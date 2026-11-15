@@ -1,25 +1,30 @@
 import fs from 'node:fs'
+import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
-import { CARRIED_USER_ASSETS_LABEL, COMPACTION_MESSAGE_INTRO, COMPACTION_USER_MESSAGE_LABEL, compactionTagText } from '../../src/model/chat/compaction'
+import { CARRIED_USER_ASSETS_LABEL, COMPACTION_MESSAGE_INTRO, COMPACTION_USER_MESSAGE_LABEL, compactionTagText, readCompactionTag } from '../../src/model/chat/compaction'
+import { compactionNotesText } from '../../src/model/chat/compactionNotes'
 import type { ShownPicture } from '../../src/model/chat/shownPictures'
-import type { SectionData } from '../../src/model/persistence/types'
+import type { ConversationData, SectionData } from '../../src/model/persistence/types'
+import { compactionInstruction } from '../../src/model/streams/compactionRequest'
 import { shortDuration } from '../../src/view/thread/pillDuration'
 import { anthropicChatBody, anthropicMarkedUser, openAiChatBody } from './harness/chatBody'
-import { consoleErrors, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
-import { appFilePath, conversationFilePath, makeConversation, seedConversation, writeTestFile } from './harness/fixtures'
+import { click, consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
+import { appFilePath, conversationFilePath, filesIn, makeConversation, seedConversation, writeTestFile } from './harness/fixtures'
 import { pasteImageReference, pngDataUrl, shownImages, solidPng, type ShownImage } from './harness/images'
 import { shownPlayers, WEBM_VIDEO, type ShownPlayer } from './harness/media'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
-import { mockChatPath, replyText, sendAnthropicReply, sendChatReply, type MockProvider } from './harness/mockServer'
+import { mockChatPath, openAiToolCall, replyText, sendAnthropicReply, sendChatReply, sendChatText, sendToolCalls, startEventStream, toolResult, writeChatFrame, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeConversationId, editorCaret, focusEditor, misplacedLines, pressRolePill, savedPillLines, sbpCall, submit, threadSections, waitForThread, type ThreadSection } from './harness/thread'
+import { activeConversationId, activeTabStreaming, AT_BOTTOM_PX, editorCaret, editorDoc, focusEditor, misplacedLines, newTab, openToasts, pickModel, pressRolePill, savedPillLines, sbpCall, submit, threadSections, viewFromBottom, waitForThread, type ThreadSection } from './harness/thread'
 import { hiddenAssetNotes, hiddenPart, pressToolChip, toolChips, toolPanelPictures, type ToolChipView } from './harness/toolChips'
 
-// A compacted conversation, driven through the real app against a mock
-// server in this process. Its first section is the compaction section: an
-// agent section whose first line is the compaction tag. No compaction runs
-// here: each test opens a conversation file that holds one.
+// Compaction, driven through the real app against a mock server in this
+// process.
+//
+// A compacted conversation: its first section is the compaction section,
+// an agent section whose first line is the compaction tag. These tests
+// open a conversation file that holds one.
 // - The editor shows an Agent pill first, in place of the tag line, and no
 //   User pill above it. The caret never goes before the notes.
 // - Each request starts with one user message: the notes, the pictures of
@@ -38,12 +43,41 @@ import { hiddenAssetNotes, hiddenPart, pressToolChip, toolChips, toolPanelPictur
 //   pictures of the tag. A request sends a kept image as its text only,
 //   unless the user names it with `@id`.
 //
+// A compaction that runs: the mock tells that a request was near the
+// context window of its model, or the conversation file tells it.
+// - Before the next chat request of the reply (between two tool rounds,
+//   or the first request after a submit), Dez sends the compaction
+//   request: the request that was due, with the instruction of Dez as one
+//   more user message. The bottom bar shows "Compacting…" meanwhile.
+// - The notes of the answer take the place of the conversation, in the
+//   tab, in the editor, and in the file, and the reply goes on: its next
+//   request holds only the notes and the kept messages of the user.
+// - A compaction request that fails two times ends the reply with an
+//   error toast, and a stop ends it with none. Both keep the
+//   conversation.
+// - Dez deletes the file of a dropped image that the user saw only in the
+//   panel of a call, and the picture copies of the tag before. The file
+//   of any other dropped image stays.
+//
 // One app session serves the whole file. The relaunch test reopens the
 // conversation of the request test.
 
 const PROVIDER: MockProvider = { id: 'compact', name: 'Compact Mock', modelId: 'compact-model', modelName: 'Compact Model' }
 const CLAUDE: MockProvider = { id: 'claude', name: 'Claude Mock', modelId: 'claude-model', modelName: 'Claude Model', apiFormat: 'anthropic' }
 const MODEL_KEY = `${PROVIDER.id}/${PROVIDER.modelId}`
+const CHAT_PATH = mockChatPath(PROVIDER)
+
+// The tokens of a request after which the next request of its conversation
+// is due for a compaction. The list of the mock model tells no context
+// window, and its id is of no model family, so Dez takes the window of an
+// unknown model for it, and this count is over the compaction threshold
+// of that window.
+const LARGE_TOKENS = 140_000
+// The first line of the instruction of a compaction request.
+const INSTRUCTION_START = compactionInstruction({ assetTable: '', jobs: [], cost: undefined, tools: false }).split('\n')[0]
+const NOTES_SUMMARY = 'The user wants to go on with the task.'
+// An answer to a compaction request: a summary, and no other part.
+const NOTES_ANSWER = `## Summary\n${NOTES_SUMMARY}\n`
 
 // The image of the kept user message, the image that the notes name, and
 // the picture that the tag keeps for the model.
@@ -176,22 +210,92 @@ describe('a compacted conversation', () => {
   }
 
   // Seeds the conversation `id` with `sections` for the model of
-  // `provider`, with the cost and the numbers of one compaction, opens
-  // it, and waits for it.
-  async function openCompacted (id: string, sections: SectionData[], provider = PROVIDER): Promise<ThreadSection[]> {
-    const cost = { usd: 0.25, requests: 4, unpriced: 0 }
+  // `provider` and with the other fields of `more`, opens it, and waits
+  // for it.
+  async function openSeeded (id: string, sections: SectionData[], provider: MockProvider, more: Partial<ConversationData>): Promise<ThreadSection[]> {
     await seedConversation(setup.app.home, makeConversation({
+      ...more,
       id,
       title: id,
       sections,
       activeModel: { providerId: provider.id, modelId: provider.modelId, modelName: provider.modelName },
-      cost,
-      compactions: { count: 1, tokens: 52_000, cost },
     }))
     await sbpCall(browser, 'dez.model/tabs/openConversation', id)
     const thread = sections.map(({ role, nodes }) => ({ role, text: nodes.map((node) => (node.kind === 'text' ? node.text : '')).join('') }))
     await waitForThread(browser, thread)
     return thread
+  }
+
+  // Seeds the conversation `id` with `sections` for the model of
+  // `provider`, with the cost and the numbers of one compaction and the
+  // fields of `more`, opens it, and waits for it.
+  async function openCompacted (id: string, sections: SectionData[], provider = PROVIDER, more: Partial<ConversationData> = {}): Promise<ThreadSection[]> {
+    const cost = { usd: 0.25, requests: 4, unpriced: 0 }
+    return openSeeded(id, sections, provider, { cost, compactions: { count: 1, tokens: 52_000, cost }, ...more })
+  }
+
+  // Seeds and opens the conversation `id` with one reply, whose request
+  // held `LARGE_TOKENS` tokens: the first request of its next reply is due
+  // for a compaction.
+  async function openLarge (id: string): Promise<ThreadSection[]> {
+    return openSeeded(id, [textSection('user', 'The task.'), textSection('agent', 'An earlier answer.'), textSection('user', '')], PROVIDER, {
+      context: { tokens: LARGE_TOKENS, estimate: 0 },
+    })
+  }
+
+  // Checks that `request` is the compaction request of a conversation
+  // whose next chat request holds `messages`: that same request (the
+  // prompt cache of the provider holds its start), with one more user
+  // message at its end, the instruction of Dez.
+  function expectCompactionRequest (request: HeldRequest, messages: unknown[]): void {
+    const body = JSON.parse(request.body) as { messages: Array<{ role: string, content: unknown }> }
+    expect({ ...body, messages: body.messages.slice(0, -1) }).toStrictEqual(openAiChatBody(PROVIDER, messages))
+    const instruction = body.messages.at(-1)
+    expect(instruction?.role).toBe('user')
+    expect(typeof instruction?.content === 'string' && instruction.content.startsWith(INSTRUCTION_START)).toBe(true)
+  }
+
+  // The one message of a request right after a compaction that kept no
+  // image: the notes that the tab holds (the text of its first section
+  // after the tag line), then each message of `kept`, the messages of the
+  // user that the compaction kept.
+  async function notesMessage (...kept: string[]): Promise<Record<string, unknown>> {
+    const [first] = await threadSections(browser)
+    const tag = first.role === 'agent' ? readCompactionTag(first.text) : null
+    if (tag === null) throw new Error('notesMessage: the first section of the tab is no compaction section')
+    return { role: 'user', content: `${COMPACTION_MESSAGE_INTRO}\n\n${first.text.slice(tag.textFrom)}${kept.map((text) => `${KEPT}${text}`).join('')}` }
+  }
+
+  // Whether the bottom bar tells the user that the reply waits for a
+  // compaction: the part is on the one line of the label that shows.
+  async function showsCompacting (): Promise<boolean> {
+    return browser.execute(() => {
+      const label = document.querySelector<HTMLElement>('.bottom-bar .usage-label')
+      const part = label?.querySelector<HTMLElement>('.compacting-label')
+      if (!label || !part) return false
+      const box = label.getBoundingClientRect()
+      const rect = part.getBoundingClientRect()
+      return rect.width > 0 && rect.top >= box.top - 1 && rect.bottom <= box.bottom + 1
+    })
+  }
+
+  // The role of each pill of the editor, with the index of its section.
+  async function pillRoles (): Promise<Array<{ index: number, role: string }>> {
+    return (await pills()).map(({ index, role }) => ({ index, role }))
+  }
+
+  // The lines of the saved file of the conversation `id`.
+  async function savedLines (id: string): Promise<string[]> {
+    return (await fs.promises.readFile(conversationFilePath(setup.app.home, id), 'utf8')).split('\n')
+  }
+
+  // The numbers of the header of the saved file of the conversation `id`
+  // whose names match `names`.
+  async function savedNumbers (id: string, names: RegExp): Promise<string[]> {
+    return (await savedLines(id))[0]
+      .replace(/ -->$/, '')
+      .split(' | ')
+      .filter((part) => names.test(part))
   }
 
   // The files of the conversation with images, and its sections: the
@@ -371,12 +475,7 @@ describe('a compacted conversation', () => {
     // The file keeps the agent role of the first section, its tag, and
     // the compaction numbers of its header. The two requests have no
     // known price: the mock model has no list price.
-    const savedLines = async (): Promise<string[]> => (await fs.promises.readFile(conversationFilePath(setup.app.home, REQUESTS_ID), 'utf8')).split('\n')
-    const savedNumbers = async (): Promise<string[]> => (await savedLines())[0]
-      .replace(/ -->$/, '')
-      .split(' | ')
-      .filter((part) => /^(cost|requests|unpriced|compact)/.test(part))
-    await waitForValue(browser, 'saved numbers', savedNumbers, [
+    await waitForValue(browser, 'saved numbers', () => savedNumbers(REQUESTS_ID, /^(cost|requests|unpriced|compact)/), [
       'cost: 0.25',
       'requests: 6',
       'unpriced: 2',
@@ -386,7 +485,7 @@ describe('a compacted conversation', () => {
       'compacted-requests: 4',
     ])
     // A blank line follows the header.
-    expect((await savedLines()).slice(2, 4)).toStrictEqual([`<dez:pill type="agent" model="${MODEL_KEY}" duration-ms="${REPLY_MS}"/>`, thread[0].text.split('\n')[0]])
+    expect((await savedLines(REQUESTS_ID)).slice(2, 4)).toStrictEqual([`<dez:pill type="agent" model="${MODEL_KEY}" duration-ms="${REPLY_MS}"/>`, thread[0].text.split('\n')[0]])
   })
 
   it('sends a user message first in the Anthropic format', async () => {
@@ -521,6 +620,184 @@ describe('a compacted conversation', () => {
     await waitForValue(browser, 'shown images', () => shownImages(browser), [KEPT_USER_IMAGE])
     expect(await hiddenAssetNotes(browser)).toStrictEqual([keptNote('image @a')])
     expect(await toolChips(browser)).toStrictEqual([compactionChipView(['1 kept asset'], false)])
+  })
+
+  it('compacts the conversation between two rounds of a reply, and the reply goes on from the notes', async () => {
+    await newTab(browser)
+    await pickModel(browser, PROVIDER.name, PROVIDER.modelName)
+    const question = 'Which compact models are there?'
+    await submit(browser, question)
+    const first = await takeRequest(setup, CHAT_PATH, openAiChatBody(PROVIDER, [{ role: 'user', content: question }]))
+    const call = openAiToolCall('call_1', 'model_list', { filter: 'compact' })
+    sendToolCalls(first.reply, [call], { promptTokens: LARGE_TOKENS })
+
+    // The next request of the reply is due for a compaction, so Dez asks
+    // for the notes first. The reply runs meanwhile.
+    const compaction = await takeRequest(setup, CHAT_PATH)
+    expectCompactionRequest(compaction, [
+      { role: 'user', content: question },
+      { role: 'assistant', content: '', tool_calls: [call] },
+      { role: 'tool', tool_call_id: 'call_1', content: toolResult(compaction, 'call_1') },
+    ])
+    await waitForValue(browser, '"Compacting…" in the bottom bar', showsCompacting, true)
+    expect(await activeTabStreaming(browser)).toBe(true)
+    sendChatText(compaction.reply, NOTES_ANSWER, { promptTokens: LARGE_TOKENS })
+
+    // The notes take the place of the conversation, and the reply goes on
+    // from them: its section is empty again, and the call is gone.
+    const second = await takeRequest(setup, CHAT_PATH)
+    expect(JSON.parse(second.body)).toStrictEqual(openAiChatBody(PROVIDER, [await notesMessage(question)]))
+    const [notes, ...rest] = await threadSections(browser)
+    expect(readCompactionTag(notes.text)?.count).toBe(1)
+    expect(notes.text).toContain(NOTES_SUMMARY)
+    expect(rest).toStrictEqual([{ role: 'user', text: question }, { role: 'agent', text: '' }])
+    // The editor shows the new sections.
+    await waitForValue(browser, 'pills after the compaction', pillRoles, [{ index: 0, role: 'agent' }, { index: 1, role: 'user' }, { index: 2, role: 'agent' }])
+    expect(await firstSectionLook()).toStrictEqual(COMPACTED_LOOK)
+    expect(await showsCompacting()).toBe(false)
+    expect(await activeTabStreaming(browser)).toBe(true)
+
+    // The view still follows the reply: an answer that is taller than the
+    // editor keeps the view at its bottom.
+    const answer = Array.from({ length: 120 }, (_, i) => `Line ${i + 1} of the answer.`).join('\n')
+    startEventStream(second.reply)
+    writeChatFrame(second.reply, { content: answer })
+    await waitForValue(browser, 'answer in the editor', async () => (await editorDoc(browser)).includes(answer), true)
+    expect(await browser.execute(() => (document.querySelector('.cm-scroller')?.scrollTop ?? 0) > 0), 'the view scrolled').toBe(true)
+    expect(await viewFromBottom(browser), 'distance from the bottom').toBeLessThanOrEqual(AT_BOTTOM_PX)
+    writeChatFrame(second.reply, { content: '' }, 'stop')
+    second.reply.end('data: [DONE]\n\n')
+    await waitForThread(browser, [notes, { role: 'user', text: question }, { role: 'agent', text: answer }, { role: 'user', text: '' }])
+    expect(await misplacedLines(browser)).toStrictEqual([])
+  })
+
+  it('compacts a conversation that is too large before the first request of a new reply', async () => {
+    const id = 'compaction-at-submit'
+    const thread = await openLarge(id)
+
+    await submit(browser, 'Go on.')
+    const compaction = await takeRequest(setup, CHAT_PATH)
+    expectCompactionRequest(compaction, [
+      { role: 'user', content: thread[0].text },
+      { role: 'assistant', content: thread[1].text },
+      { role: 'user', content: 'Go on.' },
+    ])
+    await waitForValue(browser, '"Compacting…" in the bottom bar', showsCompacting, true)
+    sendChatText(compaction.reply, NOTES_ANSWER, { promptTokens: LARGE_TOKENS + 1000 })
+
+    // The first request of the reply holds the notes, the first message of
+    // the user, and the new one.
+    const request = await takeRequest(setup, CHAT_PATH)
+    expect(JSON.parse(request.body)).toStrictEqual(openAiChatBody(PROVIDER, [await notesMessage(thread[0].text, 'Go on.')]))
+    await sendChatReply(request.reply, 'the reader of the notes')
+    const [notes] = await threadSections(browser)
+    expect(readCompactionTag(notes.text)?.count).toBe(1)
+    expect(notes.text).toContain(NOTES_SUMMARY)
+    await waitForThread(browser, [notes, thread[0], { role: 'user', text: 'Go on.' }, { role: 'agent', text: replyText('the reader of the notes') }, { role: 'user', text: '' }])
+    await waitForValue(browser, 'pills after the reply', pillRoles, [
+      { index: 0, role: 'agent' },
+      { index: 1, role: 'user' },
+      { index: 2, role: 'user' },
+      { index: 3, role: 'agent' },
+      { index: 4, role: 'user' },
+    ])
+    expect(await firstSectionLook()).toStrictEqual(COMPACTED_LOOK)
+    expect(await showsCompacting()).toBe(false)
+
+    // The file holds the compaction, with the tokens that the provider
+    // counted for the compaction request.
+    await waitForValue(browser, 'saved compaction numbers', () => savedNumbers(id, /^(compactions|compacted-tokens)/), ['compactions: 1', `compacted-tokens: ${LARGE_TOKENS + 1000}`])
+    expect((await savedLines(id))[3]).toBe(notes.text.split('\n')[0])
+  })
+
+  it('ends the reply with an error toast when the compaction request fails two times, and keeps the conversation', async () => {
+    const thread = await openLarge('compaction-failure')
+
+    await submit(browser, 'Go on.')
+    // Dez sends a failed compaction request one more time.
+    for (let tries = 1; tries <= 2; tries++) {
+      const compaction = await takeRequest(setup, CHAT_PATH)
+      compaction.reply.writeHead(500, { 'Content-Type': 'application/json' })
+      compaction.reply.end(JSON.stringify({ error: { message: 'The mock server failed.' } }))
+    }
+
+    await waitForValue(browser, 'error toast', async () => (await openToasts(browser, 'error')).map((toast) => toast.title), ['Compaction failed'])
+    await waitForValue(browser, 'streaming', () => activeTabStreaming(browser), false)
+    expect(await threadSections(browser)).toStrictEqual([...thread.slice(0, 2), { role: 'user', text: 'Go on.' }])
+    expect(await showsCompacting()).toBe(false)
+    // A third request would come at once.
+    await browser.pause(300)
+    expect(setup.mock.hasWaitingRequest()).toBe(false)
+
+    // Dez logs each failed request and the end of the reply.
+    await resetConsoleErrors(browser)
+    await click(browser, '.toast-card--error:not(.toast-card--closing) .toast-close')
+    await waitForValue(browser, 'error toast closed', () => openToasts(browser, 'error'), [])
+  })
+
+  it('stops a compaction request with its reply, with no toast, and keeps the conversation', async () => {
+    const thread = await openLarge('compaction-stop')
+
+    await submit(browser, 'Go on.')
+    const compaction = await takeRequest(setup, CHAT_PATH)
+    await waitForValue(browser, '"Compacting…" in the bottom bar', showsCompacting, true)
+
+    await pointerClick(browser, '.submit-button')
+    await waitForValue(browser, 'request closed by the app', async () => compaction.closed, true)
+    await waitForThread(browser, [...thread.slice(0, 2), { role: 'user', text: 'Go on.' }])
+    expect(await showsCompacting()).toBe(false)
+    // A stop is no failure: a second compaction request would come at once.
+    await browser.pause(300)
+    expect(setup.mock.hasWaitingRequest()).toBe(false)
+  })
+
+  // Only a second compaction can drop an image: the first one keeps each
+  // image that is new. So the conversation file holds a first compaction,
+  // whose notes have a line for each of its two made images.
+  it('deletes the file of a dropped intermediate image and the old picture copy, and keeps the file of a dropped image that the user saw', async () => {
+    const { home } = setup.app
+    const imagesDir = appFilePath(home, 'assets', 'generated', 'images')
+    const viewsDir = appFilePath(home, 'assets', 'generated', 'views')
+    const names = { draft: 'compaction-draft.png', seen: 'compaction-seen.png', sheet: 'compaction-old-sheet.png' }
+    const draft = await writeTestFile(path.join(imagesDir, names.draft), KEPT_MADE_PNG)
+    const seen = await writeTestFile(path.join(imagesDir, names.seen), MADE_PNG)
+    await writeTestFile(path.join(viewsDir, names.sheet), SHEET_PNG)
+    // The hidden mark is written out here, so that the spec does not take
+    // it from the code under test: a call made the draft as a part of its
+    // work, and the user saw it only in the panel of that call.
+    const notes = compactionNotesText({
+      summary: 'A fox for the user.',
+      requirements: '',
+      nextSteps: '',
+      assets: [
+        { id: 'a', kind: 'image', facts: 'PNG, 36x28', origin: 'made by the model_invoke job 1 of its reply: "A fox draft"', sentence: 'A draft of the fox.', text: `![${draft}](id=a|tool=model_invoke|hidden=j-aaaa)` },
+        { id: 'b', kind: 'image', facts: 'PNG, 30x20', origin: 'made by the model_invoke job 2 of its reply: "A fox"', sentence: 'The fox.', text: `![${seen}](id=b|tool=model_invoke)` },
+      ],
+      unnamed: [],
+      jobs: [],
+      cost: undefined,
+    })
+    const thread = await openCompacted('compaction-file-delete', [
+      compactionSection(`${compactionTagText({ count: 1, lastId: 'b', pictures: [{ ...SHEET, file: names.sheet }] })}\n${notes}`),
+      textSection('user', 'Make a fox.'),
+      textSection('agent', 'The fox is done.'),
+      textSection('user', ''),
+    ], PROVIDER, { context: { tokens: LARGE_TOKENS, estimate: 0 } })
+
+    await submit(browser, 'Now a wolf.')
+    const compaction = await takeRequest(setup, CHAT_PATH)
+    sendChatText(compaction.reply, '## Summary\nThe fox is done, and a wolf is next.\n\n## Assets\n@a: drop - The wolf needs no fox draft.\n@b: drop - The wolf needs no fox.\n')
+    const request = await takeRequest(setup, CHAT_PATH)
+    await sendChatReply(request.reply, 'the wolf')
+
+    // The second compaction left both images out of the conversation.
+    const [newNotes] = await threadSections(browser)
+    expect(readCompactionTag(newNotes.text)).toMatchObject({ count: 2, pictures: [] })
+    expect([draft, seen].filter((file) => newNotes.text.includes(file))).toStrictEqual([])
+    await waitForThread(browser, [newNotes, thread[1], { role: 'user', text: 'Now a wolf.' }, { role: 'agent', text: replyText('the wolf') }, { role: 'user', text: '' }])
+
+    await waitForValue(browser, 'files of the two dropped images', async () => (await filesIn(imagesDir)).filter((name) => name === names.draft || name === names.seen), [names.seen])
+    await waitForValue(browser, 'old picture copy', async () => (await filesIn(viewsDir)).includes(names.sheet), false)
   })
 
   it('shows the compaction section and sends the same first message after a relaunch', async () => {

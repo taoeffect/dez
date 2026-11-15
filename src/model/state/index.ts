@@ -128,6 +128,19 @@ function cloneSections(sections: Section[]): ModelSnapshot['tabs'][number]['sect
   }))
 }
 
+// `section` as a tab stores it: a copy with normalized content, and with
+// the agent fields only when they are set.
+function storedSection(section: Section): Section {
+  return {
+    id: section.id,
+    role: section.role,
+    content: normalizeContent(section.content),
+    ...modelRefField(section.model),
+    ...thinkingField(section.thinking),
+    ...durationField(section.durationMs),
+  }
+}
+
 function cloneTab(tab: Tab): ModelSnapshot['tabs'][number] {
   return {
     id: tab.id,
@@ -700,15 +713,48 @@ export default sbp('sbp/selectors/register', {
     if (tab) tab.context = { tokens: Math.round(tokens), estimate: tabContextEstimate(tab, model, answerCalls) }
   },
 
-  // About how many tokens the next chat request of the tab holds, for its
-  // active model, and whether that is an estimate; undefined for a missing
-  // tab. The count of the provider is the base, so a tab whose reply came
-  // from another model than the active one, or with other settings, shows
-  // an estimate. It reads the text of the whole tab: a view must not read
-  // it for each token of a stream.
-  'dez.model/tabs/contextSize' (tabId: string): ContextSize | undefined {
+  // About how many tokens the next chat request of the tab holds, for
+  // `model` (by default the active model of the tab), and whether that is
+  // an estimate; undefined for a missing tab. The count of the provider is
+  // the base, so a tab whose reply came from another model than `model`,
+  // or with other settings, shows an estimate. It reads the text of the
+  // whole tab: a view must not read it for each token of a stream.
+  'dez.model/tabs/contextSize' (tabId: string, model?: ModelRef): ContextSize | undefined {
     const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
-    return tab && contextSize(tab.context, tabContextEstimate(tab, tab.activeModel))
+    return tab && contextSize(tab.context, tabContextEstimate(tab, model ?? tab.activeModel))
+  },
+
+  // Puts the result of a compaction (controller/compaction.ts) into the
+  // tab, in one step, as the sections and the numbers must change together.
+  // `sections` are the sections that the compaction gave. Their part up to
+  // the section of the reply that runs (`replySectionId`) takes the place
+  // of the tab's sections up to that section. The sections of the tab
+  // after it stay as the tab has them now: the user can type in them while
+  // the compaction request runs. `tokens` is the context size that the
+  // compaction replaced.
+  //
+  // The counted context of the tab goes: it is a count of the text that is
+  // gone, and the size of the new, small text would be near 0 with it. The
+  // cost of the tab now becomes the cost at this compaction
+  // (`Compactions.cost`), also when the tab counted no request yet.
+  //
+  // False, with no change, for a missing tab, and for a tab that no longer
+  // holds the reply's section (the user merged it into the one before).
+  'dez.model/tabs/compact' (tabId: string, { sections, replySectionId, tokens }: { sections: readonly Section[], replySectionId: string, tokens: number }): boolean {
+    const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
+    const isReply = (section: Section) => section.id === replySectionId
+    const newEnd = sections.findIndex(isReply) + 1
+    const oldEnd = (tab?.sections.findIndex(isReply) ?? -1) + 1
+    if (!tab || newEnd === 0 || oldEnd === 0) return false
+    tab.sections.splice(0, oldEnd, ...sections.slice(0, newEnd).map(storedSection))
+    tab.title = tabTitle(tab.sections)
+    tab.compactions = {
+      count: (tab.compactions?.count ?? 0) + 1,
+      tokens: (tab.compactions?.tokens ?? 0) + Math.round(tokens),
+      cost: costField(tab.cost).cost ?? { usd: 0, requests: 0, unpriced: 0 },
+    }
+    delete tab.context
+    return true
   },
 
   // The user changed or removed the text of a reply in the tab, so its
@@ -946,14 +992,7 @@ export default sbp('sbp/selectors/register', {
   'dez.model/tabs/replaceSections' (tabId: string, sections: Section[]): boolean {
     const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
     if (!tab) return false
-    tab.sections.splice(0, tab.sections.length, ...sections.map((section) => ({
-      id: section.id,
-      role: section.role,
-      content: normalizeContent(section.content),
-      ...modelRefField(section.model),
-      ...thinkingField(section.thinking),
-      ...durationField(section.durationMs),
-    })))
+    tab.sections.splice(0, tab.sections.length, ...sections.map(storedSection))
     tab.title = tabTitle(tab.sections)
     return true
   },

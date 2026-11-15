@@ -1,7 +1,10 @@
+import { compactionMessageEnd } from '../chat/compaction'
 import { conversationCostText } from '../chat/compactionNotes'
+import { sectionIsEmpty } from '../chat/content'
 import type { ConversationCost } from '../chat/conversationCost'
 import { IMAGE_ID_SOURCE } from '../chat/images'
 import { withoutStoredFilePaths } from '../chat/storedFilePaths'
+import type { ModelRef, Section } from '../chat/types'
 import { jobsListText, type JobInfo } from '../tools/jobs'
 import type { PictureBudget } from './pictureBudget'
 
@@ -30,20 +33,60 @@ const NEAR_PICTURE_LIMIT = 0.9
  *  (`pictureLimits`, with the image limit of the model as its count).
  *
  *  With no chat request since the last compaction the answer is null: a
- *  compaction that made no room would come again and again. */
-export function compactionReason({ contextTokens, threshold, limits, spent, requestSinceCompaction }: {
+ *  compaction that made no room would come again and again.
+ *
+ *  `kept` is what the images and the pictures cost right after the newest
+ *  compaction of the reply (nothing before its first one). A picture
+ *  limit counts only when `spent` is over it: a compaction cannot take
+ *  out the images of the messages of the user that it keeps, so with no
+ *  newer picture it would make no room. It also covers a model that takes
+ *  no image, whose limit is 0. */
+export function compactionReason({ contextTokens, threshold, limits, spent, kept, requestSinceCompaction }: {
   contextTokens: number
   threshold: number
   limits: PictureBudget
   spent: PictureBudget
+  kept: PictureBudget
   requestSinceCompaction: boolean
 }): CompactionReason | null {
   if (!requestSinceCompaction) return null
   if (contextTokens >= threshold) return 'tokens'
-  if (spent.pictures >= NEAR_PICTURE_LIMIT * limits.pictures) return 'images'
-  if (spent.bytes >= NEAR_PICTURE_LIMIT * limits.bytes) return 'bytes'
-  if (spent.tokens >= NEAR_PICTURE_LIMIT * limits.tokens) return 'pictureTokens'
+  const isNear = (part: keyof PictureBudget) => spent[part] > kept[part] && spent[part] >= NEAR_PICTURE_LIMIT * limits[part]
+  if (isNear('pictures')) return 'images'
+  if (isNear('bytes')) return 'bytes'
+  if (isNear('tokens')) return 'pictureTokens'
   return null
+}
+
+// The index of the section with the id `replySectionId`, or the count of
+// the sections when there is none.
+function replyIndex(sections: readonly Section[], replySectionId: string): number {
+  const index = sections.findIndex((section) => section.id === replySectionId)
+  return index < 0 ? sections.length : index
+}
+
+/** Whether the conversation `sections` holds a reply with text between its
+ *  newest compaction (or its start) and the section of the reply that
+ *  runs (`replySectionId`). At the first request of a reply, this tells
+ *  whether a chat request went since the newest compaction
+ *  (`compactionReason`): a first message, and a message right after a
+ *  compaction, bring none. */
+export function repliedSinceCompaction(sections: readonly Section[], replySectionId: string): boolean {
+  return sections
+    .slice(compactionMessageEnd(sections), replyIndex(sections, replySectionId))
+    .some((section) => section.role === 'agent' && !sectionIsEmpty(section))
+}
+
+/** The model of the newest reply with text before the section of the
+ *  reply that runs (`replySectionId`); null when no such reply tells its
+ *  model. It read the whole conversation in its last request, so it can
+ *  write the notes of a conversation that is too large for the model of
+ *  the reply that runs. */
+export function newestReplyModel(sections: readonly Section[], replySectionId: string): ModelRef | null {
+  const newest = sections
+    .slice(0, replyIndex(sections, replySectionId))
+    .findLast((section) => section.role === 'agent' && section.model !== undefined && !sectionIsEmpty(section))
+  return newest?.model ?? null
 }
 
 /** What a compaction does with an image or a clip: `show` keeps it as a
@@ -76,7 +119,8 @@ export interface CompactionInstruction {
   /** The table of the assets of the conversation (`assetTableText`,
    *  compactionAssets.ts). */
   assetTable: string
-  /** The jobs of the reply that runs; none at a submit. */
+  /** The jobs of the reply that runs. A reply that sent no request yet
+   *  has none. */
   jobs: readonly JobInfo[]
   /** The cost of the conversation before this request. */
   cost: ConversationCost | undefined

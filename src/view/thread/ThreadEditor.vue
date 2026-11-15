@@ -1066,9 +1066,10 @@ function scrollViewToBottomAfterLayout(v: EditorView) {
   })
 }
 
-// `streamEnd` is set for the rebuild at the end of a stream. It puts the
-// caret at the doc end, then scrolls to the bottom when the view still
-// followed the stream, or keeps the scroll position that the user chose.
+// `streamEnd` is set for the rebuild at the end of a stream, and for the
+// rebuild after a compaction of a reply that runs. It puts the caret at
+// the doc end, then scrolls to the bottom when the view still followed the
+// stream, or keeps the scroll position that the user chose.
 function resetViewToActiveTab(streamEnd?: { followBottom: boolean }) {
   if (!view) return
   // The autocomplete range points into the old doc; accepting it after the
@@ -1125,6 +1126,25 @@ function onEditorStreamFinished(tabId: string, followBottom: boolean) {
   nextTick(() => resetViewToActiveTab({ followBottom }))
 }
 
+// A compaction put new sections in the place of the sections of `tabId`
+// while its reply runs (`dez.editor/rebuildIfVisible`). The view drops its
+// doc in this tick, with no `nextTick`: the doc is the old text, and each
+// write of it into the store would undo the compaction (a doc change, or
+// the structure sync below, which would add separators for the new
+// sections to the old doc).
+function onEditorRebuild(tabId: string, followBottom: boolean) {
+  if (tabId !== viewTabId) return
+  if (tabId === activeTabId.value) {
+    resetViewToActiveTab({ followBottom })
+    return
+  }
+  // Right after a tab switch the view still holds the doc of `tabId`, and
+  // the `activeTabId` watcher is about to write it back (`saveViewTabNow`).
+  // So the view holds no tab until the rebuild of that watcher.
+  viewTabId = null
+  viewConversationId = null
+}
+
 function syncViewStructureToStoreSections() {
   // Right after a tab switch the view still holds the old tab's doc. The
   // active tab's models do not belong to it: with them, the next write-back
@@ -1164,12 +1184,14 @@ function syncViewStructureToStoreSections() {
 onMounted(() => {
   mountView()
   sbp('okTurtles.events/on', 'dez.editor.stream-finished', onEditorStreamFinished)
+  sbp('okTurtles.events/on', 'dez.editor.rebuild', onEditorRebuild)
 })
 
 onBeforeUnmount(() => {
   saveViewTabNow()
   unregisterActiveView()
   sbp('okTurtles.events/off', 'dez.editor.stream-finished', onEditorStreamFinished)
+  sbp('okTurtles.events/off', 'dez.editor.rebuild', onEditorRebuild)
   refreshFindStatusDebounced.clear()
   view?.destroy()
   view = null

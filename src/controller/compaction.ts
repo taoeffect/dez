@@ -51,9 +51,10 @@ import { discardShownPictures, saveShownPictures } from './shownPictures'
 // It registers no selector, and it changes no tab: its caller puts the
 // result into the tab, when the reply is still the one that asked.
 
-/** The explanation of a compaction whose answer holds no notes. */
-export const NO_COMPACTION_NOTES_TEXT = 'The model did not write the notes that Dez asked it for, so Dez could not make the conversation smaller. '
-  + 'The conversation stays as it is. Try again, or choose another model.'
+/** The explanation of a compaction whose answer holds no notes. The toast
+ *  of a failed compaction (`dez.stream/start`) first tells what Dez tried,
+ *  and that the conversation stays as it is. */
+export const NO_COMPACTION_NOTES_TEXT = 'The model did not write the notes that Dez asked it for. Send the message again, or choose another model.'
 
 /** What a compaction needs. */
 export interface CompactionInput {
@@ -62,10 +63,18 @@ export interface CompactionInput {
   conversationId: string
   /** The sections of the tab. */
   sections: readonly Section[]
-  /** The id of the section of the reply that runs; null at a submit. */
+  /** The id of the section of the reply that runs. At a submit, that is
+   *  the empty section of the new reply. Null: the conversation has no
+   *  such section, and the compaction replaces all of it. */
   replySectionId: string | null
-  /** The model of the reply, which gets the request. */
+  /** The model that gets the request, and that the compaction section
+   *  names as its writer: the model of the reply. */
   model: ModelRef
+  /** The model that reads the compacted conversation, when it is not
+   *  `model`: the pictures of the result follow its limits. A reply to a
+   *  model whose context window is too small for the conversation gives it
+   *  (`dez.stream/start`); then `model` is the model of an earlier reply. */
+  readerModel?: ModelRef
   /** The messages, the system prompt, the tools, the output flags, and the
    *  provider settings of the next request of the reply. The compaction
    *  request sends them as they are, so it reads the prompt cache of the
@@ -82,7 +91,8 @@ export interface CompactionInput {
   /** Stops the compaction: the request, and the runs of the programs. The
    *  compaction then rejects with the stop. */
   signal: AbortSignal
-  /** The jobs of the reply that runs; none at a submit. */
+  /** The jobs of the reply that runs. A reply that sent no request yet
+   *  (a compaction at a submit) has none. */
   jobs: readonly JobInfo[]
   /** The cost of the conversation now. Read before the request, for the
    *  instruction, and after `countCost`, for the notes: a job of the reply
@@ -293,10 +303,12 @@ export async function compactConversation(input: CompactionInput): Promise<Compa
   const replyText = scope.reply === null ? '' : sectionPlainText(sections[scope.reply])
   const choices = assetDecisions(assets, answer, { jobInputs: openJobInputs(replyText, input.jobs), keptUserTexts: keptUserTexts(sections, scope) })
 
-  const cached = sbp('dez.model/modelCache/model', model.providerId, model.modelId) as ModelInfo | null
+  // The model of the next request: it reads the pictures of the result.
+  const reader = input.readerModel ?? model
+  const cached = sbp('dez.model/modelCache/model', reader.providerId, reader.modelId) as ModelInfo | null
   const sendImages = cached?.imageInput !== false
-  const limits = pictureLimits(cached ?? { id: model.modelId })
-  const imageLimit = imageLimitOf(cached ?? { id: model.modelId })
+  const limits = pictureLimits(cached ?? { id: reader.modelId })
+  const imageLimit = imageLimitOf(cached ?? { id: reader.modelId })
   let clipPictures = new Map<string, ShownPicture>()
   try {
     // The `show` assets get at most half of the pictures of a request.
@@ -315,7 +327,7 @@ export async function compactConversation(input: CompactionInput): Promise<Compa
       sendImages,
       limits,
       imageLimit,
-      rule: modelFamily(model.modelId).imageTokens,
+      rule: modelFamily(reader.modelId).imageTokens,
       imageBytes,
       newId: () => crypto.randomUUID(),
     })

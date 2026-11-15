@@ -211,11 +211,41 @@ export function openAiToolCall (id: string, name: string, args: Record<string, u
   return { id, type: 'function', function: { name, arguments: JSON.stringify(args) } }
 }
 
+/** What a mock model tells about its request in a usage chunk before the
+ *  end of its answer, as OpenRouter sends it. With neither field the
+ *  answer has no usage chunk. */
+export interface MockUsage {
+  /** The tokens of the request. Dez compacts a conversation when the
+   *  tokens of its newest request are near the context window of the
+   *  model. Without it the chunk tells a small request. */
+  promptTokens?: number
+  /** The provider's price of the request. Without it the request has no
+   *  price of the provider. */
+  usd?: number
+}
+
+function writeUsage (res: http.ServerResponse, { promptTokens, usd }: MockUsage): void {
+  if (promptTokens === undefined && usd === undefined) return
+  const prompt = promptTokens ?? 5
+  const usage = { prompt_tokens: prompt, completion_tokens: 4, total_tokens: prompt + 4, ...(usd === undefined ? {} : { cost: usd }) }
+  res.write(`data: ${JSON.stringify({ choices: [], usage })}\n\n`)
+}
+
 /** Answers a chat request with one round that holds only `calls`
  *  (`openAiToolCall`), then ends the stream. */
-export function sendToolCalls (res: http.ServerResponse, calls: ReadonlyArray<Record<string, unknown>>): void {
+export function sendToolCalls (res: http.ServerResponse, calls: ReadonlyArray<Record<string, unknown>>, usage: MockUsage = {}): void {
   startEventStream(res)
   writeChatFrame(res, { tool_calls: calls.map((call, index) => ({ index, ...call })) }, 'tool_calls')
+  writeUsage(res, usage)
+  res.end('data: [DONE]\n\n')
+}
+
+/** Answers a chat request with `text` as one frame, then ends the
+ *  stream. */
+export function sendChatText (res: http.ServerResponse, text: string, usage: MockUsage = {}): void {
+  startEventStream(res)
+  writeChatFrame(res, { content: text })
+  writeUsage(res, usage)
   res.end('data: [DONE]\n\n')
 }
 
@@ -252,24 +282,18 @@ export function replyText (name: string): string {
 }
 
 /** How `sendChatReply` ends its reply. */
-export interface ChatReplyOptions {
+export interface ChatReplyOptions extends MockUsage {
   /** When set, the stream stays open after the tokens until it resolves. */
   hold?: Promise<void> | null
-  /** The provider's price of the request, in a usage chunk before the end,
-   *  as OpenRouter sends it. Without it the request has no price of the
-   *  provider. */
-  usd?: number
 }
 
 /** Streams the reply that names `name` as chat completion SSE frames, then
  *  ends the stream with `[DONE]`. */
-export async function sendChatReply (res: http.ServerResponse, name: string, { hold = null, usd }: ChatReplyOptions = {}): Promise<void> {
+export async function sendChatReply (res: http.ServerResponse, name: string, { hold = null, ...usage }: ChatReplyOptions = {}): Promise<void> {
   startEventStream(res)
   for (const token of replyTokens(name)) writeChatFrame(res, { content: token })
   if (hold) await hold
-  if (usd !== undefined) {
-    res.write(`data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 5, completion_tokens: 4, total_tokens: 9, cost: usd } })}\n\n`)
-  }
+  writeUsage(res, usage)
   res.end('data: [DONE]\n\n')
 }
 

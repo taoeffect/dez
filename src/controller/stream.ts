@@ -1,19 +1,25 @@
 import sbp from '@sbp/sbp'
 import type { ActiveModel, MessagePart, ModelRef, Section, SectionThinking, Tab } from '../model/chat/types'
 import { sectionPlainText } from '../model/chat/content'
+import { compactionThreshold, type ContextSize } from '../model/chat/contextSize'
+import type { ConversationCost } from '../model/chat/conversationCost'
 import { IMAGE_HIDDEN_KEY, IMAGE_MADE_BY_KEY, IMAGE_TOOL_KEY, imageMarkdown } from '../model/chat/images'
-import { modelRefKey } from '../model/chat/modelRef'
+import { modelRefKey, sameModelRef } from '../model/chat/modelRef'
 import { newMediaIds } from '../model/chat/mediaIds'
 import { MEDIA_HIDDEN_ATTRIBUTE, MEDIA_JOB_ATTRIBUTE, MEDIA_MADE_BY_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE, mediaTagText } from '../model/chat/mediaTags'
 import { findToolBlocks, ModelTextEscaper } from '../model/chat/toolBlocks'
+import { effectiveOutputs } from '../model/modelOutputs'
 import { failedChatRequestCost, type ChatUsage } from '../model/providers/chatUsage'
 import { TooManyImagesError, tooManyImagesMessage } from '../model/providers/clipImages'
 import { isProviderRefusal } from '../model/providers/errors'
-import { modelFamily } from '../model/providers/modelFamilies'
-import { errorText, explainedError } from '../utils/errorText'
+import { contextWindowOf, imageLimitOf, modelFamily } from '../model/providers/modelFamilies'
+import { effectiveRequest } from '../model/providers/types'
+import { ExplainedError, errorText, explainedError } from '../utils/errorText'
 import type { ClipInputRules, GeneratedClip, GeneratedMedia, MediaKind, MediaProgress, ModelInfo, ModelRequest, ProviderGenerateMediaResult, ProviderStreamChatResult } from '../model/providers'
-import { requireProvider } from '../model/providers/registry'
-import { agentSectionMessages, mediaRequestInput } from '../model/streams/messages'
+import { getProvider, requireProvider } from '../model/providers/registry'
+import { compactionLeftFiles } from '../model/streams/compactionFiles'
+import { compactionReason, newestReplyModel, repliedSinceCompaction } from '../model/streams/compactionRequest'
+import { agentSectionMessages, mediaRequestInput, sectionsToStreamMessages } from '../model/streams/messages'
 import {
   contextImageCost,
   NO_PICTURE_BUDGET,
@@ -43,16 +49,18 @@ import {
 } from '../model/state'
 import { buildSystemPrompt, systemPromptTemplate } from '../model/systemPrompt'
 import { TOOL_DEFINITIONS } from '../model/tools/registry'
-import type { ToolRunResult } from '../model/tools/types'
+import type { ToolDefinition, ToolRunResult } from '../model/tools/types'
 import {
   cancelStreamSession,
   errorStreamSession,
   finishStreamSession,
   receiveStreamToken,
+  setStreamCompacting,
   startStreamSession,
   streamIsStreaming,
   streamSession,
 } from '../model/state/streams'
+import { compactConversation, type Compaction } from './compaction'
 import { logRequest } from './diagnostics/requestLog'
 import { discardMadeAssets, generatedClipAsset, ReplyJobs, writeJobAssets, type EndedJob, type MadeAsset } from './jobs'
 import { readableFileSize } from './programRuns'
@@ -69,7 +77,8 @@ interface StreamStartArgs {
   request: Exclude<ModelRequest, 'none'>
   // The request messages of the sections before `sectionId`, built by
   // `dez.model/streamMessagesForTab` at the submit: each round sends them,
-  // then the rounds of the reply so far.
+  // then the rounds of the reply so far. After a compaction in the reply,
+  // its rounds send the messages of the compacted sections in their place.
   messages: StreamMessage[]
   // The newest user message as a message of its own
   // (`RequestMessages.newestUserMessage`): a media request takes its
@@ -134,7 +143,9 @@ interface ReplyRuntime {
   jobs: ReplyJobs
   // The file size of each image of the messages before the reply, by path:
   // the bytes that they take of the picture budget (`imageFileSizes`).
-  // Read at the first `asset_view` call of the reply; null before it.
+  // Read at the first compaction check or `asset_view` call of the reply;
+  // null before it. A compaction in the reply reads the sizes again, for
+  // its new messages.
   imageBytes: Promise<ReadonlyMap<string, number>> | null
 }
 
@@ -556,11 +567,269 @@ async function endReply(tabId: string, reply: ReplyRuntime, status: 'finished' |
   return true
 }
 
+// The parts of a chat request that are the same in every request of a
+// reply to one model (`runChatRounds`). A compaction request sends them as
+// they are, so it reads the prompt cache of the reply.
+interface RequestFrame {
+  system: string | undefined
+  tools: readonly ToolDefinition[]
+  imageOutput: boolean
+  audioOutput: boolean
+  providerSettings: Record<string, boolean> | undefined
+}
+
+// Who writes the notes of a compaction: a model, and the chat request to
+// that model that holds the conversation. The compaction request is that
+// request with one more user message (controller/compaction.ts).
+interface NotesWriter {
+  model: ActiveModel
+  messages: readonly StreamMessage[]
+  frame: RequestFrame
+}
+
+// What the compaction check before a chat request of a reply did
+// (`compactIfDue`).
+type CompactionStep =
+  // No compaction: the request goes as it is.
+  | { kind: 'none' }
+  // The tab is compacted. `messages` are the request messages of its
+  // sections before the reply's section, and `kept` is what their images
+  // and pictures cost.
+  | { kind: 'compacted', messages: StreamMessage[], kept: PictureBudget }
+  // The reply ended in the check, or a stop or a submit ended it meanwhile.
+  | { kind: 'ended' }
+
+const NO_COMPACTION: CompactionStep = { kind: 'none' }
+const REPLY_ENDED: CompactionStep = { kind: 'ended' }
+
+// The request messages, for `model`, of the sections of `sections` before
+// the section `sectionId`; null when no section has that id. Not the
+// messages of all the sections: an empty section of a reply is left out of
+// a request, so a user section after it would join the message before it.
+function messagesBefore(sections: Section[], sectionId: string, model: ModelRef, sendTools: boolean): StreamMessage[] | null {
+  const index = sections.findIndex((section) => section.id === sectionId)
+  if (index < 0) return null
+  const cached = sbp('dez.model/modelCache/model', model.providerId, model.modelId) as ModelInfo | null
+  return sectionsToStreamMessages(sections.slice(0, index), model, { sendImages: cached?.imageInput !== false, sendTools }).messages
+}
+
+// The writer of the notes of a conversation that is larger than the whole
+// context window of the model of the new reply, `replyModel` (the user
+// chose a smaller model): the model of the newest reply before it, which
+// read the whole conversation in its last request. It gets a chat request
+// of its own: the sections before `replySectionId` as it reads them, with
+// its system prompt, its tools, and its settings.
+//
+// Null when the model of the new reply must write the notes itself: no
+// earlier reply tells its model, or that model is `replyModel`. The window
+// that Dez knows of a model can be too small (a model of no family gets a
+// default), so Dez sends the request, and the provider refuses it if the
+// conversation is in fact too large.
+//
+// Throws an `ExplainedError` when Dez cannot send a chat request to the
+// model of the newest reply: its provider is gone, or it is a media model.
+function earlierReplyWriter(sections: Section[], replySectionId: string, replyModel: ActiveModel): NotesWriter | null {
+  const ref = newestReplyModel(sections, replySectionId)
+  if (ref === null || sameModelRef(ref, replyModel)) return null
+  const provider = getProvider(ref.providerId)
+  const cached = sbp('dez.model/modelCache/model', ref.providerId, ref.modelId) as ModelInfo | null
+  const model: ActiveModel = { ...ref, modelName: cached?.name ?? ref.modelId }
+  const sendTools = sbp('dez.model/requestSendsTools', ref) as boolean
+  const messages = messagesBefore(sections, replySectionId, ref, sendTools)
+  if (!provider || effectiveRequest(cached ?? {}) !== 'chat' || messages === null) {
+    throw new ExplainedError(
+      `This conversation is too large for ${replyModel.modelName}. To go on with that model, Dez must first ask the model of the newest reply, ${model.modelName}, `
+      + `for notes that take the place of the conversation, and Dez cannot send a chat request to ${model.modelName}. `
+      + 'Choose a model that can read more text, and send the message again.',
+    )
+  }
+  const settings = sbp('dez.model/settings/snapshot') as SettingsSnapshot
+  const tools = sendTools ? TOOL_DEFINITIONS : []
+  const outputs = effectiveOutputs(cached ?? {})
+  return {
+    model,
+    messages,
+    frame: {
+      system: buildSystemPrompt(systemPromptTemplate(settings.systemPrompt), ref, provider.name, tools),
+      tools,
+      imageOutput: outputs.includes('image'),
+      audioOutput: outputs.includes('audio'),
+      providerSettings: settings.providerSettings[ref.providerId],
+    },
+  }
+}
+
+// Asks `writer` for the notes that take the place of the conversation
+// `sections` (`compactConversation`, which changes no tab), with one more
+// try after a failure. Each try is a request of the reply
+// (`reply.requestId`), so a stop cancels it, and the stream session tells
+// the bottom bar that the reply waits for a compaction. Null when a stop
+// or a new submit ended the reply meanwhile: that is no failure. Throws
+// the failure of the second try.
+async function requestCompaction(args: StreamStartArgs, reply: ReplyRuntime, sections: Section[], writer: NotesWriter): Promise<Compaction | null> {
+  const { tabId } = args
+  setStreamCompacting(tabId, true)
+  try {
+    for (let tries = 1; ; tries++) {
+      const requestId = crypto.randomUUID()
+      reply.requestId = requestId
+      try {
+        return await compactConversation({
+          tabId,
+          conversationId: args.conversationId,
+          sections,
+          replySectionId: args.sectionId,
+          model: writer.model,
+          readerModel: args.model,
+          messages: writer.messages,
+          ...writer.frame,
+          requestId,
+          signal: reply.abort.signal,
+          jobs: reply.jobs.list(),
+          cost: () => sbp('dez.model/tabs/cost', tabId) as ConversationCost | undefined,
+          countCost: (usd) => countRequestCost(tabId, usd),
+        })
+      } catch (error) {
+        if (reply.abort.signal.aborted || !replyIsCurrent(tabId, reply)) return null
+        if (tries === 2) throw error
+        console.error('The compaction request failed, and Dez sends it one more time:', error)
+      }
+    }
+  } finally {
+    // The session of a newer reply of the tab has its own flag.
+    if (replyIsCurrent(tabId, reply)) setStreamCompacting(tabId, false)
+  }
+}
+
+// The text of the error toast of a compaction whose request failed two
+// times: what Dez tried and that the conversation is as it was, then the
+// fault and the fix of `error`. `writer` is the model that Dez asked for
+// the notes.
+function compactionFailedMessage(error: unknown, writer: ActiveModel): string {
+  const cause = error instanceof TooManyImagesError ? new ExplainedError(tooManyImagesMessage(writer.modelName, error)) : explainedError(error)
+  return errorText(
+    `This conversation is near the limit of what one request can hold. So Dez asked ${writer.modelName} for notes that take the place of the conversation, and that request failed two times. `
+    + `The conversation stays as it is. ${cause.explanation}`,
+    cause.details,
+  )
+}
+
+// Ends `reply` with the error toast `message`, because Dez could not
+// compact the conversation (`error`), and the request that was due cannot
+// go without that. The tab keeps its conversation.
+async function endUncompactedReply(tabId: string, reply: ReplyRuntime, error: unknown, message: string): Promise<CompactionStep> {
+  console.error('The compaction of the conversation failed:', error)
+  flushModelText(tabId, reply)
+  if (await endReply(tabId, reply, 'error')) showReplyError(tabId, 'Compaction failed', message)
+  return REPLY_ENDED
+}
+
+// The compaction check of a reply, right before a chat request: when the
+// request is due for a compaction (`compactionReason`), one request asks
+// for the notes of the conversation, and the notes take the place of the
+// tab's sections up to the reply's section, which is empty after it. The
+// reply stays the same reply: its runtime, its jobs, and its stream
+// session go on, so its busy state, Stop, and its error toast cover the
+// compaction. The first request of a reply and a request between two tool
+// rounds use this one path: at a submit, the reply's section is the empty
+// section of the new reply.
+//
+// `messages` and `frame` are the request that is about to go. `kept` is
+// what the images and the pictures cost right after the newest compaction
+// of the reply (`compactionReason`), and `firstCheck` tells that the reply
+// sent no request yet. Call it only when a chat request went since the
+// newest compaction of the conversation.
+//
+// A compaction that Dez cannot ask for, or whose request fails two times,
+// ends the reply with an error toast, and the tab stays as it is.
+async function compactIfDue(args: StreamStartArgs, reply: ReplyRuntime, frame: RequestFrame, { messages, kept, firstCheck }: {
+  messages: StreamMessage[]
+  kept: PictureBudget
+  firstCheck: boolean
+}): Promise<CompactionStep> {
+  const { tabId, sectionId, model } = args
+  const cached = sbp('dez.model/modelCache/model', model.providerId, model.modelId) as ModelInfo | null
+  const info = cached ?? { id: model.modelId }
+  const contextWindow = contextWindowOf(info)
+  const limits = pictureLimits(info)
+  const rule = modelFamily(model.modelId).imageTokens
+  const contextTokens = (sbp('dez.model/tabs/contextSize', tabId, model) as ContextSize | undefined)?.tokens ?? 0
+  // The images before the reply are the same in each of its requests.
+  reply.imageBytes ??= imageFileSizes(messages)
+  const spent = contextImageCost(messages, rule, await reply.imageBytes)
+  if (!replyIsCurrent(tabId, reply)) return REPLY_ENDED
+  const reason = compactionReason({
+    contextTokens,
+    threshold: compactionThreshold(contextWindow),
+    limits: { ...limits, pictures: Math.min(limits.pictures, imageLimitOf(info)) },
+    spent,
+    kept,
+    requestSinceCompaction: true,
+  })
+  // The sections that the compaction reads, and that tell which files it
+  // leaves with no text. A reply's section that is gone (the user merged it
+  // into the one before) takes no compaction: the rounds end such a reply.
+  const sections = (sbp('dez.model/tab', tabId) as Tab | null)?.sections ?? []
+  if (reason === null || !sections.some((section) => section.id === sectionId)) return NO_COMPACTION
+
+  let writer: NotesWriter = { model, messages, frame }
+  let result: Compaction | null
+  try {
+    // Only a new reply can have a model that never read the conversation.
+    if (firstCheck && contextTokens > contextWindow) writer = earlierReplyWriter(sections, sectionId, model) ?? writer
+  } catch (error) {
+    // No request went, so the text of the refusal is the whole message.
+    return endUncompactedReply(tabId, reply, error, explainedError(error).message)
+  }
+  try {
+    result = await requestCompaction(args, reply, sections, writer)
+  } catch (error) {
+    return endUncompactedReply(tabId, reply, error, compactionFailedMessage(error, writer.model))
+  }
+  if (result === null) return REPLY_ENDED
+  // A submit can end the output of the reply with no stop of its request
+  // (`dez.stream/endOutput`), so the answer can still come whole. Its
+  // picture copies then have no text that names them.
+  if (!replyIsCurrent(tabId, reply)) {
+    void discardShownPictures(result.pictures)
+    return REPLY_ENDED
+  }
+
+  const swapped = sbp('dez.model/tabs/compact', tabId, { sections: result.sections, replySectionId: sectionId, tokens: result.usage?.inputTokens ?? contextTokens }) as boolean
+  const tab = swapped ? sbp('dez.model/tab', tabId) as Tab | null : null
+  const base = tab && messagesBefore(tab.sections, sectionId, model, args.sendTools)
+  if (!base) {
+    // The user merged the reply's section into the one before while the
+    // request ran, so the tab stays as it is. With no section, the reply
+    // cannot go on: it ends as a stop does.
+    void discardShownPictures(result.pictures)
+    finalizeStream(tabId, cancelStreamSession(tabId))
+    return REPLY_ENDED
+  }
+  // In the tick of the swap: an editor that still holds the old doc writes
+  // the old text back into the tab at its next doc change.
+  sbp('dez.editor/rebuildIfVisible', tabId)
+  // The reply's section is empty again, so its text state starts new.
+  reply.escaper = new ModelTextEscaper()
+  reply.afterAsset = false
+  // Before the delete, which keeps each file that a conversation file
+  // names: the old file of this conversation names the files that left.
+  await sbp('dez.model/tabs/save', tabId)
+  // Not awaited: it waits for a scan of the unused files that runs, and it
+  // logs its own failures.
+  void sbp('dez.controller/unusedFiles/deleteUnnamed', compactionLeftFiles({ sections, replySectionId: sectionId, dropped: result.dropped, kept: result.pictures }))
+  reply.imageBytes = imageFileSizes(base)
+  const keptNow = contextImageCost(base, rule, await reply.imageBytes)
+  return replyIsCurrent(tabId, reply) ? { kind: 'compacted', messages: base, kept: keptNow } : REPLY_ENDED
+}
+
 // The chat rounds of a reply: request rounds until a round ends with no
 // tool calls, with no limit of their count. Each round streams its answer
 // text and thinking into the agent section; a round that ends with tool
 // calls adds their blocks, runs them, and sends the next round with the
-// reply so far. Ends the reply, except when it throws.
+// reply so far. A request that would be too large gets a compaction of
+// the conversation first (`compactIfDue`). Ends the reply, except when it
+// throws.
 async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promise<void> {
   // Read the provider's stored setting overrides and the system prompt
   // template at stream start (rather than threading them from submitTab) so
@@ -575,12 +844,38 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
   // during the reply does not change the prompt of its later rounds. A
   // blank template gives no system prompt.
   const system = buildSystemPrompt(systemPromptTemplate(settings.systemPrompt), args.model, requireProvider(args.model.providerId).name, tools)
-  let messages = args.messages
+  const frame: RequestFrame = { system, tools, imageOutput: args.imageOutput, audioOutput: args.audioOutput, providerSettings }
+  // The messages of the sections before the reply's section: each request
+  // sends them, then the rounds of the reply so far. A compaction in the
+  // reply replaces them.
+  let base = args.messages
+  let messages = base
+  // A chat request went since the newest compaction of the conversation
+  // (`compactionReason`). At the start of the reply, the text tells it.
+  let requestSinceCompaction = repliedSinceCompaction((sbp('dez.model/tab', args.tabId) as Tab | null)?.sections ?? [], args.sectionId)
+  // What the images and the pictures cost right after the newest
+  // compaction of the reply.
+  let kept = NO_PICTURE_BUDGET
+  let firstCheck = true
   // The first call id of the group that ended the round before: it names
   // the thinking round of every later round (SectionThinking.rounds).
   let afterToolCall: string | undefined
 
   for (;;) {
+    // No check, and so no wait, for a request that needs none: a first
+    // message, and the request right after a compaction.
+    if (requestSinceCompaction) {
+      const step = await compactIfDue(args, reply, frame, { messages, kept, firstCheck })
+      if (step.kind === 'ended') return
+      if (step.kind === 'compacted') {
+        base = messages = step.messages
+        kept = step.kept
+        requestSinceCompaction = false
+        // The reply's section is empty again: it has no round before.
+        afterToolCall = undefined
+      }
+    }
+    firstCheck = false
     const requestId = crypto.randomUUID()
     reply.requestId = requestId
     const roundIsCurrent = () => repliesByTab.get(args.tabId) === reply && reply.requestId === requestId && !reply.outputEnded
@@ -604,14 +899,14 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
       result = await sbp('dez.provider/streamChat', {
         providerId: args.model.providerId,
         conversationId: args.conversationId,
-        system,
-        tools,
-        imageOutput: args.imageOutput,
-        audioOutput: args.audioOutput,
+        system: frame.system,
+        tools: frame.tools,
+        imageOutput: frame.imageOutput,
+        audioOutput: frame.audioOutput,
         modelId: args.model.modelId,
         messages,
         requestId,
-        providerSettings,
+        providerSettings: frame.providerSettings,
         onSent: () => { sent = true },
         onToken: (token: string) => {
           if (!roundIsCurrent()) return
@@ -635,6 +930,7 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
     }
     // Also when a stop cut the answer off: it gives no price.
     countRound(result.cost ?? null, result.usage)
+    requestSinceCompaction = true
     if (!replyIsCurrent(args.tabId, reply)) return
 
     // Before the blocks and the finish, which saves the conversation.
@@ -692,7 +988,7 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
     const soFar = agentSectionMessages(replySoFar, args.model, true, true)
     const lastTool = soFar.findLastIndex((message) => message.role === 'tool')
     const end = soFar[lastTool + 1]?.role === 'user' ? lastTool + 2 : lastTool + 1
-    messages = [...args.messages, ...soFar.slice(0, end)]
+    messages = [...base, ...soFar.slice(0, end)]
   }
 }
 

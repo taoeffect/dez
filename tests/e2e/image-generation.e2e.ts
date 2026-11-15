@@ -11,7 +11,7 @@ import { expectSendRefused, startMockProviderApp, type MockProviderApp } from '.
 import { answerHeld, mockChatPath, startEventStream, writeChatFrame, type MockProvider } from './harness/mockServer'
 import { changeParameterField, closePopup, openPopup, popupOpen, popupView } from './harness/parameterPopup'
 import type { E2EBrowser } from './harness/session'
-import { activeConversationId, focusEditor, newTab, openToasts, pickModel, submit, threadSections, waitForThread } from './harness/thread'
+import { activeConversationId, AT_BOTTOM_PX, focusEditor, newTab, openToasts, pickModel, submit, threadSections, viewFromBottom, waitForThread } from './harness/thread'
 
 // Image replies, driven through the real app against a mock of Venice's
 // media API (`mediaApi: { format: 'venice' }`) and of a chat API that
@@ -74,10 +74,6 @@ const UPSCALE_INPUT_PNG = solidPng(256, 256, [220, 60, 60])
 const UPSCALED_PNG = solidPng(512, 512, [220, 60, 60])
 const STORED_IMAGE_NAME = storedFileName('png')
 
-/** What a view at its bottom may still have below it: scroll positions
- *  can be fractions of a pixel. */
-const AT_BOTTOM_PX = 1
-
 describe('image generation', () => {
   let setup: MockProviderApp
   let browser: E2EBrowser
@@ -116,18 +112,6 @@ describe('image generation', () => {
       Reflect.deleteProperty(window, '__e2eReleaseImageLoads')
       release?.()
     })
-  }
-
-  // The distance from the bottom of the editor's view to the bottom of its
-  // scrollable area, read two frames after the last change.
-  async function viewFromBottom (): Promise<number> {
-    return browser.execute(() => new Promise<number>((resolve, reject) => {
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        const scroll = document.querySelector<HTMLElement>('.cm-scroller')
-        if (!scroll) reject(new Error('viewFromBottom: .cm-scroller not found'))
-        else resolve(scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight)
-      }))
-    }))
   }
 
   beforeAll(async () => {
@@ -405,13 +389,13 @@ describe('image generation', () => {
     // The rebuild at the end of the reply scrolls in a later frame.
     await browser.pause(300)
     expect(await shownImages(browser), 'image before its load').toEqual([{ alt: name, width: 0, height: 0 }])
-    expect(await viewFromBottom(), 'distance from the bottom before the load').toBeLessThanOrEqual(AT_BOTTOM_PX)
+    expect(await viewFromBottom(browser), 'distance from the bottom before the load').toBeLessThanOrEqual(AT_BOTTOM_PX)
 
     await releaseImageLoads()
     await waitForValue(browser, 'shown image', () => shownImages(browser), [{ alt: name, width: 40, height: 300 }])
     // The load event and the editor's measure come in later frames.
     await browser.pause(300)
-    expect(await viewFromBottom(), 'distance from the bottom after the load').toBeLessThanOrEqual(AT_BOTTOM_PX)
+    expect(await viewFromBottom(browser), 'distance from the bottom after the load').toBeLessThanOrEqual(AT_BOTTOM_PX)
     expect(await consoleErrors(browser)).toEqual([])
   })
 

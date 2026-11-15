@@ -2,10 +2,13 @@ import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { ActiveModel, Section, SectionThinking, Tab, ThinkingReplay } from '../model/chat/types'
+import { compactionTagText, sectionCompactionTag } from '../model/chat/compaction'
+import { compactionNotesText } from '../model/chat/compactionNotes'
 import { sectionVisibleText } from '../model/chat/content'
 import type { ContextSize } from '../model/chat/contextSize'
 import type { DrawnImage, DrawnMediaType, ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
 import { findMediaTags, mediaTagText } from '../model/chat/mediaTags'
+import { HIDDEN_IMAGE_PATH, hiddenImage } from '../model/chat/testing'
 import { agentTextForRequest, findToolBlocks } from '../model/chat/toolBlocks'
 import type { ConversationData } from '../model/persistence/types'
 import { missingImageProblem, TooManyImagesError, type InputImageRules } from '../model/providers/clipImages'
@@ -17,6 +20,8 @@ import { unstoredOutputMessage } from '../model/providers/unusableModel'
 import type { GeneratedClip, ProviderChatInputMessage, ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderInfo, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers'
 import { providerInfo } from '../model/providers/testing'
 import { CLIP_KINDS, isClipKind, isTextKind, ProviderNotConfiguredError, type MediaKind } from '../model/providers/types'
+import type { CompactionLeftFiles } from '../model/streams/compactionFiles'
+import { compactionInstruction } from '../model/streams/compactionRequest'
 import type { RequestMessages, StreamMessage } from '../model/streams/types'
 import { systemPromptErrorText } from '../model/systemPrompt'
 import { jobsWaitText, jobTimedOutText, startedJobId } from '../model/tools/jobs'
@@ -68,6 +73,11 @@ let readImages: string[] = []
 // the app folders, and the ffmpeg runs of an `audio` call with their
 // files) is the stub of testing.ts.
 let deletedClips: string[] = []
+// The tab of each editor rebuild that a compaction asked for.
+let editorRebuilds: string[] = []
+// The files that each compaction left with no text, as it gave them to the
+// delete.
+let leftFiles: CompactionLeftFiles[] = []
 let consoleError: MockInstance<typeof console.error>
 
 // Stand-ins for the provider, the editor and the disk. The editor stub
@@ -118,6 +128,13 @@ sbp('sbp/selectors/register', {
     return false
   },
   'dez.editor/reconcileAfterStreamFinish' (): void {},
+  'dez.editor/rebuildIfVisible' (tabId: string): boolean {
+    editorRebuilds.push(tabId)
+    return false
+  },
+  async 'dez.controller/unusedFiles/deleteUnnamed' (files: CompactionLeftFiles): Promise<void> {
+    leftFiles.push(files)
+  },
   async 'dez.http/cancelStream' (): Promise<void> {
     await cancelStream()
   },
@@ -180,6 +197,34 @@ function replyRounds(rounds: Array<(input: ProviderStreamChatInput) => Promise<P
   }
 }
 
+// The first line of the instruction of a compaction request.
+const COMPACTION_INSTRUCTION_START = compactionInstruction({ assetTable: '', jobs: [], cost: undefined, tools: false }).split('\n')[0]
+
+// Whether `input` is a compaction request: its last message is the
+// instruction of Dez.
+function isCompactionRequest(input: ProviderStreamChatInput): boolean {
+  const last = input.messages.at(-1)
+  return last?.role === 'user' && typeof last.content === 'string' && last.content.startsWith(COMPACTION_INSTRUCTION_START)
+}
+
+// The tokens of a chat round after which the next request is due for a
+// compaction: the model `m` is of no family, so its window is 200,000
+// tokens.
+const LARGE_USAGE = { inputTokens: 135_000, outputTokens: 10 }
+// What the provider counted for a compaction request.
+const COMPACTION_USAGE = { inputTokens: 136_000, outputTokens: 40 }
+const NOTES_SUMMARY = 'The user wants a model.'
+
+// Answers a compaction request with notes: `text`, by default a summary.
+async function notesAnswer(input: ProviderStreamChatInput, text = `## Summary\n${NOTES_SUMMARY}\n`): Promise<ProviderStreamChatResult> {
+  input.onSent?.()
+  await input.onToken(text)
+  return { requestId: input.requestId as string, usage: COMPACTION_USAGE, cost: 0.5 }
+}
+
+// A `model_list` call that finds no model (the provider list is empty).
+const geminiCall = { id: 'c1', name: 'model_list', argumentsText: '{"filter":"gemini"}' }
+
 // Puts a user message, an earlier reply, and the last user message in the
 // tab, with the texts of `conversation`.
 function setConversation(conversation: Array<{ text: string }>): void {
@@ -200,6 +245,8 @@ beforeEach(() => {
   toasts = []
   closedToasts = []
   alerts = []
+  editorRebuilds = []
+  leftFiles = []
   providerInfos = async () => []
   cancelStream = async () => {}
   deletedImages = []
@@ -802,7 +849,6 @@ describe('request log', () => {
 describe('dez.stream/start tool loop', () => {
   const running = '<dez:tool id="c1" name="model_list" status="running" filter="gemini">\n</dez:tool>\n'
   const done = `<dez:tool id="c1" name="model_list" filter="gemini">\n${NO_MODELS_TEXT}\n</dez:tool>\n`
-  const geminiCall = { id: 'c1', name: 'model_list', argumentsText: '{"filter":"gemini"}' }
   // How many times a `model_list` call ran.
   let runs = 0
 
@@ -2992,6 +3038,349 @@ describe('dez.stream/start jobs', () => {
     expect(jobs).toHaveLength(1)
     expect(jobs[0].signal.aborted).toBe(true)
     expect(toasts).toStrictEqual([])
+  })
+
+  it('keeps the open jobs of a reply over a compaction, so a jobs_wait call after it gets their results', async () => {
+    let startedId = ''
+    replyRounds([
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [invokeCall('c1')], usage: LARGE_USAGE }),
+      async (input) => {
+        // The compaction takes the block of the call out of the reply.
+        startedId = jobId('c1')
+        return await notesAnswer(input)
+      },
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [{ id: 'c2', name: 'jobs_wait', argumentsText: '{}' }] }),
+      async (input) => {
+        await input.onToken('Here it is.')
+        return { requestId: input.requestId as string }
+      },
+    ])
+
+    const stream = startStream({ sendTools: true })
+    await settled()
+    // The call after the compaction waits for the job.
+    expect(requests.map(isCompactionRequest)).toStrictEqual([false, true, false])
+    expect(jobs[0].signal.aborted).toBe(false)
+    jobs[0].end({ media: [png], clips: [] })
+    await stream
+
+    expect(callResult('c1')).toBe('')
+    expect(callResult('c2')).toBe(jobsWaitText([{ id: startedId, tool: 'model_invoke', status: 'finished', text: 'Made the image @a.', call: { number: 1, label: PROMPT } }], 0))
+    expect(sectionVisibleText(agentSection())).toContain(`![${fox}](id=a|tool=model_invoke|made-by=${startedId})`)
+    // The notes tell the model of the job that still ran.
+    expect(sectionVisibleText(activeTab().sections[0])).toContain(startedId)
+    expect(toasts).toStrictEqual([])
+  })
+})
+
+describe('dez.stream/start compaction', () => {
+  const text = (value: string) => ({ kind: 'text' as const, text: value })
+  const failure = new ExplainedError('Dez could not reach Thinker.', 'connection reset')
+
+  // A round of the reply that calls a tool. Its tokens make the next
+  // request due for a compaction.
+  async function largeRound(input: ProviderStreamChatInput): Promise<ProviderStreamChatResult> {
+    input.onSent?.()
+    await input.onToken('Checking.')
+    return { requestId: input.requestId as string, toolCalls: [geminiCall], usage: LARGE_USAGE, cost: 0.25 }
+  }
+
+  // The round that ends the reply.
+  async function lastRound(input: ProviderStreamChatInput): Promise<ProviderStreamChatResult> {
+    input.onSent?.()
+    await input.onToken('None.')
+    return { requestId: input.requestId as string, cost: 0.25 }
+  }
+
+  // A request that went, and that the provider did not answer.
+  async function failedRequest(input: ProviderStreamChatInput): Promise<ProviderStreamChatResult> {
+    input.onSent?.()
+    throw failure
+  }
+
+  // Puts a conversation with one reply and a new message in the tab, with
+  // a counted context that is over the threshold of the model `m`, and
+  // makes `active` the model of the next reply.
+  function setLargeConversation(active: ActiveModel = model): void {
+    sbp('dez.model/setActiveModel', active.providerId, active.modelId, active.modelName)
+    setConversation([{ text: 'Hi' }, { text: 'An earlier answer.' }, { text: 'More' }])
+    sbp('dez.model/tabs/countRequestContext', activeTab().id, model, 140_000)
+  }
+  const largeConversationTexts = [{ role: 'user', text: 'Hi' }, { role: 'agent', text: 'An earlier answer.' }, { role: 'user', text: 'More' }]
+
+  it('asks the model of the reply for notes between two rounds, and goes on from the notes in the same reply', async () => {
+    const tabId = activeTab().id
+    const replay = { kind: 'field', field: 'reasoning_content' } as const
+    const compacting: boolean[] = []
+    replyRounds([
+      async (input) => {
+        await input.onThinking('Look.')
+        return await largeRound(input)
+      },
+      async (input) => {
+        compacting.push(sbp('dez.model/streams/isCompacting', tabId) as boolean)
+        return await notesAnswer(input)
+      },
+      async (input) => {
+        compacting.push(sbp('dez.model/streams/isCompacting', tabId) as boolean)
+        await input.onThinking('Found.')
+        return { ...await lastRound(input), thinkingReplay: replay }
+      },
+    ])
+
+    await startStream({ sendTools: true })
+
+    // The compaction request is the request that was due, with the
+    // instruction of Dez after it, so it reads the prompt cache of the
+    // reply.
+    expect(requests.map(isCompactionRequest)).toStrictEqual([false, true, false])
+    expect(sent[1].slice(0, -1)).toStrictEqual([
+      { role: 'user', content: 'Hi' },
+      { role: 'agent', content: 'Checking.', toolCalls: [{ id: 'c1', name: 'model_list', arguments: { filter: 'gemini' } }] },
+      { role: 'tool', results: [{ callId: 'c1', content: NO_MODELS_TEXT, isError: false }] },
+    ])
+    expect(requests[1].system).toBe(requests[0].system)
+    expect(requests[1].tools).toStrictEqual(requests[0].tools)
+    expect(compacting).toStrictEqual([true, false])
+
+    // The request after it holds the notes and the message of the user,
+    // and nothing of the rounds before.
+    expect(sent[2].map((message) => message.role)).toStrictEqual(['user'])
+    const next = JSON.stringify(sent[2])
+    expect(next).toContain(NOTES_SUMMARY)
+    expect(next).toContain('Hi')
+    expect(next).not.toContain('Checking.')
+
+    const [notes, ...rest] = activeTab().sections
+    expect(sectionCompactionTag(notes)?.count).toBe(1)
+    expect(notes.model).toMatchObject({ providerId: model.providerId, modelId: model.modelId })
+    expect(rest.map((section) => ({ id: section.id, role: section.role, text: sectionVisibleText(section) }))).toStrictEqual([
+      { id: 'u1', role: 'user', text: 'Hi' },
+      { id: 'a1', role: 'agent', text: 'None.' },
+      { id: expect.any(String), role: 'user', text: '' },
+    ])
+    // The thinking of the rounds before went with their text.
+    expect(agentSection().thinking).toStrictEqual({ text: 'Found.', replay })
+    expect(activeTab().compactions).toMatchObject({ count: 1, tokens: COMPACTION_USAGE.inputTokens })
+    expect(activeTab().cost).toStrictEqual({ usd: 1, requests: 3, unpriced: 0 })
+    expect(editorRebuilds).toStrictEqual([tabId])
+    // A save at the swap, before the delete of the files that the
+    // compaction left, and the save at the end of the reply.
+    expect(savedConversations.map((data) => data.sections.map((section) => section.role))).toStrictEqual([
+      ['agent', 'user', 'agent'],
+      ['agent', 'user', 'agent', 'user'],
+    ])
+    expect(savedConversations[0].compactions?.count).toBe(1)
+    expect(leftFiles).toStrictEqual([{ sources: [], pictures: [] }])
+    expect(toasts).toStrictEqual([])
+  })
+
+  it('compacts a conversation that is too large before the first request of a new reply', async () => {
+    setLargeConversation()
+    replyRounds([notesAnswer, lastRound])
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect(requests.map(isCompactionRequest)).toStrictEqual([true, false])
+    expect(sent[0].slice(0, -1)).toStrictEqual([
+      { role: 'user', content: 'Hi' },
+      { role: 'agent', content: 'An earlier answer.' },
+      { role: 'user', content: 'More' },
+    ])
+    // The first and the newest message of the user stay word for word.
+    expect(sent[1].map((message) => message.role)).toStrictEqual(['user'])
+    const next = JSON.stringify(sent[1])
+    for (const kept of [NOTES_SUMMARY, 'Hi', 'More']) expect(next).toContain(kept)
+    expect(next).not.toContain('An earlier answer.')
+    expect(sectionCompactionTag(activeTab().sections[0])?.count).toBe(1)
+    expect(sectionTexts().slice(1)).toStrictEqual([
+      { role: 'user', text: 'Hi' },
+      { role: 'user', text: 'More' },
+      { role: 'agent', text: 'None.' },
+      { role: 'user', text: '' },
+    ])
+    expect(toasts).toStrictEqual([])
+  })
+
+  it('sends a first message with no compaction, however large the counted context is', async () => {
+    sbp('dez.model/tabs/countRequestContext', activeTab().id, model, 190_000)
+    replyRounds([lastRound])
+
+    await startStream()
+
+    expect(requests.map(isCompactionRequest)).toStrictEqual([false])
+    expect(activeTab().compactions).toBeUndefined()
+  })
+
+  // The newest message stays word for word, so the conversation is still
+  // over the threshold after the compaction.
+  it('compacts one time only for a newest message that alone is over the threshold', async () => {
+    sbp('dez.model/tabs/replaceSections', activeTab().id, [
+      { id: 'u1', role: 'user', content: [text('Hi')] },
+      { id: 'r1', role: 'agent', content: [text('An earlier answer.')], model },
+      { id: 'u2', role: 'user', content: [text('word '.repeat(80_000))] },
+      { id: 'a1', role: 'agent', content: [text('')], model },
+    ])
+    replyRounds([notesAnswer, lastRound])
+
+    await startStream()
+
+    expect(requests.map(isCompactionRequest)).toStrictEqual([true, false])
+    expect(activeTab().compactions?.count).toBe(1)
+    expect(toasts).toStrictEqual([])
+  })
+
+  it('sends a failed compaction request one more time, with no toast when that request passes', async () => {
+    replyRounds([largeRound, failedRequest, notesAnswer, lastRound])
+
+    await startStream({ sendTools: true })
+
+    expect(requests.map(isCompactionRequest)).toStrictEqual([false, true, true, false])
+    expect(requests[2].requestId).not.toBe(requests[1].requestId)
+    expect(activeTab().compactions?.count).toBe(1)
+    expect(sectionVisibleText(agentSection())).toBe('None.')
+    expect(toasts).toStrictEqual([])
+    expect(consoleError).toHaveBeenCalled()
+  })
+
+  it('ends the reply with an error toast after two failed compaction requests, and leaves the conversation as it was', async () => {
+    const tabId = activeTab().id
+    replyRounds([largeRound, failedRequest, failedRequest])
+
+    await startStream({ sendTools: true })
+
+    expect(requests.map(isCompactionRequest)).toStrictEqual([false, true, true])
+    expect(toasts).toHaveLength(1)
+    expect(toasts[0]).toMatchObject({ area: 'app-global', data: { variant: 'error', title: 'Compaction failed' } })
+    expect(toasts[0].data.message).toContain(failure.explanation)
+    expect(toasts[0].data.message).toContain(failure.details)
+    expect(consoleError).toHaveBeenCalled()
+    // The reply keeps what it wrote.
+    expect(sectionTexts().map((section) => section.role)).toStrictEqual(['user', 'agent', 'user'])
+    const reply = sectionVisibleText(agentSection())
+    expect(reply.startsWith('Checking.')).toBe(true)
+    expect(findToolBlocks(reply).map(({ id, status, result }) => ({ id, status, result }))).toStrictEqual([{ id: 'c1', status: 'success', result: NO_MODELS_TEXT }])
+    expect(activeTab().compactions).toBeUndefined()
+    expect(editorRebuilds).toStrictEqual([])
+    expect(leftFiles).toStrictEqual([])
+    expect(sbp('dez.model/streams/isStreaming', tabId)).toBe(false)
+  })
+
+  it('leaves the tab as it was before the submit when the compaction for the new reply fails', async () => {
+    setLargeConversation()
+    replyRounds([failedRequest, failedRequest])
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect(requests).toHaveLength(2)
+    expect(toasts.map((toast) => toast.data.title)).toStrictEqual(['Compaction failed'])
+    expect(sectionTexts()).toStrictEqual(largeConversationTexts)
+    expect(activeTab().compactions).toBeUndefined()
+  })
+
+  it('takes a stop during the compaction request as a stop of the reply, with no second request, no toast, and no change of the conversation', async () => {
+    const tabId = activeTab().id
+    replyRounds([
+      largeRound,
+      async (input) => {
+        await sbp('dez.stream/stop', tabId)
+        // The answer can still come whole.
+        return await notesAnswer(input)
+      },
+    ])
+
+    await startStream({ sendTools: true })
+
+    expect(requests).toHaveLength(2)
+    expect(toasts).toStrictEqual([])
+    expect(activeTab().compactions).toBeUndefined()
+    expect(editorRebuilds).toStrictEqual([])
+    expect(sectionVisibleText(agentSection()).startsWith('Checking.')).toBe(true)
+    expect(sbp('dez.model/streams/isStreaming', tabId)).toBe(false)
+  })
+
+  // Only a second compaction can drop an asset: the first one keeps each
+  // asset that is new.
+  it('gives the files that the compaction left with no text to the delete: a dropped intermediate image, and the pictures of the tag before', async () => {
+    const oldPicture = { file: 'old-sheet.jpg', label: 'A frame sheet.', width: 800, height: 200, bytes: 3000 }
+    const oldNotes = compactionNotesText({
+      summary: 'A fox for the user.',
+      requirements: '',
+      nextSteps: '',
+      assets: [{ id: 'b', kind: 'image', facts: 'PNG, 1024x768, 1.2 MB', origin: 'made by the model_invoke job 1 of its reply: "A fox"', sentence: 'A draft of the fox.', text: hiddenImage('j-aaaa', 'b') }],
+      unnamed: [],
+      jobs: [],
+      cost: undefined,
+    })
+    sbp('dez.model/tabs/replaceSections', activeTab().id, [
+      { id: 'n', role: 'agent', content: [text(`${compactionTagText({ count: 1, lastId: 'b', pictures: [oldPicture] })}\n${oldNotes}`)], model },
+      { id: 'u1', role: 'user', content: [text('Make a fox.')] },
+      { id: 'r1', role: 'agent', content: [text('The fox is done.')], model },
+      { id: 'u2', role: 'user', content: [text('Now a wolf.')] },
+      { id: 'a1', role: 'agent', content: [text('')], model },
+    ])
+    sbp('dez.model/tabs/countRequestContext', activeTab().id, model, 140_000)
+    replyRounds([
+      (input) => notesAnswer(input, '## Summary\nThe fox is done, and a wolf is next.\n\n## Assets\n@b: drop - The wolf needs no fox draft.\n'),
+      lastRound,
+    ])
+
+    await startStream()
+
+    const notes = activeTab().sections[0]
+    expect(sectionCompactionTag(notes)?.count).toBe(2)
+    expect(sectionVisibleText(notes)).not.toContain(HIDDEN_IMAGE_PATH)
+    expect(leftFiles).toStrictEqual([{ sources: [HIDDEN_IMAGE_PATH], pictures: [oldPicture.file] }])
+  })
+
+  describe('for a new reply of a model whose window is smaller than the conversation', () => {
+    const small: ActiveModel = { providerId: model.providerId, modelId: 'small', modelName: 'Small' }
+
+    beforeEach(() => {
+      sbp('dez.model/modelCache/applyProviderResult', model.providerId, {
+        ok: true,
+        models: [
+          { id: model.modelId, name: model.modelName, provider: model.providerId },
+          { id: small.modelId, name: small.modelName, provider: model.providerId, contextWindow: 100_000 },
+        ],
+      })
+    })
+
+    it('asks the model of the newest reply for the notes, with the system prompt of that model', async () => {
+      sbp('dez.model/settings/setSystemPrompt', 'You are {{model_id}}.')
+      setLargeConversation(small)
+      replyRounds([notesAnswer, lastRound])
+
+      await sbp('dez.controller/submitTab', activeTab().id)
+
+      expect(requests.map((input) => ({ modelId: input.modelId, system: input.system, compaction: isCompactionRequest(input) }))).toStrictEqual([
+        { modelId: model.modelId, system: 'You are m.', compaction: true },
+        { modelId: small.modelId, system: 'You are small.', compaction: false },
+      ])
+      expect(activeTab().sections[0].model).toMatchObject({ providerId: model.providerId, modelId: model.modelId })
+      expect(toasts).toStrictEqual([])
+    })
+
+    it('sends no request when Dez cannot ask the model of the newest reply, and names both models in the error toast', async () => {
+      setLargeConversation(small)
+      const [u1, , u2] = activeTab().sections
+      sbp('dez.model/tabs/replaceSections', activeTab().id, [
+        u1,
+        { id: 'a1', role: 'agent', content: [text('An earlier answer.')], model: { providerId: 'gone', modelId: 'old-model' } },
+        u2,
+      ])
+      replyRounds([])
+
+      await sbp('dez.controller/submitTab', activeTab().id)
+
+      expect(requests).toStrictEqual([])
+      expect(toasts.map((toast) => toast.data.title)).toStrictEqual(['Compaction failed'])
+      expect(toasts[0].data.message).toContain(small.modelName)
+      expect(toasts[0].data.message).toContain('old-model')
+      expect(consoleError).toHaveBeenCalled()
+      expect(sectionTexts()).toStrictEqual(largeConversationTexts)
+      expect(activeTab().compactions).toBeUndefined()
+    })
   })
 })
 

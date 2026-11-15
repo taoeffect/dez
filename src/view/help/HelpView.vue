@@ -29,7 +29,7 @@ const STORED_FOLDERS: { folders: readonly string[]; holds: string }[] = [
   { folders: Object.values(MEDIA_FOLDERS.pasted), holds: 'Pasted clips, and dropped clips that Dez copies.' },
   { folders: [IMAGE_FOLDERS.generated], holds: 'Images that models and Dez tools make.' },
   { folders: Object.values(MEDIA_FOLDERS.generated), holds: 'Clips that you save, and clips that Dez tools make.' },
-  { folders: [SHOWN_PICTURE_FOLDER], holds: 'Copies of the pictures that the asset_view tool showed a model. The reply of the tool call sends them to the model, and the panel of the tool call shows them.' },
+  { folders: [SHOWN_PICTURE_FOLDER], holds: 'Copies of the pictures that Dez showed a model: the pictures of the asset_view tool, which the reply of the tool call sends to the model and the panel of the tool call shows, and the pictures of the clips that a compaction keeps in view of the model.' },
 ]
 
 const HOUR_MS = 60 * 60 * 1000
@@ -148,6 +148,15 @@ function onOverlayClick(event: MouseEvent) {
               in the amount. Point at the amount to see the details.
             </p>
             <p>
+              A long conversation can get too large for one request to the model. Dez then compacts
+              it: it asks the model for notes of the work so far, and the notes take the place of
+              the earlier messages and replies. Your first message and your newest message stay as
+              they are. The bottom bar shows "Compacting…" while the model writes the notes, and the
+              reply goes on after that. A compacted conversation starts with an Agent message that
+              holds the notes, under a Compaction chip. A compaction cannot be undone: Undo does not
+              bring the earlier text back.
+            </p>
+            <p>
               Paste or drop images, audio, and video into a message. A model that makes images,
               audio, or video puts them in its reply. The
               <button type="button" class="help-link" @click="page = 'assets'">Assets</button> page
@@ -159,9 +168,9 @@ function onOverlayClick(event: MouseEvent) {
           <section v-if="page === 'tips'" class="help-page help-page--tips">
             <p>
               Shift+Click a role pill (User or Agent) to change its message from User to Agent, or
-              from Agent to User: for example, to write a reply yourself. The first message is always
-              User, the pill of a reply that is coming in does not change, and a message that links
-              dropped files stays User.
+              from Agent to User: for example, to write a reply yourself. The first message does not
+              change: it is User, or the notes of a compacted conversation. The pill of a reply that
+              is coming in does not change, and a message that links dropped files stays User.
             </p>
           </section>
 
@@ -229,6 +238,24 @@ function onOverlayClick(event: MouseEvent) {
               Files keeps its file.
             </p>
 
+            <h3>Compaction</h3>
+            <p>
+              When Dez compacts a conversation (see the
+              <button type="button" class="help-link" @click="page = 'general'">General</button>
+              page), the assets of the earlier messages and replies stay assets of the conversation,
+              with their ids, so you and the model can still name them. Some of them show in the
+              notes. The others are in the Compaction chip at the top of the conversation: click it
+              to see them, and the pictures that the model has in view.
+            </p>
+            <p>
+              From the second compaction on, the model can drop an asset that a model or a Dez tool
+              made and that the work no longer needs. It cannot drop an asset of yours, an asset
+              that is newer than the compaction before, or an asset that your first or newest
+              message names. A dropped asset leaves the conversation. Dez deletes the file of a
+              dropped intermediate asset at once. The file of any other dropped asset stays until
+              you click Delete Unused Files.
+            </p>
+
             <h3>Where the files are</h3>
             <p>
               Dez stores the files of assets in these folders of the Dez
@@ -288,7 +315,7 @@ function onOverlayClick(event: MouseEvent) {
             </ul>
 
             <h3>How files are deleted</h3>
-            <p>Dez deletes a stored file only when you tell it to:</p>
+            <p>Dez deletes a stored file of an asset only when you tell it to:</p>
             <ul>
               <li>Point at an image and click its trash. This deletes the image and its file.</li>
               <li>
@@ -305,6 +332,11 @@ function onOverlayClick(event: MouseEvent) {
             <p>
               An edit of the text and the delete of a conversation leave the files where they are.
               Dez never deletes a linked file: its trash removes it only from the conversation.
+            </p>
+            <p>
+              A compaction is the one exception: it deletes the file of each intermediate asset that
+              it drops. It also deletes the picture copies of the text that it replaces, which are
+              no assets.
             </p>
           </section>
 

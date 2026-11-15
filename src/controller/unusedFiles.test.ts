@@ -315,6 +315,77 @@ describe('dez.controller/unusedFiles/delete', () => {
   })
 })
 
+describe('dez.controller/unusedFiles/deleteUnnamed', () => {
+  const IMAGE = `${APP_DIR}/assets/generated/images/draft.png`
+  const CLIP = `${APP_DIR}/assets/generated/video/take.mp4`
+  const COPY = `${CACHE_DIR}/media/take.webm`
+
+  function deleteUnnamed (sources: string[], pictures: string[] = []): Promise<void> {
+    return sbp('dez.controller/unusedFiles/deleteUnnamed', { sources, pictures }) as Promise<void>
+  }
+
+  // The files are a moment old: the age rule of a scan would keep them.
+  it('deletes the stored files, the temp copies, and the picture copies, each one time, whatever their age', async () => {
+    await deleteUnnamed([IMAGE, CLIP, COPY, IMAGE], ['sheet.jpg', 'wave.png'])
+
+    expect(deletedFiles).toEqual([
+      'app:assets/generated/images/draft.png',
+      'app:assets/generated/video/take.mp4',
+      'cache:media/take.webm',
+      'app:assets/generated/views/sheet.jpg',
+      'app:assets/generated/views/wave.png',
+    ])
+  })
+
+  it('keeps a file that a conversation, a text in memory, or a job result still names', async () => {
+    conversations = ['No file here.', `---\ntitle: Other\n---\n![${IMAGE}](id=a)\n`]
+    heldTexts = [`<dez:tool id="c" name="asset_view" pictures="[{&quot;file&quot;:&quot;sheet.jpg&quot;,&quot;label&quot;:&quot;&quot;}]">ok</dez:tool>`]
+    unnamedMadeFiles = [COPY]
+
+    await deleteUnnamed([IMAGE, CLIP, COPY], ['sheet.jpg', 'wave.png'])
+
+    expect(deletedFiles).toEqual(['app:assets/generated/video/take.mp4', 'app:assets/generated/views/wave.png'])
+  })
+
+  it('keeps a temp copy that work of this app holds', async () => {
+    await whileHeld(['media/take.webm'], () => deleteUnnamed([COPY, CLIP]))
+
+    expect(deletedFiles).toEqual(['app:assets/generated/video/take.mp4'])
+  })
+
+  // A linked file of the user, a URL, a file of another home, and a name
+  // that goes out of the views folder.
+  it('deletes no file that Dez did not store, and reads no conversation for none', async () => {
+    await deleteUnnamed([
+      '/home/ann/Pictures/fox.png',
+      'https://clips.example/take.mp4',
+      '/home/bob/.config/dez/assets/generated/images/draft.png',
+      `${APP_DIR}/provider_keys.json`,
+      `${APP_DIR}/assets/images/../../app_state.json`,
+    ], ['../../../provider_keys.json', 'notes.txt'])
+
+    expect(deletedFiles).toEqual([])
+    expect(conversationReads).toBe(0)
+  })
+
+  it('only logs a file that cannot be deleted, and a conversation that cannot be read', async () => {
+    deleteAppFile = async (path) => {
+      if (path === 'assets/generated/images/draft.png') throw 'Permission denied (os error 13)'
+    }
+    await deleteUnnamed([IMAGE, CLIP])
+    expect(deletedFiles).toEqual(['app:assets/generated/video/take.mp4'])
+    expect(consoleError).toHaveBeenCalledTimes(1)
+
+    // With a text that Dez could not read, no file goes: it can name one.
+    deletedFiles = []
+    conversationsError = new Error('Failed to read conversations/a.md')
+    await deleteUnnamed([CLIP])
+    expect(deletedFiles).toEqual([])
+    expect(consoleError).toHaveBeenCalledTimes(2)
+    expect(toasts).toEqual([])
+  })
+})
+
 describe('dez.controller/unusedFiles', () => {
   // A scan that read the folders while a delete ran would count files that
   // are gone a moment later.

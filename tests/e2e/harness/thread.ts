@@ -214,6 +214,23 @@ export async function focusEditor (browser: E2EBrowser): Promise<void> {
   })
 }
 
+/** What a view at its bottom may still have below it: scroll positions
+ *  can be fractions of a pixel. */
+export const AT_BOTTOM_PX = 1
+
+/** The distance from the bottom of the editor's view to the bottom of its
+ *  scrollable area, read two frames after the last change so that the
+ *  scroll work of that change is done. */
+export async function viewFromBottom (browser: E2EBrowser): Promise<number> {
+  return browser.execute(() => new Promise<number>((resolve, reject) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const scroll = document.querySelector<HTMLElement>('.cm-scroller')
+      if (!scroll) reject(new Error('viewFromBottom: .cm-scroller not found'))
+      else resolve(scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight)
+    }))
+  }))
+}
+
 /** Where the focus is: 'find' or 'replace' for the find dropdown fields,
  *  'editor' for the thread editor, else the tag name of the focused
  *  element. */

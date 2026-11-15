@@ -434,6 +434,15 @@ describe('context size of a tab', () => {
     expect(size(tab.id)).toStrictEqual({ tokens: 5015, estimated: true })
   })
 
+  // A reply asks for the size of its own request, and the user can choose
+  // another model for the tab while the reply runs.
+  it('counts by the model that the caller names, in place of the active model of the tab', () => {
+    const tab = tabOf(gpt, letters(100))
+
+    expect(sbp('dez.model/tabs/contextSize', tab.id, claude)).toStrictEqual({ tokens: 40, estimated: true })
+    expect(size(tab.id)).toStrictEqual({ tokens: 25, estimated: true })
+  })
+
   // The requests of a reply that runs hold the pictures of its
   // `asset_view` calls; the request of the next reply holds none.
   it('counts the pictures of the reply that runs, each by the size of its copy, and not after the reply', () => {
@@ -472,6 +481,88 @@ describe('context size of a tab', () => {
       expect(copy.context).toStrictEqual({ tokens: 5000, estimate: 25 })
       expect(size(copy.id)).toStrictEqual({ tokens: 5000, estimated: false })
     }
+  })
+})
+
+describe('dez.model/tabs/compact', () => {
+  const model: ModelRef = { providerId: 'local', modelId: 'gpt-5.4' }
+  const section = (id: string, role: Section['role'], text: string): Section => ({ id, role, content: [{ kind: 'text', text }], ...(role === 'agent' && { model }) })
+  const compact = (tabId: string, sections: Section[], tokens: number, replySectionId = 'b') => sbp('dez.model/tabs/compact', tabId, { sections, replySectionId, tokens }) as boolean
+  const tabNow = (tabId: string) => tabs().find((tab) => tab.id === tabId) as Tab
+  // What a compaction gives for the conversation of `conversation`: the
+  // notes, the two messages of the user, and the empty reply.
+  const compacted = (count = 1): Section[] => [
+    section('notes', 'agent', `<dez:compaction count="${count}"/>\nThe notes.`),
+    section('u1', 'user', 'First'),
+    section('u2', 'user', 'Newest'),
+    section('b', 'agent', ''),
+  ]
+
+  // A tab whose reply `b` runs.
+  function conversation (): Tab {
+    const tab = tabWithText('x')
+    sbp('dez.model/tabs/replaceSections', tab.id, [
+      section('u1', 'user', 'First'),
+      section('a1', 'agent', 'An old reply'),
+      section('u2', 'user', 'Newest'),
+      section('b', 'agent', 'The reply so far'),
+    ])
+    return tab
+  }
+
+  it('puts the new sections in place of the sections up to the reply, with the numbers of the compaction', () => {
+    const tab = conversation()
+    sbp('dez.model/tabs/countRequestCost', tab.id, 0.5)
+    sbp('dez.model/tabs/countRequestContext', tab.id, model, 150_000)
+
+    expect(compact(tab.id, compacted(), 150_000.4)).toBe(true)
+
+    const now = tabNow(tab.id)
+    expect(now.sections).toStrictEqual(compacted())
+    expect(now.title).toBe('First')
+    expect(now.compactions).toStrictEqual({ count: 1, tokens: 150_000, cost: { usd: 0.5, requests: 1, unpriced: 0 } })
+    // With the count of the old text, the size of the new text would be
+    // near 0.
+    expect(now).not.toHaveProperty('context')
+    expect(sbp('dez.model/tabs/contextSize', tab.id, model)).toMatchObject({ estimated: true })
+  })
+
+  // The user can type a next message while the compaction request runs.
+  it('keeps the sections of the tab after the reply as they are at the swap', () => {
+    const tab = conversation()
+    const typed = section('u3', 'user', 'Typed while the request ran')
+    sbp('dez.model/tabs/replaceSections', tab.id, [...tabNow(tab.id).sections, typed])
+
+    // The result holds that section as it was at the start of the request.
+    expect(compact(tab.id, [...compacted(), section('u3', 'user', '')], 1000)).toBe(true)
+
+    expect(tabNow(tab.id).sections).toStrictEqual([...compacted(), typed])
+  })
+
+  it('adds each compaction to the numbers, with the cost of the tab at the newest one', () => {
+    const tab = conversation()
+
+    compact(tab.id, compacted(), 150_000)
+    // A tab that counted no request yet has a cost of nothing.
+    expect(tabNow(tab.id).compactions).toStrictEqual({ count: 1, tokens: 150_000, cost: { usd: 0, requests: 0, unpriced: 0 } })
+    sbp('dez.model/tabs/countRequestCost', tab.id, 0.25)
+    sbp('dez.model/tabs/countRequestCost', tab.id, null)
+    compact(tab.id, compacted(2), 90_000)
+
+    expect(tabNow(tab.id).compactions).toStrictEqual({ count: 2, tokens: 240_000, cost: { usd: 0.25, requests: 2, unpriced: 1 } })
+  })
+
+  it('changes nothing for a missing tab, and for a reply whose section is gone', () => {
+    const tab = conversation()
+    sbp('dez.model/tabs/countRequestContext', tab.id, model, 150_000)
+    const before = tabNow(tab.id)
+
+    expect(compact('missing', compacted(), 1000)).toBe(false)
+    // The user merged the reply's section into the one before.
+    expect(compact(tab.id, compacted(), 1000, 'gone')).toBe(false)
+    expect(compact(tab.id, compacted().slice(0, 3), 1000)).toBe(false)
+
+    expect(tabNow(tab.id)).toStrictEqual(before)
   })
 })
 
@@ -623,7 +714,7 @@ describe('section models', () => {
     typeIntoLastSection('first question')
     const first = ensureAgentSection(alpha)
     appendTokenToTabSection(activeId(), first.id, 'first answer')
-    finalizeStreamSectionForTab({ tabId: activeId(), sectionId: first.id, status: 'finished', model: { ...alpha, modelName: 'Alpha' }, startedAt: 1000, updatedAt: 1500, finishedAt: 1500 })
+    finalizeStreamSectionForTab({ tabId: activeId(), sectionId: first.id, status: 'finished', model: { ...alpha, modelName: 'Alpha' }, startedAt: 1000, updatedAt: 1500, finishedAt: 1500, compacting: false })
     typeIntoLastSection('second question')
     const second = ensureAgentSection(beta)
 

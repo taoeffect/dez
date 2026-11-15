@@ -25,8 +25,8 @@ import type { FoundAsset } from './mediaRequest'
 /** Which sections a compaction replaces, as indexes of the sections of
  *  the conversation. */
 export interface CompactionScope {
-  /** The section of the reply that runs; null for a compaction at a
-   *  submit, which has no reply yet. */
+  /** The section of the reply that runs; null for a conversation with no
+   *  such section, which the compaction then replaces whole. */
   reply: number | null
   /** The index after the last section that the compaction replaces: the
    *  one after the reply's section, or the count of the sections. The
@@ -41,7 +41,9 @@ export interface CompactionScope {
 }
 
 /** The scope of a compaction of `sections` in the reply whose section has
- *  the id `replySectionId` (null: at a submit).
+ *  the id `replySectionId`: at a submit, the empty section of the new
+ *  reply. With null, or an id of no section, the scope is the whole
+ *  conversation.
  *
  *  A message of the user is a user section before the reply's section
  *  that is not empty, and that is not the section of the carried assets of

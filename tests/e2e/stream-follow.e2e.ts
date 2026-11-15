@@ -7,7 +7,7 @@ import { consoleErrors, resetConsoleErrors, screenshotOnFailure, waitFor, waitFo
 import { makeConversation, seedConversation, seedRawAppState } from './harness/fixtures'
 import { mockChatPath, mockProviderConfig, startChatMock, startEventStream, writeChatFrame, type MockProvider, type MockServer } from './harness/mockServer'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { activeTabStreaming, editorDoc, openToasts, pickModel, sbpCall, submit, threadSections } from './harness/thread'
+import { activeTabStreaming, AT_BOTTOM_PX, editorDoc, openToasts, pickModel, sbpCall, submit, threadSections } from './harness/thread'
 
 // How the thread editor scrolls while a reply streams, driven through the
 // real app against a mock server in this process:
@@ -28,10 +28,6 @@ import { activeTabStreaming, editorDoc, openToasts, pickModel, sbpCall, submit, 
 const PROVIDER: MockProvider = { id: 'follow', name: 'Follow Mock', modelId: 'follow-model', modelName: 'Follow Model' }
 const CONVERSATION_ID = 'long-thread'
 const OTHER_CONVERSATION_ID = 'other-long-thread'
-
-/** What a view at its bottom may still have below it: scroll positions
- *  can be fractions of a pixel. */
-const AT_BOTTOM_PX = 1
 
 interface MockState {
   /** The number of chat requests so far. */

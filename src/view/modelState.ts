@@ -32,6 +32,7 @@ export interface ViewModelState {
   modelCacheChecking: ComputedRef<string[]>
   modelDisplayNames: ComputedRef<ModelDisplayNames>
   activeTabStreaming: ComputedRef<boolean>
+  activeTabCompacting: ComputedRef<boolean>
   activeTabStreamingSectionId: ComputedRef<string | null>
   tabActivity: ComputedRef<Record<string, TabActivity>>
   activeTabCost: ComputedRef<ActiveTabCost>
@@ -70,6 +71,12 @@ export function useModelState(): ViewModelState {
     activeTabStreaming: computed(() => {
       const activeTabId = sbp('dez.model/tabs/activeId') as string
       return sbp('dez.model/streams/isStreaming', activeTabId) as boolean
+    }),
+    // The reply of the active tab waits for a compaction of its
+    // conversation: the "Compacting…" text of the bottom bar.
+    activeTabCompacting: computed(() => {
+      const activeTabId = sbp('dez.model/tabs/activeId') as string
+      return sbp('dez.model/streams/isCompacting', activeTabId) as boolean
     }),
     // Drives the "generating" state of the streaming response's agent pill.
     activeTabStreamingSectionId: computed(() => {

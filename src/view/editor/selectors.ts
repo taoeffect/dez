@@ -212,6 +212,22 @@ export default sbp('sbp/selectors/register', {
     sbp('okTurtles.events/emit', 'dez.editor.stream-finished', tabId, following)
   },
 
+  /** Lets the editor of a visible tab rebuild its state from the store
+   *  while the stream of `tabId` goes on: a compaction put new sections in
+   *  the place of the tab's sections (`dez.model/tabs/compact`). The
+   *  editor rebuilds before this selector returns. A later rebuild would
+   *  be too late: the view would hold the old doc with the new sections of
+   *  the store, and its next doc change would write the old text back.
+   *
+   *  The follow of the stream stays as it is, and the event tells it to
+   *  the editor, as at the end of a stream. Returns whether the tab is
+   *  visible. */
+  'dez.editor/rebuildIfVisible' (tabId: string): boolean {
+    if (activeViewTabId !== tabId) return false
+    sbp('okTurtles.events/emit', 'dez.editor.rebuild', tabId, followingStreamTabId === tabId)
+    return true
+  },
+
   /** Cmd/Ctrl+F: open the find dropdown (or refocus it), prefilled from the
    *  editor selection when `findPrefillText` allows it. Does nothing while
    *  a modal covers the editor (`isModalOpen`). Returns whether it opened. */

@@ -1,15 +1,19 @@
 import { describe, expect, it } from 'vitest'
+import { compactionTagText } from '../chat/compaction'
 import { conversationCostText } from '../chat/compactionNotes'
 import type { ConversationCost } from '../chat/conversationCost'
 import { imageReferenceText } from '../chat/images'
 import { holdsStoredFilePath } from '../chat/storedFilePaths'
+import type { Section } from '../chat/types'
 import { jobsListText, type JobInfo } from '../tools/jobs'
 import { RED, SKY } from '../tools/testing'
 import {
   answerHasNotes,
   compactionInstruction,
   compactionReason,
+  newestReplyModel,
   readCompactionAnswer,
+  repliedSinceCompaction,
   type AnswerAsset,
   type AssetDecision,
   type CompactionAnswer,
@@ -17,11 +21,12 @@ import {
   type CompactionReason,
 } from './compactionRequest'
 import { NO_PICTURE_BUDGET, type PictureBudget } from './pictureBudget'
+import { model, reply, user } from './testing'
 
 const LIMITS: PictureBudget = { tokens: 50_000, bytes: 20_000_000, pictures: 20 }
 
 function reason(fields: Partial<Parameters<typeof compactionReason>[0]>): CompactionReason | null {
-  return compactionReason({ contextTokens: 0, threshold: 100_000, limits: LIMITS, spent: NO_PICTURE_BUDGET, requestSinceCompaction: true, ...fields })
+  return compactionReason({ contextTokens: 0, threshold: 100_000, limits: LIMITS, spent: NO_PICTURE_BUDGET, kept: NO_PICTURE_BUDGET, requestSinceCompaction: true, ...fields })
 }
 
 describe('compactionReason', () => {
@@ -53,6 +58,66 @@ describe('compactionReason', () => {
       reason({ spent: { ...over, pictures: 0 } }),
       reason({ spent: { ...over, pictures: 0, bytes: 0 } }),
     ]).toStrictEqual(['tokens', 'images', 'bytes', 'pictureTokens'])
+  })
+
+  // The images of the kept messages of the user stay in the compaction
+  // message, so a second compaction would make no room for pictures.
+  it.each<[CompactionReason, keyof PictureBudget]>([
+    ['images', 'pictures'],
+    ['bytes', 'bytes'],
+    ['pictureTokens', 'tokens'],
+  ])('is not due for %s while the pictures cost no more than the newest compaction left', (expected, part) => {
+    const spent = { ...NO_PICTURE_BUDGET, [part]: LIMITS[part] }
+
+    expect(reason({ spent, kept: spent })).toBeNull()
+    expect(reason({ spent, kept: { ...spent, [part]: LIMITS[part] - 1 } })).toBe(expected)
+    // The context size does not follow the pictures.
+    expect(reason({ contextTokens: 100_000, spent, kept: spent })).toBe('tokens')
+  })
+
+  it('is never due for the pictures of a model that takes no image', () => {
+    expect(reason({ limits: { tokens: 50_000, bytes: 20_000_000, pictures: 0 } })).toBeNull()
+  })
+})
+
+// The compaction section of a compacted conversation.
+const notes = reply('notes', `${compactionTagText({ count: 1, lastId: null, pictures: [] })}\nThe notes.`)
+
+describe('repliedSinceCompaction', () => {
+  it.each<[string, Section[], boolean]>([
+    ['a first message', [user('u1', 'Hi'), reply('b', '')], false],
+    ['a message after a reply', [user('u1', 'Hi'), reply('a1', 'Hello'), user('u2', 'More'), reply('b', '')], true],
+    ['a message after a reply that has no text', [user('u1', 'Hi'), reply('a1', ' \n'), user('u2', 'More'), reply('b', '')], false],
+    ['a message right after a compaction', [notes, user('u1', 'Hi'), user('u2', 'More'), reply('b', '')], false],
+    ['a message after a reply since the compaction', [notes, user('u1', 'Hi'), reply('a1', 'Hello'), user('u2', 'More'), reply('b', '')], true],
+    // The text of the reply that runs is no earlier reply.
+    ['a reply that runs, with text', [user('u1', 'Hi'), reply('b', 'So far')], false],
+    ['a reply after the one that runs', [user('u1', 'Hi'), reply('b', ''), user('u2', 'Typed'), reply('a2', 'Later')], false],
+  ])('for %s', (_name, sections, expected) => {
+    expect(repliedSinceCompaction(sections, 'b')).toBe(expected)
+  })
+})
+
+describe('newestReplyModel', () => {
+  const other = { providerId: 'other', modelId: 'large' }
+
+  it('gives the model of the newest reply with text before the reply that runs', () => {
+    const sections: Section[] = [
+      user('u1', 'Hi'),
+      { ...reply('a1', 'Hello'), model: other },
+      user('u2', 'More'),
+      // A reply with no text, and one that tells no model.
+      reply('a2', ''),
+      { id: 'a3', role: 'agent', content: [{ kind: 'text', text: 'From an older Dez' }] },
+      reply('b', ''),
+      { ...reply('a4', 'Later'), model },
+    ]
+
+    expect(newestReplyModel(sections, 'b')).toStrictEqual(other)
+  })
+
+  it('gives null when no reply before the one that runs tells its model', () => {
+    expect(newestReplyModel([user('u1', 'Hi'), reply('b', 'So far')], 'b')).toBeNull()
   })
 })
 

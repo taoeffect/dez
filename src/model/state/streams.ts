@@ -49,6 +49,7 @@ export const useStreamStore = defineStore('streams', () => {
       startedAt: now,
       updatedAt: now,
       finishedAt: null,
+      compacting: false,
     }
     sessionsByTab.value[input.tabId] = nextSession
     return nextSession
@@ -59,6 +60,11 @@ export const useStreamStore = defineStore('streams', () => {
     if (!currentSession || currentSession.status !== 'streaming') return currentSession
     currentSession.updatedAt = Date.now()
     return currentSession
+  }
+
+  function setCompacting(tabId: string, compacting: boolean): void {
+    const currentSession = session(tabId)
+    if (currentSession) currentSession.compacting = compacting
   }
 
   function setTerminal(input: StreamTerminalInput): EndedStreamSession | null {
@@ -90,6 +96,7 @@ export const useStreamStore = defineStore('streams', () => {
     isActiveTabStreaming,
     session,
     status,
+    setCompacting,
     isStreaming,
     startSession,
     receiveToken,
@@ -131,6 +138,12 @@ export function cancelStreamSession(tabId: string): EndedStreamSession | null {
   return cloneNullableStreamSession(useStreamStore().cancelled(tabId))
 }
 
+/** Tells that the reply of the tab waits for a compaction request, or
+ *  that it waits no more. */
+export function setStreamCompacting(tabId: string, compacting: boolean): void {
+  useStreamStore().setCompacting(tabId, compacting)
+}
+
 export default sbp('sbp/selectors/register', {
   'dez.model/streams/isStreaming' (tabId: string): boolean {
     return streamIsStreaming(tabId)
@@ -140,5 +153,12 @@ export default sbp('sbp/selectors/register', {
   'dez.model/streams/streamingSectionId' (tabId: string): string | null {
     const session = useStreamStore().session(tabId)
     return session?.status === 'streaming' ? session.sectionId : null
+  },
+
+  // Whether the reply that runs in the tab waits for a compaction request
+  // now, for the "Compacting…" text of the bottom bar.
+  'dez.model/streams/isCompacting' (tabId: string): boolean {
+    const session = useStreamStore().session(tabId)
+    return session?.status === 'streaming' && session.compacting
   },
 })

@@ -28,9 +28,10 @@ import { contextImageCost, type PictureBudget } from './pictureBudget'
 //   B   agent  the reply, which goes on: empty, with its id and its model
 //
 // `U+` is there only with an asset, `U1` only when it is not `U0`, and `B`
-// only for a compaction in a reply. A request sends `A`, `U0`, `U+`, and
-// `U1` as one message, the compaction message (messages.ts), which stays
-// the same bytes until the next compaction.
+// only when the conversation holds the section of the reply (a new reply
+// has an empty one before its first request). A request sends `A`, `U0`,
+// `U+`, and `U1` as one message, the compaction message (messages.ts),
+// which stays the same bytes until the next compaction.
 //
 // The assets of the user stay in user sections, so a linked file still
 // counts, and no text of a model makes Dez read a file of the computer.
@@ -61,7 +62,9 @@ import { contextImageCost, type PictureBudget } from './pictureBudget'
 export interface CompactedSectionsInput {
   /** The sections of the tab. */
   sections: readonly Section[]
-  /** The id of the section of the reply that runs; null at a submit. */
+  /** The id of the section of the reply that runs: at a submit, the empty
+   *  section of the new reply. Null for a conversation with no such
+   *  section, which the compaction then replaces whole. */
   replySectionId: string | null
   /** The model that wrote the answer. */
   model: ModelRef
