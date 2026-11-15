@@ -259,12 +259,12 @@ function warnImagesOverLimit(model: ActiveModel, count: number): void {
   warnImagesNotSent(count, message)
 }
 
-// The text of the error toast of a failed reply. A text that Dez wrote for
-// the user (`ExplainedError`) shows as it is; any other error is one that
-// Dez did not expect, and its raw text goes into the details.
-function replyErrorMessage(error: unknown, model: ActiveModel): string {
-  if (error instanceof TooManyImagesError) return tooManyImagesMessage(model.modelName, error)
-  return explainedError(error).message
+// The error of a failed request to `model`, as the user reads it. A text
+// that Dez wrote for the user (`ExplainedError`) is as it is; a refused
+// image count tells the image limit of `model`; any other error is one
+// that Dez did not expect, and its raw text goes into the details.
+function replyError(error: unknown, model: ActiveModel): ExplainedError {
+  return error instanceof TooManyImagesError ? new ExplainedError(tooManyImagesMessage(model.modelName, error)) : explainedError(error)
 }
 
 // The text of the error toast of a reply that ended with `jobs` that
@@ -784,7 +784,7 @@ async function requestCompaction(args: StreamStartArgs, reply: ReplyRuntime, sec
 // fault and the fix of `error`. `writer` is the model that Dez asked for
 // the notes.
 function compactionFailedMessage(error: unknown, writer: ActiveModel): string {
-  const cause = error instanceof TooManyImagesError ? new ExplainedError(tooManyImagesMessage(writer.modelName, error)) : explainedError(error)
+  const cause = replyError(error, writer)
   return errorText(
     `This conversation is near the limit of what one request can hold. So Dez asked ${writer.modelName} for notes that take the place of the conversation, and that request failed two times. `
     + `The conversation stays as it is. ${cause.explanation}`,
@@ -1236,7 +1236,7 @@ export default sbp('sbp/selectors/register', {
       if (replyIsCurrent(args.tabId, reply)) {
         console.error(args.request === 'chat' ? 'Chat request failed:' : 'Media request failed:', error)
         flushModelText(args.tabId, reply)
-        if (await endReply(args.tabId, reply, 'error')) showReplyError(args.tabId, 'Request failed', replyErrorMessage(error, args.model))
+        if (await endReply(args.tabId, reply, 'error')) showReplyError(args.tabId, 'Request failed', replyError(error, args.model).message)
       }
     } finally {
       // No job outlives its reply: nothing could take its result.
