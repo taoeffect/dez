@@ -184,24 +184,19 @@ class CompactionChipWidget extends WidgetType {
   }
 }
 
-interface CompactionChipDecorations {
-  data: CompactionChipData | null
-  chip: DecorationSet
-}
-
-function buildCompactionChipDecorations(state: EditorState): CompactionChipDecorations {
+function buildCompactionChip(state: EditorState): DecorationSet {
   const data = compactionChipData(state)
-  if (!data) return { data, chip: Decoration.none }
+  if (!data) return Decoration.none
   const widget = Decoration.widget({ widget: new CompactionChipWidget(data), block: true, side: 1 })
-  return { data, chip: Decoration.set(widget.range(state.doc.line(1).to)) }
+  return Decoration.set(widget.range(state.doc.line(1).to))
 }
 
 /** The chip, as a block after the tag line, which shows as the pill of the
  *  section. Block decorations must come from a state field. */
-const compactionChipField = StateField.define<CompactionChipDecorations>({
-  create: buildCompactionChipDecorations,
-  update: (value, tr) => tr.docChanged || sectionRolesChanged(tr) ? buildCompactionChipDecorations(tr.state) : value,
-  provide: (field) => EditorView.decorations.from(field, (value) => value.chip),
+const compactionChipField = StateField.define<DecorationSet>({
+  create: buildCompactionChip,
+  update: (value, tr) => tr.docChanged || sectionRolesChanged(tr) ? buildCompactionChip(tr.state) : value,
+  provide: (field) => EditorView.decorations.from(field),
 })
 
 /** Opens and closes the drawn panel in place when the open state changes;
