@@ -28,7 +28,8 @@ import { compactionScope, type CompactionAsset } from './compactionAssets'
 // (`dez.controller/unusedFiles/deleteUnnamed`).
 
 /** The files of a compaction that no text of its conversation names any
- *  more. */
+ *  more. A file can be in a list more than one time: the delete takes each
+ *  file one time. */
 export interface CompactionLeftFiles {
   /** The source of each dropped intermediate asset: the path of its image,
    *  or the `src` of its clip (a saved file, a temp copy, or a URL). */
@@ -60,6 +61,6 @@ export function compactionLeftFiles({ sections, replySectionId, dropped, kept }:
     // A tool block counts only in an agent section.
     ...replaced.flatMap((section) => (section.role === 'agent' ? findToolBlocks(sectionPlainText(section)).flatMap((block) => block.pictures ?? []) : [])),
   ]
-  const pictures = [...new Set(shown.map((picture) => picture.file))].filter((file) => !keptFiles.has(file))
-  return { sources: [...new Set(sources)], pictures }
+  const pictures = shown.map((picture) => picture.file).filter((file) => !keptFiles.has(file))
+  return { sources, pictures }
 }

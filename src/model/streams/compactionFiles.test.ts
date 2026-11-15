@@ -39,12 +39,12 @@ describe('compactionLeftFiles', () => {
     expect(compactionLeftFiles({ sections, replySectionId: 'b', dropped: [gone], kept: [] }).sources).toStrictEqual([])
   })
 
-  it('gives the picture copies of the old tag and of the replaced tool blocks, each one time, but not the ones that the new tag keeps', () => {
+  it('gives the picture copies of the old tag and of the replaced tool blocks, but not the ones that the new tag keeps', () => {
     const sections = [
       reply('notes', `${compactionTagText({ count: 1, lastId: 'b', pictures: [picture('old-tag.jpg'), picture('carried.jpg')] })}\nThe notes.`),
       // A block in a message of the user is plain text.
       user('u1', `Look:\n${viewBlock('call_0', ['typed.jpg'])}`),
-      reply('a1', `${viewBlock('call_1', ['one.jpg', 'two.jpg'])}\n${viewBlock('call_2', ['one.jpg'])}`),
+      reply('a1', `${viewBlock('call_1', ['one.jpg', 'two.jpg'])}\n${viewBlock('call_2', ['four.jpg'])}`),
       user('u2', 'More'),
       reply('b', viewBlock('call_3', ['three.jpg'])),
       // After the reply that runs: the compaction does not replace it.
@@ -54,6 +54,6 @@ describe('compactionLeftFiles', () => {
 
     const left = compactionLeftFiles({ sections, replySectionId: 'b', dropped: [], kept: [picture('carried.jpg'), picture('new.jpg')] })
 
-    expect(left).toStrictEqual({ sources: [], pictures: ['old-tag.jpg', 'one.jpg', 'two.jpg', 'three.jpg'] })
+    expect(left).toStrictEqual({ sources: [], pictures: ['old-tag.jpg', 'one.jpg', 'two.jpg', 'four.jpg', 'three.jpg'] })
   })
 })
