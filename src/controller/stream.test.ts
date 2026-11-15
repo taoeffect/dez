@@ -27,6 +27,7 @@ import { TOOL_DEFINITIONS, unknownToolText } from '../model/tools/registry'
 import type { ToastData } from '../view/toast/selectors'
 import { ExplainedError, UNEXPECTED_ERROR } from '../utils/errorText'
 import { APP_DIR, audioProgress, CACHE_DIR, native, resetNative, settled, writes } from './testing'
+import type { RequestLogRow } from './diagnostics/requestLog'
 // Side-effect imports: register the dez.model/* selectors and the selectors
 // under test.
 import '../model/state/index'
@@ -735,6 +736,64 @@ describe('context size of a conversation', () => {
     expect(activeTab().cost?.requests).toBe(1)
     expect(activeTab()).not.toHaveProperty('context')
     expect(size().estimated).toBe(true)
+  })
+})
+
+// The numbers that a developer reads to check the prompt cache.
+describe('request log', () => {
+  const start = Date.UTC(2026, 10, 6, 12)
+  // Each test has a new tab, and the log holds the rows of the tests
+  // before it too.
+  const rows = () => (sbp('dez.diagnostics/requestLog') as RequestLogRow[]).filter((row) => row.tabId === activeTab().id)
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(start)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('has one row for each chat round of a reply, with the tokens and the price that the provider told, and the time since the round before', async () => {
+    replyRounds([
+      async (input) => {
+        vi.setSystemTime(start + 7000)
+        return { requestId: input.requestId as string, toolCalls: [{ id: 'c1', name: 'model_list', argumentsText: '{}' }], cost: 0.25, usage: { inputTokens: 1000, cacheWriteTokens: 900, outputTokens: 50 } }
+      },
+      async (input) => {
+        await input.onToken('None.')
+        return { requestId: input.requestId as string, cost: 0.02, usage: { inputTokens: 1100, cachedInputTokens: 900, outputTokens: 20 } }
+      },
+    ])
+
+    await startStream({ sendTools: true })
+
+    const round = { tabId: activeTab().id, providerId: model.providerId, modelId: model.modelId, kind: 'chat', contextEstimated: false, imageCount: 0 }
+    expect(rows()).toStrictEqual([
+      { ...round, startedAt: start, uncachedInputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 900, outputTokens: 50, cost: 0.25, contextTokens: 1050, sincePreviousMs: null },
+      { ...round, startedAt: start + 7000, uncachedInputTokens: 200, cacheReadTokens: 900, cacheWriteTokens: 0, outputTokens: 20, cost: 0.02, contextTokens: 1120, sincePreviousMs: 7000 },
+    ])
+  })
+
+  // The rows of a tab are the requests that its cost counts.
+  it('has a row with no tokens for a request that failed after it went, and no row for one that did not go', async () => {
+    for (const [sent, failure] of [
+      [true, new ProviderHttpError(model.providerId, 400, true, '', undefined, 'Thinker refused the request.', 'Thinker refused the request.')],
+      [false, new ProviderNotConfiguredError(model.providerId, 'Thinker', false)],
+    ] as const) {
+      sbp('dez.model/tabs/replaceSections', activeTab().id, [
+        { id: 'u1', role: 'user', content: [{ kind: 'text', text: 'Hi' }] },
+        { id: 'a1', role: 'agent', content: [{ kind: 'text', text: '' }], model },
+      ])
+      streamChat = async (input) => {
+        if (sent) input.onSent?.()
+        throw failure
+      }
+      await startStream()
+    }
+
+    expect(rows()).toMatchObject([{ kind: 'chat', uncachedInputTokens: null, cacheReadTokens: null, cacheWriteTokens: null, outputTokens: null, cost: 0 }])
   })
 })
 

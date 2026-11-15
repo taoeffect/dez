@@ -1,9 +1,11 @@
 import sbp from '@sbp/sbp'
-import { failedChatRequestCost } from '../model/providers/chatUsage'
+import { failedChatRequestCost, type ChatUsage } from '../model/providers/chatUsage'
 import { TooManyImagesError, tooManyImagesMessage } from '../model/providers/clipImages'
 import { InputImageError, isProviderRefusal } from '../model/providers/errors'
 import type { MediaProgress, ProviderGenerateMediaResult, ProviderStreamChatResult } from '../model/providers/streamTypes'
 import type { GeneratedClip, GeneratedMedia } from '../model/providers/types'
+import { requestImageCount } from '../model/streams/replyPictures'
+import type { StreamMessage } from '../model/streams/types'
 import { unreadableImageText } from '../model/tools/imageTool'
 import {
   answerIsCut,
@@ -22,6 +24,7 @@ import {
 import { TOOL_DEFINITIONS } from '../model/tools/registry'
 import { ToolError } from '../model/tools/types'
 import { ExplainedError } from '../utils/errorText'
+import { logRequest } from './diagnostics/requestLog'
 import { discardMadeAssets, generatedClipAsset, type JobOutcome, type MadeAsset } from './jobs'
 
 // The request of a `model_invoke` call (model/tools/modelInvoke.ts), as the
@@ -142,8 +145,11 @@ async function invokeMediaModel(invocation: MediaInvocation, signal: AbortSignal
 //   provider or the model's list price tells it. A request that failed
 //   after it went costs what `failedChatRequestCost` tells (0 for a
 //   refused request); one that failed before it went never calls it.
+// - The developer's request log gets one row for a request that went
+//   (`logRequest`), with `tabId`, the tab of the call.
 async function invokeTextModel(
   invocation: ChatInvocation,
+  tabId: string,
   signal: AbortSignal,
   report: (state: string) => void,
   reportCost: (usd: number | null) => void,
@@ -163,12 +169,21 @@ async function invokeTextModel(
   let answer = ''
   let imageNotSaved = false
   let sent = false
+  const messages: StreamMessage[] = [{ role: 'user', content }]
+  const startedAt = Date.now()
+  // The end of the request, with the price that the job counts and the
+  // tokens that the provider told: for the job, and for the developer's
+  // request log.
+  const countRequest = (cost: number | null, usage?: ChatUsage) => {
+    reportCost(cost)
+    logRequest({ tabId, kind: 'model_invoke', model: { providerId: provider.id, modelId: model.id }, startedAt, usage, cost, imageCount: requestImageCount(messages) })
+  }
   report(invocationAnswerStateText(0))
   try {
     const result = await sbp('dez.provider/streamChat', {
       providerId: provider.id,
       modelId: model.id,
-      messages: [{ role: 'user', content }],
+      messages,
       tools: toolsAllowed ? TOOL_DEFINITIONS : [],
       imageOutput,
       audioOutput,
@@ -210,9 +225,9 @@ async function invokeTextModel(
         keep(generatedClipAsset(clip))
       },
     }) as ProviderStreamChatResult
-    reportCost(result.cost ?? null)
+    countRequest(result.cost ?? null, result.usage)
   } catch (error) {
-    if (sent) reportCost(failedChatRequestCost(error))
+    if (sent) countRequest(failedChatRequestCost(error))
     // An error of `onImage` does not end the request by itself. And
     // `ReplyJobs` reads no assets of a failed job, so the images and the
     // clip that this job saved go here.
@@ -229,8 +244,9 @@ async function invokeTextModel(
 
 /** The work of the job of a `model_invoke` call (`JobWork`): sends the one
  *  request of `invocation` (a media request, or a chat request to a text
- *  model), and gives what the model made. `rights` is what the caller lets
- *  an invoked text model do.
+ *  model), and gives what the model made. `tabId` is the tab of the call,
+ *  which the developer's request log names, and `rights` is what the
+ *  caller lets an invoked text model do.
  *
  *  - An image and a clip are the assets of the job. The reader of the
  *    job's result writes them into the reply (`writeJobAssets`), with a
@@ -249,6 +265,7 @@ async function invokeTextModel(
  *  files of a result that still comes. */
 export function invokeModel(
   invocation: ModelInvocation,
+  tabId: string,
   signal: AbortSignal,
   report: (state: string) => void,
   reportCost: (usd: number | null) => void,
@@ -256,6 +273,6 @@ export function invokeModel(
   rights: InvocationRights,
 ): Promise<JobOutcome> {
   return invocation.kind === 'chat'
-    ? invokeTextModel(invocation, signal, report, reportCost, keepAsset, rights)
+    ? invokeTextModel(invocation, tabId, signal, report, reportCost, keepAsset, rights)
     : invokeMediaModel(invocation, signal, report, reportCost)
 }

@@ -99,6 +99,8 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
        cost total of its tab (dez.model/tabs/countRequestCost), which the conversation file keeps
     -> the tokens of each chat round that told them go into the context count of its tab
        (dez.model/tabs/countRequestContext), which the conversation file keeps
+    -> each chat request that went (a chat round, a model_invoke request to a text model) adds a
+       row to the developer's request log (controller/diagnostics/requestLog.ts)
     -> the reply's finish/error/cancel reconciles the editor, adds a user section, and saves
     -> finish/error of a reply the user does not look at -> dez.controller/alertReplyEnded (sound, notification)
 ```
@@ -141,6 +143,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `model/systemPrompt/`: the built-in system prompt (`systemPrompt.md` with `{{name}}` placeholders), the variables of a template (`SYSTEM_PROMPT_VARIABLES`), and its checks (`template.ts`). The `systemPrompt` setting (null: the built-in one; blank: no system prompt) goes with every chat request of a reply.
 - `model/modelOutputs.ts`: the one table of the output types (text, image, audio, video). `model/modelInputs.ts`: what Dez can send a model, in those types (the `inputs` of `model_list` and `model_info`). `model/modelSearch.ts`: the model filter (search terms and output types) of the model picker and `model_list`.
 - `controller/notifications.ts`: the reply-end alerts (sound, system notification; a click opens the reply's tab). `view/sound.ts`: `dez.ui/playDoneSound`. `assets/sounds/`: sound files (Git LFS).
+- `controller/diagnostics/requestLog.ts`: the developer's request log (`dez.diagnostics/requestLog`, `dez.diagnostics/printRequestLog`): one row of ids and numbers for each chat request (tokens, cache reads and writes, price, context size), in memory only.
 - `model/shortcuts.ts`: the editable shortcut registry (ids, default keys, key event matching, validation, labels, menu accelerators); user overrides are in the settings store.
 - `controller/menu.ts`: the native menubar (Tauri only); `dez.controller/menu/suspendAccelerators` turns its keys off while a key is recorded; `dez.controller/menu/popupAsset`: the right-click menu of an image or a player ("Reveal in File Manager"). `view/composables/useKeyboardShortcuts.ts`: app keys.
 - `controller/window.ts`, `windowFit.ts`: restore and save the window size and position.
@@ -169,7 +172,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `dez.stream/*`: `src/controller/stream.ts`
 - `dez.http/*`: `src/controller/http.ts`
 - `dez.native/*`: `src/controller/native.ts`, the only frontend module that calls Tauri `invoke()`
-- `dez.diagnostics/*`: `src/controller/diagnostics/` (sanitized probes only)
+- `dez.diagnostics/*`: `src/controller/diagnostics/` (sanitized probes, and the developer's request log; no secrets)
 - `dez.editor/*`: `src/view/editor/selectors.ts`
 - `dez.ui/*`: `src/view/toast/selectors.ts`, `src/view/confirm/selectors.ts`, `src/view/theme.ts`, `src/view/clipboard.ts`, `src/view/sound.ts`
 

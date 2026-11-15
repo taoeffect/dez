@@ -6,7 +6,7 @@ import { modelRefKey } from '../model/chat/modelRef'
 import { newMediaIds } from '../model/chat/mediaIds'
 import { MEDIA_HIDDEN_ATTRIBUTE, MEDIA_JOB_ATTRIBUTE, MEDIA_MADE_BY_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE, mediaTagText } from '../model/chat/mediaTags'
 import { findToolBlocks, ModelTextEscaper } from '../model/chat/toolBlocks'
-import { failedChatRequestCost } from '../model/providers/chatUsage'
+import { failedChatRequestCost, type ChatUsage } from '../model/providers/chatUsage'
 import { TooManyImagesError, tooManyImagesMessage } from '../model/providers/clipImages'
 import { isProviderRefusal } from '../model/providers/errors'
 import { errorText, explainedError } from '../utils/errorText'
@@ -46,6 +46,7 @@ import {
   streamIsStreaming,
   streamSession,
 } from '../model/state/streams'
+import { logRequest } from './diagnostics/requestLog'
 import { discardMadeAssets, generatedClipAsset, ReplyJobs, writeJobAssets, type EndedJob, type MadeAsset } from './jobs'
 import { discardShownPictures } from './shownPictures'
 import type { ToolRunCall, ToolRunContext } from './tools'
@@ -547,6 +548,15 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
     // A request that failed before it went costs nothing, and does not
     // count.
     let sent = false
+    const startedAt = Date.now()
+    const imageCount = requestImageCount(messages)
+    // The end of the round's request, with the price that the tab counts
+    // and the tokens that the provider told: for the cost of the tab, and
+    // for the developer's request log.
+    const countRound = (cost: number | null, usage?: ChatUsage) => {
+      countRequestCost(args.tabId, cost)
+      logRequest({ tabId: args.tabId, kind: 'chat', model: args.model, startedAt, usage, cost, imageCount })
+    }
     try {
       result = await sbp('dez.provider/streamChat', {
         providerId: args.model.providerId,
@@ -577,11 +587,11 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
         onClip: (clip: GeneratedClip) => writeReplyClip(args.tabId, reply, clip),
       }) as ProviderStreamChatResult
     } catch (error) {
-      if (sent) countRequestCost(args.tabId, failedChatRequestCost(error))
+      if (sent) countRound(failedChatRequestCost(error))
       throw error
     }
     // Also when a stop cut the answer off: it gives no price.
-    countRequestCost(args.tabId, result.cost ?? null)
+    countRound(result.cost ?? null, result.usage)
     if (!replyIsCurrent(args.tabId, reply)) return
 
     // Before the blocks and the finish, which saves the conversation.

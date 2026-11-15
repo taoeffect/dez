@@ -51,6 +51,7 @@ import { TOOL_DEFINITIONS, unexpectedToolErrorText, unknownToolText } from '../m
 import type { ToolArguments, ToolRunResult } from '../model/tools/types'
 import { FFPROBE_TIMEOUT_MS } from '../model/tools/videoTool'
 import { ExplainedError } from '../utils/errorText'
+import type { RequestLogRow } from './diagnostics/requestLog'
 import { ReplyJobs, type JobOutcome } from './jobs'
 import { invokeModel } from './modelInvoke'
 import type { BundledToolEnd } from './nativeTypes'
@@ -115,7 +116,7 @@ let generateMedia: (input: ProviderGenerateMediaInput) => Promise<ProviderGenera
 // comes), and the ids of the requests that were cancelled. Set in
 // beforeEach and by the tests.
 let chatRequests: ProviderStreamChatInput[] = []
-let streamChat: (input: ProviderStreamChatInput) => Promise<Pick<ProviderStreamChatResult, 'cost'> | void>
+let streamChat: (input: ProviderStreamChatInput) => Promise<Pick<ProviderStreamChatResult, 'cost' | 'usage'> | void>
 let cancelledRequests: string[] = []
 
 sbp('sbp/selectors/register', {
@@ -1361,7 +1362,7 @@ describe('dez.controller/tools/run', () => {
       it('saves no image that still comes after its job ended', async () => {
         const request = heldRequest()
         const abort = new AbortController()
-        const work = invokeModel(invocationOf(PAINT), abort.signal, () => {}, () => {}, () => {}, { toolsAllowed: false })
+        const work = invokeModel(invocationOf(PAINT), tabId, abort.signal, () => {}, () => {}, () => {}, { toolsAllowed: false })
 
         abort.abort()
         request.answer({ media: [PNG], clips: [] })
@@ -1561,6 +1562,36 @@ describe('dez.controller/tools/run', () => {
             .toStrictEqual([['finished', 0.002], ['failed', 0], ['failed', null], ['failed', 'none']])
         })
 
+        // The request holds no conversation, so it tells nothing about the
+        // context of its tab or about the prompt cache of the reply.
+        it('adds a row for its request to the request log, under the tab of its call and with no context size', async () => {
+          streamChat = async (input) => {
+            input.onSent?.()
+            await input.onToken('A fox.')
+            return { cost: 0.002, usage: { inputTokens: 400, cachedInputTokens: 300, outputTokens: 30 } }
+          }
+
+          await jobTool('model_invoke', ASK)
+          await jobResult()
+
+          expect((sbp('dez.diagnostics/requestLog') as RequestLogRow[]).filter((row) => row.tabId === tabId)).toStrictEqual([{
+            startedAt: expect.any(Number),
+            tabId,
+            providerId: 'venice',
+            modelId: 'venice-glm-5',
+            kind: 'model_invoke',
+            uncachedInputTokens: 100,
+            cacheReadTokens: 300,
+            cacheWriteTokens: 0,
+            outputTokens: 30,
+            cost: 0.002,
+            contextTokens: null,
+            contextEstimated: null,
+            imageCount: 1,
+            sincePreviousMs: null,
+          }])
+        })
+
         describe(`whose answer has more than ${INVOCATION_TEXT_CAP} characters`, () => {
           const tokens = ['x'.repeat(INVOCATION_TEXT_CAP), 'y', 'z']
           const cut = invocationAnswerText(tokens.join(''))
@@ -1642,7 +1673,7 @@ describe('dez.controller/tools/run', () => {
             await input.onImage(PNG)
           }
 
-          expect(await invokeModel(invocationOf(SKETCH), abort.signal, () => {}, () => {}, () => {}, { toolsAllowed: false })).toStrictEqual({ text: '', isError: false, assets: [] })
+          expect(await invokeModel(invocationOf(SKETCH), tabId, abort.signal, () => {}, () => {}, () => {}, { toolsAllowed: false })).toStrictEqual({ text: '', isError: false, assets: [] })
           expect(savedImages).toStrictEqual([])
         })
 
