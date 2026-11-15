@@ -64,11 +64,12 @@ export interface RequestLogRow {
   cost: number | null
   /** The context size of the tab right after the request: the provider's
    *  count of the request (its input and its output tokens), else Dez's
-   *  estimate of the tab (`dez.model/tabs/contextSize`). For a `compaction`
-   *  request, the count is the size of the conversation that the
-   *  compaction then replaces, with the instruction and the notes. Null for
-   *  a `model_invoke` request, which holds no conversation, and for a
-   *  request with no count whose tab is gone. */
+   *  estimate of the tab for the model of the request
+   *  (`dez.model/tabs/contextSize`). For a `compaction` request, the count
+   *  is the size of the conversation that the compaction then replaces,
+   *  with the instruction and the notes. Null for a `model_invoke`
+   *  request, which holds no conversation, and for a request with no count
+   *  whose tab is gone. */
   contextTokens: number | null
   /** Whether `contextTokens` is no count of a provider
    *  (`ContextSize.estimated`); null with no size. */
@@ -95,11 +96,14 @@ const rows: RequestLogRow[] = []
 // The context size of the tab of `request` right after it. The tokens that
 // the provider counted for the request are that size
 // (`dez.model/tabs/countRequestContext` keeps the same sum for the tab).
-// With no count, the size is Dez's estimate of the tab as it is now.
+// With no count, the size is Dez's estimate of the tab as it is now, for
+// the model of the request: the tab's active model can be another one (the
+// model of the newest reply writes some compactions, and the user can
+// choose a model while a reply runs).
 function contextAfter(request: LoggedRequest): ContextSize | undefined {
   const { inputTokens, outputTokens } = request.usage ?? {}
   if (inputTokens !== undefined && outputTokens !== undefined) return { tokens: inputTokens + outputTokens, estimated: false }
-  return sbp('dez.model/tabs/contextSize', request.tabId) as ContextSize | undefined
+  return sbp('dez.model/tabs/contextSize', request.tabId, request.model) as ContextSize | undefined
 }
 
 // The start of the newest request of the log that sent the conversation of

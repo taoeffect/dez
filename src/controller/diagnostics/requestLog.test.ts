@@ -1,15 +1,18 @@
 import sbp from '@sbp/sbp'
 import { describe, expect, it } from 'vitest'
 import type { ContextSize } from '../../model/chat/contextSize'
+import type { ModelRef } from '../../model/chat/types'
 import { logRequest, MAX_REQUEST_LOG_ROWS, type LoggedRequest, type RequestLogRow } from './requestLog'
 
-// The context size that the tab store tells for each tab; none for a tab
-// that is gone.
-const tabSizes: Record<string, ContextSize> = {}
+// The context size that the tab store tells for each tab, by the id of the
+// model that it estimates for; none for a tab that is gone. With no model,
+// the store estimates for the active model of the tab, which no test here
+// wants: the stub then tells nothing.
+const tabSizes: Record<string, Record<string, ContextSize>> = {}
 
 sbp('sbp/selectors/register', {
-  'dez.model/tabs/contextSize' (tabId: string): ContextSize | undefined {
-    return tabSizes[tabId]
+  'dez.model/tabs/contextSize' (tabId: string, model?: ModelRef): ContextSize | undefined {
+    return model && tabSizes[tabId]?.[model.modelId]
   },
 })
 
@@ -51,7 +54,7 @@ describe('the request log', () => {
   // A request that failed, or that the user stopped, tells no tokens.
   it('has no number that the provider did not tell, and then takes the context size of the tab, if the tab is still there', () => {
     const [kept, gone] = [crypto.randomUUID(), crypto.randomUUID()]
-    tabSizes[kept] = { tokens: 4200, estimated: true }
+    tabSizes[kept] = { 'claude-sonnet': { tokens: 4200, estimated: true } }
 
     logRequest(chatRound(kept))
     logRequest(chatRound(gone, { usage: { outputTokens: 20 }, cost: 0 }))
@@ -59,6 +62,23 @@ describe('the request log', () => {
     const unknown = { uncachedInputTokens: null, cacheReadTokens: null, cacheWriteTokens: null }
     expect(rowsOf(kept)).toMatchObject([{ ...unknown, outputTokens: null, cost: null, contextTokens: 4200, contextEstimated: true }])
     expect(rowsOf(gone)).toMatchObject([{ ...unknown, outputTokens: 20, cost: 0, contextTokens: null, contextEstimated: null }])
+  })
+
+  // The model of the newest reply can write the notes of a compaction
+  // (`earlierReplyWriter`), and the user can choose another model while a
+  // reply runs: the estimate depends on the model (the system prompt, the
+  // tools, the token rates of its family).
+  it('takes the context size of the tab for the model of the request, not for the active model of the tab', () => {
+    const tabId = crypto.randomUUID()
+    tabSizes[tabId] = { 'claude-sonnet': { tokens: 4200, estimated: true }, 'glm-4.6': { tokens: 3900, estimated: true } }
+
+    logRequest(chatRound(tabId))
+    logRequest(chatRound(tabId, { kind: 'compaction', model: { providerId: 'venice', modelId: 'glm-4.6' } }))
+
+    expect(rowsOf(tabId).map((row) => [row.kind, row.modelId, row.contextTokens])).toStrictEqual([
+      ['chat', 'claude-sonnet', 4200],
+      ['compaction', 'glm-4.6', 3900],
+    ])
   })
 
   // The prompt cache of a conversation lives 5 minutes after its last
