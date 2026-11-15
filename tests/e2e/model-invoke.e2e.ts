@@ -4,7 +4,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { jobStartedText, jobsWaitText, startedJobId } from '../../src/model/tools/jobs'
 import { invocationAnswerText } from '../../src/model/tools/modelInvoke'
 import { click, consoleErrors, movePointer, pointerClick, pointerClickAt, promptMessage, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
-import { appFilePath, conversationFilePath, filesIn, mediaTempDir, newFileIn, storedFileName } from './harness/fixtures'
+import { appFilePath, conversationFilePath, filesIn, mediaTempDir, newFileIn, readModelCache, storedFileName } from './harness/fixtures'
 import { generatedImagesDir, pasteImageReference, pngDataUrl, shownImages, solidPng } from './harness/images'
 import { startedJob, waitCall } from './harness/jobs'
 import { finishVeniceJob, shownPlayers, silentWav, type ShownPlayer } from './harness/media'
@@ -32,6 +32,10 @@ import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolC
 //   the order of the job ends;
 // - a call that cannot work is refused at once and starts no job, and a
 //   refusal of the provider is the result of its job;
+// - a `voice` parameter takes a voice id that the model's list does not
+//   hold when the model's list entry says so: the request holds the id, and
+//   a refusal of the provider is the result of its job. A model whose list
+//   is complete refuses the id at once, with the list;
 // - a job that runs longer than `timeout_seconds` ends with no result, and
 //   Dez closes its request;
 // - Stop ends the job and its request, and keeps the tool blocks;
@@ -64,6 +68,23 @@ const GENERATE_PATH = `/${STUDIO.id}/v1/image/generate`
 const EDIT_PATH = `/${STUDIO.id}/v1/image/multi-edit`
 const QUEUE_PATH = `/${STUDIO.id}/v1/audio/queue`
 const RETRIEVE_PATH = `/${STUDIO.id}/v1/audio/retrieve`
+
+// A provider whose models come from its list, as only a list entry gives a
+// model its parameters: two speech models of `/audio/queue` with the same
+// voices. Only the first one also takes a voice id that the list does not
+// hold (`supports_custom_voice_id`, as the ElevenLabs models of Venice).
+const VOICES: MockProvider = { id: 'voices', name: 'Voices Mock', modelId: 'open-voice-model', modelName: 'Open Voice Model' }
+const CLOSED_VOICE_MODEL = { id: 'closed-voice-model', name: 'Closed Voice Model' }
+const VOICE_SPEC = { voices: ['Aria', 'Roger'], default_voice: 'Aria' }
+const VOICE_LIST = {
+  object: 'list',
+  data: [
+    { id: VOICES.modelId, name: VOICES.modelName, type: 'music', model_spec: { ...VOICE_SPEC, supports_custom_voice_id: true } },
+    { id: CLOSED_VOICE_MODEL.id, name: CLOSED_VOICE_MODEL.name, type: 'music', model_spec: { ...VOICE_SPEC, supports_custom_voice_id: false } },
+  ],
+}
+const VOICE_QUEUE_PATH = `/${VOICES.id}/v1/audio/queue`
+const VOICE_RETRIEVE_PATH = `/${VOICES.id}/v1/audio/retrieve`
 
 // The shorter side has the 256 pixels that Venice's edit API asks for, so
 // the image goes as it is.
@@ -100,10 +121,23 @@ describe('model_invoke', () => {
           },
         },
         { provider: HELPER },
+        {
+          provider: VOICES,
+          config: {
+            mediaApi: { format: 'venice' },
+            fetchModels: true,
+            models: [],
+            modelOutputs: { path: 'type', values: { music: { outputs: ['audio'], request: 'music' } } },
+          },
+        },
       ],
-      heldPaths: [GENERATE_PATH, EDIT_PATH, QUEUE_PATH, RETRIEVE_PATH],
-      // The free price request that goes before each request of a song.
-      jsonAnswers: { [`/${STUDIO.id}/v1/audio/quote`]: { quote: 0.05 } },
+      heldPaths: [GENERATE_PATH, EDIT_PATH, QUEUE_PATH, RETRIEVE_PATH, VOICE_QUEUE_PATH, VOICE_RETRIEVE_PATH],
+      jsonAnswers: {
+        [`/${VOICES.id}/v1/models`]: VOICE_LIST,
+        // The free price request that goes before each request of a song.
+        [`/${STUDIO.id}/v1/audio/quote`]: { quote: 0.05 },
+        [`/${VOICES.id}/v1/audio/quote`]: { quote: 0.05 },
+      },
     })
     browser = setup.browser
     generatedDir = generatedImagesDir(setup.app.home)
@@ -276,6 +310,53 @@ describe('model_invoke', () => {
     expect(await filesIn(generatedDir)).toStrictEqual(before)
     expect(await openToasts(browser, 'error')).toStrictEqual([])
     expect(await consoleErrors(browser)).toContainEqual(expect.stringContaining(`The model_invoke job ${jobId} failed`))
+  })
+
+  // The voices of a user's account at the provider are in no model list
+  // (issue `voice-selection-bugfix`).
+  it('sends a voice id that the list of the model does not hold, gives a refusal of the provider as the result of its job, and refuses the id at once for a model whose list is complete', async () => {
+    const speech = 'Hello there'
+    const speakCall = (id: string, modelId: string, voice: string) => openAiToolCall(id, 'model_invoke', { model: `${VOICES.id}/${modelId}`, prompt: speech, parameters: JSON.stringify({ voice }) })
+    // The list comes with the model check of the app start.
+    await waitForValue(browser, 'model list of the voice provider', async () => (await readModelCache(setup.app.home))?.providers[VOICES.id]?.models.map((model) => model.id) ?? [], [VOICES.modelId, CLOSED_VOICE_MODEL.id])
+    await submit(browser, 'Say hello in my voice.')
+    const first = await requestTo(CHAT_PATH)
+    sendToolCalls(first.reply, [
+      speakCall('call_closed', CLOSED_VOICE_MODEL.id, 'laTmoAT4stwoPzthxjZT'),
+      speakCall('call_own', VOICES.modelId, 'laTmoAT4stwoPzthxjZT'),
+    ])
+
+    const own = await requestTo(VOICE_QUEUE_PATH, { model: VOICES.modelId, prompt: speech, voice: 'laTmoAT4stwoPzthxjZT' })
+    const second = await requestTo(CHAT_PATH)
+    // The refusal names the voices that the model takes.
+    const refusal = toolResult(second, 'call_closed')
+    expect(startedJobId(refusal)).toBeNull()
+    expect(['"voice"', '"Aria"', '"Roger"'].filter((part) => !refusal.includes(part))).toStrictEqual([])
+    const ownJob = startedJob(second, 'call_own')
+
+    // Dez cannot check an id, so the provider does.
+    sendToolCalls(second.reply, [speakCall('call_gone', VOICES.modelId, 'goneVoiceId')])
+    const gone = await requestTo(VOICE_QUEUE_PATH, { model: VOICES.modelId, prompt: speech, voice: 'goneVoiceId' })
+    const third = await requestTo(CHAT_PATH)
+    const goneJob = startedJob(third, 'call_gone')
+
+    sendToolCalls(third.reply, [waitCall('call_wait', true)])
+    await finishVeniceJob(setup, own, { retrievePath: VOICE_RETRIEVE_PATH, modelId: VOICES.modelId, queueId: 'queue-1', clip: { type: 'audio/wav', bytes: SONG_WAV } })
+    gone.reply.writeHead(400, { 'Content-Type': 'application/json' })
+    gone.reply.end(JSON.stringify({ error: 'The voice goneVoiceId does not exist' }))
+    const fourth = await requestTo(CHAT_PATH)
+    const result = toolResult(fourth, 'call_wait')
+    expect(result).toContain(`<job id="${ownJob}" number="1" tool="model_invoke" status="finished" call="${speech}">\nMade the audio clip @a.`)
+    expect(result).toContain(`<job id="${goneJob}" number="2" tool="model_invoke" status="failed" call="${speech}">`)
+    expect(result).toContain('Details: HTTP 400: The voice goneVoiceId does not exist')
+    await sendChatReply(fourth.reply, CALLER.modelName)
+
+    await endedReply(browser)
+    expect(setup.mock.hasWaitingRequest()).toBe(false)
+    expect(await openToasts(browser, 'error')).toStrictEqual([])
+    const errors = await consoleErrors(browser)
+    expect(errors).toContainEqual(expect.stringContaining('The tool model_invoke failed'))
+    expect(errors).toContainEqual(expect.stringContaining(`The model_invoke job ${goneJob} failed`))
   })
 
   it('ends a job that runs longer than its time limit with no result, and closes its request', async () => {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, nextTick, reactive, watch } from 'vue'
 import sbp from '@sbp/sbp'
 import { useModelState } from '../modelState'
 import { modelRefKey } from '../../model/chat/modelRef'
@@ -7,7 +7,9 @@ import { effectiveRequest, type ModelInfo, type ProviderSettingsDescriptor } fro
 import { lyricsHowTo } from '../../model/providers/clipText'
 import {
   effectiveParameterValues,
+  MAX_CUSTOM_VALUE_LENGTH,
   nearestRangeValue,
+  parameterTakes,
   type OptionsParameter,
   type ParameterValue,
   type RangeParameter,
@@ -98,15 +100,73 @@ function setParameter(name: string, value: ParameterValue | null) {
 
 // The option values of a <select> are the indexes into the parameter's
 // options, so that a number option stays a number (a DOM value is text).
-// -1 is the "Default" entry of a parameter with no default of its own.
-function optionIndex(parameter: OptionsParameter): number {
+// Two entries are no option: "Default", of a parameter with no default of
+// its own, and "Other…", of a parameter that also takes a text that its
+// list does not hold (`custom`).
+const DEFAULT_ENTRY = -1
+const OTHER_ENTRY = -2
+
+// The parameters whose "Other…" entry the user picked, and typed no text
+// for yet. Nothing is stored for them until a text comes, so this is a
+// state of the open popup only.
+const awaitingText = reactive(new Set<string>())
+
+// A model switch under the open popup (a tab switch) must not open the
+// text field of a parameter of the new model that has the same name.
+watch(() => activeModel.value && modelRefKey(activeModel.value), () => awaitingText.clear())
+
+function selectEntry(parameter: OptionsParameter): number {
+  if (awaitingText.has(parameter.name)) return OTHER_ENTRY
   const value = parameterValues.value[parameter.name]
-  return parameter.options.findIndex((option) => option === value)
+  if (value === undefined) return DEFAULT_ENTRY
+  const index = parameter.options.findIndex((option) => option === value)
+  if (index >= 0) return index
+  return parameter.custom ? OTHER_ENTRY : DEFAULT_ENTRY
+}
+
+// A parameter that takes only a text (no list) always has its text field;
+// one with a list has it while its select shows "Other…".
+function showsTextField(parameter: OptionsParameter): boolean {
+  return parameter.custom === true && (parameter.options.length === 0 || selectEntry(parameter) === OTHER_ENTRY)
+}
+
+// The value of the parameter when its list does not hold it, else no text.
+function customText(parameter: OptionsParameter): string {
+  const value = parameterValues.value[parameter.name]
+  return typeof value === 'string' && !parameter.options.includes(value) ? value : ''
 }
 
 function chooseOption(parameter: OptionsParameter, event: Event) {
-  const index = Number((event.target as HTMLSelectElement).value)
-  setParameter(parameter.name, index >= 0 ? parameter.options[index] : null)
+  const select = event.target as HTMLSelectElement
+  const entry = Number(select.value)
+  if (entry !== OTHER_ENTRY) {
+    awaitingText.delete(parameter.name)
+    setParameter(parameter.name, entry >= 0 ? parameter.options[entry] : null)
+    return
+  }
+  awaitingText.add(parameter.name)
+  // The text field is in the row of the select, and Vue draws it in the
+  // next tick.
+  const row = select.closest('[data-parameter]')
+  void nextTick(() => row?.querySelector<HTMLInputElement>('.provider-settings-text')?.focus())
+}
+
+// A text is the value, with no space around it. An empty field removes a
+// value that was a text, and the select then shows what a request sends
+// (the default, or the option that the user chose before "Other…").
+function chooseText(parameter: OptionsParameter, event: Event) {
+  const input = event.target as HTMLInputElement
+  const text = input.value.trim()
+  awaitingText.delete(parameter.name)
+  if (text !== '') {
+    if (parameterTakes(parameter, text)) setParameter(parameter.name, text)
+  } else if (customText(parameter) !== '') {
+    setParameter(parameter.name, null)
+  }
+  // Vue writes the field only when the bound value changes, so the text
+  // that was typed (with its spaces, or one that the parameter does not
+  // take) would stay.
+  input.value = customText(parameter)
 }
 
 function rangeText(parameter: RangeParameter): string {
@@ -142,6 +202,7 @@ function toggleSwitch(parameter: SwitchParameter) {
 function resetToDefaults() {
   const model = activeModel.value
   if (!model) return
+  awaitingText.clear()
   sbp('dez.model/settings/resetProviderSettings', model.providerId, settingDefs.value.map((def) => def.key), model.modelId)
 }
 </script>
@@ -171,15 +232,33 @@ function resetToDefaults() {
               :data-parameter="parameter.name"
             >
               <span class="provider-settings-label">{{ parameter.label }}</span>
-              <select
-                v-if="'options' in parameter"
-                class="provider-settings-value provider-settings-select"
-                :value="optionIndex(parameter)"
-                @change="chooseOption(parameter, $event)"
-              >
-                <option v-if="parameter.default === undefined" :value="-1">Default</option>
-                <option v-for="(option, index) in parameter.options" :key="index" :value="index">{{ option }}</option>
-              </select>
+              <template v-if="'options' in parameter">
+                <select
+                  v-if="parameter.options.length > 0"
+                  class="provider-settings-value provider-settings-select"
+                  :value="selectEntry(parameter)"
+                  @change="chooseOption(parameter, $event)"
+                >
+                  <option v-if="parameter.default === undefined" :value="DEFAULT_ENTRY">Default</option>
+                  <option v-for="(option, index) in parameter.options" :key="index" :value="index">{{ option }}</option>
+                  <option v-if="parameter.custom" :value="OTHER_ENTRY">Other…</option>
+                </select>
+                <!-- A value that the list does not hold, such as the id of
+                     a voice of the user's account at the provider. -->
+                <input
+                  v-if="showsTextField(parameter)"
+                  class="provider-settings-value provider-settings-text"
+                  type="text"
+                  spellcheck="false"
+                  autocapitalize="off"
+                  autocomplete="off"
+                  :maxlength="MAX_CUSTOM_VALUE_LENGTH"
+                  :value="customText(parameter)"
+                  :placeholder="parameter.options.length > 0 ? 'Type a value' : 'Default'"
+                  :title="customText(parameter)"
+                  @change="chooseText(parameter, $event)"
+                >
+              </template>
               <!-- An empty field stands for the provider's own default, as
                    the "Default" entry of a select does. -->
               <input
@@ -272,10 +351,13 @@ function resetToDefaults() {
 }
 
 /* A row of the "Model Parameters" section: the label, then a select or a
-   number field. A switch parameter has the row of a provider toggle
-   (ProviderSettingsSwitch.vue). */
+   number field, and the text field of a value that the list does not hold
+   on a line of its own (the row wraps; the label takes no width of its
+   own, so the select stays on the label's line). A switch parameter has
+   the row of a provider toggle (ProviderSettingsSwitch.vue). */
 .provider-settings-parameter {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
@@ -300,6 +382,12 @@ function resetToDefaults() {
 
 .provider-settings-value:focus {
   border-color: var(--color-text);
+}
+
+/* A voice id is longer than the field of a list, so it gets the whole
+   width of the popup. */
+.provider-settings-text {
+  flex: 0 0 100%;
 }
 
 /* The same arrow as the sort select of the history panel. */

@@ -125,20 +125,21 @@ describe('music models', () => {
     await waitForValue(browser, 'popup of the song model', () => popupView(browser), defaults)
 
     await changeParameterField(browser, 'duration_seconds', '90', 'option')
-    // A number between two steps becomes the nearer step.
+    // A speed takes every number of its range, not only the steps of the
+    // field's arrows.
     await changeParameterField(browser, 'speed', '1.33', 'number')
     await click(browser, '.provider-settings-popup [data-parameter="force_instrumental"]')
     await waitForValue(browser, 'popup with the values of the user', () => popupView(browser), {
       ...defaults,
       rows: [
         { name: 'duration_seconds', label: 'Length (seconds)', options: ['60', '90'], picked: '90' },
-        { name: 'speed', label: 'Speed', number: '1.35', min: '0.5', max: '2', step: '0.05' },
+        { name: 'speed', label: 'Speed', number: '1.33', min: '0.5', max: '2', step: '0.05' },
         { name: 'force_instrumental', label: 'Instrumental', on: true },
       ],
     })
     await waitForValue(browser, 'stored values', () => storedParameters(SONGS.modelId), {
       duration_seconds: 90,
-      speed: 1.35,
+      speed: 1.33,
       force_instrumental: true,
     })
 

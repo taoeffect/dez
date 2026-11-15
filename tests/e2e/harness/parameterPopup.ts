@@ -6,9 +6,11 @@ import type { E2EBrowser } from './session'
 // the media models read it: the "Model Parameters" of the active model.
 
 /** One row of the "Model Parameters" section, with what its control
- *  shows. */
+ *  shows. `text` is the text field of a value that the list does not hold:
+ *  next to a list only while the list shows "Other…". */
 export type ParameterRow =
-  | { name: string, label: string, options: string[], picked: string }
+  | { name: string, label: string, options: string[], picked: string, text?: string }
+  | { name: string, label: string, text: string }
   | { name: string, label: string, number: string, min: string, max: string, step: string }
   | { name: string, label: string, on: boolean }
 
@@ -42,7 +44,16 @@ export async function popupView (browser: E2EBrowser): Promise<PopupView> {
     const rows = Array.from(document.querySelectorAll<HTMLElement>('.provider-settings-popup [data-parameter]'), (row): ParameterRow => {
       const base = { name: row.dataset.parameter ?? '', label: text(row.querySelector('.provider-settings-label')) }
       const select = row.querySelector('select')
-      if (select) return { ...base, options: Array.from(select.options, (option) => option.text), picked: select.selectedOptions[0]?.text ?? '' }
+      const textField = row.querySelector<HTMLInputElement>('input[type="text"]')
+      if (select) {
+        return {
+          ...base,
+          options: Array.from(select.options, (option) => option.text),
+          picked: select.selectedOptions[0]?.text ?? '',
+          ...(textField && { text: textField.value }),
+        }
+      }
+      if (textField) return { ...base, text: textField.value }
       const input = row.querySelector('input')
       if (input) return { ...base, number: input.value, min: input.min, max: input.max, step: input.step }
       return { ...base, on: row.getAttribute('aria-checked') === 'true' }
@@ -61,16 +72,17 @@ export async function popupView (browser: E2EBrowser): Promise<PopupView> {
  *  the option with that text), then the `change` event that a user's edit
  *  ends with. wry's automation session takes no native keys for a field,
  *  so the page sets the value. */
-export async function changeParameterField (browser: E2EBrowser, name: string, wanted: string, kind: 'option' | 'number'): Promise<void> {
-  await browser.execute((parameter: string, value: string, fieldKind: string) => {
-    const field = document.querySelector<HTMLInputElement | HTMLSelectElement>(`.provider-settings-popup [data-parameter="${parameter}"] .provider-settings-value`)
-    if (!field) throw new Error(`changeParameterField: no field for ${parameter}`)
-    if (fieldKind === 'number') {
-      field.value = value
-    } else {
+export async function changeParameterField (browser: E2EBrowser, name: string, wanted: string, kind: 'option' | 'number' | 'text'): Promise<void> {
+  await browser.execute((parameter: string, value: string, fieldKind: 'option' | 'number' | 'text') => {
+    const control = { option: 'select', number: 'input[type="number"]', text: 'input[type="text"]' }[fieldKind]
+    const field = document.querySelector<HTMLInputElement | HTMLSelectElement>(`.provider-settings-popup [data-parameter="${parameter}"] ${control}`)
+    if (!field) throw new Error(`changeParameterField: no ${fieldKind} field for ${parameter}`)
+    if (fieldKind === 'option') {
       const option = Array.from((field as HTMLSelectElement).options).find((entry) => entry.text === value)
       if (!option) throw new Error(`changeParameterField: ${parameter} has no option ${value}`)
       option.selected = true
+    } else {
+      field.value = value
     }
     field.dispatchEvent(new Event('change', { bubbles: true }))
   }, name, wanted, kind)

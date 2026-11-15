@@ -16,10 +16,12 @@ const optionValueSchema = z.union([z.string(), z.number()])
 // A ModelParameter (src/model/providers/modelParameters.ts): a list of
 // options, a range, or a switch. The switch has only the fields that all
 // three have, so it is strict and comes last: an options or range entry
-// with a bad field must not read as a switch.
+// with a bad field must not read as a switch. A list with no option is
+// valid only with `custom` (the parameter then takes a text).
 const modelParameterSchema = z.union([
-  z.object({ name: z.string(), label: z.string(), options: z.array(optionValueSchema).min(1), default: optionValueSchema.optional() }),
-  z.object({ name: z.string(), label: z.string(), min: z.number(), max: z.number(), step: z.number().positive().optional(), default: z.number().optional() }),
+  z.object({ name: z.string(), label: z.string(), options: z.array(optionValueSchema), default: optionValueSchema.optional(), custom: z.literal(true).optional() })
+    .refine((parameter) => parameter.options.length > 0 || parameter.custom === true),
+  z.object({ name: z.string(), label: z.string(), min: z.number(), max: z.number(), step: z.number().positive().optional(), anyNumber: z.literal(true).optional(), default: z.number().optional() }),
   z.strictObject({ name: z.string(), label: z.string(), default: z.boolean().optional() }),
 ])
 

@@ -186,6 +186,10 @@ describe('model cache persistence format', () => {
           { name: 'duration_seconds', label: 'Length (seconds)', min: 1, max: 30, default: 5 },
           { name: 'steps', label: 'Steps', min: 1, max: 8 },
           { name: 'speed', label: 'Speed', min: 0.7, max: 1.2, step: 0.05, default: 1 },
+          { name: 'pace', label: 'Pace', min: 0.25, max: 4, step: 0.05, anyNumber: true },
+          // Lists that also take a text that they do not hold.
+          { name: 'voice', label: 'Voice', options: ['Aria', 'Roger'], default: 'Aria', custom: true },
+          { name: 'speaker', label: 'Speaker', options: [], custom: true },
           { name: 'loop', label: 'Loop' },
           { name: 'enhance', label: 'Enhance', default: true },
         ],
@@ -241,6 +245,7 @@ describe('model cache persistence format', () => {
           models: [
             ...models,
             { id: 'no-options', name: 'No options', provider: 'venice', parameters: [{ name: 'voice', label: 'Voice', options: [] }] },
+            { id: 'bad-mark', name: 'Bad mark', provider: 'venice', parameters: [{ name: 'voice', label: 'Voice', options: ['a'], custom: 'yes' }] },
             { id: 'bad-option', name: 'Bad option', provider: 'venice', parameters: [{ name: 'loop', label: 'Loop', options: [true, false] }] },
             { id: 'half-range', name: 'Half range', provider: 'venice', parameters: [{ name: 'seconds', label: 'Length', min: 1 }] },
             { id: 'no-list', name: 'No list', provider: 'venice', parameters: { name: 'voice', label: 'Voice', options: ['a'] } },

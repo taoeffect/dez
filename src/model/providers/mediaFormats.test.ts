@@ -121,7 +121,7 @@ describe('venice image parameters', () => {
 
     expect(withoutLabels(upscale)).toStrictEqual([
       { name: 'scale', options: [2, 4], default: 2 },
-      { name: 'creativity', min: 0, max: 0.02, step: 0.001, default: 0.01 },
+      { name: 'creativity', min: 0, max: 0.02, step: 0.001, anyNumber: true, default: 0.01 },
     ])
     expect(effectiveParameterValues(upscale)).toStrictEqual({ scale: 2, creativity: 0.01 })
   })
@@ -306,12 +306,34 @@ describe('venice media responses', () => {
 describe('venice clip parameters', () => {
   const spec = (modelSpec: Record<string, unknown>) => ({ id: 'm', model_spec: modelSpec })
   const videoModel = (constraints: Record<string, unknown>) => spec({ constraints: { model_type: 'text-to-video', ...constraints } })
-  // Every speech model takes the speed of the speech request's schema.
-  const SPEECH_SPEED = { name: 'speed', min: 0.25, max: 4, step: 0.05 }
+  // Every speech model takes the speed of the speech request's schema,
+  // which has no step.
+  const SPEECH_SPEED = { name: 'speed', min: 0.25, max: 4, step: 0.05, anyNumber: true }
 
   it('gives a speech model its voices, with no default voice', () => {
     expect(parameters(veniceClips, 'tts', spec({ voices: ['af_alloy', 'af_bella', 'af_alloy'] }))).toStrictEqual([
       { name: 'voice', options: ['af_alloy', 'af_bella'] },
+      SPEECH_SPEED,
+    ])
+  })
+
+  // `supports_custom_voice_id` of the entry: the model also takes a voice
+  // id of its provider that the list does not hold. A model with a
+  // `voice_cloning` record takes the handle of a cloned voice.
+  it.each([
+    ['says that it takes other voice ids', { supports_custom_voice_id: true }],
+    ['can clone a voice', { supports_custom_voice_id: false, voice_cloning: { mode: 'zero_shot', retention_days: 7 } }],
+  ])('gives a speech model that %s a voice list that takes another text', (_name, fields) => {
+    expect(parameters(veniceClips, 'tts', spec({ voices: ['Aria', 'Roger'], ...fields }))).toStrictEqual([
+      { name: 'voice', options: ['Aria', 'Roger'], custom: true },
+      SPEECH_SPEED,
+    ])
+  })
+
+  // The API answers 400 for another voice.
+  it('gives a speech model that says that it takes no other voice id a closed voice list', () => {
+    expect(parameters(veniceClips, 'tts', spec({ voices: ['Aria', 'Roger'], supports_custom_voice_id: false, voice_cloning: null }))).toStrictEqual([
+      { name: 'voice', options: ['Aria', 'Roger'] },
       SPEECH_SPEED,
     ])
   })
@@ -351,7 +373,7 @@ describe('venice clip parameters', () => {
 
   it('gives a music model the speed range of its entry, with its own default speed', () => {
     expect(parameters(veniceClips, 'music', spec({ supports_speed: true, min_speed: 0.7, max_speed: 1.2, default_speed: 1 }))).toStrictEqual([
-      { name: 'speed', min: 0.7, max: 1.2, step: 0.05, default: 1 },
+      { name: 'speed', min: 0.7, max: 1.2, step: 0.05, anyNumber: true, default: 1 },
     ])
   })
 
@@ -367,7 +389,7 @@ describe('venice clip parameters', () => {
 
   it('gives a music speed no default when the default of the model is out of the range', () => {
     expect(parameters(veniceClips, 'music', spec({ supports_speed: true, min_speed: 0.5, max_speed: 2, default_speed: 3 }))).toStrictEqual([
-      { name: 'speed', min: 0.5, max: 2, step: 0.05 },
+      { name: 'speed', min: 0.5, max: 2, step: 0.05, anyNumber: true },
     ])
   })
 
@@ -440,6 +462,19 @@ describe('venice clip parameters', () => {
     ])
   })
 
+  // The ElevenLabs speech models of the queue request (2026-11-15).
+  it('gives a music model that takes other voice ids a voice list that takes another text, and a closed list without that', () => {
+    const voices = { voices: ['Aria', 'Roger'], default_voice: 'Aria' }
+
+    expect([
+      parameters(veniceClips, 'music', spec({ ...voices, supports_custom_voice_id: true })),
+      parameters(veniceClips, 'music', spec({ ...voices, supports_custom_voice_id: false })),
+    ]).toStrictEqual([
+      [{ name: 'voice', options: ['Aria', 'Roger'], default: 'Aria', custom: true }],
+      [{ name: 'voice', options: ['Aria', 'Roger'], default: 'Aria' }],
+    ])
+  })
+
   it('gives a video model its lengths and resolutions from low to high with the lowest as the default, and its first aspect ratio', () => {
     const model = videoModel({ durations: ['10s', '5s', '8s'], aspect_ratios: ['16:9', '9:16'], resolutions: ['1080p', '480p', '720p'] })
 
@@ -504,14 +539,16 @@ describe('venice clip parameters', () => {
     ])
   })
 
-  // "Use upscale_factor instead of resolution for upscale models."
-  it('gives a video upscale model its factors as numbers in place of resolutions', () => {
-    const model = videoModel({ model_type: 'video', durations: ['Auto'], resolutions: ['2x', '4x'], video_input: true })
+  // "Use upscale_factor instead of resolution for upscale models." The
+  // entry lists no `1x`: "`1`, `2` (default), or `4`".
+  it('gives a video upscale model its factors as numbers in place of resolutions, with the factor 1 of the same size', () => {
+    const upscale = (resolutions: string[]) => videoModel({ model_type: 'video', durations: ['Auto'], resolutions, video_input: true })
 
-    expect(parameters(veniceClips, 'videoToVideo', model)).toStrictEqual([
+    expect(parameters(veniceClips, 'videoToVideo', upscale(['2x', '4x']))).toStrictEqual([
       { name: 'duration', options: ['Auto'], default: 'Auto' },
-      { name: 'upscale_factor', options: [2, 4], default: 2 },
+      { name: 'upscale_factor', options: [1, 2, 4], default: 2 },
     ])
+    expect(parameters(veniceClips, 'videoToVideo', upscale(['1x', '4x']))[1]).toStrictEqual({ name: 'upscale_factor', options: [1, 4], default: 1 })
   })
 
   it('gives the voice changer its voices with its default voice, and a noise switch that is off only when the entry tells of one', () => {
@@ -524,6 +561,12 @@ describe('venice clip parameters', () => {
       [{ name: 'voice', options: ['Aria', 'Roger'], default: 'Aria' }, { name: 'remove_background_noise' }],
       [{ name: 'voice', options: ['Aria', 'Roger'], default: 'Aria' }],
     ])
+  })
+
+  it('gives a voice changer that takes other voice ids a voice list that takes another text', () => {
+    const model = spec({ voice_changer: true, voices: ['Aria', 'Roger'], default_voice: 'Aria', supports_custom_voice_id: true })
+
+    expect(parameters(veniceClips, 'voiceChange', model)).toStrictEqual([{ name: 'voice', options: ['Aria', 'Roger'], default: 'Aria', custom: true }])
   })
 })
 
@@ -669,11 +712,13 @@ describe('venice clip rules', () => {
     ])
   })
 
+  // An Opus file is an Ogg file, and Venice reads the container from the
+  // bytes.
   it('takes one audio clip of the types and the length of the voice changer\'s entry, at most 25 MB', () => {
-    const entry = { id: 'elevenlabs-voice-changer', model_spec: { voice_changer: true, accepted_audio_formats: ['mp3', 'wav', 'flac'], max_source_audio_duration_seconds: 300 } }
+    const entry = { id: 'elevenlabs-voice-changer', model_spec: { voice_changer: true, accepted_audio_formats: ['mp3', 'wav', 'ogg', 'flac'], max_source_audio_duration_seconds: 300 } }
 
     expect(MEDIA_FORMATS.venice.clipRules?.('voiceChange', entry, undefined)).toStrictEqual({
-      audio: { use: 'source', maxClips: 1, maxSeconds: 300, maxBytes: 25 * MB, types: ['audio/mpeg', 'audio/wav'] },
+      audio: { use: 'source', maxClips: 1, maxSeconds: 300, maxBytes: 25 * MB, types: ['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/opus'] },
     })
   })
 
@@ -1159,17 +1204,20 @@ describe('venice clip jobs', () => {
 })
 
 describe('openrouter clip parameters', () => {
-  it('gives a speech model its voices, with the first one as the default', () => {
-    expect(parameters(openRouterClips, 'tts', { id: 'hexgrad/kokoro-82m', supported_voices: ['af_alloy', 'af_bella'] })).toStrictEqual([
-      { name: 'voice', options: ['af_alloy', 'af_bella'], default: 'af_alloy' },
+  // No list of OpenRouter is closed: the API takes `voice` as a text, and
+  // some models take a voice id that their list does not hold.
+  it('gives a speech model its voices, with the first one as the default, and takes another text', () => {
+    expect(parameters(openRouterClips, 'tts', { id: 'elevenlabs/eleven-v4', supported_voices: ['george', 'sarah'] })).toStrictEqual([
+      { name: 'voice', options: ['george', 'sarah'], default: 'george', custom: true },
     ])
   })
 
+  // The Fish Audio models take the id of a voice of the provider.
   it.each([
-    ['lists no voices', { id: 'm', supported_voices: null }],
+    ['lists no voices', { id: 'fish-audio/s2.1-pro', supported_voices: null }],
     ['the model list does not have', undefined],
-  ])('gives a speech model that %s no parameters', (_name, entry) => {
-    expect(parameters(openRouterClips, 'tts', entry)).toStrictEqual([])
+  ])('gives a speech model that %s a voice that takes a text, with no default', (_name, entry) => {
+    expect(parameters(openRouterClips, 'tts', entry)).toStrictEqual([{ name: 'voice', options: [], custom: true }])
   })
 
   it('gives a video model the lengths and resolutions of its video list entry, lowest first and as the default, and no default aspect ratio', () => {
@@ -1646,9 +1694,27 @@ describe('openrouter clip requests', () => {
     })
   })
 
-  it('refuses a video request with no length, which would get the default length of OpenRouter', () => {
+  it('refuses a video request with no length and no `images_as`, which would get the default length of OpenRouter', () => {
     expect(thrownError(() => openRouterClips.request('video', OPENROUTER_URL, 'm', { prompt: 'A red fox', images: [], values: { resolution: '480p' } })))
       .toStrictEqual(new ExplainedError(NO_VIDEO_LENGTH_MESSAGE))
+  })
+
+  // `runway/aleph-2`: `supported_durations: null` in the video list.
+  it('sends a video request with no length for a model of the video list that tells no lengths', () => {
+    const entry = { id: 'runway/aleph-2', supported_durations: null, supported_resolutions: ['720p'], supported_frame_images: null }
+    const values = effectiveParameterValues(openRouterClips.parameters('video', undefined, entry))
+    const clips: InputClipPart[] = [{ kind: 'video', use: 'reference', url: 'https://cdn.example.com/v.mp4' }]
+
+    expect(values).toStrictEqual({ resolution: '720p', images_as: 'references' })
+    expect(openRouterClips.request('video', OPENROUTER_URL, 'runway/aleph-2', { prompt: 'Make it snow', images: [], clips, values })).toStrictEqual({
+      url: `${OPENROUTER_URL}/videos`,
+      body: {
+        resolution: '720p',
+        model: 'runway/aleph-2',
+        prompt: 'Make it snow',
+        input_references: [{ type: 'video_url', video_url: { url: 'https://cdn.example.com/v.mp4' } }],
+      },
+    })
   })
 
   it('has no music request, and tells the user to choose another model', () => {

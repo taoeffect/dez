@@ -330,18 +330,25 @@ function listedValues(list: unknown): OptionValue[] {
   return [...new Set((Array.isArray(list) ? list : []).filter(isOptionValue))]
 }
 
-// The parameter of a request field that takes one of `options`; none when
-// there is no option. `defaultValue` is its default when it is an option.
-function optionsParameter(name: string, label: string, options: OptionValue[], defaultValue?: unknown): ModelParameter[] {
-  if (options.length === 0) return []
+// The parameter of a request field that takes one of `options`, and, with
+// `custom`, also a text that the list does not hold; none when it has no
+// option and takes no such text. `defaultValue` is its default when it is
+// an option.
+function optionsParameter(name: string, label: string, options: OptionValue[], defaultValue?: unknown, custom = false): ModelParameter[] {
+  if (options.length === 0 && !custom) return []
   const parameter: OptionsParameter = { name, label, options }
-  if (parameterTakes(parameter, defaultValue)) parameter.default = defaultValue
+  if (isOptionValue(defaultValue) && options.includes(defaultValue)) parameter.default = defaultValue
+  if (custom) parameter.custom = true
   return [parameter]
 }
 
-// The step of a speed field. The APIs take any number of the range. A step
-// gives the arrows of the settings field a use, and `model_info` a list of
-// values that has an end.
+// The step of a speed field. The APIs take any number of the range (the
+// speech schema of Venice: "minimum: 0.25, maximum: 4", with no step), so
+// the range has `anyNumber`: a step rule in Dez would refuse a speed that
+// the provider takes (1.12). The step is only for the arrows of the
+// settings field. Checked 2026-11-15.
+// https://docs.venice.ai/api-reference/endpoint/audio/speech
+// https://docs.venice.ai/api-reference/endpoint/audio/queue
 const SPEED_STEP = 0.05
 
 // The parameter of a `speed` field (1 is the normal speed) that takes the
@@ -349,7 +356,7 @@ const SPEED_STEP = 0.05
 // is its default when the range takes it.
 function speedParameter(min: unknown, max: unknown, defaultValue?: unknown): ModelParameter[] {
   if (typeof min !== 'number' || typeof max !== 'number' || !(min > 0) || !(min < max)) return []
-  const range: RangeParameter = { name: 'speed', label: 'Speed', min, max, step: SPEED_STEP }
+  const range: RangeParameter = { name: 'speed', label: 'Speed', min, max, step: SPEED_STEP, anyNumber: true }
   if (parameterTakes(range, defaultValue)) range.default = defaultValue
   return [range]
 }
@@ -401,7 +408,9 @@ function lowestFirstParameter(name: string, label: string, list: unknown, size: 
 // when its entry in the model list tells none, or when the list that tells
 // it did not load at a model check and no earlier check knew the model
 // (`withKeptClipData` in keptClipData.ts). Only in the second case does a
-// new check help, and a format cannot tell the two apart.
+// new check help. A format that can tell the two apart refuses only the
+// second case (OpenRouter); one that cannot refuses both (Venice, whose
+// video request needs a length).
 export const NO_VIDEO_LENGTH_MESSAGE = 'Dez does not know which lengths this model takes: the provider\'s model list did not tell them. Check the provider again (Settings › Providers, "Check again").'
 
 // The readers of the fields of a Venice model entry: `spec` reads
@@ -410,6 +419,30 @@ export const NO_VIDEO_LENGTH_MESSAGE = 'Dez does not know which lengths this mod
 function veniceEntryFields(entry: unknown): { spec: (field: string) => unknown, constraint: (field: string) => unknown } {
   const spec = (field: string) => valueAtPath(entry, `model_spec.${field}`)
   return { spec, constraint: (field) => spec(`constraints.${field}`) }
+}
+
+// The `voice` parameter of a Venice speech, music, or voice changer model:
+// the voices of its entry, with the entry's default voice when the list
+// has it. The list of most models is closed: the API answers 400 for
+// another voice. Two fields of an entry tell that the model takes more,
+// and then the parameter also takes a text that the list does not hold:
+// - `supports_custom_voice_id: true` (the ElevenLabs models): "Models with
+//   `supports_custom_voice_id=true` … also accept a raw ElevenLabs Voice
+//   ID" (the queue request; the speech request and the voice changer say
+//   the same).
+// - a `voice_cloning` record (`tts-chatterbox-hd`): the speech request
+//   "also accepts a cloned-voice handle (`vv_…`) from `POST /audio/voices`
+//   (same `model` that created it)". Dez has no clone request, but the
+//   user can have a handle of the account.
+// A voice that the provider does not know gets a 400 that costs nothing,
+// or a failed job that is refunded. Checked 2026-11-15.
+// https://docs.venice.ai/api-reference/endpoint/audio/speech
+// https://docs.venice.ai/api-reference/endpoint/audio/queue
+// https://docs.venice.ai/guides/media/voice-changer
+function veniceVoice(entry: unknown): ModelParameter[] {
+  const { spec } = veniceEntryFields(entry)
+  const takesOtherVoices = spec('supports_custom_voice_id') === true || isRecord(spec('voice_cloning'))
+  return optionsParameter('voice', 'Voice', listedValues(spec('voices')), spec('default_voice'), takesOtherVoices)
 }
 
 // The length of a Venice music clip, in seconds: one of the entry's
@@ -451,6 +484,14 @@ function veniceUpscaleFactors(entry: unknown): number[] {
     .map((resolution) => (typeof resolution === 'string' ? /^(\d+)x$/i.exec(resolution)?.[1] : undefined))
   return factors.length > 0 && factors.every((factor) => factor !== undefined) ? factors.map(Number) : []
 }
+
+// The factor of a Venice video upscale that makes no pixel more, which no
+// entry lists (the entry tells the factors as resolutions, and `1x` is no
+// resolution): "`upscale_factor` | number | No | `1`, `2` (default), or
+// `4`", and "`1` | Same as input | Quality enhancement only (denoising,
+// sharpening)". Checked 2026-11-15.
+// https://docs.venice.ai/guides/media/video-upscaling
+const VENICE_SAME_SIZE_FACTOR = 1
 
 // What a Venice music model takes as text, from its entry: the least and
 // the most characters of the prompt, and whether it takes lyrics
@@ -648,7 +689,8 @@ const veniceFormat: MediaFormat = {
     // tells neither. `scale`: "Must be either 2 or 4" (other numbers are
     // billed at the 4x rate; the prices of the entry are `2x` and `4x`).
     // `creativity`: "0–0.02, default 0.01"; the API takes any number of
-    // the range, and the step gives the field's arrows a use.
+    // the range (`anyNumber`; checked 2026-11-15), and the step is only
+    // for the arrows of the settings field.
     // https://docs.venice.ai/api-reference/endpoint/image/upscale
     // https://docs.venice.ai/guides/media/image-upscaling
     // image, imageEdit: the option lists of the entry
@@ -666,7 +708,7 @@ const veniceFormat: MediaFormat = {
       if (kind === 'upscale') {
         return [
           { name: 'scale', label: 'Scale', options: [2, 4], default: 2 },
-          { name: 'creativity', label: 'Creativity', min: 0, max: 0.02, step: 0.001, default: 0.01 },
+          { name: 'creativity', label: 'Creativity', min: 0, max: 0.02, step: 0.001, anyNumber: true, default: 0.01 },
         ]
       }
       const { constraint } = veniceEntryFields(entry)
@@ -761,6 +803,7 @@ const veniceFormat: MediaFormat = {
     },
   },
   clips: {
+    // voice (tts, music, voiceChange): `veniceVoice`.
     // tts: the entry names no default voice, and each model has its own.
     // The format is a parameter so that every request names it: the
     // model's own default when Dez stores its type, else the first type
@@ -780,9 +823,9 @@ const veniceFormat: MediaFormat = {
     // music: every field but the prompt and the lyrics is a parameter, and
     // each one only when the entry says that the model takes it
     // (`supports_…`, or a list or a range of values): the API refuses a
-    // field that the model does not take. Four models have no length
-    // field in their entries (`minimax-music-v2`, 2026-11-10), so they have
-    // no length to set. There is no format parameter (the queue request
+    // field that the model does not take. Some models have no length
+    // field in their entries (`minimax-music-v2`), so they have no length
+    // to set. There is no format parameter (the queue request
     // has no format field) and no language parameter (the API gives no
     // list of the languages).
     parameters: (kind, entry) => {
@@ -792,7 +835,7 @@ const veniceFormat: MediaFormat = {
           const formats = listedValues(spec('supported_formats')).filter((format) => VENICE_SPEECH_FORMATS.has(format))
           const modelDefault = spec('default_format')
           return [
-            ...optionsParameter('voice', 'Voice', listedValues(spec('voices'))),
+            ...veniceVoice(entry),
             ...optionsParameter('response_format', 'Format', formats, formats.find((format) => format === modelDefault) ?? formats[0]),
             // The speech request takes 0.25 to 4 for every model (its
             // schema); the entries hold no speed. No default: with no
@@ -803,7 +846,7 @@ const veniceFormat: MediaFormat = {
         case 'music':
           return [
             ...veniceMusicLength(entry),
-            ...optionsParameter('voice', 'Voice', listedValues(spec('voices')), spec('default_voice')),
+            ...veniceVoice(entry),
             ...(spec('supports_speed') === true ? speedParameter(spec('min_speed'), spec('max_speed'), spec('default_speed')) : []),
             ...switchParameter('force_instrumental', 'Instrumental', spec('supports_force_instrumental')),
             // The model writes the lyrics itself.
@@ -823,8 +866,11 @@ const veniceFormat: MediaFormat = {
             // seconds gets its first entry as the default.
             ...lowestFirstParameter('duration', 'Length', spec('constraints.durations'), lengthSeconds)
               .map((length) => ('options' in length ? { default: length.options[0], ...length } : length)),
+            // The entry's first factor stays the default (2, as the
+            // API's own): a request with no factor would send a prompt,
+            // which an upscale refuses.
             ...(factors.length > 0
-              ? optionsParameter('upscale_factor', 'Upscale factor', factors, factors[0])
+              ? optionsParameter('upscale_factor', 'Upscale factor', [...new Set([VENICE_SAME_SIZE_FACTOR, ...factors])], factors[0])
               : lowestFirstParameter('resolution', 'Resolution', spec('constraints.resolutions'), resolutionLines)),
             ...optionsParameter('aspect_ratio', 'Aspect ratio', aspectRatios, aspectRatios[0]),
             ...switchParameter('audio', 'Audio', spec('constraints.audio_configurable'), true),
@@ -834,7 +880,7 @@ const veniceFormat: MediaFormat = {
           // No seed: a seed gives the same speech again, which a user who
           // asks once more does not want.
           return [
-            ...optionsParameter('voice', 'Voice', listedValues(spec('voices')), spec('default_voice')),
+            ...veniceVoice(entry),
             ...switchParameter('remove_background_noise', 'Remove background noise', spec('supports_background_noise_removal')),
           ]
       }
@@ -1124,7 +1170,10 @@ const veniceFormat: MediaFormat = {
   // video as a reference video, with the rules and the prompt name of its
   // family's references (`<Video 1>`).
   // voiceChange: the entry tells the types (`accepted_audio_formats`) and
-  // the most seconds; a larger file than 25 MB gets a 413.
+  // the most seconds; a larger file than 25 MB gets a 413. The types are
+  // containers ("Venice checks the bytes, not the extension, so a file has
+  // to actually be one of the accepted containers"), so an Opus file,
+  // which is an Ogg file, goes as it is (`VENICE_VOICE_CHANGER_TYPES`).
   // transcription: the types of the endpoint's list that Dez stores ("A
   // file is accepted when either its MIME type or its extension is on that
   // list, and the uploaded bytes must also pass a magic-byte check").
@@ -1149,7 +1198,7 @@ const veniceFormat: MediaFormat = {
       }
       case 'voiceChange': {
         const formats = listedValues(valueAtPath(entry, 'model_spec.accepted_audio_formats'))
-        const types = formats.flatMap((format) => (typeof format === 'string' && Object.hasOwn(VENICE_VOICE_CHANGER_TYPES, format) ? [VENICE_VOICE_CHANGER_TYPES[format]] : []))
+        const types = formats.flatMap((format) => (typeof format === 'string' && Object.hasOwn(VENICE_VOICE_CHANGER_TYPES, format) ? VENICE_VOICE_CHANGER_TYPES[format] : []))
         const maxSeconds = valueAtPath(entry, 'model_spec.max_source_audio_duration_seconds')
         return {
           audio: {
@@ -1193,13 +1242,18 @@ const veniceFormat: MediaFormat = {
 }
 
 // The media types of the audio formats that Venice's voice changer names
-// in a model entry (`accepted_audio_formats`).
-const VENICE_VOICE_CHANGER_TYPES: Readonly<Record<string, string>> = {
-  mp3: 'audio/mpeg',
-  wav: 'audio/wav',
-  ogg: 'audio/ogg',
-  mp4: 'audio/mp4',
-  aac: 'audio/aac',
+// in a model entry (`accepted_audio_formats`). A format is a container,
+// which Venice finds in the bytes of the file, so `ogg` is both types that
+// Dez stores an Ogg file as. Without `audio/opus`, an Opus clip would go
+// as a WAV copy, many times its size, which then breaks the 25 MB limit.
+// Checked 2026-11-15.
+// https://docs.venice.ai/guides/media/voice-changer
+const VENICE_VOICE_CHANGER_TYPES: Readonly<Record<string, readonly string[]>> = {
+  mp3: ['audio/mpeg'],
+  wav: ['audio/wav'],
+  ogg: ['audio/ogg', 'audio/opus'],
+  mp4: ['audio/mp4'],
+  aac: ['audio/aac'],
 }
 
 // The frames of a video that an OpenRouter request can give an image for
@@ -1600,10 +1654,26 @@ const openRouterFormat: MediaFormat = {
     parameters: (kind, entry, mediaEntry) => {
       switch (kind) {
         case 'tts': {
+          // `voice` is a text for every model ("Voice identifier
+          // (provider-specific)", no list in the request's schema), and no
+          // field of an entry tells that its `supported_voices` list is
+          // complete. Some lists are not: the ElevenLabs models also take
+          // "its ElevenLabs voice ID as `voice`", a MiniMax model "accepts
+          // arbitrary MiniMax voice IDs" (its description), and the Fish
+          // Audio and Seed Audio models list no voice and take a voice id
+          // of the provider. Only the Azure models have a list that the
+          // docs call full. So every voice list takes another text, and a
+          // model with no list gets a voice with no option: a refusal of
+          // the provider costs nothing ("failed generations are not
+          // billed"), and a closed list in Dez would stop a voice that
+          // works. Checked 2026-11-15.
           // A request with no `voice` goes only to the providers that have
           // a default voice, so the first voice is the default.
+          // https://openrouter.ai/docs/api/api-reference/tts/create-speech
+          // https://openrouter.ai/docs/guides/overview/multimodal/tts
+          // https://openrouter.ai/blog/announcements/elevenlabs-on-openrouter/
           const voices = listedValues(valueAtPath(entry, 'supported_voices'))
-          return optionsParameter('voice', 'Voice', voices, voices[0])
+          return optionsParameter('voice', 'Voice', voices, voices[0], true)
         }
         case 'video':
         case 'imageToVideo': {
@@ -1651,7 +1721,17 @@ const openRouterFormat: MediaFormat = {
           // A request with no length gets the provider's default length,
           // which can cost many times the shortest one. So a model whose
           // lengths Dez does not know (the video list does not have it, or
-          // the list did not load) gets no request.
+          // the list did not load) gets no request. Such a model has no
+          // `images_as` value either: only a model of the loaded video list
+          // has that parameter, and it always has a default.
+          // A model of the list that tells no lengths
+          // (`supported_durations: null`: the models that change a video
+          // of the user, such as `runway/aleph-2`) takes no length, so its
+          // request goes with none: `duration` is no required field of
+          // the request, and the pages of these models send none. Its
+          // price is then unknown. Checked 2026-11-15.
+          // https://openrouter.ai/docs/api/api-reference/video-generation/create-videos
+          // https://openrouter.ai/runway/aleph-2/llms.txt
           // The images are frames of the video (`frame_images`) or
           // references (`input_references`), as the user chose
           // (OPENROUTER_IMAGES_AS), each as a data URL; never both. Any
@@ -1668,7 +1748,7 @@ const openRouterFormat: MediaFormat = {
           // https://openrouter.ai/docs/cookbook/video-generation/image-to-video
           // https://openrouter.ai/docs/cookbook/video-generation/reference-to-video
           const { [OPENROUTER_IMAGES_AS]: imagesAs, ...fields } = values
-          if (fields.duration === undefined) throw new ExplainedError(NO_VIDEO_LENGTH_MESSAGE)
+          if (fields.duration === undefined && imagesAs === undefined) throw new ExplainedError(NO_VIDEO_LENGTH_MESSAGE)
           const imageUrls = images.map(openRouterImageItem)
           const clipUrls = clips.map((clip) => (clip.kind === 'audio'
             ? { type: 'audio_url', audio_url: { url: clipUrl(clip) } }

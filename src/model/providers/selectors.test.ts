@@ -411,7 +411,7 @@ describe('model checks of a provider with media model lists', () => {
     name: 'speech',
     provider: 'router',
     request: 'tts',
-    parameters: [{ name: 'voice', label: 'Voice', options: ['af_alloy', 'af_bella'], default: 'af_alloy' }],
+    parameters: [{ name: 'voice', label: 'Voice', options: ['af_alloy', 'af_bella'], default: 'af_alloy', custom: true }],
   }
   const video = { id: 'video', name: 'video', provider: 'router', request: 'video' }
   // The video list entry tells no frame: the model takes only references.
@@ -515,9 +515,10 @@ describe('model checks of a provider with media model lists', () => {
 
     const result = await sbp('dez.provider/listModelsResult', 'router') as ProviderModelsResult
 
-    // With no model list, the speech model has no entry with voices.
+    // With no model list, the speech model has no entry with voices: its
+    // voice is a text.
     expect(result.models).toStrictEqual([
-      { id: 'speech', name: 'speech', provider: 'router', request: 'tts' },
+      { id: 'speech', name: 'speech', provider: 'router', request: 'tts', parameters: [{ name: 'voice', label: 'Voice', options: [], custom: true }] },
       { ...video, ...videoData },
       { ...image, parameters: imageParameters },
     ])

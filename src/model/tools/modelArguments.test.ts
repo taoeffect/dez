@@ -22,6 +22,11 @@ const VIDEO: ModelInfo = {
   ],
 }
 const PLAIN: ModelInfo = { id: 'plain', name: 'Plain', provider: OPENROUTER.id }
+// A speech model whose voice list is not complete (Venice's ElevenLabs
+// models), and one whose list is.
+const VOICES = { name: 'voice', label: 'Voice', options: ['Aria', 'Roger'], default: 'Aria' }
+const OPEN_SPEECH: ModelInfo = { id: 'elevenlabs-tts-v4-turbo', name: 'ElevenLabs v4 Turbo', provider: 'venice', outputs: ['audio'], request: 'music', parameters: [{ ...VOICES, custom: true }] }
+const CLOSED_SPEECH: ModelInfo = { ...OPEN_SPEECH, id: 'seed-audio-1-0', name: 'Seed Audio', parameters: [VOICES] }
 
 const CACHE: ModelCache = {
   version: 1,
@@ -148,6 +153,10 @@ describe('parameterValuesArgument', () => {
     expect(parameterValuesArgument(VIDEO, { model: 'openrouter/x-ai/grok-video' })).toStrictEqual({})
   })
 
+  it('reads the text of a number as the number that the parameter takes', () => {
+    expect(parameterValuesArgument(VIDEO, { parameters: '{"duration": "5", "duration_seconds": "30"}' })).toStrictEqual({ duration: 5, duration_seconds: 30 })
+  })
+
   it.each(['duration=5', '[5]', '5', 'null', ''])('refuses %j, which is not a JSON object', (parameters) => {
     expect(() => parameterValuesArgument(VIDEO, { parameters })).toThrow('`parameters` must be the text of a JSON object')
   })
@@ -155,9 +164,9 @@ describe('parameterValuesArgument', () => {
   // A wrong value must not look like a price of the right one, and must
   // not go into a paid request.
   it.each([
-    ['a name that is no parameter of the model', '{"fps": 60}', 'The model has no parameter "fps". Its parameters: duration, aspect_ratio, duration_seconds.'],
+    ['a name that Dez has no parameter for', '{"fps": 60}', 'Dez has no parameter "fps" for this model. Its parameters: duration, aspect_ratio, duration_seconds.'],
     ['a value that is not an option', '{"duration": 7}', 'The parameter "duration" takes one of: 1, 5, 10.'],
-    ['a text for a number option', '{"duration": "5"}', 'The parameter "duration" takes one of: 1, 5, 10.'],
+    ['the text of a number that is not an option', '{"duration": "7"}', 'The parameter "duration" takes one of: 1, 5, 10.'],
     ['a number out of the range', '{"duration_seconds": 31}', 'The parameter "duration_seconds" takes a whole number from 1 to 30.'],
   ])('refuses %s, and tells what the model takes', (_name, parameters, message) => {
     expect(() => parameterValuesArgument(VIDEO, { parameters })).toThrow(new ToolError(message))
@@ -165,6 +174,15 @@ describe('parameterValuesArgument', () => {
 
   it('refuses a value for a model with no parameters, and tells the model to leave them out', () => {
     expect(() => parameterValuesArgument(PLAIN, { parameters: '{"duration": 5}' }))
-      .toThrow(new ToolError('The model has no parameter "duration". It has no parameters: leave out `parameters`.'))
+      .toThrow(new ToolError('Dez has no parameters for this model: leave out `parameters`.'))
+  })
+
+  // The call of the issue: a voice id of the provider that the model's
+  // list does not hold.
+  it('takes a voice id that the list does not hold for a model that takes other voices, and refuses it for a model with a closed list', () => {
+    const parameters = '{"voice":"laTmoAT4stwoPzthxjZT"}'
+
+    expect(parameterValuesArgument(OPEN_SPEECH, { parameters })).toStrictEqual({ voice: 'laTmoAT4stwoPzthxjZT' })
+    expect(() => parameterValuesArgument(CLOSED_SPEECH, { parameters })).toThrow(new ToolError('The parameter "voice" takes one of: "Aria", "Roger".'))
   })
 })

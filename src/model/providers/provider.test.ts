@@ -1581,7 +1581,7 @@ describe('media model data', () => {
     expect(openRouterLike.withClipData([chat, image, speech, video, unlisted], entries, mediaEntries)).toStrictEqual([
       chat,
       image,
-      { ...speech, parameters: [{ name: 'voice', label: 'Voice', options: ['af_alloy', 'af_bella'], default: 'af_alloy' }] },
+      { ...speech, parameters: [{ name: 'voice', label: 'Voice', options: ['af_alloy', 'af_bella'], default: 'af_alloy', custom: true }] },
       {
         ...video,
         parameters: [

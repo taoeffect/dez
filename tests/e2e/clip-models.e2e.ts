@@ -1,8 +1,10 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { consoleErrors, resetConsoleErrors, screenshotOnFailure } from './harness/dom'
+import { click, consoleErrors, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
+import { readAppState } from './harness/fixtures'
 import { MP4_VIDEO, WEBM_VIDEO, answerVeniceJob, silentWav, tempClipTag } from './harness/media'
 import { expectSendRefused, startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import { answerHeld, requestForm, type MockProvider } from './harness/mockServer'
+import { changeParameterField, closePopup, openPopup, popupOpen, popupView, type ParameterRow } from './harness/parameterPopup'
 import type { E2EBrowser } from './harness/session'
 import { newTab, openSeededConversation, pickModel, submit, waitForThread } from './harness/thread'
 
@@ -14,7 +16,9 @@ import { newTab, openSeededConversation, pickModel, submit, waitForThread } from
 // - a transcription model gets the audio clip that the message names as
 //   the file of a multipart form, and the reply's text is the transcript;
 // - the voice changer gets the clip and its voice as a multipart form, and
-//   its job's clip is the reply;
+//   its job's clip is the reply; the voice can be an id that the user
+//   types in the popup ("Other…"), as the list of the model does not hold
+//   the voices of the user's account;
 // - a video-to-video model gets the video clip as `video_url`, and its
 //   job's clip is the reply;
 // - a message with no clip gets an error toast that tells what to do, and
@@ -45,6 +49,7 @@ const MODEL_LIST = {
         voice_changer: true,
         voices: ['Aria', 'Roger'],
         default_voice: 'Aria',
+        supports_custom_voice_id: true,
         supports_background_noise_removal: true,
         accepted_audio_formats: ['mp3', 'wav', 'ogg', 'mp4', 'aac'],
         max_source_audio_duration_seconds: 300,
@@ -106,6 +111,8 @@ describe('models that change or write down a clip', () => {
 
   afterEach(async (ctx) => {
     await screenshotOnFailure(browser, ctx)
+    // A test that fails can leave the popup open.
+    if (await popupOpen(browser)) await closePopup(browser)
     await setup.mock.dropOpenReplies(browser)
   })
 
@@ -153,6 +160,47 @@ describe('models that change or write down a clip', () => {
     const reply = await answerVeniceJob(setup, queue, { retrievePath: VOICE_RETRIEVE_PATH, modelId: VOICE.id, queueId: 'job-1', clip: { type: 'audio/wav', bytes: silentWav(2) }, replyIndex: 3 })
 
     expect(reply).toMatch(/^<dez:audio id="b" type="audio\/wav" src="[^"]+\.wav" expires="[^"]+" job="job-1"\/>$/)
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('sends the voice id that the user types for "Other…" to the voice changer, shows it again in the popup, and resets it', async () => {
+    const ownVoice = 'laTmoAT4stwoPzthxjZT'
+    const listed: ParameterRow = { name: 'voice', label: 'Voice', options: ['Aria', 'Roger', 'Other…'], picked: 'Aria' }
+    const typed: ParameterRow = { ...listed, picked: 'Other…', text: ownVoice }
+    const voiceRow = async () => (await popupView(browser)).rows.find((row) => row.name === 'voice')
+    const storedParameters = async () => (await readAppState(setup.app.home))?.modelParameters?.[`${CLIPS.id}/${VOICE.id}`] ?? null
+    const beat = await tempClipTag(setup.app.home, 'audio', 'a', 'own-voice.wav', BEAT)
+    await openClip('own-voice', beat, '@a', VOICE.name)
+    await openPopup(browser)
+    await waitForValue(browser, 'voice row with the default', voiceRow, listed)
+
+    // "Other…" opens the text field, and the request still gets the default
+    // voice until a text comes.
+    await changeParameterField(browser, 'voice', 'Other…', 'option')
+    await waitForValue(browser, 'empty text field', voiceRow, { ...typed, text: '' })
+    expect(await storedParameters()).toBeNull()
+    await changeParameterField(browser, 'voice', ` ${ownVoice} `, 'text')
+    await waitForValue(browser, 'voice row with the id', voiceRow, typed)
+    await waitForValue(browser, 'stored voice', storedParameters, { voice: ownVoice })
+    await closePopup(browser)
+
+    await submit(browser, '')
+    const queue = await takeRequest(setup, VOICE_QUEUE_PATH)
+    expect(await requestForm(queue)).toStrictEqual([
+      { name: 'model', value: VOICE.id },
+      { name: 'voice', value: ownVoice },
+      { name: 'file', fileName: 'clip.wav', type: 'audio/wav', bytes: BEAT },
+    ])
+    await answerVeniceJob(setup, queue, { retrievePath: VOICE_RETRIEVE_PATH, modelId: VOICE.id, queueId: 'job-1', clip: { type: 'audio/wav', bytes: silentWav(2) }, replyIndex: 3 })
+
+    // A new popup shows the id, and a reset brings the default voice back
+    // for the other tests.
+    await openPopup(browser)
+    await waitForValue(browser, 'voice row of the new popup', voiceRow, typed)
+    await click(browser, '.provider-settings-reset')
+    await waitForValue(browser, 'voice row after the reset', voiceRow, listed)
+    await waitForValue(browser, 'stored values after the reset', storedParameters, null)
+    await closePopup(browser)
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 
