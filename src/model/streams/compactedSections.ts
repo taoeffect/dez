@@ -40,8 +40,9 @@ import { contextImageCost, type PictureBudget } from './pictureBudget'
 // a `show` asset goes as pixels (an image as it is, a clip as the picture
 // of the tag), and a `keep` asset as text only, which its kept mark tells
 // (`IMAGE_KEPT_KEY`, `MEDIA_KEPT_ATTRIBUTE`). The images of `U0` and `U1`
-// are a part of the user's words, so they go as pixels by themselves, and
-// a decision changes nothing for them.
+// are a part of the user's words, so they go as pixels by themselves,
+// within the limits of step 1 below, and a decision changes nothing for
+// them.
 //
 // Pictures are costly, so they have a budget. This module builds the
 // sections, asks the request builder for the compaction message, and

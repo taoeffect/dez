@@ -261,16 +261,17 @@ function onOverlayClick(event: MouseEvent) {
               <button type="button" class="help-link" @click="page = 'general'">General</button>
               page), the assets of the earlier messages and replies stay assets of the conversation,
               with their ids, so you and the model can still name them. Some of them show in the
-              notes. The others are in the Compaction chip at the top of the conversation: click it
-              to see them, and the pictures that the model has in view.
+              notes: the model still sees these, a clip as a picture of its frames or its sound.
+              The others are in the Compaction chip at the top of the conversation: click it to
+              see them, and the pictures that the model has in view.
             </p>
             <p>
               From the second compaction on, the model can drop an asset that a model or a Dez tool
               made and that the work no longer needs. It cannot drop an asset of yours, an asset
-              that is newer than the compaction before, or an asset that your first or newest
-              message names. A dropped asset leaves the conversation. Dez deletes the file of a
-              dropped intermediate asset at once. The file of any other dropped asset stays until
-              you click Delete Unused Files.
+              that is newer than the compaction before, an asset that a job still uses, or an asset
+              that the notes or your first or newest message name. A dropped asset leaves the
+              conversation. Dez deletes the file of a dropped intermediate asset at once. The file
+              of any other dropped asset stays until you click Delete Unused Files.
             </p>
 
             <h3>Where the files are</h3>

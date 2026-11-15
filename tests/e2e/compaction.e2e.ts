@@ -51,7 +51,8 @@ import { hiddenAssetNotes, hiddenPart, pressToolChip, toolChips, toolPanelPictur
 //   more user message. The bottom bar shows "Compacting…" meanwhile.
 // - The notes of the answer take the place of the conversation, in the
 //   tab, in the editor, and in the file, and the reply goes on: its next
-//   request holds only the notes and the kept messages of the user.
+//   request holds the notes, the images and pictures that go with them,
+//   and the kept messages of the user.
 // - A compaction request that fails two times ends the reply with an
 //   error toast, and a stop ends it with none. Both keep the
 //   conversation.

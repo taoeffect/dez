@@ -48,7 +48,8 @@ export interface PictureBudget {
   pictures: number
 }
 
-/** The budget of a reply that shows no picture any more. */
+/** Nothing: the cost of no picture (`totalCost`), and a budget that no
+ *  picture fits in. */
 export const NO_PICTURE_BUDGET: PictureBudget = { tokens: 0, bytes: 0, pictures: 0 }
 
 /** What the pictures of a tool call can still cost
@@ -63,7 +64,8 @@ export interface CallPictureBudget {
   roundPictures: number
 }
 
-/** The budget of a call of a reply that shows no picture any more. */
+/** The budget of a call that shows no picture: its model reads no images,
+ *  or its tool round was stopped. */
 export const NO_CALL_PICTURE_BUDGET: CallPictureBudget = { left: NO_PICTURE_BUDGET, roundPictures: 0 }
 
 /** What the picture limits read of a model. */

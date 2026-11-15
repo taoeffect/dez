@@ -60,9 +60,9 @@ export interface NewPicture {
 export const SHOWN_PICTURE_GONE_NOTE = 'Dez no longer has this picture: its file is gone. To see it again, call asset_view again.'
 
 /** What a request holds in place of a picture that is over an image limit
- *  of its model (`takesPart`, streams/messages.ts), after the label of the
- *  picture. */
-export const SHOWN_PICTURE_OVER_LIMIT_NOTE = 'Dez did not send this picture: this request already holds as many images as its model takes.'
+ *  of its model, the one of the request or the one of one message
+ *  (`takesPart`, streams/messages.ts), after the label of the picture. */
+export const SHOWN_PICTURE_OVER_LIMIT_NOTE = 'Dez did not send this picture: this request, or this message of it, already holds as many images as its model takes.'
 
 /** The folder of the copies, relative to the app folder. */
 export const SHOWN_PICTURE_FOLDER = 'assets/generated/views'
