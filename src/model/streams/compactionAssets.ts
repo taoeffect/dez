@@ -142,9 +142,14 @@ export function assetTableText(assets: readonly CompactionAsset[]): string {
 }
 
 /** The ids of the assets that the open jobs of a reply take as inputs: the
- *  `@id` mentions in the arguments of the tool blocks of `replyText` (the
+ *  `@id` mentions in the results of the tool blocks of `replyText` (the
  *  text of the reply's section) that started a job of `jobs` that still
  *  runs, or whose result no `jobs_wait` gave yet.
+ *
+ *  The result, not the arguments of the call: the start result names each
+ *  input of the job as `@id` (`invocationInputsText`, `videoInputsText`),
+ *  also when the call named it with a bare id (`assetIdWords` takes `c`
+ *  and `@c`, as in the `clips` of `video join_clips`).
  *
  *  After a compaction in the reply, the blocks of its jobs are gone. So a
  *  second compaction of the same reply does not know the inputs of a job
@@ -156,10 +161,7 @@ export function openJobInputs(replyText: string, jobs: readonly JobInfo[]): Set<
   for (const block of findToolBlocks(replyText)) {
     const started = startedJob(block.result)
     if (started === null || !open.has(started.id)) continue
-    for (const value of Object.values(block.arguments)) {
-      if (typeof value !== 'string') continue
-      for (const mention of findAssetMentions(value)) ids.add(mention.id)
-    }
+    for (const mention of findAssetMentions(block.result)) ids.add(mention.id)
   }
   return ids
 }

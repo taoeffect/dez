@@ -3,7 +3,9 @@
 // share; the reference of an image with an id; a compaction tag and an
 // origin of its notes; and the start of a JPEG file with no picture data,
 // which the model tests and the controller tests share.
+import type { PromptInput } from '../streams/mediaRequest'
 import { jobStartedText } from '../tools/jobs'
+import { invocationInputsText } from '../tools/modelInvoke'
 import { compactionTagText } from './compaction'
 import { IMAGE_HIDDEN_KEY, IMAGE_TOOL_KEY, imageMarkdown, imageReferenceText } from './images'
 import { MEDIA_HIDDEN_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE, mediaTagText, type MediaTagKind } from './mediaTags'
@@ -58,11 +60,15 @@ interface InvokeBlockOptions {
   prompt?: string
   /** Whether the call asks to hide what its job makes; true unless given. */
   intermediate?: boolean
+  /** The inputs that the result names after the start text, as the runner
+   *  writes them (`invocationInputsText`); no such line unless given. */
+  inputs?: readonly PromptInput[]
 }
 
 /** The block of a `model_invoke` call that started the job `jobId`. */
-export function invokeBlock(jobId: string, { number = 1, id = `call_${number}`, prompt = 'A cat', intermediate = true }: InvokeBlockOptions = {}): string {
-  return toolBlockText({ id, name: 'model_invoke', status: 'success', arguments: { model: 'studio/paint', prompt, ...(intermediate && { is_intermediate: true }) }, result: jobStartedText(jobId, number) })
+export function invokeBlock(jobId: string, { number = 1, id = `call_${number}`, prompt = 'A cat', intermediate = true, inputs }: InvokeBlockOptions = {}): string {
+  const result = inputs === undefined ? jobStartedText(jobId, number) : `${jobStartedText(jobId, number)}\n${invocationInputsText(inputs)}`
+  return toolBlockText({ id, name: 'model_invoke', status: 'success', arguments: { model: 'studio/paint', prompt, ...(intermediate && { is_intermediate: true }) }, result })
 }
 
 /** The block of a `jobs_wait` call with the result text `result`. */

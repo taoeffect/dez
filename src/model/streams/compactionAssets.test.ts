@@ -4,8 +4,10 @@ import { compactionNotesText } from '../chat/compactionNotes'
 import { IMAGE_MADE_BY_KEY, IMAGE_TOOL_KEY, imageMarkdown } from '../chat/images'
 import { mediaTagText } from '../chat/mediaTags'
 import { COMPACTION_TAG, FOX_ORIGIN, HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, idImage, invokeBlock } from '../chat/testing'
-import type { JobInfo, JobStatus } from '../tools/jobs'
-import { RED, SKY, SONG } from '../tools/testing'
+import { toolBlockText } from '../chat/toolBlocks'
+import { jobStartedText, type JobInfo, type JobStatus } from '../tools/jobs'
+import { CONVERSATION, RED, SKY, SONG } from '../tools/testing'
+import { joinClipsCall, videoInputsText } from '../tools/videoTool'
 import {
   assetDecisions,
   assetTableText,
@@ -177,25 +179,36 @@ describe('assetTableText', () => {
 })
 
 describe('openJobInputs', () => {
+  const images = (...ids: string[]) => ids.map((id) => ({ id, kind: 'image' as const }))
   const REPLY = [
     'Making the scenes.',
-    invokeBlock('j-aaaa', { number: 1, prompt: 'Make @a run to @b', intermediate: false }),
-    invokeBlock('j-bbbb', { number: 2, prompt: 'Make @c jump', intermediate: false }),
-    invokeBlock('j-cccc', { number: 3, prompt: 'Make @d swim', intermediate: false }),
-    invokeBlock('j-dddd', { number: 4, prompt: 'Make @e fly', intermediate: false }),
+    invokeBlock('j-aaaa', { number: 1, prompt: 'Make @a run to @b', intermediate: false, inputs: images('a', 'b') }),
+    invokeBlock('j-bbbb', { number: 2, prompt: 'Make @c jump', intermediate: false, inputs: images('c') }),
+    invokeBlock('j-cccc', { number: 3, prompt: 'Make @d swim', intermediate: false, inputs: images('d') }),
+    invokeBlock('j-dddd', { number: 4, prompt: 'Make @e fly', intermediate: false, inputs: images('e') }),
   ].join('\n\n')
 
   function job(id: string, status: JobStatus, delivered = false): JobInfo {
     return { id, tool: 'model_invoke', status, delivered, elapsedMs: 1000, state: '', call: { number: 1, label: '' } }
   }
 
-  it('takes the mentions of the call of a job that runs, and of an ended job whose result no jobs_wait gave', () => {
+  it('takes the inputs of a job that runs, and of an ended job whose result no jobs_wait gave', () => {
     expect(openJobInputs(REPLY, [job('j-aaaa', 'running'), job('j-bbbb', 'finished')])).toStrictEqual(new Set(['a', 'b', 'c']))
   })
 
-  it('takes no mention of a job whose result jobs_wait gave, of a stopped job, or of a job that the list does not hold', () => {
+  it('takes no input of a job whose result jobs_wait gave, of a stopped job, or of a job that the list does not hold', () => {
     expect(openJobInputs(REPLY, [job('j-aaaa', 'running'), job('j-bbbb', 'finished', true), job('j-cccc', 'stopped')])).toStrictEqual(new Set(['a', 'b']))
     expect(openJobInputs(REPLY, [])).toStrictEqual(new Set())
+  })
+
+  // `join_clips` takes ids with no `@`, so only the start result, which
+  // the runner writes from the inputs of the job, names its clips as `@c`.
+  it('takes the clips of a join whose call names them with no @', () => {
+    const parameters = { clips: 'c d' }
+    const result = `${jobStartedText('j-aaaa', 1)}\n${videoInputsText(joinClipsCall(parameters, CONVERSATION).inputs)}`
+    const join = toolBlockText({ id: 'call_1', name: 'video', status: 'success', arguments: { command: 'join_clips', parameters: JSON.stringify(parameters) }, result })
+
+    expect(openJobInputs(join, [job('j-aaaa', 'running')])).toStrictEqual(new Set(['c', 'd']))
   })
 })
 
