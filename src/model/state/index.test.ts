@@ -590,17 +590,20 @@ describe('dez.model/tabs/compact', () => {
     expect(numbers()).toStrictEqual(expected)
   })
 
-  it('changes nothing for a missing tab, and for a reply whose section is gone', () => {
+  it('changes nothing for a missing tab, for a result with no reply section, and for a tab whose reply section is gone', () => {
     const tab = conversation()
     sbp('dez.model/tabs/countRequestContext', tab.id, model, 150_000)
     const before = tabNow(tab.id)
 
     expect(compact('missing', compacted(), 1000)).toBe(false)
-    // The user merged the reply's section into the one before.
-    expect(compact(tab.id, compacted(), 1000, 'gone')).toBe(false)
     expect(compact(tab.id, compacted().slice(0, 3), 1000)).toBe(false)
-
     expect(tabNow(tab.id)).toStrictEqual(before)
+
+    // The user merged the reply's section into the one before.
+    sbp('dez.model/tabs/replaceSections', tab.id, before.sections.slice(0, -1))
+    const merged = tabNow(tab.id)
+    expect(compact(tab.id, compacted(), 1000)).toBe(false)
+    expect(tabNow(tab.id)).toStrictEqual(merged)
   })
 })
 
