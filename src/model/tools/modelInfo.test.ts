@@ -517,8 +517,8 @@ describe('modelCost', () => {
   it('gives the list price under a name that tells its unit, with its note', () => {
     const cost = (price: ModelInfo['price']) => modelCost(OPENROUTER, { ...GEMINI, price }, null)
     expect(cost({ unit: 'token', input: 2, output: 12 })).toStrictEqual({ usdPer1MInputTokens: 2, usdPer1MOutputTokens: 12 })
-    expect(cost({ unit: 'token', input: 2, output: 12, cachedInput: 0.2, note: 'over 200k tokens: more' }))
-      .toStrictEqual({ usdPer1MInputTokens: 2, usdPer1MOutputTokens: 12, usdPer1MCachedInputTokens: 0.2, note: 'over 200k tokens: more' })
+    expect(cost({ unit: 'token', input: 2, output: 12, cachedInput: 0.2, cacheWrite: 2.5, note: 'over 200k tokens: more' }))
+      .toStrictEqual({ usdPer1MInputTokens: 2, usdPer1MOutputTokens: 12, usdPer1MCachedInputTokens: 0.2, usdPer1MCacheWriteTokens: 2.5, note: 'over 200k tokens: more' })
     expect(cost({ unit: 'character', usd: 30 })).toStrictEqual({ usdPer1MCharacters: 30, usdPer1000Characters: 0.03 })
     expect(cost({ unit: 'second', usd: 0.006 })).toStrictEqual({ usdPerSecond: 0.006 })
     expect(cost({ unit: 'image', usd: 0.04, note: 'at 1024x1024' })).toStrictEqual({ usdPerImage: 0.04, note: 'at 1024x1024' })

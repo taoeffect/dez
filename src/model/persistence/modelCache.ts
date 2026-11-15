@@ -122,7 +122,7 @@ const priceNoteSchema = z.string().min(1).optional()
 
 // ModelPrice (src/model/providers/modelPrices.ts).
 const modelPriceSchema = z.union([
-  z.object({ unit: z.literal('token'), input: priceNumberSchema, output: priceNumberSchema, cachedInput: priceNumberSchema.optional(), note: priceNoteSchema }),
+  z.object({ unit: z.literal('token'), input: priceNumberSchema, output: priceNumberSchema, cachedInput: priceNumberSchema.optional(), cacheWrite: priceNumberSchema.optional(), note: priceNoteSchema }),
   z.object({ unit: z.enum(SINGLE_PRICE_UNITS), usd: priceNumberSchema, note: priceNoteSchema }),
 ])
 

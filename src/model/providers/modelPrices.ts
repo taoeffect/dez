@@ -15,8 +15,10 @@ export const PRICE_UNITS = ['token', ...SINGLE_PRICE_UNITS] as const
 
 // The price of one request unit of a model, in USD, from the provider's
 // model list (`ModelInfo.price`):
-// - `token`: per 1M input tokens, per 1M output tokens, and per 1M input
-//   tokens that the provider's prompt cache gives, when it tells that.
+// - `token`: per 1M input tokens, per 1M output tokens, and, when the list
+//   tells them, per 1M input tokens that the provider's prompt cache gives
+//   (`cachedInput`) and per 1M input tokens that a request puts into that
+//   cache (`cacheWrite`).
 // - `character`: per 1M characters of the request's text (speech).
 // - `second`: per second of audio that the model makes or reads.
 // - `image`: per image that the model makes.
@@ -25,7 +27,7 @@ export const PRICE_UNITS = ['token', ...SINGLE_PRICE_UNITS] as const
 // `note` tells the parameter values or the tier of the price, or that some
 // requests have another price. Never empty.
 export type ModelPrice =
-  | { unit: 'token', input: number, output: number, cachedInput?: number, note?: string }
+  | { unit: 'token', input: number, output: number, cachedInput?: number, cacheWrite?: number, note?: string }
   | { unit: typeof SINGLE_PRICE_UNITS[number], usd: number, note?: string }
 
 // A price of a list: a number, or a text of a number (OpenRouter gives its
@@ -154,6 +156,7 @@ export function modelTokenPrice(entry: Record<string, unknown>, config: Provider
   const perMillion = (usd: number): number => roundedPrice(usd * 1_000_000 / config.perTokens)
   const pathPrice = (path: string | undefined) => path === undefined ? undefined : priceNumber(valueAtPath(entry, path))
   const cachedInput = pathPrice(config.cachedInput)
+  const cacheWrite = pathPrice(config.cacheWrite)
   const mediaPrices = { image: pathPrice(config.imageOutput), audio: pathPrice(config.audioOutput) }
   const unpricedMedia = (['image', 'audio'] as const).some((media) => outputs.includes(media) && mediaPrices[media] === undefined)
   if (input === 0 && output === 0 && unpricedMedia) return undefined
@@ -167,6 +170,7 @@ export function modelTokenPrice(entry: Record<string, unknown>, config: Provider
     input: perMillion(input),
     output: perMillion(output),
     ...(cachedInput !== undefined && { cachedInput: perMillion(cachedInput) }),
+    ...(cacheWrite !== undefined && { cacheWrite: perMillion(cacheWrite) }),
     ...(notes.length > 0 && { note: notes.join('; ') }),
   }
 }

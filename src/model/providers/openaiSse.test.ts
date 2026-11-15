@@ -446,6 +446,21 @@ describe('OpenAiStreamParser usage', () => {
     expect(end.usage).toStrictEqual({ inputTokens: 1200, outputTokens: 5, cachedInputTokens: 1024, providerCost: 2.4e-7 })
   })
 
+  // The two names of the docs: OpenRouter's `cache_write_tokens` and
+  // Venice's `cache_creation_input_tokens`.
+  it.each([
+    ['cache_write_tokens', { cached_tokens: 10938, cache_write_tokens: 31 }],
+    ['cache_creation_input_tokens', { cached_tokens: 10938, cache_creation_input_tokens: 31 }],
+  ])('reads the input tokens that went into the cache from %s', (_name, details) => {
+    const { end } = run([
+      chunk({ content: 'Done.' }, 'stop'),
+      JSON.stringify({ choices: [], usage: { prompt_tokens: 11031, completion_tokens: 60, prompt_tokens_details: details } }),
+      '[DONE]',
+    ])
+
+    expect(end.usage).toStrictEqual({ inputTokens: 11031, outputTokens: 60, cachedInputTokens: 10938, cacheWriteTokens: 31 })
+  })
+
   it('takes the last counts of a server that sends them on every chunk', () => {
     const counted = (content: string, outputTokens: number, finishReason: string | null = null) => JSON.stringify({
       choices: [{ index: 0, delta: { content }, finish_reason: finishReason }],

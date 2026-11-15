@@ -252,18 +252,21 @@ export const providerConfigSchema = z.object({
   // `model_list` and `model_info` show it as the model's release date.
   modelReleased: z.object({ path: modelEntryPathSchema, format: z.enum(MODEL_RELEASED_FORMATS) }).optional(),
   // Where a `/models` entry holds the token prices of a chat model
-  // (modelPrices.ts): the input, output, and cached input price, each a
-  // number or a text of a number, in USD per `perTokens` tokens (1 for a
-  // price per token, 1000000 for a price per 1M tokens). `otherRates`:
-  // where the entry tells other rates of some requests (a long prompt, a
-  // time of day), so that the price is only the base rate.
-  // `imageOutput` and `audioOutput`: where it holds the price of the image
-  // and the audio tokens that a chat model makes. `model_list` and
-  // `model_info` show the price.
+  // (modelPrices.ts): the input, output, cached input, and cache write
+  // price, each a number or a text of a number, in USD per `perTokens`
+  // tokens (1 for a price per token, 1000000 for a price per 1M tokens).
+  // `cacheWrite` is the price of the input tokens that a request puts into
+  // the prompt cache for 5 minutes, the lifetime of Dez's cache marks
+  // (apiFormats.ts). `otherRates`: where the entry tells other rates of
+  // some requests (a long prompt, a time of day), so that the price is only
+  // the base rate. `imageOutput` and `audioOutput`: where it holds the
+  // price of the image and the audio tokens that a chat model makes.
+  // `model_list` and `model_info` show the price.
   modelTokenPrices: z.object({
     input: modelEntryPathSchema,
     output: modelEntryPathSchema,
     cachedInput: modelEntryPathSchema.optional(),
+    cacheWrite: modelEntryPathSchema.optional(),
     perTokens: z.number().positive(),
     otherRates: modelEntryPathSchema.optional(),
     imageOutput: modelEntryPathSchema.optional(),
@@ -295,7 +298,10 @@ export const providerConfigSchema = z.object({
   promptCacheKey: z.boolean().optional(),
   // A fixed part of every chat request body, merged right after the API
   // format's body and before the settings and the thinking body, so those can
-  // add keys to the same objects.
+  // add keys to the same objects. A server that tells the token counts of a
+  // stream only when the request asks for them gets its ask here
+  // (`stream_options: { include_usage: true }`): no format sends that field
+  // by itself, as a server that does not know it can refuse the request.
   requestBody: requestBodyPartSchema.optional(),
   // Merged into the body of a chat request to a model whose known outputs
   // hold `image` (ModelInfo.outputs), right after `requestBody`: the part

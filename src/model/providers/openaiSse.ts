@@ -232,9 +232,13 @@ function chunkCost(usage: Record<string, unknown> | undefined, cost: unknown): n
 }
 
 // The usage report of one chunk, or undefined for a chunk with no usage
-// and no cost (most chunks). `prompt_tokens` counts the cached input
-// tokens too, and `prompt_tokens_details.cached_tokens` tells how many
-// they are.
+// and no cost (most chunks). `prompt_tokens` counts every input token, and
+// `prompt_tokens_details` tells how many of them the prompt cache gave
+// (`cached_tokens`) and how many went into it. Servers differ in the name
+// of that last count: OpenRouter's docs name `cache_write_tokens`, and
+// Venice's `cache_creation_input_tokens`.
+// https://openrouter.ai/docs/guides/best-practices/prompt-caching
+// https://docs.venice.ai/guides/features/prompt-caching
 function chunkUsage(chunk: OpenAiChunk): ChatUsage | undefined {
   if (!isRecord(chunk.usage) && !isRecord(chunk.cost)) return undefined
   const usage = isRecord(chunk.usage) ? chunk.usage : undefined
@@ -243,6 +247,7 @@ function chunkUsage(chunk: OpenAiChunk): ChatUsage | undefined {
     inputTokens: usageNumber(usage?.prompt_tokens),
     outputTokens: usageNumber(usage?.completion_tokens),
     cachedInputTokens: usageNumber(details?.cached_tokens),
+    cacheWriteTokens: usageNumber(details?.cache_write_tokens) ?? usageNumber(details?.cache_creation_input_tokens),
     providerCost: chunkCost(usage, chunk.cost),
   }
 }

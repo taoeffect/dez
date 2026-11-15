@@ -179,7 +179,7 @@ describe('AnthropicStreamParser usage', () => {
   const endCounts = (usage: Record<string, number>) => event({ type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage })
   const answer = [textStart(0), textDelta(0, 'Hi.'), stop(0)]
 
-  it('counts the cached input tokens and the ones that went into the cache as input, and takes the end counts', () => {
+  it('counts the cached input tokens and the ones that went into the cache as input, tells each of them, and takes the end counts', () => {
     const { end } = run([
       messageStart({ input_tokens: 12, cache_creation_input_tokens: 300, cache_read_input_tokens: 2000, output_tokens: 1 }),
       ...answer,
@@ -187,7 +187,7 @@ describe('AnthropicStreamParser usage', () => {
       messageStop,
     ])
 
-    expect(end.usage).toStrictEqual({ inputTokens: 2312, outputTokens: 40, cachedInputTokens: 2000 })
+    expect(end.usage).toStrictEqual({ inputTokens: 2312, outputTokens: 40, cachedInputTokens: 2000, cacheWriteTokens: 300 })
   })
 
   it('gives no usage from a stream that was cut off, as its counts are too low', () => {

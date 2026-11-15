@@ -190,7 +190,7 @@ describe('provider config schema', () => {
       },
       modelReadableName: { path: 'model_spec.name' },
       modelReleased: { path: 'meta.created_at', format: 'rfc3339' },
-      modelTokenPrices: { input: 'pricing.prompt', output: 'pricing.completion', cachedInput: 'pricing.cache', perTokens: 1_000_000, otherRates: 'pricing.extended', imageOutput: 'pricing.image' },
+      modelTokenPrices: { input: 'pricing.prompt', output: 'pricing.completion', cachedInput: 'pricing.cache', cacheWrite: 'pricing.cache_write', perTokens: 1_000_000, otherRates: 'pricing.extended', imageOutput: 'pricing.image' },
       imageOutputBody: { modalities: ['image', 'text'] },
       mediaApi: { format: 'openrouter', modelRequestBodies: [{ request: 'tts', modelIdPrefix: 'heygen/', body: { response_format: 'pcm' } }] },
     }

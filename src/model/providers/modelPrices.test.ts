@@ -11,16 +11,16 @@ describe('chat token prices', () => {
   const usd = (value: number) => ({ usd: value, diem: value })
   const TEXT = ['text'] as const
 
-  it('gives an OpenRouter price per token in USD per 1M tokens, with the cache read price', () => {
-    const entry = { id: 'm', pricing: { prompt: '0.0000025', completion: '0.00001', input_cache_read: '0.00000025', input_cache_write: '0.000003125' } }
+  it('gives an OpenRouter price per token in USD per 1M tokens, with the cache read and the cache write price', () => {
+    const entry = { id: 'm', pricing: { prompt: '0.0000025', completion: '0.00001', input_cache_read: '0.00000025', input_cache_write: '0.000003125', input_cache_write_1h: '0.000005' } }
 
-    expect(modelTokenPrice(entry, openRouter, TEXT)).toStrictEqual({ unit: 'token', input: 2.5, output: 10, cachedInput: 0.25 })
+    expect(modelTokenPrice(entry, openRouter, TEXT)).toStrictEqual({ unit: 'token', input: 2.5, output: 10, cachedInput: 0.25, cacheWrite: 3.125 })
   })
 
   it('gives a Venice price per 1M tokens as it is, and tells that a long prompt has another rate', () => {
-    const entry = { id: 'm', model_spec: { pricing: { input: usd(0.5), cache_input: usd(0.05), output: usd(2), extended: { context_token_threshold: 256000, input: usd(1.5), output: usd(6) } } } }
+    const entry = { id: 'm', model_spec: { pricing: { input: usd(0.5), cache_input: usd(0.05), cache_write: usd(0.625), output: usd(2), extended: { context_token_threshold: 256000, input: usd(1.5), output: usd(6) } } } }
 
-    expect(modelTokenPrice(entry, venice, TEXT)).toStrictEqual({ unit: 'token', input: 0.5, output: 2, cachedInput: 0.05, note: 'base rate, some requests have other rates' })
+    expect(modelTokenPrice(entry, venice, TEXT)).toStrictEqual({ unit: 'token', input: 0.5, output: 2, cachedInput: 0.05, cacheWrite: 0.625, note: 'base rate, some requests have other rates' })
   })
 
   it('tells the other rates of an OpenRouter model and the price of its output images, in one note', () => {

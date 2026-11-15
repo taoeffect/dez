@@ -62,11 +62,15 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // models (Lyria) have "0" for their tokens and no audio price: their
     // price per clip is only in their description (checked live,
     // 2026-11-14), so Dez knows none (modelPrices.ts).
+    // `input_cache_write` is the rate of a 5-minute cache write; a write
+    // that lives an hour has its own rate (`input_cache_write_1h`), which
+    // no request of Dez asks for (checked live, 2026-11-14).
     // https://openrouter.ai/docs/api/api-reference/models/list-all-models-and-their-properties
     modelTokenPrices: {
       input: 'pricing.prompt',
       output: 'pricing.completion',
       cachedInput: 'pricing.input_cache_read',
+      cacheWrite: 'pricing.input_cache_write',
       perTokens: 1,
       otherRates: 'pricing.overrides',
       imageOutput: 'pricing.image_output',
@@ -156,13 +160,16 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // "Release date on Venice API": the day that Venice added the model, at
     // midnight UTC (Unix seconds; checked live, 2026-11-12).
     modelReleased: { path: 'created', format: 'unixSeconds' },
-    // `{ usd, diem }` objects per 1M tokens; `extended`: the rates of a
-    // prompt over `context_token_threshold` tokens (checked live,
+    // `{ usd, diem }` objects per 1M tokens. Some models have `cache_write`,
+    // the rate of a 5-minute cache write, and for some of them it is under
+    // the input rate (chatRequestCost has the floor). `extended`: the rates
+    // of a prompt over `context_token_threshold` tokens (checked live,
     // 2026-11-14).
     modelTokenPrices: {
       input: 'model_spec.pricing.input.usd',
       output: 'model_spec.pricing.output.usd',
       cachedInput: 'model_spec.pricing.cache_input.usd',
+      cacheWrite: 'model_spec.pricing.cache_write.usd',
       perTokens: 1_000_000,
       otherRates: 'model_spec.pricing.extended',
     },

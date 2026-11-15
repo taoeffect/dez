@@ -190,7 +190,8 @@ export class AnthropicStreamParser implements SseStreamParser {
 
   // `input_tokens` counts only the input tokens after the last cache mark;
   // the tokens that the prompt cache gave and the ones that went into it
-  // are the other two counts.
+  // are the other two counts. `ChatUsage.inputTokens` is the sum of the
+  // three.
   private usage(): ChatUsage | undefined {
     const counts = this.usageCounts
     const input = counts.input_tokens
@@ -198,6 +199,7 @@ export class AnthropicStreamParser implements SseStreamParser {
       inputTokens: input === undefined ? undefined : input + (counts.cache_read_input_tokens ?? 0) + (counts.cache_creation_input_tokens ?? 0),
       outputTokens: counts.output_tokens,
       cachedInputTokens: counts.cache_read_input_tokens,
+      cacheWriteTokens: counts.cache_creation_input_tokens,
     })
   }
 

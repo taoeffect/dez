@@ -147,7 +147,7 @@ export interface ModelInfoFacts {
  *  that tells its unit, else why Dez has no price. */
 export type ModelInfoCost =
   | { usd: number, note?: string }
-  | { usdPer1MInputTokens: number, usdPer1MOutputTokens: number, usdPer1MCachedInputTokens?: number, note?: string }
+  | { usdPer1MInputTokens: number, usdPer1MOutputTokens: number, usdPer1MCachedInputTokens?: number, usdPer1MCacheWriteTokens?: number, note?: string }
   | { usdPer1MCharacters: number, usdPer1000Characters: number, note?: string }
   | { usdPerSecond: number, note?: string }
   | { usdPerImage: number, note?: string }
@@ -162,6 +162,7 @@ function listPriceCost(price: ModelPrice): ModelInfoCost {
         usdPer1MInputTokens: price.input,
         usdPer1MOutputTokens: price.output,
         ...(price.cachedInput !== undefined && { usdPer1MCachedInputTokens: price.cachedInput }),
+        ...(price.cacheWrite !== undefined && { usdPer1MCacheWriteTokens: price.cacheWrite }),
         ...note,
       }
     case 'character': return { usdPer1MCharacters: price.usd, usdPer1000Characters: roundedPrice(price.usd / 1000), ...note }
