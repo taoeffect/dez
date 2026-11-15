@@ -1,36 +1,22 @@
 import { describe, expect, it } from 'vitest'
-import { assetPlaces } from '../chat/assetOrigins'
-import { CARRIED_USER_ASSETS_LABEL, compactionTagText } from '../chat/compaction'
+import { CARRIED_USER_ASSETS_LABEL } from '../chat/compaction'
 import { compactionNotesText } from '../chat/compactionNotes'
-import { IMAGE_MADE_BY_KEY, IMAGE_TOOL_KEY, imageMarkdown, imageReferenceText } from '../chat/images'
+import { IMAGE_MADE_BY_KEY, IMAGE_TOOL_KEY, imageMarkdown } from '../chat/images'
 import { mediaTagText } from '../chat/mediaTags'
-import { HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage } from '../chat/testing'
-import { toolBlockText } from '../chat/toolBlocks'
-import type { Section } from '../chat/types'
-import { jobStartedText, type JobInfo, type JobStatus } from '../tools/jobs'
+import { COMPACTION_TAG, FOX_ORIGIN, HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, idImage, invokeBlock } from '../chat/testing'
+import type { JobInfo, JobStatus } from '../tools/jobs'
 import { RED, SKY, SONG } from '../tools/testing'
 import {
   assetDecisions,
   assetTableText,
   carriedAssetLines,
-  compactionAssets,
   compactionScope,
   keptUserTexts,
   openJobInputs,
   type CompactionAsset,
 } from './compactionAssets'
 import { MAX_ASSET_SENTENCE_LENGTH, type AnswerAsset, type AssetDecision, type CompactionAnswer } from './compactionRequest'
-import { conversationAssets } from './mediaRequest'
-import { reply, user } from './testing'
-
-const TAG = compactionTagText({ count: 1, lastId: 'e', pictures: [] })
-const FOX_ORIGIN = 'made by the model_invoke job 2 of its reply: "A red fox"'
-
-// The reference of the image `id` at `path`, with the kept mark of a
-// compaction when `kept`.
-function image(path: string, id: string, kept = false): string {
-  return imageReferenceText({ path, metadata: [{ key: 'id', value: id }] }, kept)
-}
+import { assetsOf, reply, user } from './testing'
 
 // The notes of a compaction that kept the image `a` of the user and the
 // image `b` that a job made.
@@ -40,14 +26,14 @@ const NOTES = compactionNotesText({
   nextSteps: '',
   assets: [
     { id: 'a', kind: 'image', facts: 'JPEG, 800x600, 120 KB', origin: 'from the user', sentence: 'The reference photo.', text: null },
-    { id: 'b', kind: 'image', facts: 'PNG, 1024x768, 1.2 MB', origin: FOX_ORIGIN, sentence: 'The fox frame of scene 1.', text: image(HIDDEN_IMAGE_PATH, 'b', true) },
+    { id: 'b', kind: 'image', facts: 'PNG, 1024x768, 1.2 MB', origin: FOX_ORIGIN, sentence: 'The fox frame of scene 1.', text: idImage(HIDDEN_IMAGE_PATH, 'b', true) },
   ],
   unnamed: [],
   jobs: [],
   cost: undefined,
 })
-const COMPACTION = reply('n', `${TAG}\n${NOTES}`)
-const CARRIED = user('u+', `${CARRIED_USER_ASSETS_LABEL}\n${image(RED, 'a', true)}`)
+const COMPACTION = reply('n', `${COMPACTION_TAG}\n${NOTES}`)
+const CARRIED = user('u+', `${CARRIED_USER_ASSETS_LABEL}\n${idImage(RED, 'a', true)}`)
 
 // The compaction message (the compaction section, the first kept message,
 // the carried image `a`, and the newest kept message, into which the user
@@ -58,28 +44,16 @@ const COMPACTED = [
   COMPACTION,
   user('u1', 'Make a fox.'),
   CARRIED,
-  user('u2', `Make it run like this:\n${image(SKY, 'e')}`),
+  user('u2', `Make it run like this:\n${idImage(SKY, 'e')}`),
   reply('r', `${hiddenImage('j-aaaa', 'c')}\n${hiddenClip('j-aaaa', 'd')}`),
 ]
 
 // The facts of the files. The ones of `b` are not the ones of its notes line.
 const FACTS = new Map([['b', 'PNG | 10x10 | 1 KB'], ['c', 'PNG | 512x512 | 300 KB'], ['d', 'WAV | 2.0 s | mono'], ['e', 'PNG | 640x480 | 80 KB']])
 
-// The compaction assets of every image and clip of `sections`.
-function assetsOf(sections: readonly Section[]): CompactionAsset[] {
-  const found = [...conversationAssets(sections).found.values()]
-  return compactionAssets(sections, found, assetPlaces(sections, found), FACTS)
-}
-
 // The `field` of each asset of `assets`, by id.
 function byId<K extends keyof CompactionAsset>(assets: readonly CompactionAsset[], field: K): Record<string, CompactionAsset[K]> {
   return Object.fromEntries(assets.map((asset) => [asset.asset.id, asset[field]]))
-}
-
-// The block of a `model_invoke` call with the prompt `prompt` that started
-// the job `jobId`, the job `number` of its reply.
-function startBlock(jobId: string, number: number, prompt: string): string {
-  return toolBlockText({ id: `call_${number}`, name: 'model_invoke', status: 'success', arguments: { model: 'studio/paint', prompt }, result: jobStartedText(jobId, number) })
 }
 
 describe('compactionScope', () => {
@@ -122,7 +96,7 @@ describe('carriedAssetLines', () => {
 
   it('gives no line in a conversation with no compaction section', () => {
     expect(carriedAssetLines([reply('n', NOTES), user('u1', 'Go on.')])).toStrictEqual(new Map())
-    expect(carriedAssetLines([user('n', `${TAG}\n${NOTES}`)])).toStrictEqual(new Map())
+    expect(carriedAssetLines([user('n', `${COMPACTION_TAG}\n${NOTES}`)])).toStrictEqual(new Map())
   })
 })
 
@@ -130,12 +104,12 @@ describe('compactionAssets', () => {
   // The image `a` and the audio clip `b` of the user, then a reply with the
   // intermediate image `c` and video clip `d` of a job, and the image `e`.
   const PLAIN = [
-    user('u1', `Make these move:\n${image(RED, 'a')}\n${mediaTagText(SONG)}`),
-    reply('r', `${hiddenImage('j-aaaa', 'c')}\n${hiddenClip('j-aaaa', 'd', 'video')}\n${image(HIDDEN_IMAGE_PATH, 'e')}`),
+    user('u1', `Make these move:\n${idImage(RED, 'a')}\n${mediaTagText(SONG)}`),
+    reply('r', `${hiddenImage('j-aaaa', 'c')}\n${hiddenClip('j-aaaa', 'd', 'video')}\n${idImage(HIDDEN_IMAGE_PATH, 'e')}`),
   ]
 
   it('tells the kind of each asset, whether it is from the user, and whether a call made it as a part of its work', () => {
-    const seen = Object.fromEntries(assetsOf(PLAIN).map(({ asset, kind, fromUser, intermediate }) => [asset.id, { kind, fromUser, intermediate }]))
+    const seen = Object.fromEntries(assetsOf(PLAIN, FACTS).map(({ asset, kind, fromUser, intermediate }) => [asset.id, { kind, fromUser, intermediate }]))
 
     expect(seen).toStrictEqual({
       a: { kind: 'image', fromUser: true, intermediate: false },
@@ -147,15 +121,15 @@ describe('compactionAssets', () => {
   })
 
   it('counts every asset as new in a conversation with no compaction', () => {
-    expect(byId(assetsOf(PLAIN), 'isNew')).toStrictEqual({ a: true, b: true, c: true, d: true, e: true })
+    expect(byId(assetsOf(PLAIN, FACTS), 'isNew')).toStrictEqual({ a: true, b: true, c: true, d: true, e: true })
   })
 
   it('counts an asset as earlier only when the notes of the compaction before have its line', () => {
-    expect(byId(assetsOf(COMPACTED), 'isNew')).toStrictEqual({ a: false, b: false, e: true, c: true, d: true })
+    expect(byId(assetsOf(COMPACTED, FACTS), 'isNew')).toStrictEqual({ a: false, b: false, e: true, c: true, d: true })
   })
 
   it('takes the facts of the files with no column mark, but the facts and the sentence of a notes line over them', () => {
-    const assets = assetsOf(COMPACTED)
+    const assets = assetsOf(COMPACTED, FACTS)
 
     expect(byId(assets, 'facts')).toStrictEqual({
       a: 'JPEG, 800x600, 120 KB',
@@ -169,7 +143,7 @@ describe('compactionAssets', () => {
 
   it('tells who made an asset with no column mark', () => {
     const made = imageMarkdown(HIDDEN_IMAGE_PATH, [{ key: 'id', value: 'b' }, { key: IMAGE_TOOL_KEY, value: 'model_invoke' }, { key: IMAGE_MADE_BY_KEY, value: 'j-aaaa' }])
-    const [asset] = assetsOf([user('u1', 'Make a fox.'), reply('r', `${startBlock('j-aaaa', 1, 'A fox | a hare')}\n\n${made}`)])
+    const [asset] = assetsOf([user('u1', 'Make a fox.'), reply('r', `${invokeBlock('j-aaaa', { prompt: 'A fox | a hare', intermediate: false })}\n\n${made}`)], FACTS)
 
     expect(asset.origin).not.toContain('|')
     expect(asset.origin).toContain('A fox')
@@ -179,7 +153,7 @@ describe('compactionAssets', () => {
 
 describe('assetTableText', () => {
   it('gives one row for each asset: its id, its kind, and whether it is from the user, intermediate, and new', () => {
-    const assets = assetsOf(COMPACTED)
+    const assets = assetsOf(COMPACTED, FACTS)
     const [, ...rows] = assetTableText(assets).split('\n')
     // The id, the kind, and the three columns after the facts and the origin.
     const marks = new Map(rows.map((row) => row.split(' | ')).map((cells) => [cells[0], [cells[1], ...cells.slice(4)]]))
@@ -205,10 +179,10 @@ describe('assetTableText', () => {
 describe('openJobInputs', () => {
   const REPLY = [
     'Making the scenes.',
-    startBlock('j-aaaa', 1, 'Make @a run to @b'),
-    startBlock('j-bbbb', 2, 'Make @c jump'),
-    startBlock('j-cccc', 3, 'Make @d swim'),
-    startBlock('j-dddd', 4, 'Make @e fly'),
+    invokeBlock('j-aaaa', { number: 1, prompt: 'Make @a run to @b', intermediate: false }),
+    invokeBlock('j-bbbb', { number: 2, prompt: 'Make @c jump', intermediate: false }),
+    invokeBlock('j-cccc', { number: 3, prompt: 'Make @d swim', intermediate: false }),
+    invokeBlock('j-dddd', { number: 4, prompt: 'Make @e fly', intermediate: false }),
   ].join('\n\n')
 
   function job(id: string, status: JobStatus, delivered = false): JobInfo {
@@ -231,7 +205,7 @@ describe('keptUserTexts', () => {
 
     expect(keptUserTexts(sections, compactionScope(sections, 'r'))).toStrictEqual([
       'Make a fox.',
-      `Make it run like this:\n${image(SKY, 'e')}`,
+      `Make it run like this:\n${idImage(SKY, 'e')}`,
       'Then use @b again.',
     ])
   })
@@ -246,7 +220,7 @@ describe('keptUserTexts', () => {
 describe('assetDecisions', () => {
   type Guards = Parameters<typeof assetDecisions>[2]
 
-  const ASSETS = assetsOf(COMPACTED)
+  const ASSETS = assetsOf(COMPACTED, FACTS)
   // The asset `id` of COMPACTED.
   const assetOf = (id: string): CompactionAsset => {
     const found = ASSETS.find((asset) => asset.asset.id === id)

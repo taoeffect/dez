@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { conversationAssets } from '../streams/mediaRequest'
 import { jobsWaitText, madeAssetText, type JobInfo } from '../tools/jobs'
 import { assetPlaces, type AssetPlace } from './assetOrigins'
-import { CARRIED_USER_ASSETS_LABEL, compactionTagText } from './compaction'
+import { CARRIED_USER_ASSETS_LABEL } from './compaction'
 import { compactionNotesText, type NotesAsset } from './compactionNotes'
 import { findImageReferences, IMAGE_MADE_BY_KEY, IMAGE_TOOL_KEY, imageMarkdown, imageReferenceText } from './images'
 import { MEDIA_MADE_BY_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE, mediaTagText } from './mediaTags'
-import { HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, invokeBlock, waitBlock } from './testing'
+import { COMPACTION_TAG, FOX_ORIGIN, HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, invokeBlock, waitBlock } from './testing'
 import { toolBlockText } from './toolBlocks'
 import type { ModelRef, Section } from './types'
 
@@ -118,14 +118,11 @@ describe('assetPlaces', () => {
 })
 
 describe('assetPlaces in a compacted conversation', () => {
-  const TAG = compactionTagText({ count: 1, lastId: 'e', pictures: [] })
-  const FOX_ORIGIN = 'made by the model_invoke job 2 of its reply: "A red fox"'
-
   // A compaction section whose notes hold the asset lines `assets` and the
   // job lines `jobs`, with `more` after them.
   function compaction(assets: NotesAsset[], jobs: JobInfo[] = [], more = ''): Section {
     const notes = compactionNotesText({ summary: 'A fox for the user.', requirements: '', nextSteps: '', assets, unnamed: [], jobs, cost: undefined })
-    return section('agent', `${TAG}\n${notes}${more}`, PAINTER)
+    return section('agent', `${COMPACTION_TAG}\n${notes}${more}`, PAINTER)
   }
 
   // `reference`, the text of one image reference, with the kept mark.

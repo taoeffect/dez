@@ -6,9 +6,10 @@ import type { JobOutcome, JobWork, MadeAsset } from './jobs'
 import type { AppFileEntry, AppFileRef, BundledToolEnd, BundledToolOutput, BundledToolRun } from './nativeTypes'
 
 // Shared helpers of the unit tests of the controller code that runs the
-// programs that Dez ships (videoTool.ts, audioTool.ts, and the tool calls
-// of tools.ts and stream.ts) and the jobs of a reply (jobs.ts): a stub of
-// the native side, and helpers for the work of a call or a job.
+// programs that Dez ships (videoTool.ts, audioTool.ts, the frame sheets of
+// compaction.ts, and the tool calls of tools.ts and stream.ts) and the jobs
+// of a reply (jobs.ts): a stub of the native side, the outputs of the
+// programs, and helpers for the work of a call or a job.
 //
 // An import of this module registers the stub selectors of the app
 // folders, the files, the downloads, and the program runs
@@ -207,4 +208,17 @@ export function writes(stream: BundledToolOutput['stream'], text: string, end: B
  *  output; null for a run that wrote none. */
 export function audioProgress(seconds: number | null): string {
   return `bitrate=1536.0kbits/s\nout_time_us=${seconds === null ? 'N/A' : Math.round(seconds * 1_000_000)}\nprogress=end\n`
+}
+
+/** A video stream of a probe output (`probeOutput`,
+ *  model/tools/testing.ts): 854 by 480 pixels, 24 frames a second. */
+export const H264_STREAM = { codec_name: 'h264', codec_type: 'video', width: 854, height: 480, avg_frame_rate: '24/1', r_frame_rate: '24/1' }
+
+/** The format part of the probe output of a clip of 5.04 s. */
+export const CLIP_FORMAT = { duration: '5.040000', size: '1250000' }
+
+/** The showinfo log lines that ffmpeg writes for the frames of a sheet at
+ *  `times`, in seconds. */
+export function showinfoLog(times: number[]): string {
+  return times.map((time, n) => `[Parsed_showinfo_1 @ 0x1] n:   ${n} pts:  ${n} pts_time:${time} duration: 512 fmt:yuv420p\n`).join('')
 }

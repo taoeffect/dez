@@ -40,6 +40,11 @@ const blocksReplay = (plan: string, prefixHash: string): ThinkingReplay => ({
   prefixHash,
 })
 
+// The parts of a picture that goes, and of one over an image limit
+// (`pictureParts`, messages.ts).
+const shown = (picture: ShownPicture) => [{ type: 'text', text: picture.label }, { type: 'picture', picture }]
+const note = (picture: ShownPicture) => [{ type: 'text', text: picture.label }, { type: 'text', text: SHOWN_PICTURE_OVER_LIMIT_NOTE }]
+
 describe('agentSectionMessages', () => {
   it('gives a section with no tool blocks one agent message, with or without tools', () => {
     const section = agent('Hello.\n\nBye.\n')
@@ -134,8 +139,6 @@ describe('agentSectionMessages', () => {
       toolBlockText({ id, name: 'asset_view', status: 'success', arguments: { assets: '@a' }, result: 'ok', pictures })
     // Two rounds: the first shows two pictures, the second one.
     const section = agent(`${view('call_1', [one, two])}\n\n${view('call_2', [three])}`)
-    const shown = (picture: ReturnType<typeof pictureOf>) => [{ type: 'text', text: picture.label }, { type: 'picture', picture }]
-    const note = (picture: ReturnType<typeof pictureOf>) => [{ type: 'text', text: picture.label }, { type: 'text', text: SHOWN_PICTURE_OVER_LIMIT_NOTE }]
     const pictureMessages = (images: ReturnType<typeof newRequestImages>) =>
       agentSectionMessages(section, model, true, images).flatMap((message) => (message.role === 'user' ? [message.content] : []))
 
@@ -166,9 +169,9 @@ describe('agentSectionMessages', () => {
     const pictures = [{ file: 'f1.png', label: `asset_view: the image at ${IMAGE}.` }]
     const text = toolBlockText({ id: 'call_1', name: 'asset_view', status: 'success', arguments: { assets: '@a' }, result: 'ok', pictures })
 
-    const [, , shown] = agentSectionMessages(agent(text), model, true, newRequestImages())
+    const [, , message] = agentSectionMessages(agent(text), model, true, newRequestImages())
 
-    expect(shown).toStrictEqual({ role: 'user', content: [{ type: 'text', text: 'asset_view: the image at image.' }, { type: 'picture', picture: pictures[0] }] })
+    expect(message).toStrictEqual({ role: 'user', content: [{ type: 'text', text: 'asset_view: the image at image.' }, { type: 'picture', picture: pictures[0] }] })
   })
 
   it('sends the model text without the escape of its tag text', () => {
@@ -916,8 +919,6 @@ describe('sectionsToStreamMessages: pictures that a tool showed', () => {
     user('u2', 'Look again.'),
     reply('a2', view('call_2', [second, third])),
   ]
-  const shown = (picture: ShownPicture) => [{ type: 'text', text: picture.label }, { type: 'picture', picture }]
-  const note = (picture: ShownPicture) => [{ type: 'text', text: picture.label }, { type: 'text', text: SHOWN_PICTURE_OVER_LIMIT_NOTE }]
   const sent = (options: Partial<Parameters<typeof sectionsToStreamMessages>[2]> = {}) =>
     sectionsToStreamMessages(sections, model, { sendImages: true, sendTools: true, ...options })
   // The messages of the conversation, with the parts `older` and `newer`

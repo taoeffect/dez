@@ -6,34 +6,33 @@ import { notesAssetLines } from '../model/chat/compactionNotes'
 import { sectionPlainText } from '../model/chat/content'
 import { withRequestCost, type ConversationCost } from '../model/chat/conversationCost'
 import type { ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
-import { imageMarkdown } from '../model/chat/images'
 import { findMediaTags, isKeptClip, mediaTagText } from '../model/chat/mediaTags'
 import { SHOWN_PICTURE_FOLDER } from '../model/chat/shownPictures'
-import { jpegHeader } from '../model/chat/testing'
+import { idImage, jpegHeader } from '../model/chat/testing'
 import type { Section } from '../model/chat/types'
 import type { ChatUsage } from '../model/providers/chatUsage'
 import type { ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers/streamTypes'
 import type { StreamMessage } from '../model/streams/types'
 import { model, reply, user } from '../model/streams/testing'
+import { probeOutput } from '../model/tools/testing'
 import type { ToolDefinition } from '../model/tools/types'
 import { ExplainedError } from '../utils/errorText'
 import { compactConversation, NO_COMPACTION_NOTES_TEXT, type Compaction, type CompactionInput } from './compaction'
 import type { RequestLogRow } from './diagnostics/requestLog'
-import { APP_DIR, CACHE_DIR, ENDED, failureOf, native, resetNative, STOP } from './testing'
+import { APP_DIR, CACHE_DIR, CLIP_FORMAT, ENDED, failureOf, FILE_ID, H264_STREAM, native, resetNative, showinfoLog, STOP } from './testing'
 // Side-effect import: registers the dez.model/* selectors.
 import '../model/state/index'
 
 const FOX = `${APP_DIR}/assets/images/fox.png`
 const DRAFT = `${APP_DIR}/assets/generated/images/draft.png`
 const SCENE = `${APP_DIR}/assets/generated/video/scene.mp4`
-const image = (path: string, id: string) => imageMarkdown(path, [{ key: 'id', value: id }])
 const SCENE_TAG = mediaTagText({ kind: 'video', id: 'c', type: 'video/mp4', src: SCENE, url: null, expires: null, other: [] })
 
 /** A conversation with the image `a` of the user, and the image `b` and
  *  the video clip `c` that the model made, in a reply (`r`) that runs. */
 const SECTIONS: Section[] = [
-  user('u1', `Make a fox film like ${image(FOX, 'a')}`),
-  reply('r1', `A draft:\n${image(DRAFT, 'b')}\n${SCENE_TAG}`),
+  user('u1', `Make a fox film like ${idImage(FOX, 'a')}`),
+  reply('r1', `A draft:\n${idImage(DRAFT, 'b')}\n${SCENE_TAG}`),
   user('u2', 'Make it longer.'),
   reply('r', 'I look at the film first.'),
 ]
@@ -43,7 +42,7 @@ const NOTES = '## Summary\nThe user wants a fox film.\n\n## Next steps\nMake the
 const USAGE: ChatUsage = { inputTokens: 900, outputTokens: 50 }
 // The frame sheet that ffmpeg makes of the clip `c`.
 const SHEET_JPEG = jpegHeader(968, 364)
-const SHEET_FILE = new RegExp(`^${SHOWN_PICTURE_FOLDER}/[0-9a-f-]{36}\\.jpg$`)
+const SHEET_FILE = new RegExp(`^${SHOWN_PICTURE_FOLDER}/${FILE_ID.source}\\.jpg$`)
 
 // The stub chat API: each request, and what the provider does with one (it
 // calls the callbacks of the request, as the answer comes). The stub image
@@ -131,12 +130,10 @@ beforeEach(() => {
   // The probe of the clip, then the frame sheet of three frames.
   native.program = async (run, onOutput) => {
     if (run.tool === 'dez-ffprobe') {
-      const streams = [{ codec_name: 'h264', codec_type: 'video', width: 854, height: 480, avg_frame_rate: '24/1', r_frame_rate: '24/1' }]
-      onOutput({ stream: 'stdout', text: JSON.stringify({ streams, format: { duration: '5.040000', size: '1250000' } }) })
+      onOutput({ stream: 'stdout', text: probeOutput([H264_STREAM], CLIP_FORMAT) })
       return ENDED
     }
-    const frames = [0.4167, 1.25, 2.0833].map((time, n) => `[Parsed_showinfo_1 @ 0x1] n:   ${n} pts:  ${n} pts_time:${time} duration: 512 fmt:yuv420p\n`)
-    onOutput({ stream: 'stderr', text: frames.join('') })
+    onOutput({ stream: 'stderr', text: showinfoLog([0.4167, 1.25, 2.0833]) })
     return ENDED
   }
   native.fileBytes = () => SHEET_JPEG
@@ -225,7 +222,7 @@ describe('compactConversation', () => {
   it('reads no file for the facts of an asset that the notes of the compaction before tell', async () => {
     const first = await compactConversation(compactionInput())
     const NEW = `${APP_DIR}/assets/generated/images/new.png`
-    const sections = [...first.sections.slice(0, 3), reply('r', `A new draft:\n${image(NEW, 'd')}`), user('u3', 'And now?'), reply('r2', '')]
+    const sections = [...first.sections.slice(0, 3), reply('r', `A new draft:\n${idImage(NEW, 'd')}`), user('u3', 'And now?'), reply('r2', '')]
     readImages = []
     native.runs = []
 

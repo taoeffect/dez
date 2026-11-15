@@ -16,7 +16,7 @@ describe('findHiddenAssets', () => {
   it('finds the image and the clip whose job a block of the section started, in text order', () => {
     const image = hiddenImage('j-aaaa')
     const clip = hiddenClip('j-bbbb')
-    const text = `${invoke('j-aaaa')}\n${invoke('j-bbbb', 'call_2')}\n\n${clip}\n\n${image}\n\nDone.`
+    const text = `${invoke('j-aaaa')}\n${invoke('j-bbbb', { id: 'call_2' })}\n\n${clip}\n\n${image}\n\nDone.`
 
     expect(found(text)).toStrictEqual([['j-bbbb', clip], ['j-aaaa', image]])
     expect(findHiddenAssets(text, findToolBlocks(text)).map((asset) => asset.kind)).toStrictEqual(['clip', 'image'])

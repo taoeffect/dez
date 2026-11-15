@@ -29,6 +29,13 @@ function pillLines(serialized: string): string[] {
   return serialized.split('\n').filter((line) => line.startsWith('<dez:pill'))
 }
 
+const headerLine = (text: string) => text.slice(0, text.indexOf('\n'))
+
+// The conversation of a file whose header ends with `part`.
+function parseWithHeaderPart(part: string): ConversationData {
+  return parseConversation('conversation', `<!-- title: Chat | model:  | created: 1 | ${part} -->\n<dez:pill type="user"/>\nhi\n`)
+}
+
 describe('conversation persistence format', () => {
   it('collapses duplicate leading user pills while preserving the later agent section', () => {
     const content = `<!-- title: Duplicate pills | model: provider/model | created: 123 -->
@@ -698,14 +705,13 @@ describe('conversation cost, edited flag, and counted context in the header', ()
     created_at: 1,
     ...fields,
   })
-  const firstLine = (text: string) => text.slice(0, text.indexOf('\n'))
 
   it('round-trips the cost and the edited flag, with no float noise and no unpriced part at 0', () => {
     const priced = conversation({ cost: { usd: 0.1 + 0.2, requests: 3, unpriced: 1 }, agentTextEdited: true })
     const tiny = conversation({ cost: { usd: 2.4e-7, requests: 1, unpriced: 0 } })
 
-    expect(firstLine(serializeConversation(priced))).toBe('<!-- title: Chat | model:  | created: 1 | cost: 0.3 | requests: 3 | unpriced: 1 | edited: yes -->')
-    expect(firstLine(serializeConversation(tiny))).toBe('<!-- title: Chat | model:  | created: 1 | cost: 2.4e-7 | requests: 1 -->')
+    expect(headerLine(serializeConversation(priced))).toBe('<!-- title: Chat | model:  | created: 1 | cost: 0.3 | requests: 3 | unpriced: 1 | edited: yes -->')
+    expect(headerLine(serializeConversation(tiny))).toBe('<!-- title: Chat | model:  | created: 1 | cost: 2.4e-7 | requests: 1 -->')
     expect(parseConversation('conversation', serializeConversation(priced))).toStrictEqual({ ...priced, cost: { usd: 0.3, requests: 3, unpriced: 1 } })
     expect(parseConversation('conversation', serializeConversation(tiny))).toStrictEqual(tiny)
   })
@@ -716,7 +722,7 @@ describe('conversation cost, edited flag, and counted context in the header', ()
     const data = conversation({})
     const serialized = serializeConversation(data)
 
-    expect(firstLine(serialized)).toBe('<!-- title: Chat | model:  | created: 1 -->')
+    expect(headerLine(serialized)).toBe('<!-- title: Chat | model:  | created: 1 -->')
     expect(parseConversation('conversation', serialized)).toStrictEqual(data)
   })
 
@@ -744,7 +750,7 @@ describe('conversation cost, edited flag, and counted context in the header', ()
       'cost: 1 | requests: 2 | edited: no',
     ]
 
-    const parsed = parts.map((part) => parseConversation('conversation', `<!-- title: Chat | model:  | created: 1 | ${part} -->\n<dez:pill type="user"/>\nhi\n`))
+    const parsed = parts.map(parseWithHeaderPart)
 
     expect(parsed.map((data) => 'cost' in data)).toEqual([...parts.slice(0, -1).map(() => false), true])
     expect(parsed.some((data) => 'agentTextEdited' in data)).toBe(false)
@@ -754,8 +760,8 @@ describe('conversation cost, edited flag, and counted context in the header', ()
     const counted = conversation({ context: { tokens: 81200, estimate: 90400 } })
     const all = conversation({ cost: { usd: 0.5, requests: 2, unpriced: 0 }, agentTextEdited: true, context: { tokens: 0, estimate: 0 } })
 
-    expect(firstLine(serializeConversation(counted))).toBe('<!-- title: Chat | model:  | created: 1 | context: 81200 | context-estimate: 90400 -->')
-    expect(firstLine(serializeConversation(all))).toBe('<!-- title: Chat | model:  | created: 1 | cost: 0.5 | requests: 2 | edited: yes | context: 0 | context-estimate: 0 -->')
+    expect(headerLine(serializeConversation(counted))).toBe('<!-- title: Chat | model:  | created: 1 | context: 81200 | context-estimate: 90400 -->')
+    expect(headerLine(serializeConversation(all))).toBe('<!-- title: Chat | model:  | created: 1 | cost: 0.5 | requests: 2 | edited: yes | context: 0 | context-estimate: 0 -->')
     expect(parseConversation('conversation', serializeConversation(counted))).toStrictEqual(counted)
     expect(parseConversation('conversation', serializeConversation(all))).toStrictEqual(all)
   })
@@ -776,7 +782,7 @@ describe('conversation cost, edited flag, and counted context in the header', ()
       'context-estimate: 7 | context: 5',
     ]
 
-    const parsed = parts.map((part) => parseConversation('conversation', `<!-- title: Chat | model:  | created: 1 | ${part} -->\n<dez:pill type="user"/>\nhi\n`))
+    const parsed = parts.map(parseWithHeaderPart)
 
     expect(parsed.map((data) => data.context)).toStrictEqual([...parts.slice(0, -1).map(() => undefined), { tokens: 5, estimate: 7 }])
     expect(parsed.slice(0, -1).some((data) => 'context' in data)).toBe(false)
@@ -797,7 +803,6 @@ describe('a compacted conversation', () => {
     created_at: 1,
     ...fields,
   })
-  const firstLine = (text: string) => text.slice(0, text.indexOf('\n'))
 
   it('round-trips an agent first section whose first line is the compaction tag', () => {
     const data = conversation({})
@@ -813,9 +818,9 @@ describe('a compacted conversation', () => {
     const priced = conversation({ context: { tokens: 5, estimate: 7 }, compactions: { count: 2, tokens: 412000, cost: { usd: 0.1 + 0.2, requests: 5, unpriced: 1 }, left: 24100 } })
     const free = conversation({ compactions: { count: 1, tokens: 0, cost: { usd: 0, requests: 0, unpriced: 0 } } })
 
-    expect(firstLine(serializeConversation(priced)))
+    expect(headerLine(serializeConversation(priced)))
       .toBe('<!-- title: Chat | model:  | created: 1 | context: 5 | context-estimate: 7 | compactions: 2 | compacted-tokens: 412000 | compacted-cost: 0.3 | compacted-requests: 5 | compacted-unpriced: 1 | compacted-left: 24100 -->')
-    expect(firstLine(serializeConversation(free)))
+    expect(headerLine(serializeConversation(free)))
       .toBe('<!-- title: Chat | model:  | created: 1 | compactions: 1 | compacted-tokens: 0 | compacted-cost: 0 | compacted-requests: 0 -->')
     expect(parseConversation('conversation', serializeConversation(priced)))
       .toStrictEqual({ ...priced, compactions: { count: 2, tokens: 412000, cost: { usd: 0.3, requests: 5, unpriced: 1 }, left: 24100 } })
@@ -844,7 +849,7 @@ describe('a compacted conversation', () => {
       'compacted-requests: 2 | compacted-cost: 1 | compacted-tokens: 5 | compactions: 1',
     ]
 
-    const parsed = parts.map((part) => parseConversation('conversation', `<!-- title: Chat | model:  | created: 1 | ${part} -->\n<dez:pill type="user"/>\nhi\n`))
+    const parsed = parts.map(parseWithHeaderPart)
 
     expect(parsed.map((data) => data.compactions))
       .toStrictEqual([...parts.slice(0, -1).map(() => undefined), { count: 1, tokens: 5, cost: { usd: 1, requests: 2, unpriced: 0 } }])

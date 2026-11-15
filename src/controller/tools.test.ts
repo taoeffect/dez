@@ -59,6 +59,7 @@ import { modelCost, modelInfoText, type ModelInfoFacts } from '../model/tools/mo
 import { IMAGE_NOT_SAVED_TEXT, INVOCATION_TEXT_CAP, invocationAnswerStateText, invocationAnswerText, modelInvocation } from '../model/tools/modelInvoke'
 import { modelListArguments, modelListText } from '../model/tools/modelList'
 import { TOOL_DEFINITIONS, unexpectedToolErrorText, unknownToolText } from '../model/tools/registry'
+import { probeOutput } from '../model/tools/testing'
 import type { ToolArguments, ToolRunResult } from '../model/tools/types'
 import { FFPROBE_TIMEOUT_MS } from '../model/tools/videoTool'
 import { ExplainedError } from '../utils/errorText'
@@ -66,7 +67,7 @@ import type { RequestLogRow } from './diagnostics/requestLog'
 import { ReplyJobs, type JobOutcome } from './jobs'
 import { invokeModel } from './modelInvoke'
 import type { BundledToolEnd } from './nativeTypes'
-import { APP_DIR, audioProgress, deletedWorkFolder, ENDED, FILE_ID, heldWork, LONG, native, resetNative, running, writes } from './testing'
+import { APP_DIR, audioProgress, CLIP_FORMAT, deletedWorkFolder, ENDED, FILE_ID, H264_STREAM, heldWork, LONG, native, resetNative, running, showinfoLog, writes } from './testing'
 import type { ToolRunCall, ToolRunContext } from './tools'
 // Side-effect imports: register the dez.model/* selectors and the selector
 // under test.
@@ -1736,13 +1737,7 @@ describe('dez.controller/tools/run', () => {
     const SCENE = `${APP_DIR}/assets/generated/video/scene.mp4`
     const VOICE = `${APP_DIR}/assets/audio/voice.wav`
     // What ffprobe writes for each clip: a video clip with sound.
-    const PROBED = JSON.stringify({
-      streams: [
-        { codec_name: 'h264', codec_type: 'video', width: 854, height: 480, avg_frame_rate: '24/1', r_frame_rate: '24/1' },
-        { codec_name: 'aac', codec_type: 'audio', sample_rate: '48000', channels: 2 },
-      ],
-      format: { duration: '5.040000', size: '1250000' },
-    })
+    const PROBED = probeOutput([H264_STREAM, { codec_name: 'aac', codec_type: 'audio', sample_rate: '48000', channels: 2 }], CLIP_FORMAT)
     const COLUMNS = ASSET_INFO_COLUMNS
     let tabId: string
 
@@ -1929,13 +1924,10 @@ describe('dez.controller/tools/run', () => {
     const SCENE = `${APP_DIR}/assets/generated/video/scene.mp4`
     const VOICE = `${APP_DIR}/assets/audio/voice.wav`
     const FOX_BYTES = new Uint8Array([1, 2, 3])
-    const probed = (streams: object[]) => JSON.stringify({ streams, format: { duration: '5.040000', size: '1250000' } })
-    const VIDEO_STREAM = { codec_name: 'h264', codec_type: 'video', width: 854, height: 480, avg_frame_rate: '24/1', r_frame_rate: '24/1' }
+    const probed = (streams: object[]) => probeOutput(streams, CLIP_FORMAT)
     const AUDIO_STREAM = { codec_name: 'pcm_s16le', codec_type: 'audio', sample_rate: '48000', channels: 2 }
-    // The log lines of ffmpeg that Dez reads: the frames of a sheet, the
-    // cuts of a clip, and the loudness summary.
-    const showinfoLog = (times: number[]) => times
-      .map((time, n) => `[Parsed_showinfo_1 @ 0x1] n:   ${n} pts:  ${n} pts_time:${time} duration: 512 fmt:yuv420p\n`).join('')
+    // The log lines of ffmpeg that Dez reads: the frames of a sheet
+    // (`showinfoLog`), the cuts of a clip, and the loudness summary.
     const SHOWINFO = showinfoLog([0.4167, 1.25, 2.0833])
     // The label of the frame sheet of @b with the frames of SHOWINFO.
     const SHEET_SHOWS = 'the frame sheet of the video clip @b: 3 frames in one row, at 0.417, 1.25, 2.083 s'
@@ -2017,7 +2009,7 @@ describe('dez.controller/tools/run', () => {
       budget = { tokens: 57_408, bytes: 20 * 1024 ** 2, pictures: 20 }
       roundPictures = 20
       shown = []
-      probes = { 'b.mp4': probed([VIDEO_STREAM, AUDIO_STREAM]), 'd.wav': probed([AUDIO_STREAM]) }
+      probes = { 'b.mp4': probed([H264_STREAM, AUDIO_STREAM]), 'd.wav': probed([AUDIO_STREAM]) }
       frameSheetLog = SHOWINFO
       frameSheetEnd = ENDED
       cutsLog = ''
@@ -2219,7 +2211,7 @@ describe('dez.controller/tools/run', () => {
     })
 
     it('gives no loudness, and no note about it, for a video clip with no sound', async () => {
-      probes['b.mp4'] = probed([VIDEO_STREAM])
+      probes['b.mp4'] = probed([H264_STREAM])
 
       const result = await assetView({ assets: '@b' })
 
@@ -2586,8 +2578,8 @@ describe('dez.controller/tools/run', () => {
       })
 
       it('tells which picture of the sound a clip with no sound does not get', async () => {
-        probes['d.wav'] = probed([VIDEO_STREAM])
-        probes['b.mp4'] = probed([VIDEO_STREAM])
+        probes['d.wav'] = probed([H264_STREAM])
+        probes['b.mp4'] = probed([H264_STREAM])
 
         expect((await assetView({ assets: '@d', sound_picture: 'spectrogram' })).content).toContain(noSoundNote('spectrogram', true))
         expect((await assetView({ assets: '@d', sound_picture: 'none' })).content).toContain(noSoundNote('none', true))

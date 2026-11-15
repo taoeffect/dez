@@ -1,25 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { assetPlaces } from '../chat/assetOrigins'
 import { compactionTagText } from '../chat/compaction'
 import { imageMarkdown } from '../chat/images'
 import type { ShownPicture } from '../chat/shownPictures'
 import { HIDDEN_CLIP_PATH, HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage } from '../chat/testing'
 import { toolBlockText } from '../chat/toolBlocks'
-import type { Section } from '../chat/types'
 import { RED, SKY } from '../tools/testing'
-import { compactionAssets, type CompactionAsset } from './compactionAssets'
+import type { CompactionAsset } from './compactionAssets'
 import { compactionLeftFiles } from './compactionFiles'
-import { conversationAssets } from './mediaRequest'
-import { reply, user } from './testing'
+import { assetsOf, reply, user } from './testing'
 
 const picture = (file: string): ShownPicture => ({ file, label: 'A frame sheet', width: 800, height: 200, bytes: 3000 })
 const viewBlock = (id: string, files: string[]) => toolBlockText({ id, name: 'asset_view', status: 'success', arguments: { assets: '@b' }, result: 'ok', pictures: files.map(picture) })
-
-// Every image and clip of `sections`, as a compaction reads them.
-function assetsOf(sections: readonly Section[]): CompactionAsset[] {
-  const found = [...conversationAssets(sections).found.values()]
-  return compactionAssets(sections, found, assetPlaces(sections, found), new Map())
-}
 
 describe('compactionLeftFiles', () => {
   it('gives the files of the dropped intermediate assets only', () => {

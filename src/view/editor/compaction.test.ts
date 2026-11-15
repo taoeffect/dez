@@ -1,12 +1,12 @@
 import { undo } from '@codemirror/commands'
-import { EditorSelection, type EditorState } from '@codemirror/state'
+import type { EditorState } from '@codemirror/state'
 import { describe, expect, it } from 'vitest'
 import { compactionTagText } from '../../model/chat/compaction'
 import type { Role } from '../../model/chat/types'
 import { SECTION_SEP, sectionsField } from '../thread/cmEditor'
 import { caretAfterCompactionTag, compactionTagRange } from './compaction'
 import { deleteLineBlockBackward } from './lineBlocks'
-import { PLAYER, createState, joinSections, runCommand } from './testing'
+import { PLAYER, createState, joinSections, runCommand, selectionOf } from './testing'
 
 const TAG = compactionTagText({ count: 1, lastId: 'c', pictures: [] })
 const ROLES: Role[] = ['agent', 'user']
@@ -22,12 +22,10 @@ function firstSection(state: EditorState): unknown {
   return state.field(sectionsField)[0]
 }
 
-/** The selection of `state` after a transaction that sets `ranges` (a
- *  number is a caret, a pair is an anchor and a head). */
+/** The selection of `state` after a transaction that sets `ranges`
+ *  (`selectionOf`). */
 function selected(state: EditorState, ranges: Array<number | [number, number]>): Array<number | [number, number]> {
-  const selection = EditorSelection.create(ranges.map((range) =>
-    (typeof range === 'number' ? EditorSelection.cursor(range) : EditorSelection.range(range[0], range[1]))))
-  return state.update({ selection }).state.selection.ranges.map((range) => (range.empty ? range.head : [range.anchor, range.head]))
+  return state.update({ selection: selectionOf(ranges) }).state.selection.ranges.map((range) => (range.empty ? range.head : [range.anchor, range.head]))
 }
 
 describe('compactionTagRange', () => {

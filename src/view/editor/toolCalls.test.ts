@@ -127,7 +127,7 @@ describe('the intermediate data of a call (RenderedToolCall.intermediate)', () =
   })
 
   it('gives each call only the assets of its own job', () => {
-    const state = createState(['ask', [INVOKE, invokeBlock('j-bbbb', 'call_2'), '', hiddenImage('j-bbbb', 'c'), '', hiddenImage('j-aaaa')].join('\n')], ['user', 'agent'])
+    const state = createState(['ask', [INVOKE, invokeBlock('j-bbbb', { id: 'call_2' }), '', hiddenImage('j-bbbb', 'c'), '', hiddenImage('j-aaaa')].join('\n')], ['user', 'agent'])
 
     expect(renderedToolCalls(state).map((call) => call.intermediate?.assets.map((asset) => asset.kind === 'image' && asset.id))).toStrictEqual([['b'], ['c']])
   })

@@ -2,9 +2,8 @@
 import { history } from '@codemirror/commands'
 import { EditorSelection, EditorState, type Transaction, type TransactionSpec } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
-import { imageReferenceText } from '../../model/chat/images'
 import { mediaTagText, mediaTagTextWithKeptMark } from '../../model/chat/mediaTags'
-import { HIDDEN_CLIP_PATH, HIDDEN_IMAGE_PATH } from '../../model/chat/testing'
+import { HIDDEN_CLIP_PATH, HIDDEN_IMAGE_PATH, idImage } from '../../model/chat/testing'
 import { toolBlockText } from '../../model/chat/toolBlocks'
 import type { Role } from '../../model/chat/types'
 import { SECTION_SEP, pillsField, promptAtomicRanges, sectionsField, unwrapBrokenPills, type PillMetadata } from '../thread/cmEditor'
@@ -24,7 +23,7 @@ export const PLAYER = mediaTagText({ kind: 'video', id: 'a', type: 'video/webm',
 
 /** The reference of an image that a compaction keeps out of view. */
 export function keptImage(id = 'b'): string {
-  return imageReferenceText({ path: HIDDEN_IMAGE_PATH, metadata: [{ key: 'id', value: id }] }, true)
+  return idImage(HIDDEN_IMAGE_PATH, id, true)
 }
 
 /** The tag of a saved clip that a compaction keeps out of view. */
@@ -35,6 +34,13 @@ export function keptClip(id = 'c'): string {
 /** The doc of `texts`, one section each. */
 export function joinSections(texts: string[]): string {
   return texts.join(`\n${SECTION_SEP}\n`)
+}
+
+/** The selection of `ranges`: a number is a caret, a pair is an anchor and
+ *  a head. */
+export function selectionOf(ranges: ReadonlyArray<number | [number, number]>): EditorSelection {
+  return EditorSelection.create(ranges.map((range) =>
+    typeof range === 'number' ? EditorSelection.cursor(range) : EditorSelection.range(range[0], range[1])))
 }
 
 /** A state with every kind of line block (chips, players, the tag line of
@@ -48,10 +54,7 @@ export function joinSections(texts: string[]): string {
 export function createState(texts: string[], roles: Role[], ranges: Array<number | [number, number]> = [], pills: Record<string, PillMetadata> = {}): EditorState {
   return EditorState.create({
     doc: joinSections(texts),
-    selection: ranges.length
-      ? EditorSelection.create(ranges.map((range) =>
-        typeof range === 'number' ? EditorSelection.cursor(range) : EditorSelection.range(range[0], range[1])))
-      : undefined,
+    selection: ranges.length ? selectionOf(ranges) : undefined,
     extensions: [
       sectionsField.init(() => roles.map((role, index) => ({ id: `s${index}`, role }))),
       streamingSectionField.init(() => null),

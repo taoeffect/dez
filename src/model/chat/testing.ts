@@ -1,9 +1,11 @@
 // Unit tests only: the texts of hidden assets (hiddenAssets.ts) and of the
 // tool blocks that own them, which the model tests and the editor tests
-// share, and the start of a JPEG file with no picture data, which the model
-// tests and the controller tests share.
+// share; the reference of an image with an id; a compaction tag and an
+// origin of its notes; and the start of a JPEG file with no picture data,
+// which the model tests and the controller tests share.
 import { jobStartedText } from '../tools/jobs'
-import { IMAGE_HIDDEN_KEY, IMAGE_TOOL_KEY, imageMarkdown } from './images'
+import { compactionTagText } from './compaction'
+import { IMAGE_HIDDEN_KEY, IMAGE_TOOL_KEY, imageMarkdown, imageReferenceText } from './images'
 import { MEDIA_HIDDEN_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE, mediaTagText, type MediaTagKind } from './mediaTags'
 import { toolBlockText } from './toolBlocks'
 
@@ -12,6 +14,19 @@ export const HIDDEN_IMAGE_PATH = '/home/u/.config/dez/assets/generated/images/on
 
 /** The saved file of `hiddenClip`. */
 export const HIDDEN_CLIP_PATH = '/home/u/.config/dez/assets/generated/audio/one.wav'
+
+/** The tag of a compaction section after one compaction, whose newest id
+ *  is `e`. */
+export const COMPACTION_TAG = compactionTagText({ count: 1, lastId: 'e', pictures: [] })
+
+/** The origin of the line of a made image in the notes of a compaction. */
+export const FOX_ORIGIN = 'made by the model_invoke job 2 of its reply: "A red fox"'
+
+/** The reference of the image `id` at `path`, with the kept mark of a
+ *  compaction when `kept`. */
+export function idImage(path: string, id: string, kept = false): string {
+  return imageReferenceText({ path, metadata: [{ key: 'id', value: id }] }, kept)
+}
 
 /** The reference of an image that the job `jobId` made for an intermediate
  *  call. */
@@ -33,10 +48,21 @@ export function hiddenClip(jobId: string, id = 'c', kind: MediaTagKind = 'audio'
   })
 }
 
-/** The block of an intermediate `model_invoke` call that started the job
- *  `jobId`, the first job of its reply. */
-export function invokeBlock(jobId: string, id = 'call_1'): string {
-  return toolBlockText({ id, name: 'model_invoke', status: 'success', arguments: { model: 'studio/paint', prompt: 'A cat', is_intermediate: true }, result: jobStartedText(jobId, 1) })
+/** The options of `invokeBlock`. */
+interface InvokeBlockOptions {
+  /** The job number in the result; 1 unless given. */
+  number?: number
+  /** The call id; `call_<number>` unless given. */
+  id?: string
+  /** The prompt of the call; "A cat" unless given. */
+  prompt?: string
+  /** Whether the call asks to hide what its job makes; true unless given. */
+  intermediate?: boolean
+}
+
+/** The block of a `model_invoke` call that started the job `jobId`. */
+export function invokeBlock(jobId: string, { number = 1, id = `call_${number}`, prompt = 'A cat', intermediate = true }: InvokeBlockOptions = {}): string {
+  return toolBlockText({ id, name: 'model_invoke', status: 'success', arguments: { model: 'studio/paint', prompt, ...(intermediate && { is_intermediate: true }) }, result: jobStartedText(jobId, number) })
 }
 
 /** The block of a `jobs_wait` call with the result text `result`. */
