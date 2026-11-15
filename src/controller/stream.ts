@@ -227,6 +227,17 @@ function modelInfoOf(model: ModelRef): Partial<ModelInfo> & Pick<ModelInfo, 'id'
   return (sbp('dez.model/modelCache/model', model.providerId, model.modelId) as ModelInfo | null) ?? { id: model.modelId }
 }
 
+// Tells the user that `count` images of the conversation did not go with
+// the request; `message` tells why.
+export function warnImagesNotSent(count: number, message: string): void {
+  sbp('dez.ui/toast', 'app-global', {
+    variant: 'warning',
+    title: count === 1 ? 'Image not sent' : 'Images not sent',
+    message,
+    duration: 8000,
+  })
+}
+
 // Tells the user that the chat requests of a reply to `model` go with
 // `count` fewer images than the conversation has, because of the image
 // limits of the model (`RequestOptions.imageLimit` and
@@ -243,14 +254,9 @@ function warnImagesOverLimit(model: ActiveModel, count: number): void {
     ? `${model.modelName} takes at most ${imagesText(messageLimit)} in one message${Number.isFinite(limit) ? `, and ${imagesText(limit)} in one request` : ''}, `
       + `so ${imagesText(count)} of the conversation ${were} left out. `
       + 'Put fewer images into one message, or delete the images that the model does not need from earlier messages.'
-    : `${model.modelName} takes at most ${imagesText(limit)} in one request, so the newest ${imagesText(count)} of the conversation ${were} left out. `
+    : `${model.modelName} takes at most ${imagesText(limit)} in one request, so the newest ${count === 1 ? 'image' : imagesText(count)} of the conversation ${were} left out. `
       + 'Delete the images that the model does not need from earlier messages, or start a new conversation.'
-  sbp('dez.ui/toast', 'app-global', {
-    variant: 'warning',
-    title: count === 1 ? 'Image not sent' : 'Images not sent',
-    message,
-    duration: 8000,
-  })
+  warnImagesNotSent(count, message)
 }
 
 // The text of the error toast of a failed reply. A text that Dez wrote for

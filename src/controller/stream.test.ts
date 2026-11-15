@@ -1380,7 +1380,7 @@ describe('dez.controller/submitTab images', () => {
       data: {
         variant: 'warning',
         title: 'Image not sent',
-        message: expect.stringContaining('M takes at most 2 images in one request, so the newest 1 image '),
+        message: expect.stringContaining('M takes at most 2 images in one request, so the newest image '),
         duration: 8000,
       },
     }])

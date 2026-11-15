@@ -11,16 +11,12 @@ import { mediaInputRules, mediaRequestProblem } from '../model/streams/mediaRequ
 import { mediaRequestInput } from '../model/streams/messages'
 import type { RequestMessages } from '../model/streams/types'
 import { systemPromptErrorText, systemPromptProblem, systemPromptTemplate } from '../model/systemPrompt'
+import { warnImagesNotSent } from './stream'
 
 // Tells the user that the request goes with `count` fewer images than the
 // message has, because the model `reason` (e.g. "does not read images").
 function warnImagesLeftOut(modelName: string, reason: string, count: number): void {
-  sbp('dez.ui/toast', 'app-global', {
-    variant: 'warning',
-    title: count === 1 ? 'Image not sent' : 'Images not sent',
-    message: `${modelName} ${reason}, so ${imagesText(count)} ${count === 1 ? 'was' : 'were'} left out of the request.`,
-    duration: 8000,
-  })
+  warnImagesNotSent(count, `${modelName} ${reason}, so ${imagesText(count)} ${count === 1 ? 'was' : 'were'} left out of the request.`)
 }
 
 // Tells the user that the request goes without the clips of `leftOut`, the
