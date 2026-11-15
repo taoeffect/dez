@@ -6,6 +6,7 @@ import { IMAGE_FOLDERS } from '../../model/chat/images'
 import { MEDIA_TEMP_LIFETIME_MS } from '../../model/chat/mediaFiles'
 import { MEDIA_CACHE_FOLDER, MEDIA_FOLDERS } from '../../model/chat/mediaTags'
 import { SHOWN_PICTURE_FOLDER } from '../../model/chat/shownPictures'
+import { CHAT_IMAGE_SIDE } from '../../model/providers/imageSize'
 import { WORK_FOLDER_LIFETIME_MS, WORK_ROOT } from '../../model/tools/workFolders'
 import { shortcutKeyText } from '../../model/shortcuts'
 import { DEZ_DISCUSSIONS_URL } from '../../utils/dezLinks'
@@ -35,6 +36,10 @@ const STORED_FOLDERS: { folders: readonly string[]; holds: string }[] = [
 const HOUR_MS = 60 * 60 * 1000
 const TEMP_COPY_HOURS = MEDIA_TEMP_LIFETIME_MS / HOUR_MS
 const WORK_FOLDER_HOURS = WORK_FOLDER_LIFETIME_MS / HOUR_MS
+
+// The side over which a chat request sends a smaller copy of an image, as
+// the text writes a number (`1,568`).
+const CHAT_IMAGE_SIDE_TEXT = CHAT_IMAGE_SIDE.toLocaleString('en-US')
 
 const { shortcuts } = useModelState()
 
@@ -195,11 +200,11 @@ function onOverlayClick(event: MouseEvent) {
               message, for example: <code>Is @a too dark?</code>
             </p>
             <p>
-              Dez sends a chat model an image with a side of more than 1,568 pixels as a smaller
-              copy, which keeps the request small; the file of the image does not change. A model
-              takes a limited number of images in one request, and some models a smaller number in
-              one message. When the conversation or a message holds more, Dez leaves out the ones
-              over the limit, and tells you.
+              Dez sends a chat model an image with a side of more than {{ CHAT_IMAGE_SIDE_TEXT }}
+              pixels as a smaller copy, which keeps the request small; the file of the image does
+              not change. A model takes a limited number of images in one request, and some models
+              a smaller number in one message. When the conversation or a message holds more, Dez
+              leaves out the ones over the limit, and tells you.
             </p>
             <p>
               A model that makes images or clips, for example an image editor or a video model,
