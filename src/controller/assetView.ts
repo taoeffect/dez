@@ -16,7 +16,7 @@ import {
   ASSET_VIEW_TOOL,
   ASSET_VIEW_WORDING,
   assetViewCall,
-  assetViewPictures,
+  assetViewPicture,
   assetViewText,
   audioViewArgs,
   clipNotReadNote,
@@ -637,15 +637,16 @@ export async function assetViewResult(
   const grid = membersGo && members.length > 1 ? await gridView(members, call.detail, charge) : null
   // A stopped call gives no result, so its copies would have no block.
   signal.throwIfAborted()
-  // The owners of the pictures, in the order of `assetViewPictures`.
-  const owners = [...items, ...(grid ? [grid] : [])].filter((owner) => owner.picture)
-  const copies = await saveShownPictures(assetViewPictures(items, grid))
+  // Each picture with its owner: those of the assets, then the grid. A
+  // copy has the index of its picture (`saveShownPictures`).
+  const shown = [...items, ...(grid ? [grid] : [])]
+    .flatMap((owner) => (owner.picture ? [{ owner, picture: owner.picture }] : []))
+  const copies = await saveShownPictures(shown.map(({ picture }) => assetViewPicture(picture)))
   for (const [index, copy] of copies.entries()) {
     if (copy) continue
     // A request sends a picture from its copy, so a picture with no copy
     // does not go: its owner tells so, and its cost goes back.
-    const owner = owners[index]
-    const { file, size } = owner.picture as ViewPicture
+    const { owner, picture: { file, size } } = shown[index]
     left = totalCost([left, pictureCost(tokenRule, file, size)])
     roundPictures += 1
     owner.picture = null

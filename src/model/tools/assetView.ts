@@ -1040,11 +1040,10 @@ export function clipNotReadNote(id: string, problem: ClipReadProblem): string {
   return problem === 'unreadable' ? `Help › Developer Console shows the cause. ${advice}` : advice
 }
 
-/** The pictures of a view, each with its label, for their saved copies
- *  (`saveShownPictures`): those of the assets, then the grid. */
-export function assetViewPictures(items: readonly AssetViewItem[], grid: AssetViewGrid | null): NewPicture[] {
-  return [...items.map(({ picture }) => picture), grid?.picture ?? null]
-    .flatMap((picture) => (picture ? [{ label: `asset_view: ${picture.shows}.`, file: picture.file, size: picture.size }] : []))
+/** A picture of a view with its label, for its saved copy
+ *  (`saveShownPictures`). */
+export function assetViewPicture({ shows, file, size }: ViewPicture): NewPicture {
+  return { label: `asset_view: ${shows}.`, file, size }
 }
 
 /** The line of a result that showed a picture: where the model finds the
