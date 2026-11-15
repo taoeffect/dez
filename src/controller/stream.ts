@@ -16,11 +16,8 @@ import { agentSectionMessages, mediaRequestInput } from '../model/streams/messag
 import { NO_PICTURE_BUDGET, ReplyPictures, requestImageCount } from '../model/streams/replyPictures'
 import {
   checkToolCalls,
-  MAX_TOOL_ROUNDS,
-  ROUND_LIMIT_TOOL_RESULT,
   STOPPED_TOOL_RESULT,
   toolCallBlock,
-  toolRoundBlocks,
   toolGroupAppendText,
   toolGroupText,
   type CheckedToolCall,
@@ -351,10 +348,7 @@ function toolAssetWriters(tabId: string, reply: ReplyRuntime, tool: string, take
 // thinking for a round whose text holds an image of the model
 // (`roundThinking`, streams/messages.ts), and the request after a round of
 // calls needs that round's thinking.
-//
-// `roundsLeft`: how many tool rounds the reply can run after this one;
-// near the limit the last result tells the model (`toolRoundBlocks`).
-async function runToolRound(tabId: string, reply: ReplyRuntime, model: ModelRef, calls: CheckedToolCall[], sectionText: string, roundsLeft: number): Promise<Section | null> {
+async function runToolRound(tabId: string, reply: ReplyRuntime, model: ModelRef, calls: CheckedToolCall[], sectionText: string): Promise<Section | null> {
   const runningBlocks = calls.map((call) => toolCallBlock(call))
   const run: ToolRun = {
     calls,
@@ -392,7 +386,7 @@ async function runToolRound(tabId: string, reply: ReplyRuntime, model: ModelRef,
   }
 
   reply.toolRun = null
-  const blocks = toolRoundBlocks(calls, run.results, roundsLeft)
+  const blocks = calls.map((call, index) => toolCallBlock(call, run.results[index]))
   if (!replaceToolRun(tabId, reply.sectionId, run, toolGroupText(blocks))) {
     discardRunPictures(run)
     return null
@@ -514,10 +508,10 @@ async function endReply(tabId: string, reply: ReplyRuntime, status: 'finished' |
 }
 
 // The chat rounds of a reply: request rounds until a round ends with no
-// tool calls. Each round streams its answer text and thinking into the
-// agent section; a round that ends with tool calls adds their blocks, runs
-// them, and sends the next round with the reply so far. Ends the reply,
-// except when it throws.
+// tool calls, with no limit of their count. Each round streams its answer
+// text and thinking into the agent section; a round that ends with tool
+// calls adds their blocks, runs them, and sends the next round with the
+// reply so far. Ends the reply, except when it throws.
 async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promise<void> {
   // Read the provider's stored setting overrides and the system prompt
   // template at stream start (rather than threading them from submitTab) so
@@ -537,7 +531,7 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
   // the thinking round of every later round (SectionThinking.rounds).
   let afterToolCall: string | undefined
 
-  for (let toolRounds = 0; ; toolRounds++) {
+  for (;;) {
     const requestId = crypto.randomUUID()
     reply.requestId = requestId
     const roundIsCurrent = () => repliesByTab.get(args.tabId) === reply && reply.requestId === requestId && !reply.outputEnded
@@ -628,17 +622,7 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
 
     const sectionText = sectionPlainText(section)
     const calls = checkToolCalls(streamedCalls, findToolBlocks(sectionText).map((block) => block.id))
-    if (toolRounds >= MAX_TOOL_ROUNDS) {
-      const blocks = calls.map((call) => toolCallBlock(call, ROUND_LIMIT_TOOL_RESULT))
-      writeStreamText(args.tabId, args.sectionId, toolGroupAppendText(sectionText, blocks))
-      console.error(`The reply reached the limit of ${MAX_TOOL_ROUNDS} tool rounds`)
-      if (await endReply(args.tabId, reply, 'error')) {
-        showReplyError(args.tabId, 'Tool limit reached', `The reply reached the limit of ${MAX_TOOL_ROUNDS} tool rounds, so Dez did not run its last tool calls. To let the model go on, send a new message (for example "Go on").`)
-      }
-      return
-    }
-
-    const replySoFar = await runToolRound(args.tabId, reply, args.model, calls, sectionText, MAX_TOOL_ROUNDS - toolRounds - 1)
+    const replySoFar = await runToolRound(args.tabId, reply, args.model, calls, sectionText)
     if (!replySoFar) {
       // Still current only when the user deleted the running blocks:
       // with no calls to send back, the reply cannot go on, so it ends

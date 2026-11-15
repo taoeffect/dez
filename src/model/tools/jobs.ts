@@ -23,10 +23,13 @@ export type JobStatus = 'running' | 'finished' | 'failed' | 'timed out' | 'stopp
 /** The status of a job that has a result for `jobs_wait`. */
 export type JobResultStatus = Exclude<JobStatus, 'running' | 'stopped'>
 
-/** The most jobs that one reply starts. A job can cost money (a provider
- *  can charge for a media request when it queues it), and a model can call
- *  a tool in a loop. */
-export const MAX_JOBS_PER_REPLY = 40
+/** The most jobs of one reply that are open at one time: the jobs that
+ *  run, and the ended jobs whose results no reader took yet. A job can
+ *  cost money (a provider can charge for a media request when it queues
+ *  it), and a model can call a tool in a loop: at this count the model
+ *  must read results before it starts more. It is not a count of all the
+ *  jobs of a reply, as a reply has no limit of tool rounds. */
+export const MAX_OPEN_JOBS = 40
 
 const JOB_ID_CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789'
 const JOB_ID_LENGTH = 4
@@ -91,9 +94,10 @@ export function startedJobId(resultText: string): string | null {
   return startedJob(resultText)?.id ?? null
 }
 
-/** The error result of a call that would start one job too many. */
-export const JOB_LIMIT_TEXT = `Dez did not start this job: this reply already started ${MAX_JOBS_PER_REPLY} jobs, which is the most for one reply. `
-  + 'Call jobs_wait for the results of the jobs that still run, then tell the user what is not done. The next message of the user starts a new count.'
+/** The error result of a call that would start one open job too many
+ *  (`MAX_OPEN_JOBS`). */
+export const JOB_LIMIT_TEXT = `Dez did not start this job: ${MAX_OPEN_JOBS} jobs of this reply are open (a job that runs, or an ended job whose result no jobs_wait call gave yet), which is the most at one time. `
+  + 'Call jobs_wait: each result that it gives makes room for one new job. Then make this call again.'
 
 // The time limits that a call can give its job. A shorter limit ends a
 // request before a provider can answer. The longest one is also far below
@@ -444,7 +448,7 @@ export const JOBS_WAIT_TOOL: ToolDefinition = {
       name: 'all',
       type: 'boolean',
       description: 'Set it to `true` to wait until every job of this reply ended, and to get all their results in one call. '
-        + 'A reply can make only a limited count of rounds of tool calls, and each `jobs_wait` call that gives one result uses one: '
+        + 'Each `jobs_wait` call costs one more request with the whole conversation: '
         + 'set it when you need all the results before your next step. The default is `false`.',
       required: false,
     },

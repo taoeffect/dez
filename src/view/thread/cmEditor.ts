@@ -2191,10 +2191,11 @@ export const dezTheme = EditorView.theme({
   },
   // Only a failed call, a call that the app stopped while it ran
   // (`interrupted`, which requests send as an error), and a call that the
-  // round limit stopped (`notRun`) have a state word. The first two show
-  // the word, the wrench, and the name in the error color. A call that
-  // did not run is no failure: its word has the chip's muted color, in
-  // italics, so that it reads as a note and not as a part of the summary.
+  // round limit of an older Dez stopped (`notRun`) have a state word. The
+  // first two show the word, the wrench, and the name in the error color.
+  // A call that did not run is no failure: its word has the chip's muted
+  // color, in italics, so that it reads as a note and not as a part of
+  // the summary.
   '.dez-tool-call__state': {
     flex: 'none',
     color: 'var(--color-error, #d9534f)',

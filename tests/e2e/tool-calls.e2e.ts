@@ -2,7 +2,6 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
-import { MAX_TOOL_ROUNDS, ROUND_LIMIT_TOOL_RESULT, roundsLeftNote } from '../../src/model/streams/toolRound'
 import { unknownToolText } from '../../src/model/tools/registry'
 import { anthropicChatBody, anthropicMarkedUser, openAiChatBody } from './harness/chatBody'
 import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
@@ -12,7 +11,7 @@ import { WAV_SAMPLE_RATE, monoWav, shownPlayers } from './harness/media'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, openAiToolCall, replyText, sendAnthropicReply, sendChatReply, sendToolCalls, startEventStream, toolResult, writeAnthropicEvent, writeChatFrame, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeConversationId, activeTabStreaming, docPos, editorCaret, editorDoc, focusEditor, focusedArea, newTab, openSeededConversation, openToasts, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread, type ThreadSection } from './harness/thread'
+import { activeConversationId, activeTabStreaming, docPos, editorCaret, editorDoc, focusEditor, focusedArea, newTab, openSeededConversation, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread, type ThreadSection } from './harness/thread'
 import { pressToolChip, toolChips, toolPanel, type ToolChipView } from './harness/toolChips'
 
 // Tool calls, driven through the real app against a mock server in this
@@ -26,10 +25,9 @@ import { pressToolChip, toolChips, toolPanel, type ToolChipView } from './harnes
 // keeps the call, and the next request sends it with its result. A
 // `model_info` call gives the facts of the mock model as Dez knows them,
 // and a call with no arguments gives those of the reply's model, also after
-// the user chose another model for the tab. Near the limit of tool rounds
-// of a reply, the results tell the model how many rounds are left; the
-// calls of a round past the limit do not run, their chips say "not run",
-// and the toast of the limit closes at the next message of the tab.
+// the user chose another model for the tab. A block of a call that the
+// round limit of an older Dez stopped shows as a "not run" chip, and goes
+// back with its result.
 // The `image` tool's `crop` and `scale` calls make new images from a pasted
 // one: the images go into the reply after the calls, and the requests name
 // them by their ids, with no path. A pasted SVG goes as the same PNG copy
@@ -377,62 +375,38 @@ describe('tool calls', () => {
     ])
   })
 
-  // A model that calls a tool in every answer. Each round is one short
-  // request to the mock.
-  it('tells the model near the limit how many tool rounds are left, shows a call past the limit as "not run", and closes the toast of the limit at the next message', async () => {
-    await newTab(browser)
-    await pickModel(browser, TOOLER.name, TOOLER.modelName)
-    await submit(browser, 'List the tool models with no end.')
-    let request = await setup.mock.waitForRequest(browser)
-    for (let round = 1; round <= MAX_TOOL_ROUNDS; round++) {
-      sendToolCalls(request.reply, [openAiModelListCall(`call_${round}`, 'tool')])
-      request = await setup.mock.waitForRequest(browser)
-    }
+  // A saved conversation of an older Dez, which ended a reply after 40
+  // tool rounds: the calls of the round past that limit did not run.
+  it('shows a call that the round limit of an older Dez stopped as "not run", and sends the call back with its result', async () => {
+    const oldResult = 'Not run: the reply reached the limit of 40 tool rounds.'
+    const ran = modelListBlock('call_ran', 'tool', TOOLER_LIST)
+    const stopped = `<dez:tool id="call_past_limit" name="model_list" status="error" filter="tool">\n${oldResult}\n</dez:tool>`
+    const question = 'List the tool models with no end.'
+    const reply = `${ran}\n\n${stopped}`
+    await openSeededConversation(browser, setup.app.home, 'old-round-limit', [{ role: 'user', text: question }, { role: 'agent', text: reply }, { role: 'user', text: '' }])
 
-    // What Dez added to the result of a round, as the model gets it.
-    const noteOfRound = (round: number): string => toolResult(request, `call_${round}`).slice(TOOLER_LIST.length)
-    expect(noteOfRound(MAX_TOOL_ROUNDS - 6)).toBe('')
-    expect(noteOfRound(MAX_TOOL_ROUNDS - 5)).toBe(`\n\n${roundsLeftNote(5)}`)
-    expect(noteOfRound(MAX_TOOL_ROUNDS - 1)).toBe(`\n\n${roundsLeftNote(1)}`)
-    expect(noteOfRound(MAX_TOOL_ROUNDS)).toBe(`\n\n${roundsLeftNote(0)}`)
-
-    // The model calls a tool again: the reply ends, and the call does not
-    // run.
-    const pastLimit = `call_${MAX_TOOL_ROUNDS + 1}`
-    sendToolCalls(request.reply, [openAiModelListCall(pastLimit, 'tool')])
-    await waitForValue(browser, 'toast of the limit', () => openToasts(browser, 'error'), [{
-      title: 'Tool limit reached',
-      message: `The reply reached the limit of ${MAX_TOOL_ROUNDS} tool rounds, so Dez did not run its last tool calls. To let the model go on, send a new message (for example "Go on").`,
-    }])
-    await waitForValue(browser, 'streaming', () => activeTabStreaming(browser), false)
-    expect(setup.mock.hasWaitingRequest()).toBe(false)
-
-    // The editor draws only the chips near its window: the last ones here.
     // Nothing failed, so the chip and its result are not marked as an error.
     const notRunChip = { ...closedChip('"tool"'), state: 'notRun', label: 'Tool call model_list, "tool", not run', stateWord: 'not run' }
-    await waitForValue(browser, 'the last two chips', async () => (await toolChips(browser)).slice(-2), [closedChip('"tool"'), notRunChip])
-    const last = (await toolChips(browser)).length - 1
-    await pressToolChip(browser, last)
-    await waitForValue(browser, 'panel of the call that did not run', async () => toolPanel(browser, (await toolChips(browser)).length - 1), {
+    await waitForValue(browser, 'chips of the old reply', () => toolChips(browser), [closedChip('"tool"'), notRunChip])
+    await pressToolChip(browser, 1)
+    await waitForValue(browser, 'panel of the call that did not run', () => toolPanel(browser, 1), {
       parameters: [['filter', 'tool']],
-      result: ROUND_LIMIT_TOOL_RESULT.content,
+      result: oldResult,
       failed: false,
     })
-    expect(await consoleErrors(browser)).toStrictEqual([`The reply reached the limit of ${MAX_TOOL_ROUNDS} tool rounds`])
-    await resetConsoleErrors(browser)
 
-    // A new message starts the count again. Its request closes the toast of
-    // the reply before it, and sends the call back with its result.
+    await pickModel(browser, TOOLER.name, TOOLER.modelName)
     await submit(browser, 'Go on.')
-    const next = await setup.mock.waitForRequest(browser)
-    await waitForValue(browser, 'toast of the limit after the new message', () => openToasts(browser, 'error'), [])
-    expect(toolResult(next, pastLimit)).toBe(ROUND_LIMIT_TOOL_RESULT.content)
-    sendToolCalls(next.reply, [openAiModelListCall('call_again', 'tool')])
-    const after = await setup.mock.waitForRequest(browser)
-    expect(toolResult(after, 'call_again')).toBe(TOOLER_LIST)
-    await sendChatReply(after.reply, TOOLER.modelName)
-    await waitForValue(browser, 'streaming after the new message', () => activeTabStreaming(browser), false)
-    expect(await openToasts(browser, 'error')).toStrictEqual([])
+    const request = await setup.mock.waitForRequest(browser)
+    expect([toolResult(request, 'call_ran'), toolResult(request, 'call_past_limit')]).toStrictEqual([TOOLER_LIST, oldResult])
+    await sendChatReply(request.reply, TOOLER.modelName)
+    await waitForThread(browser, [
+      { role: 'user', text: question },
+      { role: 'agent', text: reply },
+      { role: 'user', text: 'Go on.' },
+      { role: 'agent', text: replyText(TOOLER.modelName) },
+      { role: 'user', text: '' },
+    ])
   })
 
   it('runs a model_info call: the result holds the facts of the model as Dez knows them, and the panel shows it', async () => {

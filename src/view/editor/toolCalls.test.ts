@@ -5,7 +5,7 @@ import { HIDDEN_CLIP_PATH, HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, invokeBlo
 import type { Role } from '../../model/chat/types'
 import { toolBlockText, type ToolBlockStatus } from '../../model/chat/toolBlocks'
 import { jobStartedText, jobsWaitText, type JobResultStatus } from '../../model/tools/jobs'
-import { ROUND_LIMIT_TOOL_RESULT, STOPPED_TOOL_RESULT } from '../../model/streams/toolRound'
+import { STOPPED_TOOL_RESULT } from '../../model/streams/toolRound'
 import type { ToolArguments } from '../../model/tools/types'
 import { PILL_OPEN, SECTION_SEP, sectionsField, setSectionsEffect, setSectionThinkingEffect } from '../thread/cmEditor'
 import { setStreamingSectionEffect, streamingSectionField } from '../thread/modelChip'
@@ -63,13 +63,14 @@ describe('renderedToolCalls', () => {
     expect(shown(ended).map(([id, callState]) => [id, callState])).toEqual([['a', 'interrupted'], ['b', 'interrupted']])
   })
 
-  // The round limit ran none of these calls, so nothing failed.
-  it('shows a call that the round limit stopped as not run, also with the limit of an older Dez', () => {
+  // Blocks of saved conversations: an older Dez had a limit of tool
+  // rounds, which ran none of these calls, so nothing failed.
+  it('shows a call that the round limit of an older Dez stopped as not run, with the limit of any release', () => {
     const state = createState(['ask', [
-      block('a', 'error', ROUND_LIMIT_TOOL_RESULT.content),
+      block('a', 'error', 'Not run: the reply reached the limit of 40 tool rounds.'),
       block('b', 'error', 'Not run: the reply reached the limit of 20 tool rounds.'),
       block('c', 'error', STOPPED_TOOL_RESULT.content),
-      block('d', 'success', ROUND_LIMIT_TOOL_RESULT.content),
+      block('d', 'success', 'Not run: the reply reached the limit of 40 tool rounds.'),
     ].join('\n')], ['user', 'agent'])
 
     expect(shown(state).map(([id, callState]) => [id, callState])).toEqual([['a', 'notRun'], ['b', 'notRun'], ['c', 'error'], ['d', 'success']])

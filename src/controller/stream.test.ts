@@ -20,7 +20,6 @@ import { CLIP_KINDS, isClipKind, isTextKind, ProviderNotConfiguredError, type Me
 import type { RequestMessages } from '../model/streams/types'
 import { systemPromptErrorText } from '../model/systemPrompt'
 import { jobsWaitText, jobTimedOutText, startedJobId } from '../model/tools/jobs'
-import { MAX_TOOL_ROUNDS, roundsLeftNote } from '../model/streams/toolRound'
 import { INVOCATION_READS_INPUTS, invocationFailedText } from '../model/tools/modelInvoke'
 import { NO_MODELS_TEXT } from '../model/tools/modelList'
 import { TOOL_DEFINITIONS, unknownToolText } from '../model/tools/registry'
@@ -1115,34 +1114,23 @@ describe('dez.stream/start tool loop', () => {
     expect(alerts).toStrictEqual([])
   })
 
-  // The last rounds tell the model how many rounds are left, in the
-  // result that the conversation keeps and the next request sends.
-  it(`runs ${MAX_TOOL_ROUNDS} tool rounds, warns the model in the results of the last ones, then ends with an error and runs no call of the next request`, async () => {
+  // An older Dez ended a reply after 40 tool rounds, and told the model in
+  // the results of the last ones how many rounds were left.
+  it('runs the tool rounds of a reply with no limit of their count, and adds nothing to their results', async () => {
+    const rounds = 60
     streamChat = async (input) => {
       requests.push(input)
+      if (requests.length > rounds) return { requestId: input.requestId as string }
       return { requestId: input.requestId as string, toolCalls: [{ ...geminiCall, id: `c${requests.length}` }] }
     }
 
     await startStream({ sendTools: true })
 
-    expect(requests).toHaveLength(41)
-    expect(runs).toBe(40)
-    const results = blocks().map((block) => block.result)
-    expect(results.slice(0, 34)).toStrictEqual(Array<string>(34).fill(NO_MODELS_TEXT))
-    expect(results.slice(34, 40)).toStrictEqual([5, 4, 3, 2, 1, 0].map((left) => `${NO_MODELS_TEXT}\n\n${roundsLeftNote(left)}`))
-    expect(results.slice(40)).toStrictEqual(['Not run: the reply reached the limit of 40 tool rounds.'])
-    expect(requests[35].messages.at(-1)).toStrictEqual({ role: 'tool', results: [{ callId: 'c35', content: results[34], isError: false }] })
-    expect(blocks().at(-1)?.status).toBe('error')
-    expect(toasts).toStrictEqual([{
-      area: 'app-global',
-      data: {
-        variant: 'error',
-        title: 'Tool limit reached',
-        message: 'The reply reached the limit of 40 tool rounds, so Dez did not run its last tool calls. To let the model go on, send a new message (for example "Go on").',
-        group: expect.any(String),
-      },
-    }])
-    expect(alerts).toStrictEqual([{ tabId: activeTab().id, status: 'error' }])
+    expect(requests).toHaveLength(rounds + 1)
+    expect(runs).toBe(rounds)
+    expect(blocks().map(({ status, result }) => [status, result])).toStrictEqual(Array(rounds).fill(['success', NO_MODELS_TEXT]))
+    expect(toasts).toStrictEqual([])
+    expect(alerts).toStrictEqual([{ tabId: activeTab().id, status: 'finished' }])
   })
 
   it('keeps the blocks of earlier rounds when a later round fails, and shows an error toast', async () => {

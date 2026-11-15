@@ -40,9 +40,10 @@ import { ROUND_STROKE, svgIcon } from './svgIcon'
 /** How a chip shows its call. `running`: a reply runs the tool now.
  *  `interrupted`: a `running` block that no reply runs (the app stopped
  *  while the tool ran); requests send it as an error. `notRun`: a call
- *  that the round limit of its reply stopped (`isRoundLimitResult`). Its
- *  block is an error block, which requests send as one, but nothing
- *  failed, so the chip does not say so. */
+ *  of a saved conversation that the round limit of an older Dez stopped
+ *  (`isRoundLimitResult`; Dez has no such limit now). Its block is an
+ *  error block, which requests send as one, but nothing failed, so the
+ *  chip does not say so. */
 export type ToolCallState = 'success' | 'error' | 'running' | 'interrupted' | 'notRun'
 
 function toolCallState(block: ToolBlock, streaming: boolean): ToolCallState {

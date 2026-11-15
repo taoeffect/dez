@@ -2,7 +2,7 @@ import sbp from '@sbp/sbp'
 import { tempMediaFile } from '../model/chat/mediaFiles'
 import { isSavedMediaPath, type MediaTagData } from '../model/chat/mediaTags'
 import type { GeneratedClip } from '../model/providers/types'
-import { JOB_LIMIT_TEXT, jobTimedOutText, MAX_JOBS_PER_REPLY, newJobId, type JobCall, type JobInfo, type JobResultStatus, type JobStatus, type WrittenJobAsset } from '../model/tools/jobs'
+import { JOB_LIMIT_TEXT, jobTimedOutText, MAX_OPEN_JOBS, newJobId, type JobCall, type JobInfo, type JobResultStatus, type JobStatus, type WrittenJobAsset } from '../model/tools/jobs'
 import { unexpectedToolErrorText } from '../model/tools/registry'
 import { ToolError } from '../model/tools/types'
 import type { ToolRunContext } from './tools'
@@ -197,10 +197,12 @@ export class ReplyJobs {
    *  number (`JobCall.number`) at once. The job ends as `timed out` when
    *  the work takes more than `timeoutMs`. `hidesAssets`: see `EndedJob`.
    *  `label` is the label of the call (`jobCallLabel`). Throws a
-   *  `ToolError` for a job over `MAX_JOBS_PER_REPLY`, and after `stopAll`. */
+   *  `ToolError` for one open job too many (`MAX_OPEN_JOBS`: the jobs that
+   *  ended and whose results a reader took do not count, so a long reply
+   *  can start any count of jobs), and after `stopAll`. */
   start(tool: string, work: JobWork, { timeoutMs, hidesAssets = false, label = '' }: { timeoutMs: number, hidesAssets?: boolean, label?: string }): { id: string, number: number } {
     if (this.stopped) throw new ToolError('The reply stopped, so Dez started no job. This is not a fault of the call.')
-    if (this.jobs.size >= MAX_JOBS_PER_REPLY) throw new ToolError(JOB_LIMIT_TEXT)
+    if (this.running + this.ready >= MAX_OPEN_JOBS) throw new ToolError(JOB_LIMIT_TEXT)
     const job: Job = {
       id: newJobId((id) => this.jobs.has(id)),
       tool,

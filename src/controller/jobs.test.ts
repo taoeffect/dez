@@ -1,6 +1,6 @@
 import sbp from '@sbp/sbp'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
-import { JOB_LIMIT_TEXT, MAX_JOBS_PER_REPLY } from '../model/tools/jobs'
+import { JOB_LIMIT_TEXT, MAX_OPEN_JOBS } from '../model/tools/jobs'
 import { ToolError } from '../model/tools/types'
 import { discardMadeAssets, ReplyJobs, writeJobAssets, type EndedJob, type MadeAsset } from './jobs'
 import { APP_DIR, CACHE_DIR, heldWork, LONG, native, resetNative, running, settled } from './testing'
@@ -288,15 +288,26 @@ describe('ReplyJobs', () => {
     expect(counted).toStrictEqual([0.35, null, 1.2])
   })
 
-  it(`starts no job after ${MAX_JOBS_PER_REPLY} jobs of the reply, also when they ended`, async () => {
-    for (let count = 0; count < MAX_JOBS_PER_REPLY; count++) jobs.start('model_invoke', async () => ({ text: '', isError: false, assets: [] }), LONG)
+  // A reply has no limit of tool rounds, so the limit counts only the open
+  // jobs: a model that reads its results can start any count of jobs.
+  it(`starts no job while ${MAX_OPEN_JOBS} jobs run or have a result that no wait took, and starts jobs again after a wait`, async () => {
+    const done = async () => ({ text: '', isError: false, assets: [] })
+    jobs.start('model_invoke', heldWork().work, LONG)
+    for (let count = 1; count < MAX_OPEN_JOBS; count++) jobs.start('model_invoke', done, LONG)
     await settled()
-    await jobs.wait(running())
+    expect([jobs.running, jobs.ready]).toStrictEqual([1, MAX_OPEN_JOBS - 1])
 
     let started = false
-    expect(() => jobs.start('model_invoke', async () => { started = true; return { text: '', isError: false, assets: [] } }, LONG)).toThrow(new ToolError(JOB_LIMIT_TEXT))
+    const next = async () => { started = true; return await done() }
+    expect(() => jobs.start('model_invoke', next, LONG)).toThrow(new ToolError(JOB_LIMIT_TEXT))
     expect(started).toBe(false)
-    expect(new Set(jobs.list().map((job) => job.id)).size).toBe(MAX_JOBS_PER_REPLY)
+    expect(jobs.list()).toHaveLength(MAX_OPEN_JOBS)
+
+    // The wait takes the results that are ready; the job that still runs
+    // counts on.
+    await jobs.wait(running())
+    expect(jobs.start('model_invoke', next, LONG).number).toBe(MAX_OPEN_JOBS + 1)
+    expect(started).toBe(true)
   })
 
   // Delete Unused Files keeps these files: no text names them before a

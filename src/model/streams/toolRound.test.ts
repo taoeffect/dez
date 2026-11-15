@@ -7,13 +7,9 @@ import { agentSectionMessages } from './messages'
 import {
   checkToolCalls,
   isRoundLimitResult,
-  ROUND_LIMIT_TOOL_RESULT,
-  ROUNDS_LEFT_NOTE_FROM,
-  roundsLeftNote,
   STOPPED_TOOL_RESULT,
   toolCallBlock,
   toolGroupAppendText,
-  toolRoundBlocks,
   type CheckedToolCall,
 } from './toolRound'
 
@@ -127,71 +123,27 @@ describe('toolCallBlock', () => {
     expect(toolCallBlock(call, STOPPED_TOOL_RESULT)).toStrictEqual({ ...call, status: 'error', result: 'Stopped.' })
   })
 
-  it('keeps the refusal of a refused call, also past the round limit', () => {
+  it('keeps the refusal of a refused call, also when a stop ends its round', () => {
     const expected = { id: 'c2', name: 'web_search', arguments: {}, status: 'error', result: unknownTool }
     expect(toolCallBlock(refused)).toStrictEqual(expected)
-    expect(toolCallBlock(refused, ROUND_LIMIT_TOOL_RESULT)).toStrictEqual(expected)
+    expect(toolCallBlock(refused, STOPPED_TOOL_RESULT)).toStrictEqual(expected)
   })
 })
 
-// No other text tells a model the limit of the tool rounds of a reply.
-describe('the rounds that a reply has left', () => {
-  const NOTE_START = 'Note from Dez: this reply can run'
-  const NOTE_END = '(the calls of one answer of yours are one round; a new message of the user starts the count again). Calls after that do not run. '
-    + 'So make the calls that the result needs most, and then tell the user what is not done.'
-  const LAST_ROUND = 'Note from Dez: this was the last round of tool calls that this reply can run: a call that you make now does not run. '
-    + 'Write your answer to the user now, and tell what is not done. The user can send a new message to let you go on.'
-  const calls: CheckedToolCall[] = [
-    { id: 'c1', name: 'model_list', arguments: {} },
-    { id: 'c2', name: 'model_list', arguments: { filter: 'gemini' } },
-  ]
-  const results = [{ content: '1 model', isError: false }, { content: 'No model.', isError: true }]
-
-  it('gives no note while more rounds are left than the note starts from', () => {
-    expect([roundsLeftNote(ROUNDS_LEFT_NOTE_FROM + 1), roundsLeftNote(40)]).toStrictEqual([null, null])
-  })
-
-  it('tells how many rounds are left, and at the last round to answer the user now', () => {
-    expect([roundsLeftNote(ROUNDS_LEFT_NOTE_FROM), roundsLeftNote(1), roundsLeftNote(0), roundsLeftNote(-1)]).toStrictEqual([
-      `${NOTE_START} ${ROUNDS_LEFT_NOTE_FROM} more rounds of tool calls ${NOTE_END}`,
-      `${NOTE_START} 1 more round of tool calls ${NOTE_END}`,
-      LAST_ROUND,
-      LAST_ROUND,
-    ])
-  })
-
-  it('gives the blocks of a round as they are while no note is due', () => {
-    expect(toolRoundBlocks(calls, results, ROUNDS_LEFT_NOTE_FROM + 1)).toStrictEqual([toolCallBlock(calls[0], results[0]), toolCallBlock(calls[1], results[1])])
-  })
-
-  // A reader of a result's start (a job id) or of its job parts still
-  // reads a result with a note after it.
-  it('puts the note after the result of the last block only, after a blank line, and keeps the status', () => {
-    expect(toolRoundBlocks(calls, results, 2)).toStrictEqual([
-      { ...calls[0], status: 'success', result: '1 model' },
-      { ...calls[1], status: 'error', result: `No model.\n\n${roundsLeftNote(2)}` },
-    ])
-  })
-
-  it('puts the note after the refusal of a last call that Dez did not run', () => {
-    const refused: CheckedToolCall = { id: 'c3', name: 'web_search', arguments: {}, refusal: unknownToolText('web_search') }
-
-    expect(toolRoundBlocks([calls[0], refused], [results[0], undefined], 0).map((block) => block.result))
-      .toStrictEqual(['1 model', `${unknownToolText('web_search')}\n\n${LAST_ROUND}`])
-  })
-})
-
-// The chip of a block tells a call that did not run apart from one that
-// ran and failed, by the result text.
+// Dez writes no such result now, but saved conversations hold the blocks
+// of an older Dez. The chip of a block tells a call that did not run apart
+// from one that ran and failed, by the result text.
 describe('isRoundLimitResult', () => {
-  it('knows the result of a call that the round limit stopped, also with the limit of another release of Dez', () => {
-    expect([ROUND_LIMIT_TOOL_RESULT.content, 'Not run: the reply reached the limit of 20 tool rounds.'].map(isRoundLimitResult)).toStrictEqual([true, true])
+  const OLD_RESULT = 'Not run: the reply reached the limit of 40 tool rounds.'
+
+  it('knows the result of a call that the round limit of an older Dez stopped, with the limit of any release', () => {
+    expect([OLD_RESULT, 'Not run: the reply reached the limit of 20 tool rounds.'].map(isRoundLimitResult)).toStrictEqual([true, true])
   })
 
   it.each([
     ['the result of a stopped call', STOPPED_TOOL_RESULT.content],
-    ['a result that only starts with the text', `${ROUND_LIMIT_TOOL_RESULT.content}\n\nMore text`],
-    ['a result that holds the text', `The tool said: ${ROUND_LIMIT_TOOL_RESULT.content}`],
+    ['a result that only starts with the text', `${OLD_RESULT}\n\nMore text`],
+    ['a result that holds the text', `The tool said: ${OLD_RESULT}`],
     ['an empty result', ''],
   ])('does not take %s for one', (_name, result) => {
     expect(isRoundLimitResult(result)).toBe(false)
