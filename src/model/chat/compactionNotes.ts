@@ -1,5 +1,6 @@
+import { countOf } from '../../utils/countText'
 import { usdText } from '../providers/modelPrices'
-import { ASSET_NAMES, jobResultState, type JobAssetKind, type JobInfo, type JobResultState, type JobStatus } from '../tools/jobs'
+import { ASSET_NAME_SOURCE, ASSET_NAMES, jobResultLegend, jobResultState, type JobAssetKind, type JobInfo, type JobResultState, type JobStatus } from '../tools/jobs'
 import type { ConversationCost } from './conversationCost'
 import { IMAGE_ID_SOURCE } from './images'
 import { escapedModelText, modelTextForRequest } from './toolBlocks'
@@ -77,7 +78,7 @@ const COST_HEADING = '## Cost'
 const ASSETS_LEGEND = 'Each line: @id | kind | facts | who made it | what it is, how it was made, and what a later step needs it for. '
   + 'Every id still names its image or clip. An image or a clip that these notes do not show as a picture is kept as its line only.'
 const JOBS_LEGEND = 'The jobs of the reply that ran at this compaction. Each line: job id | number in the order of the starts | tool | status | result | how its call begins. '
-  + 'result: `ready` means that the next jobs_wait of that reply gives it, `given` that a jobs_wait gave it, and `-` that there is none.'
+  + jobResultLegend(' of that reply')
 const NO_ASSETS_TEXT = 'None: these notes keep no image and no clip.'
 const NO_JOBS_TEXT = 'None: no job of a reply ran at this compaction.'
 
@@ -133,30 +134,24 @@ export interface CompactionNotes {
   cost: ConversationCost | undefined
 }
 
-// A text as one cell of a line: on one line, and, but for the last cell of
-// a line, with no column mark.
-function cell(text: string, last = false): string {
+/** A text as one cell of a line of the notes: on one line, and, but for
+ *  the last cell of a line, with `, ` in place of the column mark. The
+ *  asset table of a compaction request holds the facts and the origin of
+ *  an asset in this form too. */
+export function notesCellText(text: string, last = false): string {
   const line = text.replace(/\s+/g, ' ').trim()
   return last ? line : line.replace(/\s*\|\s*/g, ', ')
 }
 
-/** The facts text of an asset (`imageFactsText`, `clipFactsText`, or the
- *  text of a file that Dez could not read) as the notes and the asset
- *  table of a compaction request hold it: with `, ` in place of the column
- *  mark. */
-export function notesFactsText(facts: string): string {
-  return cell(facts)
-}
-
 function assetLineText({ id, kind, facts, origin, sentence }: NotesAssetLine): string {
-  const cells = [`@${id}`, ASSET_NAMES[kind], cell(facts), escapedModelText(cell(origin)), escapedModelText(cell(sentence, true))]
+  const cells = [`@${id}`, ASSET_NAMES[kind], notesCellText(facts), escapedModelText(notesCellText(origin)), escapedModelText(notesCellText(sentence, true))]
   // A line with no sentence ends with the origin.
   return cells.filter((text, index) => index < 4 || text !== '').join(COLUMN)
 }
 
 function jobLineText(job: JobInfo): string {
-  const label = cell(job.call.label, true)
-  return [job.id, job.call.number, cell(job.tool), job.status, jobResultState(job), escapedModelText(label === '' ? '-' : label)].join(COLUMN)
+  const label = notesCellText(job.call.label, true)
+  return [job.id, job.call.number, notesCellText(job.tool), job.status, jobResultState(job), escapedModelText(label === '' ? '-' : label)].join(COLUMN)
 }
 
 /** What the requests of a conversation cost up to a moment, which `upTo`
@@ -165,7 +160,7 @@ export function conversationCostText(cost: ConversationCost | undefined, upTo: s
   const start = `Cost of the conversation ${upTo}`
   if (!cost || cost.requests === 0) return `${start}: none. Dez counted no request.`
   const { usd, requests, unpriced } = cost
-  const count = requests === 1 ? '1 request' : `${requests} requests`
+  const count = countOf(requests, 'request')
   if (unpriced === requests) return `${start}: unknown. Dez knows no price of its ${count}.`
   const rest = unpriced === 0 ? '' : ` ${unpriced} of them ${unpriced === 1 ? 'has' : 'have'} no known price, and the sum leaves ${unpriced === 1 ? 'it' : 'them'} out.`
   return `${start} (an estimate): ${usdText(usd)} for ${count}.${rest}`
@@ -202,7 +197,7 @@ function partLines(text: string, heading: string): string[] {
 }
 
 const KIND_BY_NAME = new Map(Object.entries(ASSET_NAMES).map(([kind, name]) => [name, kind as JobAssetKind]))
-const ASSET_LINE = new RegExp(`^@(${IMAGE_ID_SOURCE}) \\| (${[...KIND_BY_NAME.keys()].join('|')}) \\| (.*)$`)
+const ASSET_LINE = new RegExp(`^@(${IMAGE_ID_SOURCE}) \\| (${ASSET_NAME_SOURCE}) \\| (.*)$`)
 const JOB_LINE = /^(\S+) \| (\d+) \| ([^|]*) \| (running|finished|failed|timed out|stopped) \| (-|given|ready) \| (.*)$/
 
 /** The asset lines of the notes in `text` (the text of a compaction

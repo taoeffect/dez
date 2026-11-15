@@ -1,3 +1,5 @@
+import { countOf } from '../../utils/countText'
+import { oneLineCut } from '../../utils/oneLineCut'
 import { tagEscape } from '../chat/tagEscape'
 import { usdText } from '../providers/modelPrices'
 import { ToolError, type ToolArguments, type ToolDefinition, type ToolParameter } from './types'
@@ -68,8 +70,7 @@ const JOB_LABEL_CHARS = 80
  *  (`jobPart`). The text is the model's own, which a request already
  *  holds. */
 export function jobCallLabel(text: string): string {
-  const line = [...text.replace(/"/g, '\'').replace(/\s+/g, ' ').trim()]
-  return line.length <= JOB_LABEL_CHARS ? line.join('') : `${line.slice(0, JOB_LABEL_CHARS - 1).join('').trimEnd()}…`
+  return oneLineCut(text.replace(/"/g, '\''), JOB_LABEL_CHARS)
 }
 
 /** The result of a call that started the job `jobId` as the job `number`
@@ -201,7 +202,9 @@ export type JobAssetKind = 'image' | 'audio' | 'video'
 /** The name of each kind of asset in a text for a model. */
 export const ASSET_NAMES: Readonly<Record<JobAssetKind, string>> = { image: 'image', audio: 'audio clip', video: 'video clip' }
 
-const ASSET_NAME_SOURCE = Object.values(ASSET_NAMES).join('|')
+/** The names of `ASSET_NAMES` as one regex alternation, with no group:
+ *  the readers of the texts that name a kind of asset use it. */
+export const ASSET_NAME_SOURCE = Object.values(ASSET_NAMES).join('|')
 
 /** The start of the sentence with which a tool result names an image or a
  *  clip that its call made and that Dez put into the reply, as in "Made
@@ -310,7 +313,7 @@ export function jobsWaitText(results: readonly JobResult[], running: number, rea
   if (ready === 1) rest += ' The result of 1 other job is ready: call jobs_wait to get it.'
   else if (ready > 1) rest += ` The results of ${ready} other jobs are ready: call jobs_wait to get them.`
   if (results.length === 0) return `You already have the result of each job that \`jobs\` names. ${rest}`
-  return [`${jobCountText(results.length)} ended. ${rest}`, ...results.map(jobPart)].join('\n\n')
+  return [`${countOf(results.length, 'job')} ended. ${rest}`, ...results.map(jobPart)].join('\n\n')
 }
 
 /** The ids of the jobs that the `jobs` argument of a `jobs_wait` call
@@ -381,21 +384,29 @@ export function jobResultState(job: Pick<JobInfo, 'status' | 'delivered'>): JobR
   return job.delivered ? 'given' : 'ready'
 }
 
-// A count of jobs, as in `1 job`, `3 jobs`.
-function jobCountText(count: number): string {
-  return count === 1 ? '1 job' : `${count} jobs`
+/** What the values of the `result` column of a job list mean
+ *  (`JobResultState`). `of` names the reply when the reader is not in it
+ *  (the notes of a compaction). */
+export function jobResultLegend(of = ''): string {
+  return `result: \`ready\` means that the next jobs_wait${of} gives it, \`given\` that a jobs_wait gave it, and \`-\` that there is none.`
+}
+
+/** What the paid requests of `jobs` cost: the sum of the known prices, how
+ *  many jobs have one, and how many sent a paid request with no known
+ *  price (`JobInfo.cost`). */
+export function jobsSpend(jobs: readonly JobInfo[]): { usd: number, priced: number, unpriced: number } {
+  const prices = jobs.flatMap(({ cost }) => (typeof cost === 'number' ? [cost] : []))
+  return { usd: prices.reduce((sum, cost) => sum + cost, 0), priced: prices.length, unpriced: jobs.filter(({ cost }) => cost === null).length }
 }
 
 // The last line of `jobsListText`: what the paid requests of the jobs cost,
 // from the prices that the jobs know (`JobInfo.cost`), with no request.
 function spendText(jobs: readonly JobInfo[]): string {
-  const priced = jobs.flatMap(({ cost }) => typeof cost === 'number' ? [cost] : [])
-  const unpriced = jobs.filter(({ cost }) => cost === null).length
-  if (priced.length === 0 && unpriced === 0) return 'Spend: none. No job of this reply sent a paid request.'
-  if (priced.length === 0) return `Spend: unknown. No price is known for ${unpriced === 1 ? 'the job' : `the ${unpriced} jobs`} that sent a paid request.`
-  const total = priced.reduce((sum, cost) => sum + cost, 0)
-  const rest = unpriced === 0 ? '' : `, and ${jobCountText(unpriced)} with no known price`
-  return `Spend (an estimate): ${usdText(total)} for ${jobCountText(priced.length)} with a known price `
+  const { usd, priced, unpriced } = jobsSpend(jobs)
+  if (priced === 0 && unpriced === 0) return 'Spend: none. No job of this reply sent a paid request.'
+  if (priced === 0) return `Spend: unknown. No price is known for ${unpriced === 1 ? 'the job' : `the ${unpriced} jobs`} that sent a paid request.`
+  const rest = unpriced === 0 ? '' : `, and ${countOf(unpriced, 'job')} with no known price`
+  return `Spend (an estimate): ${usdText(usd)} for ${countOf(priced, 'job')} with a known price `
     + `(the provider's price, else its quote; a refused request costs nothing)${rest}.`
 }
 
@@ -406,9 +417,9 @@ function spendText(jobs: readonly JobInfo[]): string {
  *  it is free text, which can hold the column mark. */
 export function jobsListText(jobs: readonly JobInfo[]): string {
   if (jobs.length === 0) return NO_JOBS_TEXT
-  const head = `${jobCountText(jobs.length)} of this reply (number | id | tool | status | result | seconds | call). `
+  const head = `${countOf(jobs.length, 'job')} of this reply (number | id | tool | status | result | seconds | call). `
     + 'number: the place of the job in the order of the starts. '
-    + 'result: `ready` means that the next jobs_wait gives it, `given` that a jobs_wait gave it, and `-` that there is none. '
+    + `${jobResultLegend()} `
     + 'seconds: how long the job ran, or runs so far. '
     + 'call: how the prompt or the arguments of its call begin.'
   const rows = jobs.map((job) => [

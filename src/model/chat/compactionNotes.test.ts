@@ -4,7 +4,7 @@ import {
   compactionNotesText,
   conversationCostText,
   notesAssetLines,
-  notesFactsText,
+  notesCellText,
   notesJobLines,
   type CompactionNotes,
   type NotesAsset,
@@ -107,7 +107,7 @@ describe('compactionNotesText', () => {
   it.each<[string, NotesAssetLine, Partial<NotesAssetLine>]>([
     ['a sentence that holds the column mark', { ...lineData(FRAME), sentence: 'Scene 1 | left half | the fox' }, {}],
     ['a sentence with line breaks, which comes back on one line', { ...lineData(THEME), sentence: 'The theme.\n\nUsed  in\tscene 2.' }, { sentence: 'The theme. Used in scene 2.' }],
-    ['facts with the column mark, given through notesFactsText', { ...lineData(PHOTO), kind: 'video', facts: notesFactsText('WebM | 8 s | 640x360') }, {}],
+    ['facts with the column mark, given through notesCellText', { ...lineData(PHOTO), kind: 'video', facts: notesCellText('WebM | 8 s | 640x360') }, {}],
   ])('reads back the line of an asset with %s', (_case, line, change) => {
     const text = compactionNotesText(notes({ assets: [{ ...line, text: null }] }))
 

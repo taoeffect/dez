@@ -1,11 +1,12 @@
+import { countOf, countText } from '../../utils/countText'
 import type { Compactions } from '../chat/compaction'
 import { conversationCostText } from '../chat/compactionNotes'
 import { compactionDueSize, type ContextSize } from '../chat/contextSize'
 import { costSince, type ConversationCost } from '../chat/conversationCost'
 import { usdText } from '../providers/modelPrices'
 import type { CallPictureBudget } from '../streams/pictureBudget'
-import { countText, pictureBudgetLeftText } from './assetView'
-import type { JobInfo } from './jobs'
+import { pictureBudgetLeftText } from './assetView'
+import { jobsSpend, type JobInfo } from './jobs'
 import type { ToolDefinition } from './types'
 
 // `conversation_info`: the numbers of the conversation of a reply, for the
@@ -47,11 +48,6 @@ export interface ConversationInfoFacts {
   pictureBudget: CallPictureBudget | null
 }
 
-// A count of things, as in `1 compaction`, `3 compactions`.
-function countOf(count: number, name: string): string {
-  return `${countText(count)} ${name}${count === 1 ? '' : 's'}`
-}
-
 // The line of the jobs that run with a paid request: the cost of a
 // conversation gets the price of a job only at the end of the job
 // (`ReplyJobs`, controller/jobs.ts), so the sums of a call leave these
@@ -60,14 +56,12 @@ function countOf(count: number, name: string): string {
 function openJobsText(jobs: readonly JobInfo[]): string | null {
   const open = jobs.filter((job) => job.status === 'running' && job.cost !== undefined)
   if (open.length === 0) return null
-  const prices = open.flatMap(({ cost }) => (typeof cost === 'number' ? [cost] : []))
-  const unpriced = open.length - prices.length
+  const { usd, priced, unpriced } = jobsSpend(open)
   const start = `Not in the cost yet: the paid ${open.length === 1 ? 'request' : 'requests'} of ${countOf(open.length, 'job')} of this reply that still ${open.length === 1 ? 'runs' : 'run'}. `
     + 'Dez counts the request of a job when the job ends.'
-  if (prices.length === 0) return `${start} Dez knows no price of ${open.length === 1 ? 'it' : 'them'}.`
-  const total = usdText(prices.reduce((sum, price) => sum + price, 0))
+  if (priced === 0) return `${start} Dez knows no price of ${open.length === 1 ? 'it' : 'them'}.`
   const rest = unpriced === 0 ? '' : `, and ${countOf(unpriced, 'job')} with no known price`
-  return `${start} An estimate (the provider's price, else its quote): ${total} for ${countOf(prices.length, 'job')}${rest}.`
+  return `${start} An estimate (the provider's price, else its quote): ${usdText(usd)} for ${countOf(priced, 'job')}${rest}.`
 }
 
 /** The result text of a `conversation_info` call: the context size and the

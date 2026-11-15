@@ -2,6 +2,7 @@ import { StateEffect, StateField, type EditorState, type Extension } from '@code
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view'
 import { readCompactionTag } from '../../model/chat/compaction'
 import type { ShownPicture } from '../../model/chat/shownPictures'
+import { countOf } from '../../utils/countText'
 import { SECTION_SEP } from '../thread/cmEditor'
 import { measureLineHeights } from '../thread/editorMeasure'
 import { hiddenAssets, hiddenAssetsOfChips } from './hiddenAssets'
@@ -65,10 +66,6 @@ function hasPanel(data: CompactionChipData): boolean {
   return data.assets.length > 0 || data.pictures.length > 0
 }
 
-function countText(count: number, noun: string): string {
-  return `${count} ${noun}${count === 1 ? '' : 's'}`
-}
-
 /** Two arrows that point at a line from above and below. */
 function compressIcon(): SVGSVGElement {
   return svgIcon('0 0 16 16', [
@@ -83,8 +80,8 @@ function compressIcon(): SVGSVGElement {
 function renderCounts(chip: HTMLElement, data: CompactionChipData): void {
   for (const count of chip.querySelectorAll(`.${COUNT_CLASS}`)) count.remove()
   const counts = [
-    ...(data.assets.length > 0 ? [countText(data.assets.length, 'kept asset')] : []),
-    ...(data.pictures.length > 0 ? [countText(data.pictures.length, 'picture')] : []),
+    ...(data.assets.length > 0 ? [countOf(data.assets.length, 'kept asset')] : []),
+    ...(data.pictures.length > 0 ? [countOf(data.pictures.length, 'picture')] : []),
   ]
   chip.append(...counts.map((text) => span(COUNT_CLASS, text)))
   if (hasPanel(data)) chip.setAttribute('aria-label', [`Compaction ${data.count}`, ...counts].join(', '))

@@ -1,4 +1,5 @@
 import { byteSizeText } from '../../utils/byteSize'
+import { countOf, countText } from '../../utils/countText'
 import { drawnMediaType, sizeWithin, wholeImageDrawing, type ImageComposition, type ImageDrawing, type ImageRegion, type ImageSize } from '../chat/imageDrawing'
 import type { ImageMediaType } from '../chat/images'
 import type { ClipReadProblem } from '../chat/mediaFiles'
@@ -102,11 +103,6 @@ export const SOUND_STRIP_HEIGHTS: Readonly<Record<ViewDetail, number>> = { revie
 /** The most bytes of the file of a picture: in base64, a file of this size
  *  stays under the 5 MB image limit of the Anthropic API. */
 export const MAX_PICTURE_BYTES = 3_750_000
-
-/** A count as the texts for a model write it: `57,408`. */
-export function countText(count: number): string {
-  return count.toLocaleString('en-US')
-}
 
 // The description is static (no counts that change, no dates): the tools
 // array is in the provider's prompt cache. So it tells no number of the
@@ -704,15 +700,10 @@ function tokensAndBytesText({ tokens, bytes }: PictureBudget): string {
   return `${countText(tokens)} tokens and ${byteSizeText(bytes)} of base64`
 }
 
-// `count` pictures, as in `1 picture`, `12 pictures`.
-function picturesText(count: number): string {
-  return `${countText(count)} ${count === 1 ? 'picture' : 'pictures'}`
-}
-
 // What is left of a budget. A model with no image limit of a request has
 // no count of pictures.
 function budgetLeftText(left: PictureBudget): string {
-  return Number.isFinite(left.pictures) ? `${picturesText(left.pictures)}, ${tokensAndBytesText(left)}` : tokensAndBytesText(left)
+  return Number.isFinite(left.pictures) ? `${countOf(left.pictures, 'picture')}, ${tokensAndBytesText(left)}` : tokensAndBytesText(left)
 }
 
 /** The line that tells a model what is left of the picture budget of its
@@ -722,7 +713,7 @@ function budgetLeftText(left: PictureBudget): string {
 export function pictureBudgetLeftText({ left, roundPictures }: CallPictureBudget): string {
   const line = `Picture budget left until the next compaction: ${budgetLeftText(left)}.`
   if (roundPictures >= left.pictures) return line
-  return `${line} The calls of this round can show ${roundPictures === 0 ? 'no more pictures' : `only ${picturesText(roundPictures)} more`}: `
+  return `${line} The calls of this round can show ${roundPictures === 0 ? 'no more pictures' : `only ${countOf(roundPictures, 'picture')} more`}: `
     + 'your model takes a limited number of images in one message. The next round can show more.'
 }
 

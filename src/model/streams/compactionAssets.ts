@@ -1,6 +1,7 @@
+import { oneLineCut } from '../../utils/oneLineCut'
 import type { AssetPlace } from '../chat/assetOrigins'
 import { compactionMessageEnd, isCarriedUserAssets, sectionCompactionTag } from '../chat/compaction'
-import { notesAssetLines, notesFactsText, type NotesAssetLine } from '../chat/compactionNotes'
+import { notesAssetLines, notesCellText, type NotesAssetLine } from '../chat/compactionNotes'
 import { sectionIsEmpty, sectionPlainText } from '../chat/content'
 import { findAssetMentions } from '../chat/imageMentions'
 import { IMAGE_HIDDEN_KEY } from '../chat/images'
@@ -76,10 +77,10 @@ export function carriedAssetLines(sections: readonly Section[]): Map<string, Not
 export interface CompactionAsset {
   asset: FoundAsset
   kind: JobAssetKind
-  /** The facts of its file, as the notes hold them (`notesFactsText`). */
+  /** The facts of its file, as the notes hold them (`notesCellText`). */
   facts: string
-  /** Who made it, as the notes hold it: `assetOriginText`, with no column
-   *  mark. */
+  /** Who made it, as the notes hold it: `assetOriginText`, as a cell of
+   *  the notes (`notesCellText`). */
   origin: string
   /** It is in a user section. */
   fromUser: boolean
@@ -118,8 +119,8 @@ export function compactionAssets(
     return {
       asset,
       kind: asset.kind === 'image' ? 'image' : asset.clip.kind,
-      facts: line?.facts ?? notesFactsText(facts.get(asset.id) ?? ''),
-      origin: assetOriginText(places[index].origin).replace(/\s*\|\s*/g, ' / '),
+      facts: line?.facts ?? notesCellText(facts.get(asset.id) ?? ''),
+      origin: notesCellText(assetOriginText(places[index].origin)),
       fromUser: sections[asset.section].role === 'user',
       intermediate: isIntermediate(asset),
       isNew: line === undefined,
@@ -178,13 +179,6 @@ export interface AssetChoice {
   rank: number
 }
 
-// `sentence` as the notes hold it: on one line, and cut at the limit, by
-// code points, so that the cut leaves no half of a character.
-function sentenceLine(sentence: string): string {
-  const line = [...sentence.replace(/\s+/g, ' ').trim()]
-  return line.length <= MAX_ASSET_SENTENCE_LENGTH ? line.join('') : `${line.slice(0, MAX_ASSET_SENTENCE_LENGTH - 1).join('').trimEnd()}…`
-}
-
 /** The texts of the user sections of `sections` that stay word for word
  *  after a compaction of `scope`: the first and the newest message of the
  *  user, and each user section after the sections that the compaction
@@ -232,7 +226,7 @@ export function assetDecisions(
     return {
       asset,
       decision: decision === 'drop' && mustStay ? 'keep' : decision,
-      sentence: sentenceLine(found !== undefined && found.line.sentence !== '' ? found.line.sentence : asset.sentence),
+      sentence: oneLineCut(found !== undefined && found.line.sentence !== '' ? found.line.sentence : asset.sentence, MAX_ASSET_SENTENCE_LENGTH),
       rank: found?.index ?? Infinity,
     }
   })

@@ -125,7 +125,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `view/settings/`: Settings (`SettingsView.vue`, `ProviderManager.vue`, `ShortcutManager.vue`, `SystemPromptSettings.vue`, `unusedFiles.ts`).
 - `view/tabs/TabBar.vue`: tabs (activity colors, drag to reorder).
 - `view/modelLabel.ts`: model display names and tooltip text. `view/theme.ts`: theme and editor font size.
-- `utils/`: one place for each shared rule: `byteSize.ts`, `formatName.ts`, `homePath.ts`, `errorText.ts`, `abort.ts`, `dezLinks.ts`.
+- `utils/`: one place for each shared rule: `byteSize.ts`, `countText.ts`, `oneLineCut.ts`, `formatName.ts`, `homePath.ts`, `errorText.ts`, `abort.ts`, `dezLinks.ts`.
 
 ### SBP
 

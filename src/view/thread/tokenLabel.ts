@@ -1,5 +1,6 @@
 import type { Compactions } from '../../model/chat/compaction'
 import { compactionDueSize, type ContextSize } from '../../model/chat/contextSize'
+import { countText } from '../../utils/countText'
 
 /** The text and the tooltip of the token label of the bottom bar. */
 export interface TokenLabelTexts {
@@ -40,10 +41,6 @@ function windowShareText(tokens: number, contextWindow: number): string {
   return percent > 0 && percent < 1 ? 'less than 1%' : `${Math.round(percent)}%`
 }
 
-// Whole numbers with thousands separators (`81,234`), the same on every
-// computer.
-const WHOLE_NUMBER = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 })
-
 /** The label of the context size of a conversation: the count, with `~`
  *  before it when it is an estimate of Dez and not a provider's count. The
  *  tooltip gives the whole number, what it counts, how much of
@@ -64,7 +61,7 @@ export function tokenLabelTexts(size: ContextSize, contextWindow: number | undef
   const subject = compactions ? 'buffer' : 'conversation'
   const sent = 'what your next message sends to the model'
   const lines = [
-    `Size of this ${subject}: ${about}${WHOLE_NUMBER.format(size.tokens)} tokens`,
+    `Size of this ${subject}: ${about}${countText(size.tokens)} tokens`,
     compactions
       ? `The buffer is the conversation since its last compaction: the notes of that compaction, and all after them. It is ${sent}, with the system prompt and the tools that go with it.`
       : `It is ${sent}: the conversation, with the system prompt and the tools that go with it.`,
@@ -73,9 +70,9 @@ export function tokenLabelTexts(size: ContextSize, contextWindow: number | undef
       : 'The provider counted it in the newest reply.',
   ]
   if (contextWindow !== undefined) {
-    const dueSize = WHOLE_NUMBER.format(compactionDueSize(contextWindow, compactions))
+    const dueSize = countText(compactionDueSize(contextWindow, compactions))
     lines.push(
-      `Context window of the model: ${WHOLE_NUMBER.format(contextWindow)} tokens. The ${subject} fills ${windowShareText(size.tokens, contextWindow)} of it.`,
+      `Context window of the model: ${countText(contextWindow)} tokens. The ${subject} fills ${windowShareText(size.tokens, contextWindow)} of it.`,
       compactions
         ? `Dez compacts the conversation again when the buffer gets to ${dueSize} tokens, or sooner when its images and pictures are near a limit of the model.`
         : `Dez compacts the conversation when it gets to ${dueSize} tokens, or sooner when its images and pictures are near a limit of the model: notes of the model then take the place of the earlier messages.`,
@@ -92,7 +89,7 @@ export function tokenLabelTexts(size: ContextSize, contextWindow: number | undef
     total: {
       text: `(${labelTokenText(totalTokens)})`,
       tooltip: [
-        `Size of the whole conversation: ${about}${WHOLE_NUMBER.format(totalTokens)} tokens`,
+        `Size of the whole conversation: ${about}${countText(totalTokens)} tokens`,
         `It is this buffer, plus the size that the conversation had at ${compactionsText}.`,
         'The requests sent more tokens than that in sum, as each request sends its conversation again. The cost tells what they cost.',
       ].join('\n'),

@@ -9,6 +9,7 @@ import { SHOWN_PICTURE_FOLDER } from '../../model/chat/shownPictures'
 import { CHAT_IMAGE_SIDE } from '../../model/providers/imageSize'
 import { WORK_FOLDER_LIFETIME_MS, WORK_ROOT } from '../../model/tools/workFolders'
 import { shortcutKeyText } from '../../model/shortcuts'
+import { countText } from '../../utils/countText'
 import { DEZ_DISCUSSIONS_URL } from '../../utils/dezLinks'
 import bundledFfmpeg from '../../../src-tauri/binaries/manifest.json'
 
@@ -39,7 +40,7 @@ const WORK_FOLDER_HOURS = WORK_FOLDER_LIFETIME_MS / HOUR_MS
 
 // The side over which a chat request sends a smaller copy of an image, as
 // the text writes a number (`1,568`).
-const CHAT_IMAGE_SIDE_TEXT = CHAT_IMAGE_SIDE.toLocaleString('en-US')
+const CHAT_IMAGE_SIDE_TEXT = countText(CHAT_IMAGE_SIDE)
 
 const { shortcuts } = useModelState()
 
