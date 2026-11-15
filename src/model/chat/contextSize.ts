@@ -1,3 +1,5 @@
+import type { Compactions } from './compaction'
+
 /** The context of a conversation as its newest chat request counted it: a
  *  chat round of a reply that told its tokens. A media round and the
  *  request of a `model_invoke` job do not count: they send no conversation.
@@ -44,6 +46,26 @@ export function contextSize(counted: CountedContext | undefined, estimateNow: nu
  *  (streams/pictureBudget.ts). */
 export function compactionThreshold(contextWindow: number): number {
   return Math.min(250_000, Math.floor(0.65 * contextWindow))
+}
+
+// The share of the compaction threshold by which a conversation must grow
+// after a compaction before its size makes the next one due. What a
+// compaction leaves (the system prompt, the tools, the notes, and the
+// first and the newest message of the user, word for word) can be near the
+// threshold by itself, and the next compaction takes nothing out of that:
+// with no such growth, each request of that conversation would compact it
+// again.
+const MIN_GROWTH_SHARE = 0.25
+
+/** The context size at which a conversation needs a compaction, for a
+ *  model with a context window of `contextWindow` tokens: the compaction
+ *  threshold, or more when its newest compaction (`compactions`) left
+ *  more than 3/4 of it: then a quarter of the threshold over what it left
+ *  (`Compactions.left`). A conversation that grows past the window first
+ *  gets the provider's error. */
+export function compactionDueSize(contextWindow: number, compactions: Compactions | undefined): number {
+  const threshold = compactionThreshold(contextWindow)
+  return Math.max(threshold, (compactions?.left ?? 0) + Math.floor(MIN_GROWTH_SHARE * threshold))
 }
 
 /** For object spreads: `{ context }` (a copy), or `{}` without one, because

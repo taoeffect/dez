@@ -486,8 +486,11 @@ describe('context size of a tab', () => {
 describe('dez.model/tabs/compact', () => {
   const model: ModelRef = { providerId: 'local', modelId: 'gpt-5.4' }
   const section = (id: string, role: Section['role'], text: string): Section => ({ id, role, content: [{ kind: 'text', text }], ...(role === 'agent' && { model }) })
-  const compact = (tabId: string, sections: Section[], tokens: number, replySectionId = 'b') => sbp('dez.model/tabs/compact', tabId, { sections, replySectionId, tokens }) as boolean
+  const compact = (tabId: string, sections: Section[], tokens: number, replySectionId = 'b') => sbp('dez.model/tabs/compact', tabId, { sections, replySectionId, tokens, model }) as boolean
   const tabNow = (tabId: string) => tabs().find((tab) => tab.id === tabId) as Tab
+  // The context size of the tab for the model of its reply: right after a
+  // compaction, Dez's estimate of what the compaction left.
+  const sizeNow = (tabId: string) => (sbp('dez.model/tabs/contextSize', tabId, model) as ContextSize).tokens
   // What a compaction gives for the conversation of `conversation`: the
   // notes, the two messages of the user, and the empty reply.
   const compacted = (count = 1): Section[] => [
@@ -519,7 +522,7 @@ describe('dez.model/tabs/compact', () => {
     const now = tabNow(tab.id)
     expect(now.sections).toStrictEqual(compacted())
     expect(now.title).toBe('First')
-    expect(now.compactions).toStrictEqual({ count: 1, tokens: 150_000, cost: { usd: 0.5, requests: 1, unpriced: 0 } })
+    expect(now.compactions).toStrictEqual({ count: 1, tokens: 150_000, cost: { usd: 0.5, requests: 1, unpriced: 0 }, left: sizeNow(tab.id) })
     // With the count of the old text, the size of the new text would be
     // near 0.
     expect(now).not.toHaveProperty('context')
@@ -543,12 +546,30 @@ describe('dez.model/tabs/compact', () => {
 
     compact(tab.id, compacted(), 150_000)
     // A tab that counted no request yet has a cost of nothing.
-    expect(tabNow(tab.id).compactions).toStrictEqual({ count: 1, tokens: 150_000, cost: { usd: 0, requests: 0, unpriced: 0 } })
+    expect(tabNow(tab.id).compactions).toStrictEqual({ count: 1, tokens: 150_000, cost: { usd: 0, requests: 0, unpriced: 0 }, left: sizeNow(tab.id) })
     sbp('dez.model/tabs/countRequestCost', tab.id, 0.25)
     sbp('dez.model/tabs/countRequestCost', tab.id, null)
     compact(tab.id, compacted(2), 90_000)
 
-    expect(tabNow(tab.id).compactions).toStrictEqual({ count: 2, tokens: 240_000, cost: { usd: 0.25, requests: 2, unpriced: 1 } })
+    expect(tabNow(tab.id).compactions).toStrictEqual({ count: 2, tokens: 240_000, cost: { usd: 0.25, requests: 2, unpriced: 1 }, left: sizeNow(tab.id) })
+  })
+
+  // The count is in the units of the later context size: its base is a
+  // count too.
+  it('takes the count of the first chat request after a compaction as the size that it left, and no later count', () => {
+    const tab = conversation()
+    sbp('dez.model/tabs/countRequestContext', tab.id, model, 150_000)
+    expect(tabNow(tab.id)).not.toHaveProperty('compactions')
+
+    compact(tab.id, compacted(), 150_000)
+    sbp('dez.model/tabs/countRequestContext', tab.id, model, 20_000.4)
+    sbp('dez.model/tabs/countRequestContext', tab.id, model, 30_000)
+    expect(tabNow(tab.id).compactions?.left).toBe(20_000)
+
+    // The next compaction starts from Dez's estimate again.
+    compact(tab.id, compacted(2), 30_000)
+    expect(tabNow(tab.id).compactions?.left).toBe(sizeNow(tab.id))
+    expect(sizeNow(tab.id)).not.toBe(20_000)
   })
 
   it('gives the numbers of the compactions of a tab as a copy, and nothing before its first one', () => {
@@ -559,13 +580,14 @@ describe('dez.model/tabs/compact', () => {
 
     sbp('dez.model/tabs/countRequestCost', tab.id, 0.5)
     compact(tab.id, compacted(), 150_000)
+    const expected = { count: 1, tokens: 150_000, cost: { usd: 0.5, requests: 1, unpriced: 0 }, left: sizeNow(tab.id) }
     const read = numbers() as Compactions
-    expect(read).toStrictEqual({ count: 1, tokens: 150_000, cost: { usd: 0.5, requests: 1, unpriced: 0 } })
+    expect(read).toStrictEqual(expected)
 
     // A change of the read numbers changes nothing in the tab.
     read.cost.usd = 9
     read.tokens = 1
-    expect(numbers()).toStrictEqual({ count: 1, tokens: 150_000, cost: { usd: 0.5, requests: 1, unpriced: 0 } })
+    expect(numbers()).toStrictEqual(expected)
   })
 
   it('changes nothing for a missing tab, and for a reply whose section is gone', () => {

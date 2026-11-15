@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { compactionThreshold, contextField, contextSize } from './contextSize'
+import { compactionDueSize, compactionThreshold, contextField, contextSize } from './contextSize'
 
 describe('contextSize', () => {
   it('gives the estimate, marked as one, while no request told its tokens', () => {
@@ -24,6 +24,22 @@ describe('contextSize', () => {
 describe('compactionThreshold', () => {
   it('is 65% of the context window, in whole tokens, and never over 250,000', () => {
     expect([200_000, 127_999, 400_000, 1_000_000].map(compactionThreshold)).toStrictEqual([130_000, 83_199, 250_000, 250_000])
+  })
+})
+
+// A window of 200,000 tokens: a threshold of 130,000, and a quarter of it
+// is 32,500.
+describe('compactionDueSize', () => {
+  const after = (left?: number) => compactionDueSize(200_000, { count: 1, tokens: 150_000, cost: { usd: 0, requests: 0, unpriced: 0 }, ...(left !== undefined && { left }) })
+
+  it('is the threshold with no compaction, and after a compaction that left the conversation well under it', () => {
+    expect([compactionDueSize(200_000, undefined), after(), after(0), after(97_500)]).toStrictEqual([130_000, 130_000, 130_000, 130_000])
+  })
+
+  // What a compaction leaves can be near the threshold by itself, and a
+  // next compaction would take nothing out of it.
+  it('waits for a quarter of the threshold over what a compaction left, when that is more', () => {
+    expect([after(97_501), after(130_000), after(180_000)]).toStrictEqual([130_001, 162_500, 212_500])
   })
 })
 

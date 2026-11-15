@@ -67,5 +67,14 @@ describe('token label', () => {
       expect(texts(false).total?.tooltip.split('\n')[0]).toBe('Size of the whole conversation: 1,231,234 tokens')
       expect(texts(false, 1).total?.tooltip).toContain('at its compaction.')
     })
+
+    // A window of 200,000 tokens: a threshold of 130,000, a quarter of it
+    // is 32,500.
+    it('tells a later compaction size when the compaction left the buffer near the threshold', () => {
+      const tooltip = (left: number) => tokenLabelTexts({ tokens: 125_000, estimated: false }, 200_000, { count: 1, tokens: 300_000, cost, left }).tooltip
+
+      expect(tooltip(120_000)).toContain('Dez compacts the conversation again when the buffer gets to 152,500 tokens.')
+      expect(tooltip(20_000)).toContain('when the buffer gets to 130,000 tokens.')
+    })
   })
 })

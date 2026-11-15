@@ -435,8 +435,9 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // reply (model/tools/conversationInfo.ts): the ones that the bottom bar
   // shows the user, and the picture budget. The request of the round that
   // made the call is in the cost and in the context size already
-  // (`runChatRounds`, stream.ts). The window and the threshold are the
-  // ones that the compaction check of the reply uses (`compactIfDue`).
+  // (`runChatRounds`, stream.ts). The window and the compaction numbers
+  // give the size at which the compaction check of the reply compacts
+  // (`compactIfDue`).
   async conversation_info (_args, _signal, context) {
     const { providerId, modelId } = context.model
     const contextSize = sbp('dez.model/tabs/contextSize', context.tabId, context.model) as ContextSize | undefined

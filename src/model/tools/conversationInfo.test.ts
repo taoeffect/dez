@@ -39,6 +39,15 @@ describe('conversationInfoText', () => {
     expect(text({ contextSize: { tokens: 81_234, estimated: false } }).split('\n')[0]).toContain('Context size: 81,234 tokens (the count of the provider)')
   })
 
+  // A threshold of 130,000; a quarter of it is 32,500.
+  it('tells a later compaction size when the newest compaction left the conversation near the threshold', () => {
+    const cost = { usd: 7.38, requests: 131, unpriced: 0 }
+    const dueLine = (left: number) => text({ compactions: { count: 1, tokens: 300_000, cost, left } }).split('\n')[2]
+
+    expect(dueLine(120_000)).toContain('gets to 152,500 tokens')
+    expect(dueLine(20_000)).toContain('gets to 130,000 tokens')
+  })
+
   it('gives one cost before the first compaction, with the requests of no known price', () => {
     const lines = text().split('\n')
 

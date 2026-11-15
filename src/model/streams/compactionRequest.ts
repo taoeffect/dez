@@ -26,11 +26,12 @@ const NEAR_PICTURE_LIMIT = 0.9
 /** Why the next request of a conversation needs a compaction first; null
  *  when it needs none.
  *
- *  `contextTokens` is the context size of the tab, and `threshold` the
- *  compaction threshold of the model (`compactionThreshold`). `spent` is
- *  what the images and the pictures of the next request cost
- *  (`contextImageCost`), and `limits` the picture limits of the model
- *  (`pictureLimits`).
+ *  `contextTokens` is the context size of the tab, and `dueSize` the size
+ *  at which it needs a compaction (`compactionDueSize`: the compaction
+ *  threshold of the model, or more when the newest compaction could not
+ *  get the conversation well under it). `spent` is what the images and
+ *  the pictures of the next request cost (`contextImageCost`), and
+ *  `limits` the picture limits of the model (`pictureLimits`).
  *
  *  With no chat request since the last compaction the answer is null: a
  *  compaction that made no room would come again and again.
@@ -46,9 +47,9 @@ const NEAR_PICTURE_LIMIT = 0.9
  *    cannot take out the images that the messages of the user name with
  *    an `@id` mention, so with no newer picture it would make no room. It
  *    also covers a model that takes no image, whose limit is 0. */
-export function compactionReason({ contextTokens, threshold, limits, leaves, spent, kept, requestSinceCompaction }: {
+export function compactionReason({ contextTokens, dueSize, limits, leaves, spent, kept, requestSinceCompaction }: {
   contextTokens: number
-  threshold: number
+  dueSize: number
   limits: PictureBudget
   leaves: PictureBudget
   spent: PictureBudget
@@ -56,7 +57,7 @@ export function compactionReason({ contextTokens, threshold, limits, leaves, spe
   requestSinceCompaction: boolean
 }): CompactionReason | null {
   if (!requestSinceCompaction) return null
-  if (contextTokens >= threshold) return 'tokens'
+  if (contextTokens >= dueSize) return 'tokens'
   const isNear = (part: keyof PictureBudget) => spent[part] > Math.max(kept[part], leaves[part]) && spent[part] >= NEAR_PICTURE_LIMIT * limits[part]
   if (isNear('pictures')) return 'images'
   if (isNear('bytes')) return 'bytes'

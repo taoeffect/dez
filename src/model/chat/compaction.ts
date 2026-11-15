@@ -82,6 +82,14 @@ export interface Compactions {
   tokens: number
   /** The cost of the conversation at its newest compaction. */
   cost: ConversationCost
+  /** The context size that the newest compaction left, in tokens: Dez's
+   *  estimate right after it, then the count of the first chat request
+   *  after it (`dez.model/tabs/countRequestContext`), which holds the
+   *  answer of that request too. The two match the units of the context
+   *  size at that time (`contextSize`). Absent when not known. The next
+   *  compaction for the size waits for growth over it
+   *  (`compactionDueSize`). */
+  left?: number
 }
 
 /** For object spreads: `{ compactions }` (a copy), or `{}` without one,

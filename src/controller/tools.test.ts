@@ -2986,6 +2986,7 @@ describe('dez.controller/tools/run', () => {
         ],
         replySectionId: 'a1',
         tokens: 150_000,
+        model: REPLY_MODEL,
       })
       sbp('dez.model/tabs/countRequestCost', tabId, 0.5)
 

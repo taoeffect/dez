@@ -807,16 +807,18 @@ describe('a compacted conversation', () => {
     expect(parseConversation('conversation', serialized)).toStrictEqual(data)
   })
 
+  // A file can hold no `compacted-left:` part: Dez then knows no size that
+  // the newest compaction left.
   it('round-trips the compaction numbers, after the other parts', () => {
-    const priced = conversation({ context: { tokens: 5, estimate: 7 }, compactions: { count: 2, tokens: 412000, cost: { usd: 0.1 + 0.2, requests: 5, unpriced: 1 } } })
+    const priced = conversation({ context: { tokens: 5, estimate: 7 }, compactions: { count: 2, tokens: 412000, cost: { usd: 0.1 + 0.2, requests: 5, unpriced: 1 }, left: 24100 } })
     const free = conversation({ compactions: { count: 1, tokens: 0, cost: { usd: 0, requests: 0, unpriced: 0 } } })
 
     expect(firstLine(serializeConversation(priced)))
-      .toBe('<!-- title: Chat | model:  | created: 1 | context: 5 | context-estimate: 7 | compactions: 2 | compacted-tokens: 412000 | compacted-cost: 0.3 | compacted-requests: 5 | compacted-unpriced: 1 -->')
+      .toBe('<!-- title: Chat | model:  | created: 1 | context: 5 | context-estimate: 7 | compactions: 2 | compacted-tokens: 412000 | compacted-cost: 0.3 | compacted-requests: 5 | compacted-unpriced: 1 | compacted-left: 24100 -->')
     expect(firstLine(serializeConversation(free)))
       .toBe('<!-- title: Chat | model:  | created: 1 | compactions: 1 | compacted-tokens: 0 | compacted-cost: 0 | compacted-requests: 0 -->')
     expect(parseConversation('conversation', serializeConversation(priced)))
-      .toStrictEqual({ ...priced, compactions: { count: 2, tokens: 412000, cost: { usd: 0.3, requests: 5, unpriced: 1 } } })
+      .toStrictEqual({ ...priced, compactions: { count: 2, tokens: 412000, cost: { usd: 0.3, requests: 5, unpriced: 1 }, left: 24100 } })
     expect(parseConversation('conversation', serializeConversation(free))).toStrictEqual(free)
   })
 
@@ -834,6 +836,9 @@ describe('a compacted conversation', () => {
       'compactions: 1 | compacted-tokens: x | compacted-cost: 1 | compacted-requests: 2',
       'compactions: 1 | compacted-tokens: 5 | compacted-cost: -1 | compacted-requests: 2',
       'compactions: 1 | compacted-tokens: 5 | compacted-cost: 1 | compacted-requests: 2 | compacted-unpriced: 3',
+      'compactions: 1 | compacted-tokens: 5 | compacted-cost: 1 | compacted-requests: 2 | compacted-left: -1',
+      'compactions: 1 | compacted-tokens: 5 | compacted-cost: 1 | compacted-requests: 2 | compacted-left: x',
+      'compactions: 1 | compacted-tokens: 5 | compacted-cost: 1 | compacted-requests: 2 | compacted-left: ',
       // The cost of the conversation is not the cost at its compaction.
       'compactions: 1 | compacted-tokens: 5 | cost: 1 | requests: 2',
       'compacted-requests: 2 | compacted-cost: 1 | compacted-tokens: 5 | compactions: 1',

@@ -706,9 +706,15 @@ export default sbp('sbp/selectors/register', {
   // tool calls of the answer that the tab does not hold yet. The estimate
   // of the tab at this moment goes with the count (`contextSize`). A tab
   // that was closed meanwhile gets nothing.
+  //
+  // A compacted tab has no counted context from its newest compaction
+  // (`compact`) until its first count, so that count is the size that the
+  // compaction left (`Compactions.left`).
   'dez.model/tabs/countRequestContext' (tabId: string, model: ModelRef, tokens: number, answerCalls: readonly StreamedToolCall[] = []): void {
     const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
-    if (tab) tab.context = { tokens: Math.round(tokens), estimate: tabContextEstimate(tab, model, answerCalls) }
+    if (!tab) return
+    if (tab.compactions && !tab.context) tab.compactions.left = Math.round(tokens)
+    tab.context = { tokens: Math.round(tokens), estimate: tabContextEstimate(tab, model, answerCalls) }
   },
 
   // About how many tokens the next chat request of the tab holds, for
@@ -730,16 +736,18 @@ export default sbp('sbp/selectors/register', {
   // of the tab's sections up to that section. The sections of the tab
   // after it stay as the tab has them now: the user can type in them while
   // the compaction request runs. `tokens` is the context size that the
-  // compaction replaced.
+  // compaction replaced, and `model` the model of the reply.
   //
   // The counted context of the tab goes: it is a count of the text that is
-  // gone, and the size of the new, small text would be near 0 with it. The
-  // cost of the tab now becomes the cost at this compaction
-  // (`Compactions.cost`), also when the tab counted no request yet.
+  // gone, and the size of the new, small text would be near 0 with it. So
+  // the size that the compaction left (`Compactions.left`) is Dez's
+  // estimate, until a request counts it. The cost of the tab now becomes
+  // the cost at this compaction (`Compactions.cost`), also when the tab
+  // counted no request yet.
   //
   // False, with no change, for a missing tab, and for a tab that no longer
   // holds the reply's section (the user merged it into the one before).
-  'dez.model/tabs/compact' (tabId: string, { sections, replySectionId, tokens }: { sections: readonly Section[], replySectionId: string, tokens: number }): boolean {
+  'dez.model/tabs/compact' (tabId: string, { sections, replySectionId, tokens, model }: { sections: readonly Section[], replySectionId: string, tokens: number, model: ModelRef }): boolean {
     const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
     const isReply = (section: Section) => section.id === replySectionId
     const newEnd = sections.findIndex(isReply) + 1
@@ -751,6 +759,7 @@ export default sbp('sbp/selectors/register', {
       count: (tab.compactions?.count ?? 0) + 1,
       tokens: (tab.compactions?.tokens ?? 0) + Math.round(tokens),
       cost: costField(tab.cost).cost ?? { usd: 0, requests: 0, unpriced: 0 },
+      left: tabContextEstimate(tab, model),
     }
     delete tab.context
     return true

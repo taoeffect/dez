@@ -3301,21 +3301,35 @@ describe('dez.stream/start compaction', () => {
     expect(activeTab().compactions).toBeUndefined()
   })
 
+  // A tool round of the reply with no count of the provider: the context
+  // size is Dez's estimate.
+  async function uncountedToolRound(input: ProviderStreamChatInput): Promise<ProviderStreamChatResult> {
+    input.onSent?.()
+    await input.onToken('Checking.')
+    return { requestId: input.requestId as string, toolCalls: [geminiCall], cost: 0.25 }
+  }
+
   // The newest message stays word for word, so the conversation is still
-  // over the threshold after the compaction.
-  it('compacts one time only for a newest message that alone is over the threshold', async () => {
+  // over the threshold after the compaction, and also after the next round
+  // of the reply. A compaction before that next round would take nothing
+  // out.
+  it.each([
+    ['counted', largeRound],
+    ['did not count', uncountedToolRound],
+  ])('compacts one time only for a newest message that alone is over the threshold, with a tool round that the provider %s', async (_counted, toolRound) => {
     sbp('dez.model/tabs/replaceSections', activeTab().id, [
       { id: 'u1', role: 'user', content: [text('Hi')] },
       { id: 'r1', role: 'agent', content: [text('An earlier answer.')], model },
       { id: 'u2', role: 'user', content: [text('word '.repeat(80_000))] },
       { id: 'a1', role: 'agent', content: [text('')], model },
     ])
-    replyRounds([notesAnswer, lastRound])
+    replyRounds([notesAnswer, toolRound, lastRound])
 
-    await startStream()
+    await startStream({ sendTools: true })
 
-    expect(requests.map(isCompactionRequest)).toStrictEqual([true, false])
+    expect(requests.map(isCompactionRequest)).toStrictEqual([true, false, false])
     expect(activeTab().compactions?.count).toBe(1)
+    expect(sectionVisibleText(agentSection())).toContain('None.')
     expect(toasts).toStrictEqual([])
   })
 

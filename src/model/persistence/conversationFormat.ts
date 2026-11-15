@@ -13,7 +13,7 @@ import type { ContentNodeData, ConversationData, SectionData } from './types'
 // (persistence.rs keeps only the ASCII letters, digits, `-`, and `_` of the
 // id):
 //
-//   <!-- title: X | model: provider/model | created: N | cost: 0.42 | requests: 7 | unpriced: 1 | edited: yes | context: 81200 | context-estimate: 90400 | compactions: 2 | compacted-tokens: 412000 | compacted-cost: 0.31 | compacted-requests: 5 -->
+//   <!-- title: X | model: provider/model | created: N | cost: 0.42 | requests: 7 | unpriced: 1 | edited: yes | context: 81200 | context-estimate: 90400 | compactions: 2 | compacted-tokens: 412000 | compacted-cost: 0.31 | compacted-requests: 5 | compacted-left: 24100 -->
 //
 //   <dez:pill type="user"/>
 //   text
@@ -35,10 +35,12 @@ import type { ContentNodeData, ConversationData, SectionData } from './types'
 //   its `estimate`), there only when set. A context with a bad or a
 //   missing value is ignored as a whole.
 // - `compactions:`, `compacted-tokens:`, `compacted-cost:` (USD),
-//   `compacted-requests:`, and `compacted-unpriced:` are `Tab.compactions`
-//   (its `count`, its `tokens`, and its `cost`), there only when set, after
-//   the other parts (`compacted-unpriced:` only when more than 0).
-//   Compactions with a bad or a missing value are ignored as a whole.
+//   `compacted-requests:`, `compacted-unpriced:`, and `compacted-left:` are
+//   `Tab.compactions` (its `count`, its `tokens`, its `cost`, and its
+//   `left`), there only when set, after the other parts
+//   (`compacted-unpriced:` only when more than 0). Compactions with a bad
+//   or a missing value are ignored as a whole; `compacted-left:` can be
+//   missing.
 // - The first section of a compacted conversation is an agent section
 //   whose first text line is the compaction tag (compaction.ts). The tag is
 //   section text here, as a media tag is.
@@ -115,6 +117,7 @@ function optionalHeaderParts({ cost, agentTextEdited, context, compactions }: Co
       `compacted-tokens: ${compactions.tokens}`,
       ...costParts(compactions.cost, 'compacted-cost', 'compacted-requests', 'compacted-unpriced'),
     )
+    if (compactions.left !== undefined) parts.push(`compacted-left: ${compactions.left}`)
   }
   return parts.map((part) => ` | ${part}`).join('')
 }
@@ -179,17 +182,20 @@ function headerContext(tokensText: string | undefined, estimateText: string | un
 }
 
 /** The compactions of the header's `compactions:`, `compacted-tokens:`,
- *  `compacted-cost:`, `compacted-requests:`, and `compacted-unpriced:`
- *  texts; undefined when one of them is missing or bad. The cost at a
- *  compaction can have no request: a conversation whose first request is
- *  its compaction. */
+ *  `compacted-cost:`, `compacted-requests:`, `compacted-unpriced:`, and
+ *  `compacted-left:` texts; undefined when one of them is bad, or missing
+ *  (`compacted-left:` can be missing). The cost at a compaction can have
+ *  no request: a conversation whose first request is its compaction. */
 function headerCompactions(values: ReadonlyMap<string, string>): Compactions | undefined {
   const count = headerNumber(values.get('compactions'))
   const tokens = headerNumber(values.get('compacted-tokens'))
   const cost = headerCost(values.get('compacted-cost'), values.get('compacted-requests'), values.get('compacted-unpriced'), 0)
+  const leftText = values.get('compacted-left')
+  const left = headerNumber(leftText)
   if (!Number.isSafeInteger(count) || count < 1) return undefined
   if (!Number.isSafeInteger(tokens) || tokens < 0) return undefined
-  return cost && { count, tokens, cost }
+  if (leftText !== undefined && (!Number.isSafeInteger(left) || left < 0)) return undefined
+  return cost && { count, tokens, cost, ...(leftText !== undefined && { left }) }
 }
 
 function parseHeader(line: string): ConversationHeader {

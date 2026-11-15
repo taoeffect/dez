@@ -1,5 +1,5 @@
 import type { Compactions } from '../../model/chat/compaction'
-import { compactionThreshold, type ContextSize } from '../../model/chat/contextSize'
+import { compactionDueSize, type ContextSize } from '../../model/chat/contextSize'
 
 /** The text and the tooltip of the token label of the bottom bar. */
 export interface TokenLabelTexts {
@@ -49,7 +49,7 @@ const WHOLE_NUMBER = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }
  *  tooltip gives the whole number, what it counts, how much of
  *  `contextWindow` it fills (the window of the active model, in tokens;
  *  undefined when Dez knows none: no model, or a model of no chat request),
- *  and at which size Dez compacts a conversation of that model.
+ *  and at which size Dez compacts it (`compactionDueSize`).
  *
  *  After a compaction (`compactions`), that count is the size of the
  *  buffer, and `total` is the size of the whole conversation: the sizes
@@ -71,12 +71,12 @@ export function tokenLabelTexts(size: ContextSize, contextWindow: number | undef
       : 'The provider counted it in the newest reply.',
   ]
   if (contextWindow !== undefined) {
-    const threshold = WHOLE_NUMBER.format(compactionThreshold(contextWindow))
+    const dueSize = WHOLE_NUMBER.format(compactionDueSize(contextWindow, compactions))
     lines.push(
       `Context window of the model: ${WHOLE_NUMBER.format(contextWindow)} tokens. The ${subject} fills ${windowShareText(size.tokens, contextWindow)} of it.`,
       compactions
-        ? `Dez compacts the conversation again when the buffer gets to ${threshold} tokens.`
-        : `Dez compacts the conversation when it gets to ${threshold} tokens: notes of the model then take the place of the earlier messages.`,
+        ? `Dez compacts the conversation again when the buffer gets to ${dueSize} tokens.`
+        : `Dez compacts the conversation when it gets to ${dueSize} tokens: notes of the model then take the place of the earlier messages.`,
     )
   }
   const texts: TokenLabelTexts = { text: `${size.estimated ? '~' : ''}${labelTokenText(size.tokens)}`, tooltip: lines.join('\n') }

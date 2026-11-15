@@ -1,7 +1,8 @@
 import sbp from '@sbp/sbp'
 import type { ActiveModel, MessagePart, ModelRef, Section, SectionThinking, Tab } from '../model/chat/types'
+import type { Compactions } from '../model/chat/compaction'
 import { sectionPlainText } from '../model/chat/content'
-import { compactionThreshold, type ContextSize } from '../model/chat/contextSize'
+import { compactionDueSize, type ContextSize } from '../model/chat/contextSize'
 import type { ConversationCost } from '../model/chat/conversationCost'
 import { IMAGE_HIDDEN_KEY, IMAGE_MADE_BY_KEY, IMAGE_TOOL_KEY, imageMarkdown } from '../model/chat/images'
 import { modelRefKey, sameModelRef } from '../model/chat/modelRef'
@@ -832,7 +833,7 @@ async function compactIfDue(args: StreamStartArgs, reply: ReplyRuntime, frame: R
   if (!replyIsCurrent(tabId, reply)) return REPLY_ENDED
   const reason = compactionReason({
     contextTokens,
-    threshold: compactionThreshold(contextWindow),
+    dueSize: compactionDueSize(contextWindow, sbp('dez.model/tabs/compactions', tabId) as Compactions | undefined),
     limits: pictureLimits(info),
     leaves: compactedPictureLimits(info),
     spent,
@@ -868,7 +869,7 @@ async function compactIfDue(args: StreamStartArgs, reply: ReplyRuntime, frame: R
     return REPLY_ENDED
   }
 
-  const swapped = sbp('dez.model/tabs/compact', tabId, { sections: result.sections, replySectionId: sectionId, tokens: result.usage?.inputTokens ?? contextTokens }) as boolean
+  const swapped = sbp('dez.model/tabs/compact', tabId, { sections: result.sections, replySectionId: sectionId, tokens: result.usage?.inputTokens ?? contextTokens, model }) as boolean
   const tab = swapped ? sbp('dez.model/tab', tabId) as Tab | null : null
   const base = tab && messagesBefore(tab.sections, sectionId, model, args.sendTools)
   if (!base) {

@@ -1,6 +1,6 @@
 import type { Compactions } from '../chat/compaction'
 import { conversationCostText } from '../chat/compactionNotes'
-import { compactionThreshold, type ContextSize } from '../chat/contextSize'
+import { compactionDueSize, type ContextSize } from '../chat/contextSize'
 import { costSince, type ConversationCost } from '../chat/conversationCost'
 import { usdText } from '../providers/modelPrices'
 import type { CallPictureBudget } from '../streams/pictureBudget'
@@ -81,7 +81,7 @@ export function conversationInfoText({ contextSize, contextWindow, compactions, 
     `Context size: ${about}${countText(contextSize.tokens)} tokens (${contextSize.estimated ? 'an estimate of Dez' : 'the count of the provider'}). `
       + `It is what your next request sends: the conversation${compactions ? ' since its newest compaction' : ''}, with the system prompt and the tools.`,
     `Context window of your model: ${countText(contextWindow)} tokens.`,
-    `Compaction: Dez compacts the conversation when its context size gets to ${countText(compactionThreshold(contextWindow))} tokens, `
+    `Compaction: Dez compacts the conversation when its context size gets to ${countText(compactionDueSize(contextWindow, compactions))} tokens, `
       + 'or sooner when its images and pictures are near a limit of your model. Dez then asks you for notes, which take the place of the earlier messages.',
   ]
   if (compactions) {

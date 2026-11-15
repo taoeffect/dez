@@ -30,7 +30,7 @@ const LEAVES: PictureBudget = { tokens: 25_000, bytes: 10_000_000, pictures: 10 
 function reason(fields: Partial<Parameters<typeof compactionReason>[0]>): CompactionReason | null {
   return compactionReason({
     contextTokens: 0,
-    threshold: 100_000,
+    dueSize: 100_000,
     limits: LIMITS,
     leaves: LEAVES,
     spent: NO_PICTURE_BUDGET,
@@ -45,7 +45,7 @@ describe('compactionReason', () => {
     expect(reason({ contextTokens: 500_000, spent: { tokens: 60_000, bytes: 30_000_000, pictures: 30 }, requestSinceCompaction: false })).toBeNull()
   })
 
-  it('is due for the context size at exactly the threshold, and not one token under it', () => {
+  it('is due for the context size at exactly its due size, and not one token under it', () => {
     expect(reason({ contextTokens: 100_000 })).toBe('tokens')
     expect(reason({ contextTokens: 99_999 })).toBeNull()
   })
