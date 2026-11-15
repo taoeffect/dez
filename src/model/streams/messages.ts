@@ -424,12 +424,16 @@ export function agentSectionMessages(section: Section, requestModel: ModelRef, s
 // the label of each picture, then the picture by its saved copy, or a
 // note when the request takes no more parts (`images`). A label is text
 // of the block, which the user can edit, so it gets the path scrub as
-// every request text does.
+// every request text does, and a label that the user made blank is left
+// out, as in `addAttachment`.
 function pictureParts(block: ToolBlock, images: RequestImages): MessagePart[] {
-  return (block.pictures ?? []).flatMap((picture): MessagePart[] => [
-    { type: 'text', text: withoutStoredFilePaths(picture.label) },
-    takesPart(images, picture.file) ? { type: 'picture', picture } : { type: 'text', text: SHOWN_PICTURE_OVER_LIMIT_NOTE },
-  ])
+  return (block.pictures ?? []).flatMap((picture): MessagePart[] => {
+    const label = withoutStoredFilePaths(picture.label)
+    return [
+      ...(label.trim() === '' ? [] : [{ type: 'text' as const, text: label }]),
+      takesPart(images, picture.file) ? { type: 'picture', picture } : { type: 'text', text: SHOWN_PICTURE_OVER_LIMIT_NOTE },
+    ]
+  })
 }
 
 // The text of the round `index` as a request sends it, before the path

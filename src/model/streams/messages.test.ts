@@ -174,6 +174,17 @@ describe('agentSectionMessages', () => {
     expect(message).toStrictEqual({ role: 'user', content: [{ type: 'text', text: 'asset_view: the image at image.' }, { type: 'picture', picture: pictures[0] }] })
   })
 
+  // Anthropic refuses a text block with no visible text, and the user can
+  // make a label blank in the block.
+  it('sends no text part for a blank label of a picture, whether the picture goes or not', () => {
+    const pictures = [{ file: 'f1.png', label: '' }, { file: 'f2.png', label: ' \n ' }]
+    const text = toolBlockText({ id: 'call_1', name: 'asset_view', status: 'success', arguments: { assets: '@a' }, result: 'ok', pictures })
+
+    const [, , message] = agentSectionMessages(agent(text), model, true, newRequestImages(1))
+
+    expect(message).toStrictEqual({ role: 'user', content: [{ type: 'picture', picture: pictures[0] }, { type: 'text', text: SHOWN_PICTURE_OVER_LIMIT_NOTE }] })
+  })
+
   it('sends the model text without the escape of its tag text', () => {
     const text = `See <\\dez:tool> here.\n${block('call_1', 'gemini', '1 model')}\nAnd <\\/dez:tool>.`
 
