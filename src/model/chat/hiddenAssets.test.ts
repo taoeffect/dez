@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { jobsWaitText } from '../tools/jobs'
 import { CARRIED_USER_ASSETS_LABEL, compactionTagText } from './compaction'
 import { findHiddenAssets, findKeptAssets, jobResultInBlocks, type HiddenAsset } from './hiddenAssets'
-import { findImageReferences, imageIdChange, imageMarkdown, imageReferenceText, IMAGE_TOOL_KEY } from './images'
+import { findImageReferences, imageIdChange, imageMarkdown, imageReferenceTextWithKeptMark, IMAGE_TOOL_KEY } from './images'
 import { findMediaTags, mediaTagText, mediaTagTextWithKeptMark, savedMediaTag, unsavedMediaTag } from './mediaTags'
 import { HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, invokeBlock as invoke, waitBlock as wait } from './testing'
 import { findToolBlocks, toolBlockText } from './toolBlocks'
@@ -56,9 +56,9 @@ describe('findHiddenAssets', () => {
 
 describe('findKeptAssets', () => {
   const TAG = compactionTagText({ count: 1, lastId: 'd', pictures: [] })
-  const keptImage = imageReferenceText({ path: HIDDEN_IMAGE_PATH, metadata: [{ key: 'id', value: 'b' }] }, true)
+  const keptImage = imageReferenceTextWithKeptMark({ path: HIDDEN_IMAGE_PATH, metadata: [{ key: 'id', value: 'b' }] }, true)
   const keptClip = mediaTagTextWithKeptMark(findMediaTags(hiddenClip('j-aaaa'))[0], true)
-  const linked = imageReferenceText({ path: '/home/u/Pictures/cat.png', metadata: [{ key: 'id', value: 'a' }] }, true)
+  const linked = imageReferenceTextWithKeptMark({ path: '/home/u/Pictures/cat.png', metadata: [{ key: 'id', value: 'a' }] }, true)
 
   // The text of each kept asset, for each section.
   function kept(sections: { role: 'user' | 'agent', text: string }[]): string[][] {
@@ -106,7 +106,7 @@ describe('findKeptAssets', () => {
   })
 
   it('takes an image only when it is alone on its line, and no asset with no mark', () => {
-    const shown = imageReferenceText({ path: HIDDEN_IMAGE_PATH, metadata: [{ key: 'id', value: 'b' }] }, false)
+    const shown = imageReferenceTextWithKeptMark({ path: HIDDEN_IMAGE_PATH, metadata: [{ key: 'id', value: 'b' }] }, false)
 
     expect(kept([{ role: 'agent', text: `${TAG}\nSee ${keptImage}\n\n${shown}\n\n${hiddenClip('j-aaaa')}` }])).toStrictEqual([[]])
   })

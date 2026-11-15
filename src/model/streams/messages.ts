@@ -9,7 +9,7 @@ import { sameModelRef } from '../chat/modelRef'
 import { SHOWN_PICTURE_OVER_LIMIT_NOTE } from '../chat/shownPictures'
 import { holdsStoredFilePath, withoutStoredFilePaths } from '../chat/storedFilePaths'
 import { thinkingField } from '../chat/thinking'
-import { EMPTY_TOOL_RESULT, INTERRUPTED_TOOL_RESULT, agentTextForRequest, modelTextForRequest, splitToolBlocks, type ToolBlock } from '../chat/toolBlocks'
+import { EMPTY_TOOL_RESULT, INTERRUPTED_TOOL_RESULT, agentTextForRequest, unescapedModelText, splitToolBlocks, type ToolBlock } from '../chat/toolBlocks'
 import type { ClipAttachment } from '../providers/clipInputs'
 import { minInputImages } from '../providers/clipImages'
 import { imageLimitOf, messageImageLimitOf } from '../providers/modelFamilies'
@@ -277,7 +277,7 @@ function addCompactionNotes(list: PartList, text: string, tag: CompactionTag, im
     }
     const pieceText = notes.slice(piece.from, piece.to)
     if (piece.kind === 'gap') {
-      list.pendingText += withoutStoredFilePaths(modelTextForRequest(pieceText))
+      list.pendingText += withoutStoredFilePaths(unescapedModelText(pieceText))
       continue
     }
     list.pendingText += withoutStoredFilePaths(pieceText)

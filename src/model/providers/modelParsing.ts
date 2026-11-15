@@ -1,5 +1,5 @@
 import { normalizeOutputs } from '../modelOutputs'
-import type { ModelCapabilityPath, ModelOutputsConfig, ProviderConfig, ProviderSettingDef } from './config'
+import type { ModelCapabilityPath, ModelCountPaths, ModelOutputsConfig, ProviderConfig, ProviderSettingDef } from './config'
 import type { ModelCapabilities, ModelRequest } from './types'
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -59,7 +59,7 @@ export function modelReadableName(model: Record<string, unknown>, config: Provid
 // numbers there. A server writes an unknown limit as 0 or null (OpenRouter
 // gives most of its video and speech models a `context_length` of 0), so
 // only a positive number counts. No such number, or no config, is unknown.
-export function modelCount(model: Record<string, unknown>, config: ProviderConfig['modelContextWindow']): number | undefined {
+export function modelCount(model: Record<string, unknown>, config: ModelCountPaths | undefined): number | undefined {
   if (config === undefined) return undefined
 
   const counts = config.paths

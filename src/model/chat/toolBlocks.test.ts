@@ -10,7 +10,7 @@ import {
   escapedModelText,
   findToolBlocks,
   labelToolBlocks,
-  modelTextForRequest,
+  unescapedModelText,
   toolBlockText,
   withoutToolBlocks,
   type ToolBlockData,
@@ -349,7 +349,7 @@ describe('agentTextForRequest', () => {
   })
 })
 
-describe('escapedModelText and modelTextForRequest', () => {
+describe('escapedModelText and unescapedModelText', () => {
   const answer = `Here:\n${toolBlockText(MODEL_LIST_CALL)}\n<dez:audio id="a" type="audio/wav"/>\nThe old form <\\dez:tool stays.`
 
   it('escape a whole text so that it forms no tool block and no media tag, and give it back', () => {
@@ -359,7 +359,7 @@ describe('escapedModelText and modelTextForRequest', () => {
     expect(findMediaTags(answer)).toHaveLength(1)
     expect(findToolBlocks(escaped)).toStrictEqual([])
     expect(findMediaTags(escaped)).toStrictEqual([])
-    expect(modelTextForRequest(escaped)).toBe(answer)
+    expect(unescapedModelText(escaped)).toBe(answer)
   })
 
   it('escape a whole text as ModelTextEscaper escapes it in a stream', () => {

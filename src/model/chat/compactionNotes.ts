@@ -3,7 +3,7 @@ import { usdText } from '../providers/modelPrices'
 import { ASSET_NAME_SOURCE, ASSET_NAMES, jobResultLegend, jobResultState, type JobAssetKind, type JobInfo, type JobResultState, type JobStatus } from '../tools/jobs'
 import type { ConversationCost } from './conversationCost'
 import { IMAGE_ID_SOURCE } from './images'
-import { escapedModelText, modelTextForRequest } from './toolBlocks'
+import { escapedModelText, unescapedModelText } from './toolBlocks'
 
 // The notes of a compaction section: its text after the tag line
 // (compaction.ts). This module is the one place that writes them, and that
@@ -79,8 +79,8 @@ const ASSETS_LEGEND = 'Each line: @id | kind | facts | who made it | what it is,
   + 'Every id still names its image or clip. An image or a clip that these notes do not show as a picture is kept as its line only.'
 const JOBS_LEGEND = 'The jobs of the reply that ran at this compaction. Each line: job id | number in the order of the starts | tool | status | result | how its call begins. '
   + jobResultLegend(' of that reply')
-const NO_ASSETS_TEXT = 'None: these notes keep no image and no clip.'
-const NO_JOBS_TEXT = 'None: no job of a reply ran at this compaction.'
+const NO_NOTES_ASSETS_TEXT = 'None: these notes keep no image and no clip.'
+const NO_NOTES_JOBS_TEXT = 'None: no job of a reply ran at this compaction.'
 
 const COLUMN = ' | '
 
@@ -180,8 +180,8 @@ export function compactionNotesText(notes: CompactionNotes): string {
     if (text.trim() !== '') add(heading, escapedModelText(text.trim()))
   }
   const entries = notes.assets.map((asset) => (asset.text === null ? assetLineText(asset) : `${asset.text}\n${assetLineText(asset)}`))
-  add(ASSETS_HEADING, entries.length > 0 || notes.unnamed.length > 0 ? [ASSETS_LEGEND, ...entries, ...notes.unnamed].join('\n\n') : NO_ASSETS_TEXT)
-  add(JOBS_HEADING, notes.jobs.length > 0 ? `${JOBS_LEGEND}\n\n${notes.jobs.map(jobLineText).join('\n')}` : NO_JOBS_TEXT)
+  add(ASSETS_HEADING, entries.length > 0 || notes.unnamed.length > 0 ? [ASSETS_LEGEND, ...entries, ...notes.unnamed].join('\n\n') : NO_NOTES_ASSETS_TEXT)
+  add(JOBS_HEADING, notes.jobs.length > 0 ? `${JOBS_LEGEND}\n\n${notes.jobs.map(jobLineText).join('\n')}` : NO_NOTES_JOBS_TEXT)
   add(COST_HEADING, conversationCostText(notes.cost, 'up to this compaction'))
   return parts.join('\n\n')
 }
@@ -213,8 +213,8 @@ export function notesAssetLines(text: string): Map<string, NotesAssetLine> {
       id: match[1],
       kind: KIND_BY_NAME.get(match[2]) as JobAssetKind,
       facts,
-      origin: modelTextForRequest(origin),
-      sentence: modelTextForRequest(sentence.join(COLUMN)),
+      origin: unescapedModelText(origin),
+      sentence: unescapedModelText(sentence.join(COLUMN)),
     })
   }
   return found
@@ -227,7 +227,7 @@ export function notesJobLines(text: string): Map<string, NotesJobLine> {
   for (const line of partLines(text, JOBS_HEADING)) {
     const match = JOB_LINE.exec(line)
     if (!match) continue
-    const label = modelTextForRequest(match[6])
+    const label = unescapedModelText(match[6])
     found.set(match[1], {
       id: match[1],
       number: Number(match[2]),

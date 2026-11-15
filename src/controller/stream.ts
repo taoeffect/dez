@@ -893,7 +893,7 @@ async function compactIfDue(args: StreamStartArgs, reply: ReplyRuntime, frame: R
   await sbp('dez.model/tabs/save', tabId)
   // Not awaited: it waits for a scan of the unused files that runs, and it
   // logs its own failures.
-  void sbp('dez.controller/unusedFiles/deleteUnnamed', compactionLeftFiles({ sections, replySectionId: sectionId, dropped: result.dropped, kept: result.pictures }))
+  void sbp('dez.controller/unusedFiles/deleteUnnamed', compactionLeftFiles({ sections, replySectionId: sectionId, dropped: result.dropped, keptPictures: result.pictures }))
   reply.imageBytes = imageFileSizes(base.messages)
   const keptNow = contextImageCost(base.messages, rule, await reply.imageBytes)
   return replyIsCurrent(tabId, reply) ? { kind: 'compacted', ...base, kept: keptNow } : REPLY_ENDED

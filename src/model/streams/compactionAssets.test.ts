@@ -243,7 +243,7 @@ describe('assetDecisions', () => {
   const USER = assetOf('a')
   const EARLIER = assetOf('b')
   const NEW = assetOf('c')
-  const NO_GUARDS: Guards = { jobInputs: new Set(), keptUserTexts: [] }
+  const NO_GUARDS: Guards = { jobInputs: new Set(), keptTexts: [] }
 
   function answer(assets: AnswerAsset[], notes: Partial<CompactionAnswer> = {}): CompactionAnswer {
     return { summary: 'The fox runs.', requirements: '', nextSteps: '', assets, ...notes }
@@ -270,11 +270,11 @@ describe('assetDecisions', () => {
   it.each<[string, CompactionAsset, Guards, Partial<CompactionAnswer>]>([
     ['an asset of the user', USER, NO_GUARDS, {}],
     ['an asset that came after the compaction before', NEW, NO_GUARDS, {}],
-    ['an input of an open job', EARLIER, { jobInputs: new Set(['b']), keptUserTexts: [] }, {}],
+    ['an input of an open job', EARLIER, { jobInputs: new Set(['b']), keptTexts: [] }, {}],
     ['an asset that the summary names', EARLIER, NO_GUARDS, { summary: 'The fox of @b runs.' }],
     ['an asset that the requirements name', EARLIER, NO_GUARDS, { requirements: 'Keep the fur of @b.' }],
     ['an asset that the next steps name', EARLIER, NO_GUARDS, { nextSteps: 'Animate @b.' }],
-    ['an asset that a kept message of the user names', EARLIER, { jobInputs: new Set(), keptUserTexts: ['Make it run like @b.'] }, {}],
+    ['an asset that a kept message of the user names', EARLIER, { jobInputs: new Set(), keptTexts: ['Make it run like @b.'] }, {}],
   ])('keeps %s that the answer drops, and shows it when the answer shows it', (_name, asset, guards, notes) => {
     expect(decision(asset, 'drop', guards, notes)).toBe('keep')
     expect(decision(asset, 'show', guards, notes)).toBe('show')

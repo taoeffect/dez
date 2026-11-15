@@ -4,7 +4,7 @@ import { CARRIED_USER_ASSETS_LABEL, sectionCompactionTag } from '../chat/compact
 import { notesAssetLines } from '../chat/compactionNotes'
 import { sectionPlainText } from '../chat/content'
 import { findKeptAssets } from '../chat/hiddenAssets'
-import { findImageReferences, imageMarkdown, imageReferenceText, isKeptImage } from '../chat/images'
+import { findImageReferences, imageMarkdown, imageReferenceTextWithKeptMark, isKeptImage } from '../chat/images'
 import { findMediaTags, isKeptClip, mediaTagText, mediaTagTextWithKeptMark } from '../chat/mediaTags'
 import type { ShownPicture } from '../chat/shownPictures'
 import { idImage } from '../chat/testing'
@@ -23,7 +23,7 @@ const clip = (name: string, id: string) => mediaTagText({ kind: 'video', id, typ
 // `text`, one image reference or one media tag, with the kept mark.
 const kept = (text: string) => (text.startsWith('<')
   ? mediaTagTextWithKeptMark(findMediaTags(text)[0], true)
-  : imageReferenceText(findImageReferences(text, 'user')[0], true))
+  : imageReferenceTextWithKeptMark(findImageReferences(text, 'user')[0], true))
 
 /** The model of the compaction request, which is not the one of the
  *  replies (`model`). */
@@ -49,7 +49,7 @@ function compact(sections: Section[], answerText: string, replySectionId: string
     sections,
     replySectionId,
     model: NOTES_MODEL,
-    choices: assetDecisions(assets, answer, { jobInputs: new Set(), keptUserTexts: keptUserTexts(sections, scope) }),
+    choices: assetDecisions(assets, answer, { jobInputs: new Set(), keptTexts: keptUserTexts(sections, scope) }),
     answer,
     jobs: [],
     cost: undefined,

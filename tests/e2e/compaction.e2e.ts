@@ -90,7 +90,7 @@ const CARRIED_PNG = solidPng(44, 22, [120, 40, 160])
 const PLAIN_TAG = compactionTagText({ count: 1, lastId: 'c', pictures: [] })
 const REPLY_MS = 4213
 // The start of each kept user message in the compaction message.
-const KEPT = `\n\n${COMPACTION_USER_MESSAGE_LABEL}\n`
+const USER_MESSAGE_START = `\n\n${COMPACTION_USER_MESSAGE_LABEL}\n`
 const REQUESTS_ID = 'compacted-requests'
 
 /** One role pill of the editor. */
@@ -262,7 +262,7 @@ describe('a compacted conversation', () => {
     const [first] = await threadSections(browser)
     const tag = first.role === 'agent' ? readCompactionTag(first.text) : null
     if (tag === null) throw new Error('notesMessage: the first section of the tab is no compaction section')
-    return { role: 'user', content: `${COMPACTION_MESSAGE_INTRO}\n\n${first.text.slice(tag.textFrom)}${kept.map((text) => `${KEPT}${text}`).join('')}` }
+    return { role: 'user', content: `${COMPACTION_MESSAGE_INTRO}\n\n${first.text.slice(tag.textFrom)}${kept.map((text) => `${USER_MESSAGE_START}${text}`).join('')}` }
   }
 
   // Whether the bottom bar tells the user that the reply waits for a
@@ -323,9 +323,9 @@ describe('a compacted conversation', () => {
         imagePart(MADE_PNG),
         { type: 'text', text: `\nIt is red.\n\n${SHEET.label}` },
         imagePart(SHEET_PNG),
-        { type: 'text', text: `${KEPT}Make a film of ![image](id=a)` },
+        { type: 'text', text: `${USER_MESSAGE_START}Make a film of ![image](id=a)` },
         imagePart(KEPT_PNG),
-        { type: 'text', text: `${KEPT}${sent}` },
+        { type: 'text', text: `${USER_MESSAGE_START}${sent}` },
       ],
     }
   }
@@ -385,9 +385,9 @@ describe('a compacted conversation', () => {
           text: `\nThe fox is red.\n![image](id=d|kept=compaction)\nThe film of the fox:\n<dez:video id="c" type="video/webm"/>\nThe fox sleeps.\n\n${SHEET.label}`,
         },
         imagePart(SHEET_PNG),
-        { type: 'text', text: `${KEPT}Make a film of the fox.\n\n${CARRIED_USER_ASSETS_LABEL}\n![image](id=a|kept=compaction)\n![image](id=e)` },
+        { type: 'text', text: `${USER_MESSAGE_START}Make a film of the fox.\n\n${CARRIED_USER_ASSETS_LABEL}\n![image](id=a|kept=compaction)\n![image](id=e)` },
         imagePart(CARRIED_PNG),
-        { type: 'text', text: `${KEPT}Make it longer.${KEPT}${sent}` },
+        { type: 'text', text: `${USER_MESSAGE_START}Make it longer.${USER_MESSAGE_START}${sent}` },
         ...sentParts,
       ],
     }
@@ -498,7 +498,7 @@ describe('a compacted conversation', () => {
 
     await submit(browser, 'Go on.')
     const request = await takeRequest(setup, mockChatPath(CLAUDE), anthropicChatBody(CLAUDE, [
-      anthropicMarkedUser(`${COMPACTION_MESSAGE_INTRO}\n\nNotes of the work.${KEPT}The task.${KEPT}Go on.`),
+      anthropicMarkedUser(`${COMPACTION_MESSAGE_INTRO}\n\nNotes of the work.${USER_MESSAGE_START}The task.${USER_MESSAGE_START}Go on.`),
     ]))
     sendAnthropicReply(request.reply, 'Claude')
     await waitForThread(browser, [...thread.slice(0, 2), { role: 'user', text: 'Go on.' }, { role: 'agent', text: replyText('Claude') }, { role: 'user', text: '' }])

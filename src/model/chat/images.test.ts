@@ -5,7 +5,7 @@ import {
   imageExtension,
   imageMarkdown,
   imageMediaType,
-  imageReferenceText,
+  imageReferenceTextWithKeptMark,
   isImageMediaType,
   isImagePath,
   isKeptImage,
@@ -256,13 +256,13 @@ describe('labelImageReferences', () => {
   })
 })
 
-describe('imageReferenceText and isKeptImage', () => {
+describe('imageReferenceTextWithKeptMark and isKeptImage', () => {
   const kept = { key: IMAGE_KEPT_KEY, value: KEPT_MARK_VALUE }
 
   it('adds the kept mark after the other items, and only once', () => {
     for (const metadata of [[{ key: 'id', value: 'a' }, { key: 'tool', value: 'image' }], [kept, { key: 'id', value: 'a' }, { key: 'tool', value: 'image' }]]) {
       const [reference] = findImageReferences(imageMarkdown(PNG, metadata), 'agent')
-      const [marked] = findImageReferences(imageReferenceText(reference, true), 'agent')
+      const [marked] = findImageReferences(imageReferenceTextWithKeptMark(reference, true), 'agent')
 
       expect(marked.path).toBe(PNG)
       expect(marked.metadata).toStrictEqual([{ key: 'id', value: 'a' }, { key: 'tool', value: 'image' }, kept])
@@ -272,7 +272,7 @@ describe('imageReferenceText and isKeptImage', () => {
 
   it('removes the kept mark and keeps the other items in their order', () => {
     const [reference] = findImageReferences(imageMarkdown(PNG, [{ key: 'id', value: 'a' }, kept, { key: 'desc', value: 'a (red) | b' }]), 'agent')
-    const [plain] = findImageReferences(imageReferenceText(reference, false), 'agent')
+    const [plain] = findImageReferences(imageReferenceTextWithKeptMark(reference, false), 'agent')
 
     expect(isKeptImage(reference)).toBe(true)
     expect(plain.metadata).toStrictEqual([{ key: 'id', value: 'a' }, { key: 'desc', value: 'a (red) | b' }])

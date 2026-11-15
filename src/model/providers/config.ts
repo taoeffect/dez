@@ -408,6 +408,7 @@ export type ProviderSettingDef = z.infer<typeof providerSettingDefSchema>
 export type ProviderConfig = z.infer<typeof providerConfigSchema>
 export type ProviderThinkingConfig = z.infer<typeof thinkingConfigSchema>
 export type ModelCapabilityPath = z.infer<typeof modelCapabilityPathSchema>
+export type ModelCountPaths = z.infer<typeof modelCountPathsSchema>
 export type ModelOutputsConfig = z.infer<typeof modelOutputsConfigSchema>
 export type AudioOutputConfig = NonNullable<ProviderConfig['audioOutputs']>[number]
 export type MediaApiFormatId = (typeof MEDIA_API_FORMAT_IDS)[number]

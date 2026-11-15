@@ -290,7 +290,7 @@ export function isKeptImage(reference: Pick<ImageReference, 'metadata'>): boolea
 
 /** The text of `reference` with the kept mark (`kept`), or with none. Its
  *  other items stay, in their order. */
-export function imageReferenceText(reference: Pick<ImageReference, 'path' | 'metadata'>, kept: boolean): string {
+export function imageReferenceTextWithKeptMark(reference: Pick<ImageReference, 'path' | 'metadata'>, kept: boolean): string {
   const others = reference.metadata.filter((item) => item.key !== IMAGE_KEPT_KEY)
   return imageMarkdown(reference.path, kept ? [...others, { key: IMAGE_KEPT_KEY, value: KEPT_MARK_VALUE }] : others)
 }

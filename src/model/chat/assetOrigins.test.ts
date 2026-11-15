@@ -4,7 +4,7 @@ import { jobsWaitText, madeAssetText, type JobInfo } from '../tools/jobs'
 import { assetPlaces, type AssetPlace } from './assetOrigins'
 import { CARRIED_USER_ASSETS_LABEL, compactionTagText } from './compaction'
 import { compactionNotesText, type NotesAsset } from './compactionNotes'
-import { findImageReferences, IMAGE_MADE_BY_KEY, IMAGE_TOOL_KEY, imageMarkdown, imageReferenceText } from './images'
+import { findImageReferences, IMAGE_MADE_BY_KEY, IMAGE_TOOL_KEY, imageMarkdown, imageReferenceTextWithKeptMark } from './images'
 import { MEDIA_MADE_BY_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE, mediaTagText } from './mediaTags'
 import { COMPACTION_TAG, FOX_ORIGIN, HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, invokeBlock, waitBlock } from './testing'
 import { toolBlockText } from './toolBlocks'
@@ -127,7 +127,7 @@ describe('assetPlaces in a compacted conversation', () => {
 
   // `reference`, the text of one image reference, with the kept mark.
   function kept(reference: string): string {
-    return imageReferenceText(findImageReferences(reference, 'agent')[0], true)
+    return imageReferenceTextWithKeptMark(findImageReferences(reference, 'agent')[0], true)
   }
 
   // The kept image `b` that a job made, and its line in the notes.

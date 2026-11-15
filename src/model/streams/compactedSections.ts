@@ -3,7 +3,7 @@ import { CARRIED_USER_ASSETS_LABEL, compactionTagText, sectionCompactionTag } fr
 import { compactionNotesText, type NotesAsset } from '../chat/compactionNotes'
 import { sectionPlainText, textNode } from '../chat/content'
 import type { ConversationCost } from '../chat/conversationCost'
-import { findImageReferences, imageReferenceText, isKeptImage, type ImageReference } from '../chat/images'
+import { findImageReferences, imageReferenceTextWithKeptMark, isKeptImage, type ImageReference } from '../chat/images'
 import { compareMediaIds, highestConversationMediaId } from '../chat/mediaIds'
 import { findMediaTags, mediaTagTextWithKeptMark } from '../chat/mediaTags'
 import { cloneModelRef, modelRefField } from '../chat/modelRef'
@@ -149,7 +149,7 @@ function withKeptMarks(section: Section, index: number, asText: ReadonlySet<stri
     for (const reference of nodeReferences(node.text)) {
       const kept = asText.has(referenceKey(index, nodeIndex, reference.from))
       if (kept === isKeptImage(reference)) continue
-      text += node.text.slice(end, reference.from) + imageReferenceText(reference, kept)
+      text += node.text.slice(end, reference.from) + imageReferenceTextWithKeptMark(reference, kept)
       end = reference.to
     }
     // A reference is never empty, so a change moved the end.
@@ -170,7 +170,7 @@ export function compactedSections(input: CompactedSectionsInput): CompactedSecti
   const carriedId = input.newId()
   const oldTag = sections.length > 0 ? sectionCompactionTag(sections[0]) : null
   const lastId = highestConversationMediaId(sections.map(sectionPlainText))
-  const kept = choices.filter((choice) => choice.decision !== 'drop').sort((a, b) => compareMediaIds(a.asset.asset.id, b.asset.asset.id))
+  const staying = choices.filter((choice) => choice.decision !== 'drop').sort((a, b) => compareMediaIds(a.asset.asset.id, b.asset.asset.id))
   const choiceById = new Map(choices.map((choice) => [choice.asset.asset.id, choice]))
   // An image of `U0` or `U1`: the message sends it, so a `show` adds
   // nothing for it. A clip of these messages still needs its picture.
@@ -189,18 +189,18 @@ export function compactedSections(input: CompactedSectionsInput): CompactedSecti
   // is an agent section too, so it carries the ones of the compaction
   // before.
   const unnamed = sections.slice(0, scope.end).flatMap((section) => (section.role === 'agent'
-    ? findImageReferences(sectionPlainText(section), 'agent').filter((reference) => reference.id === null).map((reference) => imageReferenceText(reference, true))
+    ? findImageReferences(sectionPlainText(section), 'agent').filter((reference) => reference.id === null).map((reference) => imageReferenceTextWithKeptMark(reference, true))
     : []))
 
   // `A`, `U0`, `U+`, and `U1` for `plan`.
   const head = ({ shown, asText }: Plan): { sections: Section[], pictures: ShownPicture[] } => {
-    const assets = kept.map(({ asset, sentence }): NotesAsset => {
+    const assets = staying.map(({ asset, sentence }): NotesAsset => {
       const found = asset.asset
       const keptMark = !shown.has(found.id)
-      const text = asset.fromUser ? null : found.kind === 'image' ? imageReferenceText(found.reference, keptMark) : mediaTagTextWithKeptMark(found.tag, keptMark)
+      const text = asset.fromUser ? null : found.kind === 'image' ? imageReferenceTextWithKeptMark(found.reference, keptMark) : mediaTagTextWithKeptMark(found.tag, keptMark)
       return { id: found.id, kind: asset.kind, facts: asset.facts, origin: asset.origin, sentence, text }
     })
-    const pictures = kept.flatMap(({ asset }) => {
+    const pictures = staying.flatMap(({ asset }) => {
       const picture = shown.has(asset.asset.id) ? clipPictures.get(asset.asset.id) : undefined
       return picture === undefined ? [] : [picture]
     })
@@ -229,8 +229,8 @@ export function compactedSections(input: CompactedSectionsInput): CompactedSecti
       const text = sectionPlainText(section)
       const lines = [
         ...findImageReferences(text, 'user').flatMap((reference) => {
-          if (reference.id === null) return [{ from: reference.from, text: imageReferenceText(reference, true) }]
-          return choiceAt(reference.id, index, reference.from) ? [{ from: reference.from, text: imageReferenceText(reference, !shown.has(reference.id)) }] : []
+          if (reference.id === null) return [{ from: reference.from, text: imageReferenceTextWithKeptMark(reference, true) }]
+          return choiceAt(reference.id, index, reference.from) ? [{ from: reference.from, text: imageReferenceTextWithKeptMark(reference, !shown.has(reference.id)) }] : []
         }),
         ...findMediaTags(text).flatMap((tag) => (choiceAt(tag.id, index, tag.from) ? [{ from: tag.from, text: mediaTagTextWithKeptMark(tag, !shown.has(tag.id)) }] : [])),
       ]

@@ -41,20 +41,20 @@ export interface CompactionLeftFiles {
 
 /** The files that the compaction of `sections` in the reply whose section
  *  has the id `replySectionId` left with no use. `dropped` are the assets
- *  that it dropped (`Compaction.dropped`), and `kept` the pictures of its
- *  new tag (`Compaction.pictures`), whose copies stay. */
-export function compactionLeftFiles({ sections, replySectionId, dropped, kept }: {
+ *  that it dropped (`Compaction.dropped`), and `keptPictures` the pictures
+ *  of its new tag (`Compaction.pictures`), whose copies stay. */
+export function compactionLeftFiles({ sections, replySectionId, dropped, keptPictures }: {
   sections: readonly Section[]
   replySectionId: string
   dropped: readonly CompactionAsset[]
-  kept: readonly ShownPicture[]
+  keptPictures: readonly ShownPicture[]
 }): CompactionLeftFiles {
   const sources = dropped.flatMap(({ asset, intermediate, fromUser }) => {
     if (!intermediate || fromUser) return []
     const source = asset.kind === 'image' ? asset.reference.path : asset.clip.src
     return source === null ? [] : [source]
   })
-  const keptFiles = new Set(kept.map((picture) => picture.file))
+  const keptFiles = new Set(keptPictures.map((picture) => picture.file))
   const replaced = sections.slice(0, compactionScope(sections, replySectionId).end)
   const shown = [
     ...(replaced.length > 0 ? sectionCompactionTag(replaced[0])?.pictures ?? [] : []),

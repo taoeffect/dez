@@ -300,7 +300,7 @@ export async function compactConversation(input: CompactionInput): Promise<Compa
     throw new ExplainedError(NO_COMPACTION_NOTES_TEXT)
   }
   const replyText = scope.reply === null ? '' : sectionPlainText(sections[scope.reply])
-  const choices = assetDecisions(assets, answer, { jobInputs: openJobInputs(replyText, input.jobs), keptUserTexts: keptUserTexts(sections, scope) })
+  const choices = assetDecisions(assets, answer, { jobInputs: openJobInputs(replyText, input.jobs), keptTexts: keptUserTexts(sections, scope) })
 
   // The model of the next request: it reads the pictures of the result.
   const reader = input.readerModel ?? model

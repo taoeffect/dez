@@ -10,10 +10,10 @@ import {
   type NotesAsset,
   type NotesAssetLine,
 } from './compactionNotes'
-import { findImageReferences, imageReferenceText } from './images'
+import { findImageReferences, imageReferenceTextWithKeptMark } from './images'
 import { findMediaTags } from './mediaTags'
 import { hiddenClip, hiddenImage, invokeBlock } from './testing'
-import { findToolBlocks, modelTextForRequest } from './toolBlocks'
+import { findToolBlocks, unescapedModelText } from './toolBlocks'
 
 const SUMMARY = '## Summary'
 const REQUIREMENTS = '## Requirements and decisions'
@@ -84,7 +84,7 @@ describe('compactionNotesText', () => {
 
   it('keeps the reference of an image with no id in the assets part', () => {
     const path = '/home/u/.config/dez/assets/generated/images/old.png'
-    const text = compactionNotesText(notes({ unnamed: [imageReferenceText({ path, metadata: [] }, true)] }))
+    const text = compactionNotesText(notes({ unnamed: [imageReferenceTextWithKeptMark({ path, metadata: [] }, true)] }))
     const lines = text.split('\n')
 
     expect(findImageReferences(text, 'agent').map((reference) => reference.path)).toStrictEqual([path])
@@ -132,7 +132,7 @@ describe('compactionNotesText', () => {
     expect(findToolBlocks(text)).toStrictEqual([])
     expect(findMediaTags(text).map((tag) => tag.id)).toStrictEqual([THEME.id])
     expect(notesAssetLines(text).get(THEME.id)?.sentence).toBe(sentence)
-    expect(modelTextForRequest(text)).toContain(summary)
+    expect(unescapedModelText(text)).toContain(summary)
   })
 })
 

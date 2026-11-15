@@ -21,7 +21,7 @@ describe('compactionLeftFiles', () => {
       reply('b', ''),
     ]
 
-    const left = compactionLeftFiles({ sections, replySectionId: 'b', dropped: assetsOf(sections), kept: [] })
+    const left = compactionLeftFiles({ sections, replySectionId: 'b', dropped: assetsOf(sections), keptPictures: [] })
 
     // Not the image `a` of the user, and not the image `d`, which the user
     // saw in the reply.
@@ -35,8 +35,8 @@ describe('compactionLeftFiles', () => {
     const [clip] = assetsOf(sections)
     const gone: CompactionAsset = { ...clip, asset: { ...clip.asset, kind: 'clip', clip: { kind: 'audio', id: 'c', type: 'audio/wav', src: null, url: null, expires: null } } as CompactionAsset['asset'] }
 
-    expect(compactionLeftFiles({ sections: pasted, replySectionId: 'b', dropped: assetsOf(pasted), kept: [] }).sources).toStrictEqual([])
-    expect(compactionLeftFiles({ sections, replySectionId: 'b', dropped: [gone], kept: [] }).sources).toStrictEqual([])
+    expect(compactionLeftFiles({ sections: pasted, replySectionId: 'b', dropped: assetsOf(pasted), keptPictures: [] }).sources).toStrictEqual([])
+    expect(compactionLeftFiles({ sections, replySectionId: 'b', dropped: [gone], keptPictures: [] }).sources).toStrictEqual([])
   })
 
   it('gives the picture copies of the old tag and of the replaced tool blocks, but not the ones that the new tag keeps', () => {
@@ -52,7 +52,7 @@ describe('compactionLeftFiles', () => {
       reply('a3', viewBlock('call_4', ['later.jpg'])),
     ]
 
-    const left = compactionLeftFiles({ sections, replySectionId: 'b', dropped: [], kept: [picture('carried.jpg'), picture('new.jpg')] })
+    const left = compactionLeftFiles({ sections, replySectionId: 'b', dropped: [], keptPictures: [picture('carried.jpg'), picture('new.jpg')] })
 
     expect(left).toStrictEqual({ sources: [], pictures: ['old-tag.jpg', 'one.jpg', 'two.jpg', 'four.jpg', 'three.jpg'] })
   })

@@ -7,7 +7,7 @@ import type { PromptInput } from '../streams/mediaRequest'
 import { jobStartedText } from '../tools/jobs'
 import { invocationInputsText } from '../tools/modelInvoke'
 import { compactionTagText } from './compaction'
-import { IMAGE_HIDDEN_KEY, IMAGE_TOOL_KEY, imageMarkdown, imageReferenceText } from './images'
+import { IMAGE_HIDDEN_KEY, IMAGE_TOOL_KEY, imageMarkdown, imageReferenceTextWithKeptMark } from './images'
 import { MEDIA_HIDDEN_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE, mediaTagText, type MediaTagKind } from './mediaTags'
 import { toolBlockText } from './toolBlocks'
 
@@ -27,7 +27,7 @@ export const FOX_ORIGIN = 'made by the model_invoke job 2 of its reply: "A red f
 /** The reference of the image `id` at `path`, with the kept mark of a
  *  compaction when `kept`. */
 export function idImage(path: string, id: string, kept = false): string {
-  return imageReferenceText({ path, metadata: [{ key: 'id', value: id }] }, kept)
+  return imageReferenceTextWithKeptMark({ path, metadata: [{ key: 'id', value: id }] }, kept)
 }
 
 /** The reference of an image that the job `jobId` made for an intermediate

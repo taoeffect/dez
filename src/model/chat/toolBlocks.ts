@@ -261,7 +261,7 @@ export function withoutToolBlocks(text: string): string {
 // writes into agent text: `dez:tool`, the media tags (mediaTags.ts), and
 // the compaction tag (compaction.ts). So no answer can hold a block's
 // opening or closing tag, a media tag, or a compaction tag. Requests remove
-// the escape (`agentTextForRequest`, `modelTextForRequest`), so the
+// the escape (`agentTextForRequest`, `unescapedModelText`), so the
 // provider gets the model's own bytes. Prose about other tags (`dez:pill`)
 // keeps its bytes.
 //
@@ -275,7 +275,7 @@ const modelTextEscape = tagEscape(...MODEL_TEXT_TAGS)
 /** Text that a model wrote, as a provider gets it: with the
  *  `ModelTextEscaper` escape removed. For a text that holds no tool block
  *  and no media tag of Dez (a caller that reads those first). */
-export function modelTextForRequest(text: string): string {
+export function unescapedModelText(text: string): string {
   return modelTextEscape.unescape(text)
 }
 
@@ -293,7 +293,7 @@ export function escapedModelText(text: string): string {
  *  one that Dez wrote. */
 export function agentTextForRequest(text: string): string {
   return splitMediaTags(text)
-    .map((piece) => (piece.kind === 'text' ? modelTextForRequest(piece.text) : mediaTagRequestText(piece.tag)))
+    .map((piece) => (piece.kind === 'text' ? unescapedModelText(piece.text) : mediaTagRequestText(piece.tag)))
     .join('')
 }
 
