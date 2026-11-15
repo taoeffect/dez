@@ -1,5 +1,6 @@
 import { compactionThreshold } from '../chat/contextSize'
 import type { ImageSize } from '../chat/imageDrawing'
+import type { MessagePart } from '../chat/types'
 import { shownPictureSize, type PictureFile, type ShownPicture } from '../chat/shownPictures'
 import { contextWindowOf, imageLimitOf, imageTokens, messageImageLimitOf, type ImageTokenRule } from '../providers/modelFamilies'
 import type { ModelInfo } from '../providers/types'
@@ -103,18 +104,25 @@ function base64Length(bytes: number): number {
   return 4 * Math.ceil(bytes / 3)
 }
 
+// What one image of `size` pixels and `byteCount` bytes costs a model that
+// counts by `rule`. Every cost of an image or a picture comes from here, so
+// a saved picture costs what it cost before its save.
+function imageCost(rule: ImageTokenRule, size: ImageSize | null, byteCount: number): PictureBudget {
+  return { tokens: imageTokens(rule, size), bytes: base64Length(byteCount), pictures: 1 }
+}
+
 /** What a new picture with the file `file`, of `size` pixels, costs a
  *  model that counts by `rule`. A picture of an unknown size (null) costs
  *  the most tokens that the rule gives. */
 export function pictureCost(rule: ImageTokenRule, file: PictureFile, size: ImageSize | null): PictureBudget {
-  return { tokens: imageTokens(rule, size), bytes: base64Length(file.bytes.length), pictures: 1 }
+  return imageCost(rule, size, file.bytes.length)
 }
 
 /** What the saved picture `picture` costs a model that counts by `rule`:
  *  the same as `pictureCost` gave for it before its save. The copy of an
  *  older Dez tells no byte count, so it counts no bytes. */
 export function shownPictureCost(rule: ImageTokenRule, picture: ShownPicture): PictureBudget {
-  return { tokens: imageTokens(rule, shownPictureSize(picture)), bytes: base64Length(picture.bytes ?? 0), pictures: 1 }
+  return imageCost(rule, shownPictureSize(picture), picture.bytes ?? 0)
 }
 
 /** `budget` after a picture that costs `cost`; null when the picture does
@@ -135,15 +143,9 @@ export function totalCost(costs: readonly PictureBudget[]): PictureBudget {
  *  and by the bytes that a request sends for it in `imageBytes` (by path;
  *  none: no bytes), which `dez.provider/chatImageSizes` gives. */
 export function contextImageCost(messages: readonly StreamMessage[], rule: ImageTokenRule, imageBytes: ReadonlyMap<string, number>): PictureBudget {
-  const costs: PictureBudget[] = []
-  for (const message of messages) {
-    if (message.role !== 'user' || typeof message.content === 'string') continue
-    for (const part of message.content) {
-      if (part.type === 'picture') costs.push(shownPictureCost(rule, part.picture))
-      else if (part.type === 'image') costs.push({ tokens: imageTokens(rule, ASSUMED_IMAGE_SIZE), bytes: base64Length(imageBytes.get(part.path) ?? 0), pictures: 1 })
-    }
-  }
-  return totalCost(costs)
+  return totalCost(Array.from(attachmentParts(messages), (part) => (part.type === 'picture'
+    ? shownPictureCost(rule, part.picture)
+    : imageCost(rule, ASSUMED_IMAGE_SIZE, imageBytes.get(part.path) ?? 0))))
 }
 
 /** What is left of `limits` after `spent`: never under 0 in a part, as
@@ -156,13 +158,19 @@ export function pictureBudgetLeft(limits: PictureBudget, spent: PictureBudget): 
   }
 }
 
+/** The image and picture parts of the user messages of `messages`: the
+ *  images of the user messages, the pictures of a compaction tag, and the
+ *  pictures of the rounds of the replies (`sectionsToStreamMessages`,
+ *  streams/messages.ts). */
+export function* attachmentParts(messages: readonly StreamMessage[]): Generator<Exclude<MessagePart, { type: 'text' }>> {
+  for (const message of messages) {
+    if (message.role !== 'user' || typeof message.content === 'string') continue
+    for (const part of message.content) if (part.type !== 'text') yield part
+  }
+}
+
 /** The images of `messages` that count against the image limit of a
- *  request (`imageLimitOf`): the image and picture parts of their user
- *  messages (the images of the user messages, the pictures of a compaction
- *  tag, and the pictures of the rounds of the replies;
- *  `sectionsToStreamMessages`, streams/messages.ts). */
+ *  request (`imageLimitOf`): all their `attachmentParts`. */
 export function requestImageCount(messages: readonly StreamMessage[]): number {
-  return messages.reduce((count, message) => count + (message.role === 'user' && typeof message.content !== 'string'
-    ? message.content.filter((part) => part.type !== 'text').length
-    : 0), 0)
+  return Array.from(attachmentParts(messages)).length
 }

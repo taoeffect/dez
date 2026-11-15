@@ -22,6 +22,7 @@ import { compactionLeftFiles } from '../model/streams/compactionFiles'
 import { compactionReason, newestReplyModel, repliedSinceCompaction } from '../model/streams/compactionRequest'
 import { agentSectionMessages, imageOptionsOf, mediaRequestInput, newRequestImages, sectionsToStreamMessages, type RequestImages } from '../model/streams/messages'
 import {
+  attachmentParts,
   compactedPictureLimits,
   contextImageCost,
   NO_CALL_PICTURE_BUDGET,
@@ -415,10 +416,7 @@ function toolAssetWriters(tabId: string, reply: ReplyRuntime, tool: string, take
 // counts no bytes: the request that holds it fails with its own text.
 async function imageFileSizes(messages: readonly StreamMessage[]): Promise<ReadonlyMap<string, number>> {
   const paths = new Set<string>()
-  for (const message of messages) {
-    if (message.role !== 'user' || typeof message.content === 'string') continue
-    for (const part of message.content) if (part.type === 'image') paths.add(part.path)
-  }
+  for (const part of attachmentParts(messages)) if (part.type === 'image') paths.add(part.path)
   return paths.size === 0 ? new Map() : await sbp('dez.provider/chatImageSizes', [...paths]) as Map<string, number>
 }
 

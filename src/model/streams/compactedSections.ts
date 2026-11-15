@@ -14,7 +14,7 @@ import type { JobInfo } from '../tools/jobs'
 import { compactionScope, type AssetChoice, type CompactionAsset } from './compactionAssets'
 import type { CompactionAnswer } from './compactionRequest'
 import { sectionsToStreamMessages } from './messages'
-import { contextImageCost, type PictureBudget } from './pictureBudget'
+import { budgetAfter, contextImageCost, type PictureBudget } from './pictureBudget'
 
 // The sections of a conversation after a compaction, in place of the
 // sections up to the reply that runs:
@@ -160,10 +160,6 @@ function withKeptMarks(section: Section, index: number, asText: ReadonlySet<stri
   return changed ? { ...section, content } : section
 }
 
-function isOver(cost: PictureBudget, limits: PictureBudget): boolean {
-  return cost.tokens > limits.tokens || cost.bytes > limits.bytes || cost.pictures > limits.pictures
-}
-
 /** The sections of a tab after a compaction; see the top of this file. */
 export function compactedSections(input: CompactedSectionsInput): CompactedSections {
   const { sections, model, choices, answer, clipPictures, imageBytes } = input
@@ -245,11 +241,13 @@ export function compactedSections(input: CompactedSectionsInput): CompactedSecti
     if (last !== null && scope.last !== null) result.push(withKeptMarks(last, scope.last, asText))
     return { sections: result, pictures }
   }
-  const costOf = (plan: Plan): PictureBudget => contextImageCost(
+  // Whether the images and the pictures of the head of `plan` fit in the
+  // limits.
+  const fits = (plan: Plan): boolean => budgetAfter(input.limits, contextImageCost(
     sectionsToStreamMessages(head(plan).sections, model, { sendImages: true, sendTools: false }).messages,
     input.rule,
     imageBytes,
-  )
+  )) !== null
 
   // 1. The images of the kept messages of the user.
   const images = [
@@ -259,10 +257,8 @@ export function compactedSections(input: CompactedSectionsInput): CompactedSecti
   const asText = new Set(images.filter(({ path }) => !imageBytes.has(path)).map(({ key }) => key))
   const asPixels = images.filter(({ key }) => !asText.has(key))
   const noShown: ReadonlySet<string> = new Set()
-  let fixed = costOf({ shown: noShown, asText })
-  while (isOver(fixed, input.limits) && asPixels.length > 0) {
+  while (!fits({ shown: noShown, asText }) && asPixels.length > 0) {
     asText.add((asPixels.pop() as { key: string }).key)
-    fixed = costOf({ shown: noShown, asText })
   }
 
   // 2. The `show` assets.
@@ -272,7 +268,7 @@ export function compactedSections(input: CompactedSectionsInput): CompactedSecti
     for (const { asset } of wanted) {
       const found = asset.asset
       if (found.kind === 'image' ? !imageBytes.has(found.reference.path) : !clipPictures.has(found.id)) continue
-      if (!isOver(costOf({ shown: new Set([...shown, found.id]), asText }), input.limits)) shown.add(found.id)
+      if (fits({ shown: new Set([...shown, found.id]), asText })) shown.add(found.id)
     }
   }
 
