@@ -19,6 +19,13 @@ import type { ImageMediaType } from '../chat/images'
  *  themselves, and the side of the `review` pictures of `asset_view`. */
 export const CHAT_IMAGE_SIDE = 1568
 
+/** The longest side of an image or a picture that Dez sends in a chat
+ *  request, in pixels: the `full` pictures of `asset_view`
+ *  (`IMAGE_PICTURE_SIDES`, tools/assetView.ts). The image limit of a model
+ *  reads it: some makers take fewer images in a request when one of them
+ *  has a longer side (`imageLimitOf`, modelFamilies.ts). */
+export const LARGEST_PICTURE_SIDE = 3000
+
 /** How to draw the copy of an image of `size` and of the type `mediaType`
  *  that a chat request sends; null for an image that goes as its file. An
  *  image with a side over `CHAT_IMAGE_SIDE` goes as a smaller JPEG copy on

@@ -1,6 +1,7 @@
 import * as z from 'zod'
 import type { ImageSize } from '../chat/imageDrawing'
 import { configIssueText } from './config'
+import { LARGEST_PICTURE_SIDE } from './imageSize'
 import modelFamiliesFile from './modelFamilies.json'
 import type { ModelInfo } from './types'
 
@@ -74,11 +75,12 @@ const modelFamilyEntrySchema = z.strictObject({
   // In tokens: the most that one request and its answer hold, or the
   // smaller limit of the request alone.
   contextWindow: positiveInt.optional(),
-  // The most images of one request. `null`: the docs state that there is
-  // no limit.
+  // The most images of one request, in all of its messages. `null`: the
+  // docs state that there is no limit.
   maxImages: positiveInt.nullable().optional(),
   // In a request with more than `over` images, no side of an image can be
-  // more than `maxSidePx` pixels.
+  // more than `maxSidePx` pixels. It counts only when Dez sends a picture
+  // with a longer side (`imageLimitOf`).
   manyImages: z.strictObject({ over: positiveInt, maxSidePx: positiveInt }).optional(),
   note: z.string().trim().min(1).optional(),
   sources: z.array(z.url()).min(1),
@@ -112,8 +114,8 @@ export interface ModelFamily {
  *  - an image: one token for each square of 28 by 28 pixels, at most 4,784,
  *    which is the count of Claude with no scale down first;
  *  - a 200k window, the smallest one of the current large models;
- *  - 20 images: the Claude API refuses an image with a side over 3,000 px
- *    in a request with more. */
+ *  - 20 images in one request: no maker tells Dez how many such a model
+ *    takes, and the smallest limit of a known family is 100. */
 export const DEFAULT_FAMILY: ModelFamily = {
   id: null,
   charsPerToken: 2.5,
@@ -205,10 +207,29 @@ export function contextWindowOf(model: Pick<ModelInfo, 'id' | 'contextWindow'>):
   return model.contextWindow ?? modelFamily(model.id).contextWindow
 }
 
-/** The most images of one chat request to `model` (`Infinity`: no limit):
- *  the one that its provider's model list gives, else the one of its
- *  family. A smaller number that a refusal of the provider told
- *  (`learnedImageLimit`) wins over both. */
-export function imageLimitOf(model: Pick<ModelInfo, 'id' | 'imageLimit' | 'learnedImageLimit'>): number {
-  return Math.min(model.imageLimit ?? modelFamily(model.id).maxImages, model.learnedImageLimit?.maxImages ?? Infinity)
+/** The most images of one request to a model of a family, when the longest
+ *  side of a picture that goes to it is `largestSidePx` pixels. A family
+ *  that takes fewer images when one of them has a long side (`manyImages`)
+ *  gives that lower count when a picture can have such a side: a refused
+ *  picture would fail each later request, as each one sends it again. */
+export function familyImageLimit({ maxImages, manyImages }: Pick<ModelFamily, 'maxImages' | 'manyImages'>, largestSidePx: number): number {
+  return manyImages && manyImages.maxSidePx < largestSidePx ? Math.min(maxImages, manyImages.over) : maxImages
+}
+
+/** The most image and picture parts of one chat request to `model`, in all
+ *  of its messages (`Infinity`: no limit): the one that its provider's
+ *  model list gives, else the one of its family for the largest picture
+ *  that Dez sends (`LARGEST_PICTURE_SIDE`). */
+export function imageLimitOf(model: Pick<ModelInfo, 'id' | 'imageLimit'>): number {
+  return model.imageLimit ?? familyImageLimit(modelFamily(model.id), LARGEST_PICTURE_SIDE)
+}
+
+/** The most image and picture parts of one message of a chat request to
+ *  `model`: the one that its provider's model list gives
+ *  (`ModelInfo.messageImageLimit`), and the count that a refusal of the
+ *  provider told (`learnedImageLimit`), which was a request of one
+ *  message. With neither, and never over it, the limit of a whole request
+ *  (`imageLimitOf`). */
+export function messageImageLimitOf(model: Pick<ModelInfo, 'id' | 'imageLimit' | 'messageImageLimit' | 'learnedImageLimit'>): number {
+  return Math.min(model.messageImageLimit ?? Infinity, model.learnedImageLimit?.maxImages ?? Infinity, imageLimitOf(model))
 }

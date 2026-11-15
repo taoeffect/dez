@@ -7,13 +7,14 @@ import { imageMediaType, type ImageMediaType } from './images'
 // asset of the conversation: no `@id` names one. Dez saves each picture as
 // a copy in the views folder, and the block of the call names the copies
 // in its `pictures` attribute (toolBlocks.ts). The copies are what the
-// model and the user see: the requests of the reply read them
-// (`agentSectionMessages`, streams/messages.ts), so each request sends the
-// same bytes, and the panel of the call's chip shows them. No request
-// sends the name of a copy. Dez deletes the copies of a call whose result
-// no block takes, such as a stopped call (controller/shownPictures.ts);
-// else only Delete Unused Files deletes a copy, when no text names it
-// (unusedFiles.ts).
+// model and the user see: each request that holds the round of the call
+// reads them (`agentSectionMessages`, streams/messages.ts), so each one
+// sends the same bytes, and the panel of the call's chip shows them. No
+// request sends the name of a copy. Dez deletes the copies of a call whose
+// result no block takes, such as a stopped call
+// (controller/shownPictures.ts), and the copies of the calls that a
+// compaction takes out; else only Delete Unused Files deletes a copy, when
+// no text names it (unusedFiles.ts).
 
 /** One picture that a tool call showed its model, as its block keeps it.
  *  The size and the byte count give the cost of the picture in a request
@@ -57,6 +58,11 @@ export interface NewPicture {
 /** What a request holds in place of a picture whose copy is gone (a user
  *  can delete the file by hand), after the label of the picture. */
 export const SHOWN_PICTURE_GONE_NOTE = 'Dez no longer has this picture: its file is gone. To see it again, call asset_view again.'
+
+/** What a request holds in place of a picture that is over an image limit
+ *  of its model (`takesPart`, streams/messages.ts), after the label of the
+ *  picture. */
+export const SHOWN_PICTURE_OVER_LIMIT_NOTE = 'Dez did not send this picture: this request already holds as many images as its model takes.'
 
 /** The folder of the copies, relative to the app folder. */
 export const SHOWN_PICTURE_FOLDER = 'assets/generated/views'

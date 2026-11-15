@@ -188,13 +188,17 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
       perTokens: 1_000_000,
       otherRates: 'model_spec.pricing.extended',
     },
-    // The window of a text model, and the most images of one request that
-    // Venice states for a model that reads images ("Check ... `maxImages`
-    // under `model_spec.capabilities` ... before sending several"; checked
-    // live, 2026-11-14).
+    // The window of a text model, and the most images that Venice states
+    // for a model that reads images ("Check ... `maxImages` under
+    // `model_spec.capabilities` ... before sending several"). That count
+    // is a limit of one message, not of a request: a request with 11
+    // images in one message gets HTTP 400 ("At most 10 image(s) may be
+    // provided in one request."), one with 6 and 5 images in two messages
+    // passes, and so does one with 12 images in several messages (Claude
+    // models; checked live, 2026-11-14).
     // https://docs.venice.ai/guides/features/vision
     modelContextWindow: { paths: ['model_spec.availableContextTokens'] },
-    modelImageLimit: { paths: ['model_spec.capabilities.maxImages'] },
+    modelMessageImageLimit: { paths: ['model_spec.capabilities.maxImages'] },
     // One `type` per model. `inpaint` models edit images, and `upscale`
     // models make an image larger. `music` models also make sounds and
     // speech; one of them is a voice changer (`model_spec.voice_changer`),

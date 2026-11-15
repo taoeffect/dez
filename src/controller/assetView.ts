@@ -7,7 +7,7 @@ import type { ClipAttachment } from '../model/providers/clipInputs'
 import { modelFamily } from '../model/providers/modelFamilies'
 import type { ModelInfo } from '../model/providers/types'
 import { conversationAssets } from '../model/streams/mediaRequest'
-import { budgetAfter, NO_PICTURE_BUDGET, pictureCost, totalCost, type PictureBudget } from '../model/streams/pictureBudget'
+import { budgetAfter, NO_CALL_PICTURE_BUDGET, pictureCost, totalCost, type PictureBudget } from '../model/streams/pictureBudget'
 import { gridLayout, gridTexts, type GridLayout, type GridPiece } from '../model/tools/assetGrid'
 import { probedClipFacts, type ClipProbeFacts } from '../model/tools/assetFacts'
 import { cutTimes } from '../model/tools/clipAnalysis'
@@ -42,9 +42,9 @@ import {
   missingTimesNote,
   NO_VIDEO_STREAM_NOTE,
   noFramesNote,
+  noPictureNote,
   noSoundNote,
   partHasNoFrame,
-  PICTURE_LIMIT_NOTE,
   pictureCostNote,
   PICTURE_NOT_DRAWN_NOTE,
   PICTURE_NOT_READ_NOTE,
@@ -92,14 +92,15 @@ import type { ToolRunContext } from './tools'
 // The work of the `asset_view` tool (model/tools/assetView.ts): it gives
 // the facts and a picture of each image and clip that a call names, and
 // gives the saved copies of the pictures back with its result
-// (`ToolRunResult.pictures`), which the requests of the reply send. This
-// module registers no selector: the `asset_view` runner (tools.ts) calls
-// it.
+// (`ToolRunResult.pictures`), which the requests of the conversation send
+// until its next compaction. This module registers no selector: the
+// `asset_view` runner (tools.ts) calls it.
 //
 // A picture is bytes here, read or drawn once, and then a copy in
 // `assets/generated/views/` (shownPictures.ts): each later request of the
-// reply reads that copy, so it sends the same bytes (the prompt cache),
-// and the image or the clip of the picture can change or go meanwhile.
+// conversation reads that copy, until a compaction takes the call out, so
+// it sends the same bytes (the prompt cache), and the image or the clip
+// of the picture can change or go meanwhile.
 // The pictures of the clips are made in a work folder, which goes at the
 // end of the call. The copies are the only files that a view keeps. The
 // log of ffmpeg goes to the console only, as it can hold a path: the model
@@ -121,7 +122,8 @@ async function viewImage(id: string, path: string, call: AssetViewCall, choice: 
   if (image.kind === 'notDrawn') item.notes.push(PICTURE_NOT_DRAWN_NOTE)
   if (image.kind !== 'read') return item
   if (call.crop && !cropRegion(call.crop, image.size)) throw new ToolError(cropUnderPixelText(id, image.size))
-  if (choice === 'overLimit') item.notes.push(PICTURE_LIMIT_NOTE)
+  const noPicture = noPictureNote(choice)
+  if (noPicture) item.notes.push(noPicture)
   if (choice !== 'show') return item
 
   const { file, mediaType, size } = image
@@ -171,8 +173,8 @@ interface GridMember {
   clipPicture: ViewPicture | null
 }
 
-/** What a picture that does not fit in the picture budget of the reply
- *  costs, and what was left of the budget. */
+/** What a picture that does not fit in the picture budget of the
+ *  conversation costs, and what was left of the budget. */
 interface OverBudget {
   cost: PictureBudget
   left: PictureBudget
@@ -186,14 +188,15 @@ async function gridImage(id: string, path: string, choice: PictureChoice): Promi
   const image = await readImageFacts(id, path)
   const item: AssetViewItem = { id, kind: 'image', facts: image.facts, notes: [], picture: null }
   if (image.kind !== 'read') return { item, member: null }
-  if (choice === 'overLimit') item.notes.push(PICTURE_LIMIT_NOTE)
+  const noPicture = noPictureNote(choice)
+  if (noPicture) item.notes.push(noPicture)
   return { item, member: choice === 'show' ? { file: image.file, piece: { kind: 'image', id }, clipPicture: null } : null }
 }
 
 // The grid picture of `members`, for a view with `detail`, when `charge`
-// takes its cost from the picture budget of the reply, else the note of
-// why it has none. As the picture of an image, a grid whose file is too
-// large is drawn again smaller until it fits.
+// takes its cost from the picture budget of the conversation, else the
+// note of why it has none. As the picture of an image, a grid whose file
+// is too large is drawn again smaller until it fits.
 async function gridView(members: readonly GridMember[], detail: ViewDetail, charge: (picture: ViewPicture) => OverBudget | null): Promise<AssetViewGrid> {
   const pieces = members.map(({ piece }) => piece)
   const ids = pieces.map(({ id }) => id)
@@ -456,7 +459,8 @@ async function videoView(input: ClipInput, facts: ClipProbeFacts, part: ClipPart
     : choice === 'show' ? await frameSheet(input, call, facts.seconds, part, folder, signal) : { notes: [], picture: null }
   const asked = soundPictureOf(call, 'video')
   const soundKind = choice === 'show' ? asked : 'none'
-  const limitNotes = choice === 'overLimit' && (facts.video !== null || (facts.audio !== null && asked !== 'none')) ? [PICTURE_LIMIT_NOTE] : []
+  const noPicture = noPictureNote(choice)
+  const limitNotes = noPicture && (facts.video !== null || (facts.audio !== null && asked !== 'none')) ? [noPicture] : []
   if (facts.audio === null || sheetView.failed) {
     const noSound = facts.audio === null && asked !== 'none' ? [noSoundNote(asked, false)] : []
     return { notes: [...sheetView.notes, ...noSound, ...limitNotes], picture: sheetView.picture }
@@ -495,27 +499,29 @@ export async function viewClip(clip: ClipAttachment, call: AssetViewCall, choice
   const soundKind = choice === 'show' ? asked : 'none'
   const draw = soundDraw(input, soundKind, null)
   const sound = await soundView(input, part, draw, folder, signal)
+  const noPicture = noPictureNote(choice)
   return {
     ...item,
-    notes: [...sound.notes, ...(choice === 'overLimit' && asked !== 'none' ? [PICTURE_LIMIT_NOTE] : [])],
+    notes: [...sound.notes, ...(noPicture && asked !== 'none' ? [noPicture] : [])],
     picture: draw && sound.picture && { ...sound.picture, ...soundPictureTexts(clip.id, 'audio', draw.kind, part, sound.picture.size) },
   }
 }
 
 /** The result of an `asset_view` call with the arguments `args`, for the
  *  conversation `sections`: its text, and the saved copies of its
- *  pictures (`saveShownPictures`), which the requests of the reply send to
- *  the model. Each picture that fits in what is left of the picture budget
- *  (`context.pictureBudget`) goes; an asset whose picture does not fit, or
- *  whose copy Dez could not save, gets a note in its place. With `layout`
- *  "grid", the images and video clips go into one grid picture, after the
- *  pictures of the other assets, when at least 2 of them give a part of
- *  it; else each one gets its own picture. Throws a `ToolError`
- *  for bad arguments, for an id that names no image and no clip of the
- *  conversation, and for a crop of a clip or of less than one pixel. A
- *  model that reads no images (`imageInput` false) gets the facts and the
- *  loudness only. A stop of `signal` stops a run of a program and rejects
- *  with the stop. */
+ *  pictures (`saveShownPictures`), which the requests of the conversation
+ *  send to the model. Each picture that fits in what is left of the
+ *  picture budget (`context.pictureBudget`) goes; an asset whose picture
+ *  does not fit, or whose copy Dez could not save, gets a note in its
+ *  place, and so does one whose round already shows as many pictures as a
+ *  message of the model takes. With `layout` "grid", the images and video
+ *  clips go into one grid picture, after the pictures of the other
+ *  assets, when at least 2 of them give a part of it; else each one gets
+ *  its own picture. Throws a `ToolError` for bad arguments, for an id
+ *  that names no image and no clip of the conversation, and for a crop of
+ *  a clip or of less than one pixel. A model that reads no images
+ *  (`imageInput` false) gets the facts and the loudness only. A stop of
+ *  `signal` stops a run of a program and rejects with the stop. */
 export async function assetViewResult(
   args: ToolArguments,
   sections: readonly Section[],
@@ -532,20 +538,29 @@ export async function assetViewResult(
 
   const model = sbp('dez.model/modelCache/model', context.model.providerId, context.model.modelId) as ModelInfo | null
   const imageInput = model?.imageInput !== false
-  let left = imageInput ? await context.pictureBudget() : NO_PICTURE_BUDGET
+  let { left, roundPictures } = imageInput ? await context.pictureBudget() : NO_CALL_PICTURE_BUDGET
   // A picture costs what the family of the model counts it as, as in the
   // budget of the context (`shownPictureCost`).
   const tokenRule = modelFamily(context.model.modelId).imageTokens
   // With nothing left of one part of the budget, no picture fits, so Dez
-  // does not make one. Else only the made picture tells its cost.
-  const pictureChoice = (): PictureChoice => (!imageInput ? 'noImageInput' : left.pictures > 0 && left.tokens > 0 && left.bytes > 0 ? 'show' : 'overLimit')
-  // Takes the cost of `picture` from what is left of the budget when it
-  // fits; else takes nothing, and gives its cost and what was left.
+  // does not make one. Else only the made picture tells its cost. The
+  // round count is checked after the budget: a call in the next round
+  // helps only while the budget has room.
+  const pictureChoice = (): PictureChoice => {
+    if (!imageInput) return 'noImageInput'
+    if (left.pictures <= 0 || left.tokens <= 0 || left.bytes <= 0) return 'overLimit'
+    return roundPictures > 0 ? 'show' : 'roundFull'
+  }
+  // Takes the cost of `picture` from what is left of the budget, and one
+  // picture from the count of the round, when it fits; else takes
+  // nothing, and gives its cost and what was left. A picture is made only
+  // while the round still takes one (`pictureChoice`).
   const charge = (picture: ViewPicture): OverBudget | null => {
     const cost = pictureCost(tokenRule, picture.file, picture.size)
     const after = budgetAfter(left, cost)
     if (!after) return { cost, left }
     left = after
+    roundPictures -= 1
     return null
   }
   // Keeps the picture of its own of `item` when it fits in what is left of
@@ -597,10 +612,12 @@ export async function assetViewResult(
   const items = call.ids.some((id) => assets.clips.has(id)) ? await inWorkFolder(view) : await view(null)
   // A stop during the last asset does not wait for the draw of the grid.
   signal.throwIfAborted()
-  const membersGo = members.length > 0 && pictureChoice() === 'show'
+  const gridChoiceNow = pictureChoice()
+  const membersGo = members.length > 0 && gridChoiceNow === 'show'
   // A grid that cannot go gives each of its assets the note that it gets
-  // when the call starts with a spent budget (`gridChoice`).
-  if (!membersGo) for (const { piece } of members) items.find((item) => item.id === piece.id)?.notes.push(PICTURE_LIMIT_NOTE)
+  // when the call starts with no room for a picture (`gridChoice`).
+  const noGrid = membersGo ? null : noPictureNote(gridChoiceNow)
+  if (noGrid) for (const { piece } of members) items.find((item) => item.id === piece.id)?.notes.push(noGrid)
   // An asset of the grid can give no member: an image that the webview
   // cannot decode, or a clip whose sheet failed or has no frame. A grid of
   // the one member that is left would draw it in a frame box, much smaller
@@ -630,6 +647,7 @@ export async function assetViewResult(
     const owner = owners[index]
     const { file, size } = owner.picture as ViewPicture
     left = totalCost([left, pictureCost(tokenRule, file, size)])
+    roundPictures += 1
     owner.picture = null
     owner.notes.push(owner === grid ? gridNotSavedNote(members.map(({ piece }) => piece.id)) : PICTURE_NOT_SAVED_NOTE)
   }
@@ -640,7 +658,7 @@ export async function assetViewResult(
       if (clipPicture?.note) items.find((item) => item.id === piece.id)?.notes.unshift(clipPicture.note)
     }
   }
-  const content = assetViewText(items, grid, imageInput ? left : null)
+  const content = assetViewText(items, grid, imageInput ? { left, roundPictures } : null)
   const saved = copies.flatMap((copy) => (copy ? [copy] : []))
   return saved.length > 0 ? { content, pictures: saved } : { content }
 }

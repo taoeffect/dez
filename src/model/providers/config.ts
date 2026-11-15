@@ -89,10 +89,11 @@ const modelEntryPathSchema = z.string().refine(
 )
 
 // Where a `/models` entry holds a count of its model (`modelContextWindow`,
-// `modelImageLimit`). A server can give the same limit in more than one
-// place with different numbers (OpenRouter: the largest window of a model's
-// providers, and the window of its main provider), so the paths are a list
-// and the smallest number counts: a request that fits it fits them all.
+// `modelImageLimit`, `modelMessageImageLimit`). A server can give the same
+// limit in more than one place with different numbers (OpenRouter: the
+// largest window of a model's providers, and the window of its main
+// provider), so the paths are a list and the smallest number counts: a
+// request that fits it fits them all.
 const modelCountPathsSchema = z.object({ paths: z.array(modelEntryPathSchema).min(1, 'Paths must not be empty') })
 
 // The formats of a release date in a `/models` entry (`modelReleased`).
@@ -291,8 +292,13 @@ export const providerConfigSchema = z.object({
   // conversation's context against it.
   modelContextWindow: modelCountPathsSchema.optional(),
   // Where a `/models` entry holds the most images that one chat request to
-  // its model can hold (Venice's `maxImages`).
+  // its model can hold, in all of its messages together (Copilot's
+  // `max_prompt_images`).
   modelImageLimit: modelCountPathsSchema.optional(),
+  // Where a `/models` entry holds the most images that one message of a
+  // chat request to its model can hold (Venice's `maxImages`). A request
+  // can then hold more images in all, in several messages.
+  modelMessageImageLimit: modelCountPathsSchema.optional(),
   auth: z.enum(['apiKey', 'githubCopilot']).default('apiKey'),
   // Static headers added to every request.
   headers: headersSchema.optional(),

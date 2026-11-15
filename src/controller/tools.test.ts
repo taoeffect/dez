@@ -19,7 +19,7 @@ import { PRICE_LIFETIME_MS } from '../model/providers/modelPrices'
 import type { ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderMediaQuote, ProviderMediaQuoteInput, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers/streamTypes'
 import { providerInfo } from '../model/providers/testing'
 import type { ModelInfo, ProviderInfo, ProviderInputImageRules, ProviderSettingsDescriptor } from '../model/providers/types'
-import { NO_PICTURE_BUDGET, type PictureBudget } from '../model/streams/pictureBudget'
+import { NO_CALL_PICTURE_BUDGET, type CallPictureBudget, type PictureBudget } from '../model/streams/pictureBudget'
 import { assetProbeArgs, clipNotReadFacts } from '../model/tools/assetFacts'
 import { ASSET_INFO_COLUMNS } from '../model/tools/assetInfo'
 import { clipChecksArgs, SCENE_CUT_FILTER } from '../model/tools/clipAnalysis'
@@ -38,11 +38,14 @@ import {
   NO_VIDEO_STREAM_NOTE,
   noSoundNote,
   PICTURE_LIMIT_NOTE,
+  PICTURE_ROUND_FULL_NOTE,
   PICTURE_NOT_DRAWN_NOTE,
   PICTURE_NOT_SAVED_NOTE,
   PICTURE_NOT_READ_NOTE,
   PICTURE_TOO_LARGE_NOTE,
+  pictureBudgetLeftText,
   pictureCostNote,
+  PICTURES_SHOWN_NOTE,
   sheetTooLargeNote,
   soundlessPartNote,
   soundStripFailedNote,
@@ -205,7 +208,7 @@ sbp('sbp/selectors/register', {
 const REPLY_MODEL: ModelRef = { providerId: 'venice', modelId: 'venice-glm-5' }
 
 // The picture budget of a context of a reply that shows no picture.
-const NO_PICTURES: Pick<ToolRunContext, 'pictureBudget'> = { pictureBudget: async () => NO_PICTURE_BUDGET }
+const NO_PICTURES: Pick<ToolRunContext, 'pictureBudget'> = { pictureBudget: async () => NO_CALL_PICTURE_BUDGET }
 
 // Runs a call of a reply of `model` that takes no image and no clip, and
 // has no job.
@@ -1947,10 +1950,17 @@ describe('dez.controller/tools/run', () => {
     const WAVE_JPEG = jpegHeader(800, 200)
     const SPECTROGRAM_JPEG = jpegHeader(1084, 328)
     const STRIP_JPEG = jpegHeader(968, 160)
+    // The last line of a view of a conversation whose budget has `pictures`
+    // and `tokens` left, in a round that takes as many pictures. The
+    // pictures of these tests have too few bytes to change the text of the
+    // bytes.
+    const budgetLine = (pictures: number, tokens: number) => pictureBudgetLeftText({ left: { pictures, tokens, bytes: 20 * 1024 ** 2 }, roundPictures: pictures })
     // The last line of a view that showed no picture.
-    const FULL_BUDGET_LINE = 'Picture budget left in this reply: 20 pictures, 57,408 tokens and 20.0 MB of base64.'
+    const FULL_BUDGET_LINE = budgetLine(20, 57_408)
     let tabId: string
     let budget: PictureBudget
+    // How many pictures the round of the call still takes.
+    let roundPictures: number
     // The pictures that the calls of a test gave their reply.
     let shown: ReturnType<typeof savedPicture>[]
     // The ffprobe output of each clip, by the name of its copy.
@@ -1970,8 +1980,9 @@ describe('dez.controller/tools/run', () => {
       return { label: copy.label, picture: { mediaType: imageMediaType(copy.file), bytes: saved?.content }, size: shownPictureSize(copy) }
     }
 
-    // Runs a call of a reply with the budget `budget`, and adds the
-    // pictures of its result to `shown`.
+    // Runs a call of a reply with the budget `budget`, in a round that
+    // takes `roundPictures` pictures more, and adds the pictures of its
+    // result to `shown`.
     async function assetView(args: ToolArguments, { signal = running() } = {}): Promise<ToolRunResult> {
       const context: ToolRunContext = {
         tabId,
@@ -1979,7 +1990,7 @@ describe('dez.controller/tools/run', () => {
         jobs: new ReplyJobs(),
         writeImage: () => null,
         writeClip: () => null,
-        pictureBudget: async () => budget,
+        pictureBudget: async () => ({ left: budget, roundPictures }),
       }
       const result = await sbp('dez.controller/tools/run', { name: 'asset_view', arguments: args }, signal, context) as ToolRunResult
       shown.push(...(result.pictures ?? []).map(savedPicture))
@@ -2000,10 +2011,11 @@ describe('dez.controller/tools/run', () => {
         { id: 'a2', role: 'agent', content: [{ kind: 'text', text: '' }] },
       ])
       readImage = async () => new Blob([FOX_BYTES], { type: 'image/png' })
-      // The budget of a reply with no image in its context, by the numbers
-      // of an older Dez: the token numbers of the tests are easy to check
-      // against it.
+      // The budget of a conversation with no image in its context, by the
+      // numbers of an older Dez: the token numbers of the tests are easy
+      // to check against it.
       budget = { tokens: 57_408, bytes: 20 * 1024 ** 2, pictures: 20 }
+      roundPictures = 20
       shown = []
       probes = { 'b.mp4': probed([VIDEO_STREAM, AUDIO_STREAM]), 'd.wav': probed([AUDIO_STREAM]) }
       frameSheetLog = SHOWINFO
@@ -2062,10 +2074,10 @@ describe('dez.controller/tools/run', () => {
         { label: '@d', picture: { mediaType: 'image/jpeg', bytes: WAVE_JPEG }, size: { width: 800, height: 200 } },
       ])
       // 648 + 455 + 232 tokens, and 4 + 80 + 80 bytes of base64.
-      expect(lines.at(-1)).toBe('Picture budget left in this reply: 17 pictures, 56,073 tokens and 20.0 MB of base64.')
+      expect(lines.at(-1)).toBe(budgetLine(17, 56_073))
       // The result names a copy of each picture, with its label and what
-      // the picture costs in a request: the requests of the reply read the
-      // copies, and the panel of the call's chip shows them.
+      // the picture costs in a request: the requests of the conversation
+      // read the copies, and the panel of the call's chip shows them.
       expect(result.pictures).toStrictEqual([
         { file: expect.stringMatching(new RegExp(`^${FILE_ID.source}\\.png$`)), label: 'asset_view: the image @a.', width: 1000, height: 500, bytes: FOX_BYTES.length },
         { file: expect.stringMatching(new RegExp(`^${FILE_ID.source}\\.jpg$`)), label: `asset_view: ${SHEET_SHOWS}.`, width: 968, height: 364, bytes: SHEET_JPEG.length },
@@ -2109,7 +2121,7 @@ describe('dez.controller/tools/run', () => {
       ])
       expect(result.content).not.toContain('Frame sheet of')
       // 648 + 232 tokens: the sheet costs nothing.
-      expect(lines.at(-1)).toBe('Picture budget left in this reply: 18 pictures, 56,528 tokens and 20.0 MB of base64.')
+      expect(lines.at(-1)).toBe(budgetLine(18, 56_528))
       expect(consoleError).toHaveBeenCalledWith('Failed to save the copy of a picture that a tool showed:', new Error('No space left on device'))
     })
 
@@ -2214,7 +2226,7 @@ describe('dez.controller/tools/run', () => {
       expect(result.content.split('\n').slice(0, 3)).toStrictEqual([
         '@b | video | MP4 | 5.04 s | 854x480 | 24 fps | h264 | no sound | 1.2 MB',
         expect.stringMatching(/^Frame sheet of 0 s to 5\.04 s: /),
-        expect.stringMatching(/^You see each picture /),
+        PICTURES_SHOWN_NOTE,
       ])
       expect(ffmpegRuns()).toHaveLength(1)
     })
@@ -2258,7 +2270,7 @@ describe('dez.controller/tools/run', () => {
       expect(result.content).not.toContain('Picture budget')
     })
 
-    it('makes no picture when the budget of the reply has no picture left, and tells which assets got none', async () => {
+    it('makes no picture when the budget of the conversation has no picture left, and tells which assets got none', async () => {
       budget = { ...budget, pictures: 1 }
 
       const result = await assetView({ assets: 'a b d' })
@@ -2271,7 +2283,31 @@ describe('dez.controller/tools/run', () => {
       ])
       expect(result.content.match(/-23\.1 LUFS integrated/g)).toHaveLength(2)
       expect(result.content.split(PICTURE_LIMIT_NOTE)).toHaveLength(3)
-      expect(result.content.split('\n').at(-1)).toBe('Picture budget left in this reply: 0 pictures, 56,760 tokens and 20.0 MB of base64.')
+      expect(result.content.split('\n').at(-1)).toBe(budgetLine(0, 56_760))
+    })
+
+    // The pictures of a round go in one message, and a model can take
+    // fewer images in one message than in a request.
+    it('makes no picture more than the round of the call takes, and tells which assets got none and that the next round can show more', async () => {
+      roundPictures = 1
+
+      const result = await assetView({ assets: 'a b d' })
+
+      expect(shown.map(labelId)).toStrictEqual(['@a'])
+      expect(result.content.split(PICTURE_ROUND_FULL_NOTE)).toHaveLength(3)
+      expect(result.content).not.toContain(PICTURE_LIMIT_NOTE)
+      expect(result.content.split('\n').at(-1)).toBe(pictureBudgetLeftText({ left: { pictures: 19, tokens: 56_760, bytes: budget.bytes - 4 }, roundPictures: 0 }))
+    })
+
+    // A call in the next round does not help while the budget is spent.
+    it('tells of the budget, not of the round, when neither has a picture left', async () => {
+      budget = { ...budget, pictures: 0 }
+      roundPictures = 0
+
+      const { content } = await assetView({ assets: 'a' })
+
+      expect(content).toContain(PICTURE_LIMIT_NOTE)
+      expect(content).not.toContain(PICTURE_ROUND_FULL_NOTE)
     })
 
     it('shows each picture that fits in the tokens that are left, and tells the cost of each one that does not, with no line about its picture', async () => {
@@ -2285,7 +2321,7 @@ describe('dez.controller/tools/run', () => {
       expect(result.content).toMatch(/^Frame sheet of /m)
       expect(result.content).not.toContain('Wave picture of')
       expect(result.content).toMatch(/-23\.1 LUFS integrated/)
-      expect(result.content.split('\n').at(-1)).toBe('Picture budget left in this reply: 19 pictures, 45 tokens and 20.0 MB of base64.')
+      expect(result.content.split('\n').at(-1)).toBe(budgetLine(19, 45))
     })
 
     it.each([
@@ -2585,7 +2621,7 @@ describe('dez.controller/tools/run', () => {
           expect.stringMatching(/^Loudness of 0 s to 2\.5 s: /),
         ])
         // The cost of the whole picture: 665 tokens, and 80 bytes of base64.
-        expect(lines.at(-1)).toBe('Picture budget left in this reply: 19 pictures, 56,743 tokens and 20.0 MB of base64.')
+        expect(lines.at(-1)).toBe(budgetLine(19, 56_743))
       })
 
       it('draws a spectrogram strip at the height of `detail`, and tells its frequency range from the sample rate', async () => {
@@ -2718,9 +2754,9 @@ describe('dez.controller/tools/run', () => {
           expect.stringMatching(/^Loudness of 0 s to 2\.5 s: /),
           expect.stringMatching(new RegExp(`^Grid picture of 968x540 pixels, top to bottom: the image @a; ${SHEET_SHOWS.replaceAll('.', '\\.')}\\. Each image fits in 320 by 320 pixels`)),
         ])
-        expect(lines[8]).toMatch(/^You see each picture /)
+        expect(lines[8]).toBe(PICTURES_SHOWN_NOTE)
         // 232 + 700 tokens, and 80 + 4 bytes of base64.
-        expect(lines[9]).toBe('Picture budget left in this reply: 18 pictures, 56,476 tokens and 20.0 MB of base64.')
+        expect(lines[9]).toBe(budgetLine(18, 56_476))
         expect(result.pictures).toStrictEqual([
           { file: expect.stringMatching(/\.jpg$/), label: shown[0].label, width: 800, height: 200, bytes: WAVE_JPEG.length },
           { file: expect.stringMatching(/\.jpg$/), label: shown[1].label, width: 968, height: 540, bytes: GRID_PICTURE.bytes.length },
@@ -2746,7 +2782,7 @@ describe('dez.controller/tools/run', () => {
         ])
         expect(result.content).not.toContain('Grid picture')
         // 648 tokens and 4 bytes of base64.
-        expect(result.content.split('\n').at(-1)).toBe('Picture budget left in this reply: 19 pictures, 56,760 tokens and 20.0 MB of base64.')
+        expect(result.content.split('\n').at(-1)).toBe(budgetLine(19, 56_760))
       })
 
       it('shows the frame sheet that is left of a grid whose image the webview cannot decode as `separate` does, with its note', async () => {
@@ -2762,9 +2798,9 @@ describe('dez.controller/tools/run', () => {
           expect.stringMatching(/^@b \| video \| /),
           'Frame sheet of 0 s to 2.5 s: 3 frames in one row, at 0.417, 1.25, 2.083 s.',
           expect.stringMatching(/^Loudness of 0 s to 2\.5 s: /),
-          expect.stringMatching(/^You see each picture /),
+          PICTURES_SHOWN_NOTE,
           // 455 tokens and 80 bytes of base64.
-          'Picture budget left in this reply: 19 pictures, 56,953 tokens and 20.0 MB of base64.',
+          budgetLine(19, 56_953),
         ])
       })
 
@@ -2777,6 +2813,16 @@ describe('dez.controller/tools/run', () => {
         expect(shown).toStrictEqual([])
         expect(result.content.split(PICTURE_LIMIT_NOTE)).toHaveLength(3)
         expect(ffmpegRuns().map(({ args }) => args)).toStrictEqual([audioViewArgs('b.mp4', { start: 0, end: 5.04 }, null)])
+      })
+
+      it('makes no grid when the round of the call takes no picture more, and tells each asset that got none', async () => {
+        roundPictures = 0
+
+        const result = await assetView({ assets: '@a @b', layout: 'grid' })
+
+        expect(compositions).toStrictEqual([])
+        expect(shown).toStrictEqual([])
+        expect(result.content.split(PICTURE_ROUND_FULL_NOTE)).toHaveLength(3)
       })
 
       it('draws no grid when the other pictures of the call spent the last picture of the budget, and tells each asset of the grid', async () => {
@@ -2792,9 +2838,9 @@ describe('dez.controller/tools/run', () => {
           expect.stringMatching(/^@b \| video \| /),
           expect.stringMatching(/^Loudness of 0 s to 2\.5 s: /),
           PICTURE_LIMIT_NOTE,
-          expect.stringMatching(/^You see each picture /),
+          PICTURES_SHOWN_NOTE,
           // 232 tokens and 80 bytes of base64 for the wave.
-          'Picture budget left in this reply: 0 pictures, 57,176 tokens and 20.0 MB of base64.',
+          budgetLine(0, 57_176),
         ])
       })
 
@@ -2820,7 +2866,7 @@ describe('dez.controller/tools/run', () => {
         expect(shown.map(labelId)).toStrictEqual(['@d'])
         expect(result.content).toContain(gridCostNote(['a', 'b'], { tokens: 700, bytes: 80, pictures: 1 }, { tokens: 568, bytes: budget.bytes - 80, pictures: 19 }))
         expect(result.content).not.toContain('Frame sheet of')
-        expect(result.content.split('\n').at(-1)).toBe('Picture budget left in this reply: 19 pictures, 568 tokens and 20.0 MB of base64.')
+        expect(result.content.split('\n').at(-1)).toBe(budgetLine(19, 568))
       })
 
       it('tells of a grid that the webview could not draw, and logs the cause', async () => {
@@ -2876,7 +2922,7 @@ describe('dez.controller/tools/run', () => {
   })
 
   describe('conversation_info', () => {
-    const BUDGET: PictureBudget = { pictures: 12, tokens: 57_408, bytes: 3 * 1024 ** 2 }
+    const BUDGET: CallPictureBudget = { left: { pictures: 12, tokens: 57_408, bytes: 3 * 1024 ** 2 }, roundPictures: 12 }
     const WINDOW = contextWindowOf({ id: REPLY_MODEL.modelId })
     let tabId: string
     let jobs: ReplyJobs

@@ -1,6 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import modelFamiliesFile from './modelFamilies.json'
-import { contextWindowOf, DEFAULT_FAMILY, imageLimitOf, imageTokens, modelFamiliesFileSchema, modelFamily, parseModelFamilies, type ImageTokenRule } from './modelFamilies'
+import {
+  contextWindowOf,
+  DEFAULT_FAMILY,
+  familyImageLimit,
+  imageLimitOf,
+  imageTokens,
+  messageImageLimitOf,
+  modelFamiliesFileSchema,
+  modelFamily,
+  parseModelFamilies,
+  type ImageTokenRule,
+} from './modelFamilies'
 import { today } from './testing'
 
 const FILE = modelFamiliesFileSchema.safeParse(modelFamiliesFile)
@@ -185,6 +196,22 @@ describe('contextWindowOf', () => {
   })
 })
 
+describe('familyImageLimit', () => {
+  // Claude takes 600 images, but only 20 when one of them has a side over
+  // a number of pixels.
+  const family = { maxImages: 600, manyImages: { over: 20, maxSidePx: 2000 } }
+
+  it('gives the lower count of a family only when a picture can have a side over the side of that count', () => {
+    expect(familyImageLimit(family, 2000)).toBe(600)
+    expect(familyImageLimit(family, 2001)).toBe(20)
+    expect(familyImageLimit({ maxImages: 600 }, 9000)).toBe(600)
+  })
+
+  it('never gives more than the limit of the family', () => {
+    expect(familyImageLimit({ maxImages: 10, manyImages: { over: 20, maxSidePx: 2000 } }, 3000)).toBe(10)
+  })
+})
+
 describe('imageLimitOf', () => {
   it('gives the limit of the model list over the one of the family', () => {
     expect(imageLimitOf({ id: 'claude-opus-4-6', imageLimit: 10 })).toBe(10)
@@ -193,11 +220,28 @@ describe('imageLimitOf', () => {
     expect(imageLimitOf({ id: 'mystery' })).toBe(DEFAULT_FAMILY.maxImages)
   })
 
-  it('gives the limit that a refusal told when it is the smaller one', () => {
-    const learned = (maxImages: number) => ({ maxImages, entry: 'hash' })
+  // A refusal told the count of one message, not of a request.
+  it('does not read the limit that a refusal told', () => {
+    const model = { id: 'claude-opus-4-6', imageLimit: 10, learnedImageLimit: { maxImages: 4, entry: 'hash' } }
 
-    expect(imageLimitOf({ id: 'claude-opus-4-6', imageLimit: 10, learnedImageLimit: learned(4) })).toBe(4)
-    expect(imageLimitOf({ id: 'claude-opus-4-6', imageLimit: 10, learnedImageLimit: learned(50) })).toBe(10)
-    expect(imageLimitOf({ id: 'grok-4-7', learnedImageLimit: learned(50) })).toBe(50)
+    expect(imageLimitOf(model)).toBe(10)
+  })
+})
+
+describe('messageImageLimitOf', () => {
+  const learned = (maxImages: number) => ({ maxImages, entry: 'hash' })
+
+  it('gives the lowest of the message limit of the model list, the limit that a refusal told, and the request limit', () => {
+    expect(messageImageLimitOf({ id: 'claude-opus-4-6', messageImageLimit: 10 })).toBe(10)
+    expect(messageImageLimitOf({ id: 'claude-opus-4-6', messageImageLimit: 10, learnedImageLimit: learned(4) })).toBe(4)
+    expect(messageImageLimitOf({ id: 'claude-opus-4-6', messageImageLimit: 10, learnedImageLimit: learned(50) })).toBe(10)
+    expect(messageImageLimitOf({ id: 'grok-4-7', learnedImageLimit: learned(50) })).toBe(50)
+    expect(messageImageLimitOf({ id: 'mystery', messageImageLimit: 30 })).toBe(DEFAULT_FAMILY.maxImages)
+  })
+
+  it('gives the request limit for a model with no limit of one message', () => {
+    expect(messageImageLimitOf({ id: 'claude-opus-4-6' })).toBe(600)
+    expect(messageImageLimitOf({ id: 'claude-opus-4-6', imageLimit: 10 })).toBe(10)
+    expect(messageImageLimitOf({ id: 'grok-4-7' })).toBe(Infinity)
   })
 })

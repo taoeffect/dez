@@ -61,14 +61,20 @@ describe('model cache persistence format', () => {
   })
 
   // A hand-edited file: the next model check reads the numbers again.
-  it('round-trips the context window and the image limit, and drops only one that is no positive whole number', () => {
+  it('round-trips the context window and the two image limits, and drops only one that is no positive whole number', () => {
     const model = { id: 'm', name: 'M', provider: 'venice' }
-    const counted = { ...model, contextWindow: 1_000_000, imageLimit: 10 }
+    const counted = { ...model, contextWindow: 1_000_000, imageLimit: 20, messageImageLimit: 10 }
     const parsed = parseModelCacheJson(JSON.stringify({
       version: MODEL_CACHE_VERSION,
       providers: {
         venice: {
-          models: [counted, { ...counted, contextWindow: 0 }, { ...counted, imageLimit: 2.5 }, { ...model, contextWindow: '200000', imageLimit: null }],
+          models: [
+            counted,
+            { ...counted, contextWindow: 0 },
+            { ...counted, imageLimit: 2.5 },
+            { ...counted, messageImageLimit: -1 },
+            { ...model, contextWindow: '200000', imageLimit: null, messageImageLimit: '10' },
+          ],
           working: true,
           updatedAt: 1,
           lastCheckedAt: 2,
@@ -76,7 +82,13 @@ describe('model cache persistence format', () => {
       },
     }))
 
-    expect(parsed.providers.venice?.models).toStrictEqual([counted, { ...model, imageLimit: 10 }, { ...model, contextWindow: 1_000_000 }, model])
+    expect(parsed.providers.venice?.models).toStrictEqual([
+      counted,
+      { ...model, imageLimit: 20, messageImageLimit: 10 },
+      { ...model, contextWindow: 1_000_000, messageImageLimit: 10 },
+      { ...model, contextWindow: 1_000_000, imageLimit: 20 },
+      model,
+    ])
     expect(parseModelCacheJson(serializeModelCacheJson(parsed))).toStrictEqual(parsed)
   })
 

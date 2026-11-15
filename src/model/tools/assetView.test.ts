@@ -11,6 +11,7 @@ import {
   imagePictureDrawing,
   loudnessOf,
   partHasNoFrame,
+  pictureBudgetLeftText,
   sceneCutsArgs,
   scenesSheetTexts,
   SHEET_PADDING,
@@ -441,5 +442,25 @@ describe('loudnessOf', () => {
 
   it('reads no loudness from a log without a summary', () => {
     expect(loudnessOf('[in#0 @ 0x1] Error opening input')).toBeNull()
+  })
+})
+
+describe('pictureBudgetLeftText', () => {
+  const left = { pictures: 12, tokens: 57_408, bytes: 3 * 1024 ** 2 }
+  const unlimited = { ...left, pictures: Infinity }
+
+  it('tells no count of pictures for a model with no image limit of a request', () => {
+    expect(pictureBudgetLeftText({ left, roundPictures: 12 })).toContain(': 12 pictures, 57,408 tokens')
+    expect(pictureBudgetLeftText({ left: unlimited, roundPictures: Infinity })).toContain(': 57,408 tokens')
+  })
+
+  it('tells the count of the round only when it is under the count of the budget', () => {
+    const round = (roundPictures: number, budget = left) => pictureBudgetLeftText({ left: budget, roundPictures })
+
+    expect([round(12), round(40), round(Infinity, unlimited)].filter((text) => text.includes('this round'))).toStrictEqual([])
+    expect(round(3)).toContain('only 3 pictures more')
+    expect(round(1)).toContain('only 1 picture more')
+    expect(round(0)).toContain('no more pictures')
+    expect(round(10, unlimited)).toContain('only 10 pictures more')
   })
 })

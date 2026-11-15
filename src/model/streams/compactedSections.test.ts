@@ -32,6 +32,8 @@ const NOTES = '## Summary\nThe user wants foxes.'
 const FACTS = 'PNG | 10x10 | 1 KB'
 /** The file size of every image, unless a test gives its own sizes. */
 const IMAGE_BYTES = 300
+/** Limits that are far away, with `pictures` as the count. */
+const withPictures = (pictures: number) => ({ tokens: 1_000_000, bytes: 1_000_000, pictures })
 const picture = (file: string): ShownPicture => ({ file: `${file}.jpg`, label: `Frames of ${file}`, width: 100, height: 100, bytes: IMAGE_BYTES })
 
 /** A compaction of `sections` with the answer `answerText`, through the
@@ -53,8 +55,7 @@ function compact(sections: Section[], answerText: string, replySectionId: string
     cost: undefined,
     clipPictures: new Map(),
     sendImages: true,
-    limits: { tokens: 1_000_000, bytes: 1_000_000, pictures: 20 },
-    imageLimit: Infinity,
+    limits: withPictures(20),
     rule: { rule: 'fixed', tokens: 100 },
     imageBytes: new Map(sections.flatMap((section) => findImageReferences(sectionPlainText(section), 'user').map(({ path }) => [path, IMAGE_BYTES]))),
     newId: () => `new-${++ids}`,
@@ -230,7 +231,7 @@ describe('compactedSections', () => {
     expect(notesAssetLines(notesText(result)).get('a')).toMatchObject({ sentence: 'The first fox.', origin: 'made by the model local/m' })
   })
 
-  it('shows the assets that the answer wants to see in the order of its lines, up to half of the limits', () => {
+  it('shows the assets that the answer wants to see in the order of its lines, with what the images of the kept messages leave of the limits', () => {
     const sections = [
       user('u0', `Make foxes like ${image(pasted('photo'), 'a')}`),
       reply('r1', `${image(made('one'), 'b')}\n${image(made('two'), 'c')}\n${image(made('three'), 'd')}`),
@@ -238,9 +239,9 @@ describe('compactedSections', () => {
       reply('r2', 'working'),
     ]
     const answer = `${NOTES}\n## Assets\n@d: show - third\n@b: show - first\n@c: show - second`
-    const result = compact(sections, answer, 'r2', { limits: { tokens: 1_000_000, bytes: 1_000_000, pictures: 4 } })
+    const result = compact(sections, answer, 'r2', { limits: withPictures(3) })
 
-    // Two of the four pictures of a request are for the notes.
+    // The image of the first message takes one of the three pictures.
     expect(sent(result.sections.slice(0, 3))).toStrictEqual({ images: [made('one'), made('three'), pasted('photo')], pictures: [] })
     expect(hidden(result.sections.slice(0, 3))).toStrictEqual(['c'])
   })
@@ -253,7 +254,7 @@ describe('compactedSections', () => {
       reply('r2', 'working'),
     ]
     const result = compact(sections, `${NOTES}\n## Assets\n@a: show - large\n@b: show - small`, 'r2', {
-      limits: { tokens: 1_000_000, bytes: 4000, pictures: 20 },
+      limits: { tokens: 1_000_000, bytes: 3000, pictures: 20 },
       imageBytes: new Map([[made('large'), 3000], [made('small'), 300]]),
     })
 
@@ -269,20 +270,20 @@ describe('compactedSections', () => {
     ]
     // The mention sends the image, so its reference in the notes costs
     // nothing more: a sum of the assets would be over the one picture.
-    const result = compact(sections, `${NOTES}\n## Assets\n@a: show - the fox`, 'r2', { limits: { tokens: 1_000_000, bytes: 1_000_000, pictures: 1 } })
+    const result = compact(sections, `${NOTES}\n## Assets\n@a: show - the fox`, 'r2', { limits: withPictures(1) })
 
     expect(sent(result.sections.slice(0, 3))).toStrictEqual({ images: [made('one')], pictures: [] })
     expect(hidden(result.sections.slice(0, 3))).toStrictEqual([])
   })
 
-  it('sends the last images of the first message as text when the kept messages hold more images than one message can', () => {
+  it('sends the last images of the first message as text when the kept messages hold more images than a compaction leaves', () => {
     const sections = [
       user('u0', `${image(pasted('one'), 'a')} then ${image(pasted('two'), 'b')} then ${image(pasted('three'), 'c')}`),
       reply('r1', 'ok'),
       user('u1', `${image(pasted('four'), 'd')} and ${image(pasted('five'), 'e')}`),
       reply('r2', 'working'),
     ]
-    const result = compact(sections, NOTES, 'r2', { imageLimit: 3 })
+    const result = compact(sections, NOTES, 'r2', { limits: withPictures(3) })
     const head = result.sections.slice(0, 3)
 
     expect(sectionPlainText(head[1])).toBe(`${image(pasted('one'), 'a')} then ${kept(image(pasted('two'), 'b'))} then ${kept(image(pasted('three'), 'c'))}`)
@@ -298,7 +299,7 @@ describe('compactedSections', () => {
       { id: 'u0', role: 'user', content: [pill, { kind: 'text', text: ` and ${image(pasted('photo'), 'b')}` }] },
       reply('r1', 'working'),
     ]
-    const result = compact(sections, NOTES, 'r1', { imageLimit: 0 })
+    const result = compact(sections, NOTES, 'r1', { limits: withPictures(0) })
 
     expect(result.sections[1].content).toStrictEqual([pill, { kind: 'text', text: ` and ${kept(image(pasted('photo'), 'b'))}` }])
   })
@@ -321,7 +322,7 @@ describe('compactedSections', () => {
     const first = compact([
       user('u0', `${image(pasted('one'), 'a')} then ${image(pasted('two'), 'b')}`),
       reply('r1', 'working'),
-    ], NOTES, 'r1', { imageLimit: 1 })
+    ], NOTES, 'r1', { limits: withPictures(1) })
     expect(sent(first.sections.slice(0, 2)).images).toStrictEqual([pasted('one')])
     const sections = [...first.sections.slice(0, 2), reply('r1', 'Done.'), user('u1', 'More'), reply('r2', 'working')]
     const result = compact(sections, NOTES, 'r2')

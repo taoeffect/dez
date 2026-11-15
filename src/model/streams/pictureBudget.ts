@@ -1,7 +1,7 @@
 import { compactionThreshold } from '../chat/contextSize'
 import type { ImageSize } from '../chat/imageDrawing'
 import { shownPictureSize, type PictureFile, type ShownPicture } from '../chat/shownPictures'
-import { contextWindowOf, imageLimitOf, imageTokens, type ImageTokenRule } from '../providers/modelFamilies'
+import { contextWindowOf, imageLimitOf, imageTokens, messageImageLimitOf, type ImageTokenRule } from '../providers/modelFamilies'
 import type { ModelInfo } from '../providers/types'
 import { ASSUMED_IMAGE_SIZE } from './contextEstimate'
 import type { StreamMessage } from './types'
@@ -9,12 +9,18 @@ import type { StreamMessage } from './types'
 // The picture budget: what the pictures of an `asset_view` call can still
 // cost. A picture goes to the model in one `user` message right after the
 // tool message of its call's round (`agentSectionMessages`, messages.ts),
-// and each later request that holds that round sends it again. So the
-// budget follows the context: it is the limits of one request to the
+// and each later request of the conversation sends it again, until a
+// compaction takes the round out. So the budget follows the context, from
+// one compaction to the next: it is the limits of one request to the
 // model, less the cost of every image and picture that the context holds
 // now. A picture costs the tokens that the model reads it as (the image
 // rule of its family, providers/modelFamilies.ts), the base64 text of its
 // bytes, and one of the images of a request.
+//
+// The same limits tell when a compaction is due (`compactionReason`,
+// compactionRequest.ts), and how much a compaction leaves
+// (`compactedPictureLimits`): the three must read one count, else a tool
+// tells a model of room that the next compaction check does not see.
 
 /** The share of the compaction threshold (`compactionThreshold`) that the
  *  images and the pictures of a context can take, in tokens. They are the
@@ -26,17 +32,12 @@ const PICTURE_TOKEN_SHARE = 0.4
  *  request: providers refuse a request body of some tens of megabytes. */
 export const MAX_REQUEST_IMAGE_BYTES = 20 * 1024 ** 2
 
-/** The most images of one request: the Claude API refuses an image with a
- *  side over 3,000 px in a request with more. The images of the user
- *  messages go in each request of a conversation too. */
-export const MAX_REQUEST_IMAGES = 20
-
-/** The most image and picture parts that the user messages of one request
- *  to `model` have together (`RequestOptions.imageLimit`, messages.ts):
- *  Dez's own limit, or the lower limit of the model. */
-export function requestImageLimit(model: Pick<ModelInfo, 'id' | 'imageLimit' | 'learnedImageLimit'>): number {
-  return Math.min(MAX_REQUEST_IMAGES, imageLimitOf(model))
-}
+/** The share of each picture limit of a request that the images and the
+ *  pictures of a conversation can take right after a compaction. A
+ *  compaction is due near a limit (`compactionReason`), so with this share
+ *  the next one is due only after new images or pictures came, and a reply
+ *  can view pictures again. */
+const COMPACTED_PICTURE_SHARE = 0.5
 
 /** What pictures can still cost, or what they cost. */
 export interface PictureBudget {
@@ -50,13 +51,47 @@ export interface PictureBudget {
 /** The budget of a reply that shows no picture any more. */
 export const NO_PICTURE_BUDGET: PictureBudget = { tokens: 0, bytes: 0, pictures: 0 }
 
+/** What the pictures of a tool call can still cost
+ *  (`ToolRunContext.pictureBudget`, controller/tools.ts). */
+export interface CallPictureBudget {
+  /** What the context has left, until the next compaction
+   *  (`pictureBudgetLeft`). */
+  left: PictureBudget
+  /** How many more pictures the calls of the round can show. The pictures
+   *  of a round go in one message, and a message has an image limit of its
+   *  own (`messageImageLimitOf`); the next round has that count again. */
+  roundPictures: number
+}
+
+/** The budget of a call of a reply that shows no picture any more. */
+export const NO_CALL_PICTURE_BUDGET: CallPictureBudget = { left: NO_PICTURE_BUDGET, roundPictures: 0 }
+
+/** What the picture limits read of a model. */
+export type PictureLimitsModel = Pick<ModelInfo, 'id' | 'contextWindow' | 'imageLimit' | 'messageImageLimit' | 'learnedImageLimit'>
+
 /** The most that the images and the pictures of one request to `model` can
- *  cost. */
-export function pictureLimits(model: Pick<ModelInfo, 'id' | 'contextWindow'>): PictureBudget {
+ *  cost. The count is the image limit of the model (`imageLimitOf`), so it
+ *  is `Infinity` for a model with no limit. */
+export function pictureLimits(model: PictureLimitsModel): PictureBudget {
   return {
     tokens: Math.floor(PICTURE_TOKEN_SHARE * compactionThreshold(contextWindowOf(model))),
     bytes: MAX_REQUEST_IMAGE_BYTES,
-    pictures: MAX_REQUEST_IMAGES,
+    pictures: imageLimitOf(model),
+  }
+}
+
+/** The most that the images and the pictures of a conversation can cost a
+ *  request to `model` right after a compaction: a share of each limit
+ *  (`COMPACTED_PICTURE_SHARE`). They all go in one message, the compaction
+ *  message, so their count is also at most the limit of one message
+ *  (`messageImageLimitOf`). The count is never under 1: a model that takes
+ *  one image can still see one of the user's. */
+export function compactedPictureLimits(model: PictureLimitsModel): PictureBudget {
+  const limits = pictureLimits(model)
+  return {
+    tokens: Math.floor(COMPACTED_PICTURE_SHARE * limits.tokens),
+    bytes: Math.floor(COMPACTED_PICTURE_SHARE * limits.bytes),
+    pictures: Math.min(Math.max(1, Math.floor(COMPACTED_PICTURE_SHARE * limits.pictures)), messageImageLimitOf(model)),
   }
 }
 
@@ -119,11 +154,11 @@ export function pictureBudgetLeft(limits: PictureBudget, spent: PictureBudget): 
   }
 }
 
-/** The images of `messages` that count against `MAX_REQUEST_IMAGES`: the
- *  image and picture parts of their user messages (the images of the user
- *  messages, the pictures of a compaction tag, and the pictures of the
- *  rounds of the reply that runs; `sectionsToStreamMessages`,
- *  streams/messages.ts). */
+/** The images of `messages` that count against the image limit of a
+ *  request (`imageLimitOf`): the image and picture parts of their user
+ *  messages (the images of the user messages, the pictures of a compaction
+ *  tag, and the pictures of the rounds of the replies;
+ *  `sectionsToStreamMessages`, streams/messages.ts). */
 export function requestImageCount(messages: readonly StreamMessage[]): number {
   return messages.reduce((count, message) => count + (message.role === 'user' && typeof message.content !== 'string'
     ? message.content.filter((part) => part.type !== 'text').length

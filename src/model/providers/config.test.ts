@@ -201,6 +201,7 @@ describe('provider config schema', () => {
       modelTokenPrices: { input: 'pricing.prompt', output: 'pricing.completion', cachedInput: 'pricing.cache', cacheWrite: 'pricing.cache_write', perTokens: 1_000_000, otherRates: 'pricing.extended', imageOutput: 'pricing.image' },
       modelContextWindow: { paths: ['context_length', 'top_provider.context_length'] },
       modelImageLimit: { paths: ['caps.maxImages'] },
+      modelMessageImageLimit: { paths: ['caps.imagesPerMessage'] },
       imageOutputBody: { modalities: ['image', 'text'] },
       mediaApi: { format: 'openrouter', modelRequestBodies: [{ request: 'tts', modelIdPrefix: 'heygen/', body: { response_format: 'pcm' } }] },
     }
@@ -226,6 +227,7 @@ describe('provider config schema', () => {
     expect(parse({ modelContextWindow: { path: 'context_length' } }).success).toBe(false)
     expect(parse({ modelImageLimit: { paths: ['.maxImages'] } }).success).toBe(false)
     expect(parse({ modelImageLimit: 'caps.maxImages' }).success).toBe(false)
+    expect(parse({ modelMessageImageLimit: { paths: [] } }).success).toBe(false)
     expect(outputs({ tts: { outputs: ['speech'] } })).toBe(false)
     expect(outputs({ tts: { outputs: 'audio' } })).toBe(false)
     expect(outputs({ tts: { request: 'chat' } })).toBe(false)

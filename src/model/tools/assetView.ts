@@ -4,8 +4,8 @@ import type { ImageMediaType } from '../chat/images'
 import type { ClipReadProblem } from '../chat/mediaFiles'
 import type { MediaTagKind } from '../chat/mediaTags'
 import type { NewPicture, PictureFile } from '../chat/shownPictures'
-import { CHAT_IMAGE_SIDE } from '../providers/imageSize'
-import type { PictureBudget } from '../streams/pictureBudget'
+import { CHAT_IMAGE_SIDE, LARGEST_PICTURE_SIDE } from '../providers/imageSize'
+import type { CallPictureBudget, PictureBudget } from '../streams/pictureBudget'
 import { assetIdsArgument, unknownValuesText } from './arguments'
 import { shortNumber } from './assetFacts'
 import { frameTimeText, SCENE_CUT_FILTER } from './clipAnalysis'
@@ -23,8 +23,8 @@ import { FFMPEG_FIXED_ARGS } from './videoTool'
 // the images and the frame sheets of a call go into one picture
 // (assetGrid.ts). The pictures go back with the result of the call, as
 // saved copies (`ToolRunResult.pictures`, chat/shownPictures.ts), which
-// the requests of the reply send within a budget
-// (streams/pictureBudget.ts); a view makes no asset.
+// the requests of the conversation send until its next compaction, within
+// a budget (streams/pictureBudget.ts); a view makes no asset.
 // controller/assetView.ts reads the files and runs ffmpeg.
 //
 // This module must not import chat/toolBlocks.ts or registry.ts: the
@@ -70,11 +70,13 @@ const VIEW_LAYOUTS: readonly ViewLayout[] = ['separate', 'grid']
 
 /** The longest side of the picture of an image, by `detail`: a larger
  *  image goes as a smaller copy. No picture has a side over the `full`
- *  one: the Claude API refuses a side over 3,000 px in a request with more
- *  than 20 images, and a refused picture fails each later request of the
- *  reply, as each one sends it again.
+ *  one (`LARGEST_PICTURE_SIDE`): the Claude API refuses a side over
+ *  3,000 px in a request with more than 20 images, and a refused picture
+ *  fails each later request of the conversation, as each one sends it
+ *  again. The image limit of a model reads the same number
+ *  (`imageLimitOf`, providers/modelFamilies.ts).
  *  https://platform.claude.com/docs/en/build-with-claude/vision */
-export const IMAGE_PICTURE_SIDES: Readonly<Record<ViewDetail, number>> = { review: CHAT_IMAGE_SIDE, full: 3000 }
+export const IMAGE_PICTURE_SIDES: Readonly<Record<ViewDetail, number>> = { review: CHAT_IMAGE_SIDE, full: LARGEST_PICTURE_SIDE }
 
 /** The box that each frame of a frame sheet, and each image of a grid,
  *  fits in, by `detail`: a sheet of `MAX_SHEET_COLUMNS` columns stays
@@ -121,11 +123,12 @@ export const ASSET_VIEW_TOOL: ToolDefinition = {
     + 'A clip with sound, video or audio, also gets the loudness of the part that you view. You do not hear a clip. '
     + 'View a whole clip first; then, for a part that looks wrong, view it again with `start` and `end` around that part, '
     + 'or with `times` for the frames that you need. '
-    + 'You see the pictures after the results of the calls of this round, in this reply only. '
-    + 'Each later request of this reply sends them again, so the pictures have a budget, '
+    + 'You see the pictures after the results of the calls of this round, and they stay in your view until Dez compacts the conversation. '
+    + 'So view an image or a clip one time: do not view it again at the same part and size, in this reply or in a later one. '
+    + 'Each request sends the pictures again, so they have a budget, '
     + "which they share with the images of the user's messages: a count of pictures, tokens, and megabytes of base64. "
     + 'The budget depends on the model of this reply, and a larger picture costs more of it. '
-    + 'Each result tells the budget that is left. '
+    + 'Each result tells the budget that is left. A compaction takes the pictures out, which makes the budget larger again. '
     + 'To check a small detail of an image, view only that part of it with `crop`. '
     + 'To compare images and clips, or to check many of them for less of the budget, show them in one picture with `layout` "grid". '
     + "Dez makes the pictures on the user's computer: no request goes to a model.",
@@ -690,37 +693,63 @@ export interface AssetViewGrid {
 }
 
 /** Whether a view makes the picture of an asset: `show`; `overLimit`
- *  when the picture budget of the reply has nothing left of one of its
- *  parts; `noImageInput` when the model of the reply reads no images. */
-export type PictureChoice = 'show' | 'overLimit' | 'noImageInput'
+ *  when the picture budget of the conversation has nothing left of one of
+ *  its parts; `roundFull` when the calls of the round already show as many
+ *  pictures as one message of the model takes; `noImageInput` when the
+ *  model of the reply reads no images. */
+export type PictureChoice = 'show' | 'overLimit' | 'roundFull' | 'noImageInput'
 
 // The tokens and the base64 bytes of the cost of a picture.
 function tokensAndBytesText({ tokens, bytes }: PictureBudget): string {
   return `${countText(tokens)} tokens and ${byteSizeText(bytes)} of base64`
 }
 
-// What is left of a budget, with its pictures.
-function budgetLeftText(left: PictureBudget): string {
-  return `${left.pictures} ${left.pictures === 1 ? 'picture' : 'pictures'}, ${tokensAndBytesText(left)}`
+// `count` pictures, as in `1 picture`, `12 pictures`.
+function picturesText(count: number): string {
+  return `${countText(count)} ${count === 1 ? 'picture' : 'pictures'}`
 }
 
-/** The line that tells a model the picture budget that its reply has
- *  `left`: the last line of an `asset_view` result, and a line of
- *  `conversation_info`. */
-export function pictureBudgetLeftText(left: PictureBudget): string {
-  return `Picture budget left in this reply: ${budgetLeftText(left)}.`
+// What is left of a budget. A model with no image limit of a request has
+// no count of pictures.
+function budgetLeftText(left: PictureBudget): string {
+  return Number.isFinite(left.pictures) ? `${picturesText(left.pictures)}, ${tokensAndBytesText(left)}` : tokensAndBytesText(left)
 }
+
+/** The line that tells a model what is left of the picture budget of its
+ *  conversation (`budget`): the last line of an `asset_view` result, and a
+ *  line of `conversation_info`. It tells the count of the round only when
+ *  that count is the lower one. */
+export function pictureBudgetLeftText({ left, roundPictures }: CallPictureBudget): string {
+  const line = `Picture budget left until the next compaction: ${budgetLeftText(left)}.`
+  if (roundPictures >= left.pictures) return line
+  return `${line} The calls of this round can show ${roundPictures === 0 ? 'no more pictures' : `only ${picturesText(roundPictures)} more`}: `
+    + 'your model takes a limited number of images in one message. The next round can show more.'
+}
+
+// What a model can do about a picture that the budget has no room for.
+const BUDGET_ADVICE = 'Dez compacts the conversation when its pictures are near a limit of your model; the budget is larger after that.'
 
 /** The note of an asset whose picture Dez did not make: the picture budget
- *  of the reply has nothing left (`overLimit`). */
-export const PICTURE_LIMIT_NOTE = 'No picture: this reply has spent its picture budget (the last line tells what is left). '
-  + 'In a later reply, call asset_view again to see it.'
+ *  of the conversation has nothing left (`overLimit`). */
+export const PICTURE_LIMIT_NOTE = `No picture: the picture budget is spent (the last line tells what is left). ${BUDGET_ADVICE}`
+
+/** The note of an asset whose picture Dez did not make: the calls of the
+ *  round already show as many pictures as one message of the model takes
+ *  (`roundFull`). */
+export const PICTURE_ROUND_FULL_NOTE = 'No picture: the calls of this round already show as many pictures as your model takes in one message. '
+  + 'To see it, call asset_view again in your next round.'
+
+/** The note of an asset whose picture Dez did not make for `choice`; null
+ *  for a choice that gives no note. */
+export function noPictureNote(choice: PictureChoice): string | null {
+  return choice === 'overLimit' ? PICTURE_LIMIT_NOTE : choice === 'roundFull' ? PICTURE_ROUND_FULL_NOTE : null
+}
 
 /** The note of an asset whose picture costs `cost`, more than the budget
- *  `left` of the reply. */
+ *  `left` of the conversation. */
 export function pictureCostNote(cost: PictureBudget, left: PictureBudget): string {
-  return `No picture: it costs ${tokensAndBytesText(cost)}, and this reply had only ${budgetLeftText(left)} left for pictures. `
-    + 'In a later reply, call asset_view again to see it.'
+  return `No picture: it costs ${tokensAndBytesText(cost)}, and only ${budgetLeftText(left)} are left of the picture budget. `
+    + `A smaller view costs less (\`detail\` "review", \`crop\`, or \`layout\` "grid"). ${BUDGET_ADVICE}`
 }
 
 /** The ids `ids` as a text writes them: "@a, @b, and @c". */
@@ -729,10 +758,11 @@ export function idsListText(ids: readonly string[]): string {
 }
 
 /** The note of the grid of `ids`, whose picture costs `cost`, more than the
- *  budget `left` of the reply. */
+ *  budget `left` of the conversation. */
 export function gridCostNote(ids: readonly string[], cost: PictureBudget, left: PictureBudget): string {
   return `No grid picture of ${idsListText(ids)}: it costs ${tokensAndBytesText(cost)}, `
-    + `and this reply had only ${budgetLeftText(left)} left for pictures. In a later reply, call asset_view again to see them.`
+    + `and only ${budgetLeftText(left)} are left of the picture budget. `
+    + `A grid of fewer assets, or with \`detail\` "review", costs less. ${BUDGET_ADVICE}`
 }
 
 /** The note of an asset whose picture Dez made but could not save
@@ -1017,26 +1047,28 @@ export function assetViewPictures(items: readonly AssetViewItem[], grid: AssetVi
     .flatMap((picture) => (picture ? [{ label: `asset_view: ${picture.shows}.`, file: picture.file, size: picture.size }] : []))
 }
 
+/** The line of a result that showed a picture: where the model finds the
+ *  pictures, and how long they stay. */
+export const PICTURES_SHOWN_NOTE = 'You see each picture after the results of the calls of this round, after a line that names it. '
+  + 'The pictures stay in your view until Dez compacts the conversation, so do not view the same thing again at the same part and size.'
+
 /** The result text of an `asset_view` call: for each asset, a line as in
  *  `@a | image | PNG | 1024x768 | 1.2 MB`, then the note of its picture and
  *  its other notes; then the note of the `grid` picture, or why it has
- *  none. The last lines tell where the pictures are and the picture budget
- *  that the reply has `left`, or that the model of the reply gets no
- *  pictures (`left` null). */
-export function assetViewText(items: readonly AssetViewItem[], grid: AssetViewGrid | null, left: PictureBudget | null): string {
+ *  none. The last lines tell where the pictures are and how long they
+ *  stay, and what is left of the picture budget (`budget`), or that the
+ *  model of the reply gets no pictures (`budget` null). */
+export function assetViewText(items: readonly AssetViewItem[], grid: AssetViewGrid | null, budget: CallPictureBudget | null): string {
   const lines = [
     ...items.flatMap((item) => [`@${item.id} | ${item.kind} | ${item.facts}`, ...(item.picture?.note ? [item.picture.note] : []), ...item.notes]),
     ...(grid?.picture?.note ? [grid.picture.note] : []),
     ...(grid?.notes ?? []),
   ]
-  if (left === null) {
+  if (budget === null) {
     lines.push('This model gets no pictures, so Dez gives only the facts, and the loudness of a clip with sound.')
     return lines.join('\n')
   }
-  if (grid?.picture || items.some((item) => item.picture)) {
-    lines.push('You see each picture after the results of the calls of this round, after a line that names it. '
-      + 'You see the pictures in this reply only. In a later reply, call asset_view again to see them again.')
-  }
-  lines.push(pictureBudgetLeftText(left))
+  if (grid?.picture || items.some((item) => item.picture)) lines.push(PICTURES_SHOWN_NOTE)
+  lines.push(pictureBudgetLeftText(budget))
   return lines.join('\n')
 }

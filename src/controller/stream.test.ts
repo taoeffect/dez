@@ -24,6 +24,7 @@ import type { CompactionLeftFiles } from '../model/streams/compactionFiles'
 import { compactionInstruction } from '../model/streams/compactionRequest'
 import type { RequestMessages, StreamMessage } from '../model/streams/types'
 import { systemPromptErrorText } from '../model/systemPrompt'
+import { PICTURE_ROUND_FULL_NOTE, pictureBudgetLeftText } from '../model/tools/assetView'
 import { jobsWaitText, jobTimedOutText, startedJobId } from '../model/tools/jobs'
 import { INVOCATION_READS_INPUTS, invocationFailedText } from '../model/tools/modelInvoke'
 import { NO_MODELS_TEXT } from '../model/tools/modelList'
@@ -1379,11 +1380,34 @@ describe('dez.controller/submitTab images', () => {
       data: {
         variant: 'warning',
         title: 'Image not sent',
-        message: 'Dez sends M at most 2 images in one request, so the newest 1 image of the conversation was left out. '
-          + 'Delete the images that the model does not need from earlier messages, or start a new conversation.',
+        message: expect.stringContaining('M takes at most 2 images in one request, so the newest 1 image '),
         duration: 8000,
       },
     }])
+  })
+
+  // Venice counts the images of each message, not of the request.
+  it('sends the last images of a message as text only when the message holds more images than the model takes in one message, and tells the user that limit', async () => {
+    sbp('dez.model/modelCache/applyProviderResult', model.providerId, {
+      ok: true,
+      models: [{ id: model.modelId, name: model.modelName, provider: model.providerId, imageLimit: 20, messageImageLimit: 2 }],
+    })
+    sbp('dez.model/tabs/replaceSections', activeTab().id, [
+      { id: 'u1', role: 'user', content: [{ kind: 'text', text: `![${image('one.png')}](id=a) ![${image('two.jpg')}](id=b) ![${image('three.webp')}](id=c)` }] },
+      { id: 'r1', role: 'agent', content: [{ kind: 'text', text: 'Three foxes.' }], model },
+      { id: 'u2', role: 'user', content: [{ kind: 'text', text: `![${image('four.png')}](id=d)` }] },
+    ])
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    const imagesOf = (message: ProviderChatInputMessage) =>
+      (message.role === 'user' && Array.isArray(message.content) ? message.content.flatMap((part) => (part.type === 'image' ? [part.path] : [])) : [])
+    // The next message has its own count.
+    expect(sent[0].map(imagesOf)).toStrictEqual([[image('one.png'), image('two.jpg')], [], [image('four.png')]])
+    expect(toasts).toHaveLength(1)
+    expect(toasts[0].data.message).toContain('at most 2 images in one message')
+    expect(toasts[0].data.message).toContain('20 images in one request')
+    expect(toasts[0].data.message).toContain('so 1 image ')
   })
 
   it('sends only the reference text with no path to a model that does not read images, and counts the images of the newest user message', async () => {
@@ -2583,6 +2607,10 @@ describe('dez.stream/start pictures that a tool shows', () => {
     ({ file: saved.file.path.slice('assets/generated/views/'.length), label: 'asset_view: the image @a.', width: 1000, height: 500, bytes: 0 })
   // The last line of the result of each call of the reply.
   const budgetLines = () => findToolBlocks(sectionVisibleText(agentSection())).map(({ result }) => result.split('\n').at(-1))
+  // That line for a conversation whose budget has `pictures` and `tokens`
+  // left, in a round that takes as many pictures.
+  const budgetLine = (pictures: number, tokens: number, megabytes = 20) =>
+    pictureBudgetLeftText({ left: { pictures, tokens, bytes: megabytes * 1024 ** 2 }, roundPictures: pictures })
 
   beforeEach(() => {
     sbp('dez.model/tabs/replaceSections', activeTab().id, [
@@ -2591,7 +2619,7 @@ describe('dez.stream/start pictures that a tool shows', () => {
     ])
   })
 
-  it('sends the picture of a view as its saved copy, after the results of its round, in each later request of the reply, and not in the next reply', async () => {
+  it('sends the picture of a view as its saved copy, after the results of its round, in each later request of the reply and in the request of the next reply', async () => {
     replyRounds([
       async (input) => ({ requestId: input.requestId as string, toolCalls: [viewCall] }),
       async (input) => ({ requestId: input.requestId as string, toolCalls: [listCall] }),
@@ -2613,9 +2641,10 @@ describe('dez.stream/start pictures that a tool shows', () => {
     // The same copy again, so the same bytes: the prompt cache needs them.
     expect(third.slice(0, 4)).toStrictEqual(second)
     expect(third.map(({ role }) => role)).toStrictEqual(['user', 'agent', 'tool', 'user', 'agent', 'tool'])
-    // The next reply sends the rounds of the section with no picture.
+    // The next reply sends the rounds of the section with the same
+    // picture message at the same place.
     const stored = (sbp('dez.model/streamMessagesForTab', activeTab().id, model) as RequestMessages).messages
-    expect(stored.slice(1, 5)).toStrictEqual([third[1], third[2], third[4], third[5]])
+    expect(stored.slice(1, 6)).toStrictEqual(third.slice(1))
   })
 
   // The limits of a model of no family: 20 pictures, 52,000 tokens, and
@@ -2629,12 +2658,31 @@ describe('dez.stream/start pictures that a tool shows', () => {
 
     await startStream({ sendTools: true })
 
-    expect(budgetLines()).toStrictEqual([
-      'Picture budget left in this reply: 19 pictures, 51,352 tokens and 20.0 MB of base64.',
-      'Picture budget left in this reply: 18 pictures, 50,704 tokens and 20.0 MB of base64.',
-      'Picture budget left in this reply: 17 pictures, 50,056 tokens and 20.0 MB of base64.',
-    ])
+    expect(budgetLines()).toStrictEqual([budgetLine(19, 51_352), budgetLine(18, 50_704), budgetLine(17, 50_056)])
     expect(requests[2].messages.map(({ role }) => role)).toStrictEqual(['user', 'agent', 'tool', 'user', 'agent', 'tool', 'user'])
+  })
+
+  // The pictures of a round go in one message, so a round shows at most
+  // as many pictures as the model takes images in one message.
+  it('gives the calls of a round no picture over the image limit of one message, and the calls of the next round that count again', async () => {
+    sbp('dez.model/modelCache/applyProviderResult', model.providerId, {
+      ok: true,
+      models: [{ id: model.modelId, name: model.modelName, provider: model.providerId, messageImageLimit: 2 }],
+    })
+    replyRounds([
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [viewCall, { ...viewCall, id: 'c3' }, { ...viewCall, id: 'c4' }] }),
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [{ ...viewCall, id: 'c5' }] }),
+      async (input) => ({ requestId: input.requestId as string }),
+    ])
+
+    await startStream({ sendTools: true })
+
+    const results = findToolBlocks(sectionVisibleText(agentSection())).map(({ result }) => result)
+    expect(results.map((result) => result.includes(PICTURE_ROUND_FULL_NOTE))).toStrictEqual([false, false, true, false])
+    expect(native.savedFiles).toHaveLength(3)
+    const pictureCounts = requests[2].messages.map((message) =>
+      (message.role === 'user' && Array.isArray(message.content) ? message.content.filter((part) => part.type === 'picture').length : 0))
+    expect(pictureCounts).toStrictEqual([0, 0, 0, 2, 0, 0, 1])
   })
 
   it('takes each image of the request off the budget, as one picture of the assumed size with the bytes that a request sends for it, which it asks for one time in a reply', async () => {
@@ -2656,10 +2704,7 @@ describe('dez.stream/start pictures that a tool shows', () => {
     })
 
     // The image counts as 3,136 tokens.
-    expect(budgetLines()).toStrictEqual([
-      'Picture budget left in this reply: 18 pictures, 48,216 tokens and 16.0 MB of base64.',
-      'Picture budget left in this reply: 17 pictures, 47,568 tokens and 16.0 MB of base64.',
-    ])
+    expect(budgetLines()).toStrictEqual([budgetLine(18, 48_216, 16), budgetLine(17, 47_568, 16)])
     expect(sizeReads).toStrictEqual([image('fox.png')])
   })
 
@@ -3377,17 +3422,22 @@ describe('dez.stream/start compaction', () => {
     expect(leftFiles).toStrictEqual([{ sources: [HIDDEN_IMAGE_PATH], pictures: [oldPicture.file] }])
   })
 
-  // A toast at the submit would be false: the compaction keeps the image
-  // that is over the limit as its text, with the kept mark.
+  // A toast at the submit would be false: the compaction keeps each image
+  // that is over what it leaves as its text, with the kept mark. It leaves
+  // at most half of the image limit as parts.
   it('tells the user of no image over the image limit of the model when a compaction before the first request leaves none', async () => {
     sbp('dez.model/modelCache/applyProviderResult', model.providerId, {
       ok: true,
-      models: [{ id: model.modelId, name: model.modelName, provider: model.providerId, imageLimit: 2 }],
+      models: [{ id: model.modelId, name: model.modelName, provider: model.providerId, imageLimit: 4 }],
     })
     sbp('dez.model/setActiveModel', model.providerId, model.modelId, model.modelName)
     sbp('dez.model/tabs/replaceSections', activeTab().id, [
-      { id: 'u1', role: 'user', content: [text(`![${image('one.png')}](id=a) ![${image('two.jpg')}](id=b) ![${image('three.webp')}](id=c)`)] },
-      { id: 'r1', role: 'agent', content: [text('Three foxes.')], model },
+      {
+        id: 'u1',
+        role: 'user',
+        content: [text(['one.png', 'two.jpg', 'three.webp', 'four.png', 'five.png'].map((name, n) => `![${image(name)}](id=${'abcde'[n]})`).join(' '))],
+      },
+      { id: 'r1', role: 'agent', content: [text('Five foxes.')], model },
       { id: 'u2', role: 'user', content: [text('More')] },
     ])
     sbp('dez.model/tabs/countRequestContext', activeTab().id, model, 140_000)
@@ -3403,6 +3453,7 @@ describe('dez.stream/start compaction', () => {
     const parts = first.role === 'user' && Array.isArray(first.content) ? first.content : []
     expect(parts.flatMap((part) => (part.type === 'image' ? [part.path] : []))).toStrictEqual([image('one.png'), image('two.jpg')])
     expect(JSON.stringify(parts)).toContain('![image](id=c|kept=compaction)')
+    expect(JSON.stringify(parts)).toContain('![image](id=e|kept=compaction)')
   })
 
   describe('for a new reply of a model whose window is smaller than the conversation', () => {

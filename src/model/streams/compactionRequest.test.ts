@@ -24,9 +24,20 @@ import { NO_PICTURE_BUDGET, type PictureBudget } from './pictureBudget'
 import { model, reply, user } from './testing'
 
 const LIMITS: PictureBudget = { tokens: 50_000, bytes: 20_000_000, pictures: 20 }
+// What a compaction leaves of LIMITS: half of each (`compactedPictureLimits`).
+const LEAVES: PictureBudget = { tokens: 25_000, bytes: 10_000_000, pictures: 10 }
 
 function reason(fields: Partial<Parameters<typeof compactionReason>[0]>): CompactionReason | null {
-  return compactionReason({ contextTokens: 0, threshold: 100_000, limits: LIMITS, spent: NO_PICTURE_BUDGET, kept: NO_PICTURE_BUDGET, requestSinceCompaction: true, ...fields })
+  return compactionReason({
+    contextTokens: 0,
+    threshold: 100_000,
+    limits: LIMITS,
+    leaves: LEAVES,
+    spent: NO_PICTURE_BUDGET,
+    kept: NO_PICTURE_BUDGET,
+    requestSinceCompaction: true,
+    ...fields,
+  })
 }
 
 describe('compactionReason', () => {
@@ -75,8 +86,18 @@ describe('compactionReason', () => {
     expect(reason({ contextTokens: 100_000, spent, kept: spent })).toBe('tokens')
   })
 
-  it('is never due for the pictures of a model that takes no image', () => {
-    expect(reason({ limits: { tokens: 50_000, bytes: 20_000_000, pictures: 0 } })).toBeNull()
+  // 0.9 of a limit of 1 picture is under 1 picture, and a compaction
+  // leaves 1: without this rule, each request would compact.
+  it('is not due for images while the context holds no more of them than a compaction leaves', () => {
+    const one = { ...NO_PICTURE_BUDGET, pictures: 1 }
+
+    expect(reason({ limits: { ...LIMITS, pictures: 1 }, leaves: { ...LEAVES, pictures: 1 }, spent: one })).toBeNull()
+    expect(reason({ limits: { ...LIMITS, pictures: 2 }, leaves: { ...LEAVES, pictures: 1 }, spent: { ...one, pictures: 2 } })).toBe('images')
+  })
+
+  it('is never due for the pictures of a model that takes no image, or of one with no image limit', () => {
+    expect(reason({ limits: { ...LIMITS, pictures: 0 }, leaves: { ...LEAVES, pictures: 0 } })).toBeNull()
+    expect(reason({ limits: { ...LIMITS, pictures: Infinity }, leaves: { ...LEAVES, pictures: Infinity }, spent: { ...NO_PICTURE_BUDGET, pictures: 5000 } })).toBeNull()
   })
 })
 

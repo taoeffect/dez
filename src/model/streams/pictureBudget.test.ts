@@ -3,15 +3,14 @@ import type { ShownPicture } from '../chat/shownPictures'
 import { DEFAULT_FAMILY, modelFamily, type ImageTokenRule } from '../providers/modelFamilies'
 import {
   budgetAfter,
+  compactedPictureLimits,
   contextImageCost,
   MAX_REQUEST_IMAGE_BYTES,
-  MAX_REQUEST_IMAGES,
   NO_PICTURE_BUDGET,
   pictureBudgetLeft,
   pictureCost,
   pictureLimits,
   requestImageCount,
-  requestImageLimit,
   shownPictureCost,
   totalCost,
 } from './pictureBudget'
@@ -30,8 +29,8 @@ function round(callIds: readonly string[]): StreamMessage[] {
 }
 
 describe('pictureLimits', () => {
-  it('gives 40% of the compaction threshold of the window of the model family, the bytes, and the count of one request', () => {
-    expect(pictureLimits({ id: 'a-model-of-no-family' })).toStrictEqual({ tokens: 52_000, bytes: 20 * 1024 ** 2, pictures: 20 })
+  it('gives 40% of the compaction threshold of the window of the model family, the bytes, and the image limit of the model', () => {
+    expect(pictureLimits({ id: 'a-model-of-no-family' })).toStrictEqual({ tokens: 52_000, bytes: 20 * 1024 ** 2, pictures: DEFAULT_FAMILY.maxImages })
   })
 
   it('reads the context window that the model list gave before the one of the family', () => {
@@ -39,16 +38,36 @@ describe('pictureLimits', () => {
     // The threshold stops at 250,000 tokens.
     expect(pictureLimits({ id: 'a-model-of-no-family', contextWindow: 2_000_000 }).tokens).toBe(100_000)
   })
+
+  // Dez has no count of its own: the limit of one message is not the limit
+  // of a request.
+  it.each<[string, Parameters<typeof pictureLimits>[0], number]>([
+    ['the count of the model list', { id: 'a-model-of-no-family', imageLimit: 600 }, 600],
+    ['the count of the family', { id: 'claude-opus-4-6' }, 600],
+    ['no count for a family with no limit', { id: 'grok-4-7' }, Infinity],
+    ['the count of a request for a model with a lower limit of one message', { id: 'a-model-of-no-family', messageImageLimit: 10, learnedImageLimit: { maxImages: 4, entry: 'h' } }, 20],
+  ])('gives %s as the count of pictures', (_name, model, pictures) => {
+    expect(pictureLimits(model).pictures).toBe(pictures)
+  })
 })
 
-describe('requestImageLimit', () => {
-  it.each<[string, Parameters<typeof requestImageLimit>[0], number]>([
-    ['the limit of the family for a model with no limit in the model list', { id: 'a-model-of-no-family' }, DEFAULT_FAMILY.maxImages],
-    ['Dez\'s own limit for a model that takes more images', { id: 'a-model-of-no-family', imageLimit: 600 }, MAX_REQUEST_IMAGES],
-    ['the lower limit that the model list gave', { id: 'a-model-of-no-family', imageLimit: 10 }, 10],
-    ['the lower limit that a refusal of the provider told', { id: 'a-model-of-no-family', imageLimit: 10, learnedImageLimit: { maxImages: 4, entry: 'h' } }, 4],
-  ])('gives %s', (_name, model, limit) => {
-    expect(requestImageLimit(model)).toBe(limit)
+describe('compactedPictureLimits', () => {
+  it('gives half of each limit of a request', () => {
+    expect(compactedPictureLimits({ id: 'a-model-of-no-family' })).toStrictEqual({ tokens: 26_000, bytes: 10 * 1024 ** 2, pictures: 10 })
+    expect(compactedPictureLimits({ id: 'a-model-of-no-family', imageLimit: 5 }).pictures).toBe(2)
+  })
+
+  // The images and the pictures of a compacted conversation go in one
+  // message.
+  it('gives at most the count of one message', () => {
+    expect(compactedPictureLimits({ id: 'a-model-of-no-family', messageImageLimit: 4 }).pictures).toBe(4)
+    expect(compactedPictureLimits({ id: 'a-model-of-no-family', messageImageLimit: 12 }).pictures).toBe(10)
+    expect(compactedPictureLimits({ id: 'grok-4-7', learnedImageLimit: { maxImages: 6, entry: 'h' } }).pictures).toBe(6)
+  })
+
+  it('gives one picture to a model that takes one image, and no count to a model with no limit', () => {
+    expect(compactedPictureLimits({ id: 'a-model-of-no-family', imageLimit: 1 }).pictures).toBe(1)
+    expect(compactedPictureLimits({ id: 'grok-4-7' }).pictures).toBe(Infinity)
   })
 })
 
@@ -149,7 +168,7 @@ describe('pictureBudgetLeft', () => {
     expect(pictureBudgetLeft(limits, { tokens: 2000, bytes: 4000, pictures: 3 })).toStrictEqual({
       tokens: 50_000,
       bytes: MAX_REQUEST_IMAGE_BYTES - 4000,
-      pictures: MAX_REQUEST_IMAGES - 3,
+      pictures: DEFAULT_FAMILY.maxImages - 3,
     })
   })
 

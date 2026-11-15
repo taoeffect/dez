@@ -3,7 +3,7 @@ import { conversationCostText } from '../chat/compactionNotes'
 import { compactionThreshold, type ContextSize } from '../chat/contextSize'
 import { costSince, type ConversationCost } from '../chat/conversationCost'
 import { usdText } from '../providers/modelPrices'
-import type { PictureBudget } from '../streams/pictureBudget'
+import type { CallPictureBudget } from '../streams/pictureBudget'
 import { countText, pictureBudgetLeftText } from './assetView'
 import type { JobInfo } from './jobs'
 import type { ToolDefinition } from './types'
@@ -22,7 +22,7 @@ export const CONVERSATION_INFO_TOOL: ToolDefinition = {
   description: 'Tell the size and the cost of this conversation: its context size in tokens, the context window of your model, '
     + 'the size at which Dez compacts the conversation (your notes then take the place of the earlier messages), how many compactions it had, '
     + 'what its requests cost so far (an estimate, with the count of the requests that have no known price), '
-    + 'and the picture budget that this reply has left. '
+    + 'and the picture budget of asset_view that is left until the next compaction. '
     + 'Call it when the user gave you a budget of cost or of tokens: before a step that costs much, and again after it. '
     + 'It sends no request, and it does not wait.',
   parameters: [],
@@ -42,9 +42,9 @@ export interface ConversationInfoFacts {
   cost: ConversationCost | undefined
   /** The jobs of the reply. */
   jobs: readonly JobInfo[]
-  /** The picture budget that the reply has left; null for a model that
-   *  gets no pictures. */
-  pictureBudget: PictureBudget | null
+  /** What is left of the picture budget of the conversation, for the next
+   *  call of the round; null for a model that gets no pictures. */
+  pictureBudget: CallPictureBudget | null
 }
 
 // A count of things, as in `1 compaction`, `3 compactions`.

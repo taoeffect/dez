@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { CARRIED_USER_ASSETS_LABEL, COMPACTION_MESSAGE_INTRO, COMPACTION_USER_MESSAGE_LABEL, compactionTagText } from '../chat/compaction'
 import { MEDIA_HIDDEN_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE, mediaTagRequestText, mediaTagText, type MediaTagData } from '../chat/mediaTags'
-import type { ShownPicture } from '../chat/shownPictures'
+import { SHOWN_PICTURE_OVER_LIMIT_NOTE, type ShownPicture } from '../chat/shownPictures'
 import { toolBlockText, type ToolBlockStatus } from '../chat/toolBlocks'
 import type { Section, SectionThinking, ThinkingReplay } from '../chat/types'
 import type { ClipInputRules, MediaKind } from '../providers/types'
 import { audioCutResultText } from '../tools/audioTool'
 import { imageResultText } from '../tools/imageTool'
 import { jobResultText, jobStartedText, jobsWaitText, type WrittenJobAsset } from '../tools/jobs'
-import { agentSectionMessages, mediaRequestInput, messageClips, sectionsToStreamMessages } from './messages'
+import { agentSectionMessages, mediaRequestInput, messageClips, newRequestImages, sectionsToStreamMessages } from './messages'
 import { model, reply, user } from './testing'
 
 const IMAGE = '/home/u/.config/dez/assets/images/red.png'
@@ -80,9 +80,9 @@ describe('agentSectionMessages', () => {
     ])
   })
 
-  // A request with no option sends the tool results only: the pictures of
-  // a call go only in the reply that made the call.
-  it('sends no picture that a call showed unless the caller asks for the pictures, with or without tools', () => {
+  // The caller gives the count of the image parts of its request: with
+  // none (a model that reads no images), no picture goes.
+  it('sends no picture that a call showed with no count of the parts of the request, with or without tools', () => {
     const pictures = [{ file: 'f1.png', label: 'asset_view: the image @a.' }]
     const text = `${toolBlockText({ id: 'call_1', name: 'asset_view', status: 'success', arguments: { assets: '@a' }, result: '@a | image | PNG', pictures })}\nDone.`
 
@@ -93,7 +93,7 @@ describe('agentSectionMessages', () => {
     ])
     expect(JSON.stringify(agentSectionMessages(agent(text), model, false))).not.toMatch(/f1\.png|the image @a/)
     // A call that goes as text has no round to put its pictures after.
-    expect(JSON.stringify(agentSectionMessages(agent(text), model, false, true))).not.toMatch(/f1\.png|the image @a/)
+    expect(JSON.stringify(agentSectionMessages(agent(text), model, false, newRequestImages()))).not.toMatch(/f1\.png|the image @a/)
   })
 
   it('puts the pictures of a round in one user message right after its results, each after its label, in the order of the calls', () => {
@@ -106,7 +106,7 @@ describe('agentSectionMessages', () => {
     // The first round has no picture; the second has those of two calls.
     const text = `${block('call_1', 'gemini', '1 model')}\n\nNow the clips.\n${view('call_2', '@f @g', [sheet, wave])}\n${view('call_3', '@x')}\n${view('call_4', '@a', [image])}\nAll good.`
 
-    expect(agentSectionMessages(agent(text), model, true, true)).toStrictEqual([
+    expect(agentSectionMessages(agent(text), model, true, newRequestImages())).toStrictEqual([
       { role: 'agent', content: '', toolCalls: [call('call_1', 'gemini')] },
       { role: 'tool', results: [result('call_1', '1 model')] },
       { role: 'agent', content: '\nNow the clips.', toolCalls: [viewCall('call_2', '@f @g'), viewCall('call_3', '@x'), viewCall('call_4', '@a')] },
@@ -126,12 +126,46 @@ describe('agentSectionMessages', () => {
     ])
   })
 
+  describe('with the image limits of a request', () => {
+    const pictureOf = (name: string) => ({ file: `${name}.jpg`, label: `asset_view: ${name}.` })
+    const [one, two, three] = ['one', 'two', 'three'].map(pictureOf)
+    const view = (id: string, pictures: ReturnType<typeof pictureOf>[]) =>
+      toolBlockText({ id, name: 'asset_view', status: 'success', arguments: { assets: '@a' }, result: 'ok', pictures })
+    // Two rounds: the first shows two pictures, the second one.
+    const section = agent(`${view('call_1', [one, two])}\n\n${view('call_2', [three])}`)
+    const shown = (picture: ReturnType<typeof pictureOf>) => [{ type: 'text', text: picture.label }, { type: 'picture', picture }]
+    const note = (picture: ReturnType<typeof pictureOf>) => [{ type: 'text', text: picture.label }, { type: 'text', text: SHOWN_PICTURE_OVER_LIMIT_NOTE }]
+    const pictureMessages = (images: ReturnType<typeof newRequestImages>) =>
+      agentSectionMessages(section, model, true, images).flatMap((message) => (message.role === 'user' ? [message.content] : []))
+
+    // The parts of a request are counted in message order, so the
+    // messages before a picture that does not go keep their bytes.
+    it('sends a picture that the request has no room for as its label and a note, and counts it', () => {
+      const images = newRequestImages(2)
+
+      expect(pictureMessages(images)).toStrictEqual([[...shown(one), ...shown(two)], note(three)])
+      expect([...images.overLimit]).toStrictEqual([three.file])
+    })
+
+    it('stops in the middle of the pictures of a round', () => {
+      expect(pictureMessages(newRequestImages(1))).toStrictEqual([[...shown(one), ...note(two)], note(three)])
+    })
+
+    // The pictures of a round are one message.
+    it('sends at most the pictures of one message for each round', () => {
+      const images = newRequestImages(Infinity, 1)
+
+      expect(pictureMessages(images)).toStrictEqual([[...shown(one), ...note(two)], shown(three)])
+      expect([...images.overLimit]).toStrictEqual([two.file])
+    })
+  })
+
   // The user can edit the label in the block.
   it('sends no stored file path in the label of a picture', () => {
     const pictures = [{ file: 'f1.png', label: `asset_view: the image at ${IMAGE}.` }]
     const text = toolBlockText({ id: 'call_1', name: 'asset_view', status: 'success', arguments: { assets: '@a' }, result: 'ok', pictures })
 
-    const [, , shown] = agentSectionMessages(agent(text), model, true, true)
+    const [, , shown] = agentSectionMessages(agent(text), model, true, newRequestImages())
 
     expect(shown).toStrictEqual({ role: 'user', content: [{ type: 'text', text: 'asset_view: the image at image.' }, { type: 'picture', picture: pictures[0] }] })
   })
@@ -770,6 +804,46 @@ describe('sectionsToStreamMessages: images of user messages', () => {
       expect(imagesOverLimit).toBe(4)
     })
   })
+
+  describe('with a limit of the images of one message', () => {
+    const limited = (messageImageLimit: number, imageLimit?: number) =>
+      sectionsToStreamMessages(sections, model, { sendImages: true, sendTools: false, imageLimit, messageImageLimit })
+    // A message with two images, and a later one that names the second
+    // image and holds a third one.
+    const sections = [
+      user('u1', `![${IMAGE}](id=a) and ![${OTHER_IMAGE}](id=c)`),
+      reply('a1', 'Yes.'),
+      user('u2', `Is @c like ![${LINKED_IMAGE}](id=d)?`),
+    ]
+    const first = [{ type: 'text', text: '![image](id=a)' }, { type: 'image', path: IMAGE }]
+
+    it('gives each message its parts up to the limit, and a later message the part of an image that an earlier one left out', () => {
+      const { messages, imagesOverLimit } = limited(1)
+
+      expect(messages).toStrictEqual([
+        { role: 'user', content: [...first, { type: 'text', text: ' and ![image](id=c)' }] },
+        { role: 'agent', content: 'Yes.' },
+        { role: 'user', content: [{ type: 'text', text: 'Is @c' }, { type: 'image', path: OTHER_IMAGE }, { type: 'text', text: ' like ![image](id=d)?' }] },
+      ])
+      // Only `d`: `c` has its part in the last message.
+      expect(imagesOverLimit).toBe(1)
+    })
+
+    it('counts the limit of the request too', () => {
+      const { messages, imagesOverLimit } = limited(2, 2)
+
+      expect(messages).toStrictEqual([
+        { role: 'user', content: [...first, { type: 'text', text: ' and ![image](id=c)' }, { type: 'image', path: OTHER_IMAGE }] },
+        { role: 'agent', content: 'Yes.' },
+        { role: 'user', content: 'Is @c like ![image](id=d)?' },
+      ])
+      expect(imagesOverLimit).toBe(1)
+    })
+
+    it('leaves out no image of messages that hold the limit, or fewer', () => {
+      expect(limited(2)).toStrictEqual(sectionsToStreamMessages(sections, model, { sendImages: true, sendTools: false }))
+    })
+  })
 })
 
 describe('sectionsToStreamMessages: clips of user messages', () => {
@@ -812,39 +886,57 @@ describe('sectionsToStreamMessages: clips of user messages', () => {
 })
 
 describe('sectionsToStreamMessages: pictures that a tool showed', () => {
-  const picture = { file: 'f1.png', label: 'asset_view: the image @a.', width: 64, height: 48, bytes: 300 }
-  const view = (id: string) => toolBlockText({ id, name: 'asset_view', status: 'success', arguments: { assets: '@a' }, result: '@a | image | PNG', pictures: [picture] })
-  // An older reply that viewed the image, and the reply that runs.
+  const pictureOf = (name: string) => ({ file: `${name}.png`, label: `asset_view: the image @a, ${name}.`, width: 64, height: 48, bytes: 300 })
+  const [first, second, third] = ['first', 'second', 'third'].map(pictureOf)
+  const view = (id: string, pictures: ShownPicture[]) =>
+    toolBlockText({ id, name: 'asset_view', status: 'success', arguments: { assets: '@a' }, result: '@a | image | PNG', pictures })
+  // An older reply that viewed the image, and the reply that runs, which
+  // viewed it two times in one round.
   const sections = [
     user('u1', `![${IMAGE}](id=a)`),
-    reply('a1', `${view('call_1')}\nIt is red.`),
+    reply('a1', `${view('call_1', [first])}\nIt is red.`),
     user('u2', 'Look again.'),
-    reply('a2', view('call_2')),
+    reply('a2', view('call_2', [second, third])),
   ]
-  const pictureMessage = { role: 'user', content: [{ type: 'text', text: picture.label }, { type: 'picture', picture }] }
-  const sent = (options: { picturesOfSection?: string, sendImages?: boolean, sendTools?: boolean }) =>
-    sectionsToStreamMessages(sections, model, { sendImages: true, sendTools: true, ...options }).messages
+  const shown = (picture: ShownPicture) => [{ type: 'text', text: picture.label }, { type: 'picture', picture }]
+  const note = (picture: ShownPicture) => [{ type: 'text', text: picture.label }, { type: 'text', text: SHOWN_PICTURE_OVER_LIMIT_NOTE }]
+  const sent = (options: Partial<Parameters<typeof sectionsToStreamMessages>[2]> = {}) =>
+    sectionsToStreamMessages(sections, model, { sendImages: true, sendTools: true, ...options })
+  // The messages of the conversation, with the parts `older` and `newer`
+  // of the two picture messages.
+  const messages = (older: unknown[], newer: unknown[]) => [
+    { role: 'user', content: [{ type: 'text', text: '![image](id=a)' }, { type: 'image', path: IMAGE }] },
+    { role: 'agent', content: '', toolCalls: [{ id: 'call_1', name: 'asset_view', arguments: { assets: '@a' } }] },
+    { role: 'tool', results: [result('call_1', '@a | image | PNG')] },
+    { role: 'user', content: older },
+    { role: 'agent', content: 'It is red.' },
+    { role: 'user', content: 'Look again.' },
+    { role: 'agent', content: '', toolCalls: [{ id: 'call_2', name: 'asset_view', arguments: { assets: '@a' } }] },
+    { role: 'tool', results: [result('call_2', '@a | image | PNG')] },
+    { role: 'user', content: newer },
+  ]
 
-  it('sends the pictures of the section of the reply that runs only, after the results of their round', () => {
-    expect(sent({ picturesOfSection: 'a2' })).toStrictEqual([
-      { role: 'user', content: [{ type: 'text', text: '![image](id=a)' }, { type: 'image', path: IMAGE }] },
-      { role: 'agent', content: '', toolCalls: [{ id: 'call_1', name: 'asset_view', arguments: { assets: '@a' } }] },
-      { role: 'tool', results: [result('call_1', '@a | image | PNG')] },
-      { role: 'agent', content: 'It is red.' },
-      { role: 'user', content: 'Look again.' },
-      { role: 'agent', content: '', toolCalls: [{ id: 'call_2', name: 'asset_view', arguments: { assets: '@a' } }] },
-      { role: 'tool', results: [result('call_2', '@a | image | PNG')] },
-      pictureMessage,
-    ])
-  })
-
-  it('sends no picture with no section of a reply that runs', () => {
-    expect(sent({})).not.toContainEqual(pictureMessage)
+  // A picture stays in view until a compaction takes its call out.
+  it('sends the pictures of every reply, each after the results of its round', () => {
+    expect(sent()).toMatchObject({ messages: messages(shown(first), [...shown(second), ...shown(third)]), imagesOverLimit: 0 })
+    expect(sent().messages).toHaveLength(9)
   })
 
   it('sends no picture to a model that reads no images, and none in a request with no tools', () => {
-    expect(sent({ picturesOfSection: 'a2', sendImages: false })).not.toContainEqual(pictureMessage)
-    expect(sent({ picturesOfSection: 'a2', sendTools: false })).not.toContainEqual(pictureMessage)
+    for (const options of [{ sendImages: false }, { sendTools: false }]) {
+      expect(JSON.stringify(sent(options).messages), JSON.stringify(options)).not.toMatch(/"picture"|first\.png|asset_view: the image/)
+    }
+  })
+
+  // The image of the first message and the picture of the older reply
+  // keep their parts, so the start of the request keeps its bytes.
+  it('counts the pictures and the images against one limit of the request, in message order', () => {
+    expect(sent({ imageLimit: 2 })).toMatchObject({ messages: messages(shown(first), [...note(second), ...note(third)]), imagesOverLimit: 2 })
+    expect(sent({ imageLimit: 3 })).toMatchObject({ messages: messages(shown(first), [...shown(second), ...note(third)]), imagesOverLimit: 1 })
+  })
+
+  it('gives the picture message of a round at most the images of one message', () => {
+    expect(sent({ messageImageLimit: 1 })).toMatchObject({ messages: messages(shown(first), [...shown(second), ...note(third)]), imagesOverLimit: 1 })
   })
 })
 

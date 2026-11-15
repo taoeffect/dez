@@ -30,28 +30,34 @@ const NEAR_PICTURE_LIMIT = 0.9
  *  compaction threshold of the model (`compactionThreshold`). `spent` is
  *  what the images and the pictures of the next request cost
  *  (`contextImageCost`), and `limits` the picture limits of the model
- *  (`pictureLimits`, with the image limit of the model as its count).
+ *  (`pictureLimits`).
  *
  *  With no chat request since the last compaction the answer is null: a
  *  compaction that made no room would come again and again.
  *
- *  `kept` is what the images and the pictures cost right after the newest
- *  compaction of the reply (nothing before its first one). A picture
- *  limit counts only when `spent` is over it: a compaction cannot take
- *  out the images of the messages of the user that it keeps, so with no
- *  newer picture it would make no room. It also covers a model that takes
- *  no image, whose limit is 0. */
-export function compactionReason({ contextTokens, threshold, limits, spent, kept, requestSinceCompaction }: {
+ *  A picture limit counts only when a compaction can make room in it, so
+ *  only when `spent` is over both of these:
+ *  - `leaves`, the most that a compaction leaves
+ *    (`compactedPictureLimits`). Without it, a model that takes only a
+ *    few images would compact at each request, as the share of a small
+ *    limit rounds to the limit itself.
+ *  - `kept`, what the images and the pictures cost right after the newest
+ *    compaction of the reply (nothing before its first one). A compaction
+ *    cannot take out the images that the messages of the user name with
+ *    an `@id` mention, so with no newer picture it would make no room. It
+ *    also covers a model that takes no image, whose limit is 0. */
+export function compactionReason({ contextTokens, threshold, limits, leaves, spent, kept, requestSinceCompaction }: {
   contextTokens: number
   threshold: number
   limits: PictureBudget
+  leaves: PictureBudget
   spent: PictureBudget
   kept: PictureBudget
   requestSinceCompaction: boolean
 }): CompactionReason | null {
   if (!requestSinceCompaction) return null
   if (contextTokens >= threshold) return 'tokens'
-  const isNear = (part: keyof PictureBudget) => spent[part] > kept[part] && spent[part] >= NEAR_PICTURE_LIMIT * limits[part]
+  const isNear = (part: keyof PictureBudget) => spent[part] > Math.max(kept[part], leaves[part]) && spent[part] >= NEAR_PICTURE_LIMIT * limits[part]
   if (isNear('pictures')) return 'images'
   if (isNear('bytes')) return 'bytes'
   if (isNear('tokens')) return 'pictureTokens'

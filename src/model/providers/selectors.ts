@@ -211,10 +211,10 @@ async function readMessageImages(messages: ProviderChatInputMessage[]): Promise<
 
 // The picture of an `asset_view` call as a request sends it: the bytes of
 // its saved copy (chat/shownPictures.ts), which are the same at each read,
-// so each request of the reply sends the same picture. A copy that is gone
-// or that Dez cannot read (a user can delete the file by hand) never fails
-// the request, as the reply could not go on then: a note goes in its
-// place, after the label of the picture.
+// so each request of the conversation sends the same picture. A copy that
+// is gone or that Dez cannot read (a user can delete the file by hand)
+// never fails the request, as no reply of the conversation could go on
+// then: a note goes in its place, after the label of the picture.
 async function shownPicturePart(picture: ShownPicture): Promise<ChatPart> {
   try {
     const mediaType = imageMediaType(picture.file)

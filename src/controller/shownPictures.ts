@@ -3,10 +3,10 @@ import { imageExtension } from '../model/chat/images'
 import { SHOWN_PICTURE_FOLDER, type NewPicture, type ShownPicture } from '../model/chat/shownPictures'
 
 // The copies of the pictures that a tool call shows its model
-// (model/chat/shownPictures.ts): the requests of the reply read them, and
-// the panel of the call's chip shows them. This module registers no
-// selector: the `asset_view` runner (assetView.ts) and the tool loop
-// (stream.ts) call it.
+// (model/chat/shownPictures.ts): the requests of the conversation read
+// them until a compaction takes the call out, and the panel of the call's
+// chip shows them. This module registers no selector: the `asset_view`
+// runner (assetView.ts) and the tool loop (stream.ts) call it.
 
 /** Saves a copy of each of `pictures` in the views folder, and gives the
  *  copies in the same order, each with the size and the byte count of its

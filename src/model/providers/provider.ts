@@ -96,13 +96,14 @@ export class Provider {
   // (Anthropic-style) to the id (servers that report only ids). The readable
   // name, the release date, the image, tool, and thinking flags, the
   // toggles that the model does not take, the outputs, the request kind,
-  // the context window, and the image limit are read only where the
+  // the context window, and the image limits are read only where the
   // config's `modelReadableName`, `modelReleased`, `modelImageInput`,
   // `modelToolCalling`, `modelThinking`, `settings[].modelSupport`,
-  // `modelOutputs`, `modelContextWindow`, and `modelImageLimit` point. A
-  // chat model makes `audio` only with an `audioOutputs` entry: with none,
-  // Dez cannot ask it for audio, so the model lists, the picker, and the
-  // tools do not offer it as an audio model.
+  // `modelOutputs`, `modelContextWindow`, `modelImageLimit`, and
+  // `modelMessageImageLimit` point. A chat model makes `audio` only with
+  // an `audioOutputs` entry: with none, Dez cannot ask it for audio, so
+  // the model lists, the picker, and the tools do not offer it as an audio
+  // model.
   // Models that make nothing stay in this list; `mergeModels` drops them, so
   // the diagnostics report shows what the server sent.
   parseModels(data: unknown): ModelInfo[] {
@@ -127,6 +128,7 @@ export class Provider {
         request,
         contextWindow: modelCount(model, this.config.modelContextWindow),
         imageLimit: modelCount(model, this.config.modelImageLimit),
+        messageImageLimit: modelCount(model, this.config.modelMessageImageLimit),
       }))
     }
 
@@ -137,7 +139,7 @@ export class Provider {
   // config does not list. Each id appears once. A name, capability flag,
   // outputs list, request kind, or context window set in the config wins
   // over the fetched one for the same id; the readable name, the release
-  // date, and the image limit are always the fetched ones. A fetched model
+  // date, and the image limits are always the fetched ones. A fetched model
   // that is known to make none of the output types (embeddings, rerank) is
   // left out; a config model is always listed.
   mergeModels(fetched: ModelInfo[]): ModelInfo[] {
@@ -163,6 +165,7 @@ export class Provider {
         request: model.request ?? fetchedModel?.request,
         contextWindow: model.contextWindow ?? fetchedModel?.contextWindow,
         imageLimit: fetchedModel?.imageLimit,
+        messageImageLimit: fetchedModel?.messageImageLimit,
       }))
     }
 

@@ -29,7 +29,7 @@ const STORED_FOLDERS: { folders: readonly string[]; holds: string }[] = [
   { folders: Object.values(MEDIA_FOLDERS.pasted), holds: 'Pasted clips, and dropped clips that Dez copies.' },
   { folders: [IMAGE_FOLDERS.generated], holds: 'Images that models and Dez tools make.' },
   { folders: Object.values(MEDIA_FOLDERS.generated), holds: 'Clips that you save, and clips that Dez tools make.' },
-  { folders: [SHOWN_PICTURE_FOLDER], holds: 'Copies of the pictures that Dez showed a model: the pictures of the asset_view tool, which the reply of the tool call sends to the model and the panel of the tool call shows, and the pictures of the clips that a compaction keeps in view of the model.' },
+  { folders: [SHOWN_PICTURE_FOLDER], holds: 'Copies of the pictures that Dez showed a model: the pictures of the asset_view tool, which the requests of the conversation send to the model until its next compaction and the panel of the tool call shows, and the pictures of the clips that a compaction keeps in view of the model.' },
 ]
 
 const HOUR_MS = 60 * 60 * 1000
@@ -193,8 +193,9 @@ function onOverlayClick(event: MouseEvent) {
             <p>
               Dez sends a chat model an image with a side of more than 1,568 pixels as a smaller
               copy, which keeps the request small; the file of the image does not change. A model
-              takes a limited number of images in one request. When the conversation holds more,
-              Dez leaves out the newest ones, and tells you.
+              takes a limited number of images in one request, and some models a smaller number in
+              one message. When the conversation or a message holds more, Dez leaves out the ones
+              over the limit, and tells you.
             </p>
             <p>
               A model that makes images or clips, for example an image editor or a video model,
@@ -218,9 +219,10 @@ function onOverlayClick(event: MouseEvent) {
               <code>asset_view</code>: an image or a part of it, frames of a video clip (at equal
               steps, at given times, or one for each shot), and the wave or the spectrogram of the
               sound of a clip, with the loudness of a clip with sound. It can also put several images
-              and video clips into one grid picture. It sees these pictures only in the reply where it
-              asked for them. They share one picture budget with the images of your messages,
-              so it sees a limited number of pictures. Click the chip of the tool call to see the pictures that the model saw. A
+              and video clips into one grid picture. The pictures stay in its view in the later
+              replies too, until Dez compacts the conversation. They share one picture budget with
+              the images of your messages, so it sees a limited number of pictures; a compaction
+              makes room for new ones. Click the chip of the tool call to see the pictures that the model saw. A
               model that reads no images gets only the facts of the asset (for example its size,
               length, and format), and the loudness of a clip with sound.
             </p>

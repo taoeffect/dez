@@ -6,7 +6,7 @@ import type { ModelCache } from '../persistence/types'
 import { inputImageRulesFor, maxInputImages, minInputImages } from '../providers/clipImages'
 import type { KnownLimit } from '../providers/knownLimits'
 import { imageRulesWithLearnedLimit } from '../providers/learnedImageLimit'
-import { contextWindowOf } from '../providers/modelFamilies'
+import { contextWindowOf, imageLimitOf, messageImageLimitOf } from '../providers/modelFamilies'
 import type { ParameterValues } from '../providers/modelParameters'
 import { roundedPrice, type ModelPrice } from '../providers/modelPrices'
 import type { ProviderMediaQuote } from '../providers/streamTypes'
@@ -54,7 +54,7 @@ export const MODEL_INFO_TOOL: ToolDefinition = {
     + `\`outputs\` (what it makes: ${MODEL_OUTPUT_IDS.join(', ')}), `
     + `\`inputs\` (what Dez can send it in one request: ${MODEL_OUTPUT_IDS.join(', ')}), `
     + '`released` (its release date, `YYYY-MM-DD`, as `model_list` gives it), '
-    + '`contextWindow` (its context window, in tokens), `parameters`, and `cost`. '
+    + '`contextWindow` (its context window, in tokens), `images` (how many images one request to it can hold), `parameters`, and `cost`. '
     + '`dez.unknown` names the facts that the provider does not tell; their values are what Dez does then, '
     + 'and an unknown `released` has no value. '
     + '`dez.limits` lists rules of the model that Dez knows from other places than the provider\'s data, each with its `source`. '
@@ -239,6 +239,21 @@ function prettyJson(value: unknown): string {
   return JSON.stringify(value, null, 2)
 }
 
+// The image limits of a chat request to `model`: the most images and
+// `asset_view` pictures of one request (`imageLimitOf`), and the most of
+// one message when that is fewer (`messageImageLimitOf`). A model with no
+// limit of a request has no such number: JSON has no Infinity. Undefined
+// with neither.
+function chatImageLimits(model: ModelInfo): Record<string, number> | undefined {
+  const request = imageLimitOf(model)
+  const message = messageImageLimitOf(model)
+  const limits = {
+    ...(Number.isFinite(request) && { maxImagesPerRequest: request }),
+    ...(message < request && { maxImagesPerMessage: message }),
+  }
+  return Object.keys(limits).length > 0 ? limits : undefined
+}
+
 // The facts that Dez uses, as it uses them. A fact that the provider does
 // not tell gets the value that Dez acts on, and `unknown` names it; the
 // release date, on which Dez does not act, is then only in `unknown`. Image
@@ -246,9 +261,10 @@ function prettyJson(value: unknown): string {
 // only for a chat request, so a model of another kind gets the first three
 // only when the provider tells them (`inputs` tells whether a media request
 // sends images), and no window. A window that the provider does not tell
-// is the one of the model's family (`contextWindowOf`). `model` holds the
-// image rules of the parameter values that a request sends
-// (`modelInfoText`).
+// is the one of the model's family (`contextWindowOf`), and so are the
+// image limits of a chat model that reads images (`chatImageLimits`).
+// `model` holds the image rules of the parameter values that a request
+// sends (`modelInfoText`).
 function dezFacts(model: ModelInfo, facts: ModelInfoFacts, supportsThinking: boolean): Record<string, unknown> {
   const kind = effectiveRequest(model)
   const chat = kind === 'chat'
@@ -264,6 +280,7 @@ function dezFacts(model: ModelInfo, facts: ModelInfoFacts, supportsThinking: boo
   const unknown = Object.entries(told).flatMap(([name, value]) => (value === undefined ? [name] : []))
   const mediaKind = kind === 'chat' || kind === 'none' ? undefined : kind
   const maxImages = mediaKind && maxInputImages(mediaKind, model.images)
+  const chatImages = chat && model.imageInput !== false ? chatImageLimits(model) : undefined
   const { size, limits } = facts.inputImages ?? {}
   const cannotUse = kind === 'none'
     ? unusableModelMessage(model.name, model)
@@ -278,6 +295,7 @@ function dezFacts(model: ModelInfo, facts: ModelInfoFacts, supportsThinking: boo
     ...((chat || model.toolCalling !== undefined) && { toolCalling: model.toolCalling !== false }),
     ...((chat || model.thinking !== undefined) && { thinking: thinking !== false }),
     ...(chat && { contextWindow: contextWindowOf(model) }),
+    ...(chatImages && { images: chatImages }),
     ...(unknown.length > 0 && { unknown }),
     ...(facts.toggles !== undefined && facts.toggles.length > 0 && { toggles: facts.toggles }),
     ...(model.unsupportedSettings && { togglesNotTaken: model.unsupportedSettings }),

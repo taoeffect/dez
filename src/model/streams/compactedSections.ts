@@ -48,15 +48,18 @@ import { contextImageCost, type PictureBudget } from './pictureBudget'
 // counts its image and picture parts (`contextImageCost`): an `@id`
 // mention of the user adds an image part only when no reference sent that
 // image, so the cost of a message is not the sum of its assets.
-// 1. The message must be in the limits of one request. While it is not,
-//    one more image of `U0` and `U1` goes as text (the kept mark; the user
-//    still sees it at its place), from the last image of `U0` back to the
-//    first image of `U1`. An image that Dez cannot read goes as text at
-//    once: a request with it would fail each time.
-// 2. The `show` assets get at most half of the limits, so that the reply
-//    can still view pictures, in the order of the answer's lines. One that
-//    does not fit is kept as text, and a smaller one after it can still
-//    fit.
+// 1. The message must be in the limits of a compacted conversation
+//    (`compactedPictureLimits`, pictureBudget.ts): a share of the limits
+//    of one request, so that the reply can still view pictures and the
+//    next compaction is due only after new ones came, and at most the
+//    images of one message. While it is not, one more image of `U0` and
+//    `U1` goes as text (the kept mark; the user still sees it at its
+//    place), from the last image of `U0` back to the first image of `U1`.
+//    An image that Dez cannot read goes as text at once: a request with
+//    it would fail each time.
+// 2. The `show` assets get what the images of step 1 leave of those
+//    limits, in the order of the answer's lines. One that does not fit is
+//    kept as text, and a smaller one after it can still fit.
 
 /** What `compactedSections` needs. */
 export interface CompactedSectionsInput {
@@ -80,10 +83,9 @@ export interface CompactedSectionsInput {
   clipPictures: ReadonlyMap<string, ShownPicture>
   /** The model reads images. Else no asset is shown. */
   sendImages: boolean
-  /** The picture limits of one request to the model (`pictureLimits`). */
+  /** The most that the images and the pictures of the compaction message
+   *  can cost (`compactedPictureLimits`). */
   limits: PictureBudget
-  /** The most images of one request to the model (`requestImageLimit`). */
-  imageLimit: number
   /** How the model counts the tokens of an image. */
   rule: ImageTokenRule
   /** How many bytes a request sends for each image of the sections that
@@ -250,7 +252,6 @@ export function compactedSections(input: CompactedSectionsInput): CompactedSecti
   )
 
   // 1. The images of the kept messages of the user.
-  const messageLimits: PictureBudget = { ...input.limits, pictures: Math.min(input.limits.pictures, input.imageLimit) }
   const images = [
     ...(last !== null && scope.last !== null ? messageImages(last, scope.last) : []),
     ...(first !== null && scope.first !== null ? messageImages(first, scope.first) : []),
@@ -259,7 +260,7 @@ export function compactedSections(input: CompactedSectionsInput): CompactedSecti
   const asPixels = images.filter(({ key }) => !asText.has(key))
   const noShown: ReadonlySet<string> = new Set()
   let fixed = costOf({ shown: noShown, asText })
-  while (isOver(fixed, messageLimits) && asPixels.length > 0) {
+  while (isOver(fixed, input.limits) && asPixels.length > 0) {
     asText.add((asPixels.pop() as { key: string }).key)
     fixed = costOf({ shown: noShown, asText })
   }
@@ -267,17 +268,11 @@ export function compactedSections(input: CompactedSectionsInput): CompactedSecti
   // 2. The `show` assets.
   const shown = new Set<string>()
   if (input.sendImages) {
-    const share = (limit: number, messageLimit: number, spent: number) => spent + Math.min(Math.floor(limit / 2), messageLimit - spent)
-    const cap: PictureBudget = {
-      tokens: share(input.limits.tokens, messageLimits.tokens, fixed.tokens),
-      bytes: share(input.limits.bytes, messageLimits.bytes, fixed.bytes),
-      pictures: share(input.limits.pictures, messageLimits.pictures, fixed.pictures),
-    }
     const wanted = choices.filter((choice) => choice.decision === 'show' && !isMessageImage(choice)).sort((a, b) => a.rank - b.rank)
     for (const { asset } of wanted) {
       const found = asset.asset
       if (found.kind === 'image' ? !imageBytes.has(found.reference.path) : !clipPictures.has(found.id)) continue
-      if (!isOver(costOf({ shown: new Set([...shown, found.id]), asText }), cap)) shown.add(found.id)
+      if (!isOver(costOf({ shown: new Set([...shown, found.id]), asText }), input.limits)) shown.add(found.id)
     }
   }
 

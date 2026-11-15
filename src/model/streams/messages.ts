@@ -6,12 +6,14 @@ import { findAssetMentions, type AssetMention } from '../chat/imageMentions'
 import { findImageReferences, IMAGE_TOOL_KEY, type ImageReference } from '../chat/images'
 import { findMediaTags, MEDIA_TOOL_ATTRIBUTE, mediaTagRequestText, mediaTagsForRequest, type MediaTag } from '../chat/mediaTags'
 import { sameModelRef } from '../chat/modelRef'
+import { SHOWN_PICTURE_OVER_LIMIT_NOTE } from '../chat/shownPictures'
 import { holdsStoredFilePath, withoutStoredFilePaths } from '../chat/storedFilePaths'
 import { thinkingField } from '../chat/thinking'
 import { EMPTY_TOOL_RESULT, INTERRUPTED_TOOL_RESULT, agentTextForRequest, modelTextForRequest, splitToolBlocks, type ToolBlock } from '../chat/toolBlocks'
 import type { ClipAttachment } from '../providers/clipInputs'
 import { minInputImages } from '../providers/clipImages'
-import type { ClipInputRules, MediaKind } from '../providers/types'
+import { imageLimitOf, messageImageLimitOf } from '../providers/modelFamilies'
+import type { ClipInputRules, MediaKind, ModelInfo } from '../providers/types'
 import { madeAssetIds } from '../tools/jobs'
 import type { ToolCall, ToolResult } from '../tools/types'
 import { conversationAssets, preparedMediaRequest, type MediaRequestInput } from './mediaRequest'
@@ -25,15 +27,23 @@ export interface RequestOptions {
   // False when the request offers no tools: an agent section's tool calls
   // then go as text (agentSectionMessages).
   sendTools: boolean
-  // The id of the agent section of the reply that runs: the one section
-  // whose `asset_view` pictures go (`agentSectionMessages`). Absent when
-  // no reply runs, and for the request of a new reply.
-  picturesOfSection?: string
-  // The most image and picture parts that the compaction message and the
-  // user messages have together (`requestImageLimit`, pictureBudget.ts).
-  // An image after them goes as its text only, and
+  // The most image and picture parts that the messages of the request
+  // have together (`imageLimitOf`, providers/modelFamilies.ts). A part
+  // over it does not go (`takesPart`), and
   // `RequestMessages.imagesOverLimit` counts it. Absent: no limit.
   imageLimit?: number
+  // The most image and picture parts of one message: a user message, the
+  // compaction message, or the picture message of a round
+  // (`messageImageLimitOf`). A part over it does not go either. Absent:
+  // no limit.
+  messageImageLimit?: number
+}
+
+/** The image rules of a request to `model` (its entry of the model cache,
+ *  or only its id): whether its images go, and its two image limits. A
+ *  model that the cache does not know not to read images gets them. */
+export function imageOptionsOf(model: Pick<ModelInfo, 'id' | 'imageInput' | 'imageLimit' | 'messageImageLimit' | 'learnedImageLimit'>): Pick<RequestOptions, 'sendImages' | 'imageLimit' | 'messageImageLimit'> {
+  return { sendImages: model.imageInput !== false, imageLimit: imageLimitOf(model), messageImageLimit: messageImageLimitOf(model) }
 }
 
 // The request messages: every section that has text, in order. No path of a
@@ -56,16 +66,19 @@ export interface RequestOptions {
 // formats take images only from the user. So to show a model an image that
 // a model made, the user mentions it in a message, or the model calls
 // `asset_view`, whose pictures go as `user` messages after the tool
-// results of their round, from their saved copies, while the reply of the
-// call runs (`agentSectionMessages`, `picturesOfSection`). A clip adds no
-// part, neither its tag nor a mention of it (`@b`): only a media request
-// sends clips (`messageClips`, `mediaRequestInput`), so the bytes of a
-// chat request do not depend on them.
+// results of their round, from their saved copies
+// (`agentSectionMessages`). They go in every later request of the
+// conversation too, until a compaction takes their round out. A clip adds
+// no part, neither its tag nor a mention of it (`@b`): only a media
+// request sends clips (`messageClips`, `mediaRequestInput`), so the bytes
+// of a chat request do not depend on them.
 //
-// A request has a limit of its images (`RequestOptions.imageLimit`). The
-// parts are counted in the order of the messages, so when a conversation
-// holds more images than the limit, the newest ones go as text only, and
-// the messages before them keep their bytes.
+// A request has two limits of its image and picture parts: the count of
+// all its messages (`RequestOptions.imageLimit`), and the count of one
+// message (`messageImageLimit`). The parts are counted in the order of
+// the messages, so when a conversation holds more of them than a limit,
+// the newest ones of the request, or the last ones of a message, do not
+// go, and the messages before them keep their bytes.
 //
 // A compacted conversation (chat/compaction.ts) starts with its compaction
 // section, an agent section, and both wire formats need a `user` message
@@ -88,15 +101,13 @@ export interface RequestOptions {
 //
 // Prompt cache: a message of the sections is the same bytes in every later
 // request: it is built from its own section and the sections before it,
-// and it keeps its image parts when a newer message comes (the bytes of an
-// image part are the same at each read, `chatImage`,
+// and it keeps its image parts, and a round its picture message, when a
+// newer message comes (the bytes of an image part and of a picture copy
+// are the same at each read; `chatImage` and `shownPicturePart`,
 // providers/selectors.ts). So the signed thinking replays go back too
-// (their prefix is the same; `wireChat`, apiFormats.ts). The one
-// exception: the picture messages of `asset_view` hold inside a reply (a
-// copy is the same bytes at each read), and are gone from the next one.
-// The compaction message never changes by itself: its sections end at the
-// first agent section after them, so a newer user message is no part of
-// it.
+// (their prefix is the same; `wireChat`, apiFormats.ts). The compaction
+// message never changes by itself: its sections end at the first agent
+// section after them, so a newer user message is no part of it.
 export function sectionsToStreamMessages(sections: Section[], requestModel: ModelRef, options: RequestOptions): Omit<RequestMessages, 'sendTools'> {
   let imagesLeftOut = 0
   let newestUserMessage: string | MessagePart[] = ''
@@ -106,7 +117,8 @@ export function sectionsToStreamMessages(sections: Section[], requestModel: Mode
   // the last one wins. Later sections are never read: a message must keep
   // its parts while the conversation after it grows.
   const imagesById = new Map<string, string>()
-  const images = newRequestImages(options.sendImages ? options.imageLimit : undefined)
+  // A model that reads no images gets no part, so no limit counts.
+  const images = options.sendImages ? newRequestImages(options.imageLimit, options.messageImageLimit) : newRequestImages()
   const sentSections = sections.filter((section) => !sectionIsEmpty(section))
   const newestUser = sentSections.findLastIndex((section) => section.role === 'user')
   // The compaction message, and the index after its last section. A
@@ -127,7 +139,7 @@ export function sectionsToStreamMessages(sections: Section[], requestModel: Mode
       return
     }
     if (section.role === 'agent') {
-      messages.push(...agentSectionMessages(section, requestModel, options.sendTools, options.sendImages && section.id === options.picturesOfSection))
+      messages.push(...agentSectionMessages(section, requestModel, options.sendTools, options.sendImages ? images : null))
       return
     }
     // A message with no image part goes as this text.
@@ -138,6 +150,7 @@ export function sectionsToStreamMessages(sections: Section[], requestModel: Mode
       compaction.pendingText += isCarriedUserAssets(text) ? '\n\n' : `\n\n${COMPACTION_USER_MESSAGE_LABEL}\n`
       addUserText(compaction, text, imagesById, images, true)
     } else {
+      startMessage(images)
       messages.push({ role: 'user', content: (options.sendImages ? userMessageContent(text, imagesById, images) : null) ?? textOnly() })
     }
     if (index !== newestUser) return
@@ -158,33 +171,50 @@ export function sectionsToStreamMessages(sections: Section[], requestModel: Mode
   return { messages, imagesLeftOut, imagesOverLimit: images.overLimit.size, newestUserMessage }
 }
 
-// The image and picture parts of the messages of one request while they
-// are built.
-interface RequestImages {
+/** The image and picture parts of the messages of one request while they
+ *  are built: which images have a part, and how many more parts the
+ *  request and the message at hand take. */
+export interface RequestImages {
   // The images that a message has a part for. An image goes one time in a
   // request, so a later message sends it as text only.
   sent: Set<string>
   // How many image and picture parts the messages can still get
   // (`RequestOptions.imageLimit`).
   left: number
+  // The most parts of one message (`RequestOptions.messageImageLimit`),
+  // and how many the message at hand has.
+  messageLimit: number
+  inMessage: number
   // The images (their paths) and the pictures (the names of their copies)
-  // that got no part because none was left.
+  // that got no part, because the request or their message was full.
   overLimit: Set<string>
 }
 
-function newRequestImages(limit = Infinity): RequestImages {
-  return { sent: new Set(), left: limit, overLimit: new Set() }
+/** The parts of a request that takes at most `limit` of them, and at most
+ *  `messageLimit` in one message, before its first message. */
+export function newRequestImages(limit = Infinity, messageLimit = Infinity): RequestImages {
+  return { sent: new Set(), left: limit, messageLimit, inMessage: 0, overLimit: new Set() }
 }
 
-// Whether the request still takes a part for the image or the picture
-// `key` (a path, or the name of a picture copy). A part that it takes
-// counts against the limit.
+// Starts the count of the parts of a new message. The compaction message
+// is one message of several sections, so its sections share one count.
+function startMessage(images: RequestImages): void {
+  images.inMessage = 0
+}
+
+// Whether the message at hand still takes a part for the image or the
+// picture `key` (a path, or the name of a picture copy). A part that it
+// takes counts against both limits. An image that got no part in a full
+// message can get one in a later message that names it; it is then no
+// longer left out.
 function takesPart(images: RequestImages, key: string): boolean {
-  if (images.left <= 0) {
+  if (images.left <= 0 || images.inMessage >= images.messageLimit) {
     images.overLimit.add(key)
     return false
   }
   images.left -= 1
+  images.inMessage += 1
+  images.overLimit.delete(key)
   return true
 }
 
@@ -345,17 +375,23 @@ export function messageClips(sections: readonly Section[]): ClipAttachment[] {
  *  each block as text, and sends no thinking: a request with no tool
  *  definitions cannot hold tool calls.
  *
- *  With `sendPictures`, a round whose `asset_view` blocks name the saved
- *  copies of their pictures (`ToolBlock.pictures`) gets one `user` message
- *  right after its tool message: each picture after its label. The
- *  Anthropic format joins that message to the tool results before it
+ *  With `images`, a round whose `asset_view` blocks name the saved copies
+ *  of their pictures (`ToolBlock.pictures`) gets one `user` message right
+ *  after its tool message: each picture after its label. The Anthropic
+ *  format joins that message to the tool results before it
  *  (`withResultsJoined`, providers/apiFormats.ts). `dez.provider/streamChat`
  *  reads the copies, so each request that holds the round sends the same
  *  bytes: the prompt cache needs them, and so do the thinking replays, as
  *  a replay goes back only while the request before it hashes to its
- *  `prefixHash` (`wireChat`). A request with no tools sends no pictures:
- *  a call that is text has no round to put them after. */
-export function agentSectionMessages(section: Section, requestModel: ModelRef, sendTools: boolean, sendPictures = false): StreamMessage[] {
+ *  `prefixHash` (`wireChat`). `images` counts the picture parts against
+ *  the image limits of the request (`takesPart`), and a picture over one
+ *  goes as its label and a note. A picture is made only within what the
+ *  context has left (streams/pictureBudget.ts), so that happens only for
+ *  a model with lower limits than the one of the reply. A request with no
+ *  tools sends no pictures: a call that is text has no round to put them
+ *  after. With no `images` (a model that reads no images), no picture
+ *  goes. */
+export function agentSectionMessages(section: Section, requestModel: ModelRef, sendTools: boolean, images: RequestImages | null = null): StreamMessage[] {
   const rounds = agentRounds(sectionPlainText(section))
   // The first group's blocks are always in the first round; a section that
   // ends at its first group has only that round.
@@ -369,20 +405,23 @@ export function agentSectionMessages(section: Section, requestModel: ModelRef, s
       { role: 'agent', content, ...thinking, toolCalls: round.blocks.map(toolCall) },
       { role: 'tool', results: round.blocks.map(toolResult) },
     ]
-    const pictures = sendPictures ? round.blocks.flatMap(pictureParts) : []
+    if (images === null) return messages
+    startMessage(images)
+    const pictures = round.blocks.flatMap((block) => pictureParts(block, images))
     if (pictures.length > 0) messages.push({ role: 'user', content: pictures })
     return messages
   })
 }
 
 // The parts of the pictures that the call of `block` showed its model:
-// the label of each picture, then the picture by its saved copy. A label
-// is text of the block, which the user can edit, so it gets the path scrub
-// as every request text does.
-function pictureParts(block: ToolBlock): MessagePart[] {
+// the label of each picture, then the picture by its saved copy, or a
+// note when the request takes no more parts (`images`). A label is text
+// of the block, which the user can edit, so it gets the path scrub as
+// every request text does.
+function pictureParts(block: ToolBlock, images: RequestImages): MessagePart[] {
   return (block.pictures ?? []).flatMap((picture): MessagePart[] => [
     { type: 'text', text: withoutStoredFilePaths(picture.label) },
-    { type: 'picture', picture },
+    takesPart(images, picture.file) ? { type: 'picture', picture } : { type: 'text', text: SHOWN_PICTURE_OVER_LIMIT_NOTE },
   ])
 }
 
@@ -586,13 +625,17 @@ function userMessageContent(text: string, imagesById: ReadonlyMap<string, string
 // mark adds no part: only its text goes. A mention of that image then
 // adds the part, as for an image that the text does not hold.
 //
-// An image that is over the limit of `images` adds no part (`takesPart`).
+// An image that is over a limit of `images` adds no part (`takesPart`),
+// and it is not marked as sent: a later message that names it can still
+// give it its part.
 function addUserText(list: PartList, text: string, imagesById: ReadonlyMap<string, string>, images: RequestImages, keptAsText = false): void {
   const pieces = messageTextPieces(text)
   const sendsImage = (piece: Extract<MessageTextPiece, { kind: 'reference' }>) => !(keptAsText && piece.kept) && !images.sent.has(piece.path)
-  // The images that the references of this text send. `images.sent` gets
-  // them only after the text, so that each of their references sends.
+  // The images that the references of this text send, and the ones of
+  // them that got a part. `images.sent` gets the second ones only after
+  // the text, so that each of their references sends.
   const own = new Set<string>()
+  const taken = new Set<string>()
   for (const piece of pieces) {
     if (piece.kind === 'reference' && sendsImage(piece)) own.add(piece.path)
   }
@@ -603,7 +646,10 @@ function addUserText(list: PartList, text: string, imagesById: ReadonlyMap<strin
         break
       case 'reference':
         list.pendingText += piece.text
-        if (sendsImage(piece) && takesPart(images, piece.path)) addAttachment(list, { type: 'image', path: piece.path })
+        if (sendsImage(piece) && takesPart(images, piece.path)) {
+          taken.add(piece.path)
+          addAttachment(list, { type: 'image', path: piece.path })
+        }
         break
       case 'gap': {
         // An image part after each mention that adds one.
@@ -620,7 +666,7 @@ function addUserText(list: PartList, text: string, imagesById: ReadonlyMap<strin
       }
     }
   }
-  for (const path of own) images.sent.add(path)
+  for (const path of taken) images.sent.add(path)
 }
 
 // A run of the text of a user message, as a request reads it: a media tag,

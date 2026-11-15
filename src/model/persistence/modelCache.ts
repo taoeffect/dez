@@ -126,13 +126,14 @@ const modelPriceSchema = z.union([
   z.object({ unit: z.enum(SINGLE_PRICE_UNITS), usd: priceNumberSchema, note: priceNoteSchema }),
 ])
 
-// A count of a model (`ModelInfo.contextWindow`, `ModelInfo.imageLimit`).
+// A count of a model (`ModelInfo.contextWindow`, `ModelInfo.imageLimit`,
+// `ModelInfo.messageImageLimit`).
 const modelCountSchema = z.number().int().positive().optional().catch(undefined)
 
 // The transform drops the `clips` key of a model whose clip rules have no
 // kind left, and a `released`, `learnedImageLimit`, `price`,
-// `contextWindow`, or `imageLimit` key whose value was bad, which Zod would
-// keep with an undefined value.
+// `contextWindow`, `imageLimit`, or `messageImageLimit` key whose value was
+// bad, which Zod would keep with an undefined value.
 const modelInfoSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -161,7 +162,8 @@ const modelInfoSchema = z.object({
   // A bad value drops only the number: the next model check reads it again.
   contextWindow: modelCountSchema,
   imageLimit: modelCountSchema,
-}).transform(({ released, clips, learnedImageLimit, price, contextWindow, imageLimit, ...model }) => ({
+  messageImageLimit: modelCountSchema,
+}).transform(({ released, clips, learnedImageLimit, price, contextWindow, imageLimit, messageImageLimit, ...model }) => ({
   ...model,
   ...(released && { released }),
   ...(clips && { clips }),
@@ -169,6 +171,7 @@ const modelInfoSchema = z.object({
   ...(price && { price }),
   ...(contextWindow && { contextWindow }),
   ...(imageLimit && { imageLimit }),
+  ...(messageImageLimit && { messageImageLimit }),
 }))
 
 // Individually drop invalid models (e.g. a bad provider id) instead of failing

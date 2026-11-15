@@ -15,7 +15,7 @@ const FAILING = providerInfo('failing', 'Failing')
 const PROVIDERS = [OPENROUTER, CLOSED, FAILING]
 
 // Model ids can hold `/`; provider ids cannot.
-const GEMINI: ModelInfo = { id: 'google/gemini-3-pro', name: 'Gemini 3 Pro', provider: OPENROUTER.id, released: '2025-11-18', imageInput: true, outputs: ['text', 'image'], request: 'chat', contextWindow: 1_048_576 }
+const GEMINI: ModelInfo = { id: 'google/gemini-3-pro', name: 'Gemini 3 Pro', provider: OPENROUTER.id, released: '2025-11-18', imageInput: true, outputs: ['text', 'image'], request: 'chat', contextWindow: 1_048_576, imageLimit: 3000 }
 const UNKNOWN: ModelInfo = { id: 'mystery', name: 'Mystery', provider: OPENROUTER.id }
 const VIDEO: ModelInfo = {
   id: 'x-ai/grok-video',
@@ -136,14 +136,14 @@ describe('modelInfoText', () => {
       id: 'openrouter/google/gemini-3-pro',
       name: 'Gemini 3 Pro',
       provider: { id: 'openrouter', name: 'OpenRouter' },
-      dez: { request: 'chat', outputs: ['text', 'image'], inputs: ['text', 'image'], released: '2025-11-18', imageInput: true, toolCalling: true, thinking: true, contextWindow: 1_048_576, unknown: ['toolCalling', 'thinking'] },
+      dez: { request: 'chat', outputs: ['text', 'image'], inputs: ['text', 'image'], released: '2025-11-18', imageInput: true, toolCalling: true, thinking: true, contextWindow: 1_048_576, images: { maxImagesPerRequest: 3000 }, unknown: ['toolCalling', 'thinking'] },
       usage: modelUsage(GEMINI, chatFacts),
       providerEntry: entry,
     }, null, 2))
   })
 
   // An unknown release date has no value: Dez does not act on it. The
-  // window is the one of a model of no known family.
+  // window and the image limit are the ones of a model of no known family.
   it('gives each fact that the provider does not tell the value that Dez acts on, and names it in `unknown`', () => {
     expect(parsed(modelInfoText(OPENROUTER, UNKNOWN, { entry: { id: 'mystery' } })).dez).toStrictEqual({
       request: 'chat',
@@ -153,6 +153,7 @@ describe('modelInfoText', () => {
       toolCalling: true,
       thinking: true,
       contextWindow: 200_000,
+      images: { maxImagesPerRequest: 20 },
       unknown: ['request', 'outputs', 'released', 'imageInput', 'toolCalling', 'thinking', 'contextWindow'],
     })
   })
@@ -172,9 +173,10 @@ describe('modelInfoText', () => {
       toolCalling: true,
       thinking: false,
       contextWindow: 200_000,
+      images: { maxImagesPerRequest: 20 },
       unknown: ['request', 'outputs', 'released', 'imageInput', 'toolCalling', 'contextWindow'],
     })
-    expect(facts(thinker)).toStrictEqual({ request: 'chat', outputs: ['text', 'image'], inputs: ['text', 'image'], released: '2025-11-18', imageInput: true, toolCalling: true, thinking: false, contextWindow: 1_048_576 })
+    expect(facts(thinker)).toStrictEqual({ request: 'chat', outputs: ['text', 'image'], inputs: ['text', 'image'], released: '2025-11-18', imageInput: true, toolCalling: true, thinking: false, contextWindow: 1_048_576, images: { maxImagesPerRequest: 3000 } })
   })
 
   it('gives the toggles that apply, with their values, and the toggles that the model does not take', () => {
@@ -190,8 +192,37 @@ describe('modelInfoText', () => {
       toolCalling: false,
       thinking: false,
       contextWindow: 1_048_576,
+      images: { maxImagesPerRequest: 3000 },
       toggles,
       togglesNotTaken: ['webSearch'],
+    })
+  })
+
+  // A chat request has two image limits; a media request has its own
+  // rules under the same name.
+  describe('the image limits of a chat model', () => {
+    const images = (model: ModelInfo) => parsed(modelInfoText(OPENROUTER, model, { entry: { id: model.id } })).dez.images
+
+    it('gives the limit of one message only when it is under the limit of a request', () => {
+      expect(images({ ...GEMINI, messageImageLimit: 10 })).toStrictEqual({ maxImagesPerRequest: 3000, maxImagesPerMessage: 10 })
+      expect(images({ ...GEMINI, messageImageLimit: 5000 })).toStrictEqual({ maxImagesPerRequest: 3000 })
+    })
+
+    // A message with more images than a refusal of the provider told
+    // does not go.
+    it('gives the count of a refusal of the provider as the limit of one message', () => {
+      expect(images({ ...GEMINI, learnedImageLimit: { maxImages: 4, entry: '0badf00d' } })).toStrictEqual({ maxImagesPerRequest: 3000, maxImagesPerMessage: 4 })
+    })
+
+    it('gives no limit of a request to a model whose family has none', () => {
+      const grok: ModelInfo = { id: 'x-ai/grok-4', name: 'Grok 4', provider: OPENROUTER.id, outputs: ['text'], request: 'chat', imageInput: true }
+
+      expect(images(grok)).toBeUndefined()
+      expect(images({ ...grok, messageImageLimit: 10 })).toStrictEqual({ maxImagesPerMessage: 10 })
+    })
+
+    it('gives none to a model that reads no images', () => {
+      expect(images({ ...GEMINI, imageInput: false })).toBeUndefined()
     })
   })
 

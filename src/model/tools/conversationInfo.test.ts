@@ -3,7 +3,7 @@ import { pictureBudgetLeftText } from './assetView'
 import { conversationInfoText, type ConversationInfoFacts } from './conversationInfo'
 import type { JobInfo } from './jobs'
 
-const BUDGET = { pictures: 12, tokens: 57_408, bytes: 3 * 1024 ** 2 }
+const BUDGET = { left: { pictures: 12, tokens: 57_408, bytes: 3 * 1024 ** 2 }, roundPictures: 12 }
 
 const text = (facts: Partial<ConversationInfoFacts> = {}) => conversationInfoText({
   contextSize: { tokens: 81_234, estimated: true },

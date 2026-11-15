@@ -4,6 +4,7 @@ import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { MAX_REQUEST_IMAGE_BYTES } from '../../src/model/streams/pictureBudget'
 import { ASSET_INFO_COLUMNS } from '../../src/model/tools/assetInfo'
+import { pictureBudgetLeftText, PICTURES_SHOWN_NOTE } from '../../src/model/tools/assetView'
 import { jobStartedText, jobsWaitResults, startedJobId, type JobResult } from '../../src/model/tools/jobs'
 import { REFUSED_DEVICES, REFUSED_PROTOCOLS } from '../../src/model/tools/videoTool'
 import { byteSizeText } from '../../src/utils/byteSize'
@@ -50,7 +51,8 @@ import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolC
 // - `asset_view` shows the model an image as it is, the frame sheet of a
 //   video clip, and the wave of an audio clip, with the times of the
 //   frames and the loudness from the log of the same ffmpeg, in each later
-//   request of the reply and in no request of the next reply;
+//   request of the reply and, as the same bytes at the same place, in the
+//   request of the next reply;
 // - on a clip of 4 shots that the spec makes with that ffmpeg, `asset_view`
 //   shows the frames at given times (`times`), one frame for each shot
 //   (`scenes`) with the wave of the sound as a strip under them, the
@@ -115,9 +117,9 @@ const TONE_ARGS = '-v error -y -f lavfi -i sine=frequency=440:duration=1'.split(
 type ShotId = 'a' | 'b' | 'c' | 'd' | 'e'
 const SHOT_IDS: ShotId[] = ['a', 'b', 'c', 'd', 'e']
 
-// The line of an `asset_view` result after the lines of its assets.
-const VIEW_END_LINE = 'You see each picture after the results of the calls of this round, after a line that names it. '
-  + 'You see the pictures in this reply only. In a later reply, call asset_view again to see them again.'
+// The last line of an `asset_view` result: what is left of the picture
+// budget, in a round that takes as many pictures as the budget has.
+const budgetLine = (pictures: number, tokens: number, bytes: number) => pictureBudgetLeftText({ left: { pictures, tokens, bytes }, roundPictures: pictures })
 
 // The loudness line of `asset_view` for the part `part` of a clip.
 const loudnessLine = (part: string) => new RegExp(`^Loudness of ${part}: -\\d+(\\.\\d)? LUFS integrated, \\d+(\\.\\d)? LU range, -\\d+(\\.\\d)? dBFS true peak\\.$`)
@@ -547,7 +549,7 @@ describe('video tool', () => {
     await expectCleanEnd(files)
   })
 
-  it('shows the model an image, the frame sheet of a video clip, and the wave of a clip that the reply made, in the later requests of the reply only', async () => {
+  it('shows the model an image, the frame sheet of a video clip, and the wave of a clip that the reply made, in the later requests of the reply and in the next reply', async () => {
     const files = await openClips('asset-view')
     await submit(browser, 'Make a tone, and check it and my clips.')
     const tone = await runJob(await chatRequest(), 'call_tone', 'ffmpeg', { arguments: '-f lavfi -i sine=frequency=440:duration=1 tone.wav' })
@@ -568,7 +570,7 @@ describe('video tool', () => {
     // A sine at the default level of the lavfi source, an eighth of the
     // full scale: about -18 dBFS.
     expect(loudness).toMatch(/^Loudness of 0 s to 1 s: -\d+(\.\d)? LUFS integrated, \d+(\.\d)? LU range, -1[78](\.\d)? dBFS true peak\.$/)
-    expect(end).toBe(VIEW_END_LINE)
+    expect(end).toBe(PICTURES_SHOWN_NOTE)
 
     // The pictures are one user message right after the tool message, with
     // a line that names each one.
@@ -593,8 +595,7 @@ describe('video tool', () => {
     // pictures and 48,864 tokens. The sheet costs 47 * 9 = 423 tokens, the
     // picture of the image 2 * 2 = 4, and the wave 29 * 8 = 232; the bytes
     // are those of the base64 data.
-    const bytesLeft = MAX_REQUEST_IMAGE_BYTES - userImageBytes(PICTURE_PNG) - bytes
-    expect(budget).toBe(`Picture budget left in this reply: 16 pictures, 48,205 tokens and ${byteSizeText(bytesLeft)} of base64.`)
+    expect(budget).toBe(budgetLine(16, 48_205, MAX_REQUEST_IMAGE_BYTES - userImageBytes(PICTURE_PNG) - bytes))
 
     // The next request of the reply sends the same messages again, the
     // pictures at the same place.
@@ -606,16 +607,20 @@ describe('video tool', () => {
     await sendChatReply(after.reply, CALLER.modelName)
     const reply = await endedReply(browser, CLIPS_REPLY_INDEX)
     // The conversation holds no picture: only the block of the call names
-    // the copies, which the requests of this reply read and its panel
-    // shows, in an attribute that no request sends.
+    // the copies, which the requests of the conversation read and its
+    // panel shows, in an attribute that no request sends.
     expect(reply.replace(/ pictures="[^"]*"/, '')).not.toContain('asset_view: ')
 
-    // The next reply gets no picture: only the reply of a call sends them.
-    // Its request holds only the image of the user's message.
+    // The request of the next reply sends the messages of the reply
+    // again, with the pictures at the same place and as the same bytes:
+    // the model still sees them, and the prompt cache of the provider
+    // still holds.
     await submit(browser, 'Thanks.')
     const next = await chatRequest()
-    expect(sentImageUrls(next.body)).toStrictEqual([`data:image/png;base64,${PICTURE_PNG.toString('base64')}`])
-    expect(next.body).not.toContain('asset_view: the')
+    const { messages: nextMessages }: { messages: WireMessage[] } = JSON.parse(next.body)
+    expect(nextMessages.slice(0, afterMessages.length)).toStrictEqual(afterMessages)
+    expect(nextMessages.slice(afterMessages.length).map(({ role }) => role)).toStrictEqual(['assistant', 'user'])
+    expect(sentImageUrls(next.body)).toStrictEqual([`data:image/png;base64,${PICTURE_PNG.toString('base64')}`, sheetUrl, imageUrl, waveUrl])
     await sendChatReply(next.reply, CALLER.modelName)
     await endedReply(browser, CLIPS_REPLY_INDEX + 2)
     await expectCleanEnd(files)
@@ -664,11 +669,11 @@ describe('video tool', () => {
     // of its call and of the calls before it: the sheet of the shots costs
     // 47 * 15 = 705 tokens, the sheet of the times 23 * 9 = 207, and the
     // spectrogram 39 * 12 = 468.
-    const budgetLine = (pictures: number, tokens: string, sent: readonly string[]) => {
-      const left = MAX_REQUEST_IMAGE_BYTES - userImageBytes(shotSources.c) - userImageBytes(shotSources.e)
-        - sent.reduce((sum, url) => sum + url.split(',')[1].length, 0)
-      return `Picture budget left in this reply: ${pictures} pictures, ${tokens} tokens and ${byteSizeText(left)} of base64.`
-    }
+    const leftAfter = (pictures: number, tokens: number, sent: readonly string[]) => budgetLine(
+      pictures,
+      tokens,
+      MAX_REQUEST_IMAGE_BYTES - userImageBytes(shotSources.c) - userImageBytes(shotSources.e) - sent.reduce((sum, url) => sum + url.split(',')[1].length, 0),
+    )
     const shotsLine = `@a | video | WebM | 4 s | 48x36 | 5 fps | vp9 | sound (opus) | ${byteSizeText(shotSources.a.length)}`
     expect(toolResult(viewed, 'call_scenes').split('\n')).toStrictEqual([
       shotsLine,
@@ -677,16 +682,16 @@ describe('video tool', () => {
         + 'Under the frames: the wave of the sound of 0 s to 4 s, a strip of 1292x160 pixels; '
         + 'time runs left to right over the whole width of the sheet, and the height is the peak level on a square-root scale.',
       expect.stringMatching(loudnessLine('0 s to 4 s')),
-      VIEW_END_LINE,
-      budgetLine(17, '45,023', [scenesUrl]),
+      PICTURES_SHOWN_NOTE,
+      leftAfter(17, 45_023, [scenesUrl]),
     ])
     // With `times`, the loudness is of the whole clip.
     expect(toolResult(viewed, 'call_times').split('\n')).toStrictEqual([
       shotsLine,
       'Frame sheet of the first frame at or after each of `times` 0.5, 2.5 s: 2 frames in one row, at 0.6, 2.6 s.',
       expect.stringMatching(loudnessLine('0 s to 4 s')),
-      VIEW_END_LINE,
-      budgetLine(16, '44,816', [scenesUrl, timesUrl]),
+      PICTURES_SHOWN_NOTE,
+      leftAfter(16, 44_816, [scenesUrl, timesUrl]),
     ])
     expect(toolResult(viewed, 'call_spectrogram').split('\n')).toStrictEqual([
       `@b | audio | WAV | 1 s | pcm_s16le | 44100 Hz | 1 channel | ${byteSizeText(shotSources.b.length)}`,
@@ -694,14 +699,14 @@ describe('video tool', () => {
         + 'the frequency runs bottom to top, on the axis at the left in Hz, on a linear scale; '
         + 'and the color is the level of each frequency, on the scale at the right in dBFS.',
       expect.stringMatching(loudnessLine('0 s to 1 s')),
-      VIEW_END_LINE,
-      budgetLine(15, '44,348', urls),
+      PICTURES_SHOWN_NOTE,
+      leftAfter(15, 44_348, urls),
     ])
     await sendChatReply(viewed.reply, CALLER.modelName)
     await endedReply(browser, CLIPS_REPLY_INDEX)
 
-    // Dez keeps a JPEG copy of each picture: the requests of the reply
-    // read it, and the panel of its chip shows it.
+    // Dez keeps a JPEG copy of each picture: the requests of the
+    // conversation read it, and the panel of its chip shows it.
     const copies = (await filesIn(viewsDir)).filter((name) => !viewsBefore.includes(name))
     expect(copies.map((name) => storedFileName('jpg').test(name))).toStrictEqual([true, true, true])
 
@@ -761,8 +766,8 @@ describe('video tool', () => {
       `@d | video | WebM | 2 s | 48x36 | 5 fps | vp9 | no sound | ${byteSizeText(WEBM_VIDEO.length)}`,
       `Frame sheet of 0 s to 2 s: ${colorSheet}.`,
       `Grid picture of 1292x560 pixels, top to bottom: ${map}.`,
-      VIEW_END_LINE,
-      `Picture budget left in this reply: 17 pictures, 44,788 tokens and ${byteSizeText(MAX_REQUEST_IMAGE_BYTES - userImageBytes(PICTURE_PNG) - userImageBytes(TALL_PNG) - bytes)} of base64.`,
+      PICTURES_SHOWN_NOTE,
+      budgetLine(17, 44_788, MAX_REQUEST_IMAGE_BYTES - userImageBytes(PICTURE_PNG) - userImageBytes(TALL_PNG) - bytes),
     ])
     await sendChatReply(viewed.reply, CALLER.modelName)
     await endedReply(browser, CLIPS_REPLY_INDEX)

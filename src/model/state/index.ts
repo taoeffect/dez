@@ -5,7 +5,7 @@
 import sbp from '@sbp/sbp'
 import { watch, type WatchStopHandle } from 'vue'
 import { debounce } from 'turtledash'
-import { streamIsStreaming, useStreamStore } from './streams'
+import { streamIsStreaming } from './streams'
 import { useModelCacheStore } from './modelCache'
 import { usePromptsStore, type Prompt } from './prompts'
 import { useSettingsStore, type DefaultModel, type SettingsSection, type Theme, type WindowGeometry } from './settings'
@@ -44,8 +44,7 @@ import { modelRefField, modelRefKey, parseModelRefKey } from '../chat/modelRef'
 import { thinkingField } from '../chat/thinking'
 import { cloneJsonObject } from '../../utils/json'
 import { estimatedRequestTokens } from '../streams/contextEstimate'
-import { sectionsToStreamMessages, type RequestOptions } from '../streams/messages'
-import { requestImageLimit } from '../streams/pictureBudget'
+import { imageOptionsOf, sectionsToStreamMessages } from '../streams/messages'
 import { BUILT_IN_SYSTEM_PROMPT, buildSystemPrompt, systemPromptProblem, systemPromptTemplate } from '../systemPrompt'
 import { TOOL_DEFINITIONS } from '../tools/registry'
 import type { StreamedToolCall } from '../tools/types'
@@ -189,7 +188,7 @@ function cloneRecords<Value>(records: Record<string, Record<string, Value>>): Re
 function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
   const {
     id, name, baseUrl, apiFormat, models, fetchModels, modelListQuery, modelImageInput, modelToolCalling,
-    modelThinking, modelOutputs, modelReadableName, modelReleased, modelTokenPrices, modelContextWindow, modelImageLimit, auth, headers, imageRequestHeaders,
+    modelThinking, modelOutputs, modelReadableName, modelReleased, modelTokenPrices, modelContextWindow, modelImageLimit, modelMessageImageLimit, auth, headers, imageRequestHeaders,
     maxOutputTokens, cacheBreakpoints, toolMessageCacheMark, promptCacheKey, requestBody, imageOutputBody,
     audioOutputs, mediaApi, settings, thinking,
     ...uncopied
@@ -216,6 +215,7 @@ function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
   if (modelTokenPrices) clone.modelTokenPrices = { ...modelTokenPrices }
   if (modelContextWindow) clone.modelContextWindow = { paths: [...modelContextWindow.paths] }
   if (modelImageLimit) clone.modelImageLimit = { paths: [...modelImageLimit.paths] }
+  if (modelMessageImageLimit) clone.modelMessageImageLimit = { paths: [...modelMessageImageLimit.paths] }
   if (headers) clone.headers = { ...headers }
   if (imageRequestHeaders) clone.imageRequestHeaders = { ...imageRequestHeaders }
   if (maxOutputTokens !== undefined) clone.maxOutputTokens = maxOutputTokens
@@ -500,10 +500,9 @@ function cachedModel(model: ModelRef): ModelInfo | undefined {
 //
 // The context size of a tab is the difference of two of these numbers on
 // top of a provider's count (`contextSize`), so both must come from here.
-// While a reply runs, its requests hold the pictures of its `asset_view`
-// calls, so the estimate holds them too (`picturesOfSection`), each by the
-// size of its saved copy. They leave the estimate at the end of the
-// reply, as the next request does not send them.
+// The requests hold the pictures of the `asset_view` calls of the
+// conversation until its next compaction, so the estimate holds them too,
+// each by the size of its saved copy.
 //
 // A tab with no model counts by the default family, with no system prompt
 // and no tools.
@@ -514,9 +513,7 @@ function tabContextEstimate(tab: Tab, model: ModelRef | null, answerCalls: reado
     return estimatedRequestTokens({ tools: [], messages, answerCalls }, DEFAULT_FAMILY)
   }
 
-  const session = useStreamStore().session(tab.id)
-  const picturesOfSection = session?.status === 'streaming' ? session.sectionId : undefined
-  const { messages, sendTools } = sbp('dez.model/streamMessagesForTab', tab.id, model, { picturesOfSection }) as RequestMessages
+  const { messages, sendTools } = sbp('dez.model/streamMessagesForTab', tab.id, model) as RequestMessages
   const tools = sendTools ? TOOL_DEFINITIONS : []
   // Only a chat request has a system prompt. A template with a problem
   // sends no request, and `buildSystemPrompt` throws for it.
@@ -1007,23 +1004,18 @@ export default sbp('sbp/selectors/register', {
   },
 
   // `model`: the model the request goes to. It decides what earlier thinking
-  // goes back, whether the images go and how many of them
-  // (`requestImageLimit`), and whether the tools go
+  // goes back, whether the images and the pictures go and how many of
+  // them (`imageOptionsOf`), and whether the tools go
   // (`dez.model/requestSendsTools`). A model that the model cache knows not
   // to read images gets only the text of each reference, with no path. An
   // unknown model (no flag, or not in the cache yet) gets the images.
-  // `options.picturesOfSection`: the section of the reply that runs, for
-  // the messages as that reply sends them; the request of a new reply
-  // gives none.
-  'dez.model/streamMessagesForTab' (tabId: string, model: ModelRef, options: Pick<RequestOptions, 'picturesOfSection'> = {}): RequestMessages {
+  'dez.model/streamMessagesForTab' (tabId: string, model: ModelRef): RequestMessages {
     const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
     if (!tab) return { messages: [], imagesLeftOut: 0, imagesOverLimit: 0, newestUserMessage: '', sendTools: false }
 
     const sendTools = sbp('dez.model/requestSendsTools', model) as boolean
-    const cached = cachedModel(model)
-    const sendImages = cached?.imageInput !== false
-    const imageLimit = requestImageLimit(cached ?? { id: model.modelId })
-    return { ...sectionsToStreamMessages(tab.sections, model, { ...options, sendImages, sendTools, imageLimit }), sendTools }
+    const options = { ...imageOptionsOf(cachedModel(model) ?? { id: model.modelId }), sendTools }
+    return { ...sectionsToStreamMessages(tab.sections, model, options), sendTools }
   },
 
   // Whether a chat request to `model` offers the Dez tools now: only to a

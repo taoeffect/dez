@@ -24,7 +24,7 @@ import {
 } from '../model/streams/compactionAssets'
 import { answerHasNotes, compactionInstruction, readCompactionAnswer } from '../model/streams/compactionRequest'
 import { conversationAssets, type FoundAsset } from '../model/streams/mediaRequest'
-import { pictureLimits, requestImageCount, requestImageLimit } from '../model/streams/pictureBudget'
+import { compactedPictureLimits, requestImageCount } from '../model/streams/pictureBudget'
 import type { StreamMessage } from '../model/streams/types'
 import { probedClipFacts, type ProbedClip } from '../model/tools/assetFacts'
 import { ASSET_INFO_TOOL } from '../model/tools/assetInfo'
@@ -307,12 +307,11 @@ export async function compactConversation(input: CompactionInput): Promise<Compa
   const reader = input.readerModel ?? model
   const cached = sbp('dez.model/modelCache/model', reader.providerId, reader.modelId) as ModelInfo | null
   const sendImages = cached?.imageInput !== false
-  const limits = pictureLimits(cached ?? { id: reader.modelId })
-  const imageLimit = requestImageLimit(cached ?? { id: reader.modelId })
+  const limits = compactedPictureLimits(cached ?? { id: reader.modelId })
   let clipPictures = new Map<string, ShownPicture>()
   try {
-    // The `show` assets get at most half of the pictures of a request.
-    if (sendImages) clipPictures = await saveClipPictures(choices, Math.floor(imageLimit / 2), signal)
+    // No more pictures than a compacted conversation can hold.
+    if (sendImages) clipPictures = await saveClipPictures(choices, limits.pictures, signal)
     // A stop while the copies were saved: the save takes no signal.
     signal.throwIfAborted()
     const compacted = compactedSections({
@@ -326,7 +325,6 @@ export async function compactConversation(input: CompactionInput): Promise<Compa
       clipPictures,
       sendImages,
       limits,
-      imageLimit,
       rule: modelFamily(reader.modelId).imageTokens,
       imageBytes,
       newId: () => crypto.randomUUID(),

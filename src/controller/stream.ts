@@ -12,23 +12,25 @@ import { effectiveOutputs } from '../model/modelOutputs'
 import { failedChatRequestCost, type ChatUsage } from '../model/providers/chatUsage'
 import { imagesText, TooManyImagesError, tooManyImagesMessage } from '../model/providers/clipImages'
 import { isProviderRefusal } from '../model/providers/errors'
-import { contextWindowOf, modelFamily } from '../model/providers/modelFamilies'
+import { contextWindowOf, imageLimitOf, messageImageLimitOf, modelFamily } from '../model/providers/modelFamilies'
 import { effectiveRequest } from '../model/providers/types'
 import { ExplainedError, errorText, explainedError } from '../utils/errorText'
 import type { ClipInputRules, GeneratedClip, GeneratedMedia, MediaKind, MediaProgress, ModelInfo, ModelRequest, ProviderGenerateMediaResult, ProviderStreamChatResult } from '../model/providers'
 import { getProvider, requireProvider } from '../model/providers/registry'
 import { compactionLeftFiles } from '../model/streams/compactionFiles'
 import { compactionReason, newestReplyModel, repliedSinceCompaction } from '../model/streams/compactionRequest'
-import { agentSectionMessages, mediaRequestInput, sectionsToStreamMessages } from '../model/streams/messages'
+import { agentSectionMessages, imageOptionsOf, mediaRequestInput, newRequestImages, sectionsToStreamMessages, type RequestImages } from '../model/streams/messages'
 import {
+  compactedPictureLimits,
   contextImageCost,
+  NO_CALL_PICTURE_BUDGET,
   NO_PICTURE_BUDGET,
   pictureBudgetLeft,
   pictureLimits,
   requestImageCount,
-  requestImageLimit,
   shownPictureCost,
   totalCost,
+  type CallPictureBudget,
   type PictureBudget,
 } from '../model/streams/pictureBudget'
 import {
@@ -206,18 +208,28 @@ function showReplyError(tabId: string, title: string, message: string): void {
 }
 
 // Tells the user that the chat requests of a reply to `model` go with
-// `count` fewer images than the conversation has, because one request
-// holds no more than the limit (`RequestOptions.imageLimit`). The parts
-// are counted in the order of the messages, so the newest images are the
-// ones with no part.
+// `count` fewer images than the conversation has, because of the image
+// limits of the model (`RequestOptions.imageLimit` and
+// `messageImageLimit`). The parts are counted in the order of the
+// messages, so with only the limit of a request, the newest images are
+// the ones with no part; with a lower limit of one message, they are also
+// the last images of a message that holds more.
 function warnImagesOverLimit(model: ActiveModel, count: number): void {
   const cached = sbp('dez.model/modelCache/model', model.providerId, model.modelId) as ModelInfo | null
-  const limit = requestImageLimit(cached ?? { id: model.modelId })
+  const info = cached ?? { id: model.modelId }
+  const limit = imageLimitOf(info)
+  const messageLimit = messageImageLimitOf(info)
+  const were = count === 1 ? 'was' : 'were'
+  const message = messageLimit < limit
+    ? `${model.modelName} takes at most ${imagesText(messageLimit)} in one message${Number.isFinite(limit) ? `, and ${imagesText(limit)} in one request` : ''}, `
+      + `so ${imagesText(count)} of the conversation ${were} left out. `
+      + 'Put fewer images into one message, or delete the images that the model does not need from earlier messages.'
+    : `${model.modelName} takes at most ${imagesText(limit)} in one request, so the newest ${imagesText(count)} of the conversation ${were} left out. `
+      + 'Delete the images that the model does not need from earlier messages, or start a new conversation.'
   sbp('dez.ui/toast', 'app-global', {
     variant: 'warning',
     title: count === 1 ? 'Image not sent' : 'Images not sent',
-    message: `Dez sends ${model.modelName} at most ${imagesText(limit)} in one request, so the newest ${imagesText(count)} of the conversation ${count === 1 ? 'was' : 'were'} left out. `
-      + 'Delete the images that the model does not need from earlier messages, or start a new conversation.',
+    message,
     duration: 8000,
   })
 }
@@ -393,19 +405,37 @@ async function imageFileSizes(messages: readonly StreamMessage[]): Promise<Reado
 // less the images and the pictures of `messages` (the request that gave
 // the calls of the round, so the context as it is now), and less the
 // pictures of the calls of the round that ended, which the next request
-// adds. The model cache gives the context window of the model; a model
-// that it does not have counts by its family.
-async function pictureBudgetOf(reply: ReplyRuntime, model: ModelRef, messages: readonly StreamMessage[], run: ToolRun): Promise<PictureBudget> {
+// adds. Those pictures go in one message, so the round can show only as
+// many more as a message of the model still takes. The model cache gives
+// the context window and the image limits of the model; a model that it
+// does not have counts by its family.
+async function pictureBudgetOf(reply: ReplyRuntime, model: ModelRef, messages: readonly StreamMessage[], run: ToolRun): Promise<CallPictureBudget> {
   // The images before the reply are the same in each of its requests.
   reply.imageBytes ??= imageFileSizes(messages)
   const imageBytes = await reply.imageBytes
   const rule = modelFamily(model.modelId).imageTokens
   const cached = sbp('dez.model/modelCache/model', model.providerId, model.modelId) as ModelInfo | null
+  const info = cached ?? { id: model.modelId }
   const shown = run.results.flatMap((result) => result?.pictures ?? [])
-  return pictureBudgetLeft(
-    pictureLimits(cached ?? { id: model.modelId }),
-    totalCost([contextImageCost(messages, rule, imageBytes), ...shown.map((picture) => shownPictureCost(rule, picture))]),
-  )
+  return {
+    left: pictureBudgetLeft(
+      pictureLimits(info),
+      totalCost([contextImageCost(messages, rule, imageBytes), ...shown.map((picture) => shownPictureCost(rule, picture))]),
+    ),
+    roundPictures: Math.max(0, messageImageLimitOf(info) - shown.length),
+  }
+}
+
+// The picture parts that the rounds of the reply to `model` can get in a
+// request that starts with the messages `base`: what `base` leaves of the
+// image limits of the model. `sectionsToStreamMessages` counts the parts
+// of the whole conversation the same way, so each later request gives the
+// rounds the same parts. Null for a model that reads no images, which
+// gets no picture.
+function replyPictureParts(base: readonly StreamMessage[], model: ModelRef): RequestImages | null {
+  const cached = sbp('dez.model/modelCache/model', model.providerId, model.modelId) as ModelInfo | null
+  const { sendImages, imageLimit = Infinity, messageImageLimit } = imageOptionsOf(cached ?? { id: model.modelId })
+  return sendImages ? newRequestImages(imageLimit - requestImageCount(base), messageImageLimit) : null
 }
 
 // Runs the calls of one round, in order: appends their running blocks (a
@@ -454,8 +484,8 @@ async function runToolRound(tabId: string, reply: ReplyRuntime, model: ModelRef,
       // The read of the file sizes takes a moment, so a stop can come
       // during it.
       pictureBudget: async () => {
-        const budget = takesAssets() ? await pictureBudgetOf(reply, model, messages, run) : NO_PICTURE_BUDGET
-        return takesAssets() ? budget : NO_PICTURE_BUDGET
+        const budget = takesAssets() ? await pictureBudgetOf(reply, model, messages, run) : NO_CALL_PICTURE_BUDGET
+        return takesAssets() ? budget : NO_CALL_PICTURE_BUDGET
       },
     }
     const result = await sbp('dez.controller/tools/run', toolCall, run.abort.signal, context) as ToolRunResult
@@ -627,17 +657,17 @@ const REPLY_ENDED: CompactionStep = { kind: 'ended' }
 
 // The request messages, for `model`, of the sections of `sections` before
 // the section `sectionId`, with the count of their images that went as
-// text only for the image limit; null when no section has that id. Not the
-// messages of all the sections: an empty section of a reply is left out of
-// a request, so a user section after it would join the message before it.
+// text only for the image limits; null when no section has that id. Not
+// the messages of all the sections: an empty section of a reply is left
+// out of a request, so a user section after it would join the message
+// before it.
 function messagesBefore(sections: Section[], sectionId: string, model: ModelRef, sendTools: boolean): Pick<RequestMessages, 'messages' | 'imagesOverLimit'> | null {
   const index = sections.findIndex((section) => section.id === sectionId)
   if (index < 0) return null
   const cached = sbp('dez.model/modelCache/model', model.providerId, model.modelId) as ModelInfo | null
   const { messages, imagesOverLimit } = sectionsToStreamMessages(sections.slice(0, index), model, {
-    sendImages: cached?.imageInput !== false,
+    ...imageOptionsOf(cached ?? { id: model.modelId }),
     sendTools,
-    imageLimit: requestImageLimit(cached ?? { id: model.modelId }),
   })
   return { messages, imagesOverLimit }
 }
@@ -780,7 +810,6 @@ async function compactIfDue(args: StreamStartArgs, reply: ReplyRuntime, frame: R
   const cached = sbp('dez.model/modelCache/model', model.providerId, model.modelId) as ModelInfo | null
   const info = cached ?? { id: model.modelId }
   const contextWindow = contextWindowOf(info)
-  const limits = pictureLimits(info)
   const rule = modelFamily(model.modelId).imageTokens
   const contextTokens = (sbp('dez.model/tabs/contextSize', tabId, model) as ContextSize | undefined)?.tokens ?? 0
   // The images before the reply are the same in each of its requests.
@@ -790,7 +819,8 @@ async function compactIfDue(args: StreamStartArgs, reply: ReplyRuntime, frame: R
   const reason = compactionReason({
     contextTokens,
     threshold: compactionThreshold(contextWindow),
-    limits: { ...limits, pictures: requestImageLimit(info) },
+    limits: pictureLimits(info),
+    leaves: compactedPictureLimits(info),
     spent,
     kept,
     requestSinceCompaction: true,
@@ -1016,14 +1046,14 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
     afterToolCall = calls[0].id
     // Only up to the results of the newest group, and the pictures that
     // its calls showed (`agentSectionMessages` puts their `user` message
-    // right after the results; the model of the reply reads images, else
-    // `asset_view` makes no picture). The text after that group (text that
-    // the user typed while the tools ran, or an asset that no result names)
-    // is the start of the next round's message. A request that ends with
-    // an agent message asks the model to go on from that text, and many
+    // right after the results; `replyPictureParts` counts them as every
+    // later request does). The text after that group (text that the user
+    // typed while the tools ran, or an asset that no result names) is the
+    // start of the next round's message. A request that ends with an
+    // agent message asks the model to go on from that text, and many
     // providers refuse it. Every later request sends that text at the start
     // of the message of the next round, after these same bytes.
-    const soFar = agentSectionMessages(replySoFar, args.model, true, true)
+    const soFar = agentSectionMessages(replySoFar, args.model, true, replyPictureParts(base, args.model))
     const lastTool = soFar.findLastIndex((message) => message.role === 'tool')
     const end = soFar[lastTool + 1]?.role === 'user' ? lastTool + 2 : lastTool + 1
     messages = [...base, ...soFar.slice(0, end)]

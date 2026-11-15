@@ -16,7 +16,6 @@ import type { Shortcut, ShortcutId } from '../shortcuts'
 // Side-effect import: registers the dez.model/* selectors under test.
 import './index'
 import { appendThinkingToTabSection, appendTokenToTabSection, finalizeStreamSectionForTab, setThinkingReplayForTabSection } from './index'
-import { finishStreamSession, startStreamSession } from './streams'
 import { BUILT_IN_SYSTEM_PROMPT } from '../systemPrompt'
 import { modelFamily } from '../providers/modelFamilies'
 import { TOOL_DEFINITIONS } from '../tools/registry'
@@ -444,28 +443,27 @@ describe('context size of a tab', () => {
     expect(size(tab.id)).toStrictEqual({ tokens: 25, estimated: true })
   })
 
-  // The requests of a reply that runs hold the pictures of its
-  // `asset_view` calls; the request of the next reply holds none.
-  it('counts the pictures of the reply that runs, each by the size of its copy, and not after the reply', () => {
+  // A request holds the pictures of the `asset_view` calls of every reply
+  // of its conversation, until a compaction takes the calls out.
+  it('counts the pictures of every reply, each by the size of its copy', () => {
     sbp('dez.model/settings/resetProviderSettings', 'local', ['tools'])
     const tab = tabOf(claude, letters(100))
     const pictures = [{ file: 'w1.jpg', label: letters(25), width: 800, height: 200, bytes: 3000 }]
-    const view = (id: string) => toolBlockText({ id, name: 'asset_view', status: 'success', arguments: { assets: '@b' }, result: 'ok', pictures })
-    sbp('dez.model/tabs/replaceSections', tab.id, [
-      { id: 'u1', role: 'user', content: [{ kind: 'text', text: letters(100) }] },
-      { id: 'a1', role: 'agent', model: claude, content: [{ kind: 'text', text: view('call_1') }] },
-      { id: 'u2', role: 'user', content: [{ kind: 'text', text: letters(100) }] },
-      { id: 'a2', role: 'agent', model: claude, content: [{ kind: 'text', text: view('call_2') }] },
-    ])
-    const withNoPicture = size(tab.id)?.tokens as number
+    const view = (id: string, shown: boolean) =>
+      toolBlockText({ id, name: 'asset_view', status: 'success', arguments: { assets: '@b' }, result: 'ok', ...(shown && { pictures }) })
+    const sizeWith = (shown: boolean) => {
+      sbp('dez.model/tabs/replaceSections', tab.id, [
+        { id: 'u1', role: 'user', content: [{ kind: 'text', text: letters(100) }] },
+        { id: 'a1', role: 'agent', model: claude, content: [{ kind: 'text', text: view('call_1', shown) }] },
+        { id: 'u2', role: 'user', content: [{ kind: 'text', text: letters(100) }] },
+        { id: 'a2', role: 'agent', model: claude, content: [{ kind: 'text', text: view('call_2', shown) }] },
+      ])
+      return size(tab.id)?.tokens as number
+    }
 
-    startStreamSession({ tabId: tab.id, sectionId: 'a2', model: { ...claude, modelName: 'Claude' }, messages: [] })
-    // Only the picture of the section `a2`: its label (25 characters are
-    // 10 tokens), and 800 by 200 pixels (232 tokens).
-    expect(size(tab.id)).toStrictEqual({ tokens: withNoPicture + 242, estimated: true })
-
-    finishStreamSession(tab.id)
-    expect(size(tab.id)).toStrictEqual({ tokens: withNoPicture, estimated: true })
+    // Each of the two pictures: its label (25 characters are 10 tokens),
+    // and 800 by 200 pixels (232 tokens).
+    expect(sizeWith(true)).toBe(sizeWith(false) + 2 * 242)
   })
 
   it('keeps the count through a reload of the conversation and a reopen of the closed tab', async () => {
@@ -915,6 +913,7 @@ describe('dez.model/customProviders/save', () => {
       modelThinking: { path: 'caps.thinks', missing: false },
       modelContextWindow: { paths: ['limits.window'] },
       modelImageLimit: { paths: ['limits.images'] },
+      modelMessageImageLimit: { paths: ['limits.imagesPerMessage'] },
       auth: 'apiKey',
       settings: [
         { key: 'search', label: 'Search', type: 'boolean', default: true, bodyPath: 'search', modelSupport: { path: 'caps.search' } },
@@ -932,6 +931,7 @@ describe('dez.model/customProviders/save', () => {
     Object.assign(config.mediaApi?.modelRequestBodies?.[0].body ?? {}, { response_format: 'changed' })
     config.modelContextWindow?.paths.push('changed')
     config.modelImageLimit?.paths.push('changed')
+    config.modelMessageImageLimit?.paths.push('changed')
 
     // toStrictEqual: a setting with no `modelSupport` gets no such key.
     expect(sbp('dez.model/customProviders/list')).toStrictEqual([saved])
