@@ -73,9 +73,11 @@ export function jobCallLabel(text: string): string {
 }
 
 /** The result of a call that started the job `jobId` as the job `number`
- *  of its reply (`JobCall.number`). A runner can add lines after it. */
+ *  of its reply (`JobCall.number`). A runner can add lines after it.
+ *  `startedJob` reads the text back up to the number, so a new wording
+ *  must keep that start. */
 export function jobStartedText(jobId: string, number: number): string {
-  return `Started the job ${jobId}. It is job ${number} of this reply, and it runs in the background. Start the other jobs that you need now, then call jobs_wait to get the results.`
+  return `Started the job ${jobId}. It is job ${number} of this reply, and it runs in the background. Start the other jobs that you need now, within the limit of open jobs, then call jobs_wait to get the results.`
 }
 
 const STARTED_JOB = new RegExp(`^Started the job (${JOB_ID_SOURCE})\\.(?: It is job (\\d+) of this reply\\b)?`)
@@ -94,9 +96,27 @@ export function startedJobId(resultText: string): string | null {
   return startedJob(resultText)?.id ?? null
 }
 
+// What an open job is (`MAX_OPEN_JOBS`), in each text that tells the limit.
+const OPEN_JOB_MEANING = 'a job that runs, or an ended job whose result no jobs_wait call gave yet'
+
+/** The rule of the open jobs (`MAX_OPEN_JOBS`), which the description of
+ *  `jobs_wait` tells in full. A model must learn it before it calls: Dez
+ *  runs all the calls of a round before the model reads a result, so the
+ *  error text (`JOB_LIMIT_TEXT`) comes too late for a model that starts
+ *  more jobs than the limit in one round. Static text: the limit is a
+ *  constant of the code, so the cached prefix keeps its bytes. */
+const OPEN_JOBS_RULE = `At most ${MAX_OPEN_JOBS} jobs of a reply can be open at one time (${OPEN_JOB_MEANING}): Dez refuses a call that would start one more. `
+  + `For more work than that, start at most ${MAX_OPEN_JOBS} jobs, call \`jobs_wait\` with \`all\`, then start the next ${MAX_OPEN_JOBS}.`
+
+/** What the description of each tool whose call starts a job tells of
+ *  jobs (`startJob`, controller/tools.ts): the limit goes where the model
+ *  reads how to call, and `jobs_wait` tells the rest of its rule. */
+export const JOB_CALL_NOTE = 'The call starts a job and returns its job id at once; `jobs_wait` gives the result. '
+  + `At most ${MAX_OPEN_JOBS} jobs can be open at one time (see \`jobs_wait\`).`
+
 /** The error result of a call that would start one open job too many
  *  (`MAX_OPEN_JOBS`). */
-export const JOB_LIMIT_TEXT = `Dez did not start this job: ${MAX_OPEN_JOBS} jobs of this reply are open (a job that runs, or an ended job whose result no jobs_wait call gave yet), which is the most at one time. `
+export const JOB_LIMIT_TEXT = `Dez did not start this job: ${MAX_OPEN_JOBS} jobs of this reply are open (${OPEN_JOB_MEANING}), which is the most at one time. `
   + 'Call jobs_wait: each result that it gives makes room for one new job. Then make this call again.'
 
 // The time limits that a call can give its job. A shorter limit ends a
@@ -428,17 +448,18 @@ export function unknownJobText(unknownIds: readonly string[], knownIds: readonly
     : `No job of this reply has ${names}. ${earlier} The jobs of this reply are ${knownIds.join(', ')}: use only these ids.`
 }
 
-// The descriptions are static (no counts, no dates): the tools array and
-// the system prompt, which lists them, are in the provider's prompt cache.
-// They are brief, as each word goes with every chat request, but a model
-// must learn from them alone how jobs run at the same time, and that a
-// result comes in the order of the job ends, not of the calls.
+// The descriptions are static (no running counts, no dates): the tools array
+// and the system prompt, which lists them, are in the provider's prompt
+// cache. They are brief, as each word goes with every chat request, but a
+// model must learn from them alone how jobs run at the same time, how many
+// can be open, and that a result comes in the order of the job ends, not of
+// the calls.
 
 export const JOBS_WAIT_TOOL: ToolDefinition = {
   name: 'jobs_wait',
   description: 'Wait for the jobs of this reply, and get their results. '
     + 'A Dez tool whose work takes long starts a job: its call returns a job id at once, and the work runs in the background. '
-    + 'Jobs run at the same time, so start every job that you need before you wait. '
+    + `Jobs run at the same time, so start the jobs that you need before you wait. ${OPEN_JOBS_RULE} `
     + '`jobs_wait` returns when one or more jobs ended (with `jobs`: when each job that you name ended). '
     + 'It gives the result of each of those jobs once, with its job id and its status (finished, failed, or timed out). '
     + 'The results come in the order in which the jobs ended, which is not the order of your calls. '

@@ -92,7 +92,8 @@ export function compactionsField(compactions: Compactions | undefined): { compac
 
 /** The text that starts the compaction message of a request, before the
  *  text of the compaction section. It is in the cached prefix of every
- *  request of its conversation: never a date, a count, or a random value. */
+ *  request of its conversation: never a date, a running count, or a
+ *  random value. */
 export const COMPACTION_MESSAGE_INTRO = '[Compaction: this conversation was long, so Dez put the notes below in place of its earlier messages. '
   + 'The notes are what the assistant wrote about the work so far, with the facts that Dez added. '
   + 'After the notes come the messages of the user that Dez kept, each one word for word.]'

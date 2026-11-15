@@ -260,7 +260,7 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 - **Provider role mapping**: internal role `agent` maps to API role `assistant` in both formats.
 - **No stored file path to providers**: every request text goes through `withoutStoredFilePaths` (`src/model/chat/storedFilePaths.ts`); a new request text needs the same.
 - **A request holds at most the request form of a media tag** (`mediaTagsForRequest`), so a Save, a Delete, or an expiry changes no request bytes.
-- **The system prompt and the tools are in the cached prefix**: never put a date, a count, or a random value into `systemPrompt.md`, its placeholder values, or a tool definition.
+- **The system prompt and the tools are in the cached prefix**: never put a value that changes between requests (a date, a running count, a random value) into `systemPrompt.md`, its placeholder values, or a tool definition. A constant of the code, such as a limit, is fine.
 - **The pictures of `asset_view` stay until the next compaction**, as the same bytes in every request (`src/model/chat/shownPictures.ts`).
 - **One picture count**: the picture budget, the compaction check, and what a compaction leaves read the same limits (`src/model/streams/pictureBudget.ts`).
 - **An image round has no thinking replay** (`roundThinking`, `src/model/streams/messages.ts`).

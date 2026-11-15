@@ -38,8 +38,9 @@ function toolItem(tool: ToolDefinition): string {
 
 /** The variables of a template, each with what it means for the user
  *  (Settings › System Prompt lists them) and its value for a request. A
- *  value is never a date, a count, or a random value: the prompt is in the
- *  cached prefix of every request (`buildSystemPrompt`).
+ *  value never changes from one request to the next (no date, no running
+ *  count, no random value): the prompt is in the cached prefix of every
+ *  request (`buildSystemPrompt`).
  *
  *  The model goes in by its id, as Dez lists it. The provider goes in by
  *  its display name and by its id: a provider added in Settings has a

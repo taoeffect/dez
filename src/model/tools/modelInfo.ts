@@ -39,11 +39,12 @@ export type ModelInfoOnlyValue = (typeof MODEL_INFO_ONLY_VALUES)[number]
  *  entry of the provider (`part`), or only some of the facts (`only`). */
 export type ModelInfoSelection = { part: ModelInfoPart } | { only: readonly ModelInfoOnlyValue[] }
 
-// The description comes from static tables only (no counts, no dates, no
-// random values): the tools array is in the provider's prompt cache, so it
-// must be the same bytes in each request of one release of Dez. It can
-// change between releases. It does not name each field of the result: the
-// result holds every fact that Dez has, and its names tell what they are.
+// The description comes from static tables only (no running counts, no
+// dates, no random values): the tools array is in the provider's prompt
+// cache, so it must be the same bytes in each request of one release of
+// Dez. It can change between releases. It does not name each field of the
+// result: the result holds every fact that Dez has, and its names tell what
+// they are.
 export const MODEL_INFO_TOOL: ToolDefinition = {
   name: 'model_info',
   description: 'Give all that Dez knows about one model that the user can use, as JSON. '

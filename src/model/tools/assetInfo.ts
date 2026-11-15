@@ -42,8 +42,8 @@ import { ToolError, type ToolArguments, type ToolDefinition } from './types'
 /** The most ids of one call. */
 export const MAX_ASSET_INFO_IDS = 20
 
-// The description is static (no counts, no dates): the tools array is in
-// the provider's prompt cache.
+// The description is static (no running counts, no dates): the tools array
+// is in the provider's prompt cache.
 export const ASSET_INFO_TOOL: ToolDefinition = {
   name: 'asset_info',
   description: 'Give the facts of images and clips of this conversation, one line for each, in the order of the ids: '

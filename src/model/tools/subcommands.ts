@@ -25,8 +25,8 @@ export interface Subcommand {
 }
 
 /** A tool whose calls name one of its subcommands. Its description and
- *  its subcommands are static text (no counts, no dates): the tools array
- *  is in the provider's prompt cache. */
+ *  its subcommands are static text (no running counts, no dates): the
+ *  tools array is in the provider's prompt cache. */
 export interface SubcommandTool {
   name: string
   /** What the tool is for, the start of its description. */

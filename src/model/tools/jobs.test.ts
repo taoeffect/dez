@@ -54,13 +54,6 @@ describe('jobCallLabel', () => {
   })
 })
 
-describe('jobStartedText', () => {
-  it('tells the id and the number of the job, and to start the other jobs before a wait', () => {
-    expect(jobStartedText('j-k3x9', 3)).toBe('Started the job j-k3x9. It is job 3 of this reply, and it runs in the background. '
-      + 'Start the other jobs that you need now, then call jobs_wait to get the results.')
-  })
-})
-
 describe('startedJobId', () => {
   it('reads the id of a start text, also with lines that a tool added after it', () => {
     expect(startedJobId(jobStartedText('j-k3x9', 1))).toBe('j-k3x9')

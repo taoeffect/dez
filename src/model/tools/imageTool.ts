@@ -64,8 +64,8 @@ const FORMAT_NAMES: Record<DrawnMediaType, string> = {
   'image/svg+xml': 'SVG',
 }
 
-// The texts are static (no counts, no dates): the tools array, which names
-// the subcommands, is in the provider's prompt cache.
+// The texts are static (no running counts, no dates): the tools array, which
+// names the subcommands, is in the provider's prompt cache.
 export const IMAGE_TOOL: SubcommandTool = {
   name: 'image',
   summary: 'Work with the images of this conversation: each subcommand makes a new image from one of them.',

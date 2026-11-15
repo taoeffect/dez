@@ -73,7 +73,7 @@ const JOBS_HEADING = '## Jobs of the reply'
 const COST_HEADING = '## Cost'
 
 // These texts are in the cached prefix of every request of the
-// conversation: never a date, a count, or a random value.
+// conversation: never a date, a running count, or a random value.
 const ASSETS_LEGEND = 'Each line: @id | kind | facts | who made it | what it is, how it was made, and what a later step needs it for. '
   + 'Every id still names its image or clip. An image or a clip that these notes do not show as a picture is kept as its line only.'
 const JOBS_LEGEND = 'The jobs of the reply that ran at this compaction. Each line: job id | number in the order of the starts | tool | status | result | how its call begins. '

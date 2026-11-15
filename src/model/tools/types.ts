@@ -24,8 +24,10 @@ export type MisplacedParameterText = (key: string, values: Readonly<Record<strin
 /** A tool as the model sees it: its name, what it does, and its parameters
  *  in a fixed order. The order is the order of the JSON schema keys and of
  *  the block attributes, so requests keep the same bytes. The definitions
- *  are in the cached prefix of every request: never put a date, a count, or
- *  a random value into one. A change between releases of Dez is fine. */
+ *  are in the cached prefix of every request: never put a value into one
+ *  that can change from one request to the next (a date, a running count
+ *  such as the open jobs, a random value). A constant of the code, such as
+ *  a limit, is fine, and so is a change between releases of Dez. */
 export interface ToolDefinition {
   name: string
   description: string

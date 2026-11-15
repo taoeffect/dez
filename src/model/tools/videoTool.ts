@@ -8,7 +8,7 @@ import { newMediaIds } from '../chat/mediaIds'
 import type { Section } from '../chat/types'
 import { conversationAssets, type ConversationAssets } from '../streams/mediaRequest'
 import { assetIdWords } from './arguments'
-import { ASSET_NAMES, INTERMEDIATE_PARAMETER, jobCallLabel, jobTimeoutMs, jobTimeoutParameter } from './jobs'
+import { ASSET_NAMES, INTERMEDIATE_PARAMETER, JOB_CALL_NOTE, jobCallLabel, jobTimeoutMs, jobTimeoutParameter } from './jobs'
 import { clipInput, tellUserConsole, type ClipInput, type KeptFile, type ProgramEnd, type ShippedProgram } from './programRuns'
 import { subcommandToolDefinition, type SubcommandTool } from './subcommands'
 import { assetText, unknownInputsProblem } from './toolInputs'
@@ -111,7 +111,7 @@ const ARGUMENTS_PARAMETER: ToolParameter = {
 // example ran with this build (tests/e2e/video-tool.e2e.ts runs some).
 const FFMPEG_HELP = [
   'Runs the ffmpeg that Dez ships once, with the arguments that you give, in a new work folder. '
-    + 'The call starts a job and gives its id at once: get the result with jobs_wait. '
+    + `${JOB_CALL_NOTE} `
     + 'The result has the end of the log of ffmpeg and the id of each new clip and image. '
     + 'They go into your reply, where the user sees them unless the call sets `is_intermediate`. '
     + 'A run can end with no error and still make a wrong clip: check each new clip with asset_view before you report it.',
@@ -159,7 +159,7 @@ export const VIDEO_TOOL: SubcommandTool = {
         + 'When the streams of the clips match (the same format, codecs, size, and frame rate), Dez joins them with no new encode. '
         + 'Else it encodes them again, at the size and the frame rate of the first clip: as WebM (VP9, Opus) when the first clip is a WebM file, else as MP4 (H.264, AAC). '
         + 'A clip of another shape gets black bars, and a clip with no sound gets silence when another clip has sound. '
-        + 'The call starts a job and gives its id at once: get the result with jobs_wait. '
+        + `${JOB_CALL_NOTE} `
         + 'The new clip goes into your reply, where the user can play it unless the call sets `is_intermediate`. '
         + 'The result gives its id: check the clip with asset_view before you report it. '
         + 'For other work on a clip (a cut, sound for a video clip, another size), use the ffmpeg subcommand.',
