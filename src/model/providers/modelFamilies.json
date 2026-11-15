@@ -102,7 +102,7 @@
     },
     {
       "id": "openai-gpt-5-tiles",
-      "match": "gpt-5[.-]?1(?!\\d)|gpt-5(?![.\\w-])",
+      "match": "gpt-5[.-]?1(?!\\d)|gpt-5(-\\d{4}-\\d\\d-\\d\\d)?(?![.\\w-])",
       "charsPerToken": 4,
       "imageTokens": { "rule": "tiles", "fitPx": 2048, "shortSidePx": 768, "tilePx": 512, "baseTokens": 70, "tileTokens": 140 },
       "contextWindow": 272000,

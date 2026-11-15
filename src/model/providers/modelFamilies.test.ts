@@ -68,7 +68,7 @@ describe('modelFamily', () => {
     ['openai-gpt-5-chat', ['openai/gpt-5.1-chat', 'gpt-5-chat-latest']],
     ['openai-gpt-4o-mini', ['openai/gpt-4o-mini-2024-07-18', 'openai-gpt-4o-mini-2024-07-18']],
     ['openai-small-patches', ['openai/gpt-4.1-mini:batch', 'openai/o4-mini:batch', 'gpt-4.1-nano', 'gpt-5-nano', 'o4-mini']],
-    ['openai-gpt-5-tiles', ['openai/gpt-5', 'openai/gpt-5:batch', 'openai/gpt-5.1-codex', 'gpt-5']],
+    ['openai-gpt-5-tiles', ['openai/gpt-5', 'openai/gpt-5:batch', 'openai/gpt-5.1-codex', 'gpt-5', 'gpt-5-2025-08-07']],
     ['openai-tiles', ['openai/gpt-4o-2024-11-20', 'openai-gpt-4o-2024-11-20', 'openai/gpt-4.1', 'openai/o3', 'openai/o3-pro', 'openai/o3-mini:batch', 'o1']],
     ['openai-gpt-4-128k', ['openai/gpt-4-turbo', 'gpt-4.5-preview']],
     ['openai-gpt-4', ['openai/gpt-4', 'gpt-4-0613']],
