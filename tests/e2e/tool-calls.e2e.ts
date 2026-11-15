@@ -460,8 +460,9 @@ describe('tool calls', () => {
     // the value that Dez acts on when it does not know; the Tools toggle is
     // the user's value. The mock provider's config has no `thinking`, so
     // Dez asks for no thinking: the model does not think, and the fact is
-    // known. It has no price list either. The usage texts are not wording
-    // that a test pins.
+    // known. The window is the one of a model of no known family. It has
+    // no price list either. The usage texts are not wording that a test
+    // pins.
     expect(JSON.parse(result)).toStrictEqual({
       id: model,
       name: TOOLER.modelName,
@@ -473,7 +474,8 @@ describe('tool calls', () => {
         imageInput: true,
         toolCalling: true,
         thinking: false,
-        unknown: ['request', 'outputs', 'released', 'imageInput', 'toolCalling'],
+        contextWindow: 200_000,
+        unknown: ['request', 'outputs', 'released', 'imageInput', 'toolCalling', 'contextWindow'],
         toggles: [{ key: 'tools', label: 'Tools', on: true }],
         cost: { error: `${TOOLER.name} gives no price for this model.` },
       },

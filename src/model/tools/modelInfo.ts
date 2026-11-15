@@ -6,6 +6,7 @@ import type { ModelCache } from '../persistence/types'
 import { inputImageRulesFor, maxInputImages, minInputImages } from '../providers/clipImages'
 import type { KnownLimit } from '../providers/knownLimits'
 import { imageRulesWithLearnedLimit } from '../providers/learnedImageLimit'
+import { contextWindowOf } from '../providers/modelFamilies'
 import type { ParameterValues } from '../providers/modelParameters'
 import { roundedPrice, type ModelPrice } from '../providers/modelPrices'
 import type { ProviderMediaQuote } from '../providers/streamTypes'
@@ -52,7 +53,8 @@ export const MODEL_INFO_TOOL: ToolDefinition = {
     + `\`request\` (how Dez sends it a request: ${MODEL_REQUESTS.join(', ')}; none means that Dez cannot use it yet), `
     + `\`outputs\` (what it makes: ${MODEL_OUTPUT_IDS.join(', ')}), `
     + `\`inputs\` (what Dez can send it in one request: ${MODEL_OUTPUT_IDS.join(', ')}), `
-    + '`released` (its release date, `YYYY-MM-DD`, as `model_list` gives it), `parameters`, and `cost`. '
+    + '`released` (its release date, `YYYY-MM-DD`, as `model_list` gives it), '
+    + '`contextWindow` (its context window, in tokens), `parameters`, and `cost`. '
     + '`dez.unknown` names the facts that the provider does not tell; their values are what Dez does then, '
     + 'and an unknown `released` has no value. '
     + '`dez.limits` lists rules of the model that Dez knows from other places than the provider\'s data, each with its `source`. '
@@ -240,9 +242,11 @@ function prettyJson(value: unknown): string {
 // The facts that Dez uses, as it uses them. A fact that the provider does
 // not tell gets the value that Dez acts on, and `unknown` names it; the
 // release date, on which Dez does not act, is then only in `unknown`. Image
-// input, thinking, and tools are facts of their own only for a chat request,
-// so a model of another kind gets them only when the provider tells them
-// (`inputs` tells whether a media request sends images). `model` holds the
+// input, thinking, tools, and the context window are facts of their own
+// only for a chat request, so a model of another kind gets the first three
+// only when the provider tells them (`inputs` tells whether a media request
+// sends images), and no window. A window that the provider does not tell
+// is the one of the model's family (`contextWindowOf`). `model` holds the
 // image rules of the parameter values that a request sends
 // (`modelInfoText`).
 function dezFacts(model: ModelInfo, facts: ModelInfoFacts, supportsThinking: boolean): Record<string, unknown> {
@@ -251,7 +255,12 @@ function dezFacts(model: ModelInfo, facts: ModelInfoFacts, supportsThinking: boo
   // With no `thinking` in its provider's config, Dez asks no model for
   // thinking and drops the reasoning of its replies (`supportsThinking`).
   const thinking = supportsThinking ? model.thinking : false
-  const told = { request: model.request, outputs: model.outputs, released: model.released, ...(chat && { imageInput: model.imageInput, toolCalling: model.toolCalling, thinking }) }
+  const told = {
+    request: model.request,
+    outputs: model.outputs,
+    released: model.released,
+    ...(chat && { imageInput: model.imageInput, toolCalling: model.toolCalling, thinking, contextWindow: model.contextWindow }),
+  }
   const unknown = Object.entries(told).flatMap(([name, value]) => (value === undefined ? [name] : []))
   const mediaKind = kind === 'chat' || kind === 'none' ? undefined : kind
   const maxImages = mediaKind && maxInputImages(mediaKind, model.images)
@@ -268,6 +277,7 @@ function dezFacts(model: ModelInfo, facts: ModelInfoFacts, supportsThinking: boo
     ...((chat || model.imageInput !== undefined) && { imageInput: model.imageInput !== false }),
     ...((chat || model.toolCalling !== undefined) && { toolCalling: model.toolCalling !== false }),
     ...((chat || model.thinking !== undefined) && { thinking: thinking !== false }),
+    ...(chat && { contextWindow: contextWindowOf(model) }),
     ...(unknown.length > 0 && { unknown }),
     ...(facts.toggles !== undefined && facts.toggles.length > 0 && { toggles: facts.toggles }),
     ...(model.unsupportedSettings && { togglesNotTaken: model.unsupportedSettings }),

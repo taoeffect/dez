@@ -76,6 +76,15 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
       imageOutput: 'pricing.image_output',
       audioOutput: 'pricing.audio_output',
     },
+    // `context_length` is the window of the model, and
+    // `top_provider.context_length` that of the provider that OpenRouter
+    // picks first, which is less for some models. No doc tells that a
+    // long prompt goes to a provider with the larger window, so the
+    // smaller number counts. Most speech, video, and transcription models
+    // have 0, and some models have a null number of the first provider:
+    // no number (checked live, 2026-11-14).
+    // https://openrouter.ai/docs/guides/overview/models
+    modelContextWindow: { paths: ['context_length', 'top_provider.context_length'] },
     auth: 'apiKey',
     // OpenRouter passes the marks on to the models that cache only a marked
     // prompt (Claude, Gemini, Qwen), and makes OpenAI's own marks of them for
@@ -129,15 +138,21 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     name: 'Z.ai',
     baseUrl: 'https://api.z.ai/api/coding/paas/v4',
     apiFormat: 'openai',
-    // Z.ai's /models reports ids only; these give the known models names.
+    // Z.ai's /models reports ids only; these give the known models names
+    // and windows. The windows are those of Z.ai's model pages and of its
+    // coding plan guide: "`glm-5.2` is `1000000`; other models `200000`"
+    // (checked 2026-11-14).
+    // https://docs.z.ai/guides/overview/overview
+    // https://docs.z.ai/devpack/tool/others
+    // https://docs.z.ai/guides/llm/glm-4.5
     models: [
-      { id: 'glm-5.2', name: 'GLM 5.2' },
-      { id: 'glm-5.1', name: 'GLM 5.1' },
-      { id: 'glm-5', name: 'GLM 5' },
-      { id: 'glm-5-turbo', name: 'GLM 5 Turbo' },
-      { id: 'glm-4.7', name: 'GLM 4.7' },
-      { id: 'glm-4.6', name: 'GLM 4.6' },
-      { id: 'glm-4.5', name: 'GLM 4.5' },
+      { id: 'glm-5.2', name: 'GLM 5.2', contextWindow: 1_000_000 },
+      { id: 'glm-5.1', name: 'GLM 5.1', contextWindow: 200_000 },
+      { id: 'glm-5', name: 'GLM 5', contextWindow: 200_000 },
+      { id: 'glm-5-turbo', name: 'GLM 5 Turbo', contextWindow: 200_000 },
+      { id: 'glm-4.7', name: 'GLM 4.7', contextWindow: 200_000 },
+      { id: 'glm-4.6', name: 'GLM 4.6', contextWindow: 200_000 },
+      { id: 'glm-4.5', name: 'GLM 4.5', contextWindow: 128_000 },
     ],
     fetchModels: true,
     auth: 'apiKey',
@@ -173,6 +188,13 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
       perTokens: 1_000_000,
       otherRates: 'model_spec.pricing.extended',
     },
+    // The window of a text model, and the most images of one request that
+    // Venice states for a model that reads images ("Check ... `maxImages`
+    // under `model_spec.capabilities` ... before sending several"; checked
+    // live, 2026-11-14).
+    // https://docs.venice.ai/guides/features/vision
+    modelContextWindow: { paths: ['model_spec.availableContextTokens'] },
+    modelImageLimit: { paths: ['model_spec.capabilities.maxImages'] },
     // One `type` per model. `inpaint` models edit images, and `upscale`
     // models make an image larger. `music` models also make sounds and
     // speech; one of them is a voice changer (`model_spec.voice_changer`),
@@ -287,6 +309,8 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     name: 'MiniMax',
     baseUrl: 'https://api.minimax.io/anthropic',
     apiFormat: 'anthropic',
+    // No window: MiniMax's docs state none for the M2 models (checked
+    // 2026-11-14).
     models: [
       { id: 'MiniMax-M2.7', name: 'MiniMax M2.7' },
       { id: 'MiniMax-M2.7-highspeed', name: 'MiniMax M2.7 Highspeed' },
@@ -309,9 +333,15 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     name: 'Kimi',
     baseUrl: 'https://api.kimi.com/coding',
     apiFormat: 'anthropic',
+    // The window of these models is "up to 1048576 (for higher-tier
+    // members)", and a lower plan "only supports up to 256K context". Dez
+    // does not know the plan of the key, so the smaller window counts
+    // (checked 2026-11-14).
+    // https://www.kimi.com/code/docs/en/kimi-code/models.html
+    // https://www.kimi.com/code/docs/en/kimi-code/error-reference.html
     models: [
-      { id: 'k3.1-pro-highspeed', name: 'Kimi K3.1 Pro Highspeed' },
-      { id: 'k3', name: 'Kimi K3' },
+      { id: 'k3.1-pro-highspeed', name: 'Kimi K3.1 Pro Highspeed', contextWindow: 262_144 },
+      { id: 'k3', name: 'Kimi K3', contextWindow: 262_144 },
     ],
     fetchModels: true,
     auth: 'apiKey',
@@ -357,6 +387,14 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
         image: { outputs: ['image'] },
       },
     },
+    // VS Code's Copilot Chat takes `max_prompt_tokens` as the most tokens
+    // of a prompt, and `max_prompt_images` as the most images of a request
+    // (`limits` in endpointProvider.ts; chatEndpoint.ts). The list needs a
+    // sign-in, so Dez has these names from that source only (checked
+    // 2026-11-14).
+    // https://github.com/microsoft/vscode/blob/5e718f45a0486f73460d307540aff922a22eaca9/extensions/copilot/src/platform/endpoint/common/endpointProvider.ts#L42-L47
+    modelContextWindow: { paths: ['capabilities.limits.max_prompt_tokens', 'capabilities.limits.max_context_window_tokens'] },
+    modelImageLimit: { paths: ['capabilities.limits.vision.max_prompt_images'] },
     auth: 'githubCopilot',
     // The Copilot API expects the headers of a supported editor integration.
     headers: {

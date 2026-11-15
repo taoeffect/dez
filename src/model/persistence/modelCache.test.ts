@@ -60,6 +60,26 @@ describe('model cache persistence format', () => {
     expect(parsed.providers.venice?.models).toStrictEqual([model, model, model, model])
   })
 
+  // A hand-edited file: the next model check reads the numbers again.
+  it('round-trips the context window and the image limit, and drops only one that is no positive whole number', () => {
+    const model = { id: 'm', name: 'M', provider: 'venice' }
+    const counted = { ...model, contextWindow: 1_000_000, imageLimit: 10 }
+    const parsed = parseModelCacheJson(JSON.stringify({
+      version: MODEL_CACHE_VERSION,
+      providers: {
+        venice: {
+          models: [counted, { ...counted, contextWindow: 0 }, { ...counted, imageLimit: 2.5 }, { ...model, contextWindow: '200000', imageLimit: null }],
+          working: true,
+          updatedAt: 1,
+          lastCheckedAt: 2,
+        },
+      },
+    }))
+
+    expect(parsed.providers.venice?.models).toStrictEqual([counted, { ...model, imageLimit: 10 }, { ...model, contextWindow: 1_000_000 }, model])
+    expect(parseModelCacheJson(serializeModelCacheJson(parsed))).toStrictEqual(parsed)
+  })
+
   it('round-trips the price of a model, and drops only a price that is not valid', () => {
     const model = { id: 'm', name: 'M', provider: 'openrouter' }
     const prices = [

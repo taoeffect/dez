@@ -75,6 +75,10 @@ export const providerModelConfigSchema = z.object({
   // How Dez sends the model a request. Wins over the server's kind; missing:
   // the server's kind, or `chat`.
   request: z.enum(MODEL_REQUESTS).optional(),
+  // The model's context window, in tokens (`ModelInfo.contextWindow`), for
+  // a model whose server tells none. Wins over the server's number
+  // (`modelContextWindow`); missing: the server's number, or unknown.
+  contextWindow: z.number().int().positive().optional(),
 })
 
 // A dot path into one `/models` entry, such as
@@ -83,6 +87,13 @@ const modelEntryPathSchema = z.string().refine(
   (path) => path.split('.').every((segment) => segment.length > 0),
   'Model entry path must be dot-separated names, none empty',
 )
+
+// Where a `/models` entry holds a count of its model (`modelContextWindow`,
+// `modelImageLimit`). A server can give the same limit in more than one
+// place with different numbers (OpenRouter: the largest window of a model's
+// providers, and the window of its main provider), so the paths are a list
+// and the smallest number counts: a request that fits it fits them all.
+const modelCountPathsSchema = z.object({ paths: z.array(modelEntryPathSchema).min(1, 'Paths must not be empty') })
 
 // The formats of a release date in a `/models` entry (`modelReleased`).
 const MODEL_RELEASED_FORMATS = ['unixSeconds', 'rfc3339'] as const
@@ -272,6 +283,16 @@ export const providerConfigSchema = z.object({
     imageOutput: modelEntryPathSchema.optional(),
     audioOutput: modelEntryPathSchema.optional(),
   }).optional(),
+  // Where a `/models` entry holds the context window of its model, in
+  // tokens: the most tokens of the prompt and the answer of one request
+  // (OpenRouter's `context_length`, a vLLM server's `max_model_len`). A
+  // server that tells a smaller limit of the prompt alone (Copilot's
+  // `max_prompt_tokens`) gets that path too. Dez takes the size of a
+  // conversation's context against it.
+  modelContextWindow: modelCountPathsSchema.optional(),
+  // Where a `/models` entry holds the most images that one chat request to
+  // its model can hold (Venice's `maxImages`).
+  modelImageLimit: modelCountPathsSchema.optional(),
   auth: z.enum(['apiKey', 'githubCopilot']).default('apiKey'),
   // Static headers added to every request.
   headers: headersSchema.optional(),

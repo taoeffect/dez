@@ -1047,6 +1047,53 @@ describe('provider models', () => {
     expect(customProvider({}).parseModels({ data: [{ id: 'a', created: 1763424000 }] })).toStrictEqual([{ id: 'a', name: 'a', provider: 'local' }])
   })
 
+  // OpenRouter gives a model that is no chat model a window of 0, and a
+  // router model a null.
+  it('reads the context window and the image limit as the smallest positive whole number at their config paths', () => {
+    const provider = customProvider({
+      modelContextWindow: { paths: ['context_length', 'top_provider.context_length'] },
+      modelImageLimit: { paths: ['caps.maxImages'] },
+    })
+    const models = provider.parseModels({
+      data: [
+        { id: 'both', context_length: 256000, top_provider: { context_length: 32768 }, caps: { maxImages: 10 } },
+        { id: 'first', context_length: 200000, top_provider: { context_length: null } },
+        { id: 'second', context_length: 0, top_provider: { context_length: 8192 } },
+        { id: 'zero', context_length: 0, top_provider: { context_length: null }, caps: { maxImages: 0 } },
+        { id: 'text', context_length: '200000', caps: { maxImages: '10' } },
+        { id: 'fraction', context_length: 1.5, caps: { maxImages: -1 } },
+        { id: 'missing' },
+      ],
+    })
+
+    // toStrictEqual: an unknown count leaves the key out.
+    expect(models).toStrictEqual([
+      { id: 'both', name: 'both', provider: 'local', contextWindow: 32768, imageLimit: 10 },
+      { id: 'first', name: 'first', provider: 'local', contextWindow: 200000 },
+      { id: 'second', name: 'second', provider: 'local', contextWindow: 8192 },
+      ...['zero', 'text', 'fraction', 'missing'].map((id) => ({ id, name: id, provider: 'local' })),
+    ])
+  })
+
+  // A config model's window is for a server that tells none, or a wrong
+  // one (the window of another plan).
+  it('gives a config model its own context window over the fetched one, and the fetched image limit', () => {
+    const provider = customProvider({
+      models: [{ id: 'set', name: 'Set', contextWindow: 262144 }, { id: 'unset', name: 'Unset' }],
+      modelContextWindow: { paths: ['window'] },
+      modelImageLimit: { paths: ['images'] },
+    })
+
+    expect(provider.mergeModels(provider.parseModels({ data: [{ id: 'set', window: 1048576, images: 5 }, { id: 'unset', window: 8192 }] }))).toStrictEqual([
+      { id: 'set', name: 'Set', provider: 'local', contextWindow: 262144, imageLimit: 5 },
+      { id: 'unset', name: 'Unset', provider: 'local', contextWindow: 8192 },
+    ])
+    expect(provider.mergeModels([])).toStrictEqual([
+      { id: 'set', name: 'Set', provider: 'local', contextWindow: 262144 },
+      { id: 'unset', name: 'Unset', provider: 'local' },
+    ])
+  })
+
   // The image, tool, and thinking flags share one reader; each has its own
   // config path and list value.
   const capabilities = [

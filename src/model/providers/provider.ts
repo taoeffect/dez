@@ -12,7 +12,7 @@ import type { ImageSizeRules, InputImageLimits } from './imageSize'
 import { MEDIA_FORMATS, type AnswerCost, type ClipEntryPrice, type ClipFormat, type ClipInput, type ClipJob, type ImageFormat, type ImageQuoteFormat, type MediaFormat, type MediaInput, type MediaWireRequest, type TextFormat } from './mediaFormats'
 import { effectiveParameterValues, type ParameterValues } from './modelParameters'
 import { modelTokenPrice } from './modelPrices'
-import { isRecord, modelCapability, modelData, modelOutputsAndRequest, modelReadableName, modelReleased, unsupportedSettings } from './modelParsing'
+import { isRecord, modelCapability, modelCount, modelData, modelOutputsAndRequest, modelReadableName, modelReleased, unsupportedSettings } from './modelParsing'
 import { isThinkingEnabled, modelToggles, toggleValue, type ToggleModel } from './modelToggles'
 import { multipartBody, type MultipartField } from './multipart'
 import { ProviderError, effectiveRequest, isClipKind, isTextKind, providerModel, type ChatMessage, type ChatRequestContext, type ClipKind, type GeneratedMedia, type ImageKind, type MediaKind, type ModelInfo, type ProviderInfo, type TextKind } from './types'
@@ -95,13 +95,14 @@ export class Provider {
   // falls back from `name` (OpenAI-style servers) to `display_name`
   // (Anthropic-style) to the id (servers that report only ids). The readable
   // name, the release date, the image, tool, and thinking flags, the
-  // toggles that the model does not take, the outputs, and the request kind
-  // are read only where the config's `modelReadableName`, `modelReleased`,
-  // `modelImageInput`, `modelToolCalling`, `modelThinking`,
-  // `settings[].modelSupport`, and `modelOutputs` point. A chat model makes
-  // `audio` only with an `audioOutputs` entry: with none, Dez cannot ask it
-  // for audio, so the model lists, the picker, and the tools do not offer
-  // it as an audio model.
+  // toggles that the model does not take, the outputs, the request kind,
+  // the context window, and the image limit are read only where the
+  // config's `modelReadableName`, `modelReleased`, `modelImageInput`,
+  // `modelToolCalling`, `modelThinking`, `settings[].modelSupport`,
+  // `modelOutputs`, `modelContextWindow`, and `modelImageLimit` point. A
+  // chat model makes `audio` only with an `audioOutputs` entry: with none,
+  // Dez cannot ask it for audio, so the model lists, the picker, and the
+  // tools do not offer it as an audio model.
   // Models that make nothing stay in this list; `mergeModels` drops them, so
   // the diagnostics report shows what the server sent.
   parseModels(data: unknown): ModelInfo[] {
@@ -124,6 +125,8 @@ export class Provider {
         unsupportedSettings: unsupportedSettings(model, this.config.settings),
         outputs: madeOutputs,
         request,
+        contextWindow: modelCount(model, this.config.modelContextWindow),
+        imageLimit: modelCount(model, this.config.modelImageLimit),
       }))
     }
 
@@ -132,11 +135,11 @@ export class Provider {
 
   // Config models come first, in config order, then the fetched models the
   // config does not list. Each id appears once. A name, capability flag,
-  // outputs list, or request kind set in the config wins over the fetched
-  // one for the same id; the readable name and the release date are always
-  // the fetched ones. A fetched model that is known to make none of the
-  // output types (embeddings, rerank) is left out; a config model is always
-  // listed.
+  // outputs list, request kind, or context window set in the config wins
+  // over the fetched one for the same id; the readable name, the release
+  // date, and the image limit are always the fetched ones. A fetched model
+  // that is known to make none of the output types (embeddings, rerank) is
+  // left out; a config model is always listed.
   mergeModels(fetched: ModelInfo[]): ModelInfo[] {
     const fetchedById = new Map<string, ModelInfo>()
     for (const model of fetched) {
@@ -158,6 +161,8 @@ export class Provider {
         unsupportedSettings: fetchedModel?.unsupportedSettings,
         outputs: model.outputs ?? fetchedModel?.outputs,
         request: model.request ?? fetchedModel?.request,
+        contextWindow: model.contextWindow ?? fetchedModel?.contextWindow,
+        imageLimit: fetchedModel?.imageLimit,
       }))
     }
 

@@ -166,7 +166,7 @@ function cloneRecords<Value>(records: Record<string, Record<string, Value>>): Re
 function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
   const {
     id, name, baseUrl, apiFormat, models, fetchModels, modelListQuery, modelImageInput, modelToolCalling,
-    modelThinking, modelOutputs, modelReadableName, modelReleased, modelTokenPrices, auth, headers, imageRequestHeaders,
+    modelThinking, modelOutputs, modelReadableName, modelReleased, modelTokenPrices, modelContextWindow, modelImageLimit, auth, headers, imageRequestHeaders,
     maxOutputTokens, cacheBreakpoints, toolMessageCacheMark, promptCacheKey, requestBody, imageOutputBody,
     audioOutputs, mediaApi, settings, thinking,
     ...uncopied
@@ -191,6 +191,8 @@ function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
   if (modelReadableName) clone.modelReadableName = { ...modelReadableName }
   if (modelReleased) clone.modelReleased = { ...modelReleased }
   if (modelTokenPrices) clone.modelTokenPrices = { ...modelTokenPrices }
+  if (modelContextWindow) clone.modelContextWindow = { paths: [...modelContextWindow.paths] }
+  if (modelImageLimit) clone.modelImageLimit = { paths: [...modelImageLimit.paths] }
   if (headers) clone.headers = { ...headers }
   if (imageRequestHeaders) clone.imageRequestHeaders = { ...imageRequestHeaders }
   if (maxOutputTokens !== undefined) clone.maxOutputTokens = maxOutputTokens

@@ -1,0 +1,332 @@
+{
+  "families": [
+    {
+      "id": "claude-1m",
+      "match": "claude-(fable|mythos)|claude-(opus|sonnet)-(4[.-][6-9]|5)(?!\\d)|claude-haiku-5[.-]5(?!\\d)",
+      "charsPerToken": 2.5,
+      "imageTokens": { "rule": "patches", "patchPx": 28, "maxLongSidePx": 2576, "maxPatches": 4784 },
+      "contextWindow": 1000000,
+      "maxImages": 600,
+      "manyImages": { "over": 20, "maxSidePx": 3000 },
+      "note": "The models that the docs name with a 1M window: Fable and Mythos 5 to 5.2, Opus 4.6 to 5.5, Sonnet 4.6 to 5.5, and Haiku 5.5. Text: 1M tokens are about 2.5M characters with the tokenizer of Opus 4.7 and later; an older model has about 3.5 characters per token. Image: one token for each square of 28 px after a scale down to a long side of 2,576 px, at most 4,784 tokens (Claude 4.7 and later; an older model counts at most 1,568).",
+      "sources": [
+        "https://platform.claude.com/docs/en/models/overview.md",
+        "https://platform.claude.com/docs/en/build-with-claude/context-windows.md",
+        "https://platform.claude.com/docs/en/build-with-claude/vision.md"
+      ],
+      "checked": "2026-11-14"
+    },
+    {
+      "id": "claude",
+      "match": "claude",
+      "charsPerToken": 2.5,
+      "imageTokens": { "rule": "patches", "patchPx": 28, "maxLongSidePx": 2576, "maxPatches": 4784 },
+      "contextWindow": 200000,
+      "maxImages": 100,
+      "manyImages": { "over": 20, "maxSidePx": 3000 },
+      "note": "Every Claude model that `claude-1m` does not name has a 200k window, and takes 100 images in one request. The text and image numbers are those of `claude-1m`, which count the most.",
+      "sources": [
+        "https://platform.claude.com/docs/en/models/overview.md",
+        "https://platform.claude.com/docs/en/build-with-claude/context-windows.md",
+        "https://platform.claude.com/docs/en/build-with-claude/vision.md"
+      ],
+      "checked": "2026-11-14"
+    },
+    {
+      "id": "gpt-oss",
+      "match": "gpt-oss",
+      "contextWindow": 131072,
+      "note": "The open models of OpenAI (gpt-oss-120b, gpt-oss-20b). They read no images.",
+      "sources": [
+        "https://developers.openai.com/api/docs/models/gpt-oss-120b.md",
+        "https://developers.openai.com/api/docs/models/gpt-oss-20b.md"
+      ],
+      "checked": "2026-11-14"
+    },
+    {
+      "id": "openai-gpt-3.5",
+      "match": "gpt-3[.-]?5",
+      "charsPerToken": 4,
+      "contextWindow": 16385,
+      "sources": [
+        "https://developers.openai.com/api/docs/models/gpt-3.5-turbo.md",
+        "https://developers.openai.com/api/docs/concepts.md"
+      ],
+      "checked": "2026-11-14"
+    },
+    {
+      "id": "openai-gpt-5-chat",
+      "match": "gpt-5[.-]?\\d?-chat",
+      "charsPerToken": 4,
+      "contextWindow": 128000,
+      "maxImages": 1500,
+      "note": "The chat models of GPT-5 to GPT-5.3 (gpt-5-chat-latest, gpt-5.1-chat-latest) have a 128,000 window. The docs give no image rule for them. The model `chat-latest` has a larger window, and is in `openai`.",
+      "sources": [
+        "https://developers.openai.com/api/docs/models/gpt-5-chat-latest.md",
+        "https://developers.openai.com/api/docs/models/gpt-5.1-chat-latest.md",
+        "https://developers.openai.com/api/docs/guides/images-vision.md",
+        "https://developers.openai.com/api/docs/concepts.md"
+      ],
+      "checked": "2026-11-14"
+    },
+    {
+      "id": "openai-gpt-4o-mini",
+      "match": "gpt-4o-mini",
+      "charsPerToken": 4,
+      "imageTokens": { "rule": "tiles", "fitPx": 2048, "shortSidePx": 768, "tilePx": 512, "baseTokens": 2833, "tileTokens": 5667 },
+      "contextWindow": 128000,
+      "maxImages": 1500,
+      "sources": [
+        "https://developers.openai.com/api/docs/guides/images-vision.md",
+        "https://developers.openai.com/api/docs/models/gpt-4o-mini.md",
+        "https://developers.openai.com/api/docs/concepts.md"
+      ],
+      "checked": "2026-11-14"
+    },
+    {
+      "id": "openai-small-patches",
+      "match": "gpt-4[.-]?1-(mini|nano)|gpt-5-nano|(^|/|openai-)o4-mini",
+      "charsPerToken": 4,
+      "imageTokens": { "rule": "patches", "patchPx": 32, "maxPatches": 30000, "tokensPerPatch": 2.46 },
+      "contextWindow": 200000,
+      "maxImages": 1500,
+      "note": "The older small models that count an image in patches of 32 px, each with its own multiplier: gpt-5-nano 1.5, gpt-4.1-mini 1.62, o4-mini 1.72, gpt-4.1-nano 2.46. The largest multiplier counts. The window is that of o4-mini, the smallest (gpt-5-nano takes 272,000 input tokens, and gpt-4.1-mini has 1,047,576).",
+      "sources": [
+        "https://developers.openai.com/api/docs/guides/images-vision.md",
+        "https://developers.openai.com/api/docs/models/o4-mini.md",
+        "https://developers.openai.com/api/docs/models/gpt-5-nano.md",
+        "https://developers.openai.com/api/docs/models/gpt-4.1-nano.md",
+        "https://developers.openai.com/api/docs/concepts.md"
+      ],
+      "checked": "2026-11-14"
+    },
+    {
+      "id": "openai-gpt-5-tiles",
+      "match": "gpt-5[.-]?1(?!\\d)|gpt-5(?![.\\w-])",
+      "charsPerToken": 4,
+      "imageTokens": { "rule": "tiles", "fitPx": 2048, "shortSidePx": 768, "tilePx": 512, "baseTokens": 70, "tileTokens": 140 },
+      "contextWindow": 272000,
+      "maxImages": 1500,
+      "note": "gpt-5 and gpt-5.1 (with its Codex models) count an image in tiles. The window is the most input tokens of gpt-5; its whole window, and that of gpt-5.1, is 400,000.",
+      "sources": [
+        "https://developers.openai.com/api/docs/guides/images-vision.md",
+        "https://developers.openai.com/api/docs/models/gpt-5.md",
+        "https://developers.openai.com/api/docs/models/gpt-5.1.md",
+        "https://developers.openai.com/api/docs/concepts.md"
+      ],
+      "checked": "2026-11-14"
+    },
+    {
+      "id": "openai-tiles",
+      "match": "gpt-4o|gpt-4[.-]?1(?!\\d)|(^|/|openai-)o[13](?![\\w.])",
+      "charsPerToken": 4,
+      "imageTokens": { "rule": "tiles", "fitPx": 2048, "shortSidePx": 768, "tilePx": 512, "baseTokens": 85, "tileTokens": 170 },
+      "contextWindow": 128000,
+      "maxImages": 1500,
+      "note": "The other models that count an image in tiles: gpt-4o and gpt-4.1 (85 and 170 tokens), o1, o1-pro, and o3 (75 and 150). The larger pair counts. The window is that of gpt-4o, o1-mini, and o1-preview, the smallest (o1 and o3 have 200,000, and gpt-4.1 has 1,047,576).",
+      "sources": [
+        "https://developers.openai.com/api/docs/guides/images-vision.md",
+        "https://developers.openai.com/api/docs/models/gpt-4o.md",
+        "https://developers.openai.com/api/docs/models/o1-mini.md",
+        "https://developers.openai.com/api/docs/concepts.md"
+      ],
+      "checked": "2026-11-14"
+    },
+    {
+      "id": "openai-gpt-4-128k",
+      "match": "gpt-4-turbo|gpt-4[.-]?5(?!\\d)",
+      "charsPerToken": 4,
+      "contextWindow": 128000,
+      "note": "gpt-4-turbo and gpt-4.5-preview. The docs give no image rule for them.",
+      "sources": [
+        "https://developers.openai.com/api/docs/models/gpt-4-turbo.md",
+        "https://developers.openai.com/api/docs/models/gpt-4.5-preview.md",
+        "https://developers.openai.com/api/docs/concepts.md"
+      ],
+      "checked": "2026-11-14"
+    },
+    {
+      "id": "openai-gpt-4",
+      "match": "gpt-4(?![.o\\d])",
+      "charsPerToken": 4,
+      "contextWindow": 8192,
+      "note": "gpt-4 and its dated copies. An old preview copy of gpt-4-turbo with a dated id (gpt-4-1106-preview) comes here too, with a window that is too small, which only compacts early.",
+      "sources": [
+        "https://developers.openai.com/api/docs/models/gpt-4.md",
+        "https://developers.openai.com/api/docs/concepts.md"
+      ],
+      "checked": "2026-11-14"
+    },
+    {
+      "id": "openai",
+      "match": "gpt-[5-9]|chat-latest",
+      "charsPerToken": 4,
+      "imageTokens": { "rule": "patches", "patchPx": 32, "maxPatches": 30000, "tokensPerPatch": 1.2 },
+      "contextWindow": 272000,
+      "maxImages": 1500,
+      "note": "Every other GPT model from GPT-5 on. Image: patches of 32 px with the multiplier 1.2 (gpt-5-mini, gpt-5.2, gpt-5.4 to gpt-6). The API refuses an image of more than 30,000 patches; gpt-5.2 to gpt-5.5 first make an image smaller (to 2,500, 6,144, or 10,000 patches), so this count is too high for a large image. The window is the most input tokens of the models with a 400,000 window (gpt-5.4-mini, chat-latest, gpt-5-codex); gpt-5.4 and later have 1,050,000, with 922,000 input tokens from gpt-5.6 on.",
+      "sources": [
+        "https://developers.openai.com/api/docs/guides/images-vision.md",
+        "https://developers.openai.com/api/docs/models/gpt-5.4-mini.md",
+        "https://developers.openai.com/api/docs/models/chat-latest.md",
+        "https://developers.openai.com/api/docs/models/gpt-5.6-sol.md",
+        "https://developers.openai.com/api/docs/concepts.md"
+      ],
+      "checked": "2026-11-14"
+    },
+    {
+      "id": "gemini-image",
+      "match": "gemini[\\w.-]*image|nano-banana",
+      "charsPerToken": 4,
+      "imageTokens": { "rule": "fixed", "tokens": 2304 },
+      "contextWindow": 65536,
+      "note": "The Gemini models that make images. The window is the input limit of gemini-2.5-flash-image, gemini-3-pro-image, and gemini-3.1-flash-lite-image, the smallest (gemini-3.1-flash-image has 131,072). The image count is that of `gemini-2`, the larger one.",
+      "sources": [
+        "https://aistudio.google.com/docs/models/gemini-3-pro-image.md",
+        "https://aistudio.google.com/docs/models/gemini-2.5-flash-image.md",
+        "https://aistudio.google.com/docs/media-resolution.md",
+        "https://aistudio.google.com/docs/tokens.md"
+      ],
+      "checked": "2026-11-14"
+    },
+    {
+      "id": "gemini-128k",
+      "match": "gemini[\\w.-]*(computer-use|native-audio|live|omni|robotics)",
+      "charsPerToken": 4,
+      "imageTokens": { "rule": "fixed", "tokens": 2304 },
+      "contextWindow": 128000,
+      "note": "The Gemini models with a small input limit: the computer use model (128,000, the smallest), and the live, native audio, omni, and robotics models (131,072). The image count is that of `gemini-2`, the larger one.",
+      "sources": [
+        "https://aistudio.google.com/docs/models/gemini-2.5-computer-use-preview-10-2025.md",
+        "https://aistudio.google.com/docs/models/gemini-omni-flash.md",
+        "https://aistudio.google.com/docs/media-resolution.md",
+        "https://aistudio.google.com/docs/tokens.md"
+      ],
+      "checked": "2026-11-14"
+    },
+    {
+      "id": "gemini-2",
+      "match": "gemini-2",
+      "charsPerToken": 4,
+      "imageTokens": { "rule": "fixed", "tokens": 2304 },
+      "contextWindow": 1048576,
+      "maxImages": 3600,
+      "note": "Image: a Gemini 2 model with no media resolution in the request counts \"256 + Pan & Scan (~2048)\" tokens. Dez sends no media resolution.",
+      "sources": [
+        "https://aistudio.google.com/docs/media-resolution.md",
+        "https://aistudio.google.com/docs/models/gemini-2.5-flash.md",
+        "https://aistudio.google.com/docs/image-understanding.md",
+        "https://aistudio.google.com/docs/tokens.md"
+      ],
+      "checked": "2026-11-14"
+    },
+    {
+      "id": "gemini",
+      "match": "gemini",
+      "charsPerToken": 4,
+      "imageTokens": { "rule": "fixed", "tokens": 1120 },
+      "contextWindow": 1048576,
+      "maxImages": 3600,
+      "note": "Gemini 3 and Gemini 4. Image: 1,120 tokens with no media resolution in the request, which is what Dez sends. The window is the input limit of Gemini 3 and the window of Gemini 4.",
+      "sources": [
+        "https://aistudio.google.com/docs/media-resolution.md",
+        "https://aistudio.google.com/docs/models/gemini-3.8-flash.md",
+        "https://aistudio.google.com/docs/models/gemini-4-carbon.md",
+        "https://aistudio.google.com/docs/image-understanding.md",
+        "https://aistudio.google.com/docs/tokens.md"
+      ],
+      "checked": "2026-11-14"
+    },
+    {
+      "id": "grok",
+      "match": "grok",
+      "contextWindow": 256000,
+      "maxImages": null,
+      "note": "The window is that of grok-build-0.1, the smallest (grok-4.5 to grok-4.7 have 500,000; grok-4.3 and grok-4.20 have 1,000,000). \"Maximum number of images: No limit\". The docs give no characters per token and no image token rule.",
+      "sources": [
+        "https://docs.x.ai/developers/models",
+        "https://docs.x.ai/developers/models/grok-build-0.1",
+        "https://docs.x.ai/developers/model-capabilities/images/understanding"
+      ],
+      "checked": "2026-11-14"
+    },
+    {
+      "id": "glm-1m",
+      "match": "glm-5[.-][23](?!\\d)",
+      "contextWindow": 1000000,
+      "note": "GLM-5.2 and the GLM-5.3 models. The docs give no characters per token of English text, no image token rule, and no image limit for them.",
+      "sources": [
+        "https://docs.z.ai/guides/overview/overview.md",
+        "https://docs.z.ai/devpack/tool/others.md"
+      ],
+      "checked": "2026-11-14"
+    },
+    {
+      "id": "glm",
+      "match": "glm",
+      "contextWindow": 128000,
+      "note": "The window is that of GLM-4.5 and GLM-4.6V, the smallest that the docs state (GLM-4.6 to GLM-5.1 and GLM-5V-Turbo have 200K). The docs state no window for GLM-4.5V.",
+      "sources": [
+        "https://docs.z.ai/guides/llm/glm-4.5.md",
+        "https://docs.z.ai/guides/vlm/glm-4.6v.md",
+        "https://docs.z.ai/guides/overview/overview.md"
+      ],
+      "checked": "2026-11-14"
+    },
+    {
+      "id": "kimi-k3",
+      "match": "kimi-k3",
+      "charsPerToken": 3,
+      "contextWindow": 1048576,
+      "maxImages": null,
+      "note": "The K3 models of the Kimi platform. The ids of Kimi Code (k3, k3.1-pro) do not match: there the window is that of the plan, and the provider config gives it. Text: \"1 Token is roughly equivalent to 3-4 English characters\". Images: \"no limit on the number of images\", but a request body of at most 100M.",
+      "sources": [
+        "https://platform.kimi.ai/docs/pricing/chat.md",
+        "https://platform.kimi.ai/docs/introduction.md",
+        "https://platform.kimi.ai/docs/guide/use-kimi-vision-model.md"
+      ],
+      "checked": "2026-11-14"
+    },
+    {
+      "id": "kimi",
+      "match": "kimi",
+      "charsPerToken": 3,
+      "contextWindow": 262144,
+      "maxImages": null,
+      "note": "The K2 models, and the Kimi Code models with \"kimi\" in their id (kimi-for-coding: up to 1,048,576; kimi-for-coding-highspeed: up to 262,144). The text and image numbers are those of `kimi-k3`.",
+      "sources": [
+        "https://platform.kimi.ai/docs/pricing/chat.md",
+        "https://www.kimi.com/code/docs/en/kimi-code/models.html",
+        "https://platform.kimi.ai/docs/introduction.md",
+        "https://platform.kimi.ai/docs/guide/use-kimi-vision-model.md"
+      ],
+      "checked": "2026-11-14"
+    },
+    {
+      "id": "minimax-m3",
+      "match": "minimax-m3",
+      "contextWindow": 1000000,
+      "note": "MiniMax-M3 and MiniMax-M3.1-Flash. The docs state no window for the M2 models, so they have no entry.",
+      "sources": [
+        "https://platform.minimax.io/docs/api-reference/text-anthropic-api.md"
+      ],
+      "checked": "2026-11-14"
+    },
+    {
+      "id": "deepseek-v4",
+      "match": "deepseek-(v4|flash)",
+      "charsPerToken": 3.3,
+      "imageTokens": { "rule": "fixed", "tokens": 1024 },
+      "contextWindow": 1000000,
+      "maxImages": 600,
+      "manyImages": { "over": 14, "maxSidePx": 4096 },
+      "note": "The models of the DeepSeek API (deepseek-flash, deepseek-v4-pro, and the V4 models by name). An older DeepSeek model, such as a local copy of R1, has no entry. Text: \"1 English character ≈ 0.3 token\". Image: \"an upper bound of 1024 tokens per image\"; a side of at most 8,192 px, and of 4,096 px \"when a request contains 15 or more images\".",
+      "sources": [
+        "https://api-docs.deepseek.com/quick_start/pricing",
+        "https://api-docs.deepseek.com/quick_start/token_usage",
+        "https://api-docs.deepseek.com/guides/vision"
+      ],
+      "checked": "2026-11-14"
+    }
+  ]
+}

@@ -54,6 +54,20 @@ export function modelReadableName(model: Record<string, unknown>, config: Provid
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined
 }
 
+// A count of a `/models` entry's model (its context window, its image
+// limit), at the config's paths: the smallest of the positive whole
+// numbers there. A server writes an unknown limit as 0 or null (OpenRouter
+// gives most of its video and speech models a `context_length` of 0), so
+// only a positive number counts. No such number, or no config, is unknown.
+export function modelCount(model: Record<string, unknown>, config: ProviderConfig['modelContextWindow']): number | undefined {
+  if (config === undefined) return undefined
+
+  const counts = config.paths
+    .map((path) => valueAtPath(model, path))
+    .filter((value): value is number => Number.isSafeInteger(value) && (value as number) > 0)
+  return counts.length > 0 ? Math.min(...counts) : undefined
+}
+
 /** The form of a release date that Dez keeps (`ModelInfo.released`). */
 export const RELEASED_DATE = /^\d{4}-\d{2}-\d{2}$/
 

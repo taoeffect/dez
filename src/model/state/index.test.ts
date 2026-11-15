@@ -622,9 +622,11 @@ describe('dez.model/customProviders/save', () => {
       name: 'Local',
       baseUrl: 'http://localhost:8080/v1',
       apiFormat: 'openai',
-      models: [{ id: 'm', thinking: false }],
+      models: [{ id: 'm', thinking: false, contextWindow: 8192 }],
       fetchModels: true,
       modelThinking: { path: 'caps.thinks', missing: false },
+      modelContextWindow: { paths: ['limits.window'] },
+      modelImageLimit: { paths: ['limits.images'] },
       auth: 'apiKey',
       settings: [
         { key: 'search', label: 'Search', type: 'boolean', default: true, bodyPath: 'search', modelSupport: { path: 'caps.search' } },
@@ -640,6 +642,8 @@ describe('dez.model/customProviders/save', () => {
     Object.assign(config.modelThinking ?? {}, { path: 'changed' })
     Object.assign(config.settings?.[0].modelSupport ?? {}, { path: 'changed' })
     Object.assign(config.mediaApi?.modelRequestBodies?.[0].body ?? {}, { response_format: 'changed' })
+    config.modelContextWindow?.paths.push('changed')
+    config.modelImageLimit?.paths.push('changed')
 
     // toStrictEqual: a setting with no `modelSupport` gets no such key.
     expect(sbp('dez.model/customProviders/list')).toStrictEqual([saved])

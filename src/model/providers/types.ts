@@ -195,9 +195,21 @@ export interface ModelInfo {
   // (`chatRequestCost`, chatUsage.ts), the characters of a speech request
   // with no quote (`textLengthCost`). Missing: the list gives none.
   price?: ModelPrice
+  // The model's context window, in tokens, that the provider's model list
+  // or the config gives (`modelContextWindow`, `models[].contextWindow` in
+  // config.ts): the most tokens of the prompt and the answer of one
+  // request, or the provider's smaller limit of the prompt. A positive
+  // whole number. Missing: the list gives none, and the model's family
+  // gives one (`contextWindowOf`, modelFamilies.ts).
+  contextWindow?: number
+  // The most images of one chat request to the model that the provider's
+  // model list gives (`modelImageLimit` in config.ts). A positive whole
+  // number. Missing: the list gives none, and the model's family gives one
+  // (`imageLimitOf`, modelFamilies.ts).
+  imageLimit?: number
 }
 
-export type ModelCapabilities = Pick<ModelInfo, 'readableName' | 'released' | 'imageInput' | 'toolCalling' | 'thinking' | 'unsupportedSettings' | 'outputs' | 'request' | 'parameters' | 'text' | 'images' | 'clips' | 'unstoredOutput' | 'learnedImageLimit' | 'price'>
+export type ModelCapabilities = Pick<ModelInfo, 'readableName' | 'released' | 'imageInput' | 'toolCalling' | 'thinking' | 'unsupportedSettings' | 'outputs' | 'request' | 'parameters' | 'text' | 'images' | 'clips' | 'unstoredOutput' | 'learnedImageLimit' | 'price' | 'contextWindow' | 'imageLimit'>
 
 // What a clip model takes as the input of a request, besides the values of
 // its parameters.
@@ -401,6 +413,8 @@ export function providerModel(provider: ProviderId, id: string, name: string, ca
   if (capabilities.unstoredOutput !== undefined) model.unstoredOutput = capabilities.unstoredOutput
   if (capabilities.learnedImageLimit !== undefined) model.learnedImageLimit = { ...capabilities.learnedImageLimit }
   if (capabilities.price !== undefined) model.price = { ...capabilities.price }
+  if (capabilities.contextWindow !== undefined) model.contextWindow = capabilities.contextWindow
+  if (capabilities.imageLimit !== undefined) model.imageLimit = capabilities.imageLimit
   return model
 }
 

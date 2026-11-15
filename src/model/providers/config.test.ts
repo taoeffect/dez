@@ -169,7 +169,15 @@ describe('provider config schema', () => {
     expect(parseModel({ request: 'speech' }).success).toBe(false)
   })
 
-  it('keeps the model list query, the output type mapping, the readable name path, the release date path, the token price paths, and the media API, and rejects bad ones', () => {
+  it('keeps a model\'s context window, and rejects one that is no positive whole number', () => {
+    const parseModel = (contextWindow: unknown) =>
+      providerConfigSchema.safeParse({ id: 'p', name: 'P', baseUrl: 'http://h', models: [{ id: 'm', contextWindow }] })
+
+    expect(parseModel(262_144).data?.models).toStrictEqual([{ id: 'm', contextWindow: 262_144 }])
+    for (const bad of [0, -1, 1.5, '200000', null]) expect(parseModel(bad).success).toBe(false)
+  })
+
+  it('keeps the model list query, the output type mapping, the readable name path, the release date path, the token price paths, the count paths, and the media API, and rejects bad ones', () => {
     const parse = (fields: Record<string, unknown>) =>
       providerConfigSchema.safeParse({ id: 'p', name: 'P', baseUrl: 'http://h', ...fields })
     const outputs = (values: unknown) => parse({ modelOutputs: { path: 'type', values } }).success
@@ -191,6 +199,8 @@ describe('provider config schema', () => {
       modelReadableName: { path: 'model_spec.name' },
       modelReleased: { path: 'meta.created_at', format: 'rfc3339' },
       modelTokenPrices: { input: 'pricing.prompt', output: 'pricing.completion', cachedInput: 'pricing.cache', cacheWrite: 'pricing.cache_write', perTokens: 1_000_000, otherRates: 'pricing.extended', imageOutput: 'pricing.image' },
+      modelContextWindow: { paths: ['context_length', 'top_provider.context_length'] },
+      modelImageLimit: { paths: ['caps.maxImages'] },
       imageOutputBody: { modalities: ['image', 'text'] },
       mediaApi: { format: 'openrouter', modelRequestBodies: [{ request: 'tts', modelIdPrefix: 'heygen/', body: { response_format: 'pcm' } }] },
     }
@@ -211,6 +221,11 @@ describe('provider config schema', () => {
     // A price per 0 tokens would divide by 0.
     expect(tokenPrices({ perTokens: 0 })).toBe(false)
     expect(tokenPrices({ cachedInput: 'p..cache' })).toBe(false)
+    expect(parse({ modelContextWindow: { paths: [] } }).success).toBe(false)
+    expect(parse({ modelContextWindow: { paths: ['limits..window'] } }).success).toBe(false)
+    expect(parse({ modelContextWindow: { path: 'context_length' } }).success).toBe(false)
+    expect(parse({ modelImageLimit: { paths: ['.maxImages'] } }).success).toBe(false)
+    expect(parse({ modelImageLimit: 'caps.maxImages' }).success).toBe(false)
     expect(outputs({ tts: { outputs: ['speech'] } })).toBe(false)
     expect(outputs({ tts: { outputs: 'audio' } })).toBe(false)
     expect(outputs({ tts: { request: 'chat' } })).toBe(false)

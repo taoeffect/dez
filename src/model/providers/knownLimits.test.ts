@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import knownLimitsFile from './knownLimits.json'
 import { knownLimitsFileSchema, knownLimitsOf, parseKnownLimits, type KnownLimit, type KnownLimitEntry, type KnownLimitTarget } from './knownLimits'
+import { today } from './testing'
 
 const FILE = knownLimitsFileSchema.safeParse(knownLimitsFile)
 
@@ -9,12 +10,6 @@ function shipped(id: string): KnownLimit {
   const entry = FILE.data?.limits.find((limit) => limit.id === id)
   if (!entry) throw new Error(`knownLimits.json has no limit ${id}`)
   return { text: entry.text, source: entry.source, ...(entry.limit && { limit: entry.limit }) }
-}
-
-// Today in the local time zone, as an ISO date.
-function today(): string {
-  const now = new Date()
-  return [now.getFullYear(), now.getMonth() + 1, now.getDate()].map((part) => String(part).padStart(2, '0')).join('-')
 }
 
 describe('knownLimits.json', () => {

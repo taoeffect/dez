@@ -15,7 +15,7 @@ const FAILING = providerInfo('failing', 'Failing')
 const PROVIDERS = [OPENROUTER, CLOSED, FAILING]
 
 // Model ids can hold `/`; provider ids cannot.
-const GEMINI: ModelInfo = { id: 'google/gemini-3-pro', name: 'Gemini 3 Pro', provider: OPENROUTER.id, released: '2025-11-18', imageInput: true, outputs: ['text', 'image'], request: 'chat' }
+const GEMINI: ModelInfo = { id: 'google/gemini-3-pro', name: 'Gemini 3 Pro', provider: OPENROUTER.id, released: '2025-11-18', imageInput: true, outputs: ['text', 'image'], request: 'chat', contextWindow: 1_048_576 }
 const UNKNOWN: ModelInfo = { id: 'mystery', name: 'Mystery', provider: OPENROUTER.id }
 const VIDEO: ModelInfo = {
   id: 'x-ai/grok-video',
@@ -136,13 +136,14 @@ describe('modelInfoText', () => {
       id: 'openrouter/google/gemini-3-pro',
       name: 'Gemini 3 Pro',
       provider: { id: 'openrouter', name: 'OpenRouter' },
-      dez: { request: 'chat', outputs: ['text', 'image'], inputs: ['text', 'image'], released: '2025-11-18', imageInput: true, toolCalling: true, thinking: true, unknown: ['toolCalling', 'thinking'] },
+      dez: { request: 'chat', outputs: ['text', 'image'], inputs: ['text', 'image'], released: '2025-11-18', imageInput: true, toolCalling: true, thinking: true, contextWindow: 1_048_576, unknown: ['toolCalling', 'thinking'] },
       usage: modelUsage(GEMINI, chatFacts),
       providerEntry: entry,
     }, null, 2))
   })
 
-  // An unknown release date has no value: Dez does not act on it.
+  // An unknown release date has no value: Dez does not act on it. The
+  // window is the one of a model of no known family.
   it('gives each fact that the provider does not tell the value that Dez acts on, and names it in `unknown`', () => {
     expect(parsed(modelInfoText(OPENROUTER, UNKNOWN, { entry: { id: 'mystery' } })).dez).toStrictEqual({
       request: 'chat',
@@ -151,7 +152,8 @@ describe('modelInfoText', () => {
       imageInput: true,
       toolCalling: true,
       thinking: true,
-      unknown: ['request', 'outputs', 'released', 'imageInput', 'toolCalling', 'thinking'],
+      contextWindow: 200_000,
+      unknown: ['request', 'outputs', 'released', 'imageInput', 'toolCalling', 'thinking', 'contextWindow'],
     })
   })
 
@@ -169,9 +171,10 @@ describe('modelInfoText', () => {
       imageInput: true,
       toolCalling: true,
       thinking: false,
-      unknown: ['request', 'outputs', 'released', 'imageInput', 'toolCalling'],
+      contextWindow: 200_000,
+      unknown: ['request', 'outputs', 'released', 'imageInput', 'toolCalling', 'contextWindow'],
     })
-    expect(facts(thinker)).toStrictEqual({ request: 'chat', outputs: ['text', 'image'], inputs: ['text', 'image'], released: '2025-11-18', imageInput: true, toolCalling: true, thinking: false })
+    expect(facts(thinker)).toStrictEqual({ request: 'chat', outputs: ['text', 'image'], inputs: ['text', 'image'], released: '2025-11-18', imageInput: true, toolCalling: true, thinking: false, contextWindow: 1_048_576 })
   })
 
   it('gives the toggles that apply, with their values, and the toggles that the model does not take', () => {
@@ -186,6 +189,7 @@ describe('modelInfoText', () => {
       imageInput: true,
       toolCalling: false,
       thinking: false,
+      contextWindow: 1_048_576,
       toggles,
       togglesNotTaken: ['webSearch'],
     })
@@ -474,7 +478,7 @@ describe('modelInfoText', () => {
   describe('with local file paths in the provider entry', () => {
     const LOCAL = providerInfo('local', 'Local')
     const path = '/home/alice/acme-bot/llama-3'
-    const served: ModelInfo = { id: path, name: path, provider: LOCAL.id, outputs: ['text'], request: 'chat', imageInput: false, toolCalling: false, thinking: false }
+    const served: ModelInfo = { id: path, name: path, provider: LOCAL.id, outputs: ['text'], request: 'chat', imageInput: false, toolCalling: false, thinking: false, contextWindow: 8192 }
 
     it('sends a stand-in for each path of the entry, and keeps the model\'s own id and name', () => {
       const result = modelInfoText(LOCAL, served, { entry: { id: path, object: 'model', root: path, parent: null, max_model_len: 8192 } })
@@ -483,7 +487,7 @@ describe('modelInfoText', () => {
         id: `local/${path}`,
         name: path,
         provider: { id: 'local', name: 'Local' },
-        dez: { request: 'chat', outputs: ['text'], inputs: ['text'], imageInput: false, toolCalling: false, thinking: false, unknown: ['released'] },
+        dez: { request: 'chat', outputs: ['text'], inputs: ['text'], imageInput: false, toolCalling: false, thinking: false, contextWindow: 8192, unknown: ['released'] },
         usage: modelUsage(served, { toggles: [], inputImages: {} }),
         providerEntry: { id: '/home/…', object: 'model', root: '/home/…', parent: null, max_model_len: 8192 },
       })
