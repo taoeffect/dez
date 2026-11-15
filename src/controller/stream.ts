@@ -58,7 +58,6 @@ import {
   cancelStreamSession,
   errorStreamSession,
   finishStreamSession,
-  receiveStreamToken,
   setStreamCompacting,
   startStreamSession,
   streamIsStreaming,
@@ -306,7 +305,6 @@ function writeStreamText(tabId: string, sectionId: string, text: string): void {
 function receiveToken(tabId: string, sectionId: string, token: string): void {
   if (!streamWritesSection(tabId, sectionId)) return
   writeStreamText(tabId, sectionId, token)
-  receiveStreamToken(tabId)
 }
 
 // Writes escaped answer text of the model. Right after an image reference

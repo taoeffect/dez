@@ -47,19 +47,11 @@ export const useStreamStore = defineStore('streams', () => {
       status: 'streaming',
       model: input.model,
       startedAt: now,
-      updatedAt: now,
       finishedAt: null,
       compacting: false,
     }
     sessionsByTab.value[input.tabId] = nextSession
     return nextSession
-  }
-
-  function receiveToken(tabId: string): StreamSessionState | null {
-    const currentSession = session(tabId)
-    if (!currentSession || currentSession.status !== 'streaming') return currentSession
-    currentSession.updatedAt = Date.now()
-    return currentSession
   }
 
   function setCompacting(tabId: string, compacting: boolean): void {
@@ -70,8 +62,7 @@ export const useStreamStore = defineStore('streams', () => {
   function setTerminal(input: StreamTerminalInput): EndedStreamSession | null {
     const currentSession = session(input.tabId)
     if (!currentSession) return null
-    const now = Date.now()
-    return Object.assign(currentSession, { status: input.status, updatedAt: now, finishedAt: now })
+    return Object.assign(currentSession, { status: input.status, finishedAt: Date.now() })
   }
 
   function finish(tabId: string): EndedStreamSession | null {
@@ -99,7 +90,6 @@ export const useStreamStore = defineStore('streams', () => {
     setCompacting,
     isStreaming,
     startSession,
-    receiveToken,
     finish,
     error,
     cancelled,
@@ -120,10 +110,6 @@ export function startStreamSession(input: StreamStartInput): StreamSessionState 
     ...input,
     model: { ...input.model },
   }))
-}
-
-export function receiveStreamToken(tabId: string): StreamSessionState | null {
-  return cloneNullableStreamSession(useStreamStore().receiveToken(tabId))
 }
 
 export function finishStreamSession(tabId: string): EndedStreamSession | null {

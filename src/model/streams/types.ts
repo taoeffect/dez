@@ -42,7 +42,6 @@ export interface StreamSessionState {
   status: StreamStatus
   model: ActiveModel
   startedAt: number
-  updatedAt: number
   finishedAt: number | null
   /** The reply waits for a compaction request (controller/compaction.ts):
    *  it writes no text until the compaction ends. */

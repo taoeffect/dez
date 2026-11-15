@@ -755,7 +755,7 @@ describe('section models', () => {
     typeIntoLastSection('first question')
     const first = ensureAgentSection(alpha)
     appendTokenToTabSection(activeId(), first.id, 'first answer')
-    finalizeStreamSectionForTab({ tabId: activeId(), sectionId: first.id, status: 'finished', model: { ...alpha, modelName: 'Alpha' }, startedAt: 1000, updatedAt: 1500, finishedAt: 1500, compacting: false })
+    finalizeStreamSectionForTab({ tabId: activeId(), sectionId: first.id, status: 'finished', model: { ...alpha, modelName: 'Alpha' }, startedAt: 1000, finishedAt: 1500, compacting: false })
     typeIntoLastSection('second question')
     const second = ensureAgentSection(beta)
 
