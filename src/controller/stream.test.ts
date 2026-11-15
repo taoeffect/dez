@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { ActiveModel, Section, SectionThinking, Tab, ThinkingReplay } from '../model/chat/types'
 import { sectionVisibleText } from '../model/chat/content'
+import type { ContextSize } from '../model/chat/contextSize'
 import type { DrawnImage, DrawnMediaType, ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
 import { findMediaTags, mediaTagText } from '../model/chat/mediaTags'
 import { agentTextForRequest, findToolBlocks } from '../model/chat/toolBlocks'
@@ -653,6 +654,87 @@ describe('conversation cost', () => {
     await startStream()
 
     await vi.waitFor(() => expect(savedConversations.at(-1)?.cost).toStrictEqual({ usd: 0.25, requests: 1, unpriced: 0 }))
+  })
+})
+
+describe('context size of a conversation', () => {
+  const size = () => sbp('dez.model/tabs/contextSize', activeTab().id) as ContextSize
+
+  // The count is exact only for the model of the tab.
+  beforeEach(() => {
+    sbp('dez.model/setActiveModel', model.providerId, model.modelId, model.modelName)
+  })
+
+  it('keeps the tokens of a reply as the size of its tab, exact until the tab changes, and saves them with the conversation', async () => {
+    replyRounds([
+      async (input) => {
+        await input.onThinking('Plan.')
+        await input.onToken('Answer')
+        return { requestId: input.requestId as string, thinkingReplay: { kind: 'field', field: 'reasoning' }, usage: { inputTokens: 1200, outputTokens: 300 } }
+      },
+    ])
+
+    await startStream()
+
+    expect(size()).toStrictEqual({ tokens: 1500, estimated: false })
+    expect(activeTab().context?.tokens).toBe(1500)
+    expect(savedConversations.at(-1)?.context).toStrictEqual(activeTab().context)
+
+    // 25 characters of a model of no family (2.5 characters per token).
+    const sections = activeTab().sections
+    sbp('dez.model/tabs/replaceSections', activeTab().id, [...sections.slice(0, -1), { ...sections.at(-1) as Section, content: [{ kind: 'text', text: 'x'.repeat(25) }] }])
+    expect(size()).toStrictEqual({ tokens: 1510, estimated: true })
+  })
+
+  // The calls of an answer are in its tokens, so only the results of the
+  // tools come on top, as an estimate, until the next round counts them.
+  it('counts each round of a reply, and adds only the results of its tools to the count of the round before', async () => {
+    let afterTools: ContextSize | undefined
+    replyRounds([
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [{ id: 'c1', name: 'model_list', argumentsText: '{}' }], usage: { inputTokens: 1000, outputTokens: 50 } }),
+      async (input) => {
+        afterTools = size()
+        await input.onToken('None.')
+        return { requestId: input.requestId as string, usage: { inputTokens: 1100, outputTokens: 20 } }
+      },
+    ])
+
+    await startStream({ sendTools: true })
+
+    expect(afterTools?.estimated).toBe(true)
+    const resultTokens = NO_MODELS_TEXT.length / 2.5
+    expect([Math.floor(resultTokens), Math.ceil(resultTokens)]).toContain((afterTools?.tokens ?? 0) - 1050)
+    expect(size()).toStrictEqual({ tokens: 1120, estimated: false })
+  })
+
+  it('keeps the count of the request before when a provider tells no tokens, or only a part of them', async () => {
+    replyRounds([
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [{ id: 'c1', name: 'model_list', argumentsText: '{}' }], usage: { inputTokens: 1000, outputTokens: 50 } }),
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [{ id: 'c2', name: 'model_list', argumentsText: '{}' }], usage: { inputTokens: 1100 } }),
+      async (input) => ({ requestId: input.requestId as string }),
+    ])
+
+    await startStream({ sendTools: true })
+
+    expect(activeTab().context?.tokens).toBe(1050)
+    expect(size().estimated).toBe(true)
+  })
+
+  // The text of a stopped answer is cut off, and its request tells the
+  // tokens of the whole answer, if any.
+  it('keeps no count of a round that the user stopped', async () => {
+    streamChat = async (input) => {
+      await input.onToken('Partial')
+      await sbp('dez.stream/stop', activeTab().id)
+      return { requestId: input.requestId as string, cost: 0.25, usage: { inputTokens: 1200, outputTokens: 300 } }
+    }
+
+    await startStream()
+
+    // The result of the round came: its price is counted.
+    expect(activeTab().cost?.requests).toBe(1)
+    expect(activeTab()).not.toHaveProperty('context')
+    expect(size().estimated).toBe(true)
   })
 })
 

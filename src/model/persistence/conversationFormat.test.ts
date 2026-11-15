@@ -688,7 +688,7 @@ describe('agent pill durations', () => {
   })
 })
 
-describe('conversation cost and edited flag in the header', () => {
+describe('conversation cost, edited flag, and counted context in the header', () => {
   const conversation = (fields: Partial<ConversationData>): ConversationData => ({
     id: 'conversation',
     title: 'Chat',
@@ -747,6 +747,38 @@ describe('conversation cost and edited flag in the header', () => {
 
     expect(parsed.map((data) => 'cost' in data)).toEqual([...parts.slice(0, -1).map(() => false), true])
     expect(parsed.some((data) => 'agentTextEdited' in data)).toBe(false)
+  })
+
+  it('round-trips the counted context, after the other parts', () => {
+    const counted = conversation({ context: { tokens: 81200, estimate: 90400 } })
+    const all = conversation({ cost: { usd: 0.5, requests: 2, unpriced: 0 }, agentTextEdited: true, context: { tokens: 0, estimate: 0 } })
+
+    expect(firstLine(serializeConversation(counted))).toBe('<!-- title: Chat | model:  | created: 1 | context: 81200 | context-estimate: 90400 -->')
+    expect(firstLine(serializeConversation(all))).toBe('<!-- title: Chat | model:  | created: 1 | cost: 0.5 | requests: 2 | edited: yes | context: 0 | context-estimate: 0 -->')
+    expect(parseConversation('conversation', serializeConversation(counted))).toStrictEqual(counted)
+    expect(parseConversation('conversation', serializeConversation(all))).toStrictEqual(all)
+  })
+
+  // A context with only one of its numbers would give a wrong count: the
+  // size is the count plus the difference of two estimates.
+  it('ignores the whole context when one of its values is missing or bad', () => {
+    const parts = [
+      'context: 5',
+      'context-estimate: 5',
+      'context: | context-estimate: 5',
+      'context: abc | context-estimate: 5',
+      'context: -1 | context-estimate: 5',
+      'context: 1.5 | context-estimate: 5',
+      'context: Infinity | context-estimate: 5',
+      'context: 5 | context-estimate: -1',
+      'context: 5 | context-estimate: 1e400',
+      'context-estimate: 7 | context: 5',
+    ]
+
+    const parsed = parts.map((part) => parseConversation('conversation', `<!-- title: Chat | model:  | created: 1 | ${part} -->\n<dez:pill type="user"/>\nhi\n`))
+
+    expect(parsed.map((data) => data.context)).toStrictEqual([...parts.slice(0, -1).map(() => undefined), { tokens: 5, estimate: 7 }])
+    expect(parsed.slice(0, -1).some((data) => 'context' in data)).toBe(false)
   })
 })
 

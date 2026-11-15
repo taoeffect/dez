@@ -1,18 +1,22 @@
 import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { ContextSize } from '../chat/contextSize'
 import type { ActiveModel, ContentNode, ModelRef, Section, SectionThinking, Tab, ThinkingReplay } from '../chat/types'
 import type { AppStatePayload, ConversationData, ModelCache } from '../persistence/types'
 import { PRICE_LIFETIME_MS, type PriceQuote } from '../providers/modelPrices'
 import type { ProviderConfig } from '../providers/config'
 import type { ModelInfo, ModelRequest } from '../providers/types'
 import type { SettingsSnapshot } from './index'
+import { estimatedRequestTokens } from '../streams/contextEstimate'
 import type { RequestMessages } from '../streams/types'
 import type { Shortcut, ShortcutId } from '../shortcuts'
 // Side-effect import: registers the dez.model/* selectors under test.
 import './index'
 import { appendThinkingToTabSection, appendTokenToTabSection, finalizeStreamSectionForTab, setThinkingReplayForTabSection } from './index'
 import { BUILT_IN_SYSTEM_PROMPT } from '../systemPrompt'
+import { modelFamily } from '../providers/modelFamilies'
+import { TOOL_DEFINITIONS } from '../tools/registry'
 
 // Conversation ids that the stub disk load below was asked for. Reset in
 // beforeEach.
@@ -296,6 +300,128 @@ describe('conversation cost and edited flag of a tab', () => {
   })
 })
 
+describe('context size of a tab', () => {
+  // A model of a family with 4 characters per token, and one with 2.5.
+  const gpt: ModelRef = { providerId: 'local', modelId: 'gpt-5.4' }
+  const claude: ModelRef = { providerId: 'local', modelId: 'claude-sonnet-4-5' }
+  const size = (tabId: string) => sbp('dez.model/tabs/contextSize', tabId) as ContextSize | undefined
+  const counted = (tabId: string) => (sbp('dez.model/tabs/conversationData', tabId) as ConversationData).context
+  const letters = (count: number) => 'x'.repeat(count)
+
+  // A new tab of `model` with one user message. The tab is the active one.
+  function tabOf (model: ModelRef, text: string): Tab {
+    const tab = tabWithText(text)
+    sbp('dez.model/setActiveModel', model.providerId, model.modelId, model.modelId)
+    return tab
+  }
+
+  // With no system prompt and no tools, a request is only its messages,
+  // so that a test can tell each count from the length of its text.
+  beforeEach(() => {
+    sbp('dez.model/settings/setSystemPrompt', '')
+    sbp('dez.model/settings/setProviderSetting', 'local', 'tools', false)
+  })
+
+  it('estimates a tab that no request counted, by the family of its model', () => {
+    const noModel = tabWithText(letters(100))
+    const ofGpt = tabOf(gpt, letters(100))
+    const ofClaude = tabOf(claude, letters(100))
+
+    expect(size(noModel.id)).toStrictEqual({ tokens: 40, estimated: true })
+    expect(size(ofGpt.id)).toStrictEqual({ tokens: 25, estimated: true })
+    expect(size(ofClaude.id)).toStrictEqual({ tokens: 40, estimated: true })
+    expect(size('missing')).toBeUndefined()
+    expect(counted(ofGpt.id)).toBeUndefined()
+  })
+
+  it('counts the system prompt and the tools only of a request that sends them', () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const tab = tabOf(gpt, letters(100))
+    const tokens = () => size(tab.id)?.tokens
+
+    sbp('dez.model/settings/setSystemPrompt', letters(40))
+    expect(tokens()).toBe(35)
+    // No request goes with a template that has a problem.
+    sbp('dez.model/settings/setSystemPrompt', 'Hi {{nope}}')
+    expect(tokens()).toBe(25)
+    expect(consoleError).not.toHaveBeenCalled()
+    // A media model gets no system prompt and no tools.
+    sbp('dez.model/settings/setSystemPrompt', letters(40))
+    sbp('dez.model/settings/resetProviderSettings', 'local', ['tools'])
+    sbp('dez.model/modelCache/applyProviderResult', 'local', { ok: true, models: [{ id: gpt.modelId, name: 'G', provider: 'local', request: 'video' }] })
+    expect(tokens()).toBe(25)
+
+    sbp('dez.model/modelCache/applyProviderResult', 'local', { ok: true, models: [{ id: gpt.modelId, name: 'G', provider: 'local' }] })
+    const withTools = estimatedRequestTokens({ system: letters(40), tools: TOOL_DEFINITIONS, messages: [{ role: 'user', content: letters(100) }] }, modelFamily(gpt.modelId))
+    expect(tokens()).toBe(withTools)
+    expect(withTools).toBeGreaterThan(35)
+  })
+
+  it('keeps the count of a request in its own tab, as a whole number, and nothing for a missing tab', () => {
+    const tab = tabOf(gpt, letters(100))
+    const other = tabOf(gpt, letters(100))
+
+    sbp('dez.model/tabs/countRequestContext', tab.id, gpt, 5000.4)
+    sbp('dez.model/tabs/countRequestContext', 'missing', gpt, 1)
+
+    expect(counted(tab.id)).toStrictEqual({ tokens: 5000, estimate: 25 })
+    expect(size(tab.id)).toStrictEqual({ tokens: 5000, estimated: false })
+    expect(sbp('dez.model/tabs/conversationData', other.id)).not.toHaveProperty('context')
+    expect(size(other.id)).toStrictEqual({ tokens: 25, estimated: true })
+  })
+
+  it('follows the text of the tab from the count of the provider', () => {
+    const tab = tabOf(gpt, letters(100))
+    sbp('dez.model/tabs/countRequestContext', tab.id, gpt, 5000)
+
+    typeText(tab.id, letters(500))
+    expect(size(tab.id)).toStrictEqual({ tokens: 5100, estimated: true })
+    typeText(tab.id, letters(20))
+    expect(size(tab.id)).toStrictEqual({ tokens: 4980, estimated: true })
+    typeText(tab.id, letters(100))
+    expect(size(tab.id)).toStrictEqual({ tokens: 5000, estimated: false })
+    // A newer count replaces the older one.
+    typeText(tab.id, letters(500))
+    sbp('dez.model/tabs/countRequestContext', tab.id, gpt, 7000)
+    expect(size(tab.id)).toStrictEqual({ tokens: 7000, estimated: false })
+  })
+
+  // The answer's calls are in its output tokens before the tab holds their
+  // blocks: 40 characters of calls are 10 tokens of the estimate.
+  it('takes the tool calls of the answer into the estimate of the count', () => {
+    const tab = tabOf(gpt, letters(100))
+
+    sbp('dez.model/tabs/countRequestContext', tab.id, gpt, 5000, [{ id: 'call_1', name: 'echo', argumentsText: letters(36) }])
+
+    expect(counted(tab.id)).toStrictEqual({ tokens: 5000, estimate: 35 })
+  })
+
+  it('shows an estimate when the active model is not the one of the count', () => {
+    const tab = tabOf(gpt, letters(100))
+    sbp('dez.model/tabs/countRequestContext', tab.id, gpt, 5000)
+
+    sbp('dez.model/setActiveModel', claude.providerId, claude.modelId, claude.modelId)
+
+    expect(size(tab.id)).toStrictEqual({ tokens: 5015, estimated: true })
+  })
+
+  it('keeps the count through a reload of the conversation and a reopen of the closed tab', async () => {
+    const tab = tabOf(gpt, letters(100))
+    sbp('dez.model/tabs/countRequestContext', tab.id, gpt, 5000)
+    diskConversations.set('conv-copy', { ...sbp('dez.model/tabs/conversationData', tab.id) as ConversationData, id: 'conv-copy' })
+
+    const reloaded = await openConversation('conv-copy') as Tab
+    sbp('dez.model/tabs/close', tab.id)
+    sbp('dez.model/tabs/reopenClosed')
+    const reopened = activeTab()
+
+    for (const copy of [reloaded, reopened]) {
+      expect(copy.context).toStrictEqual({ tokens: 5000, estimate: 25 })
+      expect(size(copy.id)).toStrictEqual({ tokens: 5000, estimated: false })
+    }
+  })
+})
+
 describe('dez.model/heldTexts', () => {
   it('gives each text and prompt body of the open and the closed tabs, each saved prompt, and the system prompt template', () => {
     sbp('dez.model/tabs/replaceSections', activeId(), [
@@ -444,7 +570,7 @@ describe('section models', () => {
     typeIntoLastSection('first question')
     const first = ensureAgentSection(alpha)
     appendTokenToTabSection(activeId(), first.id, 'first answer')
-    finalizeStreamSectionForTab({ tabId: activeId(), sectionId: first.id, status: 'finished', model: { ...alpha, modelName: 'Alpha' }, startedAt: 1000, updatedAt: 1500, finishedAt: 1500, tokenCount: 12 })
+    finalizeStreamSectionForTab({ tabId: activeId(), sectionId: first.id, status: 'finished', model: { ...alpha, modelName: 'Alpha' }, startedAt: 1000, updatedAt: 1500, finishedAt: 1500 })
     typeIntoLastSection('second question')
     const second = ensureAgentSection(beta)
 

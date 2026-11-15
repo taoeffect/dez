@@ -49,16 +49,14 @@ export const useStreamStore = defineStore('streams', () => {
       startedAt: now,
       updatedAt: now,
       finishedAt: null,
-      tokenCount: 0,
     }
     sessionsByTab.value[input.tabId] = nextSession
     return nextSession
   }
 
-  function receiveToken(tabId: string, token: string): StreamSessionState | null {
+  function receiveToken(tabId: string): StreamSessionState | null {
     const currentSession = session(tabId)
     if (!currentSession || currentSession.status !== 'streaming') return currentSession
-    currentSession.tokenCount += token.length
     currentSession.updatedAt = Date.now()
     return currentSession
   }
@@ -117,8 +115,8 @@ export function startStreamSession(input: StreamStartInput): StreamSessionState 
   }))
 }
 
-export function receiveStreamToken(tabId: string, token: string): StreamSessionState | null {
-  return cloneNullableStreamSession(useStreamStore().receiveToken(tabId, token))
+export function receiveStreamToken(tabId: string): StreamSessionState | null {
+  return cloneNullableStreamSession(useStreamStore().receiveToken(tabId))
 }
 
 export function finishStreamSession(tabId: string): EndedStreamSession | null {

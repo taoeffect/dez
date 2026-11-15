@@ -1,4 +1,5 @@
 import { stripLiveSentinels } from '../chat/content'
+import { contextField, type CountedContext } from '../chat/contextSize'
 import { agentTextEditedField, costField, type ConversationCost } from '../chat/conversationCost'
 import { durationField } from '../chat/duration'
 import { messagesAsMarkdown, sectionTextAsMarkdown } from '../chat/markdown'
@@ -11,7 +12,7 @@ import type { ContentNodeData, ConversationData, SectionData } from './types'
 // (persistence.rs keeps only the ASCII letters, digits, `-`, and `_` of the
 // id):
 //
-//   <!-- title: X | model: provider/model | created: N | cost: 0.42 | requests: 7 | unpriced: 1 | edited: yes -->
+//   <!-- title: X | model: provider/model | created: N | cost: 0.42 | requests: 7 | unpriced: 1 | edited: yes | context: 81200 | context-estimate: 90400 -->
 //
 //   <dez:pill type="user"/>
 //   text
@@ -28,6 +29,9 @@ import type { ContentNodeData, ConversationData, SectionData } from './types'
 //   `edited: yes` is `Tab.agentTextEdited`. Each part is only there when
 //   set (`unpriced:` only when more than 0). Files of an older Dez have
 //   none of them, and an older Dez ignores them. A cost with a bad or a
+//   missing value is ignored as a whole.
+// - `context:` and `context-estimate:` are `Tab.context` (its `tokens` and
+//   its `estimate`), there only when set. A context with a bad or a
 //   missing value is ignored as a whole.
 // - `duration-ms` is how long the reply took (`Section.durationMs`); files
 //   saved before Dez stored it have none.
@@ -58,7 +62,7 @@ function promptId(): string {
 
 export function serializeConversation(data: ConversationData): string {
   const model = data.activeModel ? modelRefKey(data.activeModel) : ''
-  let output = `<!-- title: ${escapeTitle(data.title)} | model: ${escapeTitle(model)} | created: ${data.created_at}${costHeaderParts(data)} -->\n`
+  let output = `<!-- title: ${escapeTitle(data.title)} | model: ${escapeTitle(model)} | created: ${data.created_at}${optionalHeaderParts(data)} -->\n`
 
   for (const section of data.sections) {
     output += '\n'
@@ -81,7 +85,8 @@ export function serializeConversation(data: ConversationData): string {
   return output
 }
 
-function costHeaderParts({ cost, agentTextEdited }: ConversationData): string {
+// The header parts that are only there when set, each with its ` | `.
+function optionalHeaderParts({ cost, agentTextEdited, context }: ConversationData): string {
   const parts: string[] = []
   if (cost) {
     // 12 significant digits drop the float noise of a long sum (0.1 + 0.2).
@@ -89,6 +94,7 @@ function costHeaderParts({ cost, agentTextEdited }: ConversationData): string {
     if (cost.unpriced > 0) parts.push(`unpriced: ${cost.unpriced}`)
   }
   if (agentTextEdited) parts.push('edited: yes')
+  if (context) parts.push(`context: ${context.tokens}`, `context-estimate: ${context.estimate}`)
   return parts.map((part) => ` | ${part}`).join('')
 }
 
@@ -116,6 +122,7 @@ interface ConversationHeader {
   createdAt: number
   cost?: ConversationCost
   agentTextEdited?: true
+  context?: CountedContext
 }
 
 const EMPTY_HEADER: ConversationHeader = { title: '', model: '', createdAt: 0 }
@@ -135,6 +142,16 @@ function headerCost(usdText: string | undefined, requestsText: string | undefine
   if (!Number.isInteger(requests) || requests < 1) return undefined
   if (!Number.isInteger(unpriced) || unpriced < 0 || unpriced > requests) return undefined
   return { usd, requests, unpriced }
+}
+
+/** The counted context of the header's `context:` and `context-estimate:`
+ *  texts; undefined when one of them is missing or bad. */
+function headerContext(tokensText: string | undefined, estimateText: string | undefined): CountedContext | undefined {
+  const tokens = headerNumber(tokensText)
+  const estimate = headerNumber(estimateText)
+  if (!Number.isSafeInteger(tokens) || tokens < 0) return undefined
+  if (!Number.isSafeInteger(estimate) || estimate < 0) return undefined
+  return { tokens, estimate }
 }
 
 function parseHeader(line: string): ConversationHeader {
@@ -169,6 +186,7 @@ function parseHeader(line: string): ConversationHeader {
     createdAt,
     ...costField(headerCost(values.get('cost'), values.get('requests'), values.get('unpriced'))),
     ...agentTextEditedField(values.get('edited') === 'yes'),
+    ...contextField(headerContext(values.get('context'), values.get('context-estimate'))),
   }
 }
 
@@ -352,5 +370,6 @@ export function parseConversation(id: string, content: string): ConversationData
     created_at: header.createdAt,
     ...costField(header.cost),
     ...agentTextEditedField(header.agentTextEdited),
+    ...contextField(header.context),
   }
 }

@@ -34,7 +34,6 @@ export interface StreamSessionState {
   startedAt: number
   updatedAt: number
   finishedAt: number | null
-  tokenCount: number
 }
 
 /** A session after its stream ended (finished, failed, or stopped). */

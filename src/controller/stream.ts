@@ -225,7 +225,7 @@ function writeStreamText(tabId: string, sectionId: string, text: string): void {
 function receiveToken(tabId: string, sectionId: string, token: string): void {
   if (!streamWritesSection(tabId, sectionId)) return
   writeStreamText(tabId, sectionId, token)
-  receiveStreamToken(tabId, token)
+  receiveStreamToken(tabId)
 }
 
 // Writes escaped answer text of the model. Right after an image reference
@@ -603,6 +603,14 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
     // merged it into the one before) takes no blocks.
     const streamedCalls = tools.length > 0 ? result.toolCalls ?? [] : []
     const section = streamingSection(args.tabId, args.sectionId)
+    // The tokens of this request are the size of the conversation with
+    // its answer. The tab holds the answer's text now, but not yet the
+    // blocks of its calls, so the calls go with the count. A provider that
+    // told no tokens leaves the count of an earlier request.
+    const { inputTokens, outputTokens } = result.usage ?? {}
+    if (inputTokens !== undefined && outputTokens !== undefined) {
+      sbp('dez.model/tabs/countRequestContext', args.tabId, args.model, inputTokens + outputTokens, section ? streamedCalls : [])
+    }
     if (streamedCalls.length === 0 || !section) {
       await endReply(args.tabId, reply, 'finished')
       return

@@ -1,3 +1,4 @@
+import type { CountedContext } from './chat/contextSize'
 import type { ConversationCost } from './chat/conversationCost'
 import type { ActiveModel, ContentNode, ModelRef, SectionThinking } from './chat/types'
 import type { ModelOutput } from './modelOutputs'
@@ -24,6 +25,7 @@ export interface ModelSnapshot {
     createdAt: number
     cost?: ConversationCost
     agentTextEdited?: true
+    context?: CountedContext
   }[]
   activeTabId: string
   activeModel: ActiveModel | null

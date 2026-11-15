@@ -1,3 +1,4 @@
+import type { CountedContext } from './contextSize'
 import type { ConversationCost } from './conversationCost'
 import type { ImageMediaType } from './images'
 import type { ToolCall, ToolResult } from '../tools/types'
@@ -157,6 +158,11 @@ export interface Tab {
    *  so the cost can belong to text that is gone. Absent when not; never
    *  set to `undefined`. Never cleared. */
   agentTextEdited?: true
+  /** The tokens of the newest chat request of the conversation that told
+   *  them, with Dez's estimate at that moment. The context size of the tab
+   *  comes from it (`dez.model/tabs/contextSize`). Absent before the first
+   *  such request; never set to `undefined`. */
+  context?: CountedContext
 }
 
 export type StreamEvent =

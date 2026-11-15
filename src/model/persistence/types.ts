@@ -1,3 +1,4 @@
+import type { CountedContext } from '../chat/contextSize'
 import type { ConversationCost } from '../chat/conversationCost'
 import type { ActiveModel, ModelRef, SectionThinking } from '../chat/types'
 import type { ModelOutput } from '../modelOutputs'
@@ -62,6 +63,8 @@ export interface ConversationData {
   cost?: ConversationCost
   /** `Tab.agentTextEdited`. */
   agentTextEdited?: true
+  /** `Tab.context`; absent in files of an older Dez. */
+  context?: CountedContext
 }
 
 export interface ConversationSummary {

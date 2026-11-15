@@ -21,8 +21,10 @@ import { withKeptClipData } from '../providers/keptClipData'
 import { modelEntriesFingerprint, withKeptImageLimits } from '../providers/learnedImageLimit'
 import type { ParameterValue, ParameterValues } from '../providers/modelParameters'
 import { freshQuote, freshQuotes, withQuote, type PriceQuote, type QuoteRequest } from '../providers/modelPrices'
+import { DEFAULT_FAMILY, modelFamily } from '../providers/modelFamilies'
 import { isToolsEnabled, toolsApply } from '../providers/modelToggles'
-import { providerModel, type ModelInfo, type ProviderId, type ProviderModelsResult } from '../providers/types'
+import { getProvider } from '../providers/registry'
+import { effectiveRequest, providerModel, type ModelInfo, type ProviderId, type ProviderModelsResult } from '../providers/types'
 import type { ActiveModel, ContentNode, ModelRef, Section, SectionThinking, Tab, ThinkingReplay, ThinkingRound } from '../chat/types'
 import {
   appendStreamingText,
@@ -32,6 +34,7 @@ import {
   sectionIsEmpty,
   sectionVisibleText,
 } from '../chat/content'
+import { contextField, contextSize, type ContextSize } from '../chat/contextSize'
 import { agentTextEditedField, costField, withRequestCost, type ConversationCost } from '../chat/conversationCost'
 import { durationField } from '../chat/duration'
 import { labelImageReferences } from '../chat/images'
@@ -39,8 +42,11 @@ import { labelMediaTags } from '../chat/mediaTags'
 import { modelRefField, modelRefKey, parseModelRefKey } from '../chat/modelRef'
 import { thinkingField } from '../chat/thinking'
 import { cloneJsonObject } from '../../utils/json'
+import { estimatedRequestTokens } from '../streams/contextEstimate'
 import { sectionsToStreamMessages } from '../streams/messages'
-import { BUILT_IN_SYSTEM_PROMPT } from '../systemPrompt'
+import { BUILT_IN_SYSTEM_PROMPT, buildSystemPrompt, systemPromptProblem, systemPromptTemplate } from '../systemPrompt'
+import { TOOL_DEFINITIONS } from '../tools/registry'
+import type { StreamedToolCall } from '../tools/types'
 import {
   endStreamSection,
   ensureTrailingAgentSection,
@@ -131,6 +137,7 @@ function cloneTab(tab: Tab): ModelSnapshot['tabs'][number] {
     createdAt: tab.createdAt,
     ...costField(tab.cost),
     ...agentTextEditedField(tab.agentTextEdited),
+    ...contextField(tab.context),
   }
 }
 
@@ -354,6 +361,7 @@ function tabFromConversation(conv: ConversationData, overrides: Partial<Tab> = {
     createdAt: overrides.createdAt ?? (conv.created_at || Date.now()),
     ...costField(conv.cost),
     ...agentTextEditedField(conv.agentTextEdited),
+    ...contextField(conv.context),
   }
 }
 
@@ -466,6 +474,35 @@ function cloneModelInfo(model: ModelInfo): ModelInfo {
 function cachedModel(model: ModelRef): ModelInfo | undefined {
   return useModelCacheStore().cache.providers[model.providerId]?.models
     .find((candidate) => candidate.id === model.modelId)
+}
+
+// Dez's estimate of the tokens of a chat request of `tab` to `model` as the
+// tab and the settings are now (`estimatedRequestTokens`): the request
+// messages of the sections, the system prompt, and the tools. `answerCalls`
+// are the tool calls of an answer whose blocks the tab does not hold yet.
+//
+// The context size of a tab is the difference of two of these numbers on
+// top of a provider's count (`contextSize`), so both must come from here.
+// The pictures of `asset_view` are in no section, so they are not in it:
+// a picture counts from the next request on, in the provider's count.
+//
+// A tab with no model counts by the default family, with no system prompt
+// and no tools.
+function tabContextEstimate(tab: Tab, model: ModelRef | null, answerCalls: readonly StreamedToolCall[] = []): number {
+  if (!model) {
+    const { messages } = sectionsToStreamMessages(tab.sections, { providerId: '', modelId: '' }, { sendImages: true, sendTools: false })
+    return estimatedRequestTokens({ tools: [], messages, answerCalls }, DEFAULT_FAMILY)
+  }
+
+  const { messages, sendTools } = sbp('dez.model/streamMessagesForTab', tab.id, model) as RequestMessages
+  const tools = sendTools ? TOOL_DEFINITIONS : []
+  // Only a chat request has a system prompt. A template with a problem
+  // sends no request, and `buildSystemPrompt` throws for it.
+  const template = systemPromptTemplate(useSettingsStore().systemPrompt)
+  const system = effectiveRequest(cachedModel(model) ?? {}) === 'chat' && systemPromptProblem(template) === null
+    ? buildSystemPrompt(template, model, getProvider(model.providerId)?.name ?? model.providerId, tools)
+    : undefined
+  return estimatedRequestTokens({ system, tools, messages, answerCalls }, modelFamily(model.modelId))
 }
 
 // A copy of the cache that shares nothing with the store. It holds only
@@ -643,6 +680,29 @@ export default sbp('sbp/selectors/register', {
     return costField(useTabStore().tabs.find((candidate) => candidate.id === tabId)?.cost).cost
   },
 
+  // Keeps the tokens of a chat request of a reply as the counted context
+  // of its tab: `tokens` is the input and the output of the request, as
+  // the provider counted them, so the size of the conversation with the
+  // answer. `model` is the model of the request, and `answerCalls` the
+  // tool calls of the answer that the tab does not hold yet. The estimate
+  // of the tab at this moment goes with the count (`contextSize`). A tab
+  // that was closed meanwhile gets nothing.
+  'dez.model/tabs/countRequestContext' (tabId: string, model: ModelRef, tokens: number, answerCalls: readonly StreamedToolCall[] = []): void {
+    const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
+    if (tab) tab.context = { tokens: Math.round(tokens), estimate: tabContextEstimate(tab, model, answerCalls) }
+  },
+
+  // About how many tokens the next chat request of the tab holds, for its
+  // active model, and whether that is an estimate; undefined for a missing
+  // tab. The count of the provider is the base, so a tab whose reply came
+  // from another model than the active one, or with other settings, shows
+  // an estimate. It reads the text of the whole tab: a view must not read
+  // it for each token of a stream.
+  'dez.model/tabs/contextSize' (tabId: string): ContextSize | undefined {
+    const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
+    return tab && contextSize(tab.context, tabContextEstimate(tab, tab.activeModel))
+  },
+
   // The user changed or removed the text of a reply in the tab, so its
   // cost can belong to text that is gone. The mark is never cleared.
   'dez.model/tabs/markAgentTextEdited' (tabId: string): void {
@@ -673,6 +733,7 @@ export default sbp('sbp/selectors/register', {
       created_at: tab.createdAt,
       ...costField(tab.cost),
       ...agentTextEditedField(tab.agentTextEdited),
+      ...contextField(tab.context),
     }
   },
 
