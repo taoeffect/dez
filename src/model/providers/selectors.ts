@@ -296,7 +296,7 @@ function svgNotDrawnError(path: string, error: unknown): InputImageError {
 async function chatImage(path: string, appDir: string): Promise<StoredImage> {
   const image = await readRequestImage(path, appDir)
   const sent = await chatImageCopy(path, image) ?? image
-  chatImageCopies.noteSent(path, sent.bytes.length)
+  chatImageCopies.noteRequestBytes(path, sent.bytes.length)
   return sent
 }
 
@@ -627,18 +627,18 @@ export default sbp('sbp/selectors/register', {
   // How many bytes a chat request sends for each image of `paths` (the
   // file, or its smaller copy; `chatImage`), by path, for a count of the
   // bytes of a request before it goes (the picture budget). An image that
-  // a request sent comes from memory, with no read of its file; any other
-  // one is read, and drawn when it goes as a copy. An image that Dez
-  // cannot send (its file is gone, an SVG that cannot be drawn) has no
-  // entry: the log tells why, and the request that holds it fails with its
-  // own text.
+  // a request or an earlier count read comes from memory, with no read of
+  // its file; any other one is read, and drawn when it goes as a copy. An
+  // image that Dez cannot send (its file is gone, an SVG that cannot be
+  // drawn) has no entry: the log tells why, and the request that holds it
+  // fails with its own text.
   async 'dez.provider/chatImageSizes' (paths: readonly string[]): Promise<Map<string, number>> {
     const sizes = new Map<string, number>()
     let appDir: Promise<string> | undefined
     await Promise.all([...new Set(paths)].map(async (path) => {
-      const sent = chatImageCopies.sentBytes(path)
-      if (sent !== undefined) {
-        sizes.set(path, sent)
+      const known = chatImageCopies.requestBytes(path)
+      if (known !== undefined) {
+        sizes.set(path, known)
         return
       }
       appDir ??= sbp('dez.native/getAppDir') as Promise<string>

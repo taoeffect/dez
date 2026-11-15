@@ -95,27 +95,27 @@ describe('ChatImageCopies', () => {
     expect(copies.get('b')).toStrictEqual(copyOf(40))
   })
 
-  it('keeps the byte count of what the newest request sent for a path', () => {
+  it('keeps the byte count of the newest read of the image at a path', () => {
     const copies = new ChatImageCopies(100)
-    expect(copies.sentBytes('/home/u/a.png')).toBeUndefined()
+    expect(copies.requestBytes('/home/u/a.png')).toBeUndefined()
 
-    copies.noteSent('/home/u/a.png', 500)
-    copies.noteSent('/home/u/a.png', 700)
+    copies.noteRequestBytes('/home/u/a.png', 500)
+    copies.noteRequestBytes('/home/u/a.png', 700)
 
-    expect(copies.sentBytes('/home/u/a.png')).toBe(700)
+    expect(copies.requestBytes('/home/u/a.png')).toBe(700)
   })
 
   it('holds nothing after a clear, and has its whole room again', () => {
     const copies = new ChatImageCopies(100)
     copies.set('a', copyOf(90))
-    copies.noteSent('/home/u/a.png', 90)
+    copies.noteRequestBytes('/home/u/a.png', 90)
 
     copies.clear()
     copies.set('b', copyOf(90))
     copies.set('c', copyOf(10))
 
     expect(copies.get('a')).toBeUndefined()
-    expect(copies.sentBytes('/home/u/a.png')).toBeUndefined()
+    expect(copies.requestBytes('/home/u/a.png')).toBeUndefined()
     expect(copies.get('b')).toStrictEqual(copyOf(90))
     expect(copies.get('c')).toStrictEqual(copyOf(10))
   })

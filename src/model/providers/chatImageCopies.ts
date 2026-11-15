@@ -1,6 +1,6 @@
 import type { ImageMediaType } from '../chat/images'
 
-// What Dez knows of the images that chat requests sent, in memory, for the
+// What Dez knows of the images that chat requests send, in memory, for the
 // run of the app. A chat request sends a large image as a smaller copy
 // (`chatImageDrawing`, imageSize.ts), and every later request of the
 // conversation sends that image again. So Dez keeps the copy, and decodes
@@ -30,28 +30,30 @@ export async function chatImageKey(bytes: Uint8Array, mediaType: ImageMediaType)
  *  at most `maxBytes` bytes: when a new one does not fit, the copies that
  *  were read the longest time ago go first.
  *
- *  It also keeps, by the path of each image, the byte count of what the
- *  newest request sent for it, so that a count of the bytes of a request
- *  (the picture budget) reads no file that a request already read. That
- *  count is not checked against the file: it can be old for a linked file
- *  that changed, until the next request sends the file. */
+ *  It also keeps, by the path of each image, how many bytes a request
+ *  sends for it, as the newest read of the image found (a request, or a
+ *  count of the bytes of a request: the picture budget), so that a count
+ *  reads no file that Dez already read. That count is not checked against
+ *  the file: it can be old for a linked file that changed, until the next
+ *  request reads the file. */
 export class ChatImageCopies {
   // In the order of the newest read or write of each entry, the oldest
   // first (a Map keeps the order of its inserts).
   private readonly entries = new Map<string, ChatImageCopy | null>()
   private copyBytes = 0
-  private readonly sentByPath = new Map<string, number>()
+  private readonly bytesByPath = new Map<string, number>()
 
   constructor(private readonly maxBytes: number) {}
 
-  /** How many bytes the newest request sent for the image at `path`;
-   *  undefined when no request sent it. */
-  sentBytes(path: string): number | undefined {
-    return this.sentByPath.get(path)
+  /** How many bytes a request sends for the image at `path`, as the newest
+   *  read of it (a request or a count of the picture budget) found;
+   *  undefined when Dez has not read it yet. */
+  requestBytes(path: string): number | undefined {
+    return this.bytesByPath.get(path)
   }
 
-  noteSent(path: string, bytes: number): void {
-    this.sentByPath.set(path, bytes)
+  noteRequestBytes(path: string, bytes: number): void {
+    this.bytesByPath.set(path, bytes)
   }
 
   /** The copy of the file of `key`; null for a file that goes as it is;
@@ -82,7 +84,7 @@ export class ChatImageCopies {
   clear(): void {
     this.entries.clear()
     this.copyBytes = 0
-    this.sentByPath.clear()
+    this.bytesByPath.clear()
   }
 
   private remove(key: string): void {
@@ -92,6 +94,6 @@ export class ChatImageCopies {
 }
 
 /** The copies of the images that the chat requests of this run of the app
- *  sent. 64 MiB hold the copies of about a hundred large images: a JPEG
+ *  send. 64 MiB hold the copies of about a hundred large images: a JPEG
  *  copy has some hundred kilobytes. */
 export const chatImageCopies = new ChatImageCopies(64 * 1024 ** 2)
