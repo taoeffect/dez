@@ -33,9 +33,6 @@ const NEAR_PICTURE_LIMIT = 0.9
  *  the pictures of the next request cost (`contextImageCost`), and
  *  `limits` the picture limits of the model (`pictureLimits`).
  *
- *  With no chat request since the last compaction the answer is null: a
- *  compaction that made no room would come again and again.
- *
  *  A picture limit counts only when a compaction can make room in it, so
  *  only when `spent` is over both of these:
  *  - `leaves`, the most that a compaction leaves
@@ -47,16 +44,14 @@ const NEAR_PICTURE_LIMIT = 0.9
  *    cannot take out the images that the messages of the user name with
  *    an `@id` mention, so with no newer picture it would make no room. It
  *    also covers a model that takes no image, whose limit is 0. */
-export function compactionReason({ contextTokens, dueSize, limits, leaves, spent, kept, requestSinceCompaction }: {
+export function compactionReason({ contextTokens, dueSize, limits, leaves, spent, kept }: {
   contextTokens: number
   dueSize: number
   limits: PictureBudget
   leaves: PictureBudget
   spent: PictureBudget
   kept: PictureBudget
-  requestSinceCompaction: boolean
 }): CompactionReason | null {
-  if (!requestSinceCompaction) return null
   if (contextTokens >= dueSize) return 'tokens'
   const isNear = (part: keyof PictureBudget) => spent[part] > Math.max(kept[part], leaves[part]) && spent[part] >= NEAR_PICTURE_LIMIT * limits[part]
   if (isNear('pictures')) return 'images'
@@ -76,8 +71,8 @@ function replyIndex(sections: readonly Section[], replySectionId: string): numbe
  *  newest compaction (or its start) and the section of the reply that
  *  runs (`replySectionId`). At the first request of a reply, this tells
  *  whether a chat request went since the newest compaction
- *  (`compactionReason`): a first message, and a message right after a
- *  compaction, bring none. */
+ *  (`runChatRounds`, controller/stream.ts): a first message, and a message
+ *  right after a compaction, bring none. */
 export function repliedSinceCompaction(sections: readonly Section[], replySectionId: string): boolean {
   return sections
     .slice(compactionMessageEnd(sections), replyIndex(sections, replySectionId))

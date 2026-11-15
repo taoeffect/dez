@@ -845,7 +845,6 @@ async function compactIfDue(args: StreamStartArgs, reply: ReplyRuntime, frame: R
     leaves: compactedPictureLimits(info),
     spent,
     kept,
-    requestSinceCompaction: true,
   })
   // The sections that the compaction reads, and that tell which files it
   // leaves with no text. A reply's section that is gone (the user merged it
@@ -935,8 +934,8 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
   // that the user does not know of yet: the ones of the messages before
   // the reply, then the ones of the messages of a compaction.
   let untoldImagesOverLimit = args.imagesOverLimit
-  // A chat request went since the newest compaction of the conversation
-  // (`compactionReason`). At the start of the reply, the text tells it.
+  // A chat request went since the newest compaction of the conversation.
+  // At the start of the reply, the text tells it.
   let requestSinceCompaction = repliedSinceCompaction((sbp('dez.model/tab', args.tabId) as Tab | null)?.sections ?? [], args.sectionId)
   // What the images and the pictures cost right after the newest
   // compaction of the reply.
@@ -948,7 +947,8 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
 
   for (;;) {
     // No check, and so no wait, for a request that needs none: a first
-    // message, and the request right after a compaction.
+    // message, and the request right after a compaction. A compaction that
+    // made no room would come again and again.
     if (requestSinceCompaction) {
       const step = await compactIfDue(args, reply, frame, { messages, kept, firstCheck })
       if (step.kind === 'ended') return

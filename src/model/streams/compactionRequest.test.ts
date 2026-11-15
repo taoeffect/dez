@@ -35,16 +35,11 @@ function reason(fields: Partial<Parameters<typeof compactionReason>[0]>): Compac
     leaves: LEAVES,
     spent: NO_PICTURE_BUDGET,
     kept: NO_PICTURE_BUDGET,
-    requestSinceCompaction: true,
     ...fields,
   })
 }
 
 describe('compactionReason', () => {
-  it('is null with no chat request since the last compaction, even when every number is over its limit', () => {
-    expect(reason({ contextTokens: 500_000, spent: { tokens: 60_000, bytes: 30_000_000, pictures: 30 }, requestSinceCompaction: false })).toBeNull()
-  })
-
   it('is due for the context size at exactly its due size, and not one token under it', () => {
     expect(reason({ contextTokens: 100_000 })).toBe('tokens')
     expect(reason({ contextTokens: 99_999 })).toBeNull()
