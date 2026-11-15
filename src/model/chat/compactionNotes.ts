@@ -61,6 +61,9 @@ import { escapedModelText, modelTextForRequest } from './toolBlocks'
 //   parts, also with nothing in them, and after the text of the model, so
 //   a reader never takes a line of a model for a line of Dez: a model can
 //   copy a heading of earlier notes into its answer.
+// - Saved conversations hold these lines, and later compactions and
+//   `asset_info` read them back. So a new form of a line needs a reader
+//   that still takes the old form.
 
 const SUMMARY_HEADING = '## Summary'
 const REQUIREMENTS_HEADING = '## Requirements and decisions'

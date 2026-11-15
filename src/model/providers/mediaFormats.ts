@@ -263,6 +263,10 @@ export interface TextFormat {
 // (`mediaApi.format` in config.ts). A format with no `images` makes no
 // images, one with no `clips` makes no clips, and one with no `texts`
 // writes down no clip.
+// A format serves each provider of its API, custom ones too, so it knows
+// no provider name: a bad answer throws an `UnusableAnswerError` with what
+// was wrong, and `explainedProviderError` (errors.ts) makes the text for
+// the reader, with the name.
 export interface MediaFormat {
   images?: ImageFormat
   clips?: ClipFormat

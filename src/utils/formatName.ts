@@ -10,7 +10,8 @@ const FORMAT_NAMES: Readonly<Record<string, string>> = {
 }
 
 /** The name of the file type with the extension `extension`: `PNG`,
- *  `JPEG`, `WebM`, `MP3`. */
+ *  `JPEG`, `WebM`, `MP3`. Code that names the type of a file from its
+ *  extension uses this, so a type has one name in all of Dez. */
 export function formatName(extension: string): string {
   const lower = extension.toLowerCase()
   return Object.hasOwn(FORMAT_NAMES, lower) ? FORMAT_NAMES[lower] : lower.toUpperCase()

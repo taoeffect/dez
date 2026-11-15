@@ -16,8 +16,10 @@ import { fileURLToPath } from 'node:url';
 // bundle as CFBundleIconFile.
 //
 // Tauri CLI 2.10 cannot take a `.icon` in `bundle.icon`, so the
-// build:macos:* npm scripts run this before `tauri build`. Only actool from
-// Xcode 26 or newer reads `.icon` documents, so this needs macOS.
+// build:macos:* npm scripts run this before `tauri build`. A bare `tauri
+// build` on macOS fails without Assets.car, as `bundle.macOS.files` names
+// it. Only actool from Xcode 26 or newer reads `.icon` documents, so this
+// needs macOS.
 //
 // https://developer.apple.com/videos/play/wwdc2025/220/
 // https://www.hendrik-erz.de/post/supporting-liquid-glass-icons-in-apps-without-xcode

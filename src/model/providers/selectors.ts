@@ -778,9 +778,11 @@ export default sbp('sbp/selectors/register', {
       // A refusal that tells that the model takes fewer images: the user
       // gets Dez's text, with the count, and the console the provider's;
       // the model cache keeps the count, so that the next message with as
-      // many images gets no request (learnedImageLimit.ts). A refusal that
-      // tells a field value that the model needs: the request goes once
-      // more with it (`Provider.clipRequestAfterRefusal`).
+      // many images gets no request (learnedImageLimit.ts). The request
+      // never goes again with fewer images: the user would pay for a clip
+      // that leaves out an image that they meant. A refusal that tells a
+      // field value that the model needs: the request goes once more with
+      // it (`Provider.clipRequestAfterRefusal`).
       const firstRequest = provider.clipRequest(kind, modelId, clipInput)
       const quote = await mediaRequestQuote(provider, input, values, cachedModel)
       signal?.throwIfAborted()

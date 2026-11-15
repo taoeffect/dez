@@ -241,7 +241,8 @@ onMounted(async () => {
 /* `pointer-events`: virtua sets `pointer-events: none` on the box around
    the rows while the list scrolls, and for 150 ms after the last scroll
    event. The rows inherit it, so a click soon after the wheel stops did
-   nothing. The rows set the property back; they need no such rest. */
+   nothing. The rows set the property back; they need no such rest. A new
+   kind of row that takes clicks needs `pointer-events: auto` too. */
 .model-item {
   display: flex;
   align-items: center;

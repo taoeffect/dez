@@ -34,7 +34,10 @@ import { tagEscape } from './tagEscape'
 //   can end the block or read as a pill or prompt line in a conversation
 //   file.
 // - Blocks count in agent sections only; in a user section the same text is
-//   plain text. Callers check the role.
+//   plain text. Callers check the role, and give the recognizer the text of
+//   one section at a time, never a whole doc: it stops only at the next
+//   `dez:` tag, so an opening line could pair with a later section's
+//   closing line.
 // - Answer text from a model is escaped too (`ModelTextEscaper`), so a model
 //   cannot write a block.
 

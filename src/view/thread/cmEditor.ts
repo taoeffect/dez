@@ -423,6 +423,9 @@ function countSeparators(doc: string): number {
   return n
 }
 
+/** The index of the section that holds `pos`: the count of separators
+ *  before it. A separator at `pos` is not counted: it starts the next
+ *  section, `index + 1`, which owns its pill. Easy to get off by one. */
 function sectionIndexAtOffset(doc: string, pos: number): number {
   let index = 0
   for (let i = 0; i < pos && i < doc.length; i++) {

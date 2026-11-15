@@ -220,7 +220,9 @@ class MediaWidget extends WidgetType {
     return createPlayer(view, this.tag, this.role)
   }
   // A changed tag goes to the drawn player (`updatePlayer`), so CM makes no
-  // new one.
+  // new one, and a clip that plays goes on. Only a new editor state
+  // (`view.setState`: a tab switch, the end of a stream) makes new players,
+  // so it stops a clip that plays.
   //
   // The player's element also stays in the document while CM draws its line
   // again, which a player that fills the screen needs: an element that

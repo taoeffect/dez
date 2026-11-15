@@ -8,7 +8,9 @@ import { MEDIA_KINDS, MODEL_REQUESTS } from './types'
 
 // Provider ids are JSON keys in provider_keys.json, the `provider` half of a
 // conversation header's `model: provider/model` (split at the first `/`), and
-// model picker group keys, so they use a small charset with no `/`.
+// model picker group keys, so they use a small charset with no `/`. The key
+// store (`is_valid_provider_id`, src-tauri/src/key_store.rs) checks the same
+// charset and length, so a change here must change it there too.
 const PROVIDER_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/
 
 // Ids are also keys of plain objects (model cache, errors, provider

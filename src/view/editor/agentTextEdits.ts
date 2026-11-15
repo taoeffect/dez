@@ -19,7 +19,9 @@ function agentTexts(state: EditorState): Map<string, string> {
  *  paste, a drop, a drag, a replace, an undo or redo, a split, a role
  *  switch, a prompt insert, and the trash of an image or a clip. The
  *  stream, the tools, the store-to-view syncs, the open and close of a
- *  prompt pill, and the Save of a clip have none, so they never count.
+ *  prompt pill, and the Save of a clip have none, so they never count. So
+ *  a new edit path of the user must set a `userEvent`, and a new write by
+ *  the program must not.
  *
  *  Sections are matched by id, and a section that is not an agent section
  *  counts as an empty text: so a merge of an empty message into a reply,

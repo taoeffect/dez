@@ -69,6 +69,16 @@ import { discardMadeAssets, generatedClipAsset, ReplyJobs, writeJobAssets, type 
 import { discardShownPictures } from './shownPictures'
 import type { ToolRunCall, ToolRunContext } from './tools'
 
+// One reply of a tab, in order: `dez.controller/submitTab` (thread.ts)
+// checks the request, builds its messages, and adds the reply's agent
+// section. That one section takes every round, tool block, image, and
+// clip of the reply. `dez.stream/start` then runs the chat rounds
+// (`runChatRounds`: a compaction check before each request, then the
+// tool calls of the round) or the one media round (`runMediaRound`).
+// Each request that went counts in the cost of the tab
+// (`countRequestCost`). The end (`endReply`) waits for the open jobs of
+// the reply, then ends its stream session (`finalizeStream`).
+
 interface StreamStartArgs {
   tabId: string
   conversationId: string
@@ -179,7 +189,9 @@ function finalizeStream(tabId: string, session: EndedStreamSession | null): void
 // Adds one request of a reply to the cost of its tab (`withRequestCost`),
 // also of a tab that is not active. A price can come after the end of the
 // reply (the answer of a stopped round), when the end has saved the
-// conversation: then it is saved again.
+// conversation: then it is saved again. Every request of a reply that
+// went counts here: each chat round, each compaction request, the media
+// round, and the paid request of each job (`ReplyJobs`).
 function countRequestCost(tabId: string, usd: number | null): void {
   sbp('dez.model/tabs/countRequestCost', tabId, usd)
   if (!streamIsStreaming(tabId)) sbp('dez.model/tabs/save', tabId).catch(() => {})
@@ -506,7 +518,9 @@ async function runToolRound(tabId: string, reply: ReplyRuntime, model: ModelRef,
   return streamingSection(tabId, reply.sectionId)
 }
 
-// The reply is still its tab's reply, and no stop or submit ended it.
+// The reply is still its tab's reply, and no stop or submit ended it. A
+// cancelled request can still give its response, so each write of a
+// reply's image or clip checks this first.
 function replyIsCurrent(tabId: string, reply: ReplyRuntime): boolean {
   return repliesByTab.get(tabId) === reply && !reply.cancelling
 }

@@ -716,7 +716,8 @@ export default sbp('sbp/selectors/register', {
   // an estimate; undefined for a missing tab. The count of the provider is
   // the base, so a tab whose reply came from another model than `model`,
   // or with other settings, shows an estimate. It reads the text of the
-  // whole tab: a view must not read it for each token of a stream.
+  // whole tab: a view must not read it for each token of a stream. So a
+  // view reads it only through `useActiveContextSize`, never in a `computed`.
   'dez.model/tabs/contextSize' (tabId: string, model?: ModelRef): ContextSize | undefined {
     const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
     return tab && contextSize(tab.context, tabContextEstimate(tab, model ?? tab.activeModel))
@@ -1527,7 +1528,9 @@ export default sbp('sbp/selectors/register', {
   // `rawModels`), or with `list` `media`, in the list that only the
   // provider's media API has (`rawMediaModels`). Undefined when Dez has
   // none in memory: after a start, until the provider's next successful
-  // model check.
+  // model check. So a fact of a model that a request or the UI must have is
+  // a field of `ModelInfo`, which model_cache.json keeps; each reader of
+  // this selector must work with no entry.
   'dez.model/modelCache/rawModel' (providerId: ProviderId, modelId: string, list: 'provider' | 'media' = 'provider'): unknown {
     const store = useModelCacheStore()
     const entry = (list === 'media' ? store.rawMediaModels : store.rawModels).get(providerId)?.get(modelId)

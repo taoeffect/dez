@@ -7,11 +7,12 @@ import { linesRemovalRange } from './images'
 import type { DocRange } from './pendingRanges'
 
 // A line block is a tag that the editor shows as one widget in place of its
-// source lines: a tool call chip of an agent section (`toolCalls.ts`), or a
-// media player of any section (`media.ts`). The tag is a block only while
-// it has its lines to itself; text on its first or last line turns it back
-// into its source. The rules here keep text off those lines, for every
-// kind of block.
+// source lines: a tool call chip of an agent section (`toolCalls.ts`), a
+// media player of any section (`media.ts`), or the tag line of a compaction
+// section, which shows as its pill (`compaction.ts`). The tag is a block
+// only while it has its lines to itself; text on its first or last line
+// turns it back into its source. The rules here keep text off those lines,
+// for every kind of block.
 
 /** The text of a section and where it starts in the doc. */
 export interface SectionText {

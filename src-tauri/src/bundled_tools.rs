@@ -70,6 +70,9 @@ const OUTPUT_PIECE_BYTES: usize = 16 * 1024;
 pub struct ToolRun {
     // A name of `BUNDLED_TOOLS`.
     pub tool: String,
+    // Not checked here: the caller keeps every path outside the work folder
+    // out of them (for a command line of a model, `argumentProblem` in
+    // videoTool.ts).
     pub args: Vec<String>,
     // The work folder, as a path in the cache root. The command has no root
     // parameter, so a program can never run in the app folder.
@@ -218,8 +221,10 @@ fn make_private_folder(folder: &Path) -> std::io::Result<()> {
 
 // Puts one input file into the work folder, as a copy. Never a symlink or a
 // hard link: a program that writes to its input would then change the
-// user's file. `std::fs::copy` clones the file where the file system can
-// (APFS, Linux file systems with reflinks), so the copy is cheap there.
+// user's file, and a link to a file of the app folder (provider_keys.json)
+// would open that file past the OS rule (confinement.rs). `std::fs::copy`
+// clones the file where the file system can (APFS, Linux file systems with
+// reflinks), so the copy is cheap there.
 //
 // The name is one path segment of the app-file rule, so the copy cannot
 // leave the folder. A name that the folder already has is refused: the copy

@@ -36,6 +36,11 @@ const QUEUE = 'dez.controller/unusedFiles'
 // The texts that can name a file that the cleanup must keep, other than
 // the conversation files: the texts in memory, and the files that the work
 // of a reply made and that no text names yet (`dez.stream/unnamedMadeFiles`).
+// The cleanup deletes each old file that no text it reads names. So a new
+// place of such text (a store, a file in the app folder) must join
+// `dez.model/heldTexts` or `dez.persistence/eachConversationText`. A new
+// kind of made file that no text names yet must join
+// `dez.stream/unnamedMadeFiles`.
 function textsInMemory(): string[] {
   return [...sbp('dez.model/heldTexts') as string[], ...sbp('dez.stream/unnamedMadeFiles') as string[]]
 }

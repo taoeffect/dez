@@ -103,7 +103,9 @@ jobs:
       # video with GStreamer. gstreamer1.0-plugins-good has the MP3 decoder
       # (mpg123audiodec) of the reply-done sound, and the WAV parser and the
       # WebM demuxer with the VP9 decoder of the clips of
-      # tests/e2e/media-player.e2e.ts.
+      # tests/e2e/media-player.e2e.ts. gstreamer1.0-plugins-base has the Opus
+      # decoder of the clips with sound that tests/e2e/video-tool.e2e.ts
+      # makes. A test clip must be in a format that these packages decode.
       - name: Install Tauri Linux dependencies
         run: |
           sudo apt-get update

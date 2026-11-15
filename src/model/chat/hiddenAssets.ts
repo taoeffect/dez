@@ -17,7 +17,9 @@ import type { Role } from './types'
 // The marker alone hides nothing. An asset is hidden only while a tool
 // block of its agent section started its job, so that there is a chip to
 // show it under: the asset of a deleted block, and the text in a user
-// section, show as any other asset.
+// section, show as any other asset. Only the view hides it: its id, its
+// `@id` mentions, the requests, and Delete Unused Files treat it as any
+// other asset.
 //
 // A compaction hides assets too: the ones that it kept as one line of its
 // notes (`IMAGE_KEPT_KEY`, `MEDIA_KEPT_ATTRIBUTE`). The editor shows them

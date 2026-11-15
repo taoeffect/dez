@@ -279,8 +279,9 @@ export function commandLineWords(text: string, program: ShippedProgram): string[
 // opens something that is not a file of the work folder (the network, a
 // pipe, a file by another name). The list holds every protocol of the
 // Linux and macOS builds (`ffmpeg -protocols`; tests/e2e/video-tool.e2e.ts
-// checks the build against it), and the demuxers that take a URL of their
-// own form.
+// checks the Linux build against it), and the demuxers that take a URL of
+// their own form. A name that the list misses passes the checks: after each
+// `scripts/update-ffmpeg.js`, check this list and `REFUSED_DEVICES` again.
 export const REFUSED_PROTOCOLS: readonly string[] = [
   'async', 'cache', 'concat', 'concatf', 'crypto', 'data', 'fd', 'ffrtmpcrypt', 'ffrtmphttp', 'file', 'ftp', 'gopher', 'gophers',
   'http', 'httpproxy', 'https', 'icecast', 'ipfs', 'ipns', 'md5', 'mmsh', 'mmst', 'pipe', 'prompeg',
@@ -292,7 +293,7 @@ export const REFUSED_PROTOCOLS: readonly string[] = [
 // macOS: a camera, a microphone, a screen, a sound output. `lavfi` is one
 // too, but it only makes pictures and sound from a filter text. A device
 // has no file name, so the path checks do not cover it
-// (tests/e2e/video-tool.e2e.ts checks the build against this list).
+// (tests/e2e/video-tool.e2e.ts checks the Linux build against this list).
 export const REFUSED_DEVICES: readonly string[] = [
   'alsa', 'android_camera', 'audiotoolbox', 'avfoundation', 'bktr', 'caca', 'decklink', 'dshow', 'fbdev', 'gdigrab', 'iec61883', 'jack', 'kmsgrab',
   'libcdio', 'libdc1394', 'openal', 'opengl', 'oss', 'pulse', 'sdl', 'sdl2', 'sndio', 'v4l2', 'vfwcap', 'video4linux2', 'x11grab', 'xcbgrab', 'xv',
@@ -385,6 +386,11 @@ const WORK_FOLDER_ONLY = 'The program works only in its own work folder: name an
 // the words after the split, with a bare `@` in place of each `@id` that
 // names an input: the id is no part of what the program gets, and an id
 // such as `fd` or `oss` must refuse nothing.
+//
+// These are string checks: they cannot see a path in the content of a
+// file (a playlist). So the OS rule (src-tauri/src/confinement.rs) guards
+// the user's files, and the network, and a computer with no OS rule, have
+// only these checks: keep both.
 //
 // The filter and option parsers of ffmpeg drop single quotes
 // (`m'o'vie=…` is `movie=…`), so each check of a text inside a word also

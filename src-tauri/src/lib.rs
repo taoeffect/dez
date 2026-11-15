@@ -44,7 +44,11 @@ pub fn run() {
         // The frontend invokes these only from the `dez.native/*` selectors in
         // src/controller/native.ts. App commands need no capability entry:
         // build.rs declares no app command list, so the webview may call each
-        // command registered here.
+        // command registered here. Keep them a thin, generic OS interface, not
+        // an API per feature: reuse or widen a command (such as
+        // `load_app_file` and `save_app_file`, text or bytes at a path of a
+        // file root) before you add a near-copy, so that most frontend
+        // features need no Rust change.
         .invoke_handler(tauri::generate_handler![
             commands::get_provider_secret,
             commands::get_copilot_chat_token,

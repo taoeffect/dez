@@ -234,7 +234,9 @@ watch(() => props.src, async (src, previous) => {
   load({ src, url: URL.createObjectURL(file) })
 }, { immediate: true })
 
-// A blob URL keeps its bytes in memory until it is revoked.
+// A blob URL keeps its bytes in memory until it is revoked. After that, the
+// bytes go only when the page collects the `File`, so keep no other
+// reference to it (`LoadedSource` holds only the URLs).
 function release(source: LoadedSource | null | undefined): void {
   if (source && source.url !== source.src) URL.revokeObjectURL(source.url)
 }

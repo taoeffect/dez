@@ -1131,7 +1131,9 @@ function onEditorStreamFinished(tabId: string, followBottom: boolean) {
 // doc in this tick, with no `nextTick`: the doc is the old text, and each
 // write of it into the store would undo the compaction (a doc change, or
 // the structure sync below, which would add separators for the new
-// sections to the old doc).
+// sections to the old doc). The new state has no undo history, so no undo
+// brings the old text back: compactionFiles.ts deletes files of that text
+// at once because of this.
 function onEditorRebuild(tabId: string, followBottom: boolean) {
   if (tabId !== viewTabId) return
   if (tabId === activeTabId.value) {

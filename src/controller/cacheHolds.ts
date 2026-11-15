@@ -2,8 +2,9 @@
 // work folder while its program runs, and the target of a download while
 // it runs. Delete Unused Files (controller/unusedFiles.ts) never takes
 // them, whatever their age: a long run or a slow download can be older
-// than the age rule (`UNUSED_FILE_MIN_AGE_MS`). This module registers no
-// selector.
+// than the age rule (`UNUSED_FILE_MIN_AGE_MS`). So any new work in the
+// cache root that can run longer than that holds its entry with
+// `holdingCachePath`. This module registers no selector.
 //
 // Only the work of this app is known here. A second Dez app with the same
 // cache folder (a release build and a development build) is not, so the

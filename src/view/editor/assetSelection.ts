@@ -74,12 +74,13 @@ const markRequest = { read: drawnAssets, write: markSelected }
 /** Keeps `data-selected` on the drawn asset widgets. It changes only that
  *  attribute of a root that CM already drew, so a selection change never
  *  draws a widget again: no image loads again, and no player starts anew
- *  (the player gotchas of AGENTS.md). The work is a measure request, which
- *  CM runs after it brought the DOM up to date (a redrawn line has new
- *  roots) and before the next paint, in the frame in which the selection
- *  layer draws. It runs after every update: a new root can come with a doc
- *  change, a scroll, or a redraw for other decorations. CM ignores DOM
- *  changes inside a widget, so the attribute starts no update. */
+ *  (a new player stops its clip: `MediaWidget.updateDOM`, media.ts). The
+ *  work is a measure request, which CM runs after it brought the DOM up to
+ *  date (a redrawn line has new roots) and before the next paint, in the
+ *  frame in which the selection layer draws. It runs after every update: a
+ *  new root can come with a doc change, a scroll, or a redraw for other
+ *  decorations. CM ignores DOM changes inside a widget, so the attribute
+ *  starts no update. */
 const selectedAssetMarker = ViewPlugin.define((view) => {
   view.requestMeasure(markRequest)
   return {

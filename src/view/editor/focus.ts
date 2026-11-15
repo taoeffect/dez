@@ -14,7 +14,8 @@ import { EditorView } from '@codemirror/view'
  *
  *  This does the same as that fallback on every platform. It only puts
  *  back the place where the user left the view; it never scrolls the view
- *  to a new place. When the focus does not scroll, it writes nothing.
+ *  to a new place. When the focus does not scroll, it writes nothing. Code
+ *  that gives the editor the focus calls this, never `view.focus()`.
  *
  *  https://github.com/codemirror/dev/issues/1626
  *  https://github.com/codemirror/view/commit/b4a5a0261fe4

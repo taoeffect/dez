@@ -30,9 +30,9 @@ cd src-tauri && cargo test
 
 - Tauri build scripts first run `npm run clean:rust` (`scripts/clean-rust.js`).
 - `build:linux:appimage` runs `scripts/build-linux-appimage.js`; the AppImage bundles the build host's GStreamer plugins.
-- macOS builds need Xcode 26+: `build:macos:*` first run `scripts/build-macos-icon.js`, which compiles `src-tauri/icons/Dez.icon` into the gitignored `src-tauri/icons/Assets.car` (icon name set in `src-tauri/Info.plist`). A bare `tauri build` on macOS fails without that file.
-- Releases: run `npm run bump-version` and commit before you tag. A pushed `v*` tag runs `.github/workflows/release-desktop.yml` (version check against the tag, e2e gate, Linux AppImages, macOS DMG, release notes from `scripts/release-notes.js`, GitHub Release). The rules are in the comments of those files.
-- CI rules (details in the workflow comments): every job removes the compromised eMudhra CA roots in its first step, only the "Write release notes" step may reference `ZAI_API_KEY`, and a job that builds the app gets only the Git LFS files of its platform (`.github/actions/pull-lfs-files`), not `lfs: true`.
+- macOS builds need Xcode 26+: `build:macos:*` first compile the app icon (`scripts/build-macos-icon.js`); a bare `tauri build` on macOS fails without it.
+- Releases: run `npm run bump-version` and commit before you tag. A pushed `v*` tag runs `.github/workflows/release-desktop.yml`.
+- CI rules are in the workflow comments: the CA roots step that starts every job, the one step that may read `ZAI_API_KEY`, the Git LFS files of a job (`.github/actions/pull-lfs-files`).
 
 ## Git conventions
 
@@ -52,120 +52,80 @@ Dez follows an SBP MVC pattern: selectors are the cross-layer API, and code live
 
 ### Runtime data flow
 
+The main path of one reply. The comments of each step tell the rest; start at the top comment of `src/controller/stream.ts`.
+
 ```text
 ThreadEditor (CodeMirror doc) syncs to the active tab's sections
   -> Mod-Enter (key, Submit button, Conversation › Send) -> dez.controller/submitTab
-    -> a model that Dez cannot run, a media input that the model is known not to take (no image,
-       no lyrics, a text of a wrong length), or an error in the custom system prompt gets a
-       "Cannot send" toast and no request
-    -> dez.model builds the request messages and stamps the trailing agent section
-    -> dez.stream/start (the system prompt of Settings › System Prompt, and Dez's tools)
-      -> dez.provider/streamChat -> dez.http/stream
-        -> dez.native/streamHttp -> Rust http_bridge::stream_http (Headers/Chunk/Done/Error)
-    -> openaiSse.ts / anthropicSse.ts split answer tokens, thinking tokens, tool calls, the
-       usage (token counts, the provider's price), and (openaiSse.ts) reply images and reply
-       audio; streamChat gives the price of the request (chatUsage.ts: the provider's, else the
-       list price)
-    -> tokens go to the store, and to the editor if the tab is visible (dez.editor/*)
-    -> a reply image is saved in assets/generated/images/ and written as an image reference
-    -> the audio of a reply is saved as a temp copy (chatAudio.ts) and written as a <dez:audio> tag
-    -> a round that ends with tool calls writes <dez:tool> blocks, runs them (dez.controller/tools/run),
-       and sends the next round; one reply is one agent section
-    -> slow tool work runs as jobs of the reply (controller/jobs.ts): jobs_wait gives their results, and
-       a reply that ends with open jobs waits for them and takes their images and clips
-    -> before each chat request of a reply, a conversation that is near a limit of its model (tokens,
-       images, pictures) is compacted (compactIfDue, controller/stream.ts): one request for notes,
-       which take the place of the sections up to the reply (dez.model/tabs/compact); the reply and
-       its jobs go on
-    -> a model_invoke call starts a job that sends one request to a model, with the images and clips
-       that its prompt names with @id: a media request (dez.provider/generateMedia), or, for a text
-       model, one chat request that holds only that prompt (dez.provider/streamChat: no
-       conversation, no system prompt, and no tools, so the invoked model can call no tool)
-    -> a video call runs ffmpeg or ffprobe, the programs that Dez ships, in a new work folder, on
-       copies of the images and clips that its arguments name with @id (join_clips and ffmpeg as a
-       job, ffprobe at once); the new files that Dez keeps go into the generated folders
-    -> an audio clip call cuts its clip with that ffmpeg in the same way, and waits for it (no job)
-    -> an asset_view call shows the model images and clips of the conversation: an image, a frame sheet
-       of a video clip (with a strip of its wave or spectrogram on request), or the wave or spectrogram
-       of an audio clip (ffmpeg, in its call); Dez saves each picture as a copy that the block of the call
-       names, and the pictures go from those copies as one user message after the tool results of their
-       round, in each later request of the conversation until its next compaction
-    -> the images and clips of a model_invoke, join_clips, or ffmpeg call with is_intermediate get a
-       `hidden` mark: the editor shows them in the open panel of the call's chip, not at their place
-       in the reply
-    -> a model with a media request kind (image, imageEdit, upscale, tts, music, video, imageToVideo,
-       videoToVideo, voiceChange, transcription) gets one media round in place of the chat rounds:
-       dez.provider/generateMedia (one request, or a queue, poll, retrieve job for a clip; the input
-       images go as edit inputs, the image of an upscale, video frames, or references; the clips of
-       the message (its tags and @id mentions) as a source, references, or background audio; and the
-       text after a "Lyrics:" line as a song's lyrics), then an image reference, a <dez:audio> /
-       <dez:video> tag, or (transcription) the text, escaped with ModelTextEscaper
-    -> the price of each request of the reply (a chat round, the media round, a job) goes into the
-       cost total of its tab (dez.model/tabs/countRequestCost), which the conversation file keeps
-    -> the tokens of each chat round that told them go into the context count of its tab
-       (dez.model/tabs/countRequestContext), which the conversation file keeps
-    -> each chat request that went (a chat round, a model_invoke request to a text model) adds a
-       row to the developer's request log (controller/diagnostics/requestLog.ts)
-    -> the reply's finish/error/cancel reconciles the editor, adds a user section, and saves
-    -> finish/error of a reply the user does not look at -> dez.controller/alertReplyEnded (sound, notification)
+    -> a message that cannot go gets a "Cannot send" toast and no request
+    -> dez.stream/start: one reply is one agent section
+      -> chat rounds: dez.provider/streamChat -> dez.http/stream
+           -> dez.native/streamHttp -> Rust http_bridge::stream_http
+         -> openaiSse.ts / anthropicSse.ts split the stream (tokens, thinking, tool calls, usage, images, audio)
+         -> tokens go to the store, and to the editor if the tab is visible (dez.editor/*)
+         -> a round that ends with tool calls runs them (dez.controller/tools/run), then sends the next round
+         -> slow tool work runs as jobs of the reply (controller/jobs.ts)
+         -> a conversation near a limit of its model is compacted before a chat request (compactIfDue)
+      -> or, for a media model, one media round: dez.provider/generateMedia
+    -> finish/error/cancel reconciles the editor, adds a user section, and saves
+    -> finish/error of a reply the user does not look at -> dez.controller/alertReplyEnded
 ```
 
 ### Frontend map (`src/`)
 
 - `main.ts`: registers all selectors; dev builds expose `window.__stores`.
 - `view/thread/ThreadEditor.vue`: the one CodeMirror `EditorView` (no contenteditable).
-- `view/thread/cmEditor.ts`: doc ⇄ sections, sentinels, state fields, role pill widgets, clipboard format, markdown parsing and styles (`dezLanguageSupport`, `dezHighlightStyle`), `dezTheme`.
-- `view/thread/modelChip.ts`, `thinkingPill.ts`, `pillDuration.ts`: the model part, the thinking slot and panel, and the reply time of an agent pill.
+- `view/thread/cmEditor.ts`: doc ⇄ sections, sentinels, state fields, role pill widgets, clipboard format, markdown parsing and styles, `dezTheme`.
+- `view/thread/modelChip.ts`, `thinkingPill.ts`, `pillDuration.ts`: the parts of an agent pill (model, thinking, reply time).
 - `view/thread/editorMeasure.ts`: forced CodeMirror re-measures.
-- `view/editor/selectors.ts`: `dez.editor/*`, the active-editor bridge (stream patching, scroll follow, Copy Markdown, `runKeyBinding`, and `rebuildIfVisible`: a new editor state from the store after a compaction).
+- `view/editor/selectors.ts`: `dez.editor/*`, the active-editor bridge (stream patching, scroll follow, Copy Markdown, the rebuild after a compaction).
 - `view/editor/find.ts`, `findState.ts`, `findHistory.ts`, `view/thread/FindDropdown.vue`: find and replace.
-- `view/editor/tables.ts`: GFM tables shown as tables, in place.
-- `view/editor/links.ts`: markdown links (`http`, `https`, `mailto`, `tel`) shown as links, with their source while a selection touches them; a plain click opens one (`dez.controller/openUrl`), and hover shows its URL in a tooltip.
-- `view/editor/mentions.ts`: the `@id` mentions that name an image or a clip shown as chips (`.dez-mention`, a mark, so the text stays text), with a hover tooltip that tells what the id names.
-- `view/editor/focus.ts`: focus the editor and keep its scroll; use `focusKeepingScroll`, not `view.focus()`. `syncDomSelection`: fix the caret after code changes the doc right after the editor gets the focus.
-- `view/editor/images.ts`, `imageInsert.ts`: images shown in place of their references (with a hover toolbar at the image's top-right corner: the id badge, the image's facts, and a trash that deletes the image after a `dez.ui/confirm` prompt; the right-click menu; and the Backspace and Delete rules), and image and clip paste and drop (which give asset ids; a paste copies the file, a drop copies or links it). `pendingRanges.ts`: doc ranges that the async insert and delete flows follow.
-- `view/assetFacts.ts`: the facts text of an image or a clip in its hover toolbar (pixel size or length, format, file size). `view/assetIcons.ts`: the one symbol of each asset kind (image, video, audio), for the id badges and the chips. `view/editor/assetSelection.ts`: an image or a player that a text selection holds fully looks selected (`selectedAssetLook`; the tint is in `dezTheme`).
-- `controller/images.ts`: `dez.controller/images/*`: store and delete an image (pasted or generated), its display URL, the display URL of a copy of a shown picture (`shownPictureUrl`), a stored file's size (`fileSize`), read a stored, linked, or dropped file, a new drawing of an image (`redraw`: crop, scale, flip, turn, fill, color changes, and file type, in the webview, no Rust; the types are in `model/chat/imageDrawing.ts`, the color math in `model/chat/imageColors.ts`), several whole images on one canvas (`compose`, from a plan of their sizes), Linux native file drops, and the drop choice (`linkPath`: link a dropped file in place or copy it; `droppedFilePaths`: the paths of a macOS drop).
-- `controller/media.ts`: `dez.controller/media/*`: save a clip (move its temp copy, else download its URL, or write the bytes of a pasted file), delete a saved clip, read a clip's bytes (`readClip`), decode an audio clip for its length and a WAV copy (`decodeAudio`: in the webview, no Rust, for the input clips of a media request; the types are in `model/chat/audioCut.ts`), the cleanup of old temp copies, and whether a clip URL answers (`urlAnswers`: the player asks it to tell a gone clip from one that the computer cannot play). `controller/clipSources.ts`: the one rule of which sources a clip can come from, and the download of a clip (no selectors); `readClip` and `controller/programRuns.ts` use it.
-- `model/tools/workFolders.ts`, `controller/workFolders.ts`: the work folders of the bundled tools (`dez.native/runBundledTool`) in the cache root, and the delete of the old ones, which `dez.controller/media/startCleanup` runs next to the cleanup of the temp copies.
-- `controller/unusedFiles.ts`: `dez.controller/unusedFiles/*`: find (with progress) and delete the stored files that no text names, and the cache entries that nothing uses (temp copies, left-over downloads, work folders); `deleteUnnamed` deletes given files at once when no text names them (a compaction calls it). The rules are in `model/chat/unusedFiles.ts`; the run of the Settings row is in `view/settings/unusedFiles.ts`. `controller/cacheHolds.ts`: the cache entries that live work holds, which the cleanup keeps.
-- `view/editor/toolCalls.ts`: `<dez:tool>` blocks shown as chips, each with a panel of its parameters, its result, and the pictures that it showed its model (the `pictures` attribute of an `asset_view` block); a block of a tool that Dez does not have shows as an `old/unrecognized tool: <name>` chip, and a call that the round limit of an older Dez stopped as a `not run` chip; the chip of an intermediate call (`isIntermediateCall`, `model/tools/registry.ts`: an eye, the type symbols, a label, and its hidden assets or text in the panel); the spacing of the chip lines (`ChipSpacing`), and every line that takes no height.
-- `view/editor/hiddenAssets.ts`: the hidden assets of the editor state, the placeholder at the place of one, and its Backspace and Delete rule. The rule of which assets a chip hides is in `model/chat/hiddenAssets.ts`. `view/editor/compactionChip.ts`: the compaction chip under the Agent pill of a compaction section; its panel shows the kept assets of the compaction and the pictures of its tag.
-- `view/editor/media.ts`: `<dez:audio>` and `<dez:video>` tags shown as players (an agent section's made clips, a user section's pasted or dropped clips); the Save and Delete of a clip; the right-click menu. `view/media/`: `MediaPlayer.vue` (the video.js parts in Dez's own skin: the Save control, the expiry clock, the hover toolbar with the id badge and the clip's facts, the card of a clip that is gone or that the computer cannot play), `clipState.ts` (with `clipProblem`, which tells which, and `clipFile`, the local file of the menu), `videoSizes.ts`, `releaseMedia.ts` (the release of a media element that left the document).
-- `view/editor/lineBlocks.ts`: the rules that blocks of whole lines share (tool chips, players, the tag line of a compaction section): text next to one, Backspace, Delete. `view/editor/compaction.ts`: the other rules of that tag line (no caret on it, no text before it).
-- `view/editor/lineCommands.ts`: Delete Line and Duplicate Line, on whole blocks (tool chips, players, prompt pills), never across a section separator.
-- `view/editor/agentTextEdits.ts`: `editsAgentText`, whether a user edit changed the text of a reply; `ThreadEditor.vue` then sets the edited mark of the tab (`dez.model/tabs/markAgentTextEdited`), which the cost label shows.
-- `model/chat/`: `Section` / `ContentNode` types and helpers (`content.ts`, `modelRef.ts`, `thinking.ts`, `markdown.ts`, `pillMarker.ts`, `images.ts`, `imageMentions.ts`, `assetMentions.ts`, `assetOrigins.ts`, `imageDrawing.ts`, `imageColors.ts`, `audioCut.ts`, `mp4Duration.ts`, `jpegSize.ts`, `toolBlocks.ts`, `shownPictures.ts`, `mediaTags.ts`, `mediaFiles.ts`, `mediaIds.ts`, `hiddenAssets.ts`, `storedFilePaths.ts`, `unusedFiles.ts`, `linkedFiles.ts`, `conversationCost.ts`, `contextSize.ts`, `compaction.ts`, `compactionNotes.ts`).
+- `view/editor/tables.ts`, `links.ts`, `mentions.ts`: GFM tables, markdown links, and `@id` mentions, shown in place.
+- `view/editor/focus.ts`: focus the editor and keep its scroll; use `focusKeepingScroll`, not `view.focus()`.
+- `view/editor/images.ts`, `imageInsert.ts`, `pendingRanges.ts`: images shown in place of their references; image and clip paste and drop.
+- `view/editor/media.ts`, `view/media/`: `<dez:audio>` and `<dez:video>` tags shown as players (`MediaPlayer.vue`, video.js parts in Dez's own skin).
+- `view/editor/toolCalls.ts`: `<dez:tool>` blocks shown as chips, each with a panel.
+- `view/editor/hiddenAssets.ts`, `compactionChip.ts`: the hidden assets of a chip, and the compaction chip with its panel.
+- `view/editor/lineBlocks.ts`, `compaction.ts`, `lineCommands.ts`: the edit rules of whole-line blocks (chips, players, the compaction tag line).
+- `view/editor/agentTextEdits.ts`: whether a user edit changed the text of a reply (the edited mark of a tab).
+- `view/editor/assetSelection.ts`, `view/assetFacts.ts`, `view/assetIcons.ts`: the selected look, the facts text, and the symbol of an asset.
+- `controller/images.ts`: `dez.controller/images/*`: store, delete, read, and redraw images; file drops.
+- `controller/media.ts`, `clipSources.ts`: `dez.controller/media/*`: save, delete, read, and decode clips; the cleanup of old temp copies.
+- `controller/unusedFiles.ts`, `cacheHolds.ts`, `workFolders.ts`: find and delete the files and cache entries that nothing uses.
+- `model/chat/`: `Section` / `ContentNode` types and helpers, and the text forms of a conversation, each with one writer and recognizer:
+  - `images.ts` (image references), `mediaTags.ts` (clips), `toolBlocks.ts` (tool calls), `pillMarker.ts` (pill markers), `compaction.ts`, `compactionNotes.ts` (the compaction tag and notes).
+  - `mediaIds.ts`, `imageMentions.ts`, `assetMentions.ts` (asset ids and `@id` mentions), `hiddenAssets.ts`, `shownPictures.ts`.
+  - `storedFilePaths.ts`, `linkedFiles.ts`, `mediaFiles.ts`, `unusedFiles.ts` (stored, linked, and unused files).
 - `model/state/`: Pinia stores (internal) and `dez.model/*` selectors; views read state through `view/modelState.ts`.
-- `controller/stream.ts`, `model/state/streams.ts`, `controller/http.ts`: stream lifecycle (one reply: one request round per group of tool calls, or one media round), per-tab sessions, native HTTP streams.
-- `model/chat/contextSize.ts`, `model/streams/contextEstimate.ts`: the context size of a tab (`dez.model/tabs/contextSize`): the tokens that the provider counted for the newest chat request, plus the change of Dez's own estimate since then (`estimatedRequestTokens`: characters and images, by the numbers of the model's family; no tokenizer).
-- Compaction (one request that asks the model of a reply for notes, which take the place of the conversation): `model/streams/compactionRequest.ts` (when one is due, which model writes the notes, the instruction, the reader of the answer), `model/streams/compactionAssets.ts` (the asset table, and what happens to each asset: `show`, `keep`, `drop`, with the guards of a `drop`), `model/chat/compactionNotes.ts` (the one writer and recognizer of the notes: the model's parts, the asset lines, the job lines, the cost), `model/streams/compactedSections.ts` (the new sections, within the picture limits that a compaction leaves), `model/streams/compactionFiles.ts` (the files that a compaction leaves with no text), `controller/compaction.ts` (`compactConversation`: the file reads, the request, the pictures of the shown clips; no selectors, and it changes no tab). `compactIfDue` (`controller/stream.ts`) runs it before a chat request of a reply, with one retry, and swaps the tab (`dez.model/tabs/compact`).
-- `model/tools/`: the Dez tools (tools that Dez runs for a model, not a provider's own tools such as web search): definitions, `registry.ts` (`TOOL_DEFINITIONS`, JSON schemas), `arguments.ts` (argument checks), `subcommands.ts` (a tool with subcommands: a `command` argument, the subcommand's `parameters` as JSON text, and a built-in `help`), `modelList.ts` (`model_list`), `modelInfo.ts` (`model_info`), `modelUsage.ts` (the `usage` texts of `model_info`), `audioTool.ts` (`audio`; its `clip` subcommand cuts a clip with ffmpeg, in its call; `controller/audioTool.ts` does the work, no selectors), `imageTool.ts` (`image`; its subcommands make new images from the images of a conversation), `jobs.ts` (the job ids, the job texts, the `timeout_seconds` rule of every tool that starts a job, the limit of the open jobs of a reply, and the tools `jobs_wait`, `jobs_list`, `job_inspect`), `conversationInfo.ts` (`conversation_info`: the context size, the compaction threshold, the cost, and the picture budget of the conversation of a reply, so that a model can keep to a budget of the user), `toolInputs.ts` (the texts about the `@id` inputs of a call that the tools share), `localPaths.ts` (stand-ins for local paths in provider data). `controller/tools.ts`: `dez.controller/tools/run`, the code of each tool; a runner gets a `ToolRunContext` (the tab of its call, the reply's model, the reply's jobs, and writers of an image and a clip into the reply). `controller/jobs.ts`: `ReplyJobs`, the jobs of one reply (no selectors). `model/streams/toolRound.ts`: the pure parts of the tool loop (the checks of a round's calls, and their blocks; a reply has no limit of tool rounds).
-- `model/tools/modelInvoke.ts`: `model_invoke` (one request of a model to a model, as a job: to a media model, or to a text model, which gets only the prompt and no tools): the checks of a call and its texts. `modelArguments.ts`: the arguments that `model_info` and `model_invoke` share. `controller/modelInvoke.ts`: the work of that job (no selectors), and `InvocationRights`, the internal `tools_allowed` rule. `model/streams/mediaRequest.ts`: the one preparation of a media request (its inputs, their names, and its checks), from a user message or from the prompt of a tool call, where only an `@id` mention is an input. `model/providers/requestReader.ts`: who reads a refusal text, the user or a calling model.
-- `model/tools/videoTool.ts`: `video` (`join_clips` and `ffmpeg` as jobs, `ffprobe` at once): the checks of a call (the `@id` inputs and the argument rule), the plan of a join, the rule of the new files, and its texts. `controller/videoTool.ts`: the work (no selectors).
-- `model/tools/assetInfo.ts`: `asset_info` (one line for each image and clip that a call names: its facts, whether the view hides it, and who made it, which `model/chat/assetOrigins.ts` finds; with `checks`, the lines of what one ffmpeg run over each whole clip finds: black, frozen, and silent parts, a loudness curve, cuts). `model/tools/assetFacts.ts`: the facts texts of an image and a clip, and the ffprobe arguments of a clip. `controller/assetInfo.ts`: the work (no selectors).
-- `model/tools/assetView.ts`: `asset_view` (the facts and a picture of each image and clip that a call names: the image, a frame sheet of a video clip at steps, at given times, or of its shots, the wave or the spectrogram of an audio clip (`sound_picture`), which a video clip gets as a strip under its sheet, and the loudness of a clip with sound), its ffmpeg arguments, and the readers of the ffmpeg log. `model/tools/assetGrid.ts`: the one picture of `layout` "grid" (its lines, the place of each image and frame sheet, its texts). `model/tools/clipAnalysis.ts`: the ffmpeg filters that find things in a clip (the scene cuts of `asset_view`, the `checks` of `asset_info`) and their log readers. `controller/assetView.ts`: the work (no selectors). `model/chat/shownPictures.ts`, `controller/shownPictures.ts` (no selectors): the saved copies of the pictures that the tools show a model, which the requests of the conversation read and the chip panel shows. `model/streams/pictureBudget.ts`: the picture limits of a request to a model (`pictureLimits`), what a compaction leaves of them (`compactedPictureLimits`), and the picture budget of a call (`ToolRunContext.pictureBudget`): those limits less the images and the pictures that the context holds, and the pictures that the round can still show.
-- `model/tools/programRuns.ts`, `controller/programRuns.ts`: what the Dez tools that run ffmpeg or ffprobe (`video`, `audio`, `asset_info`, `asset_view`) share about a run (no selectors): the copy of an input clip in a work folder, the run (`dez.native/runBundledTool`), the move of the kept files into the generated folders, and the texts of a run that failed.
-- `model/systemPrompt/`: the built-in system prompt (`systemPrompt.md` with `{{name}}` placeholders), the variables of a template (`SYSTEM_PROMPT_VARIABLES`), and its checks (`template.ts`). The `systemPrompt` setting (null: the built-in one; blank: no system prompt) goes with every chat request of a reply.
-- `model/modelOutputs.ts`: the one table of the output types (text, image, audio, video). `model/modelInputs.ts`: what Dez can send a model, in those types (the `inputs` of `model_list` and `model_info`). `model/modelSearch.ts`: the model filter (search terms and output types) of the model picker and `model_list`.
-- `controller/notifications.ts`: the reply-end alerts (sound, system notification; a click opens the reply's tab). `view/sound.ts`: `dez.ui/playDoneSound`. `assets/sounds/`: sound files (Git LFS).
-- `controller/diagnostics/requestLog.ts`: the developer's request log (`dez.diagnostics/requestLog`, `dez.diagnostics/printRequestLog`): one row of ids and numbers for each chat request (a chat round, a compaction request, a `model_invoke` request to a text model; tokens, cache reads and writes, price, context size), in memory only.
-- `model/shortcuts.ts`: the editable shortcut registry (ids, default keys, key event matching, validation, labels, menu accelerators); user overrides are in the settings store.
-- `controller/menu.ts`: the native menubar (Tauri only); `dez.controller/menu/suspendAccelerators` turns its keys off while a key is recorded; `dez.controller/menu/popupAsset`: the right-click menu of an image or a player ("Reveal in File Manager"). `view/composables/useKeyboardShortcuts.ts`: app keys.
+- `controller/thread.ts`: `dez.controller/submitTab`. `controller/tabs.ts`: `dez.controller/newTab`.
+- `controller/stream.ts`, `model/state/streams.ts`, `controller/http.ts`: stream lifecycle (one reply), per-tab sessions, native HTTP streams.
+- `model/streams/`: the pure parts of a reply: `messages.ts` (request messages), `toolRound.ts`, `mediaRequest.ts`, `pictureBudget.ts`.
+- `model/chat/contextSize.ts`, `model/streams/contextEstimate.ts`: the context size of a tab (the provider's count, plus Dez's estimate; no tokenizer).
+- Compaction (a model's notes take the place of the conversation): `controller/compaction.ts`, `model/streams/compaction*.ts`, `compactedSections.ts`; `compactIfDue` (`controller/stream.ts`) runs it.
+- `model/tools/`: the Dez tools (Dez runs them for a model; not a provider's own tools): `registry.ts` (`TOOL_DEFINITIONS`), `arguments.ts`, `subcommands.ts`, and one module per tool.
+- `controller/tools.ts`: `dez.controller/tools/run`, the runner of each tool (`ToolRunContext`).
+- `controller/modelInvoke.ts`, `videoTool.ts`, `audioTool.ts`, `assetInfo.ts`, `assetView.ts`: the work of a tool; they register no selector.
+- `controller/jobs.ts`, `model/tools/jobs.ts`: `ReplyJobs`, the jobs of one reply, and the job tools.
+- `model/tools/programRuns.ts`, `controller/programRuns.ts`, `model/tools/workFolders.ts`: what the tools that run ffmpeg or ffprobe share, and their work folders.
+- `model/systemPrompt/`: the built-in system prompt (`systemPrompt.md`), the variables of a template, and its checks.
+- `model/modelOutputs.ts`, `modelInputs.ts`, `modelSearch.ts`: the output types, what Dez can send a model, and the model filter.
+- `controller/notifications.ts`, `view/sound.ts`, `assets/sounds/`: the reply-end alerts (sound, system notification).
+- `controller/diagnostics/`: `dez.diagnostics/*`: sanitized probes, and the developer's request log (`requestLog.ts`).
+- `model/shortcuts.ts`: the editable shortcut registry; user overrides are in the settings store.
+- `controller/menu.ts`: the native menubar (Tauri only). `view/composables/useKeyboardShortcuts.ts`: app keys.
 - `controller/window.ts`, `windowFit.ts`: restore and save the window size and position.
-- `view/app/AppLayout.vue`: layout and bottom bar (`ModelSelector.vue`, `view/thread/UsageLabel.vue`, `view/thread/SubmitButton.vue`, the Help button). `UsageLabel.vue`: the token count (`dez.model/tabs/contextSize`) and the cost (`dez.model/tabs/cost`) of the active tab's conversation, with their texts in `tokenLabel.ts` and `costLabel.ts`, and "Compacting…" while a compaction request runs (`dez.model/streams/isCompacting`). After a compaction (`dez.model/tabs/compactions`), each of the two shows the number of the buffer (the conversation since its last compaction), then the number of the whole conversation in parentheses. `view/composables/useActiveContextSize.ts`: the one view read of the context size, at most a few times a second; never read it in a `computed`.
-- `view/model-selector/`: `ModelPicker.vue` (a virtual list of the rows from `pickerRows.ts`), `ModelOutputFilter.vue` (the output type filter), `ProviderSettingsPopup.vue` (for the active model: the provider toggles that apply to it, its "Model Parameters", how to write its lyrics, and the input of an upscale).
+- `view/app/AppLayout.vue`: layout and bottom bar (`ModelSelector.vue`, `view/thread/UsageLabel.vue`, `view/thread/SubmitButton.vue`, the Help button).
+- `view/thread/UsageLabel.vue`, `tokenLabel.ts`, `costLabel.ts`: the token count and the cost of the active tab's conversation.
+- `view/composables/useActiveContextSize.ts`: the one view read of the context size; never read it in a `computed`.
+- `view/model-selector/`: `ModelPicker.vue` (a virtual list), `ModelOutputFilter.vue`, `ProviderSettingsPopup.vue` (toggles and "Model Parameters" of the active model).
 - `view/history/HistoryPanel.vue`: saved conversations.
-- `view/help/HelpView.vue`: the Help panel (General, Tips, Assets, Support), opened by Help › Dez Help and the `?` button of the bottom bar (`dez.model/settings/helpOpen`). At most one of Settings, History, and Help is open. The General page tells what the token count and the cost label show (also after a compaction), and what a compaction is. The Assets page tells the user the asset rules (what a model sees, `@id`, intermediate assets, compaction, the folders, the work folders, the files that the bundled programs can open, copy or link, delete): keep it true when one of them changes. The Support page names the license of the ffmpeg and ffprobe programs, with the version and the release of `src-tauri/binaries/manifest.json`.
-- `view/confirm/`: `dez.ui/confirm`, the in-app yes/no prompt (`ConfirmDialog.vue`, mounted in `AppLayout.vue`); `isModalOpen()` (`useKeyboardShortcuts.ts`) counts it.
+- `view/help/HelpView.vue`: the Help panel. Keep its texts true when a rule that they tell changes (the Assets page tells the asset rules).
+- `view/confirm/`: `dez.ui/confirm`, the in-app yes/no prompt.
 - `view/prompts/PromptManager.vue`, `view/thread/PromptAutocomplete.vue`: saved prompts and `/prompt ` insertion.
-- `view/settings/SettingsView.vue`, `ProviderManager.vue`, `ShortcutManager.vue`, `SystemPromptSettings.vue`: settings (General holds the "Unused files" row, `unusedFiles.ts`), the providers page, Settings › Shortcuts with its key recorder (Help › Keyboard Shortcuts opens it), and Settings › System Prompt (the custom template, its variables, and Source/Preview; `SystemPromptPreview.vue` is a read-only CodeMirror view of the prompt).
-- `view/tabs/TabBar.vue`: tabs, colored busy/done by `dez.model/tabs/activity`, pointer drag to reorder (`dez.model/tabs/move`). The `+` button, keys, and File menu create tabs with `dez.controller/newTab` (`controller/tabs.ts`), which focuses the editor (`dez.editor/focus`). `dez.model/tabs/reopenClosed` brings back a closed tab from a session-only list (`model/state/tabs.ts`).
-- `view/modelLabel.ts`: model display names, and `modelTooltipName`, the one text of a model's tooltip (the id first). `view/theme.ts`: theme and editor font size.
-- `utils/byteSize.ts`: `byteSizeText`, the one byte-count text. `utils/formatName.ts`: `formatName`, the one name of a file type (`PNG`, `WebM`). `utils/homePath.ts`: `pathWithTilde`; a view gets a path with `~` for the home folder from `dez.controller/displayPath`, and the folder of a file root from `dez.controller/displayAppDir` (`controller/utils.ts`).
-- `utils/errorText.ts`: the shape of every user error text (`errorText`, `ExplainedError`, `explainedError`, `UNEXPECTED_ERROR`).
-- `utils/abort.ts`: `untilAborted`, wait for work until a stop, with no new request after the stop.
-- `utils/dezLinks.ts`: the URLs of Dez's GitHub pages.
+- `view/settings/`: Settings (`SettingsView.vue`, `ProviderManager.vue`, `ShortcutManager.vue`, `SystemPromptSettings.vue`, `unusedFiles.ts`).
+- `view/tabs/TabBar.vue`: tabs (activity colors, drag to reorder).
+- `view/modelLabel.ts`: model display names and tooltip text. `view/theme.ts`: theme and editor font size.
+- `utils/`: one place for each shared rule: `byteSize.ts`, `formatName.ts`, `homePath.ts`, `errorText.ts`, `abort.ts`, `dezLinks.ts`.
 
 ### SBP
 
@@ -196,137 +156,150 @@ Rules:
 - `@sbp/okturtles.eventqueue` to serialize async operations that must not race.
 - `turtledash` for lodash-style helpers; use its `debounce`, not ad hoc timers.
 - `w3c-keyname`, at the version CodeMirror uses, so that shortcut matching (`model/shortcuts.ts`) agrees with CodeMirror keymaps.
-- `virtua` (the virtual list of the model picker) and `@videojs/html` (the media player). The tag list `videoJsElements` in `vite.config.ts` must match the video.js elements in `MediaPlayer.vue`.
-- npm versions are exact pins, and `.npmrc` (`min-release-age`) refuses a version that is younger than 14 days: pin the newest version that it allows.
+- `virtua` (the model picker's list) and `@videojs/html` (the media player); `videoJsElements` in `vite.config.ts` must match the video.js elements in `MediaPlayer.vue`.
+- `.npmrc` makes npm write exact pins (`save-exact`) and refuse a version that is younger than 14 days (`min-release-age`): pin the newest version that it allows.
 
 ### Providers (`src/model/providers/`)
 
-- Every provider is one plain-JSON `ProviderConfig` (`config.ts`), served by one `Provider` class (`provider.ts`) over two wire formats (`apiFormats.ts`: `openai`, `anthropic`). Built-ins are in `builtins.ts`; custom providers are in `app_state.json`; `registry.ts` finds both.
-- To add a built-in, add a config literal to `builtins.ts`; no Rust change.
-- Put provider differences in config data, never in `if (providerId === …)` branches.
+- Every provider is one plain-JSON `ProviderConfig` (`config.ts`), served by one `Provider` class (`provider.ts`) over two wire formats (`apiFormats.ts`: `openai`, `anthropic`).
+- Built-ins are in `builtins.ts` (add a config literal; no Rust change); custom providers are in `app_state.json`; `registry.ts` finds both.
+- Put provider differences in config data, never in `if (providerId === …)` branches. Format code knows no provider name.
 - Provider ids must pass `isValidProviderId` (`config.ts`).
 - Chat and model HTTP stays in TypeScript (`dez.provider/*`, `dez.http/*`), not in Rust.
-- Thinking support, toggle, and send-back: `thinking.ts`, `apiFormats.ts`. Which models think is config data (`models[].thinking`, `modelThinking`; `config.ts`).
-- Toggles are per model: `modelToggles.ts` is the one rule of which toggles (Thinking, Tools, each `settings[]` entry with its `modelIdPrefix` and `modelSupport`) apply to a model. The popup (`dez.provider/settingsDescriptor`) and the chat request (`Provider.chatRequest`) both read it. A toggle that does not apply sends nothing; unknown means "applies".
-- `requestBody` (`config.ts`): a fixed part of every chat request body; Venice turns its own system prompt off with it.
-- Prompt cache: earlier messages, the system prompt, and the tools array must stay the same bytes in every later request, until a compaction. A user message keeps its image parts, a round of `asset_view` calls keeps its picture message, and the compaction message of a compacted conversation never changes. The Anthropic format always adds cache marks; OpenAI-format marks and `prompt_cache_key` come from config (`cacheBreakpoints`, `toolMessageCacheMark`, `promptCacheKey`; `apiFormats.ts`, `provider.ts`).
-- Images: every user message of a chat request carries the image parts of its own image references and its `@id` mentions (`model/streams/messages.ts`), and an image goes one time in a request: the first message that holds or names it carries it, and a later one sends text. A request has two image limits of its model, the count of all its messages and the count of one message (`imageLimitOf`, `messageImageLimitOf`; `RequestOptions`): the parts are counted in message order, the ones over a limit do not go, and the user gets a warning toast (`imagesOverLimit`). The two other places of image parts: the picture messages of the `asset_view` calls, which name the saved copies of the pictures, not paths, and go in every request until the next compaction (`agentSectionMessages`; `model/chat/shownPictures.ts`), and the compaction message of a compacted conversation, which keeps the images of its sections (but not one with the kept mark) and the pictures of its tag in every request. `dez.provider/streamChat` reads the files (stored, linked, or a picture copy) and base64-encodes them. A chat image goes at one fixed size (`chatImageDrawing`, `imageSize.ts`): a smaller JPEG copy of an image with a side over `CHAT_IMAGE_SIDE`, a PNG copy of an SVG, else the file as it is. `chatImageCopies.ts` keeps the copies in memory, by the bytes of the file, so every request sends the same bytes; `dez.provider/chatImageSizes` gives the byte count that goes for each image. A media request sends a stored SVG as a PNG copy (`requestImage`, `selectors.ts`). A reference goes as `![image](<metadata>)` before its image part, so models get ids but no path. Which models read images is config data (`models[].imageInput`, `modelImageInput`, `imageRequestHeaders`; `config.ts`); a model known not to read them gets only that text.
-- Tools: the requests of a reply offer the Dez tools unless the provider's Tools toggle is off (`toolsSetting.ts`), the model is known not to call tools (`models[].toolCalling`, `modelToolCalling`; `config.ts`), or its request kind is not `chat`; then the tool blocks go as text. The request of a `model_invoke` call offers none. Wire shapes of calls and results: `apiFormats.ts`; request messages: `model/streams/messages.ts`.
-- Outputs and request kinds (`MODEL_REQUESTS`, `MEDIA_KINDS` in `types.ts`; `modelOutputs` in `config.ts`; `modelParsing.ts`, `unusableModel.ts`): what a model makes and how Dez asks for it, from config data. A submit and a `model_invoke` call refuse a model with no request (`none`) with the same text.
-- Media (`mediaFormats.ts`, `clipRequests.ts`, `imageSize.ts`, `veniceReferences.ts`, `generatedImages.ts`, `pcmAudio.ts`, `multipart.ts`): the media wire formats (`mediaApi` in `config.ts`), `dez.provider/generateMedia` with its clip job loop (no tab or editor, so a tool can call it) and the price of its request (the provider's, else a free quote first), `dez.provider/mediaQuote`, the fit of input images, and the stored image types. Never a resend with fewer images.
-- Prices (`modelPrices.ts`, `chatUsage.ts`): the list price of a model (`ModelInfo.price`: `modelTokenPrices` in `config.ts` for a chat model, `MediaFormat.listPrice` for a media model), the quote cache (`dez.model/modelCache/keepQuote`; prices change with sales, so a quote lives `PRICE_LIFETIME_MS`), and the price of a chat request (the provider's, else the tokens at the list price). A price that Dez cannot find is unknown (null), never 0.
-- Clip inputs (`clipInputs.ts`): which clips of its source (the newest user message, or the prompt of a tool call) a media request takes, and how they go.
-- Chat image output: `imageOutputBody` (`config.ts`) goes into a chat request only for a model whose outputs hold `image`; `openaiSse.ts` reads the images of the reply.
-- Chat audio output: a chat model makes `audio` only with an `audioOutputs` entry (`config.ts`: the body that asks for audio, and the type of the bytes); `openaiSse.ts` gives the audio of a whole stream as one event, `chatAudio.ts` writes it as a temp copy (raw PCM as WAV), and `onClip` gives it to the reply or to the `model_invoke` job.
-- Model parameters (`modelParameters.ts`, `clipText.ts`, `clipImages.ts`, `keptClipData.ts`): what a media request can set, and the text, image, and clip rules of a model; all data on the model, which `model_info` shows. Dez refuses a value only when the provider's data tells that the provider refuses it: a list that is not complete has the `custom` mark (a voice also takes the id of a voice of the user's account), and a range with no step rule has `anyNumber`.
-- Known limits (`knownLimits.json`, read by `knownLimits.ts`): rules of a model that the provider's data does not state (a provider rule that Dez does not check, or a limit of Dez), matched by media format or provider, request kind, and model id. `model_info` shows them as `dez.limits`; no request is refused by them.
-- Learned image limits (`learnedImageLimit.ts`): the image count of a provider's refusal (`TooManyImagesError`) is kept per model, with a hash of the model's raw entries; Dez refuses a message with more images before any request until that entry changes. `model_info` shows it (`dez.images`, a `dez.limits` row).
-- Context window, image limits, and model families (`modelFamilies.json`, read by `modelFamilies.ts`): the context window and the two chat image limits of a model (of one request, `imageLimitOf`; of one message, `messageImageLimitOf`) come from the model list (`modelContextWindow`, `modelImageLimit`, `modelMessageImageLimit`, `models[].contextWindow`; `config.ts`), else from the family of its id (`contextWindowOf`). The picture budget, the compaction check, and what a compaction leaves read these limits (`model/streams/pictureBudget.ts`). A family also gives the characters per token and the image token rule (`imageTokens`). Every number of the file is from the maker's docs, with its sources and check day; the numbers of a model of no family are in code (`DEFAULT_FAMILY`). `model_info` shows the window and the image limits.
-- HTTP errors (`errors.ts`): status, stream, and connection errors as user texts (the fault and the fix first, the provider's sanitized text in the details). A failed request has a text for each reader, the user or a calling model (`ProviderRequestError`). Format code knows no provider name.
+- What a model can do is config data, kept on `ModelInfo`: thinking (`thinking.ts`), outputs and request kinds (`types.ts`, `modelParsing.ts`), image input, tool calling.
+- Toggles are per model: `modelToggles.ts` is the one rule, which the popup and the chat request both read.
+- Prompt cache: earlier messages, the system prompt, and the tools array must stay the same bytes in every later request, until a compaction (`apiFormats.ts`, `model/streams/messages.ts`).
+- Images of a chat request: which message carries an image and the two image limits are in `model/streams/messages.ts`; the one send size in `imageSize.ts`, `chatImageCopies.ts`.
+- Tools: when a request offers the Dez tools is in `toolsSetting.ts`; the wire shapes of calls and results are in `apiFormats.ts`.
+- Media requests: `dez.provider/generateMedia` (`mediaFormats.ts`, `clipRequests.ts`, `clipInputs.ts`). Never a resend with fewer images.
+- Prices (`modelPrices.ts`, `chatUsage.ts`): a price that Dez cannot find is unknown (null), never 0.
+- Model parameters (`modelParameters.ts`): Dez refuses a value only when the provider's data tells that the provider refuses it.
+- Limits of a model: `knownLimits.json` (rules that the provider's data does not state), `learnedImageLimit.ts`, `modelFamilies.json` (context windows and image limits, from the makers' docs).
+- HTTP errors (`errors.ts`): each failed request has a text for its reader, the user or a calling model.
 - The API key goes only to URLs that Dez builds: a URL from a provider's response (a reply image, a clip) is fetched with no provider headers.
 
 ### Toasts
 
-`src/view/toast/`: emit with `dez.ui/toast`; `ToastContainer.vue` (mounted in `AppLayout.vue`) renders them. Payloads and rules: `src/view/toast/README.md`. Chat request errors are sticky error toasts; the thread shows no error text. The error toasts of a reply close at the next reply of their tab (`ToastData.group`, `dez.ui/closeToasts`).
+`src/view/toast/`: emit with `dez.ui/toast`. Payloads and rules: `src/view/toast/README.md`. Chat request errors are sticky error toasts; the thread shows no error text.
 
 ### Backend (`src-tauri/src/`)
 
-- **Keep Rust barebones**: a thin, generic OS interface, not a per-feature API. Reuse or generalize an existing command (e.g. `load_app_file(path)` / `save_app_file`, text or bytes at a path under a file root) instead of adding a near-copy, so frontend features rarely need Rust changes.
-- `commands.rs`, `http_bridge.rs`, `notification.rs`, `idle.rs`: Tauri commands, registered in `lib.rs`. `open_devtools` (Help › Developer Console) needs the `devtools` feature of the `tauri` crate in release builds (`Cargo.toml`). `temp_folders`, `canonical_path`, and `dragged_file_paths` (the macOS drag pasteboard, through `objc2-app-kit`) tell a file drop to copy or to link.
-- `http_bridge.rs`: generic `http_request`, `stream_http`, `cancel_http_stream`, and `download_app_file` (one response body streamed to a file). A request body is text, or bytes as base64 text (`HttpBody::Base64`; `NativeHttpBody` in `src/utils/protocol/nativeHttp.ts`); never send bytes as a JSON number array (slow).
-- `bundled_tools.rs`: `run_bundled_tool` and `cancel_bundled_tool`: one run of a program of `../binaries/` (only those names) in a work folder of the cache root, with copies of its input files, a time limit, an output cap, the OS rule of `confinement.rs` (on the cache root and `PROGRAM_APP_FOLDER`), and its output and end as channel events. The end of a run ends its process group (the programs that the program started). It knows no ffmpeg option.
-- `confinement.rs`: the OS rule of every bundled program run: the program opens only the files of the cache root, and of `assets/` of the app folder, where it can read, make, and change files but not delete, move, or link them, and it makes no symlink (Landlock on Linux, Seatbelt through `/usr/bin/sandbox-exec` on macOS). With neither, the run still goes, with one stderr warning, and the argument checks of the page are its only guard.
-- `notification.rs`: `show_notification`, a system notification whose click brings the window to the front and calls back (zbus on Linux, NSUserNotificationCenter through objc2 on macOS).
-- `idle.rs`: `user_idle_ms`, the time since the last user input on the computer, or `null` when unknown.
-- `session_bus.rs`: the one shared Linux D-Bus session connection (zbus) for `notification.rs` and `idle.rs`.
-- `persistence.rs`: the file roots (`FileRoot`: `app`, the app folder; `cache`, Dez's folder in the OS cache folder), raw private-file I/O, the app-file path rule (subfolders such as `assets/images/`), file move (the moved file is private), file and folder listing, folder delete (cache root only), and id sanitization; write every private file with `write_private_file` or `PrivateFileWriter`.
+- **Keep Rust barebones**: a thin, generic OS interface, not a per-feature API. Reuse or generalize a command (e.g. `load_app_file`) instead of adding a near-copy.
+- `commands.rs`, `http_bridge.rs`, `notification.rs`, `idle.rs`: Tauri commands, registered in `lib.rs`.
+- `http_bridge.rs`: generic HTTP request, stream, and download. A request body is text or base64 text, never a JSON number array (slow).
+- `bundled_tools.rs`, `confinement.rs`: one run of a program of `../binaries/` in a work folder of the cache root, under an OS rule on the files that it can open.
+- `notification.rs`, `idle.rs`, `session_bus.rs`: system notifications, the user's idle time, and the one Linux D-Bus session connection.
+- `persistence.rs`: the file roots (`app`, `cache`) and raw private-file I/O; write every private file with `write_private_file` or `PrivateFileWriter`.
 - `key_store.rs`: `provider_keys.json`. `copilot.rs`: Copilot device flow and token refresh.
-- `lib.rs`: plugins, permission reasons, app bootstrap, and the quit hook (`RunEvent::Exit`) that stops the bundled tools.
-- `../tauri.linux.conf.json`: the Linux copy of the main window, with Tauri's native file drop on (a test in `lib.rs` keeps the two windows the same otherwise).
-- `../binaries/`: the ffmpeg and ffprobe programs that Dez ships, one pair per build target (Git LFS), with `manifest.json` (their release, sizes, and SHA-256) and `NOTICE.md` (their license); only `scripts/update-ffmpeg.js` writes this folder. `bundle.externalBin` (`../tauri.conf.json`), the one list of the programs, puts them next to the Dez program as `dez-ffmpeg` and `dez-ffprobe`; `../build.rs` reads that list, stops a build whose programs are not the files of the manifest, and gives the list to `bundled_tools.rs`.
+- `lib.rs`: plugins, permission reasons, app bootstrap, and the quit hook that stops the bundled tools.
+- `../tauri.linux.conf.json`: the Linux copy of the main window, with Tauri's native file drop on.
+- `../binaries/`: the ffmpeg and ffprobe programs that Dez ships (Git LFS), with `manifest.json`; only `scripts/update-ffmpeg.js` writes it, and `../build.rs` checks it.
 
 ## Persistence layout
 
-All app data is under `~/.config/dez/`, except the temp copies of clips and the work folders of the bundled tools. TypeScript owns every format; Rust only moves raw strings and bytes. App code uses `dez.persistence/*` only.
+All app data is under `~/.config/dez/`, except the temp copies of clips and the work folders of the bundled tools. TypeScript owns every format; Rust only moves raw strings and bytes.
 
-- `app_state.json`: tabs, settings (with shortcut overrides, the picker's output filter, the user's model parameter values, and the custom system prompt, `systemPrompt`), window geometry, provider toggles, custom providers (`src/model/persistence/appState.ts`).
-- `conversations/<sanitized-id>.md`: conversations (format: `src/model/persistence/conversationFormat.ts`, with the cost total, the edited mark, the context count, and the compaction numbers of the tab in the header; pill markers: `src/model/chat/pillMarker.ts`; tool calls: `src/model/chat/toolBlocks.ts`; the compaction tag: `src/model/chat/compaction.ts`).
+The JSON and conversation files go through `dez.persistence/*` only; the asset files go through `dez.native/*` from their controllers.
+
+- `app_state.json`: tabs, settings, window geometry, provider toggles, custom providers (`src/model/persistence/appState.ts`).
+- `conversations/<sanitized-id>.md`: conversations (`src/model/persistence/conversationFormat.ts`).
 - `prompts.json`: saved prompt templates (`src/model/persistence/prompts.ts`).
-- `model_cache.json`: last-known model lists with each model's outputs, request kind, capability flags, release date, the context window and the two image limits of the list (of one request, of one message), clip data (parameters, text rules, image rules, clip rules, a file type that Dez does not store), list price (`src/model/providers/modelPrices.ts`), and the learned image limit. It also holds the fresh price quotes of media requests (`quotes`, kept for `PRICE_LIFETIME_MS`), but no secrets and no raw provider entries (`src/model/persistence/modelCache.ts`). When a media list fails, the clip data and the media list prices in this file stay.
-- `assets/images/<uuid>.<ext>`: pasted images, and dropped images that Dez copies; conversations refer to them by absolute path (`src/controller/images.ts`). Only the image trash and Settings › General › Unused files (`src/controller/unusedFiles.ts`) delete them; a text edit or a conversation delete leaves the file.
-- `assets/generated/images/<uuid>.<ext>`: images that models and Dez tools made; the rules of `assets/images/` apply, and a compaction deletes the file of an intermediate image that it drops (`src/model/streams/compactionFiles.ts`).
-- `assets/audio/<uuid>.<ext>`, `assets/video/<uuid>.<ext>`: pasted clips, and dropped clips that Dez copies (`imageInsert.ts`; at most `MAX_SAVED_CLIP_BYTES`, `src/model/chat/mediaFiles.ts`).
-- `assets/generated/audio/<uuid>.<ext>`, `assets/generated/video/<uuid>.<ext>`: clips that the user saved with the player's Save control, and clips that Dez tools made. Only the player's trash, the Unused files cleanup, and a compaction that drops an intermediate clip delete the files of the four clip folders (`src/controller/media.ts`).
-- `assets/generated/views/<uuid>.<ext>`: the copies of the pictures that Dez showed a model: the pictures of an `asset_view` call, which the `pictures` attribute of the call's block names, and the pictures of a compaction tag (`src/model/chat/shownPictures.ts`). The requests of the conversation read them until a compaction takes their call out, and the chip panel shows them; no request sends their names. Dez deletes the copies of a call that no block takes (`discardShownPictures`) and the copies of the text that a compaction replaces; else only the Unused files cleanup deletes them.
-- `<OS cache>/dez/media/<uuid>.<ext>` (`~/.cache/dez/media/` on Linux; outside the app folder): temp copies of clips that are not saved. Dez deletes one 24 hours after its file time (`MEDIA_TEMP_LIFETIME_MS`, `src/model/chat/mediaFiles.ts`), Delete Unused Files deletes one that no text names, and a compaction deletes the one of an intermediate clip that it drops.
-- `<OS cache>/dez/work/<id>/`: the work folder of a bundled tool, with the copies of its input files and its new files (`src/model/tools/workFolders.ts`). Its owner deletes it at the end of the work; Dez deletes one that stayed 24 hours after the last change of its file list (`WORK_FOLDER_LIFETIME_MS`), and Delete Unused Files one that no live work holds.
-- Linked files: a dropped image or clip that is in no temp folder and no Dez folder stays where it is, and a user section names it by its absolute path (`src/model/chat/linkedFiles.ts`); a section that links a file cannot switch to agent. Dez never deletes it (its trash removes only the text), and the Unused files scan does not list it.
+- `model_cache.json`: last-known model lists and fresh price quotes; no secrets and no raw provider entries (`src/model/persistence/modelCache.ts`).
+- `assets/images/`, `assets/audio/`, `assets/video/`: pasted files, and dropped files that Dez copies (`src/controller/images.ts`, `media.ts`).
+- `assets/generated/images/`, `audio/`, `video/`: files that models and Dez tools made, and clips that the user saved.
+- `assets/generated/views/`: the copies of the pictures that Dez showed a model (`src/model/chat/shownPictures.ts`).
+- `<OS cache>/dez/media/`: temp copies of clips that are not saved (`src/model/chat/mediaFiles.ts`).
+- `<OS cache>/dez/work/<id>/`: the work folder of a bundled tool (`src/model/tools/workFolders.ts`).
+- Linked files: a dropped file that is in no temp folder and no Dez folder stays where it is (`src/model/chat/linkedFiles.ts`). Dez never deletes it.
+- A text edit or a conversation delete leaves the stored files. Its trash, Delete Unused Files (`src/model/chat/unusedFiles.ts`), or a compaction (`src/model/streams/compactionFiles.ts`) deletes one.
 - `provider_keys.json`: API keys and Copilot tokens (`src-tauri/src/key_store.rs`).
 
 Do not ever read, view, print, or `cat` `~/.config/dez/provider_keys.json`; it can contain API keys and OAuth tokens.
 
 ## Gotchas
 
+Each line names a trap and the code whose comments tell it in full. Read those comments before you change that code.
+
+### Editor and sections
+
 - **Do not leak sentinels**: the section and prompt pill sentinels (`cmEditor.ts`) live only in the editor doc, never on disk or in the clipboard.
-- **First section is `user`, or the compaction section**: a compacted conversation starts with its compaction section, an agent section whose first line is the `<dez:compaction …/>` tag (`src/model/chat/compaction.ts`, the one writer and recognizer; `ModelTextEscaper` covers the tag). The role of the first section follows its text (`firstSectionRole`): with no valid tag on the first line of the doc it is a user section, and it never toggles. The editor shows the section's Agent pill in place of the tag line, and a text for people leaves the tag out (`withoutCompactionTag`). A role pill belongs to the section after it, so separator index math is easy to get off by one (`cmEditor.ts`).
-- **A request never starts with an agent message**: the compaction section and the user sections right after it go as one `user` message with no tag, the compaction message (`sectionsToStreamMessages`, `src/model/streams/messages.ts`). A media request reads only the newest user message.
-- **`model`, `thinking`, and `durationMs` are agent-only**: show, save, or send them only when `role === 'agent'` (`durationMs` is never sent); copy them only when set (`modelRefField`, `thinkingField`, `durationField`).
+- **First section is `user`, or the compaction section** of a compacted conversation; its role follows its text and never toggles (`firstSectionRole`, `src/model/chat/compaction.ts`).
+- **A role pill belongs to the section after it**, so separator index math is easy to get off by one (`cmEditor.ts`).
+- **`model`, `thinking`, and `durationMs` are agent-only**: show, save, or send them only when `role === 'agent'`, and copy them only when set (`src/model/chat/types.ts`).
 - **Per-section fields flow through the editor**: the editor writes sections back to the store on every doc change; a new field must follow `SectionModel` in `cmEditor.ts`.
-- **Section models are not doc text**: undo and redo put back the role and data of the sections they re-insert through `sectionsField`'s history hook (`cmEditor.ts`).
-- **Only a user edit has a `userEvent`**: the edited mark of a reply (`editsAgentText`, `view/editor/agentTextEdits.ts`) counts only transactions with a `userEvent`. A new user edit path must set one; a new program write (stream, tool, store-to-view sync) must not.
+- **Section models are not doc text**: undo and redo put back the role and data of the sections they re-insert (`sectionsField`, `cmEditor.ts`).
+- **Only a user edit has a `userEvent`**: a new user edit path must set one; a new program write must not (`view/editor/agentTextEdits.ts`).
 - **The editor holds the old tab for a tick after a switch**: write the view back only to `viewTabId`, and never give it another tab's section models (`ThreadEditor.vue`).
-- **A compaction swaps the sections under the editor**: `dez.model/tabs/compact` and `dez.editor/rebuildIfVisible` run in the same tick (`compactIfDue`, `controller/stream.ts`), else the next doc change writes the old text back. The new editor state has no undo history, so a compaction cannot be undone.
-- **Each section is its own markdown text**: `sectionSeparatorMarkdown` (`cmEditor.ts`) ends paragraphs, quotes, and lists at a section separator; code fences and HTML blocks still run into the next sections.
+- **A compaction swaps the sections under the editor**: `dez.model/tabs/compact` and `dez.editor/rebuildIfVisible` run in the same tick (`compactIfDue`), and it cannot be undone.
+- **Each section is its own markdown text** (`sectionSeparatorMarkdown`, `cmEditor.ts`); code fences and HTML blocks still run into the next sections.
 - **Thinking has two copies during a stream** (store and visible editor); see `dez.editor/setSectionThinkingIfVisible`.
-- **The thinking panel does not show the stored thinking as it is**: it shows `readableThinking` (`src/model/chat/thinking.ts`) and an encrypted pill in place of encrypted lines (`thinkingPill.ts`). Never change the stored thinking: `field` and `copilot` replays send it back, and the prompt cache needs the same bytes.
+- **Never change the stored thinking**: replays send it back, and the prompt cache needs the same bytes. The panel shows `readableThinking` (`src/model/chat/thinking.ts`).
 - **Agent pill DOM changes in place**: see `RoleSeparatorWidget.eq` and `pillThinkingUpdater` in `cmEditor.ts`.
 - **Streams patch only the visible editor**: the store gets every token; the editor only when its tab is active (`dez.editor/appendTokenIfVisible`).
 - **Stream scroll follow**: never add code that scrolls an editor view up (`src/view/editor/selectors.ts`).
-- **Persistence starts after init**: settings changes made before `dez.model/settings/startPersistence` can be lost.
-- **Provider role mapping**: internal role `agent` maps to API role `assistant` in both formats.
-- **Copilot auth differs**: device flow commands, not the API-key commands.
-- **Tauri capabilities**: a new plugin or core command needs a permission in `src-tauri/capabilities/default.json`; app commands registered in `lib.rs` need none.
-- **The window starts hidden**: `dez.controller/window/restore` shows it, so a frontend failure before init shows no window; read the Vite output. On macOS, `lib.rs` shows it at launch so that it comes to the front.
-- **Saved window position units differ by platform**: logical points on macOS, physical px elsewhere (`src/controller/window.ts`).
-- **Wayland windows have no place**: GTK's Wayland backend cannot read or set the window position (`dez.native/gdkBackend`, `src/controller/window.ts`). The AppImage runs on X11.
-- **Image references are plain text**: `![<absolute path>](id=a)` in a text node (old ones have empty parens; an image that a Dez tool made has `id=b|tool=<tool name>`); `src/model/chat/images.ts` is the one recognizer (editor, requests, titles, search). A stored path (a file directly in `assets/images/` or `assets/generated/images/`) counts in every section; a linked path (any other absolute path of an image type, `isLinkedImagePath`) counts only in a user section, so that a model's text never makes Dez read a file of the computer.
-- **One id sequence for images and clips** (`src/model/chat/mediaIds.ts`): only a paste, a drop (`pastedMediaIds`, `imageInsert.ts`), or a reply that makes an image or a clip (`newMediaIds`, in the same tick as the write) gives an id. A pasted image or clip whose id another asset of the tab has gets a new id, and the pasted `@id` mentions of it follow (`pastedMediaIdChanges`). Never renumber an id that is in the doc. A compaction tag keeps the highest id that its conversation ever gave (`last-id`), and a new id comes after it: the kept text can still name an asset that the compaction removed.
-- **`@id` mentions**: `@a` in a user message names the image or the clip `a` (`src/model/chat/imageMentions.ts`; `@a-team` is no mention). The text keeps the mention, and every chat request gets that image at that place, unless an earlier message of the request carries the image (one part for each image); a media request reads only the newest user message. A clip goes only to a media request whose model takes clips (`messageClips`); a chat request gets only the request form of its tag. A mention reads only its own and earlier sections. The editor shows a mention that names an asset as a chip (`namedMentions`, `src/model/chat/assetMentions.ts`); the request builder and the chips find mentions in the same text pieces (`assetTextPieces`), so a chip is never false: keep the two on that one rule.
-- **An image round has no thinking replay**: a chat round that made an image stores no replay, and the thinking of a round whose text holds an image reference of the model never goes back (`roundThinking`, `src/model/streams/messages.ts`). An image that a Dez tool made (its `tool` item, `IMAGE_TOOL_KEY`) does not count.
-- **No stored file path to providers**: every request text (user and agent text, prompt bodies, the system prompt, tool arguments and results, the labels of the pictures of `asset_view`) goes through `withoutStoredFilePaths` (`src/model/chat/storedFilePaths.ts`, which knows every asset folder, the cache media folder, and the linked paths of image references and media tags) in `sectionsToStreamMessages` and `buildSystemPrompt`, and thinking that holds a path is not sent back; a new request text or a new folder of stored files needs the same.
-- **The unused-files scan must read every text that can name a stored file**: a new place that holds such text (a store, a file under `~/.config/dez/`) must be read through `dez.model/heldTexts` (memory) or `dez.persistence/eachConversationText` (disk), and a made file that no text names yet through `dez.stream/unnamedMadeFiles`; else Settings › General › Unused files deletes files that the new place uses. A new folder of stored files joins the scan through `STORED_FILE_FOLDERS` and `storedFilePath` (`src/model/chat/unusedFiles.ts`). Live work in the cache root that can take more than 5 minutes holds its entry with `holdingCachePath` (`src/controller/cacheHolds.ts`; `inWorkFolder` and `dez.native/downloadAppFile` do it), and a new kind of cache entry joins the scan through `cacheEntryKind`.
-- **Tool calls are plain text**: `<dez:tool>` blocks in agent sections, with the result as the body; `src/model/chat/toolBlocks.ts` is the one writer and recognizer. Model text is escaped so that it never forms a block (`ModelTextEscaper`). Find blocks in one agent section at a time, never in the whole doc.
-- **Chip spacing is view only**: a blank line between two tool chips takes no height while no caret is on it, and a chip next to content gets the space of a blank line (`ChipSpacing`, `view/editor/toolCalls.ts`). Never change the text of a reply for its look: the rounds of a reply are read from it (`agentRounds`).
-- **Media tags are plain text**: `<dez:audio …/>` and `<dez:video …/>`, each one whole line of a section (an agent section's made clips, a user section's pasted or dropped clips); `src/model/chat/mediaTags.ts` is the one writer and recognizer, and a rewrite keeps unknown attributes. A `src` that names a linked file counts only in a user section (`isLinkedMediaPath`, `sectionClipSource`). A request holds at most the tag's request form (`id` and `type`; `agentTextForRequest`, `mediaTagsForRequest`), so a Save, a Delete, or an expiry changes no request bytes, and no path or signed URL goes to a provider (the one exception: the `https` URL of an input clip of a `urlOnly` kind, `clipInputs.ts`). `ModelTextEscaper` covers these tags too.
-- **Reply images and clips are written only while the reply is current** (`replyIsCurrent`, `controller/stream.ts`): a cancelled request can still give a response.
-- **Raw model entries are in memory only** (`dez.model/modelCache/rawModel`): never in `model_cache.json` or the snapshot, so there is none after an app start until the provider's next model check. So a fact of a model that a request or the UI needs must be a field of `ModelInfo` and of `model_cache.json`. Provider data that a tool result passes on goes through `jsonWithoutLocalPaths` (`src/model/tools/localPaths.ts`) when the result text is built: a tool result is stored as it was sent.
-- **One agent section per reply**: tool rounds stay in one section; its thinking keeps one entry per later round (`SectionThinking.rounds`, the `rounds` pill attribute), and each round's replay goes back after its own tool calls.
-- **A tool's image or clip goes after the blocks of its group**, at the section end (`ToolRunContext.writeImage`, `writeClip`, `controller/tools.ts`), and the next request of the reply ends at the last tool message (`runChatRounds`, `controller/stream.ts`): text after it would be a prefill.
-- **A request names a tool's image or clip only in the tool result**: the result of a tool that writes an asset names its id with `madeAssetText` (`src/model/tools/jobs.ts`), and the agent message then leaves the asset's reference or tag out (`roundRequestText`, `src/model/streams/messages.ts`). A model that reads such a tag in its own messages writes one itself, which the user sees as text.
-- **The pictures of `asset_view` stay until the next compaction**: a picture is no asset (no `@id`). The block of its call names its saved copy in the `pictures` attribute, a reserved name that no request sends, with the size and the byte count of the copy. Each later request of the conversation reads the copies again, so it sends the same bytes (the prompt cache and the thinking replays need that), until a compaction takes the call out (`agentSectionMessages`, `src/model/streams/messages.ts`). A copy that is gone goes as a note text, never as a failed request. The picture budget of a call (`ToolRunContext.pictureBudget`, `src/model/streams/pictureBudget.ts`) is the limits of the model (tokens, base64 bytes, pictures) less the images and the pictures that the context holds, so it has no state of its own; the calls of one round also share the image limit of one message. A compaction leaves at most a share of each limit (`compactedPictureLimits`), and the compaction check reads the same limits (`compactionReason`): keep the three on one count. A picture whose copy Dez could not save does not go, and the copies of a call that no block takes are deleted (`discardShownPictures`).
-- **A hidden asset is a normal asset with a mark**: `hidden=<job id>` in an image reference, `hidden="<job id>"` in a media tag (`IMAGE_HIDDEN_KEY`, `MEDIA_HIDDEN_ATTRIBUTE`). Its text keeps its place in the reply, and its id, its `@id` mentions, its requests, and the unused-files scan do not change. Only the view hides it, and only while a chip of the same section owns its job (`findHiddenAssets`, `src/model/chat/hiddenAssets.ts`); else it shows as any asset. Its line takes no height while no caret is on it. The chip's panel draws it with the builders of `images.ts` and `media.ts`, which find its text by the asset, not by the DOM place.
-- **A kept asset is a normal asset with a mark**: `kept=compaction` in an image reference, `kept="compaction"` in a media tag (`IMAGE_KEPT_KEY`, `MEDIA_KEPT_ATTRIBUTE`), which only a compaction writes. In the compaction message an image reference with the mark sends no image part; an `@id` mention of the user still sends its pixels. The view hides a marked asset only in the compaction section and in the section of the carried assets of the user (`CARRIED_USER_ASSETS_LABEL`, `src/model/chat/compaction.ts`; `findKeptAssets`), where the panel of the compaction chip shows it; at any other place it shows as any asset.
-- **The notes of a compaction section are read back**: Dez writes the asset lines, the job lines, and the cost under its own headings after the model's text (`src/model/chat/compactionNotes.ts`), and the next compaction and `asset_info` read them (the facts and the origin of an asset whose call is gone). A saved conversation holds them, so a change of a line's form needs a reader of the old form.
-- **Slow tool work is a job** (`ReplyJobs`, `controller/jobs.ts`): a tool whose work can take long starts a job (`context.jobs.start`) and returns the job's id at once (`jobStartedText`), so the jobs of a reply run at the same time. The work writes nothing into the reply and reports its state (for `jobs_list`, `job_inspect`); `jobs_wait`, or the end of the reply, takes the results and writes their images and clips. The results come in the order of the job ends, so each one names its call (`JobCall`: the job's number in the reply, and a label). Each image and clip of a job gets the mark `made-by=<job id>` (`IMAGE_MADE_BY_KEY`, `MEDIA_MADE_BY_ATTRIBUTE`), which `asset_info` reads to tell which call made it. A stop, a new submit, and the end of the reply stop every job (`stopAll`), and the tool blocks stay. The files of a result that no reply took are deleted (`discardMadeAssets`, the one delete of made images and clips that no text names; the media round and the tools use it too): they were never assets of a conversation.
-- **The system prompt and the tools are in the cached prefix**: never put a date, a count, or a random value into `systemPrompt.md`, its placeholder values, or a tool definition. A change of them between releases of Dez is fine.
-- **The asset protocol reads every file**: the `assetProtocol` scope in `tauri.conf.json` is `/**` with dot folders (`requireLiteralLeadingDot: false`), as a linked file can be anywhere (the `protocol-asset` comment in `Cargo.toml`). So the webview must never load remote code: it could read any file, `provider_keys.json` too.
-- **Clips come through Rust, and local clips play from a blob URL**: a clip response goes to a file with `dez.native/downloadAppFile`, never through `dez.http/stream` as bytes (the exceptions: an `audio/pcm` speech response, which `pcmAudio.ts` makes into a WAV file, and the audio of a chat answer, which comes as base64 text in the chat stream, `chatAudio.ts`). WebKitGTK loads no media from the asset protocol, so `MediaPlayer.vue` reads a local file and plays a blob URL; its bytes stay in memory until the page collects the `Blob`, not only until the revoke. A clip plays from a provider URL only when its server answers range requests; else Dez keeps a temp copy.
-- **A bundled tool gets copies, never links**: `run_bundled_tool` (`src-tauri/src/bundled_tools.rs`) copies each input file into the work folder, as a program would write through a link into the user's file; the folder is private, and the program gets an empty environment. The OS rule (`confinement.rs`) lets the program open only the files of the cache root and of `assets/` of the app folder, never the rest of the app folder (`provider_keys.json`, `app_state.json`, `conversations/`), and a hard link into one of them would get around that rule. A program can change every file of the cache root, but it can make no symlink there, as Dez's own file code is not confined; Rust also refuses a cache path that goes through a link (`has_link_below`, `persistence.rs`). Rust does not check the arguments: the caller keeps every path outside the work folder out of them. A quit of the app stops every run and its process group; a crash of Dez does not.
-- **The argument rule of the `video` tool is string checks; the OS rule guards the files** (`argumentProblem`, `src/model/tools/videoTool.ts`): it refuses an argument that names a file outside the work folder, the network, or a device, but it cannot see a path in the content of a file (a playlist). So the guard of the user's files is the OS rule (`src-tauri/src/confinement.rs`), and the network, and a computer with no OS rule, have only the argument checks: keep both. `REFUSED_PROTOCOLS` and `REFUSED_DEVICES` must hold every protocol and device of the ffmpeg that Dez ships (`tests/e2e/video-tool.e2e.ts` checks the Linux build): check them after `scripts/update-ffmpeg.js`. Dez sets the log level of ffmpeg to `warning`, as the log goes to the chat provider and the default level prints the metadata of each input file.
-- **A new editor state makes new players**: a stream end or a tab switch stops a clip that plays; other doc changes keep the player's DOM (`updateDOM`, `view/editor/media.ts`).
-- **A removed media element frees nothing by itself**: WebKit keeps its player (on Linux a GStreamer pipeline with a connection to the sound server) until `releaseRemovedMedia` (`view/media/releaseMedia.ts`) runs; a media element that Vue can remove needs `v-release-on-remove` (`MediaPlayer.vue`). Never tear a player down at the start of its load (a WebKitGTK deadlock; the comment of `releaseRemovedMedia`).
-- **A fullscreen player hides the app's layers**: the delete prompt and the toasts are outside the fullscreen element (the player's card), so code that shows one for a player calls `leaveFullscreen` first (`view/editor/media.ts`). An element that leaves the document ends its fullscreen, so the player must stay attached over a tag rewrite (`MediaWidget.updateDOM`).
-- **The card of a video holds a second, empty `<video>`** (`.media-player__stand-in`, `MediaPlayer.vue`): on macOS it keeps WebKit's text recognition view, which takes every click, off a fullscreen clip. Keep it with no source, larger than the clip's video, and after it in the DOM.
-- **The model picker draws only the rows in view** (`virtua`): a far row has no DOM. The rows set `pointer-events: auto`, because virtua turns pointer events off on its box for a moment after a scroll; a new clickable row kind needs the same.
-- **File drops differ by platform**: WebKitGTK gives the page no dropped `File`, so Linux uses Tauri's native drop (`tauri.linux.conf.json`, `dez.controller/images/watchFileDrops`); macOS keeps HTML5 drops, as the native drop would take text drags too, and pairs each `File` with a path of the drag pasteboard by name and size (`dez.controller/images/droppedFilePaths`; only a Mac can test it). A drop copies a file from a temp folder or a Dez folder, and any file dropped into an agent section; it links any other file (`src/model/chat/linkedFiles.ts`, `imageInsert.ts`). `AppLayout.vue` refuses file drops that no handler took.
+- **Chip spacing is view only** (`ChipSpacing`, `view/editor/toolCalls.ts`): never change the text of a reply for its look, as the rounds of a reply are read from it.
+- **Never hard-code a shortcut key**: every binding path reads the effective keys from `src/model/shortcuts.ts` and the settings store.
 - **Shortcut key order differs by platform**: on Linux the menu accelerator gets the key first; put context checks in the selector both paths call, never only in a key handler.
-- **Never hard-code a shortcut key**: every binding path (window handler, CodeMirror keymap, find field, menu accelerators, button titles and keycaps) reads the effective keys from `src/model/shortcuts.ts` and the settings store.
+
+### Conversation text and assets
+
+- **Image references, media tags, and tool calls are plain text** in a section; each has one writer and recognizer (`images.ts`, `mediaTags.ts`, `toolBlocks.ts` in `src/model/chat/`).
+- **Model text never forms a tag or a block**: `ModelTextEscaper` covers the tool blocks, the media tags, and the compaction tag.
+- **Find tool blocks in one agent section at a time**, never in the whole doc (`src/model/chat/toolBlocks.ts`).
+- **A linked path counts only in a user section** (`isLinkedImagePath`, `isLinkedMediaPath`), so that a model's text never makes Dez read a file of the computer.
+- **One id sequence for images and clips** (`src/model/chat/mediaIds.ts`): never renumber an id that is in the doc, and never give an id that the conversation used before.
+- **`@id` mentions** (`src/model/chat/imageMentions.ts`): the request builder and the editor chips find mentions in the same text pieces (`assetTextPieces`); keep the two on that one rule.
+- **A hidden asset and a kept asset are normal assets with a mark**: only the view hides them (`src/model/chat/hiddenAssets.ts`, `compaction.ts`).
+- **The notes of a compaction section are read back** (`src/model/chat/compactionNotes.ts`): a change of a line's form needs a reader of the old form.
+- **The unused-files scan must read every text that can name a stored file**: a new text place, stored-file folder, or kind of cache entry must join it (`src/controller/unusedFiles.ts`).
+- **Long work in the cache root holds its entry** with `holdingCachePath` (`src/controller/cacheHolds.ts`), or the cleanup deletes it.
+
+### Requests and replies
+
+- **A request never starts with an agent message**: the compaction section goes as a `user` message (`sectionsToStreamMessages`, `src/model/streams/messages.ts`).
+- **Provider role mapping**: internal role `agent` maps to API role `assistant` in both formats.
+- **No stored file path to providers**: every request text goes through `withoutStoredFilePaths` (`src/model/chat/storedFilePaths.ts`); a new request text needs the same.
+- **A request holds at most the request form of a media tag** (`mediaTagsForRequest`), so a Save, a Delete, or an expiry changes no request bytes.
+- **The system prompt and the tools are in the cached prefix**: never put a date, a count, or a random value into `systemPrompt.md`, its placeholder values, or a tool definition.
+- **The pictures of `asset_view` stay until the next compaction**, as the same bytes in every request (`src/model/chat/shownPictures.ts`).
+- **One picture count**: the picture budget, the compaction check, and what a compaction leaves read the same limits (`src/model/streams/pictureBudget.ts`).
+- **An image round has no thinking replay** (`roundThinking`, `src/model/streams/messages.ts`).
+- **One agent section per reply**: tool rounds stay in one section, and its thinking keeps one entry for each later round (`SectionThinking.rounds`).
+- **A tool's image or clip goes after the blocks of its group**, and the next request ends at the last tool message: text after it would be a prefill (`runChatRounds`).
+- **A request names a tool's image or clip only in the tool result** (`madeAssetText`, `src/model/tools/jobs.ts`; `roundRequestText`, `src/model/streams/messages.ts`).
+- **Slow tool work is a job** (`ReplyJobs`, `controller/jobs.ts`): the tool returns the job's id at once, and the work writes nothing into the reply.
+- **Reply images and clips are written only while the reply is current** (`replyIsCurrent`, `controller/stream.ts`): a cancelled request can still give a response.
+- **Raw model entries are in memory only** (`dez.model/modelCache/rawModel`): a fact of a model that a request or the UI needs must be a field of `ModelInfo`.
+- **Provider data in a tool result** goes through `jsonWithoutLocalPaths` (`src/model/tools/localPaths.ts`): a tool result is stored as it was sent.
+- **Persistence starts after init**: settings changes made before `dez.model/settings/startPersistence` can be lost.
+
+### Media and bundled programs
+
+- **Clips come through Rust**: a clip response goes to a file with `dez.native/downloadAppFile`, not through `dez.http/stream` (the exception: the audio of a chat answer, `chatAudio.ts`).
+- **Local clips play from a blob URL**: WebKitGTK loads no media from the asset protocol (`MediaPlayer.vue`).
+- **A new editor state makes new players**: a stream end or a tab switch stops a clip that plays (`view/editor/media.ts`).
+- **A removed media element frees nothing by itself**: a media element that Vue can remove needs `v-release-on-remove` (`view/media/releaseMedia.ts`).
+- **A fullscreen player hides the app's layers**: code that shows a prompt or a toast for a player calls `leaveFullscreen` first (`view/editor/media.ts`).
+- **File drops differ by platform**: Tauri's native drop on Linux, HTML5 drops on macOS (`dez.controller/images/watchFileDrops`, `droppedFilePaths`); a drop copies or links its file.
+- **A bundled tool gets copies, never links**, and Rust does not check its arguments: the caller keeps every path outside the work folder out of them (`src-tauri/src/bundled_tools.rs`).
+- **The argument rule of the `video` tool is string checks; the OS rule guards the files** (`src/model/tools/videoTool.ts`, `src-tauri/src/confinement.rs`): keep both.
+- **After `scripts/update-ffmpeg.js`**, check `REFUSED_PROTOCOLS` and `REFUSED_DEVICES` (`src/model/tools/videoTool.ts`) against the new ffmpeg.
+
+### App, build, and tools
+
+- **The asset protocol reads every file** (`assetProtocol` in `tauri.conf.json`), so the webview must never load remote code.
 - **CSP disabled**: `"csp": null` in `tauri.conf.json` on purpose during development.
+- **Tauri capabilities**: a new plugin or core command needs a permission in `src-tauri/capabilities/default.json`; app commands registered in `lib.rs` need none.
+- **Copilot auth differs**: device flow commands, not the API-key commands.
+- **The window starts hidden**: `dez.controller/window/restore` shows it, so a frontend failure before init shows no window; read the Vite output.
+- **Saved window position units differ by platform**: logical points on macOS, physical px elsewhere (`src/controller/window.ts`).
+- **Wayland windows have no place**: GTK's Wayland backend cannot read or set the window position (`src/controller/window.ts`). The AppImage runs on X11.
+- **The model picker draws only the rows in view** (`virtua`, `ModelPicker.vue`): a far row has no DOM.
 - **Vite port is fixed**: `1420` with `strictPort: true`.
 - **`@tauri-apps/plugin-store` is unused**: app files use Dez's own Rust file I/O.
 - **Secrets wrapper is not a vault**: `src/utils/secret.ts`; never log provider headers, native HTTP payloads, or diagnostics without sanitization.
-- **Sounds and the ffmpeg programs are in Git LFS**: clone with LFS (`git lfs pull`). A pointer file in place of a sound builds with no error, and only `play()` fails (the e2e guard in `tests/e2e/notifications.e2e.ts` catches it); a pointer file in place of a program stops the build (`src-tauri/build.rs`).
-- **tauri-build puts the bundled programs next to a debug build**: keep it at 2.7 or newer; an older one copies them into a wrong folder with the build folder layout of Rust 1.100, and every run of a program fails as "missing" (`src-tauri/Cargo.toml`).
+- **Sounds and the ffmpeg programs are in Git LFS**: clone with LFS (`git lfs pull`). A pointer file in place of a sound builds with no error; one in place of a program stops the build.
+- **tauri-build puts the bundled programs next to a debug build**: keep it at 2.7 or newer (`src-tauri/Cargo.toml`).
 - When using the `agentic_fetch` tool:
   - If searching the web, *ALWAYS* tell the tool to never use local tools like Grep, and only search the web
   - If searching local folders, *ALWAYS* tell the tool to restrict its searches to this folder only and to never search outside of it
@@ -355,34 +328,32 @@ Brief comments are encouraged above functions that do anything non-trivial expla
 - Import the live SBP function only from the package: `import sbp from '@sbp/sbp'`. Do not import `sbp` via relative paths like `./sbp` or `../sbp`; relative imports are only for selector registration side effects or local SBP types/modules.
 - When using the 'tasks' skill, if while working you discover that the steps in a `STEP-*` file are wrong, incomplete, or not the best approach, rewrite that step file to follow the better approach before continuing.
 - Any errors should be logged with `console.error` (in addition to being thrown when throwing is still needed).
-- Error texts for the user tell whose fault it is (the message, the model choice, the provider, the network, or Dez) and what to do; raw details (a provider's text, a status, a native error) go last, after "Details:" (`errorText`, `src/utils/errorText.ts`). Throw such a text as an `ExplainedError`; any other error shows as one that Dez did not expect (`explainedError`). Never show only a raw error when Dez knows the cause.
-- A Dez tool that gets a bad call answers with a text that tells the model how to fix the call; a failure that is not the call's fault says so and what the model can tell the user. A runner throws a `ToolError` (`src/model/tools/types.ts`); a tool result holds no local path.
+- Error texts for the user tell whose fault it is and what to do, with raw details last (`src/utils/errorText.ts`). Throw one as an `ExplainedError`; never show only a raw error when Dez knows why.
+- A Dez tool that gets a bad call answers with a text that tells the model how to fix the call. A runner throws a `ToolError` (`src/model/tools/types.ts`); a tool result holds no local path.
 - Modifications to the project README must be tiny and generally avoided. Larger modifications require user approval (ask first).
-- Dez should avoid taking actions on its own that would result in the user's private info (like file paths) being exposed to providers. It's fine if users type them manually themselves, but for example, when designing features like image drag and drop, the image's file path shouldn't be sent to providers.
+- Dez should avoid taking actions on its own that would result in the user's private info (like file paths) being exposed to providers.
+  - It's fine if users type them manually themselves, but for example, when designing features like image drag and drop, the image's file path shouldn't be sent to providers.
 
 ## Testing approach
 
 - Unit tests: Vitest with colocated `*.test.ts` files; `npm test` also runs `scripts/*.test.js`. Rust unit tests are in the `src-tauri/src/*.rs` files.
-- Shared unit test helpers are in a `testing.ts` module next to their tests (`src/model/providers/testing.ts`, `src/model/chat/testing.ts`, `src/model/tools/testing.ts`, `src/controller/testing.ts`, `src/view/editor/testing.ts`); never copy one into a test file.
+- Shared unit test helpers are in a `testing.ts` module next to their tests; never copy one into a test file.
 - Run `npm run build` at the end of a task step with frontend changes (it type-checks), not after every edit.
 - Run `npm test` after frontend logic changes.
 - Run `cd src-tauri && cargo check` after significant Rust changes, and `cargo test` when touching Rust logic with tests.
 - Run `npm run test:e2e` after UI behavior changes covered by `tests/e2e/`. It runs the existing debug binary: rebuild first (`tests/e2e/harness/app.ts`).
 - Run `npm run typecheck:e2e` after changing the e2e harness or specs.
 - No test may call a real provider or run a paid generation: media specs use mock servers only (`tests/e2e/harness/mockServer.ts`, `media.ts`).
-- E2E model list data: a spec whose model needs list data (parameters, text rules, image rules, clip rules) gives the mock its `jsonAnswers` (`startMockProviderApp`, `tests/e2e/harness/mockProviderApp.ts`) and uses a custom provider with `fetchModels: true` (`tests/e2e/music.e2e.ts`).
-- E2E price requests: a media request first asks for its free price (Venice `/video/quote` and `/audio/quote`, OpenRouter image `/endpoints`), and an unanswered one logs a console error; a spec that sends such a request answers it in `jsonAnswers` (`tests/e2e/music.e2e.ts`).
+- Shared e2e helpers are in `tests/e2e/harness/`; never copy one into a spec. Read the header of a harness module before you use it.
+- E2E clicks: never use webdriverio's `.click()`; use the click helpers of `tests/e2e/harness/dom.ts`.
+- E2E model data: a spec answers the model list data and the price requests of its model with `jsonAnswers` (`tests/e2e/harness/mockProviderApp.ts`; see `tests/e2e/music.e2e.ts`).
 - The e2e app has its own `HOME`, `XDG_CONFIG_HOME`, and `XDG_CACHE_HOME` in a temp folder (`tests/e2e/harness/app.ts`).
-- E2E keys skip GTK, so specs never test Linux menu accelerators; the manual recipe is in `vitest.e2e.config.ts`.
-- E2E cannot send real clipboard data or OS file drags: `tests/e2e/images.e2e.ts` builds paste and drop events in the page and emits `tauri://drag-drop`; the manual recipe for real ones is in `vitest.e2e.config.ts`. The e2e app's home is in a temp folder, so a drop from it is copied: a linked-drop spec puts its files in `linkedDropDir` (`tests/e2e/harness/drops.ts`).
-- E2E specs that restart the app use `MockProviderApp.relaunch()` (`tests/e2e/harness/mockProviderApp.ts`). `model_cache.json` is saved 1 s after a model check: wait for it with `readModelCache` (`tests/e2e/harness/fixtures.ts`) before a relaunch.
-- E2E seeds turn the reply-end alerts off (`quietAppState`, `tests/e2e/harness/fixtures.ts`). Alert specs use the fake notification server (`tests/e2e/harness/notificationServer.ts`) and `setUserIdleMs` (`tests/e2e/notifications.e2e.ts`).
-- E2E clicks: never use webdriverio's `.click()`; use `click()`, `pointerClick()`, `pointerClickAt()`, `pointerShiftClickAt()`, or `pointerRightClickAt()` (only where the page cancels the `contextmenu`) from `tests/e2e/harness/dom.ts`. Shared spec helpers (pointer, caret, doc, toasts, mock replies, tool results, jobs, images, clips, tool chips, the parameter popup, process reads) are in `tests/e2e/harness/`; never copy one into a spec.
-- E2E specs that check a whole chat request body build the expected system prompt and tools with `tests/e2e/harness/chatBody.ts`; a multipart body that the mock got is read with `requestForm` (`tests/e2e/harness/mockServer.ts`).
-- E2E picker reads: use `pickerRows`, `pickerGroups`, and `pickModel` (`tests/e2e/harness/thread.ts`), which scroll the virtual list to read every row; `drawnPickerRows` reads only the rows in the DOM.
-- E2E clips (`tests/e2e/media-player.e2e.ts`, `tests/e2e/harness/media.ts`, `tests/e2e/fixtures/`): a test clip must be in a format that the CI GStreamer packages decode (VP9 in webm or mp4, wav; `.github/workflows/e2e.yml`).
-- E2E bundled tools (`tests/e2e/bundled-tools.e2e.ts`, `tests/e2e/video-tool.e2e.ts`): the real ffmpeg and ffprobe of the debug build, called through `dez.native/runBundledTool` in the page or by the `video`, `asset_view`, and `asset_info` tools for a mock model (the `audio clip` call of `tests/e2e/tool-calls.e2e.ts` runs that ffmpeg too); `pidsWithCwd` (`tests/e2e/harness/processes.ts`) finds a program by its work folder. A clip with sound that a spec makes uses Opus in WebM, which the CI GStreamer decodes.
+- E2E cannot send GTK menu accelerators, real clipboard data, or OS file drags; the manual recipes are in `vitest.e2e.config.ts`.
+- E2E specs that restart the app use `MockProviderApp.relaunch()`, after a wait for `model_cache.json` with `readModelCache` (`tests/e2e/harness/fixtures.ts`).
+- E2E seeds turn the reply-end alerts off (`quietAppState`); alert specs use the fake notification server (`tests/e2e/harness/notificationServer.ts`).
+- E2E clips must be in a format that the CI GStreamer packages decode (VP9 in webm or mp4, wav, Opus in WebM; `.github/workflows/e2e.yml`).
+- E2E bundled tools: the specs run the real ffmpeg and ffprobe of the debug build (`tests/e2e/bundled-tools.e2e.ts`, `tests/e2e/video-tool.e2e.ts`).
 - A `browser.execute` result must not be an object with a set `error` field: webdriverio takes it for a failure of the script.
-- E2E specs that open a URL call `stopOpenUrl` (`tests/e2e/harness/dom.ts`), an SBP filter on `dez.controller/openUrl`, so no browser opens.
+- E2E specs that open a URL call `stopOpenUrl` (`tests/e2e/harness/dom.ts`), so no browser opens.
 - **No display server** (every spec fails with `Hook timed out in 120000ms` in `beforeAll`): run under headless `kwin_wayland`; the recipe is in `vitest.e2e.config.ts`.
 - For UI changes beyond unit-testable logic, also check by hand with `npm run tauri dev`.

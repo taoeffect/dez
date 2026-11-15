@@ -1,3 +1,6 @@
+// package.json pins w3c-keyname at the version that @codemirror/view uses,
+// so one copy names the keys here and in the CodeMirror keymaps, and the
+// two always agree on a key name. Change the pin only with CodeMirror's.
 import { base, keyName, shift as shiftedKeyNames } from 'w3c-keyname'
 import { isMacPlatform } from '../utils/platform'
 
@@ -5,6 +8,9 @@ import { isMacPlatform } from '../utils/platform'
 // keys, and the key rules that every binding path shares (the window
 // handler, the CodeMirror keymap, the find field, the native menu, and
 // Settings › Shortcuts).
+// The user can change every key, so no code names the key of an action:
+// each binding path, menu accelerator, button title, and keycap reads the
+// effective key from `shortcuts` of the settings store (`resolveShortcuts`).
 //
 // A key is a CodeMirror key name with `Mod` resolved for the platform and
 // the modifiers in CodeMirror's order, `Shift-Meta-Ctrl-Alt-<key>`: for

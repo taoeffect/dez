@@ -4,6 +4,9 @@
 // path (vLLM's `root`, llama.cpp's `path`) that shows a user name or a
 // project name. Dez sends no such path on its own: each one goes as a
 // stand-in that still reads as a path, its known start and `…` (`/home/…`).
+// A tool that passes provider data on uses this when it builds its result
+// text, not when a request is built: a tool result is stored as it was
+// sent (modelInfo.ts).
 //
 // A path is hidden only when it starts with one of the known starts below.
 // "Starts with `/`" alone is never the test: entries also hold API routes

@@ -64,6 +64,9 @@ import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolC
 // - the `checks` of `asset_info` find the black, frozen, and silent parts,
 //   the loudness curve, and the cuts of each clip.
 // No request holds a path of the test HOME (`takeRequest` checks each one).
+// Each video clip with sound that the spec makes is VP9 and Opus in WebM:
+// the CI GStreamer (.github/workflows/e2e.yml) decodes both, so the players
+// of the page can show it.
 //
 // One app session serves the whole file; each test starts in a new tab.
 

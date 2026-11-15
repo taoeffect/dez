@@ -22,7 +22,9 @@ const APP_FOLDER_SOURCE = String.raw`\/\.config\/dez\/`
 // The end of every path that Dez writes into a conversation, and the word
 // that stands for such a path in a text for a provider. The temp copies are
 // in the OS cache folder, whose place is not known here, so their end is
-// only their own folders.
+// only their own folders. A new folder of stored files that no entry covers
+// gets one here, or its paths go to providers; the cleanup needs it too
+// (`STORED_FILE_FOLDERS` and `storedFilePath`, unusedFiles.ts).
 const STORED_FILE_PATH_ENDS: readonly { source: string, standIn: string }[] = [
   { source: `${APP_FOLDER_SOURCE}${IMAGE_PATH_END_SOURCE}`, standIn: 'image' },
   { source: `${APP_FOLDER_SOURCE}${SHOWN_PICTURE_PATH_END_SOURCE}`, standIn: 'image' },

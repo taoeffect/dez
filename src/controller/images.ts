@@ -221,7 +221,8 @@ export default sbp('sbp/selectors/register', {
   // (`dez.native/draggedFilePaths`), and pair up with the files by name and
   // size (`pairDroppedFiles`). Only the size of a path whose name is the
   // name of a dropped file is read. A failure gives null paths: the drop
-  // then copies the files.
+  // then copies the files. The e2e tests run on Linux only, so only a Mac
+  // can test this path with a real drag.
   async 'dez.controller/images/droppedFilePaths' (files: readonly File[]): Promise<(string | null)[]> {
     let paths: string[]
     try {

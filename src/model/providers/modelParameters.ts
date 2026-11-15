@@ -4,6 +4,10 @@
 // (`ImageFormat.parameters`, `ClipFormat.parameters` in mediaFormats.ts).
 // The user sets values in the provider settings popup, and the `model_info`
 // tool shows the parameters to a chat model.
+// A parameter states only the limits that the provider's data tells, as
+// Dez refuses each value that it does not take (`parameterTakes`): a list
+// that may not be complete has `custom`, and a range with no step rule has
+// `anyNumber`.
 
 // A value of a list of options.
 export type OptionValue = string | number

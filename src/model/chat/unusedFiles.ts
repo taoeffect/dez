@@ -27,7 +27,10 @@ import { SHOWN_PICTURE_FOLDER, shownPictureFile } from './shownPictures'
 // too, but only at the end of their lifetime (`MEDIA_TEMP_LIFETIME_MS`,
 // `WORK_FOLDER_LIFETIME_MS`).
 
-/** The folders of the stored files, relative to the app folder. */
+/** The folders of the stored files, relative to the app folder. A new
+ *  folder of stored files joins here and in `storedFilePath`, or the
+ *  cleanup never lists its files; the request scrub needs it too
+ *  (`STORED_FILE_PATH_ENDS`, storedFilePaths.ts). */
 export const STORED_FILE_FOLDERS: readonly string[] = [
   ...Object.values(IMAGE_FOLDERS),
   ...Object.values(MEDIA_FOLDERS).flatMap((folders) => Object.values(folders)),

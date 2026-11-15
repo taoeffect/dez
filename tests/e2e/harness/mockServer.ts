@@ -8,6 +8,9 @@ import type { E2EBrowser } from './session'
 // they share: the request body, the chat-only routing, the held chat
 // requests, the SSE reply parts, the streamed chat reply, the mock provider
 // config, start, and stop.
+//
+// No test calls a real provider or runs a paid generation: the providers
+// and media servers of a spec are mocks (this module, media.ts).
 
 export interface MockServer {
   /** `http://127.0.0.1:<port>`, with no trailing slash. */
@@ -178,7 +181,10 @@ export function mockChatPath (provider: MockProvider): string {
 }
 
 /** The `customProviders` entry of `provider` on the mock server at
- *  `serverUrl`. The app fetches no model list for it. */
+ *  `serverUrl`. The app fetches no model list for it, so its model has no
+ *  list data (parameters, text, image, and clip rules): a spec that needs
+ *  them sets `fetchModels: true` and serves the list in `jsonAnswers`
+ *  (music.e2e.ts). */
 export function mockProviderConfig (provider: MockProvider, serverUrl: string): Record<string, unknown> {
   const apiFormat = provider.apiFormat ?? 'openai'
   return {

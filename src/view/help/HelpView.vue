@@ -180,6 +180,10 @@ function onOverlayClick(event: MouseEvent) {
             </p>
           </section>
 
+          <!-- This page tells the user the asset rules of the code: what a
+               model sees, ids, intermediate assets, compaction, the folders,
+               the bundled programs, copy or link, and delete. A change to one
+               of those rules must change this text too. -->
           <section v-if="page === 'assets'" class="help-page help-page--assets">
             <h3>What a model sees</h3>
             <p>

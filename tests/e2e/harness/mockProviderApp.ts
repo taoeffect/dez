@@ -27,7 +27,11 @@ export interface MockProviderAppOptions extends AppOptions {
   heldPaths?: readonly string[]
   /** GET and POST paths that the mock answers with JSON at once, such as
    *  the model list of a provider whose config has `fetchModels: true`, or
-   *  the free price request that goes before a media request. */
+   *  the free price request that goes before a media request (Venice
+   *  `/video/quote` and `/audio/quote`, OpenRouter image `/endpoints`).
+   *  A path that the mock neither answers nor holds gets a 404, and the app
+   *  logs a console error for a price request that fails, so a spec
+   *  answers each one. */
   jsonAnswers?: Readonly<Record<string, unknown>>
 }
 

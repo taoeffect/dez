@@ -22,7 +22,9 @@ const CONVERSATION_FILE_STEM = /^[A-Za-z0-9_-]*$/
 // App code reads and writes the files under ~/.config/dez/ only through
 // these selectors, which own the file formats. They reach the disk only
 // through `dez.native/*` (src/controller/native.ts), the one frontend layer
-// that calls the raw Tauri file commands.
+// that calls the raw Tauri file commands. The stored files under assets/
+// hold raw bytes with no Dez format, so their controllers (images.ts,
+// media.ts, shownPictures.ts) use the `dez.native/*` app-file selectors.
 export default sbp('sbp/selectors/register', {
   async 'dez.persistence/saveConversation' (data: ConversationData): Promise<void> {
     try {
@@ -95,6 +97,9 @@ export default sbp('sbp/selectors/register', {
     }
   },
 
+  // Deletes only the conversation file. The stored files that it names
+  // stay: another text (a second conversation, a saved prompt) can still
+  // name them, and Delete Unused Files finds the rest.
   async 'dez.persistence/deleteConversation' (id: string): Promise<void> {
     try {
       await sbp('dez.native/deleteConversationFile', id)

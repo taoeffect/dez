@@ -1,7 +1,7 @@
 import { checkArgumentValues, fitsParameterType, type ArgumentRules } from './arguments'
 import { ToolError, type ToolArguments, type ToolArgumentValue, type ToolDefinition, type ToolParameter } from './types'
 
-// A tool with subcommands (the `audio` and `image` tools): one
+// A tool with subcommands (the `audio`, `image`, and `video` tools): one
 // short entry in the tools array, whose details the model asks for only
 // when it needs them. A call has two flat arguments, as every tool
 // parameter is a flat scalar (types.ts): `command`, the subcommand's name,
