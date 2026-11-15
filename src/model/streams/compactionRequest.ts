@@ -189,6 +189,10 @@ const HEADING_PARTS: ReadonlyMap<string, AnswerPart> = new Map([
   ['assets', 'assets'],
   ['asset', 'assets'],
   ['asset decisions', 'assets'],
+  // The assets heading of the earlier notes (compactionNotes.ts), which a
+  // second compaction request holds. Their other three headings are those
+  // of the instruction, so a model can copy this one too.
+  ['assets of the conversation', 'assets'],
 ])
 
 // A whole line in bold, with a number before it or a colon after it.

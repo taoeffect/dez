@@ -239,12 +239,14 @@ describe('readCompactionAnswer', () => {
     expect(readCompactionAnswer(`## Assets\n${heading}\nThe text.`)[part]).toBe('The text.')
   })
 
-  it('reads **Assets:** as the heading of the assets', () => {
-    expect(readCompactionAnswer('## Summary\nDone.\n**Assets:**\n@a: keep - The cat.')).toStrictEqual({
-      summary: 'Done.',
+  // `## Assets of the conversation` is the heading of the earlier notes,
+  // which a model can copy at a second compaction.
+  it.each(['**Assets:**', '## Assets of the conversation'])('reads %s as the heading of the assets', (heading) => {
+    expect(readCompactionAnswer(`## Next steps\nDone.\n${heading}\n@a: drop - The cat.`)).toStrictEqual({
+      summary: '',
       requirements: '',
-      nextSteps: '',
-      assets: [asset('a', 'keep', 'The cat.')],
+      nextSteps: 'Done.',
+      assets: [asset('a', 'drop', 'The cat.')],
     })
   })
 
