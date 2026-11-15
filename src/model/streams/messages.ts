@@ -360,6 +360,13 @@ export function messageClips(sections: readonly Section[]): ClipAttachment[] {
   return [...clips.values()]
 }
 
+/** The ids that the `@id` mentions of `text`, the text of a user message,
+ *  name, as a request reads them (`messageTextPieces`): no `@` in an image
+ *  reference, a media tag, or a stored file path. */
+export function messageMentionIds(text: string): Set<string> {
+  return new Set(messageTextPieces(text).flatMap((piece) => (piece.kind === 'gap' ? piece.mentions.map(({ id }) => id) : [])))
+}
+
 /** The request messages of one agent section. A reply that called tools
  *  made one request round per group of calls, and the section holds them
  *  all: each round's text, then its `<dez:tool>` blocks. Each round becomes
@@ -679,12 +686,13 @@ type MessageTextPiece =
   | { kind: 'gap', text: string, mentions: AssetMention[] }
 
 // The pieces of a user message's text, in order, with no empty gap
-// (`assetTextPieces`, which the editor's mention chips read too). Both
-// readers of a message's images and clips use it (`userMessageContent`,
-// `messageClips`), so a mention names the same thing in a chat request and
-// in a media request. References and mentions are read in the text outside
-// media tags, and mentions after the path scrub: a bare path can hold an
-// `@`, and a cut there would send the start of the path.
+// (`assetTextPieces`, which the editor's mention chips read too). Every
+// reader of a message's images, clips, and mentions uses it
+// (`userMessageContent`, `messageClips`, `messageMentionIds`), so a mention
+// names the same thing in a chat request, in a media request, and in the
+// asset rules of a compaction. References and mentions are read in the
+// text outside media tags, and mentions after the path scrub: a bare path
+// can hold an `@`, and a cut there would send the start of the path.
 function messageTextPieces(text: string): MessageTextPiece[] {
   return assetTextPieces(text, 'user').map((piece): MessageTextPiece => {
     if (piece.kind === 'media') return piece

@@ -1,4 +1,3 @@
-import { assetTextPieces } from '../chat/assetMentions'
 import type { AssetPlace } from '../chat/assetOrigins'
 import { compactionMessageEnd, isCarriedUserAssets, sectionCompactionTag } from '../chat/compaction'
 import { notesAssetLines, notesFactsText, type NotesAssetLine } from '../chat/compactionNotes'
@@ -6,13 +5,13 @@ import { sectionIsEmpty, sectionPlainText } from '../chat/content'
 import { findAssetMentions } from '../chat/imageMentions'
 import { IMAGE_HIDDEN_KEY } from '../chat/images'
 import { MEDIA_HIDDEN_ATTRIBUTE } from '../chat/mediaTags'
-import { withoutStoredFilePaths } from '../chat/storedFilePaths'
 import { findToolBlocks } from '../chat/toolBlocks'
 import type { Section } from '../chat/types'
 import { assetOriginText } from '../tools/assetInfo'
 import { ASSET_NAMES, startedJob, type JobAssetKind, type JobInfo } from '../tools/jobs'
 import { MAX_ASSET_SENTENCE_LENGTH, type AssetDecision, type CompactionAnswer } from './compactionRequest'
 import type { FoundAsset } from './mediaRequest'
+import { messageMentionIds } from './messages'
 
 // The images and the clips of a conversation at a compaction: what Dez
 // tells the model about each one in the compaction request (the asset
@@ -166,18 +165,6 @@ export function openJobInputs(replyText: string, jobs: readonly JobInfo[]): Set<
   return ids
 }
 
-/** The ids that the `@id` mentions of `text`, the text of a user section,
- *  name: the words that a request reads as mentions (`assetTextPieces`,
- *  after the path scrub, as in `messageTextPieces`, messages.ts). */
-export function userTextMentionIds(text: string): Set<string> {
-  const ids = new Set<string>()
-  for (const piece of assetTextPieces(text, 'user')) {
-    if (piece.kind !== 'gap') continue
-    for (const mention of findAssetMentions(withoutStoredFilePaths(text.slice(piece.from, piece.to)))) ids.add(mention.id)
-  }
-  return ids
-}
-
 /** What a compaction does with one asset. */
 export interface AssetChoice {
   asset: CompactionAsset
@@ -233,7 +220,7 @@ export function assetDecisions(
 ): AssetChoice[] {
   const named = new Set(findAssetMentions([answer.summary, answer.requirements, answer.nextSteps].join('\n')).map((mention) => mention.id))
   for (const text of keptUserTexts) {
-    for (const id of userTextMentionIds(text)) named.add(id)
+    for (const id of messageMentionIds(text)) named.add(id)
   }
   const lines = new Map(answer.assets.map((line, index) => [line.id, { line, index }]))
   return assets.map((asset): AssetChoice => {

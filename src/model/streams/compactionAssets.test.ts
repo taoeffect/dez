@@ -17,7 +17,6 @@ import {
   compactionScope,
   keptUserTexts,
   openJobInputs,
-  userTextMentionIds,
   type CompactionAsset,
 } from './compactionAssets'
 import { MAX_ASSET_SENTENCE_LENGTH, type AnswerAsset, type AssetDecision, type CompactionAnswer } from './compactionRequest'
@@ -226,23 +225,6 @@ describe('openJobInputs', () => {
   it('takes no mention of a job whose result jobs_wait gave, of a stopped job, or of a job that the list does not hold', () => {
     expect(openJobInputs(REPLY, [job('j-aaaa', 'running'), job('j-bbbb', 'finished', true), job('j-cccc', 'stopped')])).toStrictEqual(new Set(['a', 'b']))
     expect(openJobInputs(REPLY, [])).toStrictEqual(new Set())
-  })
-})
-
-describe('userTextMentionIds', () => {
-  it('gives the id of each mention of the text', () => {
-    expect(userTextMentionIds('Make @a run to @b, then (@c).')).toStrictEqual(new Set(['a', 'b', 'c']))
-  })
-
-  it('takes no word that only looks like a mention', () => {
-    expect(userTextMentionIds('Ask @a-team and bob@c.com about @d.')).toStrictEqual(new Set(['d']))
-  })
-
-  it('takes no @ in the text of an image reference or of a media tag', () => {
-    const reference = imageMarkdown('/home/u/Pictures/@f/cat.png', [{ key: 'id', value: 'a' }])
-    const tag = mediaTagText({ ...SONG, src: '/home/u/Music/@g/song.wav' })
-
-    expect(userTextMentionIds(`Like ${reference} and @b\n${tag}`)).toStrictEqual(new Set(['b']))
   })
 })
 

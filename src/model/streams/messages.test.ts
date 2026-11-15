@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { CARRIED_USER_ASSETS_LABEL, COMPACTION_MESSAGE_INTRO, COMPACTION_USER_MESSAGE_LABEL, compactionTagText } from '../chat/compaction'
+import { imageMarkdown } from '../chat/images'
 import { MEDIA_HIDDEN_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE, mediaTagRequestText, mediaTagText, type MediaTagData } from '../chat/mediaTags'
 import { SHOWN_PICTURE_OVER_LIMIT_NOTE, type ShownPicture } from '../chat/shownPictures'
 import { toolBlockText, type ToolBlockStatus } from '../chat/toolBlocks'
@@ -8,7 +9,7 @@ import type { ClipInputRules, MediaKind } from '../providers/types'
 import { audioCutResultText } from '../tools/audioTool'
 import { imageResultText } from '../tools/imageTool'
 import { jobResultText, jobStartedText, jobsWaitText, type WrittenJobAsset } from '../tools/jobs'
-import { agentSectionMessages, mediaRequestInput, messageClips, newRequestImages, sectionsToStreamMessages } from './messages'
+import { agentSectionMessages, mediaRequestInput, messageClips, messageMentionIds, newRequestImages, sectionsToStreamMessages } from './messages'
 import { model, reply, user } from './testing'
 
 const IMAGE = '/home/u/.config/dez/assets/images/red.png'
@@ -535,6 +536,23 @@ describe('messageClips', () => {
     ]
 
     expect(messageClips(sections)).toStrictEqual([attached({ ...PASTED_DANCE, src: linked }), attached({ ...SONG, src: null })])
+  })
+})
+
+describe('messageMentionIds', () => {
+  it('gives the id of each mention of the text', () => {
+    expect(messageMentionIds('Make @a run to @b, then (@c).')).toStrictEqual(new Set(['a', 'b', 'c']))
+  })
+
+  it('takes no word that only looks like a mention', () => {
+    expect(messageMentionIds('Ask @a-team and bob@c.com about @d.')).toStrictEqual(new Set(['d']))
+  })
+
+  it('takes no @ in the text of an image reference or of a media tag', () => {
+    const reference = imageMarkdown('/home/u/Pictures/@f/cat.png', [{ key: 'id', value: 'a' }])
+    const tag = mediaTagText({ ...SONG, src: '/home/u/Music/@g/song.mp3' })
+
+    expect(messageMentionIds(`Like ${reference} and @b\n${tag}`)).toStrictEqual(new Set(['b']))
   })
 })
 
