@@ -302,9 +302,12 @@ describe('conversation cost and edited flag of a tab', () => {
   })
 
   // A copy that loses the numbers would show the cost of the whole
-  // conversation as the cost of the part since its newest compaction.
+  // conversation as the cost of the part since its newest compaction. A
+  // copy that shares an object with the tab would change the tab, or
+  // change with it (`countRequestContext` sets `left` in place).
   it('keeps the compaction numbers of a conversation through its load, its save, and a reopen of the closed tab, as copies', async () => {
     const compactions = { count: 2, tokens: 412000, cost: { usd: 0.3, requests: 5, unpriced: 1 } }
+    const expected = structuredClone(compactions)
     diskConversations.set('conv-compacted', {
       id: 'conv-compacted',
       title: 'Compacted',
@@ -315,15 +318,18 @@ describe('conversation cost and edited flag of a tab', () => {
     })
 
     const loaded = await openConversation('conv-compacted') as Tab
-    const saved = conversationData(loaded.id)
+    const saved = conversationData(loaded.id).compactions as Compactions
+    expect([loaded.compactions, saved]).toStrictEqual([expected, expected])
+    // A change of the loaded data or of the saved data changes nothing in
+    // the tab.
+    compactions.count = 9
+    compactions.cost.usd = 9
+    saved.cost.usd = 8
+    expect(sbp('dez.model/tabs/compactions', loaded.id)).toStrictEqual(expected)
+
     sbp('dez.model/tabs/close', loaded.id)
     sbp('dez.model/tabs/reopenClosed')
-
-    for (const copy of [loaded, saved, activeTab()]) {
-      expect(copy.compactions).toStrictEqual(compactions)
-      expect(copy.compactions).not.toBe(compactions)
-      expect(copy.compactions?.cost).not.toBe(compactions.cost)
-    }
+    expect(activeTab().compactions).toStrictEqual(expected)
     expect(loaded.sections[0].role).toBe('agent')
     expect(conversationData(tabWithText('plain').id)).not.toHaveProperty('compactions')
   })

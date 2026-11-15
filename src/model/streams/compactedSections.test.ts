@@ -196,6 +196,8 @@ describe('compactedSections', () => {
     expect(sectionCompactionTag(result.sections[0])).toMatchObject({ count: 2, lastId: 'b' })
   })
 
+  // The dropped id is the highest one, so a tag that read only the ids
+  // that stay would give `a`.
   it('takes a dropped asset out of the conversation, and keeps its id out of the new ids', () => {
     const first = compact([
       user('u0', 'Make two foxes'),
@@ -203,18 +205,18 @@ describe('compactedSections', () => {
       user('u1', 'Go on'),
       reply('r2', 'working'),
     ], `${NOTES}\n## Assets\n@a: keep - The first fox.\n@b: keep - The second fox.`, 'r2')
-    const sections = [...first.sections.slice(0, 3), reply('r2', 'Done.'), user('u2', 'Only the second one'), reply('r3', 'working')]
-    const result = compact(sections, `${NOTES}\n## Assets\n@a: drop - not needed\n@b: show - The final fox.`, 'r3', {}, 'JPEG | 5x5 | 2 KB')
+    const sections = [...first.sections.slice(0, 3), reply('r2', 'Done.'), user('u2', 'Only the first one'), reply('r3', 'working')]
+    const result = compact(sections, `${NOTES}\n## Assets\n@a: show - The final fox.\n@b: drop - not needed`, 'r3', {}, 'JPEG | 5x5 | 2 KB')
 
-    expect(result.dropped.map(({ asset }) => asset.id)).toStrictEqual(['a'])
-    expect(notesText(result)).not.toContain(made('one'))
+    expect(result.dropped.map(({ asset }) => asset.id)).toStrictEqual(['b'])
+    expect(notesText(result)).not.toContain(made('two'))
     // The line of the kept one has the facts of its old line: Dez reads
     // no file again.
     expect([...notesAssetLines(notesText(result)).values()]).toStrictEqual([
-      { id: 'b', kind: 'image', facts: 'PNG, 10x10, 1 KB', origin: 'made by the model local/m', sentence: 'The final fox.' },
+      { id: 'a', kind: 'image', facts: 'PNG, 10x10, 1 KB', origin: 'made by the model local/m', sentence: 'The final fox.' },
     ])
     expect(sectionCompactionTag(result.sections[0])).toMatchObject({ count: 2, lastId: 'b' })
-    expect(sent(result.sections.slice(0, 3))).toStrictEqual({ images: [made('two')], pictures: [] })
+    expect(sent(result.sections.slice(0, 3))).toStrictEqual({ images: [made('one')], pictures: [] })
     expect(hidden(result.sections.slice(0, 3))).toStrictEqual([])
   })
 

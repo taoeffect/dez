@@ -930,8 +930,12 @@ describe('sectionsToStreamMessages: pictures that a tool showed', () => {
     user('u2', 'Look again.'),
     reply('a2', view('call_2', [second, third])),
   ]
-  const sent = (options: Partial<Parameters<typeof sectionsToStreamMessages>[2]> = {}) =>
-    sectionsToStreamMessages(sections, model, { sendImages: true, sendTools: true, ...options })
+  // The messages of a request, and the count of its images that went as
+  // text only.
+  const sent = (options: Partial<Parameters<typeof sectionsToStreamMessages>[2]> = {}) => {
+    const { messages, imagesOverLimit } = sectionsToStreamMessages(sections, model, { sendImages: true, sendTools: true, ...options })
+    return { messages, imagesOverLimit }
+  }
   // The messages of the conversation, with the parts `older` and `newer`
   // of the two picture messages.
   const messages = (older: unknown[], newer: unknown[]) => [
@@ -948,8 +952,7 @@ describe('sectionsToStreamMessages: pictures that a tool showed', () => {
 
   // A picture stays in view until a compaction takes its call out.
   it('sends the pictures of every reply, each after the results of its round', () => {
-    expect(sent()).toMatchObject({ messages: messages(shown(first), [...shown(second), ...shown(third)]), imagesOverLimit: 0 })
-    expect(sent().messages).toHaveLength(9)
+    expect(sent()).toStrictEqual({ messages: messages(shown(first), [...shown(second), ...shown(third)]), imagesOverLimit: 0 })
   })
 
   it('sends no picture to a model that reads no images, and none in a request with no tools', () => {
@@ -961,12 +964,12 @@ describe('sectionsToStreamMessages: pictures that a tool showed', () => {
   // The image of the first message and the picture of the older reply
   // keep their parts, so the start of the request keeps its bytes.
   it('counts the pictures and the images against one limit of the request, in message order', () => {
-    expect(sent({ imageLimit: 2 })).toMatchObject({ messages: messages(shown(first), [...note(second), ...note(third)]), imagesOverLimit: 2 })
-    expect(sent({ imageLimit: 3 })).toMatchObject({ messages: messages(shown(first), [...shown(second), ...note(third)]), imagesOverLimit: 1 })
+    expect(sent({ imageLimit: 2 })).toStrictEqual({ messages: messages(shown(first), [...note(second), ...note(third)]), imagesOverLimit: 2 })
+    expect(sent({ imageLimit: 3 })).toStrictEqual({ messages: messages(shown(first), [...shown(second), ...note(third)]), imagesOverLimit: 1 })
   })
 
   it('gives the picture message of a round at most the images of one message', () => {
-    expect(sent({ messageImageLimit: 1 })).toMatchObject({ messages: messages(shown(first), [...shown(second), ...note(third)]), imagesOverLimit: 1 })
+    expect(sent({ messageImageLimit: 1 })).toStrictEqual({ messages: messages(shown(first), [...shown(second), ...note(third)]), imagesOverLimit: 1 })
   })
 })
 

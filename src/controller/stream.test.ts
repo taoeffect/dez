@@ -169,16 +169,15 @@ function sectionTexts(): Array<{ role: string, text: string }> {
 }
 
 // Starts the reply of the section `a1`. `messages` are the messages of its
-// first request, which hold the conversation before the reply, and
-// `imagesOverLimit` counts their images that went as text only.
-async function startStream({ sendTools = false, messages = [{ role: 'user', content: 'Hi' }] as StreamMessage[], imagesOverLimit = 0 } = {}): Promise<void> {
+// first request, which hold the conversation before the reply.
+async function startStream({ sendTools = false, messages = [{ role: 'user', content: 'Hi' }] as StreamMessage[] } = {}): Promise<void> {
   await sbp('dez.stream/start', {
     tabId: activeTab().id,
     sectionId: 'a1',
     model,
     request: 'chat',
     messages,
-    imagesOverLimit,
+    imagesOverLimit: 0,
     newestUserMessage: 'Hi',
     sendTools,
     imageOutput: false,
