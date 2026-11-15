@@ -1,6 +1,6 @@
 import type { MessagePart, ModelRef, Section, SectionThinking, ThinkingReplay } from '../chat/types'
 import { assetTextPieces } from '../chat/assetMentions'
-import { COMPACTION_MESSAGE_INTRO, COMPACTION_USER_MESSAGE_LABEL, isCarriedUserAssets, sectionCompactionTag, type CompactionTag } from '../chat/compaction'
+import { COMPACTION_MESSAGE_INTRO, COMPACTION_USER_MESSAGE_LABEL, compactionMessageEnd, isCarriedUserAssets, sectionCompactionTag, type CompactionTag } from '../chat/compaction'
 import { sectionIsEmpty, sectionPlainText } from '../chat/content'
 import { findAssetMentions, type AssetMention } from '../chat/imageMentions'
 import { findImageReferences, IMAGE_TOOL_KEY, type ImageReference } from '../chat/images'
@@ -123,11 +123,11 @@ export function sectionsToStreamMessages(sections: Section[], requestModel: Mode
   const newestUser = sentSections.findLastIndex((section) => section.role === 'user')
   // The compaction message, and the index after its last section. A
   // compaction section has a tag, so it is never empty: it is the first
-  // sent section too.
+  // sent section too. The compaction reads the same rule, so it and the
+  // request agree on which sections the compaction message holds.
   const tag = sections.length > 0 ? sectionCompactionTag(sections[0]) : null
   const compaction = tag === null ? null : newPartList()
-  const firstReply = sentSections.findIndex((section, index) => index > 0 && section.role === 'agent')
-  const compactionEnd = tag === null ? 0 : firstReply < 0 ? sentSections.length : firstReply
+  const compactionEnd = compactionMessageEnd(sentSections)
   const messages: StreamMessage[] = []
   sentSections.forEach((section, index) => {
     const text = sectionPlainText(section)

@@ -222,10 +222,11 @@ export function sectionCompactionTag(section: Section): CompactionTag | null {
 }
 
 /** The index after the last section of the compaction message of
- *  `sections`, a whole conversation: the compaction section and the user
- *  sections right after it, up to the first later agent section that is
- *  not empty (`sectionsToStreamMessages`, streams/messages.ts). 0 for a
- *  conversation with no compaction. */
+ *  `sections`, a conversation (or its sections that are not empty, for a
+ *  request): the compaction section and the user sections right after it,
+ *  up to the first later agent section that is not empty. The request
+ *  (`sectionsToStreamMessages`, streams/messages.ts) and the compaction
+ *  read this one rule. 0 for a conversation with no compaction. */
 export function compactionMessageEnd(sections: readonly Section[]): number {
   if (sections.length === 0 || sectionCompactionTag(sections[0]) === null) return 0
   const firstReply = sections.findIndex((section, index) => index > 0 && section.role === 'agent' && !sectionIsEmpty(section))
