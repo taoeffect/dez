@@ -1,3 +1,4 @@
+import { compactionLastId } from './compaction'
 import { findAssetMentions } from './imageMentions'
 import { findImageReferences, imageIdChange } from './images'
 import { findMediaTags, mediaTagText } from './mediaTags'
@@ -10,6 +11,13 @@ import { findMediaTags, mediaTagText } from './mediaTags'
 // another id, at the paste (`pastedMediaIdChanges`). Only the texts tell
 // which ids are taken, so the highest id is given again after its image or
 // clip is deleted.
+//
+// The one exception is a compacted conversation (compaction.ts): a
+// compaction removes assets, and the text that it keeps can still name
+// their ids. So its tag holds the highest id that the conversation ever
+// gave (`last-id`), and a new id comes after that one too. A pasted asset
+// keeps an id that no other asset has, as before: a cut and a paste of an
+// asset must not give it a new id.
 //
 // The functions read media tags in every text, with no role check, and
 // `pastedMediaIdChanges` reads a whole editor doc: a tag counts in every
@@ -65,16 +73,21 @@ function highestMediaId(ids: Iterable<string | null>): string | null {
 /** `count` ids, in order, for the image references and the media tags that
  *  Dez itself adds to a conversation (a generated image, a generated clip):
  *  the ids after the highest one in the image references and the media tags
- *  of `texts`, the texts of the whole conversation. The caller must write
- *  the references and the tags in the same tick, so that no paste in
- *  between takes an id. */
+ *  of `texts`, and after the `last-id` of a compaction tag at the start of
+ *  the first text. `texts` are the texts of the whole conversation in
+ *  order: one for each section, or the editor doc as one text. The caller
+ *  must write the references and the tags in the same tick, so that no
+ *  paste in between takes an id. */
 export function newMediaIds(texts: readonly string[], count: number): string[] {
   // The ids of linked references count in every section (the `user` rule),
   // so a new id is never the id of one.
-  let id = highestMediaId(texts.flatMap((text) => [
-    ...findImageReferences(text, 'user').map((reference) => reference.id),
-    ...findMediaTags(text).map((tag) => tag.id),
-  ]))
+  let id = highestMediaId([
+    compactionLastId(texts[0] ?? ''),
+    ...texts.flatMap((text) => [
+      ...findImageReferences(text, 'user').map((reference) => reference.id),
+      ...findMediaTags(text).map((tag) => tag.id),
+    ]),
+  ])
   return Array.from({ length: count }, () => (id = nextMediaId(id)))
 }
 
@@ -139,7 +152,7 @@ export function pastedMediaIdChanges(text: string, pasted: readonly TextRange[])
     if (owners) owners.add(owner)
     else ownersById.set(id, new Set([owner]))
   }
-  let highest = highestMediaId(assets.map((asset) => asset.id))
+  let highest = highestMediaId([compactionLastId(text), ...assets.map((asset) => asset.id)])
   for (const asset of assets) {
     if (asset.id !== null && !isPasted(asset)) claim(asset.id, asset.owner)
   }

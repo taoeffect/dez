@@ -159,6 +159,7 @@ async function startStream({ sendTools = false, messages = [{ role: 'user', cont
     model,
     request: 'chat',
     messages,
+    newestUserMessage: 'Hi',
     sendTools,
     imageOutput: false,
     audioOutput: false,

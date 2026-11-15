@@ -34,6 +34,7 @@ import {
   sectionIsEmpty,
   sectionVisibleText,
 } from '../chat/content'
+import { compactionsField } from '../chat/compaction'
 import { contextField, contextSize, type ContextSize } from '../chat/contextSize'
 import { agentTextEditedField, costField, withRequestCost, type ConversationCost } from '../chat/conversationCost'
 import { durationField } from '../chat/duration'
@@ -138,6 +139,7 @@ function cloneTab(tab: Tab): ModelSnapshot['tabs'][number] {
     ...costField(tab.cost),
     ...agentTextEditedField(tab.agentTextEdited),
     ...contextField(tab.context),
+    ...compactionsField(tab.compactions),
   }
 }
 
@@ -362,6 +364,7 @@ function tabFromConversation(conv: ConversationData, overrides: Partial<Tab> = {
     ...costField(conv.cost),
     ...agentTextEditedField(conv.agentTextEdited),
     ...contextField(conv.context),
+    ...compactionsField(conv.compactions),
   }
 }
 
@@ -739,6 +742,7 @@ export default sbp('sbp/selectors/register', {
       ...costField(tab.cost),
       ...agentTextEditedField(tab.agentTextEdited),
       ...contextField(tab.context),
+      ...compactionsField(tab.compactions),
     }
   },
 
@@ -964,7 +968,7 @@ export default sbp('sbp/selectors/register', {
   // gives none.
   'dez.model/streamMessagesForTab' (tabId: string, model: ModelRef, options: Pick<RequestOptions, 'picturesOfSection'> = {}): RequestMessages {
     const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
-    if (!tab) return { messages: [], imagesLeftOut: 0, sendTools: false }
+    if (!tab) return { messages: [], imagesLeftOut: 0, newestUserMessage: '', sendTools: false }
 
     const sendTools = sbp('dez.model/requestSendsTools', model) as boolean
     const sendImages = cachedModel(model)?.imageInput !== false

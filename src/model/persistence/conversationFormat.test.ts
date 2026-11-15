@@ -1,5 +1,6 @@
 import { commonmarkLanguage } from '@codemirror/lang-markdown'
 import { describe, expect, it } from 'vitest'
+import { compactionTagText } from '../chat/compaction'
 import { toolBlockText } from '../chat/toolBlocks'
 import type { ModelRef, SectionThinking, ThinkingReplay } from '../chat/types'
 import { parseConversation, serializeConversation, serializeConversationAsMarkdown } from './conversationFormat'
@@ -779,6 +780,70 @@ describe('conversation cost, edited flag, and counted context in the header', ()
 
     expect(parsed.map((data) => data.context)).toStrictEqual([...parts.slice(0, -1).map(() => undefined), { tokens: 5, estimate: 7 }])
     expect(parsed.slice(0, -1).some((data) => 'context' in data)).toBe(false)
+  })
+})
+
+describe('a compacted conversation', () => {
+  const tag = compactionTagText({ count: 2, lastId: 'k', pictures: [{ file: 'sheet.jpg', label: 'Frames of @c', width: 1568, height: 882, bytes: 120_000 }] })
+  const conversation = (fields: Partial<ConversationData>): ConversationData => ({
+    id: 'conversation',
+    title: 'Chat',
+    sections: [
+      { role: 'agent', nodes: [textNode(`${tag}\n## Summary\n\nThe duck film.`)], model: { providerId: 'p', modelId: 'm' } },
+      section('user', [textNode('Make a duck film.')]),
+      section('agent', [textNode('The next shot is ready.')]),
+    ],
+    activeModel: null,
+    created_at: 1,
+    ...fields,
+  })
+  const firstLine = (text: string) => text.slice(0, text.indexOf('\n'))
+
+  it('round-trips an agent first section whose first line is the compaction tag', () => {
+    const data = conversation({})
+    const serialized = serializeConversation(data)
+
+    expect(serialized.split('\n').slice(2, 4)).toEqual(['<dez:pill type="agent" model="p/m"/>', tag])
+    expect(parseConversation('conversation', serialized)).toStrictEqual(data)
+  })
+
+  it('round-trips the compaction numbers, after the other parts', () => {
+    const priced = conversation({ context: { tokens: 5, estimate: 7 }, compactions: { count: 2, tokens: 412000, cost: { usd: 0.1 + 0.2, requests: 5, unpriced: 1 } } })
+    const free = conversation({ compactions: { count: 1, tokens: 0, cost: { usd: 0, requests: 0, unpriced: 0 } } })
+
+    expect(firstLine(serializeConversation(priced)))
+      .toBe('<!-- title: Chat | model:  | created: 1 | context: 5 | context-estimate: 7 | compactions: 2 | compacted-tokens: 412000 | compacted-cost: 0.3 | compacted-requests: 5 | compacted-unpriced: 1 -->')
+    expect(firstLine(serializeConversation(free)))
+      .toBe('<!-- title: Chat | model:  | created: 1 | compactions: 1 | compacted-tokens: 0 | compacted-cost: 0 | compacted-requests: 0 -->')
+    expect(parseConversation('conversation', serializeConversation(priced)))
+      .toStrictEqual({ ...priced, compactions: { count: 2, tokens: 412000, cost: { usd: 0.3, requests: 5, unpriced: 1 } } })
+    expect(parseConversation('conversation', serializeConversation(free))).toStrictEqual(free)
+  })
+
+  // Numbers with a part missing would give a wrong buffer cost or a wrong
+  // token total, so a hand edit that breaks one drops them all.
+  it('ignores the whole compaction numbers when one of their values is missing or bad', () => {
+    const parts = [
+      'compactions: 1',
+      'compactions: 1 | compacted-tokens: 5',
+      'compactions: 1 | compacted-tokens: 5 | compacted-cost: 1',
+      'compacted-tokens: 5 | compacted-cost: 1 | compacted-requests: 2',
+      'compactions: 0 | compacted-tokens: 5 | compacted-cost: 1 | compacted-requests: 2',
+      'compactions: 1.5 | compacted-tokens: 5 | compacted-cost: 1 | compacted-requests: 2',
+      'compactions: 1 | compacted-tokens: -5 | compacted-cost: 1 | compacted-requests: 2',
+      'compactions: 1 | compacted-tokens: x | compacted-cost: 1 | compacted-requests: 2',
+      'compactions: 1 | compacted-tokens: 5 | compacted-cost: -1 | compacted-requests: 2',
+      'compactions: 1 | compacted-tokens: 5 | compacted-cost: 1 | compacted-requests: 2 | compacted-unpriced: 3',
+      // The cost of the conversation is not the cost at its compaction.
+      'compactions: 1 | compacted-tokens: 5 | cost: 1 | requests: 2',
+      'compacted-requests: 2 | compacted-cost: 1 | compacted-tokens: 5 | compactions: 1',
+    ]
+
+    const parsed = parts.map((part) => parseConversation('conversation', `<!-- title: Chat | model:  | created: 1 | ${part} -->\n<dez:pill type="user"/>\nhi\n`))
+
+    expect(parsed.map((data) => data.compactions))
+      .toStrictEqual([...parts.slice(0, -1).map(() => undefined), { count: 1, tokens: 5, cost: { usd: 1, requests: 2, unpriced: 0 } }])
+    expect(parsed.slice(0, -1).some((data) => 'compactions' in data)).toBe(false)
   })
 })
 

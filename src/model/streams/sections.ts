@@ -48,7 +48,8 @@ export function endStreamSection(sections: Section[], section: Section, status: 
   const leavesNoTrace = empty && (status === 'cancelled' || (status === 'error' && !section.thinking))
   if (leavesNoTrace) {
     const index = sections.findIndex((candidate) => candidate.id === section.id)
-    // The first section is always a user section; never remove it.
+    // The first section is a user section or the compaction section, never
+    // the section of a stream; never remove it.
     if (index > 0) sections.splice(index, 1)
     return
   }

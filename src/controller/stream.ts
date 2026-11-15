@@ -1,5 +1,5 @@
 import sbp from '@sbp/sbp'
-import type { ActiveModel, ModelRef, Section, SectionThinking, Tab } from '../model/chat/types'
+import type { ActiveModel, MessagePart, ModelRef, Section, SectionThinking, Tab } from '../model/chat/types'
 import { sectionPlainText } from '../model/chat/content'
 import { IMAGE_HIDDEN_KEY, IMAGE_MADE_BY_KEY, IMAGE_TOOL_KEY, imageMarkdown } from '../model/chat/images'
 import { modelRefKey } from '../model/chat/modelRef'
@@ -69,9 +69,12 @@ interface StreamStartArgs {
   request: Exclude<ModelRequest, 'none'>
   // The request messages of the sections before `sectionId`, built by
   // `dez.model/streamMessagesForTab` at the submit: each round sends them,
-  // then the rounds of the reply so far. A media request takes its prompt
-  // and input images from them (`mediaRequestInput`).
+  // then the rounds of the reply so far.
   messages: StreamMessage[]
+  // The newest user message as a message of its own
+  // (`RequestMessages.newestUserMessage`): a media request takes its
+  // prompt and input images from it (`mediaRequestInput`).
+  newestUserMessage: string | MessagePart[]
   // Offer the Dez tools (RequestMessages.sendTools).
   sendTools: boolean
   // The model's known outputs hold `image`: its chat requests ask for
@@ -709,7 +712,7 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
 // new ids of the one id sequence. Ends the reply, except when it throws.
 async function runMediaRound(args: StreamStartArgs, reply: ReplyRuntime, kind: MediaKind): Promise<void> {
   const tab = sbp('dez.model/tab', args.tabId) as Tab | null
-  const input = mediaRequestInput(kind, args.messages, tab?.sections ?? [], args.inputRules)
+  const input = mediaRequestInput(kind, args.newestUserMessage, tab?.sections ?? [], args.inputRules)
   const parameters = (sbp('dez.model/settings/snapshot') as SettingsSnapshot).modelParameters[modelRefKey(args.model)]
   const requestId = crypto.randomUUID()
   reply.requestId = requestId

@@ -11,8 +11,8 @@ import { SHOWN_PICTURE_FOLDER, shownPictureFile } from './shownPictures'
 // showed its model (shownPictures.ts). A text names the file by its path:
 // in an image reference (images.ts) or in the `src` of a media tag
 // (mediaTags.ts); or by its name, in the `pictures` attribute of a tool
-// block (toolBlocks.ts). A text edit or a conversation delete leaves the
-// file on disk.
+// block (toolBlocks.ts) or of a compaction tag (compaction.ts). A text
+// edit or a conversation delete leaves the file on disk.
 //
 // The rule here: a file is in use when a text holds its file name, in any
 // form (a reference, a tag, a path as plain text, with any route to the

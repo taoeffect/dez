@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { compactionTagText } from './compaction'
 import { newMediaIds, pastedMediaIdChanges } from './mediaIds'
 import { mediaTagText } from './mediaTags'
 
@@ -166,6 +167,21 @@ describe('pastedMediaIdChanges', () => {
       expect(paste(`![${image('x')}](id=a|desc=see @a)\n${tag}`, before)).toBe(`${before}![${image('x')}](id=c|desc=see @a)\n${tag}`)
     })
   })
+
+  describe('in a compacted conversation', () => {
+    const before = `${compactionTagText({ count: 1, lastId: 'k', pictures: [] })}\nThe duck of @c is gone. ![${image('a')}](id=a)\n\u001E\n`
+
+    it('gives a pasted asset with no id, or with a taken id, an id after the last id of the compaction tag', () => {
+      expect(paste(`![${image('x')}]() ![${image('y')}](id=a)`, before))
+        .toBe(`${before}![${image('x')}](id=l) ![${image('y')}](id=m)`)
+    })
+
+    it('keeps a pasted id that no other asset has, as a cut and a paste of an asset must', () => {
+      const pasted = `![${image('b')}](id=b)`
+
+      expect(paste(pasted, before)).toBe(before + pasted)
+    })
+  })
 })
 
 describe('newMediaIds', () => {
@@ -192,5 +208,15 @@ describe('newMediaIds', () => {
 
   it('skips a line that only looks like a media tag', () => {
     expect(newMediaIds([`See ${clip('k')}`, '<dez:video id="K" type="video/mp4"/>', '<dez:video id="m"/>'], 1)).toStrictEqual(['a'])
+  })
+
+  it('gives the ids after the last id of the compaction tag of the first text, which names assets that a compaction removed', () => {
+    const tag = compactionTagText({ count: 2, lastId: 'k', pictures: [] })
+
+    expect(newMediaIds([`${tag}\nNotes about @c. ${image('a', 'a')}`, 'Next?'], 2)).toStrictEqual(['l', 'm'])
+    // One text is the whole editor doc.
+    expect(newMediaIds([`${tag}\nNotes\n\u001E\n${image('n', 'n')}`], 1)).toStrictEqual(['o'])
+    // The tag counts only at the start of the conversation.
+    expect(newMediaIds([image('a', 'a'), `${tag}\nNotes`], 1)).toStrictEqual(['b'])
   })
 })

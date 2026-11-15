@@ -101,9 +101,11 @@ export function conversationFilePath (home: string, id: string): string {
 }
 
 /** Minimal `ConversationData` factory so specs can seed uniquely-worded
- * conversations without repeating every required field. */
+ * conversations without repeating every required field. The optional
+ * fields of `overrides` (the cost, the compaction numbers) stay as given. */
 export function makeConversation (overrides: Partial<ConversationData> = {}): ConversationData {
   return {
+    ...overrides,
     id: overrides.id ?? `conv-${Math.random().toString(36).slice(2, 10)}`,
     title: overrides.title ?? 'Untitled',
     sections: overrides.sections ?? [{ role: 'user', nodes: [{ kind: 'text', text: 'hello' }] }],

@@ -39,9 +39,10 @@ function tag(kind: MediaTagKind, id: string): string {
 }
 
 /** A state whose doc is `texts`, one section each, with the roles of
- *  `roles` (section ids `s0`, `s1`, …). The first section is always `user`
- *  (`normalizeSectionModels` in cmEditor.ts). The line rules of the players
- *  have their tests in `lineBlocks.test.ts`. */
+ *  `roles` (section ids `s0`, `s1`, …). The first section is `user`, as
+ *  its text starts with no compaction tag (`normalizeSectionModels` in
+ *  cmEditor.ts). The line rules of the players have their tests in
+ *  `lineBlocks.test.ts`. */
 function createState(texts: string[], roles: Role[]): EditorState {
   return EditorState.create({
     doc: texts.join(`\n${SECTION_SEP}\n`),

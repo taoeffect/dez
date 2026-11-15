@@ -53,6 +53,7 @@ import { markdownTables } from '../editor/tables'
 import { deleteImageBang, deleteImageParen, markdownImages } from '../editor/images'
 import { markdownToolCalls, openToolCalls } from '../editor/toolCalls'
 import { markdownMedia } from '../editor/media'
+import { caretAfterCompactionTag, compactionTagLine } from '../editor/compaction'
 import { deleteLineBlockBackward, deleteLineBlockForward, joinsLineBlock } from '../editor/lineBlocks'
 import { revealHiddenLineBackward, revealHiddenLineForward } from '../editor/hiddenAssets'
 import { deleteLines, duplicateLines } from '../editor/lineCommands'
@@ -717,7 +718,9 @@ interface OpenPanels {
 }
 
 /** A new editor state for the active tab, with the panels of `openPanels`
- *  open. */
+ *  open. Its caret is at the first place for text: the doc start, or the
+ *  place after the tag line of a compaction section (the rule of
+ *  `compactionTagLine` applies only to a transaction). */
 function buildState(openPanels?: OpenPanels): EditorState {
   const sections = activeSections.value
   const models = initialSectionModels(sections)
@@ -865,7 +868,7 @@ function buildState(openPanels?: OpenPanels): EditorState {
     ]),
   )
 
-  return EditorState.create({
+  const state = EditorState.create({
     doc: buildInitialDoc(sections),
     extensions: [
       sectionsField.init(() => models),
@@ -912,6 +915,7 @@ function buildState(openPanels?: OpenPanels): EditorState {
       markdownImages(),
       markdownToolCalls(openPanels?.toolCalls),
       markdownMedia(),
+      compactionTagLine(),
       markdownLinks(),
       mentionChips(),
       filePasteAndDrop(),
@@ -967,6 +971,8 @@ function buildState(openPanels?: OpenPanels): EditorState {
       }),
     ],
   })
+  const caret = caretAfterCompactionTag(state.doc)
+  return caret === null ? state : state.update({ selection: { anchor: caret } }).state
 }
 
 function registerActiveView() {

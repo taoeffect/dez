@@ -86,7 +86,7 @@ export default sbp('sbp/selectors/register', {
       // change. The end of a running reply's output changes no user
       // message and adds no image or clip, so the input that this checks is
       // the input of the request.
-      const input = mediaRequestInput(kind, request.messages, tab.sections, inputRules)
+      const input = mediaRequestInput(kind, request.newestUserMessage, tab.sections, inputRules)
       message = mediaRequestProblem(model.modelName, kind, cachedModel, inputRules.images, input)
       mediaImages = { sent: input.images.length, leftOut: input.imagesLeftOut }
       const sentClips = { audio: 0, video: 0 }
@@ -113,7 +113,7 @@ export default sbp('sbp/selectors/register', {
     if (sbp('dez.stream/endOutput', tabId)) {
       request = sbp('dez.model/streamMessagesForTab', tabId, model) as RequestMessages
     }
-    const { messages, imagesLeftOut, sendTools } = request
+    const { messages, newestUserMessage, imagesLeftOut, sendTools } = request
 
     const agentSection = sbp('dez.model/ensureTrailingAgentSectionForTab', tabId, model)
     if (!agentSection) return
@@ -147,6 +147,7 @@ export default sbp('sbp/selectors/register', {
       model,
       request: kind,
       messages,
+      newestUserMessage,
       sendTools,
       imageOutput: outputs.includes('image'),
       audioOutput: outputs.includes('audio'),

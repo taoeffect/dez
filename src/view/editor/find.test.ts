@@ -3,6 +3,7 @@ import type { SearchQuery } from '@codemirror/search'
 import { EditorSelection, EditorState, type Extension } from '@codemirror/state'
 import { describe, expect, it } from 'vitest'
 import { PILL_NL, PILL_OPEN, SECTION_SEP, encodePrompt, pillsField, scanPills, sectionsField, type PillMetadata } from '../thread/cmEditor'
+import { compactionTagText } from '../../model/chat/compaction'
 import { toolBlockText } from '../../model/chat/toolBlocks'
 import {
   FIND_COUNT_LIMIT,
@@ -126,6 +127,17 @@ describe('find match filter', () => {
     const next = apply(state, replaceAllMatchesTransaction(state, regex('\\n')))
     expect(next.doc.toString()).toBe(`ask\n${SECTION_SEP}\nab\n${TOOL_BLOCK}\ncd`)
     expect(renderedToolCalls(next)).toHaveLength(1)
+  })
+
+  it('skips the tag line of a compaction section and its line break, but not a tag on a later line', () => {
+    const tag = compactionTagText({ count: 1, lastId: 'c', pictures: [] })
+    const doc = `${tag}\ncount\nthe compaction\n${tag}`
+    const state = createState(doc)
+    const next = apply(state, replaceAllMatchesTransaction(state, regex('\\n')))
+    const inLaterTag = doc.lastIndexOf('count')
+
+    expect(matchRanges(state, plain('count'))).toEqual([[tag.length + 1, tag.length + 6], [inLaterTag, inLaterTag + 5]])
+    expect(next.doc.toString()).toBe(`${tag}\ncountthe compaction${tag}`)
   })
 
   it('never yields empty regex matches', () => {

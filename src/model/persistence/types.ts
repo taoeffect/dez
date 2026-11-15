@@ -1,3 +1,4 @@
+import type { Compactions } from '../chat/compaction'
 import type { CountedContext } from '../chat/contextSize'
 import type { ConversationCost } from '../chat/conversationCost'
 import type { ActiveModel, ModelRef, SectionThinking } from '../chat/types'
@@ -65,6 +66,8 @@ export interface ConversationData {
   agentTextEdited?: true
   /** `Tab.context`; absent in files of an older Dez. */
   context?: CountedContext
+  /** `Tab.compactions`; absent in a conversation with no compaction. */
+  compactions?: Compactions
 }
 
 export interface ConversationSummary {

@@ -300,6 +300,33 @@ describe('conversation cost and edited flag of a tab', () => {
       expect(copy.agentTextEdited).toBe(true)
     }
   })
+
+  // A copy that loses the numbers would show the cost of the whole
+  // conversation as the cost of the part since its newest compaction.
+  it('keeps the compaction numbers of a conversation through its load, its save, and a reopen of the closed tab, as copies', async () => {
+    const compactions = { count: 2, tokens: 412000, cost: { usd: 0.3, requests: 5, unpriced: 1 } }
+    diskConversations.set('conv-compacted', {
+      id: 'conv-compacted',
+      title: 'Compacted',
+      sections: [{ role: 'agent', nodes: [{ kind: 'text', text: '<dez:compaction count="2"/>\nNotes' }] }, { role: 'user', nodes: [{ kind: 'text', text: 'Next' }] }],
+      activeModel: null,
+      created_at: 1000,
+      compactions,
+    })
+
+    const loaded = await openConversation('conv-compacted') as Tab
+    const saved = conversationData(loaded.id)
+    sbp('dez.model/tabs/close', loaded.id)
+    sbp('dez.model/tabs/reopenClosed')
+
+    for (const copy of [loaded, saved, activeTab()]) {
+      expect(copy.compactions).toStrictEqual(compactions)
+      expect(copy.compactions).not.toBe(compactions)
+      expect(copy.compactions?.cost).not.toBe(compactions.cost)
+    }
+    expect(loaded.sections[0].role).toBe('agent')
+    expect(conversationData(tabWithText('plain').id)).not.toHaveProperty('compactions')
+  })
 })
 
 describe('context size of a tab', () => {

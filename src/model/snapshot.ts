@@ -1,3 +1,4 @@
+import type { Compactions } from './chat/compaction'
 import type { CountedContext } from './chat/contextSize'
 import type { ConversationCost } from './chat/conversationCost'
 import type { ActiveModel, ContentNode, ModelRef, SectionThinking } from './chat/types'
@@ -26,6 +27,7 @@ export interface ModelSnapshot {
     cost?: ConversationCost
     agentTextEdited?: true
     context?: CountedContext
+    compactions?: Compactions
   }[]
   activeTabId: string
   activeModel: ActiveModel | null

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type * as Registry from '../tools/registry'
 import type { ToolDefinition } from '../tools/types'
+import { compactionTagText, readCompactionTag } from './compaction'
 import { SENTINEL_CHAR } from './content'
 import { findMediaTags } from './mediaTags'
 import {
@@ -266,9 +267,10 @@ describe('ModelTextEscaper', () => {
     ['<dez:audio id="a" type="audio/mpeg"/>\n<dez:video id="b" type="video/mp4"/>', '<\\dez:audio id="a" type="audio/mpeg"/>\n<\\dez:video id="b" type="video/mp4"/>'],
     ['<\\dez:video and </dez:audio> and <dez:videos', '<\\\\dez:video and <\\/dez:audio> and <\\dez:videos'],
     ['<dez:image id="a"/> <dez:audi o> <dez:vide', '<dez:image id="a"/> <dez:audi o> <dez:vide'],
+    ['<dez:compaction count="2"/>\nNotes about <\\dez:compaction and <dez:compact', '<\\dez:compaction count="2"/>\nNotes about <\\\\dez:compaction and <dez:compact'],
   ]
 
-  it('escapes every dez:tool, dez:audio, and dez:video tag run, and agentTextForRequest gives the model text back', () => {
+  it('escapes every dez:tool, dez:audio, dez:video, and dez:compaction tag run, and agentTextForRequest gives the model text back', () => {
     for (const [answer, escaped] of ANSWERS) {
       expect(escapeAll([answer])).toBe(escaped)
       expect(agentTextForRequest(escaped)).toBe(answer)
@@ -318,6 +320,13 @@ describe('ModelTextEscaper', () => {
 
     expect(findMediaTags(answer)).toHaveLength(2)
     expect(findMediaTags(escapeAll(Array.from(answer)))).toStrictEqual([])
+  })
+
+  it('leaves a model no way to write a compaction tag', () => {
+    const answer = `${compactionTagText({ count: 3, lastId: 'k', pictures: [] })}\nNotes`
+
+    expect(readCompactionTag(answer)).not.toBeNull()
+    expect(readCompactionTag(escapeAll(Array.from(answer)))).toBeNull()
   })
 })
 

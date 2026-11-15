@@ -7,6 +7,7 @@ import { ChangeSet, EditorSelection, EditorState, MapMode, StateEffect, StateFie
 import { tags as t } from '@lezer/highlight'
 import type { MarkdownConfig } from '@lezer/markdown'
 import type { ContentNode, ModelRef, Role, Section, SectionThinking } from '../../model/chat/types'
+import { contentCompactionTag, firstSectionRole, withoutCompactionTag } from '../../model/chat/compaction'
 import { durationField } from '../../model/chat/duration'
 import { modelRefField } from '../../model/chat/modelRef'
 import { PILL_MARKER, parsePillMarkerMatch, pillMarkerText } from '../../model/chat/pillMarker'
@@ -33,6 +34,10 @@ import {
  *  encode a section boundary. The char sits alone on its own line and the
  *  whole line is replaced with a block widget (the role separator pill). */
 export const SECTION_SEP = '\u001E'
+
+// The attribute of the editor content while the first section is a
+// compaction section (an agent section): the value is the section's role.
+const FIRST_SECTION_ATTRIBUTE = 'data-first-role'
 
 /** Private-use codepoints that bracket a prompt pill in the buffer:
  *  `PILL_OPEN<id>PILL_BODY<body>PILL_CLOSE`. The whole marker sequence is
@@ -168,19 +173,30 @@ export function keymapHasPlatformBinding(
   return bindings.some((binding) => binding[platform] === key)
 }
 
-/** The first section is always `user`. It has no separator line in the
- *  doc, so it has no role pill that could toggle it; its fixed User pill is
- *  the editor's `::before`. */
-function normalizeSectionModels(models: SectionModel[]): SectionModel[] {
-  if (models.length === 0) return [{ id: crypto.randomUUID(), role: 'user' }]
-  if (models[0].role === 'user') return models
+/** The role of the first section follows the doc: `agent` when its first
+ *  line is a compaction tag, else `user` (`firstSectionRole`,
+ *  src/model/chat/compaction.ts). It has no separator line in the doc, so
+ *  no pill of it could toggle its role. As a user section, its fixed User
+ *  pill is the editor's `::before`; as a compaction section, its pill is
+ *  in place of the tag line (`buildSeparatorDecorations`). */
+function normalizeSectionModels(models: SectionModel[], firstRole: Role): SectionModel[] {
+  if (models.length === 0) return [{ id: crypto.randomUUID(), role: firstRole }]
+  if (models[0].role === firstRole) return models
   const copy = models.slice()
-  copy[0] = { ...copy[0], role: 'user' }
+  copy[0] = { ...copy[0], role: firstRole }
   return copy
 }
 
+// The role of the first section of a doc string (`firstSectionRole`).
+function docFirstSectionRole(doc: string): Role {
+  const lineEnd = doc.indexOf('\n')
+  return firstSectionRole(lineEnd < 0 ? doc : doc.slice(0, lineEnd))
+}
+
 /** Produce `{ id, role, model?, thinking?, durationMs? }` for each section
- *  to seed `sectionsField`. */
+ *  to seed `sectionsField`. The first section gets the role that its doc
+ *  text gives it (`contentCompactionTag` reads the content as
+ *  `firstSectionRole` reads the first doc line). */
 export function initialSectionModels(sections: Section[]): SectionModel[] {
   if (sections.length === 0) return [{ id: crypto.randomUUID(), role: 'user' }]
   return normalizeSectionModels(sections.map((s) => ({
@@ -189,7 +205,7 @@ export function initialSectionModels(sections: Section[]): SectionModel[] {
     ...modelRefField(s.model),
     ...thinkingField(s.thinking),
     ...durationField(s.durationMs),
-  })))
+  })), contentCompactionTag(sections[0].content) ? 'agent' : 'user')
 }
 
 /** Walk all sections and collect the per-pill metadata map to seed
@@ -391,7 +407,7 @@ export function docToSections(
     const sectionModel = reconciledModels[i]
     return {
       id: sectionModel.id,
-      role: i === 0 ? 'user' : sectionModel.role,
+      role: sectionModel.role,
       ...modelRefField(sectionModel.model),
       ...thinkingField(sectionModel.thinking),
       ...durationField(sectionModel.durationMs),
@@ -523,7 +539,7 @@ export function reconcileSectionModelsToDoc(
       reconciled.push({ id: crypto.randomUUID(), role: 'user', generated: true })
     }
   }
-  return normalizeSectionModels(reconciled)
+  return normalizeSectionModels(reconciled, docFirstSectionRole(doc))
 }
 
 /** `models` with the models that the undo or redo `tr` puts back, each at
@@ -556,7 +572,7 @@ function withRestoredSectionModels(models: SectionModel[], tr: Transaction): Sec
 }
 
 export const sectionsField = StateField.define<SectionModel[]>({
-  create: () => [{ id: crypto.randomUUID(), role: 'user' }],
+  create: (state) => [{ id: crypto.randomUUID(), role: firstSectionRole(state.doc.line(1).text) }],
   update(value, tr: Transaction) {
     let next = value
     let sectionModelsManagedByEffect = false
@@ -616,7 +632,7 @@ export const sectionsField = StateField.define<SectionModel[]>({
       }
       next = reconcileSectionModelsToDoc(next, tr.newDoc.toString())
     }
-    return normalizeSectionModels(next)
+    return normalizeSectionModels(next, firstSectionRole(tr.newDoc.line(1).text))
   },
   // Section models are not doc text, so the undo history alone puts back
   // only the separator of a deleted section: `reconcileSectionModelsToDoc`
@@ -793,15 +809,28 @@ const pillThinkingUpdater = ViewPlugin.define(() => ({
  *  sectionsField and whose model part comes from `chips` (by section
  *  index). With `chips` null, the ranges have no widget (atomic ranges
  *  only). Separator n (counting from 1) starts section n, so the index of
- *  a pill is the section after it; section 0 has no separator. Only agent
- *  pills show a reply time: a user section can still hold one in memory
- *  after a role toggle. */
+ *  a pill is the section after it. Section 0 has no separator: as a
+ *  compaction section, its pill is in place of its tag line, the first
+ *  line of the doc, which is no text for people. Only agent pills show a
+ *  reply time: a user section can still hold one in memory after a role
+ *  toggle. */
 function buildSeparatorDecorations(
   doc: string,
   models: SectionModel[],
   chips: readonly (ModelChip | null)[] | null,
 ): DecorationSet {
   const ranges: { from: number; to: number; deco: Decoration }[] = []
+  if (docFirstSectionRole(doc) === 'agent') {
+    const lineEnd = doc.indexOf('\n')
+    ranges.push({
+      from: 0,
+      to: lineEnd < 0 ? doc.length : lineEnd,
+      deco: Decoration.replace({
+        widget: chips ? new RoleSeparatorWidget(0, 'agent', chips[0] ?? null, models[0]?.durationMs ?? null) : undefined,
+        inclusive: false,
+      }),
+    })
+  }
   let sectionIndex = 0
   for (let i = 0; i < doc.length; i++) {
     if (doc.charCodeAt(i) !== 0x1e) continue
@@ -842,6 +871,10 @@ export const roleSeparators: Extension = [
       return buildSeparatorDecorations(state.doc.toString(), models, chips)
     },
   ),
+  // A compaction section has its own pill, so the theme takes the fixed
+  // User pill of the first section away (`dezTheme`).
+  EditorView.contentAttributes.compute(['doc'], (state): Record<string, string> =>
+    (firstSectionRole(state.doc.line(1).text) === 'agent' ? { [FIRST_SECTION_ATTRIBUTE]: 'agent' } : {})),
   pillThinkingUpdater,
 ]
 
@@ -858,12 +891,13 @@ export const roleSeparatorAtomicRanges = EditorView.atomicRanges.of((view) =>
  *  src/model/chat/linkedFiles.ts) a user section, and a toast tells why. A
  *  linked path counts only in a user section, so in an agent section its
  *  images and players would show as source text and go to no request. The
- *  first section is always a user section (`sectionsField`), so a press on
- *  its pill shows no toast. */
+ *  role of the first section follows its text (`sectionsField`), so a
+ *  press on the pill of a compaction section does nothing. */
 function toggleSectionRole(view: EditorView, index: number): void {
   const section = view.state.field(sectionsField)[index]
   if (!section) return
-  if (index > 0 && section.role === 'user' && holdsLinkedFile(splitDocBySeparator(view.state.doc.toString())[index] ?? '')) {
+  if (index === 0) return
+  if (section.role === 'user' && holdsLinkedFile(splitDocBySeparator(view.state.doc.toString())[index] ?? '')) {
     sbp('dez.ui/toast', 'app-global', {
       title: 'Message not switched to Agent',
       message: 'This message links images or clips that you dropped, which stay where they are on your computer. '
@@ -878,7 +912,8 @@ function toggleSectionRole(view: EditorView, index: number): void {
 }
 
 /** Click handler: a Shift+press anywhere on a pill switches the role of the
- *  section after it (`toggleSectionRole`). A plain press anywhere on
+ *  section after it (`toggleSectionRole`; the pill of a compaction section
+ *  is the pill of its own section, which keeps its role). A plain press anywhere on
  *  an agent pill that shows a disclosure triangle, its model part and reply
  *  time too, opens or closes its thinking panel; a plain press on any other
  *  pill does nothing. Every pill takes the mousedown, so a press on a pill
@@ -1104,7 +1139,7 @@ export function serializeDocRangeForClipboard(
 ): string {
   if (from >= to) return ''
   const pills = scanPills(doc).filter((p) => p.to > from && p.from < to)
-  let out = from === 0 ? `${pillMarkerText({ role: 'user' })}\n` : ''
+  let out = from === 0 ? `${pillMarkerText(models[0] ?? { role: 'user' })}\n` : ''
   let cursor = from
   for (const p of pills) {
     if (cursor < Math.min(p.from, to)) {
@@ -1151,11 +1186,13 @@ export function serializeSelectionForClipboard(state: EditorState): string {
  *  As Markdown saves it (without the title): a part gets its role heading only
  *  when its pill is in the range, and an empty part gives nothing. The pill
  *  of a later section is its separator line; the first section's pill is
- *  the editor's `::before`, so it counts as selected when the range starts
- *  at doc position 0 (as in `serializeDocRangeForClipboard`). A range inside
- *  one section's text gives that text as is: a copied word gets no heading
- *  and no newline. A pill never spans a separator (`scanPills`), so the text
- *  between pills holds every separator. */
+ *  the editor's `::before`, or the pill in place of a compaction tag, so
+ *  it counts as selected when the range starts at doc position 0 (as in
+ *  `serializeDocRangeForClipboard`). The tag line of a compaction section
+ *  is left out (`withoutCompactionTag`). A range inside one section's text
+ *  gives that text as is: a copied word gets no heading and no newline. A
+ *  pill never spans a separator (`scanPills`), so the text between pills
+ *  holds every separator. */
 function serializeDocRangeAsMarkdown(doc: string, from: number, to: number, models: SectionModel[]): string {
   const parts = ['']
   const appendDocText = (fragmentFrom: number, fragmentTo: number) => {
@@ -1172,11 +1209,16 @@ function serializeDocRangeAsMarkdown(doc: string, from: number, to: number, mode
   }
   if (cursor < to) appendDocText(cursor, to)
   const firstSection = sectionIndexAtOffset(doc, from)
-  const texts = parts.map((text, index) => sectionTextAsMarkdown(models[firstSection + index]?.role ?? 'user', text))
+  const texts = parts.map((text, index) => {
+    const role = models[firstSection + index]?.role ?? 'user'
+    // The first part starts at the start of its section only in a range
+    // that starts at the doc start.
+    return sectionTextAsMarkdown(role, from === 0 ? withoutCompactionTag(text, firstSection + index, role) : text)
+  })
   if (from > 0 && texts.length === 1) return texts[0]
   return messagesAsMarkdown(texts.map((text, index): MarkdownMessage => {
     if (index > 0) return { role: models[firstSection + index]?.role ?? 'user', text }
-    return from === 0 ? { role: 'user', text } : { text }
+    return from === 0 ? { role: models[0]?.role ?? 'user', text } : { text }
   }))
 }
 
@@ -1453,10 +1495,18 @@ export const dezTheme = EditorView.theme({
   '.cm-content': {
     width: '100%',
     caretColor: 'var(--color-text)',
-    // Room for the pill of the first section, which `::before` draws: the
-    // first section has no separator line in the doc to put a widget on.
+    // Room for the pill of the first section, which `::before` draws: a
+    // first user section has no line in the doc to put a widget on.
     padding: `${editorSize(46)} 0 0`,
     position: 'relative',
+  },
+  // A first section that is a compaction section has its pill on its first
+  // line, with the margins of every separator pill.
+  [`.cm-content[${FIRST_SECTION_ATTRIBUTE}="agent"]`]: {
+    paddingTop: '0',
+  },
+  [`.cm-content[${FIRST_SECTION_ATTRIBUTE}="agent"]::before`]: {
+    display: 'none',
   },
   '.cm-content::before': {
     content: '"User"',
@@ -2599,6 +2649,9 @@ export const dezTheme = EditorView.theme({
 // around it then close, as the line has none of their markup. The line
 // itself becomes a `SectionSeparator` block, so the next section's first
 // line never joins it (a `---` there is a rule, not a setext underline).
+// The tag line of a compaction section is such a block too: it is the
+// place of that section's pill, and the first line of the section's text
+// must not join it.
 // `findMarkdownTables` (`tables.ts`) splits sections the same way.
 // An unclosed code fence or HTML block still runs into the next sections:
 // lezer reads their lines in its own loop, which stops only at their end
@@ -2609,7 +2662,7 @@ const sectionSeparatorMarkdown: MarkdownConfig = {
     name: 'SectionSeparator',
     before: 'LinkReference',
     parse(cx, line) {
-      if (line.text !== SECTION_SEP) return false
+      if (line.text !== SECTION_SEP && !(cx.lineStart === 0 && firstSectionRole(line.text) === 'agent')) return false
       cx.addElement(cx.elt('SectionSeparator', cx.lineStart, cx.lineStart + line.text.length))
       cx.nextLine()
       return true

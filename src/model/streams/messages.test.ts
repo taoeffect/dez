@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { COMPACTION_MESSAGE_INTRO, COMPACTION_USER_MESSAGE_LABEL, compactionTagText } from '../chat/compaction'
 import { MEDIA_HIDDEN_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE, mediaTagRequestText, mediaTagText, type MediaTagData } from '../chat/mediaTags'
+import type { ShownPicture } from '../chat/shownPictures'
 import { toolBlockText, type ToolBlockStatus } from '../chat/toolBlocks'
 import type { Section, SectionThinking, ThinkingReplay } from '../chat/types'
 import type { ClipInputRules, MediaKind } from '../providers/types'
@@ -513,15 +515,17 @@ describe('sectionsToStreamMessages: images of user messages', () => {
 
   it('gives image parts only to the newest user message: an earlier one sends its references and mentions as text', () => {
     const sections = [...earlier, user('u2', `Is @a like ![${OTHER_IMAGE}](id=c)?`), reply('a2', 'Yes.'), user('u3', 'And @c?')]
+    const newest = [{ type: 'text', text: 'And @c' }, { type: 'image', path: OTHER_IMAGE }, { type: 'text', text: '?' }]
 
     expect(sent(sections)).toStrictEqual({
       messages: [
         ...earlierMessages,
         { role: 'user', content: 'Is @a like ![image](id=c)?' },
         { role: 'agent', content: 'Yes.' },
-        { role: 'user', content: [{ type: 'text', text: 'And @c' }, { type: 'image', path: OTHER_IMAGE }, { type: 'text', text: '?' }] },
+        { role: 'user', content: newest },
       ],
       imagesLeftOut: 0,
+      newestUserMessage: newest,
     })
   })
 
@@ -547,21 +551,18 @@ describe('sectionsToStreamMessages: images of user messages', () => {
   })
 
   it('sends a mentioned image of an earlier section right after its mention, which stays in the text', () => {
+    const newest = [
+      { type: 'text', text: 'Give @b' },
+      { type: 'image', path: GENERATED },
+      { type: 'text', text: ' a hat, like the one of @a' },
+      { type: 'image', path: IMAGE },
+      { type: 'text', text: '.' },
+    ]
+
     expect(sent([...earlier, user('u2', 'Give @b a hat, like the one of @a.')])).toStrictEqual({
-      messages: [
-        ...earlierMessages,
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: 'Give @b' },
-            { type: 'image', path: GENERATED },
-            { type: 'text', text: ' a hat, like the one of @a' },
-            { type: 'image', path: IMAGE },
-            { type: 'text', text: '.' },
-          ],
-        },
-      ],
+      messages: [...earlierMessages, { role: 'user', content: newest }],
       imagesLeftOut: 0,
+      newestUserMessage: newest,
     })
   })
 
@@ -646,6 +647,8 @@ describe('sectionsToStreamMessages: images of user messages', () => {
       // `b` and `a` in the last message. The image of the first message
       // goes to no model, so it does not count.
       imagesLeftOut: 2,
+      // A media request reads the same text: it sends no image either.
+      newestUserMessage: 'Mix @b, @b, and ![image](id=a) with @a and @c.',
     })
     expect(sent([...earlier, user('u2', 'What is it?')], false).imagesLeftOut).toBe(0)
   })
@@ -679,13 +682,16 @@ describe('sectionsToStreamMessages: clips of user messages', () => {
   ]
 
   it('sends each tag of a user message in its request form, and no part for a clip or a mention of one', () => {
+    const newest = [{ type: 'text', text: 'Sing @f like ![image](id=a)' }, { type: 'image', path: IMAGE }, { type: 'text', text: `\n${SENT_VOICE}` }]
+
     expect(sent(sections)).toStrictEqual({
       messages: [
         { role: 'user', content: `Like this:\n${SENT_DANCE}` },
         { role: 'agent', content: 'Yes.' },
-        { role: 'user', content: [{ type: 'text', text: 'Sing @f like ![image](id=a)' }, { type: 'image', path: IMAGE }, { type: 'text', text: `\n${SENT_VOICE}` }] },
+        { role: 'user', content: newest },
       ],
       imagesLeftOut: 0,
+      newestUserMessage: newest,
     })
   })
 
@@ -742,12 +748,154 @@ describe('sectionsToStreamMessages: pictures that a tool showed', () => {
   })
 })
 
+describe('sectionsToStreamMessages: a compacted conversation', () => {
+  const sent = (sections: Section[], sendImages = true) => sectionsToStreamMessages(sections, model, { sendImages, sendTools: false })
+  const tag = (pictures: ShownPicture[] = []) => compactionTagText({ count: 1, lastId: 'c', pictures })
+  // The start of each user section of the compaction message.
+  const KEPT = `\n\n${COMPACTION_USER_MESSAGE_LABEL}\n`
+  // A compaction section with the image `b`, and two kept user messages:
+  // one with the image `a`, one that names both.
+  const withImages = [
+    reply('c', `${tag()}\nThe fox: ![${GENERATED}](id=b) It is red. See @b.\n`),
+    user('u1', `Like ![${IMAGE}](id=a)?`),
+    user('u2', 'And @b with @a.'),
+  ]
+  const withImagesMessage = {
+    role: 'user',
+    content: [
+      { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\nThe fox: ![image](id=b)` },
+      { type: 'image', path: GENERATED },
+      { type: 'text', text: ` It is red. See @b.${KEPT}Like ![image](id=a)` },
+      { type: 'image', path: IMAGE },
+      { type: 'text', text: `?${KEPT}And @b with @a.` },
+    ],
+  }
+
+  it('sends the compaction section and the user sections right after it as the first message, a user message with no tag', () => {
+    const sections = [
+      reply('c', `${tag()}\nThe user wants a fox film.\n`),
+      user('u1', 'Make it red.'),
+      user('empty', ' '),
+      user('u2', 'And slow.'),
+      reply('a1', 'Done.'),
+      user('u3', 'Thanks.'),
+    ]
+
+    expect(sent(sections)).toStrictEqual({
+      messages: [
+        { role: 'user', content: `${COMPACTION_MESSAGE_INTRO}\n\nThe user wants a fox film.${KEPT}Make it red.${KEPT}And slow.` },
+        { role: 'agent', content: 'Done.' },
+        { role: 'user', content: 'Thanks.' },
+      ],
+      imagesLeftOut: 0,
+      newestUserMessage: 'Thanks.',
+    })
+  })
+
+  it('sends a user message first for a compaction section with no notes, and for one with no user section after it', () => {
+    expect([
+      sent([reply('c', tag()), user('u1', 'Hi')]).messages,
+      sent([reply('c', `${tag()}\nNotes.`), user('u1', ''), reply('a1', 'Done.')]),
+    ]).toStrictEqual([
+      [{ role: 'user', content: `${COMPACTION_MESSAGE_INTRO}${KEPT}Hi` }],
+      {
+        messages: [{ role: 'user', content: `${COMPACTION_MESSAGE_INTRO}\n\nNotes.` }, { role: 'agent', content: 'Done.' }],
+        imagesLeftOut: 0,
+        newestUserMessage: '',
+      },
+    ])
+  })
+
+  it('sends the notes as the model wrote them, with each clip as the request form of its tag, and no path', () => {
+    const notes = `The model wrote <\\dez:audio id="x"/> once.\n${mediaTagText(RAIN)}\nThe file ${IMAGE} is the fox.`
+
+    expect(sent([reply('c', `${tag()}\n${notes}`), user('u1', `Use ${OTHER_IMAGE}.`)]).messages).toStrictEqual([{
+      role: 'user',
+      content: `${COMPACTION_MESSAGE_INTRO}\n\nThe model wrote <dez:audio id="x"/> once.\n${mediaTagRequestText(RAIN)}\nThe file image is the fox.${KEPT}Use image.`,
+    }])
+  })
+
+  it('sends each image of the compaction section and of its user sections right after its reference, and no second part for a mention', () => {
+    expect(sent(withImages)).toStrictEqual({
+      messages: [withImagesMessage],
+      imagesLeftOut: 0,
+      // The newest user message as a message of its own names its images
+      // itself: a media request reads it, and never the compaction notes.
+      newestUserMessage: [
+        { type: 'text', text: 'And @b' },
+        { type: 'image', path: GENERATED },
+        { type: 'text', text: ' with @a' },
+        { type: 'image', path: IMAGE },
+        { type: 'text', text: '.' },
+      ],
+    })
+  })
+
+  // The prompt cache and the signed thinking replays need the same bytes.
+  it('keeps the image parts of the compaction message when a newer user message comes', () => {
+    expect(sent([...withImages, reply('a1', 'Done.'), user('u3', `Now ![${OTHER_IMAGE}](id=d)`)]).messages).toStrictEqual([
+      withImagesMessage,
+      { role: 'agent', content: 'Done.' },
+      { role: 'user', content: [{ type: 'text', text: 'Now ![image](id=d)' }, { type: 'image', path: OTHER_IMAGE }] },
+    ])
+  })
+
+  it('sends the pictures of the tag after the notes, each after its label', () => {
+    const sheet = { file: 's1.jpg', label: 'The frame sheet of @d (/home/u/.config/dez/assets/generated/video/d.mp4).', width: 1280, height: 320, bytes: 3000 }
+    const wave = { file: 'w1.jpg', label: 'The wave of @e.', width: 800, height: 200, bytes: 2000 }
+
+    expect(sent([reply('c', `${tag([sheet, wave])}\nNotes.`), user('u1', 'Go on.')]).messages).toStrictEqual([{
+      role: 'user',
+      content: [
+        { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\nNotes.\n\nThe frame sheet of @d (video).` },
+        { type: 'picture', picture: sheet },
+        { type: 'text', text: '\n\nThe wave of @e.' },
+        { type: 'picture', picture: wave },
+        { type: 'text', text: `${KEPT}Go on.` },
+      ],
+    }])
+  })
+
+  it('sends a model that reads no images the text only, with no picture label, and counts the images of the newest user message only', () => {
+    const sheet = { file: 's1.jpg', label: 'The frame sheet of @d.', width: 1280, height: 320, bytes: 3000 }
+    const sections = [reply('c', `${tag([sheet])}\nThe fox: ![${GENERATED}](id=b)`), ...withImages.slice(1)]
+
+    expect(sent(sections, false)).toStrictEqual({
+      messages: [{ role: 'user', content: `${COMPACTION_MESSAGE_INTRO}\n\nThe fox: ![image](id=b)${KEPT}Like ![image](id=a)?${KEPT}And @b with @a.` }],
+      imagesLeftOut: 2,
+      newestUserMessage: 'And @b with @a.',
+    })
+    // The images of the compaction message are in every request, so a
+    // count of them would tell the user about them at every submit.
+    expect(sent([...sections, reply('a1', 'Done.'), user('u3', 'Thanks.')], false).imagesLeftOut).toBe(0)
+  })
+
+  it('reads the tag only in a first section that is an agent section', () => {
+    const text = `${tag()}\nNotes.`
+
+    expect([
+      sent([user('u1', text), reply('a1', 'Hi.')]).messages,
+      sent([user('u1', 'Hi'), reply('a1', text), user('u2', 'Go on.')]).messages,
+    ]).toStrictEqual([
+      [{ role: 'user', content: text }, { role: 'agent', content: 'Hi.' }],
+      [{ role: 'user', content: 'Hi' }, { role: 'agent', content: text }, { role: 'user', content: 'Go on.' }],
+    ])
+  })
+
+  it('gives a media request the newest user message only, also when it is a part of the compaction message', () => {
+    const tab = [...withImages.slice(0, 2), reply('new', '')]
+    const { newestUserMessage } = sent(tab)
+
+    expect(mediaRequestInput('imageEdit', newestUserMessage, tab)).toStrictEqual({ prompt: 'Like ![image](id=a)?', images: [IMAGE], imagesLeftOut: 0, ...NO_CLIPS })
+  })
+})
+
 describe('mediaRequestInput', () => {
   // The tab's sections at the start of a media reply: the reply's own
   // section is empty, so it gives no message.
   const input = (kind: MediaKind, sections: Section[], rules?: ClipInputRules) => {
     const tab = [...sections, reply('new', '')]
-    return mediaRequestInput(kind, sectionsToStreamMessages(tab, model, { sendImages: true, sendTools: false }).messages, tab, rules)
+    return mediaRequestInput(kind, sectionsToStreamMessages(tab, model, { sendImages: true, sendTools: false }).newestUserMessage, tab, rules)
   }
 
   it('takes the prompt from the last user message, with each reference as its text and no path', () => {
@@ -1032,13 +1180,13 @@ describe('mediaRequestInput', () => {
 
   it('splits the last user message of a model that takes lyrics into the style and the lyrics', () => {
     const tab = [user('u1', 'Slow piano ballad\nLyrics:\nRain on the roof'), reply('new', '')]
-    const messages = sectionsToStreamMessages(tab, model, { sendImages: true, sendTools: false }).messages
+    const { newestUserMessage } = sectionsToStreamMessages(tab, model, { sendImages: true, sendTools: false })
 
     expect([
-      mediaRequestInput('music', messages, tab, { text: { lyrics: { required: true } } }),
+      mediaRequestInput('music', newestUserMessage, tab, { text: { lyrics: { required: true } } }),
       // The rules of a model that takes none, and no rules.
-      mediaRequestInput('music', messages, tab, { text: { maxPromptLength: 300 } }),
-      mediaRequestInput('music', messages, tab),
+      mediaRequestInput('music', newestUserMessage, tab, { text: { maxPromptLength: 300 } }),
+      mediaRequestInput('music', newestUserMessage, tab),
     ]).toStrictEqual([
       { prompt: 'Slow piano ballad', lyrics: 'Rain on the roof', images: [], imagesLeftOut: 0, ...NO_CLIPS },
       { prompt: 'Slow piano ballad\nLyrics:\nRain on the roof', images: [], imagesLeftOut: 0, ...NO_CLIPS },

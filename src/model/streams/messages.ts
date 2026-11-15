@@ -1,5 +1,6 @@
 import type { MessagePart, ModelRef, Section, SectionThinking, ThinkingReplay } from '../chat/types'
 import { assetTextPieces } from '../chat/assetMentions'
+import { COMPACTION_MESSAGE_INTRO, COMPACTION_USER_MESSAGE_LABEL, sectionCompactionTag, type CompactionTag } from '../chat/compaction'
 import { sectionIsEmpty, sectionPlainText } from '../chat/content'
 import { findAssetMentions, type AssetMention } from '../chat/imageMentions'
 import { findImageReferences, IMAGE_TOOL_KEY, type ImageReference } from '../chat/images'
@@ -7,7 +8,7 @@ import { findMediaTags, MEDIA_TOOL_ATTRIBUTE, mediaTagRequestText, mediaTagsForR
 import { sameModelRef } from '../chat/modelRef'
 import { holdsStoredFilePath, withoutStoredFilePaths } from '../chat/storedFilePaths'
 import { thinkingField } from '../chat/thinking'
-import { EMPTY_TOOL_RESULT, INTERRUPTED_TOOL_RESULT, agentTextForRequest, splitToolBlocks, type ToolBlock } from '../chat/toolBlocks'
+import { EMPTY_TOOL_RESULT, INTERRUPTED_TOOL_RESULT, agentTextForRequest, modelTextForRequest, splitToolBlocks, type ToolBlock } from '../chat/toolBlocks'
 import type { ClipAttachment } from '../providers/clipInputs'
 import { minInputImages } from '../providers/clipImages'
 import type { ClipInputRules, MediaKind } from '../providers/types'
@@ -58,6 +59,16 @@ export interface RequestOptions {
 // clips (`messageClips`, `mediaRequestInput`), so the bytes of a chat
 // request do not depend on them.
 //
+// A compacted conversation (chat/compaction.ts) starts with its compaction
+// section, an agent section, and both wire formats need a `user` message
+// first. So that section and the user sections right after it, up to the
+// first later agent section, go as one `user` message, the compaction
+// message (`addCompactionNotes`, `addUserText`). It is the one other
+// message of the sections with image parts, and it keeps them in every
+// request: the images of its sections, and the pictures of its tag. The
+// compaction took every other image out of the conversation, so these are
+// the ones that the model must still see.
+//
 // An image or a clip that a Dez tool made is not text of the model, but
 // its reference or tag is in the reply, at the start of the text of the
 // round after the tool's group. An agent message leaves it out when a
@@ -72,9 +83,12 @@ export interface RequestOptions {
 // `wireChat`, apiFormats.ts). All request rounds of one reply have the same
 // newest user message, so the bytes hold inside a reply. The picture
 // messages of `asset_view` hold inside a reply too (a copy is the same
-// bytes at each read), and are gone from the next one.
+// bytes at each read), and are gone from the next one. The compaction
+// message never changes by itself: its sections end at the first agent
+// section after them, so a newer user message is no part of it.
 export function sectionsToStreamMessages(sections: Section[], requestModel: ModelRef, options: RequestOptions): Omit<RequestMessages, 'sendTools'> {
   let imagesLeftOut = 0
+  let newestUserMessage: string | MessagePart[] = ''
   // The images that a mention in the section at hand can name: the path of
   // each image id in the references of that section and of the sections
   // before it, user and agent. When two images have one id (a hand edit),
@@ -83,41 +97,141 @@ export function sectionsToStreamMessages(sections: Section[], requestModel: Mode
   const imagesById = new Map<string, string>()
   const sentSections = sections.filter((section) => !sectionIsEmpty(section))
   const newestUser = sentSections.findLastIndex((section) => section.role === 'user')
-  const messages = sentSections.flatMap((section, index): StreamMessage[] => {
+  // The compaction message, and the index after its last section. A
+  // compaction section has a tag, so it is never empty: it is the first
+  // sent section too.
+  const tag = sections.length > 0 ? sectionCompactionTag(sections[0]) : null
+  const compaction = tag === null ? null : newPartList()
+  const firstReply = sentSections.findIndex((section, index) => index > 0 && section.role === 'agent')
+  const compactionEnd = tag === null ? 0 : firstReply < 0 ? sentSections.length : firstReply
+  const messages: StreamMessage[] = []
+  sentSections.forEach((section, index) => {
     const text = sectionPlainText(section)
     for (const { id, path } of findImageReferences(text, section.role)) {
       if (id !== null) imagesById.set(id, path)
     }
+    if (compaction !== null && tag !== null && index === 0) {
+      addCompactionNotes(compaction, text, tag, options.sendImages)
+      return
+    }
     if (section.role === 'agent') {
-      return agentSectionMessages(section, requestModel, options.sendTools, options.sendImages && section.id === options.picturesOfSection)
+      messages.push(...agentSectionMessages(section, requestModel, options.sendTools, options.sendImages && section.id === options.picturesOfSection))
+      return
     }
-    const content = index === newestUser ? userMessageContent(text, imagesById) : null
-    if (content !== null) {
-      if (options.sendImages) return [{ role: 'user', content }]
-      // The count is of the image parts that the request has for a model
-      // that reads images, so the toast and the request always agree.
-      imagesLeftOut = content.filter((part) => part.type === 'image').length
+    const joined = compaction !== null && index < compactionEnd
+    if (joined) {
+      compaction.pendingText += `\n\n${COMPACTION_USER_MESSAGE_LABEL}\n`
+      addUserText(compaction, text, imagesById)
+      if (index !== newestUser) return
     }
-    return [{ role: 'user', content: withoutStoredFilePaths(mediaTagsForRequest(text)) }]
+    // The section as a message of its own: its parts when it is the newest
+    // user message, it has an image, and the model reads images.
+    const parts = index === newestUser ? userMessageContent(text, imagesById) : null
+    // The count is of the image parts that the message has for a model
+    // that reads images, so the toast and the request always agree.
+    if (parts !== null && !options.sendImages) imagesLeftOut = parts.filter((part) => part.type === 'image').length
+    const content = parts !== null && options.sendImages ? parts : withoutStoredFilePaths(mediaTagsForRequest(text))
+    if (index === newestUser) newestUserMessage = content
+    if (!joined) messages.push({ role: 'user', content })
   })
+  // Every section of the compaction message is before every other message.
+  if (compaction !== null) {
+    messages.unshift({ role: 'user', content: (options.sendImages ? messageParts(compaction) : null) ?? partListText(compaction) })
+  }
 
-  return { messages, imagesLeftOut }
+  return { messages, imagesLeftOut, newestUserMessage }
+}
+
+// The parts of one message while it is built.
+interface PartList {
+  parts: MessagePart[]
+  // The text since the last image or picture part.
+  pendingText: string
+  // The images that the message has a part for, or gets one for from a
+  // reference of the text at hand: a mention of one adds no second part.
+  sentImages: Set<string>
+}
+
+function newPartList(): PartList {
+  return { parts: [], pendingText: '', sentImages: new Set() }
+}
+
+// Adds an image or a picture part after the text since the part before it.
+// A whitespace-only text is left out: Anthropic refuses a text block with
+// no visible text.
+function addAttachment(list: PartList, part: Exclude<MessagePart, { type: 'text' }>): void {
+  if (list.pendingText.trim() !== '') list.parts.push({ type: 'text', text: list.pendingText })
+  list.pendingText = ''
+  list.parts.push(part)
+}
+
+// The parts of a built message, with the text after its last image or
+// picture (left out when it is whitespace only, as in `addAttachment`).
+// Null for a message with no image and no picture.
+function messageParts(list: PartList): MessagePart[] | null {
+  if (list.parts.length === 0) return null
+  return list.pendingText.trim() !== '' ? [...list.parts, { type: 'text', text: list.pendingText }] : list.parts
+}
+
+// The text of a built message, with no image and no picture.
+function partListText(list: PartList): string {
+  return list.parts.map((part) => (part.type === 'text' ? part.text : '')).join('') + list.pendingText
+}
+
+// Adds the start of the compaction message: the intro, the text of the
+// compaction section (`text`, whose first line is `tag`) without the tag
+// line, and, with `sendPictures`, the pictures of the tag, each one after
+// its label.
+//
+// The section's text goes as an agent message sends it: a clip as the
+// request form of its tag, the model's text with its escape removed, and
+// every text after the path scrub. But each image reference also gets its
+// image part, right after its `![image](id=a)` text. The references are
+// read with the `agent` rule, so only a stored image counts: a model's
+// text never makes Dez read another file of the computer. An `@id` mention
+// adds no part here. A tool block (only a paste can put one into this
+// section) goes as its text.
+function addCompactionNotes(list: PartList, text: string, tag: CompactionTag, sendPictures: boolean): void {
+  const notes = text.slice(tag.textFrom).trim()
+  list.pendingText += notes === '' ? COMPACTION_MESSAGE_INTRO : `${COMPACTION_MESSAGE_INTRO}\n\n`
+  for (const piece of assetTextPieces(notes, 'agent')) {
+    if (piece.kind === 'media') {
+      list.pendingText += withoutStoredFilePaths(mediaTagRequestText(piece.tag))
+      continue
+    }
+    const pieceText = notes.slice(piece.from, piece.to)
+    if (piece.kind === 'gap') {
+      list.pendingText += withoutStoredFilePaths(modelTextForRequest(pieceText))
+      continue
+    }
+    list.pendingText += withoutStoredFilePaths(pieceText)
+    list.sentImages.add(piece.path)
+    addAttachment(list, { type: 'image', path: piece.path })
+  }
+  if (!sendPictures) return
+  // A label is text of the tag, which the user can edit, so it gets the
+  // path scrub as every request text does.
+  for (const picture of tag.pictures) {
+    list.pendingText += `\n\n${withoutStoredFilePaths(picture.label)}`
+    addAttachment(list, { type: 'picture', picture })
+  }
 }
 
 /** What a media reply (a ModelInfo.request that is not `chat`) sends to
  *  dez.provider/generateMedia. `rules` is what the cache knows of the
  *  model's input, for the request's parameter values (`mediaInputRules`).
  *
- *  The source of the request is the last user message of `messages` as a
- *  chat request sends it: its text, with no path, and with each image
- *  reference as its `![image](id=a)` text; the images that it holds and
- *  the ones that it names with an `@id` mention, in text order and each
- *  one once; and its clips (`messageClips`). A chat request sends no clip:
- *  only a media request reads them. `preparedMediaRequest` (the code that
- *  the `model_invoke` tool shares) makes the request of that source: the
- *  cut to what the model takes, the names in the prompt, and the lyrics.
- *  `imagesLeftOut` and `clipsLeftOut` count the message's images and clips
- *  that the request does not take, so that the submit can tell the user.
+ *  The source of the request is the newest user message as a message of
+ *  its own (`RequestMessages.newestUserMessage`): its text, with no path,
+ *  and with each image reference as its `![image](id=a)` text; the images
+ *  that it holds and the ones that it names with an `@id` mention, in text
+ *  order and each one once; and its clips (`messageClips`). A chat request
+ *  sends no clip: only a media request reads them. `preparedMediaRequest`
+ *  (the code that the `model_invoke` tool shares) makes the request of that
+ *  source: the cut to what the model takes, the names in the prompt, and
+ *  the lyrics. `imagesLeftOut` and `clipsLeftOut` count the message's
+ *  images and clips that the request does not take, so that the submit can
+ *  tell the user.
  *
  *  When the message has no image, a request whose lowest image count is one
  *  (`minInputImages`) takes the newest image reference of `sections` (the
@@ -131,12 +245,11 @@ export function sectionsToStreamMessages(sections: Section[], requestModel: Mode
  *  the reference then, and neither refuses it. */
 export function mediaRequestInput(
   kind: MediaKind,
-  messages: StreamMessage[],
+  newestUserMessage: string | MessagePart[],
   sections: Section[],
   rules: ClipInputRules = {},
 ): MediaRequestInput {
-  const content = messages.findLast((message): message is Extract<StreamMessage, { role: 'user' }> => message.role === 'user')?.content ?? ''
-  const parts: MessagePart[] = typeof content === 'string' ? [{ type: 'text', text: content }] : content
+  const parts: MessagePart[] = typeof newestUserMessage === 'string' ? [{ type: 'text', text: newestUserMessage }] : newestUserMessage
   const input = preparedMediaRequest(kind, { parts, clips: messageClips(sections), pathsById: conversationAssets(sections).images }, rules)
   if (input.images.length + input.imagesLeftOut > 0 || input.clips.some((clip) => clip.kind === 'video') || minInputImages(kind, rules.images) !== 1) return input
   const newest = sections.map((section) => findImageReferences(sectionPlainText(section), section.role).at(-1)).findLast((reference) => reference !== undefined)
@@ -387,18 +500,8 @@ function textWithToolCalls(rounds: readonly AgentRound[]): string {
   return withoutStoredFilePaths(parts.join(''))
 }
 
-// The content of the newest user message, the only section message with
-// image parts: text and image parts in doc order (`messageTextPieces`).
-// Each image part comes right after its reference's text,
-// `![image](id=a)`, at the end of the text part before it, so that a model
-// can name the image by its id (and `promptWithNames`, mediaRequest.ts,
-// finds that text). A media tag goes in its request form and adds no part.
-//
-// An `@id` mention (imageMentions.ts) that names an image of `imagesById`
-// counts as that image at that place: its image part comes right after the
-// mention, which stays in the text as the user typed it. A mentioned image
-// goes once, at its first mention. A mention of an image that the text
-// itself holds adds no part: the reference sends that image.
+// The content of the newest user message, the only message of one section
+// with image parts: text and image parts in doc order (`addUserText`).
 //
 // Null for a text with no image part: the message then goes as the text
 // that an older user message sends (`sectionsToStreamMessages`). So a
@@ -408,40 +511,54 @@ function textWithToolCalls(rounds: readonly AgentRound[]): string {
 // after the last image is left out: Anthropic refuses a text block with no
 // visible text.
 function userMessageContent(text: string, imagesById: ReadonlyMap<string, string>): MessagePart[] | null {
+  const list = newPartList()
+  addUserText(list, text, imagesById)
+  return messageParts(list)
+}
+
+// Adds the text of a user section to a message: text and image parts in
+// doc order (`messageTextPieces`). Each image part comes right after its
+// reference's text, `![image](id=a)`, at the end of the text part before
+// it, so that a model can name the image by its id (and `promptWithNames`,
+// mediaRequest.ts, finds that text). A media tag goes in its request form
+// and adds no part.
+//
+// An `@id` mention (imageMentions.ts) that names an image of `imagesById`
+// counts as that image at that place: its image part comes right after the
+// mention, which stays in the text as the user typed it. A mentioned image
+// goes once, at its first mention. A mention of an image that the text
+// itself holds, or that the message has a part for already (an earlier
+// section of the compaction message), adds no part: the reference sends
+// that image.
+function addUserText(list: PartList, text: string, imagesById: ReadonlyMap<string, string>): void {
   const pieces = messageTextPieces(text)
-  const parts: MessagePart[] = []
-  // The images that the message has a part for, or gets one for below.
-  const sentImages = new Set(pieces.flatMap((piece) => (piece.kind === 'reference' ? [piece.path] : [])))
-  // The scrubbed text since the last image part.
-  let pendingText = ''
+  for (const piece of pieces) {
+    if (piece.kind === 'reference') list.sentImages.add(piece.path)
+  }
   for (const piece of pieces) {
     switch (piece.kind) {
       case 'media':
-        pendingText += withoutStoredFilePaths(mediaTagRequestText(piece.tag))
+        list.pendingText += withoutStoredFilePaths(mediaTagRequestText(piece.tag))
         break
       case 'reference':
-        parts.push({ type: 'text', text: pendingText + piece.text }, { type: 'image', path: piece.path })
-        pendingText = ''
+        list.pendingText += piece.text
+        addAttachment(list, { type: 'image', path: piece.path })
         break
       case 'gap': {
         // An image part after each mention that adds one.
         let start = 0
         for (const mention of piece.mentions) {
           const path = imagesById.get(mention.id)
-          if (path === undefined || sentImages.has(path)) continue
-          sentImages.add(path)
-          parts.push({ type: 'text', text: pendingText + piece.text.slice(start, mention.to) }, { type: 'image', path })
-          pendingText = ''
+          if (path === undefined || list.sentImages.has(path)) continue
+          list.sentImages.add(path)
+          list.pendingText += piece.text.slice(start, mention.to)
+          addAttachment(list, { type: 'image', path })
           start = mention.to
         }
-        pendingText += piece.text.slice(start)
+        list.pendingText += piece.text.slice(start)
       }
     }
   }
-
-  if (parts.length === 0) return null
-  if (pendingText.trim()) parts.push({ type: 'text', text: pendingText })
-  return parts
 }
 
 // A run of the text of a user message, as a request reads it: a media tag,

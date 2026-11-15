@@ -42,7 +42,7 @@ function invoked(kind: MediaKind, prompt: string, rules: ClipInputRules = {}, fa
 // The request of a user message with `text` after the conversation.
 function submitted(kind: MediaKind, text: string, rules: ClipInputRules = {}) {
   const tab = [...CONVERSATION, user('u2', text), reply('new', '')]
-  return mediaRequestInput(kind, sectionsToStreamMessages(tab, model, { sendImages: true, sendTools: false }).messages, tab, rules)
+  return mediaRequestInput(kind, sectionsToStreamMessages(tab, model, { sendImages: true, sendTools: false }).newestUserMessage, tab, rules)
 }
 
 describe('conversationAssets', () => {

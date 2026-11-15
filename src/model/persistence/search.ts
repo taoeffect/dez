@@ -4,7 +4,7 @@ import { modelRefKey } from '../chat/modelRef'
 import { labelToolBlocks } from '../chat/toolBlocks'
 import type { Role } from '../chat/types'
 import { parseConversation } from './conversationFormat'
-import { conversationSummary } from './summaries'
+import { conversationSummary, readableNodes } from './summaries'
 import type {
   ContentNodeData,
   ConversationFile,
@@ -57,9 +57,7 @@ function nodeSearchText(node: ContentNodeData, role: Role): string {
 // (mirroring conversationPreview) so snippets render single-line, and the
 // result is NFC-normalized so it compares canonically against queries.
 export function conversationPlainText(sections: SectionData[]): string {
-  const text = sections
-    .flatMap((section) => section.nodes.map((node) => nodeSearchText(node, section.role)))
-    .join(' ')
+  const text = readableNodes(sections).map(({ node, role }) => nodeSearchText(node, role)).join(' ')
   return text.split(/\s+/).filter(Boolean).join(' ').normalize('NFC')
 }
 

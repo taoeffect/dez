@@ -1,3 +1,4 @@
+import type { Compactions } from './compaction'
 import type { CountedContext } from './contextSize'
 import type { ConversationCost } from './conversationCost'
 import type { ShownPicture } from './shownPictures'
@@ -156,6 +157,9 @@ export interface Tab {
    *  comes from it (`dez.model/tabs/contextSize`). Absent before the first
    *  such request; never set to `undefined`. */
   context?: CountedContext
+  /** The numbers of the compactions of the conversation (compaction.ts).
+   *  Absent before the first compaction; never set to `undefined`. */
+  compactions?: Compactions
 }
 
 export type StreamEvent =

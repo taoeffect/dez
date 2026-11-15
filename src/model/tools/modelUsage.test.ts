@@ -58,8 +58,8 @@ function models(request: ModelRequest): ModelInfo[] {
 // `mediaRequestInput`).
 function mediaInput(kind: MediaKind, model: ModelInfo, sections: Section[]) {
   const tab = [...sections, reply('new', '')]
-  const { messages } = sectionsToStreamMessages(tab, ref, { sendImages: model.imageInput !== false, sendTools: false })
-  return mediaRequestInput(kind, messages, tab, model)
+  const { newestUserMessage } = sectionsToStreamMessages(tab, ref, { sendImages: model.imageInput !== false, sendTools: false })
+  return mediaRequestInput(kind, newestUserMessage, tab, model)
 }
 
 const has = (usage: string[], ...texts: string[]) => texts.some((text) => usage.includes(text))

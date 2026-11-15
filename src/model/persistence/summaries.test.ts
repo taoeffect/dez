@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { compactionTagText } from '../chat/compaction'
 import { toolBlockText } from '../chat/toolBlocks'
 import { conversationPreview, messageCount } from './summaries'
 import type { ContentNodeData, SectionData } from './types'
@@ -44,5 +45,20 @@ describe('conversation summaries', () => {
     ]
 
     expect(conversationPreview(sections)).toBe('Like: [audio] [video] Here it is. [video] [audio] Done.')
+  })
+
+  // In a later agent section and in a user section the tag is plain text,
+  // which the editor shows.
+  it('leaves the tag line of a compaction section out of the preview, and only that tag', () => {
+    const tag = compactionTagText({ count: 2, lastId: 'c', pictures: [] })
+    const sections = [
+      section('agent', [textNode(`${tag}\nNotes of the work.`)]),
+      section('user', [textNode('ask')]),
+      section('agent', [textNode(`${tag}\nanswer`)]),
+    ]
+
+    expect(messageCount(sections)).toBe(3)
+    expect(conversationPreview(sections)).toBe(`Notes of the work. ask ${tag} answer`)
+    expect(conversationPreview([section('user', [textNode(`${tag}\nask`)])])).toBe(`${tag} ask`)
   })
 })

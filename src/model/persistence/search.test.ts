@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { compactionTagText } from '../chat/compaction'
 import { parseModelRefKey } from '../chat/modelRef'
 import { toolBlockText } from '../chat/toolBlocks'
 import { serializeConversation } from './conversationFormat'
@@ -70,6 +71,17 @@ describe('conversationPlainText', () => {
     ]
 
     expect(conversationPlainText(sections)).toBe('Like: Here it is. Done.')
+  })
+
+  // A search for `compaction` or `count` must not find every compacted
+  // conversation.
+  it('leaves out the tag line of a compaction section', () => {
+    const sections = [
+      section('agent', [textNode(`${compactionTagText({ count: 2, lastId: 'c', pictures: [] })}\nNotes of the work.`)]),
+      section('user', [textNode('ask')]),
+    ]
+
+    expect(conversationPlainText(sections)).toBe('Notes of the work. ask')
   })
 })
 

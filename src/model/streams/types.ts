@@ -10,9 +10,13 @@ export type StreamMessage = RequestMessage<MessagePart>
 
 export interface RequestMessages {
   messages: StreamMessage[]
-  // The image references of user sections that went as text only, because
+  // The images of the newest user message that went as text only, because
   // the request model does not read images.
   imagesLeftOut: number
+  // The newest user message as a message of its own: the source of a media
+  // request (`mediaRequestInput`). In `messages` it can be a part of the
+  // compaction message. `''` when no section is a user message.
+  newestUserMessage: string | MessagePart[]
   // The request offers the Dez tools: the Tools toggle applies to the model
   // (`toolsApply` in providers/modelToggles.ts), and the provider's toggle
   // is on.

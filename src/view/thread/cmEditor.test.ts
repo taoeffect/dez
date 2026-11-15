@@ -24,6 +24,8 @@ import {
   pillsField,
   plainTextPasteTransaction,
   reconcileSectionModelsToDoc,
+  roleSeparatorAtomicRanges,
+  roleSeparators,
   scanPills,
   sectionsField,
   sectionsToDoc,
@@ -39,7 +41,9 @@ import {
   type PillMetadata,
   type SectionModel,
 } from './cmEditor'
-import { streamingSectionField } from './modelChip'
+import { modelDisplayNamesField, streamingSectionField } from './modelChip'
+import { thinkingExpandedField } from './thinkingPill'
+import { compactionTagText } from '../../model/chat/compaction'
 import { SENTINEL_CHAR, sectionVisibleText } from '../../model/chat/content'
 import type { ContentNode, ModelRef, Role, Section, SectionThinking } from '../../model/chat/types'
 import { toolBlockText } from '../../model/chat/toolBlocks'
@@ -144,6 +148,121 @@ describe('CodeMirror section role reconciliation', () => {
         (candidate) => candidate.role,
       ),
     ).toEqual(['user', 'user'])
+  })
+})
+
+describe('a first section that is a compaction section', () => {
+  const MODEL: ModelRef = { providerId: 'zai', modelId: 'glm-5.2' }
+  const TAG = compactionTagText({ count: 2, lastId: 'c', pictures: [] })
+  const NOTES = `${TAG}\nNotes of the work.`
+  const DOC = [NOTES, 'ask', 'answer'].join(`\n${SECTION_SEP}\n`)
+  const SECTIONS: Section[] = [
+    { ...section('a', 'agent', NOTES), model: MODEL, durationMs: 4213 },
+    section('u', 'user', 'ask'),
+    section('b', 'agent', 'answer'),
+  ]
+
+  function compactedState(doc = DOC): EditorState {
+    return EditorState.create({
+      doc,
+      extensions: [
+        sectionsField.init(() => initialSectionModels(SECTIONS)),
+        pillsField.init(() => new Map()),
+        modelDisplayNamesField,
+        streamingSectionField,
+        thinkingExpandedField,
+        roleSeparators,
+        roleSeparatorAtomicRanges,
+        history(),
+      ],
+    })
+  }
+
+  /** The doc range, the section index, and the role of each drawn pill. */
+  function pills(state: EditorState): unknown[] {
+    const found: unknown[] = []
+    for (const source of state.facet(EditorView.decorations)) {
+      if (typeof source === 'function') continue
+      for (const cursor = source.iter(); cursor.value; cursor.next()) {
+        const widget = cursor.value.spec.widget as { index: number, role: Role } | undefined
+        if (widget) found.push([cursor.from, cursor.to, widget.index, widget.role])
+      }
+    }
+    return found
+  }
+
+  it('gives the first section the role that its text gives it, whatever the stored role', () => {
+    const roles = (first: Section): Role[] => initialSectionModels([first, section('u', 'user', 'ask')]).map((model) => model.role)
+
+    expect(roles(section('a', 'agent', NOTES))).toStrictEqual(['agent', 'user'])
+    expect(roles(section('a', 'user', NOTES))).toStrictEqual(['agent', 'user'])
+    expect(roles(section('a', 'agent', 'Notes with no tag.'))).toStrictEqual(['user', 'user'])
+    expect(roles(section('a', 'agent', `Notes.\n${TAG}`))).toStrictEqual(['user', 'user'])
+  })
+
+  it('keeps the compaction section, with its model and reply time, through the editor and back', () => {
+    const state = compactedState()
+
+    expect(sectionsToDoc(SECTIONS)).toBe(DOC)
+    expect(docToSections(DOC, state.field(sectionsField), new Map())).toStrictEqual(SECTIONS)
+    expect(reconcileSectionModelsToDoc(state.field(sectionsField), DOC).map((model) => model.role)).toStrictEqual(['agent', 'user', 'agent'])
+  })
+
+  it('follows the text: a section with no tag is a user section, and an undo brings the agent section back', () => {
+    const state = compactedState()
+    const broken = state.update({ changes: { from: 0, to: 1 }, userEvent: 'delete.forward' }).state
+    let undone = broken
+    undo({ state: broken, dispatch: (tr) => { undone = tr.state } })
+    const typed = EditorState.create({ doc: 'Notes', extensions: [sectionsField] })
+      .update({ changes: { from: 0, insert: `${TAG}\n` } }).state
+
+    // The model stays in memory, as after a role toggle of a later section.
+    expect(broken.field(sectionsField)[0]).toStrictEqual({ id: 'a', role: 'user', model: MODEL, durationMs: 4213 })
+    expect(undone.field(sectionsField)[0]).toStrictEqual({ id: 'a', role: 'agent', model: MODEL, durationMs: 4213 })
+    expect(typed.field(sectionsField).map((model) => model.role)).toStrictEqual(['agent'])
+  })
+
+  it('keeps the role of the compaction section at a role toggle', () => {
+    const state = compactedState()
+
+    expect(state.update({ effects: toggleSectionRoleEffect.of({ id: 'a' }) }).state.field(sectionsField)).toBe(state.field(sectionsField))
+  })
+
+  it('draws the pill of the compaction section in place of its tag line, as one atomic range', () => {
+    const state = compactedState()
+    const separators = [DOC.indexOf(SECTION_SEP), DOC.lastIndexOf(SECTION_SEP)]
+    const atomic: [number, number][] = []
+    for (const source of state.facet(EditorView.atomicRanges)) {
+      for (const cursor = source({ state } as EditorView).iter(); cursor.value; cursor.next()) atomic.push([cursor.from, cursor.to])
+    }
+
+    expect(pills(state)).toStrictEqual([
+      [0, TAG.length, 0, 'agent'],
+      [separators[0], separators[0] + 1, 1, 'user'],
+      [separators[1], separators[1] + 1, 2, 'agent'],
+    ])
+    expect(atomic).toStrictEqual([[0, TAG.length], [separators[0], separators[0] + 1], [separators[1], separators[1] + 1]])
+    expect(state.facet(EditorView.contentAttributes)).toContainEqual({ 'data-first-role': 'agent' })
+  })
+
+  it('draws no pill on the first line of a first user section', () => {
+    const state = compactedState(`x${DOC}`)
+
+    expect(pills(state).map((pill) => (pill as unknown[])[2])).toStrictEqual([1, 2])
+    expect(state.facet(EditorView.contentAttributes)).not.toContainEqual({ 'data-first-role': 'agent' })
+  })
+
+  it('copies the compaction section with its agent marker and its tag', () => {
+    const state = compactedState()
+
+    expect(serializeDocRangeForClipboard(DOC, 0, DOC.length, state.field(sectionsField), new Map())).toBe([
+      '<dez:pill type="agent" model="zai/glm-5.2" duration-ms="4213"/>',
+      NOTES,
+      '<dez:pill type="user"/>',
+      'ask',
+      '<dez:pill type="agent"/>',
+      'answer',
+    ].join('\n'))
   })
 })
 
@@ -1050,6 +1169,30 @@ describe('Copy Markdown', () => {
     expect(copied).toBe(saved.slice('# Chat\n\n'.length))
   })
 
+  it('leaves out the tag line of a compaction section, as Save As Markdown does, and only there', () => {
+    const tag = compactionTagText({ count: 1, lastId: 'b', pictures: [] })
+    const sections: Section[] = [
+      section('a', 'agent', `${tag}\nNotes of the work.\n${tag}`),
+      section('u', 'user', `${tag}\nask`),
+      section('b', 'agent', `${tag}\nanswer`),
+    ]
+    const doc = sectionsToDoc(sections)
+    const models = initialSectionModels(sections)
+    const saved = serializeConversationAsMarkdown({
+      id: 'c1',
+      title: 'Chat',
+      activeModel: null,
+      created_at: 0,
+      sections: sections.map((s) => ({ role: s.role, nodes: s.content })),
+    })
+
+    expect(markdownOf(doc, EditorSelection.single(0, doc.length), models))
+      .toBe(`## Agent\n\nNotes of the work.\n${tag}\n\n## User\n\n${tag}\nask\n\n## Agent\n\n${tag}\nanswer\n`)
+    expect(saved).toBe(`# Chat\n\n${markdownOf(doc, EditorSelection.single(0, doc.length), models)}`)
+    // A range that starts after the tag line has no pill of the section.
+    expect(markdownOf(doc, EditorSelection.single(tag.length + 1, tag.length + 1 + 'Notes'.length), models)).toBe('Notes')
+  })
+
   it('joins the non-empty ranges with newlines, and copies nothing without selected text', () => {
     const doc = `alpha\n${SECTION_SEP}\nbeta gamma`
     const separatorOnly = EditorSelection.range('alpha'.length, 'alpha\n'.length + `${SECTION_SEP}\n`.length)
@@ -1285,5 +1428,21 @@ describe('markdown sections', () => {
       `SectionSeparator: ${SECTION_SEP}`,
       'Paragraph: ===',
     ])
+  })
+
+  // The tag line of a compaction section is the place of a pill, as a
+  // separator line is.
+  it('never joins the first text line of a compaction section to its tag line', () => {
+    const tag = compactionTagText({ count: 1, lastId: null, pictures: [] })
+
+    expect(topBlocks(`${tag}\nNotes`, 'ask')).toEqual([
+      `SectionSeparator: ${tag}`,
+      'Paragraph: Notes',
+      `SectionSeparator: ${SECTION_SEP}`,
+      'Paragraph: ask',
+    ])
+    expect(topBlocks(`${tag}\n---`)).toEqual([`SectionSeparator: ${tag}`, 'HorizontalRule: ---'])
+    // On any other line, the tag is text.
+    expect(topBlocks(`Notes\n${tag}`)).toEqual([`Paragraph: Notes\n${tag}`])
   })
 })

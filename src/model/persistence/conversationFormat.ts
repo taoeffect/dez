@@ -1,3 +1,4 @@
+import { compactionsField, withoutCompactionTag, type Compactions } from '../chat/compaction'
 import { stripLiveSentinels } from '../chat/content'
 import { contextField, type CountedContext } from '../chat/contextSize'
 import { agentTextEditedField, costField, type ConversationCost } from '../chat/conversationCost'
@@ -12,7 +13,7 @@ import type { ContentNodeData, ConversationData, SectionData } from './types'
 // (persistence.rs keeps only the ASCII letters, digits, `-`, and `_` of the
 // id):
 //
-//   <!-- title: X | model: provider/model | created: N | cost: 0.42 | requests: 7 | unpriced: 1 | edited: yes | context: 81200 | context-estimate: 90400 -->
+//   <!-- title: X | model: provider/model | created: N | cost: 0.42 | requests: 7 | unpriced: 1 | edited: yes | context: 81200 | context-estimate: 90400 | compactions: 2 | compacted-tokens: 412000 | compacted-cost: 0.31 | compacted-requests: 5 -->
 //
 //   <dez:pill type="user"/>
 //   text
@@ -33,6 +34,14 @@ import type { ContentNodeData, ConversationData, SectionData } from './types'
 // - `context:` and `context-estimate:` are `Tab.context` (its `tokens` and
 //   its `estimate`), there only when set. A context with a bad or a
 //   missing value is ignored as a whole.
+// - `compactions:`, `compacted-tokens:`, `compacted-cost:` (USD),
+//   `compacted-requests:`, and `compacted-unpriced:` are `Tab.compactions`
+//   (its `count`, its `tokens`, and its `cost`), there only when set, after
+//   the other parts (`compacted-unpriced:` only when more than 0).
+//   Compactions with a bad or a missing value are ignored as a whole.
+// - The first section of a compacted conversation is an agent section
+//   whose first text line is the compaction tag (compaction.ts). The tag is
+//   section text here, as a media tag is.
 // - `duration-ms` is how long the reply took (`Section.durationMs`); files
 //   saved before Dez stored it have none.
 // - Each pill line starts a section. pillMarker.ts owns the pill markers,
@@ -85,16 +94,28 @@ export function serializeConversation(data: ConversationData): string {
   return output
 }
 
+// The parts of a cost: its USD sum, its requests, and (when more than 0)
+// its requests with no known price, under the given part names.
+function costParts(cost: ConversationCost, usd: string, requests: string, unpriced: string): string[] {
+  // 12 significant digits drop the float noise of a long sum (0.1 + 0.2).
+  const parts = [`${usd}: ${Number(cost.usd.toPrecision(12))}`, `${requests}: ${cost.requests}`]
+  if (cost.unpriced > 0) parts.push(`${unpriced}: ${cost.unpriced}`)
+  return parts
+}
+
 // The header parts that are only there when set, each with its ` | `.
-function optionalHeaderParts({ cost, agentTextEdited, context }: ConversationData): string {
+function optionalHeaderParts({ cost, agentTextEdited, context, compactions }: ConversationData): string {
   const parts: string[] = []
-  if (cost) {
-    // 12 significant digits drop the float noise of a long sum (0.1 + 0.2).
-    parts.push(`cost: ${Number(cost.usd.toPrecision(12))}`, `requests: ${cost.requests}`)
-    if (cost.unpriced > 0) parts.push(`unpriced: ${cost.unpriced}`)
-  }
+  if (cost) parts.push(...costParts(cost, 'cost', 'requests', 'unpriced'))
   if (agentTextEdited) parts.push('edited: yes')
   if (context) parts.push(`context: ${context.tokens}`, `context-estimate: ${context.estimate}`)
+  if (compactions) {
+    parts.push(
+      `compactions: ${compactions.count}`,
+      `compacted-tokens: ${compactions.tokens}`,
+      ...costParts(compactions.cost, 'compacted-cost', 'compacted-requests', 'compacted-unpriced'),
+    )
+  }
   return parts.map((part) => ` | ${part}`).join('')
 }
 
@@ -103,14 +124,15 @@ function optionalHeaderParts({ cost, agentTextEdited, context }: ConversationDat
 // hold `:`, so viewers show `<dez:pill …/>` as text. Each message gets its
 // role heading (`messagesAsMarkdown`, which Copy Markdown also uses) and
 // holds what the model received: its text with prompt bodies inline. The
-// agent thinking and the tool calls are left out, and a clip is a link
-// (`sectionTextAsMarkdown`). Dez cannot read this format back.
+// agent thinking, the tool calls, and the tag line of a compaction section
+// are left out, and a clip is a link (`sectionTextAsMarkdown`). Dez cannot
+// read this format back.
 export function serializeConversationAsMarkdown(data: ConversationData): string {
-  const messages = messagesAsMarkdown(data.sections.map((section) => {
+  const messages = messagesAsMarkdown(data.sections.map((section, index) => {
     const text = section.nodes
       .map((node) => stripLiveSentinels(node.kind === 'text' ? node.text : node.body))
       .join('')
-    return { role: section.role, text: sectionTextAsMarkdown(section.role, text) }
+    return { role: section.role, text: sectionTextAsMarkdown(section.role, withoutCompactionTag(text, index, section.role)) }
   }))
   const title = `# ${data.title.replace(/\s+/g, ' ').trim() || 'Conversation'}\n`
   return messages === '' ? title : `${title}\n${messages}`
@@ -123,6 +145,7 @@ interface ConversationHeader {
   cost?: ConversationCost
   agentTextEdited?: true
   context?: CountedContext
+  compactions?: Compactions
 }
 
 const EMPTY_HEADER: ConversationHeader = { title: '', model: '', createdAt: 0 }
@@ -132,14 +155,15 @@ function headerNumber(text: string | undefined): number {
   return text === undefined || text === '' ? Number.NaN : Number(text)
 }
 
-/** The cost of the header's `cost:`, `requests:`, and `unpriced:` texts;
- *  undefined when one of them is missing or bad. */
-function headerCost(usdText: string | undefined, requestsText: string | undefined, unpricedText: string | undefined): ConversationCost | undefined {
+/** The cost of the texts of a USD part, a requests part, and an unpriced
+ *  part of the header; undefined when one of them is missing or bad. The
+ *  cost has `leastRequests` requests or more. */
+function headerCost(usdText: string | undefined, requestsText: string | undefined, unpricedText: string | undefined, leastRequests = 1): ConversationCost | undefined {
   const usd = headerNumber(usdText)
   const requests = headerNumber(requestsText)
   const unpriced = unpricedText === undefined ? 0 : headerNumber(unpricedText)
   if (!Number.isFinite(usd) || usd < 0) return undefined
-  if (!Number.isInteger(requests) || requests < 1) return undefined
+  if (!Number.isInteger(requests) || requests < leastRequests) return undefined
   if (!Number.isInteger(unpriced) || unpriced < 0 || unpriced > requests) return undefined
   return { usd, requests, unpriced }
 }
@@ -152,6 +176,20 @@ function headerContext(tokensText: string | undefined, estimateText: string | un
   if (!Number.isSafeInteger(tokens) || tokens < 0) return undefined
   if (!Number.isSafeInteger(estimate) || estimate < 0) return undefined
   return { tokens, estimate }
+}
+
+/** The compactions of the header's `compactions:`, `compacted-tokens:`,
+ *  `compacted-cost:`, `compacted-requests:`, and `compacted-unpriced:`
+ *  texts; undefined when one of them is missing or bad. The cost at a
+ *  compaction can have no request: a conversation whose first request is
+ *  its compaction. */
+function headerCompactions(values: ReadonlyMap<string, string>): Compactions | undefined {
+  const count = headerNumber(values.get('compactions'))
+  const tokens = headerNumber(values.get('compacted-tokens'))
+  const cost = headerCost(values.get('compacted-cost'), values.get('compacted-requests'), values.get('compacted-unpriced'), 0)
+  if (!Number.isSafeInteger(count) || count < 1) return undefined
+  if (!Number.isSafeInteger(tokens) || tokens < 0) return undefined
+  return cost && { count, tokens, cost }
 }
 
 function parseHeader(line: string): ConversationHeader {
@@ -187,6 +225,7 @@ function parseHeader(line: string): ConversationHeader {
     ...costField(headerCost(values.get('cost'), values.get('requests'), values.get('unpriced'))),
     ...agentTextEditedField(values.get('edited') === 'yes'),
     ...contextField(headerContext(values.get('context'), values.get('context-estimate'))),
+    ...compactionsField(headerCompactions(values)),
   }
 }
 
@@ -371,5 +410,6 @@ export function parseConversation(id: string, content: string): ConversationData
     ...costField(header.cost),
     ...agentTextEditedField(header.agentTextEdited),
     ...contextField(header.context),
+    ...compactionsField(header.compactions),
   }
 }
