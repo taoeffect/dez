@@ -118,12 +118,13 @@ describe('namedMentions', () => {
 describe('namedMentions and the request', () => {
   const model: ModelRef = { providerId: 'local', modelId: 'm' }
 
-  /** What a request sends for the newest user message (the last section
-   *  of `sections`): the paths of its image parts, and the ids of its
-   *  clips. */
+  /** What the newest user message (the last section of `sections`) sends
+   *  as a message of its own: the paths of its image parts, and the ids
+   *  of its clips. Not its message of a chat request, which has no part
+   *  for an image that an earlier message carries. */
   function sent(sections: Section[]): { images: string[], clips: string[] } {
-    const message = sectionsToStreamMessages(sections, model, { sendImages: true, sendTools: true }).messages.findLast((entry) => entry.role === 'user')
-    const parts = message && Array.isArray(message.content) ? message.content : []
+    const message = sectionsToStreamMessages(sections, model, { sendImages: true, sendTools: true }).newestUserMessage
+    const parts = Array.isArray(message) ? message : []
     return {
       images: parts.flatMap((part) => (part.type === 'image' ? [part.path] : [])).sort(),
       clips: messageClips(sections).map((clip) => clip.id).sort(),

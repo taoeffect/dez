@@ -10,9 +10,9 @@ import { MEDIA_HIDDEN_ATTRIBUTE, MEDIA_JOB_ATTRIBUTE, MEDIA_MADE_BY_ATTRIBUTE, M
 import { findToolBlocks, ModelTextEscaper } from '../model/chat/toolBlocks'
 import { effectiveOutputs } from '../model/modelOutputs'
 import { failedChatRequestCost, type ChatUsage } from '../model/providers/chatUsage'
-import { TooManyImagesError, tooManyImagesMessage } from '../model/providers/clipImages'
+import { imagesText, TooManyImagesError, tooManyImagesMessage } from '../model/providers/clipImages'
 import { isProviderRefusal } from '../model/providers/errors'
-import { contextWindowOf, imageLimitOf, modelFamily } from '../model/providers/modelFamilies'
+import { contextWindowOf, modelFamily } from '../model/providers/modelFamilies'
 import { effectiveRequest } from '../model/providers/types'
 import { ExplainedError, errorText, explainedError } from '../utils/errorText'
 import type { ClipInputRules, GeneratedClip, GeneratedMedia, MediaKind, MediaProgress, ModelInfo, ModelRequest, ProviderGenerateMediaResult, ProviderStreamChatResult } from '../model/providers'
@@ -26,6 +26,7 @@ import {
   pictureBudgetLeft,
   pictureLimits,
   requestImageCount,
+  requestImageLimit,
   shownPictureCost,
   totalCost,
   type PictureBudget,
@@ -38,7 +39,7 @@ import {
   toolGroupText,
   type CheckedToolCall,
 } from '../model/streams/toolRound'
-import type { EndedStreamSession, StreamMessage } from '../model/streams/types'
+import type { EndedStreamSession, RequestMessages, StreamMessage } from '../model/streams/types'
 import {
   appendThinkingToTabSection,
   appendTokenToTabSection,
@@ -63,7 +64,6 @@ import {
 import { compactConversation, type Compaction } from './compaction'
 import { logRequest } from './diagnostics/requestLog'
 import { discardMadeAssets, generatedClipAsset, ReplyJobs, writeJobAssets, type EndedJob, type MadeAsset } from './jobs'
-import { readableFileSize } from './programRuns'
 import { discardShownPictures } from './shownPictures'
 import type { ToolRunCall, ToolRunContext } from './tools'
 
@@ -80,6 +80,10 @@ interface StreamStartArgs {
   // then the rounds of the reply so far. After a compaction in the reply,
   // its rounds send the messages of the compacted sections in their place.
   messages: StreamMessage[]
+  // The images of those messages that went as text only for the image
+  // limit of a request (`RequestMessages.imagesOverLimit`). The first chat
+  // request of the reply tells the user (`warnImagesOverLimit`).
+  imagesOverLimit: number
   // The newest user message as a message of its own
   // (`RequestMessages.newestUserMessage`): a media request takes its
   // prompt and input images from it (`mediaRequestInput`).
@@ -141,11 +145,11 @@ interface ReplyRuntime {
   // their tool round, but not the reply: a stop, a new submit, and the end
   // of the reply end them (`stopAll`).
   jobs: ReplyJobs
-  // The file size of each image of the messages before the reply, by path:
-  // the bytes that they take of the picture budget (`imageFileSizes`).
-  // Read at the first compaction check or `asset_view` call of the reply;
-  // null before it. A compaction in the reply reads the sizes again, for
-  // its new messages.
+  // How many bytes a request sends for each image of the messages before
+  // the reply, by path: the bytes that they take of the picture budget
+  // (`imageFileSizes`). Read at the first compaction check or `asset_view`
+  // call of the reply; null before it. A compaction in the reply reads the
+  // sizes again, for its new messages.
   imageBytes: Promise<ReadonlyMap<string, number>> | null
 }
 
@@ -198,6 +202,23 @@ function showReplyError(tabId: string, title: string, message: string): void {
     title: inBackground ? `${title} in "${tab.title}"` : title,
     message,
     group: replyErrorGroup(tabId),
+  })
+}
+
+// Tells the user that the chat requests of a reply to `model` go with
+// `count` fewer images than the conversation has, because one request
+// holds no more than the limit (`RequestOptions.imageLimit`). The parts
+// are counted in the order of the messages, so the newest images are the
+// ones with no part.
+function warnImagesOverLimit(model: ActiveModel, count: number): void {
+  const cached = sbp('dez.model/modelCache/model', model.providerId, model.modelId) as ModelInfo | null
+  const limit = requestImageLimit(cached ?? { id: model.modelId })
+  sbp('dez.ui/toast', 'app-global', {
+    variant: 'warning',
+    title: count === 1 ? 'Image not sent' : 'Images not sent',
+    message: `Dez sends ${model.modelName} at most ${imagesText(limit)} in one request, so the newest ${imagesText(count)} of the conversation ${count === 1 ? 'was' : 'were'} left out. `
+      + 'Delete the images that the model does not need from earlier messages, or start a new conversation.',
+    duration: 8000,
   })
 }
 
@@ -354,16 +375,17 @@ function toolAssetWriters(tabId: string, reply: ReplyRuntime, tool: string, take
   }
 }
 
-// The size of the file of each image part of `messages`, by path, for the
-// picture budget (`contextImageCost`). The request of the reply read these
-// files, so a size that Dez cannot read is rare: it counts no bytes.
+// How many bytes a request sends for each image part of `messages` (the
+// file, or its smaller copy), by path, for the picture budget
+// (`contextImageCost`). An image that Dez cannot send has no entry and
+// counts no bytes: the request that holds it fails with its own text.
 async function imageFileSizes(messages: readonly StreamMessage[]): Promise<ReadonlyMap<string, number>> {
   const paths = new Set<string>()
   for (const message of messages) {
     if (message.role !== 'user' || typeof message.content === 'string') continue
     for (const part of message.content) if (part.type === 'image') paths.add(part.path)
   }
-  return new Map(await Promise.all([...paths].map(async (path): Promise<[string, number]> => [path, await readableFileSize(path) ?? 0])))
+  return paths.size === 0 ? new Map() : await sbp('dez.provider/chatImageSizes', [...paths]) as Map<string, number>
 }
 
 // What the pictures of the next call of `run` can cost
@@ -593,9 +615,10 @@ type CompactionStep =
   // No compaction: the request goes as it is.
   | { kind: 'none' }
   // The tab is compacted. `messages` are the request messages of its
-  // sections before the reply's section, and `kept` is what their images
-  // and pictures cost.
-  | { kind: 'compacted', messages: StreamMessage[], kept: PictureBudget }
+  // sections before the reply's section, `imagesOverLimit` counts their
+  // images that went as text only (`RequestMessages.imagesOverLimit`), and
+  // `kept` is what their images and pictures cost.
+  | { kind: 'compacted', messages: StreamMessage[], imagesOverLimit: number, kept: PictureBudget }
   // The reply ended in the check, or a stop or a submit ended it meanwhile.
   | { kind: 'ended' }
 
@@ -603,14 +626,20 @@ const NO_COMPACTION: CompactionStep = { kind: 'none' }
 const REPLY_ENDED: CompactionStep = { kind: 'ended' }
 
 // The request messages, for `model`, of the sections of `sections` before
-// the section `sectionId`; null when no section has that id. Not the
+// the section `sectionId`, with the count of their images that went as
+// text only for the image limit; null when no section has that id. Not the
 // messages of all the sections: an empty section of a reply is left out of
 // a request, so a user section after it would join the message before it.
-function messagesBefore(sections: Section[], sectionId: string, model: ModelRef, sendTools: boolean): StreamMessage[] | null {
+function messagesBefore(sections: Section[], sectionId: string, model: ModelRef, sendTools: boolean): Pick<RequestMessages, 'messages' | 'imagesOverLimit'> | null {
   const index = sections.findIndex((section) => section.id === sectionId)
   if (index < 0) return null
   const cached = sbp('dez.model/modelCache/model', model.providerId, model.modelId) as ModelInfo | null
-  return sectionsToStreamMessages(sections.slice(0, index), model, { sendImages: cached?.imageInput !== false, sendTools }).messages
+  const { messages, imagesOverLimit } = sectionsToStreamMessages(sections.slice(0, index), model, {
+    sendImages: cached?.imageInput !== false,
+    sendTools,
+    imageLimit: requestImageLimit(cached ?? { id: model.modelId }),
+  })
+  return { messages, imagesOverLimit }
 }
 
 // The writer of the notes of a conversation that is larger than the whole
@@ -635,7 +664,7 @@ function earlierReplyWriter(sections: Section[], replySectionId: string, replyMo
   const cached = sbp('dez.model/modelCache/model', ref.providerId, ref.modelId) as ModelInfo | null
   const model: ActiveModel = { ...ref, modelName: cached?.name ?? ref.modelId }
   const sendTools = sbp('dez.model/requestSendsTools', ref) as boolean
-  const messages = messagesBefore(sections, replySectionId, ref, sendTools)
+  const messages = messagesBefore(sections, replySectionId, ref, sendTools)?.messages ?? null
   if (!provider || effectiveRequest(cached ?? {}) !== 'chat' || messages === null) {
     throw new ExplainedError(
       `This conversation is too large for ${replyModel.modelName}. To go on with that model, Dez must first ask the model of the newest reply, ${model.modelName}, `
@@ -761,7 +790,7 @@ async function compactIfDue(args: StreamStartArgs, reply: ReplyRuntime, frame: R
   const reason = compactionReason({
     contextTokens,
     threshold: compactionThreshold(contextWindow),
-    limits: { ...limits, pictures: Math.min(limits.pictures, imageLimitOf(info)) },
+    limits: { ...limits, pictures: requestImageLimit(info) },
     spent,
     kept,
     requestSinceCompaction: true,
@@ -818,9 +847,9 @@ async function compactIfDue(args: StreamStartArgs, reply: ReplyRuntime, frame: R
   // Not awaited: it waits for a scan of the unused files that runs, and it
   // logs its own failures.
   void sbp('dez.controller/unusedFiles/deleteUnnamed', compactionLeftFiles({ sections, replySectionId: sectionId, dropped: result.dropped, kept: result.pictures }))
-  reply.imageBytes = imageFileSizes(base)
-  const keptNow = contextImageCost(base, rule, await reply.imageBytes)
-  return replyIsCurrent(tabId, reply) ? { kind: 'compacted', messages: base, kept: keptNow } : REPLY_ENDED
+  reply.imageBytes = imageFileSizes(base.messages)
+  const keptNow = contextImageCost(base.messages, rule, await reply.imageBytes)
+  return replyIsCurrent(tabId, reply) ? { kind: 'compacted', ...base, kept: keptNow } : REPLY_ENDED
 }
 
 // The chat rounds of a reply: request rounds until a round ends with no
@@ -850,6 +879,10 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
   // reply replaces them.
   let base = args.messages
   let messages = base
+  // The images that the next request leaves out for the image limit, and
+  // that the user does not know of yet: the ones of the messages before
+  // the reply, then the ones of the messages of a compaction.
+  let untoldImagesOverLimit = args.imagesOverLimit
   // A chat request went since the newest compaction of the conversation
   // (`compactionReason`). At the start of the reply, the text tells it.
   let requestSinceCompaction = repliedSinceCompaction((sbp('dez.model/tab', args.tabId) as Tab | null)?.sections ?? [], args.sectionId)
@@ -869,6 +902,7 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
       if (step.kind === 'ended') return
       if (step.kind === 'compacted') {
         base = messages = step.messages
+        untoldImagesOverLimit = step.imagesOverLimit
         kept = step.kept
         requestSinceCompaction = false
         // The reply's section is empty again: it has no round before.
@@ -876,6 +910,10 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
       }
     }
     firstCheck = false
+    if (untoldImagesOverLimit > 0) {
+      warnImagesOverLimit(args.model, untoldImagesOverLimit)
+      untoldImagesOverLimit = 0
+    }
     const requestId = crypto.randomUUID()
     reply.requestId = requestId
     const roundIsCurrent = () => repliesByTab.get(args.tabId) === reply && reply.requestId === requestId && !reply.outputEnded

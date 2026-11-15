@@ -6,8 +6,9 @@ import type { Role } from './types'
 
 // Where a section's text can hold an `@id` mention (imageMentions.ts), and
 // which image or clip a mention names. Two readers need it: the request
-// builder (streams/messages.ts), which sends the image or the clip of each
-// mention of the newest user message, and the editor
+// builder (streams/messages.ts), which sends the image of each mention of
+// a user message (one time in a chat request) and the clip of each
+// mention of the newest user message of a media request, and the editor
 // (view/editor/mentions.ts), which shows each mention that names something
 // as a chip. A chip must be true: it shows where a request takes a mention.
 // So both split a text with `assetTextPieces`, and `namedMentions` follows
@@ -94,8 +95,9 @@ function requestKeepsLine(gap: string, mention: AssetMention): boolean {
  *    a line is left out here.
  *
  *  So each mention here is one that a request takes when its section is
- *  the newest user message, and only a line that the scrub changes can hold
- *  a mention of a request that is not here. */
+ *  the newest user message (`RequestMessages.newestUserMessage`, where no
+ *  earlier message carries an image first), and only a line that the scrub
+ *  changes can hold a mention of a request that is not here. */
 export function namedMentions(sections: readonly MentionSection[]): NamedMention[][] {
   const imageIds = new Set<string>()
   const clipKinds = new Map<string, MediaTagKind>()

@@ -11,6 +11,7 @@ import {
   pictureCost,
   pictureLimits,
   requestImageCount,
+  requestImageLimit,
   shownPictureCost,
   totalCost,
 } from './pictureBudget'
@@ -37,6 +38,17 @@ describe('pictureLimits', () => {
     expect(pictureLimits({ id: 'a-model-of-no-family', contextWindow: 32_000 }).tokens).toBe(8320)
     // The threshold stops at 250,000 tokens.
     expect(pictureLimits({ id: 'a-model-of-no-family', contextWindow: 2_000_000 }).tokens).toBe(100_000)
+  })
+})
+
+describe('requestImageLimit', () => {
+  it.each<[string, Parameters<typeof requestImageLimit>[0], number]>([
+    ['the limit of the family for a model with no limit in the model list', { id: 'a-model-of-no-family' }, DEFAULT_FAMILY.maxImages],
+    ['Dez\'s own limit for a model that takes more images', { id: 'a-model-of-no-family', imageLimit: 600 }, MAX_REQUEST_IMAGES],
+    ['the lower limit that the model list gave', { id: 'a-model-of-no-family', imageLimit: 10 }, 10],
+    ['the lower limit that a refusal of the provider told', { id: 'a-model-of-no-family', imageLimit: 10, learnedImageLimit: { maxImages: 4, entry: 'h' } }, 4],
+  ])('gives %s', (_name, model, limit) => {
+    expect(requestImageLimit(model)).toBe(limit)
   })
 })
 

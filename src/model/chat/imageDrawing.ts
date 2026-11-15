@@ -62,6 +62,13 @@ export function wholeImageDrawing({ width, height }: ImageSize): ImageDrawing {
   return { crop: { x: 0, y: 0, width, height }, width, height }
 }
 
+/** `size` made smaller to at most `side` pixels on its longer side; never
+ *  larger. */
+export function sizeWithin(size: ImageSize, side: number): ImageSize {
+  const scale = Math.min(1, side / Math.max(size.width, size.height))
+  return { width: Math.max(1, Math.round(size.width * scale)), height: Math.max(1, Math.round(size.height * scale)) }
+}
+
 /** A drawing of several images on one canvas of `width` by `height`
  *  pixels (dez.controller/images/compose): the canvas painted with
  *  `background` (`#rrggbb`), then each image drawn whole into its place, in

@@ -13,6 +13,11 @@ export interface RequestMessages {
   // The images of the newest user message that went as text only, because
   // the request model does not read images.
   imagesLeftOut: number
+  // The images of the conversation that went as text only, and the
+  // pictures of its compaction tag that did not go, because the messages
+  // before them hold as many images as one request can have
+  // (`RequestOptions.imageLimit`, messages.ts).
+  imagesOverLimit: number
   // The newest user message as a message of its own: the source of a media
   // request (`mediaRequestInput`). In `messages` it can be a part of the
   // compaction message. `''` when no section is a user message.

@@ -577,16 +577,18 @@ describe('tool calls', () => {
     expect(await fs.promises.readFile(pastedPath)).toEqual(STRIPES_PNG)
 
     // A later request names the new images only in the results of their
-    // calls: the message after the results holds no reference of them. A
-    // mention of an id sends its image.
+    // calls: the message after the results holds no reference of them. The
+    // first message keeps its image, and a mention of an id sends its
+    // image.
     await submit(browser, 'Is @c green?')
     const third = await setup.mock.waitForRequest(browser)
     expect(JSON.parse(third.body)).toEqual(openAiChatBody(TOOLER, [
-      { role: 'user', content: 'Crop ![image](id=a)' },
+      withImage,
       ...round,
       { role: 'assistant', content: replyText(TOOLER.modelName) },
       { role: 'user', content: [{ type: 'text', text: 'Is @c' }, { type: 'image_url', image_url: { url: pngDataUrl(scaled) } }, { type: 'text', text: ' green?' }] },
     ]))
+    expectSentPrefix(second.body, third.body)
     expect(third.body).not.toContain(setup.app.home)
     await sendChatReply(third.reply, 'green')
     await waitForThread(browser, [...sections, { role: 'user', text: 'Is @c green?' }, { role: 'agent', text: replyText('green') }, { role: 'user', text: '' }])

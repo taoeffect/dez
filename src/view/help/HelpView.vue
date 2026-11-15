@@ -183,15 +183,24 @@ function onOverlayClick(event: MouseEvent) {
           <section v-if="page === 'assets'" class="help-page help-page--assets">
             <h3>What a model sees</h3>
             <p>
-              The images, audio clips, and video clips of a conversation are its assets. When you
-              send a message, Dez sends the model only the assets of that message: the ones that are
-              in it, and the ones that the message names by id (<code>@a</code>). Of the assets of
-              older messages and of replies, a chat model gets only their ids. This saves tokens and
-              cost, as Dez does not send every old image again with each message.
+              The images, audio clips, and video clips of a conversation are its assets. A chat
+              model sees the images of your messages: the ones that are in a message, and the ones
+              that a message names by id (<code>@a</code>). Dez sends them with each request of the
+              conversation, so the model keeps them in view. Of the images of replies, a chat model
+              gets only their ids. So when a chat model must see an image of a reply, name it in a
+              message, for example: <code>Is @a too dark?</code>
             </p>
             <p>
-              So when a model must see an older asset, name it in your new message, for example:
-              <code>Make @a brighter</code>.
+              Dez sends a chat model an image with a side of more than 1,568 pixels as a smaller
+              copy, which keeps the request small; the file of the image does not change. A model
+              takes a limited number of images in one request. When the conversation holds more,
+              Dez leaves out the newest ones, and tells you.
+            </p>
+            <p>
+              A model that makes images or clips, for example an image editor or a video model,
+              gets only your newest message: the assets that are in it, and the ones that it names
+              by id. So when such a model must get an older asset, name it in your new message, for
+              example: <code>Make @a brighter</code>.
             </p>
             <p>
               A clip goes only to a model that takes audio or video, for example a video model or
@@ -210,7 +219,7 @@ function onOverlayClick(event: MouseEvent) {
               steps, at given times, or one for each shot), and the wave or the spectrogram of the
               sound of a clip, with the loudness of a clip with sound. It can also put several images
               and video clips into one grid picture. It sees these pictures only in the reply where it
-              asked for them. They share one picture budget with the images of your newest message,
+              asked for them. They share one picture budget with the images of your messages,
               so it sees a limited number of pictures. Click the chip of the tool call to see the pictures that the model saw. A
               model that reads no images gets only the facts of the asset (for example its size,
               length, and format), and the loudness of a clip with sound.

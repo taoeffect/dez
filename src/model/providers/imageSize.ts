@@ -1,11 +1,38 @@
-import type { ImageDrawing, ImageSize } from '../chat/imageDrawing'
+import { sizeWithin, wholeImageDrawing, type ImageDrawing, type ImageSize } from '../chat/imageDrawing'
+import type { ImageMediaType } from '../chat/images'
 
-// The size rules of the input images of a media request (the images of an
-// edit, the frames of a video). Only a rule that the provider tells before
-// a request counts: a field of the model's entry in its model list, or a
-// sentence of its API docs (mediaFormats.ts). A provider refuses an image
-// that breaks one, so Dez sends a copy that passes them (`imageFit`,
+// The sizes of the images that Dez sends: the one size of the images of a
+// chat request (`chatImageDrawing`), and the size rules of the input images
+// of a media request (the images of an edit, the frames of a video). Of
+// the media rules, only one that the provider tells before a request
+// counts: a field of the model's entry in its model list, or a sentence of
+// its API docs (mediaFormats.ts). A provider refuses an image that breaks
+// one, so Dez sends a copy that passes them (`imageFit`,
 // dez.provider/generateMedia). The stored file does not change.
+
+/** The longest side of an image of a user message in a chat request, in
+ *  pixels: a larger image goes as a smaller copy. So no image of a
+ *  conversation costs more than one of this size, and the context estimate
+ *  and the picture budget count each image as one of this size with no
+ *  read of its pixels (`ASSUMED_IMAGE_SIZE`, streams/contextEstimate.ts).
+ *  It is the side over which most Claude models make an image smaller
+ *  themselves, and the side of the `review` pictures of `asset_view`. */
+export const CHAT_IMAGE_SIDE = 1568
+
+/** How to draw the copy of an image of `size` and of the type `mediaType`
+ *  that a chat request sends; null for an image that goes as its file. An
+ *  image with a side over `CHAT_IMAGE_SIDE` goes as a smaller JPEG copy on
+ *  white: a JPEG has no transparent pixels, and it keeps the base64 bytes
+ *  of a request small (the rule of the `review` picture of `asset_view`).
+ *  No provider is known to take SVG images, so a smaller SVG goes as a PNG
+ *  drawing at its own size. */
+export function chatImageDrawing(size: ImageSize, mediaType: ImageMediaType): ImageDrawing | null {
+  const whole = wholeImageDrawing(size)
+  if (Math.max(size.width, size.height) > CHAT_IMAGE_SIDE) {
+    return { ...whole, ...sizeWithin(size, CHAT_IMAGE_SIDE), background: '#ffffff', mediaType: 'image/jpeg' }
+  }
+  return mediaType === 'image/svg+xml' ? { ...whole, mediaType: 'image/png' } : null
+}
 
 export interface ImageSizeRules {
   // The least length in pixels of the shorter side.

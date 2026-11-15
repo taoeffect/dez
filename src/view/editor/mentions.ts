@@ -104,7 +104,10 @@ export function mentionAt(state: EditorState, pos: number, side: -1 | 1): ShownM
  *  model sees", HelpView.vue) tells the same rules: keep the two true. */
 function mentionTooltip({ id, kind }: ShownMention): HTMLElement {
   if (kind === 'image') {
-    return tooltipContent(`Image id: ${id}`, `This names the image ${id}. A model sees an older image only when your newest message names it.`)
+    return tooltipContent(
+      `Image id: ${id}`,
+      `This names the image ${id}. A chat model sees an image of a reply only when one of your messages names it. A model that makes images or clips gets an older image only when your newest message names it.`,
+    )
   }
   return tooltipContent(
     `${kind === 'video' ? 'Video' : 'Audio'} id: ${id}`,

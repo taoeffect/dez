@@ -45,6 +45,7 @@ import { thinkingField } from '../chat/thinking'
 import { cloneJsonObject } from '../../utils/json'
 import { estimatedRequestTokens } from '../streams/contextEstimate'
 import { sectionsToStreamMessages, type RequestOptions } from '../streams/messages'
+import { requestImageLimit } from '../streams/pictureBudget'
 import { BUILT_IN_SYSTEM_PROMPT, buildSystemPrompt, systemPromptProblem, systemPromptTemplate } from '../systemPrompt'
 import { TOOL_DEFINITIONS } from '../tools/registry'
 import type { StreamedToolCall } from '../tools/types'
@@ -1006,7 +1007,8 @@ export default sbp('sbp/selectors/register', {
   },
 
   // `model`: the model the request goes to. It decides what earlier thinking
-  // goes back, whether the images go, and whether the tools go
+  // goes back, whether the images go and how many of them
+  // (`requestImageLimit`), and whether the tools go
   // (`dez.model/requestSendsTools`). A model that the model cache knows not
   // to read images gets only the text of each reference, with no path. An
   // unknown model (no flag, or not in the cache yet) gets the images.
@@ -1015,11 +1017,13 @@ export default sbp('sbp/selectors/register', {
   // gives none.
   'dez.model/streamMessagesForTab' (tabId: string, model: ModelRef, options: Pick<RequestOptions, 'picturesOfSection'> = {}): RequestMessages {
     const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
-    if (!tab) return { messages: [], imagesLeftOut: 0, newestUserMessage: '', sendTools: false }
+    if (!tab) return { messages: [], imagesLeftOut: 0, imagesOverLimit: 0, newestUserMessage: '', sendTools: false }
 
     const sendTools = sbp('dez.model/requestSendsTools', model) as boolean
-    const sendImages = cachedModel(model)?.imageInput !== false
-    return { ...sectionsToStreamMessages(tab.sections, model, { ...options, sendImages, sendTools }), sendTools }
+    const cached = cachedModel(model)
+    const sendImages = cached?.imageInput !== false
+    const imageLimit = requestImageLimit(cached ?? { id: model.modelId })
+    return { ...sectionsToStreamMessages(tab.sections, model, { ...options, sendImages, sendTools, imageLimit }), sendTools }
   },
 
   // Whether a chat request to `model` offers the Dez tools now: only to a

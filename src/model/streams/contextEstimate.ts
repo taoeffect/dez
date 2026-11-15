@@ -1,5 +1,6 @@
 import type { ImageSize } from '../chat/imageDrawing'
 import { shownPictureSize } from '../chat/shownPictures'
+import { CHAT_IMAGE_SIDE } from '../providers/imageSize'
 import { imageTokens, type ModelFamily } from '../providers/modelFamilies'
 import { toolJsonSchema } from '../tools/registry'
 import type { StreamedToolCall, ToolDefinition } from '../tools/types'
@@ -33,17 +34,13 @@ export interface EstimatedRequest {
  *  picture budget counts an image of a user message as this size too
  *  (pictureBudget.ts).
  *
- *  It is a middle size, not the largest one that a family's rule knows. An
- *  image is in the estimate of a tab only while its user message is the
- *  newest one, so its count is added and then taken off again. A count far
- *  over the true one (a GPT model reads the largest image as 36,000 tokens,
- *  and a common one as 1,000 to 3,000) would put the context size far under
- *  the true one when the image leaves.
- *
- *  1568 px is the long side of the review pictures of `asset_view`
- *  (`IMAGE_PICTURE_SIDES`), and the side over which most Claude models make
- *  an image smaller. */
-export const ASSUMED_IMAGE_SIZE: ImageSize = { width: 1568, height: 1568 }
+ *  No image of a user message goes with a longer side than this
+ *  (`chatImageDrawing`, providers/imageSize.ts). So for a family that
+ *  counts the pixels of an image (`patches`), the count is never under the
+ *  true one, and it is too high for a smaller image. It is not the highest
+ *  count of every rule: a `tiles` rule counts a wide image of this side
+ *  higher than the square (1568 by 784 px are 6 tiles, the square 4). */
+export const ASSUMED_IMAGE_SIZE: ImageSize = { width: CHAT_IMAGE_SIDE, height: CHAT_IMAGE_SIDE }
 
 // How many characters of `text` are kana, Han, or Hangul. The characters
 // per token of a family are for English text; a tokenizer makes about one

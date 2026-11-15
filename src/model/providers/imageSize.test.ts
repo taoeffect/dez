@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { imageFit, imageSizeRules, type ImageSizeRules } from './imageSize'
+import { CHAT_IMAGE_SIDE, chatImageDrawing, imageFit, imageSizeRules, type ImageSizeRules } from './imageSize'
 
 // The rules of the Venice video models that tell all three.
 const VIDEO_RULES: ImageSizeRules = { minShortSide: 300, minAspectRatio: 0.4, maxAspectRatio: 2.5 }
@@ -31,6 +31,27 @@ describe('imageSizeRules', () => {
 
   it('drops only the ratio limits when no ratio is between them', () => {
     expect(imageSizeRules({ minShortSide: 240, minAspectRatio: 3, maxAspectRatio: 2 })).toStrictEqual({ minShortSide: 240 })
+  })
+})
+
+describe('chatImageDrawing', () => {
+  it.each([
+    ['a wide image', { width: 4000, height: 1000 }, { width: 1568, height: 392 }],
+    ['a tall image', { width: 1000, height: 4000 }, { width: 392, height: 1568 }],
+    ['an image one pixel over the side', { width: 1569, height: 1569 }, { width: 1568, height: 1568 }],
+    ['a thin image, with no side under 1 px', { width: 20_000, height: 2 }, { width: 1568, height: 1 }],
+  ])('draws %s as a whole JPEG on white within the side', (_name, size, drawn) => {
+    expect(chatImageDrawing(size, 'image/png')).toStrictEqual({ crop: whole(size.width, size.height), ...drawn, background: '#ffffff', mediaType: 'image/jpeg' })
+  })
+
+  it.each(['image/png', 'image/jpeg', 'image/webp', 'image/gif'] as const)('sends a %s image with no side over the limit as its file', (mediaType) => {
+    expect(chatImageDrawing({ width: CHAT_IMAGE_SIDE, height: CHAT_IMAGE_SIDE }, mediaType)).toBeNull()
+  })
+
+  // No provider is known to take SVG images.
+  it('draws an SVG with no side over the limit as a PNG at its own size, and a larger one as the JPEG', () => {
+    expect(chatImageDrawing({ width: 300, height: 150 }, 'image/svg+xml')).toStrictEqual({ crop: whole(300, 150), width: 300, height: 150, mediaType: 'image/png' })
+    expect(chatImageDrawing({ width: 3136, height: 1568 }, 'image/svg+xml')?.mediaType).toBe('image/jpeg')
   })
 })
 

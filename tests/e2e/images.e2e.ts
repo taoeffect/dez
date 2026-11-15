@@ -3,11 +3,11 @@ import path from 'node:path'
 import type { EditorView } from '@codemirror/view'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
-import { openAiSystemMessage } from './harness/chatBody'
+import { openAiSystemMessage, sentImageUrls } from './harness/chatBody'
 import { consoleErrors, elementCenter, movePointer, pointerClick, pointerClickAt, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue, type Point } from './harness/dom'
 import { dropFiles, linkedDropDir, nativeDrop } from './harness/drops'
 import { appFilePath, conversationFilePath, filesIn, storedFileName, writeTestFile } from './harness/fixtures'
-import { pasteImage, shownImages, solidPng, type ShownImage } from './harness/images'
+import { colorDistance, decodedImage, pasteImage, pasteImageReference, shownImages, solidPng, STRIPE_COLORS, stripedPng, type ShownImage } from './harness/images'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendAnthropicReply, sendChatReply, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
@@ -22,9 +22,11 @@ import { activeConversationId, copySelection, docPos, docPosPoint, editorCaret, 
 // pasted as text from another tab gets a new id (as do the pasted mentions
 // of it) when the tab has an image with its id, both API formats
 // get the image in the request body after its reference's text with the id
-// and no path, only the newest user message of a request carries images
-// (an older image goes as its reference's text, and again as an image when
-// the newest message names it with `@a`), a model that does not read
+// and no path, every user message keeps its images in each later request
+// as the same bytes, an image goes one time in a request (a later message
+// that names it with `@a` goes as text), an image with a side of more than
+// 1,568 pixels goes as a smaller JPEG copy that is the same in each
+// request and after a relaunch, a model that does not read
 // images gets only that text and the user a warning, no request holds an
 // image path (also not a reference that shows its source or an image in a
 // reply), a native drop of a file out of every temp folder links the file
@@ -38,7 +40,7 @@ import { activeConversationId, copySelection, docPos, docPosPoint, editorCaret, 
 // are built here and cross `browser.execute` as base64.
 //
 // One app session serves the whole file. Each test opens a new tab. The
-// relaunch test reopens the conversation of the OpenAI test, so it runs
+// relaunch test reopens the conversations of earlier tests, so it runs
 // last.
 
 const VISION: MockProvider = { id: 'vision', name: 'Vision Mock', modelId: 'vision-model', modelName: 'Vision Model' }
@@ -59,6 +61,9 @@ const PASTED_IMAGE_URL_PART = { type: 'image_url', image_url: { url: `data:image
 // Wider than an image's overlay toolbar (its facts make it wide), which is
 // wider than PASTED_PNG.
 const WIDE_PNG = solidPng(400, 60, [30, 30, 30])
+// 3000 x 200 pixels in three stripes: wider than the largest side of an
+// image of a chat request (`CHAT_IMAGE_SIDE`, 1568).
+const LARGE_PNG = stripedPng(1000, 200, STRIPE_COLORS)
 
 /** A Dez image reference in the doc, `![<absolute path>](id=<letters>)`. */
 const REFERENCE = /!\[[^\]\n]+\]\(id=[a-z]+\)/
@@ -131,6 +136,10 @@ describe('images', () => {
   // The first user message and conversation of the linked image test, for
   // the relaunch test.
   let sentLinkedImage: { message: string, conversationId: string } | null = null
+  // The conversation of the large image test, the sections of its thread,
+  // and the data URL of the copy of the image that its requests sent, for
+  // the relaunch test.
+  let sentLargeImage: { conversationId: string, thread: Array<{ role: string, text: string }>, url: string } | null = null
   // The folder of the files that a drop links, out of every temp folder.
   let linkedDir: string
 
@@ -988,11 +997,12 @@ describe('images', () => {
     const request = await sendRequest()
     expect(request.rawBody).not.toContain('assets/images')
     expect(request.rawBody).not.toContain(setup.app.home)
-    // Only the newest user message carries images: the first message goes
-    // as text.
+    // The first message keeps the image of its whole reference. The
+    // reference that shows its source and the image of the reply go as
+    // text.
     expect(request.body).toHaveProperty('messages', [
       openAiSystemMessage(VISION),
-      { role: 'user', content: '![image](id=a) and ![image](id=b' },
+      { role: 'user', content: [{ type: 'text', text: '![image](id=a)' }, PASTED_IMAGE_URL_PART, { type: 'text', text: ' and ![image](id=b' }] },
       { role: 'assistant', content: `${reply}![image](id=c)` },
       { role: 'user', content: 'Compare.' },
     ])
@@ -1006,7 +1016,7 @@ describe('images', () => {
     ])
   })
 
-  it('sends the image of an old message again only when the newest message names it with `@a`', async () => {
+  it('sends the image of a message again in each later request as the same bytes, and only one time when a later message names it with `@a`', async () => {
     await newTab(browser)
     await pickModel(browser, VISION.name, VISION.modelName)
     const image = await insertPastedImage('', QUESTION)
@@ -1020,38 +1030,47 @@ describe('images', () => {
       thread.push({ role: 'user', text })
       await waitForValue(browser, `thread with ${JSON.stringify(text)}`, () => threadSections(browser), thread)
     }
+    // The messages of the request before, each as JSON text in the key
+    // order of the body as sent: equal texts mean equal bytes.
+    let sentBefore: string[] = []
     // Sends the tab, checks the messages of the request after the system
-    // message, and answers it.
+    // message, and answers it. The request must start with the messages of
+    // the request before as the same bytes: the provider's prompt cache
+    // reads a request only up to its first byte that differs.
     const sendTurn = async (messages: unknown[]) => {
       const request = await sendRequest()
       expect(request.body).toHaveProperty('messages', [openAiSystemMessage(VISION), ...messages])
+      const sent = (request.body as { messages: unknown[] }).messages.map((message) => JSON.stringify(message))
+      expect(sent.slice(0, sentBefore.length)).toEqual(sentBefore)
+      sentBefore = sent
       await sendChatReply(request.reply, VISION.modelName)
       thread.push({ role: 'agent', text: reply })
       await waitForThread(browser, [...thread, { role: 'user', text: '' }])
     }
 
-    await sendTurn([{
+    const withImage = {
       role: 'user',
       content: [{ type: 'text', text: '![image](id=a)' }, PASTED_IMAGE_URL_PART, { type: 'text', text: QUESTION }],
-    }])
+    }
+    await sendTurn([withImage])
 
-    // The message with the image goes as text in every later request.
-    const earlier = [{ role: 'user', content: `![image](id=a)${QUESTION}` }, assistant, { role: 'user', content: 'Why?' }, assistant]
+    // The message with the image keeps it in every later request.
+    const earlier = [withImage, assistant, { role: 'user', content: 'Why?' }, assistant]
     await typeMessage('Why?')
     await sendTurn(earlier.slice(0, 3))
     await typeMessage('Sure?')
     await sendTurn([...earlier, { role: 'user', content: 'Sure?' }])
 
-    // A mention sends the image of the first message with the new message.
+    // The first message carries the image, so a later message that names
+    // it goes as text: an image goes one time in a request.
     await typeMessage('Is @a red?')
     await sendTurn([
       ...earlier,
       { role: 'user', content: 'Sure?' },
       assistant,
-      { role: 'user', content: [{ type: 'text', text: 'Is @a' }, PASTED_IMAGE_URL_PART, { type: 'text', text: ' red?' }] },
+      { role: 'user', content: 'Is @a red?' },
     ])
 
-    // The message with the mention goes as text in the next request.
     await typeMessage('Thanks.')
     await sendTurn([
       ...earlier,
@@ -1063,9 +1082,61 @@ describe('images', () => {
     ])
   })
 
-  it('shows the saved image, the linked image, and the [image] tab title after a relaunch', async () => {
+  it('sends an image with a side of more than 1,568 pixels as a smaller JPEG copy, the same one in each request, and keeps its file', async () => {
+    await newTab(browser)
+    await pickModel(browser, VISION.name, VISION.modelName)
+    await focusEditor(browser)
+    await pasteImageReference(browser, LARGE_PNG, 'a')
+    const reference = await editorDoc(browser)
+    await typeKeys(browser, QUESTION)
+    await waitForValue(browser, 'text after the image', () => editorDoc(browser), reference + QUESTION)
+
+    const first = await sendRequest()
+    const [url = ''] = sentImageUrls(first.rawBody)
+    expect(first.body).toHaveProperty('messages', [openAiSystemMessage(VISION), {
+      role: 'user',
+      content: [{ type: 'text', text: '![image](id=a)' }, { type: 'image_url', image_url: { url } }, { type: 'text', text: QUESTION }],
+    }])
+    // The copy has the shape of the image and fits in 1,568 by 1,568
+    // pixels: 3000 x 200 gives 1568 x 105. Its stripes are those of the
+    // image; a JPEG keeps colors only near to their values.
+    expect(url.startsWith('data:image/jpeg;base64,')).toBe(true)
+    const copy = await decodedImage(browser, url, [261, 784, 1306])
+    expect({ width: copy.width, height: copy.height }).toEqual({ width: 1568, height: 105 })
+    STRIPE_COLORS.forEach((color, index) => {
+      expect(colorDistance(copy.pixels[index], color), `color of stripe ${index}`).toBeLessThanOrEqual(12)
+    })
+    const reply = replyText(VISION.modelName)
+    const thread = [{ role: 'user', text: reference + QUESTION }, { role: 'agent', text: reply }]
+    await sendChatReply(first.reply, VISION.modelName)
+    await waitForThread(browser, [...thread, { role: 'user', text: '' }])
+
+    // The next request sends the same copy, so the provider's prompt cache
+    // reads the first message again.
+    await setCaret(browser, (await editorDoc(browser)).length)
+    await typeKeys(browser, 'Sure?')
+    const second = await sendRequest()
+    expect(sentImageUrls(second.rawBody)).toEqual([url])
+    await sendChatReply(second.reply, VISION.modelName)
+    thread.push({ role: 'user', text: 'Sure?' }, { role: 'agent', text: reply })
+    await waitForThread(browser, [...thread, { role: 'user', text: '' }])
+
+    // Dez keeps the copy in memory only: the file of the image is as the
+    // user pasted it.
+    expect(await fs.promises.readFile(referencePath(reference))).toEqual(LARGE_PNG)
+
+    const conversationId = await activeConversationId(browser)
+    await waitForValue(browser, 'saved second reply', async () => {
+      const content = await fs.promises.readFile(conversationFilePath(setup.app.home, conversationId), 'utf8').catch(() => '')
+      return content.split(reply).length - 1
+    }, 2)
+    sentLargeImage = { conversationId, thread, url }
+  })
+
+  it('shows the saved image, the linked image, and the [image] tab title after a relaunch, and sends a large image as the same copy as before', async () => {
     if (!sentImage) throw new Error('The OpenAI test saved no conversation with an image')
     if (!sentLinkedImage) throw new Error('The linked image test saved no conversation with an image')
+    if (!sentLargeImage) throw new Error('The large image test saved no conversation')
     const { image, conversationId } = sentImage
     const lastActive = await activeConversationId(browser)
     browser = await setup.relaunch()
@@ -1083,5 +1154,24 @@ describe('images', () => {
     await sbpCall(browser, 'dez.model/tabs/openConversation', sentLinkedImage.conversationId)
     await waitForValue(browser, 'reopened linked image conversation', async () => (await threadSections(browser))[0]?.text ?? null, sentLinkedImage.message)
     await waitForValue(browser, 'shown linked image', () => shownImages(browser), [{ alt: 'My photo (1).png', width: 40, height: 24 }])
+
+    // The app has no copy of the large image after its start, so it draws
+    // a new one. That one must have the bytes of the one before, or the
+    // provider's prompt cache could not read the conversation after an
+    // app start.
+    await sbpCall(browser, 'dez.model/tabs/openConversation', sentLargeImage.conversationId)
+    await waitForThread(browser, [...sentLargeImage.thread, { role: 'user', text: '' }])
+    await focusEditor(browser)
+    await setCaret(browser, (await editorDoc(browser)).length)
+    await typeKeys(browser, 'And now?')
+    const request = await sendRequest()
+    expect(sentImageUrls(request.rawBody)).toEqual([sentLargeImage.url])
+    await sendChatReply(request.reply, VISION.modelName)
+    await waitForThread(browser, [
+      ...sentLargeImage.thread,
+      { role: 'user', text: 'And now?' },
+      { role: 'agent', text: replyText(VISION.modelName) },
+      { role: 'user', text: '' },
+    ])
   })
 })

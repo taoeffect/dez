@@ -1,7 +1,7 @@
 import { compactionThreshold } from '../chat/contextSize'
 import type { ImageSize } from '../chat/imageDrawing'
 import { shownPictureSize, type PictureFile, type ShownPicture } from '../chat/shownPictures'
-import { contextWindowOf, imageTokens, type ImageTokenRule } from '../providers/modelFamilies'
+import { contextWindowOf, imageLimitOf, imageTokens, type ImageTokenRule } from '../providers/modelFamilies'
 import type { ModelInfo } from '../providers/types'
 import { ASSUMED_IMAGE_SIZE } from './contextEstimate'
 import type { StreamMessage } from './types'
@@ -27,9 +27,16 @@ const PICTURE_TOKEN_SHARE = 0.4
 export const MAX_REQUEST_IMAGE_BYTES = 20 * 1024 ** 2
 
 /** The most images of one request: the Claude API refuses an image with a
- *  side over 3,000 px in a request with more. The images of the newest user
- *  message go in each request of the reply too. */
+ *  side over 3,000 px in a request with more. The images of the user
+ *  messages go in each request of a conversation too. */
 export const MAX_REQUEST_IMAGES = 20
+
+/** The most image and picture parts that the user messages of one request
+ *  to `model` have together (`RequestOptions.imageLimit`, messages.ts):
+ *  Dez's own limit, or the lower limit of the model. */
+export function requestImageLimit(model: Pick<ModelInfo, 'id' | 'imageLimit' | 'learnedImageLimit'>): number {
+  return Math.min(MAX_REQUEST_IMAGES, imageLimitOf(model))
+}
 
 /** What pictures can still cost, or what they cost. */
 export interface PictureBudget {
@@ -88,9 +95,8 @@ export function totalCost(costs: readonly PictureBudget[]): PictureBudget {
 /** What the images and the pictures of `messages` cost a model that counts
  *  by `rule`. Dez does not decode an image of a user message for this: it
  *  counts as an image of `ASSUMED_IMAGE_SIZE`, as in the context estimate,
- *  and by the size of its file in `imageBytes` (by path; none: no bytes),
- *  which is not exact for an image that the request draws again
- *  (`requestImage`, providers/selectors.ts). */
+ *  and by the bytes that a request sends for it in `imageBytes` (by path;
+ *  none: no bytes), which `dez.provider/chatImageSizes` gives. */
 export function contextImageCost(messages: readonly StreamMessage[], rule: ImageTokenRule, imageBytes: ReadonlyMap<string, number>): PictureBudget {
   const costs: PictureBudget[] = []
   for (const message of messages) {
@@ -114,9 +120,9 @@ export function pictureBudgetLeft(limits: PictureBudget, spent: PictureBudget): 
 }
 
 /** The images of `messages` that count against `MAX_REQUEST_IMAGES`: the
- *  image and picture parts of their user messages. Of the messages of a
- *  reply, only the newest user message has images, and only the rounds of
- *  the reply have pictures (`sectionsToStreamMessages`,
+ *  image and picture parts of their user messages (the images of the user
+ *  messages, the pictures of a compaction tag, and the pictures of the
+ *  rounds of the reply that runs; `sectionsToStreamMessages`,
  *  streams/messages.ts). */
 export function requestImageCount(messages: readonly StreamMessage[]): number {
   return messages.reduce((count, message) => count + (message.role === 'user' && typeof message.content !== 'string'

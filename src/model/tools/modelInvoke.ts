@@ -131,7 +131,7 @@ export interface ChatInvocation extends InvocationTarget {
   kind: 'chat'
   /** The content of the user message: the prompt, or, when it names
    *  images, its text with an image part right after the text that names
-   *  each image (the shape of the newest user message of a conversation,
+   *  each image (the shape of a user message of a conversation,
    *  streams/messages.ts). */
   content: string | MessagePart[]
   /** The model makes images too: the request asks for them, as a request

@@ -16,13 +16,14 @@ import { secret, type Secret } from '../../utils/secret'
 import { sanitizeErrorText } from '../../utils/protocol/errors'
 import { nativeResponseJson, nativeResponseText, readNativeChunkBytes, type NativeHttpRequest, type NativeHttpResponse, type NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
 import { saveChatAudio } from './chatAudio'
+import { chatImageCopies, chatImageKey } from './chatImageCopies'
 import { chatRequestCost } from './chatUsage'
 import { clipFileProblem, clipTagProblem, hasLengthRules, missingClipProblem, needsWavCopy, type ClipAttachment, type ClipUse, type InputClipRules } from './clipInputs'
 import { inputImageRulesFor, missingImageProblem } from './clipImages'
 import { CLIP_JOB_TIMEOUT_MS, clipPollDelay, sendClipRequest, type ClipRun } from './clipRequests'
 import { assertProviderResponseOk, explainedProviderError, InputImageError, providerConnectionError, UnusableAnswerError } from './errors'
 import { generatedImageFromUrl } from './generatedImages'
-import { imageFit, type ImageSizeRules } from './imageSize'
+import { chatImageDrawing, imageFit, type ImageSizeRules } from './imageSize'
 import { knownLimitsOf, type KnownLimit } from './knownLimits'
 import { learnedImageLimitRow, learnedImagesProblem } from './learnedImageLimit'
 import type { InputClipPart, MediaWireRequest } from './mediaFormats'
@@ -197,7 +198,7 @@ async function readMessageImages(messages: ProviderChatInputMessage[]): Promise<
     if (part.type === 'text') return part
     if (part.type === 'picture') return shownPicturePart(part.picture)
     appDir ??= sbp('dez.native/getAppDir') as Promise<string>
-    const { bytes, mediaType } = await requestImage(part.path, await appDir)
+    const { bytes, mediaType } = await chatImage(part.path, await appDir)
     return { type: 'image', mediaType, data: bytesToBase64(bytes) }
   }
 
@@ -260,14 +261,79 @@ async function readRequestImage(path: string, appDir: string): Promise<StoredIma
   }
 }
 
-// The image that a request sends for the stored image at `path`. A
+// The error of an SVG image of a request that the webview could not draw
+// as a PNG copy, which is logged here. An SVG with HTML in it (a
+// `foreignObject`) taints the canvas, so WebKit gives no copy of it. No
+// form of such an image can go, so its request is refused.
+function svgNotDrawnError(path: string, error: unknown): InputImageError {
+  console.error(`Failed to draw a PNG copy of the SVG image ${path}:`, error)
+  return new InputImageError(
+    path,
+    'notDrawn',
+    `Dez cannot send the SVG image ${fileNameOf(path)}. Providers take no SVG images, so Dez sends a PNG copy, and it could not draw one: the file can be damaged, or it holds HTML, which a copy may not show. Remove its reference or mention from the message, or paste a PNG copy of the image in its place.`,
+    sanitizeErrorText(rawErrorText(error)),
+    { cause: error },
+  )
+}
+
+// The image that a chat request sends for the image at `path`: the file
+// as it is, byte for byte, or a copy that the webview draws
+// (`chatImageDrawing`, imageSize.ts): a smaller JPEG of an image with a
+// side over `CHAT_IMAGE_SIDE`, and a PNG of an SVG. Only the request gets
+// the copy; the stored file and the doc keep the image.
+//
+// Every later request of the conversation sends the image again, and the
+// prompt cache needs the same bytes. So Dez keeps what it found for the
+// bytes of a file (`chatImageCopies`), and decodes and draws each file one
+// time. The file itself is read for each request: a file that is gone
+// fails the request, and a linked file that changed goes as it is now.
+// After a copy left the memory, or after an app start, the webview draws
+// the same file at the same size to the same bytes.
+//
+// An image that the webview cannot decode goes as it is, and the
+// provider's answer then tells the user what is wrong; nothing is kept of
+// it. An SVG that cannot be drawn is refused before the request.
+async function chatImage(path: string, appDir: string): Promise<StoredImage> {
+  const image = await readRequestImage(path, appDir)
+  const sent = await chatImageCopy(path, image) ?? image
+  chatImageCopies.noteSent(path, sent.bytes.length)
+  return sent
+}
+
+// The queue of the draws of chat images (`chatImageCopy`).
+const CHAT_IMAGE_DRAWS = 'dez.provider/chatImageDraws'
+
+// The copy that a chat request sends in place of the file `image` of the
+// image at `path`; null for a file that goes as it is (`chatImage`). One
+// file at a time: a request reads its images at the same time, the canvas
+// of a large image takes much memory, and the second reference of an
+// image then finds the copy of the first.
+async function chatImageCopy(path: string, image: StoredImage): Promise<StoredImage | null> {
+  const key = await chatImageKey(image.bytes, image.mediaType)
+  return await sbp('okTurtles.eventQueue/queueEvent', CHAT_IMAGE_DRAWS, async (): Promise<StoredImage | null> => {
+    const known = chatImageCopies.get(key)
+    if (known !== undefined) return known
+    try {
+      const file = new Blob([image.bytes], { type: image.mediaType })
+      const plan = (size: ImageSize) => chatImageDrawing(size, image.mediaType)
+      const drawn = await sbp('dez.controller/images/redraw', file, plan, drawnMediaType(image.mediaType)) as DrawnImage | null
+      const copy = drawn && { bytes: drawn.bytes, mediaType: drawn.mediaType }
+      chatImageCopies.set(key, copy)
+      return copy
+    } catch (error) {
+      if (image.mediaType === 'image/svg+xml') throw svgNotDrawnError(path, error)
+      console.error('Failed to decode an image of a chat request, which goes as it is:', error)
+      return null
+    }
+  }) as StoredImage | null
+}
+
+// The image that a media request sends for the stored image at `path`. A
 // provider refuses an image that breaks a size rule that it tells
 // (`rules`, imageSize.ts), so such an image goes as a new drawing that
 // passes the rules: a part of it, at another size (`imageFit`). No
 // provider is known to take SVG images, so an SVG always goes as a PNG
-// drawing, at its own size when no rule asks for another. The webview
-// draws the same file at the same size to the same bytes, so each round
-// of a reply sends the same copy (the prompt cache). Only the request
+// drawing, at its own size when no rule asks for another. Only the request
 // gets a drawing; the stored file and the doc keep the image.
 //
 // Any other image that passes the rules goes as it is, byte for byte, and
@@ -292,18 +358,7 @@ async function requestImage(path: string, appDir: string, rules?: ImageSizeRules
     const drawn = await sbp('dez.controller/images/redraw', file, plan, drawnMediaType(image.mediaType)) as DrawnImage | null
     return drawn ? { bytes: drawn.bytes, mediaType: drawn.mediaType, size: { width: drawn.width, height: drawn.height } } : { ...image, size: decoded }
   } catch (error) {
-    if (svg) {
-      // An SVG with HTML in it (a `foreignObject`) taints the canvas, so
-      // WebKit gives no copy of it.
-      console.error(`Failed to draw a PNG copy of the SVG image ${path}:`, error)
-      throw new InputImageError(
-        path,
-        'notDrawn',
-        `Dez cannot send the SVG image ${fileNameOf(path)}. Providers take no SVG images, so Dez sends a PNG copy, and it could not draw one: the file can be damaged, or it holds HTML, which a copy may not show. Remove its reference or mention from the message, or paste a PNG copy of the image in its place.`,
-        sanitizeErrorText(rawErrorText(error)),
-        { cause: error },
-      )
-    }
+    if (svg) throw svgNotDrawnError(path, error)
     console.error('Failed to fit an image to the size rules of the request:', error)
     return { ...image, size: null }
   }
@@ -567,6 +622,34 @@ export default sbp('sbp/selectors/register', {
     } finally {
       signal?.removeEventListener('abort', cancelRequest)
     }
+  },
+
+  // How many bytes a chat request sends for each image of `paths` (the
+  // file, or its smaller copy; `chatImage`), by path, for a count of the
+  // bytes of a request before it goes (the picture budget). An image that
+  // a request sent comes from memory, with no read of its file; any other
+  // one is read, and drawn when it goes as a copy. An image that Dez
+  // cannot send (its file is gone, an SVG that cannot be drawn) has no
+  // entry: the log tells why, and the request that holds it fails with its
+  // own text.
+  async 'dez.provider/chatImageSizes' (paths: readonly string[]): Promise<Map<string, number>> {
+    const sizes = new Map<string, number>()
+    let appDir: Promise<string> | undefined
+    await Promise.all([...new Set(paths)].map(async (path) => {
+      const sent = chatImageCopies.sentBytes(path)
+      if (sent !== undefined) {
+        sizes.set(path, sent)
+        return
+      }
+      appDir ??= sbp('dez.native/getAppDir') as Promise<string>
+      try {
+        sizes.set(path, (await chatImage(path, await appDir)).bytes.length)
+      } catch (error) {
+        // `chatImage` logged an `InputImageError`.
+        if (!(error instanceof InputImageError)) console.error('Failed to read how many bytes a chat request sends for an image:', error)
+      }
+    }))
+    return sizes
   },
 
   // Makes media with a model of the provider's media API (`mediaApi`). It

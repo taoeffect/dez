@@ -113,7 +113,7 @@ export default sbp('sbp/selectors/register', {
     if (sbp('dez.stream/endOutput', tabId)) {
       request = sbp('dez.model/streamMessagesForTab', tabId, model) as RequestMessages
     }
-    const { messages, newestUserMessage, imagesLeftOut, sendTools } = request
+    const { messages, newestUserMessage, imagesLeftOut, imagesOverLimit, sendTools } = request
 
     const agentSection = sbp('dez.model/ensureTrailingAgentSectionForTab', tabId, model)
     if (!agentSection) return
@@ -147,6 +147,7 @@ export default sbp('sbp/selectors/register', {
       model,
       request: kind,
       messages,
+      imagesOverLimit,
       newestUserMessage,
       sendTools,
       imageOutput: outputs.includes('image'),

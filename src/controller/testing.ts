@@ -12,8 +12,9 @@ import type { AppFileEntry, AppFileRef, BundledToolEnd, BundledToolOutput, Bundl
 //
 // An import of this module registers the stub selectors of the app
 // folders, the files, the downloads, and the program runs
-// (`dez.native/*`, and `dez.controller/images/fileSize`), so a test file
-// must register none of them. Each test starts with `resetNative()`.
+// (`dez.native/*`, `dez.controller/images/fileSize`, and
+// `dez.provider/chatImageSizes`), so a test file must register none of
+// them. Each test starts with `resetNative()`.
 
 export const APP_DIR = '/home/u/.config/dez'
 export const CACHE_DIR = '/home/u/.cache/dez'
@@ -60,6 +61,9 @@ function newNative() {
     cancelledDownloads: [] as string[],
     // The size of a file of the computer; null for one that is gone.
     fileSize: ((): number | null => 10) as (path: string) => number | null,
+    // How many bytes a chat request sends for an image
+    // (`dez.provider/chatImageSizes`); null for one that Dez cannot send.
+    sentImageBytes: ((): number | null => 10) as (path: string) => number | null,
     readFiles: [] as AppFileRef[],
     // The bytes of a file that the code reads (a picture that a program
     // wrote); a throw for one that is not there.
@@ -118,6 +122,14 @@ sbp('sbp/selectors/register', {
   },
   async 'dez.controller/images/fileSize' (path: string): Promise<number | null> {
     return native.fileSize(path)
+  },
+  async 'dez.provider/chatImageSizes' (paths: readonly string[]): Promise<Map<string, number>> {
+    const sizes = new Map<string, number>()
+    for (const path of paths) {
+      const bytes = native.sentImageBytes(path)
+      if (bytes !== null) sizes.set(path, bytes)
+    }
+    return sizes
   },
 })
 

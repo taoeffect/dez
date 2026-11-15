@@ -168,14 +168,16 @@ function sectionTexts(): Array<{ role: string, text: string }> {
 }
 
 // Starts the reply of the section `a1`. `messages` are the messages of its
-// first request, which hold the conversation before the reply.
-async function startStream({ sendTools = false, messages = [{ role: 'user', content: 'Hi' }] as StreamMessage[] } = {}): Promise<void> {
+// first request, which hold the conversation before the reply, and
+// `imagesOverLimit` counts their images that went as text only.
+async function startStream({ sendTools = false, messages = [{ role: 'user', content: 'Hi' }] as StreamMessage[], imagesOverLimit = 0 } = {}): Promise<void> {
   await sbp('dez.stream/start', {
     tabId: activeTab().id,
     sectionId: 'a1',
     model,
     request: 'chat',
     messages,
+    imagesOverLimit,
     newestUserMessage: 'Hi',
     sendTools,
     imageOutput: false,
@@ -1323,11 +1325,20 @@ describe('dez.controller/submitTab images', () => {
     ])
   })
 
-  it('sends the images of the newest user message as parts after their reference text with no path, and every other image as that text only', async () => {
+  it('sends the images of each user message as parts after their reference text with no path, each image one time, and the images of a reply as that text only', async () => {
     await sbp('dez.controller/submitTab', activeTab().id)
 
     expect(sent[0]).toStrictEqual([
-      { role: 'user', content: 'Look:\n![image](id=a)\n![image](id=b)\nWhich is brighter?' },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Look:\n![image](id=a)' },
+          { type: 'image', path: image('one.png') },
+          { type: 'text', text: '\n![image](id=b)' },
+          { type: 'image', path: image('two.jpg') },
+          { type: 'text', text: '\nWhich is brighter?' },
+        ],
+      },
       { role: 'agent', content: 'This one: ![image](id=a)' },
       {
         role: 'user',
@@ -1335,11 +1346,44 @@ describe('dez.controller/submitTab images', () => {
           { type: 'text', text: '![image](id=c)' },
           { type: 'image', path: image('three.webp') },
           { type: 'text', text: ' and ![image](id=b\nCompare with ![image](id=a)' },
-          { type: 'image', path: image('one.png') },
         ],
       },
     ])
     expect(toasts).toEqual([])
+  })
+
+  it('sends the newest images as text only when the conversation holds more images than a request to the model takes, and tells the user', async () => {
+    sbp('dez.model/modelCache/applyProviderResult', model.providerId, {
+      ok: true,
+      models: [{ id: model.modelId, name: model.modelName, provider: model.providerId, imageLimit: 2 }],
+    })
+    // With no reply before it, the conversation is not compacted.
+    sbp('dez.model/tabs/replaceSections', activeTab().id, [
+      { id: 'u1', role: 'user', content: [{ kind: 'text', text: `![${image('one.png')}](id=a) ![${image('two.jpg')}](id=b) ![${image('three.webp')}](id=c)` }] },
+    ])
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect(sent).toStrictEqual([[{
+      role: 'user',
+      content: [
+        { type: 'text', text: '![image](id=a)' },
+        { type: 'image', path: image('one.png') },
+        { type: 'text', text: ' ![image](id=b)' },
+        { type: 'image', path: image('two.jpg') },
+        { type: 'text', text: ' ![image](id=c)' },
+      ],
+    }]])
+    expect(toasts).toStrictEqual([{
+      area: 'app-global',
+      data: {
+        variant: 'warning',
+        title: 'Image not sent',
+        message: 'Dez sends M at most 2 images in one request, so the newest 1 image of the conversation was left out. '
+          + 'Delete the images that the model does not need from earlier messages, or start a new conversation.',
+        duration: 8000,
+      },
+    }])
   })
 
   it('sends only the reference text with no path to a model that does not read images, and counts the images of the newest user message', async () => {
@@ -2593,10 +2637,10 @@ describe('dez.stream/start pictures that a tool shows', () => {
     expect(requests[2].messages.map(({ role }) => role)).toStrictEqual(['user', 'agent', 'tool', 'user', 'agent', 'tool', 'user'])
   })
 
-  it('takes each image of the request off the budget, as one picture of the assumed size with the size of its file, which it reads one time in a reply', async () => {
+  it('takes each image of the request off the budget, as one picture of the assumed size with the bytes that a request sends for it, which it asks for one time in a reply', async () => {
     const sizeReads: string[] = []
     // 3 MiB are 4 MiB of base64.
-    native.fileSize = (path) => {
+    native.sentImageBytes = (path) => {
       sizeReads.push(path)
       return 3 * 1024 ** 2
     }
@@ -3331,6 +3375,34 @@ describe('dez.stream/start compaction', () => {
     expect(sectionCompactionTag(notes)?.count).toBe(2)
     expect(sectionVisibleText(notes)).not.toContain(HIDDEN_IMAGE_PATH)
     expect(leftFiles).toStrictEqual([{ sources: [HIDDEN_IMAGE_PATH], pictures: [oldPicture.file] }])
+  })
+
+  // A toast at the submit would be false: the compaction keeps the image
+  // that is over the limit as its text, with the kept mark.
+  it('tells the user of no image over the image limit of the model when a compaction before the first request leaves none', async () => {
+    sbp('dez.model/modelCache/applyProviderResult', model.providerId, {
+      ok: true,
+      models: [{ id: model.modelId, name: model.modelName, provider: model.providerId, imageLimit: 2 }],
+    })
+    sbp('dez.model/setActiveModel', model.providerId, model.modelId, model.modelName)
+    sbp('dez.model/tabs/replaceSections', activeTab().id, [
+      { id: 'u1', role: 'user', content: [text(`![${image('one.png')}](id=a) ![${image('two.jpg')}](id=b) ![${image('three.webp')}](id=c)`)] },
+      { id: 'r1', role: 'agent', content: [text('Three foxes.')], model },
+      { id: 'u2', role: 'user', content: [text('More')] },
+    ])
+    sbp('dez.model/tabs/countRequestContext', activeTab().id, model, 140_000)
+    expect((sbp('dez.model/streamMessagesForTab', activeTab().id, model) as RequestMessages).imagesOverLimit).toBe(1)
+    replyRounds([notesAnswer, lastRound])
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect(requests.map(isCompactionRequest)).toStrictEqual([true, false])
+    expect(toasts).toStrictEqual([])
+    expect(sent[1].map((message) => message.role)).toStrictEqual(['user'])
+    const [first] = sent[1]
+    const parts = first.role === 'user' && Array.isArray(first.content) ? first.content : []
+    expect(parts.flatMap((part) => (part.type === 'image' ? [part.path] : []))).toStrictEqual([image('one.png'), image('two.jpg')])
+    expect(JSON.stringify(parts)).toContain('![image](id=c|kept=compaction)')
   })
 
   describe('for a new reply of a model whose window is smaller than the conversation', () => {

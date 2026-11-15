@@ -7,6 +7,7 @@ import { ASSET_INFO_COLUMNS } from '../../src/model/tools/assetInfo'
 import { jobStartedText, jobsWaitResults, startedJobId, type JobResult } from '../../src/model/tools/jobs'
 import { REFUSED_DEVICES, REFUSED_PROTOCOLS } from '../../src/model/tools/videoTool'
 import { byteSizeText } from '../../src/utils/byteSize'
+import { sentImageUrls } from './harness/chatBody'
 import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
 import { linkedDropDir } from './harness/drops'
 import { appFilePath, conversationFilePath, filesIn, mediaTempDir, newFileIn, storedFileName, workDir, writeTestFile } from './harness/fixtures'
@@ -192,6 +193,11 @@ describe('video tool', () => {
     return mediaFacts(file).streams
   }
 
+  // The bytes of the base64 text of an image of a user message that goes
+  // as its file `file`: each request of the conversation sends it, so it
+  // takes a part of the picture budget.
+  const userImageBytes = (file: Buffer): number => file.toString('base64').length
+
   // The picture message after the tool messages of the request `request`:
   // the text and the data URL of each part, and the bytes of base64 of all
   // its pictures.
@@ -261,8 +267,10 @@ describe('video tool', () => {
   // - `@b`: a tone of 1 s in a WAV file;
   // - `@c`, `@e`: a wide and a tall PNG image;
   // - `@d`: a video clip of one color, 2 s, with no sound.
-  // The newest user message of a reply has no image, so the reply has a
-  // budget of 20 pictures and, for a model of no family, 52,000 tokens.
+  // The images `@c` and `@e` of the user go with each request, and each
+  // counts as an image of the largest size: 3,136 tokens for a model of no
+  // family. So of 20 pictures and 52,000 tokens, a reply has a budget of
+  // 18 pictures and 45,728 tokens.
   async function openShots (name: string): Promise<Record<ShotId, string>> {
     const { home } = setup.app
     const files: Record<ShotId, string> = {
@@ -580,11 +588,13 @@ describe('video tool', () => {
     // with 4 pixels between them.
     expect(await sentJpegFacts(sheetUrl, 'sheet.jpg')).toStrictEqual(['video mjpeg 1292x240'])
     expect(await sentJpegFacts(waveUrl, 'wave.jpg')).toStrictEqual(['video mjpeg 800x200'])
-    // The newest user message has no image, so the budget had 20 pictures
-    // and 52,000 tokens. The sheet costs 47 * 9 = 423 tokens, the image
-    // 2 * 2 = 4, and the wave 29 * 8 = 232; the bytes are those of the
-    // base64 data.
-    expect(budget).toBe(`Picture budget left in this reply: 17 pictures, 51,341 tokens and ${byteSizeText(MAX_REQUEST_IMAGE_BYTES - bytes)} of base64.`)
+    // The image `@c` of the user goes with each request, and counts as an
+    // image of the largest size (3,136 tokens), so the budget had 19
+    // pictures and 48,864 tokens. The sheet costs 47 * 9 = 423 tokens, the
+    // picture of the image 2 * 2 = 4, and the wave 29 * 8 = 232; the bytes
+    // are those of the base64 data.
+    const bytesLeft = MAX_REQUEST_IMAGE_BYTES - userImageBytes(PICTURE_PNG) - bytes
+    expect(budget).toBe(`Picture budget left in this reply: 16 pictures, 48,205 tokens and ${byteSizeText(bytesLeft)} of base64.`)
 
     // The next request of the reply sends the same messages again, the
     // pictures at the same place.
@@ -601,9 +611,10 @@ describe('video tool', () => {
     expect(reply.replace(/ pictures="[^"]*"/, '')).not.toContain('asset_view: ')
 
     // The next reply gets no picture: only the reply of a call sends them.
+    // Its request holds only the image of the user's message.
     await submit(browser, 'Thanks.')
     const next = await chatRequest()
-    expect(next.body).not.toContain('image_url')
+    expect(sentImageUrls(next.body)).toStrictEqual([`data:image/png;base64,${PICTURE_PNG.toString('base64')}`])
     expect(next.body).not.toContain('asset_view: the')
     await sendChatReply(next.reply, CALLER.modelName)
     await endedReply(browser, CLIPS_REPLY_INDEX + 2)
@@ -654,7 +665,8 @@ describe('video tool', () => {
     // 47 * 15 = 705 tokens, the sheet of the times 23 * 9 = 207, and the
     // spectrogram 39 * 12 = 468.
     const budgetLine = (pictures: number, tokens: string, sent: readonly string[]) => {
-      const left = MAX_REQUEST_IMAGE_BYTES - sent.reduce((sum, url) => sum + url.split(',')[1].length, 0)
+      const left = MAX_REQUEST_IMAGE_BYTES - userImageBytes(shotSources.c) - userImageBytes(shotSources.e)
+        - sent.reduce((sum, url) => sum + url.split(',')[1].length, 0)
       return `Picture budget left in this reply: ${pictures} pictures, ${tokens} tokens and ${byteSizeText(left)} of base64.`
     }
     const shotsLine = `@a | video | WebM | 4 s | 48x36 | 5 fps | vp9 | sound (opus) | ${byteSizeText(shotSources.a.length)}`
@@ -666,7 +678,7 @@ describe('video tool', () => {
         + 'time runs left to right over the whole width of the sheet, and the height is the peak level on a square-root scale.',
       expect.stringMatching(loudnessLine('0 s to 4 s')),
       VIEW_END_LINE,
-      budgetLine(19, '51,295', [scenesUrl]),
+      budgetLine(17, '45,023', [scenesUrl]),
     ])
     // With `times`, the loudness is of the whole clip.
     expect(toolResult(viewed, 'call_times').split('\n')).toStrictEqual([
@@ -674,7 +686,7 @@ describe('video tool', () => {
       'Frame sheet of the first frame at or after each of `times` 0.5, 2.5 s: 2 frames in one row, at 0.6, 2.6 s.',
       expect.stringMatching(loudnessLine('0 s to 4 s')),
       VIEW_END_LINE,
-      budgetLine(18, '51,088', [scenesUrl, timesUrl]),
+      budgetLine(16, '44,816', [scenesUrl, timesUrl]),
     ])
     expect(toolResult(viewed, 'call_spectrogram').split('\n')).toStrictEqual([
       `@b | audio | WAV | 1 s | pcm_s16le | 44100 Hz | 1 channel | ${byteSizeText(shotSources.b.length)}`,
@@ -683,7 +695,7 @@ describe('video tool', () => {
         + 'and the color is the level of each frequency, on the scale at the right in dBFS.',
       expect.stringMatching(loudnessLine('0 s to 1 s')),
       VIEW_END_LINE,
-      budgetLine(17, '50,620', urls),
+      budgetLine(15, '44,348', urls),
     ])
     await sendChatReply(viewed.reply, CALLER.modelName)
     await endedReply(browser, CLIPS_REPLY_INDEX)
@@ -750,7 +762,7 @@ describe('video tool', () => {
       `Frame sheet of 0 s to 2 s: ${colorSheet}.`,
       `Grid picture of 1292x560 pixels, top to bottom: ${map}.`,
       VIEW_END_LINE,
-      `Picture budget left in this reply: 19 pictures, 51,060 tokens and ${byteSizeText(MAX_REQUEST_IMAGE_BYTES - bytes)} of base64.`,
+      `Picture budget left in this reply: 17 pictures, 44,788 tokens and ${byteSizeText(MAX_REQUEST_IMAGE_BYTES - userImageBytes(PICTURE_PNG) - userImageBytes(TALL_PNG) - bytes)} of base64.`,
     ])
     await sendChatReply(viewed.reply, CALLER.modelName)
     await endedReply(browser, CLIPS_REPLY_INDEX)

@@ -1,5 +1,5 @@
-import type { ImageComposition, ImageRegion, ImageSize } from '../chat/imageDrawing'
-import { FRAME_BOXES, idsListText, imagePictureShows, SHEET_PADDING, sheetGrid, sizeWithin, type ViewDetail } from './assetView'
+import { sizeWithin, type ImageComposition, type ImageRegion, type ImageSize } from '../chat/imageDrawing'
+import { FRAME_BOXES, idsListText, imagePictureShows, SHEET_PADDING, sheetGrid, type ViewDetail } from './assetView'
 
 // The one picture of an `asset_view` call with `layout` "grid": its images
 // and the pictures of its video clips (each one a frame sheet, with its

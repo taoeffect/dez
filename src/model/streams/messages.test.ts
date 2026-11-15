@@ -13,6 +13,8 @@ import { model, reply, user } from './testing'
 
 const IMAGE = '/home/u/.config/dez/assets/images/red.png'
 const OTHER_IMAGE = '/home/u/.config/dez/assets/images/blue.png'
+// An image file of the user that a user section links.
+const LINKED_IMAGE = '/home/u/Pictures/den.png'
 
 // The clips of a tab, as players of earlier replies show them.
 const SONG: MediaTagData = { kind: 'audio', id: 'c', type: 'audio/mpeg', src: '/home/u/.cache/dez/media/s1.mp3', url: null, expires: null, other: [] }
@@ -503,67 +505,108 @@ describe('messageClips', () => {
 })
 
 describe('sectionsToStreamMessages: images of user messages', () => {
-  const sent = (sections: Section[], sendImages = true) => sectionsToStreamMessages(sections, model, { sendImages, sendTools: false })
+  const sent = (sections: Section[], sendImages = true, imageLimit?: number) => sectionsToStreamMessages(sections, model, { sendImages, sendTools: false, imageLimit })
   // The conversation before the message under test: a pasted image `a`,
-  // and a generated image `b` in the reply. An earlier user message sends
-  // its image as text only.
+  // and a generated image `b` in the reply. The user message carries its
+  // image; the image of the reply goes as text only.
   const earlier = [user('u1', `![${IMAGE}](id=a) A red fox`), reply('a1', `![${GENERATED}](id=b)`)]
-  const earlierMessages = [
-    { role: 'user', content: '![image](id=a) A red fox' },
-    { role: 'agent', content: '![image](id=b)' },
-  ]
+  const earlierUserMessage = { role: 'user', content: [{ type: 'text', text: '![image](id=a)' }, { type: 'image', path: IMAGE }, { type: 'text', text: ' A red fox' }] }
+  const earlierMessages = [earlierUserMessage, { role: 'agent', content: '![image](id=b)' }]
+  // The same for a model that reads no images.
+  const earlierTexts = [{ role: 'user', content: '![image](id=a) A red fox' }, { role: 'agent', content: '![image](id=b)' }]
 
-  it('gives image parts only to the newest user message: an earlier one sends its references and mentions as text', () => {
-    const sections = [...earlier, user('u2', `Is @a like ![${OTHER_IMAGE}](id=c)?`), reply('a2', 'Yes.'), user('u3', 'And @c?')]
-    const newest = [{ type: 'text', text: 'And @c' }, { type: 'image', path: OTHER_IMAGE }, { type: 'text', text: '?' }]
+  it('gives every user message the parts of its images, and a later message no second part of an image that an earlier one carries', () => {
+    const sections = [...earlier, user('u2', `Is @a like ![${OTHER_IMAGE}](id=c)?`), reply('a2', 'Yes.'), user('u3', `And @c? ![${IMAGE}](id=a)`)]
 
     expect(sent(sections)).toStrictEqual({
       messages: [
         ...earlierMessages,
-        { role: 'user', content: 'Is @a like ![image](id=c)?' },
+        { role: 'user', content: [{ type: 'text', text: 'Is @a like ![image](id=c)' }, { type: 'image', path: OTHER_IMAGE }, { type: 'text', text: '?' }] },
         { role: 'agent', content: 'Yes.' },
-        { role: 'user', content: newest },
+        { role: 'user', content: 'And @c? ![image](id=a)' },
       ],
       imagesLeftOut: 0,
-      newestUserMessage: newest,
+      imagesOverLimit: 0,
+      // As a message of its own, the newest user message has a part for
+      // each image that it holds or names: a media request reads only it.
+      newestUserMessage: [
+        { type: 'text', text: 'And @c' },
+        { type: 'image', path: OTHER_IMAGE },
+        { type: 'text', text: '? ![image](id=a)' },
+        { type: 'image', path: IMAGE },
+      ],
     })
   })
 
-  it('sends a mentioned image however far back it is, and no other image', () => {
+  it('sends a mentioned image of a reply however far back it is, and no other image', () => {
     const turns = Array.from({ length: 20 }, (_, index) => [user(`q${index}`, `Question ${index}`), reply(`r${index}`, `Answer ${index}`)]).flat()
-    const { messages } = sent([...earlier, ...turns, user('last', 'Make @a red')])
+    const { messages } = sent([...earlier, ...turns, user('last', 'Make @b red')])
 
     expect(messages.at(-1)).toStrictEqual({
       role: 'user',
-      content: [{ type: 'text', text: 'Make @a' }, { type: 'image', path: IMAGE }, { type: 'text', text: ' red' }],
+      content: [{ type: 'text', text: 'Make @b' }, { type: 'image', path: GENERATED }, { type: 'text', text: ' red' }],
     })
-    expect(messages.slice(0, -1).filter((message) => message.role === 'user' && typeof message.content !== 'string')).toStrictEqual([])
+    expect(messages.slice(1, -1).filter((message) => message.role === 'user' && typeof message.content !== 'string')).toStrictEqual([])
   })
 
-  // A request with no new user text (a tool round of the reply, or a submit
-  // with an empty last section) must not change the message that the reply
-  // answers.
-  it('keeps the image parts of the newest user message when a reply comes after it', () => {
-    const message = { role: 'user', content: [{ type: 'text', text: '![image](id=a)' }, { type: 'image', path: IMAGE }, { type: 'text', text: ' A red fox' }] }
+  // The prompt cache and the signed thinking replays need the same bytes
+  // of a message in every later request: one with no new user text (a tool
+  // round of the reply, or a submit with an empty last section), and one
+  // with a newer user message, also when that message holds the image.
+  it('keeps the image parts of a user message when a reply and a newer user message come after it', () => {
+    const answer = { role: 'agent', content: 'It is a fox.' }
 
-    expect(sent([earlier[0]]).messages).toStrictEqual([message])
-    expect(sent([earlier[0], reply('a1', 'It is a fox.'), user('u2', '')]).messages).toStrictEqual([message, { role: 'agent', content: 'It is a fox.' }])
+    expect(sent([earlier[0]]).messages).toStrictEqual([earlierUserMessage])
+    expect(sent([earlier[0], reply('a1', 'It is a fox.'), user('u2', '')]).messages).toStrictEqual([earlierUserMessage, answer])
+    expect(sent([earlier[0], reply('a1', 'It is a fox.'), user('u2', `Is ![${IMAGE}](id=a) the same as @a?`)]).messages).toStrictEqual([
+      earlierUserMessage,
+      answer,
+      { role: 'user', content: 'Is ![image](id=a) the same as @a?' },
+    ])
   })
 
-  it('sends a mentioned image of an earlier section right after its mention, which stays in the text', () => {
-    const newest = [
-      { type: 'text', text: 'Give @b' },
-      { type: 'image', path: GENERATED },
-      { type: 'text', text: ' a hat, like the one of @a' },
-      { type: 'image', path: IMAGE },
-      { type: 'text', text: '.' },
-    ]
+  // `promptWithNames` (mediaRequest.ts) names a reference only when its
+  // part follows it.
+  it('gives each reference of an image a part in the message that sends the image first', () => {
+    expect(sent([user('u1', `![${IMAGE}](id=a) and again ![${IMAGE}](id=a) and @a`)]).messages).toStrictEqual([{
+      role: 'user',
+      content: [
+        { type: 'text', text: '![image](id=a)' },
+        { type: 'image', path: IMAGE },
+        { type: 'text', text: ' and again ![image](id=a)' },
+        { type: 'image', path: IMAGE },
+        { type: 'text', text: ' and @a' },
+      ],
+    }])
+  })
 
-    expect(sent([...earlier, user('u2', 'Give @b a hat, like the one of @a.')])).toStrictEqual({
-      messages: [...earlierMessages, { role: 'user', content: newest }],
+  it('sends a mentioned image of an earlier section right after its mention, which stays in the text, and no part for a mention of an image that an earlier message carries', () => {
+    const sections = [...earlier, user('u2', 'Give @b a hat, like the one of @a.')]
+
+    expect(sent(sections)).toStrictEqual({
+      messages: [
+        ...earlierMessages,
+        { role: 'user', content: [{ type: 'text', text: 'Give @b' }, { type: 'image', path: GENERATED }, { type: 'text', text: ' a hat, like the one of @a.' }] },
+      ],
       imagesLeftOut: 0,
-      newestUserMessage: newest,
+      imagesOverLimit: 0,
+      newestUserMessage: [
+        { type: 'text', text: 'Give @b' },
+        { type: 'image', path: GENERATED },
+        { type: 'text', text: ' a hat, like the one of @a' },
+        { type: 'image', path: IMAGE },
+        { type: 'text', text: '.' },
+      ],
     })
+  })
+
+  it('sends a mentioned image of a reply one time in a request: a later mention of it is text', () => {
+    const sections = [...earlier, user('u2', 'Crop @b'), reply('a2', 'Done.'), user('u3', 'Now turn @b')]
+
+    expect(sent(sections).messages.filter((message) => message.role === 'user').slice(1)).toStrictEqual([
+      { role: 'user', content: [{ type: 'text', text: 'Crop @b' }, { type: 'image', path: GENERATED }] },
+      { role: 'user', content: 'Now turn @b' },
+    ])
   })
 
   it('sends a mentioned image once, at its first mention', () => {
@@ -639,14 +682,17 @@ describe('sectionsToStreamMessages: images of user messages', () => {
   it('sends a model that reads no images the text only, and counts the images that the newest message would send', () => {
     const sections = [...earlier, user('u2', `Mix @b, @b, and ![${IMAGE}](id=a) with @a and @c.`)]
 
-    expect(sent(sections, false)).toStrictEqual({
+    expect(sent(sections, false, 1)).toStrictEqual({
       messages: [
-        ...earlierMessages,
+        ...earlierTexts,
         { role: 'user', content: 'Mix @b, @b, and ![image](id=a) with @a and @c.' },
       ],
-      // `b` and `a` in the last message. The image of the first message
-      // goes to no model, so it does not count.
+      // `b` and `a`: the images of the last message as a message of its
+      // own. The image of the first message is not counted: the user got
+      // the count of that message at its submit.
       imagesLeftOut: 2,
+      // No image goes, so none is over the limit.
+      imagesOverLimit: 0,
       // A media request reads the same text: it sends no image either.
       newestUserMessage: 'Mix @b, @b, and ![image](id=a) with @a and @c.',
     })
@@ -663,13 +709,66 @@ describe('sectionsToStreamMessages: images of user messages', () => {
     ]
 
     expect(sent(sections).messages).toStrictEqual([
-      { role: 'user', content: '![image](id=a) A fox' },
-      { role: 'agent', content: `Not mine: ![image](id=b|tool=image)\n${mediaTagRequestText(SONG)}` },
-      { role: 'user', content: [{ type: 'text', text: 'Like @a' }, { type: 'image', path: linked }, { type: 'text', text: ` or @b?\n${SENT_DANCE}` }] },
-    ])
-    expect(sent([user('u1', `![${linked}](id=a) A fox`)]).messages).toStrictEqual([
       { role: 'user', content: [{ type: 'text', text: '![image](id=a)' }, { type: 'image', path: linked }, { type: 'text', text: ' A fox' }] },
+      { role: 'agent', content: `Not mine: ![image](id=b|tool=image)\n${mediaTagRequestText(SONG)}` },
+      { role: 'user', content: `Like @a or @b?\n${SENT_DANCE}` },
     ])
+  })
+
+  describe('with a limit of the images of a request', () => {
+    // Three user messages with one image each, and a last one that names
+    // the image of the reply and holds the second image again.
+    const sections = [
+      ...earlier,
+      user('u2', `![${OTHER_IMAGE}](id=c) A blue fox`),
+      reply('a2', 'Yes.'),
+      user('u3', `![${LINKED_IMAGE}](id=d) and @b, with ![${OTHER_IMAGE}](id=c) and @d`),
+    ]
+    const secondMessage = { role: 'user', content: [{ type: 'text', text: '![image](id=c)' }, { type: 'image', path: OTHER_IMAGE }, { type: 'text', text: ' A blue fox' }] }
+    const lastText = '![image](id=d) and @b, with ![image](id=c) and @d'
+
+    it('sends the newest images as text only, counts each of them one time, and keeps the bytes of the messages before them', () => {
+      expect(sent(sections, true, 2)).toStrictEqual({
+        messages: [...earlierMessages, secondMessage, { role: 'agent', content: 'Yes.' }, { role: 'user', content: lastText }],
+        imagesLeftOut: 0,
+        // `d` (a reference and a mention) and `b`. `c` has a part in the
+        // message before.
+        imagesOverLimit: 2,
+        // A media request has its own limits, so the message of its own
+        // has every part.
+        newestUserMessage: [
+          { type: 'text', text: '![image](id=d)' },
+          { type: 'image', path: LINKED_IMAGE },
+          { type: 'text', text: ' and @b' },
+          { type: 'image', path: GENERATED },
+          { type: 'text', text: ', with ![image](id=c)' },
+          { type: 'image', path: OTHER_IMAGE },
+          { type: 'text', text: ' and @d' },
+        ],
+      })
+    })
+
+    it('gives the parts in message order up to the limit, in the middle of a message too', () => {
+      const { messages, imagesOverLimit } = sent(sections, true, 3)
+
+      expect(messages.at(-1)).toStrictEqual({
+        role: 'user',
+        content: [{ type: 'text', text: '![image](id=d)' }, { type: 'image', path: LINKED_IMAGE }, { type: 'text', text: ' and @b, with ![image](id=c) and @d' }],
+      })
+      expect(imagesOverLimit).toBe(1)
+    })
+
+    it('leaves out no image of a conversation that holds the limit, or fewer', () => {
+      expect([sent(sections, true, 4), sent(sections, true, 20)]).toStrictEqual([sent(sections), sent(sections)])
+      expect(sent(sections).imagesOverLimit).toBe(0)
+    })
+
+    it('sends every image as text only with a limit of 0', () => {
+      const { messages, imagesOverLimit } = sent(sections, true, 0)
+
+      expect(messages.filter((message) => message.role === 'user')).toStrictEqual([earlierTexts[0], { role: 'user', content: '![image](id=c) A blue fox' }, { role: 'user', content: lastText }])
+      expect(imagesOverLimit).toBe(4)
+    })
   })
 })
 
@@ -691,6 +790,7 @@ describe('sectionsToStreamMessages: clips of user messages', () => {
         { role: 'user', content: newest },
       ],
       imagesLeftOut: 0,
+      imagesOverLimit: 0,
       newestUserMessage: newest,
     })
   })
@@ -727,7 +827,7 @@ describe('sectionsToStreamMessages: pictures that a tool showed', () => {
 
   it('sends the pictures of the section of the reply that runs only, after the results of their round', () => {
     expect(sent({ picturesOfSection: 'a2' })).toStrictEqual([
-      { role: 'user', content: '![image](id=a)' },
+      { role: 'user', content: [{ type: 'text', text: '![image](id=a)' }, { type: 'image', path: IMAGE }] },
       { role: 'agent', content: '', toolCalls: [{ id: 'call_1', name: 'asset_view', arguments: { assets: '@a' } }] },
       { role: 'tool', results: [result('call_1', '@a | image | PNG')] },
       { role: 'agent', content: 'It is red.' },
@@ -749,7 +849,7 @@ describe('sectionsToStreamMessages: pictures that a tool showed', () => {
 })
 
 describe('sectionsToStreamMessages: a compacted conversation', () => {
-  const sent = (sections: Section[], sendImages = true) => sectionsToStreamMessages(sections, model, { sendImages, sendTools: false })
+  const sent = (sections: Section[], sendImages = true, imageLimit?: number) => sectionsToStreamMessages(sections, model, { sendImages, sendTools: false, imageLimit })
   const tag = (pictures: ShownPicture[] = []) => compactionTagText({ count: 1, lastId: 'c', pictures })
   // The start of each user section of the compaction message.
   const KEPT = `\n\n${COMPACTION_USER_MESSAGE_LABEL}\n`
@@ -788,6 +888,7 @@ describe('sectionsToStreamMessages: a compacted conversation', () => {
         { role: 'user', content: 'Thanks.' },
       ],
       imagesLeftOut: 0,
+      imagesOverLimit: 0,
       newestUserMessage: 'Thanks.',
     })
   })
@@ -801,6 +902,7 @@ describe('sectionsToStreamMessages: a compacted conversation', () => {
       {
         messages: [{ role: 'user', content: `${COMPACTION_MESSAGE_INTRO}\n\nNotes.` }, { role: 'agent', content: 'Done.' }],
         imagesLeftOut: 0,
+        imagesOverLimit: 0,
         newestUserMessage: '',
       },
     ])
@@ -819,6 +921,7 @@ describe('sectionsToStreamMessages: a compacted conversation', () => {
     expect(sent(withImages)).toStrictEqual({
       messages: [withImagesMessage],
       imagesLeftOut: 0,
+      imagesOverLimit: 0,
       // The newest user message as a message of its own names its images
       // itself: a media request reads it, and never the compaction notes.
       newestUserMessage: [
@@ -837,6 +940,29 @@ describe('sectionsToStreamMessages: a compacted conversation', () => {
       withImagesMessage,
       { role: 'agent', content: 'Done.' },
       { role: 'user', content: [{ type: 'text', text: 'Now ![image](id=d)' }, { type: 'image', path: OTHER_IMAGE }] },
+    ])
+  })
+
+  it('sends an image of the compaction message one time: a later section that holds or names it sends its text only', () => {
+    const sections = [
+      reply('c', `${tag()}\nThe fox: ![${GENERATED}](id=b)`),
+      user('u1', `Again ![${GENERATED}](id=b) and ![${IMAGE}](id=a)`),
+      reply('a1', 'Done.'),
+      user('u3', `Turn @b like ![${IMAGE}](id=a)`),
+    ]
+
+    expect(sent(sections).messages).toStrictEqual([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\nThe fox: ![image](id=b)` },
+          { type: 'image', path: GENERATED },
+          { type: 'text', text: `${KEPT}Again ![image](id=b) and ![image](id=a)` },
+          { type: 'image', path: IMAGE },
+        ],
+      },
+      { role: 'agent', content: 'Done.' },
+      { role: 'user', content: 'Turn @b like ![image](id=a)' },
     ])
   })
 
@@ -902,6 +1028,38 @@ describe('sectionsToStreamMessages: a compacted conversation', () => {
     }])
   })
 
+  it('counts the images and the pictures of the compaction message against the limit of a request, and sends no label of a picture that does not go', () => {
+    const sheet = { file: 's1.jpg', label: 'The frame sheet of @d.', width: 1280, height: 320, bytes: 3000 }
+    const wave = { file: 'w1.jpg', label: 'The wave of @e.', width: 800, height: 200, bytes: 2000 }
+    const sections = [
+      reply('c', `${tag([sheet, wave])}\nThe fox: ![${GENERATED}](id=b)`),
+      user('u1', `Like ![${IMAGE}](id=a)?`),
+      reply('a1', 'Done.'),
+      user('u2', `And ![${OTHER_IMAGE}](id=d)`),
+    ]
+
+    expect(sent(sections, true, 2)).toStrictEqual({
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\nThe fox: ![image](id=b)` },
+            { type: 'image', path: GENERATED },
+            { type: 'text', text: '\n\nThe frame sheet of @d.' },
+            { type: 'picture', picture: sheet },
+            { type: 'text', text: `${KEPT}Like ![image](id=a)?` },
+          ],
+        },
+        { role: 'agent', content: 'Done.' },
+        { role: 'user', content: 'And ![image](id=d)' },
+      ],
+      imagesLeftOut: 0,
+      // The wave, and the images `a` and `d`.
+      imagesOverLimit: 3,
+      newestUserMessage: [{ type: 'text', text: 'And ![image](id=d)' }, { type: 'image', path: OTHER_IMAGE }],
+    })
+  })
+
   it('sends a model that reads no images the text only, with no picture label, and counts the images of the newest user message only', () => {
     const sheet = { file: 's1.jpg', label: 'The frame sheet of @d.', width: 1280, height: 320, bytes: 3000 }
     const sections = [reply('c', `${tag([sheet])}\nThe fox: ![${GENERATED}](id=b)`), ...withImages.slice(1)]
@@ -909,6 +1067,7 @@ describe('sectionsToStreamMessages: a compacted conversation', () => {
     expect(sent(sections, false)).toStrictEqual({
       messages: [{ role: 'user', content: `${COMPACTION_MESSAGE_INTRO}\n\nThe fox: ![image](id=b)${KEPT}Like ![image](id=a)?${KEPT}And @b with @a.` }],
       imagesLeftOut: 2,
+      imagesOverLimit: 0,
       newestUserMessage: 'And @b with @a.',
     })
     // The images of the compaction message are in every request, so a

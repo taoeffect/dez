@@ -63,3 +63,12 @@ export function anthropicChatBody (model: ChatModel, messages: unknown[]): Recor
 export function anthropicMarkedUser (text: string): Record<string, unknown> {
   return { role: 'user', content: [{ type: 'text', text, cache_control: { type: 'ephemeral' } }] }
 }
+
+/** The URL of each image part of the messages of the OpenAI-format chat
+ *  request body `body` (its JSON text), in the order of the request. */
+export function sentImageUrls (body: string): string[] {
+  const { messages } = JSON.parse(body) as { messages: Array<{ content: unknown }> }
+  return messages
+    .flatMap(({ content }): Array<{ image_url?: { url: string } }> => (Array.isArray(content) ? content : []))
+    .flatMap(({ image_url: image }) => (image ? [image.url] : []))
+}

@@ -5,11 +5,12 @@ import { IMAGE_ID_SOURCE } from './images'
 // whose media tag has `id="a"` (mediaTags.ts). The user types it to say
 // which image or clip a request is about ("edit @a to add an apple", "make
 // @c move to the beat of @b"). The request builder then sends that image
-// with the message, at the place of the mention, while the message is the
-// newest user message of the request (`sectionsToStreamMessages`,
-// streams/messages.ts). A clip goes only to a media request, for a model
-// that takes clips (`messageClips`, `mediaRequestInput`). The mention
-// itself stays in the text as the user typed it.
+// with the message, at the place of the mention, in every chat request,
+// unless an earlier message of the request carries the image
+// (`sectionsToStreamMessages`, streams/messages.ts); a media request reads
+// only the newest user message. A clip goes only to a media request, for a
+// model that takes clips (`messageClips`, `mediaRequestInput`). The
+// mention itself stays in the text as the user typed it.
 //
 // Most `@` words are not mentions: an e-mail address, a user name, a
 // decorator in code. So a word counts only when it has the form below and

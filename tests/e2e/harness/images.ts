@@ -80,6 +80,12 @@ export interface DecodedImage {
   pixels: number[][]
 }
 
+/** The largest difference of a channel of `pixel` from that of `color`:
+ *  JPEG and WebP keep colors only near to their values. */
+export function colorDistance (pixel: readonly number[] | undefined, color: readonly number[]): number {
+  return Math.max(...color.map((value, index) => Math.abs((pixel?.[index] ?? Infinity) - value)))
+}
+
 /** Decodes the image at `url` (a data URL) in the page, and reads the pixel
  *  at each of `points`: a column (in the middle row), or a column and a row. */
 export async function decodedImage (browser: E2EBrowser, url: string, points: Array<number | [number, number]>): Promise<DecodedImage> {

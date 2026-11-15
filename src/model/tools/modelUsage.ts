@@ -47,7 +47,7 @@ export const USAGE_TEXTS = {
   tools: 'It gets the Dez tools (the ones that you have).',
   toolsOff: 'It gets no Dez tools: the Tools toggle of its provider is off.',
   noTools: 'It gets no Dez tools: it does not call tools.',
-  chatImages: 'The images of the newest user message (pasted, or named with @id) go to it as images; older images go only as text with their ids, such as `![image](id=a)`.',
+  chatImages: 'The images of the messages of the user (pasted, or named with @id) go to it as images, in each request; any other image goes only as text with its id, such as `![image](id=a)`.',
   chatNoImages: 'It does not read images: each image goes only as text with its id, such as `![image](id=a)`.',
   textReply: 'It answers with text.',
   imageReply: 'It answers with text, and it can make images; each image gets a new id (@id).',

@@ -23,7 +23,7 @@ import { docPos, docPosPoint, editorDoc, focusEditor, misplacedLines, newTab, op
 const PNG = solidPng(40, 24, [220, 60, 40])
 const IMAGE_TOOLTIP = {
   title: 'Image id: a',
-  text: 'This names the image a. A model sees an older image only when your newest message names it.',
+  text: 'This names the image a. A chat model sees an image of a reply only when one of your messages names it. A model that makes images or clips gets an older image only when your newest message names it.',
 }
 const AUDIO_TOOLTIP = {
   title: 'Audio id: b',

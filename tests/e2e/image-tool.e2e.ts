@@ -4,7 +4,7 @@ import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { openAiChatBody } from './harness/chatBody'
 import { consoleErrors, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
-import { decodedImage, generatedImagesDir, jpegImage, pasteImageReference, pngDataUrl, shownImages, STRIPE_COLORS, STRIPES_PNG, STRIPES_SVG, WEBKIT_SVG_SIZES, type DecodedImage } from './harness/images'
+import { colorDistance, decodedImage, generatedImagesDir, jpegImage, pasteImageReference, pngDataUrl, shownImages, STRIPE_COLORS, STRIPES_PNG, STRIPES_SVG, WEBKIT_SVG_SIZES, type DecodedImage } from './harness/images'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { replyText, sendChatReply, startEventStream, writeChatFrame, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
@@ -32,12 +32,6 @@ const TRANSPARENT = [0, 0, 0, 0]
 
 // The file type of each extension of a stored image.
 const FILE_TYPES: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.svg': 'image/svg+xml' }
-
-/** The largest difference of a channel of `pixel` from that of `color`:
- *  JPEG and WebP keep colors only near to their values. */
-function colorDistance (pixel: readonly number[] | undefined, color: readonly number[]): number {
-  return Math.max(...color.map((value, index) => Math.abs((pixel?.[index] ?? Infinity) - value)))
-}
 
 /** An `image` call of the mock model, and the result that Dez gives. */
 interface ImageCall {

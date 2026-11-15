@@ -1,9 +1,10 @@
 import { byteSizeText } from '../../utils/byteSize'
-import { drawnMediaType, wholeImageDrawing, type ImageComposition, type ImageDrawing, type ImageRegion, type ImageSize } from '../chat/imageDrawing'
+import { drawnMediaType, sizeWithin, wholeImageDrawing, type ImageComposition, type ImageDrawing, type ImageRegion, type ImageSize } from '../chat/imageDrawing'
 import type { ImageMediaType } from '../chat/images'
 import type { ClipReadProblem } from '../chat/mediaFiles'
 import type { MediaTagKind } from '../chat/mediaTags'
 import type { NewPicture, PictureFile } from '../chat/shownPictures'
+import { CHAT_IMAGE_SIDE } from '../providers/imageSize'
 import type { PictureBudget } from '../streams/pictureBudget'
 import { assetIdsArgument, unknownValuesText } from './arguments'
 import { shortNumber } from './assetFacts'
@@ -73,7 +74,7 @@ const VIEW_LAYOUTS: readonly ViewLayout[] = ['separate', 'grid']
  *  than 20 images, and a refused picture fails each later request of the
  *  reply, as each one sends it again.
  *  https://platform.claude.com/docs/en/build-with-claude/vision */
-export const IMAGE_PICTURE_SIDES: Readonly<Record<ViewDetail, number>> = { review: 1568, full: 3000 }
+export const IMAGE_PICTURE_SIDES: Readonly<Record<ViewDetail, number>> = { review: CHAT_IMAGE_SIDE, full: 3000 }
 
 /** The box that each frame of a frame sheet, and each image of a grid,
  *  fits in, by `detail`: a sheet of `MAX_SHEET_COLUMNS` columns stays
@@ -122,7 +123,7 @@ export const ASSET_VIEW_TOOL: ToolDefinition = {
     + 'or with `times` for the frames that you need. '
     + 'You see the pictures after the results of the calls of this round, in this reply only. '
     + 'Each later request of this reply sends them again, so the pictures have a budget, '
-    + "which they share with the images of the user's newest message: a count of pictures, tokens, and megabytes of base64. "
+    + "which they share with the images of the user's messages: a count of pictures, tokens, and megabytes of base64. "
     + 'The budget depends on the model of this reply, and a larger picture costs more of it. '
     + 'Each result tells the budget that is left. '
     + 'To check a small detail of an image, view only that part of it with `crop`. '
@@ -385,13 +386,6 @@ export function cropRegion(crop: ViewCrop, size: ImageSize): ImageRegion | null 
   const width = Math.round((crop.left + crop.width) * size.width) - x
   const height = Math.round((crop.top + crop.height) * size.height) - y
   return width < 1 || height < 1 ? null : { x, y, width, height }
-}
-
-/** `size` made smaller to at most `side` pixels on its longer side; never
- *  larger. */
-export function sizeWithin(size: ImageSize, side: number): ImageSize {
-  const scale = Math.min(1, side / Math.max(size.width, size.height))
-  return { width: Math.max(1, Math.round(size.width * scale)), height: Math.max(1, Math.round(size.height * scale)) }
 }
 
 // The drawing of the JPEG copy of the part `region` of an image, on white,

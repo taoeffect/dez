@@ -82,12 +82,12 @@ export interface CompactedSectionsInput {
   sendImages: boolean
   /** The picture limits of one request to the model (`pictureLimits`). */
   limits: PictureBudget
-  /** The most images of one message to the model (`imageLimitOf`). */
+  /** The most images of one request to the model (`requestImageLimit`). */
   imageLimit: number
   /** How the model counts the tokens of an image. */
   rule: ImageTokenRule
-  /** The size of the file of each image of the sections that Dez can
-   *  read, by its path. An image with no entry goes as text. */
+  /** How many bytes a request sends for each image of the sections that
+   *  Dez can read, by its path. An image with no entry goes as text. */
   imageBytes: ReadonlyMap<string, number>
   /** A new section id. */
   newId: () => string

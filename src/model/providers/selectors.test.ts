@@ -1,4 +1,5 @@
 import sbp from '@sbp/sbp'
+import '@sbp/okturtles.eventqueue'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { DecodedAudio } from '../chat/audioCut'
@@ -13,6 +14,7 @@ import { base64ToBytes, bytesToBase64 } from '../../utils/base64'
 import { ExplainedError } from '../../utils/errorText'
 import type { NativeHttpDownload, NativeHttpRequest, NativeHttpResponse, NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
 import { NativeHttpError } from '../../utils/protocol/errors'
+import { chatImageCopies } from './chatImageCopies'
 import { failedChatRequestCost } from './chatUsage'
 import type { ClipAttachment, InputClipRules } from './clipInputs'
 import { InputImageError } from './errors'
@@ -262,6 +264,7 @@ sbp('sbp/selectors/register', {
 
 beforeEach(() => {
   setActivePinia(createPinia())
+  chatImageCopies.clear()
   httpRequests = []
   httpAnswers = new Map()
   streamRequests = []
@@ -824,11 +827,96 @@ describe('images in chat streams', () => {
 
     await streamImage(`${APP_DIR}/assets/generated/images/logo.svg`)
 
-    expect(drawings).toStrictEqual([[{ crop: { x: 0, y: 0, width: 300, height: 150 }, width: 300, height: 150 }, 'image/png']])
+    expect(drawings).toStrictEqual([[{ crop: { x: 0, y: 0, width: 300, height: 150 }, width: 300, height: 150, mediaType: 'image/png' }, 'image/png']])
     expect(JSON.parse(streamRequests[0].body as string).messages[0].content[1]).toStrictEqual({
       type: 'image_url',
       image_url: { url: dataUrl('image/png', DRAWN_IMAGE) },
     })
+  })
+
+  // The fixed size of a chat image: the bytes of a request stay small, and
+  // a provider resizes no image by a rule that Dez does not know.
+  it('sends an image with a side over 1,568 px as a JPEG copy on white within that side', async () => {
+    storedImageSize = { width: 3136, height: 1568 }
+
+    await streamImage(`${APP_DIR}/assets/images/red.png`)
+
+    expect(drawings).toStrictEqual([[
+      { crop: { x: 0, y: 0, width: 3136, height: 1568 }, width: 1568, height: 784, background: '#ffffff', mediaType: 'image/jpeg' },
+      'image/png',
+    ]])
+    expect(JSON.parse(streamRequests[0].body as string).messages[0].content[1]).toStrictEqual({
+      type: 'image_url',
+      image_url: { url: dataUrl('image/jpeg', DRAWN_IMAGE) },
+    })
+  })
+
+  // The copy is kept by the bytes of the file, so a later request sends
+  // the same bytes with no new draw.
+  it('draws the copy of a file one time, also when another path holds the same bytes, and reads the file for each request', async () => {
+    storedImageSize = { width: 3000, height: 2000 }
+    const paths = [`${APP_DIR}/assets/images/red.png`, `${APP_DIR}/assets/images/red.png`, `${APP_DIR}/assets/generated/images/red.png`]
+
+    for (const path of paths) await streamImage(path)
+
+    expect(imageReads).toStrictEqual(['assets/images/red.png', 'assets/images/red.png', 'assets/generated/images/red.png'])
+    expect(drawings).toHaveLength(1)
+    expect(streamRequests.map((request) => JSON.parse(request.body as string).messages[0].content[1].image_url.url)).toStrictEqual(paths.map(() => dataUrl('image/jpeg', DRAWN_IMAGE)))
+  })
+
+  it('decodes a file that goes as it is one time', async () => {
+    await streamImage(`${APP_DIR}/assets/images/red.png`)
+    await streamImage(`${APP_DIR}/assets/images/red.png`)
+
+    expect(drawings).toStrictEqual([[null, 'image/png']])
+    expect(streamRequests).toHaveLength(2)
+  })
+
+  it('draws the two references of one image in a message one time', async () => {
+    storedImageSize = { width: 3000, height: 2000 }
+    const path = `${APP_DIR}/assets/images/red.png`
+
+    await sbp('dez.provider/streamChat', {
+      providerId: 'local',
+      modelId: 'm',
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'This' }, { type: 'image', path }, { type: 'text', text: 'and this' }, { type: 'image', path }] }],
+      onToken: () => {},
+    })
+
+    expect(drawings).toHaveLength(1)
+    const parts = JSON.parse(streamRequests[0].body as string).messages[0].content
+    expect([parts[1], parts[3]]).toStrictEqual(Array(2).fill({ type: 'image_url', image_url: { url: dataUrl('image/jpeg', DRAWN_IMAGE) } }))
+  })
+
+  it('draws a new copy when the file at a path holds other bytes', async () => {
+    storedImageSize = { width: 3000, height: 2000 }
+    const path = '/home/u/Pictures/plan.png'
+    linkedImages = { [path]: new File([STORED_IMAGE], 'plan.png', { type: 'image/png' }) }
+    await streamImage(path)
+
+    linkedImages = { [path]: new File([Uint8Array.from([137, 80, 78, 71, 1])], 'plan.png', { type: 'image/png' }) }
+    await streamImage(path)
+
+    expect(drawings).toHaveLength(2)
+  })
+
+  // The provider's answer then tells the user what is wrong with the file.
+  it('sends an image that the webview cannot decode as its file, and keeps nothing of it', async () => {
+    const path = `${APP_DIR}/assets/images/red.png`
+    storedImageSize = null
+    await streamImage(path)
+
+    expect(JSON.parse(streamRequests[0].body as string).messages[0].content[1]).toStrictEqual({
+      type: 'image_url',
+      image_url: { url: dataUrl('image/png', STORED_IMAGE) },
+    })
+    expect(consoleError).toHaveBeenCalledWith('Failed to decode an image of a chat request, which goes as it is:', new Error('unknown image format'))
+
+    // The next request decodes the file again.
+    storedImageSize = { width: 3000, height: 2000 }
+    await streamImage(path)
+
+    expect(JSON.parse(streamRequests[1].body as string).messages[0].content[1].image_url.url).toBe(dataUrl('image/jpeg', DRAWN_IMAGE))
   })
 
   // WebKit draws no copy of an SVG with HTML in it, and the SVG itself
@@ -842,7 +930,9 @@ describe('images in chat streams', () => {
     expect(consoleError).toHaveBeenCalledWith(`Failed to draw a PNG copy of the SVG image ${APP_DIR}/assets/generated/images/logo.svg:`, new Error('unknown image format'))
   })
 
-  it('sends the image of the newest user message only, and an earlier turn as the same bytes in every request after that', async () => {
+  // The prompt cache needs the same bytes of a message in every later
+  // request.
+  it('sends the image of a user message in every later request as the same bytes, and an image one time in a request', async () => {
     const model = { providerId: 'local', modelId: 'm' }
     const path = `${APP_DIR}/assets/images/red.png`
     const turn1: Section[] = [{ id: 'u1', role: 'user', content: [{ kind: 'text', text: `Which color? ![${path}](id=a)` }] }]
@@ -865,20 +955,52 @@ describe('images in chat streams', () => {
 
     expect(first).toEqual([{ role: 'user', content: [{ type: 'text', text: 'Which color? ![image](id=a)' }, imagePart] }])
     expect(second).toEqual([
-      { role: 'user', content: 'Which color? ![image](id=a)' },
+      ...first,
       { role: 'assistant', content: 'Red, as here: ![image](id=b)' },
-      { role: 'user', content: [{ type: 'text', text: '![image](id=c)' }, imagePart, { type: 'text', text: ' And this one?' }] },
-    ])
-    expect(third.slice(2)).toEqual([
       { role: 'user', content: '![image](id=c) And this one?' },
-      { role: 'assistant', content: 'Red too.' },
-      { role: 'user', content: 'Sure?' },
     ])
-    // OpenAI-format providers reuse their prompt cache only for a prefix of
-    // the same text: a turn changes once, when it loses its image parts.
-    expect(JSON.stringify(third.slice(0, 2))).toBe(JSON.stringify(second.slice(0, 2)))
-    // The third request reads no image file.
-    expect(imageReads).toEqual(['assets/images/red.png', 'assets/images/red.png'])
+    expect(third).toEqual([...second, { role: 'assistant', content: 'Red too.' }, { role: 'user', content: 'Sure?' }])
+    // Providers reuse their prompt cache only for a prefix of the same
+    // bytes.
+    expect(JSON.stringify(third.slice(0, 3))).toBe(JSON.stringify(second))
+    // Each request reads the file, and only the first one decodes it.
+    expect(imageReads).toEqual(['assets/images/red.png', 'assets/images/red.png', 'assets/images/red.png'])
+    expect(drawings).toHaveLength(1)
+  })
+})
+
+describe('dez.provider/chatImageSizes', () => {
+  const RED = `${APP_DIR}/assets/images/red.png`
+  const LOGO = `${APP_DIR}/assets/generated/images/logo.svg`
+  const sizes = async (paths: string[]) => Object.fromEntries(await sbp('dez.provider/chatImageSizes', paths) as Map<string, number>)
+
+  it('gives the byte count that a chat request sends for each image: of its file, or of its copy', async () => {
+    expect(await sizes([RED, LOGO, RED])).toStrictEqual({ [RED]: STORED_IMAGE.length, [LOGO]: DRAWN_IMAGE.length })
+    expect(imageReads.sort()).toStrictEqual(['assets/generated/images/logo.svg', 'assets/images/red.png'])
+  })
+
+  it('reads no file for an image that a request sent', async () => {
+    storedImageSize = { width: 3000, height: 2000 }
+    await sbp('dez.provider/streamChat', {
+      providerId: 'local',
+      modelId: 'm',
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'Which color?' }, { type: 'image', path: RED }] }],
+      onToken: () => {},
+    })
+    imageReads = []
+
+    expect(await sizes([RED])).toStrictEqual({ [RED]: DRAWN_IMAGE.length })
+    expect(imageReads).toStrictEqual([])
+  })
+
+  it('gives no entry for an image that Dez cannot read or cannot draw, and still gives the other ones', async () => {
+    const gone = `${APP_DIR}/assets/images/gone.png`
+    expect(await sizes([gone, RED])).toStrictEqual({ [RED]: STORED_IMAGE.length })
+
+    storedImageSize = null
+    expect(await sizes([LOGO])).toStrictEqual({})
+    expect(consoleError).toHaveBeenCalledWith(`Failed to read the image ${gone}:`, expect.stringContaining('No such file'))
+    expect(consoleError).toHaveBeenCalledWith(`Failed to draw a PNG copy of the SVG image ${LOGO}:`, new Error('unknown image format'))
   })
 })
 

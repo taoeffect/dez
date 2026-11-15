@@ -33,8 +33,8 @@ import type { ClipInputRules, MediaKind, ModelInfo } from '../providers/types'
  *  takes. */
 export interface MediaRequestSource {
   /** The text, with an image part right after the text that names the
-   *  image (the shape of the newest user message of a chat request). An
-   *  image has one part, at its first place. */
+   *  image (the shape of a user message of a chat request). An image has
+   *  one part, at its first place. */
   parts: MessagePart[]
   /** The clips, in text order and each one once. */
   clips: ClipAttachment[]

@@ -7,7 +7,7 @@ import type { NewPicture, ShownPicture } from '../model/chat/shownPictures'
 import type { ModelRef, Section } from '../model/chat/types'
 import { failedChatRequestCost, type ChatUsage } from '../model/providers/chatUsage'
 import type { ClipAttachment } from '../model/providers/clipInputs'
-import { imageLimitOf, modelFamily } from '../model/providers/modelFamilies'
+import { modelFamily } from '../model/providers/modelFamilies'
 import type { ProviderStreamChatResult } from '../model/providers/streamTypes'
 import type { GeneratedClip, ModelInfo } from '../model/providers/types'
 import { compactedSections, type CompactedSections } from '../model/streams/compactedSections'
@@ -24,7 +24,7 @@ import {
 } from '../model/streams/compactionAssets'
 import { answerHasNotes, compactionInstruction, readCompactionAnswer } from '../model/streams/compactionRequest'
 import { conversationAssets, type FoundAsset } from '../model/streams/mediaRequest'
-import { pictureLimits, requestImageCount } from '../model/streams/pictureBudget'
+import { pictureLimits, requestImageCount, requestImageLimit } from '../model/streams/pictureBudget'
 import type { StreamMessage } from '../model/streams/types'
 import { probedClipFacts, type ProbedClip } from '../model/tools/assetFacts'
 import { ASSET_INFO_TOOL } from '../model/tools/assetInfo'
@@ -37,7 +37,7 @@ import { probeClip, readImageFacts } from './assetInfo'
 import { viewClip } from './assetView'
 import { logRequest } from './diagnostics/requestLog'
 import { discardMadeAssets, generatedClipAsset } from './jobs'
-import { inWorkFolder, readableFileSize } from './programRuns'
+import { inWorkFolder } from './programRuns'
 import { discardShownPictures, saveShownPictures } from './shownPictures'
 
 // The compaction of a conversation (model/chat/compaction.ts): one request
@@ -133,9 +133,10 @@ async function clipProbe(clip: ClipAttachment, folder: string, signal: AbortSign
 // - `facts`: the facts text of each asset that has no line in the notes of
 //   the compaction before (`carriedAssetLines`), by its id. The line of an
 //   earlier asset tells its facts.
-// - `imageBytes`: the size of the file of each image of those sections that
-//   a request can send, by its path. An image that Dez cannot read, or that
-//   the webview cannot decode, has no entry.
+// - `imageBytes`: how many bytes a request sends for each image of those
+//   sections that a request can send (the file, or its smaller copy;
+//   `dez.provider/chatImageSizes`), by its path. An image that Dez cannot
+//   read, or that the webview cannot decode, has no entry.
 async function readAssetFiles(
   sections: readonly Section[],
   end: number,
@@ -144,7 +145,8 @@ async function readAssetFiles(
 ): Promise<{ facts: Map<string, string>, imageBytes: Map<string, number> }> {
   const carried = carriedAssetLines(sections)
   const facts = new Map<string, string>()
-  const imageBytes = new Map<string, number>()
+  // The images that a request can send, as far as the reads tell.
+  const sendable = new Set<string>()
   const notRead = new Set<string>()
   for (const asset of found) {
     if (asset.kind !== 'image' || carried.has(asset.id)) continue
@@ -152,18 +154,16 @@ async function readAssetFiles(
     const { path } = asset.reference
     const read = await readImageFacts(asset.id, path)
     facts.set(asset.id, read.facts)
-    if (read.kind === 'read') imageBytes.set(path, read.file.size)
+    if (read.kind === 'read') sendable.add(path)
     else if (read.kind === 'notRead') notRead.add(path)
   }
   // The other images: the earlier ones, the ones with no id, and a second
   // reference of an id.
-  const paths = new Set(sections.slice(0, end).flatMap((section) => findImageReferences(sectionPlainText(section), section.role).map(({ path }) => path)))
-  for (const path of paths) {
-    if (imageBytes.has(path) || notRead.has(path)) continue
-    signal.throwIfAborted()
-    const size = await readableFileSize(path)
-    if (size !== null) imageBytes.set(path, size)
+  for (const section of sections.slice(0, end)) {
+    for (const { path } of findImageReferences(sectionPlainText(section), section.role)) if (!notRead.has(path)) sendable.add(path)
   }
+  signal.throwIfAborted()
+  const imageBytes = await sbp('dez.provider/chatImageSizes', [...sendable]) as Map<string, number>
 
   const clips = found.flatMap((asset) => (asset.kind === 'clip' && !carried.has(asset.id) ? [asset.clip] : []))
   if (clips.length > 0) {
@@ -308,11 +308,11 @@ export async function compactConversation(input: CompactionInput): Promise<Compa
   const cached = sbp('dez.model/modelCache/model', reader.providerId, reader.modelId) as ModelInfo | null
   const sendImages = cached?.imageInput !== false
   const limits = pictureLimits(cached ?? { id: reader.modelId })
-  const imageLimit = imageLimitOf(cached ?? { id: reader.modelId })
+  const imageLimit = requestImageLimit(cached ?? { id: reader.modelId })
   let clipPictures = new Map<string, ShownPicture>()
   try {
     // The `show` assets get at most half of the pictures of a request.
-    if (sendImages) clipPictures = await saveClipPictures(choices, Math.floor(Math.min(limits.pictures, imageLimit) / 2), signal)
+    if (sendImages) clipPictures = await saveClipPictures(choices, Math.floor(imageLimit / 2), signal)
     // A stop while the copies were saved: the save takes no signal.
     signal.throwIfAborted()
     const compacted = compactedSections({
