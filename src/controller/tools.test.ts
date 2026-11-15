@@ -2316,8 +2316,8 @@ describe('dez.controller/tools/run', () => {
       const result = await assetView({ assets: 'a b d' })
 
       expect(shown.map(labelId)).toStrictEqual(['@b'])
-      expect(result.content).toContain(pictureCostNote({ tokens: 648, bytes: 4, pictures: 1 }, budget))
-      expect(result.content).toContain(pictureCostNote({ tokens: 232, bytes: 80, pictures: 1 }, { tokens: 45, bytes: budget.bytes - 80, pictures: 19 }))
+      expect(result.content).toContain(pictureCostNote('image', { tokens: 648, bytes: 4, pictures: 1 }, budget))
+      expect(result.content).toContain(pictureCostNote('audio', { tokens: 232, bytes: 80, pictures: 1 }, { tokens: 45, bytes: budget.bytes - 80, pictures: 19 }))
       expect(result.content).toMatch(/^Frame sheet of /m)
       expect(result.content).not.toContain('Wave picture of')
       expect(result.content).toMatch(/-23\.1 LUFS integrated/)
@@ -2672,7 +2672,9 @@ describe('dez.controller/tools/run', () => {
         const grid = await assetView({ assets: '@a @b', layout: 'grid', frames: 3, end: 2.5, sound_picture: 'wave' })
 
         expect(shown).toStrictEqual([])
-        expect(alone.content).toContain(pictureCostNote({ tokens: 455, bytes: 80, pictures: 1 }, budget))
+        expect(alone.content).toContain(pictureCostNote('video', { tokens: 455, bytes: 80, pictures: 1 }, budget))
+        // `crop` of a clip is refused, so no note tells a model to give one.
+        expect(alone.content).not.toContain('`crop`')
         expect(grid.content).toContain(gridCostNote(['a', 'b'], { tokens: 700, bytes: 80, pictures: 1 }, budget))
         for (const { content } of [alone, grid]) {
           expect(content).not.toContain(soundStripFailedNote('wave'))

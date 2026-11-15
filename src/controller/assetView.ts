@@ -569,7 +569,7 @@ export async function assetViewResult(
   const keepIfFits = (item: AssetViewItem): void => {
     const over = item.picture && charge(item.picture)
     if (!over) return
-    item.notes.push(pictureCostNote(over.cost, over.left))
+    item.notes.push(pictureCostNote(item.kind, over.cost, over.left))
     item.picture = null
   }
   // The assets of a grid share one choice, made before the pictures of the

@@ -745,11 +745,20 @@ export function noPictureNote(choice: PictureChoice): string | null {
   return choice === 'overLimit' ? PICTURE_LIMIT_NOTE : choice === 'roundFull' ? PICTURE_ROUND_FULL_NOTE : null
 }
 
-/** The note of an asset whose picture costs `cost`, more than the budget
- *  `left` of the conversation. */
-export function pictureCostNote(cost: PictureBudget, left: PictureBudget): string {
-  return `No picture: it costs ${tokensAndBytesText(cost)}, and only ${budgetLeftText(left)} are left of the picture budget. `
-    + `A smaller view costs less (\`detail\` "review", \`crop\`, or \`layout\` "grid"). ${BUDGET_ADVICE}`
+// How a model gets a smaller picture of an asset, by its kind. `detail`
+// does not change the picture of an audio clip, and `crop` of a clip is
+// refused (`cropOfClipText`).
+const SMALLER_VIEW_ADVICE: Readonly<Record<AssetViewItem['kind'], string>> = {
+  image: ' A smaller view costs less (`detail` "review", `crop`, or `layout` "grid").',
+  video: ' A smaller view costs less (`detail` "review", fewer `frames`, or `layout` "grid").',
+  audio: '',
+}
+
+/** The note of an asset of the kind `kind` whose picture costs `cost`,
+ *  more than the budget `left` of the conversation. */
+export function pictureCostNote(kind: AssetViewItem['kind'], cost: PictureBudget, left: PictureBudget): string {
+  return `No picture: it costs ${tokensAndBytesText(cost)}, and only ${budgetLeftText(left)} are left of the picture budget.`
+    + `${SMALLER_VIEW_ADVICE[kind]} ${BUDGET_ADVICE}`
 }
 
 /** The ids `ids` as a text writes them: "@a, @b, and @c". */
