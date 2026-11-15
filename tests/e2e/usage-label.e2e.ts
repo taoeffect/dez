@@ -4,7 +4,7 @@ import { Key } from 'webdriverio'
 import type { ActiveModel } from '../../src/model/chat/types'
 import { consoleErrors, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
-import { LARGE_TOKENS, openAiToolCall, replyText, sendChatReply, sendChatText, sendToolCalls, toolResult, type MockProvider } from './harness/mockServer'
+import { LARGE_TOKENS, openAiToolCall, replyText, sendChatReply, sendChatText, sendToolCalls, toolResult, type MockProvider, type MockUsage } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
 import { activeTabId, docPos, endedReply, focusEditor, newTab, sbpCall, setCaret, submit, waitForThread } from './harness/thread'
 
@@ -140,11 +140,11 @@ describe('usage label', () => {
     return shown
   }
 
-  // Asks `question` in the active tab and answers it with `sendChatReply`;
-  // with `usd`, the provider gives that price.
-  async function askAndAnswer (question: string, name: string, usd?: number): Promise<void> {
+  // Asks `question` in the active tab and answers it with `sendChatReply`,
+  // with the usage chunk of `usage`.
+  async function askAndAnswer (question: string, name: string, usage: MockUsage = {}): Promise<void> {
     await submit(browser, question)
-    await sendChatReply((await setup.mock.waitForRequest(browser)).reply, name, { usd })
+    await sendChatReply((await setup.mock.waitForRequest(browser)).reply, name, usage)
   }
 
   beforeAll(async () => {
@@ -192,7 +192,7 @@ describe('usage label', () => {
   })
 
   it('marks the sum once the user changed the text of a reply', async () => {
-    await askAndAnswer('Question', 'the model', 0.5)
+    await askAndAnswer('Question', 'the model', { usd: 0.5 })
     await waitForValue(browser, 'label after the reply', labelLook, { text: '$0.50', look: 'idle', italic: false })
 
     await focusEditor(browser)
@@ -209,7 +209,7 @@ describe('usage label', () => {
   })
 
   it('shows the cost of the active tab, busy only while a reply of that tab runs', async () => {
-    await askAndAnswer('Priced question', 'the priced tab', 0.12)
+    await askAndAnswer('Priced question', 'the priced tab', { usd: 0.12 })
     await waitForValue(browser, 'label of the priced tab', labelLook, { text: '$0.12', look: 'idle', italic: false })
     const pricedTab = await activeTabId(browser)
 
@@ -260,8 +260,7 @@ describe('usage label', () => {
   it('shows the buffer, then the whole conversation in parentheses, after a compaction, and conversation_info tells a model the same numbers', async () => {
     // The first request is near the context window of the model, so the
     // next request of the conversation is due for a compaction.
-    await submit(browser, 'Question')
-    await sendChatReply((await setup.mock.waitForRequest(browser)).reply, 'the model', { promptTokens: LARGE_TOKENS, usd: 0.5 })
+    await askAndAnswer('Question', 'the model', { promptTokens: LARGE_TOKENS, usd: 0.5 })
     await endedReply(browser)
     await waitForValue(browser, 'label before the compaction', usageTexts, ['140k', DOT, '$0.50'])
     expect(await tooltipStarts()).toEqual({
@@ -312,8 +311,7 @@ describe('usage label', () => {
     await setCaret(browser, await docPos(browser, replyText('the reader of the notes'), replyText('the reader of the notes').length))
     await typeKeys(browser, ' Edited')
     await waitForValue(browser, 'label after the edit', labelLook, { text: '$0.07 ($0.87) (?)', look: 'idle', italic: true })
-    await submit(browser, 'Next question')
-    await sendChatReply((await setup.mock.waitForRequest(browser)).reply, 'the next', { promptTokens: 5 })
+    await askAndAnswer('Next question', 'the next', { promptTokens: 5 })
     await endedReply(browser, 5)
     const withMarks = ['9 (141k)', DOT, '$0.07+ ($0.87+) (?)']
     await waitForValue(browser, 'label after a reply with no price', usageTexts, withMarks)
@@ -323,7 +321,7 @@ describe('usage label', () => {
   })
 
   it('gives way to Submit in a bar with too little room: first the cost goes, then the token count', async () => {
-    await askAndAnswer('Question', 'the model', 0.5)
+    await askAndAnswer('Question', 'the model', { usd: 0.5 })
     await waitForValue(browser, 'label in a bar with room', usageTexts, ['9', DOT, '$0.50'])
     expect(await textsWhileRoomGoes()).toEqual([['9', DOT, '$0.50'], ['9'], []])
   })

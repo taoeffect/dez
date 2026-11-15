@@ -371,25 +371,29 @@ describe('context size of a tab', () => {
 
   it('counts the system prompt and the tools only of a request that sends them', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
-    const tab = tabOf(gpt, letters(100))
-    const tokens = () => size(tab.id)?.tokens
+    try {
+      const tab = tabOf(gpt, letters(100))
+      const tokens = () => size(tab.id)?.tokens
 
-    sbp('dez.model/settings/setSystemPrompt', letters(40))
-    expect(tokens()).toBe(35)
-    // No request goes with a template that has a problem.
-    sbp('dez.model/settings/setSystemPrompt', 'Hi {{nope}}')
-    expect(tokens()).toBe(25)
-    expect(consoleError).not.toHaveBeenCalled()
-    // A media model gets no system prompt and no tools.
-    sbp('dez.model/settings/setSystemPrompt', letters(40))
-    sbp('dez.model/settings/resetProviderSettings', 'local', ['tools'])
-    sbp('dez.model/modelCache/applyProviderResult', 'local', { ok: true, models: [{ id: gpt.modelId, name: 'G', provider: 'local', request: 'video' }] })
-    expect(tokens()).toBe(25)
+      sbp('dez.model/settings/setSystemPrompt', letters(40))
+      expect(tokens()).toBe(35)
+      // No request goes with a template that has a problem.
+      sbp('dez.model/settings/setSystemPrompt', 'Hi {{nope}}')
+      expect(tokens()).toBe(25)
+      expect(consoleError).not.toHaveBeenCalled()
+      // A media model gets no system prompt and no tools.
+      sbp('dez.model/settings/setSystemPrompt', letters(40))
+      sbp('dez.model/settings/resetProviderSettings', 'local', ['tools'])
+      sbp('dez.model/modelCache/applyProviderResult', 'local', { ok: true, models: [{ id: gpt.modelId, name: 'G', provider: 'local', request: 'video' }] })
+      expect(tokens()).toBe(25)
 
-    sbp('dez.model/modelCache/applyProviderResult', 'local', { ok: true, models: [{ id: gpt.modelId, name: 'G', provider: 'local' }] })
-    const withTools = estimatedRequestTokens({ system: letters(40), tools: TOOL_DEFINITIONS, messages: [{ role: 'user', content: letters(100) }] }, modelFamily(gpt.modelId))
-    expect(tokens()).toBe(withTools)
-    expect(withTools).toBeGreaterThan(35)
+      sbp('dez.model/modelCache/applyProviderResult', 'local', { ok: true, models: [{ id: gpt.modelId, name: 'G', provider: 'local' }] })
+      const withTools = estimatedRequestTokens({ system: letters(40), tools: TOOL_DEFINITIONS, messages: [{ role: 'user', content: letters(100) }] }, modelFamily(gpt.modelId))
+      expect(tokens()).toBe(withTools)
+      expect(withTools).toBeGreaterThan(35)
+    } finally {
+      consoleError.mockRestore()
+    }
   })
 
   it('keeps the count of a request in its own tab, as a whole number, and nothing for a missing tab', () => {

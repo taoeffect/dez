@@ -18,8 +18,8 @@ export const HIDDEN_IMAGE_PATH = '/home/u/.config/dez/assets/generated/images/on
 export const HIDDEN_CLIP_PATH = '/home/u/.config/dez/assets/generated/audio/one.wav'
 
 /** The tag of a compaction section after one compaction, whose newest id
- *  is `e`. */
-export const COMPACTION_TAG = compactionTagText({ count: 1, lastId: 'e', pictures: [] })
+ *  is `b`: an asset that came after it has an id from `c` on. */
+export const COMPACTION_TAG = compactionTagText({ count: 1, lastId: 'b', pictures: [] })
 
 /** The origin of the line of a made image in the notes of a compaction. */
 export const FOX_ORIGIN = 'made by the model_invoke job 2 of its reply: "A red fox"'

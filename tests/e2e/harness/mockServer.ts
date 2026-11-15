@@ -1,5 +1,7 @@
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { compactionThreshold } from '../../../src/model/chat/contextSize'
+import { DEFAULT_FAMILY } from '../../../src/model/providers/modelFamilies'
 import { waitForValue } from './dom'
 import type { E2EBrowser } from './session'
 
@@ -235,7 +237,7 @@ export interface MockUsage {
  *  context window, and its id is of no model family, so Dez takes the
  *  window of an unknown model for it, and this count is over the
  *  compaction threshold of that window. */
-export const LARGE_TOKENS = 140_000
+export const LARGE_TOKENS = compactionThreshold(DEFAULT_FAMILY.contextWindow) + 10_000
 
 function writeUsage (res: http.ServerResponse, { promptTokens, usd }: MockUsage): void {
   if (promptTokens === undefined && usd === undefined) return

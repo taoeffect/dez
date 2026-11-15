@@ -19,7 +19,7 @@ import { PRICE_LIFETIME_MS } from '../model/providers/modelPrices'
 import type { ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderMediaQuote, ProviderMediaQuoteInput, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers/streamTypes'
 import { providerInfo } from '../model/providers/testing'
 import type { ModelInfo, ProviderInfo, ProviderInputImageRules, ProviderSettingsDescriptor } from '../model/providers/types'
-import { NO_CALL_PICTURE_BUDGET, type CallPictureBudget, type PictureBudget } from '../model/streams/pictureBudget'
+import { MAX_REQUEST_IMAGE_BYTES, NO_CALL_PICTURE_BUDGET, type CallPictureBudget, type PictureBudget } from '../model/streams/pictureBudget'
 import { assetProbeArgs, clipNotReadFacts } from '../model/tools/assetFacts'
 import { ASSET_INFO_COLUMNS } from '../model/tools/assetInfo'
 import { clipChecksArgs, SCENE_CUT_FILTER } from '../model/tools/clipAnalysis'
@@ -1738,7 +1738,6 @@ describe('dez.controller/tools/run', () => {
     const VOICE = `${APP_DIR}/assets/audio/voice.wav`
     // What ffprobe writes for each clip: a video clip with sound.
     const PROBED = probeOutput([H264_STREAM, { codec_name: 'aac', codec_type: 'audio', sample_rate: '48000', channels: 2 }], CLIP_FORMAT)
-    const COLUMNS = ASSET_INFO_COLUMNS
     let tabId: string
 
     function assetInfo(assets: string, checks?: string): Promise<ToolRunResult> {
@@ -1779,7 +1778,7 @@ describe('dez.controller/tools/run', () => {
     it('gives the facts, the place, and the origin of each asset, with one ffprobe run for each clip in one work folder', async () => {
       expect(await assetInfo('@a, @b @c d')).toStrictEqual({
         content: [
-          COLUMNS,
+          ASSET_INFO_COLUMNS,
           '@a | image | PNG | 1000x500 | 2 KB | shown | from the user',
           '@b | video | MP4 | 5.04 s | 854x480 | 24 fps | h264 | sound (aac) | 1.2 MB | hidden | made by the model_invoke job 1 of its reply: "Scene 1: a fox"',
           '@c | audio | gone: the user deleted its file, and it has no web address | shown | made by the model venice/venice-glm-5',
@@ -1814,24 +1813,24 @@ describe('dez.controller/tools/run', () => {
       }
 
       expect((await assetInfo('a b')).content).toBe([
-        COLUMNS,
+        ASSET_INFO_COLUMNS,
         '@a | image | Dez could not read its file | shown | from the user',
         '@b | video | ffprobe could not read its file | hidden | made by the model_invoke job 1 of its reply: "Scene 1: a fox"',
       ].join('\n'))
 
       readImage = async () => new Blob([new Uint8Array(2048)])
       redrawError = new Error('The image cannot be decoded.')
-      expect((await assetInfo('a')).content).toBe(`${COLUMNS}\n@a | image | PNG | 2 KB | Dez could not read its picture | shown | from the user`)
+      expect((await assetInfo('a')).content).toBe(`${ASSET_INFO_COLUMNS}\n@a | image | PNG | 2 KB | Dez could not read its picture | shown | from the user`)
     })
 
     it('gives the format of the bytes, as asset_view does, for a file whose extension does not match them', async () => {
       readImage = async () => new Blob([new Uint8Array(2048)], { type: 'image/jpeg' })
 
-      expect((await assetInfo('a')).content).toBe(`${COLUMNS}\n@a | image | JPEG | 1000x500 | 2 KB | shown | from the user`)
+      expect((await assetInfo('a')).content).toBe(`${ASSET_INFO_COLUMNS}\n@a | image | JPEG | 1000x500 | 2 KB | shown | from the user`)
     })
 
     describe('with checks', () => {
-      const CHECKED_COLUMNS = `${COLUMNS} Under the line of a clip: a line for each check, with times in seconds of the clip.`
+      const CHECKED_COLUMNS = `${ASSET_INFO_COLUMNS} Under the line of a clip: a line for each check, with times in seconds of the clip.`
       const SCENE_LINE = '@b | video | MP4 | 5.04 s | 854x480 | 24 fps | h264 | sound (aac) | 1.2 MB | hidden | made by the model_invoke job 1 of its reply: "Scene 1: a fox"'
       const VOICE_LINE = '@d | audio | WAV | 5.04 s | aac | 48000 Hz | 2 channels | 1.2 MB | shown | from the user'
       // What the check runs log for each clip copy, and how they end.
@@ -1946,7 +1945,7 @@ describe('dez.controller/tools/run', () => {
     // and `tokens` left, in a round that takes as many pictures. The
     // pictures of these tests have too few bytes to change the text of the
     // bytes.
-    const budgetLine = (pictures: number, tokens: number) => pictureBudgetLeftText({ left: { pictures, tokens, bytes: 20 * 1024 ** 2 }, roundPictures: pictures })
+    const budgetLine = (pictures: number, tokens: number) => pictureBudgetLeftText({ left: { pictures, tokens, bytes: MAX_REQUEST_IMAGE_BYTES }, roundPictures: pictures })
     // The last line of a view that showed no picture.
     const FULL_BUDGET_LINE = budgetLine(20, 57_408)
     let tabId: string
@@ -2006,7 +2005,7 @@ describe('dez.controller/tools/run', () => {
       // The budget of a conversation with no image in its context, by the
       // numbers of an older Dez: the token numbers of the tests are easy
       // to check against it.
-      budget = { tokens: 57_408, bytes: 20 * 1024 ** 2, pictures: 20 }
+      budget = { tokens: 57_408, bytes: MAX_REQUEST_IMAGE_BYTES, pictures: 20 }
       roundPictures = 20
       shown = []
       probes = { 'b.mp4': probed([H264_STREAM, AUDIO_STREAM]), 'd.wav': probed([AUDIO_STREAM]) }

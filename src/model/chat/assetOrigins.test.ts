@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { conversationAssets } from '../streams/mediaRequest'
 import { jobsWaitText, madeAssetText, type JobInfo } from '../tools/jobs'
 import { assetPlaces, type AssetPlace } from './assetOrigins'
-import { CARRIED_USER_ASSETS_LABEL } from './compaction'
+import { CARRIED_USER_ASSETS_LABEL, compactionTagText } from './compaction'
 import { compactionNotesText, type NotesAsset } from './compactionNotes'
 import { findImageReferences, IMAGE_MADE_BY_KEY, IMAGE_TOOL_KEY, imageMarkdown, imageReferenceText } from './images'
 import { MEDIA_MADE_BY_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE, mediaTagText } from './mediaTags'
@@ -167,8 +167,10 @@ describe('assetPlaces in a compacted conversation', () => {
 
   it('shows a marked asset of a kept message of the user, and every marked asset of a conversation with no compaction', () => {
     const marked = (id: string) => kept(imageMarkdown(PASTED, [{ key: 'id', value: id }]))
+    // The compaction kept the marked assets of the user, so its newest id
+    // is `d`.
     const compacted = [
-      compaction([]),
+      section('agent', `${compactionTagText({ count: 1, lastId: 'd', pictures: [] })}\nNotes of the work.`, PAINTER),
       section('user', `Like this:\n${marked('a')}`),
       section('user', `${CARRIED_USER_ASSETS_LABEL}\n${marked('c')}`),
       section('user', `And this:\n${marked('d')}`),

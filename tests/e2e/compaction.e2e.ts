@@ -301,7 +301,7 @@ describe('a compacted conversation', () => {
   // compaction section (its tag keeps a picture, and its notes name a made
   // image), the kept user message with its image, and the empty message
   // of the user.
-  async function imageConversation (): Promise<{ sections: SectionData[], notes: string, kept: string }> {
+  async function imageConversation (): Promise<SectionData[]> {
     const { home } = setup.app
     const keptFile = await writeTestFile(appFilePath(home, 'assets', 'images', 'compaction-kept.png'), KEPT_PNG)
     const madeFile = await writeTestFile(appFilePath(home, 'assets', 'generated', 'images', 'compaction-made.png'), MADE_PNG)
@@ -309,7 +309,7 @@ describe('a compacted conversation', () => {
     const notes = `The user wants a film of a fox.\nThe fox: ![${madeFile}](id=b)\nIt is red.`
     const kept = `Make a film of ![${keptFile}](id=a)`
     const tag = compactionTagText({ count: 1, lastId: 'c', pictures: [SHEET] })
-    return { sections: [compactionSection(`${tag}\n${notes}`), textSection('user', kept), textSection('user', '')], notes, kept }
+    return [compactionSection(`${tag}\n${notes}`), textSection('user', kept), textSection('user', '')]
   }
 
   // The first message of each request of the image conversation after the
@@ -416,7 +416,7 @@ describe('a compacted conversation', () => {
   })
 
   it('shows an Agent pill first, in place of the tag line, and keeps the caret off that line', async () => {
-    const { sections } = await imageConversation()
+    const sections = await imageConversation()
     const thread = await openCompacted('compacted-look', sections)
     const notesStart = thread[0].text.indexOf('\n') + 1
 
@@ -453,11 +453,11 @@ describe('a compacted conversation', () => {
   })
 
   it('sends the notes, the pictures of the tag, and the kept user messages as one user message, the first of every request', async () => {
-    const { sections } = await imageConversation()
+    const sections = await imageConversation()
     const thread = await openCompacted(REQUESTS_ID, sections)
 
     await submit(browser, 'Go on.')
-    const first = await takeRequest(setup, mockChatPath(PROVIDER), openAiChatBody(PROVIDER, [compactionMessage('Go on.')]))
+    const first = await takeRequest(setup, CHAT_PATH, openAiChatBody(PROVIDER, [compactionMessage('Go on.')]))
     await sendChatReply(first.reply, 'the first')
     const answered = [...thread.slice(0, 2), { role: 'user', text: 'Go on.' }, { role: 'agent', text: replyText('the first') }, { role: 'user', text: '' }]
     await waitForThread(browser, answered)
@@ -465,7 +465,7 @@ describe('a compacted conversation', () => {
     // The compaction message keeps its image parts when a newer user
     // message comes: the prompt cache needs the same bytes.
     await submit(browser, 'And then?')
-    const second = await takeRequest(setup, mockChatPath(PROVIDER), openAiChatBody(PROVIDER, [
+    const second = await takeRequest(setup, CHAT_PATH, openAiChatBody(PROVIDER, [
       compactionMessage('Go on.'),
       { role: 'assistant', content: replyText('the first') },
       { role: 'user', content: 'And then?' },
@@ -585,7 +585,7 @@ describe('a compacted conversation', () => {
     const plain = await openCompacted('compacted-kept-requests', sections)
 
     await submit(browser, 'Go on.')
-    const first = await takeRequest(setup, mockChatPath(PROVIDER), openAiChatBody(PROVIDER, [keptCompactionMessage('Go on.')]))
+    const first = await takeRequest(setup, CHAT_PATH, openAiChatBody(PROVIDER, [keptCompactionMessage('Go on.')]))
     await sendChatReply(first.reply, 'the plain')
     await waitForThread(browser, [...plain.slice(0, 4), { role: 'user', text: 'Go on.' }, { role: 'agent', text: replyText('the plain') }, { role: 'user', text: '' }])
 
@@ -594,7 +594,7 @@ describe('a compacted conversation', () => {
     // user.
     const mentioned = await openCompacted('compacted-kept-mention', sections)
     await submit(browser, 'Show me @d and @a.')
-    const second = await takeRequest(setup, mockChatPath(PROVIDER), openAiChatBody(PROVIDER, [keptCompactionMessage(
+    const second = await takeRequest(setup, CHAT_PATH, openAiChatBody(PROVIDER, [keptCompactionMessage(
       'Show me @d',
       imagePart(KEPT_MADE_PNG),
       { type: 'text', text: ' and @a' },
@@ -854,7 +854,7 @@ describe('a compacted conversation', () => {
     expect(await firstSectionLook()).toStrictEqual(COMPACTED_LOOK)
 
     await submit(browser, 'And now?')
-    const request = await takeRequest(setup, mockChatPath(PROVIDER), openAiChatBody(PROVIDER, [
+    const request = await takeRequest(setup, CHAT_PATH, openAiChatBody(PROVIDER, [
       compactionMessage('Go on.'),
       { role: 'assistant', content: replyText('the first') },
       { role: 'user', content: 'And then?' },

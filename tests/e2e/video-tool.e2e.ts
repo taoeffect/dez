@@ -202,6 +202,9 @@ describe('video tool', () => {
   // as its file `file`: each request of the conversation sends it, so it
   // takes a part of the picture budget.
   const userImageBytes = (file: Buffer): number => file.toString('base64').length
+  // The bytes of the two images of the user in the conversation of
+  // `openShots`, `@c` and `@e`.
+  const shotsImageBytes = (): number => userImageBytes(shotSources.c) + userImageBytes(shotSources.e)
 
   // The picture message after the tool messages of the request `request`:
   // the text and the data URL of each part, and the bytes of base64 of all
@@ -675,7 +678,7 @@ describe('video tool', () => {
     const leftAfter = (pictures: number, tokens: number, sent: readonly string[]) => budgetLine(
       pictures,
       tokens,
-      MAX_REQUEST_IMAGE_BYTES - userImageBytes(shotSources.c) - userImageBytes(shotSources.e) - sent.reduce((sum, url) => sum + url.split(',')[1].length, 0),
+      MAX_REQUEST_IMAGE_BYTES - shotsImageBytes() - sent.reduce((sum, url) => sum + url.split(',')[1].length, 0),
     )
     const shotsLine = `@a | video | WebM | 4 s | 48x36 | 5 fps | vp9 | sound (opus) | ${byteSizeText(shotSources.a.length)}`
     expect(toolResult(viewed, 'call_scenes').split('\n')).toStrictEqual([
@@ -770,7 +773,7 @@ describe('video tool', () => {
       `Frame sheet of 0 s to 2 s: ${colorSheet}.`,
       `Grid picture of 1292x560 pixels, top to bottom: ${map}.`,
       PICTURES_SHOWN_NOTE,
-      budgetLine(17, 44_788, MAX_REQUEST_IMAGE_BYTES - userImageBytes(PICTURE_PNG) - userImageBytes(TALL_PNG) - bytes),
+      budgetLine(17, 44_788, MAX_REQUEST_IMAGE_BYTES - shotsImageBytes() - bytes),
     ])
     await sendChatReply(viewed.reply, CALLER.modelName)
     await endedReply(browser, CLIPS_REPLY_INDEX)
