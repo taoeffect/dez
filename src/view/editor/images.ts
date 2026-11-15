@@ -11,7 +11,7 @@ import { IMAGE_MAX_HEIGHT_PX, SECTION_SEP, editorSizePx, sectionsField } from '.
 import { measureLineHeights } from '../thread/editorMeasure'
 import { selectedAssetLook } from './assetSelection'
 import { syncDomSelection } from './focus'
-import { HiddenAssetWidget, hiddenAssetLines, hiddenAssets, type AssetPlace } from './hiddenAssets'
+import { HiddenAssetWidget, hiddenAssetLines, hiddenAssetOwnerKinds, type AssetPlace } from './hiddenAssets'
 import { sectionRolesChanged } from './lineBlocks'
 import { followShownRange, pendingRanges, type DocRange } from './pendingRanges'
 import { ROUND_STROKE, svgIcon } from './svgIcon'
@@ -338,7 +338,7 @@ function buildImageDecorations(state: EditorState): ImageDecorations {
   // A hidden image shows in the panel of its chip (hiddenAssets.ts). It
   // stays an image here, so that its source keeps every rule of an image's
   // source; only its widget is the one of a hidden asset.
-  const hidden = new Map(hiddenAssets(state).map((asset) => [asset.from, asset.owner.kind]))
+  const hidden = hiddenAssetOwnerKinds(state)
   const decorations = Decoration.set(images.map((image) => {
     const owner = hidden.get(image.from)
     return Decoration.replace({

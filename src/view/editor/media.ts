@@ -11,7 +11,7 @@ import { sectionsField, type SectionModel } from '../thread/cmEditor'
 import { measureLineHeights } from '../thread/editorMeasure'
 import { selectedAssetLook } from './assetSelection'
 import { focusKeepingScroll, syncDomSelection } from './focus'
-import { HiddenAssetWidget, hiddenAssets, type AssetPlace } from './hiddenAssets'
+import { HiddenAssetWidget, hiddenAssetOwnerKinds, type AssetPlace } from './hiddenAssets'
 import { linesRemovalRange } from './images'
 import { lineBlocks, sectionRolesChanged, sectionTexts } from './lineBlocks'
 import { followShownRange, pendingRanges } from './pendingRanges'
@@ -272,7 +272,7 @@ function buildMediaDecorations(state: EditorState): MediaDecorations {
   // A hidden clip plays in the panel of its chip (hiddenAssets.ts). It
   // stays a line block here; only its widget is the one of a hidden asset,
   // so that no second player of the clip is made.
-  const hidden = new Map(hiddenAssets(state).map((asset) => [asset.from, asset.owner.kind]))
+  const hidden = hiddenAssetOwnerKinds(state)
   const decorations = Decoration.set(media.map((tag) => {
     const owner = hidden.get(tag.from)
     return Decoration.replace({

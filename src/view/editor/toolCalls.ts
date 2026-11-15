@@ -300,7 +300,7 @@ function addSectionSpacing(spacing: ChipSpacing, text: string, offset: number, c
  *  `hidden` the hidden assets of that section. */
 function intermediateCall(call: ToolBlock, state: ToolCallState, chips: readonly ToolBlock[], hidden: readonly HiddenAsset[]): IntermediateCall | null {
   const jobId = startedJobId(call.result)
-  const assets = jobId === null ? [] : hidden.filter((asset) => asset.owner.kind === 'job' && asset.owner.jobId === jobId)
+  const assets = hidden.filter((asset) => ownedBy(asset, jobId === null ? null : { kind: 'job', jobId }))
   const asked = (state === 'running' || jobId !== null) && isIntermediateCall(call.name, call.arguments)
   if (assets.length === 0 && !asked) return null
   const result = jobId === null ? null : jobResultInBlocks(chips, jobId)

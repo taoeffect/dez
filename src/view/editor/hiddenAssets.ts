@@ -42,9 +42,11 @@ interface HiddenAssetsInDoc {
   /** For the asset at the same index of `assets`: the whole lines that go
    *  out of the doc with it (`hiddenLines`). */
   removals: readonly DocRange[]
+  /** The owner kind of each asset, by its doc offset. */
+  ownerKinds: ReadonlyMap<number, HiddenAssetOwner['kind']>
 }
 
-const NOTHING_HIDDEN: HiddenAssetsInDoc = { assets: [], lines: [], removals: [] }
+const NOTHING_HIDDEN: HiddenAssetsInDoc = { assets: [], lines: [], removals: [], ownerKinds: new Map() }
 
 // `edge`: no line of the same section (the doc start or end, the line of a
 // section separator, or the tag line of a compaction section, which shows
@@ -106,8 +108,9 @@ function hiddenLines(doc: Text, assets: readonly HiddenAsset[]): Pick<HiddenAsse
 }
 
 // The marks that can hide an asset. Image metadata and media attributes
-// have their own names.
-const HIDING_MARKS = [IMAGE_HIDDEN_KEY, MEDIA_HIDDEN_ATTRIBUTE, IMAGE_KEPT_KEY, MEDIA_KEPT_ATTRIBUTE]
+// have their own names, but today the same texts: the Set searches the doc
+// one time for each text.
+const HIDING_MARKS = [...new Set([IMAGE_HIDDEN_KEY, MEDIA_HIDDEN_ATTRIBUTE, IMAGE_KEPT_KEY, MEDIA_KEPT_ATTRIBUTE])]
 
 /** The hidden assets of a state: the assets that the chip of a call hides
  *  (`findHiddenAssets`), and the kept assets of a compaction
@@ -139,7 +142,8 @@ function findHiddenAssetsInDoc(state: EditorState): HiddenAssetsInDoc {
     }
   })
   assets.sort((a, b) => a.from - b.from)
-  return assets.length === 0 ? NOTHING_HIDDEN : { assets, ...hiddenLines(state.doc, assets) }
+  if (assets.length === 0) return NOTHING_HIDDEN
+  return { assets, ...hiddenLines(state.doc, assets), ownerKinds: new Map(assets.map((asset) => [asset.from, asset.owner.kind])) }
 }
 
 const hiddenAssetsField = StateField.define<HiddenAssetsInDoc>({
@@ -160,6 +164,12 @@ export function hiddenAssets(state: EditorState): readonly HiddenAsset[] {
  *  height, with the blank lines between chips. */
 export function hiddenLineStarts(state: EditorState): readonly number[] {
   return (state.field(hiddenAssetsField, false) ?? NOTHING_HIDDEN).lines
+}
+
+/** The owner kind of each hidden asset of `state`, by its doc offset.
+ *  images.ts and media.ts draw a `HiddenAssetWidget` with it. */
+export function hiddenAssetOwnerKinds(state: EditorState): ReadonlyMap<number, HiddenAssetOwner['kind']> {
+  return (state.field(hiddenAssetsField, false) ?? NOTHING_HIDDEN).ownerKinds
 }
 
 /** The whole lines that go out of the doc with the hidden asset that
