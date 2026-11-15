@@ -27,11 +27,10 @@ export interface EstimatedRequest {
   answerCalls?: readonly StreamedToolCall[]
 }
 
-/** The size that an image of a user message counts as, and a picture
- *  whose block does not tell its size: Dez reads no pixel size of them
- *  here. So the same request is the same number in every run of the app,
- *  and two estimates of one tab differ only by what changed in it. The
- *  picture budget counts an image of a user message as this size too
+/** The size that an image of a user message counts as: Dez reads no pixel
+ *  size of it here. So the same request is the same number in every run of
+ *  the app, and two estimates of one tab differ only by what changed in it.
+ *  The picture budget counts an image of a user message as this size too
  *  (pictureBudget.ts).
  *
  *  No image of a user message goes with a longer side than this
@@ -39,7 +38,11 @@ export interface EstimatedRequest {
  *  counts the pixels of an image (`patches`), the count is never under the
  *  true one, and it is too high for a smaller image. It is not the highest
  *  count of every rule: a `tiles` rule counts a wide image of this side
- *  higher than the square (1568 by 784 px are 6 tiles, the square 4). */
+ *  higher than the square (1568 by 784 px are 6 tiles, the square 4).
+ *
+ *  A picture of an `asset_view` call can have a longer side, so a picture
+ *  whose block tells no size does not count as this size
+ *  (`estimatedRequestTokens`). */
 export const ASSUMED_IMAGE_SIZE: ImageSize = { width: CHAT_IMAGE_SIDE, height: CHAT_IMAGE_SIDE }
 
 // How many characters of `text` are kana, Han, or Hangul. The characters
@@ -65,7 +68,8 @@ function wideCharacters(text: string): number {
  *  A character counts by the family's characters per token, and a kana,
  *  Han, or Hangul character as one token. An image counts by the family's
  *  image rule, as one of `ASSUMED_IMAGE_SIZE`; a picture of an
- *  `asset_view` call by the same rule, at the size of its saved copy. */
+ *  `asset_view` call by the same rule, at the size of its saved copy, or
+ *  as the most that the rule gives when its block tells no size. */
 export function estimatedRequestTokens(request: EstimatedRequest, family: ModelFamily): number {
   let characters = 0
   let wide = 0
@@ -89,7 +93,7 @@ export function estimatedRequestTokens(request: EstimatedRequest, family: ModelF
         }
         for (const part of message.content) {
           if (part.type === 'text') addText(part.text)
-          else imageTokenCount += imageTokens(family.imageTokens, (part.type === 'picture' ? shownPictureSize(part.picture) : null) ?? ASSUMED_IMAGE_SIZE)
+          else imageTokenCount += imageTokens(family.imageTokens, part.type === 'picture' ? shownPictureSize(part.picture) : ASSUMED_IMAGE_SIZE)
         }
         break
       case 'agent':

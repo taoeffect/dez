@@ -71,13 +71,13 @@ describe('estimatedRequestTokens', () => {
 
   // An image of 1568 by 1568 pixels: 56 by 56 patches of 28 pixels, 49 by
   // 49 patches of 32 pixels at 1.2 tokens each, or the fixed count.
-  it('counts each image, and each picture whose copy tells no size, by the image rule of the family, at one size for all', () => {
+  it('counts each image of a user message by the image rule of the family, at one size for all', () => {
     const messages: StreamMessage[] = [{
       role: 'user',
       content: [
         { type: 'text', text: 'x'.repeat(40) },
         { type: 'image', path: '/home/u/.config/dez/assets/images/a.png' },
-        { type: 'picture', picture: { file: 'f1.png', label: 'The copy of an older Dez.' } },
+        { type: 'image', path: '/home/u/.config/dez/assets/images/b.png' },
       ],
     }]
     const text = (of: ModelFamily) => Math.ceil(40 / of.charsPerToken)
@@ -89,6 +89,23 @@ describe('estimatedRequestTokens', () => {
     expect(tokens({ messages }, gpt)).toBe(text(gpt) + 2 * 2882)
     expect(tokens({ messages }, gemini)).toBe(text(gemini) + 2 * 1120)
     expect(tokens({ messages }, DEFAULT_FAMILY)).toBe(text(DEFAULT_FAMILY) + 2 * 3136)
+  })
+
+  // A picture of an older Dez can have a side of 3000 pixels, larger than
+  // an image of a user message: it counts as the most patches of the rule
+  // (at 1.2 tokens each for GPT), or the fixed count. One side alone is no
+  // size.
+  it('counts a picture whose copy tells no size as the most that the image rule of the family gives', () => {
+    const old = { file: 'f1.png', label: 'The copy of an older Dez.' }
+    const messages: StreamMessage[] = [{
+      role: 'user',
+      content: [{ type: 'picture', picture: old }, { type: 'picture', picture: { ...old, width: 3000 } }],
+    }]
+
+    expect(tokens({ messages }, modelFamily('claude-sonnet-4-5'))).toBe(2 * 4784)
+    expect(tokens({ messages }, modelFamily('gpt-5.4'))).toBe(2 * 36000)
+    expect(tokens({ messages }, modelFamily('gemini-3-pro'))).toBe(2 * 1120)
+    expect(tokens({ messages }, DEFAULT_FAMILY)).toBe(2 * 4784)
   })
 
   // A wave picture of 800 by 200 pixels: 29 by 8 patches of 28 pixels, 25
