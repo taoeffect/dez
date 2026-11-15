@@ -10,13 +10,14 @@ import { compactionInstruction } from '../../src/model/streams/compactionRequest
 import { shortDuration } from '../../src/view/thread/pillDuration'
 import { anthropicChatBody, anthropicMarkedUser, openAiChatBody } from './harness/chatBody'
 import { click, consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
+import { linkedDropDir } from './harness/drops'
 import { appFilePath, conversationFilePath, filesIn, makeConversation, seedConversation, writeTestFile } from './harness/fixtures'
 import { pasteImageReference, pngDataUrl, shownImages, solidPng, type ShownImage } from './harness/images'
-import { shownPlayers, WEBM_VIDEO, type ShownPlayer } from './harness/media'
+import { problemCards, shownPlayers, WEBM_VIDEO, type ShownPlayer } from './harness/media'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import { LARGE_TOKENS, mockChatPath, openAiToolCall, replyText, sendAnthropicReply, sendChatReply, sendChatText, sendToolCalls, startEventStream, toolResult, writeChatFrame, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeConversationId, activeTabStreaming, AT_BOTTOM_PX, editorCaret, editorDoc, focusEditor, misplacedLines, newTab, openToasts, pickModel, pressRolePill, savedPillLines, sbpCall, submit, threadSections, viewFromBottom, waitForThread, type ThreadSection } from './harness/thread'
+import { activeConversationId, activeTabStreaming, AT_BOTTOM_PX, docPos, editorCaret, editorDoc, focusEditor, misplacedLines, newTab, openToasts, pickModel, pressRolePill, savedPillLines, sbpCall, setCaret, submit, threadSections, viewFromBottom, waitForThread, type ThreadSection } from './harness/thread'
 import { hiddenAssetNotes, hiddenPart, pressToolChip, toolChips, toolPanelPictures, type ToolChipView } from './harness/toolChips'
 
 // Compaction, driven through the real app against a mock server in this
@@ -41,7 +42,8 @@ import { hiddenAssetNotes, hiddenPart, pressToolChip, toolChips, toolPanelPictur
 //   section and in the section of the carried assets of the user, and the
 //   compaction chip under the Agent pill shows it in its panel, with the
 //   pictures of the tag. A request sends a kept image as its text only,
-//   unless the user names it with `@id`.
+//   unless the user names it with `@id`. A kept clip in the panel plays by
+//   the role that its section has now.
 //
 // A compaction that runs: the mock tells that a request was near the
 // context window of its model, or the conversation file tells it.
@@ -167,6 +169,8 @@ function keptNote (name: string): { text: string, visible: boolean } {
 describe('a compacted conversation', () => {
   let setup: MockProviderApp
   let browser: E2EBrowser
+  // The folder of a linked clip, out of every temp folder.
+  let linkedDir: string
 
   async function pills (): Promise<PillView[]> {
     return browser.execute(() => Array.from(document.querySelectorAll<HTMLElement>('.cm-content .dez-role-separator'), (separator) => ({
@@ -392,6 +396,7 @@ describe('a compacted conversation', () => {
   beforeAll(async () => {
     setup = await startMockProviderApp(PROVIDER, {}, { moreProviders: [{ provider: CLAUDE }] })
     browser = setup.browser
+    linkedDir = await linkedDropDir('compaction')
   })
 
   beforeEach(async () => {
@@ -407,6 +412,7 @@ describe('a compacted conversation', () => {
 
   afterAll(async () => {
     await setup?.stop()
+    if (linkedDir) await fs.promises.rm(linkedDir, { recursive: true, force: true })
   })
 
   it('shows an Agent pill first, in place of the tag line, and keeps the caret off that line', async () => {
@@ -615,6 +621,31 @@ describe('a compacted conversation', () => {
     await waitForValue(browser, 'shown images', () => shownImages(browser), [KEPT_USER_IMAGE])
     expect(await hiddenAssetNotes(browser)).toStrictEqual([keptNote('image @a')])
     expect(await toolChips(browser)).toStrictEqual([compactionChipView(['1 kept asset'], false)])
+  })
+
+  // A linked file plays only in a user section. Backspace at the start of
+  // the carried assets of the user joins them to the compaction section,
+  // an agent section, so the open panel shows the kept linked clip as a
+  // clip that does not play; an undo makes it play again.
+  it('plays a kept linked clip in the open panel only while its section is a user section', async () => {
+    const linked = await writeTestFile(path.join(linkedDir, 'compaction-linked.webm'), WEBM_VIDEO)
+    const notes = `${PLAIN_TAG}\nThe user sent a film.`
+    const carried = [CARRIED_USER_ASSETS_LABEL, `<dez:video id="c" type="video/webm" src="${linked}" kept="compaction"/>`].join('\n')
+    const thread = await openCompacted('compacted-kept-linked', [compactionSection(notes), textSection('user', carried), textSection('user', '')])
+
+    await pressToolChip(browser, 0)
+    await waitForValue(browser, 'player of the user section', () => shownPlayers(browser), [KEPT_CLIP_PLAYER])
+
+    await focusEditor(browser)
+    await setCaret(browser, await docPos(browser, CARRIED_USER_ASSETS_LABEL))
+    await browser.keys([Key.Backspace])
+    await waitForThread(browser, [{ role: 'agent', text: `${notes}${carried}` }, thread[2]])
+    expect(await hiddenAssetNotes(browser)).toStrictEqual([keptNote('video clip @c')])
+    await waitForValue(browser, 'card of the agent section', () => problemCards(browser), [{ cause: 'gone', lines: ['This clip is no longer available.'] }])
+
+    await browser.keys([Key.Control, 'z'])
+    await waitForThread(browser, thread)
+    await waitForValue(browser, 'player after the undo', () => shownPlayers(browser), [KEPT_CLIP_PLAYER])
   })
 
   it('compacts the conversation between two rounds of a reply, and the reply goes on from the notes', async () => {

@@ -158,7 +158,9 @@ class CompactionChipWidget extends WidgetType {
   // A Save or a Delete changes the tag of a kept clip, and the trash takes
   // a kept image out of the doc. A new chip would make new players (a clip
   // that plays would stop), so the drawn chip takes the new assets in
-  // place. Any other change makes a new chip.
+  // place (`renderAssets`: a clip whose section changed its role gets a
+  // new player). A change of the count, of the pictures, or of whether the
+  // chip has a panel makes a new chip.
   updateDOM(dom: HTMLElement, view: EditorView, from: CompactionChipWidget): boolean {
     const chip = dom.querySelector<HTMLElement>(`.${CHIP_CLASS}`)
     const { data } = this

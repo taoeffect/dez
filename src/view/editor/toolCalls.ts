@@ -580,13 +580,14 @@ function createField(text: string, label: string, placeholder: string): HTMLElem
 /** The key of a hidden asset among the assets of one chip. A drawn asset
  *  whose key stays keeps its element: an image's path and id tell its
  *  file, and a clip's kind and id never change (a Save or a Delete changes
- *  only its `src`). */
+ *  only its `src`). A drawn clip also needs the same role (`renderAssets`),
+ *  which is not part of this key. */
 function assetKey(asset: { kind: 'image', path: string, id: string | null, linked: boolean } | { kind: 'clip', tag: Pick<MediaTagData, 'kind' | 'id'> }): string {
   return JSON.stringify(asset.kind === 'image' ? ['image', asset.path, asset.id, asset.linked] : [asset.tag.kind, asset.tag.id])
 }
 
-/** The key (`assetKey`, with a count before it) of each asset that a panel
- *  draws. */
+/** The key (`assetKey`, with a count before it, and the role after it for
+ *  a clip) of each asset that a panel draws. */
 const drawnAssetKeys = new WeakMap<Element, string>()
 
 /** Whether the chip of `owner` hides `asset`. A call that started no job
@@ -604,7 +605,9 @@ function ownedBy(asset: HiddenAsset, owner: HiddenAssetOwner | null): boolean {
  *  A drawn asset that is still there keeps its element, and a kept element
  *  moves only when the order changed: a player that leaves the document
  *  stops, and ends its fullscreen. So a Save of a hidden clip, which
- *  changes its tag, keeps its player (`updatePlayer`).
+ *  changes its tag, keeps its player (`updatePlayer`). A clip whose section
+ *  has another role now gets a new player, as the role of a player is the
+ *  one of its mount (`MediaWidget.updateDOM` does the same).
  *
  *  Each asset tells where its text is in the doc now (`AssetPlace`) by its
  *  owner and its key, as its element is at the place of the chip. */
@@ -618,16 +621,17 @@ export function renderAssets(view: EditorView, list: HTMLElement, owner: HiddenA
     const key = assetKey(asset)
     const count = counts.get(key) ?? 0
     counts.set(key, count + 1)
-    const kept = drawn.get(`${count}:${key}`)
+    const drawnKey = `${count}:${key}${asset.kind === 'clip' ? `:${asset.role}` : ''}`
+    const kept = drawn.get(drawnKey)
     if (kept) {
-      drawn.delete(`${count}:${key}`)
+      drawn.delete(drawnKey)
       if (asset.kind === 'clip') updatePlayer(kept, asset.tag)
       return kept
     }
     const place: AssetPlace = () => hiddenAssets(view.state)
       .filter((hidden) => ownedBy(hidden, owner) && assetKey(hidden.kind === 'image' ? { ...hidden.image, kind: 'image' } : hidden) === key)[count]?.from ?? null
     const element = asset.kind === 'image' ? createImage(view, asset, place) : createPlayer(view, asset.tag, asset.role, place)
-    drawnAssetKeys.set(element, `${count}:${key}`)
+    drawnAssetKeys.set(element, drawnKey)
     return element
   })
   for (const gone of drawn.values()) {
