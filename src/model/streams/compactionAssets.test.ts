@@ -89,11 +89,8 @@ describe('compactionScope', () => {
     expect(compactionScope(SECTIONS, 'r')).toStrictEqual({ reply: 4, end: 5, first: 1, last: 3 })
   })
 
-  it('replaces every section at a submit, and in a reply whose section is gone', () => {
-    const scope = { reply: null, end: 6, first: 1, last: 5 }
-
-    expect(compactionScope(SECTIONS, null)).toStrictEqual(scope)
-    expect(compactionScope(SECTIONS, 'gone')).toStrictEqual(scope)
+  it('replaces every section in a reply whose section is gone', () => {
+    expect(compactionScope(SECTIONS, 'gone')).toStrictEqual({ reply: null, end: 6, first: 1, last: 5 })
   })
 
   it('has no newest message apart from the first when the user wrote one message', () => {
@@ -101,13 +98,13 @@ describe('compactionScope', () => {
   })
 
   it('counts an empty user section as no message', () => {
-    expect(compactionScope([user('u1', 'Make a fox.'), reply('r', 'A fox.'), user('u2', ' \n')], null)).toStrictEqual({ reply: null, end: 3, first: 0, last: null })
+    expect(compactionScope([user('u1', 'Make a fox.'), reply('r', 'A fox.'), user('u2', ' \n'), reply('r2', '')], 'r2')).toStrictEqual({ reply: 3, end: 4, first: 0, last: null })
   })
 
   it('counts the carried assets of the user as no message in the compaction message, but as a message after a reply', () => {
-    expect(compactionScope([COMPACTION, user('u1', 'Make a fox.'), CARRIED], null)).toStrictEqual({ reply: null, end: 3, first: 1, last: null })
-    expect(compactionScope([COMPACTION, user('u1', 'Make a fox.'), CARRIED, reply('r', 'A fox.'), { ...CARRIED, id: 'u2' }], null))
-      .toStrictEqual({ reply: null, end: 5, first: 1, last: 4 })
+    expect(compactionScope([COMPACTION, user('u1', 'Make a fox.'), CARRIED, reply('r', '')], 'r')).toStrictEqual({ reply: 3, end: 4, first: 1, last: null })
+    expect(compactionScope([COMPACTION, user('u1', 'Make a fox.'), CARRIED, reply('r', 'A fox.'), { ...CARRIED, id: 'u2' }, reply('r2', '')], 'r2'))
+      .toStrictEqual({ reply: 5, end: 6, first: 1, last: 4 })
   })
 
   it('has no first and no newest message when the user wrote none', () => {

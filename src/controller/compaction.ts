@@ -64,9 +64,8 @@ export interface CompactionInput {
   /** The sections of the tab. */
   sections: readonly Section[]
   /** The id of the section of the reply that runs. At a submit, that is
-   *  the empty section of the new reply. Null: the conversation has no
-   *  such section, and the compaction replaces all of it. */
-  replySectionId: string | null
+   *  the empty section of the new reply. */
+  replySectionId: string
   /** The model that gets the request, and that the compaction section
    *  names as its writer: the model of the reply. */
   model: ModelRef

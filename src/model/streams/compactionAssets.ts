@@ -24,8 +24,8 @@ import { messageMentionIds } from './messages'
 /** Which sections a compaction replaces, as indexes of the sections of
  *  the conversation. */
 export interface CompactionScope {
-  /** The section of the reply that runs; null for a conversation with no
-   *  such section, which the compaction then replaces whole. */
+  /** The section of the reply that runs; null when no section has its id,
+   *  and the compaction then replaces the whole conversation. */
   reply: number | null
   /** The index after the last section that the compaction replaces: the
    *  one after the reply's section, or the count of the sections. The
@@ -41,15 +41,14 @@ export interface CompactionScope {
 
 /** The scope of a compaction of `sections` in the reply whose section has
  *  the id `replySectionId`: at a submit, the empty section of the new
- *  reply. With null, or an id of no section, the scope is the whole
- *  conversation.
+ *  reply. With an id of no section, the scope is the whole conversation.
  *
  *  A message of the user is a user section before the reply's section
  *  that is not empty, and that is not the section of the carried assets of
  *  the user that an earlier compaction wrote (`isCarriedUserAssets`, which
  *  counts only in the compaction message). */
-export function compactionScope(sections: readonly Section[], replySectionId: string | null): CompactionScope {
-  const found = replySectionId === null ? -1 : sections.findIndex((section) => section.id === replySectionId)
+export function compactionScope(sections: readonly Section[], replySectionId: string): CompactionScope {
+  const found = sections.findIndex((section) => section.id === replySectionId)
   const reply = found < 0 ? null : found
   const messagesEnd = reply ?? sections.length
   const carriedEnd = compactionMessageEnd(sections)

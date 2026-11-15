@@ -200,12 +200,6 @@ describe('compactConversation', () => {
     expect(compaction.usage).toStrictEqual(USAGE)
   })
 
-  it('compacts a conversation at a submit, with no reply section', async () => {
-    const compaction = await compactConversation(compactionInput({ sections: SECTIONS.slice(0, 3), replySectionId: null }))
-
-    expect(compaction.sections.map(({ id }) => id)).toStrictEqual([expect.any(String), 'u1', 'u2'])
-  })
-
   it('counts the price of the request once, logs it as a compaction request, and writes the cost with it into the notes', async () => {
     const compaction = await compactConversation(compactionInput())
 
@@ -216,10 +210,10 @@ describe('compactConversation', () => {
 
   it('takes an asset out of the conversation that the answer drops, and keeps as text the ones that it keeps', async () => {
     // The assets of this compaction are new, so only a second one drops.
-    const first = await compactConversation(compactionInput({ replySectionId: null, sections: SECTIONS.slice(0, 3) }))
+    const first = await compactConversation(compactionInput())
     streamChat = answers(`${NOTES}\n\n## Assets\n@b: drop - An old draft.\n@c: keep - The first film.`)
 
-    const second = await compactConversation(compactionInput({ sections: [...first.sections, reply('r', 'More work.')] }))
+    const second = await compactConversation(compactionInput({ sections: [...first.sections.slice(0, 3), reply('r', 'More work.')] }))
 
     expect(second.dropped.map(({ asset }) => asset.id)).toStrictEqual(['b'])
     expect([...notesAssetLines(notesOf(second)).keys()]).toStrictEqual(['a', 'c'])

@@ -39,7 +39,7 @@ const picture = (file: string): ShownPicture => ({ file: `${file}.jpg`, label: `
 /** A compaction of `sections` with the answer `answerText`, through the
  *  steps that the controller takes. Every image has a file that Dez can
  *  read, and the limits are far away, unless `input` tells other ones. */
-function compact(sections: Section[], answerText: string, replySectionId: string | null, input: Partial<CompactedSectionsInput> = {}, facts = FACTS): CompactedSections {
+function compact(sections: Section[], answerText: string, replySectionId: string, input: Partial<CompactedSectionsInput> = {}, facts = FACTS): CompactedSections {
   const scope = compactionScope(sections, replySectionId)
   const found = [...conversationAssets(sections).found.values()].filter((asset) => asset.section < scope.end)
   const assets = compactionAssets(sections, found, assetPlaces(sections, found), new Map(found.map(({ id }) => [id, facts])))
@@ -111,11 +111,11 @@ describe('compactedSections', () => {
     expect(result.dropped).toStrictEqual([])
   })
 
-  it('has no reply section for a compaction at a submit', () => {
-    const sections = [user('u0', 'Make a fox'), reply('r1', 'Done.'), user('u1', 'Now a red one')]
-    const result = compact(sections, NOTES, null)
+  it('ends with the empty section of the new reply for a compaction at a submit', () => {
+    const sections = [user('u0', 'Make a fox'), reply('r1', 'Done.'), user('u1', 'Now a red one'), reply('r2', '')]
+    const result = compact(sections, NOTES, 'r2')
 
-    expect(result.sections.map(({ id }) => id)).toStrictEqual(['new-1', 'u0', 'u1'])
+    expect(result.sections.map(({ id }) => id)).toStrictEqual(['new-1', 'u0', 'u1', 'r2'])
   })
 
   it('keeps a made asset that the answer does not name in the notes, as text only, with who made it', () => {
