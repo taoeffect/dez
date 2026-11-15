@@ -162,6 +162,9 @@ describe('Help panel', () => {
       browser.execute((selector) => [...document.querySelectorAll(`.help-page--assets ${selector}`)].map((code) => code.textContent ?? ''), selector)
 
     await openWithButton()
+    // General is longer than the panel, and the link is in its last
+    // paragraph: a click needs the link in view.
+    await browser.execute(() => document.querySelector('.help-page--general .help-link')?.scrollIntoView({ block: 'center' }))
     await pointerClick(browser, '.help-page--general .help-link')
     await waitForValue(browser, 'Assets page', shownPage, { nav: 'Assets', page: 'help-page--assets' })
 

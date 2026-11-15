@@ -132,11 +132,20 @@ function onOverlayClick(event: MouseEvent) {
               saves each conversation: History (<kbd>{{ keys.history }}</kbd>) opens it again.
             </p>
             <p>
-              The amount in the middle of the bottom bar is about what the conversation cost: the
-              price of each request of its replies, also of the requests that a model sends to other
-              models with a Dez tool. A <code>+</code> after it means that Dez knows no price for some
-              requests, so the cost is higher. <code>(?)</code> means that you changed or deleted a
-              reply: its cost stays in the amount. Point at the amount to see the details.
+              The two numbers in the middle of the bottom bar are the size and the cost of the
+              conversation. The first one is the size in tokens (<code>k</code>: thousand,
+              <code>M</code>: million): about how much your next message sends to the model, which
+              is the conversation with the system prompt and the tools that go with it. A
+              <code>~</code> before it marks an estimate of Dez. With no <code>~</code>, it is the
+              count of the provider in the newest reply. Point at the number to see how much of the
+              context window of the model the conversation fills.
+            </p>
+            <p>
+              The amount after it is about what the conversation cost: the price of each request of
+              its replies, also of the requests that a model sends to other models with a Dez tool.
+              A <code>+</code> after it means that Dez knows no price for some requests, so the cost
+              is higher. <code>(?)</code> means that you changed or deleted a reply: its cost stays
+              in the amount. Point at the amount to see the details.
             </p>
             <p>
               Paste or drop images, audio, and video into a message. A model that makes images,
