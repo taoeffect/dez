@@ -658,8 +658,11 @@ describe('a compacted conversation', () => {
     startEventStream(second.reply)
     writeChatFrame(second.reply, { content: answer })
     await waitForValue(browser, 'answer in the editor', async () => (await editorDoc(browser)).includes(answer), true)
-    expect(await browser.execute(() => (document.querySelector('.cm-scroller')?.scrollTop ?? 0) > 0), 'the view scrolled').toBe(true)
+    // The follow scrolls in the frame after the change, and viewFromBottom
+    // waits two frames: read it first, so that the scrollTop read comes
+    // after the follow.
     expect(await viewFromBottom(browser), 'distance from the bottom').toBeLessThanOrEqual(AT_BOTTOM_PX)
+    expect(await browser.execute(() => (document.querySelector('.cm-scroller')?.scrollTop ?? 0) > 0), 'the view scrolled').toBe(true)
     writeChatFrame(second.reply, { content: '' }, 'stop')
     second.reply.end('data: [DONE]\n\n')
     await waitForThread(browser, [notes, { role: 'user', text: question }, { role: 'agent', text: answer }, { role: 'user', text: '' }])
