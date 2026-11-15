@@ -236,7 +236,9 @@ function chunkCost(usage: Record<string, unknown> | undefined, cost: unknown): n
 // `prompt_tokens_details` tells how many of them the prompt cache gave
 // (`cached_tokens`) and how many went into it. Servers differ in the name
 // of that last count: OpenRouter's docs name `cache_write_tokens`, and
-// Venice's `cache_creation_input_tokens`.
+// Venice sends `cache_creation_input_tokens` (checked live on 2026-11-14
+// with Claude Haiku 5.5 and Claude Opus 5.5, with `cached_tokens` for the
+// reads).
 // https://openrouter.ai/docs/guides/best-practices/prompt-caching
 // https://docs.venice.ai/guides/features/prompt-caching
 function chunkUsage(chunk: OpenAiChunk): ChatUsage | undefined {

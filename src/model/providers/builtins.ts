@@ -230,9 +230,12 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
       },
     },
     auth: 'apiKey',
-    // The Venice docs say that Venice adds the marks for Claude, but a live
-    // check got no Claude cache hits without them. Its other models take the
-    // marks with no error (also checked live).
+    // The Venice docs say that Venice adds the marks for Claude. A live check
+    // (2026-11-14, Claude Haiku 5.5) found two marks of Venice: at the end of
+    // the system prompt, and on the message before the last user message.
+    // They do not store the newest messages, and an older live check got no
+    // Claude cache hits without Dez's marks, so Dez sets its own. Venice's
+    // other models take the marks with no error (also checked live).
     cacheBreakpoints: true,
     // A live check with Claude Haiku 5.5: a mark on a tool message's text
     // part stored nothing, a mark on the message stored the prompt up to it.
