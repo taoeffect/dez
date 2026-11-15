@@ -66,9 +66,10 @@ export interface ToolBlockData {
   arguments: ToolArguments
   result: string
   /** The copies of the pictures that the call showed its model
-   *  (shownPictures.ts): the requests of its reply send the pictures from
-   *  them, and the panel of its chip shows them. No request sends the
-   *  attribute. Absent when there are none. */
+   *  (shownPictures.ts): each later request of the conversation sends the
+   *  pictures from them, until a compaction takes the call out, and the
+   *  panel of its chip shows them. No request sends the attribute. Absent
+   *  when there are none. */
   pictures?: readonly ShownPicture[]
 }
 

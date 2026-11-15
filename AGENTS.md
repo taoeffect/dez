@@ -211,7 +211,7 @@ The JSON and conversation files go through `dez.persistence/*` only; the asset f
 - `<OS cache>/dez/media/`: temp copies of clips that are not saved (`src/model/chat/mediaFiles.ts`).
 - `<OS cache>/dez/work/<id>/`: the work folder of a bundled tool (`src/model/tools/workFolders.ts`).
 - Linked files: a dropped file that is in no temp folder and no Dez folder stays where it is (`src/model/chat/linkedFiles.ts`). Dez never deletes it.
-- A text edit or a conversation delete leaves the stored files. Its trash, Delete Unused Files (`src/model/chat/unusedFiles.ts`), or a compaction (`src/model/streams/compactionFiles.ts`) deletes one.
+- A text edit or a conversation delete leaves the stored files. The trash of an image or a player, Delete Unused Files (`src/model/chat/unusedFiles.ts`), or a compaction (`src/model/streams/compactionFiles.ts`) deletes a stored file.
 - `provider_keys.json`: API keys and Copilot tokens (`src-tauri/src/key_store.rs`).
 
 Do not ever read, view, print, or `cat` `~/.config/dez/provider_keys.json`; it can contain API keys and OAuth tokens.
@@ -248,7 +248,7 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 - **Find tool blocks in one agent section at a time**, never in the whole doc (`src/model/chat/toolBlocks.ts`).
 - **A linked path counts only in a user section** (`isLinkedImagePath`, `isLinkedMediaPath`), so that a model's text never makes Dez read a file of the computer.
 - **One id sequence for images and clips** (`src/model/chat/mediaIds.ts`): never renumber an id that is in the doc, and never give an id that the conversation used before.
-- **`@id` mentions** (`src/model/chat/imageMentions.ts`): the request builder and the editor chips find mentions in the same text pieces (`assetTextPieces`); keep the two on that one rule.
+- **`@id` mentions** (`src/model/chat/assetMentions.ts`): the request builder and the editor chips find mentions in the same text pieces (`assetTextPieces`); keep the two on that one rule.
 - **A hidden asset and a kept asset are normal assets with a mark**: only the view hides them (`src/model/chat/hiddenAssets.ts`, `compaction.ts`).
 - **The notes of a compaction section are read back** (`src/model/chat/compactionNotes.ts`): a change of a line's form needs a reader of the old form.
 - **The unused-files scan must read every text that can name a stored file**: a new text place, stored-file folder, or kind of cache entry must join it (`src/controller/unusedFiles.ts`).

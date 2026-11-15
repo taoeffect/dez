@@ -1961,7 +1961,7 @@ describe('dez.controller/tools/run', () => {
     let budget: PictureBudget
     // How many pictures the round of the call still takes.
     let roundPictures: number
-    // The pictures that the calls of a test gave their reply.
+    // The pictures that the calls of a test showed their model.
     let shown: ReturnType<typeof savedPicture>[]
     // The ffprobe output of each clip, by the name of its copy.
     let probes: Record<string, string>
@@ -1972,7 +1972,7 @@ describe('dez.controller/tools/run', () => {
     let soundLog: string
     let soundEnd: BundledToolEnd
 
-    // A picture that a call gave its reply: the copy that its result
+    // A picture that a call showed its model: the copy that its result
     // names, with the bytes of its saved file. A request reads that file,
     // so these bytes are what the model gets.
     function savedPicture(copy: ShownPicture) {

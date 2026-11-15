@@ -336,9 +336,8 @@ function flushModelText(tabId: string, reply: ReplyRuntime): boolean {
 
 // `change` updates the thinking of the streaming section in the store; the
 // editor then gets the new thinking in the same tick, so the editor's
-// section watcher finds both copies equal. Thinking is not answer text, so
-// it does not count in the session's token count. The store changes for a
-// tab in the background too; its editor reads the store when it is shown.
+// section watcher finds both copies equal. The store changes for a tab in
+// the background too; its editor reads the store when it is shown.
 function updateStreamThinking(tabId: string, sectionId: string, change: () => SectionThinking | null): void {
   if (!streamWritesSection(tabId, sectionId)) return
   const thinking = change()
