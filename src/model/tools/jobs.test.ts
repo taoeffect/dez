@@ -3,6 +3,7 @@ import {
   jobCallLabel,
   jobInspectText,
   jobOwnText,
+  jobResultState,
   jobResultText,
   jobsListText,
   jobStartedText,
@@ -232,6 +233,17 @@ describe('jobsListText', () => {
 
   it('says so for a reply with no job', () => {
     expect(jobsListText([])).toBe(NO_JOBS_TEXT)
+  })
+})
+
+describe('jobResultState', () => {
+  it('is - for a job that runs or stopped, ready for an ended job before a jobs_wait gave its result, and given after', () => {
+    expect(jobResultState({ status: 'running', delivered: false })).toBe('-')
+    expect(jobResultState({ status: 'stopped', delivered: false })).toBe('-')
+    for (const status of ['finished', 'failed', 'timed out'] as const) {
+      expect(jobResultState({ status, delivered: false })).toBe('ready')
+      expect(jobResultState({ status, delivered: true })).toBe('given')
+    }
   })
 })
 

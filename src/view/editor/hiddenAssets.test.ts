@@ -1,16 +1,26 @@
 import type { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { describe, expect, it } from 'vitest'
+import { CARRIED_USER_ASSETS_LABEL, compactionTagText } from '../../model/chat/compaction'
 import { hiddenClip, hiddenImage, invokeBlock } from '../../model/chat/testing'
+import type { Role } from '../../model/chat/types'
 import { PILL_OPEN, setSectionsEffect } from '../thread/cmEditor'
 import { HiddenAssetWidget, hiddenAssetLines, hiddenAssets, hiddenLineStarts, revealHiddenLineBackward, revealHiddenLineForward } from './hiddenAssets'
 import { renderedImages } from './images'
 import { renderedMedia } from './media'
-import { CHIP, createState, joinSections, runCommand } from './testing'
+import { CHIP, createState, joinSections, keptClip, keptImage, runCommand } from './testing'
 
 const INVOKE = invokeBlock('j-aaaa')
 const IMAGE = hiddenImage('j-aaaa')
 const CLIP = hiddenClip('j-aaaa')
+
+const TAG = compactionTagText({ count: 2, lastId: 'z', pictures: [] })
+const KEPT_IMAGE = keptImage('k')
+const KEPT_CLIP = keptClip('l')
+const KEPT_USER_IMAGE = keptImage('u')
+// An image with no mark, in the folder of the stored images: it shows at
+// its place in a section of either role.
+const SHOWN = '![/home/u/.config/dez/assets/images/shown.png](id=s)'
 
 /** A state with an agent section of the entries `lines` (a chip is one
  *  entry of several doc lines), each on its own lines, after a user
@@ -45,17 +55,32 @@ function removals(lines: string[]): (string | null)[] {
 }
 
 /** The placeholders of hidden assets that the editor draws, each as its
- *  kind and id. */
+ *  kind, its id, and the kind of its owner. */
 function placeholders(state: EditorState): string[] {
   const found: string[] = []
   for (const source of state.facet(EditorView.decorations)) {
     if (typeof source === 'function') continue
     for (const cursor = source.iter(); cursor.value; cursor.next()) {
       const widget: unknown = cursor.value.spec.widget
-      if (widget instanceof HiddenAssetWidget) found.push(`${widget.kind} ${widget.id}`)
+      if (widget instanceof HiddenAssetWidget) found.push(`${widget.kind} ${widget.id} ${widget.owner}`)
     }
   }
   return found
+}
+
+/** A compacted conversation: the compaction section `notes` (after its tag
+ *  line), a kept message of the user, the section of the carried assets of
+ *  the user (`carried`, after its first line), then the sections `more`,
+ *  each as its role and its text. */
+function compactedState(notes: string[], carried: string[], more: Array<[Role, string]> = [], ranges: number[] = []): EditorState {
+  const texts = [[TAG, ...notes].join('\n'), 'Ask.', [CARRIED_USER_ASSETS_LABEL, ...carried].join('\n'), ...more.map(([, text]) => text)]
+  return createState(texts, ['agent', 'user', 'user', ...more.map(([role]) => role)], ranges)
+}
+
+/** The line numbers of the lines that the hidden assets of `state` take
+ *  out of view. */
+function lineNumbersOutOfView(state: EditorState): number[] {
+  return hiddenLineStarts(state).map((from) => state.doc.lineAt(from).number)
 }
 
 describe('hiddenAssets', () => {
@@ -70,7 +95,7 @@ describe('hiddenAssets', () => {
 
     expect(renderedImages(state).map((image) => state.sliceDoc(image.from, image.to))).toStrictEqual([IMAGE])
     expect(renderedMedia(state).map((tag) => state.sliceDoc(tag.from, tag.to))).toStrictEqual([CLIP])
-    expect(placeholders(state)).toStrictEqual(['audio c', 'image b'])
+    expect(placeholders(state)).toStrictEqual(['audio c job', 'image b job'])
   })
 
   it('hides nothing while no chip shows the call: a user section, and a block that stays text', () => {
@@ -196,5 +221,67 @@ describe('revealHiddenLineBackward and revealHiddenLineForward', () => {
     for (const state of [selected, twoCarets, shown]) {
       expect(runCommand(state, revealHiddenLineBackward)).toStrictEqual({ handled: false, state })
     }
+  })
+})
+
+describe('the assets that a compaction keeps', () => {
+  it('hides the kept assets of the compaction section and of the carried assets, in doc order with the assets of a job', () => {
+    const notes = ['Notes.', '', KEPT_IMAGE, 'After the image.', '', KEPT_CLIP, '', SHOWN]
+    const state = compactedState(notes, [KEPT_USER_IMAGE, SHOWN], [['agent', [INVOKE, '', IMAGE, '', 'Done.'].join('\n')]])
+
+    expect(hiddenAssets(state).map((asset) => [asset.owner.kind, state.sliceDoc(asset.from, asset.to)])).toStrictEqual([
+      ['compaction', KEPT_IMAGE],
+      ['compaction', KEPT_CLIP],
+      ['compaction', KEPT_USER_IMAGE],
+      ['job', IMAGE],
+    ])
+    expect(renderedImages(state).map((image) => state.sliceDoc(image.from, image.to))).toStrictEqual([KEPT_IMAGE, SHOWN, KEPT_USER_IMAGE, SHOWN, IMAGE])
+    expect(placeholders(state).sort()).toStrictEqual(['audio l compaction', 'image b job', 'image k compaction', 'image u compaction'])
+  })
+
+  it('takes the kept lines out of view, with the tag line as the start of the section', () => {
+    // 1 tag, 2 kept image, 3 blank, 4 Notes., 5 blank, 6 kept clip, 7 blank,
+    // 8 More., 9 separator, 10 Ask., 11 separator, 12 label, 13 kept image,
+    // 14 shown image.
+    const state = compactedState([KEPT_IMAGE, '', 'Notes.', '', KEPT_CLIP, '', 'More.'], [KEPT_USER_IMAGE, SHOWN])
+
+    expect(lineNumbersOutOfView(state)).toStrictEqual([2, 3, 5, 6, 13])
+    expect(hiddenAssets(state).map((asset) => {
+      const range = hiddenAssetLines(state, asset.from)
+      return range && state.sliceDoc(range.from, range.to)
+    })).toStrictEqual([`${KEPT_IMAGE}\n`, `\n${KEPT_CLIP}`, KEPT_USER_IMAGE])
+  })
+
+  it('puts the caret onto a kept line with Backspace and Delete, and changes no text', () => {
+    // 6 label, 7 kept image, 8 shown image.
+    const { doc } = compactedState(['Notes.'], [KEPT_USER_IMAGE, SHOWN])
+    const below = compactedState(['Notes.'], [KEPT_USER_IMAGE, SHOWN], [], [doc.line(8).from])
+    const above = compactedState(['Notes.'], [KEPT_USER_IMAGE, SHOWN], [], [doc.line(6).to])
+    const backward = runCommand(below, revealHiddenLineBackward)
+    const forward = runCommand(above, revealHiddenLineForward)
+
+    expect([backward.handled, backward.state.doc.eq(doc), backward.state.selection.main.head]).toStrictEqual([true, true, doc.line(7).to])
+    expect([forward.handled, forward.state.doc.eq(doc), forward.state.selection.main.head]).toStrictEqual([true, true, doc.line(7).from])
+  })
+
+  it('shows a marked asset that no compaction keeps: after a reply, in a kept message, in an agent section, or with no tag', () => {
+    const afterReply = compactedState(['Notes.'], [SHOWN], [['agent', 'Reply.'], ['user', `See:\n${KEPT_USER_IMAGE}`], ['user', `${CARRIED_USER_ASSETS_LABEL}\n${KEPT_USER_IMAGE}`]])
+    const keptMessage = createState([[TAG, 'Notes.'].join('\n'), KEPT_USER_IMAGE], ['agent', 'user'])
+    const laterAgent = compactedState(['Notes.'], [SHOWN], [['agent', KEPT_IMAGE]])
+    const noTag = createState([['Notes.', '', KEPT_IMAGE].join('\n'), 'Ask.', [CARRIED_USER_ASSETS_LABEL, KEPT_USER_IMAGE].join('\n')], ['user', 'user', 'user'])
+
+    for (const state of [afterReply, keptMessage, laterAgent, noTag]) {
+      expect(hiddenAssets(state)).toStrictEqual([])
+      expect(hiddenLineStarts(state)).toStrictEqual([])
+      expect(placeholders(state)).toStrictEqual([])
+      expect(renderedImages(state).length).toBeGreaterThan(0)
+    }
+  })
+
+  it('shows an asset with both marks under the chip of its call', () => {
+    const both = `${IMAGE.slice(0, -1)}|kept=compaction)`
+    const state = compactedState([INVOKE, '', both, '', 'Done.'], [])
+
+    expect(hiddenAssets(state).map((asset) => asset.owner)).toStrictEqual([{ kind: 'job', jobId: 'j-aaaa' }])
   })
 })

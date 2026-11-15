@@ -1,7 +1,9 @@
 import { JOBS_WAIT_TOOL, jobsWaitResults, startedJobId, type JobResult } from '../tools/jobs'
-import { findImageReferences, IMAGE_HIDDEN_KEY, type ImageReference } from './images'
-import { findMediaTags, MEDIA_HIDDEN_ATTRIBUTE, type MediaTag } from './mediaTags'
-import type { ToolBlock } from './toolBlocks'
+import { isCarriedUserAssets, readCompactionTag } from './compaction'
+import { findImageReferences, IMAGE_HIDDEN_KEY, IMAGE_KEPT_KEY, isKeptImage, type ImageReference } from './images'
+import { findMediaTags, isKeptClip, MEDIA_HIDDEN_ATTRIBUTE, type MediaTag } from './mediaTags'
+import { findToolBlocks, type ToolBlock } from './toolBlocks'
+import type { Role } from './types'
 
 // Hidden assets: the images and clips that a call made as a part of its
 // work (`is_intermediate` of `model_invoke`, and of the `join_clips` and
@@ -15,12 +17,23 @@ import type { ToolBlock } from './toolBlocks'
 // The marker alone hides nothing. An asset is hidden only while a tool
 // block of its agent section started its job, so that there is a chip to
 // show it under: the asset of a deleted block, and the text in a user
-// section, show as any other asset. This module is the one place that
-// tells which assets are hidden.
+// section, show as any other asset.
+//
+// A compaction hides assets too: the ones that it kept as one line of its
+// notes (`IMAGE_KEPT_KEY`, `MEDIA_KEPT_ATTRIBUTE`). The editor shows them
+// in the panel of the compaction chip (`findKeptAssets`).
+//
+// This module is the one place that tells which assets are hidden.
 
-/** One hidden asset of an agent section. `from` and `to` are the offsets
- *  of its reference or tag in the section text. */
-export type HiddenAsset = { jobId: string, from: number, to: number } & (
+/** Who shows a hidden asset in place of the text of the asset: the chip of
+ *  the call that started the job `jobId`, or the compaction chip. */
+export type HiddenAssetOwner =
+  | { kind: 'job', jobId: string }
+  | { kind: 'compaction' }
+
+/** One hidden asset of a section. `from` and `to` are the offsets of its
+ *  reference or tag in the section text. */
+export type HiddenAsset = { owner: HiddenAssetOwner, from: number, to: number } & (
   | { kind: 'image', image: ImageReference }
   | { kind: 'clip', tag: MediaTag }
 )
@@ -32,8 +45,9 @@ function isAloneOnItsLine(text: string, from: number, to: number): boolean {
   return text.slice(lineStart, from).trim() === '' && text.slice(to, lineEnd < 0 ? text.length : lineEnd).trim() === ''
 }
 
-/** The hidden assets in the text of an agent section, in order. `blocks`
- *  are the tool blocks of that text (`findToolBlocks`).
+/** The assets in the text of an agent section that the chip of a call
+ *  hides, in order. `blocks` are the tool blocks of that text
+ *  (`findToolBlocks`).
  *
  *  An image reference counts only when it is alone on its line, as the
  *  writer puts it: the editor hides whole lines, and other text on the
@@ -54,14 +68,61 @@ export function findHiddenAssets(text: string, blocks: readonly ToolBlock[]): Hi
   for (const image of findImageReferences(text, 'agent')) {
     const jobId = image.metadata.find((item) => item.key === IMAGE_HIDDEN_KEY)?.value
     if (jobId === undefined || !jobIds.has(jobId) || inBlock(image.from) || !isAloneOnItsLine(text, image.from, image.to)) continue
-    assets.push({ kind: 'image', jobId, from: image.from, to: image.to, image })
+    assets.push({ kind: 'image', owner: { kind: 'job', jobId }, from: image.from, to: image.to, image })
   }
   for (const tag of findMediaTags(text)) {
     const jobId = tag.other.find((attribute) => attribute.name === MEDIA_HIDDEN_ATTRIBUTE)?.value
     if (jobId === undefined || !jobIds.has(jobId) || inBlock(tag.from)) continue
-    assets.push({ kind: 'clip', jobId, from: tag.from, to: tag.to, tag })
+    assets.push({ kind: 'clip', owner: { kind: 'job', jobId }, from: tag.from, to: tag.to, tag })
   }
   return assets.sort((a, b) => a.from - b.from)
+}
+
+// The assets with the kept mark in the text of a section of the role
+// `role`, in order, by the rules of `findHiddenAssets`: an image alone on
+// its line, and nothing in a tool block.
+function keptAssetsOf(text: string, role: Role): HiddenAsset[] {
+  // The mark of an image is `kept=…`, and the one of a clip `kept="…"`.
+  if (!text.includes(`${IMAGE_KEPT_KEY}=`)) return []
+  const blocks = role === 'agent' ? findToolBlocks(text) : []
+  const inBlock = (from: number) => blocks.some((block) => from >= block.from && from < block.to)
+  const owner: HiddenAssetOwner = { kind: 'compaction' }
+  const assets: HiddenAsset[] = []
+  for (const image of findImageReferences(text, role)) {
+    if (!isKeptImage(image) || inBlock(image.from) || !isAloneOnItsLine(text, image.from, image.to)) continue
+    assets.push({ kind: 'image', owner, from: image.from, to: image.to, image })
+  }
+  for (const tag of findMediaTags(text)) {
+    if (isKeptClip(tag) && !inBlock(tag.from)) assets.push({ kind: 'clip', owner, from: tag.from, to: tag.to, tag })
+  }
+  return assets.sort((a, b) => a.from - b.from)
+}
+
+/** The assets that the compaction chip hides: for each of `sections` (a
+ *  whole conversation, in order; `text` is the whole text of a section),
+ *  its kept assets in order, with offsets in its text.
+ *
+ *  The kept mark hides an asset only in a compacted conversation (the
+ *  first section is an agent section that starts with a valid tag, so
+ *  there is a chip to show it under), and only in the two places where a
+ *  compaction writes it: the compaction section, and a section of the
+ *  carried assets of the user (`isCarriedUserAssets`) among the user
+ *  sections right after it. A blank section ends that run as little as it
+ *  ends the compaction message of a request. At any other place a marked
+ *  asset shows as any other asset: in a kept message of the user, the
+ *  mark only tells a request to send no pixels. */
+export function findKeptAssets(sections: readonly { role: Role, text: string }[]): HiddenAsset[][] {
+  const kept: HiddenAsset[][] = sections.map(() => [])
+  const first = sections[0]
+  if (first === undefined || first.role !== 'agent' || readCompactionTag(first.text) === null) return kept
+  kept[0] = keptAssetsOf(first.text, 'agent')
+  for (let index = 1; index < sections.length; index++) {
+    const { role, text } = sections[index]
+    if (text.trim() === '') continue
+    if (role === 'agent') break
+    if (isCarriedUserAssets(text)) kept[index] = keptAssetsOf(text, 'user')
+  }
+  return kept
 }
 
 /** The result of the job `jobId` that a `jobs_wait` block of `blocks` gave

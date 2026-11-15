@@ -46,7 +46,7 @@ interface Asset extends TextRange {
 }
 
 /** Ids in their order (`nextMediaId`): shorter first, then by letters. */
-function compareMediaIds(a: string, b: string): number {
+export function compareMediaIds(a: string, b: string): number {
   if (a.length !== b.length) return a.length - b.length
   return a < b ? -1 : a > b ? 1 : 0
 }
@@ -70,24 +70,32 @@ function highestMediaId(ids: Iterable<string | null>): string | null {
   return highest
 }
 
-/** `count` ids, in order, for the image references and the media tags that
- *  Dez itself adds to a conversation (a generated image, a generated clip):
- *  the ids after the highest one in the image references and the media tags
- *  of `texts`, and after the `last-id` of a compaction tag at the start of
- *  the first text. `texts` are the texts of the whole conversation in
- *  order: one for each section, or the editor doc as one text. The caller
- *  must write the references and the tags in the same tick, so that no
- *  paste in between takes an id. */
-export function newMediaIds(texts: readonly string[], count: number): string[] {
+/** The highest id that the conversation of `texts` ever gave: the highest
+ *  one in its image references and media tags, and the `last-id` of a
+ *  compaction tag at the start of the first text. Null for a conversation
+ *  that gave none. `texts` are the texts of the whole conversation in
+ *  order: one for each section, or the editor doc as one text. A new
+ *  compaction tag keeps this id (`last-id`). */
+export function highestConversationMediaId(texts: readonly string[]): string | null {
   // The ids of linked references count in every section (the `user` rule),
   // so a new id is never the id of one.
-  let id = highestMediaId([
+  return highestMediaId([
     compactionLastId(texts[0] ?? ''),
     ...texts.flatMap((text) => [
       ...findImageReferences(text, 'user').map((reference) => reference.id),
       ...findMediaTags(text).map((tag) => tag.id),
     ]),
   ])
+}
+
+/** `count` ids, in order, for the image references and the media tags that
+ *  Dez itself adds to a conversation (a generated image, a generated clip):
+ *  the ids after the highest one of `texts`
+ *  (`highestConversationMediaId`). The caller must write the references
+ *  and the tags in the same tick, so that no paste in between takes an
+ *  id. */
+export function newMediaIds(texts: readonly string[], count: number): string[] {
+  let id = highestConversationMediaId(texts)
   return Array.from({ length: count }, () => (id = nextMediaId(id)))
 }
 

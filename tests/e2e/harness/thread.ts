@@ -354,7 +354,10 @@ export async function misplacedLines (browser: E2EBrowser): Promise<string[]> {
     const misplaced: string[] = []
     for (const line of content.querySelectorAll<HTMLElement>(':scope > .cm-line')) {
       const rect = line.getBoundingClientRect()
-      const block = view.lineBlockAt(view.posAtDOM(line))
+      const lineBlock = view.lineBlockAt(view.posAtDOM(line))
+      // A line with a block widget next to it (the compaction chip) is one
+      // line block made of parts. Its text part is the part with no widget.
+      const block = Array.isArray(lineBlock.type) ? lineBlock.type.find((part) => part.widget === null) ?? lineBlock : lineBlock
       const top = view.documentTop + block.top
       if (Math.abs(top - rect.top) > 1 || Math.abs(block.height - rect.height) > 1) {
         const number = view.state.doc.lineAt(block.from).number

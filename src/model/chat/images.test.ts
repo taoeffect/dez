@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import {
   findImageReferences,
+  IMAGE_KEPT_KEY,
   imageExtension,
   imageMarkdown,
   imageMediaType,
+  imageReferenceText,
   isImageMediaType,
   isImagePath,
+  isKeptImage,
   isLinkedImagePath,
+  KEPT_MARK_VALUE,
   labelImageReferences,
   splitImageReferences,
   storedImageFile,
@@ -249,6 +253,30 @@ describe('labelImageReferences', () => {
   it('uses a given label as plain text', () => {
     expect(labelImageReferences(`a ![${PNG}]() b`, 'agent', '$&')).toBe('a $& b')
     expect(labelImageReferences(`a ![${PNG}]() b`, 'agent', '')).toBe('a  b')
+  })
+})
+
+describe('imageReferenceText and isKeptImage', () => {
+  const kept = { key: IMAGE_KEPT_KEY, value: KEPT_MARK_VALUE }
+
+  it('adds the kept mark after the other items, and only once', () => {
+    for (const metadata of [[{ key: 'id', value: 'a' }, { key: 'tool', value: 'image' }], [kept, { key: 'id', value: 'a' }, { key: 'tool', value: 'image' }]]) {
+      const [reference] = findImageReferences(imageMarkdown(PNG, metadata), 'agent')
+      const [marked] = findImageReferences(imageReferenceText(reference, true), 'agent')
+
+      expect(marked.path).toBe(PNG)
+      expect(marked.metadata).toStrictEqual([{ key: 'id', value: 'a' }, { key: 'tool', value: 'image' }, kept])
+      expect(isKeptImage(marked)).toBe(true)
+    }
+  })
+
+  it('removes the kept mark and keeps the other items in their order', () => {
+    const [reference] = findImageReferences(imageMarkdown(PNG, [{ key: 'id', value: 'a' }, kept, { key: 'desc', value: 'a (red) | b' }]), 'agent')
+    const [plain] = findImageReferences(imageReferenceText(reference, false), 'agent')
+
+    expect(isKeptImage(reference)).toBe(true)
+    expect(plain.metadata).toStrictEqual([{ key: 'id', value: 'a' }, { key: 'desc', value: 'a (red) | b' }])
+    expect(isKeptImage(plain)).toBe(false)
   })
 })
 

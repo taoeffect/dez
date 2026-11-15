@@ -275,6 +275,13 @@ export function modelTextForRequest(text: string): string {
   return modelTextEscape.unescape(text)
 }
 
+/** `text`, a whole text that a model wrote, with the `ModelTextEscaper`
+ *  escape: for a text that Dez writes in one piece, not as a stream (the
+ *  notes of a compaction, chat/compactionNotes.ts). */
+export function escapedModelText(text: string): string {
+  return modelTextEscape.escape(text)
+}
+
 /** The text of an agent section outside its tool blocks, as a provider
  *  gets it: the answer text as the model wrote it (the `ModelTextEscaper`
  *  escape removed), and each media tag in its request form. The tags are

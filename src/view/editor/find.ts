@@ -110,17 +110,20 @@ const protectedRangesCache = new WeakMap<Text, ProtectedRangesCacheEntry>()
  *  - collapsed pill bodies. They are hidden, and a real `\n` written into
  *    one breaks the single-line pill decoration;
  *  - images that the editor shows (`renderedImages`). Their source is
- *    hidden; a raw (broken) image reference stays searchable;
+ *    hidden; a raw (broken) image reference stays searchable. A hidden
+ *    image (hiddenAssets.ts: the asset of an intermediate call, or one that
+ *    a compaction keeps) is one of them, with a placeholder as its widget;
  *  - the line blocks (`lineBlocks.ts`) that the editor shows: tool call
- *    chips (`renderedToolCalls`) and media players (`renderedMedia`), plus
- *    the line breaks on both sides. Their source is hidden, and a replace
- *    in one could break it. Replacing a framing `\n` with nothing puts text
- *    on the block's first or last line, and the block then shows as its
- *    source; `keepTextOffLineBlocks` (lineBlocks.ts) adds a line break
- *    back only for a non-empty insert;
+ *    chips (`renderedToolCalls`) and media players (`renderedMedia`, a
+ *    hidden clip too), plus the line breaks on both sides. Their source is
+ *    hidden, and a replace in one could break it. Replacing a framing `\n`
+ *    with nothing puts text on the block's first or last line, and the
+ *    block then shows as its source; `keepTextOffLineBlocks` (lineBlocks.ts)
+ *    adds a line break back only for a non-empty insert;
  *  - the tag line of a compaction section (`compactionTagRange`), plus its
  *    line break: the pill of the section is in its place, and a replace in
- *    it would make the section a user section.
+ *    it would make the section a user section. The compaction chip
+ *    (compactionChip.ts) is a block at the end of that line, with no text.
  *  Pills without metadata (or a state without `pillsField`) count as
  *  collapsed, matching `decodeSectionContent`. Cached per doc + pill map
  *  + images + tool calls + media because the highlighter asks on every

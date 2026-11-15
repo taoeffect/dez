@@ -46,7 +46,7 @@ describe('assetTextPieces', () => {
   it('reads a linked reference as a reference only in a user section', () => {
     const text = image(LINKED, 'a')
 
-    expect(assetTextPieces(text, 'user')).toStrictEqual([{ kind: 'reference', from: 0, to: text.length, path: LINKED }])
+    expect(assetTextPieces(text, 'user')).toStrictEqual([{ kind: 'reference', from: 0, to: text.length, path: LINKED, kept: false }])
     expect(assetTextPieces(text, 'agent')).toStrictEqual([{ kind: 'gap', from: 0, to: text.length }])
   })
 })

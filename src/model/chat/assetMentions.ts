@@ -1,5 +1,5 @@
 import { findAssetMentions, type AssetMention } from './imageMentions'
-import { findImageReferences } from './images'
+import { findImageReferences, isKeptImage } from './images'
 import { findMediaTags, type MediaTag, type MediaTagKind } from './mediaTags'
 import { withoutStoredFilePaths } from './storedFilePaths'
 import type { Role } from './types'
@@ -15,10 +15,12 @@ import type { Role } from './types'
 // `messageClips`); a test ties the two.
 
 /** A run of a section's text: a media tag, an image reference, or the text
- *  between them (a gap). `from` and `to` are offsets in that text. */
+ *  between them (a gap). `from` and `to` are offsets in that text. `kept`
+ *  tells whether a reference has the kept mark of a compaction
+ *  (`IMAGE_KEPT_KEY`, images.ts). */
 export type AssetTextPiece =
   | { kind: 'media', tag: MediaTag }
-  | { kind: 'reference', from: number, to: number, path: string }
+  | { kind: 'reference', from: number, to: number, path: string, kept: boolean }
   | { kind: 'gap', from: number, to: number }
 
 /** The pieces of a section's text, in order, with no empty gap. References
@@ -37,7 +39,7 @@ export function assetTextPieces(text: string, role: Role): AssetTextPiece[] {
     for (const reference of findImageReferences(text.slice(from, to), role)) {
       addGap(end, from + reference.from)
       end = from + reference.to
-      pieces.push({ kind: 'reference', from: from + reference.from, to: end, path: reference.path })
+      pieces.push({ kind: 'reference', from: from + reference.from, to: end, path: reference.path, kept: isKeptImage(reference) })
     }
     addGap(end, to)
   }

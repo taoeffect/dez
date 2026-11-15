@@ -19,6 +19,7 @@ import { providerInfo } from '../model/providers/testing'
 import type { ModelInfo, ProviderInfo, ProviderInputImageRules, ProviderSettingsDescriptor } from '../model/providers/types'
 import { NO_PICTURE_BUDGET, type PictureBudget } from '../model/streams/pictureBudget'
 import { assetProbeArgs, clipNotReadFacts } from '../model/tools/assetFacts'
+import { ASSET_INFO_COLUMNS } from '../model/tools/assetInfo'
 import { clipChecksArgs, SCENE_CUT_FILTER } from '../model/tools/clipAnalysis'
 import {
   ASSET_VIEW_TIMEOUT_MS,
@@ -1736,7 +1737,7 @@ describe('dez.controller/tools/run', () => {
       ],
       format: { duration: '5.040000', size: '1250000' },
     })
-    const COLUMNS = 'Each line: id | kind | format and facts | shown, or hidden in the panel of its call\'s chip | who made it.'
+    const COLUMNS = ASSET_INFO_COLUMNS
     let tabId: string
 
     function assetInfo(assets: string, checks?: string): Promise<ToolRunResult> {

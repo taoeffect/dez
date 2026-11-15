@@ -49,7 +49,8 @@ export const ASSET_INFO_TOOL: ToolDefinition = {
   description: 'Give the facts of images and clips of this conversation, one line for each, in the order of the ids: '
     + 'its id; its kind (image, video, or audio); its format and facts (the size of an image in pixels; the length of a clip in seconds; '
     + 'the picture size, the frames per second, the codec, and the sound of a video clip; the codec, the sample rate, and the channels of an audio clip; '
-    + 'and the file size); whether your reply shows it (shown), or only the panel of the chip of the call that made it (hidden); '
+    + 'and the file size); whether the conversation shows it at its place (shown), or only a panel does (hidden): '
+    + 'the panel of the chip of the call that made it, or the panel of the compaction chip for one that a compaction kept; '
     + 'and who made it: the user, a model, a call of a Dez tool, or a job of a Dez tool, with the number of the job in its reply and how its call begins. '
     + 'The jobs of a reply end in any order, and the ids of what they make follow that order: '
     + 'before you use clips in an order (the scenes of a video), read which call made each one. '
@@ -106,6 +107,8 @@ export function assetOriginText(origin: AssetOrigin): string {
     }
     case 'call':
       return `made by the ${origin.tool} tool${labelEnd(origin.label)}`
+    case 'carried':
+      return origin.text
   }
 }
 
@@ -218,10 +221,13 @@ export function checksFailedLine(end: ProgramEnd, checks: readonly ClipCheck[]):
     + 'This is not a fault of the call.'
 }
 
+/** The first line of every `asset_info` result: the columns of a line. */
+export const ASSET_INFO_COLUMNS = 'Each line: id | kind | format and facts | shown, or hidden in the panel of a chip (of its call, or of the compaction) | who made it.'
+
 /** The result of an `asset_info` call with `checks`: a first line that
  *  names the columns, then the lines of `assetInfoLine`, each one of a
  *  clip followed by its check lines. */
 export function assetInfoText(lines: readonly string[], checks: readonly ClipCheck[]): string {
-  const columns = 'Each line: id | kind | format and facts | shown, or hidden in the panel of its call\'s chip | who made it.'
-  return [checks.length === 0 ? columns : `${columns} Under the line of a clip: a line for each check, with times in seconds of the clip.`, ...lines].join('\n')
+  const columns = checks.length === 0 ? ASSET_INFO_COLUMNS : `${ASSET_INFO_COLUMNS} Under the line of a clip: a line for each check, with times in seconds of the clip.`
+  return [columns, ...lines].join('\n')
 }

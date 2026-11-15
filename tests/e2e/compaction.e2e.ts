@@ -1,18 +1,20 @@
 import fs from 'node:fs'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
-import { COMPACTION_MESSAGE_INTRO, COMPACTION_USER_MESSAGE_LABEL, compactionTagText } from '../../src/model/chat/compaction'
+import { CARRIED_USER_ASSETS_LABEL, COMPACTION_MESSAGE_INTRO, COMPACTION_USER_MESSAGE_LABEL, compactionTagText } from '../../src/model/chat/compaction'
 import type { ShownPicture } from '../../src/model/chat/shownPictures'
 import type { SectionData } from '../../src/model/persistence/types'
 import { shortDuration } from '../../src/view/thread/pillDuration'
 import { anthropicChatBody, anthropicMarkedUser, openAiChatBody } from './harness/chatBody'
 import { consoleErrors, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
 import { appFilePath, conversationFilePath, makeConversation, seedConversation, writeTestFile } from './harness/fixtures'
-import { pasteImageReference, pngDataUrl, shownImages, solidPng } from './harness/images'
+import { pasteImageReference, pngDataUrl, shownImages, solidPng, type ShownImage } from './harness/images'
+import { shownPlayers, WEBM_VIDEO, type ShownPlayer } from './harness/media'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendAnthropicReply, sendChatReply, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
 import { activeConversationId, editorCaret, focusEditor, misplacedLines, pressRolePill, savedPillLines, sbpCall, submit, threadSections, waitForThread, type ThreadSection } from './harness/thread'
+import { hiddenAssetNotes, hiddenPart, pressToolChip, toolChips, toolPanelPictures, type ToolChipView } from './harness/toolChips'
 
 // A compacted conversation, driven through the real app against a mock
 // server in this process. Its first section is the compaction section: an
@@ -29,6 +31,12 @@ import { activeConversationId, editorCaret, focusEditor, misplacedLines, pressRo
 //   of every other conversation; an undo brings the compaction section
 //   back.
 // - A new image gets an id after the `last-id` of the tag.
+// - A compaction can keep an image or a clip: its reference or its tag has
+//   the kept mark. The editor hides it at its place in the compaction
+//   section and in the section of the carried assets of the user, and the
+//   compaction chip under the Agent pill shows it in its panel, with the
+//   pictures of the tag. A request sends a kept image as its text only,
+//   unless the user names it with `@id`.
 //
 // One app session serves the whole file. The relaunch test reopens the
 // conversation of the request test.
@@ -43,6 +51,10 @@ const KEPT_PNG = solidPng(40, 24, [220, 40, 40])
 const MADE_PNG = solidPng(30, 20, [40, 160, 60])
 const SHEET_PNG = solidPng(64, 16, [40, 90, 220])
 const SHEET: ShownPicture = { file: 'compaction-sheet.png', label: 'The frame sheet of the video clip @c.', width: 64, height: 16, bytes: SHEET_PNG.length }
+// The image that the notes keep, and the image that the section of the
+// carried assets of the user shows.
+const KEPT_MADE_PNG = solidPng(36, 28, [200, 160, 40])
+const CARRIED_PNG = solidPng(44, 22, [120, 40, 160])
 
 const PLAIN_TAG = compactionTagText({ count: 1, lastId: 'c', pictures: [] })
 const REPLY_MS = 4213
@@ -90,6 +102,37 @@ function compactionSection (text: string, provider = PROVIDER): SectionData {
 
 function imagePart (png: Buffer): Record<string, unknown> {
   return { type: 'image_url', image_url: { url: pngDataUrl(png) } }
+}
+
+// The images of the conversation with kept assets, as the editor shows
+// them.
+const MADE_IMAGE: ShownImage = { alt: 'compaction-made.png', width: 30, height: 20 }
+const KEPT_MADE_IMAGE: ShownImage = { alt: 'compaction-kept-made.png', width: 36, height: 28 }
+const KEPT_USER_IMAGE: ShownImage = { alt: 'compaction-kept.png', width: 40, height: 24 }
+const CARRIED_IMAGE: ShownImage = { alt: 'compaction-carried.png', width: 44, height: 22 }
+const KEPT_CLIP_PLAYER: ShownPlayer = { kind: 'video', id: 'c', available: true, source: 'blob', seconds: 2, picture: { width: 48, height: 36 }, clock: null, save: 'saved' }
+
+/** The compaction chip of a conversation that the compaction left with
+ *  `counts` (as "2 kept assets"), with its panel open or not. */
+function compactionChipView (counts: string[], open: boolean): ToolChipView {
+  return {
+    state: null,
+    label: ['Compaction 1', ...counts].join(', '),
+    unrecognized: null,
+    name: 'Compaction 1',
+    summary: null,
+    stateWord: null,
+    spinner: false,
+    expanded: String(open),
+    title: open ? 'Hide compaction' : 'Show compaction',
+    open,
+  }
+}
+
+/** The text at the place of the kept asset `name`, while the caret is on
+ *  another line. */
+function keptNote (name: string): { text: string, visible: boolean } {
+  return { text: `Kept ${name}. Open the compaction chip to see it.`, visible: false }
 }
 
 describe('a compacted conversation', () => {
@@ -180,6 +223,69 @@ describe('a compacted conversation', () => {
         { type: 'text', text: `${KEPT}Make a film of ![image](id=a)` },
         imagePart(KEPT_PNG),
         { type: 'text', text: `${KEPT}${sent}` },
+      ],
+    }
+  }
+
+  // The text of each count at the end of the compaction chip.
+  async function compactionChipCounts (): Promise<string[]> {
+    return browser.execute(() => Array.from(document.querySelectorAll('.cm-content .dez-compaction-chip__count'), (count) => count.textContent ?? ''))
+  }
+
+  // The files of the conversation with kept assets, and its sections: the
+  // compaction section (its notes show the made image `b` and keep the
+  // image `d` and the clip `c`, and its tag keeps a picture), the first
+  // kept user message, the section of the carried assets of the user (it
+  // keeps the image `a` and shows the image `e`), a second kept user
+  // message, and the empty message of the user. The kept marks are written
+  // out here, so that the spec does not take them from the code under test.
+  async function keptConversation (): Promise<SectionData[]> {
+    const { home } = setup.app
+    const made = await writeTestFile(appFilePath(home, 'assets', 'generated', 'images', 'compaction-made.png'), MADE_PNG)
+    const keptMade = await writeTestFile(appFilePath(home, 'assets', 'generated', 'images', 'compaction-kept-made.png'), KEPT_MADE_PNG)
+    const clip = await writeTestFile(appFilePath(home, 'assets', 'generated', 'video', 'compaction-clip.webm'), WEBM_VIDEO)
+    const keptUser = await writeTestFile(appFilePath(home, 'assets', 'images', 'compaction-kept.png'), KEPT_PNG)
+    const carried = await writeTestFile(appFilePath(home, 'assets', 'images', 'compaction-carried.png'), CARRIED_PNG)
+    await writeTestFile(appFilePath(home, 'assets', 'generated', 'views', SHEET.file), SHEET_PNG)
+    const notes = [
+      compactionTagText({ count: 1, lastId: 'e', pictures: [SHEET] }),
+      'The user wants a film of a fox.',
+      `![${made}](id=b)`,
+      'The fox is red.',
+      `![${keptMade}](id=d|kept=compaction)`,
+      'The film of the fox:',
+      `<dez:video id="c" type="video/webm" src="${clip}" kept="compaction"/>`,
+      'The fox sleeps.',
+    ]
+    return [
+      compactionSection(notes.join('\n')),
+      textSection('user', 'Make a film of the fox.'),
+      textSection('user', [CARRIED_USER_ASSETS_LABEL, `![${keptUser}](id=a|kept=compaction)`, `![${carried}](id=e)`].join('\n')),
+      textSection('user', 'Make it longer.'),
+      textSection('user', ''),
+    ]
+  }
+
+  // The first message of the request of the conversation with kept assets
+  // after the user sent a message: the kept images go as their text only,
+  // and the clip as the request form of its tag. `sent` is the text of the
+  // sent message up to its first image part, if any, and `sentParts` are
+  // the parts of the rest of it.
+  function keptCompactionMessage (sent: string, ...sentParts: Array<Record<string, unknown>>): Record<string, unknown> {
+    return {
+      role: 'user',
+      content: [
+        { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\nThe user wants a film of a fox.\n![image](id=b)` },
+        imagePart(MADE_PNG),
+        {
+          type: 'text',
+          text: `\nThe fox is red.\n![image](id=d|kept=compaction)\nThe film of the fox:\n<dez:video id="c" type="video/webm"/>\nThe fox sleeps.\n\n${SHEET.label}`,
+        },
+        imagePart(SHEET_PNG),
+        { type: 'text', text: `${KEPT}Make a film of the fox.\n\n${CARRIED_USER_ASSETS_LABEL}\n![image](id=a|kept=compaction)\n![image](id=e)` },
+        imagePart(CARRIED_PNG),
+        { type: 'text', text: `${KEPT}Make it longer.${KEPT}${sent}` },
+        ...sentParts,
       ],
     }
   }
@@ -339,6 +445,82 @@ describe('a compacted conversation', () => {
     await focusEditor(browser)
     await browser.keys([Key.Control, Key.End])
     await pasteImageReference(browser, KEPT_PNG, 'd')
+  })
+
+  it('hides the assets that the compaction keeps, and its chip under the Agent pill shows them with the pictures of the tag', async () => {
+    const thread = await openCompacted('compacted-kept-look', await keptConversation())
+    const notes = [keptNote('image @d'), keptNote('video clip @c'), keptNote('image @a')]
+    const counts = ['3 kept assets', '1 picture']
+
+    await waitForValue(browser, 'shown images', () => shownImages(browser), [MADE_IMAGE, CARRIED_IMAGE])
+    expect(await shownPlayers(browser)).toStrictEqual([])
+    expect(await hiddenAssetNotes(browser)).toStrictEqual(notes)
+    expect(await toolChips(browser)).toStrictEqual([compactionChipView(counts, false)])
+    expect(await compactionChipCounts()).toStrictEqual(counts)
+    expect(await toolPanelPictures(browser, 0)).toBeNull()
+    expect(await misplacedLines(browser)).toStrictEqual([])
+
+    // The panel shows the kept assets in doc order, then the picture. The
+    // chip is above the notes, so its images come first.
+    await pressToolChip(browser, 0)
+    await waitForValue(browser, 'open chip', () => toolChips(browser), [compactionChipView(counts, true)])
+    expect(await hiddenPart(browser, 0)).toStrictEqual({ heading: 'Kept assets', assets: 3, text: null })
+    await waitForValue(browser, 'images with the panel open', () => shownImages(browser), [KEPT_MADE_IMAGE, KEPT_USER_IMAGE, MADE_IMAGE, CARRIED_IMAGE])
+    await waitForValue(browser, 'player with the panel open', () => shownPlayers(browser), [KEPT_CLIP_PLAYER])
+    await waitForValue(browser, 'picture with the panel open', () => toolPanelPictures(browser, 0), [{ label: SHEET.label, size: '64x16' }])
+    // A press keeps the caret where it was, so the notes stay out of view.
+    expect(await hiddenAssetNotes(browser)).toStrictEqual(notes)
+
+    await pressToolChip(browser, 0)
+    await waitForValue(browser, 'closed chip', () => toolChips(browser), [compactionChipView(counts, false)])
+    expect(await hiddenPart(browser, 0)).toBeNull()
+    expect(await shownPlayers(browser)).toStrictEqual([])
+    expect(await shownImages(browser)).toStrictEqual([MADE_IMAGE, CARRIED_IMAGE])
+    expect(await misplacedLines(browser)).toStrictEqual([])
+    expect(await threadSections(browser)).toStrictEqual(thread)
+  })
+
+  it('sends a kept image as its text only, and a mention of the user sends the image right after the mention', async () => {
+    const sections = await keptConversation()
+    const plain = await openCompacted('compacted-kept-requests', sections)
+
+    await submit(browser, 'Go on.')
+    const first = await takeRequest(setup, mockChatPath(PROVIDER), openAiChatBody(PROVIDER, [keptCompactionMessage('Go on.')]))
+    await sendChatReply(first.reply, 'the plain')
+    await waitForThread(browser, [...plain.slice(0, 4), { role: 'user', text: 'Go on.' }, { role: 'agent', text: replyText('the plain') }, { role: 'user', text: '' }])
+
+    // The newest user message is in the compaction message too: there, a
+    // mention sends the kept image of the notes and the kept image of the
+    // user.
+    const mentioned = await openCompacted('compacted-kept-mention', sections)
+    await submit(browser, 'Show me @d and @a.')
+    const second = await takeRequest(setup, mockChatPath(PROVIDER), openAiChatBody(PROVIDER, [keptCompactionMessage(
+      'Show me @d',
+      imagePart(KEPT_MADE_PNG),
+      { type: 'text', text: ' and @a' },
+      imagePart(KEPT_PNG),
+      { type: 'text', text: '.' },
+    )]))
+    await sendChatReply(second.reply, 'the mention')
+    await waitForThread(browser, [...mentioned.slice(0, 4), { role: 'user', text: 'Show me @d and @a.' }, { role: 'agent', text: replyText('the mention') }, { role: 'user', text: '' }])
+  })
+
+  // Only the compaction section and the section of the carried assets of
+  // the user hide what the compaction keeps. A user can copy a kept line
+  // into a later message, and there it is an image as every other one.
+  it('shows a kept image at its place in a user message after a reply', async () => {
+    const kept = await writeTestFile(appFilePath(setup.app.home, 'assets', 'images', 'compaction-kept.png'), KEPT_PNG)
+    const reference = `![${kept}](id=a|kept=compaction)`
+    await openCompacted('compacted-kept-later', [
+      compactionSection(`${PLAIN_TAG}\nThe user sent a fox.\n${reference}\nIt is red.`),
+      textSection('user', 'Make a film of the fox.'),
+      textSection('agent', 'Which fox?'),
+      textSection('user', `This one:\n${reference}`),
+    ])
+
+    await waitForValue(browser, 'shown images', () => shownImages(browser), [KEPT_USER_IMAGE])
+    expect(await hiddenAssetNotes(browser)).toStrictEqual([keptNote('image @a')])
+    expect(await toolChips(browser)).toStrictEqual([compactionChipView(['1 kept asset'], false)])
   })
 
   it('shows the compaction section and sends the same first message after a relaunch', async () => {

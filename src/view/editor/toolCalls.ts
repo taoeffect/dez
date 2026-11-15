@@ -1,11 +1,12 @@
 import sbp from '@sbp/sbp'
 import { StateEffect, StateField, type EditorState, type Extension } from '@codemirror/state'
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view'
-import { jobResultInBlocks, type HiddenAsset } from '../../model/chat/hiddenAssets'
+import { jobResultInBlocks, type HiddenAsset, type HiddenAssetOwner } from '../../model/chat/hiddenAssets'
 import type { MediaTagData } from '../../model/chat/mediaTags'
 import { parseModelRefKey } from '../../model/chat/modelRef'
 import type { ShownPicture } from '../../model/chat/shownPictures'
 import { EMPTY_TOOL_RESULT, INTERRUPTED_TOOL_RESULT, type ToolBlock } from '../../model/chat/toolBlocks'
+import type { Role } from '../../model/chat/types'
 import { MODEL_OUTPUT_IDS, effectiveOutputs, type ModelOutput } from '../../model/modelOutputs'
 import { isRecord } from '../../model/providers/modelParsing'
 import type { ModelInfo } from '../../model/providers/types'
@@ -36,6 +37,9 @@ import { ROUND_STROKE, svgIcon } from './svgIcon'
 // The chip of an intermediate call (`IntermediateCall`) also has an eye, a
 // symbol for the type of what the call made, and a label; its panel shows
 // what the call hides: its images and clips (hiddenAssets.ts), or its text.
+//
+// The compaction chip (compactionChip.ts) is a chip of the same look, and
+// uses the exported builders of this file.
 
 /** How a chip shows its call. `running`: a reply runs the tool now.
  *  `interrupted`: a `running` block that no reply runs (the app stopped
@@ -52,10 +56,20 @@ function toolCallState(block: ToolBlock, streaming: boolean): ToolCallState {
 }
 
 /** A hidden asset as the panel of its chip draws it, with no doc offsets:
- *  what `createImage` or `createPlayer` takes. */
-export type IntermediateAsset =
+ *  what `createImage` or `createPlayer` takes. A clip has the role of its
+ *  section, which tells its player whether a linked file counts (an
+ *  image's `linked` tells that already). */
+export type PanelAsset =
   | { kind: 'image', path: string, id: string | null, linked: boolean }
-  | { kind: 'clip', tag: MediaTagData }
+  | { kind: 'clip', tag: MediaTagData, role: Role }
+
+/** The hidden asset `asset` of a section with the role `role`, as a panel
+ *  draws it. Without the offsets, which every token before it changes. */
+export function panelAsset(asset: HiddenAsset, role: Role): PanelAsset {
+  if (asset.kind === 'image') return { kind: 'image', path: asset.image.path, id: asset.image.id, linked: asset.image.linked }
+  const { kind, id, type, src, url, expires, other } = asset.tag
+  return { kind: 'clip', tag: { kind, id, type, src, url, expires, other }, role }
+}
 
 /** What the chip of an intermediate call shows on top of the parts of
  *  every chip. A call is intermediate when it asks to hide what its job
@@ -67,7 +81,7 @@ export interface IntermediateCall {
   /** The Dez job that the call started; null while the call runs. */
   jobId: string | null
   /** The images and clips of the job that the chip hides, in doc order. */
-  assets: readonly IntermediateAsset[]
+  assets: readonly PanelAsset[]
   /** The text that the job made, when that is all it made: it is in the
    *  result of a `jobs_wait` block, which few users open. Blank for a job
    *  with assets, and for one that did not finish. */
@@ -286,19 +300,15 @@ function addSectionSpacing(spacing: ChipSpacing, text: string, offset: number, c
  *  `hidden` the hidden assets of that section. */
 function intermediateCall(call: ToolBlock, state: ToolCallState, chips: readonly ToolBlock[], hidden: readonly HiddenAsset[]): IntermediateCall | null {
   const jobId = startedJobId(call.result)
-  const assets = jobId === null ? [] : hidden.filter((asset) => asset.jobId === jobId)
+  const assets = jobId === null ? [] : hidden.filter((asset) => asset.owner.kind === 'job' && asset.owner.jobId === jobId)
   const asked = (state === 'running' || jobId !== null) && isIntermediateCall(call.name, call.arguments)
   if (assets.length === 0 && !asked) return null
   const result = jobId === null ? null : jobResultInBlocks(chips, jobId)
   const text = result?.status === 'finished' && assets.length === 0 ? jobOwnText(result.text) : ''
   return {
     jobId,
-    assets: assets.map((asset): IntermediateAsset => {
-      if (asset.kind === 'image') return { kind: 'image', path: asset.image.path, id: asset.image.id, linked: asset.image.linked }
-      // Without the tag's offsets, which every token before it changes.
-      const { kind, id, type, src, url, expires, other } = asset.tag
-      return { kind: 'clip', tag: { kind, id, type, src, url, expires, other } }
-    }),
+    // A job's assets are in agent sections only.
+    assets: assets.map((asset) => panelAsset(asset, 'agent')),
     text: text.trim() === '' ? '' : text,
     status: result?.status ?? null,
   }
@@ -372,11 +382,11 @@ export function openToolCalls(state: EditorState): ReadonlySet<string> {
  *  drawn DOM in place (`toolCallOpenUpdater`), which needs the call. */
 const drawnCalls = new WeakMap<HTMLElement, RenderedToolCall>()
 
-const ROOT_CLASS = 'dez-tool-call'
-const CHIP_CLASS = 'dez-tool-call__chip'
-const NAME_CLASS = 'dez-tool-call__name'
+export const ROOT_CLASS = 'dez-tool-call'
+export const CHIP_CLASS = 'dez-tool-call__chip'
+export const NAME_CLASS = 'dez-tool-call__name'
 const SUMMARY_CLASS = 'dez-tool-call__summary'
-const PANEL_CLASS = 'dez-tool-call__panel'
+export const PANEL_CLASS = 'dez-tool-call__panel'
 const HEADING_CLASS = 'dez-tool-call__heading'
 const RESULT_CLASS = 'dez-tool-call__result'
 const RESULT_TEXT_CLASS = 'dez-tool-call__result-text'
@@ -403,7 +413,7 @@ const TYPE_ICONS: Readonly<Record<ModelOutput, () => SVGSVGElement>> = {
   text: () => svgIcon('0 0 16 16', [['path', { d: 'M2.5 4.2h11M2.5 8h11M2.5 11.8h6.5', ...ROUND_STROKE, 'stroke-width': '1.3' }]]),
 }
 
-function span(className: string, text?: string): HTMLSpanElement {
+export function span(className: string, text?: string): HTMLSpanElement {
   const element = document.createElement('span')
   element.className = className
   if (text !== undefined) element.textContent = text
@@ -497,25 +507,28 @@ function renderSummary(chip: HTMLElement, summary: string): void {
   if (summary !== '') chip.querySelector(`.${NAME_CLASS}`)?.after(span(SUMMARY_CLASS, summary))
 }
 
-function createChip(view: EditorView, call: RenderedToolCall): HTMLElement {
+/** The triangle at the start of a chip that has a panel. It turns while
+ *  the panel is open (`dezTheme`). */
+export function disclosureTriangle(): HTMLSpanElement {
+  return span('dez-tool-call__disclosure', '▶')
+}
+
+/** The chip part of a chip root (`ROOT_CLASS`): `lead` (a disclosure
+ *  triangle or a spinner; none for a chip with no panel), `icon`, then
+ *  `parts`. With `toggle`, the chip is a button that opens and closes its
+ *  panel: a press, or Enter or Space while it has the focus, calls it. */
+export function createChip(lead: HTMLElement | null, icon: SVGSVGElement, parts: readonly HTMLElement[], toggle: (() => void) | null): HTMLSpanElement {
   const chip = span(CHIP_CLASS)
+  if (lead) {
+    lead.setAttribute('aria-hidden', 'true')
+    chip.appendChild(lead)
+  }
+  const iconBox = span('dez-tool-call__icon')
+  iconBox.appendChild(icon)
+  chip.append(iconBox, ...parts)
+  if (!toggle) return chip
   chip.setAttribute('role', 'button')
   chip.tabIndex = 0
-  // The spinner element stays as long as the widget, so its animation runs
-  // without restarts until the call ends.
-  const slot = call.state === 'running' ? span('dez-tool-call__spinner') : span('dez-tool-call__disclosure', '▶')
-  slot.setAttribute('aria-hidden', 'true')
-  const icon = span('dez-tool-call__icon')
-  icon.appendChild(wrenchIcon())
-  chip.append(slot, icon)
-  // The words go in their own span, so the name keeps the name's look
-  // (`dezTheme`) and the flex gap spaces the two.
-  if (isUnrecognizedTool(call.name)) chip.appendChild(span('dez-tool-call__unrecognized', UNRECOGNIZED_TOOL_TEXT))
-  chip.appendChild(span(NAME_CLASS, call.name))
-  renderSummary(chip, call.summary)
-  const word = STATE_WORDS[call.state]
-  if (word) chip.appendChild(span('dez-tool-call__state', word))
-  const toggle = () => view.dispatch({ effects: toggleToolCallOpenEffect.of(call.id) })
   chip.addEventListener('mousedown', (event) => {
     if (event.button === 0) toggle()
   })
@@ -524,6 +537,20 @@ function createChip(view: EditorView, call: RenderedToolCall): HTMLElement {
     event.preventDefault()
     toggle()
   })
+  return chip
+}
+
+function createCallChip(view: EditorView, call: RenderedToolCall): HTMLElement {
+  // The spinner element stays as long as the widget, so its animation runs
+  // without restarts until the call ends.
+  const lead = call.state === 'running' ? span('dez-tool-call__spinner') : disclosureTriangle()
+  // The words go in their own span, so the name keeps the name's look
+  // (`dezTheme`) and the flex gap spaces the two.
+  const words = isUnrecognizedTool(call.name) ? [span('dez-tool-call__unrecognized', UNRECOGNIZED_TOOL_TEXT)] : []
+  const chip = createChip(lead, wrenchIcon(), [...words, span(NAME_CLASS, call.name)], () => view.dispatch({ effects: toggleToolCallOpenEffect.of(call.id) }))
+  renderSummary(chip, call.summary)
+  const word = STATE_WORDS[call.state]
+  if (word) chip.appendChild(span('dez-tool-call__state', word))
   return chip
 }
 
@@ -550,11 +577,11 @@ function createField(text: string, label: string, placeholder: string): HTMLElem
   return box
 }
 
-/** The key of a hidden asset among the assets of one call. A drawn asset
+/** The key of a hidden asset among the assets of one chip. A drawn asset
  *  whose key stays keeps its element: an image's path and id tell its
  *  file, and a clip's kind and id never change (a Save or a Delete changes
  *  only its `src`). */
-function assetKey(asset: IntermediateAsset): string {
+function assetKey(asset: { kind: 'image', path: string, id: string | null, linked: boolean } | { kind: 'clip', tag: Pick<MediaTagData, 'kind' | 'id'> }): string {
   return JSON.stringify(asset.kind === 'image' ? ['image', asset.path, asset.id, asset.linked] : [asset.tag.kind, asset.tag.id])
 }
 
@@ -562,9 +589,17 @@ function assetKey(asset: IntermediateAsset): string {
  *  draws. */
 const drawnAssetKeys = new WeakMap<Element, string>()
 
-/** Draws `assets`, the hidden assets of the job `jobId`, in `list`, each
- *  as it shows at its own place when it is not hidden: an image with its
- *  toolbar, a clip in its player (`createImage`, `createPlayer`).
+/** Whether the chip of `owner` hides `asset`. A call that started no job
+ *  has the owner null, which hides nothing. */
+function ownedBy(asset: HiddenAsset, owner: HiddenAssetOwner | null): boolean {
+  if (owner === null) return false
+  if (asset.owner.kind === 'job' && owner.kind === 'job') return asset.owner.jobId === owner.jobId
+  return asset.owner.kind === owner.kind
+}
+
+/** Draws `assets`, the hidden assets of the chip of `owner`, in `list`,
+ *  each as it shows at its own place when it is not hidden: an image with
+ *  its toolbar, a clip in its player (`createImage`, `createPlayer`).
  *
  *  A drawn asset that is still there keeps its element, and a kept element
  *  moves only when the order changed: a player that leaves the document
@@ -572,8 +607,8 @@ const drawnAssetKeys = new WeakMap<Element, string>()
  *  changes its tag, keeps its player (`updatePlayer`).
  *
  *  Each asset tells where its text is in the doc now (`AssetPlace`) by its
- *  job and its key, as its element is at the place of the chip. */
-function renderAssets(view: EditorView, list: HTMLElement, jobId: string | null, assets: readonly IntermediateAsset[]): void {
+ *  owner and its key, as its element is at the place of the chip. */
+export function renderAssets(view: EditorView, list: HTMLElement, owner: HiddenAssetOwner | null, assets: readonly PanelAsset[]): void {
   const drawn = new Map<string, HTMLElement>()
   for (const element of list.children) drawn.set(drawnAssetKeys.get(element) ?? '', element as HTMLElement)
   // How many of the assets so far have each key: two references to one
@@ -590,8 +625,8 @@ function renderAssets(view: EditorView, list: HTMLElement, jobId: string | null,
       return kept
     }
     const place: AssetPlace = () => hiddenAssets(view.state)
-      .filter((hidden) => hidden.jobId === jobId && assetKey(hidden.kind === 'image' ? { ...hidden.image, kind: 'image' } : hidden) === key)[count]?.from ?? null
-    const element = asset.kind === 'image' ? createImage(view, asset, place) : createPlayer(view, asset.tag, 'agent', place)
+      .filter((hidden) => ownedBy(hidden, owner) && assetKey(hidden.kind === 'image' ? { ...hidden.image, kind: 'image' } : hidden) === key)[count]?.from ?? null
+    const element = asset.kind === 'image' ? createImage(view, asset, place) : createPlayer(view, asset.tag, asset.role, place)
     drawnAssetKeys.set(element, `${count}:${key}`)
     return element
   })
@@ -606,17 +641,15 @@ function renderAssets(view: EditorView, list: HTMLElement, jobId: string | null,
 
 /** Takes down the players of the hidden clips that `panel` draws, before
  *  it leaves the document: only `destroyPlayer` frees a mounted player. */
-function destroyPanelPlayers(panel: Element): void {
+export function destroyPanelPlayers(panel: Element): void {
   for (const asset of panel.querySelectorAll<HTMLElement>(`.${ASSETS_CLASS} > *`)) destroyPlayer(asset)
 }
 
-/** Draws what the call hides as the first part of its open `panel`: its
- *  hidden assets (`renderAssets`), else the text of its job, as the reason
- *  to open the chip of an intermediate call is to see that. The part is
- *  gone when the call hides nothing (any more). */
-function renderHiddenPart(view: EditorView, panel: HTMLElement, call: RenderedToolCall): void {
-  const assets = call.intermediate?.assets ?? []
-  const text = call.intermediate?.text ?? ''
+/** Draws the hidden assets of the chip of `owner` as the first part of its
+ *  open `panel`: `heading`, then the assets (`renderAssets`). With no
+ *  asset, `text` shows in their place, in a field that has the heading as
+ *  its name. The part is gone when it has neither. */
+export function renderHiddenPart(view: EditorView, panel: HTMLElement, owner: HiddenAssetOwner | null, heading: string, assets: readonly PanelAsset[], text = ''): void {
   let part = panel.querySelector<HTMLElement>(`.${HIDDEN_PART_CLASS}`)
   if (assets.length === 0 && text === '') {
     if (part) destroyPanelPlayers(part)
@@ -628,19 +661,28 @@ function renderHiddenPart(view: EditorView, panel: HTMLElement, call: RenderedTo
     part.append(span(HEADING_CLASS), span(ASSETS_CLASS))
     panel.prepend(part)
   }
-  const [heading, list] = part.children
-  renderAssets(view, list as HTMLElement, call.intermediate?.jobId ?? null, assets)
+  const [headingElement, list] = part.children
+  renderAssets(view, list as HTMLElement, owner, assets)
   part.querySelector(`.${RESULT_CLASS}`)?.remove()
-  heading.textContent = assets.length > 1 ? 'Intermediate assets' : assets.length === 1 ? 'Intermediate asset' : 'Intermediate text'
-  if (assets.length === 0) part.appendChild(createField(text, 'Intermediate text', ''))
+  headingElement.textContent = heading
+  if (assets.length === 0) part.appendChild(createField(text, heading, ''))
 }
 
-/** The part of an open panel that shows the copies of the pictures that
- *  the call showed its model (`ToolBlockData.pictures`), so that the user
- *  sees what the model saw: a heading, then each picture under the text
- *  that went before it in the requests. A copy that is gone shows a short
- *  text in its place. */
-function createPictures(view: EditorView, pictures: readonly ShownPicture[]): HTMLElement[] {
+/** Draws what the call hides in its open `panel` (`renderHiddenPart`): its
+ *  hidden assets, else the text of its job, as the reason to open the chip
+ *  of an intermediate call is to see that. */
+function renderIntermediatePart(view: EditorView, panel: HTMLElement, call: RenderedToolCall): void {
+  const jobId = call.intermediate?.jobId ?? null
+  const assets = call.intermediate?.assets ?? []
+  const heading = assets.length > 1 ? 'Intermediate assets' : assets.length === 1 ? 'Intermediate asset' : 'Intermediate text'
+  renderHiddenPart(view, panel, jobId === null ? null : { kind: 'job', jobId }, heading, assets, call.intermediate?.text ?? '')
+}
+
+/** The part of an open panel that shows the copies of the pictures that a
+ *  model was shown (`ShownPicture`), so that the user sees what the model
+ *  saw: `heading`, then each picture under the text that went before it
+ *  in the requests. A copy that is gone shows a short text in its place. */
+export function createPictures(view: EditorView, pictures: readonly ShownPicture[], heading: string): HTMLElement[] {
   const items = pictures.map(({ file, label }) => {
     const item = span('dez-tool-call__picture')
     const img = document.createElement('img')
@@ -662,7 +704,7 @@ function createPictures(view: EditorView, pictures: readonly ShownPicture[]): HT
     item.append(span('dez-tool-call__picture-label', label), img)
     return item
   })
-  return [span(HEADING_CLASS, pictures.length > 1 ? 'Pictures' : 'Picture'), ...items]
+  return [span(HEADING_CLASS, heading), ...items]
 }
 
 function createPanel(view: EditorView, call: RenderedToolCall): HTMLElement {
@@ -678,20 +720,20 @@ function createPanel(view: EditorView, call: RenderedToolCall): HTMLElement {
   const result = createField(call.state === 'interrupted' ? INTERRUPTED_TOOL_RESULT : call.result, 'Result', call.state === 'running' ? 'Running…' : EMPTY_TOOL_RESULT)
   if (call.state === 'error' || call.state === 'interrupted') result.setAttribute('data-error', '')
   panel.append(span(HEADING_CLASS, 'Result'), result)
-  if (call.pictures) panel.append(...createPictures(view, call.pictures))
-  renderHiddenPart(view, panel, call)
+  if (call.pictures) panel.append(...createPictures(view, call.pictures, call.pictures.length > 1 ? 'Pictures' : 'Picture'))
+  renderIntermediatePart(view, panel, call)
   return panel
 }
 
 /** Draws the open or closed state of the chip root `root`: the chip's
- *  state for screen readers, its title, its intermediate part, and the
- *  panel. Returns whether the panel came or went. */
-function renderOpenState(view: EditorView, root: HTMLElement, call: RenderedToolCall, open: boolean): boolean {
+ *  state for screen readers, its title (`title`, which tells what a press
+ *  does), and the panel, which `createPanel` makes. Returns whether the
+ *  panel came or went. */
+export function renderOpenState(root: HTMLElement, open: boolean, title: string, createPanel: () => HTMLElement): boolean {
   const chip = root.querySelector<HTMLElement>(`.${CHIP_CLASS}`)
   if (!chip || chip.getAttribute('aria-expanded') === String(open)) return false
   chip.setAttribute('aria-expanded', String(open))
-  chip.title = open ? 'Hide tool call' : 'Show tool call'
-  renderIntermediate(chip, call, open)
+  chip.title = title
   const panel = root.querySelector(`.${PANEL_CLASS}`)
   if (open === (panel !== null)) return false
   if (panel) {
@@ -699,10 +741,18 @@ function renderOpenState(view: EditorView, root: HTMLElement, call: RenderedTool
     panel.remove()
     root.removeAttribute('data-open')
   } else {
-    root.appendChild(createPanel(view, call))
+    root.appendChild(createPanel())
     root.setAttribute('data-open', '')
   }
   return true
+}
+
+/** `renderOpenState` for the chip of `call`, with its intermediate part,
+ *  which shows whether the panel shows what the chip hides. */
+function renderCallOpenState(view: EditorView, root: HTMLElement, call: RenderedToolCall, open: boolean): boolean {
+  const chip = root.querySelector<HTMLElement>(`.${CHIP_CLASS}`)
+  if (chip && chip.getAttribute('aria-expanded') !== String(open)) renderIntermediate(chip, call, open)
+  return renderOpenState(root, open, open ? 'Hide tool call' : 'Show tool call', () => createPanel(view, call))
 }
 
 // Every part of a call that the chip draws, but its intermediate data and
@@ -730,8 +780,8 @@ class ToolCallWidget extends WidgetType {
   toDOM(view: EditorView): HTMLElement {
     const root = span(ROOT_CLASS)
     root.setAttribute('data-state', this.call.state)
-    root.appendChild(createChip(view, this.call))
-    renderOpenState(view, root, this.call, openToolCalls(view.state).has(this.call.id))
+    root.appendChild(createCallChip(view, this.call))
+    renderCallOpenState(view, root, this.call, openToolCalls(view.state).has(this.call.id))
     drawnCalls.set(root, this.call)
     // A press anywhere on the widget keeps the caret and the focus where
     // they are, as a press on a role pill does: the caret never goes onto
@@ -760,7 +810,7 @@ class ToolCallWidget extends WidgetType {
     // This also draws the chip's accessible name, which holds the summary.
     renderIntermediate(chip, this.call, chip.getAttribute('aria-expanded') === 'true')
     const panel = dom.querySelector<HTMLElement>(`.${PANEL_CLASS}`)
-    if (panel) renderHiddenPart(view, panel, this.call)
+    if (panel) renderIntermediatePart(view, panel, this.call)
     // The panel can have a new height.
     measureLineHeights(view)
     return true
@@ -855,7 +905,7 @@ const toolCallOpenUpdater = ViewPlugin.define(() => ({
     let changed = false
     for (const root of view.contentDOM.querySelectorAll<HTMLElement>(`.${ROOT_CLASS}`)) {
       const call = drawnCalls.get(root)
-      if (call && renderOpenState(view, root, call, open.has(call.id))) changed = true
+      if (call && renderCallOpenState(view, root, call, open.has(call.id))) changed = true
     }
     if (changed) measureLineHeights(view)
   },

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { compactionTagText } from './compaction'
-import { newMediaIds, pastedMediaIdChanges } from './mediaIds'
+import { compareMediaIds, highestConversationMediaId, newMediaIds, pastedMediaIdChanges } from './mediaIds'
 import { mediaTagText } from './mediaTags'
 
 const PNG = '/home/ann/.config/dez/assets/images/5f1c2a9e-0b7d-4c3e-9a51-2d8f6e4b7c10.png'
@@ -218,5 +218,36 @@ describe('newMediaIds', () => {
     expect(newMediaIds([`${tag}\nNotes\n\u001E\n${image('n', 'n')}`], 1)).toStrictEqual(['o'])
     // The tag counts only at the start of the conversation.
     expect(newMediaIds([image('a', 'a'), `${tag}\nNotes`], 1)).toStrictEqual(['b'])
+  })
+})
+
+describe('compareMediaIds', () => {
+  it('orders a shorter id first, then by letters', () => {
+    expect(['ab', 'b', 'aaa', 'z', 'ba', 'a', 'aa'].sort(compareMediaIds)).toStrictEqual(['a', 'b', 'z', 'aa', 'ab', 'ba', 'aaa'])
+  })
+})
+
+describe('highestConversationMediaId', () => {
+  const image = (id: string) => `![${PNG}](id=${id})`
+
+  it('is null for a conversation that gave no id', () => {
+    expect(highestConversationMediaId([])).toBeNull()
+    expect(highestConversationMediaId(['Hello', `![${PNG}]()`])).toBeNull()
+  })
+
+  it('takes the highest id of the image references and the media tags of all the texts, a longer id being higher', () => {
+    expect(highestConversationMediaId([image('z'), `Done.\n${clip('aa')}`])).toBe('aa')
+    expect(highestConversationMediaId([clip('y'), `See ${image('ab')} and ${image('b')}`])).toBe('ab')
+  })
+
+  it('counts the id of a linked image in every text, so that no new id is the id of one', () => {
+    expect(highestConversationMediaId([image('a'), '![/home/ann/Pictures/cat.png](id=q)'])).toBe('q')
+  })
+
+  it('counts the last-id of the compaction tag of the first text, and an asset id above it', () => {
+    const tag = compactionTagText({ count: 1, lastId: 'k', pictures: [] })
+
+    expect(highestConversationMediaId([`${tag}\nNotes about @c. ${image('a')}`])).toBe('k')
+    expect(highestConversationMediaId([`${tag}\nNotes`, image('m')])).toBe('m')
   })
 })

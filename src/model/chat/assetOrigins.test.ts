@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { conversationAssets } from '../streams/mediaRequest'
-import { jobsWaitText, madeAssetText } from '../tools/jobs'
+import { jobsWaitText, madeAssetText, type JobInfo } from '../tools/jobs'
 import { assetPlaces, type AssetPlace } from './assetOrigins'
-import { IMAGE_MADE_BY_KEY, IMAGE_TOOL_KEY, imageMarkdown } from './images'
+import { CARRIED_USER_ASSETS_LABEL, compactionTagText } from './compaction'
+import { compactionNotesText, type NotesAsset } from './compactionNotes'
+import { findImageReferences, IMAGE_MADE_BY_KEY, IMAGE_TOOL_KEY, imageMarkdown, imageReferenceText } from './images'
 import { MEDIA_MADE_BY_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE, mediaTagText } from './mediaTags'
 import { HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, invokeBlock, waitBlock } from './testing'
 import { toolBlockText } from './toolBlocks'
@@ -112,5 +114,75 @@ describe('assetPlaces', () => {
   it('names only the job or the tool when no block of the section tells more', () => {
     expect(placeOf([section('agent', toolImage('b', 'model_invoke', 'j-gone'))], 'b')).toStrictEqual({ origin: { kind: 'job', tool: 'model_invoke', number: null, label: '' }, hidden: false })
     expect(placeOf([section('agent', toolImage('b', 'image'))], 'b')).toStrictEqual({ origin: { kind: 'call', tool: 'image', label: '' }, hidden: false })
+  })
+})
+
+describe('assetPlaces in a compacted conversation', () => {
+  const TAG = compactionTagText({ count: 1, lastId: 'e', pictures: [] })
+  const FOX_ORIGIN = 'made by the model_invoke job 2 of its reply: "A red fox"'
+
+  // A compaction section whose notes hold the asset lines `assets` and the
+  // job lines `jobs`, with `more` after them.
+  function compaction(assets: NotesAsset[], jobs: JobInfo[] = [], more = ''): Section {
+    const notes = compactionNotesText({ summary: 'A fox for the user.', requirements: '', nextSteps: '', assets, unnamed: [], jobs, cost: undefined })
+    return section('agent', `${TAG}\n${notes}${more}`, PAINTER)
+  }
+
+  // `reference`, the text of one image reference, with the kept mark.
+  function kept(reference: string): string {
+    return imageReferenceText(findImageReferences(reference, 'agent')[0], true)
+  }
+
+  // The kept image `b` that a job made, and its line in the notes.
+  const FOX = kept(toolImage('b', 'model_invoke', 'j-aaaa'))
+  const FOX_LINE: NotesAsset = { id: 'b', kind: 'image', facts: 'PNG, 1024x768, 1.2 MB', origin: FOX_ORIGIN, sentence: 'The fox.', text: FOX }
+
+  it('gives an asset of the compaction section the origin of its line in the notes, over its tool marks', () => {
+    expect(placeOf([compaction([FOX_LINE]), section('user', 'Go on.')], 'b')?.origin).toStrictEqual({ kind: 'carried', text: FOX_ORIGIN })
+  })
+
+  it('gives an asset of the compaction section with no line and no tool mark to no model, as the model of the section wrote only the notes', () => {
+    const image = kept(imageMarkdown(HIDDEN_IMAGE_PATH, [{ key: 'id', value: 'b' }]))
+
+    expect(placeOf([compaction([], [], `\n\n${image}`), section('user', 'Go on.')], 'b')?.origin).toStrictEqual({ kind: 'model', model: null })
+  })
+
+  it('reads the number and the label of a job whose block is gone from the notes, in the first reply after the compaction message only', () => {
+    const job: JobInfo = { id: 'j-aaaa', tool: 'video', status: 'finished', delivered: true, elapsedMs: 9000, state: '', call: { number: 3, label: 'join_clips @a @b' } }
+    const start = [compaction([], [job]), section('user', 'Join the clips.')]
+
+    expect(placeOf([...start, section('agent', jobClip('c', 'j-aaaa'))], 'c')?.origin)
+      .toStrictEqual({ kind: 'job', tool: 'video', number: 3, label: 'join_clips @a @b' })
+    expect(placeOf([...start, section('agent', 'Joined.'), section('user', 'Again.'), section('agent', jobClip('c', 'j-aaaa'))], 'c')?.origin)
+      .toStrictEqual({ kind: 'job', tool: 'video', number: null, label: '' })
+  })
+
+  it('hides a kept asset of the compaction section and of the carried assets of the user', () => {
+    const sections = [
+      compaction([FOX_LINE]),
+      section('user', 'Make a fox.'),
+      section('user', `${CARRIED_USER_ASSETS_LABEL}\n${kept(imageMarkdown(PASTED, [{ key: 'id', value: 'a' }]))}`),
+      section('user', 'Now make it run.'),
+    ]
+
+    expect([placeOf(sections, 'b')?.hidden, placeOf(sections, 'a')?.hidden]).toStrictEqual([true, true])
+  })
+
+  it('shows a marked asset of a kept message of the user, and every marked asset of a conversation with no compaction', () => {
+    const marked = (id: string) => kept(imageMarkdown(PASTED, [{ key: 'id', value: id }]))
+    const compacted = [
+      compaction([]),
+      section('user', `Like this:\n${marked('a')}`),
+      section('user', `${CARRIED_USER_ASSETS_LABEL}\n${marked('c')}`),
+      section('user', `And this:\n${marked('d')}`),
+    ]
+    const plain = [
+      section('user', `Notes of the work.\n\n${FOX}`),
+      section('user', `${CARRIED_USER_ASSETS_LABEL}\n${marked('a')}`),
+      section('agent', `Here.\n\n${kept(toolImage('e', 'image'))}`),
+    ]
+
+    expect([placeOf(compacted, 'a')?.hidden, placeOf(compacted, 'd')?.hidden]).toStrictEqual([false, false])
+    expect(['b', 'a', 'e'].map((id) => placeOf(plain, id)?.hidden)).toStrictEqual([false, false, false])
   })
 })

@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest'
+import { reply, user } from '../streams/testing'
 import {
+  CARRIED_USER_ASSETS_LABEL,
+  compactionMessageEnd,
   compactionTagText,
   contentCompactionTag,
   firstSectionRole,
+  isCarriedUserAssets,
   readCompactionTag,
   sectionCompactionTag,
   withoutCompactionTag,
@@ -111,5 +115,36 @@ describe('contentCompactionTag and sectionCompactionTag', () => {
     expect(sectionCompactionTag(section('agent', textNode(`${tag}\nSummary`)))).toMatchObject({ count: 1, textFrom: tag.length + 1 })
     expect(sectionCompactionTag(section('user', textNode(`${tag}\nSummary`)))).toBeNull()
     expect(sectionCompactionTag(section('agent', textNode('Summary')))).toBeNull()
+  })
+})
+
+describe('isCarriedUserAssets', () => {
+  it('is true only for a text whose whole first line is the label', () => {
+    expect(isCarriedUserAssets(`${CARRIED_USER_ASSETS_LABEL}\n![/home/u/.config/dez/assets/images/red.png](id=a)`)).toBe(true)
+    expect(isCarriedUserAssets(CARRIED_USER_ASSETS_LABEL)).toBe(true)
+    expect(isCarriedUserAssets(`Here:\n${CARRIED_USER_ASSETS_LABEL}`)).toBe(false)
+    expect(isCarriedUserAssets(`${CARRIED_USER_ASSETS_LABEL} And more.\nText`)).toBe(false)
+  })
+})
+
+describe('compactionMessageEnd', () => {
+  const tag = compactionTagText({ count: 1, lastId: 'b', pictures: [] })
+  const compacted = reply('c', `${tag}\n## Summary\n\nNotes.`)
+
+  it('is 0 for a conversation with no compaction section', () => {
+    expect(compactionMessageEnd([])).toBe(0)
+    expect(compactionMessageEnd([user('u1', 'Hi'), reply('a1', 'Hello')])).toBe(0)
+    expect(compactionMessageEnd([user('u1', `${tag}\nNotes.`), reply('a1', 'Hello')])).toBe(0)
+  })
+
+  it('ends at the first later agent section that is not empty, past an empty one', () => {
+    const sections = [compacted, user('u1', 'Make a fox film.'), reply('a0', ' \n'), user('u2', 'Go on.'), reply('a1', 'Done.'), user('u3', 'Thanks.'), reply('a2', 'Welcome.')]
+
+    expect(compactionMessageEnd(sections)).toBe(4)
+  })
+
+  it('is the count of the sections when no reply follows', () => {
+    expect(compactionMessageEnd([compacted, user('u1', 'Make a fox film.'), reply('a0', '')])).toBe(3)
+    expect(compactionMessageEnd([compacted])).toBe(1)
   })
 })

@@ -1,5 +1,5 @@
 import { MARKER_ATTRIBUTES, escapeMarkerAttribute, markerAttributes } from '../../utils/markerAttribute'
-import { stripLiveSentinels } from './content'
+import { sectionIsEmpty, stripLiveSentinels } from './content'
 import type { ConversationCost } from './conversationCost'
 import { IMAGE_ID_SOURCE } from './images'
 import { readShownPictures, shownPicturesText, type ShownPicture } from './shownPictures'
@@ -100,6 +100,24 @@ export const COMPACTION_MESSAGE_INTRO = '[Compaction: this conversation was long
 /** The line before each user section of the compaction message. */
 export const COMPACTION_USER_MESSAGE_LABEL = '[Message of the user]'
 
+/** The first line of the section of the carried assets of the user: a user
+ *  section that a compaction writes after the first kept message of the
+ *  user. Below this line it holds only the image references and the media
+ *  tags of the user's messages that the compaction took out, each on a
+ *  line of its own, so that their ids still name them, and a linked file
+ *  still counts (it counts only in a user section). The line tells the
+ *  model and the user what the section is, and it tells the next
+ *  compaction that the section is no message of the user
+ *  (`isCarriedUserAssets`). It is in the cached prefix, as the texts
+ *  above. */
+export const CARRIED_USER_ASSETS_LABEL = '[Images and clips of the earlier messages of the user. Dez took those messages out of the conversation; the notes tell what they said.]'
+
+/** Whether `text`, the text of a user section, is the section of the
+ *  carried assets of the user (`CARRIED_USER_ASSETS_LABEL`). */
+export function isCarriedUserAssets(text: string): boolean {
+  return firstLine(text) === CARRIED_USER_ASSETS_LABEL
+}
+
 const TAG_START = `<${COMPACTION_TAG_NAME}`
 // Tested on one line only, so the `\s` of the attribute rule cannot cross a
 // line break. The group holds the attributes.
@@ -192,6 +210,17 @@ export function contentCompactionTag(content: readonly ContentNode[]): Compactio
  *  can be one; the caller gives no other section. Null when it is none. */
 export function sectionCompactionTag(section: Section): CompactionTag | null {
   return section.role === 'agent' ? contentCompactionTag(section.content) : null
+}
+
+/** The index after the last section of the compaction message of
+ *  `sections`, a whole conversation: the compaction section and the user
+ *  sections right after it, up to the first later agent section that is
+ *  not empty (`sectionsToStreamMessages`, streams/messages.ts). 0 for a
+ *  conversation with no compaction. */
+export function compactionMessageEnd(sections: readonly Section[]): number {
+  if (sections.length === 0 || sectionCompactionTag(sections[0]) === null) return 0
+  const firstReply = sections.findIndex((section, index) => index > 0 && section.role === 'agent' && !sectionIsEmpty(section))
+  return firstReply < 0 ? sections.length : firstReply
 }
 
 /** `text`, which starts the text of section `index` of a conversation

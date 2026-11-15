@@ -412,7 +412,7 @@ describe('toolCallLabel', () => {
 
 describe('the label and the type symbols of an intermediate chip', () => {
   const image = { kind: 'image', path: HIDDEN_IMAGE_PATH, id: 'b', linked: false } as const
-  const clip = (kind: 'audio' | 'video') => ({ kind: 'clip', tag: { kind, id: 'c', type: `${kind}/x`, src: null, url: null, expires: null, other: [] } }) as const
+  const clip = (kind: 'audio' | 'video') => ({ kind: 'clip', tag: { kind, id: 'c', type: `${kind}/x`, src: null, url: null, expires: null, other: [] }, role: 'agent' }) as const
 
   function call(more: Partial<IntermediateCall>): IntermediateCall {
     return { jobId: 'j-aaaa', assets: [], text: '', status: null, ...more }

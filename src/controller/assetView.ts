@@ -474,11 +474,12 @@ async function videoView(input: ClipInput, facts: ClipProbeFacts, part: ClipPart
   return { notes, picture: await withSoundStrip(input.id, sheet, sound.picture, { kind: draw.kind, part, sampleRate: facts.audio.sampleRate, detail: call.detail }) }
 }
 
-// The view of `clip`: its facts from ffprobe, and its frame sheet, or the
-// picture of its sound, and its loudness, from ffmpeg, all on one copy in
-// the work folder `folder`. A clip that Dez cannot read fails only its own
-// view.
-async function viewClip(clip: ClipAttachment, call: AssetViewCall, choice: PictureChoice, folder: string, signal: AbortSignal): Promise<AssetViewItem> {
+/** The view of `clip`: its facts from ffprobe, and its frame sheet, or the
+ *  picture of its sound, and its loudness, from ffmpeg, all on one copy in
+ *  the work folder `folder`. A clip that Dez cannot read fails only its own
+ *  view. A compaction makes the pictures of its clips with it too
+ *  (compaction.ts). */
+export async function viewClip(clip: ClipAttachment, call: AssetViewCall, choice: PictureChoice, folder: string, signal: AbortSignal): Promise<AssetViewItem> {
   const input = clipInput(clip)
   const probed = await probeClip(input, folder, signal, ASSET_VIEW_TOOL.name)
   const item: AssetViewItem = { id: clip.id, kind: clip.kind, facts: probedClipFacts(clip, probed), notes: [], picture: null }

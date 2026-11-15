@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import { SENTINEL_CHAR } from './content'
+import { KEPT_MARK_VALUE } from './images'
 import {
   findMediaTags,
+  isKeptClip,
   isLinkedMediaPath,
   isPastedMediaPath,
   isSavedMediaPath,
   labelMediaTags,
+  MEDIA_KEPT_ATTRIBUTE,
   mediaTagRequestText,
   mediaTagText,
+  mediaTagTextWithKeptMark,
   mediaTagsAsLinks,
   savedMediaTag,
   sectionClipSource,
@@ -255,6 +259,29 @@ describe('savedMediaTag and unsavedMediaTag', () => {
   it('keeps the offsets of a tag in a text', () => {
     const [tag] = findMediaTags(mediaTagText({ ...VIDEO, src: CLIP_URL }))
     expect(savedMediaTag(tag, SAVED_VIDEO)).toStrictEqual({ ...tag, src: SAVED_VIDEO })
+  })
+})
+
+describe('mediaTagTextWithKeptMark and isKeptClip', () => {
+  const kept = { name: MEDIA_KEPT_ATTRIBUTE, value: KEPT_MARK_VALUE }
+  const others = [{ name: 'job', value: 'q-1' }, { name: 'duration', value: '8' }]
+
+  it('adds the kept mark after the other attributes, and only once', () => {
+    for (const other of [others, [kept, ...others]]) {
+      const [marked] = read(mediaTagTextWithKeptMark({ ...AUDIO, other }, true))
+
+      expect(marked).toStrictEqual({ ...AUDIO, other: [...others, kept] })
+      expect(isKeptClip(marked)).toBe(true)
+    }
+  })
+
+  it('removes the kept mark and keeps the other attributes in their order', () => {
+    const tag = { ...VIDEO, other: [others[0], kept, others[1]] }
+    const [plain] = read(mediaTagTextWithKeptMark(tag, false))
+
+    expect(isKeptClip(tag)).toBe(true)
+    expect(plain).toStrictEqual({ ...VIDEO, other: others })
+    expect(isKeptClip(plain)).toBe(false)
   })
 })
 

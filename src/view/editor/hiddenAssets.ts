@@ -1,12 +1,13 @@
 import { StateField, type EditorState, type Extension, type Line, type Text } from '@codemirror/state'
 import { WidgetType, type EditorView } from '@codemirror/view'
+import { firstSectionRole } from '../../model/chat/compaction'
 import { SENTINEL_CHAR } from '../../model/chat/content'
-import { findHiddenAssets, type HiddenAsset } from '../../model/chat/hiddenAssets'
-import { IMAGE_HIDDEN_KEY } from '../../model/chat/images'
-import { MEDIA_HIDDEN_ATTRIBUTE } from '../../model/chat/mediaTags'
+import { findHiddenAssets, findKeptAssets, type HiddenAsset, type HiddenAssetOwner } from '../../model/chat/hiddenAssets'
+import { IMAGE_HIDDEN_KEY, IMAGE_KEPT_KEY } from '../../model/chat/images'
+import { MEDIA_HIDDEN_ATTRIBUTE, MEDIA_KEPT_ATTRIBUTE } from '../../model/chat/mediaTags'
 import { ASSET_NAMES, type JobAssetKind } from '../../model/tools/jobs'
 import { SECTION_SEP, sectionsField } from '../thread/cmEditor'
-import { agentSectionTexts, chipBlocks, sectionRolesChanged } from './lineBlocks'
+import { chipBlocks, sectionRolesChanged, sectionTexts } from './lineBlocks'
 import type { DocRange } from './pendingRanges'
 import { ROUND_STROKE, svgIcon } from './svgIcon'
 import { tableRowStarts } from './tables'
@@ -14,15 +15,16 @@ import { tableRowStarts } from './tables'
 // The editor's side of the hidden assets (src/model/chat/hiddenAssets.ts):
 // which assets of the doc a chip hides now, the lines that go out of view
 // with them, and what shows at the place of such an asset. The asset itself
-// shows in the panel of its chip (toolCalls.ts).
+// shows in the panel of its chip: the chip of a tool call (toolCalls.ts),
+// or the compaction chip for a kept asset (compactionChip.ts).
 //
 // The text of a hidden asset stays where it is, and the editor still knows
 // it as an image or a clip (`renderedImages`, `renderedMedia`): find skips
 // its source, the caret cannot go into it, and its trash finds it. Only its
 // widget is another one (`HiddenAssetWidget`), on a line of no height.
 //
-// images.ts, media.ts, and toolCalls.ts read this module. It must import
-// none of them.
+// images.ts, media.ts, toolCalls.ts, and compactionChip.ts read this
+// module. It must import none of them.
 
 /** Tells where the text of a drawn image or player starts in the doc now;
  *  null when it is not in the doc any more. The trash, the Save, and the
@@ -44,12 +46,13 @@ interface HiddenAssetsInDoc {
 
 const NOTHING_HIDDEN: HiddenAssetsInDoc = { assets: [], lines: [], removals: [] }
 
-// `edge`: no line of the same section (the doc start or end, or the line
-// of a section separator).
+// `edge`: no line of the same section (the doc start or end, the line of a
+// section separator, or the tag line of a compaction section, which shows
+// as the pill of its section).
 function lineKind(doc: Text, number: number): 'edge' | 'blank' | 'text' {
   if (number < 1 || number > doc.lines) return 'edge'
   const { text } = doc.line(number)
-  if (text.includes(SECTION_SEP)) return 'edge'
+  if (text.includes(SECTION_SEP) || (number === 1 && firstSectionRole(text) === 'agent')) return 'edge'
   return text.trim() === '' ? 'blank' : 'text'
 }
 
@@ -102,19 +105,30 @@ function hiddenLines(doc: Text, assets: readonly HiddenAsset[]): Pick<HiddenAsse
   return { lines, removals }
 }
 
-/** The hidden assets of a state. Each agent section is read on its own,
- *  with the blocks that show as chips (`chipBlocks`): an asset is hidden
- *  only while a chip can show it. An asset that images.ts or media.ts
- *  leaves as source text stays in view too: one on a line with a sentinel
- *  (a prompt pill), and an image reference on a table row line (its
- *  metadata holds `|`). */
+// The marks that can hide an asset. Image metadata and media attributes
+// have their own names.
+const HIDING_MARKS = [IMAGE_HIDDEN_KEY, MEDIA_HIDDEN_ATTRIBUTE, IMAGE_KEPT_KEY, MEDIA_KEPT_ATTRIBUTE]
+
+/** The hidden assets of a state: the assets that the chip of a call hides
+ *  (`findHiddenAssets`), and the kept assets of a compaction
+ *  (`findKeptAssets`). Each agent section is read on its own, with the
+ *  blocks that show as chips (`chipBlocks`): an asset is hidden only while
+ *  a chip can show it. An asset that images.ts or media.ts leaves as
+ *  source text stays in view too: one on a line with a sentinel (a prompt
+ *  pill), and an image reference on a table row line (its metadata holds
+ *  `|`). */
 function findHiddenAssetsInDoc(state: EditorState): HiddenAssetsInDoc {
   const doc = state.doc.toString()
   // Most docs have none, and this runs on every doc change.
-  if (!doc.includes(`${IMAGE_HIDDEN_KEY}=`) && !doc.includes(`${MEDIA_HIDDEN_ATTRIBUTE}=`)) return NOTHING_HIDDEN
+  if (!HIDING_MARKS.some((mark) => doc.includes(`${mark}=`))) return NOTHING_HIDDEN
+  const texts = sectionTexts(doc, state.field(sectionsField, false) ?? [])
+  const kept = findKeptAssets(texts.map(({ section, text }) => ({ role: section.role, text })))
   const assets: HiddenAsset[] = []
-  for (const { from: offset, text } of agentSectionTexts(doc, state.field(sectionsField, false) ?? [])) {
-    for (const asset of findHiddenAssets(text, chipBlocks(text))) {
+  texts.forEach(({ section, from: offset, text }, index) => {
+    const ofJobs = section.role === 'agent' ? findHiddenAssets(text, chipBlocks(text)) : []
+    // An asset with both marks shows under the chip of its call.
+    const ofCompaction = kept[index].filter((asset) => !ofJobs.some((other) => other.from === asset.from))
+    for (const asset of [...ofJobs, ...ofCompaction]) {
       const from = offset + asset.from
       const to = offset + asset.to
       const line = state.doc.lineAt(from)
@@ -123,7 +137,8 @@ function findHiddenAssetsInDoc(state: EditorState): HiddenAssetsInDoc {
         ? { ...asset, from, to, image: { ...asset.image, from, to } }
         : { ...asset, from, to, tag: { ...asset.tag, from, to } })
     }
-  }
+  })
+  assets.sort((a, b) => a.from - b.from)
   return assets.length === 0 ? NOTHING_HIDDEN : { assets, ...hiddenLines(state.doc, assets) }
 }
 
@@ -132,9 +147,10 @@ const hiddenAssetsField = StateField.define<HiddenAssetsInDoc>({
   update: (value, tr) => tr.docChanged || sectionRolesChanged(tr) ? findHiddenAssetsInDoc(tr.state) : value,
 })
 
-/** The assets that a chip hides in `state`, in doc order, with doc offsets;
- *  none for a state without `markdownToolCalls()`. The array is the same
- *  object until the doc or the sections change. */
+/** The assets that a chip hides in `state` (the chip of a call, or the
+ *  compaction chip), in doc order, with doc offsets; none for a state
+ *  without `markdownToolCalls()` or `compactionChip()`. The array is the
+ *  same object until the doc or the sections change. */
 export function hiddenAssets(state: EditorState): readonly HiddenAsset[] {
   return (state.field(hiddenAssetsField, false) ?? NOTHING_HIDDEN).assets
 }
@@ -171,22 +187,24 @@ export function eyeIcon(open: boolean): SVGSVGElement {
 }
 
 /** What shows at the place of a hidden asset, in place of its image or its
- *  player: one quiet line that names the asset and tells where it shows.
- *  Its line has no height while no caret is on it (`hiddenLineStarts`), so
- *  the user sees it only after a key put the caret there. Every size of it
- *  is in `em` (`dezTheme`), so that it has no size on such a line. */
+ *  player: one quiet line that names the asset and tells where it shows,
+ *  by the kind of its owner (`HiddenAssetOwner`). Its line has no height
+ *  while no caret is on it (`hiddenLineStarts`), so the user sees it only
+ *  after a key put the caret there. Every size of it is in `em`
+ *  (`dezTheme`), so that it has no size on such a line. */
 export class HiddenAssetWidget extends WidgetType {
-  constructor(readonly kind: JobAssetKind, readonly id: string | null) {
+  constructor(readonly kind: JobAssetKind, readonly id: string | null, readonly owner: HiddenAssetOwner['kind']) {
     super()
   }
   eq(other: WidgetType): boolean {
-    return other instanceof HiddenAssetWidget && other.kind === this.kind && other.id === this.id
+    return other instanceof HiddenAssetWidget && other.kind === this.kind && other.id === this.id && other.owner === this.owner
   }
   toDOM(): HTMLElement {
     const root = document.createElement('span')
     root.className = 'dez-hidden-asset'
     const name = this.id === null ? ASSET_NAMES[this.kind] : `${ASSET_NAMES[this.kind]} @${this.id}`
-    root.append(eyeIcon(false), `Hidden intermediate ${name}. Open its tool call to see it.`)
+    const text = this.owner === 'compaction' ? `Kept ${name}. Open the compaction chip to see it.` : `Hidden intermediate ${name}. Open its tool call to see it.`
+    root.append(eyeIcon(false), text)
     return root
   }
 }
@@ -222,8 +240,8 @@ export function revealHiddenLineForward(view: EditorView): boolean {
   return revealHiddenLine(view, true)
 }
 
-/** The field of the hidden assets. `markdownToolCalls()` includes it: with
- *  no chips, nothing is hidden. */
+/** The field of the hidden assets. `markdownToolCalls()` and
+ *  `compactionChip()` include it: with no chips, nothing is hidden. */
 export function hiddenAssetsOfChips(): Extension {
   return hiddenAssetsField
 }

@@ -140,6 +140,21 @@ export const IMAGE_HIDDEN_KEY = 'hidden'
  *  only in its reply, which is one agent section. */
 export const IMAGE_MADE_BY_KEY = 'made-by'
 
+/** The metadata key of an image that a compaction kept as one line of its
+ *  notes and not as pixels (compaction.ts), as in
+ *  `![<path>](id=b|kept=compaction)`; its value is `KEPT_MARK_VALUE`. In
+ *  the compaction message of a request, such a reference sends no image by
+ *  itself (streams/messages.ts). The editor shows the image in the panel of
+ *  the compaction chip, and not at the place of its reference, while the
+ *  reference is in the compaction section or in the section of the carried
+ *  assets of the user (hiddenAssets.ts). At any other place the mark does
+ *  nothing. */
+export const IMAGE_KEPT_KEY = 'kept'
+
+/** The value of the kept mark of an image (`IMAGE_KEPT_KEY`) and of a clip
+ *  (`MEDIA_KEPT_ATTRIBUTE`, mediaTags.ts). */
+export const KEPT_MARK_VALUE = 'compaction'
+
 /** One image reference in a text. */
 export interface ImageReference {
   /** Offset of the `!`. */
@@ -266,6 +281,18 @@ export function imageIdChange(reference: ImageReference, id: string): { from: nu
     : metadata.map((item) => (item.key === 'id' ? { key: 'id', value: id } : item))
   // The parens start after `![`, the path, and `](`.
   return { from: reference.from + path.length + 4, to: reference.to - 1, insert: metadataText(withId) }
+}
+
+/** Whether `reference` has the kept mark (`IMAGE_KEPT_KEY`). */
+export function isKeptImage(reference: Pick<ImageReference, 'metadata'>): boolean {
+  return reference.metadata.some((item) => item.key === IMAGE_KEPT_KEY)
+}
+
+/** The text of `reference` with the kept mark (`kept`), or with none. Its
+ *  other items stay, in their order. */
+export function imageReferenceText(reference: Pick<ImageReference, 'path' | 'metadata'>, kept: boolean): string {
+  const others = reference.metadata.filter((item) => item.key !== IMAGE_KEPT_KEY)
+  return imageMarkdown(reference.path, kept ? [...others, { key: IMAGE_KEPT_KEY, value: KEPT_MARK_VALUE }] : others)
 }
 
 /** A text of a section with the role `role` as its plain-text and image

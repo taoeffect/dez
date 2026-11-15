@@ -1,6 +1,6 @@
 import { MARKER_ATTRIBUTES, escapeMarkerAttribute, markerAttributes } from '../../utils/markerAttribute'
 import { stripLiveSentinels } from './content'
-import { IMAGE_ID_SOURCE } from './images'
+import { IMAGE_ID_SOURCE, KEPT_MARK_VALUE } from './images'
 import type { Role } from './types'
 
 // A clip (audio or video) is plain text, as an image reference and a tool
@@ -34,9 +34,10 @@ import type { Role } from './types'
 //   - `expires`: the ISO time after which the source that is not saved (the
 //     URL, or the temp copy) stops working.
 //   - Any other attribute is metadata that the tag code does not read, as
-//     the marks of the work of a tool (`tool`, `job`, `made-by`, `hidden`:
-//     the constants below). A rewrite (read a tag, change fields, write
-//     it) keeps it, after the known attributes and in its order.
+//     the marks of the work of a tool (`tool`, `job`, `made-by`, `hidden`)
+//     and the mark of a compaction (`kept`): the constants below. A
+//     rewrite (read a tag, change fields, write it) keeps it, after the
+//     known attributes and in its order.
 // - Tags count in every section, and callers find them in one section at a
 //   time. A tag in a user section comes from a paste or a drop of a clip
 //   file. A linked `src` counts only in a user section
@@ -185,6 +186,12 @@ export const MEDIA_HIDDEN_ATTRIBUTE = 'hidden'
  *  than `id` and `type` (`mediaTagRequestText`). */
 export const MEDIA_MADE_BY_ATTRIBUTE = 'made-by'
 
+/** The attribute of a clip that a compaction kept as one line of its
+ *  notes, as `IMAGE_KEPT_KEY` (images.ts) for an image; its value is
+ *  `KEPT_MARK_VALUE`. The editor shows the clip in the panel of the
+ *  compaction chip, and not at the place of its tag (hiddenAssets.ts). */
+export const MEDIA_KEPT_ATTRIBUTE = 'kept'
+
 /** One tag in a text. */
 export interface MediaTag extends MediaTagData {
   /** Offset of the `<`. */
@@ -227,6 +234,18 @@ export function mediaTagText(tag: MediaTagData): string {
     if (!FIELD_ATTRIBUTES.some((field) => field === name)) attributes.set(name, value)
   }
   return tagText(tag.kind, attributes)
+}
+
+/** Whether `tag` has the kept mark (`MEDIA_KEPT_ATTRIBUTE`). */
+export function isKeptClip(tag: Pick<MediaTagData, 'other'>): boolean {
+  return tag.other.some((attribute) => attribute.name === MEDIA_KEPT_ATTRIBUTE)
+}
+
+/** The text of `tag` with the kept mark (`kept`), or with none. Its other
+ *  attributes stay, in their order. */
+export function mediaTagTextWithKeptMark(tag: MediaTagData, kept: boolean): string {
+  const others = tag.other.filter((attribute) => attribute.name !== MEDIA_KEPT_ATTRIBUTE)
+  return mediaTagText({ ...tag, other: kept ? [...others, { name: MEDIA_KEPT_ATTRIBUTE, value: KEPT_MARK_VALUE }] : others })
 }
 
 /** A tag as a provider gets it: only its `id` and `type`.

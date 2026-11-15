@@ -338,10 +338,13 @@ function buildImageDecorations(state: EditorState): ImageDecorations {
   // A hidden image shows in the panel of its chip (hiddenAssets.ts). It
   // stays an image here, so that its source keeps every rule of an image's
   // source; only its widget is the one of a hidden asset.
-  const hidden = new Set(hiddenAssets(state).map((asset) => asset.from))
-  const decorations = Decoration.set(images.map((image) => Decoration.replace({
-    widget: hidden.has(image.from) ? new HiddenAssetWidget('image', image.id) : new ImageWidget(image.path, image.id, image.linked),
-  }).range(image.from, image.to)))
+  const hidden = new Map(hiddenAssets(state).map((asset) => [asset.from, asset.owner.kind]))
+  const decorations = Decoration.set(images.map((image) => {
+    const owner = hidden.get(image.from)
+    return Decoration.replace({
+      widget: owner ? new HiddenAssetWidget('image', image.id, owner) : new ImageWidget(image.path, image.id, image.linked),
+    }).range(image.from, image.to)
+  }))
   return { images, decorations }
 }
 

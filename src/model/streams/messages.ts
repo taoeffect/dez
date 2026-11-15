@@ -1,6 +1,6 @@
 import type { MessagePart, ModelRef, Section, SectionThinking, ThinkingReplay } from '../chat/types'
 import { assetTextPieces } from '../chat/assetMentions'
-import { COMPACTION_MESSAGE_INTRO, COMPACTION_USER_MESSAGE_LABEL, sectionCompactionTag, type CompactionTag } from '../chat/compaction'
+import { COMPACTION_MESSAGE_INTRO, COMPACTION_USER_MESSAGE_LABEL, isCarriedUserAssets, sectionCompactionTag, type CompactionTag } from '../chat/compaction'
 import { sectionIsEmpty, sectionPlainText } from '../chat/content'
 import { findAssetMentions, type AssetMention } from '../chat/imageMentions'
 import { findImageReferences, IMAGE_TOOL_KEY, type ImageReference } from '../chat/images'
@@ -67,7 +67,11 @@ export interface RequestOptions {
 // message of the sections with image parts, and it keeps them in every
 // request: the images of its sections, and the pictures of its tag. The
 // compaction took every other image out of the conversation, so these are
-// the ones that the model must still see.
+// the ones that the model must still see. An image reference with the
+// kept mark of a compaction (`IMAGE_KEPT_KEY`, chat/images.ts) is the
+// exception: in this message it goes as its text only, so the model gets
+// the id and no pixels. A mention of the user (`@a`) still sends such an
+// image.
 //
 // An image or a clip that a Dez tool made is not text of the model, but
 // its reference or tag is in the reply, at the start of the text of the
@@ -120,8 +124,10 @@ export function sectionsToStreamMessages(sections: Section[], requestModel: Mode
     }
     const joined = compaction !== null && index < compactionEnd
     if (joined) {
-      compaction.pendingText += `\n\n${COMPACTION_USER_MESSAGE_LABEL}\n`
-      addUserText(compaction, text, imagesById)
+      // The section of the carried assets of the user is no message of the
+      // user, and its first line tells what it is.
+      compaction.pendingText += isCarriedUserAssets(text) ? '\n\n' : `\n\n${COMPACTION_USER_MESSAGE_LABEL}\n`
+      addUserText(compaction, text, imagesById, true)
       if (index !== newestUser) return
     }
     // The section as a message of its own: its parts when it is the newest
@@ -186,11 +192,11 @@ function partListText(list: PartList): string {
 // The section's text goes as an agent message sends it: a clip as the
 // request form of its tag, the model's text with its escape removed, and
 // every text after the path scrub. But each image reference also gets its
-// image part, right after its `![image](id=a)` text. The references are
-// read with the `agent` rule, so only a stored image counts: a model's
-// text never makes Dez read another file of the computer. An `@id` mention
-// adds no part here. A tool block (only a paste can put one into this
-// section) goes as its text.
+// image part, right after its `![image](id=a)` text, unless it has the
+// kept mark. The references are read with the `agent` rule, so only a
+// stored image counts: a model's text never makes Dez read another file of
+// the computer. An `@id` mention adds no part here. A tool block (only a
+// paste can put one into this section) goes as its text.
 function addCompactionNotes(list: PartList, text: string, tag: CompactionTag, sendPictures: boolean): void {
   const notes = text.slice(tag.textFrom).trim()
   list.pendingText += notes === '' ? COMPACTION_MESSAGE_INTRO : `${COMPACTION_MESSAGE_INTRO}\n\n`
@@ -205,6 +211,7 @@ function addCompactionNotes(list: PartList, text: string, tag: CompactionTag, se
       continue
     }
     list.pendingText += withoutStoredFilePaths(pieceText)
+    if (piece.kept) continue
     list.sentImages.add(piece.path)
     addAttachment(list, { type: 'image', path: piece.path })
   }
@@ -530,10 +537,15 @@ function userMessageContent(text: string, imagesById: ReadonlyMap<string, string
 // itself holds, or that the message has a part for already (an earlier
 // section of the compaction message), adds no part: the reference sends
 // that image.
-function addUserText(list: PartList, text: string, imagesById: ReadonlyMap<string, string>): void {
+//
+// With `keptAsText` (the compaction message), a reference with the kept
+// mark adds no part: only its text goes. A mention of that image then
+// adds the part, as for an image that the text does not hold.
+function addUserText(list: PartList, text: string, imagesById: ReadonlyMap<string, string>, keptAsText = false): void {
   const pieces = messageTextPieces(text)
+  const sendsImage = (piece: Extract<MessageTextPiece, { kind: 'reference' }>) => !(keptAsText && piece.kept)
   for (const piece of pieces) {
-    if (piece.kind === 'reference') list.sentImages.add(piece.path)
+    if (piece.kind === 'reference' && sendsImage(piece)) list.sentImages.add(piece.path)
   }
   for (const piece of pieces) {
     switch (piece.kind) {
@@ -542,7 +554,7 @@ function addUserText(list: PartList, text: string, imagesById: ReadonlyMap<strin
         break
       case 'reference':
         list.pendingText += piece.text
-        addAttachment(list, { type: 'image', path: piece.path })
+        if (sendsImage(piece)) addAttachment(list, { type: 'image', path: piece.path })
         break
       case 'gap': {
         // An image part after each mention that adds one.
@@ -562,11 +574,12 @@ function addUserText(list: PartList, text: string, imagesById: ReadonlyMap<strin
 }
 
 // A run of the text of a user message, as a request reads it: a media tag,
-// an image reference (its text after the path scrub, and its path), or a
-// text between them (after the path scrub, with its `@id` mentions).
+// an image reference (its text after the path scrub, its path, and whether
+// it has the kept mark of a compaction), or a text between them (after the
+// path scrub, with its `@id` mentions).
 type MessageTextPiece =
   | { kind: 'media', tag: MediaTag }
-  | { kind: 'reference', text: string, path: string }
+  | { kind: 'reference', text: string, path: string, kept: boolean }
   | { kind: 'gap', text: string, mentions: AssetMention[] }
 
 // The pieces of a user message's text, in order, with no empty gap
@@ -581,7 +594,7 @@ function messageTextPieces(text: string): MessageTextPiece[] {
     if (piece.kind === 'media') return piece
     const scrubbed = withoutStoredFilePaths(text.slice(piece.from, piece.to))
     return piece.kind === 'reference'
-      ? { kind: 'reference', text: scrubbed, path: piece.path }
+      ? { kind: 'reference', text: scrubbed, path: piece.path, kept: piece.kept }
       : { kind: 'gap', text: scrubbed, mentions: findAssetMentions(scrubbed) }
   })
 }

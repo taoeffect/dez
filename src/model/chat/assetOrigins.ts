@@ -1,8 +1,10 @@
 import type { FoundAsset } from '../streams/mediaRequest'
 import { JOBS_WAIT_TOOL, jobsWaitResults, madeAssetIds, startedJob } from '../tools/jobs'
 import { callLabel } from '../tools/registry'
+import { compactionMessageEnd, sectionCompactionTag } from './compaction'
+import { notesAssetLines, notesJobLines, type NotesAssetLine, type NotesJobLine } from './compactionNotes'
 import { sectionPlainText } from './content'
-import { findHiddenAssets } from './hiddenAssets'
+import { findHiddenAssets, findKeptAssets } from './hiddenAssets'
 import { IMAGE_HIDDEN_KEY, IMAGE_MADE_BY_KEY, IMAGE_TOOL_KEY } from './images'
 import { MEDIA_HIDDEN_ATTRIBUTE, MEDIA_MADE_BY_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE } from './mediaTags'
 import { findToolBlocks, type ToolBlock } from './toolBlocks'
@@ -13,6 +15,10 @@ import type { ModelRef, Section } from './types'
 // or tag, and the tool blocks of its reply. The `asset_info` tool tells
 // these to a model, so that it knows which call made which clip (the jobs
 // of a reply end in any order, and so do the ids of their assets).
+//
+// A compaction removes the tool blocks. The notes of its section keep one
+// line for each asset, and one for each job of the reply that ran
+// (compactionNotes.ts), and these lines then tell who made an asset.
 
 /** Who made an image or a clip. */
 export type AssetOrigin =
@@ -27,9 +33,15 @@ export type AssetOrigin =
   /** A Dez tool call made it in its call, not as a job; `label` as for a
    *  job. */
   | { kind: 'call', tool: string, label: string }
+  /** A compaction kept it in its section. `text` is what its line in the
+   *  notes tells about who made it: the origin text of the time of that
+   *  compaction (`assetOriginText`, tools/assetInfo.ts). */
+  | { kind: 'carried', text: string }
 
-/** Who made an image or a clip, and whether the editor hides it (it then
- *  shows only in the panel of the chip of its call: `findHiddenAssets`). */
+/** Who made an image or a clip, and whether the editor hides it. A hidden
+ *  one shows only in a panel: the one of the chip of its call
+ *  (`findHiddenAssets`), or the one of the compaction chip
+ *  (`findKeptAssets`). */
 export interface AssetPlace {
   origin: AssetOrigin
   hidden: boolean
@@ -49,12 +61,13 @@ interface ToolMarks {
 //    the arguments of its call;
 // 2. the result of a `jobs_wait` block that names its job or the asset (an
 //    asset of a job whose block is gone, or that has no job mark);
-// 3. for an asset with a job mark, that job alone (its blocks are gone, so
-//    its number and its call are not known);
+// 3. for an asset with a job mark, that job alone (its blocks are gone):
+//    the line of the job in the notes of a compaction (`jobLines`) tells
+//    its number and its call, else they are not known;
 // 4. the result of another block that names the asset (an `image` or an
 //    `audio clip` call, which makes it in its call);
 // 5. the tool mark alone.
-function toolOrigin(id: string, marks: ToolMarks, blocks: readonly ToolBlock[]): AssetOrigin {
+function toolOrigin(id: string, marks: ToolMarks, blocks: readonly ToolBlock[], jobLines: ReadonlyMap<string, NotesJobLine>): AssetOrigin {
   const { tool, jobId } = marks
   if (jobId !== null) {
     for (const block of blocks) {
@@ -67,7 +80,10 @@ function toolOrigin(id: string, marks: ToolMarks, blocks: readonly ToolBlock[]):
     const part = jobsWaitResults(block.result).find((result) => result.id === jobId || madeAssetIds(result.text).includes(id))
     if (part) return { kind: 'job', tool: part.tool, number: part.call.number, label: part.call.label }
   }
-  if (jobId !== null) return { kind: 'job', tool, number: null, label: '' }
+  if (jobId !== null) {
+    const line = jobLines.get(jobId)
+    return { kind: 'job', tool, number: line?.number ?? null, label: line?.label ?? '' }
+  }
   const call = blocks.find((block) => block.name !== JOBS_WAIT_TOOL.name && madeAssetIds(block.result).includes(id))
   return { kind: 'call', tool, label: call ? callLabel(call.name, call.arguments) : '' }
 }
@@ -84,13 +100,36 @@ function toolMarks(asset: FoundAsset): ToolMarks | null {
   return tool === null ? null : { tool, jobId: mark(MEDIA_MADE_BY_ATTRIBUTE) ?? mark(MEDIA_HIDDEN_ATTRIBUTE) }
 }
 
+const NO_JOB_LINES: ReadonlyMap<string, NotesJobLine> = new Map()
+
 /** The place of each asset of `assets`, in its order: the assets that
- *  `conversationAssets` (streams/mediaRequest.ts) found in `sections`. An
- *  asset of a user section is from the user, and one of an agent section
- *  with no tool mark is from the model of that section. */
+ *  `conversationAssets` (streams/mediaRequest.ts) found in `sections`, a
+ *  whole conversation. An asset of a user section is from the user, and
+ *  one of an agent section with no tool mark is from the model of that
+ *  section.
+ *
+ *  In a compacted conversation, an asset of the compaction section has
+ *  the origin of its line in the notes. The job lines of the notes are of
+ *  the reply that ran at the compaction, so only the assets of the first
+ *  reply after the compaction message read them: a job id is unique in
+ *  its reply only. */
 export function assetPlaces(sections: readonly Section[], assets: readonly FoundAsset[]): AssetPlace[] {
+  const compacted = sections.length > 0 && sectionCompactionTag(sections[0]) !== null
+  const notes = compacted ? sectionPlainText(sections[0]) : ''
+  const carriedReply = compacted ? compactionMessageEnd(sections) : -1
+  // Each of these reads whole texts, so only an asset that needs one asks
+  // for it, and each is read once for all assets.
+  let assetLines: ReadonlyMap<string, NotesAssetLine> | undefined
+  let jobLines: ReadonlyMap<string, NotesJobLine> | undefined
+  let keptFrom: Set<number>[] | undefined
+  const isKept = (asset: FoundAsset, from: number) => {
+    if (!compacted) return false
+    keptFrom ??= findKeptAssets(sections.map((section) => ({ role: section.role, text: sectionPlainText(section) })))
+      .map((kept) => new Set(kept.map((hidden) => hidden.from)))
+    return keptFrom[asset.section].has(from)
+  }
   // The tool blocks of each agent section that holds one of `assets`, and
-  // the starts of its hidden assets, read once for all its assets.
+  // the starts of the assets that a chip of a call hides.
   const agentTexts = new Map<number, { blocks: ToolBlock[], hiddenFrom: Set<number> }>()
   const agentText = (index: number) => {
     let found = agentTexts.get(index)
@@ -105,12 +144,19 @@ export function assetPlaces(sections: readonly Section[], assets: readonly Found
 
   return assets.map((asset): AssetPlace => {
     const section = sections[asset.section]
-    if (section.role === 'user') return { origin: { kind: 'user' }, hidden: false }
+    const from = asset.kind === 'image' ? asset.reference.from : asset.tag.from
+    if (section.role === 'user') return { origin: { kind: 'user' }, hidden: isKept(asset, from) }
     const { blocks, hiddenFrom } = agentText(asset.section)
-    const marks = toolMarks(asset)
-    return {
-      origin: marks ? toolOrigin(asset.id, marks, blocks) : { kind: 'model', model: section.model ?? null },
-      hidden: hiddenFrom.has(asset.kind === 'image' ? asset.reference.from : asset.tag.from),
+    const hidden = hiddenFrom.has(from) || isKept(asset, from)
+    const inNotes = compacted && asset.section === 0
+    if (inNotes) {
+      const line = (assetLines ??= notesAssetLines(notes)).get(asset.id)
+      if (line) return { origin: { kind: 'carried', text: line.origin }, hidden }
     }
+    const marks = toolMarks(asset)
+    // The model of a compaction section wrote its notes, not its assets.
+    if (!marks) return { origin: { kind: 'model', model: inNotes ? null : section.model ?? null }, hidden }
+    const lines = asset.section === carriedReply ? (jobLines ??= notesJobLines(notes)) : NO_JOB_LINES
+    return { origin: toolOrigin(asset.id, marks, blocks, lines), hidden }
   })
 }

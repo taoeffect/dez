@@ -54,6 +54,7 @@ import { deleteImageBang, deleteImageParen, markdownImages } from '../editor/ima
 import { markdownToolCalls, openToolCalls } from '../editor/toolCalls'
 import { markdownMedia } from '../editor/media'
 import { caretAfterCompactionTag, compactionTagLine } from '../editor/compaction'
+import { compactionChip, openCompactionChip } from '../editor/compactionChip'
 import { deleteLineBlockBackward, deleteLineBlockForward, joinsLineBlock } from '../editor/lineBlocks'
 import { revealHiddenLineBackward, revealHiddenLineForward } from '../editor/hiddenAssets'
 import { deleteLines, duplicateLines } from '../editor/lineCommands'
@@ -711,10 +712,12 @@ function editorShortcutKeymap(): Extension {
 }
 
 /** The open panels that a new editor state keeps; without them, all start
- *  closed. `thinking` holds section ids and `toolCalls` call ids. */
+ *  closed. `thinking` holds section ids, `toolCalls` call ids, and
+ *  `compaction` tells whether the panel of the compaction chip is open. */
 interface OpenPanels {
   thinking: ReadonlySet<string>
   toolCalls: ReadonlySet<string>
+  compaction: boolean
 }
 
 /** A new editor state for the active tab, with the panels of `openPanels`
@@ -916,6 +919,7 @@ function buildState(openPanels?: OpenPanels): EditorState {
       markdownToolCalls(openPanels?.toolCalls),
       markdownMedia(),
       compactionTagLine(),
+      compactionChip(openPanels?.compaction),
       markdownLinks(),
       mentionChips(),
       filePasteAndDrop(),
@@ -1073,13 +1077,15 @@ function resetViewToActiveTab(streamEnd?: { followBottom: boolean }) {
   keepBottomOnLateLoad = false
   cancelAnimationFrame(bottomScrollFrame)
   // A rebuild of the same tab, such as the reset at the end of each
-  // stream, keeps the open thinking and tool call panels; another tab
-  // starts with all closed.
+  // stream, keeps the open thinking, tool call, and compaction panels;
+  // another tab starts with all closed.
   const sameTab = viewTabId === activeTabId.value
   // The new state has no line heights yet, so its scrollTop would show
   // other lines. The snapshot holds the top line and its offset instead.
   const scrollSnapshot = streamEnd && !streamEnd.followBottom ? view.scrollSnapshot() : null
-  const state = buildState(sameTab ? { thinking: view.state.field(thinkingExpandedField), toolCalls: openToolCalls(view.state) } : undefined)
+  const state = buildState(sameTab
+    ? { thinking: view.state.field(thinkingExpandedField), toolCalls: openToolCalls(view.state), compaction: openCompactionChip(view.state) }
+    : undefined)
   view.setState(state)
   viewTabId = activeTabId.value
   viewConversationId = activeConversationId.value

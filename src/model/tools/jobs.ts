@@ -351,8 +351,12 @@ export interface JobInfo {
 /** The result of a `jobs_list` call for a reply with no job. */
 export const NO_JOBS_TEXT = 'This reply has started no job.'
 
-// `ready`: the next `jobs_wait` gives the result. A stopped job has none.
-function resultColumn(job: JobInfo): string {
+/** Whether a `jobs_wait` gave the result of `job`, as the job lists tell
+ *  it (`jobsListText`, the notes of a compaction). `ready`: the next
+ *  `jobs_wait` gives the result. A job that runs or that stopped has none. */
+export type JobResultState = '-' | 'given' | 'ready'
+
+export function jobResultState(job: Pick<JobInfo, 'status' | 'delivered'>): JobResultState {
   if (job.status === 'running' || job.status === 'stopped') return '-'
   return job.delivered ? 'given' : 'ready'
 }
@@ -388,7 +392,7 @@ export function jobsListText(jobs: readonly JobInfo[]): string {
     + 'seconds: how long the job ran, or runs so far. '
     + 'call: how the prompt or the arguments of its call begin.'
   const rows = jobs.map((job) => [
-    job.call.number, job.id, job.tool, job.status, resultColumn(job), Math.round(job.elapsedMs / 1000), job.call.label === '' ? '-' : job.call.label,
+    job.call.number, job.id, job.tool, job.status, jobResultState(job), Math.round(job.elapsedMs / 1000), job.call.label === '' ? '-' : job.call.label,
   ].join(' | '))
   return [head, ...rows, spendText(jobs)].join('\n')
 }

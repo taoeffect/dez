@@ -7,8 +7,10 @@ import { findMediaTags } from './mediaTags'
 import {
   ModelTextEscaper,
   agentTextForRequest,
+  escapedModelText,
   findToolBlocks,
   labelToolBlocks,
+  modelTextForRequest,
   toolBlockText,
   withoutToolBlocks,
   type ToolBlockData,
@@ -344,5 +346,25 @@ describe('agentTextForRequest', () => {
     const stored = `${escaper.push(answer)}${escaper.flush()}\n${TAG}`
 
     expect(agentTextForRequest(stored)).toBe(`${answer}\n<dez:video id="b" type="video/mp4"/>`)
+  })
+})
+
+describe('escapedModelText and modelTextForRequest', () => {
+  const answer = `Here:\n${toolBlockText(MODEL_LIST_CALL)}\n<dez:audio id="a" type="audio/wav"/>\nThe old form <\\dez:tool stays.`
+
+  it('escape a whole text so that it forms no tool block and no media tag, and give it back', () => {
+    const escaped = escapedModelText(answer)
+
+    expect(findToolBlocks(answer)).toHaveLength(1)
+    expect(findMediaTags(answer)).toHaveLength(1)
+    expect(findToolBlocks(escaped)).toStrictEqual([])
+    expect(findMediaTags(escaped)).toStrictEqual([])
+    expect(modelTextForRequest(escaped)).toBe(answer)
+  })
+
+  it('escape a whole text as ModelTextEscaper escapes it in a stream', () => {
+    const escaper = new ModelTextEscaper()
+
+    expect(escapedModelText(answer)).toBe(escaper.push(answer) + escaper.flush())
   })
 })

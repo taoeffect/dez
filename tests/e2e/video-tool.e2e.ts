@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { MAX_REQUEST_IMAGE_BYTES } from '../../src/model/streams/pictureBudget'
+import { ASSET_INFO_COLUMNS } from '../../src/model/tools/assetInfo'
 import { jobStartedText, jobsWaitResults, startedJobId, type JobResult } from '../../src/model/tools/jobs'
 import { REFUSED_DEVICES, REFUSED_PROTOCOLS } from '../../src/model/tools/videoTool'
 import { byteSizeText } from '../../src/utils/byteSize'
@@ -516,7 +517,7 @@ describe('video tool', () => {
 
     const third = await chatRequest()
     const [header, made, ...sources] = toolResult(third, 'call_info').split('\n')
-    expect(header).toBe('Each line: id | kind | format and facts | shown, or hidden in the panel of its call\'s chip | who made it.')
+    expect(header).toBe(ASSET_INFO_COLUMNS)
     // The length and the frame rate of the new clip are those of its
     // encode.
     const madeBytes = (await fs.promises.stat(path.join(videoDir, await newFileIn(browser, videoDir, before)))).size
@@ -768,8 +769,7 @@ describe('video tool', () => {
     const curveValue = '(-\\d+(\\.\\d)?|-inf)'
     const curveLine = (values: number) => new RegExp(`^ {2}loudness_curve: ${curveValue}(, ${curveValue}){${values - 1}} LUFS, one value for each second from 0 s`)
     expect(toolResult(checked, 'call_checks').split('\n')).toStrictEqual([
-      'Each line: id | kind | format and facts | shown, or hidden in the panel of its call\'s chip | who made it. '
-        + 'Under the line of a clip: a line for each check, with times in seconds of the clip.',
+      `${ASSET_INFO_COLUMNS} Under the line of a clip: a line for each check, with times in seconds of the clip.`,
       `@a | video | WebM | 4 s | 48x36 | 5 fps | vp9 | sound (opus) | ${byteSizeText(shotSources.a.length)} | shown | from the user`,
       '  black: 2 s to 3 s',
       // The red shot and the black one; the test pictures move.

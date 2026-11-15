@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { COMPACTION_MESSAGE_INTRO, COMPACTION_USER_MESSAGE_LABEL, compactionTagText } from '../chat/compaction'
+import { CARRIED_USER_ASSETS_LABEL, COMPACTION_MESSAGE_INTRO, COMPACTION_USER_MESSAGE_LABEL, compactionTagText } from '../chat/compaction'
 import { MEDIA_HIDDEN_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE, mediaTagRequestText, mediaTagText, type MediaTagData } from '../chat/mediaTags'
 import type { ShownPicture } from '../chat/shownPictures'
 import { toolBlockText, type ToolBlockStatus } from '../chat/toolBlocks'
@@ -838,6 +838,52 @@ describe('sectionsToStreamMessages: a compacted conversation', () => {
       { role: 'agent', content: 'Done.' },
       { role: 'user', content: [{ type: 'text', text: 'Now ![image](id=d)' }, { type: 'image', path: OTHER_IMAGE }] },
     ])
+  })
+
+  it('sends a reference with the kept mark as its text only, and the image of such a reference at a mention of the user', () => {
+    const sections = [
+      reply('c', `${tag()}\nThe fox: ![${GENERATED}](id=b|kept=compaction) The den: ![${OTHER_IMAGE}](id=d|kept=compaction)`),
+      user('u1', `Like ![${IMAGE}](id=a|kept=compaction)?`),
+      user('u2', 'And @b with @a, then @b again.'),
+    ]
+
+    expect(sent(sections).messages).toStrictEqual([{
+      role: 'user',
+      content: [
+        { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\nThe fox: ![image](id=b|kept=compaction) The den: ![image](id=d|kept=compaction)${KEPT}Like ![image](id=a|kept=compaction)?${KEPT}And @b` },
+        { type: 'image', path: GENERATED },
+        { type: 'text', text: ' with @a' },
+        { type: 'image', path: IMAGE },
+        { type: 'text', text: ', then @b again.' },
+      ],
+    }])
+  })
+
+  it('reads the kept mark only in the compaction message: a later user message sends the image', () => {
+    const marked = `Now ![${OTHER_IMAGE}](id=d|kept=compaction)`
+
+    expect(sent([reply('c', `${tag()}\nNotes.`), user('u1', 'Hi'), reply('a1', 'Done.'), user('u3', marked)]).messages.at(-1)).toStrictEqual({
+      role: 'user',
+      content: [{ type: 'text', text: 'Now ![image](id=d|kept=compaction)' }, { type: 'image', path: OTHER_IMAGE }],
+    })
+    // A media request reads the newest user message as a message of its own.
+    expect(sent([reply('c', `${tag()}\nNotes.`), user('u1', marked)]).newestUserMessage).toStrictEqual([
+      { type: 'text', text: 'Now ![image](id=d|kept=compaction)' },
+      { type: 'image', path: OTHER_IMAGE },
+    ])
+  })
+
+  it('sends the section of the carried assets of the user with its own first line, and not as a message of the user', () => {
+    const carried = `${CARRIED_USER_ASSETS_LABEL}\n![${IMAGE}](id=a)\n![${OTHER_IMAGE}](id=d|kept=compaction)\n${mediaTagText(RAIN)}`
+
+    expect(sent([reply('c', `${tag()}\nNotes.`), user('u1', 'Make a fox.'), user('u+', carried), user('u2', 'Go on.')]).messages).toStrictEqual([{
+      role: 'user',
+      content: [
+        { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\nNotes.${KEPT}Make a fox.\n\n${CARRIED_USER_ASSETS_LABEL}\n![image](id=a)` },
+        { type: 'image', path: IMAGE },
+        { type: 'text', text: `\n![image](id=d|kept=compaction)\n${mediaTagRequestText(RAIN)}${KEPT}Go on.` },
+      ],
+    }])
   })
 
   it('sends the pictures of the tag after the notes, each after its label', () => {

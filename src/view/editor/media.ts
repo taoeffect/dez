@@ -269,10 +269,13 @@ function buildMediaDecorations(state: EditorState): MediaDecorations {
   // A hidden clip plays in the panel of its chip (hiddenAssets.ts). It
   // stays a line block here; only its widget is the one of a hidden asset,
   // so that no second player of the clip is made.
-  const hidden = new Set(hiddenAssets(state).map((asset) => asset.from))
-  const decorations = Decoration.set(media.map((tag) => Decoration.replace({
-    widget: hidden.has(tag.from) ? new HiddenAssetWidget(tag.kind, tag.id) : new MediaWidget(tag, tag.role),
-  }).range(tag.from, tag.to)))
+  const hidden = new Map(hiddenAssets(state).map((asset) => [asset.from, asset.owner.kind]))
+  const decorations = Decoration.set(media.map((tag) => {
+    const owner = hidden.get(tag.from)
+    return Decoration.replace({
+      widget: owner ? new HiddenAssetWidget(tag.kind, tag.id, owner) : new MediaWidget(tag, tag.role),
+    }).range(tag.from, tag.to)
+  }))
   return { media, decorations }
 }
 

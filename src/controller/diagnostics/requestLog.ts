@@ -17,9 +17,12 @@ import { inputTokenParts, type ChatUsage } from '../../model/providers/chatUsage
 
 /** How a chat request of the log was sent:
  *  - `chat`: a chat round of a reply. It sends the conversation of its tab.
+ *  - `compaction`: the compaction request of a conversation
+ *    (controller/compaction.ts). It sends the conversation of its tab, so
+ *    it reads the prompt cache of the chat rounds, and its instruction.
  *  - `model_invoke`: the request of a `model_invoke` call to a text model.
  *    It sends only the prompt of the call. */
-export type LoggedRequestKind = 'chat' | 'model_invoke'
+export type LoggedRequestKind = 'chat' | 'compaction' | 'model_invoke'
 
 /** What the sender of a chat request tells the log at the end of the
  *  request. */
@@ -61,8 +64,10 @@ export interface RequestLogRow {
   cost: number | null
   /** The context size of the tab right after the request: the provider's
    *  count of the request (its input and its output tokens), else Dez's
-   *  estimate of the tab (`dez.model/tabs/contextSize`). Null for a
-   *  `model_invoke` request, which holds no conversation, and for a
+   *  estimate of the tab (`dez.model/tabs/contextSize`). For a `compaction`
+   *  request, the count is the size of the conversation that the
+   *  compaction then replaces, with the instruction and the notes. Null for
+   *  a `model_invoke` request, which holds no conversation, and for a
    *  request with no count whose tab is gone. */
   contextTokens: number | null
   /** Whether `contextTokens` is no count of a provider

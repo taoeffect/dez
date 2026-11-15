@@ -2197,6 +2197,19 @@ export const dezTheme = EditorView.theme({
   '.dez-tool-call__chip:focus-visible': {
     boxShadow: '0 0 0 2px var(--color-link, #4a9eff)',
   },
+  // The compaction chip (src/view/editor/compactionChip.ts) has the tool
+  // chip's look. It is a block widget, so a block, and its title is words,
+  // not a tool name. A chip with no panel is no button.
+  '.dez-tool-call.dez-compaction-chip': {
+    display: 'flex',
+  },
+  '.dez-compaction-chip .dez-tool-call__name': {
+    fontFamily: UI_FONT_FAMILY,
+  },
+  '.dez-tool-call__chip:not([role="button"]), .dez-tool-call__chip:not([role="button"]):hover': {
+    background: 'color-mix(in srgb, var(--color-text) 5%, transparent)',
+    cursor: 'default',
+  },
   // The spinner shares the role pill spinner's rules (above); in the chip,
   // the gap spaces it.
   '.dez-tool-call__spinner': {

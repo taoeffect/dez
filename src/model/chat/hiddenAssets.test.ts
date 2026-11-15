@@ -1,14 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import { jobsWaitText } from '../tools/jobs'
-import { findHiddenAssets, jobResultInBlocks, type HiddenAsset } from './hiddenAssets'
-import { findImageReferences, imageIdChange, imageMarkdown, IMAGE_TOOL_KEY } from './images'
-import { findMediaTags, mediaTagText, savedMediaTag, unsavedMediaTag } from './mediaTags'
+import { CARRIED_USER_ASSETS_LABEL, compactionTagText } from './compaction'
+import { findHiddenAssets, findKeptAssets, jobResultInBlocks, type HiddenAsset } from './hiddenAssets'
+import { findImageReferences, imageIdChange, imageMarkdown, imageReferenceText, IMAGE_TOOL_KEY } from './images'
+import { findMediaTags, mediaTagText, mediaTagTextWithKeptMark, savedMediaTag, unsavedMediaTag } from './mediaTags'
 import { HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, invokeBlock as invoke, waitBlock as wait } from './testing'
 import { findToolBlocks, toolBlockText } from './toolBlocks'
 
 // What a test reads of each hidden asset: its job, and its text.
 function found(text: string): [string, string][] {
-  return findHiddenAssets(text, findToolBlocks(text)).map((asset: HiddenAsset) => [asset.jobId, text.slice(asset.from, asset.to)])
+  return findHiddenAssets(text, findToolBlocks(text)).map((asset: HiddenAsset) => [asset.owner.kind === 'job' ? asset.owner.jobId : '', text.slice(asset.from, asset.to)])
 }
 
 describe('findHiddenAssets', () => {
@@ -50,6 +51,64 @@ describe('findHiddenAssets', () => {
 
     expect(found(`${invoke('j-aaaa')}\n\n${shown}`)).toStrictEqual([])
     expect(found(`${failed}\n\n${hiddenImage('j-aaaa')}`)).toStrictEqual([])
+  })
+})
+
+describe('findKeptAssets', () => {
+  const TAG = compactionTagText({ count: 1, lastId: 'd', pictures: [] })
+  const keptImage = imageReferenceText({ path: HIDDEN_IMAGE_PATH, metadata: [{ key: 'id', value: 'b' }] }, true)
+  const keptClip = mediaTagTextWithKeptMark(findMediaTags(hiddenClip('j-aaaa'))[0], true)
+  const linked = imageReferenceText({ path: '/home/u/Pictures/cat.png', metadata: [{ key: 'id', value: 'a' }] }, true)
+
+  // The text of each kept asset, for each section.
+  function kept(sections: { role: 'user' | 'agent', text: string }[]): string[][] {
+    return findKeptAssets(sections).map((assets, index) => assets.map((asset) => sections[index].text.slice(asset.from, asset.to)))
+  }
+
+  it('finds the kept assets of the compaction section and of the section of the carried assets of the user', () => {
+    const sections = [
+      { role: 'agent' as const, text: `${TAG}\n## Summary\n\nDone.\n\n${keptClip}\n@c | audio clip\n\n${keptImage}\n@b | image` },
+      { role: 'user' as const, text: 'Make a cat.' },
+      { role: 'user' as const, text: `${CARRIED_USER_ASSETS_LABEL}\n${linked}` },
+      { role: 'user' as const, text: 'Now a dog.' },
+      { role: 'agent' as const, text: 'A dog.' },
+    ]
+
+    expect(kept(sections)).toStrictEqual([[keptClip, keptImage], [], [linked], [], []])
+    expect(findKeptAssets(sections).flat().every((asset) => asset.owner.kind === 'compaction')).toBe(true)
+  })
+
+  it('hides nothing in a conversation with no compaction section', () => {
+    expect(kept([{ role: 'user', text: `${CARRIED_USER_ASSETS_LABEL}\n${linked}` }, { role: 'agent', text: keptImage }])).toStrictEqual([[], []])
+    // A tag that is not on the first line is plain text.
+    expect(kept([{ role: 'agent', text: `Notes.\n${TAG}\n${keptImage}` }])).toStrictEqual([[]])
+  })
+
+  it('leaves a marked asset in view in a message of the user, and after the first reply', () => {
+    const sections = [
+      { role: 'agent' as const, text: TAG },
+      { role: 'user' as const, text: `Look at this:\n${linked}` },
+      { role: 'agent' as const, text: `Here.\n\n${keptImage}` },
+      { role: 'user' as const, text: `${CARRIED_USER_ASSETS_LABEL}\n${linked}` },
+    ]
+
+    expect(kept(sections)).toStrictEqual([[], [], [], []])
+  })
+
+  it('reads on after a blank section, as the compaction message of a request does', () => {
+    const sections = [
+      { role: 'agent' as const, text: TAG },
+      { role: 'agent' as const, text: ' \n' },
+      { role: 'user' as const, text: `${CARRIED_USER_ASSETS_LABEL}\n${linked}` },
+    ]
+
+    expect(kept(sections)).toStrictEqual([[], [], [linked]])
+  })
+
+  it('takes an image only when it is alone on its line, and no asset with no mark', () => {
+    const shown = imageReferenceText({ path: HIDDEN_IMAGE_PATH, metadata: [{ key: 'id', value: 'b' }] }, false)
+
+    expect(kept([{ role: 'agent', text: `${TAG}\nSee ${keptImage}\n\n${shown}\n\n${hiddenClip('j-aaaa')}` }])).toStrictEqual([[]])
   })
 })
 

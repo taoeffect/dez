@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { assetInfoChecks, assetInfoLine, assetInfoText, assetOriginText, checkLines, checksFailedLine, fittingChecks, MAX_CHECK_ITEMS } from './assetInfo'
+import { ASSET_INFO_COLUMNS, assetInfoChecks, assetInfoLine, assetInfoText, assetOriginText, checkLines, checksFailedLine, fittingChecks, MAX_CHECK_ITEMS } from './assetInfo'
 import { ToolError } from './types'
 
 describe('assetOriginText', () => {
@@ -17,6 +17,10 @@ describe('assetOriginText', () => {
   it('names the tool of a call', () => {
     expect(assetOriginText({ kind: 'call', tool: 'image', label: 'crop {\'image\':\'a\'}' })).toBe('made by the image tool: "crop {\'image\':\'a\'}"')
     expect(assetOriginText({ kind: 'call', tool: 'audio', label: '' })).toBe('made by the audio tool')
+  })
+
+  it('gives the origin text that the notes of a compaction kept, as it is', () => {
+    expect(assetOriginText({ kind: 'carried', text: 'made by the model_invoke job 2 of its reply: "A red fox"' })).toBe('made by the model_invoke job 2 of its reply: "A red fox"')
   })
 })
 
@@ -100,7 +104,11 @@ describe('checksFailedLine', () => {
 describe('assetInfoText', () => {
   it('tells where the check lines are only when the call has checks', () => {
     const line = '@a | audio | WAV | 2 s | shown | from the user'
-    expect(assetInfoText([line], [])).toBe(`Each line: id | kind | format and facts | shown, or hidden in the panel of its call's chip | who made it.\n${line}`)
-    expect(assetInfoText([line, '  silence: none'], ['silence']).split('\n')[0]).toMatch(/Under the line of a clip: a line for each check, with times in seconds of the clip\.$/)
+    expect(assetInfoText([line], [])).toBe(`${ASSET_INFO_COLUMNS}\n${line}`)
+    expect(assetInfoText([line, '  silence: none'], ['silence']).split('\n')).toStrictEqual([
+      `${ASSET_INFO_COLUMNS} Under the line of a clip: a line for each check, with times in seconds of the clip.`,
+      line,
+      '  silence: none',
+    ])
   })
 })

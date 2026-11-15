@@ -2,12 +2,15 @@
 import { history } from '@codemirror/commands'
 import { EditorSelection, EditorState, type Transaction, type TransactionSpec } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
-import { mediaTagText } from '../../model/chat/mediaTags'
+import { imageReferenceText } from '../../model/chat/images'
+import { mediaTagText, mediaTagTextWithKeptMark } from '../../model/chat/mediaTags'
+import { HIDDEN_CLIP_PATH, HIDDEN_IMAGE_PATH } from '../../model/chat/testing'
 import { toolBlockText } from '../../model/chat/toolBlocks'
 import type { Role } from '../../model/chat/types'
 import { SECTION_SEP, pillsField, promptAtomicRanges, sectionsField, unwrapBrokenPills, type PillMetadata } from '../thread/cmEditor'
 import { streamingSectionField } from '../thread/modelChip'
 import { compactionTagLine } from './compaction'
+import { compactionChip } from './compactionChip'
 import { markdownImages } from './images'
 import { markdownMedia } from './media'
 import { mentionChips } from './mentions'
@@ -19,18 +22,29 @@ export const CHIP = toolBlockText({ id: 'a', name: 'model_list', status: 'succes
 /** A video tag: a player in a section of either role. */
 export const PLAYER = mediaTagText({ kind: 'video', id: 'a', type: 'video/webm', src: 'https://cdn.example/v.webm', url: 'https://cdn.example/v.webm', expires: null, other: [] })
 
+/** The reference of an image that a compaction keeps out of view. */
+export function keptImage(id = 'b'): string {
+  return imageReferenceText({ path: HIDDEN_IMAGE_PATH, metadata: [{ key: 'id', value: id }] }, true)
+}
+
+/** The tag of a saved clip that a compaction keeps out of view. */
+export function keptClip(id = 'c'): string {
+  return mediaTagTextWithKeptMark({ kind: 'audio', id, type: 'audio/wav', src: HIDDEN_CLIP_PATH, url: null, expires: null, other: [] }, true)
+}
+
 /** The doc of `texts`, one section each. */
 export function joinSections(texts: string[]): string {
   return texts.join(`\n${SECTION_SEP}\n`)
 }
 
 /** A state with every kind of line block (chips, players, the tag line of
- *  a compaction section), images, prompt pills, and mention chips, whose
- *  doc is `texts`, one section each, with the roles of `roles`, the
- *  selection `ranges` (a number is a caret, a pair is an anchor and a head;
- *  no range puts the caret at the doc start), and the prompt pill metadata
- *  `pills`. The first section is `user`, or `agent` when its text starts
- *  with a compaction tag (`normalizeSectionModels` in cmEditor.ts). */
+ *  a compaction section), images, prompt pills, mention chips, and the
+ *  compaction chip, whose doc is `texts`, one section each, with the roles
+ *  of `roles`, the selection `ranges` (a number is a caret, a pair is an
+ *  anchor and a head; no range puts the caret at the doc start), and the
+ *  prompt pill metadata `pills`. The first section is `user`, or `agent`
+ *  when its text starts with a compaction tag (`normalizeSectionModels` in
+ *  cmEditor.ts). */
 export function createState(texts: string[], roles: Role[], ranges: Array<number | [number, number]> = [], pills: Record<string, PillMetadata> = {}): EditorState {
   return EditorState.create({
     doc: joinSections(texts),
@@ -47,6 +61,7 @@ export function createState(texts: string[], roles: Role[], ranges: Array<number
       markdownToolCalls(),
       markdownMedia(),
       compactionTagLine(),
+      compactionChip(),
       markdownImages(),
       mentionChips(),
       history(),

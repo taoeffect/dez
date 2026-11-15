@@ -3,7 +3,7 @@ import type { SearchQuery } from '@codemirror/search'
 import { EditorSelection, EditorState, type Extension } from '@codemirror/state'
 import { describe, expect, it } from 'vitest'
 import { PILL_NL, PILL_OPEN, SECTION_SEP, encodePrompt, pillsField, scanPills, sectionsField, type PillMetadata } from '../thread/cmEditor'
-import { compactionTagText } from '../../model/chat/compaction'
+import { CARRIED_USER_ASSETS_LABEL, compactionTagText } from '../../model/chat/compaction'
 import { toolBlockText } from '../../model/chat/toolBlocks'
 import {
   FIND_COUNT_LIMIT,
@@ -20,6 +20,7 @@ import {
 } from './find'
 import { markdownImages } from './images'
 import { markdownToolCalls, renderedToolCalls } from './toolCalls'
+import { createState as createSectionsState, keptClip, keptImage } from './testing'
 
 function createState(doc: string, selection?: [number, number], extensions: Extension[] = []): EditorState {
   return EditorState.create({
@@ -138,6 +139,18 @@ describe('find match filter', () => {
 
     expect(matchRanges(state, plain('count'))).toEqual([[tag.length + 1, tag.length + 6], [inLaterTag, inLaterTag + 5]])
     expect(next.doc.toString()).toBe(`${tag}\ncountthe compaction${tag}`)
+  })
+
+  it('skips the hidden source of the assets that a compaction keeps, and the line breaks around the compaction chip', () => {
+    const tag = compactionTagText({ count: 1, lastId: 'z', pictures: [] })
+    const notes = [tag, 'one note', '', keptImage('k'), '', keptClip('l')].join('\n')
+    const state = createSectionsState([notes, 'one ask', `${CARRIED_USER_ASSETS_LABEL}\n${keptImage('u')}`], ['agent', 'user', 'user'])
+    const next = apply(state, replaceAllMatchesTransaction(state, regex('\\n')))
+
+    // The kept files are `one.png` and `one.wav`.
+    expect(matchTexts(state, plain('one'))).toEqual(['one', 'one'])
+    expect(matchTexts(state, plain('kept'))).toEqual([])
+    expect(next.doc.line(1).text).toBe(tag)
   })
 
   it('never yields empty regex matches', () => {
