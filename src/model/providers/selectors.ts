@@ -4,6 +4,7 @@ import { drawnMediaType, wholeImageDrawing, type DrawnImage, type ImageDrawing, 
 import { IMAGE_FOLDERS, imageMediaType, isImageMediaType, isLinkedImagePath, storedImageFile, type ImageMediaType } from '../chat/images'
 import { canonicalMediaType, ClipReadError, type ClipReadProblem } from '../chat/mediaFiles'
 import { mp4DurationSeconds } from '../chat/mp4Duration'
+import { SHOWN_PICTURE_FOLDER, SHOWN_PICTURE_GONE_NOTE, type ShownPicture } from '../chat/shownPictures'
 import type { MessagePart } from '../chat/types'
 import { modelRefKey } from '../chat/modelRef'
 import type { ModelCache } from '../persistence/types'
@@ -187,14 +188,14 @@ function secretReadError(provider: Provider, copilot: boolean, error: unknown): 
   return new ExplainedError(explanation, sanitizeErrorText(rawErrorText(error)), { cause: error })
 }
 
-// The messages with the bytes of each image part, read once for the request
-// and its Copilot retry. The app folder is read only when a message has an
-// image. A picture part already holds its bytes.
+// The messages with the bytes of each image part and each picture part,
+// read once for the request and its Copilot retry. The app folder is read
+// only when a message has an image.
 async function readMessageImages(messages: ProviderChatInputMessage[]): Promise<ChatMessage[]> {
   let appDir: Promise<string> | undefined
   const readPart = async (part: MessagePart): Promise<ChatPart> => {
     if (part.type === 'text') return part
-    if (part.type === 'picture') return { type: 'image', mediaType: part.mediaType, data: bytesToBase64(part.bytes) }
+    if (part.type === 'picture') return shownPicturePart(part.picture)
     appDir ??= sbp('dez.native/getAppDir') as Promise<string>
     const { bytes, mediaType } = await requestImage(part.path, await appDir)
     return { type: 'image', mediaType, data: bytesToBase64(bytes) }
@@ -205,6 +206,24 @@ async function readMessageImages(messages: ProviderChatInputMessage[]): Promise<
     const { content } = message
     return { role: 'user', content: typeof content === 'string' ? content : await Promise.all(content.map(readPart)) }
   }))
+}
+
+// The picture of an `asset_view` call as a request sends it: the bytes of
+// its saved copy (chat/shownPictures.ts), which are the same at each read,
+// so each request of the reply sends the same picture. A copy that is gone
+// or that Dez cannot read (a user can delete the file by hand) never fails
+// the request, as the reply could not go on then: a note goes in its
+// place, after the label of the picture.
+async function shownPicturePart(picture: ShownPicture): Promise<ChatPart> {
+  try {
+    const mediaType = imageMediaType(picture.file)
+    if (!mediaType) throw new Error('The copy has no image type that Dez sends')
+    const bytes = await sbp('dez.native/loadAppFileBytes', `${SHOWN_PICTURE_FOLDER}/${picture.file}`) as Uint8Array
+    return { type: 'image', mediaType, data: bytesToBase64(bytes) }
+  } catch (error) {
+    console.error(`Failed to read the copy ${picture.file} of a picture that a tool showed:`, error)
+    return { type: 'text', text: SHOWN_PICTURE_GONE_NOTE }
+  }
 }
 
 // The image of a reference: a stored image of this Dez folder

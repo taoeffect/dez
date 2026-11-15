@@ -1,29 +1,28 @@
 import sbp from '@sbp/sbp'
 import { imageExtension } from '../model/chat/images'
-import { SHOWN_PICTURE_FOLDER, type ShownPicture } from '../model/chat/shownPictures'
-import type { ReplyPicture } from '../model/streams/replyPictures'
+import { SHOWN_PICTURE_FOLDER, type NewPicture, type ShownPicture } from '../model/chat/shownPictures'
 
-// The copies of the pictures that a tool call showed its model, which the
-// panel of the call's chip shows (model/chat/shownPictures.ts). This module
-// registers no selector: the `asset_view` runner (assetView.ts) and the tool
-// loop (stream.ts) call it.
+// The copies of the pictures that a tool call shows its model
+// (model/chat/shownPictures.ts): the requests of the reply read them, and
+// the panel of the call's chip shows them. This module registers no
+// selector: the `asset_view` runner (assetView.ts) and the tool loop
+// (stream.ts) call it.
 
 /** Saves a copy of each of `pictures` in the views folder, and gives the
- *  copies in the same order. A copy is only for the user to see, so a save
- *  that fails fails no call: that picture gets no copy, and the console
- *  tells why. */
-export async function saveShownPictures(pictures: readonly ReplyPicture[]): Promise<ShownPicture[]> {
-  const copies = await Promise.all(pictures.map(async ({ label, picture }): Promise<ShownPicture | null> => {
-    const file = `${crypto.randomUUID()}.${imageExtension(picture.mediaType)}`
+ *  copies in the same order, each with the size and the byte count of its
+ *  picture. A save that fails fails no call: that picture gets null, so
+ *  the model does not get it, and the console tells why. */
+export async function saveShownPictures(pictures: readonly NewPicture[]): Promise<(ShownPicture | null)[]> {
+  return Promise.all(pictures.map(async ({ label, file: { mediaType, bytes }, size }): Promise<ShownPicture | null> => {
+    const file = `${crypto.randomUUID()}.${imageExtension(mediaType)}`
     try {
-      await sbp('dez.native/saveAppFile', `${SHOWN_PICTURE_FOLDER}/${file}`, picture.bytes)
-      return { file, label }
+      await sbp('dez.native/saveAppFile', `${SHOWN_PICTURE_FOLDER}/${file}`, bytes)
+      return { file, label, ...(size && { width: size.width, height: size.height }), bytes: bytes.length }
     } catch (error) {
       console.error('Failed to save the copy of a picture that a tool showed:', error)
       return null
     }
   }))
-  return copies.filter((copy) => copy !== null)
 }
 
 /** Deletes the copies `pictures` of a call whose result no block took (a

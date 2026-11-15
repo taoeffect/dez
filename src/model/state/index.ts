@@ -5,7 +5,7 @@
 import sbp from '@sbp/sbp'
 import { watch, type WatchStopHandle } from 'vue'
 import { debounce } from 'turtledash'
-import { streamIsStreaming } from './streams'
+import { streamIsStreaming, useStreamStore } from './streams'
 import { useModelCacheStore } from './modelCache'
 import { usePromptsStore, type Prompt } from './prompts'
 import { useSettingsStore, type DefaultModel, type SettingsSection, type Theme, type WindowGeometry } from './settings'
@@ -43,7 +43,7 @@ import { modelRefField, modelRefKey, parseModelRefKey } from '../chat/modelRef'
 import { thinkingField } from '../chat/thinking'
 import { cloneJsonObject } from '../../utils/json'
 import { estimatedRequestTokens } from '../streams/contextEstimate'
-import { sectionsToStreamMessages } from '../streams/messages'
+import { sectionsToStreamMessages, type RequestOptions } from '../streams/messages'
 import { BUILT_IN_SYSTEM_PROMPT, buildSystemPrompt, systemPromptProblem, systemPromptTemplate } from '../systemPrompt'
 import { TOOL_DEFINITIONS } from '../tools/registry'
 import type { StreamedToolCall } from '../tools/types'
@@ -483,18 +483,23 @@ function cachedModel(model: ModelRef): ModelInfo | undefined {
 //
 // The context size of a tab is the difference of two of these numbers on
 // top of a provider's count (`contextSize`), so both must come from here.
-// The pictures of `asset_view` are in no section, so they are not in it:
-// a picture counts from the next request on, in the provider's count.
+// While a reply runs, its requests hold the pictures of its `asset_view`
+// calls, so the estimate holds them too (`picturesOfSection`), each by the
+// size of its saved copy. They leave the estimate at the end of the
+// reply, as the next request does not send them.
 //
 // A tab with no model counts by the default family, with no system prompt
 // and no tools.
 function tabContextEstimate(tab: Tab, model: ModelRef | null, answerCalls: readonly StreamedToolCall[] = []): number {
   if (!model) {
+    // With no tools, the calls go as text, so no picture goes.
     const { messages } = sectionsToStreamMessages(tab.sections, { providerId: '', modelId: '' }, { sendImages: true, sendTools: false })
     return estimatedRequestTokens({ tools: [], messages, answerCalls }, DEFAULT_FAMILY)
   }
 
-  const { messages, sendTools } = sbp('dez.model/streamMessagesForTab', tab.id, model) as RequestMessages
+  const session = useStreamStore().session(tab.id)
+  const picturesOfSection = session?.status === 'streaming' ? session.sectionId : undefined
+  const { messages, sendTools } = sbp('dez.model/streamMessagesForTab', tab.id, model, { picturesOfSection }) as RequestMessages
   const tools = sendTools ? TOOL_DEFINITIONS : []
   // Only a chat request has a system prompt. A template with a problem
   // sends no request, and `buildSystemPrompt` throws for it.
@@ -954,13 +959,16 @@ export default sbp('sbp/selectors/register', {
   // (`dez.model/requestSendsTools`). A model that the model cache knows not
   // to read images gets only the text of each reference, with no path. An
   // unknown model (no flag, or not in the cache yet) gets the images.
-  'dez.model/streamMessagesForTab' (tabId: string, model: ModelRef): RequestMessages {
+  // `options.picturesOfSection`: the section of the reply that runs, for
+  // the messages as that reply sends them; the request of a new reply
+  // gives none.
+  'dez.model/streamMessagesForTab' (tabId: string, model: ModelRef, options: Pick<RequestOptions, 'picturesOfSection'> = {}): RequestMessages {
     const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
     if (!tab) return { messages: [], imagesLeftOut: 0, sendTools: false }
 
     const sendTools = sbp('dez.model/requestSendsTools', model) as boolean
     const sendImages = cachedModel(model)?.imageInput !== false
-    return { ...sectionsToStreamMessages(tab.sections, model, { sendImages, sendTools }), sendTools }
+    return { ...sectionsToStreamMessages(tab.sections, model, { ...options, sendImages, sendTools }), sendTools }
   },
 
   // Whether a chat request to `model` offers the Dez tools now: only to a

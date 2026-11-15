@@ -1,4 +1,5 @@
 import type { ImageSize } from '../chat/imageDrawing'
+import { shownPictureSize } from '../chat/shownPictures'
 import { imageTokens, type ModelFamily } from '../providers/modelFamilies'
 import { toolJsonSchema } from '../tools/registry'
 import type { StreamedToolCall, ToolDefinition } from '../tools/types'
@@ -25,21 +26,24 @@ export interface EstimatedRequest {
   answerCalls?: readonly StreamedToolCall[]
 }
 
-// The size that every image and picture counts as: Dez reads no pixel size
-// here. So the same request is the same number in every run of the app,
-// and two estimates of one tab differ only by what changed in it.
-//
-// It is a middle size, not the largest one that a family's rule knows. An
-// image is in the estimate of a tab only while its user message is the
-// newest one, so its count is added and then taken off again. A count far
-// over the true one (a GPT model reads the largest image as 36,000 tokens,
-// and a common one as 1,000 to 3,000) would put the context size far under
-// the true one when the image leaves.
-//
-// 1568 px is the long side of the review pictures of `asset_view`
-// (`IMAGE_PICTURE_SIDES`), and the side over which most Claude models make
-// an image smaller.
-const ASSUMED_IMAGE_SIZE: ImageSize = { width: 1568, height: 1568 }
+/** The size that an image of a user message counts as, and a picture
+ *  whose block does not tell its size: Dez reads no pixel size of them
+ *  here. So the same request is the same number in every run of the app,
+ *  and two estimates of one tab differ only by what changed in it. The
+ *  picture budget counts an image of a user message as this size too
+ *  (pictureBudget.ts).
+ *
+ *  It is a middle size, not the largest one that a family's rule knows. An
+ *  image is in the estimate of a tab only while its user message is the
+ *  newest one, so its count is added and then taken off again. A count far
+ *  over the true one (a GPT model reads the largest image as 36,000 tokens,
+ *  and a common one as 1,000 to 3,000) would put the context size far under
+ *  the true one when the image leaves.
+ *
+ *  1568 px is the long side of the review pictures of `asset_view`
+ *  (`IMAGE_PICTURE_SIDES`), and the side over which most Claude models make
+ *  an image smaller. */
+export const ASSUMED_IMAGE_SIZE: ImageSize = { width: 1568, height: 1568 }
 
 // How many characters of `text` are kana, Han, or Hangul. The characters
 // per token of a family are for English text; a tokenizer makes about one
@@ -62,12 +66,13 @@ function wideCharacters(text: string): number {
  *  that goes back.
  *
  *  A character counts by the family's characters per token, and a kana,
- *  Han, or Hangul character as one token. An image or a picture counts by
- *  the family's image rule, as one of `ASSUMED_IMAGE_SIZE`. */
+ *  Han, or Hangul character as one token. An image counts by the family's
+ *  image rule, as one of `ASSUMED_IMAGE_SIZE`; a picture of an
+ *  `asset_view` call by the same rule, at the size of its saved copy. */
 export function estimatedRequestTokens(request: EstimatedRequest, family: ModelFamily): number {
   let characters = 0
   let wide = 0
-  let images = 0
+  let imageTokenCount = 0
   const addText = (text: string) => {
     const wideOfText = wideCharacters(text)
     wide += wideOfText
@@ -87,7 +92,7 @@ export function estimatedRequestTokens(request: EstimatedRequest, family: ModelF
         }
         for (const part of message.content) {
           if (part.type === 'text') addText(part.text)
-          else images++
+          else imageTokenCount += imageTokens(family.imageTokens, (part.type === 'picture' ? shownPictureSize(part.picture) : null) ?? ASSUMED_IMAGE_SIZE)
         }
         break
       case 'agent':
@@ -110,5 +115,5 @@ export function estimatedRequestTokens(request: EstimatedRequest, family: ModelF
     addText(call.argumentsText)
   }
 
-  return Math.ceil(characters / family.charsPerToken) + wide + images * imageTokens(family.imageTokens, ASSUMED_IMAGE_SIZE)
+  return Math.ceil(characters / family.charsPerToken) + wide + imageTokenCount
 }

@@ -19,11 +19,16 @@ import type { RequestMessages, StreamMessage } from './types'
 export interface RequestOptions {
   // False when the request model does not read images: the images of the
   // newest user message (its references and the images that it mentions)
-  // then go as text only, as the images of every earlier message do.
+  // then go as text only, as the images of every earlier message do, and
+  // no picture of `asset_view` goes.
   sendImages: boolean
   // False when the request offers no tools: an agent section's tool calls
   // then go as text (agentSectionMessages).
   sendTools: boolean
+  // The id of the agent section of the reply that runs: the one section
+  // whose `asset_view` pictures go (`agentSectionMessages`). Absent when
+  // no reply runs, and for the request of a new reply.
+  picturesOfSection?: string
 }
 
 // The request messages: every section that has text, in order. No path of a
@@ -46,11 +51,12 @@ export interface RequestOptions {
 // images go as text only too: both formats take images only from the user.
 // So to show a model an old image, or an image that a model made, the user
 // mentions it in the new message, or the model calls `asset_view`, whose
-// pictures are user messages that no section holds (`ReplyPictures`,
-// replyPictures.ts). A clip adds no part, neither its tag nor a mention of
-// it (`@b`): only a media request sends clips (`messageClips`,
-// `mediaRequestInput`), so the bytes of a chat request do not depend on
-// them.
+// pictures go as `user` messages after the tool results of their round,
+// from their saved copies, while the reply of the call runs
+// (`agentSectionMessages`, `picturesOfSection`). A clip adds no part,
+// neither its tag nor a mention of it (`@b`): only a media request sends
+// clips (`messageClips`, `mediaRequestInput`), so the bytes of a chat
+// request do not depend on them.
 //
 // An image or a clip that a Dez tool made is not text of the model, but
 // its reference or tag is in the reply, at the start of the text of the
@@ -65,8 +71,8 @@ export interface RequestOptions {
 // replays from there on no longer go back (their prefix changed;
 // `wireChat`, apiFormats.ts). All request rounds of one reply have the same
 // newest user message, so the bytes hold inside a reply. The picture
-// messages of `asset_view` hold inside a reply too, and are gone from the
-// next one (replyPictures.ts).
+// messages of `asset_view` hold inside a reply too (a copy is the same
+// bytes at each read), and are gone from the next one.
 export function sectionsToStreamMessages(sections: Section[], requestModel: ModelRef, options: RequestOptions): Omit<RequestMessages, 'sendTools'> {
   let imagesLeftOut = 0
   // The images that a mention in the section at hand can name: the path of
@@ -82,7 +88,9 @@ export function sectionsToStreamMessages(sections: Section[], requestModel: Mode
     for (const { id, path } of findImageReferences(text, section.role)) {
       if (id !== null) imagesById.set(id, path)
     }
-    if (section.role === 'agent') return agentSectionMessages(section, requestModel, options.sendTools)
+    if (section.role === 'agent') {
+      return agentSectionMessages(section, requestModel, options.sendTools, options.sendImages && section.id === options.picturesOfSection)
+    }
     const content = index === newestUser ? userMessageContent(text, imagesById) : null
     if (content !== null) {
       if (options.sendImages) return [{ role: 'user', content }]
@@ -174,8 +182,19 @@ export function messageClips(sections: readonly Section[]): ClipAttachment[] {
  *
  *  With `sendTools` false, a section with blocks is one agent message, with
  *  each block as text, and sends no thinking: a request with no tool
- *  definitions cannot hold tool calls. */
-export function agentSectionMessages(section: Section, requestModel: ModelRef, sendTools: boolean): StreamMessage[] {
+ *  definitions cannot hold tool calls.
+ *
+ *  With `sendPictures`, a round whose `asset_view` blocks name the saved
+ *  copies of their pictures (`ToolBlock.pictures`) gets one `user` message
+ *  right after its tool message: each picture after its label. The
+ *  Anthropic format joins that message to the tool results before it
+ *  (`withResultsJoined`, providers/apiFormats.ts). `dez.provider/streamChat`
+ *  reads the copies, so each request that holds the round sends the same
+ *  bytes: the prompt cache needs them, and so do the thinking replays, as
+ *  a replay goes back only while the request before it hashes to its
+ *  `prefixHash` (`wireChat`). A request with no tools sends no pictures:
+ *  a call that is text has no round to put them after. */
+export function agentSectionMessages(section: Section, requestModel: ModelRef, sendTools: boolean, sendPictures = false): StreamMessage[] {
   const rounds = agentRounds(sectionPlainText(section))
   // The first group's blocks are always in the first round; a section that
   // ends at its first group has only that round.
@@ -185,11 +204,25 @@ export function agentSectionMessages(section: Section, requestModel: ModelRef, s
     const content = withoutStoredFilePaths(roundRequestText(rounds, index))
     const thinking = roundThinking(section, requestModel, rounds, index)
     if (round.blocks.length === 0) return content.trim() === '' ? [] : [{ role: 'agent', content, ...thinking }]
-    return [
+    const messages: StreamMessage[] = [
       { role: 'agent', content, ...thinking, toolCalls: round.blocks.map(toolCall) },
       { role: 'tool', results: round.blocks.map(toolResult) },
     ]
+    const pictures = sendPictures ? round.blocks.flatMap(pictureParts) : []
+    if (pictures.length > 0) messages.push({ role: 'user', content: pictures })
+    return messages
   })
+}
+
+// The parts of the pictures that the call of `block` showed its model:
+// the label of each picture, then the picture by its saved copy. A label
+// is text of the block, which the user can edit, so it gets the path scrub
+// as every request text does.
+function pictureParts(block: ToolBlock): MessagePart[] {
+  return (block.pictures ?? []).flatMap((picture): MessagePart[] => [
+    { type: 'text', text: withoutStoredFilePaths(picture.label) },
+    { type: 'picture', picture },
+  ])
 }
 
 // The text of the round `index` as a request sends it, before the path

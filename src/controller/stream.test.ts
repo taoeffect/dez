@@ -17,7 +17,7 @@ import { unstoredOutputMessage } from '../model/providers/unusableModel'
 import type { GeneratedClip, ProviderChatInputMessage, ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderInfo, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers'
 import { providerInfo } from '../model/providers/testing'
 import { CLIP_KINDS, isClipKind, isTextKind, ProviderNotConfiguredError, type MediaKind } from '../model/providers/types'
-import type { RequestMessages } from '../model/streams/types'
+import type { RequestMessages, StreamMessage } from '../model/streams/types'
 import { systemPromptErrorText } from '../model/systemPrompt'
 import { jobsWaitText, jobTimedOutText, startedJobId } from '../model/tools/jobs'
 import { INVOCATION_READS_INPUTS, invocationFailedText } from '../model/tools/modelInvoke'
@@ -150,13 +150,15 @@ function sectionTexts(): Array<{ role: string, text: string }> {
   return activeTab().sections.map((section) => ({ role: section.role, text: sectionVisibleText(section) }))
 }
 
-async function startStream({ sendTools = false } = {}): Promise<void> {
+// Starts the reply of the section `a1`. `messages` are the messages of its
+// first request, which hold the conversation before the reply.
+async function startStream({ sendTools = false, messages = [{ role: 'user', content: 'Hi' }] as StreamMessage[] } = {}): Promise<void> {
   await sbp('dez.stream/start', {
     tabId: activeTab().id,
     sectionId: 'a1',
     model,
     request: 'chat',
-    messages: [{ role: 'user', content: 'Hi' }],
+    messages,
     sendTools,
     imageOutput: false,
     audioOutput: false,
@@ -2483,11 +2485,13 @@ describe('dez.stream/start images that a tool makes', () => {
 describe('dez.stream/start pictures that a tool shows', () => {
   const viewCall = { id: 'c1', name: 'asset_view', argumentsText: JSON.stringify({ assets: '@a' }) }
   const listCall = { id: 'c2', name: 'model_list', argumentsText: '{"filter":"gemini"}' }
-  // The stub reads an empty PNG file, which goes as it is.
-  const pictureMessage = {
-    role: 'user',
-    content: [{ type: 'text', text: 'asset_view: the image @a.' }, { type: 'picture', mediaType: 'image/png', bytes: new Uint8Array() }],
-  }
+  // The copy of the picture of a view of @a, as its block names it. The
+  // stub reads an empty PNG file of 1000 by 500 pixels, which goes as it
+  // is.
+  const copyOf = (saved: { file: { path: string } }) =>
+    ({ file: saved.file.path.slice('assets/generated/views/'.length), label: 'asset_view: the image @a.', width: 1000, height: 500, bytes: 0 })
+  // The last line of the result of each call of the reply.
+  const budgetLines = () => findToolBlocks(sectionVisibleText(agentSection())).map(({ result }) => result.split('\n').at(-1))
 
   beforeEach(() => {
     sbp('dez.model/tabs/replaceSections', activeTab().id, [
@@ -2496,7 +2500,7 @@ describe('dez.stream/start pictures that a tool shows', () => {
     ])
   })
 
-  it('sends the picture of a view after the results of its round in each later request of the reply, and never from the conversation', async () => {
+  it('sends the picture of a view as its saved copy, after the results of its round, in each later request of the reply, and not in the next reply', async () => {
     replyRounds([
       async (input) => ({ requestId: input.requestId as string, toolCalls: [viewCall] }),
       async (input) => ({ requestId: input.requestId as string, toolCalls: [listCall] }),
@@ -2509,14 +2513,63 @@ describe('dez.stream/start pictures that a tool shows', () => {
     await startStream({ sendTools: true })
 
     const [, second, third] = requests.map((input) => input.messages)
+    expect(native.savedFiles).toHaveLength(1)
     expect(second.map(({ role }) => role)).toStrictEqual(['user', 'agent', 'tool', 'user'])
-    expect(second[3]).toStrictEqual(pictureMessage)
+    expect(second[3]).toStrictEqual({
+      role: 'user',
+      content: [{ type: 'text', text: 'asset_view: the image @a.' }, { type: 'picture', picture: copyOf(native.savedFiles[0]) }],
+    })
+    // The same copy again, so the same bytes: the prompt cache needs them.
     expect(third.slice(0, 4)).toStrictEqual(second)
     expect(third.map(({ role }) => role)).toStrictEqual(['user', 'agent', 'tool', 'user', 'agent', 'tool'])
-    // The next reply sends the rounds from the section, which holds no
-    // picture.
+    // The next reply sends the rounds of the section with no picture.
     const stored = (sbp('dez.model/streamMessagesForTab', activeTab().id, model) as RequestMessages).messages
     expect(stored.slice(1, 5)).toStrictEqual([third[1], third[2], third[4], third[5]])
+  })
+
+  // The limits of a model of no family: 20 pictures, 52,000 tokens, and
+  // 20 MiB of base64. A picture of 1000 by 500 pixels costs 648 tokens.
+  it('gives a call the budget that the pictures of the rounds before, and of the earlier calls of its round, leave', async () => {
+    replyRounds([
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [viewCall] }),
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [{ ...viewCall, id: 'c3' }, { ...viewCall, id: 'c4' }] }),
+      async (input) => ({ requestId: input.requestId as string }),
+    ])
+
+    await startStream({ sendTools: true })
+
+    expect(budgetLines()).toStrictEqual([
+      'Picture budget left in this reply: 19 pictures, 51,352 tokens and 20.0 MB of base64.',
+      'Picture budget left in this reply: 18 pictures, 50,704 tokens and 20.0 MB of base64.',
+      'Picture budget left in this reply: 17 pictures, 50,056 tokens and 20.0 MB of base64.',
+    ])
+    expect(requests[2].messages.map(({ role }) => role)).toStrictEqual(['user', 'agent', 'tool', 'user', 'agent', 'tool', 'user'])
+  })
+
+  it('takes each image of the request off the budget, as one picture of the assumed size with the size of its file, which it reads one time in a reply', async () => {
+    const sizeReads: string[] = []
+    // 3 MiB are 4 MiB of base64.
+    native.fileSize = (path) => {
+      sizeReads.push(path)
+      return 3 * 1024 ** 2
+    }
+    replyRounds([
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [viewCall] }),
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [{ ...viewCall, id: 'c3' }] }),
+      async (input) => ({ requestId: input.requestId as string }),
+    ])
+
+    await startStream({
+      sendTools: true,
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'A fox: ![image](id=a)' }, { type: 'image', path: image('fox.png') }] }],
+    })
+
+    // The image counts as 3,136 tokens.
+    expect(budgetLines()).toStrictEqual([
+      'Picture budget left in this reply: 18 pictures, 48,216 tokens and 16.0 MB of base64.',
+      'Picture budget left in this reply: 17 pictures, 47,568 tokens and 16.0 MB of base64.',
+    ])
+    expect(sizeReads).toStrictEqual([image('fox.png')])
   })
 
   it('names the copy of each picture in the block of its call', async () => {
@@ -2532,7 +2585,7 @@ describe('dez.stream/start pictures that a tool shows', () => {
 
     const [saved] = native.savedFiles
     const [block] = findToolBlocks(sectionVisibleText(agentSection()))
-    expect(block.pictures).toStrictEqual([{ file: saved.file.path.slice('assets/generated/views/'.length), label: 'asset_view: the image @a.' }])
+    expect(block.pictures).toStrictEqual([copyOf(saved)])
     expect(native.deletedFiles).toStrictEqual([])
   })
 

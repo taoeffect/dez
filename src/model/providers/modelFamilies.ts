@@ -110,8 +110,7 @@ export interface ModelFamily {
  *  each one is on the safe side:
  *  - text: the fewest characters per token that a maker states (Claude);
  *  - an image: one token for each square of 28 by 28 pixels, at most 4,784,
- *    which is the count of Claude with no scale down first (`pictureTokens`,
- *    streams/replyPictures.ts, counts the same);
+ *    which is the count of Claude with no scale down first;
  *  - a 200k window, the smallest one of the current large models;
  *  - 20 images: the Claude API refuses an image with a side over 3,000 px
  *    in a request with more. */

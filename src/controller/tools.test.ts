@@ -2,8 +2,10 @@ import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { UnwritableImageTypeError, type ComposedImage, type DrawnImage, type DrawnMediaType, type ImageComposition, type ImageDrawing, type ImageSize } from '../model/chat/imageDrawing'
+import { imageMediaType } from '../model/chat/images'
 import { jpegSize } from '../model/chat/jpegSize'
 import { mediaTagText, type MediaTagData } from '../model/chat/mediaTags'
+import { SHOWN_PICTURE_FOLDER, shownPictureSize, type ShownPicture } from '../model/chat/shownPictures'
 import { jpegHeader } from '../model/chat/testing'
 import { toolBlockText } from '../model/chat/toolBlocks'
 import type { ModelRef, Tab } from '../model/chat/types'
@@ -15,7 +17,7 @@ import { PRICE_LIFETIME_MS } from '../model/providers/modelPrices'
 import type { ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderMediaQuote, ProviderMediaQuoteInput, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers/streamTypes'
 import { providerInfo } from '../model/providers/testing'
 import type { ModelInfo, ProviderInfo, ProviderInputImageRules, ProviderSettingsDescriptor } from '../model/providers/types'
-import { NO_PICTURE_BUDGET, ReplyPictures, type PictureBudget, type ReplyPicture } from '../model/streams/replyPictures'
+import { NO_PICTURE_BUDGET, type PictureBudget } from '../model/streams/pictureBudget'
 import { assetProbeArgs, clipNotReadFacts } from '../model/tools/assetFacts'
 import { clipChecksArgs, SCENE_CUT_FILTER } from '../model/tools/clipAnalysis'
 import {
@@ -27,12 +29,14 @@ import {
   cropUnderPixelText,
   gridCostNote,
   gridNotDrawnNote,
+  gridNotSavedNote,
   gridTooLargeNote,
   jpegCopyNote,
   NO_VIDEO_STREAM_NOTE,
   noSoundNote,
   PICTURE_LIMIT_NOTE,
   PICTURE_NOT_DRAWN_NOTE,
+  PICTURE_NOT_SAVED_NOTE,
   PICTURE_NOT_READ_NOTE,
   PICTURE_TOO_LARGE_NOTE,
   pictureCostNote,
@@ -196,8 +200,8 @@ sbp('sbp/selectors/register', {
 // calls name, so that a result tells which of the two the tool read.
 const REPLY_MODEL: ModelRef = { providerId: 'venice', modelId: 'venice-glm-5' }
 
-// The picture methods of a context of a reply that shows no picture.
-const NO_PICTURES: Pick<ToolRunContext, 'pictureBudget' | 'showPictures'> = { pictureBudget: () => NO_PICTURE_BUDGET, showPictures: () => {} }
+// The picture budget of a context of a reply that shows no picture.
+const NO_PICTURES: Pick<ToolRunContext, 'pictureBudget'> = { pictureBudget: async () => NO_PICTURE_BUDGET }
 
 // Runs a call of a reply of `model` that takes no image and no clip, and
 // has no job.
@@ -1943,7 +1947,8 @@ describe('dez.controller/tools/run', () => {
     const FULL_BUDGET_LINE = 'Picture budget left in this reply: 20 pictures, 57,408 tokens and 20.0 MB of base64.'
     let tabId: string
     let budget: PictureBudget
-    let shown: ReplyPicture[]
+    // The pictures that the calls of a test gave their reply.
+    let shown: ReturnType<typeof savedPicture>[]
     // The ffprobe output of each clip, by the name of its copy.
     let probes: Record<string, string>
     let frameSheetLog: string
@@ -1953,19 +1958,28 @@ describe('dez.controller/tools/run', () => {
     let soundLog: string
     let soundEnd: BundledToolEnd
 
-    // Runs a call of a reply whose pictures go into `shown`, unless the
-    // test gives its own `showPictures`.
-    function assetView(args: ToolArguments, { signal = running(), showPictures = (pictures: ReplyPicture[]) => { shown.push(...pictures) } } = {}): Promise<ToolRunResult> {
+    // A picture that a call gave its reply: the copy that its result
+    // names, with the bytes of its saved file. A request reads that file,
+    // so these bytes are what the model gets.
+    function savedPicture(copy: ShownPicture) {
+      const saved = native.savedFiles.find(({ file }) => file.root === 'app' && file.path === `${SHOWN_PICTURE_FOLDER}/${copy.file}`)
+      return { label: copy.label, picture: { mediaType: imageMediaType(copy.file), bytes: saved?.content }, size: shownPictureSize(copy) }
+    }
+
+    // Runs a call of a reply with the budget `budget`, and adds the
+    // pictures of its result to `shown`.
+    async function assetView(args: ToolArguments, { signal = running() } = {}): Promise<ToolRunResult> {
       const context: ToolRunContext = {
         tabId,
         model: REPLY_MODEL,
         jobs: new ReplyJobs(),
         writeImage: () => null,
         writeClip: () => null,
-        pictureBudget: () => budget,
-        showPictures,
+        pictureBudget: async () => budget,
       }
-      return sbp('dez.controller/tools/run', { name: 'asset_view', arguments: args }, signal, context) as Promise<ToolRunResult>
+      const result = await sbp('dez.controller/tools/run', { name: 'asset_view', arguments: args }, signal, context) as ToolRunResult
+      shown.push(...(result.pictures ?? []).map(savedPicture))
+      return result
     }
 
     const ffmpegRuns = () => native.runs.filter(({ run }) => run.tool === 'dez-ffmpeg').map(({ run }) => run)
@@ -1982,7 +1996,10 @@ describe('dez.controller/tools/run', () => {
         { id: 'a2', role: 'agent', content: [{ kind: 'text', text: '' }] },
       ])
       readImage = async () => new Blob([FOX_BYTES], { type: 'image/png' })
-      budget = new ReplyPictures(0).left
+      // The budget of a reply with no image in its context, by the numbers
+      // of an older Dez: the token numbers of the tests are easy to check
+      // against it.
+      budget = { tokens: 57_408, bytes: 20 * 1024 ** 2, pictures: 20 }
       shown = []
       probes = { 'b.mp4': probed([VIDEO_STREAM, AUDIO_STREAM]), 'd.wav': probed([AUDIO_STREAM]) }
       frameSheetLog = SHOWINFO
@@ -2036,22 +2053,21 @@ describe('dez.controller/tools/run', () => {
       ])
       expect(drawings).toStrictEqual([])
       expect(shown.map((shownPicture) => ({ ...shownPicture, label: labelId(shownPicture) }))).toStrictEqual([
-        { label: '@a', picture: { type: 'picture', mediaType: 'image/png', bytes: FOX_BYTES }, size: { width: 1000, height: 500 } },
-        { label: '@b', picture: { type: 'picture', mediaType: 'image/jpeg', bytes: SHEET_JPEG }, size: { width: 968, height: 364 } },
-        { label: '@d', picture: { type: 'picture', mediaType: 'image/jpeg', bytes: WAVE_JPEG }, size: { width: 800, height: 200 } },
+        { label: '@a', picture: { mediaType: 'image/png', bytes: FOX_BYTES }, size: { width: 1000, height: 500 } },
+        { label: '@b', picture: { mediaType: 'image/jpeg', bytes: SHEET_JPEG }, size: { width: 968, height: 364 } },
+        { label: '@d', picture: { mediaType: 'image/jpeg', bytes: WAVE_JPEG }, size: { width: 800, height: 200 } },
       ])
       // 648 + 455 + 232 tokens, and 4 + 80 + 80 bytes of base64.
       expect(lines.at(-1)).toBe('Picture budget left in this reply: 17 pictures, 56,073 tokens and 20.0 MB of base64.')
-      // A copy of each picture that the model saw, for the panel of the
-      // call's chip, with its label.
-      expect(result.pictures).toStrictEqual(shown.map(({ label, picture }) => ({
-        file: expect.stringMatching(new RegExp(`^${FILE_ID.source}\\.${picture.mediaType === 'image/png' ? 'png' : 'jpg'}$`)),
-        label,
-      })))
-      expect(native.savedFiles).toStrictEqual((result.pictures ?? []).map(({ file }, index) => ({
-        file: { root: 'app', path: `assets/generated/views/${file}` },
-        content: shown[index].picture.bytes,
-      })))
+      // The result names a copy of each picture, with its label and what
+      // the picture costs in a request: the requests of the reply read the
+      // copies, and the panel of the call's chip shows them.
+      expect(result.pictures).toStrictEqual([
+        { file: expect.stringMatching(new RegExp(`^${FILE_ID.source}\\.png$`)), label: 'asset_view: the image @a.', width: 1000, height: 500, bytes: FOX_BYTES.length },
+        { file: expect.stringMatching(new RegExp(`^${FILE_ID.source}\\.jpg$`)), label: `asset_view: ${SHEET_SHOWS}.`, width: 968, height: 364, bytes: SHEET_JPEG.length },
+        { file: expect.stringMatching(new RegExp(`^${FILE_ID.source}\\.jpg$`)), label: expect.stringMatching(/^asset_view: the wave of the audio clip @d, /), width: 800, height: 200, bytes: WAVE_JPEG.length },
+      ])
+      expect(native.savedFiles).toHaveLength(3)
 
       // One copy of each clip, for its probe; the later runs find it in
       // the folder, which goes at the end with the pictures.
@@ -2069,7 +2085,7 @@ describe('dez.controller/tools/run', () => {
       expect(native.readFiles).toStrictEqual([{ root: 'cache', path: `${folder}/b-frames.jpg` }, { root: 'cache', path: `${folder}/d-wave.jpg` }])
     })
 
-    it('keeps no copy of a picture whose save failed, and gives the others and the result text', async () => {
+    it('gives the model no picture whose save failed: tells so at its asset, gives its cost back, and gives the other pictures', async () => {
       let saves = 0
       native.saveAppFile = async () => {
         if (++saves === 2) throw new Error('No space left on device')
@@ -2078,16 +2094,41 @@ describe('dez.controller/tools/run', () => {
       const result = await assetView({ assets: '@a @b @d', frames: 3, end: 2.5 })
 
       expect(result.isError).toBe(false)
-      expect(shown).toHaveLength(3)
-      expect(result.content.split('\n').at(-1)).toBe('Picture budget left in this reply: 17 pictures, 56,073 tokens and 20.0 MB of base64.')
-      expect(result.pictures?.map(labelId)).toStrictEqual(['@a', '@d'])
+      expect(shown.map(labelId)).toStrictEqual(['@a', '@d'])
+      const lines = result.content.split('\n')
+      // The clip @b keeps its facts and its loudness, and has the note,
+      // with no line about its frame sheet.
+      expect(lines.slice(1, 4)).toStrictEqual([
+        expect.stringMatching(/^@b \| video \| /),
+        expect.stringMatching(/^Loudness of 0 s to 2\.5 s: /),
+        PICTURE_NOT_SAVED_NOTE,
+      ])
+      expect(result.content).not.toContain('Frame sheet of')
+      // 648 + 232 tokens: the sheet costs nothing.
+      expect(lines.at(-1)).toBe('Picture budget left in this reply: 18 pictures, 56,528 tokens and 20.0 MB of base64.')
       expect(consoleError).toHaveBeenCalledWith('Failed to save the copy of a picture that a tool showed:', new Error('No space left on device'))
     })
 
-    it('gives no copies, and no result, for a call that the user stopped', async () => {
-      const stop = new AbortController()
+    it('gives no picture and the whole budget when no save works', async () => {
+      native.saveAppFile = async () => {
+        throw new Error('No space left on device')
+      }
 
-      const result = await assetView({ assets: '@a' }, { signal: stop.signal, showPictures: () => { stop.abort() } })
+      const result = await assetView({ assets: '@a' })
+
+      expect(result).toStrictEqual({ content: `@a | image | PNG | 1000x500 | 3 B\n${PICTURE_NOT_SAVED_NOTE}\n${FULL_BUDGET_LINE}`, isError: false })
+    })
+
+    it('saves no copy, and gives no result, for a call that the user stopped', async () => {
+      const stop = new AbortController()
+      // The read of the image is the last work of this call before the
+      // save.
+      readImage = async () => {
+        stop.abort()
+        return new Blob([FOX_BYTES], { type: 'image/png' })
+      }
+
+      const result = await assetView({ assets: '@a' }, { signal: stop.signal })
 
       expect(result.isError).toBe(true)
       expect(result.pictures).toBeUndefined()
@@ -2268,7 +2309,7 @@ describe('dez.controller/tools/run', () => {
 
       expect(drawings).toStrictEqual([])
       expect(shown.map(({ picture, size }) => ({ picture, size }))).toStrictEqual([
-        { picture: { type: 'picture', mediaType: 'image/png', bytes: FOX_BYTES }, size: { width: 2000, height: 1000 } },
+        { picture: { mediaType: 'image/png', bytes: FOX_BYTES }, size: { width: 2000, height: 1000 } },
       ])
     })
 
@@ -2484,7 +2525,7 @@ describe('dez.controller/tools/run', () => {
         ])
         expect(shown).toStrictEqual([{
           label: 'asset_view: the spectrogram of the audio clip @d, 1 s to 5.04 s, time runs left to right and the frequency bottom to top.',
-          picture: { type: 'picture', mediaType: 'image/jpeg', bytes: SPECTROGRAM_JPEG },
+          picture: { mediaType: 'image/jpeg', bytes: SPECTROGRAM_JPEG },
           size: { width: 1084, height: 328 },
         }])
         expect(result.content).toMatch(/^Spectrogram of 1 s to 5\.04 s: 1084x328 pixels, .*\(add 1 s for the time in the clip\)/m)
@@ -2529,7 +2570,7 @@ describe('dez.controller/tools/run', () => {
         }])
         expect(shown).toStrictEqual([{
           label: `asset_view: ${SHEET_SHOWS}; under the frames, the wave of its sound, 0 s to 2.5 s, time runs left to right.`,
-          picture: { type: 'picture', mediaType: 'image/jpeg', bytes: SHEET_WITH_STRIP_JPEG },
+          picture: { mediaType: 'image/jpeg', bytes: SHEET_WITH_STRIP_JPEG },
           size: { width: 968, height: 528 },
         }])
         const lines = result.content.split('\n')
@@ -2557,7 +2598,7 @@ describe('dez.controller/tools/run', () => {
           shown = []
           return (await assetView({ assets: '@b', frames: 3, end: 2.5, sound_picture: 'wave' })).content.split('\n')[1]
         }
-        const sheetOnly = [{ label: `asset_view: ${SHEET_SHOWS}.`, picture: { type: 'picture', mediaType: 'image/jpeg', bytes: SHEET_JPEG }, size: { width: 968, height: 364 } }]
+        const sheetOnly = [{ label: `asset_view: ${SHEET_SHOWS}.`, picture: { mediaType: 'image/jpeg', bytes: SHEET_JPEG }, size: { width: 968, height: 364 } }]
 
         native.fileBytes = ({ path }) => {
           if (path.endsWith('-strip.jpg')) throw new Error('No such file')
@@ -2611,7 +2652,7 @@ describe('dez.controller/tools/run', () => {
         expect(compositions).toStrictEqual([])
         expect(shown).toStrictEqual([{
           label: 'asset_view: the spectrogram of the video clip @b, 0 s to 5.04 s, time runs left to right and the frequency bottom to top.',
-          picture: { type: 'picture', mediaType: 'image/jpeg', bytes: SPECTROGRAM_JPEG },
+          picture: { mediaType: 'image/jpeg', bytes: SPECTROGRAM_JPEG },
           size: { width: 1084, height: 328 },
         }])
         expect(result.content).toContain(NO_VIDEO_STREAM_NOTE)
@@ -2638,7 +2679,7 @@ describe('dez.controller/tools/run', () => {
     })
 
     describe('with `layout` "grid"', () => {
-      const GRID_PICTURE = { type: 'picture', mediaType: 'image/jpeg', bytes: jpegHeader(968, 540) }
+      const GRID_PICTURE = { mediaType: 'image/jpeg', bytes: jpegHeader(968, 540) }
 
       it('draws the images and the frame sheets in one picture after the others, and gives the note of each sheet with its clip', async () => {
         const result = await assetView({ assets: '@a @d @b', layout: 'grid', frames: 3, end: 2.5 })
@@ -2660,7 +2701,7 @@ describe('dez.controller/tools/run', () => {
         }])
         expect(drawings).toStrictEqual([])
         expect(shown).toStrictEqual([
-          { label: 'asset_view: the wave of the audio clip @d, 0 s to 2.5 s, time runs left to right.', picture: { type: 'picture', mediaType: 'image/jpeg', bytes: WAVE_JPEG }, size: { width: 800, height: 200 } },
+          { label: 'asset_view: the wave of the audio clip @d, 0 s to 2.5 s, time runs left to right.', picture: { mediaType: 'image/jpeg', bytes: WAVE_JPEG }, size: { width: 800, height: 200 } },
           { label: `asset_view: a grid, top to bottom: the image @a; ${SHEET_SHOWS}.`, picture: GRID_PICTURE, size: { width: 968, height: 540 } },
         ])
         const lines = result.content.split('\n')
@@ -2676,8 +2717,10 @@ describe('dez.controller/tools/run', () => {
         expect(lines[8]).toMatch(/^You see each picture /)
         // 232 + 700 tokens, and 80 + 4 bytes of base64.
         expect(lines[9]).toBe('Picture budget left in this reply: 18 pictures, 56,476 tokens and 20.0 MB of base64.')
-        expect(result.pictures).toStrictEqual(shown.map(({ label }) => ({ file: expect.stringMatching(/\.jpg$/), label })))
-        expect(native.savedFiles.map(({ content }) => content)).toStrictEqual([WAVE_JPEG, GRID_PICTURE.bytes])
+        expect(result.pictures).toStrictEqual([
+          { file: expect.stringMatching(/\.jpg$/), label: shown[0].label, width: 800, height: 200, bytes: WAVE_JPEG.length },
+          { file: expect.stringMatching(/\.jpg$/), label: shown[1].label, width: 968, height: 540, bytes: GRID_PICTURE.bytes.length },
+        ])
       })
 
       it('shows separate pictures for fewer than 2 images and video clips', async () => {
@@ -2695,7 +2738,7 @@ describe('dez.controller/tools/run', () => {
 
         expect(compositions).toStrictEqual([])
         expect(shown).toStrictEqual([
-          { label: 'asset_view: the image @a.', picture: { type: 'picture', mediaType: 'image/png', bytes: FOX_BYTES }, size: { width: 1000, height: 500 } },
+          { label: 'asset_view: the image @a.', picture: { mediaType: 'image/png', bytes: FOX_BYTES }, size: { width: 1000, height: 500 } },
         ])
         expect(result.content).not.toContain('Grid picture')
         // 648 tokens and 4 bytes of base64.
@@ -2709,7 +2752,7 @@ describe('dez.controller/tools/run', () => {
 
         expect(compositions).toStrictEqual([])
         expect(shown).toStrictEqual([
-          { label: `asset_view: ${SHEET_SHOWS}.`, picture: { type: 'picture', mediaType: 'image/jpeg', bytes: SHEET_JPEG }, size: { width: 968, height: 364 } },
+          { label: `asset_view: ${SHEET_SHOWS}.`, picture: { mediaType: 'image/jpeg', bytes: SHEET_JPEG }, size: { width: 968, height: 364 } },
         ])
         expect(result.content.split('\n').slice(1)).toStrictEqual([
           expect.stringMatching(/^@b \| video \| /),
@@ -2785,6 +2828,20 @@ describe('dez.controller/tools/run', () => {
         expect(result.content).toContain(gridNotDrawnNote(['a', 'b']))
         expect(result.content.split('\n').at(-1)).toBe(FULL_BUDGET_LINE)
         expect(consoleError).toHaveBeenCalledWith('Failed to draw the grid picture of @a @b:', drawError)
+      })
+
+      it('tells of a grid whose copy Dez could not save, with no sheet note and no grid line, and gives its cost back', async () => {
+        native.saveAppFile = async () => {
+          throw new Error('No space left on device')
+        }
+
+        const result = await assetView({ assets: '@a @b', layout: 'grid', frames: 3, end: 2.5 })
+
+        expect(result.pictures).toBeUndefined()
+        const lines = result.content.split('\n')
+        expect(lines).toContain(gridNotSavedNote(['a', 'b']))
+        expect(result.content).not.toMatch(/^(Frame sheet of|Grid picture of) /m)
+        expect(lines.at(-1)).toBe(FULL_BUDGET_LINE)
       })
 
       it('draws a grid whose file is too large again at a smaller side until it fits, else sends none', async () => {

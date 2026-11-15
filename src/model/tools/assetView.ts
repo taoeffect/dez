@@ -3,16 +3,8 @@ import { drawnMediaType, wholeImageDrawing, type ImageComposition, type ImageDra
 import type { ImageMediaType } from '../chat/images'
 import type { ClipReadProblem } from '../chat/mediaFiles'
 import type { MediaTagKind } from '../chat/mediaTags'
-import type { PicturePart } from '../chat/types'
-import {
-  MAX_PICTURE_TOKENS,
-  MAX_REPLY_PICTURE_BYTES,
-  MAX_REPLY_PICTURE_TOKENS,
-  MAX_REQUEST_IMAGES,
-  pictureTokens,
-  type PictureBudget,
-  type ReplyPicture,
-} from '../streams/replyPictures'
+import type { NewPicture, PictureFile } from '../chat/shownPictures'
+import type { PictureBudget } from '../streams/pictureBudget'
 import { assetIdsArgument, unknownValuesText } from './arguments'
 import { shortNumber } from './assetFacts'
 import { frameTimeText, SCENE_CUT_FILTER } from './clipAnalysis'
@@ -28,13 +20,16 @@ import { FFMPEG_FIXED_ARGS } from './videoTool'
 // (`sound_picture`), which a video clip can get as a strip under its
 // frames; a clip with sound also gives its loudness. With `layout` "grid",
 // the images and the frame sheets of a call go into one picture
-// (assetGrid.ts). The pictures go to the model through the reply
-// (`ToolRunContext.showPictures`, streams/replyPictures.ts), never into the
-// section, and a view makes no asset. controller/assetView.ts reads the
-// files and runs ffmpeg.
+// (assetGrid.ts). The pictures go back with the result of the call, as
+// saved copies (`ToolRunResult.pictures`, chat/shownPictures.ts), which
+// the requests of the reply send within a budget
+// (streams/pictureBudget.ts); a view makes no asset.
+// controller/assetView.ts reads the files and runs ffmpeg.
 //
 // This module must not import chat/toolBlocks.ts or registry.ts: the
-// registry imports it, and toolBlocks imports the registry.
+// registry imports it, and toolBlocks imports the registry. From
+// streams/pictureBudget.ts it takes only types, as that module reads the
+// registry too (through streams/contextEstimate.ts).
 
 /** The most ids of one call with a picture for each asset. */
 export const MAX_ASSET_VIEW_IDS = 4
@@ -111,7 +106,8 @@ function countText(count: number): string {
 }
 
 // The description is static (no counts that change, no dates): the tools
-// array is in the provider's prompt cache.
+// array is in the provider's prompt cache. So it tells no number of the
+// picture budget, which depends on the model of the reply.
 export const ASSET_VIEW_TOOL: ToolDefinition = {
   name: 'asset_view',
   description: 'Show you images and clips of this conversation, so that you can check them: '
@@ -125,11 +121,9 @@ export const ASSET_VIEW_TOOL: ToolDefinition = {
     + 'View a whole clip first; then, for a part that looks wrong, view it again with `start` and `end` around that part, '
     + 'or with `times` for the frames that you need. '
     + 'You see the pictures after the results of the calls of this round, in this reply only. '
-    + 'Each later request of this reply sends them again, so the pictures of one reply have a budget: '
-    + `${MAX_REQUEST_IMAGES} pictures less the images of the user's newest message, ${countText(MAX_REPLY_PICTURE_TOKENS)} tokens, `
-    + `and ${MAX_REPLY_PICTURE_BYTES / 1024 ** 2} MB of base64. `
-    + `Dez counts a picture of W by H pixels as ceil(W / 28) * ceil(H / 28) tokens, at most ${countText(MAX_PICTURE_TOKENS)}: `
-    + `a wave picture as ${countText(pictureTokens(SOUND_PICTURE_SIZE))}, a 1920x1080 frame as ${countText(pictureTokens({ width: 1920, height: 1080 }))}. `
+    + 'Each later request of this reply sends them again, so the pictures have a budget, '
+    + "which they share with the images of the user's newest message: a count of pictures, tokens, and megabytes of base64. "
+    + 'The budget depends on the model of this reply, and a larger picture costs more of it. '
     + 'Each result tells the budget that is left. '
     + 'To check a small detail of an image, view only that part of it with `crop`. '
     + 'To compare images and clips, or to check many of them for less of the budget, show them in one picture with `layout` "grid". '
@@ -670,13 +664,13 @@ export function loudnessOf(log: string): Loudness | null {
   return integrated === undefined || range === undefined || truePeak === undefined ? null : { integrated, range, truePeak }
 }
 
-/** A picture of a view, of `size` pixels (null: not known), what it shows
- *  (the text of the label that goes before it), and the line that tells
- *  about it (the frame times, the wave, a smaller copy, the parts of a
- *  grid), which the result has only while the picture goes; null for
- *  none. */
+/** A picture of a view: its file, of `size` pixels (null: not known),
+ *  what it shows (the text of the label that goes before it), and the
+ *  line that tells about it (the frame times, the wave, a smaller copy,
+ *  the parts of a grid), which the result has only while the picture
+ *  goes; null for none. */
 export interface ViewPicture {
-  part: PicturePart
+  file: PictureFile
   size: ImageSize | null
   shows: string
   note: string | null
@@ -738,6 +732,18 @@ export function idsListText(ids: readonly string[]): string {
 export function gridCostNote(ids: readonly string[], cost: PictureBudget, left: PictureBudget): string {
   return `No grid picture of ${idsListText(ids)}: it costs ${tokensAndBytesText(cost)}, `
     + `and this reply had only ${budgetLeftText(left)} left for pictures. In a later reply, call asset_view again to see them.`
+}
+
+/** The note of an asset whose picture Dez made but could not save
+ *  (chat/shownPictures.ts): a request sends a picture from its saved copy,
+ *  so the model does not get it. */
+export const PICTURE_NOT_SAVED_NOTE = 'No picture: Dez could not save it, so it cannot send it. '
+  + 'Help › Developer Console shows the cause. This is not a fault of the call.'
+
+/** The note of the grid of `ids`, whose picture Dez could not save. */
+export function gridNotSavedNote(ids: readonly string[]): string {
+  return `No grid picture of ${idsListText(ids)}: Dez could not save it, so it cannot send it. `
+    + 'Help › Developer Console shows the cause. This is not a fault of the call.'
 }
 
 /** The note of the grid of `ids`, which the webview could not draw. */
@@ -1003,11 +1009,11 @@ export function clipNotReadNote(id: string, problem: ClipReadProblem): string {
   return problem === 'unreadable' ? `Help › Developer Console shows the cause. ${advice}` : advice
 }
 
-/** The pictures of a view, each with its label, for the reply
- *  (`ToolRunContext.showPictures`): those of the assets, then the grid. */
-export function assetViewPictures(items: readonly AssetViewItem[], grid: AssetViewGrid | null): ReplyPicture[] {
+/** The pictures of a view, each with its label, for their saved copies
+ *  (`saveShownPictures`): those of the assets, then the grid. */
+export function assetViewPictures(items: readonly AssetViewItem[], grid: AssetViewGrid | null): NewPicture[] {
   return [...items.map(({ picture }) => picture), grid?.picture ?? null]
-    .flatMap((picture) => (picture ? [{ label: `asset_view: ${picture.shows}.`, picture: picture.part, size: picture.size }] : []))
+    .flatMap((picture) => (picture ? [{ label: `asset_view: ${picture.shows}.`, file: picture.file, size: picture.size }] : []))
 }
 
 /** The result text of an `asset_view` call: for each asset, a line as in

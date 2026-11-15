@@ -11,7 +11,7 @@ import { toggleRows, toggleValue } from '../model/providers/modelToggles'
 import type { ProviderMediaQuote } from '../model/providers/streamTypes'
 import { effectiveRequest, type ProviderInfo, type ProviderInputImageRules, type ProviderSettingsDescriptor } from '../model/providers/types'
 import type { SettingsSnapshot } from '../model/state'
-import type { PictureBudget, ReplyPicture } from '../model/streams/replyPictures'
+import type { PictureBudget } from '../model/streams/pictureBudget'
 import { AUDIO_TOOL, audioClipId, audioClipOf, audioCutPart, audioCutRequest, audioCutResultText, audioLengthText } from '../model/tools/audioTool'
 import { brightnessPlan, contrastPlan, convertPlan, cropPlan, flipPlan, IMAGE_TOOL, imageIdArgument, imageOf, imageResultText, invertPlan, rotatePlan, saturationPlan, scalePlan, unreadableImageText, unwritableFormatError, type ImagePlan } from '../model/tools/imageTool'
 import { isIntermediate, jobInspectText, jobResultText, jobsListText, jobStartedText, jobsWaitText, unknownJobText, waitedJobIds, type JobResult } from '../model/tools/jobs'
@@ -73,17 +73,15 @@ export interface ToolRunContext {
    *  (a stop ended the tool round): the runner then deletes the file. The
    *  result of the call must name the new id, as for `writeImage`. */
   writeClip(clip: Omit<MediaTagData, 'id' | 'other'>, options?: { tool?: string, jobId?: string, madeBy?: string, hidden?: string }): string | null
-  /** What the reply can still show the model (`ReplyPictures.left`); no
-   *  budget when it takes no picture any more (a stop ended the tool
-   *  round). */
-  pictureBudget(): PictureBudget
-  /** Shows `pictures` to the model in each later request of the reply,
-   *  after the results of the call's round (`ReplyPictures`,
-   *  streams/replyPictures.ts): never in the section, and never in a later
-   *  reply. Takes each one, in order, that fits in what is left of the
-   *  budget: the calls of a round run one after the other, so a call whose
-   *  pictures fit in `pictureBudget()` shows them all. */
-  showPictures(pictures: readonly ReplyPicture[]): void
+  /** What the pictures of the call can cost (streams/pictureBudget.ts): the
+   *  limits of a request to the model of the reply, less the images and
+   *  the pictures that the context holds now, and less the pictures of the
+   *  earlier calls of the round. No budget when the reply takes no picture
+   *  any more (a stop ended the tool round). The pictures themselves go
+   *  back with the result of the call (`ToolRunResult.pictures`): their
+   *  block names the saved copies, and each later request of the reply
+   *  reads them, after the results of the call's round. */
+  pictureBudget(): Promise<PictureBudget>
 }
 
 // The code of each Dez tool (TOOL_DEFINITIONS), by tool name. A runner gives

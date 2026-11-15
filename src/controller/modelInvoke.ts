@@ -4,7 +4,7 @@ import { TooManyImagesError, tooManyImagesMessage } from '../model/providers/cli
 import { InputImageError, isProviderRefusal } from '../model/providers/errors'
 import type { MediaProgress, ProviderGenerateMediaResult, ProviderStreamChatResult } from '../model/providers/streamTypes'
 import type { GeneratedClip, GeneratedMedia } from '../model/providers/types'
-import { requestImageCount } from '../model/streams/replyPictures'
+import { requestImageCount } from '../model/streams/pictureBudget'
 import type { StreamMessage } from '../model/streams/types'
 import { unreadableImageText } from '../model/tools/imageTool'
 import {

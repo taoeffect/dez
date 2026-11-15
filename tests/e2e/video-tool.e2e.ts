@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { MAX_REPLY_PICTURE_BYTES } from '../../src/model/streams/replyPictures'
+import { MAX_REQUEST_IMAGE_BYTES } from '../../src/model/streams/pictureBudget'
 import { jobStartedText, jobsWaitResults, startedJobId, type JobResult } from '../../src/model/tools/jobs'
 import { REFUSED_DEVICES, REFUSED_PROTOCOLS } from '../../src/model/tools/videoTool'
 import { byteSizeText } from '../../src/utils/byteSize'
@@ -261,7 +261,7 @@ describe('video tool', () => {
   // - `@c`, `@e`: a wide and a tall PNG image;
   // - `@d`: a video clip of one color, 2 s, with no sound.
   // The newest user message of a reply has no image, so the reply has a
-  // budget of 20 pictures.
+  // budget of 20 pictures and, for a model of no family, 52,000 tokens.
   async function openShots (name: string): Promise<Record<ShotId, string>> {
     const { home } = setup.app
     const files: Record<ShotId, string> = {
@@ -579,10 +579,11 @@ describe('video tool', () => {
     // with 4 pixels between them.
     expect(await sentJpegFacts(sheetUrl, 'sheet.jpg')).toStrictEqual(['video mjpeg 1292x240'])
     expect(await sentJpegFacts(waveUrl, 'wave.jpg')).toStrictEqual(['video mjpeg 800x200'])
-    // The newest user message has no image, so the budget had 20 pictures.
-    // The sheet costs 47 * 9 = 423 tokens, the image 2 * 2 = 4, and the
-    // wave 29 * 8 = 232; the bytes are those of the base64 data.
-    expect(budget).toBe(`Picture budget left in this reply: 17 pictures, 56,749 tokens and ${byteSizeText(MAX_REPLY_PICTURE_BYTES - bytes)} of base64.`)
+    // The newest user message has no image, so the budget had 20 pictures
+    // and 52,000 tokens. The sheet costs 47 * 9 = 423 tokens, the image
+    // 2 * 2 = 4, and the wave 29 * 8 = 232; the bytes are those of the
+    // base64 data.
+    expect(budget).toBe(`Picture budget left in this reply: 17 pictures, 51,341 tokens and ${byteSizeText(MAX_REQUEST_IMAGE_BYTES - bytes)} of base64.`)
 
     // The next request of the reply sends the same messages again, the
     // pictures at the same place.
@@ -594,10 +595,11 @@ describe('video tool', () => {
     await sendChatReply(after.reply, CALLER.modelName)
     const reply = await endedReply(browser, CLIPS_REPLY_INDEX)
     // The conversation holds no picture: only the block of the call names
-    // the copies for its panel, in an attribute that no request sends.
+    // the copies, which the requests of this reply read and its panel
+    // shows, in an attribute that no request sends.
     expect(reply.replace(/ pictures="[^"]*"/, '')).not.toContain('asset_view: ')
 
-    // The next reply gets no picture: the conversation holds none.
+    // The next reply gets no picture: only the reply of a call sends them.
     await submit(browser, 'Thanks.')
     const next = await chatRequest()
     expect(next.body).not.toContain('image_url')
@@ -651,7 +653,7 @@ describe('video tool', () => {
     // 47 * 15 = 705 tokens, the sheet of the times 23 * 9 = 207, and the
     // spectrogram 39 * 12 = 468.
     const budgetLine = (pictures: number, tokens: string, sent: readonly string[]) => {
-      const left = MAX_REPLY_PICTURE_BYTES - sent.reduce((sum, url) => sum + url.split(',')[1].length, 0)
+      const left = MAX_REQUEST_IMAGE_BYTES - sent.reduce((sum, url) => sum + url.split(',')[1].length, 0)
       return `Picture budget left in this reply: ${pictures} pictures, ${tokens} tokens and ${byteSizeText(left)} of base64.`
     }
     const shotsLine = `@a | video | WebM | 4 s | 48x36 | 5 fps | vp9 | sound (opus) | ${byteSizeText(shotSources.a.length)}`
@@ -663,7 +665,7 @@ describe('video tool', () => {
         + 'time runs left to right over the whole width of the sheet, and the height is the peak level on a square-root scale.',
       expect.stringMatching(loudnessLine('0 s to 4 s')),
       VIEW_END_LINE,
-      budgetLine(19, '56,703', [scenesUrl]),
+      budgetLine(19, '51,295', [scenesUrl]),
     ])
     // With `times`, the loudness is of the whole clip.
     expect(toolResult(viewed, 'call_times').split('\n')).toStrictEqual([
@@ -671,7 +673,7 @@ describe('video tool', () => {
       'Frame sheet of the first frame at or after each of `times` 0.5, 2.5 s: 2 frames in one row, at 0.6, 2.6 s.',
       expect.stringMatching(loudnessLine('0 s to 4 s')),
       VIEW_END_LINE,
-      budgetLine(18, '56,496', [scenesUrl, timesUrl]),
+      budgetLine(18, '51,088', [scenesUrl, timesUrl]),
     ])
     expect(toolResult(viewed, 'call_spectrogram').split('\n')).toStrictEqual([
       `@b | audio | WAV | 1 s | pcm_s16le | 44100 Hz | 1 channel | ${byteSizeText(shotSources.b.length)}`,
@@ -680,12 +682,13 @@ describe('video tool', () => {
         + 'and the color is the level of each frequency, on the scale at the right in dBFS.',
       expect.stringMatching(loudnessLine('0 s to 1 s')),
       VIEW_END_LINE,
-      budgetLine(17, '56,028', urls),
+      budgetLine(17, '50,620', urls),
     ])
     await sendChatReply(viewed.reply, CALLER.modelName)
     await endedReply(browser, CLIPS_REPLY_INDEX)
 
-    // Dez keeps a JPEG copy of each picture for the panel of its chip.
+    // Dez keeps a JPEG copy of each picture: the requests of the reply
+    // read it, and the panel of its chip shows it.
     const copies = (await filesIn(viewsDir)).filter((name) => !viewsBefore.includes(name))
     expect(copies.map((name) => storedFileName('jpg').test(name))).toStrictEqual([true, true, true])
 
@@ -746,7 +749,7 @@ describe('video tool', () => {
       `Frame sheet of 0 s to 2 s: ${colorSheet}.`,
       `Grid picture of 1292x560 pixels, top to bottom: ${map}.`,
       VIEW_END_LINE,
-      `Picture budget left in this reply: 19 pictures, 56,468 tokens and ${byteSizeText(MAX_REPLY_PICTURE_BYTES - bytes)} of base64.`,
+      `Picture budget left in this reply: 19 pictures, 51,060 tokens and ${byteSizeText(MAX_REQUEST_IMAGE_BYTES - bytes)} of base64.`,
     ])
     await sendChatReply(viewed.reply, CALLER.modelName)
     await endedReply(browser, CLIPS_REPLY_INDEX)

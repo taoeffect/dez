@@ -173,6 +173,21 @@ describe('toolBlockText and findToolBlocks', () => {
     expect(picturesOf(one('a.png')).pictures).toStrictEqual([{ file: 'a.png', label: 'x' }])
   })
 
+  // The size and the byte count give the cost of a picture in a request.
+  it('keeps the size and the byte count of a picture, reads a copy of an older Dez with none, and reads no picture with a bad number', () => {
+    const wave = { file: 'w1.jpg', label: 'The wave of @b.', width: 800, height: 200, bytes: 3000 }
+    const block: ToolBlockData = { id: 'call_1', name: 'asset_view', status: 'success', arguments: { assets: '@b' }, result: '@b | audio | WAV', pictures: [wave, { file: 'old.png', label: 'An old copy.' }] }
+    const picturesOf = (picture: object) => findToolBlocks(toolBlockText({ ...block, pictures: [picture as typeof wave] }))[0].pictures
+
+    expect(toolBlockText({ ...block, pictures: [wave] }).split('\n')[0]).toContain('&quot;width&quot;:800,&quot;height&quot;:200,&quot;bytes&quot;:3000}]"')
+    expect(readBack(block)).toStrictEqual([block])
+    // An empty file has a byte count.
+    expect(picturesOf({ ...wave, bytes: 0 })).toStrictEqual([{ ...wave, bytes: 0 }])
+    for (const bad of [{ width: 0 }, { height: -200 }, { width: 800.5 }, { bytes: -1 }, { bytes: '3000' }]) {
+      expect(picturesOf({ ...wave, ...bad }), JSON.stringify(bad)).toBeUndefined()
+    }
+  })
+
   it('finds a block only as whole lines, with an id, a name, and a closing line', () => {
     const block = toolBlockText(MODEL_LIST_CALL)
     const texts = [

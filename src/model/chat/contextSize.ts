@@ -36,6 +36,16 @@ export function contextSize(counted: CountedContext | undefined, estimateNow: nu
   }
 }
 
+/** The context size at which Dez makes a conversation smaller (a
+ *  compaction), for a model with a context window of `contextWindow`
+ *  tokens: well under the window, so that the answer and the next tool
+ *  results still fit, and never over a size at which requests get slow and
+ *  costly. The picture budget is a share of it
+ *  (streams/pictureBudget.ts). */
+export function compactionThreshold(contextWindow: number): number {
+  return Math.min(250_000, Math.floor(0.65 * contextWindow))
+}
+
 /** For object spreads: `{ context }` (a copy), or `{}` without one, because
  *  a copy of a tab must never write `context: undefined`. */
 export function contextField(context: CountedContext | undefined): { context?: CountedContext } {

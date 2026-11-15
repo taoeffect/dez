@@ -2,6 +2,7 @@ import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ContextSize } from '../chat/contextSize'
+import { toolBlockText } from '../chat/toolBlocks'
 import type { ActiveModel, ContentNode, ModelRef, Section, SectionThinking, Tab, ThinkingReplay } from '../chat/types'
 import type { AppStatePayload, ConversationData, ModelCache } from '../persistence/types'
 import { PRICE_LIFETIME_MS, type PriceQuote } from '../providers/modelPrices'
@@ -14,6 +15,7 @@ import type { Shortcut, ShortcutId } from '../shortcuts'
 // Side-effect import: registers the dez.model/* selectors under test.
 import './index'
 import { appendThinkingToTabSection, appendTokenToTabSection, finalizeStreamSectionForTab, setThinkingReplayForTabSection } from './index'
+import { finishStreamSession, startStreamSession } from './streams'
 import { BUILT_IN_SYSTEM_PROMPT } from '../systemPrompt'
 import { modelFamily } from '../providers/modelFamilies'
 import { TOOL_DEFINITIONS } from '../tools/registry'
@@ -403,6 +405,30 @@ describe('context size of a tab', () => {
     sbp('dez.model/setActiveModel', claude.providerId, claude.modelId, claude.modelId)
 
     expect(size(tab.id)).toStrictEqual({ tokens: 5015, estimated: true })
+  })
+
+  // The requests of a reply that runs hold the pictures of its
+  // `asset_view` calls; the request of the next reply holds none.
+  it('counts the pictures of the reply that runs, each by the size of its copy, and not after the reply', () => {
+    sbp('dez.model/settings/resetProviderSettings', 'local', ['tools'])
+    const tab = tabOf(claude, letters(100))
+    const pictures = [{ file: 'w1.jpg', label: letters(25), width: 800, height: 200, bytes: 3000 }]
+    const view = (id: string) => toolBlockText({ id, name: 'asset_view', status: 'success', arguments: { assets: '@b' }, result: 'ok', pictures })
+    sbp('dez.model/tabs/replaceSections', tab.id, [
+      { id: 'u1', role: 'user', content: [{ kind: 'text', text: letters(100) }] },
+      { id: 'a1', role: 'agent', model: claude, content: [{ kind: 'text', text: view('call_1') }] },
+      { id: 'u2', role: 'user', content: [{ kind: 'text', text: letters(100) }] },
+      { id: 'a2', role: 'agent', model: claude, content: [{ kind: 'text', text: view('call_2') }] },
+    ])
+    const withNoPicture = size(tab.id)?.tokens as number
+
+    startStreamSession({ tabId: tab.id, sectionId: 'a2', model: { ...claude, modelName: 'Claude' }, messages: [] })
+    // Only the picture of the section `a2`: its label (25 characters are
+    // 10 tokens), and 800 by 200 pixels (232 tokens).
+    expect(size(tab.id)).toStrictEqual({ tokens: withNoPicture + 242, estimated: true })
+
+    finishStreamSession(tab.id)
+    expect(size(tab.id)).toStrictEqual({ tokens: withNoPicture, estimated: true })
   })
 
   it('keeps the count through a reload of the conversation and a reopen of the closed tab', async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { contextField, contextSize } from './contextSize'
+import { compactionThreshold, contextField, contextSize } from './contextSize'
 
 describe('contextSize', () => {
   it('gives the estimate, marked as one, while no request told its tokens', () => {
@@ -18,6 +18,12 @@ describe('contextSize', () => {
   // The estimate of the text can be far over the provider's count.
   it('never goes under 0', () => {
     expect(contextSize({ tokens: 5000, estimate: 7000 }, 100)).toStrictEqual({ tokens: 0, estimated: true })
+  })
+})
+
+describe('compactionThreshold', () => {
+  it('is 65% of the context window, in whole tokens, and never over 250,000', () => {
+    expect([200_000, 127_999, 400_000, 1_000_000].map(compactionThreshold)).toStrictEqual([130_000, 83_199, 250_000, 250_000])
   })
 })
 

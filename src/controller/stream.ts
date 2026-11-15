@@ -9,11 +9,21 @@ import { findToolBlocks, ModelTextEscaper } from '../model/chat/toolBlocks'
 import { failedChatRequestCost, type ChatUsage } from '../model/providers/chatUsage'
 import { TooManyImagesError, tooManyImagesMessage } from '../model/providers/clipImages'
 import { isProviderRefusal } from '../model/providers/errors'
+import { modelFamily } from '../model/providers/modelFamilies'
 import { errorText, explainedError } from '../utils/errorText'
-import type { ClipInputRules, GeneratedClip, GeneratedMedia, MediaKind, MediaProgress, ModelRequest, ProviderGenerateMediaResult, ProviderStreamChatResult } from '../model/providers'
+import type { ClipInputRules, GeneratedClip, GeneratedMedia, MediaKind, MediaProgress, ModelInfo, ModelRequest, ProviderGenerateMediaResult, ProviderStreamChatResult } from '../model/providers'
 import { requireProvider } from '../model/providers/registry'
 import { agentSectionMessages, mediaRequestInput } from '../model/streams/messages'
-import { NO_PICTURE_BUDGET, ReplyPictures, requestImageCount } from '../model/streams/replyPictures'
+import {
+  contextImageCost,
+  NO_PICTURE_BUDGET,
+  pictureBudgetLeft,
+  pictureLimits,
+  requestImageCount,
+  shownPictureCost,
+  totalCost,
+  type PictureBudget,
+} from '../model/streams/pictureBudget'
 import {
   checkToolCalls,
   STOPPED_TOOL_RESULT,
@@ -45,6 +55,7 @@ import {
 } from '../model/state/streams'
 import { logRequest } from './diagnostics/requestLog'
 import { discardMadeAssets, generatedClipAsset, ReplyJobs, writeJobAssets, type EndedJob, type MadeAsset } from './jobs'
+import { readableFileSize } from './programRuns'
 import { discardShownPictures } from './shownPictures'
 import type { ToolRunCall, ToolRunContext } from './tools'
 
@@ -118,10 +129,10 @@ interface ReplyRuntime {
   // their tool round, but not the reply: a stop, a new submit, and the end
   // of the reply end them (`stopAll`).
   jobs: ReplyJobs
-  // The pictures that the tools of the reply showed the model
-  // (`ToolRunContext.showPictures`), which each later request of the reply
-  // sends after the results of their round.
-  pictures: ReplyPictures
+  // The file size of each image of the messages before the reply, by path:
+  // the bytes that they take of the picture budget (`imageFileSizes`).
+  // Read at the first `asset_view` call of the reply; null before it.
+  imageBytes: Promise<ReadonlyMap<string, number>> | null
 }
 
 // The reply of each tab, so tabs stream at the same time and a new start or
@@ -329,13 +340,46 @@ function toolAssetWriters(tabId: string, reply: ReplyRuntime, tool: string, take
   }
 }
 
+// The size of the file of each image part of `messages`, by path, for the
+// picture budget (`contextImageCost`). The request of the reply read these
+// files, so a size that Dez cannot read is rare: it counts no bytes.
+async function imageFileSizes(messages: readonly StreamMessage[]): Promise<ReadonlyMap<string, number>> {
+  const paths = new Set<string>()
+  for (const message of messages) {
+    if (message.role !== 'user' || typeof message.content === 'string') continue
+    for (const part of message.content) if (part.type === 'image') paths.add(part.path)
+  }
+  return new Map(await Promise.all([...paths].map(async (path): Promise<[string, number]> => [path, await readableFileSize(path) ?? 0])))
+}
+
+// What the pictures of the next call of `run` can cost
+// (`ToolRunContext.pictureBudget`): the limits of a request to `model`,
+// less the images and the pictures of `messages` (the request that gave
+// the calls of the round, so the context as it is now), and less the
+// pictures of the calls of the round that ended, which the next request
+// adds. The model cache gives the context window of the model; a model
+// that it does not have counts by its family.
+async function pictureBudgetOf(reply: ReplyRuntime, model: ModelRef, messages: readonly StreamMessage[], run: ToolRun): Promise<PictureBudget> {
+  // The images before the reply are the same in each of its requests.
+  reply.imageBytes ??= imageFileSizes(messages)
+  const imageBytes = await reply.imageBytes
+  const rule = modelFamily(model.modelId).imageTokens
+  const cached = sbp('dez.model/modelCache/model', model.providerId, model.modelId) as ModelInfo | null
+  const shown = run.results.flatMap((result) => result?.pictures ?? [])
+  return pictureBudgetLeft(
+    pictureLimits(cached ?? { id: model.modelId }),
+    totalCost([contextImageCost(messages, rule, imageBytes), ...shown.map((picture) => shownPictureCost(rule, picture))]),
+  )
+}
+
 // Runs the calls of one round, in order: appends their running blocks (a
 // refused call gets its error block at once), runs each call, then replaces
 // the running blocks with the final ones. Nothing else of the reply writes
 // the section meanwhile, but a tool can put an image or a clip after the
 // blocks (`toolAssetWriters`). `model` is the reply's
-// model, for a tool that reads it. Returns the section after the round, or
-// null when the run did not end here: the user stopped the reply, or a
+// model, for a tool that reads it, and `messages` the request that gave
+// the calls, for the picture budget. Returns the section after the round,
+// or null when the run did not end here: the user stopped the reply, or a
 // submit ended its output (stopToolRun wrote the blocks), or the user
 // deleted the running blocks.
 //
@@ -348,7 +392,7 @@ function toolAssetWriters(tabId: string, reply: ReplyRuntime, tool: string, take
 // thinking for a round whose text holds an image of the model
 // (`roundThinking`, streams/messages.ts), and the request after a round of
 // calls needs that round's thinking.
-async function runToolRound(tabId: string, reply: ReplyRuntime, model: ModelRef, calls: CheckedToolCall[], sectionText: string): Promise<Section | null> {
+async function runToolRound(tabId: string, reply: ReplyRuntime, model: ModelRef, calls: CheckedToolCall[], sectionText: string, messages: readonly StreamMessage[]): Promise<Section | null> {
   const runningBlocks = calls.map((call) => toolCallBlock(call))
   const run: ToolRun = {
     calls,
@@ -371,10 +415,12 @@ async function runToolRound(tabId: string, reply: ReplyRuntime, model: ModelRef,
       model,
       jobs: reply.jobs,
       ...toolAssetWriters(tabId, reply, call.name, takesAssets),
-      pictureBudget: () => (takesAssets() ? reply.pictures.left : NO_PICTURE_BUDGET),
-      // The round's key is the id of its first call: the first result of
-      // its tool message has it (`ReplyPictures.inMessages`).
-      showPictures: (pictures) => { if (takesAssets()) reply.pictures.add(calls[0].id, pictures) },
+      // The read of the file sizes takes a moment, so a stop can come
+      // during it.
+      pictureBudget: async () => {
+        const budget = takesAssets() ? await pictureBudgetOf(reply, model, messages, run) : NO_PICTURE_BUDGET
+        return takesAssets() ? budget : NO_PICTURE_BUDGET
+      },
     }
     const result = await sbp('dez.controller/tools/run', toolCall, run.abort.signal, context) as ToolRunResult
     if (reply.toolRun !== run) {
@@ -622,7 +668,7 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
 
     const sectionText = sectionPlainText(section)
     const calls = checkToolCalls(streamedCalls, findToolBlocks(sectionText).map((block) => block.id))
-    const replySoFar = await runToolRound(args.tabId, reply, args.model, calls, sectionText)
+    const replySoFar = await runToolRound(args.tabId, reply, args.model, calls, sectionText, messages)
     if (!replySoFar) {
       // Still current only when the user deleted the running blocks:
       // with no calls to send back, the reply cannot go on, so it ends
@@ -631,15 +677,19 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
       return
     }
     afterToolCall = calls[0].id
-    // Only up to the results of the newest group. The text after that group
-    // (text that the user typed while the tools ran, or an asset that no
-    // result names) is the start of the next round's message. A request
-    // that ends with an agent message asks the model to go on from that
-    // text, and many providers refuse it. Every later request sends that
-    // text at the start of the message of the next round, after these same
-    // bytes.
-    const soFar = agentSectionMessages(replySoFar, args.model, true)
-    messages = [...args.messages, ...reply.pictures.inMessages(soFar.slice(0, soFar.findLastIndex((message) => message.role === 'tool') + 1))]
+    // Only up to the results of the newest group, and the pictures that
+    // its calls showed (`agentSectionMessages` puts their `user` message
+    // right after the results; the model of the reply reads images, else
+    // `asset_view` makes no picture). The text after that group (text that
+    // the user typed while the tools ran, or an asset that no result names)
+    // is the start of the next round's message. A request that ends with
+    // an agent message asks the model to go on from that text, and many
+    // providers refuse it. Every later request sends that text at the start
+    // of the message of the next round, after these same bytes.
+    const soFar = agentSectionMessages(replySoFar, args.model, true, true)
+    const lastTool = soFar.findLastIndex((message) => message.role === 'tool')
+    const end = soFar[lastTool + 1]?.role === 'user' ? lastTool + 2 : lastTool + 1
+    messages = [...args.messages, ...soFar.slice(0, end)]
   }
 }
 
@@ -782,7 +832,7 @@ export default sbp('sbp/selectors/register', {
       escaper: new ModelTextEscaper(),
       afterAsset: false,
       jobs: new ReplyJobs((usd) => countRequestCost(args.tabId, usd)),
-      pictures: new ReplyPictures(requestImageCount(args.messages)),
+      imageBytes: null,
     }
     repliesByTab.set(args.tabId, reply)
 

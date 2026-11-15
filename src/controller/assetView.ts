@@ -1,11 +1,13 @@
 import sbp from '@sbp/sbp'
 import type { ComposedImage, DrawnImage, ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
 import { jpegSize } from '../model/chat/jpegSize'
-import type { PicturePart, Section } from '../model/chat/types'
+import type { PictureFile } from '../model/chat/shownPictures'
+import type { Section } from '../model/chat/types'
 import type { ClipAttachment } from '../model/providers/clipInputs'
+import { modelFamily } from '../model/providers/modelFamilies'
 import type { ModelInfo } from '../model/providers/types'
 import { conversationAssets } from '../model/streams/mediaRequest'
-import { budgetAfter, NO_PICTURE_BUDGET, pictureCost, type PictureBudget } from '../model/streams/replyPictures'
+import { budgetAfter, NO_PICTURE_BUDGET, pictureCost, totalCost, type PictureBudget } from '../model/streams/pictureBudget'
 import { gridLayout, gridTexts, type GridLayout, type GridPiece } from '../model/tools/assetGrid'
 import { probedClipFacts, type ClipProbeFacts } from '../model/tools/assetFacts'
 import { cutTimes } from '../model/tools/clipAnalysis'
@@ -28,6 +30,7 @@ import {
   frameSheetTexts,
   gridCostNote,
   gridNotDrawnNote,
+  gridNotSavedNote,
   gridTooLargeNote,
   IMAGE_PICTURE_SIDES,
   imagePictureDrawing,
@@ -45,6 +48,7 @@ import {
   pictureCostNote,
   PICTURE_NOT_DRAWN_NOTE,
   PICTURE_NOT_READ_NOTE,
+  PICTURE_NOT_SAVED_NOTE,
   PICTURE_TOO_LARGE_NOTE,
   sceneCutsArgs,
   scenesSheetTexts,
@@ -87,18 +91,19 @@ import type { ToolRunContext } from './tools'
 
 // The work of the `asset_view` tool (model/tools/assetView.ts): it gives
 // the facts and a picture of each image and clip that a call names, and
-// shows the pictures to the model of the reply (`showPictures`). This
+// gives the saved copies of the pictures back with its result
+// (`ToolRunResult.pictures`), which the requests of the reply send. This
 // module registers no selector: the `asset_view` runner (tools.ts) calls
 // it.
 //
-// A picture is always bytes, read once here: each later request of the
-// reply sends the same bytes (the prompt cache), and a file that the user
-// deletes during the reply cannot fail those requests. The pictures of the
-// clips are made in a work folder, which goes at the end of the call. The
-// only files that a view keeps are the copies of the pictures that it
-// showed, for the panel of its chip (shownPictures.ts). The log of ffmpeg
-// goes to the console only, as it can hold a path: the model gets only the
-// times and the loudness that Dez reads from it.
+// A picture is bytes here, read or drawn once, and then a copy in
+// `assets/generated/views/` (shownPictures.ts): each later request of the
+// reply reads that copy, so it sends the same bytes (the prompt cache),
+// and the image or the clip of the picture can change or go meanwhile.
+// The pictures of the clips are made in a work folder, which goes at the
+// end of the call. The copies are the only files that a view keeps. The
+// log of ffmpeg goes to the console only, as it can hold a path: the model
+// gets only the times and the loudness that Dez reads from it.
 
 // The view of the image `id`, whose file is at `path`, for `call`: its
 // facts as `asset_info` gives them (`readImageFacts`), and its picture,
@@ -144,15 +149,14 @@ async function viewImage(id: string, path: string, call: AssetViewCall, choice: 
     drawing = next
   }
   if (drawn) {
-    const part: PicturePart = { type: 'picture', mediaType: drawn.mediaType, bytes: drawn.bytes }
     const picture: ImageSize = { width: drawn.width, height: drawn.height }
     const texts = call.crop
       ? cropTexts(id, (drawing as ImageDrawing).crop, picture, call.detail)
       // With no crop, only the copy of a too large image is a JPEG drawing.
       : { shows: imagePictureShows(id), note: drawn.mediaType === 'image/jpeg' ? jpegCopyNote(picture, size, call.detail) : null }
-    item.picture = { part, size: picture, ...texts }
+    item.picture = { file: { mediaType: drawn.mediaType, bytes: drawn.bytes }, size: picture, ...texts }
   } else if (mediaType) {
-    item.picture = { part: { type: 'picture', mediaType, bytes: new Uint8Array(await file.arrayBuffer()) }, size, shows: imagePictureShows(id), note: null }
+    item.picture = { file: { mediaType, bytes: new Uint8Array(await file.arrayBuffer()) }, size, shows: imagePictureShows(id), note: null }
   }
   return item
 }
@@ -201,8 +205,8 @@ async function gridView(members: readonly GridMember[], detail: ViewDetail, char
     for (;;) {
       const { drawn, composition } = await sbp('dez.controller/images/compose', files, (sizes: readonly ImageSize[]) => gridLayout(pieces, sizes, detail, side)) as ComposedImage<GridLayout>
       if (drawn.bytes.length <= MAX_PICTURE_BYTES) {
-        const part: PicturePart = { type: 'picture', mediaType: drawn.mediaType, bytes: drawn.bytes }
-        picture = { part, size: { width: drawn.width, height: drawn.height }, ...gridTexts(pieces, composition, detail) }
+        const file: PictureFile = { mediaType: drawn.mediaType, bytes: drawn.bytes }
+        picture = { file, size: { width: drawn.width, height: drawn.height }, ...gridTexts(pieces, composition, detail) }
         break
       }
       const smaller = smallerPictureSide(Math.max(drawn.width, drawn.height))
@@ -226,7 +230,7 @@ const VIEW_RUN = { toolName: ASSET_VIEW_TOOL.name, timeoutMs: ASSET_VIEW_TIMEOUT
 /** A JPEG picture that a run of ffmpeg wrote, with its size (null: not
  *  known). */
 interface RunPicture {
-  part: PicturePart
+  file: PictureFile
   size: ImageSize | null
 }
 
@@ -235,7 +239,7 @@ interface RunPicture {
 async function readPicture(folder: string, name: string): Promise<RunPicture | null> {
   try {
     const bytes = await sbp('dez.native/loadAppFileBytes', `${folder}/${name}`, 'cache') as Uint8Array
-    return { part: { type: 'picture', mediaType: 'image/jpeg', bytes }, size: jpegSize(bytes) }
+    return { file: { mediaType: 'image/jpeg', bytes }, size: jpegSize(bytes) }
   } catch (error) {
     console.error(`Failed to read the picture ${name} of an asset_view run:`, error)
     return null
@@ -295,7 +299,7 @@ async function sheetRun(input: ClipInput, plan: SheetRunPlan, folder: string, si
   if (!picture) return { notes: [PICTURE_NOT_READ_NOTE], picture: null }
   // The file of a sheet of fine detail (noise, film grain) can be over the
   // limit, mostly at the `full` box.
-  if (picture.part.bytes.length > MAX_PICTURE_BYTES) return { notes: [plan.tooLargeNote], picture: null }
+  if (picture.file.bytes.length > MAX_PICTURE_BYTES) return { notes: [plan.tooLargeNote], picture: null }
   const { shows, note, notes = [] } = plan.texts(times)
   return { notes, picture: { ...picture, shows, note } }
 }
@@ -420,7 +424,7 @@ async function withSoundStrip(
   { kind, part, sampleRate, detail }: { kind: SoundPictureKind, part: ClipPart, sampleRate: number | null, detail: ViewDetail },
 ): Promise<ViewPicture> {
   try {
-    const files = [sheet.part, strip.part].map(({ bytes, mediaType }) => new Blob([bytes], { type: mediaType }))
+    const files = [sheet.file, strip.file].map(({ bytes, mediaType }) => new Blob([bytes], { type: mediaType }))
     const { drawn, composition } = await sbp('dez.controller/images/compose', files, soundStripLayout) as ComposedImage
     if (drawn.bytes.length > MAX_PICTURE_BYTES) return withNote(sheet, soundStripTooLargeNote(kind, detail))
     // The second place of the composition is the strip.
@@ -428,7 +432,7 @@ async function withSoundStrip(
     const texts = soundStripTexts(kind, part, { width, height }, sampleRate)
     return {
       ...withNote(sheet, texts.note),
-      part: { type: 'picture', mediaType: drawn.mediaType, bytes: drawn.bytes },
+      file: { mediaType: drawn.mediaType, bytes: drawn.bytes },
       size: { width: drawn.width, height: drawn.height },
       shows: `${sheet.shows}; ${texts.shows}`,
     }
@@ -498,11 +502,11 @@ async function viewClip(clip: ClipAttachment, call: AssetViewCall, choice: Pictu
 }
 
 /** The result of an `asset_view` call with the arguments `args`, for the
- *  conversation `sections`, after it showed the pictures of the call to
- *  the model of the reply (`context.showPictures`): its text, and the
- *  saved copies of those pictures (`saveShownPictures`). Each picture that
- *  fits in what is left of the picture budget of the reply goes; an asset
- *  whose picture does not fit gets a note in its place. With `layout`
+ *  conversation `sections`: its text, and the saved copies of its
+ *  pictures (`saveShownPictures`), which the requests of the reply send to
+ *  the model. Each picture that fits in what is left of the picture budget
+ *  (`context.pictureBudget`) goes; an asset whose picture does not fit, or
+ *  whose copy Dez could not save, gets a note in its place. With `layout`
  *  "grid", the images and video clips go into one grid picture, after the
  *  pictures of the other assets, when at least 2 of them give a part of
  *  it; else each one gets its own picture. Throws a `ToolError`
@@ -515,7 +519,7 @@ export async function assetViewResult(
   args: ToolArguments,
   sections: readonly Section[],
   signal: AbortSignal,
-  context: Pick<ToolRunContext, 'model' | 'pictureBudget' | 'showPictures'>,
+  context: Pick<ToolRunContext, 'model' | 'pictureBudget'>,
 ): Promise<Omit<ToolRunResult, 'isError'>> {
   const call = assetViewCall(args)
   const assets = conversationAssets(sections)
@@ -527,14 +531,17 @@ export async function assetViewResult(
 
   const model = sbp('dez.model/modelCache/model', context.model.providerId, context.model.modelId) as ModelInfo | null
   const imageInput = model?.imageInput !== false
-  let left = imageInput ? context.pictureBudget() : NO_PICTURE_BUDGET
+  let left = imageInput ? await context.pictureBudget() : NO_PICTURE_BUDGET
+  // A picture costs what the family of the model counts it as, as in the
+  // budget of the context (`shownPictureCost`).
+  const tokenRule = modelFamily(context.model.modelId).imageTokens
   // With nothing left of one part of the budget, no picture fits, so Dez
   // does not make one. Else only the made picture tells its cost.
   const pictureChoice = (): PictureChoice => (!imageInput ? 'noImageInput' : left.pictures > 0 && left.tokens > 0 && left.bytes > 0 ? 'show' : 'overLimit')
   // Takes the cost of `picture` from what is left of the budget when it
   // fits; else takes nothing, and gives its cost and what was left.
   const charge = (picture: ViewPicture): OverBudget | null => {
-    const cost = pictureCost(picture.part, picture.size)
+    const cost = pictureCost(tokenRule, picture.file, picture.size)
     const after = budgetAfter(left, cost)
     if (!after) return { cost, left }
     left = after
@@ -576,8 +583,8 @@ export async function assetViewResult(
         // The picture of a video clip of the grid (its frame sheet, with
         // its sound strip, or the picture of its sound alone) is a member
         // of it.
-        const { part, shows } = item.picture
-        members.push({ file: new Blob([part.bytes], { type: part.mediaType }), piece: { kind: 'clip', id, shows }, clipPicture: item.picture })
+        const { file, shows } = item.picture
+        members.push({ file: new Blob([file.bytes], { type: file.mediaType }), piece: { kind: 'clip', id, shows }, clipPicture: item.picture })
         item.picture = null
       } else {
         keepIfFits(item)
@@ -610,6 +617,21 @@ export async function assetViewResult(
     keepIfFits(items[index])
   }
   const grid = membersGo && members.length > 1 ? await gridView(members, call.detail, charge) : null
+  // A stopped call gives no result, so its copies would have no block.
+  signal.throwIfAborted()
+  // The owners of the pictures, in the order of `assetViewPictures`.
+  const owners = [...items, ...(grid ? [grid] : [])].filter((owner) => owner.picture)
+  const copies = await saveShownPictures(assetViewPictures(items, grid))
+  for (const [index, copy] of copies.entries()) {
+    if (copy) continue
+    // A request sends a picture from its copy, so a picture with no copy
+    // does not go: its owner tells so, and its cost goes back.
+    const owner = owners[index]
+    const { file, size } = owner.picture as ViewPicture
+    left = totalCost([left, pictureCost(tokenRule, file, size)])
+    owner.picture = null
+    owner.notes.push(owner === grid ? gridNotSavedNote(members.map(({ piece }) => piece.id)) : PICTURE_NOT_SAVED_NOTE)
+  }
   if (grid?.picture) {
     // The note of the picture of a clip goes before its other notes, as
     // for a picture of its own.
@@ -617,11 +639,7 @@ export async function assetViewResult(
       if (clipPicture?.note) items.find((item) => item.id === piece.id)?.notes.unshift(clipPicture.note)
     }
   }
-  const pictures = assetViewPictures(items, grid)
-  context.showPictures(pictures)
-  // A stopped call gives no result, so its copies would have no block.
-  signal.throwIfAborted()
   const content = assetViewText(items, grid, imageInput ? left : null)
-  const copies = await saveShownPictures(pictures)
-  return copies.length > 0 ? { content, pictures: copies } : { content }
+  const saved = copies.flatMap((copy) => (copy ? [copy] : []))
+  return saved.length > 0 ? { content, pictures: saved } : { content }
 }

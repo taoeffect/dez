@@ -2,7 +2,7 @@ import type { ImageSize } from './imageDrawing'
 
 // The size in pixels of a JPEG picture, read from its frame header with no
 // decode, so that Dez knows what a picture that ffmpeg made costs a model
-// (streams/replyPictures.ts). A JPEG file is a list of segments: a 0xFF
+// (streams/pictureBudget.ts). A JPEG file is a list of segments: a 0xFF
 // byte, a marker byte, and for most markers a 16-bit big-endian length that
 // counts itself, then the content. The frame header (a SOF marker) comes
 // before the first scan (SOS), and holds the precision, the height, and the

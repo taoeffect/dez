@@ -29,7 +29,7 @@ const STORED_FOLDERS: { folders: readonly string[]; holds: string }[] = [
   { folders: Object.values(MEDIA_FOLDERS.pasted), holds: 'Pasted clips, and dropped clips that Dez copies.' },
   { folders: [IMAGE_FOLDERS.generated], holds: 'Images that models and Dez tools make.' },
   { folders: Object.values(MEDIA_FOLDERS.generated), holds: 'Clips that you save, and clips that Dez tools make.' },
-  { folders: [SHOWN_PICTURE_FOLDER], holds: 'Copies of the pictures that the asset_view tool showed a model. The panel of the tool call shows them.' },
+  { folders: [SHOWN_PICTURE_FOLDER], holds: 'Copies of the pictures that the asset_view tool showed a model. The reply of the tool call sends them to the model, and the panel of the tool call shows them.' },
 ]
 
 const HOUR_MS = 60 * 60 * 1000
@@ -195,8 +195,8 @@ function onOverlayClick(event: MouseEvent) {
               steps, at given times, or one for each shot), and the wave or the spectrogram of the
               sound of a clip, with the loudness of a clip with sound. It can also put several images
               and video clips into one grid picture. It sees these pictures only in the reply where it
-              asked for them, and each reply has a picture budget, so it sees a limited number of
-              pictures. Click the chip of the tool call to see the pictures that the model saw. A
+              asked for them. They share one picture budget with the images of your newest message,
+              so it sees a limited number of pictures. Click the chip of the tool call to see the pictures that the model saw. A
               model that reads no images gets only the facts of the asset (for example its size,
               length, and format), and the loudness of a clip with sound.
             </p>

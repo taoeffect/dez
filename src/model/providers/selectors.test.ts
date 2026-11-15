@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } fr
 import type { DecodedAudio } from '../chat/audioCut'
 import type { DrawnImage, DrawnMediaType, ImageDrawing, ImageSize } from '../chat/imageDrawing'
 import { ClipReadError, MEDIA_TEMP_LIFETIME_MS } from '../chat/mediaFiles'
+import { SHOWN_PICTURE_GONE_NOTE } from '../chat/shownPictures'
 import type { ModelRef, Section } from '../chat/types'
 import { toolBlockText } from '../chat/toolBlocks'
 import type { ModelCache } from '../persistence/types'
@@ -48,6 +49,8 @@ const APP_DIR = '/home/u/.config/dez'
 const CACHE_DIR = '/home/u/.cache/dez'
 const STORED_IMAGE = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 0, 255])
 const STORED_SVG = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 30"/>')
+// The copy `wave.jpg` of a picture that a tool showed, in the views folder.
+const SHOWN_PICTURE = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0, 16])
 // The linked files that dez.controller/images/readFile reads, by path, with
 // the type that the asset protocol gives; any other path fails to read.
 let linkedImages: Record<string, File> = {}
@@ -184,6 +187,7 @@ sbp('sbp/selectors/register', {
     imageReads.push(path)
     if (path === 'assets/images/red.png' || path === 'assets/generated/images/red.png') return STORED_IMAGE
     if (path === 'assets/generated/images/logo.svg') return STORED_SVG
+    if (path === 'assets/generated/views/wave.jpg') return SHOWN_PICTURE
     throw `Failed to read ${path}: No such file or directory (os error 2)`
   },
   async 'dez.controller/images/readFile' (path: string): Promise<File> {
@@ -875,6 +879,50 @@ describe('images in chat streams', () => {
     expect(JSON.stringify(third.slice(0, 2))).toBe(JSON.stringify(second.slice(0, 2)))
     // The third request reads no image file.
     expect(imageReads).toEqual(['assets/images/red.png', 'assets/images/red.png'])
+  })
+})
+
+describe('pictures that a tool showed, in chat streams', () => {
+  const label = 'asset_view: the wave of the audio clip @b.'
+  // A later request of a reply whose `asset_view` call showed the picture
+  // with the copy `file`.
+  const stream = (file: string) => sbp('dez.provider/streamChat', {
+    providerId: 'local',
+    modelId: 'm',
+    messages: [
+      { role: 'user', content: 'Check @b.' },
+      { role: 'agent', content: '', toolCalls: [{ id: 'call_1', name: 'asset_view', arguments: { assets: '@b' } }] },
+      { role: 'tool', results: [{ callId: 'call_1', content: '@b | audio | WAV', isError: false }] },
+      { role: 'user', content: [{ type: 'text', text: label }, { type: 'picture', picture: { file, label, width: 800, height: 200, bytes: SHOWN_PICTURE.length } }] },
+    ],
+    onToken: () => {},
+  })
+  const pictureMessage = () => (jsonBody(streamRequests[0]).messages as unknown[]).at(-1)
+
+  it('sends the bytes of the saved copy as base64, read from the views folder, with the type of its extension', async () => {
+    await stream('wave.jpg')
+
+    expect(imageReads).toStrictEqual(['assets/generated/views/wave.jpg'])
+    expect(pictureMessage()).toStrictEqual({
+      role: 'user',
+      content: [{ type: 'text', text: label }, { type: 'image_url', image_url: { url: dataUrl('image/jpeg', SHOWN_PICTURE) } }],
+    })
+  })
+
+  // The user can delete the file by hand, and the reply must go on.
+  it('sends a note in place of a picture whose copy is gone, and the request still goes', async () => {
+    await stream('gone.jpg')
+
+    expect(streamRequests).toHaveLength(1)
+    expect(pictureMessage()).toStrictEqual({ role: 'user', content: [{ type: 'text', text: label }, { type: 'text', text: SHOWN_PICTURE_GONE_NOTE }] })
+    expect(consoleError).toHaveBeenCalledWith('Failed to read the copy gone.jpg of a picture that a tool showed:', expect.stringContaining('No such file'))
+  })
+
+  it('reads no file for a copy of a type that Dez does not send', async () => {
+    await stream('wave.txt')
+
+    expect(imageReads).toStrictEqual([])
+    expect(pictureMessage()).toStrictEqual({ role: 'user', content: [{ type: 'text', text: label }, { type: 'text', text: SHOWN_PICTURE_GONE_NOTE }] })
   })
 })
 

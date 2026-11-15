@@ -76,9 +76,9 @@ describe('agentSectionMessages', () => {
     ])
   })
 
-  // Only the panel of the chip shows the copies of the pictures: the model
-  // got the pictures as bytes in the reply that made them.
-  it('sends no copy of a picture that a call showed, with or without tools', () => {
+  // A request with no option sends the tool results only: the pictures of
+  // a call go only in the reply that made the call.
+  it('sends no picture that a call showed unless the caller asks for the pictures, with or without tools', () => {
     const pictures = [{ file: 'f1.png', label: 'asset_view: the image @a.' }]
     const text = `${toolBlockText({ id: 'call_1', name: 'asset_view', status: 'success', arguments: { assets: '@a' }, result: '@a | image | PNG', pictures })}\nDone.`
 
@@ -88,6 +88,48 @@ describe('agentSectionMessages', () => {
       { role: 'agent', content: 'Done.' },
     ])
     expect(JSON.stringify(agentSectionMessages(agent(text), model, false))).not.toMatch(/f1\.png|the image @a/)
+    // A call that goes as text has no round to put its pictures after.
+    expect(JSON.stringify(agentSectionMessages(agent(text), model, false, true))).not.toMatch(/f1\.png|the image @a/)
+  })
+
+  it('puts the pictures of a round in one user message right after its results, each after its label, in the order of the calls', () => {
+    const sheet = { file: 's1.jpg', label: 'asset_view: the frame sheet of @f.', width: 1280, height: 320, bytes: 3000 }
+    const wave = { file: 'w1.jpg', label: 'asset_view: the wave of @g.', width: 800, height: 200, bytes: 2000 }
+    const image = { file: 'i1.png', label: 'asset_view: the image @a.' }
+    const view = (id: string, assets: string, pictures?: typeof image[]) =>
+      toolBlockText({ id, name: 'asset_view', status: 'success', arguments: { assets }, result: `${assets} | facts`, ...(pictures && { pictures }) })
+    const viewCall = (id: string, assets: string) => ({ id, name: 'asset_view', arguments: { assets } })
+    // The first round has no picture; the second has those of two calls.
+    const text = `${block('call_1', 'gemini', '1 model')}\n\nNow the clips.\n${view('call_2', '@f @g', [sheet, wave])}\n${view('call_3', '@x')}\n${view('call_4', '@a', [image])}\nAll good.`
+
+    expect(agentSectionMessages(agent(text), model, true, true)).toStrictEqual([
+      { role: 'agent', content: '', toolCalls: [call('call_1', 'gemini')] },
+      { role: 'tool', results: [result('call_1', '1 model')] },
+      { role: 'agent', content: '\nNow the clips.', toolCalls: [viewCall('call_2', '@f @g'), viewCall('call_3', '@x'), viewCall('call_4', '@a')] },
+      { role: 'tool', results: [result('call_2', '@f @g | facts'), result('call_3', '@x | facts'), result('call_4', '@a | facts')] },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: sheet.label },
+          { type: 'picture', picture: sheet },
+          { type: 'text', text: wave.label },
+          { type: 'picture', picture: wave },
+          { type: 'text', text: image.label },
+          { type: 'picture', picture: image },
+        ],
+      },
+      { role: 'agent', content: 'All good.' },
+    ])
+  })
+
+  // The user can edit the label in the block.
+  it('sends no stored file path in the label of a picture', () => {
+    const pictures = [{ file: 'f1.png', label: `asset_view: the image at ${IMAGE}.` }]
+    const text = toolBlockText({ id: 'call_1', name: 'asset_view', status: 'success', arguments: { assets: '@a' }, result: 'ok', pictures })
+
+    const [, , shown] = agentSectionMessages(agent(text), model, true, true)
+
+    expect(shown).toStrictEqual({ role: 'user', content: [{ type: 'text', text: 'asset_view: the image at image.' }, { type: 'picture', picture: pictures[0] }] })
   })
 
   it('sends the model text without the escape of its tag text', () => {
@@ -660,6 +702,43 @@ describe('sectionsToStreamMessages: clips of user messages', () => {
     const tag = mediaTagText({ ...PASTED_DANCE, src: '/home/u/clips/@a.mp4' })
 
     expect(sent([user('u1', `![${IMAGE}](id=a)`), user('u2', `Dance\n${tag}`)]).messages.at(-1)).toStrictEqual({ role: 'user', content: `Dance\n${SENT_DANCE}` })
+  })
+})
+
+describe('sectionsToStreamMessages: pictures that a tool showed', () => {
+  const picture = { file: 'f1.png', label: 'asset_view: the image @a.', width: 64, height: 48, bytes: 300 }
+  const view = (id: string) => toolBlockText({ id, name: 'asset_view', status: 'success', arguments: { assets: '@a' }, result: '@a | image | PNG', pictures: [picture] })
+  // An older reply that viewed the image, and the reply that runs.
+  const sections = [
+    user('u1', `![${IMAGE}](id=a)`),
+    reply('a1', `${view('call_1')}\nIt is red.`),
+    user('u2', 'Look again.'),
+    reply('a2', view('call_2')),
+  ]
+  const pictureMessage = { role: 'user', content: [{ type: 'text', text: picture.label }, { type: 'picture', picture }] }
+  const sent = (options: { picturesOfSection?: string, sendImages?: boolean, sendTools?: boolean }) =>
+    sectionsToStreamMessages(sections, model, { sendImages: true, sendTools: true, ...options }).messages
+
+  it('sends the pictures of the section of the reply that runs only, after the results of their round', () => {
+    expect(sent({ picturesOfSection: 'a2' })).toStrictEqual([
+      { role: 'user', content: '![image](id=a)' },
+      { role: 'agent', content: '', toolCalls: [{ id: 'call_1', name: 'asset_view', arguments: { assets: '@a' } }] },
+      { role: 'tool', results: [result('call_1', '@a | image | PNG')] },
+      { role: 'agent', content: 'It is red.' },
+      { role: 'user', content: 'Look again.' },
+      { role: 'agent', content: '', toolCalls: [{ id: 'call_2', name: 'asset_view', arguments: { assets: '@a' } }] },
+      { role: 'tool', results: [result('call_2', '@a | image | PNG')] },
+      pictureMessage,
+    ])
+  })
+
+  it('sends no picture with no section of a reply that runs', () => {
+    expect(sent({})).not.toContainEqual(pictureMessage)
+  })
+
+  it('sends no picture to a model that reads no images, and none in a request with no tools', () => {
+    expect(sent({ picturesOfSection: 'a2', sendImages: false })).not.toContainEqual(pictureMessage)
+    expect(sent({ picturesOfSection: 'a2', sendTools: false })).not.toContainEqual(pictureMessage)
   })
 })
 

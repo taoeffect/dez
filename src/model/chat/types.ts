@@ -1,6 +1,6 @@
 import type { CountedContext } from './contextSize'
 import type { ConversationCost } from './conversationCost'
-import type { ImageMediaType } from './images'
+import type { ShownPicture } from './shownPictures'
 import type { ToolCall, ToolResult } from '../tools/types'
 import type { JsonObject } from '../../utils/json'
 
@@ -27,21 +27,14 @@ export interface PromptNode {
 
 export type ContentNode = TextNode | PromptNode
 
-/** One part of a user message to a model: text, a stored image by its
- *  absolute path (an image reference, `images.ts`), or a picture as its
- *  bytes (an `asset_view` picture of the reply, `replyPictures.ts`), which
- *  no file holds. `dez.provider/streamChat` reads the bytes of an image. */
+/** One part of a user message to a model: text, an image by its absolute
+ *  path (an image reference, `images.ts`), or a picture of an `asset_view`
+ *  call by its saved copy (`shownPictures.ts`). `dez.provider/streamChat`
+ *  reads the bytes of an image and of a picture. */
 export type MessagePart =
   | { type: 'text'; text: string }
   | { type: 'image'; path: string }
-  | PicturePart
-
-/** A picture as its bytes, of a type that requests take. */
-export interface PicturePart {
-  type: 'picture'
-  mediaType: ImageMediaType
-  bytes: Uint8Array
-}
+  | { type: 'picture'; picture: ShownPicture }
 
 /** One message of a chat request, in request order. `Part` is the part type
  *  of a user message: `MessagePart` until `dez.provider/streamChat` reads the

@@ -11,8 +11,6 @@ function tokens(request: Partial<EstimatedRequest>, of: ModelFamily = family): n
   return estimatedRequestTokens({ tools: [], messages: [], ...request }, of)
 }
 
-const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47])
-
 describe('estimatedRequestTokens', () => {
   it('is 0 for a request that holds nothing', () => {
     expect(tokens({})).toBe(0)
@@ -73,13 +71,13 @@ describe('estimatedRequestTokens', () => {
 
   // An image of 1568 by 1568 pixels: 56 by 56 patches of 28 pixels, 49 by
   // 49 patches of 32 pixels at 1.2 tokens each, or the fixed count.
-  it('counts each image and each picture by the image rule of the family, at one size for all', () => {
+  it('counts each image, and each picture whose copy tells no size, by the image rule of the family, at one size for all', () => {
     const messages: StreamMessage[] = [{
       role: 'user',
       content: [
         { type: 'text', text: 'x'.repeat(40) },
         { type: 'image', path: '/home/u/.config/dez/assets/images/a.png' },
-        { type: 'picture', mediaType: 'image/png', bytes: PNG },
+        { type: 'picture', picture: { file: 'f1.png', label: 'The copy of an older Dez.' } },
       ],
     }]
     const text = (of: ModelFamily) => Math.ceil(40 / of.charsPerToken)
@@ -91,5 +89,18 @@ describe('estimatedRequestTokens', () => {
     expect(tokens({ messages }, gpt)).toBe(text(gpt) + 2 * 2882)
     expect(tokens({ messages }, gemini)).toBe(text(gemini) + 2 * 1120)
     expect(tokens({ messages }, DEFAULT_FAMILY)).toBe(text(DEFAULT_FAMILY) + 2 * 3136)
+  })
+
+  // A wave picture of 800 by 200 pixels: 29 by 8 patches of 28 pixels, 25
+  // by 7 patches of 32 pixels at 1.2 tokens each, or the fixed count.
+  it('counts a picture whose copy tells its size by that size', () => {
+    const messages: StreamMessage[] = [{
+      role: 'user',
+      content: [{ type: 'picture', picture: { file: 'w1.jpg', label: 'The wave of @b.', width: 800, height: 200, bytes: 3000 } }],
+    }]
+
+    expect(tokens({ messages }, DEFAULT_FAMILY)).toBe(232)
+    expect(tokens({ messages }, modelFamily('gpt-5.4'))).toBe(210)
+    expect(tokens({ messages }, modelFamily('gemini-3-pro'))).toBe(1120)
   })
 })
