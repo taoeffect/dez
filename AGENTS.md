@@ -93,7 +93,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `controller/media.ts`, `clipSources.ts`: `dez.controller/media/*`: save, delete, read, and decode clips; the cleanup of old temp copies.
 - `controller/unusedFiles.ts`, `cacheHolds.ts`, `workFolders.ts`: find and delete the files and cache entries that nothing uses.
 - `model/chat/`: `Section` / `ContentNode` types and helpers, and the text forms of a conversation, each with one writer and recognizer:
-  - `images.ts` (image references), `mediaTags.ts` (clips), `toolBlocks.ts` (tool calls), `pillMarker.ts` (pill markers), `compaction.ts`, `compactionNotes.ts` (the compaction tag and notes).
+  - `images.ts` (image references), `mediaTags.ts` (clips), `toolBlocks.ts` (tool calls), `pillMarker.ts` (pill markers), `compaction.ts`, `compactionNotes.ts`, `notesTable.ts` (the compaction tag, the notes, and the tables of the notes).
   - `mediaIds.ts`, `imageMentions.ts`, `assetMentions.ts` (asset ids and `@id` mentions), `hiddenAssets.ts`, `shownPictures.ts`.
   - `storedFilePaths.ts`, `linkedFiles.ts`, `mediaFiles.ts`, `unusedFiles.ts` (stored, linked, and unused files).
 - `model/state/`: Pinia stores (internal) and `dez.model/*` selectors; views read state through `view/modelState.ts`.

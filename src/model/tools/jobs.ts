@@ -384,11 +384,15 @@ export function jobResultState(job: Pick<JobInfo, 'status' | 'delivered'>): JobR
   return job.delivered ? 'given' : 'ready'
 }
 
+const JOB_RESULT_STATES: readonly JobResultState[] = ['ready', 'given', '-']
+
 /** What the values of the `result` column of a job list mean
- *  (`JobResultState`). `of` names the reply when the reader is not in it
- *  (the notes of a compaction). */
-export function jobResultLegend(of = ''): string {
-  return `result: \`ready\` means that the next jobs_wait${of} gives it, \`given\` that a jobs_wait gave it, and \`-\` that there is none.`
+ *  (`JobResultState`): each one of `values`, or all of them. `of` names the
+ *  reply when the reader is not in it (the notes of a compaction). */
+export function jobResultLegend(of = '', values: ReadonlySet<string> = new Set(JOB_RESULT_STATES)): string {
+  const meanings: Record<JobResultState, string> = { ready: `the next jobs_wait${of} gives it`, given: 'a jobs_wait gave it', '-': 'there is none' }
+  const parts = JOB_RESULT_STATES.filter((state) => values.has(state)).map((state, index) => `\`${state}\` ${index === 0 ? 'means ' : ''}that ${meanings[state]}`)
+  return `result: ${new Intl.ListFormat('en', { type: 'conjunction' }).format(parts)}.`
 }
 
 /** What the paid requests of `jobs` cost: the sum of the known prices, how

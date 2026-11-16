@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { JobInfo } from '../tools/jobs'
+import { jobResultState, type JobInfo } from '../tools/jobs'
 import {
   compactionNotesText,
   conversationCostText,
@@ -9,10 +9,11 @@ import {
   type CompactionNotes,
   type NotesAsset,
   type NotesAssetLine,
+  type NotesJobLine,
 } from './compactionNotes'
 import { findImageReferences, imageReferenceTextWithKeptMark } from './images'
 import { findMediaTags } from './mediaTags'
-import { hiddenClip, hiddenImage, invokeBlock } from './testing'
+import { FOX_ORIGIN, hiddenClip, hiddenImage, invokeBlock } from './testing'
 import { findToolBlocks, unescapedModelText } from './toolBlocks'
 
 const SUMMARY = '## Summary'
@@ -65,6 +66,25 @@ function lineData({ text: _text, ...line }: NotesAsset): NotesAssetLine {
   return line
 }
 
+// The line that the notes must give back for `job`.
+function jobLine(job: JobInfo): NotesJobLine {
+  return { id: job.id, number: job.call.number, tool: job.tool, status: job.status, result: jobResultState(job), label: job.call.label }
+}
+
+// The text of the part `heading` of the notes `text`, up to the next part.
+function partText(text: string, heading: string): string {
+  const start = text.indexOf(`${heading}\n\n`) + heading.length + 2
+  const end = text.indexOf('\n\n## ', start)
+  return text.slice(start, end < 0 ? text.length : end)
+}
+
+// The first line of each part of the notes of an older Dez, with all the
+// columns in each line.
+const FIRST_FORM_ASSETS_HEAD = 'Each line: @id | kind | facts | who made it | what it is, how it was made, and what a later step needs it for. '
+  + 'Every id still names its image or clip. An image or a clip that these notes do not show as a picture is kept as its line only.'
+const FIRST_FORM_JOBS_HEAD = 'The jobs of the reply that ran at this compaction. Each line: job id | number in the order of the starts | tool | status | result | how its call begins. '
+  + 'result: `ready` means that the next jobs_wait of that reply gives it, `given` that a jobs_wait gave it, and `-` that there is none.'
+
 describe('compactionNotesText', () => {
   it('writes the parts of the model, each under its heading, then the assets, the jobs, and the cost', () => {
     const text = compactionNotesText(notes({ assets: [FRAME], jobs: [job({})], cost: { usd: 0.25, requests: 3, unpriced: 0 } }))
@@ -114,8 +134,8 @@ describe('compactionNotesText', () => {
     expect(notesAssetLines(text)).toStrictEqual(new Map([[line.id, { ...line, ...change }]]))
   })
 
-  it('ends the line of an asset with a blank sentence with its origin, and reads the sentence back as blank', () => {
-    const text = compactionNotesText(notes({ assets: [{ ...PHOTO, sentence: ' \n ' }] }))
+  it('leaves out the blank sentence of an asset with its column mark, and reads the sentence back as blank', () => {
+    const text = compactionNotesText(notes({ assets: [{ ...PHOTO, sentence: ' \n ' }, FRAME] }))
 
     expect(text.split('\n').find((line) => line.startsWith('@a | '))).toMatch(/ \| from the user$/)
     expect(notesAssetLines(text).get(PHOTO.id)).toStrictEqual({ ...lineData(PHOTO), sentence: '' })
@@ -152,9 +172,36 @@ describe('notesAssetLines', () => {
   })
 
   it('skips a line with only two cells after the id', () => {
-    const text = `${ASSETS}\n\n@b | image | PNG, 10x10, 1 KB\n\n@c | image | PNG, 10x10, 1 KB | from the user`
+    const text = `${ASSETS}\n\n${FIRST_FORM_ASSETS_HEAD}\n\n@b | image | PNG, 10x10, 1 KB\n\n@c | image | PNG, 10x10, 1 KB | from the user`
 
     expect(notesAssetLines(text)).toStrictEqual(new Map([['c', { id: 'c', kind: 'image', facts: 'PNG, 10x10, 1 KB', origin: 'from the user', sentence: '' }]]))
+  })
+
+  it('tells a kind and an origin that every asset has in a line each, and gives every column back', () => {
+    const assets = [PHOTO, { ...PHOTO, id: 'b', facts: 'JPEG, 640x480, 80 KB', sentence: 'The sky.' }, { ...PHOTO, id: 'e', facts: 'PNG, 10x10, 1 KB', sentence: '' }]
+    const text = compactionNotesText(notes({ assets }))
+
+    expect(partText(text, ASSETS)).toBe([
+      'Every id still names its image or clip. An image or a clip that these notes do not show as a picture is kept as its line only. '
+      + 'Each line: @id | facts | what it is, how it was made, and what a later step needs it for.',
+      'Each asset is an image.',
+      'Each asset is from the user.',
+      '',
+      '@a | PNG, 800x600, 120 KB | The reference photo.',
+      '',
+      '@b | JPEG, 640x480, 80 KB | The sky.',
+      '',
+      '@e | PNG, 10x10, 1 KB',
+    ].join('\n'))
+    expect([...notesAssetLines(text).values()]).toStrictEqual(assets.map(lineData))
+  })
+
+  it.each<[string, NotesAsset[]]>([
+    ['one asset', [FRAME]],
+    ['assets of the user and made ones', [PHOTO, FRAME, THEME, { ...FRAME, id: 'f', facts: 'PNG, 640x480, 300 KB', text: hiddenImage('j-ef56', 'f') }]],
+    ['no asset', []],
+  ])('gives every column of each asset back, for %s', (_case, assets) => {
+    expect([...notesAssetLines(compactionNotesText(notes({ assets }))).values()]).toStrictEqual(assets.map(lineData))
   })
 })
 
@@ -185,6 +232,93 @@ describe('notesJobLines', () => {
 
     expect([...notesJobLines(compactionNotesText(notes({ summary, jobs: [job({ status: 'finished' })] }))).keys()]).toStrictEqual(['j-ab12'])
     expect([...notesJobLines(compactionNotesText(notes({ summary }))).keys()]).toStrictEqual([])
+  })
+
+  // The case of the user: 28 model_invoke jobs and a video job, which all
+  // finished, and whose results a jobs_wait gave.
+  it('tells the status and the result that every job has in a line each, and splits the jobs at the change of their tool, with the range of their numbers', () => {
+    const done = { status: 'finished', delivered: true } as const
+    const sheets = Array.from({ length: 28 }, (_, index) => job({ ...done, id: `j-s${index + 1}`, call: { number: index + 1, label: `Character sheet ${index + 1}` } }))
+    const jobs = [...sheets, job({ ...done, id: 'j-film', tool: 'video', call: { number: 29, label: 'join_clips @a @b' } })]
+    const text = compactionNotesText(notes({ jobs }))
+
+    expect(partText(text, JOBS)).toBe([
+      'The jobs of the reply that ran at this compaction, in the order of their starts. Each line: job id | how its call begins.',
+      'Each job finished.',
+      'A jobs_wait of that reply gave the result of each job.',
+      '',
+      'Jobs 1 to 28, tool model_invoke:',
+      ...sheets.map(({ id, call }) => `${id} | ${call.label}`),
+      '',
+      'Job 29, tool video:',
+      'j-film | join_clips @a @b',
+    ].join('\n'))
+    expect([...notesJobLines(text).values()]).toStrictEqual(jobs.map(jobLine))
+  })
+
+  it('keeps the numbers in the rows when they have a gap, and the tool when it changes at every row', () => {
+    const tools = ['model_invoke', 'video', 'model_invoke', 'audio']
+    const jobs = [1, 2, 4, 5].map((number, index) => job({ id: `j-${number}`, tool: tools[index], status: 'finished', call: { number, label: `Call ${number}` } }))
+    const text = compactionNotesText(notes({ jobs }))
+
+    expect(partText(text, JOBS).split('\n').slice(-4)).toStrictEqual(jobs.map(({ id, tool, call }) => `${id} | ${call.number} | ${tool} | ${call.label}`))
+    expect([...notesJobLines(text).values()]).toStrictEqual(jobs.map(jobLine))
+  })
+
+  it('explains only the results that the rows hold', () => {
+    const jobs = [job({ id: 'j-a', status: 'finished', call: { number: 1, label: 'A' } }), job({ id: 'j-b', call: { number: 2, label: 'B' } })]
+    const head = partText(compactionNotesText(notes({ jobs })), JOBS).split('\n')[0]
+
+    expect(head).toContain('`ready`')
+    expect(head).toContain('`-`')
+    expect(head).not.toContain('`given`')
+  })
+
+  it.each<[string, JobInfo[]]>([
+    ['one job', [job({ status: 'finished', call: { number: 1, label: 'A cat' } })]],
+    ['a label with the column mark, a blank label, and a job that runs', [
+      job({ id: 'j-a', status: 'finished', delivered: true, call: { number: 1, label: 'A fox | a dog' } }),
+      job({ id: 'j-b', status: 'finished', delivered: true, call: { number: 2, label: '' } }),
+      job({ id: 'j-c', call: { number: 3, label: 'Rain' } }),
+    ]],
+    ['a status and a result that change in a few runs', [
+      ...[1, 2, 3].map((number) => job({ id: `j-${number}`, status: 'failed', delivered: true, call: { number, label: `Try ${number}` } })),
+      ...[4, 5, 6].map((number) => job({ id: `j-${number}`, status: 'finished', call: { number, label: `Try ${number}` } })),
+    ]],
+    ['jobs that start at 7', [7, 8, 9].map((number) => job({ id: `j-${number}`, tool: 'audio', call: { number, label: 'A song' } }))],
+  ])('gives every column of each job back, for %s', (_case, jobs) => {
+    expect([...notesJobLines(compactionNotesText(notes({ jobs }))).values()]).toStrictEqual(jobs.map(jobLine))
+  })
+})
+
+describe('the notes of an older Dez, with all the columns in each line', () => {
+  const text = [
+    ASSETS,
+    '',
+    FIRST_FORM_ASSETS_HEAD,
+    '',
+    hiddenImage('j-aaaa', 'b'),
+    `@b | image | PNG, 1024x768, 1.2 MB | ${FOX_ORIGIN} | The fox | scene 1.`,
+    '',
+    '@a | image | PNG, 800x600, 120 KB | from the user',
+    '',
+    JOBS,
+    '',
+    FIRST_FORM_JOBS_HEAD,
+    '',
+    'j-zzzz | 1 | video | running | - | -',
+    'j-aaaa | 2 | model_invoke | finished | given | A red fox',
+  ].join('\n')
+
+  it('reads each asset line and each job line', () => {
+    expect([...notesAssetLines(text).values()]).toStrictEqual([
+      { id: 'b', kind: 'image', facts: 'PNG, 1024x768, 1.2 MB', origin: FOX_ORIGIN, sentence: 'The fox | scene 1.' },
+      { id: 'a', kind: 'image', facts: 'PNG, 800x600, 120 KB', origin: 'from the user', sentence: '' },
+    ])
+    expect([...notesJobLines(text).values()]).toStrictEqual([
+      { id: 'j-zzzz', number: 1, tool: 'video', status: 'running', result: '-', label: '' },
+      { id: 'j-aaaa', number: 2, tool: 'model_invoke', status: 'finished', result: 'given', label: 'A red fox' },
+    ])
   })
 })
 

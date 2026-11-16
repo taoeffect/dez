@@ -145,12 +145,13 @@ describe('assetPlaces in a compacted conversation', () => {
   })
 
   it('reads the number and the label of a job whose block is gone from the notes, in the first reply after the compaction message only', () => {
-    const job: JobInfo = { id: 'j-aaaa', tool: 'video', status: 'finished', delivered: true, elapsedMs: 9000, state: '', call: { number: 3, label: 'join_clips @a @b' } }
-    const start = [compaction([], [job]), section('user', 'Join the clips.')]
+    // Three jobs of one tool, so that the notes tell their numbers as a range.
+    const jobs = [1, 2, 3].map((number): JobInfo => ({ id: `j-${number}`, tool: 'video', status: 'finished', delivered: true, elapsedMs: 9000, state: '', call: { number, label: `join_clips @a @${number}` } }))
+    const start = [compaction([], jobs), section('user', 'Join the clips.')]
 
-    expect(placeOf([...start, section('agent', jobClip('c', 'j-aaaa'))], 'c')?.origin)
-      .toStrictEqual({ kind: 'job', tool: 'video', number: 3, label: 'join_clips @a @b' })
-    expect(placeOf([...start, section('agent', 'Joined.'), section('user', 'Again.'), section('agent', jobClip('c', 'j-aaaa'))], 'c')?.origin)
+    expect(placeOf([...start, section('agent', jobClip('c', 'j-3'))], 'c')?.origin)
+      .toStrictEqual({ kind: 'job', tool: 'video', number: 3, label: 'join_clips @a @3' })
+    expect(placeOf([...start, section('agent', 'Joined.'), section('user', 'Again.'), section('agent', jobClip('c', 'j-3'))], 'c')?.origin)
       .toStrictEqual({ kind: 'job', tool: 'video', number: null, label: '' })
   })
 

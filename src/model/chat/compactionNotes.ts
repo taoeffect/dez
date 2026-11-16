@@ -3,6 +3,7 @@ import { usdText } from '../providers/modelPrices'
 import { ASSET_NAME_SOURCE, ASSET_NAMES, jobResultLegend, jobResultState, type JobAssetKind, type JobInfo, type JobResultState, type JobStatus } from '../tools/jobs'
 import type { ConversationCost } from './conversationCost'
 import { IMAGE_ID_SOURCE } from './images'
+import { notesTableRows, notesTableText, templateStatement, textsStatement, type NotesRow, type NotesTable } from './notesTable'
 import { escapedModelText, unescapedModelText } from './toolBlocks'
 
 // The notes of a compaction section: its text after the tag line
@@ -23,7 +24,7 @@ import { escapedModelText, unescapedModelText } from './toolBlocks'
 //
 //   ## Assets of the conversation
 //
-//   <what the lines are>
+//   <what the lines are> Each line: @id | kind | facts | who made it | …
 //
 //   ![/…/assets/generated/images/x.png](id=c|tool=model_invoke|made-by=j-ab12)
 //   @c | image | PNG, 1024x768, 1.2 MB | made by the model_invoke job 2 of its reply: "A red fox" | The fox frame of scene 1.
@@ -32,9 +33,13 @@ import { escapedModelText, unescapedModelText } from './toolBlocks'
 //
 //   ## Jobs of the reply
 //
-//   <what the lines are>
+//   <what the lines are> Each line: job id | how its call begins.
+//   Each job finished.
+//   A jobs_wait of that reply gave the result of each job.
 //
-//   j-ab12 | 2 | model_invoke | finished | given | A red fox in the snow
+//   Jobs 1 to 28, tool model_invoke:
+//   j-ab12 | A red fox in the snow
+//   …
 //
 //   ## Cost
 //
@@ -51,6 +56,10 @@ import { escapedModelText, unescapedModelText } from './toolBlocks'
 //   that a model or a tool made has its reference or tag in this section,
 //   alone on the line before its line. An asset of the user has its
 //   reference or tag in a user section after this one.
+// - The assets and the jobs are tables (notesTable.ts): a value that every
+//   row has, or that a run of rows has, leaves the rows for one line that
+//   tells it, when that makes the text shorter. The reader gives back every
+//   column of each row.
 // - The sentence is the last column of an asset line, and the label the
 //   last one of a job line: both are free text, which can hold the column
 //   mark. The columns before them hold no `|`.
@@ -64,7 +73,9 @@ import { escapedModelText, unescapedModelText } from './toolBlocks'
 //   copy a heading of earlier notes into its answer.
 // - Saved conversations hold these lines, and later compactions and
 //   `asset_info` read them back. So a new form of a line needs a reader
-//   that still takes the old form.
+//   that still takes the old form. The reader of the tables reads a line
+//   by the names of its columns, which the first line of the part tells:
+//   the first form wrote all the columns in each line, with these names.
 
 const SUMMARY_HEADING = '## Summary'
 const REQUIREMENTS_HEADING = '## Requirements and decisions'
@@ -75,14 +86,60 @@ const COST_HEADING = '## Cost'
 
 // These texts are in the cached prefix of every request of the
 // conversation: never a date, a running count, or a random value.
-const ASSETS_LEGEND = 'Each line: @id | kind | facts | who made it | what it is, how it was made, and what a later step needs it for. '
-  + 'Every id still names its image or clip. An image or a clip that these notes do not show as a picture is kept as its line only.'
-const JOBS_LEGEND = 'The jobs of the reply that ran at this compaction. Each line: job id | number in the order of the starts | tool | status | result | how its call begins. '
-  + jobResultLegend(' of that reply')
 const NO_NOTES_ASSETS_TEXT = 'None: these notes keep no image and no clip.'
 const NO_NOTES_JOBS_TEXT = 'None: no job of a reply ran at this compaction.'
 
-const COLUMN = ' | '
+// The texts of a kind of asset that every asset has, by its name
+// (`ASSET_NAMES`): "Each asset is an image."
+const ASSET_KIND_TEXTS = Object.fromEntries(Object.values(ASSET_NAMES).map((name) => [name, `Each asset is ${/^[aeiou]/.test(name) ? 'an' : 'a'} ${name}.`]))
+
+const ASSETS_TABLE: NotesTable = {
+  noun: { one: 'Asset', many: 'Assets' },
+  intro: 'Every id still names its image or clip. An image or a clip that these notes do not show as a picture is kept as its line only.',
+  rowGap: '\n\n',
+  columns: [
+    { name: '@id', pattern: `@${IMAGE_ID_SOURCE}` },
+    { name: 'kind', pattern: ASSET_NAME_SOURCE, shared: textsStatement(ASSET_KIND_TEXTS), groups: true },
+    { name: 'facts', pattern: '.*', shared: templateStatement('The facts of each asset: ', '.') },
+    // The kind statement comes first: an origin is never "an image".
+    { name: 'who made it', pattern: '.*', shared: templateStatement('Each asset is ', '.') },
+    { name: 'what it is, how it was made, and what a later step needs it for', pattern: '.*' },
+  ],
+}
+
+const JOB_STATUS_TEXTS: Readonly<Record<JobStatus, string>> = {
+  running: 'Each job was still running at this compaction.',
+  finished: 'Each job finished.',
+  failed: 'Each job failed.',
+  'timed out': 'Each job timed out.',
+  stopped: 'Each job was stopped.',
+}
+
+const JOB_RESULT_TEXTS: Readonly<Record<JobResultState, string>> = {
+  ready: 'The next jobs_wait of that reply gives the result of each job.',
+  given: 'A jobs_wait of that reply gave the result of each job.',
+  '-': 'No job has a result.',
+}
+
+const JOBS_TABLE: NotesTable = {
+  noun: { one: 'Job', many: 'Jobs' },
+  intro: 'The jobs of the reply that ran at this compaction, in the order of their starts.',
+  rowGap: '\n',
+  columns: [
+    { name: 'job id', pattern: '\\S+' },
+    { name: 'number in the order of the starts', pattern: '\\d+', counts: true },
+    { name: 'tool', pattern: '[^|]*', shared: templateStatement('The tool of each job: ', '.'), groups: true },
+    { name: 'status', pattern: Object.keys(JOB_STATUS_TEXTS).join('|'), shared: textsStatement(JOB_STATUS_TEXTS), groups: true },
+    {
+      name: 'result',
+      pattern: Object.keys(JOB_RESULT_TEXTS).join('|'),
+      shared: textsStatement(JOB_RESULT_TEXTS),
+      groups: true,
+      legend: (values) => jobResultLegend(' of that reply', values),
+    },
+    { name: 'how its call begins', pattern: '.*' },
+  ],
+}
 
 /** The line of one asset in the notes. */
 export interface NotesAssetLine {
@@ -143,15 +200,19 @@ export function notesCellText(text: string, last = false): string {
   return last ? line : line.replace(/\s*\|\s*/g, ', ')
 }
 
-function assetLineText({ id, kind, facts, origin, sentence }: NotesAssetLine): string {
-  const cells = [`@${id}`, ASSET_NAMES[kind], notesCellText(facts), escapedModelText(notesCellText(origin)), escapedModelText(notesCellText(sentence, true))]
-  // A line with no sentence ends with the origin.
-  return cells.filter((text, index) => index < 4 || text !== '').join(COLUMN)
+function assetRow({ id, kind, facts, origin, sentence, text }: NotesAsset): NotesRow {
+  return {
+    cells: [`@${id}`, ASSET_NAMES[kind], notesCellText(facts), escapedModelText(notesCellText(origin)), escapedModelText(notesCellText(sentence, true))],
+    before: text,
+  }
 }
 
-function jobLineText(job: JobInfo): string {
+function jobRow(job: JobInfo): NotesRow {
   const label = notesCellText(job.call.label, true)
-  return [job.id, job.call.number, notesCellText(job.tool), job.status, jobResultState(job), escapedModelText(label === '' ? '-' : label)].join(COLUMN)
+  return {
+    cells: [job.id, String(job.call.number), notesCellText(job.tool), job.status, jobResultState(job), escapedModelText(label === '' ? '-' : label)],
+    before: null,
+  }
 }
 
 /** What the requests of a conversation cost up to a moment, which `upTo`
@@ -179,9 +240,9 @@ export function compactionNotesText(notes: CompactionNotes): string {
   for (const [heading, text] of modelParts) {
     if (text.trim() !== '') add(heading, escapedModelText(text.trim()))
   }
-  const entries = notes.assets.map((asset) => (asset.text === null ? assetLineText(asset) : `${asset.text}\n${assetLineText(asset)}`))
-  add(ASSETS_HEADING, entries.length > 0 || notes.unnamed.length > 0 ? [ASSETS_LEGEND, ...entries, ...notes.unnamed].join('\n\n') : NO_NOTES_ASSETS_TEXT)
-  add(JOBS_HEADING, notes.jobs.length > 0 ? `${JOBS_LEGEND}\n\n${notes.jobs.map(jobLineText).join('\n')}` : NO_NOTES_JOBS_TEXT)
+  const assets = notes.assets.map(assetRow)
+  add(ASSETS_HEADING, assets.length > 0 || notes.unnamed.length > 0 ? [notesTableText(ASSETS_TABLE, assets), ...notes.unnamed].join('\n\n') : NO_NOTES_ASSETS_TEXT)
+  add(JOBS_HEADING, notes.jobs.length > 0 ? notesTableText(JOBS_TABLE, notes.jobs.map(jobRow)) : NO_NOTES_JOBS_TEXT)
   add(COST_HEADING, conversationCostText(notes.cost, 'up to this compaction'))
   return parts.join('\n\n')
 }
@@ -197,24 +258,18 @@ function partLines(text: string, heading: string): string[] {
 }
 
 const KIND_BY_NAME = new Map(Object.entries(ASSET_NAMES).map(([kind, name]) => [name, kind as JobAssetKind]))
-const ASSET_LINE = new RegExp(`^@(${IMAGE_ID_SOURCE}) \\| (${ASSET_NAME_SOURCE}) \\| (.*)$`)
-const JOB_LINE = /^(\S+) \| (\d+) \| ([^|]*) \| (running|finished|failed|timed out|stopped) \| (-|given|ready) \| (.*)$/
 
 /** The asset lines of the notes in `text` (the text of a compaction
  *  section), by asset id. Of two lines with one id, the last one counts. */
 export function notesAssetLines(text: string): Map<string, NotesAssetLine> {
   const found = new Map<string, NotesAssetLine>()
-  for (const line of partLines(text, ASSETS_HEADING)) {
-    const match = ASSET_LINE.exec(line)
-    if (!match) continue
-    const [facts, origin, ...sentence] = match[3].split(COLUMN)
-    if (origin === undefined) continue
-    found.set(match[1], {
-      id: match[1],
-      kind: KIND_BY_NAME.get(match[2]) as JobAssetKind,
+  for (const [id, kind, facts, origin, sentence] of notesTableRows(ASSETS_TABLE, partLines(text, ASSETS_HEADING))) {
+    found.set(id.slice(1), {
+      id: id.slice(1),
+      kind: KIND_BY_NAME.get(kind) as JobAssetKind,
       facts,
       origin: unescapedModelText(origin),
-      sentence: unescapedModelText(sentence.join(COLUMN)),
+      sentence: unescapedModelText(sentence),
     })
   }
   return found
@@ -224,17 +279,15 @@ export function notesAssetLines(text: string): Map<string, NotesAssetLine> {
  *  section), by job id. */
 export function notesJobLines(text: string): Map<string, NotesJobLine> {
   const found = new Map<string, NotesJobLine>()
-  for (const line of partLines(text, JOBS_HEADING)) {
-    const match = JOB_LINE.exec(line)
-    if (!match) continue
-    const label = unescapedModelText(match[6])
-    found.set(match[1], {
-      id: match[1],
-      number: Number(match[2]),
-      tool: match[3],
-      status: match[4] as JobStatus,
-      result: match[5] as JobResultState,
-      label: label === '-' ? '' : label,
+  for (const [id, number, tool, status, result, label] of notesTableRows(JOBS_TABLE, partLines(text, JOBS_HEADING))) {
+    const call = unescapedModelText(label)
+    found.set(id, {
+      id,
+      number: Number(number),
+      tool,
+      status: status as JobStatus,
+      result: result as JobResultState,
+      label: call === '-' ? '' : call,
     })
   }
   return found
