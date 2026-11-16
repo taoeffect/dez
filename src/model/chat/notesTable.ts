@@ -28,8 +28,9 @@
 // - The reader gives back every row with every column. It finds the
 //   columns of a row by the names of the "Each line:" text, so a text with
 //   any set of columns in its rows reads, also one of an older Dez with all
-//   of them in each row. The writer uses a shorter form only when the
-//   reader reads it back to the same cells.
+//   of them in each row. A column that an older Dez did not write reads as
+//   its fallback value (`NotesColumn.fallback`). The writer uses a shorter
+//   form only when the reader reads it back to the same cells.
 
 const COLUMN = ' | '
 
@@ -80,6 +81,10 @@ export interface NotesColumn {
   /** What `values` mean: the values of the column that the rows or the
    *  lead lines hold. Absent for a column whose values need no legend. */
   legend?: (values: ReadonlySet<string>) => string
+  /** The value of a row whose text does not hold the column: a line of an
+   *  older Dez, which had no such column. Absent for a column that every
+   *  form holds; the reader skips a row with no value of it. */
+  fallback?: string
 }
 
 /** The form of one table of the notes. */
@@ -281,7 +286,7 @@ export function notesTableRows(table: NotesTable, lines: readonly string[]): str
       if (place >= 0) values.set(place, cell)
     })
     if (next !== null && counter >= 0 && !values.has(counter)) values.set(counter, String(next))
-    const row = columns.map((_column, at) => values.get(at))
+    const row = columns.map((column, at) => values.get(at) ?? column.fallback)
     if (!row.every((cell, at): cell is string => cell !== undefined && patterns[at].test(cell))) continue
     if (next !== null) next += 1
     rows.push(row)

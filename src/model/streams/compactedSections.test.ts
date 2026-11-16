@@ -42,16 +42,17 @@ const picture = (file: string): ShownPicture => ({ file: `${file}.jpg`, label: `
 function compact(sections: Section[], answerText: string, replySectionId: string, input: Partial<CompactedSectionsInput> = {}, facts = FACTS): CompactedSections {
   const scope = compactionScope(sections, replySectionId)
   const found = [...conversationAssets(sections).found.values()].filter((asset) => asset.section < scope.end)
-  const assets = compactionAssets(sections, found, assetPlaces(sections, found), new Map(found.map(({ id }) => [id, facts])))
+  const assets = compactionAssets({ sections, scope, found, places: assetPlaces(sections, found), facts: new Map(found.map(({ id }) => [id, facts])), jobInputs: new Map() })
   const answer = readCompactionAnswer(answerText)
   let ids = 0
   return compactedSections({
     sections,
     replySectionId,
     model: NOTES_MODEL,
-    choices: assetDecisions(assets, answer, { jobInputs: new Set(), keptTexts: keptUserTexts(sections, scope) }),
+    choices: assetDecisions(assets, answer, { keptTexts: keptUserTexts(sections, scope) }),
     answer,
     jobs: [],
+    jobInputs: new Map(),
     cost: undefined,
     clipPictures: new Map(),
     sendImages: true,
@@ -106,7 +107,7 @@ describe('compactedSections', () => {
     const [notes] = result.sections
     expect(notes).toMatchObject({ role: 'agent', model: NOTES_MODEL })
     expect(notes.thinking).toBeUndefined()
-    expect(sectionCompactionTag(notes)).toMatchObject({ count: 1, lastId: 'b', pictures: [] })
+    expect(sectionCompactionTag(notes)).toMatchObject({ count: 1, lastId: 'b', dropped: 0, pictures: [] })
     expect(notesText(result)).toContain('The user wants foxes.')
     expect(result.dropped).toStrictEqual([])
   })
@@ -213,11 +214,47 @@ describe('compactedSections', () => {
     // The line of the kept one has the facts of its old line: Dez reads
     // no file again.
     expect([...notesAssetLines(notesText(result)).values()]).toStrictEqual([
-      { id: 'a', kind: 'image', facts: 'PNG, 10x10, 1 KB', origin: 'made by the model local/m', sentence: 'The final fox.' },
+      { id: 'a', kind: 'image', facts: 'PNG, 10x10, 1 KB', origin: 'made by the model local/m', sentence: 'The final fox.', byReply: false },
     ])
-    expect(sectionCompactionTag(result.sections[0])).toMatchObject({ count: 2, lastId: 'b' })
+    expect(sectionCompactionTag(result.sections[0])).toMatchObject({ count: 2, lastId: 'b', dropped: 1 })
     expect(sent(result.sections.slice(0, 3))).toStrictEqual({ images: [made('one')], pictures: [] })
     expect(hidden(result.sections.slice(0, 3))).toStrictEqual([])
+  })
+
+  it('drops at the first compaction an asset of an earlier reply that the answer has no line for, and keeps one of the reply that runs', () => {
+    const sections = [
+      user('u0', 'Make a fox'),
+      reply('r1', idImage(made('fox'), 'a')),
+      user('u1', 'Now a hare'),
+      reply('r2', `${idImage(made('hare'), 'b')}\n${idImage(made('draft'), 'c')}`),
+    ]
+    const result = compact(sections, `${NOTES}\n## Assets\n@b: keep - The hare.`, 'r2')
+
+    expect(result.dropped.map(({ asset }) => asset.id)).toStrictEqual(['a'])
+    expect(notesText(result)).not.toContain(made('fox'))
+    expect([...notesAssetLines(notesText(result)).values()].map(({ id, byReply }) => [id, byReply])).toStrictEqual([['b', true], ['c', true]])
+    expect(sectionCompactionTag(result.sections[0])).toMatchObject({ count: 1, lastId: 'c', dropped: 1 })
+  })
+
+  it('keeps an unnamed asset of the reply that runs at its next compaction, and drops it once a later reply runs', () => {
+    const first = compact([
+      user('u0', 'Make a fox'),
+      reply('r1', 'ok'),
+      user('u1', 'Go on'),
+      reply('r2', `${idImage(made('fox'), 'a')}\n${idImage(made('hare'), 'b')}`),
+    ], NOTES, 'r2')
+    // The same reply goes on and makes `c`: no message of the user came
+    // after the first compaction.
+    const second = compact([...first.sections.slice(0, 3), reply('r2', idImage(made('cat'), 'c'))], `${NOTES}\n## Assets\n@c: keep - The cat.`, 'r2')
+
+    expect(second.dropped).toStrictEqual([])
+    expect([...notesAssetLines(notesText(second)).values()].map(({ id, byReply }) => [id, byReply])).toStrictEqual([['a', true], ['b', true], ['c', true]])
+
+    const sections = [...second.sections.slice(0, 3), reply('r2', 'Done.'), user('u2', 'Only the cat now'), reply('r3', 'working')]
+    const third = compact(sections, `${NOTES}\n## Assets\n@c: keep - The cat.`, 'r3')
+
+    expect(third.dropped.map(({ asset }) => asset.id)).toStrictEqual(['a', 'b'])
+    expect(notesAssetLines(notesText(third)).get('c')).toMatchObject({ byReply: false })
   })
 
   it('keeps the sentence of the compaction before for an asset that the answer does not name', () => {

@@ -26,17 +26,39 @@ function section(role: Section['role'], ...content: Section['content']): Section
 
 describe('compactionTagText and readCompactionTag', () => {
   it('reads back what the writer wrote, with the text after the tag line', () => {
-    const tag = compactionTagText({ count: 12, lastId: 'ab', pictures: PICTURES })
+    const tag = compactionTagText({ count: 12, lastId: 'ab', dropped: 7, pictures: PICTURES })
     const text = `${tag}\nSummary`
 
     expect(tag).not.toContain('\n')
-    expect(readCompactionTag(text)).toEqual({ count: 12, lastId: 'ab', pictures: PICTURES, to: tag.length, textFrom: tag.length + 1 })
+    expect(readCompactionTag(text)).toEqual({ count: 12, lastId: 'ab', dropped: 7, pictures: PICTURES, to: tag.length, textFrom: tag.length + 1 })
     expect(text.slice(tag.length + 1)).toBe('Summary')
   })
 
   it('writes only the attributes that have a value', () => {
     expect(compactionTagText({ count: 1, lastId: null, pictures: [] })).toBe('<dez:compaction count="1"/>')
     expect(readCompactionTag('<dez:compaction count="1"/>')).toEqual({ count: 1, lastId: null, pictures: [], to: 27, textFrom: 27 })
+    expect(readCompactionTag('<dez:compaction count="1"/>')).not.toHaveProperty('dropped')
+  })
+
+  it('writes and reads a count of 0 dropped assets', () => {
+    const tag = compactionTagText({ count: 1, lastId: null, dropped: 0, pictures: [] })
+
+    expect(tag).toBe('<dez:compaction count="1" dropped="0"/>')
+    expect(readCompactionTag(tag)).toMatchObject({ count: 1, dropped: 0 })
+  })
+
+  it.each([
+    ['a negative count', '-1'],
+    ['a count with a leading 0', '03'],
+    ['a count that is no whole number', '1.5'],
+    ['a count that is too large', '9007199254740993'],
+    ['a word', 'some'],
+    ['an empty value', ''],
+  ])('reads %s of dropped assets as not known, and keeps the tag', (_what, value) => {
+    const tag = readCompactionTag(`<dez:compaction count="2" last-id="c" dropped="${value}"/>\nText`)
+
+    expect(tag).toMatchObject({ count: 2, lastId: 'c' })
+    expect(tag).not.toHaveProperty('dropped')
   })
 
   it('keeps live sentinels out of the tag, so it stays one line of one section in the editor doc', () => {

@@ -2,13 +2,13 @@ import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { sectionCompactionTag } from '../model/chat/compaction'
-import { notesAssetLines } from '../model/chat/compactionNotes'
+import { notesAssetLines, notesJobLines } from '../model/chat/compactionNotes'
 import { sectionPlainText } from '../model/chat/content'
 import { withRequestCost, type ConversationCost } from '../model/chat/conversationCost'
 import type { ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
 import { findMediaTags, isKeptClip, mediaTagText } from '../model/chat/mediaTags'
 import { SHOWN_PICTURE_FOLDER } from '../model/chat/shownPictures'
-import { idImage, jpegHeader } from '../model/chat/testing'
+import { idImage, invokeBlock, jpegHeader } from '../model/chat/testing'
 import type { Section } from '../model/chat/types'
 import type { ChatUsage } from '../model/providers/chatUsage'
 import type { ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers/streamTypes'
@@ -206,17 +206,31 @@ describe('compactConversation', () => {
   })
 
   it('takes an asset out of the conversation that the answer drops, and keeps as text the ones that it keeps', async () => {
-    // The assets of this compaction are new, so only a second one drops.
-    const first = await compactConversation(compactionInput())
     streamChat = answers(`${NOTES}\n\n## Assets\n@b: drop - An old draft.\n@c: keep - The first film.`)
 
-    const second = await compactConversation(compactionInput({ sections: [...first.sections.slice(0, 3), reply('r', 'More work.')] }))
+    const compaction = await compactConversation(compactionInput())
 
-    expect(second.dropped.map(({ asset }) => asset.id)).toStrictEqual(['b'])
-    expect([...notesAssetLines(notesOf(second)).keys()]).toStrictEqual(['a', 'c'])
-    expect(notesOf(second)).not.toContain(DRAFT)
-    expect(findMediaTags(notesOf(second)).map((tag) => ({ id: tag.id, kept: isKeptClip(tag) }))).toStrictEqual([{ id: 'c', kept: true }])
-    expect(sectionCompactionTag(second.sections[0])?.count).toBe(2)
+    expect(compaction.dropped.map(({ asset }) => asset.id)).toStrictEqual(['b'])
+    expect([...notesAssetLines(notesOf(compaction)).keys()]).toStrictEqual(['a', 'c'])
+    expect(notesOf(compaction)).not.toContain(DRAFT)
+    expect(findMediaTags(notesOf(compaction)).map((tag) => ({ id: tag.id, kept: isKeptClip(tag) }))).toStrictEqual([{ id: 'c', kept: true }])
+    expect(sectionCompactionTag(compaction.sections[0])).toMatchObject({ count: 1, dropped: 1 })
+  })
+
+  it('drops a made asset of an earlier reply that the answer has no line for, but not one that an open job of the reply uses', async () => {
+    const job = { id: 'j-aaaa', tool: 'model_invoke', status: 'running', delivered: false, elapsedMs: 0, state: '', call: { number: 1, label: 'Make @c longer' } } as const
+    const started = invokeBlock(job.id, { prompt: 'Make @c longer', intermediate: false, inputs: [{ id: 'c', kind: 'video' }] })
+    const sections = [...SECTIONS.slice(0, 3), reply('r', `I make the film longer.\n\n${started}`)]
+    streamChat = answers(`${NOTES}\n\n## Assets\n@a: keep - The photo of the user.`)
+
+    const compaction = await compactConversation(compactionInput({ sections, jobs: [job] }))
+
+    expect(instruction().split('\n').find((line) => line.startsWith('@c '))).toMatch(/ \| open job$/)
+    expect(compaction.dropped.map(({ asset }) => asset.id)).toStrictEqual(['b'])
+    expect([...notesAssetLines(notesOf(compaction)).keys()]).toStrictEqual(['a', 'c'])
+    // The next compaction of the reply reads the inputs of the job here:
+    // the block that started it is gone.
+    expect(notesJobLines(notesOf(compaction)).get(job.id)?.inputs).toStrictEqual(['c'])
   })
 
   it('reads no file for the facts of an asset that the notes of the compaction before tell', async () => {

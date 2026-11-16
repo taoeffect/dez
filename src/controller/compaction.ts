@@ -287,7 +287,8 @@ export async function compactConversation(input: CompactionInput): Promise<Compa
   const { facts, imageBytes } = await readAssetFiles(sections, scope.end, found, signal)
   // No request after a stop while a file was read.
   signal.throwIfAborted()
-  const assets = compactionAssets(sections, found, assetPlaces(sections, found), facts)
+  const jobInputs = openJobInputs(sections, scope, input.jobs)
+  const assets = compactionAssets({ sections, scope, found, places: assetPlaces(sections, found), facts, jobInputs })
 
   const instruction = compactionInstruction({ assetTable: assetTableText(assets), jobs: input.jobs, cost: input.cost(), tools: input.tools.length > 0 })
   const { text, usage } = await requestNotes(input, [...input.messages, { role: 'user', content: instruction }])
@@ -299,8 +300,7 @@ export async function compactConversation(input: CompactionInput): Promise<Compa
     console.error('The answer to a compaction request holds no notes.')
     throw new ExplainedError(NO_COMPACTION_NOTES_TEXT)
   }
-  const replyText = scope.reply === null ? '' : sectionPlainText(sections[scope.reply])
-  const choices = assetDecisions(assets, answer, { jobInputs: openJobInputs(replyText, input.jobs), keptTexts: keptUserTexts(sections, scope) })
+  const choices = assetDecisions(assets, answer, { keptTexts: keptUserTexts(sections, scope) })
 
   // The model of the next request: it reads the pictures of the result.
   const reader = input.readerModel ?? model
@@ -320,6 +320,7 @@ export async function compactConversation(input: CompactionInput): Promise<Compa
       choices,
       answer,
       jobs: input.jobs,
+      jobInputs,
       cost: input.cost(),
       clipPictures,
       sendImages,

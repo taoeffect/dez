@@ -76,6 +76,9 @@ export interface CompactedSectionsInput {
   answer: CompactionAnswer
   /** The jobs of the reply that runs. */
   jobs: readonly JobInfo[]
+  /** The inputs of the open jobs of `jobs` (`openJobInputs`): the notes
+   *  keep them for the next compaction of the same reply. */
+  jobInputs: ReadonlyMap<string, readonly string[]>
   /** The cost of the conversation with the compaction request. */
   cost: ConversationCost | undefined
   /** The saved picture of each clip that the model wants to see, by the
@@ -171,6 +174,7 @@ export function compactedSections(input: CompactedSectionsInput): CompactedSecti
   const oldTag = sections.length > 0 ? sectionCompactionTag(sections[0]) : null
   const lastId = highestConversationMediaId(sections.map(sectionPlainText))
   const staying = choices.filter((choice) => choice.decision !== 'drop').sort((a, b) => compareMediaIds(a.asset.asset.id, b.asset.asset.id))
+  const dropped = choices.filter((choice) => choice.decision === 'drop').map((choice) => choice.asset)
   const choiceById = new Map(choices.map((choice) => [choice.asset.asset.id, choice]))
   // An image of `U0` or `U1`: the message sends it, so a `show` adds
   // nothing for it. A clip of these messages still needs its picture.
@@ -198,7 +202,7 @@ export function compactedSections(input: CompactedSectionsInput): CompactedSecti
       const found = asset.asset
       const keptMark = !shown.has(found.id)
       const text = asset.fromUser ? null : found.kind === 'image' ? imageReferenceTextWithKeptMark(found.reference, keptMark) : mediaTagTextWithKeptMark(found.tag, keptMark)
-      return { id: found.id, kind: asset.kind, facts: asset.facts, origin: asset.origin, sentence, text }
+      return { id: found.id, kind: asset.kind, facts: asset.facts, origin: asset.origin, sentence, byReply: asset.byReply, text }
     })
     const pictures = staying.flatMap(({ asset }) => {
       const picture = shown.has(asset.asset.id) ? clipPictures.get(asset.asset.id) : undefined
@@ -211,12 +215,13 @@ export function compactedSections(input: CompactedSectionsInput): CompactedSecti
       assets,
       unnamed,
       jobs: input.jobs,
+      jobInputs: input.jobInputs,
       cost: input.cost,
     })
     const result: Section[] = [{
       id: noteId,
       role: 'agent',
-      content: [textNode(`${compactionTagText({ count: (oldTag?.count ?? 0) + 1, lastId, pictures })}\n${notes}`)],
+      content: [textNode(`${compactionTagText({ count: (oldTag?.count ?? 0) + 1, lastId, dropped: dropped.length, pictures })}\n${notes}`)],
       model: cloneModelRef(model),
     }]
     if (first !== null && scope.first !== null) result.push(withKeptMarks(first, scope.first, asText))
@@ -280,7 +285,7 @@ export function compactedSections(input: CompactedSectionsInput): CompactedSecti
       ...(reply === null ? [] : [{ id: reply.id, role: 'agent' as const, content: [textNode('')], ...modelRefField(reply.model) }]),
       ...sections.slice(scope.end),
     ],
-    dropped: choices.filter((choice) => choice.decision === 'drop').map((choice) => choice.asset),
+    dropped,
     pictures: built.pictures,
   }
 }

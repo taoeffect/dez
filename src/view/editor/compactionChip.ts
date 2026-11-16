@@ -30,12 +30,17 @@ import {
 // builders (toolCalls.ts). It has no text in the doc. Its panel shows what
 // the compaction keeps out of view: the kept images and clips of the
 // conversation (hiddenAssets.ts), and the pictures that the model was shown
-// (the `pictures` of the tag).
+// (the `pictures` of the tag). Its counts also tell how many assets the
+// compaction took out of the conversation (the `dropped` of the tag).
 
 /** What the compaction chip of a state shows. */
 export interface CompactionChipData {
   /** The `count` of the compaction tag. */
   count: number
+  /** The `dropped` of the compaction tag: how many assets the compaction
+   *  took out; null when the tag does not tell it (a tag of an older
+   *  Dez). */
+  dropped: number | null
   /** The kept assets of the conversation, in doc order. */
   assets: readonly PanelAsset[]
   /** The pictures of the compaction tag. */
@@ -54,6 +59,7 @@ export function compactionChipData(state: EditorState): CompactionChipData | nul
   const firstSeparator = kept.length === 0 ? -1 : state.doc.toString().indexOf(SECTION_SEP)
   return {
     count: tag.count,
+    dropped: tag.dropped ?? null,
     assets: kept.map((asset) => panelAsset(asset, firstSeparator < 0 || asset.from < firstSeparator ? 'agent' : 'user')),
     pictures: tag.pictures,
   }
@@ -74,13 +80,15 @@ function compressIcon(): SVGSVGElement {
 }
 
 /** Draws the counts at the end of `chip`: the kept assets and the
- *  pictures, each one only when it is not zero. A chip with a panel gets
- *  an accessible name that holds them, as screen readers skip the
- *  triangle. */
+ *  pictures, each one only when it is not zero, and between them the
+ *  dropped assets, whenever the tag tells their count (also 0). A chip
+ *  with a panel gets an accessible name that holds them, as screen readers
+ *  skip the triangle. */
 function renderCounts(chip: HTMLElement, data: CompactionChipData): void {
   for (const count of chip.querySelectorAll(`.${COUNT_CLASS}`)) count.remove()
   const counts = [
     ...(data.assets.length > 0 ? [countOf(data.assets.length, 'kept asset')] : []),
+    ...(data.dropped === null ? [] : [`${data.dropped} dropped`]),
     ...(data.pictures.length > 0 ? [countOf(data.pictures.length, 'picture')] : []),
   ]
   chip.append(...counts.map((text) => span(COUNT_CLASS, text)))

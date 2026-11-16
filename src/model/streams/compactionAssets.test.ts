@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { CARRIED_USER_ASSETS_LABEL } from '../chat/compaction'
-import { compactionNotesText } from '../chat/compactionNotes'
+import { compactionNotesText, type CompactionNotes } from '../chat/compactionNotes'
 import { IMAGE_MADE_BY_KEY, IMAGE_TOOL_KEY, imageMarkdown } from '../chat/images'
 import { mediaTagText } from '../chat/mediaTags'
 import { COMPACTION_TAG, FOX_ORIGIN, HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, idImage, invokeBlock } from '../chat/testing'
@@ -21,19 +21,21 @@ import { MAX_ASSET_SENTENCE_LENGTH, type AnswerAsset, type AssetDecision, type C
 import { assetsOf, reply, user } from './testing'
 
 // The notes of a compaction that kept the image `a` of the user and the
-// image `b` that a job made.
-const NOTES = compactionNotesText({
+// image `b` that a job of an earlier reply made.
+const NOTES_DATA: CompactionNotes = {
   summary: 'A fox for the user.',
   requirements: '',
   nextSteps: '',
   assets: [
-    { id: 'a', kind: 'image', facts: 'JPEG, 800x600, 120 KB', origin: 'from the user', sentence: 'The reference photo.', text: null },
-    { id: 'b', kind: 'image', facts: 'PNG, 1024x768, 1.2 MB', origin: FOX_ORIGIN, sentence: 'The fox frame of scene 1.', text: idImage(HIDDEN_IMAGE_PATH, 'b', true) },
+    { id: 'a', kind: 'image', facts: 'JPEG, 800x600, 120 KB', origin: 'from the user', sentence: 'The reference photo.', byReply: false, text: null },
+    { id: 'b', kind: 'image', facts: 'PNG, 1024x768, 1.2 MB', origin: FOX_ORIGIN, sentence: 'The fox frame of scene 1.', byReply: false, text: idImage(HIDDEN_IMAGE_PATH, 'b', true) },
   ],
   unnamed: [],
   jobs: [],
+  jobInputs: new Map(),
   cost: undefined,
-})
+}
+const NOTES = compactionNotesText(NOTES_DATA)
 const COMPACTION = reply('n', `${COMPACTION_TAG}\n${NOTES}`)
 const CARRIED = user('u+', `${CARRIED_USER_ASSETS_LABEL}\n${idImage(RED, 'a', true)}`)
 
@@ -91,8 +93,8 @@ describe('compactionScope', () => {
 describe('carriedAssetLines', () => {
   it('gives the asset lines of the notes of the compaction section by id', () => {
     expect(carriedAssetLines(COMPACTED)).toStrictEqual(new Map([
-      ['a', { id: 'a', kind: 'image', facts: 'JPEG, 800x600, 120 KB', origin: 'from the user', sentence: 'The reference photo.' }],
-      ['b', { id: 'b', kind: 'image', facts: 'PNG, 1024x768, 1.2 MB', origin: FOX_ORIGIN, sentence: 'The fox frame of scene 1.' }],
+      ['a', { id: 'a', kind: 'image', facts: 'JPEG, 800x600, 120 KB', origin: 'from the user', sentence: 'The reference photo.', byReply: false }],
+      ['b', { id: 'b', kind: 'image', facts: 'PNG, 1024x768, 1.2 MB', origin: FOX_ORIGIN, sentence: 'The fox frame of scene 1.', byReply: false }],
     ]))
   })
 
@@ -122,12 +124,26 @@ describe('compactionAssets', () => {
     })
   })
 
-  it('counts every asset as new in a conversation with no compaction', () => {
-    expect(byId(assetsOf(PLAIN, FACTS), 'isNew')).toStrictEqual({ a: true, b: true, c: true, d: true, e: true })
+  it('counts an asset as made by the reply only when its text is in the section of the reply that runs', () => {
+    expect(byId(assetsOf(PLAIN, FACTS, { replySectionId: 'r' }), 'byReply')).toStrictEqual({ a: false, b: false, c: true, d: true, e: true })
+    expect(byId(assetsOf([...PLAIN, user('u2', 'Now make them jump.'), reply('r2', '')], FACTS, { replySectionId: 'r2' }), 'byReply'))
+      .toStrictEqual({ a: false, b: false, c: false, d: false, e: false })
   })
 
-  it('counts an asset as earlier only when the notes of the compaction before have its line', () => {
-    expect(byId(assetsOf(COMPACTED, FACTS), 'isNew')).toStrictEqual({ a: false, b: false, e: true, c: true, d: true })
+  // A compaction in the reply moved the text of its assets into the notes.
+  it('counts an asset of the notes as made by the reply when its line tells it and that reply still runs', () => {
+    const notes = compactionNotesText({ ...NOTES_DATA, assets: NOTES_DATA.assets.map((asset) => ({ ...asset, byReply: asset.id === 'b' })) })
+    const sections = [reply('n', `${COMPACTION_TAG}\n${notes}`), ...COMPACTED.slice(1)]
+    const later = [...sections, user('u3', 'Now make it jump.'), reply('r2', '')]
+
+    expect(byId(assetsOf(sections, FACTS, { replySectionId: 'r' }), 'byReply')).toStrictEqual({ a: false, b: true, e: false, c: true, d: true })
+    expect(byId(assetsOf(later, FACTS, { replySectionId: 'r2' }), 'byReply')).toStrictEqual({ a: false, b: false, e: false, c: false, d: false })
+  })
+
+  it('counts an asset as an input of a job when an open job of the reply takes it', () => {
+    const jobInputs = new Map([['j-aaaa', ['a']], ['j-bbbb', ['e', 'a']]])
+
+    expect(byId(assetsOf(PLAIN, FACTS, { jobInputs }), 'jobInput')).toStrictEqual({ a: true, b: false, c: false, d: false, e: true })
   })
 
   it('takes the facts of the files with no column mark, but the facts and the sentence of a notes line over them', () => {
@@ -154,19 +170,19 @@ describe('compactionAssets', () => {
 })
 
 describe('assetTableText', () => {
-  it('gives one row for each asset: its id, its kind, and whether it is from the user, intermediate, and new', () => {
-    const assets = assetsOf(COMPACTED, FACTS)
+  it('gives one row for each asset: its id, its kind, and whether it is from the user, intermediate, of this reply, and an input of an open job', () => {
+    const assets = assetsOf(COMPACTED, FACTS, { replySectionId: 'r', jobInputs: new Map([['j-bbbb', ['b']]]) })
     const [, ...rows] = assetTableText(assets).split('\n')
-    // The id, the kind, and the three columns after the facts and the origin.
+    // The id, the kind, and the four columns after the facts and the origin.
     const marks = new Map(rows.map((row) => row.split(' | ')).map((cells) => [cells[0], [cells[1], ...cells.slice(4)]]))
 
     expect(rows).toHaveLength(assets.length)
     expect(marks).toStrictEqual(new Map([
-      ['@a', ['image', 'user', '-', 'earlier']],
-      ['@b', ['image', 'made', '-', 'earlier']],
-      ['@c', ['image', 'made', 'intermediate', 'new']],
-      ['@d', ['audio clip', 'made', 'intermediate', 'new']],
-      ['@e', ['image', 'user', '-', 'new']],
+      ['@a', ['image', 'user', '-', '-', '-']],
+      ['@b', ['image', 'made', '-', 'earlier', 'open job']],
+      ['@c', ['image', 'made', 'intermediate', 'this reply', '-']],
+      ['@d', ['audio clip', 'made', 'intermediate', 'this reply', '-']],
+      ['@e', ['image', 'user', '-', '-', '-']],
     ]))
   })
 
@@ -192,13 +208,20 @@ describe('openJobInputs', () => {
     return { id, tool: 'model_invoke', status, delivered, elapsedMs: 1000, state: '', call: { number: 1, label: '' } }
   }
 
-  it('takes the inputs of a job that runs, and of an ended job whose result no jobs_wait gave', () => {
-    expect(openJobInputs(REPLY, [job('j-aaaa', 'running'), job('j-bbbb', 'finished')])).toStrictEqual(new Set(['a', 'b', 'c']))
+  // The inputs of the open jobs of `jobs` when the reply that runs has the
+  // text `replyText`.
+  function inputsOf(replyText: string, jobs: readonly JobInfo[]): Map<string, string[]> {
+    const sections = [user('u1', 'Make the scenes.'), reply('r', replyText)]
+    return openJobInputs(sections, compactionScope(sections, 'r'), jobs)
+  }
+
+  it('takes the inputs of a job that runs, and of an ended job whose result no jobs_wait gave, by job', () => {
+    expect(inputsOf(REPLY, [job('j-aaaa', 'running'), job('j-bbbb', 'finished')])).toStrictEqual(new Map([['j-aaaa', ['a', 'b']], ['j-bbbb', ['c']]]))
   })
 
   it('takes no input of a job whose result jobs_wait gave, of a stopped job, or of a job that the list does not hold', () => {
-    expect(openJobInputs(REPLY, [job('j-aaaa', 'running'), job('j-bbbb', 'finished', true), job('j-cccc', 'stopped')])).toStrictEqual(new Set(['a', 'b']))
-    expect(openJobInputs(REPLY, [])).toStrictEqual(new Set())
+    expect(inputsOf(REPLY, [job('j-aaaa', 'running'), job('j-bbbb', 'finished', true), job('j-cccc', 'stopped')])).toStrictEqual(new Map([['j-aaaa', ['a', 'b']]]))
+    expect(inputsOf(REPLY, [])).toStrictEqual(new Map())
   })
 
   // `join_clips` takes ids with no `@`, so only the start result, which
@@ -208,7 +231,19 @@ describe('openJobInputs', () => {
     const result = `${jobStartedText('j-aaaa', 1)}\n${videoInputsText(joinClipsCall(parameters, CONVERSATION).inputs)}`
     const join = toolBlockText({ id: 'call_1', name: 'video', status: 'success', arguments: { command: 'join_clips', parameters: JSON.stringify(parameters) }, result })
 
-    expect(openJobInputs(join, [job('j-aaaa', 'running')])).toStrictEqual(new Set(['c', 'd']))
+    expect(inputsOf(join, [job('j-aaaa', 'running')])).toStrictEqual(new Map([['j-aaaa', ['c', 'd']]]))
+  })
+
+  // A compaction in the reply removed the blocks of the jobs that started
+  // before it, so the job lines of its notes tell their inputs.
+  it('takes the inputs that the notes tell while the reply that ran at their compaction still runs', () => {
+    const notes = compactionNotesText({ ...NOTES_DATA, jobs: [job('j-aaaa', 'running')], jobInputs: new Map([['j-aaaa', ['a', 'b']]]) })
+    const sections = [reply('n', `${COMPACTION_TAG}\n${notes}`), user('u1', 'Make the scenes.'), reply('r', invokeBlock('j-bbbb', { number: 2, intermediate: false, inputs: images('c') }))]
+    const later = [...sections, user('u2', 'Now make them jump.'), reply('r2', 'Jumping.')]
+    const jobs = [job('j-aaaa', 'running'), job('j-bbbb', 'running')]
+
+    expect(openJobInputs(sections, compactionScope(sections, 'r'), jobs)).toStrictEqual(new Map([['j-aaaa', ['a', 'b']], ['j-bbbb', ['c']]]))
+    expect(openJobInputs(later, compactionScope(later, 'r2'), jobs)).toStrictEqual(new Map())
   })
 })
 
@@ -233,7 +268,7 @@ describe('keptUserTexts', () => {
 describe('assetDecisions', () => {
   type Guards = Parameters<typeof assetDecisions>[2]
 
-  const ASSETS = assetsOf(COMPACTED, FACTS)
+  const ASSETS = assetsOf(COMPACTED, FACTS, { replySectionId: 'r' })
   // The asset `id` of COMPACTED.
   const assetOf = (id: string): CompactionAsset => {
     const found = ASSETS.find((asset) => asset.asset.id === id)
@@ -242,8 +277,9 @@ describe('assetDecisions', () => {
   }
   const USER = assetOf('a')
   const EARLIER = assetOf('b')
-  const NEW = assetOf('c')
-  const NO_GUARDS: Guards = { jobInputs: new Set(), keptTexts: [] }
+  const OWN = assetOf('c')
+  const OTHER = assetOf('d')
+  const NO_GUARDS: Guards = { keptTexts: [] }
 
   function answer(assets: AnswerAsset[], notes: Partial<CompactionAnswer> = {}): CompactionAnswer {
     return { summary: 'The fox runs.', requirements: '', nextSteps: '', assets, ...notes }
@@ -254,29 +290,51 @@ describe('assetDecisions', () => {
     return assetDecisions([asset], answer([{ id: asset.asset.id, decision: given, sentence: '' }], notes), guards)[0].decision
   }
 
+  // The decision for `asset` when the answer has a line only for OTHER.
+  function unnamed(asset: CompactionAsset, guards = NO_GUARDS, notes: Partial<CompactionAnswer> = {}): AssetDecision {
+    return assetDecisions([asset, OTHER], answer([{ id: OTHER.asset.id, decision: 'keep', sentence: '' }], notes), guards)[0].decision
+  }
+
   // The sentence of the notes for `asset` when the answer gives it `given`.
   function sentence(asset: CompactionAsset, given: string): string {
     return assetDecisions([asset], answer([{ id: asset.asset.id, decision: 'keep', sentence: given }]), NO_GUARDS)[0].sentence
   }
 
-  it('keeps an asset that the answer does not name, with its sentence of the compaction before, after every named one', () => {
-    expect(assetDecisions([EARLIER], answer([]), NO_GUARDS)).toStrictEqual([{ asset: EARLIER, decision: 'keep', sentence: 'The fox frame of scene 1.', rank: Infinity }])
+  it('keeps every asset when no line of the answer is for one of them, with its sentence of the compaction before, after every named one', () => {
+    const kept = [{ asset: EARLIER, decision: 'keep', sentence: 'The fox frame of scene 1.', rank: Infinity }]
+
+    expect(assetDecisions([EARLIER], answer([]), NO_GUARDS)).toStrictEqual(kept)
+    expect(assetDecisions([EARLIER], answer([{ id: 'z', decision: 'drop', sentence: '' }]), NO_GUARDS)).toStrictEqual(kept)
   })
 
-  it('follows the answer for an earlier made asset that nothing holds', () => {
+  it('drops a made asset of an earlier reply that the answer has no line for, and keeps one of the reply that runs', () => {
+    const choices = assetDecisions([USER, EARLIER, OWN, OTHER], answer([{ id: 'd', decision: 'keep', sentence: '' }]), NO_GUARDS)
+
+    expect(choices.map((choice) => [choice.asset.asset.id, choice.decision])).toStrictEqual([['a', 'keep'], ['b', 'drop'], ['c', 'keep'], ['d', 'keep']])
+  })
+
+  it('drops an asset of an earlier reply at the first compaction of a conversation too', () => {
+    const sections = [user('u1', 'Make a fox.'), reply('r1', idImage(HIDDEN_IMAGE_PATH, 'a')), user('u2', 'Now a hare.'), reply('r', idImage(HIDDEN_IMAGE_PATH, 'b'))]
+    const assets = assetsOf(sections, new Map(), { replySectionId: 'r' })
+
+    expect(assetDecisions(assets, answer([{ id: 'b', decision: 'keep', sentence: '' }]), NO_GUARDS).map((choice) => choice.decision)).toStrictEqual(['drop', 'keep'])
+  })
+
+  it('follows the answer for a made asset that nothing holds, also a drop of an asset of the reply that runs', () => {
     expect((['show', 'keep', 'drop'] as const).map((given) => decision(EARLIER, given))).toStrictEqual(['show', 'keep', 'drop'])
+    expect((['show', 'keep', 'drop'] as const).map((given) => decision(OWN, given))).toStrictEqual(['show', 'keep', 'drop'])
   })
 
   it.each<[string, CompactionAsset, Guards, Partial<CompactionAnswer>]>([
     ['an asset of the user', USER, NO_GUARDS, {}],
-    ['an asset that came after the compaction before', NEW, NO_GUARDS, {}],
-    ['an input of an open job', EARLIER, { jobInputs: new Set(['b']), keptTexts: [] }, {}],
+    ['an input of an open job', { ...EARLIER, jobInput: true }, NO_GUARDS, {}],
     ['an asset that the summary names', EARLIER, NO_GUARDS, { summary: 'The fox of @b runs.' }],
     ['an asset that the requirements name', EARLIER, NO_GUARDS, { requirements: 'Keep the fur of @b.' }],
     ['an asset that the next steps name', EARLIER, NO_GUARDS, { nextSteps: 'Animate @b.' }],
-    ['an asset that a kept message of the user names', EARLIER, { jobInputs: new Set(), keptTexts: ['Make it run like @b.'] }, {}],
-  ])('keeps %s that the answer drops, and shows it when the answer shows it', (_name, asset, guards, notes) => {
+    ['an asset that a kept message of the user names', EARLIER, { keptTexts: ['Make it run like @b.'] }, {}],
+  ])('keeps %s that the answer drops or has no line for, and shows it when the answer shows it', (_name, asset, guards, notes) => {
     expect(decision(asset, 'drop', guards, notes)).toBe('keep')
+    expect(unnamed(asset, guards, notes)).toBe('keep')
     expect(decision(asset, 'show', guards, notes)).toBe('show')
   })
 
@@ -286,27 +344,27 @@ describe('assetDecisions', () => {
   })
 
   it('puts a sentence on one line', () => {
-    expect(sentence(NEW, 'The fox runs.\nThen it swims.')).toBe('The fox runs. Then it swims.')
+    expect(sentence(OWN, 'The fox runs.\nThen it swims.')).toBe('The fox runs. Then it swims.')
   })
 
   it('cuts a sentence over the limit at its end, with … as its last char', () => {
     const full = 'a'.repeat(MAX_ASSET_SENTENCE_LENGTH)
-    const cut = sentence(NEW, `${full}z`)
+    const cut = sentence(OWN, `${full}z`)
 
-    expect(sentence(NEW, full)).toBe(full)
+    expect(sentence(OWN, full)).toBe(full)
     expect(cut.length).toBeLessThanOrEqual(MAX_ASSET_SENTENCE_LENGTH)
     expect(cut).toMatch(/^a+…$/)
   })
 
   it('cuts a sentence between two characters, never inside one', () => {
-    const cut = sentence(NEW, `${'a'.repeat(MAX_ASSET_SENTENCE_LENGTH - 2)}😀${'b'.repeat(10)}`)
+    const cut = sentence(OWN, `${'a'.repeat(MAX_ASSET_SENTENCE_LENGTH - 2)}😀${'b'.repeat(10)}`)
 
     expect(cut.endsWith('😀…')).toBe(true)
   })
 
   it('ranks each asset by the place of its line in the answer, in the order of the assets', () => {
     const lines: AnswerAsset[] = [{ id: 'c', decision: 'show', sentence: '' }, { id: 'a', decision: 'show', sentence: '' }]
-    const choices = assetDecisions([USER, EARLIER, NEW], answer(lines), NO_GUARDS)
+    const choices = assetDecisions([USER, EARLIER, OWN], answer(lines), NO_GUARDS)
 
     expect(choices.map((choice) => [choice.asset.asset.id, choice.rank])).toStrictEqual([['a', 1], ['b', Infinity], ['c', 0]])
   })

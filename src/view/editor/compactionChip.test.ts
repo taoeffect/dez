@@ -10,11 +10,11 @@ import { createState, keptClip, keptImage } from './testing'
 const PICTURES: ShownPicture[] = [{ file: 'f1.png', label: 'asset_view: the sheet of the video clip @d.', width: 64, height: 48, bytes: 300 }]
 const SHOWN = '![/home/u/.config/dez/assets/images/shown.png](id=s)'
 
-/** A compacted conversation with the tag `count` and `pictures`, the
- *  compaction section `notes`, a kept message of the user, and the section
- *  of the carried assets of the user (`carried`). */
-function compactedState(notes: string[], carried: string[], { count = 1, pictures = [] as ShownPicture[] } = {}): EditorState {
-  const tag = compactionTagText({ count, lastId: 'z', pictures })
+/** A compacted conversation with the tag `count`, `dropped`, and
+ *  `pictures`, the compaction section `notes`, a kept message of the user,
+ *  and the section of the carried assets of the user (`carried`). */
+function compactedState(notes: string[], carried: string[], { count = 1, dropped, pictures = [] }: { count?: number, dropped?: number, pictures?: ShownPicture[] } = {}): EditorState {
+  const tag = compactionTagText({ count, lastId: 'z', dropped, pictures })
   return createState([[tag, ...notes].join('\n'), 'Ask.', [CARRIED_USER_ASSETS_LABEL, ...carried].join('\n')], ['agent', 'user', 'user'])
 }
 
@@ -49,7 +49,13 @@ describe('compactionChipData', () => {
   })
 
   it('gives a chip with nothing in it for a compaction that kept nothing', () => {
-    expect(compactionChipData(compactedState(['Notes.', '', SHOWN], [SHOWN]))).toStrictEqual({ count: 1, assets: [], pictures: [] })
+    expect(compactionChipData(compactedState(['Notes.', '', SHOWN], [SHOWN]))).toStrictEqual({ count: 1, dropped: null, assets: [], pictures: [] })
+  })
+
+  it('gives the count of the dropped assets of the tag, also 0, and null for a tag that does not tell it', () => {
+    const dropped = (count?: number) => compactionChipData(compactedState(['Notes.'], [], { dropped: count }))?.dropped
+
+    expect([dropped(5), dropped(0), dropped()]).toStrictEqual([5, 0, null])
   })
 
   it('gives null for a doc with no compaction tag, and after a change takes the tag away', () => {

@@ -1,7 +1,7 @@
 import { oneLineCut } from '../../utils/oneLineCut'
 import type { AssetPlace } from '../chat/assetOrigins'
 import { compactionMessageEnd, isCarriedUserAssets, sectionCompactionTag } from '../chat/compaction'
-import { notesAssetLines, notesCellText, type NotesAssetLine } from '../chat/compactionNotes'
+import { notesAssetLines, notesCellText, notesJobLines, type NotesAssetLine } from '../chat/compactionNotes'
 import { sectionIsEmpty, sectionPlainText } from '../chat/content'
 import { findAssetMentions } from '../chat/imageMentions'
 import { IMAGE_HIDDEN_KEY } from '../chat/images'
@@ -17,10 +17,12 @@ import { messageMentionIds } from './messages'
 // The images and the clips of a conversation at a compaction: what Dez
 // tells the model about each one in the compaction request (the asset
 // table), and what the compaction does with each one. The model decides
-// (`show`, `keep`, `drop`; compactionRequest.ts), but Dez holds the rules
+// (`show`, `keep`, `drop`; compactionRequest.ts) what the work at hand
+// needs, and the rest leaves the conversation. Dez holds only the rules
 // that keep work that is still in use: a fault of the model, or of the
-// reader of its answer, must never remove an asset that a later step
-// needs. All pure; controller/compaction.ts reads the files.
+// reader of its answer, must never remove an asset of the user, or an
+// asset that a later step needs. All pure; controller/compaction.ts reads
+// the files.
 
 /** Which sections a compaction replaces, as indexes of the sections of
  *  the conversation. */
@@ -86,9 +88,13 @@ export interface CompactionAsset {
   fromUser: boolean
   /** A call made it as a part of its work (the `hidden` mark). */
   intermediate: boolean
-  /** The notes of the compaction before this one have no line for it: it
-   *  came after that compaction, or the conversation has none yet. */
-  isNew: boolean
+  /** The reply that runs made it: its text is in the section of the reply,
+   *  or the notes of a compaction earlier in this same reply tell it
+   *  (`NotesAssetLine.byReply`, `replyRanAtCompaction`). */
+  byReply: boolean
+  /** An open job of the reply that runs takes it as an input
+   *  (`openJobInputs`). */
+  jobInput: boolean
   /** What the model wrote about it at the compaction before this one;
    *  blank for none. */
   sentence: string
@@ -100,20 +106,39 @@ function isIntermediate(asset: FoundAsset): boolean {
     : asset.tag.other.some((attribute) => attribute.name === MEDIA_HIDDEN_ATTRIBUTE)
 }
 
-/** The assets of a compaction of `sections`: `found` are the assets of the
- *  sections that it replaces (`conversationAssets`, with a section before
- *  `CompactionScope.end`), and `places` their places (`assetPlaces`), in
- *  the same order. `facts` holds the facts text of the file of each asset
- *  by its id (`imageFactsText`, `clipFactsText`, or the text of a file
- *  that Dez could not read). An asset with a line in the notes of the
- *  compaction before needs none: its line tells its facts. */
-export function compactionAssets(
-  sections: readonly Section[],
-  found: readonly FoundAsset[],
-  places: readonly AssetPlace[],
-  facts: ReadonlyMap<string, string>,
-): CompactionAsset[] {
+// Whether the reply that runs (`scope.reply`) is the one that ran at the
+// compaction of the notes of `sections`: no message of the user came after
+// that compaction, so the reply's section is the first agent section with
+// text after the compaction message. With no text in it yet, the reply
+// counts as a new one: the next compaction of a reply comes only after a
+// round, whose text is in its section.
+function replyRanAtCompaction(sections: readonly Section[], scope: CompactionScope): boolean {
+  return scope.reply !== null && sectionCompactionTag(sections[0]) !== null && compactionMessageEnd(sections) === scope.reply
+}
+
+/** What `compactionAssets` needs. */
+export interface CompactionAssetsInput {
+  sections: readonly Section[]
+  scope: CompactionScope
+  /** The assets of the sections that the compaction replaces
+   *  (`conversationAssets`, with a section before `scope.end`). */
+  found: readonly FoundAsset[]
+  /** The places of `found` (`assetPlaces`), in the same order. */
+  places: readonly AssetPlace[]
+  /** The facts text of the file of each asset by its id
+   *  (`imageFactsText`, `clipFactsText`, or the text of a file that Dez
+   *  could not read). An asset with a line in the notes of the compaction
+   *  before needs none: its line tells its facts. */
+  facts: ReadonlyMap<string, string>
+  /** The inputs of the open jobs of the reply (`openJobInputs`). */
+  jobInputs: ReadonlyMap<string, readonly string[]>
+}
+
+/** The assets of a compaction, in the order of `input.found`. */
+export function compactionAssets({ sections, scope, found, places, facts, jobInputs }: CompactionAssetsInput): CompactionAsset[] {
   const carried = carriedAssetLines(sections)
+  const sameReply = replyRanAtCompaction(sections, scope)
+  const inputs = new Set([...jobInputs.values()].flat())
   return found.map((asset, index): CompactionAsset => {
     const line = carried.get(asset.id)
     return {
@@ -123,7 +148,8 @@ export function compactionAssets(
       origin: notesCellText(assetOriginText(places[index].origin)),
       fromUser: sections[asset.section].role === 'user',
       intermediate: isIntermediate(asset),
-      isNew: line === undefined,
+      byReply: asset.section === scope.reply || (sameReply && line?.byReply === true),
+      jobInput: inputs.has(asset.id),
       sentence: line?.sentence ?? '',
     }
   })
@@ -133,38 +159,59 @@ export function compactionAssets(
  *  names the columns, then one line for each asset. */
 export function assetTableText(assets: readonly CompactionAsset[]): string {
   if (assets.length === 0) return 'The conversation has no image and no clip, so your answer needs no line under the Assets heading.'
-  const head = 'The images and the clips of the conversation (id | kind | facts | who made it | from the user or made | intermediate or - | new or earlier). '
+  const head = 'The images and the clips of the conversation (id | kind | facts | who made it | from the user or made | intermediate or - | this reply or earlier | open job or -). '
     + 'intermediate: a call made it as a part of its work, and the user sees it only in the panel of that call. '
-    + 'new: it came after the last compaction; earlier: the notes of the last compaction have its line.'
-  const rows = assets.map(({ asset, kind, facts, origin, fromUser, intermediate, isNew }) => [
-    `@${asset.id}`, ASSET_NAMES[kind], facts, origin, fromUser ? 'user' : 'made', intermediate ? 'intermediate' : '-', isNew ? 'new' : 'earlier',
+    + 'this reply: the reply that you work on now made it; earlier: an earlier reply made it; - for an asset of the user. '
+    + 'open job: a job that still runs, or whose result you did not get yet, takes it as an input.'
+  const rows = assets.map(({ asset, kind, facts, origin, fromUser, intermediate, byReply, jobInput }) => [
+    `@${asset.id}`,
+    ASSET_NAMES[kind],
+    facts,
+    origin,
+    fromUser ? 'user' : 'made',
+    intermediate ? 'intermediate' : '-',
+    fromUser ? '-' : byReply ? 'this reply' : 'earlier',
+    jobInput ? 'open job' : '-',
   ].join(' | '))
   return [head, ...rows].join('\n')
 }
 
-/** The ids of the assets that the open jobs of a reply take as inputs: the
- *  `@id` mentions in the results of the tool blocks of `replyText` (the
- *  text of the reply's section) that started a job of `jobs` that still
- *  runs, or whose result no `jobs_wait` gave yet.
+/** The inputs of the open jobs of the reply that runs (`scope.reply`): a
+ *  job of `jobs` that still runs, or whose result no `jobs_wait` gave yet.
+ *  By job id, the ids of its inputs in order.
  *
- *  The result, not the arguments of the call: the start result names each
- *  input of the job as `@id` (`invocationInputsText`, `videoInputsText`),
- *  also when the call named it with a bare id (`assetIdWords` takes `c`
- *  and `@c`, as in the `clips` of `video join_clips`).
+ *  The tool blocks of the reply's section tell them: the `@id` mentions in
+ *  the result of the block that started the job. The result, not the
+ *  arguments of the call: the start result names each input of the job as
+ *  `@id` (`invocationInputsText`, `videoInputsText`), also when the call
+ *  named it with a bare id (`assetIdWords` takes `c` and `@c`, as in the
+ *  `clips` of `video join_clips`).
  *
- *  After a compaction in the reply, the blocks of its jobs are gone. So a
- *  second compaction of the same reply does not know the inputs of a job
- *  that still runs. The job has its own copies of them. */
-export function openJobInputs(replyText: string, jobs: readonly JobInfo[]): Set<string> {
+ *  A compaction earlier in the same reply removed the blocks of the jobs
+ *  that started before it, so its notes tell their inputs
+ *  (`NotesJobLine.inputs`). Job ids are unique only in one reply, so the
+ *  notes count only when this reply ran at their compaction. */
+export function openJobInputs(sections: readonly Section[], scope: CompactionScope, jobs: readonly JobInfo[]): Map<string, string[]> {
   const open = new Set(jobs.filter((job) => job.status === 'running' || (!job.delivered && job.status !== 'stopped')).map((job) => job.id))
-  const ids = new Set<string>()
-  if (open.size === 0) return ids
-  for (const block of findToolBlocks(replyText)) {
-    const started = startedJob(block.result)
-    if (started === null || !open.has(started.id)) continue
-    for (const mention of findAssetMentions(block.result)) ids.add(mention.id)
+  const inputs = new Map<string, string[]>()
+  const add = (jobId: string, ids: Iterable<string>) => {
+    const list = inputs.get(jobId) ?? []
+    for (const id of ids) {
+      if (!list.includes(id)) list.push(id)
+    }
+    inputs.set(jobId, list)
   }
-  return ids
+  if (open.size === 0 || scope.reply === null) return inputs
+  if (replyRanAtCompaction(sections, scope)) {
+    for (const line of notesJobLines(sectionPlainText(sections[0])).values()) {
+      if (open.has(line.id)) add(line.id, line.inputs)
+    }
+  }
+  for (const block of findToolBlocks(sectionPlainText(sections[scope.reply]))) {
+    const started = startedJob(block.result)
+    if (started !== null && open.has(started.id)) add(started.id, findAssetMentions(block.result).map((mention) => mention.id))
+  }
+  return inputs
 }
 
 /** What a compaction does with one asset. */
@@ -198,34 +245,39 @@ export function clipPictureLabel(shows: string): string {
 }
 
 /** What the compaction does with each asset of `assets`, in their order,
- *  from the answer of the model.
+ *  from the answer of the model. The model judges what the work at hand
+ *  needs; Dez guards only against its faults.
  *
- *  - An asset that the answer does not name is kept, with the sentence of
- *    the compaction before.
+ *  - An asset that the answer has no line for is kept when the reply that
+ *    runs made it (the model forgot its line), and dropped when an earlier
+ *    reply made it. When no line of the answer names an asset of `assets`,
+ *    each one is kept: a broken answer must not remove work, and a
+ *    compaction cannot be undone.
  *  - A `drop` reads as `keep` for an asset that work can still need: an
- *    asset of the user; an asset that came after the compaction before
- *    (so the first compaction drops nothing, and a new asset lives for one
- *    more compaction at least); an input of an open job (`openJobInputs`);
- *    and an asset that a text names which stays, the notes of the answer
- *    or a text of the user (`keptUserTexts`). */
+ *    asset of the user; an input of an open job (`jobInput`); and an asset
+ *    that a text names which stays, the notes of the answer or a text of
+ *    the user (`keptUserTexts`).
+ *  - Any other line counts as it is: the model can drop an asset of the
+ *    reply that runs. */
 export function assetDecisions(
   assets: readonly CompactionAsset[],
   answer: CompactionAnswer,
-  { jobInputs, keptTexts }: { jobInputs: ReadonlySet<string>, keptTexts: readonly string[] },
+  { keptTexts }: { keptTexts: readonly string[] },
 ): AssetChoice[] {
   const named = new Set(findAssetMentions([answer.summary, answer.requirements, answer.nextSteps].join('\n')).map((mention) => mention.id))
   for (const text of keptTexts) {
     for (const id of messageMentionIds(text)) named.add(id)
   }
   const lines = new Map(answer.assets.map((line, index) => [line.id, { line, index }]))
+  const answered = assets.some(({ asset }) => lines.has(asset.id))
   return assets.map((asset): AssetChoice => {
     const { id } = asset.asset
     const found = lines.get(id)
-    const mustStay = asset.fromUser || asset.isNew || jobInputs.has(id) || named.has(id)
-    const decision = found?.line.decision ?? 'keep'
+    const guarded = asset.fromUser || asset.jobInput || named.has(id)
+    const decision = found?.line.decision ?? (!answered || guarded || asset.byReply ? 'keep' : 'drop')
     return {
       asset,
-      decision: decision === 'drop' && mustStay ? 'keep' : decision,
+      decision: decision === 'drop' && guarded ? 'keep' : decision,
       sentence: oneLineCut(found !== undefined && found.line.sentence !== '' ? found.line.sentence : asset.sentence, MAX_ASSET_SENTENCE_LENGTH),
       rank: found?.index ?? Infinity,
     }

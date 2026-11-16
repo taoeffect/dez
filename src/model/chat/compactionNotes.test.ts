@@ -23,13 +23,14 @@ const ASSETS = '## Assets of the conversation'
 const JOBS = '## Jobs of the reply'
 const COST = '## Cost'
 
-const PHOTO: NotesAsset = { id: 'a', kind: 'image', facts: 'PNG, 800x600, 120 KB', origin: 'from the user', sentence: 'The reference photo.', text: null }
+const PHOTO: NotesAsset = { id: 'a', kind: 'image', facts: 'PNG, 800x600, 120 KB', origin: 'from the user', sentence: 'The reference photo.', byReply: false, text: null }
 const FRAME: NotesAsset = {
   id: 'c',
   kind: 'image',
   facts: 'PNG, 1024x768, 1.2 MB',
   origin: 'made by the model_invoke job 1 of its reply: "A cat"',
   sentence: 'The cat frame of scene 1.',
+  byReply: true,
   text: hiddenImage('j-ab12', 'c'),
 }
 const THEME: NotesAsset = {
@@ -38,6 +39,7 @@ const THEME: NotesAsset = {
   facts: 'WAV, 8 s, 1.4 MB',
   origin: 'made by the model_invoke job 2 of its reply: "A theme"',
   sentence: 'The theme of the film.',
+  byReply: false,
   text: hiddenClip('j-cd34', 'd'),
 }
 
@@ -49,6 +51,7 @@ function notes(fields: Partial<CompactionNotes>): CompactionNotes {
     assets: [],
     unnamed: [],
     jobs: [],
+    jobInputs: new Map(),
     cost: undefined,
     ...fields,
   }
@@ -66,9 +69,10 @@ function lineData({ text: _text, ...line }: NotesAsset): NotesAssetLine {
   return line
 }
 
-// The line that the notes must give back for `job`.
-function jobLine(job: JobInfo): NotesJobLine {
-  return { id: job.id, number: job.call.number, tool: job.tool, status: job.status, result: jobResultState(job), label: job.call.label }
+// The line that the notes must give back for `job`, whose inputs are
+// `inputs`.
+function jobLine(job: JobInfo, inputs: string[] = []): NotesJobLine {
+  return { id: job.id, number: job.call.number, tool: job.tool, status: job.status, result: jobResultState(job), label: job.call.label, inputs }
 }
 
 // The text of the part `heading` of the notes `text`, up to the next part.
@@ -137,7 +141,7 @@ describe('compactionNotesText', () => {
   it('leaves out the blank sentence of an asset with its column mark, and reads the sentence back as blank', () => {
     const text = compactionNotesText(notes({ assets: [{ ...PHOTO, sentence: ' \n ' }, FRAME] }))
 
-    expect(text.split('\n').find((line) => line.startsWith('@a | '))).toMatch(/ \| from the user$/)
+    expect(text.split('\n').find((line) => line.startsWith('@a | '))).toMatch(/ \| from the user \| -$/)
     expect(notesAssetLines(text).get(PHOTO.id)).toStrictEqual({ ...lineData(PHOTO), sentence: '' })
   })
 
@@ -174,24 +178,26 @@ describe('notesAssetLines', () => {
   it('skips a line with only two cells after the id', () => {
     const text = `${ASSETS}\n\n${FIRST_FORM_ASSETS_HEAD}\n\n@b | image | PNG, 10x10, 1 KB\n\n@c | image | PNG, 10x10, 1 KB | from the user`
 
-    expect(notesAssetLines(text)).toStrictEqual(new Map([['c', { id: 'c', kind: 'image', facts: 'PNG, 10x10, 1 KB', origin: 'from the user', sentence: '' }]]))
+    expect(notesAssetLines(text)).toStrictEqual(new Map([['c', { id: 'c', kind: 'image', facts: 'PNG, 10x10, 1 KB', origin: 'from the user', sentence: '', byReply: false }]]))
   })
 
   it('tells a kind and an origin that every asset has in a line each, and gives every column back', () => {
     const assets = [PHOTO, { ...PHOTO, id: 'b', facts: 'JPEG, 640x480, 80 KB', sentence: 'The sky.' }, { ...PHOTO, id: 'e', facts: 'PNG, 10x10, 1 KB', sentence: '' }]
     const text = compactionNotesText(notes({ assets }))
 
+    // The reply column stays in the rows: its line in the head would make
+    // the text of three rows longer.
     expect(partText(text, ASSETS)).toBe([
       'Every id still names its image or clip. An image or a clip that these notes do not show as a picture is kept as its line only. '
-      + 'Each line: @id | facts | what it is, how it was made, and what a later step needs it for.',
+      + 'Each line: @id | facts | made by the reply that ran at this compaction | what it is, how it was made, and what a later step needs it for.',
       'Each asset is an image.',
       'Each asset is from the user.',
       '',
-      '@a | PNG, 800x600, 120 KB | The reference photo.',
+      '@a | PNG, 800x600, 120 KB | - | The reference photo.',
       '',
-      '@b | JPEG, 640x480, 80 KB | The sky.',
+      '@b | JPEG, 640x480, 80 KB | - | The sky.',
       '',
-      '@e | PNG, 10x10, 1 KB',
+      '@e | PNG, 10x10, 1 KB | -',
     ].join('\n'))
     expect([...notesAssetLines(text).values()]).toStrictEqual(assets.map(lineData))
   })
@@ -217,14 +223,28 @@ describe('notesJobLines', () => {
     const text = compactionNotesText(notes({ jobs }))
 
     expect([...notesJobLines(text).values()]).toStrictEqual([
-      { id: 'j-aaaa', number: 1, tool: 'model_invoke', status: 'running', result: '-', label: 'A fox | a dog' },
-      { id: 'j-bbbb', number: 2, tool: 'model_invoke', status: 'finished', result: 'ready', label: '' },
-      { id: 'j-cccc', number: 3, tool: 'video', status: 'failed', result: 'given', label: 'join_clips @c @d' },
-      { id: 'j-dddd', number: 4, tool: 'model_invoke', status: 'timed out', result: 'ready', label: 'Rain at night' },
-      { id: 'j-eeee', number: 12, tool: 'model_invoke', status: 'stopped', result: '-', label: 'Show <dez:audio id="a" type="audio/wav"/>' },
+      { id: 'j-aaaa', number: 1, tool: 'model_invoke', status: 'running', result: '-', label: 'A fox | a dog', inputs: [] },
+      { id: 'j-bbbb', number: 2, tool: 'model_invoke', status: 'finished', result: 'ready', label: '', inputs: [] },
+      { id: 'j-cccc', number: 3, tool: 'video', status: 'failed', result: 'given', label: 'join_clips @c @d', inputs: [] },
+      { id: 'j-dddd', number: 4, tool: 'model_invoke', status: 'timed out', result: 'ready', label: 'Rain at night', inputs: [] },
+      { id: 'j-eeee', number: 12, tool: 'model_invoke', status: 'stopped', result: '-', label: 'Show <dez:audio id="a" type="audio/wav"/>', inputs: [] },
     ])
     // A blank label is written as `-`.
     expect(text.split('\n').find((line) => line.startsWith('j-bbbb '))).toMatch(/ \| -$/)
+  })
+
+  it.each<[string, Map<string, string[]>]>([
+    ['inputs that differ, and a job with none', new Map([['j-aaaa', ['a', 'b']], ['j-bbbb', ['c']]])],
+    ['one input that every job has', new Map([['j-aaaa', ['a']], ['j-bbbb', ['a']], ['j-cccc', ['a']]])],
+  ])('reads back the inputs of each open job, for %s', (_case, jobInputs) => {
+    const jobs = [
+      job({ id: 'j-aaaa', call: { number: 1, label: 'Make @a run to @b' } }),
+      job({ id: 'j-bbbb', status: 'finished', call: { number: 2, label: 'Make @c jump' } }),
+      job({ id: 'j-cccc', call: { number: 3, label: 'Rain' } }),
+    ]
+    const text = compactionNotesText(notes({ jobs, jobInputs }))
+
+    expect([...notesJobLines(text).values()]).toStrictEqual(jobs.map((one) => jobLine(one, jobInputs.get(one.id))))
   })
 
   it('reads only the jobs part of Dez when the summary of the model has a part with the same heading', () => {
@@ -246,6 +266,7 @@ describe('notesJobLines', () => {
       'The jobs of the reply that ran at this compaction, in the order of their starts. Each line: job id | how its call begins.',
       'Each job finished.',
       'A jobs_wait of that reply gave the result of each job.',
+      'No open job had an input.',
       '',
       'Jobs 1 to 28, tool model_invoke:',
       ...sheets.map(({ id, call }) => `${id} | ${call.label}`),
@@ -253,7 +274,7 @@ describe('notesJobLines', () => {
       'Job 29, tool video:',
       'j-film | join_clips @a @b',
     ].join('\n'))
-    expect([...notesJobLines(text).values()]).toStrictEqual(jobs.map(jobLine))
+    expect([...notesJobLines(text).values()]).toStrictEqual(jobs.map((one) => jobLine(one)))
   })
 
   it('keeps the numbers in the rows when they have a gap, and the tool when it changes at every row', () => {
@@ -262,7 +283,7 @@ describe('notesJobLines', () => {
     const text = compactionNotesText(notes({ jobs }))
 
     expect(partText(text, JOBS).split('\n').slice(-4)).toStrictEqual(jobs.map(({ id, tool, call }) => `${id} | ${call.number} | ${tool} | ${call.label}`))
-    expect([...notesJobLines(text).values()]).toStrictEqual(jobs.map(jobLine))
+    expect([...notesJobLines(text).values()]).toStrictEqual(jobs.map((one) => jobLine(one)))
   })
 
   it('explains only the results that the rows hold', () => {
@@ -287,11 +308,11 @@ describe('notesJobLines', () => {
     ]],
     ['jobs that start at 7', [7, 8, 9].map((number) => job({ id: `j-${number}`, tool: 'audio', call: { number, label: 'A song' } }))],
   ])('gives every column of each job back, for %s', (_case, jobs) => {
-    expect([...notesJobLines(compactionNotesText(notes({ jobs }))).values()]).toStrictEqual(jobs.map(jobLine))
+    expect([...notesJobLines(compactionNotesText(notes({ jobs }))).values()]).toStrictEqual(jobs.map((one) => jobLine(one)))
   })
 })
 
-describe('the notes of an older Dez, with all the columns in each line', () => {
+describe('the notes of an older Dez', () => {
   const text = [
     ASSETS,
     '',
@@ -310,14 +331,47 @@ describe('the notes of an older Dez, with all the columns in each line', () => {
     'j-aaaa | 2 | model_invoke | finished | given | A red fox',
   ].join('\n')
 
-  it('reads each asset line and each job line', () => {
+  it('reads each asset line and each job line of the form with all the columns in each line', () => {
     expect([...notesAssetLines(text).values()]).toStrictEqual([
-      { id: 'b', kind: 'image', facts: 'PNG, 1024x768, 1.2 MB', origin: FOX_ORIGIN, sentence: 'The fox | scene 1.' },
-      { id: 'a', kind: 'image', facts: 'PNG, 800x600, 120 KB', origin: 'from the user', sentence: '' },
+      { id: 'b', kind: 'image', facts: 'PNG, 1024x768, 1.2 MB', origin: FOX_ORIGIN, sentence: 'The fox | scene 1.', byReply: false },
+      { id: 'a', kind: 'image', facts: 'PNG, 800x600, 120 KB', origin: 'from the user', sentence: '', byReply: false },
     ])
     expect([...notesJobLines(text).values()]).toStrictEqual([
-      { id: 'j-zzzz', number: 1, tool: 'video', status: 'running', result: '-', label: '' },
-      { id: 'j-aaaa', number: 2, tool: 'model_invoke', status: 'finished', result: 'given', label: 'A red fox' },
+      { id: 'j-zzzz', number: 1, tool: 'video', status: 'running', result: '-', label: '', inputs: [] },
+      { id: 'j-aaaa', number: 2, tool: 'model_invoke', status: 'finished', result: 'given', label: 'A red fox', inputs: [] },
+    ])
+  })
+
+  // The form of the Dez before the reply column and the inputs column: a
+  // value that every row has is in a line of its own.
+  const SHARED_FORM = [
+    ASSETS,
+    '',
+    'Every id still names its image or clip. An image or a clip that these notes do not show as a picture is kept as its line only. '
+    + 'Each line: @id | facts | what it is, how it was made, and what a later step needs it for.',
+    'Each asset is an image.',
+    'Each asset is from the user.',
+    '',
+    '@a | PNG, 800x600, 120 KB | The reference photo.',
+    '',
+    JOBS,
+    '',
+    'The jobs of the reply that ran at this compaction, in the order of their starts. Each line: job id | how its call begins.',
+    'Each job finished.',
+    'A jobs_wait of that reply gave the result of each job.',
+    '',
+    'Jobs 1 to 2, tool model_invoke:',
+    'j-aaaa | A red fox',
+    'j-bbbb | A hare',
+  ].join('\n')
+
+  it('reads each asset line and each job line of the form with shared values', () => {
+    expect([...notesAssetLines(SHARED_FORM).values()]).toStrictEqual([
+      { id: 'a', kind: 'image', facts: 'PNG, 800x600, 120 KB', origin: 'from the user', sentence: 'The reference photo.', byReply: false },
+    ])
+    expect([...notesJobLines(SHARED_FORM).values()]).toStrictEqual([
+      { id: 'j-aaaa', number: 1, tool: 'model_invoke', status: 'finished', result: 'given', label: 'A red fox', inputs: [] },
+      { id: 'j-bbbb', number: 2, tool: 'model_invoke', status: 'finished', result: 'given', label: 'A hare', inputs: [] },
     ])
   })
 })

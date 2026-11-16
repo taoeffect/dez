@@ -12,7 +12,7 @@ import type { ContentNode, Role, Section } from './types'
 // the compaction kept come right after it. This module is the one place
 // that writes and recognizes the tag.
 //
-//   <dez:compaction count="2" last-id="k" pictures="[…]"/>
+//   <dez:compaction count="2" last-id="k" dropped="5" pictures="[…]"/>
 //
 // - The tag is one whole line, and it counts only as the first line of the
 //   first section of a conversation, at the start of the section's first
@@ -26,6 +26,10 @@ import type { ContentNode, Role, Section } from './types'
 //     name their ids (`@c`), so the id sequence counts this id too
 //     (mediaIds.ts): the id of a removed asset is never given to a new one.
 //     Absent when the conversation gave no id.
+//   - `dropped`: how many images and clips this compaction took out of the
+//     conversation (0 or more), for the compaction chip. Absent in a tag of
+//     an older Dez, which did not count them. A value that is no count
+//     reads as absent: the tag stays valid.
 //   - `pictures`: the pictures that the compaction kept for the model (a
 //     frame sheet of a clip, a wave), as their saved copies, in the form of
 //     the `pictures` attribute of a tool block (shownPictures.ts). Absent
@@ -54,6 +58,9 @@ export interface CompactionTagData {
   /** The highest id that the conversation ever gave to an image or a clip;
    *  null when it gave none. */
   lastId: string | null
+  /** How many images and clips this compaction took out of the
+   *  conversation. Absent when not known: a tag of an older Dez. */
+  dropped?: number
   /** The pictures that the compaction kept for the model, in the order in
    *  which a request sends them. */
   pictures: ShownPicture[]
@@ -132,6 +139,7 @@ const TAG_START = `<${COMPACTION_TAG_NAME}`
 // line break. The group holds the attributes.
 const TAG_LINE = new RegExp(String.raw`^${TAG_START}(${MARKER_ATTRIBUTES})\/>$`)
 const COUNT = /^[1-9]\d*$/
+const DROPPED = /^(?:0|[1-9]\d*)$/
 const ASSET_ID = new RegExp(`^${IMAGE_ID_SOURCE}$`)
 
 /** The line of `text` that starts at offset 0, with no line break. */
@@ -142,9 +150,10 @@ export function firstLine(text: string): string {
 
 // The attributes of the tag that is the whole of `line`; null when the
 // line is not a valid tag. An empty `last-id` reads as one that is not
-// there. The `pictures` are not checked: a value that is not the writer's
-// form reads as no pictures (`readShownPictures`).
-function tagAttributes(line: string): { count: number, lastId: string | null, pictures: string | undefined } | null {
+// there. The `dropped` and the `pictures` are not checked: a value that is
+// not the writer's form reads as not known (`readCompactionTag`) and as no
+// pictures (`readShownPictures`).
+function tagAttributes(line: string): { count: number, lastId: string | null, dropped: string | undefined, pictures: string | undefined } | null {
   // Most first lines are no tag: the cheap check comes first, as the editor
   // asks at each of its transactions (`firstSectionRole`).
   if (!line.startsWith(TAG_START)) return null
@@ -156,14 +165,15 @@ function tagAttributes(line: string): { count: number, lastId: string | null, pi
   const count = Number(countText)
   const lastId = attributes.get('last-id') || null
   if (!Number.isSafeInteger(count) || (lastId !== null && !ASSET_ID.test(lastId))) return null
-  return { count, lastId, pictures: attributes.get('pictures') }
+  return { count, lastId, dropped: attributes.get('dropped'), pictures: attributes.get('pictures') }
 }
 
 /** The text of a tag: one line, with live sentinels removed from every
  *  value (a label of a picture is text that a user can edit). */
-export function compactionTagText({ count, lastId, pictures }: CompactionTagData): string {
+export function compactionTagText({ count, lastId, dropped, pictures }: CompactionTagData): string {
   const attributes: Array<readonly [string, string]> = [['count', String(count)]]
   if (lastId !== null) attributes.push(['last-id', lastId])
+  if (dropped !== undefined) attributes.push(['dropped', String(dropped)])
   if (pictures.length > 0) attributes.push(['pictures', shownPicturesText(pictures)])
   return `${TAG_START}${attributes.map(([name, value]) => ` ${name}="${escapeMarkerAttribute(stripLiveSentinels(value))}"`).join('')}/>`
 }
@@ -175,9 +185,11 @@ export function readCompactionTag(text: string): CompactionTag | null {
   const line = firstLine(text)
   const attributes = tagAttributes(line)
   if (!attributes) return null
+  const droppedNumber = attributes.dropped !== undefined && DROPPED.test(attributes.dropped) ? Number(attributes.dropped) : NaN
   return {
     count: attributes.count,
     lastId: attributes.lastId,
+    ...(Number.isSafeInteger(droppedNumber) ? { dropped: droppedNumber } : {}),
     pictures: attributes.pictures === undefined ? [] : readShownPictures(attributes.pictures),
     to: line.length,
     textFrom: Math.min(line.length + 1, text.length),

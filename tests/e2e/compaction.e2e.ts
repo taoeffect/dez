@@ -58,6 +58,9 @@ import { hiddenAssetNotes, hiddenPart, pressToolChip, toolChips, toolPanelPictur
 // - A compaction request that fails two times ends the reply with an
 //   error toast, and a stop ends it with none. Both keep the
 //   conversation.
+// - The first compaction already drops a made image of an earlier reply
+//   that the answer does not keep, but never an image of the user. The
+//   compaction chip tells how many assets the compaction dropped.
 // - Dez deletes the file of a dropped image that the user saw only in the
 //   panel of a call, and the picture copies of the tag before. The file
 //   of any other dropped image stays.
@@ -780,9 +783,8 @@ describe('a compacted conversation', () => {
     expect(setup.mock.hasWaitingRequest()).toBe(false)
   })
 
-  // Only a second compaction can drop an image: the first one keeps each
-  // image that is new. So the conversation file holds a first compaction,
-  // whose notes have a line for each of its two made images.
+  // The conversation file holds a first compaction, whose notes have a
+  // line for each of its two made images, and whose tag has a picture.
   it('deletes the file of a dropped intermediate image and the old picture copy, and keeps the file of a dropped image that the user saw', async () => {
     const { home } = setup.app
     const imagesDir = appFilePath(home, 'assets', 'generated', 'images')
@@ -799,11 +801,12 @@ describe('a compacted conversation', () => {
       requirements: '',
       nextSteps: '',
       assets: [
-        { id: 'a', kind: 'image', facts: 'PNG, 36x28', origin: 'made by the model_invoke job 1 of its reply: "A fox draft"', sentence: 'A draft of the fox.', text: `![${draft}](id=a|tool=model_invoke|hidden=j-aaaa)` },
-        { id: 'b', kind: 'image', facts: 'PNG, 30x20', origin: 'made by the model_invoke job 2 of its reply: "A fox"', sentence: 'The fox.', text: `![${seen}](id=b|tool=model_invoke)` },
+        { id: 'a', kind: 'image', facts: 'PNG, 36x28', origin: 'made by the model_invoke job 1 of its reply: "A fox draft"', sentence: 'A draft of the fox.', byReply: false, text: `![${draft}](id=a|tool=model_invoke|hidden=j-aaaa)` },
+        { id: 'b', kind: 'image', facts: 'PNG, 30x20', origin: 'made by the model_invoke job 2 of its reply: "A fox"', sentence: 'The fox.', byReply: false, text: `![${seen}](id=b|tool=model_invoke)` },
       ],
       unnamed: [],
       jobs: [],
+      jobInputs: new Map(),
       cost: undefined,
     })
     const thread = await openCompacted('compaction-file-delete', [
@@ -821,12 +824,56 @@ describe('a compacted conversation', () => {
 
     // The second compaction left both images out of the conversation.
     const [newNotes] = await threadSections(browser)
-    expect(readCompactionTag(newNotes.text)).toMatchObject({ count: 2, pictures: [] })
+    expect(readCompactionTag(newNotes.text)).toMatchObject({ count: 2, dropped: 2, pictures: [] })
     expect([draft, seen].filter((file) => newNotes.text.includes(file))).toStrictEqual([])
+    expect(await compactionChipCounts()).toStrictEqual(['2 dropped'])
     await waitForThread(browser, [newNotes, thread[1], { role: 'user', text: 'Now a wolf.' }, { role: 'agent', text: replyText('the wolf') }, { role: 'user', text: '' }])
 
     await waitForValue(browser, 'files of the two dropped images', async () => (await filesIn(imagesDir)).filter((name) => name === names.draft || name === names.seen), [names.seen])
     await waitForValue(browser, 'old picture copy', async () => (await filesIn(viewsDir)).includes(names.sheet), false)
+  })
+
+  // The answer keeps one made image of an earlier reply and drops the
+  // image of the user. The other made image has no line, so it leaves the
+  // conversation. The image of the user stays, in the section of the
+  // carried assets.
+  it('drops at the first compaction a made image of an earlier reply that the answer does not keep, and never an image of the user', async () => {
+    const { home } = setup.app
+    const madeDir = appFilePath(home, 'assets', 'generated', 'images')
+    const names = { kept: 'compaction-first-kept.png', gone: 'compaction-first-gone.png' }
+    const keptFile = await writeTestFile(path.join(madeDir, names.kept), KEPT_MADE_PNG)
+    const goneFile = await writeTestFile(path.join(madeDir, names.gone), MADE_PNG)
+    const photo = await writeTestFile(appFilePath(home, 'assets', 'images', 'compaction-first-photo.png'), CARRIED_PNG)
+    const thread = await openSeeded('compaction-first-drop', [
+      textSection('user', 'Make a fox.'),
+      textSection('agent', `Two foxes.\n![${keptFile}](id=a)\n![${goneFile}](id=b)`),
+      textSection('user', `Use this photo too:\n![${photo}](id=c)`),
+      textSection('agent', 'Done.'),
+      textSection('user', ''),
+    ], PROVIDER, { context: { tokens: LARGE_TOKENS, estimate: 0 } })
+
+    await submit(browser, 'Now a wolf.')
+    const compaction = await takeRequest(setup, CHAT_PATH)
+    sendChatText(compaction.reply, '## Summary\nThe foxes are done, and a wolf is next.\n\n## Assets\n@a: keep - The fox that the wolf meets.\n@c: drop - The photo is not needed.\n')
+    const request = await takeRequest(setup, CHAT_PATH)
+    await sendChatReply(request.reply, 'the wolf')
+
+    const [notes, first, carried] = await threadSections(browser)
+    expect(readCompactionTag(notes.text)).toMatchObject({ count: 1, dropped: 1 })
+    expect([keptFile, goneFile].filter((file) => notes.text.includes(file))).toStrictEqual([keptFile])
+    expect(first).toStrictEqual(thread[0])
+    expect(carried.text.split('\n')).toStrictEqual([CARRIED_USER_ASSETS_LABEL, `![${photo}](id=c|kept=compaction)`])
+    // The reply scrolled the editor to its end, and the editor draws no
+    // chip far out of view.
+    await browser.execute(() => {
+      const scroller = document.querySelector('.cm-scroller')
+      if (scroller) scroller.scrollTop = 0
+    })
+    await waitForValue(browser, 'compaction chip', () => toolChips(browser), [compactionChipView(['2 kept assets', '1 dropped'], false)])
+    expect(await compactionChipCounts()).toStrictEqual(['2 kept assets', '1 dropped'])
+    // The user saw the dropped image in the reply, so its file stays until
+    // Delete Unused Files.
+    expect((await filesIn(madeDir)).filter((name) => name === names.kept || name === names.gone)).toStrictEqual([names.gone, names.kept])
   })
 
   it('shows the compaction section and sends the same first message after a relaunch', async () => {

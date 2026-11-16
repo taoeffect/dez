@@ -150,16 +150,18 @@ Every requirement, preference, and correction of the user, in the user's own wor
 What is in work now and what comes next, step by step, so that you can go on at once. Name the jobs that still run by their job ids, and tell what to do with their results.
 
 ## Assets
+Keep only what the work at hand needs. Dez keeps every asset of the user by itself. Of the assets that a model or a tool made, keep only an asset that you still need to finish the request that you work on now (an input of something that you still have to make or finish, and a result of this reply that the user must get), and an asset that a step of your notes uses. Drop every other made asset: the inputs of work that is finished, the versions that a newer one replaced, and the assets of earlier replies that the work at hand does not use.
+
 One line for each image and clip of the table below, in this form:
 @id: show|keep|drop - one sentence
 
 - show: you must see the asset itself to go on. Dez puts it into the notes as a picture (an image as it is, a video clip as a frame sheet, an audio clip as its wave). Pictures are costly, and Dez shows only as many as fit, in the order of your lines: put the most important one first.
-- keep: a later step can need the asset, but you do not need to see it now. Dez keeps one line about it in the notes, and its id still names it${tools ? ', so a call can use it, and `asset_view` shows it to you again' : ''}.
-- drop: no later step needs the asset. Dez takes it out of the conversation, and its id names nothing any more. Drop the intermediate assets of earlier work that no later step needs, and the versions that a newer one replaced and that the user did not ask to keep.
+- keep: the work at hand needs the asset, but you do not need to see it now. Dez keeps one line about it in the notes, and its id still names it${tools ? ', so a call can use it, and `asset_view` shows it to you again' : ''}.
+- drop: the work at hand does not need the asset. Dez takes it out of the conversation, and its id names nothing any more.
 
 The sentence tells what the asset is, how it was made (the model or the tool, and the important parts of the prompt or the command), and what a later step needs it for. You read this sentence again at the next compaction, when the calls that made the asset are gone. At most ${MAX_ASSET_SENTENCE_LENGTH} characters.
 
-Dez keeps an asset that your lines do not name. Dez never drops an asset from the user, an asset that was made since the last compaction, an asset that a job that is still open uses, or an asset that your notes name with @id: for those, \`drop\` reads as \`keep\`.
+Dez drops an asset of an earlier reply that your lines do not name, and keeps an asset of this reply that they do not name. Dez never drops an asset from the user, an asset that an open job uses, or an asset that your notes name with @id: for those, \`drop\` reads as \`keep\`.
 
 ${assetTable}
 

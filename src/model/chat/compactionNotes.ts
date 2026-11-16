@@ -27,18 +27,18 @@ import { escapedModelText, unescapedModelText } from './toolBlocks'
 //   <what the lines are> Each line: @id | kind | facts | who made it | …
 //
 //   ![/…/assets/generated/images/x.png](id=c|tool=model_invoke|made-by=j-ab12)
-//   @c | image | PNG, 1024x768, 1.2 MB | made by the model_invoke job 2 of its reply: "A red fox" | The fox frame of scene 1.
+//   @c | image | PNG, 1024x768, 1.2 MB | made by the model_invoke job 2 of its reply: "A red fox" | this reply | The fox frame of scene 1.
 //
-//   @a | image | PNG, 800x600, 120 KB | from the user | The reference photo.
+//   @a | image | PNG, 800x600, 120 KB | from the user | - | The reference photo.
 //
 //   ## Jobs of the reply
 //
-//   <what the lines are> Each line: job id | how its call begins.
-//   Each job finished.
-//   A jobs_wait of that reply gave the result of each job.
+//   <what the lines are> Each line: job id | inputs of an open job | how its call begins.
+//   Each job was still running at this compaction.
+//   No job has a result.
 //
 //   Jobs 1 to 28, tool model_invoke:
-//   j-ab12 | A red fox in the snow
+//   j-ab12 | @a | A red fox in the snow
 //   …
 //
 //   ## Cost
@@ -52,6 +52,10 @@ import { escapedModelText, unescapedModelText } from './toolBlocks'
 //   asset, and which job is which: `asset_info` reads them
 //   (assetOrigins.ts), and the next compaction copies the origin and the
 //   sentence of an asset from its line.
+// - The next compaction of the same reply (no message of the user came
+//   between the two) also reads which assets that reply made, and the
+//   inputs of its open jobs (streams/compactionAssets.ts): the tool blocks
+//   that told them are gone.
 // - Every image and clip that the compaction kept has one line. An asset
 //   that a model or a tool made has its reference or tag in this section,
 //   alone on the line before its line. An asset of the user has its
@@ -89,6 +93,10 @@ const COST_HEADING = '## Cost'
 const NO_NOTES_ASSETS_TEXT = 'None: these notes keep no image and no clip.'
 const NO_NOTES_JOBS_TEXT = 'None: no job of a reply ran at this compaction.'
 
+// The value of the asset column that marks an asset that the reply that
+// ran at the compaction made (`NotesAssetLine.byReply`); `-` for any other.
+const BY_REPLY = 'this reply'
+
 // The texts of a kind of asset that every asset has, by its name
 // (`ASSET_NAMES`): "Each asset is an image."
 const ASSET_KIND_TEXTS = Object.fromEntries(Object.values(ASSET_NAMES).map((name) => [name, `Each asset is ${/^[aeiou]/.test(name) ? 'an' : 'a'} ${name}.`]))
@@ -103,6 +111,15 @@ const ASSETS_TABLE: NotesTable = {
     { name: 'facts', pattern: '.*', shared: templateStatement('The facts of each asset: ', '.') },
     // The kind statement comes first: an origin is never "an image".
     { name: 'who made it', pattern: '.*', shared: templateStatement('Each asset is ', '.') },
+    {
+      name: 'made by the reply that ran at this compaction',
+      pattern: `${BY_REPLY}|-`,
+      shared: textsStatement({
+        [BY_REPLY]: 'The reply that ran at this compaction made each asset.',
+        '-': 'No asset was made by the reply that ran at this compaction.',
+      }),
+      fallback: '-',
+    },
     { name: 'what it is, how it was made, and what a later step needs it for', pattern: '.*' },
   ],
 }
@@ -137,6 +154,13 @@ const JOBS_TABLE: NotesTable = {
       groups: true,
       legend: (values) => jobResultLegend(' of that reply', values),
     },
+    {
+      name: 'inputs of an open job',
+      pattern: `@${IMAGE_ID_SOURCE}(?: @${IMAGE_ID_SOURCE})*|-`,
+      shared: textsStatement({ '-': 'No open job had an input.' }),
+      legend: () => 'An open job still ran at this compaction, or no jobs_wait had given its result.',
+      fallback: '-',
+    },
     { name: 'how its call begins', pattern: '.*' },
   ],
 }
@@ -152,6 +176,9 @@ export interface NotesAssetLine {
   origin: string
   /** What the model wrote about it; blank for none. */
   sentence: string
+  /** The reply that ran at the compaction made it. False for an asset of
+   *  the user, an asset of an earlier reply, and a line of an older Dez. */
+  byReply: boolean
 }
 
 /** One asset of the notes: its line, and its text. */
@@ -172,6 +199,10 @@ export interface NotesJobLine {
   result: JobResultState
   /** How its call begins; blank for none. */
   label: string
+  /** The ids of the inputs of a job that was open at the compaction (it
+   *  ran, or no `jobs_wait` had given its result), in order. Empty for
+   *  any other job, and for a line of an older Dez. */
+  inputs: string[]
 }
 
 /** What the notes of a compaction hold. */
@@ -187,6 +218,9 @@ export interface CompactionNotes {
   unnamed: readonly string[]
   /** The jobs of the reply that ran at the compaction. */
   jobs: readonly JobInfo[]
+  /** The ids of the inputs of each open job of `jobs`, by job id
+   *  (`openJobInputs`, streams/compactionAssets.ts). */
+  jobInputs: ReadonlyMap<string, readonly string[]>
   /** The cost of the conversation with the compaction request. */
   cost: ConversationCost | undefined
 }
@@ -200,17 +234,18 @@ export function notesCellText(text: string, last = false): string {
   return last ? line : line.replace(/\s*\|\s*/g, ', ')
 }
 
-function assetRow({ id, kind, facts, origin, sentence, text }: NotesAsset): NotesRow {
+function assetRow({ id, kind, facts, origin, sentence, byReply, text }: NotesAsset): NotesRow {
   return {
-    cells: [`@${id}`, ASSET_NAMES[kind], notesCellText(facts), escapedModelText(notesCellText(origin)), escapedModelText(notesCellText(sentence, true))],
+    cells: [`@${id}`, ASSET_NAMES[kind], notesCellText(facts), escapedModelText(notesCellText(origin)), byReply ? BY_REPLY : '-', escapedModelText(notesCellText(sentence, true))],
     before: text,
   }
 }
 
-function jobRow(job: JobInfo): NotesRow {
+function jobRow(job: JobInfo, inputs: readonly string[] = []): NotesRow {
   const label = notesCellText(job.call.label, true)
+  const inputWords = inputs.length > 0 ? inputs.map((id) => `@${id}`).join(' ') : '-'
   return {
-    cells: [job.id, String(job.call.number), notesCellText(job.tool), job.status, jobResultState(job), escapedModelText(label === '' ? '-' : label)],
+    cells: [job.id, String(job.call.number), notesCellText(job.tool), job.status, jobResultState(job), inputWords, escapedModelText(label === '' ? '-' : label)],
     before: null,
   }
 }
@@ -242,7 +277,7 @@ export function compactionNotesText(notes: CompactionNotes): string {
   }
   const assets = notes.assets.map(assetRow)
   add(ASSETS_HEADING, assets.length > 0 || notes.unnamed.length > 0 ? [notesTableText(ASSETS_TABLE, assets), ...notes.unnamed].join('\n\n') : NO_NOTES_ASSETS_TEXT)
-  add(JOBS_HEADING, notes.jobs.length > 0 ? notesTableText(JOBS_TABLE, notes.jobs.map(jobRow)) : NO_NOTES_JOBS_TEXT)
+  add(JOBS_HEADING, notes.jobs.length > 0 ? notesTableText(JOBS_TABLE, notes.jobs.map((job) => jobRow(job, notes.jobInputs.get(job.id)))) : NO_NOTES_JOBS_TEXT)
   add(COST_HEADING, conversationCostText(notes.cost, 'up to this compaction'))
   return parts.join('\n\n')
 }
@@ -263,13 +298,14 @@ const KIND_BY_NAME = new Map(Object.entries(ASSET_NAMES).map(([kind, name]) => [
  *  section), by asset id. Of two lines with one id, the last one counts. */
 export function notesAssetLines(text: string): Map<string, NotesAssetLine> {
   const found = new Map<string, NotesAssetLine>()
-  for (const [id, kind, facts, origin, sentence] of notesTableRows(ASSETS_TABLE, partLines(text, ASSETS_HEADING))) {
+  for (const [id, kind, facts, origin, byReply, sentence] of notesTableRows(ASSETS_TABLE, partLines(text, ASSETS_HEADING))) {
     found.set(id.slice(1), {
       id: id.slice(1),
       kind: KIND_BY_NAME.get(kind) as JobAssetKind,
       facts,
       origin: unescapedModelText(origin),
       sentence: unescapedModelText(sentence),
+      byReply: byReply === BY_REPLY,
     })
   }
   return found
@@ -279,7 +315,7 @@ export function notesAssetLines(text: string): Map<string, NotesAssetLine> {
  *  section), by job id. */
 export function notesJobLines(text: string): Map<string, NotesJobLine> {
   const found = new Map<string, NotesJobLine>()
-  for (const [id, number, tool, status, result, label] of notesTableRows(JOBS_TABLE, partLines(text, JOBS_HEADING))) {
+  for (const [id, number, tool, status, result, inputs, label] of notesTableRows(JOBS_TABLE, partLines(text, JOBS_HEADING))) {
     const call = unescapedModelText(label)
     found.set(id, {
       id,
@@ -288,6 +324,7 @@ export function notesJobLines(text: string): Map<string, NotesJobLine> {
       status: status as JobStatus,
       result: result as JobResultState,
       label: call === '-' ? '' : call,
+      inputs: inputs === '-' ? [] : inputs.split(' ').map((word) => word.slice(1)),
     })
   }
   return found

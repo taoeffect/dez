@@ -3401,17 +3401,18 @@ describe('dez.stream/start compaction', () => {
     expect(sbp('dez.model/streams/isStreaming', tabId)).toBe(false)
   })
 
-  // Only a second compaction can drop an asset: the first one keeps each
-  // asset that is new.
+  // A second compaction: the tag of the compaction before has a picture,
+  // which the new tag does not carry.
   it('gives the files that the compaction left with no text to the delete: a dropped intermediate image, and the pictures of the tag before', async () => {
     const oldPicture = { file: 'old-sheet.jpg', label: 'A frame sheet.', width: 800, height: 200, bytes: 3000 }
     const oldNotes = compactionNotesText({
       summary: 'A fox for the user.',
       requirements: '',
       nextSteps: '',
-      assets: [{ id: 'b', kind: 'image', facts: 'PNG, 1024x768, 1.2 MB', origin: 'made by the model_invoke job 1 of its reply: "A fox"', sentence: 'A draft of the fox.', text: hiddenImage('j-aaaa', 'b') }],
+      assets: [{ id: 'b', kind: 'image', facts: 'PNG, 1024x768, 1.2 MB', origin: 'made by the model_invoke job 1 of its reply: "A fox"', sentence: 'A draft of the fox.', byReply: false, text: hiddenImage('j-aaaa', 'b') }],
       unnamed: [],
       jobs: [],
+      jobInputs: new Map(),
       cost: undefined,
     })
     sbp('dez.model/tabs/replaceSections', activeTab().id, [

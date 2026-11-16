@@ -121,7 +121,7 @@ describe('assetPlaces in a compacted conversation', () => {
   // A compaction section whose notes hold the asset lines `assets` and the
   // job lines `jobs`, with `more` after them.
   function compaction(assets: NotesAsset[], jobs: JobInfo[] = [], more = ''): Section {
-    const notes = compactionNotesText({ summary: 'A fox for the user.', requirements: '', nextSteps: '', assets, unnamed: [], jobs, cost: undefined })
+    const notes = compactionNotesText({ summary: 'A fox for the user.', requirements: '', nextSteps: '', assets, unnamed: [], jobs, jobInputs: new Map(), cost: undefined })
     return section('agent', `${COMPACTION_TAG}\n${notes}${more}`, PAINTER)
   }
 
@@ -132,7 +132,7 @@ describe('assetPlaces in a compacted conversation', () => {
 
   // The kept image `b` that a job made, and its line in the notes.
   const FOX = kept(toolImage('b', 'model_invoke', 'j-aaaa'))
-  const FOX_LINE: NotesAsset = { id: 'b', kind: 'image', facts: 'PNG, 1024x768, 1.2 MB', origin: FOX_ORIGIN, sentence: 'The fox.', text: FOX }
+  const FOX_LINE: NotesAsset = { id: 'b', kind: 'image', facts: 'PNG, 1024x768, 1.2 MB', origin: FOX_ORIGIN, sentence: 'The fox.', byReply: false, text: FOX }
 
   it('gives an asset of the compaction section the origin of its line in the notes, over its tool marks', () => {
     expect(placeOf([compaction([FOX_LINE]), section('user', 'Go on.')], 'b')?.origin).toStrictEqual({ kind: 'carried', text: FOX_ORIGIN })

@@ -1,6 +1,6 @@
 import { assetPlaces } from '../chat/assetOrigins'
 import type { ModelRef, Section } from '../chat/types'
-import { compactionAssets, type CompactionAsset } from './compactionAssets'
+import { compactionAssets, compactionScope, type CompactionAsset } from './compactionAssets'
 import { conversationAssets } from './mediaRequest'
 
 // Shared helpers of the unit tests of this folder: the sections of a tab,
@@ -16,8 +16,15 @@ export const user = (id: string, text: string): Section => ({ id, role: 'user', 
 export const reply = (id: string, text: string): Section => ({ id, role: 'agent', model, content: [{ kind: 'text', text }] })
 
 /** The compaction assets of every image and clip of `sections`, with the
- *  file facts of `facts`, by id. */
-export function assetsOf(sections: readonly Section[], facts: ReadonlyMap<string, string> = new Map()): CompactionAsset[] {
+ *  file facts of `facts`, by id, at a compaction in the reply whose
+ *  section has the id `replySectionId` (none: no section is the reply's),
+ *  with the inputs of the open jobs `jobInputs`. */
+export function assetsOf(
+  sections: readonly Section[],
+  facts: ReadonlyMap<string, string> = new Map(),
+  { replySectionId = '', jobInputs = new Map() }: { replySectionId?: string, jobInputs?: ReadonlyMap<string, readonly string[]> } = {},
+): CompactionAsset[] {
   const found = [...conversationAssets(sections).found.values()]
-  return compactionAssets(sections, found, assetPlaces(sections, found), facts)
+  const scope = compactionScope(sections, replySectionId)
+  return compactionAssets({ sections, scope, found, places: assetPlaces(sections, found), facts, jobInputs })
 }
