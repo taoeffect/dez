@@ -1,6 +1,7 @@
 import sbp from '@sbp/sbp'
 import { StateEffect, StateField, type EditorState, type Extension } from '@codemirror/state'
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view'
+import { createApp, h, shallowRef, type App, type ShallowRef } from 'vue'
 import { jobResultInBlocks, type HiddenAsset, type HiddenAssetOwner } from '../../model/chat/hiddenAssets'
 import type { MediaTagData } from '../../model/chat/mediaTags'
 import { parseModelRefKey } from '../../model/chat/modelRef'
@@ -18,6 +19,7 @@ import { assetIcon } from '../assetIcons'
 import { sectionsField, type SectionModel } from '../thread/cmEditor'
 import { measureLineHeights } from '../thread/editorMeasure'
 import { streamingSectionField } from '../thread/modelChip'
+import AssetList from './AssetList.vue'
 import { eyeIcon, hiddenAssets, hiddenAssetsOfChips, hiddenLineStarts, type AssetPlace } from './hiddenAssets'
 import { createImage } from './images'
 import { agentSectionTexts, chipBlocks, lineBlocks, sectionRolesChanged } from './lineBlocks'
@@ -586,8 +588,7 @@ function assetKey(asset: { kind: 'image', path: string, id: string | null, linke
   return JSON.stringify(asset.kind === 'image' ? ['image', asset.path, asset.id, asset.linked] : [asset.tag.kind, asset.tag.id])
 }
 
-/** The key (`assetKey`, with a count before it, and the role after it for
- *  a clip) of each asset that a panel draws. */
+/** The key (`PanelAssetRow.key`) of each asset that a panel draws. */
 const drawnAssetKeys = new WeakMap<Element, string>()
 
 /** Whether the chip of `owner` hides `asset`. A call that started no job
@@ -596,6 +597,39 @@ function ownedBy(asset: HiddenAsset, owner: HiddenAssetOwner | null): boolean {
   if (owner === null) return false
   if (asset.owner.kind === 'job' && owner.kind === 'job') return asset.owner.jobId === owner.jobId
   return asset.owner.kind === owner.kind
+}
+
+/** One asset of a panel, as a row that a panel draws (`renderAssets`,
+ *  `AssetList.vue`). */
+export interface PanelAssetRow {
+  /** `assetKey`, with a count before it, and the role after it for a
+   *  clip. Unique among the rows of a panel. A drawn row whose key stays
+   *  keeps its element. */
+  key: string
+  asset: PanelAsset
+  /** Makes the element of the asset (`createImage`, `createPlayer`). */
+  create: () => HTMLElement
+}
+
+/** The rows of `assets`, the hidden assets of the chip of `owner`. Each
+ *  asset tells where its text is in the doc now (`AssetPlace`) by its
+ *  owner and its key, as its element is at the place of the chip. */
+function panelAssetRows(view: EditorView, owner: HiddenAssetOwner | null, assets: readonly PanelAsset[]): PanelAssetRow[] {
+  // How many of the assets so far have each key: two references to one
+  // file (a duplicated line) are two rows.
+  const counts = new Map<string, number>()
+  return assets.map((asset) => {
+    const key = assetKey(asset)
+    const count = counts.get(key) ?? 0
+    counts.set(key, count + 1)
+    const place: AssetPlace = () => hiddenAssets(view.state)
+      .filter((hidden) => ownedBy(hidden, owner) && assetKey(hidden.kind === 'image' ? { ...hidden.image, kind: 'image' } : hidden) === key)[count]?.from ?? null
+    return {
+      key: `${count}:${key}${asset.kind === 'clip' ? `:${asset.role}` : ''}`,
+      asset,
+      create: () => asset.kind === 'image' ? createImage(view, asset, place) : createPlayer(view, asset.tag, asset.role, place),
+    }
+  })
 }
 
 /** Draws `assets`, the hidden assets of the chip of `owner`, in `list`,
@@ -607,31 +641,19 @@ function ownedBy(asset: HiddenAsset, owner: HiddenAssetOwner | null): boolean {
  *  stops, and ends its fullscreen. So a Save of a hidden clip, which
  *  changes its tag, keeps its player (`updatePlayer`). A clip whose section
  *  has another role now gets a new player, as the role of a player is the
- *  one of its mount (`MediaWidget.updateDOM` does the same).
- *
- *  Each asset tells where its text is in the doc now (`AssetPlace`) by its
- *  owner and its key, as its element is at the place of the chip. */
-export function renderAssets(view: EditorView, list: HTMLElement, owner: HiddenAssetOwner | null, assets: readonly PanelAsset[]): void {
+ *  one of its mount (`MediaWidget.updateDOM` does the same). */
+function renderAssets(view: EditorView, list: HTMLElement, owner: HiddenAssetOwner | null, assets: readonly PanelAsset[]): void {
   const drawn = new Map<string, HTMLElement>()
   for (const element of list.children) drawn.set(drawnAssetKeys.get(element) ?? '', element as HTMLElement)
-  // How many of the assets so far have each key: two references to one
-  // file (a duplicated line) are two elements.
-  const counts = new Map<string, number>()
-  const next = assets.map((asset) => {
-    const key = assetKey(asset)
-    const count = counts.get(key) ?? 0
-    counts.set(key, count + 1)
-    const drawnKey = `${count}:${key}${asset.kind === 'clip' ? `:${asset.role}` : ''}`
-    const kept = drawn.get(drawnKey)
+  const next = panelAssetRows(view, owner, assets).map((row) => {
+    const kept = drawn.get(row.key)
     if (kept) {
-      drawn.delete(drawnKey)
-      if (asset.kind === 'clip') updatePlayer(kept, asset.tag)
+      drawn.delete(row.key)
+      if (row.asset.kind === 'clip') updatePlayer(kept, row.asset.tag)
       return kept
     }
-    const place: AssetPlace = () => hiddenAssets(view.state)
-      .filter((hidden) => ownedBy(hidden, owner) && assetKey(hidden.kind === 'image' ? { ...hidden.image, kind: 'image' } : hidden) === key)[count]?.from ?? null
-    const element = asset.kind === 'image' ? createImage(view, asset, place) : createPlayer(view, asset.tag, asset.role, place)
-    drawnAssetKeys.set(element, drawnKey)
+    const element = row.create()
+    drawnAssetKeys.set(element, row.key)
     return element
   })
   for (const gone of drawn.values()) {
@@ -643,17 +665,54 @@ export function renderAssets(view: EditorView, list: HTMLElement, owner: HiddenA
   })
 }
 
+interface MountedAssetList {
+  app: App
+  rows: ShallowRef<PanelAssetRow[]>
+}
+
+/** The `AssetList.vue` app that each long list (`renderAssetList`) holds. */
+const mountedAssetLists = new WeakMap<Element, MountedAssetList>()
+
+/** `renderAssets` for a list that can be long (the kept assets of a
+ *  compaction): the list has a scroll box of its own, and only the rows in
+ *  view have an element (`AssetList.vue`). Every player loads its whole
+ *  file and holds a connection to the sound server, which refuses new
+ *  ones past some count; a player that it refused shows the card of a
+ *  clip that cannot play. */
+function renderAssetList(view: EditorView, list: HTMLElement, owner: HiddenAssetOwner | null, assets: readonly PanelAsset[]): void {
+  const rows = panelAssetRows(view, owner, assets)
+  const mounted = mountedAssetLists.get(list)
+  if (mounted) {
+    mounted.rows.value = rows
+    return
+  }
+  const shownRows = shallowRef(rows)
+  const app = createApp({ render: () => h(AssetList, { view, rows: shownRows.value }) })
+  app.mount(list)
+  mountedAssetLists.set(list, { app, rows: shownRows })
+}
+
 /** Takes down the players of the hidden clips that `panel` draws, before
- *  it leaves the document: only `destroyPlayer` frees a mounted player. */
+ *  it leaves the document: only `destroyPlayer` frees a mounted player. A
+ *  long list takes down its rows with its app. */
 export function destroyPanelPlayers(panel: Element): void {
-  for (const asset of panel.querySelectorAll<HTMLElement>(`.${ASSETS_CLASS} > *`)) destroyPlayer(asset)
+  for (const list of panel.querySelectorAll(`.${ASSETS_CLASS}`)) {
+    const mounted = mountedAssetLists.get(list)
+    if (mounted) {
+      mounted.app.unmount()
+      mountedAssetLists.delete(list)
+    } else {
+      for (const asset of list.children) destroyPlayer(asset as HTMLElement)
+    }
+  }
 }
 
 /** Draws the hidden assets of the chip of `owner` as the first part of its
- *  open `panel`: `heading`, then the assets (`renderAssets`). With no
- *  asset, `text` shows in their place, in a field that has the heading as
- *  its name. The part is gone when it has neither. */
-export function renderHiddenPart(view: EditorView, panel: HTMLElement, owner: HiddenAssetOwner | null, heading: string, assets: readonly PanelAsset[], text = ''): void {
+ *  open `panel`: `heading`, then the assets (`renderAssets`, or
+ *  `renderAssetList` when `long`). With no asset, `text` shows in their
+ *  place, in a field that has the heading as its name. The part is gone
+ *  when it has neither. */
+export function renderHiddenPart(view: EditorView, panel: HTMLElement, owner: HiddenAssetOwner | null, heading: string, assets: readonly PanelAsset[], { text = '', long = false } = {}): void {
   let part = panel.querySelector<HTMLElement>(`.${HIDDEN_PART_CLASS}`)
   if (assets.length === 0 && text === '') {
     if (part) destroyPanelPlayers(part)
@@ -666,7 +725,8 @@ export function renderHiddenPart(view: EditorView, panel: HTMLElement, owner: Hi
     panel.prepend(part)
   }
   const [headingElement, list] = part.children
-  renderAssets(view, list as HTMLElement, owner, assets)
+  if (long) renderAssetList(view, list as HTMLElement, owner, assets)
+  else renderAssets(view, list as HTMLElement, owner, assets)
   part.querySelector(`.${RESULT_CLASS}`)?.remove()
   headingElement.textContent = heading
   if (assets.length === 0) part.appendChild(createField(text, heading, ''))
@@ -679,7 +739,7 @@ function renderIntermediatePart(view: EditorView, panel: HTMLElement, call: Rend
   const jobId = call.intermediate?.jobId ?? null
   const assets = call.intermediate?.assets ?? []
   const heading = assets.length > 1 ? 'Intermediate assets' : assets.length === 1 ? 'Intermediate asset' : 'Intermediate text'
-  renderHiddenPart(view, panel, jobId === null ? null : { kind: 'job', jobId }, heading, assets, call.intermediate?.text ?? '')
+  renderHiddenPart(view, panel, jobId === null ? null : { kind: 'job', jobId }, heading, assets, { text: call.intermediate?.text ?? '' })
 }
 
 /** The part of an open panel that shows the copies of the pictures that a

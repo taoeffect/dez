@@ -157,7 +157,9 @@ export async function intermediateParts (browser: E2EBrowser): Promise<Array<Int
 export interface HiddenPartView {
   heading: string
   /** How many images and players the part draws. `shownImages` and
-   *  `shownPlayers` read them, with those at their own place. */
+   *  `shownPlayers` read them, with those at their own place. A long list
+   *  (the kept assets of a compaction) draws only the rows near its
+   *  visible part. */
   assets: number
   /** The text of a job that made only text; null for a part with assets. */
   text: string | null
@@ -171,7 +173,7 @@ export async function hiddenPart (browser: E2EBrowser, index: number): Promise<H
     if (!part) return null
     return {
       heading: part.querySelector('.dez-tool-call__heading')?.textContent ?? '',
-      assets: part.querySelectorAll('.dez-tool-call__assets > *').length,
+      assets: part.querySelectorAll('.dez-tool-call__assets :is(.dez-image, .dez-media)').length,
       text: part.querySelector<HTMLTextAreaElement>('textarea[aria-label="Intermediate text"]')?.value ?? null,
     }
   }, index)

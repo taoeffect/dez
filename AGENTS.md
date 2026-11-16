@@ -85,7 +85,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `view/editor/images.ts`, `imageInsert.ts`, `pendingRanges.ts`: images shown in place of their references; image and clip paste and drop.
 - `view/editor/media.ts`, `view/media/`: `<dez:audio>` and `<dez:video>` tags shown as players (`MediaPlayer.vue`, video.js parts in Dez's own skin).
 - `view/editor/toolCalls.ts`: `<dez:tool>` blocks shown as chips, each with a panel.
-- `view/editor/hiddenAssets.ts`, `compactionChip.ts`: the hidden assets of a chip, and the compaction chip with its panel.
+- `view/editor/hiddenAssets.ts`, `compactionChip.ts`, `AssetList.vue`: the hidden assets of a chip, the compaction chip with its panel, and its long list of kept assets.
 - `view/editor/lineBlocks.ts`, `compaction.ts`, `lineCommands.ts`: the edit rules of whole-line blocks (chips, players, the compaction tag line).
 - `view/editor/agentTextEdits.ts`: whether a user edit changed the text of a reply (the edited mark of a tab).
 - `view/editor/assetSelection.ts`, `view/assetFacts.ts`, `view/assetIcons.ts`: the selected look, the facts text, and the symbol of an asset.
@@ -156,7 +156,7 @@ Rules:
 - `@sbp/okturtles.eventqueue` to serialize async operations that must not race.
 - `turtledash` for lodash-style helpers; use its `debounce`, not ad hoc timers.
 - `w3c-keyname`, at the version CodeMirror uses, so that shortcut matching (`model/shortcuts.ts`) agrees with CodeMirror keymaps.
-- `virtua` (the model picker's list) and `@videojs/html` (the media player); `videoJsElements` in `vite.config.ts` must match the video.js elements in `MediaPlayer.vue`.
+- `virtua` (the model picker's list, the kept assets list) and `@videojs/html` (the media player); `videoJsElements` in `vite.config.ts` must match the video.js elements in `MediaPlayer.vue`.
 - `.npmrc` makes npm write exact pins (`save-exact`) and refuse a version that is younger than 14 days (`min-release-age`): pin the newest version that it allows.
 
 ### Providers (`src/model/providers/`)
@@ -294,7 +294,7 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 - **The window starts hidden**: `dez.controller/window/restore` shows it, so a frontend failure before init shows no window; read the Vite output.
 - **Saved window position units differ by platform**: logical points on macOS, physical px elsewhere (`src/controller/window.ts`).
 - **Wayland windows have no place**: GTK's Wayland backend cannot read or set the window position (`src/controller/window.ts`). The AppImage runs on X11.
-- **The model picker draws only the rows in view** (`virtua`, `ModelPicker.vue`): a far row has no DOM.
+- **Long lists draw only the rows in view** (`virtua`; `ModelPicker.vue`, the kept assets list `AssetList.vue`): a far row has no DOM, and a far kept clip has no player unless it plays.
 - **Vite port is fixed**: `1420` with `strictPort: true`.
 - **`@tauri-apps/plugin-store` is unused**: app files use Dez's own Rust file I/O.
 - **Secrets wrapper is not a vault**: `src/utils/secret.ts`; never log provider headers, native HTTP payloads, or diagnostics without sanitization.

@@ -59,7 +59,12 @@ export function clipProblem(source: ClipSourceKind, failure: ClipLoadFailure | n
   if (failure === null) return null
   if (failure.step === 'read') return 'gone'
   if (failure.step === 'ask') return failure.answers ? 'cannot-play' : 'gone'
-  // A local file was read, so its bytes are there.
+  // A local file was read, so its bytes are there. WebKitGTK also gives
+  // "source not supported" when the sound server refuses the connection of
+  // the player's pipeline (too many players at once), with the same
+  // states, and a message that can be empty as for bytes that it cannot
+  // decode. So no field tells that case apart: views keep the count of
+  // live players low (`AssetList.vue`), and a new player is a new try.
   if (source !== 'remote') return 'cannot-play'
   if (failure.code === MEDIA_ERR_DECODE) return 'cannot-play'
   // A network error, and any other code: the URL gave no clip.

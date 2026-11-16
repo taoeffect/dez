@@ -96,9 +96,10 @@ function renderCounts(chip: HTMLElement, data: CompactionChipData): void {
 }
 
 /** Draws the kept assets as the first part of the open `panel`
- *  (`renderHiddenPart`); none when there are none. */
+ *  (`renderHiddenPart`), in a long list: a conversation can keep some
+ *  hundred of them. None when there are none. */
 function renderKeptPart(view: EditorView, panel: HTMLElement, data: CompactionChipData): void {
-  renderHiddenPart(view, panel, { kind: 'compaction' }, 'Kept assets', data.assets)
+  renderHiddenPart(view, panel, { kind: 'compaction' }, 'Kept assets', data.assets, { long: true })
 }
 
 function createPanel(view: EditorView, data: CompactionChipData): HTMLElement {
@@ -163,7 +164,7 @@ class CompactionChipWidget extends WidgetType {
   // A Save or a Delete changes the tag of a kept clip, and the trash takes
   // a kept image out of the doc. A new chip would make new players (a clip
   // that plays would stop), so the drawn chip takes the new assets in
-  // place (`renderAssets`: a clip whose section changed its role gets a
+  // place (`AssetList.vue`: a clip whose section changed its role gets a
   // new player). A change of the count, of the pictures, or of whether the
   // chip has a panel makes a new chip.
   updateDOM(dom: HTMLElement, view: EditorView, from: CompactionChipWidget): boolean {

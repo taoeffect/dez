@@ -4,16 +4,17 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { Key } from 'webdriverio'
 import { CARRIED_USER_ASSETS_LABEL, COMPACTION_MESSAGE_INTRO, COMPACTION_USER_MESSAGE_LABEL, compactionTagText, readCompactionTag } from '../../src/model/chat/compaction'
 import { compactionNotesText } from '../../src/model/chat/compactionNotes'
+import { newMediaIds } from '../../src/model/chat/mediaIds'
 import type { ShownPicture } from '../../src/model/chat/shownPictures'
 import type { ConversationData, SectionData } from '../../src/model/persistence/types'
 import { compactionInstruction } from '../../src/model/streams/compactionRequest'
 import { shortDuration } from '../../src/view/thread/pillDuration'
 import { anthropicChatBody, anthropicMarkedUser, openAiChatBody } from './harness/chatBody'
-import { click, consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
+import { click, consoleErrors, pointerClick, pointerClickAt, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
 import { linkedDropDir } from './harness/drops'
 import { appFilePath, conversationFilePath, filesIn, makeConversation, seedConversation, writeTestFile } from './harness/fixtures'
 import { pasteImageReference, pngDataUrl, shownImages, solidPng, type ShownImage } from './harness/images'
-import { problemCards, shownPlayers, WEBM_VIDEO, type ShownPlayer } from './harness/media'
+import { problemCards, shownPlayers, silentWav, WEBM_VIDEO, type ShownPlayer } from './harness/media'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import { LARGE_TOKENS, mockChatPath, openAiToolCall, replyText, sendAnthropicReply, sendChatReply, sendChatText, sendToolCalls, startEventStream, toolResult, writeChatFrame, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
@@ -649,6 +650,88 @@ describe('a compacted conversation', () => {
     await browser.keys([Key.Control, 'z'])
     await waitForThread(browser, thread)
     await waitForValue(browser, 'player after the undo', () => shownPlayers(browser), [KEPT_CLIP_PLAYER])
+  })
+
+  // A compaction can keep some hundred clips. Each player holds a pipeline,
+  // and the sound server refuses one past some count (the card of a clip
+  // that cannot play), so the panel draws only the rows near the visible
+  // part of its list (`AssetList.vue`).
+  it('draws only the kept clips near the visible part of the panel, and keeps a clip that plays', async () => {
+    const { home } = setup.app
+    const wav = await writeTestFile(appFilePath(home, 'assets', 'generated', 'audio', 'compaction-many.wav'), silentWav(1))
+    const webm = await writeTestFile(appFilePath(home, 'assets', 'generated', 'video', 'compaction-many.webm'), WEBM_VIDEO)
+    const ids = newMediaIds([], 130)
+    const [first, firstVideo] = ids
+    const last = ids[ids.length - 1]
+    const tags = ids.map((id, index) => index % 2 === 0
+      ? `<dez:audio id="${id}" type="audio/wav" src="${wav}" kept="compaction"/>`
+      : `<dez:video id="${id}" type="video/webm" src="${webm}" kept="compaction"/>`)
+    const notes = [compactionTagText({ count: 1, lastId: last, pictures: [] }), 'The user made many clips.', ...tags].join('\n')
+    const thread = await openCompacted('compacted-many-clips', [compactionSection(notes), textSection('user', 'Ask.'), textSection('user', '')])
+    expect(await compactionChipCounts()).toStrictEqual(['130 kept assets'])
+
+    // The ids of the drawn players, true when each one has its clip.
+    const drawnClips = async (): Promise<{ ids: string[], loaded: boolean }> => {
+      const players = await shownPlayers(browser)
+      return { ids: players.map(({ id }) => id), loaded: players.every(({ available, seconds }) => available && seconds !== null) }
+    }
+    const mediaElements = async (): Promise<number> => browser.execute(() => document.querySelectorAll('.cm-content :is(audio, video)').length)
+    // Whether the clip `id` is paused; null when no player draws it.
+    const clipPaused = async (id: string): Promise<boolean | null> => browser.execute((clipId: string) => {
+      const player = Array.from(document.querySelectorAll('.cm-content .media-player'))
+        .find((candidate) => candidate.querySelector('.media-player__id')?.textContent?.trim() === clipId)
+      return player?.querySelector<HTMLMediaElement>('audio, video')?.paused ?? null
+    }, id)
+    // A scroll to the end of the list, again at each read: the list gets
+    // its full height only as the rows near the end get their sizes.
+    const endIsDrawn = async (): Promise<boolean> => {
+      await browser.execute(() => {
+        const list = document.querySelector<HTMLElement>('.cm-content .dez-asset-list')
+        if (!list) throw new Error('endIsDrawn: .dez-asset-list not found')
+        list.scrollTop = list.scrollHeight
+      })
+      const { ids: drawn, loaded } = await drawnClips()
+      return loaded && drawn.includes(last) && !drawn.includes(first)
+    }
+
+    await pressToolChip(browser, 0)
+    await waitForValue(browser, 'first rows', async () => {
+      const { ids: drawn, loaded } = await drawnClips()
+      return loaded && drawn.includes(firstVideo)
+    }, true)
+    const opened = await drawnClips()
+    expect(opened.ids).toStrictEqual(ids.slice(0, opened.ids.length))
+    expect(opened.ids.length).toBeLessThan(20)
+    expect(await mediaElements()).toBeLessThan(20)
+    expect(await problemCards(browser)).toStrictEqual([])
+
+    // The video loops, so it still plays when the list is at its end. The
+    // press goes to the center of its play button.
+    await pointerClickAt(browser, await browser.execute((clipId: string) => {
+      const player = Array.from(document.querySelectorAll('.cm-content .media-player'))
+        .find((candidate) => candidate.querySelector('.media-player__id')?.textContent?.trim() === clipId)
+      const video = player?.querySelector<HTMLVideoElement>('video')
+      const rect = player?.querySelector('.media-player__play')?.getBoundingClientRect()
+      if (!video || !rect) throw new Error(`no video or play button of the clip ${clipId}`)
+      video.loop = true
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+    }, firstVideo))
+    await waitForValue(browser, 'the video plays', () => clipPaused(firstVideo), false)
+
+    await waitForValue(browser, 'the end of the list', endIsDrawn, true)
+    expect(await clipPaused(firstVideo)).toBe(false)
+    expect(await mediaElements()).toBeLessThan(20)
+    expect(await problemCards(browser)).toStrictEqual([])
+
+    // A paused clip far from the visible part frees its player.
+    await browser.execute(() => {
+      for (const media of document.querySelectorAll<HTMLMediaElement>('.cm-content :is(audio, video)')) media.pause()
+    })
+    await waitForValue(browser, 'the paused video', () => clipPaused(firstVideo), null)
+
+    await pressToolChip(browser, 0)
+    await waitForValue(browser, 'media elements after the close', mediaElements, 0)
+    expect(await threadSections(browser)).toStrictEqual(thread)
   })
 
   it('compacts the conversation between two rounds of a reply, and the reply goes on from the notes', async () => {

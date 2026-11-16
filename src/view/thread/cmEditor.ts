@@ -2414,6 +2414,22 @@ export const dezTheme = EditorView.theme({
   '.dez-tool-call__assets .dez-media': {
     padding: '0',
   },
+  // A long list of hidden assets (`AssetList.vue`): a scroll box of its
+  // own, as tall as its rows up to most of a window. virtua places each row
+  // by its own offset, so the rows space themselves, in place of the gap.
+  // `pointer-events`: virtua sets `none` on the rows' box while the list
+  // scrolls, and for 150 ms after (see ModelPicker.vue).
+  '.dez-asset-list': {
+    alignSelf: 'stretch',
+    maxHeight: '60vh',
+    overflowY: 'auto',
+  },
+  '.dez-asset-list__row': {
+    pointerEvents: 'auto',
+  },
+  '.dez-asset-list__row--after': {
+    paddingTop: editorSize(8),
+  },
   // The text at the place of a hidden asset (`HiddenAssetWidget` in
   // hiddenAssets.ts). Its line has no height while no caret is on it
   // (`.dez-tool-call-gap`, font size zero), so every size here is in `em`:
