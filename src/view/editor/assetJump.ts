@@ -71,7 +71,8 @@ export function mentionTarget(state: EditorState, mention: Pick<ShownMention, 'f
 
 /** The targets of the hidden assets that `mention` names, each in the
  *  panel of its chip. A linked image of the compaction block is only in
- *  these: `renderedImages` leaves it out, as the block shows no image. */
+ *  these: `renderedImages` reads the compaction section with the agent
+ *  rule, where a linked path does not count. */
 function hiddenTargets(state: EditorState, hidden: readonly HiddenAsset[], mention: Pick<ShownMention, 'id' | 'kind'>): AssetTarget[] {
   const calls = renderedToolCalls(state)
   // The rows of the kept assets are the hidden assets of the compaction,
