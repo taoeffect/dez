@@ -248,4 +248,15 @@ describe('findJobResults', () => {
       .toStrictEqual([[null], [], ['finished', null]])
     expect(statuses([['agent', invoke('j-aaaa')], ['user', wait(results)]])).toStrictEqual([[null], [null]])
   })
+
+  it('gives a result to each copy of the block that owns it, as each chip of a copy shows the assets of the job', () => {
+    const copy = invoke('j-aaaa')
+
+    // The owner is the nearest block before the jobs_wait block, a copy;
+    // the first block started the same job with another call id.
+    expect(statuses([['agent', `${invoke('j-aaaa', { id: 'call_2' })}\n${copy}\n${copy}\n${wait(results)}`]]))
+      .toStrictEqual([[null, 'finished', 'finished', null]])
+    expect(statuses([['agent', `${copy}\n${copy}`], ['user', 'Go on.'], ['agent', wait(results)]]))
+      .toStrictEqual([['finished', 'finished'], [], [null]])
+  })
 })

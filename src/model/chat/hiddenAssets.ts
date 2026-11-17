@@ -226,10 +226,13 @@ export function findKeptAssets(sections: readonly { role: Role, text: string }[]
  *  section gave to the model for a job. It belongs to the block that the
  *  rule of `findHiddenAssets` gives, with the `jobs_wait` block in the
  *  place of the asset: so it can be in a later agent section than the
- *  block that started the job. When two `jobs_wait` blocks give one for
- *  the same block, the first one counts. Null for a block that started no
- *  job, and for a job with no result (it still runs, its replies ended
- *  first, it was cancelled, or the `jobs_wait` block is gone). */
+ *  block that started the job. It also belongs to each copy of that block
+ *  in its section (a block of the job with the same call id), as each chip
+ *  of a copy shows the assets of the job. When two `jobs_wait` blocks give
+ *  one for the same block, the first one counts. Null for a block that
+ *  started no job, and for a job with no result (it still runs, its
+ *  replies ended first, it was cancelled, or the `jobs_wait` block is
+ *  gone). */
 export function findJobResults(sections: readonly ChipSection[]): (JobResult | null)[][] {
   const results: (JobResult | null)[][] = sections.map(({ blocks }) => blocks.map(() => null))
   const gaveResults = (block: ToolBlock) => block.name === JOBS_WAIT_TOOL.name && block.status === 'success'
@@ -242,7 +245,12 @@ export function findJobResults(sections: readonly ChipSection[]): (JobResult | n
       if (!gaveResults(wait)) continue
       for (const result of jobsWaitResults(wait.result)) {
         const start = owningStart(sections, starts, index, wait.from, result.id)
-        if (start) results[start.section][start.block] ??= result
+        if (!start) continue
+        const startBlocks = sections[start.section].blocks
+        const callId = startBlocks[start.block].id
+        for (const block of starts[start.section].get(result.id) ?? []) {
+          if (startBlocks[block].id === callId) results[start.section][block] ??= result
+        }
       }
     }
   })
