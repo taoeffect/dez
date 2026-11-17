@@ -2,7 +2,7 @@ import { JOBS_WAIT_TOOL, jobsWaitResults, startedJobId, type JobResult } from '.
 import { blockLinkedRule, isCarriedUserAssets, readCompactionBlock } from './compaction'
 import { findImageReferences, IMAGE_HIDDEN_KEY, IMAGE_KEPT_KEY, isKeptImage, type ImageReference, type LinkedPathRule } from './images'
 import { findMediaTags, isKeptClip, MEDIA_HIDDEN_ATTRIBUTE, type MediaTag } from './mediaTags'
-import { findToolBlocks, type ToolBlock } from './toolBlocks'
+import type { ToolBlock } from './toolBlocks'
 import type { Role } from './types'
 
 // Hidden assets: the images and clips that a call made as a part of its
@@ -83,22 +83,20 @@ export function findHiddenAssets(text: string, blocks: readonly ToolBlock[]): Hi
   return assets.sort((a, b) => a.from - b.from)
 }
 
-// The assets with the kept mark in the text of a section of the role
-// `role`, in order, by the rules of `findHiddenAssets`: an image alone on
-// its line, and nothing in a tool block.
-function keptAssetsOf(text: string, role: Role): HiddenAsset[] {
+// The assets with the kept mark in the text of a user section that holds
+// the carried assets of the user (the oldest layout), in order: an image
+// alone on its line, as in `findHiddenAssets`, and each clip.
+function keptUserAssets(text: string): HiddenAsset[] {
   // The mark of an image is `kept=…`, and the one of a clip `kept="…"`.
   if (!text.includes(`${IMAGE_KEPT_KEY}=`)) return []
-  const blocks = role === 'agent' ? findToolBlocks(text) : []
-  const inBlock = (from: number) => blocks.some((block) => from >= block.from && from < block.to)
   const owner: HiddenAssetOwner = { kind: 'compaction' }
   const assets: HiddenAsset[] = []
-  for (const image of findImageReferences(text, role)) {
-    if (!isKeptImage(image) || inBlock(image.from) || !isAloneOnItsLine(text, image.from, image.to)) continue
+  for (const image of findImageReferences(text, 'user')) {
+    if (!isKeptImage(image) || !isAloneOnItsLine(text, image.from, image.to)) continue
     assets.push({ kind: 'image', owner, from: image.from, to: image.to, image })
   }
   for (const tag of findMediaTags(text)) {
-    if (isKeptClip(tag) && !inBlock(tag.from)) assets.push({ kind: 'clip', owner, from: tag.from, to: tag.to, tag })
+    if (isKeptClip(tag)) assets.push({ kind: 'clip', owner, from: tag.from, to: tag.to, tag })
   }
   return assets.sort((a, b) => a.from - b.from)
 }
@@ -139,7 +137,7 @@ export function findKeptAssets(sections: readonly { role: Role, text: string }[]
     const { role, text } = sections[index]
     if (text.trim() === '') continue
     if (role === 'agent') break
-    if (isCarriedUserAssets(text)) kept[index] = keptAssetsOf(text, 'user')
+    if (isCarriedUserAssets(text)) kept[index] = keptUserAssets(text)
   }
   return kept
 }
