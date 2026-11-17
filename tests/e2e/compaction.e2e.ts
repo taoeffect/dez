@@ -104,9 +104,9 @@ const CHAT_PATH = mockChatPath(PROVIDER)
 
 // The first line of the instruction of a compaction request.
 const INSTRUCTION_START = compactionInstruction({ middleMessages: [], assetTable: '', jobs: [], cost: undefined, tools: false }).split('\n')[0]
-const NOTES_SUMMARY = 'The user wants to go on with the task.'
+const NOTES_REQUIREMENTS = 'The user wants to go on with the task.'
 // An answer to a compaction request: requirements, and no other part.
-const NOTES_ANSWER = `## Requirements and decisions\n${NOTES_SUMMARY}\n`
+const NOTES_ANSWER = `## Requirements and decisions\n${NOTES_REQUIREMENTS}\n`
 // The first line of the notes of the image conversation: a line that only
 // the notes hold.
 const IMAGE_NOTES_START = 'The user wants a film of a fox.'
@@ -1047,7 +1047,7 @@ describe('a compacted conversation', () => {
     const [firstSection, ...rest] = await threadSections(browser)
     const { block, read, reply } = await compactedSection()
     expect(read.count).toBe(1)
-    expect(block).toContain(NOTES_SUMMARY)
+    expect(block).toContain(NOTES_REQUIREMENTS)
     // A new compaction writes the block form: the notes end at the end
     // line, and the reply has no text yet.
     expect(block.endsWith(`\n${COMPACTION_END_LINE}`)).toBe(true)
@@ -1059,7 +1059,7 @@ describe('a compacted conversation', () => {
     expect((await pillThinking(browser, 0))?.slot).toBe('spinner')
     expect(await firstSectionLook()).toStrictEqual(COMPACTED_LOOK)
     expect(await chipStates()).toStrictEqual([{ name: 'Compaction 1 assets', open: false }, { name: 'Compaction 1 summary', open: false }])
-    expect(await linesShow(NOTES_SUMMARY)).toBe(false)
+    expect(await linesShow(NOTES_REQUIREMENTS)).toBe(false)
     expect(await showsCompacting()).toBe(false)
     expect(await activeTabStreaming(browser)).toBe(true)
     // The open summary panel shows the notes of the new compaction, with
@@ -1067,7 +1067,7 @@ describe('a compacted conversation', () => {
     await pressToolChip(browser, 1)
     await waitForValue(browser, 'summary in the open panel', async () => {
       const shown = await chipNotes('summary')
-      return shown !== null && shown.includes(NOTES_SUMMARY) && shown.includes(question)
+      return shown !== null && shown.includes(NOTES_REQUIREMENTS) && shown.includes(question)
     }, true)
 
     // The view still follows the reply: an answer that is taller than the
@@ -1118,7 +1118,7 @@ describe('a compacted conversation', () => {
     await sendChatReply(request.reply, 'the reader of the notes')
     const { block, read } = await compactedSection()
     expect(read.count).toBe(1)
-    expect(block).toContain(NOTES_SUMMARY)
+    expect(block).toContain(NOTES_REQUIREMENTS)
     // The reply is in the section of the block, and the caret is in the
     // user section after it.
     await waitForThread(browser, [{ role: 'agent', text: `${block}\n${replyText('the reader of the notes')}` }, { role: 'user', text: '' }])
