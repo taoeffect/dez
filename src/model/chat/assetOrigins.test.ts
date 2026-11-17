@@ -6,7 +6,7 @@ import { CARRIED_USER_ASSETS_LABEL, compactionTagText } from './compaction'
 import { compactionNotesText, type NotesAsset } from './compactionNotes'
 import { findImageReferences, IMAGE_MADE_BY_KEY, IMAGE_TOOL_KEY, imageMarkdown, imageReferenceTextWithKeptMark } from './images'
 import { MEDIA_MADE_BY_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE, mediaTagText } from './mediaTags'
-import { COMPACTION_TAG, FOX_ORIGIN, HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, idImage, invokeBlock, waitBlock } from './testing'
+import { FOX_ORIGIN, HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, idImage, invokeBlock, waitBlock } from './testing'
 import { toolBlockText } from './toolBlocks'
 import type { ModelRef, Section } from './types'
 
@@ -119,10 +119,11 @@ describe('assetPlaces', () => {
 
 describe('assetPlaces in a compacted conversation', () => {
   // A compaction section whose notes hold the asset lines `assets` and the
-  // job lines `jobs`, with `more` after them.
-  function compaction(assets: NotesAsset[], jobs: JobInfo[] = [], more = '', { firstMessage = null, summary = 'A fox for the user.' }: { firstMessage?: string | null, summary?: string } = {}): Section {
+  // job lines `jobs`, with `more` after them. Its tag's newest id is
+  // `lastId`.
+  function compaction(assets: NotesAsset[], jobs: JobInfo[] = [], more = '', { firstMessage = null, summary = 'A fox for the user.', lastId = 'b' }: { firstMessage?: string | null, summary?: string, lastId?: string } = {}): Section {
     const notes = compactionNotesText({ firstMessage, newestMessage: null, summary, requirements: '', nextSteps: '', assets, unnamed: [], jobs, jobInputs: new Map(), cost: undefined })
-    return section('agent', `${COMPACTION_TAG}\n${notes}${more}`, PAINTER)
+    return section('agent', `${compactionTagText({ count: 1, lastId, pictures: [] })}\n${notes}${more}`, PAINTER)
   }
 
   // `reference`, the text of one image reference, with the kept mark.
@@ -140,7 +141,7 @@ describe('assetPlaces in a compacted conversation', () => {
 
   it('gives an asset of a message part of the notes, and an asset whose line tells that it is from the user, the user as their origin', () => {
     const line = (id: string, text: string | null): NotesAsset => ({ id, kind: 'image', facts: 'PNG, 800x600, 120 KB', origin: 'from the user', sentence: '', byReply: false, text })
-    const notes = compaction([line('a', null), line('c', idImage(PASTED, 'c', true)), FOX_LINE], [], '', { firstMessage: `Like this:\n${idImage(PASTED, 'a')}` })
+    const notes = compaction([line('a', null), line('c', idImage(PASTED, 'c', true)), FOX_LINE], [], '', { firstMessage: `Like this:\n${idImage(PASTED, 'a')}`, lastId: 'c' })
     const sections = [notes, section('agent', '', PAINTER)]
 
     expect(['a', 'c', 'b'].map((id) => placeOf(sections, id))).toStrictEqual([

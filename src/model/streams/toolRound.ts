@@ -83,12 +83,12 @@ export function toolGroupText(blocks: readonly ToolBlockData[]): string {
   return blocks.map((block) => `${toolBlockText(block)}\n`).join('')
 }
 
-/** The text that adds a group of blocks to a section with `sectionText`:
- *  one `\n` first, also after text that ends with one, and none in an
- *  empty section; then the group text. The request builder drops one `\n`
+/** The text that adds a group of blocks to a reply with `replyText`: one
+ *  `\n` first, also after text that ends with one, and none for a reply
+ *  with no text; then the group text. The request builder drops one `\n`
  *  next to a block, so the model's own line breaks go back as they came,
  *  and after a round that wrote no text this gives the blank line that
  *  keeps two groups apart (`agentRounds` in `messages.ts`). */
-export function toolGroupAppendText(sectionText: string, blocks: readonly ToolBlockData[]): string {
-  return (sectionText === '' ? '' : '\n') + toolGroupText(blocks)
+export function toolGroupAppendText(replyText: string, blocks: readonly ToolBlockData[]): string {
+  return (replyText === '' ? '' : '\n') + toolGroupText(blocks)
 }

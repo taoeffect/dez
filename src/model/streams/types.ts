@@ -21,7 +21,9 @@ export interface RequestMessages {
   imagesOverLimit: number
   // The newest user message as a message of its own: the source of a media
   // request (`mediaRequestInput`). In `messages` it can be a part of the
-  // compaction message. `''` when no section is a user message.
+  // compaction message. With no user message, it is the last message part
+  // of the notes of a compaction (`notesMessages`); `''` when there is
+  // none either.
   newestUserMessage: string | MessagePart[]
   // The request offers the Dez tools: the Tools toggle applies to the model
   // (`toolsApply` in providers/modelToggles.ts), and the provider's toggle

@@ -1036,22 +1036,22 @@ describe('sectionsToStreamMessages: a compacted conversation', () => {
 
   // Saved conversations hold the old form, and the prompt cache needs the
   // same bytes.
-  it('sends the notes of a block with no tag and no end line, as the same bytes as the old form', () => {
+  it('sends the notes of a block without its tag line and its end line, as the same bytes as the old form', () => {
     const notes = 'The user wants a fox film.'
-    const block = compactionBlockText({ count: 1, lastId: 'c', pictures: [] }, notes)
+    const blockText = compactionBlockText({ count: 1, lastId: 'c', pictures: [] }, notes)
     const oldForm = `${tag().replace(/>$/, '/>')}\n${notes}`
     const kept = user('u1', 'Make it red.')
 
-    expect(sent([reply('c', block), kept]).messages).toStrictEqual([{ role: 'user', content: `${COMPACTION_MESSAGE_INTRO}\n\n${notes}${KEPT}Make it red.` }])
-    expect(sent([reply('c', oldForm), kept])).toStrictEqual(sent([reply('c', block), kept]))
+    expect(sent([reply('c', blockText), kept]).messages).toStrictEqual([{ role: 'user', content: `${COMPACTION_MESSAGE_INTRO}\n\n${notes}${KEPT}Make it red.` }])
+    expect(sent([reply('c', oldForm), kept])).toStrictEqual(sent([reply('c', blockText), kept]))
   })
 
   // The text after the block is the reply that ran at the compaction, so
   // a later user section is a message of its own.
   it('sends the text after the block as an agent message after the notes, and the user sections after it as their own messages', () => {
-    const block = compactionBlockText({ count: 1, lastId: 'c', pictures: [] }, 'Notes.')
+    const blockText = compactionBlockText({ count: 1, lastId: 'c', pictures: [] }, 'Notes.')
 
-    expect(sent([reply('c', `${block}\nTyped after it.`), user('u1', 'Make it red.')]).messages).toStrictEqual([
+    expect(sent([reply('c', `${blockText}\nTyped after it.`), user('u1', 'Make it red.')]).messages).toStrictEqual([
       { role: 'user', content: `${COMPACTION_MESSAGE_INTRO}\n\nNotes.` },
       { role: 'agent', content: 'Typed after it.' },
       { role: 'user', content: 'Make it red.' },

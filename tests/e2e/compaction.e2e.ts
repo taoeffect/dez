@@ -769,7 +769,7 @@ describe('a compacted conversation', () => {
     await pressToolChip(browser, 1)
     await waitForValue(browser, 'summary', () => chipNotes('summary'), '## Summary\nThe fox is done.\n\n## Next steps\nMake a wolf.')
 
-    // "fox" is in the notes three times, and once in the user message.
+    // "fox" is in the notes two times, and once in the user message.
     await focusEditor(browser)
     await openFindWithQuery(browser, 'fox')
     await waitForValue(browser, 'find status', () => findStatus(browser), '1 of 1')
@@ -1007,14 +1007,14 @@ describe('a compacted conversation', () => {
     // The question is in the notes: no section of the user is left.
     const second = await takeRequest(setup, CHAT_PATH)
     expect(JSON.parse(second.body)).toStrictEqual(openAiChatBody(PROVIDER, [await notesMessage(question)]))
-    const [notes, ...rest] = await threadSections(browser)
+    const [firstSection, ...rest] = await threadSections(browser)
     const { block, read, reply } = await compactedSection()
     expect(read.count).toBe(1)
     expect(block).toContain(NOTES_SUMMARY)
     // A new compaction writes the block form: the notes end at the end
     // line, and the reply has no text yet.
     expect(block.endsWith(`\n${COMPACTION_END_LINE}`)).toBe(true)
-    expect([notes.text, reply]).toStrictEqual([`${block}\n`, ''])
+    expect([firstSection.text, reply]).toStrictEqual([`${block}\n`, ''])
     expect(rest).toStrictEqual([])
     // The editor shows the new section: one Agent pill, the pill of the
     // reply, with its spinner, and the two chips closed.

@@ -39,8 +39,9 @@ const COLUMN = ' | '
 export interface NotesStatement {
   /** The text that tells `value`; null for a value that it cannot tell. */
   text(value: string): string | null
-  /** The value that `text` tells in `text`; null for any other text. */
-  read(text: string): string | null
+  /** The value that `line` tells, when `line` is a text of `text()`; null
+   *  for any other line. */
+  read(line: string): string | null
 }
 
 /** A statement with its own text for each value of a closed set. */
@@ -48,7 +49,7 @@ export function textsStatement(texts: Readonly<Record<string, string>>): NotesSt
   const values = new Map(Object.entries(texts).map(([value, text]) => [text, value]))
   return {
     text: (value) => (Object.hasOwn(texts, value) ? texts[value] : null),
-    read: (text) => values.get(text) ?? null,
+    read: (line) => values.get(line) ?? null,
   }
 }
 
@@ -57,7 +58,7 @@ export function textsStatement(texts: Readonly<Record<string, string>>): NotesSt
 export function templateStatement(start: string, end: string): NotesStatement {
   return {
     text: (value) => (value === '' ? null : `${start}${value}${end}`),
-    read: (text) => (text.length > start.length + end.length && text.startsWith(start) && text.endsWith(end) ? text.slice(start.length, text.length - end.length) : null),
+    read: (line) => (line.length > start.length + end.length && line.startsWith(start) && line.endsWith(end) ? line.slice(start.length, line.length - end.length) : null),
   }
 }
 
@@ -186,7 +187,7 @@ function readsBack(table: NotesTable, rows: readonly NotesRow[], text: string): 
 
 // Whether the numbers of the column `counter` count the rows up by 1, with
 // no gap, in the form that the lead lines write.
-function counts(rows: readonly NotesRow[], counter: number): boolean {
+function countsUpByOne(rows: readonly NotesRow[], counter: number): boolean {
   if (counter < 0 || rows.length === 0) return false
   const first = Number(rows[0].cells[counter])
   return Number.isSafeInteger(first) && first >= 0 && rows.every((row, index) => row.cells[counter] === String(first + index))
@@ -214,7 +215,7 @@ export function notesTableText(table: NotesTable, rows: readonly NotesRow[]): st
   // A column with one value in every row makes one group: that is a value
   // of the head, or no change.
   const groupColumns = table.columns.flatMap((column, index) => (column.groups && !shared.has(index) && rows.some((row) => row.cells[index] !== rows[0].cells[index]) ? [index] : []))
-  const ranges = counts(rows, table.columns.findIndex((column) => column.counts))
+  const ranges = countsUpByOne(rows, table.columns.findIndex((column) => column.counts))
   for (const group of [null, ...groupColumns]) {
     for (const withRanges of ranges ? [false, true] : [false]) {
       if (group !== null || withRanges) tryLayout({ shared, group, ranges: withRanges })
