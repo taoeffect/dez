@@ -151,11 +151,11 @@ describe('compactionScope of notes with message parts', () => {
     expect(keptUserTexts(sections, compactionScope(sections, 'r'))).toStrictEqual(['Make a fox.', RUN_LIKE_THIS, 'Then use @b again.'])
   })
 
-  it('counts an asset of a message part and an asset whose line is from the user as assets of the user', () => {
+  it('counts an asset of a message part as an asset of the user, whatever its line tells, and an asset whose line tells the user', () => {
     const assets: NotesAsset[] = [
       { ...NOTES_DATA.assets[0], text: idImage(RED, 'a', true) },
       NOTES_DATA.assets[1],
-      { id: 'e', kind: 'image', facts: 'PNG, 640x480, 80 KB', origin: 'from the user', sentence: '', byReply: false, text: null },
+      { id: 'e', kind: 'image', facts: 'PNG, 640x480, 80 KB', origin: FOX_ORIGIN, sentence: '', byReply: false, text: null },
     ]
     const seen = assetsOf([partsCompaction(RUN_LIKE_THIS, assets), reply('r', '')], FACTS, { replySectionId: 'r' })
 
