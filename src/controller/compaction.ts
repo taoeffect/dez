@@ -92,8 +92,8 @@ export interface CompactionInput {
    *  compaction then rejects with the stop. */
   signal: AbortSignal
   /** The jobs of the reply that runs (`TabJobs`, controller/jobs.ts): the
-   *  jobs that it started, and the jobs of the replies before it that a
-   *  stop or a new submit cut. So a compaction at a submit can have some. */
+   *  jobs that it started, and the jobs of the replies before it that the
+   *  user cut. So a compaction at a submit can have some. */
   jobs: readonly JobInfo[]
   /** The ids of the agent sections of the replies that used `jobs`
    *  (`TabJobs.replySections`): their work counts as the work of the

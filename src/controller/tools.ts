@@ -343,7 +343,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   }),
   // The job tools (model/tools/jobs.ts) read the jobs of the tab
   // (`TabJobs`, jobs.ts), which the reply took at its start: its own, and
-  // the ones of the replies that a stop or a new submit cut before it.
+  // the ones of the replies that the user cut before it.
   // `jobs_wait` gives the results of the jobs that ended since the last
   // one, and waits for the next end when there is none (with `all`: until
   // no job runs; with `jobs`: until none of the named jobs runs, and only

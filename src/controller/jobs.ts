@@ -193,9 +193,10 @@ export class TabJobs {
   constructor(private readonly onCost: (usd: number | null) => void = () => {}) {}
 
   /** The ids of the agent sections of the replies that took these jobs:
-   *  the replies that a stop or a new submit cut, and the reply that holds
-   *  them now. A compaction counts their work as the work of the reply
-   *  that runs (`CompactionInput.replySections`). */
+   *  the replies that the user cut (a stop, a new submit, a delete of
+   *  their running blocks), and the reply that holds them now. A
+   *  compaction counts their work as the work of the reply that runs
+   *  (`CompactionInput.replySections`). */
   get replySections(): readonly string[] {
     return this.sections
   }
@@ -367,9 +368,9 @@ export class TabJobs {
   /** For the end of a reply whose model did not wait for its jobs: waits
    *  until no job runs, then gives the results that no reader took, as
    *  `wait` does. `lease` is the lease of the reply (`take`): when it
-   *  aborts (a stop or a new submit handed the jobs on), the wait ends and
-   *  gives null, and the results stay for the next reader. A `stopAll`
-   *  ends the wait, with no result. */
+   *  aborts (the user cut the reply, and it handed the jobs on), the wait
+   *  ends and gives null, and the results stay for the next reader. A
+   *  `stopAll` ends the wait, with no result. */
   async settle(lease: AbortSignal): Promise<EndedJob[] | null> {
     while (this.running > 0 && !lease.aborted) await this.nextEnd(lease).catch(() => {})
     return lease.aborted ? null : this.takeUnread()

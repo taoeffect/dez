@@ -184,9 +184,9 @@ interface ReplyRuntime {
 // cancel.
 const repliesByTab = new Map<string, ReplyRuntime>()
 
-// The jobs of each tab that no reply holds now: a stop or a new submit cut
-// the reply that held them (`handOverJobs`), and the next chat reply of the
-// tab takes them (`takeJobs`). So the model of that reply can wait for the
+// The jobs of each tab that no reply holds now: the user cut the reply
+// that held them (`handOverJobs`), and the next chat reply of the tab
+// takes them (`takeJobs`). So the model of that reply can wait for the
 // jobs that a cut reply started. A close of the tab ends them
 // (`dez.stream/stop` with `endJobs`).
 const heldJobsByTab = new Map<string, TabJobs>()

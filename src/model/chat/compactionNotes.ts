@@ -124,11 +124,14 @@ import type { Role } from './types'
 //   call) has the escape of model text (`ModelTextEscaper`), so it forms
 //   no tag of Dez, and a request sends it with the escape removed. The
 //   readers give a text back with the escape removed.
-// - A reader takes the last heading of its name. Dez always writes its
-//   parts, also with nothing in them, and after the text of the model, so
-//   a reader never takes a line of a model for a line of Dez: a model can
-//   copy a heading of earlier notes into its answer. No reader looks into
-//   a message part.
+// - A reader takes the last heading of its name. Dez writes its parts
+//   after the text of the model, and the parts of the assets, the jobs,
+//   and the cost also with nothing in them, so a reader never takes a
+//   line of a model for a line of Dez: a model can copy a heading of
+//   earlier notes into its answer. `## User messages` is there only with
+//   a first message, but no line of a model has it: the reader of the
+//   answer takes each such line as a heading. No reader looks into a
+//   message part.
 // - Saved conversations hold these lines, and later compactions and
 //   `asset_info` read them back. So a new form of a line needs a reader
 //   that still takes the old form. The reader of the tables reads a line

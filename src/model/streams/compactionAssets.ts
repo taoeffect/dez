@@ -164,10 +164,10 @@ export interface CompactionAsset {
   /** A call made it as a part of its work (the `hidden` mark). */
   intermediate: boolean
   /** The reply that runs made it: its text is in the text of the reply,
-   *  or of a reply that a stop or a new submit cut before it (they share
-   *  their jobs: `CompactionAssetsInput.replySections`), after the block
-   *  in the compaction section (`sectionTextParts`). Or the notes of a
-   *  compaction earlier in this work tell it (`NotesAssetLine.byReply`,
+   *  or of a reply that the user cut before it (they share their jobs:
+   *  `CompactionAssetsInput.replySections`), after the block in the
+   *  compaction section (`sectionTextParts`). Or the notes of a compaction
+   *  earlier in this work tell it (`NotesAssetLine.byReply`,
    *  `replyRanAtCompaction`). */
   byReply: boolean
   /** An open job of the reply that runs takes it as an input
@@ -185,12 +185,11 @@ function isIntermediate(asset: FoundAsset): boolean {
 }
 
 // Whether one of the replies `replySections` (the reply that runs and the
-// replies that a stop or a new submit cut before it) is the one that ran
-// at the compaction of the notes of `sections`: a compaction makes the
-// reply's section the compaction section (compactedSections.ts). A
-// section of an older layout after the block is never the section of a
-// reply that runs: a reply that runs in a conversation of an older Dez is
-// a new one.
+// replies that the user cut before it) is the one that ran at the
+// compaction of the notes of `sections`: a compaction makes the reply's
+// section the compaction section (compactedSections.ts). A section of an
+// older layout after the block is never the section of a reply that runs:
+// a reply that runs in a conversation of an older Dez is a new one.
 function replyRanAtCompaction(sections: readonly Section[], replySections: ReadonlySet<string>): boolean {
   return sections.length > 0 && replySections.has(sections[0].id) && sectionCompactionBlock(sections[0]) !== null
 }
@@ -213,8 +212,9 @@ export interface CompactionAssetsInput {
   jobInputs: ReadonlyMap<string, readonly string[]>
   /** The ids of the agent sections of the replies that took the jobs of
    *  the reply that runs (`TabJobs.replySections`, controller/jobs.ts):
-   *  the replies that a stop or a new submit cut before it, and the reply
-   *  that runs. Their work counts as the work of the reply that runs. */
+   *  the replies that the user cut before it (a stop, a new submit, a
+   *  delete of their running blocks), and the reply that runs. Their work
+   *  counts as the work of the reply that runs. */
   replySections: readonly string[]
 }
 

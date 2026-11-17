@@ -256,8 +256,8 @@ describe('compactionAssets', () => {
     expect(byId(assetsOf(later, FACTS, { replySectionId: 'r2' }), 'byReply')).toStrictEqual({ b: false, c: false, d: false })
   })
 
-  // A stop or a new submit cut the reply `r`, and the reply `r2` took its
-  // jobs: the work of `r` counts as the work of `r2`.
+  // The user cut the reply `r`, and the reply `r2` took its jobs: the work
+  // of `r` counts as the work of `r2`.
   it('counts an asset as made by the reply when its text is in the section of a cut reply that handed its jobs on', () => {
     const sections = [...PLAIN, user('u2', 'No, make them jump.'), reply('r2', '')]
 

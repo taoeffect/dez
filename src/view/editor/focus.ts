@@ -66,8 +66,9 @@ export function syncDomSelection(view: EditorView): void {
  *  `.cm-scroller` (CodeMirror gives it `tabIndex = -1`), the user drags the
  *  view away from the selection, then clicks or Shift-clicks in the text.
  *  Put this after the pill mousedown handlers, so that a pill press that
- *  they take keeps the focus where it is, as before (the link press of
- *  `links.ts` has a high precedence for the same reason). */
+ *  they take keeps the focus where it is, as before (the press of a link
+ *  or a mention chip, `pressClicks.ts`, has a high precedence for the
+ *  same reason). */
 export const focusKeepingScrollOnMouseDown = EditorView.domEventHandlers({
   mousedown(event, view) {
     if (event.button === 0 && !view.hasFocus) focusKeepingScroll(view)

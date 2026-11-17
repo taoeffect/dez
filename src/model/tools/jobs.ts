@@ -398,7 +398,7 @@ export function jobsWaitResults(resultText: string): JobResult[] {
 
 /** One job of a reply, as `jobs_list` and `job_inspect` tell it: a job
  *  that the reply started, or that an earlier reply of the tab started
- *  before a stop or a new submit cut it. */
+ *  before the user cut it. */
 export interface JobInfo {
   id: string
   /** The tool whose call started the job. */

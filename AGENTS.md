@@ -270,7 +270,7 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 - **A tool's image or clip goes after the blocks of its group**, and the next request ends at the last tool message: text after it would be a prefill (`runChatRounds`).
 - **A request names a tool's image or clip only in the tool result** (`madeAssetText`, `src/model/tools/jobs.ts`; `roundRequestText`, `src/model/streams/messages.ts`).
 - **Slow tool work is a job** (`TabJobs`, `controller/jobs.ts`): the tool returns the job's id at once, and the work writes nothing into the reply.
-- **A stop or a new submit hands the jobs to the next reply of the tab**; a reply that ends on its own ends them, and so does a tab close (`handOverJobs`, `controller/stream.ts`). A model ends the jobs that it names with `job_cancel`.
+- **A reply that the user cuts hands its jobs to the next reply of the tab**; a reply that ends on its own ends them, and so does a tab close (`handOverJobs`, `controller/stream.ts`). A model ends the jobs that it names with `job_cancel`.
 - **Reply images and clips are written only while the reply is current** (`replyIsCurrent`, `controller/stream.ts`): a cancelled request can still give a response.
 - **Raw model entries are in memory only** (`dez.model/modelCache/rawModel`): a fact of a model that a request or the UI needs must be a field of `ModelInfo`.
 - **Provider data in a tool result** goes through `jsonWithoutLocalPaths` (`src/model/tools/localPaths.ts`): a tool result is stored as it was sent.

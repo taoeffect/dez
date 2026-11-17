@@ -4,7 +4,9 @@ import type { E2EBrowser } from './session'
 import { assetPartPoint } from './thread'
 
 // What the tool call chips of the active editor show
-// (src/view/editor/toolCalls.ts), read from the page.
+// (src/view/editor/toolCalls.ts), read from the page, and what a spec
+// expects of them; a press on a chip; and the text of a call block that a
+// seeded conversation holds.
 
 /** What one tool call chip in the editor shows. */
 export interface ToolChipView {
