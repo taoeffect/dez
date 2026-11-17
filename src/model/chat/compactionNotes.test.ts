@@ -485,16 +485,17 @@ describe('the message parts of the user', () => {
 })
 
 describe('the notes for people', () => {
-  // A model wrote this: the writer escapes it, so it forms no tag of Dez.
-  const MODEL_TAG = '<dez:audio id="z"/>'
-  const text = compactionNotesText(notes({ summary: `Like ${MODEL_TAG}, up to ${COMPACTION_END_LINE}`, assets: [FRAME, THEME] }))
+  // A model wrote a whole media tag on a line of its own. The writer escapes
+  // it; without that escape it would read as a tag of Dez, and get a label.
+  const MODEL_TAG = '<dez:audio id="z" type="audio/wav"/>'
+  const text = compactionNotesText(notes({ summary: `Like this:\n${MODEL_TAG}\nup to ${COMPACTION_END_LINE}`, assets: [FRAME, THEME] }))
 
   it('gives a label in place of each asset of Dez, and the text of the model as it wrote it', () => {
     const people = compactionNotesForPeople(text, 'agent')
 
     expect(people).not.toContain(HIDDEN_IMAGE_PATH)
     expect(people.split('\n').filter((line) => line === '[image]' || line === '[audio]')).toStrictEqual(['[image]', '[audio]'])
-    expect(people).toContain(`Like ${MODEL_TAG}, up to ${COMPACTION_END_LINE}`)
+    expect(people).toContain(`Like this:\n${MODEL_TAG}\nup to ${COMPACTION_END_LINE}`)
   })
 
   it('gives each message part as the text of its message, with a label for each asset and for each linked image that the rule lists', () => {
