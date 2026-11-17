@@ -98,6 +98,18 @@ describe('assetPlaces', () => {
     expect(placeOf([reply], 'd')?.origin).toStrictEqual({ kind: 'job', tool: 'model_invoke', number: 5, label: 'A dog' })
   })
 
+  it('tells that the chip of an earlier reply hides an asset of its job that a later reply wrote, and shows its copy in a user section', () => {
+    const results = jobsWaitText([{ id: 'j-aaaa', tool: 'model_invoke', status: 'finished', text: `${madeAssetText('image', 'b')}.`, call: { number: 1, label: 'A cat' } }], 0)
+    const sections = [
+      section('agent', `${invokeBlock('j-aaaa')}\n\nWorking.`, PAINTER),
+      section('user', `Go on.\n\n${hiddenImage('j-aaaa', 'c')}`),
+      section('agent', `${waitBlock(results)}\n\n${hiddenImage('j-aaaa', 'b')}`, PAINTER),
+    ]
+
+    expect(placeOf(sections, 'b')).toStrictEqual({ origin: { kind: 'job', tool: 'model_invoke', number: 1, label: 'A cat' }, hidden: true })
+    expect(placeOf(sections, 'c')).toStrictEqual({ origin: { kind: 'user' }, hidden: false })
+  })
+
   it('names the call whose result names an asset that a tool made in its call', () => {
     const crop = toolBlockText({
       id: 'call_1',
@@ -167,7 +179,7 @@ describe('assetPlaces in a compacted conversation', () => {
 
   it('reads the number and the label of a job whose block is gone from the notes, in the first reply after the compaction message only', () => {
     // Three jobs of one tool, so that the notes tell their numbers as a range.
-    const jobs = [1, 2, 3].map((number): JobInfo => ({ id: `j-${number}`, tool: 'video', status: 'finished', delivered: true, elapsedMs: 9000, state: '', call: { number, label: `join_clips @a @${number}` } }))
+    const jobs = [1, 2, 3].map((number): JobInfo => ({ id: `j-${number}`, tool: 'video', status: 'finished', delivered: true, elapsedMs: 9000, state: '', call: { number, label: `join_clips @a @${number}` }, inputs: [] }))
     const start = [compaction([], jobs), section('user', 'Join the clips.')]
 
     expect(placeOf([...start, section('agent', jobClip('c', 'j-3'))], 'c')?.origin)

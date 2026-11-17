@@ -12,10 +12,12 @@ import { findToolBlocks, type ToolBlock } from './toolBlocks'
 import type { ModelRef, Section } from './types'
 
 // Who made each image and clip of a conversation, and whether the editor
-// hides it, from the text of its section alone: the marks of its reference
-// or tag, and the tool blocks of its reply. The `asset_info` tool tells
-// these to a model, so that it knows which call made which clip (the jobs
-// of a reply end in any order, and so do the ids of their assets).
+// hides it, from the text of its section: the marks of its reference or
+// tag, and the tool blocks of its reply. Whether a chip of a call hides it
+// reads the earlier replies too, as a reply can take over the jobs of an
+// earlier one (`findHiddenAssets`). The `asset_info` tool tells these to a
+// model, so that it knows which call made which clip (the jobs of a reply
+// end in any order, and so do the ids of their assets).
 //
 // A compaction removes the tool blocks. The notes of its section keep one
 // line for each asset, and one for each job of the reply that ran
@@ -148,19 +150,22 @@ export function assetPlaces(sections: readonly Section[], assets: readonly Found
       .map((kept) => new Set(kept.map((hidden) => hidden.from)))
     return keptFrom[asset.section].has(from)
   }
-  // The tool blocks of the text of each reply that holds one of `assets`
-  // (`sectionTextParts`: never the compaction block), and the starts of
-  // the assets that a chip of a call hides, as offsets in the section.
-  const agentTexts = new Map<number, { blocks: ToolBlock[], hiddenFrom: Set<number> }>()
+  // The tool blocks of the text of each section (`sectionTextParts`: never
+  // the compaction block; none for a user section), and the starts of the
+  // assets that a chip of a call hides, as offsets in the section. Read
+  // once for the whole conversation, as the chip of a call can hide an
+  // asset of a later reply.
+  let agentTexts: { blocks: readonly ToolBlock[], hiddenFrom: Set<number> }[] | undefined
   const agentText = (index: number) => {
-    let found = agentTexts.get(index)
-    if (found === undefined) {
-      const { text, from } = sectionTextParts(sections[index], index)
-      const blocks = findToolBlocks(text)
-      found = { blocks, hiddenFrom: new Set(findHiddenAssets(text, blocks).map((asset) => from + asset.from)) }
-      agentTexts.set(index, found)
+    if (agentTexts === undefined) {
+      const parts = sections.map((section, at) => {
+        const { text, from } = sectionTextParts(section, at)
+        return { role: section.role, text, from, blocks: section.role === 'agent' ? findToolBlocks(text) : [] }
+      })
+      const hidden = findHiddenAssets(parts)
+      agentTexts = parts.map(({ blocks, from }, at) => ({ blocks, hiddenFrom: new Set(hidden[at].map((asset) => from + asset.from)) }))
     }
-    return found
+    return agentTexts[index]
   }
 
   return assets.map((asset): AssetPlace => {

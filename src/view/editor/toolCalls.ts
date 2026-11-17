@@ -2,7 +2,7 @@ import sbp from '@sbp/sbp'
 import { StateEffect, StateField, type EditorState, type Extension } from '@codemirror/state'
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view'
 import { createApp, h, shallowRef, type App, type ShallowRef } from 'vue'
-import { jobResultInBlocks, type HiddenAsset, type HiddenAssetOwner } from '../../model/chat/hiddenAssets'
+import { findJobResults, type HiddenAsset, type HiddenAssetOwner } from '../../model/chat/hiddenAssets'
 import type { MediaTagData } from '../../model/chat/mediaTags'
 import { parseModelRefKey } from '../../model/chat/modelRef'
 import type { ShownPicture } from '../../model/chat/shownPictures'
@@ -11,7 +11,7 @@ import { MODEL_OUTPUT_IDS, effectiveOutputs, type ModelOutput } from '../../mode
 import { isRecord } from '../../model/providers/modelParsing'
 import type { ModelInfo } from '../../model/providers/types'
 import { isRoundLimitResult } from '../../model/streams/toolRound'
-import { INTERMEDIATE_PARAMETER, jobOwnText, startedJobId, type JobResultStatus } from '../../model/tools/jobs'
+import { INTERMEDIATE_PARAMETER, jobOwnText, startedJobId, type JobResult, type JobResultStatus } from '../../model/tools/jobs'
 import { isIntermediateCall, toolDefinition } from '../../model/tools/registry'
 import type { ToolArguments } from '../../model/tools/types'
 import { assetIcon } from '../assetIcons'
@@ -79,18 +79,23 @@ export function panelAsset(asset: HiddenAsset, linkedSrc: boolean): PanelAsset {
  *  makes (`isIntermediateCall`: `is_intermediate` of `model_invoke`, or of
  *  a `video` subcommand), and it runs or started a job; or when it owns a
  *  hidden asset. A call that failed before it started a job is a failed
- *  call as any other. */
+ *  call as any other. The assets and the result of its job can be in a
+ *  later agent section than the chip: a later reply can take over the jobs
+ *  of a reply that stopped. */
 export interface IntermediateCall {
   /** The Dez job that the call started; null while the call runs. */
   jobId: string | null
-  /** The images and clips of the job that the chip hides, in doc order. */
+  /** The images and clips of the job that the chip hides, in doc order:
+   *  the hidden assets that it owns (`HiddenAssetOwner`, by the rule of
+   *  `findHiddenAssets`). */
   assets: readonly PanelAsset[]
   /** The text that the job made, when that is all it made: it is in the
-   *  result of a `jobs_wait` block, which few users open. Blank for a job
-   *  with assets, and for one that did not finish. */
+   *  result of a `jobs_wait` block (`status`), which few users open. Blank
+   *  for a job with assets, and for one that did not finish. */
   text: string
-  /** The status of the job's result in a `jobs_wait` block; null while no
-   *  block has one (the job runs, or its reply ended first). */
+  /** The status of the job's result in a `jobs_wait` block of the chip's
+   *  section or of a later one (`findJobResults`); null while no block has
+   *  one (the job runs, or its replies ended first). */
   status: JobResultStatus | null
 }
 
@@ -300,14 +305,14 @@ function addSectionSpacing(spacing: ChipSpacing, text: string, offset: number, c
 }
 
 /** What the chip of `call` shows as an intermediate call, or null
- *  (`IntermediateCall`). `chips` are the chips of the call's section, and
- *  `hidden` the hidden assets of that section. */
-function intermediateCall(call: ToolBlock, state: ToolCallState, chips: readonly ToolBlock[], hidden: readonly HiddenAsset[]): IntermediateCall | null {
+ *  (`IntermediateCall`). `ofCalls` are the hidden assets of the doc that
+ *  chips of calls own, and `result` the result of the job of the call
+ *  (`findJobResults`). */
+function intermediateCall(call: ToolBlock, state: ToolCallState, ofCalls: readonly HiddenAsset[], result: JobResult | null): IntermediateCall | null {
   const jobId = startedJobId(call.result)
-  const assets = hidden.filter((asset) => ownedBy(asset, jobId === null ? null : { kind: 'job', jobId }))
+  const assets = jobId === null ? [] : ofCalls.filter((asset) => ownedBy(asset, { kind: 'job', jobId, callId: call.id }))
   const asked = (state === 'running' || jobId !== null) && isIntermediateCall(call.name, call.arguments)
   if (assets.length === 0 && !asked) return null
-  const result = jobId === null ? null : jobResultInBlocks(chips, jobId)
   const text = result?.status === 'finished' && assets.length === 0 ? jobOwnText(result.text) : ''
   return {
     jobId,
@@ -327,13 +332,20 @@ function intermediateCall(call: ToolBlock, state: ToolCallState, chips: readonly
  *  (`chipBlocks`). Not drawn at all: blocks that start before `blockEnd`,
  *  in the compaction block (compactionBlock.ts). A `running` block runs
  *  only in the section that the active tab's stream writes into. `hidden`
- *  are the hidden assets of the doc, with doc offsets. */
+ *  are the hidden assets of the doc, with doc offsets. A chip gets the
+ *  hidden assets that it owns, and the result of its job, from any later
+ *  agent section too (`intermediateCall`). */
 function findRenderedToolCalls(doc: string, sections: readonly SectionModel[], streamingSectionId: string | null, hidden: readonly HiddenAsset[], blockEnd: number): { calls: RenderedToolCall[], spacing: ChipSpacing } {
   const calls: RenderedToolCall[] = []
   const spacing: ChipSpacing = { gapLines: [], contentAbove: [], contentBelow: [] }
   if (!doc.includes('<dez:tool')) return { calls, spacing }
-  for (const { section, from, text } of agentSectionTexts(doc, sections)) {
-    const chips = chipBlocks(text).filter((block) => from + block.from >= blockEnd)
+  const agentTexts = agentSectionTexts(doc, sections).map((sectionText) => ({
+    ...sectionText,
+    chips: chipBlocks(sectionText.text).filter((block) => sectionText.from + block.from >= blockEnd),
+  }))
+  const results = findJobResults(agentTexts.map(({ section, text, chips }) => ({ role: section.role, text, blocks: chips })))
+  const ofCalls = hidden.filter((asset) => asset.owner.kind === 'job')
+  agentTexts.forEach(({ section, from, text, chips }, sectionIndex) => {
     const summaries = toolCallSummaries(chips)
     const sectionHidden = hidden.filter((asset) => asset.from >= from && asset.to <= from + text.length)
     chips.forEach((block, index) => {
@@ -343,7 +355,7 @@ function findRenderedToolCalls(doc: string, sections: readonly SectionModel[], s
         from: from + block.from,
         to: from + block.to,
         state,
-        intermediate: intermediateCall(block, state, chips, sectionHidden),
+        intermediate: intermediateCall(block, state, ofCalls, results[sectionIndex][index]),
         summary: summaries[index],
       })
     })
@@ -355,7 +367,7 @@ function findRenderedToolCalls(doc: string, sections: readonly SectionModel[], s
     let spaced = from < blockEnd ? `${' '.repeat(blockEnd - from)}${text.slice(blockEnd - from)}` : text
     for (const asset of sectionHidden) spaced = `${spaced.slice(0, asset.from - from)}${' '.repeat(asset.to - asset.from)}${spaced.slice(asset.to - from)}`
     addSectionSpacing(spacing, spaced, from, chips)
-  }
+  })
   return { calls, spacing }
 }
 
@@ -596,11 +608,13 @@ function assetKey(asset: { kind: 'image', path: string, id: string | null, linke
 /** The key (`PanelAssetRow.key`) of each asset that a panel draws. */
 const drawnAssetKeys = new WeakMap<Element, string>()
 
-/** Whether the chip of `owner` hides `asset`. A call that started no job
- *  has the owner null, which hides nothing. */
+/** Whether the chip of `owner` hides `asset`: the chip of a call owns an
+ *  asset of the job that it started only when the asset names its call
+ *  too (`findHiddenAssets`). A call that started no job has the owner
+ *  null, which hides nothing. */
 function ownedBy(asset: HiddenAsset, owner: HiddenAssetOwner | null): boolean {
   if (owner === null) return false
-  if (asset.owner.kind === 'job' && owner.kind === 'job') return asset.owner.jobId === owner.jobId
+  if (asset.owner.kind === 'job' && owner.kind === 'job') return asset.owner.jobId === owner.jobId && asset.owner.callId === owner.callId
   return asset.owner.kind === owner.kind
 }
 
@@ -618,7 +632,8 @@ export interface PanelAssetRow {
 
 /** The rows of `assets`, the hidden assets of the chip of `owner`. Each
  *  asset tells where its text is in the doc now (`AssetPlace`) by its
- *  owner and its key, as its element is at the place of the chip. */
+ *  owner and its key, as its element is at the place of the chip. That
+ *  text can be in a later agent section than the chip. */
 function panelAssetRows(view: EditorView, owner: HiddenAssetOwner | null, assets: readonly PanelAsset[]): PanelAssetRow[] {
   // How many of the assets so far have each key: two references to one
   // file (a duplicated line) are two rows.
@@ -744,7 +759,7 @@ function renderIntermediatePart(view: EditorView, panel: HTMLElement, call: Rend
   const jobId = call.intermediate?.jobId ?? null
   const assets = call.intermediate?.assets ?? []
   const heading = assets.length > 1 ? 'Intermediate assets' : assets.length === 1 ? 'Intermediate asset' : 'Intermediate text'
-  renderHiddenPart(view, panel, jobId === null ? null : { kind: 'job', jobId }, heading, assets, { text: call.intermediate?.text ?? '' })
+  renderHiddenPart(view, panel, jobId === null ? null : { kind: 'job', jobId, callId: call.id }, heading, assets, { text: call.intermediate?.text ?? '' })
 }
 
 /** The part of an open panel that shows the copies of the pictures that a

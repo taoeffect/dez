@@ -129,7 +129,7 @@ function runFfmpeg(
 }
 
 // The outcome of a job whose ffmpeg run the backend stopped at the time
-// limit. The job has the same limit and its own clock (`ReplyJobs`), which
+// limit. The job has the same limit and its own clock (`TabJobs`), which
 // started before the input files were ready, so it ends the job first in
 // most cases; this is the text for the other case.
 function timedOutOutcome(timeoutMs: number, log: ProgramLog): JobOutcome {
@@ -161,8 +161,8 @@ function runProbe(
  *  (`outputFiles`) are the assets of the job; the text tells what the run
  *  did, with the end of its log. A run that failed keeps no file.
  *
- *  A stop of `signal` (a stop of the reply, or the time limit of the job)
- *  stops the program and rejects, which `ReplyJobs` drops. The work folder
+ *  A stop of `signal` (Dez stopped the job, or its time limit passed)
+ *  stops the program and rejects, which `TabJobs` drops. The work folder
  *  goes at every end. */
 export function runFfmpegJob(call: FfmpegCall, signal: AbortSignal, report: (state: string) => void): Promise<JobOutcome> {
   return inWorkFolder(async (folder) => {

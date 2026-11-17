@@ -78,10 +78,10 @@ export interface CompactedSectionsInput {
   /** What the compaction does with each asset (`assetDecisions`). */
   choices: readonly AssetChoice[]
   answer: CompactionAnswer
-  /** The jobs of the reply that runs. */
+  /** The jobs of the reply that runs (`CompactionInput.jobs`). */
   jobs: readonly JobInfo[]
   /** The inputs of the open jobs of `jobs` (`openJobInputs`): the notes
-   *  keep them for the next compaction of the same reply. */
+   *  tell them to the model, as their start blocks leave. */
   jobInputs: ReadonlyMap<string, readonly string[]>
   /** The cost of the conversation with the compaction request. */
   cost: ConversationCost | undefined

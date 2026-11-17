@@ -37,7 +37,7 @@ import {
 } from '../model/streams/pictureBudget'
 import {
   checkToolCalls,
-  STOPPED_TOOL_RESULT,
+  stoppedToolResult,
   toolCallBlock,
   toolGroupAppendText,
   toolGroupText,
@@ -66,7 +66,7 @@ import {
 } from '../model/state/streams'
 import { compactConversation, type Compaction } from './compaction'
 import { logRequest } from './diagnostics/requestLog'
-import { discardMadeAssets, generatedClipAsset, ReplyJobs, writeJobAssets, type EndedJob, type MadeAsset } from './jobs'
+import { discardMadeAssets, generatedClipAsset, TabJobs, writeJobAssets, type EndedJob, type MadeAsset } from './jobs'
 import { discardShownPictures } from './shownPictures'
 import type { ToolRunCall, ToolRunContext } from './tools'
 
@@ -129,6 +129,13 @@ interface ToolRun {
   abort: AbortController
 }
 
+// The jobs of the tab that a chat reply took, with the lease of the take
+// (`TabJobs.take`): it aborts when the reply hands them on.
+interface TakenJobs {
+  tabJobs: TabJobs
+  lease: AbortSignal
+}
+
 // One reply: one stream session, and one request round per group of tool
 // calls, each with its own native HTTP request.
 interface ReplyRuntime {
@@ -154,10 +161,13 @@ interface ReplyRuntime {
   // (`writeAsset`): the answer text that comes next starts a new paragraph
   // (`writeModelText`).
   afterAsset: boolean
-  // The jobs that the tools of the reply started (jobs.ts). They outlive
-  // their tool round, but not the reply: a stop, a new submit, and the end
-  // of the reply end them (`stopAll`).
-  jobs: ReplyJobs
+  // The jobs of the tab (jobs.ts) that a chat reply took at its start
+  // (`takeJobs`): the jobs that its tools start, and the jobs of the
+  // replies before it that a stop or a new submit cut. They outlive their
+  // tool round. A stop or a new submit hands them on (`handOverJobs`), and
+  // the end of a reply that ended on its own ends them (`stopAll`). Null
+  // for a media reply: it runs no tool, so it leaves the jobs with the tab.
+  jobs: TakenJobs | null
   // How many bytes a request sends for each image of the messages before
   // the reply, by path: the bytes that they take of the picture budget
   // (`imageFileSizes`). Read at the first compaction check or `asset_view`
@@ -172,6 +182,31 @@ interface ReplyRuntime {
 // http_bridge.rs keeps the global map of request ids that does the native
 // cancel.
 const repliesByTab = new Map<string, ReplyRuntime>()
+
+// The jobs of each tab that no reply holds now: a stop or a new submit cut
+// the reply that held them (`handOverJobs`), and the next chat reply of the
+// tab takes them (`takeJobs`). So the model of that reply can wait for the
+// jobs that a cut reply started. A close of the tab ends them
+// (`dez.stream/stop` with `endJobs`).
+const heldJobsByTab = new Map<string, TabJobs>()
+
+// A chat reply takes the jobs of its tab: the ones that a cut reply left,
+// else new ones. Returns them.
+function takeJobs(tabId: string, reply: ReplyRuntime): TabJobs {
+  const tabJobs = heldJobsByTab.get(tabId) ?? new TabJobs((usd) => countRequestCost(tabId, usd))
+  heldJobsByTab.delete(tabId)
+  reply.jobs = { tabJobs, lease: tabJobs.take(reply.sectionId) }
+  return tabJobs
+}
+
+// A stop or a new submit cut `reply`: its jobs go on, and the tab holds
+// them for its next chat reply. Nothing for a reply that holds no jobs (a
+// media reply), or that handed them on before.
+function handOverJobs(tabId: string, reply: ReplyRuntime): void {
+  if (!reply.jobs || reply.jobs.lease.aborted) return
+  reply.jobs.tabJobs.release()
+  heldJobsByTab.set(tabId, reply.jobs.tabJobs)
+}
 
 function finalizeStream(tabId: string, session: EndedStreamSession | null): void {
   if (!session) return
@@ -192,7 +227,8 @@ function finalizeStream(tabId: string, session: EndedStreamSession | null): void
 // reply (the answer of a stopped round), when the end has saved the
 // conversation: then it is saved again. Every request of a reply that
 // went counts here: each chat round, each compaction request, the media
-// round, and the paid request of each job (`ReplyJobs`).
+// round, and the paid request of each job (`TabJobs`), also of a job that
+// ends while no reply of the tab runs.
 function countRequestCost(tabId: string, usd: number | null): void {
   sbp('dez.model/tabs/countRequestCost', tabId, usd)
   if (!streamIsStreaming(tabId)) sbp('dez.model/tabs/save', tabId).catch(() => {})
@@ -369,15 +405,15 @@ function discardRunPictures(run: ToolRun): void {
 // Ends the tool run of a reply that the user stopped, or whose output a
 // submit ended (`dez.stream/endOutput`): aborts the running tool, and
 // writes the final blocks at once, while the stream session still writes
-// the section. Calls that ended keep their results; the others get
-// "Stopped.". The round loop finds the run gone and writes nothing more.
-// True when it wrote the blocks.
+// the section. Calls that ended keep their results; the others get their
+// stopped result (`stoppedToolResult`). The round loop finds the run gone
+// and writes nothing more. True when it wrote the blocks.
 function stopToolRun(tabId: string, reply: ReplyRuntime): boolean {
   const run = reply.toolRun
   if (!run) return false
   reply.toolRun = null
   run.abort.abort()
-  const blocks = run.calls.map((call, index) => toolCallBlock(call, run.results[index] ?? STOPPED_TOOL_RESULT))
+  const blocks = run.calls.map((call, index) => toolCallBlock(call, run.results[index] ?? stoppedToolResult(call.name)))
   if (streamWritesSection(tabId, reply.sectionId) && replaceToolRun(tabId, reply.sectionId, run, toolGroupText(blocks))) return true
   discardRunPictures(run)
   return false
@@ -485,7 +521,7 @@ function replyPictureParts(base: readonly StreamMessage[], model: ModelRef): Req
 // thinking for a round whose text holds an image of the model
 // (`roundThinking`, streams/messages.ts), and the request after a round of
 // calls needs that round's thinking.
-async function runToolRound(tabId: string, reply: ReplyRuntime, model: ModelRef, calls: CheckedToolCall[], replyText: string, messages: readonly StreamMessage[]): Promise<StreamingReply | null> {
+async function runToolRound(tabId: string, reply: ReplyRuntime, jobs: TabJobs, model: ModelRef, calls: CheckedToolCall[], replyText: string, messages: readonly StreamMessage[]): Promise<StreamingReply | null> {
   const runningBlocks = calls.map((call) => toolCallBlock(call))
   const run: ToolRun = {
     calls,
@@ -506,7 +542,7 @@ async function runToolRound(tabId: string, reply: ReplyRuntime, model: ModelRef,
     const context: ToolRunContext = {
       tabId,
       model,
-      jobs: reply.jobs,
+      jobs,
       ...toolAssetWriters(tabId, reply, call.name, takesAssets),
       // The read of the file sizes takes a moment, so a stop can come
       // during it.
@@ -614,18 +650,21 @@ async function writeReplyClip(tabId: string, reply: ReplyRuntime, clip: Generate
 // it got them, or the reply failed. Waits until no job runs, as a job can
 // be a request that the user pays for, and puts the images and the clips
 // of those jobs at the section end, under the names of their tools, as
-// `jobs_wait` does. The reply stays busy meanwhile, and a stop or a new
-// submit ends the wait and the jobs (`ReplyJobs.stopAll`). The result
-// text of such a job has no reader: the text of a job that finished is
-// dropped, and `endReply` logs the others. Returns the jobs that failed
-// or timed out, for the error toast (`unreadJobsMessage`); null when the
-// reply ended meanwhile.
-async function settleJobs(tabId: string, reply: ReplyRuntime): Promise<EndedJob[] | null> {
+// `jobs_wait` does. The reply stays busy meanwhile. A stop or a new submit
+// ends the wait, but not the jobs: the reply hands them on, with their
+// results, to the next reply (`handOverJobs`). The result text of such a
+// job has no reader: the text of a job that finished is dropped, and
+// `endReply` logs the others. Returns the jobs that failed or timed out,
+// for the error toast (`unreadJobsMessage`); null when the reply ended
+// meanwhile.
+async function settleJobs(tabId: string, reply: ReplyRuntime, { tabJobs, lease }: TakenJobs): Promise<EndedJob[] | null> {
   // A section that is gone (the user merged it into the one before) takes
   // no asset, so nothing is worth the wait.
-  if (!streamingReply(tabId, reply.sectionId)) reply.jobs.stopAll()
-  const ended = await reply.jobs.settle()
-  // After a stop the writers give null, which deletes the files.
+  if (!streamingReply(tabId, reply.sectionId)) tabJobs.stopAll()
+  const ended = await tabJobs.settle(lease)
+  if (ended === null) return null
+  // When the reply ended in another way meanwhile, the writers give null,
+  // which deletes the files.
   for (const job of ended) {
     await writeJobAssets(job, toolAssetWriters(tabId, reply, job.tool, () => replyIsCurrent(tabId, reply)))
   }
@@ -639,7 +678,8 @@ async function settleJobs(tabId: string, reply: ReplyRuntime): Promise<EndedJob[
 // submit ended it during the wait for the jobs. A caller shows its own
 // toast only after a true: the end sets the title of a new tab.
 async function endReply(tabId: string, reply: ReplyRuntime, status: 'finished' | 'error'): Promise<boolean> {
-  const unread = reply.jobs.hasOpen ? await settleJobs(tabId, reply) : []
+  const jobs = reply.jobs
+  const unread = jobs?.tabJobs.hasOpen ? await settleJobs(tabId, reply, jobs) : []
   if (unread === null) return false
   finalizeStream(tabId, status === 'finished' ? finishStreamSession(tabId) : errorStreamSession(tabId))
   if (unread.length > 0) {
@@ -756,7 +796,7 @@ function earlierReplyWriter(sections: Section[], replySectionId: string, replyMo
 // the bottom bar that the reply waits for a compaction. Null when a stop
 // or a new submit ended the reply meanwhile: that is no failure. Throws
 // the failure of the second try.
-async function requestCompaction(args: StreamStartArgs, reply: ReplyRuntime, sections: Section[], writer: NotesWriter): Promise<Compaction | null> {
+async function requestCompaction(args: StreamStartArgs, reply: ReplyRuntime, jobs: TabJobs, sections: Section[], writer: NotesWriter): Promise<Compaction | null> {
   const { tabId } = args
   setStreamCompacting(tabId, true)
   try {
@@ -775,7 +815,8 @@ async function requestCompaction(args: StreamStartArgs, reply: ReplyRuntime, sec
           ...writer.frame,
           requestId,
           signal: reply.abort.signal,
-          jobs: reply.jobs.list(),
+          jobs: jobs.list(),
+          replySections: jobs.replySections,
           cost: () => sbp('dez.model/tabs/cost', tabId) as ConversationCost | undefined,
           countCost: (usd) => countRequestCost(tabId, usd),
         })
@@ -834,7 +875,7 @@ async function endUncompactedReply(tabId: string, reply: ReplyRuntime, error: un
 //
 // A compaction that Dez cannot ask for, or whose request fails two times,
 // ends the reply with an error toast, and the tab stays as it is.
-async function compactIfDue(args: StreamStartArgs, reply: ReplyRuntime, frame: RequestFrame, { messages, kept, firstCheck }: {
+async function compactIfDue(args: StreamStartArgs, reply: ReplyRuntime, jobs: TabJobs, frame: RequestFrame, { messages, kept, firstCheck }: {
   messages: StreamMessage[]
   kept: PictureBudget
   firstCheck: boolean
@@ -872,7 +913,7 @@ async function compactIfDue(args: StreamStartArgs, reply: ReplyRuntime, frame: R
     return endUncompactedReply(tabId, reply, error, explainedError(error).message)
   }
   try {
-    result = await requestCompaction(args, reply, sections, writer)
+    result = await requestCompaction(args, reply, jobs, sections, writer)
   } catch (error) {
     return endUncompactedReply(tabId, reply, error, compactionFailedMessage(error, writer.model))
   }
@@ -921,6 +962,9 @@ async function compactIfDue(args: StreamStartArgs, reply: ReplyRuntime, frame: R
 // the conversation first (`compactIfDue`). Ends the reply, except when it
 // throws.
 async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promise<void> {
+  // Before the first compaction check: the notes of a compaction list the
+  // jobs that a cut reply left, as their start blocks leave.
+  const jobs = takeJobs(args.tabId, reply)
   // Read the provider's stored setting overrides and the system prompt
   // template at stream start (rather than threading them from submitTab) so
   // every caller — including future retries — picks up the user's current
@@ -960,7 +1004,7 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
     // message, and the request right after a compaction. A compaction that
     // made no room would come again and again.
     if (requestSinceCompaction) {
-      const step = await compactIfDue(args, reply, frame, { messages, kept, firstCheck })
+      const step = await compactIfDue(args, reply, jobs, frame, { messages, kept, firstCheck })
       if (step.kind === 'ended') return
       if (step.kind === 'compacted') {
         base = messages = step.messages
@@ -1068,7 +1112,7 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
     // Only the tool blocks of the reply text: the notes of a block hold
     // none.
     const calls = checkToolCalls(streamedCalls, findToolBlocks(replied.text).map((block) => block.id))
-    const replySoFar = await runToolRound(args.tabId, reply, args.model, calls, replied.text, messages)
+    const replySoFar = await runToolRound(args.tabId, reply, jobs, args.model, calls, replied.text, messages)
     if (!replySoFar) {
       // Still current only when the user deleted the running blocks:
       // with no calls to send back, the reply cannot go on, so it ends
@@ -1212,10 +1256,11 @@ export default sbp('sbp/selectors/register', {
     const previousReply = repliesByTab.get(args.tabId)
     if (previousReply) {
       // The submit ended its output (`dez.stream/endOutput`) before it built
-      // `args.messages`; the new reply ends its request and its jobs.
+      // `args.messages`; the new reply ends its request. The jobs of that
+      // reply go on, and the new reply takes them, if it is a chat reply.
       previousReply.cancelling = true
       previousReply.abort.abort()
-      previousReply.jobs.stopAll()
+      handOverJobs(args.tabId, previousReply)
       await sbp('dez.http/cancelStream', previousReply.requestId).catch(() => {})
       if (repliesByTab.get(args.tabId) === previousReply) repliesByTab.delete(args.tabId)
     }
@@ -1231,7 +1276,8 @@ export default sbp('sbp/selectors/register', {
       toolRun: null,
       escaper: new ModelTextEscaper(),
       afterAsset: false,
-      jobs: new ReplyJobs((usd) => countRequestCost(args.tabId, usd)),
+      // `runChatRounds` takes the jobs of the tab.
+      jobs: null,
       imageBytes: null,
     }
     repliesByTab.set(args.tabId, reply)
@@ -1254,8 +1300,10 @@ export default sbp('sbp/selectors/register', {
         if (await endReply(args.tabId, reply, 'error')) showReplyError(args.tabId, 'Request failed', replyError(error, args.model).message)
       }
     } finally {
-      // No job outlives its reply: nothing could take its result.
-      reply.jobs.stopAll()
+      // A reply that ended on its own ends its jobs: nothing could take
+      // their results. A reply that a stop or a new submit cut handed
+      // them on (its lease aborted).
+      if (reply.jobs && !reply.jobs.lease.aborted) reply.jobs.tabJobs.stopAll()
       if (repliesByTab.get(args.tabId) === reply) repliesByTab.delete(args.tabId)
     }
   },
@@ -1264,33 +1312,43 @@ export default sbp('sbp/selectors/register', {
   // request messages (so a submit with no messages leaves the reply alone)
   // and before it adds the new agent section; the new start then cancels
   // the reply's request. A running tool stops with its final blocks, the
-  // jobs of the reply stop, and the answer text that the escaper holds is
-  // written. These writes must come before the new section is in the
-  // store: the editor gets it only in Vue's next watcher flush, and a doc
-  // change before then writes the editor's sections back to the store,
-  // with no new section. Output of the request after this is dropped. True
-  // when it wrote text: the caller must then build its messages again.
+  // jobs of the reply go on for the new reply (`handOverJobs`), and the
+  // answer text that the escaper holds is written. These writes must come
+  // before the new section is in the store: the editor gets it only in
+  // Vue's next watcher flush, and a doc change before then writes the
+  // editor's sections back to the store, with no new section. Output of
+  // the request after this is dropped. True when it wrote text: the caller
+  // must then build its messages again.
   'dez.stream/endOutput' (tabId: string): boolean {
     const reply = repliesByTab.get(tabId)
     if (!reply) return false
     reply.cancelling = true
     reply.outputEnded = true
     const wroteBlocks = stopToolRun(tabId, reply)
-    reply.jobs.stopAll()
+    handOverJobs(tabId, reply)
     const wroteText = flushModelText(tabId, reply)
     return wroteBlocks || wroteText
   },
 
-  async 'dez.stream/stop' (tabId: string): Promise<void> {
-    if (!streamIsStreaming(tabId)) return
-    const reply = repliesByTab.get(tabId)
+  // Stops the reply of the tab, if one runs. Its jobs go on: the next chat
+  // reply of the tab takes them (`handOverJobs`). With `endJobs` (the tab
+  // goes), it ends them, and the jobs that the tab holds, also when no
+  // reply runs.
+  async 'dez.stream/stop' (tabId: string, { endJobs = false }: { endJobs?: boolean } = {}): Promise<void> {
+    const streaming = streamIsStreaming(tabId)
+    const reply = streaming ? repliesByTab.get(tabId) : undefined
     if (reply) {
       reply.cancelling = true
       reply.abort.abort()
       stopToolRun(tabId, reply)
       // The blocks of the calls that started the jobs stay in the section.
-      reply.jobs.stopAll()
+      handOverJobs(tabId, reply)
     }
+    if (endJobs) {
+      heldJobsByTab.get(tabId)?.stopAll()
+      heldJobsByTab.delete(tabId)
+    }
+    if (!streaming) return
 
     try {
       if (reply) {
@@ -1306,17 +1364,21 @@ export default sbp('sbp/selectors/register', {
     }
   },
 
-  // The files that the work of every reply that runs made, and that no
-  // text may name yet: the sources of the files that a job keeps while it
-  // runs, and of the assets of its result (`ReplyJobs.madeAssetSources`);
-  // and the names of the picture copies of the calls of a tool round that
-  // runs (shownPictures.ts), which a round can hold for longer than the
-  // age rule of the cleanup. Delete Unused Files keeps those files, as it
+  // The files that the work of every reply that runs, and every job of a
+  // tab, made, and that no text may name yet: the sources of the files
+  // that a job keeps while it runs, and of the assets of its result
+  // (`TabJobs.madeAssetSources`; the jobs that a tab holds too); and the
+  // names of the picture copies of the calls of a tool round that runs
+  // (shownPictures.ts), which a round can hold for longer than the age
+  // rule of the cleanup. Delete Unused Files keeps those files, as it
   // keeps the files that a text names.
   'dez.stream/unnamedMadeFiles' (): string[] {
-    return [...repliesByTab.values()].flatMap((reply) => [
-      ...reply.jobs.madeAssetSources(),
-      ...(reply.toolRun?.results ?? []).flatMap((result) => result?.pictures?.map(({ file }) => file) ?? []),
-    ])
+    const replies = [...repliesByTab.values()]
+    // A cut reply and the tab (or the next reply) can share one object.
+    const tabJobs = new Set([...heldJobsByTab.values(), ...replies.flatMap((reply) => reply.jobs?.tabJobs ?? [])])
+    return [
+      ...[...tabJobs].flatMap((jobs) => jobs.madeAssetSources()),
+      ...replies.flatMap((reply) => (reply.toolRun?.results ?? []).flatMap((result) => result?.pictures?.map(({ file }) => file) ?? [])),
+    ]
   },
 })

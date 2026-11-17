@@ -1,6 +1,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { Key } from 'webdriverio'
+import { stoppedToolResult } from '../../src/model/streams/toolRound'
 import { jobStartedText, jobsWaitText, startedJobId } from '../../src/model/tools/jobs'
 import { invocationAnswerText } from '../../src/model/tools/modelInvoke'
 import { click, consoleErrors, movePointer, pointerClick, pointerClickAt, promptMessage, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
@@ -38,10 +40,14 @@ import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolC
 //   is complete refuses the id at once, with the list;
 // - a job that runs longer than `timeout_seconds` ends with no result, and
 //   Dez closes its request;
-// - Stop ends the job and its request, and keeps the tool blocks;
+// - a stop of the user (Escape) leaves the jobs, with their requests, to
+//   the next reply of the tab: its `jobs_wait` gets their results and
+//   their images, and the result of the `jobs_wait` that the stop broke
+//   tells that the jobs go on;
 // - the request to a text model holds only the prompt and the image that
 //   the prompt names (no tools, no system prompt, nothing of the
-//   conversation), its answer is the result of the job, and Stop ends it;
+//   conversation), its answer is the result of the job, and a close of the
+//   tab ends it;
 // - a reply that ends while a job runs waits for it and takes its image;
 // - a job that failed and that no `jobs_wait` read shows an error toast;
 // - the image or the clip of a call with `is_intermediate` does not show
@@ -49,7 +55,8 @@ import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolC
 //   type symbol, a label), and shows it in its panel while it is open,
 //   with its trash and its Save. The model gets the same result, the
 //   asset keeps its id, and an `@id` mention of it sends it. It stays
-//   hidden after a relaunch. A new call of the same tool that changes the
+//   hidden after a relaunch, and under the chip of a stopped reply when the
+//   next reply takes its job. A new call of the same tool that changes the
 //   summary of the chip keeps the chip and its player;
 // - the answer of a text model to such a call shows in the panel too.
 // No request holds a path of the test HOME.
@@ -386,32 +393,57 @@ describe('model_invoke', () => {
     expect(await openToasts(browser, 'error')).toStrictEqual([])
   })
 
-  it('ends the job and its request when the user stops the reply, and keeps the tool block of the call', async () => {
+  // The case of the user: the model started jobs, and the user wants to
+  // correct it. Escape stops the reply while its `jobs_wait` waits; the
+  // reply to the correction takes the jobs over.
+  it('keeps the jobs of a reply that the user stops with Escape, and the reply to the next message waits for them and takes their results and image', async () => {
     const before = await filesIn(generatedDir)
-    await submit(browser, 'Make a picture.')
+    const prompt = 'Tell a long story.'
+    await submit(browser, 'Make a picture, and ask the helper for a story.')
     const first = await requestTo(CHAT_PATH)
-    sendToolCalls(first.reply, [paintCall('call_paint')])
+    sendToolCalls(first.reply, [paintCall('call_paint'), askCall('call_ask', prompt)])
     const paint = await requestTo(GENERATE_PATH, PAINT_BODY)
+    const asked = await requestTo(HELPER_PATH, { model: HELPER.modelId, stream: true, messages: [{ role: 'user', content: prompt }] })
     const second = await requestTo(CHAT_PATH)
-    const started = toolResult(second, 'call_paint')
+    const paintJob = startedJob(second, 'call_paint')
+    const askJob = startedJob(second, 'call_ask')
+    // The answer of the helper has begun.
+    startEventStream(asked.reply)
+    writeChatFrame(asked.reply, { content: 'Once' })
+    sendToolCalls(second.reply, [waitCall('call_wait', true)])
+    await waitForValue(browser, 'jobs_wait that waits', async () => (await threadSections(browser))[1]?.text.includes('id="call_wait"') ?? false, true)
 
-    // While a reply runs, the Submit button stops it.
-    await pointerClick(browser, '.submit-button')
-    await waitForValue(browser, 'request of the job closed', async () => paint.closed, true)
-    await waitForValue(browser, 'chat request closed', async () => second.closed, true)
-    const block = `<dez:tool id="call_paint" name="model_invoke" model="${STUDIO.id}/${STUDIO.modelId}" prompt="${PAINT_PROMPT}">\n${started}\n</dez:tool>\n`
-    await waitForThread(browser, [
-      { role: 'user', text: 'Make a picture.' },
-      { role: 'agent', text: block },
-      { role: 'user', text: '' },
-    ])
-    expect(await filesIn(generatedDir)).toStrictEqual(before)
+    await focusEditor(browser)
+    await browser.keys([Key.Escape])
+    await waitForValue(browser, 'sections after the stop', async () => (await threadSections(browser)).map(({ role }) => role), ['user', 'agent', 'user'])
+    await waitForValue(browser, 'streaming', () => activeTabStreaming(browser), false)
+    const stopped = stoppedToolResult('jobs_wait').content
+    expect((await threadSections(browser))[1].text).toContain(`\n${stopped}\n</dez:tool>`)
+    // The requests of both jobs go on, and a job can end while no reply
+    // runs.
+    expect([paint.closed, asked.closed]).toStrictEqual([false, false])
+    answerHeld(paint.reply, 'application/json', JSON.stringify({ images: [MADE_PNG.toString('base64')] }))
 
-    // The call goes back with its result, and the stopped job has no other.
-    await submit(browser, 'Go on.')
+    await submit(browser, 'Use the other style.')
     const third = await requestTo(CHAT_PATH)
-    expect(toolResult(third, 'call_paint')).toBe(started)
+    expect(toolResult(third, 'call_wait')).toBe(stopped)
+    sendToolCalls(third.reply, [waitCall('call_wait_2', true)])
+    writeChatFrame(asked.reply, { content: ' upon a time.' })
+    asked.reply.end('data: [DONE]\n\n')
+    const fourth = await requestTo(CHAT_PATH)
+    expect(toolResult(fourth, 'call_wait_2')).toBe(jobsWaitText([
+      { id: paintJob, tool: 'model_invoke', status: 'finished', text: 'Made the image @a.', call: { number: 1, label: PAINT_PROMPT } },
+      { id: askJob, tool: 'model_invoke', status: 'finished', text: invocationAnswerText('Once upon a time.'), call: { number: 2, label: prompt } },
+    ], 0))
+    await sendChatReply(fourth.reply, CALLER.modelName)
+
+    // The image goes into the reply that took the job over.
+    const reply = await endedReply(browser, 3)
+    const madePath = path.join(generatedDir, await newFileIn(browser, generatedDir, before))
+    expect(reply.endsWith(`</dez:tool>\n\n![${madePath}](id=a|tool=model_invoke|made-by=${paintJob})\n\n${replyText(CALLER.modelName)}`)).toBe(true)
+    await waitForValue(browser, 'shown image', async () => (await shownImages(browser)).map(({ width, height }) => ({ width, height })), [{ width: 48, height: 36 }])
     expect(setup.mock.hasWaitingRequest()).toBe(false)
+    expect(await openToasts(browser, 'error')).toStrictEqual([])
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 
@@ -460,7 +492,7 @@ describe('model_invoke', () => {
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 
-  it('ends the request to a text model that still answers when the user stops the reply, and takes nothing of its answer', async () => {
+  it('ends the request to a text model of a stopped reply when the user closes the tab, and takes nothing of its answer', async () => {
     const prompt = 'Tell a long story.'
     await submit(browser, 'Ask the helper.')
     const first = await requestTo(CHAT_PATH)
@@ -472,8 +504,9 @@ describe('model_invoke', () => {
     startEventStream(asked.reply)
     writeChatFrame(asked.reply, { content: 'Once' })
 
+    // While a reply runs, the Submit button stops it. The job goes on for
+    // the next reply of the tab.
     await pointerClick(browser, '.submit-button')
-    await waitForValue(browser, 'request of the job closed', async () => asked.closed, true)
     await waitForValue(browser, 'chat request closed', async () => second.closed, true)
     const block = `<dez:tool id="call_ask" name="model_invoke" model="${HELPER.id}/${HELPER.modelId}" prompt="${prompt}">\n${started}\n</dez:tool>\n`
     await waitForThread(browser, [
@@ -481,6 +514,11 @@ describe('model_invoke', () => {
       { role: 'agent', text: block },
       { role: 'user', text: '' },
     ])
+    expect(asked.closed).toBe(false)
+
+    // No later reply can take the job of a tab that is gone.
+    await pointerClick(browser, '.tab--active .tab-close')
+    await waitForValue(browser, 'request of the job closed', async () => asked.closed, true)
     expect(setup.mock.hasWaitingRequest()).toBe(false)
     expect(await openToasts(browser, 'error')).toStrictEqual([])
     expect(await consoleErrors(browser)).toStrictEqual([])
@@ -606,6 +644,46 @@ describe('model_invoke', () => {
     })
     await sendChatReply(next.reply, CALLER.modelName)
     await waitForValue(browser, 'sections after the second reply', async () => (await threadSections(browser)).length, 5)
+    expect(await openToasts(browser, 'error')).toStrictEqual([])
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  // A stop hands the job of the call to the next reply, so its image goes
+  // into a later section than the chip of its call.
+  it('hides the image of an intermediate call of a stopped reply under its chip, when the next reply takes it', async () => {
+    const before = await filesIn(generatedDir)
+    await submit(browser, 'Make a draft.')
+    const first = await requestTo(CHAT_PATH)
+    sendToolCalls(first.reply, [paintCall('call_paint', { is_intermediate: true })])
+    const paint = await requestTo(GENERATE_PATH, PAINT_BODY)
+    const second = await requestTo(CHAT_PATH)
+    const jobId = startedJob(second, 'call_paint')
+    await focusEditor(browser)
+    await browser.keys([Key.Escape])
+    await waitForValue(browser, 'sections after the stop', async () => (await threadSections(browser)).map(({ role }) => role), ['user', 'agent', 'user'])
+    await waitForValue(browser, 'streaming', () => activeTabStreaming(browser), false)
+
+    await submit(browser, 'Go on.')
+    const third = await requestTo(CHAT_PATH)
+    sendToolCalls(third.reply, [waitCall('call_wait')])
+    answerHeld(paint.reply, 'application/json', JSON.stringify({ images: [MADE_PNG.toString('base64')] }))
+    const fourth = await requestTo(CHAT_PATH)
+    expect(toolResult(fourth, 'call_wait')).toBe(jobsWaitText([{ id: jobId, tool: 'model_invoke', status: 'finished', text: 'Made the image @a.', call: { number: 1, label: PAINT_PROMPT } }], 0))
+    await sendChatReply(fourth.reply, CALLER.modelName)
+
+    const reply = await endedReply(browser, 3)
+    const madePath = path.join(generatedDir, await newFileIn(browser, generatedDir, before))
+    expect(reply.endsWith(`</dez:tool>\n\n![${madePath}](id=a|tool=model_invoke|made-by=${jobId}|hidden=${jobId})\n\n${replyText(CALLER.modelName)}`)).toBe(true)
+    // The chip of the call in the stopped reply hides the image; the
+    // `jobs_wait` chip of the next reply does not.
+    await waitForValue(browser, 'chips after the reply', () => intermediateParts(browser), [hidingPart('image'), null])
+    expect(await shownImages(browser)).toStrictEqual([])
+
+    await pressToolChip(browser, 0)
+    await waitForValue(browser, 'image in the panel', imageSizes, [{ width: 48, height: 36 }])
+    expect(await hiddenPart(browser, 0)).toStrictEqual({ heading: 'Intermediate asset', assets: 1, text: null })
+    await pressToolChip(browser, 0)
+    await waitForValue(browser, 'image after the chip closed', () => shownImages(browser), [])
     expect(await openToasts(browser, 'error')).toStrictEqual([])
     expect(await consoleErrors(browser)).toStrictEqual([])
   })

@@ -97,6 +97,7 @@ function compactionInput(input: Partial<CompactionInput> = {}): CompactionInput 
     requestId: 'request',
     signal: new AbortController().signal,
     jobs: [],
+    replySections: [],
     cost: () => cost,
     countCost: (usd) => {
       counted.push(usd)
@@ -215,7 +216,7 @@ describe('compactConversation', () => {
   })
 
   it('drops a made asset of an earlier reply that the answer has no line for, but not one that an open job of the reply uses', async () => {
-    const job = { id: 'j-aaaa', tool: 'model_invoke', status: 'running', delivered: false, elapsedMs: 0, state: '', call: { number: 1, label: 'Make @c longer' } } as const
+    const job = { id: 'j-aaaa', tool: 'model_invoke', status: 'running', delivered: false, elapsedMs: 0, state: '', call: { number: 1, label: 'Make @c longer' }, inputs: ['c'] } as const
     const started = invokeBlock(job.id, { prompt: 'Make @c longer', intermediate: false, inputs: [{ id: 'c', kind: 'video' }] })
     const sections = [...SECTIONS.slice(0, 3), reply('r', `I make the film longer.\n\n${started}`)]
     streamChat = answers(`${NOTES}\n\n## Assets\n@a: keep - The photo of the user.`)
@@ -225,9 +226,22 @@ describe('compactConversation', () => {
     expect(instruction().split('\n').find((line) => line.startsWith('@c '))).toMatch(/ \| open job$/)
     expect(compaction.dropped.map(({ asset }) => asset.id)).toStrictEqual(['b'])
     expect([...notesAssetLines(notesOf(compaction)).keys()]).toStrictEqual(['a', 'c'])
-    // The next compaction of the reply reads the inputs of the job here:
-    // the block that started it is gone.
+    // The notes tell the model the inputs of the job: the block that
+    // started it is gone.
     expect(notesJobLines(notesOf(compaction)).get(job.id)?.inputs).toStrictEqual(['c'])
+  })
+
+  // A stop cut the reply `r1`, and the reply `r` took its jobs: the block
+  // that started the job is not in the reply's section.
+  it('keeps the input of an open job that a cut reply started, and the assets that the cut reply made', async () => {
+    const job = { id: 'j-aaaa', tool: 'model_invoke', status: 'running', delivered: false, elapsedMs: 0, state: '', call: { number: 1, label: 'Make @c longer' }, inputs: ['c'] } as const
+    streamChat = answers(`${NOTES}\n\n## Assets\n@a: keep - The photo of the user.`)
+
+    const compaction = await compactConversation(compactionInput({ jobs: [job], replySections: ['r1'] }))
+
+    expect(instruction().split('\n').find((line) => line.startsWith('@c '))).toMatch(/ \| open job$/)
+    expect(compaction.dropped).toStrictEqual([])
+    expect([...notesAssetLines(notesOf(compaction)).keys()]).toStrictEqual(['a', 'b', 'c'])
   })
 
   it('reads no file for the facts of an asset that the notes of the compaction before tell', async () => {

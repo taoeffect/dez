@@ -7,13 +7,14 @@ import { unexpectedToolErrorText } from '../model/tools/registry'
 import { ToolError } from '../model/tools/types'
 import type { ToolRunContext } from './tools'
 
-// The jobs of one reply: the slow work of its tool calls, which runs in the
-// background while the reply goes on (the rules and the texts for the model
-// are in model/tools/jobs.ts). A runner starts a job with
+// The jobs of a tab: the slow work of the tool calls of its replies, which
+// runs in the background while a reply goes on (the rules and the texts for
+// the model are in model/tools/jobs.ts). A runner starts a job with
 // `context.jobs.start` and returns `jobStartedText` at once; the `jobs_wait`
 // runner, or the end of the reply, takes the results. This module registers
-// no selector: a reply owns its `ReplyJobs` (`ReplyRuntime.jobs`,
-// controller/stream.ts), and a runner gets it in its `ToolRunContext`.
+// no selector: the reply that runs owns the `TabJobs` of its tab
+// (`ReplyRuntime.jobs`), and the tab holds it between two replies
+// (controller/stream.ts). A runner gets it in its `ToolRunContext`.
 
 /** An image or a clip that the work of a reply made (a job, a tool call,
  *  a media round) before a text of the reply names it: a stored image
@@ -45,7 +46,7 @@ export interface JobOutcome {
 }
 
 /** The work of a job. `signal` aborts when the job ends before its work
- *  (its reply ended, or its time limit passed): the work must then end its
+ *  (Dez stopped it, or its time limit passed): the work must then end its
  *  requests. `report` keeps a state text for `jobs_list` and `job_inspect`,
  *  such as the phase of the work and a provider's job id; it goes to the
  *  chat provider too, and the result of a job that timed out ends with it.
@@ -105,6 +106,8 @@ interface Job extends Omit<EndedJob, 'status' | 'assets'> {
   // job: the job outlives that round.
   abort: AbortController
   timer: ReturnType<typeof setTimeout>
+  // The ids of the assets that its call names as inputs (`JobInfo.inputs`).
+  inputs: readonly string[]
 }
 
 // The source of a made asset: the path of a stored image, or the `src` of
@@ -160,8 +163,15 @@ export async function writeJobAssets(job: EndedJob, writers: Pick<ToolRunContext
   return written
 }
 
-/** The jobs of one reply. */
-export class ReplyJobs {
+/** The jobs of a tab. A stop of the user or a new submit cuts the reply
+ *  that runs, but not its jobs: the reply hands them on (`release`), and
+ *  the next chat reply of the tab takes them (`take`), with their ids,
+ *  their numbers, the results that wait, and the cost callback. So the
+ *  model of the next reply can wait for them. A reply that ends on its own
+ *  waits for its jobs, then ends them (`stopAll`); a close of the tab ends
+ *  them too. Only one reply reads the jobs at a time: the one that holds
+ *  the lease of `take`. */
+export class TabJobs {
   // In the order of the starts.
   private readonly jobs = new Map<string, Job>()
   // The jobs that ended with a result that no reader took, in the order of
@@ -170,11 +180,42 @@ export class ReplyJobs {
   // Each wait for the next end of a job.
   private readonly waits = new Set<() => void>()
   private stopped = false
+  // The ids of the agent sections of the replies that took the jobs, in
+  // the order of the takes.
+  private readonly sections: string[] = []
+  // The lease of the reply that took the jobs last (`take`).
+  private lease: AbortController | null = null
 
   /** `onCost` gets the price of each job that sent a paid request
    *  (`JobInfo.cost`) once, at the end of the job: the last price that its
    *  work reported before that end. */
   constructor(private readonly onCost: (usd: number | null) => void = () => {}) {}
+
+  /** The ids of the agent sections of the replies that took these jobs:
+   *  the replies that a stop or a new submit cut, and the reply that holds
+   *  them now. A compaction counts their work as the work of the reply
+   *  that runs (`CompactionInput.replySections`). */
+  get replySections(): readonly string[] {
+    return this.sections
+  }
+
+  /** The reply of the section `sectionId` takes the jobs, and from now on
+   *  is the one reader of their results. The lease that this returns
+   *  aborts when the reply hands the jobs on (`release`), or when another
+   *  reply takes them. */
+  take(sectionId: string): AbortSignal {
+    this.release()
+    if (!this.sections.includes(sectionId)) this.sections.push(sectionId)
+    this.lease = new AbortController()
+    return this.lease.signal
+  }
+
+  /** The reply that holds the jobs hands them on: its lease aborts, and
+   *  the jobs go on, for the next reply that takes them. */
+  release(): void {
+    this.lease?.abort()
+    this.lease = null
+  }
 
   /** How many jobs run now. */
   get running(): number {
@@ -196,12 +237,15 @@ export class ReplyJobs {
   /** Starts `work` as a job of `tool` and returns the job's id and its
    *  number (`JobCall.number`) at once. The job ends as `timed out` when
    *  the work takes more than `timeoutMs`. `hidesAssets`: see `EndedJob`.
-   *  `label` is the label of the call (`jobCallLabel`). Throws a
-   *  `ToolError` for one open job too many (`MAX_OPEN_JOBS`: the jobs that
-   *  ended and whose results a reader took do not count, so a long reply
-   *  can start any count of jobs), and after `stopAll`. */
-  start(tool: string, work: JobWork, { timeoutMs, hidesAssets = false, label = '' }: { timeoutMs: number, hidesAssets?: boolean, label?: string }): { id: string, number: number } {
-    if (this.stopped) throw new ToolError('The reply stopped, so Dez started no job. This is not a fault of the call.')
+   *  `label` is the label of the call (`jobCallLabel`), and `inputs` the
+   *  ids of the assets that the call names as inputs (`JobInfo.inputs`).
+   *  Throws a `ToolError` for one open job too many (`MAX_OPEN_JOBS`: the
+   *  jobs that ended and whose results a reader took do not count, so a
+   *  long reply can start any count of jobs), after `stopAll`, and when
+   *  `signal` (the signal of the call) aborted: a call that a stop or a
+   *  new submit cut starts no job. */
+  start(tool: string, work: JobWork, { timeoutMs, hidesAssets = false, label = '', inputs = [], signal }: { timeoutMs: number, hidesAssets?: boolean, label?: string, inputs?: readonly string[], signal?: AbortSignal }): { id: string, number: number } {
+    if (this.stopped || signal?.aborted) throw new ToolError('The reply stopped, so Dez started no job. This is not a fault of the call.')
     if (this.running + this.ready >= MAX_OPEN_JOBS) throw new ToolError(JOB_LIMIT_TEXT)
     const job: Job = {
       id: newJobId((id) => this.jobs.has(id)),
@@ -217,6 +261,7 @@ export class ReplyJobs {
       delivered: false,
       abort: new AbortController(),
       timer: setTimeout(() => this.end(job, 'timed out', jobTimedOutText(timeoutMs, job.state)), timeoutMs),
+      inputs,
     }
     this.jobs.set(job.id, job)
 
@@ -319,13 +364,16 @@ export class ReplyJobs {
 
   /** For the end of a reply whose model did not wait for its jobs: waits
    *  until no job runs, then gives the results that no reader took, as
-   *  `wait` does. A `stopAll` ends the wait, with no result. */
-  async settle(): Promise<EndedJob[]> {
-    while (this.running > 0) await this.nextEnd()
-    return this.takeUnread()
+   *  `wait` does. `lease` is the lease of the reply (`take`): when it
+   *  aborts (a stop or a new submit handed the jobs on), the wait ends and
+   *  gives null, and the results stay for the next reader. A `stopAll`
+   *  ends the wait, with no result. */
+  async settle(lease: AbortSignal): Promise<EndedJob[] | null> {
+    while (this.running > 0 && !lease.aborted) await this.nextEnd(lease).catch(() => {})
+    return lease.aborted ? null : this.takeUnread()
   }
 
-  /** Every job of the reply, in the order of the starts. */
+  /** Every job of the tab, in the order of the starts. */
   list(): JobInfo[] {
     const now = Date.now()
     return [...this.jobs.values()].map((job) => ({
@@ -336,6 +384,7 @@ export class ReplyJobs {
       elapsedMs: (job.endedAt ?? now) - job.startedAt,
       state: job.state,
       call: job.call,
+      inputs: job.inputs,
       ...(job.cost !== undefined && { cost: job.cost }),
     }))
   }
@@ -350,11 +399,10 @@ export class ReplyJobs {
     return [...this.jobs.values()].flatMap((job) => job.assets.flatMap((asset) => madeAssetSource(asset) ?? []))
   }
 
-  /** Ends every job at once, when its reply ends: a stop, a new submit, or
-   *  the reply's own end. No job outlives its reply, as nothing could take
-   *  its result. The results that no reader took are thrown away with
-   *  their files, as the output of a media request that the user stopped,
-   *  and no job starts after this. */
+  /** Ends every job at once: at the end of a reply that ended on its own,
+   *  and at a close of the tab. The results that no reader took are thrown
+   *  away with their files, as the output of a media request that the user
+   *  stopped, and no job starts after this. */
   stopAll(): void {
     this.stopped = true
     for (const job of this.jobs.values()) {

@@ -24,6 +24,7 @@ const job = (number: number, status: JobInfo['status'], cost?: number | null): J
   elapsedMs: 1000,
   state: '',
   call: { number, label: '' },
+  inputs: [],
   ...(cost !== undefined && { cost }),
 })
 

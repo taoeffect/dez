@@ -2,7 +2,7 @@ import sbp from '@sbp/sbp'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { JOB_LIMIT_TEXT, MAX_OPEN_JOBS } from '../model/tools/jobs'
 import { ToolError } from '../model/tools/types'
-import { discardMadeAssets, ReplyJobs, writeJobAssets, type EndedJob, type MadeAsset } from './jobs'
+import { discardMadeAssets, TabJobs, writeJobAssets, type EndedJob, type MadeAsset } from './jobs'
 import { APP_DIR, CACHE_DIR, heldWork, LONG, native, resetNative, running, settled } from './testing'
 
 const IMAGE = `${APP_DIR}/assets/generated/images/made.png`
@@ -34,13 +34,13 @@ sbp('sbp/selectors/register', {
   },
 })
 
-let jobs: ReplyJobs
+let jobs: TabJobs
 let consoleError: MockInstance<typeof console.error>
 
 beforeEach(() => {
   vi.useFakeTimers()
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
-  jobs = new ReplyJobs()
+  jobs = new TabJobs()
   resetNative()
   deletedImages = []
   deletedClips = []
@@ -52,7 +52,7 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-describe('ReplyJobs', () => {
+describe('TabJobs', () => {
   it('runs its jobs at the same time, and a wait gives the results in the order of their ends', async () => {
     const first = heldWork()
     const second = heldWork()
@@ -98,7 +98,7 @@ describe('ReplyJobs', () => {
 
   it('gives no result at once when the reply has no job', async () => {
     expect(await jobs.wait(running())).toStrictEqual([])
-    expect(await jobs.settle()).toStrictEqual([])
+    expect(await jobs.settle(running())).toStrictEqual([])
     expect(jobs.hasOpen).toBe(false)
   })
 
@@ -187,7 +187,7 @@ describe('ReplyJobs', () => {
       call: { number: 1, label: '' },
     }])
     expect(jobs.list()).toStrictEqual([{
-      id, tool: 'model_invoke', status: 'timed out', delivered: true, elapsedMs: 90_000, state: 'Queued at the provider as job q-7.', call: { number: 1, label: '' },
+      id, tool: 'model_invoke', status: 'timed out', delivered: true, elapsedMs: 90_000, state: 'Queued at the provider as job q-7.', call: { number: 1, label: '' }, inputs: [],
     }])
   })
 
@@ -233,12 +233,12 @@ describe('ReplyJobs', () => {
     expect(consoleError).toHaveBeenCalledTimes(2)
   })
 
-  it('lists its jobs in the order of their starts, with the state, the time, the call, and whether a wait gave the result', async () => {
+  it('lists its jobs in the order of their starts, with the state, the time, the call, the inputs, and whether a wait gave the result', async () => {
     const first = heldWork()
     const second = heldWork()
     const { id: firstId } = jobs.start('model_invoke', first.work, LONG)
     await vi.advanceTimersByTimeAsync(4000)
-    const { id: secondId } = jobs.start('video', second.work, { ...LONG, label: 'join_clips @c @d' })
+    const { id: secondId } = jobs.start('video', second.work, { ...LONG, label: 'join_clips @c @d', inputs: ['c', 'd'] })
     second.report('Sent the request.')
     second.report('Queued.')
     await vi.advanceTimersByTimeAsync(3000)
@@ -246,8 +246,8 @@ describe('ReplyJobs', () => {
     await vi.advanceTimersByTimeAsync(2000)
 
     expect(jobs.list()).toStrictEqual([
-      { id: firstId, tool: 'model_invoke', status: 'running', delivered: false, elapsedMs: 9000, state: '', call: { number: 1, label: '' } },
-      { id: secondId, tool: 'video', status: 'finished', delivered: false, elapsedMs: 3000, state: 'Queued.', call: { number: 2, label: 'join_clips @c @d' } },
+      { id: firstId, tool: 'model_invoke', status: 'running', delivered: false, elapsedMs: 9000, state: '', call: { number: 1, label: '' }, inputs: [] },
+      { id: secondId, tool: 'video', status: 'finished', delivered: false, elapsedMs: 3000, state: 'Queued.', call: { number: 2, label: 'join_clips @c @d' }, inputs: ['c', 'd'] },
     ])
 
     await jobs.wait(running())
@@ -260,7 +260,7 @@ describe('ReplyJobs', () => {
   // the job.
   it('lists the last price that the work of a job reported, keeps the price of a job that ended, and gives it to onCost at the end', async () => {
     const counted: (number | null)[] = []
-    jobs = new ReplyJobs((usd) => counted.push(usd))
+    jobs = new TabJobs((usd) => counted.push(usd))
     const paid = heldWork()
     const unpriced = heldWork()
     const stopped = heldWork()
@@ -340,8 +340,8 @@ describe('ReplyJobs', () => {
       first.finish({ text: 'First.' })
       await jobs.wait(running())
 
-      let settledJobs: EndedJob[] | undefined
-      void jobs.settle().then((ended) => { settledJobs = ended })
+      let settledJobs: EndedJob[] | null | undefined
+      void jobs.settle(running()).then((ended) => { settledJobs = ended })
       await settled()
       expect(settledJobs).toBeUndefined()
 
@@ -356,7 +356,73 @@ describe('ReplyJobs', () => {
       const { id } = jobs.start('model_invoke', held.work, { ...LONG, hidesAssets: true })
       held.finish({ assets: [image] })
 
-      expect(await jobs.settle()).toStrictEqual<EndedJob[]>([{ id, tool: 'model_invoke', status: 'finished', text: '', assets: [image], hidesAssets: true, call: { number: 1, label: '' } }])
+      expect(await jobs.settle(running())).toStrictEqual<EndedJob[]>([{ id, tool: 'model_invoke', status: 'finished', text: '', assets: [image], hidesAssets: true, call: { number: 1, label: '' } }])
+    })
+
+    // A stop during the end wait of a reply hands the jobs on: the next
+    // reply must still get every result.
+    it('gives null when the lease aborts, takes no result, and leaves the jobs and the results for the next reader', async () => {
+      const first = heldWork()
+      const second = heldWork()
+      const { id: firstId } = jobs.start('model_invoke', first.work, LONG)
+      const { id: secondId } = jobs.start('model_invoke', second.work, LONG)
+      const lease = jobs.take('r1')
+      first.finish({ text: 'First.', assets: [image] })
+      await settled()
+      const settle = jobs.settle(lease)
+
+      jobs.release()
+
+      expect(await settle).toBeNull()
+      expect(second.signal().aborted).toBe(false)
+      expect(deletedImages).toStrictEqual([])
+      second.finish({ text: 'Second.' })
+      expect((await jobs.wait(jobs.take('r2'), { all: true })).map((job) => [job.id, job.text])).toStrictEqual([[firstId, 'First.'], [secondId, 'Second.']])
+    })
+  })
+
+  describe('take and release', () => {
+    it('gives one lease at a time: a new take or a release aborts the lease before it', () => {
+      const first = jobs.take('r1')
+      const second = jobs.take('r2')
+      expect([first.aborted, second.aborted]).toStrictEqual([true, false])
+
+      jobs.release()
+      expect(second.aborted).toBe(true)
+    })
+
+    it('keeps the section of each reply that took the jobs once, in the order of the takes', () => {
+      jobs.take('r1')
+      jobs.release()
+      jobs.take('r2')
+      jobs.take('r1')
+
+      expect(jobs.replySections).toStrictEqual(['r1', 'r2'])
+    })
+
+    it('keeps the jobs, their numbers, and their results through a release and a take', async () => {
+      jobs.take('r1')
+      const held = heldWork()
+      const { id } = jobs.start('model_invoke', held.work, LONG)
+      jobs.release()
+      held.finish({ text: 'Done.' })
+      await settled()
+      jobs.take('r2')
+
+      expect(jobs.start('model_invoke', heldWork().work, LONG).number).toBe(2)
+      expect((await jobs.wait(running(), { ids: [id] })).map((job) => job.text)).toStrictEqual(['Done.'])
+    })
+
+    // A runner of a reply that a stop cut can call `start` after the stop.
+    it('starts no job for a call whose signal aborted, and starts jobs for later calls', () => {
+      const stopped = new AbortController()
+      stopped.abort()
+
+      let started = false
+      expect(() => jobs.start('model_invoke', async () => { started = true; return { text: '', isError: false, assets: [] } }, { ...LONG, signal: stopped.signal })).toThrow(ToolError)
+      expect(started).toBe(false)
+      expect(jobs.list()).toStrictEqual([])
+      expect(jobs.start('model_invoke', heldWork().work, { ...LONG, signal: running() }).number).toBe(1)
     })
   })
 
@@ -364,7 +430,7 @@ describe('ReplyJobs', () => {
     it('ends every job that runs with no result, aborts its work, and ends the waits', async () => {
       const held = heldWork()
       const { id } = jobs.start('model_invoke', held.work, { timeoutMs: 1000 })
-      const settle = jobs.settle()
+      const settle = jobs.settle(running())
       await vi.advanceTimersByTimeAsync(400)
 
       jobs.stopAll()
@@ -378,7 +444,7 @@ describe('ReplyJobs', () => {
       // work's files go.
       held.finish({ assets: [image] })
       await vi.advanceTimersByTimeAsync(5000)
-      expect(jobs.list()).toStrictEqual([{ id, tool: 'model_invoke', status: 'stopped', delivered: false, elapsedMs: 400, state: '', call: { number: 1, label: '' } }])
+      expect(jobs.list()).toStrictEqual([{ id, tool: 'model_invoke', status: 'stopped', delivered: false, elapsedMs: 400, state: '', call: { number: 1, label: '' }, inputs: [] }])
       expect(deletedImages).toStrictEqual([IMAGE])
       expect(consoleError).not.toHaveBeenCalled()
     })

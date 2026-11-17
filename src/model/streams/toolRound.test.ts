@@ -8,6 +8,7 @@ import {
   checkToolCalls,
   isRoundLimitResult,
   STOPPED_TOOL_RESULT,
+  stoppedToolResult,
   toolCallBlock,
   toolGroupAppendText,
   type CheckedToolCall,
@@ -127,6 +128,18 @@ describe('toolCallBlock', () => {
     const expected = { id: 'c2', name: 'web_search', arguments: {}, status: 'error', result: unknownTool }
     expect(toolCallBlock(refused)).toStrictEqual(expected)
     expect(toolCallBlock(refused, STOPPED_TOOL_RESULT)).toStrictEqual(expected)
+  })
+})
+
+// A stop does not end the jobs, so the result of a wait that it cut must
+// not tell the model that they ended.
+describe('stoppedToolResult', () => {
+  it('tells a cut jobs_wait that the jobs go on, and gives every other call the stopped result', () => {
+    const wait = stoppedToolResult('jobs_wait')
+
+    expect(wait.isError).toBe(true)
+    expect(wait.content).toContain('The jobs go on')
+    expect(stoppedToolResult('model_invoke')).toStrictEqual(STOPPED_TOOL_RESULT)
   })
 })
 

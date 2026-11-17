@@ -19,9 +19,26 @@ export default sbp('sbp/selectors/register', {
     return tab
   },
 
+  // A close ends the reply of the tab and its jobs (`endJobs`): no later
+  // reply of the tab could take their results. The last tab does not
+  // close (`dez.model/tabs/close`), so it keeps its jobs.
   async 'dez.controller/closeTab' (tabId: string): Promise<void> {
-    await sbp('dez.stream/stop', tabId)
+    const closes = (sbp('dez.model/tabs/list') as Tab[]).length > 1
+    await sbp('dez.stream/stop', tabId, { endJobs: closes })
     sbp('dez.model/tabs/close', tabId)
+  },
+
+  // Deletes a saved conversation (History), and closes its tabs. The reply
+  // and the jobs of each tab that goes end too. The stop comes after the
+  // delete: the save of a stopped reply could otherwise write the file
+  // again while the delete runs, and a stop of a tab that is gone saves
+  // nothing. A delete that failed keeps the tabs, and their jobs.
+  async 'dez.controller/deleteConversation' (id: string): Promise<void> {
+    const tabIds = (sbp('dez.model/tabs/list') as Tab[]).filter((tab) => tab.conversationId === id).map((tab) => tab.id)
+    await sbp('dez.model/tabs/deleteConversation', id)
+    for (const tabId of tabIds) {
+      if (!sbp('dez.model/tab', tabId)) await sbp('dez.stream/stop', tabId, { endJobs: true })
+    }
   },
 
   // Saves the conversation to a Markdown file that the user picks in the

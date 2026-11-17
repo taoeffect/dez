@@ -3,6 +3,7 @@ import type { Compactions } from '../model/chat/compaction'
 import type { ContextSize } from '../model/chat/contextSize'
 import type { ConversationCost } from '../model/chat/conversationCost'
 import { drawnMediaType, UnwritableImageTypeError, type DrawnImage, type ImageSize } from '../model/chat/imageDrawing'
+import { findAssetMentions } from '../model/chat/imageMentions'
 import type { MediaTagData } from '../model/chat/mediaTags'
 import { modelRefKey } from '../model/chat/modelRef'
 import type { ModelRef, Section, Tab } from '../model/chat/types'
@@ -33,7 +34,7 @@ import { rawErrorText } from '../utils/errorText'
 import { assetInfoResult } from './assetInfo'
 import { assetViewResult } from './assetView'
 import { audioClipSeconds, cutAudioClip } from './audioTool'
-import { discardMadeAssets, writeJobAssets, type JobWork, type ReplyJobs } from './jobs'
+import { discardMadeAssets, writeJobAssets, type JobWork, type TabJobs } from './jobs'
 import { invokeModel } from './modelInvoke'
 import { runFfmpegJob, runFfprobe, runJoinJob } from './videoTool'
 
@@ -51,9 +52,10 @@ export interface ToolRunContext {
    *  makes the call. Not the tab's active model, which the user can change
    *  while the reply runs. */
   model: ModelRef
-  /** The jobs of the reply (jobs.ts). A tool whose work can take long
-   *  starts it as a job and returns `jobStartedText` with the job's id. */
-  jobs: ReplyJobs
+  /** The jobs of the tab (jobs.ts), which the reply holds while it runs.
+   *  A tool whose work can take long starts it as a job and returns
+   *  `jobStartedText` with the job's id. */
+  jobs: TabJobs
   /** Writes the reference of a stored image that the tool made into the
    *  reply, with a new image id, and returns that id. The reference names
    *  the tool of the call, or `tool` (the `jobs_wait` runner writes what
@@ -130,10 +132,15 @@ function subcommandRunner(tool: SubcommandTool, runners: Record<string, ToolRunn
 }
 
 // Starts `work` as a job of the reply for a call of `tool` (`options` as
-// for `ReplyJobs.start`), and gives the result of the call: the id and the
-// number of the job, then `inputsText`, which tells the inputs that go.
-function startJob(context: ToolRunContext, tool: string, work: JobWork, options: Parameters<ReplyJobs['start']>[2], inputsText: string): string {
-  const job = context.jobs.start(tool, work, options)
+// for `TabJobs.start`), and gives the result of the call: the id and the
+// number of the job, then `inputsText`, which tells the inputs that go. The
+// job keeps the `@id` mentions of `inputsText` as its inputs, which a
+// compaction keeps while the job is open (`openJobInputs`). A call that a
+// stop or a new submit cut (`callSignal`, the signal of the call) starts
+// no job: the next reply takes the jobs, and this call has no reader.
+function startJob(context: ToolRunContext, callSignal: AbortSignal, tool: string, work: JobWork, options: Omit<Parameters<TabJobs['start']>[2], 'inputs' | 'signal'>, inputsText: string): string {
+  const inputs = findAssetMentions(inputsText).map((mention) => mention.id)
+  const job = context.jobs.start(tool, work, { ...options, inputs, signal: callSignal })
   return `${jobStartedText(job.id, job.number)}\n${inputsText}`
 }
 
@@ -334,12 +341,14 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     invert: imageRunner(invertPlan),
     convert: imageRunner(convertPlan),
   }),
-  // The job tools (model/tools/jobs.ts) read the jobs of the reply
-  // (`ReplyJobs`, jobs.ts). `jobs_wait` gives the results of the jobs that
-  // ended since the last one, and waits for the next end when there is
-  // none (with `all`: until no job runs; with `jobs`: until none of the
-  // named jobs runs, and only their results); a stop ends the wait, and
-  // the jobs with it (`dez.stream/stop`).
+  // The job tools (model/tools/jobs.ts) read the jobs of the tab
+  // (`TabJobs`, jobs.ts), which the reply took at its start: its own, and
+  // the ones of the replies that a stop or a new submit cut before it.
+  // `jobs_wait` gives the results of the jobs that ended since the last
+  // one, and waits for the next end when there is none (with `all`: until
+  // no job runs; with `jobs`: until none of the named jobs runs, and only
+  // their results). A stop ends the wait, but not the jobs: the next reply
+  // gets their results (`dez.stream/stop`).
   // It also puts the images and the clips of those jobs into the reply,
   // under the names of the tools that started them: a job writes nothing
   // itself, so its asset comes with the result that names it, after the
@@ -378,7 +387,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // that the model reads: the job only marks its images and clips as
   // hidden (`hidesAssets`), and the editor shows them under the chip of
   // this call. The same holds for `join_clips` and `ffmpeg` of `video`.
-  async model_invoke (args, _signal, context) {
+  async model_invoke (args, callSignal, context) {
     const providers = await sbp('dez.provider/infos') as ProviderInfo[]
     const { modelParameters, providerSettings } = sbp('dez.model/settings/snapshot') as SettingsSnapshot
     const invocation = modelInvocation(args, {
@@ -388,7 +397,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
       providerSettings,
       sections: callSections(context),
     })
-    return startJob(context, MODEL_INVOKE_TOOL.name, (signal, report, reportCost, keepAsset) => invokeModel(invocation, context.tabId, signal, report, reportCost, keepAsset, { toolsAllowed: false }), {
+    return startJob(context, callSignal, MODEL_INVOKE_TOOL.name, (signal, report, reportCost, keepAsset) => invokeModel(invocation, context.tabId, signal, report, reportCost, keepAsset, { toolsAllowed: false }), {
       timeoutMs: invocation.timeoutMs,
       hidesAssets: isIntermediate(args),
       label: invocationLabel(args),
@@ -403,13 +412,13 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // that go, as for `model_invoke`. `ffprobe` is short, so its call waits
   // for it.
   video: subcommandRunner(VIDEO_TOOL, {
-    async join_clips (args, _signal, context) {
+    async join_clips (args, callSignal, context) {
       const call = joinClipsCall(args, callSections(context))
-      return startJob(context, VIDEO_TOOL.name, (signal, report) => runJoinJob(call, signal, report), { timeoutMs: call.timeoutMs, hidesAssets: isIntermediate(args), label: videoCallLabel('join_clips', args) }, videoInputsText(call.inputs))
+      return startJob(context, callSignal, VIDEO_TOOL.name, (signal, report) => runJoinJob(call, signal, report), { timeoutMs: call.timeoutMs, hidesAssets: isIntermediate(args), label: videoCallLabel('join_clips', args) }, videoInputsText(call.inputs))
     },
-    async ffmpeg (args, _signal, context) {
+    async ffmpeg (args, callSignal, context) {
       const call = ffmpegCall(args, callSections(context))
-      return startJob(context, VIDEO_TOOL.name, (signal, report) => runFfmpegJob(call, signal, report), { timeoutMs: call.timeoutMs, hidesAssets: isIntermediate(args), label: videoCallLabel('ffmpeg', args) }, videoInputsText(call.inputs))
+      return startJob(context, callSignal, VIDEO_TOOL.name, (signal, report) => runFfmpegJob(call, signal, report), { timeoutMs: call.timeoutMs, hidesAssets: isIntermediate(args), label: videoCallLabel('ffmpeg', args) }, videoInputsText(call.inputs))
     },
     async ffprobe (args, signal, context) {
       return runFfprobe(ffprobeCall(args, callSections(context)), signal)

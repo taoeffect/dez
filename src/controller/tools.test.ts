@@ -64,7 +64,7 @@ import type { ToolArguments, ToolRunResult } from '../model/tools/types'
 import { FFPROBE_TIMEOUT_MS } from '../model/tools/videoTool'
 import { ExplainedError } from '../utils/errorText'
 import type { RequestLogRow } from './diagnostics/requestLog'
-import { ReplyJobs, type JobOutcome } from './jobs'
+import { TabJobs, type JobOutcome } from './jobs'
 import { invokeModel } from './modelInvoke'
 import type { BundledToolEnd } from './nativeTypes'
 import { APP_DIR, audioProgress, CLIP_FORMAT, deletedWorkFolder, ENDED, FILE_ID, H264_STREAM, heldWork, LONG, native, resetNative, running, showinfoLog, writes } from './testing'
@@ -214,7 +214,7 @@ const NO_PICTURES: Pick<ToolRunContext, 'pictureBudget'> = { pictureBudget: asyn
 // Runs a call of a reply of `model` that takes no image and no clip, and
 // has no job.
 function run(call: ToolRunCall, { signal = new AbortController().signal, model = REPLY_MODEL } = {}): Promise<ToolRunResult> {
-  const context: ToolRunContext = { tabId: '', model, jobs: new ReplyJobs(), writeImage: () => null, writeClip: () => null, ...NO_PICTURES }
+  const context: ToolRunContext = { tabId: '', model, jobs: new TabJobs(), writeImage: () => null, writeClip: () => null, ...NO_PICTURES }
   return sbp('dez.controller/tools/run', call, signal, context) as Promise<ToolRunResult>
 }
 
@@ -678,7 +678,7 @@ describe('dez.controller/tools/run', () => {
       const context: ToolRunContext = {
         tabId,
         model: REPLY_MODEL,
-        jobs: new ReplyJobs(),
+        jobs: new TabJobs(),
         writeImage: (path) => {
           written.push(path)
           return newImageId
@@ -852,7 +852,7 @@ describe('dez.controller/tools/run', () => {
       const context: ToolRunContext = {
         tabId,
         model: REPLY_MODEL,
-        jobs: new ReplyJobs(),
+        jobs: new TabJobs(),
         writeImage: () => null,
         writeClip: (data) => {
           written.push(data)
@@ -960,7 +960,7 @@ describe('dez.controller/tools/run', () => {
   describe('the job tools', () => {
     const IMAGE = '/home/u/.config/dez/assets/generated/images/job.png'
     const SONG = '/home/u/.config/dez/assets/generated/audio/job.mp3'
-    let jobs: ReplyJobs
+    let jobs: TabJobs
     // The tab of the calls; none for the tools that read no conversation.
     let tabId: string
     // What the reply got, each with the tool that its text names, and the
@@ -987,7 +987,7 @@ describe('dez.controller/tools/run', () => {
     }
 
     beforeEach(() => {
-      jobs = new ReplyJobs()
+      jobs = new TabJobs()
       tabId = ''
       written = []
       newIds = ['c', 'd', 'e']
@@ -1100,18 +1100,20 @@ describe('dez.controller/tools/run', () => {
       expect(deletedImages).toStrictEqual([IMAGE])
     })
 
-    it('jobs_wait ends at once when the user stops the reply, and the stopped job leaves no result', async () => {
-      jobs.start('model_invoke', heldWork().work, LONG)
+    it('jobs_wait ends at once when the user stops the reply, and the job goes on for the next wait', async () => {
+      const held = heldWork()
+      const { id } = jobs.start('model_invoke', held.work, LONG)
       const abort = new AbortController()
       const wait = jobTool('jobs_wait', {}, abort.signal)
 
-      // What `dez.stream/stop` does.
+      // What `dez.stream/stop` does to the running call.
       abort.abort()
-      jobs.stopAll()
 
       expect((await wait).isError).toBe(true)
+      expect(held.signal().aborted).toBe(false)
+      held.finish({ text: 'Done.' })
+      expect((await jobTool('jobs_wait')).content).toContain(id)
       expect(consoleError).not.toHaveBeenCalled()
-      expect(await jobs.settle()).toStrictEqual([])
     })
 
     it('jobs_list lists the jobs of the reply and does not wait', async () => {
@@ -1123,8 +1125,8 @@ describe('dez.controller/tools/run', () => {
 
       expect(await jobTool('jobs_list')).toStrictEqual({
         content: jobsListText([
-          { id: running, tool: 'model_invoke', status: 'running', delivered: false, elapsedMs: 0, state: '', call: { number: 1, label: 'A red fox' } },
-          { id: ended, tool: 'video', status: 'finished', delivered: true, elapsedMs: 0, state: '', call: { number: 2, label: '' } },
+          { id: running, tool: 'model_invoke', status: 'running', delivered: false, elapsedMs: 0, state: '', call: { number: 1, label: 'A red fox' }, inputs: [] },
+          { id: ended, tool: 'video', status: 'finished', delivered: true, elapsedMs: 0, state: '', call: { number: 2, label: '' }, inputs: [] },
         ]),
         isError: false,
       })
@@ -1226,6 +1228,8 @@ describe('dez.controller/tools/run', () => {
         expect(started.isError).toBe(false)
         expect(started.content.split('\n')[0]).toBe(jobStartedText(job.id, 1))
         expect(started.content).toContain('the image @a')
+        // A compaction keeps an input of an open job (`openJobInputs`).
+        expect(job.inputs).toStrictEqual(['a'])
         expect(await jobResult()).toContain(`<job id="${job.id}" number="1" tool="model_invoke" status="finished" call="The fox of @a in snow.">\nMade the image @c.\n</job>`)
         expect(mediaRequests).toMatchObject([{ providerId: 'venice', modelId: 'painter', kind: 'image', images: [FOX], clips: [], reader: 'model', timeoutMs: 60_000 }])
         expect(savedImages).toStrictEqual([{ mediaType: 'image/png', options: { folder: 'generated' } }])
@@ -1741,7 +1745,7 @@ describe('dez.controller/tools/run', () => {
     let tabId: string
 
     function assetInfo(assets: string, checks?: string): Promise<ToolRunResult> {
-      const context: ToolRunContext = { tabId, model: REPLY_MODEL, jobs: new ReplyJobs(), writeImage: () => null, writeClip: () => null, ...NO_PICTURES }
+      const context: ToolRunContext = { tabId, model: REPLY_MODEL, jobs: new TabJobs(), writeImage: () => null, writeClip: () => null, ...NO_PICTURES }
       const args = checks === undefined ? { assets } : { assets, checks }
       return sbp('dez.controller/tools/run', { name: 'asset_info', arguments: args }, running(), context) as Promise<ToolRunResult>
     }
@@ -1978,7 +1982,7 @@ describe('dez.controller/tools/run', () => {
       const context: ToolRunContext = {
         tabId,
         model: REPLY_MODEL,
-        jobs: new ReplyJobs(),
+        jobs: new TabJobs(),
         writeImage: () => null,
         writeClip: () => null,
         pictureBudget: async () => ({ left: budget, roundPictures }),
@@ -2918,7 +2922,7 @@ describe('dez.controller/tools/run', () => {
     const BUDGET: CallPictureBudget = { left: { pictures: 12, tokens: 57_408, bytes: 3 * 1024 ** 2 }, roundPictures: 12 }
     const WINDOW = contextWindowOf({ id: REPLY_MODEL.modelId })
     let tabId: string
-    let jobs: ReplyJobs
+    let jobs: TabJobs
     // How many times the call asked for the picture budget.
     let budgetReads: number
 
@@ -2939,7 +2943,7 @@ describe('dez.controller/tools/run', () => {
     const sizeNow = () => sbp('dez.model/tabs/contextSize', tabId, REPLY_MODEL) as ContextSize
 
     beforeEach(() => {
-      jobs = new ReplyJobs()
+      jobs = new TabJobs()
       budgetReads = 0
       tabId = sbp('dez.model/tabs/activeId') as string
       sbp('dez.model/tabs/replaceSections', tabId, [

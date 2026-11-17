@@ -124,7 +124,7 @@ function cancelDelete() {
 }
 
 async function confirmDelete(id: string) {
-  await sbp('dez.model/tabs/deleteConversation', id)
+  await sbp('dez.controller/deleteConversation', id)
   pendingDeleteId.value = null
   conversations.value = conversations.value.filter((conversation) => conversation.id !== id)
   totalCount.value = Math.max(0, totalCount.value - 1)

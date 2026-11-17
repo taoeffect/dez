@@ -23,6 +23,7 @@ import { CLIP_KINDS, isClipKind, isTextKind, ProviderNotConfiguredError, type Me
 import type { CompactionLeftFiles } from '../model/streams/compactionFiles'
 import { compactionInstruction } from '../model/streams/compactionRequest'
 import type { RequestMessages, StreamMessage } from '../model/streams/types'
+import { STOPPED_TOOL_RESULT, stoppedToolResult } from '../model/streams/toolRound'
 import { systemPromptErrorText } from '../model/systemPrompt'
 import { PICTURE_ROUND_FULL_NOTE, pictureBudgetLeftText } from '../model/tools/assetView'
 import { jobsWaitText, jobTimedOutText, startedJobId } from '../model/tools/jobs'
@@ -2854,14 +2855,52 @@ describe('dez.stream/start jobs', () => {
   // gives.
   let jobs: Array<{ signal: AbortSignal, end: (result: ProviderGenerateMediaResult) => void, fail: (error: Error) => void }> = []
 
-  // The result of the call `callId` of the reply, and the id of the job
-  // that it started.
-  function callResult(callId: string): string {
-    return findToolBlocks(sectionVisibleText(agentSection())).find((block) => block.id === callId)?.result ?? ''
+  // The result of the call `callId` of the reply in the section
+  // `sectionId`, and the id of the job that it started.
+  function callResult(callId: string, sectionId = 'a1'): string {
+    const section = activeTab().sections.find((candidate) => candidate.id === sectionId)
+    return section ? findToolBlocks(sectionVisibleText(section)).find((block) => block.id === callId)?.result ?? '' : ''
   }
-  const jobId = (callId: string) => startedJobId(callResult(callId)) as string
+  const jobId = (callId: string, sectionId = 'a1') => startedJobId(callResult(callId, sectionId)) as string
   // The block of a `model_invoke` call of the reply.
   const invokeBlock = (id: string, target = PAINTER) => `<dez:tool id="${id}" name="model_invoke" model="${target}" prompt="${PROMPT}">\n${callResult(id)}\n</dez:tool>\n`
+  const sectionText = (sectionId: string) => sectionVisibleText(activeTab().sections.find((section) => section.id === sectionId) as Section)
+
+  // Starts the next chat reply of the tab, in the section `sectionId`,
+  // after the user message `text`, as a submit after a stop does.
+  async function nextReply(sectionId: string, text = 'No, make it a hare.'): Promise<void> {
+    const tabId = activeTab().id
+    const sections = activeTab().sections.filter((section) => section.role === 'agent' || sectionVisibleText(section) !== '')
+    sbp('dez.model/tabs/replaceSections', tabId, [
+      ...sections,
+      { id: `u-${sectionId}`, role: 'user', content: [{ kind: 'text', text }] },
+      { id: sectionId, role: 'agent', content: [{ kind: 'text', text: '' }], model },
+    ])
+    await sbp('dez.stream/start', {
+      tabId,
+      sectionId,
+      model,
+      request: 'chat',
+      messages: [{ role: 'user', content: text }],
+      imagesOverLimit: 0,
+      newestUserMessage: text,
+      sendTools: true,
+      imageOutput: false,
+      audioOutput: false,
+    })
+  }
+
+  // A reply whose first round starts the job of `call`, and whose second
+  // request the user stops.
+  function stoppedRounds(call: ReturnType<typeof invokeCall>): Array<(input: ProviderStreamChatInput) => Promise<ProviderStreamChatResult>> {
+    return [
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [call] }),
+      async () => {
+        await sbp('dez.stream/stop', activeTab().id)
+        throw new Error('cancelled')
+      },
+    ]
+  }
 
   beforeEach(() => {
     vi.useFakeTimers()
@@ -2881,7 +2920,10 @@ describe('dez.stream/start jobs', () => {
     })
   })
 
-  afterEach(() => {
+  afterEach(async () => {
+    // The jobs that a stopped reply left outlive the test: end them, as a
+    // close of the tab does.
+    for (const tab of sbp('dez.model/tabs/list') as Tab[]) await sbp('dez.stream/stop', tab.id, { endJobs: true })
     vi.useRealTimers()
   })
 
@@ -3028,23 +3070,22 @@ describe('dez.stream/start jobs', () => {
   })
 
   // A section with only tool blocks is not empty, so the stop keeps it:
-  // the blocks tell which calls ran.
-  it('stops the jobs when the user stops the reply, keeps a section that holds only tool blocks, and deletes what a job still makes', async () => {
+  // the blocks tell which calls ran. The user stops a reply to correct the
+  // model, and its paid jobs must not go to waste.
+  it('lets the jobs of a reply that the user stops run on: the next reply of the tab gets their results with jobs_wait, and its jobs count on', async () => {
     replyRounds([
-      async (input) => ({ requestId: input.requestId as string, toolCalls: [invokeCall('c1', FILMER)] }),
-      async () => {
-        await sbp('dez.stream/stop', activeTab().id)
-        throw new Error('cancelled')
+      ...stoppedRounds(invokeCall('c1', FILMER)),
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [invokeCall('c3')] }),
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [{ id: 'c4', name: 'jobs_wait', argumentsText: '{"all":true}' }] }),
+      async (input) => {
+        await input.onToken('Here they are.')
+        return { requestId: input.requestId as string }
       },
     ])
 
     await startStream({ sendTools: true })
 
-    expect(jobs[0].signal.aborted).toBe(true)
-    // A request that does not end at the abort still gives its clip.
-    jobs[0].end({ media: [], clips: [run] })
-    await settled()
-    expect(native.deletedFiles).toStrictEqual([{ root: 'cache', path: 'media/run.mp4', folder: false }])
+    expect(jobs[0].signal.aborted).toBe(false)
     expect(sectionTexts()).toStrictEqual([
       { role: 'user', text: 'Hi' },
       { role: 'agent', text: invokeBlock('c1', FILMER) },
@@ -3052,15 +3093,36 @@ describe('dez.stream/start jobs', () => {
     ])
     expect(toasts).toStrictEqual([])
     expect(alerts).toStrictEqual([])
+    const first = jobId('c1')
+
+    const next = nextReply('a2')
+    await settled()
+    // The wait of the next reply waits for both jobs.
+    expect(requests).toHaveLength(4)
+    jobs[0].end({ media: [], clips: [run] })
+    jobs[1].end({ media: [png], clips: [] })
+    await next
+
+    const second = jobId('c3', 'a2')
+    expect(callResult('c4', 'a2')).toBe(jobsWaitText([
+      { id: first, tool: 'model_invoke', status: 'finished', text: 'Made the video clip @a.', call: { number: 1, label: PROMPT } },
+      { id: second, tool: 'model_invoke', status: 'finished', text: 'Made the image @b.', call: { number: 2, label: PROMPT } },
+    ], 0))
+    expect(sectionText('a2')).toContain(`made-by="${first}"/>`)
+    expect(sectionText('a2')).toContain(`![${fox}](id=b|tool=model_invoke|made-by=${second})`)
+    expect(sectionText('a1')).toBe(invokeBlock('c1', FILMER))
+    expect(toasts).toStrictEqual([])
   })
 
-  it('ends a reply that waits for its jobs as a stop when the user stops it', async () => {
+  it('ends a reply that waits for its jobs as a stop when the user stops it, and leaves the jobs and their results to the next reply', async () => {
     replyRounds([
       async (input) => ({ requestId: input.requestId as string, toolCalls: [invokeCall('c1')] }),
       async (input) => {
         await input.onToken('I started it.')
         return { requestId: input.requestId as string }
       },
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [{ id: 'c2', name: 'jobs_wait', argumentsText: '{}' }] }),
+      async (input) => ({ requestId: input.requestId as string }),
     ])
 
     const stream = startStream({ sendTools: true })
@@ -3068,17 +3130,103 @@ describe('dez.stream/start jobs', () => {
     await sbp('dez.stream/stop', activeTab().id)
     await stream
 
-    expect(jobs[0].signal.aborted).toBe(true)
+    expect(jobs[0].signal.aborted).toBe(false)
     expect(sbp('dez.model/streams/isStreaming', activeTab().id)).toBe(false)
-    expect(sectionVisibleText(agentSection())).toBe(`${invokeBlock('c1')}I started it.`)
+    expect(sectionText('a1')).toBe(`${invokeBlock('c1')}I started it.`)
     expect(savedConversations).toHaveLength(1)
     expect(toasts).toStrictEqual([])
     expect(alerts).toStrictEqual([])
+
+    // A job that ends while no reply runs keeps its image for the next
+    // reply, also through Delete Unused Files.
+    jobs[0].end({ media: [png], clips: [] })
+    await settled()
+    expect(sectionText('a1')).toBe(`${invokeBlock('c1')}I started it.`)
+    expect(deletedImages).toStrictEqual([])
+    expect(sbp('dez.stream/unnamedMadeFiles')).toStrictEqual([fox])
+
+    await nextReply('a2')
+
+    expect(callResult('c2', 'a2')).toBe(jobsWaitText([{ id: jobId('c1'), tool: 'model_invoke', status: 'finished', text: 'Made the image @a.', call: { number: 1, label: PROMPT } }], 0))
+    expect(sectionText('a2')).toContain(foxReference('c1'))
   })
 
-  // A job adds its price at its end; the stop ends the jobs before the
-  // reply's save.
-  it('adds the price of each job to the cost of the conversation, and the quote of a job that the stop ended', async () => {
+  it('tells the model in the result of a jobs_wait that a stop cut that the jobs go on', async () => {
+    replyRounds([
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [invokeCall('c1')] }),
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [{ id: 'c2', name: 'jobs_wait', argumentsText: '{}' }] }),
+    ])
+
+    const stream = startStream({ sendTools: true })
+    await settled()
+    // The call waits for the job.
+    expect(requests).toHaveLength(2)
+    await sbp('dez.stream/stop', activeTab().id)
+    await stream
+
+    expect(callResult('c2')).toBe(stoppedToolResult('jobs_wait').content)
+    expect(jobs[0].signal.aborted).toBe(false)
+  })
+
+  // A runner reads the providers before it starts its job, and the user
+  // can stop the reply meanwhile.
+  it('starts no job for a call of a reply that the user stopped before the job started', async () => {
+    providerInfos = async () => {
+      if (requests.length === 1) await sbp('dez.stream/stop', activeTab().id)
+      return [providerInfo(model.providerId, 'Thinker')]
+    }
+    replyRounds([async (input) => ({ requestId: input.requestId as string, toolCalls: [invokeCall('c1')] })])
+
+    await startStream({ sendTools: true })
+    await settled()
+
+    expect(jobs).toHaveLength(0)
+    expect(callResult('c1')).toBe(STOPPED_TOOL_RESULT.content)
+  })
+
+  // A media reply runs no tool, so it takes no jobs and ends none.
+  it('leaves the jobs of a stopped reply to the chat reply after a media reply', async () => {
+    replyRounds([
+      ...stoppedRounds(invokeCall('c1')),
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [{ id: 'c2', name: 'jobs_wait', argumentsText: '{}' }] }),
+      async (input) => ({ requestId: input.requestId as string }),
+    ])
+    await startStream({ sendTools: true })
+
+    const tabId = activeTab().id
+    sbp('dez.model/tabs/replaceSections', tabId, [...activeTab().sections.slice(0, -1), { id: 'u2', role: 'user', content: [{ kind: 'text', text: 'Draw a hare.' }] }])
+    sbp('dez.model/setActiveModel', model.providerId, 'painter', 'Painter')
+    const media = sbp('dez.controller/submitTab', tabId) as Promise<void>
+    await settled()
+    expect(jobs).toHaveLength(2)
+    jobs[1].end({ media: [png], clips: [] })
+    await media
+    expect(jobs[0].signal.aborted).toBe(false)
+
+    jobs[0].end({ media: [png], clips: [] })
+    await nextReply('a2')
+
+    expect(callResult('c2', 'a2')).toBe(jobsWaitText([{ id: jobId('c1'), tool: 'model_invoke', status: 'finished', text: 'Made the image @b.', call: { number: 1, label: PROMPT } }], 0))
+  })
+
+  it('ends the jobs that a stopped reply left when the tab closes, and deletes what a job still makes', async () => {
+    replyRounds(stoppedRounds(invokeCall('c1', FILMER)))
+    await startStream({ sendTools: true })
+    expect(jobs[0].signal.aborted).toBe(false)
+
+    await sbp('dez.stream/stop', activeTab().id, { endJobs: true })
+
+    expect(jobs[0].signal.aborted).toBe(true)
+    // A request that does not end at the abort still gives its clip.
+    jobs[0].end({ media: [], clips: [run] })
+    await settled()
+    expect(native.deletedFiles).toStrictEqual([{ root: 'cache', path: 'media/run.mp4', folder: false }])
+    expect(toasts).toStrictEqual([])
+  })
+
+  // A job adds its price at its end, also when no reply runs. A job that a
+  // close of the tab ends adds its quote.
+  it('adds the price of each job to the cost of the conversation, and the quote of a job that a close of the tab ended', async () => {
     const heldRequest = generateMedia
     generateMedia = (input) => {
       input.onProgress?.({ phase: 'sent', jobId: null, quote: 0.5 })
@@ -3098,13 +3246,17 @@ describe('dez.stream/start jobs', () => {
     await settled()
     await sbp('dez.stream/stop', activeTab().id)
     await stream
+    expect(activeTab().cost).toStrictEqual({ usd: 0.25, requests: 3, unpriced: 2 })
+
+    await sbp('dez.stream/stop', activeTab().id, { endJobs: true })
+    await settled()
 
     const cost = { usd: 0.75, requests: 4, unpriced: 2 }
     expect(activeTab().cost).toStrictEqual(cost)
     expect(savedConversations.at(-1)?.cost).toStrictEqual(cost)
   })
 
-  it('stops the jobs of a reply that a new submit in the tab ends', async () => {
+  it('hands the jobs of a reply that a new submit in the tab ends to the new reply', async () => {
     const tabId = activeTab().id
     sbp('dez.model/setActiveModel', model.providerId, model.modelId, model.modelName)
     replyRounds([
@@ -3114,17 +3266,26 @@ describe('dez.stream/start jobs', () => {
         await sbp('dez.controller/submitTab', tabId)
         throw new Error('cancelled')
       },
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [{ id: 'c2', name: 'jobs_wait', argumentsText: '{}' }] }),
       async (input) => {
-        await input.onToken('Answer.')
+        await input.onToken('Here it is.')
         return { requestId: input.requestId as string }
       },
     ])
 
-    await startStream({ sendTools: true })
-
+    const stream = startStream({ sendTools: true })
+    await settled()
+    // The new reply waits for the job of the reply that the submit ended.
     expect(requests).toHaveLength(3)
     expect(jobs).toHaveLength(1)
-    expect(jobs[0].signal.aborted).toBe(true)
+    expect(jobs[0].signal.aborted).toBe(false)
+    jobs[0].end({ media: [png], clips: [] })
+    await stream
+
+    const newReply = activeTab().sections.filter((section) => section.role === 'agent').at(-1) as Section
+    expect(newReply.id).not.toBe('a1')
+    expect(callResult('c2', newReply.id)).toBe(jobsWaitText([{ id: jobId('c1'), tool: 'model_invoke', status: 'finished', text: 'Made the image @a.', call: { number: 1, label: PROMPT } }], 0))
+    expect(sectionText(newReply.id)).toContain(foxReference('c1'))
     expect(toasts).toStrictEqual([])
   })
 

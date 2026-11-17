@@ -90,9 +90,14 @@ export interface CompactionInput {
   /** Stops the compaction: the request, and the runs of the programs. The
    *  compaction then rejects with the stop. */
   signal: AbortSignal
-  /** The jobs of the reply that runs. A reply that sent no request yet
-   *  (a compaction at a submit) has none. */
+  /** The jobs of the reply that runs (`TabJobs`, controller/jobs.ts): the
+   *  jobs that it started, and the jobs of the replies before it that a
+   *  stop or a new submit cut. So a compaction at a submit can have some. */
   jobs: readonly JobInfo[]
+  /** The ids of the agent sections of the replies that used `jobs`
+   *  (`TabJobs.replySections`): their work counts as the work of the
+   *  reply that runs (`CompactionAsset.byReply`). */
+  replySections: readonly string[]
   /** The cost of the conversation now. Read before the request, for the
    *  instruction, and after `countCost`, for the notes: a job of the reply
    *  can count a request of its own meanwhile. */
@@ -287,8 +292,8 @@ export async function compactConversation(input: CompactionInput): Promise<Compa
   const { facts, imageBytes } = await readAssetFiles(sections, scope.end, found, signal)
   // No request after a stop while a file was read.
   signal.throwIfAborted()
-  const jobInputs = openJobInputs(sections, scope, input.jobs)
-  const assets = compactionAssets({ sections, scope, found, places: assetPlaces(sections, found), facts, jobInputs })
+  const jobInputs = openJobInputs(input.jobs)
+  const assets = compactionAssets({ sections, scope, found, places: assetPlaces(sections, found), facts, jobInputs, replySections: input.replySections })
 
   const instruction = compactionInstruction({ assetTable: assetTableText(assets), jobs: input.jobs, cost: input.cost(), tools: input.tools.length > 0 })
   const { text, usage } = await requestNotes(input, [...input.messages, { role: 'user', content: instruction }])

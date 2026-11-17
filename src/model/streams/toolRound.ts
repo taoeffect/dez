@@ -1,6 +1,7 @@
 import { errorText } from '../../utils/errorText'
 import { toolBlockText, type ToolBlockData } from '../chat/toolBlocks'
 import { parseToolArguments } from '../tools/arguments'
+import { JOBS_WAIT_TOOL } from '../tools/jobs'
 import { toolDefinition, unknownToolText } from '../tools/registry'
 import type { StreamedToolCall, ToolArguments, ToolRunResult } from '../tools/types'
 
@@ -12,6 +13,16 @@ import type { StreamedToolCall, ToolArguments, ToolRunResult } from '../tools/ty
 
 /** The result of a call that was not done when the user stopped the reply. */
 export const STOPPED_TOOL_RESULT: ToolRunResult = { content: 'Stopped.', isError: true }
+
+/** The result of a call of the tool `name` that was not done when the user
+ *  stopped the reply or sent a new message. A `jobs_wait` call tells that
+ *  only the wait ended: the jobs go on, for the next reply (`TabJobs`,
+ *  controller/jobs.ts). */
+export function stoppedToolResult(name: string): ToolRunResult {
+  return name === JOBS_WAIT_TOOL.name
+    ? { content: 'The reply stopped before the jobs ended, so this wait ended. The jobs go on: the next reply gets their results with jobs_wait.', isError: true }
+    : STOPPED_TOOL_RESULT
+}
 
 /** True for the result text of a call that the round limit of an older Dez
  *  stopped ("Not run: the reply reached the limit of 40 tool rounds.", with

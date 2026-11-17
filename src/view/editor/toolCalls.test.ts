@@ -120,6 +120,12 @@ describe('the intermediate data of a call (RenderedToolCall.intermediate)', () =
     return renderedToolCalls(createState(['ask', lines.join('\n')], ['user', 'agent'], streams ? 's1' : null))[0].intermediate
   }
 
+  /** A state of the sections `texts`: a user section first, then agent
+   *  and user sections in turn. */
+  function turns(texts: string[]): EditorState {
+    return createState(texts, texts.map((_, index): Role => (index % 2 === 0 ? 'user' : 'agent')))
+  }
+
   it('holds the hidden assets of the job that the call started, in doc order', () => {
     const call = intermediate([INVOKE, '', hiddenClip('j-aaaa'), '', hiddenImage('j-aaaa'), '', 'Done.'])
 
@@ -163,6 +169,32 @@ describe('the intermediate data of a call (RenderedToolCall.intermediate)', () =
   it('holds the status of a job that failed or timed out, with no text: the Result of jobs_wait shows the error', () => {
     expect(intermediate([INVOKE, waited('failed', 'The provider refused the prompt.')])).toStrictEqual({ jobId: 'j-aaaa', assets: [], text: '', status: 'failed' })
     expect(intermediate([INVOKE, waited('timed out', 'No answer.')])).toMatchObject({ text: '', status: 'timed out' })
+  })
+
+  it('holds the assets and the result that a later reply gave for its job, past a user section', () => {
+    const [chip, wait] = renderedToolCalls(turns(['ask', [INVOKE, '', 'Working.'].join('\n'), 'Go on.', [waited('finished', 'Made the image @b.'), '', hiddenClip('j-aaaa'), '', hiddenImage('j-aaaa')].join('\n')]))
+
+    expect(chip.intermediate).toMatchObject({ jobId: 'j-aaaa', text: '', status: 'finished' })
+    expect(chip.intermediate?.assets.map((asset) => asset.kind === 'image' ? ['image', asset.id] : [asset.tag.kind, asset.tag.id])).toStrictEqual([['audio', 'c'], ['image', 'b']])
+    expect(wait.intermediate).toBeNull()
+  })
+
+  it('holds the text and the status of the result that a later reply gave for its job', () => {
+    const later = (wait: string) => renderedToolCalls(turns(['ask', INVOKE, 'Go on.', wait]))[0].intermediate
+
+    expect(later(waited('finished', 'The cat is blue.'))).toStrictEqual({ jobId: 'j-aaaa', assets: [], text: 'The cat is blue.', status: 'finished' })
+    expect(later(waited('failed', 'The provider refused the prompt.'))).toStrictEqual({ jobId: 'j-aaaa', assets: [], text: '', status: 'failed' })
+  })
+
+  it('gives the assets and the result of a job id that two replies started to the chip of the nearest one', () => {
+    const later = [waited('finished', 'Made the image @b.'), '', hiddenImage('j-aaaa')].join('\n')
+    const state = turns(['ask', INVOKE, 'Again.', invokeBlock('j-aaaa', { id: 'call_2' }), 'Go on.', later])
+
+    expect(renderedToolCalls(state).map((call) => [call.id, call.intermediate?.assets.length ?? null, call.intermediate?.status ?? null])).toStrictEqual([
+      ['call_1', 0, null],
+      ['call_2', 1, 'finished'],
+      ['call_w', null, null],
+    ])
   })
 
   it('is null for a call that started no job: a failed call, an interrupted one, and one without is_intermediate', () => {

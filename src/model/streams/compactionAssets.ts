@@ -1,15 +1,14 @@
 import { oneLineCut } from '../../utils/oneLineCut'
 import type { AssetPlace } from '../chat/assetOrigins'
 import { blockLinkedRule, compactionMessageEnd, isCarriedUserAssets, sectionCompactionBlock, sectionTextParts } from '../chat/compaction'
-import { notesAssetLines, notesCellText, notesJobLines, notesMessages, type NotesAssetLine } from '../chat/compactionNotes'
+import { notesAssetLines, notesCellText, notesMessages, type NotesAssetLine } from '../chat/compactionNotes'
 import { sectionIsEmpty, sectionPlainText } from '../chat/content'
 import { findAssetMentions } from '../chat/imageMentions'
 import { IMAGE_HIDDEN_KEY, type LinkedPathRule } from '../chat/images'
 import { MEDIA_HIDDEN_ATTRIBUTE } from '../chat/mediaTags'
-import { findToolBlocks } from '../chat/toolBlocks'
 import type { Section } from '../chat/types'
 import { assetOriginText } from '../tools/assetInfo'
-import { ASSET_NAMES, startedJob, type JobAssetKind, type JobInfo } from '../tools/jobs'
+import { ASSET_NAMES, type JobAssetKind, type JobInfo } from '../tools/jobs'
 import { MAX_ASSET_SENTENCE_LENGTH, type AssetDecision, type CompactionAnswer } from './compactionRequest'
 import { foundAssetFrom, type FoundAsset } from './mediaRequest'
 import { messageMentionIds } from './messages'
@@ -128,10 +127,12 @@ export interface CompactionAsset {
   fromUser: boolean
   /** A call made it as a part of its work (the `hidden` mark). */
   intermediate: boolean
-  /** The reply that runs made it: its text is in the text of the reply
-   *  (`sectionTextParts`: after the block, when the compaction section is
-   *  the reply's section), or the notes of a compaction earlier in this
-   *  same reply tell it (`NotesAssetLine.byReply`, `replyRanAtCompaction`). */
+  /** The reply that runs made it: its text is in the text of the reply,
+   *  or of a reply that a stop or a new submit cut before it (they share
+   *  their jobs: `CompactionAssetsInput.replySections`), after the block
+   *  in the compaction section (`sectionTextParts`). Or the notes of a
+   *  compaction earlier in this work tell it (`NotesAssetLine.byReply`,
+   *  `replyRanAtCompaction`). */
   byReply: boolean
   /** An open job of the reply that runs takes it as an input
    *  (`openJobInputs`). */
@@ -147,14 +148,15 @@ function isIntermediate(asset: FoundAsset): boolean {
     : asset.tag.other.some((attribute) => attribute.name === MEDIA_HIDDEN_ATTRIBUTE)
 }
 
-// Whether the reply that runs (`scope.reply`) is the one that ran at the
-// compaction of the notes of `sections`: a compaction makes the reply's
-// section the compaction section (compactedSections.ts), so the reply
-// that runs is in the compaction section. A section of an older layout
-// after the block is never the section of a reply that runs: a reply that
-// runs in a conversation of an older Dez is a new one.
-function replyRanAtCompaction(sections: readonly Section[], scope: CompactionScope): boolean {
-  return scope.reply === 0 && sectionCompactionBlock(sections[0]) !== null
+// Whether one of the replies `replySections` (the reply that runs and the
+// replies that a stop or a new submit cut before it) is the one that ran
+// at the compaction of the notes of `sections`: a compaction makes the
+// reply's section the compaction section (compactedSections.ts). A
+// section of an older layout after the block is never the section of a
+// reply that runs: a reply that runs in a conversation of an older Dez is
+// a new one.
+function replyRanAtCompaction(sections: readonly Section[], replySections: ReadonlySet<string>): boolean {
+  return sections.length > 0 && replySections.has(sections[0].id) && sectionCompactionBlock(sections[0]) !== null
 }
 
 /** What `compactionAssets` needs. */
@@ -173,18 +175,29 @@ export interface CompactionAssetsInput {
   facts: ReadonlyMap<string, string>
   /** The inputs of the open jobs of the reply (`openJobInputs`). */
   jobInputs: ReadonlyMap<string, readonly string[]>
+  /** The ids of the agent sections of the replies that a stop or a new
+   *  submit cut before the reply that runs, and that handed their jobs on
+   *  to it (`TabJobs.replySections`, controller/jobs.ts). Their work
+   *  counts as the work of the reply that runs. */
+  replySections: readonly string[]
 }
 
 /** The assets of a compaction, in the order of `input.found`. */
-export function compactionAssets({ sections, scope, found, places, facts, jobInputs }: CompactionAssetsInput): CompactionAsset[] {
+export function compactionAssets({ sections, scope, found, places, facts, jobInputs, replySections }: CompactionAssetsInput): CompactionAsset[] {
   const carried = carriedAssetLines(sections)
-  const sameReply = replyRanAtCompaction(sections, scope)
+  const replyIds = new Set(replySections)
+  if (scope.reply !== null) replyIds.add(sections[scope.reply].id)
+  const sameReply = replyRanAtCompaction(sections, replyIds)
   const inputs = new Set([...jobInputs.values()].flat())
-  // Where the text of the reply starts in its section: after the block,
-  // when the reply's section is the compaction section.
-  const replyFrom = scope.reply === null ? 0 : sectionTextParts(sections[scope.reply], scope.reply).from
+  // Where the text of a reply starts in each section of `replyIds`: after
+  // the block, in the compaction section.
+  const replyFrom = new Map<number, number>()
+  sections.forEach((section, index) => {
+    if (section.role === 'agent' && replyIds.has(section.id)) replyFrom.set(index, sectionTextParts(section, index).from)
+  })
   return found.map((asset, index): CompactionAsset => {
     const line = carried.get(asset.id)
+    const from = replyFrom.get(asset.section)
     return {
       asset,
       kind: asset.kind === 'image' ? 'image' : asset.clip.kind,
@@ -192,7 +205,7 @@ export function compactionAssets({ sections, scope, found, places, facts, jobInp
       origin: notesCellText(assetOriginText(places[index].origin)),
       fromUser: places[index].origin.kind === 'user',
       intermediate: isIntermediate(asset),
-      byReply: (asset.section === scope.reply && foundAssetFrom(asset) >= replyFrom) || (sameReply && line?.byReply === true),
+      byReply: (from !== undefined && foundAssetFrom(asset) >= from) || (sameReply && line?.byReply === true),
       jobInput: inputs.has(asset.id),
       sentence: line?.sentence ?? '',
     }
@@ -220,44 +233,14 @@ export function assetTableText(assets: readonly CompactionAsset[]): string {
   return [head, ...rows].join('\n')
 }
 
-/** The inputs of the open jobs of the reply that runs (`scope.reply`): a
- *  job of `jobs` that still runs, or whose result no `jobs_wait` gave yet.
- *  By job id, the ids of its inputs in order.
- *
- *  The tool blocks of the text of the reply (`sectionTextParts`) tell
- *  them: the `@id` mentions in the result of the block that started the
- *  job. The result, not the arguments of the call: the start result names
- *  each input of the job as `@id` (`invocationInputsText`,
- *  `videoInputsText`), also when the call named it with a bare id
- *  (`assetIdWords` takes `c` and `@c`, as in the `clips` of
- *  `video join_clips`).
- *
- *  A compaction earlier in the same reply removed the blocks of the jobs
- *  that started before it, so its notes tell their inputs
- *  (`NotesJobLine.inputs`). Job ids are unique only in one reply, so the
- *  notes count only when this reply ran at their compaction. */
-export function openJobInputs(sections: readonly Section[], scope: CompactionScope, jobs: readonly JobInfo[]): Map<string, string[]> {
-  const open = new Set(jobs.filter((job) => job.status === 'running' || (!job.delivered && job.status !== 'stopped')).map((job) => job.id))
-  const inputs = new Map<string, string[]>()
-  const add = (jobId: string, ids: Iterable<string>) => {
-    const list = inputs.get(jobId) ?? []
-    for (const id of ids) {
-      if (!list.includes(id)) list.push(id)
-    }
-    inputs.set(jobId, list)
-  }
-  if (open.size === 0 || scope.reply === null) return inputs
-  const notes = replyRanAtCompaction(sections, scope) ? sectionCompactionBlock(sections[0])?.notes : undefined
-  if (notes !== undefined) {
-    for (const line of notesJobLines(notes).values()) {
-      if (open.has(line.id)) add(line.id, line.inputs)
-    }
-  }
-  for (const block of findToolBlocks(sectionTextParts(sections[scope.reply], scope.reply).text)) {
-    const started = startedJob(block.result)
-    if (started !== null && open.has(started.id)) add(started.id, findAssetMentions(block.result).map((mention) => mention.id))
-  }
-  return inputs
+/** The inputs of the open jobs of the reply that runs: a job of `jobs`
+ *  that still runs, or whose result no `jobs_wait` gave yet. By job id,
+ *  the ids of its inputs in order (`JobInfo.inputs`). Each job keeps them
+ *  from its start, so a job that a cut reply started, whose block is in
+ *  an earlier section or gone in an earlier compaction, keeps them too. */
+export function openJobInputs(jobs: readonly JobInfo[]): Map<string, readonly string[]> {
+  const open = jobs.filter((job) => job.status === 'running' || (!job.delivered && job.status !== 'stopped'))
+  return new Map(open.map((job) => [job.id, job.inputs]))
 }
 
 /** What a compaction does with one asset. */

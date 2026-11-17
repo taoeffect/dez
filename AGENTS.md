@@ -64,7 +64,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
          -> openaiSse.ts / anthropicSse.ts split the stream (tokens, thinking, tool calls, usage, images, audio)
          -> tokens go to the store, and to the editor if the tab is visible (dez.editor/*)
          -> a round that ends with tool calls runs them (dez.controller/tools/run), then sends the next round
-         -> slow tool work runs as jobs of the reply (controller/jobs.ts)
+         -> slow tool work runs as jobs of the tab (controller/jobs.ts)
          -> a conversation near a limit of its model is compacted before a chat request (compactIfDue); the reply goes on after the notes, in the first section
       -> or, for a media model, one media round: dez.provider/generateMedia
     -> finish/error/cancel reconciles the editor, adds a user section, and saves
@@ -105,7 +105,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `model/tools/`: the Dez tools (Dez runs them for a model; not a provider's own tools): `registry.ts` (`TOOL_DEFINITIONS`), `arguments.ts`, `subcommands.ts`, and one module per tool.
 - `controller/tools.ts`: `dez.controller/tools/run`, the runner of each tool (`ToolRunContext`).
 - `controller/modelInvoke.ts`, `videoTool.ts`, `audioTool.ts`, `assetInfo.ts`, `assetView.ts`: the work of a tool; they register no selector.
-- `controller/jobs.ts`, `model/tools/jobs.ts`: `ReplyJobs`, the jobs of one reply, and the job tools.
+- `controller/jobs.ts`, `model/tools/jobs.ts`: `TabJobs`, the jobs of a tab, and the job tools.
 - `model/tools/programRuns.ts`, `controller/programRuns.ts`, `model/tools/workFolders.ts`: what the tools that run ffmpeg or ffprobe share, and their work folders.
 - `model/systemPrompt/`: the built-in system prompt (`systemPrompt.md`), the variables of a template, and its checks.
 - `model/modelOutputs.ts`, `modelInputs.ts`, `modelSearch.ts`: the output types, what Dez can send a model, and the model filter.
@@ -267,7 +267,8 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 - **One agent section per reply**: tool rounds stay in one section, and its thinking keeps one entry for each later round (`SectionThinking.rounds`). After a compaction, the reply text starts after the block (`sectionTextParts`).
 - **A tool's image or clip goes after the blocks of its group**, and the next request ends at the last tool message: text after it would be a prefill (`runChatRounds`).
 - **A request names a tool's image or clip only in the tool result** (`madeAssetText`, `src/model/tools/jobs.ts`; `roundRequestText`, `src/model/streams/messages.ts`).
-- **Slow tool work is a job** (`ReplyJobs`, `controller/jobs.ts`): the tool returns the job's id at once, and the work writes nothing into the reply.
+- **Slow tool work is a job** (`TabJobs`, `controller/jobs.ts`): the tool returns the job's id at once, and the work writes nothing into the reply.
+- **A stop or a new submit hands the jobs to the next reply of the tab**; a reply that ends on its own ends them, and so does a tab close (`handOverJobs`, `controller/stream.ts`).
 - **Reply images and clips are written only while the reply is current** (`replyIsCurrent`, `controller/stream.ts`): a cancelled request can still give a response.
 - **Raw model entries are in memory only** (`dez.model/modelCache/rawModel`): a fact of a model that a request or the UI needs must be a field of `ModelInfo`.
 - **Provider data in a tool result** goes through `jsonWithoutLocalPaths` (`src/model/tools/localPaths.ts`): a tool result is stored as it was sent.

@@ -122,8 +122,9 @@ export interface CompactionInstruction {
   /** The table of the assets of the conversation (`assetTableText`,
    *  compactionAssets.ts). */
   assetTable: string
-  /** The jobs of the reply that runs. A reply that sent no request yet
-   *  has none. */
+  /** The jobs of the reply that runs (`CompactionInput.jobs`). A reply
+   *  that sent no request yet has only the jobs that it took over from
+   *  a reply that a stop or a new submit cut. */
   jobs: readonly JobInfo[]
   /** The cost of the conversation before this request. */
   cost: ConversationCost | undefined

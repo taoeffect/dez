@@ -22,7 +22,7 @@ import {
 import { ToolError } from './types'
 
 const job = (fields: Partial<JobInfo>): JobInfo => ({
-  id: 'j-aaaa', tool: 'model_invoke', status: 'running', delivered: false, elapsedMs: 0, state: '', call: { number: 1, label: '' }, ...fields,
+  id: 'j-aaaa', tool: 'model_invoke', status: 'running', delivered: false, elapsedMs: 0, state: '', call: { number: 1, label: '' }, inputs: [], ...fields,
 })
 
 describe('newJobId', () => {

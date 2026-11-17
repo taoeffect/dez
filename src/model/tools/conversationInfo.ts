@@ -50,7 +50,7 @@ export interface ConversationInfoFacts {
 
 // The line of the jobs that run with a paid request: the cost of a
 // conversation gets the price of a job only at the end of the job
-// (`ReplyJobs`, controller/jobs.ts), so the sums of a call leave these
+// (`TabJobs`, controller/jobs.ts), so the sums of a call leave these
 // requests out. A model that keeps to a budget must count them too. Null
 // when no such job runs.
 function openJobsText(jobs: readonly JobInfo[]): string | null {

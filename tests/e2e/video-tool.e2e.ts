@@ -40,7 +40,8 @@ import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolC
 //   names of the copies;
 // - a call whose arguments name a file of the computer, the network, or a
 //   device is refused at once: no job, and no work folder;
-// - Stop and the time limit of a call end the program;
+// - Stop leaves the program of a job to the next reply; a close of the tab
+//   and the time limit of a call end it;
 // - every work folder is gone after its call, and no file of the
 //   conversation changes;
 // - the lists of refused protocols and devices hold every one of this
@@ -965,7 +966,7 @@ describe('video tool', () => {
     expect(await openToasts(browser, 'error')).toStrictEqual([])
   })
 
-  it('ends the program and deletes its work folder when the user stops the reply, and keeps the tool block of the call', async () => {
+  it('keeps the program of a job when the user stops the reply, and ends it and deletes its work folder when the user closes the tab', async () => {
     const before = await filesIn(audioDir)
     await submit(browser, 'Make a long tone.')
     const first = await chatRequest()
@@ -976,23 +977,24 @@ describe('video tool', () => {
     expect(started).toBe(`${jobStartedText(startedJob(second, 'call_tone'), 1)}\nThe run has no input image and no input clip.`)
     const program = await runningProgram()
 
-    // While a reply runs, the Submit button stops it.
+    // While a reply runs, the Submit button stops it. The job goes on for
+    // the next reply of the tab.
     await pointerClick(browser, '.submit-button')
     await waitForValue(browser, 'chat request closed', async () => second.closed, true)
-    await waitForValue(browser, 'the program of the call runs', async () => processExists(program), false)
-    await waitForValue(browser, 'work folders', () => filesIn(workRoot), [])
     const block = `<dez:tool id="call_tone" name="video" command="ffmpeg" parameters="${parameters.replaceAll('"', '&quot;')}">\n${started}\n</dez:tool>\n`
     await waitForThread(browser, [
       { role: 'user', text: 'Make a long tone.' },
       { role: 'agent', text: block },
       { role: 'user', text: '' },
     ])
-    expect(await filesIn(audioDir)).toStrictEqual(before)
+    expect(processExists(program)).toBe(true)
+    expect(await filesIn(workRoot)).toHaveLength(1)
 
-    // The call goes back with its result, and the stopped job has no other.
-    await submit(browser, 'Go on.')
-    const third = await chatRequest()
-    expect(toolResult(third, 'call_tone')).toBe(started)
+    // No later reply can take the job of a tab that is gone.
+    await pointerClick(browser, '.tab--active .tab-close')
+    await waitForValue(browser, 'the program of the call runs', async () => processExists(program), false)
+    await waitForValue(browser, 'work folders', () => filesIn(workRoot), [])
+    expect(await filesIn(audioDir)).toStrictEqual(before)
     expect(setup.mock.hasWaitingRequest()).toBe(false)
     expect(await consoleErrors(browser)).toStrictEqual([])
   })

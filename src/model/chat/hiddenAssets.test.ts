@@ -1,15 +1,33 @@
 import { describe, expect, it } from 'vitest'
 import { jobsWaitText } from '../tools/jobs'
 import { CARRIED_USER_ASSETS_LABEL, compactionBlockText, compactionTagText } from './compaction'
-import { findHiddenAssets, findKeptAssets, jobResultInBlocks, type HiddenAsset } from './hiddenAssets'
+import { findHiddenAssets, findJobResults, findKeptAssets, type ChipSection, type HiddenAssetOwner } from './hiddenAssets'
 import { findImageReferences, imageIdChange, imageMarkdown, IMAGE_TOOL_KEY } from './images'
 import { findMediaTags, mediaTagText, mediaTagTextWithKeptMark, savedMediaTag, unsavedMediaTag } from './mediaTags'
 import { HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, idImage, invokeBlock as invoke, waitBlock as wait } from './testing'
 import { findToolBlocks, toolBlockText } from './toolBlocks'
+import type { Role } from './types'
 
-// What a test reads of each hidden asset: its job, and its text.
+// A conversation of `texts`, each as its role and its text, with the tool
+// blocks of each text, in a user section too.
+function conversation(texts: [Role, string][]): ChipSection[] {
+  return texts.map(([role, text]) => ({ role, text, blocks: findToolBlocks(text) }))
+}
+
+// The job and the call of a chip owner, and nothing for the compaction.
+function ownerText(owner: HiddenAssetOwner): string {
+  return owner.kind === 'job' ? `${owner.jobId} ${owner.callId}` : ''
+}
+
+// What a test reads of each hidden asset of each section of a
+// conversation of `texts`: its owner (`ownerText`), and its text.
+function foundIn(texts: [Role, string][]): [string, string][][] {
+  return findHiddenAssets(conversation(texts)).map((assets, index) => assets.map((asset) => [ownerText(asset.owner), texts[index][1].slice(asset.from, asset.to)]))
+}
+
+// `foundIn` for one agent section of the text `text`.
 function found(text: string): [string, string][] {
-  return findHiddenAssets(text, findToolBlocks(text)).map((asset: HiddenAsset) => [asset.owner.kind === 'job' ? asset.owner.jobId : '', text.slice(asset.from, asset.to)])
+  return foundIn([['agent', text]])[0]
 }
 
 describe('findHiddenAssets', () => {
@@ -18,8 +36,8 @@ describe('findHiddenAssets', () => {
     const clip = hiddenClip('j-bbbb')
     const text = `${invoke('j-aaaa')}\n${invoke('j-bbbb', { id: 'call_2' })}\n\n${clip}\n\n${image}\n\nDone.`
 
-    expect(found(text)).toStrictEqual([['j-bbbb', clip], ['j-aaaa', image]])
-    expect(findHiddenAssets(text, findToolBlocks(text)).map((asset) => asset.kind)).toStrictEqual(['clip', 'image'])
+    expect(found(text)).toStrictEqual([['j-bbbb call_2', clip], ['j-aaaa call_1', image]])
+    expect(findHiddenAssets(conversation([['agent', text]]))[0].map((asset) => asset.kind)).toStrictEqual(['clip', 'image'])
   })
 
   it('finds none with no block that started the job: the asset then shows at its own place', () => {
@@ -35,7 +53,7 @@ describe('findHiddenAssets', () => {
     expect(found(`${invoke('j-aaaa')}\n\nSee ${image}`)).toStrictEqual([])
     expect(found(`${invoke('j-aaaa')}\n\n${image} and more`)).toStrictEqual([])
     expect(found(`${invoke('j-aaaa')}\n\n${image}${hiddenImage('j-aaaa', 'c')}`)).toStrictEqual([])
-    expect(found(`${invoke('j-aaaa')}\n\n  ${image} \nMore.`)).toStrictEqual([['j-aaaa', image]])
+    expect(found(`${invoke('j-aaaa')}\n\n  ${image} \nMore.`)).toStrictEqual([['j-aaaa call_1', image]])
   })
 
   it('takes no reference that is in the result of a block', () => {
@@ -51,6 +69,52 @@ describe('findHiddenAssets', () => {
 
     expect(found(`${invoke('j-aaaa')}\n\n${shown}`)).toStrictEqual([])
     expect(found(`${failed}\n\n${hiddenImage('j-aaaa')}`)).toStrictEqual([])
+  })
+})
+
+describe('findHiddenAssets in a conversation (the chip that owns an asset)', () => {
+  const image = hiddenImage('j-aaaa')
+  const clip = hiddenClip('j-aaaa')
+
+  it('gives an asset of a later reply, past a user section, to the chip of the earlier reply that started its job', () => {
+    expect(foundIn([
+      ['agent', `${invoke('j-aaaa')}\n\nWorking.`],
+      ['user', 'Go on.'],
+      ['agent', `${wait('1 job ended.')}\n\n${clip}\n\n${image}`],
+    ])).toStrictEqual([[], [], [['j-aaaa call_1', clip], ['j-aaaa call_1', image]]])
+  })
+
+  it('gives the asset to the nearest chip that started its job: of its own section, else of the nearest earlier reply that has one', () => {
+    expect(foundIn([
+      ['agent', invoke('j-aaaa')],
+      ['user', 'Again.'],
+      ['agent', `${invoke('j-aaaa', { id: 'call_2' })}\n\n${image}`],
+      ['user', 'Go on.'],
+      ['agent', 'More.'],
+      ['agent', clip],
+    ])).toStrictEqual([[], [], [['j-aaaa call_2', image]], [], [], [['j-aaaa call_2', clip]]])
+    // A chip after the asset in its section wins over a chip of an
+    // earlier section.
+    expect(foundIn([['agent', invoke('j-aaaa', { id: 'call_0' })], ['user', 'Go on.'], ['agent', `${image}\n\n${invoke('j-aaaa')}`]]))
+      .toStrictEqual([[], [], [['j-aaaa call_1', image]]])
+  })
+
+  it('gives an asset of a section with two chips of its job to the nearest one before it, else to the first one after it', () => {
+    const [first, second, third] = ['b', 'c', 'd'].map((id) => hiddenImage('j-aaaa', id))
+    const text = `${first}\n\n${invoke('j-aaaa')}\n\n${second}\n\n${invoke('j-aaaa', { id: 'call_2' })}\n\n${third}`
+
+    expect(found(text)).toStrictEqual([['j-aaaa call_1', first], ['j-aaaa call_1', second], ['j-aaaa call_2', third]])
+    // In an earlier section, the last one.
+    expect(foundIn([['agent', `${invoke('j-aaaa')}\n${invoke('j-aaaa', { id: 'call_2' })}`], ['agent', image]])[1]).toStrictEqual([['j-aaaa call_2', image]])
+  })
+
+  it('shows an asset of a user section, and starts no job by a block of a user section', () => {
+    expect(foundIn([['agent', invoke('j-aaaa')], ['user', `${image}\n\n${clip}`], ['agent', 'Done.']])).toStrictEqual([[], [], []])
+    expect(foundIn([['user', invoke('j-aaaa')], ['agent', `${image}\n\n${clip}`]])).toStrictEqual([[], []])
+  })
+
+  it('shows an asset whose job only a later section started', () => {
+    expect(foundIn([['agent', image], ['user', 'Go on.'], ['agent', invoke('j-aaaa')]])).toStrictEqual([[], [], []])
   })
 })
 
@@ -145,23 +209,43 @@ describe('the marker of a hidden asset', () => {
   })
 })
 
-describe('jobResultInBlocks', () => {
+describe('findJobResults', () => {
   const results = jobsWaitText([
     { id: 'j-aaaa', tool: 'model_invoke', status: 'finished', text: 'The cat is blue.', call: { number: 1, label: 'A cat' } },
     { id: 'j-bbbb', tool: 'model_invoke', status: 'failed', text: 'The provider refused the prompt.', call: { number: 2, label: 'A dog' } },
   ], 1)
 
-  it('gives the result that a jobs_wait block of the section holds for the job', () => {
-    const blocks = findToolBlocks(`${invoke('j-aaaa')}\n${wait('1 job ended.')}\n\n${wait(results)}`)
+  // The status of the result of each block of each section of a
+  // conversation of `texts`; null for none.
+  function statuses(texts: [Role, string][]): (string | null)[][] {
+    return findJobResults(conversation(texts)).map((blocks) => blocks.map((result) => result?.status ?? null))
+  }
 
-    expect(jobResultInBlocks(blocks, 'j-aaaa')).toStrictEqual({ id: 'j-aaaa', tool: 'model_invoke', status: 'finished', text: 'The cat is blue.', call: { number: 1, label: 'A cat' } })
-    expect(jobResultInBlocks(blocks, 'j-bbbb')?.status).toBe('failed')
+  it('gives each block that started a job the result that a jobs_wait block of its section holds for the job', () => {
+    const text = `${invoke('j-aaaa')}\n${invoke('j-bbbb', { id: 'call_2' })}\n${wait('1 job ended.')}\n\n${wait(results)}`
+
+    expect(findJobResults(conversation([['agent', text]]))).toStrictEqual([[
+      { id: 'j-aaaa', tool: 'model_invoke', status: 'finished', text: 'The cat is blue.', call: { number: 1, label: 'A cat' } },
+      { id: 'j-bbbb', tool: 'model_invoke', status: 'failed', text: 'The provider refused the prompt.', call: { number: 2, label: 'A dog' } },
+      null,
+      null,
+    ]])
   })
 
   it('gives null for a job that no jobs_wait block gave, and reads no block of another tool', () => {
     const other = toolBlockText({ id: 'call_x', name: 'model_list', status: 'success', arguments: {}, result: results })
 
-    expect(jobResultInBlocks(findToolBlocks(`${invoke('j-cccc')}\n${wait(results)}`), 'j-cccc')).toBeNull()
-    expect(jobResultInBlocks(findToolBlocks(`${invoke('j-aaaa')}\n${other}`), 'j-aaaa')).toBeNull()
+    expect(statuses([['agent', `${invoke('j-cccc')}\n${wait(results)}`]])).toStrictEqual([[null, null]])
+    expect(statuses([['agent', `${invoke('j-aaaa')}\n${other}`]])).toStrictEqual([[null, null]])
+  })
+
+  it('gives the block of an earlier reply the result that a later reply gave for its job, past a user section', () => {
+    expect(statuses([['agent', `${invoke('j-aaaa')}\n\nWorking.`], ['user', 'Go on.'], ['agent', wait(results)]])).toStrictEqual([['finished'], [], [null]])
+  })
+
+  it('gives a result to the nearest block that started its job, and reads no jobs_wait block of a user section', () => {
+    expect(statuses([['agent', invoke('j-aaaa')], ['user', 'Again.'], ['agent', `${invoke('j-aaaa', { id: 'call_2' })}\n${wait(results)}`]]))
+      .toStrictEqual([[null], [], ['finished', null]])
+    expect(statuses([['agent', invoke('j-aaaa')], ['user', wait(results)]])).toStrictEqual([[null], [null]])
   })
 })

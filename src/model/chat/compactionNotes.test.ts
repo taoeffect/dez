@@ -65,7 +65,7 @@ function notes(fields: Partial<CompactionNotes>): CompactionNotes {
 }
 
 function job(fields: Partial<JobInfo>): JobInfo {
-  return { id: 'j-ab12', tool: 'model_invoke', status: 'running', delivered: false, elapsedMs: 0, state: '', call: { number: 1, label: '' }, ...fields }
+  return { id: 'j-ab12', tool: 'model_invoke', status: 'running', delivered: false, elapsedMs: 0, state: '', call: { number: 1, label: '' }, inputs: [], ...fields }
 }
 
 function headings(text: string): string[] {

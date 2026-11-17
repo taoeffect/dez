@@ -77,7 +77,7 @@ export interface InvocationRights {
 //   failure after the provider started its job (a poll, the download, an
 //   answer that Dez cannot use, the time limit): the provider can have
 //   taken the money. A stopped or timed-out job keeps its quote too:
-//   `ReplyJobs` takes no report after the end of a job.
+//   `TabJobs` takes no report after the end of a job.
 async function invokeMediaModel(invocation: MediaInvocation, signal: AbortSignal, report: (state: string) => void, reportCost: (usd: number | null) => void): Promise<JobOutcome> {
   const { provider, model, kind, request, parameters, timeoutMs } = invocation
   report(INVOCATION_READS_INPUTS)
@@ -115,7 +115,7 @@ async function invokeMediaModel(invocation: MediaInvocation, signal: AbortSignal
   const assets = result.clips.map(generatedClipAsset)
   // An abort cancelled the request, which can end the body of an image
   // early: a cut image is never saved. A clip that still came is whole,
-  // and `ReplyJobs` deletes its temp copy.
+  // and `TabJobs` deletes its temp copy.
   if (signal.aborted) return { text: '', isError: false, assets }
 
   try {
@@ -209,7 +209,7 @@ async function invokeTextModel(
         if (answerIsCut(answer) && !imageOutput && !audioOutput) cancelRequest()
       },
       onImage: async (image: GeneratedMedia) => {
-        // The job ended: `ReplyJobs` takes no result any more.
+        // The job ended: `TabJobs` takes no result any more.
         if (signal.aborted) return
         try {
           keep({ kind: 'image', path: await sbp('dez.controller/images/save', image.bytes, image.mediaType, { folder: 'generated' }) as string })
@@ -219,7 +219,7 @@ async function invokeTextModel(
           throw error
         }
       },
-      // Also after the end of the job: `ReplyJobs` then deletes the temp
+      // Also after the end of the job: `TabJobs` then deletes the temp
       // copy, as it does with any asset of a result that came too late.
       onClip: (clip: GeneratedClip) => {
         keep(generatedClipAsset(clip))
@@ -229,14 +229,14 @@ async function invokeTextModel(
   } catch (error) {
     if (sent) countRequest(failedChatRequestCost(error))
     // An error of `onImage` does not end the request by itself. And
-    // `ReplyJobs` reads no assets of a failed job, so the images and the
+    // `TabJobs` reads no assets of a failed job, so the images and the
     // clip that this job saved go here.
     cancelRequest()
     await discardMadeAssets(assets)
     throw imageNotSaved ? new ToolError(IMAGE_NOT_SAVED_TEXT, '', { cause: error }) : invocationError(invocation, error)
   }
   // An abort after the first bytes of the answer ends it early with no
-  // error: the text is not whole. `ReplyJobs` deletes the saved images and
+  // error: the text is not whole. `TabJobs` deletes the saved images and
   // the clip.
   if (signal.aborted) return { text: '', isError: false, assets }
   return { text: invocationAnswerText(answer), isError: false, assets }
@@ -259,9 +259,9 @@ async function invokeTextModel(
  *    goes on (`JobWork`).
  *
  *  Rejects with a `ToolError` for a failure that Dez knows
- *  (`invocationError`); `ReplyJobs` logs it with its cause. When `signal`
- *  aborts (the job timed out, or its reply ended), the request ends,
- *  `ReplyJobs` takes no result and no error any more, and it deletes the
+ *  (`invocationError`); `TabJobs` logs it with its cause. When `signal`
+ *  aborts (the job timed out, or Dez stopped it), the request ends,
+ *  `TabJobs` takes no result and no error any more, and it deletes the
  *  files of a result that still comes. */
 export function invokeModel(
   invocation: ModelInvocation,

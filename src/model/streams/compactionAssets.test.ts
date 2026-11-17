@@ -4,11 +4,9 @@ import { compactionNotesText, type CompactionNotes, type NotesAsset } from '../c
 import { IMAGE_MADE_BY_KEY, IMAGE_TOOL_KEY, imageMarkdown } from '../chat/images'
 import { mediaTagText } from '../chat/mediaTags'
 import { COMPACTION_TAG, FOX_ORIGIN, HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, idImage, invokeBlock } from '../chat/testing'
-import { toolBlockText } from '../chat/toolBlocks'
 import type { Section } from '../chat/types'
-import { jobStartedText, type JobInfo, type JobStatus } from '../tools/jobs'
-import { CONVERSATION, RED, SKY, SONG } from '../tools/testing'
-import { joinClipsCall, videoInputsText } from '../tools/videoTool'
+import type { JobInfo, JobStatus } from '../tools/jobs'
+import { RED, SKY, SONG } from '../tools/testing'
 import {
   assetDecisions,
   assetTableText,
@@ -218,6 +216,25 @@ describe('compactionAssets', () => {
     expect(byId(assetsOf(later, FACTS, { replySectionId: 'r2' }), 'byReply')).toStrictEqual({ b: false, c: false, d: false })
   })
 
+  // A stop or a new submit cut the reply `r`, and the reply `r2` took its
+  // jobs: the work of `r` counts as the work of `r2`.
+  it('counts an asset as made by the reply when its text is in the section of a cut reply that handed its jobs on', () => {
+    const sections = [...PLAIN, user('u2', 'No, make them jump.'), reply('r2', '')]
+
+    expect(byId(assetsOf(sections, FACTS, { replySectionId: 'r2', replySections: ['r'] }), 'byReply')).toStrictEqual({ a: false, b: false, c: true, d: true, e: true })
+  })
+
+  it('counts an asset of the notes as made by the reply when a cut reply that handed its jobs on ran at their compaction', () => {
+    const block = compactionBlockText({ count: 1, lastId: 'b', pictures: [] }, compactionNotesText({
+      ...NOTES_DATA,
+      assets: NOTES_DATA.assets.map((asset) => ({ ...asset, byReply: asset.id === 'b' })),
+    }))
+    const sections = [reply('r', `${block}\n${hiddenImage('j-aaaa', 'c')}`), user('u3', 'No, make it jump.'), reply('r2', '')]
+
+    expect(byId(assetsOf(sections, FACTS, { replySectionId: 'r2', replySections: ['r'] }), 'byReply')).toStrictEqual({ b: true, c: true })
+    expect(byId(assetsOf(sections, FACTS, { replySectionId: 'r2' }), 'byReply')).toStrictEqual({ b: false, c: false })
+  })
+
   it('counts an asset as an input of a job when an open job of the reply takes it', () => {
     const jobInputs = new Map([['j-aaaa', ['a']], ['j-bbbb', ['e', 'a']]])
 
@@ -273,57 +290,17 @@ describe('assetTableText', () => {
 })
 
 describe('openJobInputs', () => {
-  const images = (...ids: string[]) => ids.map((id) => ({ id, kind: 'image' as const }))
-  const REPLY = [
-    'Making the scenes.',
-    invokeBlock('j-aaaa', { number: 1, prompt: 'Make @a run to @b', intermediate: false, inputs: images('a', 'b') }),
-    invokeBlock('j-bbbb', { number: 2, prompt: 'Make @c jump', intermediate: false, inputs: images('c') }),
-    invokeBlock('j-cccc', { number: 3, prompt: 'Make @d swim', intermediate: false, inputs: images('d') }),
-    invokeBlock('j-dddd', { number: 4, prompt: 'Make @e fly', intermediate: false, inputs: images('e') }),
-  ].join('\n\n')
-
-  function job(id: string, status: JobStatus, delivered = false): JobInfo {
-    return { id, tool: 'model_invoke', status, delivered, elapsedMs: 1000, state: '', call: { number: 1, label: '' } }
-  }
-
-  // The inputs of the open jobs of `jobs` when the reply that runs has the
-  // text `replyText`.
-  function inputsOf(replyText: string, jobs: readonly JobInfo[]): Map<string, string[]> {
-    const sections = [user('u1', 'Make the scenes.'), reply('r', replyText)]
-    return openJobInputs(sections, compactionScope(sections, 'r'), jobs)
+  function job(id: string, status: JobStatus, inputs: readonly string[], delivered = false): JobInfo {
+    return { id, tool: 'model_invoke', status, delivered, elapsedMs: 1000, state: '', call: { number: 1, label: '' }, inputs }
   }
 
   it('takes the inputs of a job that runs, and of an ended job whose result no jobs_wait gave, by job', () => {
-    expect(inputsOf(REPLY, [job('j-aaaa', 'running'), job('j-bbbb', 'finished')])).toStrictEqual(new Map([['j-aaaa', ['a', 'b']], ['j-bbbb', ['c']]]))
+    expect(openJobInputs([job('j-aaaa', 'running', ['a', 'b']), job('j-bbbb', 'finished', ['c'])])).toStrictEqual(new Map([['j-aaaa', ['a', 'b']], ['j-bbbb', ['c']]]))
   })
 
-  it('takes no input of a job whose result jobs_wait gave, of a stopped job, or of a job that the list does not hold', () => {
-    expect(inputsOf(REPLY, [job('j-aaaa', 'running'), job('j-bbbb', 'finished', true), job('j-cccc', 'stopped')])).toStrictEqual(new Map([['j-aaaa', ['a', 'b']]]))
-    expect(inputsOf(REPLY, [])).toStrictEqual(new Map())
-  })
-
-  // `join_clips` takes ids with no `@`, so only the start result, which
-  // the runner writes from the inputs of the job, names its clips as `@c`.
-  it('takes the clips of a join whose call names them with no @', () => {
-    const parameters = { clips: 'c d' }
-    const result = `${jobStartedText('j-aaaa', 1)}\n${videoInputsText(joinClipsCall(parameters, CONVERSATION).inputs)}`
-    const join = toolBlockText({ id: 'call_1', name: 'video', status: 'success', arguments: { command: 'join_clips', parameters: JSON.stringify(parameters) }, result })
-
-    expect(inputsOf(join, [job('j-aaaa', 'running')])).toStrictEqual(new Map([['j-aaaa', ['c', 'd']]]))
-  })
-
-  // A compaction in the reply removed the blocks of the jobs that started
-  // before it, so the job lines of its notes tell their inputs. The reply
-  // goes on after the block of its own section.
-  it('takes the inputs that the notes tell while the reply that ran at their compaction still runs', () => {
-    const notes = compactionNotesText({ ...NOTES_DATA, jobs: [job('j-aaaa', 'running')], jobInputs: new Map([['j-aaaa', ['a', 'b']]]) })
-    const block = compactionBlockText({ count: 1, lastId: 'b', pictures: [] }, notes)
-    const sections = [reply('r', `${block}\n${invokeBlock('j-bbbb', { number: 2, intermediate: false, inputs: images('c') })}`)]
-    const later = [...sections, user('u2', 'Now make them jump.'), reply('r2', 'Jumping.')]
-    const jobs = [job('j-aaaa', 'running'), job('j-bbbb', 'running')]
-
-    expect(openJobInputs(sections, compactionScope(sections, 'r'), jobs)).toStrictEqual(new Map([['j-aaaa', ['a', 'b']], ['j-bbbb', ['c']]]))
-    expect(openJobInputs(later, compactionScope(later, 'r2'), jobs)).toStrictEqual(new Map())
+  it('takes no input of a job whose result jobs_wait gave, or of a stopped job', () => {
+    expect(openJobInputs([job('j-aaaa', 'running', ['a']), job('j-bbbb', 'finished', ['c'], true), job('j-cccc', 'stopped', ['d'])])).toStrictEqual(new Map([['j-aaaa', ['a']]]))
+    expect(openJobInputs([])).toStrictEqual(new Map())
   })
 })
 

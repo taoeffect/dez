@@ -134,8 +134,11 @@ function onOverlayClick(event: MouseEvent) {
               The model picker at the lower left sets the model of the tab, and the gear next to it
               shows the settings of that model. Add your API keys and your own providers in Settings
               (<kbd>{{ keys.settings }}</kbd>) › Providers. Models can use Dez tools, for example to
-              find other models, to ask them for images and clips, and to cut and join clips. Dez
-              saves each conversation: History (<kbd>{{ keys.history }}</kbd>) opens it again.
+              find other models, to ask them for images and clips, and to cut and join clips. Slow
+              tool work, such as a request for an image, runs as a job. A stop or a new message does
+              not end the jobs of a reply: the next reply of the tab can wait for them and get their
+              results. A close of the tab ends them. Dez saves each conversation: History
+              (<kbd>{{ keys.history }}</kbd>) opens it again.
             </p>
             <p>
               The two numbers in the middle of the bottom bar are the size and the cost of the

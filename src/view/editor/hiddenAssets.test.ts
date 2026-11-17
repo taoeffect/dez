@@ -101,14 +101,35 @@ describe('hiddenAssets', () => {
 
   it('hides nothing while no chip shows the call: a user section, and a block that stays text', () => {
     const user = createState([[INVOKE, '', IMAGE, '', CLIP].join('\n')], ['user'])
+    // A user section after the reply whose chip started the job.
+    const afterChip = createState(['ask', INVOKE, [IMAGE, '', CLIP].join('\n')], ['user', 'agent', 'user'])
     const pillBlock = INVOKE.replace('A cat', `A ${PILL_OPEN} cat`)
     const text = agentState([pillBlock, '', IMAGE, '', CLIP])
 
-    for (const state of [user, text]) {
+    for (const state of [user, afterChip, text]) {
       expect(hiddenAssets(state)).toStrictEqual([])
       expect(hiddenLineStarts(state)).toStrictEqual([])
       expect(placeholders(state)).toStrictEqual([])
     }
+    expect(renderedImages(afterChip).map((image) => afterChip.sliceDoc(image.from, image.to))).toStrictEqual([IMAGE])
+  })
+
+  it('hides an asset of a later reply, past a user section, under the chip of the earlier reply that started its job, and gives its trash its lines there', () => {
+    const state = createState(['ask', [INVOKE, '', 'Working.'].join('\n'), 'Go on.', ['Done.', '', IMAGE, '', CLIP].join('\n')], ['user', 'agent', 'user', 'agent'])
+    const owner = { kind: 'job', jobId: 'j-aaaa', callId: 'call_1' }
+
+    expect(hiddenAssets(state).map((asset) => [asset.owner, state.sliceDoc(asset.from, asset.to)])).toStrictEqual([[owner, IMAGE], [owner, CLIP]])
+    expect(placeholders(state).sort()).toStrictEqual(['audio c job', 'image b job'])
+    expect(hiddenAssets(state).map((asset) => {
+      const range = hiddenAssetLines(state, asset.from)
+      return range && state.sliceDoc(range.from, range.to)
+    })).toStrictEqual([`\n${IMAGE}`, `\n${CLIP}`])
+  })
+
+  it('gives the asset to the chip of the nearest reply that started its job', () => {
+    const state = createState(['ask', INVOKE, 'Again.', invokeBlock('j-aaaa', { id: 'call_2' }), 'Go on.', IMAGE], ['user', 'agent', 'user', 'agent', 'user', 'agent'])
+
+    expect(hiddenAssets(state).map((asset) => asset.owner)).toStrictEqual([{ kind: 'job', jobId: 'j-aaaa', callId: 'call_2' }])
   })
 
   it('hides no asset that the editor leaves as source text: a clip tag with a sentinel, an image on a table row', () => {
@@ -284,8 +305,12 @@ describe('the assets that a compaction keeps', () => {
     const both = `${IMAGE.slice(0, -1)}|kept=compaction)`
     const later = compactedState(['Notes.'], [], [['agent', [INVOKE, '', both, '', 'Done.'].join('\n')]])
     const inBlock = compactedState([INVOKE, '', both, '', 'Done.'], [])
+    // The call in the block shows no chip, so it hides no asset of a later
+    // reply.
+    const afterBlock = compactedState([INVOKE, '', 'Done.'], [], [['agent', IMAGE]])
 
-    expect(hiddenAssets(later).map((asset) => asset.owner)).toStrictEqual([{ kind: 'job', jobId: 'j-aaaa' }])
+    expect(hiddenAssets(later).map((asset) => asset.owner)).toStrictEqual([{ kind: 'job', jobId: 'j-aaaa', callId: 'call_1' }])
     expect(hiddenAssets(inBlock).map((asset) => asset.owner)).toStrictEqual([{ kind: 'compaction' }])
+    expect(hiddenAssets(afterBlock)).toStrictEqual([])
   })
 })

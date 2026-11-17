@@ -122,12 +122,12 @@ const HIDING_MARKS = [...new Set([IMAGE_HIDDEN_KEY, MEDIA_HIDDEN_ATTRIBUTE, IMAG
  *  (`findHiddenAssets`), and the assets that the assets chip of a
  *  compaction shows (`findKeptAssets`): every asset of the compaction
  *  block, and the kept assets of the carried assets of the user that an
- *  older Dez wrote. Each agent section is read on its own, with the
- *  blocks that show as chips (`chipBlocks`): an asset is hidden only while
- *  a chip can show it. An asset that images.ts or media.ts leaves as
- *  source text stays in view too: one on a line with a sentinel (a prompt
- *  pill), and an image reference on a table row line (its metadata holds
- *  `|`). */
+ *  older Dez wrote. The job rule reads the blocks of each agent section
+ *  that show as chips (`chipBlocks`, each section on its own): an asset is
+ *  hidden only while a chip of its section, or of an earlier one, can
+ *  show it. An asset that images.ts or media.ts leaves as source text
+ *  stays in view too: one on a line with a sentinel (a prompt pill), and
+ *  an image reference on a table row line (its metadata holds `|`). */
 function findHiddenAssetsInDoc(state: EditorState): HiddenAssetsInDoc {
   const doc = state.doc.toString()
   const blockEnd = compactionBlockEnd(state.doc)
@@ -135,14 +135,18 @@ function findHiddenAssetsInDoc(state: EditorState): HiddenAssetsInDoc {
   if (blockEnd === 0 && !HIDING_MARKS.some((mark) => doc.includes(`${mark}=`))) return NOTHING_HIDDEN
   const texts = sectionTexts(doc, state.field(sectionsField, false) ?? [])
   const kept = findKeptAssets(texts.map(({ section, text }) => ({ role: section.role, text })))
+  // A call in the compaction block shows no chip (toolCalls.ts): the
+  // assets chip of the compaction shows its assets.
+  const ofJobs = findHiddenAssets(texts.map(({ section, from: offset, text }) => ({
+    role: section.role,
+    text,
+    blocks: section.role === 'agent' ? chipBlocks(text).filter((block) => offset + block.from >= blockEnd) : [],
+  })))
   const assets: HiddenAsset[] = []
-  texts.forEach(({ section, from: offset, text }, index) => {
-    // A call in the compaction block shows no chip (toolCalls.ts): the
-    // assets chip of the compaction shows its assets.
-    const ofJobs = section.role === 'agent' ? findHiddenAssets(text, chipBlocks(text).filter((block) => offset + block.from >= blockEnd)) : []
+  texts.forEach(({ from: offset }, index) => {
     // An asset with both marks shows under the chip of its call.
-    const ofCompaction = kept[index].filter((asset) => !ofJobs.some((other) => other.from === asset.from))
-    for (const asset of [...ofJobs, ...ofCompaction]) {
+    const ofCompaction = kept[index].filter((asset) => !ofJobs[index].some((other) => other.from === asset.from))
+    for (const asset of [...ofJobs[index], ...ofCompaction]) {
       const from = offset + asset.from
       const to = offset + asset.to
       const line = state.doc.lineAt(from)

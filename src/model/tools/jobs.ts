@@ -18,8 +18,10 @@ import { ToolError, type ToolArguments, type ToolDefinition, type ToolParameter 
 
 /** The state of a job. `finished`: its work gave a result. `failed`: its
  *  work gave an error. `timed out`: its work did not end within its time
- *  limit. `stopped`: its reply ended first (a stop or a new submit), so no
- *  model reads this one. */
+ *  limit. `stopped`: Dez ended it first (its reply ended on its own, or its
+ *  tab closed), so no model reads this one. A stop of the user or a new
+ *  submit does not end a job: the next reply of the tab gets it
+ *  (`TabJobs`, controller/jobs.ts). */
 export type JobStatus = 'running' | 'finished' | 'failed' | 'timed out' | 'stopped'
 
 /** The status of a job that has a result for `jobs_wait`. */
@@ -161,7 +163,7 @@ export function jobTimeoutMs(args: ToolArguments, defaultSeconds: number): numbe
 /** The `is_intermediate` parameter of a tool whose job makes images or
  *  clips (`model_invoke`, the `join_clips` and `ffmpeg` subcommands of
  *  `video`). With `true`, the job marks what it makes as hidden assets
- *  (`hidesAssets` of `ReplyJobs.start`, chat/hiddenAssets.ts). Nothing of
+ *  (`hidesAssets` of `TabJobs.start`, chat/hiddenAssets.ts). Nothing of
  *  a request or of a result that the model reads changes. Static text: it
  *  goes into a tool definition or a help text. */
 export const INTERMEDIATE_PARAMETER: ToolParameter = {
@@ -352,7 +354,9 @@ export function jobsWaitResults(resultText: string): JobResult[] {
   }))
 }
 
-/** One job of a reply, as `jobs_list` and `job_inspect` tell it. */
+/** One job of a reply, as `jobs_list` and `job_inspect` tell it: a job
+ *  that the reply started, or that an earlier reply of the tab started
+ *  before a stop or a new submit cut it. */
 export interface JobInfo {
   id: string
   /** The tool whose call started the job. */
@@ -365,6 +369,10 @@ export interface JobInfo {
   /** The last state that the job reported; blank for none. */
   state: string
   call: JobCall
+  /** The ids of the assets that the call of the job names as inputs (its
+   *  `@id` mentions). A compaction keeps them while the job is open
+   *  (`openJobInputs`, streams/compactionAssets.ts). */
+  inputs: readonly string[]
   /** The price in USD of the paid request of the job: the provider's own,
    *  else its quote, and 0 for a request that the provider refused. Null
    *  when no price is known; absent for a job that sent no paid request. */
@@ -457,7 +465,7 @@ export function jobInspectText(job: JobInfo): string {
  *  the reply; `knownIds` are the ids of its jobs. */
 export function unknownJobText(unknownIds: readonly string[], knownIds: readonly string[]): string {
   const names = `${unknownIds.length === 1 ? 'the id' : 'the ids'} ${unknownIds.map((id) => JSON.stringify(id)).join(', ')}`
-  const earlier = 'A job of an earlier reply ended with that reply.'
+  const earlier = 'The jobs of an earlier reply that ended on its own ended with that reply, and no job lives through a close of the tab or a restart of Dez.'
   return knownIds.length === 0
     ? `This reply has started no job, so no job has ${names}. ${earlier} Use only the id of a job that you started in this reply.`
     : `No job of this reply has ${names}. ${earlier} The jobs of this reply are ${knownIds.join(', ')}: use only these ids.`
@@ -482,7 +490,9 @@ export const JOBS_WAIT_TOOL: ToolDefinition = {
     + 'and `call` is how the prompt or the arguments of that call begin. '
     + 'An image or a clip that a job made goes into your reply then, and the result gives its id. '
     + 'These ids follow the order of the results too: before you use them in an order (the scenes of a video), read from `number` which call made each one. '
-    + 'The first line tells how many jobs still run: call `jobs_wait` again until none runs. Get the result of every job before you end your reply.',
+    + 'The first line tells how many jobs still run: call `jobs_wait` again until none runs. Get the result of every job before you end your reply. '
+    + 'A stop of the user or a new message does not end the jobs: they count as jobs of the next reply, which gets their results with `jobs_wait`, and their numbers count on. '
+    + 'Dez ends them when the user closes the tab or quits Dez.',
   parameters: [
     {
       name: 'all',
@@ -506,7 +516,7 @@ export const JOBS_WAIT_TOOL: ToolDefinition = {
 
 export const JOBS_LIST_TOOL: ToolDefinition = {
   name: 'jobs_list',
-  description: 'List the jobs that this reply started, in the order of the starts: the number, the id, the tool, and the status of each job, '
+  description: 'List the jobs of this reply, in the order of the starts: the number, the id, the tool, and the status of each job, '
     + 'whether `jobs_wait` gave its result, how long it ran, and how its call begins. '
     + 'The last line is an estimate of what the paid requests of these jobs cost. '
     + 'It does not wait, and it gives no result of a job.',
