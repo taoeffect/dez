@@ -2,7 +2,9 @@ import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ContextSize } from '../chat/contextSize'
-import type { Compactions } from '../chat/compaction'
+import { compactionBlockText, type Compactions } from '../chat/compaction'
+import { compactionNotesText } from '../chat/compactionNotes'
+import { sectionPlainText } from '../chat/content'
 import { toolBlockText } from '../chat/toolBlocks'
 import type { ActiveModel, ContentNode, ModelRef, Section, SectionThinking, Tab, ThinkingReplay } from '../chat/types'
 import type { AppStatePayload, ConversationData, ModelCache } from '../persistence/types'
@@ -549,6 +551,44 @@ describe('dez.model/tabs/compact', () => {
     expect(compact(tab.id, [...compacted(), section('u3', 'user', '')], 1000)).toBe(true)
 
     expect(tabNow(tab.id).sections).toStrictEqual([...compacted(), typed])
+  })
+
+  // The notes hold each prompt pill of the first message as its body, and
+  // the title text has no body: a title from the notes would change at the
+  // compaction. The user cannot edit the notes, so the title stays, also
+  // after a later message.
+  it.each([
+    { holds: 'text and a prompt pill', start: 'Please do this: ', body: 'Review the code for faults.', title: 'Please do this:' },
+    { holds: 'only a prompt pill', start: '', body: 'Review the code for faults.', title: 'Now the tests.' },
+    { holds: 'only a prompt pill with no body', start: '', body: '', title: 'Now the tests.' },
+  ])('keeps the title of the tab when the first message holds $holds', ({ start, body, title }) => {
+    const tab = tabWithText('x')
+    const first: Section = {
+      id: 'u1',
+      role: 'user',
+      content: [{ kind: 'text', text: start }, { kind: 'prompt', id: 'p1', promptId: 'saved', name: 'Review', body, expanded: false }, { kind: 'text', text: '' }],
+    }
+    sbp('dez.model/tabs/replaceSections', tab.id, [first, section('a1', 'agent', 'An old reply'), section('u2', 'user', 'Now the tests.'), section('b', 'agent', '')])
+    expect(tabNow(tab.id).title).toBe(title)
+
+    const notes = compactionNotesText({
+      firstMessage: sectionPlainText(first),
+      newestMessage: 'Now the tests.',
+      summary: 'The notes.',
+      requirements: '',
+      nextSteps: '',
+      assets: [],
+      unnamed: [],
+      jobs: [],
+      jobInputs: new Map(),
+      cost: undefined,
+    })
+    const block = compactionBlockText({ count: 1, lastId: null, pictures: [] }, notes)
+    expect(compact(tab.id, [section('b', 'agent', `${block}\nThe reply so far`)], 150_000)).toBe(true)
+    expect(tabNow(tab.id).title).toBe(title)
+
+    sbp('dez.model/tabs/replaceSections', tab.id, [...tabNow(tab.id).sections, section('u3', 'user', 'Another message')])
+    expect(tabNow(tab.id).title).toBe(title)
   })
 
   it('adds each compaction to the numbers, with the cost of the tab at the newest one', () => {
