@@ -165,8 +165,9 @@ function onOverlayClick(event: MouseEvent) {
               it: it asks the model for notes of the work so far, and the notes take the place of
               the earlier messages and replies. The notes keep your first message, your newest
               message, and each message between them that the work still needs, word for word, with
-              their images. The model chooses these messages, and the notes tell how many it left
-              out. The bottom bar shows "Compacting…" while the model writes the notes. A compacted
+              their images. The model chooses which of the messages between them to keep, and the
+              notes tell how many of them Dez left out so far. The bottom bar shows "Compacting…"
+              while the model writes the notes. A compacted
               conversation starts with one Agent message: first two chips, then the reply, which
               goes on under the chips. Click the summary chip to read the notes and the messages of
               yours that they keep, and the assets chip to see the assets that the compaction kept.
@@ -295,8 +296,8 @@ function onOverlayClick(event: MouseEvent) {
               work at hand needs, and the compaction drops the others: the parts of finished work,
               the versions that a newer one replaced, the versions that you rejected, and the assets
               of earlier replies that the work does not use. Dez never drops an asset of yours, an
-              asset that a job still uses, or an asset that the notes or a message of yours that they
-              keep name. So to keep an asset
+              asset that a job still uses, or an asset that the notes name. An asset that a message
+              of yours names stays too, when the notes keep that message. So to keep an asset
               of an earlier reply, name it in your message with <code>@</code> and its id. A dropped
               asset leaves the conversation. Dez deletes the file of a dropped intermediate asset at
               once. The file of any other dropped asset stays until you click Delete Unused Files.
