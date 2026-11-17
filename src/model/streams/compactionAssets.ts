@@ -6,6 +6,7 @@ import { sectionIsEmpty, sectionPlainText } from '../chat/content'
 import { findAssetMentions } from '../chat/imageMentions'
 import { IMAGE_HIDDEN_KEY, labelImageReferences, type LinkedPathRule } from '../chat/images'
 import { labelMediaTags, MEDIA_HIDDEN_ATTRIBUTE } from '../chat/mediaTags'
+import { withoutStoredFilePaths } from '../chat/storedFilePaths'
 import type { Section } from '../chat/types'
 import { assetOriginText } from '../tools/assetInfo'
 import { ASSET_NAMES, hasJobResult, type JobAssetKind, type JobInfo } from '../tools/jobs'
@@ -125,9 +126,13 @@ const MESSAGE_START_LENGTH = 160
 /** The start of each middle message of `scope`, in order, as the list of
  *  the instruction shows it (`CompactionInstruction.middleMessages`): on
  *  one line, and each image reference and media tag as its label
- *  (`[image]`, `[video]`), as the notes for people show them. */
+ *  (`[image]`, `[video]`), as the notes for people show them.
+ *
+ *  The path scrub runs before the cut: it finds a path by its end, so it
+ *  would not see the part of a path before a cut, and the provider would
+ *  get the user's name and folders. */
 export function middleMessageStarts(scope: CompactionScope): string[] {
-  return scope.middle.map(({ text, rule }) => oneLineCut(labelMediaTags(labelImageReferences(text, rule)), MESSAGE_START_LENGTH))
+  return scope.middle.map(({ text, rule }) => oneLineCut(withoutStoredFilePaths(labelMediaTags(labelImageReferences(text, rule))), MESSAGE_START_LENGTH))
 }
 
 /** The asset lines of the notes of the compaction section of `sections`,
