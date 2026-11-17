@@ -236,6 +236,16 @@ export async function viewFromBottom (browser: E2EBrowser): Promise<number> {
   }))
 }
 
+/** Scrolls the thread editor to its top: the editor draws only the pills
+ *  and chips near the view. */
+export async function scrollEditorToTop (browser: E2EBrowser): Promise<void> {
+  await browser.execute(() => {
+    const scroller = document.querySelector('.cm-scroller')
+    if (!scroller) throw new Error('scrollEditorToTop: .cm-scroller not found')
+    scroller.scrollTop = 0
+  })
+}
+
 /** Where the focus is: 'find' or 'replace' for the find dropdown fields,
  *  'editor' for the thread editor, else the tag name of the focused
  *  element. */

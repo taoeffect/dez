@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { Key } from 'webdriverio'
 import { startApp, type RunningApp } from './harness/app'
 import { consoleErrors, elementCenter, movePointer, resetConsoleErrors, screenshotOnFailure, typeInto, typeKeys, waitFor, waitForValue } from './harness/dom'
+import { FIND_FIELD } from './harness/find'
 import { appFilePath, seedAppState, writeTestFile } from './harness/fixtures'
 import { pasteImageReference, shownImages, solidPng } from './harness/images'
 import { silentWav, tempClipTag } from './harness/media'
@@ -29,7 +30,6 @@ const AUDIO_TOOLTIP = {
   title: 'Audio id: b',
   text: 'This names the audio clip b. A model that takes audio gets an older clip only when your newest message names it. A chat model gets only the id.',
 }
-const FIND_FIELD = '.find-field[aria-label="Find"]'
 
 interface Box {
   left: number

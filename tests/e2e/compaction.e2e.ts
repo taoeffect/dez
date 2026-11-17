@@ -10,15 +10,16 @@ import type { ConversationData, SectionData } from '../../src/model/persistence/
 import { compactionInstruction } from '../../src/model/streams/compactionRequest'
 import { shortDuration } from '../../src/view/thread/pillDuration'
 import { anthropicChatBody, anthropicMarkedUser, openAiChatBody } from './harness/chatBody'
-import { click, consoleErrors, movePointer, pointerClick, pointerClickAt, promptMessage, resetConsoleErrors, screenshotOnFailure, typeInto, typeKeys, waitFor, waitForValue } from './harness/dom'
+import { click, consoleErrors, movePointer, pointerClick, pointerClickAt, promptMessage, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
 import { linkedDropDir } from './harness/drops'
+import { findDropdownOpen, findStatus, openFindWithQuery } from './harness/find'
 import { appFilePath, conversationFilePath, filesIn, makeConversation, newFileIn, seedConversation, writeTestFile } from './harness/fixtures'
 import { pasteImageReference, pngDataUrl, shownImages, solidPng, type ShownImage } from './harness/images'
 import { clipTag, MP4_VIDEO, problemCards, shownPlayers, silentWav, tempClipTag, WEBM_VIDEO, type ShownPlayer } from './harness/media'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import { LARGE_TOKENS, mockChatPath, openAiToolCall, replyText, sendAnthropicReply, sendChatReply, sendChatText, sendToolCalls, startEventStream, toolResult, writeChatFrame, writeUsage, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeConversationId, activeTabStreaming, activeTabTitle, assetPartPoint, AT_BOTTOM_PX, docPos, editorCaret, editorDoc, focusEditor, misplacedLines, newTab, openToasts, pickModel, pillThinking, pressRolePill, savedPillLines, sbpCall, setCaret, submit, threadSections, viewFromBottom, waitForThread, type ThreadSection } from './harness/thread'
+import { activeConversationId, activeTabStreaming, activeTabTitle, assetPartPoint, AT_BOTTOM_PX, docPos, editorCaret, editorDoc, focusEditor, misplacedLines, newTab, openToasts, pickModel, pillThinking, pressRolePill, savedPillLines, sbpCall, scrollEditorToTop, setCaret, submit, threadSections, viewFromBottom, waitForThread, type ThreadSection } from './harness/thread'
 import { hiddenAssetNotes, hiddenPart, pressToolChip, toolChips, toolPanelPictures, type ToolChipView } from './harness/toolChips'
 
 // Compaction, driven through the real app against a mock server in this
@@ -105,7 +106,6 @@ const NOTES_ANSWER = `## Summary\n${NOTES_SUMMARY}\n`
 // The first line of the notes of the image conversation: a line that only
 // the notes hold.
 const IMAGE_NOTES_START = 'The user wants a film of a fox.'
-const FIND_FIELD = '.find-field[aria-label="Find"]'
 
 // The image of the kept user message, the image that the notes name, and
 // the picture that the tag keeps for the model.
@@ -771,13 +771,11 @@ describe('a compacted conversation', () => {
 
     // "fox" is in the notes three times, and once in the user message.
     await focusEditor(browser)
-    await browser.keys([Key.Control, 'f'])
-    await waitFor(browser, FIND_FIELD, 10_000)
-    await typeInto(browser, FIND_FIELD, 'fox', { clear: true })
-    await waitForValue(browser, 'find status', async () => browser.execute(() => document.querySelector('.find-status')?.textContent?.trim() ?? ''), '1 of 1')
+    await openFindWithQuery(browser, 'fox')
+    await waitForValue(browser, 'find status', () => findStatus(browser), '1 of 1')
     expect(await browser.execute(() => Array.from(document.querySelectorAll('.dez-find-match'), (match) => match.textContent ?? ''))).toStrictEqual(['fox'])
     await browser.keys([Key.Escape])
-    await waitForValue(browser, 'find closed', async () => browser.execute(() => document.querySelector('.find-dropdown') !== null), false)
+    await waitForValue(browser, 'find closed', () => findDropdownOpen(browser), false)
   })
 
   it('sends a kept image as its text only, and a mention of the user sends the image right after the mention', async () => {
@@ -1057,10 +1055,7 @@ describe('a compacted conversation', () => {
     expect(await misplacedLines(browser)).toStrictEqual([])
     // The end of the reply makes a new editor state, which keeps the open
     // panel. The editor draws no chip far out of view, so scroll up first.
-    await browser.execute(() => {
-      const scroller = document.querySelector('.cm-scroller')
-      if (scroller) scroller.scrollTop = 0
-    })
+    await scrollEditorToTop(browser)
     await waitForValue(browser, 'chips after the reply', chipStates, [{ name: 'Compaction 1 assets', open: false }, { name: 'Compaction 1 summary', open: true }])
     expect((await pillRoles())[0]).toStrictEqual({ index: 0, role: 'agent' })
   })
@@ -1233,10 +1228,7 @@ describe('a compacted conversation', () => {
     expect(block).toContain(`\n![${photo}](id=c|kept=compaction)\n@c `)
     // The reply scrolled the editor to its end, and the editor draws no
     // chip far out of view.
-    await browser.execute(() => {
-      const scroller = document.querySelector('.cm-scroller')
-      if (scroller) scroller.scrollTop = 0
-    })
+    await scrollEditorToTop(browser)
     await waitForValue(browser, 'compaction chips', () => toolChips(browser), [assetsChipView(['2 kept', '1 dropped'], false), summaryChipView(false)])
     expect(await compactionChipCounts()).toStrictEqual(['2 kept', '1 dropped'])
     // The user saw the dropped image in the reply, so its file stays until
@@ -1291,10 +1283,7 @@ describe('a compacted conversation', () => {
 
     // The summary chip shows the two messages, and the assets chip shows
     // the images of the first one, also the linked one.
-    await browser.execute(() => {
-      const scroller = document.querySelector('.cm-scroller')
-      if (scroller) scroller.scrollTop = 0
-    })
+    await scrollEditorToTop(browser)
     await pressToolChip(browser, 1)
     await waitForValue(browser, 'messages in the summary panel', async () => {
       const shown = await chipNotes('summary')

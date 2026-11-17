@@ -7,7 +7,7 @@ import { appFilePath, mediaTempDir, seedAppState, writeTestFile } from './harnes
 import { shownImages, solidPng } from './harness/images'
 import { WEBM_VIDEO, clipTag, shownPlayers, silentWav } from './harness/media'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { docPos, docPosPoint, editorDoc, editorSelection, focusEditor, openSeededConversation, setCaret } from './harness/thread'
+import { docPos, docPosPoint, editorDoc, editorSelection, focusEditor, openSeededConversation, scrollEditorToTop, setCaret } from './harness/thread'
 
 // Images and players inside a text selection, driven through the real app:
 // an asset looks selected (a tint of the selection color over it) only
@@ -225,10 +225,7 @@ describe('assets in a selection', () => {
     const stored = await writeTestFile(appFilePath(app.home, 'assets', 'images', 'selection-far.png'), PNG)
     const lines = Array.from({ length: 200 }, (_, index) => `Line ${index + 1}`)
     await openSeededConversation(browser, app.home, 'asset-selection-far', [{ role: 'user', text: `${lines.join('\n')}\n![${stored}](id=a)\nEnd.` }])
-    await browser.execute(() => {
-      const scroller = document.querySelector('.cm-scroller')
-      if (scroller) scroller.scrollTop = 0
-    })
+    await scrollEditorToTop(browser)
     // The image is far below the view, so the editor has not drawn it.
     await waitForValue(browser, 'images drawn at the top', assetLooks, [])
 
