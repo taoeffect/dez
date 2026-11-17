@@ -1,7 +1,6 @@
 import type { EditorView } from '@codemirror/view'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
-import { jobStartedText } from '../../src/model/tools/jobs'
 import { startApp, type RunningApp } from './harness/app'
 import { clearOpenedUrls, consoleErrors, elementCenter, movePointer, openedUrls, pointerShiftClickAt, resetConsoleErrors, screenshotOnFailure, stopOpenUrl, typeInto, typeKeys, waitFor, waitForValue } from './harness/dom'
 import { FIND_FIELD } from './harness/find'
@@ -11,7 +10,7 @@ import { silentWav, tempClipTag } from './harness/media'
 import { assetInView, flashedAssets, pressMention, recordFlashes } from './harness/mentions'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
 import { docPos, docPosPoint, editorDoc, editorScrollTop, editorSelection, focusEditor, focusedArea, misplacedLines, newTab, openSeededConversation, sbpCall, scrollEditorToEnd, scrollEditorToTop, setCaret, threadSections } from './harness/thread'
-import { hidingPart, intermediateParts, toolChips } from './harness/toolChips'
+import { hidingPart, intermediateInvokeBlock, intermediateParts, toolChips } from './harness/toolChips'
 
 // The chips of `@id` mentions in the thread editor, driven through the
 // real app.
@@ -41,6 +40,10 @@ const AUDIO_TOOLTIP = {
   title: 'Audio id: b',
   text: 'This names the audio clip b. A model that takes audio gets an older clip only when your newest message names it. A chat model gets only the id.',
 }
+
+// Lines enough that CM does not draw what is above them while the end of
+// the doc is in view.
+const FILLER = Array.from({ length: 150 }, (_, line) => `Line ${line + 1}.`).join('\n')
 
 interface Box {
   left: number
@@ -279,12 +282,9 @@ describe('mention chips', () => {
   it('goes to the image or the clip that a chip names and flashes it, and leaves the text, the selection, and the focus alone', async () => {
     const image = await storedImage('mention-jump.png')
     const clip = await tempClipTag(app.home, 'audio', 'b', 'mention-jump.wav', silentWav(1))
-    // Lines enough that CM does not draw the assets while the mentions are
-    // in view.
-    const filler = Array.from({ length: 150 }, (_, line) => `Line ${line + 1}.`).join('\n')
     await openSeededConversation(browser, app.home, 'mention-chips-jump', [
       { role: 'user', text: `The picture:\n${image}\nThe sound:\n${clip}` },
-      { role: 'agent', text: filler },
+      { role: 'agent', text: FILLER },
       { role: 'user', text: 'Compare @a with @b.' },
     ])
     await focusEditor(browser)
@@ -311,11 +311,10 @@ describe('mention chips', () => {
   it('opens the closed chip of the tool call that hides the image, and shows and flashes the image in its panel', async () => {
     const jobId = 'j-mtn1'
     const stored = await writeTestFile(appFilePath(app.home, 'assets', 'generated', 'images', 'mention-hidden.png'), PNG)
-    const filler = Array.from({ length: 150 }, (_, line) => `Line ${line + 1}.`).join('\n')
     const reply = [
-      `<dez:tool id="call_mention" name="model_invoke" model="studio/paint" prompt="A draft" is_intermediate="true">\n${jobStartedText(jobId, 1)}\n</dez:tool>`,
+      intermediateInvokeBlock('call_mention', jobId),
       `![${stored}](id=a|tool=model_invoke|hidden=${jobId})`,
-      filler,
+      FILLER,
     ].join('\n\n')
     await openSeededConversation(browser, app.home, 'mention-chips-hidden', [
       { role: 'user', text: 'Make a draft' },

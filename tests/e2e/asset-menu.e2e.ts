@@ -1,6 +1,5 @@
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { jobStartedText } from '../../src/model/tools/jobs'
 import { startApp, type RunningApp } from './harness/app'
 import { consoleErrors, elementCenter, movePointer, pointerRightClickAt, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
 import { appFilePath, mediaTempDir, seedAppState, writeTestFile } from './harness/fixtures'
@@ -8,7 +7,7 @@ import { shownImages, solidPng } from './harness/images'
 import { NOT_A_CLIP, WEBM_VIDEO, clipTag, problemCards, shownPlayers, silentWav, startClipServer, type ClipServer } from './harness/media'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
 import { assetPartPoint, editorDoc, editorSelection, focusEditor, focusedArea, openSeededConversation, setCaret } from './harness/thread'
-import { pressToolChip } from './harness/toolChips'
+import { intermediateInvokeBlock, pressToolChip } from './harness/toolChips'
 
 // The asset menu, driven through the real app: a right-click on an image
 // (or on its "Image not found" box) or on a player asks
@@ -202,7 +201,7 @@ describe('asset menu', () => {
     const stored = await writeTestFile(appFilePath(app.home, 'assets', 'generated', 'images', 'menu-hidden.png'), PNG)
     const saved = await writeTestFile(appFilePath(app.home, 'assets', 'generated', 'audio', 'menu-hidden.wav'), TONE)
     const reply = [
-      `<dez:tool id="call_menu" name="model_invoke" model="studio/paint" prompt="A draft" is_intermediate="true">\n${jobStartedText(jobId, 1)}\n</dez:tool>`,
+      intermediateInvokeBlock('call_menu', jobId),
       `![${stored}](id=a|tool=model_invoke|hidden=${jobId})`,
       `<dez:audio id="b" type="audio/wav" src="${saved}" tool="model_invoke" hidden="${jobId}"/>`,
       'Done',

@@ -7,7 +7,7 @@ import { appFilePath, mediaTempDir, seedAppState, writeTestFile } from './harnes
 import { shownImages, solidPng } from './harness/images'
 import { WEBM_VIDEO, clipTag, shownPlayers, silentWav } from './harness/media'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { docPos, docPosPoint, editorDoc, editorSelection, focusEditor, openSeededConversation, scrollEditorToTop, setCaret } from './harness/thread'
+import { docPos, docPosPoint, editorDoc, editorSelection, focusEditor, openSeededConversation, scrollEditorToEnd, scrollEditorToTop, setCaret } from './harness/thread'
 
 // Images and players inside a text selection, driven through the real app:
 // an asset looks selected (a tint of the selection color over it) only
@@ -206,10 +206,7 @@ describe('assets in a selection', () => {
 
     // A click in the text below (scrolled into view: the video is tall)
     // leaves a caret, which holds nothing.
-    await browser.execute(() => {
-      const scroller = document.querySelector('.cm-scroller')
-      if (scroller) scroller.scrollTop = scroller.scrollHeight
-    })
+    await scrollEditorToEnd(browser)
     const thanks = await docPos(browser, 'Thanks', 3)
     await pointerClickAt(browser, await docPosPoint(browser, thanks, 1))
     await waitForValue(browser, 'players after a click', assetLooks, [
@@ -232,10 +229,7 @@ describe('assets in a selection', () => {
     await focusEditor(browser)
     await browser.keys([Key.Alt, 'a'])
     await waitForValue(browser, 'select all', () => editorSelection(browser), { anchor: 0, head: (await editorDoc(browser)).length })
-    await browser.execute(() => {
-      const scroller = document.querySelector('.cm-scroller')
-      if (scroller) scroller.scrollTop = scroller.scrollHeight
-    })
+    await scrollEditorToEnd(browser)
     await waitForValue(browser, 'image drawn in the selection', assetLooks, [{ selected: true, tint: await themeColor('--color-selection-tint') }])
     expect(await consoleErrors(browser)).toStrictEqual([])
   })

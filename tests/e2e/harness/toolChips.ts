@@ -1,3 +1,4 @@
+import { jobStartedText } from '../../../src/model/tools/jobs'
 import { pointerClickAt, waitForValue, type Point } from './dom'
 import type { E2EBrowser } from './session'
 import { assetPartPoint } from './thread'
@@ -133,6 +134,12 @@ export function hidingPart (type: string): IntermediatePartView {
 /** As `hidingPart`, with its panel open. */
 export function revealingPart (type: string): IntermediatePartView {
   return { eye: 'open', lit: true, types: [type], text: 'intermediate asset' }
+}
+
+/** The block of a `model_invoke` call `callId` with `is_intermediate`,
+ *  whose result tells that it started the job `jobId`. */
+export function intermediateInvokeBlock (callId: string, jobId: string): string {
+  return `<dez:tool id="${callId}" name="model_invoke" model="studio/paint" prompt="A draft" is_intermediate="true">\n${jobStartedText(jobId, 1)}\n</dez:tool>`
 }
 
 /** The intermediate part of each chip of the active editor, in doc order;
