@@ -8,7 +8,7 @@ import { sectionVisibleText } from '../model/chat/content'
 import type { ContextSize } from '../model/chat/contextSize'
 import type { DrawnImage, DrawnMediaType, ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
 import { findMediaTags, mediaTagText } from '../model/chat/mediaTags'
-import { HIDDEN_IMAGE_PATH, hiddenImage } from '../model/chat/testing'
+import { HIDDEN_IMAGE_PATH, hiddenImage, notesData } from '../model/chat/testing'
 import { agentTextForRequest, findToolBlocks } from '../model/chat/toolBlocks'
 import type { ConversationData } from '../model/persistence/types'
 import { missingImageProblem, TooManyImagesError, type InputImageRules } from '../model/providers/clipImages'
@@ -161,25 +161,25 @@ function activeTab(): Tab {
   return (sbp('dez.model/tabs/list') as Tab[]).find((tab) => tab.id === id) as Tab
 }
 
-function agentSection(): Section {
-  return activeTab().sections.find((section) => section.id === 'a1') as Section
+function agentSection(id = 'a1'): Section {
+  return activeTab().sections.find((section) => section.id === id) as Section
 }
 
 function sectionTexts(): Array<{ role: string, text: string }> {
   return activeTab().sections.map((section) => ({ role: section.role, text: sectionVisibleText(section) }))
 }
 
-// Starts the reply of the section `a1`. `messages` are the messages of its
-// first request, which hold the conversation before the reply.
-async function startStream({ sendTools = false, messages = [{ role: 'user', content: 'Hi' }] as StreamMessage[] } = {}): Promise<void> {
+// Starts the reply of the section `sectionId`. `messages` are the messages
+// of its first request, which hold the conversation before the reply.
+async function startStream({ sendTools = false, sectionId = 'a1', newestUserMessage = 'Hi', messages = [{ role: 'user', content: newestUserMessage }] as StreamMessage[] } = {}): Promise<void> {
   await sbp('dez.stream/start', {
     tabId: activeTab().id,
-    sectionId: 'a1',
+    sectionId,
     model,
     request: 'chat',
     messages,
     imagesOverLimit: 0,
-    newestUserMessage: 'Hi',
+    newestUserMessage,
     sendTools,
     imageOutput: false,
     audioOutput: false,
@@ -2858,36 +2858,22 @@ describe('dez.stream/start jobs', () => {
   // The result of the call `callId` of the reply in the section
   // `sectionId`, and the id of the job that it started.
   function callResult(callId: string, sectionId = 'a1'): string {
-    const section = activeTab().sections.find((candidate) => candidate.id === sectionId)
-    return section ? findToolBlocks(sectionVisibleText(section)).find((block) => block.id === callId)?.result ?? '' : ''
+    return findToolBlocks(sectionVisibleText(agentSection(sectionId))).find((block) => block.id === callId)?.result ?? ''
   }
   const jobId = (callId: string, sectionId = 'a1') => startedJobId(callResult(callId, sectionId)) as string
   // The block of a `model_invoke` call of the reply.
   const invokeBlock = (id: string, target = PAINTER) => `<dez:tool id="${id}" name="model_invoke" model="${target}" prompt="${PROMPT}">\n${callResult(id)}\n</dez:tool>\n`
-  const sectionText = (sectionId: string) => sectionVisibleText(activeTab().sections.find((section) => section.id === sectionId) as Section)
 
   // Starts the next chat reply of the tab, in the section `sectionId`,
   // after the user message `text`, as a submit after a stop does.
   async function nextReply(sectionId: string, text = 'No, make it a hare.'): Promise<void> {
-    const tabId = activeTab().id
     const sections = activeTab().sections.filter((section) => section.role === 'agent' || sectionVisibleText(section) !== '')
-    sbp('dez.model/tabs/replaceSections', tabId, [
+    sbp('dez.model/tabs/replaceSections', activeTab().id, [
       ...sections,
       { id: `u-${sectionId}`, role: 'user', content: [{ kind: 'text', text }] },
       { id: sectionId, role: 'agent', content: [{ kind: 'text', text: '' }], model },
     ])
-    await sbp('dez.stream/start', {
-      tabId,
-      sectionId,
-      model,
-      request: 'chat',
-      messages: [{ role: 'user', content: text }],
-      imagesOverLimit: 0,
-      newestUserMessage: text,
-      sendTools: true,
-      imageOutput: false,
-      audioOutput: false,
-    })
+    await startStream({ sectionId, sendTools: true, newestUserMessage: text })
   }
 
   // A reply whose first round starts the job of `call`, and whose second
@@ -3108,9 +3094,9 @@ describe('dez.stream/start jobs', () => {
       { id: first, tool: 'model_invoke', status: 'finished', text: 'Made the video clip @a.', call: { number: 1, label: PROMPT } },
       { id: second, tool: 'model_invoke', status: 'finished', text: 'Made the image @b.', call: { number: 2, label: PROMPT } },
     ], 0))
-    expect(sectionText('a2')).toContain(`made-by="${first}"/>`)
-    expect(sectionText('a2')).toContain(`![${fox}](id=b|tool=model_invoke|made-by=${second})`)
-    expect(sectionText('a1')).toBe(invokeBlock('c1', FILMER))
+    expect(sectionVisibleText(agentSection('a2'))).toContain(`made-by="${first}"/>`)
+    expect(sectionVisibleText(agentSection('a2'))).toContain(`![${fox}](id=b|tool=model_invoke|made-by=${second})`)
+    expect(sectionVisibleText(agentSection('a1'))).toBe(invokeBlock('c1', FILMER))
     expect(toasts).toStrictEqual([])
   })
 
@@ -3132,7 +3118,7 @@ describe('dez.stream/start jobs', () => {
 
     expect(jobs[0].signal.aborted).toBe(false)
     expect(sbp('dez.model/streams/isStreaming', activeTab().id)).toBe(false)
-    expect(sectionText('a1')).toBe(`${invokeBlock('c1')}I started it.`)
+    expect(sectionVisibleText(agentSection('a1'))).toBe(`${invokeBlock('c1')}I started it.`)
     expect(savedConversations).toHaveLength(1)
     expect(toasts).toStrictEqual([])
     expect(alerts).toStrictEqual([])
@@ -3141,14 +3127,14 @@ describe('dez.stream/start jobs', () => {
     // reply, also through Delete Unused Files.
     jobs[0].end({ media: [png], clips: [] })
     await settled()
-    expect(sectionText('a1')).toBe(`${invokeBlock('c1')}I started it.`)
+    expect(sectionVisibleText(agentSection('a1'))).toBe(`${invokeBlock('c1')}I started it.`)
     expect(deletedImages).toStrictEqual([])
     expect(sbp('dez.stream/unnamedMadeFiles')).toStrictEqual([fox])
 
     await nextReply('a2')
 
     expect(callResult('c2', 'a2')).toBe(jobsWaitText([{ id: jobId('c1'), tool: 'model_invoke', status: 'finished', text: 'Made the image @a.', call: { number: 1, label: PROMPT } }], 0))
-    expect(sectionText('a2')).toContain(foxReference('c1'))
+    expect(sectionVisibleText(agentSection('a2'))).toContain(foxReference('c1'))
   })
 
   it('tells the model in the result of a jobs_wait that a stop cut that the jobs go on', async () => {
@@ -3199,7 +3185,7 @@ describe('dez.stream/start jobs', () => {
     await nextReply('a3')
 
     expect(callResult('c4', 'a3')).toBe(jobsWaitText([{ id: started, tool: 'model_invoke', status: 'finished', text: 'Made the image @a.', call: { number: 1, label: PROMPT } }], 0))
-    expect(sectionText('a3')).toContain(foxReference('c1'))
+    expect(sectionVisibleText(agentSection('a3'))).toContain(foxReference('c1'))
   })
 
   // A runner reads the providers before it starts its job, and the user
@@ -3319,7 +3305,7 @@ describe('dez.stream/start jobs', () => {
     const newReply = activeTab().sections.filter((section) => section.role === 'agent').at(-1) as Section
     expect(newReply.id).not.toBe('a1')
     expect(callResult('c2', newReply.id)).toBe(jobsWaitText([{ id: jobId('c1'), tool: 'model_invoke', status: 'finished', text: 'Made the image @a.', call: { number: 1, label: PROMPT } }], 0))
-    expect(sectionText(newReply.id)).toContain(foxReference('c1'))
+    expect(sectionVisibleText(agentSection(newReply.id))).toContain(foxReference('c1'))
     expect(toasts).toStrictEqual([])
   })
 
@@ -3691,18 +3677,9 @@ describe('dez.stream/start compaction', () => {
   // which the new tag does not carry.
   it('gives the files that the compaction left with no text to the delete: a dropped intermediate image, and the pictures of the tag before', async () => {
     const oldPicture = { file: 'old-sheet.jpg', label: 'A frame sheet.', width: 800, height: 200, bytes: 3000 }
-    const oldNotes = compactionNotesText({
-      firstMessage: null,
-      newestMessage: null,
-      summary: 'A fox for the user.',
-      requirements: '',
-      nextSteps: '',
+    const oldNotes = compactionNotesText(notesData({
       assets: [{ id: 'b', kind: 'image', facts: 'PNG, 1024x768, 1.2 MB', origin: 'made by the model_invoke job 1 of its reply: "A fox"', sentence: 'A draft of the fox.', byReply: false, text: hiddenImage('j-aaaa', 'b') }],
-      unnamed: [],
-      jobs: [],
-      jobInputs: new Map(),
-      cost: undefined,
-    })
+    }))
     sbp('dez.model/tabs/replaceSections', activeTab().id, [
       { id: 'n', role: 'agent', content: [text(`${compactionTagText({ count: 1, lastId: 'b', pictures: [oldPicture] })}\n${oldNotes}`)], model },
       { id: 'u1', role: 'user', content: [text('Make a fox.')] },

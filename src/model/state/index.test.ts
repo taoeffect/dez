@@ -5,6 +5,7 @@ import type { ContextSize } from '../chat/contextSize'
 import { compactionBlockText, type Compactions } from '../chat/compaction'
 import { compactionNotesText } from '../chat/compactionNotes'
 import { sectionPlainText } from '../chat/content'
+import { notesData } from '../chat/testing'
 import { toolBlockText } from '../chat/toolBlocks'
 import type { ActiveModel, ContentNode, ModelRef, Section, SectionThinking, Tab, ThinkingReplay } from '../chat/types'
 import type { AppStatePayload, ConversationData, ModelCache } from '../persistence/types'
@@ -571,18 +572,7 @@ describe('dez.model/tabs/compact', () => {
     sbp('dez.model/tabs/replaceSections', tab.id, [first, section('a1', 'agent', 'An old reply'), section('u2', 'user', 'Now the tests.'), section('b', 'agent', '')])
     expect(tabNow(tab.id).title).toBe(title)
 
-    const notes = compactionNotesText({
-      firstMessage: sectionPlainText(first),
-      newestMessage: 'Now the tests.',
-      summary: 'The notes.',
-      requirements: '',
-      nextSteps: '',
-      assets: [],
-      unnamed: [],
-      jobs: [],
-      jobInputs: new Map(),
-      cost: undefined,
-    })
+    const notes = compactionNotesText(notesData({ firstMessage: sectionPlainText(first), newestMessage: 'Now the tests.', summary: 'The notes.' }))
     const block = compactionBlockText({ count: 1, lastId: null, pictures: [] }, notes)
     expect(compact(tab.id, [section('b', 'agent', `${block}\nThe reply so far`)], 150_000)).toBe(true)
     expect(tabNow(tab.id).title).toBe(title)

@@ -1,6 +1,7 @@
 import sbp from '@sbp/sbp'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { JOB_LIMIT_TEXT, MAX_OPEN_JOBS } from '../model/tools/jobs'
+import { jobInfo } from '../model/tools/testing'
 import { ToolError } from '../model/tools/types'
 import { discardMadeAssets, TabJobs, writeJobAssets, type EndedJob, type MadeAsset } from './jobs'
 import { APP_DIR, CACHE_DIR, heldWork, LONG, native, resetNative, running, settled } from './testing'
@@ -186,9 +187,7 @@ describe('TabJobs', () => {
       hidesAssets: false,
       call: { number: 1, label: '' },
     }])
-    expect(jobs.list()).toStrictEqual([{
-      id, tool: 'model_invoke', status: 'timed out', delivered: true, elapsedMs: 90_000, state: 'Queued at the provider as job q-7.', call: { number: 1, label: '' }, inputs: [],
-    }])
+    expect(jobs.list()).toStrictEqual([jobInfo({ id, status: 'timed out', delivered: true, elapsedMs: 90_000, state: 'Queued at the provider as job q-7.' })])
   })
 
   it('throws away what a work gives after its job timed out, with its files', async () => {
@@ -246,8 +245,8 @@ describe('TabJobs', () => {
     await vi.advanceTimersByTimeAsync(2000)
 
     expect(jobs.list()).toStrictEqual([
-      { id: firstId, tool: 'model_invoke', status: 'running', delivered: false, elapsedMs: 9000, state: '', call: { number: 1, label: '' }, inputs: [] },
-      { id: secondId, tool: 'video', status: 'finished', delivered: false, elapsedMs: 3000, state: 'Queued.', call: { number: 2, label: 'join_clips @c @d' }, inputs: ['c', 'd'] },
+      jobInfo({ id: firstId, elapsedMs: 9000 }),
+      jobInfo({ id: secondId, tool: 'video', status: 'finished', elapsedMs: 3000, state: 'Queued.', call: { number: 2, label: 'join_clips @c @d' }, inputs: ['c', 'd'] }),
     ])
 
     await jobs.wait(running())
@@ -512,7 +511,7 @@ describe('TabJobs', () => {
       // work's files go.
       held.finish({ assets: [image] })
       await vi.advanceTimersByTimeAsync(5000)
-      expect(jobs.list()).toStrictEqual([{ id, tool: 'model_invoke', status: 'stopped', delivered: false, elapsedMs: 400, state: '', call: { number: 1, label: '' }, inputs: [] }])
+      expect(jobs.list()).toStrictEqual([jobInfo({ id, status: 'stopped', elapsedMs: 400 })])
       expect(deletedImages).toStrictEqual([IMAGE])
       expect(consoleError).not.toHaveBeenCalled()
     })

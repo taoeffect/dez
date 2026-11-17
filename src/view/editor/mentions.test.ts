@@ -2,15 +2,13 @@ import { EditorState } from '@codemirror/state'
 import { describe, expect, it } from 'vitest'
 import { namedMentions } from '../../model/chat/assetMentions'
 import { sectionPlainText } from '../../model/chat/content'
-import { imageMarkdown } from '../../model/chat/images'
 import { mediaTagText } from '../../model/chat/mediaTags'
+import { idImage } from '../../model/chat/testing'
 import { docToSections, encodePrompt, pillsField, sectionsField, setSectionsEffect } from '../thread/cmEditor'
 import { mentionAt, mentionChips, shownMentions } from './mentions'
-import { createState, joinSections } from './testing'
+import { createState, joinSections, RED, SONG } from './testing'
 
-const RED = imageMarkdown('/home/u/.config/dez/assets/images/red.png', [{ key: 'id', value: 'a' }])
-const LINKED = imageMarkdown('/home/u/Pictures/cat.png', [{ key: 'id', value: 'a' }])
-const SONG = mediaTagText({ kind: 'audio', id: 'b', type: 'audio/mpeg', src: null, url: 'https://cdn.example/s.mp3', expires: null, other: [] })
+const LINKED = idImage('/home/u/Pictures/cat.png', 'a')
 const DANCE = mediaTagText({ kind: 'video', id: 'c', type: 'video/mp4', src: null, url: 'https://cdn.example/d.mp4', expires: null, other: [] })
 const PILL = { promptId: null, name: 'Style' }
 

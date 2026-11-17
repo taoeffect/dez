@@ -5,8 +5,8 @@ import type { ConversationCost } from '../chat/conversationCost'
 import { holdsStoredFilePath } from '../chat/storedFilePaths'
 import { idImage } from '../chat/testing'
 import type { Section } from '../chat/types'
-import { jobsListText, type JobInfo } from '../tools/jobs'
-import { RED, SKY } from '../tools/testing'
+import { jobsListText } from '../tools/jobs'
+import { jobInfo, RED, SKY } from '../tools/testing'
 import {
   answerHasNotes,
   compactionInstruction,
@@ -149,9 +149,9 @@ describe('compactionInstruction', () => {
   })
 
   it('holds the lines of the jobs of the reply', () => {
-    const jobs: JobInfo[] = [
-      { id: 'j1', tool: 'model_invoke', status: 'running', delivered: false, elapsedMs: 12_000, state: 'Queued.', call: { number: 1, label: 'A red cat' }, inputs: [] },
-      { id: 'j2', tool: 'shell', status: 'finished', delivered: false, elapsedMs: 3_400, state: '', call: { number: 2, label: '' }, inputs: [], cost: 0.04 },
+    const jobs = [
+      jobInfo({ id: 'j1', elapsedMs: 12_000, state: 'Queued.', call: { number: 1, label: 'A red cat' } }),
+      jobInfo({ id: 'j2', tool: 'shell', status: 'finished', elapsedMs: 3_400, call: { number: 2, label: '' }, cost: 0.04 }),
     ]
 
     expect(instruction({ jobs })).toContain(jobsListText(jobs))

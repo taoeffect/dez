@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { CARRIED_USER_ASSETS_LABEL, compactionBlockText } from '../chat/compaction'
-import { compactionNotesText, type CompactionNotes, type NotesAsset } from '../chat/compactionNotes'
+import { compactionNotesText, type NotesAsset } from '../chat/compactionNotes'
 import { IMAGE_MADE_BY_KEY, IMAGE_TOOL_KEY, imageMarkdown } from '../chat/images'
 import { mediaTagText } from '../chat/mediaTags'
-import { COMPACTION_TAG, FOX_ORIGIN, HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, idImage, invokeBlock } from '../chat/testing'
+import { COMPACTION_TAG, FOX_ORIGIN, HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, idImage, invokeBlock, notesData } from '../chat/testing'
 import type { Section } from '../chat/types'
 import type { JobInfo, JobStatus } from '../tools/jobs'
-import { RED, SKY, SONG } from '../tools/testing'
+import { jobInfo, RED, SKY, SONG } from '../tools/testing'
 import {
   assetDecisions,
   assetTableText,
@@ -22,21 +22,12 @@ import { assetsOf, reply, user } from './testing'
 // The notes of a compaction of an older Dez, with no message part, that
 // kept the image `a` of the user and the image `b` that a job of an
 // earlier reply made.
-const NOTES_DATA: CompactionNotes = {
-  firstMessage: null,
-  newestMessage: null,
-  summary: 'A fox for the user.',
-  requirements: '',
-  nextSteps: '',
+const NOTES_DATA = notesData({
   assets: [
     { id: 'a', kind: 'image', facts: 'JPEG, 800x600, 120 KB', origin: 'from the user', sentence: 'The reference photo.', byReply: false, text: null },
     { id: 'b', kind: 'image', facts: 'PNG, 1024x768, 1.2 MB', origin: FOX_ORIGIN, sentence: 'The fox frame of scene 1.', byReply: false, text: idImage(HIDDEN_IMAGE_PATH, 'b', true) },
   ],
-  unnamed: [],
-  jobs: [],
-  jobInputs: new Map(),
-  cost: undefined,
-}
+})
 const NOTES = compactionNotesText(NOTES_DATA)
 const COMPACTION = reply('n', `${COMPACTION_TAG}\n${NOTES}`)
 const CARRIED = user('u+', `${CARRIED_USER_ASSETS_LABEL}\n${idImage(RED, 'a', true)}`)
@@ -291,7 +282,7 @@ describe('assetTableText', () => {
 
 describe('openJobInputs', () => {
   function job(id: string, status: JobStatus, inputs: readonly string[], delivered = false): JobInfo {
-    return { id, tool: 'model_invoke', status, delivered, elapsedMs: 1000, state: '', call: { number: 1, label: '' }, inputs }
+    return jobInfo({ id, status, delivered, inputs })
   }
 
   it('takes the inputs of a job that runs, and of an ended job whose result no jobs_wait gave, by job', () => {

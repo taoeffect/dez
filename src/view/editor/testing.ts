@@ -21,6 +21,12 @@ export const CHIP = toolBlockText({ id: 'a', name: 'model_list', status: 'succes
 /** A video tag: a player in a section of either role. */
 export const PLAYER = mediaTagText({ kind: 'video', id: 'a', type: 'video/webm', src: 'https://cdn.example/v.webm', url: 'https://cdn.example/v.webm', expires: null, other: [] })
 
+/** An image that a mention names as `@a`. */
+export const RED = idImage('/home/u/.config/dez/assets/images/red.png', 'a')
+
+/** An audio clip from a URL that a mention names as `@b`. */
+export const SONG = mediaTagText({ kind: 'audio', id: 'b', type: 'audio/mpeg', src: null, url: 'https://cdn.example/s.mp3', expires: null, other: [] })
+
 /** The reference of an image that a compaction keeps out of view. */
 export function keptImage(id = 'b'): string {
   return idImage(HIDDEN_IMAGE_PATH, id, true)

@@ -1,11 +1,12 @@
 import { mediaTagText, type MediaTagData } from '../chat/mediaTags'
 import { reply, user } from '../streams/testing'
+import type { JobInfo } from './jobs'
 import { ToolError } from './types'
 
 // Shared helpers of the unit tests of the Dez tools: the text of a refused
-// call, a conversation with images and clips for the `video` tool, and the
-// output of the ffprobe run that reads the facts of a clip for a join
-// (`joinProbeArgs`).
+// call, the facts of a job, a conversation with images and clips for the
+// `video` tool, and the output of the ffprobe run that reads the facts of a
+// clip for a join (`joinProbeArgs`).
 
 /** The text of the `ToolError` that `call` throws. */
 export function refusal(call: () => unknown): string {
@@ -16,6 +17,13 @@ export function refusal(call: () => unknown): string {
     throw error
   }
   throw new Error('The call was not refused.')
+}
+
+/** The facts of the job `j-aaaa`, job 1 of its reply: a `model_invoke` job
+ *  that runs, with no state, no label, and no input, unless `fields` give
+ *  them. */
+export function jobInfo(fields: Partial<JobInfo>): JobInfo {
+  return { id: 'j-aaaa', tool: 'model_invoke', status: 'running', delivered: false, elapsedMs: 0, state: '', call: { number: 1, label: '' }, inputs: [], ...fields }
 }
 
 export const RED = '/home/u/.config/dez/assets/images/red.jpg'

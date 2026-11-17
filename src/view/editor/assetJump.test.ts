@@ -1,15 +1,11 @@
 import type { EditorState } from '@codemirror/state'
 import { describe, expect, it } from 'vitest'
 import { compactionBlockText } from '../../model/chat/compaction'
-import { imageMarkdown } from '../../model/chat/images'
-import { mediaTagText } from '../../model/chat/mediaTags'
 import { hiddenClip, hiddenImage, invokeBlock } from '../../model/chat/testing'
 import { mentionTarget } from './assetJump'
 import { shownMentions } from './mentions'
-import { createState, joinSections, keptClip, keptImage } from './testing'
+import { createState, joinSections, keptClip, keptImage, RED, SONG } from './testing'
 
-const RED = imageMarkdown('/home/u/.config/dez/assets/images/red.png', [{ key: 'id', value: 'a' }])
-const SONG = mediaTagText({ kind: 'audio', id: 'b', type: 'audio/mpeg', src: null, url: 'https://cdn.example/s.mp3', expires: null, other: [] })
 const INVOKE = invokeBlock('j-aaaa')
 const IMAGE = hiddenImage('j-aaaa')
 const CLIP = hiddenClip('j-aaaa')

@@ -18,14 +18,10 @@ import {
   startedJob,
   startedJobId,
   waitedJobIds,
-  type JobInfo,
   type JobResult,
 } from './jobs'
+import { jobInfo } from './testing'
 import { ToolError } from './types'
-
-const job = (fields: Partial<JobInfo>): JobInfo => ({
-  id: 'j-aaaa', tool: 'model_invoke', status: 'running', delivered: false, elapsedMs: 0, state: '', call: { number: 1, label: '' }, inputs: [], ...fields,
-})
 
 describe('newJobId', () => {
   it('gives `j-` and 4 letters or digits', () => {
@@ -205,11 +201,11 @@ describe('jobsWaitResults', () => {
 describe('jobsListText', () => {
   it('gives one line for each job: its number, id, tool, status, whether a jobs_wait gave its result, its whole seconds, and its call', () => {
     const lines = jobsListText([
-      job({ elapsedMs: 12_400, call: { number: 1, label: 'A fox | a dog' } }),
-      job({ id: 'j-bbbb', status: 'finished', elapsedMs: 40_000, call: { number: 2, label: '' } }),
-      job({ id: 'j-cccc', tool: 'video', status: 'failed', delivered: true, elapsedMs: 600, call: { number: 3, label: 'join_clips @c @d' } }),
-      job({ id: 'j-dddd', status: 'timed out', delivered: true, elapsedMs: 1_800_000, call: { number: 4, label: 'Rain' } }),
-      job({ id: 'j-eeee', status: 'stopped', elapsedMs: 3000, call: { number: 5, label: 'Wind' } }),
+      jobInfo({ elapsedMs: 12_400, call: { number: 1, label: 'A fox | a dog' } }),
+      jobInfo({ id: 'j-bbbb', status: 'finished', elapsedMs: 40_000, call: { number: 2, label: '' } }),
+      jobInfo({ id: 'j-cccc', tool: 'video', status: 'failed', delivered: true, elapsedMs: 600, call: { number: 3, label: 'join_clips @c @d' } }),
+      jobInfo({ id: 'j-dddd', status: 'timed out', delivered: true, elapsedMs: 1_800_000, call: { number: 4, label: 'Rain' } }),
+      jobInfo({ id: 'j-eeee', status: 'stopped', elapsedMs: 3000, call: { number: 5, label: 'Wind' } }),
     ]).split('\n')
 
     expect(lines[0]).toMatch(/^5 jobs of this reply \(number \| id \| tool \| status \| result \| seconds \| call\)\. /)
@@ -233,7 +229,7 @@ describe('jobsListText', () => {
     ['some paid jobs have no known price', [0.0042, null, null],
       'Spend (an estimate): $0.0042 for 1 job with a known price (the provider\'s price, else its quote; a refused request costs nothing), and 2 jobs with no known price.'],
   ])('ends with the spend of the reply when %s', (_name, costs, spend) => {
-    const jobs = costs.map((cost, index) => job({ id: `j-00${index}`, ...(cost !== undefined && { cost }) }))
+    const jobs = costs.map((cost, index) => jobInfo({ id: `j-00${index}`, ...(cost !== undefined && { cost }) }))
     expect(jobsListText(jobs).split('\n').at(-1)).toBe(spend)
   })
 
@@ -256,15 +252,15 @@ describe('jobResultState', () => {
 
 describe('jobInspectText', () => {
   it('tells the status, how to get the result, the last state of the job, and how its call begins', () => {
-    expect(jobInspectText(job({ elapsedMs: 12_000, state: 'Queued at the provider as job 77.', call: { number: 2, label: 'A red fox' } })))
+    expect(jobInspectText(jobInfo({ elapsedMs: 12_000, state: 'Queued at the provider as job 77.', call: { number: 2, label: 'A red fox' } })))
       .toBe('The job j-aaaa (job 2 of this reply, model_invoke) runs, for 12 seconds so far. Call jobs_wait to wait for its result.\nState: Queued at the provider as job 77.\nIts call begins: A red fox')
-    expect(jobInspectText(job({ status: 'finished', elapsedMs: 1000 })))
+    expect(jobInspectText(jobInfo({ status: 'finished', elapsedMs: 1000 })))
       .toBe('The job j-aaaa (job 1 of this reply, model_invoke) finished after 1 second. Its result is ready: call jobs_wait to get it.\nThe job reported no state.')
-    expect(jobInspectText(job({ status: 'timed out', delivered: true, elapsedMs: 60_000 })))
+    expect(jobInspectText(jobInfo({ status: 'timed out', delivered: true, elapsedMs: 60_000 })))
       .toBe('The job j-aaaa (job 1 of this reply, model_invoke) timed out after 60 seconds. A jobs_wait call gave its result.\nThe job reported no state.')
-    expect(jobInspectText(job({ status: 'stopped', elapsedMs: 5000 })))
+    expect(jobInspectText(jobInfo({ status: 'stopped', elapsedMs: 5000 })))
       .toBe('The job j-aaaa (job 1 of this reply, model_invoke) stopped after 5 seconds, with no result.\nThe job reported no state.')
-    expect(jobInspectText(job({ status: 'cancelled', elapsedMs: 7000 })))
+    expect(jobInspectText(jobInfo({ status: 'cancelled', elapsedMs: 7000 })))
       .toBe('The job j-aaaa (job 1 of this reply, model_invoke) was cancelled after 7 seconds, with no result.\nThe job reported no state.')
   })
 })
@@ -312,11 +308,11 @@ describe('cancelledJobIds', () => {
 describe('jobCancelText', () => {
   it('tells which jobs the call cancelled, what a cancel does, what happened to the other named jobs, and how many jobs still run', () => {
     const named = [
-      job({ id: 'j-bbbb', status: 'finished', call: { number: 2, label: '' } }),
-      job({ id: 'j-aaaa', status: 'cancelled', call: { number: 1, label: '' } }),
-      job({ id: 'j-cccc', status: 'failed', delivered: true, call: { number: 3, label: '' } }),
-      job({ id: 'j-dddd', status: 'cancelled', call: { number: 4, label: '' } }),
-      job({ id: 'j-eeee', status: 'cancelled', call: { number: 5, label: '' } }),
+      jobInfo({ id: 'j-bbbb', status: 'finished', call: { number: 2, label: '' } }),
+      jobInfo({ id: 'j-aaaa', status: 'cancelled', call: { number: 1, label: '' } }),
+      jobInfo({ id: 'j-cccc', status: 'failed', delivered: true, call: { number: 3, label: '' } }),
+      jobInfo({ id: 'j-dddd', status: 'cancelled', call: { number: 4, label: '' } }),
+      jobInfo({ id: 'j-eeee', status: 'cancelled', call: { number: 5, label: '' } }),
     ]
 
     expect(jobCancelText(named, ['j-aaaa', 'j-eeee'], 2).split('\n')).toStrictEqual([
@@ -330,8 +326,8 @@ describe('jobCancelText', () => {
   })
 
   it('tells only what happened to the named jobs when it cancelled none', () => {
-    expect(jobCancelText([job({ status: 'timed out' })], [], 0))
+    expect(jobCancelText([jobInfo({ status: 'timed out' })], [], 0))
       .toBe('The job j-aaaa (job 1) had already ended (timed out), so it was not cancelled. Its result stays: the next jobs_wait gives it.\nNo job of this reply still runs.')
-    expect(jobCancelText([job({ status: 'cancelled' })], ['j-aaaa'], 1).split('\n').at(-1)).toBe('1 job of this reply still runs: jobs_wait gives its result.')
+    expect(jobCancelText([jobInfo({ status: 'cancelled' })], ['j-aaaa'], 1).split('\n').at(-1)).toBe('1 job of this reply still runs: jobs_wait gives its result.')
   })
 })

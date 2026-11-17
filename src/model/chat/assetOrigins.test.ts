@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { conversationAssets } from '../streams/mediaRequest'
 import { jobsWaitText, madeAssetText, type JobInfo } from '../tools/jobs'
+import { jobInfo } from '../tools/testing'
 import { assetPlaces, type AssetPlace } from './assetOrigins'
 import { CARRIED_USER_ASSETS_LABEL, compactionTagText } from './compaction'
 import { compactionNotesText, type NotesAsset } from './compactionNotes'
 import { findImageReferences, IMAGE_MADE_BY_KEY, IMAGE_TOOL_KEY, imageMarkdown, imageReferenceTextWithKeptMark } from './images'
 import { MEDIA_MADE_BY_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE, mediaTagText } from './mediaTags'
-import { FOX_ORIGIN, HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, idImage, invokeBlock, waitBlock } from './testing'
+import { FOX_ORIGIN, HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, idImage, invokeBlock, notesData, waitBlock } from './testing'
 import { toolBlockText } from './toolBlocks'
 import type { ModelRef, Section } from './types'
 
@@ -48,7 +49,7 @@ function placeOf(sections: readonly Section[], id: string): AssetPlace | undefin
 
 describe('assetPlaces', () => {
   it('gives the assets of a user section to the user', () => {
-    const user = section('user', `${imageMarkdown(PASTED, [{ key: 'id', value: 'a' }])}\n${hiddenClip('j-aaaa', 'b')}`)
+    const user = section('user', `${idImage(PASTED, 'a')}\n${hiddenClip('j-aaaa', 'b')}`)
 
     expect([placeOf([user], 'a'), placeOf([user], 'b')]).toStrictEqual([
       { origin: { kind: 'user' }, hidden: false },
@@ -57,7 +58,7 @@ describe('assetPlaces', () => {
   })
 
   it('gives an asset with no tool mark to the model of its agent section', () => {
-    const image = imageMarkdown(HIDDEN_IMAGE_PATH, [{ key: 'id', value: 'a' }])
+    const image = idImage(HIDDEN_IMAGE_PATH, 'a')
 
     expect(placeOf([section('user', 'Paint a cat'), section('agent', image, PAINTER)], 'a'))
       .toStrictEqual({ origin: { kind: 'model', model: PAINTER }, hidden: false })
@@ -134,7 +135,7 @@ describe('assetPlaces in a compacted conversation', () => {
   // job lines `jobs`, with `more` after them. Its tag's newest id is
   // `lastId`.
   function compaction(assets: NotesAsset[], jobs: JobInfo[] = [], more = '', { firstMessage = null, summary = 'A fox for the user.', lastId = 'b' }: { firstMessage?: string | null, summary?: string, lastId?: string } = {}): Section {
-    const notes = compactionNotesText({ firstMessage, newestMessage: null, summary, requirements: '', nextSteps: '', assets, unnamed: [], jobs, jobInputs: new Map(), cost: undefined })
+    const notes = compactionNotesText(notesData({ firstMessage, summary, assets, jobs }))
     return section('agent', `${compactionTagText({ count: 1, lastId, pictures: [] })}\n${notes}${more}`, PAINTER)
   }
 
@@ -172,14 +173,14 @@ describe('assetPlaces in a compacted conversation', () => {
   })
 
   it('gives an asset of the compaction section with no line and no tool mark to no model, as the model of the section wrote only the notes', () => {
-    const image = kept(imageMarkdown(HIDDEN_IMAGE_PATH, [{ key: 'id', value: 'b' }]))
+    const image = idImage(HIDDEN_IMAGE_PATH, 'b', true)
 
     expect(placeOf([compaction([], [], `\n\n${image}`), section('user', 'Go on.')], 'b')?.origin).toStrictEqual({ kind: 'model', model: null })
   })
 
   it('reads the number and the label of a job whose block is gone from the notes, in the first reply after the compaction message only', () => {
     // Three jobs of one tool, so that the notes tell their numbers as a range.
-    const jobs = [1, 2, 3].map((number): JobInfo => ({ id: `j-${number}`, tool: 'video', status: 'finished', delivered: true, elapsedMs: 9000, state: '', call: { number, label: `join_clips @a @${number}` }, inputs: [] }))
+    const jobs = [1, 2, 3].map((number) => jobInfo({ id: `j-${number}`, tool: 'video', status: 'finished', delivered: true, call: { number, label: `join_clips @a @${number}` } }))
     const start = [compaction([], jobs), section('user', 'Join the clips.')]
 
     expect(placeOf([...start, section('agent', jobClip('c', 'j-3'))], 'c')?.origin)
@@ -192,7 +193,7 @@ describe('assetPlaces in a compacted conversation', () => {
     const sections = [
       compaction([FOX_LINE]),
       section('user', 'Make a fox.'),
-      section('user', `${CARRIED_USER_ASSETS_LABEL}\n${kept(imageMarkdown(PASTED, [{ key: 'id', value: 'a' }]))}`),
+      section('user', `${CARRIED_USER_ASSETS_LABEL}\n${idImage(PASTED, 'a', true)}`),
       section('user', 'Now make it run.'),
     ]
 
@@ -200,7 +201,7 @@ describe('assetPlaces in a compacted conversation', () => {
   })
 
   it('shows a marked asset of a kept message of the user, and every marked asset of a conversation with no compaction', () => {
-    const marked = (id: string) => kept(imageMarkdown(PASTED, [{ key: 'id', value: id }]))
+    const marked = (id: string) => idImage(PASTED, id, true)
     // The compaction kept the marked assets of the user, so its newest id
     // is `d`.
     const compacted = [

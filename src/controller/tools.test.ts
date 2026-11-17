@@ -59,7 +59,7 @@ import { modelCost, modelInfoText, type ModelInfoFacts } from '../model/tools/mo
 import { IMAGE_NOT_SAVED_TEXT, INVOCATION_TEXT_CAP, invocationAnswerStateText, invocationAnswerText, modelInvocation } from '../model/tools/modelInvoke'
 import { modelListArguments, modelListText } from '../model/tools/modelList'
 import { TOOL_DEFINITIONS, unexpectedToolErrorText, unknownToolText } from '../model/tools/registry'
-import { probeOutput } from '../model/tools/testing'
+import { jobInfo, probeOutput } from '../model/tools/testing'
 import type { ToolArguments, ToolRunResult } from '../model/tools/types'
 import { FFPROBE_TIMEOUT_MS } from '../model/tools/videoTool'
 import { ExplainedError } from '../utils/errorText'
@@ -1125,8 +1125,8 @@ describe('dez.controller/tools/run', () => {
 
       expect(await jobTool('jobs_list')).toStrictEqual({
         content: jobsListText([
-          { id: running, tool: 'model_invoke', status: 'running', delivered: false, elapsedMs: 0, state: '', call: { number: 1, label: 'A red fox' }, inputs: [] },
-          { id: ended, tool: 'video', status: 'finished', delivered: true, elapsedMs: 0, state: '', call: { number: 2, label: '' }, inputs: [] },
+          jobInfo({ id: running, call: { number: 1, label: 'A red fox' } }),
+          jobInfo({ id: ended, tool: 'video', status: 'finished', delivered: true, call: { number: 2, label: '' } }),
         ]),
         isError: false,
       })

@@ -1,12 +1,14 @@
 // Unit tests only: the texts of hidden assets (hiddenAssets.ts) and of the
 // tool blocks that own them, which the model tests and the editor tests
-// share; the reference of an image with an id; a compaction tag and an
-// origin of its notes; and the start of a JPEG file with no picture data,
-// which the model tests and the controller tests share.
+// share; the reference of an image with an id; a compaction tag, the data
+// of its notes, and an origin of its notes; and the start of a JPEG file
+// with no picture data, which the model tests and the controller tests
+// share.
 import type { PromptInput } from '../streams/mediaRequest'
 import { jobStartedText } from '../tools/jobs'
 import { invocationInputsText } from '../tools/modelInvoke'
 import { compactionTagText } from './compaction'
+import type { CompactionNotes } from './compactionNotes'
 import { IMAGE_HIDDEN_KEY, IMAGE_TOOL_KEY, imageMarkdown, imageReferenceTextWithKeptMark } from './images'
 import { MEDIA_HIDDEN_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE, mediaTagText, type MediaTagKind } from './mediaTags'
 import { toolBlockText } from './toolBlocks'
@@ -23,6 +25,25 @@ export const COMPACTION_TAG = compactionTagText({ count: 1, lastId: 'b', picture
 
 /** The origin of the line of a made image in the notes of a compaction. */
 export const FOX_ORIGIN = 'made by the model_invoke job 2 of its reply: "A red fox"'
+
+/** The data of the notes of a compaction: the parts of the model, with no
+ *  message of the user, no asset, no job, and no cost, unless `fields`
+ *  give them. */
+export function notesData(fields: Partial<CompactionNotes>): CompactionNotes {
+  return {
+    firstMessage: null,
+    newestMessage: null,
+    summary: 'The user wants a short fox film.',
+    requirements: 'Every frame is 16:9.',
+    nextSteps: 'Make scene 2.',
+    assets: [],
+    unnamed: [],
+    jobs: [],
+    jobInputs: new Map(),
+    cost: undefined,
+    ...fields,
+  }
+}
 
 /** The reference of the image `id` at `path`, with the kept mark of a
  *  compaction when `kept`. */

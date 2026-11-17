@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { pictureBudgetLeftText } from './assetView'
 import { conversationInfoText, type ConversationInfoFacts } from './conversationInfo'
 import type { JobInfo } from './jobs'
+import { jobInfo } from './testing'
 
 const BUDGET = { left: { pictures: 12, tokens: 57_408, bytes: 3 * 1024 ** 2 }, roundPictures: 12 }
 
@@ -16,17 +17,8 @@ const text = (facts: Partial<ConversationInfoFacts> = {}) => conversationInfoTex
 })
 
 // A job of a reply; `cost` is absent for a job that sent no paid request.
-const job = (number: number, status: JobInfo['status'], cost?: number | null): JobInfo => ({
-  id: `j-${number}`,
-  tool: 'model_invoke',
-  status,
-  delivered: false,
-  elapsedMs: 1000,
-  state: '',
-  call: { number, label: '' },
-  inputs: [],
-  ...(cost !== undefined && { cost }),
-})
+const job = (number: number, status: JobInfo['status'], cost?: number | null): JobInfo =>
+  jobInfo({ id: `j-${number}`, status, call: { number, label: '' }, ...(cost !== undefined && { cost }) })
 
 describe('conversationInfoText', () => {
   it('tells the context size, the window, and the size at which Dez compacts the conversation', () => {
