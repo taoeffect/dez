@@ -175,10 +175,10 @@ export interface CompactionAssetsInput {
   facts: ReadonlyMap<string, string>
   /** The inputs of the open jobs of the reply (`openJobInputs`). */
   jobInputs: ReadonlyMap<string, readonly string[]>
-  /** The ids of the agent sections of the replies that a stop or a new
-   *  submit cut before the reply that runs, and that handed their jobs on
-   *  to it (`TabJobs.replySections`, controller/jobs.ts). Their work
-   *  counts as the work of the reply that runs. */
+  /** The ids of the agent sections of the replies that took the jobs of
+   *  the reply that runs (`TabJobs.replySections`, controller/jobs.ts):
+   *  the replies that a stop or a new submit cut before it, and the reply
+   *  that runs. Their work counts as the work of the reply that runs. */
   replySections: readonly string[]
 }
 
