@@ -11,6 +11,7 @@ import {
 import { SENTINEL_CHAR } from '../../model/chat/content'
 import { closesFence, fenceOpener, type Fence } from '../../utils/markdownFence'
 import { SECTION_SEP } from '../thread/cmEditor'
+import { compactionBlockEnd } from './compactionBlock'
 
 export type TableAlignment = 'left' | 'center' | 'right' | null
 
@@ -566,7 +567,11 @@ function buildTableDecorations(state: EditorState): TableDecorations {
   const wrappers = new RangeSetBuilder<BlockWrapper>()
   const cellMarks = new Map<string, Decoration>()
   const caretZones: CaretZone[] = []
+  // A table of the notes of a compaction shows as text in the panel of a
+  // compaction chip: the block is out of view (compactionBlock.ts).
+  const blockEnd = compactionBlockEnd(doc)
   for (const table of markdownTablesOf(doc)) {
+    if (table.from < blockEnd) continue
     wrappers.add(table.from, table.to, TABLE_WRAPPER)
     const shapes = table.rows.map((row) => row.cells.map((cell) => cellShape(doc, cell)))
     const widths = columnWidths(state.tabSize, table, shapes)

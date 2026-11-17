@@ -20,6 +20,7 @@ import { sectionsField, type SectionModel } from '../thread/cmEditor'
 import { measureLineHeights } from '../thread/editorMeasure'
 import { streamingSectionField } from '../thread/modelChip'
 import AssetList from './AssetList.vue'
+import { compactionBlockEnd } from './compactionBlock'
 import { eyeIcon, hiddenAssets, hiddenAssetsOfChips, hiddenLineStarts, type AssetPlace } from './hiddenAssets'
 import { createImage } from './images'
 import { agentSectionTexts, chipBlocks, lineBlocks, sectionRolesChanged } from './lineBlocks'
@@ -40,8 +41,8 @@ import { ROUND_STROKE, svgIcon } from './svgIcon'
 // symbol for the type of what the call made, and a label; its panel shows
 // what the call hides: its images and clips (hiddenAssets.ts), or its text.
 //
-// The compaction chip (compactionChip.ts) is a chip of the same look, and
-// uses the exported builders of this file.
+// The compaction chips (compactionChip.ts) are chips of the same look, and
+// use the exported builders of this file.
 
 /** How a chip shows its call. `running`: a reply runs the tool now.
  *  `interrupted`: a `running` block that no reply runs (the app stopped
@@ -321,15 +322,16 @@ function intermediateCall(call: ToolBlock, state: ToolCallState, chips: readonly
  *  stops only at the next `dez:` tag, so an opening line in one section
  *  could pair with a closing line in a later one. Left as text: blocks in
  *  user sections (plain text there), and blocks that hold a sentinel
- *  (`chipBlocks`). A `running` block runs only in the section that the
- *  active tab's stream writes into. `hidden` are the hidden assets of the
- *  doc, with doc offsets. */
-function findRenderedToolCalls(doc: string, sections: readonly SectionModel[], streamingSectionId: string | null, hidden: readonly HiddenAsset[]): { calls: RenderedToolCall[], spacing: ChipSpacing } {
+ *  (`chipBlocks`). Not drawn at all: blocks that start before `blockEnd`,
+ *  in the compaction block (compactionBlock.ts). A `running` block runs
+ *  only in the section that the active tab's stream writes into. `hidden`
+ *  are the hidden assets of the doc, with doc offsets. */
+function findRenderedToolCalls(doc: string, sections: readonly SectionModel[], streamingSectionId: string | null, hidden: readonly HiddenAsset[], blockEnd: number): { calls: RenderedToolCall[], spacing: ChipSpacing } {
   const calls: RenderedToolCall[] = []
   const spacing: ChipSpacing = { gapLines: [], contentAbove: [], contentBelow: [] }
   if (!doc.includes('<dez:tool')) return { calls, spacing }
   for (const { section, from, text } of agentSectionTexts(doc, sections)) {
-    const chips = chipBlocks(text)
+    const chips = chipBlocks(text).filter((block) => from + block.from >= blockEnd)
     const summaries = toolCallSummaries(chips)
     const sectionHidden = hidden.filter((asset) => asset.from >= from && asset.to <= from + text.length)
     chips.forEach((block, index) => {
@@ -389,7 +391,7 @@ export const CHIP_CLASS = 'dez-tool-call__chip'
 export const NAME_CLASS = 'dez-tool-call__name'
 const SUMMARY_CLASS = 'dez-tool-call__summary'
 export const PANEL_CLASS = 'dez-tool-call__panel'
-const HEADING_CLASS = 'dez-tool-call__heading'
+export const HEADING_CLASS = 'dez-tool-call__heading'
 const RESULT_CLASS = 'dez-tool-call__result'
 const RESULT_TEXT_CLASS = 'dez-tool-call__result-text'
 const INTERMEDIATE_CLASS = 'dez-tool-call__intermediate'
@@ -563,7 +565,7 @@ function createCallChip(view: EditorView, call: RenderedToolCall): HTMLElement {
  *  The CSS shares the thinking field's rules in `dezTheme`. A text field
  *  gives native selection, select all, and copy of the text. `label` is the
  *  field's accessible name, and `placeholder` shows for a blank text. */
-function createField(text: string, label: string, placeholder: string): HTMLElement {
+export function createField(text: string, label: string, placeholder: string): HTMLElement {
   const box = span(RESULT_CLASS)
   const mirror = span('dez-tool-call__result-mirror', text)
   mirror.setAttribute('aria-hidden', 'true')
@@ -895,7 +897,7 @@ const spaceAboveChip = Decoration.line({ class: 'dez-tool-call-line--after-conte
 const spaceBelowChip = Decoration.line({ class: 'dez-tool-call-line--before-content' })
 
 function buildToolCallDecorations(state: EditorState): ToolCallDecorations {
-  const { calls, spacing } = findRenderedToolCalls(state.doc.toString(), state.field(sectionsField, false) ?? [], state.field(streamingSectionField, false) ?? null, hiddenAssets(state))
+  const { calls, spacing } = findRenderedToolCalls(state.doc.toString(), state.field(sectionsField, false) ?? [], state.field(streamingSectionField, false) ?? null, hiddenAssets(state), compactionBlockEnd(state.doc))
   // A blank line between two chips can also be a line that goes out of
   // view with a hidden asset.
   const noHeightLines = [...new Set([...spacing.gapLines, ...hiddenLineStarts(state)])].sort((a, b) => a - b)

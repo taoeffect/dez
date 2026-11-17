@@ -3,6 +3,7 @@ import { Decoration, EditorView, hoverTooltip, type DecorationSet } from '@codem
 import { namedMentions, type AssetKind } from '../../model/chat/assetMentions'
 import { plainLiveText } from '../../model/chat/content'
 import { sectionsField } from '../thread/cmEditor'
+import { compactionBlockEnd } from './compactionBlock'
 import { tooltipContent } from './images'
 import { sectionRolesChanged, sectionTexts } from './lineBlocks'
 
@@ -66,8 +67,11 @@ function findShownMentions(state: EditorState): ShownMention[] {
   }))
 }
 
+// A mention of the compaction block gets no chip: the block is out of view
+// (compactionBlock.ts). It still names its asset for the mentions after it.
 function buildMentionDecorations(state: EditorState): MentionDecorations {
-  const mentions = findShownMentions(state)
+  const blockEnd = compactionBlockEnd(state.doc)
+  const mentions = findShownMentions(state).filter((mention) => mention.from >= blockEnd)
   return { mentions, decorations: Decoration.set(mentions.map((mention) => chip.range(mention.from, mention.to))) }
 }
 

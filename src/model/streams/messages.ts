@@ -1,6 +1,6 @@
 import type { MessagePart, ModelRef, Section, SectionThinking, ThinkingReplay } from '../chat/types'
 import { assetTextPieces } from '../chat/assetMentions'
-import { COMPACTION_MESSAGE_INTRO, COMPACTION_USER_MESSAGE_LABEL, compactionMessageEnd, isCarriedUserAssets, sectionCompactionTag, type CompactionTag } from '../chat/compaction'
+import { COMPACTION_MESSAGE_INTRO, COMPACTION_USER_MESSAGE_LABEL, compactionMessageEnd, isCarriedUserAssets, sectionCompactionBlock, type CompactionBlock } from '../chat/compaction'
 import { sectionIsEmpty, sectionPlainText } from '../chat/content'
 import { findAssetMentions, type AssetMention } from '../chat/imageMentions'
 import { findImageReferences, IMAGE_TOOL_KEY, type ImageReference } from '../chat/images'
@@ -125,8 +125,8 @@ export function sectionsToStreamMessages(sections: Section[], requestModel: Mode
   // compaction section has a tag, so it is never empty: it is the first
   // sent section too. The compaction reads the same rule, so it and the
   // request agree on which sections the compaction message holds.
-  const tag = sections.length > 0 ? sectionCompactionTag(sections[0]) : null
-  const compaction = tag === null ? null : newPartList()
+  const block = sections.length > 0 ? sectionCompactionBlock(sections[0]) : null
+  const compaction = block === null ? null : newPartList()
   const compactionEnd = compactionMessageEnd(sentSections)
   const messages: StreamMessage[] = []
   sentSections.forEach((section, index) => {
@@ -134,8 +134,8 @@ export function sectionsToStreamMessages(sections: Section[], requestModel: Mode
     for (const { id, path } of findImageReferences(text, section.role)) {
       if (id !== null) imagesById.set(id, path)
     }
-    if (compaction !== null && tag !== null && index === 0) {
-      addCompactionNotes(compaction, text, tag, images, options.sendImages)
+    if (compaction !== null && block !== null && index === 0) {
+      addCompactionNotes(compaction, text, block, images, options.sendImages)
       return
     }
     if (section.role === 'agent') {
@@ -252,9 +252,9 @@ function partListText(list: PartList): string {
 }
 
 // Adds the start of the compaction message: the intro, the text of the
-// compaction section (`text`, whose first line is `tag`) without the tag
-// line, and, with `sendPictures`, the pictures of the tag, each one after
-// its label.
+// compaction section (`text`, which starts with `block`): the notes of the
+// block and the text after it, with no tag line and no end line, and, with
+// `sendPictures`, the pictures of the tag, each one after its label.
 //
 // The section's text goes as an agent message sends it: a clip as the
 // request form of its tag, the model's text with its escape removed, and
@@ -267,8 +267,11 @@ function partListText(list: PartList): string {
 //
 // A reference that is over the limit of `images` goes as its text only,
 // and a picture that is over it does not go, with its label.
-function addCompactionNotes(list: PartList, text: string, tag: CompactionTag, images: RequestImages, sendPictures: boolean): void {
-  const notes = text.slice(tag.textFrom).trim()
+function addCompactionNotes(list: PartList, text: string, block: CompactionBlock, images: RequestImages, sendPictures: boolean): void {
+  // Text after the block (the user can type there) goes after the notes. A
+  // block with no text after it gives the bytes that the old form gave for
+  // the same notes, which ran to the end of the section.
+  const notes = [block.notes.trim(), text.slice(block.textFrom).trim()].filter((part) => part !== '').join('\n\n')
   list.pendingText += notes === '' ? COMPACTION_MESSAGE_INTRO : `${COMPACTION_MESSAGE_INTRO}\n\n`
   for (const piece of assetTextPieces(notes, 'agent')) {
     if (piece.kind === 'media') {
@@ -288,7 +291,7 @@ function addCompactionNotes(list: PartList, text: string, tag: CompactionTag, im
   if (!sendPictures) return
   // A label is text of the tag, which the user can edit, so it gets the
   // path scrub as every request text does.
-  for (const picture of tag.pictures) {
+  for (const picture of block.pictures) {
     if (!takesPart(images, picture.file)) continue
     list.pendingText += `\n\n${withoutStoredFilePaths(picture.label)}`
     addAttachment(list, { type: 'picture', picture })

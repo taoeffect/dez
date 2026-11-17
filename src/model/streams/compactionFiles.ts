@@ -1,4 +1,4 @@
-import { sectionCompactionTag } from '../chat/compaction'
+import { sectionCompactionBlock } from '../chat/compaction'
 import { sectionPlainText } from '../chat/content'
 import type { ShownPicture } from '../chat/shownPictures'
 import { findToolBlocks } from '../chat/toolBlocks'
@@ -57,7 +57,7 @@ export function compactionLeftFiles({ sections, replySectionId, dropped, keptPic
   const keptFiles = new Set(keptPictures.map((picture) => picture.file))
   const replaced = sections.slice(0, compactionScope(sections, replySectionId).end)
   const shown = [
-    ...(replaced.length > 0 ? sectionCompactionTag(replaced[0])?.pictures ?? [] : []),
+    ...(replaced.length > 0 ? sectionCompactionBlock(replaced[0])?.pictures ?? [] : []),
     // A tool block counts only in an agent section.
     ...replaced.flatMap((section) => (section.role === 'agent' ? findToolBlocks(sectionPlainText(section)).flatMap((block) => block.pictures ?? []) : [])),
   ]

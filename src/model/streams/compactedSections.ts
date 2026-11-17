@@ -1,5 +1,5 @@
 import { assetTextPieces } from '../chat/assetMentions'
-import { CARRIED_USER_ASSETS_LABEL, compactionTagText, sectionCompactionTag } from '../chat/compaction'
+import { CARRIED_USER_ASSETS_LABEL, compactionBlockText, sectionCompactionBlock } from '../chat/compaction'
 import { compactionNotesText, type NotesAsset } from '../chat/compactionNotes'
 import { sectionPlainText, textNode } from '../chat/content'
 import type { ConversationCost } from '../chat/conversationCost'
@@ -19,7 +19,8 @@ import { budgetAfter, contextImageCost, type PictureBudget } from './pictureBudg
 // The sections of a conversation after a compaction, in place of the
 // sections up to the reply that runs:
 //
-//   A   agent  the compaction section: the tag, then the notes
+//   A   agent  the compaction section: the compaction block, which holds
+//              the notes
 //              (chat/compaction.ts, chat/compactionNotes.ts)
 //   U0  user   the first message of the user, as it is
 //   U+  user   the images and the clips of the other messages of the user
@@ -171,7 +172,7 @@ export function compactedSections(input: CompactedSectionsInput): CompactedSecti
   const last = scope.last === null ? null : sections[scope.last]
   const noteId = input.newId()
   const carriedId = input.newId()
-  const oldTag = sections.length > 0 ? sectionCompactionTag(sections[0]) : null
+  const oldBlock = sections.length > 0 ? sectionCompactionBlock(sections[0]) : null
   const lastId = highestConversationMediaId(sections.map(sectionPlainText))
   const staying = choices.filter((choice) => choice.decision !== 'drop').sort((a, b) => compareMediaIds(a.asset.asset.id, b.asset.asset.id))
   const dropped = choices.filter((choice) => choice.decision === 'drop').map((choice) => choice.asset)
@@ -221,7 +222,7 @@ export function compactedSections(input: CompactedSectionsInput): CompactedSecti
     const result: Section[] = [{
       id: noteId,
       role: 'agent',
-      content: [textNode(`${compactionTagText({ count: (oldTag?.count ?? 0) + 1, lastId, dropped: dropped.length, pictures })}\n${notes}`)],
+      content: [textNode(compactionBlockText({ count: (oldBlock?.count ?? 0) + 1, lastId, dropped: dropped.length, pictures }, notes))],
       model: cloneModelRef(model),
     }]
     if (first !== null && scope.first !== null) result.push(withKeptMarks(first, scope.first, asText))

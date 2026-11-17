@@ -1,4 +1,5 @@
-import { compactionsField, withoutCompactionTag, type Compactions } from '../chat/compaction'
+import { compactionsField, type Compactions } from '../chat/compaction'
+import { compactionTextForPeople } from '../chat/compactionNotes'
 import { stripLiveSentinels } from '../chat/content'
 import { contextField, type CountedContext } from '../chat/contextSize'
 import { agentTextEditedField, costField, type ConversationCost } from '../chat/conversationCost'
@@ -127,15 +128,15 @@ function optionalHeaderParts({ cost, agentTextEdited, context, compactions }: Co
 // hold `:`, so viewers show `<dez:pill …/>` as text. Each message gets its
 // role heading (`messagesAsMarkdown`, which Copy Markdown also uses) and
 // holds what the model received: its text with prompt bodies inline. The
-// agent thinking, the tool calls, and the tag line of a compaction section
-// are left out, and a clip is a link (`sectionTextAsMarkdown`). Dez cannot
-// read this format back.
+// agent thinking and the tool calls are left out, a compaction block gives
+// its notes for people (`compactionTextForPeople`), and a clip is a link
+// (`sectionTextAsMarkdown`). Dez cannot read this format back.
 export function serializeConversationAsMarkdown(data: ConversationData): string {
   const messages = messagesAsMarkdown(data.sections.map((section, index) => {
     const text = section.nodes
       .map((node) => stripLiveSentinels(node.kind === 'text' ? node.text : node.body))
       .join('')
-    return { role: section.role, text: sectionTextAsMarkdown(section.role, withoutCompactionTag(text, index, section.role)) }
+    return { role: section.role, text: sectionTextAsMarkdown(section.role, compactionTextForPeople(text, index, section.role)) }
   }))
   const title = `# ${data.title.replace(/\s+/g, ' ').trim() || 'Conversation'}\n`
   return messages === '' ? title : `${title}\n${messages}`

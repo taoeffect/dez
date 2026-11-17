@@ -3,7 +3,7 @@ import type { SearchQuery } from '@codemirror/search'
 import { EditorSelection, EditorState, type Extension } from '@codemirror/state'
 import { describe, expect, it } from 'vitest'
 import { PILL_NL, PILL_OPEN, SECTION_SEP, encodePrompt, pillsField, scanPills, sectionsField, type PillMetadata } from '../thread/cmEditor'
-import { CARRIED_USER_ASSETS_LABEL, compactionTagText } from '../../model/chat/compaction'
+import { CARRIED_USER_ASSETS_LABEL, compactionBlockText, compactionTagText } from '../../model/chat/compaction'
 import { toolBlockText } from '../../model/chat/toolBlocks'
 import {
   FIND_COUNT_LIMIT,
@@ -130,27 +130,28 @@ describe('find match filter', () => {
     expect(renderedToolCalls(next)).toHaveLength(1)
   })
 
-  it('skips the tag line of a compaction section and its line break, but not a tag on a later line', () => {
-    const tag = compactionTagText({ count: 1, lastId: 'c', pictures: [] })
-    const doc = `${tag}\ncount\nthe compaction\n${tag}`
+  it('skips the compaction block and its line break, but not a tag on a later line', () => {
+    const data = { count: 1, lastId: 'c', pictures: [] }
+    const block = compactionBlockText(data, 'count in the notes')
+    const tag = compactionTagText(data)
+    const doc = `${block}\ncount\nthe compaction\n${tag}`
     const state = createState(doc)
     const next = apply(state, replaceAllMatchesTransaction(state, regex('\\n')))
     const inLaterTag = doc.lastIndexOf('count')
 
-    expect(matchRanges(state, plain('count'))).toEqual([[tag.length + 1, tag.length + 6], [inLaterTag, inLaterTag + 5]])
-    expect(next.doc.toString()).toBe(`${tag}\ncountthe compaction${tag}`)
+    expect(matchRanges(state, plain('count'))).toEqual([[block.length + 1, block.length + 6], [inLaterTag, inLaterTag + 5]])
+    expect(next.doc.toString()).toBe(`${block}\ncountthe compaction${tag}`)
   })
 
-  it('skips the hidden source of the assets that a compaction keeps, and the line breaks around the compaction chip', () => {
-    const tag = compactionTagText({ count: 1, lastId: 'z', pictures: [] })
-    const notes = [tag, 'one note', '', keptImage('k'), '', keptClip('l')].join('\n')
-    const state = createSectionsState([notes, 'one ask', `${CARRIED_USER_ASSETS_LABEL}\n${keptImage('u')}`], ['agent', 'user', 'user'])
+  it('skips the notes and the assets of the compaction block, and the hidden source of the kept assets of the user', () => {
+    const block = compactionBlockText({ count: 1, lastId: 'z', pictures: [] }, ['one note', '', keptImage('k'), '', keptClip('l')].join('\n'))
+    const state = createSectionsState([block, 'one ask', `${CARRIED_USER_ASSETS_LABEL}\n${keptImage('u')}`], ['agent', 'user', 'user'])
     const next = apply(state, replaceAllMatchesTransaction(state, regex('\\n')))
 
     // The kept files are `one.png` and `one.wav`.
-    expect(matchTexts(state, plain('one'))).toEqual(['one', 'one'])
+    expect(matchTexts(state, plain('one'))).toEqual(['one'])
     expect(matchTexts(state, plain('kept'))).toEqual([])
-    expect(next.doc.line(1).text).toBe(tag)
+    expect(next.sliceDoc(0, block.length)).toBe(block)
   })
 
   it('never yields empty regex matches', () => {

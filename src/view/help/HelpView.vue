@@ -161,12 +161,13 @@ function onOverlayClick(event: MouseEvent) {
               it: it asks the model for notes of the work so far, and the notes take the place of
               the earlier messages and replies. Your first message and your newest message stay as
               they are. The bottom bar shows "Compacting…" while the model writes the notes, and the
-              reply goes on after that. A compacted conversation starts with an Agent message that
-              holds the notes, under a Compaction chip. A compaction cannot be undone: Undo does not
-              bring the earlier text back. After a compaction, the bottom bar shows two sizes and
-              two amounts, as in <code>~81.2k (1.2M) · $0.42 ($7.80)</code>: first the size and the
-              cost of the conversation since its last compaction, and after each of them, in
-              parentheses, the one of the whole conversation.
+              reply goes on after that. A compacted conversation starts with an Agent message with
+              two chips: click the summary chip to read the notes, and the assets chip to see the
+              assets that the compaction kept. You cannot edit the notes. A compaction cannot be
+              undone: Undo does not bring the earlier text back. After a compaction, the bottom bar
+              shows two sizes and two amounts, as in <code>~81.2k (1.2M) · $0.42 ($7.80)</code>:
+              first the size and the cost of the conversation since its last compaction, and after
+              each of them, in parentheses, the one of the whole conversation.
             </p>
             <p>
               Paste or drop images, audio, and video into a message. A model that makes images,
@@ -270,11 +271,12 @@ function onOverlayClick(event: MouseEvent) {
               When Dez compacts a conversation (see the
               <button type="button" class="help-link" @click="page = 'general'">General</button>
               page), your assets and the assets that the work still needs stay assets of the
-              conversation, with their ids, so you and the model can still name them. Some of them
-              show in the notes: the model still sees these, a clip as a picture of its frames or
-              its sound. The others are in the Compaction chip at the top of the conversation: click
-              it to see them, and the pictures that the model has in view. The chip also tells how
-              many assets the compaction dropped.
+              conversation, with their ids, so you and the model can still name them. The model
+              still sees some of them, a clip as a picture of its frames or its sound. For the
+              others, it has only what the notes tell. Click the assets chip at the top of the
+              conversation to see them all, what the notes tell about each, and the pictures that
+              the model has in view. The chip also tells how many assets the compaction kept and how
+              many it dropped.
             </p>
             <p>
               Of the assets that a model or a Dez tool made, the model keeps only the ones that the

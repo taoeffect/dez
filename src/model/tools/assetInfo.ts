@@ -50,7 +50,7 @@ export const ASSET_INFO_TOOL: ToolDefinition = {
     + 'its id; its kind (image, video, or audio); its format and facts (the size of an image in pixels; the length of a clip in seconds; '
     + 'the picture size, the frames per second, the codec, and the sound of a video clip; the codec, the sample rate, and the channels of an audio clip; '
     + 'and the file size); whether the conversation shows it at its place (shown), or only a panel does (hidden): '
-    + 'the panel of the chip of the call that made it, or the panel of the compaction chip for one that a compaction kept; '
+    + 'the panel of the chip of the call that made it, or the panel of the assets chip of the compaction for one that a compaction kept; '
     + 'and who made it: the user, a model, a call of a Dez tool, or a job of a Dez tool, with the number of the job in its reply and how its call begins. '
     + 'The jobs of a reply end in any order, and the ids of what they make follow that order: '
     + 'before you use clips in an order (the scenes of a video), read which call made each one. '

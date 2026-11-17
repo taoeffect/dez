@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type * as Registry from '../tools/registry'
 import type { ToolDefinition } from '../tools/types'
-import { compactionTagText, readCompactionTag } from './compaction'
+import { compactionTagText, readCompactionBlock } from './compaction'
 import { SENTINEL_CHAR } from './content'
 import { findMediaTags } from './mediaTags'
 import {
@@ -327,8 +327,8 @@ describe('ModelTextEscaper', () => {
   it('leaves a model no way to write a compaction tag', () => {
     const answer = `${compactionTagText({ count: 3, lastId: 'k', pictures: [] })}\nNotes`
 
-    expect(readCompactionTag(answer)).not.toBeNull()
-    expect(readCompactionTag(escapeAll(Array.from(answer)))).toBeNull()
+    expect(readCompactionBlock(answer)).not.toBeNull()
+    expect(readCompactionBlock(escapeAll(Array.from(answer)))).toBeNull()
   })
 })
 

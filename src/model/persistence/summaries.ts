@@ -1,4 +1,4 @@
-import { withoutCompactionTag } from '../chat/compaction'
+import { compactionTextForPeople } from '../chat/compactionNotes'
 import { labelImageReferences } from '../chat/images'
 import { labelMediaTags } from '../chat/mediaTags'
 import { cloneModelRef } from '../chat/modelRef'
@@ -7,11 +7,12 @@ import type { Role } from '../chat/types'
 import type { ContentNodeData, ConversationData, ConversationSummary, SectionData } from './types'
 
 /** Each node of `sections` with the role of its section, for a text that
- *  people read (the preview, the search): the tag line of a compaction
- *  section is left out, as the editor shows a pill in its place. */
+ *  people read (the preview, the search): the block of a compaction
+ *  section gives its notes for people (`compactionTextForPeople`), as the
+ *  editor shows chips in its place. */
 export function readableNodes(sections: SectionData[]): { node: ContentNodeData, role: Role }[] {
   return sections.flatMap(({ nodes, role }, index) => nodes.map((node, nodeIndex) => ({
-    node: nodeIndex === 0 && node.kind === 'text' ? { ...node, text: withoutCompactionTag(node.text, index, role) } : node,
+    node: nodeIndex === 0 && node.kind === 'text' ? { ...node, text: compactionTextForPeople(node.text, index, role) } : node,
     role,
   })))
 }

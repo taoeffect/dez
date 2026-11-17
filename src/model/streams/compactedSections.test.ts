@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { assetPlaces } from '../chat/assetOrigins'
-import { CARRIED_USER_ASSETS_LABEL, sectionCompactionTag } from '../chat/compaction'
+import { CARRIED_USER_ASSETS_LABEL, sectionCompactionBlock } from '../chat/compaction'
 import { notesAssetLines } from '../chat/compactionNotes'
 import { sectionPlainText } from '../chat/content'
 import { findKeptAssets } from '../chat/hiddenAssets'
@@ -79,10 +79,13 @@ function sent(sections: Section[]): { images: string[], pictures: string[] } {
   }
 }
 
-/** The ids and the paths that the compaction chip of `sections` hides. */
+/** The ids and the paths of the assets of `sections` that the compaction
+ *  chips hide with the kept mark: the ones that a request sends as text
+ *  only. The chips hide the other assets of the block too. */
 function hidden(sections: Section[]): string[] {
   return findKeptAssets(sections.map((section) => ({ role: section.role, text: sectionPlainText(section) })))
     .flat()
+    .filter((asset) => (asset.kind === 'image' ? isKeptImage(asset.image) : isKeptClip(asset.tag)))
     .map((asset) => (asset.kind === 'image' ? asset.image.id ?? asset.image.path : asset.tag.id))
 }
 
@@ -107,7 +110,7 @@ describe('compactedSections', () => {
     const [notes] = result.sections
     expect(notes).toMatchObject({ role: 'agent', model: NOTES_MODEL })
     expect(notes.thinking).toBeUndefined()
-    expect(sectionCompactionTag(notes)).toMatchObject({ count: 1, lastId: 'b', dropped: 0, pictures: [] })
+    expect(sectionCompactionBlock(notes)).toMatchObject({ count: 1, lastId: 'b', dropped: 0, pictures: [] })
     expect(notesText(result)).toContain('The user wants foxes.')
     expect(result.dropped).toStrictEqual([])
   })
@@ -194,7 +197,7 @@ describe('compactedSections', () => {
       kept(idImage(pasted('one'), 'a')),
       kept(idImage(pasted('two'), 'b')),
     ])
-    expect(sectionCompactionTag(result.sections[0])).toMatchObject({ count: 2, lastId: 'b' })
+    expect(sectionCompactionBlock(result.sections[0])).toMatchObject({ count: 2, lastId: 'b' })
   })
 
   // The dropped id is the highest one, so a tag that read only the ids
@@ -216,7 +219,7 @@ describe('compactedSections', () => {
     expect([...notesAssetLines(notesText(result)).values()]).toStrictEqual([
       { id: 'a', kind: 'image', facts: 'PNG, 10x10, 1 KB', origin: 'made by the model local/m', sentence: 'The final fox.', byReply: false },
     ])
-    expect(sectionCompactionTag(result.sections[0])).toMatchObject({ count: 2, lastId: 'b', dropped: 1 })
+    expect(sectionCompactionBlock(result.sections[0])).toMatchObject({ count: 2, lastId: 'b', dropped: 1 })
     expect(sent(result.sections.slice(0, 3))).toStrictEqual({ images: [made('one')], pictures: [] })
     expect(hidden(result.sections.slice(0, 3))).toStrictEqual([])
   })
@@ -233,7 +236,7 @@ describe('compactedSections', () => {
     expect(result.dropped.map(({ asset }) => asset.id)).toStrictEqual(['a'])
     expect(notesText(result)).not.toContain(made('fox'))
     expect([...notesAssetLines(notesText(result)).values()].map(({ id, byReply }) => [id, byReply])).toStrictEqual([['b', true], ['c', true]])
-    expect(sectionCompactionTag(result.sections[0])).toMatchObject({ count: 1, lastId: 'c', dropped: 1 })
+    expect(sectionCompactionBlock(result.sections[0])).toMatchObject({ count: 1, lastId: 'c', dropped: 1 })
   })
 
   it('keeps an unnamed asset of the reply that runs at its next compaction, and drops it once a later reply runs', () => {
@@ -383,7 +386,7 @@ describe('compactedSections', () => {
 
     // In the order of the assets of the notes, not of the answer.
     expect(result.pictures).toStrictEqual([picture('a'), picture('b')])
-    expect(sectionCompactionTag(head[0])?.pictures).toStrictEqual([picture('a'), picture('b')])
+    expect(sectionCompactionBlock(head[0])?.pictures).toStrictEqual([picture('a'), picture('b')])
     expect(sent(head)).toStrictEqual({ images: [], pictures: ['a.jpg', 'b.jpg'] })
     expect(findMediaTags(notesText(result)).map((tag) => [tag.id, isKeptClip(tag)])).toStrictEqual([['b', false], ['c', true]])
     // The clip of the first message stays in it, as it is.
@@ -402,7 +405,7 @@ describe('compactedSections', () => {
     const result = compact(sections, `${NOTES}\n## Assets\n@a: keep - the clip`, 'r3')
 
     expect(result.pictures).toStrictEqual([])
-    expect(sectionCompactionTag(result.sections[0])?.pictures).toStrictEqual([])
+    expect(sectionCompactionBlock(result.sections[0])?.pictures).toStrictEqual([])
     expect(findMediaTags(notesText(result)).map((tag) => [tag.id, isKeptClip(tag)])).toStrictEqual([['a', true]])
   })
 

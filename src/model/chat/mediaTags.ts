@@ -188,8 +188,9 @@ export const MEDIA_MADE_BY_ATTRIBUTE = 'made-by'
 
 /** The attribute of a clip that a compaction kept as one line of its
  *  notes, as `IMAGE_KEPT_KEY` (images.ts) for an image; its value is
- *  `KEPT_MARK_VALUE`. The editor shows the clip in the panel of the
- *  compaction chip, and not at the place of its tag (hiddenAssets.ts). */
+ *  `KEPT_MARK_VALUE`. In the section of the carried assets of the user,
+ *  the editor shows the clip in the panel of the assets chip of the
+ *  compaction, and not at the place of its tag (hiddenAssets.ts). */
 export const MEDIA_KEPT_ATTRIBUTE = 'kept'
 
 /** One tag in a text. */

@@ -15,7 +15,7 @@ import {
 import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view'
 import { SENTINEL_CHAR } from '../../model/chat/content'
 import { SECTION_SEP, pillsField, scanPills, type PillMetadata } from '../thread/cmEditor'
-import { compactionTagRange } from './compaction'
+import { compactionBlockRange } from './compactionBlock'
 import { renderedImages } from './images'
 import { renderedMedia } from './media'
 import { renderedToolCalls } from './toolCalls'
@@ -120,14 +120,14 @@ const protectedRangesCache = new WeakMap<Text, ProtectedRangesCacheEntry>()
  *    with nothing puts text on the block's first or last line, and the
  *    block then shows as its source; `keepTextOffLineBlocks` (lineBlocks.ts)
  *    adds a line break back only for a non-empty insert;
- *  - the tag line of a compaction section (`compactionTagRange`), plus its
- *    line break: the pill of the section is in its place, and a replace in
- *    it would make the section a user section. The compaction chip
- *    (compactionChip.ts) is a block at the end of that line, with no text.
+ *  - the compaction block (`compactionBlockRange`), plus its line break:
+ *    the pill of the section and the compaction chips (compactionChip.ts)
+ *    are in its place, and a replace in its tag line would make the
+ *    section a user section.
  *  Pills without metadata (or a state without `pillsField`) count as
  *  collapsed, matching `decodeSectionContent`. Cached per doc + pill map
  *  + images + tool calls + media because the highlighter asks on every
- *  viewport change (the tag line comes from the doc alone). */
+ *  viewport change (the block comes from the doc alone). */
 function protectedRanges(state: EditorState): DocRange[] {
   const pills = state.field(pillsField, false)
   const images = renderedImages(state)
@@ -150,7 +150,7 @@ function protectedRanges(state: EditorState): DocRange[] {
     }
   }
   for (const { from, to } of images) raw.push({ from, to })
-  for (const blocks of [toolCalls, media, compactionTagRange(state)]) {
+  for (const blocks of [toolCalls, media, compactionBlockRange(state.doc)]) {
     for (const { from, to } of blocks) raw.push({ from: Math.max(0, from - 1), to: Math.min(doc.length, to + 1) })
   }
   raw.sort((a, b) => a.from - b.from)

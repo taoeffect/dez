@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { jobsWaitText } from '../tools/jobs'
-import { CARRIED_USER_ASSETS_LABEL, compactionTagText } from './compaction'
+import { CARRIED_USER_ASSETS_LABEL, compactionBlockText, compactionTagText } from './compaction'
 import { findHiddenAssets, findKeptAssets, jobResultInBlocks, type HiddenAsset } from './hiddenAssets'
 import { findImageReferences, imageIdChange, imageMarkdown, imageReferenceTextWithKeptMark, IMAGE_TOOL_KEY } from './images'
 import { findMediaTags, mediaTagText, mediaTagTextWithKeptMark, savedMediaTag, unsavedMediaTag } from './mediaTags'
@@ -55,7 +55,8 @@ describe('findHiddenAssets', () => {
 })
 
 describe('findKeptAssets', () => {
-  const TAG = compactionTagText({ count: 1, lastId: 'd', pictures: [] })
+  const DATA = { count: 1, lastId: 'd', pictures: [] }
+  const TAG = compactionTagText(DATA)
   const keptImage = imageReferenceTextWithKeptMark({ path: HIDDEN_IMAGE_PATH, metadata: [{ key: 'id', value: 'b' }] }, true)
   const keptClip = mediaTagTextWithKeptMark(findMediaTags(hiddenClip('j-aaaa'))[0], true)
   const linked = imageReferenceTextWithKeptMark({ path: '/home/u/Pictures/cat.png', metadata: [{ key: 'id', value: 'a' }] }, true)
@@ -65,9 +66,9 @@ describe('findKeptAssets', () => {
     return findKeptAssets(sections).map((assets, index) => assets.map((asset) => sections[index].text.slice(asset.from, asset.to)))
   }
 
-  it('finds the kept assets of the compaction section and of the section of the carried assets of the user', () => {
+  it('finds the assets of the compaction block and the kept assets of the section of the carried assets of the user', () => {
     const sections = [
-      { role: 'agent' as const, text: `${TAG}\n## Summary\n\nDone.\n\n${keptClip}\n@c | audio clip\n\n${keptImage}\n@b | image` },
+      { role: 'agent' as const, text: compactionBlockText(DATA, `## Summary\n\nDone.\n\n${keptClip}\n@c | audio clip\n\n${keptImage}\n@b | image`) },
       { role: 'user' as const, text: 'Make a cat.' },
       { role: 'user' as const, text: `${CARRIED_USER_ASSETS_LABEL}\n${linked}` },
       { role: 'user' as const, text: 'Now a dog.' },
@@ -105,10 +106,22 @@ describe('findKeptAssets', () => {
     expect(kept(sections)).toStrictEqual([[], [], [linked]])
   })
 
-  it('takes an image only when it is alone on its line, and no asset with no mark', () => {
+  // The block shows only as its chips, so no asset in it can show.
+  it('takes every asset of the block, with or without the kept mark, and none after the block', () => {
     const shown = imageReferenceTextWithKeptMark({ path: HIDDEN_IMAGE_PATH, metadata: [{ key: 'id', value: 'b' }] }, false)
+    const clip = hiddenClip('j-aaaa')
+    const block = compactionBlockText(DATA, `See ${keptImage}\n\n${shown}\n\n${clip}`)
 
-    expect(kept([{ role: 'agent', text: `${TAG}\nSee ${keptImage}\n\n${shown}\n\n${hiddenClip('j-aaaa')}` }])).toStrictEqual([[]])
+    expect(kept([{ role: 'agent', text: `${block}\n${shown}` }])).toStrictEqual([[keptImage, shown, clip]])
+    // The old form: the notes run to the end of the section.
+    expect(kept([{ role: 'agent', text: `${TAG.replace(/>$/, '/>')}\n${shown}` }])).toStrictEqual([[shown]])
+  })
+
+  it('takes in the section of the carried assets of the user an image only when it is alone on its line, and no asset with no mark', () => {
+    const shown = imageReferenceTextWithKeptMark({ path: '/home/u/Pictures/dog.png', metadata: [{ key: 'id', value: 'c' }] }, false)
+
+    expect(kept([{ role: 'agent', text: compactionBlockText(DATA, '') }, { role: 'user', text: `${CARRIED_USER_ASSETS_LABEL}\nSee ${linked}\n\n${shown}` }]))
+      .toStrictEqual([[], []])
   })
 })
 

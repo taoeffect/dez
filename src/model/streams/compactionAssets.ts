@@ -1,6 +1,6 @@
 import { oneLineCut } from '../../utils/oneLineCut'
 import type { AssetPlace } from '../chat/assetOrigins'
-import { compactionMessageEnd, isCarriedUserAssets, sectionCompactionTag } from '../chat/compaction'
+import { compactionMessageEnd, isCarriedUserAssets, sectionCompactionBlock } from '../chat/compaction'
 import { notesAssetLines, notesCellText, notesJobLines, type NotesAssetLine } from '../chat/compactionNotes'
 import { sectionIsEmpty, sectionPlainText } from '../chat/content'
 import { findAssetMentions } from '../chat/imageMentions'
@@ -72,7 +72,8 @@ export function compactionScope(sections: readonly Section[], replySectionId: st
 /** The asset lines of the notes of the compaction section of `sections`,
  *  by asset id; none for a conversation with no compaction. */
 export function carriedAssetLines(sections: readonly Section[]): Map<string, NotesAssetLine> {
-  return sections.length > 0 && sectionCompactionTag(sections[0]) !== null ? notesAssetLines(sectionPlainText(sections[0])) : new Map()
+  const block = sections.length > 0 ? sectionCompactionBlock(sections[0]) : null
+  return block ? notesAssetLines(block.notes) : new Map()
 }
 
 /** One image or clip of a conversation at a compaction. */
@@ -113,7 +114,7 @@ function isIntermediate(asset: FoundAsset): boolean {
 // counts as a new one: the next compaction of a reply comes only after a
 // round, whose text is in its section.
 function replyRanAtCompaction(sections: readonly Section[], scope: CompactionScope): boolean {
-  return scope.reply !== null && sectionCompactionTag(sections[0]) !== null && compactionMessageEnd(sections) === scope.reply
+  return scope.reply !== null && sectionCompactionBlock(sections[0]) !== null && compactionMessageEnd(sections) === scope.reply
 }
 
 /** What `compactionAssets` needs. */
@@ -202,8 +203,9 @@ export function openJobInputs(sections: readonly Section[], scope: CompactionSco
     inputs.set(jobId, list)
   }
   if (open.size === 0 || scope.reply === null) return inputs
-  if (replyRanAtCompaction(sections, scope)) {
-    for (const line of notesJobLines(sectionPlainText(sections[0])).values()) {
+  const notes = replyRanAtCompaction(sections, scope) ? sectionCompactionBlock(sections[0])?.notes : undefined
+  if (notes !== undefined) {
+    for (const line of notesJobLines(notes).values()) {
       if (open.has(line.id)) add(line.id, line.inputs)
     }
   }

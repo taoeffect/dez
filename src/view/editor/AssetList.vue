@@ -22,6 +22,10 @@ const props = defineProps<{ view: EditorView, rows: PanelAssetRow[] }>()
 
 const ROW_CLASS = 'dez-asset-list__row'
 
+// virtua puts each row into an item element of its own; the class lets the
+// theme raise the item under the pointer (`dezTheme` in cmEditor.ts).
+const itemProps = () => ({ class: 'dez-asset-list__item' })
+
 const box = ref<HTMLElement>()
 
 /** The asset element and the key of each drawn row, by row element. */
@@ -108,7 +112,7 @@ onBeforeUnmount(() => {
     @play.capture="refreshLiveKeys"
     @pause.capture="refreshLiveKeys"
   >
-    <Virtualizer v-slot="{ item: row, index }" :data="rows" :keep-mounted="keepMounted">
+    <Virtualizer v-slot="{ item: row, index }" :data="rows" :keep-mounted="keepMounted" :item-props="itemProps">
       <div :key="row.key" v-panel-asset="row" :class="[ROW_CLASS, { 'dez-asset-list__row--after': index > 0 }]" />
     </Virtualizer>
   </div>

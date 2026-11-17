@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { compactionTagText } from '../chat/compaction'
+import { compactionBlockText, compactionTagText } from '../chat/compaction'
+import { imageReferenceTextWithKeptMark } from '../chat/images'
+import { HIDDEN_IMAGE_PATH } from '../chat/testing'
 import { toolBlockText } from '../chat/toolBlocks'
 import { conversationPreview, messageCount } from './summaries'
 import type { ContentNodeData, SectionData } from './types'
@@ -49,16 +51,17 @@ describe('conversation summaries', () => {
 
   // In a later agent section and in a user section the tag is plain text,
   // which the editor shows.
-  it('leaves the tag line of a compaction section out of the preview, and only that tag', () => {
-    const tag = compactionTagText({ count: 2, lastId: 'c', pictures: [] })
+  it('shows the notes of a compaction block for people in the preview, and only that block', () => {
+    const data = { count: 2, lastId: 'c', pictures: [] }
+    const tag = compactionTagText(data)
     const sections = [
-      section('agent', [textNode(`${tag}\nNotes of the work.`)]),
+      section('agent', [textNode(`${compactionBlockText(data, `Notes of the work.\n${imageReferenceTextWithKeptMark({ path: HIDDEN_IMAGE_PATH, metadata: [{ key: 'id', value: 'b' }] }, true)}`)}\nTyped after it.`)]),
       section('user', [textNode('ask')]),
       section('agent', [textNode(`${tag}\nanswer`)]),
     ]
 
     expect(messageCount(sections)).toBe(3)
-    expect(conversationPreview(sections)).toBe(`Notes of the work. ask ${tag} answer`)
+    expect(conversationPreview(sections)).toBe(`Notes of the work. [image] Typed after it. ask ${tag} answer`)
     expect(conversationPreview([section('user', [textNode(`${tag}\nask`)])])).toBe(`${tag} ask`)
   })
 })

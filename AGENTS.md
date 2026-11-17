@@ -85,15 +85,15 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `view/editor/images.ts`, `imageInsert.ts`, `pendingRanges.ts`: images shown in place of their references; image and clip paste and drop.
 - `view/editor/media.ts`, `view/media/`: `<dez:audio>` and `<dez:video>` tags shown as players (`MediaPlayer.vue`, video.js parts in Dez's own skin).
 - `view/editor/toolCalls.ts`: `<dez:tool>` blocks shown as chips, each with a panel.
-- `view/editor/hiddenAssets.ts`, `compactionChip.ts`, `AssetList.vue`: the hidden assets of a chip, the compaction chip with its panel, and its long list of kept assets.
-- `view/editor/lineBlocks.ts`, `compaction.ts`, `lineCommands.ts`: the edit rules of whole-line blocks (chips, players, the compaction tag line).
+- `view/editor/hiddenAssets.ts`, `compactionChip.ts`, `AssetList.vue`: the hidden assets of a chip, the two compaction chips (assets, summary) with their panels, and the long list of kept assets.
+- `view/editor/lineBlocks.ts`, `compaction.ts`, `compactionBlock.ts`, `lineCommands.ts`: the edit rules of whole-line blocks (chips, players, the compaction block).
 - `view/editor/agentTextEdits.ts`: whether a user edit changed the text of a reply (the edited mark of a tab).
 - `view/editor/assetSelection.ts`, `view/assetFacts.ts`, `view/assetIcons.ts`: the selected look, the facts text, and the symbol of an asset.
 - `controller/images.ts`: `dez.controller/images/*`: store, delete, read, and redraw images; file drops.
 - `controller/media.ts`, `clipSources.ts`: `dez.controller/media/*`: save, delete, read, and decode clips; the cleanup of old temp copies.
 - `controller/unusedFiles.ts`, `cacheHolds.ts`, `workFolders.ts`: find and delete the files and cache entries that nothing uses.
 - `model/chat/`: `Section` / `ContentNode` types and helpers, and the text forms of a conversation, each with one writer and recognizer:
-  - `images.ts` (image references), `mediaTags.ts` (clips), `toolBlocks.ts` (tool calls), `pillMarker.ts` (pill markers), `compaction.ts`, `compactionNotes.ts`, `notesTable.ts` (the compaction tag, the notes, and the tables of the notes).
+  - `images.ts` (image references), `mediaTags.ts` (clips), `toolBlocks.ts` (tool calls), `pillMarker.ts` (pill markers), `compaction.ts`, `compactionNotes.ts`, `notesTable.ts` (the compaction block, the notes, and the tables of the notes).
   - `mediaIds.ts`, `imageMentions.ts`, `assetMentions.ts` (asset ids and `@id` mentions), `hiddenAssets.ts`, `shownPictures.ts`.
   - `storedFilePaths.ts`, `linkedFiles.ts`, `mediaFiles.ts`, `unusedFiles.ts` (stored, linked, and unused files).
 - `model/state/`: Pinia stores (internal) and `dez.model/*` selectors; views read state through `view/modelState.ts`.
@@ -249,7 +249,7 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 - **A linked path counts only in a user section** (`isLinkedImagePath`, `isLinkedMediaPath`), so that a model's text never makes Dez read a file of the computer.
 - **One id sequence for images and clips** (`src/model/chat/mediaIds.ts`): never renumber an id that is in the doc, and never give an id that the conversation used before.
 - **`@id` mentions** (`src/model/chat/assetMentions.ts`): the request builder and the editor chips find mentions in the same text pieces (`assetTextPieces`); keep the two on that one rule.
-- **A hidden asset and a kept asset are normal assets with a mark**: only the view hides them (`src/model/chat/hiddenAssets.ts`, `compaction.ts`).
+- **A hidden asset and a kept asset are normal assets with a mark**: only the view hides them (`src/model/chat/hiddenAssets.ts`, `compaction.ts`); the compaction block is out of view as a whole, and its assets show in the assets chip.
 - **The notes of a compaction section are read back** (`src/model/chat/compactionNotes.ts`): a change of a line's form needs a reader of the old form.
 - **The unused-files scan must read every text that can name a stored file**: a new text place, stored-file folder, or kind of cache entry must join it (`src/controller/unusedFiles.ts`).
 - **Long work in the cache root holds its entry** with `holdingCachePath` (`src/controller/cacheHolds.ts`), or the cleanup deletes it.

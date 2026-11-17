@@ -4,6 +4,7 @@ import { Prec, type EditorState, type Extension } from '@codemirror/state'
 import { Decoration, EditorView, ViewPlugin, hoverTooltip, type DecorationSet, type ViewUpdate } from '@codemirror/view'
 import type { SyntaxNode } from '@lezer/common'
 import { SENTINEL_CHAR } from '../../model/chat/content'
+import { compactionBlockEnd } from './compactionBlock'
 import { renderedImages } from './images'
 import { tableRowStarts } from './tables'
 
@@ -121,10 +122,14 @@ function findRenderableLinks(state: EditorState, from: number, to: number): Mark
 /** The links in `from`–`to` (all the doc by default) that the editor shows
  *  rendered in `state`, in doc order. A link shows its source while any
  *  selection range touches it, also at its two ends, so the arrow keys and
- *  a click right after it go into the source one char at a time. */
+ *  a click right after it go into the source one char at a time. A link of
+ *  the compaction block is not drawn: the block is out of view
+ *  (compactionBlock.ts). */
 export function renderedLinks(state: EditorState, from = 0, to = state.doc.length): MarkdownLink[] {
   const { ranges } = state.selection
-  return findRenderableLinks(state, from, to).filter((link) => !ranges.some((range) => range.from <= link.to && range.to >= link.from))
+  const blockEnd = compactionBlockEnd(state.doc)
+  return findRenderableLinks(state, Math.max(from, blockEnd), Math.max(to, blockEnd))
+    .filter((link) => link.from >= blockEnd && !ranges.some((range) => range.from <= link.to && range.to >= link.from))
 }
 
 /** The rendered link under the pointer, from a doc position and a side as

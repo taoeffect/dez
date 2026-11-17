@@ -7,7 +7,8 @@ import { ChangeSet, EditorSelection, EditorState, MapMode, StateEffect, StateFie
 import { tags as t } from '@lezer/highlight'
 import type { MarkdownConfig } from '@lezer/markdown'
 import type { ContentNode, ModelRef, Role, Section, SectionThinking } from '../../model/chat/types'
-import { contentCompactionTag, firstLine, firstSectionRole, withoutCompactionTag } from '../../model/chat/compaction'
+import { contentCompactionBlock, firstLine, firstSectionRole } from '../../model/chat/compaction'
+import { compactionTextForPeople } from '../../model/chat/compactionNotes'
 import { durationField } from '../../model/chat/duration'
 import { modelRefField } from '../../model/chat/modelRef'
 import { PILL_MARKER, parsePillMarkerMatch, pillMarkerText } from '../../model/chat/pillMarker'
@@ -199,7 +200,7 @@ export function initialSectionModels(sections: Section[]): SectionModel[] {
     ...modelRefField(s.model),
     ...thinkingField(s.thinking),
     ...durationField(s.durationMs),
-  })), contentCompactionTag(sections[0].content) ? 'agent' : 'user')
+  })), contentCompactionBlock(sections[0].content) ? 'agent' : 'user')
 }
 
 /** Walk all sections and collect the per-pill metadata map to seed
@@ -1185,11 +1186,11 @@ export function serializeSelectionForClipboard(state: EditorState): string {
  *  of a later section is its separator line; the first section's pill is
  *  the editor's `::before`, or the pill in place of a compaction tag, so
  *  it counts as selected when the range starts at doc position 0 (as in
- *  `serializeDocRangeForClipboard`). The tag line of a compaction section
- *  is left out (`withoutCompactionTag`). A range inside one section's text
- *  gives that text as is: a copied word gets no heading and no newline. A
- *  pill never spans a separator (`scanPills`), so the text between pills
- *  holds every separator. */
+ *  `serializeDocRangeForClipboard`). The block of a compaction section
+ *  gives its notes for people (`compactionTextForPeople`). A range inside
+ *  one section's text gives that text as is: a copied word gets no
+ *  heading and no newline. A pill never spans a separator (`scanPills`),
+ *  so the text between pills holds every separator. */
 function serializeDocRangeAsMarkdown(doc: string, from: number, to: number, models: SectionModel[]): string {
   const parts = ['']
   const appendDocText = (fragmentFrom: number, fragmentTo: number) => {
@@ -1210,7 +1211,7 @@ function serializeDocRangeAsMarkdown(doc: string, from: number, to: number, mode
     const role = models[firstSection + index]?.role ?? 'user'
     // The first part starts at the start of its section only in a range
     // that starts at the doc start.
-    return sectionTextAsMarkdown(role, from === 0 ? withoutCompactionTag(text, firstSection + index, role) : text)
+    return sectionTextAsMarkdown(role, from === 0 ? compactionTextForPeople(text, firstSection + index, role) : text)
   })
   if (from > 0 && texts.length === 1) return texts[0]
   return messagesAsMarkdown(texts.map((text, index): MarkdownMessage => {
@@ -2194,9 +2195,10 @@ export const dezTheme = EditorView.theme({
   '.dez-tool-call__chip:focus-visible': {
     boxShadow: '0 0 0 2px var(--color-link, #4a9eff)',
   },
-  // The compaction chip (src/view/editor/compactionChip.ts) has the tool
-  // chip's look. It is a block widget, so a block, and its title is words,
-  // not a tool name. A chip with no panel is no button.
+  // The compaction chips (src/view/editor/compactionChip.ts) have the tool
+  // chip's look. They are two blocks in one block widget, one under the
+  // other, and their titles are words, not tool names. A chip with no panel
+  // is no button.
   '.dez-tool-call.dez-compaction-chip': {
     display: 'flex',
   },
@@ -2426,6 +2428,13 @@ export const dezTheme = EditorView.theme({
   },
   '.dez-asset-list__row': {
     pointerEvents: 'auto',
+  },
+  // virtua gives each item `contain: layout`, which makes it a stacking
+  // context: the toolbar of an image cannot go over the next item. The
+  // toolbar of an image narrower than the toolbar hangs into the next row,
+  // so the item under the pointer or with the focus goes over the others.
+  '.dez-asset-list__item:is(:hover, :focus-within)': {
+    zIndex: '1',
   },
   '.dez-asset-list__row--after': {
     paddingTop: editorSize(8),

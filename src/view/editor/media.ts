@@ -11,6 +11,7 @@ import { sectionsField, type SectionModel } from '../thread/cmEditor'
 import { measureLineHeights } from '../thread/editorMeasure'
 import { selectedAssetLook } from './assetSelection'
 import { focusKeepingScroll, syncDomSelection } from './focus'
+import { compactionBlockEnd } from './compactionBlock'
 import { HiddenAssetWidget, hiddenAssetOwnerKinds, type AssetPlace } from './hiddenAssets'
 import { linesRemovalRange } from './images'
 import { lineBlocks, sectionRolesChanged, sectionTexts } from './lineBlocks'
@@ -47,6 +48,10 @@ interface RenderedMedia extends MediaTag {
 interface MediaDecorations {
   /** In doc order. */
   media: readonly RenderedMedia[]
+  /** The tags of `media` that are line blocks: each one but the tags of
+   *  the compaction block (compactionBlock.ts), which the assets chip
+   *  plays. */
+  blocks: readonly RenderedMedia[]
   decorations: DecorationSet
 }
 
@@ -269,17 +274,21 @@ function findRenderedMedia(doc: string, sections: readonly SectionModel[]): Rend
 
 function buildMediaDecorations(state: EditorState): MediaDecorations {
   const media = findRenderedMedia(state.doc.toString(), state.field(sectionsField, false) ?? [])
+  // A clip of the compaction block gets no widget: the block is out of
+  // view as a whole, and its clips play in the panel of the assets chip.
+  const blockEnd = compactionBlockEnd(state.doc)
+  const blocks = blockEnd === 0 ? media : media.filter((tag) => tag.from >= blockEnd)
   // A hidden clip plays in the panel of its chip (hiddenAssets.ts). It
   // stays a line block here; only its widget is the one of a hidden asset,
   // so that no second player of the clip is made.
   const hidden = hiddenAssetOwnerKinds(state)
-  const decorations = Decoration.set(media.map((tag) => {
+  const decorations = Decoration.set(blocks.map((tag) => {
     const owner = hidden.get(tag.from)
     return Decoration.replace({
       widget: owner ? new HiddenAssetWidget(tag.kind, tag.id, owner) : new MediaWidget(tag, tag.role),
     }).range(tag.from, tag.to)
   }))
-  return { media, decorations }
+  return { media, blocks, decorations }
 }
 
 /** Each media tag is replaced by its player. The ranges are atomic, so the
@@ -296,10 +305,16 @@ const mediaDecorationsField = StateField.define<MediaDecorations>({
 const NO_MEDIA: readonly RenderedMedia[] = []
 
 /** The tags that the editor shows as players in `state`, in doc order; none
- *  for a state without `markdownMedia()`. The array is the same object
- *  until the doc or the sections change, so callers can cache by it. */
+ *  for a state without `markdownMedia()`. The tags of the compaction block
+ *  are here too: they play in the panel of the assets chip, and the Save
+ *  and the Delete find them here. The array is the same object until the
+ *  doc or the sections change, so callers can cache by it. */
 export function renderedMedia(state: EditorState): readonly RenderedMedia[] {
   return state.field(mediaDecorationsField, false)?.media ?? NO_MEDIA
+}
+
+function mediaBlocks(state: EditorState): readonly RenderedMedia[] {
+  return state.field(mediaDecorationsField, false)?.blocks ?? NO_MEDIA
 }
 
 /** Follows the tag of a player, which is at `place`, while async work on
@@ -454,5 +469,5 @@ export async function deleteSavedClip(view: EditorView, root: HTMLElement, place
  *  (`assetSelection.ts`). The widget's CSS is in `dezTheme`, and the
  *  player's in `MediaPlayer.vue`. The state needs `sectionsField`. */
 export function markdownMedia(): Extension {
-  return [mediaDecorationsField, lineBlocks(renderedMedia), pendingRanges(), selectedAssetLook(ROOT_CLASS, renderedMedia)]
+  return [mediaDecorationsField, lineBlocks(mediaBlocks), pendingRanges(), selectedAssetLook(ROOT_CLASS, mediaBlocks)]
 }

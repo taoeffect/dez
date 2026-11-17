@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { jobResultState, type JobInfo } from '../tools/jobs'
+import { COMPACTION_END_LINE, compactionBlockText } from './compaction'
 import {
+  compactionNotesForPeople,
+  compactionNotesParts,
   compactionNotesText,
+  compactionTextForPeople,
   conversationCostText,
   notesAssetLines,
   notesCellText,
@@ -13,7 +17,7 @@ import {
 } from './compactionNotes'
 import { findImageReferences, imageReferenceTextWithKeptMark } from './images'
 import { findMediaTags } from './mediaTags'
-import { FOX_ORIGIN, hiddenClip, hiddenImage, invokeBlock } from './testing'
+import { FOX_ORIGIN, HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, invokeBlock } from './testing'
 import { findToolBlocks, unescapedModelText } from './toolBlocks'
 
 const SUMMARY = '## Summary'
@@ -410,5 +414,43 @@ describe('conversationCostText', () => {
 
     expect(text).toContain('$1.50')
     expect(numbers(text)).toStrictEqual(['1.50', '5', String(unpriced)])
+  })
+})
+
+describe('the notes for people', () => {
+  // A model wrote this: the writer escapes it, so it forms no tag of Dez.
+  const MODEL_TAG = '<dez:audio id="z"/>'
+  const text = compactionNotesText(notes({ summary: `Like ${MODEL_TAG}, up to ${COMPACTION_END_LINE}`, assets: [FRAME, THEME] }))
+
+  it('gives a label in place of each asset of Dez, and the text of the model as it wrote it', () => {
+    const people = compactionNotesForPeople(text)
+
+    expect(people).not.toContain(HIDDEN_IMAGE_PATH)
+    expect(people.split('\n').filter((line) => line === '[image]' || line === '[audio]')).toStrictEqual(['[image]', '[audio]'])
+    expect(people).toContain(`Like ${MODEL_TAG}, up to ${COMPACTION_END_LINE}`)
+  })
+
+  it('gives the notes in place of the block of a compaction section, with the text after the block, and any other text as it is', () => {
+    const block = compactionBlockText({ count: 1, lastId: 'd', pictures: [] }, text)
+    const section = `${block}\nTyped after it.`
+
+    expect(compactionTextForPeople(section, 0, 'agent')).toBe(`${compactionNotesForPeople(text)}\n\nTyped after it.`)
+    expect(compactionTextForPeople(block, 0, 'agent')).toBe(compactionNotesForPeople(text))
+    expect(compactionTextForPeople(section, 1, 'agent')).toBe(section)
+    expect(compactionTextForPeople(section, 0, 'user')).toBe(section)
+    expect(compactionTextForPeople('Hello.', 0, 'agent')).toBe('Hello.')
+  })
+
+  it('splits the notes into the assets part of Dez and every other part, in order', () => {
+    // The model copied the heading of the assets part into its summary.
+    const copied = compactionNotesText(notes({ summary: `${ASSETS}\n\nA line of the model.`, assets: [PHOTO] }))
+    const { assets, summary } = compactionNotesParts(copied)
+
+    expect(assets).toBe(compactionNotesForPeople(partText(copied.slice(copied.lastIndexOf(ASSETS)), ASSETS)).trim())
+    expect(assets).toContain('@a | ')
+    expect(headings(summary)).toStrictEqual([SUMMARY, ASSETS, REQUIREMENTS, NEXT_STEPS, JOBS, COST])
+    expect(summary).toContain('A line of the model.')
+    expect(summary).not.toContain('@a | ')
+    expect(compactionNotesParts('Only a summary.')).toStrictEqual({ assets: '', summary: 'Only a summary.' })
   })
 })

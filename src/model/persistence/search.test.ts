@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { compactionTagText } from '../chat/compaction'
+import { compactionBlockText } from '../chat/compaction'
 import { parseModelRefKey } from '../chat/modelRef'
 import { toolBlockText } from '../chat/toolBlocks'
 import { serializeConversation } from './conversationFormat'
@@ -75,9 +75,9 @@ describe('conversationPlainText', () => {
 
   // A search for `compaction` or `count` must not find every compacted
   // conversation.
-  it('leaves out the tag line of a compaction section', () => {
+  it('leaves out the tag line and the end line of a compaction block', () => {
     const sections = [
-      section('agent', [textNode(`${compactionTagText({ count: 2, lastId: 'c', pictures: [] })}\nNotes of the work.`)]),
+      section('agent', [textNode(compactionBlockText({ count: 2, lastId: 'c', pictures: [] }, 'Notes of the work.'))]),
       section('user', [textNode('ask')]),
     ]
 

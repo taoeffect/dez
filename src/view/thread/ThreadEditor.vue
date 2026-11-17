@@ -53,8 +53,8 @@ import { markdownTables } from '../editor/tables'
 import { deleteImageBang, deleteImageParen, markdownImages } from '../editor/images'
 import { markdownToolCalls, openToolCalls } from '../editor/toolCalls'
 import { markdownMedia } from '../editor/media'
-import { caretAfterCompactionTag, compactionTagLine } from '../editor/compaction'
-import { compactionChip, openCompactionChip } from '../editor/compactionChip'
+import { caretAfterCompactionBlock, compactionBlockRules } from '../editor/compaction'
+import { compactionChip, openCompactionChips, type CompactionChipsOpen } from '../editor/compactionChip'
 import { deleteLineBlockBackward, deleteLineBlockForward, joinsLineBlock } from '../editor/lineBlocks'
 import { revealHiddenLineBackward, revealHiddenLineForward } from '../editor/hiddenAssets'
 import { deleteLines, duplicateLines } from '../editor/lineCommands'
@@ -713,17 +713,17 @@ function editorShortcutKeymap(): Extension {
 
 /** The open panels that a new editor state keeps; without them, all start
  *  closed. `thinking` holds section ids, `toolCalls` call ids, and
- *  `compaction` tells whether the panel of the compaction chip is open. */
+ *  `compaction` tells which panels of the compaction chips are open. */
 interface OpenPanels {
   thinking: ReadonlySet<string>
   toolCalls: ReadonlySet<string>
-  compaction: boolean
+  compaction: CompactionChipsOpen
 }
 
 /** A new editor state for the active tab, with the panels of `openPanels`
  *  open. Its caret is at the first place for text: the doc start, or the
- *  place after the tag line of a compaction section (the rule of
- *  `compactionTagLine` applies only to a transaction). */
+ *  place after the compaction block of a compaction section (the rule of
+ *  `compactionBlockRules` applies only to a transaction). */
 function buildState(openPanels?: OpenPanels): EditorState {
   const sections = activeSections.value
   const models = initialSectionModels(sections)
@@ -918,7 +918,7 @@ function buildState(openPanels?: OpenPanels): EditorState {
       markdownImages(),
       markdownToolCalls(openPanels?.toolCalls),
       markdownMedia(),
-      compactionTagLine(),
+      compactionBlockRules(),
       compactionChip(openPanels?.compaction),
       markdownLinks(),
       mentionChips(),
@@ -975,7 +975,7 @@ function buildState(openPanels?: OpenPanels): EditorState {
       }),
     ],
   })
-  const caret = caretAfterCompactionTag(state.doc)
+  const caret = caretAfterCompactionBlock(state.doc)
   return caret === null ? state : state.update({ selection: { anchor: caret } }).state
 }
 
@@ -1085,7 +1085,7 @@ function resetViewToActiveTab(streamEnd?: { followBottom: boolean }) {
   // other lines. The snapshot holds the top line and its offset instead.
   const scrollSnapshot = streamEnd && !streamEnd.followBottom ? view.scrollSnapshot() : null
   const state = buildState(sameTab
-    ? { thinking: view.state.field(thinkingExpandedField), toolCalls: openToolCalls(view.state), compaction: openCompactionChip(view.state) }
+    ? { thinking: view.state.field(thinkingExpandedField), toolCalls: openToolCalls(view.state), compaction: openCompactionChips(view.state) }
     : undefined)
   view.setState(state)
   viewTabId = activeTabId.value

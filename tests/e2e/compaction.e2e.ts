@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
-import { CARRIED_USER_ASSETS_LABEL, COMPACTION_MESSAGE_INTRO, COMPACTION_USER_MESSAGE_LABEL, compactionTagText, readCompactionTag } from '../../src/model/chat/compaction'
+import { CARRIED_USER_ASSETS_LABEL, COMPACTION_END_LINE, COMPACTION_MESSAGE_INTRO, COMPACTION_USER_MESSAGE_LABEL, compactionBlockText, compactionTagText, readCompactionBlock } from '../../src/model/chat/compaction'
 import { compactionNotesText } from '../../src/model/chat/compactionNotes'
 import { newMediaIds } from '../../src/model/chat/mediaIds'
 import type { ShownPicture } from '../../src/model/chat/shownPictures'
@@ -10,41 +10,50 @@ import type { ConversationData, SectionData } from '../../src/model/persistence/
 import { compactionInstruction } from '../../src/model/streams/compactionRequest'
 import { shortDuration } from '../../src/view/thread/pillDuration'
 import { anthropicChatBody, anthropicMarkedUser, openAiChatBody } from './harness/chatBody'
-import { click, consoleErrors, pointerClick, pointerClickAt, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
+import { click, consoleErrors, movePointer, pointerClick, pointerClickAt, promptMessage, resetConsoleErrors, screenshotOnFailure, typeInto, typeKeys, waitFor, waitForValue } from './harness/dom'
 import { linkedDropDir } from './harness/drops'
-import { appFilePath, conversationFilePath, filesIn, makeConversation, seedConversation, writeTestFile } from './harness/fixtures'
+import { appFilePath, conversationFilePath, filesIn, makeConversation, newFileIn, seedConversation, writeTestFile } from './harness/fixtures'
 import { pasteImageReference, pngDataUrl, shownImages, solidPng, type ShownImage } from './harness/images'
-import { problemCards, shownPlayers, silentWav, WEBM_VIDEO, type ShownPlayer } from './harness/media'
+import { clipTag, MP4_VIDEO, problemCards, shownPlayers, silentWav, tempClipTag, WEBM_VIDEO, type ShownPlayer } from './harness/media'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import { LARGE_TOKENS, mockChatPath, openAiToolCall, replyText, sendAnthropicReply, sendChatReply, sendChatText, sendToolCalls, startEventStream, toolResult, writeChatFrame, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeConversationId, activeTabStreaming, AT_BOTTOM_PX, docPos, editorCaret, editorDoc, focusEditor, misplacedLines, newTab, openToasts, pickModel, pressRolePill, savedPillLines, sbpCall, setCaret, submit, threadSections, viewFromBottom, waitForThread, type ThreadSection } from './harness/thread'
+import { activeConversationId, activeTabStreaming, assetPartPoint, AT_BOTTOM_PX, docPos, editorCaret, editorDoc, focusEditor, misplacedLines, newTab, openToasts, pickModel, pressRolePill, savedPillLines, sbpCall, setCaret, submit, threadSections, viewFromBottom, waitForThread, type ThreadSection } from './harness/thread'
 import { hiddenAssetNotes, hiddenPart, pressToolChip, toolChips, toolPanelPictures, type ToolChipView } from './harness/toolChips'
 
 // Compaction, driven through the real app against a mock server in this
 // process.
 //
 // A compacted conversation: its first section is the compaction section,
-// an agent section whose first line is the compaction tag. These tests
-// open a conversation file that holds one.
+// an agent section that starts with the compaction block (the tag line,
+// the notes, and the end line). These tests open a conversation file that
+// holds one.
 // - The editor shows an Agent pill first, in place of the tag line, and no
-//   User pill above it. The caret never goes before the notes.
+//   User pill above it. Two chips take the place of the other lines of the
+//   block: the assets chip and the summary chip. Both start closed, and
+//   stay as they are over the end of a stream. A relaunch shows them
+//   closed.
+// - The notes are no text of the editor: the panel of the summary chip
+//   shows them in a read-only field, and Find does not match them. The
+//   caret never goes into the block. Backspace after it deletes the whole
+//   block, which makes the first section a user section; an undo brings
+//   the block back.
 // - Each request starts with one user message: the notes, the pictures of
 //   the tag, and the user messages right after the notes, with their
 //   images. That message is the same in every later request.
+// - A conversation of an older Dez, whose tag ends with `/>` and whose
+//   notes run to the end of the section, opens with the same two chips and
+//   sends the same message.
 // - A save and a relaunch keep the section, its pill, and the compaction
 //   numbers of the file header.
-// - Without its tag, the section is a user section, as the first section
-//   of every other conversation; an undo brings the compaction section
-//   back.
 // - A new image gets an id after the `last-id` of the tag.
-// - A compaction can keep an image or a clip: its reference or its tag has
-//   the kept mark. The editor hides it at its place in the compaction
-//   section and in the section of the carried assets of the user, and the
-//   compaction chip under the Agent pill shows it in its panel, with the
-//   pictures of the tag. A request sends a kept image as its text only,
-//   unless the user names it with `@id`. A kept clip in the panel plays by
-//   the role that its section has now.
+// - The assets of the block, and the kept assets of the section of the
+//   carried assets of the user, show only in the panel of the assets chip,
+//   with the pictures of the tag. The counts of the chip tell how many
+//   assets the compaction kept and dropped. The trash and the Save of an
+//   asset work in the panel, and the counts follow. A request sends a kept
+//   image as its text only, unless the user names it with `@id`. A clip in
+//   the panel plays by the role that its section has now.
 //
 // A compaction that runs: the mock tells that a request was near the
 // context window of its model, or the conversation file tells it.
@@ -53,15 +62,15 @@ import { hiddenAssetNotes, hiddenPart, pressToolChip, toolChips, toolPanelPictur
 //   request: the request that was due, with the instruction of Dez as one
 //   more user message. The bottom bar shows "Compacting…" meanwhile.
 // - The notes of the answer take the place of the conversation, in the
-//   tab, in the editor, and in the file, and the reply goes on: its next
-//   request holds the notes, the images and pictures that go with them,
-//   and the kept messages of the user.
+//   tab, in the editor, and in the file, as a block with its end line, and
+//   the reply goes on: its next request holds the notes, the images and
+//   pictures that go with them, and the kept messages of the user.
 // - A compaction request that fails two times ends the reply with an
 //   error toast, and a stop ends it with none. Both keep the
 //   conversation.
 // - The first compaction already drops a made image of an earlier reply
 //   that the answer does not keep, but never an image of the user. The
-//   compaction chip tells how many assets the compaction dropped.
+//   assets chip tells how many assets the compaction dropped.
 // - Dez deletes the file of a dropped image that the user saw only in the
 //   panel of a call, and the picture copies of the tag before. The file
 //   of any other dropped image stays.
@@ -79,6 +88,10 @@ const INSTRUCTION_START = compactionInstruction({ assetTable: '', jobs: [], cost
 const NOTES_SUMMARY = 'The user wants to go on with the task.'
 // An answer to a compaction request: a summary, and no other part.
 const NOTES_ANSWER = `## Summary\n${NOTES_SUMMARY}\n`
+// The first line of the notes of the image conversation: a line that only
+// the notes hold.
+const IMAGE_NOTES_START = 'The user wants a film of a fox.'
+const FIND_FIELD = '.find-field[aria-label="Find"]'
 
 // The image of the kept user message, the image that the notes name, and
 // the picture that the tag keeps for the model.
@@ -91,7 +104,11 @@ const SHEET: ShownPicture = { file: 'compaction-sheet.png', label: 'The frame sh
 const KEPT_MADE_PNG = solidPng(36, 28, [200, 160, 40])
 const CARRIED_PNG = solidPng(44, 22, [120, 40, 160])
 
-const PLAIN_TAG = compactionTagText({ count: 1, lastId: 'c', pictures: [] })
+const PLAIN_DATA = { count: 1, lastId: 'c', pictures: [] }
+const PLAIN_TAG = compactionTagText(PLAIN_DATA)
+// The tag of a conversation of an older Dez, whose notes run to the end
+// of the section: the same tag, with `/>` at its end.
+const OLD_TAG = `${PLAIN_TAG.slice(0, -1)}/>`
 const REPLY_MS = 4213
 // The start of each kept user message in the compaction message.
 const USER_MESSAGE_START = `\n\n${COMPACTION_USER_MESSAGE_LABEL}\n`
@@ -147,27 +164,48 @@ const KEPT_USER_IMAGE: ShownImage = { alt: 'compaction-kept.png', width: 40, hei
 const CARRIED_IMAGE: ShownImage = { alt: 'compaction-carried.png', width: 44, height: 22 }
 const KEPT_CLIP_PLAYER: ShownPlayer = { kind: 'video', id: 'c', available: true, source: 'blob', seconds: 2, picture: { width: 48, height: 36 }, clock: null, save: 'saved' }
 
-/** The compaction chip of a conversation that the compaction left with
- *  `counts` (as "2 kept assets"), with its panel open or not. */
-function compactionChipView (counts: string[], open: boolean): ToolChipView {
+/** The assets chip of the first compaction of a conversation, with
+ *  `counts` (as "2 kept") and its panel open or not. */
+function assetsChipView (counts: string[], open: boolean): ToolChipView {
   return {
     state: null,
-    label: ['Compaction 1', ...counts].join(', '),
+    label: ['Compaction 1 assets', ...counts].join(', '),
     unrecognized: null,
-    name: 'Compaction 1',
+    name: 'Compaction 1 assets',
     summary: null,
     stateWord: null,
     spinner: false,
     expanded: String(open),
-    title: open ? 'Hide compaction' : 'Show compaction',
+    title: open ? 'Hide compaction assets' : 'Show compaction assets',
     open,
   }
 }
 
+/** The summary chip of the first compaction of a conversation, with its
+ *  panel open or not. */
+function summaryChipView (open: boolean): ToolChipView {
+  return {
+    state: null,
+    label: null,
+    unrecognized: null,
+    name: 'Compaction 1 summary',
+    summary: null,
+    stateWord: null,
+    spinner: false,
+    expanded: String(open),
+    title: open ? 'Hide compaction summary' : 'Show compaction summary',
+    open,
+  }
+}
+
+/** An assets chip with nothing to show: no panel, so no name for screen
+ *  readers, no disclosure state, and no tooltip. */
+const EMPTY_ASSETS_CHIP: ToolChipView = { ...assetsChipView([], false), label: null, expanded: null, title: '' }
+
 /** The text at the place of the kept asset `name`, while the caret is on
  *  another line. */
 function keptNote (name: string): { text: string, visible: boolean } {
-  return { text: `Kept ${name}. Open the compaction chip to see it.`, visible: false }
+  return { text: `Kept ${name}. Open the assets chip of the compaction to see it.`, visible: false }
 }
 
 describe('a compacted conversation', () => {
@@ -259,14 +297,36 @@ describe('a compacted conversation', () => {
   }
 
   // The one message of a request right after a compaction that kept no
-  // image: the notes that the tab holds (the text of its first section
-  // after the tag line), then each message of `kept`, the messages of the
+  // image: the notes of the compaction block of the tab (its first section
+  // is only that block), then each message of `kept`, the messages of the
   // user that the compaction kept.
   async function notesMessage (...kept: string[]): Promise<Record<string, unknown>> {
     const [first] = await threadSections(browser)
-    const tag = first.role === 'agent' ? readCompactionTag(first.text) : null
-    if (tag === null) throw new Error('notesMessage: the first section of the tab is no compaction section')
-    return { role: 'user', content: `${COMPACTION_MESSAGE_INTRO}\n\n${first.text.slice(tag.textFrom)}${kept.map((text) => `${USER_MESSAGE_START}${text}`).join('')}` }
+    const block = first.role === 'agent' ? readCompactionBlock(first.text) : null
+    if (block === null) throw new Error('notesMessage: the first section of the tab is no compaction section')
+    if (block.textFrom !== first.text.length) throw new Error('notesMessage: the compaction section has text after its block')
+    return { role: 'user', content: `${COMPACTION_MESSAGE_INTRO}\n\n${block.notes.trim()}${kept.map((text) => `${USER_MESSAGE_START}${text}`).join('')}` }
+  }
+
+  // The text of the field of notes in the panel of the compaction chip
+  // `part`; null while the panel is closed or has no such field.
+  async function chipNotes (part: 'assets' | 'summary'): Promise<string | null> {
+    return browser.execute((wanted: string) => document.querySelector<HTMLTextAreaElement>(
+      `.cm-content .dez-compaction-chip[data-part="${wanted}"] .dez-compaction-chip__notes textarea.dez-tool-call__result-text`,
+    )?.value ?? null, part)
+  }
+
+  // The name and the open state of each chip, for a compaction whose
+  // counts a test does not set.
+  async function chipStates (): Promise<Array<{ name: string, open: boolean }>> {
+    return (await toolChips(browser)).map(({ name, open }) => ({ name, open }))
+  }
+
+  // Whether a line of the editor shows `text`. The fields of the panels are
+  // no lines, so this tells whether the notes are text of the editor.
+  async function linesShow (text: string): Promise<boolean> {
+    return browser.execute((wanted: string) => Array.from(document.querySelectorAll('.cm-content .cm-line'))
+      .some((line) => (line.textContent ?? '').includes(wanted)), text)
   }
 
   // Whether the bottom bar tells the user that the reply waits for a
@@ -310,10 +370,10 @@ describe('a compacted conversation', () => {
     const keptFile = await writeTestFile(appFilePath(home, 'assets', 'images', 'compaction-kept.png'), KEPT_PNG)
     const madeFile = await writeTestFile(appFilePath(home, 'assets', 'generated', 'images', 'compaction-made.png'), MADE_PNG)
     await writeTestFile(appFilePath(home, 'assets', 'generated', 'views', SHEET.file), SHEET_PNG)
-    const notes = `The user wants a film of a fox.\nThe fox: ![${madeFile}](id=b)\nIt is red.`
+    const notes = `${IMAGE_NOTES_START}\nThe fox: ![${madeFile}](id=b)\nIt is red.`
     const kept = `Make a film of ![${keptFile}](id=a)`
-    const tag = compactionTagText({ count: 1, lastId: 'c', pictures: [SHEET] })
-    return [compactionSection(`${tag}\n${notes}`), textSection('user', kept), textSection('user', '')]
+    const block = compactionBlockText({ count: 1, lastId: 'c', pictures: [SHEET] }, notes)
+    return [compactionSection(block), textSection('user', kept), textSection('user', '')]
   }
 
   // The first message of each request of the image conversation after the
@@ -323,7 +383,7 @@ describe('a compacted conversation', () => {
     return {
       role: 'user',
       content: [
-        { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\nThe user wants a film of a fox.\nThe fox: ![image](id=b)` },
+        { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\n${IMAGE_NOTES_START}\nThe fox: ![image](id=b)` },
         imagePart(MADE_PNG),
         { type: 'text', text: `\nIt is red.\n\n${SHEET.label}` },
         imagePart(SHEET_PNG),
@@ -334,13 +394,13 @@ describe('a compacted conversation', () => {
     }
   }
 
-  // The text of each count at the end of the compaction chip.
+  // The text of each count at the end of the assets chip.
   async function compactionChipCounts (): Promise<string[]> {
     return browser.execute(() => Array.from(document.querySelectorAll('.cm-content .dez-compaction-chip__count'), (count) => count.textContent ?? ''))
   }
 
   // The files of the conversation with kept assets, and its sections: the
-  // compaction section (its notes show the made image `b` and keep the
+  // compaction section (its notes name the made image `b`, and keep the
   // image `d` and the clip `c`, and its tag keeps a picture), the first
   // kept user message, the section of the carried assets of the user (it
   // keeps the image `a` and shows the image `e`), a second kept user
@@ -355,7 +415,6 @@ describe('a compacted conversation', () => {
     const carried = await writeTestFile(appFilePath(home, 'assets', 'images', 'compaction-carried.png'), CARRIED_PNG)
     await writeTestFile(appFilePath(home, 'assets', 'generated', 'views', SHEET.file), SHEET_PNG)
     const notes = [
-      compactionTagText({ count: 1, lastId: 'e', pictures: [SHEET] }),
       'The user wants a film of a fox.',
       `![${made}](id=b)`,
       'The fox is red.',
@@ -365,7 +424,7 @@ describe('a compacted conversation', () => {
       'The fox sleeps.',
     ]
     return [
-      compactionSection(notes.join('\n')),
+      compactionSection(compactionBlockText({ count: 1, lastId: 'e', pictures: [SHEET] }, notes.join('\n'))),
       textSection('user', 'Make a film of the fox.'),
       textSection('user', [CARRIED_USER_ASSETS_LABEL, `![${keptUser}](id=a|kept=compaction)`, `![${carried}](id=e)`].join('\n')),
       textSection('user', 'Make it longer.'),
@@ -419,17 +478,17 @@ describe('a compacted conversation', () => {
     if (linkedDir) await fs.promises.rm(linkedDir, { recursive: true, force: true })
   })
 
-  it('shows an Agent pill first, in place of the tag line, and keeps the caret off that line', async () => {
+  it('shows an Agent pill and two closed chips in place of the compaction block, and keeps the caret after the block', async () => {
     const sections = await imageConversation()
     const thread = await openCompacted('compacted-look', sections)
-    const notesStart = thread[0].text.indexOf('\n') + 1
+    const blockEnd = thread[0].text.length
 
     await waitForValue(browser, 'pills', pills, [AGENT_PILL, userPill(1), userPill(2)])
     expect(await firstSectionLook()).toStrictEqual(COMPACTED_LOOK)
-    await waitForValue(browser, 'shown images', () => shownImages(browser), [
-      { alt: 'compaction-made.png', width: 30, height: 20 },
-      { alt: 'compaction-kept.png', width: 40, height: 24 },
-    ])
+    // The made image of the notes is out of view with the block.
+    await waitForValue(browser, 'shown images', () => shownImages(browser), [KEPT_USER_IMAGE])
+    expect(await toolChips(browser)).toStrictEqual([assetsChipView(['1 kept', '1 picture'], false), summaryChipView(false)])
+    expect(await linesShow(IMAGE_NOTES_START)).toBe(false)
     // The first pill is a pill as every other one: same left edge, same
     // height, and no line is drawn at a wrong place.
     const boxes = await pillBoxes()
@@ -437,16 +496,19 @@ describe('a compacted conversation', () => {
     expect(new Set(boxes.heights).size).toBe(1)
     expect(await misplacedLines(browser)).toStrictEqual([])
 
-    // The first place of the caret is the start of the notes: text that
-    // the user types at the top of the doc goes there.
+    // The section has no text after the block, so the first place of the
+    // caret is the end of the block. Text that the user types there gets
+    // its own line after the block.
     await focusEditor(browser)
     await browser.keys([Key.Control, Key.Home])
-    expect(await editorCaret(browser)).toBe(notesStart)
+    expect(await editorCaret(browser)).toBe(blockEnd)
     await browser.keys([Key.ArrowUp])
     await browser.keys([Key.ArrowLeft])
-    expect(await editorCaret(browser)).toBe(notesStart)
+    expect(await editorCaret(browser)).toBe(blockEnd)
     await typeKeys(browser, 'So: ')
-    await waitForThread(browser, [{ role: 'agent', text: `${thread[0].text.slice(0, notesStart)}So: ${thread[0].text.slice(notesStart)}` }, ...thread.slice(1)])
+    await waitForThread(browser, [{ role: 'agent', text: `${thread[0].text}\nSo: ` }, ...thread.slice(1)])
+    expect(await linesShow('So:')).toBe(true)
+    expect(await toolChips(browser)).toStrictEqual([assetsChipView(['1 kept', '1 picture'], false), summaryChipView(false)])
     await browser.keys([Key.Control, 'z'])
     await waitForThread(browser, thread)
 
@@ -508,18 +570,48 @@ describe('a compacted conversation', () => {
     await waitForThread(browser, [...thread.slice(0, 2), { role: 'user', text: 'Go on.' }, { role: 'agent', text: replyText('Claude') }, { role: 'user', text: '' }])
   })
 
-  it('makes the first section a user section when its tag goes, and an undo brings the compaction section back', async () => {
-    const thread = await openCompacted('compacted-edit', [compactionSection(`${PLAIN_TAG}\nNotes of the work.`), textSection('user', 'The task.')])
+  // The tag of an older Dez ends with `/>`, and its notes run to the end of
+  // the section. Dez reads that form as it is: the file keeps it, and the
+  // request gets the message that the block form gives.
+  it('opens a conversation of the old form with the two chips, and sends the same first message', async () => {
+    const id = 'compacted-old-form'
+    const thread = await openCompacted(id, [compactionSection(`${OLD_TAG}\nNotes of the work.`), textSection('user', 'The task.'), textSection('user', '')])
+    await waitForValue(browser, 'pills', pills, [AGENT_PILL, userPill(1), userPill(2)])
+    expect(await firstSectionLook()).toStrictEqual(COMPACTED_LOOK)
+    expect(await toolChips(browser)).toStrictEqual([EMPTY_ASSETS_CHIP, summaryChipView(false)])
+    expect(await linesShow('Notes of the work.')).toBe(false)
+
+    await pressToolChip(browser, 1)
+    await waitForValue(browser, 'summary in the open panel', () => chipNotes('summary'), 'Notes of the work.')
+    expect(await toolChips(browser)).toStrictEqual([EMPTY_ASSETS_CHIP, summaryChipView(true)])
+
+    await submit(browser, 'Go on.')
+    const request = await takeRequest(setup, CHAT_PATH, openAiChatBody(PROVIDER, [
+      { role: 'user', content: `${COMPACTION_MESSAGE_INTRO}\n\nNotes of the work.${USER_MESSAGE_START}The task.${USER_MESSAGE_START}Go on.` },
+    ]))
+    await sendChatReply(request.reply, 'the old form')
+    await waitForThread(browser, [...thread.slice(0, 2), { role: 'user', text: 'Go on.' }, { role: 'agent', text: replyText('the old form') }, { role: 'user', text: '' }])
+    // The end of the stream makes a new editor state, which keeps the open
+    // panel.
+    await waitForValue(browser, 'chips after the reply', () => toolChips(browser), [EMPTY_ASSETS_CHIP, summaryChipView(true)])
+    expect(await chipNotes('summary')).toBe('Notes of the work.')
+    await waitForValue(browser, 'saved tag line', async () => (await savedLines(id))[3], OLD_TAG)
+  })
+
+  it('deletes the whole block with Backspace after it, which makes the first section a user section, and an undo brings the block back', async () => {
+    const block = compactionBlockText(PLAIN_DATA, 'Notes of the work.')
+    const thread = await openCompacted('compacted-edit', [compactionSection(`${block}\nMore of the work.`), textSection('user', 'The task.')])
     await waitForValue(browser, 'pills', pills, [AGENT_PILL, userPill(1)])
     const { firstTop } = await pillBoxes()
 
-    // Backspace at the start of the notes deletes the whole tag.
     await focusEditor(browser)
     await browser.keys([Key.Control, Key.Home])
+    expect(await editorCaret(browser)).toBe(block.length + 1)
     await browser.keys([Key.Backspace])
-    await waitForThread(browser, [{ role: 'user', text: 'Notes of the work.' }, thread[1]])
-    await waitForValue(browser, 'pills with no tag', pills, [userPill(1)])
+    await waitForThread(browser, [{ role: 'user', text: 'More of the work.' }, thread[1]])
+    await waitForValue(browser, 'pills with no block', pills, [userPill(1)])
     expect(await firstSectionLook()).toStrictEqual({ mark: null, userPill: true, tagText: false })
+    expect(await toolChips(browser)).toStrictEqual([])
     expect(await misplacedLines(browser)).toStrictEqual([])
     // The User pill is where the Agent pill was.
     const userPillTop = await browser.execute(() => {
@@ -527,14 +619,15 @@ describe('a compacted conversation', () => {
       return content ? Math.round(parseFloat(getComputedStyle(content, '::before').top)) : null
     })
     expect(userPillTop).toBe(firstTop)
-    await waitForValue(browser, 'saved pills with no tag', () => savedPillLines(setup.app.home, 'compacted-edit'), ['<dez:pill type="user"/>', '<dez:pill type="user"/>'])
+    await waitForValue(browser, 'saved pills with no block', () => savedPillLines(setup.app.home, 'compacted-edit'), ['<dez:pill type="user"/>', '<dez:pill type="user"/>'])
 
     await browser.keys([Key.Control, 'z'])
     await waitForThread(browser, thread)
     await waitForValue(browser, 'pills after the undo', pills, [AGENT_PILL, userPill(1)])
     expect(await firstSectionLook()).toStrictEqual(COMPACTED_LOOK)
+    expect(await toolChips(browser)).toStrictEqual([EMPTY_ASSETS_CHIP, summaryChipView(false)])
     expect(await misplacedLines(browser)).toStrictEqual([])
-    expect(await editorCaret(browser)).toBe(PLAIN_TAG.length + 1)
+    expect(await editorCaret(browser)).toBe(block.length + 1)
     await waitForValue(browser, 'saved pills after the undo', () => savedPillLines(setup.app.home, 'compacted-edit'), [
       `<dez:pill type="agent" model="${MODEL_KEY}" duration-ms="${REPLY_MS}"/>`,
       '<dez:pill type="user"/>',
@@ -551,37 +644,83 @@ describe('a compacted conversation', () => {
     await pasteImageReference(browser, KEPT_PNG, 'd')
   })
 
-  it('hides the assets that the compaction keeps, and its chip under the Agent pill shows them with the pictures of the tag', async () => {
+  it('shows the assets of the block and the kept assets only in the panel of the assets chip, with the pictures of the tag, and the notes in the panel of the summary chip', async () => {
     const thread = await openCompacted('compacted-kept-look', await keptConversation())
-    const notes = [keptNote('image @d'), keptNote('video clip @c'), keptNote('image @a')]
-    const counts = ['3 kept assets', '1 picture']
+    const counts = ['4 kept', '1 picture']
+    // The notes for people: each asset as its label, with no file path.
+    const summary = ['The user wants a film of a fox.', '[image]', 'The fox is red.', '[image]', 'The film of the fox:', '[video]', 'The fox sleeps.'].join('\n')
+    // Whether each player that the editor draws is in the panel of the
+    // assets chip.
+    const playersInPanel = async (): Promise<boolean[]> => browser.execute(() => Array.from(
+      document.querySelectorAll('.cm-content .media-player'),
+      (player) => player.closest('.dez-compaction-chip[data-part="assets"] .dez-tool-call__panel') !== null,
+    ))
 
-    await waitForValue(browser, 'shown images', () => shownImages(browser), [MADE_IMAGE, CARRIED_IMAGE])
+    // The image of the carried assets shows; the kept image of that
+    // section shows its note. The block shows no asset and no note.
+    await waitForValue(browser, 'shown images', () => shownImages(browser), [CARRIED_IMAGE])
     expect(await shownPlayers(browser)).toStrictEqual([])
-    expect(await hiddenAssetNotes(browser)).toStrictEqual(notes)
-    expect(await toolChips(browser)).toStrictEqual([compactionChipView(counts, false)])
+    expect(await hiddenAssetNotes(browser)).toStrictEqual([keptNote('image @a')])
+    expect(await toolChips(browser)).toStrictEqual([assetsChipView(counts, false), summaryChipView(false)])
     expect(await compactionChipCounts()).toStrictEqual(counts)
     expect(await toolPanelPictures(browser, 0)).toBeNull()
+    expect(await chipNotes('summary')).toBeNull()
     expect(await misplacedLines(browser)).toStrictEqual([])
 
-    // The panel shows the kept assets in doc order, then the picture. The
-    // chip is above the notes, so its images come first.
+    // The panel shows the assets of the block and the kept image of the
+    // carried assets in doc order, then the picture. The chip is above the
+    // carried assets, so its images come first.
     await pressToolChip(browser, 0)
-    await waitForValue(browser, 'open chip', () => toolChips(browser), [compactionChipView(counts, true)])
-    expect(await hiddenPart(browser, 0)).toStrictEqual({ heading: 'Kept assets', assets: 3, text: null })
-    await waitForValue(browser, 'images with the panel open', () => shownImages(browser), [KEPT_MADE_IMAGE, KEPT_USER_IMAGE, MADE_IMAGE, CARRIED_IMAGE])
+    await waitForValue(browser, 'open assets chip', () => toolChips(browser), [assetsChipView(counts, true), summaryChipView(false)])
+    // virtua draws the rows as it measures them: wait for the fourth.
+    await waitForValue(browser, 'kept assets part', () => hiddenPart(browser, 0), { heading: 'Kept assets', assets: 4, text: null })
+    await waitForValue(browser, 'images with the panel open', () => shownImages(browser), [MADE_IMAGE, KEPT_MADE_IMAGE, KEPT_USER_IMAGE, CARRIED_IMAGE])
     await waitForValue(browser, 'player with the panel open', () => shownPlayers(browser), [KEPT_CLIP_PLAYER])
+    expect(await playersInPanel()).toStrictEqual([true])
     await waitForValue(browser, 'picture with the panel open', () => toolPanelPictures(browser, 0), [{ label: SHEET.label, size: '64x16' }])
-    // A press keeps the caret where it was, so the notes stay out of view.
-    expect(await hiddenAssetNotes(browser)).toStrictEqual(notes)
+    // The notes have no part of the assets of the conversation.
+    expect(await chipNotes('assets')).toBeNull()
+    // A press keeps the caret where it was, so the note stays out of view.
+    expect(await hiddenAssetNotes(browser)).toStrictEqual([keptNote('image @a')])
+
+    await pressToolChip(browser, 1)
+    await waitForValue(browser, 'summary in the open panel', () => chipNotes('summary'), summary)
+    expect(await toolChips(browser)).toStrictEqual([assetsChipView(counts, true), summaryChipView(true)])
+    expect(await linesShow('The fox sleeps.')).toBe(false)
 
     await pressToolChip(browser, 0)
-    await waitForValue(browser, 'closed chip', () => toolChips(browser), [compactionChipView(counts, false)])
+    await pressToolChip(browser, 1)
+    await waitForValue(browser, 'closed chips', () => toolChips(browser), [assetsChipView(counts, false), summaryChipView(false)])
     expect(await hiddenPart(browser, 0)).toBeNull()
+    expect(await chipNotes('summary')).toBeNull()
     expect(await shownPlayers(browser)).toStrictEqual([])
-    expect(await shownImages(browser)).toStrictEqual([MADE_IMAGE, CARRIED_IMAGE])
+    expect(await shownImages(browser)).toStrictEqual([CARRIED_IMAGE])
     expect(await misplacedLines(browser)).toStrictEqual([])
     expect(await threadSections(browser)).toStrictEqual(thread)
+  })
+
+  // The notes of the assets of the conversation show in the panel of the
+  // assets chip, and every other part in the panel of the summary chip.
+  // Find matches only the text of the editor.
+  it('splits the notes between the two panels, and Find does not match them', async () => {
+    const notes = ['## Summary', 'The fox is done.', '', '## Assets of the conversation', '@c: a clip of the fox.', '', '## Next steps', 'Make a wolf.'].join('\n')
+    await openCompacted('compacted-notes-parts', [compactionSection(compactionBlockText(PLAIN_DATA, notes)), textSection('user', 'The fox sleeps.')])
+    await waitForValue(browser, 'chips', () => toolChips(browser), [assetsChipView(['0 kept'], false), summaryChipView(false)])
+
+    await pressToolChip(browser, 0)
+    await waitForValue(browser, 'assets notes', () => chipNotes('assets'), '@c: a clip of the fox.')
+    await pressToolChip(browser, 1)
+    await waitForValue(browser, 'summary', () => chipNotes('summary'), '## Summary\nThe fox is done.\n\n## Next steps\nMake a wolf.')
+
+    // "fox" is in the notes three times, and once in the user message.
+    await focusEditor(browser)
+    await browser.keys([Key.Control, 'f'])
+    await waitFor(browser, FIND_FIELD, 10_000)
+    await typeInto(browser, FIND_FIELD, 'fox', { clear: true })
+    await waitForValue(browser, 'find status', async () => browser.execute(() => document.querySelector('.find-status')?.textContent?.trim() ?? ''), '1 of 1')
+    expect(await browser.execute(() => Array.from(document.querySelectorAll('.dez-find-match'), (match) => match.textContent ?? ''))).toStrictEqual(['fox'])
+    await browser.keys([Key.Escape])
+    await waitForValue(browser, 'find closed', async () => browser.execute(() => document.querySelector('.find-dropdown') !== null), false)
   })
 
   it('sends a kept image as its text only, and a mention of the user sends the image right after the mention', async () => {
@@ -609,28 +748,30 @@ describe('a compacted conversation', () => {
     await waitForThread(browser, [...mentioned.slice(0, 4), { role: 'user', text: 'Show me @d and @a.' }, { role: 'agent', text: replyText('the mention') }, { role: 'user', text: '' }])
   })
 
-  // Only the compaction section and the section of the carried assets of
-  // the user hide what the compaction keeps. A user can copy a kept line
-  // into a later message, and there it is an image as every other one.
+  // Only the compaction block and the section of the carried assets of the
+  // user hide what the compaction keeps. A user can copy a kept line into
+  // a later message, and there it is an image as every other one.
   it('shows a kept image at its place in a user message after a reply', async () => {
     const kept = await writeTestFile(appFilePath(setup.app.home, 'assets', 'images', 'compaction-kept.png'), KEPT_PNG)
     const reference = `![${kept}](id=a|kept=compaction)`
     await openCompacted('compacted-kept-later', [
-      compactionSection(`${PLAIN_TAG}\nThe user sent a fox.\n${reference}\nIt is red.`),
+      compactionSection(compactionBlockText(PLAIN_DATA, `The user sent a fox.\n${reference}\nIt is red.`)),
       textSection('user', 'Make a film of the fox.'),
       textSection('agent', 'Which fox?'),
       textSection('user', `This one:\n${reference}`),
     ])
 
     await waitForValue(browser, 'shown images', () => shownImages(browser), [KEPT_USER_IMAGE])
-    expect(await hiddenAssetNotes(browser)).toStrictEqual([keptNote('image @a')])
-    expect(await toolChips(browser)).toStrictEqual([compactionChipView(['1 kept asset'], false)])
+    expect(await hiddenAssetNotes(browser)).toStrictEqual([])
+    expect(await toolChips(browser)).toStrictEqual([assetsChipView(['1 kept'], false), summaryChipView(false)])
   })
 
-  // A linked file plays only in a user section. Backspace at the start of
-  // the carried assets of the user joins them to the compaction section,
-  // an agent section, so the open panel shows the kept linked clip as a
-  // clip that does not play; an undo makes it play again.
+  // A linked file plays only in a user section. The tag of the compaction
+  // section has no end line, so its block runs to the end of the section.
+  // Backspace at the start of the carried assets of the user joins them to
+  // the compaction section, so they are in the block of an agent section:
+  // the open panel shows the kept linked clip as a clip that does not play.
+  // An undo makes it play again.
   it('plays a kept linked clip in the open panel only while its section is a user section', async () => {
     const linked = await writeTestFile(path.join(linkedDir, 'compaction-linked.webm'), WEBM_VIDEO)
     const notes = `${PLAIN_TAG}\nThe user sent a film.`
@@ -640,12 +781,15 @@ describe('a compacted conversation', () => {
     await pressToolChip(browser, 0)
     await waitForValue(browser, 'player of the user section', () => shownPlayers(browser), [KEPT_CLIP_PLAYER])
 
+    // The join keeps a line break after the block, as after every line
+    // block.
     await focusEditor(browser)
     await setCaret(browser, await docPos(browser, CARRIED_USER_ASSETS_LABEL))
     await browser.keys([Key.Backspace])
-    await waitForThread(browser, [{ role: 'agent', text: `${notes}${carried}` }, thread[2]])
-    expect(await hiddenAssetNotes(browser)).toStrictEqual([keptNote('video clip @c')])
+    await waitForThread(browser, [{ role: 'agent', text: `${notes}\n${carried}` }, thread[2]])
+    expect(await hiddenAssetNotes(browser)).toStrictEqual([])
     await waitForValue(browser, 'card of the agent section', () => problemCards(browser), [{ cause: 'gone', lines: ['This clip is no longer available.'] }])
+    expect(await linesShow(CARRIED_USER_ASSETS_LABEL)).toBe(false)
 
     await browser.keys([Key.Control, 'z'])
     await waitForThread(browser, thread)
@@ -668,7 +812,7 @@ describe('a compacted conversation', () => {
       : `<dez:video id="${id}" type="video/webm" src="${webm}" kept="compaction"/>`)
     const notes = [compactionTagText({ count: 1, lastId: last, pictures: [] }), 'The user made many clips.', ...tags].join('\n')
     const thread = await openCompacted('compacted-many-clips', [compactionSection(notes), textSection('user', 'Ask.'), textSection('user', '')])
-    expect(await compactionChipCounts()).toStrictEqual(['130 kept assets'])
+    expect(await compactionChipCounts()).toStrictEqual(['130 kept'])
 
     // The ids of the drawn players, true when each one has its clip.
     const drawnClips = async (): Promise<{ ids: string[], loaded: boolean }> => {
@@ -734,6 +878,54 @@ describe('a compacted conversation', () => {
     expect(await threadSections(browser)).toStrictEqual(thread)
   })
 
+  // The trash of an image and the Save of a clip work in the panel of the
+  // assets chip as at their own place, and change the text of the block.
+  it('saves a clip and trashes an image in the panel of the assets chip, and the counts follow', async () => {
+    const { home } = setup.app
+    const imagesDir = appFilePath(home, 'assets', 'generated', 'images')
+    const videoDir = appFilePath(home, 'assets', 'generated', 'video')
+    // The image is narrower than its toolbar, which hangs into the row of
+    // the clip; the toolbar must still take the pointer there.
+    const image = await writeTestFile(path.join(imagesDir, 'compaction-trash.png'), MADE_PNG)
+    const clip = await tempClipTag(home, 'video', 'b', 'compaction-save.mp4', MP4_VIDEO)
+    const notes = ['The fox:', `![${image}](id=a)`, 'The film of the fox:', clip, 'The end.'].join('\n')
+    await openCompacted('compacted-panel-actions', [compactionSection(compactionBlockText({ count: 1, lastId: 'b', pictures: [] }, notes)), textSection('user', '')])
+    await waitForValue(browser, 'counts', compactionChipCounts, ['2 kept'])
+    // The player of the temp copy, loaded: a click before the video has its
+    // size can land on another control, as the player grows.
+    const unsaved: ShownPlayer = { ...KEPT_CLIP_PLAYER, id: 'b', clock: 'Not saved', save: 'save' }
+    const blockText = async (): Promise<string> => (await threadSections(browser))[0].text
+
+    await pressToolChip(browser, 0)
+    await waitForValue(browser, 'player in the panel', () => shownPlayers(browser), [unsaved])
+    await waitForValue(browser, 'image in the panel', () => shownImages(browser), [{ alt: 'compaction-trash.png', width: 30, height: 20 }])
+
+    // Save moves the temp copy into the folder of the saved clips, and the
+    // tag in the block gets that file, with no end time.
+    const videosBefore = await filesIn(videoDir)
+    await pointerClick(browser, '.cm-content .media-player__save')
+    const saved = path.join(videoDir, await newFileIn(browser, videoDir, videosBefore))
+    await waitForValue(browser, 'saved tag in the block', async () => (await blockText()).includes(clipTag('video', { id: 'b', type: 'video/mp4', src: saved })), true)
+    await waitForValue(browser, 'saved player', () => shownPlayers(browser), [{ ...unsaved, clock: null, save: 'saved' }])
+    expect(await compactionChipCounts()).toStrictEqual(['2 kept'])
+
+    // The trash asks first, then deletes the file and the reference.
+    await movePointer(browser, await assetPartPoint(browser, '.dez-image', 0, '.dez-image__img'))
+    await pointerClickAt(browser, await assetPartPoint(browser, '.dez-image', 0, '.dez-image__trash'))
+    await waitForValue(browser, 'delete prompt', async () => await promptMessage(browser) !== null, true)
+    await pointerClick(browser, '.confirm-btn--confirm')
+    await waitForValue(browser, 'block after the trash', async () => (await blockText()).includes('](id=a)'), false)
+    await waitForValue(browser, 'counts after the trash', compactionChipCounts, ['1 kept'])
+    expect(await filesIn(imagesDir)).not.toContain('compaction-trash.png')
+    expect(await hiddenPart(browser, 0)).toStrictEqual({ heading: 'Kept assets', assets: 1, text: null })
+    expect(await shownImages(browser)).toStrictEqual([])
+    expect(await shownPlayers(browser)).toStrictEqual([{ ...unsaved, clock: null, save: 'saved' }])
+    // The block keeps its end line.
+    const text = await blockText()
+    expect(readCompactionBlock(text)).toMatchObject({ count: 1, textFrom: text.length })
+    expect(text.endsWith(`\n${COMPACTION_END_LINE}`)).toBe(true)
+  })
+
   it('compacts the conversation between two rounds of a reply, and the reply goes on from the notes', async () => {
     await newTab(browser)
     await pickModel(browser, PROVIDER.name, PROVIDER.modelName)
@@ -760,14 +952,21 @@ describe('a compacted conversation', () => {
     const second = await takeRequest(setup, CHAT_PATH)
     expect(JSON.parse(second.body)).toStrictEqual(openAiChatBody(PROVIDER, [await notesMessage(question)]))
     const [notes, ...rest] = await threadSections(browser)
-    expect(readCompactionTag(notes.text)?.count).toBe(1)
+    expect(readCompactionBlock(notes.text)?.count).toBe(1)
     expect(notes.text).toContain(NOTES_SUMMARY)
+    // A new compaction writes the block form: the notes end at the end line.
+    expect(notes.text.endsWith(`\n${COMPACTION_END_LINE}`)).toBe(true)
     expect(rest).toStrictEqual([{ role: 'user', text: question }, { role: 'agent', text: '' }])
-    // The editor shows the new sections.
+    // The editor shows the new sections, with the two chips closed.
     await waitForValue(browser, 'pills after the compaction', pillRoles, [{ index: 0, role: 'agent' }, { index: 1, role: 'user' }, { index: 2, role: 'agent' }])
     expect(await firstSectionLook()).toStrictEqual(COMPACTED_LOOK)
+    expect(await chipStates()).toStrictEqual([{ name: 'Compaction 1 assets', open: false }, { name: 'Compaction 1 summary', open: false }])
+    expect(await linesShow(NOTES_SUMMARY)).toBe(false)
     expect(await showsCompacting()).toBe(false)
     expect(await activeTabStreaming(browser)).toBe(true)
+    // The open summary panel shows the notes of the new compaction.
+    await pressToolChip(browser, 1)
+    await waitForValue(browser, 'summary in the open panel', async () => (await chipNotes('summary'))?.includes(NOTES_SUMMARY) ?? false, true)
 
     // The view still follows the reply: an answer that is taller than the
     // editor keeps the view at its bottom.
@@ -784,6 +983,13 @@ describe('a compacted conversation', () => {
     second.reply.end('data: [DONE]\n\n')
     await waitForThread(browser, [notes, { role: 'user', text: question }, { role: 'agent', text: answer }, { role: 'user', text: '' }])
     expect(await misplacedLines(browser)).toStrictEqual([])
+    // The end of the reply makes a new editor state, which keeps the open
+    // panel. The editor draws no chip far out of view, so scroll up first.
+    await browser.execute(() => {
+      const scroller = document.querySelector('.cm-scroller')
+      if (scroller) scroller.scrollTop = 0
+    })
+    await waitForValue(browser, 'chips after the reply', chipStates, [{ name: 'Compaction 1 assets', open: false }, { name: 'Compaction 1 summary', open: true }])
   })
 
   it('compacts a conversation that is too large before the first request of a new reply', async () => {
@@ -806,7 +1012,7 @@ describe('a compacted conversation', () => {
     expect(JSON.parse(request.body)).toStrictEqual(openAiChatBody(PROVIDER, [await notesMessage(thread[0].text, 'Go on.')]))
     await sendChatReply(request.reply, 'the reader of the notes')
     const [notes] = await threadSections(browser)
-    expect(readCompactionTag(notes.text)?.count).toBe(1)
+    expect(readCompactionBlock(notes.text)?.count).toBe(1)
     expect(notes.text).toContain(NOTES_SUMMARY)
     await waitForThread(browser, [notes, thread[0], { role: 'user', text: 'Go on.' }, { role: 'agent', text: replyText('the reader of the notes') }, { role: 'user', text: '' }])
     await waitForValue(browser, 'pills after the reply', pillRoles, [
@@ -907,9 +1113,9 @@ describe('a compacted conversation', () => {
 
     // The second compaction left both images out of the conversation.
     const [newNotes] = await threadSections(browser)
-    expect(readCompactionTag(newNotes.text)).toMatchObject({ count: 2, dropped: 2, pictures: [] })
+    expect(readCompactionBlock(newNotes.text)).toMatchObject({ count: 2, dropped: 2, pictures: [] })
     expect([draft, seen].filter((file) => newNotes.text.includes(file))).toStrictEqual([])
-    expect(await compactionChipCounts()).toStrictEqual(['2 dropped'])
+    expect(await compactionChipCounts()).toStrictEqual(['0 kept', '2 dropped'])
     await waitForThread(browser, [newNotes, thread[1], { role: 'user', text: 'Now a wolf.' }, { role: 'agent', text: replyText('the wolf') }, { role: 'user', text: '' }])
 
     await waitForValue(browser, 'files of the two dropped images', async () => (await filesIn(imagesDir)).filter((name) => name === names.draft || name === names.seen), [names.seen])
@@ -942,7 +1148,7 @@ describe('a compacted conversation', () => {
     await sendChatReply(request.reply, 'the wolf')
 
     const [notes, first, carried] = await threadSections(browser)
-    expect(readCompactionTag(notes.text)).toMatchObject({ count: 1, dropped: 1 })
+    expect(readCompactionBlock(notes.text)).toMatchObject({ count: 1, dropped: 1 })
     expect([keptFile, goneFile].filter((file) => notes.text.includes(file))).toStrictEqual([keptFile])
     expect(first).toStrictEqual(thread[0])
     expect(carried.text.split('\n')).toStrictEqual([CARRIED_USER_ASSETS_LABEL, `![${photo}](id=c|kept=compaction)`])
@@ -952,8 +1158,8 @@ describe('a compacted conversation', () => {
       const scroller = document.querySelector('.cm-scroller')
       if (scroller) scroller.scrollTop = 0
     })
-    await waitForValue(browser, 'compaction chip', () => toolChips(browser), [compactionChipView(['2 kept assets', '1 dropped'], false)])
-    expect(await compactionChipCounts()).toStrictEqual(['2 kept assets', '1 dropped'])
+    await waitForValue(browser, 'compaction chips', () => toolChips(browser), [assetsChipView(['2 kept', '1 dropped'], false), summaryChipView(false)])
+    expect(await compactionChipCounts()).toStrictEqual(['2 kept', '1 dropped'])
     // The user saw the dropped image in the reply, so its file stays until
     // Delete Unused Files.
     expect((await filesIn(madeDir)).filter((name) => name === names.kept || name === names.gone)).toStrictEqual([names.gone, names.kept])
@@ -982,6 +1188,7 @@ describe('a compacted conversation', () => {
       userPill(6),
     ])
     expect(await firstSectionLook()).toStrictEqual(COMPACTED_LOOK)
+    expect(await toolChips(browser)).toStrictEqual([assetsChipView(['1 kept', '1 picture'], false), summaryChipView(false)])
 
     await submit(browser, 'And now?')
     const request = await takeRequest(setup, CHAT_PATH, openAiChatBody(PROVIDER, [

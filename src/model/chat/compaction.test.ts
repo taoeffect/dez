@@ -2,17 +2,20 @@ import { describe, expect, it } from 'vitest'
 import { reply, user } from '../streams/testing'
 import {
   CARRIED_USER_ASSETS_LABEL,
+  COMPACTION_END_LINE,
+  compactionBlockLineCount,
+  compactionBlockText,
   compactionMessageEnd,
   compactionTagText,
-  contentCompactionTag,
+  contentCompactionBlock,
   firstSectionRole,
   isCarriedUserAssets,
-  readCompactionTag,
-  sectionCompactionTag,
-  withoutCompactionTag,
+  readCompactionBlock,
+  sectionCompactionBlock,
 } from './compaction'
 import { promptNode, textNode } from './content'
 import type { ShownPicture } from './shownPictures'
+import { escapedModelText } from './toolBlocks'
 import type { Section } from './types'
 
 const PICTURES: ShownPicture[] = [
@@ -24,27 +27,32 @@ function section(role: Section['role'], ...content: Section['content']): Section
   return { id: 's', role, content }
 }
 
-describe('compactionTagText and readCompactionTag', () => {
-  it('reads back what the writer wrote, with the text after the tag line', () => {
+describe('compactionBlockText and readCompactionBlock', () => {
+  it('reads back what the writer wrote, with the text after the block', () => {
     const tag = compactionTagText({ count: 12, lastId: 'ab', dropped: 7, pictures: PICTURES })
-    const text = `${tag}\nSummary`
+    const block = compactionBlockText({ count: 12, lastId: 'ab', dropped: 7, pictures: PICTURES }, '## Summary\n\nThe fox.')
+    const text = `${block}\nTyped after it.`
 
     expect(tag).not.toContain('\n')
-    expect(readCompactionTag(text)).toEqual({ count: 12, lastId: 'ab', dropped: 7, pictures: PICTURES, to: tag.length, textFrom: tag.length + 1 })
-    expect(text.slice(tag.length + 1)).toBe('Summary')
+    expect(block).toBe(`${tag}\n## Summary\n\nThe fox.\n${COMPACTION_END_LINE}`)
+    expect(readCompactionBlock(text)).toEqual({
+      count: 12, lastId: 'ab', dropped: 7, pictures: PICTURES, notesFrom: tag.length + 1, notes: '## Summary\n\nThe fox.', to: block.length, textFrom: block.length + 1,
+    })
+    expect(text.slice(block.length + 1)).toBe('Typed after it.')
   })
 
-  it('writes only the attributes that have a value', () => {
-    expect(compactionTagText({ count: 1, lastId: null, pictures: [] })).toBe('<dez:compaction count="1"/>')
-    expect(readCompactionTag('<dez:compaction count="1"/>')).toEqual({ count: 1, lastId: null, pictures: [], to: 27, textFrom: 27 })
-    expect(readCompactionTag('<dez:compaction count="1"/>')).not.toHaveProperty('dropped')
+  it('writes only the attributes that have a value, and a block with no notes as two lines', () => {
+    const block = compactionBlockText({ count: 1, lastId: null, pictures: [] }, '')
+
+    expect(block).toBe(`<dez:compaction count="1">\n${COMPACTION_END_LINE}`)
+    expect(readCompactionBlock(block)).toEqual({ count: 1, lastId: null, pictures: [], notesFrom: 27, notes: '', to: block.length, textFrom: block.length })
   })
 
   it('writes and reads a count of 0 dropped assets', () => {
     const tag = compactionTagText({ count: 1, lastId: null, dropped: 0, pictures: [] })
 
-    expect(tag).toBe('<dez:compaction count="1" dropped="0"/>')
-    expect(readCompactionTag(tag)).toMatchObject({ count: 1, dropped: 0 })
+    expect(tag).toBe('<dez:compaction count="1" dropped="0">')
+    expect(readCompactionBlock(tag)).toMatchObject({ count: 1, dropped: 0 })
   })
 
   it.each([
@@ -55,93 +63,131 @@ describe('compactionTagText and readCompactionTag', () => {
     ['a word', 'some'],
     ['an empty value', ''],
   ])('reads %s of dropped assets as not known, and keeps the tag', (_what, value) => {
-    const tag = readCompactionTag(`<dez:compaction count="2" last-id="c" dropped="${value}"/>\nText`)
+    const block = readCompactionBlock(`<dez:compaction count="2" last-id="c" dropped="${value}">\nText\n${COMPACTION_END_LINE}`)
 
-    expect(tag).toMatchObject({ count: 2, lastId: 'c' })
-    expect(tag).not.toHaveProperty('dropped')
+    expect(block).toMatchObject({ count: 2, lastId: 'c', notes: 'Text' })
+    expect(block).not.toHaveProperty('dropped')
   })
 
   it('keeps live sentinels out of the tag, so it stays one line of one section in the editor doc', () => {
     const tag = compactionTagText({ count: 1, lastId: null, pictures: [{ file: 'a.png', label: 'One\u001Etwo\uE000' }] })
 
     expect(tag).not.toMatch(/[\u001E\uE000-\uE003]/)
-    expect(readCompactionTag(tag)).toMatchObject({ count: 1, to: tag.length })
+    expect(readCompactionBlock(tag)).toMatchObject({ count: 1, to: tag.length })
   })
 
   it.each([
-    ['no count', '<dez:compaction last-id="a"/>'],
-    ['a count of 0', '<dez:compaction count="0"/>'],
-    ['a count with a leading 0', '<dez:compaction count="01"/>'],
+    ['no count', '<dez:compaction last-id="a">'],
+    ['a count of 0', '<dez:compaction count="0">'],
+    ['a count with a leading 0', '<dez:compaction count="01">'],
     ['a count that is no whole number', '<dez:compaction count="1.5"/>'],
-    ['a count that is too large', '<dez:compaction count="9007199254740993"/>'],
-    ['a last id that is no id', '<dez:compaction count="1" last-id="A1"/>'],
-    ['text after the tag on its line', '<dez:compaction count="1"/> Summary'],
-    ['text before the tag', ' <dez:compaction count="1"/>'],
-    ['a tag that is not closed', '<dez:compaction count="1">'],
-    ['another tag name', '<dez:compactions count="1"/>'],
-    ['a tag on the second line', 'Summary\n<dez:compaction count="1"/>'],
+    ['a count that is too large', '<dez:compaction count="9007199254740993">'],
+    ['a last id that is no id', '<dez:compaction count="1" last-id="A1">'],
+    ['text after the tag on its line', '<dez:compaction count="1"> Summary'],
+    ['text before the tag', ' <dez:compaction count="1">'],
+    ['a tag with no end', '<dez:compaction count="1"'],
+    ['another tag name', '<dez:compactions count="1">'],
+    ['a tag on the second line', 'Summary\n<dez:compaction count="1">'],
   ])('takes %s as plain text', (_what, text) => {
-    expect(readCompactionTag(text)).toBeNull()
-    expect(withoutCompactionTag(text, 0, 'agent')).toBe(text)
+    expect(readCompactionBlock(text)).toBeNull()
   })
 
   it('reads a tag with pictures that are not valid as a tag with none', () => {
-    expect(readCompactionTag('<dez:compaction count="3" last-id="" pictures="[{&quot;file&quot;:&quot;../keys.json&quot;,&quot;label&quot;:&quot;x&quot;}]"/>\nText'))
+    expect(readCompactionBlock('<dez:compaction count="3" last-id="" pictures="[{&quot;file&quot;:&quot;../keys.json&quot;,&quot;label&quot;:&quot;x&quot;}]">\nText'))
       .toMatchObject({ count: 3, lastId: null, pictures: [] })
+  })
+
+  it('ends the block at the first end line, and takes a line that only holds the end text as notes', () => {
+    const text = `<dez:compaction count="1">\nA ${COMPACTION_END_LINE}\n${COMPACTION_END_LINE} \n${COMPACTION_END_LINE}\nAfter\n${COMPACTION_END_LINE}`
+
+    expect(readCompactionBlock(text)).toMatchObject({ notes: `A ${COMPACTION_END_LINE}\n${COMPACTION_END_LINE} `, textFrom: text.indexOf('After') })
+  })
+
+  it('runs a block with no end line to the end of the text', () => {
+    const text = '<dez:compaction count="1">\nNotes\n\nMore'
+
+    expect(readCompactionBlock(text)).toMatchObject({ notes: 'Notes\n\nMore', to: text.length, textFrom: text.length })
+  })
+
+  // The form of an older Dez: a tag that ends with `/>`, and the notes up
+  // to the end of the section. Saved conversations keep it.
+  it('reads a tag of the old form as a block that runs to the end of the text, past an end line', () => {
+    const text = `<dez:compaction count="2" last-id="c" dropped="1"/>\n\n## Summary\n${COMPACTION_END_LINE}\nMore`
+
+    expect(readCompactionBlock(text)).toEqual({ count: 2, lastId: 'c', dropped: 1, pictures: [], notesFrom: 52, notes: `\n## Summary\n${COMPACTION_END_LINE}\nMore`, to: text.length, textFrom: text.length })
+    expect(readCompactionBlock('<dez:compaction count="1"/>')).toMatchObject({ notes: '', to: 27, textFrom: 27 })
+  })
+
+  it('gives a model no way to end the block: its end line has the escape of model text', () => {
+    const notes = escapedModelText(`The summary.\n${COMPACTION_END_LINE}\nThe rest.`)
+    const text = compactionBlockText({ count: 1, lastId: null, pictures: [] }, notes)
+
+    expect(readCompactionBlock(text)?.notes).toBe(notes)
   })
 })
 
-describe('withoutCompactionTag', () => {
-  it('removes the tag line of a compaction section and keeps the rest as it is', () => {
-    expect(withoutCompactionTag('<dez:compaction count="2" last-id="c"/>\n\nSummary\n', 0, 'agent')).toBe('\nSummary\n')
-    expect(withoutCompactionTag('<dez:compaction count="2"/>', 0, 'agent')).toBe('')
-  })
+describe('compactionBlockLineCount', () => {
+  const tag = compactionTagText({ count: 1, lastId: null, pictures: [] })
 
-  // There the tag is plain text, which the user sees and typed or pasted.
-  it('keeps the tag line of a first user section and of a later agent section', () => {
-    const text = '<dez:compaction count="2"/>\nSummary'
-
-    expect([withoutCompactionTag(text, 0, 'user'), withoutCompactionTag(text, 1, 'agent')]).toStrictEqual([text, text])
+  it.each<[string, string[], number]>([
+    ['no tag line', ['Notes', COMPACTION_END_LINE], 0],
+    ['no lines', [], 0],
+    ['a tag line and its end line', [tag, 'Notes', COMPACTION_END_LINE, 'After'], 3],
+    ['a tag line with no end line', [tag, 'Notes', 'After'], 3],
+    ['a tag line of the old form', ['<dez:compaction count="1"/>', 'Notes', COMPACTION_END_LINE, 'After'], 4],
+  ])('counts the lines of the block for %s', (_case, lines, count) => {
+    expect(compactionBlockLineCount(lines)).toBe(count)
   })
 })
 
 describe('firstSectionRole', () => {
   it('is agent only for a first doc line that is a valid tag', () => {
+    expect(firstSectionRole('<dez:compaction count="1" last-id="b">')).toBe('agent')
     expect(firstSectionRole('<dez:compaction count="1" last-id="b"/>')).toBe('agent')
-    expect(firstSectionRole('<dez:compaction count="0"/>')).toBe('user')
+    expect(firstSectionRole('<dez:compaction count="0">')).toBe('user')
     expect(firstSectionRole('Hello')).toBe('user')
     expect(firstSectionRole('')).toBe('user')
     // A prompt pill on the line of the tag.
-    expect(firstSectionRole('<dez:compaction count="1"/>\uE000p1\uE001Body\uE002')).toBe('user')
+    expect(firstSectionRole('<dez:compaction count="1">\uE000p1\uE001Body\uE002')).toBe('user')
   })
 
   it('reads only the first line of a whole doc', () => {
-    expect(firstSectionRole('<dez:compaction count="1"/>\nNotes\n\u001E\nHello')).toBe('agent')
-    expect(firstSectionRole('Hello\n<dez:compaction count="1"/>')).toBe('user')
+    expect(firstSectionRole(`<dez:compaction count="1">\nNotes\n${COMPACTION_END_LINE}\n\u001E\nHello`)).toBe('agent')
+    expect(firstSectionRole('Hello\n<dez:compaction count="1">')).toBe('user')
   })
 })
 
-describe('contentCompactionTag and sectionCompactionTag', () => {
-  const tag = '<dez:compaction count="1"/>'
+describe('contentCompactionBlock and sectionCompactionBlock', () => {
+  const tag = '<dez:compaction count="1">'
 
   it('finds the tag only at the start of the first text node', () => {
-    expect(contentCompactionTag([textNode(`${tag}\nSummary`)])).toMatchObject({ count: 1 })
-    expect(contentCompactionTag([textNode(tag)])).toMatchObject({ count: 1 })
-    expect(contentCompactionTag([textNode(''), promptNode({ promptId: null, name: 'P', body: `${tag}\nSummary` }), textNode('')])).toBeNull()
-    expect(contentCompactionTag([])).toBeNull()
+    expect(contentCompactionBlock([textNode(`${tag}\nSummary\n${COMPACTION_END_LINE}`)])).toMatchObject({ count: 1, notes: 'Summary' })
+    expect(contentCompactionBlock([textNode(tag)])).toMatchObject({ count: 1 })
+    expect(contentCompactionBlock([textNode(''), promptNode({ promptId: null, name: 'P', body: `${tag}\nSummary` }), textNode('')])).toBeNull()
+    expect(contentCompactionBlock([])).toBeNull()
   })
 
   it('follows the editor doc: a prompt pill on the line of the tag makes it no tag', () => {
     const pill = promptNode({ promptId: null, name: 'P', body: 'Body' })
 
-    expect(contentCompactionTag([textNode(tag), pill, textNode('')])).toBeNull()
-    expect(contentCompactionTag([textNode(`${tag}\n`), pill, textNode('')])).toMatchObject({ count: 1 })
+    expect(contentCompactionBlock([textNode(tag), pill, textNode('')])).toBeNull()
+    expect(contentCompactionBlock([textNode(`${tag}\n`), pill, textNode('')])).toMatchObject({ count: 1 })
+  })
+
+  // A block with no end line runs to the end of the section in the editor
+  // doc, past a prompt pill.
+  it('reads the block in the plain text of the content, with the bodies of prompt pills', () => {
+    const pill = promptNode({ promptId: null, name: 'P', body: 'Body' })
+
+    expect(contentCompactionBlock([textNode('<dez:compaction count="1"/>\nNotes '), pill, textNode('\nMore')])).toMatchObject({ notes: 'Notes Body\nMore' })
   })
 
   it('takes only an agent section as a compaction section', () => {
-    expect(sectionCompactionTag(section('agent', textNode(`${tag}\nSummary`)))).toMatchObject({ count: 1, textFrom: tag.length + 1 })
-    expect(sectionCompactionTag(section('user', textNode(`${tag}\nSummary`)))).toBeNull()
-    expect(sectionCompactionTag(section('agent', textNode('Summary')))).toBeNull()
+    const text = `${tag}\nSummary\n${COMPACTION_END_LINE}\nAfter`
+
+    expect(sectionCompactionBlock(section('agent', textNode(text)))).toMatchObject({ count: 1, notes: 'Summary', textFrom: text.indexOf('After') })
+    expect(sectionCompactionBlock(section('user', textNode(text)))).toBeNull()
+    expect(sectionCompactionBlock(section('agent', textNode('Summary')))).toBeNull()
   })
 })
 
@@ -155,13 +201,13 @@ describe('isCarriedUserAssets', () => {
 })
 
 describe('compactionMessageEnd', () => {
-  const tag = compactionTagText({ count: 1, lastId: 'b', pictures: [] })
-  const compacted = reply('c', `${tag}\n## Summary\n\nNotes.`)
+  const block = compactionBlockText({ count: 1, lastId: 'b', pictures: [] }, '## Summary\n\nNotes.')
+  const compacted = reply('c', block)
 
   it('is 0 for a conversation with no compaction section', () => {
     expect(compactionMessageEnd([])).toBe(0)
     expect(compactionMessageEnd([user('u1', 'Hi'), reply('a1', 'Hello')])).toBe(0)
-    expect(compactionMessageEnd([user('u1', `${tag}\nNotes.`), reply('a1', 'Hello')])).toBe(0)
+    expect(compactionMessageEnd([user('u1', block), reply('a1', 'Hello')])).toBe(0)
   })
 
   it('ends at the first later agent section that is not empty, past an empty one', () => {

@@ -1,7 +1,7 @@
 import type { FoundAsset } from '../streams/mediaRequest'
 import { JOBS_WAIT_TOOL, jobsWaitResults, madeAssetIds, startedJob } from '../tools/jobs'
 import { callLabel } from '../tools/registry'
-import { compactionMessageEnd, sectionCompactionTag } from './compaction'
+import { compactionMessageEnd, sectionCompactionBlock } from './compaction'
 import { notesAssetLines, notesJobLines, type NotesAssetLine, type NotesJobLine } from './compactionNotes'
 import { sectionPlainText } from './content'
 import { findHiddenAssets, findKeptAssets } from './hiddenAssets'
@@ -40,7 +40,7 @@ export type AssetOrigin =
 
 /** Who made an image or a clip, and whether the editor hides it. A hidden
  *  one shows only in a panel: the one of the chip of its call
- *  (`findHiddenAssets`), or the one of the compaction chip
+ *  (`findHiddenAssets`), or the one of the assets chip of a compaction
  *  (`findKeptAssets`). */
 export interface AssetPlace {
   origin: AssetOrigin
@@ -114,8 +114,9 @@ const NO_JOB_LINES: ReadonlyMap<string, NotesJobLine> = new Map()
  *  reply after the compaction message read them: a job id is unique in
  *  its reply only. */
 export function assetPlaces(sections: readonly Section[], assets: readonly FoundAsset[]): AssetPlace[] {
-  const compacted = sections.length > 0 && sectionCompactionTag(sections[0]) !== null
-  const notes = compacted ? sectionPlainText(sections[0]) : ''
+  const block = sections.length > 0 ? sectionCompactionBlock(sections[0]) : null
+  const compacted = block !== null
+  const notes = block?.notes ?? ''
   const carriedReply = compacted ? compactionMessageEnd(sections) : -1
   // Each of these reads whole texts, so only an asset that needs one asks
   // for it, and each is read once for all assets.

@@ -1,12 +1,13 @@
 import { StateField, type EditorState, type Extension, type Line, type Text } from '@codemirror/state'
 import { WidgetType, type EditorView } from '@codemirror/view'
-import { firstSectionRole } from '../../model/chat/compaction'
+import { COMPACTION_END_LINE } from '../../model/chat/compaction'
 import { SENTINEL_CHAR } from '../../model/chat/content'
 import { findHiddenAssets, findKeptAssets, type HiddenAsset, type HiddenAssetOwner } from '../../model/chat/hiddenAssets'
 import { IMAGE_HIDDEN_KEY, IMAGE_KEPT_KEY } from '../../model/chat/images'
 import { MEDIA_HIDDEN_ATTRIBUTE, MEDIA_KEPT_ATTRIBUTE } from '../../model/chat/mediaTags'
 import { ASSET_NAMES, type JobAssetKind } from '../../model/tools/jobs'
 import { SECTION_SEP, sectionsField } from '../thread/cmEditor'
+import { compactionBlockEnd } from './compactionBlock'
 import { chipBlocks, sectionRolesChanged, sectionTexts } from './lineBlocks'
 import type { DocRange } from './pendingRanges'
 import { ROUND_STROKE, svgIcon } from './svgIcon'
@@ -16,12 +17,16 @@ import { tableRowStarts } from './tables'
 // which assets of the doc a chip hides now, the lines that go out of view
 // with them, and what shows at the place of such an asset. The asset itself
 // shows in the panel of its chip: the chip of a tool call (toolCalls.ts),
-// or the compaction chip for a kept asset (compactionChip.ts).
+// or the assets chip of a compaction (compactionChip.ts) for each asset of
+// the compaction block and each kept asset of the carried assets of the
+// user.
 //
 // The text of a hidden asset stays where it is, and the editor still knows
 // it as an image or a clip (`renderedImages`, `renderedMedia`): find skips
 // its source, the caret cannot go into it, and its trash finds it. Only its
-// widget is another one (`HiddenAssetWidget`), on a line of no height.
+// widget is another one (`HiddenAssetWidget`), on a line of no height. An
+// asset of the compaction block has neither: the whole block is out of
+// view (compactionBlock.ts).
 //
 // images.ts, media.ts, toolCalls.ts, and compactionChip.ts read this
 // module. It must import none of them.
@@ -36,25 +41,26 @@ export type AssetPlace = () => number | null
 interface HiddenAssetsInDoc {
   /** In doc order, with doc offsets. */
   assets: readonly HiddenAsset[]
-  /** The start of each line that the assets take out of view, in doc
-   *  order (`hiddenLines`). */
+  /** The start of each line that the assets out of the compaction block
+   *  take out of view, in doc order (`hiddenLines`). */
   lines: readonly number[]
   /** For the asset at the same index of `assets`: the whole lines that go
    *  out of the doc with it (`hiddenLines`). */
   removals: readonly DocRange[]
-  /** The owner kind of each asset, by its doc offset. */
+  /** The owner kind of each asset out of the compaction block, by its doc
+   *  offset. */
   ownerKinds: ReadonlyMap<number, HiddenAssetOwner['kind']>
 }
 
 const NOTHING_HIDDEN: HiddenAssetsInDoc = { assets: [], lines: [], removals: [], ownerKinds: new Map() }
 
-// `edge`: no line of the same section (the doc start or end, the line of a
-// section separator, or the tag line of a compaction section, which shows
-// as the pill of its section).
-function lineKind(doc: Text, number: number): 'edge' | 'blank' | 'text' {
+// `edge`: no line of the same text (the doc start or end, the line of a
+// section separator, or the tag line or the end line of the compaction
+// block, whose last line is `blockLast`).
+function lineKind(doc: Text, number: number, blockLast: number): 'edge' | 'blank' | 'text' {
   if (number < 1 || number > doc.lines) return 'edge'
   const { text } = doc.line(number)
-  if (text.includes(SECTION_SEP) || (number === 1 && firstSectionRole(text) === 'agent')) return 'edge'
+  if (text.includes(SECTION_SEP) || (blockLast > 0 && (number === 1 || (number === blockLast && text === COMPACTION_END_LINE)))) return 'edge'
   return text.trim() === '' ? 'blank' : 'text'
 }
 
@@ -73,7 +79,7 @@ function lineKind(doc: Text, number: number): 'edge' | 'blank' | 'text' {
  *
  *  The trash of an asset takes the same lines out of the doc, so that the
  *  text looks the same before and after. */
-function hiddenLines(doc: Text, assets: readonly HiddenAsset[]): Pick<HiddenAssetsInDoc, 'lines' | 'removals'> {
+function hiddenLines(doc: Text, assets: readonly HiddenAsset[], blockLast: number): Pick<HiddenAssetsInDoc, 'lines' | 'removals'> {
   const lines: number[] = []
   const removals: DocRange[] = []
   // The number of the last blank line that went with an asset.
@@ -83,8 +89,8 @@ function hiddenLines(doc: Text, assets: readonly HiddenAsset[]): Pick<HiddenAsse
     let last = first
     let end = index + 1
     while (end < assets.length && doc.lineAt(assets[end].from).number === last.number + 1) last = doc.lineAt(assets[end++].from)
-    const before = lineKind(doc, first.number - 1)
-    const after = lineKind(doc, last.number + 1)
+    const before = lineKind(doc, first.number - 1, blockLast)
+    const after = lineKind(doc, last.number + 1, blockLast)
     let blank: Line | null = null
     if (before !== 'text' && after !== 'text') {
       if (before === 'blank' && first.number - 1 !== taken) blank = doc.line(first.number - 1)
@@ -113,22 +119,26 @@ function hiddenLines(doc: Text, assets: readonly HiddenAsset[]): Pick<HiddenAsse
 const HIDING_MARKS = [...new Set([IMAGE_HIDDEN_KEY, MEDIA_HIDDEN_ATTRIBUTE, IMAGE_KEPT_KEY, MEDIA_KEPT_ATTRIBUTE])]
 
 /** The hidden assets of a state: the assets that the chip of a call hides
- *  (`findHiddenAssets`), and the kept assets of a compaction
- *  (`findKeptAssets`). Each agent section is read on its own, with the
- *  blocks that show as chips (`chipBlocks`): an asset is hidden only while
- *  a chip can show it. An asset that images.ts or media.ts leaves as
- *  source text stays in view too: one on a line with a sentinel (a prompt
- *  pill), and an image reference on a table row line (its metadata holds
- *  `|`). */
+ *  (`findHiddenAssets`), and the assets that the assets chip of a
+ *  compaction shows (`findKeptAssets`): every asset of the compaction
+ *  block, and the kept assets of the carried assets of the user. Each
+ *  agent section is read on its own, with the blocks that show as chips
+ *  (`chipBlocks`): an asset is hidden only while a chip can show it. An
+ *  asset that images.ts or media.ts leaves as source text stays in view
+ *  too: one on a line with a sentinel (a prompt pill), and an image
+ *  reference on a table row line (its metadata holds `|`). */
 function findHiddenAssetsInDoc(state: EditorState): HiddenAssetsInDoc {
   const doc = state.doc.toString()
+  const blockEnd = compactionBlockEnd(state.doc)
   // Most docs have none, and this runs on every doc change.
-  if (!HIDING_MARKS.some((mark) => doc.includes(`${mark}=`))) return NOTHING_HIDDEN
+  if (blockEnd === 0 && !HIDING_MARKS.some((mark) => doc.includes(`${mark}=`))) return NOTHING_HIDDEN
   const texts = sectionTexts(doc, state.field(sectionsField, false) ?? [])
   const kept = findKeptAssets(texts.map(({ section, text }) => ({ role: section.role, text })))
   const assets: HiddenAsset[] = []
   texts.forEach(({ section, from: offset, text }, index) => {
-    const ofJobs = section.role === 'agent' ? findHiddenAssets(text, chipBlocks(text)) : []
+    // A call in the compaction block shows no chip (toolCalls.ts): the
+    // assets chip of the compaction shows its assets.
+    const ofJobs = section.role === 'agent' ? findHiddenAssets(text, chipBlocks(text).filter((block) => offset + block.from >= blockEnd)) : []
     // An asset with both marks shows under the chip of its call.
     const ofCompaction = kept[index].filter((asset) => !ofJobs.some((other) => other.from === asset.from))
     for (const asset of [...ofJobs, ...ofCompaction]) {
@@ -143,7 +153,15 @@ function findHiddenAssetsInDoc(state: EditorState): HiddenAssetsInDoc {
   })
   assets.sort((a, b) => a.from - b.from)
   if (assets.length === 0) return NOTHING_HIDDEN
-  return { assets, ...hiddenLines(state.doc, assets), ownerKinds: new Map(assets.map((asset) => [asset.from, asset.owner.kind])) }
+  const { lines, removals } = hiddenLines(state.doc, assets, blockEnd === 0 ? 0 : state.doc.lineAt(blockEnd).number)
+  // The block is out of view as a whole: its assets take no line out of
+  // view, and get no widget (images.ts, media.ts).
+  return {
+    assets,
+    lines: lines.filter((line) => line >= blockEnd),
+    removals,
+    ownerKinds: new Map(assets.filter((asset) => asset.from >= blockEnd).map((asset) => [asset.from, asset.owner.kind])),
+  }
 }
 
 const hiddenAssetsField = StateField.define<HiddenAssetsInDoc>({
@@ -152,9 +170,9 @@ const hiddenAssetsField = StateField.define<HiddenAssetsInDoc>({
 })
 
 /** The assets that a chip hides in `state` (the chip of a call, or the
- *  compaction chip), in doc order, with doc offsets; none for a state
- *  without `markdownToolCalls()` or `compactionChip()`. The array is the
- *  same object until the doc or the sections change. */
+ *  assets chip of a compaction), in doc order, with doc offsets; none for
+ *  a state without `markdownToolCalls()` or `compactionChip()`. The array
+ *  is the same object until the doc or the sections change. */
 export function hiddenAssets(state: EditorState): readonly HiddenAsset[] {
   return (state.field(hiddenAssetsField, false) ?? NOTHING_HIDDEN).assets
 }
@@ -213,7 +231,7 @@ export class HiddenAssetWidget extends WidgetType {
     const root = document.createElement('span')
     root.className = 'dez-hidden-asset'
     const name = this.id === null ? ASSET_NAMES[this.kind] : `${ASSET_NAMES[this.kind]} @${this.id}`
-    const text = this.owner === 'compaction' ? `Kept ${name}. Open the compaction chip to see it.` : `Hidden intermediate ${name}. Open its tool call to see it.`
+    const text = this.owner === 'compaction' ? `Kept ${name}. Open the assets chip of the compaction to see it.` : `Hidden intermediate ${name}. Open its tool call to see it.`
     root.append(eyeIcon(false), text)
     return root
   }

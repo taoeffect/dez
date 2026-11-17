@@ -1,14 +1,18 @@
 import { countOf } from '../../utils/countText'
 import { usdText } from '../providers/modelPrices'
 import { ASSET_NAME_SOURCE, ASSET_NAMES, jobResultLegend, jobResultState, type JobAssetKind, type JobInfo, type JobResultState, type JobStatus } from '../tools/jobs'
+import { readCompactionBlock } from './compaction'
 import type { ConversationCost } from './conversationCost'
-import { IMAGE_ID_SOURCE } from './images'
+import { IMAGE_ID_SOURCE, labelImageReferences } from './images'
+import { labelMediaTags } from './mediaTags'
 import { notesTableRows, notesTableText, templateStatement, textsStatement, type NotesRow, type NotesTable } from './notesTable'
 import { escapedModelText, unescapedModelText } from './toolBlocks'
+import type { Role } from './types'
 
-// The notes of a compaction section: its text after the tag line
-// (compaction.ts). This module is the one place that writes them, and that
-// reads the lines of Dez in them.
+// The notes of a compaction section: the lines of its block between the
+// tag line and the end line (compaction.ts). This module is the one place
+// that writes them, that reads the lines of Dez in them, and that makes
+// them a text for people (`compactionNotesForPeople`).
 //
 //   ## Summary
 //
@@ -262,8 +266,8 @@ export function conversationCostText(cost: ConversationCost | undefined, upTo: s
   return `${start} (an estimate): ${usdText(usd)} for ${count}.${rest}`
 }
 
-/** The text of the notes: the text of a compaction section after its tag
- *  line. */
+/** The text of the notes: the lines of a compaction block between its tag
+ *  line and its end line (`compactionBlockText`). */
 export function compactionNotesText(notes: CompactionNotes): string {
   const parts: string[] = []
   const add = (heading: string, text: string) => parts.push(`${heading}\n\n${text}`)
@@ -294,11 +298,11 @@ function partLines(text: string, heading: string): string[] {
 
 const KIND_BY_NAME = new Map(Object.entries(ASSET_NAMES).map(([kind, name]) => [name, kind as JobAssetKind]))
 
-/** The asset lines of the notes in `text` (the text of a compaction
- *  section), by asset id. Of two lines with one id, the last one counts. */
-export function notesAssetLines(text: string): Map<string, NotesAssetLine> {
+/** The asset lines of the notes `notes` (`CompactionBlock.notes`), by
+ *  asset id. Of two lines with one id, the last one counts. */
+export function notesAssetLines(notes: string): Map<string, NotesAssetLine> {
   const found = new Map<string, NotesAssetLine>()
-  for (const [id, kind, facts, origin, byReply, sentence] of notesTableRows(ASSETS_TABLE, partLines(text, ASSETS_HEADING))) {
+  for (const [id, kind, facts, origin, byReply, sentence] of notesTableRows(ASSETS_TABLE, partLines(notes, ASSETS_HEADING))) {
     found.set(id.slice(1), {
       id: id.slice(1),
       kind: KIND_BY_NAME.get(kind) as JobAssetKind,
@@ -311,11 +315,11 @@ export function notesAssetLines(text: string): Map<string, NotesAssetLine> {
   return found
 }
 
-/** The job lines of the notes in `text` (the text of a compaction
- *  section), by job id. */
-export function notesJobLines(text: string): Map<string, NotesJobLine> {
+/** The job lines of the notes `notes` (`CompactionBlock.notes`), by job
+ *  id. */
+export function notesJobLines(notes: string): Map<string, NotesJobLine> {
   const found = new Map<string, NotesJobLine>()
-  for (const [id, number, tool, status, result, inputs, label] of notesTableRows(JOBS_TABLE, partLines(text, JOBS_HEADING))) {
+  for (const [id, number, tool, status, result, inputs, label] of notesTableRows(JOBS_TABLE, partLines(notes, JOBS_HEADING))) {
     const call = unescapedModelText(label)
     found.set(id, {
       id,
@@ -328,4 +332,46 @@ export function notesJobLines(text: string): Map<string, NotesJobLine> {
     })
   }
   return found
+}
+
+/** The notes `notes` (`CompactionBlock.notes`, or a part of them) as a
+ *  text for people to read: each image reference and media tag as its
+ *  label (`[image]`, `[video]`), so no file path, and the text of the
+ *  model with its escape removed. The chips of a compaction, Copy
+ *  Markdown, Save As Markdown, the History preview, and the search show
+ *  the notes in this form.
+ *
+ *  The labels go in first, while the text of the model still has its
+ *  escape: with the escape removed first, a tag that a model wrote would
+ *  read as a tag of Dez. */
+export function compactionNotesForPeople(notes: string): string {
+  return unescapedModelText(labelMediaTags(labelImageReferences(notes, 'agent')))
+}
+
+/** `text`, which starts the text of section `index` of a conversation
+ *  (role `role`), for a text that people read: when that section is a
+ *  compaction section, its notes for people (`compactionNotesForPeople`)
+ *  in place of its block, and then the text after the block, with a blank
+ *  line between them. Any other text comes back as it is. */
+export function compactionTextForPeople(text: string, index: number, role: Role): string {
+  const block = index === 0 && role === 'agent' ? readCompactionBlock(text) : null
+  if (!block) return text
+  return [compactionNotesForPeople(block.notes), text.slice(block.textFrom)].filter((part) => part.trim() !== '').join('\n\n')
+}
+
+/** The notes for the two chips of a compaction, each for people
+ *  (`compactionNotesForPeople`): `assets` is the part of the assets of the
+ *  conversation, with no heading, and `summary` every other line, in its
+ *  order, with the headings. The assets part is the last one with its
+ *  heading, as the readers of the lines of Dez take it (`partLines`). */
+export function compactionNotesParts(notes: string): { assets: string, summary: string } {
+  const lines = notes.split('\n')
+  const start = lines.lastIndexOf(ASSETS_HEADING)
+  if (start < 0) return { assets: '', summary: compactionNotesForPeople(notes).trim() }
+  const next = lines.findIndex((line, index) => index > start && line.startsWith('## '))
+  const end = next < 0 ? lines.length : next
+  return {
+    assets: compactionNotesForPeople(lines.slice(start + 1, end).join('\n')).trim(),
+    summary: compactionNotesForPeople([...lines.slice(0, start), ...lines.slice(end)].join('\n')).trim(),
+  }
 }

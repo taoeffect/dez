@@ -1,7 +1,7 @@
 import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
-import { sectionCompactionTag } from '../model/chat/compaction'
+import { sectionCompactionBlock } from '../model/chat/compaction'
 import { notesAssetLines, notesJobLines } from '../model/chat/compactionNotes'
 import { sectionPlainText } from '../model/chat/content'
 import { withRequestCost, type ConversationCost } from '../model/chat/conversationCost'
@@ -186,7 +186,7 @@ describe('compactConversation', () => {
       { id: 'u2', role: 'user' },
       { id: 'r', role: 'agent' },
     ])
-    expect(sectionCompactionTag(compaction.sections[0])).toMatchObject({ count: 1, lastId: 'c', pictures: [] })
+    expect(sectionCompactionBlock(compaction.sections[0])).toMatchObject({ count: 1, lastId: 'c', pictures: [] })
     expect(compaction.sections[0].model).toStrictEqual(model)
     expect(notesOf(compaction)).toContain('The user wants a fox film.')
     expect(notesOf(compaction)).toContain('Make the film longer.')
@@ -214,7 +214,7 @@ describe('compactConversation', () => {
     expect([...notesAssetLines(notesOf(compaction)).keys()]).toStrictEqual(['a', 'c'])
     expect(notesOf(compaction)).not.toContain(DRAFT)
     expect(findMediaTags(notesOf(compaction)).map((tag) => ({ id: tag.id, kept: isKeptClip(tag) }))).toStrictEqual([{ id: 'c', kept: true }])
-    expect(sectionCompactionTag(compaction.sections[0])).toMatchObject({ count: 1, dropped: 1 })
+    expect(sectionCompactionBlock(compaction.sections[0])).toMatchObject({ count: 1, dropped: 1 })
   })
 
   it('drops a made asset of an earlier reply that the answer has no line for, but not one that an open job of the reply uses', async () => {
@@ -272,7 +272,7 @@ describe('compactConversation', () => {
       expect(saved[0].content).toStrictEqual(SHEET_JPEG)
       const pictures = [{ file: saved[0].file.path.slice(SHOWN_PICTURE_FOLDER.length + 1), label: expect.stringMatching(/^The frame sheet of the video clip @c.*\.$/), width: 968, height: 364, bytes: SHEET_JPEG.length }]
       expect(compaction.pictures).toStrictEqual(pictures)
-      expect(sectionCompactionTag(compaction.sections[0])?.pictures).toStrictEqual(pictures)
+      expect(sectionCompactionBlock(compaction.sections[0])?.pictures).toStrictEqual(pictures)
       expect(findMediaTags(notesOf(compaction)).map((tag) => ({ id: tag.id, kept: isKeptClip(tag) }))).toStrictEqual([{ id: 'c', kept: false }])
       expect(native.deletedFiles.filter(({ folder }) => !folder)).toStrictEqual([])
     })
@@ -310,7 +310,7 @@ describe('compactConversation', () => {
       expect(saved).toHaveLength(1)
       expect(native.deletedFiles.filter(({ folder }) => !folder)).toStrictEqual([{ root: 'app', path: saved[0].file.path, folder: false }])
       expect(compaction.pictures).toStrictEqual([])
-      expect(sectionCompactionTag(compaction.sections[0])?.pictures).toStrictEqual([])
+      expect(sectionCompactionBlock(compaction.sections[0])?.pictures).toStrictEqual([])
       expect(findMediaTags(notesOf(compaction)).map((tag) => isKeptClip(tag))).toStrictEqual([true])
     })
 

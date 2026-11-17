@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CARRIED_USER_ASSETS_LABEL, COMPACTION_MESSAGE_INTRO, COMPACTION_USER_MESSAGE_LABEL, compactionTagText } from '../chat/compaction'
+import { CARRIED_USER_ASSETS_LABEL, COMPACTION_MESSAGE_INTRO, COMPACTION_USER_MESSAGE_LABEL, compactionBlockText, compactionTagText } from '../chat/compaction'
 import { imageMarkdown } from '../chat/images'
 import { MEDIA_HIDDEN_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE, mediaTagRequestText, mediaTagText, type MediaTagData } from '../chat/mediaTags'
 import { SHOWN_PICTURE_OVER_LIMIT_NOTE, type ShownPicture } from '../chat/shownPictures'
@@ -1031,6 +1031,20 @@ describe('sectionsToStreamMessages: a compacted conversation', () => {
         newestUserMessage: '',
       },
     ])
+  })
+
+  // Saved conversations hold the old form, and the prompt cache needs the
+  // same bytes.
+  it('sends the notes of a block with no tag and no end line, as the same bytes as the old form, and the text after the block after them', () => {
+    const notes = 'The user wants a fox film.'
+    const block = compactionBlockText({ count: 1, lastId: 'c', pictures: [] }, notes)
+    const oldForm = `${tag().replace(/>$/, '/>')}\n${notes}`
+    const kept = user('u1', 'Make it red.')
+
+    expect(sent([reply('c', block), kept]).messages).toStrictEqual([{ role: 'user', content: `${COMPACTION_MESSAGE_INTRO}\n\n${notes}${KEPT}Make it red.` }])
+    expect(sent([reply('c', oldForm), kept])).toStrictEqual(sent([reply('c', block), kept]))
+    expect(sent([reply('c', `${block}\nTyped after it.`), kept]).messages)
+      .toStrictEqual([{ role: 'user', content: `${COMPACTION_MESSAGE_INTRO}\n\n${notes}\n\nTyped after it.${KEPT}Make it red.` }])
   })
 
   it('sends the notes as the model wrote them, with each clip as the request form of its tag, and no path', () => {

@@ -2,7 +2,7 @@ import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { ActiveModel, Section, SectionThinking, Tab, ThinkingReplay } from '../model/chat/types'
-import { compactionTagText, sectionCompactionTag } from '../model/chat/compaction'
+import { compactionTagText, sectionCompactionBlock } from '../model/chat/compaction'
 import { compactionNotesText } from '../model/chat/compactionNotes'
 import { sectionVisibleText } from '../model/chat/content'
 import type { ContextSize } from '../model/chat/contextSize'
@@ -3240,7 +3240,7 @@ describe('dez.stream/start compaction', () => {
     expect(next).not.toContain('Checking.')
 
     const [notes, ...rest] = activeTab().sections
-    expect(sectionCompactionTag(notes)?.count).toBe(1)
+    expect(sectionCompactionBlock(notes)?.count).toBe(1)
     expect(notes.model).toMatchObject({ providerId: model.providerId, modelId: model.modelId })
     expect(rest.map((section) => ({ id: section.id, role: section.role, text: sectionVisibleText(section) }))).toStrictEqual([
       { id: 'u1', role: 'user', text: 'Hi' },
@@ -3280,7 +3280,7 @@ describe('dez.stream/start compaction', () => {
     const next = JSON.stringify(sent[1])
     for (const kept of [NOTES_SUMMARY, 'Hi', 'More']) expect(next).toContain(kept)
     expect(next).not.toContain('An earlier answer.')
-    expect(sectionCompactionTag(activeTab().sections[0])?.count).toBe(1)
+    expect(sectionCompactionBlock(activeTab().sections[0])?.count).toBe(1)
     expect(sectionTexts().slice(1)).toStrictEqual([
       { role: 'user', text: 'Hi' },
       { role: 'user', text: 'More' },
@@ -3431,7 +3431,7 @@ describe('dez.stream/start compaction', () => {
     await startStream()
 
     const notes = activeTab().sections[0]
-    expect(sectionCompactionTag(notes)?.count).toBe(2)
+    expect(sectionCompactionBlock(notes)?.count).toBe(2)
     expect(sectionVisibleText(notes)).not.toContain(HIDDEN_IMAGE_PATH)
     expect(leftFiles).toStrictEqual([{ sources: [HIDDEN_IMAGE_PATH], pictures: [oldPicture.file] }])
   })

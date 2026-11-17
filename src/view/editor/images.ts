@@ -11,6 +11,7 @@ import { IMAGE_MAX_HEIGHT_PX, SECTION_SEP, editorSizePx, sectionsField } from '.
 import { measureLineHeights } from '../thread/editorMeasure'
 import { selectedAssetLook } from './assetSelection'
 import { syncDomSelection } from './focus'
+import { compactionBlockEnd } from './compactionBlock'
 import { HiddenAssetWidget, hiddenAssetLines, hiddenAssetOwnerKinds, type AssetPlace } from './hiddenAssets'
 import { sectionRolesChanged } from './lineBlocks'
 import { followShownRange, pendingRanges, type DocRange } from './pendingRanges'
@@ -335,11 +336,15 @@ function findRenderedImages(state: EditorState): ImageReference[] {
 
 function buildImageDecorations(state: EditorState): ImageDecorations {
   const images = findRenderedImages(state)
+  // An image of the compaction block gets no widget: the block is out of
+  // view as a whole, and its images show in the panel of the assets chip.
+  // It stays in `images`, where its trash finds it.
+  const blockEnd = compactionBlockEnd(state.doc)
   // A hidden image shows in the panel of its chip (hiddenAssets.ts). It
   // stays an image here, so that its source keeps every rule of an image's
   // source; only its widget is the one of a hidden asset.
   const hidden = hiddenAssetOwnerKinds(state)
-  const decorations = Decoration.set(images.map((image) => {
+  const decorations = Decoration.set(images.filter((image) => image.from >= blockEnd).map((image) => {
     const owner = hidden.get(image.from)
     return Decoration.replace({
       widget: owner ? new HiddenAssetWidget('image', image.id, owner) : new ImageWidget(image.path, image.id, image.linked),

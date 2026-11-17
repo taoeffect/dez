@@ -1,7 +1,7 @@
 import { commonmarkLanguage } from '@codemirror/lang-markdown'
 import { describe, expect, it } from 'vitest'
-import { compactionTagText } from '../chat/compaction'
-import { toolBlockText } from '../chat/toolBlocks'
+import { COMPACTION_END_LINE, compactionBlockText, compactionTagText } from '../chat/compaction'
+import { escapedModelText, toolBlockText } from '../chat/toolBlocks'
 import type { ModelRef, SectionThinking, ThinkingReplay } from '../chat/types'
 import { parseConversation, serializeConversation, serializeConversationAsMarkdown } from './conversationFormat'
 import type { ContentNodeData, ConversationData, SectionData } from './types'
@@ -790,12 +790,13 @@ describe('conversation cost, edited flag, and counted context in the header', ()
 })
 
 describe('a compacted conversation', () => {
-  const tag = compactionTagText({ count: 2, lastId: 'k', pictures: [{ file: 'sheet.jpg', label: 'Frames of @c', width: 1568, height: 882, bytes: 120_000 }] })
+  const tagData = { count: 2, lastId: 'k', pictures: [{ file: 'sheet.jpg', label: 'Frames of @c', width: 1568, height: 882, bytes: 120_000 }] }
+  const tag = compactionTagText(tagData)
   const conversation = (fields: Partial<ConversationData>): ConversationData => ({
     id: 'conversation',
     title: 'Chat',
     sections: [
-      { role: 'agent', nodes: [textNode(`${tag}\n## Summary\n\nThe duck film.`)], model: { providerId: 'p', modelId: 'm' } },
+      { role: 'agent', nodes: [textNode(compactionBlockText(tagData, '## Summary\n\nThe duck film.'))], model: { providerId: 'p', modelId: 'm' } },
       section('user', [textNode('Make a duck film.')]),
       section('agent', [textNode('The next shot is ready.')]),
     ],
@@ -804,11 +805,11 @@ describe('a compacted conversation', () => {
     ...fields,
   })
 
-  it('round-trips an agent first section whose first line is the compaction tag', () => {
+  it('round-trips an agent first section that starts with the compaction block', () => {
     const data = conversation({})
     const serialized = serializeConversation(data)
 
-    expect(serialized.split('\n').slice(2, 4)).toEqual(['<dez:pill type="agent" model="p/m"/>', tag])
+    expect(serialized.split('\n').slice(2, 8)).toEqual(['<dez:pill type="agent" model="p/m"/>', tag, '## Summary', '', 'The duck film.', COMPACTION_END_LINE])
     expect(parseConversation('conversation', serialized)).toStrictEqual(data)
   })
 
@@ -991,6 +992,46 @@ describe('conversation Markdown export', () => {
 
     expect(serializeConversationAsMarkdown(data))
       .toBe(`# Chat\n\n## User\n\nLike this?\n${block}\n\n## Agent\n\nLet me check.\n\nThere are 12.\n`)
+  })
+
+  // The notes of Dez name stored files, and a model wrote its text with the
+  // escape of model text: neither is for people.
+  it('writes the notes of a compaction block for people, with no tag, no path, and no escape', () => {
+    const tag = '<dez:video id="c" type="video/mp4" src="/home/u/.config/dez/assets/generated/video/v1.mp4"/>'
+    const said = `The block ends at ${COMPACTION_END_LINE}.`
+    const notes = `## Summary\n\n${escapedModelText(said)}\n\n## Assets of the conversation\n\n${tag}\n@c | video | MP4 | from the user | - | The duck.`
+    const data: ConversationData = {
+      id: 'conversation',
+      title: 'Chat',
+      sections: [
+        section('agent', [textNode(`${compactionBlockText({ count: 1, lastId: 'c', pictures: [] }, notes)}\nTyped after it.`)]),
+        section('user', [textNode('Next?')]),
+      ],
+      activeModel: null,
+      created_at: 1000,
+    }
+
+    expect(serializeConversationAsMarkdown(data)).toBe([
+      '# Chat',
+      '',
+      '## Agent',
+      '',
+      '## Summary',
+      '',
+      said,
+      '',
+      '## Assets of the conversation',
+      '',
+      '[video]',
+      '@c | video | MP4 | from the user | - | The duck.',
+      '',
+      'Typed after it.',
+      '',
+      '## User',
+      '',
+      'Next?',
+      '',
+    ].join('\n'))
   })
 
   it('writes each clip of agent and user text as a link', () => {

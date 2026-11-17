@@ -8,8 +8,8 @@ import type { DocRange } from './pendingRanges'
 
 // A line block is a tag that the editor shows as one widget in place of its
 // source lines: a tool call chip of an agent section (`toolCalls.ts`), a
-// media player of any section (`media.ts`), or the tag line of a compaction
-// section, which shows as its pill (`compaction.ts`). The tag is a block
+// media player of any section (`media.ts`), or the compaction block, which
+// shows as its pill and its chips (`compaction.ts`). The tag is a block
 // only while it has its lines to itself; text on its first or last line
 // turns it back into its source. The rules here keep text off those lines,
 // for every kind of block.

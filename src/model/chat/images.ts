@@ -144,11 +144,11 @@ export const IMAGE_MADE_BY_KEY = 'made-by'
  *  notes and not as pixels (compaction.ts), as in
  *  `![<path>](id=b|kept=compaction)`; its value is `KEPT_MARK_VALUE`. In
  *  the compaction message of a request, such a reference sends no image by
- *  itself (streams/messages.ts). The editor shows the image in the panel of
- *  the compaction chip, and not at the place of its reference, while the
- *  reference is in the compaction section or in the section of the carried
- *  assets of the user (hiddenAssets.ts). At any other place the mark does
- *  nothing. */
+ *  itself (streams/messages.ts). In the section of the carried assets of
+ *  the user, the editor shows the image in the panel of the assets chip of
+ *  the compaction, and not at the place of its reference (hiddenAssets.ts).
+ *  At any other place the mark does nothing for the editor: the panel shows
+ *  every asset of the compaction block, with or without the mark. */
 export const IMAGE_KEPT_KEY = 'kept'
 
 /** The value of the kept mark of an image (`IMAGE_KEPT_KEY`) and of a clip
