@@ -404,7 +404,7 @@ describe('middleMessageStarts', () => {
     const sections = [user('u0', 'Make a fox.'), reply('r0', 'ok'), user('u1', `${'word '.repeat(60)}end`), reply('r1', 'ok'), user('u2', 'Go on.'), reply('r', '')]
     const [start] = middleMessageStarts(compactionScope(sections, 'r'))
 
-    expect(start.length).toBeLessThanOrEqual(160)
+    expect(start).toHaveLength(160)
     expect(start).toMatch(/^(word )+word…$/)
   })
 
