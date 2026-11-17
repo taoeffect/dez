@@ -2,7 +2,7 @@ import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { sectionCompactionBlock, sectionTextParts } from '../model/chat/compaction'
-import { notesAssetLines, notesJobLines, notesMessages } from '../model/chat/compactionNotes'
+import { notesAssetLines, notesJobLines, notesLeftOutMessages, notesMessages } from '../model/chat/compactionNotes'
 import { sectionPlainText, textNode } from '../model/chat/content'
 import { withRequestCost, type ConversationCost } from '../model/chat/conversationCost'
 import type { ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
@@ -38,7 +38,7 @@ const SECTIONS: Section[] = [
 ]
 const MESSAGES: StreamMessage[] = [{ role: 'user', content: 'Make a fox film.' }, { role: 'agent', content: 'A draft.' }]
 const TOOLS: ToolDefinition[] = [{ name: 'model_list', description: 'Lists the models.', parameters: [] }]
-const NOTES = '## Summary\nThe user wants a fox film.\n\n## Next steps\nMake the film longer.'
+const NOTES = '## Requirements and decisions\nThe user wants a fox film.\nMake the film longer.'
 const USAGE: ChatUsage = { inputTokens: 900, outputTokens: 50 }
 // The frame sheet that ffmpeg makes of the clip `c`.
 const SHEET_JPEG = jpegHeader(968, 364)
@@ -178,7 +178,7 @@ describe('compactConversation', () => {
     expect(instruction()).not.toContain(APP_DIR)
   })
 
-  it('gives the notes, with the first and the newest message of the user in them, in the section of the reply as the new sections', async () => {
+  it('gives the notes, with the first and the final message of the user in them, in the section of the reply as the new sections', async () => {
     const compaction = await compactConversation(compactionInput())
 
     expect(compaction.sections.map(({ id, role }) => ({ id, role }))).toStrictEqual([{ id: 'r', role: 'agent' }])
@@ -270,6 +270,39 @@ describe('compactConversation', () => {
 
     expect([...notesAssetLines(notesOf(compaction)).keys()]).toStrictEqual(['a', 'b', 'c'])
     expect(notesAssetLines(notesOf(compaction)).get('c')?.facts).not.toContain('854x480')
+  })
+
+  describe('the middle messages of the user', () => {
+    const LOOK = `${APP_DIR}/assets/images/look.png`
+    // Two messages of the user between the first and the final one: an
+    // instruction, and thanks with an image of the user.
+    const sections = [
+      ...SECTIONS.slice(0, 3),
+      reply('r2', 'A longer film.'),
+      user('u3', `Thanks, it looks like ${idImage(LOOK, 'd')}`),
+      reply('r3', 'Good.'),
+      user('u4', 'Now add music.'),
+      reply('r', 'I look at the film first.'),
+    ]
+
+    it('are listed in the instruction by number, each as its start, with a label in place of an image', async () => {
+      await compactConversation(compactionInput({ sections }))
+
+      expect(instruction()).toContain('m1: "Make it longer."\nm2: "Thanks, it looks like [image]"')
+      expect(instruction()).not.toContain(APP_DIR)
+    })
+
+    it('stay in the notes word for word when the answer keeps them, and leave the notes when it drops them, with their images kept as lines', async () => {
+      streamChat = answers(`${NOTES}\n\n## Middle messages\nm1: keep\nm2: drop`)
+
+      const compaction = await compactConversation(compactionInput({ sections }))
+
+      const notes = sectionCompactionBlock(compaction.sections[0])!.notes
+      expect(notesMessages(notes).map(({ text }) => text)).toStrictEqual([sections[0], sections[2], sections[6]].map(sectionPlainText))
+      expect(notesLeftOutMessages(notes)).toBe(1)
+      expect(notes).not.toContain('Thanks')
+      expect(notesAssetLines(notes).get('d')?.origin).toBe('from the user')
+    })
   })
 
   describe('the picture of a clip that the answer shows', () => {
@@ -382,7 +415,7 @@ describe('compactConversation', () => {
 
     it.each([
       ['an empty answer', ''],
-      ['an answer with only asset lines', '## Assets\n@b: keep - A draft.\n@c: show - The film.'],
+      ['an answer with only other text under the messages heading', '## Middle messages\nKeep them all.'],
     ])('rejects with an explained error for %s, with the request counted and no picture made', async (_name, text) => {
       streamChat = answers(text)
 
@@ -412,7 +445,7 @@ describe('compactConversation', () => {
       const stop = new AbortController()
       streamChat = async (input) => {
         input.onSent?.()
-        input.onToken('## Summary\nThe user wa')
+        input.onToken('## Requirements and decisions\nThe user wa')
         stop.abort(STOP)
       }
 

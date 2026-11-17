@@ -18,6 +18,7 @@ import {
   compactionAssets,
   compactionScope,
   keptUserTexts,
+  middleMessageStarts,
   openJobInputs,
   type AssetChoice,
 } from '../model/streams/compactionAssets'
@@ -295,7 +296,13 @@ export async function compactConversation(input: CompactionInput): Promise<Compa
   const jobInputs = openJobInputs(input.jobs)
   const assets = compactionAssets({ sections, scope, found, places: assetPlaces(sections, found), facts, jobInputs, replySections: input.replySections })
 
-  const instruction = compactionInstruction({ assetTable: assetTableText(assets), jobs: input.jobs, cost: input.cost(), tools: input.tools.length > 0 })
+  const instruction = compactionInstruction({
+    middleMessages: middleMessageStarts(scope),
+    assetTable: assetTableText(assets),
+    jobs: input.jobs,
+    cost: input.cost(),
+    tools: input.tools.length > 0,
+  })
   const { text, usage } = await requestNotes(input, [...input.messages, { role: 'user', content: instruction }])
   // A stop after the first bytes of the answer ends the request with no
   // error, and the text is not whole.
@@ -305,7 +312,7 @@ export async function compactConversation(input: CompactionInput): Promise<Compa
     console.error('The answer to a compaction request holds no notes.')
     throw new ExplainedError(NO_COMPACTION_NOTES_TEXT)
   }
-  const choices = assetDecisions(assets, answer, { keptTexts: keptUserTexts(sections, scope) })
+  const choices = assetDecisions(assets, answer, { keptTexts: keptUserTexts(sections, scope, answer) })
 
   // The model of the next request: it reads the pictures of the result.
   const reader = input.readerModel ?? model

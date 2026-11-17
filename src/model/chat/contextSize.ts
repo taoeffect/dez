@@ -51,8 +51,8 @@ export function compactionThreshold(contextWindow: number): number {
 // The share of the compaction threshold by which a conversation must grow
 // after a compaction before its size makes the next one due. What a
 // compaction leaves (the system prompt, the tools, the notes, and the
-// first and the newest message of the user, word for word) can be near the
-// threshold by itself, and the next compaction takes nothing out of that:
+// messages of the user that they keep, word for word) can be near the
+// threshold by itself, and the next compaction takes little out of that:
 // with no such growth, each request of that conversation would compact it
 // again.
 const MIN_GROWTH_SHARE = 0.25

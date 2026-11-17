@@ -3,7 +3,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { ActiveModel, Section, SectionThinking, Tab, ThinkingReplay } from '../model/chat/types'
 import { compactionTagText, sectionCompactionBlock, sectionTextParts } from '../model/chat/compaction'
-import { compactionNotesText, notesMessages } from '../model/chat/compactionNotes'
+import { compactionNotesText, notesLeftOutMessages, notesMessages } from '../model/chat/compactionNotes'
 import { sectionVisibleText } from '../model/chat/content'
 import type { ContextSize } from '../model/chat/contextSize'
 import type { DrawnImage, DrawnMediaType, ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
@@ -201,7 +201,7 @@ function replyRounds(rounds: Array<(input: ProviderStreamChatInput) => Promise<P
 }
 
 // The first line of the instruction of a compaction request.
-const COMPACTION_INSTRUCTION_START = compactionInstruction({ assetTable: '', jobs: [], cost: undefined, tools: false }).split('\n')[0]
+const COMPACTION_INSTRUCTION_START = compactionInstruction({ middleMessages: [], assetTable: '', jobs: [], cost: undefined, tools: false }).split('\n')[0]
 
 // Whether `input` is a compaction request: its last message is the
 // instruction of Dez.
@@ -216,10 +216,11 @@ function isCompactionRequest(input: ProviderStreamChatInput): boolean {
 const LARGE_USAGE = { inputTokens: 135_000, outputTokens: 10 }
 // What the provider counted for a compaction request.
 const COMPACTION_USAGE = { inputTokens: 136_000, outputTokens: 40 }
-const NOTES_SUMMARY = 'The user wants a model.'
+const NOTES_REQUIREMENTS = 'The user wants a model.'
 
-// Answers a compaction request with notes: `text`, by default a summary.
-async function notesAnswer(input: ProviderStreamChatInput, text = `## Summary\n${NOTES_SUMMARY}\n`): Promise<ProviderStreamChatResult> {
+// Answers a compaction request with notes: `text`, by default the
+// requirements.
+async function notesAnswer(input: ProviderStreamChatInput, text = `## Requirements and decisions\n${NOTES_REQUIREMENTS}\n`): Promise<ProviderStreamChatResult> {
   input.onSent?.()
   await input.onToken(text)
   return { requestId: input.requestId as string, usage: COMPACTION_USAGE, cost: 0.5 }
@@ -3420,7 +3421,7 @@ describe('dez.stream/start compaction', () => {
     // in them, and nothing of the rounds before.
     expect(sent[2].map((message) => message.role)).toStrictEqual(['user'])
     const next = JSON.stringify(sent[2])
-    expect(next).toContain(NOTES_SUMMARY)
+    expect(next).toContain(NOTES_REQUIREMENTS)
     expect(next).toContain('Hi')
     expect(next).not.toContain('Checking.')
 
@@ -3550,17 +3551,51 @@ describe('dez.stream/start compaction', () => {
       { role: 'agent', content: 'An earlier answer.' },
       { role: 'user', content: 'More' },
     ])
-    // The first and the newest message of the user stay word for word, in
+    // The first and the final message of the user stay word for word, in
     // the notes.
     expect(sent[1].map((message) => message.role)).toStrictEqual(['user'])
     const next = JSON.stringify(sent[1])
-    for (const kept of [NOTES_SUMMARY, 'Hi', 'More']) expect(next).toContain(kept)
+    for (const kept of [NOTES_REQUIREMENTS, 'Hi', 'More']) expect(next).toContain(kept)
     expect(next).not.toContain('An earlier answer.')
     expect(sectionCompactionBlock(activeTab().sections[0])?.count).toBe(1)
     expect(replyText()).toBe('None.')
     expect(sectionTexts().slice(1)).toStrictEqual([{ role: 'user', text: '' }])
     const parts = notesMessages(sectionCompactionBlock(activeTab().sections[0])!.notes).map(({ text }) => text)
     expect(parts).toStrictEqual(['Hi', 'More'])
+    expect(toasts).toStrictEqual([])
+  })
+
+  // The messages of the user between the first and the final one: the
+  // model keeps or drops each one.
+  it('lists the middle messages in the instruction, and quotes in the notes only the ones that the answer keeps', async () => {
+    sbp('dez.model/setActiveModel', model.providerId, model.modelId, model.modelName)
+    sbp('dez.model/tabs/replaceSections', activeTab().id, [
+      { id: 'u1', role: 'user', content: [text('Hi')] },
+      { id: 'r1', role: 'agent', content: [text('Hello.')], model },
+      { id: 'u2', role: 'user', content: [text('Always answer in French.')] },
+      { id: 'r2', role: 'agent', content: [text('Oui.')], model },
+      { id: 'u3', role: 'user', content: [text('Thanks!')] },
+      { id: 'r3', role: 'agent', content: [text('De rien.')], model },
+      { id: 'u4', role: 'user', content: [text('More')] },
+    ])
+    sbp('dez.model/tabs/countRequestContext', activeTab().id, model, 140_000)
+    replyRounds([
+      (input) => notesAnswer(input, `## Requirements and decisions\n${NOTES_REQUIREMENTS}\n\n## Middle messages\nm1: keep\nm2: drop\n`),
+      lastRound,
+    ])
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect(requests.map(isCompactionRequest)).toStrictEqual([true, false])
+    const instruction = requests[0].messages.at(-1)
+    expect(instruction?.role === 'user' ? instruction.content : '').toContain('m1: "Always answer in French."\nm2: "Thanks!"')
+    const notes = sectionCompactionBlock(activeTab().sections[0])!.notes
+    expect(notesMessages(notes).map(({ text }) => text)).toStrictEqual(['Hi', 'Always answer in French.', 'More'])
+    expect(notesLeftOutMessages(notes)).toBe(1)
+    // The next request holds the kept message, and not the dropped one.
+    const next = JSON.stringify(sent[1])
+    expect(next).toContain('Always answer in French.')
+    expect(next).not.toContain('Thanks!')
     expect(toasts).toStrictEqual([])
   })
 

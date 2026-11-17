@@ -4,8 +4,8 @@ import { blockLinkedRule, compactionMessageEnd, isCarriedUserAssets, sectionComp
 import { notesAssetLines, notesCellText, notesMessages, type NotesAssetLine } from '../chat/compactionNotes'
 import { sectionIsEmpty, sectionPlainText } from '../chat/content'
 import { findAssetMentions } from '../chat/imageMentions'
-import { IMAGE_HIDDEN_KEY, type LinkedPathRule } from '../chat/images'
-import { MEDIA_HIDDEN_ATTRIBUTE } from '../chat/mediaTags'
+import { IMAGE_HIDDEN_KEY, labelImageReferences, type LinkedPathRule } from '../chat/images'
+import { labelMediaTags, MEDIA_HIDDEN_ATTRIBUTE } from '../chat/mediaTags'
 import type { Section } from '../chat/types'
 import { assetOriginText } from '../tools/assetInfo'
 import { ASSET_NAMES, hasJobResult, type JobAssetKind, type JobInfo } from '../tools/jobs'
@@ -20,11 +20,13 @@ import { messageMentionIds } from './messages'
 // needs, and the rest leaves the conversation. Dez holds only the rules
 // that keep work that is still in use: a fault of the model, or of the
 // reader of its answer, must never remove an asset of the user, or an
-// asset that a later step needs. All pure; controller/compaction.ts reads
-// the files.
+// asset that a later step needs. This module also tells which messages of
+// the user the notes keep word for word (`compactionScope`,
+// `keptMiddleMessages`), with the same rule for the words of the user.
+// All pure; controller/compaction.ts reads the files.
 
-/** A message of the user that a compaction keeps word for word: a user
- *  section, or a message part of the notes of the compaction before
+/** A message of the user that a compaction can keep word for word: a
+ *  user section, or a message part of the notes of the compaction before
  *  (`notesMessages`, chat/compactionNotes.ts). */
 export interface KeptMessage {
   /** The index of its section. */
@@ -42,7 +44,7 @@ export interface KeptMessage {
 }
 
 /** Which sections a compaction replaces, as indexes of the sections of
- *  the conversation, and which messages of the user it keeps. */
+ *  the conversation, and which messages of the user it can keep. */
 export interface CompactionScope {
   /** The section of the reply that runs; null when no section has its id,
    *  and the compaction then replaces the whole conversation. */
@@ -54,7 +56,10 @@ export interface CompactionScope {
   /** The first message of the user, which stays word for word; null for a
    *  conversation with none. */
   first: KeptMessage | null
-  /** The newest message of the user, which stays word for word: the one
+  /** The messages of the user between `first` and `last`, oldest first:
+   *  the model keeps or drops each one (`keptMiddleMessages`). */
+  middle: KeptMessage[]
+  /** The final message of the user, which stays word for word: the one
    *  that the reply answers. Null when it is `first`, or there is none. */
   last: KeptMessage | null
 }
@@ -66,9 +71,11 @@ export interface CompactionScope {
  *  A message of the user is a user section before the reply's section
  *  that is not empty, and that is not the section of the carried assets of
  *  the user that an older Dez wrote (`isCarriedUserAssets`, which counts
- *  only in the compaction message). The notes of the compaction before
- *  hold its first message, and its newest one too when no message came
- *  after it. */
+ *  only in the compaction message), or a message part of the notes of the
+ *  compaction before. The parts are read by their place: the first one is
+ *  the first message; of two or more, the last one is the final message,
+ *  and the ones between them are middle messages. A user section came
+ *  after the parts, so with one, the final part is a middle message now. */
 export function compactionScope(sections: readonly Section[], replySectionId: string): CompactionScope {
   const found = sections.findIndex((section) => section.id === replySectionId)
   const reply = found < 0 ? null : found
@@ -78,11 +85,11 @@ export function compactionScope(sections: readonly Section[], replySectionId: st
     && section.role === 'user'
     && !sectionIsEmpty(section)
     && !(index < carriedEnd && isCarriedUserAssets(sectionPlainText(section)))
-  const sectionMessage = (index: number): KeptMessage | null => {
-    if (index < 0) return null
-    const text = sectionPlainText(sections[index])
-    return { section: index, text, from: 0, to: text.length, rule: 'user' }
-  }
+  const userSections = sections.flatMap((section, index): KeptMessage[] => {
+    if (!isMessage(section, index)) return []
+    const text = sectionPlainText(section)
+    return [{ section: index, text, from: 0, to: text.length, rule: 'user' }]
+  })
   // The message parts are in the block. The compaction section can be the
   // reply's section, but the block comes before the text of the reply, so
   // the parts are always before the reply.
@@ -90,20 +97,37 @@ export function compactionScope(sections: readonly Section[], replySectionId: st
   const parts: KeptMessage[] = block === null
     ? []
     : notesMessages(block.notes).map((part) => ({ section: 0, text: part.text, from: block.notesFrom + part.from, to: block.notesFrom + part.to, rule: blockLinkedRule(block) }))
-  const firstSection = sections.findIndex(isMessage)
-  const lastSection = sections.findLastIndex(isMessage)
-  let first: KeptMessage | null
-  let last: KeptMessage | null
-  if (parts.length > 0) {
-    // Each user section came after the messages of the notes. With none,
-    // the newest message is still the one of the notes.
-    first = parts[0]
-    last = sectionMessage(lastSection) ?? (parts.length > 1 ? parts[parts.length - 1] : null)
-  } else {
-    first = sectionMessage(firstSection)
-    last = lastSection === firstSection ? null : sectionMessage(lastSection)
+  const messages = [...parts, ...userSections]
+  // With no user section, the final part stays the final message.
+  const last = messages.length > 1 ? messages[messages.length - 1] : null
+  return {
+    reply,
+    end: reply === null ? sections.length : reply + 1,
+    first: messages[0] ?? null,
+    middle: messages.slice(1, -1),
+    last,
   }
-  return { reply, end: reply === null ? sections.length : reply + 1, first, last }
+}
+
+/** The middle messages of `scope` that the notes keep word for word: each
+ *  one that no `drop` line of `answer` names. A fault of the model, or of
+ *  the reader of its answer, must never remove the words of the user, so
+ *  a message with no line, and every message of an answer with no line,
+ *  stays. */
+export function keptMiddleMessages(scope: CompactionScope, answer: CompactionAnswer): KeptMessage[] {
+  const dropped = new Set(answer.messages.filter((line) => line.decision === 'drop').map((line) => line.number))
+  return scope.middle.filter((_, index) => !dropped.has(index + 1))
+}
+
+// The most characters of the start of a middle message in the instruction.
+const MESSAGE_START_LENGTH = 160
+
+/** The start of each middle message of `scope`, in order, as the list of
+ *  the instruction shows it (`CompactionInstruction.middleMessages`): on
+ *  one line, and each image reference and media tag as its label
+ *  (`[image]`, `[video]`), as the notes for people show them. */
+export function middleMessageStarts(scope: CompactionScope): string[] {
+  return scope.middle.map(({ text, rule }) => oneLineCut(labelMediaTags(labelImageReferences(text, rule)), MESSAGE_START_LENGTH))
 }
 
 /** The asset lines of the notes of the compaction section of `sections`,
@@ -257,11 +281,12 @@ export interface AssetChoice {
 }
 
 /** The texts of the user that stay word for word after a compaction of
- *  `scope`: the first and the newest message of the user, and each user
- *  section after the sections that the compaction replaces. An `@id`
- *  mention of them must still name its asset (`assetDecisions`). */
-export function keptUserTexts(sections: readonly Section[], scope: CompactionScope): string[] {
-  const messages = [scope.first, scope.last].flatMap((message) => (message === null ? [] : [message.text]))
+ *  `scope` with `answer`: the messages that the notes quote (the first
+ *  one, the kept middle ones of `keptMiddleMessages`, and the final one),
+ *  and each user section after the sections that the compaction replaces.
+ *  An `@id` mention of them must still name its asset (`assetDecisions`). */
+export function keptUserTexts(sections: readonly Section[], scope: CompactionScope, answer: CompactionAnswer): string[] {
+  const messages = [scope.first, ...keptMiddleMessages(scope, answer), scope.last].flatMap((message) => (message === null ? [] : [message.text]))
   return [...messages, ...sections.slice(scope.end).filter((section) => section.role === 'user').map(sectionPlainText)]
 }
 
@@ -293,7 +318,7 @@ export function assetDecisions(
   answer: CompactionAnswer,
   { keptTexts }: { keptTexts: readonly string[] },
 ): AssetChoice[] {
-  const named = new Set(findAssetMentions([answer.summary, answer.requirements, answer.nextSteps].join('\n')).map((mention) => mention.id))
+  const named = new Set(findAssetMentions(answer.requirements).map((mention) => mention.id))
   for (const text of keptTexts) {
     for (const id of messageMentionIds(text)) named.add(id)
   }

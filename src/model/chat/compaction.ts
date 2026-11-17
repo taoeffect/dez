@@ -11,7 +11,8 @@ import type { ContentNode, Role, Section } from './types'
 // the work so far takes the place of the old messages. That text is the
 // compaction block, at the start of the compaction section: the first
 // section of the conversation, an agent section. The notes in the block
-// hold the first and the newest message of the user, word for word
+// hold the messages of the user that the work needs, word for word: the
+// first one, the middle ones that the model kept, and the final one
 // (compactionNotes.ts). This module is the one place that writes and
 // recognizes the block.
 //
@@ -159,11 +160,14 @@ export function compactionsField(compactions: Compactions | undefined): { compac
 /** The text that starts the compaction message of a request, before the
  *  notes of the compaction block. It is in the cached prefix of every
  *  request of its conversation: never a date, a running count, or a
- *  random value. It is true for the oldest layout too, whose kept
- *  messages of the user come after the notes. */
+ *  random value. It is true for the older layouts too: the notes of the
+ *  first layout with message parts hold only the first and the newest
+ *  message, and the kept messages of the oldest layout come after the
+ *  notes, each after `COMPACTION_USER_MESSAGE_LABEL`, with no fence. */
 export const COMPACTION_MESSAGE_INTRO = '[Compaction: this conversation was long, so Dez put the notes below in place of its earlier messages. '
   + 'The notes are what the assistant wrote about the work so far, with the facts that Dez added. '
-  + 'Dez kept the first and the newest message of the user word for word, each under its own heading in the notes or after the notes.]'
+  + 'Dez kept word for word the messages of the user that the work needs: the first one, the middle ones that still count, and the newest one at the compaction. '
+  + 'Each one is in a code fence under its heading in the notes, or after the notes after its label.]'
 
 /** The line before each user section of the compaction message: a message
  *  of the oldest layout, and a message that the user wrote after a reply

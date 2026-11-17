@@ -26,16 +26,16 @@ export const COMPACTION_TAG = compactionTagText({ count: 1, lastId: 'b', picture
 /** The origin of the line of a made image in the notes of a compaction. */
 export const FOX_ORIGIN = 'made by the model_invoke job 2 of its reply: "A red fox"'
 
-/** The data of the notes of a compaction: the parts of the model, with no
- *  message of the user, no asset, no job, and no cost, unless `fields`
- *  give them. */
+/** The data of the notes of a compaction: the requirements of the model,
+ *  with no message of the user, no asset, no job, and no cost, unless
+ *  `fields` give them. */
 export function notesData(fields: Partial<CompactionNotes>): CompactionNotes {
   return {
     firstMessage: null,
-    newestMessage: null,
-    summary: 'The user wants a short fox film.',
+    middleMessages: [],
+    leftOutMessages: 0,
+    finalMessage: null,
     requirements: 'Every frame is 16:9.',
-    nextSteps: 'Make scene 2.',
     assets: [],
     unnamed: [],
     jobs: [],

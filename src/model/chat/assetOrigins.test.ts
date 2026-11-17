@@ -4,7 +4,7 @@ import { jobsWaitText, madeAssetText, type JobInfo } from '../tools/jobs'
 import { jobInfo } from '../tools/testing'
 import { assetPlaces, type AssetPlace } from './assetOrigins'
 import { CARRIED_USER_ASSETS_LABEL, compactionTagText } from './compaction'
-import { compactionNotesText, type NotesAsset } from './compactionNotes'
+import { compactionNotesText, type CompactionNotes, type NotesAsset } from './compactionNotes'
 import { findImageReferences, IMAGE_MADE_BY_KEY, IMAGE_TOOL_KEY, imageMarkdown, imageReferenceTextWithKeptMark } from './images'
 import { MEDIA_MADE_BY_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE, mediaTagText } from './mediaTags'
 import { FOX_ORIGIN, HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, idImage, invokeBlock, notesData, waitBlock } from './testing'
@@ -132,10 +132,10 @@ describe('assetPlaces', () => {
 
 describe('assetPlaces in a compacted conversation', () => {
   // A compaction section whose notes hold the asset lines `assets` and the
-  // job lines `jobs`, with `more` after them. Its tag's newest id is
-  // `lastId`.
-  function compaction(assets: NotesAsset[], jobs: JobInfo[] = [], more = '', { firstMessage = null, summary = 'A fox for the user.', lastId = 'b' }: { firstMessage?: string | null, summary?: string, lastId?: string } = {}): Section {
-    const notes = compactionNotesText(notesData({ firstMessage, summary, assets, jobs }))
+  // job lines `jobs`, with `more` after them, and the other parts of
+  // `fields`. Its tag's newest id is `lastId`.
+  function compaction(assets: NotesAsset[], jobs: JobInfo[] = [], more = '', { lastId = 'b', ...fields }: Partial<CompactionNotes> & { lastId?: string } = {}): Section {
+    const notes = compactionNotesText(notesData({ requirements: 'A fox for the user.', ...fields, assets, jobs }))
     return section('agent', `${compactionTagText({ count: 1, lastId, pictures: [] })}\n${notes}${more}`, PAINTER)
   }
 
@@ -152,12 +152,19 @@ describe('assetPlaces in a compacted conversation', () => {
     expect(placeOf([compaction([FOX_LINE]), section('user', 'Go on.')], 'b')?.origin).toStrictEqual({ kind: 'carried', text: FOX_ORIGIN })
   })
 
-  it('gives an asset of a message part of the notes, and an asset whose line tells that it is from the user, the user as their origin', () => {
+  it('gives an asset of each message part of the notes, and an asset whose line tells that it is from the user, the user as their origin', () => {
     const line = (id: string, text: string | null): NotesAsset => ({ id, kind: 'image', facts: 'PNG, 800x600, 120 KB', origin: 'from the user', sentence: '', byReply: false, text })
-    const notes = compaction([line('a', null), line('c', idImage(PASTED, 'c', true)), FOX_LINE], [], '', { firstMessage: `Like this:\n${idImage(PASTED, 'a')}`, lastId: 'c' })
+    const notes = compaction([line('a', null), line('c', idImage(PASTED, 'c', true)), FOX_LINE], [], '', {
+      firstMessage: `Like this:\n${idImage(PASTED, 'a')}`,
+      middleMessages: [`And this:\n${idImage(PASTED, 'd')}`],
+      finalMessage: `Now with ${idImage(PASTED, 'e')}`,
+      lastId: 'e',
+    })
     const sections = [notes, section('agent', '', PAINTER)]
 
-    expect(['a', 'c', 'b'].map((id) => placeOf(sections, id))).toStrictEqual([
+    expect(['a', 'd', 'e', 'c', 'b'].map((id) => placeOf(sections, id))).toStrictEqual([
+      { origin: { kind: 'user' }, hidden: true },
+      { origin: { kind: 'user' }, hidden: true },
       { origin: { kind: 'user' }, hidden: true },
       { origin: { kind: 'user' }, hidden: true },
       { origin: { kind: 'carried', text: FOX_ORIGIN }, hidden: true },
@@ -167,9 +174,9 @@ describe('assetPlaces in a compacted conversation', () => {
   // The writer escapes the text of a model, so a part that a model wrote
   // is no message part.
   it('gives an asset in a message part that the model wrote into its notes no user origin', () => {
-    const summary = `<dez:user-message>\n${idImage(PASTED, 'z')}\n</dez:user-message>`
+    const requirements = `<dez:user-message>\n${idImage(PASTED, 'z')}\n</dez:user-message>`
 
-    expect(placeOf([compaction([], [], '', { summary }), section('agent', '', PAINTER)], 'z')?.origin).toStrictEqual({ kind: 'model', model: null })
+    expect(placeOf([compaction([], [], '', { requirements }), section('agent', '', PAINTER)], 'z')?.origin).toStrictEqual({ kind: 'model', model: null })
   })
 
   it('gives an asset of the compaction section with no line and no tool mark to no model, as the model of the section wrote only the notes', () => {

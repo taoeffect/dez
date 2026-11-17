@@ -163,14 +163,16 @@ function onOverlayClick(event: MouseEvent) {
             <p>
               A long conversation can get too large for one request to the model. Dez then compacts
               it: it asks the model for notes of the work so far, and the notes take the place of
-              the earlier messages and replies. The notes keep your first message and your newest
-              message word for word, with their images. The bottom bar shows "Compacting…" while the
-              model writes the notes. A compacted conversation starts with one Agent message: first
-              two chips, then the reply, which goes on under the chips. Click the summary chip to
-              read the notes and your two messages, and the assets chip to see the assets that the
-              compaction kept. You cannot edit the notes, and Backspace and the other delete keys
-              do not delete them. A compaction cannot be undone: Undo does not bring the earlier
-              text back. After a compaction, the bottom bar
+              the earlier messages and replies. The notes keep your first message, your newest
+              message, and each message between them that the work still needs, word for word, with
+              their images. The model chooses these messages, and the notes tell how many it left
+              out. The bottom bar shows "Compacting…" while the model writes the notes. A compacted
+              conversation starts with one Agent message: first two chips, then the reply, which
+              goes on under the chips. Click the summary chip to read the notes and the messages of
+              yours that they keep, and the assets chip to see the assets that the compaction kept.
+              You cannot edit the notes, and Backspace and the other delete keys do not delete them.
+              A compaction cannot be undone: Undo does not bring the earlier text back. After a
+              compaction, the bottom bar
               shows two sizes and two amounts, as in <code>~81.2k (1.2M) · $0.42 ($7.80)</code>:
               first the size and the cost of the conversation since its last compaction, and after
               each of them, in parentheses, the one of the whole conversation.
@@ -291,9 +293,10 @@ function onOverlayClick(event: MouseEvent) {
             <p>
               Of the assets that a model or a Dez tool made, the model keeps only the ones that the
               work at hand needs, and the compaction drops the others: the parts of finished work,
-              the versions that a newer one replaced, and the assets of earlier replies that the
-              work does not use. Dez never drops an asset of yours, an asset that a job still uses,
-              or an asset that the notes or your first or newest message name. So to keep an asset
+              the versions that a newer one replaced, the versions that you rejected, and the assets
+              of earlier replies that the work does not use. Dez never drops an asset of yours, an
+              asset that a job still uses, or an asset that the notes or a message of yours that they
+              keep name. So to keep an asset
               of an earlier reply, name it in your message with <code>@</code> and its id. A dropped
               asset leaves the conversation. Dez deletes the file of a dropped intermediate asset at
               once. The file of any other dropped asset stays until you click Delete Unused Files.

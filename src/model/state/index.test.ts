@@ -572,7 +572,7 @@ describe('dez.model/tabs/compact', () => {
     sbp('dez.model/tabs/replaceSections', tab.id, [first, section('a1', 'agent', 'An old reply'), section('u2', 'user', 'Now the tests.'), section('b', 'agent', '')])
     expect(tabNow(tab.id).title).toBe(title)
 
-    const notes = compactionNotesText(notesData({ firstMessage: sectionPlainText(first), newestMessage: 'Now the tests.', summary: 'The notes.' }))
+    const notes = compactionNotesText(notesData({ firstMessage: sectionPlainText(first), finalMessage: 'Now the tests.', requirements: 'The notes.' }))
     const block = compactionBlockText({ count: 1, lastId: null, pictures: [] }, notes)
     expect(compact(tab.id, [section('b', 'agent', `${block}\nThe reply so far`)], 150_000)).toBe(true)
     expect(tabNow(tab.id).title).toBe(title)

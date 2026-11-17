@@ -8,10 +8,13 @@ import {
   compactionNotesText,
   compactionTextForPeople,
   conversationCostText,
+  messageFence,
   notesAssetLines,
   notesCellText,
   notesJobLines,
+  notesLeftOutMessages,
   notesMessages,
+  type CompactionNotes,
   type NotesAsset,
   type NotesAssetLine,
   type NotesJobLine,
@@ -21,12 +24,18 @@ import { findMediaTags, mediaTagText } from './mediaTags'
 import { FOX_ORIGIN, HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, idImage, invokeBlock, notesData } from './testing'
 import { findToolBlocks, unescapedModelText } from './toolBlocks'
 
-const SUMMARY = '## Summary'
 const REQUIREMENTS = '## Requirements and decisions'
-const NEXT_STEPS = '## Next steps'
 const ASSETS = '## Assets of the conversation'
 const JOBS = '## Jobs of the reply'
 const COST = '## Cost'
+const USER_MESSAGES = '## User messages'
+const FIRST_MESSAGE = '### First message'
+const ONLY_MESSAGE = '### First and final message'
+const MIDDLE_MESSAGES = '### Relevant middle messages'
+const FINAL_MESSAGE = '### Final message'
+// Headings of the notes of an older Dez.
+const SUMMARY = '## Summary'
+const NEXT_STEPS = '## Next steps'
 
 const PHOTO: NotesAsset = { id: 'a', kind: 'image', facts: 'PNG, 800x600, 120 KB', origin: 'from the user', sentence: 'The reference photo.', byReply: false, text: null }
 const FRAME: NotesAsset = {
@@ -52,6 +61,22 @@ function headings(text: string): string[] {
   return text.split('\n').filter((line) => line.startsWith('## '))
 }
 
+// The headings of the parts of the messages of the user in `text`.
+function messageHeadings(text: string): string[] {
+  return text.split('\n').filter((line) => line.startsWith('### '))
+}
+
+// A message part of the notes that holds the message `text`.
+function messagePart(text: string): string {
+  return `<dez:user-message>\n${text}\n</dez:user-message>`
+}
+
+// The text `text` in a code fence of `length` backticks.
+function fenced(text: string, length = 3): string {
+  const fence = '`'.repeat(length)
+  return `${fence}\n${text}\n${fence}`
+}
+
 function lineData({ text: _text, ...line }: NotesAsset): NotesAssetLine {
   return line
 }
@@ -62,10 +87,12 @@ function jobLine(job: JobInfo, inputs: string[] = []): NotesJobLine {
   return { id: job.id, number: job.call.number, tool: job.tool, status: job.status, result: jobResultState(job), label: job.call.label, inputs }
 }
 
-// The text of the part `heading` of the notes `text`, up to the next part.
+// The text of the part `heading` of the notes `text`, up to the next part
+// of its level.
 function partText(text: string, heading: string): string {
+  const level = heading.slice(0, heading.indexOf(' ') + 1)
   const start = text.indexOf(`${heading}\n\n`) + heading.length + 2
-  const end = text.indexOf('\n\n## ', start)
+  const end = text.indexOf(`\n\n${level}`, start)
   return text.slice(start, end < 0 ? text.length : end)
 }
 
@@ -77,20 +104,18 @@ const FIRST_FORM_JOBS_HEAD = 'The jobs of the reply that ran at this compaction.
   + 'result: `ready` means that the next jobs_wait of that reply gives it, `given` that a jobs_wait gave it, and `-` that there is none.'
 
 describe('compactionNotesText', () => {
-  it('writes the parts of the model, each under its heading, then the assets, the jobs, and the cost', () => {
+  it('writes the requirements of the model under their heading, then the assets, the jobs, and the cost', () => {
     const text = compactionNotesText(notesData({ assets: [FRAME], jobs: [jobInfo({})], cost: { usd: 0.25, requests: 3, unpriced: 0 } }))
     const lines = text.split('\n')
 
-    expect(headings(text)).toStrictEqual([SUMMARY, REQUIREMENTS, NEXT_STEPS, ASSETS, JOBS, COST])
-    expect(lines[lines.indexOf(SUMMARY) + 2]).toBe('The user wants a short fox film.')
+    expect(headings(text)).toStrictEqual([REQUIREMENTS, ASSETS, JOBS, COST])
     expect(lines[lines.indexOf(REQUIREMENTS) + 2]).toBe('Every frame is 16:9.')
-    expect(lines[lines.indexOf(NEXT_STEPS) + 2]).toBe('Make scene 2.')
     expect(lines.at(-1)).toContain('$0.25')
   })
 
-  it('leaves out a blank part of the model with its heading, and always writes the parts of Dez', () => {
-    expect(headings(compactionNotesText(notesData({ requirements: ' \n\t' })))).toStrictEqual([SUMMARY, NEXT_STEPS, ASSETS, JOBS, COST])
-    expect(headings(compactionNotesText(notesData({ summary: '', requirements: '', nextSteps: '' })))).toStrictEqual([ASSETS, JOBS, COST])
+  it('leaves out blank requirements with their heading, and always writes the parts of Dez', () => {
+    expect(headings(compactionNotesText(notesData({ requirements: ' \n\t' })))).toStrictEqual([ASSETS, JOBS, COST])
+    expect(headings(compactionNotesText(notesData({ requirements: '' })))).toStrictEqual([ASSETS, JOBS, COST])
   })
 
   it('keeps the reference of an image with no id in the assets part', () => {
@@ -136,26 +161,26 @@ describe('compactionNotesText', () => {
 
   it('escapes the text of the model, so that it forms no tool block and no media tag, and reads a sentence back as it went in', () => {
     const fakeTag = '<dez:audio id="a" type="audio/wav"/>'
-    const summary = `I called the tool:\n${invokeBlock('j-ab12')}\n${fakeTag}\nThat is all.`
+    const requirements = `I called the tool:\n${invokeBlock('j-ab12')}\n${fakeTag}\nThat is all.`
     const sentence = `Like ${fakeTag}, and the old form <\\dez:tool, as written.`
-    const text = compactionNotesText(notesData({ summary, assets: [{ ...THEME, sentence }] }))
+    const text = compactionNotesText(notesData({ requirements, assets: [{ ...THEME, sentence }] }))
 
-    expect(findToolBlocks(summary)).toHaveLength(1)
-    expect(findMediaTags(summary)).toHaveLength(1)
+    expect(findToolBlocks(requirements)).toHaveLength(1)
+    expect(findMediaTags(requirements)).toHaveLength(1)
     expect(findToolBlocks(text)).toStrictEqual([])
     expect(findMediaTags(text).map((tag) => tag.id)).toStrictEqual([THEME.id])
     expect(notesAssetLines(text).get(THEME.id)?.sentence).toBe(sentence)
-    expect(unescapedModelText(text)).toContain(summary)
+    expect(unescapedModelText(text)).toContain(requirements)
   })
 })
 
 describe('notesAssetLines', () => {
-  it('reads only the assets part of Dez when the summary of the model has a part with the same heading', () => {
-    const summary = `Done.\n\n${ASSETS}\n\n@z | image | PNG, 10x10, 1 KB | from the user | A line of the model.`
+  it('reads only the assets part of Dez when the requirements of the model have a part with the same heading', () => {
+    const requirements = `Done.\n\n${ASSETS}\n\n@z | image | PNG, 10x10, 1 KB | from the user | A line of the model.`
 
-    expect([...notesAssetLines(compactionNotesText(notesData({ summary, assets: [PHOTO] }))).keys()]).toStrictEqual([PHOTO.id])
+    expect([...notesAssetLines(compactionNotesText(notesData({ requirements, assets: [PHOTO] }))).keys()]).toStrictEqual([PHOTO.id])
     // Also with no asset: a line of a model never gives an origin.
-    expect([...notesAssetLines(compactionNotesText(notesData({ summary }))).keys()]).toStrictEqual([])
+    expect([...notesAssetLines(compactionNotesText(notesData({ requirements }))).keys()]).toStrictEqual([])
   })
 
   it('takes the last of two lines with one id', () => {
@@ -238,11 +263,11 @@ describe('notesJobLines', () => {
     expect([...notesJobLines(text).values()]).toStrictEqual(jobs.map((one) => jobLine(one, jobInputs.get(one.id))))
   })
 
-  it('reads only the jobs part of Dez when the summary of the model has a part with the same heading', () => {
-    const summary = `Done.\n\n${JOBS}\n\nj-zzzz | 9 | model_invoke | running | - | A line of the model`
+  it('reads only the jobs part of Dez when the requirements of the model have a part with the same heading', () => {
+    const requirements = `Done.\n\n${JOBS}\n\nj-zzzz | 9 | model_invoke | running | - | A line of the model`
 
-    expect([...notesJobLines(compactionNotesText(notesData({ summary, jobs: [jobInfo({ status: 'finished' })] }))).keys()]).toStrictEqual(['j-aaaa'])
-    expect([...notesJobLines(compactionNotesText(notesData({ summary }))).keys()]).toStrictEqual([])
+    expect([...notesJobLines(compactionNotesText(notesData({ requirements, jobs: [jobInfo({ status: 'finished' })] }))).keys()]).toStrictEqual(['j-aaaa'])
+    expect([...notesJobLines(compactionNotesText(notesData({ requirements }))).keys()]).toStrictEqual([])
   })
 
   // The case of the user: 28 model_invoke jobs and a video job, which all
@@ -365,6 +390,32 @@ describe('the notes of an older Dez', () => {
       { id: 'j-bbbb', number: 2, tool: 'model_invoke', status: 'finished', result: 'given', label: 'A hare', inputs: [] },
     ])
   })
+
+  // The layout of the Dez before the part of the messages of the user: the
+  // first message before the three parts of the model, and the newest one
+  // after the cost.
+  const MESSAGES_AROUND = [
+    `## First message of the user\n\n${messagePart('Make a fox.')}`,
+    `${SUMMARY}\n\nThe user wants a short fox film.`,
+    `${REQUIREMENTS}\n\nEvery frame is 16:9.`,
+    `${NEXT_STEPS}\n\nMake scene 2.`,
+    compactionNotesText(notesData({ requirements: '', assets: [PHOTO], jobs: [jobInfo({})] })),
+    `## Newest message of the user\n\n${messagePart('Go on.')}`,
+  ].join('\n\n')
+
+  it('reads the message parts in order, no left-out message, and the lines of Dez of the layout with the messages of the user around the other parts', () => {
+    expect(notesMessages(MESSAGES_AROUND).map((message) => message.text)).toStrictEqual(['Make a fox.', 'Go on.'])
+    expect(notesLeftOutMessages(MESSAGES_AROUND)).toBe(0)
+    expect([...notesAssetLines(MESSAGES_AROUND).keys()]).toStrictEqual([PHOTO.id])
+    expect([...notesJobLines(MESSAGES_AROUND).keys()]).toStrictEqual(['j-aaaa'])
+  })
+
+  it('gives each message part of that layout in a code fence for people', () => {
+    const people = compactionNotesForPeople(MESSAGES_AROUND, 'agent')
+
+    expect(people.startsWith(`## First message of the user\n\n${fenced('Make a fox.')}\n\n${SUMMARY}\n\n`)).toBe(true)
+    expect(people.endsWith(`## Newest message of the user\n\n${fenced('Go on.')}`)).toBe(true)
+  })
 })
 
 describe('conversationCostText', () => {
@@ -422,22 +473,39 @@ describe('the message parts of the user', () => {
     '<dez:user-message>',
     'Thanks.',
   ].join('\n')
-  const messageHeadings = (text: string) => headings(text).filter((line) => line.endsWith('of the user'))
 
-  it('writes the first message before the parts of the model and the newest one after the cost, and reads each back word for word', () => {
-    const text = compactionNotesText(notesData({ firstMessage: TRICKY, newestMessage: 'Go on.', assets: [PHOTO], jobs: [jobInfo({})] }))
+  it('writes the messages of the user in one part after the cost: the first one, the middle ones, and the final one, each under its own heading, in order', () => {
+    const text = compactionNotesText(notesData({ firstMessage: 'Make a fox.', middleMessages: ['Use my photo.', 'Make it red.'], finalMessage: 'Go on.', assets: [PHOTO], jobs: [jobInfo({})] }))
 
-    expect(messageHeadings(text)).toStrictEqual(['## First message of the user', '## Newest message of the user'])
-    expect(text.startsWith('## First message of the user\n\n<dez:user-message>\n')).toBe(true)
-    expect(text.endsWith('## Newest message of the user\n\n<dez:user-message>\nGo on.\n</dez:user-message>')).toBe(true)
-    expect(notesMessages(text).map((message) => message.text)).toStrictEqual([TRICKY, 'Go on.'])
+    expect(headings(text)).toStrictEqual([REQUIREMENTS, ASSETS, JOBS, COST, USER_MESSAGES])
+    expect(partText(text, USER_MESSAGES)).toBe([
+      FIRST_MESSAGE,
+      '',
+      messagePart('Make a fox.'),
+      '',
+      MIDDLE_MESSAGES,
+      '',
+      messagePart('Use my photo.'),
+      '',
+      messagePart('Make it red.'),
+      '',
+      FINAL_MESSAGE,
+      '',
+      messagePart('Go on.'),
+    ].join('\n'))
+    expect(notesMessages(text).map((message) => message.text)).toStrictEqual(['Make a fox.', 'Use my photo.', 'Make it red.', 'Go on.'])
   })
 
-  it('keeps a message from ending the block, forming a tool block, or giving a line of Dez, and keeps its image and its clip', () => {
-    const text = compactionNotesText(notesData({ firstMessage: 'Make a fox.', newestMessage: TRICKY, assets: [PHOTO], jobs: [jobInfo({})] }))
+  it.each<[string, Partial<CompactionNotes>, string[]]>([
+    ['the first message', { firstMessage: TRICKY, finalMessage: 'Go on.' }, [TRICKY, 'Go on.']],
+    ['a middle message', { firstMessage: 'Make a fox.', middleMessages: [TRICKY], finalMessage: 'Go on.' }, ['Make a fox.', TRICKY, 'Go on.']],
+    ['the final message', { firstMessage: 'Make a fox.', finalMessage: TRICKY }, ['Make a fox.', TRICKY]],
+  ])('keeps %s from ending its part or the block, forming a tool block, or giving a line of Dez, and reads it back word for word with its image and its clip', (_case, messages, texts) => {
+    const text = compactionNotesText(notesData({ ...messages, assets: [PHOTO], jobs: [jobInfo({})] }))
     const block = readCompactionBlock(compactionBlockText({ count: 1, lastId: 'b', pictures: [] }, text))
 
     expect(block?.notes).toBe(text)
+    expect(notesMessages(text).map((message) => message.text)).toStrictEqual(texts)
     expect(findToolBlocks(text)).toStrictEqual([])
     expect(findImageReferences(text, 'agent').map((reference) => reference.id)).toStrictEqual(['a'])
     expect(findMediaTags(text).map((tag) => tag.id)).toStrictEqual(['b'])
@@ -445,24 +513,70 @@ describe('the message parts of the user', () => {
     expect([...notesJobLines(text).keys()]).toStrictEqual(['j-aaaa'])
   })
 
-  it('writes one part when the newest message is the first one', () => {
-    const text = compactionNotesText(notesData({ firstMessage: 'Make a fox.', newestMessage: null }))
+  it('writes one part under its own heading when the first message is the final one', () => {
+    const text = compactionNotesText(notesData({ firstMessage: 'Make a fox.' }))
 
-    expect(messageHeadings(text)).toStrictEqual(['## First and newest message of the user'])
+    expect(partText(text, USER_MESSAGES)).toBe(`${ONLY_MESSAGE}\n\n${messagePart('Make a fox.')}`)
     expect(notesMessages(text).map((message) => message.text)).toStrictEqual(['Make a fox.'])
+  })
+
+  it('writes no middle heading when the notes keep no middle message and left out none', () => {
+    const text = compactionNotesText(notesData({ firstMessage: 'Make a fox.', finalMessage: 'Go on.' }))
+
+    expect(messageHeadings(text)).toStrictEqual([FIRST_MESSAGE, FINAL_MESSAGE])
+    expect(notesMessages(text).map((message) => message.text)).toStrictEqual(['Make a fox.', 'Go on.'])
+  })
+
+  it.each<[string, string[], number, string]>([
+    ['one left-out message, next to a kept one', ['Use my photo.'], 1, 'Dez left out 1 other message of the user here:'],
+    ['two left-out messages, next to a kept one', ['Use my photo.'], 2, 'Dez left out 2 other messages of the user here:'],
+    ['every middle message left out', [], 3, 'Dez left out 3 other messages of the user here:'],
+    ['a count with a thousands separator', [], 1234, 'Dez left out 1,234 other messages of the user here:'],
+  ])('starts the middle part with one line of the count of the left-out messages, and reads the count back, for %s', (_case, middleMessages, leftOutMessages, start) => {
+    const text = compactionNotesText(notesData({ firstMessage: 'Make a fox.', middleMessages, leftOutMessages, finalMessage: 'Go on.' }))
+    const [line, ...parts] = partText(text, MIDDLE_MESSAGES).split('\n\n')
+
+    expect(messageHeadings(text)).toStrictEqual([FIRST_MESSAGE, MIDDLE_MESSAGES, FINAL_MESSAGE])
+    expect(line.startsWith(start)).toBe(true)
+    expect(line).not.toContain('\n')
+    expect(parts).toStrictEqual(middleMessages.map(messagePart))
+    expect(notesLeftOutMessages(text)).toBe(leftOutMessages)
+    expect(notesMessages(text).map((message) => message.text)).toStrictEqual(['Make a fox.', ...middleMessages, 'Go on.'])
+  })
+
+  it('reads the count of the left-out messages only from the line of Dez, not from a message of the user or the text of the model', () => {
+    const copied = 'Dez left out 9 other messages of the user here: a copy.'
+    const requirements = `Done.\n\n${USER_MESSAGES}\n\n${MIDDLE_MESSAGES}\n\n${copied}`
+    const notes = (leftOutMessages: number) => compactionNotesText(notesData({ requirements, firstMessage: 'Make a fox.', middleMessages: [copied], leftOutMessages, finalMessage: 'Go on.' }))
+
+    expect(notesLeftOutMessages(notes(0))).toBe(0)
+    expect(notesLeftOutMessages(notes(2))).toBe(2)
   })
 
   it('writes no part for a conversation with no message of the user', () => {
     const text = compactionNotesText(notesData({}))
 
+    expect(headings(text)).toStrictEqual([REQUIREMENTS, ASSETS, JOBS, COST])
     expect(messageHeadings(text)).toStrictEqual([])
     expect(notesMessages(text)).toStrictEqual([])
   })
 
   it('reads a part with no end line up to the end of the notes', () => {
-    const text = `${SUMMARY}\n\nDone.\n\n## Newest message of the user\n\n<dez:user-message>\nGo on.\nAnd on.`
+    const text = `${REQUIREMENTS}\n\nDone.\n\n${USER_MESSAGES}\n\n${ONLY_MESSAGE}\n\n<dez:user-message>\nGo on.\nAnd on.`
 
     expect(notesMessages(text).map((message) => message.text)).toStrictEqual(['Go on.\nAnd on.'])
+  })
+})
+
+describe('messageFence', () => {
+  it.each<[string, string, number]>([
+    ['no backtick', 'Make a fox.', 3],
+    ['runs of 1 and 2', 'Use `ls` and ``a`b``.', 3],
+    ['a run of 3', 'Like this:\n```\nls\n```', 4],
+    ['a longest run after a shorter one', '``` and then ``````', 7],
+    ['only backticks', '`````', 6],
+  ])('gives backticks, one more than the longest run and at least 3, for a text with %s', (_case, text, length) => {
+    expect(messageFence(text)).toBe('`'.repeat(length))
   })
 })
 
@@ -470,7 +584,7 @@ describe('the notes for people', () => {
   // A model wrote a whole media tag on a line of its own. The writer escapes
   // it; without that escape it would read as a tag of Dez, and get a label.
   const MODEL_TAG = '<dez:audio id="z" type="audio/wav"/>'
-  const text = compactionNotesText(notesData({ summary: `Like this:\n${MODEL_TAG}\nup to ${COMPACTION_END_LINE}`, assets: [FRAME, THEME] }))
+  const text = compactionNotesText(notesData({ requirements: `Like this:\n${MODEL_TAG}\nup to ${COMPACTION_END_LINE}`, assets: [FRAME, THEME] }))
 
   it('gives a label in place of each asset of Dez, and the text of the model as it wrote it', () => {
     const people = compactionNotesForPeople(text, 'agent')
@@ -480,16 +594,52 @@ describe('the notes for people', () => {
     expect(people).toContain(`Like this:\n${MODEL_TAG}\nup to ${COMPACTION_END_LINE}`)
   })
 
-  it('gives each message part as the text of its message, with a label for each asset and for each linked image that the rule lists', () => {
+  it('gives each message part as the text of its message in a code fence, with a label for each asset and for each linked image that the rule lists', () => {
     const linked = '/home/u/Pictures/fox.png'
     const message = `Draw this: ${idImage(linked, 'a')}\n<dez:tool, as typed.\n${COMPACTION_END_LINE}`
-    const withMessages = compactionNotesText(notesData({ firstMessage: message, newestMessage: `And ${idImage(linked, 'a')} again.` }))
+    const withMessages = compactionNotesText(notesData({
+      firstMessage: message,
+      middleMessages: [`Also ${idImage(linked, 'a')} here.`],
+      finalMessage: `And ${idImage(linked, 'a')} again.`,
+    }))
     const people = compactionNotesForPeople(withMessages, new Set([linked]))
 
-    expect(people).toContain(`## First message of the user\n\nDraw this: [image]\n<dez:tool, as typed.\n${COMPACTION_END_LINE}\n\n## Summary`)
-    expect(people.endsWith('## Newest message of the user\n\nAnd [image] again.')).toBe(true)
+    expect(people.endsWith([
+      USER_MESSAGES,
+      '',
+      FIRST_MESSAGE,
+      '',
+      fenced(`Draw this: [image]\n<dez:tool, as typed.\n${COMPACTION_END_LINE}`),
+      '',
+      MIDDLE_MESSAGES,
+      '',
+      fenced('Also [image] here.'),
+      '',
+      FINAL_MESSAGE,
+      '',
+      fenced('And [image] again.'),
+    ].join('\n'))).toBe(true)
     expect(people).not.toContain(linked)
     expect(people).not.toContain('dez:user-message')
+  })
+
+  it('draws the fence of each message longer than the longest run of backticks in it, so that no run closes it', () => {
+    const message = 'Run this:\n````sh\nls ``*.png``\n````'
+    const people = compactionNotesForPeople(compactionNotesText(notesData({ firstMessage: 'Make a fox.', middleMessages: [message], finalMessage: 'Go on with `ls`.' })), 'agent')
+
+    expect(people.endsWith([
+      FIRST_MESSAGE,
+      '',
+      fenced('Make a fox.'),
+      '',
+      MIDDLE_MESSAGES,
+      '',
+      fenced(message, 5),
+      '',
+      FINAL_MESSAGE,
+      '',
+      fenced('Go on with `ls`.'),
+    ].join('\n'))).toBe(true)
   })
 
   it('gives the notes in place of the block of a compaction section, with the text after the block, and any other text, in the form of the caller', () => {
@@ -505,25 +655,35 @@ describe('the notes for people', () => {
   })
 
   it('splits the notes into the assets part of Dez and every other part, in order', () => {
-    // The model copied the heading of the assets part into its summary.
-    const copied = compactionNotesText(notesData({ summary: `${ASSETS}\n\nA line of the model.`, assets: [PHOTO] }))
+    // The model copied the heading of the assets part into its requirements.
+    const copied = compactionNotesText(notesData({ requirements: `${ASSETS}\n\nA line of the model.`, assets: [PHOTO] }))
     const { assets, summary } = compactionNotesParts(copied, 'agent')
 
     expect(assets).toBe(compactionNotesForPeople(partText(copied.slice(copied.lastIndexOf(ASSETS)), ASSETS), 'agent').trim())
     expect(assets).toContain('@a | ')
-    expect(headings(summary)).toStrictEqual([SUMMARY, ASSETS, REQUIREMENTS, NEXT_STEPS, JOBS, COST])
+    expect(headings(summary)).toStrictEqual([REQUIREMENTS, ASSETS, JOBS, COST])
     expect(summary).toContain('A line of the model.')
     expect(summary).not.toContain('@a | ')
     expect(compactionNotesParts('Only a summary.', 'agent')).toStrictEqual({ assets: '', summary: 'Only a summary.' })
   })
 
   it('keeps the message parts in the summary, also when a message holds the heading of the assets part', () => {
-    const withMessages = compactionNotesText(notesData({ firstMessage: 'Make a fox.', newestMessage: `${ASSETS}\n\nNot a line of Dez.`, assets: [PHOTO] }))
+    const withMessages = compactionNotesText(notesData({ firstMessage: 'Make a fox.', finalMessage: `${ASSETS}\n\nNot a line of Dez.`, assets: [PHOTO] }))
     const { assets, summary } = compactionNotesParts(withMessages, 'agent')
 
     expect(assets).toContain('@a | ')
     expect(assets).not.toContain('Not a line of Dez.')
-    expect(summary.startsWith('## First message of the user\n\nMake a fox.\n\n## Summary')).toBe(true)
-    expect(summary.endsWith(`## Newest message of the user\n\n${ASSETS}\n\nNot a line of Dez.`)).toBe(true)
+    expect(summary.startsWith(`${REQUIREMENTS}\n\nEvery frame is 16:9.\n\n${JOBS}`)).toBe(true)
+    expect(summary.endsWith([
+      USER_MESSAGES,
+      '',
+      FIRST_MESSAGE,
+      '',
+      fenced('Make a fox.'),
+      '',
+      FINAL_MESSAGE,
+      '',
+      fenced(`${ASSETS}\n\nNot a line of Dez.`),
+    ].join('\n'))).toBe(true)
   })
 })

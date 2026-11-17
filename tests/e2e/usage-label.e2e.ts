@@ -272,7 +272,7 @@ describe('usage label', () => {
 
     await submit(browser, 'Go on.')
     const compaction = await setup.mock.waitForRequest(browser)
-    sendChatText(compaction.reply, '## Summary\nThe notes of the work.\n', { promptTokens: LARGE_TOKENS + 1000, usd: 0.3 })
+    sendChatText(compaction.reply, '## Requirements and decisions\nThe notes of the work.\n', { promptTokens: LARGE_TOKENS + 1000, usd: 0.3 })
 
     // The notes took the place of the conversation. The buffer has no
     // counted request yet: its size is an estimate, and it cost nothing.

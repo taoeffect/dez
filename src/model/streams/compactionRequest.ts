@@ -11,9 +11,13 @@ import type { PictureBudget } from './pictureBudget'
 // The compaction request: one request to the model of a reply that asks it
 // for the notes that take the place of the conversation (chat/compaction.ts).
 // It holds the messages of the next request of the reply, so it reads their
-// prompt cache, and one more user message: the instruction. This module
-// tells when a compaction is due, writes the instruction, and reads the
-// answer. All pure; controller/compaction.ts sends the request.
+// prompt cache, and one more user message: the instruction. The answer has
+// three parts: the requirements and decisions (text of the model), which
+// middle messages of the user the notes keep, and what to do with each
+// asset. Dez quotes the kept messages itself, so the model never rewrites
+// the words of the user. This module tells when a compaction is due,
+// writes the instruction, and reads the answer. All pure;
+// controller/compaction.ts sends the request.
 
 /** Why a compaction is due: the context size, or the images and the
  *  pictures of the context by count, by bytes, or by tokens. */
@@ -105,11 +109,27 @@ export interface AnswerAsset {
   sentence: string
 }
 
+/** What a compaction does with a middle message of the user: `keep`
+ *  quotes it in the notes word for word, and `drop` takes it out of the
+ *  conversation. */
+export type MessageDecision = 'keep' | 'drop'
+
+/** One message line of an answer: `m2: keep`. */
+export interface AnswerMessage {
+  /** The number of the middle message in the list of the instruction,
+   *  from 1 (`m1`). */
+  number: number
+  decision: MessageDecision
+}
+
 /** The answer of a model to a compaction request. */
 export interface CompactionAnswer {
-  summary: string
+  /** The text of the model: what the kept messages of the user do not
+   *  tell. */
   requirements: string
-  nextSteps: string
+  /** In the order of the lines; of two lines with one number, only the
+   *  first. */
+  messages: AnswerMessage[]
   /** In the order of the lines; of two lines with one id, only the first. */
   assets: AnswerAsset[]
 }
@@ -119,6 +139,10 @@ export const MAX_ASSET_SENTENCE_LENGTH = 300
 
 /** What the instruction of a compaction request holds. */
 export interface CompactionInstruction {
+  /** The start of each middle message of the user, oldest first, as text
+   *  for people (`middleMessageStarts`, compactionAssets.ts): the list of
+   *  the messages part, `m1` to `mN`. */
+  middleMessages: readonly string[]
   /** The table of the assets of the conversation (`assetTableText`,
    *  compactionAssets.ts). */
   assetTable: string
@@ -132,27 +156,44 @@ export interface CompactionInstruction {
   tools: boolean
 }
 
+// The list of the middle messages of the instruction: one line for each,
+// with its number and its start in quotes. The quote mark keeps a start
+// such as "keep going" from reading as a message line when a model copies
+// the list into its answer.
+function middleMessagesList(starts: readonly string[]): string {
+  if (starts.length === 0) return 'No message of the user came between the first and the newest one, so your answer needs no line under the Middle messages heading.'
+  const lines = starts.map((start, index) => `m${index + 1}: "${start}"`)
+  return ['The messages of the user between the first and the newest one, oldest first, each as its start (the whole messages are above):', ...lines].join('\n')
+}
+
 /** The instruction of a compaction request: the text of its last user
  *  message. The answer has the layout that `readCompactionAnswer` reads.
  *  It holds no path of a stored file. */
-export function compactionInstruction({ assetTable, jobs, cost, tools }: CompactionInstruction): string {
+export function compactionInstruction({ middleMessages, assetTable, jobs, cost, tools }: CompactionInstruction): string {
   const text = `[Request from Dez, not a message of the user]
 
-The conversation is near the limit of what one request can hold. So Dez now takes every message above out of the conversation and puts your answer to this request in their place, as notes. The work goes on right after that, from the notes alone: the next request holds only your notes, the first message of the user, and the newest message of the user, word for word. The tool calls and their results are gone then, and so is your thinking.
+The conversation is near the limit of what one request can hold. So Dez now takes every message above out of the conversation and puts your answer to this request in their place, as notes. The work goes on right after that, from the notes alone: the next request holds only your notes and the messages of the user that Dez quotes in them word for word (the first message, the middle messages that you keep, and the newest message). The tool calls and their results are gone then, and so is your thinking.
 
-Write only the notes, as plain text, with these four headings and nothing before or after them.${tools ? ' Call no tool in this answer: Dez does not run it.' : ''}
-
-## Summary
-A brief account of what the user and the assistant did between the first and the newest message of the user, in the order in which it happened, and where the reply that runs now stands. Include what failed and why, so that it is not tried again. Do not repeat the two messages: Dez adds them to the notes word for word.
+Write only the notes, as plain text, with these three headings and nothing before or after them.${tools ? ' Call no tool in this answer: Dez does not run it.' : ''}
 
 ## Requirements and decisions
-Every requirement, preference, and correction of the user, in the user's own words where the wording matters, and every decision that was made, with its reason. Include the exact values that later work needs: names, numbers, settings, and the important parts of prompts and commands.
+What the work needs to know that the kept messages of the user do not tell word for word:
+- every decision that was made, with its reason, and what failed and why, so that it is not tried again;
+- each requirement, preference, correction, and rejection of the user that is in a message that you drop;
+- what the user rejected or replaced, and what to use in its place: name a rejected or replaced asset by what it is, not by its @id (see Assets);
+- the exact values that later work needs: names, numbers, settings, and the important parts of prompts and commands.
+End this part with one or two sentences that tell where the work on the newest message of the user stands: what is done, what is not, and the job ids of the jobs that it waits for.
 
-## Next steps
-What is in work now and what comes next, step by step, so that you can go on at once. Name the jobs that still run by their job ids, and tell what to do with their results.
+## Middle messages
+Keep each message of the user whose words the work on the newest message still needs: an instruction, a requirement, a correction, or a choice that still counts, also when it is old. Drop a message that the work no longer needs, such as "ok", or a request whose work is done and changes nothing later, and put what still counts of it under Requirements and decisions. Dez quotes each kept message in the notes word for word, with its images and clips. A dropped message leaves the conversation, but its images and clips stay as assets. Dez keeps a message that your lines do not name.
+
+One line for each message of the list below, in this form:
+m1: keep|drop
+
+${middleMessagesList(middleMessages)}
 
 ## Assets
-Keep only what the work at hand needs. Dez keeps every asset of the user by itself. Of the assets that a model or a tool made, keep only an asset that you still need to finish the request that you work on now (an input of something that you still have to make or finish, and a result of this reply that the user must get), and an asset that a step of your notes uses. Drop every other made asset: the inputs of work that is finished, the versions that a newer one replaced, and the assets of earlier replies that the work at hand does not use.
+Keep only what the work at hand needs. Dez keeps every asset of the user by itself. Of the assets that a model or a tool made, keep only an asset that you still need to finish the request that you work on now (an input of something that you still have to make or finish, and a result of this reply that the user must get), and an asset that your notes name. Drop every other made asset: the inputs of work that is finished, the versions that a newer one replaced, the versions that the user rejected, and the assets of earlier replies that the work at hand does not use.
 
 One line for each image and clip of the table below, in this form:
 @id: show|keep|drop - one sentence
@@ -163,7 +204,7 @@ One line for each image and clip of the table below, in this form:
 
 The sentence tells what the asset is, how it was made (the model or the tool, and the important parts of the prompt or the command), and what a later step needs it for. You read this sentence again at the next compaction, when the calls that made the asset are gone. At most ${MAX_ASSET_SENTENCE_LENGTH} characters.
 
-Dez drops an asset of an earlier reply that your lines do not name, and keeps an asset of this reply that they do not name. Dez never drops an asset from the user, an asset that an open job uses, or an asset that your notes name with @id: for those, \`drop\` reads as \`keep\`.
+Dez drops an asset of an earlier reply that your lines do not name, and keeps an asset of this reply that they do not name. Dez never drops an asset from the user, an asset that an open job uses, or an asset that your notes or a kept message of the user name with @id: for those, \`drop\` reads as \`keep\`. So name a rejected or dropped asset in your notes by what it was, not by its @id. When Dez keeps an asset that the user rejected (a kept message of the user names it, or an open job uses it), its sentence tells that the user rejected it, and what the user wants in its place.
 
 ${assetTable}
 
@@ -174,23 +215,29 @@ ${conversationCostText(cost, 'so far')}`
   return withoutStoredFilePaths(text)
 }
 
-type AnswerPart = 'summary' | 'requirements' | 'nextSteps' | 'assets'
+type AnswerPart = 'requirements' | 'messages' | 'assets'
 
-// The names that a model gives the four headings, in lower case.
+// The names that a model gives the three headings, in lower case. The
+// headings of the parts of older notes (`summary`, `next steps`) are text
+// of the requirements part: a model can copy them from the notes of an
+// earlier compaction, and their text must not be lost.
 const HEADING_PARTS: ReadonlyMap<string, AnswerPart> = new Map([
-  ['summary', 'summary'],
   ['requirements and decisions', 'requirements'],
   ['requirements & decisions', 'requirements'],
   ['requirements', 'requirements'],
   ['decisions', 'requirements'],
-  ['next steps', 'nextSteps'],
-  ['next step', 'nextSteps'],
+  ['summary', 'requirements'],
+  ['next steps', 'requirements'],
+  ['next step', 'requirements'],
+  ['middle messages', 'messages'],
+  ['relevant middle messages', 'messages'],
+  ['user messages', 'messages'],
+  ['messages', 'messages'],
   ['assets', 'assets'],
   ['asset', 'assets'],
   ['asset decisions', 'assets'],
   // The assets heading of the earlier notes (compactionNotes.ts), which a
-  // second compaction request holds. Their other three headings are those
-  // of the instruction, so a model can copy this one too.
+  // second compaction request holds.
   ['assets of the conversation', 'assets'],
 ])
 
@@ -198,7 +245,7 @@ const HEADING_PARTS: ReadonlyMap<string, AnswerPart> = new Map([
 const BOLD_LINE = /^(?:\d+[.)]\s*)?(\*\*|__).+\1:?$/
 
 // The part that the heading on `line` starts; null for a line that is no
-// heading of the four. A heading has one of the forms that models write:
+// heading of the three. A heading has one of the forms that models write:
 // `## Name`, `**Name**`, `Name:`, with a number before the name or a colon
 // after it. A line that is only a name is no heading: it can be a line of
 // the notes.
@@ -226,6 +273,11 @@ const ASSET_LINE = new RegExp(
   'i',
 )
 
+// A message line in the forms of an asset line, with the number of a
+// middle message (`m2`) in place of the id. Text after the decision (a
+// reason) is left out. The groups: the number, the decision.
+const MESSAGE_LINE = new RegExp(String.raw`^\s*(?:[-*+•]\s+|\d+[.)]\s+)?\|?\s*[\`*_]*m(\d+)[\`*_]*[\s:|=>–—-]+[\`*_]*(keep|drop)\b`, 'i')
+
 // `text` with no code fence around the whole of it.
 function withoutFence(text: string): string {
   const lines = text.trim().split('\n')
@@ -238,16 +290,20 @@ function withoutFence(text: string): string {
  *
  *  - A heading counts in each form of `headingPart`, in any letter case.
  *    The text before the first heading, and the text of an answer with no
- *    heading, is a part of the summary. A heading that comes two times
- *    goes on with its part.
+ *    heading, is a part of the requirements. A heading that comes two
+ *    times goes on with its part.
+ *  - A message line counts only under the messages heading, and any other
+ *    line there is left out: a model can quote a message of the user
+ *    there, which Dez quotes itself.
  *  - An asset line counts only under the assets heading. A line of other
  *    text right after an asset line goes on with the sentence of that
  *    line, up to the next blank line.
  *  - A line can end with CRLF. */
 export function readCompactionAnswer(text: string): CompactionAnswer {
-  const parts: Record<Exclude<AnswerPart, 'assets'>, string[]> = { summary: [], requirements: [], nextSteps: [] }
+  const requirements: string[] = []
+  const messages = new Map<number, AnswerMessage>()
   const assets = new Map<string, AnswerAsset>()
-  let part: AnswerPart = 'summary'
+  let part: AnswerPart = 'requirements'
   // The asset whose sentence the next line can go on with.
   let open: AnswerAsset | null = null
   for (const line of withoutFence(text.replace(/\r\n?/g, '\n')).split('\n')) {
@@ -257,8 +313,14 @@ export function readCompactionAnswer(text: string): CompactionAnswer {
       open = null
       continue
     }
-    if (part !== 'assets') {
-      parts[part].push(line)
+    if (part === 'requirements') {
+      requirements.push(line)
+      continue
+    }
+    if (part === 'messages') {
+      const match = MESSAGE_LINE.exec(line)
+      const number = match ? Number(match[1]) : NaN
+      if (match && !messages.has(number)) messages.set(number, { number, decision: match[2].toLowerCase() as MessageDecision })
       continue
     }
     const match = ASSET_LINE.exec(line)
@@ -275,9 +337,8 @@ export function readCompactionAnswer(text: string): CompactionAnswer {
     }
   }
   return {
-    summary: parts.summary.join('\n').trim(),
-    requirements: parts.requirements.join('\n').trim(),
-    nextSteps: parts.nextSteps.join('\n').trim(),
+    requirements: requirements.join('\n').trim(),
+    messages: [...messages.values()],
     assets: [...assets.values()],
   }
 }
@@ -287,9 +348,11 @@ function sentenceText(text: string): string {
   return text.replace(/\s*\|\s*$/, '').trim()
 }
 
-/** Whether `answer` holds notes: text in one of its three parts. An answer
- *  with none (an empty answer, or only asset lines) must not take the
- *  place of a conversation. */
+/** Whether `answer` holds notes: requirements text, a message line, or an
+ *  asset line. Dez quotes the kept messages of the user itself, so the
+ *  text of the model is not the only record of the work. An answer with
+ *  nothing that Dez can read (an empty one, or one cut off at once) must
+ *  not take the place of a conversation. */
 export function answerHasNotes(answer: CompactionAnswer): boolean {
-  return answer.summary !== '' || answer.requirements !== '' || answer.nextSteps !== ''
+  return answer.requirements !== '' || answer.messages.length > 0 || answer.assets.length > 0
 }

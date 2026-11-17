@@ -15,21 +15,7 @@ import type { Role } from './types'
 // that writes them, that reads the lines of Dez in them, and that makes
 // them a text for people (`compactionNotesForPeople`).
 //
-//   ## First message of the user
-//
-//   <dez:user-message>
-//   <the first message of the user, word for word>
-//   </dez:user-message>
-//
-//   ## Summary
-//
-//   <text of the model>
-//
 //   ## Requirements and decisions
-//
-//   <text of the model>
-//
-//   ## Next steps
 //
 //   <text of the model>
 //
@@ -56,30 +42,61 @@ import type { Role } from './types'
 //
 //   <one sentence>
 //
-//   ## Newest message of the user
+//   ## User messages
+//
+//   ### First message
+//
+//   <dez:user-message>
+//   <the first message of the user, word for word>
+//   </dez:user-message>
+//
+//   ### Relevant middle messages
+//
+//   Dez left out 2 other messages of the user here: …
+//
+//   <dez:user-message>
+//   <a middle message that the model kept, word for word>
+//   </dez:user-message>
+//
+//   ### Final message
 //
 //   <dez:user-message>
 //   <the message that the reply answers, word for word>
 //   </dez:user-message>
 //
-// - The two messages of the user are the message parts
-//   (`notesMessages`). The first one is the first message of the
-//   conversation: a later compaction copies it from the notes before. The
-//   newest one is the message that the reply that ran at the compaction
-//   answers. When the two are one message, the notes hold one part, with
-//   the heading `## First and newest message of the user`. The model reads
-//   the newest message last, right before the reply goes on.
+// - The messages of the user are the message parts (`notesMessages`), in
+//   the order of the conversation, and they are read by their place: the
+//   first part is the first message of the conversation, which a later
+//   compaction copies from the notes before. Of two or more parts, the
+//   last one is the final message: the one that the reply that ran at the
+//   compaction answers. The parts between them are the middle messages
+//   that the model kept (streams/compactionAssets.ts). When the first
+//   message is the final one, the notes hold one part, with the heading
+//   `### First and final message`. The model reads the final message
+//   last, right before the reply goes on.
+// - The middle part starts with one line that tells how many middle
+//   messages Dez left out, when it left out one or more: at this
+//   compaction and at the ones before. With no middle message and none
+//   left out, the notes have no middle heading.
+// - The notes of Dez before this layout had the parts `## First message of
+//   the user` (or `## First and newest message of the user`) before the
+//   text of the model, `## Summary` and `## Next steps` parts of the
+//   model, and `## Newest message of the user` at the end. The readers
+//   read them too: the parts are read by place, and a reader of a part of
+//   Dez finds its heading.
 // - A part is the text of the message with an escape of its own
 //   (`messageEscape`), between a start line and an end line, each a whole
 //   line. The escape takes only the tags that would end the part or the
 //   block, or form a tool block in this agent section; the image
 //   references and the media tags of the user stay as they are, so they
 //   still count, at their places. A request sends a part as a message of
-//   the user (streams/messages.ts). A reader of the lines of Dez skips the
-//   parts, so a line of the user is never a line of Dez.
-// - The summary, the requirements and decisions, and the next steps are
-//   the three parts of the answer of the model to the compaction request
-//   (streams/compactionRequest.ts). A blank part is left out.
+//   the user (streams/messages.ts), and a request and a text for people
+//   show it in a code fence (`messageFence`) in place of its two tag
+//   lines. A reader of the lines of Dez skips the parts, so a line of the
+//   user is never a line of Dez.
+// - The requirements and decisions are the text part of the answer of
+//   the model to the compaction request (streams/compactionRequest.ts). A
+//   blank part is left out.
 // - The parts of the assets, the jobs, and the cost are of Dez. The
 //   compaction removes the tool blocks of the conversation, so these lines
 //   are all that still tells who made an asset, and which job is which:
@@ -103,30 +120,30 @@ import type { Role } from './types'
 // - The sentence is the last column of an asset line, and the label the
 //   last one of a job line: both are free text, which can hold the column
 //   mark. The columns before them hold no `|`.
-// - Every text of a model (the three parts, a sentence, a label of a call)
-//   has the escape of model text (`ModelTextEscaper`), so it forms no tag
-//   of Dez, and a request sends it with the escape removed. The readers
-//   give a text back with the escape removed.
+// - Every text of a model (the requirements, a sentence, a label of a
+//   call) has the escape of model text (`ModelTextEscaper`), so it forms
+//   no tag of Dez, and a request sends it with the escape removed. The
+//   readers give a text back with the escape removed.
 // - A reader takes the last heading of its name. Dez always writes its
 //   parts, also with nothing in them, and after the text of the model, so
 //   a reader never takes a line of a model for a line of Dez: a model can
-//   copy a heading of earlier notes into its answer. The newest message of
-//   the user comes after them, but no reader looks into a message part.
+//   copy a heading of earlier notes into its answer. No reader looks into
+//   a message part.
 // - Saved conversations hold these lines, and later compactions and
 //   `asset_info` read them back. So a new form of a line needs a reader
 //   that still takes the old form. The reader of the tables reads a line
 //   by the names of its columns, which the first line of the part tells:
 //   the first form wrote all the columns in each line, with these names.
 
-const FIRST_MESSAGE_HEADING = '## First message of the user'
-const ONLY_MESSAGE_HEADING = '## First and newest message of the user'
-const SUMMARY_HEADING = '## Summary'
 const REQUIREMENTS_HEADING = '## Requirements and decisions'
-const NEXT_STEPS_HEADING = '## Next steps'
 const ASSETS_HEADING = '## Assets of the conversation'
 const JOBS_HEADING = '## Jobs of the reply'
 const COST_HEADING = '## Cost'
-const NEWEST_MESSAGE_HEADING = '## Newest message of the user'
+const USER_MESSAGES_HEADING = '## User messages'
+const FIRST_MESSAGE_HEADING = '### First message'
+const ONLY_MESSAGE_HEADING = '### First and final message'
+const MIDDLE_MESSAGES_HEADING = '### Relevant middle messages'
+const FINAL_MESSAGE_HEADING = '### Final message'
 
 const MESSAGE_START_LINE = `<${USER_MESSAGE_TAG_NAME}>`
 const MESSAGE_END_LINE = `</${USER_MESSAGE_TAG_NAME}>`
@@ -140,6 +157,16 @@ const messageEscape = tagEscape('dez:tool', COMPACTION_TAG_NAME, USER_MESSAGE_TA
 // conversation: never a date, a running count, or a random value.
 const NO_NOTES_ASSETS_TEXT = 'None: these notes keep no image and no clip.'
 const NO_NOTES_JOBS_TEXT = 'None: no job of a reply ran at this compaction.'
+
+// The line at the start of the middle part that tells how many middle
+// messages Dez left out (`CompactionNotes.leftOutMessages`), and its
+// reader. The count is fixed until the next compaction, so the line can be
+// in the cached prefix.
+function leftOutText(count: number): string {
+  const [its, it] = count === 1 ? ['its', 'it'] : ['their', 'them']
+  return `Dez left out ${countOf(count, 'other message')} of the user here: the work at hand no longer needed ${its} words, and the notes above tell what of ${it} still counts.`
+}
+const LEFT_OUT_LINE = /^Dez left out ([\d,]+) other messages? of the user here:/
 
 // The value of the asset column that marks an asset that the reply that
 // ran at the compaction made (`NotesAssetLine.byReply`); `-` for any other.
@@ -256,15 +283,19 @@ export interface NotesJobLine {
 /** What the notes of a compaction hold. */
 export interface CompactionNotes {
   /** The first message of the user, as its plain text (a prompt pill as
-   *  its body); null when the conversation has none. */
+   *  its body); null when the conversation has none. Each message of the
+   *  user has this form. */
   firstMessage: string | null
+  /** The middle messages of the user that the notes keep, oldest first. */
+  middleMessages: readonly string[]
+  /** How many middle messages of the user the notes left out, at this
+   *  compaction and at the ones before it. */
+  leftOutMessages: number
   /** The message of the user that the reply that runs answers; null when
    *  it is the first message, or when there is none. */
-  newestMessage: string | null
-  /** The three parts of the model's answer, with no escape. */
-  summary: string
+  finalMessage: string | null
+  /** The text part of the model's answer, with no escape. */
   requirements: string
-  nextSteps: string
   assets: readonly NotesAsset[]
   /** The references of the images with no id (an image of an old Dez)
    *  that the notes keep, each with the kept mark, and not in a message
@@ -323,25 +354,30 @@ function messagePartText(text: string): string {
   return `${MESSAGE_START_LINE}\n${messageEscape.escape(text)}\n${MESSAGE_END_LINE}`
 }
 
+// The part of the messages of the user in `notes`, with no heading: a
+// sub-part for each kind of message, in the order of the conversation.
+function userMessagesText({ firstMessage, middleMessages, leftOutMessages, finalMessage }: CompactionNotes): string {
+  const parts: string[] = []
+  if (firstMessage !== null) parts.push(`${finalMessage === null ? ONLY_MESSAGE_HEADING : FIRST_MESSAGE_HEADING}\n\n${messagePartText(firstMessage)}`)
+  if (middleMessages.length > 0 || leftOutMessages > 0) {
+    const lines = [...(leftOutMessages > 0 ? [leftOutText(leftOutMessages)] : []), ...middleMessages.map(messagePartText)]
+    parts.push(`${MIDDLE_MESSAGES_HEADING}\n\n${lines.join('\n\n')}`)
+  }
+  if (finalMessage !== null) parts.push(`${FINAL_MESSAGE_HEADING}\n\n${messagePartText(finalMessage)}`)
+  return parts.join('\n\n')
+}
+
 /** The text of the notes: the lines of a compaction block between its tag
  *  line and its end line (`compactionBlockText`). */
 export function compactionNotesText(notes: CompactionNotes): string {
   const parts: string[] = []
   const add = (heading: string, text: string) => parts.push(`${heading}\n\n${text}`)
-  if (notes.firstMessage !== null) add(notes.newestMessage === null ? ONLY_MESSAGE_HEADING : FIRST_MESSAGE_HEADING, messagePartText(notes.firstMessage))
-  const modelParts: Array<readonly [string, string]> = [
-    [SUMMARY_HEADING, notes.summary],
-    [REQUIREMENTS_HEADING, notes.requirements],
-    [NEXT_STEPS_HEADING, notes.nextSteps],
-  ]
-  for (const [heading, text] of modelParts) {
-    if (text.trim() !== '') add(heading, escapedModelText(text.trim()))
-  }
+  if (notes.requirements.trim() !== '') add(REQUIREMENTS_HEADING, escapedModelText(notes.requirements.trim()))
   const assets = notes.assets.map(assetRow)
   add(ASSETS_HEADING, assets.length > 0 || notes.unnamed.length > 0 ? [notesTableText(ASSETS_TABLE, assets), ...notes.unnamed].join('\n\n') : NO_NOTES_ASSETS_TEXT)
   add(JOBS_HEADING, notes.jobs.length > 0 ? notesTableText(JOBS_TABLE, notes.jobs.map((job) => jobRow(job, notes.jobInputs.get(job.id)))) : NO_NOTES_JOBS_TEXT)
   add(COST_HEADING, conversationCostText(notes.cost, 'up to this compaction'))
-  if (notes.newestMessage !== null) add(NEWEST_MESSAGE_HEADING, messagePartText(notes.newestMessage))
+  if (notes.firstMessage !== null) add(USER_MESSAGES_HEADING, userMessagesText(notes))
   return parts.join('\n\n')
 }
 
@@ -393,10 +429,38 @@ function scanMessages(notes: string): { messages: NotesMessage[], lines: string[
 }
 
 /** The message parts of the notes `notes` (`CompactionBlock.notes`), in
- *  order. The first one is the first message of the user; the last one is
- *  the newest message when there are two or more. */
+ *  order. The first one is the first message of the user; of two or more,
+ *  the last one is the final message, and the ones between them are the
+ *  middle messages. */
 export function notesMessages(notes: string): NotesMessage[] {
   return scanMessages(notes).messages
+}
+
+/** How many middle messages of the user the notes `notes` left out
+ *  (`CompactionNotes.leftOutMessages`); 0 for the notes of an older Dez,
+ *  which have no line of the count. */
+export function notesLeftOutMessages(notes: string): number {
+  for (const line of partLines(notes, USER_MESSAGES_HEADING)) {
+    const match = LEFT_OUT_LINE.exec(line)
+    if (match) return Number(match[1].replace(/,/g, ''))
+  }
+  return 0
+}
+
+/** The fence of a code block that quotes the message `text` of the user:
+ *  backticks, one more than the longest run of backticks in `text`, and at
+ *  least 3. A run inside a code block that is shorter than its fence does
+ *  not close it (CommonMark), so the text can hold any fence of its own.
+ *  The request form and the form for people of a message only make its
+ *  runs shorter, so the fence of its raw text fits each form. */
+export function messageFence(text: string): string {
+  let longest = 0
+  let run = 0
+  for (const char of text) {
+    run = char === '`' ? run + 1 : 0
+    if (run > longest) longest = run
+  }
+  return '`'.repeat(Math.max(3, longest + 1))
 }
 
 // The lines of the last part of `text` with `heading`: from the line after
@@ -453,9 +517,10 @@ export function notesJobLines(notes: string): Map<string, NotesJobLine> {
  *  linked paths count by `rule` (`blockLinkedRule`), as a text for people
  *  to read: each image reference and media tag as its label (`[image]`,
  *  `[video]`), so no file path, the text of the model with its escape
- *  removed, and each message part as the text of its message. The chips
- *  of a compaction, Copy Markdown, Save As Markdown, the History preview,
- *  and the search show the notes in this form.
+ *  removed, and each message part as the text of its message in a code
+ *  fence (`messageFence`). The chips of a compaction, Copy Markdown, Save
+ *  As Markdown, the History preview, and the search show the notes in
+ *  this form.
  *
  *  The labels go in first, while the text of the model still has its
  *  escape: with the escape removed first, a tag that a model wrote would
@@ -465,7 +530,8 @@ export function compactionNotesForPeople(notes: string, rule: LinkedPathRule): s
   const pieces: string[] = []
   let from = 0
   for (const message of notesMessages(notes)) {
-    pieces.push(unescapedModelText(labeled(notes.slice(from, message.partFrom))), labeled(message.text))
+    const fence = messageFence(message.text)
+    pieces.push(unescapedModelText(labeled(notes.slice(from, message.partFrom))), `${fence}\n${labeled(message.text)}\n${fence}`)
     from = message.partTo
   }
   pieces.push(unescapedModelText(labeled(notes.slice(from))))

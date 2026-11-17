@@ -1,7 +1,7 @@
 import type { MessagePart, ModelRef, Section, SectionThinking, ThinkingReplay } from '../chat/types'
 import { assetTextPieces } from '../chat/assetMentions'
 import { blockLinkedRule, COMPACTION_MESSAGE_INTRO, COMPACTION_USER_MESSAGE_LABEL, compactionMessageEnd, isCarriedUserAssets, partsImageReferences, sectionCompactionBlock, sectionLinkedRuleParts, sectionTextParts, type CompactionBlock, type LinkedRulePart } from '../chat/compaction'
-import { notesMessages } from '../chat/compactionNotes'
+import { messageFence, notesMessages } from '../chat/compactionNotes'
 import { sectionIsEmpty, sectionPlainText } from '../chat/content'
 import { findAssetMentions, type AssetMention } from '../chat/imageMentions'
 import { findImageReferences, IMAGE_TOOL_KEY, type ImageReference, type LinkedPathRule } from '../chat/images'
@@ -86,15 +86,15 @@ export function imageOptionsOf(model: Pick<ModelInfo, 'id' | 'imageInput' | 'ima
 // first. So the compaction block goes as a `user` message, the compaction
 // message (`addCompactionNotes`), and the text after the block goes as the
 // agent messages of the reply that ran the compaction, with its thinking.
-// The notes hold the first and the newest message of the user in message
+// The notes hold the messages of the user that the work needs in message
 // parts (chat/compactionNotes.ts): each part goes as a text of the user
-// (`addUserText`), with the images of its references. In a conversation
-// that an older Dez compacted, the user sections right after the
-// compaction section, up to the first later agent section, held these
-// messages: they go in the same message, each one after its label. The
-// message carries the pictures of the tag too. The compaction took every
-// other image out of the conversation, so these are the ones that the
-// model must still see. An image reference with the kept mark of a
+// (`addUserText`), with the images of its references, in a code fence. In
+// a conversation that an older Dez compacted, the user sections right
+// after the compaction section, up to the first later agent section, held
+// these messages: they go in the same message, each one after its label.
+// The message carries the pictures of the tag too. The compaction took
+// every other image out of the conversation, so these are the ones that
+// the model must still see. An image reference with the kept mark of a
 // compaction (`IMAGE_KEPT_KEY`, chat/images.ts) is the exception: in this
 // message it goes as its text only, so the model gets the id and no
 // pixels. A mention of the user (`@a`) still sends such an image.
@@ -292,8 +292,11 @@ function partListText(list: PartList): string {
 //
 // A message part of the notes (`notesMessages`) goes as a text of the
 // user (`addUserText`), with the same rule: its text with no escape, its
-// images, and the images of its mentions (`imagesById`). Its start line
-// and its end line do not go; its heading does.
+// images, and the images of its mentions (`imagesById`). In place of its
+// start line and its end line go the lines of a code fence
+// (`messageFence`), so the model sees where the words of the user start
+// and end; the image parts go at their places, inside the fence. Its
+// heading goes as it is.
 //
 // A reference that is over the limit of `images` goes as its text only,
 // and a picture that is over it does not go, with its label.
@@ -304,7 +307,10 @@ function addCompactionNotes(list: PartList, block: CompactionBlock, imagesById: 
   let end = 0
   for (const message of notesMessages(notes)) {
     addNotesText(list, notes.slice(end, message.partFrom), rule, images)
+    const fence = messageFence(message.text)
+    list.pendingText += `${fence}\n`
     addUserText(list, message.text, imagesById, images, true, rule)
+    list.pendingText += `\n${fence}`
     end = message.partTo
   }
   addNotesText(list, notes.slice(end), rule, images)

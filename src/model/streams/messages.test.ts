@@ -1244,37 +1244,44 @@ describe('sectionsToStreamMessages: a compacted conversation', () => {
     expect(mediaRequestInput('imageEdit', newestUserMessage, tab)).toStrictEqual({ prompt: 'Like ![image](id=a)?', images: [IMAGE], imagesLeftOut: 0, ...NO_CLIPS })
   })
 
-  // The form of a compaction that moves the first and the newest message
-  // of the user into its notes, as message parts (`notesMessages`).
+  // The form of a compaction that moves the messages of the user that the
+  // work needs into its notes, as message parts (`notesMessages`). A
+  // request sends each part in a code fence.
   describe('with the messages of the user in the notes', () => {
-    const part = (heading: string, text: string) => `${heading}\n\n<dez:user-message>\n${text}\n</dez:user-message>`
-    const partsBlock = (first: string, summary: string, newest: string | null, linked?: string[]) => reply('c', compactionBlockText(
-      { count: 1, lastId: 'c', pictures: [], linked },
-      [
-        part(newest === null ? '## First and newest message of the user' : '## First message of the user', first),
-        `## Summary\n\n${summary}`,
-        ...(newest === null ? [] : [part('## Newest message of the user', newest)]),
-      ].join('\n\n'),
-    ))
+    const FENCE = '```'
+    const part = (text: string) => `<dez:user-message>\n${text}\n</dez:user-message>`
+    // The notes of a compaction: the requirements `requirements`, then the
+    // messages of the user: `first`, each of `middle`, and `final` (null
+    // when the first message is the final one).
+    const notesText = (requirements: string, first: string, final: string | null, middle: string[] = []) => [
+      `## Requirements and decisions\n\n${requirements}`,
+      '## User messages',
+      `${final === null ? '### First and final message' : '### First message'}\n\n${part(first)}`,
+      ...(middle.length === 0 ? [] : [`### Relevant middle messages\n\n${middle.map(part).join('\n\n')}`]),
+      ...(final === null ? [] : [`### Final message\n\n${part(final)}`]),
+    ].join('\n\n')
+    const partsBlock = (notes: string, linked?: string[]) => reply('c', compactionBlockText({ count: 1, lastId: 'c', pictures: [], linked }, notes))
     const LINKED_CLIP: MediaTagData = { kind: 'video', id: 'f', type: 'video/mp4', src: '/home/u/Videos/trip.mp4', url: null, expires: null, other: [] }
 
-    it('sends the notes with the two messages at their places, each image right after its reference, and no start or end line', () => {
-      const sections = [partsBlock(`Make a fox like ![${IMAGE}](id=a)`, `The fox: ![${GENERATED}](id=b)`, 'Now make @b red.'), reply('r', '')]
+    it('sends each message at its place in a code fence, with each image part in the fence right after its reference, and no start or end line', () => {
+      const notes = notesText(`The fox: ![${GENERATED}](id=b)`, `Make a fox like ![${IMAGE}](id=a)`, 'Now make @b red.', [`End on ![${OTHER_IMAGE}](id=d).`])
 
-      expect(sent(sections)).toStrictEqual({
+      expect(sent([partsBlock(notes), reply('r', '')])).toStrictEqual({
         messages: [{
           role: 'user',
           content: [
-            { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\n## First message of the user\n\nMake a fox like ![image](id=a)` },
-            { type: 'image', path: IMAGE },
-            { type: 'text', text: '\n\n## Summary\n\nThe fox: ![image](id=b)' },
+            { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\n## Requirements and decisions\n\nThe fox: ![image](id=b)` },
             { type: 'image', path: GENERATED },
-            { type: 'text', text: '\n\n## Newest message of the user\n\nNow make @b red.' },
+            { type: 'text', text: `\n\n## User messages\n\n### First message\n\n${FENCE}\nMake a fox like ![image](id=a)` },
+            { type: 'image', path: IMAGE },
+            { type: 'text', text: `\n${FENCE}\n\n### Relevant middle messages\n\n${FENCE}\nEnd on ![image](id=d)` },
+            { type: 'image', path: OTHER_IMAGE },
+            { type: 'text', text: `.\n${FENCE}\n\n### Final message\n\n${FENCE}\nNow make @b red.\n${FENCE}` },
           ],
         }],
         imagesLeftOut: 0,
         imagesOverLimit: 0,
-        // A media request reads the newest message part, with the image of
+        // A media request reads the final message part, with the image of
         // its mention.
         newestUserMessage: [
           { type: 'text', text: 'Now make @b' },
@@ -1284,11 +1291,37 @@ describe('sectionsToStreamMessages: a compacted conversation', () => {
       })
     })
 
+    it('makes the fence one backtick longer than the longest run of backticks in the message, and at least three backticks long', () => {
+      const first = `Run this:\n${FENCE}\nnpm test\n${FENCE}`
+      const final = 'Name it `fox`.'
+      const longFence = '````'
+
+      expect(sent([partsBlock(notesText('Notes.', first, final)), reply('r', '')]).messages).toStrictEqual([{
+        role: 'user',
+        content: `${COMPACTION_MESSAGE_INTRO}\n\n## Requirements and decisions\n\nNotes.\n\n## User messages\n\n### First message\n\n${longFence}\n${first}\n${longFence}\n\n### Final message\n\n${FENCE}\n${final}\n${FENCE}`,
+      }])
+    })
+
+    it('sends no path of a stored file in a text: an image goes as its own part, and a clip as its tag with no path', () => {
+      const notes = notesText(
+        `The file ${IMAGE} is the fox.`,
+        `Make a fox like ![${IMAGE}](id=a)`,
+        'Go on.',
+        [`Use ![${OTHER_IMAGE}](id=d), the file ${GENERATED}, and this:\n${mediaTagText(RAIN)}`],
+      )
+      const parts = sent([partsBlock(notes), reply('r', '')]).messages.flatMap((message) => (message.role === 'user' && Array.isArray(message.content) ? message.content : []))
+      const texts = parts.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('')
+
+      expect(parts.filter((part) => part.type !== 'text')).toStrictEqual([{ type: 'image', path: IMAGE }, { type: 'image', path: OTHER_IMAGE }])
+      expect(texts).toContain(mediaTagRequestText(RAIN))
+      expect(texts).not.toContain('/home/u')
+    })
+
     it('sends the reply after the notes, and a later message of the user, as messages of their own', () => {
-      const sections = [partsBlock('Make a fox.', 'Notes.', null), reply('r', 'Done.'), user('u3', `Thanks ![${OTHER_IMAGE}](id=d)`)]
+      const sections = [partsBlock(notesText('Notes.', 'Make a fox.', null)), reply('r', 'Done.'), user('u3', `Thanks ![${OTHER_IMAGE}](id=d)`)]
 
       expect(sent(sections).messages).toStrictEqual([
-        { role: 'user', content: `${COMPACTION_MESSAGE_INTRO}\n\n## First and newest message of the user\n\nMake a fox.\n\n## Summary\n\nNotes.` },
+        { role: 'user', content: `${COMPACTION_MESSAGE_INTRO}\n\n## Requirements and decisions\n\nNotes.\n\n## User messages\n\n### First and final message\n\n${FENCE}\nMake a fox.\n${FENCE}` },
         { role: 'agent', content: 'Done.' },
         { role: 'user', content: [{ type: 'text', text: 'Thanks ![image](id=d)' }, { type: 'image', path: OTHER_IMAGE }] },
       ])
@@ -1296,34 +1329,57 @@ describe('sectionsToStreamMessages: a compacted conversation', () => {
 
     it('sends a linked image and a linked clip of the messages with no path, and only when the tag lists them', () => {
       const first = `Like ![${LINKED_IMAGE}](id=a)`
-      const newest = `Cut this:\n${mediaTagText(LINKED_CLIP)}`
-      // A model wrote a linked path into its summary: the list does not
-      // hold it, so it is no image.
-      const summary = '![/home/u/Pictures/keys.png](id=z) is the den.'
-      const listed = [partsBlock(first, summary, newest, [LINKED_IMAGE, LINKED_CLIP.src!]), reply('r', '')]
+      const final = `Cut this:\n${mediaTagText(LINKED_CLIP)}`
+      // A model wrote a linked path into its requirements: the list does
+      // not hold it, so it is no image.
+      const requirements = '![/home/u/Pictures/keys.png](id=z) is the den.'
+      const listed = [partsBlock(notesText(requirements, first, final), [LINKED_IMAGE, LINKED_CLIP.src!]), reply('r', '')]
 
       expect(sent(listed).messages).toStrictEqual([{
         role: 'user',
         content: [
-          { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\n## First message of the user\n\nLike ![image](id=a)` },
+          { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\n## Requirements and decisions\n\n![image](id=z) is the den.\n\n## User messages\n\n### First message\n\n${FENCE}\nLike ![image](id=a)` },
           { type: 'image', path: LINKED_IMAGE },
-          { type: 'text', text: `\n\n## Summary\n\n![image](id=z) is the den.\n\n## Newest message of the user\n\nCut this:\n${mediaTagRequestText(LINKED_CLIP)}` },
+          { type: 'text', text: `\n${FENCE}\n\n### Final message\n\n${FENCE}\nCut this:\n${mediaTagRequestText(LINKED_CLIP)}\n${FENCE}` },
         ],
       }])
       expect(messageClips(listed).map(({ id, src }) => ({ id, src }))).toStrictEqual([{ id: 'f', src: LINKED_CLIP.src }])
 
       // With no list, the same paths are text of a model.
-      const unlisted = [partsBlock(first, summary, newest), reply('r', '')]
+      const unlisted = [partsBlock(notesText(requirements, first, final)), reply('r', '')]
       expect(JSON.stringify(sent(unlisted).messages)).not.toContain('/home/u')
       expect(sent(unlisted).messages[0]).toStrictEqual({ role: 'user', content: expect.any(String) })
       expect(messageClips(unlisted).map(({ id, src }) => ({ id, src }))).toStrictEqual([{ id: 'f', src: null }])
     })
 
+    // The notes of an older Dez hold the first and the newest message of
+    // the user around the parts of the model.
+    it('sends each message part of older notes in a code fence too, and reads the last part as the newest message', () => {
+      const notes = [
+        `## First message of the user\n\n${part('Make a fox.')}`,
+        '## Summary\n\nThe fox is done.',
+        `## Newest message of the user\n\n${part('Now a wolf.')}`,
+      ].join('\n\n')
+
+      expect(sent([partsBlock(notes), reply('r', '')])).toStrictEqual({
+        messages: [{
+          role: 'user',
+          content: `${COMPACTION_MESSAGE_INTRO}\n\n## First message of the user\n\n${FENCE}\nMake a fox.\n${FENCE}\n\n## Summary\n\nThe fox is done.\n\n## Newest message of the user\n\n${FENCE}\nNow a wolf.\n${FENCE}`,
+        }],
+        imagesLeftOut: 0,
+        imagesOverLimit: 0,
+        newestUserMessage: 'Now a wolf.',
+      })
+    })
+
     // The compaction section holds the block, then the reply that ran at
     // the compaction, with its model and its thinking.
     describe('and the reply after the block in the same section', () => {
-      const BLOCK = compactionBlockText({ count: 1, lastId: 'c', pictures: [] }, part('## First and newest message of the user', 'Make a fox.'))
-      const NOTES_MESSAGE = { role: 'user', content: `${COMPACTION_MESSAGE_INTRO}\n\n## First and newest message of the user\n\nMake a fox.` }
+      const BLOCK = compactionBlockText({ count: 1, lastId: 'c', pictures: [] }, notesText('Notes.', 'Make a fox.', null))
+      const NOTES_MESSAGE = {
+        role: 'user',
+        content: `${COMPACTION_MESSAGE_INTRO}\n\n## Requirements and decisions\n\nNotes.\n\n## User messages\n\n### First and final message\n\n${FENCE}\nMake a fox.\n${FENCE}`,
+      }
       const replay1 = blocksReplay('Plan 1', 'h1')
       const replay2 = blocksReplay('Plan 2', 'h2')
       const rounds = `Look.\n${block('call_1', 'fox', '1 model')}\nDone.`
@@ -1368,7 +1424,7 @@ describe('sectionsToStreamMessages: a compacted conversation', () => {
       // named its id before, but a later message of the user that names it
       // gets one.
       it('gives a message of the notes no image of the reply after the block, so the first message keeps its bytes', () => {
-        const mentions = compactionBlockText({ count: 1, lastId: 'c', pictures: [] }, part('## First and newest message of the user', 'Make a fox. Then compare it with @d.'))
+        const mentions = compactionBlockText({ count: 1, lastId: 'c', pictures: [] }, notesText('Notes.', 'Make a fox. Then compare it with @d.', null))
         const sections = [reply('r', `${mentions}\nHere it is.\n\n![${GENERATED}](id=d)`), user('u1', 'Make @d red.')]
         const { messages } = sent(sections)
 

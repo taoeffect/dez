@@ -3,7 +3,7 @@ import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { CARRIED_USER_ASSETS_LABEL, COMPACTION_END_LINE, COMPACTION_MESSAGE_INTRO, COMPACTION_USER_MESSAGE_LABEL, compactionBlockText, compactionTagText, readCompactionBlock, type CompactionBlock } from '../../src/model/chat/compaction'
-import { compactionNotesText, notesMessages } from '../../src/model/chat/compactionNotes'
+import { compactionNotesText, messageFence, notesMessages } from '../../src/model/chat/compactionNotes'
 import { newMediaIds } from '../../src/model/chat/mediaIds'
 import type { ShownPicture } from '../../src/model/chat/shownPictures'
 import type { ConversationData, SectionData } from '../../src/model/persistence/types'
@@ -69,10 +69,13 @@ import { hiddenAssetNotes, hiddenPart, pressToolChip, toolChips, toolPanelPictur
 //   the reply goes on in the same section right after the block: one
 //   Agent pill, with the thinking and the spinner of the reply, and no
 //   User pill before the reply. A reply can compact two times.
-//   The notes hold the first and the newest message of the user word for
-//   word, which the summary chip shows, and the tab keeps its title. The
-//   next request holds the notes with the two messages and their images:
-//   an image that a message links goes as pixels, and no text holds a path.
+//   The notes hold the messages of the user that the work needs word for
+//   word: the first one, the middle ones that the answer keeps, and the
+//   newest one, which the summary chip shows, each in a code fence, and
+//   the tab keeps its title. The next request holds the notes with these
+//   messages, each in a code fence, and their images: an image that a
+//   message links goes as pixels, and no text holds a path. A middle
+//   message that the answer drops leaves, and its image stays an asset.
 // - A compaction request that fails two times ends the reply with an
 //   error toast, and a stop ends it with none. Both keep the
 //   conversation.
@@ -100,10 +103,10 @@ const MODEL_KEY = `${PROVIDER.id}/${PROVIDER.modelId}`
 const CHAT_PATH = mockChatPath(PROVIDER)
 
 // The first line of the instruction of a compaction request.
-const INSTRUCTION_START = compactionInstruction({ assetTable: '', jobs: [], cost: undefined, tools: false }).split('\n')[0]
+const INSTRUCTION_START = compactionInstruction({ middleMessages: [], assetTable: '', jobs: [], cost: undefined, tools: false }).split('\n')[0]
 const NOTES_SUMMARY = 'The user wants to go on with the task.'
-// An answer to a compaction request: a summary, and no other part.
-const NOTES_ANSWER = `## Summary\n${NOTES_SUMMARY}\n`
+// An answer to a compaction request: requirements, and no other part.
+const NOTES_ANSWER = `## Requirements and decisions\n${NOTES_SUMMARY}\n`
 // The first line of the notes of the image conversation: a line that only
 // the notes hold.
 const IMAGE_NOTES_START = 'The user wants a film of a fox.'
@@ -121,6 +124,10 @@ const CARRIED_PNG = solidPng(44, 22, [120, 40, 160])
 // The image that a message of the user links: a file of the user out of
 // every Dez folder.
 const LINKED_PNG = solidPng(26, 18, [40, 200, 200])
+// The screenshot that the user sends in a middle message, in place of the
+// renders of the model.
+const SHOT_PNG = solidPng(34, 26, [90, 90, 90])
+const SHOT_IMAGE: ShownImage = { alt: 'compaction-middle-shot.png', width: 34, height: 26 }
 
 const PLAIN_DATA = { count: 1, lastId: 'c', pictures: [] }
 const PLAIN_TAG = compactionTagText(PLAIN_DATA)
@@ -343,15 +350,19 @@ describe('a compacted conversation', () => {
 
   // The one message of a request right after a compaction that kept no
   // image: the notes of the compaction block of the tab, with each message
-  // part as its text. The reply text after the block does not change it.
-  // `messages` are the texts of the parts, the first and the newest
-  // message of the user, word for word.
+  // part as its text in a code fence. The reply text after the block does
+  // not change it. `messages` are the texts of the parts: the messages of
+  // the user that the notes keep, word for word.
   async function notesMessage (...messages: string[]): Promise<Record<string, unknown>> {
     const notes = (await compactedSection()).read.notes.trim()
     const parts = notesMessages(notes)
     expect(parts.map(({ text }) => text)).toStrictEqual(messages)
-    // The start line and the end line of a part do not go.
-    const content = parts.reduceRight((text, part) => `${text.slice(0, part.partFrom)}${part.text}${text.slice(part.partTo)}`, notes)
+    // A code fence takes the place of the start line and the end line of
+    // a part.
+    const content = parts.reduceRight((text, part) => {
+      const fence = messageFence(part.text)
+      return `${text.slice(0, part.partFrom)}${fence}\n${part.text}\n${fence}${text.slice(part.partTo)}`
+    }, notes)
     return { role: 'user', content: `${COMPACTION_MESSAGE_INTRO}\n\n${content}` }
   }
 
@@ -1179,16 +1190,16 @@ describe('a compacted conversation', () => {
     // it from the code under test: a call made the draft as a part of its
     // work, and the user saw it only in the panel of that call.
     const notes = compactionNotesText({
-      summary: 'A fox for the user.',
-      requirements: '',
-      nextSteps: '',
+      requirements: 'A fox for the user.',
       assets: [
         { id: 'a', kind: 'image', facts: 'PNG, 36x28', origin: 'made by the model_invoke job 1 of its reply: "A fox draft"', sentence: 'A draft of the fox.', byReply: false, text: `![${draft}](id=a|tool=model_invoke|hidden=j-aaaa)` },
         { id: 'b', kind: 'image', facts: 'PNG, 30x20', origin: 'made by the model_invoke job 2 of its reply: "A fox"', sentence: 'The fox.', byReply: false, text: `![${seen}](id=b|tool=model_invoke)` },
       ],
       unnamed: [],
       firstMessage: null,
-      newestMessage: null,
+      middleMessages: [],
+      leftOutMessages: 0,
+      finalMessage: null,
       jobs: [],
       jobInputs: new Map(),
       cost: undefined,
@@ -1223,7 +1234,8 @@ describe('a compacted conversation', () => {
 
   // The answer keeps one made image of an earlier reply and drops the
   // image of the user. The other made image has no line, so it leaves the
-  // conversation. The image of the user stays, with its line in the notes.
+  // conversation. The answer drops the middle message of the user, so it
+  // leaves too, but its image stays, with its line in the notes.
   it('drops at the first compaction a made image of an earlier reply that the answer does not keep, and never an image of the user', async () => {
     const { home } = setup.app
     const madeDir = appFilePath(home, 'assets', 'generated', 'images')
@@ -1241,7 +1253,7 @@ describe('a compacted conversation', () => {
 
     await submit(browser, 'Now a wolf.')
     const compaction = await takeRequest(setup, CHAT_PATH)
-    sendChatText(compaction.reply, '## Summary\nThe foxes are done, and a wolf is next.\n\n## Assets\n@a: keep - The fox that the wolf meets.\n@c: drop - The photo is not needed.\n')
+    sendChatText(compaction.reply, '## Summary\nThe foxes are done, and a wolf is next.\n\n## Middle messages\nm1: drop\n\n## Assets\n@a: keep - The fox that the wolf meets.\n@c: drop - The photo is not needed.\n')
     const request = await takeRequest(setup, CHAT_PATH)
     await sendChatReply(request.reply, 'the wolf')
 
@@ -1279,22 +1291,24 @@ describe('a compacted conversation', () => {
     const compaction = await takeRequest(setup, CHAT_PATH)
     sendChatText(compaction.reply, NOTES_ANSWER)
 
-    // One user message: the notes, with the two messages word for word,
-    // and each image right after its reference. No text holds a path.
+    // One user message: the notes, with the two messages word for word in
+    // code fences, and each image right after its reference. No text holds
+    // a path.
     const request = await takeRequest(setup, CHAT_PATH)
     const notes = await compactedSection()
     expect(notes.read.linked).toStrictEqual([linked])
     const text = notes.read.notes.trim()
     const [firstPart, newestPart] = notesMessages(text)
     expect([firstPart.text, newestPart.text]).toStrictEqual([first, 'Go on.'])
+    const fence = messageFence(first)
     expect(JSON.parse(request.body)).toStrictEqual(openAiChatBody(PROVIDER, [{
       role: 'user',
       content: [
-        { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\n${text.slice(0, firstPart.partFrom)}Film ![image](id=a)` },
+        { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\n${text.slice(0, firstPart.partFrom)}${fence}\nFilm ![image](id=a)` },
         imagePart(LINKED_PNG),
         { type: 'text', text: ' and ![image](id=b)' },
         imagePart(KEPT_PNG),
-        { type: 'text', text: `${text.slice(firstPart.partTo, newestPart.partFrom)}Go on.${text.slice(newestPart.partTo)}` },
+        { type: 'text', text: `\n${fence}${text.slice(firstPart.partTo, newestPart.partFrom)}${fence}\nGo on.\n${fence}${text.slice(newestPart.partTo)}` },
       ],
     }]))
     expect(request.body).not.toContain(linkedDir)
@@ -1317,6 +1331,74 @@ describe('a compacted conversation', () => {
     }, true)
     await pressToolChip(browser, 0)
     await waitForValue(browser, 'images in the assets panel', () => shownImages(browser), [LINKED_USER_IMAGE, MESSAGE_IMAGE])
+  })
+
+  // The answer keeps the middle message with the instruction of the user
+  // and drops the "ok", and it drops the render that the user rejected.
+  // The kept message and its image go in a code fence; the "ok" leaves,
+  // and the notes tell that one message is left out.
+  it('keeps the middle messages of the user that the answer keeps, each in a code fence, and leaves out the others', async () => {
+    const { home } = setup.app
+    const shot = await writeTestFile(appFilePath(home, 'assets', 'images', SHOT_IMAGE.alt), SHOT_PNG)
+    const render = await writeTestFile(appFilePath(home, 'assets', 'generated', 'images', 'compaction-middle-render.png'), MADE_PNG)
+    const instruction = `For the middle part use my screenshot, not the renders:\n![${shot}](id=a)`
+    await openSeeded('compaction-middle', [
+      textSection('user', 'Make a short film in three parts.'),
+      textSection('agent', 'A plan.'),
+      textSection('user', instruction),
+      textSection('agent', `A render of the middle part.\n![${render}](id=b)`),
+      textSection('user', 'ok'),
+      textSection('agent', 'Fine.'),
+      textSection('user', ''),
+    ], PROVIDER, { context: { tokens: LARGE_TOKENS, estimate: 0 } })
+
+    await submit(browser, 'Now the end part.')
+    const compaction = await takeRequest(setup, CHAT_PATH)
+    // The instruction lists the start of each middle message, after the
+    // form of a line ("m1: keep|drop").
+    const start = 'm1: "For the middle part use my screenshot, not the renders: '
+    const list = String(requestMessages(compaction).at(-1)?.content).split('\n').filter((line) => /^m\d+: "/.test(line))
+    expect(list.map((line) => line.slice(0, start.length))).toStrictEqual([start, 'm2: "ok"'])
+    sendChatText(compaction.reply, '## Requirements and decisions\nThe film has three parts.\n\n## Middle messages\nm1: keep\nm2: drop\n\n## Assets\n@b: drop - The user rejected the renders.\n')
+
+    // The next request quotes the first, the kept middle, and the final
+    // message, each in a code fence, and the image of the middle message
+    // right after its reference, in its fence.
+    const request = await takeRequest(setup, CHAT_PATH)
+    const { block, read } = await compactedSection()
+    const text = read.notes.trim()
+    const [first, middle, final] = notesMessages(text)
+    expect(notesMessages(text).map((part) => part.text)).toStrictEqual(['Make a short film in three parts.', instruction, 'Now the end part.'])
+    const fence = messageFence(instruction)
+    expect(JSON.parse(request.body)).toStrictEqual(openAiChatBody(PROVIDER, [{
+      role: 'user',
+      content: [
+        { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\n${text.slice(0, first.partFrom)}${fence}\n${first.text}\n${fence}${text.slice(first.partTo, middle.partFrom)}${fence}\nFor the middle part use my screenshot, not the renders:\n![image](id=a)` },
+        imagePart(SHOT_PNG),
+        { type: 'text', text: `\n${fence}${text.slice(middle.partTo, final.partFrom)}${fence}\nNow the end part.\n${fence}${text.slice(final.partTo)}` },
+      ],
+    }]))
+    await sendChatReply(request.reply, 'the end part')
+    await waitForValue(browser, 'reply after the notes', async () => (await compactedSection()).reply, replyText('the end part'))
+
+    // The render left the conversation; the screenshot stays.
+    expect(read).toMatchObject({ count: 1, dropped: 1 })
+    expect([shot, render].filter((file) => block.includes(file))).toStrictEqual([shot])
+
+    // The summary chip shows the three kinds of message, each kept one in
+    // a code fence, and tells that one message is left out. The assets
+    // chip shows the screenshot and no render.
+    await scrollEditorToTop(browser)
+    await pressToolChip(browser, 1)
+    await waitForValue(browser, 'summary panel', async () => (await chipNotes('summary')) !== null, true)
+    const shown = await chipNotes('summary')
+    expect(shown).toContain('## User messages\n\n### First message\n\n```\nMake a short film in three parts.\n```')
+    expect(shown).toContain('### Relevant middle messages\n\nDez left out 1 other message of the user here')
+    expect(shown).toContain('```\nFor the middle part use my screenshot, not the renders:\n')
+    expect(shown).toContain('### Final message\n\n```\nNow the end part.\n```')
+    expect(shown).not.toContain('```\nok\n```')
+    await pressToolChip(browser, 0)
+    await waitForValue(browser, 'images in the assets panel', () => shownImages(browser), [SHOT_IMAGE])
   })
 
   // An older Dez wrote the reply after a compaction as a section of its

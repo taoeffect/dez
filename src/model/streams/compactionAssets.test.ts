@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { CARRIED_USER_ASSETS_LABEL, compactionBlockText } from '../chat/compaction'
-import { compactionNotesText, type NotesAsset } from '../chat/compactionNotes'
+import { compactionNotesText, type CompactionNotes, type NotesAsset } from '../chat/compactionNotes'
 import { IMAGE_MADE_BY_KEY, IMAGE_TOOL_KEY, imageMarkdown } from '../chat/images'
 import { mediaTagText } from '../chat/mediaTags'
 import { COMPACTION_TAG, FOX_ORIGIN, HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, idImage, invokeBlock, notesData } from '../chat/testing'
@@ -12,11 +12,14 @@ import {
   assetTableText,
   carriedAssetLines,
   compactionScope,
+  keptMiddleMessages,
   keptUserTexts,
+  middleMessageStarts,
   openJobInputs,
   type CompactionAsset,
+  type CompactionScope,
 } from './compactionAssets'
-import { MAX_ASSET_SENTENCE_LENGTH, type AnswerAsset, type AssetDecision, type CompactionAnswer } from './compactionRequest'
+import { MAX_ASSET_SENTENCE_LENGTH, type AnswerAsset, type AnswerMessage, type AssetDecision, type CompactionAnswer } from './compactionRequest'
 import { assetsOf, reply, user } from './testing'
 
 // The notes of a compaction of an older Dez, with no message part, that
@@ -54,10 +57,20 @@ function byId<K extends keyof CompactionAsset>(assets: readonly CompactionAsset[
 }
 
 // The scope of a compaction of `sections` in the reply `replySectionId`,
-// with each kept message as the index of its section.
-function sectionScope(sections: readonly Section[], replySectionId: string): Record<string, number | null> {
-  const { reply, end, first, last } = compactionScope(sections, replySectionId)
-  return { reply, end, first: first?.section ?? null, last: last?.section ?? null }
+// with each message of the user as the index of its section.
+function sectionScope(sections: readonly Section[], replySectionId: string): Record<string, number | number[] | null> {
+  const { reply, end, first, middle, last } = compactionScope(sections, replySectionId)
+  return { reply, end, first: first?.section ?? null, middle: middle.map((message) => message.section), last: last?.section ?? null }
+}
+
+// The texts of the messages of the user of `scope`.
+function scopeTexts({ first, middle, last }: CompactionScope): { first: string | null, middle: string[], last: string | null } {
+  return { first: first?.text ?? null, middle: middle.map((message) => message.text), last: last?.text ?? null }
+}
+
+// An answer with the message lines `messages`, and no asset line.
+function answerWith(messages: AnswerMessage[] = []): CompactionAnswer {
+  return { requirements: 'The fox runs.', messages, assets: [] }
 }
 
 // A linked image of the user: it counts in the notes only with the
@@ -66,40 +79,57 @@ const LINKED = '/home/u/Pictures/run.png'
 const RUN_LIKE_THIS = `Make it run like this:\n${idImage(LINKED, 'e')}`
 
 // The compaction section of a compaction with message parts: the first
-// and the newest message of the user (`newest`; null: one part), which
-// links the image `e`.
-function partsCompaction(newest: string | null = RUN_LIKE_THIS, assets: readonly NotesAsset[] = NOTES_DATA.assets): Section {
-  const notes = compactionNotesText({ ...NOTES_DATA, firstMessage: 'Make a fox.', newestMessage: newest, assets })
+// message of the user, and the final one, which links the image `e`,
+// unless `fields` give other ones.
+function partsCompaction(fields: Partial<CompactionNotes> = {}): Section {
+  const notes = compactionNotesText({ ...NOTES_DATA, firstMessage: 'Make a fox.', finalMessage: RUN_LIKE_THIS, ...fields })
   return reply('n', compactionBlockText({ count: 1, lastId: 'e', pictures: [], linked: [LINKED] }, notes))
 }
 
 describe('compactionScope', () => {
   const SECTIONS = [...COMPACTED, user('u3', 'Now make it jump.')]
 
-  it('replaces the sections up to the reply, and keeps the first and the newest message of the user before it', () => {
-    expect(sectionScope(SECTIONS, 'r')).toStrictEqual({ reply: 4, end: 5, first: 1, last: 3 })
+  it('replaces the sections up to the reply, and takes the first and the final message of the user before it', () => {
+    expect(sectionScope(SECTIONS, 'r')).toStrictEqual({ reply: 4, end: 5, first: 1, middle: [], last: 3 })
   })
 
   it('replaces every section in a reply whose section is gone', () => {
-    expect(sectionScope(SECTIONS, 'gone')).toStrictEqual({ reply: null, end: 6, first: 1, last: 5 })
+    expect(sectionScope(SECTIONS, 'gone')).toStrictEqual({ reply: null, end: 6, first: 1, middle: [3], last: 5 })
   })
 
-  it('has no newest message apart from the first when the user wrote one message', () => {
-    expect(sectionScope([user('u1', 'Make a fox.'), reply('r', 'A fox.')], 'r')).toStrictEqual({ reply: 1, end: 2, first: 0, last: null })
+  it('takes each message of the user between the first and the final one as a middle message, oldest first', () => {
+    const sections = [
+      user('u0', 'Make a fox.'),
+      reply('r0', 'A fox.'),
+      user('u1', 'Use the red fur.'),
+      reply('r1', 'ok'),
+      user('u2', ' \n'),
+      reply('r2', 'ok'),
+      user('u3', 'Make it 16:9.'),
+      reply('r3', 'ok'),
+      user('u4', 'Now make it run.'),
+      reply('r', ''),
+    ]
+
+    expect(sectionScope(sections, 'r')).toStrictEqual({ reply: 9, end: 10, first: 0, middle: [2, 6], last: 8 })
+  })
+
+  it('has no final message apart from the first when the user wrote one message', () => {
+    expect(sectionScope([user('u1', 'Make a fox.'), reply('r', 'A fox.')], 'r')).toStrictEqual({ reply: 1, end: 2, first: 0, middle: [], last: null })
   })
 
   it('counts an empty user section as no message', () => {
-    expect(sectionScope([user('u1', 'Make a fox.'), reply('r', 'A fox.'), user('u2', ' \n'), reply('r2', '')], 'r2')).toStrictEqual({ reply: 3, end: 4, first: 0, last: null })
+    expect(sectionScope([user('u1', 'Make a fox.'), reply('r', 'A fox.'), user('u2', ' \n'), reply('r2', '')], 'r2')).toStrictEqual({ reply: 3, end: 4, first: 0, middle: [], last: null })
   })
 
   it('counts the carried assets of the user as no message in the compaction message, but as a message after a reply', () => {
-    expect(sectionScope([COMPACTION, user('u1', 'Make a fox.'), CARRIED, reply('r', '')], 'r')).toStrictEqual({ reply: 3, end: 4, first: 1, last: null })
+    expect(sectionScope([COMPACTION, user('u1', 'Make a fox.'), CARRIED, reply('r', '')], 'r')).toStrictEqual({ reply: 3, end: 4, first: 1, middle: [], last: null })
     expect(sectionScope([COMPACTION, user('u1', 'Make a fox.'), CARRIED, reply('r', 'A fox.'), { ...CARRIED, id: 'u2' }, reply('r2', '')], 'r2'))
-      .toStrictEqual({ reply: 5, end: 6, first: 1, last: 4 })
+      .toStrictEqual({ reply: 5, end: 6, first: 1, middle: [], last: 4 })
   })
 
-  it('has no first and no newest message when the user wrote none', () => {
-    expect(sectionScope([COMPACTION, reply('r', 'Going on.')], 'r')).toStrictEqual({ reply: 1, end: 2, first: null, last: null })
+  it('has no first and no final message when the user wrote none', () => {
+    expect(sectionScope([COMPACTION, reply('r', 'Going on.')], 'r')).toStrictEqual({ reply: 1, end: 2, first: null, middle: [], last: null })
   })
 
   it('keeps a user section as its whole plain text, in which a linked path counts', () => {
@@ -110,34 +140,53 @@ describe('compactionScope', () => {
 })
 
 describe('compactionScope of notes with message parts', () => {
-  it('takes the first and the newest message from the parts while no user section came after them, with the linked paths of the tag', () => {
+  it('takes the first and the final message from the parts while no user section came after them, with the linked paths of the tag', () => {
     const compaction = partsCompaction()
-    const { first, last } = compactionScope([compaction, reply('r', 'Running.')], 'r')
+    const { first, middle, last } = compactionScope([compaction, reply('r', 'Running.')], 'r')
     const text = (compaction.content[0] as { text: string }).text
 
     expect([first?.section, first?.text, last?.section, last?.text]).toStrictEqual([0, 'Make a fox.', 0, RUN_LIKE_THIS])
+    expect(middle).toStrictEqual([])
     expect(first?.rule).toStrictEqual(new Set([LINKED]))
     // The offsets are of the text with its escape, in the section.
     expect(text.slice(first?.from, first?.to)).toBe('Make a fox.')
     expect(text.slice(last?.from, last?.to)).toBe(RUN_LIKE_THIS)
   })
 
-  it('takes the newest user section after the parts as the newest message', () => {
-    const scope = compactionScope([partsCompaction(), reply('r', 'A fox.'), user('u2', 'Now a wolf.'), reply('r2', '')], 'r2')
+  it('takes the newest user section after the parts as the final message, and the final part as a middle message', () => {
+    const compaction = partsCompaction()
+    const scope = compactionScope([compaction, reply('r', 'A fox.'), user('u2', 'Now a wolf.'), reply('r2', '')], 'r2')
+    const [part] = scope.middle
 
-    expect([scope.first?.text, scope.last]).toStrictEqual(['Make a fox.', { section: 2, text: 'Now a wolf.', from: 0, to: 11, rule: 'user' }])
+    expect(scopeTexts(scope)).toStrictEqual({ first: 'Make a fox.', middle: [RUN_LIKE_THIS], last: 'Now a wolf.' })
+    expect(scope.last).toStrictEqual({ section: 2, text: 'Now a wolf.', from: 0, to: 11, rule: 'user' })
+    expect([part.section, part.rule]).toStrictEqual([0, new Set([LINKED])])
+    expect((compaction.content[0] as { text: string }).text.slice(part.from, part.to)).toBe(RUN_LIKE_THIS)
   })
 
-  it('has no newest message apart from the first when the notes hold one part and no user section came after it', () => {
-    const scope = compactionScope([partsCompaction(null), reply('r', '')], 'r')
+  it('takes the middle parts as middle messages, and keeps the final part as the final message while no user section came after them', () => {
+    const scope = compactionScope([partsCompaction({ middleMessages: ['Use the red fur.', 'Make it 16:9.'] }), reply('r', '')], 'r')
 
-    expect([scope.first?.text, scope.last]).toStrictEqual(['Make a fox.', null])
+    expect(scopeTexts(scope)).toStrictEqual({ first: 'Make a fox.', middle: ['Use the red fur.', 'Make it 16:9.'], last: RUN_LIKE_THIS })
   })
 
-  it('gives the two messages of the parts as the kept texts of the user', () => {
+  it('takes the middle parts, the final part, and each user section but the newest one as middle messages, in this order', () => {
+    const compaction = partsCompaction({ middleMessages: ['Use the red fur.'] })
+    const scope = compactionScope([compaction, reply('r', 'A fox.'), user('u2', 'Now a wolf.'), reply('r2', 'A wolf.'), user('u3', 'Now a hare.'), reply('r3', '')], 'r3')
+
+    expect(scopeTexts(scope)).toStrictEqual({ first: 'Make a fox.', middle: ['Use the red fur.', RUN_LIKE_THIS, 'Now a wolf.'], last: 'Now a hare.' })
+  })
+
+  it('has no final message apart from the first when the notes hold one part and no user section came after it', () => {
+    const scope = compactionScope([partsCompaction({ finalMessage: null }), reply('r', '')], 'r')
+
+    expect(scopeTexts(scope)).toStrictEqual({ first: 'Make a fox.', middle: [], last: null })
+  })
+
+  it('gives the messages of the parts as the kept texts of the user', () => {
     const sections = [partsCompaction(), reply('r', 'Running.'), user('u3', 'Then use @b again.')]
 
-    expect(keptUserTexts(sections, compactionScope(sections, 'r'))).toStrictEqual(['Make a fox.', RUN_LIKE_THIS, 'Then use @b again.'])
+    expect(keptUserTexts(sections, compactionScope(sections, 'r'), answerWith())).toStrictEqual(['Make a fox.', RUN_LIKE_THIS, 'Then use @b again.'])
   })
 
   it('counts an asset of a message part as an asset of the user, whatever its line tells, and an asset whose line tells the user', () => {
@@ -146,7 +195,7 @@ describe('compactionScope of notes with message parts', () => {
       NOTES_DATA.assets[1],
       { id: 'e', kind: 'image', facts: 'PNG, 640x480, 80 KB', origin: FOX_ORIGIN, sentence: '', byReply: false, text: null },
     ]
-    const seen = assetsOf([partsCompaction(RUN_LIKE_THIS, assets), reply('r', '')], FACTS, { replySectionId: 'r' })
+    const seen = assetsOf([partsCompaction({ assets }), reply('r', '')], FACTS, { replySectionId: 'r' })
 
     expect(byId(seen, 'fromUser')).toStrictEqual({ e: true, a: true, b: false })
   })
@@ -296,21 +345,106 @@ describe('openJobInputs', () => {
   })
 })
 
+describe('keptMiddleMessages', () => {
+  // A conversation with three middle messages: `u1`, `u2`, and `u3`.
+  const SECTIONS = [
+    user('u0', 'Make a fox.'),
+    reply('r0', 'A fox.'),
+    user('u1', 'Use the red fur.'),
+    reply('r1', 'ok'),
+    user('u2', 'ok'),
+    reply('r2', 'ok'),
+    user('u3', 'Make it 16:9.'),
+    reply('r3', 'ok'),
+    user('u4', 'Now make it run.'),
+    reply('r', ''),
+  ]
+  const SCOPE = compactionScope(SECTIONS, 'r')
+  // The sections of the middle messages that `answer` keeps.
+  const keptSections = (answer: CompactionAnswer) => keptMiddleMessages(SCOPE, answer).map((message) => message.section)
+
+  it('keeps every middle message when the answer has no message line', () => {
+    expect(keptSections(answerWith())).toStrictEqual([2, 4, 6])
+  })
+
+  it('drops each middle message whose number has a drop line, and keeps each other one, in order', () => {
+    expect(keptSections(answerWith([{ number: 2, decision: 'drop' }, { number: 1, decision: 'keep' }]))).toStrictEqual([2, 6])
+    expect(keptSections(answerWith([{ number: 3, decision: 'drop' }, { number: 1, decision: 'drop' }]))).toStrictEqual([4])
+  })
+
+  it('skips a line whose number has no middle message', () => {
+    expect(keptSections(answerWith([{ number: 4, decision: 'drop' }, { number: 0, decision: 'drop' }]))).toStrictEqual([2, 4, 6])
+  })
+})
+
+describe('middleMessageStarts', () => {
+  it('gives the start of each middle message on one line, with a label in place of each image and clip', () => {
+    const screen = mediaTagText({ kind: 'video', id: 'd', type: 'video/webm', src: '/home/u/Videos/screen.webm', url: null, expires: null, other: [] })
+    const sections = [
+      user('u0', 'Make a film.'),
+      reply('r0', 'ok'),
+      user('u1', `For the middle part use\n${idImage(LINKED, 'e')}  and\n${screen}\nnot the renders.`),
+      reply('r1', 'ok'),
+      user('u2', 'ok'),
+      reply('r2', 'ok'),
+      user('u3', 'Now make the film.'),
+      reply('r', ''),
+    ]
+
+    expect(middleMessageStarts(compactionScope(sections, 'r'))).toStrictEqual(['For the middle part use [image] and [video] not the renders.', 'ok'])
+  })
+
+  it('labels an image of a message part by the linked paths of the tag', () => {
+    const scope = compactionScope([partsCompaction(), reply('r', 'A fox.'), user('u2', 'Now a wolf.'), reply('r2', '')], 'r2')
+
+    expect(middleMessageStarts(scope)).toStrictEqual(['Make it run like this: [image]'])
+  })
+
+  it('cuts a long message at 160 characters, with … as its last char', () => {
+    const sections = [user('u0', 'Make a fox.'), reply('r0', 'ok'), user('u1', `${'word '.repeat(60)}end`), reply('r1', 'ok'), user('u2', 'Go on.'), reply('r', '')]
+    const [start] = middleMessageStarts(compactionScope(sections, 'r'))
+
+    expect(start.length).toBeLessThanOrEqual(160)
+    expect(start).toMatch(/^(word )+word…$/)
+  })
+
+  it('gives no start when no message came between the first and the final one', () => {
+    expect(middleMessageStarts(compactionScope([user('u0', 'Make a fox.'), reply('r0', 'ok'), user('u1', 'Go on.'), reply('r', '')], 'r'))).toStrictEqual([])
+  })
+})
+
 describe('keptUserTexts', () => {
-  it('gives the first and the newest message of the user, and each user section after the replaced ones', () => {
+  it('gives the first and the final message of the user, and each user section after the replaced ones', () => {
     const sections = [...COMPACTED, reply('later', 'More.'), user('u3', 'Then use @b again.')]
 
-    expect(keptUserTexts(sections, compactionScope(sections, 'r'))).toStrictEqual([
+    expect(keptUserTexts(sections, compactionScope(sections, 'r'), answerWith())).toStrictEqual([
       'Make a fox.',
       `Make it run like this:\n${idImage(SKY, 'e')}`,
       'Then use @b again.',
     ])
   })
 
+  it('gives the middle messages that the answer keeps, in order, and not the ones that it drops', () => {
+    const sections = [
+      user('u0', 'Make a fox.'),
+      reply('r0', 'A fox.'),
+      user('u1', 'Use the fur of @b.'),
+      reply('r1', 'ok'),
+      user('u2', 'Then use @c.'),
+      reply('r2', 'ok'),
+      user('u3', 'Now make it run.'),
+      reply('r', 'working'),
+    ]
+    const scope = compactionScope(sections, 'r')
+
+    expect(keptUserTexts(sections, scope, answerWith())).toStrictEqual(['Make a fox.', 'Use the fur of @b.', 'Then use @c.', 'Now make it run.'])
+    expect(keptUserTexts(sections, scope, answerWith([{ number: 2, decision: 'drop' }]))).toStrictEqual(['Make a fox.', 'Use the fur of @b.', 'Now make it run.'])
+  })
+
   it('gives only the one message of a conversation in which the user wrote one', () => {
     const sections = [user('u1', 'Make a fox.'), reply('r', 'A fox.')]
 
-    expect(keptUserTexts(sections, compactionScope(sections, 'r'))).toStrictEqual(['Make a fox.'])
+    expect(keptUserTexts(sections, compactionScope(sections, 'r'), answerWith())).toStrictEqual(['Make a fox.'])
   })
 })
 
@@ -331,7 +465,7 @@ describe('assetDecisions', () => {
   const NO_GUARDS: Guards = { keptTexts: [] }
 
   function answer(assets: AnswerAsset[], notes: Partial<CompactionAnswer> = {}): CompactionAnswer {
-    return { summary: 'The fox runs.', requirements: '', nextSteps: '', assets, ...notes }
+    return { ...answerWith(), assets, ...notes }
   }
 
   // The decision for `asset` alone when the answer gives it `given`.
@@ -377,9 +511,7 @@ describe('assetDecisions', () => {
   it.each<[string, CompactionAsset, Guards, Partial<CompactionAnswer>]>([
     ['an asset of the user', USER, NO_GUARDS, {}],
     ['an input of an open job', { ...EARLIER, jobInput: true }, NO_GUARDS, {}],
-    ['an asset that the summary names', EARLIER, NO_GUARDS, { summary: 'The fox of @b runs.' }],
     ['an asset that the requirements name', EARLIER, NO_GUARDS, { requirements: 'Keep the fur of @b.' }],
-    ['an asset that the next steps name', EARLIER, NO_GUARDS, { nextSteps: 'Animate @b.' }],
     ['an asset that a kept message of the user names', EARLIER, { keptTexts: ['Make it run like @b.'] }, {}],
   ])('keeps %s that the answer drops or has no line for, and shows it when the answer shows it', (_name, asset, guards, notes) => {
     expect(decision(asset, 'drop', guards, notes)).toBe('keep')
