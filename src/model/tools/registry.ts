@@ -12,22 +12,28 @@ import { parseSubcommandCall } from './subcommands'
 import { ToolError, type ToolArguments, type ToolDefinition } from './types'
 import { VIDEO_TOOL, VIDEO_TOOL_DEFINITION, videoCallLabel } from './videoTool'
 
-/** Every Dez tool, in the order that requests list them. A new tool goes
- *  at the end: the tools before it then keep their bytes in the tools
- *  array (the provider's prompt cache). */
+/** Every Dez tool, in the order that requests and the system prompt list
+ *  them. Keep related tools together, in logical groups: the models, the
+ *  media tools, the assets and the conversation, the jobs. A new tool goes
+ *  into its group, not at the end. A new order changes the bytes of the
+ *  tools array (the provider's prompt cache) only between releases of Dez;
+ *  in one release the array stays the same bytes. */
 export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
   MODEL_LIST_TOOL,
   MODEL_INFO_TOOL,
+  MODEL_INVOKE_TOOL,
+
   AUDIO_TOOL_DEFINITION,
   IMAGE_TOOL_DEFINITION,
-  JOBS_WAIT_TOOL,
-  JOBS_LIST_TOOL,
-  JOB_INSPECT_TOOL,
-  MODEL_INVOKE_TOOL,
   VIDEO_TOOL_DEFINITION,
+
   ASSET_INFO_TOOL,
   ASSET_VIEW_TOOL,
   CONVERSATION_INFO_TOOL,
+
+  JOBS_WAIT_TOOL,
+  JOBS_LIST_TOOL,
+  JOB_INSPECT_TOOL,
   JOB_CANCEL_TOOL,
 ]
 
