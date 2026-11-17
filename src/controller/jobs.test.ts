@@ -426,6 +426,74 @@ describe('TabJobs', () => {
     })
   })
 
+  describe('cancel', () => {
+    it('ends a job that runs at once as cancelled: aborts its work, counts its last price once, and gives no result', async () => {
+      const counted: (number | null)[] = []
+      jobs = new TabJobs((usd) => counted.push(usd))
+      const held = heldWork()
+      const other = heldWork()
+      const { id } = jobs.start('model_invoke', held.work, LONG)
+      jobs.start('model_invoke', other.work, LONG)
+      held.reportCost(0.2)
+
+      expect(jobs.cancel([id])).toStrictEqual([id])
+
+      expect(held.signal().aborted).toBe(true)
+      expect(other.signal().aborted).toBe(false)
+      expect(counted).toStrictEqual([0.2])
+      expect(jobs.list().map((job) => job.status)).toStrictEqual(['cancelled', 'running'])
+      expect([jobs.running, jobs.ready]).toStrictEqual([1, 0])
+      // A wait that names the job returns at once, with no result.
+      expect(await jobs.wait(running(), { ids: [id] })).toStrictEqual([])
+      // A second cancel changes nothing.
+      expect(jobs.cancel([id])).toStrictEqual([])
+      expect(counted).toStrictEqual([0.2])
+    })
+
+    it('throws away a late result of its work with its files, and logs no abort error', async () => {
+      const held = heldWork()
+      const { id } = jobs.start('model_invoke', held.work, LONG)
+      const aborted = jobs.start('model_invoke', (signal) => new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
+      }), LONG).id
+
+      jobs.cancel([id, aborted])
+      held.finish({ text: 'Late.', assets: [image, clip(TEMP_CLIP)] })
+      await settled()
+
+      expect(await jobs.wait(running())).toStrictEqual([])
+      expect(deletedImages).toStrictEqual([IMAGE])
+      expect(native.deletedFiles).toStrictEqual([{ root: 'cache', path: 'media/made.mp4', folder: false }])
+      expect(jobs.list().map((job) => job.status)).toStrictEqual(['cancelled', 'cancelled'])
+      expect(jobs.madeAssetSources()).toStrictEqual([])
+      expect(consoleError).not.toHaveBeenCalled()
+    })
+
+    it('leaves a job that ended with its status and its unread result, and gives only the ids that it cancelled', async () => {
+      const ended = heldWork()
+      const endedId = jobs.start('model_invoke', ended.work, LONG).id
+      const runningId = jobs.start('model_invoke', heldWork().work, LONG).id
+      ended.finish({ text: 'Done.', assets: [image] })
+      await settled()
+
+      expect(jobs.cancel([endedId, runningId])).toStrictEqual([runningId])
+
+      expect((await jobs.wait(running())).map((job) => [job.id, job.status, job.text])).toStrictEqual([[endedId, 'finished', 'Done.']])
+      expect(deletedImages).toStrictEqual([])
+    })
+
+    // Unlike `stopAll`, a cancel lets the reply start the jobs that it
+    // needs in place of the cancelled ones.
+    it(`makes room for a new job while ${MAX_OPEN_JOBS} jobs are open, and jobs start after it`, () => {
+      const ids = Array.from({ length: MAX_OPEN_JOBS }, () => jobs.start('model_invoke', heldWork().work, LONG).id)
+      expect(() => jobs.start('model_invoke', heldWork().work, LONG)).toThrow(new ToolError(JOB_LIMIT_TEXT))
+
+      jobs.cancel([ids[3]])
+
+      expect(jobs.start('model_invoke', heldWork().work, LONG).number).toBe(MAX_OPEN_JOBS + 1)
+    })
+  })
+
   describe('stopAll', () => {
     it('ends every job that runs with no result, aborts its work, and ends the waits', async () => {
       const held = heldWork()

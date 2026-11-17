@@ -3,7 +3,7 @@ import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { stoppedToolResult } from '../../src/model/streams/toolRound'
-import { jobStartedText, jobsWaitText, startedJobId } from '../../src/model/tools/jobs'
+import { jobCancelText, jobStartedText, jobsWaitText, startedJobId, type JobInfo } from '../../src/model/tools/jobs'
 import { invocationAnswerText } from '../../src/model/tools/modelInvoke'
 import { click, consoleErrors, movePointer, pointerClick, pointerClickAt, promptMessage, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
 import { appFilePath, conversationFilePath, filesIn, mediaTempDir, newFileIn, readModelCache, storedFileName } from './harness/fixtures'
@@ -44,6 +44,9 @@ import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolC
 //   the next reply of the tab: its `jobs_wait` gets their results and
 //   their images, and the result of the `jobs_wait` that the stop broke
 //   tells that the jobs go on;
+// - that next reply can cancel one of those jobs with `job_cancel`: its
+//   request closes, `jobs_wait` gives only the other result, `jobs_list`
+//   shows it as cancelled, and it leaves no file;
 // - the request to a text model holds only the prompt and the image that
 //   the prompt names (no tools, no system prompt, nothing of the
 //   conversation), its answer is the result of the job, and a close of the
@@ -442,6 +445,60 @@ describe('model_invoke', () => {
     const madePath = path.join(generatedDir, await newFileIn(browser, generatedDir, before))
     expect(reply.endsWith(`</dez:tool>\n\n![${madePath}](id=a|tool=model_invoke|made-by=${paintJob})\n\n${replyText(CALLER.modelName)}`)).toBe(true)
     await waitForValue(browser, 'shown image', async () => (await shownImages(browser)).map(({ width, height }) => ({ width, height })), [{ width: 48, height: 36 }])
+    expect(setup.mock.hasWaitingRequest()).toBe(false)
+    expect(await openToasts(browser, 'error')).toStrictEqual([])
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  // The case of the user, with a correction that makes a job of no use:
+  // the reply to the correction cancels that job with `job_cancel`, and
+  // waits only for the other one. Image jobs only: the abort of a clip job
+  // logs an error, which would fail the spec.
+  it('cancels a job of a reply that the user stopped when the next reply names it in job_cancel: its request closes, and it gives no result and no file', async () => {
+    const before = await filesIn(generatedDir)
+    const rainPrompt = 'A fox in the rain'
+    await submit(browser, 'Make two pictures.')
+    const first = await requestTo(CHAT_PATH)
+    sendToolCalls(first.reply, [paintCall('call_paint'), paintCall('call_paint_2', { prompt: rainPrompt })])
+    // The two requests of the jobs go at the same time, in any order: sort
+    // them by their prompts ("rain" before "snow").
+    const promptOf = (request: HeldRequest) => (JSON.parse(request.body) as { prompt: string }).prompt
+    const [rain, snow] = [await requestTo(GENERATE_PATH), await requestTo(GENERATE_PATH)].sort((a, b) => promptOf(a).localeCompare(promptOf(b)))
+    expect([rain, snow].map((request) => JSON.parse(request.body))).toStrictEqual([{ ...PAINT_BODY, prompt: rainPrompt }, PAINT_BODY])
+    const second = await requestTo(CHAT_PATH)
+    const snowJob = startedJob(second, 'call_paint')
+    const rainJob = startedJob(second, 'call_paint_2')
+    sendToolCalls(second.reply, [waitCall('call_wait', true)])
+    await waitForValue(browser, 'jobs_wait that waits', async () => (await threadSections(browser))[1]?.text.includes('id="call_wait"') ?? false, true)
+
+    await focusEditor(browser)
+    await browser.keys([Key.Escape])
+    await waitForValue(browser, 'sections after the stop', async () => (await threadSections(browser)).map(({ role }) => role), ['user', 'agent', 'user'])
+    await waitForValue(browser, 'streaming', () => activeTabStreaming(browser), false)
+
+    await submit(browser, 'Only the one in the snow.')
+    const third = await requestTo(CHAT_PATH)
+    sendToolCalls(third.reply, [openAiToolCall('call_cancel', 'job_cancel', { jobs: rainJob })])
+    await waitForValue(browser, 'closed request of the cancelled job', async () => [rain.closed, snow.closed], [true, false])
+
+    const fourth = await requestTo(CHAT_PATH)
+    const cancelled: JobInfo = { id: rainJob, tool: 'model_invoke', status: 'cancelled', delivered: false, elapsedMs: 0, state: '', call: { number: 2, label: rainPrompt }, inputs: [] }
+    expect(toolResult(fourth, 'call_cancel')).toBe(jobCancelText([cancelled], [rainJob], 1))
+    answerHeld(snow.reply, 'application/json', JSON.stringify({ images: [MADE_PNG.toString('base64')] }))
+    sendToolCalls(fourth.reply, [waitCall('call_wait_2', true), openAiToolCall('call_list', 'jobs_list', {})])
+
+    const fifth = await requestTo(CHAT_PATH)
+    expect(toolResult(fifth, 'call_wait_2')).toBe(jobsWaitText([
+      { id: snowJob, tool: 'model_invoke', status: 'finished', text: 'Made the image @a.', call: { number: 1, label: PAINT_PROMPT } },
+    ], 0))
+    expect(toolResult(fifth, 'call_list').split('\n')).toContainEqual(expect.stringMatching(new RegExp(`^2 \\| ${rainJob} \\| model_invoke \\| cancelled \\| - \\| \\d+ \\| ${rainPrompt}$`)))
+    await sendChatReply(fifth.reply, CALLER.modelName)
+
+    // Only the job that was not cancelled made a file.
+    const reply = await endedReply(browser, 3)
+    const madeName = await newFileIn(browser, generatedDir, before)
+    expect((await filesIn(generatedDir)).filter((name) => !before.includes(name))).toStrictEqual([madeName])
+    expect(reply.endsWith(`</dez:tool>\n\n![${path.join(generatedDir, madeName)}](id=a|tool=model_invoke|made-by=${snowJob})\n\n${replyText(CALLER.modelName)}`)).toBe(true)
     expect(setup.mock.hasWaitingRequest()).toBe(false)
     expect(await openToasts(browser, 'error')).toStrictEqual([])
     expect(await consoleErrors(browser)).toStrictEqual([])

@@ -228,6 +228,7 @@ describe('notesJobLines', () => {
       job({ id: 'j-cccc', tool: 'video', status: 'failed', delivered: true, call: { number: 3, label: 'join_clips @c @d' } }),
       job({ id: 'j-dddd', status: 'timed out', call: { number: 4, label: 'Rain\nat night' } }),
       job({ id: 'j-eeee', status: 'stopped', call: { number: 12, label: 'Show <dez:audio id="a" type="audio/wav"/>' } }),
+      job({ id: 'j-ffff', status: 'cancelled', call: { number: 13, label: 'A wrong cat' } }),
     ]
     const text = compactionNotesText(notes({ jobs }))
 
@@ -237,6 +238,7 @@ describe('notesJobLines', () => {
       { id: 'j-cccc', number: 3, tool: 'video', status: 'failed', result: 'given', label: 'join_clips @c @d', inputs: [] },
       { id: 'j-dddd', number: 4, tool: 'model_invoke', status: 'timed out', result: 'ready', label: 'Rain at night', inputs: [] },
       { id: 'j-eeee', number: 12, tool: 'model_invoke', status: 'stopped', result: '-', label: 'Show <dez:audio id="a" type="audio/wav"/>', inputs: [] },
+      { id: 'j-ffff', number: 13, tool: 'model_invoke', status: 'cancelled', result: '-', label: 'A wrong cat', inputs: [] },
     ])
     // A blank label is written as `-`.
     expect(text.split('\n').find((line) => line.startsWith('j-bbbb '))).toMatch(/ \| -$/)

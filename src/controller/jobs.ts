@@ -2,7 +2,7 @@ import sbp from '@sbp/sbp'
 import { tempMediaFile } from '../model/chat/mediaFiles'
 import { isSavedMediaPath, type MediaTagData } from '../model/chat/mediaTags'
 import type { GeneratedClip } from '../model/providers/types'
-import { JOB_LIMIT_TEXT, jobTimedOutText, MAX_OPEN_JOBS, newJobId, type JobCall, type JobInfo, type JobResultStatus, type JobStatus, type WrittenJobAsset } from '../model/tools/jobs'
+import { hasJobResult, JOB_LIMIT_TEXT, jobTimedOutText, MAX_OPEN_JOBS, newJobId, type JobCall, type JobInfo, type JobResultStatus, type JobStatus, type WrittenJobAsset } from '../model/tools/jobs'
 import { unexpectedToolErrorText } from '../model/tools/registry'
 import { ToolError } from '../model/tools/types'
 import type { ToolRunContext } from './tools'
@@ -46,15 +46,15 @@ export interface JobOutcome {
 }
 
 /** The work of a job. `signal` aborts when the job ends before its work
- *  (Dez stopped it, or its time limit passed): the work must then end its
- *  requests. `report` keeps a state text for `jobs_list` and `job_inspect`,
- *  such as the phase of the work and a provider's job id; it goes to the
- *  chat provider too, and the result of a job that timed out ends with it.
- *  `reportCost` keeps the price in USD of the paid request of the work
- *  (`JobInfo.cost`; null: no price is known), for the spend line of
- *  `jobs_list`: a work that sends a paid request calls it when the request
- *  goes, and again when its price is final. A work that sends none never
- *  calls it.
+ *  (Dez stopped it, a model cancelled it, or its time limit passed): the
+ *  work must then end its requests. `report` keeps a state text for
+ *  `jobs_list` and `job_inspect`, such as the phase of the work and a
+ *  provider's job id; it goes to the chat provider too, and the result of
+ *  a job that timed out ends with it. `reportCost` keeps the price in USD
+ *  of the paid request of the work (`JobInfo.cost`; null: no price is
+ *  known), for the spend line of `jobs_list`: a work that sends a paid
+ *  request calls it when the request goes, and again when its price is
+ *  final. A work that sends none never calls it.
  *
  *  The work makes its files, but writes nothing into the reply: a job can
  *  end while the model writes text, and the asset of a tool goes after the
@@ -167,10 +167,11 @@ export async function writeJobAssets(job: EndedJob, writers: Pick<ToolRunContext
  *  that runs, but not its jobs: the reply hands them on (`release`), and
  *  the next chat reply of the tab takes them (`take`), with their ids,
  *  their numbers, the results that wait, and the cost callback. So the
- *  model of the next reply can wait for them. A reply that ends on its own
- *  waits for its jobs, then ends them (`stopAll`); a close of the tab ends
- *  them too. Only one reply reads the jobs at a time: the one that holds
- *  the lease of `take`. */
+ *  model of the next reply can wait for them, or cancel the ones that it
+ *  no longer needs (`cancel`). A reply that ends on its own waits for its
+ *  jobs, then ends them (`stopAll`); a close of the tab ends them too.
+ *  Only one reply reads the jobs at a time: the one that holds the lease
+ *  of `take`. */
 export class TabJobs {
   // In the order of the starts.
   private readonly jobs = new Map<string, Job>()
@@ -270,8 +271,8 @@ export class TabJobs {
     // to the work's promise in this tick: a plain `return` of it would
     // listen one tick later, and two works that end in the tick of their
     // starts would then end in the order of the starts. A report after the
-    // end of the job changes nothing: a stopped or timed-out job keeps the
-    // price of its request when it ended.
+    // end of the job changes nothing: a stopped, cancelled, or timed-out
+    // job keeps the price of its request when it ended.
     const outcome = (async () => await work(job.abort.signal, (state) => {
       if (job.status === 'running') job.state = state
     }, (usd) => {
@@ -282,8 +283,8 @@ export class TabJobs {
       if (job.status === 'running') job.assets.push(asset)
     }))()
     outcome.then((result) => {
-      // The job timed out or stopped before its work ended: nobody reads
-      // this result.
+      // The job timed out, stopped, or was cancelled before its work ended:
+      // nobody reads this result.
       if (job.status !== 'running') void discardMadeAssets(result.assets)
       else this.end(job, result.isError ? 'failed' : 'finished', result.text, result.assets)
     }, (error: unknown) => {
@@ -296,16 +297,17 @@ export class TabJobs {
   }
 
   // Ends a running job, and wakes every wait. A job that its work did not
-  // end (a time limit, a stop) aborts the work's signal, which ends the
-  // requests of the work.
+  // end (a time limit, a stop, a cancel) aborts the work's signal, which
+  // ends the requests of the work. A job with no result (`hasJobResult`)
+  // leaves nothing for a reader.
   private end(job: Job, status: Exclude<JobStatus, 'running'>, text = '', assets: MadeAsset[] = []): void {
     job.status = status
     job.text = text
     job.assets = assets
     job.endedAt = Date.now()
     clearTimeout(job.timer)
-    if (status === 'timed out' || status === 'stopped') job.abort.abort()
-    if (status !== 'stopped') this.unread.push(job)
+    if (status === 'timed out' || !hasJobResult(status)) job.abort.abort()
+    if (hasJobResult(status)) this.unread.push(job)
     if (job.cost !== undefined) this.onCost(job.cost)
     for (const wake of [...this.waits]) wake()
   }
@@ -348,9 +350,9 @@ export class TabJobs {
    *  either, it gives none at once. With `all`, it waits until no job
    *  runs, so it gives every result that is left in one call. With `ids`,
    *  it waits until none of those jobs runs, and gives only their results
-   *  (an id of no job counts as ended). Rejects with the reason of
-   *  `signal` when it aborts; the jobs go on, and the results stay for the
-   *  next reader. */
+   *  (an id of no job counts as ended, and a cancelled job gives none).
+   *  Rejects with the reason of `signal` when it aborts; the jobs go on,
+   *  and the results stay for the next reader. */
   async wait(signal: AbortSignal, { all = false, ids }: { all?: boolean, ids?: readonly string[] } = {}): Promise<EndedJob[]> {
     const done = ids
       ? () => ids.every((id) => this.jobs.get(id)?.status !== 'running')
@@ -397,6 +399,24 @@ export class TabJobs {
    *  (`dez.stream/unnamedMadeFiles`). */
   madeAssetSources(): string[] {
     return [...this.jobs.values()].flatMap((job) => job.assets.flatMap((asset) => madeAssetSource(asset) ?? []))
+  }
+
+  /** For `job_cancel`: ends at once each job of `ids` that runs, as
+   *  `cancelled`, and gives the ids of those jobs. As a stopped job, it
+   *  aborts its work (so its requests end), counts its last price
+   *  (`onCost`: a provider can bill a request that it took), and gives no
+   *  result; a late result of its work is thrown away with its files. A
+   *  job that ended before keeps its status and its result. Unlike
+   *  `stopAll`, new jobs can start after it. */
+  cancel(ids: readonly string[]): string[] {
+    const cancelled: string[] = []
+    for (const id of ids) {
+      const job = this.jobs.get(id)
+      if (job?.status !== 'running') continue
+      this.end(job, 'cancelled')
+      cancelled.push(id)
+    }
+    return cancelled
   }
 
   /** Ends every job at once: at the end of a reply that ended on its own,

@@ -137,7 +137,8 @@ function onOverlayClick(event: MouseEvent) {
               find other models, to ask them for images and clips, and to cut and join clips. Slow
               tool work, such as a request for an image, runs as a job. A stop or a new message does
               not end the jobs of a reply: the next reply of the tab can wait for them and get their
-              results. A close of the tab ends them. Dez saves each conversation: History
+              results. To end a job that you no longer need, ask the model to cancel it. A close of
+              the tab ends all its jobs. Dez saves each conversation: History
               (<kbd>{{ keys.history }}</kbd>) opens it again.
             </p>
             <p>

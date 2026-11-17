@@ -95,7 +95,7 @@ export interface IntermediateCall {
   text: string
   /** The status of the job's result in a `jobs_wait` block of the chip's
    *  section or of a later one (`findJobResults`); null while no block has
-   *  one (the job runs, or its replies ended first). */
+   *  one (the job runs, its replies ended first, or it was cancelled). */
   status: JobResultStatus | null
 }
 

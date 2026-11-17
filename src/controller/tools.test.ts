@@ -54,7 +54,7 @@ import {
   VIEW_FAILED_NOTE,
 } from '../model/tools/assetView'
 import { conversationInfoText } from '../model/tools/conversationInfo'
-import { jobsListText, jobStartedText, jobsWaitResults, jobsWaitText, NO_JOBS_TEXT, NO_OPEN_JOBS_TEXT } from '../model/tools/jobs'
+import { jobCancelText, jobsListText, jobStartedText, jobsWaitResults, jobsWaitText, NO_JOBS_TEXT, NO_OPEN_JOBS_TEXT } from '../model/tools/jobs'
 import { modelCost, modelInfoText, type ModelInfoFacts } from '../model/tools/modelInfo'
 import { IMAGE_NOT_SAVED_TEXT, INVOCATION_TEXT_CAP, invocationAnswerStateText, invocationAnswerText, modelInvocation } from '../model/tools/modelInvoke'
 import { modelListArguments, modelListText } from '../model/tools/modelList'
@@ -1151,6 +1151,56 @@ describe('dez.controller/tools/run', () => {
       expect(result.isError).toBe(true)
       expect(result.content).toContain('"j-none-1"')
       expect(result.content).toContain(`The jobs of this reply are ${id}:`)
+    })
+
+    it('job_cancel cancels a job that runs and leaves a job that ended; a later jobs_wait gives only the other results, and jobs_list shows the cancel', async () => {
+      const cancelled = heldWork()
+      const slow = heldWork()
+      const cancelledId = jobs.start('model_invoke', cancelled.work, { ...LONG, label: 'A wrong cat' }).id
+      const endedId = jobs.start('model_invoke', async () => ({ text: 'A dog.', isError: false, assets: [] }), LONG).id
+      const slowId = jobs.start('model_invoke', slow.work, LONG).id
+      await vi.waitFor(() => expect(jobs.ready).toBe(1))
+
+      const result = await jobTool('job_cancel', { jobs: `${cancelledId} ${endedId}` })
+      expect(result).toStrictEqual({
+        content: jobCancelText(jobs.list().filter((job) => job.id !== slowId), [cancelledId], 1),
+        isError: false,
+      })
+      expect(result.content).toContain(`Cancelled 1 job: ${cancelledId} (job 1).`)
+      expect(cancelled.signal().aborted).toBe(true)
+      expect(slow.signal().aborted).toBe(false)
+
+      // The cancelled job gives no result, also when its work still ends.
+      cancelled.finish({ text: 'A cat.' })
+      slow.finish({ text: 'A bird.' })
+      expect(jobsWaitResults((await jobTool('jobs_wait', { all: true })).content).map((job) => job.id)).toStrictEqual([endedId, slowId])
+      expect((await jobTool('jobs_list')).content.split('\n')[1]).toBe(`1 | ${cancelledId} | model_invoke | cancelled | - | 0 | A wrong cat`)
+    })
+
+    it('job_cancel gives an error result that names the jobs of the reply for an id that none of them has, and cancels nothing', async () => {
+      const held = heldWork()
+      const id = jobs.start('model_invoke', held.work, LONG).id
+
+      const result = await jobTool('job_cancel', { jobs: `${id}, j-zzzz` })
+
+      expect(result.isError).toBe(true)
+      expect(result.content).toContain('"j-zzzz"')
+      expect(result.content).toContain(`The jobs of this reply are ${id}:`)
+      expect(held.signal().aborted).toBe(false)
+      expect(jobs.running).toBe(1)
+    })
+
+    it('jobs_wait with `jobs` that names a cancelled job tells that it has no result, and waits only for the other named jobs', async () => {
+      const slow = heldWork()
+      const cancelledId = jobs.start('model_invoke', heldWork().work, LONG).id
+      const slowId = jobs.start('model_invoke', slow.work, LONG).id
+      await jobTool('job_cancel', { jobs: cancelledId })
+
+      const wait = jobTool('jobs_wait', { jobs: `${cancelledId} ${slowId}` })
+      slow.finish({ text: 'Done.' })
+
+      expect((await wait).content).toBe(jobsWaitText([{ id: slowId, tool: 'model_invoke', status: 'finished', text: 'Done.', call: { number: 2, label: '' } }], 0, 0, [cancelledId]))
+      expect((await jobTool('jobs_wait', { jobs: cancelledId })).content).toBe(jobsWaitText([], 0, 0, [cancelledId]))
     })
 
     describe('model_invoke', () => {

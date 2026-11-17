@@ -8,7 +8,7 @@ import { IMAGE_HIDDEN_KEY, type LinkedPathRule } from '../chat/images'
 import { MEDIA_HIDDEN_ATTRIBUTE } from '../chat/mediaTags'
 import type { Section } from '../chat/types'
 import { assetOriginText } from '../tools/assetInfo'
-import { ASSET_NAMES, type JobAssetKind, type JobInfo } from '../tools/jobs'
+import { ASSET_NAMES, hasJobResult, type JobAssetKind, type JobInfo } from '../tools/jobs'
 import { MAX_ASSET_SENTENCE_LENGTH, type AssetDecision, type CompactionAnswer } from './compactionRequest'
 import { foundAssetFrom, type FoundAsset } from './mediaRequest'
 import { messageMentionIds } from './messages'
@@ -234,12 +234,13 @@ export function assetTableText(assets: readonly CompactionAsset[]): string {
 }
 
 /** The inputs of the open jobs of the reply that runs: a job of `jobs`
- *  that still runs, or whose result no `jobs_wait` gave yet. By job id,
- *  the ids of its inputs in order (`JobInfo.inputs`). Each job keeps them
- *  from its start, so a job that a cut reply started, whose block is in
- *  an earlier section or gone in an earlier compaction, keeps them too. */
+ *  that still runs, or whose result no `jobs_wait` gave yet (a stopped or
+ *  cancelled job has none). By job id, the ids of its inputs in order
+ *  (`JobInfo.inputs`). Each job keeps them from its start, so a job that a
+ *  cut reply started, whose block is in an earlier section or gone in an
+ *  earlier compaction, keeps them too. */
 export function openJobInputs(jobs: readonly JobInfo[]): Map<string, readonly string[]> {
-  const open = jobs.filter((job) => job.status === 'running' || (!job.delivered && job.status !== 'stopped'))
+  const open = jobs.filter((job) => job.status === 'running' || (hasJobResult(job.status) && !job.delivered))
   return new Map(open.map((job) => [job.id, job.inputs]))
 }
 

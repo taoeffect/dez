@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  cancelledJobIds,
   jobCallLabel,
+  jobCancelText,
   jobInspectText,
   jobOwnText,
   jobResultState,
@@ -168,6 +170,17 @@ describe('jobsWaitText', () => {
     expect(jobsWaitText([], 1, 1)).not.toBe(NO_OPEN_JOBS_TEXT)
     expect(jobsWaitText([], 0, 1)).toContain('The result of 1 other job is ready')
   })
+
+  // A call that names a cancelled job must not say that the model has its
+  // result: a cancelled job has none.
+  it('names each cancelled job of `jobs` as one with no result', () => {
+    expect(jobsWaitText([], 0, 0, ['j-bbbb'])).toBe(
+      'The job j-bbbb that `jobs` names was cancelled with job_cancel, so it gives no result. You already have the result of any other job that `jobs` names. No job still runs.',
+    )
+    expect(jobsWaitText([made], 1, 0, ['j-bbbb', 'j-cccc']).split('\n')[0]).toBe(
+      '1 job ended. The jobs j-bbbb and j-cccc that `jobs` names were cancelled with job_cancel, so they give no result. 1 job still runs: call jobs_wait again to get its result.',
+    )
+  })
 })
 
 describe('jobsWaitResults', () => {
@@ -230,9 +243,10 @@ describe('jobsListText', () => {
 })
 
 describe('jobResultState', () => {
-  it('is - for a job that runs or stopped, ready for an ended job before a jobs_wait gave its result, and given after', () => {
-    expect(jobResultState({ status: 'running', delivered: false })).toBe('-')
-    expect(jobResultState({ status: 'stopped', delivered: false })).toBe('-')
+  it('is - for a job that runs, was cancelled, or stopped, ready for an ended job before a jobs_wait gave its result, and given after', () => {
+    for (const status of ['running', 'cancelled', 'stopped'] as const) {
+      expect(jobResultState({ status, delivered: false })).toBe('-')
+    }
     for (const status of ['finished', 'failed', 'timed out'] as const) {
       expect(jobResultState({ status, delivered: false })).toBe('ready')
       expect(jobResultState({ status, delivered: true })).toBe('given')
@@ -250,6 +264,8 @@ describe('jobInspectText', () => {
       .toBe('The job j-aaaa (job 1 of this reply, model_invoke) timed out after 60 seconds. A jobs_wait call gave its result.\nThe job reported no state.')
     expect(jobInspectText(job({ status: 'stopped', elapsedMs: 5000 })))
       .toBe('The job j-aaaa (job 1 of this reply, model_invoke) stopped after 5 seconds, with no result.\nThe job reported no state.')
+    expect(jobInspectText(job({ status: 'cancelled', elapsedMs: 7000 })))
+      .toBe('The job j-aaaa (job 1 of this reply, model_invoke) was cancelled after 7 seconds, with no result.\nThe job reported no state.')
   })
 })
 
@@ -273,5 +289,49 @@ describe('waitedJobIds', () => {
   it('refuses an id of no job of the reply, and names the unknown ids and the ids of the reply', () => {
     expect(() => waitedJobIds({ jobs: 'j-aaaa j-zzzz j-yyyy' }, known)).toThrow(/"j-zzzz", "j-yyyy".* j-aaaa, j-bbbb, j-cccc:/)
     expect(() => waitedJobIds({ jobs: 'j-aaaa' }, [])).toThrow(/started no job, so no job has the id "j-aaaa"/)
+  })
+})
+
+describe('cancelledJobIds', () => {
+  const known = ['j-aaaa', 'j-bbbb', 'j-cccc']
+
+  it('reads the ids with white space or commas between them, each once', () => {
+    expect(cancelledJobIds({ jobs: 'j-cccc, j-aaaa j-cccc' }, known)).toStrictEqual(['j-cccc', 'j-aaaa'])
+  })
+
+  it('refuses a call that names no job, and names the ids of the reply', () => {
+    expect(() => cancelledJobIds({ jobs: ' , ' }, known)).toThrow(/^Name the jobs to cancel in `jobs`.* j-aaaa, j-bbbb, j-cccc\.$/)
+    expect(() => cancelledJobIds({ jobs: '' }, [])).toThrow('This reply has started no job, so there is no job to cancel.')
+  })
+
+  it('refuses an id of no job of the reply, and names the unknown ids and the ids of the reply', () => {
+    expect(() => cancelledJobIds({ jobs: 'j-aaaa j-zzzz' }, known)).toThrow(/the id "j-zzzz".* j-aaaa, j-bbbb, j-cccc:/)
+  })
+})
+
+describe('jobCancelText', () => {
+  it('tells which jobs the call cancelled, what a cancel does, what happened to the other named jobs, and how many jobs still run', () => {
+    const named = [
+      job({ id: 'j-bbbb', status: 'finished', call: { number: 2, label: '' } }),
+      job({ id: 'j-aaaa', status: 'cancelled', call: { number: 1, label: '' } }),
+      job({ id: 'j-cccc', status: 'failed', delivered: true, call: { number: 3, label: '' } }),
+      job({ id: 'j-dddd', status: 'cancelled', call: { number: 4, label: '' } }),
+      job({ id: 'j-eeee', status: 'cancelled', call: { number: 5, label: '' } }),
+    ]
+
+    expect(jobCancelText(named, ['j-aaaa', 'j-eeee'], 2).split('\n')).toStrictEqual([
+      'Cancelled 2 jobs: j-aaaa (job 1) and j-eeee (job 5). A cancelled job gives no result and no image or clip, and jobs_list shows it as cancelled. '
+      + 'A request that its provider took before the cancel can still cost money.',
+      'The job j-bbbb (job 2) had already ended (finished), so it was not cancelled. Its result stays: the next jobs_wait gives it.',
+      'The job j-cccc (job 3) had already ended (failed), so it was not cancelled. A jobs_wait gave its result.',
+      'The job j-dddd (job 4) was cancelled before.',
+      '2 jobs of this reply still run: jobs_wait gives their results.',
+    ])
+  })
+
+  it('tells only what happened to the named jobs when it cancelled none', () => {
+    expect(jobCancelText([job({ status: 'timed out' })], [], 0))
+      .toBe('The job j-aaaa (job 1) had already ended (timed out), so it was not cancelled. Its result stays: the next jobs_wait gives it.\nNo job of this reply still runs.')
+    expect(jobCancelText([job({ status: 'cancelled' })], ['j-aaaa'], 1).split('\n').at(-1)).toBe('1 job of this reply still runs: jobs_wait gives its result.')
   })
 })

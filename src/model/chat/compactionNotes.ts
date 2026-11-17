@@ -178,6 +178,7 @@ const JOB_STATUS_TEXTS: Readonly<Record<JobStatus, string>> = {
   failed: 'Each job failed.',
   'timed out': 'Each job timed out.',
   stopped: 'Each job was stopped.',
+  cancelled: 'Each job was cancelled.',
 }
 
 const JOB_RESULT_TEXTS: Readonly<Record<JobResultState, string>> = {

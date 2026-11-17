@@ -229,7 +229,7 @@ export function findKeptAssets(sections: readonly { role: Role, text: string }[]
  *  block that started the job. When two `jobs_wait` blocks give one for
  *  the same block, the first one counts. Null for a block that started no
  *  job, and for a job with no result (it still runs, its replies ended
- *  first, or the `jobs_wait` block is gone). */
+ *  first, it was cancelled, or the `jobs_wait` block is gone). */
 export function findJobResults(sections: readonly ChipSection[]): (JobResult | null)[][] {
   const results: (JobResult | null)[][] = sections.map(({ blocks }) => blocks.map(() => null))
   const gaveResults = (block: ToolBlock) => block.name === JOBS_WAIT_TOOL.name && block.status === 'success'

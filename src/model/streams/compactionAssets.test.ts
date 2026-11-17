@@ -298,8 +298,9 @@ describe('openJobInputs', () => {
     expect(openJobInputs([job('j-aaaa', 'running', ['a', 'b']), job('j-bbbb', 'finished', ['c'])])).toStrictEqual(new Map([['j-aaaa', ['a', 'b']], ['j-bbbb', ['c']]]))
   })
 
-  it('takes no input of a job whose result jobs_wait gave, or of a stopped job', () => {
-    expect(openJobInputs([job('j-aaaa', 'running', ['a']), job('j-bbbb', 'finished', ['c'], true), job('j-cccc', 'stopped', ['d'])])).toStrictEqual(new Map([['j-aaaa', ['a']]]))
+  it('takes no input of a job whose result jobs_wait gave, or of a stopped or cancelled job', () => {
+    expect(openJobInputs([job('j-aaaa', 'running', ['a']), job('j-bbbb', 'finished', ['c'], true), job('j-cccc', 'stopped', ['d']), job('j-dddd', 'cancelled', ['e'])]))
+      .toStrictEqual(new Map([['j-aaaa', ['a']]]))
     expect(openJobInputs([])).toStrictEqual(new Map())
   })
 })

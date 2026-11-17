@@ -20,7 +20,7 @@ import type { CallPictureBudget } from '../model/streams/pictureBudget'
 import { AUDIO_TOOL, audioClipId, audioClipOf, audioCutPart, audioCutRequest, audioCutResultText, audioLengthText } from '../model/tools/audioTool'
 import { conversationInfoText } from '../model/tools/conversationInfo'
 import { brightnessPlan, contrastPlan, convertPlan, cropPlan, flipPlan, IMAGE_TOOL, imageIdArgument, imageOf, imageResultText, invertPlan, rotatePlan, saturationPlan, scalePlan, unreadableImageText, unwritableFormatError, type ImagePlan } from '../model/tools/imageTool'
-import { isIntermediate, jobInspectText, jobResultText, jobsListText, jobStartedText, jobsWaitText, unknownJobText, waitedJobIds, type JobResult } from '../model/tools/jobs'
+import { cancelledJobIds, isIntermediate, jobCancelText, jobInspectText, jobResultText, jobsListText, jobStartedText, jobsWaitText, unknownJobText, waitedJobIds, type JobResult } from '../model/tools/jobs'
 import { parameterValuesArgument, type ModelTarget } from '../model/tools/modelArguments'
 import { modelCost, modelInfoSelection, modelInfoText, modelInfoTarget, type ModelInfoFacts } from '../model/tools/modelInfo'
 import { invocationInputsText, invocationLabel, MODEL_INVOKE_TOOL, modelInvocation } from '../model/tools/modelInvoke'
@@ -353,14 +353,16 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // under the names of the tools that started them: a job writes nothing
   // itself, so its asset comes with the result that names it, after the
   // blocks of this call's group. Its result is never an error result: each
-  // part tells in words whether its job failed.
+  // part tells in words whether its job failed, and a named job that
+  // `job_cancel` cancelled is named as one with no result.
   async jobs_wait (args, signal, context) {
     const ids = waitedJobIds(args, context.jobs.list().map((job) => job.id)) ?? undefined
     const results: JobResult[] = []
     for (const job of await context.jobs.wait(signal, { all: args.all === true, ids })) {
       results.push({ id: job.id, tool: job.tool, status: job.status, text: jobResultText(job.text, await writeJobAssets(job, context)), call: job.call })
     }
-    return jobsWaitText(results, context.jobs.running, context.jobs.ready)
+    const cancelled = context.jobs.list().filter((job) => job.status === 'cancelled' && ids?.includes(job.id)).map((job) => job.id)
+    return jobsWaitText(results, context.jobs.running, context.jobs.ready, cancelled)
   },
   async jobs_list (_args, _signal, context) {
     return jobsListText(context.jobs.list())
@@ -371,6 +373,16 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     const job = jobs.find((candidate) => candidate.id === id)
     if (!job) throw new ToolError(unknownJobText([id], jobs.map((known) => known.id)))
     return jobInspectText(job)
+  },
+  // `job_cancel` checks every id first (an unknown id cancels nothing),
+  // then ends the named jobs that run; a named job that ended keeps its
+  // result.
+  async job_cancel (args, _signal, context) {
+    const ids = cancelledJobIds(args, context.jobs.list().map((job) => job.id))
+    const cancelled = context.jobs.cancel(ids)
+    const jobs = context.jobs.list()
+    const named = ids.flatMap((id) => jobs.find((job) => job.id === id) ?? [])
+    return jobCancelText(named, cancelled, context.jobs.running)
   },
   // The `model_invoke` tool (model/tools/modelInvoke.ts): one request to
   // a model, as a job of the reply (`invokeModel`, modelInvoke.ts).
