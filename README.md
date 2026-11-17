@@ -15,9 +15,9 @@ https://github.com/user-attachments/assets/6523d6b6-e225-4409-8d27-bb55f19e1060
 - **Multi-provider model selection** — OpenRouter, Z.ai, GitHub Copilot, Kimi, MiniMax, Venice, and Charm Hyper, plus your own [custom providers](#custom-providers): any OpenAI- or Anthropic-compatible server, such as llama-server, LM Studio, or Ollama
 - **Image, video, and audio creation** - Create and edit videos, music, voice overs, and images using hundreds of supported models
 - **Web search & URL scraping** - Venice-based models can search the Internet and read URLs you give them
+- **Compaction** - Automatic compaction of long-running tasks that carry over assets and jobs
 - **X search** - Via Grok models on Venice
 - **Inline editing** — edit any message in a thread, including agent responses
-- **Per-response model labels** — switch models mid-convo and remember who said what
 - **Multiple simultaneous responses** — Ask different AIs the same question across multiple tabs at once
 - **Conversation history** — persisted locally with the ability to browse and delete past conversations
 - **Save as Markdown** - <kbd>Cmd/Ctrl+S</kbd> saves the current conversation to a Markdown file you pick
