@@ -10,9 +10,10 @@ https://github.com/user-attachments/assets/6523d6b6-e225-4409-8d27-bb55f19e1060
 
 ## Features
 
-- **Saved prompts** — selectable via `/prompt` shortcut (Zed-style)
+- **Saved prompts** — selectable via `/prompt` shortcut
 - **Tabbed conversations** — multiple concurrent chats in a single window
 - **Multi-provider model selection** — OpenRouter, Z.ai, GitHub Copilot, Kimi, MiniMax, Venice, and Charm Hyper, plus your own [custom providers](#custom-providers): any OpenAI- or Anthropic-compatible server, such as llama-server, LM Studio, or Ollama
+- **Image, video, and audio creation** - Create and edit videos, music, voice overs, and images using hundreds of supported models
 - **Web search & URL scraping** - Venice-based models can search the Internet and read URLs you give them
 - **X search** - Via Grok models on Venice
 - **Inline editing** — edit any message in a thread, including agent responses
@@ -25,7 +26,6 @@ https://github.com/user-attachments/assets/6523d6b6-e225-4409-8d27-bb55f19e1060
 - **Find & replace** - <kbd>Cmd/Ctrl+F</kbd> opens a find bar with live highlights
 - **Markdown tables** - Renders GFM-flavored markdown tables inline
 - **Images** - paste or drop images. rendered inline. use with image-ready models. privacy-preserving, image paths never sent to provider
-- **Image, audio & video generation** - with Venice and OpenRouter models
 - **Native menubar** - File, Edit, Conversation, View, Window, and Help menus with an item for every keyboard shortcut
 - **Open Dez Folder** - a button in Settings › General opens the folder where Dez keeps its data (`~/.config/dez/`)
 - **Cross-platform** — macOS and Linux
