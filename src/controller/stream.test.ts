@@ -3168,6 +3168,40 @@ describe('dez.stream/start jobs', () => {
     expect(jobs[0].signal.aborted).toBe(false)
   })
 
+  // With no calls to send back, the reply cannot go on, so it ends as a stop
+  // does. The jobs that it carried from a stopped reply go on too.
+  it('hands the jobs of a reply on to the next reply when the user deletes its running blocks', async () => {
+    replyRounds([
+      ...stoppedRounds(invokeCall('c1')),
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [{ ...geminiCall, id: 'c3' }] }),
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [{ id: 'c4', name: 'jobs_wait', argumentsText: '{}' }] }),
+      async (input) => ({ requestId: input.requestId as string }),
+    ])
+    await startStream({ sendTools: true })
+    const tabId = activeTab().id
+    const started = jobId('c1')
+    // The `model_list` call of the next reply reads the providers while its
+    // block runs.
+    providerInfos = async () => {
+      sbp('dez.model/tabs/replaceSections', tabId, activeTab().sections.map((section) => section.id === 'a2' ? { ...section, content: [{ kind: 'text', text: '' }] } : section))
+      return []
+    }
+
+    await nextReply('a2')
+
+    expect(requests).toHaveLength(3)
+    expect(sbp('dez.model/streams/isStreaming', tabId)).toBe(false)
+    expect(jobs[0].signal.aborted).toBe(false)
+    expect(alerts).toStrictEqual([])
+
+    jobs[0].end({ media: [png], clips: [] })
+    await settled()
+    await nextReply('a3')
+
+    expect(callResult('c4', 'a3')).toBe(jobsWaitText([{ id: started, tool: 'model_invoke', status: 'finished', text: 'Made the image @a.', call: { number: 1, label: PROMPT } }], 0))
+    expect(sectionText('a3')).toContain(foxReference('c1'))
+  })
+
   // A runner reads the providers before it starts its job, and the user
   // can stop the reply meanwhile.
   it('starts no job for a call of a reply that the user stopped before the job started', async () => {

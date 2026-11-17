@@ -163,10 +163,11 @@ interface ReplyRuntime {
   afterAsset: boolean
   // The jobs of the tab (jobs.ts) that a chat reply took at its start
   // (`takeJobs`): the jobs that its tools start, and the jobs of the
-  // replies before it that a stop or a new submit cut. They outlive their
-  // tool round. A stop or a new submit hands them on (`handOverJobs`), and
-  // the end of a reply that ended on its own ends them (`stopAll`). Null
-  // for a media reply: it runs no tool, so it leaves the jobs with the tab.
+  // replies before it that the user cut. They outlive their tool round. A
+  // cut (a stop, a new submit, a delete of the running blocks) hands them
+  // on (`handOverJobs`), and the end of a reply that ended on its own ends
+  // them (`stopAll`). Null for a media reply: it runs no tool, so it leaves
+  // the jobs with the tab.
   jobs: TakenJobs | null
   // How many bytes a request sends for each image of the messages before
   // the reply, by path: the bytes that they take of the picture budget
@@ -199,9 +200,10 @@ function takeJobs(tabId: string, reply: ReplyRuntime): TabJobs {
   return tabJobs
 }
 
-// A stop or a new submit cut `reply`: its jobs go on, and the tab holds
-// them for its next chat reply. Nothing for a reply that holds no jobs (a
-// media reply), or that handed them on before.
+// A stop or a new submit cut `reply`, or the user deleted its running tool
+// blocks (it ends as a stop does): its jobs go on, and the tab holds them
+// for its next chat reply. Nothing for a reply that holds no jobs (a media
+// reply), or that handed them on before.
 function handOverJobs(tabId: string, reply: ReplyRuntime): void {
   if (!reply.jobs || reply.jobs.lease.aborted) return
   reply.jobs.tabJobs.release()
@@ -1116,8 +1118,11 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
     if (!replySoFar) {
       // Still current only when the user deleted the running blocks:
       // with no calls to send back, the reply cannot go on, so it ends
-      // as a stop does.
-      if (replyIsCurrent(args.tabId, reply)) finalizeStream(args.tabId, cancelStreamSession(args.tabId))
+      // as a stop does, and its jobs go on for the next reply.
+      if (replyIsCurrent(args.tabId, reply)) {
+        handOverJobs(args.tabId, reply)
+        finalizeStream(args.tabId, cancelStreamSession(args.tabId))
+      }
       return
     }
     afterToolCall = calls[0].id
@@ -1301,8 +1306,8 @@ export default sbp('sbp/selectors/register', {
       }
     } finally {
       // A reply that ended on its own ends its jobs: nothing could take
-      // their results. A reply that a stop or a new submit cut handed
-      // them on (its lease aborted).
+      // their results. A reply that the user cut (a stop, a new submit, a
+      // delete of its running blocks) handed them on (its lease aborted).
       if (reply.jobs && !reply.jobs.lease.aborted) reply.jobs.tabJobs.stopAll()
       if (repliesByTab.get(args.tabId) === reply) repliesByTab.delete(args.tabId)
     }
