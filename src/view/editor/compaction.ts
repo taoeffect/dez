@@ -1,4 +1,4 @@
-import { EditorSelection, EditorState, RangeSet, type Extension, type Text } from '@codemirror/state'
+import { EditorSelection, EditorState, RangeSet, type ChangeSpec, type Extension, type Text } from '@codemirror/state'
 import { Decoration, EditorView } from '@codemirror/view'
 import { SECTION_SEP } from '../thread/cmEditor'
 import { compactionBlockRange } from './compactionBlock'
@@ -72,9 +72,10 @@ const keepCaretOffBlock = EditorState.transactionFilter.of((tr) => {
 
 /** Text that goes in before the block (a file or a text drag that the
  *  user drops on the left part of the first pill) is put after the block:
- *  the block moves back to the start of the doc, as whole lines. An insert
- *  in place of a selection that held the block removes the block, and is
- *  left alone. An IME composition is left alone too, as in
+ *  the block moves back to the start of the doc, as whole lines. A drop on
+ *  the right part of the pill goes into the block: `keepTextOutOfBlock`.
+ *  An insert in place of a selection that held the block removes the
+ *  block, and is left alone. An IME composition is left alone too, as in
  *  `keepTextOffLineBlocks`. */
 const keepBlockFirst = EditorState.transactionFilter.of((tr) => {
   if (!tr.docChanged || !(tr.isUserEvent('input') || tr.isUserEvent('move.drop')) || tr.isUserEvent('input.type.compose')) return tr
@@ -89,6 +90,40 @@ const keepBlockFirst = EditorState.transactionFilter.of((tr) => {
   const lineBreakBefore = tr.newDoc.sliceString(from - 1, from) === '\n'
   return [tr, {
     changes: [{ from: 0, insert: `${blockText}\n` }, { from: lineBreakBefore ? from - 1 : from, to }],
+    sequential: true,
+  }]
+})
+
+/** Text that goes in inside the block is put after the block, on a line of
+ *  its own. A drop on the right part of the first pill, and a native file
+ *  drop (Linux) on the chips, are inserts at the end of the tag line
+ *  (`posAtCoords` gives the end of an inline widget there, and the edge of
+ *  the chips' block widget). In the block, an image reference or a dragged
+ *  text would join the tag line, and the first section would be a user
+ *  section; a clip tag would be a line of the notes. Dragged text stays
+ *  selected at its new place. An IME composition is left alone, as in
+ *  `keepTextOffLineBlocks`. */
+const keepTextOutOfBlock = EditorState.transactionFilter.of((tr) => {
+  if (!tr.docChanged || !(tr.isUserEvent('input') || tr.isUserEvent('move.drop')) || tr.isUserEvent('input.type.compose')) return tr
+  const [block] = compactionBlockRange(tr.startState.doc)
+  if (!block) return tr
+  const removals: ChangeSpec[] = []
+  let text = ''
+  tr.changes.iterChanges((fromA, toA, fromB, toB, inserted) => {
+    if (fromA !== toA || fromA <= block.from || fromA >= block.to) return
+    removals.push({ from: fromB, to: toB })
+    text += inserted.toString()
+  })
+  if (removals.length === 0) return tr
+  const end = tr.changes.mapPos(block.to, -1)
+  const insert = text.startsWith('\n') ? text : `\n${text}`
+  // Every removal is before `end`: the moved text ends at `to`.
+  const to = end - text.length + insert.length
+  // A follow-up spec keeps the effects of `tr` (the end of a pending range
+  // of a file drop, `insertFiles` in imageInsert.ts).
+  return [tr, {
+    changes: [...removals, { from: end, insert }],
+    selection: tr.newSelection.main.empty ? { anchor: to } : { anchor: to - text.length, head: to },
     sequential: true,
   }]
 })
@@ -114,8 +149,10 @@ const atomicBlock = EditorView.atomicRanges.of((view) => {
  *  in `ThreadEditor.vue`). `keepCaretOffBlock` is before `keepBlockFirst`:
  *  the transaction filters run from the last to the first, and the caret
  *  rule must read the doc that the move of the block gives.
- *  `keepBlockOnDeleteKeys` is last, so that it runs first, and the other
- *  filters see no change when it stops one. */
+ *  `keepTextOutOfBlock` is after `keepBlockFirst`, so that `keepBlockFirst`
+ *  reads a block with no new text inside it. `keepBlockOnDeleteKeys` is
+ *  last, so that it runs first, and the other filters see no change when
+ *  it stops one. */
 export function compactionBlockRules(): Extension {
-  return [lineBlocks((state) => compactionBlockRange(state.doc)), keepCaretOffBlock, keepBlockFirst, atomicBlock, keepBlockOnDeleteKeys]
+  return [lineBlocks((state) => compactionBlockRange(state.doc)), keepCaretOffBlock, keepBlockFirst, keepTextOutOfBlock, atomicBlock, keepBlockOnDeleteKeys]
 }

@@ -147,6 +147,31 @@ describe('text at the block', () => {
     expect(next.sliceDoc(next.selection.main.from, next.selection.main.to)).toBe(' text')
   })
 
+  // A drop on the right part of the first pill, or on the chips, is a drop
+  // at the end of the tag line: inside the block.
+  it.each([
+    ['an image', '![/home/u/.config/dez/assets/images/a.png](id=d)'],
+    ['a clip, which starts with its own line break', `\n${PLAYER}`],
+  ])('puts %s that is dropped inside the block after the block', (_what, dropped) => {
+    const state = createState(TEXTS, ROLES, [AFTER])
+    const next = state.update({ changes: { from: TAG.length, insert: dropped }, selection: { anchor: TAG.length + dropped.length }, userEvent: 'input.drop' }).state
+
+    expect(next.doc.toString()).toBe(joinSections([`${BLOCK}\n${dropped.trimStart()}\nMore`, 'ask']))
+    expect(next.selection.main.head).toBe(AFTER + dropped.trimStart().length)
+    expect(firstSection(next)).toStrictEqual({ id: 's0', role: 'agent' })
+  })
+
+  it('puts text that is dragged into the block after the block, and keeps it selected', () => {
+    const state = createState([`${BLOCK}\nMore text`, 'ask'], ROLES, [AFTER])
+    const from = AFTER + 'More'.length
+    const changes = state.changes([{ from, to: from + ' text'.length }, { from: TAG.length, insert: ' text' }])
+    const next = state.update({ changes, selection: { anchor: changes.mapPos(TAG.length, -1), head: changes.mapPos(TAG.length, 1) }, userEvent: 'move.drop' }).state
+
+    expect(next.doc.toString()).toBe(joinSections([`${BLOCK}\n text\nMore`, 'ask']))
+    expect(next.sliceDoc(next.selection.main.from, next.selection.main.to)).toBe(' text')
+    expect(firstSection(next)).toStrictEqual({ id: 's0', role: 'agent' })
+  })
+
   it('lets text that takes the place of a selection with the block remove the block', () => {
     const state = createState(TEXTS, ROLES, [[0, AFTER + 'More'.length]])
     const next = state.update({ changes: { from: 0, to: AFTER + 'More'.length, insert: 'x' }, userEvent: 'input.type' }).state
