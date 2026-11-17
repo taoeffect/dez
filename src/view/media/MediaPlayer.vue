@@ -29,7 +29,7 @@ import { MAX_SAVED_CLIP_BYTES, mediaFileExtension } from '../../model/chat/media
 import { isPastedMediaPath, type MediaTagKind } from '../../model/chat/mediaTags'
 import { assetFactsText } from '../assetFacts'
 import { ASSET_ICON_SHAPES } from '../assetIcons'
-import { clipFile, clipProblem, clipSourceKind, expiryNotice, problemCard, type ClipLoadFailure, type ClipProblem } from './clipState'
+import { clipFile, clipPlayType, clipProblem, clipSourceKind, expiryNotice, problemCard, type ClipLoadFailure, type ClipProblem } from './clipState'
 import { releaseRemovedMedia } from './releaseMedia'
 import { videoAspectRatios } from './videoSizes'
 
@@ -187,7 +187,10 @@ const fileBytes = ref<number | null>(null)
 // "gone" card. Until the file is read, the media element keeps the source
 // of before. A new media element (in place of a card) gets no source until
 // then: so it does not change its source at the start of its load, which
-// can stop the web process (the comment of `releaseRemovedMedia`).
+// can stop the web process (the comment of `releaseRemovedMedia`). The blob
+// gets a type that WebKit knows (`clipPlayType`): WebKit on macOS picks its
+// media engine by that type, and refuses the `audio/m4a` that the asset
+// protocol gives an ffmpeg `.m4a`. A slice of the file shares its bytes.
 // https://github.com/tauri-apps/tauri/issues/3725
 watch(() => props.src, async (src, previous) => {
   const kind = sourceKind.value
@@ -230,7 +233,8 @@ watch(() => props.src, async (src, previous) => {
     return
   }
   fileBytes.value = file.size
-  load({ src, url: URL.createObjectURL(file) })
+  const type = clipPlayType(file.type, props.type)
+  load({ src, url: URL.createObjectURL(type === file.type ? file : file.slice(0, file.size, type)) })
 }, { immediate: true })
 
 // A blob URL keeps its bytes in memory until it is revoked. After that, the

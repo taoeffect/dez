@@ -1,3 +1,4 @@
+import { knownMediaType } from '../../model/chat/mediaFiles'
 import { isLinkedMediaPath, isSavedMediaPath, isTempMediaPath } from '../../model/chat/mediaTags'
 
 // What the player (MediaPlayer.vue, src/view/editor/media.ts) shows for a
@@ -21,6 +22,26 @@ export function clipSourceKind(src: string | null, linkedSrc: boolean): ClipSour
   if (isTempMediaPath(src)) return 'temp'
   if (/^https?:\/\/\S+$/i.test(src)) return 'remote'
   return linkedSrc && isLinkedMediaPath(src) ? 'linked' : 'none'
+}
+
+/** The media type of the blob that a local clip plays from. `fileType` is
+ *  the type of the read file, which the asset protocol takes from the bytes
+ *  (the `infer` crate), and `tagType` the type of the clip's tag. WebKit on
+ *  macOS picks its media engine by the type of a blob, and knows only some
+ *  names of a format: infer names an ffmpeg `.m4a` `audio/m4a`, which
+ *  macOS refuses, and `audio/mp4` plays. So the blob gets the canonical
+ *  name (`knownMediaType`) of the file's type, else of the tag's type (the
+ *  bytes have no type that Dez knows, such as `text/html`, the fallback of
+ *  the protocol), else the file's type as it is. The bytes come first: the
+ *  tag's type of a provider clip is the provider's word.
+ *  https://bugs.webkit.org/show_bug.cgi?id=245428 */
+export function clipPlayType(fileType: string, tagType: string | null): string {
+  const known = knownMediaType(fileType) ?? knownMediaType(tagType ?? '')
+  if (known === null) return fileType
+  // macOS knows no `audio/opus` (its `canPlayType` gives ""), and plays
+  // `audio/ogg`, the media type of an Opus file in Ogg (RFC 7845).
+  // https://www.rfc-editor.org/rfc/rfc7845#section-9
+  return known === 'audio/opus' ? 'audio/ogg' : known
 }
 
 /** Why a clip does not play. `gone`: its bytes are not there any more (it
@@ -59,12 +80,15 @@ export function clipProblem(source: ClipSourceKind, failure: ClipLoadFailure | n
   if (failure === null) return null
   if (failure.step === 'read') return 'gone'
   if (failure.step === 'ask') return failure.answers ? 'cannot-play' : 'gone'
-  // A local file was read, so its bytes are there. WebKitGTK also gives
-  // "source not supported" when the sound server refuses the connection of
-  // the player's pipeline (too many players at once), with the same
-  // states, and a message that can be empty as for bytes that it cannot
-  // decode. So no field tells that case apart: views keep the count of
-  // live players low (`AssetList.vue`), and a new player is a new try.
+  // A local file was read, so its bytes are there. Two other causes give
+  // the same "source not supported" error, with no field that tells them
+  // apart from bytes that this computer cannot decode:
+  // - WebKitGTK, when the sound server refuses the connection of the
+  //   player's pipeline (too many players at once). Views keep the count of
+  //   live players low (`AssetList.vue`), and a new player is a new try.
+  // - WebKit on macOS, for a blob whose type it does not know, whatever the
+  //   bytes. The player gives the blob a type that it knows
+  //   (`clipPlayType`).
   if (source !== 'remote') return 'cannot-play'
   if (failure.code === MEDIA_ERR_DECODE) return 'cannot-play'
   // A network error, and any other code: the URL gave no clip.

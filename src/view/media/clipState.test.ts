@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clipFile, clipProblem, clipSourceKind, expiryNotice, problemCard, type ClipSourceKind } from './clipState'
+import { clipFile, clipPlayType, clipProblem, clipSourceKind, expiryNotice, problemCard, type ClipSourceKind } from './clipState'
 
 describe('clipSourceKind', () => {
   it('tells a saved file, a temp copy, and a URL apart, whether a linked file counts or not', () => {
@@ -34,6 +34,30 @@ describe('clipSourceKind', () => {
       'https://cdn.example/a b.mp4',
     ]
     for (const src of sources) expect(clipSourceKind(src, true), src).toBe('none')
+  })
+})
+
+describe('clipPlayType', () => {
+  it.each([
+    // An ffmpeg `.m4a`: the asset protocol names its bytes `audio/m4a`.
+    ['audio/m4a', 'audio/mp4', 'audio/mp4'],
+    ['audio/x-wav', 'audio/wav', 'audio/wav'],
+    ['audio/x-flac', null, 'audio/flac'],
+    // An Opus file in Ogg: macOS knows only `audio/ogg`.
+    ['audio/opus', 'audio/opus', 'audio/ogg'],
+    // Bytes with no type that Dez knows take the tag's type.
+    ['text/html', 'audio/mp4', 'audio/mp4'],
+    ['', 'audio/mp4', 'audio/mp4'],
+    ['', 'Audio/MP4; codecs="mp4a.40.2"', 'audio/mp4'],
+    ['application/octet-stream', 'audio/x-m4a', 'audio/mp4'],
+    // The bytes come before the tag.
+    ['video/webm', 'video/mp4', 'video/webm'],
+    // A type that Dez does not know on both sides stays as it is.
+    ['video/x-m4v', null, 'video/x-m4v'],
+    ['video/x-m4v', 'video/x-unknown', 'video/x-m4v'],
+    ['', null, ''],
+  ])('plays a file of type %j with tag type %j as %j', (fileType, tagType, playType) => {
+    expect(clipPlayType(fileType, tagType)).toBe(playType)
   })
 })
 

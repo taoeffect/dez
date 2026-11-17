@@ -277,7 +277,7 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 ### Media and bundled programs
 
 - **Clips come through Rust**: a clip response goes to a file with `dez.native/downloadAppFile`, not through `dez.http/stream` (the exception: the audio of a chat answer, `chatAudio.ts`).
-- **Local clips play from a blob URL**: WebKitGTK loads no media from the asset protocol (`MediaPlayer.vue`).
+- **Local clips play from a blob URL with a type that WebKit knows**: WebKitGTK loads no media from the asset protocol; macOS reads the blob's type (`MediaPlayer.vue`, `clipPlayType`).
 - **A new editor state makes new players**: a stream end or a tab switch stops a clip that plays (`view/editor/media.ts`).
 - **A removed media element frees nothing by itself**: a media element that Vue can remove needs `v-release-on-remove` (`view/media/releaseMedia.ts`).
 - **A fullscreen player hides the app's layers**: code that shows a prompt or a toast for a player calls `leaveFullscreen` first (`view/editor/media.ts`).

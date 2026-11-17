@@ -57,12 +57,18 @@ function bareMediaType(type: string): string {
   return type.split(';', 1)[0].trim().toLowerCase()
 }
 
-/** A media type with no parameters, in lower case, with one name for each
- *  format that Dez knows: `audio/x-flac` is `audio/flac`, `audio/mp3` is
- *  `audio/mpeg`. Another type stays as it is. */
-export function canonicalMediaType(type: string): string {
+/** The canonical name of a media type that Dez knows (with any parameters
+ *  and case), or null for another type. One name for each format:
+ *  `audio/x-flac` is `audio/flac`, `audio/mp3` is `audio/mpeg`. */
+export function knownMediaType(type: string): string | null {
   const mediaType = bareMediaType(type)
-  return Object.hasOwn(EXTENSION_BY_MEDIA_TYPE, mediaType) ? MEDIA_TYPE_BY_EXTENSION[EXTENSION_BY_MEDIA_TYPE[mediaType]] : mediaType
+  return Object.hasOwn(EXTENSION_BY_MEDIA_TYPE, mediaType) ? MEDIA_TYPE_BY_EXTENSION[EXTENSION_BY_MEDIA_TYPE[mediaType]] : null
+}
+
+/** A media type with no parameters, in lower case, with its canonical name
+ *  when Dez knows it (`knownMediaType`). Another type stays as it is. */
+export function canonicalMediaType(type: string): string {
+  return knownMediaType(type) ?? bareMediaType(type)
 }
 
 /** The extensions of the files that Dez takes as clips in a paste or a
