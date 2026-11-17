@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { compactionBlockText, compactionTagText } from '../chat/compaction'
-import { imageReferenceTextWithKeptMark } from '../chat/images'
-import { HIDDEN_IMAGE_PATH } from '../chat/testing'
+import { HIDDEN_IMAGE_PATH, idImage } from '../chat/testing'
 import { toolBlockText } from '../chat/toolBlocks'
 import { conversationPreview, messageCount } from './summaries'
 import type { ContentNodeData, SectionData } from './types'
@@ -55,7 +54,7 @@ describe('conversation summaries', () => {
     const data = { count: 2, lastId: 'c', pictures: [] }
     const tag = compactionTagText(data)
     const sections = [
-      section('agent', [textNode(`${compactionBlockText(data, `Notes of the work.\n${imageReferenceTextWithKeptMark({ path: HIDDEN_IMAGE_PATH, metadata: [{ key: 'id', value: 'b' }] }, true)}`)}\nTyped after it.`)]),
+      section('agent', [textNode(`${compactionBlockText(data, `Notes of the work.\n${idImage(HIDDEN_IMAGE_PATH, 'b', true)}`)}\nTyped after it.`)]),
       section('user', [textNode('ask')]),
       section('agent', [textNode(`${tag}\nanswer`)]),
     ]

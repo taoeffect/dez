@@ -11,7 +11,7 @@ import type { Section } from '../chat/types'
 import { assetOriginText } from '../tools/assetInfo'
 import { ASSET_NAMES, startedJob, type JobAssetKind, type JobInfo } from '../tools/jobs'
 import { MAX_ASSET_SENTENCE_LENGTH, type AssetDecision, type CompactionAnswer } from './compactionRequest'
-import type { FoundAsset } from './mediaRequest'
+import { foundAssetFrom, type FoundAsset } from './mediaRequest'
 import { messageMentionIds } from './messages'
 
 // The images and the clips of a conversation at a compaction: what Dez
@@ -185,7 +185,6 @@ export function compactionAssets({ sections, scope, found, places, facts, jobInp
   const replyFrom = scope.reply === null ? 0 : sectionTextParts(sections[scope.reply], scope.reply).from
   return found.map((asset, index): CompactionAsset => {
     const line = carried.get(asset.id)
-    const assetFrom = asset.kind === 'image' ? asset.reference.from : asset.tag.from
     return {
       asset,
       kind: asset.kind === 'image' ? 'image' : asset.clip.kind,
@@ -193,7 +192,7 @@ export function compactionAssets({ sections, scope, found, places, facts, jobInp
       origin: notesCellText(assetOriginText(places[index].origin)),
       fromUser: places[index].origin.kind === 'user',
       intermediate: isIntermediate(asset),
-      byReply: (asset.section === scope.reply && assetFrom >= replyFrom) || (sameReply && line?.byReply === true),
+      byReply: (asset.section === scope.reply && foundAssetFrom(asset) >= replyFrom) || (sameReply && line?.byReply === true),
       jobInput: inputs.has(asset.id),
       sentence: line?.sentence ?? '',
     }

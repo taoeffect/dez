@@ -1,5 +1,6 @@
 import * as z from 'zod'
 import { fileNameOf } from '../../utils/fileName'
+import { parseJsonAttribute } from '../../utils/markerAttribute'
 import type { ImageSize } from './imageDrawing'
 import { imageMediaType, type ImageMediaType } from './images'
 
@@ -100,14 +101,7 @@ export function shownPicturesText(pictures: readonly ShownPicture[]): string {
 /** The pictures of a `pictures` attribute value. A value that is not the
  *  writer's form (a hand edit) reads as no pictures. */
 export function readShownPictures(text: string): ShownPicture[] {
-  let value: unknown
-  try {
-    value = JSON.parse(text)
-  } catch {
-    return []
-  }
-  const parsed = shownPicturesSchema.safeParse(value)
-  return parsed.success ? parsed.data : []
+  return parseJsonAttribute(text, shownPicturesSchema) ?? []
 }
 
 /** The app-file path (`assets/generated/views/<file>`) of `path` when it

@@ -59,6 +59,11 @@ export type FoundAsset =
   /** `clip` is the clip as `ConversationAssets.clips` holds it. */
   | { kind: 'clip', id: string, section: number, tag: MediaTag, clip: ClipAttachment }
 
+/** The offset of the text of `asset` in the plain text of its section. */
+export function foundAssetFrom(asset: FoundAsset): number {
+  return asset.kind === 'image' ? asset.reference.from : asset.tag.from
+}
+
 /** The images and the clips that an `@id` mention can name. */
 export interface ConversationAssets {
   /** The path of each image id. */

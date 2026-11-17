@@ -1,5 +1,5 @@
 import * as z from 'zod'
-import { MARKER_ATTRIBUTES, escapeMarkerAttribute, markerAttributes } from '../../utils/markerAttribute'
+import { MARKER_ATTRIBUTES, escapeMarkerAttribute, markerAttributes, parseJsonAttribute } from '../../utils/markerAttribute'
 import { modelRefKey, parseModelRefKey } from './modelRef'
 import { tagEscape } from './tagEscape'
 import type { ModelRef, Role, Section, SectionThinking, ThinkingReplay, ThinkingRound } from './types'
@@ -57,17 +57,6 @@ const thinkingRoundsSchema = z.array(z.object({
   from: z.number().int().nonnegative(),
   replay: thinkingReplaySchema.optional(),
 })).refine((rounds) => rounds.every((round, index) => index === 0 || rounds[index - 1].from <= round.from))
-
-function parseJsonAttribute<T>(json: string, schema: z.ZodType<T>): T | null {
-  let value: unknown
-  try {
-    value = JSON.parse(json)
-  } catch {
-    return null
-  }
-  const parsed = schema.safeParse(value)
-  return parsed.success ? parsed.data : null
-}
 
 // `pillMarkerText` writes whole, non-negative milliseconds. Any other value
 // (a hand edit) reads as "unknown", as a bad `model` does.

@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { compactionTagText } from '../chat/compaction'
 import { conversationCostText } from '../chat/compactionNotes'
 import type { ConversationCost } from '../chat/conversationCost'
-import { imageReferenceTextWithKeptMark } from '../chat/images'
 import { holdsStoredFilePath } from '../chat/storedFilePaths'
+import { idImage } from '../chat/testing'
 import type { Section } from '../chat/types'
 import { jobsListText, type JobInfo } from '../tools/jobs'
 import { RED, SKY } from '../tools/testing'
@@ -171,7 +171,7 @@ describe('compactionInstruction', () => {
   it('holds no path of a stored file from the asset table', () => {
     const assetTable = [
       'The images and the clips of the conversation (id | kind | facts).',
-      `@a | image | ${imageReferenceTextWithKeptMark({ path: RED, metadata: [{ key: 'id', value: 'a' }] }, false)}`,
+      `@a | image | ${idImage(RED, 'a')}`,
       `@e | image | 640 x 480 PNG, at ${SKY}`,
     ].join('\n')
     const text = instruction({ assetTable })

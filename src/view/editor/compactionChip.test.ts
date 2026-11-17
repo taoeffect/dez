@@ -1,5 +1,5 @@
 import { EditorState } from '@codemirror/state'
-import { EditorView } from '@codemirror/view'
+import { EditorView, type Decoration } from '@codemirror/view'
 import { describe, expect, it } from 'vitest'
 import { CARRIED_USER_ASSETS_LABEL, COMPACTION_END_LINE, compactionBlockText, compactionTagText } from '../../model/chat/compaction'
 import type { ShownPicture } from '../../model/chat/shownPictures'
@@ -33,27 +33,15 @@ function assetSummaries(assets: readonly PanelAsset[]): string[] {
   return assets.map((asset) => asset.kind === 'image' ? `image ${asset.id}` : `${asset.tag.kind} ${asset.tag.id} ${asset.linkedSrc ? 'linked' : 'unlinked'}`)
 }
 
-/** The block decorations of the state that are not drawn by a view plugin,
- *  as [from, to]: a widget has no doc text of its own (from = to). */
-function blockDecorations(state: EditorState): Array<[number, number]> {
+/** The decorations of the state that are not drawn by a view plugin and
+ *  that `keep` takes, as [from, to]: a widget has no doc text of its own
+ *  (from = to). */
+function decorationRanges(state: EditorState, keep: (from: number, spec: Decoration['spec']) => boolean): Array<[number, number]> {
   const ranges: Array<[number, number]> = []
   for (const source of state.facet(EditorView.decorations)) {
     if (typeof source === 'function') continue
     for (const cursor = source.iter(); cursor.value; cursor.next()) {
-      if (cursor.value.spec.block) ranges.push([cursor.from, cursor.to])
-    }
-  }
-  return ranges
-}
-
-/** Every decoration of the state that is not drawn by a view plugin and
- *  starts before `end`. */
-function decorationsBefore(state: EditorState, end: number): Array<[number, number]> {
-  const ranges: Array<[number, number]> = []
-  for (const source of state.facet(EditorView.decorations)) {
-    if (typeof source === 'function') continue
-    for (const cursor = source.iter(); cursor.value; cursor.next()) {
-      if (cursor.from < end) ranges.push([cursor.from, cursor.to])
+      if (keep(cursor.from, cursor.value.spec)) ranges.push([cursor.from, cursor.to])
     }
   }
   return ranges
@@ -113,9 +101,10 @@ describe('the compaction chips', () => {
     const state = compactedState(['Notes.', 'More notes.'], [])
     const tagLine = state.doc.line(1)
     const blockEnd = state.doc.line(4).to
+    const isBlock = (_from: number, spec: Decoration['spec']) => spec.block === true
 
-    expect(blockDecorations(state)).toStrictEqual([[tagLine.to, tagLine.to], [tagLine.to + 1, blockEnd]])
-    expect(blockDecorations(createState(['Notes.', 'Ask.'], ['user', 'user']))).toStrictEqual([])
+    expect(decorationRanges(state, isBlock)).toStrictEqual([[tagLine.to, tagLine.to], [tagLine.to + 1, blockEnd]])
+    expect(decorationRanges(createState(['Notes.', 'Ask.'], ['user', 'user']), isBlock)).toStrictEqual([])
   })
 
   it('draw nothing else for the text of the block: no image, player, or tool call chip', () => {
@@ -123,7 +112,7 @@ describe('the compaction chips', () => {
     const tagLine = state.doc.line(1)
     const blockEnd = state.doc.toString().indexOf(COMPACTION_END_LINE) + COMPACTION_END_LINE.length
 
-    expect(decorationsBefore(state, blockEnd)).toStrictEqual([[tagLine.to, tagLine.to], [tagLine.to + 1, blockEnd]])
+    expect(decorationRanges(state, (from) => from < blockEnd)).toStrictEqual([[tagLine.to, tagLine.to], [tagLine.to + 1, blockEnd]])
   })
 
   it('start closed, and a toggle opens and closes the panel of one chip over doc changes', () => {

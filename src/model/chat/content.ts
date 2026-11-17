@@ -49,11 +49,14 @@ export function normalizeContent(nodes: ContentNode[]): ContentNode[] {
   return out
 }
 
+/** Concatenate all text + prompt bodies of `content` in document order. */
+export function contentPlainText(content: readonly ContentNode[]): string {
+  return content.map((n) => (n.kind === 'text' ? n.text : n.body)).join('')
+}
+
 /** Concatenate all text + prompt bodies in document order. */
 export function sectionPlainText(section: Section): string {
-  return section.content
-    .map((n) => (n.kind === 'text' ? n.text : n.body))
-    .join('')
+  return contentPlainText(section.content)
 }
 
 /** Concatenate ONLY visible text (ignoring prompt bodies); used for title / emptiness. */

@@ -1,3 +1,5 @@
+import type { ZodType } from 'zod'
+
 // Escaping and grammar for the attributes of `dez:` markers (`name="…"`,
 // `model="…"`) in conversation files and clipboard text: the section pills
 // (pillMarker.ts) and the tool blocks (toolBlocks.ts). A value ends at the
@@ -50,4 +52,17 @@ export function markerAttributes(text: string): Map<string, string> {
     if (!attributes.has(name)) attributes.set(name, unescapeMarkerAttribute(value))
   }
   return attributes
+}
+
+/** The value of the JSON text `json` of an attribute when it has the form
+ *  of `schema`; null for any other text (a hand edit). */
+export function parseJsonAttribute<T>(json: string, schema: ZodType<T>): T | null {
+  let value: unknown
+  try {
+    value = JSON.parse(json)
+  } catch {
+    return null
+  }
+  const parsed = schema.safeParse(value)
+  return parsed.success ? parsed.data : null
 }

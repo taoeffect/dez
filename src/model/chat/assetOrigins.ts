@@ -1,4 +1,4 @@
-import type { FoundAsset } from '../streams/mediaRequest'
+import { foundAssetFrom, type FoundAsset } from '../streams/mediaRequest'
 import { assetOriginText } from '../tools/assetInfo'
 import { JOBS_WAIT_TOOL, jobsWaitResults, madeAssetIds, startedJob } from '../tools/jobs'
 import { callLabel } from '../tools/registry'
@@ -165,7 +165,7 @@ export function assetPlaces(sections: readonly Section[], assets: readonly Found
 
   return assets.map((asset): AssetPlace => {
     const section = sections[asset.section]
-    const from = asset.kind === 'image' ? asset.reference.from : asset.tag.from
+    const from = foundAssetFrom(asset)
     if (section.role === 'user') return { origin: { kind: 'user' }, hidden: isKept(asset, from) }
     const { blocks, hiddenFrom } = agentText(asset.section)
     const hidden = hiddenFrom.has(from) || isKept(asset, from)

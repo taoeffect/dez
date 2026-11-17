@@ -1,6 +1,6 @@
 import * as z from 'zod'
-import { MARKER_ATTRIBUTES, escapeMarkerAttribute, markerAttributes } from '../../utils/markerAttribute'
-import { sectionIsEmpty, sectionPlainText, stripLiveSentinels, textNode } from './content'
+import { MARKER_ATTRIBUTES, escapeMarkerAttribute, markerAttributes, parseJsonAttribute } from '../../utils/markerAttribute'
+import { contentPlainText, sectionIsEmpty, sectionPlainText, stripLiveSentinels, textNode } from './content'
 import type { ConversationCost } from './conversationCost'
 import { findImageReferences, IMAGE_ID_SOURCE, type ImageReference, type LinkedPathRule } from './images'
 import { findMediaTags, type MediaTag } from './mediaTags'
@@ -230,15 +230,7 @@ const linkedPathsSchema = z.array(z.string())
 // The paths of a `linked` value; none for no value, and for a value that
 // is not the writer's form (a hand edit).
 function readLinkedPaths(text: string | undefined): string[] {
-  if (text === undefined) return []
-  let value: unknown
-  try {
-    value = JSON.parse(text)
-  } catch {
-    return []
-  }
-  const parsed = linkedPathsSchema.safeParse(value)
-  return parsed.success ? parsed.data : []
+  return (text === undefined ? null : parseJsonAttribute(text, linkedPathsSchema)) ?? []
 }
 
 /** The text of a tag line: one line, with live sentinels removed from
@@ -441,17 +433,17 @@ export function firstSectionRole(text: string): Role {
 /** The block at the start of the content of a section, by the rule of the
  *  editor doc (`firstSectionRole`): the first node is a text that starts
  *  with the tag line, and no prompt pill is on that line. Its offsets are
- *  in the plain text of the content (prompt bodies in it, as
- *  `sectionPlainText`): a block with no end line runs to the end of the
- *  section, as in the editor doc. Null when there is none. The role of the
- *  section is not read. */
+ *  in the plain text of the content (`contentPlainText`, prompt bodies in
+ *  it): a block with no end line runs to the end of the section, as in
+ *  the editor doc. Null when there is none. The role of the section is
+ *  not read. */
 export function contentCompactionBlock(content: readonly ContentNode[]): CompactionBlock | null {
   const first = content[0]
   if (first?.kind !== 'text') return null
   // The doc line of the tag goes on into the node after a text with no
   // line break, and that node is a prompt pill.
   if (first.text.indexOf('\n') < 0 && content.length > 1) return null
-  return readCompactionBlock(content.map((node) => (node.kind === 'text' ? node.text : node.body)).join(''))
+  return readCompactionBlock(contentPlainText(content))
 }
 
 /** The block of `section` when it is a compaction section: an agent

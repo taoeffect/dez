@@ -3396,9 +3396,7 @@ describe('dez.stream/start compaction', () => {
   // A tool round of the reply with no count of the provider: the context
   // size is Dez's estimate.
   async function uncountedToolRound(input: ProviderStreamChatInput): Promise<ProviderStreamChatResult> {
-    input.onSent?.()
-    await input.onToken('Checking.')
-    return { requestId: input.requestId as string, toolCalls: [geminiCall], cost: 0.25 }
+    return { ...await largeRound(input), usage: undefined }
   }
 
   // The newest message stays word for word, so the conversation is still

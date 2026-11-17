@@ -13,6 +13,7 @@ import type { ImageTokenRule } from '../providers/modelFamilies'
 import type { JobInfo } from '../tools/jobs'
 import { compactionScope, type AssetChoice, type CompactionAsset, type KeptMessage } from './compactionAssets'
 import type { CompactionAnswer } from './compactionRequest'
+import { foundAssetFrom } from './mediaRequest'
 import { sectionsToStreamMessages } from './messages'
 import { budgetAfter, contextImageCost, type PictureBudget } from './pictureBudget'
 
@@ -171,10 +172,9 @@ export function compactedSections(input: CompactedSectionsInput): CompactedSecti
   // is in one of the two messages.
   const inMessage = (section: number, from: number) => messages.some((message) => message !== null
     && message.section === section && from >= message.from && from < message.to)
-  const assetFrom = ({ asset }: CompactionAsset) => (asset.kind === 'image' ? asset.reference.from : asset.tag.from)
   // An image of the two messages: the message sends it, so a `show` adds
   // nothing for it. A clip of these messages still needs its picture.
-  const isMessageImage = ({ asset }: AssetChoice) => asset.asset.kind === 'image' && inMessage(asset.asset.section, assetFrom(asset))
+  const isMessageImage = ({ asset }: AssetChoice) => asset.asset.kind === 'image' && inMessage(asset.asset.section, foundAssetFrom(asset.asset))
   // The references of the images with no id (an image of an old Dez) out
   // of the two messages, in section and text order: the notes keep them as
   // text. The compaction section holds the ones of the compaction before.
@@ -202,7 +202,7 @@ export function compactedSections(input: CompactedSectionsInput): CompactedSecti
     const assets = staying.map(({ asset, sentence }): NotesAsset => {
       const found = asset.asset
       const keptMark = !shown.has(found.id)
-      const text = inMessage(found.section, assetFrom(asset))
+      const text = inMessage(found.section, foundAssetFrom(found))
         ? null
         : found.kind === 'image' ? imageReferenceTextWithKeptMark(found.reference, keptMark) : mediaTagTextWithKeptMark(found.tag, keptMark)
       return { id: found.id, kind: asset.kind, facts: asset.facts, origin: asset.origin, sentence, byReply: asset.byReply, text }
