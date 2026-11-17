@@ -21,7 +21,7 @@ import {
 } from './compactionNotes'
 import { findImageReferences, imageReferenceTextWithKeptMark } from './images'
 import { findMediaTags, mediaTagText } from './mediaTags'
-import { FOX_ORIGIN, HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, idImage, invokeBlock, notesData } from './testing'
+import { FOX_ORIGIN, HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, idImage, invokeBlock, messagePart, notesData } from './testing'
 import { findToolBlocks, unescapedModelText } from './toolBlocks'
 
 const REQUIREMENTS = '## Requirements and decisions'
@@ -64,11 +64,6 @@ function headings(text: string): string[] {
 // The headings of the parts of the messages of the user in `text`.
 function messageHeadings(text: string): string[] {
   return text.split('\n').filter((line) => line.startsWith('### '))
-}
-
-// A message part of the notes that holds the message `text`.
-function messagePart(text: string): string {
-  return `<dez:user-message>\n${text}\n</dez:user-message>`
 }
 
 // The text `text` in a code fence of `length` backticks.

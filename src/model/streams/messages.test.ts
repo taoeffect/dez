@@ -3,6 +3,7 @@ import { CARRIED_USER_ASSETS_LABEL, COMPACTION_MESSAGE_INTRO, COMPACTION_USER_ME
 import { imageMarkdown } from '../chat/images'
 import { MEDIA_HIDDEN_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE, mediaTagRequestText, mediaTagText, type MediaTagData } from '../chat/mediaTags'
 import { SHOWN_PICTURE_OVER_LIMIT_NOTE, type ShownPicture } from '../chat/shownPictures'
+import { messagePart } from '../chat/testing'
 import { toolBlockText, type ToolBlockStatus } from '../chat/toolBlocks'
 import type { Section, SectionThinking, ThinkingReplay } from '../chat/types'
 import type { ClipInputRules, MediaKind } from '../providers/types'
@@ -1249,16 +1250,15 @@ describe('sectionsToStreamMessages: a compacted conversation', () => {
   // request sends each part in a code fence.
   describe('with the messages of the user in the notes', () => {
     const FENCE = '```'
-    const part = (text: string) => `<dez:user-message>\n${text}\n</dez:user-message>`
     // The notes of a compaction: the requirements `requirements`, then the
     // messages of the user: `first`, each of `middle`, and `final` (null
     // when the first message is the final one).
     const notesText = (requirements: string, first: string, final: string | null, middle: string[] = []) => [
       `## Requirements and decisions\n\n${requirements}`,
       '## User messages',
-      `${final === null ? '### First and final message' : '### First message'}\n\n${part(first)}`,
-      ...(middle.length === 0 ? [] : [`### Relevant middle messages\n\n${middle.map(part).join('\n\n')}`]),
-      ...(final === null ? [] : [`### Final message\n\n${part(final)}`]),
+      `${final === null ? '### First and final message' : '### First message'}\n\n${messagePart(first)}`,
+      ...(middle.length === 0 ? [] : [`### Relevant middle messages\n\n${middle.map(messagePart).join('\n\n')}`]),
+      ...(final === null ? [] : [`### Final message\n\n${messagePart(final)}`]),
     ].join('\n\n')
     const partsBlock = (notes: string, linked?: string[]) => reply('c', compactionBlockText({ count: 1, lastId: 'c', pictures: [], linked }, notes))
     const LINKED_CLIP: MediaTagData = { kind: 'video', id: 'f', type: 'video/mp4', src: '/home/u/Videos/trip.mp4', url: null, expires: null, other: [] }
@@ -1356,9 +1356,9 @@ describe('sectionsToStreamMessages: a compacted conversation', () => {
     // the user around the parts of the model.
     it('sends each message part of older notes in a code fence too, and reads the last part as the newest message', () => {
       const notes = [
-        `## First message of the user\n\n${part('Make a fox.')}`,
+        `## First message of the user\n\n${messagePart('Make a fox.')}`,
         '## Summary\n\nThe fox is done.',
-        `## Newest message of the user\n\n${part('Now a wolf.')}`,
+        `## Newest message of the user\n\n${messagePart('Now a wolf.')}`,
       ].join('\n\n')
 
       expect(sent([partsBlock(notes), reply('r', '')])).toStrictEqual({

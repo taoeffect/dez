@@ -10,7 +10,7 @@ import { STOPPED_TOOL_RESULT } from '../../model/streams/toolRound'
 import type { ToolArguments } from '../../model/tools/types'
 import { PILL_OPEN, SECTION_SEP, sectionsField, setSectionsEffect, setSectionThinkingEffect } from '../thread/cmEditor'
 import { setStreamingSectionEffect, streamingSectionField } from '../thread/modelChip'
-import { PLAYER } from './testing'
+import { PLAYER, RED } from './testing'
 import { intermediateLabel, intermediateSymbols, markdownToolCalls, renderedToolCalls, toolCallLabel, toolCallSummaries, type IntermediateCall } from './toolCalls'
 
 function block(id: string, status: ToolBlockStatus = 'success', result = 'ok'): string {
@@ -287,8 +287,7 @@ describe('the spacing of the chip lines', () => {
     expect(agentRows(['before', block('a'), block('b'), '', block('c'), 'after'])).toEqual([
       'before', SPACE, 'chip a', 'chip b', COLLAPSED, 'chip c', SPACE, 'after',
     ])
-    const image = '![/home/u/.config/dez/assets/images/red.png](id=a)'
-    expect(agentRows([image, block('a'), PLAYER])).toEqual([image, SPACE, 'chip a', SPACE, PLAYER])
+    expect(agentRows([RED, block('a'), PLAYER])).toEqual([RED, SPACE, 'chip a', SPACE, PLAYER])
   })
 
   it('leaves a chip with a blank line between it and content as it is', () => {

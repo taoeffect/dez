@@ -1,13 +1,13 @@
 // Unit tests only: the texts of hidden assets (hiddenAssets.ts) and of the
 // tool blocks that own them, which the model tests and the editor tests
 // share; the reference of an image with an id; a compaction tag, the data
-// of its notes, and an origin of its notes; and the start of a JPEG file
-// with no picture data, which the model tests and the controller tests
-// share.
+// of its notes, a message part of its notes, and an origin of its notes;
+// and the start of a JPEG file with no picture data, which the model tests
+// and the controller tests share.
 import type { PromptInput } from '../streams/mediaRequest'
 import { jobStartedText } from '../tools/jobs'
 import { invocationInputsText } from '../tools/modelInvoke'
-import { compactionTagText } from './compaction'
+import { compactionTagText, USER_MESSAGE_TAG_NAME } from './compaction'
 import type { CompactionNotes } from './compactionNotes'
 import { IMAGE_HIDDEN_KEY, IMAGE_TOOL_KEY, imageMarkdown, imageReferenceTextWithKeptMark } from './images'
 import { MEDIA_HIDDEN_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE, mediaTagText, type MediaTagKind } from './mediaTags'
@@ -43,6 +43,12 @@ export function notesData(fields: Partial<CompactionNotes>): CompactionNotes {
     cost: undefined,
     ...fields,
   }
+}
+
+/** A message part of the notes of a compaction (`notesMessages`,
+ *  compactionNotes.ts) that holds the message `text`, with no escape. */
+export function messagePart(text: string): string {
+  return `<${USER_MESSAGE_TAG_NAME}>\n${text}\n</${USER_MESSAGE_TAG_NAME}>`
 }
 
 /** The reference of the image `id` at `path`, with the kept mark of a

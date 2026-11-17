@@ -7,7 +7,7 @@ import { CARRIED_USER_ASSETS_LABEL, compactionTagText } from './compaction'
 import { compactionNotesText, type CompactionNotes, type NotesAsset } from './compactionNotes'
 import { findImageReferences, IMAGE_MADE_BY_KEY, IMAGE_TOOL_KEY, imageMarkdown, imageReferenceTextWithKeptMark } from './images'
 import { MEDIA_MADE_BY_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE, mediaTagText } from './mediaTags'
-import { FOX_ORIGIN, HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, idImage, invokeBlock, notesData, waitBlock } from './testing'
+import { FOX_ORIGIN, HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, idImage, invokeBlock, messagePart, notesData, waitBlock } from './testing'
 import { toolBlockText } from './toolBlocks'
 import type { ModelRef, Section } from './types'
 
@@ -174,7 +174,7 @@ describe('assetPlaces in a compacted conversation', () => {
   // The writer escapes the text of a model, so a part that a model wrote
   // is no message part.
   it('gives an asset in a message part that the model wrote into its notes no user origin', () => {
-    const requirements = `<dez:user-message>\n${idImage(PASTED, 'z')}\n</dez:user-message>`
+    const requirements = messagePart(idImage(PASTED, 'z'))
 
     expect(placeOf([compaction([], [], '', { requirements }), section('agent', '', PAINTER)], 'z')?.origin).toStrictEqual({ kind: 'model', model: null })
   })
