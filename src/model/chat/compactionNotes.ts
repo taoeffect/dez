@@ -77,13 +77,14 @@ import type { Role } from './types'
 //   still count, at their places. A request sends a part as a message of
 //   the user (streams/messages.ts). A reader of the lines of Dez skips the
 //   parts, so a line of the user is never a line of Dez.
-// - The first three parts are the answer of the model to the compaction
-//   request (streams/compactionRequest.ts). A blank part is left out.
-// - The other parts are of Dez. The compaction removes the tool blocks of
-//   the conversation, so these lines are all that still tells who made an
-//   asset, and which job is which: `asset_info` reads them
-//   (assetOrigins.ts), and the next compaction copies the origin and the
-//   sentence of an asset from its line.
+// - The summary, the requirements and decisions, and the next steps are
+//   the three parts of the answer of the model to the compaction request
+//   (streams/compactionRequest.ts). A blank part is left out.
+// - The parts of the assets, the jobs, and the cost are of Dez. The
+//   compaction removes the tool blocks of the conversation, so these lines
+//   are all that still tells who made an asset, and which job is which:
+//   `asset_info` reads them (assetOrigins.ts), and the next compaction
+//   copies the origin and the sentence of an asset from its line.
 // - The next compaction of the same reply (no message of the user came
 //   between the two) also reads which assets that reply made, and the
 //   inputs of its open jobs (streams/compactionAssets.ts): the tool blocks

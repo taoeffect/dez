@@ -37,7 +37,7 @@ import type { ContentNode, Role, Section } from './types'
 //   the first end line after it. With no end line, the block runs to the
 //   end of the text of the section. Text after the block is the text of
 //   the reply. `compactionBlockLineCount` is the one rule: the editor
-//   reads its doc lines with it (view/editor/compaction.ts).
+//   reads its doc lines with it (view/editor/compactionBlock.ts).
 // - The old form: an older Dez wrote a tag that ends with `/>`, and no end
 //   line. Its notes run to the end of the text of the section. Saved
 //   conversations keep this form, and Dez does not change their text: this
@@ -157,22 +157,22 @@ export function compactionsField(compactions: Compactions | undefined): { compac
 }
 
 /** The text that starts the compaction message of a request, before the
- *  text of the compaction section. It is in the cached prefix of every
+ *  notes of the compaction block. It is in the cached prefix of every
  *  request of its conversation: never a date, a running count, or a
- *  random value. It is true for the old layout too, whose kept messages
- *  of the user come after the notes. */
+ *  random value. It is true for the oldest layout too, whose kept
+ *  messages of the user come after the notes. */
 export const COMPACTION_MESSAGE_INTRO = '[Compaction: this conversation was long, so Dez put the notes below in place of its earlier messages. '
   + 'The notes are what the assistant wrote about the work so far, with the facts that Dez added. '
   + 'Dez kept the first and the newest message of the user word for word, each under its own heading in the notes or after the notes.]'
 
 /** The line before each user section of the compaction message: a message
- *  of the old layout, and a message that the user wrote after a reply with
- *  no text. */
+ *  of the oldest layout, and a message that the user wrote after a reply
+ *  with no text. */
 export const COMPACTION_USER_MESSAGE_LABEL = '[Message of the user]'
 
 /** The first line of the section of the carried assets of the user, in
- *  the old layout: a user section that an older Dez wrote after the first
- *  kept message of the user. Below this line it holds only the image
+ *  the oldest layout: a user section that an older Dez wrote after the
+ *  first kept message of the user. Below this line it holds only the image
  *  references and the media tags of the user's messages that the
  *  compaction took out, each on a line of its own, so that their ids still
  *  name them, and a linked file still counts. The line tells the model and

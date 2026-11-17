@@ -677,10 +677,10 @@ interface MountedAssetList {
 const mountedAssetLists = new WeakMap<Element, MountedAssetList>()
 
 /** `renderAssets` for a list that can be long (the kept assets of a
- *  compaction): the list has a scroll box of its own, and only the rows in
- *  view have an element (`AssetList.vue`). Every player loads its whole
- *  file and holds a connection to the sound server, which refuses new
- *  ones past some count; a player that it refused shows the card of a
+ *  compaction): the list has a scroll box of its own, and only the rows
+ *  near view have an element (`AssetList.vue`). Every player loads its
+ *  whole file and holds a connection to the sound server, which refuses
+ *  new ones past some count; a player that it refused shows the card of a
  *  clip that cannot play. */
 function renderAssetList(view: EditorView, list: HTMLElement, owner: HiddenAssetOwner | null, assets: readonly PanelAsset[]): void {
   const rows = panelAssetRows(view, owner, assets)

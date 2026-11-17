@@ -978,8 +978,9 @@ describe('sectionsToStreamMessages: a compacted conversation', () => {
   const tag = (pictures: ShownPicture[] = []) => compactionTagText({ count: 1, lastId: 'c', pictures })
   // The start of each user section of the compaction message.
   const KEPT = `\n\n${COMPACTION_USER_MESSAGE_LABEL}\n`
-  // A compaction section with the image `b`, and two kept user messages:
-  // one with the image `a`, one that names both.
+  // A compaction section with the image `b`, and two kept user messages in
+  // sections of their own, as an older Dez wrote them: one with the image
+  // `a`, one that names both.
   const withImages = [
     reply('c', `${tag()}\nThe fox: ![${GENERATED}](id=b) It is red. See @b.\n`),
     user('u1', `Like ![${IMAGE}](id=a)?`),

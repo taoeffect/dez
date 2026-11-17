@@ -11,11 +11,11 @@ import { lineBlocks } from './lineBlocks'
 // (compactionChip.ts). The reply that ran at the compaction goes on after
 // it, in the same section. The rules here keep it as one whole line block
 // (`compactionBlockRange`): no caret in it, no text typed into it or
-// before it, and no Backspace next to it deletes it. Only a selection that
-// holds it deletes it, and a delete of the whole block makes the first
-// section a user section again. The actions of an asset in the panel of
-// the assets chip (the trash, the Save of a clip) change the text of the
-// block: no rule here stops them.
+// before it, and no delete key next to it deletes it or joins text to it.
+// Only a selection that holds it deletes it, and a delete of the whole
+// block makes the first section a user section again. The actions of an
+// asset in the panel of the assets chip (the trash, the Save of a clip)
+// change the text of the block: no rule here stops them.
 
 /** The first place of a caret in a doc that starts with a compaction
  *  block: the start of the line after the block, where the text of the
@@ -31,20 +31,29 @@ export function caretAfterCompactionBlock(doc: Text): number | null {
   return doc.line(last.number + 1).text === SECTION_SEP ? block.to : block.to + 1
 }
 
-/** Backspace with one caret right after the block, or at the start of the
- *  line after it when that line has text, does nothing. The text after the
- *  block is the reply; with the block gone, the role of the first section
- *  would follow that text, so one key would drop every note and make the
- *  reply a message of the user (`firstSectionRole`). Before the line block
- *  rule, which deletes a whole block there (`deleteLineBlockBackward`). */
-export function keepCompactionBlockOnBackspace(view: EditorView): boolean {
-  const { doc, selection } = view.state
-  if (selection.ranges.length !== 1 || !selection.main.empty) return false
-  const [block] = compactionBlockRange(doc)
-  if (!block) return false
-  const caret = selection.main.head
-  return caret === block.to || (caret === block.to + 1 && doc.lineAt(caret).length > 0)
-}
+/** A delete key next to the block leaves it as it is: Backspace, Delete,
+ *  and the keys that delete a word or up to a line start, on every
+ *  platform (the user events `delete.backward` and `delete.forward`). The
+ *  text after the block is the reply. With the block gone, the role of the
+ *  first section would follow that text, so one key would drop every note
+ *  and make the reply a message of the user (`firstSectionRole`). With the
+ *  line break after the end line gone, the reply would join the end line:
+ *  the block would then run to the end of the section, and the reply would
+ *  be part of the notes. So such a key does nothing. CM's own key on an
+ *  empty line after the block, a section merge, and a delete of a
+ *  selection that holds the block (`delete.selection`) still work. */
+const keepBlockOnDeleteKeys = EditorState.transactionFilter.of((tr) => {
+  if (!tr.docChanged || !(tr.isUserEvent('delete.backward') || tr.isUserEvent('delete.forward'))) return tr
+  const [block] = compactionBlockRange(tr.startState.doc)
+  if (!block) return tr
+  let changesBlock = false
+  tr.changes.iterChangedRanges((fromA) => {
+    if (fromA < block.to) changesBlock = true
+  })
+  // With no change before its end, the block keeps its offsets.
+  const joinsEndLine = !changesBlock && tr.newDoc.lineAt(block.to).to > block.to
+  return changesBlock || joinsEndLine ? [] : tr
+})
 
 /** A caret before the end of the block goes to the first place after it
  *  (`caretAfterCompactionBlock`): text typed before the tag would make it
@@ -104,7 +113,9 @@ const atomicBlock = EditorView.atomicRanges.of((view) => {
 /** The rules of the compaction block, for the thread editor (`buildState()`
  *  in `ThreadEditor.vue`). `keepCaretOffBlock` is before `keepBlockFirst`:
  *  the transaction filters run from the last to the first, and the caret
- *  rule must read the doc that the move of the block gives. */
+ *  rule must read the doc that the move of the block gives.
+ *  `keepBlockOnDeleteKeys` is last, so that it runs first, and the other
+ *  filters see no change when it stops one. */
 export function compactionBlockRules(): Extension {
-  return [lineBlocks((state) => compactionBlockRange(state.doc)), keepCaretOffBlock, keepBlockFirst, atomicBlock]
+  return [lineBlocks((state) => compactionBlockRange(state.doc)), keepCaretOffBlock, keepBlockFirst, atomicBlock, keepBlockOnDeleteKeys]
 }

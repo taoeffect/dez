@@ -21,8 +21,8 @@
 //   (`NotesColumn.groups`).
 // - Numbers that count the rows up by 1 with no gap leave the rows, and the
 //   lead line of each group tells its range (`NotesColumn.counts`).
-// - Each of the three is used only when it makes the text shorter, so a
-//   table of one row keeps all its cells. The rows keep their order.
+// - Each of the three is used only when it makes the text shorter. The
+//   rows keep their order.
 // - The head names only the columns that the rows hold, and a legend tells
 //   only the values that the rows and the lead lines hold.
 // - The reader gives back every row with every column. It finds the

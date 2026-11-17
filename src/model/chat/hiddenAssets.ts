@@ -21,11 +21,11 @@ import type { Role } from './types'
 // `@id` mentions, the requests, and Delete Unused Files treat it as any
 // other asset.
 //
-// A compaction hides assets too: every asset of its block (the kept assets
-// that it wrote with the kept mark, `IMAGE_KEPT_KEY` and
-// `MEDIA_KEPT_ATTRIBUTE`, in its notes), and the kept assets of the user
-// that it carried. The editor shows them in the panel of the assets chip
-// of the compaction (`findKeptAssets`).
+// A compaction hides assets too: every asset of its block, with or without
+// the kept mark (`IMAGE_KEPT_KEY`, `MEDIA_KEPT_ATTRIBUTE`), and, in the
+// oldest layout, the kept assets of the user that an older Dez carried in
+// a user section after the block. The editor shows them in the panel of
+// the assets chip of the compaction (`findKeptAssets`).
 //
 // This module is the one place that tells which assets are hidden.
 
@@ -123,12 +123,12 @@ function blockAssetsOf(text: string, to: number, rule: LinkedPathRule): HiddenAs
  *  section that starts with a valid block, so there are chips to show
  *  them under). In the compaction section, every image and clip of the
  *  block is hidden, with or without the kept mark (`blockAssetsOf`). In
- *  the user sections right after it (the old layout), an asset with the
+ *  the user sections right after it (the oldest layout), an asset with the
  *  kept mark is hidden only in a section of the carried assets of the user
  *  (`isCarriedUserAssets`). A blank section ends that run as little as it
  *  ends the compaction message of a request. At any other place a marked
- *  asset shows as any other asset: in a kept message of the user, the
- *  mark only tells a request to send no pixels. */
+ *  asset shows as any other asset: in a kept message of the user of that
+ *  layout, the mark only tells a request to send no pixels. */
 export function findKeptAssets(sections: readonly { role: Role, text: string }[]): HiddenAsset[][] {
   const kept: HiddenAsset[][] = sections.map(() => [])
   const first = sections[0]

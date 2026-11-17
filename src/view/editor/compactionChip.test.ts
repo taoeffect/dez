@@ -18,9 +18,10 @@ interface TagOptions {
   linked?: string[]
 }
 
-/** A compacted conversation with the tag `count`, `dropped`, `pictures`,
- *  and `linked`, the block with the notes `notes`, a kept message of the
- *  user, and the section of the carried assets of the user (`carried`). */
+/** A compacted conversation in the layout of an older Dez, with the tag
+ *  `count`, `dropped`, `pictures`, and `linked`: the block with the notes
+ *  `notes`, a kept message of the user, and the section of the carried
+ *  assets of the user (`carried`). */
 function compactedState(notes: string[], carried: string[], { count = 1, dropped, pictures = [], linked }: TagOptions = {}): EditorState {
   const block = compactionBlockText({ count, lastId: 'z', dropped, pictures, linked }, notes.join('\n'))
   return createState([block, 'Ask.', [CARRIED_USER_ASSETS_LABEL, ...carried].join('\n')], ['agent', 'user', 'user'])

@@ -1,11 +1,13 @@
-import { deleteCharBackward, undo } from '@codemirror/commands'
+import { deleteCharBackward, deleteGroupBackward, undo } from '@codemirror/commands'
 import type { EditorState } from '@codemirror/state'
+import type { EditorView } from '@codemirror/view'
 import { describe, expect, it } from 'vitest'
 import { COMPACTION_END_LINE, compactionBlockText, compactionTagText } from '../../model/chat/compaction'
 import type { Role } from '../../model/chat/types'
 import { sectionsField } from '../thread/cmEditor'
-import { caretAfterCompactionBlock, keepCompactionBlockOnBackspace } from './compaction'
+import { caretAfterCompactionBlock } from './compaction'
 import { compactionBlockRange } from './compactionBlock'
+import { deleteLineBlockBackward } from './lineBlocks'
 import { PLAYER, createState, joinSections, runCommand, selectionOf } from './testing'
 
 const DATA = { count: 1, lastId: 'c', pictures: [] }
@@ -162,31 +164,48 @@ describe('text at the block', () => {
 })
 
 // The text after the block is the reply that ran at the compaction: with
-// the block gone, it would be a message of the user.
-describe('Backspace next to the block', () => {
-  it.each([
+// the block gone, it would be a message of the user, and joined to the end
+// line, it would be part of the notes.
+describe('a delete key next to the block', () => {
+  // The Backspace of the thread editor (`deleteLineBlockBackward` first),
+  // CM's own Backspace, and the delete of a word (Ctrl-Backspace, and
+  // Alt-Backspace on macOS).
+  const KEYS: Array<[string, (view: EditorView) => boolean]> = [
+    ['the line block Backspace', deleteLineBlockBackward],
+    ['CM Backspace', deleteCharBackward],
+    ['the delete of a word', deleteGroupBackward],
+  ]
+  const PLACES: Array<[string, string[], number]> = [
     ['at the start of the text after the block', TEXTS, AFTER],
     ['at the end of a section that is only its block', ONLY_BLOCK, BLOCK.length],
-  ])('keeps the block %s', (_where, texts, caret) => {
-    const state = createState(texts, ROLES, [caret])
-    const { handled, state: next } = runCommand(state, keepCompactionBlockOnBackspace)
+  ]
 
-    expect(handled).toBe(true)
-    expect(next).toBe(state)
+  it.each(PLACES.flatMap(([where, texts, caret]) => KEYS.map(([key, command]) => [key, where, texts, caret, command] as const)))(
+    'keeps the block for %s %s',
+    (_key, _where, texts, caret, command) => {
+      const state = createState(texts, ROLES, [caret])
+      const next = runCommand(state, command).state
+
+      expect(next.doc.toString()).toBe(state.doc.toString())
+      expect(firstSection(next)).toStrictEqual({ id: 's0', role: 'agent' })
+    },
+  )
+
+  it('lets a key delete text of the reply that does not reach the block', () => {
+    const state = createState(TEXTS, ROLES, [AFTER + 'More'.length])
+
+    expect(runCommand(state, deleteGroupBackward).state.doc.toString()).toBe(joinSections([`${BLOCK}\n`, 'ask']))
   })
 
   // CM's own key takes the empty line away, and the block stays.
-  it('leaves an empty line after the block to the next rules', () => {
+  it('lets CM Backspace take an empty line after the block away', () => {
     const state = createState([`${BLOCK}\n`, 'ask'], ROLES, [AFTER])
 
-    expect(runCommand(state, keepCompactionBlockOnBackspace).handled).toBe(false)
     expect(runCommand(state, deleteCharBackward).state.doc.toString()).toBe(joinSections(ONLY_BLOCK))
   })
 
   it('lets a selection that holds the block delete it, which makes the first section a user section, and an undo brings both back', () => {
     const state = createState(TEXTS, ROLES, [[0, AFTER]])
-    expect(runCommand(state, keepCompactionBlockOnBackspace).handled).toBe(false)
-
     const deleted = runCommand(state, deleteCharBackward).state
 
     expect(deleted.doc.toString()).toBe(joinSections(['More', 'ask']))

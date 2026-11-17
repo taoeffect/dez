@@ -114,8 +114,12 @@ const NO_JOB_LINES: ReadonlyMap<string, NotesJobLine> = new Map()
  *  notes, and an asset whose line tells "from the user", are from the
  *  user. The job lines of the notes are of the reply that ran at the
  *  compaction, so only its assets read them: a job id is unique in its
- *  reply only. That reply is the text after the block (chat/compaction.ts),
- *  or, in an older layout, the first reply after the compaction message. */
+ *  reply only. That reply is the text after the block (chat/compaction.ts).
+ *  When that text is blank (an older layout, or a reply that stopped
+ *  before any text), it is the first reply after the compaction message:
+ *  the two cannot be told apart. A reply finds its jobs in its own tool
+ *  blocks first, so a later reply reads a job line only when the user
+ *  deleted the block of that job. */
 export function assetPlaces(sections: readonly Section[], assets: readonly FoundAsset[]): AssetPlace[] {
   const first = sections.length > 0 ? sectionTextParts(sections[0], 0) : null
   const block = first?.block ?? null

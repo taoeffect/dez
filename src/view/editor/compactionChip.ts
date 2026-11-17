@@ -38,8 +38,9 @@ import {
 // - The assets chip: its counts tell how many assets the compaction kept
 //   and dropped (the `dropped` of the tag), and how many pictures the model
 //   was shown (the `pictures` of the tag). Its panel shows every asset of
-//   the block and the kept assets of the carried assets of the user
-//   (hiddenAssets.ts), the pictures, and the assets part of the notes.
+//   the block (hiddenAssets.ts), the pictures, and the assets part of the
+//   notes. In a conversation of an older Dez, it also shows the kept
+//   assets of the section of the carried assets of the user.
 // - The summary chip: its panel shows every other part of the notes.
 //
 // The notes show as text for people (`compactionNotesParts`), in read-only
@@ -53,8 +54,8 @@ export interface CompactionChipData {
    *  took out; null when the tag does not tell it (a tag of an older
    *  Dez). */
   dropped: number | null
-  /** The assets of the block and the kept assets of the carried assets of
-   *  the user, in doc order. */
+  /** The assets of the block and, in a conversation of an older Dez, the
+   *  kept assets of the carried assets of the user, in doc order. */
   assets: readonly PanelAsset[]
   /** The pictures of the compaction tag. */
   pictures: readonly ShownPicture[]
@@ -276,9 +277,9 @@ class CompactionChipsWidget extends WidgetType {
   // A Save or a Delete changes the tag of a clip, and the trash takes an
   // image out of the doc. New chips would make new players (a clip that
   // plays would stop), so the drawn chips take the new assets in place
-  // (`AssetList.vue`: a clip whose section changed its role gets a new
-  // player). A change of the count, of the pictures, or of whether a chip
-  // has a panel makes new chips.
+  // (`AssetList.vue`: a clip whose `linkedSrc` changed gets a new player).
+  // A change of the count, of the pictures, or of whether a chip has a
+  // panel makes new chips.
   updateDOM(dom: HTMLElement, view: EditorView, from: CompactionChipsWidget): boolean {
     const assetsRoot = partRoot(dom, 'assets')
     const chip = assetsRoot?.querySelector<HTMLElement>(`.${CHIP_CLASS}`)

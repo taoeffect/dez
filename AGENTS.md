@@ -230,7 +230,7 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 - **Section models are not doc text**: undo and redo put back the role and data of the sections they re-insert (`sectionsField`, `cmEditor.ts`).
 - **Only a user edit has a `userEvent`**: a new user edit path must set one; a new program write must not (`view/editor/agentTextEdits.ts`).
 - **The editor holds the old tab for a tick after a switch**: write the view back only to `viewTabId`, and never give it another tab's section models (`ThreadEditor.vue`).
-- **A compaction swaps the sections under the editor**: `dez.model/tabs/compact` and `dez.editor/rebuildIfVisible` run in the same tick (`compactIfDue`), and it cannot be undone. Backspace never deletes the block (`src/view/editor/compaction.ts`).
+- **A compaction swaps the sections under the editor**: `dez.model/tabs/compact` and `dez.editor/rebuildIfVisible` run in the same tick (`compactIfDue`), and it cannot be undone. No delete key next to the block deletes it or joins text to it (`src/view/editor/compaction.ts`).
 - **Each section is its own markdown text** (`sectionSeparatorMarkdown`, `cmEditor.ts`); code fences and HTML blocks still run into the next sections.
 - **Thinking has two copies during a stream** (store and visible editor); see `dez.editor/setSectionThinkingIfVisible`.
 - **Never change the stored thinking**: replays send it back, and the prompt cache needs the same bytes. The panel shows `readableThinking` (`src/model/chat/thinking.ts`).
@@ -244,7 +244,7 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 ### Conversation text and assets
 
 - **Image references, media tags, and tool calls are plain text** in a section; each has one writer and recognizer (`images.ts`, `mediaTags.ts`, `toolBlocks.ts` in `src/model/chat/`).
-- **Model text never forms a tag or a block**: `ModelTextEscaper` covers the tool blocks, the media tags, and the compaction tag.
+- **Model text never forms a tag or a block**: `ModelTextEscaper` covers the tool blocks, the media tags, the compaction block, and the user messages of its notes (`toolBlocks.ts`).
 - **Find tool blocks in one agent section at a time**, never in the whole doc (`src/model/chat/toolBlocks.ts`).
 - **A linked path counts only in a user section, or in the compaction block when its tag lists it** (`linkedRuleParts`, `src/model/chat/compaction.ts`), so that a model's text never makes Dez read a file of the computer.
 - **One id sequence for images and clips** (`src/model/chat/mediaIds.ts`): never renumber an id that is in the doc, and never give an id that the conversation used before.

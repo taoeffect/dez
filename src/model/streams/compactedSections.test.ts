@@ -65,8 +65,9 @@ function compact(sections: Section[], answerText: string, replySectionId: string
 }
 
 /** The images and the pictures that the compaction message of `sections`
- *  sends, in its order. `sections` end before the section of the reply:
- *  a request reads the reply only when it has text. */
+ *  sends, in its order. `sections` hold only the compaction section, with
+ *  no reply text after the block: a request reads the reply only when it
+ *  has text. */
 function sent(sections: Section[]): { images: string[], pictures: string[] } {
   const { messages } = sectionsToStreamMessages(sections, model, { sendImages: true, sendTools: false })
   expect(messages).toHaveLength(1)

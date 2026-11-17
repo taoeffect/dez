@@ -190,7 +190,7 @@ function normalizeSectionModels(models: SectionModel[], firstRole: Role): Sectio
 
 /** Produce `{ id, role, model?, thinking?, durationMs? }` for each section
  *  to seed `sectionsField`. The first section gets the role that its doc
- *  text gives it (`contentCompactionTag` reads the content as
+ *  text gives it (`contentCompactionBlock` reads the content as
  *  `firstSectionRole` reads the first doc line). */
 export function initialSectionModels(sections: Section[]): SectionModel[] {
   if (sections.length === 0) return [{ id: crypto.randomUUID(), role: 'user' }]

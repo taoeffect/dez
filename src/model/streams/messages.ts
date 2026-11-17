@@ -112,9 +112,11 @@ export function imageOptionsOf(model: Pick<ModelInfo, 'id' | 'imageInput' | 'ima
 // are the same at each read; `chatImage` and `shownPicturePart`,
 // providers/selectors.ts). So the signed thinking replays go back too
 // (their prefix is the same; `wireChat`, apiFormats.ts). The compaction
-// message never changes by itself: it is the block alone, or, in the
-// oldest layout, its sections end at the first agent section after them,
-// so a newer user message is no part of it (`compactionMessageEnd`).
+// message never changes by itself: it is the block alone when the reply
+// that ran the compaction wrote text after it. Else (an old layout, or a
+// reply with no text) its sections end at the first later agent section
+// that is not empty, so a newer user message is no part of it
+// (`compactionMessageEnd`).
 export function sectionsToStreamMessages(sections: Section[], requestModel: ModelRef, options: RequestOptions): Omit<RequestMessages, 'sendTools'> {
   let imagesLeftOut = 0
   let newestUserMessage: string | MessagePart[] = ''
@@ -165,8 +167,8 @@ export function sectionsToStreamMessages(sections: Section[], requestModel: Mode
       return
     }
     if (compaction !== null && index < compactionEnd) {
-      // The section of the carried assets of the user is no message of the
-      // user, and its first line tells what it is.
+      // The section of the carried assets of the user (an old layout) is
+      // no message of the user, and its first line tells what it is.
       compaction.pendingText += isCarriedUserAssets(text) ? '\n\n' : `\n\n${COMPACTION_USER_MESSAGE_LABEL}\n`
       addUserText(compaction, text, imagesById, images, true)
     } else {

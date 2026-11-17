@@ -18,8 +18,8 @@ import { tableRowStarts } from './tables'
 // with them, and what shows at the place of such an asset. The asset itself
 // shows in the panel of its chip: the chip of a tool call (toolCalls.ts),
 // or the assets chip of a compaction (compactionChip.ts) for each asset of
-// the compaction block and each kept asset of the carried assets of the
-// user.
+// the compaction block, and for each kept asset of the carried assets of
+// the user in a conversation of an older Dez.
 //
 // The text of a hidden asset stays where it is, and the editor still knows
 // it as an image or a clip (`renderedImages`, `renderedMedia`): find skips
@@ -121,12 +121,13 @@ const HIDING_MARKS = [...new Set([IMAGE_HIDDEN_KEY, MEDIA_HIDDEN_ATTRIBUTE, IMAG
 /** The hidden assets of a state: the assets that the chip of a call hides
  *  (`findHiddenAssets`), and the assets that the assets chip of a
  *  compaction shows (`findKeptAssets`): every asset of the compaction
- *  block, and the kept assets of the carried assets of the user. Each
- *  agent section is read on its own, with the blocks that show as chips
- *  (`chipBlocks`): an asset is hidden only while a chip can show it. An
- *  asset that images.ts or media.ts leaves as source text stays in view
- *  too: one on a line with a sentinel (a prompt pill), and an image
- *  reference on a table row line (its metadata holds `|`). */
+ *  block, and the kept assets of the carried assets of the user that an
+ *  older Dez wrote. Each agent section is read on its own, with the
+ *  blocks that show as chips (`chipBlocks`): an asset is hidden only while
+ *  a chip can show it. An asset that images.ts or media.ts leaves as
+ *  source text stays in view too: one on a line with a sentinel (a prompt
+ *  pill), and an image reference on a table row line (its metadata holds
+ *  `|`). */
 function findHiddenAssetsInDoc(state: EditorState): HiddenAssetsInDoc {
   const doc = state.doc.toString()
   const blockEnd = compactionBlockEnd(state.doc)

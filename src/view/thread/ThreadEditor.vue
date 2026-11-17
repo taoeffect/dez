@@ -53,7 +53,7 @@ import { markdownTables } from '../editor/tables'
 import { deleteImageBang, deleteImageParen, markdownImages } from '../editor/images'
 import { markdownToolCalls, openToolCalls } from '../editor/toolCalls'
 import { markdownMedia } from '../editor/media'
-import { caretAfterCompactionBlock, compactionBlockRules, keepCompactionBlockOnBackspace } from '../editor/compaction'
+import { caretAfterCompactionBlock, compactionBlockRules } from '../editor/compaction'
 import { compactionChip, openCompactionChips, type CompactionChipsOpen } from '../editor/compactionChip'
 import { deleteLineBlockBackward, deleteLineBlockForward, joinsLineBlock } from '../editor/lineBlocks'
 import { revealHiddenLineBackward, revealHiddenLineForward } from '../editor/hiddenAssets'
@@ -864,7 +864,6 @@ function buildState(openPanels?: OpenPanels): EditorState {
         key: 'Backspace',
         run: (v) => mergeWithPreviousSection(v)
           || revealHiddenLineBackward(v)
-          || keepCompactionBlockOnBackspace(v)
           || deleteLineBlockBackward(v)
           || deleteImageParen(v)
           || strictMultiCursorBackspace(v),

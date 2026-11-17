@@ -164,9 +164,9 @@ function onOverlayClick(event: MouseEvent) {
               model writes the notes. A compacted conversation starts with one Agent message: first
               two chips, then the reply, which goes on under the chips. Click the summary chip to
               read the notes and your two messages, and the assets chip to see the assets that the
-              compaction kept. You cannot edit the notes, and Backspace does not delete them. A
-              compaction cannot be undone: Undo does not bring the
-              earlier text back. After a compaction, the bottom bar
+              compaction kept. You cannot edit the notes, and Backspace and the other delete keys
+              do not delete them. A compaction cannot be undone: Undo does not bring the earlier
+              text back. After a compaction, the bottom bar
               shows two sizes and two amounts, as in <code>~81.2k (1.2M) · $0.42 ($7.80)</code>:
               first the size and the cost of the conversation since its last compaction, and after
               each of them, in parentheses, the one of the whole conversation.

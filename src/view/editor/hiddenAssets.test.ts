@@ -69,10 +69,10 @@ function placeholders(state: EditorState): string[] {
   return found
 }
 
-/** A compacted conversation: the compaction block with the notes `notes`,
- *  a kept message of the user, the section of the carried assets of the
- *  user (`carried`, after its first line), then the sections `more`, each
- *  as its role and its text. */
+/** A compacted conversation in the layout of an older Dez: the compaction
+ *  block with the notes `notes`, a kept message of the user, the section
+ *  of the carried assets of the user (`carried`, after its first line),
+ *  then the sections `more`, each as its role and its text. */
 function compactedState(notes: string[], carried: string[], more: Array<[Role, string]> = [], ranges: number[] = []): EditorState {
   const texts = [compactionBlockText(TAG_DATA, notes.join('\n')), 'Ask.', [CARRIED_USER_ASSETS_LABEL, ...carried].join('\n'), ...more.map(([, text]) => text)]
   return createState(texts, ['agent', 'user', 'user', ...more.map(([role]) => role)], ranges)

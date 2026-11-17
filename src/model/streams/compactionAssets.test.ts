@@ -43,11 +43,11 @@ const NOTES = compactionNotesText(NOTES_DATA)
 const COMPACTION = reply('n', `${COMPACTION_TAG}\n${NOTES}`)
 const CARRIED = user('u+', `${CARRIED_USER_ASSETS_LABEL}\n${idImage(RED, 'a', true)}`)
 
-// The compaction message (the compaction section, the first kept message,
-// the carried image `a`, and the newest kept message, into which the user
-// pasted the image `e` after the compaction: the notes have no line for
-// it), then the reply that runs, with the intermediate image `c` and
-// clip `d`.
+// The compaction message of an older Dez (the compaction section, the
+// first kept message, the carried image `a`, and the newest kept message,
+// into which the user pasted the image `e` after the compaction: the notes
+// have no line for it), then the reply that runs, with the intermediate
+// image `c` and clip `d`.
 const COMPACTED = [
   COMPACTION,
   user('u1', 'Make a fox.'),

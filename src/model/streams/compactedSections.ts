@@ -22,8 +22,9 @@ import { budgetAfter, contextImageCost, type PictureBudget } from './pictureBudg
 // which holds the notes (chat/compaction.ts, chat/compactionNotes.ts),
 // then a line break, and the reply goes on after it. It keeps the id and
 // the model of the reply, so the reply keeps one AGENT pill; its thinking
-// and its time start new, as the text of the reply does. With no section
-// of the reply, it gets a new id and the model of the compaction. A
+// starts new, as the text of the reply does. The end of the reply sets
+// its time (`endStreamSection`): the time of the whole reply. With no
+// section of the reply, it gets a new id and the model of the compaction. A
 // request sends the block as one message of the user, the compaction
 // message (messages.ts), which stays the same bytes until the next
 // compaction.
