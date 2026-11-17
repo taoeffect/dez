@@ -1,11 +1,12 @@
 import sbp from '@sbp/sbp'
 import { syntaxTree } from '@codemirror/language'
-import { Prec, type EditorState, type Extension } from '@codemirror/state'
+import type { EditorState, Extension } from '@codemirror/state'
 import { Decoration, EditorView, ViewPlugin, hoverTooltip, type DecorationSet, type ViewUpdate } from '@codemirror/view'
 import type { SyntaxNode } from '@lezer/common'
 import { SENTINEL_CHAR } from '../../model/chat/content'
 import { compactionBlockEnd } from './compactionBlock'
 import { renderedImages } from './images'
+import { pressClicks } from './pressClicks'
 import { tableRowStarts } from './tables'
 
 /** A markdown link that the editor can show as a link. */
@@ -185,39 +186,15 @@ const linkRenderer = ViewPlugin.fromClass(
   { decorations: (plugin) => plugin.decorations },
 )
 
-/** The rendered link whose text holds `target`, a `.dez-link` mark or an
- *  element in it. */
-function renderedLinkAtElement(view: EditorView, target: EventTarget | null): MarkdownLink | null {
-  const text = target instanceof Element ? target.closest('.dez-link') : null
-  if (!text || !view.contentDOM.contains(text)) return null
-  return renderedLinkAt(view.state, view.posAtDOM(text), 1)
-}
-
-/** A plain primary-button press on a rendered link opens its URL when the
- *  button goes up on the same link. The handler takes the press, so the
- *  caret does not go into the link (which would show its source under the
- *  pointer) and the focus stays where it is, as for a press on a pill. A
- *  press with a modifier key (Ctrl/Cmd adds a selection range, Shift
- *  extends the selection) or with another button is left to CodeMirror.
- *  The button can go up outside the editor, so the window watches the
- *  release. */
-const linkClicks = EditorView.domEventHandlers({
-  mousedown(event, view) {
-    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return false
-    const pressed = renderedLinkAtElement(view, event.target)
-    if (!pressed) return false
-    const onMouseUp = (release: MouseEvent) => {
-      if (release.button !== 0) return
-      window.removeEventListener('mouseup', onMouseUp, true)
-      const released = renderedLinkAtElement(view, release.target)
-      if (released && released.from === pressed.from && released.url === pressed.url) {
-        sbp('dez.controller/openUrl', pressed.url)
-      }
-    }
-    window.addEventListener('mouseup', onMouseUp, true)
-    return true
-  },
-})
+/** A press on a rendered link opens its URL (`pressClicks`). The press
+ *  rule keeps the caret out of the link, which would show its source under
+ *  the pointer, as for a press on a pill. */
+const linkClicks = pressClicks(
+  '.dez-link',
+  renderedLinkAt,
+  (pressed, released) => released.from === pressed.from && released.url === pressed.url,
+  (_view, link) => sbp('dez.controller/openUrl', link.url),
+)
 
 /** Hovering a rendered link shows its full URL in a tooltip above it, not
  *  below, where the hand of the pointer cursor would cover its start. A
@@ -247,8 +224,5 @@ const linkUrlTooltip = hoverTooltip(
  *  `ThreadEditor.vue`): rendered, opened by a click, and their URL shown on
  *  hover. The CSS is in `dezTheme`. */
 export function markdownLinks(): Extension {
-  // High precedence: the link press must run before
-  // `focusKeepingScrollOnMouseDown` (focus.ts), which focuses an editor
-  // that does not have the focus.
-  return [linkRenderer, Prec.high(linkClicks), linkUrlTooltip]
+  return [linkRenderer, linkClicks, linkUrlTooltip]
 }

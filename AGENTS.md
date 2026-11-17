@@ -81,6 +81,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `view/editor/selectors.ts`: `dez.editor/*`, the active-editor bridge (stream patching, scroll follow, Copy Markdown, the rebuild after a compaction).
 - `view/editor/find.ts`, `findState.ts`, `findHistory.ts`, `view/thread/FindDropdown.vue`: find and replace.
 - `view/editor/tables.ts`, `links.ts`, `mentions.ts`: GFM tables, markdown links, and `@id` mentions, shown in place.
+- `view/editor/pressClicks.ts`: the one click rule of a clickable mark (a link, a mention chip).
 - `view/editor/assetJump.ts`, `drawnAssets.ts`: a click on a mention goes to its asset and flashes it; the drawn assets.
 - `view/editor/focus.ts`: focus the editor and keep its scroll; use `focusKeepingScroll`, not `view.focus()`.
 - `view/editor/images.ts`, `imageInsert.ts`, `pendingRanges.ts`: images shown in place of their references; image and clip paste and drop.
