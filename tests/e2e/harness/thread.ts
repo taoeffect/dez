@@ -495,6 +495,11 @@ export async function activeTabStreaming (browser: E2EBrowser): Promise<boolean>
   })
 }
 
+/** Whether the busy dots under the editor show. */
+export async function busyDotsShown (browser: E2EBrowser): Promise<boolean> {
+  return browser.execute(() => document.querySelector('.busy-indicator') !== null)
+}
+
 /** Title and message of each open (not closing) toast of `variant`, or of
  *  every variant when it is not given. A toast with no title gives ''. */
 export async function openToasts (browser: E2EBrowser, variant?: ToastVariant): Promise<Array<{ title: string, message: string }>> {

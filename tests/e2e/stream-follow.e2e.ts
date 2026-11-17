@@ -308,9 +308,6 @@ describe('stream follow', () => {
     const scrolled = await scrollTo(60)
     await sendThinking('\n- step 4')
     await expectStayed('thinking step 4', scrolled)
-    // The first answer text hides the busy dots below the editor, which
-    // makes the scroller taller. So the answer adds lines, or the distance
-    // from the bottom would get smaller while the view stays still.
     await sendAnswer('Reply 4.\nReply 4 line 1\nReply 4 line 2')
     await expectStayed('answer', scrolled)
 

@@ -11,18 +11,20 @@ import { WAV_SAMPLE_RATE, monoWav, shownPlayers } from './harness/media'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, openAiToolCall, replyText, sendAnthropicReply, sendChatReply, sendToolCalls, startEventStream, toolResult, writeAnthropicEvent, writeChatFrame, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeConversationId, activeTabStreaming, docPos, editorCaret, editorDoc, focusEditor, focusedArea, newTab, openSeededConversation, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread, type ThreadSection } from './harness/thread'
+import { activeConversationId, activeTabStreaming, busyDotsShown, docPos, editorCaret, editorDoc, focusEditor, focusedArea, newTab, openSeededConversation, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread, type ThreadSection } from './harness/thread'
 import { pressToolChip, toolChips, toolPanel, type ToolChipView } from './harness/toolChips'
 
 // Tool calls, driven through the real app against a mock server in this
 // process: a model of each API format calls the `model_list` tool, the app
 // runs it, writes the call as a block into the reply, shows the block as a
 // chip whose panel shows the parameters and the result, and sends the call
-// and its result back in the next request. Every request holds Dez's system
-// prompt and tools, and a later request starts with the same bytes as the
-// one before it (the prompt cache). A relaunch reads the saved call back
-// from the conversation file. A Stop while the round after a call waits
-// keeps the call, and the next request sends it with its result. A
+// and its result back in the next request. The busy dots under the editor
+// show for the whole reply: while its text streams and while the next round
+// waits. Every request holds Dez's system prompt and tools, and a later
+// request starts with the same bytes as the one before it (the prompt
+// cache). A relaunch reads the saved call back from the conversation file.
+// A Stop while the round after a call waits keeps the call, and the next
+// request sends it with its result. A
 // `model_info` call gives the facts of the mock model as Dez knows them,
 // and a call with no arguments gives those of the reply's model, also after
 // the user chose another model for the tab. A block of a call that the
@@ -185,9 +187,12 @@ describe('tool calls', () => {
     expect(JSON.parse(first.body)).toEqual(openAiChatBody(TOOLER, [{ role: 'user', content: question }]))
 
     // Text, then the call in pieces: its id and name, then its arguments in
-    // two parts.
+    // two parts. The busy dots show while the text streams, as the reply
+    // runs.
     startEventStream(first.reply)
     writeChatFrame(first.reply, { content: 'Let me look.' })
+    await waitForValue(browser, 'text of the reply', async () => (await threadSections(browser))[1]?.text, 'Let me look.')
+    await waitForValue(browser, 'busy dots while the text streams', () => busyDotsShown(browser), true)
     writeChatFrame(first.reply, { tool_calls: [{ index: 0, id: 'call_1', type: 'function', function: { name: 'model_list', arguments: '' } }] })
     writeChatFrame(first.reply, { tool_calls: [{ index: 0, function: { arguments: '{"filter":' } }] })
     writeChatFrame(first.reply, { tool_calls: [{ index: 0, function: { arguments: '"tool"}' } }] }, 'tool_calls')
@@ -209,6 +214,7 @@ describe('tool calls', () => {
     ])
     await waitForValue(browser, 'chip while the next round waits', () => toolChips(browser), [closedChip('"tool"')])
     expect(await activeTabStreaming(browser)).toBe(true)
+    await waitForValue(browser, 'busy dots while the next round waits', () => busyDotsShown(browser), true)
 
     await sendChatReply(second.reply, TOOLER.modelName)
     const sections = [
@@ -217,6 +223,7 @@ describe('tool calls', () => {
       { role: 'user', text: '' },
     ]
     await waitForThread(browser, sections)
+    await waitForValue(browser, 'busy dots after the reply', () => busyDotsShown(browser), false)
     await waitForValue(browser, 'chip after the reply', () => toolChips(browser), [closedChip('"tool"')])
 
     // A press on the chip opens its panel, and keeps the caret and the focus

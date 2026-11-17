@@ -5,7 +5,6 @@ import { EditorView, drawSelection, keymap, tooltips, type Command, type KeyBind
 import { copyLineDown, copyLineUp, deleteLine, history, historyKeymap, defaultKeymap, redo, selectAll, undo } from '@codemirror/commands'
 import sbp from '@sbp/sbp'
 import { useModelState, type Prompt } from '../modelState'
-import { sectionIsEmpty } from '../../model/chat/content'
 import { sameModelRef } from '../../model/chat/modelRef'
 import { sameThinking } from '../../model/chat/thinking'
 import type { ShortcutIdOfScope } from '../../model/shortcuts'
@@ -136,15 +135,6 @@ const autocompleteSelectedIndex = ref(0)
 const findDropdownRef = ref<InstanceType<typeof FindDropdown> | null>(null)
 
 const isActiveTabStreaming = activeTabStreaming
-
-// The three dots under the editor while the stream has not written text
-// yet.
-const showBusyIndicator = computed(() => {
-  if (!isActiveTabStreaming.value) return false
-  const sections = activeSections.value
-  const last = sections[sections.length - 1]
-  return last?.role === 'agent' && sectionIsEmpty(last)
-})
 
 const matchingPrompts = computed(() => {
   const q = autocompleteQuery.value.trim().toLowerCase()
@@ -1296,7 +1286,10 @@ watch(
       @select="acceptPrompt"
       @hover="autocompleteSelectedIndex = $event"
     />
-    <div v-if="showBusyIndicator" class="busy-indicator">
+    <!-- The busy sign of the whole reply, as the Stop button: tool rounds,
+         job waits, and the wait for open jobs at the end can show no new
+         text for minutes. -->
+    <div v-if="isActiveTabStreaming" class="busy-indicator">
       <span class="busy-dot" />
       <span class="busy-dot" />
       <span class="busy-dot" />

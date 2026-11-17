@@ -13,7 +13,7 @@ import { finishVeniceJob, shownPlayers, silentWav, type ShownPlayer } from './ha
 import { startMockProviderApp, takeRequestTo, type MockProviderApp } from './harness/mockProviderApp'
 import { answerHeld, mockChatPath, openAiToolCall, replyText, sendChatReply, sendToolCalls, startEventStream, toolResult, writeChatFrame, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeConversationId, activeTabStreaming, assetPartPoint, docPos, editorDoc, endedReply, focusEditor, newTab, openToasts, setCaret, submit, threadSections, waitForThread } from './harness/thread'
+import { activeConversationId, activeTabStreaming, assetPartPoint, busyDotsShown, docPos, editorDoc, endedReply, focusEditor, newTab, openToasts, setCaret, submit, threadSections, waitForThread } from './harness/thread'
 import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolChip, revealingPart, toolChips, toolPanel } from './harness/toolChips'
 
 // The `model_invoke` tool, driven through the real app against a mock chat
@@ -26,6 +26,8 @@ import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolC
 // - `jobs_wait` gives the result of the job, and the image goes into the
 //   reply after the blocks of that call, with a new id and the name of the
 //   tool;
+// - the busy dots under the editor show while `jobs_wait` waits for a job,
+//   and while a reply that ended waits for its jobs;
 // - two jobs run at the same time, each `jobs_wait` gives the jobs that
 //   ended, and the clip of a provider's job keeps the provider's job id;
 // - the start text of a job tells its number in the reply, each result
@@ -184,7 +186,11 @@ describe('model_invoke', () => {
     expect(toolResult(second, 'call_edit')).toContain('the image @a')
     expect(await filesIn(generatedDir)).toStrictEqual(before)
 
+    // The busy dots show while `jobs_wait` waits for the job: the reply
+    // runs, though its text does not change.
     sendToolCalls(second.reply, [waitCall('call_wait')])
+    await waitForValue(browser, 'block of the wait', async () => (await threadSections(browser))[1]?.text.includes('id="call_wait"') ?? false, true)
+    await waitForValue(browser, 'busy dots while the job runs', () => busyDotsShown(browser), true)
     answerHeld(edit.reply, 'image/png', MADE_PNG)
     const third = await requestTo(CHAT_PATH)
     expect(toolResult(third, 'call_wait')).toBe(jobsWaitText([{ id: jobId, tool: 'model_invoke', status: 'finished', text: 'Made the image @b.', call: { number: 1, label: 'Make @a orange' } }], 0))
@@ -594,10 +600,12 @@ describe('model_invoke', () => {
     // The model ended its reply, and the reply waits for the job.
     await waitForValue(browser, 'text of the reply', async () => (await threadSections(browser))[1]?.text.endsWith(replyText(CALLER.modelName)) ?? false, true)
     expect(await activeTabStreaming(browser)).toBe(true)
+    await waitForValue(browser, 'busy dots while the reply waits for the job', () => busyDotsShown(browser), true)
     expect(await threadSections(browser)).toHaveLength(2)
 
     answerHeld(paint.reply, 'application/json', JSON.stringify({ images: [MADE_PNG.toString('base64')] }))
     const reply = await endedReply(browser)
+    await waitForValue(browser, 'busy dots after the reply', () => busyDotsShown(browser), false)
     const madePath = path.join(generatedDir, await newFileIn(browser, generatedDir, before))
     expect(reply.endsWith(`${replyText(CALLER.modelName)}\n\n![${madePath}](id=a|tool=model_invoke|made-by=${jobId})`)).toBe(true)
     expect(await openToasts(browser, 'error')).toStrictEqual([])
