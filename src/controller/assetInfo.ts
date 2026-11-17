@@ -145,7 +145,7 @@ async function clipCheckLines(input: ClipInput, probed: ProbedClip, checks: read
   const fitting = fittingChecks(checks, streams)
   if (fitting.length === 0) return checkLines(checks, streams, '')
   const run = { toolName: ASSET_INFO_TOOL.name, timeoutMs: ASSET_VIEW_TIMEOUT_MS }
-  const { end, log } = await runFfmpegLog(clipChecksArgs(input.name, fitting), folder, run, signal)
+  const { end, log } = await runFfmpegLog(clipChecksArgs(input.name, fitting, probed.facts.video), folder, run, signal)
   if (end.kind !== 'exited' || end.code !== 0) {
     console.error(`ffmpeg could not run the checks of the ${input.kind} clip @${input.id}:`, end, log)
     return [checksFailedLine(end, fitting)]

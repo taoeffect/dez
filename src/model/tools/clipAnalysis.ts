@@ -1,3 +1,4 @@
+import type { ImageSize } from '../chat/imageDrawing'
 import { FFMPEG_FIXED_ARGS } from './videoTool'
 
 // What ffmpeg finds in a clip, from the lines that its filters write into
@@ -15,6 +16,28 @@ export const SCENE_CUT_THRESHOLD = 10
  *  (a sudden change of the whole picture), with its time (`cutTimes`). It
  *  passes every frame on, and the first frame of a run is never a cut. */
 export const SCENE_CUT_FILTER = `scdet=threshold=${SCENE_CUT_THRESHOLD}`
+
+// The width in pixels under which a picture can have a plane narrower than
+// 64 bytes (`frameCompareArgs`): a chroma plane of 4:1:0 or 4:1:1 is a
+// quarter of the width.
+const SIMD_SAFE_WIDTH = 256
+
+/** The ffmpeg arguments, before the input, of a run with `freezedetect` or
+ *  `scdet` over a picture of `size`. On x86, ffmpeg 8.1.2 gives these
+ *  filters a wrong difference of two frames when a plane of the picture is
+ *  narrower than one SIMD register (16, 32, or 64 bytes): its `scene_sad`
+ *  asm reads one register of each row, past the end of a shorter row, and
+ *  the C code then adds the whole row again. The bytes past the row are
+ *  random, so a small clip got random frozen parts and cuts. `-cpuflags 0`
+ *  makes ffmpeg use only its C code, which is slower, but only for these
+ *  small pictures. A number, unlike a flag name such as `avx2`, is valid on
+ *  every CPU. The smaller side counts, so that the rule holds also when
+ *  ffmpeg turns the frames of a clip with a rotation.
+ *  https://github.com/FFmpeg/FFmpeg/blob/n8.1.2/libavfilter/x86/scene_sad.asm
+ *  https://github.com/FFmpeg/FFmpeg/blob/n8.1.2/libavfilter/x86/scene_sad_init.c */
+export function frameCompareArgs(size: ImageSize): string[] {
+  return Math.min(size.width, size.height) < SIMD_SAFE_WIDTH ? ['-cpuflags', '0'] : []
+}
 
 // A time in a log line of the filters of this module, in seconds. ffmpeg
 // writes each one as a plain decimal number, never with an exponent: a time
@@ -77,18 +100,24 @@ const CHECK_FILTERS: Readonly<Record<ClipCheck, string>> = {
   cuts: SCENE_CUT_FILTER,
 }
 
+// The checks whose filters compare each frame with an earlier one
+// (`frameCompareArgs`).
+const FRAME_COMPARE_CHECKS: readonly ClipCheck[] = ['frozen', 'cuts']
+
 /** The ffmpeg arguments of one run of `checks` over the whole clip file
- *  `input`: a chain of filters on its first picture stream and one on its
- *  first sound stream, as the checks need them. The caller gives only the
- *  checks that fit the clip (it has the streams that they read). The run
- *  writes nothing; the readers of this module read its log. */
-export function clipChecksArgs(input: string, checks: readonly ClipCheck[]): string[] {
+ *  `input`, whose picture has the size `picture` (null: no picture): a
+ *  chain of filters on its first picture stream and one on its first
+ *  sound stream, as the checks need them. The caller gives only the checks
+ *  that fit the clip (it has the streams that they read). The run writes
+ *  nothing; the readers of this module read its log. */
+export function clipChecksArgs(input: string, checks: readonly ClipCheck[], picture: ImageSize | null): string[] {
   const chains = ([['picture', '0:v:0', 'v'], ['sound', '0:a:0', 'a']] as const).flatMap(([stream, from, to]) => {
     const filters = CLIP_CHECKS.filter((check) => CHECK_STREAMS[check] === stream && checks.includes(check)).map((check) => CHECK_FILTERS[check])
     return filters.length === 0 ? [] : [{ graph: `[${from}]${filters.join(',')}[${to}]`, output: `[${to}]` }]
   })
+  const compares = picture !== null && checks.some((check) => FRAME_COMPARE_CHECKS.includes(check))
   return [
-    ...FFMPEG_FIXED_ARGS, '-v', 'info', '-i', input,
+    ...FFMPEG_FIXED_ARGS, '-v', 'info', ...(compares ? frameCompareArgs(picture) : []), '-i', input,
     '-filter_complex', chains.map(({ graph }) => graph).join(';'),
     ...chains.flatMap(({ output }) => ['-map', output]),
     '-f', 'null', '-',

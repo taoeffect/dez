@@ -1932,9 +1932,9 @@ describe('dez.controller/tools/run', () => {
         deletedWorkFolder()
         expect(runs()).toStrictEqual([
           { tool: 'dez-ffprobe', args: assetProbeArgs('b.mp4'), timeoutMs: FFPROBE_TIMEOUT_MS },
-          { tool: 'dez-ffmpeg', args: clipChecksArgs('b.mp4', ['black', 'silence', 'cuts']), timeoutMs: ASSET_VIEW_TIMEOUT_MS },
+          { tool: 'dez-ffmpeg', args: clipChecksArgs('b.mp4', ['black', 'silence', 'cuts'], { width: 854, height: 480 }), timeoutMs: ASSET_VIEW_TIMEOUT_MS },
           { tool: 'dez-ffprobe', args: assetProbeArgs('d.wav'), timeoutMs: FFPROBE_TIMEOUT_MS },
-          { tool: 'dez-ffmpeg', args: clipChecksArgs('d.wav', ['silence']), timeoutMs: ASSET_VIEW_TIMEOUT_MS },
+          { tool: 'dez-ffmpeg', args: clipChecksArgs('d.wav', ['silence'], null), timeoutMs: ASSET_VIEW_TIMEOUT_MS },
         ])
         expect(consoleError).not.toHaveBeenCalled()
       })

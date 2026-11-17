@@ -294,15 +294,25 @@ describe('timesSheetArgs', () => {
 })
 
 describe('sceneCutsArgs', () => {
+  const HD = { width: 1920, height: 1080 }
+
   it('logs the cuts of the part only, and writes no file', () => {
-    const part = sceneCutsArgs('f.mp4', { start: 2, end: 6 })
+    const part = sceneCutsArgs('f.mp4', { start: 2, end: 6 }, HD)
     expect(part.slice(part.indexOf('-ss'), part.indexOf('-ss') + 6)).toStrictEqual(['-ss', '2.000', '-to', '6.000', '-i', 'f.mp4'])
     expect(part[part.indexOf('-vf') + 1]).toBe(SCENE_CUT_FILTER)
     expect(part.slice(-3)).toStrictEqual(['-f', 'null', '-'])
+    expect(part).not.toContain('-cpuflags')
 
-    const whole = sceneCutsArgs('f.mp4', { start: 0, end: null })
+    const whole = sceneCutsArgs('f.mp4', { start: 0, end: null }, HD)
     expect(whole).not.toContain('-ss')
     expect(whole).not.toContain('-to')
+  })
+
+  // ffmpeg's x86 SIMD code gives cuts at random for a small picture
+  // (`frameCompareArgs`).
+  it('turns the SIMD code of ffmpeg off, before the input, for a small picture', () => {
+    const args = sceneCutsArgs('f.mp4', { start: 0, end: null }, { width: 48, height: 36 })
+    expect(args.slice(args.indexOf('-cpuflags'), args.indexOf('-cpuflags') + 4)).toStrictEqual(['-cpuflags', '0', '-i', 'f.mp4'])
   })
 })
 

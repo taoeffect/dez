@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { blackIntervals, clipChecksArgs, cutTimes, frozenIntervals, loudnessCurve, silenceIntervals } from './clipAnalysis'
+import { blackIntervals, clipChecksArgs, cutTimes, frameCompareArgs, frozenIntervals, loudnessCurve, silenceIntervals } from './clipAnalysis'
 
 describe('cutTimes', () => {
   // Lines of a real `SCENE_CUT_FILTER` run (ffmpeg 8) on a clip of 24 fps
@@ -21,21 +21,45 @@ describe('cutTimes', () => {
 })
 
 describe('clipChecksArgs', () => {
-  const ffmpegArgs = (graph: string, maps: string[]) => [
-    '-nostdin', '-hide_banner', '-v', 'warning', '-stats', '-v', 'info', '-i', 'clip.mp4',
+  const HD = { width: 1920, height: 1080 }
+  const ffmpegArgs = (graph: string, maps: string[], beforeInput: string[] = []) => [
+    '-nostdin', '-hide_banner', '-v', 'warning', '-stats', '-v', 'info', ...beforeInput, '-i', 'clip.mp4',
     '-filter_complex', graph, ...maps.flatMap((map) => ['-map', map]), '-f', 'null', '-',
   ]
 
   it('puts the checks of the picture and of the sound into one chain each, in the order of the checks', () => {
-    expect(clipChecksArgs('clip.mp4', ['cuts', 'loudness_curve', 'black', 'silence', 'frozen'])).toStrictEqual(ffmpegArgs(
+    expect(clipChecksArgs('clip.mp4', ['cuts', 'loudness_curve', 'black', 'silence', 'frozen'], HD)).toStrictEqual(ffmpegArgs(
       '[0:v:0]blackdetect=d=0,freezedetect=d=1,scdet=threshold=10[v];[0:a:0]silencedetect=n=-60dB:d=1,ebur128=framelog=info[a]',
       ['[v]', '[a]'],
     ))
   })
 
   it('reads only the stream that the checks need', () => {
-    expect(clipChecksArgs('clip.mp4', ['silence'])).toStrictEqual(ffmpegArgs('[0:a:0]silencedetect=n=-60dB:d=1[a]', ['[a]']))
-    expect(clipChecksArgs('clip.mp4', ['cuts'])).toStrictEqual(ffmpegArgs('[0:v:0]scdet=threshold=10[v]', ['[v]']))
+    expect(clipChecksArgs('clip.mp4', ['silence'], null)).toStrictEqual(ffmpegArgs('[0:a:0]silencedetect=n=-60dB:d=1[a]', ['[a]']))
+    expect(clipChecksArgs('clip.mp4', ['cuts'], HD)).toStrictEqual(ffmpegArgs('[0:v:0]scdet=threshold=10[v]', ['[v]']))
+  })
+
+  // ffmpeg's x86 SIMD code gives frozen parts and cuts at random for these
+  // pictures (`frameCompareArgs`).
+  it('turns the SIMD code of ffmpeg off for a check that compares the frames of a small picture', () => {
+    const small = { width: 48, height: 36 }
+    const noSimd = ['-cpuflags', '0']
+    expect(clipChecksArgs('clip.mp4', ['frozen'], small)).toStrictEqual(ffmpegArgs('[0:v:0]freezedetect=d=1[v]', ['[v]'], noSimd))
+    expect(clipChecksArgs('clip.mp4', ['cuts', 'silence'], small)).toStrictEqual(ffmpegArgs(
+      '[0:v:0]scdet=threshold=10[v];[0:a:0]silencedetect=n=-60dB:d=1[a]',
+      ['[v]', '[a]'],
+      noSimd,
+    ))
+    // `blackdetect` and the sound filters compare no frames.
+    expect(clipChecksArgs('clip.mp4', ['black', 'silence'], small)).not.toContain('-cpuflags')
+  })
+})
+
+describe('frameCompareArgs', () => {
+  it('turns the SIMD code of ffmpeg off only for a picture with a side under 256 px', () => {
+    expect(frameCompareArgs({ width: 255, height: 1080 })).toStrictEqual(['-cpuflags', '0'])
+    expect(frameCompareArgs({ width: 1920, height: 255 })).toStrictEqual(['-cpuflags', '0'])
+    expect(frameCompareArgs({ width: 256, height: 256 })).toStrictEqual([])
   })
 })
 

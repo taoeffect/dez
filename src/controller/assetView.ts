@@ -346,14 +346,15 @@ async function timesSheet(input: ClipInput, times: readonly number[], seconds: n
   }, folder, signal)
 }
 
-// The frame sheet of the shots of `part` of the video clip `input`, of at
-// most `frames` frames, for a view with `detail`: a run that finds the
-// cuts, then the sheet of the first frame of the part and of the first
-// frame after each cut. The grid of a sheet is fixed before its run, so
-// one run cannot do both. Both runs read the part with the same `-ss`, so
-// the frames of the second are those of the cuts of the first.
-async function scenesSheet(input: ClipInput, frames: number, part: ClipPart, detail: ViewDetail, folder: string, signal: AbortSignal): Promise<SheetView> {
-  const cutsRan = await runFfmpegLog(sceneCutsArgs(input.name, part), folder, VIEW_RUN, signal)
+// The frame sheet of the shots of `part` of the video clip `input`, whose
+// picture has the size `picture`, of at most `frames` frames, for a view
+// with `detail`: a run that finds the cuts, then the sheet of the first
+// frame of the part and of the first frame after each cut. The grid of a
+// sheet is fixed before its run, so one run cannot do both. Both runs read
+// the part with the same `-ss`, so the frames of the second are those of
+// the cuts of the first.
+async function scenesSheet(input: ClipInput, picture: ImageSize, frames: number, part: ClipPart, detail: ViewDetail, folder: string, signal: AbortSignal): Promise<SheetView> {
+  const cutsRan = await runFfmpegLog(sceneCutsArgs(input.name, part, picture), folder, VIEW_RUN, signal)
   const problem = runProblemNote(input.clip, cutsRan)
   if (problem !== null) return { notes: [problem], picture: null, failed: true }
   const cuts = cutTimes(cutsRan.log).map((time) => part.start + time)
@@ -369,11 +370,12 @@ async function scenesSheet(input: ClipInput, frames: number, part: ClipPart, det
 }
 
 // The frame sheet of `part` of the video clip `input`, of `seconds` (null:
-// not known), with the frames that `call` picks.
-function frameSheet(input: ClipInput, call: AssetViewCall, seconds: number | null, part: ClipPart, folder: string, signal: AbortSignal): Promise<SheetView> {
+// not known), whose picture has the size `picture`, with the frames that
+// `call` picks.
+function frameSheet(input: ClipInput, call: AssetViewCall, seconds: number | null, picture: ImageSize, part: ClipPart, folder: string, signal: AbortSignal): Promise<SheetView> {
   const { sheet, detail } = call
   if (sheet.kind === 'times') return timesSheet(input, sheet.times, seconds, detail, folder, signal)
-  if (sheet.kind === 'scenes') return scenesSheet(input, sheet.frames, part, detail, folder, signal)
+  if (sheet.kind === 'scenes') return scenesSheet(input, picture, sheet.frames, part, detail, folder, signal)
   return stepsSheet(input, sheet.frames, part, detail, folder, signal)
 }
 
@@ -456,7 +458,7 @@ async function withSoundStrip(
 async function videoView(input: ClipInput, facts: ClipProbeFacts, part: ClipPart, call: AssetViewCall, choice: PictureChoice, folder: string, signal: AbortSignal): Promise<Pick<AssetViewItem, 'notes' | 'picture'>> {
   const sheetView: SheetView = facts.video === null
     ? { notes: [NO_VIDEO_STREAM_NOTE], picture: null }
-    : choice === 'show' ? await frameSheet(input, call, facts.seconds, part, folder, signal) : { notes: [], picture: null }
+    : choice === 'show' ? await frameSheet(input, call, facts.seconds, facts.video, part, folder, signal) : { notes: [], picture: null }
   const asked = soundPictureOf(call, 'video')
   const soundKind = choice === 'show' ? asked : 'none'
   const noPicture = noPictureNote(choice)

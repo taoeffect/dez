@@ -9,7 +9,7 @@ import { CHAT_IMAGE_SIDE, LARGEST_PICTURE_SIDE } from '../providers/imageSize'
 import type { CallPictureBudget, PictureBudget } from '../streams/pictureBudget'
 import { assetIdsArgument, unknownValuesText } from './arguments'
 import { shortNumber } from './assetFacts'
-import { frameTimeText, SCENE_CUT_FILTER } from './clipAnalysis'
+import { frameCompareArgs, frameTimeText, SCENE_CUT_FILTER } from './clipAnalysis'
 import { clipReadAdviceText, type InputWording } from './toolInputs'
 import { ToolError, type ToolArguments, type ToolDefinition } from './types'
 import { FFMPEG_FIXED_ARGS } from './videoTool'
@@ -545,10 +545,13 @@ export function timesSheetArgs(input: string, output: string, from: number, time
 }
 
 /** The ffmpeg arguments that log the cuts of `part` of the clip file
- *  `input` (`SCENE_CUT_FILTER`; `cutTimes` reads them, from the start of
- *  the part) and write nothing. */
-export function sceneCutsArgs(input: string, part: ClipPart): string[] {
-  return [...FFMPEG_FIXED_ARGS, '-v', 'info', ...partArgs(part), '-i', input, '-map', '0:v:0', '-vf', SCENE_CUT_FILTER, '-f', 'null', '-']
+ *  `input`, whose picture has the size `picture` (`SCENE_CUT_FILTER`;
+ *  `cutTimes` reads them, from the start of the part) and write nothing. */
+export function sceneCutsArgs(input: string, part: ClipPart, picture: ImageSize): string[] {
+  return [
+    ...FFMPEG_FIXED_ARGS, '-v', 'info', ...frameCompareArgs(picture), ...partArgs(part), '-i', input,
+    '-map', '0:v:0', '-vf', SCENE_CUT_FILTER, '-f', 'null', '-',
+  ]
 }
 
 const SHOWINFO_FRAME = /\[Parsed_showinfo_\d+ @ [^\]]*\] n:\s*\d+\s+pts:\s*-?\d+\s+pts_time:(-?[\d.]+)/g

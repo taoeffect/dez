@@ -286,7 +286,7 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 - **File drops differ by platform**: Tauri's native drop on Linux, HTML5 drops on macOS (`dez.controller/images/watchFileDrops`, `droppedFilePaths`); a drop copies or links its file.
 - **A bundled tool gets copies, never links**, and Rust does not check its arguments: the caller keeps every path outside the work folder out of them (`src-tauri/src/bundled_tools.rs`).
 - **The argument rule of the `video` tool is string checks; the OS rule guards the files** (`src/model/tools/videoTool.ts`, `src-tauri/src/confinement.rs`): keep both.
-- **After `scripts/update-ffmpeg.js`**, check `REFUSED_PROTOCOLS` and `REFUSED_DEVICES` (`src/model/tools/videoTool.ts`) against the new ffmpeg.
+- **After `scripts/update-ffmpeg.js`**, check `REFUSED_PROTOCOLS` and `REFUSED_DEVICES` (`src/model/tools/videoTool.ts`) against the new ffmpeg, and whether its x86 bug that `frameCompareArgs` (`src/model/tools/clipAnalysis.ts`) works around is fixed.
 
 ### App, build, and tools
 
@@ -359,4 +359,5 @@ Brief comments are encouraged above functions that do anything non-trivial expla
 - A `browser.execute` result must not be an object with a set `error` field: webdriverio takes it for a failure of the script.
 - E2E specs that open a URL call `stopOpenUrl` (`tests/e2e/harness/dom.ts`), so no browser opens.
 - **No display server** (every spec fails with `Hook timed out in 120000ms` in `beforeAll`): run under headless `kwin_wayland`; the recipe is in `vitest.e2e.config.ts`.
+- **CI draws with software GL** (Xvfb), so a new page can take a second to draw: read CodeMirror's layout after a frame (`misplacedLines`). `LIBGL_ALWAYS_SOFTWARE=1` gives the same slow frames locally.
 - For UI changes beyond unit-testable logic, also check by hand with `npm run tauri dev`.

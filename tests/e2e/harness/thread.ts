@@ -395,27 +395,35 @@ export async function rolePillHeights (browser: E2EBrowser): Promise<number[]> {
 /** The drawn lines of the active editor whose place in CodeMirror's height
  *  map is not where the DOM draws them, as `line N: map top+height, DOM
  *  top+height`. On such a line the caret and clicks land on the wrong
- *  line. */
+ *  line. Read two frames after the last change: CodeMirror measures the
+ *  DOM into its height map in the next frame, and until then the map is
+ *  old. With software GL (Xvfb on CI), WebKit can take about a second to
+ *  draw the first frame of a new page of images and chips. */
 export async function misplacedLines (browser: E2EBrowser): Promise<string[]> {
-  return browser.execute(() => {
-    const content = document.querySelector<HTMLElement>('.cm-content')
-    if (!content) throw new Error('misplacedLines: .cm-content not found')
-    const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
-    const misplaced: string[] = []
-    for (const line of content.querySelectorAll<HTMLElement>(':scope > .cm-line')) {
-      const rect = line.getBoundingClientRect()
-      const lineBlock = view.lineBlockAt(view.posAtDOM(line))
-      // A line with a block widget next to it (the compaction chip) is one
-      // line block made of parts. Its text part is the part with no widget.
-      const block = Array.isArray(lineBlock.type) ? lineBlock.type.find((part) => part.widget === null) ?? lineBlock : lineBlock
-      const top = view.documentTop + block.top
-      if (Math.abs(top - rect.top) > 1 || Math.abs(block.height - rect.height) > 1) {
-        const number = view.state.doc.lineAt(block.from).number
-        misplaced.push(`line ${number}: map ${Math.round(top)}+${Math.round(block.height)}, DOM ${Math.round(rect.top)}+${Math.round(rect.height)}`)
+  return browser.execute(() => new Promise<string[]>((resolve, reject) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const content = document.querySelector<HTMLElement>('.cm-content')
+      if (!content) {
+        reject(new Error('misplacedLines: .cm-content not found'))
+        return
       }
-    }
-    return misplaced
-  })
+      const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
+      const misplaced: string[] = []
+      for (const line of content.querySelectorAll<HTMLElement>(':scope > .cm-line')) {
+        const rect = line.getBoundingClientRect()
+        const lineBlock = view.lineBlockAt(view.posAtDOM(line))
+        // A line with a block widget next to it (the compaction chip) is one
+        // line block made of parts. Its text part is the part with no widget.
+        const block = Array.isArray(lineBlock.type) ? lineBlock.type.find((part) => part.widget === null) ?? lineBlock : lineBlock
+        const top = view.documentTop + block.top
+        if (Math.abs(top - rect.top) > 1 || Math.abs(block.height - rect.height) > 1) {
+          const number = view.state.doc.lineAt(block.from).number
+          misplaced.push(`line ${number}: map ${Math.round(top)}+${Math.round(block.height)}, DOM ${Math.round(rect.top)}+${Math.round(rect.height)}`)
+        }
+      }
+      resolve(misplaced)
+    }))
+  }))
 }
 
 /** A mousedown on `part` of the role pill before section `index`, as a
