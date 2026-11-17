@@ -1362,6 +1362,19 @@ describe('sectionsToStreamMessages: a compacted conversation', () => {
         expect(after.slice(0, 4)).toStrictEqual(withTools([ran(rounds, thinking)]).messages)
         expect(JSON.stringify(after[0])).toBe(JSON.stringify(during[0]))
       })
+
+      // The reply after the block is newer than the messages of the notes:
+      // an image that it writes gets no part in a message of the notes that
+      // named its id before, but a later message of the user that names it
+      // gets one.
+      it('gives a message of the notes no image of the reply after the block, so the first message keeps its bytes', () => {
+        const mentions = compactionBlockText({ count: 1, lastId: 'c', pictures: [] }, part('## First and newest message of the user', 'Make a fox. Then compare it with @d.'))
+        const sections = [reply('r', `${mentions}\nHere it is.\n\n![${GENERATED}](id=d)`), user('u1', 'Make @d red.')]
+        const { messages } = sent(sections)
+
+        expect(messages[0]).toStrictEqual(sent(sectionsBeforeReply(sections, 0)).messages[0])
+        expect(messages.at(-1)).toStrictEqual({ role: 'user', content: [{ type: 'text', text: 'Make @d' }, { type: 'image', path: GENERATED }, { type: 'text', text: ' red.' }] })
+      })
     })
   })
 })

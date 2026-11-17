@@ -1,6 +1,6 @@
 import type { MessagePart, ModelRef, Section, SectionThinking, ThinkingReplay } from '../chat/types'
 import { assetTextPieces } from '../chat/assetMentions'
-import { blockLinkedRule, COMPACTION_MESSAGE_INTRO, COMPACTION_USER_MESSAGE_LABEL, compactionMessageEnd, isCarriedUserAssets, partsImageReferences, sectionCompactionBlock, sectionLinkedRuleParts, sectionTextParts, type CompactionBlock } from '../chat/compaction'
+import { blockLinkedRule, COMPACTION_MESSAGE_INTRO, COMPACTION_USER_MESSAGE_LABEL, compactionMessageEnd, isCarriedUserAssets, partsImageReferences, sectionCompactionBlock, sectionLinkedRuleParts, sectionTextParts, type CompactionBlock, type LinkedRulePart } from '../chat/compaction'
 import { notesMessages } from '../chat/compactionNotes'
 import { sectionIsEmpty, sectionPlainText } from '../chat/content'
 import { findAssetMentions, type AssetMention } from '../chat/imageMentions'
@@ -123,9 +123,16 @@ export function sectionsToStreamMessages(sections: Section[], requestModel: Mode
   // The images that a mention in the section at hand can name: the path of
   // each image id in the references of that section and of the sections
   // before it, user and agent. When two images have one id (a hand edit),
-  // the last one wins. Later sections are never read: a message must keep
-  // its parts while the conversation after it grows.
+  // the last one wins. Later text is never read: not the sections after
+  // the message, and for the messages of the notes, not the reply after
+  // the compaction block. A message must keep its parts while the
+  // conversation after it grows.
   const imagesById = new Map<string, string>()
+  const addImageIds = (parts: readonly LinkedRulePart[]) => {
+    for (const { id, path } of partsImageReferences(parts)) {
+      if (id !== null) imagesById.set(id, path)
+    }
+  }
   // A model that reads no images gets no part, so no limit counts.
   const images = options.sendImages ? newRequestImages(options.imageLimit, options.messageImageLimit) : newRequestImages()
   const newestUser = sections.findLastIndex((section) => section.role === 'user' && !sectionIsEmpty(section))
@@ -149,19 +156,22 @@ export function sectionsToStreamMessages(sections: Section[], requestModel: Mode
   sections.forEach((section, index) => {
     if (sectionIsEmpty(section)) return
     const text = sectionPlainText(section)
-    for (const { id, path } of partsImageReferences(sectionLinkedRuleParts(section, index))) {
-      if (id !== null) imagesById.set(id, path)
-    }
+    const ruleParts = sectionLinkedRuleParts(section, index)
     if (compaction !== null && block !== null && index === 0) {
+      // The first part is the block; the reply after it is newer than the
+      // messages of the notes, so its images get their ids only after them.
+      addImageIds(ruleParts.slice(0, 1))
       addCompactionNotes(compaction, block, imagesById, images, options.sendImages)
       // With no user section, the newest message of the user is the last
       // message part of the notes.
       const newestPart = newestUser < 0 ? notesMessages(block.notes).at(-1) : undefined
       if (newestPart !== undefined) takeNewest(newestPart.text, blockLinkedRule(block))
+      addImageIds(ruleParts.slice(1))
       const replyText = sectionTextParts(section, index).text
       if (replyText.trim() !== '') messages.push(...agentSectionMessages(section, requestModel, options.sendTools, options.sendImages ? images : null, replyText))
       return
     }
+    addImageIds(ruleParts)
     if (section.role === 'agent') {
       messages.push(...agentSectionMessages(section, requestModel, options.sendTools, options.sendImages ? images : null))
       return
