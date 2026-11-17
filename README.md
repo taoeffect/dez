@@ -6,9 +6,7 @@
 
 Talk with AI in a fully editable plaintext document. Inspired by Zed's text threads feature (no longer with us, RIP).
 
-<p align="center">
-  <video src="https://github.com/user-attachments/assets/99a4b112-49e5-44eb-9579-00db6623d2fb" controls autoplay muted playsinline width="800"></video>
-</p>
+https://github.com/user-attachments/assets/6523d6b6-e225-4409-8d27-bb55f19e1060
 
 ## Features
 
