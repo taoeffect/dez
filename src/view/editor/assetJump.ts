@@ -126,13 +126,16 @@ function endJump(): void {
 }
 
 /** The doc changes while a jump runs (a stream adds text): the offset of
- *  the asset follows them. A change that deletes the asset ends the jump.
- *  A new state of the view (`setState`, a tab switch) calls no update
+ *  the asset follows them. A change that deletes or replaces the first
+ *  character of the asset ends the jump: else the jump could flash another
+ *  asset that then starts there, such as the next asset after a delete of
+ *  the asset's line. A Save that writes the tag of the asset again ends it
+ *  too. A new state of the view (`setState`, a tab switch) calls no update
  *  listener, so the jump sees that `state` is not the view's any more. */
 function followDocChanges(update: ViewUpdate): void {
   const jump = running
   if (!jump || jump.view !== update.view || jump.state !== update.startState) return
-  const from = update.changes.mapPos(jump.from, 1, MapMode.TrackDel)
+  const from = update.changes.mapPos(jump.from, 1, MapMode.TrackAfter)
   if (from === null) {
     endJump()
     return

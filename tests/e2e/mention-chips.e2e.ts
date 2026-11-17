@@ -1,3 +1,4 @@
+import type { EditorView } from '@codemirror/view'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { jobStartedText } from '../../src/model/tools/jobs'
@@ -25,7 +26,8 @@ import { hidingPart, intermediateParts, toolChips } from './harness/toolChips'
 // A plain click on a chip goes to the asset that it names: the editor
 // opens the tool call chip that hides it, scrolls it into view, and
 // flashes a ring around it. The click changes no text, no selection, and
-// no focus. A press on a link inside a chip opens the link.
+// no focus. A change that deletes the asset while it flashes ends the
+// jump. A press on a link inside a chip opens the link.
 //
 // One app session serves the whole file. Each test has its own tab. The
 // spec stops every `dez.controller/openUrl` call (`stopOpenUrl`).
@@ -334,6 +336,38 @@ describe('mention chips', () => {
     await waitForValue(browser, 'the image in view', () => assetInView(browser, 'a'), true)
     expect(await flashedAssets(browser)).toEqual(['image a'])
     expect(await focusedArea(browser)).toBe(focus)
+  })
+
+  it('ends a jump when a change deletes the asset, so the asset that then starts at its place does not flash', async () => {
+    const image = await storedImage('mention-deleted.png')
+    const next = `![${await writeTestFile(appFilePath(app.home, 'assets', 'images', 'mention-next.png'), PNG)}](id=c)`
+    await openSeededConversation(browser, app.home, 'mention-chips-deleted', [
+      { role: 'user', text: `${image}\n${next}\nSee @a.` },
+    ])
+    await waitForValue(browser, 'the chip', chips, ['@a'])
+
+    await recordFlashes(browser)
+    await pressMention(browser, 0)
+    // In the frame of the flash, so that the jump still runs: a program
+    // change (no user event, as the Delete of a clip) removes the line of
+    // the image. The next image then starts where the image started.
+    await browser.execute((line: string) => new Promise<void>((resolve) => {
+      const content = document.querySelector('.cm-content')
+      if (!content) throw new Error('.cm-content not found')
+      const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
+      const removeOnFlash = () => {
+        if (!(Reflect.get(window, '__e2eFlashes') as string[]).includes('image a')) {
+          requestAnimationFrame(removeOnFlash)
+          return
+        }
+        const from = view.state.doc.toString().indexOf(line)
+        view.dispatch({ changes: { from, to: from + line.length } })
+        resolve()
+      }
+      removeOnFlash()
+    }), `${image}\n`)
+    expect(await editorDoc(browser)).not.toContain(image)
+    expect(await flashedAssets(browser)).toEqual(['image a'])
   })
 
   it('leaves a press on a link in a chip and a Shift+click to the editor, and does not move an asset in view', async () => {
