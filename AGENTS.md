@@ -246,7 +246,7 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 - **Image references, media tags, and tool calls are plain text** in a section; each has one writer and recognizer (`images.ts`, `mediaTags.ts`, `toolBlocks.ts` in `src/model/chat/`).
 - **Model text never forms a tag or a block**: `ModelTextEscaper` covers the tool blocks, the media tags, and the compaction tag.
 - **Find tool blocks in one agent section at a time**, never in the whole doc (`src/model/chat/toolBlocks.ts`).
-- **A linked path counts only in a user section** (`isLinkedImagePath`, `isLinkedMediaPath`), so that a model's text never makes Dez read a file of the computer.
+- **A linked path counts only in a user section, or in the compaction block when its tag lists it** (`linkedPathRule`, `src/model/chat/compaction.ts`), so that a model's text never makes Dez read a file of the computer.
 - **One id sequence for images and clips** (`src/model/chat/mediaIds.ts`): never renumber an id that is in the doc, and never give an id that the conversation used before.
 - **`@id` mentions** (`src/model/chat/assetMentions.ts`): the request builder and the editor chips find mentions in the same text pieces (`assetTextPieces`); keep the two on that one rule.
 - **A hidden asset and a kept asset are normal assets with a mark**: only the view hides them (`src/model/chat/hiddenAssets.ts`, `compaction.ts`); the compaction block is out of view as a whole, and its assets show in the assets chip.

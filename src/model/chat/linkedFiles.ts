@@ -9,12 +9,14 @@ import { findMediaTags, isLinkedMediaPath } from './mediaTags'
 // app folder, the cache root): there it would go away by itself, or Dez
 // could delete it. A paste always copies, as a pasted file has no path.
 //
-// A linked path counts only in a user section (`isLinkedImagePath` in
-// images.ts, `isLinkedMediaPath` in mediaTags.ts): a model must not choose a
-// file of this computer that Dez then reads. Dez never deletes a linked
-// file; its trash removes only the reference or the tag. Providers get no
-// linked path (`withoutStoredFilePaths`, storedFilePaths.ts), and the
-// unused-files scan lists only the files that Dez stores.
+// A linked path counts only where the user put it (`LinkedPathRule` in
+// images.ts, `sectionClipSource` in mediaTags.ts): in a user section, and
+// in a compaction block whose tag lists it, as a compaction moves the
+// messages of the user into its notes (compaction.ts). A model must not
+// choose a file of this computer that Dez then reads. Dez never deletes a
+// linked file; its trash removes only the reference or the tag. Providers
+// get no linked path (`withoutStoredFilePaths`, storedFilePaths.ts), and
+// the unused-files scan lists only the files that Dez stores.
 
 /** True when the absolute path `path` is the folder `folder` or a path in
  *  it. Both must be canonical (`dez.native/canonicalPath`), as a link or a

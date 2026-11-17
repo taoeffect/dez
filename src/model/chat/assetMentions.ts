@@ -1,5 +1,6 @@
+import { linkedPathRule } from './compaction'
 import { findAssetMentions, type AssetMention } from './imageMentions'
-import { findImageReferences, isKeptImage } from './images'
+import { findImageReferences, isKeptImage, type LinkedPathRule } from './images'
 import { findMediaTags, type MediaTag, type MediaTagKind } from './mediaTags'
 import { withoutStoredFilePaths } from './storedFilePaths'
 import type { Role } from './types'
@@ -25,11 +26,11 @@ export type AssetTextPiece =
   | { kind: 'gap', from: number, to: number }
 
 /** The pieces of a section's text, in order, with no empty gap. References
- *  are read in the text outside the media tags, with `role` (a linked
- *  reference counts only in a user section, images.ts). Mentions count only
- *  in a gap: the path and the metadata of a reference and the attributes of
- *  a tag can hold an `@`. */
-export function assetTextPieces(text: string, role: Role): AssetTextPiece[] {
+ *  are read in the text outside the media tags, with `rule` (where a
+ *  linked reference counts, images.ts). Mentions count only in a gap: the
+ *  path and the metadata of a reference and the attributes of a tag can
+ *  hold an `@`. */
+export function assetTextPieces(text: string, rule: LinkedPathRule): AssetTextPiece[] {
   const pieces: AssetTextPiece[] = []
   const addGap = (from: number, to: number) => {
     if (from < to) pieces.push({ kind: 'gap', from, to })
@@ -37,7 +38,7 @@ export function assetTextPieces(text: string, role: Role): AssetTextPiece[] {
   // The text between two tags: its references, and the gaps around them.
   const addText = (from: number, to: number) => {
     let end = from
-    for (const reference of findImageReferences(text.slice(from, to), role)) {
+    for (const reference of findImageReferences(text.slice(from, to), rule)) {
       addGap(end, from + reference.from)
       end = from + reference.to
       pieces.push({ kind: 'reference', from: from + reference.from, to: end, path: reference.path, kept: isKeptImage(reference) })
@@ -101,15 +102,16 @@ function requestKeepsLine(gap: string, mention: AssetMention): boolean {
 export function namedMentions(sections: readonly MentionSection[]): NamedMention[][] {
   const imageIds = new Set<string>()
   const clipKinds = new Map<string, MediaTagKind>()
-  return sections.map(({ role, text }) => {
-    for (const { id } of findImageReferences(text, role)) {
+  return sections.map(({ role, text }, index) => {
+    const rule = linkedPathRule(role, text, index)
+    for (const { id } of findImageReferences(text, rule)) {
       if (id !== null) imageIds.add(id)
     }
     for (const { id, kind } of findMediaTags(text)) clipKinds.set(id, kind)
     if ((imageIds.size === 0 && clipKinds.size === 0) || !text.includes('@')) return []
 
     const mentions: NamedMention[] = []
-    for (const piece of assetTextPieces(text, role)) {
+    for (const piece of assetTextPieces(text, rule)) {
       if (piece.kind !== 'gap') continue
       const gap = text.slice(piece.from, piece.to)
       for (const mention of findAssetMentions(gap)) {

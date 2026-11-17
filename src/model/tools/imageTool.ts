@@ -1,3 +1,4 @@
+import { sectionLinkedRule } from '../chat/compaction'
 import { sectionPlainText } from '../chat/content'
 import type { ColorChange } from '../chat/imageColors'
 import { drawnMediaType, wholeImageDrawing, type DrawnMediaType, type ImageDrawing, type ImageFlip, type ImageRegion, type ImageSize } from '../chat/imageDrawing'
@@ -267,7 +268,7 @@ export function imageOf(sections: readonly Section[], id: string): ConversationI
   // A later reference with an id replaces an earlier one, and keeps the
   // place of the first one in the list of the error text.
   const images = new Map<string, ConversationImage>()
-  for (const reference of sections.flatMap((section) => findImageReferences(sectionPlainText(section), section.role))) {
+  for (const reference of sections.flatMap((section, index) => findImageReferences(sectionPlainText(section), sectionLinkedRule(section, index)))) {
     const mediaType = imageMediaType(reference.path)
     if (reference.id !== null && mediaType) images.set(reference.id, { path: reference.path, mediaType })
   }

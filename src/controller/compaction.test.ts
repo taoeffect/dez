@@ -2,7 +2,7 @@ import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { sectionCompactionBlock } from '../model/chat/compaction'
-import { notesAssetLines, notesJobLines } from '../model/chat/compactionNotes'
+import { notesAssetLines, notesJobLines, notesMessages } from '../model/chat/compactionNotes'
 import { sectionPlainText } from '../model/chat/content'
 import { withRequestCost, type ConversationCost } from '../model/chat/conversationCost'
 import type { ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
@@ -177,13 +177,11 @@ describe('compactConversation', () => {
     expect(instruction()).not.toContain(APP_DIR)
   })
 
-  it('gives the notes, the messages of the user that stay, and the empty reply as the new sections', async () => {
+  it('gives the notes, with the first and the newest message of the user in them, and the empty reply as the new sections', async () => {
     const compaction = await compactConversation(compactionInput())
 
     expect(compaction.sections.map(({ id, role }) => ({ id, role }))).toStrictEqual([
       { id: expect.any(String), role: 'agent' },
-      { id: 'u1', role: 'user' },
-      { id: 'u2', role: 'user' },
       { id: 'r', role: 'agent' },
     ])
     expect(sectionCompactionBlock(compaction.sections[0])).toMatchObject({ count: 1, lastId: 'c', pictures: [] })
@@ -191,8 +189,9 @@ describe('compactConversation', () => {
     expect(notesOf(compaction)).toContain('The user wants a fox film.')
     expect(notesOf(compaction)).toContain('Make the film longer.')
     expect([...notesAssetLines(notesOf(compaction)).keys()]).toStrictEqual(['a', 'b', 'c'])
-    expect(compaction.sections.slice(1, 3)).toStrictEqual([SECTIONS[0], SECTIONS[2]])
-    expect(compaction.sections[3]).toStrictEqual(reply('r', ''))
+    expect(notesMessages(sectionCompactionBlock(compaction.sections[0])!.notes).map(({ text }) => text))
+      .toStrictEqual([SECTIONS[0], SECTIONS[2]].map(sectionPlainText))
+    expect(compaction.sections[1]).toStrictEqual(reply('r', ''))
     expect(compaction.dropped).toStrictEqual([])
     expect(compaction.usage).toStrictEqual(USAGE)
   })

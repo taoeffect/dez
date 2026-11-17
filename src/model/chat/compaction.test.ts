@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { reply, user } from '../streams/testing'
 import {
+  blockLinkedRule,
   CARRIED_USER_ASSETS_LABEL,
   COMPACTION_END_LINE,
   compactionBlockLineCount,
@@ -10,8 +11,10 @@ import {
   contentCompactionBlock,
   firstSectionRole,
   isCarriedUserAssets,
+  linkedPathRule,
   readCompactionBlock,
   sectionCompactionBlock,
+  sectionLinkedRule,
 } from './compaction'
 import { promptNode, textNode } from './content'
 import type { ShownPicture } from './shownPictures'
@@ -123,6 +126,58 @@ describe('compactionBlockText and readCompactionBlock', () => {
     const text = compactionBlockText({ count: 1, lastId: null, pictures: [] }, notes)
 
     expect(readCompactionBlock(text)?.notes).toBe(notes)
+  })
+})
+
+describe('the linked paths of a compaction block', () => {
+  const LINKED = ['/home/u/Pictures/fox "red".png', '/home/u/Music/song & more.wav']
+
+  it('writes the list in one line of the tag, and reads it back', () => {
+    const tag = compactionTagText({ count: 2, lastId: 'b', pictures: [], linked: LINKED })
+    const text = compactionBlockText({ count: 2, lastId: 'b', pictures: [], linked: LINKED }, 'Notes')
+
+    expect(tag).not.toContain('\n')
+    expect(text.startsWith(tag)).toBe(true)
+    expect(readCompactionBlock(text)).toMatchObject({ count: 2, lastId: 'b', linked: LINKED, notes: 'Notes' })
+  })
+
+  it('writes no attribute for an empty list', () => {
+    const tag = compactionTagText({ count: 1, lastId: null, pictures: [], linked: [] })
+
+    expect(tag).toBe('<dez:compaction count="1">')
+    expect(readCompactionBlock(tag)).not.toHaveProperty('linked')
+  })
+
+  it.each([
+    ['no JSON', 'not json'],
+    ['no list', '{&quot;a&quot;:1}'],
+    ['a list of numbers', '[1,2]'],
+  ])('reads %s as no linked path, and keeps the tag', (_what, value) => {
+    const block = readCompactionBlock(`<dez:compaction count="2" last-id="c" linked="${value}">\nText\n${COMPACTION_END_LINE}`)
+
+    expect(block).toMatchObject({ count: 2, lastId: 'c', notes: 'Text' })
+    expect(block).not.toHaveProperty('linked')
+    expect(blockLinkedRule(block!)).toBe('agent')
+  })
+
+  it('counts a linked path in the block only when the list holds it', () => {
+    const text = compactionBlockText({ count: 1, lastId: null, pictures: [], linked: LINKED }, 'Notes')
+    const rule = linkedPathRule('agent', text, 0)
+
+    expect(rule).toStrictEqual(new Set(LINKED))
+    expect(sectionLinkedRule(reply('c', text), 0)).toStrictEqual(new Set(LINKED))
+    // A block with no list gives no path.
+    expect(linkedPathRule('agent', compactionBlockText({ count: 1, lastId: null, pictures: [] }, 'Notes'), 0)).toStrictEqual(new Set())
+  })
+
+  it('takes the role of a section that is no compaction section', () => {
+    const text = compactionBlockText({ count: 1, lastId: null, pictures: [], linked: LINKED }, 'Notes')
+
+    expect(linkedPathRule('agent', text, 1)).toBe('agent')
+    expect(linkedPathRule('user', text, 0)).toBe('user')
+    expect(linkedPathRule('agent', 'Hello', 0)).toBe('agent')
+    expect(sectionLinkedRule(reply('c', text), 2)).toBe('agent')
+    expect(sectionLinkedRule(user('u', 'Hi'), 0)).toBe('user')
   })
 })
 

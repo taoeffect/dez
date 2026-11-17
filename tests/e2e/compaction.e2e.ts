@@ -3,7 +3,7 @@ import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { CARRIED_USER_ASSETS_LABEL, COMPACTION_END_LINE, COMPACTION_MESSAGE_INTRO, COMPACTION_USER_MESSAGE_LABEL, compactionBlockText, compactionTagText, readCompactionBlock } from '../../src/model/chat/compaction'
-import { compactionNotesText } from '../../src/model/chat/compactionNotes'
+import { compactionNotesText, notesMessages } from '../../src/model/chat/compactionNotes'
 import { newMediaIds } from '../../src/model/chat/mediaIds'
 import type { ShownPicture } from '../../src/model/chat/shownPictures'
 import type { ConversationData, SectionData } from '../../src/model/persistence/types'
@@ -18,7 +18,7 @@ import { clipTag, MP4_VIDEO, problemCards, shownPlayers, silentWav, tempClipTag,
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import { LARGE_TOKENS, mockChatPath, openAiToolCall, replyText, sendAnthropicReply, sendChatReply, sendChatText, sendToolCalls, startEventStream, toolResult, writeChatFrame, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeConversationId, activeTabStreaming, assetPartPoint, AT_BOTTOM_PX, docPos, editorCaret, editorDoc, focusEditor, misplacedLines, newTab, openToasts, pickModel, pressRolePill, savedPillLines, sbpCall, setCaret, submit, threadSections, viewFromBottom, waitForThread, type ThreadSection } from './harness/thread'
+import { activeConversationId, activeTabStreaming, activeTabTitle, assetPartPoint, AT_BOTTOM_PX, docPos, editorCaret, editorDoc, focusEditor, misplacedLines, newTab, openToasts, pickModel, pressRolePill, savedPillLines, sbpCall, setCaret, submit, threadSections, viewFromBottom, waitForThread, type ThreadSection } from './harness/thread'
 import { hiddenAssetNotes, hiddenPart, pressToolChip, toolChips, toolPanelPictures, type ToolChipView } from './harness/toolChips'
 
 // Compaction, driven through the real app against a mock server in this
@@ -63,14 +63,19 @@ import { hiddenAssetNotes, hiddenPart, pressToolChip, toolChips, toolPanelPictur
 //   more user message. The bottom bar shows "Compacting…" meanwhile.
 // - The notes of the answer take the place of the conversation, in the
 //   tab, in the editor, and in the file, as a block with its end line, and
-//   the reply goes on: its next request holds the notes, the images and
-//   pictures that go with them, and the kept messages of the user.
+//   the reply goes on right after the block, with no User pill before it.
+//   The notes hold the first and the newest message of the user word for
+//   word, which the summary chip shows, and the tab keeps its title. The
+//   next request holds the notes with the two messages and their images:
+//   an image that a message links goes as pixels, and no text holds a path.
 // - A compaction request that fails two times ends the reply with an
 //   error toast, and a stop ends it with none. Both keep the
 //   conversation.
 // - The first compaction already drops a made image of an earlier reply
 //   that the answer does not keep, but never an image of the user. The
 //   assets chip tells how many assets the compaction dropped.
+// - A conversation in the old layout (kept user sections after the block)
+//   compacts again into the new layout.
 // - Dez deletes the file of a dropped image that the user saw only in the
 //   panel of a call, and the picture copies of the tag before. The file
 //   of any other dropped image stays.
@@ -103,6 +108,9 @@ const SHEET: ShownPicture = { file: 'compaction-sheet.png', label: 'The frame sh
 // carried assets of the user shows.
 const KEPT_MADE_PNG = solidPng(36, 28, [200, 160, 40])
 const CARRIED_PNG = solidPng(44, 22, [120, 40, 160])
+// The image that a message of the user links: a file of the user out of
+// every Dez folder.
+const LINKED_PNG = solidPng(26, 18, [40, 200, 200])
 
 const PLAIN_DATA = { count: 1, lastId: 'c', pictures: [] }
 const PLAIN_TAG = compactionTagText(PLAIN_DATA)
@@ -163,6 +171,9 @@ const KEPT_MADE_IMAGE: ShownImage = { alt: 'compaction-kept-made.png', width: 36
 const KEPT_USER_IMAGE: ShownImage = { alt: 'compaction-kept.png', width: 40, height: 24 }
 const CARRIED_IMAGE: ShownImage = { alt: 'compaction-carried.png', width: 44, height: 22 }
 const KEPT_CLIP_PLAYER: ShownPlayer = { kind: 'video', id: 'c', available: true, source: 'blob', seconds: 2, picture: { width: 48, height: 36 }, clock: null, save: 'saved' }
+// The two images of the first message of the user in the notes.
+const LINKED_USER_IMAGE: ShownImage = { alt: 'compaction-linked.png', width: 26, height: 18 }
+const MESSAGE_IMAGE: ShownImage = { alt: 'compaction-message.png', width: 40, height: 24 }
 
 /** The assets chip of the first compaction of a conversation, with
  *  `counts` (as "2 kept") and its panel open or not. */
@@ -298,14 +309,20 @@ describe('a compacted conversation', () => {
 
   // The one message of a request right after a compaction that kept no
   // image: the notes of the compaction block of the tab (its first section
-  // is only that block), then each message of `kept`, the messages of the
-  // user that the compaction kept.
-  async function notesMessage (...kept: string[]): Promise<Record<string, unknown>> {
+  // is only that block), with each message part as its text. `messages`
+  // are the texts of the parts, the first and the newest message of the
+  // user, word for word.
+  async function notesMessage (...messages: string[]): Promise<Record<string, unknown>> {
     const [first] = await threadSections(browser)
     const block = first.role === 'agent' ? readCompactionBlock(first.text) : null
     if (block === null) throw new Error('notesMessage: the first section of the tab is no compaction section')
     if (block.textFrom !== first.text.length) throw new Error('notesMessage: the compaction section has text after its block')
-    return { role: 'user', content: `${COMPACTION_MESSAGE_INTRO}\n\n${block.notes.trim()}${kept.map((text) => `${USER_MESSAGE_START}${text}`).join('')}` }
+    const notes = block.notes.trim()
+    const parts = notesMessages(notes)
+    expect(parts.map(({ text }) => text)).toStrictEqual(messages)
+    // The start line and the end line of a part do not go.
+    const content = parts.reduceRight((text, part) => `${text.slice(0, part.partFrom)}${part.text}${text.slice(part.partTo)}`, notes)
+    return { role: 'user', content: `${COMPACTION_MESSAGE_INTRO}\n\n${content}` }
   }
 
   // The text of the field of notes in the panel of the compaction chip
@@ -948,7 +965,8 @@ describe('a compacted conversation', () => {
     sendChatText(compaction.reply, NOTES_ANSWER, { promptTokens: LARGE_TOKENS })
 
     // The notes take the place of the conversation, and the reply goes on
-    // from them: its section is empty again, and the call is gone.
+    // from them: its section is empty again, and the call is gone. The
+    // question is in the notes: no section of the user is left.
     const second = await takeRequest(setup, CHAT_PATH)
     expect(JSON.parse(second.body)).toStrictEqual(openAiChatBody(PROVIDER, [await notesMessage(question)]))
     const [notes, ...rest] = await threadSections(browser)
@@ -956,17 +974,22 @@ describe('a compacted conversation', () => {
     expect(notes.text).toContain(NOTES_SUMMARY)
     // A new compaction writes the block form: the notes end at the end line.
     expect(notes.text.endsWith(`\n${COMPACTION_END_LINE}`)).toBe(true)
-    expect(rest).toStrictEqual([{ role: 'user', text: question }, { role: 'agent', text: '' }])
-    // The editor shows the new sections, with the two chips closed.
-    await waitForValue(browser, 'pills after the compaction', pillRoles, [{ index: 0, role: 'agent' }, { index: 1, role: 'user' }, { index: 2, role: 'agent' }])
+    expect(rest).toStrictEqual([{ role: 'agent', text: '' }])
+    // The editor shows the new sections, with the two chips closed, and no
+    // User pill before the reply.
+    await waitForValue(browser, 'pills after the compaction', pillRoles, [{ index: 0, role: 'agent' }, { index: 1, role: 'agent' }])
     expect(await firstSectionLook()).toStrictEqual(COMPACTED_LOOK)
     expect(await chipStates()).toStrictEqual([{ name: 'Compaction 1 assets', open: false }, { name: 'Compaction 1 summary', open: false }])
     expect(await linesShow(NOTES_SUMMARY)).toBe(false)
     expect(await showsCompacting()).toBe(false)
     expect(await activeTabStreaming(browser)).toBe(true)
-    // The open summary panel shows the notes of the new compaction.
+    // The open summary panel shows the notes of the new compaction, with
+    // the message of the user.
     await pressToolChip(browser, 1)
-    await waitForValue(browser, 'summary in the open panel', async () => (await chipNotes('summary'))?.includes(NOTES_SUMMARY) ?? false, true)
+    await waitForValue(browser, 'summary in the open panel', async () => {
+      const shown = await chipNotes('summary')
+      return shown !== null && shown.includes(NOTES_SUMMARY) && shown.includes(question)
+    }, true)
 
     // The view still follows the reply: an answer that is taller than the
     // editor keeps the view at its bottom.
@@ -981,7 +1004,7 @@ describe('a compacted conversation', () => {
     expect(await browser.execute(() => (document.querySelector('.cm-scroller')?.scrollTop ?? 0) > 0), 'the view scrolled').toBe(true)
     writeChatFrame(second.reply, { content: '' }, 'stop')
     second.reply.end('data: [DONE]\n\n')
-    await waitForThread(browser, [notes, { role: 'user', text: question }, { role: 'agent', text: answer }, { role: 'user', text: '' }])
+    await waitForThread(browser, [notes, { role: 'agent', text: answer }, { role: 'user', text: '' }])
     expect(await misplacedLines(browser)).toStrictEqual([])
     // The end of the reply makes a new editor state, which keeps the open
     // panel. The editor draws no chip far out of view, so scroll up first.
@@ -1006,21 +1029,19 @@ describe('a compacted conversation', () => {
     await waitForValue(browser, '"Compacting…" in the bottom bar', showsCompacting, true)
     sendChatText(compaction.reply, NOTES_ANSWER, { promptTokens: LARGE_TOKENS + 1000 })
 
-    // The first request of the reply holds the notes, the first message of
-    // the user, and the new one.
+    // The first request of the reply holds the notes, with the first
+    // message of the user and the new one in them.
     const request = await takeRequest(setup, CHAT_PATH)
     expect(JSON.parse(request.body)).toStrictEqual(openAiChatBody(PROVIDER, [await notesMessage(thread[0].text, 'Go on.')]))
     await sendChatReply(request.reply, 'the reader of the notes')
     const [notes] = await threadSections(browser)
     expect(readCompactionBlock(notes.text)?.count).toBe(1)
     expect(notes.text).toContain(NOTES_SUMMARY)
-    await waitForThread(browser, [notes, thread[0], { role: 'user', text: 'Go on.' }, { role: 'agent', text: replyText('the reader of the notes') }, { role: 'user', text: '' }])
+    await waitForThread(browser, [notes, { role: 'agent', text: replyText('the reader of the notes') }, { role: 'user', text: '' }])
     await waitForValue(browser, 'pills after the reply', pillRoles, [
       { index: 0, role: 'agent' },
-      { index: 1, role: 'user' },
+      { index: 1, role: 'agent' },
       { index: 2, role: 'user' },
-      { index: 3, role: 'agent' },
-      { index: 4, role: 'user' },
     ])
     expect(await firstSectionLook()).toStrictEqual(COMPACTED_LOOK)
     expect(await showsCompacting()).toBe(false)
@@ -1072,8 +1093,10 @@ describe('a compacted conversation', () => {
     expect(setup.mock.hasWaitingRequest()).toBe(false)
   })
 
-  // The conversation file holds a first compaction, whose notes have a
-  // line for each of its two made images, and whose tag has a picture.
+  // The conversation file holds a first compaction in the old layout: a
+  // kept user section after the block. Its notes have a line for each of
+  // its two made images, and its tag has a picture. The second compaction
+  // writes the new layout.
   it('deletes the file of a dropped intermediate image and the old picture copy, and keeps the file of a dropped image that the user saw', async () => {
     const { home } = setup.app
     const imagesDir = appFilePath(home, 'assets', 'generated', 'images')
@@ -1094,6 +1117,8 @@ describe('a compacted conversation', () => {
         { id: 'b', kind: 'image', facts: 'PNG, 30x20', origin: 'made by the model_invoke job 2 of its reply: "A fox"', sentence: 'The fox.', byReply: false, text: `![${seen}](id=b|tool=model_invoke)` },
       ],
       unnamed: [],
+      firstMessage: null,
+      newestMessage: null,
       jobs: [],
       jobInputs: new Map(),
       cost: undefined,
@@ -1109,6 +1134,9 @@ describe('a compacted conversation', () => {
     const compaction = await takeRequest(setup, CHAT_PATH)
     sendChatText(compaction.reply, '## Summary\nThe fox is done, and a wolf is next.\n\n## Assets\n@a: drop - The wolf needs no fox draft.\n@b: drop - The wolf needs no fox.\n')
     const request = await takeRequest(setup, CHAT_PATH)
+    // The first message of the old layout and the new message are in the
+    // notes now.
+    expect(JSON.parse(request.body)).toStrictEqual(openAiChatBody(PROVIDER, [await notesMessage(thread[1].text, 'Now a wolf.')]))
     await sendChatReply(request.reply, 'the wolf')
 
     // The second compaction left both images out of the conversation.
@@ -1116,7 +1144,7 @@ describe('a compacted conversation', () => {
     expect(readCompactionBlock(newNotes.text)).toMatchObject({ count: 2, dropped: 2, pictures: [] })
     expect([draft, seen].filter((file) => newNotes.text.includes(file))).toStrictEqual([])
     expect(await compactionChipCounts()).toStrictEqual(['0 kept', '2 dropped'])
-    await waitForThread(browser, [newNotes, thread[1], { role: 'user', text: 'Now a wolf.' }, { role: 'agent', text: replyText('the wolf') }, { role: 'user', text: '' }])
+    await waitForThread(browser, [newNotes, { role: 'agent', text: replyText('the wolf') }, { role: 'user', text: '' }])
 
     await waitForValue(browser, 'files of the two dropped images', async () => (await filesIn(imagesDir)).filter((name) => name === names.draft || name === names.seen), [names.seen])
     await waitForValue(browser, 'old picture copy', async () => (await filesIn(viewsDir)).includes(names.sheet), false)
@@ -1124,8 +1152,7 @@ describe('a compacted conversation', () => {
 
   // The answer keeps one made image of an earlier reply and drops the
   // image of the user. The other made image has no line, so it leaves the
-  // conversation. The image of the user stays, in the section of the
-  // carried assets.
+  // conversation. The image of the user stays, with its line in the notes.
   it('drops at the first compaction a made image of an earlier reply that the answer does not keep, and never an image of the user', async () => {
     const { home } = setup.app
     const madeDir = appFilePath(home, 'assets', 'generated', 'images')
@@ -1147,11 +1174,12 @@ describe('a compacted conversation', () => {
     const request = await takeRequest(setup, CHAT_PATH)
     await sendChatReply(request.reply, 'the wolf')
 
-    const [notes, first, carried] = await threadSections(browser)
+    await waitForValue(browser, 'sections after the notes', async () => (await threadSections(browser)).slice(1), [{ role: 'agent', text: replyText('the wolf') }, { role: 'user', text: '' }])
+    const [notes] = await threadSections(browser)
     expect(readCompactionBlock(notes.text)).toMatchObject({ count: 1, dropped: 1 })
     expect([keptFile, goneFile].filter((file) => notes.text.includes(file))).toStrictEqual([keptFile])
-    expect(first).toStrictEqual(thread[0])
-    expect(carried.text.split('\n')).toStrictEqual([CARRIED_USER_ASSETS_LABEL, `![${photo}](id=c|kept=compaction)`])
+    expect(notesMessages(readCompactionBlock(notes.text)!.notes).map(({ text }) => text)).toStrictEqual([thread[0].text, 'Now a wolf.'])
+    expect(notes.text).toContain(`\n![${photo}](id=c|kept=compaction)\n@c `)
     // The reply scrolled the editor to its end, and the editor draws no
     // chip far out of view.
     await browser.execute(() => {
@@ -1163,6 +1191,67 @@ describe('a compacted conversation', () => {
     // The user saw the dropped image in the reply, so its file stays until
     // Delete Unused Files.
     expect((await filesIn(madeDir)).filter((name) => name === names.kept || name === names.gone)).toStrictEqual([names.gone, names.kept])
+  })
+
+  // The first message of the user holds a pasted image and a linked one: a
+  // file of the user out of every Dez folder (linkedFiles.ts). The tag of
+  // the block lists the linked path, so the reference still counts there.
+  it('keeps the first and the newest message of the user in the notes with their images, and the title of the tab', async () => {
+    const photo = await writeTestFile(appFilePath(setup.app.home, 'assets', 'images', 'compaction-message.png'), KEPT_PNG)
+    const linked = await writeTestFile(path.join(linkedDir, 'compaction-linked.png'), LINKED_PNG)
+    const first = `Film ![${linked}](id=a) and ![${photo}](id=b)`
+    await openSeeded('compaction-messages', [
+      textSection('user', first),
+      textSection('agent', 'An earlier answer.'),
+      textSection('user', ''),
+    ], PROVIDER, { context: { tokens: LARGE_TOKENS, estimate: 0 } })
+
+    await submit(browser, 'Go on.')
+    const compaction = await takeRequest(setup, CHAT_PATH)
+    sendChatText(compaction.reply, NOTES_ANSWER)
+
+    // One user message: the notes, with the two messages word for word,
+    // and each image right after its reference. No text holds a path.
+    const request = await takeRequest(setup, CHAT_PATH)
+    const [notes] = await threadSections(browser)
+    const block = readCompactionBlock(notes.text)
+    expect(block?.linked).toStrictEqual([linked])
+    const text = block!.notes.trim()
+    const [firstPart, newestPart] = notesMessages(text)
+    expect([firstPart.text, newestPart.text]).toStrictEqual([first, 'Go on.'])
+    expect(JSON.parse(request.body)).toStrictEqual(openAiChatBody(PROVIDER, [{
+      role: 'user',
+      content: [
+        { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\n${text.slice(0, firstPart.partFrom)}Film ![image](id=a)` },
+        imagePart(LINKED_PNG),
+        { type: 'text', text: ' and ![image](id=b)' },
+        imagePart(KEPT_PNG),
+        { type: 'text', text: `${text.slice(firstPart.partTo, newestPart.partFrom)}Go on.${text.slice(newestPart.partTo)}` },
+      ],
+    }]))
+    expect(request.body).not.toContain(linkedDir)
+    expect(request.body).not.toContain(setup.app.home)
+    await sendChatReply(request.reply, 'the film')
+
+    // No User pill before the reply, and the title still tells the first
+    // message.
+    await waitForThread(browser, [notes, { role: 'agent', text: replyText('the film') }, { role: 'user', text: '' }])
+    await waitForValue(browser, 'pills after the reply', pillRoles, [{ index: 0, role: 'agent' }, { index: 1, role: 'agent' }, { index: 2, role: 'user' }])
+    expect(await activeTabTitle(browser)).toBe('Film [image] and [image]')
+
+    // The summary chip shows the two messages, and the assets chip shows
+    // the images of the first one, also the linked one.
+    await browser.execute(() => {
+      const scroller = document.querySelector('.cm-scroller')
+      if (scroller) scroller.scrollTop = 0
+    })
+    await pressToolChip(browser, 1)
+    await waitForValue(browser, 'messages in the summary panel', async () => {
+      const shown = await chipNotes('summary')
+      return shown !== null && shown.includes('Film [image] and [image]') && shown.includes('Go on.')
+    }, true)
+    await pressToolChip(browser, 0)
+    await waitForValue(browser, 'images in the assets panel', () => shownImages(browser), [LINKED_USER_IMAGE, MESSAGE_IMAGE])
   })
 
   it('shows the compaction section and sends the same first message after a relaunch', async () => {

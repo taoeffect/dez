@@ -1,11 +1,12 @@
 import { countOf } from '../../utils/countText'
 import { usdText } from '../providers/modelPrices'
 import { ASSET_NAME_SOURCE, ASSET_NAMES, jobResultLegend, jobResultState, type JobAssetKind, type JobInfo, type JobResultState, type JobStatus } from '../tools/jobs'
-import { readCompactionBlock } from './compaction'
+import { blockLinkedRule, COMPACTION_TAG_NAME, readCompactionBlock, USER_MESSAGE_TAG_NAME } from './compaction'
 import type { ConversationCost } from './conversationCost'
-import { IMAGE_ID_SOURCE, labelImageReferences } from './images'
+import { IMAGE_ID_SOURCE, labelImageReferences, type LinkedPathRule } from './images'
 import { labelMediaTags } from './mediaTags'
 import { notesTableRows, notesTableText, templateStatement, textsStatement, type NotesRow, type NotesTable } from './notesTable'
+import { tagEscape } from './tagEscape'
 import { escapedModelText, unescapedModelText } from './toolBlocks'
 import type { Role } from './types'
 
@@ -13,6 +14,12 @@ import type { Role } from './types'
 // tag line and the end line (compaction.ts). This module is the one place
 // that writes them, that reads the lines of Dez in them, and that makes
 // them a text for people (`compactionNotesForPeople`).
+//
+//   ## First message of the user
+//
+//   <dez:user-message>
+//   <the first message of the user, word for word>
+//   </dez:user-message>
 //
 //   ## Summary
 //
@@ -49,6 +56,27 @@ import type { Role } from './types'
 //
 //   <one sentence>
 //
+//   ## Newest message of the user
+//
+//   <dez:user-message>
+//   <the message that the reply answers, word for word>
+//   </dez:user-message>
+//
+// - The two messages of the user are the message parts
+//   (`notesMessages`). The first one is the first message of the
+//   conversation: a later compaction copies it from the notes before. The
+//   newest one is the message that the reply that ran at the compaction
+//   answers. When the two are one message, the notes hold one part, with
+//   the heading `## First and newest message of the user`. The model reads
+//   the newest message last, right before the reply goes on.
+// - A part is the text of the message with an escape of its own
+//   (`messageEscape`), between a start line and an end line, each a whole
+//   line. The escape takes only the tags that would end the part or the
+//   block, or form a tool block in this agent section; the image
+//   references and the media tags of the user stay as they are, so they
+//   still count, at their places. A request sends a part as a message of
+//   the user (streams/messages.ts). A reader of the lines of Dez skips the
+//   parts, so a line of the user is never a line of Dez.
 // - The first three parts are the answer of the model to the compaction
 //   request (streams/compactionRequest.ts). A blank part is left out.
 // - The other parts are of Dez. The compaction removes the tool blocks of
@@ -61,9 +89,12 @@ import type { Role } from './types'
 //   inputs of its open jobs (streams/compactionAssets.ts): the tool blocks
 //   that told them are gone.
 // - Every image and clip that the compaction kept has one line. An asset
-//   that a model or a tool made has its reference or tag in this section,
-//   alone on the line before its line. An asset of the user has its
-//   reference or tag in a user section after this one.
+//   in a message part has its reference or tag there. Any other asset has
+//   its reference or tag in this section, alone on the line before its
+//   line: an asset that a model or a tool made, and an asset of another
+//   message of the user (its origin is "from the user"). In a conversation
+//   of an older Dez, an asset of the user can have its reference or tag
+//   in a user section after this one.
 // - The assets and the jobs are tables (notesTable.ts): a value that every
 //   row has, or that a run of rows has, leaves the rows for one line that
 //   tells it, when that makes the text shorter. The reader gives back every
@@ -78,19 +109,31 @@ import type { Role } from './types'
 // - A reader takes the last heading of its name. Dez always writes its
 //   parts, also with nothing in them, and after the text of the model, so
 //   a reader never takes a line of a model for a line of Dez: a model can
-//   copy a heading of earlier notes into its answer.
+//   copy a heading of earlier notes into its answer. The newest message of
+//   the user comes after them, but no reader looks into a message part.
 // - Saved conversations hold these lines, and later compactions and
 //   `asset_info` read them back. So a new form of a line needs a reader
 //   that still takes the old form. The reader of the tables reads a line
 //   by the names of its columns, which the first line of the part tells:
 //   the first form wrote all the columns in each line, with these names.
 
+const FIRST_MESSAGE_HEADING = '## First message of the user'
+const ONLY_MESSAGE_HEADING = '## First and newest message of the user'
 const SUMMARY_HEADING = '## Summary'
 const REQUIREMENTS_HEADING = '## Requirements and decisions'
 const NEXT_STEPS_HEADING = '## Next steps'
 const ASSETS_HEADING = '## Assets of the conversation'
 const JOBS_HEADING = '## Jobs of the reply'
 const COST_HEADING = '## Cost'
+const NEWEST_MESSAGE_HEADING = '## Newest message of the user'
+
+const MESSAGE_START_LINE = `<${USER_MESSAGE_TAG_NAME}>`
+const MESSAGE_END_LINE = `</${USER_MESSAGE_TAG_NAME}>`
+// The escape of the text of a message part. Not the escape of model text:
+// that one also takes the media tags, so a clip of the user would not
+// count, and its unescape would change a text of the user that holds
+// `<\dez:audio`.
+const messageEscape = tagEscape('dez:tool', COMPACTION_TAG_NAME, USER_MESSAGE_TAG_NAME)
 
 // These texts are in the cached prefix of every request of the
 // conversation: never a date, a running count, or a random value.
@@ -187,9 +230,8 @@ export interface NotesAssetLine {
 
 /** One asset of the notes: its line, and its text. */
 export interface NotesAsset extends NotesAssetLine {
-  /** The reference or the tag of an asset that the compaction section
-   *  holds; null for an asset of the user, whose text is in a user
-   *  section. */
+  /** The reference or the tag of the asset, which goes on the line before
+   *  its line; null for an asset whose text is in a message part. */
   text: string | null
 }
 
@@ -211,14 +253,21 @@ export interface NotesJobLine {
 
 /** What the notes of a compaction hold. */
 export interface CompactionNotes {
+  /** The first message of the user, as its plain text (a prompt pill as
+   *  its body); null when the conversation has none. */
+  firstMessage: string | null
+  /** The message of the user that the reply that runs answers; null when
+   *  it is the first message, or when there is none. */
+  newestMessage: string | null
   /** The three parts of the model's answer, with no escape. */
   summary: string
   requirements: string
   nextSteps: string
   assets: readonly NotesAsset[]
-  /** The references of the made images with no id (an image of an old
-   *  Dez), each with the kept mark. No line can name one, but its text
-   *  must stay, so that the user still has the image. */
+  /** The references of the images with no id (an image of an old Dez)
+   *  that the notes keep, each with the kept mark, and not in a message
+   *  part. No line can name one, but its text must stay, so that the user
+   *  still has the image. */
   unnamed: readonly string[]
   /** The jobs of the reply that ran at the compaction. */
   jobs: readonly JobInfo[]
@@ -266,11 +315,18 @@ export function conversationCostText(cost: ConversationCost | undefined, upTo: s
   return `${start} (an estimate): ${usdText(usd)} for ${count}.${rest}`
 }
 
+// The text of a message part: the start line, the text with its escape,
+// and the end line.
+function messagePartText(text: string): string {
+  return `${MESSAGE_START_LINE}\n${messageEscape.escape(text)}\n${MESSAGE_END_LINE}`
+}
+
 /** The text of the notes: the lines of a compaction block between its tag
  *  line and its end line (`compactionBlockText`). */
 export function compactionNotesText(notes: CompactionNotes): string {
   const parts: string[] = []
   const add = (heading: string, text: string) => parts.push(`${heading}\n\n${text}`)
+  if (notes.firstMessage !== null) add(notes.newestMessage === null ? ONLY_MESSAGE_HEADING : FIRST_MESSAGE_HEADING, messagePartText(notes.firstMessage))
   const modelParts: Array<readonly [string, string]> = [
     [SUMMARY_HEADING, notes.summary],
     [REQUIREMENTS_HEADING, notes.requirements],
@@ -283,13 +339,70 @@ export function compactionNotesText(notes: CompactionNotes): string {
   add(ASSETS_HEADING, assets.length > 0 || notes.unnamed.length > 0 ? [notesTableText(ASSETS_TABLE, assets), ...notes.unnamed].join('\n\n') : NO_NOTES_ASSETS_TEXT)
   add(JOBS_HEADING, notes.jobs.length > 0 ? notesTableText(JOBS_TABLE, notes.jobs.map((job) => jobRow(job, notes.jobInputs.get(job.id)))) : NO_NOTES_JOBS_TEXT)
   add(COST_HEADING, conversationCostText(notes.cost, 'up to this compaction'))
+  if (notes.newestMessage !== null) add(NEWEST_MESSAGE_HEADING, messagePartText(notes.newestMessage))
   return parts.join('\n\n')
 }
 
+/** One message part of the notes. The offsets are in the notes. */
+export interface NotesMessage {
+  /** The text of the message, with the escape of the part removed. */
+  text: string
+  /** The text with its escape: from the line after the start line to
+   *  the line break before the end line. */
+  from: number
+  to: number
+  /** The whole part: from the start line to after the end line, or to the
+   *  end of the notes for a part with no end line. */
+  partFrom: number
+  partTo: number
+}
+
+// The message parts of `notes`, and whether each of its lines is a line of
+// a part. A line that is the start line opens a part, and the first later
+// line that is the end line closes it. With no end line, the part runs to
+// the end of the notes.
+function scanMessages(notes: string): { messages: NotesMessage[], lines: string[], inMessage: boolean[] } {
+  const lines = notes.split('\n')
+  const inMessage = lines.map(() => false)
+  const messages: NotesMessage[] = []
+  const add = (partFrom: number, endLineFrom: number, partTo: number) => {
+    const from = Math.min(partFrom + MESSAGE_START_LINE.length + 1, notes.length)
+    const to = Math.max(from, endLineFrom - 1)
+    messages.push({ text: messageEscape.unescape(notes.slice(from, to)), from, to, partFrom, partTo })
+  }
+  let start: number | null = null
+  let offset = 0
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index]
+    if (start !== null) {
+      inMessage[index] = true
+      if (line === MESSAGE_END_LINE) {
+        add(start, offset, offset + line.length)
+        start = null
+      }
+    } else if (line === MESSAGE_START_LINE) {
+      inMessage[index] = true
+      start = offset
+    }
+    offset += line.length + 1
+  }
+  if (start !== null) add(start, notes.length + 1, notes.length)
+  return { messages, lines, inMessage }
+}
+
+/** The message parts of the notes `notes` (`CompactionBlock.notes`), in
+ *  order. The first one is the first message of the user; the last one is
+ *  the newest message when there are two or more. */
+export function notesMessages(notes: string): NotesMessage[] {
+  return scanMessages(notes).messages
+}
+
 // The lines of the last part of `text` with `heading`: from the line after
-// the heading to the next heading of that level.
+// the heading to the next heading of that level. The lines of the message
+// parts do not count.
 function partLines(text: string, heading: string): string[] {
-  const lines = text.split('\n')
+  const { lines: all, inMessage } = scanMessages(text)
+  const lines = all.filter((_, index) => !inMessage[index])
   const start = lines.lastIndexOf(heading)
   if (start < 0) return []
   const end = lines.findIndex((line, index) => index > start && line.startsWith('## '))
@@ -334,18 +447,27 @@ export function notesJobLines(notes: string): Map<string, NotesJobLine> {
   return found
 }
 
-/** The notes `notes` (`CompactionBlock.notes`, or a part of them) as a
- *  text for people to read: each image reference and media tag as its
- *  label (`[image]`, `[video]`), so no file path, and the text of the
- *  model with its escape removed. The chips of a compaction, Copy
- *  Markdown, Save As Markdown, the History preview, and the search show
- *  the notes in this form.
+/** The notes `notes` (`CompactionBlock.notes`, or a part of them), whose
+ *  linked paths count by `rule` (`blockLinkedRule`), as a text for people
+ *  to read: each image reference and media tag as its label (`[image]`,
+ *  `[video]`), so no file path, the text of the model with its escape
+ *  removed, and each message part as the text of its message. The chips
+ *  of a compaction, Copy Markdown, Save As Markdown, the History preview,
+ *  and the search show the notes in this form.
  *
  *  The labels go in first, while the text of the model still has its
  *  escape: with the escape removed first, a tag that a model wrote would
  *  read as a tag of Dez. */
-export function compactionNotesForPeople(notes: string): string {
-  return unescapedModelText(labelMediaTags(labelImageReferences(notes, 'agent')))
+export function compactionNotesForPeople(notes: string, rule: LinkedPathRule): string {
+  const labeled = (text: string) => labelMediaTags(labelImageReferences(text, rule))
+  const pieces: string[] = []
+  let from = 0
+  for (const message of notesMessages(notes)) {
+    pieces.push(unescapedModelText(labeled(notes.slice(from, message.partFrom))), labeled(message.text))
+    from = message.partTo
+  }
+  pieces.push(unescapedModelText(labeled(notes.slice(from))))
+  return pieces.join('')
 }
 
 /** `text`, which starts the text of section `index` of a conversation
@@ -356,22 +478,23 @@ export function compactionNotesForPeople(notes: string): string {
 export function compactionTextForPeople(text: string, index: number, role: Role): string {
   const block = index === 0 && role === 'agent' ? readCompactionBlock(text) : null
   if (!block) return text
-  return [compactionNotesForPeople(block.notes), text.slice(block.textFrom)].filter((part) => part.trim() !== '').join('\n\n')
+  return [compactionNotesForPeople(block.notes, blockLinkedRule(block)), text.slice(block.textFrom)].filter((part) => part.trim() !== '').join('\n\n')
 }
 
 /** The notes for the two chips of a compaction, each for people
- *  (`compactionNotesForPeople`): `assets` is the part of the assets of the
- *  conversation, with no heading, and `summary` every other line, in its
- *  order, with the headings. The assets part is the last one with its
- *  heading, as the readers of the lines of Dez take it (`partLines`). */
-export function compactionNotesParts(notes: string): { assets: string, summary: string } {
-  const lines = notes.split('\n')
-  const start = lines.lastIndexOf(ASSETS_HEADING)
-  if (start < 0) return { assets: '', summary: compactionNotesForPeople(notes).trim() }
-  const next = lines.findIndex((line, index) => index > start && line.startsWith('## '))
+ *  (`compactionNotesForPeople`, with `rule`): `assets` is the part of the
+ *  assets of the conversation, with no heading, and `summary` every other
+ *  line, in its order, with the headings and the messages of the user.
+ *  The assets part is the last one with its heading, as the readers of
+ *  the lines of Dez take it (`partLines`). */
+export function compactionNotesParts(notes: string, rule: LinkedPathRule): { assets: string, summary: string } {
+  const { lines, inMessage } = scanMessages(notes)
+  const start = lines.findLastIndex((line, index) => !inMessage[index] && line === ASSETS_HEADING)
+  if (start < 0) return { assets: '', summary: compactionNotesForPeople(notes, rule).trim() }
+  const next = lines.findIndex((line, index) => index > start && !inMessage[index] && line.startsWith('## '))
   const end = next < 0 ? lines.length : next
   return {
-    assets: compactionNotesForPeople(lines.slice(start + 1, end).join('\n')).trim(),
-    summary: compactionNotesForPeople([...lines.slice(0, start), ...lines.slice(end)].join('\n')).trim(),
+    assets: compactionNotesForPeople(lines.slice(start + 1, end).join('\n'), rule).trim(),
+    summary: compactionNotesForPeople([...lines.slice(0, start), ...lines.slice(end)].join('\n'), rule).trim(),
   }
 }

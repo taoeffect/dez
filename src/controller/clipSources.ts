@@ -84,8 +84,9 @@ export type ClipSource =
 // The place that `source` (the `src` or the `url` of a clip) names; null
 // for one that Dez may not take a clip from. A saved file and a temp copy
 // count in both. A linked file counts only as the `src`: the caller gives a
-// linked `src` only for a tag of a user section (`sectionClipSource`), and
-// the `url` is the provider's, so a linked path there is never read.
+// linked `src` only for a tag where it counts (`sectionClipSource`: a user
+// section, or a compaction block whose tag lists it), and the `url` is the
+// provider's, so a linked path there is never read.
 function clipSource (source: string, isSrc: boolean): ClipSource | null {
   if (isSavedMediaPath(source) || isTempMediaPath(source)) return { kind: 'file', path: source, linked: false }
   if (/^https?:\/\//i.test(source)) return { kind: 'url', url: source }

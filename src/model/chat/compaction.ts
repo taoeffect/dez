@@ -1,18 +1,20 @@
+import * as z from 'zod'
 import { MARKER_ATTRIBUTES, escapeMarkerAttribute, markerAttributes } from '../../utils/markerAttribute'
 import { sectionIsEmpty, stripLiveSentinels } from './content'
 import type { ConversationCost } from './conversationCost'
-import { IMAGE_ID_SOURCE } from './images'
+import { IMAGE_ID_SOURCE, type LinkedPathRule } from './images'
 import { readShownPictures, shownPicturesText, type ShownPicture } from './shownPictures'
 import type { ContentNode, Role, Section } from './types'
 
 // A compaction makes a long conversation small: what a model wrote about
 // the work so far takes the place of the old messages. That text is the
 // compaction section: the first section of the conversation, an agent
-// section that starts with the compaction block. The user messages that
-// the compaction kept come right after it. This module is the one place
-// that writes and recognizes the block.
+// section that starts with the compaction block. The notes in the block
+// hold the first and the newest message of the user, word for word
+// (compactionNotes.ts). This module is the one place that writes and
+// recognizes the block.
 //
-//   <dez:compaction count="2" last-id="k" dropped="5" pictures="[…]">
+//   <dez:compaction count="2" last-id="k" dropped="5" pictures="[…]" linked="[…]">
 //   (the notes: compactionNotes.ts)
 //   </dez:compaction>
 //
@@ -45,6 +47,13 @@ import type { ContentNode, Role, Section } from './types'
 //     frame sheet of a clip, a wave), as their saved copies, in the form of
 //     the `pictures` attribute of a tool block (shownPictures.ts). Absent
 //     when there is none.
+//   - `linked`: the linked paths (linkedFiles.ts) that the user gave and
+//     that the notes name, as a JSON list of strings. A linked path counts
+//     in the block only when this list holds it (`linkedPathRule`): the
+//     compaction moves the messages of the user into the block, and their
+//     linked files must still count there. A model cannot write the tag,
+//     so it cannot add a path. Absent when there is none; a value that is
+//     no list of strings reads as none.
 // - The role of the first section follows its text: `agent` when it starts
 //   with a valid tag, else `user`, as the first section of every other
 //   conversation (`firstSectionRole`, `contentCompactionBlock`). So a user
@@ -56,7 +65,9 @@ import type { ContentNode, Role, Section } from './types'
 //   sections right after it as one `user` message, with no tag and no end
 //   line: the compaction message (`sectionsToStreamMessages`,
 //   streams/messages.ts). Both wire formats need a user message first, and
-//   only a user message takes image parts.
+//   only a user message takes image parts. Only a conversation of an older
+//   Dez has user sections right after the block: the old layout, which
+//   kept the messages of the user there.
 // - A text for people (the chips, Markdown, a preview, the search) shows
 //   the notes as `compactionNotesForPeople` (compactionNotes.ts) gives them.
 
@@ -65,6 +76,11 @@ export const COMPACTION_TAG_NAME = 'dez:compaction'
 
 /** The line that ends a compaction block. */
 export const COMPACTION_END_LINE = `</${COMPACTION_TAG_NAME}>`
+
+/** The name of the tag of a message of the user in the notes
+ *  (compactionNotes.ts), for the escapes of model text and of that
+ *  message. */
+export const USER_MESSAGE_TAG_NAME = 'dez:user-message'
 
 /** What a compaction tag holds. */
 export interface CompactionTagData {
@@ -79,6 +95,9 @@ export interface CompactionTagData {
   /** The pictures that the compaction kept for the model, in the order in
    *  which a request sends them. */
   pictures: ShownPicture[]
+  /** The linked paths that the user gave and that the notes name (see the
+   *  top of this file). Absent when there is none. */
+  linked?: string[]
 }
 
 /** The compaction block at the start of a text. */
@@ -129,24 +148,27 @@ export function compactionsField(compactions: Compactions | undefined): { compac
 /** The text that starts the compaction message of a request, before the
  *  text of the compaction section. It is in the cached prefix of every
  *  request of its conversation: never a date, a running count, or a
- *  random value. */
+ *  random value. It is true for the old layout too, whose kept messages
+ *  of the user come after the notes. */
 export const COMPACTION_MESSAGE_INTRO = '[Compaction: this conversation was long, so Dez put the notes below in place of its earlier messages. '
   + 'The notes are what the assistant wrote about the work so far, with the facts that Dez added. '
-  + 'After the notes come the messages of the user that Dez kept, each one word for word.]'
+  + 'Dez kept the first and the newest message of the user word for word, each under its own heading in the notes or after the notes.]'
 
-/** The line before each user section of the compaction message. */
+/** The line before each user section of the compaction message: a message
+ *  of the old layout, and a message that the user wrote after a reply with
+ *  no text. */
 export const COMPACTION_USER_MESSAGE_LABEL = '[Message of the user]'
 
-/** The first line of the section of the carried assets of the user: a user
- *  section that a compaction writes after the first kept message of the
- *  user. Below this line it holds only the image references and the media
- *  tags of the user's messages that the compaction took out, each on a
- *  line of its own, so that their ids still name them, and a linked file
- *  still counts (it counts only in a user section). The line tells the
- *  model and the user what the section is, and it tells the next
- *  compaction that the section is no message of the user
- *  (`isCarriedUserAssets`). It is in the cached prefix, as the texts
- *  above. */
+/** The first line of the section of the carried assets of the user, in
+ *  the old layout: a user section that an older Dez wrote after the first
+ *  kept message of the user. Below this line it holds only the image
+ *  references and the media tags of the user's messages that the
+ *  compaction took out, each on a line of its own, so that their ids still
+ *  name them, and a linked file still counts. The line tells the model and
+ *  the user what the section is, and it tells the next compaction that the
+ *  section is no message of the user (`isCarriedUserAssets`). Dez only
+ *  reads it now: the notes hold the assets of the user (compactionNotes.ts).
+ *  It is in the cached prefix, as the texts above. */
 export const CARRIED_USER_ASSETS_LABEL = '[Images and clips of the earlier messages of the user. Dez took those messages out of the conversation; the notes tell what they said.]'
 
 /** Whether `text`, the text of a user section, is the section of the
@@ -172,11 +194,12 @@ export function firstLine(text: string): string {
 
 // The attributes of the tag that is the whole of `line`; null when the
 // line is not a valid tag. An empty `last-id` reads as one that is not
-// there. The `dropped` and the `pictures` are not checked: a value that is
-// not the writer's form reads as not known (`readCompactionBlock`) and as
-// no pictures (`readShownPictures`). `oldForm` is true for a tag that ends
+// there. The `dropped`, the `pictures`, and the `linked` are not checked: a
+// value that is not the writer's form reads as not known
+// (`readCompactionBlock`), as no pictures (`readShownPictures`), and as no
+// linked path (`readLinkedPaths`). `oldForm` is true for a tag that ends
 // with `/>`.
-function tagAttributes(line: string): { count: number, lastId: string | null, dropped: string | undefined, pictures: string | undefined, oldForm: boolean } | null {
+function tagAttributes(line: string): { count: number, lastId: string | null, dropped: string | undefined, pictures: string | undefined, linked: string | undefined, oldForm: boolean } | null {
   // Most first lines are no tag: the cheap check comes first, as the editor
   // asks at each of its transactions (`firstSectionRole`).
   if (!line.startsWith(TAG_START)) return null
@@ -188,16 +211,33 @@ function tagAttributes(line: string): { count: number, lastId: string | null, dr
   const count = Number(countText)
   const lastId = attributes.get('last-id') || null
   if (!Number.isSafeInteger(count) || (lastId !== null && !ASSET_ID.test(lastId))) return null
-  return { count, lastId, dropped: attributes.get('dropped'), pictures: attributes.get('pictures'), oldForm: match[2] === '/' }
+  return { count, lastId, dropped: attributes.get('dropped'), pictures: attributes.get('pictures'), linked: attributes.get('linked'), oldForm: match[2] === '/' }
+}
+
+const linkedPathsSchema = z.array(z.string())
+
+// The paths of a `linked` value; none for no value, and for a value that
+// is not the writer's form (a hand edit).
+function readLinkedPaths(text: string | undefined): string[] {
+  if (text === undefined) return []
+  let value: unknown
+  try {
+    value = JSON.parse(text)
+  } catch {
+    return []
+  }
+  const parsed = linkedPathsSchema.safeParse(value)
+  return parsed.success ? parsed.data : []
 }
 
 /** The text of a tag line: one line, with live sentinels removed from
  *  every value (a label of a picture is text that a user can edit). */
-export function compactionTagText({ count, lastId, dropped, pictures }: CompactionTagData): string {
+export function compactionTagText({ count, lastId, dropped, pictures, linked }: CompactionTagData): string {
   const attributes: Array<readonly [string, string]> = [['count', String(count)]]
   if (lastId !== null) attributes.push(['last-id', lastId])
   if (dropped !== undefined) attributes.push(['dropped', String(dropped)])
   if (pictures.length > 0) attributes.push(['pictures', shownPicturesText(pictures)])
+  if (linked !== undefined && linked.length > 0) attributes.push(['linked', JSON.stringify(linked)])
   return `${TAG_START}${attributes.map(([name, value]) => ` ${name}="${escapeMarkerAttribute(stripLiveSentinels(value))}"`).join('')}>`
 }
 
@@ -260,6 +300,7 @@ export function readCompactionBlock(text: string): CompactionBlock | null {
   const line = firstLine(text)
   const attributes = tagAttributes(line)!
   const droppedNumber = attributes.dropped !== undefined && DROPPED.test(attributes.dropped) ? Number(attributes.dropped) : NaN
+  const linked = readLinkedPaths(attributes.linked)
   const notesFrom = Math.min(line.length + 1, text.length)
   const to = lineEnd(text, lineCount)
   const lastLineFrom = lineCount === 1 ? 0 : text.lastIndexOf('\n', to - 1) + 1
@@ -272,11 +313,27 @@ export function readCompactionBlock(text: string): CompactionBlock | null {
     lastId: attributes.lastId,
     ...(Number.isSafeInteger(droppedNumber) ? { dropped: droppedNumber } : {}),
     pictures: attributes.pictures === undefined ? [] : readShownPictures(attributes.pictures),
+    ...(linked.length > 0 ? { linked } : {}),
     notesFrom,
     notes: text.slice(notesFrom, notesTo),
     to,
     textFrom: Math.min(to + 1, text.length),
   }
+}
+
+/** Where the linked paths of a compaction block count: only the paths of
+ *  its `linked` list (see the top of this file). */
+export function blockLinkedRule(block: Pick<CompactionTagData, 'linked'>): LinkedPathRule {
+  return block.linked === undefined ? 'agent' : new Set(block.linked)
+}
+
+/** Where the linked paths of `text` count (`LinkedPathRule`, images.ts):
+ *  `text` is the text of section `index` of a conversation, whose role is
+ *  `role`. In the compaction section, only the paths that its tag lists
+ *  count; in any other section, the role tells it. */
+export function linkedPathRule(role: Role, text: string, index: number): LinkedPathRule {
+  const attributes = index === 0 && role === 'agent' ? tagAttributes(firstLine(text)) : null
+  return attributes ? blockLinkedRule({ linked: readLinkedPaths(attributes.linked) }) : role
 }
 
 /** The `last-id` of the tag that is the first line of `text`; null when
@@ -317,6 +374,14 @@ export function contentCompactionBlock(content: readonly ContentNode[]): Compact
  *  it is none. */
 export function sectionCompactionBlock(section: Section): CompactionBlock | null {
   return section.role === 'agent' ? contentCompactionBlock(section.content) : null
+}
+
+/** Where the linked paths of `section`, section `index` of a conversation,
+ *  count (`linkedPathRule`): the rule of the content of a section, by the
+ *  rule of the editor doc (`sectionCompactionBlock`). */
+export function sectionLinkedRule(section: Section, index: number): LinkedPathRule {
+  const block = index === 0 ? sectionCompactionBlock(section) : null
+  return block ? blockLinkedRule(block) : section.role
 }
 
 /** The index after the last section of the compaction message of

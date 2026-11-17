@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { assetPlaces } from '../chat/assetOrigins'
-import { CARRIED_USER_ASSETS_LABEL, sectionCompactionBlock } from '../chat/compaction'
-import { notesAssetLines } from '../chat/compactionNotes'
+import { blockLinkedRule, sectionCompactionBlock } from '../chat/compaction'
+import { notesAssetLines, notesMessages } from '../chat/compactionNotes'
 import { sectionPlainText } from '../chat/content'
 import { findKeptAssets } from '../chat/hiddenAssets'
 import { findImageReferences, imageMarkdown, imageReferenceTextWithKeptMark, isKeptImage } from '../chat/images'
@@ -89,10 +89,14 @@ function hidden(sections: Section[]): string[] {
     .map((asset) => (asset.kind === 'image' ? asset.image.id ?? asset.image.path : asset.tag.id))
 }
 
-const notesText = (result: CompactedSections) => sectionPlainText(result.sections[0])
+const notesText = (result: CompactedSections) => sectionCompactionBlock(result.sections[0])?.notes ?? ''
+/** The texts of the message parts of the notes of `result`. */
+const messagesOf = (result: CompactedSections) => notesMessages(notesText(result)).map((message) => message.text)
+/** The compaction section of `result`, which a request sends alone. */
+const headOf = (result: CompactedSections) => result.sections.slice(0, 1)
 
 describe('compactedSections', () => {
-  it('puts the notes, the first message, and the newest message in place of the sections up to the reply, which goes on empty', () => {
+  it('puts the notes, with the first and the newest message of the user, in place of the sections up to the reply, which goes on empty', () => {
     const sections = [
       user('u0', `Make a fox like ${idImage(pasted('photo'), 'a')}`),
       reply('r1', `Here it is.\n${idImage(made('fox'), 'b')}`),
@@ -102,15 +106,15 @@ describe('compactedSections', () => {
     ]
     const result = compact(sections, NOTES, 'r2')
 
-    expect(result.sections.map(({ id, role }) => [id, role])).toStrictEqual([['new-1', 'agent'], ['u0', 'user'], ['u1', 'user'], ['r2', 'agent'], ['later', 'user']])
-    expect(result.sections[1]).toBe(sections[0])
-    expect(result.sections[2]).toBe(sections[2])
-    expect(result.sections[3]).toStrictEqual({ id: 'r2', role: 'agent', model, content: [{ kind: 'text', text: '' }] })
-    expect(result.sections[4]).toBe(sections[4])
+    expect(result.sections.map(({ id, role }) => [id, role])).toStrictEqual([['new-1', 'agent'], ['r2', 'agent'], ['later', 'user']])
+    expect(result.sections[1]).toStrictEqual({ id: 'r2', role: 'agent', model, content: [{ kind: 'text', text: '' }] })
+    expect(result.sections[2]).toBe(sections[4])
     const [notes] = result.sections
     expect(notes).toMatchObject({ role: 'agent', model: NOTES_MODEL })
     expect(notes.thinking).toBeUndefined()
     expect(sectionCompactionBlock(notes)).toMatchObject({ count: 1, lastId: 'b', dropped: 0, pictures: [] })
+    expect(sectionCompactionBlock(notes)?.linked).toBeUndefined()
+    expect(messagesOf(result)).toStrictEqual([`Make a fox like ${idImage(pasted('photo'), 'a')}`, 'Now make it red.'])
     expect(notesText(result)).toContain('The user wants foxes.')
     expect(result.dropped).toStrictEqual([])
   })
@@ -119,7 +123,15 @@ describe('compactedSections', () => {
     const sections = [user('u0', 'Make a fox'), reply('r1', 'Done.'), user('u1', 'Now a red one'), reply('r2', '')]
     const result = compact(sections, NOTES, 'r2')
 
-    expect(result.sections.map(({ id }) => id)).toStrictEqual(['new-1', 'u0', 'u1', 'r2'])
+    expect(result.sections.map(({ id }) => id)).toStrictEqual(['new-1', 'r2'])
+    expect(messagesOf(result)).toStrictEqual(['Make a fox', 'Now a red one'])
+  })
+
+  it('writes one message part when the user wrote one message', () => {
+    const result = compact([user('u0', 'Make a fox'), reply('r1', 'working')], NOTES, 'r1')
+
+    expect(messagesOf(result)).toStrictEqual(['Make a fox'])
+    expect(notesText(result).startsWith('## First and newest message of the user\n')).toBe(true)
   })
 
   it('keeps a made asset that the answer does not name in the notes, as text only, with who made it', () => {
@@ -130,24 +142,25 @@ describe('compactedSections', () => {
       reply('r2', 'I start the work.'),
     ]
     const result = compact(sections, NOTES, 'r2')
-    const head = result.sections.slice(0, 3)
+    const head = headOf(result)
 
     expect(notesText(result)).toContain(`${kept(idImage(made('fox'), 'b'))}\n@b | image | `)
     expect(notesAssetLines(notesText(result)).get('b')).toMatchObject({ facts: 'PNG, 10x10, 1 KB', origin: 'made by the model local/m' })
     expect(notesAssetLines(notesText(result)).get('a')).toMatchObject({ origin: 'from the user' })
     // The image of the first message goes by itself; the kept one sends
-    // no pixels, and the chip shows it.
+    // no pixels.
     expect(sent(head)).toStrictEqual({ images: [pasted('photo')], pictures: [] })
     expect(hidden(head)).toStrictEqual(['b'])
-    // The calls are gone, but the origin is not.
+    // The calls are gone, but the origin is not. The assets chip shows
+    // every asset of the block.
     const found = [...conversationAssets(head).found.values()]
     expect(assetPlaces(head, found).map(({ origin, hidden: isHidden }, index) => [found[index].id, origin, isHidden])).toStrictEqual([
+      ['a', { kind: 'user' }, true],
       ['b', { kind: 'carried', text: 'made by the model local/m' }, true],
-      ['a', { kind: 'user' }, false],
     ])
   })
 
-  it('carries the assets of the other messages of the user in one section after the first message', () => {
+  it('keeps the assets of the other messages of the user in the notes, each with its text before its line', () => {
     const unnamed = imageMarkdown(pasted('old'))
     const sections = [
       user('u0', 'Start'),
@@ -160,44 +173,69 @@ describe('compactedSections', () => {
       reply('r4', 'working'),
     ]
     const result = compact(sections, `${NOTES}\n## Assets\n@c: show - the second photo`, 'r4')
+    const head = headOf(result)
 
-    expect(result.sections.map(({ id, role }) => [id, role])).toStrictEqual([['new-1', 'agent'], ['u0', 'user'], ['new-2', 'user'], ['u3', 'user'], ['r4', 'agent']])
-    expect(sectionPlainText(result.sections[2]).split('\n')).toStrictEqual([
-      CARRIED_USER_ASSETS_LABEL,
-      kept(idImage(pasted('one'), 'a')),
-      kept(clip('song', 'b')),
-      kept(unnamed),
-      idImage(pasted('two'), 'c'),
-    ])
-    const head = result.sections.slice(0, 4)
+    expect(result.sections.map(({ id }) => id)).toStrictEqual(['new-1', 'r4'])
+    expect(messagesOf(result)).toStrictEqual(['Start', 'Go on'])
+    expect(notesText(result)).toContain(`${kept(idImage(pasted('one'), 'a'))}\n@a | `)
+    expect(notesText(result)).toContain(`${kept(clip('song', 'b'))}\n@b | `)
+    expect(notesText(result)).toContain(`${idImage(pasted('two'), 'c')}\n@c | `)
+    expect(notesText(result)).toContain(kept(unnamed))
     expect(sent(head)).toStrictEqual({ images: [pasted('two')], pictures: [] })
     expect(hidden(head)).toStrictEqual(['a', 'b', pasted('old')])
-    // An asset of the user has its line in the notes, and its text only in
-    // the user section.
-    expect([...notesAssetLines(notesText(result)).keys()]).toStrictEqual(['a', 'b', 'c'])
-    expect(findImageReferences(notesText(result), 'user')).toStrictEqual([])
+    expect([...notesAssetLines(notesText(result)).values()].map(({ id, origin }) => [id, origin])).toStrictEqual([['a', 'from the user'], ['b', 'from the user'], ['c', 'from the user']])
   })
 
-  it('takes the assets of the carried section and of the newest message of the compaction before into the new carried section', () => {
+  it('copies the first message from the notes at a later compaction, and keeps the assets of the newest message before as lines of the user', () => {
     const first = compact([
-      user('u0', 'Start'),
+      user('u0', `Start with ${idImage(pasted('zero'), 'a')}`),
       reply('r1', 'ok'),
-      user('u1', `Use ${idImage(pasted('one'), 'a')}`),
+      user('u1', 'More'),
       reply('r2', 'ok'),
       user('u2', `Then ${idImage(pasted('two'), 'b')}`),
       reply('r3', 'working'),
     ], NOTES, 'r3')
-    expect(first.sections.map(({ id }) => id)).toStrictEqual(['new-1', 'u0', 'new-2', 'u2', 'r3'])
-    const sections = [...first.sections.slice(0, 4), reply('r3', 'Done.'), user('u3', 'One more'), reply('r4', 'working')]
+    expect(first.sections.map(({ id }) => id)).toStrictEqual(['new-1', 'r3'])
+    const sections = [first.sections[0], reply('r3', 'Done.'), user('u3', 'One more'), reply('r4', 'working')]
     const result = compact(sections, NOTES, 'r4')
 
-    expect(result.sections.map(({ id }) => id)).toStrictEqual(['new-1', 'u0', 'new-2', 'u3', 'r4'])
-    expect(sectionPlainText(result.sections[2]).split('\n')).toStrictEqual([
-      CARRIED_USER_ASSETS_LABEL,
-      kept(idImage(pasted('one'), 'a')),
-      kept(idImage(pasted('two'), 'b')),
-    ])
+    expect(result.sections.map(({ id }) => id)).toStrictEqual(['new-1', 'r4'])
+    expect(messagesOf(result)).toStrictEqual([`Start with ${idImage(pasted('zero'), 'a')}`, 'One more'])
+    expect(notesText(result)).toContain(`${kept(idImage(pasted('two'), 'b'))}\n@b | `)
+    expect(notesAssetLines(notesText(result)).get('b')).toMatchObject({ origin: 'from the user' })
+    expect(sent(headOf(result)).images).toStrictEqual([pasted('zero')])
     expect(sectionCompactionBlock(result.sections[0])).toMatchObject({ count: 2, lastId: 'b' })
+  })
+
+  it('keeps the newest message of the notes while no message of the user came after it', () => {
+    const first = compact([user('u0', 'Start'), reply('r1', 'ok'), user('u1', 'Go on'), reply('r2', 'working')], NOTES, 'r2')
+    const result = compact([first.sections[0], reply('r2', 'Still working.')], NOTES, 'r2')
+
+    expect(messagesOf(result)).toStrictEqual(['Start', 'Go on'])
+  })
+
+  // A user gave the linked files, so they still count in the block, where
+  // a linked path counts only when the tag lists it.
+  it('lists the linked paths of the two messages and of the other assets of the user in the tag, and no path that a model wrote', () => {
+    const linked = (name: string) => `/home/u/Pictures/${name}.png`
+    const linkedClip = mediaTagText({ kind: 'audio', id: 'c', type: 'audio/wav', src: '/home/u/Music/song.wav', url: null, expires: null, other: [] })
+    const sections = [
+      user('u0', `Like ${idImage(linked('first'), 'a')}`),
+      reply('r1', `Copied: ${imageMarkdown(linked('model'))}`),
+      user('u1', `And ${idImage(linked('other'), 'b')}\n${linkedClip}\nand ${imageMarkdown(linked('old'))}`),
+      reply('r2', 'ok'),
+      user('u2', 'Go on'),
+      reply('r3', 'working'),
+    ]
+    const result = compact(sections, `## Summary\nSee ${imageMarkdown(linked('model'))}.`, 'r3')
+    const block = sectionCompactionBlock(result.sections[0])
+
+    expect(block?.linked).toStrictEqual([linked('first'), linked('other'), '/home/u/Music/song.wav', linked('old')])
+    const rule = blockLinkedRule(block!)
+    // The path of the model stays text: no file of the computer.
+    expect(notesText(result)).toContain(linked('model'))
+    expect(findImageReferences(notesText(result), rule).map(({ path }) => path)).toStrictEqual([linked('first'), linked('other'), linked('old')])
+    expect(sent(headOf(result)).images).toStrictEqual([linked('first')])
   })
 
   // The dropped id is the highest one, so a tag that read only the ids
@@ -209,7 +247,7 @@ describe('compactedSections', () => {
       user('u1', 'Go on'),
       reply('r2', 'working'),
     ], `${NOTES}\n## Assets\n@a: keep - The first fox.\n@b: keep - The second fox.`, 'r2')
-    const sections = [...first.sections.slice(0, 3), reply('r2', 'Done.'), user('u2', 'Only the first one'), reply('r3', 'working')]
+    const sections = [first.sections[0], reply('r2', 'Done.'), user('u2', 'Only the first one'), reply('r3', 'working')]
     const result = compact(sections, `${NOTES}\n## Assets\n@a: show - The final fox.\n@b: drop - not needed`, 'r3', {}, 'JPEG | 5x5 | 2 KB')
 
     expect(result.dropped.map(({ asset }) => asset.id)).toStrictEqual(['b'])
@@ -220,8 +258,8 @@ describe('compactedSections', () => {
       { id: 'a', kind: 'image', facts: 'PNG, 10x10, 1 KB', origin: 'made by the model local/m', sentence: 'The final fox.', byReply: false },
     ])
     expect(sectionCompactionBlock(result.sections[0])).toMatchObject({ count: 2, lastId: 'b', dropped: 1 })
-    expect(sent(result.sections.slice(0, 3))).toStrictEqual({ images: [made('one')], pictures: [] })
-    expect(hidden(result.sections.slice(0, 3))).toStrictEqual([])
+    expect(sent(headOf(result))).toStrictEqual({ images: [made('one')], pictures: [] })
+    expect(hidden(headOf(result))).toStrictEqual([])
   })
 
   it('drops at the first compaction an asset of an earlier reply that the answer has no line for, and keeps one of the reply that runs', () => {
@@ -248,12 +286,12 @@ describe('compactedSections', () => {
     ], NOTES, 'r2')
     // The same reply goes on and makes `c`: no message of the user came
     // after the first compaction.
-    const second = compact([...first.sections.slice(0, 3), reply('r2', idImage(made('cat'), 'c'))], `${NOTES}\n## Assets\n@c: keep - The cat.`, 'r2')
+    const second = compact([first.sections[0], reply('r2', idImage(made('cat'), 'c'))], `${NOTES}\n## Assets\n@c: keep - The cat.`, 'r2')
 
     expect(second.dropped).toStrictEqual([])
     expect([...notesAssetLines(notesText(second)).values()].map(({ id, byReply }) => [id, byReply])).toStrictEqual([['a', true], ['b', true], ['c', true]])
 
-    const sections = [...second.sections.slice(0, 3), reply('r2', 'Done.'), user('u2', 'Only the cat now'), reply('r3', 'working')]
+    const sections = [second.sections[0], reply('r2', 'Done.'), user('u2', 'Only the cat now'), reply('r3', 'working')]
     const third = compact(sections, `${NOTES}\n## Assets\n@c: keep - The cat.`, 'r3')
 
     expect(third.dropped.map(({ asset }) => asset.id)).toStrictEqual(['a', 'b'])
@@ -267,7 +305,7 @@ describe('compactedSections', () => {
       user('u1', 'Go on'),
       reply('r2', 'working'),
     ], `${NOTES}\n## Assets\n@a: keep - The first fox.`, 'r2')
-    const sections = [...first.sections.slice(0, 3), reply('r2', 'Done.'), user('u2', 'More'), reply('r3', 'working')]
+    const sections = [first.sections[0], reply('r2', 'Done.'), user('u2', 'More'), reply('r3', 'working')]
     const result = compact(sections, NOTES, 'r3')
 
     expect(notesAssetLines(notesText(result)).get('a')).toMatchObject({ sentence: 'The first fox.', origin: 'made by the model local/m' })
@@ -284,8 +322,8 @@ describe('compactedSections', () => {
     const result = compact(sections, answer, 'r2', { limits: withPictures(3) })
 
     // The image of the first message takes one of the three pictures.
-    expect(sent(result.sections.slice(0, 3))).toStrictEqual({ images: [made('one'), made('three'), pasted('photo')], pictures: [] })
-    expect(hidden(result.sections.slice(0, 3))).toStrictEqual(['c'])
+    expect(sent(headOf(result))).toStrictEqual({ images: [pasted('photo'), made('one'), made('three')], pictures: [] })
+    expect(hidden(headOf(result))).toStrictEqual(['c'])
   })
 
   it('keeps an asset that does not fit as text, and still shows a smaller one after it', () => {
@@ -300,7 +338,7 @@ describe('compactedSections', () => {
       imageBytes: new Map([[made('large'), 3000], [made('small'), 300]]),
     })
 
-    expect(sent(result.sections.slice(0, 3))).toStrictEqual({ images: [made('small')], pictures: [] })
+    expect(sent(headOf(result))).toStrictEqual({ images: [made('small')], pictures: [] })
   })
 
   it('counts an image that a kept message names with @id only once against the budget', () => {
@@ -314,8 +352,8 @@ describe('compactedSections', () => {
     // nothing more: a sum of the assets would be over the one picture.
     const result = compact(sections, `${NOTES}\n## Assets\n@a: show - the fox`, 'r2', { limits: withPictures(1) })
 
-    expect(sent(result.sections.slice(0, 3))).toStrictEqual({ images: [made('one')], pictures: [] })
-    expect(hidden(result.sections.slice(0, 3))).toStrictEqual([])
+    expect(sent(headOf(result))).toStrictEqual({ images: [made('one')], pictures: [] })
+    expect(hidden(headOf(result))).toStrictEqual([])
   })
 
   it('sends the last images of the first message as text when the kept messages hold more images than a compaction leaves', () => {
@@ -326,16 +364,16 @@ describe('compactedSections', () => {
       reply('r2', 'working'),
     ]
     const result = compact(sections, NOTES, 'r2', { limits: withPictures(3) })
-    const head = result.sections.slice(0, 3)
 
-    expect(sectionPlainText(head[1])).toBe(`${idImage(pasted('one'), 'a')} then ${kept(idImage(pasted('two'), 'b'))} then ${kept(idImage(pasted('three'), 'c'))}`)
-    expect(head[2]).toBe(sections[2])
-    expect(sent(head)).toStrictEqual({ images: [pasted('one'), pasted('four'), pasted('five')], pictures: [] })
-    // The user still sees them at their place.
-    expect(hidden(head)).toStrictEqual([])
+    expect(messagesOf(result)).toStrictEqual([
+      `${idImage(pasted('one'), 'a')} then ${kept(idImage(pasted('two'), 'b'))} then ${kept(idImage(pasted('three'), 'c'))}`,
+      sectionPlainText(sections[2]),
+    ])
+    expect(sent(headOf(result))).toStrictEqual({ images: [pasted('one'), pasted('four'), pasted('five')], pictures: [] })
+    expect(hidden(headOf(result))).toStrictEqual(['b', 'c'])
   })
 
-  it('leaves an image of a prompt pill as it is, and still ends', () => {
+  it('puts the body of a prompt pill into the message, with its images, and still ends', () => {
     const pill = { kind: 'prompt' as const, id: 'p1', promptId: null, name: 'Style', body: `Like ${idImage(pasted('style'), 'a')}`, expanded: false }
     const sections: Section[] = [
       { id: 'u0', role: 'user', content: [pill, { kind: 'text', text: ` and ${idImage(pasted('photo'), 'b')}` }] },
@@ -343,7 +381,7 @@ describe('compactedSections', () => {
     ]
     const result = compact(sections, NOTES, 'r1', { limits: withPictures(0) })
 
-    expect(result.sections[1].content).toStrictEqual([pill, { kind: 'text', text: ` and ${kept(idImage(pasted('photo'), 'b'))}` }])
+    expect(messagesOf(result)).toStrictEqual([`Like ${kept(idImage(pasted('style'), 'a'))} and ${kept(idImage(pasted('photo'), 'b'))}`])
   })
 
   it('sends an image whose file Dez cannot read as text', () => {
@@ -354,10 +392,9 @@ describe('compactedSections', () => {
       reply('r2', 'working'),
     ]
     const result = compact(sections, `${NOTES}\n## Assets\n@c: show - the fox`, 'r2', { imageBytes: new Map([[pasted('photo'), IMAGE_BYTES]]) })
-    const head = result.sections.slice(0, 3)
 
-    expect(sectionPlainText(head[1])).toBe(`Like ${kept(idImage(pasted('gone'), 'a'))} and ${idImage(pasted('photo'), 'b')}`)
-    expect(sent(head)).toStrictEqual({ images: [pasted('photo')], pictures: [] })
+    expect(messagesOf(result)[0]).toBe(`Like ${kept(idImage(pasted('gone'), 'a'))} and ${idImage(pasted('photo'), 'b')}`)
+    expect(sent(headOf(result))).toStrictEqual({ images: [pasted('photo')], pictures: [] })
   })
 
   it('sets the marks of a kept message new at each compaction', () => {
@@ -365,12 +402,12 @@ describe('compactedSections', () => {
       user('u0', `${idImage(pasted('one'), 'a')} then ${idImage(pasted('two'), 'b')}`),
       reply('r1', 'working'),
     ], NOTES, 'r1', { limits: withPictures(1) })
-    expect(sent(first.sections.slice(0, 2)).images).toStrictEqual([pasted('one')])
-    const sections = [...first.sections.slice(0, 2), reply('r1', 'Done.'), user('u1', 'More'), reply('r2', 'working')]
+    expect(sent(headOf(first)).images).toStrictEqual([pasted('one')])
+    const sections = [first.sections[0], reply('r1', 'Done.'), user('u1', 'More'), reply('r2', 'working')]
     const result = compact(sections, NOTES, 'r2')
 
-    expect(sectionPlainText(result.sections[1])).toBe(`${idImage(pasted('one'), 'a')} then ${idImage(pasted('two'), 'b')}`)
-    expect(sent(result.sections.slice(0, 3)).images).toStrictEqual([pasted('one'), pasted('two')])
+    expect(messagesOf(result)[0]).toBe(`${idImage(pasted('one'), 'a')} then ${idImage(pasted('two'), 'b')}`)
+    expect(sent(headOf(result)).images).toStrictEqual([pasted('one'), pasted('two')])
   })
 
   it('shows a clip as the picture of the tag, and keeps a clip with no picture as text', () => {
@@ -382,15 +419,15 @@ describe('compactedSections', () => {
     ]
     const answer = `${NOTES}\n## Assets\n@c: show - second cut\n@a: show - the source\n@b: show - first cut`
     const result = compact(sections, answer, 'r2', { clipPictures: new Map([['a', picture('a')], ['b', picture('b')]]) })
-    const head = result.sections.slice(0, 3)
+    const head = headOf(result)
 
     // In the order of the assets of the notes, not of the answer.
     expect(result.pictures).toStrictEqual([picture('a'), picture('b')])
     expect(sectionCompactionBlock(head[0])?.pictures).toStrictEqual([picture('a'), picture('b')])
     expect(sent(head)).toStrictEqual({ images: [], pictures: ['a.jpg', 'b.jpg'] })
-    expect(findMediaTags(notesText(result)).map((tag) => [tag.id, isKeptClip(tag)])).toStrictEqual([['b', false], ['c', true]])
     // The clip of the first message stays in it, as it is.
-    expect(head[1]).toBe(sections[0])
+    expect(messagesOf(result)[0]).toBe(sectionPlainText(sections[0]))
+    expect(findMediaTags(notesText(result)).map((tag) => [tag.id, isKeptClip(tag)])).toStrictEqual([['a', false], ['b', false], ['c', true]])
   })
 
   it('does not carry the pictures of the compaction before', () => {
@@ -401,7 +438,7 @@ describe('compactedSections', () => {
       reply('r2', 'working'),
     ], `${NOTES}\n## Assets\n@a: show - the clip`, 'r2', { clipPictures: new Map([['a', picture('a')]]) })
     expect(first.pictures).toStrictEqual([picture('a')])
-    const sections = [...first.sections.slice(0, 3), reply('r2', 'Done.'), user('u2', 'More'), reply('r3', 'working')]
+    const sections = [first.sections[0], reply('r2', 'Done.'), user('u2', 'More'), reply('r3', 'working')]
     const result = compact(sections, `${NOTES}\n## Assets\n@a: keep - the clip`, 'r3')
 
     expect(result.pictures).toStrictEqual([])
@@ -432,11 +469,11 @@ describe('compactedSections', () => {
       user('u1', 'Go on'),
       reply('r2', 'working'),
     ], NOTES, 'r2')
-    expect(hidden(first.sections.slice(0, 3))).toStrictEqual([made('old')])
-    expect(sent(first.sections.slice(0, 3)).images).toStrictEqual([])
+    expect(hidden(headOf(first))).toStrictEqual([made('old')])
+    expect(sent(headOf(first)).images).toStrictEqual([])
 
-    const sections = [...first.sections.slice(0, 3), reply('r2', 'Done.'), user('u2', 'More'), reply('r3', 'working')]
+    const sections = [first.sections[0], reply('r2', 'Done.'), user('u2', 'More'), reply('r3', 'working')]
     const second = compact(sections, NOTES, 'r3')
-    expect(hidden(second.sections.slice(0, 3))).toStrictEqual([made('old')])
+    expect(hidden(headOf(second))).toStrictEqual([made('old')])
   })
 })

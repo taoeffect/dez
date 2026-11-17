@@ -36,6 +36,11 @@ export async function activeConversationId (browser: E2EBrowser): Promise<string
   return tab.conversationId
 }
 
+/** The title that the tab bar shows for the active tab. */
+export async function activeTabTitle (browser: E2EBrowser): Promise<string | null> {
+  return browser.execute(() => document.querySelector('.tab--active .tab-title')?.textContent ?? null)
+}
+
 /** Opens a new tab and waits until it shows its one empty user section. */
 export async function newTab (browser: E2EBrowser): Promise<void> {
   await sbpCall(browser, 'dez.model/tabs/create')

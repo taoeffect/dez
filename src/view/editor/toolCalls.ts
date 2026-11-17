@@ -7,7 +7,6 @@ import type { MediaTagData } from '../../model/chat/mediaTags'
 import { parseModelRefKey } from '../../model/chat/modelRef'
 import type { ShownPicture } from '../../model/chat/shownPictures'
 import { EMPTY_TOOL_RESULT, INTERRUPTED_TOOL_RESULT, type ToolBlock } from '../../model/chat/toolBlocks'
-import type { Role } from '../../model/chat/types'
 import { MODEL_OUTPUT_IDS, effectiveOutputs, type ModelOutput } from '../../model/modelOutputs'
 import { isRecord } from '../../model/providers/modelParsing'
 import type { ModelInfo } from '../../model/providers/types'
@@ -59,19 +58,20 @@ function toolCallState(block: ToolBlock, streaming: boolean): ToolCallState {
 }
 
 /** A hidden asset as the panel of its chip draws it, with no doc offsets:
- *  what `createImage` or `createPlayer` takes. A clip has the role of its
- *  section, which tells its player whether a linked file counts (an
- *  image's `linked` tells that already). */
+ *  what `createImage` or `createPlayer` takes. A clip has `linkedSrc`,
+ *  which tells its player whether a linked file counts where its tag is
+ *  (an image's `linked` tells that already). */
 export type PanelAsset =
   | { kind: 'image', path: string, id: string | null, linked: boolean }
-  | { kind: 'clip', tag: MediaTagData, role: Role }
+  | { kind: 'clip', tag: MediaTagData, linkedSrc: boolean }
 
-/** The hidden asset `asset` of a section with the role `role`, as a panel
- *  draws it. Without the offsets, which every token before it changes. */
-export function panelAsset(asset: HiddenAsset, role: Role): PanelAsset {
+/** The hidden asset `asset` as a panel draws it; `linkedSrc` tells whether
+ *  a linked `src` of a clip counts where its tag is. Without the offsets,
+ *  which every token before it changes. */
+export function panelAsset(asset: HiddenAsset, linkedSrc: boolean): PanelAsset {
   if (asset.kind === 'image') return { kind: 'image', path: asset.image.path, id: asset.image.id, linked: asset.image.linked }
   const { kind, id, type, src, url, expires, other } = asset.tag
-  return { kind: 'clip', tag: { kind, id, type, src, url, expires, other }, role }
+  return { kind: 'clip', tag: { kind, id, type, src, url, expires, other }, linkedSrc }
 }
 
 /** What the chip of an intermediate call shows on top of the parts of
@@ -310,8 +310,9 @@ function intermediateCall(call: ToolBlock, state: ToolCallState, chips: readonly
   const text = result?.status === 'finished' && assets.length === 0 ? jobOwnText(result.text) : ''
   return {
     jobId,
-    // A job's assets are in agent sections only.
-    assets: assets.map((asset) => panelAsset(asset, 'agent')),
+    // A job's assets are in agent sections only, where no linked file
+    // counts.
+    assets: assets.map((asset) => panelAsset(asset, false)),
     text: text.trim() === '' ? '' : text,
     status: result?.status ?? null,
   }
@@ -584,8 +585,8 @@ export function createField(text: string, label: string, placeholder: string): H
 /** The key of a hidden asset among the assets of one chip. A drawn asset
  *  whose key stays keeps its element: an image's path and id tell its
  *  file, and a clip's kind and id never change (a Save or a Delete changes
- *  only its `src`). A drawn clip also needs the same role (`renderAssets`),
- *  which is not part of this key. */
+ *  only its `src`). A drawn clip also needs the same `linkedSrc`
+ *  (`renderAssets`), which is not part of this key. */
 function assetKey(asset: { kind: 'image', path: string, id: string | null, linked: boolean } | { kind: 'clip', tag: Pick<MediaTagData, 'kind' | 'id'> }): string {
   return JSON.stringify(asset.kind === 'image' ? ['image', asset.path, asset.id, asset.linked] : [asset.tag.kind, asset.tag.id])
 }
@@ -604,7 +605,7 @@ function ownedBy(asset: HiddenAsset, owner: HiddenAssetOwner | null): boolean {
 /** One asset of a panel, as a row that a panel draws (`renderAssets`,
  *  `AssetList.vue`). */
 export interface PanelAssetRow {
-  /** `assetKey`, with a count before it, and the role after it for a
+  /** `assetKey`, with a count before it, and `linkedSrc` after it for a
    *  clip. Unique among the rows of a panel. A drawn row whose key stays
    *  keeps its element. */
   key: string
@@ -627,9 +628,9 @@ function panelAssetRows(view: EditorView, owner: HiddenAssetOwner | null, assets
     const place: AssetPlace = () => hiddenAssets(view.state)
       .filter((hidden) => ownedBy(hidden, owner) && assetKey(hidden.kind === 'image' ? { ...hidden.image, kind: 'image' } : hidden) === key)[count]?.from ?? null
     return {
-      key: `${count}:${key}${asset.kind === 'clip' ? `:${asset.role}` : ''}`,
+      key: `${count}:${key}${asset.kind === 'clip' ? `:${asset.linkedSrc}` : ''}`,
       asset,
-      create: () => asset.kind === 'image' ? createImage(view, asset, place) : createPlayer(view, asset.tag, asset.role, place),
+      create: () => asset.kind === 'image' ? createImage(view, asset, place) : createPlayer(view, asset.tag, asset.linkedSrc, place),
     }
   })
 }
@@ -641,9 +642,9 @@ function panelAssetRows(view: EditorView, owner: HiddenAssetOwner | null, assets
  *  A drawn asset that is still there keeps its element, and a kept element
  *  moves only when the order changed: a player that leaves the document
  *  stops, and ends its fullscreen. So a Save of a hidden clip, which
- *  changes its tag, keeps its player (`updatePlayer`). A clip whose section
- *  has another role now gets a new player, as the role of a player is the
- *  one of its mount (`MediaWidget.updateDOM` does the same). */
+ *  changes its tag, keeps its player (`updatePlayer`). A clip whose
+ *  `linkedSrc` changed gets a new player, as the `linkedSrc` of a player
+ *  is the one of its mount (`MediaWidget.updateDOM` does the same). */
 function renderAssets(view: EditorView, list: HTMLElement, owner: HiddenAssetOwner | null, assets: readonly PanelAsset[]): void {
   const drawn = new Map<string, HTMLElement>()
   for (const element of list.children) drawn.set(drawnAssetKeys.get(element) ?? '', element as HTMLElement)

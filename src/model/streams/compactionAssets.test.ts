@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { CARRIED_USER_ASSETS_LABEL } from '../chat/compaction'
-import { compactionNotesText, type CompactionNotes } from '../chat/compactionNotes'
+import { CARRIED_USER_ASSETS_LABEL, compactionBlockText } from '../chat/compaction'
+import { compactionNotesText, type CompactionNotes, type NotesAsset } from '../chat/compactionNotes'
 import { IMAGE_MADE_BY_KEY, IMAGE_TOOL_KEY, imageMarkdown } from '../chat/images'
 import { mediaTagText } from '../chat/mediaTags'
 import { COMPACTION_TAG, FOX_ORIGIN, HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, idImage, invokeBlock } from '../chat/testing'
 import { toolBlockText } from '../chat/toolBlocks'
+import type { Section } from '../chat/types'
 import { jobStartedText, type JobInfo, type JobStatus } from '../tools/jobs'
 import { CONVERSATION, RED, SKY, SONG } from '../tools/testing'
 import { joinClipsCall, videoInputsText } from '../tools/videoTool'
@@ -20,9 +21,12 @@ import {
 import { MAX_ASSET_SENTENCE_LENGTH, type AnswerAsset, type AssetDecision, type CompactionAnswer } from './compactionRequest'
 import { assetsOf, reply, user } from './testing'
 
-// The notes of a compaction that kept the image `a` of the user and the
-// image `b` that a job of an earlier reply made.
+// The notes of a compaction of an older Dez, with no message part, that
+// kept the image `a` of the user and the image `b` that a job of an
+// earlier reply made.
 const NOTES_DATA: CompactionNotes = {
+  firstMessage: null,
+  newestMessage: null,
   summary: 'A fox for the user.',
   requirements: '',
   nextSteps: '',
@@ -60,33 +64,102 @@ function byId<K extends keyof CompactionAsset>(assets: readonly CompactionAsset[
   return Object.fromEntries(assets.map((asset) => [asset.asset.id, asset[field]]))
 }
 
+// The scope of a compaction of `sections` in the reply `replySectionId`,
+// with each kept message as the index of its section.
+function sectionScope(sections: readonly Section[], replySectionId: string): Record<string, number | null> {
+  const { reply, end, first, last } = compactionScope(sections, replySectionId)
+  return { reply, end, first: first?.section ?? null, last: last?.section ?? null }
+}
+
+// A linked image of the user: it counts in the notes only with the
+// `linked` list of the tag.
+const LINKED = '/home/u/Pictures/run.png'
+const RUN_LIKE_THIS = `Make it run like this:\n${idImage(LINKED, 'e')}`
+
+// The compaction section of a compaction with message parts: the first
+// and the newest message of the user (`newest`; null: one part), which
+// links the image `e`.
+function partsCompaction(newest: string | null = RUN_LIKE_THIS, assets: readonly NotesAsset[] = NOTES_DATA.assets): Section {
+  const notes = compactionNotesText({ ...NOTES_DATA, firstMessage: 'Make a fox.', newestMessage: newest, assets })
+  return reply('n', compactionBlockText({ count: 1, lastId: 'e', pictures: [], linked: [LINKED] }, notes))
+}
+
 describe('compactionScope', () => {
   const SECTIONS = [...COMPACTED, user('u3', 'Now make it jump.')]
 
   it('replaces the sections up to the reply, and keeps the first and the newest message of the user before it', () => {
-    expect(compactionScope(SECTIONS, 'r')).toStrictEqual({ reply: 4, end: 5, first: 1, last: 3 })
+    expect(sectionScope(SECTIONS, 'r')).toStrictEqual({ reply: 4, end: 5, first: 1, last: 3 })
   })
 
   it('replaces every section in a reply whose section is gone', () => {
-    expect(compactionScope(SECTIONS, 'gone')).toStrictEqual({ reply: null, end: 6, first: 1, last: 5 })
+    expect(sectionScope(SECTIONS, 'gone')).toStrictEqual({ reply: null, end: 6, first: 1, last: 5 })
   })
 
   it('has no newest message apart from the first when the user wrote one message', () => {
-    expect(compactionScope([user('u1', 'Make a fox.'), reply('r', 'A fox.')], 'r')).toStrictEqual({ reply: 1, end: 2, first: 0, last: null })
+    expect(sectionScope([user('u1', 'Make a fox.'), reply('r', 'A fox.')], 'r')).toStrictEqual({ reply: 1, end: 2, first: 0, last: null })
   })
 
   it('counts an empty user section as no message', () => {
-    expect(compactionScope([user('u1', 'Make a fox.'), reply('r', 'A fox.'), user('u2', ' \n'), reply('r2', '')], 'r2')).toStrictEqual({ reply: 3, end: 4, first: 0, last: null })
+    expect(sectionScope([user('u1', 'Make a fox.'), reply('r', 'A fox.'), user('u2', ' \n'), reply('r2', '')], 'r2')).toStrictEqual({ reply: 3, end: 4, first: 0, last: null })
   })
 
   it('counts the carried assets of the user as no message in the compaction message, but as a message after a reply', () => {
-    expect(compactionScope([COMPACTION, user('u1', 'Make a fox.'), CARRIED, reply('r', '')], 'r')).toStrictEqual({ reply: 3, end: 4, first: 1, last: null })
-    expect(compactionScope([COMPACTION, user('u1', 'Make a fox.'), CARRIED, reply('r', 'A fox.'), { ...CARRIED, id: 'u2' }, reply('r2', '')], 'r2'))
+    expect(sectionScope([COMPACTION, user('u1', 'Make a fox.'), CARRIED, reply('r', '')], 'r')).toStrictEqual({ reply: 3, end: 4, first: 1, last: null })
+    expect(sectionScope([COMPACTION, user('u1', 'Make a fox.'), CARRIED, reply('r', 'A fox.'), { ...CARRIED, id: 'u2' }, reply('r2', '')], 'r2'))
       .toStrictEqual({ reply: 5, end: 6, first: 1, last: 4 })
   })
 
   it('has no first and no newest message when the user wrote none', () => {
-    expect(compactionScope([COMPACTION, reply('r', 'Going on.')], 'r')).toStrictEqual({ reply: 1, end: 2, first: null, last: null })
+    expect(sectionScope([COMPACTION, reply('r', 'Going on.')], 'r')).toStrictEqual({ reply: 1, end: 2, first: null, last: null })
+  })
+
+  it('keeps a user section as its whole plain text, in which a linked path counts', () => {
+    const { first } = compactionScope([user('u1', RUN_LIKE_THIS), reply('r', '')], 'r')
+
+    expect(first).toStrictEqual({ section: 0, text: RUN_LIKE_THIS, from: 0, to: RUN_LIKE_THIS.length, rule: 'user' })
+  })
+})
+
+describe('compactionScope of notes with message parts', () => {
+  it('takes the first and the newest message from the parts while no user section came after them, with the linked paths of the tag', () => {
+    const compaction = partsCompaction()
+    const { first, last } = compactionScope([compaction, reply('r', 'Running.')], 'r')
+    const text = (compaction.content[0] as { text: string }).text
+
+    expect([first?.section, first?.text, last?.section, last?.text]).toStrictEqual([0, 'Make a fox.', 0, RUN_LIKE_THIS])
+    expect(first?.rule).toStrictEqual(new Set([LINKED]))
+    // The offsets are of the text with its escape, in the section.
+    expect(text.slice(first?.from, first?.to)).toBe('Make a fox.')
+    expect(text.slice(last?.from, last?.to)).toBe(RUN_LIKE_THIS)
+  })
+
+  it('takes the newest user section after the parts as the newest message', () => {
+    const scope = compactionScope([partsCompaction(), reply('r', 'A fox.'), user('u2', 'Now a wolf.'), reply('r2', '')], 'r2')
+
+    expect([scope.first?.text, scope.last]).toStrictEqual(['Make a fox.', { section: 2, text: 'Now a wolf.', from: 0, to: 11, rule: 'user' }])
+  })
+
+  it('has no newest message apart from the first when the notes hold one part and no user section came after it', () => {
+    const scope = compactionScope([partsCompaction(null), reply('r', '')], 'r')
+
+    expect([scope.first?.text, scope.last]).toStrictEqual(['Make a fox.', null])
+  })
+
+  it('gives the two messages of the parts as the kept texts of the user', () => {
+    const sections = [partsCompaction(), reply('r', 'Running.'), user('u3', 'Then use @b again.')]
+
+    expect(keptUserTexts(sections, compactionScope(sections, 'r'))).toStrictEqual(['Make a fox.', RUN_LIKE_THIS, 'Then use @b again.'])
+  })
+
+  it('counts an asset of a message part and an asset whose line is from the user as assets of the user', () => {
+    const assets: NotesAsset[] = [
+      { ...NOTES_DATA.assets[0], text: idImage(RED, 'a', true) },
+      NOTES_DATA.assets[1],
+      { id: 'e', kind: 'image', facts: 'PNG, 640x480, 80 KB', origin: 'from the user', sentence: '', byReply: false, text: null },
+    ]
+    const seen = assetsOf([partsCompaction(RUN_LIKE_THIS, assets), reply('r', '')], FACTS, { replySectionId: 'r' })
+
+    expect(byId(seen, 'fromUser')).toStrictEqual({ e: true, a: true, b: false })
   })
 })
 

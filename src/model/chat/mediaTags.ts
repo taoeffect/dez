@@ -1,7 +1,6 @@
 import { MARKER_ATTRIBUTES, escapeMarkerAttribute, markerAttributes } from '../../utils/markerAttribute'
 import { stripLiveSentinels } from './content'
-import { IMAGE_ID_SOURCE, KEPT_MARK_VALUE } from './images'
-import type { Role } from './types'
+import { IMAGE_ID_SOURCE, KEPT_MARK_VALUE, linkedPathCounts, type LinkedPathRule } from './images'
 
 // A clip (audio or video) is plain text, as an image reference and a tool
 // call are: no content node kind and no sentinel. It is one self-closing
@@ -25,9 +24,9 @@ import type { Role } from './types'
 //   - `src`: the source that plays now: the stored file (an absolute path
 //     in a folder of `MEDIA_FOLDERS`), else the temp copy (an absolute path
 //     in `MEDIA_CACHE_FOLDER` of the cache root), else the value of `url`.
-//     A clip that has no source any more has no `src`. In a user section
-//     it can also be a linked file (`isLinkedMediaPath`): a dropped file
-//     that Dez linked in place and did not copy (linkedFiles.ts).
+//     A clip that has no source any more has no `src`. It can also be a
+//     linked file (`isLinkedMediaPath`): a dropped file that Dez linked in
+//     place and did not copy (linkedFiles.ts).
 //   - `url`: the provider's URL of the clip, when the provider gave one. It
 //     never changes, so that a clip can go back to it when its saved file
 //     is deleted. It is a signed URL, which is a secret.
@@ -40,9 +39,9 @@ import type { Role } from './types'
 //     known attributes and in its order.
 // - Tags count in every section, and callers find them in one section at a
 //   time. A tag in a user section comes from a paste or a drop of a clip
-//   file. A linked `src` counts only in a user section
-//   (`sectionClipSource`): a model must not choose a file of this computer
-//   that Dez then reads.
+//   file. A linked `src` counts only where the user put it
+//   (`sectionClipSource`, `LinkedPathRule` of images.ts): a model must not
+//   choose a file of this computer that Dez then reads.
 // - Answer text from a model is escaped (`ModelTextEscaper`, toolBlocks.ts),
 //   so a model cannot write a tag.
 // - A provider gets only the request form (`mediaTagRequestText`): of a
@@ -135,10 +134,10 @@ export function isLinkedMediaPath(path: string): boolean {
 }
 
 /** The `src` of a clip's tag as a source that Dez reads, for a tag in a
- *  section with the role `role`: null for a linked path in an agent
- *  section, where it does not count (see the top of this file). */
-export function sectionClipSource(src: string | null, role: Role): string | null {
-  return src !== null && role !== 'user' && isLinkedMediaPath(src) ? null : src
+ *  text whose linked paths count by `rule`: null for a linked path that
+ *  does not count there (see the top of this file). */
+export function sectionClipSource(src: string | null, rule: LinkedPathRule): string | null {
+  return src !== null && isLinkedMediaPath(src) && !linkedPathCounts(src, rule) ? null : src
 }
 
 /** One attribute of a tag that Dez does not know here. */

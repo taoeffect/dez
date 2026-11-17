@@ -3,7 +3,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { ActiveModel, Section, SectionThinking, Tab, ThinkingReplay } from '../model/chat/types'
 import { compactionTagText, sectionCompactionBlock } from '../model/chat/compaction'
-import { compactionNotesText } from '../model/chat/compactionNotes'
+import { compactionNotesText, notesMessages } from '../model/chat/compactionNotes'
 import { sectionVisibleText } from '../model/chat/content'
 import type { ContextSize } from '../model/chat/contextSize'
 import type { DrawnImage, DrawnMediaType, ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
@@ -3231,8 +3231,8 @@ describe('dez.stream/start compaction', () => {
     expect(requests[1].tools).toStrictEqual(requests[0].tools)
     expect(compacting).toStrictEqual([true, false])
 
-    // The request after it holds the notes and the message of the user,
-    // and nothing of the rounds before.
+    // The request after it holds the notes, with the message of the user
+    // in them, and nothing of the rounds before.
     expect(sent[2].map((message) => message.role)).toStrictEqual(['user'])
     const next = JSON.stringify(sent[2])
     expect(next).toContain(NOTES_SUMMARY)
@@ -3242,8 +3242,8 @@ describe('dez.stream/start compaction', () => {
     const [notes, ...rest] = activeTab().sections
     expect(sectionCompactionBlock(notes)?.count).toBe(1)
     expect(notes.model).toMatchObject({ providerId: model.providerId, modelId: model.modelId })
+    // No section of the user stays: its message is in the notes.
     expect(rest.map((section) => ({ id: section.id, role: section.role, text: sectionVisibleText(section) }))).toStrictEqual([
-      { id: 'u1', role: 'user', text: 'Hi' },
       { id: 'a1', role: 'agent', text: 'None.' },
       { id: expect.any(String), role: 'user', text: '' },
     ])
@@ -3255,8 +3255,8 @@ describe('dez.stream/start compaction', () => {
     // A save at the swap, before the delete of the files that the
     // compaction left, and the save at the end of the reply.
     expect(savedConversations.map((data) => data.sections.map((section) => section.role))).toStrictEqual([
-      ['agent', 'user', 'agent'],
-      ['agent', 'user', 'agent', 'user'],
+      ['agent', 'agent'],
+      ['agent', 'agent', 'user'],
     ])
     expect(savedConversations[0].compactions?.count).toBe(1)
     expect(leftFiles).toStrictEqual([{ sources: [], pictures: [] }])
@@ -3275,18 +3275,19 @@ describe('dez.stream/start compaction', () => {
       { role: 'agent', content: 'An earlier answer.' },
       { role: 'user', content: 'More' },
     ])
-    // The first and the newest message of the user stay word for word.
+    // The first and the newest message of the user stay word for word, in
+    // the notes.
     expect(sent[1].map((message) => message.role)).toStrictEqual(['user'])
     const next = JSON.stringify(sent[1])
     for (const kept of [NOTES_SUMMARY, 'Hi', 'More']) expect(next).toContain(kept)
     expect(next).not.toContain('An earlier answer.')
     expect(sectionCompactionBlock(activeTab().sections[0])?.count).toBe(1)
     expect(sectionTexts().slice(1)).toStrictEqual([
-      { role: 'user', text: 'Hi' },
-      { role: 'user', text: 'More' },
       { role: 'agent', text: 'None.' },
       { role: 'user', text: '' },
     ])
+    const parts = notesMessages(sectionCompactionBlock(activeTab().sections[0])!.notes).map(({ text }) => text)
+    expect(parts).toStrictEqual(['Hi', 'More'])
     expect(toasts).toStrictEqual([])
   })
 
@@ -3406,6 +3407,8 @@ describe('dez.stream/start compaction', () => {
   it('gives the files that the compaction left with no text to the delete: a dropped intermediate image, and the pictures of the tag before', async () => {
     const oldPicture = { file: 'old-sheet.jpg', label: 'A frame sheet.', width: 800, height: 200, bytes: 3000 }
     const oldNotes = compactionNotesText({
+      firstMessage: null,
+      newestMessage: null,
       summary: 'A fox for the user.',
       requirements: '',
       nextSteps: '',

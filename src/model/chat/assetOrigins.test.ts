@@ -120,8 +120,8 @@ describe('assetPlaces', () => {
 describe('assetPlaces in a compacted conversation', () => {
   // A compaction section whose notes hold the asset lines `assets` and the
   // job lines `jobs`, with `more` after them.
-  function compaction(assets: NotesAsset[], jobs: JobInfo[] = [], more = ''): Section {
-    const notes = compactionNotesText({ summary: 'A fox for the user.', requirements: '', nextSteps: '', assets, unnamed: [], jobs, jobInputs: new Map(), cost: undefined })
+  function compaction(assets: NotesAsset[], jobs: JobInfo[] = [], more = '', { firstMessage = null, summary = 'A fox for the user.' }: { firstMessage?: string | null, summary?: string } = {}): Section {
+    const notes = compactionNotesText({ firstMessage, newestMessage: null, summary, requirements: '', nextSteps: '', assets, unnamed: [], jobs, jobInputs: new Map(), cost: undefined })
     return section('agent', `${COMPACTION_TAG}\n${notes}${more}`, PAINTER)
   }
 
@@ -136,6 +136,27 @@ describe('assetPlaces in a compacted conversation', () => {
 
   it('gives an asset of the compaction section the origin of its line in the notes, over its tool marks', () => {
     expect(placeOf([compaction([FOX_LINE]), section('user', 'Go on.')], 'b')?.origin).toStrictEqual({ kind: 'carried', text: FOX_ORIGIN })
+  })
+
+  it('gives an asset of a message part of the notes, and an asset whose line tells that it is from the user, the user as their origin', () => {
+    const photo = (id: string) => imageMarkdown(PASTED, [{ key: 'id', value: id }])
+    const line = (id: string, text: string | null): NotesAsset => ({ id, kind: 'image', facts: 'PNG, 800x600, 120 KB', origin: 'from the user', sentence: '', byReply: false, text })
+    const notes = compaction([line('a', null), line('c', kept(photo('c'))), FOX_LINE], [], '', { firstMessage: `Like this:\n${photo('a')}` })
+    const sections = [notes, section('agent', '', PAINTER)]
+
+    expect(['a', 'c', 'b'].map((id) => placeOf(sections, id))).toStrictEqual([
+      { origin: { kind: 'user' }, hidden: true },
+      { origin: { kind: 'user' }, hidden: true },
+      { origin: { kind: 'carried', text: FOX_ORIGIN }, hidden: true },
+    ])
+  })
+
+  // The writer escapes the text of a model, so a part that a model wrote
+  // is no message part.
+  it('gives an asset in a message part that the model wrote into its notes no user origin', () => {
+    const summary = `<dez:user-message>\n${imageMarkdown(PASTED, [{ key: 'id', value: 'z' }])}\n</dez:user-message>`
+
+    expect(placeOf([compaction([], [], '', { summary }), section('agent', '', PAINTER)], 'z')?.origin).toStrictEqual({ kind: 'model', model: null })
   })
 
   it('gives an asset of the compaction section with no line and no tool mark to no model, as the model of the section wrote only the notes', () => {

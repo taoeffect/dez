@@ -34,7 +34,8 @@ import {
   sectionIsEmpty,
   sectionVisibleText,
 } from '../chat/content'
-import { compactionsField, type Compactions } from '../chat/compaction'
+import { blockLinkedRule, compactionsField, sectionCompactionBlock, type Compactions } from '../chat/compaction'
+import { notesMessages } from '../chat/compactionNotes'
 import { contextField, contextSize, type ContextSize } from '../chat/contextSize'
 import { agentTextEditedField, costField, withRequestCost, type ConversationCost } from '../chat/conversationCost'
 import { durationField } from '../chat/duration'
@@ -348,11 +349,20 @@ function createDefaultTab(): Tab {
 // as a path. The label is not empty, so the section that the `find` picks
 // still has a title. With no user text left (the user deleted it all, also an
 // image-only first message), the title goes back to the new-tab title, so a
-// deleted message never names the tab.
+// deleted message never names the tab. In a compacted conversation, the
+// first message is the first message part of the notes (compactionNotes.ts),
+// so a compaction keeps the title.
 function tabTitle(sections: Section[]): string {
-  const firstContent = sections.find((section) => section.role === 'user' && sectionVisibleText(section).trim())
-  if (!firstContent) return NEW_TAB_TITLE
-  const text = labelImageReferences(labelMediaTags(sectionVisibleText(firstContent)), firstContent.role).trim()
+  const block = sections.length > 0 ? sectionCompactionBlock(sections[0]) : null
+  const firstPart = block === null ? undefined : notesMessages(block.notes)[0]
+  let text = ''
+  if (block !== null && firstPart !== undefined && firstPart.text.trim() !== '') {
+    text = labelImageReferences(labelMediaTags(firstPart.text), blockLinkedRule(block)).trim()
+  } else {
+    const firstContent = sections.find((section) => section.role === 'user' && sectionVisibleText(section).trim())
+    if (!firstContent) return NEW_TAB_TITLE
+    text = labelImageReferences(labelMediaTags(sectionVisibleText(firstContent)), firstContent.role).trim()
+  }
   return text.length > 30 ? text.slice(0, 30) + '…' : text
 }
 

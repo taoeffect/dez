@@ -4,7 +4,6 @@ import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemir
 import { createApp, h, reactive, shallowRef, type App, type ShallowRef } from 'vue'
 import { SENTINEL_CHAR } from '../../model/chat/content'
 import { MEDIA_TAG_NAMES, findMediaTags, isLinkedMediaPath, isPastedMediaPath, isTempMediaPath, mediaTagText, savedMediaTag, unsavedMediaTag, type MediaTag, type MediaTagData } from '../../model/chat/mediaTags'
-import type { Role } from '../../model/chat/types'
 import MediaPlayer from '../media/MediaPlayer.vue'
 import { expiryNotice } from '../media/clipState'
 import { sectionsField, type SectionModel } from '../thread/cmEditor'
@@ -39,10 +38,11 @@ export function isInSelectableTooltip(target: EventTarget | null): boolean {
   return element instanceof Element && element.closest(`.${SELECTABLE_TOOLTIP_CLASS}`) !== null
 }
 
-/** A tag that the editor shows as a player, with the role of its section,
- *  which tells whether a linked `src` counts (`sectionClipSource`). */
+/** A tag that the editor shows as a player, and whether a linked `src`
+ *  counts there: only in a user section (`sectionClipSource`). The clips of
+ *  the compaction block play in the assets chip (compactionChip.ts). */
 interface RenderedMedia extends MediaTag {
-  role: Role
+  linkedSrc: boolean
 }
 
 interface MediaDecorations {
@@ -78,16 +78,16 @@ interface MountedPlayer {
 
 const mountedPlayers = new WeakMap<HTMLElement, MountedPlayer>()
 
-/** Mounts the player of the clip `shownTag` of a section with the role
- *  `role`, and returns its root element. `destroyPlayer` must take it
- *  down.
+/** Mounts the player of the clip `shownTag`, and returns its root element.
+ *  `linkedSrc` tells whether a linked `src` counts where the tag is
+ *  (`clipSourceKind`). `destroyPlayer` must take it down.
  *
  *  `place` tells where the tag is in the doc now, for the Save and the
  *  Delete. With none, the player is drawn in place of its tag, and its DOM
  *  tells (`MediaWidget`). The player of a hidden clip is drawn in the panel
  *  of its chip (toolCalls.ts), whose DOM is at the chip's place, so the
  *  chip gives the place. */
-export function createPlayer(view: EditorView, shownTag: MediaTagData, role: Role, place?: AssetPlace): HTMLElement {
+export function createPlayer(view: EditorView, shownTag: MediaTagData, linkedSrc: boolean, place?: AssetPlace): HTMLElement {
   const root = document.createElement('span')
   root.className = ROOT_CLASS
   const tagPlace = place ?? (() => view.contentDOM.contains(root) ? view.posAtDOM(root) : null)
@@ -102,7 +102,7 @@ export function createPlayer(view: EditorView, shownTag: MediaTagData, role: Rol
         id,
         type,
         src,
-        role,
+        linkedSrc,
         expires,
         busy: src !== null && busyClips.has(src),
         onSave: () => { void saveClip(view, root, tagPlace, tag.value) },
@@ -210,7 +210,7 @@ export function destroyPlayer(root: HTMLElement): void {
 
 /** The player of one clip, in place of its tag. */
 class MediaWidget extends WidgetType {
-  constructor(readonly tag: MediaTagData, readonly role: Role) {
+  constructor(readonly tag: MediaTagData, readonly linkedSrc: boolean) {
     super()
   }
   // Every field that the player shows or that Save and Delete read. Doc
@@ -219,16 +219,16 @@ class MediaWidget extends WidgetType {
     if (!(other instanceof MediaWidget)) return false
     const a = this.tag
     const b = other.tag
-    return this.role === other.role && a.kind === b.kind && a.id === b.id && a.type === b.type && a.src === b.src && a.url === b.url && a.expires === b.expires
+    return this.linkedSrc === other.linkedSrc && a.kind === b.kind && a.id === b.id && a.type === b.type && a.src === b.src && a.url === b.url && a.expires === b.expires
   }
   toDOM(view: EditorView): HTMLElement {
-    return createPlayer(view, this.tag, this.role)
+    return createPlayer(view, this.tag, this.linkedSrc)
   }
   // A changed tag goes to the drawn player (`updatePlayer`), so CM makes no
   // new one, and a clip that plays goes on. A new editor state
   // (`view.setState`: a tab switch, the end of a stream), a role change of
-  // the section, or a hidden or kept mark makes a new widget, so it stops a
-  // clip that plays.
+  // the section (which changes `linkedSrc`), or a hidden or kept mark makes
+  // a new widget, so it stops a clip that plays.
   //
   // The player's element also stays in the document while CM draws its line
   // again, which a player that fills the screen needs: an element that
@@ -240,7 +240,7 @@ class MediaWidget extends WidgetType {
   // make the DOM agree, so a Save in fullscreen ended the fullscreen (the
   // e2e case "keeps a video in fullscreen over a Save" covers it).
   updateDOM(dom: HTMLElement, _view: EditorView, from: MediaWidget): boolean {
-    return from.role === this.role && updatePlayer(dom, this.tag)
+    return from.linkedSrc === this.linkedSrc && updatePlayer(dom, this.tag)
   }
   destroy(dom: HTMLElement): void {
     destroyPlayer(dom)
@@ -255,18 +255,18 @@ class MediaWidget extends WidgetType {
   }
 }
 
-/** The tags that the editor shows as players, in doc order, each with the
- *  role of its section. Each section is read on its own (`sectionTexts`).
- *  Left as text: a line that is not a valid tag, and a tag that holds a
- *  sentinel (a prompt pill), whose widgets and atomic ranges must stay the
- *  only ones there. */
+/** The tags that the editor shows as players, in doc order, each with
+ *  whether a linked `src` counts in its section. Each section is read on
+ *  its own (`sectionTexts`). Left as text: a line that is not a valid tag,
+ *  and a tag that holds a sentinel (a prompt pill), whose widgets and
+ *  atomic ranges must stay the only ones there. */
 function findRenderedMedia(doc: string, sections: readonly SectionModel[]): RenderedMedia[] {
   const media: RenderedMedia[] = []
   if (!MEDIA_TAG_NAMES.some((name) => doc.includes(`<${name}`))) return media
   for (const { section, from, text } of sectionTexts(doc, sections)) {
     for (const tag of findMediaTags(text)) {
       if (SENTINEL_CHAR.test(text.slice(tag.from, tag.to))) continue
-      media.push({ ...tag, from: from + tag.from, to: from + tag.to, role: section.role })
+      media.push({ ...tag, from: from + tag.from, to: from + tag.to, linkedSrc: section.role === 'user' })
     }
   }
   return media
@@ -285,7 +285,7 @@ function buildMediaDecorations(state: EditorState): MediaDecorations {
   const decorations = Decoration.set(blocks.map((tag) => {
     const owner = hidden.get(tag.from)
     return Decoration.replace({
-      widget: owner ? new HiddenAssetWidget(tag.kind, tag.id, owner) : new MediaWidget(tag, tag.role),
+      widget: owner ? new HiddenAssetWidget(tag.kind, tag.id, owner) : new MediaWidget(tag, tag.linkedSrc),
     }).range(tag.from, tag.to)
   }))
   return { media, blocks, decorations }

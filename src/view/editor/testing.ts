@@ -26,9 +26,10 @@ export function keptImage(id = 'b'): string {
   return idImage(HIDDEN_IMAGE_PATH, id, true)
 }
 
-/** The tag of a saved clip that a compaction keeps out of view. */
-export function keptClip(id = 'c'): string {
-  return mediaTagTextWithKeptMark({ kind: 'audio', id, type: 'audio/wav', src: HIDDEN_CLIP_PATH, url: null, expires: null, other: [] }, true)
+/** The tag of a clip (a saved one, unless `src` is given) that a
+ *  compaction keeps out of view. */
+export function keptClip(id = 'c', src = HIDDEN_CLIP_PATH): string {
+  return mediaTagTextWithKeptMark({ kind: 'audio', id, type: 'audio/wav', src, url: null, expires: null, other: [] }, true)
 }
 
 /** The doc of `texts`, one section each. */

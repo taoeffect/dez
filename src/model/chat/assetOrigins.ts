@@ -1,8 +1,9 @@
 import type { FoundAsset } from '../streams/mediaRequest'
+import { assetOriginText } from '../tools/assetInfo'
 import { JOBS_WAIT_TOOL, jobsWaitResults, madeAssetIds, startedJob } from '../tools/jobs'
 import { callLabel } from '../tools/registry'
 import { compactionMessageEnd, sectionCompactionBlock } from './compaction'
-import { notesAssetLines, notesJobLines, type NotesAssetLine, type NotesJobLine } from './compactionNotes'
+import { notesAssetLines, notesJobLines, notesMessages, type NotesAssetLine, type NotesJobLine } from './compactionNotes'
 import { sectionPlainText } from './content'
 import { findHiddenAssets, findKeptAssets } from './hiddenAssets'
 import { IMAGE_HIDDEN_KEY, IMAGE_MADE_BY_KEY, IMAGE_TOOL_KEY } from './images'
@@ -109,15 +110,23 @@ const NO_JOB_LINES: ReadonlyMap<string, NotesJobLine> = new Map()
  *  section.
  *
  *  In a compacted conversation, an asset of the compaction section has
- *  the origin of its line in the notes. The job lines of the notes are of
- *  the reply that ran at the compaction, so only the assets of the first
- *  reply after the compaction message read them: a job id is unique in
- *  its reply only. */
+ *  the origin of its line in the notes. An asset in a message part of the
+ *  notes, and an asset whose line tells "from the user", are from the
+ *  user. The job lines of the notes are of the reply that ran at the
+ *  compaction, so only the assets of the first reply after the compaction
+ *  message read them: a job id is unique in its reply only. */
 export function assetPlaces(sections: readonly Section[], assets: readonly FoundAsset[]): AssetPlace[] {
   const block = sections.length > 0 ? sectionCompactionBlock(sections[0]) : null
   const compacted = block !== null
   const notes = block?.notes ?? ''
   const carriedReply = compacted ? compactionMessageEnd(sections) : -1
+  // Whether the offset `from` of the text of the compaction section is in
+  // a message part of its notes.
+  let messageRanges: { from: number, to: number }[] | undefined
+  const inMessage = (from: number) => {
+    messageRanges ??= notesMessages(notes).map((message) => ({ from: block!.notesFrom + message.from, to: block!.notesFrom + message.to }))
+    return messageRanges.some((range) => from >= range.from && from < range.to)
+  }
   // Each of these reads whole texts, so only an asset that needs one asks
   // for it, and each is read once for all assets.
   let assetLines: ReadonlyMap<string, NotesAssetLine> | undefined
@@ -151,8 +160,9 @@ export function assetPlaces(sections: readonly Section[], assets: readonly Found
     const hidden = hiddenFrom.has(from) || isKept(asset, from)
     const inNotes = compacted && asset.section === 0
     if (inNotes) {
+      if (inMessage(from)) return { origin: { kind: 'user' }, hidden }
       const line = (assetLines ??= notesAssetLines(notes)).get(asset.id)
-      if (line) return { origin: { kind: 'carried', text: line.origin }, hidden }
+      if (line) return { origin: line.origin === assetOriginText({ kind: 'user' }) ? { kind: 'user' } : { kind: 'carried', text: line.origin }, hidden }
     }
     const marks = toolMarks(asset)
     // The model of a compaction section wrote its notes, not its assets.

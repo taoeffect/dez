@@ -88,6 +88,13 @@ describe('isLinkedMediaPath and sectionClipSource', () => {
     expect(sectionClipSource(LINKED, 'agent')).toBeNull()
     for (const src of [SAVED_VIDEO, CACHED_VIDEO, CLIP_URL, null]) expect(sectionClipSource(src, 'agent'), String(src)).toBe(src)
   })
+
+  // The rule of a compaction block: only the paths of its `linked` list.
+  it('keeps a linked source for a set of paths only when the set holds it', () => {
+    expect(sectionClipSource(LINKED, new Set([LINKED]))).toBe(LINKED)
+    expect(sectionClipSource(LINKED, new Set(['/home/u/Videos/other.mp4']))).toBeNull()
+    expect(sectionClipSource(SAVED_VIDEO, new Set())).toBe(SAVED_VIDEO)
+  })
 })
 
 describe('mediaTagText', () => {

@@ -11,7 +11,7 @@ import { colorDistance, decodedImage, pasteImage, pasteImageReference, shownImag
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendAnthropicReply, sendChatReply, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeConversationId, copySelection, docPos, docPosPoint, editorCaret, editorDoc, focusEditor, newTab, openToasts, pasteText, pickModel, pressRolePill, sbpCall, setCaret, threadSections, waitForThread } from './harness/thread'
+import { activeConversationId, activeTabTitle, copySelection, docPos, docPosPoint, editorCaret, editorDoc, focusEditor, newTab, openToasts, pasteText, pickModel, pressRolePill, sbpCall, setCaret, threadSections, waitForThread } from './harness/thread'
 
 // Images in a conversation, driven through the real app: a paste or a drop
 // stores the file and puts its reference, with a new image id, in the doc,
@@ -291,10 +291,6 @@ describe('images', () => {
       const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
       view.dispatch({ changes: { from: view.state.doc.length, insert }, userEvent: 'input.type' })
     }, text)
-  }
-
-  async function activeTabTitle (): Promise<string | null> {
-    return browser.execute(() => document.querySelector('.tab--active .tab-title')?.textContent ?? null)
   }
 
   // Closes every toast, so that a test sees only the toasts it causes (the
@@ -613,13 +609,13 @@ describe('images', () => {
   it('puts back the New Tab title when the trash deletes the only content of a tab, an image', async () => {
     await newTab(browser)
     await insertPastedImage('', '')
-    await waitForValue(browser, 'title with the image', activeTabTitle, '[image]')
+    await waitForValue(browser, 'title with the image', () => activeTabTitle(browser), '[image]')
 
     await clickTrash(0)
     await waitForValue(browser, 'prompt', async () => (await promptState()).focus, 'yes')
     await browser.keys(Key.Enter)
     await waitForValue(browser, 'doc after Enter', () => editorDoc(browser), '')
-    await waitForValue(browser, 'title after the delete', activeTabTitle, 'New Tab')
+    await waitForValue(browser, 'title after the delete', () => activeTabTitle(browser), 'New Tab')
   })
 
   it('shows the source on Backspace after an image, and the image again on `)`, undo, and redo', async () => {
@@ -885,7 +881,7 @@ describe('images', () => {
       { role: 'agent', text: replyText(VISION.modelName) },
       { role: 'user', text: '' },
     ])
-    expect(await activeTabTitle()).toBe(`[image]${QUESTION}`)
+    expect(await activeTabTitle(browser)).toBe(`[image]${QUESTION}`)
 
     const conversationId = await activeConversationId(browser)
     await waitForValue(browser, 'saved reference', async () => {
@@ -1149,7 +1145,7 @@ describe('images', () => {
     await sbpCall(browser, 'dez.model/tabs/openConversation', conversationId)
     await waitForValue(browser, 'reopened conversation', async () => (await threadSections(browser))[0]?.text ?? null, image.reference + QUESTION)
     await waitForValue(browser, 'shown image', () => shownImages(browser), [shownPastedImage(image)])
-    expect(await activeTabTitle()).toBe(`[image]${QUESTION}`)
+    expect(await activeTabTitle(browser)).toBe(`[image]${QUESTION}`)
 
     await sbpCall(browser, 'dez.model/tabs/openConversation', sentLinkedImage.conversationId)
     await waitForValue(browser, 'reopened linked image conversation', async () => (await threadSections(browser))[0]?.text ?? null, sentLinkedImage.message)

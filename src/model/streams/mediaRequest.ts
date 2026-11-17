@@ -1,5 +1,6 @@
 import type { MessagePart, Section } from '../chat/types'
 import type { AssetKind } from '../chat/assetMentions'
+import { sectionLinkedRule } from '../chat/compaction'
 import { sectionPlainText } from '../chat/content'
 import { findAssetMentions } from '../chat/imageMentions'
 import { findImageReferences, requestImageReferenceStart, type ImageReference } from '../chat/images'
@@ -71,7 +72,7 @@ export interface ConversationAssets {
 
 /** The images and the clips of `sections` by their ids: the image
  *  references and the media tags of each section, user and agent, with the
- *  rules of its role (a linked file counts only in a user section). Of two
+ *  rule of the section for a linked file (`sectionLinkedRule`). Of two
  *  images or two clips with one id (a hand edit), the last one counts, and
  *  an id that an image and a clip both have names the image. */
 export function conversationAssets(sections: readonly Section[]): ConversationAssets {
@@ -79,12 +80,13 @@ export function conversationAssets(sections: readonly Section[]): ConversationAs
   const clips = new Map<string, Extract<FoundAsset, { kind: 'clip' }>>()
   sections.forEach((section, index) => {
     const text = sectionPlainText(section)
-    for (const reference of findImageReferences(text, section.role)) {
+    const rule = sectionLinkedRule(section, index)
+    for (const reference of findImageReferences(text, rule)) {
       if (reference.id !== null) images.set(reference.id, { kind: 'image', id: reference.id, section: index, reference })
     }
     for (const tag of findMediaTags(text)) {
       const { kind, id, type, src, url, expires } = tag
-      clips.set(id, { kind: 'clip', id, section: index, tag, clip: { kind, id, type, src: sectionClipSource(src, section.role), url, expires } })
+      clips.set(id, { kind: 'clip', id, section: index, tag, clip: { kind, id, type, src: sectionClipSource(src, rule), url, expires } })
     }
   })
   for (const id of images.keys()) clips.delete(id)

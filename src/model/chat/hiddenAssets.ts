@@ -1,6 +1,6 @@
 import { JOBS_WAIT_TOOL, jobsWaitResults, startedJobId, type JobResult } from '../tools/jobs'
-import { isCarriedUserAssets, readCompactionBlock } from './compaction'
-import { findImageReferences, IMAGE_HIDDEN_KEY, IMAGE_KEPT_KEY, isKeptImage, type ImageReference } from './images'
+import { blockLinkedRule, isCarriedUserAssets, readCompactionBlock } from './compaction'
+import { findImageReferences, IMAGE_HIDDEN_KEY, IMAGE_KEPT_KEY, isKeptImage, type ImageReference, type LinkedPathRule } from './images'
 import { findMediaTags, isKeptClip, MEDIA_HIDDEN_ATTRIBUTE, type MediaTag } from './mediaTags'
 import { findToolBlocks, type ToolBlock } from './toolBlocks'
 import type { Role } from './types'
@@ -105,11 +105,12 @@ function keptAssetsOf(text: string, role: Role): HiddenAsset[] {
 
 // Every asset of the text of a compaction section before `to`, the end of
 // its block, in order: the block shows only as its chips, so no asset in
-// it can show at its own place.
-function blockAssetsOf(text: string, to: number): HiddenAsset[] {
+// it can show at its own place. Its linked paths count by `rule`
+// (`blockLinkedRule`).
+function blockAssetsOf(text: string, to: number, rule: LinkedPathRule): HiddenAsset[] {
   const owner: HiddenAssetOwner = { kind: 'compaction' }
   const assets: HiddenAsset[] = []
-  for (const image of findImageReferences(text.slice(0, to), 'agent')) assets.push({ kind: 'image', owner, from: image.from, to: image.to, image })
+  for (const image of findImageReferences(text.slice(0, to), rule)) assets.push({ kind: 'image', owner, from: image.from, to: image.to, image })
   for (const tag of findMediaTags(text.slice(0, to))) assets.push({ kind: 'clip', owner, from: tag.from, to: tag.to, tag })
   return assets.sort((a, b) => a.from - b.from)
 }
@@ -122,8 +123,8 @@ function blockAssetsOf(text: string, to: number): HiddenAsset[] {
  *  section that starts with a valid block, so there are chips to show
  *  them under). In the compaction section, every image and clip of the
  *  block is hidden, with or without the kept mark (`blockAssetsOf`). In
- *  the user sections right after it, an asset with the kept mark is
- *  hidden only in a section of the carried assets of the user
+ *  the user sections right after it (the old layout), an asset with the
+ *  kept mark is hidden only in a section of the carried assets of the user
  *  (`isCarriedUserAssets`). A blank section ends that run as little as it
  *  ends the compaction message of a request. At any other place a marked
  *  asset shows as any other asset: in a kept message of the user, the
@@ -133,7 +134,7 @@ export function findKeptAssets(sections: readonly { role: Role, text: string }[]
   const first = sections[0]
   const block = first?.role === 'agent' ? readCompactionBlock(first.text) : null
   if (!block) return kept
-  kept[0] = blockAssetsOf(first.text, block.to)
+  kept[0] = blockAssetsOf(first.text, block.to, blockLinkedRule(block))
   for (let index = 1; index < sections.length; index++) {
     const { role, text } = sections[index]
     if (text.trim() === '') continue

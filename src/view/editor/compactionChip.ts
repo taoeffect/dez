@@ -1,7 +1,8 @@
 import { StateEffect, StateField, type EditorState, type Extension } from '@codemirror/state'
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view'
-import { readCompactionBlock } from '../../model/chat/compaction'
+import { blockLinkedRule, readCompactionBlock, type CompactionBlock } from '../../model/chat/compaction'
 import { compactionNotesParts } from '../../model/chat/compactionNotes'
+import { linkedPathCounts } from '../../model/chat/images'
 import type { ShownPicture } from '../../model/chat/shownPictures'
 import { countOf } from '../../utils/countText'
 import { SECTION_SEP } from '../thread/cmEditor'
@@ -71,32 +72,39 @@ export type CompactionChipsOpen = Readonly<Record<CompactionChipPart, boolean>>
 
 const CLOSED: CompactionChipsOpen = { assets: false, summary: false }
 
-/** The last notes that `notesParts` read, and their parts. Each doc change
- *  (a token of a reply) reads the chips again, and the notes stay the
- *  same. */
-let lastNotes: { notes: string, parts: ReturnType<typeof compactionNotesParts> } | null = null
+/** The last block text that `notesParts` read, and the parts of its notes.
+ *  Each doc change (a token of a reply) reads the chips again, and the
+ *  block stays the same. The key is the whole block, as the rule of its
+ *  linked paths is in its tag. */
+let lastNotes: { blockText: string, parts: ReturnType<typeof compactionNotesParts> } | null = null
 
-function notesParts(notes: string): ReturnType<typeof compactionNotesParts> {
-  if (lastNotes?.notes !== notes) lastNotes = { notes, parts: compactionNotesParts(notes) }
+function notesParts(blockText: string, block: CompactionBlock): ReturnType<typeof compactionNotesParts> {
+  if (lastNotes?.blockText !== blockText) lastNotes = { blockText, parts: compactionNotesParts(block.notes, blockLinkedRule(block)) }
   return lastNotes.parts
 }
 
 /** What the compaction chips of `state` show; null when the doc does not
  *  start with a compaction block. An asset before the first section
- *  separator is in the compaction section, which has the role agent. Each
- *  other one is in a user section that holds the carried assets of the
- *  user (`findKeptAssets`). */
+ *  separator is in the compaction block, where a linked path counts only
+ *  when the tag lists it. Each other one is in a user section of an older
+ *  Dez that holds the carried assets of the user (`findKeptAssets`). */
 export function compactionChipData(state: EditorState): CompactionChipData | null {
   const [range] = compactionBlockRange(state.doc)
-  const block = range && readCompactionBlock(state.sliceDoc(range.from, range.to))
+  const blockText = range ? state.sliceDoc(range.from, range.to) : ''
+  const block = range && readCompactionBlock(blockText)
   if (!block) return null
+  const rule = blockLinkedRule(block)
   const kept = hiddenAssets(state).filter((asset) => asset.owner.kind === 'compaction')
   const firstSeparator = kept.length === 0 ? -1 : state.doc.toString().indexOf(SECTION_SEP)
-  const { assets, summary } = notesParts(block.notes)
+  const { assets, summary } = notesParts(blockText, block)
   return {
     count: block.count,
     dropped: block.dropped ?? null,
-    assets: kept.map((asset) => panelAsset(asset, firstSeparator < 0 || asset.from < firstSeparator ? 'agent' : 'user')),
+    assets: kept.map((asset) => {
+      const inBlock = firstSeparator < 0 || asset.from < firstSeparator
+      const src = asset.kind === 'clip' ? asset.tag.src : null
+      return panelAsset(asset, inBlock ? src !== null && linkedPathCounts(src, rule) : true)
+    }),
     pictures: block.pictures,
     assetsText: assets,
     summary,

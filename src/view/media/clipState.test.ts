@@ -2,24 +2,24 @@ import { describe, expect, it } from 'vitest'
 import { clipFile, clipProblem, clipSourceKind, expiryNotice, problemCard, type ClipSourceKind } from './clipState'
 
 describe('clipSourceKind', () => {
-  it('tells a saved file, a temp copy, and a URL apart, in any section', () => {
-    for (const role of ['user', 'agent'] as const) {
-      expect(clipSourceKind('/home/u/.config/dez/assets/generated/video/9f3c.mp4', role)).toBe('saved')
-      expect(clipSourceKind('/home/u/.config/dez/assets/generated/audio/9f3c.mp3', role)).toBe('saved')
-      expect(clipSourceKind('/home/u/.cache/dez/media/9f3c.mp4', role)).toBe('temp')
-      expect(clipSourceKind('https://cdn.example/v.mp4?sig=1', role)).toBe('remote')
-      expect(clipSourceKind('HTTP://cdn.example/v.mp4', role)).toBe('remote')
+  it('tells a saved file, a temp copy, and a URL apart, whether a linked file counts or not', () => {
+    for (const linkedSrc of [true, false]) {
+      expect(clipSourceKind('/home/u/.config/dez/assets/generated/video/9f3c.mp4', linkedSrc)).toBe('saved')
+      expect(clipSourceKind('/home/u/.config/dez/assets/generated/audio/9f3c.mp3', linkedSrc)).toBe('saved')
+      expect(clipSourceKind('/home/u/.cache/dez/media/9f3c.mp4', linkedSrc)).toBe('temp')
+      expect(clipSourceKind('https://cdn.example/v.mp4?sig=1', linkedSrc)).toBe('remote')
+      expect(clipSourceKind('HTTP://cdn.example/v.mp4', linkedSrc)).toBe('remote')
     }
   })
 
   it('gives no source for a tag with no src', () => {
-    expect(clipSourceKind(null, 'user')).toBe('none')
+    expect(clipSourceKind(null, true)).toBe('none')
   })
 
-  it('takes any other absolute path as a linked file in a user section only', () => {
+  it('takes any other absolute path as a linked file only where a linked file counts', () => {
     for (const src of ['/home/u/Videos/clip.mp4', '/home/u/.config/dez/assets/generated/video/sub/9f3c.mp4']) {
-      expect(clipSourceKind(src, 'user'), src).toBe('linked')
-      expect(clipSourceKind(src, 'agent'), src).toBe('none')
+      expect(clipSourceKind(src, true), src).toBe('linked')
+      expect(clipSourceKind(src, false), src).toBe('none')
     }
   })
 
@@ -33,7 +33,7 @@ describe('clipSourceKind', () => {
       'https://',
       'https://cdn.example/a b.mp4',
     ]
-    for (const src of sources) expect(clipSourceKind(src, 'user'), src).toBe('none')
+    for (const src of sources) expect(clipSourceKind(src, true), src).toBe('none')
   })
 })
 
@@ -134,21 +134,21 @@ describe('clipFile', () => {
 
   it('gives the saved file, the temp copy, or the linked file, also when this computer cannot play it', () => {
     for (const src of [SAVED, TEMP, LINKED]) {
-      expect(clipFile(src, 'user', null, false), src).toBe(src)
-      expect(clipFile(src, 'user', 'cannot-play', false), src).toBe(src)
+      expect(clipFile(src, true, null, false), src).toBe(src)
+      expect(clipFile(src, true, 'cannot-play', false), src).toBe(src)
     }
   })
 
-  it('gives no file for a clip that plays from its URL only, that has no source, or that links a file in an agent section', () => {
-    expect(clipFile('https://cdn.example/v.mp4?sig=1', 'user', null, false)).toBeNull()
-    expect(clipFile(LINKED, 'agent', null, false)).toBeNull()
-    expect(clipFile(null, 'user', 'gone', false)).toBeNull()
+  it('gives no file for a clip that plays from its URL only, that has no source, or that links a file where a linked file does not count', () => {
+    expect(clipFile('https://cdn.example/v.mp4?sig=1', true, null, false)).toBeNull()
+    expect(clipFile(LINKED, false, null, false)).toBeNull()
+    expect(clipFile(null, true, 'gone', false)).toBeNull()
   })
 
   it('gives no file when the file cannot be read, or while a Save or a Delete runs', () => {
     for (const src of [SAVED, TEMP, LINKED]) {
-      expect(clipFile(src, 'user', 'gone', false), src).toBeNull()
-      expect(clipFile(src, 'user', null, true), src).toBeNull()
+      expect(clipFile(src, true, 'gone', false), src).toBeNull()
+      expect(clipFile(src, true, null, true), src).toBeNull()
     }
   })
 })

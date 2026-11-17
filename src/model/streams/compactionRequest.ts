@@ -141,7 +141,7 @@ The conversation is near the limit of what one request can hold. So Dez now take
 Write only the notes, as plain text, with these four headings and nothing before or after them.${tools ? ' Call no tool in this answer: Dez does not run it.' : ''}
 
 ## Summary
-What the user wants, and what was done so far, in the order in which it happened. Include what failed and why, so that it is not tried again.
+A brief account of what the user and the assistant did between the first and the newest message of the user, in the order in which it happened, and where the reply that runs now stands. Include what failed and why, so that it is not tried again. Do not repeat the two messages: Dez adds them to the notes word for word.
 
 ## Requirements and decisions
 Every requirement, preference, and correction of the user, in the user's own words where the wording matters, and every decision that was made, with its reason. Include the exact values that later work needs: names, numbers, settings, and the important parts of prompts and commands.

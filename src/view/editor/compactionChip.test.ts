@@ -9,25 +9,27 @@ import { CHIP, PLAYER, createState, keptClip, keptImage } from './testing'
 
 const PICTURES: ShownPicture[] = [{ file: 'f1.png', label: 'asset_view: the sheet of the video clip @d.', width: 64, height: 48, bytes: 300 }]
 const SHOWN = '![/home/u/.config/dez/assets/images/shown.png](id=s)'
+const LINKED_CLIP = '/home/u/Music/linked.wav'
 
 interface TagOptions {
   count?: number
   dropped?: number
   pictures?: ShownPicture[]
+  linked?: string[]
 }
 
-/** A compacted conversation with the tag `count`, `dropped`, and
- *  `pictures`, the block with the notes `notes`, a kept message of the
+/** A compacted conversation with the tag `count`, `dropped`, `pictures`,
+ *  and `linked`, the block with the notes `notes`, a kept message of the
  *  user, and the section of the carried assets of the user (`carried`). */
-function compactedState(notes: string[], carried: string[], { count = 1, dropped, pictures = [] }: TagOptions = {}): EditorState {
-  const block = compactionBlockText({ count, lastId: 'z', dropped, pictures }, notes.join('\n'))
+function compactedState(notes: string[], carried: string[], { count = 1, dropped, pictures = [], linked }: TagOptions = {}): EditorState {
+  const block = compactionBlockText({ count, lastId: 'z', dropped, pictures, linked }, notes.join('\n'))
   return createState([block, 'Ask.', [CARRIED_USER_ASSETS_LABEL, ...carried].join('\n')], ['agent', 'user', 'user'])
 }
 
-/** Each asset of the chip as its kind, its id, and, for a clip, the role
- *  that its player gets. */
+/** Each asset of the chip as its kind, its id, and, for a clip, whether a
+ *  linked file counts for its player (`linkedSrc`). */
 function assetSummaries(assets: readonly PanelAsset[]): string[] {
-  return assets.map((asset) => asset.kind === 'image' ? `image ${asset.id}` : `${asset.tag.kind} ${asset.tag.id} ${asset.role}`)
+  return assets.map((asset) => asset.kind === 'image' ? `image ${asset.id}` : `${asset.tag.kind} ${asset.tag.id} ${asset.linkedSrc ? 'linked' : 'unlinked'}`)
 }
 
 /** The block decorations of the state that are not drawn by a view plugin,
@@ -58,15 +60,16 @@ function decorationsBefore(state: EditorState, end: number): Array<[number, numb
 
 describe('compactionChipData', () => {
   it('gives the count of the tag, every asset of the block and the kept assets of the user in doc order, and the pictures of the tag', () => {
-    const notes = ['Notes.', '', keptImage('k'), '', keptClip('l'), '', SHOWN]
-    const state = compactedState(notes, [keptClip('m'), keptImage('u'), SHOWN], { count: 3, pictures: PICTURES })
+    const notes = ['Notes.', '', keptImage('k'), '', keptClip('l'), '', keptClip('n', LINKED_CLIP), '', keptClip('o', '/home/u/Music/other.wav'), '', SHOWN]
+    const state = compactedState(notes, [keptClip('m'), keptImage('u'), SHOWN], { count: 3, pictures: PICTURES, linked: [LINKED_CLIP] })
     const data = compactionChipData(state)
 
     expect(data?.count).toBe(3)
-    // A clip of the block plays as a clip of the agent, and a clip of the
-    // carried assets of the user as a clip of a user. An asset of the user
-    // with no kept mark shows at its place.
-    expect(assetSummaries(data?.assets ?? [])).toStrictEqual(['image k', 'audio l agent', 'image s', 'audio m user', 'image u'])
+    // In the block, a linked file counts only for a clip whose src the tag
+    // lists. In the carried assets of the user (an older Dez), it counts
+    // for every clip. An asset of the user with no kept mark shows at its
+    // place.
+    expect(assetSummaries(data?.assets ?? [])).toStrictEqual(['image k', 'audio l unlinked', 'audio n linked', 'audio o unlinked', 'image s', 'audio m linked', 'image u'])
     expect(data?.pictures).toStrictEqual(PICTURES)
   })
 

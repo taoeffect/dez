@@ -1,5 +1,6 @@
 import sbp from '@sbp/sbp'
 import { assetPlaces } from '../model/chat/assetOrigins'
+import { sectionLinkedRule } from '../model/chat/compaction'
 import { sectionPlainText } from '../model/chat/content'
 import type { ConversationCost } from '../model/chat/conversationCost'
 import { findImageReferences } from '../model/chat/images'
@@ -158,9 +159,9 @@ async function readAssetFiles(
   }
   // The other images: the earlier ones, the ones with no id, and a second
   // reference of an id.
-  for (const section of sections.slice(0, end)) {
-    for (const { path } of findImageReferences(sectionPlainText(section), section.role)) if (!notRead.has(path)) sendable.add(path)
-  }
+  sections.slice(0, end).forEach((section, index) => {
+    for (const { path } of findImageReferences(sectionPlainText(section), sectionLinkedRule(section, index))) if (!notRead.has(path)) sendable.add(path)
+  })
   signal.throwIfAborted()
   const imageBytes = await sbp('dez.provider/chatImageSizes', [...sendable]) as Map<string, number>
 

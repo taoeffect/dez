@@ -27,7 +27,6 @@ import '@videojs/html/ui/tooltip-label'
 import '@videojs/html/ui/tooltip-shortcut'
 import { MAX_SAVED_CLIP_BYTES, mediaFileExtension } from '../../model/chat/mediaFiles'
 import { isPastedMediaPath, type MediaTagKind } from '../../model/chat/mediaTags'
-import type { Role } from '../../model/chat/types'
 import { assetFactsText } from '../assetFacts'
 import { ASSET_ICON_SHAPES } from '../assetIcons'
 import { clipFile, clipProblem, clipSourceKind, expiryNotice, problemCard, type ClipLoadFailure, type ClipProblem } from './clipState'
@@ -57,9 +56,9 @@ const props = defineProps<{
    *  the temp copy, or of a linked file, or a URL; null for a clip with no
    *  source. */
   src: string | null
-  /** The role of the tag's section: a linked file plays only in a user
-   *  section (`clipSourceKind`). */
-  role: Role
+  /** A linked file counts where the tag is (`clipSourceKind`): in a user
+   *  section, or in a compaction block whose tag lists it. */
+  linkedSrc: boolean
   /** The time after which a source that is not saved stops working (the
    *  `expires` of the clip's tag). */
   expires: string | null
@@ -71,7 +70,7 @@ const emit = defineEmits<{ save: [], delete: [] }>()
 
 const media = ref<HTMLMediaElement | null>(null)
 
-const sourceKind = computed(() => clipSourceKind(props.src, props.role))
+const sourceKind = computed(() => clipSourceKind(props.src, props.linkedSrc))
 /** The kind, as the id badge and its tooltip name it. */
 const kindName = computed(() => props.kind === 'video' ? 'Video' : 'Audio')
 /** The clip plays from its saved file. */
@@ -104,7 +103,7 @@ const failed = shallowRef<FailedLoad | null>(null)
 /** The problem of the clip while its source is `src` (`clipProblem`). */
 function problemOf(src: string | null): ClipProblem | 'ask' | null {
   const entry = failed.value
-  return clipProblem(clipSourceKind(src, props.role), entry !== null && entry.src === src ? entry.failure : null)
+  return clipProblem(clipSourceKind(src, props.linkedSrc), entry !== null && entry.src === src ? entry.failure : null)
 }
 
 /** Why the clip does not play: null while it plays, and while its URL is
@@ -208,7 +207,7 @@ watch(() => props.src, async (src, previous) => {
   // this card too, until the next editor state makes a new player.)
   const before = failed.value
   if (kind === 'saved' && before !== null && before.src === previous
-    && clipSourceKind(previous, props.role) !== 'saved' && problemOf(previous) === 'cannot-play') {
+    && clipSourceKind(previous, props.linkedSrc) !== 'saved' && problemOf(previous) === 'cannot-play') {
     failed.value = { src, failure: before.failure }
     load(null)
     return
@@ -454,7 +453,7 @@ function onSaveClick(): void {
 function onContextMenu(event: MouseEvent): void {
   if (event.target instanceof Element && event.target.closest('.media-player__tooltip--selectable') !== null) return
   event.preventDefault()
-  void sbp('dez.controller/menu/popupAsset', clipFile(props.src, props.role, unavailable.value, props.busy))
+  void sbp('dez.controller/menu/popupAsset', clipFile(props.src, props.linkedSrc, unavailable.value, props.busy))
 }
 </script>
 

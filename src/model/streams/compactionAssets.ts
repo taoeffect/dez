@@ -1,10 +1,10 @@
 import { oneLineCut } from '../../utils/oneLineCut'
 import type { AssetPlace } from '../chat/assetOrigins'
-import { compactionMessageEnd, isCarriedUserAssets, sectionCompactionBlock } from '../chat/compaction'
-import { notesAssetLines, notesCellText, notesJobLines, type NotesAssetLine } from '../chat/compactionNotes'
+import { blockLinkedRule, compactionMessageEnd, isCarriedUserAssets, sectionCompactionBlock } from '../chat/compaction'
+import { notesAssetLines, notesCellText, notesJobLines, notesMessages, type NotesAssetLine } from '../chat/compactionNotes'
 import { sectionIsEmpty, sectionPlainText } from '../chat/content'
 import { findAssetMentions } from '../chat/imageMentions'
-import { IMAGE_HIDDEN_KEY } from '../chat/images'
+import { IMAGE_HIDDEN_KEY, type LinkedPathRule } from '../chat/images'
 import { MEDIA_HIDDEN_ATTRIBUTE } from '../chat/mediaTags'
 import { findToolBlocks } from '../chat/toolBlocks'
 import type { Section } from '../chat/types'
@@ -24,8 +24,26 @@ import { messageMentionIds } from './messages'
 // asset that a later step needs. All pure; controller/compaction.ts reads
 // the files.
 
+/** A message of the user that a compaction keeps word for word: a user
+ *  section, or a message part of the notes of the compaction before
+ *  (`notesMessages`, chat/compactionNotes.ts). */
+export interface KeptMessage {
+  /** The index of its section. */
+  section: number
+  /** Its text: the plain text of a user section (`sectionPlainText`), or
+   *  the text of a message part. */
+  text: string
+  /** Where it is in the plain text of its section: the whole text of a
+   *  user section, or the text of a part with its escape. */
+  from: number
+  to: number
+  /** Where the linked paths of `text` count (`LinkedPathRule`): `'user'`
+   *  for a user section, the rule of the block for a part. */
+  rule: LinkedPathRule
+}
+
 /** Which sections a compaction replaces, as indexes of the sections of
- *  the conversation. */
+ *  the conversation, and which messages of the user it keeps. */
 export interface CompactionScope {
   /** The section of the reply that runs; null when no section has its id,
    *  and the compaction then replaces the whole conversation. */
@@ -36,10 +54,10 @@ export interface CompactionScope {
   end: number
   /** The first message of the user, which stays word for word; null for a
    *  conversation with none. */
-  first: number | null
+  first: KeptMessage | null
   /** The newest message of the user, which stays word for word: the one
    *  that the reply answers. Null when it is `first`, or there is none. */
-  last: number | null
+  last: KeptMessage | null
 }
 
 /** The scope of a compaction of `sections` in the reply whose section has
@@ -48,8 +66,10 @@ export interface CompactionScope {
  *
  *  A message of the user is a user section before the reply's section
  *  that is not empty, and that is not the section of the carried assets of
- *  the user that an earlier compaction wrote (`isCarriedUserAssets`, which
- *  counts only in the compaction message). */
+ *  the user that an older Dez wrote (`isCarriedUserAssets`, which counts
+ *  only in the compaction message). The notes of the compaction before
+ *  hold its first message, and its newest one too when no message came
+ *  after it. */
 export function compactionScope(sections: readonly Section[], replySectionId: string): CompactionScope {
   const found = sections.findIndex((section) => section.id === replySectionId)
   const reply = found < 0 ? null : found
@@ -59,14 +79,31 @@ export function compactionScope(sections: readonly Section[], replySectionId: st
     && section.role === 'user'
     && !sectionIsEmpty(section)
     && !(index < carriedEnd && isCarriedUserAssets(sectionPlainText(section)))
-  const first = sections.findIndex(isMessage)
-  const last = sections.findLastIndex(isMessage)
-  return {
-    reply,
-    end: reply === null ? sections.length : reply + 1,
-    first: first < 0 ? null : first,
-    last: last < 0 || last === first ? null : last,
+  const sectionMessage = (index: number): KeptMessage | null => {
+    if (index < 0) return null
+    const text = sectionPlainText(sections[index])
+    return { section: index, text, from: 0, to: text.length, rule: 'user' }
   }
+  // The compaction section is never the reply's section, so its parts are
+  // always before the reply.
+  const block = sections.length > 0 ? sectionCompactionBlock(sections[0]) : null
+  const parts: KeptMessage[] = block === null
+    ? []
+    : notesMessages(block.notes).map((part) => ({ section: 0, text: part.text, from: block.notesFrom + part.from, to: block.notesFrom + part.to, rule: blockLinkedRule(block) }))
+  const firstSection = sections.findIndex(isMessage)
+  const lastSection = sections.findLastIndex(isMessage)
+  let first: KeptMessage | null
+  let last: KeptMessage | null
+  if (parts.length > 0) {
+    // Each user section came after the messages of the notes. With none,
+    // the newest message is still the one of the notes.
+    first = parts[0]
+    last = sectionMessage(lastSection) ?? (parts.length > 1 ? parts[parts.length - 1] : null)
+  } else {
+    first = sectionMessage(firstSection)
+    last = lastSection === firstSection ? null : sectionMessage(lastSection)
+  }
+  return { reply, end: reply === null ? sections.length : reply + 1, first, last }
 }
 
 /** The asset lines of the notes of the compaction section of `sections`,
@@ -85,7 +122,8 @@ export interface CompactionAsset {
   /** Who made it, as the notes hold it: `assetOriginText`, as a cell of
    *  the notes (`notesCellText`). */
   origin: string
-  /** It is in a user section. */
+  /** The user gave it (`assetPlaces`): it is in a user section, in a
+   *  message part of the notes, or its line in the notes tells so. */
   fromUser: boolean
   /** A call made it as a part of its work (the `hidden` mark). */
   intermediate: boolean
@@ -147,7 +185,7 @@ export function compactionAssets({ sections, scope, found, places, facts, jobInp
       kind: asset.kind === 'image' ? 'image' : asset.clip.kind,
       facts: line?.facts ?? notesCellText(facts.get(asset.id) ?? ''),
       origin: notesCellText(assetOriginText(places[index].origin)),
-      fromUser: sections[asset.section].role === 'user',
+      fromUser: places[index].origin.kind === 'user',
       intermediate: isIntermediate(asset),
       byReply: asset.section === scope.reply || (sameReply && line?.byReply === true),
       jobInput: inputs.has(asset.id),
@@ -228,14 +266,13 @@ export interface AssetChoice {
   rank: number
 }
 
-/** The texts of the user sections of `sections` that stay word for word
- *  after a compaction of `scope`: the first and the newest message of the
- *  user, and each user section after the sections that the compaction
- *  replaces. An `@id` mention of them must still name its asset
- *  (`assetDecisions`). */
+/** The texts of the user that stay word for word after a compaction of
+ *  `scope`: the first and the newest message of the user, and each user
+ *  section after the sections that the compaction replaces. An `@id`
+ *  mention of them must still name its asset (`assetDecisions`). */
 export function keptUserTexts(sections: readonly Section[], scope: CompactionScope): string[] {
-  const messages = [scope.first, scope.last].flatMap((index) => (index === null ? [] : [sections[index]]))
-  return [...messages, ...sections.slice(scope.end).filter((section) => section.role === 'user')].map(sectionPlainText)
+  const messages = [scope.first, scope.last].flatMap((message) => (message === null ? [] : [message.text]))
+  return [...messages, ...sections.slice(scope.end).filter((section) => section.role === 'user').map(sectionPlainText)]
 }
 
 /** The label of the picture of a clip that a compaction keeps for its

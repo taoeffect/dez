@@ -15,10 +15,12 @@ import type { Role } from './types'
 //   writes them). It counts in every section.
 // - Linked: any other absolute path with the extension of an image type
 //   that Dez stores as it is (`isLinkedImagePath`): a dropped file that Dez
-//   linked in place and did not copy (linkedFiles.ts). It counts only in a
-//   user section: a model can write any text in its reply, and a linked
-//   reference there would let the model choose a file of this computer
-//   that Dez then reads, and sends on an `@id` mention.
+//   linked in place and did not copy (linkedFiles.ts). It counts only where
+//   the user put it (`LinkedPathRule`): in a user section, and in the
+//   compaction block for a path that its tag lists (compaction.ts). A
+//   model can write any text in its reply, and a linked reference there
+//   would let the model choose a file of this computer that Dez then
+//   reads, and sends on an `@id` mention.
 // Any other markdown image (a URL, a relative path) stays plain text: it is
 // not rendered and not sent as an image. The editor, the request builder,
 // and the title, preview, and search text all use this one recognizer.
@@ -144,10 +146,11 @@ export const IMAGE_MADE_BY_KEY = 'made-by'
  *  notes and not as pixels (compaction.ts), as in
  *  `![<path>](id=b|kept=compaction)`; its value is `KEPT_MARK_VALUE`. In
  *  the compaction message of a request, such a reference sends no image by
- *  itself (streams/messages.ts). In the section of the carried assets of
- *  the user, the editor shows the image in the panel of the assets chip of
- *  the compaction, and not at the place of its reference (hiddenAssets.ts).
- *  At any other place the mark does nothing for the editor: the panel shows
+ *  itself (streams/messages.ts), also in a message part of the notes. In
+ *  the section of the carried assets of the user of an older Dez, the
+ *  editor shows the image in the panel of the assets chip of the
+ *  compaction, and not at the place of its reference (hiddenAssets.ts). At
+ *  any other place the mark does nothing for the editor: the panel shows
  *  every asset of the compaction block, with or without the mark. */
 export const IMAGE_KEPT_KEY = 'kept'
 
@@ -201,16 +204,28 @@ function metadataText(metadata: readonly ImageMetadataItem[]): string {
   return metadata.map(({ key, value }) => `${key}=${value.replace(/[\\|()]/g, '\\$&')}`).join('|')
 }
 
-/** The image references in a text of a section with the role `role`, in
- *  order: a linked path counts only in a user section (see the top of this
- *  file). */
-export function findImageReferences(text: string, role: Role): ImageReference[] {
+/** Where the linked paths of a text count (see the top of this file):
+ *  `'user'` for a user section (every linked path counts), `'agent'` for
+ *  an agent section (none counts), or the paths that count, for the
+ *  compaction block, whose tag lists the linked paths that the user gave
+ *  (`linkedPathRule`, compaction.ts). A model never sees a linked path (a
+ *  request holds no path), so it cannot copy one into its notes. */
+export type LinkedPathRule = Role | ReadonlySet<string>
+
+/** Whether the linked path `path` counts in a text with the rule `rule`. */
+export function linkedPathCounts(path: string, rule: LinkedPathRule): boolean {
+  return rule === 'user' || (typeof rule !== 'string' && rule.has(path))
+}
+
+/** The image references in a text whose linked paths count by `rule`, in
+ *  order (see the top of this file). */
+export function findImageReferences(text: string, rule: LinkedPathRule): ImageReference[] {
   const references: ImageReference[] = []
   IMAGE_REFERENCE.lastIndex = 0
   for (let match = IMAGE_REFERENCE.exec(text); match; match = IMAGE_REFERENCE.exec(text)) {
     const path = match[1]
     const linked = !isImagePath(path)
-    const metadata = linked && (role !== 'user' || !LINKED_IMAGE_PATH.test(path)) ? null : parseImageMetadata(match[2] ?? '')
+    const metadata = linked && (!LINKED_IMAGE_PATH.test(path) || !linkedPathCounts(path, rule)) ? null : parseImageMetadata(match[2] ?? '')
     // A path may hold a `)`, so a reference can start in the metadata of a
     // match that does not count, for bad metadata or a path that is no
     // image path (`![/a.txt](x=![/b)/c.png]()`): the scan goes on just
@@ -246,7 +261,8 @@ export function isImagePath(path: string): boolean {
 
 /** True for a linked image path: an absolute path with the extension of an
  *  image type that Dez stores as it is (`LINKED_IMAGE_PATH_SOURCE`), and no
- *  stored image path. It counts as an image in a user section only. */
+ *  stored image path. It counts as an image only where its rule lets it
+ *  (`LinkedPathRule`). */
 export function isLinkedImagePath(path: string): boolean {
   return LINKED_IMAGE_PATH.test(path) && !isImagePath(path)
 }
@@ -295,12 +311,12 @@ export function imageReferenceTextWithKeptMark(reference: Pick<ImageReference, '
   return imageMarkdown(reference.path, kept ? [...others, { key: IMAGE_KEPT_KEY, value: KEPT_MARK_VALUE }] : others)
 }
 
-/** A text of a section with the role `role` as its plain-text and image
+/** A text whose linked paths count by `rule` as its plain-text and image
  *  pieces, in order. Empty text pieces are left out; whitespace is kept. */
-export function splitImageReferences(text: string, role: Role): ImageTextPiece[] {
+export function splitImageReferences(text: string, rule: LinkedPathRule): ImageTextPiece[] {
   const pieces: ImageTextPiece[] = []
   let start = 0
-  for (const { from, to, path } of findImageReferences(text, role)) {
+  for (const { from, to, path } of findImageReferences(text, rule)) {
     if (from > start) pieces.push({ kind: 'text', text: text.slice(start, from) })
     pieces.push({ kind: 'image', path, source: text.slice(from, to) })
     start = to
@@ -309,10 +325,10 @@ export function splitImageReferences(text: string, role: Role): ImageTextPiece[]
   return pieces
 }
 
-/** A text of a section with the role `role`, with each image reference
+/** A text whose linked paths count by `rule`, with each image reference
  *  replaced by `label`. */
-export function labelImageReferences(text: string, role: Role, label = IMAGE_LABEL): string {
-  return splitImageReferences(text, role).map((piece) => (piece.kind === 'text' ? piece.text : label)).join('')
+export function labelImageReferences(text: string, rule: LinkedPathRule, label = IMAGE_LABEL): string {
+  return splitImageReferences(text, rule).map((piece) => (piece.kind === 'text' ? piece.text : label)).join('')
 }
 
 /** True for an image type that Dez stores as it is. */

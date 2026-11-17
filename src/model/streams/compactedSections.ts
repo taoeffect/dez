@@ -1,17 +1,17 @@
 import { assetTextPieces } from '../chat/assetMentions'
-import { CARRIED_USER_ASSETS_LABEL, compactionBlockText, sectionCompactionBlock } from '../chat/compaction'
+import { compactionBlockText, sectionCompactionBlock, sectionLinkedRule } from '../chat/compaction'
 import { compactionNotesText, type NotesAsset } from '../chat/compactionNotes'
 import { sectionPlainText, textNode } from '../chat/content'
 import type { ConversationCost } from '../chat/conversationCost'
-import { findImageReferences, imageReferenceTextWithKeptMark, isKeptImage, type ImageReference } from '../chat/images'
+import { findImageReferences, imageReferenceTextWithKeptMark, isKeptImage, linkedPathCounts, type ImageReference, type LinkedPathRule } from '../chat/images'
 import { compareMediaIds, highestConversationMediaId } from '../chat/mediaIds'
-import { findMediaTags, mediaTagTextWithKeptMark } from '../chat/mediaTags'
+import { findMediaTags, isLinkedMediaPath, mediaTagTextWithKeptMark } from '../chat/mediaTags'
 import { cloneModelRef, modelRefField } from '../chat/modelRef'
 import type { ShownPicture } from '../chat/shownPictures'
-import type { ContentNode, ModelRef, Section } from '../chat/types'
+import type { ModelRef, Section } from '../chat/types'
 import type { ImageTokenRule } from '../providers/modelFamilies'
 import type { JobInfo } from '../tools/jobs'
-import { compactionScope, type AssetChoice, type CompactionAsset } from './compactionAssets'
+import { compactionScope, type AssetChoice, type CompactionAsset, type KeptMessage } from './compactionAssets'
 import type { CompactionAnswer } from './compactionRequest'
 import { sectionsToStreamMessages } from './messages'
 import { budgetAfter, contextImageCost, type PictureBudget } from './pictureBudget'
@@ -20,30 +20,31 @@ import { budgetAfter, contextImageCost, type PictureBudget } from './pictureBudg
 // sections up to the reply that runs:
 //
 //   A   agent  the compaction section: the compaction block, which holds
-//              the notes
-//              (chat/compaction.ts, chat/compactionNotes.ts)
-//   U0  user   the first message of the user, as it is
-//   U+  user   the images and the clips of the other messages of the user
-//              (`CARRIED_USER_ASSETS_LABEL`)
-//   U1  user   the newest message of the user, as it is
+//              the notes (chat/compaction.ts, chat/compactionNotes.ts)
 //   B   agent  the reply, which goes on: empty, with its id and its model
 //
-// `U+` is there only with an asset, `U1` only when it is not `U0`, and `B`
-// only when the conversation holds the section of the reply (a new reply
-// has an empty one before its first request). A request sends `A`, `U0`,
-// `U+`, and `U1` as one message, the compaction message (messages.ts),
-// which stays the same bytes until the next compaction.
+// `B` is there only when the conversation holds the section of the reply
+// (a new reply has an empty one before its first request). A request
+// sends `A` as one message of the user, the compaction message
+// (messages.ts), which stays the same bytes until the next compaction.
 //
-// The assets of the user stay in user sections, so a linked file still
-// counts, and no text of a model makes Dez read a file of the computer.
+// The notes hold the first and the newest message of the user word for
+// word, each in a message part (`firstMessage`, `newestMessage`), so the
+// sections of the user leave the conversation. A later compaction copies
+// the first message from the notes before. Every other image and clip
+// that stays has its reference or tag in the notes, with its line: also
+// one of another message of the user. The user gave the linked files of
+// these texts, so the tag lists them (`linked`), and they still count in
+// the block. No text of a model makes Dez read a file of the computer: a
+// path that the old texts did not count, the new block does not count.
 //
 // What a model sees of an asset follows its decision (`assetDecisions`):
 // a `show` asset goes as pixels (an image as it is, a clip as the picture
 // of the tag), and a `keep` asset as text only, which its kept mark tells
-// (`IMAGE_KEPT_KEY`, `MEDIA_KEPT_ATTRIBUTE`). The images of `U0` and `U1`
-// are a part of the user's words, so they go as pixels by themselves,
-// within the limits of step 1 below, and a decision changes nothing for
-// them.
+// (`IMAGE_KEPT_KEY`, `MEDIA_KEPT_ATTRIBUTE`). The images of the two
+// messages are a part of the user's words, so they go as pixels by
+// themselves, within the limits of step 1 below, and a decision changes
+// nothing for them.
 //
 // Pictures are costly, so they have a budget. This module builds the
 // sections, asks the request builder for the compaction message, and
@@ -54,11 +55,11 @@ import { budgetAfter, contextImageCost, type PictureBudget } from './pictureBudg
 //    (`compactedPictureLimits`, pictureBudget.ts): a share of the limits
 //    of one request, so that the reply can still view pictures and the
 //    next compaction is due only after new ones came, and at most the
-//    images of one message. While it is not, one more image of `U0` and
-//    `U1` goes as text (the kept mark; the user still sees it at its
-//    place), from the last image of `U0` back to the first image of `U1`.
-//    An image that Dez cannot read goes as text at once: a request with
-//    it would fail each time.
+//    images of one message. While it is not, one more image of the two
+//    messages goes as text (the kept mark; the user still sees it in the
+//    summary chip), from the last image of the first message back to the
+//    first image of the newest message. An image that Dez cannot read
+//    goes as text at once: a request with it would fail each time.
 // 2. The `show` assets get what the images of step 1 leave of those
 //    limits, in the order of the answer's lines. One that does not fit is
 //    kept as text, and a smaller one after it can still fit.
@@ -110,99 +111,99 @@ export interface CompactedSections {
 }
 
 // What goes as pixels: the ids of the `show` assets that do, and the keys
-// (`referenceKey`) of the images of `U0` and `U1` that do not.
+// (`imageKey`) of the images of the two messages that do not.
 interface Plan {
   shown: ReadonlySet<string>
   asText: ReadonlySet<string>
 }
 
-// The key of the image reference at `from` in the text node `node` of the
-// section `section`.
-function referenceKey(section: number, node: number, from: number): string {
-  return `${section}:${node}:${from}`
+// The key of the image reference at `from` in the text of a kept message:
+// `message` is 0 for the first message, and 1 for the newest one.
+function imageKey(message: number, from: number): string {
+  return `${message}:${from}`
 }
 
-// The image references of `text`, the text of a text node of a user
-// section, as a request reads them (`assetTextPieces`: a reference in a
+// The image references of `text`, a kept message whose linked paths count
+// by `rule`, as a request reads them (`assetTextPieces`: a reference in a
 // media tag is none), with offsets in `text`.
-function nodeReferences(text: string): ImageReference[] {
-  return assetTextPieces(text, 'user').flatMap((piece) => (piece.kind === 'reference'
-    ? findImageReferences(text.slice(piece.from, piece.to), 'user').map((reference) => ({ ...reference, from: piece.from, to: piece.to }))
+function messageReferences(text: string, rule: LinkedPathRule): ImageReference[] {
+  return assetTextPieces(text, rule).flatMap((piece) => (piece.kind === 'reference'
+    ? findImageReferences(text.slice(piece.from, piece.to), rule).map((reference) => ({ ...reference, from: piece.from, to: piece.to }))
     : []))
 }
 
-// The image references of the text nodes of `section` (index `index`), in
-// text order. A reference in a prompt pill is not here: the text of a pill
-// stays as it is.
-function messageImages(section: Section, index: number): { key: string, path: string }[] {
-  return section.content.flatMap((node, nodeIndex) => (node.kind === 'text'
-    ? nodeReferences(node.text).map((reference) => ({ key: referenceKey(index, nodeIndex, reference.from), path: reference.path }))
-    : []))
+// The text of `message` (0 or 1, as for `imageKey`) with the kept mark on
+// the images of `asText` and on no other image. The marks of a message are
+// set new at each compaction.
+function withKeptMarks({ text, rule }: KeptMessage, message: number, asText: ReadonlySet<string>): string {
+  let marked = ''
+  let end = 0
+  for (const reference of messageReferences(text, rule)) {
+    const kept = asText.has(imageKey(message, reference.from))
+    if (kept === isKeptImage(reference)) continue
+    marked += text.slice(end, reference.from) + imageReferenceTextWithKeptMark(reference, kept)
+    end = reference.to
+  }
+  return marked + text.slice(end)
 }
 
-// `section` (index `index`), a kept message of the user, with the kept
-// mark on the images of `asText` and on no other image. The marks of a
-// message are set new at each compaction. Only a reference whose mark must
-// change gets new text.
-function withKeptMarks(section: Section, index: number, asText: ReadonlySet<string>): Section {
-  let changed = false
-  const content = section.content.map((node, nodeIndex): ContentNode => {
-    if (node.kind !== 'text') return node
-    let text = ''
-    let end = 0
-    for (const reference of nodeReferences(node.text)) {
-      const kept = asText.has(referenceKey(index, nodeIndex, reference.from))
-      if (kept === isKeptImage(reference)) continue
-      text += node.text.slice(end, reference.from) + imageReferenceTextWithKeptMark(reference, kept)
-      end = reference.to
-    }
-    // A reference is never empty, so a change moved the end.
-    if (end === 0) return node
-    changed = true
-    return textNode(text + node.text.slice(end))
-  })
-  return changed ? { ...section, content } : section
+// The linked paths that count in `text`, whose linked paths count by
+// `rule`: the ones of its image references and of its media tags.
+function linkedPathsOf(text: string, rule: LinkedPathRule): string[] {
+  return [
+    ...findImageReferences(text, rule).filter((reference) => reference.linked).map((reference) => reference.path),
+    ...findMediaTags(text).flatMap(({ src }) => (src !== null && isLinkedMediaPath(src) && linkedPathCounts(src, rule) ? [src] : [])),
+  ]
 }
 
 /** The sections of a tab after a compaction; see the top of this file. */
 export function compactedSections(input: CompactedSectionsInput): CompactedSections {
   const { sections, model, choices, answer, clipPictures, imageBytes } = input
   const scope = compactionScope(sections, input.replySectionId)
-  const first = scope.first === null ? null : sections[scope.first]
-  const last = scope.last === null ? null : sections[scope.last]
+  const messages = [scope.first, scope.last]
   const noteId = input.newId()
-  const carriedId = input.newId()
   const oldBlock = sections.length > 0 ? sectionCompactionBlock(sections[0]) : null
   const lastId = highestConversationMediaId(sections.map(sectionPlainText))
   const staying = choices.filter((choice) => choice.decision !== 'drop').sort((a, b) => compareMediaIds(a.asset.asset.id, b.asset.asset.id))
   const dropped = choices.filter((choice) => choice.decision === 'drop').map((choice) => choice.asset)
-  const choiceById = new Map(choices.map((choice) => [choice.asset.asset.id, choice]))
-  // An image of `U0` or `U1`: the message sends it, so a `show` adds
+  // Whether the text at `from` of the plain text of the section `section`
+  // is in one of the two messages.
+  const inMessage = (section: number, from: number) => messages.some((message) => message !== null
+    && message.section === section && from >= message.from && from < message.to)
+  const assetFrom = ({ asset }: CompactionAsset) => (asset.kind === 'image' ? asset.reference.from : asset.tag.from)
+  // An image of the two messages: the message sends it, so a `show` adds
   // nothing for it. A clip of these messages still needs its picture.
-  const isMessageImage = ({ asset }: AssetChoice) => asset.asset.kind === 'image' && asset.fromUser
-    && (asset.asset.section === scope.first || asset.asset.section === scope.last)
-  // The choice of the asset whose text is at `from` in the section
-  // `index`; undefined for a text that is not the one of its id
-  // (`conversationAssets`: of two with one id, only the last one counts).
-  const choiceAt = (id: string, index: number, from: number) => {
-    const choice = choiceById.get(id)
-    if (choice === undefined || choice.decision === 'drop' || choice.asset.asset.section !== index) return undefined
-    const { asset } = choice.asset
-    return (asset.kind === 'image' ? asset.reference.from : asset.tag.from) === from ? choice : undefined
+  const isMessageImage = ({ asset }: AssetChoice) => asset.asset.kind === 'image' && inMessage(asset.asset.section, assetFrom(asset))
+  // The references of the images with no id (an image of an old Dez) out
+  // of the two messages, in section and text order: the notes keep them as
+  // text. The compaction section holds the ones of the compaction before.
+  const unnamed = sections.slice(0, scope.end).flatMap((section, index) => findImageReferences(sectionPlainText(section), sectionLinkedRule(section, index))
+    .filter((reference) => reference.id === null && !inMessage(index, reference.from)))
+  // The linked paths that the new block holds and that count where they
+  // are now: in the two messages, in the text of a kept asset, and in an
+  // image with no id.
+  const linked = new Set<string>()
+  for (const message of messages) {
+    if (message !== null) linkedPathsOf(message.text, message.rule).forEach((path) => linked.add(path))
   }
-  // The references of the made images with no id. The compaction section
-  // is an agent section too, so it carries the ones of the compaction
-  // before.
-  const unnamed = sections.slice(0, scope.end).flatMap((section) => (section.role === 'agent'
-    ? findImageReferences(sectionPlainText(section), 'agent').filter((reference) => reference.id === null).map((reference) => imageReferenceTextWithKeptMark(reference, true))
-    : []))
+  for (const { asset: { asset } } of staying) {
+    if (asset.kind === 'image' && asset.reference.linked) linked.add(asset.reference.path)
+    // `conversationAssets` gives a clip no `src` for a linked one that does
+    // not count.
+    if (asset.kind === 'clip' && asset.clip.src !== null && isLinkedMediaPath(asset.clip.src)) linked.add(asset.clip.src)
+  }
+  for (const reference of unnamed) {
+    if (reference.linked) linked.add(reference.path)
+  }
 
-  // `A`, `U0`, `U+`, and `U1` for `plan`.
-  const head = ({ shown, asText }: Plan): { sections: Section[], pictures: ShownPicture[] } => {
+  // `A` for `plan`.
+  const head = ({ shown, asText }: Plan): { section: Section, pictures: ShownPicture[] } => {
     const assets = staying.map(({ asset, sentence }): NotesAsset => {
       const found = asset.asset
       const keptMark = !shown.has(found.id)
-      const text = asset.fromUser ? null : found.kind === 'image' ? imageReferenceTextWithKeptMark(found.reference, keptMark) : mediaTagTextWithKeptMark(found.tag, keptMark)
+      const text = inMessage(found.section, assetFrom(asset))
+        ? null
+        : found.kind === 'image' ? imageReferenceTextWithKeptMark(found.reference, keptMark) : mediaTagTextWithKeptMark(found.tag, keptMark)
       return { id: found.id, kind: asset.kind, facts: asset.facts, origin: asset.origin, sentence, byReply: asset.byReply, text }
     })
     const pictures = staying.flatMap(({ asset }) => {
@@ -210,56 +211,33 @@ export function compactedSections(input: CompactedSectionsInput): CompactedSecti
       return picture === undefined ? [] : [picture]
     })
     const notes = compactionNotesText({
+      firstMessage: scope.first === null ? null : withKeptMarks(scope.first, 0, asText),
+      newestMessage: scope.last === null ? null : withKeptMarks(scope.last, 1, asText),
       summary: answer.summary,
       requirements: answer.requirements,
       nextSteps: answer.nextSteps,
       assets,
-      unnamed,
+      unnamed: unnamed.map((reference) => imageReferenceTextWithKeptMark(reference, true)),
       jobs: input.jobs,
       jobInputs: input.jobInputs,
       cost: input.cost,
     })
-    const result: Section[] = [{
-      id: noteId,
-      role: 'agent',
-      content: [textNode(compactionBlockText({ count: (oldBlock?.count ?? 0) + 1, lastId, dropped: dropped.length, pictures }, notes))],
-      model: cloneModelRef(model),
-    }]
-    if (first !== null && scope.first !== null) result.push(withKeptMarks(first, scope.first, asText))
-
-    // The assets of the other messages of the user, in section and text
-    // order. An image with no id has no decision: it is kept as text.
-    const carried: string[] = []
-    sections.slice(0, scope.end).forEach((section, index) => {
-      if (section.role !== 'user' || index === scope.first || index === scope.last) return
-      const text = sectionPlainText(section)
-      const lines = [
-        ...findImageReferences(text, 'user').flatMap((reference) => {
-          if (reference.id === null) return [{ from: reference.from, text: imageReferenceTextWithKeptMark(reference, true) }]
-          return choiceAt(reference.id, index, reference.from) ? [{ from: reference.from, text: imageReferenceTextWithKeptMark(reference, !shown.has(reference.id)) }] : []
-        }),
-        ...findMediaTags(text).flatMap((tag) => (choiceAt(tag.id, index, tag.from) ? [{ from: tag.from, text: mediaTagTextWithKeptMark(tag, !shown.has(tag.id)) }] : [])),
-      ]
-      carried.push(...lines.sort((a, b) => a.from - b.from).map((line) => line.text))
-    })
-    if (carried.length > 0) result.push({ id: carriedId, role: 'user', content: [textNode([CARRIED_USER_ASSETS_LABEL, ...carried].join('\n'))] })
-
-    if (last !== null && scope.last !== null) result.push(withKeptMarks(last, scope.last, asText))
-    return { sections: result, pictures }
+    const tag = { count: (oldBlock?.count ?? 0) + 1, lastId, dropped: dropped.length, pictures, linked: [...linked] }
+    return { section: { id: noteId, role: 'agent', content: [textNode(compactionBlockText(tag, notes))], model: cloneModelRef(model) }, pictures }
   }
   // Whether the images and the pictures of the head of `plan` fit in the
   // limits.
   const fits = (plan: Plan): boolean => budgetAfter(input.limits, contextImageCost(
-    sectionsToStreamMessages(head(plan).sections, model, { sendImages: true, sendTools: false }).messages,
+    sectionsToStreamMessages([head(plan).section], model, { sendImages: true, sendTools: false }).messages,
     input.rule,
     imageBytes,
   )) !== null
 
-  // 1. The images of the kept messages of the user.
-  const images = [
-    ...(last !== null && scope.last !== null ? messageImages(last, scope.last) : []),
-    ...(first !== null && scope.first !== null ? messageImages(first, scope.first) : []),
-  ]
+  // 1. The images of the two messages.
+  const messageImages = (message: KeptMessage | null, index: number) => (message === null
+    ? []
+    : messageReferences(message.text, message.rule).map((reference) => ({ key: imageKey(index, reference.from), path: reference.path })))
+  const images = [...messageImages(scope.last, 1), ...messageImages(scope.first, 0)]
   const asText = new Set(images.filter(({ path }) => !imageBytes.has(path)).map(({ key }) => key))
   const asPixels = images.filter(({ key }) => !asText.has(key))
   const noShown: ReadonlySet<string> = new Set()
@@ -282,7 +260,7 @@ export function compactedSections(input: CompactedSectionsInput): CompactedSecti
   const reply = scope.reply === null ? null : sections[scope.reply]
   return {
     sections: [
-      ...built.sections,
+      built.section,
       ...(reply === null ? [] : [{ id: reply.id, role: 'agent' as const, content: [textNode('')], ...modelRefField(reply.model) }]),
       ...sections.slice(scope.end),
     ],

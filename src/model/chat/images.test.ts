@@ -186,6 +186,19 @@ describe('linked references', () => {
     expect(labelImageReferences(text, 'user')).toBe('a [image] b')
     expect(labelImageReferences(text, 'agent')).toBe(text)
   })
+
+  // The rule of a compaction block: only the paths of its `linked` list.
+  it('counts a linked path for a set of paths only when the set holds it', () => {
+    const other = '/home/ann/Pictures/other.png'
+    const text = `![${LINKED}](id=c) ![${other}]() ![${PNG}](id=a)`
+
+    expect(findImageReferences(text, new Set([LINKED])).map(({ path, linked }) => ({ path, linked }))).toEqual([
+      { path: LINKED, linked: true },
+      { path: PNG, linked: false },
+    ])
+    expect(findImageReferences(text, new Set()).map((ref) => ref.path)).toEqual([PNG])
+    expect(labelImageReferences(text, new Set([other]))).toBe(`![${LINKED}](id=c) [image] [image]`)
+  })
 })
 
 describe('storedImageFile', () => {
