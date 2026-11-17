@@ -11,7 +11,7 @@ import type { ShownPicture } from '../chat/shownPictures'
 import type { ModelRef, Section } from '../chat/types'
 import type { ImageTokenRule } from '../providers/modelFamilies'
 import type { JobInfo } from '../tools/jobs'
-import { compactionScope, keptMiddleMessages, type AssetChoice, type CompactionAsset, type KeptMessage } from './compactionAssets'
+import { compactionScope, keptMiddleMessages, quotedMessages, type AssetChoice, type CompactionAsset, type KeptMessage } from './compactionAssets'
 import type { CompactionAnswer } from './compactionRequest'
 import { foundAssetFrom } from './mediaRequest'
 import { sectionsToStreamMessages } from './messages'
@@ -166,14 +166,12 @@ function linkedPathsOf(text: string, rule: LinkedPathRule): string[] {
 export function compactedSections(input: CompactedSectionsInput): CompactedSections {
   const { sections, model, choices, answer, clipPictures, imageBytes } = input
   const scope = compactionScope(sections, input.replySectionId)
-  const keptMiddle = keptMiddleMessages(scope, answer)
-  // The messages that the notes quote, in their order.
-  const messages = [scope.first, ...keptMiddle, scope.last].filter((message) => message !== null)
+  const messages = quotedMessages(scope, answer)
   const noteId = input.newId()
   const oldBlock = sections.length > 0 ? sectionCompactionBlock(sections[0]) : null
   // The count of the middle messages that the notes leave out: the ones
   // that the notes before left out, and the ones that this answer drops.
-  const leftOutMessages = (oldBlock === null ? 0 : notesLeftOutMessages(oldBlock.notes)) + scope.middle.length - keptMiddle.length
+  const leftOutMessages = (oldBlock === null ? 0 : notesLeftOutMessages(oldBlock.notes)) + scope.middle.length - keptMiddleMessages(scope, answer).length
   const lastId = highestConversationMediaId(sections.map(sectionPlainText))
   const staying = choices.filter((choice) => choice.decision !== 'drop').sort((a, b) => compareMediaIds(a.asset.asset.id, b.asset.asset.id))
   const dropped = choices.filter((choice) => choice.decision === 'drop').map((choice) => choice.asset)

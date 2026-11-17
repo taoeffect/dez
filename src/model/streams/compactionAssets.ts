@@ -120,6 +120,13 @@ export function keptMiddleMessages(scope: CompactionScope, answer: CompactionAns
   return scope.middle.filter((_, index) => !dropped.has(index + 1))
 }
 
+/** The messages of the user that the notes quote word for word, in their
+ *  order: the first one, the middle ones that `answer` keeps
+ *  (`keptMiddleMessages`), and the final one. */
+export function quotedMessages(scope: CompactionScope, answer: CompactionAnswer): KeptMessage[] {
+  return [scope.first, ...keptMiddleMessages(scope, answer), scope.last].filter((message) => message !== null)
+}
+
 // The most characters of the start of a middle message in the instruction.
 const MESSAGE_START_LENGTH = 160
 
@@ -286,13 +293,12 @@ export interface AssetChoice {
 }
 
 /** The texts of the user that stay word for word after a compaction of
- *  `scope` with `answer`: the messages that the notes quote (the first
- *  one, the kept middle ones of `keptMiddleMessages`, and the final one),
- *  and each user section after the sections that the compaction replaces.
- *  An `@id` mention of them must still name its asset (`assetDecisions`). */
+ *  `scope` with `answer`: the messages that the notes quote
+ *  (`quotedMessages`), and each user section after the sections that the
+ *  compaction replaces. An `@id` mention of them must still name its asset
+ *  (`assetDecisions`). */
 export function keptUserTexts(sections: readonly Section[], scope: CompactionScope, answer: CompactionAnswer): string[] {
-  const messages = [scope.first, ...keptMiddleMessages(scope, answer), scope.last].flatMap((message) => (message === null ? [] : [message.text]))
-  return [...messages, ...sections.slice(scope.end).filter((section) => section.role === 'user').map(sectionPlainText)]
+  return [...quotedMessages(scope, answer).map((message) => message.text), ...sections.slice(scope.end).filter((section) => section.role === 'user').map(sectionPlainText)]
 }
 
 /** The label of the picture of a clip that a compaction keeps for its
