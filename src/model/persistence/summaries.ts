@@ -6,15 +6,15 @@ import { labelToolBlocks } from '../chat/toolBlocks'
 import type { Role } from '../chat/types'
 import type { ContentNodeData, ConversationData, ConversationSummary, SectionData } from './types'
 
-/** Each node of `sections` with the role of its section, for a text that
- *  people read (the preview, the search): the block of a compaction
+/** The text of each node of `sections` for a text that people read (the
+ *  preview, the search), as `nodeText` gives it. The block of a compaction
  *  section gives its notes for people (`compactionTextForPeople`), as the
- *  editor shows chips in its place. */
-export function readableNodes(sections: SectionData[]): { node: ContentNodeData, role: Role }[] {
-  return sections.flatMap(({ nodes, role }, index) => nodes.map((node, nodeIndex) => ({
-    node: nodeIndex === 0 && node.kind === 'text' ? { ...node, text: compactionTextForPeople(node.text, index, role) } : node,
-    role,
-  })))
+ *  editor shows chips in its place, and `nodeText` gets only the text after
+ *  the block: the notes are no text of a section. */
+export function readableTexts(sections: SectionData[], nodeText: (node: ContentNodeData, role: Role) => string): string[] {
+  return sections.flatMap(({ nodes, role }, index) => nodes.map((node, nodeIndex) => (nodeIndex === 0 && node.kind === 'text'
+    ? compactionTextForPeople(node.text, index, role, (text) => nodeText({ ...node, text }, role))
+    : nodeText(node, role))))
 }
 
 // An image reference shows as `[image]`, never as its path. Prompt bodies
@@ -38,7 +38,7 @@ export function messageCount(sections: SectionData[]): number {
 }
 
 export function conversationPreview(sections: SectionData[]): string {
-  const text = readableNodes(sections).map(({ node, role }) => nodePlainText(node, role)).join(' ')
+  const text = readableTexts(sections, nodePlainText).join(' ')
   const normalized = text.split(/\s+/).filter(Boolean).join(' ')
   const maxPreviewChars = 160
   if ([...normalized].length > maxPreviewChars) {

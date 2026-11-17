@@ -1211,7 +1211,8 @@ function serializeDocRangeAsMarkdown(doc: string, from: number, to: number, mode
     const role = models[firstSection + index]?.role ?? 'user'
     // The first part starts at the start of its section only in a range
     // that starts at the doc start.
-    return sectionTextAsMarkdown(role, from === 0 ? compactionTextForPeople(text, firstSection + index, role) : text)
+    if (from !== 0) return sectionTextAsMarkdown(role, text)
+    return compactionTextForPeople(text, firstSection + index, role, (sectionText) => sectionTextAsMarkdown(role, sectionText))
   })
   if (from > 0 && texts.length === 1) return texts[0]
   return messagesAsMarkdown(texts.map((text, index): MarkdownMessage => {

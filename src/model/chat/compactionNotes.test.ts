@@ -509,15 +509,16 @@ describe('the notes for people', () => {
     expect(people).not.toContain('dez:user-message')
   })
 
-  it('gives the notes in place of the block of a compaction section, with the text after the block, and any other text as it is', () => {
+  it('gives the notes in place of the block of a compaction section, with the text after the block, and any other text, in the form of the caller', () => {
     const block = compactionBlockText({ count: 1, lastId: 'd', pictures: [] }, text)
     const section = `${block}\nTyped after it.`
+    const upper = (part: string) => part.toUpperCase()
 
-    expect(compactionTextForPeople(section, 0, 'agent')).toBe(`${compactionNotesForPeople(text, 'agent')}\n\nTyped after it.`)
-    expect(compactionTextForPeople(block, 0, 'agent')).toBe(compactionNotesForPeople(text, 'agent'))
-    expect(compactionTextForPeople(section, 1, 'agent')).toBe(section)
-    expect(compactionTextForPeople(section, 0, 'user')).toBe(section)
-    expect(compactionTextForPeople('Hello.', 0, 'agent')).toBe('Hello.')
+    expect(compactionTextForPeople(section, 0, 'agent', upper)).toBe(`${compactionNotesForPeople(text, 'agent')}\n\nTYPED AFTER IT.`)
+    expect(compactionTextForPeople(block, 0, 'agent', upper)).toBe(compactionNotesForPeople(text, 'agent'))
+    expect(compactionTextForPeople(section, 1, 'agent', upper)).toBe(section.toUpperCase())
+    expect(compactionTextForPeople(section, 0, 'user', upper)).toBe(section.toUpperCase())
+    expect(compactionTextForPeople('Hello.', 0, 'agent', upper)).toBe('HELLO.')
   })
 
   it('splits the notes into the assets part of Dez and every other part, in order', () => {

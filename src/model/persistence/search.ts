@@ -4,7 +4,7 @@ import { modelRefKey } from '../chat/modelRef'
 import { labelToolBlocks } from '../chat/toolBlocks'
 import type { Role } from '../chat/types'
 import { parseConversation } from './conversationFormat'
-import { conversationSummary, readableNodes } from './summaries'
+import { conversationSummary, readableTexts } from './summaries'
 import type {
   ContentNodeData,
   ConversationFile,
@@ -46,7 +46,10 @@ export function clearConversationSearchCache(): void {
 // Tool blocks in agent text are left out the same way: their markup (`dez`,
 // `tool`, call ids) and tool results are not reply text. So are the media
 // tags, in agent and in user text: their markup, path, and URL, and a label
-// too (`video` would match every conversation with a clip).
+// too (`video` would match every conversation with a clip). The notes of a
+// compaction block are the exception: they never come here
+// (`readableTexts`), and go into the search text as the chips show them,
+// labels included.
 function nodeSearchText(node: ContentNodeData, role: Role): string {
   return node.kind === 'text'
     ? labelImageReferences(labelMediaTags(role === 'agent' ? labelToolBlocks(node.text, ' ') : node.text, ' '), role, ' ')
@@ -57,7 +60,7 @@ function nodeSearchText(node: ContentNodeData, role: Role): string {
 // (mirroring conversationPreview) so snippets render single-line, and the
 // result is NFC-normalized so it compares canonically against queries.
 export function conversationPlainText(sections: SectionData[]): string {
-  const text = readableNodes(sections).map(({ node, role }) => nodeSearchText(node, role)).join(' ')
+  const text = readableTexts(sections, nodeSearchText).join(' ')
   return text.split(/\s+/).filter(Boolean).join(' ').normalize('NFC')
 }
 

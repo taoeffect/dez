@@ -472,14 +472,21 @@ export function compactionNotesForPeople(notes: string, rule: LinkedPathRule): s
 }
 
 /** `text`, which starts the text of section `index` of a conversation
- *  (role `role`), for a text that people read: when that section is a
- *  compaction section, its notes for people (`compactionNotesForPeople`)
- *  in place of its block, and then the text after the block, with a blank
- *  line between them. Any other text comes back as it is. */
-export function compactionTextForPeople(text: string, index: number, role: Role): string {
+ *  (role `role`), for a text that people read, with `sectionText` the
+ *  caller's form of the text of a section (Markdown, the preview, the
+ *  search). When that section is a compaction section: its notes for
+ *  people (`compactionNotesForPeople`) in place of its block, and then the
+ *  text after the block as `sectionText` gives it, with a blank line
+ *  between them. Any other text comes back as `sectionText` gives it.
+ *
+ *  The notes never go through `sectionText`: they are no text of a
+ *  section, and their model text has no escape any more, so a pass of a
+ *  section (tool blocks, media tags) would read a tag that a model quoted
+ *  as a tag of Dez. */
+export function compactionTextForPeople(text: string, index: number, role: Role, sectionText: (text: string) => string): string {
   const block = index === 0 && role === 'agent' ? readCompactionBlock(text) : null
-  if (!block) return text
-  return [compactionNotesForPeople(block.notes, blockLinkedRule(block)), text.slice(block.textFrom)].filter((part) => part.trim() !== '').join('\n\n')
+  if (!block) return sectionText(text)
+  return [compactionNotesForPeople(block.notes, blockLinkedRule(block)), sectionText(text.slice(block.textFrom))].filter((part) => part.trim() !== '').join('\n\n')
 }
 
 /** The notes for the two chips of a compaction, each for people

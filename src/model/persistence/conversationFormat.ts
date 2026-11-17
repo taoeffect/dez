@@ -138,7 +138,7 @@ export function serializeConversationAsMarkdown(data: ConversationData): string 
     const text = section.nodes
       .map((node) => stripLiveSentinels(node.kind === 'text' ? node.text : node.body))
       .join('')
-    return { role: section.role, text: sectionTextAsMarkdown(section.role, compactionTextForPeople(text, index, section.role)) }
+    return { role: section.role, text: compactionTextForPeople(text, index, section.role, (sectionText) => sectionTextAsMarkdown(section.role, sectionText)) }
   }))
   const title = `# ${data.title.replace(/\s+/g, ' ').trim() || 'Conversation'}\n`
   return messages === '' ? title : `${title}\n${messages}`

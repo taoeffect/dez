@@ -1055,6 +1055,31 @@ describe('conversation Markdown export', () => {
     ].join('\n'))
   })
 
+  // The passes of a reply text (tool blocks, clips) would read a tag or a
+  // tool block that a model quoted in its notes as one of Dez.
+  it('writes the text that a model quoted in the notes word for word, and leaves out the tool calls of the reply after the block', () => {
+    const summary = [
+      'The duck clip:',
+      '<dez:video id="c" type="video/mp4"/>',
+      'and a call:',
+      '<dez:tool id="a" name="model_list" filter="gemini">',
+      'ok',
+      '</dez:tool>',
+      'The block ends.',
+    ].join('\n')
+    const call = toolBlockText({ id: 'call_1', name: 'model_list', status: 'success', arguments: {}, result: '12 models' })
+    const block = compactionBlockText({ count: 1, lastId: 'c', pictures: [] }, `## Summary\n\n${escapedModelText(summary)}`)
+    const data: ConversationData = {
+      id: 'conversation',
+      title: 'Chat',
+      sections: [section('agent', [textNode(`${block}\n${call}\nReply text.`)])],
+      activeModel: null,
+      created_at: 1000,
+    }
+
+    expect(serializeConversationAsMarkdown(data)).toBe(`# Chat\n\n## Agent\n\n## Summary\n\n${summary}\n\nReply text.\n`)
+  })
+
   it('writes each clip of agent and user text as a link', () => {
     const saved = '/home/u/.config/dez/assets/generated/video/v1.mp4'
     const pasted = '/home/u/.config/dez/assets/video/v2.mp4'
