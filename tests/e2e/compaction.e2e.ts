@@ -16,6 +16,7 @@ import { findDropdownOpen, findStatus, openFindWithQuery } from './harness/find'
 import { appFilePath, conversationFilePath, filesIn, makeConversation, newFileIn, seedConversation, writeTestFile } from './harness/fixtures'
 import { pasteImageReference, pngDataUrl, shownImages, solidPng, type ShownImage } from './harness/images'
 import { clipTag, MP4_VIDEO, problemCards, shownPlayers, silentWav, tempClipTag, WEBM_VIDEO, type ShownPlayer } from './harness/media'
+import { assetInView, flashedAssets, pressMention, recordFlashes } from './harness/mentions'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import { LARGE_TOKENS, mockChatPath, openAiToolCall, replyText, sendAnthropicReply, sendChatReply, sendChatText, sendToolCalls, startEventStream, toolResult, writeChatFrame, writeUsage, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
@@ -931,6 +932,31 @@ describe('a compacted conversation', () => {
     await pressToolChip(browser, 0)
     await waitForValue(browser, 'media elements after the close', mediaElements, 0)
     expect(await threadSections(browser)).toStrictEqual(thread)
+  })
+
+  // A mention of a kept asset after the block: a click opens the assets
+  // chip, and the list scrolls to the row of the asset, which it draws only
+  // then.
+  it('opens the assets chip on a click on a mention of a far kept clip, and shows and flashes its row', async () => {
+    const { home } = setup.app
+    const wav = await writeTestFile(appFilePath(home, 'assets', 'generated', 'audio', 'compaction-mention.wav'), silentWav(1))
+    const ids = newMediaIds([], 130)
+    const last = ids[ids.length - 1]
+    const tags = ids.map((id) => `<dez:audio id="${id}" type="audio/wav" src="${wav}" kept="compaction"/>`)
+    const notes = [compactionTagText({ count: 1, lastId: last, pictures: [] }), 'The user made many clips.', ...tags].join('\n')
+    const thread = await openCompacted('compacted-mention', [compactionSection(notes), textSection('user', `Play @${last} again.`), textSection('user', '')])
+    expect(await compactionChipCounts()).toStrictEqual(['130 kept'])
+    expect(await shownPlayers(browser)).toStrictEqual([])
+
+    await recordFlashes(browser)
+    await pressMention(browser, 0)
+    await waitForValue(browser, 'the kept clip in view', () => assetInView(browser, last), true)
+    expect(await flashedAssets(browser)).toStrictEqual([`player ${last}`])
+    expect((await shownPlayers(browser)).map(({ id }) => id)).not.toContain(ids[0])
+    expect(await threadSections(browser)).toStrictEqual(thread)
+
+    await pressToolChip(browser, 0)
+    await waitForValue(browser, 'players after the close', async () => (await shownPlayers(browser)).length, 0)
   })
 
   // The trash of an image and the Save of a clip work in the panel of the

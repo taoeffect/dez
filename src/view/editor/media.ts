@@ -11,7 +11,8 @@ import { measureLineHeights } from '../thread/editorMeasure'
 import { selectedAssetLook } from './assetSelection'
 import { focusKeepingScroll, syncDomSelection } from './focus'
 import { compactionBlockEnd } from './compactionBlock'
-import { HiddenAssetWidget, hiddenAssetOwnerKinds, type AssetPlace } from './hiddenAssets'
+import { noteDrawnAsset, type AssetPlace } from './drawnAssets'
+import { HiddenAssetWidget, hiddenAssetOwnerKinds } from './hiddenAssets'
 import { linesRemovalRange } from './images'
 import { lineBlocks, sectionRolesChanged, sectionTexts } from './lineBlocks'
 import { followShownRange, pendingRanges } from './pendingRanges'
@@ -91,6 +92,7 @@ export function createPlayer(view: EditorView, shownTag: MediaTagData, linkedSrc
   const root = document.createElement('span')
   root.className = ROOT_CLASS
   const tagPlace = place ?? (() => view.contentDOM.contains(root) ? view.posAtDOM(root) : null)
+  noteDrawnAsset(root, tagPlace)
   const tag = shallowRef(shownTag)
   const app = createApp({
     // The player gets the source as the tag has it, and makes the URL

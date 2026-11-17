@@ -18,6 +18,7 @@ import { holdsLinkedFile } from '../../model/chat/linkedFiles'
 import { SENTINEL_CHAR, normalizeContent, stripLiveSentinels, textNode } from '../../model/chat/content'
 import { EDITOR_FONT_SIZE_DEFAULT, EDITOR_FONT_SIZE_PROPERTY } from '../../model/editorFontSize'
 import { escapeMarkerAttribute, unescapeMarkerAttribute } from '../../utils/markerAttribute'
+import { ASSET_FLASH_MS } from '../editor/drawnAssets'
 import { addModelToPill, modelDisplayNamesField, sameModelChip, sectionModelChips, streamingSectionField, type ModelChip } from './modelChip'
 import { addDurationToPill } from './pillDuration'
 import {
@@ -1562,6 +1563,27 @@ export const dezTheme = EditorView.theme({
   '&.cm-focused .dez-image[data-selected]:has(> .dez-image__img)::after, &.cm-focused .dez-media[data-selected] .media-player__card:not(:fullscreen)::after': {
     background: 'var(--color-selection-tint, rgba(184, 178, 234, 0.5))',
   },
+  // The flash of an asset that a mention chip names (`flashDrawnAsset`,
+  // drawnAssets.ts): a ring in the mention color. It is an inset shadow on
+  // the box of the selection tint above; the two rules set other
+  // properties of that box, so both show. Not an outline: WebKit draws it
+  // under the positioned parts of a player. Not a ring outside the box:
+  // the scroll box of the kept assets list cuts it. The ring is still
+  // here; it fades in and out in the reduced-motion block below.
+  '.dez-image[data-flash]::after, .dez-media[data-flash] .media-player__card:not(:fullscreen)::after': {
+    content: '""',
+    position: 'absolute',
+    inset: '0',
+    boxShadow: `inset 0 0 0 ${editorSize(3)} var(--color-mention-ring, rgb(212, 154, 17))`,
+    pointerEvents: 'none',
+  },
+  '.dez-image[data-flash]::after': {
+    borderRadius: editorSize(6),
+  },
+  // The card clips its children to its corners, which would cut the ring.
+  '.dez-media[data-flash] .media-player__card:not(:fullscreen)::after': {
+    borderRadius: 'inherit',
+  },
   '.cm-gutters': { display: 'none' },
   '.dez-role-separator': {
     display: 'inline-flex',
@@ -1894,6 +1916,9 @@ export const dezTheme = EditorView.theme({
     '.dez-image__trash:active': {
       transform: 'scale(0.92)',
     },
+    '.dez-image[data-flash]::after, .dez-media[data-flash] .media-player__card:not(:fullscreen)::after': {
+      animation: `dez-asset-flash ${ASSET_FLASH_MS}ms ease-in-out forwards`,
+    },
   },
   '@keyframes dez-role-pill-glow': {
     '0%, 100%': { opacity: '0' },
@@ -1905,6 +1930,13 @@ export const dezTheme = EditorView.theme({
   },
   '@keyframes dez-role-pill-spin': {
     to: { transform: 'rotate(360deg)' },
+  },
+  // Grows in from the edge, holds, then fades out; `forwards` keeps it
+  // gone until the timer of `flashDrawnAsset` takes the attribute away.
+  '@keyframes dez-asset-flash': {
+    '0%': { boxShadow: 'inset 0 0 0 0 transparent' },
+    '25%, 60%': { boxShadow: `inset 0 0 0 ${editorSize(4)} var(--color-mention-ring, rgb(212, 154, 17))` },
+    '100%': { boxShadow: `inset 0 0 0 ${editorSize(4)} transparent` },
   },
   '.dez-prompt-pill': {
     display: 'inline-flex',
@@ -2507,6 +2539,8 @@ export const dezTheme = EditorView.theme({
     borderRadius: editorSize(4),
     backgroundColor: 'var(--color-mention-bg, rgba(212, 154, 17, 0.2))',
     color: 'var(--color-mention, #6b4700)',
+    // A click shows the asset that the chip names (mentions.ts).
+    cursor: 'pointer',
   },
   // The syntax highlight spans and a link's span are inside the chip's span.
   // The highlight colors (code, a heading, a quote) give way to the mention

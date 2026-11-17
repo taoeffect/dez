@@ -246,6 +246,24 @@ export async function scrollEditorToTop (browser: E2EBrowser): Promise<void> {
   })
 }
 
+/** Scrolls the thread editor to its end, where CM draws the last lines. */
+export async function scrollEditorToEnd (browser: E2EBrowser): Promise<void> {
+  await browser.execute(() => {
+    const scroller = document.querySelector('.cm-scroller')
+    if (!scroller) throw new Error('scrollEditorToEnd: .cm-scroller not found')
+    scroller.scrollTop = scroller.scrollHeight
+  })
+}
+
+/** The scroll position of the thread editor. */
+export async function editorScrollTop (browser: E2EBrowser): Promise<number> {
+  return browser.execute(() => {
+    const scroller = document.querySelector('.cm-scroller')
+    if (!scroller) throw new Error('editorScrollTop: .cm-scroller not found')
+    return scroller.scrollTop
+  })
+}
+
 /** Where the focus is: 'find' or 'replace' for the find dropdown fields,
  *  'editor' for the thread editor, else the tag name of the focused
  *  element. */

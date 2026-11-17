@@ -1,8 +1,9 @@
-import { StateField, type EditorState, type Extension } from '@codemirror/state'
+import { Prec, StateField, type EditorState, type Extension } from '@codemirror/state'
 import { Decoration, EditorView, hoverTooltip, type DecorationSet } from '@codemirror/view'
 import { namedMentions, type AssetKind } from '../../model/chat/assetMentions'
 import { plainLiveText } from '../../model/chat/content'
 import { sectionsField } from '../thread/cmEditor'
+import { assetJumps, jumpToAsset, mentionTarget } from './assetJump'
 import { compactionBlockEnd } from './compactionBlock'
 import { tooltipContent } from './images'
 import { sectionRolesChanged, sectionTexts } from './lineBlocks'
@@ -21,6 +22,9 @@ import { sectionRolesChanged, sectionTexts } from './lineBlocks'
 // The chips come from `namedMentions` (assetMentions.ts), the rule that a
 // test ties to the request builder. Sections of both roles get them: a
 // reply can name an asset too, and its id reads the same there.
+//
+// A chip is also a link to its asset: a click scrolls to the image or the
+// player that it names, and opens the chip that hides it (assetJump.ts).
 
 /** A mention that the editor shows as a chip: its doc range, its id, and
  *  what the id names. */
@@ -140,9 +144,47 @@ const mentionHover = hoverTooltip(
   { hideOn: (tr, tooltip) => mentionAt(tr.state, tr.changes.mapPos(tooltip.pos), 1) === null },
 )
 
+/** The chip whose text holds `target`, a `.dez-mention` mark or an element
+ *  in it. */
+function mentionAtElement(view: EditorView, target: EventTarget | null): ShownMention | null {
+  const mark = target instanceof Element ? target.closest('.dez-mention') : null
+  if (!mark || !view.contentDOM.contains(mark)) return null
+  return mentionAt(view.state, view.posAtDOM(mark), 1)
+}
+
+/** A plain primary-button press on a chip shows the asset that it names
+ *  (`jumpToAsset`) when the button goes up on the same chip: the press
+ *  rule of a link (`linkClicks`, links.ts). The handler takes the press,
+ *  so the caret and the focus stay where they are. A press with a
+ *  modifier key or another button, and a press on a chip whose asset the
+ *  editor does not draw (`mentionTarget`), go to CodeMirror. A link can
+ *  be inside a chip: a press on the link is the link's. */
+const mentionClicks = EditorView.domEventHandlers({
+  mousedown(event, view) {
+    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return false
+    if (event.target instanceof Element && event.target.closest('.dez-link')) return false
+    const pressed = mentionAtElement(view, event.target)
+    if (!pressed || !mentionTarget(view.state, pressed)) return false
+    const onMouseUp = (release: MouseEvent) => {
+      if (release.button !== 0) return
+      window.removeEventListener('mouseup', onMouseUp, true)
+      const released = mentionAtElement(view, release.target)
+      if (!released || released.from !== pressed.from || released.id !== pressed.id) return
+      // The doc can change between the press and the release.
+      const target = mentionTarget(view.state, released)
+      if (target) jumpToAsset(view, target)
+    }
+    window.addEventListener('mouseup', onMouseUp, true)
+    return true
+  },
+})
+
 /** The mention chips of the thread editor (`buildState()` in
- *  `ThreadEditor.vue`), with their tooltips. The state needs
- *  `sectionsField`. The CSS is in `dezTheme`. */
+ *  `ThreadEditor.vue`), with their tooltips and their clicks. The state
+ *  needs `sectionsField`. The CSS is in `dezTheme`. */
 export function mentionChips(): Extension {
-  return [mentionDecorationsField, mentionHover]
+  // High precedence: the press must run before
+  // `focusKeepingScrollOnMouseDown` (focus.ts), which focuses an editor
+  // that does not have the focus.
+  return [mentionDecorationsField, mentionHover, Prec.high(mentionClicks), assetJumps()]
 }

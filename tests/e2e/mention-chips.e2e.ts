@@ -1,13 +1,16 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
+import { jobStartedText } from '../../src/model/tools/jobs'
 import { startApp, type RunningApp } from './harness/app'
-import { consoleErrors, elementCenter, movePointer, resetConsoleErrors, screenshotOnFailure, typeInto, typeKeys, waitFor, waitForValue } from './harness/dom'
+import { clearOpenedUrls, consoleErrors, elementCenter, movePointer, openedUrls, pointerShiftClickAt, resetConsoleErrors, screenshotOnFailure, stopOpenUrl, typeInto, typeKeys, waitFor, waitForValue } from './harness/dom'
 import { FIND_FIELD } from './harness/find'
 import { appFilePath, seedAppState, writeTestFile } from './harness/fixtures'
 import { pasteImageReference, shownImages, solidPng } from './harness/images'
 import { silentWav, tempClipTag } from './harness/media'
+import { assetInView, flashedAssets, pressMention, recordFlashes } from './harness/mentions'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { docPos, docPosPoint, editorDoc, focusEditor, misplacedLines, newTab, openSeededConversation, sbpCall, setCaret, threadSections } from './harness/thread'
+import { docPos, docPosPoint, editorDoc, editorScrollTop, editorSelection, focusEditor, focusedArea, misplacedLines, newTab, openSeededConversation, sbpCall, scrollEditorToEnd, scrollEditorToTop, setCaret, threadSections } from './harness/thread'
+import { hidingPart, intermediateParts, toolChips } from './harness/toolChips'
 
 // The chips of `@id` mentions in the thread editor, driven through the
 // real app.
@@ -19,7 +22,13 @@ import { docPos, docPosPoint, editorDoc, focusEditor, misplacedLines, newTab, op
 // changes no layout: the text keeps its place when the chip comes or goes.
 // A find match shows in place of the part of a chip that it covers.
 //
-// One app session serves the whole file. Each test has its own tab.
+// A plain click on a chip goes to the asset that it names: the editor
+// opens the tool call chip that hides it, scrolls it into view, and
+// flashes a ring around it. The click changes no text, no selection, and
+// no focus. A press on a link inside a chip opens the link.
+//
+// One app session serves the whole file. Each test has its own tab. The
+// spec stops every `dez.controller/openUrl` call (`stopOpenUrl`).
 
 const PNG = solidPng(40, 24, [220, 60, 40])
 const IMAGE_TOOLTIP = {
@@ -143,12 +152,14 @@ describe('mention chips', () => {
       throw err
     }
     await waitFor(browser, 'header.tab-bar', 60_000)
+    await stopOpenUrl(browser)
   })
 
   // Errors thrown inside CodeMirror plugins are only logged, so the page
   // records console.error calls and each test checks the record.
   beforeEach(async () => {
     await resetConsoleErrors(browser)
+    await clearOpenedUrls(browser)
   })
 
   afterEach(async (ctx) => {
@@ -261,5 +272,100 @@ describe('mention chips', () => {
     await browser.keys(Key.Escape)
     await waitForValue(browser, 'the chip after find', chipParts, [WHOLE_CHIP])
     expect(await layout()).toEqual(withChip)
+  })
+
+  it('goes to the image or the clip that a chip names and flashes it, and leaves the text, the selection, and the focus alone', async () => {
+    const image = await storedImage('mention-jump.png')
+    const clip = await tempClipTag(app.home, 'audio', 'b', 'mention-jump.wav', silentWav(1))
+    // Lines enough that CM does not draw the assets while the mentions are
+    // in view.
+    const filler = Array.from({ length: 150 }, (_, line) => `Line ${line + 1}.`).join('\n')
+    await openSeededConversation(browser, app.home, 'mention-chips-jump', [
+      { role: 'user', text: `The picture:\n${image}\nThe sound:\n${clip}` },
+      { role: 'agent', text: filler },
+      { role: 'user', text: 'Compare @a with @b.' },
+    ])
+    await focusEditor(browser)
+    const from = await docPos(browser, 'Compare')
+    await setCaret(browser, from, from + 'Compare'.length)
+    const doc = await editorDoc(browser)
+    const selection = await editorSelection(browser)
+
+    for (const [index, id, flashed] of [[0, 'a', 'image a'], [1, 'b', 'player b']] as const) {
+      await scrollEditorToEnd(browser)
+      await waitForValue(browser, 'the chips at the end', chips, ['@a', '@b'])
+      expect(await assetInView(browser, id)).toBe(false)
+
+      await recordFlashes(browser)
+      await pressMention(browser, index)
+      await waitForValue(browser, `${flashed} in view`, () => assetInView(browser, id), true)
+      await waitForValue(browser, `the flash of ${flashed}`, () => flashedAssets(browser), [flashed])
+      expect(await editorDoc(browser)).toBe(doc)
+      expect(await editorSelection(browser)).toEqual(selection)
+      expect(await focusedArea(browser)).toBe('editor')
+    }
+  })
+
+  it('opens the closed chip of the tool call that hides the image, and shows and flashes the image in its panel', async () => {
+    const jobId = 'j-mtn1'
+    const stored = await writeTestFile(appFilePath(app.home, 'assets', 'generated', 'images', 'mention-hidden.png'), PNG)
+    const filler = Array.from({ length: 150 }, (_, line) => `Line ${line + 1}.`).join('\n')
+    const reply = [
+      `<dez:tool id="call_mention" name="model_invoke" model="studio/paint" prompt="A draft" is_intermediate="true">\n${jobStartedText(jobId, 1)}\n</dez:tool>`,
+      `![${stored}](id=a|tool=model_invoke|hidden=${jobId})`,
+      filler,
+    ].join('\n\n')
+    await openSeededConversation(browser, app.home, 'mention-chips-hidden', [
+      { role: 'user', text: 'Make a draft' },
+      { role: 'agent', text: reply },
+      { role: 'user', text: 'Use @a.' },
+    ])
+    await scrollEditorToTop(browser)
+    await waitForValue(browser, 'the closed chip that hides the image', () => intermediateParts(browser), [hidingPart('image')])
+    expect(await shownImages(browser)).toStrictEqual([])
+    await scrollEditorToEnd(browser)
+    await waitForValue(browser, 'the chip', chips, ['@a'])
+
+    const focus = await focusedArea(browser)
+    await recordFlashes(browser)
+    await pressMention(browser, 0)
+    await waitForValue(browser, 'the open chip', async () => (await toolChips(browser)).map(({ open }) => open), [true])
+    await waitForValue(browser, 'the image in the panel', () => shownImages(browser), [{ alt: 'mention-hidden.png', width: 40, height: 24 }])
+    await waitForValue(browser, 'the image in view', () => assetInView(browser, 'a'), true)
+    expect(await flashedAssets(browser)).toEqual(['image a'])
+    expect(await focusedArea(browser)).toBe(focus)
+  })
+
+  it('leaves a press on a link in a chip and a Shift+click to the editor, and does not move an asset in view', async () => {
+    const image = await storedImage('mention-link.png')
+    await openSeededConversation(browser, app.home, 'mention-chips-link', [
+      { role: 'user', text: `${image}\nSee [the draft @a](https://example.com/a) or @a, then stop.` },
+    ])
+    await waitForValue(browser, 'the chips', chips, ['@a', '@a'])
+    await waitForValue(browser, 'the image in view', () => assetInView(browser, 'a'), true)
+    await focusEditor(browser)
+    const end = (await editorDoc(browser)).length
+    await setCaret(browser, end)
+    const scrollTop = await editorScrollTop(browser)
+
+    // The image is in view: the click flashes it and scrolls nothing.
+    await recordFlashes(browser)
+    await pressMention(browser, 1)
+    await waitForValue(browser, 'the flash', () => flashedAssets(browser), ['image a'])
+    expect(await editorScrollTop(browser)).toBe(scrollTop)
+    expect(await editorSelection(browser)).toEqual({ anchor: end, head: end })
+
+    await recordFlashes(browser)
+    await pressMention(browser, 0)
+    await waitForValue(browser, 'the opened link', () => openedUrls(browser), ['https://example.com/a'])
+    expect(await flashedAssets(browser)).toEqual([])
+    expect(await editorSelection(browser)).toEqual({ anchor: end, head: end })
+
+    // A Shift+click selects to the place of the press, as on other text.
+    const mention = (await editorDoc(browser)).lastIndexOf('@a')
+    await pointerShiftClickAt(browser, await docPosPoint(browser, mention + 1, 1))
+    await waitForValue(browser, 'the selection of the Shift+click', () => editorSelection(browser), { anchor: end, head: mention + 1 })
+    expect(await flashedAssets(browser)).toEqual([])
+    expect(await focusedArea(browser)).toBe('editor')
   })
 })

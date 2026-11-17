@@ -20,7 +20,8 @@ import { measureLineHeights } from '../thread/editorMeasure'
 import { streamingSectionField } from '../thread/modelChip'
 import AssetList from './AssetList.vue'
 import { compactionBlockEnd } from './compactionBlock'
-import { eyeIcon, hiddenAssets, hiddenAssetsOfChips, hiddenLineStarts, type AssetPlace } from './hiddenAssets'
+import type { AssetPlace } from './drawnAssets'
+import { eyeIcon, hiddenAssets, hiddenAssetsOfChips, hiddenLineStarts } from './hiddenAssets'
 import { createImage } from './images'
 import { agentSectionTexts, chipBlocks, lineBlocks, sectionRolesChanged } from './lineBlocks'
 import { createPlayer, destroyPlayer, isInSelectableTooltip, updatePlayer } from './media'
@@ -397,6 +398,12 @@ export function openToolCalls(state: EditorState): ReadonlySet<string> {
   return state.field(toolCallsOpenField, false) ?? new Set()
 }
 
+/** The effects that open the panel of each chip of the call `id` in
+ *  `state`: none when it is open already, as the effect toggles. */
+export function openToolCallEffects(state: EditorState, id: string): StateEffect<string>[] {
+  return openToolCalls(state).has(id) ? [] : [toggleToolCallOpenEffect.of(id)]
+}
+
 /** The call that each drawn chip root shows. The open state changes the
  *  drawn DOM in place (`toolCallOpenUpdater`), which needs the call. */
 const drawnCalls = new WeakMap<HTMLElement, RenderedToolCall>()
@@ -688,6 +695,8 @@ function renderAssets(view: EditorView, list: HTMLElement, owner: HiddenAssetOwn
 interface MountedAssetList {
   app: App
   rows: ShallowRef<PanelAssetRow[]>
+  /** The mounted `AssetList.vue`; null while it is not mounted. */
+  list: InstanceType<typeof AssetList> | null
 }
 
 /** The `AssetList.vue` app that each long list (`renderAssetList`) holds. */
@@ -707,9 +716,25 @@ function renderAssetList(view: EditorView, list: HTMLElement, owner: HiddenAsset
     return
   }
   const shownRows = shallowRef(rows)
-  const app = createApp({ render: () => h(AssetList, { view, rows: shownRows.value }) })
+  // A function ref, as the render function of an app has no template refs.
+  const app = createApp({ render: () => h(AssetList, { view, rows: shownRows.value, ref: (instance) => { mountedList.list = instance as MountedAssetList['list'] } }) })
+  const mountedList: MountedAssetList = { app, rows: shownRows, list: null }
+  mountedAssetLists.set(list, mountedList)
   app.mount(list)
-  mountedAssetLists.set(list, { app, rows: shownRows })
+}
+
+/** Asks the first long list (`renderAssetList`) in `root` to scroll its
+ *  own box so that it draws row `index` (`AssetList.vue`); false when
+ *  `root` holds no mounted long list. */
+export function showLongListRow(root: Element, index: number): boolean {
+  for (const element of root.querySelectorAll(`.${ASSETS_CLASS}`)) {
+    const list = mountedAssetLists.get(element)?.list
+    if (list) {
+      list.showRow(index)
+      return true
+    }
+  }
+  return false
 }
 
 /** Takes down the players of the hidden clips that `panel` draws, before

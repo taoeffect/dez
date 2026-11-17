@@ -31,13 +31,6 @@ import { tableRowStarts } from './tables'
 // images.ts, media.ts, toolCalls.ts, and compactionChip.ts read this
 // module. It must import none of them.
 
-/** Tells where the text of a drawn image or player starts in the doc now;
- *  null when it is not in the doc any more. The trash, the Save, and the
- *  tooltips of an asset work on its text. An asset at its own place finds
- *  its text by its DOM. A hidden asset is drawn in the panel of its chip,
- *  whose DOM is at the place of the chip, so the chip gives this. */
-export type AssetPlace = () => number | null
-
 interface HiddenAssetsInDoc {
   /** In doc order, with doc offsets. */
   assets: readonly HiddenAsset[]

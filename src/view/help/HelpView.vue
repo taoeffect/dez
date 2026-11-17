@@ -256,7 +256,9 @@ function onOverlayClick(event: MouseEvent) {
               Point at an image or a player to see its id. A model gets this id, and never the path
               of the file. Write <code>@</code> and the id in a message to name the asset. A message
               can name its own assets and the assets of the messages before it. Dez shows a name as
-              a small chip when an asset has that id; a name with no chip names no asset.
+              a small chip when an asset has that id; a name with no chip names no asset. Click a
+              chip to go to its asset, which flashes. When a chip of a tool call or of a compaction
+              hides the asset, Dez opens that chip first.
             </p>
 
             <h3>Intermediate assets</h3>

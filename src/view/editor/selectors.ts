@@ -54,7 +54,8 @@ function followToBottomNextFrame(): void {
 // starts it again. Only the user moves a view up while it is not at its
 // bottom: new text, the follow scroll, and CodeMirror's scroll anchoring
 // (it keeps the top line in place when the doc grows below it) never do.
-// So this one rule covers the wheel, the scrollbar, keys and find jumps.
+// So this one rule covers the wheel, the scrollbar, keys, find jumps, and
+// mention jumps (assetJump.ts).
 // The distance from the bottom alone cannot tell a user scroll from new
 // text, because a scroll event can come after more text arrived.
 // So code that runs without a user action must not scroll a view up, or

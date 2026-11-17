@@ -78,6 +78,8 @@ onUnmounted(() => {
      color.) */
   --color-mention: #6b4700;
   --color-mention-bg: rgba(212, 154, 17, 0.2);
+  /* The ring that flashes around the asset that a clicked mention names. */
+  --color-mention-ring: rgb(212, 154, 17);
 
   font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
   font-size: 16px;
@@ -120,6 +122,7 @@ onUnmounted(() => {
     --color-image-toolbar-border: rgba(255, 255, 255, 0.14);
     --color-mention: #f0c75e;
     --color-mention-bg: rgba(240, 190, 70, 0.16);
+    --color-mention-ring: rgb(240, 190, 70);
   }
 }
 
@@ -148,5 +151,6 @@ onUnmounted(() => {
   --color-image-toolbar-border: rgba(255, 255, 255, 0.14);
   --color-mention: #f0c75e;
   --color-mention-bg: rgba(240, 190, 70, 0.16);
+  --color-mention-ring: rgb(240, 190, 70);
 }
 </style>

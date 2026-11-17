@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { EditorView } from '@codemirror/view'
-import { Virtualizer } from 'virtua/vue'
+import { Virtualizer, type VirtualizerHandle } from 'virtua/vue'
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch, type Directive } from 'vue'
 import { measureLineHeights } from '../thread/editorMeasure'
 import { destroyPlayer, updatePlayer } from './media'
@@ -27,6 +27,16 @@ const ROW_CLASS = 'dez-asset-list__row'
 const itemProps = () => ({ class: 'dez-asset-list__item' })
 
 const box = ref<HTMLElement>()
+const virtualizer = ref<VirtualizerHandle>()
+
+defineExpose({
+  /** Scrolls the box so that it draws row `index`, at its middle: a
+   *  mention chip (assetJump.ts) asks for a far kept asset, which has no
+   *  element yet. */
+  showRow(index: number): void {
+    virtualizer.value?.scrollToIndex(index, { align: 'center' })
+  },
+})
 
 /** The asset element and the key of each drawn row, by row element. */
 const drawnRows = new WeakMap<Element, { element: HTMLElement, key: string }>()
@@ -112,7 +122,7 @@ onBeforeUnmount(() => {
     @play.capture="refreshLiveKeys"
     @pause.capture="refreshLiveKeys"
   >
-    <Virtualizer v-slot="{ item: row, index }" :data="rows" :keep-mounted="keepMounted" :item-props="itemProps">
+    <Virtualizer ref="virtualizer" v-slot="{ item: row, index }" :data="rows" :keep-mounted="keepMounted" :item-props="itemProps">
       <div :key="row.key" v-panel-asset="row" :class="[ROW_CLASS, { 'dez-asset-list__row--after': index > 0 }]" />
     </Virtualizer>
   </div>

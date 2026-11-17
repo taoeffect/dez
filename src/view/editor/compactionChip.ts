@@ -25,6 +25,7 @@ import {
   panelAsset,
   renderHiddenPart,
   renderOpenState,
+  showLongListRow,
   span,
   type PanelAsset,
 } from './toolCalls'
@@ -216,6 +217,15 @@ const drawnData = new WeakMap<HTMLElement, CompactionChipData>()
 
 function partRoot(root: HTMLElement, part: CompactionChipPart): HTMLElement | null {
   return root.querySelector<HTMLElement>(`[${PART_ATTRIBUTE}="${part}"]`)
+}
+
+/** Asks the long list of the open assets panel of `view` to draw the kept
+ *  asset at `index` (the kept assets are its rows, in doc order); false
+ *  when the panel is not drawn. */
+export function showKeptAssetRow(view: EditorView, index: number): boolean {
+  const root = view.contentDOM.querySelector<HTMLElement>(`.${CHIPS_CLASS}`)
+  const assetsRoot = root && partRoot(root, 'assets')
+  return !!assetsRoot && showLongListRow(assetsRoot, index)
 }
 
 /** `renderOpenState` for the chip `part` of the widget root `root`;

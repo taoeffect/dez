@@ -12,7 +12,8 @@ import { measureLineHeights } from '../thread/editorMeasure'
 import { selectedAssetLook } from './assetSelection'
 import { syncDomSelection } from './focus'
 import { compactionBlockEnd } from './compactionBlock'
-import { HiddenAssetWidget, hiddenAssetLines, hiddenAssetOwnerKinds, type AssetPlace } from './hiddenAssets'
+import { noteDrawnAsset, type AssetPlace } from './drawnAssets'
+import { HiddenAssetWidget, hiddenAssetLines, hiddenAssetOwnerKinds } from './hiddenAssets'
 import { sectionRolesChanged } from './lineBlocks'
 import { followShownRange, pendingRanges, type DocRange } from './pendingRanges'
 import { ROUND_STROKE, svgIcon } from './svgIcon'
@@ -222,6 +223,7 @@ export function createImage(view: EditorView, { path, id, linked }: Pick<ImageRe
   const wrapper = document.createElement('span')
   wrapper.className = 'dez-image'
   const placeNow = place ?? (() => view.contentDOM.contains(wrapper) ? view.posAtDOM(wrapper) : null)
+  noteDrawnAsset(wrapper, placeNow)
   const img = document.createElement('img')
   img.className = 'dez-image__img'
   img.alt = fileNameOf(path)
