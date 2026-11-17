@@ -114,8 +114,9 @@ export interface RenderedToolCall extends ToolBlock {
  *  content with no blank line between them as with one. Content is a line
  *  of the same section that is not blank and not a chip (text, an image, a
  *  player); the start and the end of a section are not content. A hidden
- *  asset (hiddenAssets.ts) is no content: its line counts as a blank line.
- *  Positions are doc offsets, in doc order. */
+ *  asset (hiddenAssets.ts) and the compaction block (compactionBlock.ts)
+ *  are no content: they are out of view, so their lines count as blank
+ *  lines. Positions are doc offsets, in doc order. */
 interface ChipSpacing {
   /** The start of each blank line between two chips. Such a line takes no
    *  height (`collapsedLines`). */
@@ -346,11 +347,12 @@ function findRenderedToolCalls(doc: string, sections: readonly SectionModel[], s
         summary: summaries[index],
       })
     })
-    // Spaces stand for the text of each hidden asset, so that its line
-    // counts as a blank line (`ChipSpacing`). A chip with only a hidden
-    // asset between it and text, and no blank line, gets no space there;
-    // the writers of an asset always put a blank line on one side.
-    let spaced = text
+    // Spaces stand for the text of the compaction block, which is out of
+    // view under its chips, and for the text of each hidden asset, so that
+    // their lines count as blank lines (`ChipSpacing`). A chip with only a
+    // hidden asset between it and text, and no blank line, gets no space
+    // there; the writers of an asset always put a blank line on one side.
+    let spaced = from < blockEnd ? `${' '.repeat(blockEnd - from)}${text.slice(blockEnd - from)}` : text
     for (const asset of sectionHidden) spaced = `${spaced.slice(0, asset.from - from)}${' '.repeat(asset.to - asset.from)}${spaced.slice(asset.to - from)}`
     addSectionSpacing(spacing, spaced, from, chips)
   }

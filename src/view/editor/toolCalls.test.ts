@@ -1,6 +1,7 @@
 import { EditorSelection, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { describe, expect, it } from 'vitest'
+import { compactionBlockText } from '../../model/chat/compaction'
 import { HIDDEN_CLIP_PATH, HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, invokeBlock, waitBlock } from '../../model/chat/testing'
 import type { Role } from '../../model/chat/types'
 import { toolBlockText, type ToolBlockStatus } from '../../model/chat/toolBlocks'
@@ -15,6 +16,9 @@ import { intermediateLabel, intermediateSymbols, markdownToolCalls, renderedTool
 function block(id: string, status: ToolBlockStatus = 'success', result = 'ok'): string {
   return toolBlockText({ id, name: 'model_list', status, arguments: { filter: 'gemini' }, result: status === 'running' ? '' : result })
 }
+
+/** A compaction block, the start of a compaction section. */
+const COMPACTION_BLOCK = compactionBlockText({ count: 1, lastId: 'b', pictures: [] }, 'Notes')
 
 /** A state whose doc is `texts`, one section each, with the roles of
  *  `roles` (section ids `s0`, `s1`, …). The first section is `user`, as
@@ -315,6 +319,14 @@ describe('the spacing of the chip lines', () => {
     expect(agentRows(lines, 2)).toEqual(['chip call_1', COLLAPSED, image, '', 'Done.'])
     expect(agentRows(lines, 1)).toEqual(['chip call_1', '', COLLAPSED, '', 'Done.'])
     expect(agentRows(lines, 4)).toEqual(['chip call_1', COLLAPSED, COLLAPSED, '', 'Done.'])
+  })
+
+  it('gives a chip right after the compaction block no space above: the lines of the block are out of view', () => {
+    const compacted = (reply: string[]) => rows(createState([[COMPACTION_BLOCK, ...reply].join('\n'), 'ask'], ['agent', 'user']))
+    const blockRows = COMPACTION_BLOCK.split('\n')
+
+    expect(compacted([block('a'), 'Done.'])).toEqual([...blockRows, 'chip a', SPACE, 'Done.', SECTION_SEP, 'ask'])
+    expect(compacted(['Working.', block('a'), 'Done.'])).toEqual([...blockRows, 'Working.', SPACE, 'chip a', SPACE, 'Done.', SECTION_SEP, 'ask'])
   })
 })
 
