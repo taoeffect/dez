@@ -1,6 +1,6 @@
 import sbp from '@sbp/sbp'
 import type { ActiveModel, MessagePart, ModelRef, Section, SectionThinking, Tab } from '../model/chat/types'
-import type { Compactions } from '../model/chat/compaction'
+import { sectionsBeforeReply, sectionTextParts, type Compactions } from '../model/chat/compaction'
 import { sectionPlainText } from '../model/chat/content'
 import { compactionDueSize, type ContextSize } from '../model/chat/contextSize'
 import type { ConversationCost } from '../model/chat/conversationCost'
@@ -291,9 +291,18 @@ function streamWritesSection(tabId: string, sectionId: string): boolean {
   return !!session && session.sectionId === sectionId && session.status === 'streaming'
 }
 
-function streamingSection(tabId: string, sectionId: string): Section | null {
-  const tab = sbp('dez.model/tab', tabId) as Tab | null
-  return tab?.sections.find((section) => section.id === sectionId) ?? null
+// The reply's section in the tab, with the text of the reply. In the
+// compaction section, the reply that ran at the compaction goes on after
+// the block, so its text is the text after the block (`sectionTextParts`).
+interface StreamingReply {
+  section: Section
+  text: string
+}
+
+function streamingReply(tabId: string, sectionId: string): StreamingReply | null {
+  const sections = (sbp('dez.model/tab', tabId) as Tab | null)?.sections ?? []
+  const index = sections.findIndex((section) => section.id === sectionId)
+  return index < 0 ? null : { section: sections[index], text: sectionTextParts(sections[index], index).text }
 }
 
 // Appends text to the streaming section in the store, and in the editor when
@@ -462,7 +471,7 @@ function replyPictureParts(base: readonly StreamMessage[], model: ModelRef): Req
 // the section meanwhile, but a tool can put an image or a clip after the
 // blocks (`toolAssetWriters`). `model` is the reply's
 // model, for a tool that reads it, and `messages` the request that gave
-// the calls, for the picture budget. Returns the section after the round,
+// the calls, for the picture budget. Returns the reply after the round,
 // or null when the run did not end here: the user stopped the reply, or a
 // submit ended its output (stopToolRun wrote the blocks), or the user
 // deleted the running blocks.
@@ -476,7 +485,7 @@ function replyPictureParts(base: readonly StreamMessage[], model: ModelRef): Req
 // thinking for a round whose text holds an image of the model
 // (`roundThinking`, streams/messages.ts), and the request after a round of
 // calls needs that round's thinking.
-async function runToolRound(tabId: string, reply: ReplyRuntime, model: ModelRef, calls: CheckedToolCall[], sectionText: string, messages: readonly StreamMessage[]): Promise<Section | null> {
+async function runToolRound(tabId: string, reply: ReplyRuntime, model: ModelRef, calls: CheckedToolCall[], replyText: string, messages: readonly StreamMessage[]): Promise<StreamingReply | null> {
   const runningBlocks = calls.map((call) => toolCallBlock(call))
   const run: ToolRun = {
     calls,
@@ -484,7 +493,7 @@ async function runToolRound(tabId: string, reply: ReplyRuntime, model: ModelRef,
     runningText: toolGroupText(runningBlocks),
     abort: new AbortController(),
   }
-  writeStreamText(tabId, reply.sectionId, toolGroupAppendText(sectionText, runningBlocks))
+  writeStreamText(tabId, reply.sectionId, toolGroupAppendText(replyText, runningBlocks))
   // The next round's text comes after the blocks, not after an asset.
   reply.afterAsset = false
   reply.toolRun = run
@@ -521,7 +530,7 @@ async function runToolRound(tabId: string, reply: ReplyRuntime, model: ModelRef,
     discardRunPictures(run)
     return null
   }
-  return streamingSection(tabId, reply.sectionId)
+  return streamingReply(tabId, reply.sectionId)
 }
 
 // The reply is still its tab's reply, and no stop or submit ended it. A
@@ -532,10 +541,10 @@ function replyIsCurrent(tabId: string, reply: ReplyRuntime): boolean {
 }
 
 // The line breaks that put a reference of the reply (an image, a clip) in
-// a paragraph of its own after `sectionText`. A clip's tag needs it: a tag
+// a paragraph of its own after `replyText`. A clip's tag needs it: a tag
 // counts only as a whole line (mediaTags.ts).
-function paragraphGap(sectionText: string): string {
-  return sectionText === '' || sectionText.endsWith('\n\n') ? '' : sectionText.endsWith('\n') ? '\n' : '\n\n'
+function paragraphGap(replyText: string): string {
+  return replyText === '' || replyText.endsWith('\n\n') ? '' : replyText.endsWith('\n') ? '\n' : '\n\n'
 }
 
 // Writes an image reference or a clip tag at the end of the reply's
@@ -544,14 +553,15 @@ function paragraphGap(sectionText: string): string {
 // user merged it into the one before, or the stream ended. The id and the
 // write are in one tick, so that no paste takes the id (the editor gives
 // ids only to pasted and dropped references). The model text that comes
-// next starts a new paragraph (`writeModelText`).
+// next starts a new paragraph (`writeModelText`). Right after a compaction,
+// the reply text is empty, so the asset starts on the line after the end
+// line of the block.
 function writeAsset(tabId: string, reply: ReplyRuntime, assetText: (id: string) => string): string | null {
+  const replied = streamingReply(tabId, reply.sectionId)
+  if (replied === null || !streamWritesSection(tabId, reply.sectionId)) return null
   const sections = (sbp('dez.model/tab', tabId) as Tab | null)?.sections ?? []
-  const texts = sections.map(sectionPlainText)
-  const sectionText = texts[sections.findIndex((section) => section.id === reply.sectionId)]
-  if (sectionText === undefined || !streamWritesSection(tabId, reply.sectionId)) return null
-  const [id] = newMediaIds(texts, 1)
-  receiveToken(tabId, reply.sectionId, paragraphGap(sectionText) + assetText(id))
+  const [id] = newMediaIds(sections.map(sectionPlainText), 1)
+  receiveToken(tabId, reply.sectionId, paragraphGap(replied.text) + assetText(id))
   reply.afterAsset = true
   return id
 }
@@ -613,7 +623,7 @@ async function writeReplyClip(tabId: string, reply: ReplyRuntime, clip: Generate
 async function settleJobs(tabId: string, reply: ReplyRuntime): Promise<EndedJob[] | null> {
   // A section that is gone (the user merged it into the one before) takes
   // no asset, so nothing is worth the wait.
-  if (!streamingSection(tabId, reply.sectionId)) reply.jobs.stopAll()
+  if (!streamingReply(tabId, reply.sectionId)) reply.jobs.stopAll()
   const ended = await reply.jobs.settle()
   // After a stop the writers give null, which deletes the files.
   for (const job of ended) {
@@ -664,10 +674,11 @@ interface NotesWriter {
 type CompactionStep =
   // No compaction: the request goes as it is.
   | { kind: 'none' }
-  // The tab is compacted. `messages` are the request messages of its
-  // sections before the reply's section, `imagesOverLimit` counts their
-  // images that went as text only (`RequestMessages.imagesOverLimit`), and
-  // `kept` is what their images and pictures cost.
+  // The tab is compacted. `messages` are the request messages before the
+  // reply: the compaction message of the block of the reply's section.
+  // `imagesOverLimit` counts their images that went as text only
+  // (`RequestMessages.imagesOverLimit`), and `kept` is what their images
+  // and pictures cost.
   | { kind: 'compacted', messages: StreamMessage[], imagesOverLimit: number, kept: PictureBudget }
   // The reply ended in the check, or a stop or a submit ended it meanwhile.
   | { kind: 'ended' }
@@ -676,15 +687,16 @@ const NO_COMPACTION: CompactionStep = { kind: 'none' }
 const REPLY_ENDED: CompactionStep = { kind: 'ended' }
 
 // The request messages, for `model`, of the sections of `sections` before
-// the section `sectionId`, with the count of their images that went as
-// text only for the image limits; null when no section has that id. Not
-// the messages of all the sections: an empty section of a reply is left
-// out of a request, so a user section after it would join the message
-// before it.
+// the reply's section `sectionId`, with the count of their images that
+// went as text only for the image limits; null when no section has that
+// id. Not the messages of all the sections: an empty section of a reply is
+// left out of a request, so a user section after it would join the
+// message before it. For a reply in the compaction section, that is the
+// compaction message of its block (`sectionsBeforeReply`).
 function messagesBefore(sections: Section[], sectionId: string, model: ModelRef, sendTools: boolean): Pick<RequestMessages, 'messages' | 'imagesOverLimit'> | null {
   const index = sections.findIndex((section) => section.id === sectionId)
   if (index < 0) return null
-  const { messages, imagesOverLimit } = sectionsToStreamMessages(sections.slice(0, index), model, {
+  const { messages, imagesOverLimit } = sectionsToStreamMessages(sectionsBeforeReply(sections, index), model, {
     ...imageOptionsOf(modelInfoOf(model)),
     sendTools,
   })
@@ -805,12 +817,14 @@ async function endUncompactedReply(tabId: string, reply: ReplyRuntime, error: un
 // The compaction check of a reply, right before a chat request: when the
 // request is due for a compaction (`compactionReason`), one request asks
 // for the notes of the conversation, and the notes take the place of the
-// tab's sections up to the reply's section, which is empty after it. The
-// reply stays the same reply: its runtime, its jobs, and its stream
-// session go on, so its busy state, Stop, and its error toast cover the
-// compaction. The first request of a reply and a request between two tool
-// rounds use this one path: at a submit, the reply's section is the empty
-// section of the new reply.
+// tab's sections up to the reply's section and of the text of the reply.
+// After it, the reply's section is the compaction section: the block, and
+// no reply text yet (`compactedSections`). The reply stays the same
+// reply: its runtime, its jobs, and its stream session go on, so its busy
+// state, Stop, and its error toast cover the compaction, and it writes on
+// after the block. The first request of a reply and a request between two
+// tool rounds use this one path: at a submit, the reply's section is the
+// empty section of the new reply.
 //
 // `messages` and `frame` are the request that is about to go. `kept` is
 // what the images and the pictures cost right after the newest compaction
@@ -885,7 +899,7 @@ async function compactIfDue(args: StreamStartArgs, reply: ReplyRuntime, frame: R
   // In the tick of the swap: an editor that still holds the old doc writes
   // the old text back into the tab at its next doc change.
   sbp('dez.editor/rebuildIfVisible', tabId)
-  // The reply's section is empty again, so its text state starts new.
+  // The reply text is empty again, so its text state starts new.
   reply.escaper = new ModelTextEscaper()
   reply.afterAsset = false
   // Before the delete, which keeps each file that a conversation file
@@ -923,7 +937,7 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
   const frame: RequestFrame = { system, tools, imageOutput: args.imageOutput, audioOutput: args.audioOutput, providerSettings }
   // The messages of the sections before the reply's section: each request
   // sends them, then the rounds of the reply so far. A compaction in the
-  // reply replaces them.
+  // reply replaces them with the compaction message of its block.
   let base = args.messages
   let messages = base
   // The images that the next request leaves out for the image limit, and
@@ -953,7 +967,7 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
         untoldImagesOverLimit = step.imagesOverLimit
         kept = step.kept
         requestSinceCompaction = false
-        // The reply's section is empty again: it has no round before.
+        // The reply text is empty again: it has no round before.
         afterToolCall = undefined
       }
     }
@@ -1037,23 +1051,24 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
     // back with no tool definitions. A section that is gone (the user
     // merged it into the one before) takes no blocks.
     const streamedCalls = tools.length > 0 ? result.toolCalls ?? [] : []
-    const section = streamingSection(args.tabId, args.sectionId)
+    const replied = streamingReply(args.tabId, args.sectionId)
     // The tokens of this request are the size of the conversation with
     // its answer. The tab holds the answer's text now, but not yet the
     // blocks of its calls, so the calls go with the count. A provider that
     // told no tokens leaves the count of an earlier request.
     const { inputTokens, outputTokens } = result.usage ?? {}
     if (inputTokens !== undefined && outputTokens !== undefined) {
-      sbp('dez.model/tabs/countRequestContext', args.tabId, args.model, inputTokens + outputTokens, section ? streamedCalls : [])
+      sbp('dez.model/tabs/countRequestContext', args.tabId, args.model, inputTokens + outputTokens, replied ? streamedCalls : [])
     }
-    if (streamedCalls.length === 0 || !section) {
+    if (streamedCalls.length === 0 || !replied) {
       await endReply(args.tabId, reply, 'finished')
       return
     }
 
-    const sectionText = sectionPlainText(section)
-    const calls = checkToolCalls(streamedCalls, findToolBlocks(sectionText).map((block) => block.id))
-    const replySoFar = await runToolRound(args.tabId, reply, args.model, calls, sectionText, messages)
+    // Only the tool blocks of the reply text: the notes of a block hold
+    // none.
+    const calls = checkToolCalls(streamedCalls, findToolBlocks(replied.text).map((block) => block.id))
+    const replySoFar = await runToolRound(args.tabId, reply, args.model, calls, replied.text, messages)
     if (!replySoFar) {
       // Still current only when the user deleted the running blocks:
       // with no calls to send back, the reply cannot go on, so it ends
@@ -1071,7 +1086,7 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
     // agent message asks the model to go on from that text, and many
     // providers refuse it. Every later request sends that text at the start
     // of the message of the next round, after these same bytes.
-    const soFar = agentSectionMessages(replySoFar, args.model, true, replyPictureParts(base, args.model))
+    const soFar = agentSectionMessages(replySoFar.section, args.model, true, replyPictureParts(base, args.model), replySoFar.text)
     const lastTool = soFar.findLastIndex((message) => message.role === 'tool')
     const end = soFar[lastTool + 1]?.role === 'user' ? lastTool + 2 : lastTool + 1
     messages = [...base, ...soFar.slice(0, end)]

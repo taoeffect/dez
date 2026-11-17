@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CARRIED_USER_ASSETS_LABEL, COMPACTION_MESSAGE_INTRO, COMPACTION_USER_MESSAGE_LABEL, compactionBlockText, compactionTagText } from '../chat/compaction'
+import { CARRIED_USER_ASSETS_LABEL, COMPACTION_MESSAGE_INTRO, COMPACTION_USER_MESSAGE_LABEL, compactionBlockText, compactionTagText, sectionsBeforeReply } from '../chat/compaction'
 import { imageMarkdown } from '../chat/images'
 import { MEDIA_HIDDEN_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE, mediaTagRequestText, mediaTagText, type MediaTagData } from '../chat/mediaTags'
 import { SHOWN_PICTURE_OVER_LIMIT_NOTE, type ShownPicture } from '../chat/shownPictures'
@@ -1035,7 +1035,7 @@ describe('sectionsToStreamMessages: a compacted conversation', () => {
 
   // Saved conversations hold the old form, and the prompt cache needs the
   // same bytes.
-  it('sends the notes of a block with no tag and no end line, as the same bytes as the old form, and the text after the block after them', () => {
+  it('sends the notes of a block with no tag and no end line, as the same bytes as the old form', () => {
     const notes = 'The user wants a fox film.'
     const block = compactionBlockText({ count: 1, lastId: 'c', pictures: [] }, notes)
     const oldForm = `${tag().replace(/>$/, '/>')}\n${notes}`
@@ -1043,8 +1043,18 @@ describe('sectionsToStreamMessages: a compacted conversation', () => {
 
     expect(sent([reply('c', block), kept]).messages).toStrictEqual([{ role: 'user', content: `${COMPACTION_MESSAGE_INTRO}\n\n${notes}${KEPT}Make it red.` }])
     expect(sent([reply('c', oldForm), kept])).toStrictEqual(sent([reply('c', block), kept]))
-    expect(sent([reply('c', `${block}\nTyped after it.`), kept]).messages)
-      .toStrictEqual([{ role: 'user', content: `${COMPACTION_MESSAGE_INTRO}\n\n${notes}\n\nTyped after it.${KEPT}Make it red.` }])
+  })
+
+  // The text after the block is the reply that ran at the compaction, so
+  // a later user section is a message of its own.
+  it('sends the text after the block as an agent message after the notes, and the user sections after it as their own messages', () => {
+    const block = compactionBlockText({ count: 1, lastId: 'c', pictures: [] }, 'Notes.')
+
+    expect(sent([reply('c', `${block}\nTyped after it.`), user('u1', 'Make it red.')]).messages).toStrictEqual([
+      { role: 'user', content: `${COMPACTION_MESSAGE_INTRO}\n\nNotes.` },
+      { role: 'agent', content: 'Typed after it.' },
+      { role: 'user', content: 'Make it red.' },
+    ])
   })
 
   it('sends the notes as the model wrote them, with each clip as the request form of its tag, and no path', () => {
@@ -1306,6 +1316,51 @@ describe('sectionsToStreamMessages: a compacted conversation', () => {
       expect(JSON.stringify(sent(unlisted).messages)).not.toContain('/home/u')
       expect(sent(unlisted).messages[0]).toStrictEqual({ role: 'user', content: expect.any(String) })
       expect(messageClips(unlisted).map(({ id, src }) => ({ id, src }))).toStrictEqual([{ id: 'f', src: null }])
+    })
+
+    // The compaction section holds the block, then the reply that ran at
+    // the compaction, with its model and its thinking.
+    describe('and the reply after the block in the same section', () => {
+      const BLOCK = compactionBlockText({ count: 1, lastId: 'c', pictures: [] }, part('## First and newest message of the user', 'Make a fox.'))
+      const NOTES_MESSAGE = { role: 'user', content: `${COMPACTION_MESSAGE_INTRO}\n\n## First and newest message of the user\n\nMake a fox.` }
+      const replay1 = blocksReplay('Plan 1', 'h1')
+      const replay2 = blocksReplay('Plan 2', 'h2')
+      const rounds = `Look.\n${block('call_1', 'fox', '1 model')}\nDone.`
+      const ran = (text: string, thinking?: SectionThinking): Section => ({ ...reply('r', `${BLOCK}\n${text}`), ...(thinking && { thinking }) })
+      const thinking: SectionThinking = { text: 'Plan 1Plan 2', replay: replay1, rounds: [{ afterToolCall: 'call_1', from: 6, replay: replay2 }] }
+      const withTools = (sections: Section[]) => sectionsToStreamMessages(sections, model, { sendImages: true, sendTools: true })
+
+      it('sends only the notes, as a message of the user, while the reply has no text', () => {
+        expect(sent([ran('')])).toStrictEqual({ messages: [NOTES_MESSAGE], imagesLeftOut: 0, imagesOverLimit: 0, newestUserMessage: 'Make a fox.' })
+      })
+
+      it('sends the rounds of the reply after the notes, each with its thinking', () => {
+        expect(withTools([ran(rounds, thinking)]).messages).toStrictEqual([
+          NOTES_MESSAGE,
+          { role: 'agent', content: 'Look.', thinking: { text: 'Plan 1', replay: replay1 }, toolCalls: [call('call_1', 'fox')] },
+          { role: 'tool', results: [result('call_1', '1 model')] },
+          { role: 'agent', content: 'Done.', thinking: { text: 'Plan 2', replay: replay2 } },
+        ])
+      })
+
+      it('sends a later message of the user and a later reply as messages of their own', () => {
+        expect(withTools([ran(rounds, thinking), user('u1', 'Now a red one.'), reply('r2', 'Red.')]).messages.slice(-2)).toStrictEqual([
+          { role: 'user', content: 'Now a red one.' },
+          { role: 'agent', content: 'Red.' },
+        ])
+      })
+
+      // The prompt cache: a request in the reply sends the block alone
+      // (`sectionsBeforeReply`), and a later request sends it as the same
+      // first message, then the reply as it was sent.
+      it('sends the same first messages while the reply runs and after it', () => {
+        const during = withTools(sectionsBeforeReply([ran(rounds, thinking)], 0)).messages
+        const after = withTools([ran(rounds, thinking), user('u1', 'Now a red one.'), reply('r2', '')]).messages
+
+        expect(during).toStrictEqual([NOTES_MESSAGE])
+        expect(after.slice(0, 4)).toStrictEqual(withTools([ran(rounds, thinking)]).messages)
+        expect(JSON.stringify(after[0])).toBe(JSON.stringify(during[0]))
+      })
     })
   })
 })

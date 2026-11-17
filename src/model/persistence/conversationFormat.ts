@@ -43,8 +43,10 @@ import type { ContentNodeData, ConversationData, SectionData } from './types'
 //   or a missing value are ignored as a whole; `compacted-left:` can be
 //   missing.
 // - The first section of a compacted conversation is an agent section
-//   whose first text line is the compaction tag (compaction.ts). The tag is
-//   section text here, as a media tag is.
+//   whose first text line is the compaction tag (compaction.ts): the
+//   block, then the text of the reply that ran at the compaction, with the
+//   model, the thinking, and the time of that reply. The tag is section
+//   text here, as a media tag is.
 // - `duration-ms` is how long the reply took (`Section.durationMs`); files
 //   saved before Dez stored it have none.
 // - Each pill line starts a section. pillMarker.ts owns the pill markers,

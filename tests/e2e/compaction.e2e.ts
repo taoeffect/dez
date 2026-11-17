@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
-import { CARRIED_USER_ASSETS_LABEL, COMPACTION_END_LINE, COMPACTION_MESSAGE_INTRO, COMPACTION_USER_MESSAGE_LABEL, compactionBlockText, compactionTagText, readCompactionBlock } from '../../src/model/chat/compaction'
+import { CARRIED_USER_ASSETS_LABEL, COMPACTION_END_LINE, COMPACTION_MESSAGE_INTRO, COMPACTION_USER_MESSAGE_LABEL, compactionBlockText, compactionTagText, readCompactionBlock, type CompactionBlock } from '../../src/model/chat/compaction'
 import { compactionNotesText, notesMessages } from '../../src/model/chat/compactionNotes'
 import { newMediaIds } from '../../src/model/chat/mediaIds'
 import type { ShownPicture } from '../../src/model/chat/shownPictures'
@@ -16,9 +16,9 @@ import { appFilePath, conversationFilePath, filesIn, makeConversation, newFileIn
 import { pasteImageReference, pngDataUrl, shownImages, solidPng, type ShownImage } from './harness/images'
 import { clipTag, MP4_VIDEO, problemCards, shownPlayers, silentWav, tempClipTag, WEBM_VIDEO, type ShownPlayer } from './harness/media'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
-import { LARGE_TOKENS, mockChatPath, openAiToolCall, replyText, sendAnthropicReply, sendChatReply, sendChatText, sendToolCalls, startEventStream, toolResult, writeChatFrame, type HeldRequest, type MockProvider } from './harness/mockServer'
+import { LARGE_TOKENS, mockChatPath, openAiToolCall, replyText, sendAnthropicReply, sendChatReply, sendChatText, sendToolCalls, startEventStream, toolResult, writeChatFrame, writeUsage, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeConversationId, activeTabStreaming, activeTabTitle, assetPartPoint, AT_BOTTOM_PX, docPos, editorCaret, editorDoc, focusEditor, misplacedLines, newTab, openToasts, pickModel, pressRolePill, savedPillLines, sbpCall, setCaret, submit, threadSections, viewFromBottom, waitForThread, type ThreadSection } from './harness/thread'
+import { activeConversationId, activeTabStreaming, activeTabTitle, assetPartPoint, AT_BOTTOM_PX, docPos, editorCaret, editorDoc, focusEditor, misplacedLines, newTab, openToasts, pickModel, pillThinking, pressRolePill, savedPillLines, sbpCall, setCaret, submit, threadSections, viewFromBottom, waitForThread, type ThreadSection } from './harness/thread'
 import { hiddenAssetNotes, hiddenPart, pressToolChip, toolChips, toolPanelPictures, type ToolChipView } from './harness/toolChips'
 
 // Compaction, driven through the real app against a mock server in this
@@ -35,9 +35,10 @@ import { hiddenAssetNotes, hiddenPart, pressToolChip, toolChips, toolPanelPictur
 //   closed.
 // - The notes are no text of the editor: the panel of the summary chip
 //   shows them in a read-only field, and Find does not match them. The
-//   caret never goes into the block. Backspace after it deletes the whole
-//   block, which makes the first section a user section; an undo brings
-//   the block back.
+//   caret never goes into the block. Backspace after it keeps the block,
+//   as the text after the block is the reply. Only a selection that holds
+//   the block deletes it, which makes the first section a user section;
+//   an undo brings the block back.
 // - Each request starts with one user message: the notes, the pictures of
 //   the tag, and the user messages right after the notes, with their
 //   images. That message is the same in every later request.
@@ -63,7 +64,9 @@ import { hiddenAssetNotes, hiddenPart, pressToolChip, toolChips, toolPanelPictur
 //   more user message. The bottom bar shows "Compacting…" meanwhile.
 // - The notes of the answer take the place of the conversation, in the
 //   tab, in the editor, and in the file, as a block with its end line, and
-//   the reply goes on right after the block, with no User pill before it.
+//   the reply goes on in the same section right after the block: one
+//   Agent pill, with the thinking and the spinner of the reply, and no
+//   User pill before the reply. A reply can compact two times.
 //   The notes hold the first and the newest message of the user word for
 //   word, which the summary chip shows, and the tab keeps its title. The
 //   next request holds the notes with the two messages and their images:
@@ -74,17 +77,23 @@ import { hiddenAssetNotes, hiddenPart, pressToolChip, toolChips, toolPanelPictur
 // - The first compaction already drops a made image of an earlier reply
 //   that the answer does not keep, but never an image of the user. The
 //   assets chip tells how many assets the compaction dropped.
-// - A conversation in the old layout (kept user sections after the block)
-//   compacts again into the new layout.
+// - A conversation in an old layout (kept user sections after the block,
+//   or the reply in a section of its own) compacts again into the new
+//   layout. A relaunch keeps the new layout, and it sends the same
+//   messages.
 // - Dez deletes the file of a dropped image that the user saw only in the
 //   panel of a call, and the picture copies of the tag before. The file
 //   of any other dropped image stays.
 //
 // One app session serves the whole file. The relaunch test reopens the
-// conversation of the request test.
+// conversation of the request test, and a conversation that compacted at
+// a submit.
 
 const PROVIDER: MockProvider = { id: 'compact', name: 'Compact Mock', modelId: 'compact-model', modelName: 'Compact Model' }
 const CLAUDE: MockProvider = { id: 'claude', name: 'Claude Mock', modelId: 'claude-model', modelName: 'Claude Model', apiFormat: 'anthropic' }
+// A model with thinking (`thinking: {}`), for the pill of a reply that
+// compacts.
+const THINKER: MockProvider = { id: 'thinker', name: 'Thinker Mock', modelId: 'think-model', modelName: 'Think Model' }
 const MODEL_KEY = `${PROVIDER.id}/${PROVIDER.modelId}`
 const CHAT_PATH = mockChatPath(PROVIDER)
 
@@ -307,17 +316,37 @@ describe('a compacted conversation', () => {
     expect(typeof instruction?.content === 'string' && instruction.content.startsWith(INSTRUCTION_START)).toBe(true)
   }
 
-  // The one message of a request right after a compaction that kept no
-  // image: the notes of the compaction block of the tab (its first section
-  // is only that block), with each message part as its text. `messages`
-  // are the texts of the parts, the first and the newest message of the
-  // user, word for word.
-  async function notesMessage (...messages: string[]): Promise<Record<string, unknown>> {
+  // The messages of an OpenAI-format request with no system message: the
+  // other fields of a request to a model with thinking are not the
+  // business of these tests.
+  function requestMessages (request: HeldRequest): Array<Record<string, unknown>> {
+    const { messages } = JSON.parse(request.body) as { messages: Array<Record<string, unknown>> }
+    return messages.filter((message) => message.role !== 'system')
+  }
+
+  // Whether the pill before section `index` shows that its reply streams.
+  async function pillStreams (index: number): Promise<boolean> {
+    return browser.execute((sectionIndex: number) => document.querySelector(
+      `.cm-content .dez-role-separator[data-section-index="${sectionIndex}"] .dez-role-separator__label[data-streaming]`,
+    ) !== null, index)
+  }
+
+  // The compaction block of the first section of the tab, with its parts,
+  // and the text of the reply after it.
+  async function compactedSection (): Promise<{ block: string, read: CompactionBlock, reply: string }> {
     const [first] = await threadSections(browser)
-    const block = first.role === 'agent' ? readCompactionBlock(first.text) : null
-    if (block === null) throw new Error('notesMessage: the first section of the tab is no compaction section')
-    if (block.textFrom !== first.text.length) throw new Error('notesMessage: the compaction section has text after its block')
-    const notes = block.notes.trim()
+    const read = first.role === 'agent' ? readCompactionBlock(first.text) : null
+    if (read === null) throw new Error('compactedSection: the first section of the tab is no compaction section')
+    return { block: first.text.slice(0, read.to), read, reply: first.text.slice(read.textFrom) }
+  }
+
+  // The one message of a request right after a compaction that kept no
+  // image: the notes of the compaction block of the tab, with each message
+  // part as its text. The reply text after the block does not change it.
+  // `messages` are the texts of the parts, the first and the newest
+  // message of the user, word for word.
+  async function notesMessage (...messages: string[]): Promise<Record<string, unknown>> {
+    const notes = (await compactedSection()).read.notes.trim()
     const parts = notesMessages(notes)
     expect(parts.map(({ text }) => text)).toStrictEqual(messages)
     // The start line and the end line of a part do not go.
@@ -474,7 +503,7 @@ describe('a compacted conversation', () => {
   }
 
   beforeAll(async () => {
-    setup = await startMockProviderApp(PROVIDER, {}, { moreProviders: [{ provider: CLAUDE }] })
+    setup = await startMockProviderApp(PROVIDER, {}, { moreProviders: [{ provider: CLAUDE }, { provider: THINKER, config: { thinking: {} } }] })
     browser = setup.browser
     linkedDir = await linkedDropDir('compaction')
   })
@@ -615,15 +644,25 @@ describe('a compacted conversation', () => {
     await waitForValue(browser, 'saved tag line', async () => (await savedLines(id))[3], OLD_TAG)
   })
 
-  it('deletes the whole block with Backspace after it, which makes the first section a user section, and an undo brings the block back', async () => {
+  it('keeps the block at a Backspace after it, deletes it with a selection that holds it, which makes the first section a user section, and an undo brings the block back', async () => {
     const block = compactionBlockText(PLAIN_DATA, 'Notes of the work.')
     const thread = await openCompacted('compacted-edit', [compactionSection(`${block}\nMore of the work.`), textSection('user', 'The task.')])
     await waitForValue(browser, 'pills', pills, [AGENT_PILL, userPill(1)])
     const { firstTop } = await pillBoxes()
 
+    // The text after the block is the reply: a Backspace at its start
+    // changes nothing.
     await focusEditor(browser)
     await browser.keys([Key.Control, Key.Home])
     expect(await editorCaret(browser)).toBe(block.length + 1)
+    await browser.keys([Key.Backspace])
+    await browser.pause(300)
+    expect(await threadSections(browser)).toStrictEqual(thread)
+    expect(await pills()).toStrictEqual([AGENT_PILL, userPill(1)])
+    expect(await editorCaret(browser)).toBe(block.length + 1)
+
+    // A selection from there to the start of the doc holds the block.
+    await browser.keys([Key.Shift, Key.Control, Key.Home])
     await browser.keys([Key.Backspace])
     await waitForThread(browser, [{ role: 'user', text: 'More of the work.' }, thread[1]])
     await waitForValue(browser, 'pills with no block', pills, [userPill(1)])
@@ -644,6 +683,7 @@ describe('a compacted conversation', () => {
     expect(await firstSectionLook()).toStrictEqual(COMPACTED_LOOK)
     expect(await toolChips(browser)).toStrictEqual([EMPTY_ASSETS_CHIP, summaryChipView(false)])
     expect(await misplacedLines(browser)).toStrictEqual([])
+    await browser.keys([Key.Control, Key.Home])
     expect(await editorCaret(browser)).toBe(block.length + 1)
     await waitForValue(browser, 'saved pills after the undo', () => savedPillLines(setup.app.home, 'compacted-edit'), [
       `<dez:pill type="agent" model="${MODEL_KEY}" duration-ms="${REPLY_MS}"/>`,
@@ -965,19 +1005,23 @@ describe('a compacted conversation', () => {
     sendChatText(compaction.reply, NOTES_ANSWER, { promptTokens: LARGE_TOKENS })
 
     // The notes take the place of the conversation, and the reply goes on
-    // from them: its section is empty again, and the call is gone. The
-    // question is in the notes: no section of the user is left.
+    // from them, in the same section after the block: the call is gone.
+    // The question is in the notes: no section of the user is left.
     const second = await takeRequest(setup, CHAT_PATH)
     expect(JSON.parse(second.body)).toStrictEqual(openAiChatBody(PROVIDER, [await notesMessage(question)]))
     const [notes, ...rest] = await threadSections(browser)
-    expect(readCompactionBlock(notes.text)?.count).toBe(1)
-    expect(notes.text).toContain(NOTES_SUMMARY)
-    // A new compaction writes the block form: the notes end at the end line.
-    expect(notes.text.endsWith(`\n${COMPACTION_END_LINE}`)).toBe(true)
-    expect(rest).toStrictEqual([{ role: 'agent', text: '' }])
-    // The editor shows the new sections, with the two chips closed, and no
-    // User pill before the reply.
-    await waitForValue(browser, 'pills after the compaction', pillRoles, [{ index: 0, role: 'agent' }, { index: 1, role: 'agent' }])
+    const { block, read, reply } = await compactedSection()
+    expect(read.count).toBe(1)
+    expect(block).toContain(NOTES_SUMMARY)
+    // A new compaction writes the block form: the notes end at the end
+    // line, and the reply has no text yet.
+    expect(block.endsWith(`\n${COMPACTION_END_LINE}`)).toBe(true)
+    expect([notes.text, reply]).toStrictEqual([`${block}\n`, ''])
+    expect(rest).toStrictEqual([])
+    // The editor shows the new section: one Agent pill, the pill of the
+    // reply, with its spinner, and the two chips closed.
+    await waitForValue(browser, 'pills after the compaction', pillRoles, [{ index: 0, role: 'agent' }])
+    expect((await pillThinking(browser, 0))?.slot).toBe('spinner')
     expect(await firstSectionLook()).toStrictEqual(COMPACTED_LOOK)
     expect(await chipStates()).toStrictEqual([{ name: 'Compaction 1 assets', open: false }, { name: 'Compaction 1 summary', open: false }])
     expect(await linesShow(NOTES_SUMMARY)).toBe(false)
@@ -1004,7 +1048,12 @@ describe('a compacted conversation', () => {
     expect(await browser.execute(() => (document.querySelector('.cm-scroller')?.scrollTop ?? 0) > 0), 'the view scrolled').toBe(true)
     writeChatFrame(second.reply, { content: '' }, 'stop')
     second.reply.end('data: [DONE]\n\n')
-    await waitForThread(browser, [notes, { role: 'agent', text: answer }, { role: 'user', text: '' }])
+    await waitForThread(browser, [{ role: 'agent', text: `${block}\n${answer}` }, { role: 'user', text: '' }])
+    // The User pill comes after the reply, with the caret in its section.
+    // The editor draws no pill far out of view: the Agent pill is at the
+    // top of the long answer.
+    expect(await pillRoles()).toStrictEqual([{ index: 1, role: 'user' }])
+    expect(await editorCaret(browser)).toBe((await editorDoc(browser)).length)
     expect(await misplacedLines(browser)).toStrictEqual([])
     // The end of the reply makes a new editor state, which keeps the open
     // panel. The editor draws no chip far out of view, so scroll up first.
@@ -1013,6 +1062,7 @@ describe('a compacted conversation', () => {
       if (scroller) scroller.scrollTop = 0
     })
     await waitForValue(browser, 'chips after the reply', chipStates, [{ name: 'Compaction 1 assets', open: false }, { name: 'Compaction 1 summary', open: true }])
+    expect((await pillRoles())[0]).toStrictEqual({ index: 0, role: 'agent' })
   })
 
   it('compacts a conversation that is too large before the first request of a new reply', async () => {
@@ -1034,22 +1084,21 @@ describe('a compacted conversation', () => {
     const request = await takeRequest(setup, CHAT_PATH)
     expect(JSON.parse(request.body)).toStrictEqual(openAiChatBody(PROVIDER, [await notesMessage(thread[0].text, 'Go on.')]))
     await sendChatReply(request.reply, 'the reader of the notes')
-    const [notes] = await threadSections(browser)
-    expect(readCompactionBlock(notes.text)?.count).toBe(1)
-    expect(notes.text).toContain(NOTES_SUMMARY)
-    await waitForThread(browser, [notes, { role: 'agent', text: replyText('the reader of the notes') }, { role: 'user', text: '' }])
-    await waitForValue(browser, 'pills after the reply', pillRoles, [
-      { index: 0, role: 'agent' },
-      { index: 1, role: 'agent' },
-      { index: 2, role: 'user' },
-    ])
+    const { block, read } = await compactedSection()
+    expect(read.count).toBe(1)
+    expect(block).toContain(NOTES_SUMMARY)
+    // The reply is in the section of the block, and the caret is in the
+    // user section after it.
+    await waitForThread(browser, [{ role: 'agent', text: `${block}\n${replyText('the reader of the notes')}` }, { role: 'user', text: '' }])
+    await waitForValue(browser, 'pills after the reply', pillRoles, [{ index: 0, role: 'agent' }, { index: 1, role: 'user' }])
+    expect(await editorCaret(browser)).toBe((await editorDoc(browser)).length)
     expect(await firstSectionLook()).toStrictEqual(COMPACTED_LOOK)
     expect(await showsCompacting()).toBe(false)
 
     // The file holds the compaction, with the tokens that the provider
     // counted for the compaction request.
     await waitForValue(browser, 'saved compaction numbers', () => savedNumbers(id, /^(compactions|compacted-tokens)/), ['compactions: 1', `compacted-tokens: ${LARGE_TOKENS + 1000}`])
-    expect((await savedLines(id))[3]).toBe(notes.text.split('\n')[0])
+    expect((await savedLines(id))[3]).toBe(block.split('\n')[0])
   })
 
   it('ends the reply with an error toast when the compaction request fails two times, and keeps the conversation', async () => {
@@ -1139,12 +1188,13 @@ describe('a compacted conversation', () => {
     expect(JSON.parse(request.body)).toStrictEqual(openAiChatBody(PROVIDER, [await notesMessage(thread[1].text, 'Now a wolf.')]))
     await sendChatReply(request.reply, 'the wolf')
 
-    // The second compaction left both images out of the conversation.
-    const [newNotes] = await threadSections(browser)
-    expect(readCompactionBlock(newNotes.text)).toMatchObject({ count: 2, dropped: 2, pictures: [] })
-    expect([draft, seen].filter((file) => newNotes.text.includes(file))).toStrictEqual([])
+    // The second compaction left both images out of the conversation, and
+    // the reply follows its block.
+    const { block, read } = await compactedSection()
+    expect(read).toMatchObject({ count: 2, dropped: 2, pictures: [] })
+    expect([draft, seen].filter((file) => block.includes(file))).toStrictEqual([])
     expect(await compactionChipCounts()).toStrictEqual(['0 kept', '2 dropped'])
-    await waitForThread(browser, [newNotes, { role: 'agent', text: replyText('the wolf') }, { role: 'user', text: '' }])
+    await waitForThread(browser, [{ role: 'agent', text: `${block}\n${replyText('the wolf')}` }, { role: 'user', text: '' }])
 
     await waitForValue(browser, 'files of the two dropped images', async () => (await filesIn(imagesDir)).filter((name) => name === names.draft || name === names.seen), [names.seen])
     await waitForValue(browser, 'old picture copy', async () => (await filesIn(viewsDir)).includes(names.sheet), false)
@@ -1174,12 +1224,13 @@ describe('a compacted conversation', () => {
     const request = await takeRequest(setup, CHAT_PATH)
     await sendChatReply(request.reply, 'the wolf')
 
-    await waitForValue(browser, 'sections after the notes', async () => (await threadSections(browser)).slice(1), [{ role: 'agent', text: replyText('the wolf') }, { role: 'user', text: '' }])
-    const [notes] = await threadSections(browser)
-    expect(readCompactionBlock(notes.text)).toMatchObject({ count: 1, dropped: 1 })
-    expect([keptFile, goneFile].filter((file) => notes.text.includes(file))).toStrictEqual([keptFile])
-    expect(notesMessages(readCompactionBlock(notes.text)!.notes).map(({ text }) => text)).toStrictEqual([thread[0].text, 'Now a wolf.'])
-    expect(notes.text).toContain(`\n![${photo}](id=c|kept=compaction)\n@c `)
+    await waitForValue(browser, 'reply after the notes', async () => (await compactedSection()).reply, replyText('the wolf'))
+    await waitForThread(browser, [(await threadSections(browser))[0], { role: 'user', text: '' }])
+    const { block, read } = await compactedSection()
+    expect(read).toMatchObject({ count: 1, dropped: 1 })
+    expect([keptFile, goneFile].filter((file) => block.includes(file))).toStrictEqual([keptFile])
+    expect(notesMessages(read.notes).map(({ text }) => text)).toStrictEqual([thread[0].text, 'Now a wolf.'])
+    expect(block).toContain(`\n![${photo}](id=c|kept=compaction)\n@c `)
     // The reply scrolled the editor to its end, and the editor draws no
     // chip far out of view.
     await browser.execute(() => {
@@ -1213,10 +1264,9 @@ describe('a compacted conversation', () => {
     // One user message: the notes, with the two messages word for word,
     // and each image right after its reference. No text holds a path.
     const request = await takeRequest(setup, CHAT_PATH)
-    const [notes] = await threadSections(browser)
-    const block = readCompactionBlock(notes.text)
-    expect(block?.linked).toStrictEqual([linked])
-    const text = block!.notes.trim()
+    const notes = await compactedSection()
+    expect(notes.read.linked).toStrictEqual([linked])
+    const text = notes.read.notes.trim()
     const [firstPart, newestPart] = notesMessages(text)
     expect([firstPart.text, newestPart.text]).toStrictEqual([first, 'Go on.'])
     expect(JSON.parse(request.body)).toStrictEqual(openAiChatBody(PROVIDER, [{
@@ -1233,10 +1283,10 @@ describe('a compacted conversation', () => {
     expect(request.body).not.toContain(setup.app.home)
     await sendChatReply(request.reply, 'the film')
 
-    // No User pill before the reply, and the title still tells the first
-    // message.
-    await waitForThread(browser, [notes, { role: 'agent', text: replyText('the film') }, { role: 'user', text: '' }])
-    await waitForValue(browser, 'pills after the reply', pillRoles, [{ index: 0, role: 'agent' }, { index: 1, role: 'agent' }, { index: 2, role: 'user' }])
+    // One Agent pill for the notes and the reply, no User pill before the
+    // reply, and the title still tells the first message.
+    await waitForThread(browser, [{ role: 'agent', text: `${notes.block}\n${replyText('the film')}` }, { role: 'user', text: '' }])
+    await waitForValue(browser, 'pills after the reply', pillRoles, [{ index: 0, role: 'agent' }, { index: 1, role: 'user' }])
     expect(await activeTabTitle(browser)).toBe('Film [image] and [image]')
 
     // The summary chip shows the two messages, and the assets chip shows
@@ -1254,7 +1304,128 @@ describe('a compacted conversation', () => {
     await waitForValue(browser, 'images in the assets panel', () => shownImages(browser), [LINKED_USER_IMAGE, MESSAGE_IMAGE])
   })
 
-  it('shows the compaction section and sends the same first message after a relaunch', async () => {
+  // An older Dez wrote the reply after a compaction as a section of its
+  // own, after the section of the block. Such a conversation sends as it
+  // is, and its next compaction writes one section.
+  it('sends and compacts a conversation whose reply after the notes is a section of its own', async () => {
+    await openCompacted('compacted-own-reply', [
+      compactionSection(compactionBlockText(PLAIN_DATA, 'Notes of the work.')),
+      textSection('agent', 'The reply after the notes.'),
+      textSection('user', ''),
+    ], PROVIDER, { context: { tokens: LARGE_TOKENS, estimate: 0 } })
+    await waitForValue(browser, 'pills', pills, [AGENT_PILL, { index: 1, role: 'agent', model: null, time: null }, userPill(2)])
+    expect(await firstSectionLook()).toStrictEqual(COMPACTED_LOOK)
+
+    await submit(browser, 'Go on.')
+    const compaction = await takeRequest(setup, CHAT_PATH)
+    expectCompactionRequest(compaction, [
+      { role: 'user', content: `${COMPACTION_MESSAGE_INTRO}\n\nNotes of the work.` },
+      { role: 'assistant', content: 'The reply after the notes.' },
+      { role: 'user', content: 'Go on.' },
+    ])
+    sendChatText(compaction.reply, NOTES_ANSWER)
+
+    const request = await takeRequest(setup, CHAT_PATH)
+    expect(JSON.parse(request.body)).toStrictEqual(openAiChatBody(PROVIDER, [await notesMessage('Go on.')]))
+    await sendChatReply(request.reply, 'the new layout')
+    const { block, read } = await compactedSection()
+    expect(read.count).toBe(2)
+    await waitForThread(browser, [{ role: 'agent', text: `${block}\n${replyText('the new layout')}` }, { role: 'user', text: '' }])
+    await waitForValue(browser, 'pills after the reply', pillRoles, [{ index: 0, role: 'agent' }, { index: 1, role: 'user' }])
+  })
+
+  // The pill of the block is the pill of the reply: it streams, and it
+  // shows the thinking of the rounds after the newest compaction. The
+  // thinking from before a compaction goes with the rounds that it
+  // replaces. The second compaction of a reply replaces the block of the
+  // first one and the rounds after it.
+  it('compacts one reply two times under one Agent pill, which shows the spinner and the thinking of the reply', async () => {
+    const chatPath = mockChatPath(THINKER)
+    await newTab(browser)
+    await pickModel(browser, THINKER.name, THINKER.modelName)
+    const question = 'Which models think?'
+    await submit(browser, question)
+    const first = await takeRequest(setup, chatPath)
+    sendToolCalls(first.reply, [openAiToolCall('call_1', 'model_list', { filter: 'think' })], { thinking: 'A plan before the notes.', promptTokens: LARGE_TOKENS })
+
+    const firstCompaction = await takeRequest(setup, chatPath)
+    sendChatText(firstCompaction.reply, NOTES_ANSWER, { promptTokens: LARGE_TOKENS })
+
+    // The reply goes on after the block, with no thinking yet: the pill
+    // shows the spinner.
+    const second = await takeRequest(setup, chatPath)
+    expect(requestMessages(second)).toStrictEqual([await notesMessage(question)])
+    await waitForValue(browser, 'pills after the first compaction', pillRoles, [{ index: 0, role: 'agent' }])
+    expect((await pillThinking(browser, 0))?.slot).toBe('spinner')
+    expect(await pillStreams(0)).toBe(true)
+
+    // The thinking of the next round shows on the same pill.
+    const plan = 'A plan after the notes.'
+    startEventStream(second.reply)
+    writeChatFrame(second.reply, { reasoning_content: plan })
+    await waitForValue(browser, 'thinking on the pill', async () => (await pillThinking(browser, 0))?.slot ?? null, 'disclosure')
+    await pressRolePill(browser, 0, '.dez-role-separator__disclosure')
+    await waitForValue(browser, 'open thinking panel', async () => (await pillThinking(browser, 0))?.panelText ?? null, plan)
+    expect(await pillStreams(0)).toBe(true)
+    // A small count after the compaction: the next compaction is due only
+    // at a large one.
+    const secondCall = openAiToolCall('call_2', 'model_list', { filter: 'plan' })
+    writeChatFrame(second.reply, { tool_calls: [{ index: 0, ...secondCall }] }, 'tool_calls')
+    writeUsage(second.reply, { promptTokens: 20_000 })
+    second.reply.end('data: [DONE]\n\n')
+
+    // The chip of the call comes after the two chips of the compaction.
+    const third = await takeRequest(setup, chatPath)
+    expect(requestMessages(third)).toStrictEqual([
+      await notesMessage(question),
+      { role: 'assistant', content: '', tool_calls: [secondCall], reasoning_content: plan },
+      { role: 'tool', tool_call_id: 'call_2', content: toolResult(third, 'call_2') },
+    ])
+    await waitForValue(browser, 'chips of the reply', chipStates, [
+      { name: 'Compaction 1 assets', open: false },
+      { name: 'Compaction 1 summary', open: false },
+      { name: 'model_list', open: false },
+    ])
+    const thirdCall = openAiToolCall('call_3', 'model_list', { filter: 'more' })
+    sendToolCalls(third.reply, [thirdCall], { promptTokens: LARGE_TOKENS })
+
+    // The second compaction request is the request that was due, with the
+    // instruction at its end.
+    const secondCompaction = await takeRequest(setup, chatPath)
+    const compactionMessages = requestMessages(secondCompaction)
+    expect(compactionMessages.slice(0, -1)).toStrictEqual([
+      ...requestMessages(third),
+      { role: 'assistant', content: '', tool_calls: [thirdCall] },
+      { role: 'tool', tool_call_id: 'call_3', content: toolResult(secondCompaction, 'call_3') },
+    ])
+    expect(String(compactionMessages.at(-1)?.content).startsWith(INSTRUCTION_START)).toBe(true)
+    const secondSummary = 'The models that think are listed.'
+    sendChatText(secondCompaction.reply, `## Summary\n${secondSummary}\n`, { promptTokens: LARGE_TOKENS })
+
+    // The new block takes the place of the old one and of the rounds after
+    // it. The thinking of those rounds goes with them.
+    const last = await takeRequest(setup, chatPath)
+    expect(requestMessages(last)).toStrictEqual([await notesMessage(question)])
+    const { block, read, reply } = await compactedSection()
+    expect([read.count, block.includes(secondSummary), reply]).toStrictEqual([2, true, ''])
+    expect(await pillRoles()).toStrictEqual([{ index: 0, role: 'agent' }])
+    await waitForValue(browser, 'pill after the second compaction', async () => (await pillThinking(browser, 0))?.slot ?? null, 'spinner')
+    expect(await chipStates()).toStrictEqual([{ name: 'Compaction 2 assets', open: false }, { name: 'Compaction 2 summary', open: false }])
+
+    // At the end of the reply, the User pill comes, with the caret in its
+    // section, and text that the user types goes there.
+    await sendChatReply(last.reply, 'the thinker')
+    const answered = { role: 'agent', text: `${block}\n${replyText('the thinker')}` }
+    await waitForThread(browser, [answered, { role: 'user', text: '' }])
+    expect(await pillRoles()).toStrictEqual([{ index: 0, role: 'agent' }, { index: 1, role: 'user' }])
+    expect([await pillStreams(0), (await pillThinking(browser, 0))?.slot]).toStrictEqual([false, null])
+    expect(await editorCaret(browser)).toBe((await editorDoc(browser)).length)
+    await focusEditor(browser)
+    await typeKeys(browser, 'Thanks.')
+    await waitForThread(browser, [answered, { role: 'user', text: 'Thanks.' }])
+  })
+
+  it('shows the compaction section and sends the same first message after a relaunch, in the old and the new layout', async () => {
     const active = await activeConversationId(browser)
     browser = await setup.relaunch()
     // A new page: the record that beforeEach started is gone.
@@ -1289,5 +1460,31 @@ describe('a compacted conversation', () => {
     ]))
     await sendChatReply(request.reply, 'the third')
     await waitForValue(browser, 'the third reply', async () => (await threadSections(browser)).at(-2)?.text ?? null, replyText('the third'))
+    await waitForValue(browser, 'streaming', () => activeTabStreaming(browser), false)
+
+    // The conversation of the compaction at a submit: its reply is in the
+    // section of the block. The file keeps that section, and the request
+    // sends the block as the compaction message, then the reply.
+    await sbpCall(browser, 'dez.model/tabs/openConversation', 'compaction-at-submit')
+    await waitForValue(browser, 'pills of the new layout', async () => (await pills()).map((pill) => ({ ...pill, time: null })), [
+      { index: 0, role: 'agent', model: PROVIDER.modelName, time: null },
+      userPill(1),
+    ])
+    expect(await firstSectionLook()).toStrictEqual(COMPACTED_LOOK)
+    const { block, reply } = await compactedSection()
+    expect(reply).toBe(replyText('the reader of the notes'))
+    await submit(browser, 'And next?')
+    const next = await takeRequest(setup, CHAT_PATH, openAiChatBody(PROVIDER, [
+      await notesMessage('The task.', 'Go on.'),
+      { role: 'assistant', content: replyText('the reader of the notes') },
+      { role: 'user', content: 'And next?' },
+    ]))
+    await sendChatReply(next.reply, 'the next')
+    await waitForThread(browser, [
+      { role: 'agent', text: `${block}\n${replyText('the reader of the notes')}` },
+      { role: 'user', text: 'And next?' },
+      { role: 'agent', text: replyText('the next') },
+      { role: 'user', text: '' },
+    ])
   })
 })

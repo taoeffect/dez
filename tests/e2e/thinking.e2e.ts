@@ -9,7 +9,7 @@ import { click, closeSettings, consoleErrors, resetConsoleErrors, screenshotOnFa
 import { conversationFilePath, makeConversation, readAppState, seedConversation, seedRawAppState } from './harness/fixtures'
 import { startChatMock, startEventStream, writeAnthropicEvent, writeChatFrame, type MockServer } from './harness/mockServer'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { activeConversationId, activeTabStreaming, maskPillDuration, newTab, pickModel, pressRolePill, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
+import { activeConversationId, activeTabStreaming, maskPillDuration, newTab, pickModel, pillThinking, pressRolePill, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
 
 // Model thinking, driven through the real app against a mock server in this
 // process: the thinking parts of the agent pill, the encrypted pill of the
@@ -112,19 +112,6 @@ interface MockState {
   /** The thinking parts of the next OpenAI reply, in place of
    *  `thinkingParts(n)`; that reply sets it back to null. */
   nextThinkingParts: string[] | null
-}
-
-/** What the thinking parts of one role pill show. */
-interface PillThinkingView {
-  role: string
-  /** The left slot of the pill. */
-  slot: 'spinner' | 'disclosure' | null
-  /** `aria-expanded` of the disclosure triangle. */
-  expanded: string | null
-  /** `data-thinking-open` is set on the separator. */
-  open: boolean
-  /** The text of the panel's text field, or null without a panel. */
-  panelText: string | null
 }
 
 interface Gate {
@@ -241,24 +228,6 @@ describe('thinking', () => {
       const sections = sbp('dez.model/thread/sections') as Array<{ thinking?: unknown }>
       return sections.map((section) => section.thinking ? JSON.parse(JSON.stringify(section.thinking)) as unknown : null)
     })
-  }
-
-  async function pillThinking (index: number): Promise<PillThinkingView | null> {
-    return browser.execute((sectionIndex: number) => {
-      const separator = document.querySelector<HTMLElement>(`.cm-content .dez-role-separator[data-section-index="${sectionIndex}"]`)
-      if (!separator) return null
-      const label = separator.querySelector('.dez-role-separator__label')
-      const disclosure = label?.querySelector('.dez-role-separator__disclosure')
-      const spinner = label?.querySelector('.dez-role-separator__spinner')
-      const field = separator.querySelector<HTMLTextAreaElement>('.dez-role-separator__thinking textarea.dez-role-separator__thinking-text')
-      return {
-        role: separator.dataset.role ?? '',
-        slot: disclosure ? 'disclosure' as const : spinner ? 'spinner' as const : null,
-        expanded: disclosure?.getAttribute('aria-expanded') ?? null,
-        open: separator.dataset.thinkingOpen === '1',
-        panelText: field?.value ?? null,
-      }
-    }, index)
   }
 
   // The encrypted pill in the thinking panel of section `index`, or null
@@ -459,11 +428,11 @@ describe('thinking', () => {
     try {
       await submit(browser, 'Question 1')
       // The reply streams and has no thinking yet.
-      await waitForValue(browser, 'pill before the thinking', () => pillThinking(1), {
+      await waitForValue(browser, 'pill before the thinking', () => pillThinking(browser, 1), {
         role: 'agent', slot: 'spinner', expanded: null, open: false, panelText: null,
       })
       gates[0].open()
-      await waitForValue(browser, 'pill with thinking', () => pillThinking(1), {
+      await waitForValue(browser, 'pill with thinking', () => pillThinking(browser, 1), {
         role: 'agent', slot: 'disclosure', expanded: 'false', open: false, panelText: null,
       })
       // Screen readers get the triangle as a "Thinking" button, and its open
@@ -478,7 +447,7 @@ describe('thinking', () => {
       })).toEqual({ model: true, inImage: false })
       // A mousedown on the triangle opens the panel and keeps the role.
       await pressRolePill(browser, 1, '.dez-role-separator__disclosure')
-      await waitForValue(browser, 'open panel', () => pillThinking(1), {
+      await waitForValue(browser, 'open panel', () => pillThinking(browser, 1), {
         role: 'agent', slot: 'disclosure', expanded: 'true', open: true, panelText: thinkingParts(1)[0],
       })
       expect(await browser.execute(() => {
@@ -486,7 +455,7 @@ describe('thinking', () => {
         return { readOnly: field?.readOnly ?? null, label: field?.getAttribute('aria-label') ?? null }
       })).toEqual({ readOnly: true, label: 'Thinking' })
       gates[1].open()
-      await waitForValue(browser, 'panel after more thinking', () => pillThinking(1), {
+      await waitForValue(browser, 'panel after more thinking', () => pillThinking(browser, 1), {
         role: 'agent', slot: 'disclosure', expanded: 'true', open: true, panelText: thinkingText(1),
       })
       expect(await activeTabStreaming(browser)).toBe(true)
@@ -502,7 +471,7 @@ describe('thinking', () => {
     ])
     // The editor rebuilds its state from the store when a stream ends; the
     // panel stays open.
-    await waitForValue(browser, 'panel after the stream', () => pillThinking(1), {
+    await waitForValue(browser, 'panel after the stream', () => pillThinking(browser, 1), {
       role: 'agent', slot: 'disclosure', expanded: 'true', open: true, panelText: thinkingText(1),
     })
     expect(await storedThinking()).toEqual([null, { text: thinkingText(1), replay: FIELD_REPLAY }, null])
@@ -513,7 +482,7 @@ describe('thinking', () => {
     // A mousedown anywhere else on a pill with a triangle opens or closes
     // the panel too: here on the role word, then on the model name.
     await pressRolePill(browser, 1)
-    await waitForValue(browser, 'closed panel', () => pillThinking(1), {
+    await waitForValue(browser, 'closed panel', () => pillThinking(browser, 1), {
       role: 'agent', slot: 'disclosure', expanded: 'false', open: false, panelText: null,
     })
     // Closing the panel makes the pill shorter with no doc change. The caret
@@ -526,7 +495,7 @@ describe('thinking', () => {
     // Opening the panel makes the pill taller with no doc change. A click
     // on the answer below it must still land on the answer line.
     await pressRolePill(browser, 1, '.dez-role-separator__model-name')
-    await waitForValue(browser, 'opened again', async () => (await pillThinking(1))?.panelText ?? null, thinkingText(1))
+    await waitForValue(browser, 'opened again', async () => (await pillThinking(browser, 1))?.panelText ?? null, thinkingText(1))
     await waitForValue(browser, 'click below the open pill', () => lineHitBelowPill(1), 'same line')
   })
 
@@ -594,7 +563,7 @@ describe('thinking', () => {
       null,
       null,
     ])
-    await waitForValue(browser, 'pill of the reply without thinking', () => pillThinking(5), {
+    await waitForValue(browser, 'pill of the reply without thinking', () => pillThinking(browser, 5), {
       role: 'agent', slot: null, expanded: null, open: false, panelText: null,
     })
     await waitForValue(browser, 'saved replies', savedAgentReplies, [
@@ -621,7 +590,7 @@ describe('thinking', () => {
       { role: 'user', text: '' },
     ])
     expect(await storedThinking()).toEqual([null, null, null])
-    expect(await pillThinking(1)).toEqual({ role: 'agent', slot: null, expanded: null, open: false, panelText: null })
+    expect(await pillThinking(browser, 1)).toEqual({ role: 'agent', slot: null, expanded: null, open: false, panelText: null })
 
     await openProviderDetail(PLAIN.id, PLAIN.name)
     expect(await supportsThinkingChecked()).toBe(false)
@@ -644,7 +613,7 @@ describe('thinking', () => {
       { role: 'user', text: '' },
     ])
     expect(await storedThinking()).toEqual([null, null, null, { text: thinkingText(2), replay: FIELD_REPLAY }, null])
-    expect((await pillThinking(3))?.slot).toBe('disclosure')
+    expect((await pillThinking(browser, 3))?.slot).toBe('disclosure')
     // The checkbox asks for nothing more than the OpenAI format default.
     expect(requestBodies(PLAIN_CHAT)[1]).toEqual(openAiChatBody(PLAIN, [
       { role: 'user', content: 'Plain question 1' },
@@ -674,7 +643,7 @@ describe('thinking', () => {
       thinking: { type: 'adaptive', display: 'summarized' },
     })
     expect(await storedThinking()).toEqual([null, claudeThinking(1), null])
-    expect((await pillThinking(1))?.slot).toBe('disclosure')
+    expect((await pillThinking(browser, 1))?.slot).toBe('disclosure')
 
     await submit(browser, 'Claude question 2')
     await waitForThread(browser, [
@@ -771,7 +740,7 @@ describe('thinking', () => {
     // In the thinking panel, select all selects the panel text, and Copy
     // Markdown copies it unchanged.
     await pressRolePill(browser, 1, '.dez-role-separator__disclosure')
-    await waitForValue(browser, 'open panel', async () => (await pillThinking(1))?.panelText ?? null, 'Seeded plan.\nSecond line.')
+    await waitForValue(browser, 'open panel', async () => (await pillThinking(browser, 1))?.panelText ?? null, 'Seeded plan.\nSecond line.')
     await browser.execute(() => document.querySelector<HTMLTextAreaElement>('.dez-role-separator__thinking-text')?.focus())
     await browser.keys([Key.Control, 'a'])
     await browser.keys([Key.Control, Key.Shift, 'c'])
@@ -791,7 +760,7 @@ describe('thinking', () => {
     // The panel leaves out the encrypted line, with the blank lines before
     // it, and shows the encrypted pill below the text in its place.
     await pressRolePill(browser, 3, '.dez-role-separator__disclosure')
-    await waitForValue(browser, 'panel without the encrypted line', async () => (await pillThinking(3))?.panelText ?? null, READABLE_PLAN)
+    await waitForValue(browser, 'panel without the encrypted line', async () => (await pillThinking(browser, 3))?.panelText ?? null, READABLE_PLAN)
     expect(await encryptedPill(3)).toEqual({
       label: 'Encrypted reasoning hidden · 3 KB',
       title: 'The provider sent this reasoning encrypted. Dez keeps it with the reply but does not show it.',
@@ -799,7 +768,7 @@ describe('thinking', () => {
     })
     // A reply without an encrypted line gets no encrypted pill.
     await pressRolePill(browser, 1, '.dez-role-separator__disclosure')
-    await waitForValue(browser, 'panel of the reply without the line', async () => (await pillThinking(1))?.panelText ?? null, PLAIN_SEEDED_THINKING)
+    await waitForValue(browser, 'panel of the reply without the line', async () => (await pillThinking(browser, 1))?.panelText ?? null, PLAIN_SEEDED_THINKING)
     expect(await encryptedPill(1)).toBeNull()
     // Only the panel changes: the store keeps the text as the provider sent it.
     expect(await storedThinking()).toEqual([
@@ -856,7 +825,7 @@ describe('thinking', () => {
     try {
       await submit(browser, 'Unreadable question')
       gates[0].open()
-      await waitForValue(browser, 'triangle', async () => (await pillThinking(1))?.slot ?? null, 'disclosure')
+      await waitForValue(browser, 'triangle', async () => (await pillThinking(browser, 1))?.slot ?? null, 'disclosure')
       await pressRolePill(browser, 1, '.dez-role-separator__disclosure')
       await waitForValue(browser, 'panel of the held-back start', panelField, { text: '', placeholder: '' })
       gates[1].open()

@@ -1,18 +1,28 @@
 import * as z from 'zod'
 import { MARKER_ATTRIBUTES, escapeMarkerAttribute, markerAttributes } from '../../utils/markerAttribute'
-import { sectionIsEmpty, stripLiveSentinels } from './content'
+import { sectionIsEmpty, sectionPlainText, stripLiveSentinels, textNode } from './content'
 import type { ConversationCost } from './conversationCost'
-import { IMAGE_ID_SOURCE, type LinkedPathRule } from './images'
+import { findImageReferences, IMAGE_ID_SOURCE, type ImageReference, type LinkedPathRule } from './images'
+import { findMediaTags, type MediaTag } from './mediaTags'
 import { readShownPictures, shownPicturesText, type ShownPicture } from './shownPictures'
 import type { ContentNode, Role, Section } from './types'
 
 // A compaction makes a long conversation small: what a model wrote about
 // the work so far takes the place of the old messages. That text is the
-// compaction section: the first section of the conversation, an agent
-// section that starts with the compaction block. The notes in the block
+// compaction block, at the start of the compaction section: the first
+// section of the conversation, an agent section. The notes in the block
 // hold the first and the newest message of the user, word for word
 // (compactionNotes.ts). This module is the one place that writes and
 // recognizes the block.
+//
+// The compaction section is the section of the reply that ran the
+// compaction: the block, then the text of that reply, with the id, the
+// model, the thinking, and the time of the reply
+// (streams/compactedSections.ts). So the reply has one AGENT pill. Every
+// reader of the text of a reply reads only the text after the block
+// (`sectionTextParts`). Two older layouts still open and send: the
+// compaction section, the user sections that held the kept messages of
+// the user, then the reply; and the compaction section, then the reply.
 //
 //   <dez:compaction count="2" last-id="k" dropped="5" pictures="[…]" linked="[…]">
 //   (the notes: compactionNotes.ts)
@@ -25,8 +35,8 @@ import type { ContentNode, Role, Section } from './types'
 //   so the user sees that it is not valid.
 // - The end line is one whole line. The block runs from the tag line to
 //   the first end line after it. With no end line, the block runs to the
-//   end of the text of the section. Text after the block is normal text of
-//   the section. `compactionBlockLineCount` is the one rule: the editor
+//   end of the text of the section. Text after the block is the text of
+//   the reply. `compactionBlockLineCount` is the one rule: the editor
 //   reads its doc lines with it (view/editor/compaction.ts).
 // - The old form: an older Dez wrote a tag that ends with `/>`, and no end
 //   line. Its notes run to the end of the text of the section. Saved
@@ -49,25 +59,26 @@ import type { ContentNode, Role, Section } from './types'
 //     when there is none.
 //   - `linked`: the linked paths (linkedFiles.ts) that the user gave and
 //     that the notes name, as a JSON list of strings. A linked path counts
-//     in the block only when this list holds it (`linkedPathRule`): the
+//     in the block only when this list holds it (`linkedRuleParts`): the
 //     compaction moves the messages of the user into the block, and their
 //     linked files must still count there. A model cannot write the tag,
 //     so it cannot add a path. Absent when there is none; a value that is
-//     no list of strings reads as none.
+//     no list of strings reads as none. The text after the block is text
+//     of a model: no linked path counts there.
 // - The role of the first section follows its text: `agent` when it starts
 //   with a valid tag, else `user`, as the first section of every other
 //   conversation (`firstSectionRole`, `contentCompactionBlock`). So a user
-//   who deletes the block gets a normal conversation, and an undo brings
-//   the compaction section back.
+//   who deletes the block (a selection that holds it) gets a normal
+//   conversation, and an undo brings the compaction section back.
 // - Answer text from a model is escaped (`ModelTextEscaper`, toolBlocks.ts),
 //   so a model cannot write a tag or an end line.
-// - A request sends the notes, the text after the block, and the user
-//   sections right after it as one `user` message, with no tag and no end
-//   line: the compaction message (`sectionsToStreamMessages`,
+// - A request sends the notes as one `user` message, with no tag and no
+//   end line: the compaction message (`sectionsToStreamMessages`,
 //   streams/messages.ts). Both wire formats need a user message first, and
-//   only a user message takes image parts. Only a conversation of an older
-//   Dez has user sections right after the block: the old layout, which
-//   kept the messages of the user there.
+//   only a user message takes image parts. The text after the block goes
+//   as the rounds of the reply, as any agent section goes. In the oldest
+//   layout, the user sections right after the compaction section go in
+//   the compaction message too (`compactionMessageEnd`).
 // - A text for people (the chips, Markdown, a preview, the search) shows
 //   the notes as `compactionNotesForPeople` (compactionNotes.ts) gives them.
 
@@ -327,13 +338,88 @@ export function blockLinkedRule(block: Pick<CompactionTagData, 'linked'>): Linke
   return block.linked === undefined ? 'agent' : new Set(block.linked)
 }
 
-/** Where the linked paths of `text` count (`LinkedPathRule`, images.ts):
- *  `text` is the text of section `index` of a conversation, whose role is
- *  `role`. In the compaction section, only the paths that its tag lists
- *  count; in any other section, the role tells it. */
-export function linkedPathRule(role: Role, text: string, index: number): LinkedPathRule {
-  const attributes = index === 0 && role === 'agent' ? tagAttributes(firstLine(text)) : null
-  return attributes ? blockLinkedRule({ linked: readLinkedPaths(attributes.linked) }) : role
+/** A part of the text of a section whose linked paths (linkedFiles.ts)
+ *  count by one rule (`LinkedPathRule`, images.ts). */
+export interface LinkedRulePart {
+  text: string
+  /** The offset of `text` in the text of the section. */
+  from: number
+  rule: LinkedPathRule
+}
+
+// The parts of `text`, which starts with `block`: the block, by the rule of
+// its tag, and the text after it (the reply), by the rule of every agent
+// section. The line break between them is in no part.
+function blockRuleParts(text: string, block: CompactionBlock): LinkedRulePart[] {
+  const parts: LinkedRulePart[] = [{ text: text.slice(0, block.to), from: 0, rule: blockLinkedRule(block) }]
+  if (block.textFrom < text.length) parts.push({ text: text.slice(block.textFrom), from: block.textFrom, rule: 'agent' })
+  return parts
+}
+
+/** Where the linked paths of `text` count: `text` is the text of section
+ *  `index` of a conversation, whose role is `role`. In the compaction
+ *  section, only the paths that its tag lists count in the block, and the
+ *  text after the block is the text of a reply. Any other section is one
+ *  part, with the rule of its role. The editor gives the text of its doc,
+ *  so the block follows the rule of the doc (`firstSectionRole`). */
+export function linkedRuleParts(role: Role, text: string, index: number): LinkedRulePart[] {
+  const block = index === 0 && role === 'agent' ? readCompactionBlock(text) : null
+  return block === null ? [{ text, from: 0, rule: role }] : blockRuleParts(text, block)
+}
+
+/** `linkedRuleParts` of the plain text of `section`, section `index` of a
+ *  conversation, with the block of its content (`sectionCompactionBlock`). */
+export function sectionLinkedRuleParts(section: Section, index: number): LinkedRulePart[] {
+  const text = sectionPlainText(section)
+  const block = index === 0 ? sectionCompactionBlock(section) : null
+  return block === null ? [{ text, from: 0, rule: section.role }] : blockRuleParts(text, block)
+}
+
+/** The image references of `parts`, the parts of one text, in order, with
+ *  offsets in that text. */
+export function partsImageReferences(parts: readonly LinkedRulePart[]): ImageReference[] {
+  return parts.flatMap(({ text, from, rule }) => findImageReferences(text, rule)
+    .map((reference) => ({ ...reference, from: from + reference.from, to: from + reference.to })))
+}
+
+/** The media tags of `parts`, the parts of one text, in order, with offsets
+ *  in that text, each one with the rule of its part. A tag is a whole
+ *  line, so no tag runs over the end of a block. */
+export function partsMediaTags(parts: readonly LinkedRulePart[]): { tag: MediaTag, rule: LinkedPathRule }[] {
+  return parts.flatMap(({ text, from, rule }) => findMediaTags(text)
+    .map((tag) => ({ tag: { ...tag, from: from + tag.from, to: from + tag.to }, rule })))
+}
+
+/** The text of a section, split at the end of its compaction block. */
+export interface SectionTextParts {
+  /** The block that starts the text; null for none. */
+  block: CompactionBlock | null
+  /** The text after the block: in the compaction section, the text of the
+   *  reply that ran the compaction. The whole text of any other section. */
+  text: string
+  /** The offset of `text` in the plain text of the section. */
+  from: number
+}
+
+/** The parts of the plain text of `section`, section `index` of a
+ *  conversation (`sectionPlainText`). Every reader of the text of a reply
+ *  reads `text`: no tool block, no round, and no asset of a reply is in
+ *  the block. */
+export function sectionTextParts(section: Section, index: number): SectionTextParts {
+  const text = sectionPlainText(section)
+  const block = index === 0 ? sectionCompactionBlock(section) : null
+  return block === null ? { block, text, from: 0 } : { block, text: text.slice(block.textFrom), from: block.textFrom }
+}
+
+/** The sections of `sections` before the text of the reply whose section
+ *  is `sections[replyIndex]`, for the requests of that reply: the sections
+ *  before it, or, for a reply in the compaction section, that section with
+ *  its block only. */
+export function sectionsBeforeReply(sections: readonly Section[], replyIndex: number): Section[] {
+  const block = replyIndex === 0 && sections.length > 0 ? sectionCompactionBlock(sections[0]) : null
+  if (block === null) return sections.slice(0, replyIndex)
+  const { id, role } = sections[0]
+  return [{ id, role, content: [textNode(sectionPlainText(sections[0]).slice(0, block.to))] }]
 }
 
 /** The `last-id` of the tag that is the first line of `text`; null when
@@ -376,22 +462,21 @@ export function sectionCompactionBlock(section: Section): CompactionBlock | null
   return section.role === 'agent' ? contentCompactionBlock(section.content) : null
 }
 
-/** Where the linked paths of `section`, section `index` of a conversation,
- *  count (`linkedPathRule`): the rule of the content of a section, by the
- *  rule of the editor doc (`sectionCompactionBlock`). */
-export function sectionLinkedRule(section: Section, index: number): LinkedPathRule {
-  const block = index === 0 ? sectionCompactionBlock(section) : null
-  return block ? blockLinkedRule(block) : section.role
-}
-
 /** The index after the last section of the compaction message of
- *  `sections`, a conversation (or its sections that are not empty, for a
- *  request): the compaction section and the user sections right after it,
- *  up to the first later agent section that is not empty. The request
+ *  `sections`, a conversation: the compaction section, and the user
+ *  sections right after it up to the first later agent section that is not
+ *  empty. The text of a reply after the block ends the message at the
+ *  compaction section: the reply that ran the compaction wrote it there.
+ *  So only a reply with no text (a stop, an error) lets a later message of
+ *  the user join the compaction message, as in the old layouts, whose
+ *  replies were sections of their own. The request
  *  (`sectionsToStreamMessages`, streams/messages.ts) and the compaction
  *  read this one rule. 0 for a conversation with no compaction. */
 export function compactionMessageEnd(sections: readonly Section[]): number {
-  if (sections.length === 0 || sectionCompactionBlock(sections[0]) === null) return 0
+  if (sections.length === 0) return 0
+  const { block, text } = sectionTextParts(sections[0], 0)
+  if (block === null) return 0
+  if (text.trim() !== '') return 1
   const firstReply = sections.findIndex((section, index) => index > 0 && section.role === 'agent' && !sectionIsEmpty(section))
   return firstReply < 0 ? sections.length : firstReply
 }

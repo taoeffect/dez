@@ -1,9 +1,8 @@
 import type { MessagePart, Section } from '../chat/types'
 import type { AssetKind } from '../chat/assetMentions'
-import { sectionLinkedRule } from '../chat/compaction'
-import { sectionPlainText } from '../chat/content'
+import { partsImageReferences, partsMediaTags, sectionLinkedRuleParts } from '../chat/compaction'
 import { findAssetMentions } from '../chat/imageMentions'
-import { findImageReferences, requestImageReferenceStart, type ImageReference } from '../chat/images'
+import { requestImageReferenceStart, type ImageReference } from '../chat/images'
 import { findMediaTags, sectionClipSource, type MediaTag, type MediaTagKind } from '../chat/mediaTags'
 import { withoutStoredFilePaths } from '../chat/storedFilePaths'
 import { takesInputImages } from '../modelInputs'
@@ -72,19 +71,20 @@ export interface ConversationAssets {
 
 /** The images and the clips of `sections` by their ids: the image
  *  references and the media tags of each section, user and agent, with the
- *  rule of the section for a linked file (`sectionLinkedRule`). Of two
- *  images or two clips with one id (a hand edit), the last one counts, and
- *  an id that an image and a clip both have names the image. */
+ *  rule of their part of the section for a linked file
+ *  (`sectionLinkedRuleParts`), and with offsets in the plain text of the
+ *  section. Of two images or two clips with one id (a hand edit), the last
+ *  one counts, and an id that an image and a clip both have names the
+ *  image. */
 export function conversationAssets(sections: readonly Section[]): ConversationAssets {
   const images = new Map<string, Extract<FoundAsset, { kind: 'image' }>>()
   const clips = new Map<string, Extract<FoundAsset, { kind: 'clip' }>>()
   sections.forEach((section, index) => {
-    const text = sectionPlainText(section)
-    const rule = sectionLinkedRule(section, index)
-    for (const reference of findImageReferences(text, rule)) {
+    const parts = sectionLinkedRuleParts(section, index)
+    for (const reference of partsImageReferences(parts)) {
       if (reference.id !== null) images.set(reference.id, { kind: 'image', id: reference.id, section: index, reference })
     }
-    for (const tag of findMediaTags(text)) {
+    for (const { tag, rule } of partsMediaTags(parts)) {
       const { kind, id, type, src, url, expires } = tag
       clips.set(id, { kind: 'clip', id, section: index, tag, clip: { kind, id, type, src: sectionClipSource(src, rule), url, expires } })
     }

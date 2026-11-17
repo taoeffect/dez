@@ -400,6 +400,39 @@ export async function pressRolePill (browser: E2EBrowser, index: number, part = 
   }, index, part, shiftKey)
 }
 
+/** What the thinking parts of one role pill show. */
+export interface PillThinkingView {
+  role: string
+  /** The left slot of the pill. */
+  slot: 'spinner' | 'disclosure' | null
+  /** `aria-expanded` of the disclosure triangle. */
+  expanded: string | null
+  /** `data-thinking-open` is set on the separator. */
+  open: boolean
+  /** The text of the panel's text field, or null without a panel. */
+  panelText: string | null
+}
+
+/** The thinking parts of the role pill before section `index`, or null
+ *  when the editor draws no such pill. */
+export async function pillThinking (browser: E2EBrowser, index: number): Promise<PillThinkingView | null> {
+  return browser.execute((sectionIndex: number) => {
+    const separator = document.querySelector<HTMLElement>(`.cm-content .dez-role-separator[data-section-index="${sectionIndex}"]`)
+    if (!separator) return null
+    const label = separator.querySelector('.dez-role-separator__label')
+    const disclosure = label?.querySelector('.dez-role-separator__disclosure')
+    const spinner = label?.querySelector('.dez-role-separator__spinner')
+    const field = separator.querySelector<HTMLTextAreaElement>('.dez-role-separator__thinking textarea.dez-role-separator__thinking-text')
+    return {
+      role: separator.dataset.role ?? '',
+      slot: disclosure ? 'disclosure' as const : spinner ? 'spinner' as const : null,
+      expanded: disclosure?.getAttribute('aria-expanded') ?? null,
+      open: separator.dataset.thinkingOpen === '1',
+      panelText: field?.value ?? null,
+    }
+  }, index)
+}
+
 /** The marker lines of a conversation file, or null while it does not
  *  exist. */
 export async function savedPillLines (home: string, conversationId: string): Promise<string[] | null> {

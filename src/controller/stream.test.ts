@@ -2,7 +2,7 @@ import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { ActiveModel, Section, SectionThinking, Tab, ThinkingReplay } from '../model/chat/types'
-import { compactionTagText, sectionCompactionBlock } from '../model/chat/compaction'
+import { compactionTagText, sectionCompactionBlock, sectionTextParts } from '../model/chat/compaction'
 import { compactionNotesText, notesMessages } from '../model/chat/compactionNotes'
 import { sectionVisibleText } from '../model/chat/content'
 import type { ContextSize } from '../model/chat/contextSize'
@@ -3195,6 +3195,10 @@ describe('dez.stream/start compaction', () => {
     sbp('dez.model/tabs/countRequestContext', activeTab().id, model, 140_000)
   }
   const largeConversationTexts = [{ role: 'user', text: 'Hi' }, { role: 'agent', text: 'An earlier answer.' }, { role: 'user', text: 'More' }]
+  // The text after the block of the compaction section, and the end of the
+  // block in its text.
+  const replyText = () => sectionTextParts(activeTab().sections[0], 0).text
+  const blockEnd = () => sectionCompactionBlock(activeTab().sections[0])!.to
 
   it('asks the model of the reply for notes between two rounds, and goes on from the notes in the same reply', async () => {
     const tabId = activeTab().id
@@ -3239,28 +3243,118 @@ describe('dez.stream/start compaction', () => {
     expect(next).toContain('Hi')
     expect(next).not.toContain('Checking.')
 
-    const [notes, ...rest] = activeTab().sections
-    expect(sectionCompactionBlock(notes)?.count).toBe(1)
-    expect(notes.model).toMatchObject({ providerId: model.providerId, modelId: model.modelId })
-    // No section of the user stays: its message is in the notes.
-    expect(rest.map((section) => ({ id: section.id, role: section.role, text: sectionVisibleText(section) }))).toStrictEqual([
-      { id: 'a1', role: 'agent', text: 'None.' },
-      { id: expect.any(String), role: 'user', text: '' },
-    ])
+    // The reply goes on in its own section, after the block, on a line of
+    // its own. No section of the user stays: its message is in the notes.
+    const [first, ...rest] = activeTab().sections
+    expect(first.id).toBe('a1')
+    expect(sectionCompactionBlock(first)?.count).toBe(1)
+    expect(first.model).toMatchObject({ providerId: model.providerId, modelId: model.modelId })
+    expect(sectionVisibleText(first).slice(blockEnd())).toBe('\nNone.')
+    expect(rest.map((section) => ({ role: section.role, text: sectionVisibleText(section) }))).toStrictEqual([{ role: 'user', text: '' }])
     // The thinking of the rounds before went with their text.
     expect(agentSection().thinking).toStrictEqual({ text: 'Found.', replay })
+    expect(agentSection().durationMs).toEqual(expect.any(Number))
     expect(activeTab().compactions).toMatchObject({ count: 1, tokens: COMPACTION_USAGE.inputTokens })
     expect(activeTab().cost).toStrictEqual({ usd: 1, requests: 3, unpriced: 0 })
     expect(editorRebuilds).toStrictEqual([tabId])
     // A save at the swap, before the delete of the files that the
     // compaction left, and the save at the end of the reply.
     expect(savedConversations.map((data) => data.sections.map((section) => section.role))).toStrictEqual([
-      ['agent', 'agent'],
-      ['agent', 'agent', 'user'],
+      ['agent'],
+      ['agent', 'user'],
     ])
     expect(savedConversations[0].compactions?.count).toBe(1)
     expect(leftFiles).toStrictEqual([{ sources: [], pictures: [] }])
     expect(toasts).toStrictEqual([])
+  })
+
+  // A request in the reply sends the compaction message of the block, then
+  // the rounds of the reply after the block. The second compaction reads
+  // the first one in the reply's own section, and takes its place. The
+  // first count after a compaction sets the size that it left, so a small
+  // round comes first, and the large round after it makes the next request
+  // due.
+  it('sends the rounds after the block after the compaction message, and compacts the same reply again', async () => {
+    const tabId = activeTab().id
+    const listCall = (id: string) => ({ id, name: 'model_list', arguments: { filter: 'gemini' } })
+    const listResult = (callId: string) => ({ role: 'tool', results: [{ callId, content: NO_MODELS_TEXT, isError: false }] })
+    replyRounds([
+      largeRound,
+      notesAnswer,
+      async (input) => {
+        input.onSent?.()
+        await input.onToken('Small.')
+        return { requestId: input.requestId as string, toolCalls: [{ ...geminiCall, id: 'c2' }], usage: { inputTokens: 20_000, outputTokens: 10 } }
+      },
+      largeRound,
+      notesAnswer,
+      lastRound,
+    ])
+
+    await startStream({ sendTools: true })
+
+    expect(requests.map(isCompactionRequest)).toStrictEqual([false, true, false, false, true, false])
+    const [compactionMessage] = sent[2]
+    expect(sent[2]).toStrictEqual([compactionMessage])
+    expect(compactionMessage.role).toBe('user')
+    // The same bytes, then the rounds after the block.
+    const small = [{ role: 'agent', content: 'Small.', toolCalls: [listCall('c2')] }, listResult('c2')]
+    expect(sent[3]).toStrictEqual([compactionMessage, ...small])
+    expect(sent[4].slice(0, -1)).toStrictEqual([
+      compactionMessage,
+      ...small,
+      { role: 'agent', content: 'Checking.', toolCalls: [listCall('c1')] },
+      listResult('c1'),
+    ])
+    expect(sent[5]).toHaveLength(1)
+    expect(sent[5][0]).not.toStrictEqual(compactionMessage)
+
+    expect(activeTab().sections.map(({ id, role }) => [id, role])).toStrictEqual([['a1', 'agent'], [expect.any(String), 'user']])
+    expect(sectionCompactionBlock(activeTab().sections[0])?.count).toBe(2)
+    expect(replyText()).toBe('None.')
+    expect(editorRebuilds).toStrictEqual([tabId, tabId])
+    expect(toasts).toStrictEqual([])
+  })
+
+  it('writes an image of the round right after the compaction on the line after the block', async () => {
+    saveImage = async () => generated('g1.png')
+    replyRounds([
+      largeRound,
+      notesAnswer,
+      async (input) => {
+        await input.onImage(png)
+        await input.onToken('Here.')
+        return { requestId: input.requestId as string }
+      },
+    ])
+
+    await startStream({ sendTools: true })
+
+    expect(sectionVisibleText(activeTab().sections[0]).slice(blockEnd())).toBe(`\n![${generated('g1.png')}](id=a)\n\nHere.`)
+  })
+
+  // The notes hold the message of the user, so the section stays, and the
+  // next message needs a user section.
+  it('keeps the block, with no line after it, and adds a user section when the user stops the reply right after the compaction', async () => {
+    const tabId = activeTab().id
+    replyRounds([
+      largeRound,
+      notesAnswer,
+      async (input) => {
+        await input.onThinking('Look.')
+        await sbp('dez.stream/stop', tabId)
+        return { requestId: input.requestId as string }
+      },
+    ])
+
+    await startStream({ sendTools: true })
+
+    const [first] = activeTab().sections
+    expect(sectionVisibleText(first)).toHaveLength(blockEnd())
+    expect(first.thinking).toBeUndefined()
+    expect(first.durationMs).toBeUndefined()
+    expect(sectionTexts().slice(1)).toStrictEqual([{ role: 'user', text: '' }])
+    expect(sbp('dez.model/streams/isStreaming', tabId)).toBe(false)
   })
 
   it('compacts a conversation that is too large before the first request of a new reply', async () => {
@@ -3282,10 +3376,8 @@ describe('dez.stream/start compaction', () => {
     for (const kept of [NOTES_SUMMARY, 'Hi', 'More']) expect(next).toContain(kept)
     expect(next).not.toContain('An earlier answer.')
     expect(sectionCompactionBlock(activeTab().sections[0])?.count).toBe(1)
-    expect(sectionTexts().slice(1)).toStrictEqual([
-      { role: 'agent', text: 'None.' },
-      { role: 'user', text: '' },
-    ])
+    expect(replyText()).toBe('None.')
+    expect(sectionTexts().slice(1)).toStrictEqual([{ role: 'user', text: '' }])
     const parts = notesMessages(sectionCompactionBlock(activeTab().sections[0])!.notes).map(({ text }) => text)
     expect(parts).toStrictEqual(['Hi', 'More'])
     expect(toasts).toStrictEqual([])
@@ -3341,7 +3433,7 @@ describe('dez.stream/start compaction', () => {
     expect(requests.map(isCompactionRequest)).toStrictEqual([false, true, true, false])
     expect(requests[2].requestId).not.toBe(requests[1].requestId)
     expect(activeTab().compactions?.count).toBe(1)
-    expect(sectionVisibleText(agentSection())).toBe('None.')
+    expect(replyText()).toBe('None.')
     expect(toasts).toStrictEqual([])
     expect(consoleError).toHaveBeenCalled()
   })
@@ -3497,7 +3589,8 @@ describe('dez.stream/start compaction', () => {
         { modelId: model.modelId, system: 'You are m.', compaction: true },
         { modelId: small.modelId, system: 'You are small.', compaction: false },
       ])
-      expect(activeTab().sections[0].model).toMatchObject({ providerId: model.providerId, modelId: model.modelId })
+      // The section is the one of the reply, with its model.
+      expect(activeTab().sections[0].model).toMatchObject({ providerId: small.providerId, modelId: small.modelId })
       expect(toasts).toStrictEqual([])
     })
 

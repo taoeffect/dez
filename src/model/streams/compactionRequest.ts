@@ -1,4 +1,4 @@
-import { compactionMessageEnd } from '../chat/compaction'
+import { sectionTextParts } from '../chat/compaction'
 import { conversationCostText } from '../chat/compactionNotes'
 import { sectionIsEmpty } from '../chat/content'
 import type { ConversationCost } from '../chat/conversationCost'
@@ -67,16 +67,17 @@ function replyIndex(sections: readonly Section[], replySectionId: string): numbe
   return index < 0 ? sections.length : index
 }
 
-/** Whether the conversation `sections` holds a reply with text between its
- *  newest compaction (or its start) and the section of the reply that
- *  runs (`replySectionId`). At the first request of a reply, this tells
- *  whether a chat request went since the newest compaction
- *  (`runChatRounds`, controller/stream.ts): a first message, and a message
- *  right after a compaction, bring none. */
+/** Whether the conversation `sections` holds a reply with text before the
+ *  section of the reply that runs (`replySectionId`). Only the text of a
+ *  reply counts (`sectionTextParts`): the compaction block is none, and a
+ *  compaction takes the place of every reply before it. So at the first
+ *  request of a reply, this tells whether a chat request went since the
+ *  newest compaction (`runChatRounds`, controller/stream.ts): a first
+ *  message, and a message right after a compaction, bring none. */
 export function repliedSinceCompaction(sections: readonly Section[], replySectionId: string): boolean {
   return sections
-    .slice(compactionMessageEnd(sections), replyIndex(sections, replySectionId))
-    .some((section) => section.role === 'agent' && !sectionIsEmpty(section))
+    .slice(0, replyIndex(sections, replySectionId))
+    .some((section, index) => section.role === 'agent' && sectionTextParts(section, index).text.trim() !== '')
 }
 
 /** The model of the newest reply with text before the section of the

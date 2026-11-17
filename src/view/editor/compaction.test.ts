@@ -1,12 +1,11 @@
-import { undo } from '@codemirror/commands'
+import { deleteCharBackward, undo } from '@codemirror/commands'
 import type { EditorState } from '@codemirror/state'
 import { describe, expect, it } from 'vitest'
 import { COMPACTION_END_LINE, compactionBlockText, compactionTagText } from '../../model/chat/compaction'
 import type { Role } from '../../model/chat/types'
-import { SECTION_SEP, sectionsField } from '../thread/cmEditor'
-import { caretAfterCompactionBlock } from './compaction'
+import { sectionsField } from '../thread/cmEditor'
+import { caretAfterCompactionBlock, keepCompactionBlockOnBackspace } from './compaction'
 import { compactionBlockRange } from './compactionBlock'
-import { deleteLineBlockBackward } from './lineBlocks'
 import { PLAYER, createState, joinSections, runCommand, selectionOf } from './testing'
 
 const DATA = { count: 1, lastId: 'c', pictures: [] }
@@ -162,27 +161,40 @@ describe('text at the block', () => {
   })
 })
 
-describe('Backspace after the block', () => {
-  it('deletes the block, which makes the first section a user section, and an undo brings both back', () => {
-    const { handled, state } = runCommand(createState(TEXTS, ROLES, [AFTER]), deleteLineBlockBackward)
+// The text after the block is the reply that ran at the compaction: with
+// the block gone, it would be a message of the user.
+describe('Backspace next to the block', () => {
+  it.each([
+    ['at the start of the text after the block', TEXTS, AFTER],
+    ['at the end of a section that is only its block', ONLY_BLOCK, BLOCK.length],
+  ])('keeps the block %s', (_where, texts, caret) => {
+    const state = createState(texts, ROLES, [caret])
+    const { handled, state: next } = runCommand(state, keepCompactionBlockOnBackspace)
 
     expect(handled).toBe(true)
-    expect(state.doc.toString()).toBe(joinSections(['More', 'ask']))
-    expect(state.selection.main.head).toBe(0)
-    expect(firstSection(state)).toStrictEqual({ id: 's0', role: 'user' })
-
-    const undone = runCommand(state, undo).state
-
-    expect(undone.doc.toString()).toBe(DOC)
-    expect(undone.selection.main.head).toBe(AFTER)
-    expect(firstSection(undone)).toStrictEqual({ id: 's0', role: 'agent' })
+    expect(next).toBe(state)
   })
 
-  it('deletes the block of a section that is only its block, and keeps the separator of the next section', () => {
-    const { handled, state } = runCommand(createState(ONLY_BLOCK, ROLES, [BLOCK.length]), deleteLineBlockBackward)
+  // CM's own key takes the empty line away, and the block stays.
+  it('leaves an empty line after the block to the next rules', () => {
+    const state = createState([`${BLOCK}\n`, 'ask'], ROLES, [AFTER])
 
-    expect(handled).toBe(true)
-    expect(state.doc.toString()).toBe(`\n${SECTION_SEP}\nask`)
-    expect(state.field(sectionsField).map((section) => section.role)).toStrictEqual(['user', 'user'])
+    expect(runCommand(state, keepCompactionBlockOnBackspace).handled).toBe(false)
+    expect(runCommand(state, deleteCharBackward).state.doc.toString()).toBe(joinSections(ONLY_BLOCK))
+  })
+
+  it('lets a selection that holds the block delete it, which makes the first section a user section, and an undo brings both back', () => {
+    const state = createState(TEXTS, ROLES, [[0, AFTER]])
+    expect(runCommand(state, keepCompactionBlockOnBackspace).handled).toBe(false)
+
+    const deleted = runCommand(state, deleteCharBackward).state
+
+    expect(deleted.doc.toString()).toBe(joinSections(['More', 'ask']))
+    expect(firstSection(deleted)).toStrictEqual({ id: 's0', role: 'user' })
+
+    const undone = runCommand(deleted, undo).state
+
+    expect(undone.doc.toString()).toBe(DOC)
+    expect(firstSection(undone)).toStrictEqual({ id: 's0', role: 'agent' })
   })
 })

@@ -1,4 +1,4 @@
-import { linkedPathRule } from './compaction'
+import { linkedRuleParts, partsImageReferences } from './compaction'
 import { findAssetMentions, type AssetMention } from './imageMentions'
 import { findImageReferences, isKeptImage, type LinkedPathRule } from './images'
 import { findMediaTags, type MediaTag, type MediaTagKind } from './mediaTags'
@@ -103,21 +103,24 @@ export function namedMentions(sections: readonly MentionSection[]): NamedMention
   const imageIds = new Set<string>()
   const clipKinds = new Map<string, MediaTagKind>()
   return sections.map(({ role, text }, index) => {
-    const rule = linkedPathRule(role, text, index)
-    for (const { id } of findImageReferences(text, rule)) {
+    const parts = linkedRuleParts(role, text, index)
+    for (const { id } of partsImageReferences(parts)) {
       if (id !== null) imageIds.add(id)
     }
     for (const { id, kind } of findMediaTags(text)) clipKinds.set(id, kind)
     if ((imageIds.size === 0 && clipKinds.size === 0) || !text.includes('@')) return []
 
     const mentions: NamedMention[] = []
-    for (const piece of assetTextPieces(text, rule)) {
-      if (piece.kind !== 'gap') continue
-      const gap = text.slice(piece.from, piece.to)
-      for (const mention of findAssetMentions(gap)) {
-        const kind = imageIds.has(mention.id) ? 'image' : clipKinds.get(mention.id)
-        if (kind === undefined || !requestKeepsLine(gap, mention)) continue
-        mentions.push({ from: piece.from + mention.from, to: piece.from + mention.to, id: mention.id, kind })
+    for (const part of parts) {
+      for (const piece of assetTextPieces(part.text, part.rule)) {
+        if (piece.kind !== 'gap') continue
+        const gap = part.text.slice(piece.from, piece.to)
+        for (const mention of findAssetMentions(gap)) {
+          const kind = imageIds.has(mention.id) ? 'image' : clipKinds.get(mention.id)
+          if (kind === undefined || !requestKeepsLine(gap, mention)) continue
+          const from = part.from + piece.from
+          mentions.push({ from: from + mention.from, to: from + mention.to, id: mention.id, kind })
+        }
       }
     }
     return mentions

@@ -1,5 +1,5 @@
 import { assetTextPieces } from '../chat/assetMentions'
-import { compactionBlockText, sectionCompactionBlock, sectionLinkedRule } from '../chat/compaction'
+import { compactionBlockText, partsImageReferences, sectionCompactionBlock, sectionLinkedRuleParts } from '../chat/compaction'
 import { compactionNotesText, type NotesAsset } from '../chat/compactionNotes'
 import { sectionPlainText, textNode } from '../chat/content'
 import type { ConversationCost } from '../chat/conversationCost'
@@ -17,16 +17,16 @@ import { sectionsToStreamMessages } from './messages'
 import { budgetAfter, contextImageCost, type PictureBudget } from './pictureBudget'
 
 // The sections of a conversation after a compaction, in place of the
-// sections up to the reply that runs:
-//
-//   A   agent  the compaction section: the compaction block, which holds
-//              the notes (chat/compaction.ts, chat/compactionNotes.ts)
-//   B   agent  the reply, which goes on: empty, with its id and its model
-//
-// `B` is there only when the conversation holds the section of the reply
-// (a new reply has an empty one before its first request). A request
-// sends `A` as one message of the user, the compaction message
-// (messages.ts), which stays the same bytes until the next compaction.
+// sections up to the reply that runs: one agent section, the section of
+// that reply (the compaction section). It holds the compaction block,
+// which holds the notes (chat/compaction.ts, chat/compactionNotes.ts),
+// then a line break, and the reply goes on after it. It keeps the id and
+// the model of the reply, so the reply keeps one AGENT pill; its thinking
+// and its time start new, as the text of the reply does. With no section
+// of the reply, it gets a new id and the model of the compaction. A
+// request sends the block as one message of the user, the compaction
+// message (messages.ts), which stays the same bytes until the next
+// compaction.
 //
 // The notes hold the first and the newest message of the user word for
 // word, each in a message part (`firstMessage`, `newestMessage`), so the
@@ -177,7 +177,7 @@ export function compactedSections(input: CompactedSectionsInput): CompactedSecti
   // The references of the images with no id (an image of an old Dez) out
   // of the two messages, in section and text order: the notes keep them as
   // text. The compaction section holds the ones of the compaction before.
-  const unnamed = sections.slice(0, scope.end).flatMap((section, index) => findImageReferences(sectionPlainText(section), sectionLinkedRule(section, index))
+  const unnamed = sections.slice(0, scope.end).flatMap((section, index) => partsImageReferences(sectionLinkedRuleParts(section, index))
     .filter((reference) => reference.id === null && !inMessage(index, reference.from)))
   // The linked paths that the new block holds and that count where they
   // are now: in the two messages, in the text of a kept asset, and in an
@@ -196,7 +196,7 @@ export function compactedSections(input: CompactedSectionsInput): CompactedSecti
     if (reference.linked) linked.add(reference.path)
   }
 
-  // `A` for `plan`.
+  // The block for `plan`.
   const head = ({ shown, asText }: Plan): { section: Section, pictures: ShownPicture[] } => {
     const assets = staying.map(({ asset, sentence }): NotesAsset => {
       const found = asset.asset
@@ -223,7 +223,7 @@ export function compactedSections(input: CompactedSectionsInput): CompactedSecti
       cost: input.cost,
     })
     const tag = { count: (oldBlock?.count ?? 0) + 1, lastId, dropped: dropped.length, pictures, linked: [...linked] }
-    return { section: { id: noteId, role: 'agent', content: [textNode(compactionBlockText(tag, notes))], model: cloneModelRef(model) }, pictures }
+    return { section: { id: noteId, role: 'agent', content: [textNode(compactionBlockText(tag, notes))] }, pictures }
   }
   // Whether the images and the pictures of the head of `plan` fit in the
   // limits.
@@ -258,12 +258,16 @@ export function compactedSections(input: CompactedSectionsInput): CompactedSecti
 
   const built = head({ shown, asText })
   const reply = scope.reply === null ? null : sections[scope.reply]
+  // The line break after the block keeps its end line whole, so the first
+  // token of the reply starts on a line of its own.
+  const first: Section = {
+    id: reply?.id ?? noteId,
+    role: 'agent',
+    content: [textNode(`${sectionPlainText(built.section)}\n`)],
+    ...(reply === null ? { model: cloneModelRef(model) } : modelRefField(reply.model)),
+  }
   return {
-    sections: [
-      built.section,
-      ...(reply === null ? [] : [{ id: reply.id, role: 'agent' as const, content: [textNode('')], ...modelRefField(reply.model) }]),
-      ...sections.slice(scope.end),
-    ],
+    sections: [first, ...sections.slice(scope.end)],
     dropped,
     pictures: built.pictures,
   }

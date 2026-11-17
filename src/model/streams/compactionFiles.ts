@@ -1,5 +1,4 @@
-import { sectionCompactionBlock } from '../chat/compaction'
-import { sectionPlainText } from '../chat/content'
+import { sectionCompactionBlock, sectionTextParts } from '../chat/compaction'
 import type { ShownPicture } from '../chat/shownPictures'
 import { findToolBlocks } from '../chat/toolBlocks'
 import type { Section } from '../chat/types'
@@ -58,8 +57,8 @@ export function compactionLeftFiles({ sections, replySectionId, dropped, keptPic
   const replaced = sections.slice(0, compactionScope(sections, replySectionId).end)
   const shown = [
     ...(replaced.length > 0 ? sectionCompactionBlock(replaced[0])?.pictures ?? [] : []),
-    // A tool block counts only in an agent section.
-    ...replaced.flatMap((section) => (section.role === 'agent' ? findToolBlocks(sectionPlainText(section)).flatMap((block) => block.pictures ?? []) : [])),
+    // A tool block counts only in the text of an agent section.
+    ...replaced.flatMap((section, index) => (section.role === 'agent' ? findToolBlocks(sectionTextParts(section, index).text).flatMap((block) => block.pictures ?? []) : [])),
   ]
   const pictures = shown.map((picture) => picture.file).filter((file) => !keptFiles.has(file))
   return { sources, pictures }

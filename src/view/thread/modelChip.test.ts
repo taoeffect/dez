@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { SECTION_SEP, roleSeparators, sectionsField, type SectionModel } from './cmEditor'
 import { modelDisplayNamesField, sectionModelChips, setModelDisplayNamesEffect, setStreamingSectionEffect, streamingSectionField } from './modelChip'
 import { thinkingExpandedField } from './thinkingPill'
+import { compactionBlockText } from '../../model/chat/compaction'
 import type { ModelRef, Role } from '../../model/chat/types'
 import type { ModelDisplayNames } from '../../model/providers/types'
 
@@ -160,5 +161,25 @@ describe('role separator model chips', () => {
 
     expect(separatorWidgets(token)[0].eq(chipWidget)).toBe(true)
     expect(separatorWidgets(finished)[0].eq(chipWidget)).toBe(false)
+  })
+
+  // After a compaction, the reply goes on in the first section, after the
+  // block, and the pill at the tag line is the pill of the reply.
+  it('marks the chip of a compaction section at its tag line as streaming while its reply streams', () => {
+    const doc = `${compactionBlockText({ count: 1, lastId: 'a', pictures: [] }, 'Notes')}\nanswer`
+    const state = EditorState.create({
+      doc,
+      extensions: [
+        sectionsField.init(() => [{ id: 's0', role: 'agent', model: ALPHA }]),
+        modelDisplayNamesField.init(() => NAMES),
+        streamingSectionField.init(() => 's0'),
+        thinkingExpandedField,
+        roleSeparators,
+      ],
+    })
+    const finished = state.update({ effects: setStreamingSectionEffect.of(null) }).state
+
+    expect(separatorWidgets(state)).toMatchObject([{ index: 0, role: 'agent', chip: { modelName: 'Alpha One', streaming: true } }])
+    expect(separatorWidgets(finished)).toMatchObject([{ index: 0, chip: { streaming: false } }])
   })
 })

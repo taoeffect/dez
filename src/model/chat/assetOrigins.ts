@@ -2,7 +2,7 @@ import type { FoundAsset } from '../streams/mediaRequest'
 import { assetOriginText } from '../tools/assetInfo'
 import { JOBS_WAIT_TOOL, jobsWaitResults, madeAssetIds, startedJob } from '../tools/jobs'
 import { callLabel } from '../tools/registry'
-import { compactionMessageEnd, sectionCompactionBlock } from './compaction'
+import { compactionMessageEnd, sectionTextParts } from './compaction'
 import { notesAssetLines, notesJobLines, notesMessages, type NotesAssetLine, type NotesJobLine } from './compactionNotes'
 import { sectionPlainText } from './content'
 import { findHiddenAssets, findKeptAssets } from './hiddenAssets'
@@ -109,17 +109,23 @@ const NO_JOB_LINES: ReadonlyMap<string, NotesJobLine> = new Map()
  *  one of an agent section with no tool mark is from the model of that
  *  section.
  *
- *  In a compacted conversation, an asset of the compaction section has
- *  the origin of its line in the notes. An asset in a message part of the
+ *  In a compacted conversation, an asset of the compaction block has the
+ *  origin of its line in the notes. An asset in a message part of the
  *  notes, and an asset whose line tells "from the user", are from the
  *  user. The job lines of the notes are of the reply that ran at the
- *  compaction, so only the assets of the first reply after the compaction
- *  message read them: a job id is unique in its reply only. */
+ *  compaction, so only its assets read them: a job id is unique in its
+ *  reply only. That reply is the text after the block (chat/compaction.ts),
+ *  or, in an older layout, the first reply after the compaction message. */
 export function assetPlaces(sections: readonly Section[], assets: readonly FoundAsset[]): AssetPlace[] {
-  const block = sections.length > 0 ? sectionCompactionBlock(sections[0]) : null
-  const compacted = block !== null
+  const first = sections.length > 0 ? sectionTextParts(sections[0], 0) : null
+  const block = first?.block ?? null
   const notes = block?.notes ?? ''
-  const carriedReply = compacted ? compactionMessageEnd(sections) : -1
+  // The section of the reply that ran at the compaction, and where its
+  // text starts: the text after the block, or an older layout's reply.
+  const ranReply = block === null
+    ? null
+    : first!.text.trim() !== '' ? { section: 0, from: block.textFrom } : { section: compactionMessageEnd(sections), from: 0 }
+  const ranAtCompaction = (index: number, from: number) => ranReply !== null && index === ranReply.section && from >= ranReply.from
   // Whether the offset `from` of the text of the compaction section is in
   // a message part of its notes.
   let messageRanges: { from: number, to: number }[] | undefined
@@ -133,20 +139,21 @@ export function assetPlaces(sections: readonly Section[], assets: readonly Found
   let jobLines: ReadonlyMap<string, NotesJobLine> | undefined
   let keptFrom: Set<number>[] | undefined
   const isKept = (asset: FoundAsset, from: number) => {
-    if (!compacted) return false
+    if (block === null) return false
     keptFrom ??= findKeptAssets(sections.map((section) => ({ role: section.role, text: sectionPlainText(section) })))
       .map((kept) => new Set(kept.map((hidden) => hidden.from)))
     return keptFrom[asset.section].has(from)
   }
-  // The tool blocks of each agent section that holds one of `assets`, and
-  // the starts of the assets that a chip of a call hides.
+  // The tool blocks of the text of each reply that holds one of `assets`
+  // (`sectionTextParts`: never the compaction block), and the starts of
+  // the assets that a chip of a call hides, as offsets in the section.
   const agentTexts = new Map<number, { blocks: ToolBlock[], hiddenFrom: Set<number> }>()
   const agentText = (index: number) => {
     let found = agentTexts.get(index)
     if (found === undefined) {
-      const text = sectionPlainText(sections[index])
+      const { text, from } = sectionTextParts(sections[index], index)
       const blocks = findToolBlocks(text)
-      found = { blocks, hiddenFrom: new Set(findHiddenAssets(text, blocks).map((asset) => asset.from)) }
+      found = { blocks, hiddenFrom: new Set(findHiddenAssets(text, blocks).map((asset) => from + asset.from)) }
       agentTexts.set(index, found)
     }
     return found
@@ -158,16 +165,16 @@ export function assetPlaces(sections: readonly Section[], assets: readonly Found
     if (section.role === 'user') return { origin: { kind: 'user' }, hidden: isKept(asset, from) }
     const { blocks, hiddenFrom } = agentText(asset.section)
     const hidden = hiddenFrom.has(from) || isKept(asset, from)
-    const inNotes = compacted && asset.section === 0
+    const inNotes = block !== null && asset.section === 0 && from < block.to
     if (inNotes) {
       if (inMessage(from)) return { origin: { kind: 'user' }, hidden }
       const line = (assetLines ??= notesAssetLines(notes)).get(asset.id)
       if (line) return { origin: line.origin === assetOriginText({ kind: 'user' }) ? { kind: 'user' } : { kind: 'carried', text: line.origin }, hidden }
     }
     const marks = toolMarks(asset)
-    // The model of a compaction section wrote its notes, not its assets.
+    // The model of a compaction wrote its notes, not the assets in them.
     if (!marks) return { origin: { kind: 'model', model: inNotes ? null : section.model ?? null }, hidden }
-    const lines = asset.section === carriedReply ? (jobLines ??= notesJobLines(notes)) : NO_JOB_LINES
+    const lines = ranAtCompaction(asset.section, from) ? (jobLines ??= notesJobLines(notes)) : NO_JOB_LINES
     return { origin: toolOrigin(asset.id, marks, blocks, lines), hidden }
   })
 }

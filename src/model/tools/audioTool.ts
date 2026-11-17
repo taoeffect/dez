@@ -1,10 +1,8 @@
 import { byteSizeText } from '../../utils/byteSize'
 import { AUDIO_CUT_RATE, type AudioPart } from '../chat/audioCut'
-import { sectionLinkedRule } from '../chat/compaction'
-import { sectionPlainText } from '../chat/content'
-import { findImageReferences } from '../chat/images'
+import { partsImageReferences, partsMediaTags, sectionLinkedRuleParts } from '../chat/compaction'
 import { MAX_SAVED_CLIP_BYTES } from '../chat/mediaFiles'
-import { findMediaTags, sectionClipSource, type MediaTag } from '../chat/mediaTags'
+import { sectionClipSource, type MediaTag } from '../chat/mediaTags'
 import type { Section } from '../chat/types'
 import { assetIdArgument } from './arguments'
 import { madeAssetText } from './jobs'
@@ -70,15 +68,15 @@ export function audioClipId(args: ToolArguments): string {
 /** The audio clip `id` of a tab's `sections`: the newest media tag with that
  *  id in any section (a clip that a model made, or a clip file that the
  *  user pasted or dropped; mediaTags.ts), with the `src` that counts in its
- *  section (`sectionClipSource`). Throws for an id that names a video clip,
- *  an image, or nothing; the text tells the model the ids of the audio
- *  clips that it can name. */
+ *  part of its section (`sectionClipSource`, `sectionLinkedRuleParts`).
+ *  Throws for an id that names a video clip, an image, or nothing; the
+ *  text tells the model the ids of the audio clips that it can name. */
 export function audioClipOf(sections: readonly Section[], id: string): MediaTag {
-  const tags = sections.flatMap((section, index) => findMediaTags(sectionPlainText(section)).map((tag) => ({ ...tag, src: sectionClipSource(tag.src, sectionLinkedRule(section, index)) })))
+  const tags = sections.flatMap((section, index) => partsMediaTags(sectionLinkedRuleParts(section, index)).map(({ tag, rule }) => ({ ...tag, src: sectionClipSource(tag.src, rule) })))
   const tag = tags.findLast((candidate) => candidate.id === id)
   if (tag?.kind === 'audio') return tag
   if (tag?.kind === 'video') throw new ToolError(`@${id} is a video clip. The audio tool works on audio clips only.`)
-  if (sections.some((section, index) => findImageReferences(sectionPlainText(section), sectionLinkedRule(section, index)).some((reference) => reference.id === id))) {
+  if (sections.some((section, index) => partsImageReferences(sectionLinkedRuleParts(section, index)).some((reference) => reference.id === id))) {
     throw new ToolError(`@${id} is an image. The audio tool works on audio clips only.`)
   }
   const ids = [...new Set(tags.filter((candidate) => candidate.kind === 'audio').map((candidate) => `@${candidate.id}`))]

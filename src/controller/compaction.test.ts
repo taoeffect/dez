@@ -1,9 +1,9 @@
 import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
-import { sectionCompactionBlock } from '../model/chat/compaction'
+import { sectionCompactionBlock, sectionTextParts } from '../model/chat/compaction'
 import { notesAssetLines, notesJobLines, notesMessages } from '../model/chat/compactionNotes'
-import { sectionPlainText } from '../model/chat/content'
+import { sectionPlainText, textNode } from '../model/chat/content'
 import { withRequestCost, type ConversationCost } from '../model/chat/conversationCost'
 import type { ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
 import { findMediaTags, isKeptClip, mediaTagText } from '../model/chat/mediaTags'
@@ -177,13 +177,10 @@ describe('compactConversation', () => {
     expect(instruction()).not.toContain(APP_DIR)
   })
 
-  it('gives the notes, with the first and the newest message of the user in them, and the empty reply as the new sections', async () => {
+  it('gives the notes, with the first and the newest message of the user in them, in the section of the reply as the new sections', async () => {
     const compaction = await compactConversation(compactionInput())
 
-    expect(compaction.sections.map(({ id, role }) => ({ id, role }))).toStrictEqual([
-      { id: expect.any(String), role: 'agent' },
-      { id: 'r', role: 'agent' },
-    ])
+    expect(compaction.sections.map(({ id, role }) => ({ id, role }))).toStrictEqual([{ id: 'r', role: 'agent' }])
     expect(sectionCompactionBlock(compaction.sections[0])).toMatchObject({ count: 1, lastId: 'c', pictures: [] })
     expect(compaction.sections[0].model).toStrictEqual(model)
     expect(notesOf(compaction)).toContain('The user wants a fox film.')
@@ -191,7 +188,8 @@ describe('compactConversation', () => {
     expect([...notesAssetLines(notesOf(compaction)).keys()]).toStrictEqual(['a', 'b', 'c'])
     expect(notesMessages(sectionCompactionBlock(compaction.sections[0])!.notes).map(({ text }) => text))
       .toStrictEqual([SECTIONS[0], SECTIONS[2]].map(sectionPlainText))
-    expect(compaction.sections[1]).toStrictEqual(reply('r', ''))
+    // The reply starts new on the line after the block.
+    expect(sectionTextParts(compaction.sections[0], 0).text).toBe('')
     expect(compaction.dropped).toStrictEqual([])
     expect(compaction.usage).toStrictEqual(USAGE)
   })
@@ -235,7 +233,10 @@ describe('compactConversation', () => {
   it('reads no file for the facts of an asset that the notes of the compaction before tell', async () => {
     const first = await compactConversation(compactionInput())
     const NEW = `${APP_DIR}/assets/generated/images/new.png`
-    const sections = [...first.sections.slice(0, 3), reply('r', `A new draft:\n${idImage(NEW, 'd')}`), user('u3', 'And now?'), reply('r2', '')]
+    // The reply went on after the block, and a later reply runs.
+    const [compacted] = first.sections
+    const replied = { ...compacted, content: [textNode(`${sectionPlainText(compacted)}A new draft:\n${idImage(NEW, 'd')}`)] }
+    const sections = [replied, user('u3', 'And now?'), reply('r2', '')]
     readImages = []
     native.runs = []
 

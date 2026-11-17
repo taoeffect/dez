@@ -203,14 +203,19 @@ describe('compactionAssets', () => {
       .toStrictEqual({ a: false, b: false, c: false, d: false, e: false })
   })
 
-  // A compaction in the reply moved the text of its assets into the notes.
+  // A compaction in the reply moved the text of its assets into the notes,
+  // and the reply goes on after the block of its own section.
   it('counts an asset of the notes as made by the reply when its line tells it and that reply still runs', () => {
-    const notes = compactionNotesText({ ...NOTES_DATA, assets: NOTES_DATA.assets.map((asset) => ({ ...asset, byReply: asset.id === 'b' })) })
-    const sections = [reply('n', `${COMPACTION_TAG}\n${notes}`), ...COMPACTED.slice(1)]
-    const later = [...sections, user('u3', 'Now make it jump.'), reply('r2', '')]
+    const compaction = (byReply: boolean) => compactionBlockText({ count: 1, lastId: 'b', pictures: [] }, compactionNotesText({
+      ...NOTES_DATA,
+      assets: NOTES_DATA.assets.map((asset) => ({ ...asset, byReply: byReply && asset.id === 'b' })),
+    }))
+    const sections = (byReply: boolean) => [reply('r', `${compaction(byReply)}\n${hiddenImage('j-aaaa', 'c')}\n${hiddenClip('j-aaaa', 'd')}`)]
+    const later = [...sections(true), user('u3', 'Now make it jump.'), reply('r2', '')]
 
-    expect(byId(assetsOf(sections, FACTS, { replySectionId: 'r' }), 'byReply')).toStrictEqual({ a: false, b: true, e: false, c: true, d: true })
-    expect(byId(assetsOf(later, FACTS, { replySectionId: 'r2' }), 'byReply')).toStrictEqual({ a: false, b: false, e: false, c: false, d: false })
+    expect(byId(assetsOf(sections(true), FACTS, { replySectionId: 'r' }), 'byReply')).toStrictEqual({ b: true, c: true, d: true })
+    expect(byId(assetsOf(sections(false), FACTS, { replySectionId: 'r' }), 'byReply')).toStrictEqual({ b: false, c: true, d: true })
+    expect(byId(assetsOf(later, FACTS, { replySectionId: 'r2' }), 'byReply')).toStrictEqual({ b: false, c: false, d: false })
   })
 
   it('counts an asset as an input of a job when an open job of the reply takes it', () => {
@@ -308,10 +313,12 @@ describe('openJobInputs', () => {
   })
 
   // A compaction in the reply removed the blocks of the jobs that started
-  // before it, so the job lines of its notes tell their inputs.
+  // before it, so the job lines of its notes tell their inputs. The reply
+  // goes on after the block of its own section.
   it('takes the inputs that the notes tell while the reply that ran at their compaction still runs', () => {
     const notes = compactionNotesText({ ...NOTES_DATA, jobs: [job('j-aaaa', 'running')], jobInputs: new Map([['j-aaaa', ['a', 'b']]]) })
-    const sections = [reply('n', `${COMPACTION_TAG}\n${notes}`), user('u1', 'Make the scenes.'), reply('r', invokeBlock('j-bbbb', { number: 2, intermediate: false, inputs: images('c') }))]
+    const block = compactionBlockText({ count: 1, lastId: 'b', pictures: [] }, notes)
+    const sections = [reply('r', `${block}\n${invokeBlock('j-bbbb', { number: 2, intermediate: false, inputs: images('c') })}`)]
     const later = [...sections, user('u2', 'Now make them jump.'), reply('r2', 'Jumping.')]
     const jobs = [job('j-aaaa', 'running'), job('j-bbbb', 'running')]
 

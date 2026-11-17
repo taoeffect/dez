@@ -208,7 +208,7 @@ function metadataText(metadata: readonly ImageMetadataItem[]): string {
  *  `'user'` for a user section (every linked path counts), `'agent'` for
  *  an agent section (none counts), or the paths that count, for the
  *  compaction block, whose tag lists the linked paths that the user gave
- *  (`linkedPathRule`, compaction.ts). A model never sees a linked path (a
+ *  (`linkedRuleParts`, compaction.ts). A model never sees a linked path (a
  *  request holds no path), so it cannot copy one into its notes. */
 export type LinkedPathRule = Role | ReadonlySet<string>
 

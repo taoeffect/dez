@@ -11,10 +11,14 @@ import {
   contentCompactionBlock,
   firstSectionRole,
   isCarriedUserAssets,
-  linkedPathRule,
+  linkedRuleParts,
+  partsImageReferences,
+  partsMediaTags,
   readCompactionBlock,
   sectionCompactionBlock,
-  sectionLinkedRule,
+  sectionLinkedRuleParts,
+  sectionsBeforeReply,
+  sectionTextParts,
 } from './compaction'
 import { promptNode, textNode } from './content'
 import type { ShownPicture } from './shownPictures'
@@ -160,24 +164,69 @@ describe('the linked paths of a compaction block', () => {
     expect(blockLinkedRule(block!)).toBe('agent')
   })
 
-  it('counts a linked path in the block only when the list holds it', () => {
-    const text = compactionBlockText({ count: 1, lastId: null, pictures: [], linked: LINKED }, 'Notes')
-    const rule = linkedPathRule('agent', text, 0)
+  it('counts a linked path in the block only when the list holds it, and in the reply text after it never', () => {
+    const stored = '/home/u/.config/dez/assets/images/c.png'
+    const block = compactionBlockText({ count: 1, lastId: null, pictures: [], linked: LINKED }, `![${LINKED[0]}](id=a)`)
+    const reply_ = `![${LINKED[0]}](id=b)\n![${stored}](id=c)`
+    const text = `${block}\n${reply_}`
+    const parts = linkedRuleParts('agent', text, 0)
 
-    expect(rule).toStrictEqual(new Set(LINKED))
-    expect(sectionLinkedRule(reply('c', text), 0)).toStrictEqual(new Set(LINKED))
+    expect(parts).toStrictEqual([
+      { text: block, from: 0, rule: new Set(LINKED) },
+      { text: reply_, from: block.length + 1, rule: 'agent' },
+    ])
+    expect(sectionLinkedRuleParts(reply('c', text), 0)).toStrictEqual(parts)
+    expect(partsImageReferences(parts).map(({ id, path, from }) => ({ id, path, from }))).toStrictEqual([
+      { id: 'a', path: LINKED[0], from: text.indexOf('![') },
+      { id: 'c', path: stored, from: text.indexOf(`![${stored}`) },
+    ])
     // A block with no list gives no path.
-    expect(linkedPathRule('agent', compactionBlockText({ count: 1, lastId: null, pictures: [] }, 'Notes'), 0)).toStrictEqual(new Set())
+    expect(linkedRuleParts('agent', compactionBlockText({ count: 1, lastId: null, pictures: [] }, 'Notes'), 0)[0].rule).toBe('agent')
+  })
+
+  it('gives the clips of each part the rule of the part, with offsets in the whole text', () => {
+    const tag = (id: string) => `<dez:audio id="${id}" type="audio/wav" src="${LINKED[1].replace(/&/g, '&amp;')}"/>`
+    const block = compactionBlockText({ count: 1, lastId: null, pictures: [], linked: LINKED }, tag('a'))
+    const text = `${block}\nSaid.\n${tag('b')}`
+    const tags = partsMediaTags(linkedRuleParts('agent', text, 0))
+
+    expect(tags.map(({ tag: { id, from }, rule }) => ({ id, from, rule }))).toStrictEqual([
+      { id: 'a', from: text.indexOf('<dez:audio'), rule: new Set(LINKED) },
+      { id: 'b', from: text.lastIndexOf('<dez:audio'), rule: 'agent' },
+    ])
   })
 
   it('takes the role of a section that is no compaction section', () => {
     const text = compactionBlockText({ count: 1, lastId: null, pictures: [], linked: LINKED }, 'Notes')
 
-    expect(linkedPathRule('agent', text, 1)).toBe('agent')
-    expect(linkedPathRule('user', text, 0)).toBe('user')
-    expect(linkedPathRule('agent', 'Hello', 0)).toBe('agent')
-    expect(sectionLinkedRule(reply('c', text), 2)).toBe('agent')
-    expect(sectionLinkedRule(user('u', 'Hi'), 0)).toBe('user')
+    expect(linkedRuleParts('agent', text, 1)).toStrictEqual([{ text, from: 0, rule: 'agent' }])
+    expect(linkedRuleParts('user', text, 0)).toStrictEqual([{ text, from: 0, rule: 'user' }])
+    expect(linkedRuleParts('agent', 'Hello', 0)).toStrictEqual([{ text: 'Hello', from: 0, rule: 'agent' }])
+    expect(sectionLinkedRuleParts(reply('c', text), 2)).toStrictEqual([{ text, from: 0, rule: 'agent' }])
+    expect(sectionLinkedRuleParts(user('u', 'Hi'), 0)).toStrictEqual([{ text: 'Hi', from: 0, rule: 'user' }])
+  })
+})
+
+describe('sectionTextParts and sectionsBeforeReply', () => {
+  const block = compactionBlockText({ count: 1, lastId: 'b', pictures: [] }, '## Summary\n\nNotes.')
+
+  it('gives the text of the reply after the block of the compaction section', () => {
+    expect(sectionTextParts(reply('c', `${block}\nThe answer.`), 0)).toMatchObject({ text: 'The answer.', from: block.length + 1 })
+    expect(sectionTextParts(reply('c', `${block}\n`), 0)).toMatchObject({ text: '', from: block.length + 1 })
+    expect(sectionTextParts(reply('c', block), 0)).toMatchObject({ text: '', from: block.length })
+  })
+
+  it('gives the whole text of any other section', () => {
+    expect(sectionTextParts(reply('c', `${block}\nThe answer.`), 1)).toStrictEqual({ block: null, text: `${block}\nThe answer.`, from: 0 })
+    expect(sectionTextParts(user('u', block), 0)).toStrictEqual({ block: null, text: block, from: 0 })
+  })
+
+  it('gives the block alone before the reply of the compaction section, and the sections before any other reply', () => {
+    const sections = [reply('c', `${block}\nThe answer.`), user('u', 'More.'), reply('a', '')]
+
+    expect(sectionsBeforeReply(sections, 0)).toStrictEqual([{ id: 'c', role: 'agent', content: [textNode(block)] }])
+    expect(sectionsBeforeReply(sections, 2)).toStrictEqual(sections.slice(0, 2))
+    expect(sectionsBeforeReply([reply('a', 'Hi')], 0)).toStrictEqual([])
   })
 })
 
@@ -274,5 +323,13 @@ describe('compactionMessageEnd', () => {
   it('is the count of the sections when no reply follows', () => {
     expect(compactionMessageEnd([compacted, user('u1', 'Make a fox film.'), reply('a0', '')])).toBe(3)
     expect(compactionMessageEnd([compacted])).toBe(1)
+  })
+
+  it('ends at the compaction section when the reply after the block has text', () => {
+    expect(compactionMessageEnd([reply('c', `${block}\nThe answer.`), user('u1', 'More.'), reply('a1', '')])).toBe(1)
+  })
+
+  it('lets later user sections join after a reply text that is blank', () => {
+    expect(compactionMessageEnd([reply('c', `${block}\n \n`), user('u1', 'More.'), reply('a1', 'Done.')])).toBe(2)
   })
 })

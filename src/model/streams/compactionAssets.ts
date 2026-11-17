@@ -1,6 +1,6 @@
 import { oneLineCut } from '../../utils/oneLineCut'
 import type { AssetPlace } from '../chat/assetOrigins'
-import { blockLinkedRule, compactionMessageEnd, isCarriedUserAssets, sectionCompactionBlock } from '../chat/compaction'
+import { blockLinkedRule, compactionMessageEnd, isCarriedUserAssets, sectionCompactionBlock, sectionTextParts } from '../chat/compaction'
 import { notesAssetLines, notesCellText, notesJobLines, notesMessages, type NotesAssetLine } from '../chat/compactionNotes'
 import { sectionIsEmpty, sectionPlainText } from '../chat/content'
 import { findAssetMentions } from '../chat/imageMentions'
@@ -84,8 +84,9 @@ export function compactionScope(sections: readonly Section[], replySectionId: st
     const text = sectionPlainText(sections[index])
     return { section: index, text, from: 0, to: text.length, rule: 'user' }
   }
-  // The compaction section is never the reply's section, so its parts are
-  // always before the reply.
+  // The message parts are in the block. The compaction section can be the
+  // reply's section, but the block comes before the text of the reply, so
+  // the parts are always before the reply.
   const block = sections.length > 0 ? sectionCompactionBlock(sections[0]) : null
   const parts: KeptMessage[] = block === null
     ? []
@@ -127,9 +128,10 @@ export interface CompactionAsset {
   fromUser: boolean
   /** A call made it as a part of its work (the `hidden` mark). */
   intermediate: boolean
-  /** The reply that runs made it: its text is in the section of the reply,
-   *  or the notes of a compaction earlier in this same reply tell it
-   *  (`NotesAssetLine.byReply`, `replyRanAtCompaction`). */
+  /** The reply that runs made it: its text is in the text of the reply
+   *  (`sectionTextParts`: after the block, when the compaction section is
+   *  the reply's section), or the notes of a compaction earlier in this
+   *  same reply tell it (`NotesAssetLine.byReply`, `replyRanAtCompaction`). */
   byReply: boolean
   /** An open job of the reply that runs takes it as an input
    *  (`openJobInputs`). */
@@ -146,13 +148,13 @@ function isIntermediate(asset: FoundAsset): boolean {
 }
 
 // Whether the reply that runs (`scope.reply`) is the one that ran at the
-// compaction of the notes of `sections`: no message of the user came after
-// that compaction, so the reply's section is the first agent section with
-// text after the compaction message. With no text in it yet, the reply
-// counts as a new one: the next compaction of a reply comes only after a
-// round, whose text is in its section.
+// compaction of the notes of `sections`: a compaction makes the reply's
+// section the compaction section (compactedSections.ts), so the reply
+// that runs is in the compaction section. A section of an older layout
+// after the block is never the section of a reply that runs: a reply that
+// runs in a conversation of an older Dez is a new one.
 function replyRanAtCompaction(sections: readonly Section[], scope: CompactionScope): boolean {
-  return scope.reply !== null && sectionCompactionBlock(sections[0]) !== null && compactionMessageEnd(sections) === scope.reply
+  return scope.reply === 0 && sectionCompactionBlock(sections[0]) !== null
 }
 
 /** What `compactionAssets` needs. */
@@ -178,8 +180,12 @@ export function compactionAssets({ sections, scope, found, places, facts, jobInp
   const carried = carriedAssetLines(sections)
   const sameReply = replyRanAtCompaction(sections, scope)
   const inputs = new Set([...jobInputs.values()].flat())
+  // Where the text of the reply starts in its section: after the block,
+  // when the reply's section is the compaction section.
+  const replyFrom = scope.reply === null ? 0 : sectionTextParts(sections[scope.reply], scope.reply).from
   return found.map((asset, index): CompactionAsset => {
     const line = carried.get(asset.id)
+    const assetFrom = asset.kind === 'image' ? asset.reference.from : asset.tag.from
     return {
       asset,
       kind: asset.kind === 'image' ? 'image' : asset.clip.kind,
@@ -187,7 +193,7 @@ export function compactionAssets({ sections, scope, found, places, facts, jobInp
       origin: notesCellText(assetOriginText(places[index].origin)),
       fromUser: places[index].origin.kind === 'user',
       intermediate: isIntermediate(asset),
-      byReply: asset.section === scope.reply || (sameReply && line?.byReply === true),
+      byReply: (asset.section === scope.reply && assetFrom >= replyFrom) || (sameReply && line?.byReply === true),
       jobInput: inputs.has(asset.id),
       sentence: line?.sentence ?? '',
     }
@@ -219,12 +225,13 @@ export function assetTableText(assets: readonly CompactionAsset[]): string {
  *  job of `jobs` that still runs, or whose result no `jobs_wait` gave yet.
  *  By job id, the ids of its inputs in order.
  *
- *  The tool blocks of the reply's section tell them: the `@id` mentions in
- *  the result of the block that started the job. The result, not the
- *  arguments of the call: the start result names each input of the job as
- *  `@id` (`invocationInputsText`, `videoInputsText`), also when the call
- *  named it with a bare id (`assetIdWords` takes `c` and `@c`, as in the
- *  `clips` of `video join_clips`).
+ *  The tool blocks of the text of the reply (`sectionTextParts`) tell
+ *  them: the `@id` mentions in the result of the block that started the
+ *  job. The result, not the arguments of the call: the start result names
+ *  each input of the job as `@id` (`invocationInputsText`,
+ *  `videoInputsText`), also when the call named it with a bare id
+ *  (`assetIdWords` takes `c` and `@c`, as in the `clips` of
+ *  `video join_clips`).
  *
  *  A compaction earlier in the same reply removed the blocks of the jobs
  *  that started before it, so its notes tell their inputs
@@ -247,7 +254,7 @@ export function openJobInputs(sections: readonly Section[], scope: CompactionSco
       if (open.has(line.id)) add(line.id, line.inputs)
     }
   }
-  for (const block of findToolBlocks(sectionPlainText(sections[scope.reply]))) {
+  for (const block of findToolBlocks(sectionTextParts(sections[scope.reply], scope.reply).text)) {
     const started = startedJob(block.result)
     if (started !== null && open.has(started.id)) add(started.id, findAssetMentions(block.result).map((mention) => mention.id))
   }

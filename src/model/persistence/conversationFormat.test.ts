@@ -792,25 +792,46 @@ describe('conversation cost, edited flag, and counted context in the header', ()
 describe('a compacted conversation', () => {
   const tagData = { count: 2, lastId: 'k', pictures: [{ file: 'sheet.jpg', label: 'Frames of @c', width: 1568, height: 882, bytes: 120_000 }] }
   const tag = compactionTagText(tagData)
+  const block = compactionBlockText(tagData, '## Summary\n\nThe duck film.')
+  // The reply that ran at the compaction goes on after the block, in the
+  // same section, with the model, the thinking, and the time of the reply.
+  const compacted = (text: string): SectionData => ({
+    role: 'agent',
+    nodes: [textNode(`${block}\n${text}`)],
+    model: { providerId: 'p', modelId: 'm' },
+    thinking: { text: 'Plan the shot.' },
+    durationMs: 4200,
+  })
   const conversation = (fields: Partial<ConversationData>): ConversationData => ({
     id: 'conversation',
     title: 'Chat',
-    sections: [
-      { role: 'agent', nodes: [textNode(compactionBlockText(tagData, '## Summary\n\nThe duck film.'))], model: { providerId: 'p', modelId: 'm' } },
-      section('user', [textNode('Make a duck film.')]),
-      section('agent', [textNode('The next shot is ready.')]),
-    ],
+    sections: [compacted('The next shot is ready.'), section('user', [textNode('Make it longer.')])],
     activeModel: null,
     created_at: 1,
     ...fields,
   })
 
-  it('round-trips an agent first section that starts with the compaction block', () => {
+  it('round-trips a first agent section with the compaction block, then the reply, with its model, thinking, and time', () => {
     const data = conversation({})
     const serialized = serializeConversation(data)
+    const lines = serialized.split('\n')
+    const tagLine = lines.indexOf(tag)
 
-    expect(serialized.split('\n').slice(2, 8)).toEqual(['<dez:pill type="agent" model="p/m"/>', tag, '## Summary', '', 'The duck film.', COMPACTION_END_LINE])
+    expect(pillLines(serialized)[0]).toContain('model="p/m"')
+    expect(lines.slice(tagLine + 1, tagLine + 6)).toEqual(['## Summary', '', 'The duck film.', COMPACTION_END_LINE, 'The next shot is ready.'])
     expect(parseConversation('conversation', serialized)).toStrictEqual(data)
+  })
+
+  // A reply that streams is saved before its first token: its section is
+  // the block and one line break. The file keeps no last line break of a
+  // text, so the section reads back as the block alone, the form that the
+  // end of a reply with no text gives too (`endStreamSection`).
+  it('reads back a first section whose reply has no text yet as the block alone', () => {
+    const { model, thinking, durationMs } = compacted('')
+    const data = conversation({ sections: [compacted('')] })
+
+    expect(parseConversation('conversation', serializeConversation(data)).sections)
+      .toStrictEqual([{ role: 'agent', nodes: [textNode(block)], model, thinking, durationMs }])
   })
 
   // A file can hold no `compacted-left:` part: Dez then knows no size that

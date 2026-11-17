@@ -1,9 +1,7 @@
 import sbp from '@sbp/sbp'
 import { assetPlaces } from '../model/chat/assetOrigins'
-import { sectionLinkedRule } from '../model/chat/compaction'
-import { sectionPlainText } from '../model/chat/content'
+import { partsImageReferences, sectionLinkedRuleParts } from '../model/chat/compaction'
 import type { ConversationCost } from '../model/chat/conversationCost'
-import { findImageReferences } from '../model/chat/images'
 import type { NewPicture, ShownPicture } from '../model/chat/shownPictures'
 import type { ModelRef, Section } from '../model/chat/types'
 import { failedChatRequestCost, type ChatUsage } from '../model/providers/chatUsage'
@@ -67,8 +65,9 @@ export interface CompactionInput {
   /** The id of the section of the reply that runs. At a submit, that is
    *  the empty section of the new reply. */
   replySectionId: string
-  /** The model that gets the request, and that the compaction section
-   *  names as its writer: the model of the reply. */
+  /** The model that gets the request: the model of the reply. With no
+   *  section of the reply, the compaction section names it as its writer
+   *  (`compactedSections`). */
   model: ModelRef
   /** The model that reads the compacted conversation, when it is not
    *  `model`: the pictures of the result follow its limits. A reply to a
@@ -160,7 +159,7 @@ async function readAssetFiles(
   // The other images: the earlier ones, the ones with no id, and a second
   // reference of an id.
   sections.slice(0, end).forEach((section, index) => {
-    for (const { path } of findImageReferences(sectionPlainText(section), sectionLinkedRule(section, index))) if (!notRead.has(path)) sendable.add(path)
+    for (const { path } of partsImageReferences(sectionLinkedRuleParts(section, index))) if (!notRead.has(path)) sendable.add(path)
   })
   signal.throwIfAborted()
   const imageBytes = await sbp('dez.provider/chatImageSizes', [...sendable]) as Map<string, number>

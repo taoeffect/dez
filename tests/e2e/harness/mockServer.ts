@@ -239,17 +239,26 @@ export interface MockUsage {
  *  compaction threshold of that window. */
 export const LARGE_TOKENS = compactionThreshold(DEFAULT_FAMILY.contextWindow) + 10_000
 
-function writeUsage (res: http.ServerResponse, { promptTokens, usd }: MockUsage): void {
+/** Writes the usage chunk of `usage`; none when it has neither field. */
+export function writeUsage (res: http.ServerResponse, { promptTokens, usd }: MockUsage): void {
   if (promptTokens === undefined && usd === undefined) return
   const prompt = promptTokens ?? 5
   const usage = { prompt_tokens: prompt, completion_tokens: 4, total_tokens: prompt + 4, ...(usd === undefined ? {} : { cost: usd }) }
   res.write(`data: ${JSON.stringify({ choices: [], usage })}\n\n`)
 }
 
+/** What `sendToolCalls` sends before the calls, and its usage chunk. */
+export interface ToolRoundOptions extends MockUsage {
+  /** The reasoning text of the round (`reasoning_content`), which a
+   *  provider with thinking shows on the pill of the reply. */
+  thinking?: string
+}
+
 /** Answers a chat request with one round that holds only `calls`
  *  (`openAiToolCall`), then ends the stream. */
-export function sendToolCalls (res: http.ServerResponse, calls: ReadonlyArray<Record<string, unknown>>, usage: MockUsage = {}): void {
+export function sendToolCalls (res: http.ServerResponse, calls: ReadonlyArray<Record<string, unknown>>, { thinking, ...usage }: ToolRoundOptions = {}): void {
   startEventStream(res)
+  if (thinking !== undefined) writeChatFrame(res, { reasoning_content: thinking })
   writeChatFrame(res, { tool_calls: calls.map((call, index) => ({ index, ...call })) }, 'tool_calls')
   writeUsage(res, usage)
   res.end('data: [DONE]\n\n')

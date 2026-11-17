@@ -8,16 +8,18 @@ import { lineBlocks } from './lineBlocks'
 // the doc. It is no text for people: the editor shows the AGENT pill of the
 // section in place of its tag line (`buildSeparatorDecorations`,
 // cmEditor.ts), and the two compaction chips in place of its other lines
-// (compactionChip.ts). The rules here keep it as one whole line block
+// (compactionChip.ts). The reply that ran at the compaction goes on after
+// it, in the same section. The rules here keep it as one whole line block
 // (`compactionBlockRange`): no caret in it, no text typed into it or
-// before it. A selection can hold it, and a delete of the whole block
-// makes the first section a user section again. The actions of an asset
-// in the panel of the assets chip (the trash, the Save of a clip) change
-// the text of the block: no rule here stops them.
+// before it, and no Backspace next to it deletes it. Only a selection that
+// holds it deletes it, and a delete of the whole block makes the first
+// section a user section again. The actions of an asset in the panel of
+// the assets chip (the trash, the Save of a clip) change the text of the
+// block: no rule here stops them.
 
 /** The first place of a caret in a doc that starts with a compaction
  *  block: the start of the line after the block, where the text of the
- *  section after the block starts. With no such line (the doc ends, or the
+ *  reply after the block starts. With no such line (the doc ends, or the
  *  separator of the next section comes), it is the end of the block, where
  *  typed text gets its own line (`lineBlocks.ts`). Null for a doc with no
  *  block. */
@@ -27,6 +29,21 @@ export function caretAfterCompactionBlock(doc: Text): number | null {
   const last = doc.lineAt(block.to)
   if (last.number === doc.lines) return block.to
   return doc.line(last.number + 1).text === SECTION_SEP ? block.to : block.to + 1
+}
+
+/** Backspace with one caret right after the block, or at the start of the
+ *  line after it when that line has text, does nothing. The text after the
+ *  block is the reply; with the block gone, the role of the first section
+ *  would follow that text, so one key would drop every note and make the
+ *  reply a message of the user (`firstSectionRole`). Before the line block
+ *  rule, which deletes a whole block there (`deleteLineBlockBackward`). */
+export function keepCompactionBlockOnBackspace(view: EditorView): boolean {
+  const { doc, selection } = view.state
+  if (selection.ranges.length !== 1 || !selection.main.empty) return false
+  const [block] = compactionBlockRange(doc)
+  if (!block) return false
+  const caret = selection.main.head
+  return caret === block.to || (caret === block.to + 1 && doc.lineAt(caret).length > 0)
 }
 
 /** A caret before the end of the block goes to the first place after it

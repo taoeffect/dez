@@ -293,9 +293,10 @@ describe('usage label', () => {
     expect(info).not.toContain(setup.app.home)
 
     // The provider counts 9 tokens for the last request of the reply, and
-    // the conversation had 141,000 at its compaction.
+    // the conversation had 141,000 at its compaction. The reply goes on
+    // after the notes, in the first section.
     await sendChatReply(second.reply, 'the reader of the notes', { usd: 0.02 })
-    await endedReply(browser)
+    await endedReply(browser, 0)
     await waitForValue(browser, 'label after the reply', usageTexts, ['9 (141k)', DOT, '$0.07 ($0.87)'])
     expect(await tooltipStarts()).toEqual({
       token: 'Size of this buffer: 9 tokens',
@@ -312,7 +313,7 @@ describe('usage label', () => {
     await typeKeys(browser, ' Edited')
     await waitForValue(browser, 'label after the edit', labelLook, { text: '$0.07 ($0.87) (?)', look: 'idle', italic: true })
     await askAndAnswer('Next question', 'the next', { promptTokens: 5 })
-    await endedReply(browser, 3)
+    await endedReply(browser, 2)
     const withMarks = ['9 (141k)', DOT, '$0.07+ ($0.87+) (?)']
     await waitForValue(browser, 'label after a reply with no price', usageTexts, withMarks)
 

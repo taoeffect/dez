@@ -161,10 +161,11 @@ function onOverlayClick(event: MouseEvent) {
               it: it asks the model for notes of the work so far, and the notes take the place of
               the earlier messages and replies. The notes keep your first message and your newest
               message word for word, with their images. The bottom bar shows "Compacting…" while the
-              model writes the notes, and the reply goes on after that. A compacted conversation
-              starts with an Agent message with two chips: click the summary chip to read the notes
-              and your two messages, and the assets chip to see the assets that the compaction kept.
-              You cannot edit the notes. A compaction cannot be undone: Undo does not bring the
+              model writes the notes. A compacted conversation starts with one Agent message: first
+              two chips, then the reply, which goes on under the chips. Click the summary chip to
+              read the notes and your two messages, and the assets chip to see the assets that the
+              compaction kept. You cannot edit the notes, and Backspace does not delete them. A
+              compaction cannot be undone: Undo does not bring the
               earlier text back. After a compaction, the bottom bar
               shows two sizes and two amounts, as in <code>~81.2k (1.2M) · $0.42 ($7.80)</code>:
               first the size and the cost of the conversation since its last compaction, and after
@@ -183,8 +184,9 @@ function onOverlayClick(event: MouseEvent) {
             <p>
               Shift+Click a role pill (User or Agent) to change its message from User to Agent, or
               from Agent to User: for example, to write a reply yourself. The first message does not
-              change: it is User, or the notes of a compacted conversation. The pill of a reply that
-              is coming in does not change, and a message that links dropped files stays User.
+              change: it is User, or the Agent message with the notes of a compacted conversation.
+              The pill of a reply that is coming in does not change, and a message that links
+              dropped files stays User.
             </p>
           </section>
 
