@@ -31,8 +31,10 @@ describe('endStreamSection', () => {
   })
 
   it('keeps the block of a reply with no text, with no line after it, and adds a user section', () => {
-    expect(ended(compacted(' \n'), 'finished')[0]).toMatchObject({ text: BLOCK, thinking: { text: 'Plan.' }, durationMs: 900 })
-    expect(ended(compacted(' \n'), 'finished')).toHaveLength(2)
+    expect(ended(compacted(' \n'), 'finished')).toStrictEqual([
+      { id: 'r', role: 'agent', text: BLOCK, thinking: { text: 'Plan.' }, durationMs: 900 },
+      { id: expect.any(String), role: 'user', text: '', thinking: undefined, durationMs: undefined },
+    ])
   })
 
   // The notes hold the message of the user: the section never goes, and
