@@ -167,8 +167,7 @@ export function sectionsToStreamMessages(sections: Section[], requestModel: Mode
       const newestPart = newestUser < 0 ? notesMessages(block.notes).at(-1) : undefined
       if (newestPart !== undefined) takeNewest(newestPart.text, blockLinkedRule(block))
       addImageIds(ruleParts.slice(1))
-      const replyText = sectionTextParts(section, index).text
-      if (replyText.trim() !== '') messages.push(...agentSectionMessages(section, requestModel, options.sendTools, options.sendImages ? images : null, replyText))
+      messages.push(...agentSectionMessages(section, requestModel, options.sendTools, options.sendImages ? images : null, sectionTextParts(section, index).text))
       return
     }
     addImageIds(ruleParts)

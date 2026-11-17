@@ -5,7 +5,6 @@ import { compactionNotesParts } from '../../model/chat/compactionNotes'
 import { linkedPathCounts } from '../../model/chat/images'
 import type { ShownPicture } from '../../model/chat/shownPictures'
 import { countOf } from '../../utils/countText'
-import { SECTION_SEP } from '../thread/cmEditor'
 import { measureLineHeights } from '../thread/editorMeasure'
 import { compactionBlockRange } from './compactionBlock'
 import { hiddenAssets, hiddenAssetsOfChips } from './hiddenAssets'
@@ -85,10 +84,10 @@ function notesParts(blockText: string, block: CompactionBlock): ReturnType<typeo
 }
 
 /** What the compaction chips of `state` show; null when the doc does not
- *  start with a compaction block. An asset before the first section
- *  separator is in the compaction block, where a linked path counts only
- *  when the tag lists it. Each other one is in a user section of an older
- *  Dez that holds the carried assets of the user (`findKeptAssets`). */
+ *  start with a compaction block. An asset before the end of the block is
+ *  in the compaction block, where a linked path counts only when the tag
+ *  lists it. Each other one is in a user section of an older Dez that
+ *  holds the carried assets of the user (`findKeptAssets`). */
 export function compactionChipData(state: EditorState): CompactionChipData | null {
   const [range] = compactionBlockRange(state.doc)
   const blockText = range ? state.sliceDoc(range.from, range.to) : ''
@@ -96,13 +95,12 @@ export function compactionChipData(state: EditorState): CompactionChipData | nul
   if (!block) return null
   const rule = blockLinkedRule(block)
   const kept = hiddenAssets(state).filter((asset) => asset.owner.kind === 'compaction')
-  const firstSeparator = kept.length === 0 ? -1 : state.doc.toString().indexOf(SECTION_SEP)
   const { assets, summary } = notesParts(blockText, block)
   return {
     count: block.count,
     dropped: block.dropped ?? null,
     assets: kept.map((asset) => {
-      const inBlock = firstSeparator < 0 || asset.from < firstSeparator
+      const inBlock = asset.from < blockText.length
       const src = asset.kind === 'clip' ? asset.tag.src : null
       return panelAsset(asset, inBlock ? src !== null && linkedPathCounts(src, rule) : true)
     }),

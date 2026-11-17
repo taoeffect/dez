@@ -557,11 +557,11 @@ function paragraphGap(replyText: string): string {
 // the reply text is empty, so the asset starts on the line after the end
 // line of the block.
 function writeAsset(tabId: string, reply: ReplyRuntime, assetText: (id: string) => string): string | null {
-  const replied = streamingReply(tabId, reply.sectionId)
-  if (replied === null || !streamWritesSection(tabId, reply.sectionId)) return null
   const sections = (sbp('dez.model/tab', tabId) as Tab | null)?.sections ?? []
+  const index = sections.findIndex((section) => section.id === reply.sectionId)
+  if (index < 0 || !streamWritesSection(tabId, reply.sectionId)) return null
   const [id] = newMediaIds(sections.map(sectionPlainText), 1)
-  receiveToken(tabId, reply.sectionId, paragraphGap(replied.text) + assetText(id))
+  receiveToken(tabId, reply.sectionId, paragraphGap(sectionTextParts(sections[index], index).text) + assetText(id))
   reply.afterAsset = true
   return id
 }

@@ -198,7 +198,7 @@ export function compactedSections(input: CompactedSectionsInput): CompactedSecti
   }
 
   // The block for `plan`.
-  const head = ({ shown, asText }: Plan): { section: Section, pictures: ShownPicture[] } => {
+  const head = ({ shown, asText }: Plan): { text: string, pictures: ShownPicture[] } => {
     const assets = staying.map(({ asset, sentence }): NotesAsset => {
       const found = asset.asset
       const keptMark = !shown.has(found.id)
@@ -224,12 +224,12 @@ export function compactedSections(input: CompactedSectionsInput): CompactedSecti
       cost: input.cost,
     })
     const tag = { count: (oldBlock?.count ?? 0) + 1, lastId, dropped: dropped.length, pictures, linked: [...linked] }
-    return { section: { id: noteId, role: 'agent', content: [textNode(compactionBlockText(tag, notes))] }, pictures }
+    return { text: compactionBlockText(tag, notes), pictures }
   }
   // Whether the images and the pictures of the head of `plan` fit in the
   // limits.
   const fits = (plan: Plan): boolean => budgetAfter(input.limits, contextImageCost(
-    sectionsToStreamMessages([head(plan).section], model, { sendImages: true, sendTools: false }).messages,
+    sectionsToStreamMessages([{ id: noteId, role: 'agent', content: [textNode(head(plan).text)] }], model, { sendImages: true, sendTools: false }).messages,
     input.rule,
     imageBytes,
   )) !== null
@@ -264,7 +264,7 @@ export function compactedSections(input: CompactedSectionsInput): CompactedSecti
   const first: Section = {
     id: reply?.id ?? noteId,
     role: 'agent',
-    content: [textNode(`${sectionPlainText(built.section)}\n`)],
+    content: [textNode(`${built.text}\n`)],
     ...(reply === null ? { model: cloneModelRef(model) } : modelRefField(reply.model)),
   }
   return {
