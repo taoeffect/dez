@@ -60,6 +60,7 @@ import { deleteLines, duplicateLines } from '../editor/lineCommands'
 import { filePasteAndDrop } from '../editor/imageInsert'
 import { markdownLinks } from '../editor/links'
 import { mentionChips } from '../editor/mentions'
+import { pasteMentions, recordCopy } from '../editor/mentionPaste'
 import { focusKeepingScrollOnMouseDown } from '../editor/focus'
 import { activeFindQuery, findState } from '../editor/findState'
 import { editsAgentText } from '../editor/agentTextEdits'
@@ -545,6 +546,7 @@ function writeSelectionToClipboard(event: ClipboardEvent, cut: boolean, v: Edito
   if (!text) return false
   event.preventDefault()
   setClipboardText(event, text)
+  recordCopy(v.state, text, viewConversationId)
   if (cut) {
     const transaction = cutSelectedRangesTransaction(v.state)
     if (transaction) v.dispatch(v.state.update(transaction))
@@ -555,8 +557,8 @@ function writeSelectionToClipboard(event: ClipboardEvent, cut: boolean, v: Edito
 function pasteClipboardText(event: ClipboardEvent, v: EditorView): boolean {
   const text = event.clipboardData?.getData('text/plain') ?? ''
   if (!text) return false
-  v.dispatch(clipboardPasteTransaction(v.state, text))
   event.preventDefault()
+  if (!pasteMentions(v, text, viewConversationId)) v.dispatch(clipboardPasteTransaction(v.state, text))
   return true
 }
 

@@ -263,6 +263,15 @@ function onOverlayClick(event: MouseEvent) {
               chip to go to its asset, which flashes. When a chip of a tool call or of a compaction
               hides the asset, Dez opens that chip first.
             </p>
+            <p>
+              Copy text that names assets in one conversation and paste it into another, and Dez
+              asks whether to bring the assets along. With Yes, a name of an asset that this
+              conversation has changes to the id of that asset here. Each other asset goes in at the
+              top of the paste, with an id that is free here, and its names change to that id. Dez
+              copies no file: the asset uses the same file in both conversations, so a trash that
+              deletes the file deletes it for both. A linked file goes only into a user message. With
+              No, Dez pastes the text as it is.
+            </p>
 
             <h3>Intermediate assets</h3>
             <p>
