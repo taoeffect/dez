@@ -20,7 +20,10 @@ import { activeConversationId, activeTabTitle, copySelection, docPos, docPosPoin
 // tooltip that says what it is for, and keeps its delete rules, the trash
 // asks first and then deletes the file and the reference, an image that is
 // pasted as text from another tab gets a new id (as do the pasted mentions
-// of it) when the tab has an image with its id, both API formats
+// of it) when the tab has an image with its id, a paste of mentions of an
+// image of another tab asks first (Yes puts a copy of the image at the top
+// of the paste, or gives the mentions the id of the same image in the tab;
+// No pastes the text as it is), both API formats
 // get the image in the request body after its reference's text with the id
 // and no path, every user message keeps its images in each later request
 // as the same bytes, an image goes one time in a request (a later message
@@ -341,6 +344,29 @@ describe('images', () => {
     return { path: referencePath(reference), reference, from: before.length, to: before.length + reference.length }
   }
 
+  // In a new tab: pastes PASTED_PNG (`a`), types ` Make @a blue` after it,
+  // and copies only that text, with no image.
+  async function copyMentionOnly (): Promise<{ image: InsertedImage, copied: string }> {
+    await newTab(browser)
+    const image = await insertPastedImage('', ' Make @a blue')
+    await setCaret(browser, image.to + 1, (await editorDoc(browser)).length)
+    const copied = await copySelection(browser)
+    expect(copied).toBe('Make @a blue')
+    return { image, copied }
+  }
+
+  // In a new tab: an image `a` of the tab's own, text that names it, and a
+  // second line `Note: `, with the caret at its end.
+  async function tabWithOwnImage (): Promise<{ image: InsertedImage, beforePaste: string }> {
+    await newTab(browser)
+    const image = await insertPastedImage('See @a: ', '')
+    await browser.keys(Key.Enter)
+    await typeKeys(browser, 'Note: ')
+    const beforePaste = `See @a: ${image.reference}\nNote: `
+    await waitForValue(browser, 'doc before the paste', docAndCaret, { doc: beforePaste, caret: beforePaste.length })
+    return { image, beforePaste }
+  }
+
   // Sends the active tab with Ctrl+Enter and takes its request, with the
   // body as sent and parsed.
   async function sendRequest (): Promise<{ path: string, rawBody: string, body: unknown, reply: HeldRequest['reply'] }> {
@@ -475,6 +501,79 @@ describe('images', () => {
     // One undo takes back the paste and its new ids.
     await browser.keys([Key.Control, 'z'])
     await waitForValue(browser, 'doc after undo', () => editorDoc(browser), beforePaste)
+  })
+
+  it('asks before a paste of mentions of an image of another tab, and on Enter (Yes) puts a copy of the image at the top of the paste, with a new id that the mentions take', async () => {
+    const { image: copiedImage, copied } = await copyMentionOnly()
+    const { image: ownImage, beforePaste } = await tabWithOwnImage()
+    await pasteText(browser, copied)
+    await waitForValue(browser, 'prompt', promptState, {
+      message: 'The pasted text names an asset of another conversation. Add it at the top of the paste, and the names in the text change to fit this conversation? No pastes the text as it is.',
+      buttons: ['No', 'Yes'],
+      focus: 'yes',
+    })
+    expect(await editorDoc(browser)).toBe(beforePaste)
+
+    // The tab has an image `a` of its own, so the copy is `b`, on a line of
+    // its own at the start of the paste's line.
+    await browser.keys(Key.Enter)
+    const afterPaste = `See @a: ${ownImage.reference}\n![id=b](${copiedImage.path})\nNote: Make @b blue`
+    await waitForValue(browser, 'doc after Enter', docAndCaret, { doc: afterPaste, caret: afterPaste.length })
+    await waitForValue(browser, 'prompt after Enter', promptState, { message: null, buttons: [], focus: 'editor' })
+    await waitForValue(browser, 'shown images', () => shownImages(browser), [shownPastedImage(ownImage), shownPastedImage(copiedImage)])
+    expect((await imageOverlays()).map((overlay) => overlay.id)).toEqual(['a', 'b'])
+
+    // One undo takes back the paste, the copy, and the new ids.
+    await browser.keys([Key.Control, 'z'])
+    await waitForValue(browser, 'doc after undo', () => editorDoc(browser), beforePaste)
+  })
+
+  it('gives the pasted mentions of an image of another tab the id of the same image in this tab, on Yes, and adds no copy', async () => {
+    const { image: copiedImage, copied } = await copyMentionOnly()
+    await newTab(browser)
+    const ownImage = await insertPastedImage('', '')
+    // The file of the copied image, as typed text: it keeps its id.
+    const sameImage = `![id=b](${copiedImage.path})`
+    await typeAtEnd(`\n${sameImage}\nNote: `)
+    const beforePaste = `${ownImage.reference}\n${sameImage}\nNote: `
+    await setCaret(browser, beforePaste.length)
+    const shown = [shownPastedImage(ownImage), shownPastedImage(copiedImage)]
+    await waitForValue(browser, 'shown images before the paste', () => shownImages(browser), shown)
+
+    await pasteText(browser, copied)
+    await waitForValue(browser, 'prompt', promptState, {
+      message: 'This conversation has the assets that the pasted text names, under other ids. Change the names in the text to these ids? No pastes the text as it is.',
+      buttons: ['No', 'Yes'],
+      focus: 'yes',
+    })
+    await pointerClick(browser, '.confirm-btn--confirm')
+    // `@a` would name the tab's own image.
+    const afterPaste = `${beforePaste}Make @b blue`
+    await waitForValue(browser, 'doc after Yes', docAndCaret, { doc: afterPaste, caret: afterPaste.length })
+    expect(await shownImages(browser)).toEqual(shown)
+  })
+
+  it('pastes mentions of an image of another tab as they are on No, Esc, or a click outside the prompt', async () => {
+    const { copied } = await copyMentionOnly()
+    const { image: ownImage, beforePaste } = await tabWithOwnImage()
+    const cancels: Array<[string, () => Promise<unknown>]> = [
+      ['No', () => pointerClick(browser, '.confirm-btn--cancel')],
+      ['Esc', () => browser.keys(Key.Escape)],
+      // Off the dialog, on the overlay around it.
+      ['a click outside', () => pointerClickAt(browser, { x: 20, y: 300 })],
+    ]
+    for (const [label, cancel] of cancels) {
+      await pasteText(browser, copied)
+      await waitForValue(browser, `prompt before ${label}`, async () => (await promptState()).focus, 'yes')
+      await cancel()
+      const afterPaste = `${beforePaste}Make @a blue`
+      await waitForValue(browser, `doc after ${label}`, docAndCaret, { doc: afterPaste, caret: afterPaste.length })
+      await waitForValue(browser, `prompt after ${label}`, promptState, { message: null, buttons: [], focus: 'editor' })
+      expect(await shownImages(browser)).toEqual([shownPastedImage(ownImage)])
+
+      await browser.keys([Key.Control, 'z'])
+      await waitForValue(browser, `doc after the undo of the paste on ${label}`, docAndCaret, { doc: beforePaste, caret: beforePaste.length })
+    }
   })
 
   it('explains the id badge and the trash in tooltips while the pointer is on them', async () => {
