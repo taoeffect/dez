@@ -1,5 +1,5 @@
 import { compactionLastId } from './compaction'
-import { findAssetMentions } from './imageMentions'
+import { findAssetMentions, type AssetMention } from './imageMentions'
 import { findImageReferences, imageIdChange } from './images'
 import { findMediaTags, mediaTagText } from './mediaTags'
 
@@ -24,18 +24,18 @@ import { findMediaTags, mediaTagText } from './mediaTags'
 // section, user (a pasted or dropped clip) or agent.
 
 /** A range of a text. */
-interface TextRange {
+export interface TextRange {
   from: number
   to: number
 }
 
 /** A change to a text: `insert` in place of a range. */
-interface TextChange extends TextRange {
+export interface TextChange extends TextRange {
   insert: string
 }
 
 /** One image reference or one media tag of a text. */
-interface Asset extends TextRange {
+export interface Asset extends TextRange {
   /** Null for an image reference with no id. */
   id: string | null
   /** What the asset is: the path of an image, the tag text of a clip. A tag
@@ -53,7 +53,7 @@ export function compareMediaIds(a: string, b: string): number {
 
 /** The id after `id`: `a` … `z`, `aa`, `ab`, … `zz`, `aaa`, … (like
  *  spreadsheet columns). `a` after null. */
-function nextMediaId(id: string | null): string {
+export function nextMediaId(id: string | null): string {
   if (id === null) return 'a'
   let index = id.length - 1
   while (index >= 0 && id[index] === 'z') index--
@@ -62,7 +62,7 @@ function nextMediaId(id: string | null): string {
 }
 
 /** The highest of these ids (`compareMediaIds`); null when there is none. */
-function highestMediaId(ids: Iterable<string | null>): string | null {
+export function highestMediaId(ids: Iterable<string | null>): string | null {
   let highest: string | null = null
   for (const id of ids) {
     if (id !== null && (highest === null || compareMediaIds(id, highest) > 0)) highest = id
@@ -102,7 +102,7 @@ export function newMediaIds(texts: readonly string[], count: number): string[] {
 /** The image references and the media tags of `text`, in doc order. The
  *  text can span sections, so linked references count in each (the `user`
  *  rule): an id stays unique over every reference that has one. */
-function findAssets(text: string): Asset[] {
+export function findAssets(text: string): Asset[] {
   const references = findImageReferences(text, 'user').map((reference): Asset => ({
     from: reference.from,
     to: reference.to,
@@ -152,7 +152,7 @@ function findAssets(text: string): Asset[] {
  *
  *  The changes are in doc order, and no two overlap. */
 export function pastedMediaIdChanges(text: string, pasted: readonly TextRange[]): TextChange[] {
-  const isPasted = ({ from, to }: TextRange) => pasted.some((range) => range.from <= from && to <= range.to)
+  const isPasted = (range: TextRange) => inRanges(range, pasted)
   const assets = findAssets(text)
   const ownersById = new Map<string, Set<string>>()
   const claim = (id: string, owner: string) => {
@@ -195,18 +195,35 @@ export function pastedMediaIdChanges(text: string, pasted: readonly TextRange[])
   }
   if (newIds.size === 0) return changes
 
-  // The mentions are read in each whole run of text between two assets, not
-  // only in its pasted part, so that the chars around a mention count: a
-  // pasted `@a` before the letters `bc` is the word `@abc`.
+  for (const mention of pastedMentions(text, assets, pasted)) {
+    const id = newIds.get(mention.id)
+    // The change keeps the `@`.
+    if (id !== undefined) changes.push({ from: mention.from + 1, to: mention.to, insert: id })
+  }
+  return changes.sort((a, b) => a.from - b.from)
+}
+
+// Whether `range` is whole in one of `ranges`.
+function inRanges({ from, to }: TextRange, ranges: readonly TextRange[]): boolean {
+  return ranges.some((range) => range.from <= from && to <= range.to)
+}
+
+/** The `@id` mentions (imageMentions.ts) of `text` that are whole in one of
+ *  the `pasted` ranges, in doc order, with offsets in `text`. `assets` are
+ *  the assets of `text` (`findAssets`): a mention counts only in the text
+ *  between them. Each whole run of text between two assets is read, not
+ *  only its pasted part, so that the chars around a mention count: a
+ *  pasted `@a` before the letters `bc` is the word `@abc`. */
+export function pastedMentions(text: string, assets: readonly TextRange[], pasted: readonly TextRange[]): AssetMention[] {
+  const mentions: AssetMention[] = []
   let textFrom = 0
   for (const next of [...assets, { from: text.length, to: text.length }]) {
     for (const mention of findAssetMentions(text.slice(textFrom, next.from))) {
-      const id = newIds.get(mention.id)
-      const range = { from: textFrom + mention.from, to: textFrom + mention.to }
-      // The change keeps the `@`.
-      if (id !== undefined && isPasted(range)) changes.push({ from: range.from + 1, to: range.to, insert: id })
+      const found = { from: textFrom + mention.from, to: textFrom + mention.to, id: mention.id }
+      if (inRanges(found, pasted)) mentions.push(found)
     }
+    // A reference inside a tag ends before the tag does.
     textFrom = Math.max(textFrom, next.to)
   }
-  return changes.sort((a, b) => a.from - b.from)
+  return mentions
 }
