@@ -695,7 +695,7 @@ describe('dez.controller/tools/run', () => {
       newImageId = 'c'
       tabId = sbp('dez.model/tabs/activeId') as string
       sbp('dez.model/tabs/replaceSections', tabId, [
-        { id: 'u1', role: 'user', content: [{ kind: 'text', text: `A fox: ![${stored('fox.png')}](id=a) and a photo: ![${stored('photo.jpg')}](id=b)` }] },
+        { id: 'u1', role: 'user', content: [{ kind: 'text', text: `A fox: ![id=a](${stored('fox.png')}) and a photo: ![id=b](${stored('photo.jpg')})` }] },
         { id: 'a1', role: 'agent', content: [{ kind: 'text', text: '' }] },
       ])
     })
@@ -1260,7 +1260,7 @@ describe('dez.controller/tools/run', () => {
         sbp('dez.model/modelCache/applyProviderResult', 'venice', { ok: true, models: [...MODELS('venice'), PAINTER, FILMER, SCRIBE, SKETCHER, SINGER] })
         tabId = sbp('dez.model/tabs/activeId') as string
         sbp('dez.model/tabs/replaceSections', tabId, [
-          { id: 'u1', role: 'user', content: [{ kind: 'text', text: `A fox: ![${FOX}](id=a) and ![${LINKED}](id=b)\n${mediaTagText(SPEECH)}` }] },
+          { id: 'u1', role: 'user', content: [{ kind: 'text', text: `A fox: ![id=a](${FOX}) and ![id=b](${LINKED})\n${mediaTagText(SPEECH)}` }] },
           { id: 'a1', role: 'agent', content: [{ kind: 'text', text: '' }] },
         ])
       })
@@ -1819,7 +1819,7 @@ describe('dez.controller/tools/run', () => {
         other: [{ name: 'tool', value: 'model_invoke' }, { name: 'made-by', value: 'j-aaaa' }, { name: 'hidden', value: 'j-aaaa' }],
       })
       sbp('dez.model/tabs/replaceSections', tabId, [
-        { id: 'u1', role: 'user', content: [{ kind: 'text', text: `A fox: ![${FOX}](id=a)` }] },
+        { id: 'u1', role: 'user', content: [{ kind: 'text', text: `A fox: ![id=a](${FOX})` }] },
         // The clip @c has no file and no web address any more.
         { id: 'a1', role: 'agent', model: REPLY_MODEL, content: [{ kind: 'text', text: `${start}\n\n${scene}\n<dez:audio id="c" type="audio/wav"/>` }] },
         { id: 'u2', role: 'user', content: [{ kind: 'text', text: `<dez:audio id="d" type="audio/wav" src="${VOICE}"/>\nWhich is which?` }] },
@@ -2049,7 +2049,7 @@ describe('dez.controller/tools/run', () => {
     beforeEach(() => {
       tabId = sbp('dez.model/tabs/activeId') as string
       sbp('dez.model/tabs/replaceSections', tabId, [
-        { id: 'u1', role: 'user', content: [{ kind: 'text', text: `A fox: ![${FOX}](id=a)\n<dez:video id="b" type="video/mp4" src="${SCENE}"/>` }] },
+        { id: 'u1', role: 'user', content: [{ kind: 'text', text: `A fox: ![id=a](${FOX})\n<dez:video id="b" type="video/mp4" src="${SCENE}"/>` }] },
         // The clip @c has no file and no web address any more.
         { id: 'a1', role: 'agent', model: REPLY_MODEL, content: [{ kind: 'text', text: `<dez:audio id="c" type="audio/wav"/>` }] },
         { id: 'u2', role: 'user', content: [{ kind: 'text', text: `<dez:audio id="d" type="audio/wav" src="${VOICE}"/>\nCheck them.` }] },

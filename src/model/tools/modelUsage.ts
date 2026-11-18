@@ -47,14 +47,14 @@ export const USAGE_TEXTS = {
   tools: 'It gets the Dez tools (the ones that you have).',
   toolsOff: 'It gets no Dez tools: the Tools toggle of its provider is off.',
   noTools: 'It gets no Dez tools: it does not call tools.',
-  chatImages: 'The images of the messages of the user (pasted, or named with @id) go to it as images, in each request; any other image goes only as text with its id, such as `![image](id=a)`.',
-  chatNoImages: 'It does not read images: each image goes only as text with its id, such as `![image](id=a)`.',
+  chatImages: 'The images of the messages of the user (pasted, or named with @id) go to it as images, in each request; any other image goes only as text with its id, such as `![id=a](image)`.',
+  chatNoImages: 'It does not read images: each image goes only as text with its id, such as `![id=a](image)`.',
   textReply: 'It answers with text.',
   imageReply: 'It answers with text, and it can make images; each image gets a new id (@id).',
   audioReply: 'It answers with text and an audio clip; the reply shows the clip as a player with a new id (@id).',
   toggles: `Each request sends the toggles of \`dez.toggles\`; the user sets them in ${SETTINGS_POPUP}.`,
   mediaRequest: 'A request holds only the newest user message, not the rest of the conversation.',
-  promptImages: 'An image in the text goes into the prompt as its id text, such as `![image](id=a)`.',
+  promptImages: 'An image in the text goes into the prompt as its id text, such as `![id=a](image)`.',
   noText: 'The text of the message does not go.',
   textLengths: 'Dez refuses a message whose text breaks the lengths of `dez.text` (in UTF-16 units).',
   noImages: 'It takes no input image: the images of the message do not go.',
@@ -113,7 +113,7 @@ const NAMES_ARE_PUT_IN = 'Dez puts these names in: write only the @id in the pro
 // `mediaRequestInput`): the names of the first two images show the form.
 export function referenceNamesUsage(promptName: string): string {
   const name = (n: number) => `\`${promptName.replaceAll('{n}', String(n))}\``
-  return `Each image that goes is named in the prompt as the model names it, ${name(1)} for the first, ${name(2)} for the second, and so on, in place of its id text (such as \`![image](id=a)\`) and its @id mentions; any other image goes into the prompt as its id text. ${NAMES_ARE_PUT_IN}`
+  return `Each image that goes is named in the prompt as the model names it, ${name(1)} for the first, ${name(2)} for the second, and so on, in place of its id text (such as \`![id=a](image)\`) and its @id mentions; any other image goes into the prompt as its id text. ${NAMES_ARE_PUT_IN}`
 }
 
 // What a model does with the clips of a kind (`ClipKindRules.use`).

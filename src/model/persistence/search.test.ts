@@ -189,8 +189,8 @@ describe('searchConversationFiles', () => {
     const file = fileFor(
       conversation('a', 'Notes', [
         section('user', [
-          textNode(`Look at![${image('3f2a9c1e')}]()this chart`),
-          promptNode('compare', `with ![${image('7d4b0e52')}]()`),
+          textNode(`Look at![](${image('3f2a9c1e')})this chart`),
+          promptNode('compare', `with ![](${image('7d4b0e52')})`),
         ]),
       ]),
       1000,

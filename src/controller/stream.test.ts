@@ -1312,15 +1312,15 @@ describe('dez.controller/submitTab images', () => {
     replyRounds([async (input) => ({ requestId: input.requestId as string })])
     sbp('dez.model/setActiveModel', model.providerId, model.modelId, model.modelName)
     sbp('dez.model/tabs/replaceSections', activeTab().id, [
-      { id: 'u1', role: 'user', content: [{ kind: 'text', text: `Look:\n![${image('one.png')}](id=a)\n![${image('two.jpg')}](id=b)\nWhich is brighter?` }] },
-      { id: 'a1', role: 'agent', content: [{ kind: 'text', text: `This one: ![${image('one.png')}](id=a)` }], model },
+      { id: 'u1', role: 'user', content: [{ kind: 'text', text: `Look:\n![id=a](${image('one.png')})\n![id=b](${image('two.jpg')})\nWhich is brighter?` }] },
+      { id: 'a1', role: 'agent', content: [{ kind: 'text', text: `This one: ![id=a](${image('one.png')})` }], model },
       {
         id: 'u2',
         role: 'user',
         content: [
           // The second reference lost its `)` to the Backspace rule.
-          { kind: 'text', text: `![${image('three.webp')}](id=c) and ![${image('two.jpg')}](id=b\n` },
-          { kind: 'prompt', id: 'p1', promptId: null, name: 'Compare', body: `Compare with ![${image('one.png')}](id=a)`, expanded: false },
+          { kind: 'text', text: `![id=c](${image('three.webp')}) and ![id=b](${image('two.jpg')}\n` },
+          { kind: 'prompt', id: 'p1', promptId: null, name: 'Compare', body: `Compare with ![id=a](${image('one.png')})`, expanded: false },
           { kind: 'text', text: '' },
         ],
       },
@@ -1334,20 +1334,20 @@ describe('dez.controller/submitTab images', () => {
       {
         role: 'user',
         content: [
-          { type: 'text', text: 'Look:\n![image](id=a)' },
+          { type: 'text', text: 'Look:\n![id=a](image)' },
           { type: 'image', path: image('one.png') },
-          { type: 'text', text: '\n![image](id=b)' },
+          { type: 'text', text: '\n![id=b](image)' },
           { type: 'image', path: image('two.jpg') },
           { type: 'text', text: '\nWhich is brighter?' },
         ],
       },
-      { role: 'agent', content: 'This one: ![image](id=a)' },
+      { role: 'agent', content: 'This one: ![id=a](image)' },
       {
         role: 'user',
         content: [
-          { type: 'text', text: '![image](id=c)' },
+          { type: 'text', text: '![id=c](image)' },
           { type: 'image', path: image('three.webp') },
-          { type: 'text', text: ' and ![image](id=b\nCompare with ![image](id=a)' },
+          { type: 'text', text: ' and ![id=b](image\nCompare with ![id=a](image)' },
         ],
       },
     ])
@@ -1361,7 +1361,7 @@ describe('dez.controller/submitTab images', () => {
     })
     // With no reply before it, the conversation is not compacted.
     sbp('dez.model/tabs/replaceSections', activeTab().id, [
-      { id: 'u1', role: 'user', content: [{ kind: 'text', text: `![${image('one.png')}](id=a) ![${image('two.jpg')}](id=b) ![${image('three.webp')}](id=c)` }] },
+      { id: 'u1', role: 'user', content: [{ kind: 'text', text: `![id=a](${image('one.png')}) ![id=b](${image('two.jpg')}) ![id=c](${image('three.webp')})` }] },
     ])
 
     await sbp('dez.controller/submitTab', activeTab().id)
@@ -1369,11 +1369,11 @@ describe('dez.controller/submitTab images', () => {
     expect(sent).toStrictEqual([[{
       role: 'user',
       content: [
-        { type: 'text', text: '![image](id=a)' },
+        { type: 'text', text: '![id=a](image)' },
         { type: 'image', path: image('one.png') },
-        { type: 'text', text: ' ![image](id=b)' },
+        { type: 'text', text: ' ![id=b](image)' },
         { type: 'image', path: image('two.jpg') },
-        { type: 'text', text: ' ![image](id=c)' },
+        { type: 'text', text: ' ![id=c](image)' },
       ],
     }]])
     expect(toasts).toStrictEqual([{
@@ -1394,9 +1394,9 @@ describe('dez.controller/submitTab images', () => {
       models: [{ id: model.modelId, name: model.modelName, provider: model.providerId, imageLimit: 20, messageImageLimit: 2 }],
     })
     sbp('dez.model/tabs/replaceSections', activeTab().id, [
-      { id: 'u1', role: 'user', content: [{ kind: 'text', text: `![${image('one.png')}](id=a) ![${image('two.jpg')}](id=b) ![${image('three.webp')}](id=c)` }] },
+      { id: 'u1', role: 'user', content: [{ kind: 'text', text: `![id=a](${image('one.png')}) ![id=b](${image('two.jpg')}) ![id=c](${image('three.webp')})` }] },
       { id: 'r1', role: 'agent', content: [{ kind: 'text', text: 'Three foxes.' }], model },
-      { id: 'u2', role: 'user', content: [{ kind: 'text', text: `![${image('four.png')}](id=d)` }] },
+      { id: 'u2', role: 'user', content: [{ kind: 'text', text: `![id=d](${image('four.png')})` }] },
     ])
 
     await sbp('dez.controller/submitTab', activeTab().id)
@@ -1420,9 +1420,9 @@ describe('dez.controller/submitTab images', () => {
     await sbp('dez.controller/submitTab', activeTab().id)
 
     expect(sent[0]).toStrictEqual([
-      { role: 'user', content: 'Look:\n![image](id=a)\n![image](id=b)\nWhich is brighter?' },
-      { role: 'agent', content: 'This one: ![image](id=a)' },
-      { role: 'user', content: '![image](id=c) and ![image](id=b\nCompare with ![image](id=a)' },
+      { role: 'user', content: 'Look:\n![id=a](image)\n![id=b](image)\nWhich is brighter?' },
+      { role: 'agent', content: 'This one: ![id=a](image)' },
+      { role: 'user', content: '![id=c](image) and ![id=b](image\nCompare with ![id=a](image)' },
     ])
     expect(toasts).toStrictEqual([{
       area: 'app-global',
@@ -1444,7 +1444,7 @@ describe('dez.controller/submitTab images', () => {
       user('u1'),
       agent('a1', { text: `The user sent ${image('one.png')}.`, replay: field }),
       user('u2'),
-      agent('a2', { text: 'Blocks.', replay: blocks(`![${image('one.png')}](id=a) is a cat.`) }),
+      agent('a2', { text: 'Blocks.', replay: blocks(`![id=a](${image('one.png')}) is a cat.`) }),
       user('u3'),
       agent('a3', { text: 'It is a cat.', replay: field }),
       user('u4'),
@@ -1473,8 +1473,8 @@ describe('dez.stream/start media round', () => {
   const film: GeneratedClip = { kind: 'video', mediaType: 'video/mp4', src: FILM_URL, url: FILM_URL, expires: EXPIRES, jobId: 'q-1' }
   const speechTag = (id: string) => `<dez:audio id="${id}" type="audio/mpeg" src="${speech.src}" expires="${EXPIRES}"/>`
   const conversation = (lastUserText = 'Make it red.') => [
-    { role: 'user', text: `A fox: ![${image('fox.png')}](id=a)` },
-    { role: 'agent', text: `![${generated('old.png')}](id=b)` },
+    { role: 'user', text: `A fox: ![id=a](${image('fox.png')})` },
+    { role: 'agent', text: `![id=b](${generated('old.png')})` },
     { role: 'user', text: lastUserText },
   ]
   const leftOut = (title: string, message: string) => [{ area: 'app-global', data: { variant: 'warning', title, message, duration: 8000 } }]
@@ -1541,7 +1541,7 @@ describe('dez.stream/start media round', () => {
     expect(saves).toStrictEqual([{ folder: 'generated' }, { folder: 'generated' }])
     expect(sectionTexts()).toStrictEqual([
       ...conversation(),
-      { role: 'agent', text: `![${generated('g1.png')}](id=c)\n\n![${generated('g2.png')}](id=d)` },
+      { role: 'agent', text: `![id=c](${generated('g1.png')})\n\n![id=d](${generated('g2.png')})` },
       { role: 'user', text: '' },
     ])
     expect(savedConversations.at(-1)?.sections).toHaveLength(5)
@@ -1552,11 +1552,11 @@ describe('dez.stream/start media round', () => {
 
   it('edits the images of the last user message, with their stand-ins in the prompt', async () => {
     useRequest('imageEdit')
-    setConversation(conversation(`Make ![${image('cat.png')}](id=c) red.`))
+    setConversation(conversation(`Make ![id=c](${image('cat.png')}) red.`))
 
     await sbp('dez.controller/submitTab', activeTab().id)
 
-    expect(mediaInputs[0]).toMatchObject({ kind: 'imageEdit', prompt: 'Make ![image](id=c) red.', images: [image('cat.png')] })
+    expect(mediaInputs[0]).toMatchObject({ kind: 'imageEdit', prompt: 'Make ![id=c](image) red.', images: [image('cat.png')] })
   })
 
   it('edits the newest image of the conversation when the last user message has none', async () => {
@@ -1578,11 +1578,11 @@ describe('dez.stream/start media round', () => {
       ok: true,
       models: [{ id: model.modelId, name: model.modelName, provider: model.providerId, outputs: ['image'], request, imageInput: false }],
     })
-    setConversation(conversation(`Make ![${image('cat.png')}](id=c) look like @a.`))
+    setConversation(conversation(`Make ![id=c](${image('cat.png')}) look like @a.`))
 
     await sbp('dez.controller/submitTab', activeTab().id)
 
-    expect(mediaInputs.map(({ prompt, images }) => ({ prompt, images }))).toStrictEqual([{ prompt: 'Make ![image](id=c) look like @a.', images }])
+    expect(mediaInputs.map(({ prompt, images }) => ({ prompt, images }))).toStrictEqual([{ prompt: 'Make ![id=c](image) look like @a.', images }])
     expect(toasts).toStrictEqual(warnings)
   })
 
@@ -1711,7 +1711,7 @@ describe('dez.stream/start media round', () => {
     expect(mediaInputs.map((input) => input.signal?.aborted)).toStrictEqual([true, false])
     expect(sectionTexts()).toStrictEqual([
       ...conversation(),
-      { role: 'agent', text: `![${generated('g1.png')}](id=c)` },
+      { role: 'agent', text: `![id=c](${generated('g1.png')})` },
       { role: 'user', text: '' },
     ])
   })
@@ -1775,7 +1775,7 @@ describe('dez.stream/start media round', () => {
   })
 
   describe('the frames of a video', () => {
-    const twoImages = `From ![${image('cat.png')}](id=c) to @a.`
+    const twoImages = `From ![id=c](${image('cat.png')}) to @a.`
 
     beforeEach(() => {
       generateMedia = async (input) => {
@@ -1791,7 +1791,7 @@ describe('dez.stream/start media round', () => {
       await sbp('dez.controller/submitTab', activeTab().id)
 
       expect(mediaInputs.map(({ kind, prompt, images }) => ({ kind, prompt, images })))
-        .toStrictEqual([{ kind: 'imageToVideo', prompt: 'From ![image](id=c) to @a.', images: [image('cat.png'), image('fox.png')] }])
+        .toStrictEqual([{ kind: 'imageToVideo', prompt: 'From ![id=c](image) to @a.', images: [image('cat.png'), image('fox.png')] }])
       expect(sectionTexts().at(-2)?.text).toContain('<dez:video id="d"')
       expect(toasts).toStrictEqual([])
     })
@@ -2208,7 +2208,7 @@ describe('dez.stream/start images of a chat reply', () => {
       return generated(`g${saves.length}.png`)
     }
     sbp('dez.model/tabs/replaceSections', activeTab().id, [
-      { id: 'u1', role: 'user', content: [{ kind: 'text', text: `A fox: ![${image('fox.png')}](id=a)` }] },
+      { id: 'u1', role: 'user', content: [{ kind: 'text', text: `A fox: ![id=a](${image('fox.png')})` }] },
       { id: 'a1', role: 'agent', content: [{ kind: 'text', text: '' }], model },
     ])
   })
@@ -2226,7 +2226,7 @@ describe('dez.stream/start images of a chat reply', () => {
 
     await startStream()
 
-    const text = `Two views.\n\n![${generated('g1.png')}](id=b)\n\n![${generated('g2.png')}](id=c)\n\nThe last one:\n\n![${generated('g3.png')}](id=d)`
+    const text = `Two views.\n\n![id=b](${generated('g1.png')})\n\n![id=c](${generated('g2.png')})\n\nThe last one:\n\n![id=d](${generated('g3.png')})`
     expect(saves).toStrictEqual([{ folder: 'generated' }, { folder: 'generated' }, { folder: 'generated' }])
     expect(sectionVisibleText(agentSection())).toBe(text)
     expect(editorTokens.join('')).toBe(text)
@@ -2247,7 +2247,7 @@ describe('dez.stream/start images of a chat reply', () => {
 
     await startStream()
 
-    expect(sectionVisibleText(agentSection())).toBe(`See <dez\n\n![${generated('g1.png')}](id=b)\n\n:tool id="x" name="y">`)
+    expect(sectionVisibleText(agentSection())).toBe(`See <dez\n\n![id=b](${generated('g1.png')})\n\n:tool id="x" name="y">`)
     expect(findToolBlocks(sectionVisibleText(agentSection()))).toStrictEqual([])
   })
 
@@ -2291,7 +2291,7 @@ describe('dez.stream/start images of a chat reply', () => {
 
     await startStream()
 
-    expect(sectionVisibleText(agentSection())).toBe(`First. Second.\n\n![${generated('g2.png')}](id=b)`)
+    expect(sectionVisibleText(agentSection())).toBe(`First. Second.\n\n![id=b](${generated('g2.png')})`)
     expect(alerts).toStrictEqual([{ tabId: activeTab().id, status: 'finished' }])
     expect(toasts).toStrictEqual([])
     expect(deletedImages).toStrictEqual([])
@@ -2351,8 +2351,8 @@ describe('dez.stream/start images of a chat reply', () => {
 
     await startStream({ sendTools: true })
 
-    expect(sectionVisibleText(agentSection())).toBe(`![${generated('g1.png')}](id=b)\n${block}None.`)
-    expect(JSON.stringify(sent[1])).toContain('![image](id=b)')
+    expect(sectionVisibleText(agentSection())).toBe(`![id=b](${generated('g1.png')})\n${block}None.`)
+    expect(JSON.stringify(sent[1])).toContain('![id=b](image)')
     expect(JSON.stringify(sent[1])).not.toContain('/home/u')
   })
 
@@ -2368,7 +2368,7 @@ describe('dez.stream/start images of a chat reply', () => {
 
     await startStream()
 
-    expect(sectionVisibleText(agentSection())).toBe(`![${generated('g1.png')}](id=b)`)
+    expect(sectionVisibleText(agentSection())).toBe(`![id=b](${generated('g1.png')})`)
     expect(agentSection().thinking).toBeUndefined()
     expect(savedConversations.at(-1)?.sections[1].thinking).toBeUndefined()
     expect(editorThinking).toStrictEqual([])
@@ -2419,7 +2419,7 @@ describe('dez.stream/start audio of a chat reply', () => {
 
   it('writes the tag of the clip, with a new id, as a whole line after the answer text', async () => {
     sbp('dez.model/tabs/replaceSections', activeTab().id, [
-      { id: 'u1', role: 'user', content: [{ kind: 'text', text: `A fox: ![${image('fox.png')}](id=a)` }] },
+      { id: 'u1', role: 'user', content: [{ kind: 'text', text: `A fox: ![id=a](${image('fox.png')})` }] },
       { id: 'a1', role: 'agent', content: [{ kind: 'text', text: '' }], model },
     ])
     streamChat = async (input) => {
@@ -2477,7 +2477,7 @@ describe('dez.stream/start audio of a chat reply', () => {
 })
 
 describe('dez.stream/start images that a tool makes', () => {
-  const reference = (name: string, id: string) => `![${generated(name)}](id=${id}|tool=image)`
+  const reference = (name: string, id: string) => `![id=${id}|tool=image](${generated(name)})`
   const replay = (opaque: string): ThinkingReplay => ({ kind: 'copilot', opaque, prefixHash: 'h' })
   // An `image scale` call with these parameters, as the model sends it, and
   // its block in the reply.
@@ -2494,7 +2494,7 @@ describe('dez.stream/start images that a tool makes', () => {
     saves = 0
     saveImage = async () => generated(`g${++saves}.png`)
     sbp('dez.model/tabs/replaceSections', activeTab().id, [
-      { id: 'u1', role: 'user', content: [{ kind: 'text', text: `A fox: ![${image('fox.png')}](id=a)` }] },
+      { id: 'u1', role: 'user', content: [{ kind: 'text', text: `A fox: ![id=a](${image('fox.png')})` }] },
       { id: 'a1', role: 'agent', content: [{ kind: 'text', text: '' }], model },
     ])
   })
@@ -2615,7 +2615,7 @@ describe('dez.stream/start pictures that a tool shows', () => {
 
   beforeEach(() => {
     sbp('dez.model/tabs/replaceSections', activeTab().id, [
-      { id: 'u1', role: 'user', content: [{ kind: 'text', text: `A fox: ![${image('fox.png')}](id=a)` }] },
+      { id: 'u1', role: 'user', content: [{ kind: 'text', text: `A fox: ![id=a](${image('fox.png')})` }] },
       { id: 'a1', role: 'agent', content: [{ kind: 'text', text: '' }], model },
     ])
   })
@@ -2701,7 +2701,7 @@ describe('dez.stream/start pictures that a tool shows', () => {
 
     await startStream({
       sendTools: true,
-      messages: [{ role: 'user', content: [{ type: 'text', text: 'A fox: ![image](id=a)' }, { type: 'image', path: image('fox.png') }] }],
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'A fox: ![id=a](image)' }, { type: 'image', path: image('fox.png') }] }],
     })
 
     // The image counts as 3,136 tokens.
@@ -2848,7 +2848,7 @@ describe('dez.stream/start jobs', () => {
   const invokeCall = (id: string, target = PAINTER) => ({ id, name: 'model_invoke', argumentsText: JSON.stringify({ model: target, prompt: PROMPT }) })
   const fox = generated('fox.png')
   // The reference of the image of the job of the call `callId`.
-  const foxReference = (callId: string) => `![${fox}](id=a|tool=model_invoke|made-by=${jobId(callId)})`
+  const foxReference = (callId: string) => `![id=a|tool=model_invoke|made-by=${jobId(callId)}](${fox})`
   // A clip that the provider made as its job `q-17`, in a temp copy.
   const run: GeneratedClip = { kind: 'video', mediaType: 'video/mp4', src: '/home/u/.cache/dez/media/run.mp4', url: null, expires: '2026-12-01T00:00:00.000Z', jobId: 'q-17' }
   // The requests of the jobs, in the order of the starts: the signal of
@@ -2996,7 +2996,7 @@ describe('dez.stream/start jobs', () => {
     expect(callResult('c3')).toBe(jobsWaitText([{ id: jobId('c1'), tool: 'model_invoke', status: 'finished', text: 'Made the image @a.', call: { number: 1, label: PROMPT } }], 1))
     const text = sectionVisibleText(agentSection())
     expect(text.slice(text.lastIndexOf('</dez:tool>\n'))).toBe(
-      `</dez:tool>\n\n![${fox}](id=a|tool=model_invoke|made-by=${jobId('c1')}|hidden=${jobId('c1')})\n\nDone.\n\n`
+      `</dez:tool>\n\n![id=a|tool=model_invoke|made-by=${jobId('c1')}|hidden=${jobId('c1')}](${fox})\n\nDone.\n\n`
       + `<dez:video id="b" type="video/mp4" src="${run.src}" expires="${run.expires}" tool="model_invoke" job="q-17" made-by="${jobId('c2')}" hidden="${jobId('c2')}"/>`,
     )
     expect(toasts).toStrictEqual([])
@@ -3096,7 +3096,7 @@ describe('dez.stream/start jobs', () => {
       { id: second, tool: 'model_invoke', status: 'finished', text: 'Made the image @b.', call: { number: 2, label: PROMPT } },
     ], 0))
     expect(sectionVisibleText(agentSection('a2'))).toContain(`made-by="${first}"/>`)
-    expect(sectionVisibleText(agentSection('a2'))).toContain(`![${fox}](id=b|tool=model_invoke|made-by=${second})`)
+    expect(sectionVisibleText(agentSection('a2'))).toContain(`![id=b|tool=model_invoke|made-by=${second}](${fox})`)
     expect(sectionVisibleText(agentSection('a1'))).toBe(invokeBlock('c1', FILMER))
     expect(toasts).toStrictEqual([])
   })
@@ -3336,7 +3336,7 @@ describe('dez.stream/start jobs', () => {
 
     expect(callResult('c1')).toBe('')
     expect(callResult('c2')).toBe(jobsWaitText([{ id: startedId, tool: 'model_invoke', status: 'finished', text: 'Made the image @a.', call: { number: 1, label: PROMPT } }], 0))
-    expect(sectionVisibleText(agentSection())).toContain(`![${fox}](id=a|tool=model_invoke|made-by=${startedId})`)
+    expect(sectionVisibleText(agentSection())).toContain(`![id=a|tool=model_invoke|made-by=${startedId}](${fox})`)
     // The notes tell the model of the job that still ran.
     expect(sectionVisibleText(activeTab().sections[0])).toContain(startedId)
     expect(toasts).toStrictEqual([])
@@ -3512,7 +3512,7 @@ describe('dez.stream/start compaction', () => {
 
     await startStream({ sendTools: true })
 
-    expect(sectionVisibleText(activeTab().sections[0]).slice(blockEnd())).toBe(`\n![${generated('g1.png')}](id=a)\n\nHere.`)
+    expect(sectionVisibleText(activeTab().sections[0]).slice(blockEnd())).toBe(`\n![id=a](${generated('g1.png')})\n\nHere.`)
   })
 
   // The notes hold the message of the user, so the section stays, and the
@@ -3749,7 +3749,7 @@ describe('dez.stream/start compaction', () => {
       {
         id: 'u1',
         role: 'user',
-        content: [text(['one.png', 'two.jpg', 'three.webp', 'four.png', 'five.png'].map((name, n) => `![${image(name)}](id=${'abcde'[n]})`).join(' '))],
+        content: [text(['one.png', 'two.jpg', 'three.webp', 'four.png', 'five.png'].map((name, n) => `![id=${'abcde'[n]}](${image(name)})`).join(' '))],
       },
       { id: 'r1', role: 'agent', content: [text('Five foxes.')], model },
       { id: 'u2', role: 'user', content: [text('More')] },
@@ -3766,8 +3766,8 @@ describe('dez.stream/start compaction', () => {
     const [first] = sent[1]
     const parts = first.role === 'user' && Array.isArray(first.content) ? first.content : []
     expect(parts.flatMap((part) => (part.type === 'image' ? [part.path] : []))).toStrictEqual([image('one.png'), image('two.jpg')])
-    expect(JSON.stringify(parts)).toContain('![image](id=c|kept=compaction)')
-    expect(JSON.stringify(parts)).toContain('![image](id=e|kept=compaction)')
+    expect(JSON.stringify(parts)).toContain('![id=c|kept=compaction](image)')
+    expect(JSON.stringify(parts)).toContain('![id=e|kept=compaction](image)')
   })
 
   describe('for a new reply of a model whose window is smaller than the conversation', () => {

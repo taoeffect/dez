@@ -739,9 +739,9 @@ describe('tab titles', () => {
   it('shows each image reference as [image], never its path', () => {
     const image = (name: string) => `/home/user/.config/dez/assets/images/${name}.png`
 
-    expect(titleFor(`![${image('a')}]()`)).toBe('[image]')
-    expect(titleFor(`Compare ![${image('a')}]() and ![${image('b')}]()`)).toBe('Compare [image] and [image]')
-    expect(titleFor(`![${image('a')}]() ![${image('b')}]() Which one is brighter?`)).toBe('[image] [image] Which one is b…')
+    expect(titleFor(`![](${image('a')})`)).toBe('[image]')
+    expect(titleFor(`Compare ![](${image('a')}) and ![](${image('b')})`)).toBe('Compare [image] and [image]')
+    expect(titleFor(`![](${image('a')}) ![](${image('b')}) Which one is brighter?`)).toBe('[image] [image] Which one is b…')
   })
 
   it('shows each clip tag of a dropped clip as its kind, never its path', () => {
@@ -753,7 +753,7 @@ describe('tab titles', () => {
   it('goes back to New Tab when no user text is left', () => {
     const image = '/home/user/.config/dez/assets/images/a.png'
 
-    expect(titleFor(`![${image}](id=a)`)).toBe('[image]')
+    expect(titleFor(`![id=a](${image})`)).toBe('[image]')
     expect(titleFor('')).toBe('New Tab')
     expect(titleFor('hi')).toBe('hi')
     expect(titleFor(' \n ')).toBe('New Tab')

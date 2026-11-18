@@ -71,8 +71,8 @@ function autolink(state: EditorState, node: SyntaxNode): MarkdownLink | null {
  *    marker), whose widgets and atomic ranges must stay the only ones
  *    there;
  *  - a link that touches a rendered image (`renderedImages`), as in
- *    `[![…](id=a)](https://…)`: the image widget is atomic and the link
- *    markup is not;
+ *    `[![id=a](/…/x.png)](https://…)`: the image widget is atomic and the
+ *    link markup is not;
  *  - a link on a table row line: a replace decoration there becomes an
  *    extra table cell (see `tableDecorationsField` in `tables.ts`). */
 function linesLetLinkRender(state: EditorState, link: MarkdownLink): boolean {
@@ -91,7 +91,7 @@ function linesLetLinkRender(state: EditorState, link: MarkdownLink): boolean {
 /** The links in `from`–`to` that the editor can render, rendered or not:
  *  inline links and autolinks from the markdown syntax tree, so links in
  *  code and image descriptions never count, and a Dez image reference with
- *  no `!` (`[path](id=a)`) is a link to `id=a`, which does not open. Also
+ *  no `!` (`[id=a](/…/x.png)`) is a link to a path, which does not open. Also
  *  left as source text: a link with no text to show, and a link whose
  *  hidden markup crosses a line break (a view plugin cannot replace one). */
 function findRenderableLinks(state: EditorState, from: number, to: number): MarkdownLink[] {

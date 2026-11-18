@@ -37,9 +37,9 @@ export const LOOP: MediaTagData = { kind: 'video', id: 'd', type: 'video/webm', 
  *  (SONG), the video clips `c` (FILM) and `d` (LOOP), and the PNG image `e`
  *  (SKY). */
 export const CONVERSATION = [
-  user('u1', `![${RED}](id=a)\n${mediaTagText(SONG)}`),
+  user('u1', `![id=a](${RED})\n${mediaTagText(SONG)}`),
   reply('a1', `${mediaTagText(FILM)}\n${mediaTagText(LOOP)}`),
-  user('u2', `![${SKY}](id=e)`),
+  user('u2', `![id=e](${SKY})`),
 ]
 
 /** A video stream of a probe output, as ffprobe writes it. */

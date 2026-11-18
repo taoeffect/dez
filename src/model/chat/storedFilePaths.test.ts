@@ -13,20 +13,23 @@ const PASTED_VIDEO = '/home/ann/.config/dez/assets/video/0c4e7a51-9b2d-4f6a-8e13
 
 describe('withoutStoredFilePaths', () => {
   it.each([
-    ['empty parens', `![${PNG}]()`, '![image]()'],
-    ['an id', `![${PNG}](id=a)`, '![image](id=a)'],
-    ['unknown keys and escaped values', String.raw`![${PNG}](id=b|desc=a \| b \(c\) \\ d|x=)`, String.raw`![image](id=b|desc=a \| b \(c\) \\ d|x=)`],
-    ['a home folder with spaces, parentheses, and non-ASCII names', '![/Users/Zoë Ann (work)/.config/dez/assets/images/x_1-2.webp](id=a)', '![image](id=a)'],
-    ['a generated image', `![${GENERATED}](id=b)`, '![image](id=b)'],
-  ])('sends a reference with %s as ![image] and its metadata as it is', (_case, text, sent) => {
+    ['no metadata', `![](${PNG})`, '![](image)'],
+    ['an id', `![id=a](${PNG})`, '![id=a](image)'],
+    ['unknown keys and escaped values', String.raw`![id=b|desc=a \| b (c) \[d\] \\ e|x=](${PNG})`, String.raw`![id=b|desc=a \| b (c) \[d\] \\ e|x=](image)`],
+    ['a home folder with spaces, parentheses, and non-ASCII names', '![id=a](</Users/Zoë Ann (work)/.config/dez/assets/images/x_1-2.webp>)', '![id=a](image)'],
+    ['a path in <…> that needs none', `![id=a](<${PNG}>)`, '![id=a](image)'],
+    ['a generated image', `![id=b](${GENERATED})`, '![id=b](image)'],
+  ])('sends a reference with %s as ](image) and its metadata as it is', (_case, text, sent) => {
     expect(withoutStoredFilePaths(text)).toBe(sent)
   })
 
   it.each([
-    ['the source that the Backspace rule leaves', `![${PNG}](id=a`, '![image](id=a'],
-    ['the link that the Delete rule leaves', `[${PNG}](id=a)`, '[image](id=a)'],
-    ['a reference with an id that is not valid', `![${PNG}](id=A)`, '![image](id=A)'],
-    ['a reference with a key given twice', `![${PNG}](id=a|id=b)`, '![image](id=a|id=b)'],
+    ['the source that the Backspace rule leaves', `![id=a](${PNG}`, '![id=a](image'],
+    ['the source of a path in <…> that the Backspace rule leaves', '![id=a](</Users/Zoë Ann/.config/dez/assets/images/x.png> more', '![id=a](image more'],
+    ['the link that the Delete rule leaves', `[id=a](${PNG})`, '[id=a](image)'],
+    ['a reference with an id that is not valid', `![id=A](${PNG})`, '![id=A](image)'],
+    ['a reference with a key given twice', `![id=a|id=b](${PNG})`, '![id=a|id=b](image)'],
+    ['a reference of the old form, with the path first', `![${PNG}](id=a)`, '![image](id=a)'],
     ['a bare path', `see ${PNG} now`, 'see image now'],
     ['a bare generated path', `see ${GENERATED} now`, 'see image now'],
     ['a bare path of a copy of a shown picture', 'see /home/ann/.config/dez/assets/generated/views/0c4e7a51-9b2d-4f6a-8e13-5d7c9a2b4f60.jpg now', 'see image now'],
@@ -35,12 +38,12 @@ describe('withoutStoredFilePaths', () => {
   })
 
   it('takes the paths in metadata values and every path on a line, also of another home', () => {
-    expect(withoutStoredFilePaths(`![${PNG}](id=a|desc=a /home/bob/.config/dez/assets/images/b.png) and ![${JPG}](id=b)`))
-      .toBe('![image](id=a|desc=a image) and ![image](id=b)')
+    expect(withoutStoredFilePaths(`![id=a|desc=a /home/bob/.config/dez/assets/images/b.png](${PNG}) and ![id=b](${JPG})`))
+      .toBe('![id=a|desc=a image](image) and ![id=b](image)')
   })
 
   it.each(['jpg', 'jpeg', 'gif', 'webp'])('takes a path with the extension %s', (extension) => {
-    expect(withoutStoredFilePaths(`![/home/ann/.config/dez/assets/images/x.${extension}](id=a)`)).toBe('![image](id=a)')
+    expect(withoutStoredFilePaths(`![id=a](/home/ann/.config/dez/assets/images/x.${extension})`)).toBe('![id=a](image)')
   })
 
   it.each([
@@ -59,7 +62,7 @@ describe('withoutStoredFilePaths', () => {
   it('puts the word of the last path in a run in place of all the paths in it', () => {
     expect(withoutStoredFilePaths(`${PNG} then ${VIDEO}`)).toBe('video')
     expect(withoutStoredFilePaths(`${VIDEO} then ${CACHED} then ${PNG}`)).toBe('image')
-    expect(withoutStoredFilePaths(`![${PNG}](id=a) then ${AUDIO}`)).toBe('![image](id=a) then audio')
+    expect(withoutStoredFilePaths(`![id=a](${PNG}) then ${AUDIO}`)).toBe('![id=a](image) then audio')
   })
 
   it('leaves no path of a media tag that goes as plain text', () => {
@@ -82,11 +85,15 @@ describe('withoutStoredFilePaths', () => {
     }
   })
 
-  it('takes the path of a linked image from every image reference, also one that is not valid', () => {
+  it('takes the path of a linked image from every image reference and markdown link, also one that is not valid, and from the alt text of the old form', () => {
     const cases = [
+      ['![id=a](</home/ann/Pictures/My photo (1).JPG>)', '![id=a](image)'],
+      ['Back ![id=a](/home/ann/a.png', 'Back ![id=a](image'],
+      ['Back ![id=a](/home/ann/a.pngand more', 'Back ![id=a](imageand more'],
+      ['Gone [id=a](</home/ann/My photo.png>)', 'Gone [id=a](image)'],
+      ['Here ![id=b|tool=image](/home/ann/x.webp) and ![](/home/ann/y.svg)', 'Here ![id=b|tool=image](image) and ![](image)'],
+      ['[x.png](/home/ann/x.png)', '[x.png](image)'],
       ['![/home/ann/Pictures/My photo (1).JPG](id=a)', '![image](id=a)'],
-      ['Back ![/home/ann/a.png](id=a', 'Back ![image](id=a'],
-      ['Here ![/home/ann/x.webp](id=b|tool=image) and ![/home/ann/y.svg]()', 'Here ![image](id=b|tool=image) and ![image]()'],
       ['[/home/ann/a.gif](https://example.com/a.gif)', '[image](https://example.com/a.gif)'],
     ]
     for (const [text, sent] of cases) expect(withoutStoredFilePaths(text), text).toBe(sent)
@@ -100,8 +107,8 @@ describe('withoutStoredFilePaths', () => {
     for (const [text, sent] of cases) expect(withoutStoredFilePaths(text), text).toBe(sent)
   })
 
-  it('leaves a linked path that the user typed out of a reference or a tag as it is', () => {
-    for (const text of ['Open /home/ann/Pictures/x.png', 'img src="/home/ann/a.png"', '<dez:image src="/home/ann/a.png"/>', '[x.png](/home/ann/x.png)']) {
+  it('leaves a linked path that the user typed out of a reference, a link, or a tag as it is', () => {
+    for (const text of ['Open /home/ann/Pictures/x.png', 'img src="/home/ann/a.png"', '<dez:image src="/home/ann/a.png"/>', '(/home/ann/x.png)']) {
       expect(withoutStoredFilePaths(text)).toBe(text)
     }
   })
@@ -146,8 +153,8 @@ describe('withoutStoredFilePaths', () => {
 describe('holdsStoredFilePath', () => {
   it('finds an image path in a reference, in prose, and in JSON, on every call', () => {
     for (let call = 0; call < 2; call++) {
-      expect(holdsStoredFilePath(`a ![${PNG}](id=a)`)).toBe(true)
-      expect(holdsStoredFilePath(`a [${PNG}](id=a)`)).toBe(true)
+      expect(holdsStoredFilePath(`a ![id=a](${PNG})`)).toBe(true)
+      expect(holdsStoredFilePath(`a [id=a](${PNG})`)).toBe(true)
       expect(holdsStoredFilePath(JSON.stringify({ thinking: `The user sent\n${JPG}` }))).toBe(true)
       expect(holdsStoredFilePath(`made ${GENERATED}`)).toBe(true)
     }

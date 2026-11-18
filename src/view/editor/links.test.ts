@@ -82,7 +82,7 @@ describe('renderedLinks', () => {
   })
 
   it('leaves a Dez image reference without its `!` as source, and never renders a link in an image description', () => {
-    const doc = `See [${RED}](id=a) and ![a [b](https://example.com)](https://example.com/i.png).`
+    const doc = `See [id=a](${RED}) and ![a [b](https://example.com)](https://example.com/i.png).`
     expect(shown(createState(doc))).toEqual([])
   })
 
@@ -152,7 +152,7 @@ describe('renderedLinks', () => {
   })
 
   it('leaves a link that touches a rendered image as source', () => {
-    const image = (id: string): string => `![${RED}](id=${id})`
+    const image = (id: string): string => `![id=${id}](${RED})`
     const doc = `See ${image('a')}[a](https://a.example), [${image('b')}](https://b.example), and [c](https://c.example) ${image('c')}.`
     expect(shownTexts(createState(doc))).toEqual(['c'])
   })
@@ -205,10 +205,10 @@ describe('renderedLinkAt', () => {
   })
 
   it('finds no link where the source shows', () => {
-    const doc = 'See [docs](https://a.example) and [path](id=a).'
+    const doc = `See [docs](https://a.example) and [id=a](${RED}).`
     const inDocs = doc.indexOf('docs') + 2
     expect(urlAt(createState(doc, inDocs), inDocs, 1)).toBeNull()
-    const inPath = doc.indexOf('path') + 2
+    const inPath = doc.indexOf('id=a') + 2
     expect(urlAt(createState(doc, doc.length), inPath, 1)).toBeNull()
   })
 })

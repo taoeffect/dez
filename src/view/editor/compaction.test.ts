@@ -124,7 +124,7 @@ describe('text at the block', () => {
 
   // A drop on the left part of the first pill is a drop at the doc start.
   it.each([
-    ['an image', '![/home/u/.config/dez/assets/images/a.png](id=d)'],
+    ['an image', '![id=d](/home/u/.config/dez/assets/images/a.png)'],
     ['a clip, which ends with its own line break', `${PLAYER}\n`],
   ])('puts %s that is dropped before the block after the block', (_what, dropped) => {
     const state = createState(TEXTS, ROLES, [AFTER])
@@ -150,7 +150,7 @@ describe('text at the block', () => {
   // A drop on the right part of the first pill, or on the chips, is a drop
   // at the end of the tag line: inside the block.
   it.each([
-    ['an image', '![/home/u/.config/dez/assets/images/a.png](id=d)'],
+    ['an image', '![id=d](/home/u/.config/dez/assets/images/a.png)'],
     ['a clip, which starts with its own line break', `\n${PLAYER}`],
   ])('puts %s that is dropped inside the block after the block', (_what, dropped) => {
     const state = createState(TEXTS, ROLES, [AFTER])

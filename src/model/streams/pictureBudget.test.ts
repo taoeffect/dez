@@ -134,7 +134,7 @@ describe('totalCost', () => {
 
 describe('contextImageCost', () => {
   const messages: StreamMessage[] = [
-    { role: 'user', content: 'An older message with ![image](id=a) as text.' },
+    { role: 'user', content: 'An older message with ![id=a](image) as text.' },
     { role: 'agent', content: 'An answer.' },
     { role: 'user', content: [{ type: 'text', text: 'Two: ' }, { type: 'image', path: '/a.png' }, { type: 'image', path: '/b.png' }] },
     ...round(['call_1']),

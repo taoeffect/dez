@@ -28,8 +28,8 @@ interface Toast {
 
 const RED = '/home/u/.config/dez/assets/images/red.png'
 const BLUE = '/home/u/.config/dez/assets/images/blue.jpg'
-const red = `![${RED}]()`
-const blue = `![${BLUE}]()`
+const red = `![](${RED})`
+const blue = `![](${BLUE})`
 
 let confirmCalls: ConfirmCall[] = []
 let deleteCalls: DeleteCall[] = []
@@ -97,7 +97,7 @@ describe('renderedImages', () => {
   })
 
   it('leaves broken references and other markdown images as text', () => {
-    const state = createState([`![${RED}](`, `[${RED}]()`, `![${RED}](x)`, '![](https://example.com/a.png)'].join('\n'))
+    const state = createState([`![](${RED}`, `[](${RED})`, `![x](${RED})`, `![](<${RED})`, '![](https://example.com/a.png)'].join('\n'))
     expect(shown(state)).toEqual([])
   })
 
@@ -120,12 +120,12 @@ describe('renderedImages', () => {
 })
 
 describe('Backspace after an image', () => {
-  it('deletes only the `)`, so the source shows with the caret after the `(`', () => {
+  it('deletes only the `)`, so the source shows with the caret after the path', () => {
     const doc = `x ${red} y`
     const after = doc.indexOf(red) + red.length
     const { handled, state } = runCommand(createState(doc, after), deleteImageParen)
     expect(handled).toBe(true)
-    expect(state.doc.toString()).toBe(`x ![${RED}]( y`)
+    expect(state.doc.toString()).toBe(`x ![](${RED} y`)
     expect(state.selection.main.head).toBe(after - 1)
     expect(shown(state)).toEqual([])
   })
@@ -169,7 +169,7 @@ describe('Delete before an image', () => {
     const before = doc.indexOf(red)
     const { handled, state } = runCommand(createState(doc, before), deleteImageBang)
     expect(handled).toBe(true)
-    expect(state.doc.toString()).toBe(`x [${RED}]()`)
+    expect(state.doc.toString()).toBe(`x [](${RED})`)
     expect(state.selection.main.head).toBe(before)
     expect(shown(state)).toEqual([])
     expect(shown(type(state, '!'))).toEqual([red])
@@ -288,7 +288,7 @@ describe('deleteImage (the image trash)', () => {
 
   it('removes a linked image, whose file stays, in its own step that undo takes back', async () => {
     const path = '/home/u/Pictures/cat.png'
-    const linked = `![${path}](id=a)`
+    const linked = `![id=a](${path})`
     // A linked reference shows only in a user section.
     const editor = createEditor(EditorState.create({
       doc: ['before', linked, 'after'].join('\n'),
@@ -368,8 +368,8 @@ describe('deleteImage (the image trash)', () => {
   })
 
   it('finds the reference again by its path and id in a new state of the same tab (the stream-end rebuild)', async () => {
-    const redA = `![${RED}](id=a)`
-    const redB = `![${RED}](id=b)`
+    const redA = `![id=a](${RED})`
+    const redB = `![id=b](${RED})`
     const doc = [redA, redB, 'after'].join('\n')
     // The store got the end of the reply and a new user section.
     const rebuilt = `${doc} streamed\n${SECTION_SEP}\n`
@@ -431,8 +431,8 @@ describe('deleteImage (the image trash)', () => {
 })
 
 describe('image overlay tooltips', () => {
-  const redA = `![${RED}](id=a)`
-  const blueB = `![${BLUE}](id=b)`
+  const redA = `![id=a](${RED})`
+  const blueB = `![id=b](${BLUE})`
 
   /** The state with the tooltip of an overlay item of the shown image
    *  `index`, as the hover shows it. */
@@ -468,7 +468,7 @@ describe('image overlay tooltips', () => {
       runCommand(state, deleteImageParen).state,
       // Another id, another file, and no reference.
       edit(state, { changes: { from: to - 2, to: to - 1, insert: 'c' } }),
-      edit(state, { changes: { from, to, insert: `![${BLUE}](id=a)` } }),
+      edit(state, { changes: { from, to, insert: `![id=a](${BLUE})` } }),
       edit(state, { changes: { from, to } }),
     ]
     for (const next of changed) expect(imageTooltip(next)).toBeNull()

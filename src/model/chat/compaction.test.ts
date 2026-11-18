@@ -166,8 +166,8 @@ describe('the linked paths of a compaction block', () => {
 
   it('counts a linked path in the block only when the list holds it, and in the reply text after it never', () => {
     const stored = '/home/u/.config/dez/assets/images/c.png'
-    const block = compactionBlockText({ count: 1, lastId: null, pictures: [], linked: LINKED }, `![${LINKED[0]}](id=a)`)
-    const reply_ = `![${LINKED[0]}](id=b)\n![${stored}](id=c)`
+    const block = compactionBlockText({ count: 1, lastId: null, pictures: [], linked: LINKED }, `![id=a](<${LINKED[0]}>)`)
+    const reply_ = `![id=b](<${LINKED[0]}>)\n![id=c](${stored})`
     const text = `${block}\n${reply_}`
     const parts = linkedRuleParts('agent', text, 0)
 
@@ -178,7 +178,7 @@ describe('the linked paths of a compaction block', () => {
     expect(sectionLinkedRuleParts(reply('c', text), 0)).toStrictEqual(parts)
     expect(partsImageReferences(parts).map(({ id, path, from }) => ({ id, path, from }))).toStrictEqual([
       { id: 'a', path: LINKED[0], from: text.indexOf('![') },
-      { id: 'c', path: stored, from: text.indexOf(`![${stored}`) },
+      { id: 'c', path: stored, from: text.indexOf(`![id=c](${stored}`) },
     ])
     // A block with no list gives no path.
     expect(linkedRuleParts('agent', compactionBlockText({ count: 1, lastId: null, pictures: [] }, 'Notes'), 0)[0].rule).toBe('agent')
@@ -297,7 +297,7 @@ describe('contentCompactionBlock and sectionCompactionBlock', () => {
 
 describe('isCarriedUserAssets', () => {
   it('is true only for a text whose whole first line is the label', () => {
-    expect(isCarriedUserAssets(`${CARRIED_USER_ASSETS_LABEL}\n![/home/u/.config/dez/assets/images/red.png](id=a)`)).toBe(true)
+    expect(isCarriedUserAssets(`${CARRIED_USER_ASSETS_LABEL}\n![id=a](/home/u/.config/dez/assets/images/red.png)`)).toBe(true)
     expect(isCarriedUserAssets(CARRIED_USER_ASSETS_LABEL)).toBe(true)
     expect(isCarriedUserAssets(`Here:\n${CARRIED_USER_ASSETS_LABEL}`)).toBe(false)
     expect(isCarriedUserAssets(`${CARRIED_USER_ASSETS_LABEL} And more.\nText`)).toBe(false)

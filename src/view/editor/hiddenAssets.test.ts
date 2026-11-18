@@ -21,7 +21,7 @@ const KEPT_CLIP = keptClip('l')
 const KEPT_USER_IMAGE = keptImage('u')
 // An image with no mark, in the folder of the stored images: it shows at
 // its place in a section of either role.
-const SHOWN = '![/home/u/.config/dez/assets/images/shown.png](id=s)'
+const SHOWN = '![id=s](/home/u/.config/dez/assets/images/shown.png)'
 
 /** A state with an agent section of the entries `lines` (a chip is one
  *  entry of several doc lines), each on its own lines, after a user
@@ -302,7 +302,7 @@ describe('the assets that a compaction keeps', () => {
   })
 
   it('shows an asset with both marks under the chip of its call, and one of a call in the block in the assets chip', () => {
-    const both = `${IMAGE.slice(0, -1)}|kept=compaction)`
+    const both = IMAGE.replace('](', '|kept=compaction](')
     const later = compactedState(['Notes.'], [], [['agent', [INVOKE, '', both, '', 'Done.'].join('\n')]])
     const inBlock = compactedState([INVOKE, '', both, '', 'Done.'], [])
     // The call in the block shows no chip, so it hides no asset of a later

@@ -8,7 +8,7 @@ import { compactionChip, compactionChipData, openCompactionChips, toggleCompacti
 import { CHIP, PLAYER, createState, keptClip, keptImage } from './testing'
 
 const PICTURES: ShownPicture[] = [{ file: 'f1.png', label: 'asset_view: the sheet of the video clip @d.', width: 64, height: 48, bytes: 300 }]
-const SHOWN = '![/home/u/.config/dez/assets/images/shown.png](id=s)'
+const SHOWN = '![id=s](/home/u/.config/dez/assets/images/shown.png)'
 const LINKED_CLIP = '/home/u/Music/linked.wav'
 
 interface TagOptions {

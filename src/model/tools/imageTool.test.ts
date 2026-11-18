@@ -44,14 +44,14 @@ describe('imageIdArgument', () => {
 describe('imageOf', () => {
   it('finds the newest reference with the id in the user and the agent sections, with its file type', () => {
     const made = '/home/u/.config/dez/assets/generated/images/fox.jpg'
-    const sections = [section('user', `A fox: ![${stored('fox.png')}](id=a)`), section('agent', `![${made}](id=a|tool=image)`)]
+    const sections = [section('user', `A fox: ![id=a](${stored('fox.png')})`), section('agent', `![id=a|tool=image](${made})`)]
     expect(imageOf(sections, 'a')).toStrictEqual({ path: made, mediaType: 'image/jpeg' })
     expect(imageOf(sections.slice(0, 1), 'a')).toStrictEqual({ path: stored('fox.png'), mediaType: 'image/png' })
   })
 
   it('tells the model that an id names an audio or a video clip', () => {
     const sections = [
-      section('user', `![${stored('fox.png')}](id=a)`),
+      section('user', `![id=a](${stored('fox.png')})`),
       section('agent', mediaTagText({ kind: 'audio', id: 'b', type: 'audio/mpeg', src: null, url: 'https://cdn.example/b.mp3', expires: null, other: [] })),
       section('agent', mediaTagText({ kind: 'video', id: 'c', type: 'video/mp4', src: null, url: null, expires: null, other: [] })),
     ]
@@ -61,8 +61,8 @@ describe('imageOf', () => {
 
   it('lists the images, each once and in the order they first came, for an id that names nothing', () => {
     const sections = [
-      section('user', `![${stored('b.png')}](id=b) ![${stored('a.png')}](id=a) ![${stored('old.png')}]()`),
-      section('user', `![${stored('b2.png')}](id=b)`),
+      section('user', `![id=b](${stored('b.png')}) ![id=a](${stored('a.png')}) ![](${stored('old.png')})`),
+      section('user', `![id=b](${stored('b2.png')})`),
     ]
     expect(refusal(() => imageOf(sections, 'z'))).toBe('No image of this conversation has the id @z. Its images are @b, @a: call again with one of these ids.')
   })

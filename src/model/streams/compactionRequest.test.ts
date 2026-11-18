@@ -182,7 +182,7 @@ describe('compactionInstruction', () => {
 
     expect(holdsStoredFilePath(text)).toBe(false)
     expect(['/home/u', '.config/dez', 'assets/images', 'red.jpg', 'sky.png'].filter((part) => text.includes(part))).toStrictEqual([])
-    expect(text).toContain('(id=a)')
+    expect(text).toContain('![id=a](image)')
   })
 
   // The lines of the list of the middle messages: `m1: "start"`.

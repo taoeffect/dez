@@ -21,7 +21,7 @@ import { refusal } from './testing'
 
 const SONG: MediaTagData = { kind: 'audio', id: 'b', type: 'audio/mpeg', src: 'https://cdn.example/b.mp3', url: 'https://cdn.example/b.mp3', expires: null, other: [] }
 const VIDEO: MediaTagData = { kind: 'video', id: 'c', type: 'video/mp4', src: null, url: null, expires: null, other: [] }
-const IMAGE = '![/home/u/.config/dez/assets/images/red.png](id=a)'
+const IMAGE = '![id=a](/home/u/.config/dez/assets/images/red.png)'
 
 function section(role: Section['role'], text: string): Section {
   return { id: crypto.randomUUID(), role, content: [{ kind: 'text', text }] }

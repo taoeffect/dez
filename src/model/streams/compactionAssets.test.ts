@@ -411,7 +411,7 @@ describe('middleMessageStarts', () => {
   // Each path crosses character 160 of its message, where the cut falls.
   it.each([
     ['a bare stored path', `${'word '.repeat(28)}/home/alice/.config/dez/assets/images/0123.png`, `${'word '.repeat(28)}image`],
-    ['the linked path of a broken image reference', `${'word '.repeat(28)}![/home/alice/Pictures/holiday/beach.png](id=a`, `${'word '.repeat(28)}![image](id=a`],
+    ['the linked path of a broken image reference', `${'word '.repeat(28)}![id=a](/home/alice/Pictures/holiday/beach.png`, `${'word '.repeat(28)}![id=a](image`],
     ['the src path of a broken media tag', `${'word '.repeat(26)}<dez:video src="/home/alice/Videos/holiday.webm"`, `${'word '.repeat(26)}<dez:video src="video"`],
   ])('takes %s out of a message before the cut, so no part of it stays', (_case, message, start) => {
     const sections = [user('u0', 'Make a fox.'), reply('r0', 'ok'), user('u1', message), reply('r1', 'ok'), user('u2', 'Go on.'), reply('r', '')]

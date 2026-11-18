@@ -1,5 +1,5 @@
 import { ExplainedError } from '../../utils/errorText'
-import { IMAGE_PATH_END_SOURCE, LINKED_IMAGE_PATH_SOURCE, isImagePath } from './images'
+import { IMAGE_DESTINATION_SOURCE, IMAGE_PATH_END_SOURCE, LINKED_IMAGE_PATH_SOURCE, isImagePath } from './images'
 import { MEDIA_CACHE_PATH_END_SOURCE, MEDIA_TAG_KINDS, SAVED_MEDIA_PATH_END_SOURCES, isSavedMediaPath, type MediaTagKind } from './mediaTags'
 import { SHOWN_PICTURE_PATH_END_SOURCE } from './shownPictures'
 
@@ -44,11 +44,17 @@ const ANY_STORED_FILE_PATH_END = new RegExp(STORED_FILE_PATH_END_SOURCE)
 // holds.
 const BRACKET_FREE_RUN = /[^\[\]\r\n]+/g
 
-// The path of a linked image reference, from its `[` to its `](`: also of a
-// reference that is not valid (the Backspace rule's `![<path>](id=a`, bad
-// metadata), and of one in an agent section, where it is plain text. A
-// stored path matches too, which gives the same word.
-const LINKED_IMAGE_REFERENCE_PATH = new RegExp(String.raw`\[${LINKED_IMAGE_PATH_SOURCE}\]\(`, 'g')
+// The destination path of an image reference with a linked or a stored
+// path, bare or in `<…>`, from its `](`: also of a reference that is not
+// valid (the Backspace rule's `![id=a](<path>`, the Delete rule's
+// `[id=a](<path>)`, bad metadata), of one in an agent section, where it is
+// plain text, and of a markdown link to such a path.
+const IMAGE_DESTINATION_PATH = new RegExp(String.raw`\]\(${IMAGE_DESTINATION_SOURCE}`, 'g')
+// A linked or a stored image path right before `](`: the place of the path
+// in the old form of a reference (`![<path>](id=a)`), which Dez reads no
+// more, and the text of a markdown link. Its path must not go to a
+// provider either.
+const IMAGE_ALT_TEXT_PATH = new RegExp(String.raw`\[${LINKED_IMAGE_PATH_SOURCE}\]\(`, 'g')
 // A media tag, valid or not, from its name to the end of its line: a valid
 // tag goes as its request form, with no `src` (`mediaTagsForRequest`), but a
 // tag that the user broke goes as plain text.
@@ -68,19 +74,19 @@ export function holdsStoredFilePath(text: string): boolean {
  *  links replaced by one word. The `src` path of a media tag line becomes
  *  the tag's kind (`audio` or `video`), also for a temp copy; any other
  *  such path becomes `image`, `audio`, `video`, or `media` (a temp copy).
- *  So an image reference goes as `![image](id=a)`, with its metadata as it
+ *  So an image reference goes as `![id=a](image)`, with its metadata as it
  *  is in the text, and a reference that is not valid (the Backspace rule's
- *  `![<path>](id=a`, bad metadata), a `src` path of a media tag line that
+ *  `![id=a](<path>`, bad metadata), a `src` path of a media tag line that
  *  is not valid, and, for a stored file, a bare path and a path in a
  *  metadata value lose their paths too. A text with no such path
  *  comes back as it is, so text-only request bodies keep their bytes
  *  (prompt cache).
  *
- *  A linked path is found only where Dez writes it: in the alt text of an
- *  image reference (`[/…/x.png](`), and as the `src` of a media tag. So the
- *  path of an image in a markdown link (`[/a.png](https://…)`) goes too,
- *  but a path that the user types in prose stays: it is the user's own
- *  text.
+ *  A linked path is found only where Dez writes it, or wrote it: in the
+ *  destination of an image reference (`](/…/x.png`, `](</…/x.png>`), in
+ *  the alt text of the old form (`[/…/x.png](`), and as the `src` of a
+ *  media tag. So the path of an image in a markdown link goes too, but a
+ *  path that the user types in prose stays: it is the user's own text.
  *
  *  A stored path's start in prose is not known (a home folder can hold
  *  spaces), so each run with no bracket or line break loses all from its
@@ -91,7 +97,8 @@ export function holdsStoredFilePath(text: string): boolean {
  *  from each `/`, which took 0.5 s on a 200 KB base64 line. */
 export function withoutStoredFilePaths(text: string): string {
   const unlinked = text
-    .replace(LINKED_IMAGE_REFERENCE_PATH, '[image](')
+    .replace(IMAGE_DESTINATION_PATH, '](image')
+    .replace(IMAGE_ALT_TEXT_PATH, '[image](')
     .replace(MEDIA_TAG_LINE, (line, kind: string) => line.replace(MEDIA_TAG_SRC_PATH, `$1${kind}"`))
   if (!holdsStoredFilePath(unlinked)) return unlinked
   return unlinked.replace(BRACKET_FREE_RUN, (run) => {
@@ -108,13 +115,13 @@ export function withoutStoredFilePaths(text: string): string {
  *  app folder `appDir`, for the image reference or the media tag that names
  *  it. Every code that stores an image or a clip in the app folder gets its
  *  path here, before it writes the file. The recognizers take only an
- *  absolute path on one line, with no bracket for an image (so not
- *  `./.config/dez` when $HOME is not set): a reference or a tag with
+ *  absolute path on one line, with no bracket, `<`, or `>` for an image (so
+ *  not `./.config/dez` when $HOME is not set): a reference or a tag with
  *  another path would show as plain text and never reach a model. For such
  *  a path, this throws an `ExplainedError` that tells the user the fix. */
 export function newStoredFilePath(appDir: string, file: string, kind: 'image' | MediaTagKind): string {
   const path = `${appDir}/${file}`
   if (kind === 'image' ? isImagePath(path) : isSavedMediaPath(path)) return path
-  const [files, refusedChars] = kind === 'image' ? ['images', '"[", "]", or a line break'] : ['clips', 'a line break']
+  const [files, refusedChars] = kind === 'image' ? ['images', '"[", "]", "<", ">", or a line break'] : ['clips', 'a line break']
   throw new ExplainedError(`Dez cannot store ${files} in the Dez folder ${appDir}. The path of this folder must start with "/" and must not hold ${refusedChars}. Start Dez with a HOME environment variable that gives such a path.`)
 }

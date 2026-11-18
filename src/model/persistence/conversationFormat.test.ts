@@ -133,9 +133,9 @@ world
       id: 'conversation',
       title: '[image] What color is it?',
       sections: [
-        section('user', [textNode(`![${image}]()\nWhat color is it? ![${image}]()`)]),
+        section('user', [textNode(`![](${image})\nWhat color is it? ![](${image})`)]),
         section('agent', [textNode('Red.')]),
-        section('user', [textNode(`![${image}]()`)]),
+        section('user', [textNode(`![](${image})`)]),
       ],
       activeModel: null,
       created_at: 1000,

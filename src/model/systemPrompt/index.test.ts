@@ -93,9 +93,9 @@ describe('buildSystemPrompt with a template of the user', () => {
   })
 
   it('sends no path of a stored file that the template holds', () => {
-    const template = 'Look at ![/home/u/.config/dez/assets/images/1.png](id=a) and {{model_id}}.'
+    const template = 'Look at ![id=a](/home/u/.config/dez/assets/images/1.png) and {{model_id}}.'
 
-    expect(buildSystemPrompt(template, MODEL, PROVIDER_NAME, [])).toBe('Look at ![image](id=a) and google/gemini-3-pro-preview.')
+    expect(buildSystemPrompt(template, MODEL, PROVIDER_NAME, [])).toBe('Look at ![id=a](image) and google/gemini-3-pro-preview.')
   })
 
   it('throws the refusal text of a template with a problem, and logs it', () => {

@@ -105,11 +105,11 @@ describe('find match filter', () => {
 
   it('skips the hidden source of shown images but matches a broken image reference', () => {
     const path = '/home/u/.config/dez/assets/images/a.png'
-    const doc = `png ![${path}]() ![${path}](`
+    const doc = `png ![](${path}) ![](${path}`
     const state = createState(doc, undefined, [markdownImages()])
     const broken = doc.lastIndexOf(path)
     expect(matchRanges(state, plain('png'))).toEqual([[0, 3], [broken + path.length - 3, broken + path.length]])
-    expect(matchTexts(state, plain('png ![/home'))).toEqual([])
+    expect(matchTexts(state, plain('png ![](/home'))).toEqual([])
   })
 
   it('skips the hidden source of tool call chips, but not a block in a user section', () => {
@@ -262,7 +262,7 @@ describe('find prefill', () => {
   })
 
   it('takes nothing when the selection touches the hidden source of a shown image', () => {
-    const reference = '![/home/u/.config/dez/assets/images/a.png](id=a)'
+    const reference = '![id=a](/home/u/.config/dez/assets/images/a.png)'
     const doc = `look ${reference} here`
     const from = doc.indexOf(reference)
     const to = from + reference.length

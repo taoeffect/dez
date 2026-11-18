@@ -50,7 +50,7 @@ export function imageOptionsOf(model: Pick<ModelInfo, 'id' | 'imageInput' | 'ima
 // The request messages: every section that has text, in order. No path of a
 // file that Dez stores or links ever goes to a provider: every text (user
 // and agent text, prompt bodies, tool arguments and results) goes through
-// `withoutStoredFilePaths`, so an image reference goes as `![image](id=a)`,
+// `withoutStoredFilePaths`, so an image reference goes as `![id=a](image)`,
 // with the ids and other metadata that later requests can name. A clip goes
 // as its tag with only the id and the type (`mediaTagRequestText`), in a
 // user section (a clip file that the user pasted or dropped) and in an
@@ -62,7 +62,7 @@ export function imageOptionsOf(model: Pick<ModelInfo, 'id' | 'imageInput' | 'ima
 // is false: its image references, and the images that it names with an
 // `@id` mention, however far back they are (`userMessageContent`). An
 // image goes one time in a request, in the first message that holds or
-// names it: a later message sends that image as its `![image](id=a)` text,
+// names it: a later message sends that image as its `![id=a](image)` text,
 // or as the mention, only. An agent section's images go as text only: both
 // formats take images only from the user. So to show a model an image that
 // a model made, the user mentions it in a message, or the model calls
@@ -283,7 +283,7 @@ function partListText(list: PartList): string {
 // The notes go as an agent message sends them: a clip as the request form
 // of its tag, the model's text with its escape removed, and every text
 // after the path scrub. But each image reference also gets its image
-// part, right after its `![image](id=a)` text, unless it has the kept
+// part, right after its `![id=a](image)` text, unless it has the kept
 // mark. The references are read with the rule of the block
 // (`blockLinkedRule`), so a linked file counts only when the tag lists
 // it: a model's text never makes Dez read another file of the computer.
@@ -350,7 +350,7 @@ function addNotesText(list: PartList, notes: string, rule: LinkedPathRule, image
  *
  *  The source of the request is the newest user message as a message of
  *  its own (`RequestMessages.newestUserMessage`): its text, with no path,
- *  and with each image reference as its `![image](id=a)` text; the images
+ *  and with each image reference as its `![id=a](image)` text; the images
  *  that it holds and the ones that it names with an `@id` mention, in text
  *  order and each one once; and its clips (`messageClips`). A chat request
  *  sends no clip: only a media request reads them. `preparedMediaRequest`
@@ -680,7 +680,7 @@ function userMessageContent(text: string, imagesById: ReadonlyMap<string, string
 // Adds the text of a message of the user to a message: text and image
 // parts in doc order (`messageTextPieces`, with the linked paths that
 // count by `rule`). Each image part comes right after its
-// reference's text, `![image](id=a)`, at the end of the text part before
+// reference's text, `![id=a](image)`, at the end of the text part before
 // it, so that a model can name the image by its id (and `promptWithNames`,
 // mediaRequest.ts, finds that text). A media tag goes in its request form
 // and adds no part.

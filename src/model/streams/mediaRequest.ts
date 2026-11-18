@@ -222,7 +222,7 @@ export function preparedMediaRequest(kind: MediaKind, source: MediaRequestSource
 // `imageNames` has the name of each image that goes by its path (`@Image1`
 // for the first), and `clipNames` the name of each clip that goes by its id
 // (`@Audio1`). The name of an image takes the place of its reference text
-// (`![image](id=a)`) and of each @id mention of it, and the name of a clip
+// (`![id=a](image)`) and of each @id mention of it, and the name of a clip
 // the place of its tag line and of each @id mention of it, as the guides of
 // such models tell the user to write; the doc keeps the text as the user
 // wrote it. The image part of a reference or of a first mention comes right

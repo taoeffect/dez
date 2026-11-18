@@ -936,11 +936,11 @@ describe('images in chat streams', () => {
   it('sends the image of a user message in every later request as the same bytes, and an image one time in a request', async () => {
     const model = { providerId: 'local', modelId: 'm' }
     const path = `${APP_DIR}/assets/images/red.png`
-    const turn1: Section[] = [{ id: 'u1', role: 'user', content: [{ kind: 'text', text: `Which color? ![${path}](id=a)` }] }]
+    const turn1: Section[] = [{ id: 'u1', role: 'user', content: [{ kind: 'text', text: `Which color? ![id=a](${path})` }] }]
     const turn2: Section[] = [
       ...turn1,
-      { id: 'a1', role: 'agent', model, content: [{ kind: 'text', text: `Red, as here: ![${path}](id=b)` }] },
-      { id: 'u2', role: 'user', content: [{ kind: 'text', text: `![${path}](id=c) And this one?` }] },
+      { id: 'a1', role: 'agent', model, content: [{ kind: 'text', text: `Red, as here: ![id=b](${path})` }] },
+      { id: 'u2', role: 'user', content: [{ kind: 'text', text: `![id=c](${path}) And this one?` }] },
     ]
     const turn3: Section[] = [
       ...turn2,
@@ -954,11 +954,11 @@ describe('images in chat streams', () => {
     const [first, second, third] = streamRequests.map((request) => jsonBody(request).messages as unknown[])
     const imagePart = { type: 'image_url', image_url: { url: dataUrl('image/png', STORED_IMAGE) } }
 
-    expect(first).toEqual([{ role: 'user', content: [{ type: 'text', text: 'Which color? ![image](id=a)' }, imagePart] }])
+    expect(first).toEqual([{ role: 'user', content: [{ type: 'text', text: 'Which color? ![id=a](image)' }, imagePart] }])
     expect(second).toEqual([
       ...first,
-      { role: 'assistant', content: 'Red, as here: ![image](id=b)' },
-      { role: 'user', content: '![image](id=c) And this one?' },
+      { role: 'assistant', content: 'Red, as here: ![id=b](image)' },
+      { role: 'user', content: '![id=c](image) And this one?' },
     ])
     expect(third).toEqual([...second, { role: 'assistant', content: 'Red too.' }, { role: 'user', content: 'Sure?' }])
     // Providers reuse their prompt cache only for a prefix of the same
@@ -1059,24 +1059,24 @@ describe('chat streams with image paths', () => {
     id: 'call_1',
     name: 'model_list',
     status: 'success',
-    arguments: { filter: `![${path}](id=a)` },
+    arguments: { filter: `![id=a](${path})` },
     result: `Found ${path}.`,
   })
   const sections = (model: ModelRef): Section[] => [
-    { id: 'u1', role: 'user', content: [{ kind: 'text', text: `Look: ![${path}](id=a) Why?` }] },
+    { id: 'u1', role: 'user', content: [{ kind: 'text', text: `Look: ![id=a](${path}) Why?` }] },
     {
       id: 'a1',
       role: 'agent',
       model,
-      content: [{ kind: 'text', text: `This: ![${path}](id=a)\n${toolCall}\nDone.` }],
+      content: [{ kind: 'text', text: `This: ![id=a](${path})\n${toolCall}\nDone.` }],
       thinking: { text: `The user sent ${path}.`, replay: { kind: 'field', field: 'reasoning_content' } },
     },
     {
       id: 'u2',
       role: 'user',
       content: [
-        { kind: 'text', text: [`![${path}](id=b)`, `![${path}](id=a`, `[${path}](id=b)`, `see ${path} now`, `![${path}](id=b|desc=a /home/bob/.config/dez/assets/images/b.png)`, ''].join('\n') },
-        { kind: 'prompt', id: 'p1', promptId: null, name: 'Ask', body: `Prompt: ![${path}](id=a)`, expanded: false },
+        { kind: 'text', text: [`![id=b](${path})`, `![id=a](${path}`, `[id=b](${path})`, `see ${path} now`, `![id=b|desc=a /home/bob/.config/dez/assets/images/b.png](${path})`, ''].join('\n') },
+        { kind: 'prompt', id: 'p1', promptId: null, name: 'Ask', body: `Prompt: ![id=a](${path})`, expanded: false },
         { kind: 'text', text: '' },
       ],
     },

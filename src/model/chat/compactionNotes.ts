@@ -23,7 +23,7 @@ import type { Role } from './types'
 //
 //   <what the lines are> Each line: @id | kind | facts | who made it | …
 //
-//   ![/…/assets/generated/images/x.png](id=c|tool=model_invoke|made-by=j-ab12)
+//   ![id=c|tool=model_invoke|made-by=j-ab12](/…/assets/generated/images/x.png)
 //   @c | image | PNG, 1024x768, 1.2 MB | made by the model_invoke job 2 of its reply: "A red fox" | this reply | The fox frame of scene 1.
 //
 //   @a | image | PNG, 800x600, 120 KB | from the user | - | The reference photo.

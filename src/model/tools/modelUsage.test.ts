@@ -149,7 +149,7 @@ describe('modelUsage', () => {
       for (const kind of MEDIA_KINDS) {
         for (const model of models(kind)) {
           const usage = modelUsage(model, NO_FACTS)
-          const sent = mediaInput(kind, model, [user('u1', `Mix ![${FIRST}](id=a) and ![${SECOND}](id=b)`)]).images
+          const sent = mediaInput(kind, model, [user('u1', `Mix ![id=a](${FIRST}) and ![id=b](${SECOND})`)]).images
           const label = `${kind} ${JSON.stringify(model)}`
 
           expect(has(usage, USAGE_TEXTS.noImages, USAGE_TEXTS.noImagesRead), label).toBe(sent.length === 0)
@@ -163,7 +163,7 @@ describe('modelUsage', () => {
       for (const kind of MEDIA_KINDS) {
         for (const model of models(kind)) {
           const usage = modelUsage(model, NO_FACTS)
-          const sent = mediaInput(kind, model, [user('u1', `![${FIRST}](id=a)`), reply('a1', 'Done.'), user('u2', 'Make it blue')]).images
+          const sent = mediaInput(kind, model, [user('u1', `![id=a](${FIRST})`), reply('a1', 'Done.'), user('u2', 'Make it blue')]).images
 
           expect(has(usage, USAGE_TEXTS.newestImage, USAGE_TEXTS.newestImageOnly), `${kind} ${JSON.stringify(model)}`).toBe(sent.length > 0)
         }
@@ -187,13 +187,13 @@ describe('modelUsage', () => {
       for (const kind of MEDIA_KINDS) {
         for (const model of models(kind)) {
           const usage = modelUsage(model, NO_FACTS)
-          const { prompt, images } = mediaInput(kind, model, [user('u1', `Mix ![${FIRST}](id=a) and ![${SECOND}](id=b)`)])
+          const { prompt, images } = mediaInput(kind, model, [user('u1', `Mix ![id=a](${FIRST}) and ![id=b](${SECOND})`)])
           const promptName = model.images?.references?.promptName
           const named = promptName !== undefined && usage.includes(referenceNamesUsage(promptName))
           const label = `${kind} ${JSON.stringify(model)}`
 
           expect(named || usage.includes(USAGE_TEXTS.promptImages) || usage.includes(USAGE_TEXTS.noText), label).toBe(true)
-          expect(named, label).toBe(!usage.includes(USAGE_TEXTS.noText) && images.length > 0 && !prompt.includes('![image]'))
+          expect(named, label).toBe(!usage.includes(USAGE_TEXTS.noText) && images.length > 0 && !prompt.includes('](image)'))
           if (named) expect(prompt, label).toBe('Mix @Image1 and @Image2')
         }
       }
@@ -258,7 +258,7 @@ describe('modelUsage', () => {
       const SONG: MediaTagData = { kind: 'audio', id: 'c', type: 'audio/mpeg', src: '/home/u/.cache/dez/media/s.mp3', url: null, expires: null, other: [] }
       const DANCE: MediaTagData = { kind: 'video', id: 'd', type: 'video/mp4', src: '/home/u/.cache/dez/media/d.mp4', url: null, expires: null, other: [] }
       const RAIN: MediaTagData = { ...SONG, id: 'e', src: '/home/u/.cache/dez/media/r.mp3' }
-      const clipsReply = reply('a1', `![${FIRST}](id=a)\n${mediaTagText(SONG)}\n${mediaTagText(DANCE)}\n${mediaTagText(RAIN)}`)
+      const clipsReply = reply('a1', `![id=a](${FIRST})\n${mediaTagText(SONG)}\n${mediaTagText(DANCE)}\n${mediaTagText(RAIN)}`)
       // A message with clips that it names and a clip file that the user
       // pasted into it.
       const message = user('u1', `Use @c, @d, and @e with this:\n${mediaTagText({ ...DANCE, id: 'f', src: '/home/u/.config/dez/assets/video/f.mp4' })}`)
@@ -396,7 +396,7 @@ describe('modelUsage', () => {
         for (const model of clipModels('video')) {
           const usage = modelUsage(model, NO_FACTS)
           for (const clipKind of ['audio', 'video'] as const) {
-            const { clips } = mediaInput('video', model, [clipsReply, user('u1', `![${FIRST}](id=a) with @${clipKind === 'audio' ? 'c' : 'd'}`)])
+            const { clips } = mediaInput('video', model, [clipsReply, user('u1', `![id=a](${FIRST}) with @${clipKind === 'audio' ? 'c' : 'd'}`)])
             const refusedAsFile = clips.length > 0 && clipTagProblem('M', model.clips, clips, 1) !== null
             const refusedWithUrl = clips.length > 0 && clipTagProblem('M', model.clips, withUrls(clips), 1) !== null
 
@@ -411,7 +411,7 @@ describe('modelUsage', () => {
       it('tells to give each character one voice clip exactly when a video request takes an audio clip file as a reference or a voice', () => {
         for (const model of clipModels('video')) {
           const usage = modelUsage(model, NO_FACTS)
-          const { clips } = mediaInput('video', model, [clipsReply, user('u1', `![${FIRST}](id=a) with @c`)])
+          const { clips } = mediaInput('video', model, [clipsReply, user('u1', `![id=a](${FIRST}) with @c`)])
           const takesFile = clips.length > 0 && clipTagProblem('M', model.clips, clips, 1) === null
           const use = model.clips?.audio?.use
 
@@ -465,7 +465,7 @@ describe('modelUsage', () => {
     it('tells that the images of the newest message go exactly when a request carries them', () => {
       for (const imageInput of IMAGE_INPUTS) {
         const model: ModelInfo = { id: 'm', name: 'M', provider: 'p', request: 'chat', ...(imageInput !== undefined && { imageInput }) }
-        const { messages } = sectionsToStreamMessages([user('u1', `![${FIRST}](id=a)`)], ref, { sendImages: model.imageInput !== false, sendTools: false })
+        const { messages } = sectionsToStreamMessages([user('u1', `![id=a](${FIRST})`)], ref, { sendImages: model.imageInput !== false, sendTools: false })
         const content = messages[0].role === 'user' ? messages[0].content : ''
         const carriesImage = typeof content !== 'string' && content.some((part) => part.type === 'image')
 

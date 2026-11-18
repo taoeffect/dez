@@ -23,24 +23,24 @@ describe('pastedMediaIdChanges', () => {
   }
 
   it('gives pasted images with no id the ids after the highest one in the conversation, and keeps their other items', () => {
-    const before = `![${image('a')}](id=a) ![${image('c')}](id=c)\n`
+    const before = `![id=a](${image('a')}) ![id=c](${image('c')})\n`
 
-    expect(paste(`![${image('d')}]()\n![${image('e')}](desc=x)`, before))
-      .toBe(`${before}![${image('d')}](id=d)\n![${image('e')}](id=e|desc=x)`)
+    expect(paste(`![](${image('d')})\n![desc=x](${image('e')})`, before))
+      .toBe(`${before}![id=d](${image('d')})\n![id=e|desc=x](${image('e')})`)
   })
 
   it('keeps a pasted id that no other image has, and the id of the same image', () => {
-    const before = `![${image('a')}](id=a) `
-    const pasted = `![${image('a')}](id=a) ![${image('k')}](id=k)`
+    const before = `![id=a](${image('a')}) `
+    const pasted = `![id=a](${image('a')}) ![id=k](${image('k')})`
 
     expect(paste(pasted, before)).toBe(before + pasted)
   })
 
   it('gives a pasted image the next id when another image has its id, in the conversation or earlier in the paste', () => {
-    const before = `![${image('a')}](id=a) `
+    const before = `![id=a](${image('a')}) `
 
-    expect(paste(`![${image('x')}](desc=x|id=a) ![${image('y')}](id=c) ![${image('z')}](id=c)`, before))
-      .toBe(`${before}![${image('x')}](desc=x|id=d) ![${image('y')}](id=c) ![${image('z')}](id=e)`)
+    expect(paste(`![desc=x|id=a](${image('x')}) ![id=c](${image('y')}) ![id=c](${image('z')})`, before))
+      .toBe(`${before}![desc=x|id=d](${image('x')}) ![id=c](${image('y')}) ![id=e](${image('z')})`)
   })
 
   it.each([
@@ -51,35 +51,35 @@ describe('pastedMediaIdChanges', () => {
     [['zz'], 'aaa'],
     [['y', 'ab'], 'ac'],
   ])('counts ids like spreadsheet columns: after %j comes %s', (ids, next) => {
-    const before = ids.map((id, index) => `![${image(`old${index}`)}](id=${id})\n`).join('')
+    const before = ids.map((id, index) => `![id=${id}](${image(`old${index}`)})\n`).join('')
 
-    expect(paste(`![${image('new')}]()`, before)).toBe(`${before}![${image('new')}](id=${next})`)
+    expect(paste(`![](${image('new')})`, before)).toBe(`${before}![id=${next}](${image('new')})`)
   })
 
   it('changes no reference that was not pasted whole', () => {
     // An old reference with no id, a reference that the paste only
     // completed, and a hand-edited clash all stay as they are.
-    const before = `![${image('a')}]() ![${image('b')}](id=x) ![${image('c')}](id=x) ![${image('d')}](`
+    const before = `![](${image('a')}) ![id=x](${image('b')}) ![id=x](${image('c')}) ![](${image('d')}`
 
     expect(paste(')', before)).toBe(`${before})`)
   })
 
   it('gives a pasted image with no id the id after the highest one of the images and the clips', () => {
-    const before = `![${image('a')}](id=a)\n\u001E\n${clip('d')}\n\u001E\n`
+    const before = `![id=a](${image('a')})\n\u001E\n${clip('d')}\n\u001E\n`
 
-    expect(paste(`![${image('new')}]()`, before)).toBe(`${before}![${image('new')}](id=e)`)
+    expect(paste(`![](${image('new')})`, before)).toBe(`${before}![id=e](${image('new')})`)
   })
 
   it('gives a pasted image the next id when a clip has its id, before or after the paste', () => {
     const before = `${clip('b')}\n\u001E\n`
     const after = `\n\u001E\n${clip('c', 'audio')}`
 
-    expect(paste(`![${image('x')}](id=b) ![${image('y')}](id=c) ![${image('z')}](id=a)`, before, after))
-      .toBe(`${before}![${image('x')}](id=d) ![${image('y')}](id=e) ![${image('z')}](id=a)${after}`)
+    expect(paste(`![id=b](${image('x')}) ![id=c](${image('y')}) ![id=a](${image('z')})`, before, after))
+      .toBe(`${before}![id=d](${image('x')}) ![id=e](${image('y')}) ![id=a](${image('z')})${after}`)
   })
 
   it('gives a pasted clip the next id when an image or another clip has its id, and keeps its other attributes', () => {
-    const before = `![${image('a')}](id=a)\n\u001E\n${clip('b')}\n\u001E\n`
+    const before = `![id=a](${image('a')})\n\u001E\n${clip('b')}\n\u001E\n`
     const tag = { kind: 'video', type: 'video/mp4', src: '/home/ann/.cache/dez/media/x.mp4', url: null, expires: '2026-11-11T09:30:00.000Z', other: [{ name: 'job', value: 'j "1"' }] } as const
 
     expect(paste(`${clip('a', 'audio')}\n${mediaTagText({ ...tag, id: 'b' })}`, before))
@@ -94,17 +94,17 @@ describe('pastedMediaIdChanges', () => {
   })
 
   it('gives the new ids in doc order when a pasted clip and a pasted image both have a taken id', () => {
-    const before = `![${image('a')}](id=a)\n${clip('b')}\n`
+    const before = `![id=a](${image('a')})\n${clip('b')}\n`
 
-    expect(paste(`${clip('a', 'video', 'https://cdn.example/other')}\n![${image('x')}](id=b)`, before))
-      .toBe(`${before}${clip('c', 'video', 'https://cdn.example/other')}\n![${image('x')}](id=d)`)
-    expect(paste(`![${image('x')}](id=b)\n${clip('a', 'video', 'https://cdn.example/other')}`, before))
-      .toBe(`${before}![${image('x')}](id=c)\n${clip('d', 'video', 'https://cdn.example/other')}`)
+    expect(paste(`${clip('a', 'video', 'https://cdn.example/other')}\n![id=b](${image('x')})`, before))
+      .toBe(`${before}${clip('c', 'video', 'https://cdn.example/other')}\n![id=d](${image('x')})`)
+    expect(paste(`![id=b](${image('x')})\n${clip('a', 'video', 'https://cdn.example/other')}`, before))
+      .toBe(`${before}![id=c](${image('x')})\n${clip('d', 'video', 'https://cdn.example/other')}`)
   })
 
   it('lets the first of two pasted assets keep an id that both have', () => {
-    expect(paste(`![${image('x')}](id=a)\n${clip('a')}`)).toBe(`![${image('x')}](id=a)\n${clip('b')}`)
-    expect(paste(`${clip('a')}\n![${image('x')}](id=a)`)).toBe(`${clip('a')}\n![${image('x')}](id=b)`)
+    expect(paste(`![id=a](${image('x')})\n${clip('a')}`)).toBe(`![id=a](${image('x')})\n${clip('b')}`)
+    expect(paste(`${clip('a')}\n![id=a](${image('x')})`)).toBe(`${clip('a')}\n![id=b](${image('x')})`)
   })
 
   it('changes no tag that was not pasted whole', () => {
@@ -116,18 +116,18 @@ describe('pastedMediaIdChanges', () => {
   })
 
   it('leaves an image reference in an attribute of a pasted tag that gets a new id', () => {
-    const before = `![${image('a')}](id=a)\n`
-    const nested = `![${image('n')}](id=a)`
+    const before = `![id=a](${image('a')})\n`
+    const nested = `![id=a](${image('n')})`
 
     expect(paste(clip('a', 'video', nested), before)).toBe(before + clip('b', 'video', nested))
   })
 
   describe('mentions', () => {
-    const before = `![${image('a')}](id=a) and @a\n`
+    const before = `![id=a](${image('a')}) and @a\n`
 
     it('gives the pasted mentions of an id that changed the new id, before and after its image', () => {
-      expect(paste(`(@a: a duck) ![${image('x')}](id=a) edit @a, not @a-team or @k`, before, '\nthen @a'))
-        .toBe(`${before}(@b: a duck) ![${image('x')}](id=b) edit @b, not @a-team or @k\nthen @a`)
+      expect(paste(`(@a: a duck) ![id=a](${image('x')}) edit @a, not @a-team or @k`, before, '\nthen @a'))
+        .toBe(`${before}(@b: a duck) ![id=b](${image('x')}) edit @b, not @a-team or @k\nthen @a`)
     })
 
     it('gives the pasted mentions of a clip its new id', () => {
@@ -135,49 +135,49 @@ describe('pastedMediaIdChanges', () => {
     })
 
     it('keeps a pasted mention whose image keeps its id, and one of an id that the paste has no image for', () => {
-      const pasted = `![${image('k')}](id=k) @k @a`
+      const pasted = `![id=k](${image('k')}) @k @a`
 
       expect(paste(pasted, before)).toBe(before + pasted)
     })
 
     it('takes the last pasted image of an id for its mentions', () => {
-      expect(paste(`![${image('x')}](id=a) ![${image('y')}](id=a) @a`, before))
-        .toBe(`${before}![${image('x')}](id=b) ![${image('y')}](id=c) @c`)
+      expect(paste(`![id=a](${image('x')}) ![id=a](${image('y')}) @a`, before))
+        .toBe(`${before}![id=b](${image('x')}) ![id=c](${image('y')}) @c`)
       // The last one is a copy of the conversation's own image `a`.
-      expect(paste(`![${image('x')}](id=a) ![${image('a')}](id=a) @a`, before))
-        .toBe(`${before}![${image('x')}](id=b) ![${image('a')}](id=a) @a`)
+      expect(paste(`![id=a](${image('x')}) ![id=a](${image('a')}) @a`, before))
+        .toBe(`${before}![id=b](${image('x')}) ![id=a](${image('a')}) @a`)
     })
 
     it('gives the pasted copies of one image or clip one new id', () => {
-      expect(paste(`![${image('x')}](id=a) ![${image('x')}](id=a) @a`, before))
-        .toBe(`${before}![${image('x')}](id=b) ![${image('x')}](id=b) @b`)
+      expect(paste(`![id=a](${image('x')}) ![id=a](${image('x')}) @a`, before))
+        .toBe(`${before}![id=b](${image('x')}) ![id=b](${image('x')}) @b`)
       expect(paste(`${clip('a')}\nMake @a longer.\n${clip('a')}`, before))
         .toBe(`${before}${clip('b')}\nMake @b longer.\n${clip('b')}`)
     })
 
     it('reads a pasted mention with the chars around it in the conversation', () => {
       // `bob@a` is an address and `@abc` is another word.
-      expect(paste(`@a ![${image('x')}](id=a) @a`, `${before}bob`, 'bc'))
-        .toBe(`${before}bob@a ![${image('x')}](id=b) @abc`)
+      expect(paste(`@a ![id=a](${image('x')}) @a`, `${before}bob`, 'bc'))
+        .toBe(`${before}bob@a ![id=b](${image('x')}) @abc`)
     })
 
     it('changes no `@` text inside a pasted reference or tag', () => {
       const tag = clip('b', 'video', 'https://cdn.example/@a/clip')
 
-      expect(paste(`![${image('x')}](id=a|desc=see @a)\n${tag}`, before)).toBe(`${before}![${image('x')}](id=c|desc=see @a)\n${tag}`)
+      expect(paste(`![id=a|desc=see @a](${image('x')})\n${tag}`, before)).toBe(`${before}![id=c|desc=see @a](${image('x')})\n${tag}`)
     })
   })
 
   describe('in a compacted conversation', () => {
-    const before = `${compactionTagText({ count: 1, lastId: 'k', pictures: [] })}\nThe duck of @c is gone. ![${image('a')}](id=a)\n\u001E\n`
+    const before = `${compactionTagText({ count: 1, lastId: 'k', pictures: [] })}\nThe duck of @c is gone. ![id=a](${image('a')})\n\u001E\n`
 
     it('gives a pasted asset with no id, or with a taken id, an id after the last id of the compaction tag', () => {
-      expect(paste(`![${image('x')}]() ![${image('y')}](id=a)`, before))
-        .toBe(`${before}![${image('x')}](id=l) ![${image('y')}](id=m)`)
+      expect(paste(`![](${image('x')}) ![id=a](${image('y')})`, before))
+        .toBe(`${before}![id=l](${image('x')}) ![id=m](${image('y')})`)
     })
 
     it('keeps a pasted id that no other asset has, as a cut and a paste of an asset must', () => {
-      const pasted = `![${image('b')}](id=b)`
+      const pasted = `![id=b](${image('b')})`
 
       expect(paste(pasted, before)).toBe(before + pasted)
     })
@@ -185,14 +185,14 @@ describe('pastedMediaIdChanges', () => {
 })
 
 describe('newMediaIds', () => {
-  const image = (name: string, id: string) => `![/home/ann/.config/dez/assets/images/${name}.png](id=${id})`
+  const image = (name: string, id: string) => `![id=${id}](/home/ann/.config/dez/assets/images/${name}.png)`
 
   it('gives the ids after the highest one in all the texts of the conversation, in order', () => {
     expect(newMediaIds([`${image('a', 'b')} ${image('b', 'y')}`, '', `see ${image('c', 'c')}`], 3)).toStrictEqual(['z', 'aa', 'ab'])
   })
 
   it('starts at a when no reference has an id, and skips text that is not a reference', () => {
-    expect(newMediaIds([`![${PNG}]() ![${PNG}](id=Q) ![x](id=zz)`], 2)).toStrictEqual(['a', 'b'])
+    expect(newMediaIds([`![](${PNG}) ![id=Q](${PNG}) ![id=zz](x)`], 2)).toStrictEqual(['a', 'b'])
     expect(newMediaIds([], 1)).toStrictEqual(['a'])
   })
 
@@ -228,11 +228,11 @@ describe('compareMediaIds', () => {
 })
 
 describe('highestConversationMediaId', () => {
-  const image = (id: string) => `![${PNG}](id=${id})`
+  const image = (id: string) => `![id=${id}](${PNG})`
 
   it('is null for a conversation that gave no id', () => {
     expect(highestConversationMediaId([])).toBeNull()
-    expect(highestConversationMediaId(['Hello', `![${PNG}]()`])).toBeNull()
+    expect(highestConversationMediaId(['Hello', `![](${PNG})`])).toBeNull()
   })
 
   it('takes the highest id of the image references and the media tags of all the texts, a longer id being higher', () => {
@@ -241,7 +241,7 @@ describe('highestConversationMediaId', () => {
   })
 
   it('counts the id of a linked image in every text, so that no new id is the id of one', () => {
-    expect(highestConversationMediaId([image('a'), '![/home/ann/Pictures/cat.png](id=q)'])).toBe('q')
+    expect(highestConversationMediaId([image('a'), '![id=q](/home/ann/Pictures/cat.png)'])).toBe('q')
   })
 
   it('counts the last-id of the compaction tag of the first text, and an asset id above it', () => {

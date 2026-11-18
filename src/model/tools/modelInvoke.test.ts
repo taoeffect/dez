@@ -50,8 +50,8 @@ const SONG: MediaTagData = { kind: 'audio', id: 'c', type: 'audio/mpeg', src: '/
 
 // A conversation with the images `a`, `b`, and `d`, and the audio clip `c`.
 const CONVERSATION = [
-  user('u1', `Like ![${RED}](id=b) and ![${SKY}](id=d)`),
-  reply('a1', `![${FOX}](id=a)\n${mediaTagText(SONG)}`),
+  user('u1', `Like ![id=b](${RED}) and ![id=d](${SKY})`),
+  reply('a1', `![id=a](${FOX})\n${mediaTagText(SONG)}`),
 ]
 
 // What a test knows besides the call; the rest is as in the conversation
@@ -230,7 +230,7 @@ describe('modelInvocation for a text model', () => {
   // Only an @id sends an image: a path that the model wrote reads no file
   // and does not go.
   it('sends no path of a stored file that the prompt holds', () => {
-    const { content, inputs } = chatInvocation({ model: 'venice/chatter', prompt: `What is ![${RED}](id=b)?` })
+    const { content, inputs } = chatInvocation({ model: 'venice/chatter', prompt: `What is ![id=b](${RED})?` })
 
     expect(content).toBeTypeOf('string')
     expect(content).not.toContain('/home')

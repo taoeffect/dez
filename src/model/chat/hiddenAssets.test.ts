@@ -196,7 +196,7 @@ describe('the marker of a hidden asset', () => {
     const change = imageIdChange(reference, 'f')
 
     expect(text.slice(0, change.from) + change.insert + text.slice(change.to))
-      .toBe(`![${HIDDEN_IMAGE_PATH}](id=f|tool=model_invoke|hidden=j-aaaa)`)
+      .toBe(`![id=f|tool=model_invoke|hidden=j-aaaa](${HIDDEN_IMAGE_PATH})`)
   })
 
   it('stays in the tag of a clip that is saved, and of one whose saved file is deleted', () => {

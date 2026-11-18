@@ -222,12 +222,12 @@ describe('agentSectionMessages', () => {
   })
 
   it('sends no image path in the text, the arguments, or the results', () => {
-    const text = `This: ![${IMAGE}](id=a)\n${block('call_1', `![${IMAGE}](id=a)`, `Found ![${IMAGE}](id=a).`)}\nSee ![${IMAGE}](id=a).`
+    const text = `This: ![id=a](${IMAGE})\n${block('call_1', `![id=a](${IMAGE})`, `Found ![id=a](${IMAGE}).`)}\nSee ![id=a](${IMAGE}).`
 
     expect(agentSectionMessages(agent(text), model, true)).toStrictEqual([
-      { role: 'agent', content: 'This: ![image](id=a)', toolCalls: [call('call_1', '![image](id=a)')] },
-      { role: 'tool', results: [result('call_1', 'Found ![image](id=a).')] },
-      { role: 'agent', content: 'See ![image](id=a).' },
+      { role: 'agent', content: 'This: ![id=a](image)', toolCalls: [call('call_1', '![id=a](image)')] },
+      { role: 'tool', results: [result('call_1', 'Found ![id=a](image).')] },
+      { role: 'agent', content: 'See ![id=a](image).' },
     ])
     expect(JSON.stringify(agentSectionMessages(agent(text), model, false))).not.toContain('assets/images')
   })
@@ -317,7 +317,7 @@ describe('agentSectionMessages', () => {
   // Dez writes the asset of a tool after the group of the tool's call, so
   // its text is the start of the text of the next round.
   describe('images and clips that a Dez tool made', () => {
-    const toolImage = (id: string, hidden?: string) => `![${IMAGE}](id=${id}|tool=model_invoke${hidden === undefined ? '' : `|hidden=${hidden}`})`
+    const toolImage = (id: string, hidden?: string) => `![id=${id}|tool=model_invoke${hidden === undefined ? '' : `|hidden=${hidden}`}](${IMAGE})`
     const toolClip = (clip: MediaTagData, hidden?: string) => mediaTagText({
       ...clip,
       other: [{ name: MEDIA_TOOL_ATTRIBUTE, value: 'model_invoke' }, ...(hidden === undefined ? [] : [{ name: MEDIA_HIDDEN_ATTRIBUTE, value: hidden }])],
@@ -353,7 +353,7 @@ describe('agentSectionMessages', () => {
           '',
           '[Tool call: model_list {"filter":"gemini"}]\n1 model\n[End of tool result]',
           '',
-          '![image](id=b|tool=model_invoke)',
+          '![id=b|tool=model_invoke](image)',
           '',
           'Done.',
         ].join('\n'),
@@ -374,7 +374,7 @@ describe('agentSectionMessages', () => {
       expect(sentAfterGroup(`${jobStartedText('j-cccc', 1)}\nThe inputs of the request: the video clip @d.`, `\n${toolClip(DANCE)}\n\nDone.`))
         .toStrictEqual([{ role: 'agent', content: '\n<dez:video id="d" type="video/mp4"/>\n\nDone.' }])
       // An image of the model itself, with no mark of a tool.
-      expect(sentAfterGroup(WAIT_RESULT, `\n![${IMAGE}](id=a)\n\nDone.`)).toStrictEqual([{ role: 'agent', content: '\n![image](id=a)\n\nDone.' }])
+      expect(sentAfterGroup(WAIT_RESULT, `\n![id=a](${IMAGE})\n\nDone.`)).toStrictEqual([{ role: 'agent', content: '\n![id=a](image)\n\nDone.' }])
     })
   })
 
@@ -430,34 +430,34 @@ describe('agentSectionMessages', () => {
     // The stream controller keeps no replay for a round that made an image;
     // a conversation from before that rule holds one.
     it('sends no thinking of a round that holds an image, and each other round keeps its own', () => {
-      const withImage = text.replace('More.', `More.\n\n![${IMAGE}](id=a)`)
-      const imageReply = agent(`![${IMAGE}](id=a)`, { text: '', replay: replay1 })
+      const withImage = text.replace('More.', `More.\n\n![id=a](${IMAGE})`)
+      const imageReply = agent(`![id=a](${IMAGE})`, { text: '', replay: replay1 })
 
       expect(agentSectionMessages(agent(withImage, thinking), model, true).filter((message) => message.role === 'agent')).toStrictEqual([
         { role: 'agent', content: 'Look.', thinking: { text: 'Plan 1', replay: replay1 }, toolCalls: [call('call_1', 'gemini'), call('call_2', 'mistral')] },
-        { role: 'agent', content: 'More.\n\n![image](id=a)', toolCalls: [call('call_3', 'claude')] },
+        { role: 'agent', content: 'More.\n\n![id=a](image)', toolCalls: [call('call_3', 'claude')] },
         { role: 'agent', content: 'Done.' },
       ])
-      expect(agentSectionMessages(imageReply, model, true)).toStrictEqual([{ role: 'agent', content: '![image](id=a)' }])
+      expect(agentSectionMessages(imageReply, model, true)).toStrictEqual([{ role: 'agent', content: '![id=a](image)' }])
     })
 
     // The reference of a tool's image is at the start of the text of the
     // round after the tool's group; the replay of that round is not the
     // signature of an image.
     it('keeps the thinking of a round whose only image is one that a Dez tool made', () => {
-      const toolImage = `![${IMAGE}](id=a|tool=image)`
+      const toolImage = `![id=a|tool=image](${IMAGE})`
       const second = (roundText: string) => agentSectionMessages(agent(text.replace('More.', roundText), thinking), model, true)[2]
 
       expect(second(`\n${toolImage}\n\nMore.`)).toStrictEqual({
         role: 'agent',
-        content: '\n![image](id=a|tool=image)\n\nMore.',
+        content: '\n![id=a|tool=image](image)\n\nMore.',
         thinking: { text: 'Plan 2', replay: replay2 },
         toolCalls: [call('call_3', 'claude')],
       })
       // The model made an image in that round too.
-      expect(second(`\n${toolImage}\n\n![${IMAGE}](id=b)`)).toStrictEqual({
+      expect(second(`\n${toolImage}\n\n![id=b](${IMAGE})`)).toStrictEqual({
         role: 'agent',
-        content: '\n![image](id=a|tool=image)\n\n![image](id=b)',
+        content: '\n![id=a|tool=image](image)\n\n![id=b](image)',
         toolCalls: [call('call_3', 'claude')],
       })
     })
@@ -537,7 +537,7 @@ describe('messageClips', () => {
   // has the id of an image of an earlier section, and the clip `d` that of
   // an image of the message.
   it('gives no clip for an id that an image has', () => {
-    const sections = [clipsReply, reply('a2', `![${GENERATED}](id=c)`), user('u1', `Use @c and @d: ![${IMAGE}](id=d)\n${mediaTagText({ ...PASTED_DANCE, id: 'c' })}`)]
+    const sections = [clipsReply, reply('a2', `![id=c](${GENERATED})`), user('u1', `Use @c and @d: ![id=d](${IMAGE})\n${mediaTagText({ ...PASTED_DANCE, id: 'c' })}`)]
 
     expect(messageClips(sections)).toStrictEqual([])
   })
@@ -576,21 +576,21 @@ describe('sectionsToStreamMessages: images of user messages', () => {
   // The conversation before the message under test: a pasted image `a`,
   // and a generated image `b` in the reply. The user message carries its
   // image; the image of the reply goes as text only.
-  const earlier = [user('u1', `![${IMAGE}](id=a) A red fox`), reply('a1', `![${GENERATED}](id=b)`)]
-  const earlierUserMessage = { role: 'user', content: [{ type: 'text', text: '![image](id=a)' }, { type: 'image', path: IMAGE }, { type: 'text', text: ' A red fox' }] }
-  const earlierMessages = [earlierUserMessage, { role: 'agent', content: '![image](id=b)' }]
+  const earlier = [user('u1', `![id=a](${IMAGE}) A red fox`), reply('a1', `![id=b](${GENERATED})`)]
+  const earlierUserMessage = { role: 'user', content: [{ type: 'text', text: '![id=a](image)' }, { type: 'image', path: IMAGE }, { type: 'text', text: ' A red fox' }] }
+  const earlierMessages = [earlierUserMessage, { role: 'agent', content: '![id=b](image)' }]
   // The same for a model that reads no images.
-  const earlierTexts = [{ role: 'user', content: '![image](id=a) A red fox' }, { role: 'agent', content: '![image](id=b)' }]
+  const earlierTexts = [{ role: 'user', content: '![id=a](image) A red fox' }, { role: 'agent', content: '![id=b](image)' }]
 
   it('gives every user message the parts of its images, and a later message no second part of an image that an earlier one carries', () => {
-    const sections = [...earlier, user('u2', `Is @a like ![${OTHER_IMAGE}](id=c)?`), reply('a2', 'Yes.'), user('u3', `And @c? ![${IMAGE}](id=a)`)]
+    const sections = [...earlier, user('u2', `Is @a like ![id=c](${OTHER_IMAGE})?`), reply('a2', 'Yes.'), user('u3', `And @c? ![id=a](${IMAGE})`)]
 
     expect(sent(sections)).toStrictEqual({
       messages: [
         ...earlierMessages,
-        { role: 'user', content: [{ type: 'text', text: 'Is @a like ![image](id=c)' }, { type: 'image', path: OTHER_IMAGE }, { type: 'text', text: '?' }] },
+        { role: 'user', content: [{ type: 'text', text: 'Is @a like ![id=c](image)' }, { type: 'image', path: OTHER_IMAGE }, { type: 'text', text: '?' }] },
         { role: 'agent', content: 'Yes.' },
-        { role: 'user', content: 'And @c? ![image](id=a)' },
+        { role: 'user', content: 'And @c? ![id=a](image)' },
       ],
       imagesLeftOut: 0,
       imagesOverLimit: 0,
@@ -599,7 +599,7 @@ describe('sectionsToStreamMessages: images of user messages', () => {
       newestUserMessage: [
         { type: 'text', text: 'And @c' },
         { type: 'image', path: OTHER_IMAGE },
-        { type: 'text', text: '? ![image](id=a)' },
+        { type: 'text', text: '? ![id=a](image)' },
         { type: 'image', path: IMAGE },
       ],
     })
@@ -625,22 +625,22 @@ describe('sectionsToStreamMessages: images of user messages', () => {
 
     expect(sent([earlier[0]]).messages).toStrictEqual([earlierUserMessage])
     expect(sent([earlier[0], reply('a1', 'It is a fox.'), user('u2', '')]).messages).toStrictEqual([earlierUserMessage, answer])
-    expect(sent([earlier[0], reply('a1', 'It is a fox.'), user('u2', `Is ![${IMAGE}](id=a) the same as @a?`)]).messages).toStrictEqual([
+    expect(sent([earlier[0], reply('a1', 'It is a fox.'), user('u2', `Is ![id=a](${IMAGE}) the same as @a?`)]).messages).toStrictEqual([
       earlierUserMessage,
       answer,
-      { role: 'user', content: 'Is ![image](id=a) the same as @a?' },
+      { role: 'user', content: 'Is ![id=a](image) the same as @a?' },
     ])
   })
 
   // `promptWithNames` (mediaRequest.ts) names a reference only when its
   // part follows it.
   it('gives each reference of an image a part in the message that sends the image first', () => {
-    expect(sent([user('u1', `![${IMAGE}](id=a) and again ![${IMAGE}](id=a) and @a`)]).messages).toStrictEqual([{
+    expect(sent([user('u1', `![id=a](${IMAGE}) and again ![id=a](${IMAGE}) and @a`)]).messages).toStrictEqual([{
       role: 'user',
       content: [
-        { type: 'text', text: '![image](id=a)' },
+        { type: 'text', text: '![id=a](image)' },
         { type: 'image', path: IMAGE },
-        { type: 'text', text: ' and again ![image](id=a)' },
+        { type: 'text', text: ' and again ![id=a](image)' },
         { type: 'image', path: IMAGE },
         { type: 'text', text: ' and @a' },
       ],
@@ -684,12 +684,12 @@ describe('sectionsToStreamMessages: images of user messages', () => {
   })
 
   it('adds no part for a mention of an image that the message itself holds', () => {
-    expect(sent([...earlier, user('u2', `Put @c on @b: ![${OTHER_IMAGE}](id=c) Is @c right?`)]).messages.at(-1)).toStrictEqual({
+    expect(sent([...earlier, user('u2', `Put @c on @b: ![id=c](${OTHER_IMAGE}) Is @c right?`)]).messages.at(-1)).toStrictEqual({
       role: 'user',
       content: [
         { type: 'text', text: 'Put @c on @b' },
         { type: 'image', path: GENERATED },
-        { type: 'text', text: ': ![image](id=c)' },
+        { type: 'text', text: ': ![id=c](image)' },
         { type: 'image', path: OTHER_IMAGE },
         { type: 'text', text: ' Is @c right?' },
       ],
@@ -710,20 +710,20 @@ describe('sectionsToStreamMessages: images of user messages', () => {
 
     // The reply that answers `first` made the image `a` and goes on with a
     // tool round: `first` is still the newest user message.
-    const during = sent([first, reply('a1', `![${GENERATED}](id=a)`)]).messages
-    const after = sent([first, reply('a1', `![${GENERATED}](id=a)`), user('u2', 'Now make @a blue')]).messages
+    const during = sent([first, reply('a1', `![id=a](${GENERATED})`)]).messages
+    const after = sent([first, reply('a1', `![id=a](${GENERATED})`), user('u2', 'Now make @a blue')]).messages
 
     expect(before).toStrictEqual([{ role: 'user', content: 'Draw @a' }])
-    expect(during).toStrictEqual([...before, { role: 'agent', content: '![image](id=a)' }])
+    expect(during).toStrictEqual([...before, { role: 'agent', content: '![id=a](image)' }])
     expect(after).toStrictEqual([
       ...before,
-      { role: 'agent', content: '![image](id=a)' },
+      { role: 'agent', content: '![id=a](image)' },
       { role: 'user', content: [{ type: 'text', text: 'Now make @a' }, { type: 'image', path: GENERATED }, { type: 'text', text: ' blue' }] },
     ])
   })
 
   it('takes the last image with the id when two images have it', () => {
-    const sections = [user('u1', `![${IMAGE}](id=a)`), reply('a1', `![${GENERATED}](id=a)`), user('u2', 'Crop @a')]
+    const sections = [user('u1', `![id=a](${IMAGE})`), reply('a1', `![id=a](${GENERATED})`), user('u2', 'Crop @a')]
 
     expect(sent(sections).messages.at(-1)).toStrictEqual({ role: 'user', content: [{ type: 'text', text: 'Crop @a' }, { type: 'image', path: GENERATED }] })
   })
@@ -738,21 +738,21 @@ describe('sectionsToStreamMessages: images of user messages', () => {
   })
 
   it('scrubs a bare path before a reference and after it', () => {
-    const text = `See ${IMAGE}![${IMAGE}](id=c) and ${GENERATED}.`
+    const text = `See ${IMAGE}![id=c](${IMAGE}) and ${GENERATED}.`
 
     expect(sent([user('u1', text)]).messages).toStrictEqual([{
       role: 'user',
-      content: [{ type: 'text', text: 'See image![image](id=c)' }, { type: 'image', path: IMAGE }, { type: 'text', text: ' and image.' }],
+      content: [{ type: 'text', text: 'See image![id=c](image)' }, { type: 'image', path: IMAGE }, { type: 'text', text: ' and image.' }],
     }])
   })
 
   it('sends a model that reads no images the text only, and counts the images that the newest message would send', () => {
-    const sections = [...earlier, user('u2', `Mix @b, @b, and ![${IMAGE}](id=a) with @a and @c.`)]
+    const sections = [...earlier, user('u2', `Mix @b, @b, and ![id=a](${IMAGE}) with @a and @c.`)]
 
     expect(sent(sections, false, 1)).toStrictEqual({
       messages: [
         ...earlierTexts,
-        { role: 'user', content: 'Mix @b, @b, and ![image](id=a) with @a and @c.' },
+        { role: 'user', content: 'Mix @b, @b, and ![id=a](image) with @a and @c.' },
       ],
       // `b` and `a`: the images of the last message as a message of its
       // own. The image of the first message is not counted: the user got
@@ -761,7 +761,7 @@ describe('sectionsToStreamMessages: images of user messages', () => {
       // No image goes, so none is over the limit.
       imagesOverLimit: 0,
       // A media request reads the same text: it sends no image either.
-      newestUserMessage: 'Mix @b, @b, and ![image](id=a) with @a and @c.',
+      newestUserMessage: 'Mix @b, @b, and ![id=a](image) with @a and @c.',
     })
     expect(sent([...earlier, user('u2', 'What is it?')], false).imagesLeftOut).toBe(0)
   })
@@ -770,14 +770,14 @@ describe('sectionsToStreamMessages: images of user messages', () => {
     const linked = '/home/u/Pictures/My fox (1).JPG'
     const typed = '/home/u/Pictures/b.png'
     const sections = [
-      user('u1', `![${linked}](id=a) A fox`),
-      reply('a1', `Not mine: ![${typed}](id=b|tool=image)\n${mediaTagText({ ...SONG, src: '/home/u/Music/s.mp3' })}`),
+      user('u1', `![id=a](<${linked}>) A fox`),
+      reply('a1', `Not mine: ![id=b|tool=image](${typed})\n${mediaTagText({ ...SONG, src: '/home/u/Music/s.mp3' })}`),
       user('u2', `Like @a or @b?\n${mediaTagText({ ...PASTED_DANCE, src: '/home/u/Videos/d.mp4' })}`),
     ]
 
     expect(sent(sections).messages).toStrictEqual([
-      { role: 'user', content: [{ type: 'text', text: '![image](id=a)' }, { type: 'image', path: linked }, { type: 'text', text: ' A fox' }] },
-      { role: 'agent', content: `Not mine: ![image](id=b|tool=image)\n${mediaTagRequestText(SONG)}` },
+      { role: 'user', content: [{ type: 'text', text: '![id=a](image)' }, { type: 'image', path: linked }, { type: 'text', text: ' A fox' }] },
+      { role: 'agent', content: `Not mine: ![id=b|tool=image](image)\n${mediaTagRequestText(SONG)}` },
       { role: 'user', content: `Like @a or @b?\n${SENT_DANCE}` },
     ])
   })
@@ -787,12 +787,12 @@ describe('sectionsToStreamMessages: images of user messages', () => {
     // the image of the reply and holds the second image again.
     const sections = [
       ...earlier,
-      user('u2', `![${OTHER_IMAGE}](id=c) A blue fox`),
+      user('u2', `![id=c](${OTHER_IMAGE}) A blue fox`),
       reply('a2', 'Yes.'),
-      user('u3', `![${LINKED_IMAGE}](id=d) and @b, with ![${OTHER_IMAGE}](id=c) and @d`),
+      user('u3', `![id=d](${LINKED_IMAGE}) and @b, with ![id=c](${OTHER_IMAGE}) and @d`),
     ]
-    const secondMessage = { role: 'user', content: [{ type: 'text', text: '![image](id=c)' }, { type: 'image', path: OTHER_IMAGE }, { type: 'text', text: ' A blue fox' }] }
-    const lastText = '![image](id=d) and @b, with ![image](id=c) and @d'
+    const secondMessage = { role: 'user', content: [{ type: 'text', text: '![id=c](image)' }, { type: 'image', path: OTHER_IMAGE }, { type: 'text', text: ' A blue fox' }] }
+    const lastText = '![id=d](image) and @b, with ![id=c](image) and @d'
 
     it('sends the newest images as text only, counts each of them one time, and keeps the bytes of the messages before them', () => {
       expect(sent(sections, true, 2)).toStrictEqual({
@@ -804,11 +804,11 @@ describe('sectionsToStreamMessages: images of user messages', () => {
         // A media request has its own limits, so the message of its own
         // has every part.
         newestUserMessage: [
-          { type: 'text', text: '![image](id=d)' },
+          { type: 'text', text: '![id=d](image)' },
           { type: 'image', path: LINKED_IMAGE },
           { type: 'text', text: ' and @b' },
           { type: 'image', path: GENERATED },
-          { type: 'text', text: ', with ![image](id=c)' },
+          { type: 'text', text: ', with ![id=c](image)' },
           { type: 'image', path: OTHER_IMAGE },
           { type: 'text', text: ' and @d' },
         ],
@@ -820,7 +820,7 @@ describe('sectionsToStreamMessages: images of user messages', () => {
 
       expect(messages.at(-1)).toStrictEqual({
         role: 'user',
-        content: [{ type: 'text', text: '![image](id=d)' }, { type: 'image', path: LINKED_IMAGE }, { type: 'text', text: ' and @b, with ![image](id=c) and @d' }],
+        content: [{ type: 'text', text: '![id=d](image)' }, { type: 'image', path: LINKED_IMAGE }, { type: 'text', text: ' and @b, with ![id=c](image) and @d' }],
       })
       expect(imagesOverLimit).toBe(1)
     })
@@ -833,7 +833,7 @@ describe('sectionsToStreamMessages: images of user messages', () => {
     it('sends every image as text only with a limit of 0', () => {
       const { messages, imagesOverLimit } = sent(sections, true, 0)
 
-      expect(messages.filter((message) => message.role === 'user')).toStrictEqual([earlierTexts[0], { role: 'user', content: '![image](id=c) A blue fox' }, { role: 'user', content: lastText }])
+      expect(messages.filter((message) => message.role === 'user')).toStrictEqual([earlierTexts[0], { role: 'user', content: '![id=c](image) A blue fox' }, { role: 'user', content: lastText }])
       expect(imagesOverLimit).toBe(4)
     })
   })
@@ -844,19 +844,19 @@ describe('sectionsToStreamMessages: images of user messages', () => {
     // A message with two images, and a later one that names the second
     // image and holds a third one.
     const sections = [
-      user('u1', `![${IMAGE}](id=a) and ![${OTHER_IMAGE}](id=c)`),
+      user('u1', `![id=a](${IMAGE}) and ![id=c](${OTHER_IMAGE})`),
       reply('a1', 'Yes.'),
-      user('u2', `Is @c like ![${LINKED_IMAGE}](id=d)?`),
+      user('u2', `Is @c like ![id=d](${LINKED_IMAGE})?`),
     ]
-    const first = [{ type: 'text', text: '![image](id=a)' }, { type: 'image', path: IMAGE }]
+    const first = [{ type: 'text', text: '![id=a](image)' }, { type: 'image', path: IMAGE }]
 
     it('gives each message its parts up to the limit, and a later message the part of an image that an earlier one left out', () => {
       const { messages, imagesOverLimit } = limited(1)
 
       expect(messages).toStrictEqual([
-        { role: 'user', content: [...first, { type: 'text', text: ' and ![image](id=c)' }] },
+        { role: 'user', content: [...first, { type: 'text', text: ' and ![id=c](image)' }] },
         { role: 'agent', content: 'Yes.' },
-        { role: 'user', content: [{ type: 'text', text: 'Is @c' }, { type: 'image', path: OTHER_IMAGE }, { type: 'text', text: ' like ![image](id=d)?' }] },
+        { role: 'user', content: [{ type: 'text', text: 'Is @c' }, { type: 'image', path: OTHER_IMAGE }, { type: 'text', text: ' like ![id=d](image)?' }] },
       ])
       // Only `d`: `c` has its part in the last message.
       expect(imagesOverLimit).toBe(1)
@@ -866,9 +866,9 @@ describe('sectionsToStreamMessages: images of user messages', () => {
       const { messages, imagesOverLimit } = limited(2, 2)
 
       expect(messages).toStrictEqual([
-        { role: 'user', content: [...first, { type: 'text', text: ' and ![image](id=c)' }, { type: 'image', path: OTHER_IMAGE }] },
+        { role: 'user', content: [...first, { type: 'text', text: ' and ![id=c](image)' }, { type: 'image', path: OTHER_IMAGE }] },
         { role: 'agent', content: 'Yes.' },
-        { role: 'user', content: 'Is @c like ![image](id=d)?' },
+        { role: 'user', content: 'Is @c like ![id=d](image)?' },
       ])
       expect(imagesOverLimit).toBe(1)
     })
@@ -884,11 +884,11 @@ describe('sectionsToStreamMessages: clips of user messages', () => {
   const sections = [
     user('u1', `Like this:\n${mediaTagText(PASTED_DANCE)}`),
     reply('a1', 'Yes.'),
-    user('u2', `Sing @f like ![${IMAGE}](id=a)\n${mediaTagText(PASTED_VOICE)}`),
+    user('u2', `Sing @f like ![id=a](${IMAGE})\n${mediaTagText(PASTED_VOICE)}`),
   ]
 
   it('sends each tag of a user message in its request form, and no part for a clip or a mention of one', () => {
-    const newest = [{ type: 'text', text: 'Sing @f like ![image](id=a)' }, { type: 'image', path: IMAGE }, { type: 'text', text: `\n${SENT_VOICE}` }]
+    const newest = [{ type: 'text', text: 'Sing @f like ![id=a](image)' }, { type: 'image', path: IMAGE }, { type: 'text', text: `\n${SENT_VOICE}` }]
 
     expect(sent(sections)).toStrictEqual({
       messages: [
@@ -906,7 +906,7 @@ describe('sectionsToStreamMessages: clips of user messages', () => {
     const textOnly = [...sections.slice(0, 2), user('u2', `Sing @f\n${mediaTagText(PASTED_VOICE)}`)]
 
     expect([sent(sections, false).messages.at(-1), sent(textOnly).messages.at(-1)]).toStrictEqual([
-      { role: 'user', content: `Sing @f like ![image](id=a)\n${SENT_VOICE}` },
+      { role: 'user', content: `Sing @f like ![id=a](image)\n${SENT_VOICE}` },
       { role: 'user', content: `Sing @f\n${SENT_VOICE}` },
     ])
   })
@@ -914,7 +914,7 @@ describe('sectionsToStreamMessages: clips of user messages', () => {
   it('reads no image mention in a tag line', () => {
     const tag = mediaTagText({ ...PASTED_DANCE, src: '/home/u/clips/@a.mp4' })
 
-    expect(sent([user('u1', `![${IMAGE}](id=a)`), user('u2', `Dance\n${tag}`)]).messages.at(-1)).toStrictEqual({ role: 'user', content: `Dance\n${SENT_DANCE}` })
+    expect(sent([user('u1', `![id=a](${IMAGE})`), user('u2', `Dance\n${tag}`)]).messages.at(-1)).toStrictEqual({ role: 'user', content: `Dance\n${SENT_DANCE}` })
   })
 })
 
@@ -926,7 +926,7 @@ describe('sectionsToStreamMessages: pictures that a tool showed', () => {
   // An older reply that viewed the image, and the reply that runs, which
   // viewed it two times in one round.
   const sections = [
-    user('u1', `![${IMAGE}](id=a)`),
+    user('u1', `![id=a](${IMAGE})`),
     reply('a1', `${view('call_1', [first])}\nIt is red.`),
     user('u2', 'Look again.'),
     reply('a2', view('call_2', [second, third])),
@@ -940,7 +940,7 @@ describe('sectionsToStreamMessages: pictures that a tool showed', () => {
   // The messages of the conversation, with the parts `older` and `newer`
   // of the two picture messages.
   const messages = (older: unknown[], newer: unknown[]) => [
-    { role: 'user', content: [{ type: 'text', text: '![image](id=a)' }, { type: 'image', path: IMAGE }] },
+    { role: 'user', content: [{ type: 'text', text: '![id=a](image)' }, { type: 'image', path: IMAGE }] },
     { role: 'agent', content: '', toolCalls: [{ id: 'call_1', name: 'asset_view', arguments: { assets: '@a' } }] },
     { role: 'tool', results: [result('call_1', '@a | image | PNG')] },
     { role: 'user', content: older },
@@ -983,16 +983,16 @@ describe('sectionsToStreamMessages: a compacted conversation', () => {
   // sections of their own, as an older Dez wrote them: one with the image
   // `a`, one that names both.
   const withImages = [
-    reply('c', `${tag()}\nThe fox: ![${GENERATED}](id=b) It is red. See @b.\n`),
-    user('u1', `Like ![${IMAGE}](id=a)?`),
+    reply('c', `${tag()}\nThe fox: ![id=b](${GENERATED}) It is red. See @b.\n`),
+    user('u1', `Like ![id=a](${IMAGE})?`),
     user('u2', 'And @b with @a.'),
   ]
   const withImagesMessage = {
     role: 'user',
     content: [
-      { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\nThe fox: ![image](id=b)` },
+      { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\nThe fox: ![id=b](image)` },
       { type: 'image', path: GENERATED },
-      { type: 'text', text: ` It is red. See @b.${KEPT}Like ![image](id=a)` },
+      { type: 'text', text: ` It is red. See @b.${KEPT}Like ![id=a](image)` },
       { type: 'image', path: IMAGE },
       { type: 'text', text: `?${KEPT}And @b with @a.` },
     ],
@@ -1087,47 +1087,47 @@ describe('sectionsToStreamMessages: a compacted conversation', () => {
 
   // The prompt cache and the signed thinking replays need the same bytes.
   it('keeps the image parts of the compaction message when a newer user message comes', () => {
-    expect(sent([...withImages, reply('a1', 'Done.'), user('u3', `Now ![${OTHER_IMAGE}](id=d)`)]).messages).toStrictEqual([
+    expect(sent([...withImages, reply('a1', 'Done.'), user('u3', `Now ![id=d](${OTHER_IMAGE})`)]).messages).toStrictEqual([
       withImagesMessage,
       { role: 'agent', content: 'Done.' },
-      { role: 'user', content: [{ type: 'text', text: 'Now ![image](id=d)' }, { type: 'image', path: OTHER_IMAGE }] },
+      { role: 'user', content: [{ type: 'text', text: 'Now ![id=d](image)' }, { type: 'image', path: OTHER_IMAGE }] },
     ])
   })
 
   it('sends an image of the compaction message one time: a later section that holds or names it sends its text only', () => {
     const sections = [
-      reply('c', `${tag()}\nThe fox: ![${GENERATED}](id=b)`),
-      user('u1', `Again ![${GENERATED}](id=b) and ![${IMAGE}](id=a)`),
+      reply('c', `${tag()}\nThe fox: ![id=b](${GENERATED})`),
+      user('u1', `Again ![id=b](${GENERATED}) and ![id=a](${IMAGE})`),
       reply('a1', 'Done.'),
-      user('u3', `Turn @b like ![${IMAGE}](id=a)`),
+      user('u3', `Turn @b like ![id=a](${IMAGE})`),
     ]
 
     expect(sent(sections).messages).toStrictEqual([
       {
         role: 'user',
         content: [
-          { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\nThe fox: ![image](id=b)` },
+          { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\nThe fox: ![id=b](image)` },
           { type: 'image', path: GENERATED },
-          { type: 'text', text: `${KEPT}Again ![image](id=b) and ![image](id=a)` },
+          { type: 'text', text: `${KEPT}Again ![id=b](image) and ![id=a](image)` },
           { type: 'image', path: IMAGE },
         ],
       },
       { role: 'agent', content: 'Done.' },
-      { role: 'user', content: 'Turn @b like ![image](id=a)' },
+      { role: 'user', content: 'Turn @b like ![id=a](image)' },
     ])
   })
 
   it('sends a reference with the kept mark as its text only, and the image of such a reference at a mention of the user', () => {
     const sections = [
-      reply('c', `${tag()}\nThe fox: ![${GENERATED}](id=b|kept=compaction) The den: ![${OTHER_IMAGE}](id=d|kept=compaction)`),
-      user('u1', `Like ![${IMAGE}](id=a|kept=compaction)?`),
+      reply('c', `${tag()}\nThe fox: ![id=b|kept=compaction](${GENERATED}) The den: ![id=d|kept=compaction](${OTHER_IMAGE})`),
+      user('u1', `Like ![id=a|kept=compaction](${IMAGE})?`),
       user('u2', 'And @b with @a, then @b again.'),
     ]
 
     expect(sent(sections).messages).toStrictEqual([{
       role: 'user',
       content: [
-        { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\nThe fox: ![image](id=b|kept=compaction) The den: ![image](id=d|kept=compaction)${KEPT}Like ![image](id=a|kept=compaction)?${KEPT}And @b` },
+        { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\nThe fox: ![id=b|kept=compaction](image) The den: ![id=d|kept=compaction](image)${KEPT}Like ![id=a|kept=compaction](image)?${KEPT}And @b` },
         { type: 'image', path: GENERATED },
         { type: 'text', text: ' with @a' },
         { type: 'image', path: IMAGE },
@@ -1137,28 +1137,28 @@ describe('sectionsToStreamMessages: a compacted conversation', () => {
   })
 
   it('reads the kept mark only in the compaction message: a later user message sends the image', () => {
-    const marked = `Now ![${OTHER_IMAGE}](id=d|kept=compaction)`
+    const marked = `Now ![id=d|kept=compaction](${OTHER_IMAGE})`
 
     expect(sent([reply('c', `${tag()}\nNotes.`), user('u1', 'Hi'), reply('a1', 'Done.'), user('u3', marked)]).messages.at(-1)).toStrictEqual({
       role: 'user',
-      content: [{ type: 'text', text: 'Now ![image](id=d|kept=compaction)' }, { type: 'image', path: OTHER_IMAGE }],
+      content: [{ type: 'text', text: 'Now ![id=d|kept=compaction](image)' }, { type: 'image', path: OTHER_IMAGE }],
     })
     // A media request reads the newest user message as a message of its own.
     expect(sent([reply('c', `${tag()}\nNotes.`), user('u1', marked)]).newestUserMessage).toStrictEqual([
-      { type: 'text', text: 'Now ![image](id=d|kept=compaction)' },
+      { type: 'text', text: 'Now ![id=d|kept=compaction](image)' },
       { type: 'image', path: OTHER_IMAGE },
     ])
   })
 
   it('sends the section of the carried assets of the user with its own first line, and not as a message of the user', () => {
-    const carried = `${CARRIED_USER_ASSETS_LABEL}\n![${IMAGE}](id=a)\n![${OTHER_IMAGE}](id=d|kept=compaction)\n${mediaTagText(RAIN)}`
+    const carried = `${CARRIED_USER_ASSETS_LABEL}\n![id=a](${IMAGE})\n![id=d|kept=compaction](${OTHER_IMAGE})\n${mediaTagText(RAIN)}`
 
     expect(sent([reply('c', `${tag()}\nNotes.`), user('u1', 'Make a fox.'), user('u+', carried), user('u2', 'Go on.')]).messages).toStrictEqual([{
       role: 'user',
       content: [
-        { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\nNotes.${KEPT}Make a fox.\n\n${CARRIED_USER_ASSETS_LABEL}\n![image](id=a)` },
+        { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\nNotes.${KEPT}Make a fox.\n\n${CARRIED_USER_ASSETS_LABEL}\n![id=a](image)` },
         { type: 'image', path: IMAGE },
-        { type: 'text', text: `\n![image](id=d|kept=compaction)\n${mediaTagRequestText(RAIN)}${KEPT}Go on.` },
+        { type: 'text', text: `\n![id=d|kept=compaction](image)\n${mediaTagRequestText(RAIN)}${KEPT}Go on.` },
       ],
     }])
   })
@@ -1183,10 +1183,10 @@ describe('sectionsToStreamMessages: a compacted conversation', () => {
     const sheet = { file: 's1.jpg', label: 'The frame sheet of @d.', width: 1280, height: 320, bytes: 3000 }
     const wave = { file: 'w1.jpg', label: 'The wave of @e.', width: 800, height: 200, bytes: 2000 }
     const sections = [
-      reply('c', `${tag([sheet, wave])}\nThe fox: ![${GENERATED}](id=b)`),
-      user('u1', `Like ![${IMAGE}](id=a)?`),
+      reply('c', `${tag([sheet, wave])}\nThe fox: ![id=b](${GENERATED})`),
+      user('u1', `Like ![id=a](${IMAGE})?`),
       reply('a1', 'Done.'),
-      user('u2', `And ![${OTHER_IMAGE}](id=d)`),
+      user('u2', `And ![id=d](${OTHER_IMAGE})`),
     ]
 
     expect(sent(sections, true, 2)).toStrictEqual({
@@ -1194,29 +1194,29 @@ describe('sectionsToStreamMessages: a compacted conversation', () => {
         {
           role: 'user',
           content: [
-            { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\nThe fox: ![image](id=b)` },
+            { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\nThe fox: ![id=b](image)` },
             { type: 'image', path: GENERATED },
             { type: 'text', text: '\n\nThe frame sheet of @d.' },
             { type: 'picture', picture: sheet },
-            { type: 'text', text: `${KEPT}Like ![image](id=a)?` },
+            { type: 'text', text: `${KEPT}Like ![id=a](image)?` },
           ],
         },
         { role: 'agent', content: 'Done.' },
-        { role: 'user', content: 'And ![image](id=d)' },
+        { role: 'user', content: 'And ![id=d](image)' },
       ],
       imagesLeftOut: 0,
       // The wave, and the images `a` and `d`.
       imagesOverLimit: 3,
-      newestUserMessage: [{ type: 'text', text: 'And ![image](id=d)' }, { type: 'image', path: OTHER_IMAGE }],
+      newestUserMessage: [{ type: 'text', text: 'And ![id=d](image)' }, { type: 'image', path: OTHER_IMAGE }],
     })
   })
 
   it('sends a model that reads no images the text only, with no picture label, and counts the images of the newest user message only', () => {
     const sheet = { file: 's1.jpg', label: 'The frame sheet of @d.', width: 1280, height: 320, bytes: 3000 }
-    const sections = [reply('c', `${tag([sheet])}\nThe fox: ![${GENERATED}](id=b)`), ...withImages.slice(1)]
+    const sections = [reply('c', `${tag([sheet])}\nThe fox: ![id=b](${GENERATED})`), ...withImages.slice(1)]
 
     expect(sent(sections, false)).toStrictEqual({
-      messages: [{ role: 'user', content: `${COMPACTION_MESSAGE_INTRO}\n\nThe fox: ![image](id=b)${KEPT}Like ![image](id=a)?${KEPT}And @b with @a.` }],
+      messages: [{ role: 'user', content: `${COMPACTION_MESSAGE_INTRO}\n\nThe fox: ![id=b](image)${KEPT}Like ![id=a](image)?${KEPT}And @b with @a.` }],
       imagesLeftOut: 2,
       imagesOverLimit: 0,
       newestUserMessage: 'And @b with @a.',
@@ -1242,7 +1242,7 @@ describe('sectionsToStreamMessages: a compacted conversation', () => {
     const tab = [...withImages.slice(0, 2), reply('new', '')]
     const { newestUserMessage } = sent(tab)
 
-    expect(mediaRequestInput('imageEdit', newestUserMessage, tab)).toStrictEqual({ prompt: 'Like ![image](id=a)?', images: [IMAGE], imagesLeftOut: 0, ...NO_CLIPS })
+    expect(mediaRequestInput('imageEdit', newestUserMessage, tab)).toStrictEqual({ prompt: 'Like ![id=a](image)?', images: [IMAGE], imagesLeftOut: 0, ...NO_CLIPS })
   })
 
   // The form of a compaction that moves the messages of the user that the
@@ -1264,17 +1264,17 @@ describe('sectionsToStreamMessages: a compacted conversation', () => {
     const LINKED_CLIP: MediaTagData = { kind: 'video', id: 'f', type: 'video/mp4', src: '/home/u/Videos/trip.mp4', url: null, expires: null, other: [] }
 
     it('sends each message at its place in a code fence, with each image part in the fence right after its reference, and no start or end line', () => {
-      const notes = notesText(`The fox: ![${GENERATED}](id=b)`, `Make a fox like ![${IMAGE}](id=a)`, 'Now make @b red.', [`End on ![${OTHER_IMAGE}](id=d).`])
+      const notes = notesText(`The fox: ![id=b](${GENERATED})`, `Make a fox like ![id=a](${IMAGE})`, 'Now make @b red.', [`End on ![id=d](${OTHER_IMAGE}).`])
 
       expect(sent([partsBlock(notes), reply('r', '')])).toStrictEqual({
         messages: [{
           role: 'user',
           content: [
-            { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\n## Requirements and decisions\n\nThe fox: ![image](id=b)` },
+            { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\n## Requirements and decisions\n\nThe fox: ![id=b](image)` },
             { type: 'image', path: GENERATED },
-            { type: 'text', text: `\n\n## User messages\n\n### First message\n\n${FENCE}\nMake a fox like ![image](id=a)` },
+            { type: 'text', text: `\n\n## User messages\n\n### First message\n\n${FENCE}\nMake a fox like ![id=a](image)` },
             { type: 'image', path: IMAGE },
-            { type: 'text', text: `\n${FENCE}\n\n### Relevant middle messages\n\n${FENCE}\nEnd on ![image](id=d)` },
+            { type: 'text', text: `\n${FENCE}\n\n### Relevant middle messages\n\n${FENCE}\nEnd on ![id=d](image)` },
             { type: 'image', path: OTHER_IMAGE },
             { type: 'text', text: `.\n${FENCE}\n\n### Final message\n\n${FENCE}\nNow make @b red.\n${FENCE}` },
           ],
@@ -1305,9 +1305,9 @@ describe('sectionsToStreamMessages: a compacted conversation', () => {
     it('sends no path of a stored file in a text: an image goes as its own part, and a clip as its tag with no path', () => {
       const notes = notesText(
         `The file ${IMAGE} is the fox.`,
-        `Make a fox like ![${IMAGE}](id=a)`,
+        `Make a fox like ![id=a](${IMAGE})`,
         'Go on.',
-        [`Use ![${OTHER_IMAGE}](id=d), the file ${GENERATED}, and this:\n${mediaTagText(RAIN)}`],
+        [`Use ![id=d](${OTHER_IMAGE}), the file ${GENERATED}, and this:\n${mediaTagText(RAIN)}`],
       )
       const parts = sent([partsBlock(notes), reply('r', '')]).messages.flatMap((message) => (message.role === 'user' && Array.isArray(message.content) ? message.content : []))
       const texts = parts.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('')
@@ -1318,27 +1318,27 @@ describe('sectionsToStreamMessages: a compacted conversation', () => {
     })
 
     it('sends the reply after the notes, and a later message of the user, as messages of their own', () => {
-      const sections = [partsBlock(notesText('Notes.', 'Make a fox.', null)), reply('r', 'Done.'), user('u3', `Thanks ![${OTHER_IMAGE}](id=d)`)]
+      const sections = [partsBlock(notesText('Notes.', 'Make a fox.', null)), reply('r', 'Done.'), user('u3', `Thanks ![id=d](${OTHER_IMAGE})`)]
 
       expect(sent(sections).messages).toStrictEqual([
         { role: 'user', content: `${COMPACTION_MESSAGE_INTRO}\n\n## Requirements and decisions\n\nNotes.\n\n## User messages\n\n### First and final message\n\n${FENCE}\nMake a fox.\n${FENCE}` },
         { role: 'agent', content: 'Done.' },
-        { role: 'user', content: [{ type: 'text', text: 'Thanks ![image](id=d)' }, { type: 'image', path: OTHER_IMAGE }] },
+        { role: 'user', content: [{ type: 'text', text: 'Thanks ![id=d](image)' }, { type: 'image', path: OTHER_IMAGE }] },
       ])
     })
 
     it('sends a linked image and a linked clip of the messages with no path, and only when the tag lists them', () => {
-      const first = `Like ![${LINKED_IMAGE}](id=a)`
+      const first = `Like ![id=a](${LINKED_IMAGE})`
       const final = `Cut this:\n${mediaTagText(LINKED_CLIP)}`
       // A model wrote a linked path into its requirements: the list does
       // not hold it, so it is no image.
-      const requirements = '![/home/u/Pictures/keys.png](id=z) is the den.'
+      const requirements = '![id=z](/home/u/Pictures/keys.png) is the den.'
       const listed = [partsBlock(notesText(requirements, first, final), [LINKED_IMAGE, LINKED_CLIP.src!]), reply('r', '')]
 
       expect(sent(listed).messages).toStrictEqual([{
         role: 'user',
         content: [
-          { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\n## Requirements and decisions\n\n![image](id=z) is the den.\n\n## User messages\n\n### First message\n\n${FENCE}\nLike ![image](id=a)` },
+          { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\n## Requirements and decisions\n\n![id=z](image) is the den.\n\n## User messages\n\n### First message\n\n${FENCE}\nLike ![id=a](image)` },
           { type: 'image', path: LINKED_IMAGE },
           { type: 'text', text: `\n${FENCE}\n\n### Final message\n\n${FENCE}\nCut this:\n${mediaTagRequestText(LINKED_CLIP)}\n${FENCE}` },
         ],
@@ -1425,7 +1425,7 @@ describe('sectionsToStreamMessages: a compacted conversation', () => {
       // gets one.
       it('gives a message of the notes no image of the reply after the block, so the first message keeps its bytes', () => {
         const mentions = compactionBlockText({ count: 1, lastId: 'c', pictures: [] }, notesText('Notes.', 'Make a fox. Then compare it with @d.', null))
-        const sections = [reply('r', `${mentions}\nHere it is.\n\n![${GENERATED}](id=d)`), user('u1', 'Make @d red.')]
+        const sections = [reply('r', `${mentions}\nHere it is.\n\n![id=d](${GENERATED})`), user('u1', 'Make @d red.')]
         const { messages } = sent(sections)
 
         expect(messages[0]).toStrictEqual(sent(sectionsBeforeReply(sections, 0)).messages[0])
@@ -1446,16 +1446,16 @@ describe('mediaRequestInput', () => {
   it('takes the prompt from the last user message, with each reference as its text and no path', () => {
     const sections = [
       user('u1', 'A red fox'),
-      reply('a1', `![${GENERATED}](id=a)`),
-      user('u2', `\nLike ![${IMAGE}](id=b), but blue \n`),
+      reply('a1', `![id=a](${GENERATED})`),
+      user('u2', `\nLike ![id=b](${IMAGE}), but blue \n`),
     ]
 
-    expect(input('image', sections)).toStrictEqual({ prompt: 'Like ![image](id=b), but blue', images: [], imagesLeftOut: 1, ...NO_CLIPS })
-    expect(input('imageEdit', sections)).toStrictEqual({ prompt: 'Like ![image](id=b), but blue', images: [IMAGE], imagesLeftOut: 0, ...NO_CLIPS })
+    expect(input('image', sections)).toStrictEqual({ prompt: 'Like ![id=b](image), but blue', images: [], imagesLeftOut: 1, ...NO_CLIPS })
+    expect(input('imageEdit', sections)).toStrictEqual({ prompt: 'Like ![id=b](image), but blue', images: [IMAGE], imagesLeftOut: 0, ...NO_CLIPS })
   })
 
   it('edits the images of the last user message, in order', () => {
-    const sections = [user('u1', `![${GENERATED}](id=a)`), user('u2', `Mix ![${OTHER_IMAGE}](id=b) and ![${IMAGE}](id=c)`)]
+    const sections = [user('u1', `![id=a](${GENERATED})`), user('u2', `Mix ![id=b](${OTHER_IMAGE}) and ![id=c](${IMAGE})`)]
 
     expect(input('imageEdit', sections).images).toStrictEqual([OTHER_IMAGE, IMAGE])
   })
@@ -1464,9 +1464,9 @@ describe('mediaRequestInput', () => {
     const newest = '/home/u/.config/dez/assets/generated/images/cat.webp'
     const sections = [
       user('u1', 'A red fox'),
-      reply('a1', `![${GENERATED}](id=a)`),
+      reply('a1', `![id=a](${GENERATED})`),
       user('u2', 'A cat'),
-      reply('a2', `![${newest}](id=b)`),
+      reply('a2', `![id=b](${newest})`),
       user('u3', 'Edit @a to add an apple'),
     ]
 
@@ -1476,8 +1476,8 @@ describe('mediaRequestInput', () => {
 
   it('edits the pasted and the mentioned images of the last user message in text order, each one once', () => {
     const sections = [
-      reply('a1', `![${GENERATED}](id=a)`),
-      user('u1', `Put ![${IMAGE}](id=b) and ![${IMAGE}](id=b) on @a. Keep @a and @b sharp.`),
+      reply('a1', `![id=a](${GENERATED})`),
+      user('u1', `Put ![id=b](${IMAGE}) and ![id=b](${IMAGE}) on @a. Keep @a and @b sharp.`),
     ]
 
     expect(input('imageEdit', sections).images).toStrictEqual([IMAGE, GENERATED])
@@ -1485,23 +1485,23 @@ describe('mediaRequestInput', () => {
 
   it('gives an edit model that takes fewer images the first ones, the image to edit first, and counts the rest', () => {
     const sections = [
-      reply('a1', `![${GENERATED}](id=a)`),
-      user('u1', `Put ![${IMAGE}](id=b) on @a`),
+      reply('a1', `![id=a](${GENERATED})`),
+      user('u1', `Put ![id=b](${IMAGE}) on @a`),
     ]
 
     expect([
       input('imageEdit', sections, { images: { maxImages: 1 } }),
       input('imageEdit', sections, { images: { maxImages: 3 } }),
     ]).toStrictEqual([
-      { prompt: 'Put ![image](id=b) on @a', images: [IMAGE], imagesLeftOut: 1, ...NO_CLIPS },
-      { prompt: 'Put ![image](id=b) on @a', images: [IMAGE, GENERATED], imagesLeftOut: 0, ...NO_CLIPS },
+      { prompt: 'Put ![id=b](image) on @a', images: [IMAGE], imagesLeftOut: 1, ...NO_CLIPS },
+      { prompt: 'Put ![id=b](image) on @a', images: [IMAGE, GENERATED], imagesLeftOut: 0, ...NO_CLIPS },
     ])
   })
 
   it('edits the newest image of the conversation when the last user message has none', () => {
     const sections = [
-      user('u1', `![${IMAGE}](id=a) A red fox`),
-      reply('a1', `![${IMAGE}](id=a)\n\n![${GENERATED}](id=b)`),
+      user('u1', `![id=a](${IMAGE}) A red fox`),
+      reply('a1', `![id=a](${IMAGE})\n\n![id=b](${GENERATED})`),
       user('u2', 'Make it blue'),
     ]
 
@@ -1515,23 +1515,23 @@ describe('mediaRequestInput', () => {
   // These requests have no place for a file, so the submit tells the user
   // that the images of the message were left out.
   it.each(['image', 'tts', 'music'] as const)('gives a %s request the prompt, no image of the conversation, and the count of the message\'s images', (kind) => {
-    const sections = [reply('a1', `![${GENERATED}](id=a)`), user('u1', `Say what ![${IMAGE}](id=b) and @a show`)]
+    const sections = [reply('a1', `![id=a](${GENERATED})`), user('u1', `Say what ![id=b](${IMAGE}) and @a show`)]
 
-    expect(input(kind, sections)).toStrictEqual({ prompt: 'Say what ![image](id=b) and @a show', images: [], imagesLeftOut: 2, ...NO_CLIPS })
+    expect(input(kind, sections)).toStrictEqual({ prompt: 'Say what ![id=b](image) and @a show', images: [], imagesLeftOut: 2, ...NO_CLIPS })
   })
 
   describe('the reference images of a new image', () => {
     it('takes as many images of the last user message as the model takes, and counts the rest', () => {
-      const sections = [reply('a1', `![${GENERATED}](id=a)`), user('u1', `Mix ![${IMAGE}](id=b) and @a`)]
+      const sections = [reply('a1', `![id=a](${GENERATED})`), user('u1', `Mix ![id=b](${IMAGE}) and @a`)]
 
-      expect(input('image', sections, { images: { maxImages: 1 } })).toStrictEqual({ prompt: 'Mix ![image](id=b) and @a', images: [IMAGE], imagesLeftOut: 1, ...NO_CLIPS })
+      expect(input('image', sections, { images: { maxImages: 1 } })).toStrictEqual({ prompt: 'Mix ![id=b](image) and @a', images: [IMAGE], imagesLeftOut: 1, ...NO_CLIPS })
     })
 
     // "Make it blue" after an image: the image goes, as for an edit. One
     // image can never meet a count above 1, so a model that needs more
     // gets none, and the refusal tells the count of the message.
     it('takes the newest image of the conversation for a model that needs one, and none for a model that needs none or more', () => {
-      const sections = [user('u1', 'A red fox'), reply('a1', `![${GENERATED}](id=a)`), user('u2', 'Make it blue')]
+      const sections = [user('u1', 'A red fox'), reply('a1', `![id=a](${GENERATED})`), user('u2', 'Make it blue')]
 
       expect([
         input('image', sections, { images: { maxImages: 1, minImages: 1 } }),
@@ -1548,13 +1548,13 @@ describe('mediaRequestInput', () => {
   describe('the image of an upscale', () => {
     // A model with no rules takes one image (`maxInputImages`).
     it('takes the first image of the last user message, and counts the rest', () => {
-      const sections = [reply('a1', `![${GENERATED}](id=a)`), user('u1', `![${IMAGE}](id=b) and @a`)]
+      const sections = [reply('a1', `![id=a](${GENERATED})`), user('u1', `![id=b](${IMAGE}) and @a`)]
 
-      expect(input('upscale', sections)).toStrictEqual({ prompt: '![image](id=b) and @a', images: [IMAGE], imagesLeftOut: 1, ...NO_CLIPS })
+      expect(input('upscale', sections)).toStrictEqual({ prompt: '![id=b](image) and @a', images: [IMAGE], imagesLeftOut: 1, ...NO_CLIPS })
     })
 
     it('takes the newest image of the conversation when the last user message has none, and none when there is none', () => {
-      const sections = [user('u1', `![${IMAGE}](id=a) A red fox`), reply('a1', `![${GENERATED}](id=b)`), user('u2', 'Larger')]
+      const sections = [user('u1', `![id=a](${IMAGE}) A red fox`), reply('a1', `![id=b](${GENERATED})`), user('u2', 'Larger')]
 
       expect([input('upscale', sections), input('upscale', [user('u1', 'Larger')])]).toStrictEqual([
         { prompt: 'Larger', images: [GENERATED], imagesLeftOut: 0, ...NO_CLIPS },
@@ -1565,17 +1565,17 @@ describe('mediaRequestInput', () => {
 
   describe('the frames of a video', () => {
     // A pasted image, a mentioned image, and each of them once more.
-    const twoImages = [reply('a1', `![${GENERATED}](id=a)`), user('u1', `From ![${IMAGE}](id=b) to @a. Keep @b and @a sharp.`)]
-    const threeImages = [reply('a1', `![${GENERATED}](id=a)`), user('u1', `![${IMAGE}](id=b) ![${OTHER_IMAGE}](id=c) @a`)]
+    const twoImages = [reply('a1', `![id=a](${GENERATED})`), user('u1', `From ![id=b](${IMAGE}) to @a. Keep @b and @a sharp.`)]
+    const threeImages = [reply('a1', `![id=a](${GENERATED})`), user('u1', `![id=b](${IMAGE}) ![id=c](${OTHER_IMAGE}) @a`)]
     // The newest image of the conversation is not in the last message.
-    const imageBefore = [user('u1', `![${IMAGE}](id=a) A red fox`), reply('a1', `![${GENERATED}](id=b)`), user('u2', 'Make it run')]
+    const imageBefore = [user('u1', `![id=a](${IMAGE}) A red fox`), reply('a1', `![id=b](${GENERATED})`), user('u2', 'Make it run')]
 
     it.each([
       ['a model with no rules one image', undefined, [IMAGE], 1],
       ['a model that takes one frame one image', { images: { maxImages: 1 } }, [IMAGE], 1],
       ['a model that takes two frames both images, in text order', { images: { maxImages: 2 } }, [IMAGE, GENERATED], 0],
     ])('gives %s of the last user message, and counts the rest', (_name, rules, images, imagesLeftOut) => {
-      expect(input('imageToVideo', twoImages, rules)).toStrictEqual({ prompt: 'From ![image](id=b) to @a. Keep @b and @a sharp.', images, imagesLeftOut, ...NO_CLIPS })
+      expect(input('imageToVideo', twoImages, rules)).toStrictEqual({ prompt: 'From ![id=b](image) to @a. Keep @b and @a sharp.', images, imagesLeftOut, ...NO_CLIPS })
     })
 
     it('gives a model that takes two frames the first two of three images', () => {
@@ -1612,7 +1612,7 @@ describe('mediaRequestInput', () => {
     const references = (maxImages: number, promptName?: string): ClipInputRules => ({ images: { maxImages, references: promptName === undefined ? {} : { promptName } } })
     // A pasted image, a mentioned image, each of them once more, and a
     // mention of no image.
-    const twoImages = [reply('a1', `![${GENERATED}](id=a)`), user('u1', `From ![${IMAGE}](id=b) to @a. Keep @b and @a sharp, not @z.`)]
+    const twoImages = [reply('a1', `![id=a](${GENERATED})`), user('u1', `From ![id=b](${IMAGE}) to @a. Keep @b and @a sharp, not @z.`)]
 
     it.each([
       ['@Image{n}', 'From @Image1 to @Image2. Keep @Image1 and @Image2 sharp, not @z.'],
@@ -1631,24 +1631,24 @@ describe('mediaRequestInput', () => {
     })
 
     it('names an image whose reference has no id', () => {
-      const sections = [user('u1', `![${IMAGE}]() meets ![${GENERATED}](id=a)`)]
+      const sections = [user('u1', `![](${IMAGE}) meets ![id=a](${GENERATED})`)]
 
       expect(input('imageToVideo', sections, references(7, '@Image{n}'))).toStrictEqual({ prompt: '@Image1 meets @Image2', images: [IMAGE, GENERATED], imagesLeftOut: 0, ...NO_CLIPS })
     })
 
     it('keeps the ids in the prompt of a model that tells no names', () => {
-      expect(input('imageToVideo', twoImages, references(7)).prompt).toBe('From ![image](id=b) to @a. Keep @b and @a sharp, not @z.')
+      expect(input('imageToVideo', twoImages, references(7)).prompt).toBe('From ![id=b](image) to @a. Keep @b and @a sharp, not @z.')
     })
 
     it('names an image of an earlier message that the last user message mentions', () => {
-      const imageBefore = [user('u1', `![${IMAGE}](id=a) A red fox`), reply('a1', `![${GENERATED}](id=b)`), user('u2', 'Make @a run')]
+      const imageBefore = [user('u1', `![id=a](${IMAGE}) A red fox`), reply('a1', `![id=b](${GENERATED})`), user('u2', 'Make @a run')]
 
       expect(input('imageToVideo', imageBefore, references(7, '@Image{n}'))).toStrictEqual({ prompt: 'Make @Image1 run', images: [IMAGE], imagesLeftOut: 0, ...NO_CLIPS })
     })
   })
 
   describe('the clips of a video', () => {
-    const clipsReply = reply('a1', `![${GENERATED}](id=a)\n${mediaTagText(SONG)}\n${mediaTagText(DANCE)}\n${mediaTagText(RAIN)}`)
+    const clipsReply = reply('a1', `![id=a](${GENERATED})\n${mediaTagText(SONG)}\n${mediaTagText(DANCE)}\n${mediaTagText(RAIN)}`)
     const rules = (maxAudio: number, maxVideo: number, names = false): ClipInputRules => ({
       images: { maxImages: 4, references: names ? { promptName: '@Image{n}' } : {} },
       clips: {
@@ -1676,7 +1676,7 @@ describe('mediaRequestInput', () => {
     })
 
     it('names each clip that goes in the prompt with the numbers of its kind, and keeps the mentions of the others', () => {
-      const sections = [clipsReply, user('u1', `@a dances @d to @e and @c, like ![${IMAGE}](id=g)`)]
+      const sections = [clipsReply, user('u1', `@a dances @d to @e and @c, like ![id=g](${IMAGE})`)]
 
       expect(input('video', sections, rules(1, 3, true))).toStrictEqual({
         prompt: '@Image1 dances @Video1 to @Audio1 and @c, like @Image2',

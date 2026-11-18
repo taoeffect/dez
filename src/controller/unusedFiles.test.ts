@@ -118,7 +118,7 @@ describe('dez.controller/unusedFiles/find', () => {
 
   it('gives the old files of every stored-file folder that no text names, with their total size', async () => {
     folders = {
-      'app:assets/images': [file('pasted-used.png', 1), file('pasted-free.png', 20), file('pasted-new.png', 300, OLD + 1)],
+      'app:assets/images': [file('pasted-used.png', 1), file('pasted-old.png', 5), file('pasted-free.png', 20), file('pasted-new.png', 300, OLD + 1)],
       'app:assets/generated/images': [file('made-held.webp', 4000), file('made-free.jpg', 50_000), file('made-by-job.png', 9)],
       'app:assets/generated/audio': [file('speech-prompt.mp3', 600_000), file('speech-free.wav', 7_000_000)],
       'app:assets/generated/video': [file('film-used.mp4', 80_000_000), file('film.mp4.4012.7.tmp', 900_000_000)],
@@ -126,13 +126,15 @@ describe('dez.controller/unusedFiles/find', () => {
       'app:assets/video': [file('pasted-used.webm', 3_000_000)],
     }
     conversations = [
-      `---\ntitle: One\n---\n![${APP_DIR}/assets/images/pasted-used.png](id=a)\n`,
-      'No file here.',
+      `---\ntitle: One\n---\n![id=a](${APP_DIR}/assets/images/pasted-used.png)\n`,
+      // A reference of the old form is plain text, but its path still
+      // names the file.
+      `No file here, and ![${APP_DIR}/assets/images/pasted-old.png](id=e) as text.`,
       `<dez:video id="b" type="video/mp4" src="${APP_DIR}/assets/generated/video/film-used.mp4"/>\n`
         + `<dez:video id="d" type="video/webm" src="${APP_DIR}/assets/video/pasted-used.webm"/>\n`,
     ]
     // A tab that is not saved yet, and a saved prompt.
-    heldTexts = [`![${APP_DIR}/assets/generated/images/made-held.webp](id=c)`, 'Say it as in speech-prompt.mp3']
+    heldTexts = [`![id=c](${APP_DIR}/assets/generated/images/made-held.webp)`, 'Say it as in speech-prompt.mp3']
     // The image of a job result that no text names yet.
     unnamedMadeFiles = [`${APP_DIR}/assets/generated/images/made-by-job.png`]
 
@@ -271,7 +273,7 @@ describe('dez.controller/unusedFiles/delete', () => {
   })
 
   it('keeps a file that a text in memory or a job result names since the scan', async () => {
-    heldTexts = ['', `Now with ![${APP_DIR}/assets/generated/images/b.webp](id=a)`]
+    heldTexts = ['', `Now with ![id=a](${APP_DIR}/assets/generated/images/b.webp)`]
     unnamedMadeFiles = [`${CACHE_DIR}/media/d.mp4`]
 
     expect(await deleteUnused(unused)).toStrictEqual({ deleted: 4, bytes: 6_503_010, inUse: 2, failed: 0 })
@@ -338,7 +340,7 @@ describe('dez.controller/unusedFiles/deleteUnnamed', () => {
   })
 
   it('keeps a file that a conversation, a text in memory, or a job result still names', async () => {
-    conversations = ['No file here.', `---\ntitle: Other\n---\n![${IMAGE}](id=a)\n`]
+    conversations = ['No file here.', `---\ntitle: Other\n---\n![id=a](${IMAGE})\n`]
     heldTexts = [`<dez:tool id="c" name="asset_view" pictures="[{&quot;file&quot;:&quot;sheet.jpg&quot;,&quot;label&quot;:&quot;&quot;}]">ok</dez:tool>`]
     unnamedMadeFiles = [COPY]
 

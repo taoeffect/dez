@@ -106,7 +106,7 @@ describe('namedMentions', () => {
   })
 
   it('leaves out a mention on a line whose path a request takes out, and keeps the other lines', () => {
-    const sections = [user(`${idImage(RED, 'a')}\nOpen ${FOX} for @a\nThen @a\n![${RED}](id=a and @a`)]
+    const sections = [user(`${idImage(RED, 'a')}\nOpen ${FOX} for @a\nThen @a\n![id=a](${RED} and @a`)]
 
     expect(named(sections)).toStrictEqual([['@a=image']])
     expect(namedMentions(sections)[0][0].from).toBe(sections[0].text.indexOf('Then @a') + 5)

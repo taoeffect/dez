@@ -18,8 +18,8 @@ const attached = ({ other: _other, ...clip }: MediaTagData) => clip
 // A conversation with the images `a` (generated) and `b` (pasted), and the
 // clips `c`, `d`, and `e`.
 const CONVERSATION = [
-  user('u1', `Like ![${PASTED}](id=b)`),
-  reply('a1', `![${GENERATED}](id=a)\n${mediaTagText(SONG)}\n${mediaTagText(DANCE)}\n${mediaTagText(RAIN)}`),
+  user('u1', `Like ![id=b](${PASTED})`),
+  reply('a1', `![id=a](${GENERATED})\n${mediaTagText(SONG)}\n${mediaTagText(DANCE)}\n${mediaTagText(RAIN)}`),
 ]
 
 // Rules of a video model that takes images and clips as references.
@@ -50,7 +50,7 @@ describe('conversationAssets', () => {
     const newerSong: MediaTagData = { ...SONG, type: 'audio/wav', src: '/home/u/.config/dez/assets/generated/audio/s2.wav' }
     const sections = [
       ...CONVERSATION,
-      user('u2', `![${GENERATED}](id=b)\n${mediaTagText(newerSong)}\n${mediaTagText({ ...DANCE, id: 'a' })}`),
+      user('u2', `![id=b](${GENERATED})\n${mediaTagText(newerSong)}\n${mediaTagText({ ...DANCE, id: 'a' })}`),
     ]
 
     const { images, clips, found } = conversationAssets(sections)
@@ -70,7 +70,7 @@ describe('conversationAssets', () => {
   // A model's text must never make Dez read a file of the computer.
   it('takes a linked file only from a user section', () => {
     const linkedClip: MediaTagData = { ...SONG, id: 'h', src: '/home/u/Music/song.mp3' }
-    const text = `![${LINKED}](id=g)\n${mediaTagText(linkedClip)}`
+    const text = `![id=g](${LINKED})\n${mediaTagText(linkedClip)}`
 
     const fromUser = conversationAssets([user('u1', text)])
     const fromAgent = conversationAssets([reply('a1', text)])
@@ -99,12 +99,12 @@ describe('promptRequestSource', () => {
 
   // A model could write the path of any file into a reference or a tag.
   it('reads no image reference and no media tag of the prompt as an input, and keeps no path of them', () => {
-    const prompt = `Edit ![${LINKED}](id=b) and ![${PASTED}](id=b)\n<dez:audio id="c" type="audio/mpeg" src="/home/u/.cache/dez/media/s1.mp3"/>`
+    const prompt = `Edit ![id=b](${LINKED}) and ![id=b](${PASTED})\n<dez:audio id="c" type="audio/mpeg" src="/home/u/.cache/dez/media/s1.mp3"/>`
 
     const { parts, clips, inputs } = promptRequestSource(prompt, conversationAssets(CONVERSATION))
 
     expect({ parts, clips, inputs }).toStrictEqual({
-      parts: [{ type: 'text', text: 'Edit ![image](id=b) and ![image](id=b)\n<dez:audio id="c" type="audio/mpeg" src="audio"/>' }],
+      parts: [{ type: 'text', text: 'Edit ![id=b](image) and ![id=b](image)\n<dez:audio id="c" type="audio/mpeg" src="audio"/>' }],
       clips: [],
       inputs: [],
     })

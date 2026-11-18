@@ -26,7 +26,7 @@ const IMAGE_PARAMETER: ToolParameter = { name: 'image', type: 'string', descript
 
 // What every subcommand does with the image that it names and with the new
 // image, for the help texts.
-const NEW_IMAGE_TEXT = 'An image of the conversation shows in the text as `![image](id=a)`, where `a` is its id; the user writes `@a` for it. '
+const NEW_IMAGE_TEXT = 'An image of the conversation shows in the text as `![id=a](image)`, where `a` is its id; the user writes `@a` for it. '
   + 'The image itself does not change. The new image goes into your reply, where the user sees it, and the result gives its id and its size in pixels.'
 
 const CROP_PARAMETERS = ['x', 'y', 'width', 'height'] as const
