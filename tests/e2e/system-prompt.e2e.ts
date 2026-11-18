@@ -204,12 +204,12 @@ describe('Settings › System Prompt', () => {
 
     // Back to Source, an edit, and Preview again: the preview follows.
     await showMode('Source')
-    await writePrompt('# {{model_id}}\n\nAn image `![image](id=a)`, ![image](id=a), and a clip `<dez:audio id="b" type="audio/wav"/>`.')
+    await writePrompt('# {{model_id}}\n\nAn image `![id=a](image)`, ![id=a](image), and a clip `<dez:audio id="b" type="audio/wav"/>`.')
     await showMode('Preview')
     await waitForValue(browser, 'preview lines', previewLines, [
       '# prompt-model',
       '',
-      'An image `![image](id=a)`, ![image](id=a), and a clip `<dez:audio id="b" type="audio/wav"/>`.',
+      'An image `![id=a](image)`, ![id=a](image), and a clip `<dez:audio id="b" type="audio/wav"/>`.',
     ])
     expect(await browser.execute(() => document.querySelectorAll('.system-prompt-preview :is(img, audio, video, .dez-image, .dez-media)').length)).toBe(0)
   })

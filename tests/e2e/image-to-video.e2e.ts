@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { click, consoleErrors, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
 import { readAppState } from './harness/fixtures'
-import { decodedImage, pasteImageReference, pngDataUrl, solidPng, stripedPng, type Rgb } from './harness/images'
+import { decodedImage, pasteImageReference, pngDataUrl, referencePath, solidPng, stripedPng, type Rgb } from './harness/images'
 import { WEBM_VIDEO, answerVeniceJob, shownPlayers } from './harness/media'
 import { expectSendRefused, startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import type { HeldRequest, MockProvider } from './harness/mockServer'
@@ -175,7 +175,7 @@ describe('image-to-video models', () => {
 
     // The length and the resolution are the lowest of the model's lists.
     const queue = await queueRequest({
-      prompt: 'The fox runs: ![image](id=a)',
+      prompt: 'The fox runs: ![id=a](image)',
       duration: '5s',
       resolution: '480p',
       audio: true,
@@ -234,7 +234,7 @@ describe('image-to-video models', () => {
     await submit(browser, '')
 
     const queue = await queueRequest({
-      prompt: 'From ![image](id=a) to ![image](id=b), not ![image](id=c)',
+      prompt: 'From ![id=a](image) to ![id=b](image), not ![id=c](image)',
       duration: '5s',
       resolution: '480p',
       audio: false,
@@ -268,7 +268,7 @@ describe('image-to-video models', () => {
     await submit(browser, '')
 
     const queue = await queueRequest({
-      prompt: 'From ![image](id=a) to ![image](id=b)',
+      prompt: 'From ![id=a](image) to ![id=b](image)',
       duration: '5s',
       resolution: '480p',
       audio: true,
@@ -311,7 +311,7 @@ describe('image-to-video models', () => {
     await submit(browser, '')
 
     const queue = await queueRequest({
-      prompt: 'Wide: ![image](id=a)',
+      prompt: 'Wide: ![id=a](image)',
       duration: '5s',
       resolution: '480p',
       audio: true,
@@ -333,7 +333,7 @@ describe('image-to-video models', () => {
     const clip = await answerJob(queue, 'queue-4', 1)
     expect(clip).toMatch(/^<dez:video id="b" type="video\/webm" src="[^"]+\.webm" expires="[^"]+" job="queue-4"\/>$/)
     await waitForThread(browser, [{ role: 'user', text: message }, { role: 'agent', text: clip }, { role: 'user', text: '' }])
-    const storedPath = message.slice('Wide: !['.length, message.indexOf(']('))
+    const storedPath = referencePath(message)
     expect(await fs.promises.readFile(storedPath)).toStrictEqual(WIDE_PNG)
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
@@ -361,7 +361,7 @@ describe('image-to-video models', () => {
     expect(clip).toMatch(/^<dez:video id="d" type="video\/webm" src="[^"]+\.webm" expires="[^"]+" job="queue-5"\/>$/)
     // The message keeps its references and its mention.
     await waitForThread(browser, [{ role: 'user', text: message }, { role: 'agent', text: clip }, { role: 'user', text: '' }])
-    expect(message).toMatch(/^The fox !\[[^\]]+\]\(id=a\) meets the bird !\[[^\]]+\]\(id=b\) in the park !\[[^\]]+\]\(id=c\)\. Keep @a in front\.$/)
+    expect(message).toMatch(/^The fox !\[id=a\]\([^)]+\) meets the bird !\[id=b\]\([^)]+\) in the park !\[id=c\]\([^)]+\)\. Keep @a in front\.$/)
     expect(await openToasts(browser, 'warning')).toStrictEqual([])
     expect(await consoleErrors(browser)).toStrictEqual([])
   })

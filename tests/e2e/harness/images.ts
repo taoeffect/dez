@@ -169,7 +169,19 @@ export async function pasteImage (browser: E2EBrowser, image: Buffer, type = 'im
  *  reference, which gets the image id `id`. */
 export async function pasteImageReference (browser: E2EBrowser, image: Buffer, id: string, type = 'image/png'): Promise<void> {
   await pasteImage(browser, image, type)
-  await waitForValue(browser, `reference of the image ${id}`, async () => (await threadSections(browser)).at(-1)?.text.endsWith(`](id=${id})`) ?? false, true)
+  const reference = new RegExp(String.raw`!\[id=${id}\]\([^\s()]+\)$`)
+  await waitForValue(browser, `reference of the image ${id}`, async () => reference.test((await threadSections(browser)).at(-1)?.text ?? ''), true)
+}
+
+// The path of an image reference, `![<metadata>](<path>)`. A path in the
+// test HOME has no space or paren, so it is never in `<…>`.
+const REFERENCE_PATH = /!\[[^\]\n]*\]\(([^\s()]+)\)/
+
+/** The path of the first image reference in `text`. */
+export function referencePath (text: string): string {
+  const path = REFERENCE_PATH.exec(text)?.[1]
+  if (path === undefined) throw new Error(`referencePath: no image reference in ${JSON.stringify(text)}`)
+  return path
 }
 
 /** The folder of the images that models and Dez tools made, in the test

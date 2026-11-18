@@ -178,7 +178,7 @@ describe('venice image parameters', () => {
     expect(edit.path).toBe(EDIT_PATH)
     expect(JSON.parse(edit.body)).toStrictEqual({
       modelId: EDIT_MODEL.id,
-      prompt: '![image](id=a)',
+      prompt: '![id=a](image)',
       images: [pngDataUrl(INPUT_PNG)],
       safe_mode: false,
       resolution: '1K',

@@ -148,7 +148,7 @@ describe('images of the OpenRouter image API', () => {
     expect(await fs.promises.readFile(file)).toEqual(MADE_PNG)
     await waitForThread(browser, [
       { role: 'user', text: 'Draw a fox' },
-      { role: 'agent', text: `![${file}](id=a)` },
+      { role: 'agent', text: `![id=a](${file})` },
       { role: 'user', text: '' },
     ])
     await waitForValue(browser, 'shown image', () => shownImages(browser), [{ alt: name, width: 24, height: 16 }])
@@ -178,7 +178,7 @@ describe('images of the OpenRouter image API', () => {
     expect(JSON.parse(request.body)).toEqual({
       resolution: '2K',
       model: FLUX.id,
-      prompt: '![image](id=a)![image](id=b)Mix them',
+      prompt: '![id=a](image)![id=b](image)Mix them',
       input_references: [PASTED_PNG, SECOND_PNG].map((png) => ({ type: 'image_url', image_url: { url: pngDataUrl(png) } })),
     })
     expect(request.body).not.toContain(setup.app.home)
@@ -187,7 +187,7 @@ describe('images of the OpenRouter image API', () => {
     const name = await newFileIn(browser, generatedDir(), before)
     await waitForThread(browser, [
       { role: 'user', text: `${references}Mix them` },
-      { role: 'agent', text: `![${path.join(generatedDir(), name)}](id=c)` },
+      { role: 'agent', text: `![id=c](${path.join(generatedDir(), name)})` },
       { role: 'user', text: '' },
     ])
     expect(await openToasts(browser, 'warning')).toEqual([])
@@ -209,7 +209,7 @@ describe('images of the OpenRouter image API', () => {
     const request = await setup.mock.waitForRequest(browser)
     expect(JSON.parse(request.body)).toEqual({
       model: STYLE_MODEL.id,
-      prompt: '![image](id=a)![image](id=b)In this style',
+      prompt: '![id=a](image)![id=b](image)In this style',
       input_references: [{ type: 'image_url', image_url: { url: pngDataUrl(PASTED_PNG) } }],
     })
     await waitForValue(browser, 'warning toast', () => openToasts(browser, 'warning'), [{
@@ -221,7 +221,7 @@ describe('images of the OpenRouter image API', () => {
     const name = await newFileIn(browser, generatedDir(), before)
     await waitForThread(browser, [
       { role: 'user', text: `${references}In this style` },
-      { role: 'agent', text: `![${path.join(generatedDir(), name)}](id=c)` },
+      { role: 'agent', text: `![id=c](${path.join(generatedDir(), name)})` },
       { role: 'user', text: '' },
     ])
     expect(await consoleErrors(browser)).toEqual([])
@@ -247,7 +247,7 @@ describe('images of the OpenRouter image API', () => {
     expect(await fs.promises.readFile(file)).toEqual(MADE_SVG)
     await waitForThread(browser, [
       { role: 'user', text: 'Draw a logo' },
-      { role: 'agent', text: `![${file}](id=a)` },
+      { role: 'agent', text: `![id=a](${file})` },
       { role: 'user', text: '' },
     ])
     await waitForValue(browser, 'shown image', () => shownImages(browser), [{ alt: name, width: 40, height: 24 }])

@@ -360,7 +360,7 @@ describe('clips that a message names', () => {
 
     const queue = await takeRequest(setup, QUEUE_PATH, {
       model: FILMS.modelId,
-      prompt: 'Make it dance like @b to @a: ![image](id=c)',
+      prompt: 'Make it dance like @b to @a: ![id=c](image)',
       ...PARAMETERS,
       image_url: pngDataUrl(PNG),
     })

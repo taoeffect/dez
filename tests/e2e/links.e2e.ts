@@ -29,7 +29,7 @@ const MAIL_SOURCE = 'Mail <ann@example.com> or call [support](tel:+15551234).'
 const MAIL_SHOWN = 'Mail ann@example.com or call support.'
 // Links whose destination Dez does not open (a `file:` URL, and a Dez image
 // reference that lost its `!`) and a link in a code span stay source.
-const RAW_SOURCE = 'Raw [file](file:///etc/hosts), [pic.png](id=a), and `[code](https://example.com/code)`.'
+const RAW_SOURCE = 'Raw [file](file:///etc/hosts), [id=a](/tmp/pic.png), and `[code](https://example.com/code)`.'
 // A table row line never shows a link: hiding its markup would add a cell.
 const TABLE_ROW = '| Ex | [row link](https://example.net/row) |'
 const TEXT = ['Links fixture.', '', READ_SOURCE, MAIL_SOURCE, RAW_SOURCE, '', '| Site | Link |', '|------|------|', TABLE_ROW].join('\n')

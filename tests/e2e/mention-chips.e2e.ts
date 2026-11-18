@@ -144,7 +144,7 @@ describe('mention chips', () => {
 
   // The image `name` as a stored file, as its reference with the id `a`.
   async function storedImage (name: string): Promise<string> {
-    return `![${await writeTestFile(appFilePath(app.home, 'assets', 'images', name), PNG)}](id=a)`
+    return `![id=a](${await writeTestFile(appFilePath(app.home, 'assets', 'images', name), PNG)})`
   }
 
   beforeAll(async () => {
@@ -313,7 +313,7 @@ describe('mention chips', () => {
     const stored = await writeTestFile(appFilePath(app.home, 'assets', 'generated', 'images', 'mention-hidden.png'), PNG)
     const reply = [
       intermediateInvokeBlock('call_mention', jobId),
-      `![${stored}](id=a|tool=model_invoke|hidden=${jobId})`,
+      `![id=a|tool=model_invoke|hidden=${jobId}](${stored})`,
       FILLER,
     ].join('\n\n')
     await openSeededConversation(browser, app.home, 'mention-chips-hidden', [
@@ -339,7 +339,7 @@ describe('mention chips', () => {
 
   it('ends a jump when a change deletes the asset, so the asset that then starts at its place does not flash', async () => {
     const image = await storedImage('mention-deleted.png')
-    const next = `![${await writeTestFile(appFilePath(app.home, 'assets', 'images', 'mention-next.png'), PNG)}](id=c)`
+    const next = `![id=c](${await writeTestFile(appFilePath(app.home, 'assets', 'images', 'mention-next.png'), PNG)})`
     await openSeededConversation(browser, app.home, 'mention-chips-deleted', [
       { role: 'user', text: `${image}\n${next}\nSee @a.` },
     ])

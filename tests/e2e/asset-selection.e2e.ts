@@ -108,10 +108,10 @@ describe('assets in a selection', () => {
   it('tints an image only while a selection holds all of it, in the focused or the not-focused color, and keeps its element', async () => {
     const stored = await writeTestFile(appFilePath(app.home, 'assets', 'images', 'selection.png'), PNG)
     const missing = appFilePath(app.home, 'assets', 'images', 'selection-missing.png')
-    const reference = `![${stored}](id=a)`
+    const reference = `![id=a](${stored})`
     await openSeededConversation(browser, app.home, 'asset-selection-image', [{
       role: 'user',
-      text: `Before the image.\n${reference}\nAfter the image.\n![${missing}](id=b)\nEnd.`,
+      text: `Before the image.\n${reference}\nAfter the image.\n![id=b](${missing})\nEnd.`,
     }])
     await waitForValue(browser, 'shown images', () => shownImages(browser), [{ alt: 'selection.png', width: 120, height: 60 }])
     await waitFor(browser, '.cm-content .dez-image-missing')
@@ -221,7 +221,7 @@ describe('assets in a selection', () => {
   it('marks an image that the editor draws after a scroll into a selection', async () => {
     const stored = await writeTestFile(appFilePath(app.home, 'assets', 'images', 'selection-far.png'), PNG)
     const lines = Array.from({ length: 200 }, (_, index) => `Line ${index + 1}`)
-    await openSeededConversation(browser, app.home, 'asset-selection-far', [{ role: 'user', text: `${lines.join('\n')}\n![${stored}](id=a)\nEnd.` }])
+    await openSeededConversation(browser, app.home, 'asset-selection-far', [{ role: 'user', text: `${lines.join('\n')}\n![id=a](${stored})\nEnd.` }])
     await scrollEditorToTop(browser)
     // The image is far below the view, so the editor has not drawn it.
     await waitForValue(browser, 'images drawn at the top', assetLooks, [])

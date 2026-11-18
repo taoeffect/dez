@@ -202,7 +202,7 @@ describe('model_invoke', () => {
     expect(madeName).toMatch(storedFileName('png'))
     const madePath = path.join(generatedDir, madeName)
     expect(await fs.promises.readFile(madePath)).toEqual(MADE_PNG)
-    expect(reply.endsWith(`</dez:tool>\n\n![${madePath}](id=b|tool=model_invoke|made-by=${jobId})\n\n${replyText(CALLER.modelName)}`)).toBe(true)
+    expect(reply.endsWith(`</dez:tool>\n\n![id=b|tool=model_invoke|made-by=${jobId}](${madePath})\n\n${replyText(CALLER.modelName)}`)).toBe(true)
     await waitForValue(browser, 'shown images', async () => (await shownImages(browser)).map(({ width, height }) => ({ width, height })), [
       { width: 320, height: 256 },
       { width: 48, height: 36 },
@@ -243,7 +243,7 @@ describe('model_invoke', () => {
 
     // Each asset comes after the blocks of the call that gave it.
     const reply = await endedReply(browser)
-    const image = new RegExp(String.raw`<\/dez:tool>\n\n!\[[^\]]+\]\(id=a\|tool=model_invoke\|made-by=${paintJob}\)\n`).exec(reply)
+    const image = new RegExp(String.raw`<\/dez:tool>\n\n!\[id=a\|tool=model_invoke\|made-by=${paintJob}\]\([^)]+\)\n`).exec(reply)
     expect(image).not.toBeNull()
     expect(image?.index).toBeLessThan(reply.indexOf('id="call_wait_2"'))
     const clip = new RegExp(String.raw`<\/dez:tool>\n\n<dez:audio id="b" type="audio\/wav" src="([^"]+\.wav)" expires="[^"]+" tool="model_invoke" job="queue-1" made-by="${songJob}"\/>\n\n([^\n]+)$`).exec(reply)
@@ -449,7 +449,7 @@ describe('model_invoke', () => {
     // The image goes into the reply that took the job over.
     const reply = await endedReply(browser, 3)
     const madePath = path.join(generatedDir, await newFileIn(browser, generatedDir, before))
-    expect(reply.endsWith(`</dez:tool>\n\n![${madePath}](id=a|tool=model_invoke|made-by=${paintJob})\n\n${replyText(CALLER.modelName)}`)).toBe(true)
+    expect(reply.endsWith(`</dez:tool>\n\n![id=a|tool=model_invoke|made-by=${paintJob}](${madePath})\n\n${replyText(CALLER.modelName)}`)).toBe(true)
     await waitForValue(browser, 'shown image', async () => (await shownImages(browser)).map(({ width, height }) => ({ width, height })), [{ width: 48, height: 36 }])
     expect(setup.mock.hasWaitingRequest()).toBe(false)
     expect(await openToasts(browser, 'error')).toStrictEqual([])
@@ -504,7 +504,7 @@ describe('model_invoke', () => {
     const reply = await endedReply(browser, 3)
     const madeName = await newFileIn(browser, generatedDir, before)
     expect((await filesIn(generatedDir)).filter((name) => !before.includes(name))).toStrictEqual([madeName])
-    expect(reply.endsWith(`</dez:tool>\n\n![${path.join(generatedDir, madeName)}](id=a|tool=model_invoke|made-by=${snowJob})\n\n${replyText(CALLER.modelName)}`)).toBe(true)
+    expect(reply.endsWith(`</dez:tool>\n\n![id=a|tool=model_invoke|made-by=${snowJob}](${path.join(generatedDir, madeName)})\n\n${replyText(CALLER.modelName)}`)).toBe(true)
     expect(setup.mock.hasWaitingRequest()).toBe(false)
     expect(await openToasts(browser, 'error')).toStrictEqual([])
     expect(await consoleErrors(browser)).toStrictEqual([])
@@ -607,7 +607,7 @@ describe('model_invoke', () => {
     const reply = await endedReply(browser)
     await waitForValue(browser, 'busy dots after the reply', () => busyDotsShown(browser), false)
     const madePath = path.join(generatedDir, await newFileIn(browser, generatedDir, before))
-    expect(reply.endsWith(`${replyText(CALLER.modelName)}\n\n![${madePath}](id=a|tool=model_invoke|made-by=${jobId})`)).toBe(true)
+    expect(reply.endsWith(`${replyText(CALLER.modelName)}\n\n![id=a|tool=model_invoke|made-by=${jobId}](${madePath})`)).toBe(true)
     expect(await openToasts(browser, 'error')).toStrictEqual([])
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
@@ -662,7 +662,7 @@ describe('model_invoke', () => {
 
     const reply = await endedReply(browser)
     const madePath = path.join(generatedDir, await newFileIn(browser, generatedDir, before))
-    expect(reply.endsWith(`</dez:tool>\n\n![${madePath}](id=a|tool=model_invoke|made-by=${jobId}|hidden=${jobId})\n\n${replyText(CALLER.modelName)}`)).toBe(true)
+    expect(reply.endsWith(`</dez:tool>\n\n![id=a|tool=model_invoke|made-by=${jobId}|hidden=${jobId}](${madePath})\n\n${replyText(CALLER.modelName)}`)).toBe(true)
     return { reply, madePath, jobId, started: toolResult(second, 'call_paint') }
   }
 
@@ -678,7 +678,7 @@ describe('model_invoke', () => {
     expect(await hiddenAssetNotes(browser)).toStrictEqual([{ text: note, visible: false }])
 
     // A caret on the line of the image shows what the line holds.
-    await setCaret(browser, await docPos(browser, `![${madePath}]`))
+    await setCaret(browser, await docPos(browser, `](${madePath})`))
     await waitForValue(browser, 'note under the caret', () => hiddenAssetNotes(browser), [{ text: note, visible: true }])
     await setCaret(browser, (await editorDoc(browser)).length)
     await waitForValue(browser, 'note after the caret left', () => hiddenAssetNotes(browser), [{ text: note, visible: false }])
@@ -738,7 +738,7 @@ describe('model_invoke', () => {
 
     const reply = await endedReply(browser, 3)
     const madePath = path.join(generatedDir, await newFileIn(browser, generatedDir, before))
-    expect(reply.endsWith(`</dez:tool>\n\n![${madePath}](id=a|tool=model_invoke|made-by=${jobId}|hidden=${jobId})\n\n${replyText(CALLER.modelName)}`)).toBe(true)
+    expect(reply.endsWith(`</dez:tool>\n\n![id=a|tool=model_invoke|made-by=${jobId}|hidden=${jobId}](${madePath})\n\n${replyText(CALLER.modelName)}`)).toBe(true)
     // The chip of the call in the stopped reply hides the image; the
     // `jobs_wait` chip of the next reply does not.
     await waitForValue(browser, 'chips after the reply', () => intermediateParts(browser), [hidingPart('image'), null])
@@ -895,7 +895,7 @@ describe('model_invoke', () => {
     await pointerClickAt(browser, await assetPartPoint(browser, '.dez-image', 0, '.dez-image__trash'))
     await waitForValue(browser, 'delete prompt', async () => await promptMessage(browser) !== null, true)
     await pointerClick(browser, '.confirm-btn--confirm')
-    const reference = `![${madePath}](id=a|tool=model_invoke|made-by=${jobId}|hidden=${jobId})\n\n`
+    const reference = `![id=a|tool=model_invoke|made-by=${jobId}|hidden=${jobId}](${madePath})\n\n`
     await waitForValue(browser, 'reply after the trash', async () => (await threadSections(browser))[1].text, reply.replace(reference, ''))
     await waitForValue(browser, 'files after the trash', () => filesIn(generatedDir), before)
 

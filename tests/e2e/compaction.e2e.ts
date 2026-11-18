@@ -428,8 +428,8 @@ describe('a compacted conversation', () => {
     const keptFile = await writeTestFile(appFilePath(home, 'assets', 'images', 'compaction-kept.png'), KEPT_PNG)
     const madeFile = await writeTestFile(appFilePath(home, 'assets', 'generated', 'images', 'compaction-made.png'), MADE_PNG)
     await writeTestFile(appFilePath(home, 'assets', 'generated', 'views', SHEET.file), SHEET_PNG)
-    const notes = `${IMAGE_NOTES_START}\nThe fox: ![${madeFile}](id=b)\nIt is red.`
-    const kept = `Make a film of ![${keptFile}](id=a)`
+    const notes = `${IMAGE_NOTES_START}\nThe fox: ![id=b](${madeFile})\nIt is red.`
+    const kept = `Make a film of ![id=a](${keptFile})`
     const block = compactionBlockText({ count: 1, lastId: 'c', pictures: [SHEET] }, notes)
     return [compactionSection(block), textSection('user', kept), textSection('user', '')]
   }
@@ -441,11 +441,11 @@ describe('a compacted conversation', () => {
     return {
       role: 'user',
       content: [
-        { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\n${IMAGE_NOTES_START}\nThe fox: ![image](id=b)` },
+        { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\n${IMAGE_NOTES_START}\nThe fox: ![id=b](image)` },
         imagePart(MADE_PNG),
         { type: 'text', text: `\nIt is red.\n\n${SHEET.label}` },
         imagePart(SHEET_PNG),
-        { type: 'text', text: `${USER_MESSAGE_START}Make a film of ![image](id=a)` },
+        { type: 'text', text: `${USER_MESSAGE_START}Make a film of ![id=a](image)` },
         imagePart(KEPT_PNG),
         { type: 'text', text: `${USER_MESSAGE_START}${sent}` },
       ],
@@ -474,9 +474,9 @@ describe('a compacted conversation', () => {
     await writeTestFile(appFilePath(home, 'assets', 'generated', 'views', SHEET.file), SHEET_PNG)
     const notes = [
       'The user wants a film of a fox.',
-      `![${made}](id=b)`,
+      `![id=b](${made})`,
       'The fox is red.',
-      `![${keptMade}](id=d|kept=compaction)`,
+      `![id=d|kept=compaction](${keptMade})`,
       'The film of the fox:',
       `<dez:video id="c" type="video/webm" src="${clip}" kept="compaction"/>`,
       'The fox sleeps.',
@@ -484,7 +484,7 @@ describe('a compacted conversation', () => {
     return [
       compactionSection(compactionBlockText({ count: 1, lastId: 'e', pictures: [SHEET] }, notes.join('\n'))),
       textSection('user', 'Make a film of the fox.'),
-      textSection('user', [CARRIED_USER_ASSETS_LABEL, `![${keptUser}](id=a|kept=compaction)`, `![${carried}](id=e)`].join('\n')),
+      textSection('user', [CARRIED_USER_ASSETS_LABEL, `![id=a|kept=compaction](${keptUser})`, `![id=e](${carried})`].join('\n')),
       textSection('user', 'Make it longer.'),
       textSection('user', ''),
     ]
@@ -499,14 +499,14 @@ describe('a compacted conversation', () => {
     return {
       role: 'user',
       content: [
-        { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\nThe user wants a film of a fox.\n![image](id=b)` },
+        { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\nThe user wants a film of a fox.\n![id=b](image)` },
         imagePart(MADE_PNG),
         {
           type: 'text',
-          text: `\nThe fox is red.\n![image](id=d|kept=compaction)\nThe film of the fox:\n<dez:video id="c" type="video/webm"/>\nThe fox sleeps.\n\n${SHEET.label}`,
+          text: `\nThe fox is red.\n![id=d|kept=compaction](image)\nThe film of the fox:\n<dez:video id="c" type="video/webm"/>\nThe fox sleeps.\n\n${SHEET.label}`,
         },
         imagePart(SHEET_PNG),
-        { type: 'text', text: `${USER_MESSAGE_START}Make a film of the fox.\n\n${CARRIED_USER_ASSETS_LABEL}\n![image](id=a|kept=compaction)\n![image](id=e)` },
+        { type: 'text', text: `${USER_MESSAGE_START}Make a film of the fox.\n\n${CARRIED_USER_ASSETS_LABEL}\n![id=a|kept=compaction](image)\n![id=e](image)` },
         imagePart(CARRIED_PNG),
         { type: 'text', text: `${USER_MESSAGE_START}Make it longer.${USER_MESSAGE_START}${sent}` },
         ...sentParts,
@@ -820,7 +820,7 @@ describe('a compacted conversation', () => {
   // a later message, and there it is an image as every other one.
   it('shows a kept image at its place in a user message after a reply', async () => {
     const kept = await writeTestFile(appFilePath(setup.app.home, 'assets', 'images', 'compaction-kept.png'), KEPT_PNG)
-    const reference = `![${kept}](id=a|kept=compaction)`
+    const reference = `![id=a|kept=compaction](${kept})`
     await openCompacted('compacted-kept-later', [
       compactionSection(compactionBlockText(PLAIN_DATA, `The user sent a fox.\n${reference}\nIt is red.`)),
       textSection('user', 'Make a film of the fox.'),
@@ -980,7 +980,7 @@ describe('a compacted conversation', () => {
     // the clip; the toolbar must still take the pointer there.
     const image = await writeTestFile(path.join(imagesDir, 'compaction-trash.png'), MADE_PNG)
     const clip = await tempClipTag(home, 'video', 'b', 'compaction-save.mp4', MP4_VIDEO)
-    const notes = ['The fox:', `![${image}](id=a)`, 'The film of the fox:', clip, 'The end.'].join('\n')
+    const notes = ['The fox:', `![id=a](${image})`, 'The film of the fox:', clip, 'The end.'].join('\n')
     await openCompacted('compacted-panel-actions', [compactionSection(compactionBlockText({ count: 1, lastId: 'b', pictures: [] }, notes)), textSection('user', '')])
     await waitForValue(browser, 'counts', compactionChipCounts, ['2 kept'])
     // The player of the temp copy, loaded: a click before the video has its
@@ -1006,7 +1006,7 @@ describe('a compacted conversation', () => {
     await pointerClickAt(browser, await assetPartPoint(browser, '.dez-image', 0, '.dez-image__trash'))
     await waitForValue(browser, 'delete prompt', async () => await promptMessage(browser) !== null, true)
     await pointerClick(browser, '.confirm-btn--confirm')
-    await waitForValue(browser, 'block after the trash', async () => (await blockText()).includes('](id=a)'), false)
+    await waitForValue(browser, 'block after the trash', async () => (await blockText()).includes('![id=a]('), false)
     await waitForValue(browser, 'counts after the trash', compactionChipCounts, ['1 kept'])
     expect(await filesIn(imagesDir)).not.toContain('compaction-trash.png')
     expect(await hiddenPart(browser, 0)).toStrictEqual({ heading: 'Kept assets', assets: 1, text: null })
@@ -1192,8 +1192,8 @@ describe('a compacted conversation', () => {
     const notes = compactionNotesText({
       requirements: 'A fox for the user.',
       assets: [
-        { id: 'a', kind: 'image', facts: 'PNG, 36x28', origin: 'made by the model_invoke job 1 of its reply: "A fox draft"', sentence: 'A draft of the fox.', byReply: false, text: `![${draft}](id=a|tool=model_invoke|hidden=j-aaaa)` },
-        { id: 'b', kind: 'image', facts: 'PNG, 30x20', origin: 'made by the model_invoke job 2 of its reply: "A fox"', sentence: 'The fox.', byReply: false, text: `![${seen}](id=b|tool=model_invoke)` },
+        { id: 'a', kind: 'image', facts: 'PNG, 36x28', origin: 'made by the model_invoke job 1 of its reply: "A fox draft"', sentence: 'A draft of the fox.', byReply: false, text: `![id=a|tool=model_invoke|hidden=j-aaaa](${draft})` },
+        { id: 'b', kind: 'image', facts: 'PNG, 30x20', origin: 'made by the model_invoke job 2 of its reply: "A fox"', sentence: 'The fox.', byReply: false, text: `![id=b|tool=model_invoke](${seen})` },
       ],
       unnamed: [],
       firstMessage: null,
@@ -1245,8 +1245,8 @@ describe('a compacted conversation', () => {
     const photo = await writeTestFile(appFilePath(home, 'assets', 'images', 'compaction-first-photo.png'), CARRIED_PNG)
     const thread = await openSeeded('compaction-first-drop', [
       textSection('user', 'Make a fox.'),
-      textSection('agent', `Two foxes.\n![${keptFile}](id=a)\n![${goneFile}](id=b)`),
-      textSection('user', `Use this photo too:\n![${photo}](id=c)`),
+      textSection('agent', `Two foxes.\n![id=a](${keptFile})\n![id=b](${goneFile})`),
+      textSection('user', `Use this photo too:\n![id=c](${photo})`),
       textSection('agent', 'Done.'),
       textSection('user', ''),
     ], PROVIDER, { context: { tokens: LARGE_TOKENS, estimate: 0 } })
@@ -1263,7 +1263,7 @@ describe('a compacted conversation', () => {
     expect(read).toMatchObject({ count: 1, dropped: 1 })
     expect([keptFile, goneFile].filter((file) => block.includes(file))).toStrictEqual([keptFile])
     expect(notesMessages(read.notes).map(({ text }) => text)).toStrictEqual([thread[0].text, 'Now a wolf.'])
-    expect(block).toContain(`\n![${photo}](id=c|kept=compaction)\n@c `)
+    expect(block).toContain(`\n![id=c|kept=compaction](${photo})\n@c `)
     // The reply scrolled the editor to its end, and the editor draws no
     // chip far out of view.
     await scrollEditorToTop(browser)
@@ -1280,7 +1280,7 @@ describe('a compacted conversation', () => {
   it('keeps the first and the newest message of the user in the notes with their images, and the title of the tab', async () => {
     const photo = await writeTestFile(appFilePath(setup.app.home, 'assets', 'images', 'compaction-message.png'), KEPT_PNG)
     const linked = await writeTestFile(path.join(linkedDir, 'compaction-linked.png'), LINKED_PNG)
-    const first = `Film ![${linked}](id=a) and ![${photo}](id=b)`
+    const first = `Film ![id=a](${linked}) and ![id=b](${photo})`
     await openSeeded('compaction-messages', [
       textSection('user', first),
       textSection('agent', 'An earlier answer.'),
@@ -1304,9 +1304,9 @@ describe('a compacted conversation', () => {
     expect(JSON.parse(request.body)).toStrictEqual(openAiChatBody(PROVIDER, [{
       role: 'user',
       content: [
-        { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\n${text.slice(0, firstPart.partFrom)}${fence}\nFilm ![image](id=a)` },
+        { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\n${text.slice(0, firstPart.partFrom)}${fence}\nFilm ![id=a](image)` },
         imagePart(LINKED_PNG),
-        { type: 'text', text: ' and ![image](id=b)' },
+        { type: 'text', text: ' and ![id=b](image)' },
         imagePart(KEPT_PNG),
         { type: 'text', text: `\n${fence}${text.slice(firstPart.partTo, newestPart.partFrom)}${fence}\nGo on.\n${fence}${text.slice(newestPart.partTo)}` },
       ],
@@ -1341,12 +1341,12 @@ describe('a compacted conversation', () => {
     const { home } = setup.app
     const shot = await writeTestFile(appFilePath(home, 'assets', 'images', SHOT_IMAGE.alt), SHOT_PNG)
     const render = await writeTestFile(appFilePath(home, 'assets', 'generated', 'images', 'compaction-middle-render.png'), MADE_PNG)
-    const instruction = `For the middle part use my screenshot, not the renders:\n![${shot}](id=a)`
+    const instruction = `For the middle part use my screenshot, not the renders:\n![id=a](${shot})`
     await openSeeded('compaction-middle', [
       textSection('user', 'Make a short film in three parts.'),
       textSection('agent', 'A plan.'),
       textSection('user', instruction),
-      textSection('agent', `A render of the middle part.\n![${render}](id=b)`),
+      textSection('agent', `A render of the middle part.\n![id=b](${render})`),
       textSection('user', 'ok'),
       textSection('agent', 'Fine.'),
       textSection('user', ''),
@@ -1373,7 +1373,7 @@ describe('a compacted conversation', () => {
     expect(JSON.parse(request.body)).toStrictEqual(openAiChatBody(PROVIDER, [{
       role: 'user',
       content: [
-        { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\n${text.slice(0, first.partFrom)}${fence}\n${first.text}\n${fence}${text.slice(first.partTo, middle.partFrom)}${fence}\nFor the middle part use my screenshot, not the renders:\n![image](id=a)` },
+        { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\n${text.slice(0, first.partFrom)}${fence}\n${first.text}\n${fence}${text.slice(first.partTo, middle.partFrom)}${fence}\nFor the middle part use my screenshot, not the renders:\n![id=a](image)` },
         imagePart(SHOT_PNG),
         { type: 'text', text: `\n${fence}${text.slice(middle.partTo, final.partFrom)}${fence}\nNow the end part.\n${fence}${text.slice(final.partTo)}` },
       ],

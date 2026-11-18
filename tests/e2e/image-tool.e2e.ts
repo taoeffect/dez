@@ -96,7 +96,7 @@ describe('image tool flip, rotate, color changes, and convert', () => {
     await waitForValue(browser, 'sections after the reply', async () => (await threadSections(browser)).length, 3)
     const text = (await threadSections(browser))[1].text
     expect(text.endsWith(replyText(TOOLER.modelName))).toBe(true)
-    const paths = Object.fromEntries([...text.matchAll(/!\[([^\]]+)\]\(id=([b-z])\|tool=image\)/g)].map((match) => [match[2], match[1]]))
+    const paths = Object.fromEntries([...text.matchAll(/!\[id=([b-z])\|tool=image\]\(([^)]+)\)/g)].map((match) => [match[1], match[2]]))
     for (const file of Object.values(paths)) expect(path.dirname(file)).toBe(generatedDir)
     return paths
   }
@@ -135,7 +135,7 @@ describe('image tool flip, rotate, color changes, and convert', () => {
     await pasteInNewTab(STRIPES_PNG, 'image/png')
     await submit(browser, '')
     const first = await setup.mock.waitForRequest(browser)
-    const withImage = { role: 'user', content: [{ type: 'text', text: 'Turn ![image](id=a)' }, { type: 'image_url', image_url: { url: pngDataUrl(STRIPES_PNG) } }] }
+    const withImage = { role: 'user', content: [{ type: 'text', text: 'Turn ![id=a](image)' }, { type: 'image_url', image_url: { url: pngDataUrl(STRIPES_PNG) } }] }
     expect(JSON.parse(first.body)).toEqual(openAiChatBody(TOOLER, [withImage]))
 
     // The third call names the image of the second. A turn of 45 degrees

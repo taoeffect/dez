@@ -130,7 +130,7 @@ describe('asset menu', () => {
   it('pops up the menu with the file of a stored image, and with no file for a missing image', async () => {
     const stored = await writeTestFile(appFilePath(app.home, 'assets', 'images', 'stored.png'), PNG)
     const missing = appFilePath(app.home, 'assets', 'images', 'missing.png')
-    const text = `Images:\n![${stored}](id=a)\n![${missing}](id=b)\nEnd of the images.`
+    const text = `Images:\n![id=a](${stored})\n![id=b](${missing})\nEnd of the images.`
     await openSeededConversation(browser, app.home, 'asset-menu-images', [{ role: 'user', text }])
     await waitForValue(browser, 'shown images', () => shownImages(browser), [{ alt: 'stored.png', width: 40, height: 24 }])
     await waitFor(browser, '.cm-content .dez-image-missing')
@@ -202,7 +202,7 @@ describe('asset menu', () => {
     const saved = await writeTestFile(appFilePath(app.home, 'assets', 'generated', 'audio', 'menu-hidden.wav'), TONE)
     const reply = [
       intermediateInvokeBlock('call_menu', jobId),
-      `![${stored}](id=a|tool=model_invoke|hidden=${jobId})`,
+      `![id=a|tool=model_invoke|hidden=${jobId}](${stored})`,
       `<dez:audio id="b" type="audio/wav" src="${saved}" tool="model_invoke" hidden="${jobId}"/>`,
       'Done',
     ].join('\n\n')
@@ -263,7 +263,7 @@ describe('asset menu', () => {
     const stored = await writeTestFile(appFilePath(app.home, 'assets', 'images', 'select.png'), PNG)
     const temp = await writeTestFile(path.join(mediaTempDir(app.home), 'menu-select.wav'), TONE)
     await openSeededConversation(browser, app.home, 'asset-menu-select', [
-      { role: 'user', text: `See ![${stored}](id=a)` },
+      { role: 'user', text: `See ![id=a](${stored})` },
       { role: 'agent', text: clipTag('audio', { id: 'b', type: 'audio/wav', src: temp, expires }) },
       { role: 'user', text: '' },
     ])

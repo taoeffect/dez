@@ -7,7 +7,7 @@ import { openAiSystemMessage, sentImageUrls } from './harness/chatBody'
 import { consoleErrors, elementCenter, movePointer, pointerClick, pointerClickAt, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue, type Point } from './harness/dom'
 import { dropFiles, linkedDropDir, nativeDrop } from './harness/drops'
 import { appFilePath, conversationFilePath, filesIn, storedFileName, writeTestFile } from './harness/fixtures'
-import { colorDistance, decodedImage, pasteImage, pasteImageReference, shownImages, solidPng, STRIPE_COLORS, stripedPng, type ShownImage } from './harness/images'
+import { colorDistance, decodedImage, pasteImage, pasteImageReference, referencePath, shownImages, solidPng, STRIPE_COLORS, stripedPng, type ShownImage } from './harness/images'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendAnthropicReply, sendChatReply, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
@@ -65,13 +65,8 @@ const WIDE_PNG = solidPng(400, 60, [30, 30, 30])
 // image of a chat request (`CHAT_IMAGE_SIDE`, 1568).
 const LARGE_PNG = stripedPng(1000, 200, STRIPE_COLORS)
 
-/** A Dez image reference in the doc, `![<absolute path>](id=<letters>)`. */
-const REFERENCE = /!\[[^\]\n]+\]\(id=[a-z]+\)/
-
-/** The path in a reference, `![<path>](…)`. */
-function referencePath (reference: string): string {
-  return reference.slice(2, reference.indexOf(']('))
-}
+/** A Dez image reference in the doc, `![id=<letters>](<absolute path>)`. */
+const REFERENCE = /!\[id=[a-z]+\]\([^\s()]+\)/
 
 interface DocAndCaret {
   doc: string
@@ -117,7 +112,7 @@ interface PromptState {
 
 interface InsertedImage {
   path: string
-  /** `![<path>](id=a)`: each test puts it in a new tab, so its id is `a`. */
+  /** `![id=a](<path>)`: each test puts it in a new tab, so its id is `a`. */
   reference: string
   /** The doc range of the reference. */
   from: number
@@ -283,7 +278,7 @@ describe('images', () => {
   }
 
   // Puts `text` at the end of the doc as typed text, which gets no image ids
-  // (only a paste or a drop does), as in a reference saved before ids.
+  // (only a paste or a drop does).
   async function typeAtEnd (text: string): Promise<void> {
     await browser.execute((insert: string) => {
       const content = document.querySelector('.cm-content')
@@ -321,7 +316,7 @@ describe('images', () => {
     expect(doc).toBe(`Before ${reference}after`)
     expect(caret).toBe('Before '.length + reference.length)
     const fileName = path.basename(referencePath(reference))
-    expect(reference).toBe(`![${path.join(imagesDir(), fileName)}](id=a)`)
+    expect(reference).toBe(`![id=a](${path.join(imagesDir(), fileName)})`)
     expect(await storedImages()).toEqual([...before, fileName].sort())
     expect(await fs.promises.readFile(path.join(imagesDir(), fileName))).toEqual(DROPPED_PNG)
     await waitForValue(browser, 'shown image', () => shownImages(browser), [{ alt: fileName, width: 40, height: 24 }])
@@ -339,7 +334,7 @@ describe('images', () => {
     const pasted = await docAndCaret()
     const reference = pasted.doc.slice(before.length)
     expect(pasted.doc.slice(0, before.length)).toBe(before)
-    expect(reference).toBe(`![${referencePath(reference)}](id=a)`)
+    expect(reference).toBe(`![id=a](${referencePath(reference)})`)
     expect(pasted.caret).toBe(pasted.doc.length)
     await typeKeys(browser, after)
     await waitForValue(browser, 'text after the image', () => editorDoc(browser), before + reference + after)
@@ -403,15 +398,15 @@ describe('images', () => {
     await waitForValue(browser, 'second reference', async () => (await editorDoc(browser)).length > firstLine.length, true)
     const second = (await editorDoc(browser)).slice(firstLine.length)
     const secondPath = referencePath(second)
-    expect(second).toBe(`![${secondPath}](id=b)`)
+    expect(second).toBe(`![id=b](${secondPath})`)
     expect(secondPath).not.toBe(first.path)
 
-    // A reference with no id, as saved before ids existed, gets only the
-    // trash; this one is to an image wider than its overlay. The overlay of
-    // an image whose file is gone is in its box.
+    // A reference with no id gets only the trash; this one is to an image
+    // wider than its overlay. The overlay of an image whose file is gone is
+    // in its box.
     const wide = path.join(imagesDir(), 'wide.png')
     await fs.promises.writeFile(wide, WIDE_PNG)
-    await typeAtEnd(`\n![${wide}]()\n![${path.join(imagesDir(), 'gone.png')}](id=c)`)
+    await typeAtEnd(`\n![](${wide})\n![id=c](${path.join(imagesDir(), 'gone.png')})`)
     await waitForValue(browser, 'shown images', () => shownImages(browser), [
       shownPastedImage(first),
       { alt: path.basename(secondPath), width: 48, height: 32 },
@@ -472,7 +467,7 @@ describe('images', () => {
 
     // The pasted image is `b` here, and so is its mention. `@a-team` is no
     // mention, and the tab's own `@a` was not pasted.
-    const afterPaste = `${beforePaste}![${copiedImage.path}](id=b) edit @b, not @a-team`
+    const afterPaste = `${beforePaste}![id=b](${copiedImage.path}) edit @b, not @a-team`
     await waitForValue(browser, 'doc after the paste', docAndCaret, { doc: afterPaste, caret: afterPaste.length })
     await waitForValue(browser, 'shown images', () => shownImages(browser), [shownPastedImage(ownImage), shownPastedImage(copiedImage)])
     expect((await imageOverlays()).map((overlay) => overlay.id)).toEqual(['a', 'b'])
@@ -485,7 +480,7 @@ describe('images', () => {
   it('explains the id badge and the trash in tooltips while the pointer is on them', async () => {
     await newTab(browser)
     await insertPastedImage('See ', ' here')
-    await typeAtEnd(`\n![${path.join(imagesDir(), 'gone.png')}](id=b)`)
+    await typeAtEnd(`\n![id=b](${path.join(imagesDir(), 'gone.png')})`)
     await waitForValue(browser, 'missing image box', () => browser.execute(
       () => document.querySelector('.cm-content .dez-image-missing')?.firstChild?.textContent ?? null,
     ), 'Image not found: gone.png')
@@ -569,7 +564,7 @@ describe('images', () => {
   it('deletes the file and the reference of an image on Yes or Enter, with no undo, and the text of a missing image', async () => {
     await newTab(browser)
     const image = await insertPastedImage('See ', ' here')
-    const gone = `![${path.join(imagesDir(), 'gone.png')}]()`
+    const gone = `![](${path.join(imagesDir(), 'gone.png')})`
     await typeAtEnd(`\n${gone}`)
     await waitForValue(browser, 'shown image', () => shownImages(browser), [shownPastedImage(image)])
     await waitForValue(browser, 'missing image box', () => browser.execute(
@@ -767,7 +762,8 @@ describe('images', () => {
     await waitForValue(browser, 'typed text', () => editorDoc(browser), 'Before after')
 
     await nativeDrop(browser, await docPoint('Before '.length), [source])
-    const message = `Before ![${source}](id=a)after`
+    // The path has a space and parens, so it is in `<…>`.
+    const message = `Before ![id=a](<${source}>)after`
     await waitForValue(browser, 'linked reference', docAndCaret, { doc: message, caret: message.length - 'after'.length })
     await waitForValue(browser, 'shown image', () => shownImages(browser), [{ alt: 'My photo (1).png', width: 40, height: 24 }])
     expect(await storedImages()).toEqual(before)
@@ -778,7 +774,7 @@ describe('images', () => {
     expect(request.body).toHaveProperty('messages', [openAiSystemMessage(VISION), {
       role: 'user',
       content: [
-        { type: 'text', text: 'Before ![image](id=a)' },
+        { type: 'text', text: 'Before ![id=a](image)' },
         { type: 'image_url', image_url: { url: `data:image/png;base64,${DROPPED_PNG.toString('base64')}` } },
         { type: 'text', text: 'after' },
       ],
@@ -805,7 +801,7 @@ describe('images', () => {
     await waitForValue(browser, 'typed text', () => editorDoc(browser), 'See  here')
     await nativeDrop(browser, await docPoint('See '.length), [source])
     await waitForValue(browser, 'shown image', () => shownImages(browser), [{ alt: 'kept.png', width: 40, height: 24 }])
-    expect(await editorDoc(browser)).toBe(`See ![${source}](id=a) here`)
+    expect(await editorDoc(browser)).toBe(`See ![id=a](${source}) here`)
     await setCaret(browser, 2)
 
     await clickTrash(0)
@@ -821,7 +817,7 @@ describe('images', () => {
 
     // The file stays, so the removal is an undo step.
     await browser.keys([Key.Control, 'z'])
-    await waitForValue(browser, 'doc after undo', () => editorDoc(browser), `See ![${source}](id=a) here`)
+    await waitForValue(browser, 'doc after undo', () => editorDoc(browser), `See ![id=a](${source}) here`)
     await waitForValue(browser, 'image after undo', () => shownImages(browser), [{ alt: 'kept.png', width: 40, height: 24 }])
   })
 
@@ -843,13 +839,13 @@ describe('images', () => {
     await waitForValue(browser, 'stored copy', async () => (await storedImages()).length, before.length + 1)
     const fileName = (await storedImages()).find((name) => !before.includes(name)) ?? ''
     expect(await fs.promises.readFile(path.join(imagesDir(), fileName))).toEqual(DROPPED_PNG)
-    const copied = `![${path.join(imagesDir(), fileName)}](id=a)${reply}`
+    const copied = `![id=a](${path.join(imagesDir(), fileName)})${reply}`
     const copiedImage = { alt: fileName, width: 40, height: 24 }
     await waitForThread(browser, [{ role: 'user', text: 'Hi' }, { role: 'agent', text: copied }, { role: 'user', text: '' }])
     await waitForValue(browser, 'shown copy', () => shownImages(browser), [copiedImage])
 
     await nativeDrop(browser, await docPoint((await editorDoc(browser)).length), [source])
-    const sections = [{ role: 'user', text: 'Hi' }, { role: 'agent', text: copied }, { role: 'user', text: `![${source}](id=b)` }]
+    const sections = [{ role: 'user', text: 'Hi' }, { role: 'agent', text: copied }, { role: 'user', text: `![id=b](${source})` }]
     const shown = [copiedImage, { alt: 'switch.png', width: 40, height: 24 }]
     await waitForThread(browser, sections)
     await waitForValue(browser, 'shown images', () => shownImages(browser), shown)
@@ -870,7 +866,7 @@ describe('images', () => {
     expect(request.body).toHaveProperty('messages', [openAiSystemMessage(VISION), {
       role: 'user',
       content: [
-        { type: 'text', text: '![image](id=a)' },
+        { type: 'text', text: '![id=a](image)' },
         PASTED_IMAGE_URL_PART,
         { type: 'text', text: QUESTION },
       ],
@@ -903,7 +899,7 @@ describe('images', () => {
     expect(request.body).toHaveProperty('messages', [{
       role: 'user',
       content: [
-        { type: 'text', text: '![image](id=a)' },
+        { type: 'text', text: '![id=a](image)' },
         { type: 'image', source: { type: 'base64', media_type: 'image/png', data: PASTED_PNG.toString('base64') } },
         { type: 'text', text: QUESTION, cache_control: { type: 'ephemeral' } },
       ],
@@ -925,7 +921,7 @@ describe('images', () => {
     expect(request.path).toBe(mockChatPath(VISION))
     expect(request.body).toHaveProperty('messages', [
       openAiSystemMessage({ ...VISION, modelId: TEXT_MODEL.id }),
-      { role: 'user', content: `![image](id=a)${QUESTION}` },
+      { role: 'user', content: `![id=a](image)${QUESTION}` },
     ])
     expect(await openToasts(browser, 'warning')).toEqual([{
       title: 'Image not sent',
@@ -947,15 +943,15 @@ describe('images', () => {
     await pasteImage(browser, PASTED_PNG)
     await waitForValue(browser, 'second reference', async () => (await editorDoc(browser)).length > firstLine.length, true)
     const second = (await editorDoc(browser)).slice(firstLine.length)
-    expect(second).toBe(`![${referencePath(second)}](id=b)`)
+    expect(second).toBe(`![id=b](${referencePath(second)})`)
 
     const firstRequest = await sendRequest()
     expect(firstRequest.body).toHaveProperty('messages', [openAiSystemMessage(VISION), {
       role: 'user',
       content: [
-        { type: 'text', text: '![image](id=a)' },
+        { type: 'text', text: '![id=a](image)' },
         PASTED_IMAGE_URL_PART,
-        { type: 'text', text: ' and ![image](id=b)' },
+        { type: 'text', text: ' and ![id=b](image)' },
         PASTED_IMAGE_URL_PART,
       ],
     }])
@@ -972,12 +968,11 @@ describe('images', () => {
     await focusEditor(browser)
     await setCaret(browser, replyEnd)
     await pasteImage(browser, PASTED_PNG)
-    await waitForValue(browser, 'reference in the reply', async () => (await editorDoc(browser)).includes('](id=c)'), true)
-    const withThird = await editorDoc(browser)
-    const third = withThird.slice(replyEnd, withThird.indexOf('](id=c)') + '](id=c)'.length)
-    expect(third).toBe(`![${referencePath(third)}](id=c)`)
+    const thirdReference = /^!\[id=c\]\([^\s()]+\)/
+    await waitForValue(browser, 'reference in the reply', async () => thirdReference.test((await editorDoc(browser)).slice(replyEnd)), true)
+    const [third = ''] = thirdReference.exec((await editorDoc(browser)).slice(replyEnd)) ?? []
 
-    // Image b shows its source, `![<path>](id=b`.
+    // Image b shows its source, `![id=b](<path>`.
     await setCaret(browser, firstLine.length + second.length)
     await browser.keys(Key.Backspace)
     await waitForValue(browser, 'source of image b', async () => (await threadSections(browser))[0]?.text ?? null, firstLine + second.slice(0, -1))
@@ -998,8 +993,8 @@ describe('images', () => {
     // text.
     expect(request.body).toHaveProperty('messages', [
       openAiSystemMessage(VISION),
-      { role: 'user', content: [{ type: 'text', text: '![image](id=a)' }, PASTED_IMAGE_URL_PART, { type: 'text', text: ' and ![image](id=b' }] },
-      { role: 'assistant', content: `${reply}![image](id=c)` },
+      { role: 'user', content: [{ type: 'text', text: '![id=a](image)' }, PASTED_IMAGE_URL_PART, { type: 'text', text: ' and ![id=b](image' }] },
+      { role: 'assistant', content: `${reply}![id=c](image)` },
       { role: 'user', content: 'Compare.' },
     ])
     await sendChatReply(request.reply, VISION.modelName)
@@ -1046,7 +1041,7 @@ describe('images', () => {
 
     const withImage = {
       role: 'user',
-      content: [{ type: 'text', text: '![image](id=a)' }, PASTED_IMAGE_URL_PART, { type: 'text', text: QUESTION }],
+      content: [{ type: 'text', text: '![id=a](image)' }, PASTED_IMAGE_URL_PART, { type: 'text', text: QUESTION }],
     }
     await sendTurn([withImage])
 
@@ -1091,7 +1086,7 @@ describe('images', () => {
     const [url = ''] = sentImageUrls(first.rawBody)
     expect(first.body).toHaveProperty('messages', [openAiSystemMessage(VISION), {
       role: 'user',
-      content: [{ type: 'text', text: '![image](id=a)' }, { type: 'image_url', image_url: { url } }, { type: 'text', text: QUESTION }],
+      content: [{ type: 'text', text: '![id=a](image)' }, { type: 'image_url', image_url: { url } }, { type: 'text', text: QUESTION }],
     }])
     // The copy has the shape of the image and fits in 1,568 by 1,568
     // pixels: 3000 x 200 gives 1568 x 105. Its stripes are those of the

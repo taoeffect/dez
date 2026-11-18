@@ -6,7 +6,7 @@ import { unknownToolText } from '../../src/model/tools/registry'
 import { anthropicChatBody, anthropicMarkedUser, openAiChatBody } from './harness/chatBody'
 import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
 import { appFilePath, conversationFilePath, filesIn, makeConversation, seedConversation, workDir, writeTestFile } from './harness/fixtures'
-import { decodedImage, generatedImagesDir, pasteImageReference, pngDataUrl, shownImages, STRIPE_COLORS, STRIPES_PNG, STRIPES_SVG, WEBKIT_SVG_SIZES } from './harness/images'
+import { decodedImage, generatedImagesDir, pasteImageReference, pngDataUrl, referencePath, shownImages, STRIPE_COLORS, STRIPES_PNG, STRIPES_SVG, WEBKIT_SVG_SIZES } from './harness/images'
 import { WAV_SAMPLE_RATE, monoWav, shownPlayers } from './harness/media'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, openAiToolCall, replyText, sendAnthropicReply, sendChatReply, sendToolCalls, startEventStream, toolResult, writeAnthropicEvent, writeChatFrame, type MockProvider } from './harness/mockServer'
@@ -524,7 +524,7 @@ describe('tool calls', () => {
     const message = (await threadSections(browser))[0].text
     await submit(browser, '')
     const first = await setup.mock.waitForRequest(browser)
-    const withImage = { role: 'user', content: [{ type: 'text', text: 'Crop ![image](id=a)' }, { type: 'image_url', image_url: { url: pngDataUrl(STRIPES_PNG) } }] }
+    const withImage = { role: 'user', content: [{ type: 'text', text: 'Crop ![id=a](image)' }, { type: 'image_url', image_url: { url: pngDataUrl(STRIPES_PNG) } }] }
     expect(JSON.parse(first.body)).toEqual(openAiChatBody(TOOLER, [withImage]))
 
     // The green stripe (columns 30 to 59), then that new image at twice its
@@ -558,7 +558,7 @@ describe('tool calls', () => {
     // text of the next round starts a new paragraph after them.
     await waitForValue(browser, 'sections after the reply', async () => (await threadSections(browser)).length, 3)
     const reply = (await threadSections(browser))[1].text
-    const [croppedPath = '', scaledPath = ''] = [...reply.matchAll(/!\[([^\]]+)\]\(id=[bc]\|tool=image\)/g)].map((match) => match[1])
+    const [croppedPath = '', scaledPath = ''] = [...reply.matchAll(/!\[id=[bc]\|tool=image\]\(([^)]+)\)/g)].map((match) => match[1])
     const blockOf = (id: string, command: string, parameters: string, result: string) =>
       `<dez:tool id="${id}" name="image" command="${command}" parameters="${parameters.replaceAll('"', '&quot;')}">\n${result}\n</dez:tool>`
     const blocks = `${blockOf('call_crop', 'crop', cropParameters, cropResult)}\n${blockOf('call_scale', 'scale', scaleParameters, scaleResult)}`
@@ -568,11 +568,11 @@ describe('tool calls', () => {
       { role: 'user', text: message },
       {
         role: 'agent',
-        text: `Cropping.\n${blocks}\n\n![${croppedPath}](id=b|tool=image)\n\n![${scaledPath}](id=c|tool=image)\n\n${replyText(TOOLER.modelName)}`,
+        text: `Cropping.\n${blocks}\n\n![id=b|tool=image](${croppedPath})\n\n![id=c|tool=image](${scaledPath})\n\n${replyText(TOOLER.modelName)}`,
       },
     ]
     await waitForThread(browser, [...sections, { role: 'user', text: '' }])
-    const pastedPath = message.slice('Crop !['.length, message.indexOf(']('))
+    const pastedPath = referencePath(message)
     await waitForValue(browser, 'shown images', () => shownImages(browser), [
       { alt: path.basename(pastedPath), width: 90, height: 20 },
       { alt: path.basename(croppedPath), width: 30, height: 20 },
@@ -610,7 +610,7 @@ describe('tool calls', () => {
     await typeKeys(browser, 'Crop ')
     await pasteImageReference(browser, STRIPES_SVG, 'a', 'image/svg+xml')
     const message = (await threadSections(browser))[0].text
-    const pastedPath = message.slice('Crop !['.length, message.indexOf(']('))
+    const pastedPath = referencePath(message)
     expect(path.extname(pastedPath)).toBe('.svg')
     expect(await fs.promises.readFile(pastedPath)).toEqual(STRIPES_SVG)
     await waitForValue(browser, 'loaded SVG', async () => ((await shownImages(browser))[0]?.width ?? 0) > 0, true)
@@ -654,7 +654,7 @@ describe('tool calls', () => {
 
     await waitForValue(browser, 'sections after the reply', async () => (await threadSections(browser)).length, 3)
     const reply = (await threadSections(browser))[1].text
-    const madePath = reply.slice(reply.indexOf('![') + 2, reply.indexOf(']('))
+    const madePath = referencePath(reply)
     expect(path.extname(madePath)).toBe('.png')
     expect(await decodedImage(browser, pngDataUrl(await fs.promises.readFile(madePath)), [made.width / 10, made.width / 2, made.width * 9 / 10])).toEqual({
       ...made,

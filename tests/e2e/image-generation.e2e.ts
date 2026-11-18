@@ -160,7 +160,7 @@ describe('image generation', () => {
     expect(generatedName).toMatch(STORED_IMAGE_NAME)
     const generatedPath = path.join(generatedDir(), generatedName)
     expect(await fs.promises.readFile(generatedPath)).toEqual(GENERATED_PNG)
-    const generatedReference = `![${generatedPath}](id=a)`
+    const generatedReference = `![id=a](${generatedPath})`
     await waitForThread(browser, [
       { role: 'user', text: 'Draw a fox' },
       { role: 'agent', text: generatedReference },
@@ -193,7 +193,7 @@ describe('image generation', () => {
       { role: 'user', text: 'Draw a fox' },
       { role: 'agent', text: generatedReference },
       { role: 'user', text: 'Make it orange' },
-      { role: 'agent', text: `![${editedPath}](id=b)` },
+      { role: 'agent', text: `![id=b](${editedPath})` },
       { role: 'user', text: '' },
     ])
     await waitForValue(browser, 'shown images', () => shownImages(browser), [
@@ -212,7 +212,7 @@ describe('image generation', () => {
     const foxName = await newFileIn(browser, generatedDir(), before)
     const foxReply = [
       { role: 'user', text: 'Draw a fox' },
-      { role: 'agent', text: `![${path.join(generatedDir(), foxName)}](id=a)` },
+      { role: 'agent', text: `![id=a](${path.join(generatedDir(), foxName)})` },
     ]
     await waitForThread(browser, [...foxReply, { role: 'user', text: '' }])
 
@@ -222,7 +222,7 @@ describe('image generation', () => {
     const catName = await newFileIn(browser, generatedDir(), [...before, foxName])
     const catReply = [
       { role: 'user', text: 'Draw a cat' },
-      { role: 'agent', text: `![${path.join(generatedDir(), catName)}](id=b)` },
+      { role: 'agent', text: `![id=b](${path.join(generatedDir(), catName)})` },
     ]
     await waitForThread(browser, [...foxReply, ...catReply, { role: 'user', text: '' }])
 
@@ -245,7 +245,7 @@ describe('image generation', () => {
       ...foxReply,
       ...catReply,
       { role: 'user', text: 'Edit @a to add an apple' },
-      { role: 'agent', text: `![${path.join(generatedDir(), editedName)}](id=c)` },
+      { role: 'agent', text: `![id=c](${path.join(generatedDir(), editedName)})` },
       { role: 'user', text: '' },
     ])
     expect(await consoleErrors(browser)).toEqual([])
@@ -265,7 +265,7 @@ describe('image generation', () => {
     expect(edit.path).toBe(EDIT_PATH)
     expect(JSON.parse(edit.body)).toEqual({
       modelId: EDIT_MODEL.id,
-      prompt: '![image](id=a)![image](id=b)![image](id=c)![image](id=d)',
+      prompt: '![id=a](image)![id=b](image)![id=c](image)![id=d](image)',
       images: pngs.slice(0, 3).map(pngDataUrl),
       safe_mode: false,
     })
@@ -311,7 +311,7 @@ describe('image generation', () => {
     expect(await fs.promises.readFile(foxPath)).toEqual(GENERATED_PNG)
     const foxReply = [
       { role: 'user', text: 'Draw a fox' },
-      { role: 'agent', text: `Here is a fox.\n\n![${foxPath}](id=a)\n\nIt is green.` },
+      { role: 'agent', text: `Here is a fox.\n\n![id=a](${foxPath})\n\nIt is green.` },
     ]
     await waitForThread(browser, [...foxReply, { role: 'user', text: '' }])
     await waitForValue(browser, 'shown image', () => shownImages(browser), [{ alt: foxName, width: 320, height: 256 }])
@@ -324,7 +324,7 @@ describe('image generation', () => {
     expect(JSON.parse(second.body)).toEqual({
       ...openAiChatBody(chatModel, [
         { role: 'user', content: 'Draw a fox' },
-        { role: 'assistant', content: 'Here is a fox.\n\n![image](id=a)\n\nIt is green.' },
+        { role: 'assistant', content: 'Here is a fox.\n\n![id=a](image)\n\nIt is green.' },
         {
           role: 'user',
           content: [
@@ -349,7 +349,7 @@ describe('image generation', () => {
     await waitForThread(browser, [
       ...foxReply,
       { role: 'user', text: 'Make @a orange' },
-      { role: 'agent', text: `![${editedPath}](id=b)` },
+      { role: 'agent', text: `![id=b](${editedPath})` },
       { role: 'user', text: '' },
     ])
     await waitForValue(browser, 'shown images', () => shownImages(browser), [
@@ -359,7 +359,7 @@ describe('image generation', () => {
     const file = conversationFilePath(setup.app.home, await activeConversationId(browser))
     await waitForValue(browser, 'saved references', async () => {
       const content = await fs.promises.readFile(file, 'utf8').catch(() => '')
-      return content.includes(`![${foxPath}](id=a)`) && content.includes(`![${editedPath}](id=b)`)
+      return content.includes(`![id=a](${foxPath})`) && content.includes(`![id=b](${editedPath})`)
     }, true)
     expect(await consoleErrors(browser)).toEqual([])
   })
@@ -383,7 +383,7 @@ describe('image generation', () => {
     const name = await newFileIn(browser, generatedDir(), before)
     await waitForThread(browser, [
       { role: 'user', text: `${question}\nDraw a tall fox` },
-      { role: 'agent', text: `![${path.join(generatedDir(), name)}](id=a)` },
+      { role: 'agent', text: `![id=a](${path.join(generatedDir(), name)})` },
       { role: 'user', text: '' },
     ])
     // The rebuild at the end of the reply scrolls in a later frame.
@@ -430,7 +430,7 @@ describe('image generation', () => {
     expect(await fs.promises.readFile(upscaledPath)).toEqual(UPSCALED_PNG)
     await waitForThread(browser, [
       { role: 'user', text: `${reference}Make it larger` },
-      { role: 'agent', text: `![${upscaledPath}](id=b)` },
+      { role: 'agent', text: `![id=b](${upscaledPath})` },
       { role: 'user', text: '' },
     ])
     await waitForValue(browser, 'shown image sizes', async () => (await shownImages(browser)).map(({ width, height }) => [width, height]), [[256, 256], [512, 512]])

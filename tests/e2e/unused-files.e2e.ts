@@ -161,7 +161,7 @@ describe('Settings: delete unused files', () => {
       await seedConversation(app.home, makeConversation({
         id: 'with-image',
         title: 'With image',
-        sections: [{ role: 'user', nodes: [{ kind: 'text', text: `Look at ![${appFilePath(app.home, 'assets/images/image-saved.png')}](id=a)` }] }],
+        sections: [{ role: 'user', nodes: [{ kind: 'text', text: `Look at ![id=a](${appFilePath(app.home, 'assets/images/image-saved.png')})` }] }],
       }))
       await seedConversation(app.home, makeConversation({
         id: 'with-clip',
@@ -195,7 +195,7 @@ describe('Settings: delete unused files', () => {
     await sbpCall(browser, 'dez.model/tabs/replaceSections', firstTab, [{
       id: 'u1',
       role: 'user',
-      content: [{ kind: 'text', text: `Draft with ![${appFilePath(app.home, 'assets/generated/images/image-tab.png')}](id=a)` }],
+      content: [{ kind: 'text', text: `Draft with ![id=a](${appFilePath(app.home, 'assets/generated/images/image-tab.png')})` }],
     }])
 
     await sbpCall(browser, 'dez.model/settings/open', 'general')

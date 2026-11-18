@@ -252,7 +252,7 @@ describe('video tool', () => {
         text: [
           clipTag('video', { id: 'a', type: 'video/webm', src: files.a }),
           clipTag('video', { id: 'b', type: 'video/webm', src: files.b }),
-          `![${files.c}](id=c)`,
+          `![id=c](${files.c})`,
           'Here are my clips and my picture.',
         ].join('\n'),
       },
@@ -296,9 +296,9 @@ describe('video tool', () => {
         text: [
           clipTag('video', { id: 'a', type: 'video/webm', src: files.a }),
           clipTag('audio', { id: 'b', type: 'audio/wav', src: files.b }),
-          `![${files.c}](id=c)`,
+          `![id=c](${files.c})`,
           clipTag('video', { id: 'd', type: 'video/webm', src: files.d }),
-          `![${files.e}](id=e)`,
+          `![id=e](${files.e})`,
           'Here are my shots.',
         ].join('\n'),
       },
@@ -850,7 +850,7 @@ describe('video tool', () => {
     const videoName = await newFileIn(browser, videoDir, videosBefore)
     expect(videoName).toMatch(storedFileName('webm'))
     const videoPath = path.join(videoDir, videoName)
-    expect(reply).toContain(`</dez:tool>\n\n![${imagePath}](id=g|tool=video|made-by=${frame.jobId})\n<dez:tool id="call_still"`)
+    expect(reply).toContain(`</dez:tool>\n\n![id=g|tool=video|made-by=${frame.jobId}](${imagePath})\n<dez:tool id="call_still"`)
     expect(reply.endsWith(`</dez:tool>\n\n<dez:video id="h" type="video/webm" src="${videoPath}" tool="video" made-by="${still.jobId}"/>\n\n${replyText(CALLER.modelName)}`)).toBe(true)
     expect(mediaFacts(imagePath)).toStrictEqual({ streams: ['video mjpeg 48x36'], seconds: null })
     expect(mediaFacts(videoPath)).toStrictEqual({ streams: ['video vp9 48x36', 'audio opus'], seconds: 1 })
@@ -882,7 +882,7 @@ describe('video tool', () => {
     const imageName = await newFileIn(browser, imagesDir, imagesBefore)
     expect(imageName).toMatch(storedFileName('jpg'))
     const imagePath = path.join(imagesDir, imageName)
-    expect(reply.endsWith(`</dez:tool>\n\n![${imagePath}](id=h|tool=video|made-by=${last.jobId})\n\n${replyText(CALLER.modelName)}`)).toBe(true)
+    expect(reply.endsWith(`</dez:tool>\n\n![id=h|tool=video|made-by=${last.jobId}](${imagePath})\n\n${replyText(CALLER.modelName)}`)).toBe(true)
     expect(mediaFacts(countPath)).toStrictEqual({ streams: ['video vp9 48x36'], seconds: 2 })
 
     // The image is the frame at 1.8 s, the last one, and not the one

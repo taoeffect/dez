@@ -91,7 +91,7 @@ describe('asset facts', () => {
   it('shows the pixels, the format, and the file size of an image between its id and its trash, and no facts for a missing image', async () => {
     const stored = await writeTestFile(appFilePath(app.home, 'assets', 'images', 'facts.png'), PNG)
     const missing = appFilePath(app.home, 'assets', 'images', 'facts-missing.png')
-    await openSeededConversation(browser, app.home, 'asset-facts-images', [{ role: 'user', text: `Images:\n![${stored}](id=a)\n![${missing}](id=b)\nEnd.` }])
+    await openSeededConversation(browser, app.home, 'asset-facts-images', [{ role: 'user', text: `Images:\n![id=a](${stored})\n![id=b](${missing})\nEnd.` }])
     await waitForValue(browser, 'shown images', () => shownImages(browser), [{ alt: 'facts.png', width: 40, height: 24 }])
     await waitFor(browser, '.cm-content .dez-image-missing')
 
