@@ -31,6 +31,7 @@ cd src-tauri && cargo test
 - Tauri build scripts first run `npm run clean:rust` (`scripts/clean-rust.js`).
 - `build:linux:appimage` runs `scripts/build-linux-appimage.js`; the AppImage bundles the build host's GStreamer plugins.
 - macOS builds need Xcode 26+: `build:macos:*` first compile the app icon (`scripts/build-macos-icon.js`); a bare `tauri build` on macOS fails without it.
+- The user docs of packaging and releases are in `docs/PACKAGING.md`.
 - Releases: run `npm run bump-version` and commit before you tag. A pushed `v*` tag runs `.github/workflows/release-desktop.yml`.
 - CI rules are in the workflow comments: the CA roots step that starts every job, the one step that may read `ZAI_API_KEY`, the Git LFS files of a job (`.github/actions/pull-lfs-files`).
 
@@ -164,7 +165,7 @@ Rules:
 ### Providers (`src/model/providers/`)
 
 - Every provider is one plain-JSON `ProviderConfig` (`config.ts`), served by one `Provider` class (`provider.ts`) over two wire formats (`apiFormats.ts`: `openai`, `anthropic`).
-- Built-ins are in `builtins.ts` (add a config literal; no Rust change); custom providers are in `app_state.json`; `registry.ts` finds both.
+- Built-ins are in `builtins.ts` (add a config literal; no Rust change); custom providers are in `app_state.json`; `registry.ts` finds both. `docs/CUSTOM_PROVIDERS.md` tells users each config field: keep it true when a field changes.
 - Put provider differences in config data, never in `if (providerId === …)` branches. Format code knows no provider name.
 - Provider ids must pass `isValidProviderId` (`config.ts`).
 - Chat and model HTTP stays in TypeScript (`dez.provider/*`, `dez.http/*`), not in Rust.

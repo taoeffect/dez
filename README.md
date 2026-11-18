@@ -2,204 +2,46 @@
   <img src="src-tauri/icons/128x128.png" alt="Dez app icon" width="128" height="128">
 </p>
 
-# Dez
+<h1 align="center">Dez - Plain text AI multimedia studio!</h1>
 
 Talk with AI in a fully editable plaintext document. Inspired by Zed's text threads feature (no longer with us, RIP).
 
 https://github.com/user-attachments/assets/6523d6b6-e225-4409-8d27-bb55f19e1060
 
-## Features
+# Features 🌟
 
-- **Saved prompts** — selectable via `/prompt` shortcut
-- **Tabbed conversations** — multiple concurrent chats in a single window
-- **Multi-provider model selection** — OpenRouter, Z.ai, GitHub Copilot, Kimi, MiniMax, Venice, and Charm Hyper, plus your own [custom providers](#custom-providers): any OpenAI- or Anthropic-compatible server, such as llama-server, LM Studio, or Ollama
-- **Image, video, and audio creation** - Create and edit videos, music, voice overs, and images using hundreds of supported models
-- **Web search & URL scraping** - Venice-based models can search the Internet and read URLs you give them
-- **Compaction** - Automatic compaction of long-running tasks that carry over assets and jobs
-- **X search** - Via Grok models on Venice
-- **Inline editing** — edit any message in a thread, including agent responses
-- **Multiple simultaneous responses** — Ask different AIs the same question across multiple tabs at once
-- **Conversation history** — persisted locally with the ability to browse and delete past conversations
-- **Save as Markdown** - <kbd>Cmd/Ctrl+S</kbd> saves the current conversation to a Markdown file you pick
-- **Copy Markdown** - <kbd>Cmd/Ctrl+Shift+C</kbd> copies the selection as plain Markdown, with no response pills and no thinking
-- **Multiple cursors** - <kbd>Ctrl+Shift+Up</kbd> and <kbd>Ctrl+Shift+Down</kbd> adds cursors above and below
-- **Find & replace** - <kbd>Cmd/Ctrl+F</kbd> opens a find bar with live highlights
-- **Markdown tables** - Renders GFM-flavored markdown tables inline
-- **Images** - paste or drop images. rendered inline. use with image-ready models. privacy-preserving, image paths never sent to provider
-- **Native menubar** - File, Edit, Conversation, View, Window, and Help menus with an item for every keyboard shortcut
-- **Open Dez Folder** - a button in Settings › General opens the folder where Dez keeps its data (`~/.config/dez/`)
-- **Cross-platform** — macOS and Linux
+- 📝 Saved prompts via `/prompt`
+- 🗂️ Tabbed conversations
+- 🤖 Supports OpenRouter, Z.ai, GitHub Copilot, Kimi, MiniMax, Venice, and Charm Hyper
+- 🏠 Local models: add any OpenAI- or Anthropic-compatible server as a [custom provider](docs/CUSTOM_PROVIDERS.md)
+- 🎨 Create and edit images, video, music, and voice overs with hundreds of models
+- 🔎 Web search and URL reading with Venice models (X search with Grok)
+- 🗜️ Automatic compaction of long tasks that keeps assets and jobs
+- ✏️ Edit any message, including AI replies
+- ⚡ Run many replies at once, across tabs
+- 📚 Conversation history saved on your device
+- 💾 Save as Markdown (<kbd>Cmd/Ctrl+S</kbd>)
+- 📋 Copy clean Markdown (<kbd>Cmd/Ctrl+Shift+C</kbd>)
+- ⌨️ Multiple cursors (<kbd>Ctrl+Shift+Up/Down</kbd>)
+- 🔍 Find & replace (<kbd>Cmd/Ctrl+F</kbd>)
+- 📊 Inline Markdown tables
+- 🖼️ Paste or drop images; file paths never go to providers
+- 🧭 Native menubar with every shortcut
+- 📂 Open your data folder from Settings
+- 💻 macOS and Linux
 
-## Custom providers
+# Docs
 
-A custom provider is any server that speaks the OpenAI chat completions API or the Anthropic messages API. This includes local servers such as llama-server, LM Studio, Ollama, and vLLM, and hosted APIs that are compatible with one of the two.
+- [Custom providers](docs/CUSTOM_PROVIDERS.md): add any OpenAI- or Anthropic-compatible server, such as llama-server, LM Studio, or Ollama
+- [Packaging](docs/PACKAGING.md): build the Linux AppImage and the macOS DMG, make a tagged release, and open an unsigned macOS build
 
-To add one, open Settings › Providers and click **+ Add provider**. Set the name, the API format, and the base URL. An API key is optional: local servers usually need none. Add model ids if the server does not list its models. If the server's models think, check **Supports thinking** (see [Thinking](#thinking)).
-
-You can also add custom providers by hand in `~/.config/dez/app_state.json`. **Close Dez first.** Dez saves this file while it runs, so it overwrites changes made while it is open.
-
-```json
-{
-  "customProviders": [
-    {
-      "id": "ollama",
-      "name": "Ollama",
-      "baseUrl": "http://localhost:11434/v1",
-      "models": [{ "id": "llama3.2", "name": "Llama 3.2" }]
-    },
-    {
-      "id": "claude-proxy",
-      "name": "Claude proxy",
-      "baseUrl": "https://llm.example.com",
-      "apiFormat": "anthropic",
-      "apiKey": "sk-..."
-    }
-  ]
-}
-```
-
-| Field | Required | Meaning |
-|---|---|---|
-| `id` | yes | 1 to 64 letters, digits, `-`, or `_`. It must not be a built-in id (`openrouter`, `zai`, `venice`, `charm_hyper`, `minimax`, `copilot`), `__favorites__`, or a JavaScript `Object.prototype` name such as `__proto__` or `constructor`. |
-| `name` | yes | The name in the model picker and in Settings. |
-| `baseUrl` | yes | An `http://` or `https://` URL with no query (`?`), fragment (`#`), user name, or password. See the base URL rule below. |
-| `apiFormat` | no | `openai` (default) or `anthropic`. |
-| `models` | no | Models that always show, as `{ "id": "...", "name": "..." }`. The name is optional. Add `"imageInput": true` or `false` to tell Dez if the model reads images; it has priority over `modelImageInput`. Add `"toolCalling": true` or `false` to tell Dez if the model calls tools; it has priority over `modelToolCalling`. Add `"thinking": true` or `false` to tell Dez if the model thinks; it has priority over `modelThinking`. Add `"outputs"` (a list of `text`, `image`, `audio`, `video`) and `"request"` (`chat`, `image`, `imageEdit`, `upscale`, `tts`, `music`, `video`, `imageToVideo`, `videoToVideo`, `voiceChange`, `transcription`, or `none`) to tell Dez what the model makes and how to send it a request; they have priority over `modelOutputs`. Add `"contextWindow"` (a number of tokens) to tell Dez the context window of the model; it has priority over `modelContextWindow`. |
-| `fetchModels` | no | `true` (default) also lists the models that the server reports. `false` never asks the server. |
-| `modelListQuery` | no | Query parameters for the model list request, as `{ "name": "value" }`, e.g. `{ "type": "all" }`. |
-| `modelImageInput` | no | Where the server's model list tells if a model reads images, as `{ "path": "..." }`: a dot path in each model entry, e.g. `architecture.input_modalities`. A `true` or `false` there is the answer; a list there means "reads images" when it holds `"image"`. Add `"missing": false` (or `true`) to give the answer for an entry with no value there. |
-| `modelToolCalling` | no | Where the server's model list tells if a model calls tools, as `{ "path": "..." }`, e.g. `supported_parameters`. A `true` or `false` there is the answer; a list there means "calls tools" when it holds `"tools"`. Add `"missing": false` (or `true`) to give the answer for an entry with no value there. Dez offers its tools to a model unless it knows that the model cannot call them. If the server refuses requests that offer tools (e.g. with HTTP 400), turn off the Tools toggle in the model picker's settings popup, or set `"toolCalling": false` on the model in `models`. |
-| `modelThinking` | no | Where the server's model list tells if a model thinks, as `{ "path": "..." }`, read as `modelToolCalling` is; a list there means "thinks" when it holds `"reasoning"`. A model that is known not to think gets no Thinking toggle, and its requests get no `thinking` fields. |
-| `modelOutputs` | no | Where the server's model list tells what a model makes, as `{ "path": "...", "values": { ... } }`: a dot path to a type, or a list of types, in each model entry. `values` gives each type its `outputs` and `request`, as in `models`; a type with no `request` gets `none`. Dez does not list a model whose types make nothing (`"outputs": []`), and skips a type that is not in `values`, or whose `requiredPath` (a dot path) has no value in the entry. A type can take its `request` from a second value of the entry: `"requestBy": { "path": "...", "values": { ... } }`; a `true` or `false` there has the key `"true"` or `"false"`. See the built-ins in [`src/model/providers/builtins.ts`](src/model/providers/builtins.ts). |
-| `modelReadableName` | no | Where the server's model list holds a readable name for a model that is named by its id, as `{ "path": "..." }`, e.g. `model_spec.name`. The tooltip of the model shows it after the id. |
-| `modelReleased` | no | Where the server's model list holds the release date of a model, as `{ "path": "...", "format": "..." }`: `unixSeconds` for a number of seconds, e.g. `{ "path": "created", "format": "unixSeconds" }`, or `rfc3339` for a text such as `2025-02-19T00:00:00Z` (`created_at` in the Anthropic format). The `model_list` and `model_info` tools show it. |
-| `modelTokenPrices` | no | Where the server's model list holds the token prices of a chat model, as `{ "input": "...", "output": "...", "perTokens": 1 }`: dot paths to a number or a text of a number, in USD per `perTokens` tokens (`1000000` for a price per 1M tokens). Optional paths: `cachedInput` (the cached input price), `cacheWrite` (the price of the input that a request puts into the prompt cache), `otherRates` (other rates of some requests), `imageOutput` (the price of the image tokens), `audioOutput` (the price of the audio tokens). The `model_list` and `model_info` tools show the price. |
-| `modelContextWindow` | no | Where the server's model list holds the context window of a model, in tokens, as `{ "paths": ["..."] }`: one or more dot paths to a number, e.g. `["context_length"]`. With more than one number, the smallest counts. For a model with no number, Dez uses the window of its model family, else 200,000 tokens. The `model_info` tool shows it. |
-| `modelImageLimit` | no | Where the server's model list holds the most images of one chat request to a model, as `{ "paths": ["..."] }`: one or more dot paths to a number; with more than one number, the smallest counts. For a model with no number, Dez uses the image limit of its model family, else 20 images. The `model_info` tool shows it. |
-| `modelMessageImageLimit` | no | Where the server's model list holds the most images of one message of a chat request to a model, as `{ "paths": ["..."] }`, read as `modelImageLimit` is. A request can then hold more images, in several messages. For a model with no number, a message can hold as many images as a request. |
-| `apiKey` | no | When Dez starts, it moves the key into `~/.config/dez/provider_keys.json` and removes it from `app_state.json`. |
-| `headers` | no | Extra HTTP headers for every request, as `{ "Name": "value" }`. A name may use only letters, digits, and ``!#$%&'*+-.^_`\|~``. A value must not contain a line break or a control character other than tab. Dez stores headers as plain text in `app_state.json`, so put an API key in `apiKey`, not in a header. |
-| `imageRequestHeaders` | no | Extra HTTP headers only for a chat request that sends an image, with the same rules as `headers`. |
-| `maxOutputTokens` | no | `max_tokens` for the Anthropic format (default 32000). |
-| `cacheBreakpoints` | no | OpenAI format: `true` marks the last two user messages with Anthropic's `cache_control` (the last result of a tool round counts as a user message), for a server that passes the marks on to models that cache only a marked prompt (such as Claude). The Anthropic format always adds the marks. |
-| `toolMessageCacheMark` | no | OpenAI format with `cacheBreakpoints`: where a tool result message takes its mark. `part` (default) puts it on the content as one text part; `message` puts it on the message itself. Venice needs `message`. |
-| `promptCacheKey` | no | OpenAI format: `true` sends the conversation id as `prompt_cache_key`, so the server can send all the requests of a conversation to the machine that holds its prompt cache. |
-| `requestBody` | no | A JSON object that Dez merges into every chat request, before `settings` and `thinking`: objects merge key by key, and other values replace. E.g. `{ "stream_options": { "include_usage": true } }` for an OpenAI-format server that tells the token counts of a reply only when the request asks for them. |
-| `imageOutputBody` | no | OpenAI format: a JSON object that Dez merges into a chat request to a model that makes images, right after `requestBody`, e.g. `{ "modalities": ["image", "text"] }`. Dez reads the images of the reply from `delta.images`. |
-| `audioOutputs` | no | OpenAI format: for chat models that make audio, a list of `{ "modelIdPrefix": "...", "body": { ... }, "contentType": "audio/mpeg" }`. Dez merges `body` into a chat request to a model whose id starts with `modelIdPrefix` (the first entry that matches wins), right after `imageOutputBody`, and reads the audio of the reply, of the type `contentType`, from `delta.audio`. For raw PCM, use e.g. `audio/pcm;rate=24000` and `"pcmSampleBits": 16`. A chat model that no entry names makes no audio in Dez. |
-| `mediaApi` | no | The API for the models whose `request` is `image`, `imageEdit`, `upscale`, `tts`, `music`, `video`, `imageToVideo`, `videoToVideo`, `voiceChange`, or `transcription`, as `{ "format": "venice" }`. The formats: `venice` (the Venice image, audio, and video API, at `<baseUrl>/image/...`, `/audio/...`, and `/video/...`) and `openrouter` (OpenRouter images, speech, transcription, and video, at `<baseUrl>/images`, `/audio/speech`, `/audio/transcriptions`, and `/videos`; no `upscale`, `music`, `videoToVideo`, or `voiceChange`). Without it, a request to such a model fails. `"modelRequestBodies"` adds fixed fields to the requests of some models, as `[{ "request": "tts", "modelIdPrefix": "...", "body": { ... } }]`. A form request (`transcription`, `voiceChange`) takes only the top-level text, number, and `true` values, as text fields; `false` and `null` remove the field. |
-| `settings` | no | On/off toggles for the provider settings popup in the model picker. Each toggle writes a value into the chat request. See the Venice `settings` in [`src/model/providers/builtins.ts`](src/model/providers/builtins.ts). The keys `thinking` and `tools` are reserved for the Thinking and Tools toggles. A toggle shows, and writes its value, only for the models that take it: `"modelIdPrefix"` gives the start of their ids, and `"modelSupport"` (read as `modelToolCalling` is) gives where the server's model list tells it; a list there means "takes it" when it holds the first name of the toggle's `bodyPath`. |
-| `thinking` | no | Set it when the server's models think. See [Thinking](#thinking). Checking **Supports thinking** writes `{}`; unchecking it removes the field. |
-
-The base URL rule:
-
-- **OpenAI format**: the base URL includes the version, the same as in the OpenAI SDKs. Dez sends chats to `<baseUrl>/chat/completions` and gets models from `<baseUrl>/models`. Common local base URLs are `http://localhost:8080/v1` (llama-server), `http://localhost:1234/v1` (LM Studio), `http://localhost:11434/v1` (Ollama), and `http://localhost:8000/v1` (vLLM).
-- **Anthropic format**: the base URL has no `/v1`, the same as in the Anthropic SDKs, e.g. `https://api.anthropic.com`. Dez sends chats to `<baseUrl>/v1/messages` and gets models from `<baseUrl>/v1/models`. If the base URL ends in `/v1`, Dez removes it.
-
-Dez drops an entry that is not valid, and the other providers still load. The next time Dez saves `app_state.json`, the dropped entry is no longer in the file, so keep a copy of your edits until they work.
-
-A provider shows in the model picker only while its last model check worked. If a local server was off when Dez started, start the server, then click **Check again** in Settings › Providers. The model picker also checks again when you open it, at most once a minute per provider.
-
-### Thinking
-
-A custom provider that has `thinking` gets the Thinking toggle (on by default) in Settings › Providers and in the model picker's settings popup. While the toggle is on, Dez shows the thinking that the server streams, and sends the thinking of earlier responses of the same model back to the server.
-
-Dez reads thinking from these parts of a reply:
-
-- **OpenAI format**: the `reasoning_content`, `reasoning`, `reasoning_text`, or `reasoning_details` field of a delta, or a reply that starts with `<think>` or `<thought>`.
-- **Anthropic format**: `thinking` and `redacted_thinking` blocks.
-
-`thinking` is an object with two optional fields. Each one is a JSON object that Dez merges into the chat request: objects merge key by key, and other values replace. `enabledBody: {}` sends nothing.
-
-| Field | Sent when | Default |
-|---|---|---|
-| `enabledBody` | the Thinking toggle is on | OpenAI format: nothing. Anthropic format: `{ "thinking": { "type": "adaptive", "display": "summarized" } }`. |
-| `disabledBody` | the Thinking toggle is off | nothing |
-
-Some servers reject a field for thinking that their model does not support. For example, Claude Sonnet 4.5, Opus 4.5, and Haiku 4.5 reject `adaptive`. For those, set `enabledBody` by hand, e.g. `{ "thinking": { "type": "enabled", "budget_tokens": 8000 } }`, or uncheck **Supports thinking**.
-
-## Packaging
-
-Install dependencies before packaging:
-
-```bash
-npm ci
-```
-
-Build a Linux AppImage on Linux for the current machine architecture:
-
-```bash
-npm run build:linux:appimage
-```
-
-The AppImage is written under `src-tauri/target/release/bundle/appimage/`. A local Linux build is native to the host machine, so run it on x86_64 Linux for an x86_64 AppImage or on ARM64 Linux for an ARM64 AppImage.
-
-The AppImage includes the GStreamer plugins of the build machine, so that the notification sound plays. The build needs `patchelf` (Debian/Ubuntu: `sudo apt install patchelf`; Fedora: `sudo dnf install patchelf`) and the GStreamer base and good plugins.
-
-The notification sound (`src/assets/sounds/ding.mp3`) and the ffmpeg and ffprobe programs that Dez ships (`src-tauri/binaries/`, with their license notice in `NOTICE.md`) are stored with [Git LFS](https://git-lfs.com/). Install Git LFS and run `git lfs pull` before you build. Without it, the build stops, because a small text file is in place of each program.
-
-Build an Apple Silicon macOS DMG on macOS:
-
-```bash
-npm run build:macos:dmg
-```
-
-The DMG is written under `src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/`. macOS packaging requires macOS and Xcode tooling; it is not supported as a Linux cross-compilation target.
-
-macOS builds need Xcode 26 or newer (`xcrun actool --version`). `build:macos:dmg` and `build:macos:app` first run `scripts/build-macos-icon.js`, which compiles the app icon `src-tauri/icons/Dez.icon` into `src-tauri/icons/Assets.car`. A bare `tauri build` does not compile it, and fails when that file is missing. If the default Xcode is older, select a newer one with `sudo xcode-select -s <path to Xcode.app>`.
-
-To run the native build for the current platform only:
-
-```bash
-npm run build:desktop
-```
-
-## Tagged releases
-
-First set the version in the npm, Tauri, and Cargo files, and commit them. Then push a version tag on that commit to start the desktop release workflow:
-
-```bash
-npm run bump-version -- 0.1.0
-git commit -m "v0.1.0" package.json package-lock.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock
-git tag v0.1.0
-git push origin HEAD v0.1.0
-```
-
-The workflow first checks that the version files hold the tag's version (`npm run bump-version -- --check v0.1.0` runs the same check on your machine). The bundles get their names from `src-tauri/tauri.conf.json`, and the app shows the `package.json` version in About and in the update check, so on a mismatch the workflow stops before any build and makes no release. Then delete the tag (`git tag -d v0.1.0 && git push origin :refs/tags/v0.1.0`), bump and commit, and tag again.
-
-When the check passes, the workflow builds Linux x86_64 and Linux ARM64 AppImages on Ubuntu, builds the Apple Silicon DMG on macOS, writes the release notes, creates the GitHub Release for the tag if needed, and attaches all release assets. Linux downloads are labeled by architecture, for example `Dez_0.1.0_linux_x86_64.AppImage` and `Dez_0.1.0_linux_arm64.AppImage`; ARM users should choose the `arm64` AppImage. The macOS download is `Dez_0.1.0_aarch64.dmg`.
-
-## macOS unsigned build note
-
-The macOS DMG is currently unsigned and not notarized. On Apple Silicon Macs, macOS may show "Dez is damaged and can't be opened" or block the app as coming from an unidentified developer.
-
-If that happens, remove the quarantine attribute from the downloaded DMG before opening it. Adjust the filename to match the downloaded artifact:
-
-```bash
-xattr -d com.apple.quarantine ~/Downloads/dez_0.1.0_aarch64.dmg
-```
-
-If you already copied the app into Applications, run:
-
-```bash
-xattr -cr /Applications/Dez.app
-```
-
-If macOS reports a permission error, run:
-
-```bash
-sudo xattr -cr /Applications/Dez.app
-```
-
-Developer ID signing and notarization can be added later to avoid this quarantine workaround for downloaded builds.
-
-## Tech Stack
+# Tech Stack
 
 - [Tauri v2](https://v2.tauri.app/) (Rust backend)
 - [Vue 3](https://vuejs.org/) with `<script setup>` SFCs
 - TypeScript
 - Vite
 
-## License
+# License
 
 AGPL-3.0. See [`LICENSE`](LICENSE) for license details.

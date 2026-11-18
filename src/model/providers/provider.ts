@@ -500,7 +500,7 @@ export class Provider {
   // A config can give a model a media request kind (`models[].request`)
   // without a `mediaApi`, or with one that does not serve the kind; its
   // requests then fail with one of these errors. The fix of the config is
-  // the `mediaApi` row of the README.
+  // the `mediaApi` row of docs/CUSTOM_PROVIDERS.md.
   private mediaFormat(): MediaFormat {
     const format = this.mediaFormatOrNone()
     if (!format) throw new ProviderError(`${this.name} has no media API that Dez can use. Choose another model.`, this.id)
