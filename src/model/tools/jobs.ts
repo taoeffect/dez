@@ -2,6 +2,7 @@ import { countOf } from '../../utils/countText'
 import { oneLineCut } from '../../utils/oneLineCut'
 import { tagEscape } from '../chat/tagEscape'
 import { usdText } from '../providers/modelPrices'
+import { argumentWords } from './arguments'
 import { ToolError, type ToolArguments, type ToolDefinition, type ToolParameter } from './types'
 
 // Jobs: the slow work of a Dez tool, such as a request to a media model. A
@@ -340,13 +341,12 @@ export function jobsWaitText(results: readonly JobResult[], running: number, rea
   return [`${countOf(results.length, 'job')} ended. ${named}${rest}`, ...results.map(jobPart)].join('\n\n')
 }
 
-// The ids of the jobs that the `jobs` argument of a call names (white
-// space or commas between them), each once, in order. Throws a `ToolError`
-// for an id of no job of the reply (`knownIds`), so that a call with a
-// wrong id acts on no job.
+// The ids of the jobs that the `jobs` argument of a call names (its words,
+// `argumentWords`), each once, in order. Throws a `ToolError` for an id of
+// no job of the reply (`knownIds`), so that a call with a wrong id acts on
+// no job.
 function namedJobIds(args: ToolArguments, knownIds: readonly string[]): string[] {
-  const text = typeof args.jobs === 'string' ? args.jobs : ''
-  const ids = [...new Set(text.split(/[\s,]+/).filter((id) => id !== ''))]
+  const ids = [...new Set(argumentWords(args, 'jobs'))]
   const unknown = ids.filter((id) => !knownIds.includes(id))
   if (unknown.length > 0) throw new ToolError(unknownJobText(unknown, knownIds))
   return ids

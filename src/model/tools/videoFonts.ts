@@ -1,5 +1,5 @@
 import fontsManifest from '../../../src-tauri/fonts/manifest.json'
-import { unknownValuesText } from './arguments'
+import { argumentWords, unknownValuesText } from './arguments'
 import { tellUserConsole } from './programRuns'
 import { ToolError, type ToolArguments } from './types'
 
@@ -53,13 +53,12 @@ export const SHIPPED_FAMILIES_TEXT = FAMILIES
   .map((fonts) => `"${fonts[0].family}" for ${fonts[0].scripts}`)
   .join('; ')
 
-/** The fonts that the `fonts` argument of an ffmpeg call names, each one
- *  once, in the order of the call. The names are separated by white space
- *  or commas, as the ids of `clips`. Throws a `ToolError` for a name of no
- *  font that Dez ships; `notDone` tells what Dez did not do. */
+/** The fonts that the `fonts` argument of an ffmpeg call names (its words,
+ *  `argumentWords`), each one once, in the order of the call. Throws a
+ *  `ToolError` for a name of no font that Dez ships; `notDone` tells what
+ *  Dez did not do. */
 export function fontsArgument(args: ToolArguments, notDone: string): string[] {
-  const value = typeof args.fonts === 'string' ? args.fonts : ''
-  const names = [...new Set(value.split(/[\s,]+/).filter((name) => name !== ''))]
+  const names = [...new Set(argumentWords(args, 'fonts'))]
   const unknown = names.filter((name) => !SHIPPED_FONTS.some(({ file }) => file === name))
   if (unknown.length > 0) {
     throw new ToolError(`${unknownValuesText('fonts', unknown, `the file names, with no folder, of the fonts that Dez ships: ${SHIPPED_NAMES}`)} ${notDone}`)

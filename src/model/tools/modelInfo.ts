@@ -12,7 +12,7 @@ import { roundedPrice, type ModelPrice } from '../providers/modelPrices'
 import type { ProviderMediaQuote } from '../providers/streamTypes'
 import { effectiveRequest, MODEL_REQUESTS, type ModelInfo, type ProviderInfo, type ProviderInputImageRules } from '../providers/types'
 import { unstoredOutputMessage, unusableModelMessage } from '../providers/unusableModel'
-import { unknownValuesText } from './arguments'
+import { argumentWords, unknownValuesText } from './arguments'
 import { jsonWithoutLocalPaths } from './localPaths'
 import { FIND_MODELS, listedModel, namedModelTarget, type ModelTarget } from './modelArguments'
 import { modelUsage } from './modelUsage'
@@ -230,7 +230,7 @@ export function modelInfoSelection(args: ToolArguments): ModelInfoSelection | un
   if (args.only === undefined) return undefined
 
   const valid = `a comma list of: ${MODEL_INFO_ONLY_VALUES.join(', ')}`
-  const words = String(args.only).toLowerCase().split(/[\s,]+/).filter((word) => word !== '')
+  const words = argumentWords(args, 'only').map((word) => word.toLowerCase())
   if (words.length === 0) throw new ToolError(`\`only\` names no part. Use ${valid}, or leave out \`only\` to get the whole result.`)
   const unknown = [...new Set(words.filter((word) => !MODEL_INFO_ONLY_VALUES.some((value) => value === word)))]
   if (unknown.length > 0) throw new ToolError(unknownValuesText('only', unknown, valid))

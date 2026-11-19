@@ -128,16 +128,22 @@ export function assetIdArgument(value: ToolArgumentValue | undefined, asset: str
   return id
 }
 
+/** The words of the text argument `parameter` of a call, separated by
+ *  white space or commas, in the order of the call: none for an absent
+ *  value or a value that is no text. */
+export function argumentWords(args: ToolArguments, parameter: string): string[] {
+  const value = args[parameter]
+  return (typeof value === 'string' ? value : '').split(/[\s,]+/).filter((word) => word !== '')
+}
+
 /** The ids of the images and the clips that the text argument `parameter`
- *  of a call names (`a` or `@a`), split by white space and commas, in the
- *  order of the call; an id can be there twice. Throws a ToolError for a
+ *  of a call names (`a` or `@a`), its words (`argumentWords`) in the order
+ *  of the call; an id can be there twice. Throws a ToolError for a
  *  word that is no id. `asset` is the kind of asset with its article (`a
  *  clip`), and `advice` ends the error text: the form of a good argument,
  *  and what Dez did not do. */
 export function assetIdWords(args: ToolArguments, parameter: string, asset: string, advice: string): string[] {
-  const value = args[parameter]
-  const words = (typeof value === 'string' ? value : '').split(/[\s,]+/).filter((word) => word !== '')
-  return words.map((word) => {
+  return argumentWords(args, parameter).map((word) => {
     const id = ASSET_ID_ARGUMENT.exec(word)?.[1]
     if (id === undefined) throw new ToolError(`\`${parameter}\` holds ${JSON.stringify(word)}, which is no id of ${asset}. ${advice}`)
     return id

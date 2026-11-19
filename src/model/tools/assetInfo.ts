@@ -1,7 +1,7 @@
 import type { AssetOrigin, AssetPlace } from '../chat/assetOrigins'
 import type { MediaTagKind } from '../chat/mediaTags'
 import { modelRefKey } from '../chat/modelRef'
-import { unknownValuesText } from './arguments'
+import { argumentWords, unknownValuesText } from './arguments'
 import type { ClipProbeFacts } from './assetFacts'
 import { ASSET_VIEW_TIMEOUT_MS } from './assetView'
 import {
@@ -123,7 +123,7 @@ export function assetInfoLine(id: string, kind: 'image' | MediaTagKind, facts: s
  *  `CLIP_CHECKS`: none for a blank or absent one. Throws a `ToolError` for
  *  a name that is no check. */
 export function assetInfoChecks(args: ToolArguments): ClipCheck[] {
-  const words = (typeof args.checks === 'string' ? args.checks : '').toLowerCase().split(/[\s,]+/).filter((word) => word !== '')
+  const words = argumentWords(args, 'checks').map((word) => word.toLowerCase())
   const unknown = [...new Set(words.filter((word) => !CLIP_CHECKS.some((check) => check === word)))]
   if (unknown.length > 0) throw new ToolError(`${unknownValuesText('checks', unknown, `any of: ${CLIP_CHECKS.join(', ')}`)} ${NOT_DONE}`)
   return CLIP_CHECKS.filter((check) => words.includes(check))
