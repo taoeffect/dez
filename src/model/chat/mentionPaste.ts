@@ -38,7 +38,9 @@ import type { Role } from './types'
 //   Dez copies no file. It leaves out the marks that tie an asset to its
 //   own conversation (tool, made by, hidden, kept), and keeps the rest.
 // - A copy takes the id of the same asset elsewhere in the conversation,
-//   else its own id when no asset has it, else a new id (mediaIds.ts).
+//   else its own id when no asset has it, else a new id (mediaIds.ts). A
+//   pasted mention that the plan does not change keeps its id, so no copy
+//   takes that id, and a new id goes after it.
 // - A linked file is copied only into a user section, where a linked path
 //   counts (images.ts): a model's text must never make Dez read a file of
 //   the computer. In another section, its mentions stay as pasted.
@@ -212,7 +214,8 @@ export function mentionPastePlan({ doc, sections, pasted }: PastedDoc, record: R
   const isPasted = ({ from, to }: TextRange) => pasted.from <= from && to <= pasted.to
   const assets = findAssets(doc)
   const pastedIds = new Set(assets.filter(isPasted).map((asset) => asset.id))
-  const mentions = pastedMentions(doc, assets, [pasted]).filter((mention) => record.has(mention.id) && !pastedIds.has(mention.id))
+  const allPasted = pastedMentions(doc, assets, [pasted])
+  const mentions = allPasted.filter((mention) => record.has(mention.id) && !pastedIds.has(mention.id))
   if (mentions.length === 0) return null
 
   const placeIndex = sections.findLastIndex((section) => section.from <= pasted.from)
@@ -246,7 +249,11 @@ export function mentionPastePlan({ doc, sections, pasted }: PastedDoc, record: R
     copyIndexes.set(sourceId, index)
   }
 
-  const copyIds = newCopyIds(doc, assets.filter((asset) => !isPasted(asset)), new Set(assets.map((asset) => asset.id)), copies)
+  // A pasted mention that stays as pasted keeps its id, so no copy may take
+  // it.
+  const keptMentionIds = allPasted.map(({ id }) => id).filter((id) => !presentIds.has(id) && !copyIndexes.has(id))
+  const takenIds = new Set([...assets.map((asset) => asset.id), ...keptMentionIds])
+  const copyIds = newCopyIds(doc, assets.filter((asset) => !isPasted(asset)), takenIds, copies)
   const idChanges = new Map<string, string>()
   for (const [sourceId, id] of presentIds) {
     if (id !== sourceId) idChanges.set(sourceId, id)
@@ -277,13 +284,14 @@ export function mentionPastePlan({ doc, sections, pasted }: PastedDoc, record: R
 
 // The id of each copy, in order (see the top of this file): the id of the
 // same asset elsewhere in the doc, which no other asset there has; else its
-// own id, when no asset of the doc (`docIds`) and no earlier copy has it;
-// else the next id after the highest one of the doc and of the copies.
-// `others` are the assets of the doc that were not pasted.
+// own id, when no asset of the doc, no kept pasted mention (`takenIds`), and
+// no earlier copy has it; else the next id after the highest one of
+// `takenIds` and of the copies. `others` are the assets of the doc that
+// were not pasted.
 function newCopyIds(
   doc: string,
   others: readonly { id: string | null, owner: string }[],
-  docIds: ReadonlySet<string | null>,
+  takenIds: ReadonlySet<string | null>,
   copies: readonly { asset: MentionedAsset, sourceId: string }[],
 ): string[] {
   const ownersById = new Map<string, Set<string>>()
@@ -296,10 +304,10 @@ function newCopyIds(
       if (id === null || taken.has(id) || owner !== copyOwner(asset, id)) return false
       return ownersById.get(id)?.size === 1
     })?.id ?? null
-    const id = sameAsset ?? (docIds.has(sourceId) || taken.has(sourceId) ? null : sourceId)
+    const id = sameAsset ?? (takenIds.has(sourceId) || taken.has(sourceId) ? null : sourceId)
     if (id !== null) taken.add(id)
     return id
   })
-  let highest = highestMediaId([compactionLastId(doc), ...docIds, ...ids])
+  let highest = highestMediaId([compactionLastId(doc), ...takenIds, ...ids])
   return ids.map((id) => id ?? (highest = nextMediaId(highest)))
 }

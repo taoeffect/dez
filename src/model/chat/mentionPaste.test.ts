@@ -152,6 +152,13 @@ describe('mentionPastePlan', () => {
       .toEqual([`${idImage(CAT, 'a')}\n${clip('c')}\n${idImage(DUCK, 'd')}\nEdit @d`])
   })
 
+  it('gives a copy no id of a pasted mention that named nothing at the copy', () => {
+    const unnamed: MentionSection[] = [{ role: 'user', text: `${idImage(DUCK, 'a')} Edit @a, not @c` }]
+
+    expect(paste(unnamed, [{ role: 'user', text: `${idImage(CAT, 'a')} ${idImage(FOX, 'b')}\n${PASTE_PLACE}` }], 'Edit @a, not @c'))
+      .toEqual([`${idImage(CAT, 'a')} ${idImage(FOX, 'b')}\n${idImage(DUCK, 'd')}\nEdit @d, not @c`])
+  })
+
   it('gives a copy the id that the same file has elsewhere in the conversation, when no other asset has that id', () => {
     expect(paste(source, [{ role: 'user', text: PASTE_PLACE }, { role: 'agent', text: idImage(DUCK, 'e') }], 'Edit @a'))
       .toEqual([`${idImage(DUCK, 'e')}\nEdit @e`, idImage(DUCK, 'e')])
@@ -199,6 +206,13 @@ describe('mentionPastePlan', () => {
     it('gives a mention in an agent section the id that the file has in an earlier user section', () => {
       expect(paste(linkedSource, [{ role: 'user', text: idImage(LINKED_DUCK, 'c') }, { role: 'agent', text: PASTE_PLACE }], 'Edit @a'))
         .toEqual([idImage(LINKED_DUCK, 'c'), 'Edit @c'])
+    })
+
+    it('keeps its id in an agent section, where no copy of another asset takes it', () => {
+      const withStored: MentionSection[] = [{ role: 'user', text: `${idImage(LINKED_DUCK, 'c')} ${idImage(DUCK, 'b')} Compare @c and @b` }]
+
+      expect(paste(withStored, [{ role: 'user', text: `Hi ${idImage(CAT, 'b')}` }, { role: 'agent', text: PASTE_PLACE }], 'Compare @c and @b'))
+        .toEqual([`Hi ${idImage(CAT, 'b')}`, `${idImage(DUCK, 'd')}\nCompare @c and @d`])
     })
   })
 
