@@ -353,13 +353,14 @@ function addNotesText(list: PartList, notes: string, rule: LinkedPathRule, image
  *  its own (`RequestMessages.newestUserMessage`): its text, with no path,
  *  and with each image reference as its `![id=a](image)` text; the images
  *  that it holds and the ones that it names with an `@id` mention, in text
- *  order and each one once; and its clips (`messageClips`). A chat request
- *  sends no clip: only a media request reads them. `preparedMediaRequest`
- *  (the code that the `model_invoke` tool shares) makes the request of that
- *  source: the cut to what the model takes, the names in the prompt, and
- *  the lyrics. `imagesLeftOut` and `clipsLeftOut` count the message's
- *  images and clips that the request does not take, so that the submit can
- *  tell the user.
+ *  order and each one once; and its clips (`messageClips`). Its tag lines
+ *  are read by the rule of its text (`newestUserText`), so the names in
+ *  the prompt and the clips agree. A chat request sends no clip: only a
+ *  media request reads them. `preparedMediaRequest` (the code that the
+ *  `model_invoke` tool shares) makes the request of that source: the cut
+ *  to what the model takes, the names in the prompt, and the lyrics.
+ *  `imagesLeftOut` and `clipsLeftOut` count the message's images and clips
+ *  that the request does not take, so that the submit can tell the user.
  *
  *  When the message has no image, a request whose lowest image count is one
  *  (`minInputImages`) takes the newest image reference of `sections` (the
@@ -379,36 +380,41 @@ export function mediaRequestInput(
   rules: ClipInputRules = {},
 ): MediaRequestInput {
   const parts: MessagePart[] = typeof newestUserMessage === 'string' ? [{ type: 'text', text: newestUserMessage }] : newestUserMessage
-  const input = preparedMediaRequest(kind, { parts, clips: messageClips(sections), pathsById: conversationAssets(sections).images }, rules)
+  const rule = newestUserText(sections)?.rule ?? 'user'
+  const input = preparedMediaRequest(kind, { parts, clips: messageClips(sections), pathsById: conversationAssets(sections).images, rule }, rules)
   if (input.images.length + input.imagesLeftOut > 0 || input.clips.some((clip) => clip.kind === 'video') || minInputImages(kind, rules.images) !== 1) return input
   const newest = sections.map((section, index) => partsImageReferences(sectionLinkedRuleParts(section, index)).at(-1)).findLast((reference) => reference !== undefined)
   return { ...input, images: newest ? [newest.path] : [] }
 }
 
-/** The clips of the newest user message of `sections`, in text order and
- *  each one once: its media tags (clip files that the user pasted or
- *  dropped) and the clips that it names with an `@id` mention
- *  (imageMentions.ts). A mention names the last media tag with that id in
- *  the message or in a section before it, user or agent. The message is
- *  read as `userMessageContent` reads it (`messageTextPieces`). An id that
- *  an image of the message or of an earlier section has is an image: its
- *  tag and its mentions add no clip. A mention of no image and no clip is
- *  plain text. The text keeps each mention as the user typed it.
- *
- *  With no user section, the newest message is the last message part of
- *  the notes of a compaction (as for `RequestMessages.newestUserMessage`). */
+// The newest message of the user in `sections`, as `sectionsToStreamMessages`
+// takes it for `RequestMessages.newestUserMessage`: the text of the newest
+// user section that is not empty, or with no such section, the last message
+// part of the notes of a compaction. `rule` is the rule of the text
+// (`messageTextPieces`), and `section` the index of the section that holds
+// it. Null when there is no message.
+function newestUserText(sections: readonly Section[]): { text: string, rule: LinkedPathRule, section: number } | null {
+  const index = sections.findLastIndex((section) => section.role === 'user' && !sectionIsEmpty(section))
+  if (index >= 0) return { text: sectionPlainText(sections[index]), rule: 'user', section: index }
+  const block = sections.length > 0 ? sectionCompactionBlock(sections[0]) : null
+  const part = block === null ? undefined : notesMessages(block.notes).at(-1)
+  return block === null || part === undefined ? null : { text: part.text, rule: blockLinkedRule(block), section: 0 }
+}
+
+/** The clips of the newest user message of `sections` (`newestUserText`),
+ *  in text order and each one once: its media tags (clip files that the
+ *  user pasted or dropped) and the clips that it names with an `@id`
+ *  mention (imageMentions.ts). A mention names the last media tag with
+ *  that id in the message or in a section before it, user or agent. The
+ *  message is read as `userMessageContent` reads it (`messageTextPieces`).
+ *  An id that an image of the message or of an earlier section has is an
+ *  image: its tag and its mentions add no clip. A mention of no image and
+ *  no clip is plain text. The text keeps each mention as the user typed
+ *  it. */
 export function messageClips(sections: readonly Section[]): ClipAttachment[] {
-  const messageIndex = sections.findLastIndex((section) => section.role === 'user' && !sectionIsEmpty(section))
-  let message: { text: string, rule: LinkedPathRule } | null = null
-  if (messageIndex >= 0) {
-    message = { text: sectionPlainText(sections[messageIndex]), rule: 'user' }
-  } else {
-    const block = sections.length > 0 ? sectionCompactionBlock(sections[0]) : null
-    const part = block === null ? undefined : notesMessages(block.notes).at(-1)
-    if (block !== null && part !== undefined) message = { text: part.text, rule: blockLinkedRule(block) }
-  }
+  const message = newestUserText(sections)
   if (message === null) return []
-  const clipsById = conversationAssets(sections.slice(0, Math.max(messageIndex, 0) + 1)).clips
+  const clipsById = conversationAssets(sections.slice(0, message.section + 1)).clips
 
   const clips = new Map<string, ClipAttachment>()
   const add = (id: string) => {

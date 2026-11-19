@@ -1386,6 +1386,23 @@ describe('sectionsToStreamMessages: a compacted conversation', () => {
       expect(messageClips(unlisted).map(({ id, src }) => ({ id, src }))).toStrictEqual([{ id: 'f', src: null }])
     })
 
+    // A message part of the notes is read by the rule of the block, where a
+    // line of Dez ends code: a tag line in a fence of it is a clip. In a user
+    // section, the fence holds the tag, which is text.
+    it('names in the prompt a clip whose tag line is in a fence of the newest message part, as the request sends the clip', () => {
+      const final = `Dance like this:\n${FENCE}\n${mediaTagText(DANCE)}\n${FENCE}`
+      const rules: ClipInputRules = { clips: { video: { use: 'reference', maxClips: 1, promptName: '@Video{n}' } } }
+      const input = (sections: Section[]) => mediaRequestInput('video', sent(sections).newestUserMessage, sections, rules)
+
+      expect([
+        input([partsBlock(notesText('Notes.', 'Make a fox.', final)), reply('r', '')]),
+        input([user('u1', final), reply('r', '')]),
+      ]).toStrictEqual([
+        { prompt: `Dance like this:\n${FENCE}\n@Video1\n${FENCE}`, images: [], imagesLeftOut: 0, clips: [attached(DANCE)], clipsLeftOut: { audio: 0, video: 0 } },
+        { prompt: `Dance like this:\n${FENCE}\n${mediaTagRequestText(DANCE)}\n${FENCE}`, images: [], imagesLeftOut: 0, ...NO_CLIPS },
+      ])
+    })
+
     // The notes of an older Dez hold the first and the newest message of
     // the user around the parts of the model.
     it('sends each message part of older notes in a code fence too, and reads the last part as the newest message', () => {

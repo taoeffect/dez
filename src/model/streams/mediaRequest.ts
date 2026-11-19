@@ -2,7 +2,7 @@ import type { MessagePart, Section } from '../chat/types'
 import type { AssetKind } from '../chat/assetMentions'
 import { partsImageReferences, partsMediaTags, sectionLinkedRuleParts } from '../chat/compaction'
 import { findAssetMentions } from '../chat/imageMentions'
-import { requestImageReferenceStart, type ImageReference } from '../chat/images'
+import { requestImageReferenceStart, type ImageReference, type LinkedPathRule } from '../chat/images'
 import { findMediaTags, sectionClipSource, type MediaTag, type MediaTagKind } from '../chat/mediaTags'
 import { withoutStoredFilePaths } from '../chat/storedFilePaths'
 import { takesInputImages } from '../modelInputs'
@@ -40,6 +40,11 @@ export interface MediaRequestSource {
   clips: ClipAttachment[]
   /** The path of each image id that a mention of the text can name. */
   pathsById: ReadonlyMap<string, string>
+  /** The rule of the text, which tells whether a tag line in a fence is a
+   *  clip (codeRanges.ts): `'user'` for a user section and a tool prompt,
+   *  or the rule of the block (`blockLinkedRule`) for a message part of the
+   *  notes of a compaction. */
+  rule: LinkedPathRule
 }
 
 /** What a media request sends to `dez.provider/generateMedia`, and the
@@ -154,7 +159,7 @@ export function promptRequestSource(prompt: string, assets: ConversationAssets):
     }
   }
   if (start < text.length) parts.push({ type: 'text', text: text.slice(start) })
-  return { parts, clips: [...clips.values()], pathsById: assets.images, inputs, unknownIds: [...unknownIds] }
+  return { parts, clips: [...clips.values()], pathsById: assets.images, rule: 'user', inputs, unknownIds: [...unknownIds] }
 }
 
 /** The input rules of a media request to `model` (the `rules` of
@@ -213,7 +218,7 @@ export function preparedMediaRequest(kind: MediaKind, source: MediaRequestSource
   }))
   const prompt = imageNames.size === 0 && clipNames.size === 0
     ? source.parts.map((part) => (part.type === 'text' ? part.text : '')).join('')
-    : promptWithNames(source.parts, imageNames, clipNames, source.pathsById)
+    : promptWithNames(source.parts, imageNames, clipNames, source.pathsById, source.rule)
   return { ...clipText(rules.text, prompt.trim()), images, imagesLeftOut, clips, clipsLeftOut }
 }
 
@@ -228,8 +233,10 @@ export function preparedMediaRequest(kind: MediaKind, source: MediaRequestSource
 // wrote it. The image part of a reference or of a first mention comes right
 // after that text, at the end of the text part before it. An image or a
 // clip with no name and a mention of nothing stay as they are. `pathsById`
-// gives the image of each id (the ids are unique in a tab).
-function promptWithNames(parts: readonly MessagePart[], imageNames: ReadonlyMap<string, string>, clipNames: ReadonlyMap<string, string>, pathsById: ReadonlyMap<string, string>): string {
+// gives the image of each id (the ids are unique in a tab). `rule` is the
+// rule of the text (`MediaRequestSource.rule`), so that each tag line that
+// sends a clip is a place.
+function promptWithNames(parts: readonly MessagePart[], imageNames: ReadonlyMap<string, string>, clipNames: ReadonlyMap<string, string>, pathsById: ReadonlyMap<string, string>, rule: LinkedPathRule): string {
   // `text` with each mention of an image or a clip that goes as its name.
   // A mention ends with a letter, so it is never part of a reference that
   // ends a text.
@@ -258,7 +265,7 @@ function promptWithNames(parts: readonly MessagePart[], imageNames: ReadonlyMap<
     if (referenceStart !== null && next?.type === 'image') places.push({ from: text.length + referenceStart, to: text.length + part.text.length, name: imageNames.get(next.path) })
     text += part.text
   }
-  for (const tag of findMediaTags(text, 'user')) places.push({ from: tag.from, to: tag.to, name: clipNames.get(tag.id) })
+  for (const tag of findMediaTags(text, rule)) places.push({ from: tag.from, to: tag.to, name: clipNames.get(tag.id) })
   places.sort((a, b) => a.from - b.from)
 
   let prompt = ''

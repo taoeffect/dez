@@ -92,6 +92,7 @@ describe('promptRequestSource', () => {
       ],
       clips: [attached(DANCE), attached(SONG)],
       pathsById: conversationAssets(CONVERSATION).images,
+      rule: 'user',
       inputs: [{ id: 'a', kind: 'image' }, { id: 'd', kind: 'video' }, { id: 'c', kind: 'audio' }],
       unknownIds: ['everyone', 'z'],
     })
