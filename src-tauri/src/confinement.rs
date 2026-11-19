@@ -1,32 +1,82 @@
-//! Keeps a bundled program inside its folders at the OS level: the program
-//! can read and write only under one folder (Dez's cache folder for a
-//! bundled program, `run_bundled_tool`), read, make, and change files (but
-//! not delete, move, or link them) under a few more (the assets folder of
-//! the Dez folder), and read its own file. So a program that a call tricks
-//! into opening a path (an argument, or a path in the content of a file,
-//! such as a playlist) gets "permission denied". It can make no symlink
-//! anywhere: Dez's own file code is not confined, and it would follow a
-//! link in the cache folder to any file (a temp clip that names the API
-//! keys, a work folder that names a folder of the user).
-//! - Linux: Landlock, a part of the kernel since Linux 5.13.
+//! Keeps a bundled program inside its folders at the OS level, by the
+//! `Confinement` of its run. The program can:
+//! - read and write only under one folder (Dez's cache folder for ffmpeg,
+//!   the work folder of the run for Deno);
+//! - read and write under a few more that it owns, with no move or link of a
+//!   file between two folders there (the folder of a script app);
+//! - read, make, and change files (but not delete, move, or link them) under
+//!   others (the assets folder of the Dez folder);
+//! - read its own file and, for a program that is not static, the library
+//!   folders of the system.
+//!
+//! So a program that a call tricks into opening a path (an argument, or a
+//! path in the content of a file, such as a playlist) gets "permission
+//! denied". It can make no symlink anywhere: Dez's own file code is not
+//! confined, and it would follow a link in the cache folder to any file (a
+//! temp clip that names the API keys, a work folder that names a folder of
+//! the user). It has no network, and it gets none of the open files of Dez.
+//! - Linux: Landlock, a part of the kernel since Linux 5.13, for the files,
+//!   and a seccomp filter for the system calls that Landlock does not
+//!   confine (`REFUSED_CALLS`).
 //! - macOS: Seatbelt, through `/usr/bin/sandbox-exec`, which ships with the
 //!   OS. It is the only program of the computer that a run starts.
 //!
 //! Where the OS has neither (an old or a stripped kernel, a macOS with no
-//! `sandbox-exec`), the program runs with no confinement, and the argument
-//! checks of the page (`argumentProblem` in videoTool.ts) are its only
-//! guard. Dez then writes one warning to its log.
+//! `sandbox-exec`), a run whose confinement is `required` does not start
+//! (`NO_CONFINEMENT`). Any other program then runs with no confinement of
+//! its files, and the argument checks of the page (`argumentProblem` in
+//! videoTool.ts) are its only guard. Dez then writes one warning to its log.
 //!
-//! The limits of the confinement: the network is not confined (the ffmpeg
-//! and ffprobe that Dez ships have no network code, and the argument checks
-//! refuse its protocols); the program can read the facts of any file (size,
-//! time, owner, and extended attributes), not its content; on macOS it can
-//! also read the files of the system that a program needs to start, and
-//! the names in the root folder `/`.
+//! The limits of the confinement:
+//! - The program can read the facts of any file (size, time, owner, and
+//!   extended attributes), not its content. It can change the mode, the
+//!   owner, the times, and the attributes only of a file that it could open.
+//! - `REFUSED_CALLS` is a list of calls that Dez knows, so a later kernel
+//!   can add a call that it does not hold.
+//! - Linux before 6.12 has no Landlock scope: the program can send a signal
+//!   to another program of the user.
+//! - The memory limit (`Confinement::data_limit`) is a rule of Linux only.
+//! - macOS: the program can also read the files of the system that a
+//!   program needs to start, and the names in the root folder `/`; and it
+//!   can move or link a file between two of its folders.
 
 use std::path::{Path, PathBuf};
 
 use tokio::process::Command;
+
+// What the OS lets the program of one run do (`confined_command`). The
+// default value gives the program only `folder`.
+// Linux reads every field; the other systems do not.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Confinement {
+    // The folder that the program can read and write, with all below it:
+    // every file right there but the make of a symlink.
+    pub(crate) folder: PathBuf,
+    // Folders that the program has the same rights on, but with no move or
+    // link of a file from or to another folder (Linux): the folder of a
+    // script app. So the program can leave no hard link there to a file of
+    // `folder` that Dez stores later.
+    pub(crate) also_owned: Vec<PathBuf>,
+    // Folders whose files the program can read, make, and change, but
+    // never delete, move, or link; it can make no folder there.
+    pub(crate) also_writable: Vec<PathBuf>,
+    // Folders and files that the program can read (only the tests, whose
+    // system programs need the system's folders).
+    pub(crate) also_readable: Vec<PathBuf>,
+    // Whether the program loads the shared libraries of the system: one
+    // that is not a static program (Deno). Linux only; the macOS profile
+    // lets every program read them.
+    pub(crate) system_libraries: bool,
+    // Whether the run does not start where the OS has no file rule.
+    pub(crate) required: bool,
+    // The most bytes of data that the program can have (Linux only).
+    pub(crate) data_limit: Option<u64>,
+}
+
+// The start of the error of a run that did not start because the OS has no
+// file rule and its confinement is `required`.
+pub(crate) const NO_CONFINEMENT: &str = "No confinement: ";
 
 // Tells once per app run that the programs run with no confinement. A log
 // line per run would only repeat it.
@@ -37,42 +87,189 @@ fn warn_unconfined(cause: &str) {
     });
 }
 
-// A command that starts `program` with `args`, confined to `folder` (every
-// file right there but the make of a symlink), with the file rights of
-// `also_writable` (read, make, and change a file; never delete, move, or
-// link one, nor make a folder) and read rights on `also_readable` too (only
-// the tests, whose system programs need the system's folders). The caller
-// sets the rest (the work folder, the environment, the pipes). An `Err` is
-// a confinement that the OS has but that Dez could not set up: the run
-// does not start then.
+// A run on a computer whose OS has no file rule: an error for a confinement
+// that is `required`, and a warning for any other.
+fn without_file_rule(cause: &str, confinement: &Confinement) -> Result<(), String> {
+    if confinement.required {
+        return Err(format!("{NO_CONFINEMENT}{cause}, and Dez does not run this program with no confinement"));
+    }
+    warn_unconfined(cause);
+    Ok(())
+}
+
+// A command that starts `program` with `args` under `confinement`. The
+// caller sets the rest (the work folder, the environment, the pipes). An
+// `Err` is a confinement that the OS has but that Dez could not set up, or
+// one that is `required` on an OS that has none: the run does not start
+// then.
 #[cfg(target_os = "linux")]
-pub(crate) fn confined_command(program: &Path, args: &[String], folder: &Path, also_writable: &[PathBuf], also_readable: &[PathBuf]) -> Result<Command, String> {
+pub(crate) fn confined_command(program: &Path, args: &[String], confinement: &Confinement) -> Result<Command, String> {
     use std::os::fd::AsRawFd;
 
+    use libc::{c_long, c_ulong};
+
+    let rules = landlock_rules(program, confinement).map_err(|error| format!("Failed to set up the confinement of the program: {}", error))?;
+    if rules.is_none() {
+        without_file_rule("this Linux kernel has no Landlock", confinement)?;
+    }
+    // Made here, before the fork: the child must not allocate.
+    let filter = call_filter();
+    let data_limit = confinement.data_limit.map(|bytes| libc::rlimit { rlim_cur: bytes, rlim_max: bytes });
     let mut command = Command::new(program);
     command.args(args);
-    match landlock_rules(program, folder, also_writable, also_readable).map_err(|error| format!("Failed to set up the confinement of the program: {}", error))? {
-        // SAFETY: the closure runs in the child between fork and exec, where
-        // only async-signal-safe calls are allowed (another thread of Dez can
-        // hold the lock of the allocator at the fork). It makes two system
-        // calls and does not allocate: `last_os_error` only reads errno.
-        Some(rules) => unsafe {
-            command.pre_exec(move || {
-                // Landlock needs `no_new_privs` from a process that is not
-                // root. It also keeps a setuid program from gaining rights.
-                // The arguments are `unsigned long` for the kernel.
-                if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1 as libc::c_ulong, 0 as libc::c_ulong, 0 as libc::c_ulong, 0 as libc::c_ulong) != 0 {
-                    return Err(std::io::Error::last_os_error());
+    // SAFETY: the closure runs in the child between fork and exec, where
+    // only async-signal-safe calls are allowed (another thread of Dez can
+    // hold the lock of the allocator at the fork). It makes system calls
+    // only and does not allocate: `last_os_error` only reads errno. The
+    // arguments of `prctl` and `syscall` are `unsigned long` for the kernel.
+    unsafe {
+        command.pre_exec(move || {
+            let done = |result: c_long| if result == 0 { Ok(()) } else { Err(std::io::Error::last_os_error()) };
+            // Landlock and seccomp need `no_new_privs` from a process that
+            // is not root. It also keeps a setuid program from gaining
+            // rights.
+            done(libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1 as c_ulong, 0 as c_ulong, 0 as c_ulong, 0 as c_ulong) as c_long)?;
+            // The data of a program: its heap and every other private
+            // memory that it can write. A limit on the address space
+            // (`RLIMIT_AS`) is no choice: Deno reserves far more than it
+            // uses, and stops at its start under one.
+            if let Some(limit) = &data_limit {
+                done(libc::setrlimit(libc::RLIMIT_DATA, limit) as c_long)?;
+            }
+            // The program gets no open file of Dez but its three pipes: a
+            // library of Dez can hold a socket that does not close at an
+            // exec (the display, D-Bus), and that would be a way around
+            // the network rule. The call marks every file from 3 on to
+            // close at the exec, and does not close it now: Rust tells the
+            // parent of a failed exec through a pipe. The raw call, as an
+            // old glibc has no `close_range`. A kernel before 5.11 does not
+            // know the call or the flag, and has no Landlock either.
+            if libc::syscall(libc::SYS_close_range, 3 as c_ulong, libc::c_uint::MAX as c_ulong, libc::CLOSE_RANGE_CLOEXEC as c_ulong) != 0 {
+                let error = std::io::Error::last_os_error();
+                if !matches!(error.raw_os_error(), Some(libc::ENOSYS | libc::EINVAL)) {
+                    return Err(error);
                 }
-                if libc::syscall(libc::SYS_landlock_restrict_self, rules.as_raw_fd(), 0 as libc::c_uint) != 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                Ok(())
-            });
-        },
-        None => warn_unconfined("this Linux kernel has no Landlock"),
+            }
+            if let Some(rules) = &rules {
+                done(libc::syscall(libc::SYS_landlock_restrict_self, rules.as_raw_fd() as c_ulong, 0 as c_ulong))?;
+            }
+            // The last step, so that the filter is no rule of the steps
+            // above. The kernel copies the filter at this call.
+            let filter_program = libc::sock_fprog { len: filter.len() as libc::c_ushort, filter: filter.as_ptr().cast_mut() };
+            done(libc::prctl(libc::PR_SET_SECCOMP, libc::SECCOMP_MODE_FILTER as c_ulong, &filter_program as *const libc::sock_fprog) as c_long)?;
+            Ok(())
+        });
     }
     Ok(command)
+}
+
+// The system calls that no bundled program can make, each with the error
+// that the program gets in its place. All but the first two are here
+// because Landlock does not confine them.
+//
+// - `socket`: no socket of any kind, so no network (TCP, UDP, raw), no Unix
+//   socket (D-Bus, the display), and no netlink. The Landlock rule covers
+//   TCP only. A `socketpair` stays: it reaches no other program.
+// - `io_uring_setup`: an io_uring makes sockets with no `socket` call.
+//   `ENOSYS` is the answer of a kernel that has no io_uring, so a program
+//   uses its other way.
+// - The calls that change the facts of a file by its path (its mode, its
+//   owner, its times, its extended attributes): without this, a program
+//   could make the API keys file readable for every user. The forms that
+//   take an open file stay (`fchmod`, `fchown`, `fsetxattr`), as a program
+//   opens only what Landlock lets it open. `futimens` does not stay: it is
+//   `utimensat` with no path.
+// - `truncate`: Landlock confines it only since Linux 6.2. A program cuts
+//   a file that it opened (`ftruncate`).
+//
+// Deno, ffmpeg, and ffprobe run with this list; only `Deno.chmod` and
+// `Deno.utime` fail.
+// Linux gives each call that is newer than 5.1 one number on every
+// machine, so the ones that the libc crate does not know for both machines
+// are numbers here (`asm-generic/unistd.h`).
+#[cfg(target_os = "linux")]
+const REFUSED_CALLS: &[(libc::c_long, libc::c_int)] = &[
+    (libc::SYS_socket, libc::EPERM),
+    (libc::SYS_io_uring_setup, libc::ENOSYS),
+    (libc::SYS_fchmodat, libc::EPERM),
+    // fchmodat2
+    (452, libc::EPERM),
+    (libc::SYS_fchownat, libc::EPERM),
+    (libc::SYS_utimensat, libc::EPERM),
+    (libc::SYS_setxattr, libc::EPERM),
+    (libc::SYS_lsetxattr, libc::EPERM),
+    (libc::SYS_removexattr, libc::EPERM),
+    (libc::SYS_lremovexattr, libc::EPERM),
+    // setxattrat, removexattrat, file_setattr
+    (463, libc::EPERM),
+    (466, libc::EPERM),
+    (469, libc::EPERM),
+    (libc::SYS_truncate, libc::EPERM),
+];
+
+// The older calls of x86_64 that do the same as a call of `REFUSED_CALLS`.
+// arm64 never had them.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const OLD_REFUSED_CALLS: &[(libc::c_long, libc::c_int)] = &[
+    (libc::SYS_chmod, libc::EPERM),
+    (libc::SYS_chown, libc::EPERM),
+    (libc::SYS_lchown, libc::EPERM),
+    (libc::SYS_utime, libc::EPERM),
+    (libc::SYS_utimes, libc::EPERM),
+    (libc::SYS_futimesat, libc::EPERM),
+];
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+const OLD_REFUSED_CALLS: &[(libc::c_long, libc::c_int)] = &[];
+
+// The machine of the programs that Dez ships, as seccomp names it
+// (`linux/audit.h`: the ELF machine with the 64-bit and little-endian
+// flags). A system call number means a call only together with it.
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const CALL_MACHINE: u32 = 0xC000_003E;
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+const CALL_MACHINE: u32 = 0xC000_00B7;
+#[cfg(all(target_os = "linux", not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
+compile_error!("The seccomp filter of confinement.rs knows only x86_64 and aarch64: add the machine and its system calls.");
+
+// The seccomp filter of a run: a small program (classic BPF) that the
+// kernel runs at each system call of the confined program, and of every
+// program that it starts. A call of `REFUSED_CALLS` fails with its error,
+// and every other call goes on.
+//
+// A program can also make its calls in the form of another machine, where
+// each call has another number: 32-bit calls on x86_64, and there also the
+// x32 form, which has the machine of x86_64 and one more bit in the number.
+// The list would not name those calls, so they end the program. No
+// bundled program makes one.
+#[cfg(target_os = "linux")]
+fn call_filter() -> Vec<libc::sock_filter> {
+    use std::mem::offset_of;
+
+    // Load a field of the call (`seccomp_data`); jump over `jt` steps when
+    // the loaded value is `k`, else over `jf`; end with the answer `k`.
+    const LOAD: u32 = libc::BPF_LD | libc::BPF_W | libc::BPF_ABS;
+    const JUMP_IF_EQUAL: u32 = libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K;
+    const ANSWER: u32 = libc::BPF_RET | libc::BPF_K;
+    let step = |code: u32, jt: u8, jf: u8, k: u32| libc::sock_filter { code: code as u16, jt, jf, k };
+
+    let mut filter = vec![
+        step(LOAD, 0, 0, offset_of!(libc::seccomp_data, arch) as u32),
+        step(JUMP_IF_EQUAL, 1, 0, CALL_MACHINE),
+        step(ANSWER, 0, 0, libc::SECCOMP_RET_KILL_PROCESS),
+        step(LOAD, 0, 0, offset_of!(libc::seccomp_data, nr) as u32),
+    ];
+    // The bit of an x32 call (`__X32_SYSCALL_BIT`): every number from it on.
+    #[cfg(target_arch = "x86_64")]
+    filter.extend([
+        step(libc::BPF_JMP | libc::BPF_JGE | libc::BPF_K, 0, 1, 0x4000_0000),
+        step(ANSWER, 0, 0, libc::SECCOMP_RET_KILL_PROCESS),
+    ]);
+    for (call, error) in REFUSED_CALLS.iter().chain(OLD_REFUSED_CALLS) {
+        filter.push(step(JUMP_IF_EQUAL, 0, 1, *call as u32));
+        filter.push(step(ANSWER, 0, 0, libc::SECCOMP_RET_ERRNO | *error as u32));
+    }
+    filter.push(step(ANSWER, 0, 0, libc::SECCOMP_RET_ALLOW));
+    filter
 }
 
 #[cfg(target_os = "linux")]
@@ -84,27 +281,45 @@ enum RulesError {
     Path(#[from] landlock::PathFdError),
 }
 
+// The folders of the shared libraries of a Linux system, and of the loader
+// that starts every program that is not static (`ld-linux-*.so`). On a
+// system that keeps them deeper (Debian: `/usr/lib/<machine>-linux-gnu`),
+// they are still below one of these.
+#[cfg(target_os = "linux")]
+const SYSTEM_LIBRARY_FOLDERS: [&str; 4] = ["/usr/lib", "/usr/lib64", "/lib", "/lib64"];
+
 // The Landlock rules of a run, as the file of a ruleset, or `None` when the
 // kernel has no Landlock. Dez builds them in its own process: the child only
-// applies them (`confined_command`). The ruleset handles every file right
-// that the crate knows (ABI 9); the crate drops the ones that the kernel
-// does not know (its default "best effort" mode), and every kernel with
-// Landlock confines reads and writes. The file has `O_CLOEXEC`, so the
-// program does not get it.
+// applies them (`confined_command`). The ruleset handles every right that
+// the crate knows (ABI 9); the crate drops the ones that the kernel does
+// not know (its default "best effort" mode), and every kernel with Landlock
+// confines reads and writes. The file has `O_CLOEXEC`, so the program does
+// not get it.
 #[cfg(target_os = "linux")]
-fn landlock_rules(program: &Path, folder: &Path, also_writable: &[PathBuf], also_readable: &[PathBuf]) -> Result<Option<std::os::fd::OwnedFd>, RulesError> {
-    use landlock::{ABI, Access, AccessFs, PathBeneath, PathFd, Ruleset, RulesetAttr, RulesetCreatedAttr};
+fn landlock_rules(program: &Path, confinement: &Confinement) -> Result<Option<std::os::fd::OwnedFd>, RulesError> {
+    use landlock::{ABI, Access, AccessFs, AccessNet, PathBeneath, PathFd, Ruleset, RulesetAttr, RulesetCreatedAttr, Scope};
 
     let every_right = AccessFs::from_all(ABI::V9);
     // No `MakeSym` in the folder: see the comment of the module.
     let mut folder_rights = every_right;
     folder_rights.remove(AccessFs::MakeSym);
+    // With no `Refer`, a move or a link of a file between two folders fails
+    // (`EXDEV`), also between two folders below this one. A move in one
+    // folder works.
+    let mut owned_rights = folder_rights;
+    owned_rights.remove(AccessFs::Refer);
     // An exec needs the read right of the program too.
     let start_right = AccessFs::Execute | AccessFs::ReadFile;
     let mut ruleset = Ruleset::default()
         .handle_access(every_right)?
+        // The second guard of the network, after `REFUSED_CALLS`: no rule
+        // gives a port, so every TCP bind and connect fails (Linux 6.7),
+        // and the program can send no signal to a program outside the run
+        // and connect to no abstract Unix socket (Linux 6.12).
+        .handle_access(AccessNet::from_all(ABI::V9))?
+        .scope(Scope::from_all(ABI::V9))?
         .create()?
-        .add_rule(PathBeneath::new(PathFd::new(folder)?, folder_rights))?
+        .add_rule(PathBeneath::new(PathFd::new(&confinement.folder)?, folder_rights))?
         .add_rule(PathBeneath::new(PathFd::new(program)?, start_right))?;
     // The device files that a run can use, as in `SEATBELT_PROFILE`; one
     // that the computer lacks is left out.
@@ -118,16 +333,30 @@ fn landlock_rules(program: &Path, folder: &Path, also_writable: &[PathBuf], also
     for (device, rights) in devices.into_iter().filter(|(device, _)| Path::new(device).exists()) {
         ruleset = ruleset.add_rule(PathBeneath::new(PathFd::new(device)?, rights))?;
     }
+    // The kernel starts a program that is not static through the loader of
+    // the system, and wants the `Execute` right on the loader for that: with
+    // the read right alone, the exec fails. The loader then reads the
+    // libraries. So the program can also start a file of these folders;
+    // that program is under the same rules, and `no_new_privs` gives it no
+    // right of a setuid file. No `ReadDir`: the loader lists no folder.
+    if confinement.system_libraries {
+        for folder in SYSTEM_LIBRARY_FOLDERS.iter().map(Path::new).filter(|folder| folder.exists()) {
+            ruleset = ruleset.add_rule(PathBeneath::new(PathFd::new(folder)?, start_right))?;
+        }
+    }
+    for path in &confinement.also_owned {
+        ruleset = ruleset.add_rule(PathBeneath::new(PathFd::new(path)?, owned_rights))?;
+    }
     // With no `RemoveFile`, `MakeDir`, or `Refer`, a program cannot delete,
     // move, or hard-link a file there, nor make a folder; with no `Execute`
     // or `MakeSym`, it cannot start a file there or make a link to another
     // file. Landlock checks the real path of each open, so a symlink or
     // `..` from there reaches nothing else.
     let file_rights = AccessFs::ReadFile | AccessFs::ReadDir | AccessFs::WriteFile | AccessFs::MakeReg | AccessFs::Truncate;
-    for path in also_writable {
+    for path in &confinement.also_writable {
         ruleset = ruleset.add_rule(PathBeneath::new(PathFd::new(path)?, file_rights))?;
     }
-    for path in also_readable {
+    for path in &confinement.also_readable {
         // The crate drops the folder rights of a rule on a file.
         ruleset = ruleset.add_rule(PathBeneath::new(PathFd::new(path)?, AccessFs::from_read(ABI::V9)))?;
     }
@@ -139,7 +368,9 @@ fn landlock_rules(program: &Path, folder: &Path, also_writable: &[PathBuf], also
 #[cfg(target_os = "macos")]
 const SANDBOX_EXEC: &str = "/usr/bin/sandbox-exec";
 
-// The Seatbelt profile of a run (SBPL: the last rule that matches wins).
+// The Seatbelt profile of a run (SBPL: the last rule that matches wins), in
+// two parts: `confined_command` puts the rules of the other folders of the
+// run between them.
 // - `(allow default)` with a deny of all file reads and writes, and not a
 //   `(deny default)` profile: the programs load AppKit, AVFoundation, and
 //   more frameworks, which need much that a full list would miss.
@@ -155,12 +386,18 @@ const SANDBOX_EXEC: &str = "/usr/bin/sandbox-exec";
 //   (`/private/var/…`), so they are canonical.
 // - File facts, extended attributes, and maps of the libraries stay
 //   allowed: dyld needs them, and Landlock does not confine them either.
-// - The rules of `also_writable` (added in `confined_command`) give read,
-//   write, and the create of a regular file, as `file_rights` of
-//   `landlock_rules`: no unlink, rename away, folder, or symlink there.
+// - The rules of `also_owned` give what the rule of the folder gives. A
+//   move or a link between two folders stays possible here: Seatbelt has
+//   no rule like the `Refer` right of Landlock.
+// - The rules of `also_writable` give read, write, and the create of a
+//   regular file, as `file_rights` of `landlock_rules`: no unlink, rename
+//   away, folder, or symlink there.
 // - The deny of a symlink create (the rule of WebKit's WebProcess profile)
-//   comes after the allow of the cache folder, so it wins there: no symlink
-//   in the cache folder either (see the comment of the module).
+//   comes after every allow of a folder, so it wins there: no symlink in
+//   the cache folder or in the folder of an app (see the comment of the
+//   module).
+// - The deny of the network covers every socket that is not a pair of the
+//   program itself: no connect, bind, or listen, also on a Unix socket.
 // - The kernel logs a deny of `/dev/dtracehelper`, `/dev/autofs_nowait`,
 //   and `~/.CFUserTextEncoding` at each start of a program: the system
 //   libraries (dyld, CoreFoundation) try to open them and go on without
@@ -185,13 +422,17 @@ const SEATBELT_PROFILE: &str = r#"(version 1)
   (literal (param "PROGRAM")))
 (allow file-write-data (literal "/dev/null"))
 (allow file-read-data file-write* (subpath (param "FOLDER")))
-(deny file-write-create (vnode-type SYMLINK))
 "#;
 
 #[cfg(target_os = "macos")]
-pub(crate) fn confined_command(program: &Path, args: &[String], folder: &Path, also_writable: &[PathBuf], also_readable: &[PathBuf]) -> Result<Command, String> {
+const SEATBELT_PROFILE_END: &str = r#"(deny file-write-create (vnode-type SYMLINK))
+(deny network*)
+"#;
+
+#[cfg(target_os = "macos")]
+pub(crate) fn confined_command(program: &Path, args: &[String], confinement: &Confinement) -> Result<Command, String> {
     if !Path::new(SANDBOX_EXEC).is_file() {
-        warn_unconfined("this Mac has no /usr/bin/sandbox-exec");
+        without_file_rule("this Mac has no /usr/bin/sandbox-exec", confinement)?;
         let mut command = Command::new(program);
         command.args(args);
         return Ok(command);
@@ -204,24 +445,28 @@ pub(crate) fn confined_command(program: &Path, args: &[String], folder: &Path, a
     };
     // Only the count of the extra paths goes into the profile text.
     let mut profile = SEATBELT_PROFILE.to_string();
-    for index in 0..also_writable.len() {
+    for index in 0..confinement.also_owned.len() {
+        profile.push_str(&format!("(allow file-read-data file-write* (subpath (param \"OWN_{index}\")))\n"));
+    }
+    for index in 0..confinement.also_writable.len() {
         profile.push_str(&format!("(allow file-read-data file-write-data (subpath (param \"WRITE_{index}\")))\n"));
         profile.push_str(&format!("(allow file-write-create (require-all (subpath (param \"WRITE_{index}\")) (vnode-type REGULAR-FILE)))\n"));
     }
-    if !also_readable.is_empty() {
-        let paths: Vec<String> = (0..also_readable.len()).map(|index| format!("(subpath (param \"READ_{index}\"))")).collect();
+    if !confinement.also_readable.is_empty() {
+        let paths: Vec<String> = (0..confinement.also_readable.len()).map(|index| format!("(subpath (param \"READ_{index}\"))")).collect();
         profile.push_str(&format!("(allow file-read-data {})\n", paths.join(" ")));
     }
+    profile.push_str(SEATBELT_PROFILE_END);
     let program = canonical(program)?;
     let mut command = Command::new(SANDBOX_EXEC);
     command.arg("-p").arg(profile);
-    command.arg("-D").arg(parameter("FOLDER", &canonical(folder)?));
+    command.arg("-D").arg(parameter("FOLDER", &canonical(&confinement.folder)?));
     command.arg("-D").arg(parameter("PROGRAM", &program));
-    for (index, path) in also_writable.iter().enumerate() {
-        command.arg("-D").arg(parameter(&format!("WRITE_{index}"), &canonical(path)?));
-    }
-    for (index, path) in also_readable.iter().enumerate() {
-        command.arg("-D").arg(parameter(&format!("READ_{index}"), &canonical(path)?));
+    let path_lists = [("OWN", &confinement.also_owned), ("WRITE", &confinement.also_writable), ("READ", &confinement.also_readable)];
+    for (name, paths) in path_lists {
+        for (index, path) in paths.iter().enumerate() {
+            command.arg("-D").arg(parameter(&format!("{name}_{index}"), &canonical(path)?));
+        }
     }
     // The program path is absolute, so `sandbox-exec` takes no word of
     // `args` as its own option: its option list ends at the program.
@@ -230,9 +475,25 @@ pub(crate) fn confined_command(program: &Path, args: &[String], folder: &Path, a
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-pub(crate) fn confined_command(program: &Path, args: &[String], _folder: &Path, _also_writable: &[PathBuf], _also_readable: &[PathBuf]) -> Result<Command, String> {
-    warn_unconfined("Dez knows no confinement of this OS");
+pub(crate) fn confined_command(program: &Path, args: &[String], confinement: &Confinement) -> Result<Command, String> {
+    without_file_rule("Dez knows no confinement of this OS", confinement)?;
     let mut command = Command::new(program);
     command.args(args);
     Ok(command)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The page tells such an error from the others by its start.
+    #[test]
+    fn a_required_confinement_is_an_error_where_the_os_has_no_file_rule() {
+        let required = Confinement { required: true, ..Confinement::default() };
+
+        let error = without_file_rule("this kernel has no Landlock", &required).expect_err("refused");
+
+        assert!(error.starts_with(NO_CONFINEMENT), "{error}");
+        assert_eq!(without_file_rule("this kernel has no Landlock", &Confinement::default()), Ok(()));
+    }
 }

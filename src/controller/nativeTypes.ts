@@ -36,8 +36,10 @@ export interface AppFileEntry {
 }
 
 // The programs that Dez ships and can run (`bundle.externalBin` in
-// src-tauri/tauri.conf.json).
-export type BundledTool = 'dez-ffmpeg' | 'dez-ffprobe'
+// src-tauri/tauri.conf.json). The backend has the rules of each one
+// (`ProgramRules` in bundled_tools.rs): what its `args` are, which folders
+// it can open, and whether it runs on a computer whose OS cannot confine it.
+export type BundledTool = 'dez-ffmpeg' | 'dez-ffprobe' | 'dez-deno'
 
 // A file that a run gets in its work folder before the program starts: a
 // copy of the file at the absolute path `source`, with the name `name`: a
@@ -52,11 +54,16 @@ export interface BundledToolInput {
 // One run of `dez.native/runBundledTool` (`ToolRun` in bundled_tools.rs).
 export interface BundledToolRun {
   tool: BundledTool
+  // ffmpeg and ffprobe: the arguments of the program. Deno: only the name
+  // of the script file in the work folder; the backend writes the rest of
+  // the command line.
   args: string[]
   // The work folder, as a path in the cache root: the program runs in it,
   // so a relative path in `args` names a file of it. It is made when it is
   // missing, and only the user can open it. More than one run can use one
-  // folder; an input whose `name` the folder has is refused.
+  // folder; an input whose `name` the folder has is refused. A Deno run can
+  // open no file outside it, so its folder must be one folder of the work
+  // root (`work/<id>`); Deno keeps its own files there in `deno-dir/`.
   folder: string
   inputs: BundledToolInput[]
   // The time limit of the program. The input copies do not count.
@@ -64,6 +71,17 @@ export interface BundledToolRun {
   // The most bytes of output (stdout and stderr together) that a run gives.
   // A program that writes more is stopped.
   maxOutputBytes: number
+  // Whether the program gets an input that stays open to the end of the
+  // run, for the texts of `dez.native/writeBundledToolInput`. Without it,
+  // a program that reads its input gets the end at once.
+  stdin?: boolean
+  // The name of one folder of `apps/` in the app folder, which must be
+  // there. The program can then read and change the files of that folder.
+  // Only a Deno run can have one.
+  appFolder?: string
+  // The time zone of the program (`Europe/Berlin`), so that its local time
+  // is the one of the user: a program gets no other fact of the computer.
+  timeZone?: string
 }
 
 export interface BundledToolOutput {

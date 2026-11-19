@@ -155,7 +155,10 @@ export default sbp('sbp/selectors/register', {
   // program chose. `onOutput` gets the output while the program runs, as
   // pieces of text in the order of each stream (a piece is not a line).
   // Rejects when the run did not start: a bad folder path or input file, a
-  // `runId` that is active, a program that is missing.
+  // `runId` that is active, a program that is missing, a run that the rules
+  // of its program refuse. The error of a program that must be confined, on
+  // a computer whose OS cannot confine it, starts with `No confinement: `
+  // (`NO_CONFINEMENT` in src-tauri/src/confinement.rs).
   //
   // The channel is made here, not by the caller as for `streamHttp`: the end
   // of a run is its last channel event (a command result can come before
@@ -195,6 +198,20 @@ export default sbp('sbp/selectors/register', {
   // run is kept too, so give each run a new `runId`.
   'dez.native/cancelBundledTool' (runId: string): Promise<void> {
     return invoke('cancel_bundled_tool', { runId })
+  },
+
+  // Writes `text` to the input of a `runBundledTool` run with `stdin`, after
+  // the texts of the earlier writes; the program gets it as it is, so a line
+  // needs its `\n`. Resolves when the text is in the queue of the run, which
+  // waits while the program does not read. Rejects when no run with this id
+  // is active, when the run has no `stdin`, and when its program closed its
+  // input. The backend runs each command as its own task, so:
+  // - a write can come before its run is active: write only after the run
+  //   gave an output;
+  // - two writes at the same time have no order: wait for each one.
+  // The input stays open to the end of the run; there is no way to close it.
+  'dez.native/writeBundledToolInput' (runId: string, text: string): Promise<void> {
+    return invoke('write_bundled_tool_input', { runId, text })
   },
 
   // The canonical paths of the OS temp folders that exist

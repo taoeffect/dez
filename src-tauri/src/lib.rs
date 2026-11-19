@@ -83,6 +83,7 @@ pub fn run() {
             idle::user_idle_ms,
             bundled_tools::run_bundled_tool,
             bundled_tools::cancel_bundled_tool,
+            bundled_tools::write_bundled_tool_input,
         ]);
     // macOS brings the app to the front when it starts, and with it each
     // window that is visible at that time. The main window starts hidden

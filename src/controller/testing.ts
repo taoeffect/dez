@@ -48,6 +48,7 @@ function newNative() {
     runs: [] as { run: BundledToolRun, runId: string }[],
     program: (async () => ENDED) as StubProgram,
     cancelledRuns: [] as string[],
+    inputWrites: [] as { runId: string, text: string }[],
     // The files of every work folder after a run, and the size of each.
     folderFiles: [] as string[],
     folderFileSize: 10,
@@ -99,6 +100,9 @@ sbp('sbp/selectors/register', {
   },
   async 'dez.native/cancelBundledTool' (runId: string): Promise<void> {
     native.cancelledRuns.push(runId)
+  },
+  async 'dez.native/writeBundledToolInput' (runId: string, text: string): Promise<void> {
+    native.inputWrites.push({ runId, text })
   },
   async 'dez.native/listAppFiles' (path: string, root = 'app'): Promise<AppFileEntry[]> {
     native.listedFolders.push({ root, path } as AppFileRef)

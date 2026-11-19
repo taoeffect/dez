@@ -1,19 +1,29 @@
 //! Runs a program that Dez ships next to its own program (`BUNDLED_TOOLS`),
 //! for the Dez tools of the frontend. This module knows nothing of the
-//! options of a program: the caller gives the arguments, and gets the output
-//! and the end of the run.
+//! work of a tool: the caller gives the arguments, and gets the output and
+//! the end of the run. It knows what each program is allowed
+//! (`ProgramRules`).
 //!
 //! The rules of a run, which no caller can change:
 //! - Only a bundled program runs, never a program of the computer (on macOS
 //!   it starts through `/usr/bin/sandbox-exec`, see confinement.rs).
 //! - It runs in a work folder of the cache root, with copies of its input
-//!   files (`prepare_work_folder`), an empty environment, and no input.
-//! - The OS keeps it inside the cache root and the assets folder of the app
-//!   folder (`PROGRAM_APP_FOLDER`): it can read and write no file outside
-//!   the cache root, and in the assets folder it can read, make, and change
-//!   files, but not delete or move them (confinement.rs, which also tells
-//!   what a computer with no confinement does). It can make no symlink, and
-//!   Dez follows no link of the cache root (`has_link_below`).
+//!   files (`prepare_work_folder`). Its environment holds only what its
+//!   rules name and the time zone of the run. It has no input, or one that
+//!   only `write_bundled_tool_input` writes.
+//! - The OS keeps it inside its folders (confinement.rs, which also tells
+//!   what a computer with no confinement does), with no network:
+//!   - ffmpeg and ffprobe: the cache root and the assets folder of the app
+//!     folder (`PROGRAM_APP_FOLDER`). They can read and write no file
+//!     outside the cache root, and in the assets folder they can read,
+//!     make, and change files, but not delete or move them.
+//!   - Deno: the work folder of its run and, for a run with an app folder,
+//!     that one folder of `APPS_FOLDER`. Rust builds its command line, and
+//!     the page gives only the name of a script (`DENO_RULES`). It does not
+//!     run on a computer with no confinement, and its memory has a limit.
+//!
+//!   No program can make a symlink, and Dez follows no link of the cache
+//!   root (`has_link_below`).
 //! - It ends at its time limit, at its output cap, at a cancel
 //!   (`cancel_bundled_tool`, also one that came before the run command),
 //!   and when the app quits (`stop_all_runs`). The end of a run ends the
@@ -21,6 +31,8 @@
 
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, VecDeque};
+use std::convert::Infallible;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -30,11 +42,12 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 use tauri::ipc::Channel;
-use tokio::io::{AsyncRead, AsyncReadExt};
-use tokio::sync::{Notify, watch};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+use tokio::process::ChildStdin;
+use tokio::sync::{Notify, mpsc, watch};
 
-use crate::confinement::confined_command;
-use crate::persistence::{FileRoot, app_file_path, has_link_below, is_app_file_segment, root_dir};
+use crate::confinement::{Confinement, confined_command};
+use crate::persistence::{FileRoot, has_link_below, is_app_file_segment, root_dir};
 
 // The programs that a run can name (`const BUNDLED_TOOLS: &[&str]`): the
 // `bundle.externalBin` programs of tauri.conf.json, under the names that
@@ -42,14 +55,23 @@ use crate::persistence::{FileRoot, app_file_path, has_link_below, is_app_file_se
 // config is its one place.
 include!(concat!(env!("OUT_DIR"), "/bundled_tools.rs"));
 
-// The folder of the app folder whose files a program can read, make, and
-// change, but not delete, move, or link (`also_writable` of
-// `confined_command`): the folder of every stored asset (`IMAGE_FOLDERS`
-// in images.ts, `MEDIA_FOLDERS` in mediaTags.ts). Never the app folder
-// itself: it holds provider_keys.json, app_state.json, and conversations/,
-// and Landlock cannot take a folder back out of an allowed one. A constant
-// and not a command parameter, so no page code can widen it.
+// The folder of the app folder whose files ffmpeg and ffprobe can read,
+// make, and change, but not delete, move, or link
+// (`Confinement::also_writable`): the folder of every stored asset
+// (`IMAGE_FOLDERS` in images.ts, `MEDIA_FOLDERS` in mediaTags.ts). Never the
+// app folder itself: it holds provider_keys.json, app_state.json, and
+// conversations/, and Landlock cannot take a folder back out of an allowed
+// one. A constant and not a command parameter, so no page code can widen it.
 const PROGRAM_APP_FOLDER: &str = "assets";
+
+// The folder of the app folder that holds the apps, one folder for each. A
+// run with an app folder (`ToolRun::app_folder`) gets one of them, by its
+// name.
+const APPS_FOLDER: &str = "apps";
+
+// The folder of the cache root that holds the work folders (`WORK_ROOT` in
+// src/model/tools/workFolders.ts).
+const WORK_ROOT: &str = "work";
 
 // How long a quit of the app waits for the runs to end (`stop_all_runs`).
 const EXIT_WAIT: Duration = Duration::from_secs(2);
@@ -64,15 +86,21 @@ const KEPT_CANCELS: usize = 16;
 // output event.
 const OUTPUT_PIECE_BYTES: usize = 16 * 1024;
 
+// How many texts for the input of a run can wait until the program reads
+// them (`ToolRuns::write_input`). A write after that waits for its place,
+// so a program that does not read holds its writer, and not memory of Dez.
+const INPUT_QUEUE: usize = 16;
+
 // One run, as the frontend asks for it (`BundledToolRun` in nativeTypes.ts).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolRun {
     // A name of `BUNDLED_TOOLS`.
     pub tool: String,
-    // Not checked here: the caller keeps every path outside the work folder
-    // out of them (for a command line of a model, `argumentProblem` in
-    // videoTool.ts).
+    // What the rules of the program make of them (`PageArgs`). The
+    // arguments of ffmpeg and ffprobe are not checked here: the caller
+    // keeps every path outside the work folder out of them (for a command
+    // line of a model, `argumentProblem` in videoTool.ts).
     pub args: Vec<String>,
     // The work folder, as a path in the cache root. The command has no root
     // parameter, so a program can never run in the app folder.
@@ -83,6 +111,19 @@ pub struct ToolRun {
     // The most bytes of output (stdout and stderr together) that the run
     // passes on. A program that writes more is ended.
     pub max_output_bytes: u64,
+    // Whether the program gets an input that stays open, for the texts of
+    // `write_bundled_tool_input`. Without it, the program gets the end of
+    // its input at once.
+    #[serde(default)]
+    pub stdin: bool,
+    // The name of one folder of `APPS_FOLDER`, which the program can then
+    // read and change. Only for a program whose rules take one.
+    #[serde(default)]
+    pub app_folder: Option<String>,
+    // The name of a time zone (`Europe/Berlin`), which the program gets as
+    // `TZ`: its local time is then the one of the user.
+    #[serde(default)]
+    pub time_zone: Option<String>,
 }
 
 // A file that the work folder gets before the program starts.
@@ -126,6 +167,109 @@ pub enum ToolRunEnd {
     OutputTooLarge,
 }
 
+// What the page arguments of a run are for a program.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PageArgs {
+    // The arguments of the program, after its first ones.
+    AsGiven,
+    // One file name of the work folder: the script that the program runs.
+    // It goes to the program as `./<name>`, so that a name can never be a
+    // flag (`--allow-all` passes the name rule).
+    Script,
+}
+
+// The folder that the OS confines a program to (`Confinement::folder`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConfinedTo {
+    // The cache root: every work folder and the temp clips.
+    CacheRoot,
+    // The work folder of the run, which must be one folder of `WORK_ROOT`.
+    WorkFolder,
+}
+
+// What Dez allows one bundled program, and how it starts it. The rules are
+// constants and not parameters of the command, so no page code can widen
+// them.
+struct ProgramRules {
+    // The arguments that each run starts with.
+    first_args: &'static [&'static str],
+    page_args: PageArgs,
+    // `None`: a run of the program cannot have an app folder. Else the
+    // flags that a run with an app folder gets, each with the work folder
+    // and the app folder as its value (`--flag=<work>,<app>`).
+    app_folder_flags: Option<&'static [&'static str]>,
+    // The variables of the environment of each run.
+    env: &'static [(&'static str, &'static str)],
+    // A variable that names a folder for the own files of the program, and
+    // the name of that folder in the work folder.
+    state_folder: Option<(&'static str, &'static str)>,
+    confined_to: ConfinedTo,
+    // Whether the program can read, make, and change the files of
+    // `PROGRAM_APP_FOLDER`.
+    assets_writable: bool,
+    // The next three are the fields of the same names of `Confinement`.
+    system_libraries: bool,
+    must_be_confined: bool,
+    data_limit: Option<u64>,
+}
+
+// ffmpeg and ffprobe: static programs with no network code, which read and
+// write media files. The page builds their command line.
+const FFMPEG_RULES: ProgramRules = ProgramRules {
+    first_args: &[],
+    page_args: PageArgs::AsGiven,
+    app_folder_flags: None,
+    env: &[],
+    state_folder: None,
+    confined_to: ConfinedTo::CacheRoot,
+    assets_writable: true,
+    system_libraries: false,
+    must_be_confined: false,
+    data_limit: None,
+};
+
+// Deno runs code that a model wrote, so it has two guards: the OS rule,
+// which holds also when the code breaks out of Deno (a bug of V8), and
+// Deno's own permissions.
+// - `run`, never `eval`, which has every permission. `--no-prompt`: a
+//   refused permission is an error and not a question. `--no-remote` and
+//   `--no-npm`: no code from the network. `--no-config` and `--no-lock`: no
+//   file of the work folder changes how Deno runs.
+// - No `--allow-*` flag but the two of a run with an app folder: no
+//   network, no environment, no other program, no native library. A run
+//   with no app folder has no file permission at all. Deno's file flags do
+//   not cover an `import`, which only the OS rule keeps in the folders.
+// - The environment is empty but for these: Deno reads many variables, and
+//   one of them (`DENO_PERMISSION_BROKER_PATH`) turns its flags off.
+//   `DENO_DIR` is where Deno keeps its caches, and it must be a folder
+//   that the run can write.
+// - Two memory limits. The heap of V8 (in MB) ends a run whose objects
+//   grow without end, with a clear text. It does not count the data of
+//   typed arrays and of WebAssembly, which the data limit of the OS
+//   covers, on Linux. The data limit counts reserved memory too: Deno
+//   needs about 0.4 GB of it to start, and each Worker about 0.3 GB more.
+const DENO_RULES: ProgramRules = ProgramRules {
+    first_args: &["run", "--no-prompt", "--no-remote", "--no-npm", "--no-config", "--no-lock", "--v8-flags=--max-old-space-size=512"],
+    page_args: PageArgs::Script,
+    app_folder_flags: Some(&["--allow-read", "--allow-write"]),
+    env: &[("DENO_NO_UPDATE_CHECK", "1"), ("NO_COLOR", "1")],
+    state_folder: Some(("DENO_DIR", "deno-dir")),
+    confined_to: ConfinedTo::WorkFolder,
+    assets_writable: false,
+    system_libraries: true,
+    must_be_confined: true,
+    data_limit: Some(2 * 1024 * 1024 * 1024),
+};
+
+// The rules of a bundled program. A program with no rules does not run.
+fn rules_of(tool: &str) -> Option<&'static ProgramRules> {
+    match tool {
+        "dez-ffmpeg" | "dez-ffprobe" => Some(&FFMPEG_RULES),
+        "dez-deno" => Some(&DENO_RULES),
+        _ => None,
+    }
+}
+
 // A run with its paths resolved: the program can be any file here, so the
 // tests can run small system programs.
 pub(crate) struct ProgramRun {
@@ -135,17 +279,25 @@ pub(crate) struct ProgramRun {
     inputs: Vec<ToolInput>,
     timeout: Duration,
     max_output_bytes: u64,
-    // The folder that the program can read and write, with all below it
-    // (`confined_command`): the cache root, which holds `folder`. The
-    // program can make no symlink there, and Dez follows none there
-    // (`has_link_below`).
-    confined_to: PathBuf,
-    // Folders whose files the program can also read, make, and change, but
-    // not delete or move: `PROGRAM_APP_FOLDER` for a bundled program.
-    also_writable: Vec<PathBuf>,
-    // Folders and files that the program can also read: none for a bundled
-    // program. The system programs of the tests need the system's folders.
-    also_readable: Vec<PathBuf>,
+    // The whole environment of the program.
+    env: Vec<(String, OsString)>,
+    // Whether the input of the program stays open (`ToolRun::stdin`).
+    takes_input: bool,
+    // The folder below which Dez follows no link when it makes the work
+    // folder and copies the inputs (`has_link_below`): the cache root,
+    // where ffmpeg can change every file.
+    link_root: PathBuf,
+    // What the OS lets the program do. Its folder holds `folder`, or is
+    // `folder`.
+    confinement: Confinement,
+}
+
+// The folders that a run of the app is made from.
+struct Roots {
+    // The folder of the bundled programs.
+    tools: PathBuf,
+    cache: PathBuf,
+    app: PathBuf,
 }
 
 // `PROGRAM_APP_FOLDER` of the app folder `app_dir`, made when it is
@@ -186,17 +338,134 @@ fn tool_path(dir: &Path, tool: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+// The work folder of a run, from its path in the cache root. A program that
+// is confined to its work folder gets one folder of `WORK_ROOT` and nothing
+// wider: the cache root or `work` itself would give it the files of the
+// other runs. Whether the path goes through a link is a check of
+// `prepare_work_folder`.
+fn work_folder(cache: &Path, relative: &str, rules: &ProgramRules) -> Result<PathBuf, String> {
+    let segments: Vec<&str> = relative.split('/').collect();
+    if !segments.iter().all(|segment| is_app_file_segment(segment)) {
+        return Err(format!("Invalid work folder path: {}", relative));
+    }
+    if rules.confined_to == ConfinedTo::WorkFolder && !matches!(segments[..], [WORK_ROOT, _]) {
+        return Err(format!("The work folder of this program must be a folder of {}/, and not {}", WORK_ROOT, relative));
+    }
+    Ok(cache.join(relative))
+}
+
+// The folder of an app, from its name in `APPS_FOLDER`. It must be there,
+// and as a folder: the program gets every file below it, so a link in its
+// place (the user's, as no program can make one) would give the program the
+// folder that the link names.
+fn app_folder(app_root: &Path, name: &str) -> Result<PathBuf, String> {
+    if !is_app_file_segment(name) {
+        return Err(format!("Invalid app folder name: {}", name));
+    }
+    let folder = app_root.join(APPS_FOLDER).join(name);
+    if has_link_below(app_root, &folder) {
+        return Err(format!("The app folder {} goes through a link", name));
+    }
+    if !folder.is_dir() {
+        return Err(format!("There is no app folder {}", name));
+    }
+    Ok(folder)
+}
+
+// A folder path as one entry of the path list of a flag
+// (`--allow-read=<a>,<b>`). Deno splits the list at each comma and has no
+// way to write a comma of a path, so such a path is refused, and one that
+// is not UTF-8 too. The error names no path: the page can pass it on to a
+// model.
+fn flag_path(path: &Path) -> Result<&str, String> {
+    path.to_str()
+        .filter(|text| !text.contains(','))
+        .ok_or_else(|| "A folder of the run has a comma in its path, or a path that is not UTF-8 text, which the program cannot take".to_string())
+}
+
+// Whether `text` can be the `TZ` of a program: the form of the name of a
+// time zone (`Europe/Berlin`, `Etc/GMT+5`, `UTC`). A `TZ` can also name a
+// file (`:/path`, a name with `..`), and this form has none of those.
+fn is_time_zone(text: &str) -> bool {
+    text.len() <= 64
+        && text.starts_with(|first: char| first.is_ascii_alphanumeric())
+        && text.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '+' | '-' | '/'))
+}
+
+// A run of the page as the rules of its program allow it, with its paths
+// resolved: the one place where the page's words become a command line, an
+// environment, and a confinement.
+fn resolved_run(run: ToolRun, roots: &Roots) -> Result<ProgramRun, String> {
+    let program = tool_path(&roots.tools, &run.tool)?;
+    let rules = rules_of(&run.tool).ok_or_else(|| format!("Dez has no rules for the bundled tool {}", run.tool))?;
+    let folder = work_folder(&roots.cache, &run.folder, rules)?;
+    let app_folder = match (&run.app_folder, rules.app_folder_flags) {
+        (None, _) => None,
+        (Some(name), Some(_)) => Some(app_folder(&roots.app, name)?),
+        (Some(_), None) => return Err(format!("A run of {} cannot have an app folder", run.tool)),
+    };
+
+    let mut args: Vec<String> = rules.first_args.iter().map(|arg| arg.to_string()).collect();
+    if let (Some(app_folder), Some(flags)) = (&app_folder, rules.app_folder_flags) {
+        let folders = format!("{},{}", flag_path(&folder)?, flag_path(app_folder)?);
+        args.extend(flags.iter().map(|flag| format!("{flag}={folders}")));
+    }
+    match rules.page_args {
+        PageArgs::AsGiven => args.extend(run.args),
+        PageArgs::Script => match run.args.as_slice() {
+            [script] if is_app_file_segment(script) => args.push(format!("./{script}")),
+            _ => return Err(format!("A run of {} takes one argument, the name of a script file of its work folder", run.tool)),
+        },
+    }
+
+    let mut env: Vec<(String, OsString)> = rules.env.iter().map(|(name, value)| (name.to_string(), OsString::from(value))).collect();
+    if let Some((name, subfolder)) = rules.state_folder {
+        env.push((name.to_string(), folder.join(subfolder).into_os_string()));
+    }
+    if let Some(zone) = run.time_zone {
+        if !is_time_zone(&zone) {
+            return Err(format!("Invalid time zone: {}", zone));
+        }
+        env.push(("TZ".to_string(), zone.into()));
+    }
+
+    let confinement = Confinement {
+        folder: match rules.confined_to {
+            ConfinedTo::CacheRoot => roots.cache.clone(),
+            ConfinedTo::WorkFolder => folder.clone(),
+        },
+        also_owned: app_folder.into_iter().collect(),
+        also_writable: if rules.assets_writable { vec![program_app_folder(&roots.app)?] } else { Vec::new() },
+        also_readable: Vec::new(),
+        system_libraries: rules.system_libraries,
+        required: rules.must_be_confined,
+        data_limit: rules.data_limit,
+    };
+    Ok(ProgramRun {
+        program,
+        args,
+        folder,
+        inputs: run.inputs,
+        timeout: Duration::from_millis(run.timeout_ms),
+        max_output_bytes: run.max_output_bytes,
+        env,
+        takes_input: run.stdin,
+        link_root: roots.cache.clone(),
+        confinement,
+    })
+}
+
 // Makes the work folder and puts the input files into it. The folder can be
 // there already: a caller runs more than one program in one folder (a probe
 // of the inputs, then the work), and a download can write into it first. A
-// folder that goes through a link below `confined_to` is refused before the
+// folder that goes through a link below `link_root` is refused before the
 // chmod: the link can name a folder of the user.
-fn prepare_work_folder(folder: &Path, inputs: &[ToolInput], confined_to: &Path) -> Result<(), String> {
-    if has_link_below(confined_to, folder) {
+fn prepare_work_folder(folder: &Path, inputs: &[ToolInput], link_root: &Path) -> Result<(), String> {
+    if has_link_below(link_root, folder) {
         return Err("The work folder goes through a link".to_string());
     }
     make_private_folder(folder).map_err(|error| format!("Failed to make the work folder: {}", error))?;
-    inputs.iter().try_for_each(|input| copy_input(folder, input, confined_to))
+    inputs.iter().try_for_each(|input| copy_input(folder, input, link_root))
 }
 
 // A work folder holds copies of the user's files and what a program makes
@@ -234,7 +503,7 @@ fn make_private_folder(folder: &Path) -> std::io::Result<()> {
 // name that the folder already has is refused: the copy would replace a
 // file of an earlier run, or write through a link that a program left
 // there. The error texts name the copy, never the source path.
-fn copy_input(folder: &Path, input: &ToolInput, confined_to: &Path) -> Result<(), String> {
+fn copy_input(folder: &Path, input: &ToolInput, link_root: &Path) -> Result<(), String> {
     let name = &input.name;
     let subfolder = match name.split_once('/') {
         None if is_app_file_segment(name) => None,
@@ -245,10 +514,10 @@ fn copy_input(folder: &Path, input: &ToolInput, confined_to: &Path) -> Result<()
     if !source.is_absolute() {
         return Err(format!("The source of the input file {} is not an absolute path", name));
     }
-    // A link below `confined_to` (a temp clip) can be the work of a program
+    // A link below `link_root` (a temp clip) can be the work of a program
     // and name any file, the API keys too. A link outside it is the user's
     // (a linked file), and `metadata` follows it: it is an input like a file.
-    if has_link_below(confined_to, source) {
+    if has_link_below(link_root, source) {
         return Err(format!("The source of the input file {} goes through a link in the folder of the program", name));
     }
     let is_file = std::fs::metadata(source)
@@ -260,7 +529,7 @@ fn copy_input(folder: &Path, input: &ToolInput, confined_to: &Path) -> Result<()
     if let Some(subfolder) = subfolder {
         // Before the chmod, as for the work folder: a link can name a
         // folder of the user.
-        if has_link_below(confined_to, &subfolder) {
+        if has_link_below(link_root, &subfolder) {
             return Err(format!("The folder of the input file {} goes through a link", name));
         }
         make_private_folder(&subfolder).map_err(|error| format!("Failed to make the folder of the input file {}: {}", name, error))?;
@@ -415,12 +684,28 @@ impl Drop for ProcessGroup {
     }
 }
 
+// Passes the texts of the page on to the input of the program, in their
+// order, as long as the run lasts: it never ends by itself. A write that
+// fails (the program closed its input, or ended) drops the pipe and the
+// queue, so the next `ToolRuns::write_input` of the run fails.
+async fn pass_input(pipe: Option<ChildStdin>, texts: Option<mpsc::Receiver<String>>) -> Infallible {
+    if let (Some(mut pipe), Some(mut texts)) = (pipe, texts) {
+        while let Some(text) = texts.recv().await {
+            if pipe.write_all(text.as_bytes()).await.is_err() {
+                break;
+            }
+        }
+    }
+    std::future::pending().await
+}
+
 // Starts the program in its work folder and waits for its end.
-// - `confined_command`: the OS keeps the program inside its folder.
+// - `confined_command`: the OS keeps the program inside its folders.
 // - `env_clear`: the program gets no variable of Dez's environment (API
-//   keys can be there), and no `PATH`.
+//   keys can be there), and no `PATH`; only the variables of its run.
 // - `Stdio::null()`: a program that reads its input (ffmpeg reads keys)
-//   gets the end of the input at once.
+//   gets the end of the input at once. A run that takes input gets a pipe
+//   that stays open to its end (`pass_input`).
 // - `process_group(0)`: the program and the programs that it starts are in
 //   a group of their own (`ProcessGroup`). The end of a run ends them all,
 //   also after a normal exit: the end of both outputs is the end of the run,
@@ -429,13 +714,15 @@ impl Drop for ProcessGroup {
 async fn run_program(
     run: &ProgramRun,
     stopped: &mut watch::Receiver<bool>,
+    texts: Option<mpsc::Receiver<String>>,
     send: &(impl Fn(ToolRunEvent) + Sync),
 ) -> Result<ToolRunEnd, String> {
-    let mut command = confined_command(&run.program, &run.args, &run.confined_to, &run.also_writable, &run.also_readable)?;
+    let mut command = confined_command(&run.program, &run.args, &run.confinement)?;
     command
         .current_dir(&run.folder)
         .env_clear()
-        .stdin(Stdio::null())
+        .envs(run.env.iter().map(|(name, value)| (name, value)))
+        .stdin(if run.takes_input { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
@@ -448,6 +735,7 @@ async fn run_program(
     let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
         return Err("The program has no output pipes".to_string());
     };
+    let input = pass_input(child.stdin.take(), texts);
     let budget = OutputBudget(AtomicU64::new(run.max_output_bytes));
 
     let end = {
@@ -462,7 +750,12 @@ async fn run_program(
         // The exit comes after the end of both pipes, so the end event is
         // the last event and no output is lost. `None`: over the cap.
         let exit = async {
-            match output.await {
+            // The input goes on next to the output, and ends with it.
+            let output = tokio::select! {
+                output = output => output,
+                never = input => match never {},
+            };
+            match output {
                 Ok(_) => {
                     group.end();
                     Some(child.wait().await)
@@ -494,9 +787,9 @@ async fn run_program(
     Ok(end)
 }
 
-// The runs that are active, by the run id of the page, each with the sender
-// of its stop flag, and the cancels that came before their run. A managed
-// state of the app.
+// The runs that are active, by the run id of the page, each with the ways
+// to reach it, and the cancels that came before their run. A managed state
+// of the app.
 #[derive(Default)]
 pub struct ToolRuns {
     table: Mutex<RunTable>,
@@ -508,10 +801,17 @@ pub struct ToolRuns {
 // register of its run must not pass each other.
 #[derive(Default)]
 struct RunTable {
-    active: HashMap<String, watch::Sender<bool>>,
+    active: HashMap<String, RunControls>,
     // The ids of the cancels that came when their run was not active, the
     // oldest first, at most `KEPT_CANCELS`.
     kept_cancels: VecDeque<String>,
+}
+
+// The ways to reach an active run: the sender of its stop flag, and the
+// queue of the texts for its input when the run takes input.
+struct RunControls {
+    stop: watch::Sender<bool>,
+    input: Option<mpsc::Sender<String>>,
 }
 
 // The place of a run in `RunTable::active`. Its drop takes the run out, on
@@ -535,9 +835,12 @@ impl ToolRuns {
         self.table.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    // Adds a run, as stopped when its cancel came first. An id that is
-    // active is refused: a cancel could not tell the two runs apart.
-    fn register<'a>(&'a self, run_id: &'a str) -> Result<(ActiveRun<'a>, watch::Receiver<bool>), String> {
+    // Adds a run, as stopped when its cancel came first, and gives the two
+    // ends that the run reads: its stop flag and, for a run that takes
+    // input, the queue of its texts. An id that is active is refused: a
+    // cancel could not tell the two runs apart.
+    #[allow(clippy::type_complexity)]
+    fn register<'a>(&'a self, run_id: &'a str, takes_input: bool) -> Result<(ActiveRun<'a>, watch::Receiver<bool>, Option<mpsc::Receiver<String>>), String> {
         let mut table = self.lock();
         let RunTable { active, kept_cancels } = &mut *table;
         match active.entry(run_id.to_string()) {
@@ -545,8 +848,9 @@ impl ToolRuns {
             Entry::Vacant(entry) => {
                 let cancelled = kept_cancels.iter().position(|id| id == run_id).and_then(|index| kept_cancels.remove(index)).is_some();
                 let (stop, stopped) = watch::channel(cancelled);
-                entry.insert(stop);
-                Ok((ActiveRun { runs: self, run_id }, stopped))
+                let (input, texts) = takes_input.then(|| mpsc::channel(INPUT_QUEUE)).unzip();
+                entry.insert(RunControls { stop, input });
+                Ok((ActiveRun { runs: self, run_id }, stopped, texts))
             }
         }
     }
@@ -558,14 +862,28 @@ impl ToolRuns {
     // comes after the end of its run is kept too, so each run needs a new id.
     pub(crate) fn cancel(&self, run_id: &str) {
         let mut table = self.lock();
-        if let Some(stop) = table.active.get(run_id) {
-            stop.send_replace(true);
+        if let Some(run) = table.active.get(run_id) {
+            run.stop.send_replace(true);
         } else if !table.kept_cancels.iter().any(|id| id == run_id) {
             if table.kept_cancels.len() == KEPT_CANCELS {
                 table.kept_cancels.pop_front();
             }
             table.kept_cancels.push_back(run_id.to_string());
         }
+    }
+
+    // Puts `text` into the queue for the input of a run, and waits while
+    // the queue is full. The program gets the text as it is, after the texts
+    // that came before. An `Err` is a run that is not active, takes no
+    // input, or whose program closed its input. Tauri runs each command as
+    // its own task, so the first write of a run can come before the run is
+    // active: the caller waits for an output of the program first.
+    pub(crate) async fn write_input(&self, run_id: &str, text: String) -> Result<(), String> {
+        let input = self.lock().active.get(run_id).and_then(|run| run.input.clone());
+        let Some(input) = input else {
+            return Err(format!("No active run with the id {} takes input", run_id));
+        };
+        input.send(text).await.map_err(|_| format!("The program of the run {} takes no more input", run_id))
     }
 
     // Stops every run and waits until each one ended, so that no program is
@@ -581,8 +899,8 @@ impl ToolRuns {
                 if table.active.is_empty() {
                     return;
                 }
-                for stop in table.active.values() {
-                    stop.send_replace(true);
+                for run in table.active.values() {
+                    run.stop.send_replace(true);
                 }
             }
             ended.await;
@@ -597,10 +915,10 @@ impl ToolRuns {
         mut run: ProgramRun,
         send: impl Fn(ToolRunEvent) + Send + Sync,
     ) -> Result<(), String> {
-        let (_active, mut stopped) = self.register(run_id)?;
+        let (_active, mut stopped, texts) = self.register(run_id, run.takes_input)?;
         // File copies block, so they run off the async threads.
-        let (folder, inputs, confined_to) = (run.folder.clone(), std::mem::take(&mut run.inputs), run.confined_to.clone());
-        tokio::task::spawn_blocking(move || prepare_work_folder(&folder, &inputs, &confined_to))
+        let (folder, inputs, link_root) = (run.folder.clone(), std::mem::take(&mut run.inputs), run.link_root.clone());
+        tokio::task::spawn_blocking(move || prepare_work_folder(&folder, &inputs, &link_root))
             .await
             .map_err(|error| format!("Failed to prepare the work folder: {}", error))??;
         // A copy cannot stop in its middle, so a cancel that came before the
@@ -610,7 +928,7 @@ impl ToolRuns {
         let end = if cancelled {
             ToolRunEnd::Cancelled
         } else {
-            run_program(&run, &mut stopped, &send).await?
+            run_program(&run, &mut stopped, texts, &send).await?
         };
         send(ToolRunEvent::End(end));
         Ok(())
@@ -622,8 +940,10 @@ impl ToolRuns {
 // message and a command result on different paths, so a result could reach
 // the page before the last output (`stream_http` in http_bridge.rs has the
 // same rule). `Ok` tells only that every event is sent. An `Err` is a run
-// that did not start (a name that is no bundled tool, a bad folder path or
-// input file, a run id that is active) or whose end is not known.
+// that did not start (a name that is no bundled tool, a run that the rules
+// of its program refuse, a bad folder path or input file, a run id that is
+// active, a computer with no confinement for a program that needs one) or
+// whose end is not known.
 #[tauri::command]
 pub async fn run_bundled_tool(
     run: ToolRun,
@@ -631,17 +951,8 @@ pub async fn run_bundled_tool(
     on_event: Channel<ToolRunEvent>,
     runs: State<'_, ToolRuns>,
 ) -> Result<(), String> {
-    let run = ProgramRun {
-        program: tool_path(&tools_dir()?, &run.tool)?,
-        args: run.args,
-        folder: app_file_path(FileRoot::Cache, &run.folder)?,
-        inputs: run.inputs,
-        timeout: Duration::from_millis(run.timeout_ms),
-        max_output_bytes: run.max_output_bytes,
-        confined_to: root_dir(FileRoot::Cache)?,
-        also_writable: vec![program_app_folder(&root_dir(FileRoot::App)?)?],
-        also_readable: Vec::new(),
-    };
+    let roots = Roots { tools: tools_dir()?, cache: root_dir(FileRoot::Cache)?, app: root_dir(FileRoot::App)? };
+    let run = resolved_run(run, &roots)?;
     runs.run(&run_id, run, |event| {
         // A send fails only when the page is gone, and then nobody waits
         // for the event.
@@ -656,6 +967,14 @@ pub async fn run_bundled_tool(
 pub async fn cancel_bundled_tool(run_id: String, runs: State<'_, ToolRuns>) -> Result<(), String> {
     runs.cancel(&run_id);
     Ok(())
+}
+
+// Writes `text` to the input of the run with this id, which must be a run
+// with `ToolRun::stdin` (`ToolRuns::write_input`). `Ok` tells that the text
+// is in the queue of the run, not that the program read it.
+#[tauri::command]
+pub async fn write_bundled_tool_input(run_id: String, text: String, runs: State<'_, ToolRuns>) -> Result<(), String> {
+    runs.write_input(&run_id, text).await
 }
 
 // Ends every run when the app quits. The event loop ends the process with
@@ -680,6 +999,154 @@ mod tests {
     use super::*;
     use crate::persistence::tests::TempDir;
     use serde_json::json;
+
+    // A run as the page asks for it, with no option.
+    fn tool_run(tool: &str, args: &[&str], folder: &str) -> ToolRun {
+        ToolRun {
+            tool: tool.to_string(),
+            args: args.iter().map(|arg| arg.to_string()).collect(),
+            folder: folder.to_string(),
+            inputs: Vec::new(),
+            timeout_ms: 30_000,
+            max_output_bytes: 1024 * 1024,
+            stdin: false,
+            app_folder: None,
+            time_zone: None,
+        }
+    }
+
+    // The folders of a run in `dir`, with an empty file in place of each
+    // bundled program.
+    fn fake_roots(dir: &Path) -> Roots {
+        let roots = Roots { tools: dir.join("tools"), cache: dir.join("cache"), app: dir.join("config") };
+        std::fs::create_dir_all(&roots.tools).expect("create");
+        for tool in BUNDLED_TOOLS {
+            std::fs::write(roots.tools.join(tool), b"").expect("write");
+        }
+        roots
+    }
+
+    #[test]
+    fn each_bundled_program_has_rules() {
+        for tool in BUNDLED_TOOLS {
+            assert!(rules_of(tool).is_some(), "{tool} has no rules");
+        }
+    }
+
+    // The page gives a Deno run only the name of its script. Rust writes
+    // the command line, so no word of the page is a flag of Deno.
+    #[test]
+    fn a_deno_run_takes_one_script_name_that_is_never_a_flag() {
+        let dir = TempDir::new("tools-deno-args");
+        let roots = fake_roots(&dir.0);
+        let args_of = |args: &[&str]| resolved_run(tool_run("dez-deno", args, "work/a"), &roots).map(|run| run.args);
+
+        let args = args_of(&["main.ts"]).expect("a script name");
+        // `run`, and not `eval`, which has every permission.
+        assert_eq!(args.first().map(String::as_str), Some("run"));
+        assert_eq!(args.last().map(String::as_str), Some("./main.ts"));
+        // A run with no app folder has no permission of Deno.
+        assert!(!args.iter().any(|arg| arg.starts_with("--allow") || arg == "-A"), "{args:?}");
+        // A file can have the name of a flag.
+        assert_eq!(args_of(&["--allow-all"]).expect("a file name").last().map(String::as_str), Some("./--allow-all"));
+        let refused: [&[&str]; 8] = [&[], &["--allow-all", "main.ts"], &["main.ts", "extra"], &[""], &["../main.ts"], &["sub/main.ts"], &["/tmp/main.ts"], &["main.ts "]];
+        for args in refused {
+            assert!(args_of(args).is_err(), "{args:?} must be refused");
+        }
+    }
+
+    // The OS keeps a Deno run in its own work folder, so that folder must
+    // be one folder of the work root: a wider one would give the run the
+    // files of the other runs. ffmpeg has all of the cache root.
+    #[test]
+    fn a_deno_run_is_confined_to_its_work_folder_which_is_one_folder_of_the_work_root() {
+        let dir = TempDir::new("tools-deno-folder");
+        let roots = fake_roots(&dir.0);
+        let run_in = |tool: &str, folder: &str| resolved_run(tool_run(tool, &["main.ts"], folder), &roots);
+
+        let run = run_in("dez-deno", "work/a").expect("a work folder");
+        assert_eq!(run.folder, roots.cache.join("work").join("a"));
+        assert_eq!(run.confinement.folder, run.folder);
+        assert!(run.confinement.required);
+        assert!(run.confinement.also_writable.is_empty() && run.confinement.also_owned.is_empty());
+        for folder in ["work", "work/a/b", "media/a", "a", "", "work/", "work/..", "work/../media", "/work/a", "work//a"] {
+            assert!(run_in("dez-deno", folder).is_err(), "the folder {folder:?}");
+        }
+
+        let run = run_in("dez-ffmpeg", "work/a/b").expect("a folder of the cache root");
+        assert_eq!(run.confinement.folder, roots.cache);
+        assert_eq!(run.confinement.also_writable, [roots.app.join(PROGRAM_APP_FOLDER)]);
+        assert!(!run.confinement.required);
+        for folder in ["", "../a", "/tmp/a", "work/../../a"] {
+            assert!(run_in("dez-ffmpeg", folder).is_err(), "the folder {folder:?}");
+        }
+    }
+
+    // The app folder of a run is one folder of `apps/` that is there, by
+    // its name. Deno gets it and the work folder in its two file flags.
+    #[test]
+    fn an_app_folder_is_one_real_folder_of_the_apps_and_only_deno_takes_one() {
+        let dir = TempDir::new("tools-app-folder");
+        let roots = fake_roots(&dir.0);
+        let apps = roots.app.join(APPS_FOLDER);
+        let (app, outside) = (apps.join("my-app"), dir.0.join("outside"));
+        std::fs::create_dir_all(&app).expect("create");
+        std::fs::create_dir_all(&outside).expect("create");
+        std::fs::write(apps.join("a-file"), b"").expect("write");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, apps.join("linked")).expect("link");
+        let with_app = |tool: &str, name: &str| resolved_run(ToolRun { app_folder: Some(name.to_string()), ..tool_run(tool, &["main.ts"], "work/a") }, &roots);
+
+        let run = with_app("dez-deno", "my-app").expect("an app folder");
+        assert_eq!(run.confinement.also_owned, [app.clone()]);
+        let folders = format!("{},{}", roots.cache.join("work").join("a").display(), app.display());
+        let flags: Vec<&String> = run.args.iter().filter(|arg| arg.starts_with("--allow")).collect();
+        assert_eq!(flags, [&format!("--allow-read={folders}"), &format!("--allow-write={folders}")]);
+        assert_eq!(run.args.last().map(String::as_str), Some("./main.ts"));
+
+        for name in ["", ".", "..", "../config", "my-app/sub", "/tmp", "no-such-app", "a-file", "linked"] {
+            assert!(with_app("dez-deno", name).is_err(), "the app folder {name:?}");
+        }
+        assert!(with_app("dez-ffmpeg", "my-app").is_err(), "ffmpeg with an app folder");
+    }
+
+    // Deno splits the folder list of a flag at each comma, so a comma in a
+    // path would make two other paths of it. The error can go to a model,
+    // so it names no path.
+    #[test]
+    fn a_deno_run_with_an_app_folder_is_refused_when_a_folder_path_has_a_comma() {
+        let dir = TempDir::new("tools-deno-comma");
+        let roots = fake_roots(&dir.0.join("private,folder"));
+        std::fs::create_dir_all(roots.app.join(APPS_FOLDER).join("my-app")).expect("create");
+        let run = tool_run("dez-deno", &["main.ts"], "work/a");
+
+        // A run with no app folder has no flag that names a folder.
+        assert!(resolved_run(run.clone(), &roots).is_ok());
+        let error = resolved_run(ToolRun { app_folder: Some("my-app".to_string()), ..run }, &roots).err().expect("refused");
+        assert!(error.contains("comma"), "{error}");
+        assert!(!error.contains("private"), "{error}");
+    }
+
+    // A `TZ` can also name a file of the computer (`:/path`), so only the
+    // form of a zone name goes to a program.
+    #[test]
+    fn only_the_name_of_a_time_zone_becomes_the_tz_of_a_program() {
+        let dir = TempDir::new("tools-time-zone");
+        let roots = fake_roots(&dir.0);
+        let with_zone = |tool: &str, zone: &str| resolved_run(ToolRun { time_zone: Some(zone.to_string()), ..tool_run(tool, &["main.ts"], "work/a") }, &roots);
+        let tz = |run: ProgramRun| run.env.into_iter().find(|(name, _)| name == "TZ").map(|(_, zone)| zone);
+
+        for zone in ["Europe/Berlin", "UTC", "Etc/GMT+5", "Etc/GMT-14", "America/Argentina/Buenos_Aires"] {
+            for tool in ["dez-deno", "dez-ffmpeg"] {
+                assert_eq!(tz(with_zone(tool, zone).expect("a zone name")), Some(OsString::from(zone)), "{tool} with {zone}");
+            }
+        }
+        let long = "a".repeat(65);
+        for zone in ["", ":/etc/passwd", "/etc/localtime", "../zone", "Europe/../../etc/passwd", "Europe/Berlin\n", "Europe Berlin", "-5", "Zürich", long.as_str()] {
+            assert!(with_zone("dez-deno", zone).is_err(), "the zone {zone:?}");
+        }
+        assert_eq!(tz(resolved_run(tool_run("dez-deno", &["main.ts"], "work/a"), &roots).expect("a run")), None);
+    }
 
     #[test]
     fn only_a_bundled_program_that_is_there_has_a_path() {
@@ -736,6 +1203,21 @@ mod tests {
         .expect("run");
         assert_eq!((run.timeout_ms, run.max_output_bytes), (5000, 1024));
         assert_eq!((run.inputs[0].name.as_str(), run.inputs[0].source.as_str()), ("in.mp4", "/home/ann/clip.mp4"));
+        // A run with no option has none.
+        assert_eq!((run.stdin, run.app_folder, run.time_zone), (false, None, None));
+        let run: ToolRun = serde_json::from_value(json!({
+            "tool": "dez-deno",
+            "args": ["main.ts"],
+            "folder": "work/a",
+            "inputs": [],
+            "timeoutMs": 5000,
+            "maxOutputBytes": 1024,
+            "stdin": true,
+            "appFolder": "my-app",
+            "timeZone": "Europe/Berlin",
+        }))
+        .expect("run with options");
+        assert_eq!((run.stdin, run.app_folder.as_deref(), run.time_zone.as_deref()), (true, Some("my-app"), Some("Europe/Berlin")));
 
         let event_json = |event: ToolRunEvent| serde_json::to_value(event).expect("event JSON");
         assert_eq!(
@@ -811,14 +1293,27 @@ mod tests {
                 inputs: Vec::new(),
                 timeout: Duration::from_secs(30),
                 max_output_bytes: 1024 * 1024,
-                confined_to: folder.to_path_buf(),
-                also_writable: Vec::new(),
-                also_readable: ["/usr", "/bin", "/lib", "/lib64", "/etc"].into_iter().map(PathBuf::from).filter(|path| path.exists()).collect(),
+                env: Vec::new(),
+                takes_input: false,
+                link_root: folder.to_path_buf(),
+                confinement: Confinement {
+                    folder: folder.to_path_buf(),
+                    also_readable: ["/usr", "/bin", "/lib", "/lib64", "/etc"].into_iter().map(PathBuf::from).filter(|path| path.exists()).collect(),
+                    ..Confinement::default()
+                },
             }
         }
 
         fn script(text: &str, folder: &Path) -> ProgramRun {
             program_run("/bin/sh", &["-c", text], folder)
+        }
+
+        // The run with the folders of an ffmpeg run: confined to `cache`,
+        // which holds its work folder, and where Dez follows no link.
+        fn in_cache(mut run: ProgramRun, cache: &Path) -> ProgramRun {
+            run.confinement.folder = cache.to_path_buf();
+            run.link_root = cache.to_path_buf();
+            run
         }
 
         // The `send` of a run, and the events that it sends.
@@ -1045,16 +1540,78 @@ mod tests {
         }
 
         // The test program has an environment (`PATH`, `HOME`) and can have
-        // an input. A program of a run gets none of them.
+        // an input. A program of a run gets only the variables of its run,
+        // and no input.
         #[tokio::test]
-        async fn a_program_gets_no_environment_and_no_input() {
+        async fn a_program_gets_only_the_environment_of_its_run_and_no_input() {
             let dir = TempDir::new("tools-run-empty");
             let nothing = Sent { ends: exited(0), ..Sent::default() };
 
             // `env` prints each variable that it got.
             assert_eq!(finished(program_run("/usr/bin/env", &[], &dir.0.join("env"))).await, nothing);
+            let mut with_zone = program_run("/usr/bin/env", &[], &dir.0.join("zone"));
+            with_zone.env = vec![("TZ".to_string(), OsString::from("Europe/Berlin"))];
+            assert_eq!(finished(with_zone).await.stdout, "TZ=Europe/Berlin\n");
             // `cat` with no file reads its input to the end.
             assert_eq!(finished(program_run("/bin/cat", &[], &dir.0.join("cat"))).await, nothing);
+        }
+
+        // A run with input: the program gets each text of the page, in
+        // their order, while it runs.
+        #[tokio::test]
+        async fn a_run_with_input_gets_the_texts_of_the_page_in_their_order() {
+            let dir = TempDir::new("tools-run-input");
+            let runs = ToolRuns::default();
+            let (send, mut events) = event_channel();
+            let mut run = script("echo ready; read first; read second; echo \"$first, $second\"", &dir.0.join("work"));
+            run.takes_input = true;
+
+            let (result, ()) = tokio::join!(runs.run("a", run, send), async {
+                wait_for_output(&mut events, "ready").await;
+                // A text can end inside a line, and can hold more than one.
+                for text in ["on", "e\ntwo\nthree\n"] {
+                    assert_eq!(runs.write_input("a", text.to_string()).await, Ok(()));
+                }
+            });
+
+            assert_eq!(result, Ok(()));
+            assert_eq!(sent(events).await, Sent { stdout: "one, two\n".to_string(), ends: exited(0), ..Sent::default() });
+        }
+
+        // Only a run that asked for an input has one, and only while its
+        // program has it open.
+        #[tokio::test]
+        async fn a_write_is_an_error_for_a_run_that_takes_no_input_or_closed_it() {
+            let dir = TempDir::new("tools-run-no-input");
+            let runs = ToolRuns::default();
+            let (send, mut events) = event_channel();
+            let (closed_send, mut closed_events) = event_channel();
+            // `exec <&-` closes the input of the shell, and so of the sleep.
+            let mut closed = script("exec <&-; echo started; exec /bin/sleep 60", &dir.0.join("closed"));
+            closed.takes_input = true;
+
+            assert!(runs.write_input("no-run", "text\n".to_string()).await.is_err());
+            let (no_input, closed, ()) = tokio::join!(
+                runs.run("no-input", script(ENDLESS, &dir.0.join("no-input")), send),
+                runs.run("closed", closed, closed_send),
+                async {
+                    wait_for_output(&mut events, "started").await;
+                    wait_for_output(&mut closed_events, "started").await;
+                    assert!(runs.write_input("no-input", "text\n".to_string()).await.is_err());
+                    // Dez learns of a closed input at its write to the
+                    // program, so the first texts still go into the queue.
+                    let mut writes = 0;
+                    while runs.write_input("closed", "text\n".to_string()).await.is_ok() {
+                        writes += 1;
+                        assert!(writes < 100, "a write to a closed input is no error");
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                    }
+                    runs.cancel("no-input");
+                    runs.cancel("closed");
+                },
+            );
+
+            assert_eq!((no_input, closed), (Ok(()), Ok(())));
         }
 
         // The OS keeps a program inside its folder: it reads and writes
@@ -1076,8 +1633,7 @@ mod tests {
                 written.display(),
                 made.display(),
             );
-            let mut run = script(&text, &folder);
-            run.confined_to = inside.clone();
+            let run = in_cache(script(&text, &folder), &inside);
 
             let sent = finished(run).await;
 
@@ -1119,9 +1675,8 @@ mod tests {
                 conversation = conversation.display(),
                 linked = linked.display(),
             );
-            let mut run = script(&text, &cache.join("work").join("a"));
-            run.confined_to = cache.clone();
-            run.also_writable = vec![assets.clone()];
+            let mut run = in_cache(script(&text, &cache.join("work").join("a")), &cache);
+            run.confinement.also_writable = vec![assets.clone()];
 
             let sent = finished(run).await;
 
@@ -1158,8 +1713,7 @@ mod tests {
                 keys = keys.display(),
                 home = home.display(),
             );
-            let mut run = script(&text, &folder);
-            run.confined_to = inside.clone();
+            let run = in_cache(script(&text, &folder), &inside);
 
             let sent = finished(run).await;
 
@@ -1169,6 +1723,88 @@ mod tests {
             assert!(std::fs::symlink_metadata(&clip).is_err(), "{}", sent.stderr);
             assert!(std::fs::symlink_metadata(inside.join("work").join("b")).is_err());
             assert!(!hard.exists());
+        }
+
+        // The folder of a script app, as a Deno run gets it: the program
+        // reads, makes, renames, and deletes files and folders there. It
+        // makes no symlink there and, on Linux, no hard link from or to
+        // another folder: such a link would keep a file of the work folder
+        // open to the app after Dez stored it.
+        #[tokio::test]
+        async fn a_program_owns_its_app_folder_but_links_nothing_into_or_out_of_it() {
+            let dir = TempDir::new("tools-run-app-folder");
+            let (app, folder, home) = (dir.0.join("config").join("apps").join("a"), dir.0.join("cache").join("work").join("a"), dir.0.join("home"));
+            std::fs::create_dir_all(&app).expect("create");
+            std::fs::create_dir_all(&home).expect("create");
+            std::fs::write(app.join("data.txt"), b"data").expect("write");
+            std::fs::write(app.join("old.txt"), b"old").expect("write");
+            // The errors of the hard links go to /dev/null: their text
+            // differs by OS (Landlock gives EXDEV for a link that needs
+            // `Refer`).
+            let text = format!(
+                "/bin/cat '{app}/data.txt'; echo made > '{app}/made.txt'; /bin/mv '{app}/made.txt' '{app}/renamed.txt'; /bin/mkdir '{app}/sub'; echo below > '{app}/sub/below.txt'; /bin/rm '{app}/old.txt'; \
+                 /bin/ln -s '{home}' '{app}/link'; echo work > work.txt; /bin/ln work.txt '{app}/hard.txt' 2>/dev/null; /bin/ln '{app}/data.txt' hard.txt 2>/dev/null",
+                app = app.display(),
+                home = home.display(),
+            );
+            let mut run = script(&text, &folder);
+            run.confinement.also_owned = vec![app.clone()];
+
+            let sent = finished(run).await;
+
+            assert_eq!(sent.stdout, "data", "{NOT_CONFINED}");
+            assert_eq!(std::fs::read(app.join("renamed.txt")).expect("read"), b"made\n", "{}", sent.stderr);
+            assert_eq!(std::fs::read(app.join("sub").join("below.txt")).expect("read"), b"below\n", "{}", sent.stderr);
+            assert!(!app.join("made.txt").exists() && !app.join("old.txt").exists(), "{}", sent.stderr);
+            // The symlink.
+            assert_eq!(sent.stderr.matches(DENIED).count(), 1, "{}", sent.stderr);
+            assert!(std::fs::symlink_metadata(app.join("link")).is_err());
+            #[cfg(target_os = "linux")]
+            assert!(!app.join("hard.txt").exists() && !folder.join("hard.txt").exists());
+        }
+
+        // The OS rule on files does not cover a change of the mode or the
+        // times of a file by its path (Landlock), so the rule on system
+        // calls refuses those: a program must not open the API keys file
+        // to every user of the computer.
+        #[tokio::test]
+        async fn a_program_changes_no_mode_and_no_time_of_a_file_outside_its_folder() {
+            let dir = TempDir::new("tools-run-file-facts");
+            let keys = dir.0.join("provider_keys.json");
+            std::fs::write(&keys, b"keys").expect("write");
+            std::fs::set_permissions(&keys, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+            let modified = std::fs::metadata(&keys).expect("stat").modified().expect("time");
+            let text = format!("/bin/chmod 644 '{keys}'; /bin/touch -t 200101010000 '{keys}'; echo done", keys = keys.display());
+
+            let sent = finished(script(&text, &dir.0.join("work"))).await;
+
+            assert_eq!(sent.stdout, "done\n", "{}", sent.stderr);
+            assert_eq!(mode_of(&keys), 0o600, "{}", sent.stderr);
+            assert_eq!(std::fs::metadata(&keys).expect("stat").modified().expect("time"), modified, "{}", sent.stderr);
+        }
+
+        // A program reaches no server, also not one of the computer itself:
+        // the texts for a TCP port and a UDP port of the test never come.
+        // bash opens a socket for a `/dev/tcp/…` or `/dev/udp/…` path.
+        #[tokio::test]
+        async fn a_program_has_no_network() {
+            let dir = TempDir::new("tools-run-no-network");
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listen");
+            let datagrams = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind");
+            listener.set_nonblocking(true).expect("non-blocking");
+            datagrams.set_nonblocking(true).expect("non-blocking");
+            let text = format!(
+                "echo text > /dev/tcp/127.0.0.1/{}; echo text > /dev/udp/127.0.0.1/{}; echo done",
+                listener.local_addr().expect("address").port(),
+                datagrams.local_addr().expect("address").port(),
+            );
+
+            let sent = finished(program_run("/bin/bash", &["-c", &text], &dir.0.join("work"))).await;
+
+            assert_eq!(sent.stdout, "done\n", "{}", sent.stderr);
+            let nothing_came = Err(std::io::ErrorKind::WouldBlock);
+            assert_eq!(listener.accept().map(|_| ()).map_err(|error| error.kind()), nothing_came, "{}", sent.stderr);
+            assert_eq!(datagrams.recv_from(&mut [0; 16]).map(|_| ()).map_err(|error| error.kind()), nothing_came, "{}", sent.stderr);
         }
 
         #[tokio::test]
@@ -1392,25 +2028,34 @@ mod tests {
             assert_eq!(sent(events_b).await.ends, [ToolRunEnd::Cancelled]);
         }
 
-        // A run of a real bundled program as `run_bundled_tool` makes it:
-        // confined to `confined_to`, with no other folder to read.
+        // The folders of the runs of the real bundled programs: a cache
+        // root and an app folder in `dir`, and the folder of the programs.
         // tauri-build copies the programs next to the Dez program of the
         // build (`target/<profile>/`). The folder of the test program below
         // it depends on the version of cargo (`deps/` before Rust 1.100, a
         // folder deep in `build/` since), so the programs are in the first
         // folder above the test program that holds them.
-        fn bundled_run(name: &str, args: &[&str], folder: &Path, confined_to: &Path) -> ProgramRun {
+        fn real_roots(dir: &Path) -> Roots {
             let test_dir = tools_dir().expect("the folder of the test program");
-            let program = test_dir
+            let tools = test_dir
                 .ancestors()
-                .find_map(|dir| tool_path(dir, name).ok())
-                .unwrap_or_else(|| panic!("No folder above {} holds the bundled program {}", test_dir.display(), name));
-            ProgramRun {
-                program,
-                confined_to: confined_to.to_path_buf(),
-                also_readable: Vec::new(),
-                ..program_run("", args, folder)
-            }
+                .find(|dir| BUNDLED_TOOLS.iter().all(|tool| dir.join(tool).is_file()))
+                .unwrap_or_else(|| panic!("No folder above {} holds the bundled programs", test_dir.display()));
+            Roots { tools: tools.to_path_buf(), cache: dir.join("cache"), app: dir.join("config") }
+        }
+
+        // A run of a real bundled program as `run_bundled_tool` makes it,
+        // in the folder `folder` of the cache root.
+        fn bundled_run(roots: &Roots, tool: &str, args: &[&str], folder: &str) -> ProgramRun {
+            resolved_run(tool_run(tool, args, folder), roots).expect("a run that the rules allow")
+        }
+
+        // A run of the real Deno with `text` as its script, which Dez
+        // copies into the work folder `work/<name>` as an input.
+        fn deno_run(dir: &Path, name: &str, text: &str) -> ToolRun {
+            let source = dir.join(format!("{name}.ts"));
+            std::fs::write(&source, text).expect("write the script");
+            ToolRun { inputs: vec![input("main.ts", &source)], ..tool_run("dez-deno", &["main.ts"], &format!("work/{name}")) }
         }
 
         // The real programs, as a tool call runs them: ffmpeg makes a file,
@@ -1421,22 +2066,125 @@ mod tests {
         #[tokio::test]
         async fn the_bundled_programs_run_and_read_an_input_copy() {
             let dir = TempDir::new("tools-run-bundled");
-            let made = dir.0.join("made");
+            let roots = real_roots(&dir.0);
+            let linked = dir.0.join("linked.wav");
 
             let make = ["-hide_banner", "-f", "lavfi", "-i", "sine=frequency=440:duration=0.2", "tone.wav"];
-            let ffmpeg = finished(bundled_run("dez-ffmpeg", &make, &made, &made)).await;
+            let ffmpeg = finished(bundled_run(&roots, "dez-ffmpeg", &make, "made")).await;
 
             assert_eq!(ffmpeg.ends, exited(0), "{}", ffmpeg.stderr);
             assert_eq!(ffmpeg.stdout, "");
             assert!(ffmpeg.stderr.contains("tone.wav"), "{}", ffmpeg.stderr);
+            std::fs::rename(roots.cache.join("made").join("tone.wav"), &linked).expect("move");
 
             let read = ["-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", "in.wav"];
-            let probe_folder = dir.0.join("probe");
-            let mut probe = bundled_run("dez-ffprobe", &read, &probe_folder, &probe_folder);
-            probe.inputs = vec![input("in.wav", &made.join("tone.wav"))];
+            let mut probe = bundled_run(&roots, "dez-ffprobe", &read, "probe");
+            probe.inputs = vec![input("in.wav", &linked)];
             let ffprobe = finished(probe).await;
 
             assert_eq!(ffprobe, Sent { stdout: "0.200000\n".to_string(), ends: exited(0), ..Sent::default() });
+        }
+
+        // The real Deno, as a tool call runs it: a TypeScript file of its
+        // work folder, with the time zone of the user, and with the texts
+        // of the page on its input.
+        #[tokio::test]
+        async fn deno_runs_a_script_with_the_time_zone_and_the_input_of_its_run() {
+            let dir = TempDir::new("tools-run-deno");
+            let roots = real_roots(&dir.0);
+            let text = r#"
+                const zone: string = Intl.DateTimeFormat().resolvedOptions().timeZone
+                console.log(`ready in ${zone}`)
+                const decoder = new TextDecoder()
+                for await (const piece of Deno.stdin.readable) {
+                  const line = decoder.decode(piece).trim()
+                  if (line === 'end') Deno.exit(3)
+                  console.log(`got ${line}`)
+                }
+            "#;
+            let run = ToolRun { stdin: true, time_zone: Some("Asia/Tokyo".to_string()), ..deno_run(&dir.0, "a", text) };
+            let run = resolved_run(run, &roots).expect("a run that the rules allow");
+            let runs = ToolRuns::default();
+            let (send, mut events) = event_channel();
+
+            let (result, ()) = tokio::join!(runs.run("a", run, send), async {
+                wait_for_output(&mut events, "ready in Asia/Tokyo").await;
+                assert_eq!(runs.write_input("a", "one\n".to_string()).await, Ok(()));
+                wait_for_output(&mut events, "got one").await;
+                assert_eq!(runs.write_input("a", "end\n".to_string()).await, Ok(()));
+            });
+
+            assert_eq!(result, Ok(()));
+            let sent = sent(events).await;
+            assert_eq!((sent.ends, sent.stderr.as_str()), (exited(3), ""));
+        }
+
+        // The two guards of a Deno run. Deno's own permissions: a script
+        // reads and writes its work folder and its app folder and no other
+        // file, and a run with no app folder opens no file at all. The OS
+        // rule: an `import`, which Deno's file permissions do not cover,
+        // loads no file from outside the folders of the run.
+        #[tokio::test]
+        async fn deno_opens_only_its_work_folder_and_its_app_folder() {
+            let dir = TempDir::new("tools-run-deno-files");
+            let roots = real_roots(&dir.0);
+            let app = roots.app.join(APPS_FOLDER).join("my-app");
+            let private = dir.0.join("private.ts");
+            std::fs::create_dir_all(&app).expect("create");
+            std::fs::write(app.join("data.txt"), "app data").expect("write");
+            std::fs::write(&private, "export const text = 'private text'\n").expect("write");
+            // What each open gives: its text, or the name of its error. The
+            // work folder is `<dir>/cache/work/<name>`.
+            let opens = r#"
+                const outcome = (work: () => Promise<unknown>) => work().then(String, (error) => error.name)
+                const app = '../../../config/apps/my-app'
+                const outside = '../../../private.ts'
+                console.log([
+                  await outcome(() => Deno.writeTextFile('made.txt', 'made').then(() => Deno.readTextFile('made.txt'))),
+                  await outcome(() => Deno.readTextFile(`${app}/data.txt`)),
+                  await outcome(() => Deno.writeTextFile(`${app}/new.txt`, 'new').then(() => 'written')),
+                  await outcome(() => Deno.readTextFile(outside)),
+                  await outcome(() => Deno.writeTextFile(outside, 'changed').then(() => 'written')),
+                ].join(', '))
+            "#;
+            let import = "import { text } from '../../../private.ts'\nconsole.log(text)\n";
+            let run = |run: ToolRun| finished(resolved_run(run, &roots).expect("a run that the rules allow"));
+
+            let with_app = run(ToolRun { app_folder: Some("my-app".to_string()), ..deno_run(&dir.0, "with-app", opens) }).await;
+            assert_eq!(with_app.stdout, "made, app data, written, NotCapable, NotCapable\n", "{}", with_app.stderr);
+            assert_eq!(std::fs::read(app.join("new.txt")).expect("read"), b"new");
+
+            let without_app = run(deno_run(&dir.0, "without-app", opens)).await;
+            assert_eq!(without_app.stdout, "NotCapable, NotCapable, NotCapable, NotCapable, NotCapable\n", "{}", without_app.stderr);
+
+            let imported = run(ToolRun { app_folder: Some("my-app".to_string()), ..deno_run(&dir.0, "import", import) }).await;
+            assert_eq!(imported.stdout, "", "{NOT_CONFINED}");
+            assert_ne!(imported.ends, exited(0), "{}", imported.stderr);
+            assert!(imported.stderr.contains(DENIED), "{}", imported.stderr);
+            assert_eq!(std::fs::read(&private).expect("read"), b"export const text = 'private text'\n");
+        }
+
+        // The data limit of a Deno run (Linux). The heap limit of V8 does
+        // not count the bytes of a typed array, so the data limit is their
+        // end, and it is an error that the script can catch.
+        #[cfg(target_os = "linux")]
+        #[tokio::test]
+        async fn deno_gets_no_more_memory_than_its_data_limit() {
+            let dir = TempDir::new("tools-run-deno-memory");
+            let roots = real_roots(&dir.0);
+            let text = r#"
+                const megabytes = (count: number) => new Uint8Array(count * 1024 * 1024).length > 0
+                console.log(megabytes(256))
+                try {
+                  console.log(megabytes(3 * 1024))
+                } catch (error) {
+                  console.log(error instanceof RangeError ? 'refused' : String(error))
+                }
+            "#;
+
+            let sent = finished(resolved_run(deno_run(&dir.0, "a", text), &roots).expect("a run that the rules allow")).await;
+
+            assert_eq!(sent, Sent { stdout: "true\nrefused\n".to_string(), ends: exited(0), ..Sent::default() });
         }
 
         // The real programs read a clip of their folder by its path, and
@@ -1446,16 +2194,16 @@ mod tests {
         #[tokio::test]
         async fn the_bundled_programs_cannot_open_a_file_outside_their_folder() {
             let dir = TempDir::new("tools-run-bundled-confined");
-            let inside = dir.0.join("cache");
-            let made = inside.join("made");
-            let (clip, outside) = (made.join("tone.ts"), dir.0.join("tone.ts"));
+            let roots = real_roots(&dir.0);
+            let inside = &roots.cache;
+            let (clip, outside) = (inside.join("made").join("tone.ts"), dir.0.join("tone.ts"));
             let make = ["-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=0.2", "-c:a", "mp2", "tone.ts"];
-            assert_eq!(finished(bundled_run("dez-ffmpeg", &make, &made, &inside)).await.ends, exited(0));
+            assert_eq!(finished(bundled_run(&roots, "dez-ffmpeg", &make, "made")).await.ends, exited(0));
             std::fs::copy(&clip, &outside).expect("copy");
             let path = |path: &Path| path.to_str().expect("UTF-8 path").to_string();
             let probe = |name: &str, file: &str| {
                 let args = ["-v", "error", "-show_entries", "format=format_name", "-of", "csv=p=0", file];
-                bundled_run("dez-ffprobe", &args, &inside.join(name), &inside)
+                bundled_run(&roots, "dez-ffprobe", &args, name)
             };
 
             let read = finished(probe("inside", &path(&clip))).await;
@@ -1469,7 +2217,7 @@ mod tests {
             std::fs::create_dir_all(&hls).expect("create");
             std::fs::write(hls.join("inside.m3u8"), playlist(&clip)).expect("write");
             std::fs::write(hls.join("outside.m3u8"), playlist(&outside)).expect("write");
-            let copy = |list: &str, output: &str| bundled_run("dez-ffmpeg", &["-v", "error", "-f", "hls", "-i", list, "-c", "copy", output], &hls, &inside);
+            let copy = |list: &str, output: &str| bundled_run(&roots, "dez-ffmpeg", &["-v", "error", "-f", "hls", "-i", list, "-c", "copy", output], "hls");
             let copied = finished(copy("inside.m3u8", "inside.mkv")).await;
             assert_eq!(copied.ends, exited(0), "{}", copied.stderr);
             // The hls demuxer does not pass on the cause of a failed open:
@@ -1481,7 +2229,7 @@ mod tests {
 
             let written = dir.0.join("written.wav");
             let write = ["-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=0.2", &path(&written)];
-            let refused = finished(bundled_run("dez-ffmpeg", &write, &inside.join("write"), &inside)).await;
+            let refused = finished(bundled_run(&roots, "dez-ffmpeg", &write, "write")).await;
             assert_ne!(refused.ends, exited(0));
             assert!(refused.stderr.contains(DENIED), "{}", refused.stderr);
             assert!(!written.exists());

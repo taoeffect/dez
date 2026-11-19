@@ -364,8 +364,9 @@ function onOverlayClick(event: MouseEvent) {
             </p>
             <!-- The rule is in src-tauri/src/confinement.rs (Landlock on
                  Linux, Seatbelt on macOS), its folders are in
-                 `run_bundled_tool` (src-tauri/src/bundled_tools.rs), and the
-                 checks of a command line are `argumentProblem` in
+                 `FFMPEG_RULES` and `resolved_run`
+                 (src-tauri/src/bundled_tools.rs), and the checks of a
+                 command line are `argumentProblem` in
                  src/model/tools/videoTool.ts. The programs have no network
                  code: their build has `--disable-network` (see
                  `dez-ffmpeg -buildconf`). -->
