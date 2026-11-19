@@ -17,10 +17,11 @@ export function readableTexts(sections: SectionData[], nodeText: (node: ContentN
     : nodeText(node, role))))
 }
 
-// An image reference shows as `[image]`, never as its path. Prompt bodies
+// An image reference shows as `[image]`, not as its path. Prompt bodies
 // too: their references are sent as images. A tool block in agent text
 // gives a space: its markup and its result are not reply text. A media tag
-// shows as `[audio]` or `[video]`.
+// shows as `[audio]` or `[video]`. A reference or a tag in Markdown code is
+// text (codeRanges.ts), so it stays as its text, path included.
 function nodePlainText(node: ContentNodeData, role: Role): string {
   if (node.kind === 'prompt') return labelImageReferences(node.body, role)
   return labelImageReferences(labelMediaTags(role === 'agent' ? labelToolBlocks(node.text, ' ') : node.text, role), role)

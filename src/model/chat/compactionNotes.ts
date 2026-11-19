@@ -98,8 +98,10 @@ import type { Role } from './types'
 // - The requirements and decisions are the text part of the answer of
 //   the model to the compaction request (streams/compactionRequest.ts). A
 //   blank part is left out. A part that leaves a code fence open gets a
-//   closer line (`openFenceCloser`, codeRanges.ts): code is text, so the
-//   fence would else hold the asset lines of Dez after it.
+//   closer line (`openFenceCloser`, codeRanges.ts): code is text, and a
+//   `<dez:` line ends a fence, but the headings, image references, and
+//   asset rows that Dez writes after the part do not. The fence would else
+//   hold them, and a kept image in it would be text, not an image.
 // - The parts of the assets, the jobs, and the cost are of Dez. The
 //   compaction removes the tool blocks of the conversation, so these lines
 //   are all that still tells who made an asset, and which job is which:

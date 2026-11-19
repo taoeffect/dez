@@ -430,7 +430,7 @@ export function messageClips(sections: readonly Section[]): ClipAttachment[] {
 
 /** The ids that the `@id` mentions of `text`, the text of a user message,
  *  name, as a request reads them (`messageTextPieces`): no `@` in an image
- *  reference, a media tag, or a stored file path. */
+ *  reference, a media tag, Markdown code, or a stored file path. */
 export function messageMentionIds(text: string): Set<string> {
   return new Set(messageTextPieces(text).flatMap((piece) => (piece.kind === 'gap' ? piece.mentions.map(({ id }) => id) : [])))
 }

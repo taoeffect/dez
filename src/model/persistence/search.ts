@@ -46,10 +46,11 @@ export function clearConversationSearchCache(): void {
 // Tool blocks in agent text are left out the same way: their markup (`dez`,
 // `tool`, call ids) and tool results are not reply text. So are the media
 // tags, in agent and in user text: their markup, path, and URL, and a label
-// too (`video` would match every conversation with a clip). The notes of a
-// compaction block are the exception: they never come here
-// (`readableTexts`), and go into the search text as the chips show them,
-// labels included.
+// too (`video` would match every conversation with a clip). A reference or
+// a tag in Markdown code is text (codeRanges.ts), so it stays as its text,
+// path included. The notes of a compaction block are the exception: they
+// never come here (`readableTexts`), and go into the search text as the
+// chips show them, labels included.
 function nodeSearchText(node: ContentNodeData, role: Role): string {
   return node.kind === 'text'
     ? labelImageReferences(labelMediaTags(role === 'agent' ? labelToolBlocks(node.text, ' ') : node.text, role, ' '), role, ' ')
