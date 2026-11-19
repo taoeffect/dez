@@ -277,15 +277,18 @@ export function commandLineWords(text: string, program: ShippedProgram): string[
 
 // The protocols of ffmpeg: a word with one of these names before a `:`
 // opens something that is not a file of the work folder (the network, a
-// pipe, a file by another name). The list holds every protocol of the
+// pipe, a file by another name, the shared file cache of `shared` in a
+// folder of its `cache_dir` option). The list holds every protocol of the
 // Linux and macOS builds (`ffmpeg -protocols`; tests/e2e/video-tool.e2e.ts
-// checks the Linux build against it), and the demuxers that take a URL of
-// their own form. A name that the list misses passes the checks: after each
-// `scripts/update-ffmpeg.js`, check this list and `REFUSED_DEVICES` again.
+// checks the Linux build against it), the network protocols that the
+// builds leave out (`--disable-network`; a later build can have them
+// again), and the demuxers that take a URL of their own form. A name that
+// the list misses passes the checks: after each `scripts/update-ffmpeg.js`,
+// check this list and `REFUSED_DEVICES` again.
 export const REFUSED_PROTOCOLS: readonly string[] = [
   'async', 'cache', 'concat', 'concatf', 'crypto', 'data', 'fd', 'ffrtmpcrypt', 'ffrtmphttp', 'file', 'ftp', 'gopher', 'gophers',
   'http', 'httpproxy', 'https', 'icecast', 'ipfs', 'ipns', 'md5', 'mmsh', 'mmst', 'pipe', 'prompeg',
-  'rtmp', 'rtmpe', 'rtmps', 'rtmpt', 'rtmpte', 'rtmpts', 'rtp', 'srtp', 'subfile', 'tcp', 'tee', 'tls', 'dtls', 'udp', 'udplite', 'unix',
+  'rtmp', 'rtmpe', 'rtmps', 'rtmpt', 'rtmpte', 'rtmpts', 'rtp', 'shared', 'srtp', 'subfile', 'tcp', 'tee', 'tls', 'dtls', 'udp', 'udplite', 'unix',
   'rtsp', 'sap', 'sdp', 'hls',
 ]
 

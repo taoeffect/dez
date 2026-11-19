@@ -18,12 +18,15 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 // manifest in every build, and `bundle.externalBin` (tauri.conf.json) puts
 // them next to the Dez program.
 //
-// Why this source: FFmpeg publishes no programs of its own. These builds
-// are static, have no `--enable-nonfree` part (so Dez may ship them), come
-// for the three platforms of Dez from one build, and GitHub gives a SHA-256
-// for each file.
+// Why this source: FFmpeg publishes no programs of its own. Dez builds them
+// in its own repository, from the build scripts of the Shaka Project
+// (SHAKA_REPO), with more libraries (the drawtext, subtitles, and ass
+// filters, and PNG). The builds are static, have no `--enable-nonfree` part
+// (so Dez may ship them), come for the three platforms of Dez from one build,
+// and GitHub gives a SHA-256 for each file.
 
-const BUILD_REPO = 'shaka-project/static-ffmpeg-binaries';
+const BUILD_REPO = 'taoeffect/dez-ffmpeg';
+const SHAKA_REPO = 'shaka-project/static-ffmpeg-binaries';
 const BUILD_REPO_URL = `https://github.com/${BUILD_REPO}`;
 
 const USAGE = `Vendor the ffmpeg and ffprobe programs of one release of ${BUILD_REPO}.
@@ -35,7 +38,7 @@ The tag is an FFmpeg version and the build number of the release.
 The releases: ${BUILD_REPO_URL}/releases
 
 Example:
-  node scripts/update-ffmpeg.js n8.1.2-2`;
+  node scripts/update-ffmpeg.js n9.0.2-3`;
 
 // The tag rule of the build repository: the FFmpeg version, then the number
 // of the build of that version (its README, "Tag names").
@@ -45,13 +48,12 @@ const TAG_PATTERN = /^(n\d+(?:\.\d+)+)-\d+$/;
 export const TOOLS = ['ffmpeg', 'ffprobe'];
 
 // The platforms of Dez: the Rust target triple of a build, and the platform
-// part of the release file names. The plain Linux names are the fully
-// static (musl) builds; the `-ubuntu-…` files of a release need the
-// libraries of that Ubuntu.
+// part of the release file names. The Linux files are fully static (musl)
+// builds.
 export const PLATFORMS = {
   'aarch64-unknown-linux-gnu': 'linux-arm64',
   'x86_64-unknown-linux-gnu': 'linux-x64',
-  'aarch64-apple-darwin': 'osx-arm64'
+  'aarch64-apple-darwin': 'macos-arm64'
 };
 
 // The name of a program in src-tauri/binaries/. Tauri takes the file
@@ -117,12 +119,41 @@ export function manifestText(tag, files) {
   return `${JSON.stringify(manifest, null, 2)}\n`;
 }
 
+// The libraries that the builds hold (the scripts of build-scripts/ in the
+// build repository), each with its license, as of release n9.0.2-3. A
+// library that a build adds or drops needs a change here, as NOTICE.md must
+// name it. The versions are in versions.txt of each release.
+const LIBRARIES = [
+  ['libvpx', 'https://chromium.googlesource.com/webm/libvpx', 'the BSD 3-Clause License'],
+  ['SVT-AV1', 'https://gitlab.com/AOMediaCodec/SVT-AV1', 'the BSD 3-Clause Clear License'],
+  ['x264', 'https://code.videolan.org/videolan/x264', 'the GNU General Public License, version 2 or later'],
+  ['x265', 'https://bitbucket.org/multicoreware/x265_git', 'the GNU General Public License, version 2 or later'],
+  ['LAME', 'https://lame.sourceforge.io/', 'the GNU Library General Public License, version 2 or later'],
+  ['Opus', 'https://opus-codec.org/', 'the BSD 3-Clause License'],
+  ['zlib', 'https://zlib.net/', 'the zlib License'],
+  // FreeType gives a choice of two licenses. Dez takes the FreeType
+  // License, which asks for a credit in the documentation (FREETYPE_CREDIT).
+  ['FreeType', 'https://freetype.org/', 'the FreeType License (FTL)'],
+  ['HarfBuzz', 'https://github.com/harfbuzz/harfbuzz', 'the MIT License ("Old MIT")'],
+  ['FriBidi', 'https://github.com/fribidi/fribidi', 'the GNU Lesser General Public License, version 2.1 or later'],
+  ['libass', 'https://github.com/libass/libass', 'the ISC License'],
+  // The Linux files are static musl builds (PLATFORMS).
+  ['musl (only in the Linux files)', 'https://musl.libc.org/', 'the MIT License']
+];
+
+// The credit text that the FreeType License (docs/FTL.TXT of FreeType)
+// asks for, without the year, as the FreeType version moves with the
+// releases of the build repository.
+const FREETYPE_CREDIT =
+  'Portions of this software are copyright © The FreeType Project (https://freetype.org). All rights reserved.';
+
 // The text of src-tauri/binaries/NOTICE.md: the license notice of the
-// programs, with the links to their source. It is written with the
-// manifest, so that it never names another version than the files have. It
-// names no library of the builds: the build repository lists them.
+// programs and of their libraries, with the links to their source. It is
+// written with the manifest, so that it never names another version than
+// the files have.
 export function noticeText(tag) {
   const version = ffmpegVersionOfTag(tag);
+  const libraries = LIBRARIES.map(([name, url, license]) => `- [${name}](${url}): ${license}`).join('\n');
   return `# ffmpeg and ffprobe in Dez
 
 <!-- Written by scripts/update-ffmpeg.js. Do not edit it by hand. -->
@@ -130,7 +161,7 @@ export function noticeText(tag) {
 Dez ships two programs of the [FFmpeg](https://ffmpeg.org/) project next to its own program: \`dez-ffmpeg\` (ffmpeg) and \`dez-ffprobe\` (ffprobe). Dez runs them as separate programs. They are not a part of the Dez program, and the license of Dez does not apply to them.
 
 - FFmpeg version: ${version}
-- Builder: the Shaka Project, [${BUILD_REPO}](${BUILD_REPO_URL})
+- Builder: Dez, [${BUILD_REPO}](${BUILD_REPO_URL}), from the build scripts of the Shaka Project, [${SHAKA_REPO}](https://github.com/${SHAKA_REPO})
 - Release: [${tag}](${BUILD_REPO_URL}/releases/tag/${tag})
 
 The files of this folder are the files of that release, not changed. \`manifest.json\` has the release file, the size, and the SHA-256 of each one. This file is for the Dez version of this branch or tag: for another Dez version, read it at the tag of that version.
@@ -139,10 +170,18 @@ The files of this folder are the files of that release, not changed. \`manifest.
 
 The programs have the [GNU General Public License, version 3](https://www.gnu.org/licenses/gpl-3.0.html) or later: the builds are configured with \`--enable-gpl --enable-version3\`, and without \`--enable-nonfree\`. \`dez-ffmpeg -L\` prints the license terms, and \`dez-ffmpeg -version\` prints the configuration.
 
+## Libraries
+
+The programs hold these libraries. Their versions are in [\`versions.txt\`](${BUILD_REPO_URL}/blob/${tag}/versions.txt) of the release.
+
+${libraries}
+
+FreeType: ${FREETYPE_CREDIT}
+
 ## Source code
 
 - FFmpeg ${version}: <https://git.ffmpeg.org/gitweb/ffmpeg.git/tag/refs/tags/${version}> (a copy: <https://github.com/FFmpeg/FFmpeg/tree/${version}>)
-- The build scripts, and the versions of the libraries that the builds hold (\`versions.txt\`): <${BUILD_REPO_URL}/tree/${tag}>
+- The build scripts, which get the source of each library at the version of \`versions.txt\`: <${BUILD_REPO_URL}/tree/${tag}>
 
 ## Another version
 

@@ -1,37 +1,37 @@
 {
-  "ffmpegVersion": "n8.1.2",
-  "releaseTag": "n8.1.2-2",
-  "source": "https://github.com/shaka-project/static-ffmpeg-binaries/releases/tag/n8.1.2-2",
+  "ffmpegVersion": "n9.0.2",
+  "releaseTag": "n9.0.2-3",
+  "source": "https://github.com/taoeffect/dez-ffmpeg/releases/tag/n9.0.2-3",
   "files": {
     "dez-ffmpeg-aarch64-unknown-linux-gnu": {
       "asset": "ffmpeg-linux-arm64",
-      "size": 36523320,
-      "sha256": "6e7b1d7d1aa8c35e3fedd78a140aa0968717aeb7386ecfb0ee00773d9f0a4503"
+      "size": 38490360,
+      "sha256": "79e8771b2d9ac9dd708ee589946cb98f0ab3d68a004ef46086560d6374e39f73"
     },
     "dez-ffprobe-aarch64-unknown-linux-gnu": {
       "asset": "ffprobe-linux-arm64",
-      "size": 36326648,
-      "sha256": "fd2aca1456f0261cabef4514b6d97a70fa342003347f51b39c473dd364328089"
+      "size": 38359256,
+      "sha256": "7c896b84b18b41b0886f8cfa447258534f2b9c6f288d420d522ca9b934e6c550"
     },
     "dez-ffmpeg-x86_64-unknown-linux-gnu": {
       "asset": "ffmpeg-linux-x64",
-      "size": 48299480,
-      "sha256": "9eac5b2b5076db5ff853a6fa0dcd6b8de7d0cac8481eadda6c47cd935825f1ee"
+      "size": 50529112,
+      "sha256": "171ad68a90bb0502f7976fbc710c5d968016601fd325741c370455a191ff50a2"
     },
     "dez-ffprobe-x86_64-unknown-linux-gnu": {
       "asset": "ffprobe-linux-x64",
-      "size": 48090488,
-      "sha256": "065d3c56926052a76e884c4e4b51b7d95248da9391ab7effdcca6b94ceab98cf"
+      "size": 50328344,
+      "sha256": "2d97591fa2867f7ff7e6c873233f0475574f2629a7cce6e09cb30796bd08f1b6"
     },
     "dez-ffmpeg-aarch64-apple-darwin": {
-      "asset": "ffmpeg-osx-arm64",
-      "size": 34833592,
-      "sha256": "bae78d9849a6e99eadcc83872f4de68adbd149d0847290bbada612d25c12f15e"
+      "asset": "ffmpeg-macos-arm64",
+      "size": 36177352,
+      "sha256": "8cc7eb87ea348224c043af0c784ce4548ad95a5c2ea6c92e26d71e21a0a07d9c"
     },
     "dez-ffprobe-aarch64-apple-darwin": {
-      "asset": "ffprobe-osx-arm64",
-      "size": 34641944,
-      "sha256": "e510a6099182ab55ab062f7e29d3662e587a954a39d0bbae0c6aa3ad110b5478"
+      "asset": "ffprobe-macos-arm64",
+      "size": 35985800,
+      "sha256": "1240d9aebad322af6a5745994112b85025606b40aac7b9a733b1402e2c88bc6e"
     }
   }
 }

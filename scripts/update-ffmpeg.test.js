@@ -16,11 +16,11 @@ const sha = letter => letter.repeat(64);
 
 // The release data of the GitHub API, with the files that Dez takes and
 // some that it does not. Each file has its own size and SHA-256.
-function release(tag = 'n8.1.2-2') {
+function release(tag = 'n9.0.2-3') {
   const names = [
-    'ffmpeg-linux-arm64', 'ffmpeg-linux-arm64-ubuntu-24.04', 'ffmpeg-linux-x64', 'ffmpeg-osx-arm64',
+    'ffmpeg-linux-arm64', 'ffmpeg-linux-arm64-ubuntu-24.04', 'ffmpeg-linux-x64', 'ffmpeg-macos-arm64',
     'ffmpeg-osx-x64', 'ffmpeg-win-x64.exe', 'ffprobe-linux-arm64', 'ffprobe-linux-x64',
-    'ffprobe-linux-x64-ubuntu-24.04', 'ffprobe-osx-arm64'
+    'ffprobe-linux-x64-ubuntu-24.04', 'ffprobe-macos-arm64'
   ];
   return {
     tag_name: tag,
@@ -34,16 +34,16 @@ function release(tag = 'n8.1.2-2') {
 
 describe('parseArgs', () => {
   it('takes one release tag', () => {
-    expect(parseArgs(['n8.1.2-2'])).toEqual({ tag: 'n8.1.2-2' });
+    expect(parseArgs(['n9.0.2-3'])).toEqual({ tag: 'n9.0.2-3' });
     expect(parseArgs(['n9.0-11'])).toEqual({ tag: 'n9.0-11' });
   });
 
   it('refuses anything but one tag of an FFmpeg version and a build number', () => {
     expect(() => parseArgs([])).toThrow('Expected one release tag, got: (none)');
-    expect(() => parseArgs(['n8.1.2-2', 'n8.1.2-3'])).toThrow('Expected one release tag, got: n8.1.2-2 n8.1.2-3');
-    expect(() => parseArgs(['n8.1.2'])).toThrow('Invalid release tag: n8.1.2');
-    expect(() => parseArgs(['8.1.2-2'])).toThrow('Invalid release tag: 8.1.2-2');
-    expect(() => parseArgs(['n8.1.2-2/../x'])).toThrow('Invalid release tag: n8.1.2-2/../x');
+    expect(() => parseArgs(['n9.0.2-3', 'n9.0.2-4'])).toThrow('Expected one release tag, got: n9.0.2-3 n9.0.2-4');
+    expect(() => parseArgs(['n9.0.2'])).toThrow('Invalid release tag: n9.0.2');
+    expect(() => parseArgs(['9.0.2-3'])).toThrow('Invalid release tag: 9.0.2-3');
+    expect(() => parseArgs(['n9.0.2-3/../x'])).toThrow('Invalid release tag: n9.0.2-3/../x');
   });
 });
 
@@ -54,33 +54,33 @@ describe('vendoredFiles', () => {
       { name: 'dez-ffprobe-aarch64-unknown-linux-gnu', asset: 'ffprobe-linux-arm64', size: 1006, sha256: sha('6') },
       { name: 'dez-ffmpeg-x86_64-unknown-linux-gnu', asset: 'ffmpeg-linux-x64', size: 1002, sha256: sha('2') },
       { name: 'dez-ffprobe-x86_64-unknown-linux-gnu', asset: 'ffprobe-linux-x64', size: 1007, sha256: sha('7') },
-      { name: 'dez-ffmpeg-aarch64-apple-darwin', asset: 'ffmpeg-osx-arm64', size: 1003, sha256: sha('3') },
-      { name: 'dez-ffprobe-aarch64-apple-darwin', asset: 'ffprobe-osx-arm64', size: 1009, sha256: sha('9') }
+      { name: 'dez-ffmpeg-aarch64-apple-darwin', asset: 'ffmpeg-macos-arm64', size: 1003, sha256: sha('3') },
+      { name: 'dez-ffprobe-aarch64-apple-darwin', asset: 'ffprobe-macos-arm64', size: 1009, sha256: sha('9') }
     ]);
   });
 
   it('refuses a release that lacks a file of one platform', () => {
     const data = release();
-    data.assets = data.assets.filter(asset => asset.name !== 'ffprobe-osx-arm64');
-    expect(() => vendoredFiles(data)).toThrow('The release n8.1.2-2 has no file ffprobe-osx-arm64.');
+    data.assets = data.assets.filter(asset => asset.name !== 'ffprobe-macos-arm64');
+    expect(() => vendoredFiles(data)).toThrow('The release n9.0.2-3 has no file ffprobe-macos-arm64.');
   });
 
   it('refuses a file that GitHub gives no SHA-256 for, as nothing can check it', () => {
     for (const digest of [null, undefined, 'md5:0123', `sha256:${sha('g')}`, `sha256:${sha('a')}0`]) {
       const data = release();
       data.assets.find(asset => asset.name === 'ffmpeg-linux-x64').digest = digest;
-      expect(() => vendoredFiles(data)).toThrow('The release n8.1.2-2 gives no SHA-256 for ffmpeg-linux-x64.');
+      expect(() => vendoredFiles(data)).toThrow('The release n9.0.2-3 gives no SHA-256 for ffmpeg-linux-x64.');
     }
   });
 });
 
 describe('manifestText', () => {
   it('names each file as the build names it, for every target and program', () => {
-    const manifest = JSON.parse(manifestText('n8.1.2-2', vendoredFiles(release())));
+    const manifest = JSON.parse(manifestText('n9.0.2-3', vendoredFiles(release())));
     expect(manifest).toMatchObject({
-      ffmpegVersion: 'n8.1.2',
-      releaseTag: 'n8.1.2-2',
-      source: 'https://github.com/shaka-project/static-ffmpeg-binaries/releases/tag/n8.1.2-2'
+      ffmpegVersion: 'n9.0.2',
+      releaseTag: 'n9.0.2-3',
+      source: 'https://github.com/taoeffect/dez-ffmpeg/releases/tag/n9.0.2-3'
     });
     // build.rs finds a file by `dez-<program>-<TARGET>`.
     const names = Object.keys(PLATFORMS).flatMap(triple => TOOLS.map(tool => vendoredName(tool, triple)));
@@ -95,12 +95,20 @@ describe('manifestText', () => {
 
 describe('noticeText', () => {
   it('links the source of the FFmpeg version and the build of the release tag', () => {
-    const notice = noticeText('n9.0-11');
-    expect(notice).toContain('- FFmpeg version: n9.0\n');
-    expect(notice).toContain('https://git.ffmpeg.org/gitweb/ffmpeg.git/tag/refs/tags/n9.0>');
-    expect(notice).toContain('https://github.com/shaka-project/static-ffmpeg-binaries/releases/tag/n9.0-11)');
-    expect(notice).toContain('https://github.com/shaka-project/static-ffmpeg-binaries/tree/n9.0-11>');
-    expect(notice).not.toContain('n8.');
+    const notice = noticeText('n9.1-11');
+    expect(notice).toContain('- FFmpeg version: n9.1\n');
+    expect(notice).toContain('https://git.ffmpeg.org/gitweb/ffmpeg.git/tag/refs/tags/n9.1>');
+    expect(notice).toContain('https://github.com/taoeffect/dez-ffmpeg/releases/tag/n9.1-11)');
+    expect(notice).toContain('https://github.com/taoeffect/dez-ffmpeg/tree/n9.1-11>');
+    expect(notice).not.toContain('n9.0');
+  });
+
+  it('links the library versions of the release tag, and gives the credit that the FreeType License asks for', () => {
+    const notice = noticeText('n9.1-11');
+    expect(notice).toContain('(https://github.com/taoeffect/dez-ffmpeg/blob/n9.1-11/versions.txt)');
+    expect(notice).toContain(
+      'FreeType: Portions of this software are copyright © The FreeType Project (https://freetype.org). All rights reserved.'
+    );
   });
 });
 
@@ -120,14 +128,14 @@ describe('hostTriple', () => {
 
 describe('reportedVersion', () => {
   it('reads the version of the first line of both programs', () => {
-    expect(reportedVersion('ffmpeg version n8.1.2 Copyright (c) 2000-2026 the FFmpeg developers\nbuilt with gcc'))
-      .toBe('n8.1.2');
-    expect(reportedVersion('ffprobe version n8.1.2 Copyright (c) 2007-2026 the FFmpeg developers')).toBe('n8.1.2');
+    expect(reportedVersion('ffmpeg version n9.0.2 Copyright (c) 2000-2026 the FFmpeg developers\nbuilt with gcc'))
+      .toBe('n9.0.2');
+    expect(reportedVersion('ffprobe version n9.0.2 Copyright (c) 2007-2026 the FFmpeg developers')).toBe('n9.0.2');
   });
 
   it('gives nothing for another output', () => {
     expect(reportedVersion('')).toBeUndefined();
-    expect(reportedVersion('built with gcc\nffmpeg version n8.1.2')).toBeUndefined();
+    expect(reportedVersion('built with gcc\nffmpeg version n9.0.2')).toBeUndefined();
   });
 });
 

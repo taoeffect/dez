@@ -226,6 +226,7 @@ describe('ffmpegCall', () => {
     ['-i "concat:@c|@d" -c copy out.mp4', 'concat:@c|@d', 'use the join_clips subcommand or the concat filter'],
     ['-i crypto+file:x.mp4 out.mp4', 'crypto+file:x.mp4', 'the protocol form "crypto"'],
     ['-i subfile,,start,0,end,9,,:@c out.mp4', 'subfile,,start,0,end,9,,:@c', 'the protocol form "subfile"'],
+    ['-cache_dir cache -i shared:@c out.mp4', 'shared:@c', 'the protocol form "shared"'],
     ['-i @c -f mpegts pipe:1', 'pipe:1', 'the protocol form "pipe"'],
     ['-i @c -vf movie=tcp:host:9 out.mp4', 'movie=tcp:host:9', 'the protocol form "tcp"'],
     ['-i @c -f mpegts -', '-', 'the standard input or output'],
