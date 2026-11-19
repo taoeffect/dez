@@ -52,7 +52,7 @@ export function clearConversationSearchCache(): void {
 // labels included.
 function nodeSearchText(node: ContentNodeData, role: Role): string {
   return node.kind === 'text'
-    ? labelImageReferences(labelMediaTags(role === 'agent' ? labelToolBlocks(node.text, ' ') : node.text, ' '), role, ' ')
+    ? labelImageReferences(labelMediaTags(role === 'agent' ? labelToolBlocks(node.text, ' ') : node.text, role, ' '), role, ' ')
     : `${node.name} ${labelImageReferences(node.body, role, ' ')}`
 }
 

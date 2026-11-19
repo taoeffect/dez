@@ -99,7 +99,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `controller/unusedFiles.ts`, `cacheHolds.ts`, `workFolders.ts`: find and delete the files and cache entries that nothing uses.
 - `model/chat/`: `Section` / `ContentNode` types and helpers, and the text forms of a conversation, each with one writer and recognizer:
   - `images.ts` (image references), `mediaTags.ts` (clips), `toolBlocks.ts` (tool calls), `pillMarker.ts` (pill markers), `compaction.ts`, `compactionNotes.ts`, `notesTable.ts` (the compaction block, the notes, and the tables of the notes).
-  - `mediaIds.ts`, `imageMentions.ts`, `assetMentions.ts` (asset ids and `@id` mentions), `hiddenAssets.ts`, `shownPictures.ts`.
+  - `mediaIds.ts`, `imageMentions.ts`, `assetMentions.ts` (asset ids and `@id` mentions), `codeRanges.ts` (Markdown code), `hiddenAssets.ts`, `shownPictures.ts`.
   - `storedFilePaths.ts`, `linkedFiles.ts`, `mediaFiles.ts`, `unusedFiles.ts` (stored, linked, and unused files).
 - `model/state/`: Pinia stores (internal) and `dez.model/*` selectors; views read state through `view/modelState.ts`.
 - `controller/thread.ts`: `dez.controller/submitTab`. `controller/tabs.ts`: `dez.controller/newTab`.
@@ -162,6 +162,7 @@ Rules:
 - `@sbp/okturtles.eventqueue` to serialize async operations that must not race.
 - `turtledash` for lodash-style helpers; use its `debounce`, not ad hoc timers.
 - `w3c-keyname`, at the version CodeMirror uses, so that shortcut matching (`model/shortcuts.ts`) agrees with CodeMirror keymaps.
+- `@lezer/markdown`, the CommonMark parser of the editor, also gives the code rule of `src/model/chat/codeRanges.ts`.
 - `virtua` (the model picker's list, the kept assets list) and `@videojs/html` (the media player); `videoJsElements` in `vite.config.ts` must match the video.js elements in `MediaPlayer.vue`.
 - `.npmrc` makes npm write exact pins (`save-exact`) and refuse a version that is younger than 14 days (`min-release-age`): pin the newest version that it allows.
 
@@ -256,6 +257,7 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 - **A linked path counts only in a user section, or in the compaction block when its tag lists it** (`linkedRuleParts`, `src/model/chat/compaction.ts`), so that a model's text never makes Dez read a file of the computer.
 - **One id sequence for images and clips** (`src/model/chat/mediaIds.ts`): never renumber an id that is in the doc, and never give an id that the conversation used before.
 - **`@id` mentions** (`src/model/chat/assetMentions.ts`): the request builder and the editor chips find mentions in the same text pieces (`assetTextPieces`); keep the two on that one rule.
+- **Code is text** (`src/model/chat/codeRanges.ts`): no reader takes an image, a clip, or a mention in Markdown code, but the id sequence counts its ids (`mediaIds.ts`), and a request sends a tag in code in its request form.
 - **A hidden asset and a kept asset are normal assets with a mark**: only the view hides them (`src/model/chat/hiddenAssets.ts`, `compaction.ts`); the compaction block is out of view as a whole, and its assets show in the assets chip.
 - **The notes of a compaction section are read back** (`src/model/chat/compactionNotes.ts`): a change of a line's form needs a reader of the old form.
 - **The unused-files scan must read every text that can name a stored file**: a new text place, stored-file folder, or kind of cache entry must join it (`src/controller/unusedFiles.ts`).

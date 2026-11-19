@@ -258,7 +258,7 @@ function promptWithNames(parts: readonly MessagePart[], imageNames: ReadonlyMap<
     if (referenceStart !== null && next?.type === 'image') places.push({ from: text.length + referenceStart, to: text.length + part.text.length, name: imageNames.get(next.path) })
     text += part.text
   }
-  for (const tag of findMediaTags(text)) places.push({ from: tag.from, to: tag.to, name: clipNames.get(tag.id) })
+  for (const tag of findMediaTags(text, 'user')) places.push({ from: tag.from, to: tag.to, name: clipNames.get(tag.id) })
   places.sort((a, b) => a.from - b.from)
 
   let prompt = ''

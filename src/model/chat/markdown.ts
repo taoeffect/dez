@@ -12,9 +12,10 @@ export interface MarkdownMessage {
 
 /** The text of a section for people to read (Save As Markdown, Copy
  *  Markdown): each clip is a Markdown link, and the tool blocks of an agent
- *  section are left out, as the agent thinking is. */
+ *  section are left out, as the agent thinking is. A clip in code stays as
+ *  its text. */
 export function sectionTextAsMarkdown(role: Role, text: string): string {
-  return mediaTagsAsLinks(role === 'agent' ? withoutToolBlocks(text) : text)
+  return mediaTagsAsLinks(role === 'agent' ? withoutToolBlocks(text) : text, role)
 }
 
 // CommonMark ends an unclosed fence only at the end of the document, so a

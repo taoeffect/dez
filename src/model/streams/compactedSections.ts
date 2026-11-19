@@ -158,7 +158,7 @@ function withKeptMarks({ text, rule }: KeptMessage, message: number, asText: Rea
 function linkedPathsOf(text: string, rule: LinkedPathRule): string[] {
   return [
     ...findImageReferences(text, rule).filter((reference) => reference.linked).map((reference) => reference.path),
-    ...findMediaTags(text).flatMap(({ src }) => (src !== null && isLinkedMediaPath(src) && linkedPathCounts(src, rule) ? [src] : [])),
+    ...findMediaTags(text, rule).flatMap(({ src }) => (src !== null && isLinkedMediaPath(src) && linkedPathCounts(src, rule) ? [src] : [])),
   ]
 }
 

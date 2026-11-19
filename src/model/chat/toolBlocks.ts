@@ -293,7 +293,7 @@ export function escapedModelText(text: string): string {
  *  found first: after the unescape, a tag that a model wrote would read as
  *  one that Dez wrote. */
 export function agentTextForRequest(text: string): string {
-  return splitMediaTags(text)
+  return splitMediaTags(text, 'agent')
     .map((piece) => (piece.kind === 'text' ? unescapedModelText(piece.text) : mediaTagRequestText(piece.tag)))
     .join('')
 }

@@ -139,7 +139,7 @@ const MESSAGE_START_LENGTH = 160
  *  would not see the part of a path before a cut, and the provider would
  *  get the user's name and folders. */
 export function middleMessageStarts(scope: CompactionScope): string[] {
-  return scope.middle.map(({ text, rule }) => oneLineCut(withoutStoredFilePaths(labelMediaTags(labelImageReferences(text, rule))), MESSAGE_START_LENGTH))
+  return scope.middle.map(({ text, rule }) => oneLineCut(withoutStoredFilePaths(labelMediaTags(labelImageReferences(text, rule), rule)), MESSAGE_START_LENGTH))
 }
 
 /** The asset lines of the notes of the compaction section of `sections`,

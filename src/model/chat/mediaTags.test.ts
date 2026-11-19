@@ -10,6 +10,7 @@ import {
   labelMediaTags,
   MEDIA_KEPT_ATTRIBUTE,
   mediaTagRequestText,
+  mediaTagsForRequest,
   mediaTagText,
   mediaTagTextWithKeptMark,
   mediaTagsAsLinks,
@@ -46,7 +47,7 @@ const AUDIO: MediaTagData = {
 
 // The data of a tag in a text, with no offsets.
 function read(text: string): MediaTagData[] {
-  return findMediaTags(text).map(({ from: _from, to: _to, ...data }) => data)
+  return findMediaTags(text, 'user').map(({ from: _from, to: _to, ...data }) => data)
 }
 
 describe('isSavedMediaPath and isPastedMediaPath', () => {
@@ -149,10 +150,18 @@ describe('mediaTagRequestText', () => {
   })
 
   it('stays the same when the source of the clip changes', () => {
-    const [tag] = findMediaTags(mediaTagText(VIDEO))
+    const [tag] = findMediaTags(mediaTagText(VIDEO), 'agent')
     const deleted = { ...tag, src: null, expires: null }
 
     expect(mediaTagRequestText(deleted)).toBe(mediaTagRequestText(tag))
+  })
+})
+
+describe('mediaTagsForRequest', () => {
+  it('sends each tag in its request form, also a tag in code', () => {
+    const text = `See \`x\`:\n\`\`\`\n${mediaTagText(VIDEO)}\n\`\`\`\n${mediaTagText(AUDIO)}`
+
+    expect(mediaTagsForRequest(text)).toBe(`See \`x\`:\n\`\`\`\n${mediaTagRequestText(VIDEO)}\n\`\`\`\n${mediaTagRequestText(AUDIO)}`)
   })
 })
 
@@ -167,7 +176,7 @@ describe('findMediaTags', () => {
     const video = mediaTagText(VIDEO)
     const audio = mediaTagText(AUDIO)
     const text = `Here it is:\n${video}\n\nAnd the sound:\n${audio}`
-    const tags = findMediaTags(text)
+    const tags = findMediaTags(text, 'agent')
 
     expect(tags.map((tag) => text.slice(tag.from, tag.to))).toStrictEqual([video, audio])
     expect(tags.map((tag) => tag.id)).toStrictEqual(['b', 'c'])
@@ -180,7 +189,7 @@ describe('findMediaTags', () => {
   })
 
   it('keeps the unknown attributes of a tag when one field changes', () => {
-    const [tag] = findMediaTags('<dez:video id="b" job="j-1" type="video/mp4" src="https://cdn.example/v.mp4" seed="42" url="https://cdn.example/v.mp4"/>')
+    const [tag] = findMediaTags('<dez:video id="b" job="j-1" type="video/mp4" src="https://cdn.example/v.mp4" seed="42" url="https://cdn.example/v.mp4"/>', 'agent')
 
     expect(mediaTagText({ ...tag, src: SAVED_VIDEO })).toBe(
       `<dez:video id="b" type="video/mp4" src="${SAVED_VIDEO}" url="https://cdn.example/v.mp4" job="j-1" seed="42"/>`,
@@ -215,12 +224,12 @@ describe('findMediaTags', () => {
       '<\\dez:audio id="c" type="audio/mpeg"/>',
     ]
 
-    for (const text of notTags) expect(findMediaTags(text), text).toStrictEqual([])
+    for (const text of notTags) expect(findMediaTags(text, 'agent'), text).toStrictEqual([])
   })
 
   it('takes only the audio and video names', () => {
     for (const name of ['dez:videox', 'dez:image', 'dez:tool', 'dez:Audio', 'audio']) {
-      expect(findMediaTags(`<${name} id="c" type="audio/mpeg"/>`), name).toStrictEqual([])
+      expect(findMediaTags(`<${name} id="c" type="audio/mpeg"/>`, 'agent'), name).toStrictEqual([])
     }
   })
 
@@ -236,13 +245,30 @@ describe('findMediaTags', () => {
       '<dez:audio/>',
     ]
 
-    for (const text of notTags) expect(findMediaTags(text), text).toStrictEqual([])
+    for (const text of notTags) expect(findMediaTags(text, 'agent'), text).toStrictEqual([])
   })
 
   it('finds a tag after a line that only looks like one', () => {
     const text = `<dez:audio id="B2" type="audio/mpeg"/>\nprose <dez:video\n${mediaTagText(AUDIO)}`
 
     expect(read(text)).toStrictEqual([AUDIO])
+  })
+
+  it('takes a tag in code of a user text as text, unless asked for the tags in code', () => {
+    const tag = mediaTagText(AUDIO)
+    const text = `\`\`\`\n${tag}\n\`\`\`\n${mediaTagText(VIDEO)}`
+
+    expect(findMediaTags(text, 'user').map(({ id }) => id)).toStrictEqual(['b'])
+    expect(findMediaTags(text, 'user', { inCode: true }).map(({ id }) => id)).toStrictEqual(['c', 'b'])
+    expect(labelMediaTags(text, 'user')).toBe(`\`\`\`\n${tag}\n\`\`\`\n[video]`)
+  })
+
+  // In an agent text, a tag line is a line of Dez: it ends the code.
+  it('takes a tag of an agent text after an open fence as a tag', () => {
+    const text = `\`\`\`\n${mediaTagText(AUDIO)}`
+
+    expect(findMediaTags(text, 'agent').map(({ id }) => id)).toStrictEqual(['c'])
+    expect(findMediaTags(text, 'user')).toStrictEqual([])
   })
 })
 
@@ -264,7 +290,7 @@ describe('savedMediaTag and unsavedMediaTag', () => {
   })
 
   it('keeps the offsets of a tag in a text', () => {
-    const [tag] = findMediaTags(mediaTagText({ ...VIDEO, src: CLIP_URL }))
+    const [tag] = findMediaTags(mediaTagText({ ...VIDEO, src: CLIP_URL }), 'agent')
     expect(savedMediaTag(tag, SAVED_VIDEO)).toStrictEqual({ ...tag, src: SAVED_VIDEO })
   })
 })
@@ -295,15 +321,15 @@ describe('mediaTagTextWithKeptMark and isKeptClip', () => {
 describe('splitMediaTags', () => {
   it('gives the text and the tags in order, with the whitespace kept', () => {
     const text = `Done.\n\n${mediaTagText(VIDEO)}\n\nMore?\n`
-    const pieces = splitMediaTags(text)
+    const pieces = splitMediaTags(text, 'agent')
 
     expect(pieces.map((piece) => (piece.kind === 'text' ? piece.text : piece.tag.id))).toStrictEqual(['Done.\n\n', 'b', '\n\nMore?\n'])
   })
 
   it('leaves out empty text pieces', () => {
-    expect(splitMediaTags(mediaTagText(AUDIO)).map((piece) => piece.kind)).toStrictEqual(['media'])
-    expect(splitMediaTags('')).toStrictEqual([])
-    expect(splitMediaTags('no tag')).toStrictEqual([{ kind: 'text', text: 'no tag' }])
+    expect(splitMediaTags(mediaTagText(AUDIO), 'agent').map((piece) => piece.kind)).toStrictEqual(['media'])
+    expect(splitMediaTags('', 'agent')).toStrictEqual([])
+    expect(splitMediaTags('no tag', 'agent')).toStrictEqual([{ kind: 'text', text: 'no tag' }])
   })
 })
 
@@ -311,17 +337,17 @@ describe('labelMediaTags', () => {
   const text = `Done.\n${mediaTagText(VIDEO)}\n${mediaTagText(AUDIO)}\nEnd`
 
   it('puts the label of its kind in place of each tag', () => {
-    expect(labelMediaTags(text)).toBe('Done.\n[video]\n[audio]\nEnd')
+    expect(labelMediaTags(text, 'agent')).toBe('Done.\n[video]\n[audio]\nEnd')
   })
 
   it('puts a given label in place of each tag', () => {
-    expect(labelMediaTags(text, ' ')).toBe('Done.\n \n \nEnd')
+    expect(labelMediaTags(text, 'agent', ' ')).toBe('Done.\n \n \nEnd')
   })
 })
 
 describe('mediaTagsAsLinks', () => {
   it('links to the saved file', () => {
-    expect(mediaTagsAsLinks(`Done.\n${mediaTagText(VIDEO)}\nEnd`)).toBe(`Done.\n[video](${SAVED_VIDEO})\nEnd`)
+    expect(mediaTagsAsLinks(`Done.\n${mediaTagText(VIDEO)}\nEnd`, 'agent')).toBe(`Done.\n[video](${SAVED_VIDEO})\nEnd`)
   })
 
   it('puts a saved path that is no plain link destination in angle brackets', () => {
@@ -331,34 +357,34 @@ describe('mediaTagsAsLinks', () => {
       ['/home/a<b>c\\d/.config/dez/assets/generated/audio/a1.mp3', '[audio](</home/a\\<b\\>c\\\\d/.config/dez/assets/generated/audio/a1.mp3>)'],
     ]
 
-    for (const [src, link] of cases) expect(mediaTagsAsLinks(mediaTagText({ ...AUDIO, src }))).toBe(link)
+    for (const [src, link] of cases) expect(mediaTagsAsLinks(mediaTagText({ ...AUDIO, src }), 'agent')).toBe(link)
   })
 
   it('links to the provider URL of a clip with no saved file', () => {
-    expect(mediaTagsAsLinks(mediaTagText({ ...VIDEO, src: CLIP_URL }))).toBe(`[video](${CLIP_URL})`)
-    expect(mediaTagsAsLinks(mediaTagText({ ...VIDEO, src: CACHED_VIDEO }))).toBe(`[video](${CLIP_URL})`)
-    expect(mediaTagsAsLinks(mediaTagText({ ...VIDEO, src: null }))).toBe(`[video](${CLIP_URL})`)
+    expect(mediaTagsAsLinks(mediaTagText({ ...VIDEO, src: CLIP_URL }), 'agent')).toBe(`[video](${CLIP_URL})`)
+    expect(mediaTagsAsLinks(mediaTagText({ ...VIDEO, src: CACHED_VIDEO }), 'agent')).toBe(`[video](${CLIP_URL})`)
+    expect(mediaTagsAsLinks(mediaTagText({ ...VIDEO, src: null }), 'agent')).toBe(`[video](${CLIP_URL})`)
   })
 
   it('gives only the label of a clip with no saved file and no URL', () => {
-    expect(mediaTagsAsLinks(mediaTagText(AUDIO))).toBe('[audio]')
-    expect(mediaTagsAsLinks(mediaTagText({ ...VIDEO, src: CACHED_VIDEO, url: null }))).toBe('[video]')
+    expect(mediaTagsAsLinks(mediaTagText(AUDIO), 'agent')).toBe('[audio]')
+    expect(mediaTagsAsLinks(mediaTagText({ ...VIDEO, src: CACHED_VIDEO, url: null }), 'agent')).toBe('[video]')
   })
 
   it('links to a linked file, and takes no relative path as a file', () => {
     const nested = '/home/u/.config/dez/assets/generated/video/sub/9f3c.mp4'
-    expect(mediaTagsAsLinks(mediaTagText({ ...VIDEO, src: nested, url: null }))).toBe(`[video](${nested})`)
-    expect(mediaTagsAsLinks(mediaTagText({ ...VIDEO, src: '/home/u/Videos/clip (1).mp4', url: null }))).toBe('[video](</home/u/Videos/clip (1).mp4>)')
-    expect(mediaTagsAsLinks(mediaTagText({ ...VIDEO, src: 'home/u/.config/dez/assets/generated/video/9f3c.mp4', url: null }))).toBe('[video]')
+    expect(mediaTagsAsLinks(mediaTagText({ ...VIDEO, src: nested, url: null }), 'user')).toBe(`[video](${nested})`)
+    expect(mediaTagsAsLinks(mediaTagText({ ...VIDEO, src: '/home/u/Videos/clip (1).mp4', url: null }), 'user')).toBe('[video](</home/u/Videos/clip (1).mp4>)')
+    expect(mediaTagsAsLinks(mediaTagText({ ...VIDEO, src: 'home/u/.config/dez/assets/generated/video/9f3c.mp4', url: null }), 'user')).toBe('[video]')
   })
 
   it('gives only the label for a target with a line break', () => {
-    expect(mediaTagsAsLinks(mediaTagText({ ...AUDIO, url: 'https://x.example/a\nb' }))).toBe('[audio]')
+    expect(mediaTagsAsLinks(mediaTagText({ ...AUDIO, url: 'https://x.example/a\nb' }), 'agent')).toBe('[audio]')
   })
 
   it('keeps a text with no tag as it is', () => {
     const text = 'A line with <dez:video id="b" type="video/mp4"/> in it.'
 
-    expect(mediaTagsAsLinks(text)).toBe(text)
+    expect(mediaTagsAsLinks(text, 'agent')).toBe(text)
   })
 })

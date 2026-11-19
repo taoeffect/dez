@@ -1032,6 +1032,52 @@ describe('images', () => {
     ])
   })
 
+  // The report: references in a code fence to files that are gone showed
+  // "Image not found" boxes. Code is text (src/model/chat/codeRanges.ts).
+  it('shows a reference in code as its text, with no image and no "Image not found" box', async () => {
+    await newTab(browser)
+    await focusEditor(browser)
+    const gone = `![id=a](${path.join(imagesDir(), 'gone.png')})`
+    const typed = `Code:\n\`\`\`\n${gone}\n\`\`\`\nand \`${gone}\`\n\n    ${gone}\n\nNot code: ${gone}`
+    await typeAtEnd(typed)
+    await waitForValue(browser, 'typed doc', () => editorDoc(browser), typed)
+    // Only the reference out of code gets a box.
+    await waitForValue(browser, 'missing image boxes', () => browser.execute(
+      () => Array.from(document.querySelectorAll('.cm-content .dez-image-missing'), (box) => box.firstChild?.textContent ?? null),
+    ), ['Image not found: gone.png'])
+    expect(await browser.execute(() => document.querySelectorAll('.cm-content .dez-image').length)).toBe(1)
+    const shownText = await browser.execute(() => document.querySelector('.cm-content')?.textContent ?? '')
+    expect(shownText.split(gone).length - 1).toBe(3)
+  })
+
+  it('shows and sends only the image whose reference is out of code, with no toast, and the code with no path', async () => {
+    await newTab(browser)
+    await pickModel(browser, VISION.name, VISION.modelName)
+    const image = await insertPastedImage('', '')
+    const code = `\n\`\`\`\n${image.reference}\n\`\`\`\nand \`${image.reference}\``
+    await typeAtEnd(code)
+    await waitForValue(browser, 'doc with the copies in code', () => editorDoc(browser), image.reference + code)
+    await waitForValue(browser, 'shown image', () => shownImages(browser), [shownPastedImage(image)])
+
+    const request = await sendRequest()
+    expect(request.body).toHaveProperty('messages', [openAiSystemMessage(VISION), {
+      role: 'user',
+      content: [
+        { type: 'text', text: '![id=a](image)' },
+        PASTED_IMAGE_URL_PART,
+        { type: 'text', text: '\n```\n![id=a](image)\n```\nand `![id=a](image)`' },
+      ],
+    }])
+    expect(request.rawBody).not.toContain(imagesDir())
+    expect(await openToasts(browser)).toEqual([])
+    await sendChatReply(request.reply, VISION.modelName)
+    await waitForThread(browser, [
+      { role: 'user', text: image.reference + code },
+      { role: 'agent', text: replyText(VISION.modelName) },
+      { role: 'user', text: '' },
+    ])
+  })
+
   it('sends no image path, also for a reference that shows its source and an image in a reply', async () => {
     await newTab(browser)
     await pickModel(browser, VISION.name, VISION.modelName)

@@ -150,7 +150,7 @@ export function findHiddenAssets(sections: readonly ChipSection[]): HiddenAsset[
       const owner = ownerOf(jobId, image.from)
       if (owner) assets.push({ kind: 'image', owner, from: image.from, to: image.to, image })
     }
-    for (const tag of findMediaTags(text)) {
+    for (const tag of findMediaTags(text, 'agent')) {
       const jobId = tag.other.find((attribute) => attribute.name === MEDIA_HIDDEN_ATTRIBUTE)?.value
       if (jobId === undefined || inBlock(tag.from)) continue
       const owner = ownerOf(jobId, tag.from)
@@ -173,7 +173,7 @@ function keptUserAssets(text: string): HiddenAsset[] {
     if (!isKeptImage(image) || !isAloneOnItsLine(text, image.from, image.to)) continue
     assets.push({ kind: 'image', owner, from: image.from, to: image.to, image })
   }
-  for (const tag of findMediaTags(text)) {
+  for (const tag of findMediaTags(text, 'user')) {
     if (isKeptClip(tag)) assets.push({ kind: 'clip', owner, from: tag.from, to: tag.to, tag })
   }
   return assets.sort((a, b) => a.from - b.from)
@@ -187,7 +187,7 @@ function blockAssetsOf(text: string, to: number, rule: LinkedPathRule): HiddenAs
   const owner: HiddenAssetOwner = { kind: 'compaction' }
   const assets: HiddenAsset[] = []
   for (const image of findImageReferences(text.slice(0, to), rule)) assets.push({ kind: 'image', owner, from: image.from, to: image.to, image })
-  for (const tag of findMediaTags(text.slice(0, to))) assets.push({ kind: 'clip', owner, from: tag.from, to: tag.to, tag })
+  for (const tag of findMediaTags(text.slice(0, to), rule)) assets.push({ kind: 'clip', owner, from: tag.from, to: tag.to, tag })
   return assets.sort((a, b) => a.from - b.from)
 }
 

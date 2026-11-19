@@ -71,19 +71,21 @@ export function highestMediaId(ids: Iterable<string | null>): string | null {
 }
 
 /** The highest id that the conversation of `texts` ever gave: the highest
- *  one in its image references and media tags, and the `last-id` of a
- *  compaction tag at the start of the first text. Null for a conversation
- *  that gave none. `texts` are the texts of the whole conversation in
- *  order: one for each section, or the editor doc as one text. A new
- *  compaction tag keeps this id (`last-id`). */
+ *  one in its image references and media tags, also the ones in code, and
+ *  the `last-id` of a compaction tag at the start of the first text. Null
+ *  for a conversation that gave none. `texts` are the texts of the whole
+ *  conversation in order: one for each section, or the editor doc as one
+ *  text. A new compaction tag keeps this id (`last-id`). */
 export function highestConversationMediaId(texts: readonly string[]): string | null {
   // The ids of linked references count in every section (the `user` rule),
-  // so a new id is never the id of one.
+  // so a new id is never the id of one. An id in code counts too: the user
+  // can take the code marks away, and the reference or the tag is then an
+  // asset again, which must not share its id with a newer one.
   return highestMediaId([
     compactionLastId(texts[0] ?? ''),
     ...texts.flatMap((text) => [
-      ...findImageReferences(text, 'user').map((reference) => reference.id),
-      ...findMediaTags(text).map((tag) => tag.id),
+      ...findImageReferences(text, 'user', { inCode: true }).map((reference) => reference.id),
+      ...findMediaTags(text, 'user', { inCode: true }).map((tag) => tag.id),
     ]),
   ])
 }
@@ -99,18 +101,19 @@ export function newMediaIds(texts: readonly string[], count: number): string[] {
   return Array.from({ length: count }, () => (id = nextMediaId(id)))
 }
 
-/** The image references and the media tags of `text`, in doc order. The
- *  text can span sections, so linked references count in each (the `user`
- *  rule): an id stays unique over every reference that has one. */
+/** The image references and the media tags of `text`, in doc order, also
+ *  the ones in code (see `highestConversationMediaId`). The text can span
+ *  sections, so linked references count in each (the `user` rule): an id
+ *  stays unique over every reference that has one. */
 export function findAssets(text: string): Asset[] {
-  const references = findImageReferences(text, 'user').map((reference): Asset => ({
+  const references = findImageReferences(text, 'user', { inCode: true }).map((reference): Asset => ({
     from: reference.from,
     to: reference.to,
     id: reference.id,
     owner: reference.path,
     withId: (id) => imageIdChange(reference, id),
   }))
-  const tags = findMediaTags(text).map((tag): Asset => ({
+  const tags = findMediaTags(text, 'user', { inCode: true }).map((tag): Asset => ({
     from: tag.from,
     to: tag.to,
     id: tag.id,

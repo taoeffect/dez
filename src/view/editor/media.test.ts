@@ -82,6 +82,16 @@ describe('renderedMedia', () => {
     expect(shown(state)).toEqual([])
   })
 
+  // In a reply, a line of Dez ends the code of the model; in a message of
+  // the user, a tag in code is text.
+  it('leaves a tag in code as text, shows one after an open fence of a reply, and one in the next section', () => {
+    const state = createState(
+      [`\`\`\`\n${tag('video', 'a')}\n\`\`\``, `\`\`\`\n${tag('audio', 'b')}`, `\`\`\`\n${tag('video', 'c')}`, tag('video', 'd')],
+      ['user', 'agent', 'user', 'user'],
+    )
+    expect(shown(state).map(([, id]) => id)).toEqual(['b', 'd'])
+  })
+
   it('keeps the same array until a change can change the players', () => {
     const state = createState(['ask', tag('video', 'a')], ['user', 'agent'])
     const media = renderedMedia(state)

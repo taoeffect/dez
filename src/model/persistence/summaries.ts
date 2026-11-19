@@ -23,7 +23,7 @@ export function readableTexts(sections: SectionData[], nodeText: (node: ContentN
 // shows as `[audio]` or `[video]`.
 function nodePlainText(node: ContentNodeData, role: Role): string {
   if (node.kind === 'prompt') return labelImageReferences(node.body, role)
-  return labelImageReferences(labelMediaTags(role === 'agent' ? labelToolBlocks(node.text, ' ') : node.text), role)
+  return labelImageReferences(labelMediaTags(role === 'agent' ? labelToolBlocks(node.text, ' ') : node.text, role), role)
 }
 
 function sectionHasVisibleContent(section: SectionData): boolean {

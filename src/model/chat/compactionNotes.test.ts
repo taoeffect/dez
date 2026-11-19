@@ -134,7 +134,7 @@ describe('compactionNotesText', () => {
     expect(lines[lineIndex(userImage.id) - 1]).toBe(userImage.text)
     expect(lines[lineIndex(PHOTO.id) - 1]).toBe('')
     expect(findImageReferences(text, 'agent').map((reference) => reference.id)).toStrictEqual([FRAME.id, userImage.id])
-    expect(findMediaTags(text).map((tag) => tag.id)).toStrictEqual([THEME.id])
+    expect(findMediaTags(text, 'agent').map((tag) => tag.id)).toStrictEqual([THEME.id])
   })
 
   it.each<[string, NotesAssetLine, Partial<NotesAssetLine>]>([
@@ -161,11 +161,30 @@ describe('compactionNotesText', () => {
     const text = compactionNotesText(notesData({ requirements, assets: [{ ...THEME, sentence }] }))
 
     expect(findToolBlocks(requirements)).toHaveLength(1)
-    expect(findMediaTags(requirements)).toHaveLength(1)
+    expect(findMediaTags(requirements, 'agent')).toHaveLength(1)
     expect(findToolBlocks(text)).toStrictEqual([])
-    expect(findMediaTags(text).map((tag) => tag.id)).toStrictEqual([THEME.id])
+    expect(findMediaTags(text, 'agent').map((tag) => tag.id)).toStrictEqual([THEME.id])
     expect(notesAssetLines(text).get(THEME.id)?.sentence).toBe(sentence)
     expect(unescapedModelText(text)).toContain(requirements)
+  })
+
+  // Code is text: an open fence of the model would hold the lines of the
+  // assets part, and the readers would find no asset in them.
+  it.each([
+    ['```', 'Use this:\n```ts\nconst a = 1'],
+    ['~~~~', 'Use this:\n~~~~\nconst a = 1\n~~~'],
+  ])('closes a fence %s that the requirements leave open, and still reads the assets after it', (closer, requirements) => {
+    const text = compactionNotesText(notesData({ requirements, assets: [FRAME, THEME] }))
+
+    expect(partText(text, REQUIREMENTS)).toBe(`${requirements}\n${closer}`)
+    expect(findImageReferences(text, 'agent').map((reference) => reference.id)).toStrictEqual([FRAME.id])
+    expect([...notesAssetLines(text).keys()]).toStrictEqual([FRAME.id, THEME.id])
+  })
+
+  it('adds no closer to requirements whose fences are all closed', () => {
+    const requirements = 'Use this:\n```ts\nconst a = 1\n```'
+
+    expect(partText(compactionNotesText(notesData({ requirements })), REQUIREMENTS)).toBe(requirements)
   })
 })
 
@@ -503,7 +522,7 @@ describe('the message parts of the user', () => {
     expect(notesMessages(text).map((message) => message.text)).toStrictEqual(texts)
     expect(findToolBlocks(text)).toStrictEqual([])
     expect(findImageReferences(text, 'agent').map((reference) => reference.id)).toStrictEqual(['a'])
-    expect(findMediaTags(text).map((tag) => tag.id)).toStrictEqual(['b'])
+    expect(findMediaTags(text, 'agent').map((tag) => tag.id)).toStrictEqual(['b'])
     expect([...notesAssetLines(text).keys()]).toStrictEqual([PHOTO.id])
     expect([...notesJobLines(text).keys()]).toStrictEqual(['j-aaaa'])
   })

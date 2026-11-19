@@ -116,6 +116,12 @@ describe('pastedMediaIdChanges', () => {
     expect(paste('/>', before)).toBe(`${before}/>`)
   })
 
+  it('gives a pasted image the next id when a reference or a tag in code has its id', () => {
+    const before = `\`\`\`\n![id=a](${image('a')})\n${clip('b')}\n\`\`\`\n`
+
+    expect(paste(`![id=a](${image('x')})\n${clip('b', 'audio')}`, before)).toBe(`${before}![id=c](${image('x')})\n${clip('d', 'audio')}`)
+  })
+
   it('leaves an image reference in an attribute of a pasted tag that gets a new id', () => {
     const before = `![id=a](${image('a')})\n`
     const nested = `![id=a](${image('n')})`
@@ -209,6 +215,12 @@ describe('newMediaIds', () => {
 
   it('skips a line that only looks like a media tag', () => {
     expect(newMediaIds([`See ${clip('k')}`, '<dez:video id="K" type="video/mp4"/>', '<dez:video id="m"/>'], 1)).toStrictEqual(['a'])
+  })
+
+  // The user can take the code marks away: the reference or the tag is
+  // then an asset again, and its id must still be its own.
+  it('counts the ids of the references and the tags in code', () => {
+    expect(newMediaIds([`\`\`\`\n${image('a', 'c')}\n${clip('d')}\n\`\`\`\nand \`${image('b', 'e')}\``], 1)).toStrictEqual(['f'])
   })
 
   it('gives the ids after the last id of the compaction tag of the first text, which names assets that a compaction removed', () => {

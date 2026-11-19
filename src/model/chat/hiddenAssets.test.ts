@@ -70,6 +70,16 @@ describe('findHiddenAssets', () => {
     expect(found(`${invoke('j-aaaa')}\n\n${shown}`)).toStrictEqual([])
     expect(found(`${failed}\n\n${hiddenImage('j-aaaa')}`)).toStrictEqual([])
   })
+
+  // A line of Dez ends the code of a reply, so a hidden clip after an open
+  // fence is still hidden.
+  it('takes no image reference in code, and a clip after an open fence', () => {
+    const image = hiddenImage('j-aaaa')
+    const clip = hiddenClip('j-aaaa')
+
+    expect(found(`${invoke('j-aaaa')}\n\n\`\`\`\n${image}\n\`\`\``)).toStrictEqual([])
+    expect(found(`${invoke('j-aaaa')}\n\n\`\`\`\n${image}\n\n${clip}`)).toStrictEqual([['j-aaaa call_1', clip]])
+  })
 })
 
 describe('findHiddenAssets in a conversation (the chip that owns an asset)', () => {
@@ -122,7 +132,7 @@ describe('findKeptAssets', () => {
   const DATA = { count: 1, lastId: 'd', pictures: [] }
   const TAG = compactionTagText(DATA)
   const keptImage = idImage(HIDDEN_IMAGE_PATH, 'b', true)
-  const keptClip = mediaTagTextWithKeptMark(findMediaTags(hiddenClip('j-aaaa'))[0], true)
+  const keptClip = mediaTagTextWithKeptMark(findMediaTags(hiddenClip('j-aaaa'), 'agent')[0], true)
   const linked = idImage('/home/u/Pictures/cat.png', 'a', true)
 
   // The text of each kept asset, for each section.
@@ -200,7 +210,7 @@ describe('the marker of a hidden asset', () => {
   })
 
   it('stays in the tag of a clip that is saved, and of one whose saved file is deleted', () => {
-    const [tag] = findMediaTags(hiddenClip('j-aaaa'))
+    const [tag] = findMediaTags(hiddenClip('j-aaaa'), 'agent')
     const saved = mediaTagText(savedMediaTag(tag, '/home/u/.config/dez/assets/generated/audio/two.wav'))
 
     expect(saved).toContain(' src="/home/u/.config/dez/assets/generated/audio/two.wav" ')

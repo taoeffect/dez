@@ -382,7 +382,7 @@ export function partsImageReferences(parts: readonly LinkedRulePart[]): ImageRef
  *  in that text, each one with the rule of its part. A tag is a whole
  *  line, so no tag runs over the end of a block. */
 export function partsMediaTags(parts: readonly LinkedRulePart[]): { tag: MediaTag, rule: LinkedPathRule }[] {
-  return parts.flatMap(({ text, from, rule }) => findMediaTags(text)
+  return parts.flatMap(({ text, from, rule }) => findMediaTags(text, rule)
     .map((tag) => ({ tag: { ...tag, from: from + tag.from, to: from + tag.to }, rule })))
 }
 

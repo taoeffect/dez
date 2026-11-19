@@ -1,7 +1,7 @@
 import sbp from '@sbp/sbp'
 import { StateEffect, StateField, type EditorState, type Extension, type Text } from '@codemirror/state'
 import { Decoration, EditorView, ViewPlugin, WidgetType, showTooltip, type DecorationSet, type PluginValue, type Rect, type Tooltip } from '@codemirror/view'
-import { SENTINEL_CHAR } from '../../model/chat/content'
+import { SENTINEL_CHAR, plainLiveText } from '../../model/chat/content'
 import { findImageReferences, imageExtension, imageMediaType, type ImageReference } from '../../model/chat/images'
 import { fileNameOf } from '../../utils/fileName'
 import { isMacPlatform } from '../../utils/platform'
@@ -14,7 +14,7 @@ import { syncDomSelection } from './focus'
 import { compactionBlockEnd } from './compactionBlock'
 import { noteDrawnAsset, type AssetPlace } from './drawnAssets'
 import { HiddenAssetWidget, hiddenAssetLines, hiddenAssetOwnerKinds } from './hiddenAssets'
-import { sectionRolesChanged } from './lineBlocks'
+import { sectionRolesChanged, sectionTexts } from './lineBlocks'
 import { followShownRange, pendingRanges, type DocRange } from './pendingRanges'
 import { ROUND_STROKE, svgIcon } from './svgIcon'
 import { tableRowStarts } from './tables'
@@ -304,11 +304,12 @@ class ImageWidget extends WidgetType {
   }
 }
 
-/** The image references that the editor shows as images, in doc order, each
- *  read with the role of its section (`findImageReferences`): a linked
- *  reference shows only in a user section. With no `sectionsField`, every
- *  line has the agent rule (stored paths only). Not shown, so left as
- *  source text:
+/** The image references that the editor shows as images, in doc order. Each
+ *  section is read as a request reads it: its plain text (`plainLiveText`),
+ *  with the role of the section (`findImageReferences`): a linked reference
+ *  shows only in a user section, and a reference in Markdown code is text.
+ *  With no `sectionsField`, the doc is one text with the agent rule (stored
+ *  paths only). Not shown, so left as source text:
  *  - a reference on a line with a sentinel (a section separator or a pill
  *    marker), whose widgets and atomic ranges must stay the only ones there;
  *  - a reference on a table row line (`tableRowStarts`): a widget there
@@ -316,22 +317,26 @@ class ImageWidget extends WidgetType {
  *    `tables.ts`). */
 function findRenderedImages(state: EditorState): ImageReference[] {
   const { doc } = state
+  const docText = doc.toString()
+  if (!docText.includes('![')) return []
   const sections = state.field(sectionsField, false)
+  const texts = sections
+    ? sectionTexts(docText, sections).map(({ section, from, text }) => ({ rule: section.role, from, text }))
+    : [{ rule: 'agent' as const, from: 0, text: docText }]
   const images: ImageReference[] = []
-  let lineFrom = 0
-  // The section of a line is the count of the separators before it
-  // (`sectionTexts` in lineBlocks.ts).
-  let section = 0
-  for (const text of doc.iterLines()) {
-    const from = lineFrom
-    lineFrom += text.length + 1
-    const lineSection = section
-    if (text.includes(SECTION_SEP)) section += text.split(SECTION_SEP).length - 1
-    if (!text.includes('![') || SENTINEL_CHAR.test(text)) continue
-    const references = findImageReferences(text, sections?.[lineSection]?.role ?? 'agent')
-    if (references.length === 0) continue
-    if (tableRowStarts(doc).has(from)) continue
-    for (const reference of references) images.push({ ...reference, from: from + reference.from, to: from + reference.to })
+  for (const { rule, from, text } of texts) {
+    if (!text.includes('![')) continue
+    const plain = plainLiveText(text)
+    for (const reference of findImageReferences(plain.text, rule)) {
+      const start = from + plain.liveOffset(reference.from)
+      // The offset of the last char, not of the char after the reference:
+      // a marker right after the reference is not part of it.
+      const end = from + plain.liveOffset(reference.to - 1) + 1
+      if (end - start !== reference.to - reference.from) continue
+      const line = doc.lineAt(start)
+      if (SENTINEL_CHAR.test(line.text) || tableRowStarts(doc).has(line.from)) continue
+      images.push({ ...reference, from: start, to: end })
+    }
   }
   return images
 }

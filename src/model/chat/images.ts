@@ -1,4 +1,5 @@
 import { fileNameOf } from '../../utils/fileName'
+import { codeRanges, inCode } from './codeRanges'
 import type { Role } from './types'
 
 // A Dez image reference is plain text in a text node, in the markdown image
@@ -26,9 +27,12 @@ import type { Role } from './types'
 //   reads, and sends on an `@id` mention.
 // Any other markdown image (a URL, a relative path, the old form with the
 // path in the alt text) stays plain text: it is not rendered and not sent
-// as an image. The editor, the request builder, and the title, preview, and
-// search text all use this one recognizer. Providers get no path, only the
-// reference's metadata (`withoutStoredFilePaths`, storedFilePaths.ts).
+// as an image. A reference in Markdown code (a fence, an indented block, a
+// code span: codeRanges.ts) is plain text too; only the id sequence
+// (mediaIds.ts) reads it, so that its id stays taken. The editor, the
+// request builder, and the title, preview, and search text all use this
+// one recognizer. Providers get no path, only the reference's metadata
+// (`withoutStoredFilePaths`, storedFilePaths.ts).
 
 // The image types that Dez stores as they are; the paste and drop code
 // converts other image types to PNG. OpenAI, Anthropic, and Venice accept
@@ -257,8 +261,9 @@ export function linkedPathCounts(path: string, rule: LinkedPathRule): boolean {
 }
 
 /** The image references in a text whose linked paths count by `rule`, in
- *  order (see the top of this file). */
-export function findImageReferences(text: string, rule: LinkedPathRule): ImageReference[] {
+ *  order (see the top of this file). A reference in code is text, so it is
+ *  not here, unless `options.inCode` is set. */
+export function findImageReferences(text: string, rule: LinkedPathRule, options: { inCode?: boolean } = {}): ImageReference[] {
   const references: ImageReference[] = []
   IMAGE_REFERENCE.lastIndex = 0
   // No `![` can start inside a match after its own `!`: the alt text holds
@@ -278,7 +283,9 @@ export function findImageReferences(text: string, rule: LinkedPathRule): ImageRe
       metadata,
     })
   }
-  return references
+  if (references.length === 0 || options.inCode) return references
+  const code = codeRanges(text, rule)
+  return code.length === 0 ? references : references.filter((reference) => !inCode(code, reference.from))
 }
 
 /** The offset of the image reference that ends `text`, a text of a request

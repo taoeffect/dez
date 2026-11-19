@@ -27,7 +27,7 @@ describe('assetTextPieces', () => {
     const tag = mediaTagText(SONG)
     const text = `See ${idImage(RED, 'a')} and\n${tag}\n@a`
 
-    expect(assetTextPieces(text, 'user').map((piece) => piece.kind === 'media' ? { kind: piece.kind, text: text.slice(piece.tag.from, piece.tag.to) } : { kind: piece.kind, text: text.slice(piece.from, piece.to) })).toStrictEqual([
+    expect(assetTextPieces(text, 'user').map((piece) => 'tag' in piece ? { kind: piece.kind, text: text.slice(piece.tag.from, piece.tag.to) } : { kind: piece.kind, text: text.slice(piece.from, piece.to) })).toStrictEqual([
       { kind: 'gap', text: 'See ' },
       { kind: 'reference', text: idImage(RED, 'a') },
       { kind: 'gap', text: ' and\n' },
@@ -48,6 +48,32 @@ describe('assetTextPieces', () => {
 
     expect(assetTextPieces(text, 'user')).toStrictEqual([{ kind: 'reference', from: 0, to: text.length, path: LINKED, kept: false }])
     expect(assetTextPieces(text, 'agent')).toStrictEqual([{ kind: 'gap', from: 0, to: text.length }])
+  })
+
+  it('gives the code as code pieces, with a reference in code as a part of its code, and a tag in code as a codeTag', () => {
+    const tag = mediaTagText(SONG)
+    const fenced = `\`\`\`\n${idImage(RED, 'a')}\n${tag}\n@a\n\`\`\``
+    const text = `See \`${idImage(FOX, 'b')}\` and ${idImage(RED, 'a')}\n\n${fenced}\n@b`
+    const pieces = assetTextPieces(text, 'user').map((piece) => 'tag' in piece ? { kind: piece.kind, text: text.slice(piece.tag.from, piece.tag.to) } : { kind: piece.kind, text: text.slice(piece.from, piece.to) })
+
+    expect(pieces).toStrictEqual([
+      { kind: 'gap', text: 'See ' },
+      { kind: 'code', text: `\`${idImage(FOX, 'b')}\`` },
+      { kind: 'gap', text: ' and ' },
+      { kind: 'reference', text: idImage(RED, 'a') },
+      { kind: 'gap', text: '\n\n' },
+      { kind: 'code', text: `\`\`\`\n${idImage(RED, 'a')}\n` },
+      { kind: 'codeTag', text: tag },
+      { kind: 'code', text: '\n@a\n```' },
+      { kind: 'gap', text: '\n@b' },
+    ])
+  })
+
+  it('ends the code of an agent text at a line of Dez', () => {
+    const tag = mediaTagText(SONG)
+    const text = `\`\`\`\nopen\n${tag}\n@c`
+
+    expect(assetTextPieces(text, 'agent').map((piece) => piece.kind)).toStrictEqual(['code', 'media', 'gap'])
   })
 })
 
@@ -97,6 +123,15 @@ describe('namedMentions', () => {
     expect(named([user(`${linked}\n${tag}`)])).toStrictEqual([[]])
   })
 
+  it('reads no mention in code, and takes no image or clip in code for a mention', () => {
+    const sections = [
+      user(`\`\`\`\n${idImage(RED, 'a')}\n${mediaTagText(SONG)}\n\`\`\`\n${idImage(FOX, 'b')}`),
+      user('`@b` and @a and @c and @b\n\n    @b'),
+    ]
+
+    expect(named(sections)).toStrictEqual([[], ['@b=image']])
+  })
+
   // A linked reference is plain text in an agent section: it gives no id,
   // and a request takes its path out, so its line shows no mention.
   it('does not count a linked reference of an agent section', () => {
@@ -143,7 +178,7 @@ describe('namedMentions and the request', () => {
       ...mentions.flatMap(({ id, kind }) => (kind === 'image' ? [pathsById.get(id) ?? ''] : [])),
     ]
     const clips = [
-      ...findMediaTags(message.text).map(({ id }) => id).filter((id) => !pathsById.has(id)),
+      ...findMediaTags(message.text, 'user').map(({ id }) => id).filter((id) => !pathsById.has(id)),
       ...mentions.flatMap(({ id, kind }) => (kind === 'image' ? [] : [id])),
     ]
     return { images: [...new Set(images)].sort(), clips: [...new Set(clips)].sort() }
@@ -167,6 +202,8 @@ describe('namedMentions and the request', () => {
     ['a mention in a reference and in a tag', conversation(idImage(RED, 'a'), clips, `${imageMarkdown(LINKED, [{ key: 'id', value: 'b' }, { key: 'note', value: '@a' }])}\n${mediaTagText({ ...SONG, id: 'e', other: [{ name: 'note', value: '@d' }] })}`)],
     ['a linked reference of an agent section', conversation('hi', idImage(LINKED, 'a'), '@a')],
     ['mentions next to a line with a bare path', conversation(idImage(RED, 'a'), idImage(FOX, 'b'), `Open ${FOX} now\nand @a with @b`)],
+    ['a reference, a tag, and mentions in code', conversation(idImage(RED, 'a'), clips, `\`\`\`\n${idImage(FOX, 'b')}\n${mediaTagText({ ...SONG, id: 'e' })}\n@a @e\n\`\`\`\nand \`@d\` and @c`)],
+    ['a reference in code of an agent section', conversation('hi', `\`\`\`\n${idImage(FOX, 'b')}\n\`\`\``, '@b')],
   ])('names what a request sends: %s', (_name, sections) => {
     expect(namedByMessage(sections)).toStrictEqual(sent(sections))
   })

@@ -37,7 +37,7 @@ export function dropCopiesFile(canonicalPath: string, copyFolders: readonly stri
  *  must stay a user section, as its linked paths count nowhere else. */
 export function holdsLinkedFile(text: string): boolean {
   return findImageReferences(text, 'user').some((reference) => reference.linked)
-    || findMediaTags(text).some((tag) => tag.src !== null && isLinkedMediaPath(tag.src))
+    || findMediaTags(text, 'user').some((tag) => tag.src !== null && isLinkedMediaPath(tag.src))
 }
 
 /** A dropped `File` as a drop event gives it: no path, only a name and a

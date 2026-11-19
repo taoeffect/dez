@@ -1,6 +1,7 @@
 import { countOf } from '../../utils/countText'
 import { usdText } from '../providers/modelPrices'
 import { ASSET_NAME_SOURCE, ASSET_NAMES, jobResultLegend, jobResultState, type JobAssetKind, type JobInfo, type JobResultState, type JobStatus } from '../tools/jobs'
+import { openFenceCloser } from './codeRanges'
 import { blockLinkedRule, COMPACTION_TAG_NAME, readCompactionBlock, USER_MESSAGE_TAG_NAME } from './compaction'
 import type { ConversationCost } from './conversationCost'
 import { IMAGE_ID_SOURCE, labelImageReferences, type LinkedPathRule } from './images'
@@ -96,7 +97,9 @@ import type { Role } from './types'
 //   user is never a line of Dez.
 // - The requirements and decisions are the text part of the answer of
 //   the model to the compaction request (streams/compactionRequest.ts). A
-//   blank part is left out.
+//   blank part is left out. A part that leaves a code fence open gets a
+//   closer line (`openFenceCloser`, codeRanges.ts): code is text, so the
+//   fence would else hold the asset lines of Dez after it.
 // - The parts of the assets, the jobs, and the cost are of Dez. The
 //   compaction removes the tool blocks of the conversation, so these lines
 //   are all that still tells who made an asset, and which job is which:
@@ -370,12 +373,19 @@ function userMessagesText({ firstMessage, middleMessages, leftOutMessages, final
   return parts.join('\n\n')
 }
 
+// `text`, a text of a model in the notes, with a closer line for the code
+// fence that it leaves open at its end.
+function closedFences(text: string): string {
+  const closer = openFenceCloser(text)
+  return closer === null ? text : `${text}\n${closer}`
+}
+
 /** The text of the notes: the lines of a compaction block between its tag
  *  line and its end line (`compactionBlockText`). */
 export function compactionNotesText(notes: CompactionNotes): string {
   const parts: string[] = []
   const add = (heading: string, text: string) => parts.push(`${heading}\n\n${text}`)
-  if (notes.requirements.trim() !== '') add(REQUIREMENTS_HEADING, escapedModelText(notes.requirements.trim()))
+  if (notes.requirements.trim() !== '') add(REQUIREMENTS_HEADING, closedFences(escapedModelText(notes.requirements.trim())))
   const assets = notes.assets.map(assetRow)
   add(ASSETS_HEADING, assets.length > 0 || notes.unnamed.length > 0 ? [notesTableText(ASSETS_TABLE, assets), ...notes.unnamed].join('\n\n') : NO_NOTES_ASSETS_TEXT)
   add(JOBS_HEADING, notes.jobs.length > 0 ? notesTableText(JOBS_TABLE, notes.jobs.map((job) => jobRow(job, notes.jobInputs.get(job.id)))) : NO_NOTES_JOBS_TEXT)
@@ -529,7 +539,7 @@ export function notesJobLines(notes: string): Map<string, NotesJobLine> {
  *  escape: with the escape removed first, a tag that a model wrote would
  *  read as a tag of Dez. */
 export function compactionNotesForPeople(notes: string, rule: LinkedPathRule): string {
-  const labeled = (text: string) => labelMediaTags(labelImageReferences(text, rule))
+  const labeled = (text: string) => labelMediaTags(labelImageReferences(text, rule), rule)
   const pieces: string[] = []
   let from = 0
   for (const message of notesMessages(notes)) {

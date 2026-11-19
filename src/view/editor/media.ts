@@ -2,7 +2,7 @@ import sbp from '@sbp/sbp'
 import { StateField, type EditorState, type Extension } from '@codemirror/state'
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view'
 import { createApp, h, reactive, shallowRef, type App, type ShallowRef } from 'vue'
-import { SENTINEL_CHAR } from '../../model/chat/content'
+import { SENTINEL_CHAR, plainLiveText } from '../../model/chat/content'
 import { MEDIA_TAG_NAMES, findMediaTags, isLinkedMediaPath, isPastedMediaPath, isTempMediaPath, mediaTagText, savedMediaTag, unsavedMediaTag, type MediaTag, type MediaTagData } from '../../model/chat/mediaTags'
 import MediaPlayer from '../media/MediaPlayer.vue'
 import { expiryNotice } from '../media/clipState'
@@ -260,15 +260,19 @@ class MediaWidget extends WidgetType {
 /** The tags that the editor shows as players, in doc order, each with
  *  whether a linked `src` counts in its section. Each section is read on
  *  its own (`sectionTexts`). Left as text: a line that is not a valid tag,
- *  and a tag that holds a sentinel (a prompt pill), whose widgets and
- *  atomic ranges must stay the only ones there. */
+ *  a tag that holds a sentinel (a prompt pill), whose widgets and atomic
+ *  ranges must stay the only ones there, and a tag in Markdown code of the
+ *  section's plain text (`plainLiveText`), which a request reads. */
 function findRenderedMedia(doc: string, sections: readonly SectionModel[]): RenderedMedia[] {
   const media: RenderedMedia[] = []
   if (!MEDIA_TAG_NAMES.some((name) => doc.includes(`<${name}`))) return media
   for (const { section, from, text } of sectionTexts(doc, sections)) {
-    for (const tag of findMediaTags(text)) {
-      if (SENTINEL_CHAR.test(text.slice(tag.from, tag.to))) continue
-      media.push({ ...tag, from: from + tag.from, to: from + tag.to, linkedSrc: section.role === 'user' })
+    const tags = findMediaTags(text, section.role, { inCode: true }).filter((tag) => !SENTINEL_CHAR.test(text.slice(tag.from, tag.to)))
+    if (tags.length === 0) continue
+    const plain = plainLiveText(text)
+    const outOfCode = new Set(findMediaTags(plain.text, section.role).map((tag) => plain.liveOffset(tag.from)))
+    for (const tag of tags) {
+      if (outOfCode.has(tag.from)) media.push({ ...tag, from: from + tag.from, to: from + tag.to, linkedSrc: section.role === 'user' })
     }
   }
   return media

@@ -223,6 +223,11 @@ function onOverlayClick(event: MouseEvent) {
               message, for example: <code>Is @a too dark?</code>
             </p>
             <p>
+              Code is only text. An image, a clip, or an <code>@a</code> in code (between
+              <code>```</code> lines, in <code>`backticks`</code>, or on lines with four spaces in
+              front) shows as its text, and Dez sends no image or clip for it.
+            </p>
+            <p>
               Dez sends a chat model an image with a side of more than {{ CHAT_IMAGE_SIDE_TEXT }}
               pixels as a smaller copy, which keeps the request small; the file of the image does
               not change. A model takes a limited number of images in one request, and some models

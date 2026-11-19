@@ -275,7 +275,7 @@ export function imageOf(sections: readonly Section[], id: string): ConversationI
   const image = images.get(id)
   if (image) return image
 
-  const clip = sections.flatMap((section) => findMediaTags(sectionPlainText(section))).findLast((tag) => tag.id === id)
+  const clip = sections.flatMap((section) => findMediaTags(sectionPlainText(section), section.role)).findLast((tag) => tag.id === id)
   if (clip) throw new ToolError(`@${id} is ${clip.kind === 'audio' ? 'an audio' : 'a video'} clip. The image tool works on images only.`)
   const ids = [...images.keys()].map((imageId) => `@${imageId}`)
   throw new ToolError(ids.length === 0

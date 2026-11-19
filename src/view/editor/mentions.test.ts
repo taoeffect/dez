@@ -49,6 +49,10 @@ describe('shownMentions', () => {
     expect(chips(createState([`${RED}\nbob@a.com, @a-team, @ab, @A, and @b`], ['user']))).toStrictEqual([])
   })
 
+  it('shows no chip for a mention in code, and one in the next section after a fence that stays open', () => {
+    expect(chips(createState([`${RED}\n\`@a\` and\n\`\`\`\n@a`, 'Make @a blue'], ['user', 'user']))).toStrictEqual(['@a=image'])
+  })
+
   it('reads a linked image only in a user section, and follows a role change', () => {
     const state = createState(['Hi', `${LINKED}\nSee @a`], ['user', 'user'])
     const asAgent = state.update({ effects: setSectionsEffect.of([{ id: 's0', role: 'user' }, { id: 's1', role: 'agent' }]) }).state

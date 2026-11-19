@@ -363,7 +363,7 @@ function tabTitle(sections: Section[], current: string): string {
   if (block !== null && notesMessages(block.notes).length > 0) return current
   const firstContent = sections.find((section) => section.role === 'user' && sectionVisibleText(section).trim())
   if (!firstContent) return NEW_TAB_TITLE
-  const text = labelImageReferences(labelMediaTags(sectionVisibleText(firstContent)), firstContent.role).trim()
+  const text = labelImageReferences(labelMediaTags(sectionVisibleText(firstContent), firstContent.role), firstContent.role).trim()
   return text.length > 30 ? text.slice(0, 30) + '…' : text
 }
 

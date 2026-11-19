@@ -325,15 +325,16 @@ function addCompactionNotes(list: PartList, block: CompactionBlock, imagesById: 
 }
 
 // Adds `notes`, a text of the notes out of the message parts, with the
-// linked paths that count by `rule` (see `addCompactionNotes`).
+// linked paths that count by `rule` (see `addCompactionNotes`). Code is
+// model text as a gap is, with no image.
 function addNotesText(list: PartList, notes: string, rule: LinkedPathRule, images: RequestImages): void {
   for (const piece of assetTextPieces(notes, rule)) {
-    if (piece.kind === 'media') {
+    if (piece.kind === 'media' || piece.kind === 'codeTag') {
       list.pendingText += withoutStoredFilePaths(mediaTagRequestText(piece.tag))
       continue
     }
     const pieceText = notes.slice(piece.from, piece.to)
-    if (piece.kind === 'gap') {
+    if (piece.kind === 'gap' || piece.kind === 'code') {
       list.pendingText += withoutStoredFilePaths(unescapedModelText(pieceText))
       continue
     }
@@ -532,7 +533,7 @@ function roundRequestText(rounds: readonly AgentRound[], index: number): string 
 function withoutToolAssets(text: string, ids: ReadonlySet<string>): string {
   const assets = [
     ...findImageReferences(text, 'agent').filter(({ id, metadata }) => id !== null && ids.has(id) && metadata.some((item) => item.key === IMAGE_TOOL_KEY)),
-    ...findMediaTags(text).filter(({ id, other }) => ids.has(id) && other.some((attribute) => attribute.name === MEDIA_TOOL_ATTRIBUTE)),
+    ...findMediaTags(text, 'agent').filter(({ id, other }) => ids.has(id) && other.some((attribute) => attribute.name === MEDIA_TOOL_ATTRIBUTE)),
   ]
   let rest = text
   // From the last one, so that the offsets of the earlier ones still hold.
@@ -683,7 +684,8 @@ function userMessageContent(text: string, imagesById: ReadonlyMap<string, string
 // reference's text, `![id=a](image)`, at the end of the text part before
 // it, so that a model can name the image by its id (and `promptWithNames`,
 // mediaRequest.ts, finds that text). A media tag goes in its request form
-// and adds no part.
+// and adds no part. Markdown code adds no part: a reference, a tag, or a
+// mention in it is text (a tag goes in its request form there too).
 //
 // An `@id` mention (imageMentions.ts) that names an image of `imagesById`
 // counts as that image at that place: its image part comes right after the
@@ -720,6 +722,9 @@ function addUserText(list: PartList, text: string, imagesById: ReadonlyMap<strin
       case 'media':
         list.pendingText += withoutStoredFilePaths(mediaTagRequestText(piece.tag))
         break
+      case 'text':
+        list.pendingText += piece.text
+        break
       case 'reference':
         list.pendingText += piece.text
         if (sendsImage(piece) && takesPart(images, piece.path)) {
@@ -747,12 +752,15 @@ function addUserText(list: PartList, text: string, imagesById: ReadonlyMap<strin
 
 // A run of the text of a user message, as a request reads it: a media tag,
 // an image reference (its text after the path scrub, its path, and whether
-// it has the kept mark of a compaction), or a text between them (after the
-// path scrub, with its `@id` mentions).
+// it has the kept mark of a compaction), a text between them (after the
+// path scrub, with its `@id` mentions), or a run of Markdown code (after
+// the path scrub, and a tag in it in its request form), which names
+// nothing.
 type MessageTextPiece =
   | { kind: 'media', tag: MediaTag }
   | { kind: 'reference', text: string, path: string, kept: boolean }
   | { kind: 'gap', text: string, mentions: AssetMention[] }
+  | { kind: 'text', text: string }
 
 // The pieces of a user message's text, in order, with no empty gap
 // (`assetTextPieces`, which the editor's mention chips read too), with the
@@ -762,12 +770,15 @@ type MessageTextPiece =
 // (`userMessageContent`, `messageClips`, `messageMentionIds`), so a mention
 // names the same thing in a chat request, in a media request, and in the
 // asset rules of a compaction. References and mentions are read in the
-// text outside media tags, and mentions after the path scrub: a bare path
-// can hold an `@`, and a cut there would send the start of the path.
+// text outside media tags and code, and mentions after the path scrub: a
+// bare path can hold an `@`, and a cut there would send the start of the
+// path.
 function messageTextPieces(text: string, rule: LinkedPathRule = 'user'): MessageTextPiece[] {
   return assetTextPieces(text, rule).map((piece): MessageTextPiece => {
     if (piece.kind === 'media') return piece
+    if (piece.kind === 'codeTag') return { kind: 'text', text: withoutStoredFilePaths(mediaTagRequestText(piece.tag)) }
     const scrubbed = withoutStoredFilePaths(text.slice(piece.from, piece.to))
+    if (piece.kind === 'code') return { kind: 'text', text: scrubbed }
     return piece.kind === 'reference'
       ? { kind: 'reference', text: scrubbed, path: piece.path, kept: piece.kept }
       : { kind: 'gap', text: scrubbed, mentions: findAssetMentions(scrubbed) }

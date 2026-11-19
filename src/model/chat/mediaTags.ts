@@ -1,4 +1,5 @@
 import { MARKER_ATTRIBUTES, escapeMarkerAttribute, markerAttributes } from '../../utils/markerAttribute'
+import { codeRanges, inCode } from './codeRanges'
 import { stripLiveSentinels } from './content'
 import { IMAGE_ID_SOURCE, KEPT_MARK_VALUE, linkedPathCounts, type LinkedPathRule } from './images'
 
@@ -42,13 +43,20 @@ import { IMAGE_ID_SOURCE, KEPT_MARK_VALUE, linkedPathCounts, type LinkedPathRule
 //   file. A linked `src` counts only where the user put it
 //   (`sectionClipSource`, `LinkedPathRule` of images.ts): a model must not
 //   choose a file of this computer that Dez then reads.
+// - A tag in Markdown code (a fence, an indented block, a code span:
+//   codeRanges.ts) is text, as an image reference there is: no player, no
+//   clip in a request. Only a user text can hold one: in any other text, a
+//   tag line is a line of Dez, which ends code. The id sequence
+//   (mediaIds.ts) still reads it, so that its id stays taken.
 // - Answer text from a model is escaped (`ModelTextEscaper`, toolBlocks.ts),
 //   so a model cannot write a tag.
 // - A provider gets only the request form (`mediaTagRequestText`): of a
 //   user section through `mediaTagsForRequest`, and of an agent section
-//   through `agentTextForRequest` (toolBlocks.ts). The tag of a clip that a
-//   Dez tool made does not go at all when a result of that tool names the
-//   clip (`roundRequestText`, streams/messages.ts).
+//   through `agentTextForRequest` (toolBlocks.ts). A tag in code goes in
+//   its request form too: it is text, but its whole text holds the signed
+//   URL and the path of the clip. The tag of a clip that a Dez tool made
+//   does not go at all when a result of that tool names the clip
+//   (`roundRequestText`, streams/messages.ts).
 
 /** The kinds of clips: the tag of a kind is `dez:<kind>`. */
 export const MEDIA_TAG_KINDS = ['audio', 'video'] as const
@@ -301,8 +309,10 @@ function readTag(line: string): MediaTagData | null {
   }
 }
 
-/** The media tags in a text, in order. */
-export function findMediaTags(text: string): MediaTag[] {
+/** The media tags in a text whose linked paths count by `rule`, in order.
+ *  A tag in code is text, so it is not here, unless `options.inCode` is
+ *  set (see the top of this file). */
+export function findMediaTags(text: string, rule: LinkedPathRule, options: { inCode?: boolean } = {}): MediaTag[] {
   const tags: MediaTag[] = []
   for (let from = text.indexOf(TAG_PREFIX); from >= 0;) {
     if (from > 0 && text[from - 1] !== '\n') {
@@ -316,15 +326,20 @@ export function findMediaTags(text: string): MediaTag[] {
     // The rest of this line holds no line start.
     from = text.indexOf(TAG_PREFIX, to)
   }
-  return tags
+  // In a text that is not a user text, a tag line is a line of Dez, which
+  // no code holds (codeRanges.ts), so it needs no parse.
+  if (tags.length === 0 || options.inCode || rule !== 'user') return tags
+  const code = codeRanges(text, rule)
+  return code.length === 0 ? tags : tags.filter((tag) => !inCode(code, tag.from))
 }
 
-/** A text as its plain-text and media tag pieces, in order. Empty text
- *  pieces are left out; whitespace is kept. */
-export function splitMediaTags(text: string): MediaTextPiece[] {
+/** A text as its plain-text and media tag pieces, in order, with the tags
+ *  of `findMediaTags`. Empty text pieces are left out; whitespace is
+ *  kept. */
+export function splitMediaTags(text: string, rule: LinkedPathRule, options: { inCode?: boolean } = {}): MediaTextPiece[] {
   const pieces: MediaTextPiece[] = []
   let start = 0
-  for (const tag of findMediaTags(text)) {
+  for (const tag of findMediaTags(text, rule, options)) {
     if (tag.from > start) pieces.push({ kind: 'text', text: text.slice(start, tag.from) })
     pieces.push({ kind: 'media', tag })
     start = tag.to
@@ -334,10 +349,11 @@ export function splitMediaTags(text: string): MediaTextPiece[] {
 }
 
 /** A text as a provider gets it: each media tag in its request form
- *  (`mediaTagRequestText`), and the rest as it is. Give it the whole text
- *  of a section: a tag counts only at a line start of that text. */
+ *  (`mediaTagRequestText`), also a tag in code (see the top of this file),
+ *  and the rest as it is. Give it the whole text of a section: a tag
+ *  counts only at a line start of that text. */
 export function mediaTagsForRequest(text: string): string {
-  return splitMediaTags(text).map((piece) => (piece.kind === 'text' ? piece.text : mediaTagRequestText(piece.tag))).join('')
+  return splitMediaTags(text, 'user', { inCode: true }).map((piece) => (piece.kind === 'text' ? piece.text : mediaTagRequestText(piece.tag))).join('')
 }
 
 /** The text that stands for a clip of each kind in history previews and
@@ -347,10 +363,11 @@ export const MEDIA_TAG_LABELS: Readonly<Record<MediaTagKind, string>> = {
   video: '[video]',
 }
 
-/** A text with each media tag replaced by `label`, or by the label of its
- *  kind when there is none. */
-export function labelMediaTags(text: string, label?: string): string {
-  return splitMediaTags(text).map((piece) => (piece.kind === 'text' ? piece.text : label ?? MEDIA_TAG_LABELS[piece.tag.kind])).join('')
+/** A text whose linked paths count by `rule`, with each media tag replaced
+ *  by `label`, or by the label of its kind when there is none. A tag in
+ *  code stays as its text. */
+export function labelMediaTags(text: string, rule: LinkedPathRule, label?: string): string {
+  return splitMediaTags(text, rule).map((piece) => (piece.kind === 'text' ? piece.text : label ?? MEDIA_TAG_LABELS[piece.tag.kind])).join('')
 }
 
 // `target` as the destination of a Markdown link. CommonMark takes a plain
@@ -367,9 +384,9 @@ function linkDestination(target: string): string | null {
  *  media tag as a Markdown link, `[video](<target>)`: to the saved file or
  *  the linked file when the clip has one, else to the provider's URL when
  *  it has one. A clip with neither gives only its label: a temp copy is
- *  not a lasting target. */
-export function mediaTagsAsLinks(text: string): string {
-  return splitMediaTags(text).map((piece) => {
+ *  not a lasting target. A tag in code stays as its text. */
+export function mediaTagsAsLinks(text: string, rule: LinkedPathRule): string {
+  return splitMediaTags(text, rule).map((piece) => {
     if (piece.kind === 'text') return piece.text
     const { kind, src, url } = piece.tag
     const target = src !== null && (isSavedMediaPath(src) || isLinkedMediaPath(src)) ? src : url

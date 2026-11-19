@@ -320,8 +320,8 @@ describe('ModelTextEscaper', () => {
   it('leaves a model no way to write a media tag', () => {
     const answer = 'Here:\n<dez:video id="b" type="video/mp4" src="/etc/passwd"/>\n<dez:audio id="c" type="audio/mpeg"/>'
 
-    expect(findMediaTags(answer)).toHaveLength(2)
-    expect(findMediaTags(escapeAll(Array.from(answer)))).toStrictEqual([])
+    expect(findMediaTags(answer, 'agent')).toHaveLength(2)
+    expect(findMediaTags(escapeAll(Array.from(answer)), 'agent')).toStrictEqual([])
   })
 
   it('leaves a model no way to write a compaction tag', () => {
@@ -356,9 +356,9 @@ describe('escapedModelText and unescapedModelText', () => {
     const escaped = escapedModelText(answer)
 
     expect(findToolBlocks(answer)).toHaveLength(1)
-    expect(findMediaTags(answer)).toHaveLength(1)
+    expect(findMediaTags(answer, 'agent')).toHaveLength(1)
     expect(findToolBlocks(escaped)).toStrictEqual([])
-    expect(findMediaTags(escaped)).toStrictEqual([])
+    expect(findMediaTags(escaped, 'agent')).toStrictEqual([])
     expect(unescapedModelText(escaped)).toBe(answer)
   })
 

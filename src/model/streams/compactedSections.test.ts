@@ -22,7 +22,7 @@ const made = (name: string) => `${APP}/assets/generated/images/${name}.png`
 const clip = (name: string, id: string) => mediaTagText({ kind: 'video', id, type: 'video/webm', src: `${APP}/assets/video/${name}.webm`, url: null, expires: null, other: [] })
 // `text`, one image reference or one media tag, with the kept mark.
 const kept = (text: string) => (text.startsWith('<')
-  ? mediaTagTextWithKeptMark(findMediaTags(text)[0], true)
+  ? mediaTagTextWithKeptMark(findMediaTags(text, 'user')[0], true)
   : imageReferenceTextWithKeptMark(findImageReferences(text, 'user')[0], true))
 
 /** The model of the compaction request, which is not the one of the
@@ -224,7 +224,7 @@ describe('compactedSections', () => {
     // Each image and clip is in its message only, and an image goes by
     // itself.
     expect(findImageReferences(notesText(result), 'agent').map(({ id }) => id)).toStrictEqual(['a', 'b'])
-    expect(findMediaTags(notesText(result)).map((tag) => [tag.id, isKeptClip(tag)])).toStrictEqual([['c', false]])
+    expect(findMediaTags(notesText(result), 'agent').map((tag) => [tag.id, isKeptClip(tag)])).toStrictEqual([['c', false]])
     expect(sent(head)).toStrictEqual({ images: [pasted('photo'), pasted('screen')], pictures: [] })
     expect(hidden(head)).toStrictEqual([])
     expect([...notesAssetLines(notesText(result)).values()].map(({ id, origin }) => [id, origin])).toStrictEqual([['a', 'from the user'], ['b', 'from the user'], ['c', 'from the user']])
@@ -534,7 +534,7 @@ describe('compactedSections', () => {
     expect(sent(head)).toStrictEqual({ images: [], pictures: ['a.jpg', 'b.jpg'] })
     // The clip of the first message stays in it, as it is.
     expect(messagesOf(result)[0]).toBe(sectionPlainText(sections[0]))
-    expect(findMediaTags(notesText(result)).map((tag) => [tag.id, isKeptClip(tag)])).toStrictEqual([['b', false], ['c', true], ['a', false]])
+    expect(findMediaTags(notesText(result), 'agent').map((tag) => [tag.id, isKeptClip(tag)])).toStrictEqual([['b', false], ['c', true], ['a', false]])
   })
 
   it('does not carry the pictures of the compaction before', () => {
@@ -550,7 +550,7 @@ describe('compactedSections', () => {
 
     expect(result.pictures).toStrictEqual([])
     expect(sectionCompactionBlock(result.sections[0])?.pictures).toStrictEqual([])
-    expect(findMediaTags(notesText(result)).map((tag) => [tag.id, isKeptClip(tag)])).toStrictEqual([['a', true]])
+    expect(findMediaTags(notesText(result), 'agent').map((tag) => [tag.id, isKeptClip(tag)])).toStrictEqual([['a', true]])
   })
 
   it('shows no asset to a model that reads no images', () => {
@@ -565,7 +565,7 @@ describe('compactedSections', () => {
 
     expect(result.pictures).toStrictEqual([])
     expect(findImageReferences(notesText(result), 'agent').map(isKeptImage)).toStrictEqual([true])
-    expect(findMediaTags(notesText(result)).map(isKeptClip)).toStrictEqual([true])
+    expect(findMediaTags(notesText(result), 'agent').map(isKeptClip)).toStrictEqual([true])
   })
 
   it('keeps a made image with no id, which no line can name, for the user', () => {

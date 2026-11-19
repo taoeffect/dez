@@ -112,6 +112,15 @@ describe('renderedImages', () => {
     expect(shown(state)).toEqual([blue])
   })
 
+  // The report: references in a fence to files that are gone showed as
+  // "Image not found" boxes.
+  it('leaves a reference in code as text, and shows one in the next section after a fence that stays open', () => {
+    const texts = [`\`\`\`\n${red}\n\`\`\`\n\`${red}\` ${blue}\n\n    ${red}`, `\`\`\`\n${red}`, blue]
+    const doc = joinSections(texts)
+
+    expect(renderedImages(createThreadState(texts, ['user', 'agent', 'user'])).map((image) => image.from)).toEqual([doc.indexOf(blue), doc.lastIndexOf(blue)])
+  })
+
   it('follows edits to the doc', () => {
     const state = createState('a')
     expect(shown(state)).toEqual([])

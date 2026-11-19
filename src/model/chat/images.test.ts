@@ -134,6 +134,35 @@ describe('findImageReferences', () => {
 
     expect(findImageReferences(text, 'agent').map((ref) => text.slice(ref.from, ref.to))).toEqual([valid])
   })
+
+  describe('in Markdown code', () => {
+    const reference = `![id=a](${PNG})`
+    const ids = (text: string, rule: 'user' | 'agent', inCode?: boolean) => findImageReferences(text, rule, { inCode }).map((ref) => text.slice(ref.from, ref.to))
+
+    it.each([
+      ['a fence', `\`\`\`\n${reference}\n\`\`\``],
+      ['a fence with no closer', `Look:\n\n~~~\n${reference}`],
+      ['a code span', `Type \`${reference}\` to show it.`],
+      ['an indented block', `Type:\n\n    ${reference}`],
+    ])('leaves a reference in %s as plain text, unless code is asked for', (_case, text) => {
+      expect(ids(text, 'user')).toStrictEqual([])
+      expect(ids(text, 'agent')).toStrictEqual([])
+      expect(ids(text, 'user', true)).toStrictEqual([reference])
+    })
+
+    it('finds the reference after the closer', () => {
+      const after = `![id=b](${JPG})`
+
+      expect(ids(`\`\`\`\n${reference}\n\`\`\`\n${after}`, 'user')).toStrictEqual([after])
+    })
+
+    it('ends the code of a reply at a line of Dez, and not the code of a user text', () => {
+      const text = `\`\`\`\nx\n<dez:audio id="b" type="audio/wav"/>\n${reference}`
+
+      expect(ids(text, 'agent')).toStrictEqual([reference])
+      expect(ids(text, 'user')).toStrictEqual([])
+    })
+  })
 })
 
 describe('imageIdChange', () => {

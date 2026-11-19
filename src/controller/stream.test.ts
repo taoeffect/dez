@@ -2078,7 +2078,7 @@ describe('dez.stream/start media round', () => {
 
       const reply = sectionTexts().at(-2)?.text ?? ''
       expect(mediaInputs.map(({ kind, clips }) => ({ kind, clips }))).toStrictEqual([{ kind: 'transcription', clips: [speechClip('c')] }])
-      expect([findMediaTags(reply), agentTextForRequest(reply)]).toStrictEqual([[], transcript])
+      expect([findMediaTags(reply, 'agent'), agentTextForRequest(reply)]).toStrictEqual([[], transcript])
       expect(sectionTexts().at(-1)).toStrictEqual({ role: 'user', text: '' })
       expect([toasts, alerts]).toStrictEqual([[], [{ tabId: activeTab().id, status: 'finished' }]])
     })

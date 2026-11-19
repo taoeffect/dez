@@ -211,7 +211,7 @@ describe('compactConversation', () => {
     expect(compaction.dropped.map(({ asset }) => asset.id)).toStrictEqual(['b'])
     expect([...notesAssetLines(notesOf(compaction)).keys()]).toStrictEqual(['a', 'c'])
     expect(notesOf(compaction)).not.toContain(DRAFT)
-    expect(findMediaTags(notesOf(compaction)).map((tag) => ({ id: tag.id, kept: isKeptClip(tag) }))).toStrictEqual([{ id: 'c', kept: true }])
+    expect(findMediaTags(notesOf(compaction), 'agent').map((tag) => ({ id: tag.id, kept: isKeptClip(tag) }))).toStrictEqual([{ id: 'c', kept: true }])
     expect(sectionCompactionBlock(compaction.sections[0])).toMatchObject({ count: 1, dropped: 1 })
   })
 
@@ -320,7 +320,7 @@ describe('compactConversation', () => {
       const pictures = [{ file: saved[0].file.path.slice(SHOWN_PICTURE_FOLDER.length + 1), label: expect.stringMatching(/^The frame sheet of the video clip @c.*\.$/), width: 968, height: 364, bytes: SHEET_JPEG.length }]
       expect(compaction.pictures).toStrictEqual(pictures)
       expect(sectionCompactionBlock(compaction.sections[0])?.pictures).toStrictEqual(pictures)
-      expect(findMediaTags(notesOf(compaction)).map((tag) => ({ id: tag.id, kept: isKeptClip(tag) }))).toStrictEqual([{ id: 'c', kept: false }])
+      expect(findMediaTags(notesOf(compaction), 'agent').map((tag) => ({ id: tag.id, kept: isKeptClip(tag) }))).toStrictEqual([{ id: 'c', kept: false }])
       expect(native.deletedFiles.filter(({ folder }) => !folder)).toStrictEqual([])
     })
 
@@ -331,7 +331,7 @@ describe('compactConversation', () => {
 
       expect(programRuns('dez-ffmpeg')).toStrictEqual([])
       expect(savedPictures()).toStrictEqual([])
-      expect(findMediaTags(notesOf(compaction)).map((tag) => isKeptClip(tag))).toStrictEqual([true])
+      expect(findMediaTags(notesOf(compaction), 'agent').map((tag) => isKeptClip(tag))).toStrictEqual([true])
     })
 
     it('is not made for a model that reads no images', async () => {
@@ -342,7 +342,7 @@ describe('compactConversation', () => {
 
       expect(programRuns('dez-ffmpeg')).toStrictEqual([])
       expect(compaction.pictures).toStrictEqual([])
-      expect(findMediaTags(notesOf(compaction)).map((tag) => isKeptClip(tag))).toStrictEqual([true])
+      expect(findMediaTags(notesOf(compaction), 'agent').map((tag) => isKeptClip(tag))).toStrictEqual([true])
     })
 
     it('is deleted when it does not fit in the picture limits of the model, and the clip is kept as text', async () => {
@@ -358,7 +358,7 @@ describe('compactConversation', () => {
       expect(native.deletedFiles.filter(({ folder }) => !folder)).toStrictEqual([{ root: 'app', path: saved[0].file.path, folder: false }])
       expect(compaction.pictures).toStrictEqual([])
       expect(sectionCompactionBlock(compaction.sections[0])?.pictures).toStrictEqual([])
-      expect(findMediaTags(notesOf(compaction)).map((tag) => isKeptClip(tag))).toStrictEqual([true])
+      expect(findMediaTags(notesOf(compaction), 'agent').map((tag) => isKeptClip(tag))).toStrictEqual([true])
     })
 
     it('is left out, with the clip kept as text, when ffmpeg makes none', async () => {
@@ -369,7 +369,7 @@ describe('compactConversation', () => {
 
       expect(savedPictures()).toStrictEqual([])
       expect(compaction.pictures).toStrictEqual([])
-      expect(findMediaTags(notesOf(compaction)).map((tag) => isKeptClip(tag))).toStrictEqual([true])
+      expect(findMediaTags(notesOf(compaction), 'agent').map((tag) => isKeptClip(tag))).toStrictEqual([true])
     })
   })
 

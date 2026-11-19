@@ -533,6 +533,12 @@ describe('messageClips', () => {
     expect(messageClips([clipsReply, user('u1', `Use @c\n${mediaTagText(PASTED_DANCE)}`), reply('a2', 'Done.'), user('u2', 'Again'), user('u3', '')])).toStrictEqual([])
   })
 
+  it('gives no clip for a tag or a mention in code', () => {
+    const message = user('u1', `Not \`@c\`:\n\`\`\`\n${mediaTagText(PASTED_DANCE)}\n@d\n\`\`\`\nbut @e`)
+
+    expect(messageClips([clipsReply, message])).toStrictEqual([attached(RAIN)])
+  })
+
   // The ids are unique in a tab unless the user edits the text. The clip `c`
   // has the id of an image of an earlier section, and the clip `d` that of
   // an image of the message.
@@ -568,6 +574,10 @@ describe('messageMentionIds', () => {
     const tag = mediaTagText({ ...SONG, src: '/home/u/Music/@g/song.mp3' })
 
     expect(messageMentionIds(`Like ${reference} and @b\n${tag}`)).toStrictEqual(new Set(['b']))
+  })
+
+  it('takes no mention in code', () => {
+    expect(messageMentionIds('Use @a, not `@b`:\n```\n@c\n```\n\n    @d')).toStrictEqual(new Set(['a']))
   })
 })
 
@@ -764,6 +774,30 @@ describe('sectionsToStreamMessages: images of user messages', () => {
       newestUserMessage: 'Mix @b, @b, and ![id=a](image) with @a and @c.',
     })
     expect(sent([...earlier, user('u2', 'What is it?')], false).imagesLeftOut).toBe(0)
+  })
+
+  // The report: references in a code fence to files that are gone gave
+  // "is missing" errors, and many of them the toast of the image limit.
+  it('sends a reference, a mention, and a tag in code as text only, with no part and no place in the image limits', () => {
+    const typed = `\`\`\`\n![id=c](${OTHER_IMAGE})\n@b\n${mediaTagText(PASTED_DANCE)}\n\`\`\`\nand \`![id=d](${OTHER_IMAGE})\` and\n\n    ![id=e](${OTHER_IMAGE})`
+    const text = `\`\`\`\n![id=c](image)\n@b\n${SENT_DANCE}\n\`\`\`\nand \`![id=d](image)\` and\n\n    ![id=e](image)`
+    const sections = [...earlier, user('u2', typed)]
+
+    expect(sent(sections, true, 1)).toStrictEqual({
+      messages: [...earlierMessages, { role: 'user', content: text }],
+      imagesLeftOut: 0,
+      imagesOverLimit: 0,
+      newestUserMessage: text,
+    })
+    expect(sent(sections, false).imagesLeftOut).toBe(0)
+    expect(messageClips(sections)).toStrictEqual([])
+  })
+
+  // In a reply, a line of Dez ends the code of the model.
+  it('names a tool image after a tool block that follows an open fence of the reply', () => {
+    const sections = [user('u1', 'Make a fox'), reply('a1', `\`\`\`\nopen\n${block('call_1', 'gemini', '1 model')}\n![id=b|tool=image](${GENERATED})\n\nDone.`), user('u2', 'Crop @b')]
+
+    expect(sent(sections).messages.at(-1)).toStrictEqual({ role: 'user', content: [{ type: 'text', text: 'Crop @b' }, { type: 'image', path: GENERATED }] })
   })
 
   it('sends a linked image of a user message as an image part, and no linked path in any text', () => {
