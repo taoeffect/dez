@@ -49,6 +49,9 @@
       "binaries/dez-ffmpeg",
       "binaries/dez-ffprobe"
     ],
+    "resources": {
+      "fonts/": "fonts/"
+    },
     "macOS": {
       "files": {
         "Resources/Assets.car": "icons/Assets.car"

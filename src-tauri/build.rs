@@ -5,13 +5,44 @@ use std::{env, fs, io, path::Path, process};
 /// programs that Dez ships next to its own program.
 const CONFIG_PATH: &str = "tauri.conf.json";
 
-const MANIFEST_PATH: &str = "binaries/manifest.json";
+/// A folder of src-tauri/ that a script vendors: Git LFS files, and a
+/// `manifest.json` that names the size and the SHA-256 of each one.
+struct VendoredFolder {
+    folder: &'static str,
+    /// How to get the files, for the error texts.
+    get_files: &'static str,
+}
+
+/// The ffmpeg and ffprobe programs of every build target.
+const BINARIES: VendoredFolder = VendoredFolder {
+    folder: "binaries",
+    get_files: "Install Git LFS and run `git lfs pull` to get the file of the repository, \
+                or run `node scripts/update-ffmpeg.js <release tag>` to vendor another version.",
+};
+
+/// The fonts that the programs can use, the same for every build target.
+const FONTS: VendoredFolder = VendoredFolder {
+    folder: "fonts",
+    get_files: "Install Git LFS and run `git lfs pull` to get the file of the repository, \
+                or run `node scripts/update-fonts.js` to vendor the fonts of its list.",
+};
+
+impl VendoredFolder {
+    /// The manifest of the folder, and a `rerun-if-changed` for it.
+    fn manifest(&self) -> Result<serde_json::Value, String> {
+        let path = format!("{}/manifest.json", self.folder);
+        println!("cargo:rerun-if-changed={path}");
+        read_json(&path)
+    }
+}
 
 fn main() {
-    let prepared = bundled_tools().and_then(|tools| {
-        check_bundled_tools(&tools)?;
-        write_bundled_tools(&tools)
-    });
+    let prepared = bundled_tools()
+        .and_then(|tools| {
+            check_bundled_tools(&tools)?;
+            write_bundled_tools(&tools)
+        })
+        .and_then(|()| check_fonts());
     if let Err(problem) = prepared {
         eprintln!("{problem}");
         process::exit(1);
@@ -76,61 +107,87 @@ fn write_bundled_tools(tools: &[String]) -> Result<(), String> {
 /// `rerun-if-changed` changes (tauri-build names the config files), so most
 /// builds do not hash the programs.
 fn check_bundled_tools(tools: &[String]) -> Result<(), String> {
-    println!("cargo:rerun-if-changed={MANIFEST_PATH}");
-    let manifest = read_json(MANIFEST_PATH)?;
+    let manifest = BINARIES.manifest()?;
     let target = env::var("TARGET").expect("cargo sets TARGET for a build script");
 
     for tool in tools {
         let name = format!("{tool}-{target}");
-        let path = Path::new("binaries").join(&name);
-        println!("cargo:rerun-if-changed={}", path.display());
         let entry = &manifest["files"][&name];
         let (Some(size), Some(sha256)) = (entry["size"].as_u64(), entry["sha256"].as_str())
         else {
             return Err(format!(
                 "Dez has no {tool} program for the build target {target}: \
-                 src-tauri/{MANIFEST_PATH} does not name {name}. \
+                 src-tauri/binaries/manifest.json does not name {name}. \
                  scripts/update-ffmpeg.js has the platforms that Dez ships programs for."
             ));
         };
-        check_tool(&path, size, sha256)?;
+        check_file(&BINARIES, &name, size, sha256)?;
     }
     Ok(())
 }
 
-/// Checks one program file against the size and the SHA-256 of the manifest.
-/// The size comes first: it needs no read of the file, and it finds a Git LFS
-/// pointer file.
-fn check_tool(path: &Path, size: u64, sha256: &str) -> Result<(), String> {
-    const GET_FILE: &str = "Install Git LFS and run `git lfs pull` to get the file of the \
-                            repository, or run `node scripts/update-ffmpeg.js <release tag>` \
-                            to vendor another version.";
-    let shown = format!("src-tauri/{}", path.display());
+/// Checks that the fonts are the files that fonts/manifest.json names, as
+/// `check_bundled_tools` checks the programs: `bundle.resources` ships the
+/// folder, and a Git LFS pointer file in the place of a font is a font that
+/// ffmpeg cannot open.
+fn check_fonts() -> Result<(), String> {
+    let manifest = FONTS.manifest()?;
+    let Some(fonts) = manifest["fonts"].as_object() else {
+        return Err(format!(
+            "src-tauri/fonts/manifest.json has no `fonts` object. {}",
+            FONTS.get_files
+        ));
+    };
+    for (name, entry) in fonts {
+        let (Some(size), Some(sha256)) = (entry["size"].as_u64(), entry["sha256"].as_str()) else {
+            return Err(format!(
+                "src-tauri/fonts/manifest.json names no size or SHA-256 for {name}. {}",
+                FONTS.get_files
+            ));
+        };
+        check_file(&FONTS, name, size, sha256)?;
+    }
+    Ok(())
+}
 
-    let found_size = fs::metadata(path)
-        .map_err(|error| format!("{shown} is missing ({error}). {GET_FILE}"))?
+/// Checks one file of a vendored folder against the size and the SHA-256 of
+/// its manifest. The size comes first: it needs no read of the file, and it
+/// finds a Git LFS pointer file.
+fn check_file(
+    vendored: &VendoredFolder,
+    name: &str,
+    size: u64,
+    sha256: &str,
+) -> Result<(), String> {
+    let path = Path::new(vendored.folder).join(name);
+    println!("cargo:rerun-if-changed={}", path.display());
+    let shown = format!("src-tauri/{}", path.display());
+    let manifest = format!("src-tauri/{}/manifest.json", vendored.folder);
+    let get_files = vendored.get_files;
+
+    let found_size = fs::metadata(&path)
+        .map_err(|error| format!("{shown} is missing ({error}). {get_files}"))?
         .len();
     if found_size != size {
-        if found_size < 1024 && is_lfs_pointer(path) {
+        if found_size < 1024 && is_lfs_pointer(&path) {
             return Err(format!(
-                "{shown} is a Git LFS pointer file, not the program. \
+                "{shown} is a Git LFS pointer file, not the file that {manifest} names. \
                  Install Git LFS and run `git lfs pull`."
             ));
         }
         return Err(format!(
-            "{shown} has {found_size} bytes, and src-tauri/{MANIFEST_PATH} names {size}. {GET_FILE}"
+            "{shown} has {found_size} bytes, and {manifest} names {size}. {get_files}"
         ));
     }
 
     let mut hasher = Sha256::new();
-    fs::File::open(path)
+    fs::File::open(&path)
         .and_then(|mut file| io::copy(&mut file, &mut hasher))
         .map_err(|error| format!("Cannot read {shown}: {error}"))?;
     let found_sha256 = format!("{:x}", hasher.finalize());
     if found_sha256 != sha256 {
         return Err(format!(
-            "{shown} has the SHA-256 {found_sha256}, and src-tauri/{MANIFEST_PATH} names {sha256}. \
-             {GET_FILE}"
+            "{shown} has the SHA-256 {found_sha256}, and {manifest} names {sha256}. {get_files}"
         ));
     }
     Ok(())

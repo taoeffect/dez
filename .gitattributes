@@ -1,3 +1,7 @@
 *.mp3 filter=lfs diff=lfs merge=lfs -text
 # The ffmpeg and ffprobe programs that Dez ships (scripts/update-ffmpeg.js).
 src-tauri/binaries/dez-ff* filter=lfs diff=lfs merge=lfs -text
+# The fonts that Dez ships (scripts/update-fonts.js). Their licenses and
+# manifest.json stay plain Git.
+src-tauri/fonts/*.ttf filter=lfs diff=lfs merge=lfs -text
+src-tauri/fonts/*.otf filter=lfs diff=lfs merge=lfs -text

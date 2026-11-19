@@ -57,12 +57,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      # The build needs two kinds of Git LFS files. Vite inlines
+      # The build needs three kinds of Git LFS files. Vite inlines
       # src/assets/sounds/ding.mp3: a pointer file gives no build error,
       # and only the sound fails to play. src-tauri/build.rs checks the
-      # ffmpeg and ffprobe programs of this platform, and stops the build
-      # on a pointer file. The header of the action tells why it does not
-      # pull every LFS file.
+      # ffmpeg and ffprobe programs of this platform and the fonts, and
+      # stops the build on a pointer file. The header of the action tells
+      # why it does not pull every LFS file.
       - name: Pull Git LFS files
         uses: ./.github/actions/pull-lfs-files
         with:
