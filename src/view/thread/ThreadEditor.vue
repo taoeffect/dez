@@ -356,11 +356,11 @@ function moveCaretByRow(v: EditorView, forward: boolean): boolean {
   const column = range.head - currentLine.from
   const caretAtColumn = (line: Line) => EditorSelection.cursor(line.from + Math.min(column, line.length))
   if (adjacentLine) return selectCaret(v, caretAtColumn(adjacentLine))
-  const nextSectionLine = forward
+  const otherSectionLine = forward
     ? firstEditableLineOfNextSection(state, currentLine.number)
     : lastEditableLineOfPreviousSection(state, currentLine.number)
-  if (!nextSectionLine) return selectCaret(v, EditorSelection.cursor(forward ? currentLine.to : currentLine.from))
-  return selectCaret(v, caretOnRowAtGoal(v, range, nextSectionLine, forward) ?? caretAtColumn(nextSectionLine))
+  if (!otherSectionLine) return selectCaret(v, EditorSelection.cursor(forward ? currentLine.to : currentLine.from))
+  return selectCaret(v, caretOnRowAtGoal(v, range, otherSectionLine, forward) ?? caretAtColumn(otherSectionLine))
 }
 
 function documentLineCursorTarget(state: EditorState, head: number, forward: boolean): number | null {
