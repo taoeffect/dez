@@ -12,7 +12,7 @@ https://github.com/user-attachments/assets/6980f983-bfcf-4146-9cfb-6658b37774d5
 
 - 📝 Saved prompts via `/prompt`
 - 🗂️ Tabbed conversations
-- 🤖 Supports OpenRouter, Z.ai, GitHub Copilot, Kimi, MiniMax, Venice, and Charm Hyper
+- 🤖 Supports OpenRouter, Z.ai, GitHub Copilot, Kimi, MiniMax, Venice, Charm Hyper, and TrustedRouter
 - 🏠 Local models: add any OpenAI- or Anthropic-compatible server as a [custom provider](docs/CUSTOM_PROVIDERS.md)
 - 🎨 Create and edit images, video, music, and voice overs with hundreds of models
 - 🔒 Sandboxed: Dez won't harm your computer. (Seatbelt on macOS, Landlock on Linux)
