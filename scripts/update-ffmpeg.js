@@ -10,13 +10,15 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 // Vendors the ffmpeg and ffprobe programs that Dez ships: downloads the
 // files of one release of the build repository for every platform of Dez,
-// checks each file against the SHA-256 that GitHub gives for it, and writes
-// the files, their manifest, and their license notice into
-// src-tauri/binaries/. The files are in Git LFS (.gitattributes).
+// and the license texts of the release, checks each file against the SHA-256
+// that GitHub gives for it, and writes the files, their manifest, and their
+// license notice into src-tauri/binaries/. The programs are in Git LFS
+// (.gitattributes); the other files are plain Git.
 //
 // src-tauri/build.rs checks the files of the build target against the
-// manifest in every build, and `bundle.externalBin` (tauri.conf.json) puts
-// them next to the Dez program.
+// manifest in every build, `bundle.externalBin` (tauri.conf.json) puts them
+// next to the Dez program, and `bundle.resources` ships NOTICE.md and the
+// license texts.
 //
 // Why this source: FFmpeg publishes no programs of its own. Dez builds them
 // in its own repository, from the build scripts of the Shaka Project
@@ -80,66 +82,105 @@ export function ffmpegVersionOfTag(tag) {
   return TAG_PATTERN.exec(tag)[1];
 }
 
-// The files to vendor, from the release data of the GitHub API: for each
-// program of each platform its name in Dez, its release file, and the size
-// and SHA-256 that GitHub states. Throws when the release has no such file,
-// or gives no SHA-256 for it (releases from before GitHub made digests):
-// Dez vendors no file that it cannot check.
-export function vendoredFiles(release) {
-  const assets = new Map((release.assets ?? []).map(asset => [asset.name, asset]));
-  const files = [];
-  for (const [triple, platform] of Object.entries(PLATFORMS)) {
-    for (const tool of TOOLS) {
-      const assetName = `${tool}-${platform}`;
-      const asset = assets.get(assetName);
-      if (!asset) {
-        throw new Error(`The release ${release.tag_name} has no file ${assetName}.`);
-      }
-      const sha256 = /^sha256:([0-9a-f]{64})$/.exec(asset.digest ?? '')?.[1];
-      if (!sha256) {
-        throw new Error(`The release ${release.tag_name} gives no SHA-256 for ${assetName}.`);
-      }
-      files.push({ name: vendoredName(tool, triple), asset: assetName, size: asset.size, sha256 });
-    }
+// The license texts of the programs and of their libraries: a file of each
+// release (build-scripts/91-licenses.sh of the build repository), and its
+// name in src-tauri/binaries/.
+export const LICENSE_TEXTS = 'LICENSES.txt';
+
+// A file of the release data of the GitHub API, with the size and the
+// SHA-256 that GitHub states. Throws when the release has no such file, or
+// gives no SHA-256 for it (releases from before GitHub made digests): Dez
+// vendors no file that it cannot check.
+function releaseFile(release, assetName) {
+  const asset = (release.assets ?? []).find(candidate => candidate.name === assetName);
+  if (!asset) {
+    throw new Error(`The release ${release.tag_name} has no file ${assetName}.`);
   }
-  return files;
+  const sha256 = /^sha256:([0-9a-f]{64})$/.exec(asset.digest ?? '')?.[1];
+  if (!sha256) {
+    throw new Error(`The release ${release.tag_name} gives no SHA-256 for ${assetName}.`);
+  }
+  return { asset: assetName, size: asset.size, sha256 };
+}
+
+// The programs to vendor: for each program of each platform its name in Dez,
+// its release file, and its size and SHA-256 (`releaseFile`).
+export function vendoredFiles(release) {
+  return Object.entries(PLATFORMS).flatMap(([triple, platform]) =>
+    TOOLS.map(tool => ({ name: vendoredName(tool, triple), ...releaseFile(release, `${tool}-${platform}`) }))
+  );
+}
+
+// The license texts to vendor (`LICENSE_TEXTS`), with their size and
+// SHA-256. Releases before n9.0.2-4 have no such file.
+export function licenseTextsFile(release) {
+  return { name: LICENSE_TEXTS, ...releaseFile(release, LICENSE_TEXTS) };
 }
 
 // The text of src-tauri/binaries/manifest.json: what build.rs checks the
 // programs against, and where they come from.
-export function manifestText(tag, files) {
+export function manifestText(tag, files, licenseTexts) {
   const manifest = {
     ffmpegVersion: ffmpegVersionOfTag(tag),
     releaseTag: tag,
     source: `${BUILD_REPO_URL}/releases/tag/${tag}`,
     files: Object.fromEntries(
       files.map(({ name, asset, size, sha256 }) => [name, { asset, size, sha256 }])
-    )
+    ),
+    licenseTexts: { asset: licenseTexts.asset, size: licenseTexts.size, sha256: licenseTexts.sha256 }
   };
   return `${JSON.stringify(manifest, null, 2)}\n`;
 }
 
 // The libraries that the builds hold (the scripts of build-scripts/ in the
-// build repository), each with its license, as of release n9.0.2-3. A
-// library that a build adds or drops needs a change here, as NOTICE.md must
-// name it. The versions are in versions.txt of each release.
-const LIBRARIES = [
-  ['libvpx', 'https://chromium.googlesource.com/webm/libvpx', 'the BSD 3-Clause License'],
-  ['SVT-AV1', 'https://gitlab.com/AOMediaCodec/SVT-AV1', 'the BSD 3-Clause Clear License'],
-  ['x264', 'https://code.videolan.org/videolan/x264', 'the GNU General Public License, version 2 or later'],
-  ['x265', 'https://bitbucket.org/multicoreware/x265_git', 'the GNU General Public License, version 2 or later'],
-  ['LAME', 'https://lame.sourceforge.io/', 'the GNU Library General Public License, version 2 or later'],
-  ['Opus', 'https://opus-codec.org/', 'the BSD 3-Clause License'],
-  ['zlib', 'https://zlib.net/', 'the zlib License'],
+// build repository), each with its license: its id (its name in versions.txt
+// and in LICENSE_TEXTS), the name and the link that NOTICE.md gives, and its
+// license. `licenseTextsProblem` checks this list against the license texts
+// of each release, so a library that a build adds or drops stops the script
+// until the list (and so NOTICE.md) names it.
+export const LIBRARIES = [
+  { id: 'libvpx', name: 'libvpx', url: 'https://chromium.googlesource.com/webm/libvpx', license: 'the BSD 3-Clause License' },
+  { id: 'svt-av1', name: 'SVT-AV1', url: 'https://gitlab.com/AOMediaCodec/SVT-AV1', license: 'the BSD 3-Clause Clear License' },
+  { id: 'x264', name: 'x264', url: 'https://code.videolan.org/videolan/x264', license: 'the GNU General Public License, version 2 or later' },
+  { id: 'x265', name: 'x265', url: 'https://bitbucket.org/multicoreware/x265_git', license: 'the GNU General Public License, version 2 or later' },
+  { id: 'lame', name: 'LAME', url: 'https://lame.sourceforge.io/', license: 'the GNU Library General Public License, version 2 or later' },
+  { id: 'opus', name: 'Opus', url: 'https://opus-codec.org/', license: 'the BSD 3-Clause License' },
+  { id: 'zlib', name: 'zlib', url: 'https://zlib.net/', license: 'the zlib License' },
   // FreeType gives a choice of two licenses. Dez takes the FreeType
   // License, which asks for a credit in the documentation (FREETYPE_CREDIT).
-  ['FreeType', 'https://freetype.org/', 'the FreeType License (FTL)'],
-  ['HarfBuzz', 'https://github.com/harfbuzz/harfbuzz', 'the MIT License ("Old MIT")'],
-  ['FriBidi', 'https://github.com/fribidi/fribidi', 'the GNU Lesser General Public License, version 2.1 or later'],
-  ['libass', 'https://github.com/libass/libass', 'the ISC License'],
+  { id: 'freetype', name: 'FreeType', url: 'https://freetype.org/', license: 'the FreeType License (FTL)' },
+  { id: 'harfbuzz', name: 'HarfBuzz', url: 'https://github.com/harfbuzz/harfbuzz', license: 'the MIT License ("Old MIT")' },
+  {
+    id: 'fribidi',
+    name: 'FriBidi',
+    url: 'https://github.com/fribidi/fribidi',
+    license: 'the GNU Lesser General Public License, version 2.1 or later'
+  },
+  { id: 'libass', name: 'libass', url: 'https://github.com/libass/libass', license: 'the ISC License' },
   // The Linux files are static musl builds (PLATFORMS).
-  ['musl (only in the Linux files)', 'https://musl.libc.org/', 'the MIT License']
+  { id: 'musl', name: 'musl (only in the Linux files)', url: 'https://musl.libc.org/', license: 'the MIT License' }
 ];
+
+// The head of a part of LICENSE_TEXTS: a rule line, the line
+// "<id> <version>: <file>", and another rule line (91-licenses.sh of the
+// build repository writes them).
+const LICENSE_TEXT_HEAD = /^={80}\n(\S+) \S+: .+\n={80}$/gm;
+
+// Why the license texts of a release do not fit LIBRARIES, or undefined when
+// they do: they must have a part for FFmpeg and for each library of the list,
+// and for no other one.
+export function licenseTextsProblem(text) {
+  const found = new Set(Array.from(text.matchAll(LICENSE_TEXT_HEAD), match => match[1]));
+  const named = ['ffmpeg', ...LIBRARIES.map(library => library.id)];
+  const missing = named.filter(id => !found.has(id));
+  if (missing.length > 0) {
+    return `has no license text of ${missing.join(', ')}, which LIBRARIES of this script names. If the build dropped it, remove it there`;
+  }
+  const unnamed = [...found].filter(id => !named.includes(id));
+  return unnamed.length > 0
+    ? `has the license text of ${unnamed.join(', ')}, which LIBRARIES of this script does not name. Add it there, so that NOTICE.md names it`
+    : undefined;
+}
 
 // The credit text that the FreeType License (docs/FTL.TXT of FreeType)
 // asks for, without the year, as the FreeType version moves with the
@@ -153,7 +194,7 @@ const FREETYPE_CREDIT =
 // the files have.
 export function noticeText(tag) {
   const version = ffmpegVersionOfTag(tag);
-  const libraries = LIBRARIES.map(([name, url, license]) => `- [${name}](${url}): ${license}`).join('\n');
+  const libraries = LIBRARIES.map(({ name, url, license }) => `- [${name}](${url}): ${license}`).join('\n');
   return `# ffmpeg and ffprobe in Dez
 
 <!-- Written by scripts/update-ffmpeg.js. Do not edit it by hand. -->
@@ -164,7 +205,7 @@ Dez ships two programs of the [FFmpeg](https://ffmpeg.org/) project next to its 
 - Builder: Dez, [${BUILD_REPO}](${BUILD_REPO_URL}), from the build scripts of the Shaka Project, [${SHAKA_REPO}](https://github.com/${SHAKA_REPO})
 - Release: [${tag}](${BUILD_REPO_URL}/releases/tag/${tag})
 
-The files of this folder are the files of that release, not changed. \`manifest.json\` has the release file, the size, and the SHA-256 of each one. This file is for the Dez version of this branch or tag: for another Dez version, read it at the tag of that version.
+The programs and \`${LICENSE_TEXTS}\` are files of that release, not changed. \`manifest.json\` has the release file, the size, and the SHA-256 of each one. This file is for the Dez version of this branch or tag: for another Dez version, read it at the tag of that version.
 
 ## License
 
@@ -177,6 +218,10 @@ The programs hold these libraries. Their versions are in [\`versions.txt\`](${BU
 ${libraries}
 
 FreeType: ${FREETYPE_CREDIT}
+
+## License texts
+
+\`${LICENSE_TEXTS}\` has the license texts of FFmpeg and of each library, copied from the source code of the build. The Dez bundle ships it and this file in the \`ffmpeg\` folder of its resources.
 
 ## Source code
 
@@ -217,9 +262,9 @@ export function licenseProblem(bytes) {
   return missing && `is built without ${missing}, so NOTICE.md would name the wrong license`;
 }
 
-// Downloads `url` into the file `path` and gives the size and the SHA-256
-// of the bytes that it wrote.
-async function download(url, path) {
+// Downloads `url` into a new file `path` with the mode `mode`, and gives the
+// size and the SHA-256 of the bytes that it wrote.
+async function download(url, path, mode) {
   const response = await fetch(url);
   if (!response.ok || !response.body) {
     throw new Error(`GitHub answered ${response.status} for ${url}.`);
@@ -235,11 +280,25 @@ async function download(url, path) {
         yield chunk;
       }
     },
-    // 0755: Git keeps the executable bit of an LFS file, and Tauri copies
-    // the file with its mode.
-    createWriteStream(path, { mode: 0o755 })
+    createWriteStream(path, { mode })
   );
   return { size, sha256: hash.digest('hex') };
+}
+
+// Downloads a file of the release (`releaseFile`) into `path`, and throws
+// unless it is the file that GitHub states.
+async function downloadReleaseFile(tag, file, path, mode) {
+  console.log(`Downloading ${file.asset} (${file.size} bytes)`);
+  // A URL that the script builds, not one of the API answer.
+  const url = `${BUILD_REPO_URL}/releases/download/${tag}/${file.asset}`;
+  const got = await download(url, path, mode);
+  if (got.size !== file.size || got.sha256 !== file.sha256) {
+    throw new Error(
+      `${file.asset} is not the file that GitHub states.\n` +
+        `  stated: ${file.size} bytes, SHA-256 ${file.sha256}\n` +
+        `  got:    ${got.size} bytes, SHA-256 ${got.sha256}`
+    );
+  }
 }
 
 // Runs a downloaded program of this computer with `-version` and throws
@@ -280,24 +339,23 @@ async function main(args) {
     if (!response.ok) {
       throw new Error(`GitHub answered ${response.status} for ${releaseUrl}. Check the tag: ${BUILD_REPO_URL}/releases`);
     }
-    const files = vendoredFiles(await response.json());
+    const release = await response.json();
+    const files = vendoredFiles(release);
+    const licenseTexts = licenseTextsFile(release);
 
     for (const file of files) {
-      console.log(`Downloading ${file.asset} (${file.size} bytes)`);
-      // A URL that the script builds, not one of the API answer.
-      const url = `${BUILD_REPO_URL}/releases/download/${tag}/${file.asset}`;
       const path = join(downloadDir, file.name);
-      const got = await download(url, path);
-      if (got.size !== file.size || got.sha256 !== file.sha256) {
-        throw new Error(
-          `${file.asset} is not the file that GitHub states.\n` +
-            `  stated: ${file.size} bytes, SHA-256 ${file.sha256}\n` +
-            `  got:    ${got.size} bytes, SHA-256 ${got.sha256}`
-        );
-      }
+      // 0755: Git keeps the executable bit of an LFS file, and Tauri copies
+      // the file with its mode.
+      await downloadReleaseFile(tag, file, path, 0o755);
       const problem = licenseProblem(readFileSync(path));
       if (problem) throw new Error(`${file.asset} ${problem}.`);
     }
+
+    const licenseTextsPath = join(downloadDir, licenseTexts.name);
+    await downloadReleaseFile(tag, licenseTexts, licenseTextsPath, 0o644);
+    const licenseTextsIssue = licenseTextsProblem(readFileSync(licenseTextsPath, 'utf8'));
+    if (licenseTextsIssue) throw new Error(`${licenseTexts.asset} ${licenseTextsIssue}.`);
 
     const version = ffmpegVersionOfTag(tag);
     const triple = hostTriple(process.platform, process.arch);
@@ -311,10 +369,10 @@ async function main(args) {
       console.log('Dez ships no programs for this computer, so the script did not run one.');
     }
 
-    for (const file of files) {
+    for (const file of [...files, licenseTexts]) {
       renameSync(join(downloadDir, file.name), join(binariesDir, file.name));
     }
-    writeFileSync(join(binariesDir, 'manifest.json'), manifestText(tag, files));
+    writeFileSync(join(binariesDir, 'manifest.json'), manifestText(tag, files, licenseTexts));
     writeFileSync(join(binariesDir, 'NOTICE.md'), noticeText(tag));
 
     console.log(`Vendored FFmpeg ${version} (release ${tag}) in src-tauri/binaries/.

@@ -14,13 +14,14 @@ import { DEZ_DISCUSSIONS_URL } from '../../utils/dezLinks'
 import bundledFfmpeg from '../../../src-tauri/binaries/manifest.json'
 import bundledFonts from '../../../src-tauri/fonts/manifest.json'
 
-type HelpPage = 'general' | 'tips' | 'assets' | 'support'
+type HelpPage = 'general' | 'tips' | 'assets' | 'support' | 'acknowledgements'
 
 const PAGES: { id: HelpPage; label: string }[] = [
   { id: 'general', label: 'General' },
   { id: 'tips', label: 'Tips' },
   { id: 'assets', label: 'Assets' },
   { id: 'support', label: 'Support' },
+  { id: 'acknowledgements', label: 'Acknowledgements' },
 ]
 
 // The rows of the folder list of the Assets page: the folders of the stored
@@ -43,9 +44,9 @@ const WORK_FOLDER_HOURS = WORK_FOLDER_LIFETIME_MS / HOUR_MS
 // the text writes a number (`1,568`).
 const CHAT_IMAGE_SIDE_TEXT = countText(CHAT_IMAGE_SIDE)
 
-// The sources of the fonts that Dez ships, for the Support page: each
-// repository once, in the order of the manifest, with the families of its
-// fonts.
+// The sources of the fonts that Dez ships, for the Acknowledgements page:
+// each repository once, in the order of the manifest, with the families of
+// its fonts.
 const FONT_SOURCES: { repository: string; families: string[] }[] = []
 for (const { repository, family } of Object.values(bundledFonts.fonts)) {
   const source = FONT_SOURCES.find((known) => known.repository === repository)
@@ -355,7 +356,7 @@ function onOverlayClick(event: MouseEvent) {
               <code v-if="workDir">{{ workDir }}</code><template v-else>the cache folder of the system</template>,
               so the assets that it reads stay as they are. When the tool draws text, the work
               folder also holds copies of the fonts that it uses (fonts that come with Dez, see
-              <button type="button" class="help-link" @click="page = 'support'">Support</button>),
+              <button type="button" class="help-link" @click="page = 'acknowledgements'">Acknowledgements</button>),
               and the text files that the model writes for it, for example subtitles or a title.
               Dez does not store these files as assets. Dez deletes the work folder at the end
               of the work, or {{ WORK_FOLDER_HOURS }} hours later if Dez closed before that. Before
@@ -429,17 +430,22 @@ function onOverlayClick(event: MouseEvent) {
                 {{ DEZ_DISCUSSIONS_URL }}
               </button>
             </p>
+          </section>
 
+          <section v-if="page === 'acknowledgements'" class="help-page help-page--acknowledgements">
             <!-- The version and the link come from the manifest of the
                  programs that this build holds, so they are true for every
                  Dez version, and the link needs no file of the Dez
-                 repository. The full notice is src-tauri/binaries/NOTICE.md. -->
+                 repository. `bundle.resources` ships the notice and the
+                 license texts (src-tauri/binaries/NOTICE.md, LICENSES.txt)
+                 in the ffmpeg folder of the resources. -->
             <h3>FFmpeg</h3>
             <p>
               Dez comes with ffmpeg and ffprobe, two programs of the FFmpeg project (version
               {{ bundledFfmpeg.ffmpegVersion }}). They are separate programs with their own license,
               the GNU General Public License, version 3 or later. Dez ships the files of this
-              release, and the release lists the versions of their source code:
+              release, with the license texts of FFmpeg and of the libraries in the programs, and the
+              release lists the versions of their source code:
             </p>
             <p>
               <button type="button" class="help-link help-link--ffmpeg" @click="sbp('dez.controller/openUrl', bundledFfmpeg.source)">
@@ -543,7 +549,10 @@ function onOverlayClick(event: MouseEvent) {
   flex-direction: column;
   gap: 2px;
   padding: 12px;
-  width: 140px;
+  /* Room for the longest label, "Acknowledgements", also in bold (the
+     active page): a fixed width, so the nav does not change width when
+     the page changes. */
+  width: 180px;
   flex-shrink: 0;
   border-right: 1px solid var(--color-border);
 }

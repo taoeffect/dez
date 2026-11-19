@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  LIBRARIES,
   PLATFORMS,
   TOOLS,
   hostTriple,
   licenseProblem,
+  licenseTextsFile,
+  licenseTextsProblem,
   manifestText,
   noticeText,
   parseArgs,
@@ -20,7 +23,7 @@ function release(tag = 'n9.0.2-3') {
   const names = [
     'ffmpeg-linux-arm64', 'ffmpeg-linux-arm64-ubuntu-24.04', 'ffmpeg-linux-x64', 'ffmpeg-macos-arm64',
     'ffmpeg-osx-x64', 'ffmpeg-win-x64.exe', 'ffprobe-linux-arm64', 'ffprobe-linux-x64',
-    'ffprobe-linux-x64-ubuntu-24.04', 'ffprobe-macos-arm64'
+    'ffprobe-linux-x64-ubuntu-24.04', 'ffprobe-macos-arm64', 'LICENSES.txt'
   ];
   return {
     tag_name: tag,
@@ -74,9 +77,51 @@ describe('vendoredFiles', () => {
   });
 });
 
+describe('licenseTextsFile', () => {
+  it('takes the license texts of the release, with their size and SHA-256', () => {
+    expect(licenseTextsFile(release())).toEqual({ name: 'LICENSES.txt', asset: 'LICENSES.txt', size: 1010, sha256: sha('a') });
+  });
+
+  it('refuses a release with no license texts, as the releases before n9.0.2-4', () => {
+    const data = release();
+    data.assets = data.assets.filter(asset => asset.name !== 'LICENSES.txt');
+    expect(() => licenseTextsFile(data)).toThrow('The release n9.0.2-3 has no file LICENSES.txt.');
+  });
+});
+
+// A LICENSES.txt as 91-licenses.sh of the build repository writes it, with
+// one part for each file of each library id.
+function licenseTexts(ids) {
+  const rule = '='.repeat(80);
+  const parts = ids.map(id => `${rule}\n${id} v1.0: COPYING\n${rule}\n\nThe text of ${id}.\n`);
+  return `The license texts of the ffmpeg and ffprobe programs of dez-ffmpeg.\n\n${parts.join('')}`;
+}
+
+const ALL_IDS = ['ffmpeg', ...LIBRARIES.map(library => library.id)];
+
+describe('licenseTextsProblem', () => {
+  it('takes texts with a part for FFmpeg and for each library, and more than one file of a library', () => {
+    expect(licenseTextsProblem(licenseTexts(['ffmpeg', ...ALL_IDS]))).toBeUndefined();
+  });
+
+  it('refuses texts that lack a library of LIBRARIES', () => {
+    const ids = ALL_IDS.filter(id => id !== 'musl' && id !== 'fribidi');
+    expect(licenseTextsProblem(licenseTexts(ids))).toMatch(/^has no license text of fribidi, musl, /);
+  });
+
+  it('refuses texts of a library that LIBRARIES does not name, as NOTICE.md would not name it', () => {
+    expect(licenseTextsProblem(licenseTexts([...ALL_IDS, 'mbedtls']))).toMatch(/^has the license text of mbedtls, /);
+  });
+
+  it('takes a part only from a head between two rule lines', () => {
+    const text = licenseTexts(ALL_IDS.filter(id => id !== 'opus')) + 'opus v1.6.1: COPYING\n';
+    expect(licenseTextsProblem(text)).toMatch(/^has no license text of opus, /);
+  });
+});
+
 describe('manifestText', () => {
   it('names each file as the build names it, for every target and program', () => {
-    const manifest = JSON.parse(manifestText('n9.0.2-3', vendoredFiles(release())));
+    const manifest = JSON.parse(manifestText('n9.0.2-3', vendoredFiles(release()), licenseTextsFile(release())));
     expect(manifest).toMatchObject({
       ffmpegVersion: 'n9.0.2',
       releaseTag: 'n9.0.2-3',
@@ -90,6 +135,7 @@ describe('manifestText', () => {
       size: 1007,
       sha256: sha('7')
     });
+    expect(manifest.licenseTexts).toEqual({ asset: 'LICENSES.txt', size: 1010, sha256: sha('a') });
   });
 });
 

@@ -50,7 +50,9 @@
       "binaries/dez-ffprobe"
     ],
     "resources": {
-      "fonts/": "fonts/"
+      "fonts/": "fonts/",
+      "binaries/NOTICE.md": "ffmpeg/NOTICE.md",
+      "binaries/LICENSES.txt": "ffmpeg/LICENSES.txt"
     },
     "macOS": {
       "files": {

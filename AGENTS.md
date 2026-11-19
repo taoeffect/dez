@@ -200,7 +200,7 @@ Rules:
 - `key_store.rs`: `provider_keys.json`. `copilot.rs`: Copilot device flow and token refresh.
 - `lib.rs`: plugins, permission reasons, app bootstrap, and the quit hook that stops the bundled tools.
 - `../tauri.linux.conf.json`: the Linux copy of the main window, with Tauri's native file drop on.
-- `../binaries/`: the ffmpeg and ffprobe programs that Dez ships (Git LFS), with `manifest.json`; only `scripts/update-ffmpeg.js` writes it, and `../build.rs` checks it.
+- `../binaries/`: the ffmpeg and ffprobe programs that Dez ships (Git LFS), with `manifest.json`, `NOTICE.md`, and `LICENSES.txt` (the license texts of the release); only `scripts/update-ffmpeg.js` writes it, `../build.rs` checks it, and `bundle.resources` ships the two license files.
 - `../fonts/`: the OFL fonts that Dez ships for ffmpeg's text filters (Git LFS), with their licenses and `manifest.json`; only `scripts/update-fonts.js` writes it, `../build.rs` checks it, and `bundle.resources` ships it.
 
 ## Persistence layout

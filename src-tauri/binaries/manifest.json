@@ -1,7 +1,7 @@
 {
   "ffmpegVersion": "n9.0.2",
-  "releaseTag": "n9.0.2-3",
-  "source": "https://github.com/taoeffect/dez-ffmpeg/releases/tag/n9.0.2-3",
+  "releaseTag": "n9.0.2-4",
+  "source": "https://github.com/taoeffect/dez-ffmpeg/releases/tag/n9.0.2-4",
   "files": {
     "dez-ffmpeg-aarch64-unknown-linux-gnu": {
       "asset": "ffmpeg-linux-arm64",
@@ -26,12 +26,17 @@
     "dez-ffmpeg-aarch64-apple-darwin": {
       "asset": "ffmpeg-macos-arm64",
       "size": 36177352,
-      "sha256": "8cc7eb87ea348224c043af0c784ce4548ad95a5c2ea6c92e26d71e21a0a07d9c"
+      "sha256": "dfd54c268e91e87303731bc87e588fb1295e273d9aca29041f2dcd7418413691"
     },
     "dez-ffprobe-aarch64-apple-darwin": {
       "asset": "ffprobe-macos-arm64",
       "size": 35985800,
-      "sha256": "1240d9aebad322af6a5745994112b85025606b40aac7b9a733b1402e2c88bc6e"
+      "sha256": "ec3e73f09a2743eaedc06b1cee021ab7f5e2868aaa52d33b2962099b27d05441"
     }
+  },
+  "licenseTexts": {
+    "asset": "LICENSES.txt",
+    "size": 161962,
+    "sha256": "26882e523bbcc99a6d7363411e55fabe54f70089dc17c89433d301eeec536818"
   }
 }
