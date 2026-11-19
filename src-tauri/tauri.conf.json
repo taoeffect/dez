@@ -47,12 +47,15 @@
     ],
     "externalBin": [
       "binaries/dez-ffmpeg",
-      "binaries/dez-ffprobe"
+      "binaries/dez-ffprobe",
+      "binaries/dez-deno"
     ],
     "resources": {
       "fonts/": "fonts/",
       "binaries/NOTICE.md": "ffmpeg/NOTICE.md",
-      "binaries/LICENSES.txt": "ffmpeg/LICENSES.txt"
+      "binaries/LICENSES.txt": "ffmpeg/LICENSES.txt",
+      "binaries/deno/NOTICE.md": "deno/NOTICE.md",
+      "binaries/deno/LICENSES.txt": "deno/LICENSES.txt"
     },
     "macOS": {
       "files": {

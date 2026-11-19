@@ -41,11 +41,13 @@ impl FileSource {
     }
 }
 
-/// The ffmpeg and ffprobe programs of every build target.
+/// The programs of every build target (ffmpeg, ffprobe, Deno). Each program
+/// has an update script that vendors it.
 const BINARIES: VendoredFolder = VendoredFolder {
     folder: "binaries",
     source: FileSource::FetchScript,
-    vendor_step: "run `node scripts/update-ffmpeg.js <release tag>` to vendor another version",
+    vendor_step: "run the update script of the program (scripts/update-ffmpeg.js, \
+                  scripts/update-deno.js) to vendor another version",
 };
 
 /// The fonts that the programs can use, the same for every build target.
@@ -138,8 +140,9 @@ fn build_target() -> String {
 ///
 /// Why: the programs are not in Git, so a new checkout has none until
 /// scripts/fetch-programs.js downloads them (`FileSource::FetchScript`).
-/// And a program that Dez runs must be the one that scripts/update-ffmpeg.js
-/// checked and pinned, whatever put the file there.
+/// And a program that Dez runs must be the one that its update script
+/// (scripts/update-ffmpeg.js, scripts/update-deno.js) checked and pinned,
+/// whatever put the file there.
 ///
 /// Cargo runs the build script again only when a file that it names with
 /// `rerun-if-changed` changes (tauri-build names the config files), so most
@@ -154,7 +157,7 @@ fn check_bundled_tools(tools: &[String]) -> Result<(), String> {
             return Err(format!(
                 "Dez has no {tool} program for the build target {target}: \
                  {} does not name {name}. \
-                 scripts/update-ffmpeg.js has the platforms that Dez ships programs for.",
+                 scripts/bundled-programs.js has the platforms that Dez ships programs for.",
                 BINARIES.shown_manifest()
             ));
         };

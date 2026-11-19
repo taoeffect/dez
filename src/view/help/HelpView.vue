@@ -11,7 +11,7 @@ import { WORK_FOLDER_LIFETIME_MS, WORK_ROOT } from '../../model/tools/workFolder
 import { shortcutKeyText } from '../../model/shortcuts'
 import { countText } from '../../utils/countText'
 import { DEZ_DISCUSSIONS_URL } from '../../utils/dezLinks'
-import bundledFfmpeg from '../../../src-tauri/binaries/manifest.json'
+import bundledPrograms from '../../../src-tauri/binaries/manifest.json'
 import bundledFonts from '../../../src-tauri/fonts/manifest.json'
 
 type HelpPage = 'general' | 'tips' | 'assets' | 'support' | 'thanks'
@@ -442,14 +442,32 @@ function onOverlayClick(event: MouseEvent) {
             <h3>FFmpeg</h3>
             <p>
               Dez comes with ffmpeg and ffprobe, two programs of the FFmpeg project (version
-              {{ bundledFfmpeg.ffmpegVersion }}). They are separate programs with their own license,
+              {{ bundledPrograms.ffmpegVersion }}). They are separate programs with their own license,
               the GNU General Public License, version 3 or later. Dez ships the files of this
               release, with the license texts of FFmpeg and of the libraries in the programs, and the
               release lists the versions of their source code:
             </p>
             <p>
-              <button type="button" class="help-link help-link--ffmpeg" @click="sbp('dez.controller/openUrl', bundledFfmpeg.source)">
-                {{ bundledFfmpeg.source }}
+              <button type="button" class="help-link help-link--ffmpeg" @click="sbp('dez.controller/openUrl', bundledPrograms.source)">
+                {{ bundledPrograms.source }}
+              </button>
+            </p>
+
+            <!-- As for FFmpeg, from the same manifest: scripts/update-deno.js
+                 writes its `deno` part. The notice and the license texts
+                 (src-tauri/binaries/deno/) are in the deno folder of the
+                 resources. This part has no list: the font links below are
+                 found by their place in the one list of the page. -->
+            <h3>Deno</h3>
+            <p>
+              Dez comes with Deno (version {{ bundledPrograms.deno.version }}), a program of the
+              Deno project that runs JavaScript and TypeScript. It is a separate program with its own
+              license, the MIT License. Dez ships the program of this release, with the license
+              texts of Deno and of the code of other projects in the program, such as the V8 engine:
+            </p>
+            <p>
+              <button type="button" class="help-link help-link--deno" @click="sbp('dez.controller/openUrl', bundledPrograms.deno.source)">
+                {{ bundledPrograms.deno.source }}
               </button>
             </p>
 

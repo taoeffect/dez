@@ -18,9 +18,9 @@ The AppImage includes the GStreamer plugins of the build machine, so that the no
 
 The notification sound (`src/assets/sounds/ding.mp3`) and the fonts that Dez ships for ffmpeg's text filters (`src-tauri/fonts/`) are stored with [Git LFS](https://git-lfs.com/). Install Git LFS and run `git lfs pull` before you build. Without it, the build stops, because a small text file is in place of each font.
 
-The ffmpeg and ffprobe programs that Dez ships are not in the repository. `node scripts/fetch-programs.js` downloads the two programs of your machine into `src-tauri/binaries/` from the URLs in `src-tauri/binaries/manifest.json`. It takes a file only when the file has the size and the SHA-256 that the manifest names. `npm run tauri` and the build commands on this page run the script first; it downloads nothing when the programs are there. A build with `cargo` alone does not run it: when a program is missing, the build stops and names the command to run. For another build target, add `--target <target triple>`.
+The programs that Dez ships (ffmpeg, ffprobe, and Deno) are not in the repository. `node scripts/fetch-programs.js` downloads the programs of your machine into `src-tauri/binaries/` from the URLs in `src-tauri/binaries/manifest.json`. It takes a file only when the file has the size and the SHA-256 that the manifest names. `npm run tauri` and the build commands on this page run the script first; it downloads nothing when the programs are there. A build with `cargo` alone does not run it: when a program is missing, the build stops and names the command to run. For another build target, add `--target <target triple>`.
 
-The license texts (`src-tauri/binaries/NOTICE.md`, `src-tauri/binaries/LICENSES.txt`, `src-tauri/fonts/*-OFL.txt`) and the manifests are plain Git files.
+The license texts (`NOTICE.md` and `LICENSES.txt` in `src-tauri/binaries/` and in `src-tauri/binaries/deno/`, `src-tauri/fonts/*-OFL.txt`) and the manifests are plain Git files.
 
 Build an Apple Silicon macOS DMG on macOS:
 

@@ -71,7 +71,7 @@ jobs:
       fail-fast: false
       matrix:
         # `target` is the Rust target triple of the runner: the names of
-        # the ffmpeg and ffprobe programs in src-tauri/binaries/ end with it.
+        # the bundled programs in src-tauri/binaries/ end with it.
         include:
           - arch: x86_64
             runner: ubuntu-22.04
@@ -109,8 +109,8 @@ jobs:
           node-version: 24
           cache: npm
 
-      # The ffmpeg and ffprobe programs of this target (see the comment at
-      # this step in e2e.yml).
+      # The bundled programs of this target (see the comment at this step
+      # in e2e.yml).
       - name: Fetch bundled programs
         uses: ./.github/actions/fetch-programs
         with:
@@ -215,8 +215,8 @@ jobs:
           node-version: 24
           cache: npm
 
-      # The ffmpeg and ffprobe programs of this target (see the comment at
-      # this step in e2e.yml).
+      # The bundled programs of this target (see the comment at this step
+      # in e2e.yml).
       - name: Fetch bundled programs
         uses: ./.github/actions/fetch-programs
         with:

@@ -4,7 +4,16 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { BINARIES_DIR, PROGRAM_MODE, downloadPinned, hostTriple } from './bundled-programs.js';
+import {
+  BINARIES_DIR,
+  PROGRAM_MODE,
+  downloadPinned,
+  githubRelease,
+  hostTriple,
+  manifestFileText,
+  manifestWith,
+  releaseFile
+} from './bundled-programs.js';
 
 // Vendors the ffmpeg and ffprobe programs that Dez ships: downloads the
 // files of one release of the build repository for every platform of Dez,
@@ -89,22 +98,6 @@ export function ffmpegVersionOfTag(tag) {
 // name in src-tauri/binaries/.
 export const LICENSE_TEXTS = 'LICENSES.txt';
 
-// A file of the release data of the GitHub API, with the size and the
-// SHA-256 that GitHub states. Throws when the release has no such file, or
-// gives no SHA-256 for it (releases from before GitHub made digests): Dez
-// vendors no file that it cannot check.
-function releaseFile(release, assetName) {
-  const asset = (release.assets ?? []).find(candidate => candidate.name === assetName);
-  if (!asset) {
-    throw new Error(`The release ${release.tag_name} has no file ${assetName}.`);
-  }
-  const sha256 = /^sha256:([0-9a-f]{64})$/.exec(asset.digest ?? '')?.[1];
-  if (!sha256) {
-    throw new Error(`The release ${release.tag_name} gives no SHA-256 for ${assetName}.`);
-  }
-  return { asset: assetName, size: asset.size, sha256 };
-}
-
 // The programs to vendor: for each program of each platform its name in Dez,
 // its release file, and its size and SHA-256 (`releaseFile`).
 export function vendoredFiles(release) {
@@ -129,17 +122,26 @@ function releaseFileUrl(tag, asset) {
 // programs against, and where they come from. The `url`, `size`, and
 // `sha256` of a program are its pin: scripts/fetch-programs.js downloads
 // the program from that URL, and takes only that file.
-export function manifestText(tag, files, licenseTexts) {
-  const manifest = {
-    ffmpegVersion: ffmpegVersionOfTag(tag),
-    releaseTag: tag,
-    source: `${BUILD_REPO_URL}/releases/tag/${tag}`,
-    files: Object.fromEntries(
-      files.map(({ name, asset, size, sha256 }) => [name, { asset, url: releaseFileUrl(tag, asset), size, sha256 }])
-    ),
-    licenseTexts: { asset: licenseTexts.asset, size: licenseTexts.size, sha256: licenseTexts.sha256 }
-  };
-  return `${JSON.stringify(manifest, null, 2)}\n`;
+//
+// `manifest` is the manifest of before. The script changes only its own
+// part (`manifestWith`): the manifest also has the programs of the other
+// update scripts (update-deno.js).
+export function manifestText(manifest, tag, files, licenseTexts) {
+  return manifestFileText(
+    manifestWith(
+      manifest,
+      {
+        ffmpegVersion: ffmpegVersionOfTag(tag),
+        releaseTag: tag,
+        source: `${BUILD_REPO_URL}/releases/tag/${tag}`,
+        licenseTexts: { asset: licenseTexts.asset, size: licenseTexts.size, sha256: licenseTexts.sha256 }
+      },
+      Object.fromEntries(
+        files.map(({ name, asset, size, sha256 }) => [name, { asset, url: releaseFileUrl(tag, asset), size, sha256 }])
+      ),
+      name => TOOLS.some(tool => name.startsWith(vendoredName(tool, '')))
+    )
+  );
 }
 
 // The libraries that the builds hold (the scripts of build-scripts/ in the
@@ -302,12 +304,7 @@ async function main(args) {
   // every check passed: a failed run leaves the vendored version whole.
   const downloadDir = mkdtempSync(join(BINARIES_DIR, '.update-'));
   try {
-    const releaseUrl = `https://api.github.com/repos/${BUILD_REPO}/releases/tags/${tag}`;
-    const response = await fetch(releaseUrl, { headers: { Accept: 'application/vnd.github+json' } });
-    if (!response.ok) {
-      throw new Error(`GitHub answered ${response.status} for ${releaseUrl}. Check the tag: ${BUILD_REPO_URL}/releases`);
-    }
-    const release = await response.json();
+    const release = await githubRelease(BUILD_REPO, tag);
     const files = vendoredFiles(release);
     const licenseTexts = licenseTextsFile(release);
 
@@ -338,7 +335,9 @@ async function main(args) {
     for (const file of [...files, licenseTexts]) {
       renameSync(join(downloadDir, file.name), join(BINARIES_DIR, file.name));
     }
-    writeFileSync(join(BINARIES_DIR, 'manifest.json'), manifestText(tag, files, licenseTexts));
+    const manifestPath = join(BINARIES_DIR, 'manifest.json');
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    writeFileSync(manifestPath, manifestText(manifest, tag, files, licenseTexts));
     writeFileSync(join(BINARIES_DIR, 'NOTICE.md'), noticeText(tag));
 
     console.log(`Vendored FFmpeg ${version} (release ${tag}) in src-tauri/binaries/.

@@ -120,8 +120,10 @@ describe('licenseTextsProblem', () => {
 });
 
 describe('manifestText', () => {
+  const text = (manifest, tag = 'n9.0.2-3') => manifestText(manifest, tag, vendoredFiles(release(tag)), licenseTextsFile(release(tag)));
+
   it('names each file as the build names it, for every target and program', () => {
-    const manifest = JSON.parse(manifestText('n9.0.2-3', vendoredFiles(release()), licenseTextsFile(release())));
+    const manifest = JSON.parse(text({}));
     expect(manifest).toMatchObject({
       ffmpegVersion: 'n9.0.2',
       releaseTag: 'n9.0.2-3',
@@ -139,6 +141,25 @@ describe('manifestText', () => {
       sha256: sha('7')
     });
     expect(manifest.licenseTexts).toEqual({ asset: 'LICENSES.txt', size: 1010, sha256: sha('a') });
+  });
+
+  it('keeps the part of another update script as it is, and replaces all of its own part', () => {
+    const deno = { version: '2.9.8', source: 'https://example.com/deno' };
+    const denoFile = { url: 'https://example.com/deno.zip', zip: { member: 'deno', size: 3, sha256: sha('e') }, size: 9, sha256: sha('f') };
+    const before = JSON.parse(text({}, 'n9.0.2-3'));
+    before.deno = deno;
+    before.files['dez-deno-x86_64-unknown-linux-gnu'] = denoFile;
+    // A program of a platform that the script has no more.
+    before.files['dez-ffmpeg-x86_64-apple-darwin'] = { size: 1 };
+
+    const after = JSON.parse(text(before, 'n9.1-1'));
+    expect(after.deno).toEqual(deno);
+    expect(after.files['dez-deno-x86_64-unknown-linux-gnu']).toEqual(denoFile);
+    // Without the part of the other script, the manifest is the one of a
+    // first run for the new tag: nothing of the old tag is left.
+    delete after.deno;
+    delete after.files['dez-deno-x86_64-unknown-linux-gnu'];
+    expect(after).toEqual(JSON.parse(text({}, 'n9.1-1')));
   });
 });
 

@@ -23,7 +23,8 @@ npm run build:macos:app        # Apple Silicon macOS .app; macOS only
 npm run bump-version -- [--check] <version>          # npm, Tauri, and Cargo version files; --check only checks
 node scripts/release-notes.js <tag> [--out <file>]   # release notes body for a tag
 node scripts/update-ffmpeg.js <release tag>           # vendor the ffmpeg and ffprobe programs of a release
-node scripts/fetch-programs.js [--target <triple>]    # download the ffmpeg and ffprobe programs of a build target (default: this computer)
+node scripts/update-deno.js <version>                 # vendor the Deno program of a release (dez-deno), with its license texts
+node scripts/fetch-programs.js [--target <triple>]    # download the bundled programs of a build target (default: this computer)
 node scripts/update-fonts.js                          # vendor the fonts that Dez ships (src-tauri/fonts/)
 npm run preview                # preview the built frontend
 cd src-tauri && cargo check
@@ -201,7 +202,7 @@ Rules:
 - `key_store.rs`: `provider_keys.json`. `copilot.rs`: Copilot device flow and token refresh.
 - `lib.rs`: plugins, permission reasons, app bootstrap, and the quit hook that stops the bundled tools.
 - `../tauri.linux.conf.json`: the Linux copy of the main window, with Tauri's native file drop on.
-- `../binaries/`: the ffmpeg and ffprobe programs that Dez ships (ignored by Git; `scripts/fetch-programs.js` downloads them), with `manifest.json` (the URL, size, and SHA-256 of each program), `NOTICE.md`, and `LICENSES.txt` (the license texts of the release); only `scripts/update-ffmpeg.js` writes the tracked files, `../build.rs` checks the programs, and `bundle.resources` ships the two license files.
+- `../binaries/`: the ffmpeg, ffprobe, and Deno programs that Dez ships (ignored by Git; `scripts/fetch-programs.js` downloads them), with `manifest.json` (the URL, size, and SHA-256 of each program), and the license notice and license texts of FFmpeg (`NOTICE.md`, `LICENSES.txt`) and of Deno (`deno/`); only `scripts/update-ffmpeg.js` and `scripts/update-deno.js` write the tracked files, each its own part, `../build.rs` checks the programs, and `bundle.resources` ships the license files.
 - `../fonts/`: the OFL fonts that Dez ships for ffmpeg's text filters (Git LFS), with their licenses and `manifest.json`; only `scripts/update-fonts.js` writes it, `../build.rs` checks it, and `bundle.resources` ships it.
 
 ## Persistence layout
@@ -312,7 +313,7 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 - **`@tauri-apps/plugin-store` is unused**: app files use Dez's own Rust file I/O.
 - **Secrets wrapper is not a vault**: `src/utils/secret.ts`; never log provider headers, native HTTP payloads, or diagnostics without sanitization.
 - **Sounds and the fonts are in Git LFS**: clone with LFS (`git lfs pull`). A pointer file in place of a sound builds with no error; one in place of a font stops the build.
-- **The ffmpeg programs are not in Git**: a new clone has none until `scripts/fetch-programs.js` runs. `build.rs` downloads nothing; it stops the build when a program is missing or is not the file that `binaries/manifest.json` pins.
+- **The bundled programs are not in Git**: a new clone has none until `scripts/fetch-programs.js` runs. `build.rs` downloads nothing; it stops the build when a program is missing or is not the file that `binaries/manifest.json` pins.
 - **tauri-build puts the bundled programs next to a debug build**: keep it at 2.7 or newer (`src-tauri/Cargo.toml`).
 - When using the `agentic_fetch` tool:
   - If searching the web, *ALWAYS* tell the tool to never use local tools like Grep, and only search the web

@@ -15,8 +15,8 @@ name = "dez_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 # sha2 and serde_json, at the versions that tauri already builds: build.rs
-# checks the bundled ffmpeg and ffprobe programs (binaries/) against
-# binaries/manifest.json with them.
+# checks the bundled programs (binaries/) against binaries/manifest.json
+# with them.
 [build-dependencies]
 # tauri-build copies the bundled programs (`bundle.externalBin`) next to the
 # Dez program of a debug build. It must be 2.7 or newer: older versions take
@@ -101,12 +101,12 @@ objc2 = "=0.6.4"
 objc2-foundation = "=0.3.2"
 objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSPasteboard"] }
 
-# build.rs hashes the two bundled programs of the build target (70 to 96
-# MB) each time that cargo runs the build script again, for example after
-# a change of tauri.conf.json or of a capability file. Cargo builds the
-# dependencies of a build script with no optimization: the hash then took
-# 2 s on an arm64 host, and takes 0.2 s with this. A package entry also
-# applies to a build dependency.
+# build.rs hashes the bundled programs of the build target (150 to 200 MB)
+# each time that cargo runs the build script again, for example after a
+# change of tauri.conf.json or of a capability file. Cargo builds the
+# dependencies of a build script with no optimization: the hash of 77 MB
+# then took 2 s on an arm64 host, and takes 0.2 s with this. A package
+# entry also applies to a build dependency.
 [profile.dev.package.sha2]
 opt-level = 3
 

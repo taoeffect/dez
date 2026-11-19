@@ -18,8 +18,8 @@
 # src-tauri/build.rs stops the build when a font is not the file that
 # src-tauri/fonts/manifest.json names.
 #
-# The ffmpeg and ffprobe programs are not in Git LFS: the fetch-programs
-# action gets them.
+# The programs that Dez ships (ffmpeg, ffprobe, Deno) are not in Git LFS:
+# the fetch-programs action gets them.
 name: Pull the Git LFS files
 description: >-
   Gets the sound files and the fonts from Git LFS, with a cache of the LFS

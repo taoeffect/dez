@@ -1,4 +1,4 @@
-# Gets the programs that Dez ships (ffmpeg and ffprobe) for one build
+# Gets the programs that Dez ships (ffmpeg, ffprobe, Deno) for one build
 # target. They are not in Git: scripts/fetch-programs.js downloads each one
 # from the URL that src-tauri/binaries/manifest.json pins for it, and takes
 # only a file with the pinned size and SHA-256. Run it after the checkout
@@ -7,8 +7,8 @@
 # The npm scripts that build Dez run the same script first, so a job would
 # get the programs without this action. The action adds the cache, and a
 # step of its own that fails when a download fails. A run that finds the
-# cache downloads nothing (the two programs of one target are about 70 to
-# 96 MB). The script checks the files of a cache as it checks every file,
+# cache downloads nothing (the programs of one target are about 150 to
+# 200 MB). The script checks the files of a cache as it checks every file,
 # and downloads a file again that does not match its pin.
 #
 # A run finds only the caches of its own branch or tag and of the default
@@ -16,12 +16,13 @@
 # the E2E runs on master, and downloads the files of the other two
 # targets once.
 #
-# The download needs no token: the releases of the build repository
-# (scripts/update-ffmpeg.js) are public.
+# The download needs no token: the releases that the manifest names (the
+# build repository of scripts/update-ffmpeg.js, the Deno repository) are
+# public.
 name: Fetch the bundled programs of one platform
 description: >-
-  Gets the ffmpeg and ffprobe programs of one build target, checked against
-  src-tauri/binaries/manifest.json, with a cache of the files.
+  Gets the ffmpeg, ffprobe, and Deno programs of one build target, checked
+  against src-tauri/binaries/manifest.json, with a cache of the files.
 
 inputs:
   target:

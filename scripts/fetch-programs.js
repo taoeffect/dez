@@ -7,7 +7,9 @@ import {
   BINARIES_DIR,
   MANIFEST_NAME,
   PROGRAM_MODE,
+  checkPin,
   downloadPinned,
+  downloadZipMember,
   hostTriple,
   isPinnedFile
 } from './bundled-programs.js';
@@ -73,6 +75,12 @@ export function programNames(config) {
 // (`<name>-<target triple>`, as Tauri and build.rs name it) and its pin of
 // the manifest. Throws when the manifest names no such file, or no URL,
 // size, or SHA-256 for it.
+//
+// A program that its release has only in a zip file (Deno) has a `zip`
+// field too: `url` is then the zip file, `zip.size` and `zip.sha256` are
+// its pin, and `zip.member` is the name of the program in it. `size` and
+// `sha256` are always those of the program file itself, which is what
+// build.rs checks.
 export function pinnedPrograms(manifest, names, target) {
   const files = manifest?.files ?? {};
   return names.map(program => {
@@ -80,14 +88,16 @@ export function pinnedPrograms(manifest, names, target) {
     if (!Object.hasOwn(files, name)) {
       throw new Error(`Dez has no ${program} program for the target ${target}: ${MANIFEST_NAME} does not name ${name}.`);
     }
-    const { url, size, sha256 } = files[name];
+    const { url, size, sha256, zip } = files[name];
+    const vendorScripts = 'The script that vendors the program writes them (scripts/update-ffmpeg.js, scripts/update-deno.js).';
     if (typeof url !== 'string' || !Number.isSafeInteger(size) || typeof sha256 !== 'string') {
-      throw new Error(
-        `${MANIFEST_NAME} names no URL, size, or SHA-256 for ${name}. ` +
-          'The script that vendors the program writes them (scripts/update-ffmpeg.js).'
-      );
+      throw new Error(`${MANIFEST_NAME} names no URL, size, or SHA-256 for ${name}. ${vendorScripts}`);
     }
-    return { name, url, size, sha256 };
+    if (zip === undefined) return { name, url, size, sha256 };
+    if (typeof zip?.member !== 'string' || !Number.isSafeInteger(zip.size) || typeof zip.sha256 !== 'string') {
+      throw new Error(`${MANIFEST_NAME} names no file, size, or SHA-256 for the zip file of ${name}. ${vendorScripts}`);
+    }
+    return { name, url, size, sha256, zip: { member: zip.member, size: zip.size, sha256: zip.sha256 } };
   });
 }
 
@@ -96,16 +106,25 @@ export function pinnedPrograms(manifest, names, target) {
 // into a folder next to it (the same file system, so a rename moves it), and
 // takes the place of the program only after it passed the check: no failed
 // or wrong download is ever under the name of a program.
-export async function fetchProgram(dir, { name, url, size, sha256 }, log = console.log) {
+//
+// For a program in a zip file (`zip`, see `pinnedPrograms`), the zip file
+// must match its pin, and then the program that came out of it must match
+// the pin of the program.
+export async function fetchProgram(dir, { name, url, size, sha256, zip }, log = console.log) {
   const path = join(dir, name);
   const pin = { size, sha256 };
   const downloads = !(await isPinnedFile(path, pin));
   if (downloads) {
-    log(`Downloading ${name} (${size} bytes)`);
+    log(`Downloading ${name} (${(zip ?? pin).size} bytes)`);
     const downloadDir = mkdtempSync(join(dir, '.fetch-'));
     try {
       const downloaded = join(downloadDir, name);
-      await downloadPinned(url, downloaded, PROGRAM_MODE, pin, MANIFEST_NAME);
+      if (zip) {
+        const got = await downloadZipMember(url, downloaded, PROGRAM_MODE, zip, MANIFEST_NAME);
+        checkPin(`The file ${zip.member} of ${url}`, got, pin, MANIFEST_NAME);
+      } else {
+        await downloadPinned(url, downloaded, PROGRAM_MODE, pin, MANIFEST_NAME);
+      }
       renameSync(downloaded, path);
     } finally {
       rmSync(downloadDir, { recursive: true, force: true });

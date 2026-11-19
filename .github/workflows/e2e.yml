@@ -71,12 +71,12 @@ jobs:
           node-version: 24
           cache: npm
 
-      # The ffmpeg and ffprobe programs of this platform are not in Git: a
-      # script downloads them, and takes only the files that
-      # src-tauri/binaries/manifest.json pins. src-tauri/build.rs checks
-      # them again, and stops the build when one is missing. The script
-      # needs Node, so the step is after the Node setup. The header of the
-      # action tells the rest.
+      # The programs that Dez ships (ffmpeg, ffprobe, Deno) are not in Git:
+      # a script downloads those of this platform, and takes only the files
+      # that src-tauri/binaries/manifest.json pins. src-tauri/build.rs
+      # checks them again, and stops the build when one is missing. The
+      # script needs Node, so the step is after the Node setup. The header
+      # of the action tells the rest.
       - name: Fetch bundled programs
         uses: ./.github/actions/fetch-programs
         with:

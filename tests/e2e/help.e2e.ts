@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { Key } from 'webdriverio'
 import { STORED_FILE_FOLDERS } from '../../src/model/chat/unusedFiles'
 import { DEZ_DISCUSSIONS_URL } from '../../src/utils/dezLinks'
-import bundledFfmpeg from '../../src-tauri/binaries/manifest.json'
+import bundledPrograms from '../../src-tauri/binaries/manifest.json'
 import bundledFonts from '../../src-tauri/fonts/manifest.json'
 import { startApp, type RunningApp } from './harness/app'
 import { clearOpenedUrls, consoleErrors, openedUrls, pointerClick, pointerClickAt, pointerDrag, resetConsoleErrors, screenshotOnFailure, stopOpenUrl, waitFor, waitForValue } from './harness/dom'
@@ -180,20 +180,24 @@ describe('Help panel', () => {
     await pointerClickAt(browser, fontsLink)
     await waitForValue(browser, 'Thank You page', shownPage, { nav: 'Thank You', page: 'help-page--thanks' })
 
-    // The release of the ffmpeg and ffprobe programs that the app holds.
-    await pointerClick(browser, '.help-page--thanks .help-link--ffmpeg')
-    await waitForValue(browser, 'opened URLs', () => openedUrls(browser), [bundledFfmpeg.source])
-    // The source of the fonts that the app holds: one link for each
-    // repository, in the order of the manifest. The links are at the end of
-    // the page, which can be longer than the panel: a click needs the link
-    // in view.
-    const fontSources = [...new Set(Object.values(bundledFonts.fonts).map(({ repository }) => repository))]
-    for (let i = 1; i <= fontSources.length; i++) {
-      const link = `.help-page--thanks li:nth-child(${i}) .help-link--font`
+    // The page can be longer than the panel: a click needs its link in view.
+    const clickInView = async (link: string) => {
       await browser.execute((link) => document.querySelector(link)?.scrollIntoView({ block: 'center' }), link)
       await pointerClick(browser, link)
     }
-    await waitForValue(browser, 'opened URLs', () => openedUrls(browser), [bundledFfmpeg.source, ...fontSources])
+    // The release of the ffmpeg and ffprobe programs that the app holds,
+    // then the release of its Deno program.
+    const programSources = [bundledPrograms.source, bundledPrograms.deno.source]
+    await clickInView('.help-page--thanks .help-link--ffmpeg')
+    await clickInView('.help-page--thanks .help-link--deno')
+    await waitForValue(browser, 'opened URLs', () => openedUrls(browser), programSources)
+    // The source of the fonts that the app holds: one link for each
+    // repository, in the order of the manifest.
+    const fontSources = [...new Set(Object.values(bundledFonts.fonts).map(({ repository }) => repository))]
+    for (let i = 1; i <= fontSources.length; i++) {
+      await clickInView(`.help-page--thanks li:nth-child(${i}) .help-link--font`)
+    }
+    await waitForValue(browser, 'opened URLs', () => openedUrls(browser), [...programSources, ...fontSources])
     expect(await helpOpen()).toBe(true)
   })
 

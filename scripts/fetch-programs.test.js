@@ -1,12 +1,10 @@
-import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { fetchProgram, parseArgs, pinnedPrograms, programNames } from './fetch-programs.js';
-
-const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
+import { sha256, zipFile } from './testing.js';
 
 describe('parseArgs', () => {
   it('takes no argument, a target, or a call for the usage text', () => {
@@ -79,6 +77,32 @@ describe('pinnedPrograms', () => {
       const files = { ...manifest.files, 'dez-ffmpeg-x86_64-unknown-linux-gnu': entry };
       expect(() => pinnedPrograms({ files }, names, 'x86_64-unknown-linux-gnu')).toThrow(
         /^src-tauri\/binaries\/manifest\.json names no URL, size, or SHA-256 for dez-ffmpeg-x86_64-unknown-linux-gnu\. /
+      );
+    }
+  });
+
+  // The entry of a program that comes in a zip file: `url` is the zip file,
+  // and `zip` pins it and names the program in it.
+  const zipPin = { ...pin('e'), zip: { member: 'deno', size: 3, sha256: 'f'.repeat(64) } };
+  const zipFiles = { ...manifest.files, 'dez-deno-x86_64-unknown-linux-gnu': zipPin };
+
+  it('gives the pin of the zip file too, for a program that comes in a zip file', () => {
+    expect(pinnedPrograms({ files: zipFiles }, ['dez-deno'], 'x86_64-unknown-linux-gnu')).toEqual([
+      {
+        name: 'dez-deno-x86_64-unknown-linux-gnu',
+        url: 'https://example.com/e',
+        size: 7,
+        sha256: 'e'.repeat(64),
+        zip: { member: 'deno', size: 3, sha256: 'f'.repeat(64) }
+      }
+    ]);
+  });
+
+  it('refuses a zip file with no program name, size, or SHA-256', () => {
+    for (const zip of [null, {}, { ...zipPin.zip, member: undefined }, { ...zipPin.zip, size: '3' }, { ...zipPin.zip, sha256: undefined }]) {
+      const files = { ...zipFiles, 'dez-deno-x86_64-unknown-linux-gnu': { ...zipPin, zip } };
+      expect(() => pinnedPrograms({ files }, ['dez-deno'], 'x86_64-unknown-linux-gnu')).toThrow(
+        /^src-tauri\/binaries\/manifest\.json names no file, size, or SHA-256 for the zip file of dez-deno-x86_64-unknown-linux-gnu\. /
       );
     }
   });
@@ -170,5 +194,61 @@ describe('fetchProgram', () => {
     );
     expect(readFileSync(join(dir, NAME))).toEqual(otherProgram);
     expect(readdirSync(dir)).toEqual([NAME]);
+  });
+
+  describe('for a program in a zip file', () => {
+    const DENO = 'dez-deno-x86_64-unknown-linux-gnu';
+    const zip = zipFile([{ name: 'README', bytes: Buffer.from('a text') }, { name: 'deno', bytes: program }]);
+    // A zip file with another program under the same name.
+    const otherZip = zipFile([{ name: 'deno', bytes: otherProgram }]);
+
+    const zipPinned = (zipBytes = zip) => ({
+      ...pinned('/release/deno.zip'),
+      name: DENO,
+      zip: { member: 'deno', size: zipBytes.length, sha256: sha256(zipBytes) }
+    });
+
+    it('takes the program out of the zip file as a file that can run, and leaves nothing else', async () => {
+      served['/release/deno.zip'] = zip;
+      expect(await fetchProgram(dir, zipPinned(), quiet)).toBe(true);
+      expect(readFileSync(join(dir, DENO))).toEqual(program);
+      expect(mode(join(dir, DENO))).toBe(0o755);
+      expect(readdirSync(dir)).toEqual([DENO]);
+    });
+
+    it('keeps a program that matches its pin with no request', async () => {
+      writeFileSync(join(dir, DENO), program);
+      expect(await fetchProgram(dir, zipPinned(), quiet)).toBe(false);
+      expect(requests).toEqual([]);
+    });
+
+    it('refuses a download that is not the pinned zip file, and puts nothing under the name of the program', async () => {
+      served['/release/deno.zip'] = otherZip;
+      await expect(fetchProgram(dir, zipPinned(), quiet)).rejects.toThrow(
+        `/release/deno.zip is not the file that src-tauri/binaries/manifest.json names.\n` +
+          `  named: ${zip.length} bytes, SHA-256 ${sha256(zip)}\n` +
+          `  got:   ${otherZip.length} bytes, SHA-256 ${sha256(otherZip)}`
+      );
+      expect(readdirSync(dir)).toEqual([]);
+    });
+
+    it('refuses a pinned zip file whose program is not the pinned program', async () => {
+      served['/release/deno.zip'] = otherZip;
+      const { url } = zipPinned();
+      await expect(fetchProgram(dir, zipPinned(otherZip), quiet)).rejects.toThrow(
+        `The file deno of ${url} is not the file that src-tauri/binaries/manifest.json names.\n` +
+          `  named: ${program.length} bytes, SHA-256 ${sha256(program)}\n` +
+          `  got:   ${otherProgram.length} bytes, SHA-256 ${sha256(otherProgram)}`
+      );
+      expect(readdirSync(dir)).toEqual([]);
+    });
+
+    it('tells the URL of a pinned zip file that does not have the program', async () => {
+      served['/release/deno.zip'] = zip;
+      const pin = zipPinned();
+      pin.zip.member = 'deno.exe';
+      await expect(fetchProgram(dir, pin, quiet)).rejects.toThrow(`${pin.url}: The zip file has no file deno.exe.`);
+      expect(readdirSync(dir)).toEqual([]);
+    });
   });
 });
