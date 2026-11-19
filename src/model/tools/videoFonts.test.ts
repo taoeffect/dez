@@ -35,6 +35,7 @@ describe('fontProblem', () => {
     'drawtext=fonts/NotoSans-Bold.ttf:text=Hi',
     '[0:v]drawtext@title=./fonts/NotoSansArabic-Regular.ttf:text=Hi[v]',
     'drawtext=text=Hi:fontfile= fonts/NotoSans-Bold.ttf :fontsize=40',
+    'drawtext=text = Hi:fontfile=fonts/NotoSans-Bold.ttf',
     'drawtext=fontfile=fonts/NotoSans-Bold.ttf,drawtext=fontfile=fonts/NotoSansArabic-Regular.ttf',
     'subtitles=c.mkv:fontsdir=fonts',
     // fontsdir is the third option of subtitles and ass.
@@ -54,11 +55,15 @@ describe('fontProblem', () => {
     ['drawtext=NotoSans-Bold.ttf:text=Hi', 'Give the font as fontfile=fonts/<file>'],
     ['drawtext=FontFile=Arial', 'Give the font as fontfile=fonts/<file>'],
     ['drawtext=text=Hi:fontfile=c.webm', 'Give the font as fontfile=fonts/<file>'],
+    // ffmpeg takes `x y=z` as a value with no key: no `=` follows the name `x`.
+    ['drawtext=x y=z:text=Hi', 'Give the font as fontfile=fonts/<file>'],
     ['drawtext=fontfile=fonts/Arial.ttf', 'it names "Arial.ttf" in the fonts folder, and Dez ships no font with that name'],
     ['drawtext=fontfile=fonts/sub/NotoSans-Bold.ttf', 'it names "sub/NotoSans-Bold.ttf" in the fonts folder'],
     ['fonts/out.mp4', 'it names "out.mp4" in the fonts folder'],
     ['subtitles=c.mkv:fontsdir=.', 'give fontsdir=fonts'],
     ['subtitles=c.mkv:640x360:sub', 'give fontsdir=fonts'],
+    ['subtitles=c.mkv:640x360:x y=z', 'give fontsdir=fonts'],
+    ['subtitles=a b=c.srt:640x360:sub', 'give fontsdir=fonts'],
     ['ass=c.ass:fontsdir=fonts/NotoSans-Bold.ttf', 'give fontsdir=fonts'],
     ['Fonts/NotoSans-Bold.ttf', 'it writes the fonts folder as "Fonts/"'],
   ])('refuses %j', (word, cause) => {

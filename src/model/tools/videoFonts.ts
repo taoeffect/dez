@@ -78,6 +78,12 @@ const NAME_CHARS = 'A-Za-z0-9_'
 // The end of a value of a filter's options: a separator of the options, or
 // of the filter graph.
 const VALUE_CHARS = String.raw`[^:,;[\]]`
+// A value with no key of a filter's options. ffmpeg reads a key only when
+// key chars, optional white space, and a `=` start the value (`get_key`,
+// libavutil/opt.c), so `x y=z` is a value with no key. A filter takes values
+// with no key only before its first key, in the order of its options.
+const KEY_START = String.raw`\s*[A-Za-z0-9_./-]*\s*=`
+const UNKEYED_VALUE = String.raw`(?!${KEY_START})${VALUE_CHARS}*`
 // A file of the fonts folder, as `fonts/<file>`: at the start of the word
 // or of a value, or after a `/` (`./fonts/x`). A name char, a `.`, or a `-`
 // before it makes another folder (`my-fonts/x`). The case of the folder
@@ -86,11 +92,10 @@ const VALUE_CHARS = String.raw`[^:,;[\]]`
 const FONT_PATH = new RegExp(String.raw`(?:^|[^${NAME_CHARS}.-])(fonts)/([A-Za-z0-9._-]*)`, 'gi')
 // The font of drawtext: the value of a `fontfile` key, or the first value
 // with no key of drawtext, as `fontfile` is its first option. The filter
-// can have an instance name (`drawtext@a=…`). A filter takes values with no
-// key only before its first key, so a first value with a `=` is a key.
+// can have an instance name (`drawtext@a=…`).
 const FONT_FILE_VALUE = new RegExp(
   String.raw`(?:^|[^${NAME_CHARS}])fontfile\s*=(${VALUE_CHARS}*)`
-    + String.raw`|(?:^|[^${NAME_CHARS}])drawtext(?:@[^=,;[]*)?\s*=([^:=,;[\]]*)(?=$|[:,;[\]])`,
+    + String.raw`|(?:^|[^${NAME_CHARS}])drawtext(?:@[^=,;[]*)?\s*=(${UNKEYED_VALUE})`,
   'gi',
 )
 // The fonts folder of libass: the value of a `fontsdir` key, or the third
@@ -98,7 +103,7 @@ const FONT_FILE_VALUE = new RegExp(
 // `original_size`).
 const FONTS_DIR_VALUE = new RegExp(
   String.raw`(?:^|[^${NAME_CHARS}])fontsdir\s*=(${VALUE_CHARS}*)`
-    + String.raw`|(?:^|[^${NAME_CHARS}])(?:subtitles|ass)(?:@[^=,;[]*)?\s*=[^:=,;[\]]*:[^:=,;[\]]*:([^:=,;[\]]*)(?=$|[:,;[\]])`,
+    + String.raw`|(?:^|[^${NAME_CHARS}])(?:subtitles|ass)(?:@[^=,;[]*)?\s*=${UNKEYED_VALUE}:${UNKEYED_VALUE}:(${UNKEYED_VALUE})`,
   'gi',
 )
 // The forms of a font value that name the fonts folder of the run, and its
