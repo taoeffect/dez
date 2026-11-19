@@ -102,7 +102,7 @@ describe('pasteMentions', () => {
     expect(pasteMentions(editor.view, text, 'conv-2')).toBe(true)
     expect(editor.doc()).toBe(before)
     expect(confirmCalls[0].message).toBe('The pasted text names an asset of another conversation. Add it at the top of the paste, '
-      + 'and the names in the text change to fit this conversation? No pastes the text as it is.')
+      + 'and change the names in the text to fit this conversation? Choose No to paste the text as it is.')
     await answer(true)
 
     expect(editor.doc()).toBe(`${idImage(CAT, 'a')}\n${idImage(DUCK, 'b')}\nNote: Make @b blue`)
@@ -117,7 +117,7 @@ describe('pasteMentions', () => {
 
     expect(pasteMentions(editor.view, text, 'conv-2')).toBe(true)
     expect(confirmCalls[0].message).toBe('This conversation has the assets that the pasted text names, under other ids. '
-      + 'Change the names in the text to these ids? No pastes the text as it is.')
+      + 'Change the names in the text to these ids? Choose No to paste the text as it is.')
     await answer(true)
 
     expect(editor.doc()).toBe(`${idImage(CAT, 'a')}\n${idImage(DUCK, 'b')}\nMake @b blue`)

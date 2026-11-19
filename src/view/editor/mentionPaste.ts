@@ -84,13 +84,13 @@ function planPaste(state: EditorState, text: string, record: CopyRecord): { past
 
 /** The question of the prompt for `plan`. */
 function promptMessage({ copies, idChanges }: MentionPastePlan): string {
-  const asNo = 'No pastes the text as it is.'
+  const asNo = 'Choose No to paste the text as it is.'
   if (copies.length === 0) {
     return `This conversation has the assets that the pasted text names, under other ids. Change the names in the text to these ids? ${asNo}`
   }
   const one = copies.length === 1
   const what = one ? 'an asset' : `${copies.length} assets`
-  const ids = idChanges.size > 0 ? `, and the names in the text change to fit this conversation` : ''
+  const ids = idChanges.size > 0 ? ', and change the names in the text to fit this conversation' : ''
   return `The pasted text names ${what} of another conversation. Add ${one ? 'it' : 'them'} at the top of the paste${ids}? ${asNo}`
 }
 

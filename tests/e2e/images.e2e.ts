@@ -508,7 +508,7 @@ describe('images', () => {
     const { image: ownImage, beforePaste } = await tabWithOwnImage()
     await pasteText(browser, copied)
     await waitForValue(browser, 'prompt', promptState, {
-      message: 'The pasted text names an asset of another conversation. Add it at the top of the paste, and the names in the text change to fit this conversation? No pastes the text as it is.',
+      message: 'The pasted text names an asset of another conversation. Add it at the top of the paste, and change the names in the text to fit this conversation? Choose No to paste the text as it is.',
       buttons: ['No', 'Yes'],
       focus: 'yes',
     })
@@ -542,7 +542,7 @@ describe('images', () => {
 
     await pasteText(browser, copied)
     await waitForValue(browser, 'prompt', promptState, {
-      message: 'This conversation has the assets that the pasted text names, under other ids. Change the names in the text to these ids? No pastes the text as it is.',
+      message: 'This conversation has the assets that the pasted text names, under other ids. Change the names in the text to these ids? Choose No to paste the text as it is.',
       buttons: ['No', 'Yes'],
       focus: 'yes',
     })
