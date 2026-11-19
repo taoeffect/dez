@@ -23,6 +23,7 @@ npm run build:macos:app        # Apple Silicon macOS .app; macOS only
 npm run bump-version -- [--check] <version>          # npm, Tauri, and Cargo version files; --check only checks
 node scripts/release-notes.js <tag> [--out <file>]   # release notes body for a tag
 node scripts/update-ffmpeg.js <release tag>           # vendor the ffmpeg and ffprobe programs of a release
+node scripts/update-fonts.js                          # vendor the fonts that Dez ships (src-tauri/fonts/)
 npm run preview                # preview the built frontend
 cd src-tauri && cargo check
 cd src-tauri && cargo test
@@ -111,6 +112,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `controller/modelInvoke.ts`, `videoTool.ts`, `audioTool.ts`, `assetInfo.ts`, `assetView.ts`: the work of a tool; they register no selector.
 - `controller/jobs.ts`, `model/tools/jobs.ts`: `TabJobs`, the jobs of a tab, and the job tools.
 - `model/tools/programRuns.ts`, `controller/programRuns.ts`, `model/tools/workFolders.ts`: what the tools that run ffmpeg or ffprobe share, and their work folders.
+- `model/tools/videoFonts.ts`, `videoTextFiles.ts`: the fonts and the text files of an ffmpeg run (the `fonts` and `text_files` parameters).
 - `model/systemPrompt/`: the built-in system prompt (`systemPrompt.md`), the variables of a template, and its checks.
 - `model/modelOutputs.ts`, `modelInputs.ts`, `modelSearch.ts`: the output types, what Dez can send a model, and the model filter.
 - `controller/notifications.ts`, `view/sound.ts`, `assets/sounds/`: the reply-end alerts (sound, system notification).
@@ -198,6 +200,7 @@ Rules:
 - `lib.rs`: plugins, permission reasons, app bootstrap, and the quit hook that stops the bundled tools.
 - `../tauri.linux.conf.json`: the Linux copy of the main window, with Tauri's native file drop on.
 - `../binaries/`: the ffmpeg and ffprobe programs that Dez ships (Git LFS), with `manifest.json`; only `scripts/update-ffmpeg.js` writes it, and `../build.rs` checks it.
+- `../fonts/`: the OFL fonts that Dez ships for ffmpeg's text filters (Git LFS), with their licenses and `manifest.json`; only `scripts/update-fonts.js` writes it, `../build.rs` checks it, and `bundle.resources` ships it.
 
 ## Persistence layout
 
@@ -286,9 +289,9 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 - **A removed media element frees nothing by itself**: a media element that Vue can remove needs `v-release-on-remove` (`view/media/releaseMedia.ts`).
 - **A fullscreen player hides the app's layers**: code that shows a prompt or a toast for a player calls `leaveFullscreen` first (`view/editor/media.ts`).
 - **File drops differ by platform**: Tauri's native drop on Linux, HTML5 drops on macOS (`dez.controller/images/watchFileDrops`, `droppedFilePaths`); a drop copies or links its file.
-- **A bundled tool gets copies, never links**, and Rust does not check its arguments: the caller keeps every path outside the work folder out of them (`src-tauri/src/bundled_tools.rs`).
+- **A bundled tool gets copies, never links**, into its work folder or one private subfolder of it (`fonts/<file>`), and Rust does not check its arguments: the caller keeps every path outside the work folder out of them (`src-tauri/src/bundled_tools.rs`).
 - **The argument rule of the `video` tool is string checks; the OS rule guards the files, and the ffmpeg build has no network code** (`src/model/tools/videoTool.ts`, `src-tauri/src/confinement.rs`): keep all three.
-- **After `scripts/update-ffmpeg.js`**, check `REFUSED_PROTOCOLS` and `REFUSED_DEVICES` (`src/model/tools/videoTool.ts`) against the new ffmpeg, that its `-buildconf` still has `--disable-network`, and whether its x86 bug that `frameCompareArgs` (`src/model/tools/clipAnalysis.ts`) works around is fixed.
+- **After `scripts/update-ffmpeg.js`**, check `REFUSED_PROTOCOLS` and `REFUSED_DEVICES` (`src/model/tools/videoTool.ts`) against the new ffmpeg, that its `-buildconf` still has `--disable-network`, the demuxers that read names from a file's text (`src/model/tools/videoTextFiles.ts`), and whether its x86 bug that `frameCompareArgs` (`src/model/tools/clipAnalysis.ts`) works around is fixed.
 
 ### App, build, and tools
 
@@ -303,7 +306,7 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 - **Vite port is fixed**: `1420` with `strictPort: true`.
 - **`@tauri-apps/plugin-store` is unused**: app files use Dez's own Rust file I/O.
 - **Secrets wrapper is not a vault**: `src/utils/secret.ts`; never log provider headers, native HTTP payloads, or diagnostics without sanitization.
-- **Sounds and the ffmpeg programs are in Git LFS**: clone with LFS (`git lfs pull`). A pointer file in place of a sound builds with no error; one in place of a program stops the build.
+- **Sounds, the ffmpeg programs, and the fonts are in Git LFS**: clone with LFS (`git lfs pull`). A pointer file in place of a sound builds with no error; one in place of a program or a font stops the build.
 - **tauri-build puts the bundled programs next to a debug build**: keep it at 2.7 or newer (`src-tauri/Cargo.toml`).
 - When using the `agentic_fetch` tool:
   - If searching the web, *ALWAYS* tell the tool to never use local tools like Grep, and only search the web
