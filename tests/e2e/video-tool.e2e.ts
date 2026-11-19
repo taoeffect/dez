@@ -132,10 +132,13 @@ const ALPHA_COLOR = '32,128,255,127'
 const TITLE_FONT = 'NotoSans-Bold.ttf'
 const TITLE_ARGS = `-ss 1 -i @a -frames:v 1 -vf "drawtext=fontfile=fonts/${TITLE_FONT}:text='Night Drive':fontsize=64:fontcolor=white:borderw=4:x=(w-text_w)/2:y=h-text_h-40" -update 1 title.png`
 // The font, the text file, and the arguments of the subtitles example of
-// the help, for the clip `@a`. The subtitle ends at 2.5 s.
+// the help, for the clip `@a`. The subtitle ends at 2.5 s. The help encodes
+// H.264 in MP4; here VP9 in WebM takes its place, as the GStreamer of CI has
+// no H.264 decoder and the player of the new clip would fail to load it
+// (.github/workflows/e2e.yml).
 const SUBTITLES_FONT = 'NotoSans-Regular.ttf'
 const SUBTITLES_FILES = { 'words.srt': '1\n00:00:00,000 --> 00:00:02,500\nNight: Drive\n' }
-const SUBTITLES_ARGS = '-i @a -vf "subtitles=words.srt:fontsdir=fonts:force_style=\'FontName=Noto Sans\'" -c:v libx264 -c:a aac subtitled.mp4'
+const SUBTITLES_ARGS = '-i @a -vf "subtitles=words.srt:fontsdir=fonts:force_style=\'FontName=Noto Sans\'" -c:v libvpx-vp9 subtitled.webm'
 
 // The ids of the files of the conversation that `openShots` opens.
 type ShotId = 'a' | 'b' | 'c' | 'd' | 'e'
@@ -985,7 +988,7 @@ describe('video tool', () => {
     const subtitles = await runJob(title.next, 'call_subtitles', 'ffmpeg', { arguments: SUBTITLES_ARGS, fonts: SUBTITLES_FONT, text_files: JSON.stringify(SUBTITLES_FILES) })
     expect(subtitles.started).toBe(`${jobStartedText(subtitles.jobId, 3)}\nThe inputs of the run: the video clip @a as a.webm. `
       + `The fonts of the run, in its fonts folder: ${SUBTITLES_FONT}. The text files of the run, in its work folder: words.srt.`)
-    expect(subtitles.result.text).toMatch(/^ffmpeg ended with no error and made 1 file that Dez keeps: subtitled\.mp4 \(video clip\)\. The line at the end gives its id\.\n[\s\S]+\nMade the video clip @c\.$/)
+    expect(subtitles.result.text).toMatch(/^ffmpeg ended with no error and made 1 file that Dez keeps: subtitled\.webm \(video clip\)\. The line at the end gives its id\.\n[\s\S]+\nMade the video clip @c\.$/)
     // No request names the folder of the fonts that Dez ships.
     expect(subtitles.next.body).not.toContain(path.dirname(setup.app.binary))
     await sendChatReply(subtitles.next.reply, CALLER.modelName)
@@ -995,9 +998,9 @@ describe('video tool', () => {
     const titlePath = path.join(imagesDir, await newFileIn(browser, imagesDir, imagesBefore))
     const subtitledPath = path.join(videoDir, await newFileIn(browser, videoDir, [...videosBefore, darkName]))
     expect(reply).toContain(`</dez:tool>\n\n![id=b|tool=video|made-by=${title.jobId}](${titlePath})\n<dez:tool id="call_subtitles"`)
-    expect(reply.endsWith(`</dez:tool>\n\n<dez:video id="c" type="video/mp4" src="${subtitledPath}" tool="video" made-by="${subtitles.jobId}"/>\n\n${replyText(CALLER.modelName)}`)).toBe(true)
+    expect(reply.endsWith(`</dez:tool>\n\n<dez:video id="c" type="video/webm" src="${subtitledPath}" tool="video" made-by="${subtitles.jobId}"/>\n\n${replyText(CALLER.modelName)}`)).toBe(true)
     expect(mediaFacts(titlePath)).toStrictEqual({ streams: ['video png 640x360'], seconds: null })
-    expect(mediaFacts(subtitledPath)).toStrictEqual({ streams: ['video h264 640x360'], seconds: 3 })
+    expect(mediaFacts(subtitledPath)).toStrictEqual({ streams: ['video vp9 640x360'], seconds: 3 })
     // White text on the black clip: the title, and the subtitle until its
     // end. drawtext fails with no font, and libass draws no text when the
     // fonts folder has no font of the family of the style.
