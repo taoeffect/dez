@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { compactionTagText } from './compaction'
 import { compareMediaIds, highestConversationMediaId, newMediaIds, pastedMediaIdChanges } from './mediaIds'
 import { mediaTagText } from './mediaTags'
+import { idImage } from './testing'
 
 const PNG = '/home/ann/.config/dez/assets/images/5f1c2a9e-0b7d-4c3e-9a51-2d8f6e4b7c10.png'
 
@@ -185,7 +186,7 @@ describe('pastedMediaIdChanges', () => {
 })
 
 describe('newMediaIds', () => {
-  const image = (name: string, id: string) => `![id=${id}](/home/ann/.config/dez/assets/images/${name}.png)`
+  const image = (name: string, id: string) => idImage(`/home/ann/.config/dez/assets/images/${name}.png`, id)
 
   it('gives the ids after the highest one in all the texts of the conversation, in order', () => {
     expect(newMediaIds([`${image('a', 'b')} ${image('b', 'y')}`, '', `see ${image('c', 'c')}`], 3)).toStrictEqual(['z', 'aa', 'ab'])
@@ -228,7 +229,7 @@ describe('compareMediaIds', () => {
 })
 
 describe('highestConversationMediaId', () => {
-  const image = (id: string) => `![id=${id}](${PNG})`
+  const image = (id: string) => idImage(PNG, id)
 
   it('is null for a conversation that gave no id', () => {
     expect(highestConversationMediaId([])).toBeNull()

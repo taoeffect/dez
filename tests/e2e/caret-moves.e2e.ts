@@ -38,11 +38,20 @@ const FOUR = 7
 // shorter puts the caret before its last char.
 const ROW_OFFSET = 30
 
-/** Where the caret is: its doc line, its visual row in that line (0 is the
- *  first row), its offset in the line, the line's length, and its x. */
+/** A visual row of a doc line: where it starts and ends, its top, and the
+ *  x of its end. */
+interface LineRow {
+  from: number
+  to: number
+  top: number
+  endX: number
+}
+
+/** Where the caret is: its doc line, the top of its row, its offset in the
+ *  line, the line's length, and its x. */
 interface CaretPlace {
   line: number
-  row: number
+  top: number
   column: number
   length: number
   x: number
@@ -53,29 +62,28 @@ describe('caret moves', () => {
   let app: RunningApp
   let browser: E2EBrowser
 
-  /** The visual rows of doc line `line`: where each starts and ends, and
-   *  the x of its end. */
-  async function lineRows (line: number): Promise<Array<{ from: number, to: number, endX: number }>> {
+  /** The visual rows of doc line `line`, in order. */
+  async function lineRows (line: number): Promise<LineRow[]> {
     return browser.execute((lineNumber: number) => {
       const content = document.querySelector('.cm-content')
       if (!content) throw new Error('lineRows: .cm-content not found')
       const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
       const { from, to } = view.state.doc.line(lineNumber)
-      const starts: number[] = []
+      const starts: Array<{ from: number, top: number }> = []
       let rowTop = -Infinity
       for (let pos = from; pos < to; pos++) {
         const coords = view.coordsAtPos(pos, 1)
         if (!coords) throw new Error(`lineRows: no coords for ${pos}`)
         if (coords.top > rowTop + 1) {
-          starts.push(pos)
+          starts.push({ from: pos, top: coords.top })
           rowTop = coords.top
         }
       }
       return starts.map((start, index) => {
-        const end = starts[index + 1] ?? to
+        const end = starts[index + 1]?.from ?? to
         const endCoords = view.coordsAtPos(end, -1)
-        if (!endCoords) throw new Error(`lineRows: no coords for the end of the row at ${start}`)
-        return { from: start, to: end, endX: endCoords.left }
+        if (!endCoords) throw new Error(`lineRows: no coords for the end of the row at ${start.from}`)
+        return { ...start, to: end, endX: endCoords.left }
       })
     }, line)
   }
@@ -90,19 +98,9 @@ describe('caret moves', () => {
       // The side that CodeMirror draws the caret on.
       const caret = view.coordsAtPos(head, assoc || 1)
       if (!caret) throw new Error(`caretPlace: no coords for ${head}`)
-      let row = 0
-      let rowTop = -Infinity
-      for (let pos = line.from; pos < line.to; pos++) {
-        const coords = view.coordsAtPos(pos, 1)
-        if (!coords) throw new Error(`caretPlace: no coords for ${pos}`)
-        if (coords.top > rowTop + 1) {
-          if (rowTop > -Infinity && coords.top <= caret.top + 1) row++
-          rowTop = coords.top
-        }
-      }
       return {
         line: line.number,
-        row,
+        top: caret.top,
         column: head - line.from,
         length: line.length,
         x: caret.left,
@@ -128,7 +126,9 @@ describe('caret moves', () => {
     const rows = await lineRows(line)
     const place = await caretPlace()
     const rowIndex = row < 0 ? rows.length + row : row
-    expect({ line: place.line, row: place.row }).toEqual({ line, row: rowIndex })
+    // The caret's row: the last one that starts at or above the caret.
+    const placeRow = rows.findLastIndex((rowOfLine) => rowOfLine.top <= place.top + 1)
+    expect({ line: place.line, row: placeRow }).toEqual({ line, row: rowIndex })
     // The caret goes to the char edge nearest to the x.
     expect(Math.abs(place.x - Math.min(start.x, rows[rowIndex].endX))).toBeLessThan(place.charWidth)
   }

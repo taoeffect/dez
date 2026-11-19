@@ -280,6 +280,16 @@ describe('images', () => {
     })
   }
 
+  // The three ways to close a confirm prompt with No.
+  function promptCancels (): Array<[string, () => Promise<unknown>]> {
+    return [
+      ['No', () => pointerClick(browser, '.confirm-btn--cancel')],
+      ['Esc', () => browser.keys(Key.Escape)],
+      // Off the dialog, on the overlay around it.
+      ['a click outside', () => pointerClickAt(browser, { x: 20, y: 300 })],
+    ]
+  }
+
   // Puts `text` at the end of the doc as typed text, which gets no image ids
   // (only a paste or a drop does).
   async function typeAtEnd (text: string): Promise<void> {
@@ -556,13 +566,7 @@ describe('images', () => {
   it('pastes mentions of an image of another tab as they are on No, Esc, or a click outside the prompt', async () => {
     const { copied } = await copyMentionOnly()
     const { image: ownImage, beforePaste } = await tabWithOwnImage()
-    const cancels: Array<[string, () => Promise<unknown>]> = [
-      ['No', () => pointerClick(browser, '.confirm-btn--cancel')],
-      ['Esc', () => browser.keys(Key.Escape)],
-      // Off the dialog, on the overlay around it.
-      ['a click outside', () => pointerClickAt(browser, { x: 20, y: 300 })],
-    ]
-    for (const [label, cancel] of cancels) {
+    for (const [label, cancel] of promptCancels()) {
       await pasteText(browser, copied)
       await waitForValue(browser, `prompt before ${label}`, async () => (await promptState()).focus, 'yes')
       await cancel()
@@ -637,13 +641,7 @@ describe('images', () => {
     const unchanged = { doc: `See ${image.reference} here`, caret: 2 }
     await setCaret(browser, unchanged.caret)
 
-    const cancels: Array<[string, () => Promise<unknown>]> = [
-      ['No', () => pointerClick(browser, '.confirm-btn--cancel')],
-      ['Esc', () => browser.keys(Key.Escape)],
-      // Off the dialog, on the overlay around it.
-      ['a click outside', () => pointerClickAt(browser, { x: 20, y: 300 })],
-    ]
-    for (const [label, cancel] of cancels) {
+    for (const [label, cancel] of promptCancels()) {
       await clickTrash(0)
       await waitForValue(browser, `prompt before ${label}`, promptState, {
         message: 'Are you sure you want to delete this image?',
