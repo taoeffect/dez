@@ -371,9 +371,11 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // shape. `created` is 0 for every model, so there is no release date.
     // https://api.trustedrouter.com/v1/models
     modelImageInput: { path: 'architecture.input_modalities' },
+    // An image goes as an `image_url` data URL (checked live, 2026-11-19).
     // A list of request fields that the model takes: "tools" for a model
     // that calls tools, "reasoning" for one that takes the `reasoning`
-    // field of `thinking` below.
+    // field of `thinking` below. A tool round and its replay with the
+    // `tool` message passed (checked live, 2026-11-19).
     modelToolCalling: { path: 'supported_parameters' },
     modelThinking: { path: 'supported_parameters' },
     // A list. The image, speech, transcription, and video models answer
@@ -421,15 +423,24 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // OpenRouter.
     modelContextWindow: { paths: ['context_length', 'top_provider.context_length'] },
     auth: 'apiKey',
-    // A stream tells its token counts only when the request asks for them.
-    // TrustedRouter refuses a field that it does not know (400) or does not
-    // support (501), so the config sends no other fixed field.
+    // A stream tells its token counts only when the request asks for them;
+    // its usage chunk then has `cost_microdollars` and
+    // `total_cost_microdollars` (checked live, 2026-11-19). TrustedRouter
+    // refuses a field that it does not know (400) or does not support
+    // (501), so the config sends no other fixed field.
     // https://trustedrouter.com/docs
     // https://trustedrouter.com/docs/migrate-from-openrouter
     requestBody: { stream_options: { include_usage: true } },
+    // The key keeps a conversation on its last provider, whose prompt cache
+    // holds it. A model whose `supported_parameters` lacks the field takes
+    // it too (checked live, 2026-11-19).
+    // https://trustedrouter.com/docs/prompt-caching
+    promptCacheKey: true,
     // OpenRouter's field, which TrustedRouter takes; it goes only to a model
     // whose `supported_parameters` has "reasoning" (`modelThinking`). Some
-    // models must think, so there is no off field.
+    // models must think, so there is no off field. The thinking streams in
+    // `reasoning` and `reasoning_content`, and a replay of either on the
+    // assistant message of a tool round passed (checked live, 2026-11-19).
     thinking: { enabledBody: { reasoning: { enabled: true } } },
   },
   {

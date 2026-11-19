@@ -330,6 +330,7 @@ describe('prompt cache', () => {
     expect(requestBody(keyed.chatRequest(messages, { id: 'm' }, key).request)).not.toHaveProperty('prompt_cache_key')
     expect(requestBody(openAi.chatRequest(messages, { id: 'm' }, key, {}, { conversationId: 'conv-1' }).request)).not.toHaveProperty('prompt_cache_key')
     expect(requestBody(keyedAnthropic.chatRequest(messages, { id: 'm' }, key, {}, { conversationId: 'conv-1' }).request)).not.toHaveProperty('prompt_cache_key')
+    expect(requestBody(builtInProvider('trustedrouter').chatRequest(messages, { id: 'm' }, key, {}, { conversationId: 'conv-1' }).request).prompt_cache_key).toBe('conv-1')
   })
 })
 
