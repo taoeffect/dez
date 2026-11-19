@@ -266,11 +266,12 @@ function onOverlayClick(event: MouseEvent) {
             <p>
               Copy text that names assets in one conversation and paste it into another, and Dez
               asks whether to bring the assets along. With Yes, a name of an asset that this
-              conversation has changes to the id of that asset here. Each other asset goes in at the
-              top of the paste, with an id that is free here, and its names change to that id. Dez
-              copies no file: the asset uses the same file in both conversations, so a trash that
-              deletes the file deletes it for both. A linked file goes only into a user message. With
-              No, Dez pastes the text as it is.
+              conversation has in the message of the paste, or in a message before it, changes to the
+              id of that asset here. Each other asset goes in at the top of the paste, with the id of
+              the same asset elsewhere in this conversation, else with an id that is free here, and
+              its names change to that id. Dez copies no file: the asset uses the same file in both
+              conversations, so a trash that deletes the file deletes it for both. A linked file goes
+              only into a user message. With No, Dez pastes the text as it is.
             </p>
 
             <h3>Intermediate assets</h3>
