@@ -161,6 +161,12 @@ const SANDBOX_EXEC: &str = "/usr/bin/sandbox-exec";
 // - The deny of a symlink create (the rule of WebKit's WebProcess profile)
 //   comes after the allow of the cache folder, so it wins there: no symlink
 //   in the cache folder either (see the comment of the module).
+// - The kernel logs a deny of `/dev/dtracehelper`, `/dev/autofs_nowait`,
+//   and `~/.CFUserTextEncoding` at each start of a program: the system
+//   libraries (dyld, CoreFoundation) try to open them and go on without
+//   them. They stay denied, so the home folder stays closed. The sandbox of
+//   Nix allows the same three files, for the same libraries.
+//   https://gist.github.com/LnL7/017a37a6f45d289fdf4f48023aed1112
 #[cfg(target_os = "macos")]
 const SEATBELT_PROFILE: &str = r#"(version 1)
 (allow default)

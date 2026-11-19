@@ -5,6 +5,7 @@ import type { Section } from '../chat/types'
 import { reply, user } from '../streams/testing'
 import { CONVERSATION, FILM, OPUS, PLAN, probeOutput, RED, refusal, SKY, SONG, VP9, WEBM } from './testing'
 import type { ToolArguments } from './types'
+import { SHIPPED_FONTS } from './videoFonts'
 import {
   clipFacts,
   commandLineWords,
@@ -54,6 +55,14 @@ describe('the video tool', () => {
       ['ffmpeg', ['arguments', 'fonts', 'text_files', 'is_intermediate', 'timeout_seconds']],
       ['ffprobe', ['arguments']],
     ])
+  })
+
+  // A model asked which fonts it has answers from the tools array alone.
+  it('names each shipped font family and its scripts in the tools array, with no help call', () => {
+    for (const { family, scripts } of SHIPPED_FONTS) {
+      expect(VIDEO_TOOL_DEFINITION.description).toContain(`"${family}"`)
+      expect(VIDEO_TOOL_DEFINITION.description).toContain(scripts)
+    }
   })
 
   it('runs a job for the time that its help states when a call gives none', () => {

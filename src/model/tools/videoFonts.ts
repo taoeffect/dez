@@ -35,13 +35,22 @@ export const FONT_FOLDER = 'fonts'
 
 const SHIPPED_NAMES = SHIPPED_FONTS.map(({ file }) => file).join(', ')
 
+// The fonts that Dez ships by family, in the order of the manifest.
+const FAMILIES = [...new Set(SHIPPED_FONTS.map(({ family }) => family))]
+  .map((family) => SHIPPED_FONTS.filter((font) => font.family === family))
+
 /** The fonts that Dez ships, for the help: each family, with its files and
  *  its scripts. A constant of the build, so the help keeps its bytes. */
-export const SHIPPED_FONTS_TEXT = [...new Set(SHIPPED_FONTS.map(({ family }) => family))]
-  .map((family) => {
-    const fonts = SHIPPED_FONTS.filter((font) => font.family === family)
-    return `"${family}" (${fonts.map(({ file }) => file).join(', ')}) for ${fonts[0].scripts}`
-  })
+export const SHIPPED_FONTS_TEXT = FAMILIES
+  .map((fonts) => `"${fonts[0].family}" (${fonts.map(({ file }) => file).join(', ')}) for ${fonts[0].scripts}`)
+  .join('; ')
+
+/** The font families that Dez ships, each with its scripts, for the tools
+ *  array entry of the `video` tool: a model then knows the fonts that it
+ *  can draw text with, without a `help` call. A constant of the build, so
+ *  the tools array keeps its bytes. */
+export const SHIPPED_FAMILIES_TEXT = FAMILIES
+  .map((fonts) => `"${fonts[0].family}" for ${fonts[0].scripts}`)
   .join('; ')
 
 /** The fonts that the `fonts` argument of an ffmpeg call names, each one

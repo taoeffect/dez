@@ -13,7 +13,7 @@ import { clipInput, tellUserConsole, type ClipInput, type KeptFile, type Program
 import { subcommandToolDefinition, type SubcommandTool } from './subcommands'
 import { assetText, unknownInputsProblem } from './toolInputs'
 import { ToolError, type ToolArguments, type ToolParameter } from './types'
-import { fontProblem, fontsArgument, SHIPPED_FONTS_TEXT } from './videoFonts'
+import { fontProblem, fontsArgument, SHIPPED_FAMILIES_TEXT, SHIPPED_FONTS_TEXT } from './videoFonts'
 import { MAX_TEXT_FILES, MAX_TEXT_FILES_BYTES, TEXT_FILE_NAME_TEXT, textFilesArgument, type TextFile } from './videoTextFiles'
 
 // The `video` tool: ffmpeg and ffprobe, the programs that Dez ships
@@ -184,10 +184,13 @@ const FFMPEG_HELP = [
 ].join('\n')
 
 // Static text only (no count that changes, no date): the tools array is in
-// the provider's prompt cache.
+// the provider's prompt cache. The summary names the fonts, as a model that
+// is asked which fonts it has does not call `help` to find out.
 export const VIDEO_TOOL: SubcommandTool = {
   name: 'video',
-  summary: 'Join, cut, mix, and convert the video clips, the audio clips, and the images of this conversation with ffmpeg, and read their facts with ffprobe.',
+  summary: 'Join, cut, mix, and convert the video clips, the audio clips, and the images of this conversation with ffmpeg, and read their facts with ffprobe. '
+    + `ffmpeg can also write text on them, but only with the fonts that Dez ships, never a font of the computer: ${SHIPPED_FAMILIES_TEXT}. `
+    + 'The help of the ffmpeg subcommand gives their files and tells how to use them.',
   subcommands: [
     {
       name: 'join_clips',
