@@ -207,6 +207,8 @@ Rules:
 
 All app data is under `~/.config/dez/`, except the temp copies of clips and the work folders of the bundled tools. TypeScript owns every format; Rust only moves raw strings and bytes.
 
+**"The Dez folders"** means every folder that Dez manages: the app root (`~/.config/dez/`) and Dez's folder in the OS cache (`<OS cache>/dez/`). Nothing else is a Dez folder.
+
 The JSON and conversation files go through `dez.persistence/*` only; the asset files go through `dez.native/*` from their controllers.
 
 - `app_state.json`: tabs, settings, window geometry, provider toggles, custom providers (`src/model/persistence/appState.ts`).
