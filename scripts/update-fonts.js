@@ -38,9 +38,9 @@ const LICENSE = 'OFL-1.1';
 // version of its release.
 const NOTO_FONTS_COMMIT = 'ebbf5a34c2aaac39770e02d24afcfe9a8ad55e3e';
 
-// The URL of a file of a GitHub repository at a tag or a commit.
-function githubFile(repository, ref, path) {
-  return `https://raw.githubusercontent.com/${repository}/${ref}/${path}`;
+// The URL of a file of a GitHub repository at a commit.
+function githubFile(repository, commit, path) {
+  return `https://raw.githubusercontent.com/${repository}/${commit}/${path}`;
 }
 
 // The unhinted build of a Noto family: hints help only small text on a
@@ -52,15 +52,28 @@ function notoFonts(family, styles) {
   });
 }
 
-// The files of a repository at its release tag.
-function releaseFonts(repository, release, folder, files) {
-  return files.map(file => ({ file, url: githubFile(repository, release, `${folder}/${file}`) }));
+// A source whose fonts are files of its own repository, at the commit of its
+// release.
+function releaseFonts(source, folder, files) {
+  const fonts = files.map(file => ({ file, url: githubFile(source.repository, source.commit, `${folder}/${file}`) }));
+  return { ...source, fonts };
+}
+
+// The URL of the license file of a source.
+function licenseUrl(source) {
+  return githubFile(source.repository, source.commit, source.licensePath);
 }
 
 // The fonts that Dez ships, by source: the repository and release tag of the
-// fonts, the scripts that they cover, the license file of the release (the
-// path in the repository, and the name in src-tauri/fonts/), and the font
-// files. Each URL is pinned to a tag or a commit.
+// fonts, the commit of that tag, the scripts that they cover, the license
+// file of the release (the path in the repository, and the name in
+// src-tauri/fonts/), and the font files.
+//
+// Each URL is at a commit, never at a tag: a tag can move, and the script
+// takes the bytes that it gets and writes their SHA-256 into the manifest.
+// The commit of a tag: `git ls-remote https://github.com/<repository>
+// 'refs/tags/<release>*'` (an annotated tag gives its commit on the `^{}`
+// line).
 //
 // One static font per file: the drawtext filter draws with the first face of
 // its file, so a collection (.ttc) would give one of its fonts, and a
@@ -71,6 +84,7 @@ export const FONT_SOURCES = [
   {
     repository: 'notofonts/latin-greek-cyrillic',
     release: 'NotoSans-v2.015',
+    commit: 'c4a321e123e4d4ff315f57f4e0adf294fe3a95be',
     scripts: 'Latin, Greek, Cyrillic',
     licensePath: 'OFL.txt',
     licenseFile: 'NotoSans-OFL.txt',
@@ -79,6 +93,7 @@ export const FONT_SOURCES = [
   {
     repository: 'notofonts/arabic',
     release: 'NotoSansArabic-v2.013',
+    commit: '1b2b7e5c6ce3ab4d50681c854892325530084c35',
     scripts: 'Arabic',
     licensePath: 'OFL.txt',
     licenseFile: 'NotoSansArabic-OFL.txt',
@@ -87,6 +102,7 @@ export const FONT_SOURCES = [
   {
     repository: 'notofonts/hebrew',
     release: 'NotoSansHebrew-v3.001',
+    commit: '036f3206f67caac235cf8546a7751d3440771a7e',
     scripts: 'Hebrew',
     licensePath: 'OFL.txt',
     licenseFile: 'NotoSansHebrew-OFL.txt',
@@ -95,42 +111,49 @@ export const FONT_SOURCES = [
   {
     repository: 'notofonts/devanagari',
     release: 'NotoSansDevanagari-v2.007',
+    commit: 'e123d230c160ebe949d731cc19017cdb354180d1',
     scripts: 'Devanagari',
     licensePath: 'OFL.txt',
     licenseFile: 'NotoSansDevanagari-OFL.txt',
     fonts: notoFonts('NotoSansDevanagari', ['Regular', 'Bold'])
   },
-  {
-    repository: 'notofonts/noto-cjk',
-    release: 'Sans2.004',
-    scripts: 'Chinese, Japanese, Korean (Japanese glyph forms)',
-    licensePath: 'LICENSE',
-    licenseFile: 'NotoSansCJKjp-OFL.txt',
-    fonts: releaseFonts('notofonts/noto-cjk', 'Sans2.004', 'Sans/OTF/Japanese', [
-      'NotoSansCJKjp-Regular.otf',
-      'NotoSansCJKjp-Bold.otf'
-    ])
-  },
-  {
-    repository: 'notofonts/noto-cjk',
-    release: 'Serif2.003',
-    scripts: 'Chinese, Japanese, Korean (Japanese glyph forms)',
-    // The Serif releases have no LICENSE at the root.
-    licensePath: 'Serif/LICENSE',
-    licenseFile: 'NotoSerifCJKjp-OFL.txt',
-    fonts: releaseFonts('notofonts/noto-cjk', 'Serif2.003', 'Serif/OTF/Japanese', ['NotoSerifCJKjp-Black.otf'])
-  },
-  {
-    repository: 'JetBrains/JetBrainsMono',
-    release: 'v2.304',
-    scripts: 'Latin, Greek, Cyrillic (monospaced)',
-    licensePath: 'OFL.txt',
-    licenseFile: 'JetBrainsMono-OFL.txt',
-    fonts: releaseFonts('JetBrains/JetBrainsMono', 'v2.304', 'fonts/ttf', [
-      'JetBrainsMono-Regular.ttf',
-      'JetBrainsMono-Bold.ttf'
-    ])
-  }
+  releaseFonts(
+    {
+      repository: 'notofonts/noto-cjk',
+      release: 'Sans2.004',
+      commit: '523d033d6cb47f4a80c58a35753646f5c3608a78',
+      scripts: 'Chinese, Japanese, Korean (Japanese glyph forms)',
+      licensePath: 'LICENSE',
+      licenseFile: 'NotoSansCJKjp-OFL.txt'
+    },
+    'Sans/OTF/Japanese',
+    ['NotoSansCJKjp-Regular.otf', 'NotoSansCJKjp-Bold.otf']
+  ),
+  releaseFonts(
+    {
+      repository: 'notofonts/noto-cjk',
+      release: 'Serif2.003',
+      commit: '9b0f1436e455d902de067a2501422e5dc71ad16b',
+      scripts: 'Chinese, Japanese, Korean (Japanese glyph forms)',
+      // The Serif releases have no LICENSE at the root.
+      licensePath: 'Serif/LICENSE',
+      licenseFile: 'NotoSerifCJKjp-OFL.txt'
+    },
+    'Serif/OTF/Japanese',
+    ['NotoSerifCJKjp-Black.otf']
+  ),
+  releaseFonts(
+    {
+      repository: 'JetBrains/JetBrainsMono',
+      release: 'v2.304',
+      commit: 'cd5227bd1f61dff3bbd6c814ceaf7ffd95e947d9',
+      scripts: 'Latin, Greek, Cyrillic (monospaced)',
+      licensePath: 'OFL.txt',
+      licenseFile: 'JetBrainsMono-OFL.txt'
+    },
+    'fonts/ttf',
+    ['JetBrainsMono-Regular.ttf', 'JetBrainsMono-Bold.ttf']
+  )
 ];
 
 // The sfnt version of a TrueType or OpenType font: TrueType outlines (two
@@ -231,7 +254,7 @@ export function manifestText(fonts) {
           url,
           license: LICENSE,
           licenseFile: source.licenseFile,
-          licenseUrl: githubFile(source.repository, source.release, source.licensePath),
+          licenseUrl: licenseUrl(source),
           size,
           sha256
         }
@@ -275,10 +298,10 @@ async function main(args) {
   try {
     const fonts = [];
     for (const source of FONT_SOURCES) {
-      const licenseUrl = githubFile(source.repository, source.release, source.licensePath);
-      const license = await download(licenseUrl);
+      const url = licenseUrl(source);
+      const license = await download(url);
       const problem = licenseProblem(license.toString('utf8'));
-      if (problem) throw new Error(`${licenseUrl} ${problem}.`);
+      if (problem) throw new Error(`${url} ${problem}.`);
       writeFileSync(join(downloadDir, source.licenseFile), license);
 
       for (const { file, url } of source.fonts) {

@@ -9,7 +9,7 @@
       "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/ebbf5a34c2aaac39770e02d24afcfe9a8ad55e3e/fonts/NotoSans/unhinted/ttf/NotoSans-Regular.ttf",
       "license": "OFL-1.1",
       "licenseFile": "NotoSans-OFL.txt",
-      "licenseUrl": "https://raw.githubusercontent.com/notofonts/latin-greek-cyrillic/NotoSans-v2.015/OFL.txt",
+      "licenseUrl": "https://raw.githubusercontent.com/notofonts/latin-greek-cyrillic/c4a321e123e4d4ff315f57f4e0adf294fe3a95be/OFL.txt",
       "size": 431364,
       "sha256": "f3961a9cde016d41a4879aecda1474d3a36d6bf54fa0e4643de029cc2248b0e8"
     },
@@ -22,7 +22,7 @@
       "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/ebbf5a34c2aaac39770e02d24afcfe9a8ad55e3e/fonts/NotoSans/unhinted/ttf/NotoSans-Bold.ttf",
       "license": "OFL-1.1",
       "licenseFile": "NotoSans-OFL.txt",
-      "licenseUrl": "https://raw.githubusercontent.com/notofonts/latin-greek-cyrillic/NotoSans-v2.015/OFL.txt",
+      "licenseUrl": "https://raw.githubusercontent.com/notofonts/latin-greek-cyrillic/c4a321e123e4d4ff315f57f4e0adf294fe3a95be/OFL.txt",
       "size": 432376,
       "sha256": "87cb2d84472a7d66da659ee47b6cdb9552326e8c128245231f191b6ac72529d9"
     },
@@ -35,7 +35,7 @@
       "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/ebbf5a34c2aaac39770e02d24afcfe9a8ad55e3e/fonts/NotoSansArabic/unhinted/ttf/NotoSansArabic-Regular.ttf",
       "license": "OFL-1.1",
       "licenseFile": "NotoSansArabic-OFL.txt",
-      "licenseUrl": "https://raw.githubusercontent.com/notofonts/arabic/NotoSansArabic-v2.013/OFL.txt",
+      "licenseUrl": "https://raw.githubusercontent.com/notofonts/arabic/1b2b7e5c6ce3ab4d50681c854892325530084c35/OFL.txt",
       "size": 142140,
       "sha256": "bd86ca02f087d7f3c3788ba458fb6b73744c7639ed276b8d870dba6def6c40d0"
     },
@@ -48,7 +48,7 @@
       "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/ebbf5a34c2aaac39770e02d24afcfe9a8ad55e3e/fonts/NotoSansArabic/unhinted/ttf/NotoSansArabic-Bold.ttf",
       "license": "OFL-1.1",
       "licenseFile": "NotoSansArabic-OFL.txt",
-      "licenseUrl": "https://raw.githubusercontent.com/notofonts/arabic/NotoSansArabic-v2.013/OFL.txt",
+      "licenseUrl": "https://raw.githubusercontent.com/notofonts/arabic/1b2b7e5c6ce3ab4d50681c854892325530084c35/OFL.txt",
       "size": 141852,
       "sha256": "f4cb79f842a07d1bcf597879574358fb7010f73761396d1d0f2445dfedb4d2ca"
     },
@@ -61,7 +61,7 @@
       "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/ebbf5a34c2aaac39770e02d24afcfe9a8ad55e3e/fonts/NotoSansHebrew/unhinted/ttf/NotoSansHebrew-Regular.ttf",
       "license": "OFL-1.1",
       "licenseFile": "NotoSansHebrew-OFL.txt",
-      "licenseUrl": "https://raw.githubusercontent.com/notofonts/hebrew/NotoSansHebrew-v3.001/OFL.txt",
+      "licenseUrl": "https://raw.githubusercontent.com/notofonts/hebrew/036f3206f67caac235cf8546a7751d3440771a7e/OFL.txt",
       "size": 16836,
       "sha256": "04272f5600d0ec816d31d0df73b23aa8d3501ea359ebe820da31c11ffcf00853"
     },
@@ -74,7 +74,7 @@
       "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/ebbf5a34c2aaac39770e02d24afcfe9a8ad55e3e/fonts/NotoSansHebrew/unhinted/ttf/NotoSansHebrew-Bold.ttf",
       "license": "OFL-1.1",
       "licenseFile": "NotoSansHebrew-OFL.txt",
-      "licenseUrl": "https://raw.githubusercontent.com/notofonts/hebrew/NotoSansHebrew-v3.001/OFL.txt",
+      "licenseUrl": "https://raw.githubusercontent.com/notofonts/hebrew/036f3206f67caac235cf8546a7751d3440771a7e/OFL.txt",
       "size": 16900,
       "sha256": "dfdb3056de1f4542b888c77a1a8a750548a802e271479f56e52152423b64dde8"
     },
@@ -87,7 +87,7 @@
       "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/ebbf5a34c2aaac39770e02d24afcfe9a8ad55e3e/fonts/NotoSansDevanagari/unhinted/ttf/NotoSansDevanagari-Regular.ttf",
       "license": "OFL-1.1",
       "licenseFile": "NotoSansDevanagari-OFL.txt",
-      "licenseUrl": "https://raw.githubusercontent.com/notofonts/devanagari/NotoSansDevanagari-v2.007/OFL.txt",
+      "licenseUrl": "https://raw.githubusercontent.com/notofonts/devanagari/e123d230c160ebe949d731cc19017cdb354180d1/OFL.txt",
       "size": 184228,
       "sha256": "9c7d935139ea6a1e6ad9dbac4f6d27ece1e04bca8123c8888d00a0f9df4724cd"
     },
@@ -100,7 +100,7 @@
       "url": "https://raw.githubusercontent.com/notofonts/notofonts.github.io/ebbf5a34c2aaac39770e02d24afcfe9a8ad55e3e/fonts/NotoSansDevanagari/unhinted/ttf/NotoSansDevanagari-Bold.ttf",
       "license": "OFL-1.1",
       "licenseFile": "NotoSansDevanagari-OFL.txt",
-      "licenseUrl": "https://raw.githubusercontent.com/notofonts/devanagari/NotoSansDevanagari-v2.007/OFL.txt",
+      "licenseUrl": "https://raw.githubusercontent.com/notofonts/devanagari/e123d230c160ebe949d731cc19017cdb354180d1/OFL.txt",
       "size": 183412,
       "sha256": "ff2f76a23aad41e0608c2d7dbc4bacd247ff3bec78f0ec2a8fb106b561636e58"
     },
@@ -110,10 +110,10 @@
       "scripts": "Chinese, Japanese, Korean (Japanese glyph forms)",
       "repository": "https://github.com/notofonts/noto-cjk",
       "release": "Sans2.004",
-      "url": "https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/Sans/OTF/Japanese/NotoSansCJKjp-Regular.otf",
+      "url": "https://raw.githubusercontent.com/notofonts/noto-cjk/523d033d6cb47f4a80c58a35753646f5c3608a78/Sans/OTF/Japanese/NotoSansCJKjp-Regular.otf",
       "license": "OFL-1.1",
       "licenseFile": "NotoSansCJKjp-OFL.txt",
-      "licenseUrl": "https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/LICENSE",
+      "licenseUrl": "https://raw.githubusercontent.com/notofonts/noto-cjk/523d033d6cb47f4a80c58a35753646f5c3608a78/LICENSE",
       "size": 16467736,
       "sha256": "68a3fc98800b2a27b371f2fb79991daf3633bd89309d4ffaa6946fd587f375b5"
     },
@@ -123,10 +123,10 @@
       "scripts": "Chinese, Japanese, Korean (Japanese glyph forms)",
       "repository": "https://github.com/notofonts/noto-cjk",
       "release": "Sans2.004",
-      "url": "https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/Sans/OTF/Japanese/NotoSansCJKjp-Bold.otf",
+      "url": "https://raw.githubusercontent.com/notofonts/noto-cjk/523d033d6cb47f4a80c58a35753646f5c3608a78/Sans/OTF/Japanese/NotoSansCJKjp-Bold.otf",
       "license": "OFL-1.1",
       "licenseFile": "NotoSansCJKjp-OFL.txt",
-      "licenseUrl": "https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/LICENSE",
+      "licenseUrl": "https://raw.githubusercontent.com/notofonts/noto-cjk/523d033d6cb47f4a80c58a35753646f5c3608a78/LICENSE",
       "size": 17032620,
       "sha256": "e53dcb0dcb2922e45d01aae1ebd2f382bb81d4229b18b6b883bd170678af1f76"
     },
@@ -136,10 +136,10 @@
       "scripts": "Chinese, Japanese, Korean (Japanese glyph forms)",
       "repository": "https://github.com/notofonts/noto-cjk",
       "release": "Serif2.003",
-      "url": "https://raw.githubusercontent.com/notofonts/noto-cjk/Serif2.003/Serif/OTF/Japanese/NotoSerifCJKjp-Black.otf",
+      "url": "https://raw.githubusercontent.com/notofonts/noto-cjk/9b0f1436e455d902de067a2501422e5dc71ad16b/Serif/OTF/Japanese/NotoSerifCJKjp-Black.otf",
       "license": "OFL-1.1",
       "licenseFile": "NotoSerifCJKjp-OFL.txt",
-      "licenseUrl": "https://raw.githubusercontent.com/notofonts/noto-cjk/Serif2.003/Serif/LICENSE",
+      "licenseUrl": "https://raw.githubusercontent.com/notofonts/noto-cjk/9b0f1436e455d902de067a2501422e5dc71ad16b/Serif/LICENSE",
       "size": 24093784,
       "sha256": "7a8c8b6dd729eddc63b021284d1eb4ada9974c84609c5eb4b23f9591795e8e76"
     },
@@ -149,10 +149,10 @@
       "scripts": "Latin, Greek, Cyrillic (monospaced)",
       "repository": "https://github.com/JetBrains/JetBrainsMono",
       "release": "v2.304",
-      "url": "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/v2.304/fonts/ttf/JetBrainsMono-Regular.ttf",
+      "url": "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/cd5227bd1f61dff3bbd6c814ceaf7ffd95e947d9/fonts/ttf/JetBrainsMono-Regular.ttf",
       "license": "OFL-1.1",
       "licenseFile": "JetBrainsMono-OFL.txt",
-      "licenseUrl": "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/v2.304/OFL.txt",
+      "licenseUrl": "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/cd5227bd1f61dff3bbd6c814ceaf7ffd95e947d9/OFL.txt",
       "size": 273900,
       "sha256": "a0bf60ef0f83c5ed4d7a75d45838548b1f6873372dfac88f71804491898d138f"
     },
@@ -162,10 +162,10 @@
       "scripts": "Latin, Greek, Cyrillic (monospaced)",
       "repository": "https://github.com/JetBrains/JetBrainsMono",
       "release": "v2.304",
-      "url": "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/v2.304/fonts/ttf/JetBrainsMono-Bold.ttf",
+      "url": "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/cd5227bd1f61dff3bbd6c814ceaf7ffd95e947d9/fonts/ttf/JetBrainsMono-Bold.ttf",
       "license": "OFL-1.1",
       "licenseFile": "JetBrainsMono-OFL.txt",
-      "licenseUrl": "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/v2.304/OFL.txt",
+      "licenseUrl": "https://raw.githubusercontent.com/JetBrains/JetBrainsMono/cd5227bd1f61dff3bbd6c814ceaf7ffd95e947d9/OFL.txt",
       "size": 277828,
       "sha256": "5590990c82e097397517f275f430af4546e1c45cff408bde4255dad142479dcb"
     }

@@ -115,30 +115,28 @@ describe('manifestText', () => {
       scripts: 'Chinese, Japanese, Korean (Japanese glyph forms)',
       repository: 'https://github.com/notofonts/noto-cjk',
       release: 'Sans2.004',
-      url: 'https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/Sans/OTF/Japanese/NotoSansCJKjp-Bold.otf',
+      url: 'https://raw.githubusercontent.com/notofonts/noto-cjk/523d033d6cb47f4a80c58a35753646f5c3608a78/Sans/OTF/Japanese/NotoSansCJKjp-Bold.otf',
       license: 'OFL-1.1',
       licenseFile: 'NotoSansCJKjp-OFL.txt',
-      licenseUrl: 'https://raw.githubusercontent.com/notofonts/noto-cjk/Sans2.004/LICENSE',
+      licenseUrl: 'https://raw.githubusercontent.com/notofonts/noto-cjk/523d033d6cb47f4a80c58a35753646f5c3608a78/LICENSE',
       size: 20,
       sha256: 'b'.repeat(64)
     });
     expect(manifest.fonts['NotoSans-Regular.ttf'].licenseUrl).toBe(
-      'https://raw.githubusercontent.com/notofonts/latin-greek-cyrillic/NotoSans-v2.015/OFL.txt'
+      'https://raw.githubusercontent.com/notofonts/latin-greek-cyrillic/c4a321e123e4d4ff315f57f4e0adf294fe3a95be/OFL.txt'
     );
   });
 });
 
 describe('FONT_SOURCES', () => {
-  it('pins every font URL to its release tag or to a commit', () => {
-    // raw.githubusercontent.com/<owner>/<repository>/<ref>/<path>
-    const unpinned = FONT_SOURCES.flatMap(source =>
-      source.fonts
-        .map(({ url }) => url)
-        .filter(url => {
-          const ref = url.split('/')[5];
-          return ref !== source.release && !/^[0-9a-f]{40}$/.test(ref);
-        })
+  // A tag can move: the script would take its new bytes with no error.
+  it('pins every font URL and license URL to a commit', () => {
+    const fonts = FONT_SOURCES.flatMap(source =>
+      source.fonts.map(font => ({ source, ...font, family: 'F', style: 'Regular', size: 1, sha256: 'a'.repeat(64) }))
     );
+    const urls = Object.values(JSON.parse(manifestText(fonts)).fonts).flatMap(font => [font.url, font.licenseUrl]);
+    // raw.githubusercontent.com/<owner>/<repository>/<ref>/<path>
+    const unpinned = urls.filter(url => !/^[0-9a-f]{40}$/.test(url.split('/')[5]));
     expect(unpinned).toEqual([]);
   });
 
