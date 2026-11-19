@@ -89,12 +89,15 @@ export function textFilesArgument(args: ToolArguments, notDone: string): TextFil
   if (badNames.length > 0) {
     throw new ToolError(`Dez refuses the text file name${badNames.length === 1 ? '' : 's'} ${badNames.join(', ')} in \`text_files\`: ${TEXT_FILE_NAME_TEXT}. ${notDone}`)
   }
-  const lowerNames = files.map(({ name }) => name.toLowerCase())
-  const twinIndex = lowerNames.findIndex((name, index) => lowerNames.indexOf(name) !== index)
-  if (twinIndex >= 0) {
-    const first = files[lowerNames.indexOf(lowerNames[twinIndex])]
-    throw new ToolError(`In \`text_files\`, the names ${JSON.stringify(first.name)} and ${JSON.stringify(files[twinIndex].name)} differ only in case: on macOS they name one file. `
-      + `Give each text file another name. ${notDone}`)
+  const namesByLowerName = new Map<string, string>()
+  for (const { name } of files) {
+    const lowerName = name.toLowerCase()
+    const twin = namesByLowerName.get(lowerName)
+    if (twin !== undefined) {
+      throw new ToolError(`In \`text_files\`, the names ${JSON.stringify(twin)} and ${JSON.stringify(name)} differ only in case: on macOS they name one file. `
+        + `Give each text file another name. ${notDone}`)
+    }
+    namesByLowerName.set(lowerName, name)
   }
   if (files.length > MAX_TEXT_FILES) {
     throw new ToolError(`\`text_files\` has ${countOf(files.length, 'file')}, and a run takes at most ${MAX_TEXT_FILES}. Put the texts into fewer files. ${notDone}`)
