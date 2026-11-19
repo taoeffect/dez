@@ -23,7 +23,7 @@ const NAV = {
   Tips: '.help-nav-btn:nth-child(2)',
   Assets: '.help-nav-btn:nth-child(3)',
   Support: '.help-nav-btn:nth-child(4)',
-  Acknowledgements: '.help-nav-btn:nth-child(5)',
+  ThankYou: '.help-nav-btn:nth-child(5)',
 }
 
 describe('Help panel', () => {
@@ -100,10 +100,10 @@ describe('Help panel', () => {
     await waitForValue(browser, 'Assets page', shownPage, { nav: 'Assets', page: 'help-page--assets' })
     await pointerClick(browser, NAV.Support)
     await waitForValue(browser, 'Support page', shownPage, { nav: 'Support', page: 'help-page--support' })
-    await pointerClick(browser, NAV.Acknowledgements)
-    await waitForValue(browser, 'Acknowledgements page', shownPage, { nav: 'Acknowledgements', page: 'help-page--acknowledgements' })
-    // Each label, also the long one in the bold of the active page, ends
-    // inside the padding of its button.
+    await pointerClick(browser, NAV.ThankYou)
+    await waitForValue(browser, 'Thank You page', shownPage, { nav: 'Thank You', page: 'help-page--thanks' })
+    // Each label, also in the bold of the active page, ends inside the
+    // padding of its button.
     const labelsPastPadding = await browser.execute(() => [...document.querySelectorAll('.help-nav-btn')].filter((button) => {
       const range = document.createRange()
       range.selectNodeContents(button)
@@ -164,24 +164,24 @@ describe('Help panel', () => {
     expect(await helpOpen()).toBe(true)
   })
 
-  it('opens Acknowledgements from the fonts link of Assets, and its links with the system browser', async () => {
+  it('opens Thank You from the fonts link of Assets, and its links with the system browser', async () => {
     await openWithButton()
     await pointerClick(browser, NAV.Assets)
     await waitFor(browser, '.help-page--assets')
     // Assets has more than one page link; this one is in the paragraph of
     // the work folder, below the first view of the page.
     const fontsLink = await browser.execute(() => {
-      const link = [...document.querySelectorAll('.help-page--assets .help-link')].find((button) => button.textContent?.trim() === 'Acknowledgements')
-      if (!link) throw new Error('no Acknowledgements link on Assets')
+      const link = [...document.querySelectorAll('.help-page--assets .help-link')].find((button) => button.textContent?.trim() === 'Thank You')
+      if (!link) throw new Error('no Thank You link on Assets')
       link.scrollIntoView({ block: 'center' })
       const box = link.getBoundingClientRect()
       return { x: box.left + box.width / 2, y: box.top + box.height / 2 }
     })
     await pointerClickAt(browser, fontsLink)
-    await waitForValue(browser, 'Acknowledgements page', shownPage, { nav: 'Acknowledgements', page: 'help-page--acknowledgements' })
+    await waitForValue(browser, 'Thank You page', shownPage, { nav: 'Thank You', page: 'help-page--thanks' })
 
     // The release of the ffmpeg and ffprobe programs that the app holds.
-    await pointerClick(browser, '.help-page--acknowledgements .help-link--ffmpeg')
+    await pointerClick(browser, '.help-page--thanks .help-link--ffmpeg')
     await waitForValue(browser, 'opened URLs', () => openedUrls(browser), [bundledFfmpeg.source])
     // The source of the fonts that the app holds: one link for each
     // repository, in the order of the manifest. The links are at the end of
@@ -189,7 +189,7 @@ describe('Help panel', () => {
     // in view.
     const fontSources = [...new Set(Object.values(bundledFonts.fonts).map(({ repository }) => repository))]
     for (let i = 1; i <= fontSources.length; i++) {
-      const link = `.help-page--acknowledgements li:nth-child(${i}) .help-link--font`
+      const link = `.help-page--thanks li:nth-child(${i}) .help-link--font`
       await browser.execute((link) => document.querySelector(link)?.scrollIntoView({ block: 'center' }), link)
       await pointerClick(browser, link)
     }

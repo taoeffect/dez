@@ -14,14 +14,14 @@ import { DEZ_DISCUSSIONS_URL } from '../../utils/dezLinks'
 import bundledFfmpeg from '../../../src-tauri/binaries/manifest.json'
 import bundledFonts from '../../../src-tauri/fonts/manifest.json'
 
-type HelpPage = 'general' | 'tips' | 'assets' | 'support' | 'acknowledgements'
+type HelpPage = 'general' | 'tips' | 'assets' | 'support' | 'thanks'
 
 const PAGES: { id: HelpPage; label: string }[] = [
   { id: 'general', label: 'General' },
   { id: 'tips', label: 'Tips' },
   { id: 'assets', label: 'Assets' },
   { id: 'support', label: 'Support' },
-  { id: 'acknowledgements', label: 'Acknowledgements' },
+  { id: 'thanks', label: 'Thank You' },
 ]
 
 // The rows of the folder list of the Assets page: the folders of the stored
@@ -44,7 +44,7 @@ const WORK_FOLDER_HOURS = WORK_FOLDER_LIFETIME_MS / HOUR_MS
 // the text writes a number (`1,568`).
 const CHAT_IMAGE_SIDE_TEXT = countText(CHAT_IMAGE_SIDE)
 
-// The sources of the fonts that Dez ships, for the Acknowledgements page:
+// The sources of the fonts that Dez ships, for the Thank You page:
 // each repository once, in the order of the manifest, with the families of
 // its fonts.
 const FONT_SOURCES: { repository: string; families: string[] }[] = []
@@ -356,7 +356,7 @@ function onOverlayClick(event: MouseEvent) {
               <code v-if="workDir">{{ workDir }}</code><template v-else>the cache folder of the system</template>,
               so the assets that it reads stay as they are. When the tool draws text, the work
               folder also holds copies of the fonts that it uses (fonts that come with Dez, see
-              <button type="button" class="help-link" @click="page = 'acknowledgements'">Acknowledgements</button>),
+              <button type="button" class="help-link" @click="page = 'thanks'">Thank You</button>),
               and the text files that the model writes for it, for example subtitles or a title.
               Dez does not store these files as assets. Dez deletes the work folder at the end
               of the work, or {{ WORK_FOLDER_HOURS }} hours later if Dez closed before that. Before
@@ -432,7 +432,7 @@ function onOverlayClick(event: MouseEvent) {
             </p>
           </section>
 
-          <section v-if="page === 'acknowledgements'" class="help-page help-page--acknowledgements">
+          <section v-if="page === 'thanks'" class="help-page help-page--thanks">
             <!-- The version and the link come from the manifest of the
                  programs that this build holds, so they are true for every
                  Dez version, and the link needs no file of the Dez
@@ -549,10 +549,7 @@ function onOverlayClick(event: MouseEvent) {
   flex-direction: column;
   gap: 2px;
   padding: 12px;
-  /* Room for the longest label, "Acknowledgements", also in bold (the
-     active page): a fixed width, so the nav does not change width when
-     the page changes. */
-  width: 180px;
+  width: 140px;
   flex-shrink: 0;
   border-right: 1px solid var(--color-border);
 }
