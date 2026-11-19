@@ -23,18 +23,19 @@ npm run build:macos:app        # Apple Silicon macOS .app; macOS only
 npm run bump-version -- [--check] <version>          # npm, Tauri, and Cargo version files; --check only checks
 node scripts/release-notes.js <tag> [--out <file>]   # release notes body for a tag
 node scripts/update-ffmpeg.js <release tag>           # vendor the ffmpeg and ffprobe programs of a release
+node scripts/fetch-programs.js [--target <triple>]    # download the ffmpeg and ffprobe programs of a build target (default: this computer)
 node scripts/update-fonts.js                          # vendor the fonts that Dez ships (src-tauri/fonts/)
 npm run preview                # preview the built frontend
 cd src-tauri && cargo check
 cd src-tauri && cargo test
 ```
 
-- Tauri build scripts first run `npm run clean:rust` (`scripts/clean-rust.js`).
+- Tauri build scripts first run `npm run clean:rust` (`scripts/clean-rust.js`) and `scripts/fetch-programs.js`. A bare `cargo` build runs neither.
 - `build:linux:appimage` runs `scripts/build-linux-appimage.js`; the AppImage bundles the build host's GStreamer plugins.
 - macOS builds need Xcode 26+: `build:macos:*` first compile the app icon (`scripts/build-macos-icon.js`); a bare `tauri build` on macOS fails without it.
 - The user docs of packaging and releases are in `docs/PACKAGING.md`.
 - Releases: run `npm run bump-version` and commit before you tag. A pushed `v*` tag runs `.github/workflows/release-desktop.yml`.
-- CI rules are in the workflow comments: the CA roots step that starts every job, the one step that may read `ZAI_API_KEY`, the Git LFS files of a job (`.github/actions/pull-lfs-files`).
+- CI rules are in the workflow comments: the CA roots step that starts every job, the one step that may read `ZAI_API_KEY`, the Git LFS files of a job (`.github/actions/pull-lfs-files`), the bundled programs of a job (`.github/actions/fetch-programs`).
 
 ## Git conventions
 
@@ -200,7 +201,7 @@ Rules:
 - `key_store.rs`: `provider_keys.json`. `copilot.rs`: Copilot device flow and token refresh.
 - `lib.rs`: plugins, permission reasons, app bootstrap, and the quit hook that stops the bundled tools.
 - `../tauri.linux.conf.json`: the Linux copy of the main window, with Tauri's native file drop on.
-- `../binaries/`: the ffmpeg and ffprobe programs that Dez ships (Git LFS), with `manifest.json`, `NOTICE.md`, and `LICENSES.txt` (the license texts of the release); only `scripts/update-ffmpeg.js` writes it, `../build.rs` checks it, and `bundle.resources` ships the two license files.
+- `../binaries/`: the ffmpeg and ffprobe programs that Dez ships (ignored by Git; `scripts/fetch-programs.js` downloads them), with `manifest.json` (the URL, size, and SHA-256 of each program), `NOTICE.md`, and `LICENSES.txt` (the license texts of the release); only `scripts/update-ffmpeg.js` writes the tracked files, `../build.rs` checks the programs, and `bundle.resources` ships the two license files.
 - `../fonts/`: the OFL fonts that Dez ships for ffmpeg's text filters (Git LFS), with their licenses and `manifest.json`; only `scripts/update-fonts.js` writes it, `../build.rs` checks it, and `bundle.resources` ships it.
 
 ## Persistence layout
@@ -310,7 +311,8 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 - **Vite port is fixed**: `1420` with `strictPort: true`.
 - **`@tauri-apps/plugin-store` is unused**: app files use Dez's own Rust file I/O.
 - **Secrets wrapper is not a vault**: `src/utils/secret.ts`; never log provider headers, native HTTP payloads, or diagnostics without sanitization.
-- **Sounds, the ffmpeg programs, and the fonts are in Git LFS**: clone with LFS (`git lfs pull`). A pointer file in place of a sound builds with no error; one in place of a program or a font stops the build.
+- **Sounds and the fonts are in Git LFS**: clone with LFS (`git lfs pull`). A pointer file in place of a sound builds with no error; one in place of a font stops the build.
+- **The ffmpeg programs are not in Git**: a new clone has none until `scripts/fetch-programs.js` runs. `build.rs` downloads nothing; it stops the build when a program is missing or is not the file that `binaries/manifest.json` pins.
 - **tauri-build puts the bundled programs next to a debug build**: keep it at 2.7 or newer (`src-tauri/Cargo.toml`).
 - When using the `agentic_fetch` tool:
   - If searching the web, *ALWAYS* tell the tool to never use local tools like Grep, and only search the web

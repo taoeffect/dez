@@ -1,19 +1,21 @@
 #!/usr/bin/env node
 
 import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { createWriteStream, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { Readable } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { BINARIES_DIR, PROGRAM_MODE, downloadPinned, hostTriple } from './bundled-programs.js';
 
 // Vendors the ffmpeg and ffprobe programs that Dez ships: downloads the
 // files of one release of the build repository for every platform of Dez,
 // and the license texts of the release, checks each file against the SHA-256
 // that GitHub gives for it, and writes the files, their manifest, and their
-// license notice into src-tauri/binaries/. The programs are in Git LFS
-// (.gitattributes); the other files are plain Git.
+// license notice into src-tauri/binaries/.
+//
+// The programs are not in Git (src-tauri/.gitignore); the other files are.
+// The manifest pins the URL, the size, and the SHA-256 of each program, and
+// scripts/fetch-programs.js downloads the programs of a build target again
+// from it. So the manifest is what a commit of a new version holds.
 //
 // src-tauri/build.rs checks the files of the build target against the
 // manifest in every build, `bundle.externalBin` (tauri.conf.json) puts them
@@ -117,15 +119,23 @@ export function licenseTextsFile(release) {
   return { name: LICENSE_TEXTS, ...releaseFile(release, LICENSE_TEXTS) };
 }
 
+// The URL of a file of a release. The script builds it from the tag and from
+// a file name of its own; it takes no URL of the API answer.
+function releaseFileUrl(tag, asset) {
+  return `${BUILD_REPO_URL}/releases/download/${tag}/${asset}`;
+}
+
 // The text of src-tauri/binaries/manifest.json: what build.rs checks the
-// programs against, and where they come from.
+// programs against, and where they come from. The `url`, `size`, and
+// `sha256` of a program are its pin: scripts/fetch-programs.js downloads
+// the program from that URL, and takes only that file.
 export function manifestText(tag, files, licenseTexts) {
   const manifest = {
     ffmpegVersion: ffmpegVersionOfTag(tag),
     releaseTag: tag,
     source: `${BUILD_REPO_URL}/releases/tag/${tag}`,
     files: Object.fromEntries(
-      files.map(({ name, asset, size, sha256 }) => [name, { asset, size, sha256 }])
+      files.map(({ name, asset, size, sha256 }) => [name, { asset, url: releaseFileUrl(tag, asset), size, sha256 }])
     ),
     licenseTexts: { asset: licenseTexts.asset, size: licenseTexts.size, sha256: licenseTexts.sha256 }
   };
@@ -234,15 +244,6 @@ FreeType: ${FREETYPE_CREDIT}
 `;
 }
 
-// The target triple of the computer that runs the script, or undefined when
-// Dez ships no programs for it.
-export function hostTriple(platform, arch) {
-  if (platform === 'linux' && arch === 'arm64') return 'aarch64-unknown-linux-gnu';
-  if (platform === 'linux' && arch === 'x64') return 'x86_64-unknown-linux-gnu';
-  if (platform === 'darwin' && arch === 'arm64') return 'aarch64-apple-darwin';
-  return undefined;
-}
-
 // The version that a program reports: the third word of the first line of
 // its `-version` output ("ffmpeg version n8.1.2 Copyright …").
 export function reportedVersion(versionOutput) {
@@ -262,43 +263,11 @@ export function licenseProblem(bytes) {
   return missing && `is built without ${missing}, so NOTICE.md would name the wrong license`;
 }
 
-// Downloads `url` into a new file `path` with the mode `mode`, and gives the
-// size and the SHA-256 of the bytes that it wrote.
-async function download(url, path, mode) {
-  const response = await fetch(url);
-  if (!response.ok || !response.body) {
-    throw new Error(`GitHub answered ${response.status} for ${url}.`);
-  }
-  const hash = createHash('sha256');
-  let size = 0;
-  await pipeline(
-    Readable.fromWeb(response.body),
-    async function* (chunks) {
-      for await (const chunk of chunks) {
-        hash.update(chunk);
-        size += chunk.length;
-        yield chunk;
-      }
-    },
-    createWriteStream(path, { mode })
-  );
-  return { size, sha256: hash.digest('hex') };
-}
-
 // Downloads a file of the release (`releaseFile`) into `path`, and throws
 // unless it is the file that GitHub states.
 async function downloadReleaseFile(tag, file, path, mode) {
   console.log(`Downloading ${file.asset} (${file.size} bytes)`);
-  // A URL that the script builds, not one of the API answer.
-  const url = `${BUILD_REPO_URL}/releases/download/${tag}/${file.asset}`;
-  const got = await download(url, path, mode);
-  if (got.size !== file.size || got.sha256 !== file.sha256) {
-    throw new Error(
-      `${file.asset} is not the file that GitHub states.\n` +
-        `  stated: ${file.size} bytes, SHA-256 ${file.sha256}\n` +
-        `  got:    ${got.size} bytes, SHA-256 ${got.sha256}`
-    );
-  }
+  await downloadPinned(releaseFileUrl(tag, file.asset), path, mode, file, 'GitHub');
 }
 
 // Runs a downloaded program of this computer with `-version` and throws
@@ -328,11 +297,10 @@ async function main(args) {
     process.exit(1);
   }
 
-  const binariesDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'src-tauri', 'binaries');
   // The downloads go into a folder next to the final files (the same file
   // system, so a rename moves them), and the final files change only after
   // every check passed: a failed run leaves the vendored version whole.
-  const downloadDir = mkdtempSync(join(binariesDir, '.update-'));
+  const downloadDir = mkdtempSync(join(BINARIES_DIR, '.update-'));
   try {
     const releaseUrl = `https://api.github.com/repos/${BUILD_REPO}/releases/tags/${tag}`;
     const response = await fetch(releaseUrl, { headers: { Accept: 'application/vnd.github+json' } });
@@ -345,9 +313,7 @@ async function main(args) {
 
     for (const file of files) {
       const path = join(downloadDir, file.name);
-      // 0755: Git keeps the executable bit of an LFS file, and Tauri copies
-      // the file with its mode.
-      await downloadReleaseFile(tag, file, path, 0o755);
+      await downloadReleaseFile(tag, file, path, PROGRAM_MODE);
       const problem = licenseProblem(readFileSync(path));
       if (problem) throw new Error(`${file.asset} ${problem}.`);
     }
@@ -370,13 +336,14 @@ async function main(args) {
     }
 
     for (const file of [...files, licenseTexts]) {
-      renameSync(join(downloadDir, file.name), join(binariesDir, file.name));
+      renameSync(join(downloadDir, file.name), join(BINARIES_DIR, file.name));
     }
-    writeFileSync(join(binariesDir, 'manifest.json'), manifestText(tag, files, licenseTexts));
-    writeFileSync(join(binariesDir, 'NOTICE.md'), noticeText(tag));
+    writeFileSync(join(BINARIES_DIR, 'manifest.json'), manifestText(tag, files, licenseTexts));
+    writeFileSync(join(BINARIES_DIR, 'NOTICE.md'), noticeText(tag));
 
     console.log(`Vendored FFmpeg ${version} (release ${tag}) in src-tauri/binaries/.
-Next: build and test Dez, then commit the folder. "git lfs ls-files" must list the six programs.`);
+Next: build and test Dez, then commit manifest.json, NOTICE.md, and LICENSES.txt.
+Git ignores the programs: scripts/fetch-programs.js gets them from the URLs of the manifest.`);
   } catch (error) {
     console.error(`update-ffmpeg: ${error.message}`);
     process.exitCode = 1;

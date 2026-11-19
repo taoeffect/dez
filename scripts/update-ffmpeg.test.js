@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { hostTriple } from './bundled-programs.js';
 import {
   LIBRARIES,
   PLATFORMS,
   TOOLS,
-  hostTriple,
   licenseProblem,
   licenseTextsFile,
   licenseTextsProblem,
@@ -130,8 +130,11 @@ describe('manifestText', () => {
     // build.rs finds a file by `dez-<program>-<TARGET>`.
     const names = Object.keys(PLATFORMS).flatMap(triple => TOOLS.map(tool => vendoredName(tool, triple)));
     expect(Object.keys(manifest.files).sort()).toEqual(names.sort());
+    // The pin of a program: fetch-programs.js downloads it from `url`, and
+    // takes only a file of that size and SHA-256.
     expect(manifest.files['dez-ffprobe-x86_64-unknown-linux-gnu']).toEqual({
       asset: 'ffprobe-linux-x64',
+      url: 'https://github.com/taoeffect/dez-ffmpeg/releases/download/n9.0.2-3/ffprobe-linux-x64',
       size: 1007,
       sha256: sha('7')
     });
@@ -158,14 +161,8 @@ describe('noticeText', () => {
   });
 });
 
-describe('hostTriple', () => {
-  it('gives the target triple of each platform of Dez, and none for another computer', () => {
-    expect(hostTriple('linux', 'arm64')).toBe('aarch64-unknown-linux-gnu');
-    expect(hostTriple('linux', 'x64')).toBe('x86_64-unknown-linux-gnu');
-    expect(hostTriple('darwin', 'arm64')).toBe('aarch64-apple-darwin');
-    expect(hostTriple('darwin', 'x64')).toBeUndefined();
-    expect(hostTriple('win32', 'x64')).toBeUndefined();
-    // Every triple that it gives has programs.
+describe('PLATFORMS', () => {
+  it('has programs for every computer that hostTriple names', () => {
     for (const [platform, arch] of [['linux', 'arm64'], ['linux', 'x64'], ['darwin', 'arm64']]) {
       expect(PLATFORMS).toHaveProperty(hostTriple(platform, arch));
     }
