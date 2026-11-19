@@ -49,14 +49,17 @@ export function recordCopy(state: EditorState, text: string, conversationId: str
 
 /** Whether a paste at the selection of `state` can bring the assets of its
  *  mentions: one selection range, not in the body of a prompt pill (a
- *  paste there is plain text), and not on a later line of a block of many
- *  lines (a tool call chip, the compaction block), where the copies at the
- *  start of the line would split the block. */
+ *  paste there is plain text), and not on a line that starts inside a
+ *  block of many lines (a tool call chip, the compaction block) or inside
+ *  an expanded prompt pill, whose body has real line breaks: the copies go
+ *  in at the start of the line, and would split the block or change the
+ *  prompt's text. */
 function pasteFits(state: EditorState): boolean {
   if (state.selection.ranges.length !== 1) return false
   const { from, to } = state.selection.main
-  if (scanPills(state.doc.toString()).some((pill) => pill.bodyFrom <= from && to <= pill.bodyTo)) return false
   const lineStart = state.doc.lineAt(from).from
+  const pills = scanPills(state.doc.toString())
+  if (pills.some((pill) => (pill.bodyFrom <= from && to <= pill.bodyTo) || (pill.from < lineStart && lineStart < pill.to))) return false
   return !lineBlockRanges(state).some((block) => block.from < lineStart && lineStart <= block.to)
 }
 

@@ -5,7 +5,7 @@ import type { EditorView } from '@codemirror/view'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { idImage } from '../../model/chat/testing'
 import type { Role } from '../../model/chat/types'
-import { serializeSelectionForClipboard } from '../thread/cmEditor'
+import { encodePrompt, serializeSelectionForClipboard } from '../thread/cmEditor'
 import { filePasteAndDrop } from './imageInsert'
 import { pasteMentions, recordCopy } from './mentionPaste'
 import { CHIP, createState, joinSections } from './testing'
@@ -150,6 +150,15 @@ describe('pasteMentions', () => {
 
     expect(pasteMentions(createEditor(texts, ['user', 'agent']).view, text, 'conv-2')).toBe(false)
     expect(pasteMentions(createEditor(texts, ['user', 'agent'], joinSections(texts).length - CHIP.length).view, text, 'conv-2')).toBe(true)
+  })
+
+  it('leaves to the plain paste a paste on a later line of an expanded prompt pill, after its close, as the copies would go in its body', () => {
+    const text = copy('Make @a blue')
+    const pill = encodePrompt('p1', 'line one\nline two', false)
+
+    expect(pasteMentions(createEditor([`${pill} `]).view, text, 'conv-2')).toBe(false)
+    expect(pasteMentions(createEditor([`${encodePrompt('p1', 'line one\n', false)} `]).view, text, 'conv-2')).toBe(false)
+    expect(pasteMentions(createEditor([` ${pill}`], ['user'], 0).view, text, 'conv-2')).toBe(true)
   })
 
   it('pastes at the place that the edits made while the prompt was open moved', async () => {
