@@ -51,7 +51,7 @@ describe('the video tool', () => {
     expect(VIDEO_TOOL_DEFINITION.name).toBe('video')
     expect(VIDEO_TOOL.subcommands.map(({ name, parameters }) => [name, parameters.map((parameter) => parameter.name)])).toStrictEqual([
       ['join_clips', ['clips', 'is_intermediate', 'timeout_seconds']],
-      ['ffmpeg', ['arguments', 'is_intermediate', 'timeout_seconds']],
+      ['ffmpeg', ['arguments', 'fonts', 'is_intermediate', 'timeout_seconds']],
       ['ffprobe', ['arguments']],
     ])
   })
@@ -63,15 +63,20 @@ describe('the video tool', () => {
   })
 
   it('accepts every example of its own help', () => {
+    // An example that needs fonts tells them as `with "<files>" in `fonts``.
     const examples = subcommand('ffmpeg').description.split('\n')
       .filter((line) => line.startsWith('- '))
-      .map((line) => line.slice(line.indexOf(': ') + 2))
+      .map((line): ToolArguments => {
+        const fonts = /with "([^"]+)" in `fonts`:/.exec(line)?.[1]
+        return { arguments: line.slice(line.indexOf(': ') + 2), ...(fonts === undefined ? {} : { fonts }) }
+      })
 
-    expect(examples).toHaveLength(9)
-    expect(ffmpegWords(examples[0])).toStrictEqual(['-i', 'c.webm', '-i', 'b.wav', '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac', '-shortest', 'out.mp4'])
+    expect(examples).toHaveLength(10)
+    expect(ffmpegWords(String(examples[0].arguments))).toStrictEqual(['-i', 'c.webm', '-i', 'b.wav', '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac', '-shortest', 'out.mp4'])
     // The filter graph of the mix is one word, without its quotes.
-    expect(ffmpegWords(examples[7])).toContain('[1:a]volume=0.25[music];[0:a][music]amix=inputs=2:duration=first:normalize=0[a]')
-    for (const example of examples) expect(() => ffmpegCall({ arguments: example }, CONVERSATION), example).not.toThrow()
+    expect(ffmpegWords(String(examples[7].arguments))).toContain('[1:a]volume=0.25[music];[0:a][music]amix=inputs=2:duration=first:normalize=0[a]')
+    expect(ffmpegCall(examples[9], CONVERSATION).fonts).toStrictEqual(['NotoSans-Bold.ttf'])
+    for (const example of examples) expect(() => ffmpegCall(example, CONVERSATION), String(example.arguments)).not.toThrow()
     expect(() => ffmpegCall(subcommand('ffmpeg').example as ToolArguments, CONVERSATION)).not.toThrow()
     expect(() => ffprobeCall(subcommand('ffprobe').example as ToolArguments, CONVERSATION)).not.toThrow()
     expect(() => joinClipsCall(subcommand('join_clips').example as ToolArguments, CONVERSATION)).not.toThrow()
@@ -170,6 +175,22 @@ describe('ffmpegCall', () => {
     expect(videoInputsText(inputs)).toBe('The run has no input image and no input clip.')
   })
 
+  it('gives the fonts of the call to the run, and names them with the inputs', () => {
+    const call = ffmpegCall({ arguments: '-i @c -vf "drawtext=fontfile=\'fonts/NotoSansArabic-Regular.ttf\':text=\'a, b\'" out.mp4', fonts: 'NotoSans-Bold.ttf NotoSansArabic-Regular.ttf' }, CONVERSATION)
+
+    expect(call.fonts).toStrictEqual(['NotoSans-Bold.ttf', 'NotoSansArabic-Regular.ttf'])
+    expect(call.args.at(-2)).toBe('drawtext=fontfile=\'fonts/NotoSansArabic-Regular.ttf\':text=\'a, b\'')
+    expect(videoInputsText(call.inputs, call.fonts)).toContain('NotoSans-Bold.ttf, NotoSansArabic-Regular.ttf')
+    expect(refusal(() => ffmpegCall({ arguments: '-i @c out.mp4', fonts: 'Arial.ttf' }, CONVERSATION))).toContain('Dez started no job.')
+  })
+
+  it('refuses a font that ffprobe names: only an ffmpeg run gets fonts', () => {
+    const message = refusal(() => ffprobeCall({ arguments: '-show_format fonts/NotoSans-Bold.ttf' }, CONVERSATION))
+
+    expect(message).toContain('the `fonts` parameter of the ffmpeg subcommand')
+    expect(message).toContain('Dez did not run ffprobe.')
+  })
+
   it('knows a run with the null format', () => {
     expect(ffmpegCall({ arguments: '-v info -i @b -af volumedetect -f null -' }, CONVERSATION).nullOutput).toBe(true)
     expect(ffmpegCall({ arguments: '-i @b -af volumedetect -f:a null -' }, CONVERSATION).nullOutput).toBe(true)
@@ -263,6 +284,11 @@ describe('ffmpegCall', () => {
     ['-f lavfi -i "amo\'v\'ie@\'x,y\'=@c:hls" out.wav', 'amo\'v\'ie@\'x,y\'=@c:hls', 'the hls format or an .m3u8 file'],
     ['-/filter_complex graph.txt -i @c out.mp4', '-/filter_complex', 'reads its value from a file'],
     ['-i @c -vf "drawbox=x=10\\:y=2" out.mp4', 'drawbox=x=10\\:y=2', 'a backslash'],
+    // The font checks read the forms of the word that ffmpeg reads.
+    ['-i @c -vf "drawtext=fontfile=\'fonts/NotoSans-Bold.ttf\':text=Hi" out.mp4', 'drawtext=fontfile=\'fonts/NotoSans-Bold.ttf\':text=Hi', 'Add it to the `fonts` parameter'],
+    ['-i @c -vf "drawtext=f\'o\'ntfile=Arial.ttf" out.mp4', 'drawtext=f\'o\'ntfile=Arial.ttf', 'Give the font as fontfile=fonts/<file>'],
+    ['-i @c -vf "drawtext@\'a,b\'=Arial.ttf" out.mp4', 'drawtext@\'a,b\'=Arial.ttf', 'Give the font as fontfile=fonts/<file>'],
+    ['-i @c -vf "subtitles=@c:fontsdir=\'.\'" out.mp4', 'subtitles=@c:fontsdir=\'.\'', 'give fontsdir=fonts'],
   ])('refuses %j', (text, word, cause) => {
     const message = refusal(() => ffmpegCall({ arguments: text }, CONVERSATION))
 

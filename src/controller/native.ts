@@ -1,6 +1,6 @@
 import sbp from '@sbp/sbp'
 import { Channel, invoke } from '@tauri-apps/api/core'
-import { homeDir } from '@tauri-apps/api/path'
+import { homeDir, resolveResource } from '@tauri-apps/api/path'
 import { save, type SaveDialogOptions } from '@tauri-apps/plugin-dialog'
 import { writeTextFile } from '@tauri-apps/plugin-fs'
 import type {
@@ -219,6 +219,15 @@ export default sbp('sbp/selectors/register', {
   // src-tauri/capabilities/default.json allows).
   'dez.native/homeDir' (): Promise<string> {
     return homeDir()
+  },
+
+  // The absolute path of a file of the bundle's resource folder
+  // (`bundle.resources` of src-tauri/tauri.conf.json), from its path in that
+  // folder, as in `fonts/NotoSans-Regular.ttf`. A cargo build has the
+  // resources next to its program (tauri-build copies them there). It does
+  // not check that the file is there. `core:default` allows it.
+  'dez.native/resourcePath' (relative: string): Promise<string> {
+    return resolveResource(relative)
   },
 
   'dez.native/isWindowFullscreen' (): Promise<boolean> {

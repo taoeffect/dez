@@ -11,6 +11,7 @@ import { INPUT_CLIP_TOO_LARGE, outputNotStoredText, programNotStartedText } from
 import { CONVERSATION, FILM, LOOP, OPUS, PLAN, probeOutput, SKY, SONG, VP9 } from '../model/tools/testing'
 import { clipReadProblemText } from '../model/tools/toolInputs'
 import { ToolError } from '../model/tools/types'
+import { fontNotFoundText } from '../model/tools/videoFonts'
 import {
   clipFacts,
   FFMPEG_OUTPUT_BYTES,
@@ -35,7 +36,7 @@ import {
 } from '../model/tools/videoTool'
 import { errorText } from '../utils/errorText'
 import type { BundledToolEnd } from './nativeTypes'
-import { APP_DIR, CACHE_DIR, deletedWorkFolder, ENDED, failureOf, FILE_ID, native, refusalOf, resetNative, running, SAVED, STOP, writes, type StubProgram } from './testing'
+import { APP_DIR, CACHE_DIR, deletedWorkFolder, ENDED, failureOf, FILE_ID, native, refusalOf, resetNative, RESOURCE_DIR, running, SAVED, STOP, writes, type StubProgram } from './testing'
 import { runFfmpegJob, runFfprobe, runJoinJob } from './videoTool'
 
 // A conversation whose only asset is the video clip `a`, in a user section.
@@ -222,6 +223,34 @@ describe('runFfmpegJob', () => {
     await runFfmpegJob(call, running(), report)
 
     expect(native.runs[0].run.inputs).toStrictEqual([{ name: 'a.mp4', source: '/home/u/Videos/trip.mp4' }])
+  })
+
+  it('copies the fonts of the call from the resource folder into the fonts folder of the work folder', async () => {
+    const call = ffmpegCall({ arguments: '-i @c -vf drawtext=fontfile=fonts/NotoSans-Bold.ttf:text=Hi out.mp4', fonts: 'NotoSans-Bold.ttf NotoSansCJKjp-Regular.otf' }, CONVERSATION)
+
+    await runFfmpegJob(call, running(), report)
+
+    expect(native.runs[0].run.inputs).toStrictEqual([
+      { name: 'c.webm', source: FILM.src },
+      { name: 'fonts/NotoSans-Bold.ttf', source: `${RESOURCE_DIR}/fonts/NotoSans-Bold.ttf` },
+      { name: 'fonts/NotoSansCJKjp-Regular.otf', source: `${RESOURCE_DIR}/fonts/NotoSansCJKjp-Regular.otf` },
+    ])
+    expect(native.runs[0].run.args).toContain('drawtext=fontfile=fonts/NotoSans-Bold.ttf:text=Hi')
+  })
+
+  it.each([
+    ['the resource folder', () => { native.resourcePath = () => { throw new Error('unknown path') } }],
+    ['the font file', () => { native.fileSize = (path) => path.startsWith(RESOURCE_DIR) ? null : 10 }],
+  ])('runs no program when Dez cannot find %s of a font, and tells the model to tell the user', async (_, setup) => {
+    const call = ffmpegCall({ arguments: '-i @c -vf drawtext=fontfile=fonts/NotoSans-Bold.ttf:text=Hi out.mp4', fonts: 'NotoSans-Bold.ttf' }, CONVERSATION)
+    setup()
+
+    const refusal = await refusalOf(runFfmpegJob(call, running(), report))
+
+    expect(refusal).toBe(fontNotFoundText('NotoSans-Bold.ttf', 'video'))
+    expect(native.runs).toStrictEqual([])
+    expect(consoleError).toHaveBeenCalled()
+    deletedWorkFolder()
   })
 
   it('refuses an image whose file is gone, and one that the webview cannot draw', async () => {

@@ -430,7 +430,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     },
     async ffmpeg (args, callSignal, context) {
       const call = ffmpegCall(args, callSections(context))
-      return startJob(context, callSignal, VIDEO_TOOL.name, (signal, report) => runFfmpegJob(call, signal, report), { timeoutMs: call.timeoutMs, hidesAssets: isIntermediate(args), label: videoCallLabel('ffmpeg', args) }, videoInputsText(call.inputs))
+      return startJob(context, callSignal, VIDEO_TOOL.name, (signal, report) => runFfmpegJob(call, signal, report), { timeoutMs: call.timeoutMs, hidesAssets: isIntermediate(args), label: videoCallLabel('ffmpeg', args) }, videoInputsText(call.inputs, call.fonts))
     },
     async ffprobe (args, signal, context) {
       return runFfprobe(ffprobeCall(args, callSections(context)), signal)

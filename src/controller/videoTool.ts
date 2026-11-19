@@ -5,6 +5,7 @@ import { jobTimedOutText } from '../model/tools/jobs'
 import { withoutLocalPaths } from '../model/tools/localPaths'
 import { programNotStartedText, type ClipInput, type KeptFile, type ProgramEnd } from '../model/tools/programRuns'
 import { ToolError } from '../model/tools/types'
+import { FONT_FOLDER, fontNotFoundText } from '../model/tools/videoFonts'
 import {
   clipFacts,
   FFMPEG_OUTPUT_BYTES,
@@ -106,6 +107,33 @@ async function prepareInputs(inputs: readonly VideoInput[], folder: string, sign
   return copies
 }
 
+// The copies of the fonts of a call (videoFonts.ts): the files that Dez
+// ships in the fonts folder of its resource folder, which go into the
+// folder of the same name in the work folder. Throws a `ToolError` for a
+// font that Dez cannot find (an install that lacks it), and the stop of
+// `signal`.
+async function fontInputs(fonts: readonly string[], signal: AbortSignal): Promise<BundledToolInput[]> {
+  const copies: BundledToolInput[] = []
+  for (const file of fonts) {
+    signal.throwIfAborted()
+    const name = `${FONT_FOLDER}/${file}`
+    let source: string
+    try {
+      source = await sbp('dez.native/resourcePath', name) as string
+    } catch (error) {
+      console.error(`Failed to find the resource folder of the font ${file}:`, error)
+      throw new ToolError(fontNotFoundText(file, VIDEO_TOOL.name), '', { cause: error })
+    }
+    if (await readableFileSize(source) === null) {
+      console.error(`The font ${file} is not at ${source}, or Dez may not read it.`)
+      throw new ToolError(fontNotFoundText(file, VIDEO_TOOL.name))
+    }
+    copies.push({ name, source })
+  }
+  signal.throwIfAborted()
+  return copies
+}
+
 // One ffmpeg run of a job, to its end. Its log goes into `log`, what it
 // prints to its standard output into `output`, and its last progress line
 // is the state of the job.
@@ -157,9 +185,10 @@ function runProbe(
 
 /** The work of the job of a `video ffmpeg` call (`JobWork`): one run of
  *  ffmpeg with the arguments of `call`, in a new work folder that holds
- *  copies of the call's inputs. The new files of the run that Dez stores
- *  (`outputFiles`) are the assets of the job; the text tells what the run
- *  did, with the end of its log. A run that failed keeps no file.
+ *  copies of the call's inputs, and of its fonts in the subfolder `fonts`.
+ *  The new files of the run that Dez stores (`outputFiles`) are the assets
+ *  of the job; the text tells what the run did, with the end of its log. A
+ *  run that failed keeps no file.
  *
  *  A stop of `signal` (Dez stopped the job, or its time limit passed)
  *  stops the program and rejects, which `TabJobs` drops. The work folder
@@ -167,7 +196,7 @@ function runProbe(
 export function runFfmpegJob(call: FfmpegCall, signal: AbortSignal, report: (state: string) => void): Promise<JobOutcome> {
   return inWorkFolder(async (folder) => {
     report(VIDEO_READS_INPUTS)
-    const inputs = await prepareInputs(call.inputs, folder, signal)
+    const inputs = [...await prepareInputs(call.inputs, folder, signal), ...await fontInputs(call.fonts, signal)]
     const log = new ProgramLog()
     const output = new OutputStart()
     const end = await runFfmpeg({ args: call.args, folder, inputs }, call.timeoutMs, signal, report, log, output)

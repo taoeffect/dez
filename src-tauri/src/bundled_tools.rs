@@ -88,7 +88,8 @@ pub struct ToolRun {
 // A file that the work folder gets before the program starts.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ToolInput {
-    // The file name of the copy in the work folder.
+    // The name of the copy in the work folder: a file name, or one subfolder
+    // and a file name (`fonts/a.ttf`).
     pub name: String,
     // The absolute path of the file to copy.
     pub source: String,
@@ -226,15 +227,20 @@ fn make_private_folder(folder: &Path) -> std::io::Result<()> {
 // clones the file where the file system can (APFS, Linux file systems with
 // reflinks), so the copy is cheap there.
 //
-// The name is one path segment of the app-file rule, so the copy cannot
-// leave the folder. A name that the folder already has is refused: the copy
-// would replace a file of an earlier run, or write through a link that a
-// program left there. The error texts name the copy, never the source path.
+// The name is one path segment of the app-file rule, or two: a subfolder,
+// which is made private as the work folder, and a file name. So the copy
+// cannot leave the folder. A subfolder keeps files apart from the others
+// for a program that reads every file of a folder (the fonts of libass). A
+// name that the folder already has is refused: the copy would replace a
+// file of an earlier run, or write through a link that a program left
+// there. The error texts name the copy, never the source path.
 fn copy_input(folder: &Path, input: &ToolInput, confined_to: &Path) -> Result<(), String> {
     let name = &input.name;
-    if !is_app_file_segment(name) {
-        return Err(format!("Invalid input file name: {}", name));
-    }
+    let subfolder = match name.split_once('/') {
+        None if is_app_file_segment(name) => None,
+        Some((subfolder, file)) if is_app_file_segment(subfolder) && is_app_file_segment(file) => Some(folder.join(subfolder)),
+        _ => return Err(format!("Invalid input file name: {}", name)),
+    };
     let source = Path::new(&input.source);
     if !source.is_absolute() {
         return Err(format!("The source of the input file {} is not an absolute path", name));
@@ -250,6 +256,14 @@ fn copy_input(folder: &Path, input: &ToolInput, confined_to: &Path) -> Result<()
         .map_err(|error| format!("Failed to read the source of the input file {}: {}", name, error))?;
     if !is_file {
         return Err(format!("The source of the input file {} is not a file", name));
+    }
+    if let Some(subfolder) = subfolder {
+        // Before the chmod, as for the work folder: a link can name a
+        // folder of the user.
+        if has_link_below(confined_to, &subfolder) {
+            return Err(format!("The folder of the input file {} goes through a link", name));
+        }
+        make_private_folder(&subfolder).map_err(|error| format!("Failed to make the folder of the input file {}: {}", name, error))?;
     }
     let target = folder.join(name);
     // `symlink_metadata` also sees a link that names no file.
@@ -909,13 +923,14 @@ mod tests {
             let folder = dir.0.join("work");
             std::fs::write(&source, b"clip").expect("write");
 
-            for name in ["", ".", "..", "../out.mp4", "a/b.mp4", "/tmp/dez-test-out.mp4", "a b.mp4"] {
+            for name in ["", ".", "..", "../out.mp4", "./out.mp4", "a/b/c.mp4", "a//b.mp4", "a/", "a/..", "/tmp/dez-test-out.mp4", "a b.mp4", "a/b c.mp4"] {
                 assert!(prepare_work_folder(&folder, &[input(name, &source)], &folder).is_err(), "the name {name:?}");
             }
             let relative = ToolInput { name: "in.mp4".to_string(), source: "clip.mp4".to_string() };
             assert!(prepare_work_folder(&folder, &[relative], &folder).is_err(), "a relative source");
             assert!(prepare_work_folder(&folder, &[input("in.mp4", &dir.0.join("gone.mp4"))], &folder).is_err(), "a missing source");
             assert!(prepare_work_folder(&folder, &[input("in.mp4", &dir.0)], &folder).is_err(), "a folder as the source");
+            assert!(prepare_work_folder(&folder, &[input("sub/in.mp4", &dir.0.join("gone.mp4"))], &folder).is_err(), "a missing source in a subfolder");
             assert_eq!(std::fs::read_dir(&folder).expect("list").count(), 0);
             assert_eq!(dir.file_names().len(), 2, "a file left the work folder");
 
@@ -930,6 +945,28 @@ mod tests {
             // And a name that the same call gave before.
             let twice = [input("twice.mp4", &source), input("twice.mp4", &source)];
             assert!(prepare_work_folder(&folder, &twice, &folder).is_err(), "a name twice");
+        }
+
+        // A subfolder keeps files apart from the other copies, for a
+        // program that reads every file of a folder (libass, the fonts).
+        #[test]
+        fn an_input_can_go_into_one_private_subfolder_that_is_no_link() {
+            let dir = TempDir::new("tools-input-subfolder");
+            let (source, outside) = (dir.0.join("font.ttf"), dir.0.join("outside"));
+            let folder = dir.0.join("work");
+            std::fs::write(&source, b"font").expect("write");
+            std::fs::create_dir(&outside).expect("create");
+            std::fs::set_permissions(&outside, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+
+            prepare_work_folder(&folder, &[input("fonts/a.ttf", &source), input("fonts/b.ttf", &source)], &folder).expect("prepare");
+            assert_eq!(std::fs::read(folder.join("fonts").join("b.ttf")).expect("read"), b"font");
+            assert_eq!(mode_of(&folder.join("fonts")), 0o700);
+
+            // A link that a program left in place of the subfolder.
+            symlink(&outside, folder.join("linked")).expect("link");
+            assert!(prepare_work_folder(&folder, &[input("linked/a.ttf", &source)], &folder).is_err(), "a linked subfolder");
+            assert_eq!(mode_of(&outside), 0o755);
+            assert_eq!(std::fs::read_dir(&outside).expect("list").count(), 0);
         }
 
         // The page can pass the error on to a model, which must learn no

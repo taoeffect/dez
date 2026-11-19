@@ -12,13 +12,14 @@ import type { AppFileEntry, AppFileRef, BundledToolEnd, BundledToolOutput, Bundl
 // programs, and helpers for the work of a call or a job.
 //
 // An import of this module registers the stub selectors of the app
-// folders, the files, the downloads, and the program runs
-// (`dez.native/*`, `dez.controller/images/fileSize`, and
+// folders, the resource folder, the files, the downloads, and the program
+// runs (`dez.native/*`, `dez.controller/images/fileSize`, and
 // `dez.provider/chatImageSizes`), so a test file must register none of
 // them. Each test starts with `resetNative()`.
 
 export const APP_DIR = '/home/u/.config/dez'
 export const CACHE_DIR = '/home/u/.cache/dez'
+export const RESOURCE_DIR = '/usr/lib/Dez'
 /** The end of a program run with no error. */
 export const ENDED: BundledToolEnd = { kind: 'exited', code: 0 }
 /** The answer of a download that wrote its file. */
@@ -69,6 +70,9 @@ function newNative() {
     // The bytes of a file that the code reads (a picture that a program
     // wrote); a throw for one that is not there.
     fileBytes: ((): Uint8Array => new Uint8Array([0xff, 0xd8])) as (file: AppFileRef) => Uint8Array,
+    // The path of a file of the resource folder; a throw for a folder that
+    // Dez cannot find.
+    resourcePath: ((relative: string): string => `${RESOURCE_DIR}/${relative}`) as (relative: string) => string,
   }
 }
 
@@ -85,6 +89,9 @@ export function resetNative(): void {
 sbp('sbp/selectors/register', {
   async 'dez.native/getAppDir' (root = 'app'): Promise<string> {
     return root === 'cache' ? CACHE_DIR : APP_DIR
+  },
+  async 'dez.native/resourcePath' (relative: string): Promise<string> {
+    return native.resourcePath(relative)
   },
   'dez.native/runBundledTool' (run: BundledToolRun, runId: string, onOutput: (output: BundledToolOutput) => void): Promise<BundledToolEnd> {
     native.runs.push({ run, runId })
