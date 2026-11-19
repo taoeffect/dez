@@ -33,13 +33,17 @@ import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolC
 //   and into the reply, with a new id and the name of the tool; a later
 //   call of the reply mixes music under the sound of such a new clip, and
 //   another one takes the last frame of such a clip as an image (both the
-//   examples of the help); a PNG image goes as a JPEG copy; a run with
+//   examples of the help); a PNG image goes as its own file, and a new PNG
+//   image keeps the transparent pixels of its source; drawtext and
+//   `subtitles` (the examples of the help) draw text with the fonts that
+//   Dez ships, the subtitles from a text file of the call; a run with
 //   `-f null -` gives only its log; with `is_intermediate`, its new clip
 //   is hidden under the chip of its call;
 // - `ffprobe` gives its output as the result of its call, with the neutral
 //   names of the copies;
-// - a call whose arguments name a file of the computer, the network, or a
-//   device is refused at once: no job, and no work folder;
+// - a call whose arguments name a file of the computer (a font too), the
+//   network, a device, or a commands file of a filter is refused at once:
+//   no job, and no work folder;
 // - Stop leaves the program of a job to the next reply; a close of the tab
 //   and the time limit of a call end it;
 // - every work folder is gone after its call, and no file of the
@@ -117,6 +121,22 @@ const SHOTS_ARGS = [
 // tone of 1 s in a WAV file.
 const TONE_ARGS = '-v error -y -f lavfi -i sine=frequency=440:duration=1'.split(' ')
 
+// The arguments of ffmpeg that make a PNG image of 48x36 pixels of one
+// color, each pixel half transparent; and the red, green, blue, and alpha
+// of each of its pixels (an alpha of 0.5 is 127).
+const ALPHA_ARGS = '-v error -y -f lavfi -i color=c=0x2080ff@0.5:size=48x36,format=rgba -frames:v 1 -update 1'.split(' ')
+const ALPHA_COLOR = '32,128,255,127'
+
+// The font of the drawtext example of the help, and its arguments for the
+// clip `@a`.
+const TITLE_FONT = 'NotoSans-Bold.ttf'
+const TITLE_ARGS = `-ss 1 -i @a -frames:v 1 -vf "drawtext=fontfile=fonts/${TITLE_FONT}:text='Night Drive':fontsize=64:fontcolor=white:borderw=4:x=(w-text_w)/2:y=h-text_h-40" -update 1 title.png`
+// The font, the text file, and the arguments of the subtitles example of
+// the help, for the clip `@a`. The subtitle ends at 2.5 s.
+const SUBTITLES_FONT = 'NotoSans-Regular.ttf'
+const SUBTITLES_FILES = { 'words.srt': '1\n00:00:00,000 --> 00:00:02,500\nNight: Drive\n' }
+const SUBTITLES_ARGS = '-i @a -vf "subtitles=words.srt:fontsdir=fonts:force_style=\'FontName=Noto Sans\'" -c:v libx264 -c:a aac subtitled.mp4'
+
 // The ids of the files of the conversation that `openShots` opens.
 type ShotId = 'a' | 'b' | 'c' | 'd' | 'e'
 const SHOT_IDS: ShotId[] = ['a', 'b', 'c', 'd', 'e']
@@ -163,14 +183,34 @@ describe('video tool', () => {
   // The bytes of each file of the conversation that `openShots` opens, by
   // the id of its clip or image. `beforeAll` makes the clips.
   let shotSources: Record<ShotId, Buffer>
+  // The PNG image of `ALPHA_ARGS`, which `beforeAll` makes.
+  let alphaPng: Buffer
 
   const chatRequest = (): Promise<HeldRequest> => takeRequest(setup, CHAT_PATH)
 
   // The standard output of a run of `program` of the build under test.
-  function programOutput (program: 'dez-ffmpeg' | 'dez-ffprobe', args: string[]): string {
-    const run = spawnSync(path.join(path.dirname(setup.app.binary), program), args, { encoding: 'utf8' })
-    if (run.status !== 0) throw new Error(`${program} ${args.join(' ')} failed: ${run.stderr}`)
+  function programRun (program: 'dez-ffmpeg' | 'dez-ffprobe', args: string[]): Buffer {
+    const run = spawnSync(path.join(path.dirname(setup.app.binary), program), args)
+    if (run.status !== 0) throw new Error(`${program} ${args.join(' ')} failed: ${run.stderr.toString()}`)
     return run.stdout
+  }
+  const programOutput = (program: 'dez-ffmpeg' | 'dez-ffprobe', args: string[]): string => programRun(program, args).toString('utf8')
+
+  // Each color of the pixels of the picture `file` once, as its red, green,
+  // blue, and alpha (`32,128,255,127`), as ffmpeg decodes it.
+  function pixelColors (file: string): string[] {
+    const pixels = programRun('dez-ffmpeg', ['-v', 'error', '-i', file, '-f', 'rawvideo', '-pix_fmt', 'rgba', '-'])
+    const colors = new Set<string>()
+    for (let start = 0; start < pixels.length; start += 4) colors.add(pixels.subarray(start, start + 4).join(','))
+    return [...colors]
+  }
+
+  // The number of light pixels (gray above the middle) of the frame at
+  // `seconds` of the picture or clip `file`: the white text that a call
+  // draws on a black picture.
+  function lightPixels (file: string, seconds = 0): number {
+    const gray = programRun('dez-ffmpeg', ['-v', 'error', '-ss', String(seconds), '-i', file, '-frames:v', '1', '-vf', 'format=gray', '-f', 'rawvideo', '-'])
+    return gray.filter((value) => value > 128).length
   }
 
   // The facts of the media file `file`: each stream (`video vp9 48x36`,
@@ -363,8 +403,10 @@ describe('video tool', () => {
     imagesDir = generatedImagesDir(home)
     const shotsFile = path.join(linkedDir, 'shots.webm')
     const toneFile = path.join(linkedDir, 'tone.wav')
+    const alphaFile = path.join(linkedDir, 'alpha.png')
     programOutput('dez-ffmpeg', [...SHOTS_ARGS, shotsFile])
     programOutput('dez-ffmpeg', [...TONE_ARGS, toneFile])
+    programOutput('dez-ffmpeg', [...ALPHA_ARGS, alphaFile])
     shotSources = {
       a: await fs.promises.readFile(shotsFile),
       b: await fs.promises.readFile(toneFile),
@@ -372,6 +414,7 @@ describe('video tool', () => {
       d: WEBM_VIDEO,
       e: TALL_PNG,
     }
+    alphaPng = await fs.promises.readFile(alphaFile)
   })
 
   beforeEach(async () => {
@@ -824,7 +867,7 @@ describe('video tool', () => {
     await expectCleanEnd(files, shotSources)
   })
 
-  it('takes a frame of a clip as a new image, and makes a clip from a PNG image, which goes to ffmpeg as a JPEG copy', async () => {
+  it('takes a frame of a clip as a new image, and makes a clip from a PNG image, which goes to ffmpeg as its own file', async () => {
     const files = await openClips('ffmpeg-images')
     const imagesBefore = await filesIn(imagesDir)
     const videosBefore = await filesIn(videoDir)
@@ -835,9 +878,8 @@ describe('video tool', () => {
     expect(frame.result.status).toBe('finished')
     expect(frame.result.text).toMatch(/^ffmpeg ended with no error and made 1 file that Dez keeps: frame\.jpg \(image\)\. The line at the end gives its id\.\n[\s\S]+\nMade the image @g\.$/)
 
-    // This ffmpeg reads no PNG file.
     const still = await runJob(frame.next, 'call_still', 'ffmpeg', { arguments: '-loop 1 -i @c -i @e -c:v libvpx-vp9 -pix_fmt yuv420p -c:a libopus -shortest still.webm' })
-    expect(still.started).toBe(`${jobStartedText(still.jobId, 2)}\nThe inputs of the run: the image @c as c.jpg (a JPEG copy, with white in place of transparent pixels), the audio clip @e as e.wav.`)
+    expect(still.started).toBe(`${jobStartedText(still.jobId, 2)}\nThe inputs of the run: the image @c as c.png, the audio clip @e as e.wav.`)
     expect(still.result.status).toBe('finished')
     expect(still.result.text).toMatch(/^ffmpeg ended with no error and made 1 file that Dez keeps: still\.webm \(video clip\)\. The line at the end gives its id\.\n[\s\S]+\nMade the video clip @h\.$/)
     await sendChatReply(still.next.reply, CALLER.modelName)
@@ -859,6 +901,35 @@ describe('video tool', () => {
     await waitForValue(browser, 'the new image in the editor', async () => (await shownImages(browser)).find(({ alt }) => alt === imageName), { alt: imageName, width: 48, height: 36 })
     await waitForValue(browser, 'player of the new clip', async () => (await shownPlayers(browser)).at(-1), madeVideoPlayer('h', 1))
     await expectCleanEnd(files)
+  })
+
+  it('gives ffmpeg a PNG image as its own file, and keeps its transparent pixels in a new PNG image', async () => {
+    const { home } = setup.app
+    const file = appFilePath(home, 'assets', 'images', 'ffmpeg-alpha-a.png')
+    await writeTestFile(file, alphaPng)
+    await openSeededConversation(browser, home, 'ffmpeg-alpha', [
+      { role: 'user', text: `![id=a](${file})\nHere is my picture.` },
+      { role: 'agent', text: 'Got it.' },
+      { role: 'user', text: '' },
+    ])
+    await pickModel(browser, CALLER.name, CALLER.modelName)
+    const before = await filesIn(imagesDir)
+    await submit(browser, 'Make it half as large.')
+    const small = await runJob(await chatRequest(), 'call_small', 'ffmpeg', { arguments: '-i @a -vf scale=24:18 small.png' })
+    expect(small.started).toBe(`${jobStartedText(small.jobId, 1)}\nThe inputs of the run: the image @a as a.png.`)
+    expect(small.result.text).toMatch(/^ffmpeg ended with no error and made 1 file that Dez keeps: small\.png \(image\)\. The line at the end gives its id\.\n[\s\S]+\nMade the image @b\.$/)
+    await sendChatReply(small.next.reply, CALLER.modelName)
+
+    const reply = await endedReply(browser, CLIPS_REPLY_INDEX)
+    const imageName = await newFileIn(browser, imagesDir, before)
+    expect(imageName).toMatch(storedFileName('png'))
+    const imagePath = path.join(imagesDir, imageName)
+    expect(reply.endsWith(`</dez:tool>\n\n![id=b|tool=video|made-by=${small.jobId}](${imagePath})\n\n${replyText(CALLER.modelName)}`)).toBe(true)
+    expect(mediaFacts(imagePath)).toStrictEqual({ streams: ['video png 24x18'], seconds: null })
+    // Each pixel has the color and the alpha of the source.
+    expect(pixelColors(imagePath)).toStrictEqual([ALPHA_COLOR])
+    await waitForValue(browser, 'the new image in the editor', async () => (await shownImages(browser)).find(({ alt }) => alt === imageName), { alt: imageName, width: 24, height: 18 })
+    await expectCleanEnd({ a: file }, { a: alphaPng })
   })
 
   // The way of the help to start a next scene where a clip ends. Each frame
@@ -897,6 +968,46 @@ describe('video tool', () => {
     await expectCleanEnd(files)
   })
 
+  // The examples of the help that draw text, on a black clip that the reply
+  // makes: large enough for the text, and with no light pixel.
+  it('writes a title and subtitles on a clip with the fonts that Dez ships, the subtitles from a text file of the call, with the examples of the help', async () => {
+    const imagesBefore = await filesIn(imagesDir)
+    const videosBefore = await filesIn(videoDir)
+    await submit(browser, 'Write a title and subtitles on a dark clip.')
+    const dark = await runJob(await chatRequest(), 'call_dark', 'ffmpeg', { arguments: '-f lavfi -i color=c=black:size=640x360:rate=5:duration=3 -c:v libvpx-vp9 dark.webm' })
+    expect(dark.result.text.endsWith('\nMade the video clip @a.')).toBe(true)
+    const darkName = await newFileIn(browser, videoDir, videosBefore)
+
+    const title = await runJob(dark.next, 'call_title', 'ffmpeg', { arguments: TITLE_ARGS, fonts: TITLE_FONT })
+    expect(title.started).toBe(`${jobStartedText(title.jobId, 2)}\nThe inputs of the run: the video clip @a as a.webm. The fonts of the run, in its fonts folder: ${TITLE_FONT}.`)
+    expect(title.result.text).toMatch(/^ffmpeg ended with no error and made 1 file that Dez keeps: title\.png \(image\)\. The line at the end gives its id\.\n[\s\S]+\nMade the image @b\.$/)
+
+    const subtitles = await runJob(title.next, 'call_subtitles', 'ffmpeg', { arguments: SUBTITLES_ARGS, fonts: SUBTITLES_FONT, text_files: JSON.stringify(SUBTITLES_FILES) })
+    expect(subtitles.started).toBe(`${jobStartedText(subtitles.jobId, 3)}\nThe inputs of the run: the video clip @a as a.webm. `
+      + `The fonts of the run, in its fonts folder: ${SUBTITLES_FONT}. The text files of the run, in its work folder: words.srt.`)
+    expect(subtitles.result.text).toMatch(/^ffmpeg ended with no error and made 1 file that Dez keeps: subtitled\.mp4 \(video clip\)\. The line at the end gives its id\.\n[\s\S]+\nMade the video clip @c\.$/)
+    // No request names the folder of the fonts that Dez ships.
+    expect(subtitles.next.body).not.toContain(path.dirname(setup.app.binary))
+    await sendChatReply(subtitles.next.reply, CALLER.modelName)
+
+    const reply = await endedReply(browser)
+    const darkPath = path.join(videoDir, darkName)
+    const titlePath = path.join(imagesDir, await newFileIn(browser, imagesDir, imagesBefore))
+    const subtitledPath = path.join(videoDir, await newFileIn(browser, videoDir, [...videosBefore, darkName]))
+    expect(reply).toContain(`</dez:tool>\n\n![id=b|tool=video|made-by=${title.jobId}](${titlePath})\n<dez:tool id="call_subtitles"`)
+    expect(reply.endsWith(`</dez:tool>\n\n<dez:video id="c" type="video/mp4" src="${subtitledPath}" tool="video" made-by="${subtitles.jobId}"/>\n\n${replyText(CALLER.modelName)}`)).toBe(true)
+    expect(mediaFacts(titlePath)).toStrictEqual({ streams: ['video png 640x360'], seconds: null })
+    expect(mediaFacts(subtitledPath)).toStrictEqual({ streams: ['video h264 640x360'], seconds: 3 })
+    // White text on the black clip: the title, and the subtitle until its
+    // end. drawtext fails with no font, and libass draws no text when the
+    // fonts folder has no font of the family of the style.
+    expect(lightPixels(darkPath, 1)).toBe(0)
+    expect(lightPixels(titlePath)).toBeGreaterThan(100)
+    expect(lightPixels(subtitledPath, 1)).toBeGreaterThan(100)
+    expect(lightPixels(subtitledPath, 2.8)).toBe(0)
+    await expectCleanEnd({})
+  })
+
   it('gives the output of ffprobe as the result of its call, with the names of the copies and no job', async () => {
     const files = await openClips('ffprobe')
     await submit(browser, 'What are these files?')
@@ -918,9 +1029,8 @@ describe('video tool', () => {
     expect(toolResult(second, 'call_linked')).toBe('filename=b.webm\nformat_name=matroska,webm')
     expect(toolResult(second, 'call_temp')).toBe('filename=d.mp4\nformat_name=mov,mp4,m4a,3gp,3g2,mj2')
     expect(toolResult(second, 'call_remote')).toBe('vp9,48,36')
-    expect(toolResult(second, 'call_picture')).toBe(
-      'The image @c went to ffprobe as a JPEG copy, with white in place of transparent pixels: the facts are those of the copy.\nmjpeg,48,36',
-    )
+    // A PNG image goes as its own file: the result has no note of a copy.
+    expect(toolResult(second, 'call_picture')).toBe('png,48,36')
     expect(second.body).not.toContain(linkedDir)
     expect(second.body).not.toContain('holiday')
     await sendChatReply(second.reply, CALLER.modelName)
@@ -931,28 +1041,38 @@ describe('video tool', () => {
     await expectCleanEnd(files)
   })
 
-  it('refuses arguments that name a file of the computer, the network, or a device at once, with no job and no work folder', async () => {
+  it('refuses arguments that name a file of the computer, the network, a device, or a commands file at once, with no job and no work folder', async () => {
     await submit(browser, 'Read my files.')
     const first = await chatRequest()
+    const blackFrame = '-f lavfi -i color=c=black:size=640x360 -frames:v 1'
     sendToolCalls(first.reply, [
       videoCall('call_path', 'ffmpeg', { arguments: '-i /etc/hostname -f null -' }),
       videoCall('call_url', 'ffprobe', { arguments: 'https://example.com/clip.mp4' }),
       videoCall('call_camera', 'ffmpeg', { arguments: '-f v4l2 -i video0 camera.mp4' }),
+      videoCall('call_font', 'ffmpeg', { arguments: `${blackFrame} -vf "drawtext=fontfile=/usr/share/fonts/x.ttf:text=Hi" title.png` }),
+      // The commands of a file that the call writes could make curves write
+      // a file anywhere.
+      videoCall('call_commands', 'ffmpeg', { arguments: `${blackFrame} -vf "sendcmd=f=cmds.txt,curves" curves.png`, text_files: '{"cmds.txt":"0 curves plot p.gp;"}' }),
     ])
 
     const second = await chatRequest()
     const workFolderOnly = 'The program works only in its own work folder: name an input as @id, and an output as a new file name with no folder.'
-    expect(toolResult(second, 'call_path')).toBe(
-      `Dez refuses "/etc/hostname" in \`arguments\`: it holds an absolute path. ${workFolderOnly} `
+    const absolutePath = (word: string) => `Dez refuses ${JSON.stringify(word)} in \`arguments\`: it holds an absolute path. ${workFolderOnly} `
       + 'For a run with no output file, end the arguments with -f null - (not with a path of the system). '
-      + 'In an expression, write a division with no space before the "/", as in iw/2. Dez started no job.',
-    )
+      + 'In an expression, write a division with no space before the "/", as in iw/2. Dez started no job.'
+    expect(toolResult(second, 'call_path')).toBe(absolutePath('/etc/hostname'))
     expect(toolResult(second, 'call_url')).toBe(`Dez refuses "https://example.com/clip.mp4" in \`arguments\`: it holds a URL. ${workFolderOnly} Dez did not run ffprobe.`)
     expect(toolResult(second, 'call_camera')).toBe(
       'Dez refuses "v4l2" in `arguments`: it names the device v4l2. '
       + 'Dez lets the program use no camera, no microphone, no screen, and no sound output of this computer. Dez started no job.',
     )
-    for (const callId of ['call_path', 'call_url', 'call_camera']) expect(startedJobId(toolResult(second, callId))).toBeNull()
+    expect(toolResult(second, 'call_font')).toBe(absolutePath('drawtext=fontfile=/usr/share/fonts/x.ttf:text=Hi'))
+    expect(toolResult(second, 'call_commands')).toBe(
+      'Dez refuses "sendcmd=f=cmds.txt,curves" in `arguments`: it gives sendcmd a commands file. '
+      + 'Dez does not check the text of a file, and a command can make a filter open a file outside of its work folder. '
+      + 'Write the commands into the filter, as in "asendcmd=c=\'2 volume volume 0.5\',volume=1". Dez started no job.',
+    )
+    for (const callId of ['call_path', 'call_url', 'call_camera', 'call_font', 'call_commands']) expect(startedJobId(toolResult(second, callId))).toBeNull()
 
     sendToolCalls(second.reply, [openAiToolCall('call_list', 'jobs_list', {})])
     const third = await chatRequest()
