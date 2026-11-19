@@ -280,8 +280,12 @@ export function mentionPastePlan({ doc, sections, pasted }: PastedDoc, record: R
   const copiesAt = Math.max(lineStart, place.from)
   const copyLines = copies.map(({ asset }, index) => copyText(asset, copyIds[index]))
   // The new ids of the pasted assets, read with the copies in place (see the
-  // top of this file). The copies come first in the doc, and no other asset
-  // has their ids, so they keep them.
+  // top of this file). The copies keep their ids: `pastedMediaIdChanges`
+  // changes only an id that an asset of another owner has outside the paste
+  // or earlier in it, the copies come first in the paste, and `newCopyIds`
+  // gives no copy an id that another copy, or an asset of another owner
+  // outside the paste, has. A copy can share its id with the same asset
+  // elsewhere in the doc.
   const copiesText = copyLines.map((line) => `${line}\n`).join('')
   const withCopies = doc.slice(0, copiesAt) + copiesText + doc.slice(copiesAt)
   const shift = copiesText.length

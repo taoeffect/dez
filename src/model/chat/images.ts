@@ -3,11 +3,12 @@ import type { Role } from './types'
 
 // A Dez image reference is plain text in a text node, in the markdown image
 // form that other markdown editors show: `![<metadata>](<absolute path>)`.
-// The alt text holds the image's metadata: nothing (references saved before
-// ids existed), or `key=value` items joined by `|`, such as `id=a`, and
-// later perhaps `id=a|desc=my great image`. The destination holds the path,
-// in the exact form that the user asked for: as it is, or in `<…>` when it
-// holds a space or a paren (CommonMark ends a bare destination at a space).
+// The alt text holds the image's metadata: nothing (a reference typed by
+// hand or written by another app), or `key=value` items joined by `|`, such
+// as `id=a`, and later perhaps `id=a|desc=my great image`. The destination
+// holds the path, in the exact form that the user asked for: as it is, or
+// in `<…>` when it holds a space or a paren (CommonMark ends a bare
+// destination at a space).
 // The `id` is the image's short name in its conversation, from the one id
 // sequence that clips use too (mediaIds.ts): the user names one image with
 // it in a message (`@a`, imageMentions.ts), and models read it in the
