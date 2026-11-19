@@ -28,18 +28,19 @@ export function jobInfo(fields: Partial<JobInfo>): JobInfo {
 
 export const RED = '/home/u/.config/dez/assets/images/red.jpg'
 export const SKY = '/home/u/.config/dez/assets/images/sky.png'
+export const PLAN = '/home/u/.config/dez/assets/images/plan.svg'
 export const SONG: MediaTagData = { kind: 'audio', id: 'b', type: 'audio/wav', src: '/home/u/.config/dez/assets/audio/s1.wav', url: null, expires: null, other: [] }
 export const FILM: MediaTagData = { kind: 'video', id: 'c', type: 'video/webm', src: '/home/u/.cache/dez/media/v1.webm', url: null, expires: null, other: [] }
 /** A clip that is only at its provider's address. */
 export const LOOP: MediaTagData = { kind: 'video', id: 'd', type: 'video/webm', src: null, url: 'https://clips.example/x/loop?sig=1', expires: null, other: [] }
 
 /** A conversation with the JPEG image `a` (RED), the audio clip `b`
- *  (SONG), the video clips `c` (FILM) and `d` (LOOP), and the PNG image `e`
- *  (SKY). */
+ *  (SONG), the video clips `c` (FILM) and `d` (LOOP), the PNG image `e`
+ *  (SKY), and the SVG image `f` (PLAN). */
 export const CONVERSATION = [
   user('u1', `![id=a](${RED})\n${mediaTagText(SONG)}`),
   reply('a1', `${mediaTagText(FILM)}\n${mediaTagText(LOOP)}`),
-  user('u2', `![id=e](${SKY})`),
+  user('u2', `![id=e](${SKY})\n![id=f](${PLAN})`),
 ]
 
 /** A video stream of a probe output, as ffprobe writes it. */

@@ -94,10 +94,10 @@ export const FFPROBE_FIXED_ARGS: readonly string[] = ['-hide_banner']
 const JOINED_NAME = 'joined'
 const JOIN_LIST_FILE = 'list.txt'
 
-// The endings of the files that Dez keeps, for the help and the error
-// texts. This ffmpeg build has no zlib, so it writes no PNG; it has no
-// WebP encoder either.
-const KEPT_ENDINGS = [...CLIP_FILE_EXTENSIONS.map((extension) => `.${extension}`), '.jpg', '.gif'].join(', ')
+// The endings of the files that Dez keeps, as the help and the error texts
+// tell them (`outputFiles` is the rule). No `.webp`: this ffmpeg build has
+// no WebP encoder.
+const KEPT_ENDINGS = [...CLIP_FILE_EXTENSIONS.map((extension) => `.${extension}`), '.jpg', '.png', '.gif'].join(', ')
 
 const ARGUMENTS_PARAMETER: ToolParameter = {
   name: 'arguments',
@@ -119,10 +119,12 @@ const FFMPEG_HELP = [
     + 'Dez puts a copy of that file into the work folder and writes the name of the copy (as in c.mp4) in place of the @id. '
     + 'The file itself never changes. Name no other file: Dez refuses an argument that names a file outside the work folder. '
     + 'On Linux with Landlock and on macOS, the system also lets ffmpeg open no file outside the cache folder and the assets folder of Dez, so a file that names another file (a playlist, a list) cannot reach the other files of the user. '
-    + 'A PNG or SVG image goes as a JPEG copy, with white in place of transparent pixels.',
+    + 'A PNG, JPEG, GIF, or WebP image goes as its own file, with its transparent pixels. An SVG image goes as a JPEG copy, with white in place of transparent pixels: ffmpeg reads no SVG. '
+    + 'An encode to a pixel format with no transparency (as yuv420p for libx264) drops the transparency, and each transparent pixel shows the color that it hides, often black. '
+    + 'To put such an image on white, see the examples.',
   'Outputs: give each output a new file name with no folder, made of ASCII letters, digits, ".", "_", and "-" only. '
     + `Dez keeps the new files whose name ends in ${KEPT_ENDINGS}, at most ${MAX_VIDEO_OUTPUT_FILES} for one call, and deletes every other file. `
-    + 'This ffmpeg writes no PNG and no WebP image. For a run whose log is the result, end the arguments with `-f null -`.',
+    + 'Write a PNG for an image with transparent pixels: a JPEG has none. This ffmpeg writes no WebP image. For a run whose log is the result, end the arguments with `-f null -`.',
   'Arguments: one command line without the program name. Dez splits it into words as a shell does: white space ends a word, and single or double quotes keep a word with spaces whole. '
     + 'It is not a shell: it has no pipe, no redirect, no variable, and no backslash escape. '
     + 'To give ffmpeg single quotes (around a filter value with a comma), put the whole argument in double quotes, as in "select=\'eq(n,0)\'".',
@@ -132,7 +134,7 @@ const FFMPEG_HELP = [
     + 'a lone "-" (only `-f null -` can have one), a capture or playback device, the hls format or an .m3u8 file name (no HLS input and no HLS output), '
     + 'and the options -safe, -protocol_whitelist, -protocol_blacklist, -filter_script, -filter_complex_script, -graph_file, -hls_key_info_file, '
     + '-enable_drefs, -use_absolute_path, -dump_attachment, and each option that starts with "-/".',
-  'Encoders of this build: libx264, libx265, libvpx-vp9, libvpx, libsvtav1 (video); aac, libmp3lame, libopus, flac, pcm_s16le (audio); mjpeg, gif (images). '
+  'Encoders of this build: libx264, libx265, libvpx-vp9, libvpx, libsvtav1 (video); aac, libmp3lame, libopus, flac, pcm_s16le (audio); mjpeg, png, gif (images). '
     + 'It has no drawtext and no subtitles filter. The ffprobe subcommand gives the full lists with no job (-encoders, -filters, -h filter=scale).',
   'Examples of `arguments`:',
   '- Put the sound of @b on the video clip @c: -i @c -i @b -map 0:v -map 1:a -c:v copy -c:a aac -shortest out.mp4',
@@ -141,6 +143,7 @@ const FFMPEG_HELP = [
   '- Take the frame at second 1 as an image: -ss 1 -i @c -frames:v 1 -update 1 frame.jpg',
   '- Take the last frame as an image, for the first frame of a next scene (each frame of the last second goes into the same file, and the last one stays): -sseof -1 -i @c -update 1 -q:v 2 last.jpg',
   '- Make a video clip from the image @a and the sound @b: -loop 1 -i @a -i @b -c:v libx264 -tune stillimage -pix_fmt yuv420p -c:a aac -shortest still.mp4',
+  '- Make a 5-second video clip from the image @a, with white in place of its transparent pixels: -loop 1 -i @a -t 5 -filter_complex "[0:v]split[x][y];[x]drawbox=c=white:t=fill[bg];[bg][y]overlay,format=yuv420p" -c:v libx264 on_white.mp4',
   '- Put the music @b under the sound (the dialog) of the video clip @c, at a quarter of its level: -i @c -i @b -filter_complex "[1:a]volume=0.25[music];[0:a][music]amix=inputs=2:duration=first:normalize=0[a]" -map 0:v -map "[a]" -c:v copy -c:a aac mixed.mp4',
   '- Measure the loudness of @b, with no new file: -v info -i @b -af volumedetect -f null -',
 ].join('\n')
@@ -188,7 +191,7 @@ export const VIDEO_TOOL: SubcommandTool = {
       description: 'Runs the ffprobe that Dez ships once, with the arguments that you give, and gives its output as the result of this call (no job), '
         + `up to ${PROGRAM_OUTPUT_CAP} characters. Name a clip or an image by its id with an @, as in \`@c\`. `
         + 'The inputs, the split of the arguments into words, and the refusals are those of the ffmpeg subcommand: its help tells them. '
-        + 'A PNG or SVG image goes as a JPEG copy, so the facts are those of the copy. '
+        + 'An SVG image goes as a JPEG copy, so the facts are those of the copy. '
         + 'Ask only for what you need: -show_frames and -show_packets of a whole clip are long. '
         + 'ffprobe also gives the lists of this ffmpeg build, as in -encoders, -filters, -formats, -h filter=scale, and -h encoder=libx264.',
       parameters: [ARGUMENTS_PARAMETER],
@@ -456,8 +459,8 @@ export interface ImageInput {
   /** The name of its copy in the work folder. */
   name: string
   path: string
-  /** The copy is a JPEG drawing of the image, not its file: this ffmpeg
-   *  build reads no PNG (it has no zlib) and no SVG. */
+  /** The copy is a JPEG drawing of the image, not its file: ffmpeg reads
+   *  no SVG. */
   jpegCopy: boolean
 }
 
@@ -465,7 +468,7 @@ export type VideoInput = ImageInput | ClipInput
 
 // The image types whose files this ffmpeg build reads, with the extension
 // of the copy.
-const READ_IMAGE_TYPES: Readonly<Record<string, string>> = { 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' }
+const READ_IMAGE_TYPES: Readonly<Record<string, string>> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' }
 
 // The input that the id `id` names; null for an id of no image and no
 // clip. The name of an image's copy is the id and the extension of the

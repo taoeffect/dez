@@ -3,7 +3,7 @@ import { MAX_SAVED_CLIP_BYTES } from '../chat/mediaFiles'
 import { mediaTagText } from '../chat/mediaTags'
 import type { Section } from '../chat/types'
 import { reply, user } from '../streams/testing'
-import { CONVERSATION, FILM, OPUS, probeOutput, RED, refusal, SKY, SONG, VP9, WEBM } from './testing'
+import { CONVERSATION, FILM, OPUS, PLAN, probeOutput, RED, refusal, SKY, SONG, VP9, WEBM } from './testing'
 import type { ToolArguments } from './types'
 import {
   clipFacts,
@@ -67,10 +67,10 @@ describe('the video tool', () => {
       .filter((line) => line.startsWith('- '))
       .map((line) => line.slice(line.indexOf(': ') + 2))
 
-    expect(examples).toHaveLength(8)
+    expect(examples).toHaveLength(9)
     expect(ffmpegWords(examples[0])).toStrictEqual(['-i', 'c.webm', '-i', 'b.wav', '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac', '-shortest', 'out.mp4'])
     // The filter graph of the mix is one word, without its quotes.
-    expect(ffmpegWords(examples[6])).toContain('[1:a]volume=0.25[music];[0:a][music]amix=inputs=2:duration=first:normalize=0[a]')
+    expect(ffmpegWords(examples[7])).toContain('[1:a]volume=0.25[music];[0:a][music]amix=inputs=2:duration=first:normalize=0[a]')
     for (const example of examples) expect(() => ffmpegCall({ arguments: example }, CONVERSATION), example).not.toThrow()
     expect(() => ffmpegCall(subcommand('ffmpeg').example as ToolArguments, CONVERSATION)).not.toThrow()
     expect(() => ffprobeCall(subcommand('ffprobe').example as ToolArguments, CONVERSATION)).not.toThrow()
@@ -153,14 +153,15 @@ describe('ffmpegCall', () => {
     expect(ffmpegCall({ arguments: '-i @a out.mp4' }, [reply('a1', odd)]).inputs[0].name).toBe('a.bin')
   })
 
-  it('gives a JPEG image as its file, and a PNG image as a JPEG copy', () => {
-    const { inputs } = ffmpegCall({ arguments: '-i @a -i @e out.mp4' }, CONVERSATION)
+  it('gives a JPEG or PNG image as its file, and an SVG image as a JPEG copy', () => {
+    const { inputs } = ffmpegCall({ arguments: '-i @a -i @e -i @f out.mp4' }, CONVERSATION)
 
     expect(inputs).toStrictEqual([
       { kind: 'image', id: 'a', name: 'a.jpg', path: RED, jpegCopy: false },
-      { kind: 'image', id: 'e', name: 'e.jpg', path: SKY, jpegCopy: true },
+      { kind: 'image', id: 'e', name: 'e.png', path: SKY, jpegCopy: false },
+      { kind: 'image', id: 'f', name: 'f.jpg', path: PLAN, jpegCopy: true },
     ])
-    expect(videoInputsText(inputs)).toBe('The inputs of the run: the image @a as a.jpg, the image @e as e.jpg (a JPEG copy, with white in place of transparent pixels).')
+    expect(videoInputsText(inputs)).toBe('The inputs of the run: the image @a as a.jpg, the image @e as e.png, the image @f as f.jpg (a JPEG copy, with white in place of transparent pixels).')
   })
 
   it('tells that a run has no input', () => {
@@ -285,7 +286,7 @@ describe('ffmpegCall', () => {
 
     expect(message).toContain('@z names no image and no clip of this conversation')
     expect(message).toContain('Dez started no job.')
-    expect(message).toContain('the image @a, the image @e, the audio clip @b, the video clip @c, the video clip @d')
+    expect(message).toContain('the image @a, the image @e, the image @f, the audio clip @b, the video clip @c, the video clip @d')
     expect(message).not.toContain('/home')
   })
 
@@ -699,7 +700,7 @@ describe('ffmpegRunResult', () => {
     expect(isError).toBe(true)
     expect(text).toContain('it made no new file that Dez keeps. Dez did not keep out.mkv (Dez stores no file of its type).')
     expect(text).toContain('.mp4, .webm, .mov')
-    expect(text).toContain('.jpg, .gif')
+    expect(text).toContain('.jpg, .png, .gif')
   })
 })
 
@@ -775,13 +776,13 @@ describe('the ffprobe results', () => {
   })
 
   it('tells of a cut and of a JPEG copy in the first lines', () => {
-    const { inputs } = ffprobeCall({ arguments: '-show_frames @e @a' }, CONVERSATION)
+    const { inputs } = ffprobeCall({ arguments: '-show_frames @e @f @a' }, CONVERSATION)
     const text = ffprobeResultText(inputs, outputOf('x'.repeat(PROGRAM_OUTPUT_CAP)), outputOf('warn'))
     const lines = text.split('\n')
 
     expect(lines[0]).toContain(`these are the first ${PROGRAM_OUTPUT_CAP} characters`)
     expect(lines[0]).toContain('-show_entries')
-    expect(lines[1]).toBe('The image @e went to ffprobe as a JPEG copy, with white in place of transparent pixels: the facts are those of the copy.')
+    expect(lines[1]).toBe('The image @f went to ffprobe as a JPEG copy, with white in place of transparent pixels: the facts are those of the copy.')
     expect(lines[2]).toBe('x'.repeat(PROGRAM_OUTPUT_CAP))
     expect(lines).toHaveLength(3)
   })

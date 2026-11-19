@@ -8,7 +8,7 @@ import { reply, user } from '../model/streams/testing'
 import { unreadableImageText } from '../model/tools/imageTool'
 import { jobTimedOutText } from '../model/tools/jobs'
 import { INPUT_CLIP_TOO_LARGE, outputNotStoredText, programNotStartedText } from '../model/tools/programRuns'
-import { CONVERSATION, FILM, LOOP, OPUS, probeOutput, SKY, SONG, VP9 } from '../model/tools/testing'
+import { CONVERSATION, FILM, LOOP, OPUS, PLAN, probeOutput, SKY, SONG, VP9 } from '../model/tools/testing'
 import { clipReadProblemText } from '../model/tools/toolInputs'
 import { ToolError } from '../model/tools/types'
 import {
@@ -131,16 +131,16 @@ describe('runFfmpegJob', () => {
     expect(native.deletedFiles).toHaveLength(1)
   })
 
-  it('gives a PNG image as a JPEG copy that the webview draws on white', async () => {
-    const call = ffmpegCall({ arguments: '-loop 1 -i @e -t 2 out.mp4' }, CONVERSATION)
+  it('gives a PNG image as its file, and an SVG image as a JPEG copy that the webview draws on white', async () => {
+    const call = ffmpegCall({ arguments: '-loop 1 -i @e -loop 1 -i @f -filter_complex overlay -t 2 out.mp4' }, CONVERSATION)
 
     await runFfmpegJob(call, running(), report)
 
     const folder = deletedWorkFolder()
-    expect(readImages).toStrictEqual([SKY])
+    expect(readImages).toStrictEqual([PLAN])
     expect(drawings).toStrictEqual([{ drawing: { crop: { x: 0, y: 0, ...IMAGE_SIZE }, ...IMAGE_SIZE, background: '#ffffff' }, mediaType: 'image/jpeg' }])
-    expect(native.savedFiles).toStrictEqual([{ file: { root: 'cache', path: `${folder}/e.jpg` }, content: JPEG_BYTES }])
-    expect(native.runs[0].run.inputs).toStrictEqual([])
+    expect(native.savedFiles).toStrictEqual([{ file: { root: 'cache', path: `${folder}/f.jpg` }, content: JPEG_BYTES }])
+    expect(native.runs[0].run.inputs).toStrictEqual([{ name: 'e.png', source: SKY }])
   })
 
   it('downloads a clip that is only at its web address into the folder, with no provider header', async () => {
@@ -228,21 +228,21 @@ describe('runFfmpegJob', () => {
     native.fileSize = () => null
     redrawError = new Error('The image did not decode.')
 
-    const gone = await refusalOf(runFfmpegJob(ffmpegCall({ arguments: '-i @a out.mp4' }, CONVERSATION), running(), report))
-    const notDrawn = await refusalOf(runFfmpegJob(ffmpegCall({ arguments: '-i @e out.mp4' }, CONVERSATION), running(), report))
+    const gone = await refusalOf(runFfmpegJob(ffmpegCall({ arguments: '-i @e out.mp4' }, CONVERSATION), running(), report))
+    const notDrawn = await refusalOf(runFfmpegJob(ffmpegCall({ arguments: '-i @f out.mp4' }, CONVERSATION), running(), report))
 
-    expect(gone).toBe(unreadableImageText('a'))
-    expect(notDrawn).toBe(jpegCopyNotDrawnText('e'))
+    expect(gone).toBe(unreadableImageText('e'))
+    expect(notDrawn).toBe(jpegCopyNotDrawnText('f'))
     expect(native.runs).toStrictEqual([])
     expect(native.deletedFiles).toHaveLength(2)
   })
 
   it('tells that a JPEG copy that Dez could not write is no fault of the call, with no path', async () => {
-    native.saveAppFile = async () => { throw new Error(`${CACHE_DIR}/work/w/e.jpg: the disk is full`) }
+    native.saveAppFile = async () => { throw new Error(`${CACHE_DIR}/work/w/f.jpg: the disk is full`) }
 
-    const refusal = await refusalOf(runFfmpegJob(ffmpegCall({ arguments: '-i @e out.mp4' }, CONVERSATION), running(), report))
+    const refusal = await refusalOf(runFfmpegJob(ffmpegCall({ arguments: '-i @f out.mp4' }, CONVERSATION), running(), report))
 
-    expect(refusal).toBe(jpegCopyNotWrittenText('e'))
+    expect(refusal).toBe(jpegCopyNotWrittenText('f'))
     expect(drawings).toHaveLength(1)
     expect(native.runs).toStrictEqual([])
     deletedWorkFolder()
