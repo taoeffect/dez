@@ -12,6 +12,7 @@ import { shortcutKeyText } from '../../model/shortcuts'
 import { countText } from '../../utils/countText'
 import { DEZ_DISCUSSIONS_URL } from '../../utils/dezLinks'
 import bundledFfmpeg from '../../../src-tauri/binaries/manifest.json'
+import bundledFonts from '../../../src-tauri/fonts/manifest.json'
 
 type HelpPage = 'general' | 'tips' | 'assets' | 'support'
 
@@ -41,6 +42,16 @@ const WORK_FOLDER_HOURS = WORK_FOLDER_LIFETIME_MS / HOUR_MS
 // The side over which a chat request sends a smaller copy of an image, as
 // the text writes a number (`1,568`).
 const CHAT_IMAGE_SIDE_TEXT = countText(CHAT_IMAGE_SIDE)
+
+// The sources of the fonts that Dez ships, for the Support page: each
+// repository once, in the order of the manifest, with the families of its
+// fonts.
+const FONT_SOURCES: { repository: string; families: string[] }[] = []
+for (const { repository, family } of Object.values(bundledFonts.fonts)) {
+  const source = FONT_SOURCES.find((known) => known.repository === repository)
+  if (!source) FONT_SOURCES.push({ repository, families: [family] })
+  else if (!source.families.includes(family)) source.families.push(family)
+}
 
 const { shortcuts } = useModelState()
 
@@ -337,7 +348,11 @@ function onOverlayClick(event: MouseEvent) {
               A Dez tool that cuts, joins, or converts clips stores its new clips and images at
               once, in the folders above. It works on copies of the assets, in a work folder in
               <code v-if="workDir">{{ workDir }}</code><template v-else>the cache folder of the system</template>,
-              so the assets that it reads stay as they are. Dez deletes the work folder at the end
+              so the assets that it reads stay as they are. When the tool draws text, the work
+              folder also holds copies of the fonts that it uses (fonts that come with Dez, see
+              <button type="button" class="help-link" @click="page = 'support'">Support</button>),
+              and the text files that the model writes for it, for example subtitles or a title.
+              Dez does not store these files as assets. Dez deletes the work folder at the end
               of the work, or {{ WORK_FOLDER_HOURS }} hours later if Dez closed before that. Before
               that time, Delete Unused Files deletes such a work folder.
             </p>
@@ -345,9 +360,12 @@ function onOverlayClick(event: MouseEvent) {
                  Linux, Seatbelt on macOS), its folders are in
                  `run_bundled_tool` (src-tauri/src/bundled_tools.rs), and the
                  checks of a command line are `argumentProblem` in
-                 src/model/tools/videoTool.ts. -->
+                 src/model/tools/videoTool.ts. The programs have no network
+                 code: their build has `--disable-network` (see
+                 `dez-ffmpeg -buildconf`). -->
             <p>
-              Such a tool runs ffmpeg or ffprobe, programs that come with Dez. The system lets them
+              Such a tool runs ffmpeg or ffprobe, programs that come with Dez. They have no
+              network code, so they cannot connect to the internet. The system lets them
               open only the files in
               <code v-if="cacheDir">{{ cacheDir }}</code><template v-else>the folder of Dez in the cache folder of the system</template>
               and in the <code>assets</code> folder of the Dez folder: not your conversations, your
@@ -355,7 +373,7 @@ function onOverlayClick(event: MouseEvent) {
               read, add, and change files, but not delete or move them. Dez also refuses a command
               line that names another file, a web address, or a device such as a camera. A Linux
               system without Landlock (a part of the kernel since Linux 5.13) cannot set this
-              limit: there, the checks of Dez are the only guard.
+              limit: there, the checks of Dez are the only guard of your files.
             </p>
 
             <h3>Copy or link</h3>
@@ -423,6 +441,27 @@ function onOverlayClick(event: MouseEvent) {
                 {{ bundledFfmpeg.source }}
               </button>
             </p>
+
+            <!-- The fonts and their sources come from the manifest of the
+                 fonts that this build holds. scripts/update-fonts.js, its one
+                 writer, takes only fonts of the SIL Open Font License 1.1, and
+                 the bundle holds the whole folder: the license file of each
+                 source is next to its fonts. -->
+            <h3>Fonts</h3>
+            <p>
+              Dez comes with fonts for the text that the Dez tool <code>video</code> draws on
+              images and clips, as this ffmpeg can use no font of your system. The fonts have their
+              own license, the SIL Open Font License, version 1.1, and Dez ships the license with
+              them. They come from these projects:
+            </p>
+            <ul>
+              <li v-for="source in FONT_SOURCES" :key="source.repository">
+                {{ source.families.join(', ') }}:
+                <button type="button" class="help-link help-link--font" @click="sbp('dez.controller/openUrl', source.repository)">
+                  {{ source.repository }}
+                </button>
+              </li>
+            </ul>
           </section>
         </div>
       </div>

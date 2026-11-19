@@ -3,6 +3,7 @@ import { Key } from 'webdriverio'
 import { STORED_FILE_FOLDERS } from '../../src/model/chat/unusedFiles'
 import { DEZ_DISCUSSIONS_URL } from '../../src/utils/dezLinks'
 import bundledFfmpeg from '../../src-tauri/binaries/manifest.json'
+import bundledFonts from '../../src-tauri/fonts/manifest.json'
 import { startApp, type RunningApp } from './harness/app'
 import { clearOpenedUrls, consoleErrors, openedUrls, pointerClick, pointerClickAt, pointerDrag, resetConsoleErrors, screenshotOnFailure, stopOpenUrl, waitFor, waitForValue } from './harness/dom'
 import { seedAppState } from './harness/fixtures'
@@ -151,6 +152,17 @@ describe('Help panel', () => {
     // The release of the ffmpeg and ffprobe programs that the app holds.
     await pointerClick(browser, '.help-page--support .help-link--ffmpeg')
     await waitForValue(browser, 'opened URLs', () => openedUrls(browser), [DEZ_DISCUSSIONS_URL, bundledFfmpeg.source])
+    // The source of the fonts that the app holds: one link for each
+    // repository, in the order of the manifest. The links are at the end of
+    // the page, which can be longer than the panel: a click needs the link
+    // in view.
+    const fontSources = [...new Set(Object.values(bundledFonts.fonts).map(({ repository }) => repository))]
+    for (let i = 1; i <= fontSources.length; i++) {
+      const link = `.help-page--support li:nth-child(${i}) .help-link--font`
+      await browser.execute((link) => document.querySelector(link)?.scrollIntoView({ block: 'center' }), link)
+      await pointerClick(browser, link)
+    }
+    await waitForValue(browser, 'opened URLs', () => openedUrls(browser), [DEZ_DISCUSSIONS_URL, bundledFfmpeg.source, ...fontSources])
     expect(await helpOpen()).toBe(true)
   })
 
