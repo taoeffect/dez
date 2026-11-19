@@ -216,14 +216,21 @@ function reasoningDetailsText(details: Record<string, unknown>[]): string {
 }
 
 // The price that a server puts in its usage chunk, in USD: OpenRouter's
-// `usage.cost`, or Venice's top-level `cost`, with a USD part and a DIEM
-// part (Venice's own credit, which it spends first; one DIEM pays for one
-// USD of requests), which add up. Live shapes (2026-11-14):
-// OpenRouter `"usage": { …, "cost": 2.4e-7 }`; Venice
+// `usage.cost`, TrustedRouter's integer microdollars, or Venice's top-level
+// `cost`, with a USD part and a DIEM part (Venice's own credit, which it
+// spends first; one DIEM pays for one USD of requests), which add up. Live
+// shapes (2026-11-14): OpenRouter `"usage": { …, "cost": 2.4e-7 }`; Venice
 // `"cost": { "usd": 0, "diem": 0.00000232 }`.
 function chunkCost(usage: Record<string, unknown> | undefined, cost: unknown): number | undefined {
   const usageCost = usageNumber(usage?.cost)
   if (usageCost !== undefined) return usageCost
+  // TrustedRouter: `usage.total_cost_microdollars` and
+  // `usage.cost_microdollars`, integers (1,000,000 is $1), only when the
+  // charge of the request is known. The total is the whole charge of the
+  // request, so it comes first.
+  // https://trustedrouter.com/docs
+  const microdollars = usageNumber(usage?.total_cost_microdollars) ?? usageNumber(usage?.cost_microdollars)
+  if (microdollars !== undefined) return roundedPrice(microdollars / 1_000_000)
   if (!isRecord(cost)) return undefined
   const usd = usageNumber(cost.usd)
   const diem = usageNumber(cost.diem)
