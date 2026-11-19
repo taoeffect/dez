@@ -144,6 +144,12 @@ export function intermediateInvokeBlock (callId: string, jobId: string): string 
   return `<dez:tool id="${callId}" name="model_invoke" model="studio/paint" prompt="A draft" is_intermediate="true">\n${jobStartedText(jobId, 1)}\n</dez:tool>`
 }
 
+/** The text of a `model_list` call that succeeded, as the agent section and
+ *  the conversation file hold it. */
+export function modelListBlock (id: string, filter: string, result: string): string {
+  return `<dez:tool id="${id}" name="model_list" filter="${filter}">\n${result}\n</dez:tool>`
+}
+
 /** The intermediate part of each chip of the active editor, in doc order;
  *  null for a chip with no such part. */
 export async function intermediateParts (browser: E2EBrowser): Promise<Array<IntermediatePartView | null>> {

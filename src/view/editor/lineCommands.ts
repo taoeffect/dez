@@ -99,8 +99,9 @@ function holdsToolBlock(state: EditorState, docText: string, spans: readonly Lin
  *  inside) that hold it strictly. The first move goes to the atom edge on
  *  `pos`'s line (a line block on the line above ends on this line), else
  *  to the nearer edge; later moves keep that way, so nested atoms cannot
- *  move it back and forth. */
-function outsideAtoms(doc: Text, atoms: readonly RangeSet<RangeValue>[], pos: number): number {
+ *  move it back and forth. `atoms` are the sets of the view's
+ *  `EditorView.atomicRanges`. */
+export function outsideAtoms(doc: Text, atoms: readonly RangeSet<RangeValue>[], pos: number): number {
   const line = doc.lineAt(pos)
   let forward: boolean | null = null
   for (let moved = true; moved;) {

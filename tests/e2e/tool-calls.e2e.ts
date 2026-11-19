@@ -12,7 +12,7 @@ import { startMockProviderApp, type MockProviderApp } from './harness/mockProvid
 import { mockChatPath, openAiToolCall, replyText, sendAnthropicReply, sendChatReply, sendToolCalls, startEventStream, toolResult, writeAnthropicEvent, writeChatFrame, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
 import { activeConversationId, activeTabStreaming, busyDotsShown, docPos, editorCaret, editorDoc, focusEditor, focusedArea, newTab, openSeededConversation, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread, type ThreadSection } from './harness/thread'
-import { pressToolChip, toolChips, toolPanel, type ToolChipView } from './harness/toolChips'
+import { modelListBlock, pressToolChip, toolChips, toolPanel, type ToolChipView } from './harness/toolChips'
 
 // Tool calls, driven through the real app against a mock server in this
 // process: a model of each API format calls the `model_list` tool, the app
@@ -67,12 +67,6 @@ const TOOLER_LIST = `1 model matches "tool" ${LIST_COLUMNS}\n${TOOLER.id}/${TOOL
 const CLAUDE_LIST = `1 model matches "claude" ${LIST_COLUMNS}\n${CLAUDE.id}/${CLAUDE.modelId} | ${CLAUDE.modelName} | ${CLAUDE.name} | ? | t,i | ? | ?`
 
 const EPHEMERAL = { type: 'ephemeral' }
-
-/** The text of a `model_list` call that succeeded, as the agent section and
- *  the conversation file hold it. */
-function modelListBlock (id: string, filter: string, result: string): string {
-  return `<dez:tool id="${id}" name="model_list" filter="${filter}">\n${result}\n</dez:tool>`
-}
 
 /** A `model_list` call in an OpenAI-format assistant message. */
 function openAiModelListCall (id: string, filter: string): Record<string, unknown> {

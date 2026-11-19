@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch, nextTick } from 'vue'
-import { Compartment, EditorSelection, EditorState, Prec, type Extension, type Line, type SelectionRange } from '@codemirror/state'
-import { EditorView, drawSelection, keymap, tooltips, type Command, type KeyBinding } from '@codemirror/view'
+import { Compartment, EditorSelection, EditorState, Prec, type Extension, type SelectionRange } from '@codemirror/state'
+import { EditorView, drawSelection, keymap, tooltips, type BlockInfo, type Command, type KeyBinding } from '@codemirror/view'
 import { copyLineDown, copyLineUp, deleteLine, history, historyKeymap, defaultKeymap, redo, selectAll, undo } from '@codemirror/commands'
 import sbp from '@sbp/sbp'
 import { useModelState, type Prompt } from '../modelState'
@@ -56,7 +56,7 @@ import { caretAfterCompactionBlock, compactionBlockRules } from '../editor/compa
 import { compactionChip, openCompactionChips, type CompactionChipsOpen } from '../editor/compactionChip'
 import { deleteLineBlockBackward, deleteLineBlockForward, joinsLineBlock } from '../editor/lineBlocks'
 import { revealHiddenLineBackward, revealHiddenLineForward } from '../editor/hiddenAssets'
-import { deleteLines, duplicateLines } from '../editor/lineCommands'
+import { deleteLines, duplicateLines, outsideAtoms } from '../editor/lineCommands'
 import { filePasteAndDrop } from '../editor/imageInsert'
 import { markdownLinks } from '../editor/links'
 import { mentionChips } from '../editor/mentions'
@@ -302,21 +302,27 @@ function mergeWithNextSection(v: EditorView): boolean {
   return true
 }
 
+/** Selects `caret`, moved out of any widget that a caret cannot be inside
+ *  (`outsideAtoms`): a dispatch, unlike CodeMirror's own commands, does
+ *  not skip atomic ranges. */
 function selectCaret(v: EditorView, caret: SelectionRange): boolean {
+  const atoms = v.state.facet(EditorView.atomicRanges).map((source) => source(v))
+  const head = outsideAtoms(v.state.doc, atoms, caret.head)
   v.dispatch({
-    selection: EditorSelection.create([caret]),
+    selection: EditorSelection.create([head === caret.head ? caret : EditorSelection.cursor(head, 0, undefined, caret.goalColumn)]),
     scrollIntoView: true,
     userEvent: 'select',
   })
   return true
 }
 
-/** A caret on the first (`forward`) or last visual row of `line`, at the x
- *  of the caret `range`: its goal column during a run of presses, else its
- *  own x, read as CodeMirror's `moveVertically` reads it. The result keeps
- *  that goal column, so the next press keeps the x too. Null when the view
- *  has no coordinates for it (a place out of the viewport). */
-function caretOnRowAtGoal(v: EditorView, range: SelectionRange, line: Line, forward: boolean): SelectionRange | null {
+/** A caret on the first (`forward`) or last visual row of the row line
+ *  `row`, at the x of the caret `range`: its goal column during a run of
+ *  presses, else its own x, read as CodeMirror's `moveVertically` reads
+ *  it. The result keeps that goal column, so the next press keeps the x
+ *  too. Null when the view has no coordinates for it (a place out of the
+ *  viewport), or gives a place off the row (a line of no height). */
+function caretOnRowAtGoal(v: EditorView, range: SelectionRange, row: BlockInfo, forward: boolean): SelectionRange | null {
   const contentLeft = v.contentDOM.getBoundingClientRect().left
   let goal = range.goalColumn
   if (goal === undefined) {
@@ -324,43 +330,53 @@ function caretOnRowAtGoal(v: EditorView, range: SelectionRange, line: Line, forw
     if (!caret) return null
     goal = caret.left - contentLeft
   }
-  const row = forward ? v.coordsAtPos(line.from, 1) : v.coordsAtPos(line.to, -1)
-  if (!row) return null
-  const target = v.posAndSideAtCoords({ x: contentLeft + goal, y: (row.top + row.bottom) / 2 }, false)
-  if (target.pos < line.from || target.pos > line.to) return null
+  const rowCoords = forward ? v.coordsAtPos(row.from, 1) : v.coordsAtPos(row.to, -1)
+  if (!rowCoords) return null
+  const target = v.posAndSideAtCoords({ x: contentLeft + goal, y: (rowCoords.top + rowCoords.bottom) / 2 }, false)
+  if (target.pos < row.from || target.pos > row.to) return null
   return EditorSelection.cursor(target.pos, target.assoc, undefined, goal)
 }
 
-/** Up and Down. A key moves one visual row inside the caret's line first,
- *  as CodeMirror's own move does, so a wrapped line next to a role pill is
- *  walked row by row. With no row left in the line, it goes to the next
+/** Up and Down. They move by row lines, the lines that the user sees
+ *  (`lineBlockAt`): a tool chip is one row line, however many doc lines
+ *  its block has, so a key never walks the hidden text of a chip. A key
+ *  moves one visual row inside the caret's row line first, as
+ *  CodeMirror's own move does, so a wrapped line next to a role pill is
+ *  walked row by row. With no row left there, it goes to the next row
  *  line of the section, or across the role pill to the nearest row of the
- *  line on the other side (its last row going up, its first going down) at
- *  the caret's x; CodeMirror's own move would stop on the pill's line. At
- *  the doc edges it goes to the line start or end. A selection collapses
- *  first. */
+ *  row line on the other side (its last row going up, its first going
+ *  down) at the caret's x; CodeMirror's own move would stop on the pill's
+ *  line. A line of no height (a blank line between two chips, the line of
+ *  a hidden asset) is a row line too: CodeMirror's move skips it, so the
+ *  key puts the caret on it, where it shows (`collapsedLines`,
+ *  toolCalls.ts). At the doc edges it goes to the row line's start or
+ *  end. A selection collapses first. */
 function moveCaretByRow(v: EditorView, forward: boolean): boolean {
   const { state } = v
+  const { doc } = state
   const range = state.selection.main
   if (!range.empty) return selectCaret(v, EditorSelection.cursor(forward ? range.to : range.from))
 
-  const currentLine = state.doc.lineAt(range.head)
-  const adjacentLine = forward
-    ? nextEditableLineInSection(state, currentLine.number)
-    : previousEditableLineInSection(state, currentLine.number)
+  const row = v.lineBlockAt(range.head)
+  // A place on the next row line, past the line break between the two.
+  const beyond = forward ? row.to + 1 : row.from - 1
+  const beyondLine = beyond >= 0 && beyond <= doc.length ? doc.lineAt(beyond) : null
+  const adjacentRow = beyondLine && beyondLine.text !== SECTION_SEP ? v.lineBlockAt(beyond) : null
   const moved = v.moveVertically(range, forward)
-  const movedLine = state.doc.lineAt(moved.head).number
+  const movedRow = v.lineBlockAt(moved.head)
   const movedOn = forward ? moved.head > range.head : moved.head < range.head
-  if (movedOn && (movedLine === currentLine.number || movedLine === adjacentLine?.number)) return selectCaret(v, moved)
+  if (movedOn && (movedRow.from === row.from || movedRow.from === adjacentRow?.from)) return selectCaret(v, moved)
 
-  const column = range.head - currentLine.from
-  const caretAtColumn = (line: Line) => EditorSelection.cursor(line.from + Math.min(column, line.length))
-  if (adjacentLine) return selectCaret(v, caretAtColumn(adjacentLine))
+  const column = range.head - doc.lineAt(range.head).from
+  const caretAtColumn = (target: BlockInfo) => EditorSelection.cursor(target.from + Math.min(column, target.length))
+  if (adjacentRow) return selectCaret(v, caretOnRowAtGoal(v, range, adjacentRow, forward) ?? caretAtColumn(adjacentRow))
+  const rowLine = doc.lineAt(forward ? row.to : row.from).number
   const otherSectionLine = forward
-    ? firstEditableLineOfNextSection(state, currentLine.number)
-    : lastEditableLineOfPreviousSection(state, currentLine.number)
-  if (!otherSectionLine) return selectCaret(v, EditorSelection.cursor(forward ? currentLine.to : currentLine.from))
-  return selectCaret(v, caretOnRowAtGoal(v, range, otherSectionLine, forward) ?? caretAtColumn(otherSectionLine))
+    ? firstEditableLineOfNextSection(state, rowLine)
+    : lastEditableLineOfPreviousSection(state, rowLine)
+  if (!otherSectionLine) return selectCaret(v, EditorSelection.cursor(forward ? row.to : row.from))
+  const otherRow = v.lineBlockAt(otherSectionLine.from)
+  return selectCaret(v, caretOnRowAtGoal(v, range, otherRow, forward) ?? caretAtColumn(otherRow))
 }
 
 function documentLineCursorTarget(state: EditorState, head: number, forward: boolean): number | null {

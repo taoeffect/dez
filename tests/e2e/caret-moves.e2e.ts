@@ -2,21 +2,28 @@ import type { EditorView } from '@codemirror/view'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { startApp, type RunningApp } from './harness/app'
-import { consoleErrors, resetConsoleErrors, screenshotOnFailure, waitFor } from './harness/dom'
+import { consoleErrors, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
 import { seedAppState } from './harness/fixtures'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { focusEditor, openSeededConversation, setCaret } from './harness/thread'
+import { docPos, editorCaret, editorDoc, focusEditor, openSeededConversation, setCaret } from './harness/thread'
+import { modelListBlock, toolChips } from './harness/toolChips'
 
-// Up and Down in the real editor, on long lines that wrap next to a role
-// pill. A key first moves one visual row in the caret's line; with no row
-// left, it goes across a pill to the nearest row of the next line, at the
-// caret's x. The rules are in `moveCaretByRow`
+// Up and Down in the real editor: on long lines that wrap next to a role
+// pill, and through tool chips. A key first moves one visual row in the
+// caret's line; with no row left, it goes to the next line that the user
+// sees, or across a pill to the nearest row of the next line, at the
+// caret's x. A tool chip is one such line, however many doc lines its
+// block has. The rules are in `moveCaretByRow`
 // (src/view/thread/ThreadEditor.vue). They need layout, which jsdom does
 // not have, so only this spec tests them.
 //
-// One app session and one conversation serve the whole file. The doc lines
-// of the conversation: 1 `one …`, 2 the agent pill, 3 `two …`, 4 `short`,
-// 5 `three …`, 6 the user pill, 7 `four …`.
+// One app session serves the whole file, with two conversations. The doc
+// lines of the first: 1 `one …`, 2 the agent pill, 3 `two …`, 4 `short`,
+// 5 `three …`, 6 the user pill, 7 `four …`. The second (`CHIP_SECTIONS`),
+// in a tab of its own after the tests of the first: a user line; a reply
+// of the chips a, b, c, d, and e, with a blank line after b, c, d, and e,
+// and a line of text; a user line; a reply of the chip f only; and an
+// empty user line.
 
 /** A line long enough to wrap to three rows or more in the e2e window. */
 function wrapped (word: string): string {
@@ -56,6 +63,68 @@ interface CaretPlace {
   length: number
   x: number
   charWidth: number
+}
+
+/** A tool chip of the second conversation: its name (the filter of its
+ *  call) and the text of its block. */
+interface ChipBlock {
+  name: string
+  block: string
+}
+
+function chipBlock (name: string, result: string): ChipBlock {
+  return { name, block: modelListBlock(`call_rows_${name}`, name, result) }
+}
+
+function resultLines (name: string, count: number): string {
+  return Array.from({ length: count }, (_, index) => `${name} result ${index + 1}`).join('\n')
+}
+
+const LONG_RESULT = JSON.stringify({ id: 'studio/paint', parameters: ['size', 'quality', 'style'], usage: ['text', 'image', 'cost'] }, null, 2)
+const CHIPS: ChipBlock[] = [
+  chipBlock('a', resultLines('a', 3)),
+  chipBlock('b', resultLines('b', 4)),
+  chipBlock('c', LONG_RESULT),
+  chipBlock('d', resultLines('d', 2)),
+  chipBlock('e', resultLines('e', 2)),
+  chipBlock('f', resultLines('f', 3)),
+]
+const [A, B, C, D, E, F] = CHIPS
+const ABOVE = 'text above the chips'
+const BELOW = 'text below the chips'
+const REPLY_END = 'the end of the reply'
+const CHIP_SECTIONS: Array<{ role: 'user' | 'agent', text: string }> = [
+  { role: 'user', text: ABOVE },
+  // The shape of the reply of the bug report: two chips on adjacent lines,
+  // a chip with a long result between blank lines, and two chips with a
+  // blank line between them. A saved section drops its last blank lines,
+  // so a line of text keeps the blank line after the last chip.
+  { role: 'agent', text: [A.block, B.block, '', C.block, '', D.block, '', E.block, '', REPLY_END].join('\n') },
+  { role: 'user', text: BELOW },
+  // A section that ends with a chip.
+  { role: 'agent', text: F.block },
+  { role: 'user', text: '' },
+]
+// Far more presses than a walk through every hidden line of the chips takes.
+const MAX_PRESSES = 80
+
+/** Where `head` is in `doc`, the doc of the second conversation:
+ *  `chip <name>` at an edge of a chip, `in chip <name>` strictly inside one
+ *  (in its hidden text), `blank after <name>` on the blank line after a
+ *  chip, `blank` on another blank line, else the text of its line. */
+function stopName (doc: string, head: number): string {
+  for (const { name, block } of CHIPS) {
+    const from = doc.indexOf(block)
+    const to = from + block.length
+    if (head === from || head === to) return `chip ${name}`
+    if (from < head && head < to) return `in chip ${name}`
+  }
+  const lineStart = doc.lastIndexOf('\n', head - 1) + 1
+  const lineEnd = doc.indexOf('\n', head)
+  const text = doc.slice(lineStart, lineEnd === -1 ? doc.length : lineEnd)
+  if (text !== '') return text
+  const above = CHIPS.find(({ block }) => doc.indexOf(block) + block.length === lineStart - 1)
+  return above ? `blank after ${above.name}` : 'blank'
 }
 
 describe('caret moves', () => {
@@ -209,5 +278,57 @@ describe('caret moves', () => {
     await browser.keys([Key.ArrowDown])
     const end = await caretPlace()
     expect(end).toMatchObject({ line: FOUR, column: end.length })
+  })
+
+  // The second conversation. Each chip is one stop, however many lines its
+  // block has, and so is each blank line around the chips: the caret never
+  // goes into the hidden text of a block.
+  describe('through tool chips', () => {
+    /** Presses `key` until the caret is on the line `target`, and gives
+     *  the stop of each press (`stopName`). The walk ends early when a
+     *  press does not move the caret on in the key's way, or after
+     *  `MAX_PRESSES`. */
+    async function walk (key: string, target: string): Promise<string[]> {
+      const forward = key === Key.ArrowDown
+      const doc = await editorDoc(browser)
+      const stops: string[] = []
+      let last = await editorCaret(browser)
+      for (let press = 0; press < MAX_PRESSES && stops.at(-1) !== target; press++) {
+        await browser.keys([key])
+        const head = await editorCaret(browser)
+        if (forward ? head <= last : head >= last) {
+          stops.push(`no move on from ${stopName(doc, last)}`)
+          break
+        }
+        stops.push(stopName(doc, head))
+        last = head
+      }
+      return stops
+    }
+
+    beforeAll(async () => {
+      await openSeededConversation(browser, app.home, 'caret-chips', CHIP_SECTIONS)
+      await waitForValue(browser, 'chips', async () => (await toolChips(browser)).length, CHIPS.length)
+    })
+
+    // The case of the bug report: Up walked every hidden line of the chips.
+    it('moves Up one stop per chip and per blank line', async () => {
+      await setCaret(browser, await docPos(browser, BELOW, BELOW.length))
+      expect(await walk(Key.ArrowUp, ABOVE)).toEqual([
+        REPLY_END, 'blank after e', 'chip e', 'blank after d', 'chip d', 'blank after c', 'chip c', 'blank after b', 'chip b', 'chip a', ABOVE,
+      ])
+    })
+
+    it('moves Down one stop per chip and per blank line, from across a pill onto the first chip', async () => {
+      await setCaret(browser, await docPos(browser, ABOVE, ABOVE.length))
+      expect(await walk(Key.ArrowDown, BELOW)).toEqual([
+        'chip a', 'chip b', 'blank after b', 'chip c', 'blank after c', 'chip d', 'blank after d', 'chip e', 'blank after e', REPLY_END, BELOW,
+      ])
+    })
+
+    it('moves Up across a pill onto a chip that ends its section, then on across the next pill', async () => {
+      await setCaret(browser, (await editorDoc(browser)).length)
+      expect(await walk(Key.ArrowUp, BELOW)).toEqual(['chip f', BELOW])
+    })
   })
 })
