@@ -9,22 +9,20 @@ const CONFIG_PATH: &str = "tauri.conf.json";
 /// `manifest.json` that names the size and the SHA-256 of each one.
 struct VendoredFolder {
     folder: &'static str,
-    /// How to get the files, for the error texts.
-    get_files: &'static str,
+    /// The script call that vendors the files again, for the error texts.
+    vendor_step: &'static str,
 }
 
 /// The ffmpeg and ffprobe programs of every build target.
 const BINARIES: VendoredFolder = VendoredFolder {
     folder: "binaries",
-    get_files: "Install Git LFS and run `git lfs pull` to get the file of the repository, \
-                or run `node scripts/update-ffmpeg.js <release tag>` to vendor another version.",
+    vendor_step: "run `node scripts/update-ffmpeg.js <release tag>` to vendor another version",
 };
 
 /// The fonts that the programs can use, the same for every build target.
 const FONTS: VendoredFolder = VendoredFolder {
     folder: "fonts",
-    get_files: "Install Git LFS and run `git lfs pull` to get the file of the repository, \
-                or run `node scripts/update-fonts.js` to vendor the fonts of its list.",
+    vendor_step: "run `node scripts/update-fonts.js` to vendor the fonts of its list",
 };
 
 impl VendoredFolder {
@@ -33,6 +31,11 @@ impl VendoredFolder {
         let path = format!("{}/manifest.json", self.folder);
         println!("cargo:rerun-if-changed={path}");
         read_json(&path)
+    }
+
+    /// The manifest of the folder, as the error texts name it.
+    fn shown_manifest(&self) -> String {
+        format!("src-tauri/{}/manifest.json", self.folder)
     }
 }
 
@@ -112,13 +115,12 @@ fn check_bundled_tools(tools: &[String]) -> Result<(), String> {
 
     for tool in tools {
         let name = format!("{tool}-{target}");
-        let entry = &manifest["files"][&name];
-        let (Some(size), Some(sha256)) = (entry["size"].as_u64(), entry["sha256"].as_str())
-        else {
+        let Some((size, sha256)) = size_and_sha256(&manifest["files"][&name]) else {
             return Err(format!(
                 "Dez has no {tool} program for the build target {target}: \
-                 src-tauri/binaries/manifest.json does not name {name}. \
-                 scripts/update-ffmpeg.js has the platforms that Dez ships programs for."
+                 {} does not name {name}. \
+                 scripts/update-ffmpeg.js has the platforms that Dez ships programs for.",
+                BINARIES.shown_manifest()
             ));
         };
         check_file(&BINARIES, &name, size, sha256)?;
@@ -132,17 +134,16 @@ fn check_bundled_tools(tools: &[String]) -> Result<(), String> {
 /// ffmpeg cannot open.
 fn check_fonts() -> Result<(), String> {
     let manifest = FONTS.manifest()?;
+    // manifest.json is plain Git, not Git LFS: only the vendor step fixes it.
+    let shown_manifest = FONTS.shown_manifest();
+    let vendor_step = FONTS.vendor_step;
     let Some(fonts) = manifest["fonts"].as_object() else {
-        return Err(format!(
-            "src-tauri/fonts/manifest.json has no `fonts` object. {}",
-            FONTS.get_files
-        ));
+        return Err(format!("{shown_manifest} has no `fonts` object: {vendor_step}."));
     };
     for (name, entry) in fonts {
-        let (Some(size), Some(sha256)) = (entry["size"].as_u64(), entry["sha256"].as_str()) else {
+        let Some((size, sha256)) = size_and_sha256(entry) else {
             return Err(format!(
-                "src-tauri/fonts/manifest.json names no size or SHA-256 for {name}. {}",
-                FONTS.get_files
+                "{shown_manifest} names no size or SHA-256 for {name}: {vendor_step}."
             ));
         };
         check_file(&FONTS, name, size, sha256)?;
@@ -162,11 +163,14 @@ fn check_file(
     let path = Path::new(vendored.folder).join(name);
     println!("cargo:rerun-if-changed={}", path.display());
     let shown = format!("src-tauri/{}", path.display());
-    let manifest = format!("src-tauri/{}/manifest.json", vendored.folder);
-    let get_files = vendored.get_files;
+    let manifest = vendored.shown_manifest();
+    let advice = format!(
+        "Install Git LFS and run `git lfs pull` to get the file of the repository, or {}.",
+        vendored.vendor_step
+    );
 
     let found_size = fs::metadata(&path)
-        .map_err(|error| format!("{shown} is missing ({error}). {get_files}"))?
+        .map_err(|error| format!("{shown} is missing ({error}). {advice}"))?
         .len();
     if found_size != size {
         if found_size < 1024 && is_lfs_pointer(&path) {
@@ -176,7 +180,7 @@ fn check_file(
             ));
         }
         return Err(format!(
-            "{shown} has {found_size} bytes, and {manifest} names {size}. {get_files}"
+            "{shown} has {found_size} bytes, and {manifest} names {size}. {advice}"
         ));
     }
 
@@ -187,10 +191,15 @@ fn check_file(
     let found_sha256 = format!("{:x}", hasher.finalize());
     if found_sha256 != sha256 {
         return Err(format!(
-            "{shown} has the SHA-256 {found_sha256}, and {manifest} names {sha256}. {get_files}"
+            "{shown} has the SHA-256 {found_sha256}, and {manifest} names {sha256}. {advice}"
         ));
     }
     Ok(())
+}
+
+/// The size and the SHA-256 that an entry of a manifest names.
+fn size_and_sha256(entry: &serde_json::Value) -> Option<(u64, &str)> {
+    Some((entry["size"].as_u64()?, entry["sha256"].as_str()?))
 }
 
 /// Whether a file is the text that Git LFS leaves in the place of a file
