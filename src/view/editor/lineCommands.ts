@@ -95,12 +95,16 @@ function holdsToolBlock(state: EditorState, docText: string, spans: readonly Lin
   return spans.some((span) => toolBlocks.some((block) => block.from <= span.to && block.to >= span.from))
 }
 
+/** The sets of the view's `EditorView.atomicRanges`, for `outsideAtoms`. */
+export function viewAtoms(view: EditorView): RangeSet<RangeValue>[] {
+  return view.state.facet(EditorView.atomicRanges).map((source) => source(view))
+}
+
 /** `pos` moved out of the atomic ranges (widgets that a caret cannot be
  *  inside) that hold it strictly. The first move goes to the atom edge on
  *  `pos`'s line (a line block on the line above ends on this line), else
  *  to the nearer edge; later moves keep that way, so nested atoms cannot
- *  move it back and forth. `atoms` are the sets of the view's
- *  `EditorView.atomicRanges`. */
+ *  move it back and forth. `atoms` are the view's sets (`viewAtoms`). */
 export function outsideAtoms(doc: Text, atoms: readonly RangeSet<RangeValue>[], pos: number): number {
   const line = doc.lineAt(pos)
   let forward: boolean | null = null
@@ -130,7 +134,7 @@ export function deleteLines(view: EditorView): boolean {
   if (!spans) return true
   const removals = spans.map((span) => linesRemovalRange(doc, span))
   const changes = state.changes(removals)
-  const atoms = state.facet(EditorView.atomicRanges).map((source) => source(view))
+  const atoms = viewAtoms(view)
   const carets = spans.map((span, index) => {
     const removal = removals[index]
     const { head } = span.ranges.reduce((first, range) => (range.from < first.from ? range : first))

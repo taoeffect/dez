@@ -56,7 +56,7 @@ import { caretAfterCompactionBlock, compactionBlockRules } from '../editor/compa
 import { compactionChip, openCompactionChips, type CompactionChipsOpen } from '../editor/compactionChip'
 import { deleteLineBlockBackward, deleteLineBlockForward, joinsLineBlock } from '../editor/lineBlocks'
 import { revealHiddenLineBackward, revealHiddenLineForward } from '../editor/hiddenAssets'
-import { deleteLines, duplicateLines, outsideAtoms } from '../editor/lineCommands'
+import { deleteLines, duplicateLines, outsideAtoms, viewAtoms } from '../editor/lineCommands'
 import { filePasteAndDrop } from '../editor/imageInsert'
 import { markdownLinks } from '../editor/links'
 import { mentionChips } from '../editor/mentions'
@@ -306,8 +306,7 @@ function mergeWithNextSection(v: EditorView): boolean {
  *  (`outsideAtoms`): a dispatch, unlike CodeMirror's own commands, does
  *  not skip atomic ranges. */
 function selectCaret(v: EditorView, caret: SelectionRange): boolean {
-  const atoms = v.state.facet(EditorView.atomicRanges).map((source) => source(v))
-  const head = outsideAtoms(v.state.doc, atoms, caret.head)
+  const head = outsideAtoms(v.state.doc, viewAtoms(v), caret.head)
   v.dispatch({
     selection: EditorSelection.create([head === caret.head ? caret : EditorSelection.cursor(head, 0, undefined, caret.goalColumn)]),
     scrollIntoView: true,
