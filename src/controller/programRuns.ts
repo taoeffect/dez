@@ -6,6 +6,7 @@ import { newStoredFilePath } from '../model/chat/storedFilePaths'
 import {
   INPUT_CLIP_TOO_LARGE,
   outputNotStoredText,
+  programNotConfinedText,
   programNotStartedText,
   type ClipInput,
   type KeptFile,
@@ -16,16 +17,17 @@ import { clipReadProblemText } from '../model/tools/toolInputs'
 import { ToolError } from '../model/tools/types'
 import { FFMPEG_OUTPUT_BYTES } from '../model/tools/videoTool'
 import { workFolderPath } from '../model/tools/workFolders'
+import { rawErrorText } from '../utils/errorText'
 import { holdingCachePath } from './cacheHolds'
 import { clipFromSources, downloadClip, type ClipSource } from './clipSources'
 import { discardMadeAssets, type MadeAsset } from './jobs'
 import type { BundledTool, BundledToolEnd, BundledToolInput, BundledToolOutput, BundledToolRun } from './nativeTypes'
 
-// The runs of ffmpeg and ffprobe, the programs that Dez ships, for the
+// The runs of the programs that Dez ships (ffmpeg, ffprobe, Deno), for the
 // Dez tools that run them (videoTool.ts, audioTool.ts, assetInfo.ts,
-// assetView.ts). This module registers no selector. Its texts for a model
-// are in model/tools/programRuns.ts; `toolName` is the Dez tool of the
-// call, which those texts name.
+// assetView.ts, jsEval.ts). This module registers no selector. Its texts
+// for a model are in model/tools/programRuns.ts; `toolName` is the Dez
+// tool of the call, which those texts name.
 //
 // Each call has its own new work folder in the cache root
 // (model/tools/workFolders.ts). The program runs in it and gets only
@@ -34,14 +36,23 @@ import type { BundledTool, BundledToolEnd, BundledToolInput, BundledToolOutput, 
 // computer is in its arguments. Where the OS can, Rust also lets the
 // program open only the files of the cache root and of the assets folder
 // of the Dez folder, where it cannot delete or move a file
-// (src-tauri/src/confinement.rs). The folder goes at the end of the call,
-// with all that the program wrote. Only the files that Dez keeps move out
-// of it first, into the generated folders of the Dez folder.
+// (src-tauri/src/confinement.rs). Deno runs the code of a model, so its
+// rule is tighter (its own work folder, and the app folder of the run when
+// it has one), and Rust starts no Deno run where the OS cannot hold it to
+// that rule. The folder goes at the end of the call, with all that the
+// program wrote. Only the files that Dez keeps move out of it first, into
+// the generated folders of the Dez folder.
 //
 // An error of the system (a native error text) can hold a path: it goes to
 // the log only, never into a text for a model.
 
-const PROGRAM_FILES: Readonly<Record<ShippedProgram, BundledTool>> = { ffmpeg: 'dez-ffmpeg', ffprobe: 'dez-ffprobe' }
+const PROGRAM_FILES: Readonly<Record<ShippedProgram, BundledTool>> = { ffmpeg: 'dez-ffmpeg', ffprobe: 'dez-ffprobe', deno: 'dez-deno' }
+
+// The start of the native error of a run that Rust refused because the OS
+// cannot confine the program (`NO_CONFINEMENT` in
+// src-tauri/src/confinement.rs). Only a program that must be confined gets
+// it: Deno.
+const NO_CONFINEMENT = 'No confinement: '
 
 /** Runs `work` with the path of a new work folder, and deletes the folder
  *  with all that it holds when the work ends, also after an error or a
@@ -120,8 +131,9 @@ export async function clipInputFile(input: ClipInput, folder: string, signal: Ab
 /** One run of `program` in a work folder, to its end. A stop of `signal`
  *  stops the program; this then rejects with the stop, after the program is
  *  gone, so the caller can delete the folder. Throws a `ToolError` for a
- *  run that did not start (the program is missing, or the system did not
- *  let Dez make the folder or copy an input). */
+ *  run that did not start: the program is missing, the system did not let
+ *  Dez make the folder or copy an input, or the program must be confined
+ *  and the system cannot confine it. */
 export async function runProgram(
   program: ShippedProgram,
   toolName: string,
@@ -145,7 +157,8 @@ export async function runProgram(
     // The native error text can hold the path of the work folder or of an
     // input file, so the model gets none of it.
     console.error(`Failed to run ${program}:`, error)
-    throw new ToolError(programNotStartedText(program, toolName), '', { cause: error })
+    const text = rawErrorText(error).startsWith(NO_CONFINEMENT) ? programNotConfinedText(program, toolName) : programNotStartedText(program, toolName)
+    throw new ToolError(text, '', { cause: error })
   } finally {
     signal.removeEventListener('abort', cancel)
   }

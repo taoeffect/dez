@@ -4,15 +4,15 @@ import type { MediaTagKind } from '../chat/mediaTags'
 import type { ClipAttachment } from '../providers/clipInputs'
 import type { JobAssetKind } from './jobs'
 
-// What the tools that run ffmpeg or ffprobe, the programs that Dez ships
-// (src-tauri/binaries/), share about a run: its input clips, its end, the
-// new files that Dez keeps, and the texts of the failures that are the
-// same for every tool. controller/programRuns.ts does the work.
+// What the tools that run a program that Dez ships (src-tauri/binaries/)
+// share about a run: its input clips, its end, the new files that Dez
+// keeps, and the texts of the failures that are the same for every tool.
+// controller/programRuns.ts does the work.
 //
 // Every text here is a tool result: it goes to the chat provider.
 
 /** A program that Dez ships. */
-export type ShippedProgram = 'ffmpeg' | 'ffprobe'
+export type ShippedProgram = 'ffmpeg' | 'ffprobe' | 'deno'
 
 /** A clip of a call, as the program gets it. */
 export interface ClipInput {
@@ -60,6 +60,15 @@ export function tellUserConsole(tool: string): string {
  *  or copy an input file. */
 export function programNotStartedText(program: ShippedProgram, tool: string): string {
   return `Dez could not start ${program} on this computer. ${tellUserConsole(tool)}`
+}
+
+/** The error result of a run for the tool `tool` that Dez refused: the
+ *  program must run confined (it runs code of a model), and the system of
+ *  this computer cannot confine a program. No other call can go either. */
+export function programNotConfinedText(program: ShippedProgram, tool: string): string {
+  return `Dez did not start ${program}: the system of this computer cannot keep a program inside its own folders, and Dez does not run ${program} without that guard. `
+    + `This is not a fault of the call, and no other call of the ${tool} tool can run on this computer. `
+    + `Tell the user that the ${tool} tool cannot run here and that Help › Developer Console shows why, and do the work without the tool.`
 }
 
 /** The details of a clip that Dez does not give to the program because its

@@ -240,14 +240,17 @@ export const VIDEO_TOOL: SubcommandTool = {
 
 export const VIDEO_TOOL_DEFINITION = subcommandToolDefinition(VIDEO_TOOL)
 
+// The programs that the `video` tool runs.
+type VideoProgram = Extract<ShippedProgram, 'ffmpeg' | 'ffprobe'>
+
 // What Dez did not do for a call that it refuses, by the program of the
 // call: `ffmpeg` runs as a job, and `ffprobe` in the call.
-const NOT_DONE: Readonly<Record<ShippedProgram, string>> = {
+const NOT_DONE: Readonly<Record<VideoProgram, string>> = {
   ffmpeg: 'Dez started no job.',
   ffprobe: 'Dez did not run ffprobe.',
 }
 
-const OTHER_PROGRAM: Readonly<Record<ShippedProgram, ShippedProgram>> = { ffmpeg: 'ffprobe', ffprobe: 'ffmpeg' }
+const OTHER_PROGRAM: Readonly<Record<VideoProgram, VideoProgram>> = { ffmpeg: 'ffprobe', ffprobe: 'ffmpeg' }
 
 // A word that only a shell reads: an operator between two commands, or a
 // redirect (`>`, `2>&1`, `<in.txt`). A filter value such as
@@ -267,7 +270,7 @@ const SHELL_WORD = /^(?:&&|\|\||[|;&]|\d*[<>].*)$/
  *  name of the program is dropped. Throws a `ToolError` for a quote that
  *  does not close, a word that only a shell reads, and a text with no
  *  word. */
-export function commandLineWords(text: string, program: ShippedProgram): string[] {
+export function commandLineWords(text: string, program: VideoProgram): string[] {
   const words: string[] = []
   let word = ''
   let inWord = false
@@ -570,7 +573,7 @@ export interface ProgramCall {
 // Throws a `ToolError` for a text that is no command line
 // (`commandLineWords`), a word that the argument rule or the font checks
 // refuse, and an `@id` that names nothing (`unknownInputsProblem`).
-function programCall(program: ShippedProgram, fixedArgs: readonly string[], args: ToolArguments, sections: readonly Section[], fonts: readonly string[]): ProgramCall {
+function programCall(program: VideoProgram, fixedArgs: readonly string[], args: ToolArguments, sections: readonly Section[], fonts: readonly string[]): ProgramCall {
   const words = commandLineWords(typeof args.arguments === 'string' ? args.arguments : '', program)
   const assets = conversationAssets(sections)
   const inputs = new Map<string, VideoInput>()

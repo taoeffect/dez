@@ -12,9 +12,9 @@ import type { AppFileEntry, AppFileRef, BundledToolEnd, BundledToolOutput, Bundl
 // programs, and helpers for the work of a call or a job.
 //
 // An import of this module registers the stub selectors of the app
-// folders, the resource folder, the files, the downloads, and the program
-// runs (`dez.native/*`, `dez.controller/images/fileSize`, and
-// `dez.provider/chatImageSizes`), so a test file must register none of
+// folders, the resource folder, the real paths, the files, the downloads,
+// and the program runs (`dez.native/*`, `dez.controller/images/fileSize`,
+// and `dez.provider/chatImageSizes`), so a test file must register none of
 // them. Each test starts with `resetNative()`.
 
 export const APP_DIR = '/home/u/.config/dez'
@@ -74,6 +74,9 @@ function newNative() {
     // The path of a file of the resource folder; a throw for a folder that
     // Dez cannot find.
     resourcePath: ((relative: string): string => `${RESOURCE_DIR}/${relative}`) as (relative: string) => string,
+    // The real path of a file or a folder; a throw for one that is not
+    // there.
+    canonicalPath: ((path: string): string => path) as (path: string) => string,
   }
 }
 
@@ -93,6 +96,9 @@ sbp('sbp/selectors/register', {
   },
   async 'dez.native/resourcePath' (relative: string): Promise<string> {
     return native.resourcePath(relative)
+  },
+  async 'dez.native/canonicalPath' (path: string): Promise<string> {
+    return native.canonicalPath(path)
   },
   'dez.native/runBundledTool' (run: BundledToolRun, runId: string, onOutput: (output: BundledToolOutput) => void): Promise<BundledToolEnd> {
     native.runs.push({ run, runId })

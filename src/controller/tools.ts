@@ -21,6 +21,7 @@ import { AUDIO_TOOL, audioClipId, audioClipOf, audioCutPart, audioCutRequest, au
 import { conversationInfoText } from '../model/tools/conversationInfo'
 import { brightnessPlan, contrastPlan, convertPlan, cropPlan, flipPlan, IMAGE_TOOL, imageIdArgument, imageOf, imageResultText, invertPlan, rotatePlan, saturationPlan, scalePlan, unreadableImageText, unwritableFormatError, type ImagePlan } from '../model/tools/imageTool'
 import { cancelledJobIds, isIntermediate, jobCancelText, jobInspectText, jobResultText, jobsListText, jobStartedText, jobsWaitText, unknownJobText, waitedJobIds, type JobResult } from '../model/tools/jobs'
+import { jsEvalCall } from '../model/tools/jsEval'
 import { parameterValuesArgument, type ModelTarget } from '../model/tools/modelArguments'
 import { modelCost, modelInfoSelection, modelInfoText, modelInfoTarget, type ModelInfoFacts } from '../model/tools/modelInfo'
 import { invocationInputsText, invocationLabel, MODEL_INVOKE_TOOL, modelInvocation } from '../model/tools/modelInvoke'
@@ -35,6 +36,7 @@ import { assetInfoResult } from './assetInfo'
 import { assetViewResult } from './assetView'
 import { audioClipSeconds, cutAudioClip } from './audioTool'
 import { discardMadeAssets, writeJobAssets, type JobWork, type TabJobs } from './jobs'
+import { runJsEval } from './jsEval'
 import { invokeModel } from './modelInvoke'
 import { runFfmpegJob, runFfprobe, runJoinJob } from './videoTool'
 
@@ -475,6 +477,14 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
       // A model that reads no images gets no pictures, as in asset_view.
       pictureBudget: model?.imageInput === false ? null : await context.pictureBudget(),
     })
+  },
+  // One run of code that the model wrote, in Deno, the JavaScript runtime
+  // that Dez ships (jsEval.ts). The code gets no network and no file. The
+  // call waits for the end of the code and starts no job: the time limit
+  // of a run is short, and the model needs the value for its next step. A
+  // stop of the reply stops the code.
+  async js_eval (args, signal) {
+    return runJsEval(jsEvalCall(args), signal)
   },
 }
 

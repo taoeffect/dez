@@ -17,7 +17,7 @@ import { startedJob, waitCall } from './harness/jobs'
 import { clipTag, MP4_VIDEO, shownPlayers, silentWav, startClipServer, WEBM_VIDEO, type ClipServer, type ShownPlayer } from './harness/media'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, openAiToolCall, replyText, sendChatReply, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
-import { pidsWithCwd, processExists } from './harness/processes'
+import { processExists, runningProgram } from './harness/processes'
 import type { E2EBrowser } from './harness/session'
 import { activeConversationId, endedReply, newTab, openSeededConversation, openToasts, pickModel, submit, waitForThread } from './harness/thread'
 import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolChip, revealingPart, toolChips, toolPanelPictures } from './harness/toolChips'
@@ -366,17 +366,6 @@ describe('video tool', () => {
     const results = jobsWaitResults(waited)
     expect(results.map(({ id, tool }) => ({ id, tool }))).toStrictEqual([{ id: jobId, tool: 'video' }])
     return { jobId, started: toolResult(second, callId), result: results[0], next }
-  }
-
-  // The pid of the program of the one call that runs: waits until the work
-  // root holds one folder, and one program works in it. Dez deletes the
-  // folder at the end of the call, so a check that the program ended reads
-  // this pid, not the folder (`pidsWithCwd`).
-  async function runningProgram (): Promise<number> {
-    await waitForValue(browser, 'programs in the work folders', async () => (await filesIn(workRoot)).map((name) => pidsWithCwd(path.join(workRoot, name)).length), [1])
-    const [name] = await filesIn(workRoot)
-    const [pid] = pidsWithCwd(path.join(workRoot, name))
-    return pid
   }
 
   // After the calls of a test: no work folder stays, no file of the
@@ -1098,7 +1087,7 @@ describe('video tool', () => {
     const second = await chatRequest()
     const started = toolResult(second, 'call_tone')
     expect(started).toBe(`${jobStartedText(startedJob(second, 'call_tone'), 1)}\nThe run has no input image and no input clip.`)
-    const program = await runningProgram()
+    const program = await runningProgram(browser, workRoot)
 
     // While a reply runs, the Submit button stops it. The job goes on for
     // the next reply of the tab.
@@ -1130,7 +1119,7 @@ describe('video tool', () => {
     sendToolCalls(first.reply, [videoCall('call_tone', 'ffmpeg', { arguments: ENDLESS_TONE, timeout_seconds: 10 })])
     const second = await chatRequest()
     const jobId = startedJob(second, 'call_tone')
-    const program = await runningProgram()
+    const program = await runningProgram(browser, workRoot)
     sendToolCalls(second.reply, [waitCall('call_wait')])
 
     // The wait is longer than `waitForValue` takes.
