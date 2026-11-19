@@ -23,7 +23,7 @@ export const SCENE_CUT_FILTER = `scdet=threshold=${SCENE_CUT_THRESHOLD}`
 const SIMD_SAFE_WIDTH = 256
 
 /** The ffmpeg arguments, before the input, of a run with `freezedetect` or
- *  `scdet` over a picture of `size`. On x86, ffmpeg 8.1.2 gives these
+ *  `scdet` over a picture of `size`. On x86, ffmpeg 9.0.2 gives these
  *  filters a wrong difference of two frames when a plane of the picture is
  *  narrower than one SIMD register (16, 32, or 64 bytes): its `scene_sad`
  *  asm reads one register of each row, past the end of a shorter row, and
@@ -32,9 +32,12 @@ const SIMD_SAFE_WIDTH = 256
  *  makes ffmpeg use only its C code, which is slower, but only for these
  *  small pictures. A number, unlike a flag name such as `avx2`, is valid on
  *  every CPU. The smaller side counts, so that the rule holds also when
- *  ffmpeg turns the frames of a clip with a rotation.
- *  https://github.com/FFmpeg/FFmpeg/blob/n8.1.2/libavfilter/x86/scene_sad.asm
- *  https://github.com/FFmpeg/FFmpeg/blob/n8.1.2/libavfilter/x86/scene_sad_init.c */
+ *  ffmpeg turns the frames of a clip with a rotation. FFmpeg fixed the bug
+ *  after 9.0.2, in the commit of the last link: an ffmpeg that has it needs
+ *  no `-cpuflags 0`.
+ *  https://github.com/FFmpeg/FFmpeg/blob/n9.0.2/libavfilter/x86/scene_sad.asm
+ *  https://github.com/FFmpeg/FFmpeg/blob/n9.0.2/libavfilter/x86/scene_sad_init.c
+ *  https://github.com/FFmpeg/FFmpeg/commit/1d08d999c7ed5083507a6471d483002cd0facfa0 */
 export function frameCompareArgs(size: ImageSize): string[] {
   return Math.min(size.width, size.height) < SIMD_SAFE_WIDTH ? ['-cpuflags', '0'] : []
 }
