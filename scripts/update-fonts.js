@@ -268,8 +268,10 @@ async function main(args) {
   mkdirSync(fontsDir, { recursive: true });
   // The downloads go into a folder next to the final files (the same file
   // system, so a rename moves them), and the final files change only after
-  // every check passed: a failed run leaves the vendored fonts whole.
-  const downloadDir = mkdtempSync(join(fontsDir, '.update-'));
+  // every check passed: a failed run leaves the vendored fonts whole. The
+  // folder is not in fonts/: `bundle.resources` ships all of fonts/, dot
+  // folders too, and a killed run (no `finally`) leaves the folder.
+  const downloadDir = mkdtempSync(join(fontsDir, '..', '.fonts-update-'));
   try {
     const fonts = [];
     for (const source of FONT_SOURCES) {

@@ -12,3 +12,7 @@
 # The download folder of scripts/update-ffmpeg.js. A run that was killed
 # leaves it, with programs that the Git LFS rule does not cover.
 /binaries/.update-*/
+
+# The download folder of scripts/update-fonts.js. A run that was killed
+# leaves it, with fonts that the Git LFS rule does not cover.
+/.fonts-update-*/
