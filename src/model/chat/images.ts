@@ -86,23 +86,28 @@ const anyCase = (word: string) => [...word].map((char) => `[${char.toLowerCase()
 // The extensions of the image types that Dez stores as they are, in any
 // letter case (a camera names its photos `IMG_0001.JPG`).
 const IMAGE_EXTENSION_SOURCE = `(?:${Object.keys(MEDIA_TYPE_BY_EXTENSION).map(anyCase).join('|')})`
+// A char of a linked image path: no bracket, `<`, or `>`, as a stored path
+// holds none, and no control char or sentinel (content.ts), which would
+// break the editor's line and section scan.
+const LINKED_PATH_CHAR = String.raw`[^\[\]<>\u0000-\u001F\u007F\uE000-\uE003]`
 /** Regex source of a linked image path (`isLinkedImagePath`), and of a
- *  stored one too: an absolute path that ends with the extension of an
- *  image type that Dez stores as it is. The path holds no bracket, `<`, or
- *  `>`, as a stored one does not, and no control char or sentinel
- *  (content.ts), which would break the editor's line and section scan. No
- *  capture groups. */
-export const LINKED_IMAGE_PATH_SOURCE = String.raw`\/[^\[\]<>\u0000-\u001F\u007F\uE000-\uE003]*\.${IMAGE_EXTENSION_SOURCE}`
+ *  stored one too: an absolute path of `LINKED_PATH_CHAR`s that ends with
+ *  the extension of an image type that Dez stores as it is. No capture
+ *  groups. */
+export const LINKED_IMAGE_PATH_SOURCE = String.raw`\/${LINKED_PATH_CHAR}*\.${IMAGE_EXTENSION_SOURCE}`
 const LINKED_IMAGE_PATH = new RegExp(`^${LINKED_IMAGE_PATH_SOURCE}$`)
 // The chars of a path that CommonMark does not take in a bare destination:
 // a path with one goes in `<…>`.
 const NOT_BARE_PATH_CHAR = String.raw`\s()\u0000-\u001F\u007F`
 const NOT_BARE_PATH = new RegExp(`[${NOT_BARE_PATH_CHAR}]`)
+// A char of a linked image path in a bare destination.
+const BARE_PATH_CHAR = String.raw`[^${NOT_BARE_PATH_CHAR}\[\]<>\uE000-\uE003]`
 /** Regex source of the destination of a markdown link or image that holds
  *  a linked or stored image path (`LINKED_IMAGE_PATH_SOURCE`): the path in
- *  `<…>`, or the path as it is when it holds no char that a bare
- *  destination ends at. No capture groups. */
-export const IMAGE_DESTINATION_SOURCE = String.raw`(?:<${LINKED_IMAGE_PATH_SOURCE}>|\/[^${NOT_BARE_PATH_CHAR}\[\]<>\uE000-\uE003]*\.${IMAGE_EXTENSION_SOURCE})`
+ *  `<…>`, also with no `>` (Backspace deleted it), or the path as it is
+ *  when it holds no char that a bare destination ends at. No capture
+ *  groups. */
+export const IMAGE_DESTINATION_SOURCE = String.raw`(?:<${LINKED_IMAGE_PATH_SOURCE}>?|\/${BARE_PATH_CHAR}*\.${IMAGE_EXTENSION_SOURCE})`
 
 // One metadata item: a lower-case key, `=`, and a one-line value in which a
 // `\` escapes `\`, `|`, `[`, or `]`; every other char stands for itself, so
@@ -112,6 +117,14 @@ export const IMAGE_DESTINATION_SOURCE = String.raw`(?:<${LINKED_IMAGE_PATH_SOURC
 // a table row are not shown as images anyway (`findRenderedImages`).
 const METADATA_ITEM_SOURCE = String.raw`[a-z][a-z0-9_-]*=(?:[^\\|\[\]\r\n]|\\[\\|\[\]])*`
 const METADATA_SOURCE = String.raw`${METADATA_ITEM_SOURCE}(?:\|${METADATA_ITEM_SOURCE})*`
+/** Regex source of an image reference whose source Backspace deletes char
+ *  by char from its end (`deleteImageParen`, view/editor/images.ts): an
+ *  `![<metadata>](` and an absolute path, bare or after `<`, with no `)` or
+ *  `>` after it, so also a path that lost its extension. Group 1 is the
+ *  text up to `](`; the rest is what is left of the path. The lookahead
+ *  after each path takes the whole run of path chars, never a part of it,
+ *  so a `)` or a `>` right after the run is no match. */
+export const UNCLOSED_IMAGE_REFERENCE_SOURCE = String.raw`(!\[(?:${METADATA_SOURCE})?\]\()(?:<\/${LINKED_PATH_CHAR}*(?!${LINKED_PATH_CHAR}|>)|\/${BARE_PATH_CHAR}*(?!${BARE_PATH_CHAR}|\)))`
 // Group 1 is the metadata; group 2 an absolute path in `<…>`, or group 3 a
 // bare one: `findImageReferences` then keeps the stored and the linked
 // paths that count in the section. Global and shared:

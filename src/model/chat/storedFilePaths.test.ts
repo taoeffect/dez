@@ -26,6 +26,7 @@ describe('withoutStoredFilePaths', () => {
   it.each([
     ['the source that the Backspace rule leaves', `![id=a](${PNG}`, '![id=a](image'],
     ['the source of a path in <…> that the Backspace rule leaves', '![id=a](</Users/Zoë Ann/.config/dez/assets/images/x.png> more', '![id=a](image more'],
+    ['the source after more Backspaces, with a part of the extension', `![id=a](${PNG.slice(0, -1)}`, '![id=a](image'],
     ['the link that the Delete rule leaves', `[id=a](${PNG})`, '[id=a](image)'],
     ['a reference with an id that is not valid', `![id=A](${PNG})`, '![id=A](image)'],
     ['a reference with a key given twice', `![id=a|id=b](${PNG})`, '![id=a|id=b](image)'],
@@ -89,6 +90,10 @@ describe('withoutStoredFilePaths', () => {
     const cases = [
       ['![id=a](</home/ann/Pictures/My photo (1).JPG>)', '![id=a](image)'],
       ['Back ![id=a](/home/ann/a.png', 'Back ![id=a](image'],
+      ['Back ![id=a](</home/ann/My photo (1).png', 'Back ![id=a](image'],
+      ['Back ![id=a](</home/ann/My photo (1).p\nmore', 'Back ![id=a](image\nmore'],
+      ['Back ![id=a](/home/ann/a.pn more', 'Back ![id=a](image more'],
+      ['Back ![](/home/', 'Back ![](image'],
       ['Back ![id=a](/home/ann/a.pngand more', 'Back ![id=a](imageand more'],
       ['Gone [id=a](</home/ann/My photo.png>)', 'Gone [id=a](image)'],
       ['Here ![id=b|tool=image](/home/ann/x.webp) and ![](/home/ann/y.svg)', 'Here ![id=b|tool=image](image) and ![](image)'],
@@ -109,6 +114,12 @@ describe('withoutStoredFilePaths', () => {
 
   it('leaves a linked path that the user typed out of a reference, a link, or a tag as it is', () => {
     for (const text of ['Open /home/ann/Pictures/x.png', 'img src="/home/ann/a.png"', '<dez:image src="/home/ann/a.png"/>', '(/home/ann/x.png)']) {
+      expect(withoutStoredFilePaths(text)).toBe(text)
+    }
+  })
+
+  it('leaves a destination with no image path that a ) or a > ends, a link, and code as they are', () => {
+    for (const text of ['![id=a](/home/ann/notes.txt)', '![id=a](</home/ann/My notes.txt>) more', '[docs](/api/v1 "Title")', 'f[0](/a b/)']) {
       expect(withoutStoredFilePaths(text)).toBe(text)
     }
   })

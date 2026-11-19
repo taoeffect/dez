@@ -1,5 +1,5 @@
 import { ExplainedError } from '../../utils/errorText'
-import { IMAGE_DESTINATION_SOURCE, IMAGE_PATH_END_SOURCE, LINKED_IMAGE_PATH_SOURCE, isImagePath } from './images'
+import { IMAGE_DESTINATION_SOURCE, IMAGE_PATH_END_SOURCE, LINKED_IMAGE_PATH_SOURCE, UNCLOSED_IMAGE_REFERENCE_SOURCE, isImagePath } from './images'
 import { MEDIA_CACHE_PATH_END_SOURCE, MEDIA_TAG_KINDS, SAVED_MEDIA_PATH_END_SOURCES, isSavedMediaPath, type MediaTagKind } from './mediaTags'
 import { SHOWN_PICTURE_PATH_END_SOURCE } from './shownPictures'
 
@@ -46,10 +46,19 @@ const BRACKET_FREE_RUN = /[^\[\]\r\n]+/g
 
 // The destination path of an image reference with a linked or a stored
 // path, bare or in `<…>`, from its `](`: also of a reference that is not
-// valid (the Backspace rule's `![id=a](<path>`, the Delete rule's
-// `[id=a](<path>)`, bad metadata), of one in an agent section, where it is
-// plain text, and of a markdown link to such a path.
+// valid (the Backspace rule's `![id=a](/…/x.png`, the next Backspace's
+// `![id=a](</…/x y.png`, the Delete rule's `[id=a](/…/x.png)`, bad
+// metadata), of one in an agent section, where it is plain text, and of a
+// markdown link to such a path.
 const IMAGE_DESTINATION_PATH = new RegExp(String.raw`\]\(${IMAGE_DESTINATION_SOURCE}`, 'g')
+// What is left of the path of a reference whose source Backspace deletes
+// from its end, once the path has lost a char of its extension
+// (`![id=a](/…/x.pn`). It needs the `!` and the metadata, so a markdown
+// link (`[docs](/api "Title")`) and code (`f[0](/a b/)`) stay as they are.
+// A reference that lost its `!` too (Delete before it, then Backspace into
+// its path) goes as it is, as `(/…/x.png)` does after more Deletes: its
+// shape is gone, and the scrub leaves a path in the user's own text.
+const UNCLOSED_IMAGE_REFERENCE = new RegExp(UNCLOSED_IMAGE_REFERENCE_SOURCE, 'g')
 // A linked or a stored image path right before `](`: the place of the path
 // in the old form of a reference (`![<path>](id=a)`), which Dez reads no
 // more, and the text of a markdown link. Its path must not go to a
@@ -76,11 +85,11 @@ export function holdsStoredFilePath(text: string): boolean {
  *  such path becomes `image`, `audio`, `video`, or `media` (a temp copy).
  *  So an image reference goes as `![id=a](image)`, with its metadata as it
  *  is in the text, and a reference that is not valid (the Backspace rule's
- *  `![id=a](<path>`, bad metadata), a `src` path of a media tag line that
- *  is not valid, and, for a stored file, a bare path and a path in a
- *  metadata value lose their paths too. A text with no such path
- *  comes back as it is, so text-only request bodies keep their bytes
- *  (prompt cache).
+ *  `![id=a](/…/x.png`, also after more Backspaces, as `![id=a](/…/x.p`;
+ *  bad metadata), a `src` path of a media tag line that is not valid, and,
+ *  for a stored file, a bare path and a path in a metadata value lose their
+ *  paths too. A text with no such path comes back as it is, so text-only
+ *  request bodies keep their bytes (prompt cache).
  *
  *  A linked path is found only where Dez writes it, or wrote it: in the
  *  destination of an image reference (`](/…/x.png`, `](</…/x.png>`), in
@@ -98,6 +107,7 @@ export function holdsStoredFilePath(text: string): boolean {
 export function withoutStoredFilePaths(text: string): string {
   const unlinked = text
     .replace(IMAGE_DESTINATION_PATH, '](image')
+    .replace(UNCLOSED_IMAGE_REFERENCE, '$1image')
     .replace(IMAGE_ALT_TEXT_PATH, '[image](')
     .replace(MEDIA_TAG_LINE, (line, kind: string) => line.replace(MEDIA_TAG_SRC_PATH, `$1${kind}"`))
   if (!holdsStoredFilePath(unlinked)) return unlinked
