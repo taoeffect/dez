@@ -539,18 +539,15 @@ export interface ImageInput {
 
 export type VideoInput = ImageInput | ClipInput
 
-// The image types whose files this ffmpeg build reads, with the extension
-// of the copy.
-const READ_IMAGE_TYPES: Readonly<Record<string, string>> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' }
-
 // The input that the id `id` names; null for an id of no image and no
 // clip. The name of an image's copy is the id and the extension of the
-// file's type, as for a clip (`clipInput`).
+// file's type, as for a clip (`clipInput`). This ffmpeg build reads every
+// image type that Dez stores but SVG, which goes as a JPEG copy.
 function inputOf(id: string, assets: ConversationAssets): VideoInput | null {
   const path = assets.images.get(id)
   if (path !== undefined) {
     const type = imageMediaType(path)
-    const extension = type !== null && Object.hasOwn(READ_IMAGE_TYPES, type) ? READ_IMAGE_TYPES[type] : null
+    const extension = type === null || type === 'image/svg+xml' ? null : imageExtension(type)
     return { kind: 'image', id, name: `${id}.${extension ?? 'jpg'}`, path, jpegCopy: extension === null }
   }
   const clip = assets.clips.get(id)
