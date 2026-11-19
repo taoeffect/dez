@@ -1,7 +1,17 @@
 import type { MentionSection } from './assetMentions'
 import { compactionLastId, linkedRuleParts, partsImageReferences, partsMediaTags } from './compaction'
 import { IMAGE_HIDDEN_KEY, IMAGE_KEPT_KEY, IMAGE_MADE_BY_KEY, IMAGE_TOOL_KEY, imageMarkdown, type ImageReference } from './images'
-import { findAssets, highestMediaId, nextMediaId, pastedMediaIdChanges, pastedMentions, type TextChange, type TextRange } from './mediaIds'
+import {
+  findAssets,
+  highestMediaId,
+  inRanges,
+  mentionIdChanges,
+  nextMediaId,
+  pastedMediaIdChanges,
+  pastedMentions,
+  type TextChange,
+  type TextRange,
+} from './mediaIds'
 import {
   isLinkedMediaPath,
   MEDIA_HIDDEN_ATTRIBUTE,
@@ -119,9 +129,11 @@ export interface MentionPastePlan {
   changes: TextChange[]
   /** The offset of the copies in that doc. */
   copiesAt: number
-  /** The text of each copy, one line each, in order. Each goes in followed
-   *  by a line break. */
+  /** The text of each copy, one line each, in order. */
   copies: string[]
+  /** `copies`, each line ended by a line break: the text that goes in at
+   *  `copiesAt`. */
+  copiesText: string
   /** The new id of each mentioned id that changes. */
   idChanges: ReadonlyMap<string, string>
 }
@@ -175,8 +187,8 @@ interface NamedAsset {
 // The assets that a mention at the paste place names, by id: the ones of
 // `sections` (the sections up to the one of the paste place) that are not
 // in `pasted`, by the rules of a request (see the top of this file).
-function namedAssets(sections: readonly PastedDocSection[], pasted: TextRange): Map<string, NamedAsset> {
-  const isPasted = (from: number, to: number) => pasted.from <= from && to <= pasted.to
+function namedAssets(sections: readonly PastedDocSection[], pasted: readonly TextRange[]): Map<string, NamedAsset> {
+  const isPasted = (from: number, to: number) => inRanges({ from, to }, pasted)
   const images = new Map<string, NamedAsset>()
   const clips = new Map<string, NamedAsset>()
   sections.forEach(({ role, from: sectionFrom, text }, index) => {
@@ -211,16 +223,17 @@ function presentId(named: ReadonlyMap<string, NamedAsset>, sourceId: string, ass
  *  paste is the plain paste: no copy goes in, and no mention changes. See
  *  the top of this file for the rules. */
 export function mentionPastePlan({ doc, sections, pasted }: PastedDoc, record: ReadonlyMap<string, MentionedAsset>): MentionPastePlan | null {
-  const isPasted = ({ from, to }: TextRange) => pasted.from <= from && to <= pasted.to
+  const pastedRanges = [pasted]
+  const isPasted = (range: TextRange) => inRanges(range, pastedRanges)
   const assets = findAssets(doc)
   const pastedIds = new Set(assets.filter(isPasted).map((asset) => asset.id))
-  const allPasted = pastedMentions(doc, assets, [pasted])
+  const allPasted = pastedMentions(doc, assets, pastedRanges)
   const mentions = allPasted.filter((mention) => record.has(mention.id) && !pastedIds.has(mention.id))
   if (mentions.length === 0) return null
 
   const placeIndex = sections.findLastIndex((section) => section.from <= pasted.from)
   const place = sections[placeIndex]
-  const named = namedAssets(sections.slice(0, placeIndex + 1), pasted)
+  const named = namedAssets(sections.slice(0, placeIndex + 1), pastedRanges)
   // The id of each mentioned asset that is present, and the index of the
   // copy of each one that is missing.
   const presentIds = new Map<string, string>()
@@ -274,12 +287,8 @@ export function mentionPastePlan({ doc, sections, pasted }: PastedDoc, record: R
   const shift = copiesText.length
   const changes = pastedMediaIdChanges(withCopies, [{ from: copiesAt, to: copiesAt + shift }, { from: pasted.from + shift, to: pasted.to + shift }])
     .map(({ from, to, insert }) => ({ from: from - shift, to: to - shift, insert }))
-  for (const mention of mentions) {
-    const id = idChanges.get(mention.id)
-    // The change keeps the `@`.
-    if (id !== undefined) changes.push({ from: mention.from + 1, to: mention.to, insert: id })
-  }
-  return { changes: changes.sort((a, b) => a.from - b.from), copiesAt, copies: copyLines, idChanges }
+  changes.push(...mentionIdChanges(mentions, idChanges))
+  return { changes: changes.sort((a, b) => a.from - b.from), copiesAt, copies: copyLines, copiesText, idChanges }
 }
 
 // The id of each copy, in order (see the top of this file): the id of the

@@ -64,12 +64,11 @@ function paste(source: readonly MentionSection[], sections: readonly MentionSect
   const plan = mentionPastePlan(input, copyRecord(source))
   if (plan === null) return input.doc.split(SEPARATOR)
   const changed = plan.changes.reduceRight((text, { from, to, insert }) => text.slice(0, from) + insert + text.slice(to), input.doc)
-  const copies = plan.copies.map((line) => `${line}\n`).join('')
-  const doc = changed.slice(0, plan.copiesAt) + copies + changed.slice(plan.copiesAt)
+  const doc = changed.slice(0, plan.copiesAt) + plan.copiesText + changed.slice(plan.copiesAt)
   const grown = plan.changes.reduce((sum, { from, to, insert }) => sum + insert.length - (to - from), 0)
   const inserted = [
-    { from: plan.copiesAt, to: plan.copiesAt + copies.length },
-    { from: input.pasted.from + copies.length, to: input.pasted.to + copies.length + grown },
+    { from: plan.copiesAt, to: plan.copiesAt + plan.copiesText.length },
+    { from: input.pasted.from + plan.copiesText.length, to: input.pasted.to + plan.copiesText.length + grown },
   ]
   expect(pastedMediaIdChanges(doc, inserted)).toEqual([])
   return doc.split(SEPARATOR)

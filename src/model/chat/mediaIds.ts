@@ -194,17 +194,21 @@ export function pastedMediaIdChanges(text: string, pasted: readonly TextRange[])
     }
   }
   if (newIds.size === 0) return changes
-
-  for (const mention of pastedMentions(text, assets, pasted)) {
-    const id = newIds.get(mention.id)
-    // The change keeps the `@`.
-    if (id !== undefined) changes.push({ from: mention.from + 1, to: mention.to, insert: id })
-  }
+  changes.push(...mentionIdChanges(pastedMentions(text, assets, pasted), newIds))
   return changes.sort((a, b) => a.from - b.from)
 }
 
-// Whether `range` is whole in one of `ranges`.
-function inRanges({ from, to }: TextRange, ranges: readonly TextRange[]): boolean {
+/** The changes that give each of `mentions` its id in `newIds`. */
+export function mentionIdChanges(mentions: readonly AssetMention[], newIds: ReadonlyMap<string, string>): TextChange[] {
+  return mentions.flatMap(({ id, from, to }) => {
+    const newId = newIds.get(id)
+    // The change keeps the `@`.
+    return newId === undefined ? [] : [{ from: from + 1, to, insert: newId }]
+  })
+}
+
+/** Whether `range` is whole in one of `ranges`. */
+export function inRanges({ from, to }: TextRange, ranges: readonly TextRange[]): boolean {
   return ranges.some((range) => range.from <= from && to <= range.to)
 }
 

@@ -137,13 +137,12 @@ export function pasteMentions(view: EditorView, text: string, conversationId: st
     const { paste, plan: finalPlan } = planPaste(targetState, text, record)
     const done = { effects: removePendingRange(rangeId) }
     if (confirmed && finalPlan !== null) {
-      const copies = finalPlan.copies.map((line) => `${line}\n`).join('')
       // Every change of the plan is at or after `copiesAt`, so the copies go
       // in at `copiesAt` of the doc after the changes.
       view.dispatch(
         paste,
         { changes: finalPlan.changes, sequential: true },
-        { changes: { from: finalPlan.copiesAt, insert: copies }, sequential: true },
+        { changes: { from: finalPlan.copiesAt, insert: finalPlan.copiesText }, sequential: true },
         done,
       )
     } else {
