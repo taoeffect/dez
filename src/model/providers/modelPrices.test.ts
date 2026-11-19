@@ -74,6 +74,29 @@ describe('chat token prices', () => {
     expect(modelTokenPrice({ id: 'm', pricing }, openRouter, TEXT)).toBeUndefined()
   })
 
+  // TrustedRouter's routers give their cheapest rate and, in `prompt_max`,
+  // their dearest; some panels list "0" with no `prompt_max`. Entry shapes
+  // of the live list (2026-11-19).
+  describe('TrustedRouter routers and panels', () => {
+    const trustedRouter = tokenPrices('trustedrouter')
+
+    it.each([
+      ['a router with a dearest rate', { prompt: '0.000000026375', completion: '0.00000007385', prompt_max: '0.000003165', completion_max: '0.000015825' }, { route_kind: 'auto_pool' }],
+      ['a panel that lists 0', { prompt: '0', completion: '0' }, { route_kind: 'fusion_panel' }],
+      ['an orchestration that lists 0', { prompt: '0', completion: '0' }, { route_kind: 'advisor_orchestration' }],
+    ])('gives no price for %s', (_name, pricing, trustedrouter) => {
+      expect(modelTokenPrice({ id: 'm', pricing, trustedrouter }, trustedRouter, TEXT)).toBeUndefined()
+    })
+
+    it.each([
+      ['a model', { prompt: '0.000001', completion: '0.000002', input_cache_read: '0.0000001' }, { route_kind: 'model' }, { unit: 'token', input: 1, output: 2, cachedInput: 0.1 }],
+      ['a free pool', { prompt: '0', completion: '0' }, { route_kind: 'free_pool' }, { unit: 'token', input: 0, output: 0 }],
+      ['a dearest rate that is no number', { prompt: '0.000001', completion: '0.000002', prompt_max: null }, { route_kind: 'model' }, { unit: 'token', input: 1, output: 2 }],
+    ])('gives the price of %s', (_name, pricing, trustedrouter, price) => {
+      expect(modelTokenPrice({ id: 'm', pricing, trustedrouter }, trustedRouter, TEXT)).toStrictEqual(price)
+    })
+  })
+
   it('gives no price for a provider whose config has no token price paths', () => {
     expect(modelTokenPrice({ id: 'm', pricing: { prompt: '0.000001', completion: '0.000002' } }, undefined, TEXT)).toBeUndefined()
   })

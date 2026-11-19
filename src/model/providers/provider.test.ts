@@ -1490,8 +1490,9 @@ describe('provider models', () => {
       ['text-audio', ['text'], 'chat'],
       ['speech-to-text', ['text'], 'transcription'],
     ])
-    // TrustedRouter (checked live 2026-11-19): only text models stay, and a
-    // model that writes text and images is a text model.
+    // TrustedRouter (checked live 2026-11-19): only text models stay, a
+    // model that writes text and images is a text model, and an entry with
+    // no chat route takes no request.
     expect(kinds('trustedrouter', [
       { id: 'text', architecture: { output_modalities: ['text'] } },
       { id: 'text-image', architecture: { output_modalities: ['text', 'image'] } },
@@ -1501,9 +1502,14 @@ describe('provider models', () => {
       { id: 'video', architecture: { output_modalities: ['video'] } },
       { id: 'embed', architecture: { output_modalities: ['embeddings'] } },
       { id: 'decide', architecture: { output_modalities: ['decision'] } },
+      // An entry with "text" but no chat route (an embedding model).
+      { id: 'embed-text', architecture: { output_modalities: ['text'] }, trustedrouter: { supports_chat: false } },
+      { id: 'chat-text', architecture: { output_modalities: ['text'] }, trustedrouter: { supports_chat: true } },
     ])).toEqual([
       ['text', ['text'], 'chat'],
       ['text-image', ['text'], 'chat'],
+      ['embed-text', ['text'], 'none'],
+      ['chat-text', ['text'], 'chat'],
     ])
     expect(kinds('copilot', [
       { id: 'chat', capabilities: { type: 'chat' } },
