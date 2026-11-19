@@ -341,6 +341,9 @@ describe('ffmpegCall', () => {
     ['-i @c -vf "sendcmd=f=cmds.txt,curves" out.mp4', 'sendcmd=f=cmds.txt,curves', 'it gives sendcmd a commands file'],
     ['-i @b -af "asendcmd=filename=cmds.txt,volume" out.wav', 'asendcmd=filename=cmds.txt,volume', 'it gives asendcmd a commands file'],
     ['-i @c -vf "sendcmd@\'x,y\'=\'f=cmds.txt\',curves" out.mp4', 'sendcmd@\'x,y\'=\'f=cmds.txt\',curves', 'it gives sendcmd a commands file'],
+    // The graph parser ends a filter name only at `=,;[`, so a `]` stays in
+    // the instance name.
+    ['-i @c -vf "sendcmd@x]y=f=cmds.txt,curves" out.mp4', 'sendcmd@x]y=f=cmds.txt,curves', 'it gives sendcmd a commands file'],
   ])('refuses %j', (text, word, cause) => {
     const message = refusal(() => ffmpegCall({ arguments: text }, CONVERSATION))
 

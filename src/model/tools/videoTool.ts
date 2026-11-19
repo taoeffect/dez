@@ -401,10 +401,11 @@ const OPTION_KEY = new RegExp(String.raw`(?:^|[^${NAME_CHARS}])(${REFUSED_OPTION
 // (`curves plot` writes a file, `lut1d file` reads one). The model chooses
 // the text of a file of `text_files`. The commands in the word (`c=`, or
 // the first value with no key) pass, as the checks read them. This check
-// needs the text of `filterOptionsText`. A key after a `=` matches too, as
-// an instance name can hold a `=` in quotes; so `c=f=x` matches, a text
-// that sendcmd refuses as commands.
-const SENDCMD_FILE = new RegExp(String.raw`(?:^|[^${NAME_CHARS}])(a?sendcmd)(?:@[^=,;[\]]*)?\s*=(?:[^,;[\]]*[:=])?\s*(?:f|filename)\s*=`, 'i')
+// needs the text of `filterOptionsText`. The graph parser of ffmpeg ends the
+// name of a filter only at `=,;[`, so an instance name can hold a `]`. A key
+// after a `=` matches too, as an instance name can hold a `=` in quotes; so
+// `c=f=x` matches, a text that sendcmd refuses as commands.
+const SENDCMD_FILE = new RegExp(String.raw`(?:^|[^${NAME_CHARS}])(a?sendcmd)(?:@[^=,;[]*)?\s*=(?:[^,;[\]]*[:=])?\s*(?:f|filename)\s*=`, 'i')
 // The name of the hls format, or a file ending of an HLS playlist, as a
 // whole name in a word: ffmpeg takes a format name in any case, from many
 // options (`-f`, `-fifo_format`, `-segment_format`, the `f=` and
