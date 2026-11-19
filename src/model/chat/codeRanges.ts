@@ -44,8 +44,10 @@ const DEZ_LINE = /(?<![^\n])<\/?dez:/g
 // The code ranges of the texts that were read last, by text. The same text
 // is read many times: by each reader of a request, and by each part of the
 // editor on each doc change, where most sections did not change. The oldest
-// entry goes first when the cache is full.
-const CACHE_ENTRIES = 256
+// entry goes first when the cache is full. The char limit bounds the memory;
+// the entry limit is far above the runs of a long conversation, as a scan in
+// text order over more entries than the cache holds gets no hit.
+const CACHE_ENTRIES = 8192
 const CACHE_CHARS = 4_000_000
 const cache = new Map<string, readonly CodeRange[]>()
 let cacheChars = 0

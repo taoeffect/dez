@@ -1,5 +1,5 @@
 import { parser } from '@lezer/markdown'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { codeRanges, inCode, openFenceCloser } from './codeRanges'
 import type { LinkedPathRule } from './images'
 
@@ -46,6 +46,22 @@ describe('codeRanges', () => {
 
   it('takes a line as a line of Dez only at its start', () => {
     expect(codeTexts(`\`\`\`\nx ${TAG}\ny`, 'agent')).toStrictEqual([`\`\`\`\nx ${TAG}\ny`])
+  })
+
+  // The editor reads the whole doc again on each key press, in the same
+  // order. A reply with many tool calls has thousands of runs with code,
+  // and each one that the cache dropped is parsed again.
+  it('parses no run of a long reply again on the next read', () => {
+    const block = (index: number) => `I run \`ffprobe\` (${index}).\n<dez:tool id="c${index}" name="video">\n{\n    "index": ${index}\n}\n</dez:tool>\n`
+    const text = Array.from({ length: 1000 }, (_, index) => block(index)).join('')
+    const first = codeRanges(text, 'agent')
+    const parse = vi.spyOn(parser, 'parse')
+    try {
+      expect(codeRanges(text, 'agent')).toStrictEqual(first)
+      expect(parse).not.toHaveBeenCalled()
+    } finally {
+      parse.mockRestore()
+    }
   })
 
   // `codeRanges` parses only a text with a code sign (a backtick, `~~~`, a
