@@ -6,6 +6,7 @@ import { withoutLocalPaths } from '../model/tools/localPaths'
 import { programNotStartedText, type ClipInput, type KeptFile, type ProgramEnd } from '../model/tools/programRuns'
 import { ToolError } from '../model/tools/types'
 import { FONT_FOLDER, fontNotFoundText } from '../model/tools/videoFonts'
+import type { TextFile } from '../model/tools/videoTextFiles'
 import {
   clipFacts,
   FFMPEG_OUTPUT_BYTES,
@@ -134,6 +135,22 @@ async function fontInputs(fonts: readonly string[], signal: AbortSignal): Promis
   return copies
 }
 
+// Writes the text files of a call (videoTextFiles.ts) into the work folder,
+// as UTF-8. Throws a `ToolError` for a file that Dez cannot write, and the
+// stop of `signal`.
+async function writeTextFiles(textFiles: readonly TextFile[], folder: string, signal: AbortSignal): Promise<void> {
+  for (const { name, text } of textFiles) {
+    signal.throwIfAborted()
+    try {
+      await sbp('dez.native/saveAppFile', `${folder}/${name}`, text, 'cache')
+    } catch (error) {
+      console.error(`Failed to write the text file ${name} of an ffmpeg run:`, error)
+      throw new ToolError(programNotStartedText('ffmpeg', VIDEO_TOOL.name), '', { cause: error })
+    }
+  }
+  signal.throwIfAborted()
+}
+
 // One ffmpeg run of a job, to its end. Its log goes into `log`, what it
 // prints to its standard output into `output`, and its last progress line
 // is the state of the job.
@@ -185,10 +202,10 @@ function runProbe(
 
 /** The work of the job of a `video ffmpeg` call (`JobWork`): one run of
  *  ffmpeg with the arguments of `call`, in a new work folder that holds
- *  copies of the call's inputs, and of its fonts in the subfolder `fonts`.
- *  The new files of the run that Dez stores (`outputFiles`) are the assets
- *  of the job; the text tells what the run did, with the end of its log. A
- *  run that failed keeps no file.
+ *  copies of the call's inputs, its text files, and copies of its fonts in
+ *  the subfolder `fonts`. The new files of the run that Dez stores
+ *  (`outputFiles`) are the assets of the job; the text tells what the run
+ *  did, with the end of its log. A run that failed keeps no file.
  *
  *  A stop of `signal` (Dez stopped the job, or its time limit passed)
  *  stops the program and rejects, which `TabJobs` drops. The work folder
@@ -197,13 +214,14 @@ export function runFfmpegJob(call: FfmpegCall, signal: AbortSignal, report: (sta
   return inWorkFolder(async (folder) => {
     report(VIDEO_READS_INPUTS)
     const inputs = [...await prepareInputs(call.inputs, folder, signal), ...await fontInputs(call.fonts, signal)]
+    await writeTextFiles(call.textFiles, folder, signal)
     const log = new ProgramLog()
     const output = new OutputStart()
     const end = await runFfmpeg({ args: call.args, folder, inputs }, call.timeoutMs, signal, report, log, output)
     if (end.kind === 'timedOut') return timedOutOutcome(call.timeoutMs, log)
 
     const listed = await sbp('dez.native/listAppFiles', folder, 'cache') as AppFileEntry[]
-    const files = outputFiles(listed, new Set(call.inputs.map((input) => input.name)))
+    const files = outputFiles(listed, new Set([...call.inputs.map((input) => input.name), ...call.textFiles.map((file) => file.name)]))
     return keptOutcome(ffmpegRunResult(call, end, files, log, output), folder, files.kept)
   })
 }

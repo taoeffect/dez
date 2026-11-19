@@ -253,6 +253,45 @@ describe('runFfmpegJob', () => {
     deletedWorkFolder()
   })
 
+  it('writes the text files of the call into the work folder before the run, and keeps none of them', async () => {
+    const call = ffmpegCall({
+      arguments: '-i @c -vf "subtitles=words.srt:fontsdir=fonts,drawtext=fontfile=fonts/NotoSans-Bold.ttf:textfile=title.txt" out.mp4',
+      fonts: 'NotoSans-Bold.ttf',
+      text_files: '{"words.srt": "1\\n00:00:00,000 --> 00:00:02,000\\nHi\\n", "title.txt": "Night: Drive"}',
+    }, CONVERSATION)
+    let savedAtRun: string[] = []
+    native.program = async () => {
+      savedAtRun = native.savedFiles.map(({ file }) => file.path)
+      return ENDED
+    }
+    native.folderFiles = ['c.webm', 'out.mp4', 'title.txt', 'words.srt']
+
+    const outcome = await runFfmpegJob(call, running(), report)
+
+    const folder = deletedWorkFolder()
+    expect(native.savedFiles).toStrictEqual([
+      { file: { root: 'cache', path: `${folder}/words.srt` }, content: '1\n00:00:00,000 --> 00:00:02,000\nHi\n' },
+      { file: { root: 'cache', path: `${folder}/title.txt` }, content: 'Night: Drive' },
+    ])
+    expect(savedAtRun).toStrictEqual([`${folder}/words.srt`, `${folder}/title.txt`])
+    expect(outcome.assets).toHaveLength(1)
+    expect(outcome.text).not.toContain('words.srt')
+    expect(outcome.text).not.toContain('title.txt')
+  })
+
+  it('runs no program when Dez cannot write a text file, and tells the model that the program did not start', async () => {
+    const call = ffmpegCall({ arguments: '-i @c -vf subtitles=words.srt:fontsdir=fonts out.mp4', fonts: 'NotoSans-Regular.ttf', text_files: '{"words.srt": "1\\n00:00:00,000 --> 00:00:02,000\\nHi\\n"}' }, CONVERSATION)
+    const failure = new Error(`${CACHE_DIR}: the disk is full`)
+    native.saveAppFile = async () => { throw failure }
+
+    const refusal = await refusalOf(runFfmpegJob(call, running(), report))
+
+    expect(refusal).toBe(programNotStartedText('ffmpeg', 'video'))
+    expect(native.runs).toStrictEqual([])
+    expect(consoleError).toHaveBeenCalledWith('Failed to write the text file words.srt of an ffmpeg run:', failure)
+    deletedWorkFolder()
+  })
+
   it('refuses an image whose file is gone, and one that the webview cannot draw', async () => {
     native.fileSize = () => null
     redrawError = new Error('The image did not decode.')

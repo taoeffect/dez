@@ -14,6 +14,7 @@ import { subcommandToolDefinition, type SubcommandTool } from './subcommands'
 import { assetText, unknownInputsProblem } from './toolInputs'
 import { ToolError, type ToolArguments, type ToolParameter } from './types'
 import { fontProblem, fontsArgument, SHIPPED_FONTS_TEXT } from './videoFonts'
+import { MAX_TEXT_FILES, MAX_TEXT_FILES_BYTES, TEXT_FILE_NAME_TEXT, textFilesArgument, type TextFile } from './videoTextFiles'
 
 // The `video` tool: ffmpeg and ffprobe, the programs that Dez ships
 // (src-tauri/binaries/), on the clips and the images of a conversation.
@@ -115,6 +116,15 @@ const FONTS_PARAMETER: ToolParameter = {
   required: false,
 }
 
+const TEXT_FILES_PARAMETER: ToolParameter = {
+  name: 'text_files',
+  type: 'string',
+  description: 'Texts that Dez writes into the work folder as files (UTF-8) before the run, as the text of a JSON object from file name to text, as in {"title.txt":"Night: Drive"}. '
+    + `In it, ${TEXT_FILE_NAME_TEXT}. At most ${MAX_TEXT_FILES} files and ${byteSizeText(MAX_TEXT_FILES_BYTES)} in all. `
+    + 'The help of the subcommand tells how drawtext, subtitles, and ass read them.',
+  required: false,
+}
+
 // The help of the `ffmpeg` subcommand. It is long, and only a `help` call
 // sends it: the tools array holds one short entry for the whole tool. Each
 // example ran with this build (tests/e2e/video-tool.e2e.ts runs some).
@@ -148,10 +158,13 @@ const FFMPEG_HELP = [
   'Text (drawtext, subtitles, ass): this ffmpeg has no font of the system. It reads a font only from the folder fonts of the work folder, which holds a copy of each font that the `fonts` parameter names. '
     + `The fonts that Dez ships: ${SHIPPED_FONTS_TEXT}. `
     + 'drawtext needs the font as fontfile=fonts/<file>, as in the example; with no fontfile, it fails. '
-    + 'subtitles and ass need fontsdir=fonts and a style that names the family of a font in `fonts`, as in subtitles=<file>:fontsdir=fonts:force_style=\'FontName=Noto Sans\'. '
+    + 'A text= value cannot hold ":" (ffmpeg needs a backslash escape for it, which Dez refuses): put such a text into a file of `text_files`, and give it to drawtext as textfile=<name>. '
+    + 'drawtext reads %{…} in a text as a function, so a text with "%" needs expansion=none. '
+    + 'subtitles draws an SRT or ASS file of `text_files` (or the subtitle stream of an input), and ass draws an ASS file. '
+    + 'Both need fontsdir=fonts and a style that names the family of a font in `fonts`: the style of an ASS file, or force_style, as in subtitles=<name>.srt:fontsdir=fonts:force_style=\'FontName=Noto Sans\'. '
     + 'When the folder has no font of the family of a style, libass draws no text and gives no error. '
     + 'libass also takes no glyph from another font: draw the text of each script with a font of that script. '
-    + 'A text= value cannot hold ":" (ffmpeg needs a backslash escape for it, which Dez refuses), and a "%" in it needs expansion=none.',
+    + 'The log lines "can\'t find selected font provider" and "libass wasn\'t built with ASS_FEATURE_WRAP_UNICODE support" tell of no error.',
   'Examples of `arguments`:',
   '- Put the sound of @b on the video clip @c: -i @c -i @b -map 0:v -map 1:a -c:v copy -c:a aac -shortest out.mp4',
   '- Cut 5 seconds that start at second 2: -ss 2 -t 5 -i @c -c:v libx264 -c:a aac cut.mp4',
@@ -163,6 +176,8 @@ const FFMPEG_HELP = [
   '- Put the music @b under the sound (the dialog) of the video clip @c, at a quarter of its level: -i @c -i @b -filter_complex "[1:a]volume=0.25[music];[0:a][music]amix=inputs=2:duration=first:normalize=0[a]" -map 0:v -map "[a]" -c:v copy -c:a aac mixed.mp4',
   '- Measure the loudness of @b, with no new file: -v info -i @b -af volumedetect -f null -',
   '- Write a title on the frame at second 1 of @c, as a PNG image, with "NotoSans-Bold.ttf" in `fonts`: -ss 1 -i @c -frames:v 1 -vf "drawtext=fontfile=fonts/NotoSans-Bold.ttf:text=\'Night Drive\':fontsize=64:fontcolor=white:borderw=4:x=(w-text_w)/2:y=h-text_h-40" -update 1 title.png',
+  '- Write the subtitles of an SRT file on @c, with "NotoSans-Regular.ttf" in `fonts` and {"words.srt":"1\\n00:00:00,000 --> 00:00:02,500\\nNight: Drive\\n"} in `text_files`: '
+    + '-i @c -vf "subtitles=words.srt:fontsdir=fonts:force_style=\'FontName=Noto Sans\'" -c:v libx264 -c:a aac subtitled.mp4',
 ].join('\n')
 
 // Static text only (no count that changes, no date): the tools array is in
@@ -197,9 +212,9 @@ export const VIDEO_TOOL: SubcommandTool = {
     },
     {
       name: 'ffmpeg',
-      summary: 'Run ffmpeg with your own arguments on the clips and the images, for example to cut or scale a clip, to put sound on a video clip, to write text on a picture, or to take a frame as an image.',
+      summary: 'Run ffmpeg with your own arguments on the clips and the images, for example to cut or scale a clip, to put sound on a video clip, to write text or subtitles on a picture or a clip, or to take a frame as an image.',
       description: FFMPEG_HELP,
-      parameters: [ARGUMENTS_PARAMETER, FONTS_PARAMETER, INTERMEDIATE_PARAMETER, jobTimeoutParameter(DEFAULT_VIDEO_TIMEOUT_SECONDS)],
+      parameters: [ARGUMENTS_PARAMETER, FONTS_PARAMETER, TEXT_FILES_PARAMETER, INTERMEDIATE_PARAMETER, jobTimeoutParameter(DEFAULT_VIDEO_TIMEOUT_SECONDS)],
       example: { arguments: '-i @c -i @b -map 0:v -map 1:a -c:v copy -c:a aac -shortest out.mp4' },
     },
     {
@@ -564,6 +579,9 @@ function programCall(program: ShippedProgram, fixedArgs: readonly string[], args
 export interface FfmpegCall extends ProgramCall {
   /** The fonts that the run gets in its fonts folder (videoFonts.ts). */
   fonts: string[]
+  /** The text files that Dez writes into the work folder before the run
+   *  (videoTextFiles.ts). */
+  textFiles: TextFile[]
   timeoutMs: number
   /** The arguments name the null format (`-f null`): a run that makes no
    *  file did what the call asked for. */
@@ -573,12 +591,14 @@ export interface FfmpegCall extends ProgramCall {
 /** The run that a `video ffmpeg` call asks for, from its checked arguments
  *  and the sections of its tab. Throws a `ToolError`, whose text tells the
  *  model how to fix the call, for a bad time limit, a font that Dez does
- *  not ship, and arguments that Dez does not run (`programCall`). */
+ *  not ship, text files that Dez does not write (`textFilesArgument`), and
+ *  arguments that Dez does not run (`programCall`). */
 export function ffmpegCall(args: ToolArguments, sections: readonly Section[]): FfmpegCall {
   const timeoutMs = jobTimeoutMs(args, DEFAULT_VIDEO_TIMEOUT_SECONDS)
   const fonts = fontsArgument(args, NOT_DONE.ffmpeg)
+  const textFiles = textFilesArgument(args, NOT_DONE.ffmpeg)
   const call = programCall('ffmpeg', FFMPEG_FIXED_ARGS, args, sections, fonts)
-  return { ...call, fonts, timeoutMs, nullOutput: call.args.some((word, index) => word === 'null' && FORMAT_OPTION.test(call.args[index - 1] ?? '')) }
+  return { ...call, fonts, textFiles, timeoutMs, nullOutput: call.args.some((word, index) => word === 'null' && FORMAT_OPTION.test(call.args[index - 1] ?? '')) }
 }
 
 /** The run that a `video ffprobe` call asks for, as `ffmpegCall`. ffprobe
@@ -593,11 +613,15 @@ const JPEG_COPY_NOTE = 'a JPEG copy, with white in place of transparent pixels'
 /** What the result of a call that started a job adds after
  *  `jobStartedText`: the inputs of the run with the names of their copies,
  *  so that the model sees at once what the program gets, and by which
- *  names the log calls them, and the fonts of its fonts folder. */
-export function videoInputsText(inputs: readonly VideoInput[], fonts: readonly string[] = []): string {
+ *  names the log calls them, then the fonts of its fonts folder and its
+ *  text files. */
+export function videoInputsText(inputs: readonly VideoInput[], fonts: readonly string[] = [], textFiles: readonly TextFile[] = []): string {
   const parts = inputs.map((input) => `${assetText(input)} as ${input.name}${input.kind === 'image' && input.jpegCopy ? ` (${JPEG_COPY_NOTE})` : ''}`)
-  const inputsText = inputs.length === 0 ? 'The run has no input image and no input clip.' : `The inputs of the run: ${parts.join(', ')}.`
-  return fonts.length === 0 ? inputsText : `${inputsText} The fonts of the run, in its fonts folder: ${fonts.join(', ')}.`
+  return [
+    inputs.length === 0 ? 'The run has no input image and no input clip.' : `The inputs of the run: ${parts.join(', ')}.`,
+    ...(fonts.length === 0 ? [] : [`The fonts of the run, in its fonts folder: ${fonts.join(', ')}.`]),
+    ...(textFiles.length === 0 ? [] : [`The text files of the run, in its work folder: ${textFiles.map(({ name }) => name).join(', ')}.`]),
+  ].join(' ')
 }
 
 /** The label of a call of a `video` subcommand (`JobCall.label`): the
@@ -1027,7 +1051,7 @@ const FFMPEG_CALL_ADVICE: FfmpegAdvice = {
   // A model that read the name of a copy in an earlier result (`c.mp4`)
   // can take it for a file that stays.
   failed: 'Read the end of its log: fix the arguments and call again, or, when the log tells that an input file is the problem, tell the user. '
-    + 'Each call has a new work folder, which holds only the inputs that the call names as @id.',
+    + 'Each call has a new work folder, which holds only the inputs that the call names as @id, and the fonts and the text files of the call.',
   tooMuchOutput: 'Call again with a lower log level (-v error gives only the errors), and with no option that prints data.',
 }
 

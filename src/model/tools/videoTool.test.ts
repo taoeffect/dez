@@ -51,7 +51,7 @@ describe('the video tool', () => {
     expect(VIDEO_TOOL_DEFINITION.name).toBe('video')
     expect(VIDEO_TOOL.subcommands.map(({ name, parameters }) => [name, parameters.map((parameter) => parameter.name)])).toStrictEqual([
       ['join_clips', ['clips', 'is_intermediate', 'timeout_seconds']],
-      ['ffmpeg', ['arguments', 'fonts', 'is_intermediate', 'timeout_seconds']],
+      ['ffmpeg', ['arguments', 'fonts', 'text_files', 'is_intermediate', 'timeout_seconds']],
       ['ffprobe', ['arguments']],
     ])
   })
@@ -63,19 +63,28 @@ describe('the video tool', () => {
   })
 
   it('accepts every example of its own help', () => {
-    // An example that needs fonts tells them as `with "<files>" in `fonts``.
+    // An example that needs fonts or text files tells them in its label, as
+    // `with "<files>" in `fonts`` and `and <JSON> in `text_files``. The
+    // arguments start after the label: after the last "`: " of a label that
+    // names a parameter, as a text in the label can hold ": ".
     const examples = subcommand('ffmpeg').description.split('\n')
       .filter((line) => line.startsWith('- '))
       .map((line): ToolArguments => {
-        const fonts = /with "([^"]+)" in `fonts`:/.exec(line)?.[1]
-        return { arguments: line.slice(line.indexOf(': ') + 2), ...(fonts === undefined ? {} : { fonts }) }
+        const fonts = /with "([^"]+)" in `fonts`/.exec(line)?.[1]
+        const textFiles = / and (\{.*\}) in `text_files`/.exec(line)?.[1]
+        const start = line.includes('`: ') ? line.lastIndexOf('`: ') + 3 : line.indexOf(': ') + 2
+        return { arguments: line.slice(start), ...(fonts === undefined ? {} : { fonts }), ...(textFiles === undefined ? {} : { text_files: textFiles }) }
       })
 
-    expect(examples).toHaveLength(10)
+    expect(examples).toHaveLength(11)
     expect(ffmpegWords(String(examples[0].arguments))).toStrictEqual(['-i', 'c.webm', '-i', 'b.wav', '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac', '-shortest', 'out.mp4'])
     // The filter graph of the mix is one word, without its quotes.
     expect(ffmpegWords(String(examples[7].arguments))).toContain('[1:a]volume=0.25[music];[0:a][music]amix=inputs=2:duration=first:normalize=0[a]')
     expect(ffmpegCall(examples[9], CONVERSATION).fonts).toStrictEqual(['NotoSans-Bold.ttf'])
+    expect(ffmpegCall(examples[10], CONVERSATION)).toMatchObject({
+      fonts: ['NotoSans-Regular.ttf'],
+      textFiles: [{ name: 'words.srt', text: '1\n00:00:00,000 --> 00:00:02,500\nNight: Drive\n' }],
+    })
     for (const example of examples) expect(() => ffmpegCall(example, CONVERSATION), String(example.arguments)).not.toThrow()
     expect(() => ffmpegCall(subcommand('ffmpeg').example as ToolArguments, CONVERSATION)).not.toThrow()
     expect(() => ffprobeCall(subcommand('ffprobe').example as ToolArguments, CONVERSATION)).not.toThrow()
@@ -182,6 +191,19 @@ describe('ffmpegCall', () => {
     expect(call.args.at(-2)).toBe('drawtext=fontfile=\'fonts/NotoSansArabic-Regular.ttf\':text=\'a, b\'')
     expect(videoInputsText(call.inputs, call.fonts)).toContain('NotoSans-Bold.ttf, NotoSansArabic-Regular.ttf')
     expect(refusal(() => ffmpegCall({ arguments: '-i @c out.mp4', fonts: 'Arial.ttf' }, CONVERSATION))).toContain('Dez started no job.')
+  })
+
+  it('gives the text files of the call to the run, and names them after the inputs and the fonts', () => {
+    const call = ffmpegCall({
+      arguments: '-i @c -vf "drawtext=fontfile=fonts/NotoSans-Bold.ttf:textfile=title.txt:expansion=none,subtitles=words.srt:fontsdir=fonts" out.mp4',
+      fonts: 'NotoSans-Bold.ttf',
+      text_files: '{"title.txt": "Night: Drive, 100%", "words.srt": "1\\n00:00:00,000 --> 00:00:02,000\\nHi\\n"}',
+    }, CONVERSATION)
+
+    expect(call.textFiles).toStrictEqual([{ name: 'title.txt', text: 'Night: Drive, 100%' }, { name: 'words.srt', text: '1\n00:00:00,000 --> 00:00:02,000\nHi\n' }])
+    expect(videoInputsText(call.inputs, call.fonts, call.textFiles)).toBe('The inputs of the run: the video clip @c as c.webm. '
+      + 'The fonts of the run, in its fonts folder: NotoSans-Bold.ttf. The text files of the run, in its work folder: title.txt, words.srt.')
+    expect(refusal(() => ffmpegCall({ arguments: '-i @c out.mp4', text_files: '{"../x.txt": "x"}' }, CONVERSATION))).toContain('Dez started no job.')
   })
 
   it('refuses a font that ffprobe names: only an ffmpeg run gets fonts', () => {
