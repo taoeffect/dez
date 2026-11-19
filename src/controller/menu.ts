@@ -168,12 +168,12 @@ export default sbp('sbp/selectors/register', {
         text: 'Window',
         items: [
           ...(isMacPlatform ? [{ item: 'Minimize' }, { item: 'Maximize', text: 'Zoom' }, SEPARATOR] satisfies PredefinedMenuItemOptions[] : []),
-          await shortcutMenuItem(shortcuts, 'previousTab', { text: 'Previous Tab', action: () => sbp('dez.model/tabs/cycle', -1) }),
-          await shortcutMenuItem(shortcuts, 'nextTab', { text: 'Next Tab', action: () => sbp('dez.model/tabs/cycle', 1) }),
+          await shortcutMenuItem(shortcuts, 'previousTab', { text: 'Previous Tab', action: () => sbp('dez.controller/goToTab', { step: -1 }) }),
+          await shortcutMenuItem(shortcuts, 'nextTab', { text: 'Next Tab', action: () => sbp('dez.controller/goToTab', { step: 1 }) }),
           SEPARATOR,
           ...await Promise.all(([1, 2, 3, 4, 5, 6, 7, 8, 9] as const).map((n) => shortcutMenuItem(shortcuts, `goToTab${n}`, {
             text: `Tab ${n}`,
-            action: () => sbp('dez.model/tabs/switchToIndex', n - 1),
+            action: () => sbp('dez.controller/goToTab', { index: n - 1 }),
           }))),
         ],
       })

@@ -86,6 +86,10 @@ function dispatchStreamChange(view: EditorView, tabId: string, spec: Transaction
   if (followingStreamTabId === tabId) followToBottomNextFrame()
 }
 
+function isTextField(element: Element | null): element is HTMLInputElement | HTMLTextAreaElement {
+  return element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement
+}
+
 /** What `dez.editor/runKeyBinding` does while a native text field (an
  *  `<input>` or `<textarea>`, such as the find field) has focus: run the
  *  binding in the editor anyway, do nothing, or run this
@@ -120,15 +124,21 @@ export default sbp('sbp/selectors/register', {
 
   /** Puts the caret in the active editor, so the user can type at once.
    *  Does nothing while a modal (the confirm prompt, Settings, or History)
-   *  covers the editor. Returns whether it focused the editor.
+   *  covers the editor. With `keepTextFieldFocus`, it also does nothing
+   *  while a native text field outside the editor has the focus, such as
+   *  the find field, so the user can go on typing in it. A field inside the
+   *  editor (the textarea of a thinking panel or a tool result) does not
+   *  count. Returns whether it focused the editor.
    *
    *  Right after a tab switch the view still shows the old tab: the
    *  `activeTabId` watcher in `ThreadEditor.vue` swaps its state a tick
    *  later. That is fine, because CodeMirror's `setState` gives the focus
    *  back to a view that had it. */
-  'dez.editor/focus' (): boolean {
+  'dez.editor/focus' ({ keepTextFieldFocus = false }: { keepTextFieldFocus?: boolean } = {}): boolean {
     const view = activeView
     if (!view || isModalOpen()) return false
+    const focused = document.activeElement
+    if (keepTextFieldFocus && isTextField(focused) && !view.dom.contains(focused)) return false
     if (!view.hasFocus) focusKeepingScroll(view)
     return true
   },
@@ -328,7 +338,7 @@ export default sbp('sbp/selectors/register', {
    *  ran. */
   'dez.editor/runKeyBinding' (id: ShortcutIdOfScope<'editor'>, inTextField: TextFieldAction = 'editor'): boolean {
     const focused = document.activeElement
-    if (inTextField !== 'editor' && (focused instanceof HTMLInputElement || focused instanceof HTMLTextAreaElement)) {
+    if (inTextField !== 'editor' && isTextField(focused)) {
       // execCommand is deprecated, but it is the only way for a script to
       // run the field's own edit commands (its undo stack, a line break).
       return inTextField !== 'none' && document.execCommand(inTextField)
@@ -350,7 +360,7 @@ export default sbp('sbp/selectors/register', {
   'dez.editor/copyMarkdown' (): boolean {
     const focused = document.activeElement
     let text = ''
-    if (focused instanceof HTMLInputElement || focused instanceof HTMLTextAreaElement) {
+    if (isTextField(focused)) {
       const { selectionStart, selectionEnd } = focused
       if (focused.type !== 'password' && selectionStart !== null && selectionEnd !== null) {
         text = focused.value.slice(selectionStart, selectionEnd)

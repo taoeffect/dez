@@ -19,6 +19,7 @@ import {
   waitForValue,
   type Point,
 } from './harness/dom'
+import { findDropdownOpen } from './harness/find'
 import { makeConversation, readAppState, seedAppState, seedConversation } from './harness/fixtures'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
 import {
@@ -405,6 +406,97 @@ describe('tab bar', () => {
 
     await browser.keys([Key.Escape])
     await waitForValue(browser, 'Settings open', () => sbpCall(browser, 'dez.model/settings/isOpen'), false)
+  })
+
+  // Regression: after Ctrl+Shift+[ (Previous Tab), Home and End scrolled
+  // the tab strip, and Page Up and Page Down did nothing. The tab keys only
+  // switched the tab, and the focus stayed out of the editor, where a click
+  // on a tab puts it. Now a tab key focuses the editor, so these keys move
+  // in the doc, and the tab that the key leaves keeps its place. The find
+  // field keeps the focus, so a search goes on in the next tab. browser.keys
+  // skip GTK, so this tests the page handler, not the menu accelerators.
+  it('focuses the editor after a tab key, so Home, End, Page Up, and Page Down move in the doc', async () => {
+    await resetConsoleErrors(browser)
+    const id = 'tabs-e2e-keys'
+    await seedConversation(app.home, makeConversation({ id, title: id, sections: longQuestion('keys') }))
+    await sbpCall(browser, 'dez.model/tabs/openConversation', id)
+    await waitForValue(browser, 'keys tab open', () => activeConversationId(browser), id)
+    // A new tab goes to the end of the bar, so the keys tab gets a tab after
+    // it, and the strip scrolls with enough tabs.
+    await sbpCall(browser, 'dez.model/tabs/create')
+    for (let extraTabs = 1; (await stripScroll(browser)).max <= 0; extraTabs++) {
+      expect(extraTabs, 'new tabs before the strip scrolls').toBeLessThan(MAX_CLICKS)
+      await sbpCall(browser, 'dez.model/tabs/create')
+    }
+    const keysIndex = (await conversationIds(browser)).indexOf(id)
+    const activeIndex = async (): Promise<number> => (await tabStrip(browser)).active
+    await sbpCall(browser, 'dez.model/tabs/switchToIndex', keysIndex + 1)
+    await waitForValue(browser, 'tab after the keys tab active', activeIndex, keysIndex + 1)
+    const clickActiveTab = async (): Promise<void> => {
+      // On the title: the tab's center can be on its close button.
+      await pointerClick(browser, '.tab--active .tab-title')
+      await waitForValue(browser, 'focus after a click on a tab', () => focusedArea(browser), 'body')
+    }
+
+    await clickActiveTab()
+    await browser.keys([Key.Control, Key.Shift, '['])
+    await waitForValue(browser, 'keys tab active after Ctrl+Shift+[', activeIndex, keysIndex)
+    await waitForValue(browser, 'focus after Ctrl+Shift+[', () => focusedArea(browser), 'editor')
+    await waitForValue(browser, 'keys tab at its start', async () => ({ top: await scrollerTop(browser), caret: (await viewPlace(browser)).caret }), { top: 0, caret: 0 })
+    const strip = await stripScroll(browser)
+    const docLength = (await editorDoc(browser)).length
+
+    await browser.keys([Key.PageDown])
+    await waitForValue(browser, 'view and caret moved down by Page Down', async () => {
+      const place = await viewPlace(browser)
+      return place.topLine > 1 && place.caret > 0
+    }, true)
+    expect(await stripScroll(browser), 'strip after Page Down').toEqual(strip)
+
+    await browser.keys([Key.End])
+    await waitForValue(browser, 'caret after End', async () => (await viewPlace(browser)).caret, docLength)
+    const atEnd = await viewPlace(browser)
+    expect(atEnd.topLine).toBeGreaterThan(100)
+    expect(await stripScroll(browser), 'strip after End').toEqual(strip)
+
+    await browser.keys([Key.PageUp])
+    await waitForValue(browser, 'view and caret moved up by Page Up', async () => {
+      const place = await viewPlace(browser)
+      return place.topLine < atEnd.topLine && place.caret < docLength
+    }, true)
+    expect(await stripScroll(browser), 'strip after Page Up').toEqual(strip)
+
+    await browser.keys([Key.Home])
+    await waitForValue(browser, 'view and caret after Home', async () => ({ top: await scrollerTop(browser), caret: (await viewPlace(browser)).caret }), { top: 0, caret: 0 })
+    expect(await stripScroll(browser), 'strip after Home').toEqual(strip)
+
+    // The key focuses the view of the tab that it leaves before the switch
+    // saves that tab's place.
+    await browser.keys([Key.PageDown])
+    await waitForValue(browser, 'caret moved by Page Down', async () => (await viewPlace(browser)).caret > 0, true)
+    const middle = await viewPlace(browser)
+    await clickActiveTab()
+    await browser.keys([Key.Control, Key.Shift, ']'])
+    await waitForValue(browser, 'tab after the keys tab active after Ctrl+Shift+]', activeIndex, keysIndex + 1)
+    await clickActiveTab()
+    await browser.keys([Key.Control, Key.Shift, '['])
+    await waitForValue(browser, 'keys tab active again', activeIndex, keysIndex)
+    await waitForValue(browser, 'keys tab place after the round trip', () => viewPlace(browser), middle)
+
+    await clickActiveTab()
+    await browser.keys([Key.Control, '1'])
+    await waitForValue(browser, 'first tab active after Ctrl+1', activeIndex, 0)
+    await waitForValue(browser, 'focus after Ctrl+1', () => focusedArea(browser), 'editor')
+
+    await browser.keys([Key.Control, 'f'])
+    await waitForValue(browser, 'focus after Ctrl+F', () => focusedArea(browser), 'find')
+    await browser.keys([Key.Control, Key.Shift, ']'])
+    await waitForValue(browser, 'second tab active after Ctrl+Shift+] in find', activeIndex, 1)
+    expect(await focusedArea(browser), 'focus after a tab key in find').toBe('find')
+    await browser.keys([Key.Escape])
+    await waitForValue(browser, 'find open after Esc', () => findDropdownOpen(browser), false)
+
+    expect(await consoleErrors(browser)).toEqual([])
   })
 })
 

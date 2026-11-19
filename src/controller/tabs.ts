@@ -19,6 +19,20 @@ export default sbp('sbp/selectors/register', {
     return tab
   },
 
+  // The tab keys (Previous Tab, Next Tab, Tab 1–9) and their menu items
+  // call this, so the keys after a switch (Home, End, Page Up, Page Down)
+  // move in the doc of the tab, not in the page. As with `newTab`, the
+  // Linux menu accelerator takes the key before the page key handler, so
+  // the focus must be here. A focused text field outside the editor (the
+  // find field) keeps the focus, so a search can go on in the next tab. A
+  // click on a tab does not come here: it leaves the focus out of the
+  // editor.
+  'dez.controller/goToTab' (target: { step: 1 | -1 } | { index: number }): void {
+    if ('step' in target) sbp('dez.model/tabs/cycle', target.step)
+    else sbp('dez.model/tabs/switchToIndex', target.index)
+    sbp('dez.editor/focus', { keepTextFieldFocus: true })
+  },
+
   // A close ends the reply of the tab and its jobs (`endJobs`): no later
   // reply of the tab could take their results. The last tab does not
   // close (`dez.model/tabs/close`), so it keeps its jobs.
