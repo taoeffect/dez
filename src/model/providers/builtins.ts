@@ -360,6 +360,66 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     thinking: {},
   },
   {
+    id: 'trustedrouter',
+    name: 'TrustedRouter',
+    baseUrl: 'https://api.trustedrouter.com/v1',
+    apiFormat: 'openai',
+    models: [],
+    fetchModels: true,
+    // /models lists every model with no query; `output_modalities=all`
+    // lists none (checked live, 2026-11-19). The entries have OpenRouter's
+    // shape. `created` is 0 for every model, so there is no release date.
+    // https://api.trustedrouter.com/v1/models
+    modelImageInput: { path: 'architecture.input_modalities' },
+    // A list of request fields that the model takes: "tools" for a model
+    // that calls tools, "reasoning" for one that takes the `reasoning`
+    // field of `thinking` below.
+    modelToolCalling: { path: 'supported_parameters' },
+    modelThinking: { path: 'supported_parameters' },
+    // A list. The image, speech, transcription, and video models answer
+    // through APIs that Dez has no format for here, so they are left out,
+    // with the embedding and decision models; a model that writes text and
+    // images is a text model (checked live, 2026-11-19).
+    modelOutputs: {
+      path: 'architecture.output_modalities',
+      values: {
+        text: { outputs: ['text'], request: 'chat' },
+        image: { outputs: [] },
+        speech: { outputs: [] },
+        transcription: { outputs: [] },
+        video: { outputs: [] },
+        embeddings: { outputs: [] },
+        decision: { outputs: [] },
+      },
+    },
+    // Texts of USD per token. The router models (`trustedrouter/auto`)
+    // give the price of their cheapest model, and the price of their
+    // dearest one in `prompt_max`, which only they have (checked live,
+    // 2026-11-19).
+    modelTokenPrices: {
+      input: 'pricing.prompt',
+      output: 'pricing.completion',
+      cachedInput: 'pricing.input_cache_read',
+      perTokens: 1,
+      otherRates: 'pricing.prompt_max',
+    },
+    // The two numbers are the same for every model, and null for some
+    // (checked live, 2026-11-19); the smaller one counts, as for
+    // OpenRouter.
+    modelContextWindow: { paths: ['context_length', 'top_provider.context_length'] },
+    auth: 'apiKey',
+    // A stream tells its token counts only when the request asks for them.
+    // TrustedRouter refuses a field that it does not know (400) or does not
+    // support (501), so the config sends no other fixed field.
+    // https://trustedrouter.com/docs
+    // https://trustedrouter.com/docs/migrate-from-openrouter
+    requestBody: { stream_options: { include_usage: true } },
+    // OpenRouter's field, which TrustedRouter takes; it goes only to a model
+    // whose `supported_parameters` has "reasoning" (`modelThinking`). Some
+    // models must think, so there is no off field.
+    thinking: { enabledBody: { reasoning: { enabled: true } } },
+  },
+  {
     id: 'copilot',
     name: 'GitHub Copilot',
     baseUrl: 'https://api.githubcopilot.com',

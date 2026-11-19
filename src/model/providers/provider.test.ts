@@ -540,6 +540,7 @@ describe('thinking request bodies', () => {
     expect(bodyWith(builtInProvider('zai'))).toEqual({ ...base, thinking: { type: 'enabled' } })
     expect(bodyWith(builtInProvider('minimax'))).toEqual({ ...markedBase, max_tokens: 65536, thinking: { type: 'adaptive' } })
     expect(bodyWith(builtInProvider('venice')).reasoning).toEqual({ enabled: true })
+    expect(bodyWith(builtInProvider('trustedrouter'))).toEqual({ ...base, stream_options: { include_usage: true }, reasoning: { enabled: true } })
   })
 
   it('adds only the format default to a built-in with an empty thinking config', () => {
@@ -559,6 +560,7 @@ describe('thinking request bodies', () => {
     expect(bodyWith(builtInProvider('openrouter'), { thinking: false })).toEqual(markedBase)
     expect(bodyWith(builtInProvider('minimax'), { thinking: false })).toEqual({ ...markedBase, max_tokens: 65536 })
     expect(bodyWith(builtInProvider('kimi'), { thinking: false })).toEqual({ ...markedBase, max_tokens: 32000 })
+    expect(bodyWith(builtInProvider('trustedrouter'), { thinking: false })).toEqual({ ...base, stream_options: { include_usage: true } })
   })
 
   it('merges the Venice disabledBody into the venice_parameters that the settings wrote', () => {
@@ -1487,6 +1489,21 @@ describe('provider models', () => {
       ['google/lyria-3-clip-preview', ['text', 'audio'], 'chat'],
       ['text-audio', ['text'], 'chat'],
       ['speech-to-text', ['text'], 'transcription'],
+    ])
+    // TrustedRouter (checked live 2026-11-19): only text models stay, and a
+    // model that writes text and images is a text model.
+    expect(kinds('trustedrouter', [
+      { id: 'text', architecture: { output_modalities: ['text'] } },
+      { id: 'text-image', architecture: { output_modalities: ['text', 'image'] } },
+      { id: 'image', architecture: { output_modalities: ['image'] } },
+      { id: 'speech', architecture: { output_modalities: ['speech'] } },
+      { id: 'speech-to-text', architecture: { output_modalities: ['transcription'] } },
+      { id: 'video', architecture: { output_modalities: ['video'] } },
+      { id: 'embed', architecture: { output_modalities: ['embeddings'] } },
+      { id: 'decide', architecture: { output_modalities: ['decision'] } },
+    ])).toEqual([
+      ['text', ['text'], 'chat'],
+      ['text-image', ['text'], 'chat'],
     ])
     expect(kinds('copilot', [
       { id: 'chat', capabilities: { type: 'chat' } },

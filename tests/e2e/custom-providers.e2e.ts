@@ -58,6 +58,7 @@ const BUILT_INS: ProviderRow[] = [
   { id: 'charm_hyper', name: 'Charm Hyper' },
   { id: 'minimax', name: 'MiniMax' },
   { id: 'kimi', name: 'Kimi' },
+  { id: 'trustedrouter', name: 'TrustedRouter' },
   { id: 'copilot', name: 'GitHub Copilot' },
 ]
 
