@@ -45,7 +45,9 @@ import { MAX_TEXT_FILES, MAX_TEXT_FILES_BYTES, TEXT_FILE_NAME_TEXT, textFilesArg
 // of the Dez folder, where it can delete or move no file. Where the OS has
 // no such rule (a Linux kernel with no Landlock), the program runs with
 // the rights of the user, and these checks are its only guard. The OS rule
-// is about files only: the network always has only these checks.
+// is about files only. The programs that Dez ships have no network code
+// (`--disable-network`, src-tauri/binaries/), and these checks refuse every
+// network protocol as a second guard, for a later build that has one.
 //
 // Every text here is a tool result or the result of a job: it goes to the
 // chat provider. So it names an image or a clip by its id only.
@@ -150,9 +152,10 @@ const FFMPEG_HELP = [
   `Dez puts \`${FFMPEG_FIXED_ARGS.join(' ')}\` before your arguments, so the log holds the warnings, the errors, and the progress. `
     + 'Add `-v info` for the lines of a filter that reports in the log (volumedetect, silencedetect, cropdetect).',
   'Dez refuses an argument with: an absolute path, "~", "..", a backslash, a URL or a protocol form (as in http:, file:, pipe:, concat:), '
-    + 'a lone "-" (only `-f null -` can have one), a capture or playback device, the hls format or an .m3u8 file name (no HLS input and no HLS output), '
-    + 'and the options -safe, -protocol_whitelist, -protocol_blacklist, -filter_script, -filter_complex_script, -graph_file, -hls_key_info_file, '
-    + '-enable_drefs, -use_absolute_path, -dump_attachment, and each option that starts with "-/".',
+    + 'a lone "-" (only `-f null -` can have one), a capture or playback device, the hls format or an .m3u8 or .m3u file name (no HLS input and no HLS output), '
+    + 'the options -safe, -protocol_whitelist, -protocol_blacklist, -filter_script, -filter_complex_script, -graph_file, -hls_key_info_file, '
+    + '-enable_drefs, -use_absolute_path, -dump_attachment, and each option that starts with "-/", '
+    + 'and a commands file of sendcmd or asendcmd (f=, filename=): write the commands into the filter, as in "asendcmd=c=\'2 volume volume 0.5\',volume=1".',
   'Encoders of this build: libx264, libx265, libvpx-vp9, libvpx, libsvtav1 (video); aac, libmp3lame, libopus, flac, pcm_s16le (audio); mjpeg, png, gif (images). '
     + 'The ffprobe subcommand gives the full lists with no job (-encoders, -filters, -h filter=scale).',
   'Text (drawtext, subtitles, ass): this ffmpeg has no font of the system. It reads a font only from the folder fonts of the work folder, which holds a copy of each font that the `fonts` parameter names. '
@@ -389,41 +392,66 @@ const DEVICE_FORMAT = new RegExp(String.raw`(?:${KEYED_FORMAT_VALUE}|${MOVIE_FOR
 // A refused option as a key of an option list inside a word
 // (`movie=list.txt:format_opts=safe=0`).
 const OPTION_KEY = new RegExp(String.raw`(?:^|[^${NAME_CHARS}])(${REFUSED_OPTIONS.join('|')})\s*=`, 'i')
-// The name of the hls format, or of the one file ending of the hls muxer
-// (`.m3u8`), as a whole name in a word: ffmpeg takes a format name in any
-// case, from many options (`-f`, `-fifo_format`, `-segment_format`, the
-// `f=` and `fifo_format=` keys of a filter or of a tee output, the second
-// value of `movie`), and takes the hls muxer for an output name that ends
-// in `.m3u8`. Option names such as `-hls_time` do not match.
-const HLS_NAME = new RegExp(String.raw`(?:^|[^${NAME_CHARS}])(?:hls|m3u8)(?![${NAME_CHARS}])`, 'i')
+// The commands file of `sendcmd` or `asendcmd`, as the key `f` or
+// `filename` of the filter: its commands go to the other filters with no
+// check of their text, and a command can set a path option of a filter
+// (`curves plot` writes a file, `lut1d file` reads one). The model chooses
+// the text of a file of `text_files`. The commands in the word (`c=`, or
+// the first value with no key) pass, as the checks read them. This check
+// needs the text of `filterOptionsText`. A key after a `=` matches too, as
+// an instance name can hold a `=` in quotes; so `c=f=x` matches, a text
+// that sendcmd refuses as commands.
+const SENDCMD_FILE = new RegExp(String.raw`(?:^|[^${NAME_CHARS}])(a?sendcmd)(?:@[^=,;[\]]*)?\s*=(?:[^,;[\]]*[:=])?\s*(?:f|filename)\s*=`, 'i')
+// The name of the hls format, or a file ending of an HLS playlist, as a
+// whole name in a word: ffmpeg takes a format name in any case, from many
+// options (`-f`, `-fifo_format`, `-segment_format`, the `f=` and
+// `fifo_format=` keys of a filter or of a tee output, the second value of
+// `movie`), takes the hls muxer for an output name that ends in `.m3u8`,
+// and the probe of the hls demuxer takes a playlist whose name ends in
+// `.m3u8` or `.m3u`. Option names such as `-hls_time` do not match.
+const HLS_NAME = new RegExp(String.raw`(?:^|[^${NAME_CHARS}])(?:hls|m3u8?)(?![${NAME_CHARS}])`, 'i')
 
-// The chars that end a filter, its name, or its options in the filter
-// graph parser of ffmpeg, unless they are in quotes.
-const GRAPH_SEPARATORS = '[],;='
+// The chars that end a filter or its options in the filter graph parser
+// of ffmpeg, unless they are in quotes. A `=` also ends the name of a
+// filter.
+const FILTER_SEPARATORS = '[],;'
 
-// The text of `word` as the filter graph parser of ffmpeg gives it to the
-// parser of a filter's options: with no quotes, and with `_` in place of
-// each separator in quotes, as that one ends nothing (`amovie@'a,b'=x:pulse`
-// is one filter, `amovie` with the instance name `a,b`). The parser drops
-// each quote and takes the text up to the next one as it is; Dez takes no
-// backslash, its other escape.
-function filterGraphText(word: string): string {
+// The text of `word` with no quotes, and with `_` in place of each char of
+// `separators` in quotes, as that one ends nothing. The parsers of ffmpeg
+// drop each quote and take the text up to the next one as it is; Dez takes
+// no backslash, their other escape.
+function unquotedText(word: string, separators: string): string {
   let quoted = false
   let text = ''
   for (const char of word) {
     if (char === '\'') quoted = !quoted
-    else text += quoted && GRAPH_SEPARATORS.includes(char) ? '_' : char
+    else text += quoted && separators.includes(char) ? '_' : char
   }
   return text
 }
 
+// The text of `word` as the filter graph parser of ffmpeg splits it into
+// filters, their names, and their options: a separator in quotes ends
+// nothing (`amovie@'a,b'=x:pulse` is one filter, `amovie` with the
+// instance name `a,b`).
+function filterGraphText(word: string): string {
+  return unquotedText(word, `${FILTER_SEPARATORS}=`)
+}
+
+// The text of `word` as the option parser of each filter gets it: the
+// graph parser drops the quotes, so a `=` in quotes separates a key from
+// its value again (`sendcmd@'a,b'='f=x'` is `sendcmd` with the key `f`).
+function filterOptionsText(word: string): string {
+  return unquotedText(word, FILTER_SEPARATORS)
+}
+
 // The forms of `word` that each check of a text inside a word reads. The
 // filter and option parsers of ffmpeg drop single quotes (`m'o'vie=…` is
-// `movie=…`), so a check also reads the word without them, and its
-// `filterGraphText`, where a separator in quotes ends no filter. A
-// backslash, their other escape, is refused as such.
+// `movie=…`), so a check also reads the word without them, its
+// `filterGraphText`, and its `filterOptionsText`. A backslash, their other
+// escape, is refused as such.
 function wordForms(word: string): string[] {
-  return word.includes('\'') ? [word, word.replaceAll('\'', ''), filterGraphText(word)] : [word]
+  return word.includes('\'') ? [word, word.replaceAll('\'', ''), filterGraphText(word), filterOptionsText(word)] : [word]
 }
 
 const WORK_FOLDER_ONLY = 'The program works only in its own work folder: name an input as @id, and an output as a new file name with no folder.'
@@ -436,9 +464,9 @@ const WORK_FOLDER_ONLY = 'The program works only in its own work folder: name an
 //
 // These are string checks: they cannot see a path in the content of a
 // file (a playlist). So the OS rule (src-tauri/src/confinement.rs) guards
-// the user's files, and the network, and a computer with no OS rule, have
-// only these checks: keep both. Each check of a text inside a word reads
-// each of its `wordForms`.
+// the user's files, and a computer with no OS rule has only these checks:
+// keep both. The network has these checks and a build with no network
+// code. Each check of a text inside a word reads each of its `wordForms`.
 function argumentProblem(words: readonly string[], index: number): string | null {
   const word = words[index]
   const forms = wordForms(word)
@@ -465,6 +493,11 @@ function argumentProblem(words: readonly string[], index: number): string | null
   const option = /^-+([^:=]+)/.exec(word)?.[1].toLowerCase()
   const key = option !== undefined && REFUSED_OPTIONS.includes(option) ? option : found(OPTION_KEY)?.[1].toLowerCase()
   if (key !== undefined) return `Dez does not allow the option ${key}: with it, the program could open a file outside of its work folder.`
+  const commandsFile = found(SENDCMD_FILE)
+  if (commandsFile) {
+    return `it gives ${commandsFile[1].toLowerCase()} a commands file. Dez does not check the text of a file, and a command can make a filter open a file outside of its work folder. `
+      + 'Write the commands into the filter, as in "asendcmd=c=\'2 volume volume 0.5\',volume=1".'
+  }
   const format = FORMAT_OPTION.test(words[index - 1] ?? '') ? word.toLowerCase() : undefined
   const device = format !== undefined && REFUSED_DEVICES.includes(format) ? format : found(DEVICE_FORMAT)?.[1].toLowerCase()
   if (device !== undefined) return `it names the device ${device}. Dez lets the program use no camera, no microphone, no screen, and no sound output of this computer.`
@@ -475,7 +508,7 @@ function argumentProblem(words: readonly string[], index: number): string | null
   // the name of its output (the output can be the copy of such a file) and
   // deletes its old segments, each one by the folder of the newest line.
   if (found(HLS_NAME)) {
-    return 'it names the hls format or an .m3u8 file. An HLS playlist can name files outside the work folder by paths that Dez cannot check, '
+    return 'it names the hls format or an .m3u8 or .m3u file. An HLS playlist can name files outside the work folder by paths that Dez cannot check, '
       + 'and ffmpeg reads those files as segments, or deletes them as old segments. So Dez lets the program read and write no HLS playlist. '
       + 'To cut a clip into short clips, use the segment format, as in -f segment -segment_time 5 -reset_timestamps 1 part%03d.mp4.'
   }

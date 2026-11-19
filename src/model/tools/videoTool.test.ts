@@ -247,6 +247,7 @@ describe('ffmpegCall', () => {
     '-y -i @c -f null -',
     '-i @b -af volumedetect -f:a null -',
     '-i @c frame_%03d.jpg',
+    '-i @b -af "asendcmd=c=\'2 volume volume 0.5\',volume=1" out.wav',
   ])('runs %j', (text) => {
     expect(() => ffmpegCall({ arguments: text }, CONVERSATION)).not.toThrow()
   })
@@ -290,20 +291,22 @@ describe('ffmpegCall', () => {
     ['-f lavfi -i movie=list.txt:format_opts=safe=0:f=concat out.mp4', 'movie=list.txt:format_opts=safe=0:f=concat', 'the option safe'],
     ['-f lavfi -graph_file @c -i x out.wav', '-graph_file', 'the option graph_file'],
     ['-i @c -hls_key_info_file @d out.mp4', '-hls_key_info_file', 'the option hls_key_info_file'],
-    ['-f hls -i @c -c copy out.mkv', 'hls', 'the hls format or an .m3u8 file'],
-    ['-f HLS -i @c -i @d out.mkv', 'HLS', 'the hls format or an .m3u8 file'],
-    ['-i @c -f hls -hls_flags delete_segments+append_list @c', 'hls', 'the hls format or an .m3u8 file'],
-    ['-i @c -map 0 -f fifo -fifo_format hls -format_opts hls_flags=delete_segments+append_list @c', 'hls', 'the hls format or an .m3u8 file'],
-    ['-i @c -map 0 -f tee "[f=fifo:fifo_format=hls]@c"', '[f=fifo:fifo_format=hls]@c', 'the hls format or an .m3u8 file'],
-    ['-i @c -hls_flags delete_segments+append_list out.m3u8', 'out.m3u8', 'the hls format or an .m3u8 file'],
-    ['-f lavfi -i "amovie=@c:f=hls" out.wav', 'amovie=@c:f=hls', 'the hls format or an .m3u8 file'],
-    ['-f lavfi -i "movie=@c:format_name=h\'l\'s" out.mp4', 'movie=@c:format_name=h\'l\'s', 'the hls format or an .m3u8 file'],
-    ['-f:v hls -i @c -c copy out.mkv', 'hls', 'the hls format or an .m3u8 file'],
-    ['-f lavfi -i "amovie=@c:hls" out.wav', 'amovie=@c:hls', 'the hls format or an .m3u8 file'],
-    ['-f lavfi -i "amovie = @c : hls " out.wav', 'amovie = @c : hls ', 'the hls format or an .m3u8 file'],
-    ['-f lavfi -i "amovie@q=@c:hls" out.wav', 'amovie@q=@c:hls', 'the hls format or an .m3u8 file'],
-    ['-f lavfi -i "amovie=x y=z:hls" out.wav', 'amovie=x y=z:hls', 'the hls format or an .m3u8 file'],
-    ['-f lavfi -i "amo\'v\'ie@\'x,y\'=@c:hls" out.wav', 'amo\'v\'ie@\'x,y\'=@c:hls', 'the hls format or an .m3u8 file'],
+    ['-f hls -i @c -c copy out.mkv', 'hls', 'the hls format or an .m3u8 or .m3u file'],
+    ['-f HLS -i @c -i @d out.mkv', 'HLS', 'the hls format or an .m3u8 or .m3u file'],
+    ['-i @c -f hls -hls_flags delete_segments+append_list @c', 'hls', 'the hls format or an .m3u8 or .m3u file'],
+    ['-i @c -map 0 -f fifo -fifo_format hls -format_opts hls_flags=delete_segments+append_list @c', 'hls', 'the hls format or an .m3u8 or .m3u file'],
+    ['-i @c -map 0 -f tee "[f=fifo:fifo_format=hls]@c"', '[f=fifo:fifo_format=hls]@c', 'the hls format or an .m3u8 or .m3u file'],
+    ['-i @c -hls_flags delete_segments+append_list out.m3u8', 'out.m3u8', 'the hls format or an .m3u8 or .m3u file'],
+    // The probe of the hls demuxer takes a playlist whose name ends in .m3u.
+    ['-i list.m3u out.mp4', 'list.m3u', 'the hls format or an .m3u8 or .m3u file'],
+    ['-f lavfi -i "amovie=@c:f=hls" out.wav', 'amovie=@c:f=hls', 'the hls format or an .m3u8 or .m3u file'],
+    ['-f lavfi -i "movie=@c:format_name=h\'l\'s" out.mp4', 'movie=@c:format_name=h\'l\'s', 'the hls format or an .m3u8 or .m3u file'],
+    ['-f:v hls -i @c -c copy out.mkv', 'hls', 'the hls format or an .m3u8 or .m3u file'],
+    ['-f lavfi -i "amovie=@c:hls" out.wav', 'amovie=@c:hls', 'the hls format or an .m3u8 or .m3u file'],
+    ['-f lavfi -i "amovie = @c : hls " out.wav', 'amovie = @c : hls ', 'the hls format or an .m3u8 or .m3u file'],
+    ['-f lavfi -i "amovie@q=@c:hls" out.wav', 'amovie@q=@c:hls', 'the hls format or an .m3u8 or .m3u file'],
+    ['-f lavfi -i "amovie=x y=z:hls" out.wav', 'amovie=x y=z:hls', 'the hls format or an .m3u8 or .m3u file'],
+    ['-f lavfi -i "amo\'v\'ie@\'x,y\'=@c:hls" out.wav', 'amo\'v\'ie@\'x,y\'=@c:hls', 'the hls format or an .m3u8 or .m3u file'],
     ['-/filter_complex graph.txt -i @c out.mp4', '-/filter_complex', 'reads its value from a file'],
     ['-i @c -vf "drawbox=x=10\\:y=2" out.mp4', 'drawbox=x=10\\:y=2', 'a backslash'],
     // The font checks read the forms of the word that ffmpeg reads.
@@ -311,6 +314,24 @@ describe('ffmpegCall', () => {
     ['-i @c -vf "drawtext=f\'o\'ntfile=Arial.ttf" out.mp4', 'drawtext=f\'o\'ntfile=Arial.ttf', 'Give the font as fontfile=fonts/<file>'],
     ['-i @c -vf "drawtext@\'a,b\'=Arial.ttf" out.mp4', 'drawtext@\'a,b\'=Arial.ttf', 'Give the font as fontfile=fonts/<file>'],
     ['-i @c -vf "subtitles=@c:fontsdir=\'.\'" out.mp4', 'subtitles=@c:fontsdir=\'.\'', 'give fontsdir=fonts'],
+    // The file options of the text filters (drawtext, subtitles, ass).
+    ['-i @c -vf "drawtext=fontfile=/usr/share/fonts/x.ttf:text=Hi" out.mp4', 'drawtext=fontfile=/usr/share/fonts/x.ttf:text=Hi', 'an absolute path'],
+    ['-i @c -vf "drawtext=fontfile=\'/usr/share/fonts/x.ttf\':text=Hi" out.mp4', 'drawtext=fontfile=\'/usr/share/fonts/x.ttf\':text=Hi', 'an absolute path'],
+    ['-i @c -vf "drawtext=fontfile=../x.ttf:text=Hi" out.mp4', 'drawtext=fontfile=../x.ttf:text=Hi', 'a parent folder'],
+    ['-i @c -vf "drawtext=fontfile=~/x.ttf:text=Hi" out.mp4', 'drawtext=fontfile=~/x.ttf:text=Hi', 'it holds "~"'],
+    ['-i @c -vf "drawtext=fontfile=fonts//etc/x.ttf:text=Hi" out.mp4', 'drawtext=fontfile=fonts//etc/x.ttf:text=Hi', 'an absolute path'],
+    ['-i @c -vf "drawtext=fontfile=fonts/NotoSans-Bold.ttf:textfile=/etc/passwd" out.mp4', 'drawtext=fontfile=fonts/NotoSans-Bold.ttf:textfile=/etc/passwd', 'an absolute path'],
+    ['-i @c -vf "subtitles=words.srt:fontsdir=/" out.mp4', 'subtitles=words.srt:fontsdir=/', 'give fontsdir=fonts'],
+    ['-i @c -vf subtitles=/tmp/x.srt out.mp4', 'subtitles=/tmp/x.srt', 'an absolute path'],
+    ['-i @c -vf "subtitles=filename=http://example.com/x.srt" out.mp4', 'subtitles=filename=http://example.com/x.srt', 'it holds a URL'],
+    ['-i @c -vf "subtitles=\'file:x.srt\'" out.mp4', 'subtitles=\'file:x.srt\'', 'the protocol form "file"'],
+    ['-i @c -vf ass=f=file:x.ass out.mp4', 'ass=f=file:x.ass', 'the protocol form "file"'],
+    // A commands file of sendcmd: a command can set a path option of a
+    // filter (`curves plot` writes a file). The graph parser drops the
+    // quotes, so the last one sets the key f.
+    ['-i @c -vf "sendcmd=f=cmds.txt,curves" out.mp4', 'sendcmd=f=cmds.txt,curves', 'it gives sendcmd a commands file'],
+    ['-i @b -af "asendcmd=filename=cmds.txt,volume" out.wav', 'asendcmd=filename=cmds.txt,volume', 'it gives asendcmd a commands file'],
+    ['-i @c -vf "sendcmd@\'x,y\'=\'f=cmds.txt\',curves" out.mp4', 'sendcmd@\'x,y\'=\'f=cmds.txt\',curves', 'it gives sendcmd a commands file'],
   ])('refuses %j', (text, word, cause) => {
     const message = refusal(() => ffmpegCall({ arguments: text }, CONVERSATION))
 
@@ -358,8 +379,8 @@ describe('ffprobeCall', () => {
 
   it.each([
     ['-show_format /etc/passwd', 'an absolute path'],
-    ['-f hls @c', 'the hls format or an .m3u8 file'],
-    ['-f:v hls @c', 'the hls format or an .m3u8 file'],
+    ['-f hls @c', 'the hls format or an .m3u8 or .m3u file'],
+    ['-f:v hls @c', 'the hls format or an .m3u8 or .m3u file'],
     ['-show_format @z', '@z names no image and no clip'],
   ])('tells that ffprobe did not run for %j', (text, cause) => {
     const message = refusal(() => ffprobeCall({ arguments: text }, CONVERSATION))

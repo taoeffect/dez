@@ -22,8 +22,11 @@ import { ToolError, type ToolArguments } from './types'
 // - vobsub opens the `.sub` file of its own input name, and mov opens the
 //   files that it references only with `enable_drefs`, which the argument
 //   checks refuse.
-// The build has no dash, imf, or sdp demuxer. The OS rule of the run
-// (src-tauri/src/confinement.rs) still guards the files of the user.
+// The build has no dash, imf, or sdp demuxer. sendcmd and asendcmd can
+// read their commands from a file, and a command can set a path option of
+// another filter, so the argument checks refuse that file (`SENDCMD_FILE`
+// in videoTool.ts). The OS rule of the run (src-tauri/src/confinement.rs)
+// still guards the files of the user.
 
 /** A text file of a run: its name in the work folder, and its text, which
  *  Dez writes as UTF-8. */

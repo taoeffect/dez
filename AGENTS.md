@@ -287,8 +287,8 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 - **A fullscreen player hides the app's layers**: code that shows a prompt or a toast for a player calls `leaveFullscreen` first (`view/editor/media.ts`).
 - **File drops differ by platform**: Tauri's native drop on Linux, HTML5 drops on macOS (`dez.controller/images/watchFileDrops`, `droppedFilePaths`); a drop copies or links its file.
 - **A bundled tool gets copies, never links**, and Rust does not check its arguments: the caller keeps every path outside the work folder out of them (`src-tauri/src/bundled_tools.rs`).
-- **The argument rule of the `video` tool is string checks; the OS rule guards the files** (`src/model/tools/videoTool.ts`, `src-tauri/src/confinement.rs`): keep both.
-- **After `scripts/update-ffmpeg.js`**, check `REFUSED_PROTOCOLS` and `REFUSED_DEVICES` (`src/model/tools/videoTool.ts`) against the new ffmpeg, and whether its x86 bug that `frameCompareArgs` (`src/model/tools/clipAnalysis.ts`) works around is fixed.
+- **The argument rule of the `video` tool is string checks; the OS rule guards the files, and the ffmpeg build has no network code** (`src/model/tools/videoTool.ts`, `src-tauri/src/confinement.rs`): keep all three.
+- **After `scripts/update-ffmpeg.js`**, check `REFUSED_PROTOCOLS` and `REFUSED_DEVICES` (`src/model/tools/videoTool.ts`) against the new ffmpeg, that its `-buildconf` still has `--disable-network`, and whether its x86 bug that `frameCompareArgs` (`src/model/tools/clipAnalysis.ts`) works around is fixed.
 
 ### App, build, and tools
 
