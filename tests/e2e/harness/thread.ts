@@ -523,20 +523,35 @@ export async function openToasts (browser: E2EBrowser, variant?: ToastVariant): 
   ), variant ? `.toast-card--${variant}` : '.toast-card')
 }
 
-/** Waits until the active tab holds `expected` and no stream runs, then
- *  checks that no error toast is open. */
+// The end of a stream rebuilds the editor, and when the view followed the
+// stream, it scrolls to the bottom one frame later
+// (`scrollViewToBottomAfterLayout`, `ThreadEditor.vue`). The rebuild asks
+// for that frame in the task that ends the stream, so it comes before the
+// frames that a later script asks for. With slow frames (software GL), a
+// scroll of a spec that does not wait for it is undone.
+async function streamEndScrollDone (browser: E2EBrowser): Promise<void> {
+  await browser.execute(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+  }))
+}
+
+/** Waits until the active tab holds `expected`, no stream runs, and the
+ *  scroll of the stream end is done, then checks that no error toast is
+ *  open. */
 export async function waitForThread (browser: E2EBrowser, expected: ThreadSection[]): Promise<void> {
   await waitForValue(browser, 'thread sections', () => threadSections(browser), expected)
   await waitForValue(browser, 'streaming', () => activeTabStreaming(browser), false)
+  await streamEndScrollDone(browser)
   expect(await openToasts(browser, 'error')).toEqual([])
 }
 
 /** Waits for the end of the reply at the section `replyIndex` of the
- *  active tab (the empty user section after it is there, and no stream
- *  runs), and gives its text. */
+ *  active tab (the empty user section after it is there, no stream runs,
+ *  and the scroll of the stream end is done), and gives its text. */
 export async function endedReply (browser: E2EBrowser, replyIndex = 1): Promise<string> {
   await waitForValue(browser, 'sections after the reply', async () => (await threadSections(browser)).length, replyIndex + 2)
   await waitForValue(browser, 'streaming', () => activeTabStreaming(browser), false)
+  await streamEndScrollDone(browser)
   return (await threadSections(browser))[replyIndex].text
 }
 
