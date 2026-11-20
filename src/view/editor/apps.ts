@@ -1,8 +1,7 @@
 import { MapMode, StateEffect, StateField, type ChangeDesc, type EditorState, type Extension } from '@codemirror/state'
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view'
 import sbp from '@sbp/sbp'
-import { findAppTags, type AppTag } from '../../model/chat/appTags'
-import { SENTINEL_CHAR, plainLiveText } from '../../model/chat/content'
+import { APP_TAG_NAME, findAppTags, type AppTag } from '../../model/chat/appTags'
 import type { Section } from '../../model/chat/types'
 import { APP_STOPPED_TEXT, AppCallError, SAVE_NEEDS_DRAFT_TEXT, SaveNotStoredError, type SavedAppFile, type SavedAssetAnswer } from '../../model/tools/appBridge'
 import type { AppCardFacts } from '../../model/tools/appShow'
@@ -16,7 +15,7 @@ import { compactionBlockEnd } from './compactionBlock'
 import { syncDomSelection } from './focus'
 import { insertSavedFile } from './imageInsert'
 import { linesRemovalRange } from './images'
-import { lineBlocks, sectionRolesChanged, sectionTexts } from './lineBlocks'
+import { lineBlocks, sectionRolesChanged, shownSectionTags } from './lineBlocks'
 import { followShownRange, pendingRanges } from './pendingRanges'
 import { ROUND_STROKE, svgIcon, trashIcon, type IconShapes } from './svgIcon'
 
@@ -238,26 +237,12 @@ class AppWidget extends WidgetType {
   }
 }
 
-/** The tags that the editor shows as cards, in doc order, as doc ranges.
- *  Each section is read on its own (`sectionTexts`). Left as text: a line
- *  that is not a valid tag, a tag that holds a sentinel (a prompt pill),
- *  whose widgets and atomic ranges must stay the only ones there, a tag in
- *  Markdown code of the section's plain text (`plainLiveText`), which a
- *  request reads, and a tag before `blockEnd`, the end of the compaction
- *  block, which is out of view as a whole. */
+/** The tags that the editor shows as cards (`shownSectionTags`), in doc
+ *  order, as doc ranges. A tag before `blockEnd`, the end of the
+ *  compaction block, stays out: the block is out of view as a whole. */
 function findRenderedApps(doc: string, sections: readonly SectionModel[], blockEnd: number): AppTag[] {
-  const apps: AppTag[] = []
-  if (!doc.includes('<dez:app')) return apps
-  for (const { section, from, text } of sectionTexts(doc, sections)) {
-    const tags = findAppTags(text, section.role, { inCode: true }).filter((tag) => !SENTINEL_CHAR.test(text.slice(tag.from, tag.to)))
-    if (tags.length === 0) continue
-    const plain = plainLiveText(text)
-    const outOfCode = new Set(findAppTags(plain.text, section.role).map((tag) => plain.liveOffset(tag.from)))
-    for (const tag of tags) {
-      if (outOfCode.has(tag.from) && from + tag.from >= blockEnd) apps.push({ name: tag.name, from: from + tag.from, to: from + tag.to })
-    }
-  }
-  return apps
+  if (!doc.includes(`<${APP_TAG_NAME}`)) return []
+  return shownSectionTags(doc, sections, findAppTags).filter(({ from }) => from >= blockEnd).map(({ tag, from, to }) => ({ name: tag.name, from, to }))
 }
 
 function appsOf(state: EditorState): AppTag[] {
