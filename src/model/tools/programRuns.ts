@@ -2,7 +2,9 @@ import { byteSizeText } from '../../utils/byteSize'
 import { MAX_SAVED_CLIP_BYTES, mediaFileExtension } from '../chat/mediaFiles'
 import type { MediaTagKind } from '../chat/mediaTags'
 import type { ClipAttachment } from '../providers/clipInputs'
+import { APPS_INVOKE, APPS_TOOL } from './appsTool'
 import type { JobAssetKind } from './jobs'
+import { JS_EVAL_TOOL } from './jsEval'
 
 // What the tools that run a program that Dez ships (src-tauri/binaries/)
 // share about a run: its input clips, its end, the new files that Dez
@@ -62,13 +64,17 @@ export function programNotStartedText(program: ShippedProgram, tool: string): st
   return `Dez could not start ${program} on this computer. ${tellUserConsole(tool)}`
 }
 
-/** The error result of a run for the tool `tool` that Dez refused: the
- *  program must run confined (it runs code of a model), and the system of
- *  this computer cannot confine a program. No other call can go either. */
-export function programNotConfinedText(program: ShippedProgram, tool: string): string {
+/** The error result of a run of `program` that Dez refused: the program
+ *  must run confined, and the system of this computer cannot confine a
+ *  program. No other run of it can go either. Rust refuses only a program
+ *  that runs code of a model (Deno), so the text names the calls that run
+ *  Deno, and tells that the other calls of their tools still work: a model
+ *  that reads that a whole tool cannot run stops using all of it. */
+export function programNotConfinedText(program: ShippedProgram): string {
   return `Dez did not start ${program}: the system of this computer cannot keep a program inside its own folders, and Dez does not run ${program} without that guard. `
-    + `This is not a fault of the call, and no other call of the ${tool} tool can run on this computer. `
-    + `Tell the user that the ${tool} tool cannot run here and that Help › Developer Console shows why, and do the work without the tool.`
+    + `This is not a fault of the call. No call that runs ${program} can run on this computer: ${JS_EVAL_TOOL.name}, and ${APPS_TOOL.name} ${APPS_INVOKE} of a script app. `
+    + `The other calls of the ${APPS_TOOL.name} tool still work, also ${APPS_TOOL.name} ${APPS_INVOKE} of a UI app. `
+    + `Tell the user that Dez cannot run ${program} here and that Help › Developer Console shows why, and do the work without the calls that run ${program}.`
 }
 
 /** The state of a job before its program runs. */

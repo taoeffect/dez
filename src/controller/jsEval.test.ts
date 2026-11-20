@@ -191,7 +191,7 @@ describe('runJsEval', () => {
 
     const refusal = await refusalOf(runJsEval(CALL, running(), callContext()))
 
-    expect(refusal).toBe(programNotConfinedText('deno', JS_EVAL_TOOL.name))
+    expect(refusal).toBe(programNotConfinedText('deno'))
     deletedWorkFolder()
   })
 

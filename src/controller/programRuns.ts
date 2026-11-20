@@ -199,7 +199,7 @@ export async function runProgram(
     // The native error text can hold the path of the work folder or of an
     // input file, so the model gets none of it.
     console.error(`Failed to run ${program}:`, error)
-    const text = rawErrorText(error).startsWith(NO_CONFINEMENT) ? programNotConfinedText(program, toolName) : programNotStartedText(program, toolName)
+    const text = rawErrorText(error).startsWith(NO_CONFINEMENT) ? programNotConfinedText(program) : programNotStartedText(program, toolName)
     throw new ToolError(text, '', { cause: error })
   } finally {
     signal.removeEventListener('abort', cancel)
