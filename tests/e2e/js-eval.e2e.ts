@@ -1,8 +1,9 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
 import { filesIn, workDir } from './harness/fixtures'
+import { evalCall, expectReplyEnd as expectEnd } from './harness/jsEval'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
-import { mockChatPath, openAiToolCall, replyText, sendChatReply, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
+import { mockChatPath, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
 import { processExists, runningProgram } from './harness/processes'
 import type { E2EBrowser } from './harness/session'
 import { endedReply, newTab, openToasts, submit } from './harness/thread'
@@ -36,11 +37,6 @@ const CHAT_PATH = mockChatPath(CALLER)
 // code of a call can only have it from the app.
 const APP_TIME_ZONE = 'Asia/Tokyo'
 
-/** A `js_eval` call of the mock model. */
-function evalCall (id: string, code: string, more: Record<string, unknown> = {}): Record<string, unknown> {
-  return openAiToolCall(id, 'js_eval', { code, ...more })
-}
-
 describe('js_eval tool', () => {
   let setup: MockProviderApp
   let browser: E2EBrowser
@@ -48,17 +44,7 @@ describe('js_eval tool', () => {
 
   const chatRequest = (): Promise<HeldRequest> => takeRequest(setup, CHAT_PATH)
 
-  // Answers the request with the last text of a reply, and checks the end
-  // of the reply: its text ends after the blocks of the calls, no work
-  // folder stays, and no error toast shows.
-  async function expectReplyEnd (request: HeldRequest): Promise<void> {
-    await sendChatReply(request.reply, CALLER.modelName)
-    const reply = await endedReply(browser)
-    expect(reply.endsWith(`</dez:tool>\n${replyText(CALLER.modelName)}`)).toBe(true)
-    expect(setup.mock.hasWaitingRequest()).toBe(false)
-    expect(await filesIn(workRoot)).toStrictEqual([])
-    expect(await openToasts(browser, 'error')).toStrictEqual([])
-  }
+  const expectReplyEnd = (request: HeldRequest): Promise<void> => expectEnd(setup, CALLER, request)
 
   beforeAll(async () => {
     setup = await startMockProviderApp(CALLER, {}, { env: { TZ: APP_TIME_ZONE } })

@@ -17,7 +17,7 @@
 //! the user). It has no network, and it gets none of the open files of Dez.
 //! - Linux: Landlock, a part of the kernel since Linux 5.13, for the files,
 //!   and a seccomp filter for the system calls that Landlock does not
-//!   confine (`REFUSED_CALLS`).
+//!   confine (`REFUSED_CALLS`, `OWN_PROCESS_CALLS`).
 //! - macOS: Seatbelt, through `/usr/bin/sandbox-exec`, which ships with the
 //!   OS. It is the only program of the computer that a run starts.
 //!
@@ -27,18 +27,35 @@
 //! its files, and the argument checks of the page (`argumentProblem` in
 //! videoTool.ts) are its only guard. Dez then writes one warning to its log.
 //!
-//! The limits of the confinement:
-//! - The program can read the facts of any file (size, time, owner, and
-//!   extended attributes), not its content. It can change the mode, the
-//!   owner, the times, and the attributes only of a file that it could open.
+//! The limits of the confinement, as an audit with native code in a program
+//! found them (the audit tests of bundled_tools.rs):
+//! - The program can learn the facts of a file whose path it knows (that it
+//!   is there, its size, its time, its owner), not its content, its
+//!   extended attributes, or the names in its folder. It can learn facts
+//!   of the computer too (its name, its kernel). It can change the mode,
+//!   the owner, the times, and the attributes only of a file that it could
+//!   open.
+//! - It can read and change no data of another program, but it can slow a
+//!   program of the same user (its priority, its processors). Linux before
+//!   6.12 has no Landlock scope: there it can also send that program a
+//!   signal.
+//! - It can start a file of the system's library folders, and one that it
+//!   wrote into its folder. That program is under the same rules.
 //! - `REFUSED_CALLS` is a list of calls that Dez knows, so a later kernel
-//!   can add a call that it does not hold.
-//! - Linux before 6.12 has no Landlock scope: the program can send a signal
-//!   to another program of the user.
-//! - The memory limit (`Confinement::data_limit`) is a rule of Linux only.
+//!   can add a call that it does not hold. A list of refused calls also
+//!   leaves the rest of the kernel open to an attack on the kernel itself.
+//! - There is no limit on the disk space of the folders or on the count of
+//!   the programs that a program starts. The memory limit
+//!   (`Confinement::data_limit`) is a rule of Linux only, and it counts
+//!   the private memory of a program: native code can get shared memory,
+//!   which it does not count.
 //! - macOS: the program can also read the files of the system that a
-//!   program needs to start, and the names in the root folder `/`; and it
-//!   can move or link a file between two of its folders.
+//!   program needs to start, and the names in the root folder `/`; it can
+//!   move or link a file between two of its folders, and make a named pipe
+//!   there. The rules on system calls are Linux only: the profile allows
+//!   what it does not deny, so native code in a program can still reach
+//!   other programs of the user (their services, shared memory, signals).
+//!   No audit with native code ran on a Mac.
 
 use std::path::{Path, PathBuf};
 
@@ -165,7 +182,8 @@ pub(crate) fn confined_command(program: &Path, args: &[String], confinement: &Co
 
 // The system calls that no bundled program can make, each with the error
 // that the program gets in its place. All but the first two are here
-// because Landlock does not confine them.
+// because Landlock does not confine them: it guards the open of a file,
+// and each of these reaches data with no open.
 //
 // - `socket`: no socket of any kind, so no network (TCP, UDP, raw), no Unix
 //   socket (D-Bus, the display), and no netlink. The Landlock rule covers
@@ -181,9 +199,27 @@ pub(crate) fn confined_command(program: &Path, args: &[String], confinement: &Co
 //   `utimensat` with no path.
 // - `truncate`: Landlock confines it only since Linux 6.2. A program cuts
 //   a file that it opened (`ftruncate`).
+// - The calls that read the extended attributes of a file by its path: an
+//   attribute can hold private text (the URL that a browser got a file
+//   from). `fgetxattr` and `flistxattr`, which take an open file, stay.
+// - `inotify_add_watch` and `fanotify_init`: a watch tells the names of the
+//   files of a folder as other programs change them, and needs no open.
+// - The shared memory, the message queues, and the semaphores of System V:
+//   a program of the user opens them by a number, not by a path, so it
+//   could read and change the memory that other programs share (the
+//   pictures that an X11 program draws). A segment also stays after the
+//   end of its program, outside of every limit.
+// - `mq_open` and `mq_unlink`, the message queues of POSIX, which a
+//   program names by a name and not by a path. Landlock stops the open of
+//   a queue of another program, but not its delete.
+// - The key rings of the kernel, which hold secrets of the user's session.
+// - `setsid` and `setpgid`: a program cannot leave the process group of
+//   its run, so the end of a run ends every program that it started
+//   (`ProcessGroup` in bundled_tools.rs). Rust puts the program into its
+//   group before this filter is in place.
 //
-// Deno, ffmpeg, and ffprobe run with this list; only `Deno.chmod` and
-// `Deno.utime` fail.
+// Deno, ffmpeg, and ffprobe run with this list; only `Deno.chmod`,
+// `Deno.utime`, and `Deno.watchFs` fail.
 // Linux gives each call that is newer than 5.1 one number on every
 // machine, so the ones that the libc crate does not know for both machines
 // are numbers here (`asm-generic/unistd.h`).
@@ -205,6 +241,33 @@ const REFUSED_CALLS: &[(libc::c_long, libc::c_int)] = &[
     (466, libc::EPERM),
     (469, libc::EPERM),
     (libc::SYS_truncate, libc::EPERM),
+    (libc::SYS_getxattr, libc::EPERM),
+    (libc::SYS_lgetxattr, libc::EPERM),
+    (libc::SYS_listxattr, libc::EPERM),
+    (libc::SYS_llistxattr, libc::EPERM),
+    // getxattrat, listxattrat
+    (464, libc::EPERM),
+    (465, libc::EPERM),
+    (libc::SYS_inotify_add_watch, libc::EPERM),
+    (libc::SYS_fanotify_init, libc::EPERM),
+    (libc::SYS_shmget, libc::EPERM),
+    (libc::SYS_shmat, libc::EPERM),
+    (libc::SYS_shmctl, libc::EPERM),
+    (libc::SYS_msgget, libc::EPERM),
+    (libc::SYS_msgsnd, libc::EPERM),
+    (libc::SYS_msgrcv, libc::EPERM),
+    (libc::SYS_msgctl, libc::EPERM),
+    (libc::SYS_semget, libc::EPERM),
+    (libc::SYS_semop, libc::EPERM),
+    (libc::SYS_semtimedop, libc::EPERM),
+    (libc::SYS_semctl, libc::EPERM),
+    (libc::SYS_mq_open, libc::EPERM),
+    (libc::SYS_mq_unlink, libc::EPERM),
+    (libc::SYS_add_key, libc::EPERM),
+    (libc::SYS_request_key, libc::EPERM),
+    (libc::SYS_keyctl, libc::EPERM),
+    (libc::SYS_setsid, libc::EPERM),
+    (libc::SYS_setpgid, libc::EPERM),
 ];
 
 // The older calls of x86_64 that do the same as a call of `REFUSED_CALLS`.
@@ -221,6 +284,14 @@ const OLD_REFUSED_CALLS: &[(libc::c_long, libc::c_int)] = &[
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
 const OLD_REFUSED_CALLS: &[(libc::c_long, libc::c_int)] = &[];
 
+// The system calls that a program can make only on itself: their first
+// argument names a process, and it must be 0, "this process". With a
+// process id there, `prlimit64` sets the limits of another program of the
+// user, and a limit of 0 ends that program. Landlock does not confine it.
+// The C library always makes the call with 0 (`getrlimit`, `setrlimit`).
+#[cfg(target_os = "linux")]
+const OWN_PROCESS_CALLS: &[libc::c_long] = &[libc::SYS_prlimit64];
+
 // The machine of the programs that Dez ships, as seccomp names it
 // (`linux/audit.h`: the ELF machine with the 64-bit and little-endian
 // flags). A system call number means a call only together with it.
@@ -234,7 +305,8 @@ compile_error!("The seccomp filter of confinement.rs knows only x86_64 and aarch
 // The seccomp filter of a run: a small program (classic BPF) that the
 // kernel runs at each system call of the confined program, and of every
 // program that it starts. A call of `REFUSED_CALLS` fails with its error,
-// and every other call goes on.
+// a call of `OWN_PROCESS_CALLS` on another process fails too, and every
+// other call goes on.
 //
 // A program can also make its calls in the form of another machine, where
 // each call has another number: 32-bit calls on x86_64, and there also the
@@ -268,6 +340,19 @@ fn call_filter() -> Vec<libc::sock_filter> {
         filter.push(step(JUMP_IF_EQUAL, 0, 1, *call as u32));
         filter.push(step(ANSWER, 0, 0, libc::SECCOMP_RET_ERRNO | *error as u32));
     }
+    // The first argument is a process id, which is 32 bits: the kernel
+    // drops the high half of the 64-bit value, so the low half is the
+    // whole test (both machines are little-endian). The load replaces the
+    // call number, so each way ends with an answer.
+    for call in OWN_PROCESS_CALLS {
+        filter.extend([
+            step(JUMP_IF_EQUAL, 0, 4, *call as u32),
+            step(LOAD, 0, 0, offset_of!(libc::seccomp_data, args) as u32),
+            step(JUMP_IF_EQUAL, 0, 1, 0),
+            step(ANSWER, 0, 0, libc::SECCOMP_RET_ALLOW),
+            step(ANSWER, 0, 0, libc::SECCOMP_RET_ERRNO | libc::EPERM as u32),
+        ]);
+    }
     filter.push(step(ANSWER, 0, 0, libc::SECCOMP_RET_ALLOW));
     filter
 }
@@ -300,9 +385,13 @@ fn landlock_rules(program: &Path, confinement: &Confinement) -> Result<Option<st
     use landlock::{ABI, Access, AccessFs, AccessNet, PathBeneath, PathFd, Ruleset, RulesetAttr, RulesetCreatedAttr, Scope};
 
     let every_right = AccessFs::from_all(ABI::V9);
-    // No `MakeSym` in the folder: see the comment of the module.
+    // A program makes only regular files and folders in the folder.
+    // - No `MakeSym`: see the comment of the module.
+    // - No named pipe, socket, or device file: Dez's own file code would
+    //   wait without end at the open of a named pipe that a program left
+    //   in the place of a file.
     let mut folder_rights = every_right;
-    folder_rights.remove(AccessFs::MakeSym);
+    folder_rights.remove(AccessFs::MakeSym | AccessFs::MakeFifo | AccessFs::MakeSock | AccessFs::MakeChar | AccessFs::MakeBlock);
     // With no `Refer`, a move or a link of a file between two folders fails
     // (`EXDEV`), also between two folders below this one. A move in one
     // folder works.

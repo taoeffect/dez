@@ -662,9 +662,10 @@ async fn until_stopped(stopped: &mut watch::Receiver<bool>) {
 // still able to write files. `end` kills every process of the group. The
 // caller calls it while the program is not waited for yet: its process
 // then still holds the group id, so the id can name no other group. The
-// drop ends the group too, for a run whose future is dropped. A program
-// that leaves the group (`setsid`) is not ended; it stays under the OS
-// rule of its run.
+// drop ends the group too, for a run whose future is dropped. On Linux no
+// program leaves the group: the confinement refuses `setsid` and
+// `setpgid`. On macOS a program that leaves it is not ended; it stays
+// under the OS rule of its run.
 struct ProcessGroup(Option<u32>);
 
 impl ProcessGroup {
@@ -1358,8 +1359,9 @@ mod tests {
             }
         }
 
-        // Whether the program of an `ENDLESS` run in this folder still runs.
-        // A program that was ended and waited for has no process any more.
+        // Whether the program whose id is in the file `pid` of this folder
+        // (an `ENDLESS` run does that) still runs. A program that was ended
+        // and waited for has no process any more.
         fn program_is_running(folder: &Path) -> bool {
             let pid = std::fs::read_to_string(folder.join("pid")).expect("pid file");
             std::process::Command::new("/bin/sh")
@@ -1368,6 +1370,19 @@ mod tests {
                 .status()
                 .expect("run kill")
                 .success()
+        }
+
+        // Waits for the end of the program of the file `pid`, for a program
+        // that was started in the background. After the end of its run it
+        // is a child of the system's first program, which waits for it a
+        // moment after its end.
+        async fn program_ended(folder: &Path) -> bool {
+            let mut checks = 0;
+            while program_is_running(folder) && checks < 100 {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                checks += 1;
+            }
+            !program_is_running(folder)
         }
 
         #[test]
@@ -1879,15 +1894,8 @@ mod tests {
             assert_eq!(finished(script(start_one, &exits)).await.ends, exited(0));
             assert_eq!(finished(timed).await.ends, [ToolRunEnd::TimedOut]);
 
-            // The started program is a child of the system's first program
-            // now, which waits for it a moment after its end.
             for folder in [&exits, &times_out] {
-                let mut checks = 0;
-                while program_is_running(folder) && checks < 100 {
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                    checks += 1;
-                }
-                assert!(!program_is_running(folder), "{}", folder.display());
+                assert!(program_ended(folder).await, "{}", folder.display());
             }
         }
 
@@ -2233,6 +2241,486 @@ mod tests {
             assert_ne!(refused.ends, exited(0));
             assert!(refused.stderr.contains(DENIED), "{}", refused.stderr);
             assert!(!written.exists());
+        }
+
+        // The audit of the OS rule (confinement.rs). The tests below take
+        // away the guard of Deno: a script runs with every permission of
+        // Deno, and then with native code, which a bug of V8 can give a
+        // script. So each refusal here is one of the OS rule alone. The
+        // escapes that Deno's own flags stop, and the limits of a run, are
+        // in tests/e2e/js-eval-sandbox.e2e.ts.
+
+        // A Deno run with every permission of Deno. No run of the app has
+        // them: Rust builds the flags (`DENO_RULES`), and no word of the
+        // page is one. Deno refuses `--allow-all` next to the flags of an
+        // app folder, so those go.
+        fn with_every_permission(mut run: ProgramRun) -> ProgramRun {
+            run.args.retain(|arg| !arg.starts_with("--allow-"));
+            run.args.insert(1, "--allow-all".to_string());
+            run
+        }
+
+        // The text of each file that no run may read.
+        const PRIVATE: &str = "private text";
+
+        // The files of an audit that are outside the folders of its run
+        // (the work folder `cache/work/a` and the app folder `my-app`), as
+        // paths in the folder of the test: a file of the user, the files of
+        // the Dez folder, another app, another run, and a temp clip.
+        const PRIVATE_FILES: [&str; 8] = [
+            "private.txt",
+            "config/provider_keys.json",
+            "config/app_state.json",
+            "config/conversations/c.md",
+            "config/assets/images/a.png",
+            "config/apps/other/data.txt",
+            "cache/work/other/data.txt",
+            "cache/media/clip.txt",
+        ];
+
+        fn write_private_files(dir: &Path) {
+            for file in PRIVATE_FILES {
+                let path = dir.join(file);
+                std::fs::create_dir_all(path.parent().expect("a folder")).expect("create");
+                std::fs::write(&path, PRIVATE).expect("write");
+            }
+        }
+
+        // Every file and folder below `dir` that is not in a folder of
+        // `own`, with its mode and the bytes of a file: what an audit run
+        // must leave as it was.
+        fn files_outside(dir: &Path, own: &[PathBuf]) -> Vec<(PathBuf, u32, Vec<u8>)> {
+            let mut files = Vec::new();
+            let mut folders = vec![dir.to_path_buf()];
+            while let Some(folder) = folders.pop() {
+                for entry in std::fs::read_dir(&folder).expect("list") {
+                    let path = entry.expect("entry").path();
+                    if own.contains(&path) {
+                        continue;
+                    }
+                    let metadata = std::fs::symlink_metadata(&path).expect("stat");
+                    // Only a regular file is read: the read of a named
+                    // pipe would wait without end.
+                    let bytes = if metadata.is_file() { std::fs::read(&path).expect("read") } else { Vec::new() };
+                    if metadata.is_dir() {
+                        folders.push(path.clone());
+                    }
+                    files.push((path, metadata.mode(), bytes));
+                }
+            }
+            files.sort();
+            files
+        }
+
+        // The probes of a Deno script that has every permission of Deno.
+        // `__FILES__` is `PRIVATE_FILES`, and `__PORT__` a TCP port of the
+        // test. A `PermissionDenied` here is a refusal of the OS, as Deno
+        // refuses nothing. Every other error shows as it is, so a probe
+        // with a mistake does not count as refused.
+        const DENO_AUDIT: &str = r#"
+            // `fetch` gives the error of the OS as the cause of its own.
+            const refused = (error: Error): boolean => error.name === 'PermissionDenied'
+              || /Permission denied|Operation not permitted/.test(error.message)
+              || (error.cause instanceof Error && refused(error.cause))
+            const outcome = (work: () => unknown) => Promise.resolve().then(work).then(
+              (value) => `ok ${value}`,
+              (error) => refused(error) ? 'refused' : `${error.name}: ${error.message} (${error.cause})`,
+            )
+            // One line for the probes of a file or a folder: `refused`, or
+            // each probe that the OS did not refuse.
+            const report = async (name: string, probes: Record<string, () => unknown>) => {
+              const open: string[] = []
+              for (const [probe, work] of Object.entries(probes)) {
+                const result = await outcome(work)
+                if (result !== 'refused') open.push(`${probe} ${result}`)
+              }
+              console.log(`${name}: ${open.join(', ') || 'refused'}`)
+            }
+            // The folder of the test: the work folder is `cache/work/a`.
+            const above = '../../..'
+
+            console.log(`own folder: ${await outcome(() => Deno.writeTextFile('made.txt', 'made').then(() => Deno.readTextFile('made.txt')))}`)
+            console.log(`app folder: ${await outcome(() => Deno.readTextFile(`${above}/config/apps/my-app/data.txt`))}`)
+            for (const file of __FILES__) {
+              const path = `${above}/${file}`
+              await report(file, {
+                read: () => Deno.readTextFile(path),
+                import: () => import(path, { with: { type: 'text' } }).then((module) => module.default),
+                write: () => Deno.writeTextFile(path, 'changed'),
+                append: () => Deno.writeTextFile(path, 'more', { append: true }),
+                truncate: () => Deno.truncate(path),
+                remove: () => Deno.remove(path),
+                rename: () => Deno.rename(path, `${path}.moved`),
+                chmod: () => Deno.chmod(path, 0o666),
+                'copy out': () => Deno.copyFile(path, 'copy.txt'),
+                'copy over': () => Deno.copyFile('made.txt', path),
+                symlink: () => Deno.symlink(path, 'link.txt'),
+              })
+            }
+            for (const folder of ['.', 'cache', 'cache/work', 'cache/work/other', 'config', 'config/apps', 'config/apps/other']) {
+              const path = `${above}/${folder}`
+              await report(`folder ${folder}`, {
+                list: async () => (await Array.fromAsync(Deno.readDir(path))).map((entry) => entry.name).join(' '),
+                'make a file': () => Deno.writeTextFile(`${path}/new.txt`, 'new'),
+                'make a folder': () => Deno.mkdir(`${path}/new`),
+              })
+            }
+            await report('imports', {
+              module: () => import(`${above}/private.ts`).then((module) => module.text),
+              JSON: () => import(`${above}/config/provider_keys.json`, { with: { type: 'json' } }).then((module) => JSON.stringify(module.default)),
+            })
+            await report('network', {
+              connect: () => Deno.connect({ hostname: '127.0.0.1', port: __PORT__ }).then(() => 'connected'),
+              fetch: () => fetch('http://127.0.0.1:__PORT__/', { signal: AbortSignal.timeout(2000) }).then(() => 'answered'),
+            })
+        "#;
+
+        // The lines of `DENO_AUDIT` for a run that the OS rule holds.
+        fn deno_audit_lines() -> String {
+            let mut lines = vec!["own folder: ok made".to_string(), "app folder: ok app data".to_string()];
+            lines.extend(PRIVATE_FILES.iter().map(|file| format!("{file}: refused")));
+            lines.extend(["folder .", "folder cache", "folder cache/work", "folder cache/work/other", "folder config", "folder config/apps", "folder config/apps/other", "imports", "network"].map(|name| format!("{name}: refused")));
+            lines.join("\n") + "\n"
+        }
+
+        // The end of a Deno script that ran with every permission of Deno
+        // in the work folder `cache/work/a`, next to the private files. It
+        // fails when the run changed a file outside its work folder and the
+        // app folder `my-app`, or when it wrote the text of a private file.
+        async fn audited(dir: &Path, run: ToolRun) -> Sent {
+            let roots = real_roots(dir);
+            write_private_files(dir);
+            let run = with_every_permission(resolved_run(run, &roots).expect("a run that the rules allow"));
+            let own = [roots.cache.join("work").join("a"), roots.app.join(APPS_FOLDER).join("my-app")];
+            let before = files_outside(dir, &own);
+
+            let sent = finished(run).await;
+
+            assert!(files_outside(dir, &own) == before, "the run changed a file outside its folders\n{}\n{}", sent.stdout, sent.stderr);
+            assert!(!sent.stdout.contains(PRIVATE) && !sent.stderr.contains(PRIVATE), "{NOT_CONFINED}\n{}\n{}", sent.stdout, sent.stderr);
+            sent
+        }
+
+        // A script with every permission of Deno reads and changes its work
+        // folder and its app folder, and nothing else: no file of the user
+        // or of Dez, no other app, no other run, and no server.
+        #[tokio::test]
+        async fn deno_with_every_permission_of_deno_stays_in_the_folders_of_its_run() {
+            let dir = TempDir::new("tools-audit-deno");
+            let app = real_roots(&dir.0).app.join(APPS_FOLDER).join("my-app");
+            std::fs::create_dir_all(&app).expect("create");
+            std::fs::write(app.join("data.txt"), "app data").expect("write");
+            std::fs::write(dir.0.join("private.ts"), format!("export const text = '{PRIVATE}'\n")).expect("write");
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listen");
+            listener.set_nonblocking(true).expect("non-blocking");
+            let text = DENO_AUDIT
+                .replace("__FILES__", &json!(PRIVATE_FILES).to_string())
+                .replace("__PORT__", &listener.local_addr().expect("address").port().to_string());
+
+            let sent = audited(&dir.0, ToolRun { app_folder: Some("my-app".to_string()), ..deno_run(&dir.0, "a", &text) }).await;
+
+            assert_eq!(sent.stdout, deno_audit_lines(), "{NOT_CONFINED}\n{}", sent.stderr);
+            assert_eq!(sent.ends, exited(0), "{}", sent.stderr);
+            assert_eq!(listener.accept().map(|_| ()).map_err(|error| error.kind()), Err(std::io::ErrorKind::WouldBlock));
+        }
+
+        // One probe of an audit script on Linux: its name, its code (an
+        // expression of the script), and its outcome under the OS rule.
+        #[cfg(target_os = "linux")]
+        type Probe = (&'static str, &'static str, &'static str);
+
+        // The probes as an object of the script: a function for each name.
+        #[cfg(target_os = "linux")]
+        fn probe_object(probes: &[Probe]) -> String {
+            let entries: Vec<String> = probes.iter().map(|(name, code, _)| format!("{}: () => {code}", json!(name))).collect();
+            format!("{{\n{}\n}}", entries.join(",\n"))
+        }
+
+        // What the script writes when each probe has the outcome of its row.
+        #[cfg(target_os = "linux")]
+        fn probe_lines(probes: &[Probe]) -> String {
+            probes.iter().map(|(name, _, outcome)| format!("{name}: {outcome}\n")).collect()
+        }
+
+        // The script of `LINUX_DENO_PROBES`. An outcome holds the name of
+        // the error and the error number of the OS: 13 (`EACCES`) is a
+        // refusal of Landlock, 1 (`EPERM`) one of the call filter, and 18
+        // (`EXDEV`) the answer of Landlock to a link between two folders.
+        #[cfg(target_os = "linux")]
+        const LINUX_DENO_AUDIT: &str = r#"
+            const outcome = (work: () => unknown) => Promise.resolve().then(work).then(
+              (value) => `ok ${value}`,
+              (error) => `${error.name} ${/os error (\d+)/.exec(error.message)?.[1] ?? error.message}`,
+            )
+            // The folder of the test: the work folder is `cache/work/a`.
+            const above = '../../..'
+            const output = (program: string, args: string[]) => new Deno.Command(program, { args }).output().then((output) => new TextDecoder().decode(output.stdout).trim())
+            const readsPrivateFile = `Deno.readTextFile('${above}/private.txt').then(console.log, (error) => console.log(error.name))`
+            await Deno.writeTextFile('made.txt', 'made')
+            const probes: Record<string, () => unknown> = __PROBES__
+            for (const [name, work] of Object.entries(probes)) console.log(`${name}: ${await outcome(work)}`)
+        "#;
+
+        #[cfg(target_os = "linux")]
+        const LINUX_DENO_PROBES: &[Probe] = &[
+            ("users of the computer", "Deno.readTextFile('/etc/passwd')", "PermissionDenied 13"),
+            ("own variables file", "Deno.readTextFile('/proc/self/environ')", "PermissionDenied 13"),
+            ("variables of Dez", "Deno.readTextFile(`/proc/${Deno.ppid}/environ`)", "PermissionDenied 13"),
+            ("root folder", "Array.fromAsync(Deno.readDir('/'))", "PermissionDenied 13"),
+            ("temp folder", "Array.fromAsync(Deno.readDir('/tmp'))", "PermissionDenied 13"),
+            ("mode of an own file", "Deno.chmod('made.txt', 0o777)", "PermissionDenied 1"),
+            ("times of an own file", "Deno.utime('made.txt', 0, 0)", "PermissionDenied 1"),
+            ("watch of the own folder", "Deno.watchFs('.').close()", "PermissionDenied 1"),
+            ("hard link to a private file", "Deno.link(`${above}/private.txt`, 'hard.txt')", "Error 18"),
+            ("move of a private file in", "Deno.rename(`${above}/private.txt`, 'moved.txt')", "PermissionDenied 13"),
+            ("move of an own file out", "Deno.rename('made.txt', `${above}/moved.txt`)", "PermissionDenied 13"),
+            ("Unix socket", "Deno.connect({ transport: 'unix', path: `${above}/socket` }).then(() => 'connected')", "PermissionDenied 1"),
+            ("server", "Deno.listen({ port: 0 }).close()", "PermissionDenied 1"),
+            ("network interfaces", "Deno.networkInterfaces().length", "PermissionDenied 1"),
+            ("shell", "output('/bin/sh', ['-c', 'echo started'])", "PermissionDenied 13"),
+            // Deno can start its own program. That Deno has every
+            // permission of Deno too, and the same OS rule.
+            ("Deno that the script started", "output(Deno.execPath(), ['eval', readsPrivateFile])", "ok PermissionDenied"),
+            ("variables", "Object.keys(Deno.env.toObject()).sort().join(' ')", "ok DENO_DIR DENO_NO_UPDATE_CHECK NO_COLOR"),
+        ];
+
+        // What a script with every permission of Deno gets of the computer
+        // on Linux: no file of the system, nothing of Dez's process, no
+        // socket, no other program, and no variable of Dez. A Deno that it
+        // starts is under the same rules.
+        #[cfg(target_os = "linux")]
+        #[tokio::test]
+        async fn deno_with_every_permission_of_deno_gets_nothing_of_the_computer() {
+            let dir = TempDir::new("tools-audit-linux");
+            let socket = std::os::unix::net::UnixListener::bind(dir.0.join("socket")).expect("listen");
+            socket.set_nonblocking(true).expect("non-blocking");
+            let text = LINUX_DENO_AUDIT.replace("__PROBES__", &probe_object(LINUX_DENO_PROBES));
+
+            let sent = audited(&dir.0, deno_run(&dir.0, "a", &text)).await;
+
+            assert_eq!(sent.stdout, probe_lines(LINUX_DENO_PROBES), "{}", sent.stderr);
+            assert_eq!(sent.ends, exited(0), "{}", sent.stderr);
+            assert_eq!(socket.accept().map(|_| ()).map_err(|error| error.kind()), Err(std::io::ErrorKind::WouldBlock));
+        }
+
+        // The numbers of system calls, by the names of their constants, as
+        // the JSON text of an object.
+        #[cfg(target_os = "linux")]
+        macro_rules! call_numbers {
+            ($($name:ident),* $(,)?) => { json!(std::collections::BTreeMap::from([$((stringify!($name), libc::$name)),*])).to_string() };
+        }
+
+        // The script of `NATIVE_PROBES`: system calls from native code.
+        // Deno loads the C library and calls its `syscall`, so no code of
+        // Deno is between the script and the kernel. A bug of V8 can give a
+        // script the same. An outcome is `ok` or the name of the error.
+        // `__CALLS__` holds the numbers of the calls on this processor.
+        #[cfg(target_os = "linux")]
+        const NATIVE_AUDIT: &str = r#"
+            const libc = Deno.dlopen('libc.so.6', {
+              __errno_location: { parameters: [], result: 'pointer' },
+              syscall: { parameters: ['i64', 'i64', 'i64', 'i64', 'i64', 'i64', 'i64'], result: 'i64' },
+            })
+            // `fchmodat2`, `getxattrat`, and `listxattrat` have one number
+            // on every processor, and the libc crate does not name them.
+            const CALLS: Record<string, number> = { ...__CALLS__, fchmodat2: 452, getxattrat: 464, listxattrat: 465 }
+            const ERRORS: Record<number, string> = { 1: 'EPERM', 2: 'ENOENT', 13: 'EACCES', 14: 'EFAULT', 18: 'EXDEV', 22: 'EINVAL', 38: 'ENOSYS' }
+            // The kernel reads these bytes at a later call, so they must
+            // stay.
+            const kept: Uint8Array[] = []
+            const address = (bytes: Uint8Array) => {
+              kept.push(bytes)
+              return Deno.UnsafePointer.value(Deno.UnsafePointer.of(bytes))
+            }
+            const text = (value: string) => address(new TextEncoder().encode(`${value}\0`))
+            const buffer = (size: number) => address(new Uint8Array(size))
+            // Two numbers of 64 bits: a memory range (`struct iovec`) or a
+            // limit (`struct rlimit`).
+            const pair = (first: bigint, second: bigint) => address(new Uint8Array(new BigUint64Array([first, second]).buffer))
+            const raw = (name: string, ...args: (number | bigint)[]) => {
+              const six = [...args, 0, 0, 0, 0, 0, 0].slice(0, 6).map(BigInt) as [bigint, bigint, bigint, bigint, bigint, bigint]
+              return libc.symbols.syscall(BigInt(CALLS[name]), ...six)
+            }
+            // The error number is the one of the last call.
+            const outcome = (result: bigint) => {
+              if (result !== -1n) return 'ok'
+              const error = new Deno.UnsafePointerView(libc.symbols.__errno_location()!).getInt32()
+              return ERRORS[error] ?? `error ${error}`
+            }
+            const call = (name: string, ...args: (number | bigint)[]) => outcome(raw(name, ...args))
+
+            const AT_FDCWD = -100
+            // Dez is the test program here.
+            const dez = Deno.ppid
+            const file = '../../../private.txt'
+            const attribute = 'user.dez-audit'
+            // A key that no program uses, so that no probe makes or opens
+            // shared memory, a message queue, or a semaphore.
+            const key = 0x64657a41
+            const watches = raw('SYS_inotify_init1', 0)
+            const watchesOutcome = outcome(watches)
+            const dezProcess = raw('SYS_pidfd_open', dez, 0)
+            const dezProcessOutcome = outcome(dezProcess)
+            const probes: Record<string, () => string> = __PROBES__
+            for (const [name, probe] of Object.entries(probes)) console.log(`${name}: ${probe()}`)
+        "#;
+
+        // The probes of native code.
+        // - Only calls that every processor has (`openat`, not `open`).
+        // - No probe changes something outside the run when the OS rule
+        //   fails: a key that no program has, a signal with the number 0, a
+        //   trace that does not stop Dez (`PTRACE_SEIZE`).
+        // - `EACCES` and `EXDEV` come from Landlock, and so does the `EPERM`
+        //   of the probes of Dez's process from "memory of Dez" to
+        //   `pidfd_send_signal`. `ENOSYS` and the other `EPERM` come from
+        //   the call filter, but the one of "more memory": the kernel lets
+        //   no program raise its own limit.
+        // - `setsid` is not here: the kernel refuses it for the first
+        //   program of a group, with or without the filter.
+        #[cfg(target_os = "linux")]
+        const NATIVE_PROBES: &[Probe] = &[
+            ("TCP socket", "call('SYS_socket', 2, 1, 0)", "EPERM"),
+            ("UDP socket", "call('SYS_socket', 2, 2, 0)", "EPERM"),
+            ("Unix socket", "call('SYS_socket', 1, 1, 0)", "EPERM"),
+            ("netlink socket", "call('SYS_socket', 16, 3, 0)", "EPERM"),
+            ("io_uring", "call('SYS_io_uring_setup', 4, buffer(128))", "ENOSYS"),
+            // Files outside the run.
+            ("open for a read", "call('SYS_openat', AT_FDCWD, text(file), 0)", "EACCES"),
+            ("open for a write", "call('SYS_openat', AT_FDCWD, text(file), 1)", "EACCES"),
+            ("memory file of Dez", "call('SYS_openat', AT_FDCWD, text(`/proc/${dez}/mem`), 0)", "EACCES"),
+            ("variables of Dez", "call('SYS_openat', AT_FDCWD, text(`/proc/${dez}/environ`), 0)", "EACCES"),
+            ("folder of Dez", "call('SYS_readlinkat', AT_FDCWD, text(`/proc/${dez}/cwd`), buffer(256), 256)", "EACCES"),
+            ("hard link", "call('SYS_linkat', AT_FDCWD, text(file), AT_FDCWD, text('hard.txt'), 0)", "EXDEV"),
+            ("symlink", "call('SYS_symlinkat', text(file), AT_FDCWD, text('link.txt'))", "EACCES"),
+            ("named pipe", "call('SYS_mknodat', AT_FDCWD, text('pipe'), 0o010600, 0)", "EACCES"),
+            ("socket file", "call('SYS_mknodat', AT_FDCWD, text('socket'), 0o140600, 0)", "EACCES"),
+            // The facts of a file, which need no open of the file.
+            ("fchmodat", "call('SYS_fchmodat', AT_FDCWD, text(file), 0o666)", "EPERM"),
+            ("fchmodat2", "call('fchmodat2', AT_FDCWD, text(file), 0o666, 0)", "EPERM"),
+            ("fchownat", "call('SYS_fchownat', AT_FDCWD, text(file), -1, -1, 0)", "EPERM"),
+            ("utimensat", "call('SYS_utimensat', AT_FDCWD, text(file), 0, 0)", "EPERM"),
+            ("truncate", "call('SYS_truncate', text(file), 0)", "EPERM"),
+            ("setxattr", "call('SYS_setxattr', text(file), text(attribute), text('value'), 5, 0)", "EPERM"),
+            ("removexattr", "call('SYS_removexattr', text(file), text(attribute))", "EPERM"),
+            ("getxattr", "call('SYS_getxattr', text(file), text(attribute), buffer(64), 64)", "EPERM"),
+            ("lgetxattr", "call('SYS_lgetxattr', text(file), text(attribute), buffer(64), 64)", "EPERM"),
+            ("listxattr", "call('SYS_listxattr', text(file), buffer(256), 256)", "EPERM"),
+            ("llistxattr", "call('SYS_llistxattr', text(file), buffer(256), 256)", "EPERM"),
+            ("getxattrat", "call('getxattrat', AT_FDCWD, text(file), 0, text(attribute), buffer(16), 16)", "EPERM"),
+            ("listxattrat", "call('listxattrat', AT_FDCWD, text(file), 0, buffer(256), 256)", "EPERM"),
+            ("inotify_init1", "watchesOutcome", "ok"),
+            ("inotify_add_watch", "call('SYS_inotify_add_watch', watches, text('../../..'), 0xfff)", "EPERM"),
+            // The flag (`FAN_REPORT_FID`) is the form that the kernel lets
+            // a program that is not root make.
+            ("fanotify_init", "call('SYS_fanotify_init', 0x200, 0)", "EPERM"),
+            // The process of Dez.
+            ("memory of Dez", "call('SYS_process_vm_readv', dez, pair(buffer(8), 8n), 1, pair(4096n, 8n), 1, 0)", "EPERM"),
+            ("ptrace", "call('SYS_ptrace', 0x4206, dez, 0, 0)", "EPERM"),
+            ("kcmp", "call('SYS_kcmp', Deno.pid, dez, 0, 0, 0)", "EPERM"),
+            ("pidfd_open", "dezProcessOutcome", "ok"),
+            ("pidfd_getfd", "call('SYS_pidfd_getfd', dezProcess, 0, 0)", "EPERM"),
+            ("kill", "call('SYS_kill', dez, 0)", "EPERM"),
+            ("pidfd_send_signal", "call('SYS_pidfd_send_signal', dezProcess, 0, 0, 0)", "EPERM"),
+            ("limits of Dez", "call('SYS_prlimit64', dez, 7, 0, buffer(16))", "EPERM"),
+            ("own limits", "call('SYS_prlimit64', 0, 7, 0, buffer(16))", "ok"),
+            ("more memory", "call('SYS_prlimit64', 0, 2, pair(2n ** 33n, 2n ** 33n), 0)", "EPERM"),
+            ("setpgid", "call('SYS_setpgid', 0, 0)", "EPERM"),
+            // The shared objects of the kernel.
+            ("shmget", "call('SYS_shmget', key, 4096, 0o600)", "EPERM"),
+            ("shmat", "call('SYS_shmat', -1, 0, 0)", "EPERM"),
+            ("msgget", "call('SYS_msgget', key, 0o600)", "EPERM"),
+            ("semget", "call('SYS_semget', key, 1, 0o600)", "EPERM"),
+            ("mq_open", "call('SYS_mq_open', text('/dez-audit'), 0, 0, 0)", "EPERM"),
+            ("mq_unlink", "call('SYS_mq_unlink', text('/dez-audit'))", "EPERM"),
+            ("add_key", "call('SYS_add_key', text('user'), text('dez-audit'), text('value'), 5, -2)", "EPERM"),
+            ("request_key", "call('SYS_request_key', text('user'), text('dez-audit'), 0, 0)", "EPERM"),
+            ("keyctl", "call('SYS_keyctl', 0, -3, 0)", "EPERM"),
+        ];
+
+        // Native code in a program reaches no file outside its run, no
+        // socket, nothing of Dez's process, and none of the kernel's shared
+        // objects (shared memory, queues, key rings).
+        #[cfg(target_os = "linux")]
+        #[tokio::test]
+        async fn native_code_in_a_program_reaches_nothing_outside_its_run() {
+            let dir = TempDir::new("tools-audit-native");
+            let calls = call_numbers!(
+                SYS_socket, SYS_io_uring_setup, SYS_openat, SYS_readlinkat, SYS_linkat, SYS_symlinkat, SYS_mknodat,
+                SYS_fchmodat, SYS_fchownat, SYS_utimensat, SYS_truncate, SYS_setxattr, SYS_removexattr,
+                SYS_getxattr, SYS_lgetxattr, SYS_listxattr, SYS_llistxattr,
+                SYS_inotify_init1, SYS_inotify_add_watch, SYS_fanotify_init,
+                SYS_process_vm_readv, SYS_ptrace, SYS_kcmp, SYS_pidfd_open, SYS_pidfd_getfd, SYS_kill, SYS_pidfd_send_signal,
+                SYS_prlimit64, SYS_setpgid,
+                SYS_shmget, SYS_shmat, SYS_msgget, SYS_semget, SYS_mq_open, SYS_mq_unlink,
+                SYS_add_key, SYS_request_key, SYS_keyctl,
+            );
+            let text = NATIVE_AUDIT.replace("__CALLS__", &calls).replace("__PROBES__", &probe_object(NATIVE_PROBES));
+            let mut lines = probe_lines(NATIVE_PROBES);
+            // Landlock keeps a program from a signal to a program outside
+            // its run only since its version 6 (Linux 6.12): a limit that
+            // confinement.rs states. The call with these arguments gives
+            // the version.
+            // SAFETY: the kernel reads no memory for this flag.
+            let landlock_version = unsafe { libc::syscall(libc::SYS_landlock_create_ruleset, 0 as libc::c_ulong, 0 as libc::c_ulong, 1 as libc::c_ulong) };
+            if landlock_version < 6 {
+                lines = lines.replace("kill: EPERM", "kill: ok").replace("pidfd_send_signal: EPERM", "pidfd_send_signal: ok");
+            }
+
+            let sent = audited(&dir.0, deno_run(&dir.0, "a", &text)).await;
+
+            assert_eq!(sent.stdout, lines, "{}", sent.stderr);
+            assert_eq!(sent.ends, exited(0), "{}", sent.stderr);
+        }
+
+        // The end of a run ends the process group of its program
+        // (`ProcessGroup`). So no program may leave the group, with a new
+        // session (`setsid`) or a new group (`setpgid`, which the job
+        // control of bash calls): it would go on after the run, and could
+        // still write files.
+        #[cfg(target_os = "linux")]
+        #[tokio::test]
+        async fn a_program_cannot_leave_the_process_group_of_its_run() {
+            let dir = TempDir::new("tools-audit-group");
+            let (session, group) = (dir.0.join("session"), dir.0.join("group"));
+            // `setsid` starts its program only in a new session.
+            let new_session = "/usr/bin/setsid /bin/true; echo \"new session: $?\"; /usr/bin/setsid /bin/sleep 60 > /dev/null 2>&1 & echo $! > pid";
+            // With `set -m`, bash puts each program that it starts into a
+            // group of its own, and goes on when it cannot.
+            let new_group = "set -m; /bin/sleep 60 > /dev/null 2>&1 & echo $! > pid; echo started";
+
+            let in_session = finished(script(new_session, &session)).await;
+            let in_group = finished(program_run("/bin/bash", &["-c", new_group], &group)).await;
+
+            assert_eq!((in_session.stdout.as_str(), in_session.ends), ("new session: 1\n", exited(0)), "{}", in_session.stderr);
+            assert_eq!((in_group.stdout.as_str(), in_group.ends), ("started\n", exited(0)), "{}", in_group.stderr);
+            for folder in [&session, &group] {
+                assert!(program_ended(folder).await, "{}", folder.display());
+            }
+        }
+
+        // A program gets no open file of Dez: here a socket of the test
+        // that is open for the programs that the test starts.
+        #[cfg(target_os = "linux")]
+        #[tokio::test]
+        async fn a_program_gets_no_open_file_of_dez() {
+            use std::io::Read;
+            use std::os::fd::AsRawFd;
+
+            let dir = TempDir::new("tools-audit-open-files");
+            let (mut ours, theirs) = std::os::unix::net::UnixStream::pair().expect("a socket pair");
+            ours.set_nonblocking(true).expect("non-blocking");
+            // Rust opens every file with the mark that closes it at the
+            // start of a program. A library of Dez can open one without.
+            // SAFETY: the call changes only a flag of the test's own file.
+            assert_eq!(unsafe { libc::fcntl(theirs.as_raw_fd(), libc::F_SETFD, 0) }, 0);
+            // bash and not sh: dash takes only a file number of one digit.
+            let write = format!("echo text >&{}; echo done", theirs.as_raw_fd());
+
+            let sent = finished(program_run("/bin/bash", &["-c", &write], &dir.0.join("work"))).await;
+
+            assert_eq!(sent.stdout, "done\n");
+            assert!(sent.stderr.contains("Bad file descriptor"), "{}", sent.stderr);
+            assert_eq!(ours.read(&mut [0; 8]).map_err(|error| error.kind()), Err(std::io::ErrorKind::WouldBlock));
         }
     }
 }

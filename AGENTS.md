@@ -368,7 +368,7 @@ Brief comments are encouraged above functions that do anything non-trivial expla
 - E2E specs that restart the app use `MockProviderApp.relaunch()`, after a wait for `model_cache.json` with `readModelCache` (`tests/e2e/harness/fixtures.ts`).
 - E2E seeds turn the reply-end alerts off (`quietAppState`); alert specs use the fake notification server (`tests/e2e/harness/notificationServer.ts`).
 - E2E clips must be in a format that the CI GStreamer packages decode (VP9 in webm or mp4, wav, Opus in WebM; `.github/workflows/e2e.yml`).
-- E2E bundled tools: the specs run the real ffmpeg, ffprobe, and Deno of the debug build (`tests/e2e/bundled-tools.e2e.ts`, `tests/e2e/video-tool.e2e.ts`, `tests/e2e/js-eval.e2e.ts`).
+- E2E bundled tools: the specs run the real ffmpeg, ffprobe, and Deno of the debug build (`tests/e2e/bundled-tools.e2e.ts`, `tests/e2e/video-tool.e2e.ts`, `tests/e2e/js-eval.e2e.ts`, and the sandbox audit of Deno, `tests/e2e/js-eval-sandbox.e2e.ts`).
 - A `browser.execute` result must not be an object with a set `error` field: webdriverio takes it for a failure of the script.
 - E2E specs that open a URL call `stopOpenUrl` (`tests/e2e/harness/dom.ts`), so no browser opens.
 - **No display server** (every spec fails with `Hook timed out in 120000ms` in `beforeAll`): run under headless `kwin_wayland`; the recipe is in `vitest.e2e.config.ts`.
