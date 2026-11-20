@@ -164,14 +164,23 @@ export interface ShownAppFrame {
   offCover: number | null
 }
 
+// The frame hosts of the apps that run in the active editor.
+const APP_HOSTS = '.cm-scroller > .dez-app-frame'
+
+/** The selector of the frame host of the app `app` that runs in the active
+ *  editor. */
+export function runningAppHost (app: string): string {
+  return `${APP_HOSTS}[data-app="${app}"]`
+}
+
 /** The frame hosts of the active editor, read two frames after the last
  *  change, so that the layout work of that change is done. */
 export async function shownAppFrames (browser: E2EBrowser): Promise<ShownAppFrame[]> {
-  return browser.execute(() => new Promise<ShownAppFrame[]>((resolve) => {
+  return browser.execute((hosts: string) => new Promise<ShownAppFrame[]>((resolve) => {
     requestAnimationFrame(() => requestAnimationFrame(() => {
       const EDGES = ['left', 'top', 'right', 'bottom'] as const
       const windowBox = { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight }
-      resolve(Array.from(document.querySelectorAll<HTMLElement>('.cm-scroller > .dez-app-frame'), (host) => {
+      resolve(Array.from(document.querySelectorAll<HTMLElement>(hosts), (host) => {
         const place = document.querySelector(`.cm-content [data-app-frame-place="${host.dataset.run}"]`)?.getBoundingClientRect()
         const at = host.getBoundingClientRect()
         const off = (box: Record<typeof EDGES[number], number>): number => Math.max(...EDGES.map((edge) => Math.abs(at[edge] - box[edge])))
@@ -187,7 +196,7 @@ export async function shownAppFrames (browser: E2EBrowser): Promise<ShownAppFram
         }
       }))
     }))
-  }))
+  }), APP_HOSTS)
 }
 
 /** The bar of the frame host of one app that runs. */
@@ -202,11 +211,11 @@ export interface ShownAppBar {
 
 /** The bars of the frame hosts of the active editor. */
 export async function shownAppBars (browser: E2EBrowser): Promise<ShownAppBar[]> {
-  return browser.execute(() => Array.from(document.querySelectorAll<HTMLElement>('.cm-scroller > .dez-app-frame'), (host): ShownAppBar => ({
+  return browser.execute((hosts: string) => Array.from(document.querySelectorAll<HTMLElement>(hosts), (host): ShownAppBar => ({
     app: host.dataset.app ?? null,
     text: Array.from(host.querySelectorAll('.dez-app-frame__name, .dez-app-frame__size'), (part) => part.textContent ?? '').join('\n'),
     buttons: Array.from(host.querySelectorAll('.dez-app-frame__bar button'), (button) => button.getAttribute('title') ?? ''),
-  })))
+  })), APP_HOSTS)
 }
 
 /** Waits until the app `app` that runs fills the screen (`on`), or until
@@ -219,11 +228,11 @@ export async function waitForAppFullscreen (browser: E2EBrowser, app: string, on
   let sizeBefore = ''
   try {
     await browser.waitUntil(async () => {
-      state = await browser.execute((name: string) => ({
-        host: document.fullscreenElement?.matches(`.cm-scroller > .dez-app-frame[data-app="${name}"]`) ?? false,
-        button: document.querySelector(`.cm-scroller > .dez-app-frame[data-app="${name}"][data-fullscreen]`) !== null,
+      state = await browser.execute((host: string) => ({
+        host: document.fullscreenElement?.matches(host) ?? false,
+        button: document.querySelector(`${host}[data-fullscreen]`) !== null,
         size: `${window.innerWidth}x${window.innerHeight}`,
-      }), app)
+      }), runningAppHost(app))
       const atRest = state.host === on && state.button === on && state.size === sizeBefore
       sizeBefore = state.size
       return atRest
@@ -236,7 +245,7 @@ export async function waitForAppFullscreen (browser: E2EBrowser, app: string, on
 // The frame of the app `app` that runs in the active editor (the first one,
 // when more than one card of the app runs).
 function runningAppFrame (app: string): string {
-  return `.cm-scroller > .dez-app-frame[data-app="${app}"] iframe`
+  return `${runningAppHost(app)} iframe`
 }
 
 /** Runs `work` in the page of the app `app` that runs in the active editor

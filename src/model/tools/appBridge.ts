@@ -107,7 +107,13 @@ export function appCall(selector: string, args: readonly unknown[]): AppCall {
     }
     return { selector, blob }
   }
-  throw new AppCallError(`Dez has no selector ${JSON.stringify(selector)} for an app. An app can call ${APP_READ_ASSET} and ${APP_SAVE_ASSET}, and no Dez tool.`)
+  throw new AppCallError(noAppSelectorText(selector))
+}
+
+/** The refusal of a call of a page with `selector`, which no app can
+ *  call. */
+export function noAppSelectorText(selector: string): string {
+  return `Dez has no selector ${JSON.stringify(selector)} for an app. An app can call ${APP_READ_ASSET} and ${APP_SAVE_ASSET}, and no Dez tool.`
 }
 
 /** What a save gives the page: the id of the new asset, or null when it

@@ -3,12 +3,13 @@ import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { appTagText } from '../../src/model/chat/appTags'
-import { SAVE_NEEDS_DRAFT_TEXT, SAVE_NEEDS_USER_TEXT } from '../../src/model/tools/appBridge'
+import { noAppSelectorText, SAVE_NEEDS_DRAFT_TEXT, SAVE_NEEDS_USER_TEXT } from '../../src/model/tools/appBridge'
 import {
   appFolderSize,
   inRunningApp,
   movingAppFiles,
   pageFrameGuards,
+  runningAppHost,
   runningAppPoint,
   seedApp,
   shownAppBars,
@@ -140,7 +141,7 @@ const NOTES_POSTER: ShownAppCard = { app: 'notes', state: 'run', text: 'notes\nK
 const LONG_TEXT = Array.from({ length: 300 }, (_, index) => `Line ${index + 1}`).join('\n')
 
 // The part `part` of the frame host of the app `app` that runs.
-const hostPart = (app: string, part: string): string => `.cm-scroller > .dez-app-frame[data-app="${app}"] ${part}`
+const hostPart = (app: string, part: string): string => `${runningAppHost(app)} ${part}`
 
 const NOTES_CARD = '.cm-content .dez-app[data-app="notes"]'
 const RUN = `${NOTES_CARD} .dez-app__run`
@@ -879,8 +880,7 @@ describe('apps in a conversation', () => {
     ])
 
     // The page calls no selector of Dez's own page.
-    const refused = (selector: string): Outcome<unknown> =>
-      ({ refused: `Dez has no selector "${selector}" for an app. An app can call dez.app/readAsset and dez.app/saveAsset, and no Dez tool.` })
+    const refused = (selector: string): Outcome<unknown> => ({ refused: noAppSelectorText(selector) })
     expect(await inRunningApp(browser, 'board', () => browser.execute(async () => {
       const outcome = Reflect.get(window, 'outcome') as (call: Promise<unknown>) => Promise<Outcome<unknown>>
       const dez = Reflect.get(window, 'dez') as { sbp: (selector: string, ...args: unknown[]) => Promise<unknown> }
@@ -918,7 +918,7 @@ describe('apps in a conversation', () => {
       window.removeEventListener('message', listen)
       return got
     }))
-    expect(answers).toStrictEqual([[904, false, 'Dez has no selector "dez.model/tabs/list" for an app. An app can call dez.app/readAsset and dez.app/saveAsset, and no Dez tool.']])
+    expect(answers).toStrictEqual([[904, false, noAppSelectorText('dez.model/tabs/list')]])
 
     // A save puts a file into the message of the user, so Dez takes none
     // while the user does not work in the app: the editor has the keyboard,
@@ -960,7 +960,7 @@ describe('apps in a conversation', () => {
     await waitFor(browser, hostPart('board', 'iframe'))
     await waitForValue(browser, 'the page of the app', () => inRunningApp(browser, 'board', () => browser.execute(() => typeof Reflect.get(window, 'outcome'))), 'function')
 
-    const refused = 'Dez has no selector "dez.model/tabs/list" for an app. An app can call dez.app/readAsset and dez.app/saveAsset, and no Dez tool.'
+    const refused = noAppSelectorText('dez.model/tabs/list')
     expect(await inRunningApp(browser, 'board', () => browser.execute(async () => {
       const outcome = Reflect.get(window, 'outcome') as (call: Promise<unknown>) => Promise<Outcome<unknown>>
       const dez = Reflect.get(window, 'dez') as { sbp: (selector: string, ...args: unknown[]) => Promise<unknown> }
