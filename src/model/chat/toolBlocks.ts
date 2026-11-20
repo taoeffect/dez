@@ -2,6 +2,7 @@ import { MARKER_ATTRIBUTES, escapeMarkerAttribute, markerAttributes } from '../.
 import { fitsParameterType } from '../tools/arguments'
 import { toolDefinition } from '../tools/registry'
 import type { ToolArguments, ToolArgumentValue, ToolParameterType } from '../tools/types'
+import { APP_TAG_NAME, appTagText, splitAppTags } from './appTags'
 import { bridgedCallsText, hasBridgedCalls, readBridgedCalls, type BridgedCalls } from './bridgedCalls'
 import { COMPACTION_TAG_NAME, USER_MESSAGE_TAG_NAME } from './compaction'
 import { stripLiveSentinels } from './content'
@@ -270,23 +271,26 @@ export function withoutToolBlocks(text: string): string {
 
 // Model answer text gets the `tagEscape` escape for the tags that Dez itself
 // writes into agent text: `dez:tool`, the media tags (mediaTags.ts), the
-// compaction tag (compaction.ts), and the tag of a message of the user in
-// the notes (compactionNotes.ts). So no answer can hold a block's opening
-// or closing tag, a media tag, a compaction tag, or a message of the user.
-// Requests remove the escape (`agentTextForRequest`,
-// `unescapedModelText`), so the provider gets the model's own bytes. Prose
-// about other tags (`dez:pill`) keeps its bytes.
+// app tag (appTags.ts), the compaction tag (compaction.ts), and the tag of
+// a message of the user in the notes (compactionNotes.ts). So no answer
+// can hold a block's opening or closing tag, a media tag, an app tag, a
+// compaction tag, or a message of the user. Requests remove the escape
+// (`agentTextForRequest`, `unescapedModelText`), so the provider gets the
+// model's own bytes. Prose about other tags (`dez:pill`) keeps its bytes.
+// The escape takes each name as the start of a name, so `<dez:apps` gets
+// it too, and loses it again in a request.
 //
 // Text that a model wrote before a tag was in this list has no escape for
 // it, and no way tells the two apart. So a line of such a text that has
 // the form of a media tag reads as one, and an old `<\dez:audio` or
 // `<\dez:compaction` loses its `\` in a request. Stored text never changes.
-const MODEL_TEXT_TAGS: readonly string[] = ['dez:tool', ...MEDIA_TAG_NAMES, COMPACTION_TAG_NAME, USER_MESSAGE_TAG_NAME]
+const MODEL_TEXT_TAGS: readonly string[] = ['dez:tool', ...MEDIA_TAG_NAMES, APP_TAG_NAME, COMPACTION_TAG_NAME, USER_MESSAGE_TAG_NAME]
 const modelTextEscape = tagEscape(...MODEL_TEXT_TAGS)
 
 /** Text that a model wrote, as a provider gets it: with the
- *  `ModelTextEscaper` escape removed. For a text that holds no tool block
- *  and no media tag of Dez (a caller that reads those first). */
+ *  `ModelTextEscaper` escape removed. For a text that holds no tool block,
+ *  no media tag, and no app tag of Dez (a caller that reads those
+ *  first). */
 export function unescapedModelText(text: string): string {
   return modelTextEscape.unescape(text)
 }
@@ -300,12 +304,22 @@ export function escapedModelText(text: string): string {
 
 /** The text of an agent section outside its tool blocks, as a provider
  *  gets it: the answer text as the model wrote it (the `ModelTextEscaper`
- *  escape removed), and each media tag in its request form. The tags are
- *  found first: after the unescape, a tag that a model wrote would read as
- *  one that Dez wrote. */
+ *  escape removed), each media tag in its request form, and each app tag
+ *  in the text of its writer. The tags are found first: after the
+ *  unescape, a tag that a model wrote would read as one that Dez wrote. */
 export function agentTextForRequest(text: string): string {
   return splitMediaTags(text, 'agent')
-    .map((piece) => (piece.kind === 'text' ? unescapedModelText(piece.text) : mediaTagRequestText(piece.tag)))
+    .map((piece) => (piece.kind === 'text' ? modelTextAroundAppTags(piece.text) : mediaTagRequestText(piece.tag)))
+    .join('')
+}
+
+// `text`, a run of an agent section between two media tags, as a provider
+// gets it. A run starts and ends where a line of the section does (a media
+// tag is a whole line), so the app tags of the run are those of the
+// section.
+function modelTextAroundAppTags(text: string): string {
+  return splitAppTags(text, 'agent')
+    .map((piece) => (piece.kind === 'text' ? unescapedModelText(piece.text) : appTagText(piece.tag.name)))
     .join('')
 }
 

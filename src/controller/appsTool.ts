@@ -10,6 +10,7 @@ import {
   editResult,
   fileText,
   hasReadableManifest,
+  isReadableManifest,
   initCall,
   initText,
   itemFailureText,
@@ -40,6 +41,7 @@ import {
   type ListedApp,
 } from '../model/tools/appsTool'
 import { MANIFEST_FILE } from '../model/tools/appManifest'
+import { appNotShownText, checkShowTarget, showCall, showResultText } from '../model/tools/appShow'
 import { ToolError, type SubcommandArguments } from '../model/tools/types'
 import { rawErrorText } from '../utils/errorText'
 import type { AppFileEntry, FileTree } from './nativeTypes'
@@ -49,7 +51,9 @@ import type { AppFileEntry, FileTree } from './nativeTypes'
 // native file selectors. The model module checks the call, decides what to
 // do from what is at the paths, and builds every text; the functions here
 // only ask the native side and do what the model module decided. The run
-// of an app (`invoke`) is in appInvoke.ts.
+// of an app (`invoke`) is in appInvoke.ts. `show` changes no file: it
+// checks the files of the app, and the reply of its call writes the app
+// into itself.
 //
 // A check and the file operation after it are two native calls, so a
 // program that changes the folder between them can make the operation
@@ -221,4 +225,20 @@ export async function listApps(args: SubcommandArguments): Promise<AppsResult> {
     return { name, tree, manifest }
   }))
   return listAppsText(call, apps)
+}
+
+/** `apps show`: checks that the app is a UI app with its page
+ *  (`checkShowTarget`), each fact from one exact read of its path, and
+ *  then has the reply of the call write the tag of the app into itself
+ *  (`reply.showApp`, `ToolRunContext.showApp`). Throws a `ToolError` for
+ *  an app that Dez cannot show, and for a reply that takes no text any
+ *  more. */
+export async function showApp(args: SubcommandArguments, reply: { showApp(name: string): boolean }): Promise<AppsResult> {
+  const call = showCall(args)
+  const [app, manifest, index] = await Promise.all([call.app, call.manifest, call.index].map(factsOf))
+  // The native side reads a file of any size, so the size check is first.
+  const manifestBytes = isReadableManifest(manifest) ? await readBytes(call.manifest) : null
+  checkShowTarget(call, { app, manifest, manifestBytes, index })
+  if (!reply.showApp(call.name)) throw new ToolError(appNotShownText())
+  return showResultText(call.name)
 }

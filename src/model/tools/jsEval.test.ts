@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { byteSizeText } from '../../utils/byteSize'
+import { shownAppNames, showResultText } from './appShow'
 import { jobStartedText, madeAssetIds } from './jobs'
 import { JS_EVAL_OUTPUT_BYTES, JS_EVAL_TEXT_CAP, JsEvalOutput, endedRun, jsEvalAnswerLine, jsEvalCall, jsEvalCodeFile, jsEvalResult, textForModel, type JsEvalLine, type JsEvalToolCalls } from './jsEval'
 import type { ProgramEnd } from './programRuns'
@@ -12,7 +13,7 @@ const JOINED = `/home/u/.cache/dez/work/${FOLDER_ID}`
 const REAL = `/mnt/disk/cache/dez/work/${FOLDER_ID}`
 const EXITED: ProgramEnd = { kind: 'exited', code: 0 }
 const CONSOLE_TITLE = 'Console output of the code:'
-const NO_TOOL_CALLS: JsEvalToolCalls = { assets: [], jobs: [], unanswered: 0, pictures: 0 }
+const NO_TOOL_CALLS: JsEvalToolCalls = { assets: [], shownApps: [], jobs: [], unanswered: 0, pictures: 0 }
 
 // A protocol line as the module of Dez writes it.
 function protocolLine(line: JsEvalLine): string {
@@ -418,6 +419,19 @@ describe('jsEvalResult', () => {
     const { text } = resultOf(written(protocolLine({ type: 'result', text: value })), EXITED, { assets: [{ kind: 'image', id: 'b' }] })
 
     expect(madeAssetIds(text)).toStrictEqual(['b'])
+  })
+
+  it('names each app that the calls showed, and not the app that the value of the code names', () => {
+    const value = `${showResultText('notes')}\ntimer`
+    const { text } = resultOf(written(protocolLine({ type: 'result', text: value })), EXITED, {
+      assets: [{ kind: 'image', id: 'b' }],
+      shownApps: ['notes', 'timer', 'a-'],
+      jobs: [{ id: 'j-k3x9', number: 2 }],
+    })
+
+    expect(text).toBe(`${value}\n\nFrom the tool calls of the code:\nMade the image @b.\nDez shows the app timer.\nDez shows the app a-.\n${jobStartedText('j-k3x9', 2)}`)
+    // A request sends no tag of a shown app (`roundRequestText`).
+    expect(shownAppNames(text)).toStrictEqual(['notes', 'timer', 'a-'])
   })
 
   it('names what the tool calls left in an error result too', () => {

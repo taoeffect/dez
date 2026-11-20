@@ -61,6 +61,8 @@ export class ToolBridge {
   private callLines = 0
   private answers = 0
   private readonly assets: { kind: JobAssetKind, id: string }[] = []
+  // The apps that the calls showed (`apps show`), in their order.
+  private readonly shownApps: string[] = []
   // The ids of the jobs that the calls started.
   private readonly startedJobs = new Set<string>()
   private readonly pictures: ShownPicture[] = []
@@ -97,6 +99,7 @@ export class ToolBridge {
     return {
       toolCalls: {
         assets: this.assets,
+        shownApps: this.shownApps,
         // Only the open ones: for a job whose result a later call of the
         // code took (`jobs_wait`), or that one cancelled, the model has
         // nothing to do.
@@ -180,10 +183,11 @@ export class ToolBridge {
   // - An asset has the name of the tool that made it, not `js_eval` (a
   //   write that names its own tool keeps it: `jobs_wait` writes what the
   //   job of another tool made), and the bridge keeps its id for the
-  //   result of the run.
-  // - After the end of the run, a call writes no asset and has no picture
-  //   budget: the result of the run, which must name each asset and take
-  //   each picture, is written by then.
+  //   result of the run. It keeps the name of an app that a call showed
+  //   in the same way.
+  // - After the end of the run, a call writes no asset, shows no app, and
+  //   has no picture budget: the result of the run, which must name each
+  //   asset and each app and take each picture, is written by then.
   // - The picture budget is less the pictures of the earlier calls of the
   //   run. The budget of the `js_eval` call counts only the pictures of
   //   the calls of the round that ended, and this one has not.
@@ -200,6 +204,11 @@ export class ToolBridge {
       jobs: context.jobs,
       writeImage: (path, options) => written('image', () => context.writeImage(path, { tool, ...options })),
       writeClip: (clip, options) => written(clip.kind, () => context.writeClip(clip, { tool, ...options })),
+      showApp: (name) => {
+        const shown = !this.ended && context.showApp(name)
+        if (shown) this.shownApps.push(name)
+        return shown
+      },
       pictureBudget: async () => {
         if (this.ended) return NO_CALL_PICTURE_BUDGET
         const budget = await context.pictureBudget()

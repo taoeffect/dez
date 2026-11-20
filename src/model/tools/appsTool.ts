@@ -2,8 +2,8 @@ import { byteSizeText } from '../../utils/byteSize'
 import { countOf, countText } from '../../utils/countText'
 import { oneLineCut } from '../../utils/oneLineCut'
 import { startOf } from '../../utils/textCut'
-import { APP_KINDS, MANIFEST_FILE, MANIFEST_MAX_BYTES, MAX_DESCRIPTION_LENGTH, parseAppManifest, type AppManifest } from './appManifest'
-import { appTemplateFiles, SCRIPT_MAIN_FILE } from './appTemplates'
+import { APP_KINDS, isAppName, MANIFEST_FILE, MANIFEST_MAX_BYTES, MAX_DESCRIPTION_LENGTH, parseAppManifest, type AppKind, type AppManifest } from './appManifest'
+import { appTemplateFiles, SCRIPT_MAIN_FILE, UI_INDEX_FILE } from './appTemplates'
 import { unknownValuesText } from './arguments'
 import { INTERMEDIATE_PARAMETER, JOB_CALL_NOTE, jobTimeoutParameter } from './jobs'
 import { linesName, linesText, planLineEdits, textLines, type LineEdit } from './lineEdits'
@@ -20,8 +20,9 @@ import { ToolError, type SubcommandArguments, type SubcommandParameter, type Too
 // This module has the pure parts: the definition, the checks of a call,
 // the rules of a path, the limits, and every text that the calling model
 // reads. controller/appsTool.ts does the file work. Of `invoke`, which
-// runs a script app, it has only the definition and the help: the rules
-// and the texts of a run are in appInvoke.ts.
+// runs a script app, and of `show`, which puts a UI app into the reply, it
+// has only the definition and the help: the rules and the texts of a run
+// are in appInvoke.ts, and those of `show` in appShow.ts.
 //
 // Every text here is a tool result: it goes to the chat provider. The tool
 // builds its texts from virtual paths only. It does not send them through
@@ -63,6 +64,9 @@ export const APP_RUN_MAX_OUTPUT_BYTES = 256 * 1024 * 1024
  *  from the file subcommands name it by this (registry.ts,
  *  toolBridge.ts). */
 export const APPS_INVOKE = 'invoke'
+
+/** The subcommand that shows a UI app in the reply (appShow.ts). */
+export const APPS_SHOW = 'show'
 
 /** How many entries below a folder `ls` asks for. The entries of the
  *  folder itself come first in a listing, so only a folder with more than
@@ -129,7 +133,7 @@ const INVOKE_HELP = `Runs the code of a script app in a sandbox on the user's co
 
 export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
   name: 'apps',
-  summary: `Make, change, and run apps: small programs that you write for the user, each in its own folder ${APPS_VIRTUAL_ROOT}/<name>/. `
+  summary: `Make, change, show, and run apps: small programs that you write for the user, each in its own folder ${APPS_VIRTUAL_ROOT}/<name>/. `
     + 'The apps stay from one conversation to the next, and a script app keeps its own files from one run to the next. '
     + `Every path of a call starts with ${APPS_VIRTUAL_ROOT}/.`,
   subcommands: [
@@ -137,7 +141,7 @@ export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
       name: 'init',
       summary: 'Make a new app from a template: its folder, its manifest.json, and its first files.',
       description: `Makes the folder ${APPS_VIRTUAL_ROOT}/<name>/ with a manifest.json (the name, the description, and the kind of the app) and the first files of its kind: `
-        + `${SCRIPT_MAIN_FILE} for a script app (code with no page, which invoke runs), or index.html, main.js, and style.css for a UI app (a web page). `
+        + `${SCRIPT_MAIN_FILE} for a script app (code with no page, which invoke runs), or ${UI_INDEX_FILE}, main.js, and style.css for a UI app (a web page, which show shows). `
         + `The call fails when ${APPS_VIRTUAL_ROOT}/<name> is there already: it replaces nothing. Change the files after it with read, edit, and write.`,
       parameters: [
         { name: 'name', type: 'string', description: `The name of the app, which is the name of its folder. ${APP_NAME_RULE}`, required: true },
@@ -270,6 +274,18 @@ export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
       example: { moves: [{ from: `${APPS_VIRTUAL_ROOT}/${EXAMPLE_APP}/units.js`, to: `${APPS_VIRTUAL_ROOT}/${EXAMPLE_APP}/lib/units.js` }] },
     },
     {
+      name: APPS_SHOW,
+      summary: 'Show a UI app to the user: Dez puts it into your reply, after this call.',
+      description: `Puts a UI app into your reply, after this call, where the user sees it. The page of the app is its ${UI_INDEX_FILE}: `
+        + 'Dez refuses an app that has none, and a script app, which has no page (invoke runs a script app). '
+        + 'The call runs no code and changes no file. Dez writes the app into the conversation itself, as a line `<dez:app name="…"/>`: '
+        + 'never write such a line yourself, as the user reads yours as plain text.',
+      parameters: [
+        { name: 'name', type: 'string', description: `The name of the app, as in "${EXAMPLE_APP}": the name of its folder in ${APPS_VIRTUAL_ROOT}/.`, required: true },
+      ],
+      example: { name: EXAMPLE_APP },
+    },
+    {
       name: APPS_INVOKE,
       summary: `Run a script app: the code of its ${SCRIPT_MAIN_FILE}, with your parameters, on copies of images and clips, to get a text and new images and clips.`,
       description: INVOKE_HELP,
@@ -390,12 +406,10 @@ function checkNewNames(path: AppsPath): void {
     + 'Dez takes such a path for a path of the user\'s computer and hides it from you. Use another name.')
 }
 
-const APP_NAME = /^[a-z0-9][a-z0-9_-]{0,63}$/
-
 /** The folder of the app that a call names with `name`. Throws a
  *  `ToolError` for a text that is no name of an app. */
 export function appNamed(name: string): AppsPath {
-  if (!APP_NAME.test(name)) throw new ToolError(`${JSON.stringify(startOf(name, 100))} is no name for an app. ${APP_NAME_RULE}`)
+  if (!isAppName(name)) throw new ToolError(`${JSON.stringify(startOf(name, 100))} is no name for an app. ${APP_NAME_RULE}`)
   return pathOf([name])
 }
 
@@ -850,7 +864,7 @@ export function mvCall(args: SubcommandArguments): { moves: Move[] } {
   for (const { from, to } of moves) {
     if (from.names.length === 0) throw new ToolError(`${APPS_VIRTUAL_ROOT} is the folder of all apps, and mv does not move it.`)
     if (to.names.length === 0) throw new ToolError(`\`to\` is ${APPS_VIRTUAL_ROOT}, the folder of all apps. Give the full new path of what you move, as in ${example}.`)
-    if (to.names.length === 1 && !APP_NAME.test(to.names[0])) {
+    if (to.names.length === 1 && !isAppName(to.names[0])) {
       throw new ToolError(`${to.virtual} is directly in ${APPS_VIRTUAL_ROOT}/, where only the folders of apps are, and "${to.names[0]}" is no name for an app. ${APP_NAME_RULE} `
         + `To move into an app, give the full new path, as in "${APPS_VIRTUAL_ROOT}/${EXAMPLE_APP}/${from.names.at(-1)}".`)
     }
@@ -1041,6 +1055,30 @@ export function isReadableManifest(facts: PathFacts | undefined): boolean {
 /** Whether the list reads the manifest of an app (`isReadableManifest`). */
 export function hasReadableManifest(tree: AppsTree): boolean {
   return isReadableManifest(manifestEntry(tree))
+}
+
+const MANIFEST_NEEDS = `a JSON object with "name", "description", and "kind", which is ${APP_KINDS.map((kind) => `"${kind}"`).join(' or ')}`
+
+/** The kind of the app at `app`, as its manifest tells it: the first
+ *  check of a subcommand that works only on one kind of app (`invoke`,
+ *  `show`). `facts` is what is at `manifest`, the path of the manifest,
+ *  and `bytes` are the bytes of that file, null when Dez did not read it
+ *  (`isReadableManifest`). Throws a `ToolError` for a manifest that is
+ *  missing, that Dez does not read, or that is not valid; `notDone` is its
+ *  last sentence, which tells what Dez did not do. */
+export function checkedAppKind(app: AppsPath, manifest: AppsPath, facts: PathFacts, bytes: Uint8Array | null, notDone: string): AppKind {
+  if (facts.kind === 'missing') {
+    throw new ToolError(`The app ${app.virtual} has no ${MANIFEST_FILE}, so Dez does not know its kind. Write ${manifest.virtual}: ${MANIFEST_NEEDS}. ${notDone}`)
+  }
+  if (!isReadableManifest(facts) || bytes === null) {
+    throw new ToolError(`${manifest.virtual} is no plain file of at most ${byteSizeText(MANIFEST_MAX_BYTES)}, so Dez does not read it and does not know the kind of the app. `
+      + `Write it again: ${MANIFEST_NEEDS}. ${notDone}`)
+  }
+  const parsed = parseAppManifest(new TextDecoder().decode(bytes))
+  if (!parsed) {
+    throw new ToolError(`${manifest.virtual} is not valid, so Dez does not know the kind of the app. Write it again: ${MANIFEST_NEEDS}. ${notDone}`)
+  }
+  return parsed.kind
 }
 
 // The kind and the description columns of an app. An app with no manifest

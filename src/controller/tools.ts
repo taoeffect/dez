@@ -35,7 +35,7 @@ import { ffmpegCall, ffprobeCall, joinClipsCall, VIDEO_TOOL, videoCallLabel, vid
 import { untilAborted } from '../utils/abort'
 import { rawErrorText } from '../utils/errorText'
 import { checkedInvokeCall, runAppJob } from './appInvoke'
-import { editAppFile, initApp, listAppFolder, listApps, makeAppFolder, moveAppPaths, readAppFile, removeAppPaths, writeAppFile } from './appsTool'
+import { editAppFile, initApp, listAppFolder, listApps, makeAppFolder, moveAppPaths, readAppFile, removeAppPaths, showApp, writeAppFile } from './appsTool'
 import { assetInfoResult } from './assetInfo'
 import { assetViewResult } from './assetView'
 import { audioClipSeconds, cutAudioClip } from './audioTool'
@@ -86,6 +86,14 @@ export interface ToolRunContext {
    *  (a stop ended the tool round): the runner then deletes the file. The
    *  result of the call must name the new id, as for `writeImage`. */
   writeClip(clip: Omit<MediaTagData, 'id' | 'other'>, options?: { tool?: string, jobId?: string, madeBy?: string, hidden?: string }): string | null
+  /** Writes the tag of the app `name` into the reply (`<dez:app>`,
+   *  chat/appTags.ts), after the blocks of the calls, as the writers above
+   *  write an asset. False when the reply takes no text any more (a stop
+   *  ended the tool round).
+   *
+   *  The result of the call must name the app with `shownAppText`
+   *  (tools/appShow.ts): a request sends that result and not the tag. */
+  showApp(name: string): boolean
   /** What the pictures of the call can cost (streams/pictureBudget.ts): the
    *  limits of a request to the model of the reply, less the images and
    *  the pictures that the context holds now, and less the pictures of the
@@ -506,6 +514,8 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // of the call and of the files of the app run first
   // (`checkedInvokeCall`): a call that Dez refuses starts no job and no
   // program. The result tells the inputs that go, as for `model_invoke`.
+  //
+  // `show` puts a UI app into the reply (appShow.ts): it runs no code.
   apps: subcommandRunner(APPS_TOOL, {
     init: initApp,
     read: readAppFile,
@@ -516,6 +526,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     ls: listAppFolder,
     mkdir: makeAppFolder,
     mv: moveAppPaths,
+    show: (args, _signal, context) => showApp(args, context),
     async invoke (args, callSignal, context) {
       const call = await checkedInvokeCall(args, callSections(context))
       return startJob(context, callSignal, APPS_TOOL.name, (signal, report, _reportCost, keepAsset) => runAppJob(call, signal, report, keepAsset), {

@@ -4,14 +4,15 @@ import type { EditorView } from '@codemirror/view'
 import { describe, expect, it } from 'vitest'
 import type { Role } from '../../model/chat/types'
 import { SECTION_SEP } from '../thread/cmEditor'
+import { renderedApps } from './apps'
 import { deleteLineBlockBackward, deleteLineBlockForward, joinsLineBlock } from './lineBlocks'
 import { renderedMedia } from './media'
-import { CHIP, PLAYER, createState, joinSections, runCommand } from './testing'
+import { APP_CARD, CHIP, PLAYER, createState, joinSections, runCommand } from './testing'
 import { renderedToolCalls } from './toolCalls'
 
 /** The source of each block that the editor shows, in doc order. */
 function shown(state: EditorState): string[] {
-  return [...renderedToolCalls(state), ...renderedMedia(state)]
+  return [...renderedToolCalls(state), ...renderedMedia(state), ...renderedApps(state)]
     .sort((a, b) => a.from - b.from)
     .map(({ from, to }) => state.sliceDoc(from, to))
 }
@@ -36,12 +37,14 @@ function mergeJoins(sections: string[], roles: Role[], index: number): boolean {
   return joinsLineBlock(createState(sections, roles), separator - 1, separator + SECTION_SEP.length + 1)
 }
 
-// Every rule holds for each kind of block, and for a player in each role
-// of section.
+// Every rule holds for each kind of block, and for a player and an app
+// card in each role of section.
 describe.each([
   ['a tool call chip', CHIP, 'agent'],
   ['a media player', PLAYER, 'agent'],
   ['a media player of a user section', PLAYER, 'user'],
+  ['an app card', APP_CARD, 'agent'],
+  ['an app card of a user section', APP_CARD, 'user'],
 ] as const)('with %s', (_kind, block, role) => {
   const texts = ['ask', ['before', block, 'after'].join('\n')]
   const roles: Role[] = ['user', role]

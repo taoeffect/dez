@@ -608,12 +608,12 @@ describe('the notes for people', () => {
     expect(people).toContain(`Like this:\n${MODEL_TAG}\nup to ${COMPACTION_END_LINE}`)
   })
 
-  it('gives each message part as the text of its message in a code fence, with a label for each asset and for each linked image that the rule lists', () => {
+  it('gives each message part as the text of its message in a code fence, with a label for each asset, each app, and each linked image that the rule lists', () => {
     const linked = '/home/u/Pictures/fox.png'
     const message = `Draw this: ${idImage(linked, 'a')}\n<dez:tool, as typed.\n${COMPACTION_END_LINE}`
     const withMessages = compactionNotesText(notesData({
       firstMessage: message,
-      middleMessages: [`Also ${idImage(linked, 'a')} here.`],
+      middleMessages: [`Also ${idImage(linked, 'a')} here.\n<dez:app name="notes" open="1"/>`],
       finalMessage: `And ${idImage(linked, 'a')} again.`,
     }))
     const people = compactionNotesForPeople(withMessages, new Set([linked]))
@@ -627,7 +627,7 @@ describe('the notes for people', () => {
       '',
       MIDDLE_MESSAGES,
       '',
-      fenced('Also [image] here.'),
+      fenced('Also [image] here.\n[app notes]'),
       '',
       FINAL_MESSAGE,
       '',

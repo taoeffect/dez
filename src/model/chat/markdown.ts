@@ -1,4 +1,5 @@
 import { closesFence, fenceOpener, type Fence } from '../../utils/markdownFence'
+import { labelAppTags } from './appTags'
 import { mediaTagsAsLinks } from './mediaTags'
 import { withoutToolBlocks } from './toolBlocks'
 import type { Role } from './types'
@@ -11,11 +12,12 @@ export interface MarkdownMessage {
 }
 
 /** The text of a section for people to read (Save As Markdown, Copy
- *  Markdown): each clip is a Markdown link, and the tool blocks of an agent
- *  section are left out, as the agent thinking is. A clip in code stays as
- *  its text. */
+ *  Markdown): each clip is a Markdown link, each app that Dez shows is its
+ *  label (`[app <name>]`), and the tool blocks of an agent section are
+ *  left out, as the agent thinking is. A clip and an app tag in code stay
+ *  as their text. */
 export function sectionTextAsMarkdown(role: Role, text: string): string {
-  return mediaTagsAsLinks(role === 'agent' ? withoutToolBlocks(text) : text, role)
+  return labelAppTags(mediaTagsAsLinks(role === 'agent' ? withoutToolBlocks(text) : text, role), role)
 }
 
 // CommonMark ends an unclosed fence only at the end of the document, so a

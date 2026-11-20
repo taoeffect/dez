@@ -378,20 +378,20 @@ describe('keptMiddleMessages', () => {
 })
 
 describe('middleMessageStarts', () => {
-  it('gives the start of each middle message on one line, with a label in place of each image and clip', () => {
+  it('gives the start of each middle message on one line, with a label in place of each image, clip, and app', () => {
     const screen = mediaTagText({ kind: 'video', id: 'd', type: 'video/webm', src: '/home/u/Videos/screen.webm', url: null, expires: null, other: [] })
     const sections = [
       user('u0', 'Make a film.'),
       reply('r0', 'ok'),
       user('u1', `For the middle part use\n${idImage(LINKED, 'e')}  and\n${screen}\nnot the renders.`),
       reply('r1', 'ok'),
-      user('u2', 'ok'),
+      user('u2', 'Why is this empty?\n<dez:app name="notes" open="1"/>'),
       reply('r2', 'ok'),
       user('u3', 'Now make the film.'),
       reply('r', ''),
     ]
 
-    expect(middleMessageStarts(compactionScope(sections, 'r'))).toStrictEqual(['For the middle part use [image] and [video] not the renders.', 'ok'])
+    expect(middleMessageStarts(compactionScope(sections, 'r'))).toStrictEqual(['For the middle part use [image] and [video] not the renders.', 'Why is this empty? [app notes]'])
   })
 
   it('labels an image of a message part by the linked paths of the tag', () => {

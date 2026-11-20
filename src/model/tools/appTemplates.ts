@@ -26,6 +26,10 @@ export interface TemplateFile {
  *  (`apps invoke`, appInvoke.ts). */
 export const SCRIPT_MAIN_FILE = 'main.ts'
 
+/** The file of a UI app that is its page: what Dez shows for the app
+ *  (`apps show`, appShow.ts). */
+export const UI_INDEX_FILE = 'index.html'
+
 function scriptFiles(name: string): TemplateFile[] {
   return [{
     name: SCRIPT_MAIN_FILE,
@@ -58,7 +62,7 @@ export default async function main(parameters: Record<string, unknown>, dez: Dez
 function uiFiles(name: string): TemplateFile[] {
   return [
     {
-      name: 'index.html',
+      name: UI_INDEX_FILE,
       content: `<!doctype html>
 <html lang="en">
 <head>

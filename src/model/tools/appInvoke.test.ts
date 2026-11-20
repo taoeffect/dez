@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { byteSizeText } from '../../utils/byteSize'
-import { APP_KINDS, appManifestText, MANIFEST_MAX_BYTES, type AppKind } from './appManifest'
+import { APP_KINDS, MANIFEST_MAX_BYTES } from './appManifest'
 import {
   APP_OUTPUT_LISTED_ENTRIES,
   appRunDescription,
@@ -19,7 +19,7 @@ import {
 } from './appInvoke'
 import { APP_RUN_MAX_OUTPUT_BYTES, APP_RUN_MAX_OUTPUT_FILES } from './appsTool'
 import { JS_EVAL_OUTPUT_BYTES, textForModel, type RunOutcome } from './jsEval'
-import { appsArgs, CONVERSATION, fileTree, FOLDER_FACTS, folderTree, MISSING_TREE, refusal } from './testing'
+import { appsArgs, CONVERSATION, fileTree, FOLDER_FACTS, folderTree, MISSING_TREE, notesManifest, refusal } from './testing'
 
 const NOT_STARTED = 'Dez started no job.'
 
@@ -87,13 +87,9 @@ describe('invokeCall', () => {
   })
 })
 
-function manifestOf(kind: AppKind): Uint8Array {
-  return bytes(appManifestText({ name: 'notes', description: 'Keeps notes.', kind }))
-}
-
 // What is at the paths of a script app that can run, with `changes`.
 function target(changes: Partial<InvokeTarget> = {}): InvokeTarget {
-  const manifestBytes = manifestOf('script')
+  const manifestBytes = notesManifest('script')
   return { app: FOLDER_FACTS, manifest: { kind: 'file', size: manifestBytes.length }, manifestBytes, main: { kind: 'file', size: 120 }, ...changes }
 }
 
@@ -129,7 +125,7 @@ describe('checkInvokeTarget', () => {
   })
 
   it('refuses a UI app before it looks at the main file', () => {
-    const text = check({ manifestBytes: manifestOf('ui'), main: MISSING_TREE })
+    const text = check({ manifestBytes: notesManifest('ui'), main: MISSING_TREE })
 
     expect(text).toContain('/apps/notes is a UI app')
     expect(text).toContain(NOT_STARTED)

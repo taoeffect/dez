@@ -184,6 +184,24 @@ describe('ToolBridge', () => {
     expect((await bridge.end()).toolCalls.assets).toStrictEqual([{ kind: 'image', id: 'a' }, { kind: 'audio', id: 'b' }])
   })
 
+  it('runs an apps show call of the code, and gives the apps that the reply took, in their order', async () => {
+    const asked: string[] = []
+    // The reply takes no second app.
+    const context = callContext({ showApp: (name) => asked.push(name) !== 2 })
+    toolRuns.tool = async (call, _signal, toolContext) => {
+      toolContext.showApp((JSON.parse(String(call.arguments.parameters)) as { name: string }).name)
+      return TOOL_DONE
+    }
+    const bridge = new ToolBridge(context, [], running())
+
+    for (const [id, name] of ['notes', 'gone', 'timer'].entries()) bridge.call(callLine(id, 'dez.tools/apps/show', { name }), write)
+    await vi.waitFor(() => expect(answers).toHaveLength(3))
+
+    expect(toolRuns.calls[0]).toStrictEqual({ name: 'apps', arguments: { command: 'show', parameters: '{"name":"notes"}' } })
+    expect(asked).toStrictEqual(['notes', 'gone', 'timer'])
+    expect((await bridge.end()).toolCalls.shownApps).toStrictEqual(['notes', 'timer'])
+  })
+
   it('gives the pictures of the calls in their order, and gives a call the picture budget less the pictures of the earlier calls', async () => {
     const second: ShownPicture = { ...PICTURE, file: 'p2.jpg' }
     const budgets: CallPictureBudget[] = []
@@ -261,13 +279,13 @@ describe('ToolBridge', () => {
     })
   })
 
-  it('takes no asset and no picture of a call that ends after the end of the run, and keeps its result in the list of the calls', async () => {
+  it('takes no asset, no app, and no picture of a call that ends after the end of the run, and keeps its result in the list of the calls', async () => {
     const written: string[] = []
     const late = heldStep()
     let got: unknown
     toolRuns.tool = async (_call, _signal, toolContext) => {
       await late.wait
-      got = { image: toolContext.writeImage('/x/late.png'), clip: toolContext.writeClip(CLIP), budget: await toolContext.pictureBudget() }
+      got = { image: toolContext.writeImage('/x/late.png'), clip: toolContext.writeClip(CLIP), app: toolContext.showApp('notes'), budget: await toolContext.pictureBudget() }
       return { ...TOOL_DONE, pictures: [PICTURE] }
     }
     const context = callContext({
@@ -279,6 +297,10 @@ describe('ToolBridge', () => {
         written.push(clip.src ?? '')
         return 'b'
       },
+      showApp: (name) => {
+        written.push(name)
+        return true
+      },
       pictureBudget: async () => BUDGET,
     })
     const bridge = new ToolBridge(context, [], running())
@@ -289,10 +311,10 @@ describe('ToolBridge', () => {
     late.finish()
     const end = await ending
 
-    expect(got).toStrictEqual({ image: null, clip: null, budget: NO_CALL_PICTURE_BUDGET })
+    expect(got).toStrictEqual({ image: null, clip: null, app: false, budget: NO_CALL_PICTURE_BUDGET })
     expect(written).toStrictEqual([])
     expect(end).toStrictEqual({
-      toolCalls: { assets: [], jobs: [], unanswered: 1, pictures: 0 },
+      toolCalls: { assets: [], shownApps: [], jobs: [], unanswered: 1, pictures: 0 },
       pictures: [],
       bridged: { calls: [{ name: 'jobs_list', arguments: {}, status: 'success', result: TOOL_DONE.content }], more: 0 },
     })

@@ -1,6 +1,7 @@
 import { countOf } from '../../utils/countText'
 import { usdText } from '../providers/modelPrices'
 import { ASSET_NAME_SOURCE, ASSET_NAMES, jobResultLegend, jobResultState, type JobAssetKind, type JobInfo, type JobResultState, type JobStatus } from '../tools/jobs'
+import { labelAppTags } from './appTags'
 import { openFenceCloser } from './codeRanges'
 import { blockLinkedRule, COMPACTION_TAG_NAME, readCompactionBlock, USER_MESSAGE_TAG_NAME } from './compaction'
 import type { ConversationCost } from './conversationCost'
@@ -530,18 +531,18 @@ export function notesJobLines(notes: string): Map<string, NotesJobLine> {
 
 /** The notes `notes` (`CompactionBlock.notes`, or a part of them), whose
  *  linked paths count by `rule` (`blockLinkedRule`), as a text for people
- *  to read: each image reference and media tag as its label (`[image]`,
- *  `[video]`), so no file path, the text of the model with its escape
- *  removed, and each message part as the text of its message in a code
- *  fence (`messageFence`). The chips of a compaction, Copy Markdown, Save
- *  As Markdown, the History preview, and the search show the notes in
- *  this form.
+ *  to read: each image reference, media tag, and app tag as its label
+ *  (`[image]`, `[video]`, `[app <name>]`), so no file path, the text of
+ *  the model with its escape removed, and each message part as the text of
+ *  its message in a code fence (`messageFence`). The chips of a
+ *  compaction, Copy Markdown, Save As Markdown, the History preview, and
+ *  the search show the notes in this form.
  *
  *  The labels go in first, while the text of the model still has its
  *  escape: with the escape removed first, a tag that a model wrote would
  *  read as a tag of Dez. */
 export function compactionNotesForPeople(notes: string, rule: LinkedPathRule): string {
-  const labeled = (text: string) => labelMediaTags(labelImageReferences(text, rule), rule)
+  const labeled = (text: string) => labelAppTags(labelMediaTags(labelImageReferences(text, rule), rule), rule)
   const pieces: string[] = []
   let from = 0
   for (const message of notesMessages(notes)) {

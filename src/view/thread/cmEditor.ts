@@ -2564,6 +2564,61 @@ export const dezTheme = EditorView.theme({
     userSelect: 'none',
     WebkitUserSelect: 'none',
   },
+  // App cards (src/view/editor/apps.ts). The widget is the only thing on
+  // its line, as a media player is: a column as wide as the line, with the
+  // card of the app in it. The card has a border and a faint fill, through
+  // which the selection layer behind it shows. A long name gives way with
+  // an ellipsis.
+  '.dez-app': {
+    display: 'inline-flex',
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    boxSizing: 'border-box',
+    width: '100%',
+    padding: editorSize(6, 0),
+    verticalAlign: 'top',
+    fontFamily: UI_FONT_FAMILY,
+    lineHeight: '1.5',
+    letterSpacing: 'normal',
+    whiteSpace: 'normal',
+    cursor: 'default',
+    userSelect: 'none',
+    WebkitUserSelect: 'none',
+  },
+  '.dez-app__card': {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: editorSize(8),
+    boxSizing: 'border-box',
+    maxWidth: '100%',
+    padding: editorSize(6, 12, 6, 10),
+    border: '1px solid var(--color-border, #d0d0d0)',
+    borderRadius: editorSize(8),
+    background: 'color-mix(in srgb, var(--color-text) 5%, transparent)',
+    color: 'var(--color-muted, #888)',
+    fontSize: editorSize(13),
+    whiteSpace: 'nowrap',
+  },
+  '.dez-app__icon': {
+    display: 'inline-flex',
+    flex: 'none',
+  },
+  '.dez-app__icon svg': {
+    display: 'block',
+    width: editorSize(15),
+    height: editorSize(15),
+  },
+  '.dez-app__label': {
+    flex: 'none',
+  },
+  '.dez-app__name': {
+    minWidth: '0',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    color: 'var(--color-text)',
+    fontFamily: MONO_FONT_FAMILY,
+    fontWeight: '600',
+  },
   // Rendered links (src/view/editor/links.ts): only the link text shows. An
   // autolink's address has the `t.url` style of `dezHighlightStyle`, which
   // has no underline, so the underline is set here too.

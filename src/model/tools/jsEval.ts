@@ -2,6 +2,7 @@ import * as z from 'zod'
 import { byteSizeText } from '../../utils/byteSize'
 import { countOf, countText } from '../../utils/countText'
 import { endOf, startOf } from '../../utils/textCut'
+import { shownAppNames, shownAppText } from './appShow'
 import { APPS_VIRTUAL_ROOT } from './appsTool'
 import { jobStartedText, madeAssetIds, madeAssetText, type JobAssetKind } from './jobs'
 import RUNNER from './jsEvalRunner.js?raw'
@@ -502,6 +503,9 @@ export interface JsEvalToolCalls {
   /** The images and the clips that the calls made and that Dez put into
    *  the reply, in their order. */
   assets: readonly { kind: JobAssetKind, id: string }[]
+  /** The apps that the calls showed (`apps show`): Dez put each into the
+   *  reply, in this order. */
+  shownApps: readonly string[]
   /** The jobs that the calls started and that are still open: no call of
    *  the code took their results. Each with its number
    *  (`JobCall.number`). */
@@ -515,18 +519,22 @@ export interface JsEvalToolCalls {
 
 // What the tool calls `calls` left, as paragraphs of a result whose given
 // text is `given` (blank for none):
-// - A line for each made asset and each open job. A made asset must be in
-//   the result as `madeAssetText` at the start of a line: the readers of a
-//   tool block find it there (`madeAssetIds`), and a request sends no other
-//   text of the asset. A line that the given text holds does not come
-//   twice: code often returns the text of its last call.
+// - A line for each made asset, each shown app, and each open job. A made
+//   asset must be in the result as `madeAssetText` at the start of a line,
+//   and a shown app as `shownAppText`: the readers of a tool block find
+//   them there (`madeAssetIds`, `shownAppNames`), and a request sends no
+//   other text of the asset or of the app. A line that the given text
+//   holds does not come twice: code often returns the text of its last
+//   call.
 // - The calls that had no answer.
 // - With `isError`, the pictures that the model does not get: only a
 //   result that is no error has pictures (`ToolRunResult.pictures`).
 function toolCallParagraphs(calls: JsEvalToolCalls, given: string, isError: boolean): string[] {
   const named = new Set(madeAssetIds(given))
+  const namedApps = new Set(shownAppNames(given))
   const lines = [
     ...calls.assets.flatMap(({ kind, id }) => (named.has(id) ? [] : [`${madeAssetText(kind, id)}.`])),
+    ...calls.shownApps.flatMap((name) => (namedApps.has(name) ? [] : [`${shownAppText(name)}.`])),
     ...calls.jobs.map(({ id, number }) => jobStartedText(id, number)).filter((line) => !given.includes(line)),
   ]
   const them = (count: number) => (count === 1 ? 'it' : 'them')

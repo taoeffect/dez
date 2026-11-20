@@ -215,7 +215,7 @@ const NO_PICTURES: Pick<ToolRunContext, 'pictureBudget'> = { pictureBudget: asyn
 // Runs a call of a reply of `model` that takes no image and no clip, and
 // has no job.
 function run(call: ToolRunCall, { signal = new AbortController().signal, model = REPLY_MODEL } = {}): Promise<ToolRunResult> {
-  const context: ToolRunContext = { tabId: '', model, jobs: new TabJobs(), writeImage: () => null, writeClip: () => null, ...NO_PICTURES }
+  const context: ToolRunContext = { tabId: '', model, jobs: new TabJobs(), writeImage: () => null, writeClip: () => null, showApp: () => false, ...NO_PICTURES }
   return sbp('dez.controller/tools/run', call, signal, context) as Promise<ToolRunResult>
 }
 
@@ -685,6 +685,7 @@ describe('dez.controller/tools/run', () => {
           return newImageId
         },
         writeClip: () => null,
+        showApp: () => false,
         ...NO_PICTURES,
       }
       const args = { command, parameters: JSON.stringify(parameters) }
@@ -859,6 +860,7 @@ describe('dez.controller/tools/run', () => {
           written.push(data)
           return newClipId
         },
+        showApp: () => false,
         ...NO_PICTURES,
       }
       const args = { command: 'clip', parameters: JSON.stringify(parameters) }
@@ -982,6 +984,7 @@ describe('dez.controller/tools/run', () => {
           written.push({ path: clip.src, ...options })
           return newIds.shift() ?? null
         },
+        showApp: () => false,
         ...NO_PICTURES,
       }
       return sbp('dez.controller/tools/run', { name, arguments: args }, signal, context) as Promise<ToolRunResult>
@@ -1796,7 +1799,7 @@ describe('dez.controller/tools/run', () => {
     let tabId: string
 
     function assetInfo(assets: string, checks?: string): Promise<ToolRunResult> {
-      const context: ToolRunContext = { tabId, model: REPLY_MODEL, jobs: new TabJobs(), writeImage: () => null, writeClip: () => null, ...NO_PICTURES }
+      const context: ToolRunContext = { tabId, model: REPLY_MODEL, jobs: new TabJobs(), writeImage: () => null, writeClip: () => null, showApp: () => false, ...NO_PICTURES }
       const args = checks === undefined ? { assets } : { assets, checks }
       return sbp('dez.controller/tools/run', { name: 'asset_info', arguments: args }, running(), context) as Promise<ToolRunResult>
     }
@@ -2036,6 +2039,7 @@ describe('dez.controller/tools/run', () => {
         jobs: new TabJobs(),
         writeImage: () => null,
         writeClip: () => null,
+        showApp: () => false,
         pictureBudget: async () => ({ left: budget, roundPictures }),
       }
       const result = await sbp('dez.controller/tools/run', { name: 'asset_view', arguments: args }, signal, context) as ToolRunResult
@@ -2984,6 +2988,7 @@ describe('dez.controller/tools/run', () => {
         jobs,
         writeImage: () => null,
         writeClip: () => null,
+        showApp: () => false,
         pictureBudget: async () => {
           budgetReads += 1
           return BUDGET

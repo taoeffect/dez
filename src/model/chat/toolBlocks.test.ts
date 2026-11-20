@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type * as Registry from '../tools/registry'
 import type { ToolDefinition } from '../tools/types'
+import { appTagText, findAppTags } from './appTags'
 import { compactionTagText, readCompactionBlock } from './compaction'
 import { SENTINEL_CHAR } from './content'
 import { findMediaTags } from './mediaTags'
@@ -303,9 +304,10 @@ describe('ModelTextEscaper', () => {
     ['<\\dez:video and </dez:audio> and <dez:videos', '<\\\\dez:video and <\\/dez:audio> and <\\dez:videos'],
     ['<dez:image id="a"/> <dez:audi o> <dez:vide', '<dez:image id="a"/> <dez:audi o> <dez:vide'],
     ['<dez:compaction count="2"/>\nNotes about <\\dez:compaction and <dez:compact', '<\\dez:compaction count="2"/>\nNotes about <\\\\dez:compaction and <dez:compact'],
+    ['<dez:app name="notes"/>\n</dez:app> and <\\dez:apps and <dez:ap', '<\\dez:app name="notes"/>\n<\\/dez:app> and <\\\\dez:apps and <dez:ap'],
   ]
 
-  it('escapes every dez:tool, dez:audio, dez:video, and dez:compaction tag run, and agentTextForRequest gives the model text back', () => {
+  it('escapes every dez:tool, dez:audio, dez:video, dez:compaction, and dez:app tag run, and agentTextForRequest gives the model text back', () => {
     for (const [answer, escaped] of ANSWERS) {
       expect(escapeAll([answer])).toBe(escaped)
       expect(agentTextForRequest(escaped)).toBe(answer)
@@ -363,6 +365,13 @@ describe('ModelTextEscaper', () => {
     expect(readCompactionBlock(answer)).not.toBeNull()
     expect(readCompactionBlock(escapeAll(Array.from(answer)))).toBeNull()
   })
+
+  it('leaves a model no way to write an app tag', () => {
+    const answer = `Here is your app:\n${appTagText('notes')}\n<dez:app name="other" open="1"/>`
+
+    expect(findAppTags(answer, 'agent')).toHaveLength(2)
+    expect(findAppTags(escapeAll(Array.from(answer)), 'agent')).toStrictEqual([])
+  })
 })
 
 describe('agentTextForRequest', () => {
@@ -379,6 +388,18 @@ describe('agentTextForRequest', () => {
     const stored = `${escaper.push(answer)}${escaper.flush()}\n${TAG}`
 
     expect(agentTextForRequest(stored)).toBe(`${answer}\n<dez:video id="b" type="video/mp4"/>`)
+  })
+
+  it('sends each app tag with only its name, also next to a media tag', () => {
+    expect(agentTextForRequest(`Done.\n\n<dez:app name="notes" open="1" job="j-1"/>\n${TAG}\n${appTagText('timer')}\nMore?`))
+      .toBe(`Done.\n\n${appTagText('notes')}\n<dez:video id="b" type="video/mp4"/>\n${appTagText('timer')}\nMore?`)
+  })
+
+  it('sends an app tag that a model wrote as the model wrote it, next to a tag of Dez', () => {
+    const answer = 'I can write a tag too:\n<dez:app name="other" open="1"/>'
+    const stored = `${escapedModelText(answer)}\n\n${appTagText('notes')}`
+
+    expect(agentTextForRequest(stored)).toBe(`${answer}\n\n${appTagText('notes')}`)
   })
 })
 

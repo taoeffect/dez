@@ -6,7 +6,7 @@ import { storedTypeOfBytes } from '../chat/fileSignatures'
 import { imageExtension, imageMediaType } from '../chat/images'
 import type { Section } from '../chat/types'
 import { conversationAssets, type ConversationAssets } from '../streams/mediaRequest'
-import { APP_KINDS, MANIFEST_FILE, MANIFEST_MAX_BYTES, parseAppManifest } from './appManifest'
+import { MANIFEST_FILE } from './appManifest'
 import {
   APP_RUN_DEFAULT_SECONDS,
   APP_RUN_MAX_OUTPUT_BYTES,
@@ -14,8 +14,8 @@ import {
   APPS_TOOL,
   appNamed,
   checkAppIsThere,
+  checkedAppKind,
   isPathName,
-  isReadableManifest,
   kindName,
   pathIn,
   type AppsPath,
@@ -151,7 +151,6 @@ export interface InvokeTarget {
   main: PathFacts
 }
 
-const MANIFEST_NEEDS = `a JSON object with "name", "description", and "kind", which is ${APP_KINDS.map((kind) => `"${kind}"`).join(' or ')}`
 const MAIN_EXPORT = '`export default async function main(parameters, dez) { … }`'
 
 /** Throws a `ToolError` unless the app of `call` is a script app that a
@@ -159,18 +158,7 @@ const MAIN_EXPORT = '`export default async function main(parameters, dez) { … 
  *  its main file. */
 export function checkInvokeTarget({ app, manifest, main }: InvokeCall, target: InvokeTarget): void {
   checkAppIsThere(app, target.app)
-  if (target.manifest.kind === 'missing') {
-    throw new ToolError(`The app ${app.virtual} has no ${MANIFEST_FILE}, so Dez does not know its kind. Write ${manifest.virtual}: ${MANIFEST_NEEDS}. ${NOT_DONE}`)
-  }
-  if (!isReadableManifest(target.manifest) || target.manifestBytes === null) {
-    throw new ToolError(`${manifest.virtual} is no plain file of at most ${byteSizeText(MANIFEST_MAX_BYTES)}, so Dez does not read it and does not know the kind of the app. `
-      + `Write it again: ${MANIFEST_NEEDS}. ${NOT_DONE}`)
-  }
-  const parsed = parseAppManifest(new TextDecoder().decode(target.manifestBytes))
-  if (!parsed) {
-    throw new ToolError(`${manifest.virtual} is not valid, so Dez does not know the kind of the app. Write it again: ${MANIFEST_NEEDS}. ${NOT_DONE}`)
-  }
-  if (parsed.kind !== 'script') {
+  if (checkedAppKind(app, manifest, target.manifest, target.manifestBytes, NOT_DONE) !== 'script') {
     throw new ToolError(`${app.virtual} is a UI app, and invoke runs only a script app: an app whose ${MANIFEST_FILE} has the kind "script", with its code in ${SCRIPT_MAIN_FILE}. ${NOT_DONE}`)
   }
   if (target.main.kind === 'missing') {

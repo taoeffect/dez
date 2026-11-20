@@ -1,22 +1,27 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { appTagText } from '../../src/model/chat/appTags'
 import { appManifestText, parseAppManifest } from '../../src/model/tools/appManifest'
+import { showResultText } from '../../src/model/tools/appShow'
 import { byteSizeText } from '../../src/utils/byteSize'
-import { appsCall } from './harness/apps'
-import { consoleErrors, resetConsoleErrors, screenshotOnFailure } from './harness/dom'
+import { appsCall, seedApp, shownAppCards } from './harness/apps'
+import { consoleErrors, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
 import { linkedDropDir } from './harness/drops'
-import { appFilePath, filesIn, writeTestFile } from './harness/fixtures'
+import { appFilePath, conversationFilePath, filesIn, writeTestFile } from './harness/fixtures'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendChatReply, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { endedReply, newTab, openToasts, submit } from './harness/thread'
+import { activeConversationId, endedReply, newTab, openToasts, submit } from './harness/thread'
 
 // The `apps` tool, driven through the real app against a mock chat model in
 // this process. The calls work on the real folder `apps/` of the test HOME,
 // through the file commands of the backend:
 // - a model makes an app, and writes, reads, edits, moves, lists, and
 //   deletes its files; only the user can open what the tool made;
+// - a model shows a UI app: Dez writes the tag of the app into the reply,
+//   the editor draws it as a card, and a request tells of the app only in
+//   the result of the call;
 // - the tool opens, changes, and moves nothing through a link that is in
 //   the folder of an app, so a call never reaches a file of the computer
 //   that is not in that folder, and the delete of an app leaves the file
@@ -219,5 +224,59 @@ describe('apps tool', () => {
     expect(await filesIn(appsDir)).toStrictEqual([])
     expect(fs.readFileSync(secret, 'utf8')).toBe(SECRET)
     await expectReplyEnd(third)
+  })
+
+  it('shows a UI app as a card in the reply, and tells the model of it only in the result of the call', async () => {
+    await seedApp(appsDir, { name: 'notes', description: 'Keeps notes.', kind: 'ui' }, { 'index.html': '<!doctype html>\n<p>Notes</p>\n' })
+    await seedApp(appsDir, { name: 'sum', description: 'Adds numbers.', kind: 'script' }, { 'main.ts': 'export default () => 1\n' })
+    await seedApp(appsDir, { name: 'bare', description: 'Has no page yet.', kind: 'ui' })
+    const tag = appTagText('notes')
+
+    await submit(browser, 'Show me the notes app.')
+    const first = await chatRequest()
+    sendToolCalls(first.reply, [
+      appsCall('call_show', 'show', { name: 'notes' }),
+      appsCall('call_script', 'show', { name: 'sum' }),
+      appsCall('call_bare', 'show', { name: 'bare' }),
+      appsCall('call_gone', 'show', { name: 'gone' }),
+    ])
+
+    const second = await chatRequest()
+    expect(toolResult(second, 'call_show')).toBe(showResultText('notes'))
+    expect(toolResult(second, 'call_script')).toContain('/apps/sum is a script app, and show shows only a UI app')
+    expect(toolResult(second, 'call_bare')).toContain('The app /apps/bare has no index.html, the page that Dez shows.')
+    expect(toolResult(second, 'call_gone')).toContain('/apps/gone')
+    expect(second.body).not.toContain('dez:app')
+    await sendChatReply(second.reply, CALLER.modelName)
+
+    // One tag, for the one app that Dez can show: a paragraph of its own
+    // between the blocks of the calls and the text of the next round.
+    const reply = await endedReply(browser)
+    expect(reply.endsWith(`</dez:tool>\n\n${tag}\n\n${replyText(CALLER.modelName)}`)).toBe(true)
+    expect(reply.split('<dez:app').length - 1).toBe(1)
+    expect(await shownAppCards(browser)).toStrictEqual([{ app: 'notes', text: 'App notes' }])
+    expect(await openToasts(browser, 'error')).toStrictEqual([])
+    const file = conversationFilePath(setup.app.home, await activeConversationId(browser))
+    await waitForValue(browser, 'saved tag', async () => (await fs.promises.readFile(file, 'utf8').catch(() => '')).includes(`\n${tag}\n`), true)
+
+    // The request of the next reply sends the first reply with the same
+    // bytes: the result of the call, and no tag.
+    await submit(browser, 'Thanks.')
+    const third = await chatRequest()
+    expect(toolResult(third, 'call_show')).toBe(showResultText('notes'))
+    expect(third.body).not.toContain('dez:app')
+    const sentBefore = (JSON.parse(second.body) as { messages: unknown[] }).messages
+    expect((JSON.parse(third.body) as { messages: unknown[] }).messages.slice(0, sentBefore.length)).toStrictEqual(sentBefore)
+    await sendChatReply(third.reply, CALLER.modelName)
+    await endedReply(browser, 3)
+    expect(await shownAppCards(browser)).toStrictEqual([{ app: 'notes', text: 'App notes' }])
+    // Dez logs each call that it refuses, and nothing else.
+    expect((await consoleErrors(browser)).map((error) => error.split('\n')[0].replace(/^The tool apps failed: ToolError: (\S+ \S+ \S+).*$/, '$1'))).toStrictEqual([
+      '/apps/sum is a',
+      'The app /apps/bare',
+      'There is no',
+    ])
+
+    await fs.promises.rm(appsDir, { recursive: true, force: true })
   })
 })

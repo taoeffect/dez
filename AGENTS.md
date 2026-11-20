@@ -91,16 +91,17 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `view/editor/focus.ts`: focus the editor and keep its scroll; use `focusKeepingScroll`, not `view.focus()`.
 - `view/editor/images.ts`, `imageInsert.ts`, `pendingRanges.ts`: images shown in place of their references; image and clip paste and drop.
 - `view/editor/media.ts`, `view/media/`: `<dez:audio>` and `<dez:video>` tags shown as players (`MediaPlayer.vue`, video.js parts in Dez's own skin).
+- `view/editor/apps.ts`: `<dez:app>` tags shown as app cards.
 - `view/editor/toolCalls.ts`: `<dez:tool>` blocks shown as chips, each with a panel.
 - `view/editor/hiddenAssets.ts`, `compactionChip.ts`, `AssetList.vue`: the hidden assets of a chip, the two compaction chips (assets, summary) with their panels, and the long list of kept assets.
-- `view/editor/lineBlocks.ts`, `compaction.ts`, `compactionBlock.ts`, `lineCommands.ts`: the edit rules of whole-line blocks (chips, players, the compaction block).
+- `view/editor/lineBlocks.ts`, `compaction.ts`, `compactionBlock.ts`, `lineCommands.ts`: the edit rules of whole-line blocks (chips, players, app cards, the compaction block).
 - `view/editor/agentTextEdits.ts`: whether a user edit changed the text of a reply (the edited mark of a tab).
 - `view/editor/assetSelection.ts`, `view/assetFacts.ts`, `view/assetIcons.ts`: the selected look, the facts text, and the symbol of an asset.
 - `controller/images.ts`: `dez.controller/images/*`: store, delete, read, and redraw images; file drops.
 - `controller/media.ts`, `clipSources.ts`: `dez.controller/media/*`: save, delete, read, and decode clips; the cleanup of old temp copies.
 - `controller/unusedFiles.ts`, `cacheHolds.ts`, `workFolders.ts`: find and delete the files and cache entries that nothing uses.
 - `model/chat/`: `Section` / `ContentNode` types and helpers, and the text forms of a conversation, each with one writer and recognizer:
-  - `images.ts` (image references), `mediaTags.ts` (clips), `toolBlocks.ts` (tool calls), `bridgedCalls.ts` (the tool calls of the code of a `js_eval` call), `pillMarker.ts` (pill markers), `compaction.ts`, `compactionNotes.ts`, `notesTable.ts` (the compaction block, the notes, and the tables of the notes).
+  - `images.ts` (image references), `mediaTags.ts` (clips), `appTags.ts` (shown apps), `toolBlocks.ts` (tool calls), `bridgedCalls.ts` (the tool calls of the code of a `js_eval` call), `pillMarker.ts` (pill markers), `compaction.ts`, `compactionNotes.ts`, `notesTable.ts` (the compaction block, the notes, and the tables of the notes).
   - `mediaIds.ts`, `imageMentions.ts`, `assetMentions.ts` (asset ids and `@id` mentions), `codeRanges.ts` (Markdown code), `hiddenAssets.ts`, `shownPictures.ts`, `fileSignatures.ts` (the type of a file from its first bytes).
   - `storedFilePaths.ts`, `linkedFiles.ts`, `mediaFiles.ts`, `unusedFiles.ts` (stored, linked, and unused files).
 - `model/state/`: Pinia stores (internal) and `dez.model/*` selectors; views read state through `view/modelState.ts`.
@@ -119,6 +120,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `model/tools/toolBridge.ts`, `controller/toolBridge.ts`: the tool bridge of `js_eval`: the Dez tools that the code of a run calls with `dez.sbp`.
 - `model/tools/appsTool.ts`, `lineEdits.ts`, `appManifest.ts`, `appTemplates.ts`, `controller/appsTool.ts`: the `apps` tool: the files of the apps, on the virtual root `/apps/`.
 - `model/tools/appInvoke.ts`, `controller/appInvoke.ts`: `apps invoke`: a run of the code of a script app in Deno, as a job with copies of its inputs and checked output files.
+- `model/tools/appShow.ts`: `apps show`: Dez writes the `<dez:app>` tag of a UI app into the reply (`ToolRunContext.showApp`).
 - `model/systemPrompt/`: the built-in system prompt (`systemPrompt.md`), the variables of a template, and its checks.
 - `model/modelOutputs.ts`, `modelInputs.ts`, `modelSearch.ts`: the output types, what Dez can send a model, and the model filter.
 - `controller/notifications.ts`, `view/sound.ts`, `assets/sounds/`: the reply-end alerts (sound, system notification).
@@ -261,13 +263,14 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 
 ### Conversation text and assets
 
-- **Image references, media tags, and tool calls are plain text** in a section; each has one writer and recognizer (`images.ts`, `mediaTags.ts`, `toolBlocks.ts` in `src/model/chat/`).
-- **Model text never forms a tag or a block**: `ModelTextEscaper` covers the tool blocks, the media tags, the compaction block, and the user messages of its notes (`toolBlocks.ts`).
+- **Image references, media tags, app tags, and tool calls are plain text** in a section; each has one writer and recognizer (`images.ts`, `mediaTags.ts`, `appTags.ts`, `toolBlocks.ts` in `src/model/chat/`).
+- **Model text never forms a tag or a block**: `ModelTextEscaper` covers the tool blocks, the media tags, the app tags, the compaction block, and the user messages of its notes (`toolBlocks.ts`).
 - **Find tool blocks in one agent section at a time**, never in the whole doc (`src/model/chat/toolBlocks.ts`).
 - **A linked path counts only in a user section, or in the compaction block when its tag lists it** (`linkedRuleParts`, `src/model/chat/compaction.ts`), so that a model's text never makes Dez read a file of the computer.
 - **One id sequence for images and clips** (`src/model/chat/mediaIds.ts`): never renumber an id that is in the doc, and never give an id that the conversation used before.
 - **`@id` mentions** (`src/model/chat/assetMentions.ts`): the request builder and the editor chips find mentions in the same text pieces (`assetTextPieces`); keep the two on that one rule.
-- **Code is text** (`src/model/chat/codeRanges.ts`): no reader takes an image, a clip, or a mention in Markdown code, but the id sequence counts its ids (`mediaIds.ts`), and a request sends a tag in code in its request form.
+- **Code is text** (`src/model/chat/codeRanges.ts`): no reader takes an image, a clip, an app, or a mention in Markdown code, but the id sequence counts its ids (`mediaIds.ts`), and a request sends a tag in code in its request form.
+- **An app is no asset**: an app tag holds only the name of the app, with no id and no path (`src/model/chat/appTags.ts`).
 - **A hidden asset and a kept asset are normal assets with a mark**: only the view hides them (`src/model/chat/hiddenAssets.ts`, `compaction.ts`); the compaction block is out of view as a whole, and its assets show in the assets chip.
 - **The notes of a compaction section are read back** (`src/model/chat/compactionNotes.ts`): a change of a line's form needs a reader of the old form.
 - **The unused-files scan must read every text that can name a stored file**: a new text place, stored-file folder, or kind of cache entry must join it (`src/controller/unusedFiles.ts`).
@@ -286,6 +289,7 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 - **One agent section per reply**: tool rounds stay in one section, and its thinking keeps one entry for each later round (`SectionThinking.rounds`). After a compaction, the reply text starts after the block (`sectionTextParts`).
 - **A tool's image or clip goes after the blocks of its group**, and the next request ends at the last tool message: text after it would be a prefill (`runChatRounds`).
 - **A request names a tool's image or clip only in the tool result** (`madeAssetText`, `src/model/tools/jobs.ts`; `roundRequestText`, `src/model/streams/messages.ts`).
+- **A request names a shown app only in the tool result** (`shownAppText`, `src/model/tools/appShow.ts`; `roundRequestText`): the tag of the app does not go in the round after its call.
 - **Slow tool work is a job** (`TabJobs`, `controller/jobs.ts`): the tool returns the job's id at once, and the work writes nothing into the reply.
 - **A reply that the user cuts hands its jobs to the next reply of the tab**; a reply that ends on its own ends them, and so does a tab close (`handOverJobs`, `controller/stream.ts`). A model ends the jobs that it names with `job_cancel`.
 - **Reply images and clips are written only while the reply is current** (`replyIsCurrent`, `controller/stream.ts`): a cancelled request can still give a response.
@@ -377,7 +381,7 @@ Brief comments are encouraged above functions that do anything non-trivial expla
 - E2E seeds turn the reply-end alerts off (`quietAppState`); alert specs use the fake notification server (`tests/e2e/harness/notificationServer.ts`).
 - E2E clips must be in a format that the CI GStreamer packages decode (VP9 in webm or mp4, wav, Opus in WebM; `.github/workflows/e2e.yml`).
 - E2E bundled tools: the specs run the real ffmpeg, ffprobe, and Deno of the debug build (`tests/e2e/bundled-tools.e2e.ts`, `tests/e2e/video-tool.e2e.ts`, `tests/e2e/js-eval.e2e.ts`, and the sandbox audit of Deno, `tests/e2e/js-eval-sandbox.e2e.ts`).
-- E2E `apps` tool: `tests/e2e/apps-tool.e2e.ts` runs the file subcommands on the real file commands of the backend, with links in the folder of an app; `tests/e2e/apps-invoke.e2e.ts` runs script apps in the real Deno. The unit tests use the in-memory files of `fakeAppFiles` (`src/controller/testing.ts`).
+- E2E `apps` tool: `tests/e2e/apps-tool.e2e.ts` runs the file subcommands on the real file commands of the backend, with links in the folder of an app, and `show`; `tests/e2e/apps-invoke.e2e.ts` runs script apps in the real Deno. The unit tests use the in-memory files of `fakeAppFiles` (`src/controller/testing.ts`).
 - E2E app frames: `tests/e2e/app-frames.e2e.ts` is the audit of the guards of the app frames: pages that try to get out, a server that counts what reaches it, and the controls in Dez's own page (`tests/e2e/harness/appFrames.ts`).
 - A `browser.execute` result must not be an object with a set `error` field: webdriverio takes it for a failure of the script.
 - E2E specs that open a URL call `stopOpenUrl` (`tests/e2e/harness/dom.ts`), so no browser opens.

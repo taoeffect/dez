@@ -9,6 +9,19 @@ import * as z from 'zod'
 // The folder name is what names an app, in every call and every list. The
 // `name` of the manifest is the name that the app had when it was made.
 
+/** Regex source of the name of an app: 1 to 64 characters, each a
+ *  lower-case letter, a digit, `-`, or `_`, and the first one a letter or a
+ *  digit. So a name is safe as it is in a path, in a URL, in HTML, and in
+ *  an attribute of a tag (`<dez:app>`, chat/appTags.ts). */
+export const APP_NAME_SOURCE = '[a-z0-9][a-z0-9_-]{0,63}'
+
+const APP_NAME = new RegExp(`^${APP_NAME_SOURCE}$`)
+
+/** Whether `name` can name an app, which is the name of its folder. */
+export function isAppName(name: string): boolean {
+  return APP_NAME.test(name)
+}
+
 /** What an app is: code that runs with no page (`script`), or a web page
  *  (`ui`). */
 export const APP_KINDS = ['script', 'ui'] as const

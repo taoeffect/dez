@@ -1,5 +1,6 @@
 import { mediaTagText, type MediaTagData } from '../chat/mediaTags'
 import { reply, user } from '../streams/testing'
+import { appManifestText, type AppKind } from './appManifest'
 import { APPS_TOOL, type AppsEntryKind, type AppsTree, type PathFacts } from './appsTool'
 import type { JobInfo } from './jobs'
 import { parseSubcommandCall } from './subcommands'
@@ -71,6 +72,11 @@ export function appsArgs(command: string, parameters: Record<string, unknown>): 
 /** The listing of a path with nothing at it. */
 export const MISSING_TREE: AppsTree = { kind: 'missing', size: 0, entries: [], more: false }
 export const FOLDER_FACTS: PathFacts = { kind: 'folder', size: 0 }
+
+/** The bytes of a valid manifest file of the app `notes` of `kind`. */
+export function notesManifest(kind: AppKind): Uint8Array {
+  return new TextEncoder().encode(appManifestText({ name: 'notes', description: 'Keeps notes.', kind }))
+}
 
 /** The listing of a file of `size` bytes. */
 export function fileTree(size: number): AppsTree {

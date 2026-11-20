@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { MANIFEST_MAX_BYTES, parseAppManifest } from './appManifest'
 import { invokeCall } from './appInvoke'
+import { showCall } from './appShow'
 import {
   APPS_MAX_BYTES,
   APPS_MAX_ENTRIES,
@@ -53,7 +54,7 @@ const bytes = (text: string) => new TextEncoder().encode(text)
 const text = (content: Uint8Array | null) => (content === null ? null : new TextDecoder().decode(content))
 
 describe('APPS_TOOL', () => {
-  it('has the file subcommands and invoke, in the order of the list that a model reads', () => {
+  it('has the file subcommands, show, and invoke, in the order of the list that a model reads', () => {
     expect(APPS_TOOL_DEFINITION.name).toBe('apps')
     expect(APPS_TOOL.subcommands.map(({ name, parameters }) => [name, parameters.map((parameter) => parameter.name)])).toStrictEqual([
       ['init', ['name', 'kind', 'description']],
@@ -65,6 +66,7 @@ describe('APPS_TOOL', () => {
       ['ls', ['path']],
       ['mkdir', ['path']],
       ['mv', ['moves']],
+      ['show', ['name']],
       ['invoke', ['name', 'parameters', 'inputs', 'is_intermediate', 'timeout_seconds']],
     ])
   })
@@ -72,6 +74,7 @@ describe('APPS_TOOL', () => {
   it('gives each subcommand an example that its parameters and its checks take', () => {
     const checks: Record<string, (call: SubcommandArguments) => unknown> = {
       init: initCall, read: readCall, write: writeCall, edit: editCall, rm: rmCall, list_apps: listAppsCall, ls: lsCall, mkdir: mkdirCall, mv: mvCall,
+      show: showCall,
       invoke: (call) => invokeCall(call, CONVERSATION),
     }
     for (const subcommand of APPS_TOOL.subcommands) {

@@ -1,10 +1,11 @@
 import sbp from '@sbp/sbp'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { MANIFEST_MAX_BYTES, parseAppManifest } from '../model/tools/appManifest'
+import { showResultText } from '../model/tools/appShow'
 import { APPS_MAX_BYTES, APPS_MAX_FILE_BYTES } from '../model/tools/appsTool'
 import type { ToolRunResult } from '../model/tools/types'
 import { APP_DIR, appFiles, callContext, fakeAppFiles, native, resetNative, running, STOP, type FakeAppFiles } from './testing'
-import type { ToolRunCall } from './tools'
+import type { ToolRunCall, ToolRunContext } from './tools'
 // Side-effect import: registers the selector under test.
 import './tools'
 
@@ -15,9 +16,9 @@ import './tools'
 // (model/tools/appsTool.test.ts); the tests here tell what a call reads,
 // writes, moves, and deletes.
 
-function apps(command: string, parameters: Record<string, unknown> = {}, signal: AbortSignal = running()): Promise<ToolRunResult> {
+function apps(command: string, parameters: Record<string, unknown> = {}, signal: AbortSignal = running(), context: Partial<ToolRunContext> = {}): Promise<ToolRunResult> {
   const call: ToolRunCall = { name: 'apps', arguments: { command, parameters: JSON.stringify(parameters) } }
-  return sbp('dez.controller/tools/run', call, signal, callContext()) as Promise<ToolRunResult>
+  return sbp('dez.controller/tools/run', call, signal, callContext(context)) as Promise<ToolRunResult>
 }
 
 const decoder = new TextDecoder()
@@ -418,6 +419,61 @@ describe('apps list_apps', () => {
       'odd | ? | 0 B | (a manifest.json that Dez does not read: it is no plain file of at most 16 KB)',
     ])
     expect(native.readFiles).toStrictEqual([{ root: 'app', path: 'apps/notes/manifest.json' }])
+  })
+})
+
+describe('apps show', () => {
+  // The apps that the reply took, in the order of the calls.
+  let shown: string[]
+  const show = (name: string, takes = true) => apps('show', { name }, running(), {
+    showApp: (app) => {
+      if (takes) shown.push(app)
+      return takes
+    },
+  })
+
+  beforeEach(() => {
+    shown = []
+  })
+
+  it('puts a UI app with a page into the reply, and changes no file', async () => {
+    const files = fakeAppFiles(appFiles('notes', { 'index.html': '<p>Notes</p>\n' }, 'ui'))
+    const before = pathsIn(files, 'apps')
+
+    const result = await show('notes')
+
+    expect(result).toStrictEqual({ content: showResultText('notes'), isError: false })
+    expect(shown).toStrictEqual(['notes'])
+    expect(pathsIn(files, 'apps')).toStrictEqual(before)
+    expect(native.savedFiles).toStrictEqual([])
+    // The page is not read: the frame of the app loads it.
+    expect(native.readFiles).toStrictEqual([{ root: 'app', path: 'apps/notes/manifest.json' }])
+  })
+
+  it.each([
+    ['an app that is not there', {}, 'There is no app /apps/notes'],
+    ['a script app', appFiles('notes', { 'main.ts': 'export default () => 1\n' }), '/apps/notes is a script app'],
+    ['a UI app with no page', appFiles('notes', { 'main.js': '' }, 'ui'), 'has no index.html'],
+    ['a UI app with a folder at the place of its page', appFiles('notes', { 'index.html': null }, 'ui'), '/apps/notes/index.html is a folder and no file'],
+    ['an app with no manifest', { 'apps/notes/index.html': '<p>Notes</p>\n' }, 'has no manifest.json'],
+  ])('shows nothing for %s', async (_case, start, why) => {
+    fakeAppFiles(start)
+
+    const result = await show('notes')
+
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain(why)
+    expect(shown).toStrictEqual([])
+  })
+
+  it('tells that it showed no app when the reply takes no text any more', async () => {
+    fakeAppFiles(appFiles('notes', { 'index.html': '<p>Notes</p>\n' }, 'ui'))
+
+    const result = await show('notes', false)
+
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain('The reply stopped before Dez could put the app into it')
+    expect(result.content).not.toContain('Dez shows the app')
   })
 })
 

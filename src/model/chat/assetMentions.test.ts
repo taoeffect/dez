@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { messageClips, sectionsToStreamMessages } from '../streams/messages'
+import { appTagText } from './appTags'
 import { assetTextPieces, namedMentions, type MentionSection, type NamedMention } from './assetMentions'
 import { sectionPlainText } from './content'
 import { findImageReferences, imageMarkdown } from './images'
@@ -74,6 +75,23 @@ describe('assetTextPieces', () => {
     const text = `\`\`\`\nopen\n${tag}\n@c`
 
     expect(assetTextPieces(text, 'agent').map((piece) => piece.kind)).toStrictEqual(['code', 'media', 'gap'])
+    expect(assetTextPieces(`\`\`\`\nopen\n${appTagText('notes')}\n@c`, 'agent').map((piece) => piece.kind)).toStrictEqual(['code', 'app', 'gap'])
+  })
+
+  it('gives the app tags as app pieces, in text order with the media tags, and a tag in code as a part of its code', () => {
+    const clip = mediaTagText(SONG)
+    const text = `${appTagText('notes')}\n${clip}\nSee:\n<dez:app name="timer" open="1"/>\n\n\`\`\`\n${appTagText('notes')}\n\`\`\``
+    const pieces = assetTextPieces(text, 'user').map((piece) => 'tag' in piece ? { kind: piece.kind, text: text.slice(piece.tag.from, piece.tag.to) } : { kind: piece.kind, text: text.slice(piece.from, piece.to) })
+
+    expect(pieces).toStrictEqual([
+      { kind: 'app', text: appTagText('notes') },
+      { kind: 'gap', text: '\n' },
+      { kind: 'media', text: clip },
+      { kind: 'gap', text: '\nSee:\n' },
+      { kind: 'app', text: '<dez:app name="timer" open="1"/>' },
+      { kind: 'gap', text: '\n\n' },
+      { kind: 'code', text: `\`\`\`\n${appTagText('notes')}\n\`\`\`` },
+    ])
   })
 })
 

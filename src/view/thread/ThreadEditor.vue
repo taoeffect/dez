@@ -52,6 +52,7 @@ import { markdownTables } from '../editor/tables'
 import { deleteImageBang, deleteImageParen, markdownImages } from '../editor/images'
 import { markdownToolCalls, openToolCalls } from '../editor/toolCalls'
 import { markdownMedia } from '../editor/media'
+import { markdownApps } from '../editor/apps'
 import { caretAfterCompactionBlock, compactionBlockRules } from '../editor/compaction'
 import { compactionChip, openCompactionChips, type CompactionChipsOpen } from '../editor/compactionChip'
 import { deleteLineBlockBackward, deleteLineBlockForward, joinsLineBlock } from '../editor/lineBlocks'
@@ -858,6 +859,7 @@ function buildState(openPanels?: OpenPanels): EditorState {
       markdownImages(),
       markdownToolCalls(openPanels?.toolCalls),
       markdownMedia(),
+      markdownApps(),
       compactionBlockRules(),
       compactionChip(openPanels?.compaction),
       markdownLinks(),
