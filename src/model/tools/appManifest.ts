@@ -27,6 +27,11 @@ export function isAppName(name: string): boolean {
 export const APP_KINDS = ['script', 'ui'] as const
 export type AppKind = typeof APP_KINDS[number]
 
+/** The kind of an app in a list for a model when no manifest tells it
+ *  (`manifestColumns`, appsTool.ts). */
+export const UNKNOWN_APP_KIND = '?'
+export type ListedAppKind = AppKind | typeof UNKNOWN_APP_KIND
+
 export const MANIFEST_FILE = 'manifest.json'
 
 /** Dez reads no manifest that is larger: a good one is a few lines. */

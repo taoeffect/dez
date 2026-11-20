@@ -297,7 +297,7 @@ function onOverlayClick(e: MouseEvent) {
                 </button>
               </div>
               <p class="settings-hint">
-                Removes old images, audio and video that no conversation or prompt references.
+                Removes old images, audio, video and apps that no conversation or prompt references.
               </p>
               <div
                 v-if="unusedFilesProgress !== null"

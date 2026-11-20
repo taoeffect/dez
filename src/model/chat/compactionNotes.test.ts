@@ -9,12 +9,14 @@ import {
   compactionTextForPeople,
   conversationCostText,
   messageFence,
+  notesAppLines,
   notesAssetLines,
   notesCellText,
   notesJobLines,
   notesLeftOutMessages,
   notesMessages,
   type CompactionNotes,
+  type NotesApp,
   type NotesAsset,
   type NotesAssetLine,
   type NotesJobLine,
@@ -26,6 +28,7 @@ import { findToolBlocks, unescapedModelText } from './toolBlocks'
 
 const REQUIREMENTS = '## Requirements and decisions'
 const ASSETS = '## Assets of the conversation'
+const APPS = '## Apps of the conversation'
 const JOBS = '## Jobs of the reply'
 const COST = '## Cost'
 const USER_MESSAGES = '## User messages'
@@ -236,6 +239,50 @@ describe('notesAssetLines', () => {
     ['no asset', []],
   ])('gives every column of each asset back, for %s', (_case, assets) => {
     expect([...notesAssetLines(compactionNotesText(notesData({ assets }))).values()]).toStrictEqual(assets.map(lineData))
+  })
+})
+
+describe('notesAppLines', () => {
+  const SHEET: NotesApp = { name: 'contact-sheet', kind: 'script', description: 'Makes a contact sheet of images.' }
+  const TIMER: NotesApp = { name: 'timer_2', kind: 'ui', description: 'A timer | with laps.' }
+  const BROKEN: NotesApp = { name: 'x', kind: '?', description: '(no manifest.json)' }
+
+  it('reads back the name, the kind, and the description of each app, from a part between the assets and the jobs', () => {
+    const text = compactionNotesText(notesData({ assets: [PHOTO], apps: [SHEET, TIMER, BROKEN], jobs: [jobInfo({})] }))
+
+    expect(headings(text)).toStrictEqual([REQUIREMENTS, ASSETS, APPS, JOBS, COST])
+    expect(partText(text, APPS).split('\n')).toContain('/apps/contact-sheet | script | Makes a contact sheet of images.')
+    expect(notesAppLines(text)).toStrictEqual(new Map([[SHEET.name, SHEET], [TIMER.name, TIMER], [BROKEN.name, BROKEN]]))
+    // The lines of the other parts read as before.
+    expect([...notesAssetLines(text).keys()]).toStrictEqual([PHOTO.id])
+    expect([...notesJobLines(text).keys()]).toStrictEqual(['j-aaaa'])
+  })
+
+  it('reads a blank description back as blank, and a description on two lines as one line', () => {
+    const text = compactionNotesText(notesData({ apps: [{ ...SHEET, description: '' }, { ...TIMER, description: 'A timer.\nWith laps.' }] }))
+
+    expect([...notesAppLines(text).values()]).toStrictEqual([{ ...SHEET, description: '' }, { ...TIMER, description: 'A timer. With laps.' }])
+  })
+
+  // A request sends the notes with the escape of model text removed, so a
+  // description that holds an escaped form must go out as it was written.
+  it('reads a description with the start of a tag of Dez, plain or escaped, back as it went in, and sends it so', () => {
+    const description = 'Plays <dez:audio id="a" type="audio/wav"/>, and the old form <\\dez:tool, as written.'
+    const text = compactionNotesText(notesData({ apps: [{ ...SHEET, description }] }))
+
+    expect(notesAppLines(text).get(SHEET.name)?.description).toBe(description)
+    expect(unescapedModelText(text)).toContain(`/apps/contact-sheet | script | ${description}`)
+  })
+
+  it('reads no app line of a model: a part with the heading in the requirements is text', () => {
+    const copied = `Done.\n\n${ASSETS}\n\nNone.\n\n${APPS}\n\nEach line: app | kind | description.\n\n/apps/model-line | script | A line of the model.`
+
+    expect([...notesAppLines(compactionNotesText(notesData({ requirements: copied }))).keys()]).toStrictEqual([])
+    expect([...notesAppLines(compactionNotesText(notesData({ requirements: copied, apps: [SHEET] }))).keys()]).toStrictEqual([SHEET.name])
+  })
+
+  it('gives no app for notes with no apps part', () => {
+    expect(notesAppLines(compactionNotesText(notesData({ assets: [PHOTO] }))).size).toBe(0)
   })
 })
 

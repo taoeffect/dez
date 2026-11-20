@@ -103,7 +103,7 @@ const MODEL_KEY = `${PROVIDER.id}/${PROVIDER.modelId}`
 const CHAT_PATH = mockChatPath(PROVIDER)
 
 // The first line of the instruction of a compaction request.
-const INSTRUCTION_START = compactionInstruction({ middleMessages: [], assetTable: '', jobs: [], cost: undefined, tools: false }).split('\n')[0]
+const INSTRUCTION_START = compactionInstruction({ middleMessages: [], assetTable: '', apps: [], jobs: [], cost: undefined, tools: false }).split('\n')[0]
 const NOTES_REQUIREMENTS = 'The user wants to go on with the task.'
 // An answer to a compaction request: requirements, and no other part.
 const NOTES_ANSWER = `## Requirements and decisions\n${NOTES_REQUIREMENTS}\n`
@@ -1196,6 +1196,7 @@ describe('a compacted conversation', () => {
         { id: 'b', kind: 'image', facts: 'PNG, 30x20', origin: 'made by the model_invoke job 2 of its reply: "A fox"', sentence: 'The fox.', byReply: false, text: `![id=b|tool=model_invoke](${seen})` },
       ],
       unnamed: [],
+      apps: [],
       firstMessage: null,
       middleMessages: [],
       leftOutMessages: 0,

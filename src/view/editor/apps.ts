@@ -362,6 +362,20 @@ export function carriedAppRuns(state: EditorState): CarriedAppRun[] {
   return appRuns(state).map(({ id, name, from }) => ({ id, name, later: apps.filter((tag) => tag.name === name && tag.from > from).length }))
 }
 
+/** Dez deleted the app `name`: its facts are those of an app that is gone
+ *  (`setAppDeleted`), so a card that any conversation draws later tells
+ *  so. In `view`, the editor that shows a conversation now (null: none),
+ *  each run of the app ends, as its page shows files that are gone, and
+ *  each card of the app is drawn again. */
+export function showAppDeleted(view: EditorView | null, name: string): void {
+  setAppDeleted(name)
+  if (!view) return
+  // A program write: no `userEvent`.
+  const stops = appRuns(view.state).filter((run) => run.name === name).map((run) => stopAppEffect.of(run.id))
+  if (stops.length > 0) view.dispatch({ effects: stops })
+  redrawPosters(view, name)
+}
+
 /** The trash of an app (on its card, and on the bar of a run): asks
  *  whether to delete the app of the card whose tag starts at `from`, and
  *  on "Yes" deletes the folder of the app (`dez.controller/apps/delete`),
@@ -420,12 +434,7 @@ export async function deleteApp(view: EditorView, from: number): Promise<void> {
       void readAppFacts(name).then(() => redrawPosters(view, name))
       return
     }
-    setAppDeleted(name)
-    // The runs of the app show files that are gone. A program write: no
-    // `userEvent`.
-    const stops = appRuns(view.state).filter((run) => run.name === name).map((run) => stopAppEffect.of(run.id))
-    if (stops.length > 0) view.dispatch({ effects: stops })
-    redrawPosters(view, name)
+    showAppDeleted(view, name)
   }
   const range = followed.current()
   followed.end(range ? linesRemovalRange(view.state.doc, range) : undefined, { undoable: gone, userEvent: 'delete' })

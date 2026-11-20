@@ -144,12 +144,30 @@ describe('newestReplyModel', () => {
 const TABLE = 'The images and the clips of the conversation (id | kind | facts).\n@a | image | 800 x 600 PNG\n@b | audio | 12 s WAV'
 
 function instruction(fields: Partial<CompactionInstruction> = {}): string {
-  return compactionInstruction({ middleMessages: [], assetTable: TABLE, jobs: [], cost: undefined, tools: true, ...fields })
+  return compactionInstruction({ middleMessages: [], assetTable: TABLE, apps: [], jobs: [], cost: undefined, tools: true, ...fields })
 }
 
 describe('compactionInstruction', () => {
   it('holds the asset table as it was given', () => {
     expect(instruction()).toContain(TABLE)
+  })
+
+  it('lists the apps of the conversation after the asset table, one line for each, and no list with no app', () => {
+    const text = instruction({
+      apps: [
+        { name: 'notes', kind: 'ui', description: 'Keeps notes | with tags.' },
+        { name: 'sheet', kind: '?', description: '(no manifest.json)' },
+      ],
+      jobs: [jobInfo({ id: 'j1' })],
+    })
+    const lines = text.split('\n')
+    const first = lines.indexOf('/apps/notes | ui | Keeps notes | with tags.')
+
+    expect(lines[first + 1]).toBe('/apps/sheet | ? | (no manifest.json)')
+    expect(lines[first - 1]).toContain('(app | kind | description)')
+    expect(lines.indexOf('@b | audio | 12 s WAV')).toBeLessThan(first)
+    expect(first).toBeLessThan(lines.indexOf('The jobs of this reply:'))
+    expect(instruction()).not.toContain('app | kind')
   })
 
   it('holds the lines of the jobs of the reply', () => {

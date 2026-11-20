@@ -42,7 +42,7 @@ const picture = (file: string): ShownPicture => ({ file: `${file}.jpg`, label: `
 function compact(sections: Section[], answerText: string, replySectionId: string, input: Partial<CompactedSectionsInput> = {}, facts = FACTS): CompactedSections {
   const scope = compactionScope(sections, replySectionId)
   const found = [...conversationAssets(sections).found.values()].filter((asset) => asset.section < scope.end)
-  const assets = compactionAssets({ sections, scope, found, places: assetPlaces(sections, found), facts: new Map(found.map(({ id }) => [id, facts])), jobInputs: new Map(), replySections: [] })
+  const assets = compactionAssets({ sections, scope, found, places: assetPlaces(sections, found), facts: new Map(found.map(({ id }) => [id, facts])), jobInputs: new Map(), appInputs: new Set(), replySections: [] })
   const answer = readCompactionAnswer(answerText)
   let ids = 0
   return compactedSections({
@@ -51,6 +51,7 @@ function compact(sections: Section[], answerText: string, replySectionId: string
     model: NOTES_MODEL,
     choices: assetDecisions(assets, answer, { keptTexts: keptUserTexts(sections, scope, answer) }),
     answer,
+    apps: [],
     jobs: [],
     jobInputs: new Map(),
     cost: undefined,

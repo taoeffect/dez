@@ -203,7 +203,7 @@ function replyRounds(rounds: Array<(input: ProviderStreamChatInput) => Promise<P
 }
 
 // The first line of the instruction of a compaction request.
-const COMPACTION_INSTRUCTION_START = compactionInstruction({ middleMessages: [], assetTable: '', jobs: [], cost: undefined, tools: false }).split('\n')[0]
+const COMPACTION_INSTRUCTION_START = compactionInstruction({ middleMessages: [], assetTable: '', apps: [], jobs: [], cost: undefined, tools: false }).split('\n')[0]
 
 // Whether `input` is a compaction request: its last message is the
 // instruction of Dez.

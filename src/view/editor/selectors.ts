@@ -17,6 +17,7 @@ import {
 } from './find'
 import { findHistory } from './findHistory'
 import { findState } from './findState'
+import { showAppDeleted } from './apps'
 import { focusKeepingScroll } from './focus'
 import { postToAppFrame } from '../apps/appFrame'
 import { focusedAppFrame } from '../apps/appFrameHost'
@@ -241,6 +242,15 @@ export default sbp('sbp/selectors/register', {
     if (activeViewTabId !== tabId) return false
     sbp('okTurtles.events/emit', 'dez.editor.rebuild', tabId, followingStreamTabId === tabId)
     return true
+  },
+
+  /** Dez deleted the app `name` with no click on a card (Delete Unused
+   *  Files): the cards of the app tell that it is gone, and its runs end
+   *  (`showAppDeleted`). The cleanup deletes only an app that no
+   *  conversation names, but a paste can bring a tag of it in while the
+   *  delete runs. */
+  'dez.editor/appDeleted' (name: string): void {
+    showAppDeleted(activeView, name)
   },
 
   /** Cmd/Ctrl+F: open the find dropdown (or refocus it), prefilled from the

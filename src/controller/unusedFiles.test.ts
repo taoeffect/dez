@@ -3,7 +3,7 @@ import '@sbp/okturtles.eventqueue'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { UNUSED_FILE_MIN_AGE_MS, type UnusedFiles, type UnusedFilesDeleted } from '../model/chat/unusedFiles'
 import { holdingCachePath } from './cacheHolds'
-import type { AppFileEntry, AppFileRoot } from './nativeTypes'
+import type { AppFileEntry, AppFileRoot, FileTree } from './nativeTypes'
 import './unusedFiles'
 
 interface Toast {
@@ -16,14 +16,21 @@ const APP_DIR = '/home/ann/.config/dez'
 const CACHE_DIR = '/home/ann/.cache/dez'
 const NOW = 1_800_000_000_000
 const OLD = NOW - UNUSED_FILE_MIN_AGE_MS
+const NO_TREE: FileTree = { kind: 'missing', size: 0, updatedAt: null, entries: [], more: false }
+// The counts of a delete of a scan with no app.
+const NO_APPS = { deleted: 0, inUse: 0, failed: 0 }
 
 // What the stub selectors below give, and what they were asked for. Reset
 // in beforeEach. A key of `folders` is the root and the path of a listing
-// (`app:assets/images`), with `:folders` for a listing of folders; an entry
-// of `deletedFiles` is the root and the path, with ` (folder)` for a folder
-// delete.
+// (`app:assets/images`), with `:folders` for a listing of folders; a key of
+// `trees` is a path in the app folder (`apps/notes`); an entry of
+// `deletedFiles` is the root and the path, with ` (folder)` for a folder
+// delete; `goneApps` are the apps that the editor was told of.
 let folders: Record<string, AppFileEntry[]> = {}
 let listAppFiles: (key: string) => Promise<AppFileEntry[]>
+let trees: Record<string, FileTree> = {}
+let treeError: unknown = null
+let goneApps: string[] = []
 let conversations: string[] = []
 let conversationsError: unknown = null
 let conversationReads = 0
@@ -40,6 +47,14 @@ sbp('sbp/selectors/register', {
   },
   async 'dez.native/listAppFiles' (path: string, root: AppFileRoot = 'app', { folders = false }: { folders?: boolean } = {}): Promise<AppFileEntry[]> {
     return listAppFiles(`${root}:${path}${folders ? ':folders' : ''}`)
+  },
+  async 'dez.native/listFileTree' (path: string, maxEntries: number): Promise<FileTree> {
+    if (treeError !== null) throw treeError
+    const tree = trees[path] ?? NO_TREE
+    return { ...tree, entries: tree.entries.slice(0, maxEntries), more: tree.more || tree.entries.length > maxEntries }
+  },
+  'dez.editor/appDeleted' (name: string): void {
+    goneApps.push(name)
   },
   async 'dez.native/deleteAppFile' (path: string, root: AppFileRoot = 'app', { folder = false }: { folder?: boolean } = {}): Promise<void> {
     await deleteAppFile(path)
@@ -66,6 +81,13 @@ sbp('sbp/selectors/register', {
 
 function file (name: string, size: number, updatedAt = OLD): AppFileEntry {
   return { name, updatedAt, size }
+}
+
+// The listing of the folder of an app with the files `files` (path to
+// size), each changed at `updatedAt`.
+function appTree (files: Record<string, number>, updatedAt: number | null = OLD): FileTree {
+  const entries = Object.entries(files).map(([path, size]) => ({ path, kind: 'file' as const, size, updatedAt }))
+  return { kind: 'folder', size: 0, updatedAt, entries, more: false }
 }
 
 async function find (): Promise<{ unused: UnusedFiles, progress: number[] }> {
@@ -97,6 +119,9 @@ beforeEach(() => {
   vi.setSystemTime(NOW)
   folders = {}
   listAppFiles = async (key) => folders[key] ?? []
+  trees = {}
+  treeError = null
+  goneApps = []
   conversations = []
   conversationsError = null
   conversationReads = 0
@@ -219,6 +244,57 @@ describe('dez.controller/unusedFiles/find', () => {
     expect((await find()).unused).toStrictEqual({ files: [{ root: 'app', path: 'assets/images/a.png', size: 5 }], bytes: 5 })
   })
 
+  it('gives the old apps that no text names, each with the size of its files', async () => {
+    folders = { 'app:apps:folders': ['shown', 'called', 'pathed', 'held', 'free', 'listed'].map((name) => file(name, 0)) }
+    trees = {
+      'apps/shown': appTree({ 'manifest.json': 100, 'index.html': 900 }),
+      'apps/called': appTree({ 'manifest.json': 100 }),
+      'apps/pathed': appTree({ 'main.js': 10 }),
+      'apps/held': appTree({ 'main.js': 10 }),
+      'apps/free': appTree({ 'manifest.json': 100, 'data/log.txt': 4000 }),
+      'apps/listed': appTree({ 'main.js': 7 }),
+    }
+    conversations = [
+      '---\ntitle: One\n---\nHere it is:\n<dez:app name="shown"/>\n',
+      '<dez:tool id="c1" name="apps" command="invoke" parameters="{&quot;name&quot;:&quot;called&quot;}">\nDone.\n</dez:tool>\n'
+        + '<dez:tool id="c2" name="apps" command="read" parameters="{&quot;path&quot;:&quot;/apps/pathed/main.js&quot;}">\n1: let x\n</dez:tool>\n'
+        // A list of all apps names none of them: it must not keep them all.
+        + '<dez:tool id="c3" name="apps" command="list_apps" parameters="{}">\n'
+        + '6 apps (name | kind | size | description), by name.\nfree | ui | 4 KB | Free.\nlisted | script | 7 B | Listed.\n</dez:tool>\n',
+    ]
+    // A tab that is not saved yet.
+    heldTexts = ['Run it:\n<dez:app name="held"/>']
+
+    const { unused, progress } = await find()
+
+    expect(unused).toStrictEqual({
+      files: [{ root: 'app', path: 'apps/free', size: 4100 }, { root: 'app', path: 'apps/listed', size: 7 }],
+      bytes: 4107,
+    })
+    expect(progress).toEqual([0, 1 / 2, 1, 1])
+    expect(deletedFiles).toEqual([])
+  })
+
+  it('keeps an app that changed a moment ago, and one that it cannot tell the age or the files of', async () => {
+    folders = { 'app:apps:folders': ['young-file', 'young-folder', 'no-time', 'huge', 'Not-An-App', 'gone', 'a-file', 'old'].map((name) => file(name, 0)) }
+    const old = appTree({ 'main.js': 1, 'data.json': 2 })
+    trees = {
+      'apps/young-file': { ...old, entries: [old.entries[0], { ...old.entries[1], updatedAt: OLD + 1 }] },
+      'apps/young-folder': { ...old, updatedAt: OLD + 1 },
+      'apps/no-time': { ...old, entries: [{ ...old.entries[0], updatedAt: null }, old.entries[1]] },
+      // More files than the tools of Dez put into an app: the listing is
+      // cut, so Dez did not see the newest one.
+      'apps/huge': appTree(Object.fromEntries(Array.from({ length: 1001 }, (_, index) => [`f${index}.js`, 1]))),
+      // The `apps` tool makes no folder with such a name.
+      'apps/Not-An-App': old,
+      // `apps/gone` went after the listing.
+      'apps/a-file': { ...NO_TREE, kind: 'file', size: 5, updatedAt: OLD },
+      'apps/old': old,
+    }
+
+    expect((await find()).unused).toStrictEqual({ files: [{ root: 'app', path: 'apps/old', size: 3 }], bytes: 3 })
+  })
+
   // A scan that took the conversations it could read for all of them would
   // give the files of the others as unused.
   it('rejects with an error toast when the conversations cannot all be read', async () => {
@@ -232,7 +308,7 @@ describe('dez.controller/unusedFiles/find', () => {
     expect(consoleError).toHaveBeenCalled()
   })
 
-  it.each(['app:assets/generated/video', 'cache:media', 'cache:work/w1'])('rejects with an error toast when %s cannot be listed', async (failing) => {
+  it.each(['app:assets/generated/video', 'cache:media', 'cache:work/w1', 'app:apps:folders'])('rejects with an error toast when %s cannot be listed', async (failing) => {
     folders = { 'cache:work:folders': [file('w1', 0)] }
     listAppFiles = async (key) => {
       if (key === failing) throw new Error(`Failed to list ${failing}`)
@@ -242,6 +318,16 @@ describe('dez.controller/unusedFiles/find', () => {
     await expect(find()).rejects.toThrow(`Failed to list ${failing}`)
 
     expect(toasts).toStrictEqual([{ title: 'Could not look for unused files', message: `${READ_FAILURE}\n\nDetails: Failed to list ${failing}`, variant: 'error' }])
+    expect(conversationReads).toBe(0)
+  })
+
+  it('rejects with an error toast when the files of an app cannot be listed', async () => {
+    folders = { 'app:apps:folders': [file('notes', 0)] }
+    treeError = 'Failed to list apps/notes: Permission denied (os error 13)'
+
+    await expect(find()).rejects.toBe(treeError)
+
+    expect(toasts).toStrictEqual([{ title: 'Could not look for unused files', message: `${READ_FAILURE}\n\nDetails: ${treeError}`, variant: 'error' }])
     expect(conversationReads).toBe(0)
   })
 })
@@ -260,7 +346,7 @@ describe('dez.controller/unusedFiles/delete', () => {
   }
 
   it('deletes the files and counts them, a work folder as a folder', async () => {
-    expect(await deleteUnused(unused)).toStrictEqual({ deleted: 6, bytes: 6_543_210, inUse: 0, failed: 0 })
+    expect(await deleteUnused(unused)).toStrictEqual({ deleted: 6, bytes: 6_543_210, inUse: 0, failed: 0, apps: NO_APPS })
     expect(deletedFiles).toEqual([
       'app:assets/images/a.png',
       'app:assets/generated/images/b.webp',
@@ -276,14 +362,14 @@ describe('dez.controller/unusedFiles/delete', () => {
     heldTexts = ['', `Now with ![id=a](${APP_DIR}/assets/generated/images/b.webp)`]
     unnamedMadeFiles = [`${CACHE_DIR}/media/d.mp4`]
 
-    expect(await deleteUnused(unused)).toStrictEqual({ deleted: 4, bytes: 6_503_010, inUse: 2, failed: 0 })
+    expect(await deleteUnused(unused)).toStrictEqual({ deleted: 4, bytes: 6_503_010, inUse: 2, failed: 0, apps: NO_APPS })
     expect(deletedFiles).toEqual(['app:assets/images/a.png', 'app:assets/generated/video/c.mp4', 'cache:media/e.part.4012.7.tmp', 'cache:work/f (folder)'])
   })
 
   it('keeps a cache entry that work of this app holds since the scan', async () => {
     const deleted = await whileHeld(['work/f', 'media/e.part'], () => deleteUnused(unused))
 
-    expect(deleted).toStrictEqual({ deleted: 4, bytes: 43_210, inUse: 2, failed: 0 })
+    expect(deleted).toStrictEqual({ deleted: 4, bytes: 43_210, inUse: 2, failed: 0, apps: NO_APPS })
     expect(deletedFiles).toEqual(['app:assets/images/a.png', 'app:assets/generated/images/b.webp', 'app:assets/generated/video/c.mp4', 'cache:media/d.mp4'])
   })
 
@@ -292,12 +378,41 @@ describe('dez.controller/unusedFiles/delete', () => {
       if (path === 'assets/images/a.png') throw 'Failed to delete assets/images/a.png: Permission denied (os error 13)'
     }
 
-    expect(await deleteUnused(unused)).toStrictEqual({ deleted: 5, bytes: 6_543_200, inUse: 0, failed: 1 })
+    expect(await deleteUnused(unused)).toStrictEqual({ deleted: 5, bytes: 6_543_200, inUse: 0, failed: 1, apps: NO_APPS })
     expect(deletedFiles).not.toContain('app:assets/images/a.png')
     expect(consoleError).toHaveBeenCalled()
   })
 
-  it('deletes no file that is not a stored image, a saved clip, or a cache entry of the cleanup', async () => {
+  describe('with apps', () => {
+    const withApps: UnusedFiles = {
+      files: [
+        { root: 'app', path: 'assets/images/a.png', size: 10 },
+        { root: 'app', path: 'apps/notes', size: 500 },
+        { root: 'app', path: 'apps/timer', size: 7000 },
+      ],
+      bytes: 7510,
+    }
+
+    it('deletes the folder of each app, counts the apps apart from the files, and tells the editor', async () => {
+      expect(await deleteUnused(withApps)).toStrictEqual({ deleted: 1, bytes: 7510, inUse: 0, failed: 0, apps: { deleted: 2, inUse: 0, failed: 0 } })
+      expect(deletedFiles).toEqual(['app:assets/images/a.png', 'app:apps/notes (folder)', 'app:apps/timer (folder)'])
+      expect(goneApps).toEqual(['notes', 'timer'])
+    })
+
+    it('keeps an app that a text in memory names since the scan, and counts one that cannot be deleted', async () => {
+      heldTexts = ['Here it is:\n<dez:app name="notes"/>']
+      deleteAppFile = async (path) => {
+        if (path === 'apps/timer') throw 'Failed to delete apps/timer: Permission denied (os error 13)'
+      }
+
+      expect(await deleteUnused(withApps)).toStrictEqual({ deleted: 1, bytes: 10, inUse: 0, failed: 0, apps: { deleted: 0, inUse: 1, failed: 1 } })
+      expect(deletedFiles).toEqual(['app:assets/images/a.png'])
+      expect(goneApps).toEqual([])
+      expect(consoleError).toHaveBeenCalled()
+    })
+  })
+
+  it('deletes no file that is not a stored image, a saved clip, the folder of an app, or a cache entry of the cleanup', async () => {
     const files: UnusedFiles['files'] = [
       { root: 'app', path: 'app_state.json', size: 1 },
       { root: 'app', path: 'conversations/a.md', size: 2 },
@@ -309,10 +424,15 @@ describe('dez.controller/unusedFiles/delete', () => {
       { root: 'cache', path: 'media/sub/a.mp4', size: 8 },
       { root: 'cache', path: 'work/w1/a.mp4', size: 9 },
       { root: 'cache', path: 'work/..', size: 10 },
+      { root: 'app', path: 'apps', size: 12 },
+      { root: 'app', path: 'apps/notes/main.js', size: 13 },
+      { root: 'app', path: 'apps/..', size: 14 },
+      { root: 'app', path: 'apps/Not-An-App', size: 15 },
+      { root: 'cache', path: 'apps/notes', size: 16 },
       { root: 'app', path: 'assets/images/a.png', size: 11 },
     ]
 
-    expect(await deleteUnused({ files, bytes: 66 })).toStrictEqual({ deleted: 1, bytes: 11, inUse: 0, failed: 10 })
+    expect(await deleteUnused({ files, bytes: 136 })).toStrictEqual({ deleted: 1, bytes: 11, inUse: 0, failed: 15, apps: NO_APPS })
     expect(deletedFiles).toEqual(['app:assets/images/a.png'])
   })
 })
@@ -406,7 +526,7 @@ describe('dez.controller/unusedFiles', () => {
     await vi.advanceTimersByTimeAsync(0)
     release()
 
-    expect(await deleted).toStrictEqual({ deleted: 1, bytes: 10, inUse: 0, failed: 0 })
+    expect(await deleted).toStrictEqual({ deleted: 1, bytes: 10, inUse: 0, failed: 0, apps: NO_APPS })
     expect((await found).unused).toStrictEqual({ files: [{ root: 'app', path: 'assets/images/b.png', size: 20 }], bytes: 20 })
   })
 })

@@ -175,6 +175,9 @@ export interface CompactionAsset {
   /** An open job of the reply that runs takes it as an input
    *  (`openJobInputs`). */
   jobInput: boolean
+  /** A file of an app of the conversation names it with `@id`
+   *  (`CompactionAssetsInput.appInputs`). */
+  appInput: boolean
   /** What the model wrote about it at the compaction before this one;
    *  blank for none. */
   sentence: string
@@ -212,6 +215,10 @@ export interface CompactionAssetsInput {
   facts: ReadonlyMap<string, string>
   /** The inputs of the open jobs of the reply (`openJobInputs`). */
   jobInputs: ReadonlyMap<string, readonly string[]>
+  /** The ids that the files of the apps of the conversation name with
+   *  `@id` (`appFileMentions`, compactionApps.ts). An id of no asset of
+   *  `found` counts for nothing. */
+  appInputs: ReadonlySet<string>
   /** The ids of the agent sections of the replies that took the jobs of
    *  the reply that runs (`TabJobs.replySections`, controller/jobs.ts):
    *  the replies that the user cut before it (a stop, a new submit, a
@@ -221,7 +228,7 @@ export interface CompactionAssetsInput {
 }
 
 /** The assets of a compaction, in the order of `input.found`. */
-export function compactionAssets({ sections, scope, found, places, facts, jobInputs, replySections }: CompactionAssetsInput): CompactionAsset[] {
+export function compactionAssets({ sections, scope, found, places, facts, jobInputs, appInputs, replySections }: CompactionAssetsInput): CompactionAsset[] {
   const carried = carriedAssetLines(sections)
   const replyIds = new Set(replySections)
   if (scope.reply !== null) replyIds.add(sections[scope.reply].id)
@@ -245,6 +252,7 @@ export function compactionAssets({ sections, scope, found, places, facts, jobInp
       intermediate: isIntermediate(asset),
       byReply: (from !== undefined && foundAssetFrom(asset) >= from) || (sameReply && line?.byReply === true),
       jobInput: inputs.has(asset.id),
+      appInput: appInputs.has(asset.id),
       sentence: line?.sentence ?? '',
     }
   })
@@ -254,11 +262,12 @@ export function compactionAssets({ sections, scope, found, places, facts, jobInp
  *  names the columns, then one line for each asset. */
 export function assetTableText(assets: readonly CompactionAsset[]): string {
   if (assets.length === 0) return 'The conversation has no image and no clip, so your answer needs no line under the Assets heading.'
-  const head = 'The images and the clips of the conversation (id | kind | facts | who made it | from the user or made | intermediate or - | this reply or earlier | open job or -). '
+  const head = 'The images and the clips of the conversation (id | kind | facts | who made it | from the user or made | intermediate or - | this reply or earlier | open job or - | app file or -). '
     + 'intermediate: a call made it as a part of its work, and the user sees it only in the panel of that call. '
     + 'this reply: the reply that you work on now made it; earlier: an earlier reply made it; - for an asset of the user. '
-    + 'open job: a job that still runs, or whose result you did not get yet, takes it as an input.'
-  const rows = assets.map(({ asset, kind, facts, origin, fromUser, intermediate, byReply, jobInput }) => [
+    + 'open job: a job that still runs, or whose result you did not get yet, takes it as an input. '
+    + 'app file: a file of an app of the conversation names it with @id.'
+  const rows = assets.map(({ asset, kind, facts, origin, fromUser, intermediate, byReply, jobInput, appInput }) => [
     `@${asset.id}`,
     ASSET_NAMES[kind],
     facts,
@@ -267,6 +276,7 @@ export function assetTableText(assets: readonly CompactionAsset[]): string {
     intermediate ? 'intermediate' : '-',
     fromUser ? '-' : byReply ? 'this reply' : 'earlier',
     jobInput ? 'open job' : '-',
+    appInput ? 'app file' : '-',
   ].join(' | '))
   return [head, ...rows].join('\n')
 }
@@ -319,9 +329,10 @@ export function clipPictureLabel(shows: string): string {
  *    each one is kept: a broken answer must not remove work, and a
  *    compaction cannot be undone.
  *  - A `drop` reads as `keep` for an asset that work can still need: an
- *    asset of the user; an input of an open job (`jobInput`); and an asset
- *    that a text names which stays, the notes of the answer or a text of
- *    the user (`keptUserTexts`).
+ *    asset of the user; an input of an open job (`jobInput`); an asset
+ *    that a file of an app of the conversation names (`appInput`); and an
+ *    asset that a text names which stays, the notes of the answer or a
+ *    text of the user (`keptUserTexts`).
  *  - Any other line counts as it is: the model can drop an asset of the
  *    reply that runs. */
 export function assetDecisions(
@@ -338,7 +349,7 @@ export function assetDecisions(
   return assets.map((asset): AssetChoice => {
     const { id } = asset.asset
     const found = lines.get(id)
-    const guarded = asset.fromUser || asset.jobInput || named.has(id)
+    const guarded = asset.fromUser || asset.jobInput || asset.appInput || named.has(id)
     const decision = found?.line.decision ?? (!answered || guarded || asset.byReply ? 'keep' : 'drop')
     return {
       asset,

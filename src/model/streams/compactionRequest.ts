@@ -1,10 +1,11 @@
 import { sectionTextParts } from '../chat/compaction'
-import { conversationCostText } from '../chat/compactionNotes'
+import { conversationCostText, notesCellText, type NotesApp } from '../chat/compactionNotes'
 import { sectionIsEmpty } from '../chat/content'
 import type { ConversationCost } from '../chat/conversationCost'
 import { IMAGE_ID_SOURCE } from '../chat/images'
 import { withoutStoredFilePaths } from '../chat/storedFilePaths'
 import type { ModelRef, Section } from '../chat/types'
+import { APPS_VIRTUAL_ROOT } from '../tools/appsTool'
 import { jobsListText, type JobInfo } from '../tools/jobs'
 import type { PictureBudget } from './pictureBudget'
 
@@ -146,6 +147,9 @@ export interface CompactionInstruction {
   /** The table of the assets of the conversation (`assetTableText`,
    *  compactionAssets.ts). */
   assetTable: string
+  /** The apps of the conversation, as the notes keep them
+   *  (`compactionApp`, compactionApps.ts). */
+  apps: readonly NotesApp[]
   /** The jobs of the reply that runs (`CompactionInput.jobs`). A reply
    *  that sent no request yet has only the jobs that it took over from
    *  a reply that the user cut. */
@@ -166,10 +170,21 @@ function middleMessagesList(starts: readonly string[]): string {
   return ['The messages of the user between the first and the newest one, oldest first, each as its start (the whole messages are above):', ...lines].join('\n')
 }
 
+// The list of the apps of the instruction, after two line breaks: one line
+// for each app, as the notes hold it. Blank for a conversation with no
+// app.
+function appsList(apps: readonly NotesApp[]): string {
+  if (apps.length === 0) return ''
+  const head = 'The apps of the conversation (app | kind | description). Dez keeps this list in the notes by itself, and the files of each app stay as they are, so your answer needs no line for an app. '
+    + 'Tell under Requirements and decisions what the work at hand still does with an app.'
+  const lines = apps.map(({ name, kind, description }) => `${APPS_VIRTUAL_ROOT}/${name} | ${kind} | ${notesCellText(description, true)}`)
+  return `\n\n${[head, ...lines].join('\n')}`
+}
+
 /** The instruction of a compaction request: the text of its last user
  *  message. The answer has the layout that `readCompactionAnswer` reads.
  *  It holds no path of a stored file. */
-export function compactionInstruction({ middleMessages, assetTable, jobs, cost, tools }: CompactionInstruction): string {
+export function compactionInstruction({ middleMessages, assetTable, apps, jobs, cost, tools }: CompactionInstruction): string {
   const text = `[Request from Dez, not a message of the user]
 
 The conversation is near the limit of what one request can hold. So Dez now takes every message above out of the conversation and puts your answer to this request in their place, as notes. The work goes on right after that, from the notes alone: the next request holds only your notes and the messages of the user that Dez quotes in them word for word (the first message, the middle messages that you keep, and the newest message). The tool calls and their results are gone then, and so is your thinking.
@@ -204,9 +219,9 @@ One line for each image and clip of the table below, in this form:
 
 The sentence tells what the asset is, how it was made (the model or the tool, and the important parts of the prompt or the command), and what a later step needs it for. You read this sentence again at the next compaction, when the calls that made the asset are gone. At most ${MAX_ASSET_SENTENCE_LENGTH} characters.
 
-Dez drops an asset of an earlier reply that your lines do not name, and keeps an asset of this reply that they do not name. Dez never drops an asset from the user, an asset that an open job uses, or an asset that your notes or a kept message of the user name with @id: for those, \`drop\` reads as \`keep\`. So name a rejected or dropped asset in your notes by what it was, not by its @id. When Dez keeps an asset that the user rejected (a kept message of the user names it, or an open job uses it), its sentence tells that the user rejected it, and what the user wants in its place.
+Dez drops an asset of an earlier reply that your lines do not name, and keeps an asset of this reply that they do not name. Dez never drops an asset from the user, an asset that an open job uses, an asset that a file of an app of the conversation names with @id, or an asset that your notes or a kept message of the user name with @id: for those, \`drop\` reads as \`keep\`. So name a rejected or dropped asset in your notes by what it was, not by its @id. When Dez keeps an asset that the user rejected (a kept message of the user names it, or an open job or a file of an app uses it), its sentence tells that the user rejected it, and what the user wants in its place.
 
-${assetTable}
+${assetTable}${appsList(apps)}
 
 The jobs of this reply:
 ${jobsListText(jobs)}

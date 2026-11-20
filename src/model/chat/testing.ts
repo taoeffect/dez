@@ -29,8 +29,8 @@ export const COMPACTION_TAG = compactionTagText({ count: 1, lastId: 'b', picture
 export const FOX_ORIGIN = 'made by the model_invoke job 2 of its reply: "A red fox"'
 
 /** The data of the notes of a compaction: the requirements of the model,
- *  with no message of the user, no asset, no job, and no cost, unless
- *  `fields` give them. */
+ *  with no message of the user, no asset, no app, no job, and no cost,
+ *  unless `fields` give them. */
 export function notesData(fields: Partial<CompactionNotes>): CompactionNotes {
   return {
     firstMessage: null,
@@ -40,6 +40,7 @@ export function notesData(fields: Partial<CompactionNotes>): CompactionNotes {
     requirements: 'Every frame is 16:9.',
     assets: [],
     unnamed: [],
+    apps: [],
     jobs: [],
     jobInputs: new Map(),
     cost: undefined,

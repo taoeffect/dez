@@ -1,6 +1,6 @@
 import { assetTextPieces } from '../chat/assetMentions'
 import { compactionBlockText, partsImageReferences, sectionCompactionBlock, sectionLinkedRuleParts } from '../chat/compaction'
-import { compactionNotesText, notesLeftOutMessages, type NotesAsset } from '../chat/compactionNotes'
+import { compactionNotesText, notesLeftOutMessages, type NotesApp, type NotesAsset } from '../chat/compactionNotes'
 import { sectionPlainText, textNode } from '../chat/content'
 import type { ConversationCost } from '../chat/conversationCost'
 import { findImageReferences, imageReferenceTextWithKeptMark, isKeptImage, linkedPathCounts, type ImageReference, type LinkedPathRule } from '../chat/images'
@@ -81,6 +81,9 @@ export interface CompactedSectionsInput {
   /** What the compaction does with each asset (`assetDecisions`). */
   choices: readonly AssetChoice[]
   answer: CompactionAnswer
+  /** The apps of the conversation (`compactionApp`, compactionApps.ts),
+   *  by name: the notes keep one line for each. */
+  apps: readonly NotesApp[]
   /** The jobs of the reply that runs (`CompactionInput.jobs`). */
   jobs: readonly JobInfo[]
   /** The inputs of the open jobs of `jobs` (`openJobInputs`): the notes
@@ -229,6 +232,7 @@ export function compactedSections(input: CompactedSectionsInput): CompactedSecti
       requirements: answer.requirements,
       assets,
       unnamed: unnamed.map((reference) => imageReferenceTextWithKeptMark(reference, true)),
+      apps: input.apps,
       jobs: input.jobs,
       jobInputs: input.jobInputs,
       cost: input.cost,

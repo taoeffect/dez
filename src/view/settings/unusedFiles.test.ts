@@ -12,12 +12,15 @@ const twoFiles: UnusedFiles = {
   bytes: 4 * 1024 * 1024,
 }
 
+// The counts of a delete of a scan with no app.
+const NO_APPS = { deleted: 0, inUse: 0, failed: 0 }
+
 // What the stub selectors below give, and what they were asked for. Reset
 // in beforeEach.
 let findCalls: Array<{ progress: (fraction: number) => void, finish: (unused: UnusedFiles) => void, fail: () => void }> = []
 let confirmCalls: Array<{ message: string, answer: (confirmed: boolean) => void }> = []
 let deleteCalls: UnusedFiles[] = []
-let deleteResult: UnusedFilesDeleted = { deleted: 2, bytes: twoFiles.bytes, inUse: 0, failed: 0 }
+let deleteResult: UnusedFilesDeleted = { deleted: 2, bytes: twoFiles.bytes, inUse: 0, failed: 0, apps: NO_APPS }
 let toasts: ToastData[] = []
 
 sbp('sbp/selectors/register', {
@@ -44,7 +47,7 @@ beforeEach(() => {
   findCalls = []
   confirmCalls = []
   deleteCalls = []
-  deleteResult = { deleted: 2, bytes: twoFiles.bytes, inUse: 0, failed: 0 }
+  deleteResult = { deleted: 2, bytes: twoFiles.bytes, inUse: 0, failed: 0, apps: NO_APPS }
   toasts = []
 })
 
@@ -57,31 +60,63 @@ describe('deleteQuestion', () => {
     expect(deleteQuestion({ files: [{ root: 'app', path: 'assets/images/a.png', size: 300 }], bytes: 300 }))
       .toBe('Are you sure you want to delete 1 unused file? This frees 300 B, and it cannot be undone.')
   })
+
+  it('counts the apps apart from the files, and names them', () => {
+    const apps = ['notes', 'timer'].map((name) => ({ root: 'app' as const, path: `apps/${name}`, size: 1024 }))
+    expect(deleteQuestion({ files: [...twoFiles.files, ...apps], bytes: twoFiles.bytes + 2048 }))
+      .toBe('Are you sure you want to delete 2 unused files and 2 unused apps (notes, timer)? This frees 4.0 MB, and it cannot be undone.')
+    expect(deleteQuestion({ files: [apps[0]], bytes: 1024 }))
+      .toBe('Are you sure you want to delete 1 unused app (notes)? This frees 1 KB, and it cannot be undone.')
+  })
+
+  it('names at most 10 apps', () => {
+    const files = Array.from({ length: 12 }, (_, index) => ({ root: 'app' as const, path: `apps/a${index}`, size: 1 }))
+    expect(deleteQuestion({ files, bytes: 12 }))
+      .toBe('Are you sure you want to delete 12 unused apps (a0, a1, a2, a3, a4, a5, a6, a7, a8, a9, and 2 more)? This frees 12 B, and it cannot be undone.')
+  })
 })
 
 describe('deletedToast', () => {
   it('tells the count and the freed size, and goes away', () => {
-    expect(deletedToast({ deleted: 12, bytes: 50_646_221, inUse: 0, failed: 0 }))
+    expect(deletedToast({ deleted: 12, bytes: 50_646_221, inUse: 0, failed: 0, apps: NO_APPS }))
       .toStrictEqual({ message: 'Deleted 12 unused files (48.3 MB).', variant: 'success', duration: 5000 })
-    expect(deletedToast({ deleted: 1, bytes: 2048, inUse: 0, failed: 0 }).message).toBe('Deleted 1 unused file (2 KB).')
+    expect(deletedToast({ deleted: 1, bytes: 2048, inUse: 0, failed: 0, apps: NO_APPS }).message).toBe('Deleted 1 unused file (2 KB).')
   })
 
   it('tells the files that stay because a text names them again', () => {
-    expect(deletedToast({ deleted: 3, bytes: 10, inUse: 1, failed: 0 }))
+    expect(deletedToast({ deleted: 3, bytes: 10, inUse: 1, failed: 0, apps: NO_APPS }))
       .toStrictEqual({ message: 'Deleted 3 unused files (10 B). Kept 1 file now in use.', variant: 'success', duration: 5000 })
-    expect(deletedToast({ deleted: 0, bytes: 0, inUse: 2, failed: 0 }))
+    expect(deletedToast({ deleted: 0, bytes: 0, inUse: 2, failed: 0, apps: NO_APPS }))
       .toStrictEqual({ message: 'Deleted no files. Kept 2 files now in use.', variant: 'default', duration: 5000 })
   })
 
   it('stays open as a warning when a file could not be deleted', () => {
-    expect(deletedToast({ deleted: 3, bytes: 10, inUse: 1, failed: 2 })).toStrictEqual({
+    expect(deletedToast({ deleted: 3, bytes: 10, inUse: 1, failed: 2, apps: NO_APPS })).toStrictEqual({
       title: 'Unused files',
       message: 'Deleted 3 unused files (10 B). Kept 1 file now in use. Could not delete 2 files: the system did not let Dez delete them. '
         + 'Help › Developer Console shows why. Fix that, and click Delete Unused Files again.',
       variant: 'warning',
     })
-    expect(deletedToast({ deleted: 0, bytes: 0, inUse: 0, failed: 1 }).message).toBe('Deleted no files. Could not delete 1 file: the system did not let Dez delete it. '
+    expect(deletedToast({ deleted: 0, bytes: 0, inUse: 0, failed: 1, apps: NO_APPS }).message).toBe('Deleted no files. Could not delete 1 file: the system did not let Dez delete it. '
       + 'Help › Developer Console shows why. Fix that, and click Delete Unused Files again.')
+  })
+
+  it('counts the apps apart from the files in each sentence', () => {
+    expect(deletedToast({ deleted: 3, bytes: 2048, inUse: 1, failed: 0, apps: { deleted: 2, inUse: 1, failed: 0 } }))
+      .toStrictEqual({ message: 'Deleted 3 unused files and 2 unused apps (2 KB). Kept 1 file and 1 app now in use.', variant: 'success', duration: 5000 })
+    // A delete that took only apps is a delete, and one that kept or
+    // failed only apps tells no file.
+    expect(deletedToast({ deleted: 0, bytes: 2048, inUse: 0, failed: 0, apps: { deleted: 1, inUse: 0, failed: 0 } }))
+      .toStrictEqual({ message: 'Deleted 1 unused app (2 KB).', variant: 'success', duration: 5000 })
+    expect(deletedToast({ deleted: 0, bytes: 0, inUse: 0, failed: 0, apps: { deleted: 0, inUse: 2, failed: 1 } })).toStrictEqual({
+      title: 'Unused files',
+      message: 'Deleted no files. Kept 2 apps now in use. Could not delete 1 app: the system did not let Dez delete it. '
+        + 'Help › Developer Console shows why. Fix that, and click Delete Unused Files again.',
+      variant: 'warning',
+    })
+    expect(deletedToast({ deleted: 1, bytes: 5, inUse: 0, failed: 2, apps: { deleted: 0, inUse: 0, failed: 1 } }).message)
+      .toBe('Deleted 1 unused file (5 B). Could not delete 2 files and 1 app: the system did not let Dez delete them. '
+        + 'Help › Developer Console shows why. Fix that, and click Delete Unused Files again.')
   })
 })
 

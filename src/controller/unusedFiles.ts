@@ -5,56 +5,68 @@ import { SHOWN_PICTURE_FOLDER } from '../model/chat/shownPictures'
 import {
   STORED_FILE_FOLDERS,
   cacheEntryKind,
+  hasUnnamed,
   isHeldCacheEntry,
+  isNamed,
+  oldAppFolder,
   oldCacheEntries,
   oldStoredFiles,
+  removeNamed,
   removeNamedFiles,
   storedFilePath,
-  textCanName,
+  unnamedFiles,
+  unusedAppName,
+  type FileRef,
   type StoredFile,
   type UnusedFiles,
   type UnusedFilesDeleted,
 } from '../model/chat/unusedFiles'
+import { APPS_MAX_ENTRIES, APPS_ROOT, pathIn } from '../model/tools/appsTool'
 import { WORK_ROOT } from '../model/tools/workFolders'
 import { REPORT_ADVICE, errorText, explainedError, rawErrorText } from '../utils/errorText'
 import { fileNameOf } from '../utils/fileName'
 import { heldCachePaths } from './cacheHolds'
-import type { AppFileEntry } from './nativeTypes'
+import type { AppFileEntry, FileTree } from './nativeTypes'
 
 // The cleanup of Settings › General › Delete Unused Files: the stored files
 // (pasted, dropped, and generated images and clips, and the copies of the
-// pictures that tools showed their model) that no text uses any more, and
-// the entries of Dez's cache folder that nothing uses (temp copies of clips,
-// left-over downloads, and work folders). The rules for "unused" are in
-// src/model/chat/unusedFiles.ts. A compaction deletes some of its files at
-// once, by the same rules (`dez.controller/unusedFiles/deleteUnnamed`).
+// pictures that tools showed their model) that no text uses any more, the
+// apps that no text names, and the entries of Dez's cache folder that
+// nothing uses (temp copies of clips, left-over downloads, and work
+// folders). The rules for "unused" are in src/model/chat/unusedFiles.ts. A
+// compaction deletes some of its files at once, by the same rules
+// (`dez.controller/unusedFiles/deleteUnnamed`).
 
 // One scan or delete at a time: a scan that ran together with a delete
 // would count files that are gone a moment later.
 const QUEUE = 'dez.controller/unusedFiles'
 
-// The texts that can name a file that the cleanup must keep, other than
-// the conversation files: the texts in memory, and the files that the work
-// of a reply made and that no text names yet (`dez.stream/unnamedMadeFiles`).
-// The cleanup deletes each old file that no text it reads names. So a new
-// place of such text (a store, a file in the app folder) must join
-// `dez.model/heldTexts` or `dez.persistence/eachConversationText`. A new
-// kind of made file that no text names yet must join
-// `dez.stream/unnamedMadeFiles`.
+// The texts that can name a file or an app that the cleanup must keep,
+// other than the conversation files: the texts in memory, and the files
+// that the work of a reply made and that no text names yet
+// (`dez.stream/unnamedMadeFiles`). The cleanup deletes each old file and
+// each old app that no text it reads names. So a new place of such text (a
+// store, a file in the app folder) must join `dez.model/heldTexts` or
+// `dez.persistence/eachConversationText`. A new kind of made file that no
+// text names yet must join `dez.stream/unnamedMadeFiles`. The files of the
+// apps are no such text: Dez writes no path of a stored file into an app
+// (src/model/chat/unusedFiles.ts).
 function textsInMemory(): string[] {
   return [...sbp('dez.model/heldTexts') as string[], ...sbp('dez.stream/unnamedMadeFiles') as string[]]
 }
 
-// A file of the cleanup, with no size.
-type FileRef = Pick<StoredFile, 'root' | 'path'>
-
-// Deletes one file of the cleanup. Only a stored file (`storedFilePath`)
-// and a cache entry of the cleanup (`cacheEntryKind`) go; it throws for
-// any other file, so no selector of this module deletes one.
+// Deletes one file of the cleanup. Only the folder of an app
+// (`unusedAppName`), a stored file (`storedFilePath`), and a cache entry of
+// the cleanup (`cacheEntryKind`) go; it throws for any other file, so no
+// selector of this module deletes one.
 async function deleteCleanupFile(file: FileRef, appDir: string, cacheDir: string): Promise<void> {
+  if (unusedAppName(file) !== null) {
+    await sbp('dez.native/deleteAppFile', file.path, 'app', { folder: true })
+    return
+  }
   if (file.root === 'app') {
     if (storedFilePath(`${appDir}/${file.path}`, appDir) !== file.path) {
-      throw new Error('Not a stored image, a saved clip, or a copy of a shown picture')
+      throw new Error('Not a stored image, a saved clip, a copy of a shown picture, or the folder of an app')
     }
     await sbp('dez.native/deleteAppFile', file.path)
     return
@@ -65,12 +77,12 @@ async function deleteCleanupFile(file: FileRef, appDir: string, cacheDir: string
 }
 
 export default sbp('sbp/selectors/register', {
-  // Finds the stored files that no conversation, open or closed tab, saved
-  // prompt, or work of a reply that runs (a job result, a picture copy of a
-  // tool round) names, and the cache entries that nothing uses, and adds up
-  // their size. `onProgress` gets the part of the scan that is done, from 0
-  // to 1: the conversation files are the slow part, so it counts them.
-  // Nothing is deleted here.
+  // Finds the stored files and the apps that no conversation, open or
+  // closed tab, saved prompt, or work of a reply that runs (a job result, a
+  // picture copy of a tool round) names, and the cache entries that nothing
+  // uses, and adds up their size. `onProgress` gets the part of the scan
+  // that is done, from 0 to 1: the conversation files are the slow part, so
+  // it counts them. Nothing is deleted here.
   //
   // The files are listed first, and the texts are read after that: the
   // conversation files, and then the texts in memory, which hold what is
@@ -81,8 +93,9 @@ export default sbp('sbp/selectors/register', {
   // - A Save of a temp copy moves the file with its old file time, and
   //   writes the path into the clip's tag a moment later. The texts in
   //   memory are read after the listing, and once more before the delete.
-  // A cache entry that live work of this app uses (cacheHolds.ts) is left
-  // out, whatever its age.
+  // An app gets its text in the first way: `apps init` makes its folder,
+  // and the block of the call names it after that. A cache entry that live
+  // work of this app uses (cacheHolds.ts) is left out, whatever its age.
   //
   // A failure is logged, shows an error toast, and rejects: a scan that did
   // not read everything must not give a list of files to delete.
@@ -108,17 +121,26 @@ export default sbp('sbp/selectors/register', {
           const files = await sbp('dez.native/listAppFiles', folder.path, 'cache') as AppFileEntry[]
           candidates.push({ ...folder, size: files.reduce((sum, file) => sum + file.size, 0) })
         }
-        const unnamed = new Set(candidates.filter((file) => textCanName(file, cacheDir)).map((file) => fileNameOf(file.path)))
-        // With no file that a text can name, no text needs a read.
-        if (unnamed.size > 0) {
+        const appFolders = await sbp('dez.native/listAppFiles', APPS_ROOT.file, 'app', { folders: true }) as AppFileEntry[]
+        for (const { name } of appFolders) {
+          // The listing of the folders gives the time of the folder only:
+          // the age rule of an app needs the time of each file in it.
+          const tree = await sbp('dez.native/listFileTree', pathIn(APPS_ROOT, name).file, APPS_MAX_ENTRIES) as FileTree
+          const app = oldAppFolder(name, tree, now)
+          if (app !== null) candidates.push(app)
+        }
+        const unnamed = unnamedFiles(candidates, cacheDir)
+        // With no file and no app that a text can name, no text needs a
+        // read.
+        if (hasUnnamed(unnamed)) {
           await sbp('dez.persistence/eachConversationText', (text: string, index: number, count: number) => {
-            removeNamedFiles(unnamed, text)
+            removeNamed(unnamed, text)
             onProgress((index + 1) / count)
           })
-          for (const text of textsInMemory()) removeNamedFiles(unnamed, text)
+          for (const text of textsInMemory()) removeNamed(unnamed, text)
         }
         onProgress(1)
-        const files = candidates.filter((file) => !textCanName(file, cacheDir) || unnamed.has(fileNameOf(file.path)))
+        const files = candidates.filter((file) => !isNamed(file, unnamed, cacheDir))
         return { files, bytes: files.reduce((sum, file) => sum + file.size, 0) }
       }) as UnusedFiles
     } catch (error) {
@@ -132,37 +154,42 @@ export default sbp('sbp/selectors/register', {
     }
   },
 
-  // Deletes the files of a scan (`dez.controller/unusedFiles/find`), and
-  // tells what it did. The user answered a prompt since the scan, and a
-  // reply can write text or start work in that time, so the texts in
-  // memory and the held cache entries are read again: a file that one of
-  // them names or holds now stays. Only a file of the cleanup goes
-  // (`deleteCleanupFile`). A file that cannot be deleted is logged and
-  // counted, and the other files still go. A missing file counts as
-  // deleted.
+  // Deletes the files and the apps of a scan
+  // (`dez.controller/unusedFiles/find`), and tells what it did. The user
+  // answered a prompt since the scan, and a reply can write text or start
+  // work in that time, so the texts in memory and the held cache entries
+  // are read again: a file or an app that one of them names or holds now
+  // stays. Only a file of the cleanup goes (`deleteCleanupFile`). A file
+  // that cannot be deleted is logged and counted, and the other files
+  // still go. A missing file counts as deleted. The editor learns of each
+  // deleted app (`dez.editor/appDeleted`): a card of the app that it shows
+  // tells that the app is gone.
   async 'dez.controller/unusedFiles/delete' (unused: UnusedFiles): Promise<UnusedFilesDeleted> {
     try {
       return await sbp('okTurtles.eventQueue/queueEvent', QUEUE, async (): Promise<UnusedFilesDeleted> => {
         const appDir = await sbp('dez.native/getAppDir') as string
         const cacheDir = await sbp('dez.native/getAppDir', 'cache') as string
-        const unnamed = new Set(unused.files.filter((file) => textCanName(file, cacheDir)).map((file) => fileNameOf(file.path)))
-        for (const text of textsInMemory()) removeNamedFiles(unnamed, text)
+        const unnamed = unnamedFiles(unused.files, cacheDir)
+        for (const text of textsInMemory()) removeNamed(unnamed, text)
         const held = heldCachePaths()
-        const result: UnusedFilesDeleted = { deleted: 0, bytes: 0, inUse: 0, failed: 0 }
+        const result: UnusedFilesDeleted = { deleted: 0, bytes: 0, inUse: 0, failed: 0, apps: { deleted: 0, inUse: 0, failed: 0 } }
         for (const file of unused.files) {
-          const named = textCanName(file, cacheDir) && !unnamed.has(fileNameOf(file.path))
-          if (named || (file.root === 'cache' && isHeldCacheEntry(file.path, held))) {
-            result.inUse++
+          const app = unusedAppName(file)
+          const counts = app === null ? result : result.apps
+          if (isNamed(file, unnamed, cacheDir) || (file.root === 'cache' && isHeldCacheEntry(file.path, held))) {
+            counts.inUse++
             continue
           }
           try {
             await deleteCleanupFile(file, appDir, cacheDir)
-            result.deleted++
-            result.bytes += file.size
           } catch (error) {
-            console.error(`Failed to delete the unused file ${file.root}:${file.path}:`, error)
-            result.failed++
+            console.error(`Failed to delete the unused ${app === null ? 'file' : 'app'} ${file.root}:${file.path}:`, error)
+            counts.failed++
+            continue
           }
+          counts.deleted++
+          result.bytes += file.size
+          if (app !== null) sbp('dez.editor/appDeleted', app)
         }
         return result
       }) as UnusedFilesDeleted

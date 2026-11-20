@@ -1,5 +1,7 @@
 import { countOf } from '../../utils/countText'
 import { usdText } from '../providers/modelPrices'
+import { APP_KINDS, APP_NAME_SOURCE, UNKNOWN_APP_KIND, type ListedAppKind } from '../tools/appManifest'
+import { APPS_VIRTUAL_ROOT } from '../tools/appsTool'
 import { ASSET_NAME_SOURCE, ASSET_NAMES, jobResultLegend, jobResultState, type JobAssetKind, type JobInfo, type JobResultState, type JobStatus } from '../tools/jobs'
 import { labelAppTags } from './appTags'
 import { openFenceCloser } from './codeRanges'
@@ -29,6 +31,12 @@ import type { Role } from './types'
 //   @c | image | PNG, 1024x768, 1.2 MB | made by the model_invoke job 2 of its reply: "A red fox" | this reply | The fox frame of scene 1.
 //
 //   @a | image | PNG, 800x600, 120 KB | from the user | - | The reference photo.
+//
+//   ## Apps of the conversation
+//
+//   <what the lines are> Each line: app | kind | description.
+//
+//   /apps/contact-sheet | script | Makes a contact sheet of images.
 //
 //   ## Jobs of the reply
 //
@@ -119,24 +127,38 @@ import type { Role } from './types'
 //   message of the user (its origin is "from the user"). In a conversation
 //   of an older Dez, an asset of the user can have its reference or tag
 //   in a user section after this one.
-// - The assets and the jobs are tables (notesTable.ts): a value that every
-//   row has, or that a run of rows has, leaves the rows for one line that
-//   tells it, when that makes the text shorter. The reader gives back every
-//   column of each row.
-// - The sentence is the last column of an asset line, and the label the
-//   last one of a job line: both are free text, which can hold the column
-//   mark. The columns before them hold no `|`.
-// - Every text of a model (the requirements, a sentence, a label of a
-//   call) has the escape of model text (`ModelTextEscaper`), so it forms
-//   no tag of Dez, and a request sends it with the escape removed. The
-//   readers give a text back with the escape removed.
+// - The apps (tools/appsTool.ts) that the text before the compaction
+//   named have a part of their own, one line for each. The compaction
+//   removes the calls and the tags that named them, so these lines are
+//   all that still names them: they tell a model that the apps are
+//   there, and their paths keep the apps out of Delete Unused Files
+//   (`namedApps`, appNames.ts). The next compaction finds the names with
+//   that same rule, and reads a line only for the kind and the
+//   description of an app whose manifest it cannot read. An app is no
+//   asset: the part holds no id and no file path. Notes with no app have
+//   no such part.
+// - The assets, the apps, and the jobs are tables (notesTable.ts): a
+//   value that every row has, or that a run of rows has, leaves the rows
+//   for one line that tells it, when that makes the text shorter. The
+//   reader gives back every column of each row.
+// - The sentence is the last column of an asset line, the description
+//   the last one of an app line, and the label the last one of a job
+//   line: all are free text, which can hold the column mark. The columns
+//   before them hold no `|`.
+// - Every text of a model (the requirements, a sentence, the description
+//   of an app, a label of a call) has the escape of model text
+//   (`ModelTextEscaper`), so it forms no tag of Dez, and a request sends
+//   it with the escape removed. The readers give a text back with the
+//   escape removed.
 // - A reader takes the last heading of its name. Dez writes its parts
 //   after the text of the model, and the parts of the assets, the jobs,
 //   and the cost also with nothing in them, so a reader never takes a
 //   line of a model for a line of Dez: a model can copy a heading of
 //   earlier notes into its answer. `## User messages` is there only with
 //   a first message, but no line of a model has it: the reader of the
-//   answer takes each such line as a heading. No reader looks into a
+//   answer takes each such line as a heading. The part of the apps is
+//   there only with an app, so its reader takes it only after the part
+//   of the assets, where no text of a model is. No reader looks into a
 //   message part.
 // - Saved conversations hold these lines, and later compactions and
 //   `asset_info` read them back. So a new form of a line needs a reader
@@ -146,6 +168,7 @@ import type { Role } from './types'
 
 const REQUIREMENTS_HEADING = '## Requirements and decisions'
 const ASSETS_HEADING = '## Assets of the conversation'
+const APPS_HEADING = '## Apps of the conversation'
 const JOBS_HEADING = '## Jobs of the reply'
 const COST_HEADING = '## Cost'
 const USER_MESSAGES_HEADING = '## User messages'
@@ -250,6 +273,19 @@ const JOBS_TABLE: NotesTable = {
   ],
 }
 
+const APP_PATH_START = `${APPS_VIRTUAL_ROOT}/`
+
+const APPS_TABLE: NotesTable = {
+  noun: { one: 'App', many: 'Apps' },
+  intro: 'The apps that the conversation named before this compaction, each as it was then. Dez keeps the files of each one.',
+  rowGap: '\n',
+  columns: [
+    { name: 'app', pattern: `${APP_PATH_START}${APP_NAME_SOURCE}` },
+    { name: 'kind', pattern: [...APP_KINDS, `\\${UNKNOWN_APP_KIND}`].join('|') },
+    { name: 'description', pattern: '.*' },
+  ],
+}
+
 /** The line of one asset in the notes. */
 export interface NotesAssetLine {
   id: string
@@ -289,6 +325,16 @@ export interface NotesJobLine {
   inputs: string[]
 }
 
+/** The line of one app in the notes. */
+export interface NotesApp {
+  /** The name of the app: the name of its folder. */
+  name: string
+  kind: ListedAppKind
+  /** What the app is: the description of its manifest, or a text of Dez
+   *  that tells why Dez knows none; blank for none. */
+  description: string
+}
+
 /** What the notes of a compaction hold. */
 export interface CompactionNotes {
   /** The first message of the user, as its plain text (a prompt pill as
@@ -311,6 +357,8 @@ export interface CompactionNotes {
    *  part. No line can name one, but its text must stay, so that the user
    *  still has the image. */
   unnamed: readonly string[]
+  /** The apps that the text before the compaction named, by name. */
+  apps: readonly NotesApp[]
   /** The jobs of the reply that ran at the compaction. */
   jobs: readonly JobInfo[]
   /** The ids of the inputs of each open job of `jobs`, by job id
@@ -343,6 +391,10 @@ function jobRow(job: JobInfo, inputs: readonly string[] = []): NotesRow {
     cells: [job.id, String(job.call.number), notesCellText(job.tool), job.status, jobResultState(job), inputWords, escapedModelText(label === '' ? '-' : label)],
     before: null,
   }
+}
+
+function appRow({ name, kind, description }: NotesApp): NotesRow {
+  return { cells: [`${APP_PATH_START}${name}`, kind, escapedModelText(notesCellText(description, true))], before: null }
 }
 
 /** What the requests of a conversation cost up to a moment, which `upTo`
@@ -391,6 +443,7 @@ export function compactionNotesText(notes: CompactionNotes): string {
   if (notes.requirements.trim() !== '') add(REQUIREMENTS_HEADING, closedFences(escapedModelText(notes.requirements.trim())))
   const assets = notes.assets.map(assetRow)
   add(ASSETS_HEADING, assets.length > 0 || notes.unnamed.length > 0 ? [notesTableText(ASSETS_TABLE, assets), ...notes.unnamed].join('\n\n') : NO_NOTES_ASSETS_TEXT)
+  if (notes.apps.length > 0) add(APPS_HEADING, notesTableText(APPS_TABLE, notes.apps.map(appRow)))
   add(JOBS_HEADING, notes.jobs.length > 0 ? notesTableText(JOBS_TABLE, notes.jobs.map((job) => jobRow(job, notes.jobInputs.get(job.id)))) : NO_NOTES_JOBS_TEXT)
   add(COST_HEADING, conversationCostText(notes.cost, 'up to this compaction'))
   if (notes.firstMessage !== null) add(USER_MESSAGES_HEADING, userMessagesText(notes))
@@ -481,12 +534,14 @@ export function messageFence(text: string): string {
 
 // The lines of the last part of `text` with `heading`: from the line after
 // the heading to the next heading of that level. The lines of the message
-// parts do not count.
-function partLines(text: string, heading: string): string[] {
+// parts do not count. With `after`, a heading of a part that Dez always
+// writes, the part counts only when it comes after that part: a part
+// that Dez leaves out when it has no line could else be text of a model.
+function partLines(text: string, heading: string, after?: string): string[] {
   const { lines: all, inMessage } = scanMessages(text)
   const lines = all.filter((_, index) => !inMessage[index])
   const start = lines.lastIndexOf(heading)
-  if (start < 0) return []
+  if (start < 0 || (after !== undefined && start < lines.lastIndexOf(after))) return []
   const end = lines.findIndex((line, index) => index > start && line.startsWith('## '))
   return lines.slice(start + 1, end < 0 ? lines.length : end)
 }
@@ -525,6 +580,17 @@ export function notesJobLines(notes: string): Map<string, NotesJobLine> {
       label: call === '-' ? '' : call,
       inputs: inputs === '-' ? [] : inputs.split(' ').map((word) => word.slice(1)),
     })
+  }
+  return found
+}
+
+/** The app lines of the notes `notes` (`CompactionBlock.notes`), by the
+ *  name of the app. */
+export function notesAppLines(notes: string): Map<string, NotesApp> {
+  const found = new Map<string, NotesApp>()
+  for (const [path, kind, description] of notesTableRows(APPS_TABLE, partLines(notes, APPS_HEADING, ASSETS_HEADING))) {
+    const name = path.slice(APP_PATH_START.length)
+    found.set(name, { name, kind: kind as ListedAppKind, description: unescapedModelText(description) })
   }
   return found
 }

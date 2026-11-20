@@ -3,7 +3,7 @@ import { countOf, countText } from '../../utils/countText'
 import { oneLineCut } from '../../utils/oneLineCut'
 import { startOf } from '../../utils/textCut'
 import { APP_HANDLER_EXAMPLE, APP_READ_ASSET, APP_RUN_FRAME_SIZE, APP_SAVE_ASSET } from './appBridge'
-import { APP_KINDS, isAppName, MANIFEST_FILE, MANIFEST_MAX_BYTES, MAX_DESCRIPTION_LENGTH, parseAppManifest, type AppKind, type AppManifest } from './appManifest'
+import { APP_KINDS, isAppName, MANIFEST_FILE, MANIFEST_MAX_BYTES, MAX_DESCRIPTION_LENGTH, parseAppManifest, UNKNOWN_APP_KIND, type AppKind, type AppManifest, type ListedAppKind } from './appManifest'
 import { appTemplateFiles, SCRIPT_MAIN_FILE, UI_CLIENT_SCRIPT_TAG, UI_INDEX_FILE, UI_OWN_SCRIPT_TAG } from './appTemplates'
 import { unknownValuesText } from './arguments'
 import { INTERMEDIATE_PARAMETER, JOB_CALL_NOTE, jobTimeoutParameter } from './jobs'
@@ -1133,13 +1133,14 @@ export function checkedAppKind(app: AppsPath, manifest: AppsPath, facts: PathFac
   return parsed.kind
 }
 
-// The kind and the description columns of an app. An app with no manifest
-// that Dez can read still lists: a model must see it to repair it.
-function manifestColumns({ tree, manifest }: ListedApp): [string, string] {
-  if (!manifestEntry(tree)) return ['?', '(no manifest.json)']
-  if (!manifest) return ['?', `(a manifest.json that Dez does not read: it is no plain file of at most ${byteSizeText(MANIFEST_MAX_BYTES)})`]
+/** The kind and the description of an app for a list, each with no column
+ *  mark. An app with no manifest that Dez can read still lists: a model
+ *  must see it to repair it. */
+export function manifestColumns({ tree, manifest }: ListedApp): [ListedAppKind, string] {
+  if (!manifestEntry(tree)) return [UNKNOWN_APP_KIND, '(no manifest.json)']
+  if (!manifest) return [UNKNOWN_APP_KIND, `(a manifest.json that Dez does not read: it is no plain file of at most ${byteSizeText(MANIFEST_MAX_BYTES)})`]
   const parsed = parseAppManifest(new TextDecoder().decode(manifest))
-  if (!parsed) return ['?', `(a manifest.json that is not valid: it needs "name", "description", and "kind", which is ${APP_KINDS.map((kind) => `"${kind}"`).join(' or ')})`]
+  if (!parsed) return [UNKNOWN_APP_KIND, `(a manifest.json that is not valid: it needs "name", "description", and "kind", which is ${APP_KINDS.map((kind) => `"${kind}"`).join(' or ')})`]
   // A `|` in a description would read as the end of the column.
   const description = oneLineCut(parsed.description.replaceAll('|', '/'), MAX_DESCRIPTION_LENGTH)
   return [parsed.kind, description === '' ? '(no description)' : description]

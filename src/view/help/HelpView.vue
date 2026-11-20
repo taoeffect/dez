@@ -323,7 +323,8 @@ function onOverlayClick(event: MouseEvent) {
               work at hand needs, and the compaction drops the others: the parts of finished work,
               the versions that a newer one replaced, the versions that you rejected, and the assets
               of earlier replies that the work does not use. Dez never drops an asset of yours, an
-              asset that a job still uses, or an asset that the notes name. An asset that a message
+              asset that a job still uses, an asset that the notes name, or an asset that a file of
+              an app of the conversation names with <code>@</code> and its id. An asset that a message
               of yours names stays too, when the notes keep that message. So to keep an asset
               of an earlier reply, name it in your message with <code>@</code> and its id. A dropped
               asset leaves the conversation. Dez deletes the file of a dropped intermediate asset at
@@ -406,7 +407,8 @@ function onOverlayClick(event: MouseEvent) {
               </li>
               <li>
                 Click Delete Unused Files in Settings › General. Dez finds the stored files that no
-                conversation uses, and deletes them after you say yes. In the cache folder, it also
+                conversation uses, and deletes them after you say yes. It also deletes each app
+                that no conversation names, with all its files. In the cache folder, it also
                 deletes the temporary copies of clips that no conversation uses, and the work folders
                 and downloads that Dez did not finish.
               </li>

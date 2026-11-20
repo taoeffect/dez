@@ -1,8 +1,10 @@
 import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
+import { namedApps } from '../model/chat/appNames'
+import { appTagText } from '../model/chat/appTags'
 import { sectionCompactionBlock, sectionTextParts } from '../model/chat/compaction'
-import { notesAssetLines, notesJobLines, notesLeftOutMessages, notesMessages } from '../model/chat/compactionNotes'
+import { notesAppLines, notesAssetLines, notesJobLines, notesLeftOutMessages, notesMessages } from '../model/chat/compactionNotes'
 import { sectionPlainText, textNode } from '../model/chat/content'
 import { withRequestCost, type ConversationCost } from '../model/chat/conversationCost'
 import type { ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
@@ -19,7 +21,7 @@ import type { ToolDefinition } from '../model/tools/types'
 import { ExplainedError } from '../utils/errorText'
 import { compactConversation, NO_COMPACTION_NOTES_TEXT, type Compaction, type CompactionInput } from './compaction'
 import type { RequestLogRow } from './diagnostics/requestLog'
-import { APP_DIR, CACHE_DIR, CLIP_FORMAT, ENDED, failureOf, FILE_ID, H264_STREAM, native, resetNative, showinfoLog, STOP } from './testing'
+import { APP_DIR, appFiles, CACHE_DIR, CLIP_FORMAT, ENDED, failureOf, fakeAppFiles, FILE_ID, H264_STREAM, native, resetNative, showinfoLog, STOP } from './testing'
 // Side-effect import: registers the dez.model/* selectors.
 import '../model/state/index'
 
@@ -223,7 +225,7 @@ describe('compactConversation', () => {
 
     const compaction = await compactConversation(compactionInput({ sections, jobs: [job] }))
 
-    expect(instruction().split('\n').find((line) => line.startsWith('@c '))).toMatch(/ \| open job$/)
+    expect(instruction().split('\n').find((line) => line.startsWith('@c '))).toMatch(/ \| open job \| -$/)
     expect(compaction.dropped.map(({ asset }) => asset.id)).toStrictEqual(['b'])
     expect([...notesAssetLines(notesOf(compaction)).keys()]).toStrictEqual(['a', 'c'])
     // The notes tell the model the inputs of the job: the block that
@@ -239,7 +241,7 @@ describe('compactConversation', () => {
 
     const compaction = await compactConversation(compactionInput({ jobs: [job], replySections: ['r1'] }))
 
-    expect(instruction().split('\n').find((line) => line.startsWith('@c '))).toMatch(/ \| open job$/)
+    expect(instruction().split('\n').find((line) => line.startsWith('@c '))).toMatch(/ \| open job \| -$/)
     expect(compaction.dropped).toStrictEqual([])
     expect([...notesAssetLines(notesOf(compaction)).keys()]).toStrictEqual(['a', 'b', 'c'])
   })
@@ -270,6 +272,70 @@ describe('compactConversation', () => {
 
     expect([...notesAssetLines(notesOf(compaction)).keys()]).toStrictEqual(['a', 'b', 'c'])
     expect(notesAssetLines(notesOf(compaction)).get('c')?.facts).not.toContain('854x480')
+  })
+
+  describe('the apps of the conversation', () => {
+    // The reply `r1` wrote a file of the script app `sheet` and showed the
+    // UI app `viewer`. It also names an app that has no folder.
+    const sections = [
+      SECTIONS[0],
+      reply('r1', `A draft:\n${idImage(DRAFT, 'b')}\n${SCENE_TAG}\nI wrote /apps/sheet/main.js, and /apps/gone is no more.\n${appTagText('viewer')}`),
+      ...SECTIONS.slice(2),
+    ]
+    const APPS = { ...appFiles('sheet', { 'main.js': 'export default () => 1' }), ...appFiles('viewer', {}, 'ui') }
+    // The sections after the compaction `first`, with one more message of
+    // the user, in a later reply (`r2`).
+    const later = (first: Compaction) => compactionInput({ sections: [first.sections[0], user('u3', 'And now?'), reply('r2', '')], replySectionId: 'r2' })
+
+    it('are listed in the instruction when they have a folder, and each keeps a line in the notes, which still names it', async () => {
+      fakeAppFiles({ ...APPS, ...appFiles('other') })
+
+      const compaction = await compactConversation(compactionInput({ sections }))
+
+      expect(instruction().split('\n').filter((line) => line.startsWith('/apps/'))).toStrictEqual([
+        '/apps/sheet | script | The sheet app.',
+        '/apps/viewer | ui | The viewer app.',
+      ])
+      expect([...notesAppLines(notesOf(compaction)).values()]).toStrictEqual([
+        { name: 'sheet', kind: 'script', description: 'The sheet app.' },
+        { name: 'viewer', kind: 'ui', description: 'The viewer app.' },
+      ])
+      // The rule by which Delete Unused Files keeps an app.
+      expect([...namedApps(notesOf(compaction))].sort()).toStrictEqual(['sheet', 'viewer'])
+    })
+
+    it('keep a made asset that one of their files names with its id, also when the answer drops it', async () => {
+      fakeAppFiles({ ...APPS, 'apps/sheet/lib/inputs.json': '{ "images": ["@b", "@z"] }' })
+      streamChat = answers(`${NOTES}\n\n## Assets\n@b: drop - An old draft.\n@c: drop - The first film.`)
+
+      const compaction = await compactConversation(compactionInput({ sections }))
+
+      expect(instruction().split('\n').find((line) => line.startsWith('@b '))).toMatch(/ \| app file$/)
+      expect(compaction.dropped.map(({ asset }) => asset.id)).toStrictEqual(['c'])
+      expect([...notesAssetLines(notesOf(compaction)).keys()]).toStrictEqual(['a', 'b'])
+    })
+
+    it('stay in the notes at the next compaction, but for an app whose folder is gone', async () => {
+      const files = fakeAppFiles(APPS)
+      const first = await compactConversation(compactionInput({ sections }))
+      for (const path of [...files.keys()]) if (path.startsWith('apps/viewer')) files.delete(path)
+
+      const compaction = await compactConversation(later(first))
+
+      expect([...notesAppLines(notesOf(compaction)).keys()]).toStrictEqual(['sheet'])
+    })
+
+    it('keep the lines of the notes before when Dez cannot read their folders', async () => {
+      fakeAppFiles(APPS)
+      const first = await compactConversation(compactionInput({ sections }))
+      const failure = new Error('Permission denied (os error 13)')
+      native.fileTree = () => { throw failure }
+
+      const compaction = await compactConversation(later(first))
+
+      expect(notesAppLines(notesOf(compaction))).toStrictEqual(notesAppLines(notesOf(first)))
+      expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('/apps/sheet'), failure)
+    })
   })
 
   describe('the middle messages of the user', () => {
