@@ -55,10 +55,9 @@
 //!   there. The rules on system calls are Linux only: the profile allows
 //!   what it does not deny, so native code in a program can still reach
 //!   other programs of the user (their services, shared memory, signals).
-//!   No step of Dez closes its open files there, as the one of Linux does
-//!   (`close_range`). So a file that a library of Dez opened with no mark
-//!   to close it at the start of a program can go to the program: no test
-//!   on a Mac looked for one. No audit with native code ran on a Mac.
+//!   Dez marks its open files to close at the start of a program with a
+//!   loop there (`without_open_files_of_dez`), as macOS has no
+//!   `close_range`. No audit with native code ran on a Mac.
 
 use std::path::{Path, PathBuf};
 
@@ -521,8 +520,44 @@ const SEATBELT_PROFILE_END: &str = r#"(deny file-write-create (vnode-type SYMLIN
 (deny network*)
 "#;
 
+// The command of a run on macOS: Seatbelt where the Mac has
+// `sandbox-exec`, and a program with no OS rule where it has none and the
+// confinement allows that.
 #[cfg(target_os = "macos")]
 pub(crate) fn confined_command(program: &Path, args: &[String], confinement: &Confinement) -> Result<Command, String> {
+    let mut command = seatbelt_command(program, args, confinement)?;
+    without_open_files_of_dez(&mut command);
+    Ok(command)
+}
+
+// The program gets no open file of Dez but its three pipes, as on Linux: a
+// library of Dez can hold a file that does not close at an exec, and
+// `sandbox-exec` keeps every open file for the program that it execs.
+// macOS has no `close_range`, so a loop marks each file from 3 on to close
+// at the exec, up to the size of the file table of the process. A number
+// that is no open file gives EBADF, which the loop skips. It closes no
+// file now: Rust tells the parent of a failed exec through a pipe, and
+// macOS stops a process that closes a guarded file.
+#[cfg(target_os = "macos")]
+fn without_open_files_of_dez(command: &mut Command) {
+    // SAFETY: a plain call with no arguments, in Dez's process before the
+    // fork.
+    let table_size = unsafe { libc::getdtablesize() };
+    // SAFETY: the closure runs in the child between fork and exec, where
+    // only async-signal-safe calls are allowed. `fcntl` is one, and the
+    // closure does not allocate.
+    unsafe {
+        command.pre_exec(move || {
+            for file in 3..table_size {
+                libc::fcntl(file, libc::F_SETFD, libc::FD_CLOEXEC);
+            }
+            Ok(())
+        });
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn seatbelt_command(program: &Path, args: &[String], confinement: &Confinement) -> Result<Command, String> {
     if !Path::new(SANDBOX_EXEC).is_file() {
         without_file_rule("this Mac has no /usr/bin/sandbox-exec", confinement)?;
         let mut command = Command::new(program);

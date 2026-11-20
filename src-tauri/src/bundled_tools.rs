@@ -1883,25 +1883,43 @@ mod tests {
             }
         }
 
-        #[tokio::test]
-        async fn a_cancel_during_the_input_copies_starts_no_program() {
-            let dir = TempDir::new("tools-run-early-cancel");
-            let source = dir.0.join("source.txt");
-            let folder = dir.0.join("work");
-            std::fs::write(&source, b"input text").expect("write");
-            let runs = ToolRuns::default();
-            let (send, events) = event_channel();
-            let mut run = script("echo ran > ran.txt", &folder);
-            run.inputs = vec![input("in.txt", &source)];
+        // The input copies run on a blocking thread, and a fast copy could
+        // end before the run first looks at it: the run would then start
+        // its program before the cancel. So the runtime has one blocking
+        // thread, which the test holds until after the cancel, and the
+        // copies wait for it. The program of the run is not there: a try to
+        // start it fails at once. A real program would show nothing, as the
+        // stop ends it before it can write a file.
+        #[test]
+        fn a_cancel_during_the_input_copies_starts_no_program() {
+            let runtime = tokio::runtime::Builder::new_current_thread().max_blocking_threads(1).enable_all().build().expect("runtime");
+            runtime.block_on(async {
+                let dir = TempDir::new("tools-run-early-cancel");
+                let source = dir.0.join("source.txt");
+                let folder = dir.0.join("work");
+                std::fs::write(&source, b"input text").expect("write");
+                let runs = ToolRuns::default();
+                let (send, events) = event_channel();
+                let mut run = program_run(dir.0.join("no-program").to_str().expect("UTF-8 path"), &[], &folder);
+                run.inputs = vec![input("in.txt", &source)];
+                let (held, holding) = tokio::sync::oneshot::channel();
+                let (release, released) = std::sync::mpsc::channel::<()>();
+                let hold = tokio::task::spawn_blocking(move || {
+                    let _ = held.send(());
+                    let _ = released.recv();
+                });
+                holding.await.expect("the blocking thread is held");
 
-            // `join!` polls the run first: it is in the list and waits for
-            // its copies when the cancel comes.
-            let (result, ()) = tokio::join!(runs.run("a", run, send), async { runs.cancel("a") });
+                let (result, ()) = tokio::join!(biased; runs.run("a", run, send), async {
+                    runs.cancel("a");
+                    release.send(()).expect("release the blocking thread");
+                });
 
-            assert_eq!(result, Ok(()));
-            assert_eq!(sent(events).await, Sent { ends: vec![ToolRunEnd::Cancelled], ..Sent::default() });
-            assert!(folder.join("in.txt").is_file());
-            assert!(!folder.join("ran.txt").exists());
+                hold.await.expect("the hold ends");
+                assert_eq!(result, Ok(()));
+                assert_eq!(sent(events).await, Sent { ends: vec![ToolRunEnd::Cancelled], ..Sent::default() });
+                assert!(folder.join("in.txt").is_file());
+            });
         }
 
         #[tokio::test]
@@ -2126,27 +2144,39 @@ mod tests {
             std::fs::write(app.join("data.txt"), "app data").expect("write");
             std::fs::write(&private, "export const text = 'private text'\n").expect("write");
             // What each open gives: its text, or the name of its error. The
-            // work folder is `<dir>/cache/work/<name>`.
-            let opens = r#"
-                const outcome = (work: () => Promise<unknown>) => work().then(String, (error) => error.name)
-                const app = '../../../config/apps/my-app'
-                const outside = '../../../private.ts'
-                console.log([
-                  await outcome(() => Deno.writeTextFile('made.txt', 'made').then(() => Deno.readTextFile('made.txt'))),
-                  await outcome(() => Deno.readTextFile(`${app}/data.txt`)),
-                  await outcome(() => Deno.writeTextFile(`${app}/new.txt`, 'new').then(() => 'written')),
-                  await outcome(() => Deno.readTextFile(outside)),
-                  await outcome(() => Deno.writeTextFile(outside, 'changed').then(() => 'written')),
-                ].join(', '))
-            "#;
+            // script names each file by the path that Dez joined from its
+            // root, as the code of an app does (`dez.appFolder`,
+            // appInvoke.ts): Deno checks a path against its flags as text,
+            // and finds a relative path from the real path of its folder,
+            // which is another text when a folder above is a link (macOS:
+            // `/var` of the temp folder is a link to `/private/var`).
+            let path_text = |path: &Path| serde_json::to_string(path.to_str().expect("UTF-8 path")).expect("JSON");
+            let opens = |name: &str| {
+                let (work, app, outside) = (path_text(&roots.cache.join(WORK_ROOT).join(name)), path_text(&app), path_text(&private));
+                format!(
+                    r#"
+                    const outcome = (open: () => Promise<unknown>) => open().then(String, (error) => error.name)
+                    const work = {work}
+                    const app = {app}
+                    const outside = {outside}
+                    console.log([
+                      await outcome(() => Deno.writeTextFile(work + '/made.txt', 'made').then(() => Deno.readTextFile(work + '/made.txt'))),
+                      await outcome(() => Deno.readTextFile(app + '/data.txt')),
+                      await outcome(() => Deno.writeTextFile(app + '/new.txt', 'new').then(() => 'written')),
+                      await outcome(() => Deno.readTextFile(outside)),
+                      await outcome(() => Deno.writeTextFile(outside, 'changed').then(() => 'written')),
+                    ].join(', '))
+                    "#
+                )
+            };
             let import = "import { text } from '../../../private.ts'\nconsole.log(text)\n";
             let run = |run: ToolRun| finished(resolved_run(run, &roots).expect("a run that the rules allow"));
 
-            let with_app = run(ToolRun { app_folder: Some("my-app".to_string()), ..deno_run(&dir.0, "with-app", opens) }).await;
+            let with_app = run(ToolRun { app_folder: Some("my-app".to_string()), ..deno_run(&dir.0, "with-app", &opens("with-app")) }).await;
             assert_eq!(with_app.stdout, "made, app data, written, NotCapable, NotCapable\n", "{}", with_app.stderr);
             assert_eq!(std::fs::read(app.join("new.txt")).expect("read"), b"new");
 
-            let without_app = run(deno_run(&dir.0, "without-app", opens)).await;
+            let without_app = run(deno_run(&dir.0, "without-app", &opens("without-app"))).await;
             assert_eq!(without_app.stdout, "NotCapable, NotCapable, NotCapable, NotCapable, NotCapable\n", "{}", without_app.stderr);
 
             let imported = run(ToolRun { app_folder: Some("my-app".to_string()), ..deno_run(&dir.0, "import", import) }).await;
@@ -2803,7 +2833,6 @@ mod tests {
 
         // A program gets no open file of Dez: here a socket of the test
         // that is open for the programs that the test starts.
-        #[cfg(target_os = "linux")]
         #[tokio::test]
         async fn a_program_gets_no_open_file_of_dez() {
             use std::io::Read;

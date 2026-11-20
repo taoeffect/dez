@@ -347,6 +347,7 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 - **Sounds and the fonts are in Git LFS**: clone with LFS (`git lfs pull`). A pointer file in place of a sound builds with no error; one in place of a font stops the build.
 - **The bundled programs are not in Git**: a new clone has none until `scripts/fetch-programs.js` runs. `build.rs` downloads nothing; it stops the build when a program is missing or is not the file that `binaries/manifest.json` pins.
 - **tauri-build puts the bundled programs next to a debug build**: keep it at 2.7 or newer (`src-tauri/Cargo.toml`).
+- **A signed macOS build signs the bundled programs again**, with the hardened runtime and the one entitlements file of the app (`src-tauri/Entitlements.plist`): Deno needs `allow-jit` there. A build with no signing identity (`cargo`, `tauri dev`) does not show it (`docs/PACKAGING.md`).
 - When using the `agentic_fetch` tool:
   - If searching the web, *ALWAYS* tell the tool to never use local tools like Grep, and only search the web
   - If searching local folders, *ALWAYS* tell the tool to restrict its searches to this folder only and to never search outside of it

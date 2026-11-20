@@ -58,6 +58,7 @@
       "binaries/deno/LICENSES.txt": "deno/LICENSES.txt"
     },
     "macOS": {
+      "entitlements": "./Entitlements.plist",
       "files": {
         "Resources/Assets.car": "icons/Assets.car"
       }

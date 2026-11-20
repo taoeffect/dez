@@ -93,7 +93,8 @@ webkit2gtk = { version = "=2.0.2", features = ["v2_38"] }
 # libc: on Linux, the raw calls that confine a bundled program in the child
 # between fork and exec, where a crate's own call could allocate: the
 # Landlock rules, the seccomp filter, the data limit (`setrlimit`), and the
-# close of the inherited files (`close_range`) (confinement.rs); on Linux
+# close of the inherited files (`close_range`) (confinement.rs); on macOS,
+# the close of the inherited files there (`fcntl`, confinement.rs); on Linux
 # and macOS, the kill of the process group of a bundled program run
 # (bundled_tools.rs), and the open flags of a read in a place that programs
 # own (persistence.rs).
