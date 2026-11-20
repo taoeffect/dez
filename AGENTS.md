@@ -201,6 +201,7 @@ Rules:
 - `commands.rs`, `http_bridge.rs`, `notification.rs`, `idle.rs`: Tauri commands, registered in `lib.rs`.
 - `http_bridge.rs`: generic HTTP request, stream, and download. A request body is text or base64 text, never a JSON number array (slow).
 - `bundled_tools.rs`, `confinement.rs`: one run of a program of `../binaries/` in a work folder of the cache root, under an OS rule on the files that it can open.
+- `app_frames.rs`: the `dezapp://` scheme that serves the files of a UI app to its frame, and the guards of the app frames (the policy of each answer, the navigation guard, the rules of the webview).
 - `notification.rs`, `idle.rs`, `session_bus.rs`: system notifications, the user's idle time, and the one Linux D-Bus session connection.
 - `persistence.rs`: the file roots (`app`, `cache`) and raw private-file I/O; write every private file with `write_private_file` or `PrivateFileWriter`.
 - `key_store.rs`: `provider_keys.json`. `copilot.rs`: Copilot device flow and token refresh.
@@ -309,6 +310,8 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 
 - **The asset protocol reads every file** (`assetProtocol` in `tauri.conf.json`), so the webview must never load remote code.
 - **CSP disabled**: `"csp": null` in `tauri.conf.json` on purpose during development.
+- **An app frame loads only from `dezapp://`**, never from the asset protocol, in an `<iframe sandbox="allow-scripts">`. Its guards are in `src-tauri/src/app_frames.rs`; the audit `tests/e2e/app-frames.e2e.ts` must pass after an update of WebKit, wry, or Tauri.
+- **Linux needs WebKitGTK 2.42 or newer**, to build and to run (`src-tauri/Cargo.toml`, `app_frames.rs`).
 - **Tauri capabilities**: a new plugin or core command needs a permission in `src-tauri/capabilities/default.json`; app commands registered in `lib.rs` need none.
 - **Copilot auth differs**: device flow commands, not the API-key commands.
 - **The window starts hidden**: `dez.controller/window/restore` shows it, so a frontend failure before init shows no window; read the Vite output.
@@ -375,6 +378,7 @@ Brief comments are encouraged above functions that do anything non-trivial expla
 - E2E clips must be in a format that the CI GStreamer packages decode (VP9 in webm or mp4, wav, Opus in WebM; `.github/workflows/e2e.yml`).
 - E2E bundled tools: the specs run the real ffmpeg, ffprobe, and Deno of the debug build (`tests/e2e/bundled-tools.e2e.ts`, `tests/e2e/video-tool.e2e.ts`, `tests/e2e/js-eval.e2e.ts`, and the sandbox audit of Deno, `tests/e2e/js-eval-sandbox.e2e.ts`).
 - E2E `apps` tool: `tests/e2e/apps-tool.e2e.ts` runs the file subcommands on the real file commands of the backend, with links in the folder of an app; `tests/e2e/apps-invoke.e2e.ts` runs script apps in the real Deno. The unit tests use the in-memory files of `fakeAppFiles` (`src/controller/testing.ts`).
+- E2E app frames: `tests/e2e/app-frames.e2e.ts` is the audit of the guards of the app frames: pages that try to get out, a server that counts what reaches it, and the controls in Dez's own page (`tests/e2e/harness/appFrames.ts`).
 - A `browser.execute` result must not be an object with a set `error` field: webdriverio takes it for a failure of the script.
 - E2E specs that open a URL call `stopOpenUrl` (`tests/e2e/harness/dom.ts`), so no browser opens.
 - **No display server** (every spec fails with `Hook timed out in 120000ms` in `beforeAll`): run under headless `kwin_wayland`; the recipe is in `vitest.e2e.config.ts`.

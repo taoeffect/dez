@@ -1,3 +1,4 @@
+mod app_frames;
 mod bundled_tools;
 mod commands;
 mod confinement;
@@ -38,6 +39,8 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())
+        // The scheme of the app frames, with their guards (app_frames.rs).
+        .plugin(app_frames::plugin())
         .manage(reqwest::Client::new())
         .manage(http_bridge::HttpStreamState::new())
         .manage(bundled_tools::ToolRuns::default())

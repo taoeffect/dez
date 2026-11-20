@@ -74,6 +74,13 @@ dirs = "=6.0.0"
 #
 # landlock: confinement.rs builds the Landlock rules of a bundled program
 # run with it (landlock 0.4.7 needs libc 0.2.186 or later).
+#
+# webkit2gtk: the version and the feature that wry uses. app_frames.rs adds
+# the content rule list of the app frames to the webview with its C
+# functions (`webkit2gtk::ffi`), and turns the link preconnect of the
+# webview off. The crate has no feature API (WebKitGTK 2.42), so
+# app_frames.rs declares those C functions itself: Dez needs WebKitGTK 2.42
+# or newer, when it is built and when it runs.
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "=0.18.2"
 zbus = "=5.14.0"
@@ -81,6 +88,7 @@ wayland-client = "=0.31.15"
 wayland-protocols = { version = "=0.32.13", features = ["client", "staging"] }
 x11rb = { version = "=0.14.0", features = ["screensaver"] }
 landlock = "=0.4.7"
+webkit2gtk = { version = "=2.0.2", features = ["v2_38"] }
 
 # libc: on Linux, the raw calls that confine a bundled program in the child
 # between fork and exec, where a crate's own call could allocate: the
@@ -97,12 +105,16 @@ libc = "=0.2.191"
 # center delegate with them; mac-notification-sys only sets the app id that
 # the notifications post as. objc2-app-kit: the version that wry uses;
 # commands.rs reads the paths of a file drag from the drag pasteboard with
-# it (`dragged_file_paths`).
+# it (`dragged_file_paths`). objc2-web-kit, block2: the versions that wry
+# uses; app_frames.rs adds the content rule list of the app frames to the
+# webview with them, and turns the link preconnect of the webview off.
 [target.'cfg(target_os = "macos")'.dependencies]
 mac-notification-sys = "=0.6.15"
 objc2 = "=0.6.4"
 objc2-foundation = "=0.3.2"
 objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSPasteboard"] }
+objc2-web-kit = { version = "=0.3.2", default-features = false, features = ["std", "block2", "WKContentRuleList", "WKContentRuleListStore", "WKUserContentController"] }
+block2 = "=0.6.2"
 
 # build.rs hashes the bundled programs of the build target (150 to 200 MB)
 # each time that cargo runs the build script again, for example after a
