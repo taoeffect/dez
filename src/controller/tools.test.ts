@@ -55,6 +55,7 @@ import {
 } from '../model/tools/assetView'
 import { conversationInfoText } from '../model/tools/conversationInfo'
 import { jobCancelText, jobsListText, jobStartedText, jobsWaitResults, jobsWaitText, NO_JOBS_TEXT, NO_OPEN_JOBS_TEXT } from '../model/tools/jobs'
+import { jsEvalAnswerLine } from '../model/tools/jsEval'
 import { modelCost, modelInfoText, type ModelInfoFacts } from '../model/tools/modelInfo'
 import { IMAGE_NOT_SAVED_TEXT, INVOCATION_TEXT_CAP, invocationAnswerStateText, invocationAnswerText, modelInvocation } from '../model/tools/modelInvoke'
 import { modelListArguments, modelListText } from '../model/tools/modelList'
@@ -67,7 +68,7 @@ import type { RequestLogRow } from './diagnostics/requestLog'
 import { TabJobs, type JobOutcome } from './jobs'
 import { invokeModel } from './modelInvoke'
 import type { BundledToolEnd } from './nativeTypes'
-import { APP_DIR, audioProgress, CLIP_FORMAT, deletedWorkFolder, ENDED, FILE_ID, H264_STREAM, heldWork, LONG, native, resetNative, running, showinfoLog, writes } from './testing'
+import { APP_DIR, audioProgress, callingProgram, CLIP_FORMAT, deletedWorkFolder, ENDED, FILE_ID, H264_STREAM, heldWork, LONG, native, resetNative, running, showinfoLog, writes } from './testing'
 import type { ToolRunCall, ToolRunContext } from './tools'
 // Side-effect imports: register the dez.model/* selectors and the selector
 // under test.
@@ -3075,6 +3076,17 @@ describe('dez.controller/tools/run', () => {
 
       expect(result.isError).toBe(true)
       expect(result.content).toContain('The tab of this conversation is closed')
+    })
+  })
+
+  describe('js_eval', () => {
+    it('runs a tool call of the code as a call of the reply, and gives the code its result', async () => {
+      native.program = callingProgram(['dez.tools/jobs_list'])
+
+      const result = await run({ name: 'js_eval', arguments: { code: 'await dez.sbp("dez.tools/jobs_list")\nreturn "ok"' } })
+
+      expect(result).toStrictEqual({ content: 'ok', isError: false })
+      expect(native.inputWrites.map(({ text }) => text)).toStrictEqual([jsEvalAnswerLine(1, { text: NO_JOBS_TEXT, isError: false })])
     })
   })
 })

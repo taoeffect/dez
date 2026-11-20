@@ -2,12 +2,15 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { jobCallLabel, jobsWaitResults, NO_JOBS_TEXT } from '../../src/model/tools/jobs'
 import { withoutLocalPaths } from '../../src/model/tools/localPaths'
+import { invocationAnswerText } from '../../src/model/tools/modelInvoke'
+import { UNEXPECTED_BRIDGE_ERROR_TEXT } from '../../src/model/tools/toolBridge'
 import { consoleErrors, resetConsoleErrors, screenshotOnFailure } from './harness/dom'
 import { appFilePath, makeConversation, mediaTempDir, seedConversation, workDir, writeTestFile } from './harness/fixtures'
 import { evalCall, expectReplyEnd } from './harness/jsEval'
-import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
-import { mockChatPath, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
+import { startMockProviderApp, takeRequest, takeRequestTo, type MockProviderApp } from './harness/mockProviderApp'
+import { mockChatPath, replyText, sendChatReply, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
 import { newTab, submit } from './harness/thread'
 
@@ -34,6 +37,16 @@ import { newTab, submit } from './harness/thread'
 //   these paths, and each text of a run goes to the provider. This covers
 //   a path as the code got it: code that changes the text of a path (a
 //   reversed text, base64) gets it out, a known limit.
+// - The tool bridge (`dez.sbp`) trusts no line of a run. The code writes
+//   call lines itself, in the form of the lines of Dez's module: a line
+//   gets a call of a Dez tool with arguments that the tool takes, or an
+//   error answer. No line gets a selector of the app, a tool that Dez does
+//   not have, a second run of code, or a field that every object of the
+//   page has. A line of a megabyte and a value too deep to walk break no
+//   later call. A run gets at most 40 calls, also when its last ones would
+//   start a job, and call lines without end hold no run. A path of the
+//   computer in an argument of a call goes on as in a result: another
+//   provider can get an argument.
 // No request holds the private text of the seeded files, or a path of the
 // test HOME (`takeRequest` checks each one), and no seeded file changes.
 //
@@ -44,12 +57,55 @@ import { newTab, submit } from './harness/thread'
 // One app session serves the whole file; each test starts in a new tab.
 
 const CALLER: MockProvider = { id: 'caller', name: 'Caller Mock', modelId: 'caller-model', modelName: 'Caller Model' }
+// A text model that the code of a call asks with `model_invoke`.
+const HELPER: MockProvider = { id: 'helper', name: 'Helper Mock', modelId: 'helper-model', modelName: 'Helper Model' }
 const CHAT_PATH = mockChatPath(CALLER)
+const HELPER_PATH = mockChatPath(HELPER)
 
 // The text of each seeded file that the code of a call must not get. No
 // code of a call holds it, so it is in a request only when a run read a
 // file.
 const PRIVATE = 'private text of the audit'
+
+// The start of the code of a call that writes lines to the output of its
+// run in the form of the lines of Dez's module (`writeLine`; `callLine`
+// is a call line with no arguments), and that reads the answers of Dez
+// from the input of its run itself (`answerOf`, by the id of a line).
+// Dez's module reads the input only while a `dez.sbp` call waits, so the
+// code gets the answer of each line that it wrote.
+const LINE_WRITER = [
+  'const encoder = new TextEncoder()',
+  'const decoder = new TextDecoder()',
+  'const writeLine = (text) => {',
+  '  let bytes = encoder.encode("\\x1e" + text + "\\n")',
+  '  while (bytes.length > 0) bytes = bytes.subarray(Deno.stdout.writeSync(bytes))',
+  '}',
+  'const callLine = (id, selector) => JSON.stringify({ type: "call", id, selector })',
+  'const answers = new Map()',
+  'const buffer = new Uint8Array(65536)',
+  'let input = ""',
+  'const answerOf = async (id) => {',
+  '  while (!answers.has(id)) {',
+  '    const count = await Deno.stdin.read(buffer)',
+  '    if (count === null) throw new Error("Dez closed the input of the run")',
+  '    input += decoder.decode(buffer.subarray(0, count), { stream: true })',
+  '    let end',
+  '    while ((end = input.indexOf("\\n")) >= 0) {',
+  '      const answer = JSON.parse(input.slice(0, end))',
+  '      answers.set(answer.id, answer)',
+  '      input = input.slice(end + 1)',
+  '    }',
+  '  }',
+  '  return answers.get(id)',
+  '}',
+].join('\n')
+
+// The answer of Dez to a call line, as the code of `LINE_WRITER` reads it.
+interface LineAnswer {
+  id: number
+  text: string
+  isError: boolean
+}
 
 // One try of the code of a call: its name, the source of a function that
 // does the try, and the outcome that the call must give for it.
@@ -139,7 +195,7 @@ describe('js_eval sandbox', () => {
   let asset: string
 
   beforeAll(async () => {
-    setup = await startMockProviderApp(CALLER)
+    setup = await startMockProviderApp(CALLER, {}, { moreProviders: [{ provider: HELPER }] })
     browser = setup.browser
     const { home } = setup.app
     keys = await seedPrivateFile(appFilePath(home, 'provider_keys.json'), JSON.stringify({ audit: { api_key: PRIVATE } }))
@@ -298,8 +354,8 @@ describe('js_eval sandbox', () => {
       'The code threw an error:',
       'TypeError: Import \'file:///etc/passwd\' failed.',
       '    0: Permission denied (os error 13)',
-      '    at file:///work/code.ts:1:55',
-      '    at async default (file:///work/code.ts:1:42)',
+      '    at file:///work/code.ts:1:58',
+      '    at async default (file:///work/code.ts:1:45)',
     ].join('\n'))
     await expectReplyEnd(setup, CALLER, second)
     expectPrivateFilesUnchanged()
@@ -391,6 +447,150 @@ describe('js_eval sandbox', () => {
       'The code threw an error:\nError: in /work\n    at default (file:///work/code.ts:2:7)\nCaused by: "file:///work/runner.js"\n\nConsole output of the code:\n/work',
     )
     expect(toolResult(second, 'call_outside').split('\n')).toStrictEqual([withoutLocalPaths(pathToFileURL(keys).href), withoutLocalPaths(keys)])
+    await expectReplyEnd(setup, CALLER, second)
+  })
+
+  it('gives a call line that the code wrote itself a call of a Dez tool or an error answer, and nothing else of the app', async () => {
+    // Call lines that Dez must refuse: the selector, the arguments as a
+    // JSON text (null for a line with none), and the start of the error
+    // text of the answer.
+    const refused: ReadonlyArray<readonly [selector: string, argumentsJson: string | null, error: string]> = [
+      // A selector of the app, which would give the keys of the user.
+      ['dez.native/loadAppFile', '["provider_keys.json"]', '`dez.sbp` has no selector "dez.native/loadAppFile".'],
+      ['dez.tools/../dez.native/loadAppFile', '["provider_keys.json"]', 'The selector "dez.tools/../dez.native/loadAppFile" has too many parts.'],
+      ['dez.tools/shell', '{"command":"id"}', 'Dez has no tool named "shell".'],
+      // A run of code in a run of code.
+      ['dez.tools/js_eval', '{"code":"return 1"}', 'Code cannot call js_eval:'],
+      // Names that every object of the page has.
+      ['dez.tools/constructor', null, 'Dez has no tool named "constructor".'],
+      ['dez.tools/__proto__', null, 'Dez has no tool named "__proto__".'],
+      ['dez.tools/image/__proto__', '{}', 'The image tool has no subcommand "__proto__".'],
+      ['dez.tools/jobs_list', '{"__proto__":{"all":true}}', 'jobs_list has no parameter "__proto__".'],
+      // Arguments that are no object.
+      ['dez.tools/jobs_list', '[1,2]', 'The second argument of `dez.sbp` must be an object'],
+      ['dez.tools/jobs_list', '"all"', 'The second argument of `dez.sbp` must be an object'],
+    ]
+    const FIRST_ID = 100
+    const lines = refused.map(([selector, argumentsJson], index) => (
+      `{"type":"call","id":${FIRST_ID + index},"selector":${JSON.stringify(selector)}${argumentsJson === null ? '' : `,"arguments":${argumentsJson}`}}`
+    ))
+    await submit(browser, 'Write your own lines.')
+    const first = await chatRequest()
+    sendToolCalls(first.reply, [evalCall('call_forged', [
+      LINE_WRITER,
+      `const lines = ${JSON.stringify(lines)}`,
+      'lines.forEach(writeLine)',
+      'const refused = []',
+      `for (let index = 0; index < lines.length; index++) refused.push(await answerOf(${FIRST_ID} + index))`,
+      // A selector of a megabyte.
+      'writeLine(callLine(800, "dez.tools/" + "x".repeat(1 << 20)))',
+      'const long = await answerOf(800)',
+      // Arrays in each other, deeper than a function that calls itself
+      // for each one can go. The code does not wait for this answer.
+      'writeLine(`{"type":"call","id":900,"selector":"dez.tools/jobs_list","arguments":{"a":${"[".repeat(500000)}${"]".repeat(500000)}}}`)',
+      // No call lines: a text that is no JSON, a key that no line has, and
+      // an id that is no number.
+      'writeLine(`{"type":"call","id":901,`)',
+      'writeLine(JSON.stringify({ type: "call", id: 902, selector: "dez.tools/jobs_list", more: 1 }))',
+      'writeLine(JSON.stringify({ type: "call", id: "903", selector: "dez.tools/jobs_list" }))',
+      // A call of a Dez tool, as a line of the code and as a call of
+      // `dez.sbp`, after all of them.
+      'writeLine(callLine(950, "dez.tools/jobs_list"))',
+      'const last = await answerOf(950)',
+      'const own = await dez.sbp("dez.tools/jobs_list")',
+      'return JSON.stringify({ refused, long: { isError: long.isError, characters: long.text.length }, answered: [...answers.keys()], deep: answers.get(900) ?? null, last, own })',
+    ].join('\n'))])
+
+    const second = await chatRequest()
+    const [value, log] = toolResult(second, 'call_forged').split('\n\nConsole output of the code:\n')
+    const outcome = JSON.parse(value) as {
+      refused: LineAnswer[]
+      long: { isError: boolean, characters: number }
+      answered: number[]
+      deep: LineAnswer | null
+      last: LineAnswer
+      own: string
+    }
+    expect(outcome.refused.map(({ id, text, isError }, index) => ({ id, text: text.slice(0, refused[index][2].length), isError })))
+      .toStrictEqual(refused.map(([, , error], index) => ({ id: FIRST_ID + index, text: error, isError: true })))
+    // The error names only the start of the selector.
+    expect(outcome.long.isError).toBe(true)
+    expect(outcome.long.characters).toBeLessThan(1000)
+    expect(outcome.deep).toStrictEqual({ id: 900, text: UNEXPECTED_BRIDGE_ERROR_TEXT, isError: true })
+    expect(outcome.answered).toStrictEqual([...refused.map((_, index) => FIRST_ID + index), 800, 900, 950])
+    expect(outcome.last).toStrictEqual({ id: 950, text: NO_JOBS_TEXT, isError: false })
+    expect(outcome.own).toBe(NO_JOBS_TEXT)
+    // A text that is no call line is console output of the code.
+    expect(log.split('\n')).toStrictEqual([
+      '{"type":"call","id":901,',
+      '{"type":"call","id":902,"selector":"dez.tools/jobs_list","more":1}',
+      '{"type":"call","id":"903","selector":"dez.tools/jobs_list"}',
+    ])
+    await expectReplyEnd(setup, CALLER, second)
+    expectPrivateFilesUnchanged()
+  })
+
+  it('runs at most 40 tool calls of the code of one call, and call lines without end hold no run', async () => {
+    const startJob = 'dez.sbp("dez.tools/video/ffmpeg", { arguments: "-f lavfi -i color=c=red:size=16x16:duration=1 -frames:v 1 -update 1 red.png" })'
+    await submit(browser, 'Call them all.')
+    const first = await chatRequest()
+    sendToolCalls(first.reply, [
+      evalCall('call_many', [
+        'const outcomes = []',
+        'for (let number = 1; number <= 42; number++) {',
+        // The calls after the limit would each start a job.
+        `  const call = number <= 40 ? dez.sbp("dez.tools/jobs_list") : ${startJob}`,
+        '  outcomes.push(await call.then(() => "ran", (error) => error.message))',
+        '}',
+        'return outcomes.join("\\n")',
+      ].join('\n')),
+      // The code reads no answer, so the answers fill the input of its
+      // program, and Dez must not wait for the program to read them.
+      evalCall('call_flood', [
+        LINE_WRITER,
+        'for (let id = 1; id <= 50000; id++) writeLine(callLine(id, "dez.tools/jobs_list"))',
+        'await new Promise((resolve) => setTimeout(resolve, 2000))',
+        'return "the code went on"',
+      ].join('\n')),
+      // The count of the calls is the count of one run.
+      evalCall('call_after', 'return await dez.sbp("dez.tools/jobs_list")'),
+    ])
+
+    const second = await chatRequest()
+    const refusal = 'The code made more than 40 tool calls, the most of one js_eval call, so Dez did not run this one. '
+      + 'Make fewer calls in one run: do the rest of the work in a new js_eval call.'
+    expect(toolResult(second, 'call_many').split('\n')).toStrictEqual([...Array.from({ length: 40 }, () => 'ran'), refusal, refusal])
+    const flood = /^the code went on\n\n([\d,]+) tool calls of the code had not ended when the code ended, so Dez cut them short\. /.exec(toolResult(second, 'call_flood'))
+    const unanswered = Number(flood?.[1].replaceAll(',', ''))
+    expect(unanswered).toBeGreaterThan(40_000)
+    expect(unanswered).toBeLessThan(50_000)
+    // No call after the limit started a job.
+    expect(toolResult(second, 'call_after')).toBe(NO_JOBS_TEXT)
+    await expectReplyEnd(setup, CALLER, second)
+  })
+
+  it('takes the paths of the computer out of the arguments of a tool call of the code', async () => {
+    const program = withoutLocalPaths(path.join(path.dirname(setup.app.binary), 'dez-deno'))
+    const prompt = `Where is /work?\nAnd what is ${program}`
+    await submit(browser, 'Ask the helper.')
+    const first = await chatRequest()
+    sendToolCalls(first.reply, [evalCall('call_ask', [
+      'const prompt = `Where is ${Deno.cwd()}?\\nAnd what is ${Deno.execPath()}`',
+      `await dez.sbp("dez.tools/model_invoke", { model: "${HELPER.id}/${HELPER.modelId}", prompt })`,
+      'return await dez.sbp("dez.tools/jobs_wait")',
+    ].join('\n'))])
+
+    // The other provider gets the prompt as a result of a run would hold
+    // it.
+    const asked = await takeRequestTo(setup, HELPER_PATH, { model: HELPER.modelId, stream: true, messages: [{ role: 'user', content: prompt }] })
+    await sendChatReply(asked.reply, HELPER.modelName)
+    const second = await chatRequest()
+    // The result of the job names the call by the start of its prompt, and
+    // the text after a path that Dez took out stays.
+    const [job] = jobsWaitResults(toolResult(second, 'call_ask'))
+    expect({ tool: job.tool, status: job.status, text: job.text, label: job.call.label }).toStrictEqual({
+      tool: 'model_invoke', status: 'finished', text: invocationAnswerText(replyText(HELPER.modelName)), label: jobCallLabel(prompt),
+    })
     await expectReplyEnd(setup, CALLER, second)
   })
 })

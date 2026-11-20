@@ -62,10 +62,10 @@ function allSubcommands(tool: SubcommandTool): Subcommand[] {
  *  two flat arguments of every call. */
 export function subcommandToolDefinition(tool: SubcommandTool): ToolDefinition {
   const first = tool.subcommands[0]?.name ?? HELP_NAME
-  const names = allSubcommands(tool).map((subcommand) => subcommand.name).join(', ')
+  const names = allSubcommands(tool).map((subcommand) => subcommand.name)
   return {
     name: tool.name,
-    description: `${tool.summary} It has subcommands (${names}). `
+    description: `${tool.summary} It has subcommands (${names.join(', ')}). `
       + 'Call it with no arguments to list them with what each one does. '
       + detailsText(tool),
     parameters: [
@@ -83,6 +83,7 @@ export function subcommandToolDefinition(tool: SubcommandTool): ToolDefinition {
       },
     ],
     misplacedParameter: (key, values) => misplacedParameterText(tool, key, values),
+    subcommands: names,
   }
 }
 

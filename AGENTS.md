@@ -116,6 +116,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `model/tools/programRuns.ts`, `controller/programRuns.ts`, `model/tools/workFolders.ts`: what the tools that run a bundled program (ffmpeg, ffprobe, Deno) share, and their work folders.
 - `model/tools/videoFonts.ts`, `videoTextFiles.ts`: the fonts and the text files of an ffmpeg run (the `fonts` and `text_files` parameters).
 - `model/tools/jsEval.ts`, `jsEvalRunner.js`: the `js_eval` tool (code of a model in Deno): Dez's module of a run, its line protocol, and the result texts.
+- `model/tools/toolBridge.ts`, `controller/toolBridge.ts`: the tool bridge of `js_eval`: the Dez tools that the code of a run calls with `dez.sbp`.
 - `model/systemPrompt/`: the built-in system prompt (`systemPrompt.md`), the variables of a template, and its checks.
 - `model/modelOutputs.ts`, `modelInputs.ts`, `modelSearch.ts`: the output types, what Dez can send a model, and the model filter.
 - `controller/notifications.ts`, `view/sound.ts`, `assets/sounds/`: the reply-end alerts (sound, system notification).

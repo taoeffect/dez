@@ -35,6 +35,10 @@ export interface ToolDefinition {
   /** Only a tool whose calls hold more parameters inside one of these
    *  (subcommands.ts). No part of a request. */
   misplacedParameter?: MisplacedParameterText
+  /** Only a tool with subcommands (subcommands.ts): the names of all of
+   *  them, in the order of its list. The tool bridge reads it
+   *  (toolBridge.ts). No part of a request. */
+  subcommands?: readonly string[]
 }
 
 export type ToolArgumentValue = string | number | boolean

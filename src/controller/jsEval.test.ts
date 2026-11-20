@@ -1,16 +1,33 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { JS_EVAL_CODE_FILE, JS_EVAL_OUTPUT_BYTES, JS_EVAL_RUNNER, JS_EVAL_RUNNER_FILE, JS_EVAL_TOOL, jsEvalCodeFile, type JsEvalCall, type JsEvalLine } from '../model/tools/jsEval'
+import { SHOWN_PICTURE_FOLDER, type ShownPicture } from '../model/chat/shownPictures'
+import { madeAssetText } from '../model/tools/jobs'
+import { JS_EVAL_CODE_FILE, JS_EVAL_OUTPUT_BYTES, JS_EVAL_RUNNER, JS_EVAL_RUNNER_FILE, JS_EVAL_TOOL, jsEvalAnswerLine, jsEvalCodeFile, type JsEvalCall } from '../model/tools/jsEval'
 import { programNotConfinedText, programNotStartedText } from '../model/tools/programRuns'
 import { runJsEval } from './jsEval'
 import type { BundledToolEnd } from './nativeTypes'
-import { CACHE_DIR, deletedWorkFolder, ENDED, failureOf, native, refusalOf, resetNative, running, STOP, writes } from './testing'
+import {
+  CACHE_DIR,
+  callContext,
+  callingProgram,
+  deletedWorkFolder,
+  ENDED,
+  failureOf,
+  native,
+  protocolLine,
+  refusalOf,
+  resetNative,
+  running,
+  STOP,
+  stubToolRuns,
+  TOOL_DONE,
+  toolRuns,
+  writes,
+} from './testing'
 
 const CALL: JsEvalCall = { code: 'return 1 + 1', timeoutMs: 30_000 }
-
-// A protocol line as the module of Dez writes it.
-function protocolLine(line: JsEvalLine): string {
-  return `\x1e${JSON.stringify(line)}\n`
-}
+const PICTURE: ShownPicture = { file: 'p1.jpg', label: 'The image @a', width: 512, height: 512, bytes: 3000 }
+// The delete of the copy of `PICTURE`.
+const PICTURE_DELETE = { root: 'app', path: `${SHOWN_PICTURE_FOLDER}/${PICTURE.file}`, folder: false }
 
 // Makes `timeZone` the time zone of this computer.
 function setTimeZone(timeZone: string): void {
@@ -19,6 +36,7 @@ function setTimeZone(timeZone: string): void {
 
 beforeEach(() => {
   resetNative()
+  stubToolRuns()
   vi.spyOn(console, 'error').mockImplementation(() => {})
   setTimeZone('Europe/Berlin')
 })
@@ -28,13 +46,13 @@ afterEach(() => {
 })
 
 describe('runJsEval', () => {
-  it('writes the module of Dez and the code into a new work folder, and runs the module with Deno', async () => {
+  it('writes the module of Dez and the code into a new work folder, and runs the module with Deno, with an input', async () => {
     native.program = writes('stdout', protocolLine({ type: 'result', text: '2' }))
 
-    const result = await runJsEval(CALL, running())
+    const result = await runJsEval(CALL, running(), callContext())
 
     const folder = deletedWorkFolder()
-    expect(result).toBe('2')
+    expect(result).toStrictEqual({ content: '2' })
     expect(native.savedFiles).toStrictEqual([
       { file: { root: 'cache', path: `${folder}/${JS_EVAL_RUNNER_FILE}` }, content: JS_EVAL_RUNNER },
       { file: { root: 'cache', path: `${folder}/${JS_EVAL_CODE_FILE}` }, content: jsEvalCodeFile(CALL.code) },
@@ -46,6 +64,7 @@ describe('runJsEval', () => {
       inputs: [],
       timeoutMs: CALL.timeoutMs,
       maxOutputBytes: JS_EVAL_OUTPUT_BYTES,
+      stdin: true,
       timeZone: 'Europe/Berlin',
     }])
   })
@@ -54,7 +73,7 @@ describe('runJsEval', () => {
     setTimeZone('')
     native.program = writes('stdout', protocolLine({ type: 'result', text: '2' }))
 
-    await runJsEval(CALL, running())
+    await runJsEval(CALL, running(), callContext())
 
     expect(native.runs[0].run).not.toHaveProperty('timeZone')
   })
@@ -68,7 +87,7 @@ describe('runJsEval', () => {
       return ENDED
     }
 
-    expect(await runJsEval(CALL, running())).toBe('2\n\nConsole output of the code:\nstep 1\na warning')
+    expect(await runJsEval(CALL, running(), callContext())).toStrictEqual({ content: '2\n\nConsole output of the code:\nstep 1\na warning' })
   })
 
   it('throws the error result of code that threw, with /work for the real path of the work folder and for the path that Dez made', async () => {
@@ -80,9 +99,41 @@ describe('runJsEval', () => {
       return ENDED
     }
 
-    const refusal = await refusalOf(runJsEval(CALL, running()))
+    const refusal = await refusalOf(runJsEval(CALL, running(), callContext()))
 
     expect(refusal).toBe('The code threw an error:\nError: x\n    at default (file:///work/code.ts:1:41)\n\nConsole output of the code:\ncwd /work, made as /work')
+    deletedWorkFolder()
+  })
+
+  it('runs a tool call of the code with the context of the call, gives the code its answer, and tells the model what the call made', async () => {
+    native.program = callingProgram(['dez.tools/image/flip'])
+    toolRuns.tool = async (_call, _signal, context) => ({ content: `${madeAssetText('image', context.writeImage('/x/flipped.png') ?? '')}.`, isError: false })
+
+    const result = await runJsEval(CALL, running(), callContext({ writeImage: () => 'b' }))
+
+    expect(toolRuns.calls).toStrictEqual([{ name: 'image', arguments: { command: 'flip', parameters: '{}' } }])
+    expect(native.inputWrites).toStrictEqual([{ runId: native.runs[0].runId, text: jsEvalAnswerLine(1, { text: 'Made the image @b.', isError: false }) }])
+    expect(result).toStrictEqual({ content: 'ok\n\nFrom the tool calls of the code:\nMade the image @b.' })
+    deletedWorkFolder()
+  })
+
+  it('gives the pictures that the tool calls of the code showed', async () => {
+    native.program = callingProgram(['dez.tools/jobs_list'])
+    toolRuns.tool = async () => ({ ...TOOL_DONE, pictures: [PICTURE] })
+
+    const result = await runJsEval(CALL, running(), callContext())
+
+    expect(result).toStrictEqual({ content: 'ok', pictures: [PICTURE] })
+    expect(native.deletedFiles).not.toContainEqual(PICTURE_DELETE)
+  })
+
+  it('deletes the pictures of the tool calls of code that failed', async () => {
+    native.program = callingProgram(['dez.tools/jobs_list'], { type: 'error', text: 'Error: x' })
+    toolRuns.tool = async () => ({ ...TOOL_DONE, pictures: [PICTURE] })
+
+    await refusalOf(runJsEval(CALL, running(), callContext()))
+
+    expect(native.deletedFiles).toContainEqual(PICTURE_DELETE)
     deletedWorkFolder()
   })
 
@@ -91,7 +142,7 @@ describe('runJsEval', () => {
       throw new Error('No space left on /home/u/.cache')
     }
 
-    const refusal = await refusalOf(runJsEval(CALL, running()))
+    const refusal = await refusalOf(runJsEval(CALL, running(), callContext()))
 
     expect(refusal).toBe(programNotStartedText('deno', JS_EVAL_TOOL.name))
     expect(native.runs).toStrictEqual([])
@@ -103,7 +154,7 @@ describe('runJsEval', () => {
       throw new Error('No such file: /home/u/.cache/dez/work')
     }
 
-    const refusal = await refusalOf(runJsEval(CALL, running()))
+    const refusal = await refusalOf(runJsEval(CALL, running(), callContext()))
 
     expect(refusal).toBe(programNotStartedText('deno', JS_EVAL_TOOL.name))
     expect(native.runs).toStrictEqual([])
@@ -115,7 +166,7 @@ describe('runJsEval', () => {
       throw 'No confinement: this kernel has no Landlock, and Dez does not run this program with no confinement'
     }
 
-    const refusal = await refusalOf(runJsEval(CALL, running()))
+    const refusal = await refusalOf(runJsEval(CALL, running(), callContext()))
 
     expect(refusal).toBe(programNotConfinedText('deno', JS_EVAL_TOOL.name))
     deletedWorkFolder()
@@ -126,21 +177,38 @@ describe('runJsEval', () => {
       throw 'The program dez-deno is missing in /usr/lib/Dez'
     }
 
-    expect(await refusalOf(runJsEval(CALL, running()))).toBe(programNotStartedText('deno', JS_EVAL_TOOL.name))
+    expect(await refusalOf(runJsEval(CALL, running(), callContext()))).toBe(programNotStartedText('deno', JS_EVAL_TOOL.name))
   })
 
-  it('stops the code at a stop of the call', async () => {
+  it('stops the code and its tool call at a stop of the call, and deletes the pictures of its tool calls', async () => {
     const stop = new AbortController()
     let end: (end: BundledToolEnd) => void = () => {}
-    native.program = () => new Promise((resolve) => { end = resolve })
+    native.program = (_run, onOutput) => {
+      onOutput({ stream: 'stdout', text: protocolLine({ type: 'call', id: 1, selector: 'dez.tools/jobs_list' }) })
+      onOutput({ stream: 'stdout', text: protocolLine({ type: 'call', id: 2, selector: 'dez.tools/jobs_wait' }) })
+      return new Promise((resolve) => { end = resolve })
+    }
+    // The reason of the stop of the tool call that waits.
+    let toolStop: unknown
+    toolRuns.tool = (call, signal) => {
+      if (call.name === 'jobs_list') return Promise.resolve({ ...TOOL_DONE, pictures: [PICTURE] })
+      return new Promise((resolve) => {
+        signal.addEventListener('abort', () => {
+          toolStop = signal.reason
+          resolve({ content: 'stopped', isError: true })
+        })
+      })
+    }
 
-    const work = failureOf(runJsEval(CALL, stop.signal))
-    await vi.waitFor(() => expect(native.runs).toHaveLength(1))
+    const work = failureOf(runJsEval(CALL, stop.signal, callContext()))
+    await vi.waitFor(() => expect(toolRuns.calls).toHaveLength(2))
     stop.abort(STOP)
     end({ kind: 'cancelled' })
 
+    expect(toolStop).toBe(STOP)
     expect(await work).toBe(STOP)
     expect(native.cancelledRuns).toStrictEqual([native.runs[0].runId])
+    expect(native.deletedFiles).toContainEqual(PICTURE_DELETE)
     deletedWorkFolder()
   })
 })

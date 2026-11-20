@@ -10,9 +10,12 @@ import {
   jsEvalResult,
   type JsEvalCall,
 } from '../model/tools/jsEval'
-import { programNotStartedText } from '../model/tools/programRuns'
-import { ToolError } from '../model/tools/types'
+import { programNotStartedText, type ProgramEnd } from '../model/tools/programRuns'
+import { ToolError, type ToolRunResult } from '../model/tools/types'
 import { inWorkFolder, runProgram } from './programRuns'
+import { discardShownPictures } from './shownPictures'
+import { ToolBridge } from './toolBridge'
+import type { ToolRunContext } from './tools'
 
 // The run of a `js_eval` call (model/tools/jsEval.ts): the code of a model
 // in Deno, the program that Dez ships. This module registers no selector.
@@ -21,6 +24,9 @@ import { inWorkFolder, runProgram } from './programRuns'
 // its own module, which Deno runs, and the code of the call. The page
 // gives Rust only the name of the module: Rust writes the Deno command
 // line, with no permission for the code (src-tauri/src/bundled_tools.rs).
+//
+// The code calls the other Dez tools over the input and the output of the
+// program (toolBridge.ts).
 
 // The paths of the work folder `folder` (a path in the cache root) on this
 // computer, as a text of the run can name them: the real path, which Deno
@@ -38,12 +44,15 @@ async function workFolderPaths(folder: string): Promise<string[]> {
   }
 }
 
-/** Runs the code of `call` to its end, and gives the result text: the
- *  value that the code returned, then its console output. Throws a
- *  `ToolError` with the error result of any other end (`jsEvalResult`) and
- *  of a run that did not start, and the stop of `signal`, which also stops
- *  the code. */
-export function runJsEval(call: JsEvalCall, signal: AbortSignal): Promise<string> {
+/** Runs the code of `call` to its end, and gives the result: the value
+ *  that the code returned, what its tool calls left, then its console
+ *  output, and the pictures that its tool calls showed. `context` is the
+ *  context of the call, which the tool calls of the code run with
+ *  (`ToolBridge`). Throws a `ToolError` with the error result of any other
+ *  end (`jsEvalResult`) and of a run that did not start, and the stop of
+ *  `signal`, which also stops the code and its tool call. A call that
+ *  throws shows no picture: it deletes the copies. */
+export function runJsEval(call: JsEvalCall, signal: AbortSignal, context: ToolRunContext): Promise<Omit<ToolRunResult, 'isError'>> {
   return inWorkFolder(async (folder) => {
     const files = [
       { name: JS_EVAL_RUNNER_FILE, text: JS_EVAL_RUNNER },
@@ -63,12 +72,24 @@ export function runJsEval(call: JsEvalCall, signal: AbortSignal): Promise<string
     // the user's: Rust gives a program no other fact of the computer.
     const { timeZone } = Intl.DateTimeFormat().resolvedOptions()
     const output = new JsEvalOutput()
-    const run = { args: [JS_EVAL_RUNNER_FILE], folder, inputs: [], timeoutMs: call.timeoutMs, maxOutputBytes: JS_EVAL_OUTPUT_BYTES, ...(timeZone ? { timeZone } : {}) }
-    const end = await runProgram('deno', JS_EVAL_TOOL.name, run, signal, ({ stream, text }) => {
-      output.add(stream, text)
-    })
-    const { text, isError } = jsEvalResult(call, end, output, folders)
-    if (isError) throw new ToolError(text)
-    return text
+    const bridge = new ToolBridge(context, folders, signal)
+    // `stdin`: the answers of the tool calls go to the input of the program.
+    const run = { args: [JS_EVAL_RUNNER_FILE], folder, inputs: [], timeoutMs: call.timeoutMs, maxOutputBytes: JS_EVAL_OUTPUT_BYTES, stdin: true, ...(timeZone ? { timeZone } : {}) }
+    let end: ProgramEnd
+    try {
+      end = await runProgram('deno', JS_EVAL_TOOL.name, run, signal, ({ stream, text }, writeInput) => {
+        for (const line of output.add(stream, text)) bridge.call(line, writeInput)
+      })
+    } catch (error) {
+      await discardShownPictures((await bridge.end()).pictures)
+      throw error
+    }
+    const { toolCalls, pictures } = await bridge.end()
+    const { text, isError } = jsEvalResult(call, end, output, folders, toolCalls)
+    if (isError) {
+      await discardShownPictures(pictures)
+      throw new ToolError(text)
+    }
+    return { content: text, ...(pictures.length > 0 && { pictures }) }
   })
 }

@@ -128,18 +128,30 @@ export async function clipInputFile(input: ClipInput, folder: string, signal: Ab
   }
 }
 
+/** Writes `text` to the input of a run, after the texts of the earlier
+ *  writes (`dez.native/writeBundledToolInput`). Only a run with `stdin` has
+ *  an input. It resolves when the text is in the queue of the run, and
+ *  rejects when the run ended or its program closed its input. Wait for
+ *  each write before the next one: two writes at one time have no order. */
+export type ProgramInputWriter = (text: string) => Promise<void>
+
 /** One run of `program` in a work folder, to its end. A stop of `signal`
  *  stops the program; this then rejects with the stop, after the program is
  *  gone, so the caller can delete the folder. Throws a `ToolError` for a
  *  run that did not start: the program is missing, the system did not let
  *  Dez make the folder or copy an input, or the program must be confined
- *  and the system cannot confine it. */
+ *  and the system cannot confine it.
+ *
+ *  `onOutput` gets each piece that the program writes, and the writer of
+ *  the input of the run. A write can go only from an output on: before the
+ *  first one, the run may not be active yet. `onOutput` must not throw: a
+ *  throw ends the run as one that did not start. */
 export async function runProgram(
   program: ShippedProgram,
   toolName: string,
   run: Omit<BundledToolRun, 'tool'>,
   signal: AbortSignal,
-  onOutput: (output: BundledToolOutput) => void,
+  onOutput: (output: BundledToolOutput, writeInput: ProgramInputWriter) => void,
 ): Promise<ProgramEnd> {
   signal.throwIfAborted()
   const runId = crypto.randomUUID()
@@ -148,7 +160,8 @@ export async function runProgram(
       console.error(`Failed to stop ${program}:`, error)
     })
   }
-  const ended = sbp('dez.native/runBundledTool', { ...run, tool: PROGRAM_FILES[program] }, runId, onOutput) as Promise<BundledToolEnd>
+  const writeInput: ProgramInputWriter = (text) => sbp('dez.native/writeBundledToolInput', runId, text) as Promise<void>
+  const ended = sbp('dez.native/runBundledTool', { ...run, tool: PROGRAM_FILES[program] }, runId, (output: BundledToolOutput) => onOutput(output, writeInput)) as Promise<BundledToolEnd>
   signal.addEventListener('abort', cancel, { once: true })
   let end: BundledToolEnd
   try {

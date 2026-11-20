@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { byteSizeText } from '../../utils/byteSize'
-import { JS_EVAL_OUTPUT_BYTES, JS_EVAL_TEXT_CAP, JsEvalOutput, jsEvalCall, jsEvalCodeFile, jsEvalResult, type JsEvalLine } from './jsEval'
+import { jobStartedText, madeAssetIds } from './jobs'
+import { JS_EVAL_OUTPUT_BYTES, JS_EVAL_TEXT_CAP, JsEvalOutput, jsEvalAnswerLine, jsEvalCall, jsEvalCodeFile, jsEvalResult, type JsEvalLine, type JsEvalToolCalls } from './jsEval'
 import type { ProgramEnd } from './programRuns'
 import { ToolError, type ToolArguments } from './types'
 
@@ -11,6 +12,7 @@ const JOINED = `/home/u/.cache/dez/work/${FOLDER_ID}`
 const REAL = `/mnt/disk/cache/dez/work/${FOLDER_ID}`
 const EXITED: ProgramEnd = { kind: 'exited', code: 0 }
 const CONSOLE_TITLE = 'Console output of the code:'
+const NO_TOOL_CALLS: JsEvalToolCalls = { assets: [], jobs: [], unanswered: 0, pictures: 0 }
 
 // A protocol line as the module of Dez writes it.
 function protocolLine(line: JsEvalLine): string {
@@ -24,9 +26,10 @@ function written(...pieces: string[]): JsEvalOutput {
   return output
 }
 
-// The result of a run with a time limit of 30 seconds.
-function resultOf(output: JsEvalOutput, end: ProgramEnd = EXITED) {
-  return jsEvalResult({ code: 'return 1', timeoutMs: 30_000 }, end, output, [REAL, JOINED])
+// The result of a run with a time limit of 30 seconds, whose tool calls
+// left `toolCalls`.
+function resultOf(output: JsEvalOutput, end: ProgramEnd = EXITED, toolCalls: Partial<JsEvalToolCalls> = {}) {
+  return jsEvalResult({ code: 'return 1', timeoutMs: 30_000 }, end, output, [REAL, JOINED], { ...NO_TOOL_CALLS, ...toolCalls })
 }
 
 describe('jsEvalCall', () => {
@@ -51,9 +54,9 @@ describe('jsEvalCall', () => {
 
 describe('jsEvalCodeFile', () => {
   // The function of a code file, as the module of Dez gets it.
-  function codeFunction(file: string): () => Promise<unknown> {
+  function codeFunction(file: string): (dez?: unknown) => Promise<unknown> {
     expect(file.startsWith('export default ')).toBe(true)
-    return new Function(`return ${file.slice('export default '.length)}`)() as () => Promise<unknown>
+    return new Function(`return ${file.slice('export default '.length)}`)() as (dez?: unknown) => Promise<unknown>
   }
 
   it('makes the code the body of an async function', async () => {
@@ -66,6 +69,12 @@ describe('jsEvalCodeFile', () => {
     const run = codeFunction(jsEvalCodeFile('return 4 // the result'))
 
     expect(await run()).toBe(4)
+  })
+
+  it('gives the code the object of the run as `dez`', async () => {
+    const run = codeFunction(jsEvalCodeFile('return dez.sbp("dez.tools/jobs_list")'))
+
+    expect(await run({ sbp: (selector: string) => `called ${selector}` })).toBe('called dez.tools/jobs_list')
   })
 
   it('keeps each line of the code at its line number', () => {
@@ -98,7 +107,11 @@ describe('JsEvalOutput', () => {
 
   it.each([
     ['text that is no JSON', 'not json'],
-    ['a line of an unknown type', '{"type":"call","text":"x"}'],
+    ['a line of an unknown type', '{"type":"other","text":"x"}'],
+    ['a call with no id', '{"type":"call","selector":"dez.tools/jobs_list"}'],
+    ['a call whose id is no integer', '{"type":"call","id":1.5,"selector":"dez.tools/jobs_list"}'],
+    ['a call whose selector is no text', '{"type":"call","id":1,"selector":["dez.tools/jobs_list"]}'],
+    ['a call with a key that it does not have', '{"type":"call","id":1,"selector":"dez.tools/jobs_list","more":1}'],
     ['a line with a key that it does not have', '{"type":"result","text":"x","more":1}'],
     ['a result whose text is no string', '{"type":"result","text":5}'],
     ['an error with no text', '{"type":"error"}'],
@@ -144,6 +157,55 @@ describe('JsEvalOutput', () => {
     output.add('stdout', 'same stream')
 
     expect(output.ended().log).toBe('no line end\nerror: Uncaught\nnext\nsame stream')
+  })
+
+  it('gives a call line to its caller at once, and keeps it out of the line of the run and the console output', () => {
+    const output = new JsEvalOutput()
+    const call = { type: 'call' as const, id: 1, selector: 'dez.tools/image/scale', arguments: { image: 'a', width: 64 } }
+
+    expect(output.add('stdout', `before\n${protocolLine(call)}after\n`)).toStrictEqual([call])
+    expect(output.add('stdout', protocolLine({ type: 'result', text: '2' }))).toStrictEqual([])
+    expect(output.ended()).toStrictEqual({ line: { type: 'result', text: '2' }, log: 'before\nafter\n' })
+  })
+
+  it('gives a call line that comes in many pieces when its line end comes', () => {
+    const output = new JsEvalOutput()
+    const call = { type: 'call' as const, id: 7, selector: 'dez.tools/jobs_list' }
+    const calls = [...protocolLine(call)].map((piece) => output.add('stdout', piece))
+
+    expect(calls.slice(0, -1).flat()).toStrictEqual([])
+    expect(calls.at(-1)).toStrictEqual([call])
+  })
+
+  it('gives the call lines of one piece in their order', () => {
+    const output = new JsEvalOutput()
+    const calls = [3, 1, 2].map((id) => ({ type: 'call' as const, id, selector: 'dez.tools/jobs_list' }))
+
+    expect(output.add('stdout', calls.map(protocolLine).join('log\n'))).toStrictEqual(calls)
+  })
+
+  it('keeps the line of the run that came before a call line', () => {
+    const output = written(protocolLine({ type: 'result', text: '2' }), protocolLine({ type: 'call', id: 1, selector: 'dez.tools/jobs_list' }))
+
+    expect(output.ended().line).toStrictEqual({ type: 'result', text: '2' })
+  })
+
+  it('takes no call line from the error output', () => {
+    const output = new JsEvalOutput()
+    const line = protocolLine({ type: 'call', id: 1, selector: 'dez.tools/jobs_list' })
+
+    expect(output.add('stderr', line)).toStrictEqual([])
+    expect(output.ended().log).toBe(line)
+  })
+})
+
+describe('jsEvalAnswerLine', () => {
+  it('writes an answer as one line that reads back, also a text with line ends', () => {
+    const line = jsEvalAnswerLine(3, { text: 'The call failed.\nFix it:\r\n\u2028"quoted"', isError: true })
+
+    expect(line.endsWith('\n')).toBe(true)
+    expect(line.slice(0, -1)).not.toMatch(/[\n\r]/)
+    expect(JSON.parse(line)).toStrictEqual({ id: 3, text: 'The call failed.\nFix it:\r\n\u2028"quoted"', isError: true })
   })
 })
 
@@ -264,7 +326,7 @@ describe('jsEvalResult', () => {
 
   it('tells of a time limit with the seconds of the call', () => {
     const output = written('step 1\n')
-    const { text, isError } = jsEvalResult({ code: 'for (;;) {}', timeoutMs: 5000 }, { kind: 'timedOut' }, output, [JOINED])
+    const { text, isError } = jsEvalResult({ code: 'for (;;) {}', timeoutMs: 5000 }, { kind: 'timedOut' }, output, [JOINED], NO_TOOL_CALLS)
 
     expect(isError).toBe(true)
     expect(text).toContain('within 5 seconds')
@@ -316,4 +378,75 @@ describe('jsEvalResult', () => {
       expect(text).not.toContain('forged value')
     },
   )
+
+  it('names what the tool calls left between the value and the console output', () => {
+    const output = written('step 1\n', protocolLine({ type: 'result', text: 'done' }))
+    const { text, isError } = resultOf(output, EXITED, {
+      assets: [{ kind: 'image', id: 'b' }, { kind: 'video', id: 'c' }, { kind: 'audio', id: 'd' }],
+      jobs: [{ id: 'j-k3x9', number: 2 }],
+    })
+
+    expect(isError).toBe(false)
+    expect(text).toBe([
+      'done',
+      '',
+      'From the tool calls of the code:',
+      'Made the image @b.',
+      'Made the video clip @c.',
+      'Made the audio clip @d.',
+      jobStartedText('j-k3x9', 2),
+      '',
+      CONSOLE_TITLE,
+      'step 1',
+    ].join('\n'))
+    // A request sends no other text of a made asset (`roundRequestText`).
+    expect(madeAssetIds(text)).toStrictEqual(['b', 'c', 'd'])
+  })
+
+  it('does not name twice what the value of the code names', () => {
+    const value = `Made the image @b from @a.\n${jobStartedText('j-k3x9', 2)}\n@c`
+    const { text } = resultOf(written(protocolLine({ type: 'result', text: value })), EXITED, {
+      assets: [{ kind: 'image', id: 'b' }, { kind: 'video', id: 'c' }],
+      jobs: [{ id: 'j-k3x9', number: 2 }, { id: 'j-ab12', number: 3 }],
+    })
+
+    expect(text).toBe(`${value}\n\nFrom the tool calls of the code:\nMade the video clip @c.\n${jobStartedText('j-ab12', 3)}`)
+  })
+
+  it('names an asset whose line the cut of a long value took', () => {
+    const value = `${'x'.repeat(JS_EVAL_TEXT_CAP)}\nMade the image @b.`
+    const { text } = resultOf(written(protocolLine({ type: 'result', text: value })), EXITED, { assets: [{ kind: 'image', id: 'b' }] })
+
+    expect(madeAssetIds(text)).toStrictEqual(['b'])
+  })
+
+  it('names what the tool calls left in an error result too', () => {
+    const output = written(protocolLine({ type: 'error', text: 'Error: late' }))
+    const { text, isError } = resultOf(output, EXITED, { assets: [{ kind: 'image', id: 'b' }], jobs: [{ id: 'j-k3x9', number: 1 }] })
+
+    expect(isError).toBe(true)
+    expect(text).toBe(`The code threw an error:\nError: late\n\nFrom the tool calls of the code:\nMade the image @b.\n${jobStartedText('j-k3x9', 1)}`)
+  })
+
+  it.each([
+    [1, '1 tool call of the code had not ended when the code ended, so Dez cut it short.'],
+    [3, '3 tool calls of the code had not ended when the code ended, so Dez cut them short.'],
+  ])('tells of %i tool calls that had no answer, and how to keep them', (unanswered, sentence) => {
+    const { text } = resultOf(written('log\n', protocolLine({ type: 'result', text: 'done' })), EXITED, { unanswered })
+    const note = text.indexOf(sentence)
+
+    expect(note).toBeGreaterThan(0)
+    expect(text.indexOf('`await` each `dez.sbp` call')).toBeGreaterThan(note)
+    expect(note).toBeLessThan(text.indexOf(CONSOLE_TITLE))
+  })
+
+  it('tells in an error result that the model does not get the pictures of the tool calls', () => {
+    const { text } = resultOf(written(), { kind: 'timedOut' }, { pictures: 2 })
+
+    expect(text).toContain('does not show you the 2 pictures of its tool calls')
+  })
+
+  it('tells nothing of the pictures in a result that shows them', () => {
+    expect(resultOf(written(protocolLine({ type: 'result', text: 'done' })), EXITED, { pictures: 2 })).toStrictEqual({ text: 'done', isError: false })
+  })
 })

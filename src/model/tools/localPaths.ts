@@ -1,3 +1,5 @@
+import { mapJsonStrings } from '../../utils/json'
+
 // Local file paths in data that Dez passes on from one provider to another.
 // The `model_info` tool sends a model's entry of its provider's model list to
 // the chat model, and the entry of a local or custom server can hold a file
@@ -29,12 +31,16 @@ const LOCAL_ROOTS = [
   'data', 'workspace', 'workspaces', 'scratch',
 ]
 
+// The characters that a name of a path or of a URL can have next to a `/`,
+// as the inside of a character class.
+const NAME_CHARS = String.raw`\p{L}\p{N}_.~/\\-`
+
 // What comes before a path: the start of a line, or a character that a path
 // or a URL cannot have before a `/`. So a folder in the middle of a relative
 // path (`models/home/x`), of an API route (`/v1/data/x`), or of a URL
 // (`https://host/home/x`) starts no match. A path after `=`, `:`, or a quote
 // does (`--model=/home/x`, and also `?file=/home/x` in a URL).
-const PATH_START = String.raw`(^|[^\p{L}\p{N}_.~/\\-])`
+const PATH_START = `(^|[^${NAME_CHARS}])`
 
 // The start of a `file:` URL, with or without a host: `file:/home/x`,
 // `file:///home/x`, `file://localhost/home/x`.
@@ -70,7 +76,14 @@ const KNOWN_STARTS = [
 // no earlier end is safe: the text after a path on the same line is hidden
 // with it (`-m /home/x --port 80` gives `-m /home/…`). A start with nothing
 // after it (`/home/`, `~/`) shows no name and is no match.
-const LOCAL_PATH = new RegExp(`${PATH_START}(${FILE_URL}(?:${KNOWN_STARTS.join('|')}))[^\\r\\n]+`, 'gmu')
+//
+// A stand-in of this rule matches as itself (a start, `…`, and then no
+// character of a name), so the text after it on its line stays. A text can
+// go through the rule twice, with the stand-in of the first time in the
+// middle of a line the second time: an argument of a tool call of code,
+// then the result of that code, which holds the argument in a tag, a table,
+// or JSON (toolBridge.ts).
+const LOCAL_PATH = new RegExp(`${PATH_START}(${FILE_URL}(?:${KNOWN_STARTS.join('|')}))(?:${HIDDEN}(?![${NAME_CHARS}])|[^\\r\\n]+)`, 'gmu')
 
 /** `text` with a stand-in in place of each local file path that can show a
  *  user name or a project name: the path's known start, then `…` (`/home/…`,
@@ -81,11 +94,8 @@ export function withoutLocalPaths(text: string): string {
 }
 
 /** A copy of a JSON value with `withoutLocalPaths` applied to every string in
- *  it: the string values at any depth, and the object keys. Two keys that get
- *  the same stand-in become one field, with the value of the later key. */
+ *  it (`mapJsonStrings`): the string values at any depth, and the object
+ *  keys. */
 export function jsonWithoutLocalPaths(value: unknown): unknown {
-  if (typeof value === 'string') return withoutLocalPaths(value)
-  if (Array.isArray(value)) return value.map(jsonWithoutLocalPaths)
-  if (value === null || typeof value !== 'object') return value
-  return Object.fromEntries(Object.entries(value).map(([key, item]) => [withoutLocalPaths(key), jsonWithoutLocalPaths(item)]))
+  return mapJsonStrings(value, withoutLocalPaths)
 }

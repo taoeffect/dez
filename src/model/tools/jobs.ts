@@ -435,6 +435,13 @@ export function jobResultState(job: Pick<JobInfo, 'status' | 'delivered'>): JobR
   return job.delivered ? 'given' : 'ready'
 }
 
+/** Whether `job` is open (`MAX_OPEN_JOBS`): it still runs, or it ended
+ *  with a result that no `jobs_wait` gave yet. A stopped or cancelled job
+ *  has no result, so it is not open. */
+export function isOpenJob(job: Pick<JobInfo, 'status' | 'delivered'>): boolean {
+  return job.status === 'running' || jobResultState(job) === 'ready'
+}
+
 const JOB_RESULT_STATES: readonly JobResultState[] = ['ready', 'given', '-']
 
 /** What the values of the `result` column of a job list mean

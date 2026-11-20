@@ -41,8 +41,12 @@ describe('withoutLocalPaths', () => {
     ['/Users/alice/My Models/Acme Bot/model.gguf', '/Users/…'],
   ])('hides the rest of %j', (path, standIn) => {
     expect(withoutLocalPaths(path)).toBe(standIn)
-    // A stand-in is no path with more to hide.
+    // A stand-in is no path with more to hide: not at the end of a line,
+    // and not before other text, where a text that goes through the rule a
+    // second time can have it.
     expect(withoutLocalPaths(standIn)).toBe(standIn)
+    const tag = `<job call="${standIn}" tool="video">`
+    expect(withoutLocalPaths(tag)).toBe(tag)
   })
 
   it.each([
@@ -95,6 +99,17 @@ describe('withoutLocalPaths', () => {
   it('hides the paths of each line, and keeps the other lines and the line ends', () => {
     expect(withoutLocalPaths('FROM /Users/alice/llama-3.gguf\r\nPARAMETER temperature 0.7\nADAPTER ~/lora/acme\n'))
       .toBe('FROM /Users/…\r\nPARAMETER temperature 0.7\nADAPTER ~/…\n')
+  })
+
+  it('keeps the text after a stand-in, and hides the paths in it', () => {
+    expect(withoutLocalPaths('{ "root": "/home/…", "path": "/mnt/disk/acme", "id": "x" }')).toBe('{ "root": "/home/…", "path": "/mnt/…')
+    expect(withoutLocalPaths('j-abcd | running | Where is /home/… | 2 s')).toBe('j-abcd | running | Where is /home/… | 2 s')
+  })
+
+  it('hides a path whose first name starts as a stand-in does', () => {
+    expect(withoutLocalPaths('/home/…alice/models and more')).toBe('/home/…')
+    expect(withoutLocalPaths('/home/…/home/alice/models')).toBe('/home/…')
+    expect(withoutLocalPaths('C:\\Users\\….alice\\models')).toBe('C:\\Users\\…')
   })
 })
 

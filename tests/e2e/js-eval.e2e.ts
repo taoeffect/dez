@@ -1,12 +1,22 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { ASSET_INFO_COLUMNS } from '../../src/model/tools/assetInfo'
+import { PICTURES_SHOWN_NOTE } from '../../src/model/tools/assetView'
+import { jobStartedText, jobsWaitResults, NO_JOBS_TEXT, startedJobId } from '../../src/model/tools/jobs'
+import { byteSizeText } from '../../src/utils/byteSize'
 import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
-import { filesIn, workDir } from './harness/fixtures'
-import { evalCall, expectReplyEnd as expectEnd } from './harness/jsEval'
+import { linkedDropDir } from './harness/drops'
+import { appFilePath, filesIn, workDir, writeTestFile } from './harness/fixtures'
+import { generatedImagesDir, pngDataUrl, shownImages, STRIPES_PNG } from './harness/images'
+import { waitCall } from './harness/jobs'
+import { evalCall, expectReplyEnd as expectEnd, expectRunsEnded } from './harness/jsEval'
+import { clipTag, WEBM_VIDEO } from './harness/media'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
-import { mockChatPath, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
+import { mockChatPath, replyText, sendChatReply, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
 import { processExists, runningProgram } from './harness/processes'
 import type { E2EBrowser } from './harness/session'
-import { endedReply, newTab, openToasts, submit } from './harness/thread'
+import { endedReply, newTab, openSeededConversation, openToasts, pickModel, submit } from './harness/thread'
 
 // The `js_eval` tool, driven through the real app against a mock chat model
 // in this process. The app runs the code of each call in the real Deno of
@@ -23,10 +33,21 @@ import { endedReply, newTab, openToasts, submit } from './harness/thread'
 // - code that ended with no value, and code that Dez stopped at the time
 //   limit of its call, give an error result;
 // - Stop ends the code of a call that runs;
-// - every work folder is gone after its call.
+// - every work folder is gone after its call;
+// - the code of a call runs the other Dez tools with `dez.sbp`, in both
+//   forms of a call, on the files that the user dropped (a stored image, a
+//   linked image, a linked clip) by their ids: it gets the result text of
+//   each tool, and the error of a tool as an error that it can catch. An
+//   image that a call made goes into the reply with the name of its tool,
+//   and the next call of the code can name it. The model sees the picture
+//   of an `asset_view` call of the code, in each later request too;
+// - a job that the code started is a job of the reply: the code can wait
+//   for it, the result of the call names each job that is still open, and
+//   the model gets the result of such a job with `jobs_wait`.
 // No request holds a path of the test HOME (`takeRequest` checks each one):
 // the work folder of each run is in that HOME, and Deno names it in an error
-// stack, in `import.meta.url`, and in `Deno.cwd()`.
+// stack, in `import.meta.url`, and in `Deno.cwd()`. No request holds the
+// path or the name of a linked file.
 //
 // One app session serves the whole file; each test starts in a new tab.
 
@@ -41,15 +62,46 @@ describe('js_eval tool', () => {
   let setup: MockProviderApp
   let browser: E2EBrowser
   let workRoot: string
+  let imagesDir: string
+  // A folder that is not in the test HOME, so that the app links a file of
+  // it in place.
+  let linkedDir: string
 
   const chatRequest = (): Promise<HeldRequest> => takeRequest(setup, CHAT_PATH)
 
   const expectReplyEnd = (request: HeldRequest): Promise<void> => expectEnd(setup, CALLER, request)
 
+  // The images that the tools of a reply made, from the text `reply` of its
+  // section, in its order: the id and the marks of each reference, and
+  // whether its file is a stored file of the generated images.
+  function madeImages (reply: string): Array<{ id: string, marks: string, stored: boolean }> {
+    return [...reply.matchAll(/!\[id=([a-z]+)\|([^\]]+)\]\(([^)\s]+)\)/g)]
+      .map(([, id, marks, file]) => ({ id, marks, stored: path.dirname(file) === imagesDir && fs.existsSync(file) }))
+  }
+
+  // Opens a conversation with files that the user dropped, all in its one
+  // user section. The next new id of the conversation is `d`.
+  // - `@a`: a PNG image that Dez copied (a stored file);
+  // - `@b`: the same image as a file that the user linked;
+  // - `@c`: a video clip as a file that the user linked.
+  async function openDrops (name: string): Promise<void> {
+    const { home } = setup.app
+    const stored = await writeTestFile(appFilePath(home, 'assets', 'images', `${name}-a.png`), STRIPES_PNG)
+    const image = await writeTestFile(path.join(linkedDir, `${name}-holiday.png`), STRIPES_PNG)
+    const clip = await writeTestFile(path.join(linkedDir, `${name}-beach.webm`), WEBM_VIDEO)
+    await openSeededConversation(browser, home, name, [{
+      role: 'user',
+      text: [`![id=a](${stored})`, `![id=b](${image})`, clipTag('video', { id: 'c', type: 'video/webm', src: clip }), 'Here are my files.'].join('\n'),
+    }])
+    await pickModel(browser, CALLER.name, CALLER.modelName)
+  }
+
   beforeAll(async () => {
+    linkedDir = await linkedDropDir('js-eval')
     setup = await startMockProviderApp(CALLER, {}, { env: { TZ: APP_TIME_ZONE } })
     browser = setup.browser
     workRoot = workDir(setup.app.home)
+    imagesDir = generatedImagesDir(setup.app.home)
   })
 
   beforeEach(async () => {
@@ -64,6 +116,7 @@ describe('js_eval tool', () => {
 
   afterAll(async () => {
     await setup?.stop()
+    if (linkedDir) await fs.promises.rm(linkedDir, { recursive: true, force: true })
   })
 
   it('gives the value that the code of a call returned, then its console output', async () => {
@@ -181,5 +234,133 @@ describe('js_eval tool', () => {
     expect(await openToasts(browser, 'error')).toStrictEqual([])
     // A stop is no failure of the tool.
     expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('runs the Dez tools that the code of a call names with dez.sbp, on a stored image and on linked files: their results, their images, their picture, and their errors', async () => {
+    await openDrops('bridge')
+    await submit(browser, ' Work on them.')
+    const first = await chatRequest()
+    const badCall = 'dez.sbp("dez.tools/image/scale", { image: "zz", width: 4 })'
+    sendToolCalls(first.reply, [
+      // A tool that runs a bundled program itself (ffprobe, for the clip).
+      evalCall('call_facts', 'return await dez.sbp("dez.tools/asset_info", { assets: "@a @b @c" })'),
+      // The two forms of a call of a subcommand. The second call names the
+      // image that the first one made.
+      evalCall('call_images', [
+        'const flipped = await dez.sbp("dez.tools/image/flip", { image: "b", direction: "horizontal" })',
+        'const [, id] = /^Made the image @([a-z]+) /.exec(flipped)',
+        'return await dez.sbp("dez.tools/image", { command: "scale", parameters: JSON.stringify({ image: id, width: 45 }) })',
+      ].join('\n')),
+      evalCall('call_view', 'return await dez.sbp("dez.tools/asset_view", { assets: "@b" })'),
+      evalCall('call_caught', [
+        'let failure',
+        'try {',
+        `  await ${badCall}`,
+        '} catch (error) {',
+        '  failure = `${error.name}: ${error.message}`',
+        '}',
+        // A call with no arguments, after a call that failed.
+        'return [failure, await dez.sbp("dez.tools/jobs_list")].join("\\n")',
+      ].join('\n')),
+      evalCall('call_thrown', `const unused = 1\nawait ${badCall}`),
+    ])
+
+    const second = await chatRequest()
+    const pngSize = byteSizeText(STRIPES_PNG.length)
+    expect(toolResult(second, 'call_facts').split('\n')).toStrictEqual([
+      ASSET_INFO_COLUMNS,
+      `@a | image | PNG | 90x20 | ${pngSize} | shown | from the user`,
+      `@b | image | PNG | 90x20 | ${pngSize} | shown | from the user`,
+      `@c | video | WebM | 2 s | 48x36 | 5 fps | vp9 | no sound | ${byteSizeText(WEBM_VIDEO.length)} | shown | from the user`,
+    ])
+    // The code returned only what its last call gave, so the result names
+    // the image of the first call too.
+    expect(toolResult(second, 'call_images')).toBe(
+      'Made the image @e from @d. The image @e is 45x10 pixels.\n\nFrom the tool calls of the code:\nMade the image @d.',
+    )
+    expect(toolResult(second, 'call_view').split('\n').slice(0, 2)).toStrictEqual([`@b | image | PNG | 90x20 | ${pngSize}`, PICTURES_SHOWN_NOTE])
+    // The error of a tool is the error text that a call of the model gets.
+    const failure = 'No image of this conversation has the id @zz. Its images are @a, @b, @d, @e: call again with one of these ids.'
+    expect(toolResult(second, 'call_caught')).toBe(`Error: ${failure}\n${NO_JOBS_TEXT}`)
+    // The stack names the line of the code that made the call.
+    expect(toolResult(second, 'call_thrown')).toBe(`The code threw an error:\nError: ${failure}\n    at default (file:///work/code.ts:2:11)`)
+
+    // The model sees the picture of the `asset_view` call of the code as
+    // after a call of its own: in one user message after the tool
+    // messages, after a line that names it.
+    const { messages } = JSON.parse(second.body) as { messages: unknown[] }
+    expect(messages.at(-1)).toStrictEqual({
+      role: 'user',
+      content: [{ type: 'text', text: 'asset_view: the image @b.' }, { type: 'image_url', image_url: { url: pngDataUrl(STRIPES_PNG) } }],
+    })
+
+    // The code of a later call works on the images that the calls made, and
+    // the request after it sends the same messages again, the picture at
+    // the same place.
+    sendToolCalls(second.reply, [evalCall('call_made', 'return await dez.sbp("dez.tools/asset_info", { assets: "@d @e" })')])
+    const third = await chatRequest()
+    const [, flipped, scaled] = toolResult(third, 'call_made').split('\n')
+    expect(flipped.startsWith('@d | image | PNG | 90x20 | ')).toBe(true)
+    expect(scaled.startsWith('@e | image | PNG | 45x10 | ')).toBe(true)
+    const { messages: laterMessages } = JSON.parse(third.body) as { messages: unknown[] }
+    expect(laterMessages.slice(0, messages.length)).toStrictEqual(messages)
+    for (const { body } of [first, second, third]) {
+      expect(body).not.toContain(linkedDir)
+      expect(body).not.toContain('holiday')
+      expect(body).not.toContain('beach')
+    }
+
+    await expectReplyEnd(third)
+    // Each image is in the reply with the name of the tool that made it,
+    // and the editor shows it. The editor draws only the images near its
+    // view, which is at the end of the reply: the last two are these.
+    expect(madeImages(await endedReply(browser))).toStrictEqual([
+      { id: 'd', marks: 'tool=image', stored: true },
+      { id: 'e', marks: 'tool=image', stored: true },
+    ])
+    await waitForValue(browser, 'shown images', async () => (await shownImages(browser)).slice(-2).map(({ width, height }) => ({ width, height })), [{ width: 90, height: 20 }, { width: 45, height: 10 }])
+  })
+
+  it('makes a job that the code of a call started a job of the reply: the code waits for it, and the result names each job that is still open', async () => {
+    await submit(browser, 'Make two pictures.')
+    const first = await chatRequest()
+    sendToolCalls(first.reply, [evalCall('call_jobs', [
+      'const draw = (color) => dez.sbp("dez.tools/video/ffmpeg", {',
+      '  arguments: `-f lavfi -i color=c=${color}:size=16x16:duration=1 -frames:v 1 -update 1 ${color}.png`,',
+      '})',
+      'await draw("red")',
+      'const waited = await dez.sbp("dez.tools/jobs_wait")',
+      'await draw("blue")',
+      'return waited',
+    ].join('\n'))])
+
+    const second = await chatRequest()
+    const [waited, left] = toolResult(second, 'call_jobs').split('\n\nFrom the tool calls of the code:\n')
+    expect(waited.startsWith('1 job ended. No job still runs.\n\n')).toBe(true)
+    const [red] = jobsWaitResults(waited)
+    expect({ tool: red.tool, status: red.status, number: red.call.number }).toStrictEqual({ tool: 'video', status: 'finished', number: 1 })
+    expect(red.text.endsWith('Made the image @a.')).toBe(true)
+    // The code took the result of the first job, and its value tells of
+    // the image of that job. So the result names only the second job.
+    const blueId = startedJobId(left)
+    expect(left).toBe(jobStartedText(String(blueId), 2))
+
+    sendToolCalls(second.reply, [waitCall('call_wait')])
+    const third = await chatRequest()
+    const [blue] = jobsWaitResults(toolResult(third, 'call_wait'))
+    expect({ id: blue.id, tool: blue.tool, status: blue.status, number: blue.call.number }).toStrictEqual({ id: blueId, tool: 'video', status: 'finished', number: 2 })
+    expect(blue.text.endsWith('Made the image @b.')).toBe(true)
+    await sendChatReply(third.reply, CALLER.modelName)
+
+    // Each image is in the reply after the blocks of the round whose call
+    // took the result of its job: a call of the code, then a call of the
+    // model.
+    const reply = await endedReply(browser)
+    expect(madeImages(reply)).toStrictEqual([
+      { id: 'a', marks: `tool=video|made-by=${red.id}`, stored: true },
+      { id: 'b', marks: `tool=video|made-by=${blueId}`, stored: true },
+    ])
+    expect(reply.endsWith(`\n\n${replyText(CALLER.modelName)}`)).toBe(true)
+    await expectRunsEnded(setup)
   })
 })

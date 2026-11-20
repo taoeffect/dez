@@ -7,7 +7,9 @@ import { imageMediaType, type ImageMediaType } from './images'
 // The pictures that an `asset_view` call shows its model. A picture is no
 // asset of the conversation: no `@id` names one. Dez saves each picture as
 // a copy in the views folder, and the block of the call names the copies
-// in its `pictures` attribute (toolBlocks.ts). The copies are what the
+// in its `pictures` attribute (toolBlocks.ts); for an `asset_view` call
+// that the code of a `js_eval` call made, that is the block of the
+// `js_eval` call (controller/toolBridge.ts). The copies are what the
 // model and the user see: each request that holds the round of the call
 // reads them (`agentSectionMessages`, streams/messages.ts), so each one
 // sends the same bytes, and the panel of the call's chip shows them. No

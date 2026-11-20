@@ -1,9 +1,12 @@
 import sbp from '@sbp/sbp'
 import { expect, vi } from 'vitest'
-import { ToolError } from '../model/tools/types'
+import { NO_CALL_PICTURE_BUDGET } from '../model/streams/pictureBudget'
+import type { JsEvalLine } from '../model/tools/jsEval'
+import { ToolError, type ToolRunResult } from '../model/tools/types'
 import type { NativeDownloadRule, NativeHttpDownload, NativeHttpRequest } from '../utils/protocol/nativeHttp'
-import type { JobOutcome, JobWork, MadeAsset } from './jobs'
+import { TabJobs, type JobOutcome, type JobWork, type MadeAsset } from './jobs'
 import type { AppFileEntry, AppFileRef, BundledToolEnd, BundledToolOutput, BundledToolRun } from './nativeTypes'
+import type { ToolRunCall, ToolRunContext } from './tools'
 
 // Shared helpers of the unit tests of the controller code that runs the
 // programs that Dez ships (videoTool.ts, audioTool.ts, the frame sheets of
@@ -156,6 +159,66 @@ export function running(): AbortSignal {
   return new AbortController().signal
 }
 
+/** The context of a call of a reply that takes no image and no clip,
+ *  shows no picture, and has no job, with `more` in place of its parts. */
+export function callContext(more: Partial<ToolRunContext> = {}): ToolRunContext {
+  return {
+    tabId: '',
+    model: { providerId: 'venice', modelId: 'venice-glm-5' },
+    jobs: new TabJobs(),
+    writeImage: () => null,
+    writeClip: () => null,
+    pictureBudget: async () => NO_CALL_PICTURE_BUDGET,
+    ...more,
+  }
+}
+
+/** What the stub of `dez.controller/tools/run` does for one call. */
+export type StubTool = (call: ToolRunCall, signal: AbortSignal, context: ToolRunContext) => Promise<ToolRunResult>
+
+/** The result of a stub tool that has nothing to tell. */
+export const TOOL_DONE: ToolRunResult = { content: 'done', isError: false }
+
+// The stub tools at the start of a test: no call ran, and each call gives
+// `TOOL_DONE`.
+function newToolRuns() {
+  return {
+    calls: [] as ToolRunCall[],
+    tool: (async () => TOOL_DONE) as StubTool,
+  }
+}
+
+/** The stub of the Dez tools, for the tests of the code that runs the tool
+ *  calls of a `js_eval` run (toolBridge.ts, jsEval.ts): the calls that
+ *  ran, and what a call does. */
+export const toolRuns = newToolRuns()
+
+let toolRunsRegistered = false
+
+/** Puts the stub of `dez.controller/tools/run` (`toolRuns`) back to its
+ *  start, and registers it at the first call. This module does not
+ *  register it on import, as its other stubs: the tests of the real
+ *  selector (tools.test.ts) import this module too. Each test of a file
+ *  that needs the stub starts with it. */
+export function stubToolRuns(): void {
+  Object.assign(toolRuns, newToolRuns())
+  if (toolRunsRegistered) return
+  toolRunsRegistered = true
+  sbp('sbp/selectors/register', {
+    'dez.controller/tools/run' (call: ToolRunCall, signal: AbortSignal, context: ToolRunContext): Promise<ToolRunResult> {
+      toolRuns.calls.push(call)
+      return toolRuns.tool(call, signal, context)
+    },
+  })
+}
+
+/** A step that a test ends by hand: `wait` resolves at `finish()`. */
+export function heldStep(): { wait: Promise<void>, finish: () => void } {
+  let finish!: () => void
+  const wait = new Promise<void>((resolve) => { finish = resolve })
+  return { wait, finish }
+}
+
 /** The options of a job whose time limit no test reaches. */
 export const LONG = { timeoutMs: 600_000 }
 
@@ -217,6 +280,26 @@ export function writes(stream: BundledToolOutput['stream'], text: string, end: B
   return async (_run, onOutput) => {
     onOutput({ stream, text })
     return end
+  }
+}
+
+/** A protocol line of a `js_eval` run, as the module of Dez writes it
+ *  (model/tools/jsEvalRunner.js). */
+export function protocolLine(line: JsEvalLine): string {
+  return `\x1e${JSON.stringify(line)}\n`
+}
+
+/** A `js_eval` program whose code makes one tool call for each of
+ *  `selectors`, each after the answer of the one before, and then ends
+ *  with the line `last`. */
+export function callingProgram(selectors: readonly string[], last: JsEvalLine = { type: 'result', text: 'ok' }): StubProgram {
+  return async (_run, onOutput) => {
+    for (const [index, selector] of selectors.entries()) {
+      onOutput({ stream: 'stdout', text: protocolLine({ type: 'call', id: index + 1, selector }) })
+      await vi.waitFor(() => expect(native.inputWrites).toHaveLength(index + 1))
+    }
+    onOutput({ stream: 'stdout', text: protocolLine(last) })
+    return ENDED
   }
 }
 

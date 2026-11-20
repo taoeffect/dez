@@ -479,12 +479,13 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     })
   },
   // One run of code that the model wrote, in Deno, the JavaScript runtime
-  // that Dez ships (jsEval.ts). The code gets no network and no file. The
-  // call waits for the end of the code and starts no job: the time limit
-  // of a run is short, and the model needs the value for its next step. A
-  // stop of the reply stops the code.
-  async js_eval (args, signal) {
-    return runJsEval(jsEvalCall(args), signal)
+  // that Dez ships (jsEval.ts). The code gets no network and no file; it
+  // calls the other Dez tools through Dez, with the context of this call
+  // (toolBridge.ts). The call waits for the end of the code and starts no
+  // job: the time limit of a run is short, and the model needs the value
+  // for its next step. A stop of the reply stops the code.
+  async js_eval (args, signal, context) {
+    return runJsEval(jsEvalCall(args), signal, context)
   },
 }
 

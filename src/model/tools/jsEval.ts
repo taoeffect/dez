@@ -1,6 +1,7 @@
 import * as z from 'zod'
 import { byteSizeText } from '../../utils/byteSize'
 import { countOf, countText } from '../../utils/countText'
+import { jobStartedText, madeAssetIds, madeAssetText, type JobAssetKind } from './jobs'
 import RUNNER from './jsEvalRunner.js?raw'
 import { withoutLocalPaths } from './localPaths'
 import type { ProgramEnd } from './programRuns'
@@ -18,6 +19,11 @@ import { ToolError, type ToolArguments, type ToolDefinition } from './types'
 // module imports. The module writes what the code gave as one protocol
 // line to its standard output. All other output of the run is the console
 // output of the code.
+//
+// The code can call the other Dez tools (`dez.sbp` of the module): the
+// module writes one `call` line for each call, and reads the answer of Dez
+// as one line of its standard input. toolBridge.ts tells which calls go,
+// and controller/toolBridge.ts runs them.
 //
 // Every text here is a tool result: it goes to the chat provider. A text of
 // a run can name the work folder or the program (`import.meta.url`, an
@@ -38,7 +44,9 @@ export const JS_EVAL_RUNNER: string = RUNNER
 
 /** The most bytes that a run writes (standard output and error output
  *  together). It is also the most that one protocol line holds, so a
- *  returned value near this size ends the run with no result. */
+ *  returned value near this size ends the run with no result. The call
+ *  lines of the tool calls count too: the limit ends code that writes
+ *  them without end. */
 export const JS_EVAL_OUTPUT_BYTES = 4 * 1024 * 1024
 
 /** The most characters of a returned value (or of the text of an error)
@@ -46,6 +54,12 @@ export const JS_EVAL_OUTPUT_BYTES = 4 * 1024 * 1024
  *  conversation, so a value that is far larger than a model can use must
  *  not fill them. */
 export const JS_EVAL_TEXT_CAP = 20_000
+
+/** The most tool calls (`dez.sbp`) of the code of one call. Each call line
+ *  of a run counts, also one that Dez refuses; each later one gets an
+ *  error answer (`bridgedToolCall`, toolBridge.ts). The limit holds a loop
+ *  that a model wrote wrong: a call can start a job that costs money. */
+export const JS_EVAL_MAX_TOOL_CALLS = 40
 
 // The least characters of console output that a result has room for, also
 // next to a value of JS_EVAL_TEXT_CAP characters: the console output of
@@ -71,6 +85,13 @@ export const JS_EVAL_TOOL: ToolDefinition = {
     + 'The code has no network, no files, and no environment variables, and it can start no program; no flag and no import changes that. '
     + 'It can load the built-in modules with `await import("node:crypto")`, but a static `import` does not work, '
     + 'and no package of npm, of JSR, or from a URL loads. '
+    + 'The code can call the other Dez tools: `await dez.sbp("dez.tools/<tool>", { …arguments })`, '
+    + 'and `await dez.sbp("dez.tools/<tool>/<subcommand>", { …parameters })` for a subcommand, '
+    + 'as in `await dez.sbp("dez.tools/image/scale", { image: "a", width: 1024 })`. '
+    + 'A call gives the result text of the tool, the same text that a direct call gives you, and it throws an error with that text when the tool gives an error. '
+    + 'The code names an image or a clip by its id, and gets no file of it. '
+    + `One run can make at most ${JS_EVAL_MAX_TOOL_CALLS} tool calls, and none of \`js_eval\`. `
+    + 'The result names each image and clip that the calls made, and each job that they started and that is still open. '
     + 'The clock and the time zone are those of the user\'s computer. '
     + 'Each call is a new run: nothing stays from one call to the next. '
     + `The call waits for the end of the code. A result holds at most the first ${JS_EVAL_TEXT_CAP} characters of the value. `
@@ -114,8 +135,9 @@ export function jsEvalCall(args: ToolArguments): JsEvalCall {
 }
 
 // The start of the code file: the code of a call is the body of this
-// function, and the module of Dez calls it.
-const CODE_HEADER = 'export default async function () {'
+// function, and the module of Dez calls it with the `dez` object of the
+// run (`dez.sbp`, jsEvalRunner.js).
+const CODE_HEADER = 'export default async function (dez) {'
 
 /** The text of the code file of a run (`JS_EVAL_CODE_FILE`) for the code of
  *  a call. The header has no line of its own: the first line of the code
@@ -132,16 +154,28 @@ export function jsEvalCodeFile(code: string): string {
 // it.
 const RECORD_SEPARATOR = '\x1e'
 
-// The lines that the module of Dez writes: the value that the code
-// returned as a text (none for no value), or the text of what it threw. An
-// object with any other key is no line.
+// The lines that the module of Dez writes:
+// - `result`: the value that the code returned as a text (none for no
+//   value);
+// - `error`: the text of what the code threw;
+// - `call`: a tool call of the code (`dez.sbp`). `id` is the number that
+//   the answer of Dez names, and `arguments` any JSON value: only
+//   `bridgedToolCall` (toolBridge.ts) knows what a tool takes.
+// An object with any other key is no line.
 const lineSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('result'), text: z.string().optional() }),
   z.strictObject({ type: z.literal('error'), text: z.string() }),
+  z.strictObject({ type: z.literal('call'), id: z.int(), selector: z.string(), arguments: z.unknown().optional() }),
 ])
 
 /** A protocol line of a run. */
 export type JsEvalLine = z.infer<typeof lineSchema>
+
+/** The protocol line of a tool call of the code. */
+export type JsEvalCallLine = Extract<JsEvalLine, { type: 'call' }>
+
+// The protocol line that tells what the code gave.
+type JsEvalEndLine = Exclude<JsEvalLine, JsEvalCallLine>
 
 // The protocol line that `text` is, the text between a record separator and
 // a line end; null for any other text.
@@ -156,24 +190,35 @@ function protocolLine(text: string): JsEvalLine | null {
   return line.success ? line.data : null
 }
 
+/** The answer of Dez to the call line `id` of a run, as the text for the
+ *  input of the program: one line of JSON, which the module of Dez reads
+ *  (jsEvalRunner.js). `text` is the result text of the tool, and with
+ *  `isError` the text of its error. JSON writes a line end as an escape,
+ *  so the answer is one line. */
+export function jsEvalAnswerLine(id: number, answer: { text: string, isError: boolean }): string {
+  return `${JSON.stringify({ id, text: answer.text, isError: answer.isError })}\n`
+}
+
 /** The output of one run, read while the program writes it: the protocol
- *  line of the run, and the console output of the code.
+ *  lines of the run, and the console output of the code.
  *
  *  A protocol line is a record separator, one JSON object, and a line end,
  *  on the standard output. The code of a model runs in the same program as
- *  the module that writes the line, so it can write any text there, a line
- *  too. So every line is untrusted input: one that is not a known line in
- *  full is console output, as the code wrote it. The last line is the line
- *  of the run: the module writes its line as the last thing of a run, so a
- *  line that the code wrote before it does not count. The length of a line
- *  has the limit of the whole output (`JS_EVAL_OUTPUT_BYTES`).
+ *  the module that writes the lines, so it can write any text there, a
+ *  line too. So every line is untrusted input: one that is not a known
+ *  line in full is console output, as the code wrote it. The last `result`
+ *  or `error` line is the line of the run: the module writes its line as
+ *  the last thing of a run, so a line that the code wrote before it does
+ *  not count. A `call` line is no line of the run: `add` gives it to its
+ *  caller at once, which answers it while the program runs. The length of
+ *  a line has the limit of the whole output (`JS_EVAL_OUTPUT_BYTES`).
  *
  *  The console of the code is Deno's own, which writes plain text to the
  *  two streams. So all other text is the console output, in the order in
  *  which its pieces come. The order of two pieces of different streams is
  *  not exact: the program writes each stream by itself. */
 export class JsEvalOutput {
-  private line: JsEvalLine | null = null
+  private line: JsEvalEndLine | null = null
   private log = ''
   // The stream of the last piece of the console output.
   private logStream: 'stdout' | 'stderr' | null = null
@@ -181,20 +226,22 @@ export class JsEvalOutput {
   // its line end has not come; null outside a line.
   private open: string | null = null
 
-  /** Takes the next piece `text` of a stream. A piece is not a line: a
-   *  protocol line can come in many pieces, and with other text in one. */
-  add(stream: 'stdout' | 'stderr', text: string): void {
+  /** Takes the next piece `text` of a stream, and gives the `call` lines
+   *  that end in it, in their order. A piece is not a line: a protocol
+   *  line can come in many pieces, and with other text in one. */
+  add(stream: 'stdout' | 'stderr', text: string): JsEvalCallLine[] {
     if (stream === 'stderr') {
       this.addLog(stream, text)
-      return
+      return []
     }
+    const calls: JsEvalCallLine[] = []
     let rest = text
     while (rest !== '') {
       if (this.open === null) {
         const start = rest.indexOf(RECORD_SEPARATOR)
         if (start < 0) {
           this.addLog(stream, rest)
-          return
+          return calls
         }
         this.addLog(stream, rest.slice(0, start))
         this.open = ''
@@ -204,7 +251,7 @@ export class JsEvalOutput {
       const end = rest.search(/[\n\x1e]/)
       if (end < 0) {
         this.open += rest
-        return
+        return calls
       }
       const candidate = this.open + rest.slice(0, end)
       if (rest[end] === RECORD_SEPARATOR) {
@@ -217,17 +264,19 @@ export class JsEvalOutput {
       } else {
         const line = protocolLine(candidate)
         if (line === null) this.addLog(stream, `${RECORD_SEPARATOR}${candidate}\n`)
+        else if (line.type === 'call') calls.push(line)
         else this.line = line
         this.open = null
       }
       rest = rest.slice(end + 1)
     }
+    return calls
   }
 
   /** What the run gave, for the end of the run: its protocol line (null
    *  for none) and the console output of the code. A line whose line end
    *  did not come is no line. */
-  ended(): { line: JsEvalLine | null, log: string } {
+  ended(): { line: JsEvalEndLine | null, log: string } {
     if (this.open !== null) {
       this.addLog('stdout', RECORD_SEPARATOR + this.open)
       this.open = null
@@ -246,19 +295,19 @@ export class JsEvalOutput {
   }
 }
 
-// `text` of a run with no path of this computer: the work folder of the
-// run is `WORK_FOLDER_NAME`, and any other local path goes as its known
-// start (`withoutLocalPaths`; the path of the Deno program is one, which
-// the code can read with no permission). `workFolders` are the paths of
-// the work folder that a text can hold: its real path, which Deno names,
-// and the path that Dez made (the two differ when a folder above is a
-// link). Deno writes a path in a URL with escapes (a space is `%20`), so
-// the URL form is found by the name of the folder, a random id that no
-// other text holds.
-//
-// A text goes through this as a whole, before any cut: a cut path would
-// get past it.
-function textForModel(text: string, workFolders: readonly string[]): string {
+/** `text` of a run with no path of this computer: the work folder of the
+ *  run is `WORK_FOLDER_NAME`, and any other local path goes as its known
+ *  start (`withoutLocalPaths`; the path of the Deno program is one, which
+ *  the code can read with no permission). `workFolders` are the paths of
+ *  the work folder that a text can hold: its real path, which Deno names,
+ *  and the path that Dez made (the two differ when a folder above is a
+ *  link). Deno writes a path in a URL with escapes (a space is `%20`), so
+ *  the URL form is found by the name of the folder, a random id that no
+ *  other text holds.
+ *
+ *  A text goes through this as a whole, before any cut: a cut path would
+ *  get past it. */
+export function textForModel(text: string, workFolders: readonly string[]): string {
   let result = text
   for (const folder of workFolders) {
     result = result.replaceAll(folder, WORK_FOLDER_NAME)
@@ -361,7 +410,7 @@ function returnedOutcome(value: string | undefined, hasConsole: boolean): Outcom
 // The outcome of a run of `call` with the end `end` and the protocol line
 // `line`. `hasConsole` tells that the code wrote console output, which
 // goes after it.
-function runOutcome(call: JsEvalCall, end: ProgramEnd, line: JsEvalLine | null, hasConsole: boolean): Outcome {
+function runOutcome(call: JsEvalCall, end: ProgramEnd, line: JsEvalEndLine | null, hasConsole: boolean): Outcome {
   if (line?.type === 'result') return returnedOutcome(line.text, hasConsole)
   if (line?.type === 'error') {
     return { isError: true, lead: 'The code threw an error:', given: { text: line.text, name: 'text of the error' }, advice: errorAdvice(line.text) }
@@ -386,14 +435,61 @@ function runOutcome(call: JsEvalCall, end: ProgramEnd, line: JsEvalLine | null, 
     + `an \`await\` of a promise that never settles, or a call of \`Deno.exit\`.${hasConsole ? ' The console output tells which.' : silent}`)
 }
 
+/** What the tool calls of the code of a run (`dez.sbp`) left, for the
+ *  result of the run (controller/toolBridge.ts). The code can leave out of
+ *  its value what a call told it, so the result tells it. */
+export interface JsEvalToolCalls {
+  /** The images and the clips that the calls made and that Dez put into
+   *  the reply, in their order. */
+  assets: readonly { kind: JobAssetKind, id: string }[]
+  /** The jobs that the calls started and that are still open: no call of
+   *  the code took their results. Each with its number
+   *  (`JobCall.number`). */
+  jobs: readonly { id: string, number: number }[]
+  /** How many calls had no answer when the run ended: Dez stopped the one
+   *  that ran, and ran none of the calls after it. */
+  unanswered: number
+  /** How many pictures the calls showed the model (`asset_view`). */
+  pictures: number
+}
+
+// What the tool calls `calls` left, as paragraphs of a result whose given
+// text is `given` (blank for none):
+// - A line for each made asset and each open job. A made asset must be in
+//   the result as `madeAssetText` at the start of a line: the readers of a
+//   tool block find it there (`madeAssetIds`), and a request sends no other
+//   text of the asset. A line that the given text holds does not come
+//   twice: code often returns the text of its last call.
+// - The calls that had no answer.
+// - With `isError`, the pictures that the model does not get: only a
+//   result that is no error has pictures (`ToolRunResult.pictures`).
+function toolCallParagraphs(calls: JsEvalToolCalls, given: string, isError: boolean): string[] {
+  const named = new Set(madeAssetIds(given))
+  const lines = [
+    ...calls.assets.flatMap(({ kind, id }) => (named.has(id) ? [] : [`${madeAssetText(kind, id)}.`])),
+    ...calls.jobs.map(({ id, number }) => jobStartedText(id, number)).filter((line) => !given.includes(line)),
+  ]
+  const them = (count: number) => (count === 1 ? 'it' : 'them')
+  return [
+    ...(lines.length === 0 ? [] : [`From the tool calls of the code:\n${lines.join('\n')}`]),
+    ...(calls.unanswered === 0
+      ? []
+      : [`${countOf(calls.unanswered, 'tool call')} of the code had not ended when the code ended, so Dez cut ${them(calls.unanswered)} short. `
+        + '`await` each `dez.sbp` call, and give the code the time that its calls need.']),
+    ...(isError && calls.pictures > 0
+      ? [`The code failed, so Dez does not show you the ${countOf(calls.pictures, 'picture')} of its tool calls. Call asset_view yourself to see ${them(calls.pictures)}.`]
+      : []),
+  ]
+}
+
 /** The result of a run of `call` that ended with `end` and wrote `output`:
- *  the returned value, then the console output of the code. Any other end
- *  is an error result (`isError`) that tells the model what happened and
- *  what to do: the code threw an error, Dez stopped it at a limit, or it
- *  ended with no value. A first line tells of each cut. `workFolders` are
- *  the paths of the work folder of the run on this computer
- *  (`textForModel`). */
-export function jsEvalResult(call: JsEvalCall, end: ProgramEnd, output: JsEvalOutput, workFolders: readonly string[]): { text: string, isError: boolean } {
+ *  the returned value, what its tool calls left (`toolCalls`), then the
+ *  console output of the code. Any other end is an error result
+ *  (`isError`) that tells the model what happened and what to do: the code
+ *  threw an error, Dez stopped it at a limit, or it ended with no value. A
+ *  first line tells of each cut. `workFolders` are the paths of the work
+ *  folder of the run on this computer (`textForModel`). */
+export function jsEvalResult(call: JsEvalCall, end: ProgramEnd, output: JsEvalOutput, workFolders: readonly string[], toolCalls: JsEvalToolCalls): { text: string, isError: boolean } {
   const ended = output.ended()
   // The module of Dez ends the program with the code 0 right after its
   // line. A line of a run with another end is one that the code wrote.
@@ -405,6 +501,7 @@ export function jsEvalResult(call: JsEvalCall, end: ProgramEnd, output: JsEvalOu
   const paragraphs = [
     [...(lead === null ? [] : [lead]), ...(main === null ? [] : [main.text])].join('\n'),
     ...advice,
+    ...toolCallParagraphs(toolCalls, main?.text ?? '', isError),
     ...(log === null ? [] : [`Console output of the code:\n${log.text}`]),
   ]
   const notes = [main, log].flatMap((part) => part?.note ?? [])
