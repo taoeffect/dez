@@ -108,7 +108,8 @@ libc = "=0.2.191"
 # commands.rs reads the paths of a file drag from the drag pasteboard with
 # it (`dragged_file_paths`). objc2-web-kit, block2: the versions that wry
 # uses; app_frames.rs adds the content rule list of the app frames to the
-# webview with them, and turns the link preconnect of the webview off.
+# webview with them, and turns the link preconnect and WebRTC of the
+# webview off.
 [target.'cfg(target_os = "macos")'.dependencies]
 mac-notification-sys = "=0.6.15"
 objc2 = "=0.6.4"

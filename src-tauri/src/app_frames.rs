@@ -211,7 +211,12 @@ fn client_script_app(uri: &Uri) -> Option<&str> {
 // - `worker-src blob:`: a Worker from a Blob keeps this policy, and takes
 //   long work off the thread of Dez's page. A Worker from a file of the
 //   app never starts in a sandboxed page.
-// - No nested frame, no form target, no `<base>`, no WebRTC.
+// - No nested frame, no form target, no `<base>`.
+// - `webrtc 'block'`: WebKit does not enforce it. On a Mac, the STUN
+//   packets and the TURN connection of a frame reached a local server.
+//   The guard of WebRTC is the switch of the webview on macOS
+//   (`turn_off_peer_connection`). WebKitGTK has WebRTC off by default,
+//   which the frame audit checks.
 fn app_policy(app: &str) -> String {
     let own = format!("{SCHEME}://{HOST}/{app}/");
     format!(
@@ -414,11 +419,11 @@ impl Gate {
     }
 }
 
-// Puts the two guards of a webview itself on: no link preconnect, and the
-// content rule list. `decide` gets the result. WebKit compiles the list
-// first, so the result comes later, on the main thread. A failure of
-// `with_webview` means that the event loop is gone (Dez quits): `decide`
-// then never runs, and the gate stays shut.
+// Puts the guards of a webview itself on: no link preconnect, on macOS no
+// WebRTC, and the content rule list. `decide` gets the result. WebKit
+// compiles the list first, so the result comes later, on the main thread.
+// A failure of `with_webview` means that the event loop is gone (Dez
+// quits): `decide` then never runs, and the gate stays shut.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn guard_webview<R: Runtime>(webview: &Webview<R>, decide: impl FnOnce(WebviewGuards) + Send + 'static) {
     // The store of the compiled list on Linux: a folder of the webview's
@@ -433,7 +438,10 @@ fn guard_webview<R: Runtime>(webview: &Webview<R>, decide: impl FnOnce(WebviewGu
         let web_view = webview.inner();
         #[cfg(target_os = "linux")]
         let web_view = &web_view;
-        match platform::turn_off_link_preconnect(web_view) {
+        let turned_off = platform::turn_off_link_preconnect(web_view);
+        #[cfg(target_os = "macos")]
+        let turned_off = turned_off.and_then(|()| platform::turn_off_peer_connection(web_view));
+        match turned_off {
             #[cfg(target_os = "linux")]
             Ok(()) => platform::add_rule_list(web_view, &store, Box::new(decide)),
             #[cfg(target_os = "macos")]
@@ -595,6 +603,25 @@ mod platform {
 
     use super::{LINK_PRECONNECT, RULE_LIST, RULE_LIST_NAME, WebviewGuards};
 
+    // The `WKPreferences` of the webview `web_view` (a `WKWebView`): those
+    // of the live webview, not a copy.
+    fn preferences(web_view: *mut c_void) -> Result<Retained<AnyObject>, String> {
+        // SAFETY: Tauri gives a live `WKWebView`, or null.
+        let Some(web_view) = (unsafe { web_view.cast::<AnyObject>().as_ref() }) else {
+            return Err("Tauri gave no webview".to_string());
+        };
+        // SAFETY: two public properties, each an object or nil. A copy of
+        // the configuration holds the same preferences object.
+        let preferences: Option<Retained<AnyObject>> = unsafe {
+            let configuration: Option<Retained<AnyObject>> = msg_send![web_view, configuration];
+            match configuration {
+                Some(configuration) => msg_send![&*configuration, preferences],
+                None => None,
+            }
+        };
+        preferences.ok_or_else(|| "the webview has no preferences".to_string())
+    }
+
     // Turns the feature `LINK_PRECONNECT` of the webview `web_view` (a
     // `WKWebView`) off, and checks that it is off. WebKit has no public
     // switch for it. These are the private methods of the feature list of
@@ -603,22 +630,7 @@ mod platform {
     // and the `key` of a `_WKFeature`. An older macOS has none of them,
     // and then no app shows. Runs on the main thread.
     pub(super) fn turn_off_link_preconnect(web_view: *mut c_void) -> WebviewGuards {
-        // SAFETY: Tauri gives a live `WKWebView`, or null.
-        let Some(web_view) = (unsafe { web_view.cast::<AnyObject>().as_ref() }) else {
-            return Err("Tauri gave no webview".to_string());
-        };
-        // SAFETY: two public properties, each an object or nil. The
-        // preferences are those of the live webview, not a copy.
-        let preferences: Option<Retained<AnyObject>> = unsafe {
-            let configuration: Option<Retained<AnyObject>> = msg_send![web_view, configuration];
-            match configuration {
-                Some(configuration) => msg_send![&*configuration, preferences],
-                None => None,
-            }
-        };
-        let Some(preferences) = preferences else {
-            return Err("the webview has no preferences".to_string());
-        };
+        let preferences = preferences(web_view)?;
         let class = preferences.class();
         // A private method can go away: ask for each one before its call.
         let has_feature_list = AnyClass::get(c"_WKFeature").is_some()
@@ -646,6 +658,31 @@ mod platform {
             return if still_on { Err(format!("WebKit did not turn the feature `{LINK_PRECONNECT}` off")) } else { Ok(()) };
         }
         Err(format!("WebKit has no feature `{LINK_PRECONNECT}`"))
+    }
+
+    // Turns WebRTC of the webview `web_view` (a `WKWebView`) off, and
+    // checks that it is off. With WebRTC, the page of an app sends packets
+    // to any server (STUN over UDP, TURN over TCP), and no policy, content
+    // rule list, or navigation guard sees them. Dez's own page does not use
+    // WebRTC. The switch is a private property of `WKPreferences`
+    // (`_peerConnectionEnabled`, `WKPreferencesPrivate.h`, macOS 10.13.4),
+    // not the feature list: an older feature list does not hold every
+    // feature. A frame that loads after the switch has no
+    // `RTCPeerConnection`. Runs on the main thread.
+    pub(super) fn turn_off_peer_connection(web_view: *mut c_void) -> WebviewGuards {
+        let preferences = preferences(web_view)?;
+        let class = preferences.class();
+        // A private method can go away: ask for each one before its call.
+        if !class.responds_to(sel!(_setPeerConnectionEnabled:)) || !class.responds_to(sel!(_peerConnectionEnabled)) {
+            return Err("WebKit has no switch for WebRTC on this macOS".to_string());
+        }
+        // SAFETY: the preferences have both methods; the first takes a
+        // BOOL, the second gives one.
+        let still_on: bool = unsafe {
+            let () = msg_send![&*preferences, _setPeerConnectionEnabled: false];
+            msg_send![&*preferences, _peerConnectionEnabled]
+        };
+        if still_on { Err("WebKit did not turn WebRTC off".to_string()) } else { Ok(()) }
     }
 
     // The content rule list: `WKContentRuleListStore` compiles it, and the
