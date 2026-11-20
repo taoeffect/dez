@@ -1,15 +1,27 @@
 import { IMAGE_ID_SOURCE } from '../chat/images'
-import { ToolError, type MisplacedParameterText, type ToolArguments, type ToolArgumentValue, type ToolParameter, type ToolParameterType } from './types'
+import {
+  ToolError,
+  type ArgumentsOf,
+  type MisplacedParameterText,
+  type SubcommandArguments,
+  type SubcommandParameter,
+  type ToolArguments,
+  type ToolArgumentValue,
+  type ToolListParameter,
+  type ToolParameter,
+  type ToolParameterType,
+} from './types'
 
 // The checks of the arguments of a call against the parameters of a tool
 // (or of a subcommand, subcommands.ts), with error texts that tell the
 // model how to fix the call.
 
 /** What a call's arguments are checked against: the tool's name, for the
- *  error texts, and its parameters. A `ToolDefinition` is one. */
-export interface ArgumentRules {
+ *  error texts, and its parameters. A `ToolDefinition` is one. Only the
+ *  rules of a subcommand can hold a list parameter (`ToolListParameter`). */
+export interface ArgumentRules<P extends SubcommandParameter = ToolParameter> {
   name: string
-  parameters: readonly ToolParameter[]
+  parameters: readonly P[]
   /** What the error of a key that is no parameter tells when the tool
    *  knows where the key belongs; else the error lists the parameters. */
   misplacedParameter?: MisplacedParameterText
@@ -31,21 +43,49 @@ export function fitsParameterType(type: ToolParameterType, value: unknown): valu
   return TYPE_RULES[type].matches(value)
 }
 
-export type ToolArgumentsParse =
-  | { ok: true; arguments: ToolArguments }
+export type ToolArgumentsParse<P extends SubcommandParameter = ToolParameter> =
+  | { ok: true; arguments: ArgumentsOf<P> }
   | { ok: false; error: string }
+
+/** The name of the type of a parameter, as the lists of parameters show
+ *  it: `integer`, `list of strings`, `list of objects`. */
+export function parameterTypeName(parameter: SubcommandParameter): string {
+  if (parameter.type !== 'list') return parameter.type
+  return typeof parameter.items === 'string' ? `list of ${parameter.items}s` : 'list of objects'
+}
+
+// What a value of a parameter is, for the error texts: `an integer`, `a
+// list of strings`.
+function valueText(parameter: SubcommandParameter): string {
+  return parameter.type === 'list' ? `a ${parameterTypeName(parameter)}` : TYPE_RULES[parameter.type].text
+}
+
+// A value of the type of a parameter, as JSON, for the error texts. A list
+// of objects shows one item with its required fields (else its first one).
+function exampleValue(parameter: SubcommandParameter): string {
+  if (parameter.type !== 'list') return TYPE_RULES[parameter.type].example
+  if (typeof parameter.items === 'string') return `[${TYPE_RULES[parameter.items].example}]`
+  return `[${exampleArguments(exampleParameters(parameter.items))}]`
+}
+
+// The parameters that an example call holds: the required ones, else the
+// first one.
+function exampleParameters<P extends SubcommandParameter>(parameters: readonly P[]): readonly P[] {
+  const required = parameters.filter((parameter) => parameter.required)
+  return required.length > 0 ? required : parameters.slice(0, 1)
+}
 
 // Arguments that hold `parameters`, each with an example value of its type,
 // as one line of JSON.
-function exampleArguments(parameters: readonly ToolParameter[]): string {
-  return `{${parameters.map((parameter) => `${JSON.stringify(parameter.name)}: ${TYPE_RULES[parameter.type].example}`).join(', ')}}`
+function exampleArguments(parameters: readonly SubcommandParameter[]): string {
+  return `{${parameters.map((parameter) => `${JSON.stringify(parameter.name)}: ${exampleValue(parameter)}`).join(', ')}}`
 }
 
 // What a tool takes: its parameters with their JSON types (`limit
 // (integer)`), or an empty object for a tool with none.
-function parametersText(rules: ArgumentRules): string {
+function parametersText(rules: ArgumentRules<SubcommandParameter>): string {
   if (rules.parameters.length === 0) return `${rules.name} has no parameters: send {} as the arguments.`
-  const list = rules.parameters.map((parameter) => `${parameter.name} (${parameter.type}${parameter.required ? ', required' : ''})`).join(', ')
+  const list = rules.parameters.map((parameter) => `${parameter.name} (${parameterTypeName(parameter)}${parameter.required ? ', required' : ''})`).join(', ')
   return `The parameters of ${rules.name} are: ${list}.`
 }
 
@@ -53,10 +93,8 @@ function parametersText(rules: ArgumentRules): string {
 // example with the required parameters (else the first one), and the list
 // of all of them.
 function argumentsFormText(rules: ArgumentRules): string {
-  const { parameters } = rules
-  if (parameters.length === 0) return parametersText(rules)
-  const required = parameters.filter((parameter) => parameter.required)
-  return `Send one JSON object, as in ${exampleArguments(required.length > 0 ? required : parameters.slice(0, 1))}. ${parametersText(rules)}`
+  if (rules.parameters.length === 0) return parametersText(rules)
+  return `Send one JSON object, as in ${exampleArguments(exampleParameters(rules.parameters))}. ${parametersText(rules)}`
 }
 
 /** Checks the arguments JSON text of a call from the model against the
@@ -79,6 +117,31 @@ export function parseToolArguments(rules: ArgumentRules, json: string): ToolArgu
   return checkArgumentValues(rules, given as Record<string, unknown>)
 }
 
+// The checked items of the value of a list parameter, or the error of the
+// first item that is not one. An object item is checked as the arguments of
+// a call are, against its fields, so it gets the same error texts.
+function checkedList(parameter: ToolListParameter, value: unknown): { ok: true; items: ToolArgumentValue[] | ToolArguments[] } | { ok: false; error: string } {
+  const example = `as in ${exampleArguments([parameter])}`
+  if (!Array.isArray(value)) return { ok: false, error: `The parameter "${parameter.name}" must be ${valueText(parameter)}, ${example}.` }
+  const { items } = parameter
+  if (typeof items === 'string') {
+    const rule = TYPE_RULES[items]
+    const bad = value.findIndex((item) => !rule.matches(item))
+    if (bad !== -1) return { ok: false, error: `Item ${bad + 1} of the parameter "${parameter.name}" must be ${rule.text}, ${example}.` }
+    return { ok: true, items: value as ToolArgumentValue[] }
+  }
+  const objects: ToolArguments[] = []
+  for (const [index, item] of value.entries()) {
+    if (item === null || typeof item !== 'object' || Array.isArray(item)) {
+      return { ok: false, error: `Item ${index + 1} of the parameter "${parameter.name}" must be an object, ${example}.` }
+    }
+    const checked = checkArgumentValues({ name: `an item of "${parameter.name}"`, parameters: items }, item as Record<string, unknown>)
+    if (!checked.ok) return { ok: false, error: `Item ${index + 1} of the parameter "${parameter.name}" is not valid: ${checked.error}` }
+    objects.push(checked.arguments)
+  }
+  return { ok: true, items: objects }
+}
+
 /** Checks the values of a call's arguments, one JSON object, against the
  *  parameters. The result has the parameters in definition order.
  *
@@ -86,30 +149,43 @@ export function parseToolArguments(rules: ArgumentRules, json: string): ToolArgu
  *  parameter are errors; `error` is then the text for the model to read:
  *  what is wrong, and how a good value looks (the parameter names and
  *  types, where the key belongs (`ArgumentRules.misplacedParameter`), or
- *  an example). A `null` value counts as absent. */
-export function checkArgumentValues(rules: ArgumentRules, values: Record<string, unknown>): ToolArgumentsParse {
-  const unknownKey = Object.keys(values).find((key) => !rules.parameters.some((parameter) => parameter.name === key))
+ *  an example). A `null` value counts as absent. The value of a list
+ *  parameter must be a list whose items are all of its item type; a list
+ *  with no item is a value. */
+export function checkArgumentValues<P extends SubcommandParameter = ToolParameter>(rules: ArgumentRules<P>, values: Record<string, unknown>): ToolArgumentsParse<P> {
+  // The checks read the widest kind of parameter.
+  const parameters: readonly SubcommandParameter[] = rules.parameters
+  const unknownKey = Object.keys(values).find((key) => !parameters.some((parameter) => parameter.name === key))
   if (unknownKey !== undefined) {
-    const fix = rules.misplacedParameter?.(unknownKey, values) ?? parametersText(rules)
+    const fix = rules.misplacedParameter?.(unknownKey, values) ?? parametersText({ name: rules.name, parameters })
     return { ok: false, error: `${rules.name} has no parameter ${JSON.stringify(unknownKey)}. ${fix}` }
   }
 
-  const parsed: ToolArguments = {}
-  for (const parameter of rules.parameters) {
+  const parsed: SubcommandArguments = {}
+  for (const parameter of parameters) {
     // Own keys only: a parameter such as `constructor` must not read
     // `Object.prototype`.
     const value = Object.hasOwn(values, parameter.name) ? values[parameter.name] : null
-    const rule = TYPE_RULES[parameter.type]
     if (value === null) {
       if (parameter.required) {
-        return { ok: false, error: `The required parameter "${parameter.name}" is missing. Add it as ${rule.text}, as in ${exampleArguments([parameter])}.` }
+        return { ok: false, error: `The required parameter "${parameter.name}" is missing. Add it as ${valueText(parameter)}, as in ${exampleArguments([parameter])}.` }
       }
       continue
     }
-    if (!rule.matches(value)) return { ok: false, error: `The parameter "${parameter.name}" must be ${rule.text}, as in ${exampleArguments([parameter])}.` }
+    if (parameter.type === 'list') {
+      const list = checkedList(parameter, value)
+      if (!list.ok) return list
+      parsed[parameter.name] = list.items
+      continue
+    }
+    if (!TYPE_RULES[parameter.type].matches(value)) {
+      return { ok: false, error: `The parameter "${parameter.name}" must be ${valueText(parameter)}, as in ${exampleArguments([parameter])}.` }
+    }
     parsed[parameter.name] = value
   }
-  return { ok: true, arguments: parsed }
+  // `parsed` holds a list only for a list parameter, which only rules of
+  // the wide kind have (`ArgumentsOf`).
+  return { ok: true, arguments: parsed as ArgumentsOf<P> }
 }
 
 const ASSET_ID_ARGUMENT = new RegExp(`^@?(${IMAGE_ID_SOURCE})$`)

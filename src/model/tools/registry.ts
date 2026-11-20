@@ -1,4 +1,5 @@
 import type { JsonObject } from '../../utils/json'
+import { APPS_TOOL_DEFINITION } from './appsTool'
 import { ASSET_INFO_TOOL } from './assetInfo'
 import { ASSET_VIEW_TOOL } from './assetView'
 import { AUDIO_TOOL_DEFINITION } from './audioTool'
@@ -15,10 +16,11 @@ import { VIDEO_TOOL, VIDEO_TOOL_DEFINITION, videoCallLabel } from './videoTool'
 
 /** Every Dez tool, in the order that requests and the system prompt list
  *  them. Keep related tools together, in logical groups: the models, the
- *  media tools, the assets and the conversation, the code runs, the jobs.
- *  A new tool goes into its group, not at the end. A new order changes the
- *  bytes of the tools array (the provider's prompt cache) only between
- *  releases of Dez; in one release the array stays the same bytes. */
+ *  media tools, the assets and the conversation, the code (the code runs
+ *  and the apps), the jobs. A new tool goes into its group, not at the end.
+ *  A new order changes the bytes of the tools array (the provider's prompt
+ *  cache) only between releases of Dez; in one release the array stays the
+ *  same bytes. */
 export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
   MODEL_LIST_TOOL,
   MODEL_INFO_TOOL,
@@ -33,6 +35,7 @@ export const TOOL_DEFINITIONS: readonly ToolDefinition[] = [
   CONVERSATION_INFO_TOOL,
 
   JS_EVAL_TOOL,
+  APPS_TOOL_DEFINITION,
 
   JOBS_WAIT_TOOL,
   JOBS_LIST_TOOL,

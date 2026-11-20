@@ -17,6 +17,24 @@ export interface ToolParameter {
   required: boolean
 }
 
+/** A parameter of a subcommand (subcommands.ts) whose value is a list: of
+ *  scalars of one type, or of objects whose fields are flat scalars. Only a
+ *  subcommand can have one: its parameters are JSON in one text argument of
+ *  the call, and a parameter of a tool itself must fit in one block
+ *  attribute. */
+export interface ToolListParameter {
+  name: string
+  type: 'list'
+  /** The type of each item, or the fields of each item of a list of
+   *  objects. */
+  items: ToolParameterType | readonly ToolParameter[]
+  description: string
+  required: boolean
+}
+
+/** A parameter of a subcommand. */
+export type SubcommandParameter = ToolParameter | ToolListParameter
+
 /** For a key of a call that is none of a tool's parameters: the text that
  *  tells the model where the key belongs, from the call's arguments
  *  (`values`); null when the tool does not know the key. */
@@ -47,6 +65,18 @@ export type ToolArgumentValue = string | number | boolean
 /** Checked arguments of a call, keyed by parameter name. An absent optional
  *  parameter has no key. */
 export type ToolArguments = Record<string, ToolArgumentValue>
+
+export type SubcommandArgumentValue = ToolArgumentValue | ToolArgumentValue[] | ToolArguments[]
+
+/** Checked arguments of a call of a subcommand that can have a list
+ *  parameter, keyed by parameter name. An absent optional parameter has no
+ *  key. */
+export type SubcommandArguments = Record<string, SubcommandArgumentValue>
+
+/** The checked arguments of a call with parameters of the kind `P`: flat
+ *  scalars, unless a parameter can be a list. So the code of a tool with no
+ *  list parameter never has to tell a list from a scalar. */
+export type ArgumentsOf<P extends SubcommandParameter> = [P] extends [ToolParameter] ? ToolArguments : SubcommandArguments
 
 /** A call that a model made, as later requests send it back. */
 export interface ToolCall {

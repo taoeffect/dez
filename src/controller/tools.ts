@@ -17,6 +17,7 @@ import type { ProviderMediaQuote } from '../model/providers/streamTypes'
 import { effectiveRequest, type ModelInfo, type ProviderInfo, type ProviderInputImageRules, type ProviderSettingsDescriptor } from '../model/providers/types'
 import type { SettingsSnapshot } from '../model/state'
 import type { CallPictureBudget } from '../model/streams/pictureBudget'
+import { APPS_TOOL } from '../model/tools/appsTool'
 import { AUDIO_TOOL, audioClipId, audioClipOf, audioCutPart, audioCutRequest, audioCutResultText, audioLengthText } from '../model/tools/audioTool'
 import { conversationInfoText } from '../model/tools/conversationInfo'
 import { brightnessPlan, contrastPlan, convertPlan, cropPlan, flipPlan, IMAGE_TOOL, imageIdArgument, imageOf, imageResultText, invertPlan, rotatePlan, saturationPlan, scalePlan, unreadableImageText, unwritableFormatError, type ImagePlan } from '../model/tools/imageTool'
@@ -28,10 +29,11 @@ import { invocationInputsText, invocationLabel, MODEL_INVOKE_TOOL, modelInvocati
 import { modelListArguments, modelListText } from '../model/tools/modelList'
 import { unexpectedToolErrorText, unknownToolText } from '../model/tools/registry'
 import { parseSubcommandCall, type SubcommandTool } from '../model/tools/subcommands'
-import { ToolError, type ToolArguments, type ToolRunResult } from '../model/tools/types'
+import { ToolError, type ArgumentsOf, type SubcommandParameter, type ToolArguments, type ToolRunResult } from '../model/tools/types'
 import { ffmpegCall, ffprobeCall, joinClipsCall, VIDEO_TOOL, videoCallLabel, videoInputsText } from '../model/tools/videoTool'
 import { untilAborted } from '../utils/abort'
 import { rawErrorText } from '../utils/errorText'
+import { editAppFile, initApp, listAppFolder, listApps, makeAppFolder, moveAppPaths, readAppFile, removeAppPaths, writeAppFile } from './appsTool'
 import { assetInfoResult } from './assetInfo'
 import { assetViewResult } from './assetView'
 import { audioClipSeconds, cutAudioClip } from './audioTool'
@@ -100,8 +102,10 @@ export interface ToolRunContext {
 // text (`ToolRunResult.pictures`, `bridged`), or throws a `ToolError` for
 // an error result. A runner whose error result has more than its text
 // gives it with `isError` (`runJsEval`). `signal` aborts when the user
-// stops the reply; a runner that waits on something must stop then.
-type ToolRunner = (args: ToolArguments, signal: AbortSignal, context: ToolRunContext) => Promise<string | (Omit<ToolRunResult, 'isError'> & { isError?: boolean })>
+// stops the reply; a runner that waits on something must stop then. `A` is
+// what the runner gets as the arguments: those of the call, or those of a
+// subcommand, which can hold lists (`subcommandRunner`).
+type ToolRunner<A = ToolArguments> = (args: A, signal: AbortSignal, context: ToolRunContext) => Promise<string | (Omit<ToolRunResult, 'isError'> & { isError?: boolean })>
 
 // The sections of the tab of a call, where a tool finds the images and
 // the clips that the call names; none for a tab that is gone.
@@ -127,7 +131,7 @@ async function modelInfoLookup(args: ToolArguments, replyModel: ModelRef): Promi
 // The runner of a tool with subcommands (subcommands.ts): gives the list or
 // the help that a call asks for, else runs the runner of the subcommand
 // with the subcommand's own checked arguments.
-function subcommandRunner(tool: SubcommandTool, runners: Record<string, ToolRunner>): ToolRunner {
+function subcommandRunner<P extends SubcommandParameter>(tool: SubcommandTool<P>, runners: Record<string, ToolRunner<ArgumentsOf<P>>>): ToolRunner {
   return async (args, signal, context) => {
     const call = parseSubcommandCall(tool, args)
     return call.kind === 'text' ? call.text : await runners[call.name](call.arguments, signal, context)
@@ -488,6 +492,22 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   async js_eval (args, signal, context) {
     return runJsEval(jsEvalCall(args), signal, context)
   },
+  // The files of the apps, the small programs that a model writes for the
+  // user (appsTool.ts). Each subcommand works on the folder `apps/` of the
+  // app root and is done when the call returns: it starts no job, and it
+  // reads nothing of the conversation. A stop of the reply stops `rm` and
+  // `mv` between two paths; any other call is short and runs to its end.
+  apps: subcommandRunner(APPS_TOOL, {
+    init: initApp,
+    read: readAppFile,
+    write: writeAppFile,
+    edit: editAppFile,
+    rm: removeAppPaths,
+    list_apps: listApps,
+    ls: listAppFolder,
+    mkdir: makeAppFolder,
+    mv: moveAppPaths,
+  }),
 }
 
 export default sbp('sbp/selectors/register', {
