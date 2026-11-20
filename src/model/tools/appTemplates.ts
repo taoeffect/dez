@@ -12,8 +12,10 @@ import { appManifestText, MANIFEST_FILE, type AppManifest } from './appManifest'
 // into the manifest, as JSON: it is free text.
 //
 // The page of a UI app loads its script and its style from files of their
-// own. Keep it so: the frame of an app will run no script that is in the
-// page itself.
+// own, so that a model reads and edits each on its own. Before its own
+// script it loads `~dez.js`: Dez's client script, which is no file of the
+// app (src-tauri/src/app_client.js). Without it, Escape in the app does
+// not give the keyboard back to Dez.
 
 /** One file of a template: its name in the folder of the app, and its
  *  text. */
@@ -76,6 +78,7 @@ function uiFiles(name: string): TemplateFile[] {
     <h1>${name}</h1>
     <p id="output"></p>
   </main>
+  <script src="~dez.js"></script>
   <script src="main.js"></script>
 </body>
 </html>

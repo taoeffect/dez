@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { APP_KINDS, MANIFEST_MAX_BYTES } from './appManifest'
-import { appNotShownText, checkShowTarget, showCall, shownAppNames, shownAppText, showResultText, type ShowTarget } from './appShow'
+import { appCardFacts, appNotShownText, checkShowTarget, showCall, shownAppNames, shownAppText, showResultText, type ShowTarget } from './appShow'
 import { appsArgs, FOLDER_FACTS, MISSING_TREE, notesManifest, refusal } from './testing'
 
 const NOT_SHOWN = 'Dez shows no app.'
@@ -80,6 +80,30 @@ describe('checkShowTarget', () => {
   it('checks the app before its manifest, and the manifest before the page', () => {
     expect(check({ app: MISSING_TREE, manifest: MISSING_TREE, manifestBytes: null, index: MISSING_TREE })).toContain('There is no app')
     expect(check({ manifest: MISSING_TREE, manifestBytes: null, index: MISSING_TREE })).toContain('has no manifest.json')
+  })
+})
+
+describe('appCardFacts', () => {
+  const call = show('notes')
+  const facts = (changes: Partial<ShowTarget> = {}) => appCardFacts(call, target(changes))
+
+  it('gives the description of a UI app that Dez can show', () => {
+    expect(facts()).toStrictEqual({ state: 'ready', description: 'Keeps notes.' })
+  })
+
+  it('tells an app with no folder from one that Dez cannot show', () => {
+    expect(facts({ app: MISSING_TREE, manifest: MISSING_TREE, manifestBytes: null, index: MISSING_TREE })).toStrictEqual({ state: 'missing' })
+
+    for (const [what, changes] of [
+      ['a file at the place of the folder', { app: { kind: 'file', size: 3 } }],
+      ['no manifest', { manifest: MISSING_TREE, manifestBytes: null }],
+      ['a manifest that is not valid', { manifestBytes: new TextEncoder().encode('{"name": "notes"') }],
+      ['a script app', { manifestBytes: notesManifest('script') }],
+      ['no page', { index: MISSING_TREE }],
+      ['a folder at the place of the page', { index: FOLDER_FACTS }],
+    ] as Array<[string, Partial<ShowTarget>]>) {
+      expect(facts(changes), what).toStrictEqual({ state: 'broken' })
+    }
   })
 })
 

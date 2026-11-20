@@ -9,6 +9,10 @@
 //! - The scheme `dezapp://localhost/<name>/<path>` serves only a regular
 //!   file below `apps/<name>/` (`app_file`, `serve`). An app frame loads
 //!   from this scheme only, never from the asset protocol.
+//! - Dez's client script (`CLIENT_SCRIPT`) is served as `~dez.js` in the
+//!   folder of each app, under the policy of that app. No file of an app
+//!   can have that name (`is_app_file_segment`), so the page of an app
+//!   that loads the name always gets Dez's own script.
 //! - Each answer of the scheme has a `Content-Security-Policy` header
 //!   (`app_policy`), which lets the page load only from the URL prefix of
 //!   its own app, from Blobs, and from `data:` URLs. It also sandboxes the
@@ -66,6 +70,15 @@ const LOCKED_POLICY: &str = "default-src 'none'; sandbox";
 // The answer for each path that names no file that the scheme serves. It
 // tells no reason and no path: the code of an app can read it.
 const NO_SUCH_FILE: &str = "No such file in this app.";
+
+// Dez's client script of the page of an app: what a page needs to work
+// with the frame host of Dez's page. The host and the script change
+// together, so the script is no file of an app: the scheme serves this
+// text under the name `CLIENT_SCRIPT_NAME` in the folder of each app,
+// which is inside the script source of the app's policy. `~` is in no
+// name of a file of an app (`is_app_file_segment`).
+const CLIENT_SCRIPT: &str = include_str!("app_client.js");
+const CLIENT_SCRIPT_NAME: &str = "~dez.js";
 
 // The name of the rule list in the store of the OS.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -144,6 +157,16 @@ fn content_type(path: &str) -> &'static str {
         .map_or("application/octet-stream", |(_, content_type)| content_type)
 }
 
+// The path of a URL of the scheme, without its first `/`; none for a URL
+// with another authority than the one host, so a port or a user name is
+// refused too. A query is no part of the path.
+fn scheme_path(uri: &Uri) -> Option<&str> {
+    if uri.authority().map(|authority| authority.as_str()) != Some(HOST) {
+        return None;
+    }
+    uri.path().strip_prefix('/')
+}
+
 // The file that a URL of the scheme names.
 #[derive(Debug, PartialEq)]
 struct AppFile<'a> {
@@ -157,16 +180,19 @@ struct AppFile<'a> {
 // `dezapp://localhost/<name>/<path>` with each part a plain file name
 // (`is_app_file_segment`). So a `..`, an empty part, and a `%` escape of
 // one are refused and never decoded, the folder of an app is no file (no
-// default page), and the name of the app is safe in a header value. A
-// query is no part of the path.
+// default page), and the name of the app is safe in a header value.
 fn app_file(uri: &Uri) -> Option<AppFile<'_>> {
-    // The whole authority, so a port or a user name is refused too.
-    if uri.authority().map(|authority| authority.as_str()) != Some(HOST) {
-        return None;
-    }
-    let path = uri.path().strip_prefix('/')?;
+    let path = scheme_path(uri)?;
     let (app, _) = path.split_once('/')?;
     path.split('/').all(is_app_file_segment).then_some(AppFile { app, path })
+}
+
+// The app in whose folder `uri` names Dez's client script
+// (`dezapp://localhost/<name>/~dez.js`); none for every other URL. The
+// name of the app is a plain file name, as in `app_file`.
+fn client_script_app(uri: &Uri) -> Option<&str> {
+    let (app, file) = scheme_path(uri)?.split_once('/')?;
+    (file == CLIENT_SCRIPT_NAME && is_app_file_segment(app)).then_some(app)
 }
 
 // The policy of each page and file of the app `app`. `own` is the URL
@@ -264,7 +290,8 @@ type WebviewGuards = Result<(), String>;
 // The answer to one request of the scheme. `guards` are those of the
 // webview of the request. `read` gives the bytes of a file of the app root
 // (`load_app_file_bytes`: it refuses a path through a link and all that is
-// no regular file); it gets only a path that `app_file` passed.
+// no regular file); it gets only a path that `app_file` passed. The client
+// script is read from no file.
 fn serve(request: &Request<Vec<u8>>, guards: &WebviewGuards, read: impl FnOnce(&str) -> Result<Vec<u8>, String>) -> Answer {
     if let Err(problem) = guards {
         // No code of an app can read this text: with a guard off, no page
@@ -278,6 +305,11 @@ fn serve(request: &Request<Vec<u8>>, guards: &WebviewGuards, read: impl FnOnce(&
         let mut refused = refusal(StatusCode::METHOD_NOT_ALLOWED, "The files of an app can only be read.");
         refused.headers_mut().insert(header::ALLOW, header::HeaderValue::from_static("GET"));
         return refused;
+    }
+    if let Some(app) = client_script_app(request.uri()) {
+        return answer(StatusCode::OK, content_type(CLIENT_SCRIPT_NAME), &app_policy(app))
+            .body(Cow::Borrowed(CLIENT_SCRIPT.as_bytes()))
+            .expect("each header value is plain ASCII");
     }
     let Some(file) = app_file(request.uri()) else {
         return refusal(StatusCode::NOT_FOUND, NO_SUCH_FILE);
@@ -795,6 +827,45 @@ mod tests {
         for source in sources {
             assert!(["dezapp://localhost/my-app/", "blob:", "data:"].contains(&source), "{source} in {policy}");
         }
+    }
+
+    // The script of Dez comes from no file, so no file of an app can take
+    // its place: its name is no name of a file of an app.
+    #[test]
+    fn the_client_script_is_served_in_the_folder_of_each_app_from_no_file() {
+        assert!(!is_app_file_segment(CLIENT_SCRIPT_NAME));
+
+        let answer = serve(&get("dezapp://localhost/my-app/~dez.js?v=2"), &Ok(()), no_read);
+
+        assert_eq!(answer.status(), StatusCode::OK);
+        assert_eq!(answer.body().as_ref(), CLIENT_SCRIPT.as_bytes());
+        assert_eq!(header_of(&answer, header::CONTENT_TYPE), "text/javascript; charset=utf-8");
+        assert_eq!(header_of(&answer, header::X_CONTENT_TYPE_OPTIONS), "nosniff");
+        assert_eq!(header_of(&answer, header::CONTENT_SECURITY_POLICY), app_policy("my-app"));
+    }
+
+    #[test]
+    fn the_client_script_has_its_one_name_in_the_folder_of_an_app_only() {
+        for refused in [
+            "dezapp://localhost/~dez.js",
+            "dezapp://localhost//~dez.js",
+            "dezapp://localhost/my-app/js/~dez.js",
+            "dezapp://localhost/../~dez.js",
+            "dezapp://localhost/my%2Dapp/~dez.js",
+            "dezapp://localhost/my-app/~dez.js/",
+            "dezapp://localhost/my-app/~DEZ.js",
+            "dezapp://other/my-app/~dez.js",
+            "dezapp://localhost:8080/my-app/~dez.js",
+        ] {
+            let answer = serve(&get(refused), &Ok(()), no_read);
+            assert_eq!(answer.status(), StatusCode::NOT_FOUND, "{refused}");
+            assert_eq!(header_of(&answer, header::CONTENT_SECURITY_POLICY), LOCKED_POLICY, "{refused}");
+        }
+        let mut post = get("dezapp://localhost/my-app/~dez.js");
+        *post.method_mut() = Method::POST;
+        assert_eq!(serve(&post, &Ok(()), no_read).status(), StatusCode::METHOD_NOT_ALLOWED);
+        let unguarded = serve(&get("dezapp://localhost/my-app/~dez.js"), &Err("no store".to_string()), no_read);
+        assert_eq!(unguarded.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 
     #[test]

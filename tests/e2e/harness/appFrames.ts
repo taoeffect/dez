@@ -256,13 +256,29 @@ export async function frameReport (browser: E2EBrowser, id: string, probe: strin
   return reports.find((report) => report.probe === probe)?.result
 }
 
-/** Runs `work` with the page of the frame `id` as the page that WebDriver
- *  works in, then goes back to Dez's page. */
-export async function inAppFrame<T> (browser: E2EBrowser, id: string, work: () => Promise<T>): Promise<T> {
-  await browser.switchFrame(await browser.$(`iframe[data-app-frame="${id}"]`))
+/** Runs `work` with the page of the frame `selector` of Dez's page as the
+ *  page that WebDriver works in, then goes back to Dez's page. In that
+ *  page `browser.execute` and the reads work; pointer actions and keys do
+ *  not: click at a point of Dez's page, and the keys then go to the frame.
+ *
+ *  The switch gives the keyboard to the frame in WebKit, and the way back
+ *  does not take it away: the later keys of the spec go to the frame.
+ *  Dez's page does not see this (its `document.activeElement` stays), and
+ *  neither a `focus()` call nor a click in Dez's page gets the keyboard
+ *  back while the frame is in the page. A later click in the frame then
+ *  also leaves `document.activeElement` as it was. A user cannot do this.
+ *  So call this only while the frame has the keyboard, or after the last
+ *  key and the last read of the focus of the test. */
+export async function inFrame<T> (browser: E2EBrowser, selector: string, work: () => Promise<T>): Promise<T> {
+  await browser.switchFrame(await browser.$(selector))
   try {
     return await work()
   } finally {
     await browser.switchFrame(null)
   }
+}
+
+/** Runs `work` in the page of the frame `id` (`inFrame`). */
+export function inAppFrame<T> (browser: E2EBrowser, id: string, work: () => Promise<T>): Promise<T> {
+  return inFrame(browser, `iframe[data-app-frame="${id}"]`, work)
 }

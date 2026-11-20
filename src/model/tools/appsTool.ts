@@ -275,9 +275,9 @@ export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
     },
     {
       name: APPS_SHOW,
-      summary: 'Show a UI app to the user: Dez puts it into your reply, after this call.',
-      description: `Puts a UI app into your reply, after this call, where the user sees it. The page of the app is its ${UI_INDEX_FILE}: `
-        + 'Dez refuses an app that has none, and a script app, which has no page (invoke runs a script app). '
+      summary: 'Show a UI app to the user: Dez puts it into your reply, after this call, as a card with a Run button.',
+      description: `Puts a UI app into your reply, after this call, as a card with a Run button. The app starts when the user clicks Run: its page then shows in the conversation. `
+        + `The page of the app is its ${UI_INDEX_FILE}: Dez refuses an app that has none, and a script app, which has no page (invoke runs a script app). `
         + 'The call runs no code and changes no file. Dez writes the app into the conversation itself, as a line `<dez:app name="…"/>`: '
         + 'never write such a line yourself, as the user reads yours as plain text.',
       parameters: [

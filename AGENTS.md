@@ -91,7 +91,8 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `view/editor/focus.ts`: focus the editor and keep its scroll; use `focusKeepingScroll`, not `view.focus()`.
 - `view/editor/images.ts`, `imageInsert.ts`, `pendingRanges.ts`: images shown in place of their references; image and clip paste and drop.
 - `view/editor/media.ts`, `view/media/`: `<dez:audio>` and `<dez:video>` tags shown as players (`MediaPlayer.vue`, video.js parts in Dez's own skin).
-- `view/editor/apps.ts`: `<dez:app>` tags shown as app cards.
+- `view/editor/apps.ts`: `<dez:app>` tags shown as app cards (a poster with Run), and the apps that run in the editor.
+- `view/apps/`: `appFrame.ts` (the frame of one app, and its messages), `appFrameHost.ts` (the frames of the apps that run, each over its card), `appIcon.ts`.
 - `view/editor/toolCalls.ts`: `<dez:tool>` blocks shown as chips, each with a panel.
 - `view/editor/hiddenAssets.ts`, `compactionChip.ts`, `AssetList.vue`: the hidden assets of a chip, the two compaction chips (assets, summary) with their panels, and the long list of kept assets.
 - `view/editor/lineBlocks.ts`, `compaction.ts`, `compactionBlock.ts`, `lineCommands.ts`: the edit rules of whole-line blocks (chips, players, app cards, the compaction block).
@@ -121,6 +122,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `model/tools/appsTool.ts`, `lineEdits.ts`, `appManifest.ts`, `appTemplates.ts`, `controller/appsTool.ts`: the `apps` tool: the files of the apps, on the virtual root `/apps/`.
 - `model/tools/appInvoke.ts`, `controller/appInvoke.ts`: `apps invoke`: a run of the code of a script app in Deno, as a job with copies of its inputs and checked output files.
 - `model/tools/appShow.ts`: `apps show`: Dez writes the `<dez:app>` tag of a UI app into the reply (`ToolRunContext.showApp`).
+- `controller/apps.ts`: `dez.controller/apps/card`, the facts of an app for its card.
 - `model/systemPrompt/`: the built-in system prompt (`systemPrompt.md`), the variables of a template, and its checks.
 - `model/modelOutputs.ts`, `modelInputs.ts`, `modelSearch.ts`: the output types, what Dez can send a model, and the model filter.
 - `controller/notifications.ts`, `view/sound.ts`, `assets/sounds/`: the reply-end alerts (sound, system notification).
@@ -203,7 +205,7 @@ Rules:
 - `commands.rs`, `http_bridge.rs`, `notification.rs`, `idle.rs`: Tauri commands, registered in `lib.rs`.
 - `http_bridge.rs`: generic HTTP request, stream, and download. A request body is text or base64 text, never a JSON number array (slow).
 - `bundled_tools.rs`, `confinement.rs`: one run of a program of `../binaries/` in a work folder of the cache root, under an OS rule on the files that it can open.
-- `app_frames.rs`: the `dezapp://` scheme that serves the files of a UI app to its frame, and the guards of the app frames (the policy of each answer, the navigation guard, the rules of the webview).
+- `app_frames.rs`, `app_client.js`: the `dezapp://` scheme that serves the files of a UI app to its frame, the guards of the app frames (the policy of each answer, the navigation guard, the rules of the webview), and Dez's script for the page of an app (`~dez.js`).
 - `notification.rs`, `idle.rs`, `session_bus.rs`: system notifications, the user's idle time, and the one Linux D-Bus session connection.
 - `persistence.rs`: the file roots (`app`, `cache`) and raw private-file I/O; write every private file with `write_private_file` or `PrivateFileWriter`.
 - `key_store.rs`: `provider_keys.json`. `copilot.rs`: Copilot device flow and token refresh.
@@ -258,6 +260,8 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 - **Streams patch only the visible editor**: the store gets every token; the editor only when its tab is active (`dez.editor/appendTokenIfVisible`).
 - **Stream scroll follow**: never add code that scrolls an editor view up (`src/view/editor/selectors.ts`).
 - **Chip spacing is view only** (`ChipSpacing`, `view/editor/toolCalls.ts`): never change the text of a reply for its look, as the rounds of a reply are read from it.
+- **The apps that run are a part of the editor state**: code that gives the view a new state carries them over (`carriedAppRuns`) and calls `syncAppFrames` (`view/editor/apps.ts`). A tab switch stops them.
+- **The frame of an app is never in a widget**: CodeMirror makes each widget again, and a frame that moves in the DOM loads again. The host puts it over the card (`view/apps/appFrameHost.ts`).
 - **Never hard-code a shortcut key**: every binding path reads the effective keys from `src/model/shortcuts.ts` and the settings store.
 - **Shortcut key order differs by platform**: on Linux the menu accelerator gets the key first; put context checks in the selector both paths call, never only in a key handler.
 
@@ -315,6 +319,8 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 - **The asset protocol reads every file** (`assetProtocol` in `tauri.conf.json`), so the webview must never load remote code.
 - **CSP disabled**: `"csp": null` in `tauri.conf.json` on purpose during development.
 - **An app frame loads only from `dezapp://`**, never from the asset protocol, in an `<iframe sandbox="allow-scripts">`. Its guards are in `src-tauri/src/app_frames.rs`; the audit `tests/e2e/app-frames.e2e.ts` must pass after an update of WebKit, wry, or Tauri.
+- **An app is one page**: a frame that loads a second time (a reload, a link) is stopped (`src/view/apps/appFrame.ts`).
+- **`~dez.js` is a reserved name** of the app scheme: no file of an app can have it (`src-tauri/src/app_frames.rs`).
 - **Linux needs WebKitGTK 2.42 or newer**, to build and to run (`src-tauri/Cargo.toml`, `app_frames.rs`).
 - **Tauri capabilities**: a new plugin or core command needs a permission in `src-tauri/capabilities/default.json`; app commands registered in `lib.rs` need none.
 - **Copilot auth differs**: device flow commands, not the API-key commands.
@@ -383,6 +389,7 @@ Brief comments are encouraged above functions that do anything non-trivial expla
 - E2E bundled tools: the specs run the real ffmpeg, ffprobe, and Deno of the debug build (`tests/e2e/bundled-tools.e2e.ts`, `tests/e2e/video-tool.e2e.ts`, `tests/e2e/js-eval.e2e.ts`, and the sandbox audit of Deno, `tests/e2e/js-eval-sandbox.e2e.ts`).
 - E2E `apps` tool: `tests/e2e/apps-tool.e2e.ts` runs the file subcommands on the real file commands of the backend, with links in the folder of an app, and `show`; `tests/e2e/apps-invoke.e2e.ts` runs script apps in the real Deno. The unit tests use the in-memory files of `fakeAppFiles` (`src/controller/testing.ts`).
 - E2E app frames: `tests/e2e/app-frames.e2e.ts` is the audit of the guards of the app frames: pages that try to get out, a server that counts what reaches it, and the controls in Dez's own page (`tests/e2e/harness/appFrames.ts`).
+- E2E apps in a conversation: `tests/e2e/app-host.e2e.ts` (the poster, Run, Stop, the keyboard). A read of the page of a frame gives the frame the keyboard for WebDriver: read the doc comment of `inFrame` (`tests/e2e/harness/appFrames.ts`) before you use it.
 - A `browser.execute` result must not be an object with a set `error` field: webdriverio takes it for a failure of the script.
 - E2E specs that open a URL call `stopOpenUrl` (`tests/e2e/harness/dom.ts`), so no browser opens.
 - **No display server** (every spec fails with `Hook timed out in 120000ms` in `beforeAll`): run under headless `kwin_wayland`; the recipe is in `vitest.e2e.config.ts`.

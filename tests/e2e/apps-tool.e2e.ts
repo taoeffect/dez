@@ -5,7 +5,7 @@ import { appTagText } from '../../src/model/chat/appTags'
 import { appManifestText, parseAppManifest } from '../../src/model/tools/appManifest'
 import { showResultText } from '../../src/model/tools/appShow'
 import { byteSizeText } from '../../src/utils/byteSize'
-import { appsCall, seedApp, shownAppCards } from './harness/apps'
+import { appsCall, seedApp, shownAppCards, type ShownAppCard } from './harness/apps'
 import { consoleErrors, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
 import { linkedDropDir } from './harness/drops'
 import { appFilePath, conversationFilePath, filesIn, writeTestFile } from './harness/fixtures'
@@ -254,7 +254,9 @@ describe('apps tool', () => {
     const reply = await endedReply(browser)
     expect(reply.endsWith(`</dez:tool>\n\n${tag}\n\n${replyText(CALLER.modelName)}`)).toBe(true)
     expect(reply.split('<dez:app').length - 1).toBe(1)
-    expect(await shownAppCards(browser)).toStrictEqual([{ app: 'notes', text: 'App notes' }])
+    // The card is a poster: the app does not run until the user starts it.
+    const poster: ShownAppCard[] = [{ app: 'notes', state: 'run', text: 'notes\nKeeps notes.' }]
+    await waitForValue(browser, 'the card of the app', () => shownAppCards(browser), poster)
     expect(await openToasts(browser, 'error')).toStrictEqual([])
     const file = conversationFilePath(setup.app.home, await activeConversationId(browser))
     await waitForValue(browser, 'saved tag', async () => (await fs.promises.readFile(file, 'utf8').catch(() => '')).includes(`\n${tag}\n`), true)
@@ -269,7 +271,7 @@ describe('apps tool', () => {
     expect((JSON.parse(third.body) as { messages: unknown[] }).messages.slice(0, sentBefore.length)).toStrictEqual(sentBefore)
     await sendChatReply(third.reply, CALLER.modelName)
     await endedReply(browser, 3)
-    expect(await shownAppCards(browser)).toStrictEqual([{ app: 'notes', text: 'App notes' }])
+    await waitForValue(browser, 'the card of the app after the next reply', () => shownAppCards(browser), poster)
     // Dez logs each call that it refuses, and nothing else.
     expect((await consoleErrors(browser)).map((error) => error.split('\n')[0].replace(/^The tool apps failed: ToolError: (\S+ \S+ \S+).*$/, '$1'))).toStrictEqual([
       '/apps/sum is a',

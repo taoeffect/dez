@@ -1,4 +1,4 @@
-import { APP_NAME_SOURCE, MANIFEST_FILE } from './appManifest'
+import { APP_NAME_SOURCE, MANIFEST_FILE, parseAppManifest } from './appManifest'
 import { appNamed, checkAppIsThere, checkedAppKind, kindName, pathIn, type AppsPath, type PathFacts } from './appsTool'
 import { UI_INDEX_FILE } from './appTemplates'
 import { ToolError, type SubcommandArguments } from './types'
@@ -10,9 +10,10 @@ import { ToolError, type SubcommandArguments } from './types'
 // at the paths of the app, and the stream controller writes the line
 // (`ToolRunContext.showApp`, controller/tools.ts).
 //
-// This module has the pure parts: the checks of a call, and every text
-// that the calling model reads. Every text here is a tool result: it goes
-// to the chat provider, and it holds virtual paths only.
+// This module has the pure parts: the checks of a call, every text that
+// the calling model reads, and what the card of an app tells the user
+// (`appCardFacts`). Every text here is a tool result: it goes to the chat
+// provider, and it holds virtual paths only.
 
 // What Dez did not do for a call that it refuses.
 const NOT_DONE = 'Dez shows no app.'
@@ -65,6 +66,33 @@ export function checkShowTarget({ app, manifest, index }: ShowCall, target: Show
   }
 }
 
+/** What the card of an app tells the user of the app (view/editor/apps.ts):
+ *  - `ready`: a UI app that Dez can show, with the description of its
+ *    manifest.
+ *  - `missing`: there is no folder of that name, so the app is gone.
+ *  - `broken`: what is there is no UI app that Dez can show.
+ *  - `unreadable`: Dez could not read what is there. */
+export type AppCardFacts =
+  | { state: 'ready', description: string }
+  | { state: 'missing' | 'broken' | 'unreadable' }
+
+/** The facts of the card of the app of `call`, from what is at its paths.
+ *  The card follows the one rule of a `show` call (`checkShowTarget`): Dez
+ *  runs for the user only an app that it would show for a model. */
+export function appCardFacts(call: ShowCall, target: ShowTarget): AppCardFacts {
+  if (target.app.kind === 'missing') return { state: 'missing' }
+  try {
+    checkShowTarget(call, target)
+  } catch (error) {
+    if (error instanceof ToolError) return { state: 'broken' }
+    throw error
+  }
+  // The check read the kind from the manifest, so its bytes are there and
+  // they parse.
+  const manifest = target.manifestBytes && parseAppManifest(new TextDecoder().decode(target.manifestBytes))
+  return manifest ? { state: 'ready', description: manifest.description } : { state: 'broken' }
+}
+
 /** The start of the sentence with which a tool result tells that Dez put
  *  the app `name` into the reply, as in "Dez shows the app notes". Every
  *  result that tells of a shown app starts a line with it (the result of
@@ -88,9 +116,11 @@ export function shownAppNames(resultText: string): string[] {
   return [...resultText.matchAll(SHOWN_APP_LINE_START)].map((match) => match[1])
 }
 
-/** The result of a `show` call whose app `name` Dez put into the reply. */
+/** The result of a `show` call whose app `name` Dez put into the reply.
+ *  It tells that the app does not run yet: a model must not tell the user
+ *  that the app is open. */
 export function showResultText(name: string): string {
-  return `${shownAppText(name)} in your reply, after this call, where the user sees it. Write no tag and no link for it.`
+  return `${shownAppText(name)} in your reply, after this call, as a card with a Run button: the app starts when the user clicks Run. Write no tag and no link for it.`
 }
 
 /** The text of the `ToolError` of a `show` call whose reply took no text

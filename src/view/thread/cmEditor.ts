@@ -1474,6 +1474,12 @@ const TABLE_DELIMITER_ROW_EM = 0.6
  *  in px at the default font size. */
 export const IMAGE_MAX_HEIGHT_PX = 320
 
+/** The height of the box of an app card (`src/view/editor/apps.ts`), which
+ *  is the height of the frame host of an app that runs, and the space
+ *  above and below the box, in px at the default font size. */
+export const APP_BOX_HEIGHT_PX = 400
+export const APP_CARD_PADDING_PX = 6
+
 /** The height of a line of body text, in em of the editor font. */
 const TEXT_LINE_HEIGHT = 1.6
 
@@ -2566,16 +2572,17 @@ export const dezTheme = EditorView.theme({
   },
   // App cards (src/view/editor/apps.ts). The widget is the only thing on
   // its line, as a media player is: a column as wide as the line, with the
-  // card of the app in it. The card has a border and a faint fill, through
-  // which the selection layer behind it shows. A long name gives way with
-  // an ellipsis.
+  // box of the app in it. The box has one size, for its poster and as the
+  // placeholder of a run: a start and a stop move no text, and the editor
+  // knows the height of a card that it has not drawn. The box has a border
+  // and a faint fill, through which the selection layer behind it shows.
   '.dez-app': {
     display: 'inline-flex',
     flexDirection: 'column',
     alignItems: 'flex-start',
     boxSizing: 'border-box',
     width: '100%',
-    padding: editorSize(6, 0),
+    padding: editorSize(APP_CARD_PADDING_PX, 0),
     verticalAlign: 'top',
     fontFamily: UI_FONT_FAMILY,
     lineHeight: '1.5',
@@ -2585,39 +2592,175 @@ export const dezTheme = EditorView.theme({
     userSelect: 'none',
     WebkitUserSelect: 'none',
   },
-  '.dez-app__card': {
-    display: 'inline-flex',
+  '.dez-app__box': {
+    display: 'flex',
     alignItems: 'center',
-    gap: editorSize(8),
+    justifyContent: 'center',
     boxSizing: 'border-box',
-    maxWidth: '100%',
-    padding: editorSize(6, 12, 6, 10),
+    width: '100%',
+    height: editorSize(APP_BOX_HEIGHT_PX),
     border: '1px solid var(--color-border, #d0d0d0)',
     borderRadius: editorSize(8),
     background: 'color-mix(in srgb, var(--color-text) 5%, transparent)',
-    color: 'var(--color-muted, #888)',
-    fontSize: editorSize(13),
-    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+  },
+  // The placeholder of a run draws nothing: the frame host is over it, and
+  // an edge of the box must not show next to an edge of the host.
+  '.dez-app__box[data-app-frame-place]': {
+    borderColor: 'transparent',
+    background: 'none',
+  },
+  '.dez-app__poster': {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: editorSize(10),
+    boxSizing: 'border-box',
+    maxWidth: `min(100%, ${editorSize(440)})`,
+    padding: editorSize(16),
+    textAlign: 'center',
+  },
+  '.dez-app__title': {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: editorSize(8),
+    maxWidth: '100%',
+    color: 'var(--color-text)',
+    fontSize: editorSize(15),
   },
   '.dez-app__icon': {
     display: 'inline-flex',
     flex: 'none',
+    color: 'var(--color-muted, #888)',
   },
   '.dez-app__icon svg': {
     display: 'block',
-    width: editorSize(15),
-    height: editorSize(15),
+    width: editorSize(17),
+    height: editorSize(17),
   },
-  '.dez-app__label': {
-    flex: 'none',
-  },
+  // A long name gives way with an ellipsis.
   '.dez-app__name': {
     minWidth: '0',
     overflow: 'hidden',
     textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    fontFamily: MONO_FONT_FAMILY,
+    fontWeight: '600',
+  },
+  '.dez-app__description, .dez-app__note': {
+    maxWidth: '100%',
+    color: 'var(--color-muted, #888)',
+    fontSize: editorSize(13),
+    overflowWrap: 'anywhere',
+  },
+  // The description is the text of a model: at most three lines of it.
+  '.dez-app__description': {
+    display: '-webkit-box',
+    WebkitBoxOrient: 'vertical',
+    WebkitLineClamp: '3',
+    overflow: 'hidden',
+  },
+  // Run, and the Stop of the frame host: the look of the buttons of the
+  // bottom bar.
+  '.dez-app__run, .dez-app-frame__stop': {
+    display: 'inline-flex',
+    alignItems: 'center',
+    flex: 'none',
+    border: '1px solid var(--color-border, #d0d0d0)',
+    background: 'var(--color-bg)',
+    color: 'var(--color-text)',
+    fontFamily: 'inherit',
+    lineHeight: '1',
+    cursor: 'pointer',
+  },
+  '.dez-app__run:hover, .dez-app-frame__stop:hover': {
+    borderColor: 'var(--color-muted, #888)',
+  },
+  '.dez-app__run': {
+    gap: editorSize(6),
+    marginTop: editorSize(4),
+    padding: editorSize(7, 16, 7, 12),
+    borderRadius: editorSize(6),
+    fontSize: editorSize(13),
+    fontWeight: '600',
+  },
+  '.dez-app__run svg': {
+    display: 'block',
+    width: editorSize(12),
+    height: editorSize(12),
+  },
+  // The frame host of an app that runs (src/view/apps/appFrameHost.ts): a
+  // child of the scroller, over the box of the card, with the place and the
+  // size of that box as inline styles. The scroller is a stacking context
+  // (CM gives it `z-index: 0`), and the host is above the text and the
+  // layers of the editor in it.
+  '.dez-app-frame': {
+    position: 'absolute',
+    zIndex: '5',
+    display: 'flex',
+    flexDirection: 'column',
+    boxSizing: 'border-box',
+    border: '1px solid var(--color-border, #d0d0d0)',
+    borderRadius: editorSize(8),
+    background: 'var(--color-bg)',
+    overflow: 'hidden',
+    fontFamily: UI_FONT_FAMILY,
+    lineHeight: '1.5',
+    letterSpacing: 'normal',
+  },
+  // The app has the keyboard: the keys do not go to the editor.
+  '.dez-app-frame:focus-within': {
+    borderColor: 'var(--color-accent, #4c8dff)',
+    boxShadow: '0 0 0 1px var(--color-accent, #4c8dff)',
+  },
+  '.dez-app-frame__bar': {
+    display: 'flex',
+    alignItems: 'center',
+    flex: 'none',
+    gap: editorSize(8),
+    padding: editorSize(4, 6, 4, 10),
+    borderBottom: '1px solid var(--color-border, #d0d0d0)',
+    background: 'color-mix(in srgb, var(--color-text) 5%, transparent)',
+    color: 'var(--color-muted, #888)',
+    fontSize: editorSize(12),
+    cursor: 'default',
+    userSelect: 'none',
+    WebkitUserSelect: 'none',
+  },
+  '.dez-app-frame__icon': {
+    display: 'inline-flex',
+    flex: 'none',
+  },
+  '.dez-app-frame__icon svg': {
+    display: 'block',
+    width: editorSize(14),
+    height: editorSize(14),
+  },
+  '.dez-app-frame__name': {
+    flex: '1 1 0',
+    minWidth: '0',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
     color: 'var(--color-text)',
     fontFamily: MONO_FONT_FAMILY,
     fontWeight: '600',
+  },
+  '.dez-app-frame__stop': {
+    padding: editorSize(4, 10),
+    borderRadius: editorSize(4),
+    fontSize: editorSize(12),
+  },
+  // The page of the app. A page that sets no background is drawn on white,
+  // as in a browser: the frame is see-through for such a page, and the dark
+  // theme of Dez must not show under its black text.
+  '.dez-app-frame__page': {
+    display: 'block',
+    flex: '1 1 0',
+    width: '100%',
+    minHeight: '0',
+    border: '0',
+    background: '#fff',
   },
   // Rendered links (src/view/editor/links.ts): only the link text shows. An
   // autolink's address has the `t.url` style of `dezHighlightStyle`, which

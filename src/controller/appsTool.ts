@@ -41,7 +41,7 @@ import {
   type ListedApp,
 } from '../model/tools/appsTool'
 import { MANIFEST_FILE } from '../model/tools/appManifest'
-import { appNotShownText, checkShowTarget, showCall, showResultText } from '../model/tools/appShow'
+import { appNotShownText, checkShowTarget, showCall, showResultText, type ShowCall, type ShowTarget } from '../model/tools/appShow'
 import { ToolError, type SubcommandArguments } from '../model/tools/types'
 import { rawErrorText } from '../utils/errorText'
 import type { AppFileEntry, FileTree } from './nativeTypes'
@@ -227,18 +227,23 @@ export async function listApps(args: SubcommandArguments): Promise<AppsResult> {
   return listAppsText(call, apps)
 }
 
-/** `apps show`: checks that the app is a UI app with its page
- *  (`checkShowTarget`), each fact from one exact read of its path, and
- *  then has the reply of the call write the tag of the app into itself
- *  (`reply.showApp`, `ToolRunContext.showApp`). Throws a `ToolError` for
- *  an app that Dez cannot show, and for a reply that takes no text any
- *  more. */
-export async function showApp(args: SubcommandArguments, reply: { showApp(name: string): boolean }): Promise<AppsResult> {
-  const call = showCall(args)
+/** What is at the paths of the app of `call`, each from one exact read of
+ *  its path. Throws a `ToolError` when the native side fails. */
+export async function showTargetOf(call: ShowCall): Promise<ShowTarget> {
   const [app, manifest, index] = await Promise.all([call.app, call.manifest, call.index].map(factsOf))
   // The native side reads a file of any size, so the size check is first.
   const manifestBytes = isReadableManifest(manifest) ? await readBytes(call.manifest) : null
-  checkShowTarget(call, { app, manifest, manifestBytes, index })
+  return { app, manifest, manifestBytes, index }
+}
+
+/** `apps show`: checks that the app is a UI app with its page
+ *  (`checkShowTarget`), and then has the reply of the call write the tag
+ *  of the app into itself (`reply.showApp`, `ToolRunContext.showApp`).
+ *  Throws a `ToolError` for an app that Dez cannot show, and for a reply
+ *  that takes no text any more. */
+export async function showApp(args: SubcommandArguments, reply: { showApp(name: string): boolean }): Promise<AppsResult> {
+  const call = showCall(args)
+  checkShowTarget(call, await showTargetOf(call))
   if (!reply.showApp(call.name)) throw new ToolError(appNotShownText())
   return showResultText(call.name)
 }

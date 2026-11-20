@@ -190,7 +190,9 @@ describe('init', () => {
       '/apps/unit-converter/style.css',
     ])
     const page = call.files[1].content
-    expect(page).toContain('<script src="main.js"></script>')
+    // Dez's client script is first, so that it sees a key before the code
+    // of the app does.
+    expect(page).toContain('<script src="~dez.js"></script>\n  <script src="main.js"></script>')
     expect(page).toContain('<link rel="stylesheet" href="style.css">')
     // Every script tag loads a file, and no tag has code in an attribute.
     expect(page).not.toMatch(/<script(?![^>]*\ssrc=)/)
