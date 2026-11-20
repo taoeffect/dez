@@ -6,20 +6,28 @@ import { IMAGE_FOLDERS } from '../../model/chat/images'
 import { MEDIA_TEMP_LIFETIME_MS } from '../../model/chat/mediaFiles'
 import { MEDIA_CACHE_FOLDER, MEDIA_FOLDERS } from '../../model/chat/mediaTags'
 import { SHOWN_PICTURE_FOLDER } from '../../model/chat/shownPictures'
+import { UNUSED_FILE_MIN_AGE_MS } from '../../model/chat/unusedFiles'
 import { CHAT_IMAGE_SIDE } from '../../model/providers/imageSize'
+import { APP_RUN_FRAME_SIZE } from '../../model/tools/appBridge'
+import { MANIFEST_FILE } from '../../model/tools/appManifest'
+import { APP_RUN_DEFAULT_SECONDS, APP_RUN_MAX_OUTPUT_BYTES, APP_RUN_MAX_OUTPUT_FILES, APPS_MAX_BYTES, APPS_MAX_ENTRIES, APPS_ROOT, APPS_VIRTUAL_ROOT } from '../../model/tools/appsTool'
+import { SCRIPT_MAIN_FILE, UI_INDEX_FILE } from '../../model/tools/appTemplates'
+import { JS_EVAL_DEFAULT_SECONDS, JS_EVAL_MAX_SECONDS, JS_EVAL_MAX_TOOL_CALLS, JS_EVAL_OUTPUT_BYTES } from '../../model/tools/jsEval'
 import { WORK_FOLDER_LIFETIME_MS, WORK_ROOT } from '../../model/tools/workFolders'
 import { shortcutKeyText } from '../../model/shortcuts'
+import { byteSizeText } from '../../utils/byteSize'
 import { countText } from '../../utils/countText'
 import { DEZ_DISCUSSIONS_URL } from '../../utils/dezLinks'
 import bundledPrograms from '../../../src-tauri/binaries/manifest.json'
 import bundledFonts from '../../../src-tauri/fonts/manifest.json'
 
-type HelpPage = 'general' | 'tips' | 'assets' | 'support' | 'thanks'
+type HelpPage = 'general' | 'tips' | 'assets' | 'apps' | 'support' | 'thanks'
 
 const PAGES: { id: HelpPage; label: string }[] = [
   { id: 'general', label: 'General' },
   { id: 'tips', label: 'Tips' },
   { id: 'assets', label: 'Assets' },
+  { id: 'apps', label: 'Apps' },
   { id: 'support', label: 'Support' },
   { id: 'thanks', label: 'Thank You' },
 ]
@@ -43,6 +51,25 @@ const WORK_FOLDER_HOURS = WORK_FOLDER_LIFETIME_MS / HOUR_MS
 // The side over which a chat request sends a smaller copy of an image, as
 // the text writes a number (`1,568`).
 const CHAT_IMAGE_SIDE_TEXT = countText(CHAT_IMAGE_SIDE)
+
+// The limits of the apps and of the code that a model runs, as the Apps
+// page writes them. They come from the constants of the code, so the page
+// tells no limit that Dez does not keep.
+const MINUTE_SECONDS = 60
+const APP_LIMITS = {
+  entries: countText(APPS_MAX_ENTRIES),
+  size: byteSizeText(APPS_MAX_BYTES),
+  savedFiles: APP_RUN_MAX_OUTPUT_FILES,
+  savedFileSize: byteSizeText(APP_RUN_MAX_OUTPUT_BYTES),
+  runMinutes: APP_RUN_DEFAULT_SECONDS / MINUTE_SECONDS,
+  unusedMinutes: UNUSED_FILE_MIN_AGE_MS / (MINUTE_SECONDS * 1000),
+}
+const CODE_LIMITS = {
+  seconds: JS_EVAL_DEFAULT_SECONDS,
+  mostMinutes: JS_EVAL_MAX_SECONDS / MINUTE_SECONDS,
+  toolCalls: JS_EVAL_MAX_TOOL_CALLS,
+  output: byteSizeText(JS_EVAL_OUTPUT_BYTES),
+}
 
 // The sources of the fonts that Dez ships, for the Thank You page:
 // each repository once, in the order of the manifest, with the families of
@@ -70,15 +97,17 @@ const keys = computed(() => ({
 }))
 
 // The Dez folder, Dez's cache folder (which the bundled programs can open),
-// the folder of the temp copies of clips, and the folder of the work
-// folders, as the Assets page shows them (`~` for the home folder). The
-// cache folder differs by system, so the page reads the folders and spells
-// none. Null until the read ends, and for a folder that cannot be read: the
-// page then names the folder with no path.
+// the folder of the temp copies of clips, the folder of the work folders,
+// and the folder of the apps, as the Assets page and the Apps page show
+// them (`~` for the home folder). The cache folder differs by system, so
+// the page reads the folders and spells none. Null until the read ends,
+// and for a folder that cannot be read: the page then names the folder
+// with no path.
 const appDir = ref<string | null>(null)
 const cacheDir = ref<string | null>(null)
 const tempDir = ref<string | null>(null)
 const workDir = ref<string | null>(null)
+const appsDir = ref<string | null>(null)
 
 onMounted(async () => {
   const [app, cache] = await Promise.all([
@@ -89,6 +118,7 @@ onMounted(async () => {
   cacheDir.value = cache
   tempDir.value = cache === null ? null : `${cache}/${MEDIA_CACHE_FOLDER}`
   workDir.value = cache === null ? null : `${cache}/${WORK_ROOT}`
+  appsDir.value = app === null ? null : `${app}/${APPS_ROOT.file}`
 })
 
 function onClose() {
@@ -146,7 +176,8 @@ function onOverlayClick(event: MouseEvent) {
               The model picker at the lower left sets the model of the tab, and the gear next to it
               shows the settings of that model. Add your API keys and your own providers in Settings
               (<kbd>{{ keys.settings }}</kbd>) › Providers. Models can use Dez tools, for example to
-              find other models, to ask them for images and clips, and to cut and join clips. Slow
+              find other models, to ask them for images and clips, to cut and join clips, to run
+              code, and to write small apps. Slow
               tool work, such as a request for an image, runs as a job. A stop or a new message does
               not end the jobs of a reply: the next reply of the tab can wait for them and get their
               results. To end a job that you no longer need, ask the model to cancel it. A close of
@@ -194,8 +225,10 @@ function onOverlayClick(event: MouseEvent) {
               Paste or drop images, audio, and video into a message. A model that makes images,
               audio, or video puts them in its reply. The
               <button type="button" class="help-link" @click="page = 'assets'">Assets</button> page
-              tells which of them a model sees, and where Dez keeps their files. Type
-              <code>/prompt</code> and a space to insert a saved prompt (Settings › Prompts).
+              tells which of them a model sees, and where Dez keeps their files. The
+              <button type="button" class="help-link" @click="page = 'apps'">Apps</button> page
+              tells what an app is, and what the code that a model runs can open on your computer.
+              Type <code>/prompt</code> and a space to insert a saved prompt (Settings › Prompts).
             </p>
           </section>
 
@@ -293,8 +326,10 @@ function onOverlayClick(event: MouseEvent) {
 
             <h3>Intermediate assets</h3>
             <p>
-              A chat model that asks another model for an image or a clip, or that joins or changes
-              clips with the Dez tool <code>video</code>, can mark what it makes as intermediate: a
+              A chat model that asks another model for an image or a clip, that joins or changes
+              clips with the Dez tool <code>video</code>, or that runs an app (see the
+              <button type="button" class="help-link" @click="page = 'apps'">Apps</button> page)
+              can mark what it makes as intermediate: a
               part of its work, for example a clip that it then joins with others, and not the
               result that you asked for. Dez hides such an asset in the reply, and the chip of its
               tool call says "intermediate asset hidden". Click the chip to see the asset.
@@ -408,7 +443,9 @@ function onOverlayClick(event: MouseEvent) {
               <li>
                 Click Delete Unused Files in Settings › General. Dez finds the stored files that no
                 conversation uses, and deletes them after you say yes. It also deletes each app
-                that no conversation names, with all its files. In the cache folder, it also
+                that no conversation and no saved prompt names, with all its files (see the
+                <button type="button" class="help-link" @click="page = 'apps'">Apps</button>
+                page). In the cache folder, it also
                 deletes the temporary copies of clips that no conversation uses, and the work folders
                 and downloads that Dez did not finish.
               </li>
@@ -421,6 +458,236 @@ function onOverlayClick(event: MouseEvent) {
               A compaction is the one exception: it deletes the file of each intermediate asset that
               it drops. It also deletes the picture copies of the text that it replaces, which are
               no assets.
+            </p>
+          </section>
+
+          <!-- This page tells the user the rules of the apps and of the code
+               that a model runs. A change to one of those rules must change
+               this text too. The rules are in:
+               - what an app is, its limits, and a run of it:
+                 src/model/tools/appsTool.ts, appManifest.ts, appInvoke.ts,
+                 appBridge.ts;
+               - the card, the bar, the keys, and the saves of a shown app:
+                 src/view/editor/apps.ts, src/view/apps/appFrameHost.ts,
+                 appFrame.ts;
+               - what a page can reach: src-tauri/src/app_frames.rs;
+               - the code of a `js_eval` call: src/model/tools/jsEval.ts,
+                 toolBridge.ts;
+               - the sandbox of Deno, and what it does not stop: `DENO_RULES`
+                 in src-tauri/src/bundled_tools.rs (the two memory limits of
+                 the text are numbers of that file), and the header of
+                 src-tauri/src/confinement.rs;
+               - the deletes and a compaction: src/model/chat/unusedFiles.ts,
+                 appNames.ts, src/model/streams/compactionApps.ts. -->
+          <section v-if="page === 'apps'" class="help-page help-page--apps">
+            <h3>What an app is</h3>
+            <p>
+              An app is a small program that a model writes for you with the Dez tool
+              <code>apps</code>: for example a calculator, a chart, a small game, or a tool for work
+              that you do again and again on your images and clips. Dez keeps each app in a folder
+              of its own in
+              <code v-if="appsDir">{{ appsDir }}</code><template v-else>the <code>{{ APPS_ROOT.file }}</code> folder of the Dez folder</template>.
+              So an app stays from one conversation to the next, and each model can run and change
+              the apps that are there. A model gets no path of your computer: it names the folder of
+              an app as <code>{{ APPS_VIRTUAL_ROOT }}/</code> and the name of the app.
+            </p>
+            <p>
+              There are two kinds of app. A UI app is a web page
+              (<code>{{ UI_INDEX_FILE }}</code>): a model shows it in its reply, and you work with it
+              there. A script app is code with no page (<code>{{ SCRIPT_MAIN_FILE }}</code>): a model
+              runs it, and gets its result. The file <code>{{ MANIFEST_FILE }}</code> of an app holds
+              its name, its kind, and a description, which tells you and a later model what the app
+              does. An app holds at most {{ APP_LIMITS.entries }} files and folders, and
+              {{ APP_LIMITS.size }}: the tool writes nothing that takes an app over these limits.
+            </p>
+
+            <h3>Apps in a conversation</h3>
+            <p>
+              A model puts a UI app into its reply as a card, with the name of the app, its
+              description, and the size of its files. The app does not start by itself: click Run.
+              Its page then shows in the card, under a bar with the name and the size of the app.
+              More than one app can run at the same time. A switch to another tab stops the apps of
+              the tab.
+            </p>
+            <p>The bar has these buttons:</p>
+            <ul>
+              <li>
+                Expand: the app covers the conversation. While it does, Find and the keys of the
+                editor are off. Click the button again to close the expanded view.
+              </li>
+              <li>Fullscreen: the app fills the screen.</li>
+              <li>
+                Stop: the app ends, and the card shows Run again. An app keeps nothing from one run
+                to the next, so Run starts it from its beginning.
+              </li>
+              <li>
+                The trash, which the card has too: after you say yes, Dez deletes the folder of the
+                app with all its files. No conversation can run the app after that, and Undo does
+                not bring it back. When the app is gone already, the trash removes only the card.
+              </li>
+            </ul>
+            <p>
+              Escape takes you one step out of an app each time: out of fullscreen, then out of the
+              expanded view, then the keyboard goes back to the conversation. A panel or a prompt of
+              Dez that is open closes first. An app can keep Escape for itself, for example to close
+              a dialog of its own. On Linux, an app in fullscreen gets no Escape, <code>f</code>, or
+              <code>F</code> key: there, these three keys leave fullscreen.
+            </p>
+            <p>
+              A context click on the card, on the bar, or in the app shows Reveal in File Manager,
+              which shows the folder of the app in the file manager of the system. An app can show
+              a menu of its own in place of it, and a text field or selected text of an app keeps
+              the menu of the system.
+            </p>
+            <p>
+              An app is one page. Dez stops an app that goes to another page or that loads its page
+              again, and tells you: start it again with Run. An app that is out of view runs slowly.
+              An app with a light and a dark look follows the setting of your system, not the theme
+              of Dez.
+            </p>
+
+            <h3>What a UI app can open</h3>
+            <p>A UI app runs in a closed frame in the window of Dez. It can use only these:</p>
+            <ul>
+              <li>Its own files. It can read them, and it cannot change them.</li>
+              <li>
+                The images and the clips of the conversation that shows it, also a file that a
+                message links. The app gets their bytes, and never a path or a file name.
+              </li>
+              <li>
+                A save of a new image or clip, which goes into the message that you write. Dez takes
+                a save only while you work in the app (the app has the keyboard, or the pointer is
+                over it) and while no reply runs. An app can save at most
+                {{ APP_LIMITS.savedFiles }} files from Run to Stop, each of at most
+                {{ APP_LIMITS.savedFileSize }}. Dez reads the type of a file from its first bytes,
+                and stores only an image or a clip.
+              </li>
+            </ul>
+            <p>
+              A UI app cannot connect to the internet or to any server, also not for a font, a
+              library, or an image. It has no storage, no cookies, and no download, and its code
+              cannot read the clipboard. It opens no window and no other page. It gets no text of a
+              conversation, no API key, no other app, no Dez tool, and no other file of your
+              computer.
+            </p>
+            <p>
+              One limit: the page of an app runs in the window of Dez itself. While the code of a
+              page is busy, the window of Dez does not answer. A page whose code never ends (an
+              endless loop) stops the window for good. Stop cannot work then: you must quit Dez and
+              start it again. Ask a model to correct such an app before you run it again.
+            </p>
+
+            <h3>Code that a model runs</h3>
+            <p>
+              A model can run code on your computer in two ways. Both use Deno, a program that comes
+              with Dez (see
+              <button type="button" class="help-link" @click="page = 'thanks'">Thank You</button>).
+              Deno runs the code in a sandbox: the next part tells what the code can open.
+            </p>
+            <p>
+              With the Dez tool <code>js_eval</code>, a model runs a short piece of JavaScript or
+              TypeScript and gets its result: for example for exact arithmetic, a date, or a sort.
+              The code has no files, no network, and no environment variables, and it can start no
+              program. It can call the other Dez tools, at most {{ CODE_LIMITS.toolCalls }} times in
+              one run, so one piece of code can do a chain of tool calls. It works on your images
+              and clips only through those tools, by their ids: it gets no file. Dez stops code that
+              runs longer than {{ CODE_LIMITS.seconds }} seconds (a model can ask for up to
+              {{ CODE_LIMITS.mostMinutes }} minutes), and code that writes more than
+              {{ CODE_LIMITS.output }} of output. Click the chip of the call to see the code, its
+              result, and each tool call that the code made.
+            </p>
+            <p>
+              With <code>apps invoke</code>, a model runs an app as a job, with parameters and with
+              the assets of the conversation that it names by id. A script app runs in Deno. A UI
+              app runs in a page of {{ APP_RUN_FRAME_SIZE.width }} by
+              {{ APP_RUN_FRAME_SIZE.height }} pixels that you do not see, and that Dez removes at
+              the end of the run. A file that you dropped or linked reaches the code only as a copy
+              (a script app) or as bytes (a UI app): the code learns no path and no file name, and
+              nothing that it writes reaches your file. The run gives the model a text, and the
+              files that the app made. Dez keeps at most {{ APP_LIMITS.savedFiles }} files of one
+              run, each of at most {{ APP_LIMITS.savedFileSize }}. It reads the type of each file
+              from its first bytes, and stores a copy of each image and clip as an asset of the
+              conversation. A run that fails keeps no file. Dez stops a run after
+              {{ APP_LIMITS.runMinutes }} minutes, unless the model sets another time limit.
+            </p>
+
+            <h3>The sandbox</h3>
+            <p>
+              The code of <code>js_eval</code> and of a script app is code that a model wrote, so it
+              runs behind two guards. The first is a rule of the system (Landlock and a filter of
+              system calls on Linux, Seatbelt on macOS), which holds also when the second fails. The
+              second is the permissions of Deno. Behind them:
+            </p>
+            <ul>
+              <li>
+                The rule of the system lets the code of <code>js_eval</code> open only the work
+                folder of its run, in
+                <code v-if="workDir">{{ workDir }}</code><template v-else>the cache folder of the system</template>,
+                and Deno lets it open no file at all. Dez deletes that folder at the end of the run.
+              </li>
+              <li>
+                The code of a script app can open only the work folder of its run and the folder of
+                its own app. So a script app can keep data in its folder from one run to the next.
+                Dez deletes the work folder at the end of the run.
+              </li>
+              <li>
+                No code can open your conversations, your API keys, the <code>assets</code> folder,
+                another app, another work folder, or any other file of yours.
+              </li>
+              <li>
+                No code can connect to the internet or to another program, and none can load a
+                package or other code from the internet.
+              </li>
+            </ul>
+            <p>
+              A Linux system without Landlock (a part of the kernel since Linux 5.13) cannot set the
+              rule of the system. There, Dez does not run Deno at all: <code>js_eval</code> and a
+              run of a script app give the model an error, and Help › Developer Console shows why.
+            </p>
+            <p>No sandbox is perfect. These are the limits of this one that Dez knows:</p>
+            <ul>
+              <li>
+                Memory: on Linux, a run can take about 2 GB at the most. On macOS, only the
+                JavaScript memory of a run has a limit (512 MB), so a run can take more there.
+              </li>
+              <li>
+                Disk space: nothing limits how much a run writes into its folders, so a script app
+                can fill the folder of its app.
+              </li>
+              <li>
+                Code that gets past Deno through a fault of Deno has only the rule of the system
+                against it. It still cannot read a file of yours. But it can learn the facts of a
+                file whose path it knows (that the file is there, its size, and its time), and it
+                can start more programs, which are under the same rule.
+              </li>
+              <li>
+                On macOS, the rule of the system guards the files and the network, but it has no
+                filter of system calls: such code can reach other programs of yours there, for
+                example with a signal. The rule was tested with attack code on Linux only.
+              </li>
+            </ul>
+
+            <h3>How apps are deleted</h3>
+            <p>An app stays until one of these deletes it:</p>
+            <ul>
+              <li>You click the trash of the app, and say yes.</li>
+              <li>
+                You click Delete Unused Files in Settings › General, and say yes. Dez then deletes
+                each app that no conversation and no saved prompt names: the question tells which
+                apps. A text names an app by its path (<code>{{ APPS_VIRTUAL_ROOT }}/</code> and
+                its name), by its card, or by a call of the <code>apps</code> tool with its name.
+                Dez keeps an app that changed in the last {{ APP_LIMITS.unusedMinutes }} minutes,
+                and an app with more than {{ APP_LIMITS.entries }} files and folders.
+              </li>
+              <li>
+                A model deletes the app, or files of it, with the <code>apps</code> tool. Dez does
+                not ask you first.
+              </li>
+            </ul>
+            <p>
+              The delete of a conversation leaves its apps. A compaction keeps them too: its notes
+              list each app of the conversation with its kind and its description. But the card of
+              a shown app goes with the reply that held it: ask the model to show the app again.
             </p>
           </section>
 

@@ -3,7 +3,7 @@ import { byteSizeText } from '../../utils/byteSize'
 import { countOf, countText } from '../../utils/countText'
 import { endOf, startOf } from '../../utils/textCut'
 import { shownAppNames, shownAppText } from './appShow'
-import { APPS_VIRTUAL_ROOT } from './appsTool'
+import { APPS_INVOKE, APPS_TOOL, APPS_VIRTUAL_ROOT } from './appsTool'
 import { jobStartedText, madeAssetIds, madeAssetText, type JobAssetKind } from './jobs'
 import RUNNER from './jsEvalRunner.js?raw'
 import { withoutLocalPaths } from './localPaths'
@@ -86,9 +86,11 @@ export const JS_EVAL_MAX_TOOL_CALLS = 40
 // code that failed tells why.
 const LEAST_CONSOLE_ROOM = 2000
 
-const DEFAULT_SECONDS = 30
+/** The time limit of a run with no `timeout_seconds`, and the most that a
+ *  call can ask for. */
+export const JS_EVAL_DEFAULT_SECONDS = 30
 const MIN_SECONDS = 1
-const MAX_SECONDS = 300
+export const JS_EVAL_MAX_SECONDS = 300
 
 // The name of the work folder of a run in every text for a model.
 const WORK_FOLDER_NAME = '/work'
@@ -114,7 +116,9 @@ export const JS_EVAL_TOOL: ToolDefinition = {
     + 'as in `await dez.sbp("dez.tools/image/scale", { image: "a", width: 1024 })`. '
     + 'A call gives the result text of the tool, the same text that a direct call gives you, and it throws an error with that text when the tool gives an error. '
     + 'The code names an image or a clip by its id, and gets no file of it. '
-    + `One run can make at most ${JS_EVAL_MAX_TOOL_CALLS} tool calls, and none of \`js_eval\`. `
+    + 'In each text that the code gives a tool, Dez cuts a path of a file of the user\'s computer after its start, with the rest of its line '
+    + '(`/home/…`, `/tmp/…`, `~/…`): give a tool a text that needs such a path in a call of your own. '
+    + `One run can make at most ${JS_EVAL_MAX_TOOL_CALLS} tool calls, and none of \`js_eval\` or of \`${APPS_TOOL.name} ${APPS_INVOKE}\`. `
     + 'The result names each image and clip that the calls made, and each job that they started and that is still open. '
     + 'The clock and the time zone are those of the user\'s computer. '
     + 'Each call is a new run: nothing stays from one call to the next. '
@@ -130,8 +134,8 @@ export const JS_EVAL_TOOL: ToolDefinition = {
     {
       name: 'timeout_seconds',
       type: 'integer',
-      description: `The most seconds that the code runs, from ${MIN_SECONDS} to ${MAX_SECONDS}. Dez stops code that runs longer, with no result. `
-        + `The default is ${DEFAULT_SECONDS}.`,
+      description: `The most seconds that the code runs, from ${MIN_SECONDS} to ${JS_EVAL_MAX_SECONDS}. Dez stops code that runs longer, with no result. `
+        + `The default is ${JS_EVAL_DEFAULT_SECONDS}.`,
       required: false,
     },
   ],
@@ -146,14 +150,14 @@ export interface JsEvalCall {
 /** The call that the arguments `args` ask for. Throws a `ToolError` for
  *  no code and for a time limit outside the range. */
 export function jsEvalCall(args: ToolArguments): JsEvalCall {
-  const { [JS_EVAL_CODE_PARAMETER]: code, timeout_seconds: seconds = DEFAULT_SECONDS } = args
+  const { [JS_EVAL_CODE_PARAMETER]: code, timeout_seconds: seconds = JS_EVAL_DEFAULT_SECONDS } = args
   if (typeof code !== 'string' || code.trim() === '') {
     throw new ToolError('`code` is missing or blank, so Dez ran nothing. Give the code to run as `code`: the body of an async function '
       + 'that gives its result with `return`, for example `return new Date().toISOString()`.')
   }
-  if (typeof seconds !== 'number' || !Number.isInteger(seconds) || seconds < MIN_SECONDS || seconds > MAX_SECONDS) {
-    throw new ToolError(`\`timeout_seconds\` must be a whole number from ${MIN_SECONDS} to ${MAX_SECONDS}, so Dez ran nothing. `
-      + `Leave it out for the default of ${DEFAULT_SECONDS} seconds.`)
+  if (typeof seconds !== 'number' || !Number.isInteger(seconds) || seconds < MIN_SECONDS || seconds > JS_EVAL_MAX_SECONDS) {
+    throw new ToolError(`\`timeout_seconds\` must be a whole number from ${MIN_SECONDS} to ${JS_EVAL_MAX_SECONDS}, so Dez ran nothing. `
+      + `Leave it out for the default of ${JS_EVAL_DEFAULT_SECONDS} seconds.`)
   }
   return { code, timeoutMs: seconds * 1000 }
 }
@@ -479,7 +483,7 @@ function runOutcome(call: JsEvalCall, end: ProgramEnd, line: JsEvalEndLine | nul
   const failed = (lead: string): RunOutcome => ({ isError: true, lead, given: null, advice: [] })
   if (end.kind === 'timedOut') {
     return failed(`Dez stopped the code: it did not end within ${countOf(call.timeoutMs / 1000, 'second')}. `
-      + `Make the code do less work, or give it more time with \`timeout_seconds\` (at most ${MAX_SECONDS}).`)
+      + `Make the code do less work, or give it more time with \`timeout_seconds\` (at most ${JS_EVAL_MAX_SECONDS}).`)
   }
   if (end.kind === 'outputTooLarge') {
     return failed(`Dez stopped the code: it wrote more than ${byteSizeText(JS_EVAL_OUTPUT_BYTES)} of output. `

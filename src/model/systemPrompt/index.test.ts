@@ -1,4 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { APP_READ_ASSET, APP_RUN_FRAME_SIZE, APP_SAVE_ASSET } from '../tools/appBridge'
+import { APPS_INVOKE, APPS_SHOW, APPS_TOOL, APPS_VIRTUAL_ROOT } from '../tools/appsTool'
+import { SCRIPT_MAIN_FILE, UI_CLIENT_SCRIPT_TAG, UI_INDEX_FILE, UI_OWN_SCRIPT_TAG } from '../tools/appTemplates'
+import { JS_EVAL_TOOL } from '../tools/jsEval'
 import { TOOL_DEFINITIONS } from '../tools/registry'
 import type { ToolDefinition } from '../tools/types'
 import { ExplainedError } from '../../utils/errorText'
@@ -30,6 +34,42 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks()
+})
+
+describe('the built-in template', () => {
+  // The template is prose, so a name or a size that the code changes stays
+  // in it as it was, and a model then writes a call or a page that fails.
+  it('tells the code runs and the apps by the names and the sizes that the code has', () => {
+    for (const text of [
+      `\`${JS_EVAL_TOOL.name}\``,
+      `\`${APPS_TOOL.name}\``,
+      `\`${APPS_VIRTUAL_ROOT}/<name>/\``,
+      `\`${SCRIPT_MAIN_FILE}\``,
+      `\`${UI_INDEX_FILE}\``,
+      `\`${UI_CLIENT_SCRIPT_TAG}\``,
+      `\`${UI_OWN_SCRIPT_TAG}\``,
+      `dez.sbp('${APP_READ_ASSET}', `,
+      `dez.sbp('${APP_SAVE_ASSET}', `,
+      `${APP_RUN_FRAME_SIZE.width} by ${APP_RUN_FRAME_SIZE.height} CSS pixels`,
+    ]) expect(BUILT_IN_SYSTEM_PROMPT).toContain(text)
+
+    const subcommands = APPS_TOOL.subcommands.map(({ name }) => name)
+    for (const name of ['init', 'list_apps', APPS_INVOKE, APPS_SHOW]) {
+      expect(subcommands).toContain(name)
+      expect(BUILT_IN_SYSTEM_PROMPT).toContain(`\`${name}\``)
+    }
+  })
+
+  it('makes a paragraph depend only on a tool that Dez has', () => {
+    const tools = TOOL_DEFINITIONS.map(({ name }) => name)
+    const named = [...BUILT_IN_SYSTEM_PROMPT.matchAll(/the list of Dez tools above has ((?:`[a-z_]+`(?:, or |, | or )?)+)/g)]
+      .flatMap(([, names]) => [...names.matchAll(/`([a-z_]+)`/g)].map(([, name]) => name))
+
+    // The paragraphs of the two tools of this file are among them, so the
+    // search finds the names.
+    expect(named).toEqual(expect.arrayContaining([JS_EVAL_TOOL.name, APPS_TOOL.name]))
+    expect(named.filter((name) => !tools.includes(name))).toEqual([])
+  })
 })
 
 describe('buildSystemPrompt with the built-in template', () => {
