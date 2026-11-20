@@ -1,10 +1,15 @@
-import { EditorState } from '@codemirror/state'
-import { describe, expect, it } from 'vitest'
+import { undo } from '@codemirror/commands'
+import { EditorState, type Transaction, type TransactionSpec } from '@codemirror/state'
+import type { EditorView } from '@codemirror/view'
+import sbp from '@sbp/sbp'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { appTagText } from '../../model/chat/appTags'
 import { compactionBlockText } from '../../model/chat/compaction'
 import type { Role } from '../../model/chat/types'
+import type { AppCardFacts } from '../../model/tools/appShow'
 import { PILL_OPEN, sectionsField, setSectionThinkingEffect } from '../thread/cmEditor'
-import { appRuns, carriedAppRuns, markdownApps, renderedApps, runAppEffect, stopAppEffect, type CarriedAppRun } from './apps'
+import { editsAgentText } from './agentTextEdits'
+import { appRuns, carriedAppRuns, deleteApp, markdownApps, renderedApps, runAppEffect, stopAppEffect, type CarriedAppRun } from './apps'
 import { createState, joinSections } from './testing'
 
 // The line rules of the cards have their tests in `lineBlocks.test.ts`.
@@ -165,5 +170,167 @@ describe('carriedAppRuns', () => {
     expect(running(compacted)).toStrictEqual([['timer', TIMER], ['notes', NOTES]])
 
     expect(appRuns(stateWith(['another conversation'], ['user'], carried))).toStrictEqual([])
+  })
+})
+
+describe('deleteApp (the trash of an app)', () => {
+  const READY: AppCardFacts = { state: 'ready', description: 'Keeps notes.', size: { bytes: 2048, more: false } }
+
+  // What the stub selectors do, and what they got.
+  let facts: Record<string, AppCardFacts> = {}
+  let answer: () => boolean = () => true
+  let deleteFolder: () => Promise<void> = async () => {}
+  let confirmMessages: string[] = []
+  let deletedApps: string[] = []
+  let toastTitles: string[] = []
+  // The state and each transaction of the stand-in view.
+  let state: EditorState
+  let transactions: Transaction[] = []
+
+  sbp('sbp/selectors/register', {
+    async 'dez.ui/confirm' ({ message }: { message: string }): Promise<boolean> {
+      confirmMessages.push(message)
+      return answer()
+    },
+    async 'dez.controller/apps/card' (name: string): Promise<AppCardFacts> {
+      return facts[name] ?? { state: 'missing' }
+    },
+    async 'dez.controller/apps/delete' (name: string): Promise<void> {
+      deletedApps.push(name)
+      await deleteFolder()
+    },
+    'dez.ui/toast' (_area: string, toast: { title: string }): void {
+      toastTitles.push(toast.title)
+    },
+    'dez.model/tabs/activeId' (): string {
+      return 'tab-1'
+    },
+  })
+
+  const view = {
+    get state() {
+      return state
+    },
+    dispatch(spec: TransactionSpec) {
+      const tr = state.update(spec)
+      transactions.push(tr)
+      state = tr.state
+    },
+    hasFocus: false,
+    dom: { contains: () => false },
+    // The editor draws no card here.
+    contentDOM: { querySelectorAll: () => [] },
+  } as unknown as EditorView
+
+  /** A conversation whose reply shows the notes app two times and the
+   *  timer app once, with a run of each card, after a typed `!` that undo
+   *  can take back. */
+  function open(): void {
+    state = started(createState(['ask', `before\n${NOTES}\n${TIMER}\n${NOTES}\nafter`], ['user', 'agent']), 0, 1, 2)
+    state = state.update({ changes: { from: state.doc.length, insert: '!' }, userEvent: 'input.type' }).state
+    transactions = []
+  }
+
+  /** The trash of the card `card` (an index in doc order). */
+  function trash(card: number): Promise<void> {
+    return deleteApp(view, renderedApps(state)[card].from)
+  }
+
+  function sectionText(): string {
+    return state.doc.toString().slice(state.doc.toString().indexOf('before'))
+  }
+
+  function undoOnce(): string {
+    let undone = state
+    expect(undo({ state, dispatch: (tr) => { undone = tr.state } })).toBe(true)
+    return undone.doc.toString().slice(undone.doc.toString().indexOf('before'))
+  }
+
+  beforeEach(() => {
+    facts = { notes: READY, timer: READY }
+    answer = () => true
+    deleteFolder = async () => {}
+    confirmMessages = []
+    deletedApps = []
+    toastTitles = []
+    vi.stubGlobal('document', { fullscreenElement: null })
+    open()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('deletes the app, ends each run of it, and takes only the line of its card out, in a step that undo skips', async () => {
+    await trash(0)
+
+    expect(confirmMessages).toStrictEqual(['Are you sure you want to delete the app notes? Dez deletes the folder of the app with all its files. No conversation can run the app after that.'])
+    expect(deletedApps).toStrictEqual(['notes'])
+    expect(sectionText()).toBe(`before\n${TIMER}\n${NOTES}\nafter!`)
+    expect(running(state)).toStrictEqual([['timer', TIMER]])
+    expect(undoOnce()).toBe(`before\n${TIMER}\n${NOTES}\nafter`)
+    expect(toastTitles).toStrictEqual([])
+    // The edited flag of the tab (agentTextEdits.ts).
+    expect(transactions.some(editsAgentText)).toBe(true)
+  })
+
+  it('changes nothing when the user answers "No"', async () => {
+    answer = () => false
+    const runs = appRuns(state)
+
+    await trash(0)
+
+    expect(deletedApps).toStrictEqual([])
+    expect(sectionText()).toBe(`before\n${NOTES}\n${TIMER}\n${NOTES}\nafter!`)
+    expect(appRuns(state)).toBe(runs)
+  })
+
+  it('keeps the card and the runs when the delete fails', async () => {
+    deleteFolder = async () => { throw new Error('Permission denied') }
+    const runs = appRuns(state)
+
+    await trash(2)
+
+    expect(deletedApps).toStrictEqual(['notes'])
+    expect(sectionText()).toBe(`before\n${NOTES}\n${TIMER}\n${NOTES}\nafter!`)
+    expect(appRuns(state)).toBe(runs)
+  })
+
+  it('deletes no file for the card of an app that is gone, and takes its line out in a step that undo takes back', async () => {
+    delete facts.timer
+
+    await trash(1)
+
+    expect(confirmMessages).toStrictEqual(['Are you sure you want to remove the card of the app timer from the conversation? The app is gone, so Dez deletes no file.'])
+    expect(deletedApps).toStrictEqual([])
+    expect(sectionText()).toBe(`before\n${NOTES}\n${NOTES}\nafter!`)
+    expect(undoOnce()).toBe(`before\n${NOTES}\n${TIMER}\n${NOTES}\nafter!`)
+  })
+
+  it('deletes no file when the card went while the prompt was open, and tells the user', async () => {
+    answer = () => {
+      const [card] = renderedApps(state)
+      view.dispatch({ changes: { from: card.from, to: card.to, insert: 'text' } })
+      return true
+    }
+
+    await trash(0)
+
+    expect(deletedApps).toStrictEqual([])
+    expect(toastTitles).toStrictEqual(['App not deleted'])
+    expect(sectionText()).toBe(`before\ntext\n${TIMER}\n${NOTES}\nafter!`)
+  })
+
+  // A stream can move the card while the prompt is open.
+  it('follows its card through a change before it, and deletes that card, not the other one of the app', async () => {
+    answer = () => {
+      view.dispatch({ changes: { from: state.doc.toString().indexOf('before'), insert: 'More text. ' } })
+      return true
+    }
+
+    await trash(2)
+
+    expect(deletedApps).toStrictEqual(['notes'])
+    expect(sectionText()).toBe(`before\n${NOTES}\n${TIMER}\nafter!`)
   })
 })

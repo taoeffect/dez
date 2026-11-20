@@ -477,9 +477,24 @@ export function kindName(kind: AppsEntryKind): string {
   return kind === 'other' ? OTHER_KIND : `a ${kind}`
 }
 
-// The bytes of the files of a listing.
-function filesBytes(tree: AppsTree): number {
-  return tree.entries.reduce((bytes, entry) => bytes + (entry.kind === 'file' ? entry.size : 0), 0)
+/** The size of an app: the bytes of the files of its listing. `more` tells
+ *  that the app has more files and folders than the listing, so it is
+ *  larger than `bytes`. */
+export interface AppSize {
+  bytes: number
+  more: boolean
+}
+
+/** The size of the folder with the listing `tree`. The one rule of the
+ *  size of an app: the results of the tool and the card of an app in a
+ *  conversation tell the same number. */
+export function appSize(tree: AppsTree): AppSize {
+  return { bytes: tree.entries.reduce((bytes, entry) => bytes + (entry.kind === 'file' ? entry.size : 0), 0), more: tree.more }
+}
+
+/** A size as a text: `12 KB`, or `more than 12 KB`. */
+export function appSizeText({ bytes, more }: AppSize): string {
+  return `${more ? 'more than ' : ''}${byteSizeText(bytes)}`
 }
 
 // A path of a listing as a result shows it. A program can make a name that
@@ -526,7 +541,7 @@ export function checkAppRoom(app: AppsPath, tree: AppsTree, added: { entries: nu
   if (added.entries > 0 && entries + added.entries > APPS_MAX_ENTRIES) {
     throw new ToolError(`The app ${app.virtual} has ${countText(entries)} files and folders, and this call would add ${countText(added.entries)}. ${advice}`)
   }
-  const bytes = filesBytes(tree)
+  const { bytes } = appSize(tree)
   if (added.bytes > 0 && bytes + added.bytes > APPS_MAX_BYTES) {
     throw new ToolError(`The app ${app.virtual} has ${byteSizeText(bytes)}, and this call would add ${byteSizeText(added.bytes)}. ${advice}`)
   }
@@ -836,7 +851,7 @@ export function rmStep(path: AppsPath, tree: AppsTree): { folder: boolean, text:
   return {
     folder: true,
     text: [
-      `Deleted the folder ${path.virtual} with the ${more}${countText(below.length)} files and folders in it (${more}${byteSizeText(filesBytes(tree))}):`,
+      `Deleted the folder ${path.virtual} with the ${more}${countText(below.length)} files and folders in it (${appSizeText(appSize(tree))}):`,
       ...below.slice(0, RM_MAX_SHOWN_PATHS),
       ...(rest > 0 ? [`… and ${more}${countText(rest)} more.`] : []),
     ].join('\n'),
@@ -1098,7 +1113,7 @@ function manifestColumns({ tree, manifest }: ListedApp): [string, string] {
  *  app. The size of an app with more than `APPS_MAX_ENTRIES` files and
  *  folders is the size of the listed ones, and the row tells so. */
 export function listAppsText(call: ListAppsCall, apps: readonly ListedApp[]): string {
-  const all = apps.filter((app) => app.tree.kind === 'folder').map((app) => ({ app, bytes: filesBytes(app.tree) }))
+  const all = apps.filter((app) => app.tree.kind === 'folder').map((app) => ({ app, size: appSize(app.tree) }))
   if (all.length === 0) return NO_APPS
 
   const criteria = [
@@ -1106,7 +1121,7 @@ export function listAppsText(call: ListAppsCall, apps: readonly ListedApp[]): st
     ...(call.minBytes === null ? [] : [`\`min_bytes\` ${call.minBytes}`]),
     ...(call.maxBytes === null ? [] : [`\`max_bytes\` ${call.maxBytes}`]),
   ].join(' and ')
-  const matches = all.filter(({ app, bytes }) => app.name.toLowerCase().includes(call.name)
+  const matches = all.filter(({ app, size: { bytes } }) => app.name.toLowerCase().includes(call.name)
     && (call.minBytes === null || bytes >= call.minBytes)
     && (call.maxBytes === null || bytes <= call.maxBytes))
   if (matches.length === 0) {
@@ -1118,11 +1133,11 @@ export function listAppsText(call: ListAppsCall, apps: readonly ListedApp[]): st
   if (call.sort !== 'name') {
     const direction = call.sort === 'largest' ? -1 : 1
     // The sort keeps the order by name for apps of one size.
-    sorted.sort((a, b) => direction * (a.bytes - b.bytes))
+    sorted.sort((a, b) => direction * (a.size.bytes - b.size.bytes))
   }
-  const rows = sorted.slice(0, LIST_APPS_MAX_ROWS).map(({ app, bytes }) => {
+  const rows = sorted.slice(0, LIST_APPS_MAX_ROWS).map(({ app, size }) => {
     const [kind, description] = manifestColumns(app)
-    return [app.name, kind, `${app.tree.more ? 'more than ' : ''}${byteSizeText(bytes)}`, description].join(' | ')
+    return [app.name, kind, appSizeText(size), description].join(' | ')
   })
   if (sorted.length > LIST_APPS_MAX_ROWS) rows.push(`… and ${countText(sorted.length - LIST_APPS_MAX_ROWS)} more. Use \`name\` to get a shorter list.`)
 

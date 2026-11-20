@@ -1,5 +1,7 @@
+import fs from 'node:fs'
 import path from 'node:path'
 import { appManifestText, MANIFEST_FILE, type AppManifest } from '../../../src/model/tools/appManifest'
+import { appSizeText } from '../../../src/model/tools/appsTool'
 import { inFrame } from './appFrames'
 import { elementCenter, type Point } from './dom'
 import { writeTestFile } from './fixtures'
@@ -24,6 +26,17 @@ export async function seedApp (appsDir: string, manifest: AppManifest, files: Re
   const folder = path.join(appsDir, manifest.name)
   await writeTestFile(path.join(folder, MANIFEST_FILE), Buffer.from(appManifestText(manifest)))
   for (const [name, text] of Object.entries(files)) await writeTestFile(path.join(folder, name), Buffer.from(text))
+}
+
+/** The size of the folder of the app `name` of `appsDir`, as Dez tells
+ *  it: the bytes of all its files. */
+export async function appFolderSize (appsDir: string, name: string): Promise<string> {
+  const folder = path.join(appsDir, name)
+  let bytes = 0
+  for (const entry of await fs.promises.readdir(folder, { recursive: true, withFileTypes: true })) {
+    if (entry.isFile()) bytes += (await fs.promises.stat(path.join(entry.parentPath, entry.name))).size
+  }
+  return appSizeText({ bytes, more: false })
 }
 
 /** One app card of the editor. */
@@ -51,6 +64,25 @@ export async function shownAppCards (browser: E2EBrowser): Promise<ShownAppCard[
   })))
 }
 
+/** The tools in the corner of one poster. */
+export interface ShownAppCorner {
+  app: string | null
+  /** The size of the folder of the app; null when the corner tells none. */
+  size: string | null
+  /** The tooltip of the trash. */
+  trash: string | null
+}
+
+/** The corner tools of the posters that the active editor shows, in doc
+ *  order. A card of an app that runs has none. */
+export async function shownAppCorners (browser: E2EBrowser): Promise<ShownAppCorner[]> {
+  return browser.execute(() => Array.from(document.querySelectorAll<HTMLElement>('.cm-content .dez-app .dez-app__tools'), (tools): ShownAppCorner => ({
+    app: tools.closest('.dez-app')?.getAttribute('data-app') ?? null,
+    size: tools.querySelector('.dez-app__size')?.textContent ?? null,
+    trash: tools.querySelector('.dez-app__trash')?.getAttribute('title') ?? null,
+  })))
+}
+
 /** The frame host of one app that runs in the editor. */
 export interface ShownAppFrame {
   app: string | null
@@ -62,6 +94,13 @@ export interface ShownAppFrame {
    *  largest distance of two edges. Null when the editor does not draw the
    *  placeholder (it is far out of view). */
   offPlace: number | null
+  /** The size that the host shows in: over its card (`card`), over the
+   *  conversation view (`expanded`), or over the screen (`fullscreen`). */
+  view: 'card' | 'expanded' | 'fullscreen'
+  /** How far the host is from the box that it must cover, in px, as
+   *  `offPlace` tells it: the box of the scroller for `expanded`, the
+   *  window for `fullscreen`. Null for `card`. */
+  offCover: number | null
 }
 
 /** The frame hosts of the active editor, read two frames after the last
@@ -69,18 +108,68 @@ export interface ShownAppFrame {
 export async function shownAppFrames (browser: E2EBrowser): Promise<ShownAppFrame[]> {
   return browser.execute(() => new Promise<ShownAppFrame[]>((resolve) => {
     requestAnimationFrame(() => requestAnimationFrame(() => {
+      const EDGES = ['left', 'top', 'right', 'bottom'] as const
+      const windowBox = { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight }
       resolve(Array.from(document.querySelectorAll<HTMLElement>('.cm-scroller > .dez-app-frame'), (host) => {
         const place = document.querySelector(`.cm-content [data-app-frame-place="${host.dataset.run}"]`)?.getBoundingClientRect()
         const at = host.getBoundingClientRect()
+        const off = (box: Record<typeof EDGES[number], number>): number => Math.max(...EDGES.map((edge) => Math.abs(at[edge] - box[edge])))
+        const view = document.fullscreenElement === host ? 'fullscreen' : host.hasAttribute('data-expanded') ? 'expanded' : 'card'
+        const scroller = host.parentElement?.getBoundingClientRect()
         return {
           app: host.dataset.app ?? null,
           run: host.dataset.run ?? null,
           top: Math.round(at.top),
-          offPlace: place ? Math.max(...(['left', 'top', 'right', 'bottom'] as const).map((edge) => Math.abs(at[edge] - place[edge]))) : null,
+          offPlace: place ? off(place) : null,
+          view,
+          offCover: view === 'fullscreen' ? off(windowBox) : view === 'expanded' && scroller ? off(scroller) : null,
         }
       }))
     }))
   }))
+}
+
+/** The bar of the frame host of one app that runs. */
+export interface ShownAppBar {
+  app: string | null
+  /** The texts of the bar, one part per line: the name of the app, then
+   *  the size of its folder. */
+  text: string
+  /** The tooltip of each button of the bar, in order. */
+  buttons: string[]
+}
+
+/** The bars of the frame hosts of the active editor. */
+export async function shownAppBars (browser: E2EBrowser): Promise<ShownAppBar[]> {
+  return browser.execute(() => Array.from(document.querySelectorAll<HTMLElement>('.cm-scroller > .dez-app-frame'), (host): ShownAppBar => ({
+    app: host.dataset.app ?? null,
+    text: Array.from(host.querySelectorAll('.dez-app-frame__name, .dez-app-frame__size'), (part) => part.textContent ?? '').join('\n'),
+    buttons: Array.from(host.querySelectorAll('.dez-app-frame__bar button'), (button) => button.getAttribute('title') ?? ''),
+  })))
+}
+
+/** Waits until the app `app` that runs fills the screen (`on`), or until
+ *  nothing does. The page is ready for a click only when the layout is at
+ *  rest: the fullscreen button of the bar has its new state (the host sets
+ *  it at `fullscreenchange`), and two reads of the window size agree,
+ *  because the window gets its new size in steps. */
+export async function waitForAppFullscreen (browser: E2EBrowser, app: string, on: boolean): Promise<void> {
+  let state: { host: boolean, button: boolean, size: string } | undefined
+  let sizeBefore = ''
+  try {
+    await browser.waitUntil(async () => {
+      state = await browser.execute((name: string) => ({
+        host: document.fullscreenElement?.matches(`.cm-scroller > .dez-app-frame[data-app="${name}"]`) ?? false,
+        button: document.querySelector(`.cm-scroller > .dez-app-frame[data-app="${name}"][data-fullscreen]`) !== null,
+        size: `${window.innerWidth}x${window.innerHeight}`,
+      }), app)
+      const atRest = state.host === on && state.button === on && state.size === sizeBefore
+      sizeBefore = state.size
+      return atRest
+    }, { timeout: 10_000, interval: 150 })
+  } catch (err) {
+    throw new Error(`app fullscreen: expected ${on}, got ${JSON.stringify(state)}`, { cause: err })
+  }
 }
 
 // The frame of the app `app` that runs in the active editor (the first one,

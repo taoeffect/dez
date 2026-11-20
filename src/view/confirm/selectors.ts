@@ -1,5 +1,5 @@
 import sbp from '@sbp/sbp'
-import { shallowRef } from 'vue'
+import { answerConfirm, confirmRequest } from './request'
 
 export interface ConfirmOptions {
   message: string
@@ -7,26 +7,6 @@ export interface ConfirmOptions {
    *  picks it. */
   confirmLabel?: string
   cancelLabel?: string
-}
-
-export interface ConfirmRequest {
-  message: string
-  confirmLabel: string
-  cancelLabel: string
-  resolve: (confirmed: boolean) => void
-}
-
-/** The open prompt, drawn by `ConfirmDialog.vue`; `null` while none is
- *  open. */
-export const confirmRequest = shallowRef<ConfirmRequest | null>(null)
-
-/** Closes the open prompt with the user's answer. Does nothing when no
- *  prompt is open. */
-export function answerConfirm(confirmed: boolean): void {
-  const request = confirmRequest.value
-  if (!request) return
-  confirmRequest.value = null
-  request.resolve(confirmed)
 }
 
 export default sbp('sbp/selectors/register', {

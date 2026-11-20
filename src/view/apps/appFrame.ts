@@ -23,9 +23,13 @@ import { UI_INDEX_FILE } from '../../model/tools/appTemplates'
 
 /** A message of the page of an app:
  *  - `escape`: the user pressed Escape, and the page did not take the key
- *    for itself. */
+ *    for itself.
+ *  - `menu`: a context click that the page did not take for itself, at a
+ *    place where the menu of the webview has no use (no text field, no
+ *    selected text). */
 const frameMessageSchema = z.discriminatedUnion('dez', [
   z.object({ dez: z.literal('escape') }),
+  z.object({ dez: z.literal('menu') }),
 ])
 
 export type AppFrameMessage = z.infer<typeof frameMessageSchema>

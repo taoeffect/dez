@@ -5,6 +5,7 @@ import { consoleErrors, elementCenter, movePointer, pointerRightClickAt, resetCo
 import { appFilePath, mediaTempDir, seedAppState, writeTestFile } from './harness/fixtures'
 import { shownImages, solidPng } from './harness/images'
 import { NOT_A_CLIP, WEBM_VIDEO, clipTag, problemCards, shownPlayers, silentWav, startClipServer, type ClipServer } from './harness/media'
+import { menuRecord, recordAssetMenus, resetMenuRecord } from './harness/menus'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
 import { assetPartPoint, editorDoc, editorSelection, focusEditor, focusedArea, openSeededConversation, setCaret } from './harness/thread'
 import { intermediateInvokeBlock, pressToolChip } from './harness/toolChips'
@@ -51,23 +52,6 @@ describe('asset menu', () => {
     return { ...await editorSelection(browser), focus: await focusedArea(browser), doc: await editorDoc(browser) }
   }
 
-  // The files of the `popupAsset` calls, and whether each `contextmenu`
-  // event was canceled after every listener of the page ran, since the
-  // last reset.
-  async function menuRecord (): Promise<{ files: Array<string | null>, canceled: boolean[] }> {
-    return browser.execute(() => ({
-      files: [...Reflect.get(window, '__e2eAssetMenus') as Array<string | null>],
-      canceled: [...Reflect.get(window, '__e2eContextMenus') as boolean[]],
-    }))
-  }
-
-  async function resetMenuRecord (): Promise<void> {
-    await browser.execute(() => {
-      (Reflect.get(window, '__e2eAssetMenus') as unknown[]).length = 0;
-      (Reflect.get(window, '__e2eContextMenus') as unknown[]).length = 0
-    })
-  }
-
   // Right-clicks the element `part` of each asset of `asset`, in doc order,
   // and checks that each click asked for the menu with the file of
   // `files[index]`, canceled the webview's menu, and left the editor as
@@ -76,10 +60,10 @@ describe('asset menu', () => {
   // takes the clicks there.
   async function expectMenus (asset: string, part: (index: number) => string, files: Array<string | null>, before: EditorState): Promise<void> {
     for (const [index, file] of files.entries()) {
-      await resetMenuRecord()
+      await resetMenuRecord(browser)
       await movePointer(browser, await elementCenter(browser, 'header.tab-bar'))
       await pointerRightClickAt(browser, await assetPartPoint(browser, asset, index, part(index)))
-      await waitForValue(browser, `menu of ${asset} ${index}`, menuRecord, { files: [file], canceled: [true] })
+      await waitForValue(browser, `menu of ${asset} ${index}`, () => menuRecord(browser), { files: [file], canceled: [true] })
       expect(await editorState(), `editor after a right-click on ${asset} ${index}`).toStrictEqual(before)
     }
   }
@@ -95,26 +79,12 @@ describe('asset menu', () => {
       throw err
     }
     await waitFor(browser, 'header.tab-bar', 60_000)
-    // A filter that returns false stops the selector call, so no native
-    // menu opens. The window listener runs after every listener of the
-    // page, so it sees whether one of them canceled the webview's menu.
-    await browser.execute(() => {
-      const sbp = Reflect.get(window, 'sbp') as (selector: string, ...args: unknown[]) => unknown
-      const files: Array<string | null> = []
-      const canceled: boolean[] = []
-      Reflect.set(window, '__e2eAssetMenus', files)
-      Reflect.set(window, '__e2eContextMenus', canceled)
-      sbp('sbp/filters/selector/add', 'dez.controller/menu/popupAsset', (_domain: string, _selector: string, data: unknown[]) => {
-        files.push(data[0] as string | null)
-        return false
-      })
-      window.addEventListener('contextmenu', (event) => canceled.push(event.defaultPrevented))
-    })
+    await recordAssetMenus(browser)
   })
 
   beforeEach(async () => {
     await resetConsoleErrors(browser)
-    await resetMenuRecord()
+    await resetMenuRecord(browser)
   })
 
   afterEach(async (ctx) => {
@@ -251,7 +221,7 @@ describe('asset menu', () => {
       })
     })
     expect(notCanceled).toStrictEqual([true, true])
-    expect(await menuRecord()).toStrictEqual({ files: [], canceled: [false, false] })
+    expect(await menuRecord(browser)).toStrictEqual({ files: [], canceled: [false, false] })
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 

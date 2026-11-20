@@ -126,8 +126,9 @@ export default sbp('sbp/selectors/register', {
   },
 
   /** Puts the caret in the active editor, so the user can type at once.
-   *  Does nothing while a modal (the confirm prompt, Settings, or History)
-   *  covers the editor. With `keepTextFieldFocus`, it also does nothing
+   *  Does nothing while a modal covers the editor (`isModalOpen`: the
+   *  confirm prompt, a panel, the expanded view of an app). With
+   *  `keepTextFieldFocus`, it also does nothing
    *  while a native text field outside the editor has the focus, such as
    *  the find field, so the user can go on typing in it. A field inside the
    *  editor (the textarea of a thinking panel or a tool result) does not

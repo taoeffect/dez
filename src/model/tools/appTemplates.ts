@@ -15,7 +15,8 @@ import { appManifestText, MANIFEST_FILE, type AppManifest } from './appManifest'
 // own, so that a model reads and edits each on its own. Before its own
 // script it loads `~dez.js`: Dez's client script, which is no file of the
 // app (src-tauri/src/app_client.js). Without it, Escape in the app does
-// not give the keyboard back to Dez.
+// not give the keyboard back to Dez, and a context click in the app shows
+// the menu of the webview.
 
 /** One file of a template: its name in the folder of the app, and its
  *  text. */

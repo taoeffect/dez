@@ -4,12 +4,17 @@ import sbp from '@sbp/sbp'
 import { findAppTags, type AppTag } from '../../model/chat/appTags'
 import { SENTINEL_CHAR, plainLiveText } from '../../model/chat/content'
 import type { AppCardFacts } from '../../model/tools/appShow'
-import { FRAME_PLACE_ATTRIBUTE, placeAppFrames, type AppRun } from '../apps/appFrameHost'
+import { appSizeLabel, knownAppFacts, readAppFacts, setAppDeleted } from '../apps/appFacts'
+import { FRAME_PLACE_ATTRIBUTE, placeAppFrames, type AppFrameActions, type AppRun } from '../apps/appFrameHost'
 import { appIcon } from '../apps/appIcon'
+import { leaveFullscreen } from '../fullscreen'
 import { APP_BOX_HEIGHT_PX, APP_CARD_PADDING_PX, editorSizePx, sectionsField, type SectionModel } from '../thread/cmEditor'
 import { compactionBlockEnd } from './compactionBlock'
+import { syncDomSelection } from './focus'
+import { linesRemovalRange } from './images'
 import { lineBlocks, sectionRolesChanged, sectionTexts } from './lineBlocks'
-import { ROUND_STROKE, svgIcon, type IconShapes } from './svgIcon'
+import { followShownRange, pendingRanges } from './pendingRanges'
+import { ROUND_STROKE, svgIcon, trashIcon, type IconShapes } from './svgIcon'
 
 // The apps that Dez shows in a conversation (app tags,
 // src/model/chat/appTags.ts), each shown as a card in place of its tag,
@@ -20,7 +25,9 @@ import { ROUND_STROKE, svgIcon, type IconShapes } from './svgIcon'
 // An app starts only on a click on Run: the code of an app is the work of
 // a model, a loop in it that never ends blocks the window of Dez, and a
 // conversation with many apps must not start them all. So the card is a
-// poster (the name, the description, Run) until then.
+// poster (the name, the description, Run) until then. A corner of the
+// poster has the size of the folder of the app, and the trash that
+// deletes the app (`deleteApp`).
 //
 // The apps that run are a part of the editor state (`AppRun`): a run
 // belongs to the tag whose card started it, and its place follows the tag
@@ -29,6 +36,10 @@ import { ROUND_STROKE, svgIcon, type IconShapes } from './svgIcon'
 // (view/apps/appFrameHost.ts) shows the frame of the app over it: a
 // widget cannot hold the frame, as CodeMirror makes each widget again for
 // a new state and takes away the DOM of one that is far out of view.
+//
+// The facts of an app (its description, its size, whether Dez can show
+// it) are in view/apps/appFacts.ts: a card draws from the last ones at
+// once, and then reads them again.
 
 const ROOT_CLASS = 'dez-app'
 
@@ -61,10 +72,6 @@ interface AppsState {
   decorations: DecorationSet
 }
 
-// The last facts that Dez read of each app, by its name: a card draws from
-// them at once, with no empty frame in between, and then reads them again.
-const knownFacts = new Map<string, AppCardFacts>()
-
 function span(part: string, text = ''): HTMLSpanElement {
   const element = document.createElement('span')
   element.className = `${ROOT_CLASS}__${part}`
@@ -96,6 +103,25 @@ function poster(name: string, facts: AppCardFacts | undefined, run: () => void):
   return made
 }
 
+// The corner of the poster of the app `name`: the size of its folder, when
+// `facts` have it, and the trash. The trash is out of the Tab order, as
+// the trash of an image is: Tab in the editor never lands in a card.
+function cornerTools(view: EditorView, root: HTMLElement, name: string, facts: AppCardFacts | undefined): HTMLElement {
+  const tools = span('tools')
+  const size = appSizeLabel(facts)
+  if (size) tools.append(span('size', size))
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = `${ROOT_CLASS}__trash`
+  button.title = facts?.state === 'missing' ? `Remove the card of the app ${name}` : `Delete the app ${name}`
+  button.setAttribute('aria-label', button.title)
+  button.tabIndex = -1
+  button.append(trashIcon())
+  button.addEventListener('click', () => void deleteApp(view, view.posAtDOM(root)))
+  tools.append(button)
+  return tools
+}
+
 // The box of the card `root`: the poster is in it, or the frame of a run
 // is over it.
 function boxOf(root: HTMLElement): HTMLElement {
@@ -108,29 +134,11 @@ function showsPoster(root: HTMLElement): boolean {
   return root.isConnected && !boxOf(root).hasAttribute(FRAME_PLACE_ATTRIBUTE)
 }
 
-// The reads of the facts that run now, by the name of their app: the cards
-// of one app that are drawn together share one read.
-const factReads = new Map<string, Promise<AppCardFacts>>()
-
-// Reads the facts of the app `name` again; never rejects.
-function readFacts(name: string): Promise<AppCardFacts> {
-  let read = factReads.get(name)
-  if (!read) {
-    read = (sbp('dez.controller/apps/card', name) as Promise<AppCardFacts>).then((facts) => {
-      knownFacts.set(name, facts)
-      factReads.delete(name)
-      return facts
-    })
-    factReads.set(name, read)
-  }
-  return read
-}
-
 // Run of the card `root`: starts the app only when its files are still
 // those of a UI app. The files can change after the card was drawn (the
 // `apps` tool, a delete), and the card then tells why there is no run.
 async function runApp(view: EditorView, root: HTMLElement, name: string): Promise<void> {
-  const facts = await readFacts(name)
+  const facts = await readAppFacts(name)
   if (!showsPoster(root)) return
   if (facts.state !== 'ready') {
     drawPoster(view, root, name)
@@ -141,12 +149,22 @@ async function runApp(view: EditorView, root: HTMLElement, name: string): Promis
 }
 
 function drawPoster(view: EditorView, root: HTMLElement, name: string): void {
-  boxOf(root).replaceChildren(poster(name, knownFacts.get(name), () => void runApp(view, root, name)))
+  const facts = knownAppFacts(name)
+  boxOf(root).replaceChildren(poster(name, facts, () => void runApp(view, root, name)), cornerTools(view, root, name, facts))
+}
+
+// Draws again each poster of the app `name` that the editor shows now,
+// from the facts that Dez has. The name of an app is safe in a selector
+// (lower-case letters, digits, `-`, and `_`).
+function redrawPosters(view: EditorView, name: string): void {
+  for (const root of view.contentDOM.querySelectorAll<HTMLElement>(`.${ROOT_CLASS}[data-app="${name}"]`)) {
+    if (showsPoster(root)) drawPoster(view, root, name)
+  }
 }
 
 // What a poster shows of `facts`, as one text.
 function shownFacts(facts: AppCardFacts | undefined): string {
-  return facts ? `${facts.state}\n${facts.state === 'ready' ? facts.description : ''}` : ''
+  return facts ? `${facts.state}\n${facts.state === 'ready' ? facts.description : ''}\n${appSizeLabel(facts)}` : ''
 }
 
 // Draws the card `root` for the app `name`: empty for the run `runId`, as
@@ -160,9 +178,9 @@ function drawCard(view: EditorView, root: HTMLElement, name: string, runId: stri
     return
   }
   box.removeAttribute(FRAME_PLACE_ATTRIBUTE)
-  const drawn = shownFacts(knownFacts.get(name))
+  const drawn = shownFacts(knownAppFacts(name))
   drawPoster(view, root, name)
-  void readFacts(name).then((facts) => {
+  void readAppFacts(name).then((facts) => {
     if (shownFacts(facts) !== drawn && showsPoster(root)) drawPoster(view, root, name)
   })
 }
@@ -179,17 +197,24 @@ class AppWidget extends WidgetType {
     return other instanceof AppWidget && other.name === this.name && other.runId === this.runId
   }
   toDOM(view: EditorView): HTMLElement {
+    const { name } = this
     const root = document.createElement('span')
     root.className = ROOT_CLASS
-    root.dataset.app = this.name
+    root.dataset.app = name
     // A press on the card moves no caret and takes no focus: the editor
     // keeps its selection, and Run gets its click. A context click on
     // macOS would select a word of the poster (see `createPlayer`,
     // media.ts).
     root.addEventListener('mousedown', (event) => event.preventDefault())
     root.addEventListener('selectstart', (event) => event.preventDefault())
+    // A context click shows Dez's menu of the app, in place of the menu of
+    // the webview.
+    root.addEventListener('contextmenu', (event) => {
+      event.preventDefault()
+      void sbp('dez.controller/apps/popupMenu', name)
+    })
     root.append(span('box'))
-    drawCard(view, root, this.name, this.runId)
+    drawCard(view, root, name, this.runId)
     return root
   }
   // A start and a stop change the card in place.
@@ -334,13 +359,93 @@ export function carriedAppRuns(state: EditorState): CarriedAppRun[] {
   return appRuns(state).map(({ id, name, from }) => ({ id, name, later: apps.filter((tag) => tag.name === name && tag.from > from).length }))
 }
 
+/** The trash of an app (on its card, and on the bar of a run): asks
+ *  whether to delete the app of the card whose tag starts at `from`, and
+ *  on "Yes" deletes the folder of the app (`dez.controller/apps/delete`),
+ *  ends each run of the app, and takes the line of the tag out of the doc
+ *  (`linesRemovalRange`). The other cards of the app stay, and tell that
+ *  the app is gone. That removal is not in the undo history: the files do
+ *  not come back, so an undo could only bring back the card of an app
+ *  that is gone.
+ *
+ *  The card of an app that is gone has a trash too. It deletes no file,
+ *  and takes only the line out, in a normal edit that an undo takes back.
+ *  The prompt tells which of the two the trash does, from the files as
+ *  they are when it opens: they can have changed since the card was drawn.
+ *
+ *  The doc can change while the prompt is open or the folder is being
+ *  deleted (a stream), so the tag is followed (`followShownRange`). When
+ *  the tag is gone after the prompt, no file is deleted, and a toast tells
+ *  the user. A failed delete (the controller has shown a toast) keeps the
+ *  tag. If the tag goes while the folder is being deleted, its text stays,
+ *  and its card tells that the app is gone. */
+export async function deleteApp(view: EditorView, from: number): Promise<void> {
+  const tag = renderedApps(view.state).find((app) => app.from === from)
+  if (!tag) return
+  const { name } = tag
+  const followed = followShownRange(view, tag, renderedApps, (other) => other.name === name)
+  // The prompt is outside of an app that fills the screen.
+  const [facts] = await Promise.all([readAppFacts(name), leaveFullscreen(view.dom)])
+  const gone = facts.state === 'missing'
+  const message = gone
+    ? `Are you sure you want to remove the card of the app ${name} from the conversation? The app is gone, so Dez deletes no file.`
+    : `Are you sure you want to delete the app ${name}? Dez deletes the folder of the app with all its files. No conversation can run the app after that.`
+  const confirmed = await sbp('dez.ui/confirm', { message }) as boolean
+  if (!confirmed) {
+    followed.end()
+    return
+  }
+  if (!followed.current()) {
+    followed.end()
+    sbp('dez.ui/toast', 'app-global', {
+      title: gone ? 'Card not removed' : 'App not deleted',
+      message: 'The conversation changed while the prompt was open. Try again.',
+      variant: 'warning',
+      duration: 8000,
+    })
+    return
+  }
+  if (!gone) {
+    try {
+      await sbp('dez.controller/apps/delete', name)
+    } catch {
+      // The controller has logged the failure and shown a toast. The user
+      // can have gone to fullscreen again after the prompt.
+      void leaveFullscreen(view.dom)
+      followed.end()
+      // A delete that failed can have deleted a part of the files.
+      void readAppFacts(name).then(() => redrawPosters(view, name))
+      return
+    }
+    setAppDeleted(name)
+    // The runs of the app show files that are gone. A program write: no
+    // `userEvent`.
+    const stops = appRuns(view.state).filter((run) => run.name === name).map((run) => stopAppEffect.of(run.id))
+    if (stops.length > 0) view.dispatch({ effects: stops })
+    redrawPosters(view, name)
+  }
+  const range = followed.current()
+  followed.end(range ? linesRemovalRange(view.state.doc, range) : undefined, { undoable: gone, userEvent: 'delete' })
+  // The prompt gave the focus back a few ms ago (`syncDomSelection`).
+  if (range) syncDomSelection(view)
+}
+
+// What the controls of the bar of a run do in the editor state.
+const FRAME_ACTIONS: AppFrameActions = {
+  // A program write: no `userEvent`.
+  stop: (view, runId) => view.dispatch({ effects: stopAppEffect.of(runId) }),
+  remove(view, runId) {
+    const run = appRuns(view.state).find((run) => run.id === runId)
+    if (run) void deleteApp(view, run.from)
+  },
+}
+
 /** Makes the frames of `view` those of the apps that run in its state,
  *  each over its placeholder (`placeAppFrames`). The update listener of
  *  `markdownApps` calls it; code that gives the view a new state calls it
  *  too, as `setState` runs no listener. */
 export function syncAppFrames(view: EditorView): void {
-  // A program write: no `userEvent`.
-  placeAppFrames(view, appRuns(view.state), (runId) => view.dispatch({ effects: stopAppEffect.of(runId) }))
+  placeAppFrames(view, appRuns(view.state), FRAME_ACTIONS)
 }
 
 // The frames follow the runs, and their places follow the layout of the
@@ -354,8 +459,9 @@ const appFramesSync = EditorView.updateListener.of((update) => {
 /** App cards for the thread editor (`buildState()` in `ThreadEditor.vue`),
  *  with the runs `carried` of the state before it. The cards are line
  *  blocks (`lineBlocks.ts`), as the media players are. Find skips the
- *  hidden text (`protectedRanges` in `find.ts`). The CSS of the card and
- *  of the frame host is in `dezTheme`. The state needs `sectionsField`. */
+ *  hidden text (`protectedRanges` in `find.ts`). The trash follows its tag
+ *  as a pending range. The CSS of the card and of the frame host is in
+ *  `dezTheme`. The state needs `sectionsField`. */
 export function markdownApps(carried: readonly CarriedAppRun[] = []): Extension {
   return [
     carried.length === 0 ? appsField : appsField.init((state) => {
@@ -363,6 +469,7 @@ export function markdownApps(carried: readonly CarriedAppRun[] = []): Extension 
       return appsState(apps, restoredRuns(apps, carried))
     }),
     lineBlocks(renderedApps),
+    pendingRanges(),
     appFramesSync,
   ]
 }

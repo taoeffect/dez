@@ -4,6 +4,7 @@ import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemir
 import { createApp, h, reactive, shallowRef, type App, type ShallowRef } from 'vue'
 import { SENTINEL_CHAR, plainLiveText } from '../../model/chat/content'
 import { MEDIA_TAG_NAMES, findMediaTags, isLinkedMediaPath, isPastedMediaPath, isTempMediaPath, mediaTagText, savedMediaTag, unsavedMediaTag, type MediaTag, type MediaTagData } from '../../model/chat/mediaTags'
+import { leaveFullscreen } from '../fullscreen'
 import MediaPlayer from '../media/MediaPlayer.vue'
 import { expiryNotice } from '../media/clipState'
 import { sectionsField, type SectionModel } from '../thread/cmEditor'
@@ -334,22 +335,10 @@ function followClip(view: EditorView, place: AssetPlace, clip: MediaTagData) {
   return shown ? followShownRange(view, shown, renderedMedia, isClip) : null
 }
 
-/** Fullscreen shows only the card of a player. The delete prompt and the
- *  toasts are outside the card (`AppLayout.vue`), so the user would not see
- *  them, and a prompt that is not seen takes the keys. So the player `root`
- *  leaves fullscreen before the prompt shows, and when a Save or a Delete
- *  shows a toast. Resolves when the page shows again; at once for a player
- *  that does not fill the screen. The root's `fullscreenchange` listener
- *  then gives the focus back to the editor. */
-async function leaveFullscreen(root: HTMLElement): Promise<void> {
-  if (!root.contains(document.fullscreenElement)) return
-  try {
-    await document.exitFullscreen()
-  } catch (error) {
-    console.error('Failed to leave fullscreen:', error)
-  }
-}
-
+// A toast for the player `root`, which leaves fullscreen first
+// (`leaveFullscreen`, fullscreen.ts), as it does before its delete prompt.
+// The root's `fullscreenchange` listener then gives the focus back to the
+// editor.
 function warnClipChanged(root: HTMLElement, title: string, message: string): void {
   void leaveFullscreen(root)
   sbp('dez.ui/toast', 'app-global', { title, message, variant: 'warning', duration: 8000 })

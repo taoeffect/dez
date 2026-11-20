@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import sbp from '@sbp/sbp'
-import { answerConfirm, confirmRequest } from './selectors'
+import { inAppFrameHost } from '../apps/appFrameHost'
+import { answerConfirm, confirmRequest } from './request'
 
 const cancelButton = ref<HTMLButtonElement | null>(null)
 const confirmButton = ref<HTMLButtonElement | null>(null)
@@ -32,8 +33,10 @@ function restoreFocus() {
   opener = null
   if (!(element instanceof HTMLElement) || !element.isConnected) return
   // `dez.editor/focus` puts back the editor's scroll, which WebKit can move
-  // when the editor gets the focus again (focus.ts).
-  if (element.closest('.cm-editor')) sbp('dez.editor/focus')
+  // when the editor gets the focus again (focus.ts). An app that runs in
+  // the editor (its frame, a control of its bar) is not the editor: the
+  // keyboard goes back to the app, also while it covers the conversation.
+  if (element.closest('.cm-editor') && !inAppFrameHost(element)) sbp('dez.editor/focus')
   else element.focus({ preventScroll: true })
 }
 

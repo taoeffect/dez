@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { APP_KINDS, MANIFEST_MAX_BYTES } from './appManifest'
 import { appCardFacts, appNotShownText, checkShowTarget, showCall, shownAppNames, shownAppText, showResultText, type ShowTarget } from './appShow'
-import { appsArgs, FOLDER_FACTS, MISSING_TREE, notesManifest, refusal } from './testing'
+import { appsArgs, fileTree, FOLDER_FACTS, folderTree, MISSING_TREE, notesManifest, refusal } from './testing'
 
 const NOT_SHOWN = 'Dez shows no app.'
 
@@ -85,25 +85,34 @@ describe('checkShowTarget', () => {
 
 describe('appCardFacts', () => {
   const call = show('notes')
-  const facts = (changes: Partial<ShowTarget> = {}) => appCardFacts(call, target(changes))
+  const tree = folderTree({ 'manifest.json': 80, 'index.html': 300, lib: null, 'lib/a.js': 1200 })
+  const facts = (changes: Partial<ShowTarget> = {}, listing = tree) => appCardFacts(call, target(changes), listing)
+  const SIZE = { bytes: 1580, more: false }
 
-  it('gives the description of a UI app that Dez can show', () => {
-    expect(facts()).toStrictEqual({ state: 'ready', description: 'Keeps notes.' })
+  it('gives the description and the size of a UI app that Dez can show', () => {
+    expect(facts()).toStrictEqual({ state: 'ready', description: 'Keeps notes.', size: SIZE })
+  })
+
+  it('tells that an app is larger than its listing', () => {
+    expect(facts({}, folderTree({ 'index.html': 300 }, true))).toMatchObject({ size: { bytes: 300, more: true } })
   })
 
   it('tells an app with no folder from one that Dez cannot show', () => {
-    expect(facts({ app: MISSING_TREE, manifest: MISSING_TREE, manifestBytes: null, index: MISSING_TREE })).toStrictEqual({ state: 'missing' })
+    expect(facts({ app: MISSING_TREE, manifest: MISSING_TREE, manifestBytes: null, index: MISSING_TREE }, MISSING_TREE)).toStrictEqual({ state: 'missing' })
 
     for (const [what, changes] of [
-      ['a file at the place of the folder', { app: { kind: 'file', size: 3 } }],
       ['no manifest', { manifest: MISSING_TREE, manifestBytes: null }],
       ['a manifest that is not valid', { manifestBytes: new TextEncoder().encode('{"name": "notes"') }],
       ['a script app', { manifestBytes: notesManifest('script') }],
       ['no page', { index: MISSING_TREE }],
       ['a folder at the place of the page', { index: FOLDER_FACTS }],
     ] as Array<[string, Partial<ShowTarget>]>) {
-      expect(facts(changes), what).toStrictEqual({ state: 'broken' })
+      expect(facts(changes), what).toStrictEqual({ state: 'broken', size: SIZE })
     }
+  })
+
+  it('gives no size when a file is at the place of the folder', () => {
+    expect(facts({ app: { kind: 'file', size: 3 } }, fileTree(3))).toStrictEqual({ state: 'broken', size: null })
   })
 })
 

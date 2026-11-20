@@ -1,15 +1,45 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { appTagText } from '../../src/model/chat/appTags'
-import { inRunningApp, runningAppPoint, seedApp, shownAppCards, shownAppFrames, type ShownAppCard } from './harness/apps'
-import { consoleErrors, pointerClick, pointerClickAt, resetConsoleErrors, screenshotOnFailure, typeKeys, waitFor, waitForValue } from './harness/dom'
-import { appFilePath } from './harness/fixtures'
+import {
+  appFolderSize,
+  inRunningApp,
+  runningAppPoint,
+  seedApp,
+  shownAppBars,
+  shownAppCards,
+  shownAppCorners,
+  shownAppFrames,
+  waitForAppFullscreen,
+  type ShownAppCard,
+  type ShownAppFrame,
+} from './harness/apps'
+import {
+  consoleErrors,
+  elementCenter,
+  isOnTop,
+  movePointer,
+  pointerClick,
+  pointerClickAt,
+  pointerRightClickAt,
+  promptMessage,
+  resetConsoleErrors,
+  screenshotOnFailure,
+  typeKeys,
+  waitFor,
+  waitForValue,
+  type Point,
+} from './harness/dom'
+import { appFilePath, filesIn } from './harness/fixtures'
+import { menuRecord, recordAssetMenus, resetMenuRecord, type MenuRecord } from './harness/menus'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, sendChatReply, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
 import {
   activeTabId,
+  assetPartPoint,
   editorDoc,
+  editorScrollTop,
   editorSelection,
   endedReply,
   focusEditor,
@@ -33,6 +63,14 @@ import {
 //   there, with no new load, while the conversation changes around it;
 // - the keyboard goes to the app on Run, and back to the editor on Escape
 //   and on Stop;
+// - the corner of a poster and the bar of an app that runs tell the size of
+//   the folder of the app, and have the trash, which deletes the app after
+//   a prompt;
+// - the bar shows the app over the conversation view (the expanded view)
+//   and over the screen (fullscreen), with the page of the app as it is,
+//   and Escape goes one step back for each key;
+// - a context click on a card, on a bar, and in the page of an app asks
+//   for the menu of the app, with its folder (harness/menus.ts);
 // - an app whose frame goes to another page is stopped.
 // The pages come from the real scheme of the app frames, with Dez's client
 // script (`~dez.js`). The guards of a frame have their own audit
@@ -78,9 +116,21 @@ const NOTES_FILES = {
 
 const NOTES_POSTER: ShownAppCard = { app: 'notes', state: 'run', text: 'notes\nKeeps notes.' }
 
+// A reply text that is much longer than the view.
+const LONG_TEXT = Array.from({ length: 300 }, (_, index) => `Line ${index + 1}`).join('\n')
+
+// The part `part` of the frame host of the app `app` that runs.
+const hostPart = (app: string, part: string): string => `.cm-scroller > .dez-app-frame[data-app="${app}"] ${part}`
+
 const RUN = '.cm-content .dez-app[data-app="notes"] .dez-app__run'
-const FRAME = '.cm-scroller > .dez-app-frame[data-app="notes"] iframe'
-const STOP = '.cm-scroller > .dez-app-frame[data-app="notes"] .dez-app-frame__stop'
+const FRAME = hostPart('notes', 'iframe')
+const BAR_NAME = hostPart('notes', '.dez-app-frame__name')
+const EXPAND = hostPart('notes', '[data-action="expand"]')
+const FULLSCREEN = hostPart('notes', '[data-action="fullscreen"]')
+const STOP = hostPart('notes', '.dez-app-frame__stop')
+
+const deletePrompt = (app: string): string =>
+  `Are you sure you want to delete the app ${app}? Dez deletes the folder of the app with all its files. No conversation can run the app after that.`
 
 // What a test reads of the page of `notes`; each part is null while the
 // page loads.
@@ -90,9 +140,21 @@ interface NotesPage {
   ownEscape: string | null
 }
 
+// The size that the host of one app that runs shows in, and whether the
+// host is at the place of that size: over the placeholder of its run
+// (`card`), over the conversation view (`expanded`), or over the window
+// (`fullscreen`). A place can be a fraction of a pixel.
+interface FrameView {
+  run: string | null
+  view: ShownAppFrame['view']
+  inPlace: boolean
+}
+
 describe('apps in a conversation', () => {
   let setup: MockProviderApp
   let browser: E2EBrowser
+  // The folder of the apps of the test HOME.
+  let appsDir: string
 
   const notesPage = (): Promise<NotesPage> => inRunningApp(browser, 'notes', () => browser.execute(() => ({
     load: document.body?.dataset.load ?? null,
@@ -108,6 +170,24 @@ describe('apps in a conversation', () => {
   // of its run. A place can be a fraction of a pixel.
   const framesInPlace = async (): Promise<Array<{ app: string | null, run: string | null, inPlace: boolean }>> =>
     (await shownAppFrames(browser)).map(({ app, run, offPlace }) => ({ app, run, inPlace: offPlace !== null && offPlace <= 1 }))
+
+  const frameViews = async (): Promise<FrameView[]> =>
+    (await shownAppFrames(browser)).map(({ run, view, offPlace, offCover }) => {
+      const off = view === 'card' ? offPlace : offCover
+      return { run, view, inPlace: off !== null && off <= 1 }
+    })
+
+  const helpOpen = (): Promise<boolean> => browser.execute(() => document.querySelector('.help-overlay') !== null)
+
+  // A wheel turn down at the center of the element `selector`.
+  async function wheelAt (selector: string): Promise<void> {
+    const { x, y } = await elementCenter(browser, selector)
+    await browser.action('wheel').scroll({ x, y, deltaY: 300 }).perform()
+  }
+
+  // The center of the part `part` of the card `index` of the app `app`.
+  const cardPoint = (app: string, index: number, part: string): Promise<Point> =>
+    assetPartPoint(browser, `.dez-app[data-app="${app}"]`, index, part)
 
   // Opens a conversation whose reply shows the app `notes`, with `after` as
   // the text of the reply after the card.
@@ -139,17 +219,31 @@ describe('apps in a conversation', () => {
     await waitForValue(browser, 'the field with the keyboard', () => inRunningApp(browser, 'notes', () => browser.execute(() => document.activeElement?.id ?? null)), 'text')
   }
 
+  // Runs `notes` and types into its text field, so that a later read of
+  // the page tells a page that stayed from one that loaded again. Gives
+  // the id of the run and what the page shows.
+  async function runNotesWithText (): Promise<{ run: string | null, page: NotesPage }> {
+    const { run, page: loaded } = await runNotes()
+    await enterNotesText()
+    await typeKeys(browser, 'abc')
+    const page: NotesPage = { ...loaded, text: 'abc' }
+    await waitForValue(browser, 'the page of the app', notesPage, page)
+    return { run, page }
+  }
+
   beforeAll(async () => {
     setup = await startMockProviderApp(CALLER)
     browser = setup.browser
-    const appsDir = appFilePath(setup.app.home, 'apps')
+    appsDir = appFilePath(setup.app.home, 'apps')
     await seedApp(appsDir, { name: 'notes', description: 'Keeps notes.', kind: 'ui' }, NOTES_FILES)
     await seedApp(appsDir, { name: 'timer', description: 'Counts down.', kind: 'ui' }, { 'index.html': '<!doctype html>\n<p>Timer</p>\n' })
     await seedApp(appsDir, { name: 'sum', description: 'Adds numbers.', kind: 'script' }, { 'main.ts': 'export default () => 1\n' })
+    await recordAssetMenus(browser)
   })
 
   beforeEach(async () => {
     await resetConsoleErrors(browser)
+    await resetMenuRecord(browser)
   })
 
   afterEach(async (ctx) => {
@@ -176,9 +270,16 @@ describe('apps in a conversation', () => {
       { app: 'sum', state: 'note' },
     ])
     expect((await shownAppCards(browser))[0]).toStrictEqual(NOTES_POSTER)
+    // The corner of a poster tells the size of the folder of its app, also
+    // for an app that Dez cannot start.
+    expect((await shownAppCorners(browser)).slice(0, 2)).toStrictEqual([
+      { app: 'notes', size: await appFolderSize(appsDir, 'notes'), trash: 'Delete the app notes' },
+      { app: 'sum', size: await appFolderSize(appsDir, 'sum'), trash: 'Delete the app sum' },
+    ])
     // The editor draws no card that is far below the view.
     await scrollEditorToEnd(browser)
     await waitForValue(browser, 'the last poster', async () => (await cards()).at(-1), { app: 'gone', state: 'note' })
+    expect((await shownAppCorners(browser)).at(-1)).toStrictEqual({ app: 'gone', size: null, trash: 'Remove the card of the app gone' })
     // No app runs before its Run.
     expect(await shownAppFrames(browser)).toStrictEqual([])
     expect(await consoleErrors(browser)).toStrictEqual([])
@@ -189,9 +290,16 @@ describe('apps in a conversation', () => {
     await focusEditor(browser)
     const { run } = await runNotes()
 
-    // The frame covers the card, which is an empty placeholder now.
+    // The frame covers the card, which is an empty placeholder now. The
+    // bar above the frame has the name and the size of the app, and its
+    // controls.
     expect(await shownAppCards(browser)).toStrictEqual([{ app: 'notes', state: 'running', text: '' }])
     expect(await framesInPlace()).toStrictEqual([{ app: 'notes', run, inPlace: true }])
+    expect(await shownAppBars(browser)).toStrictEqual([{
+      app: 'notes',
+      text: `notes\n${await appFolderSize(appsDir, 'notes')}`,
+      buttons: ['Expand the app over the conversation', 'Fullscreen', 'Stop the app notes', 'Delete the app notes'],
+    }])
 
     // Run gives the keyboard to the app: the keys go to its page only, with
     // no click in the page.
@@ -236,13 +344,9 @@ describe('apps in a conversation', () => {
   })
 
   it('keeps an app that runs, with its page as it is, through edits, the end of a reply, and a far scroll', async () => {
-    await openNotes('app-host-stays', Array.from({ length: 300 }, (_, index) => `Line ${index + 1}`).join('\n'))
+    await openNotes('app-host-stays', LONG_TEXT)
     await pickModel(browser, CALLER.name, CALLER.modelName)
-    const { run, page: loaded } = await runNotes()
-    await enterNotesText()
-    await typeKeys(browser, 'abc')
-    const page: NotesPage = { ...loaded, text: 'abc' }
-    await waitForValue(browser, 'the page of the app', notesPage, page)
+    const { run, page } = await runNotesWithText()
     const inPlace = [{ app: 'notes', run, inPlace: true }]
     expect(await framesInPlace()).toStrictEqual(inPlace)
     const [{ top }] = await shownAppFrames(browser)
@@ -321,6 +425,243 @@ describe('apps in a conversation', () => {
     expect(await editorDoc(browser)).toBe(doc)
     expect(await editorSelection(browser)).toStrictEqual(selection)
     expect(await focusedArea(browser)).toBe('iframe')
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('shows an app over the conversation view, with its page as it is, and closes the view on Escape', async () => {
+    await openNotes('app-host-expand', LONG_TEXT)
+    const { run, page } = await runNotesWithText()
+    const atCard: FrameView[] = [{ run, view: 'card', inPlace: true }]
+    const expanded: FrameView[] = [{ run, view: 'expanded', inPlace: true }]
+    expect(await frameViews()).toStrictEqual(atCard)
+
+    // The control of the wheel check below: over an app at the size of its
+    // card, a wheel turn that the app does not take scrolls the
+    // conversation.
+    await wheelAt(FRAME)
+    await waitForValue(browser, 'the conversation after a wheel turn over the card', async () => await editorScrollTop(browser) > 0, true)
+    await scrollEditorToTop(browser)
+    await waitForValue(browser, 'the frame back in view', frameViews, atCard)
+
+    // Expand puts the host over the conversation view. The page of the app
+    // is the same one (no new load), and the app keeps the keyboard.
+    await pointerClick(browser, EXPAND)
+    await waitForValue(browser, 'the expanded view', frameViews, expanded)
+    expect(await focusedArea(browser)).toBe('iframe')
+    expect(await notesPage()).toStrictEqual(page)
+    expect((await shownAppBars(browser))[0].buttons[0]).toBe('Close the expanded view')
+
+    // The conversation under the app does not scroll.
+    await wheelAt(FRAME)
+    await wheelAt(BAR_NAME)
+    // A wrong scroll would come in the next frames.
+    await browser.pause(300)
+    expect(await editorScrollTop(browser)).toBe(0)
+
+    // Escape in the app closes the view, and the app keeps the keyboard.
+    await browser.keys(Key.Escape)
+    await waitForValue(browser, 'the app after Escape', frameViews, atCard)
+    expect(await focusedArea(browser)).toBe('iframe')
+    expect(await notesPage()).toStrictEqual(page)
+
+    // A panel of Dez shows over the expanded view. Its button leaves the
+    // keyboard in the app, and Escape there closes the panel first.
+    await pointerClick(browser, EXPAND)
+    await waitForValue(browser, 'the expanded view under Help', frameViews, expanded)
+    await pointerClick(browser, '.help-button')
+    await waitForValue(browser, 'Help over the app', () => isOnTop(browser, '.help-overlay'), true)
+    expect(await focusedArea(browser)).toBe('iframe')
+    await browser.keys(Key.Escape)
+    await waitForValue(browser, 'Help after Escape', helpOpen, false)
+    expect(await frameViews()).toStrictEqual(expanded)
+
+    // The button of the bar closes the view too. At the size of its card,
+    // Escape in the app gives the keyboard to the editor.
+    await pointerClick(browser, EXPAND)
+    await waitForValue(browser, 'the app after its button', frameViews, atCard)
+    expect(await focusedArea(browser)).toBe('iframe')
+    await browser.keys(Key.Escape)
+    await waitForValue(browser, 'the focus after Escape', () => focusedArea(browser), 'editor')
+
+    // The editor never has the keyboard under an app that covers it: the
+    // view closes when the editor gets the keyboard.
+    await pointerClick(browser, EXPAND)
+    await waitForValue(browser, 'the expanded view again', frameViews, expanded)
+    await waitForValue(browser, 'the focus in the expanded view', () => focusedArea(browser), 'iframe')
+    await focusEditor(browser)
+    await waitForValue(browser, 'the app after a focus of the editor', frameViews, atCard)
+    expect(await focusedArea(browser)).toBe('editor')
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('shows an app over the whole screen, with its page as it is, and goes one step back on Escape', async () => {
+    await openNotes('app-host-fullscreen', LONG_TEXT)
+    const { run, page } = await runNotesWithText()
+    const shownAs = (view: FrameView['view']): FrameView[] => [{ run, view, inPlace: true }]
+
+    await pointerClick(browser, FULLSCREEN)
+    await waitForAppFullscreen(browser, 'notes', true)
+    await waitForValue(browser, 'the app over the screen', frameViews, shownAs('fullscreen'))
+    expect(await focusedArea(browser)).toBe('iframe')
+    expect(await notesPage()).toStrictEqual(page)
+    expect((await shownAppBars(browser))[0].buttons[1]).toBe('Leave fullscreen')
+    // The conversation under the app does not scroll.
+    await wheelAt(FRAME)
+    // A wrong scroll would come in the next frames.
+    await browser.pause(300)
+    expect(await editorScrollTop(browser)).toBe(0)
+
+    // The button of the bar puts the app back over its card.
+    await pointerClick(browser, FULLSCREEN)
+    await waitForAppFullscreen(browser, 'notes', false)
+    await waitForValue(browser, 'the app back over its card', frameViews, shownAs('card'))
+    expect(await focusedArea(browser)).toBe('iframe')
+
+    // Escape goes one step back for each key: from the screen to the
+    // expanded view, to the card, and then the editor gets the keyboard.
+    await pointerClick(browser, EXPAND)
+    await waitForValue(browser, 'the expanded view', frameViews, shownAs('expanded'))
+    await pointerClick(browser, FULLSCREEN)
+    await waitForAppFullscreen(browser, 'notes', true)
+    await waitForValue(browser, 'the expanded app over the screen', frameViews, shownAs('fullscreen'))
+    await browser.keys(Key.Escape)
+    await waitForAppFullscreen(browser, 'notes', false)
+    await waitForValue(browser, 'the expanded view after Escape', frameViews, shownAs('expanded'))
+    expect(await focusedArea(browser)).toBe('iframe')
+    expect(await notesPage()).toStrictEqual(page)
+    await browser.keys(Key.Escape)
+    await waitForValue(browser, 'the card after Escape', frameViews, shownAs('card'))
+    expect(await focusedArea(browser)).toBe('iframe')
+    await browser.keys(Key.Escape)
+    await waitForValue(browser, 'the focus after the last Escape', () => focusedArea(browser), 'editor')
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('deletes an app from the trash of its card and of its bar, after a prompt', async () => {
+    await seedApp(appsDir, { name: 'draft', description: 'A draft.', kind: 'ui' }, { 'index.html': '<!doctype html>\n<p>Draft</p>\n' })
+    await seedApp(appsDir, { name: 'scratch', description: 'A scratch pad.', kind: 'ui' }, { 'index.html': '<!doctype html>\n<p>Scratch</p>\n' })
+    const replyWith = (cards: string): Array<{ role: 'user' | 'agent', text: string }> => [
+      { role: 'user', text: 'Show me my apps.' },
+      { role: 'agent', text: `${cards}Done.` },
+      { role: 'user', text: '' },
+    ]
+    const scratchTag = appTagText('scratch')
+    const thread = replyWith(`${appTagText('draft')}\nFirst:\n${scratchTag}\nSecond:\n${scratchTag}\n`)
+    await openSeededConversation(browser, setup.app.home, 'app-host-delete', thread)
+    const cards = async (): Promise<Array<Pick<ShownAppCard, 'app' | 'state'>>> =>
+      (await shownAppCards(browser)).map(({ app, state }) => ({ app, state }))
+    // The editor draws no card that is far below the view: the last one
+    // comes when the first one is gone.
+    await waitForValue(browser, 'the first posters', cards, [
+      { app: 'draft', state: 'run' },
+      { app: 'scratch', state: 'run' },
+    ])
+    const scratchPart = (part: string): string => hostPart('scratch', part)
+    const runs = async (): Promise<Array<string | null>> => (await shownAppFrames(browser)).map((frame) => frame.app)
+
+    // "No" deletes nothing.
+    await pointerClickAt(browser, await cardPoint('draft', 0, '.dez-app__trash'))
+    await waitForValue(browser, 'the prompt of a card', () => promptMessage(browser), deletePrompt('draft'))
+    await pointerClick(browser, '.confirm-btn--cancel')
+    await waitForValue(browser, 'the prompt after No', () => promptMessage(browser), null)
+    expect(await filesIn(appsDir)).toContain('draft')
+    expect(await threadSections(browser)).toStrictEqual(thread)
+
+    // "Yes" deletes the folder of the app, and takes the line of the card
+    // out of the conversation.
+    await pointerClickAt(browser, await cardPoint('draft', 0, '.dez-app__trash'))
+    await waitForValue(browser, 'the prompt of a card again', () => promptMessage(browser), deletePrompt('draft'))
+    await pointerClick(browser, '.confirm-btn--confirm')
+    await waitForValue(browser, 'the apps after the delete of a card', async () => (await filesIn(appsDir)).includes('draft'), false)
+    await waitForValue(browser, 'the conversation after the delete of a card', () => threadSections(browser), replyWith(`First:\n${scratchTag}\nSecond:\n${scratchTag}\n`))
+    await waitForValue(browser, 'the posters after the delete of a card', cards, [
+      { app: 'scratch', state: 'run' },
+      { app: 'scratch', state: 'run' },
+    ])
+
+    // The trash of the bar of an app that fills the screen: the prompt is
+    // not a part of the app, so the app leaves fullscreen first. "No"
+    // leaves the app as it runs.
+    await pointerClickAt(browser, await cardPoint('scratch', 1, '.dez-app__run'))
+    await waitFor(browser, scratchPart('iframe'))
+    await pointerClick(browser, scratchPart('[data-action="fullscreen"]'))
+    await waitForAppFullscreen(browser, 'scratch', true)
+    await pointerClick(browser, scratchPart('[data-action="delete"]'))
+    await waitForValue(browser, 'the prompt of a bar', () => promptMessage(browser), deletePrompt('scratch'))
+    await waitForAppFullscreen(browser, 'scratch', false)
+    expect(await isOnTop(browser, '.confirm-dialog')).toBe(true)
+    await pointerClick(browser, '.confirm-btn--cancel')
+    await waitForValue(browser, 'the prompt of a bar after No', () => promptMessage(browser), null)
+    expect(await runs()).toStrictEqual(['scratch'])
+
+    // The prompt shows over an expanded app. "Yes" ends the run, and takes
+    // out the line of its card. The other card of the app stays, and tells
+    // that the app is gone.
+    await pointerClick(browser, scratchPart('[data-action="expand"]'))
+    await waitForValue(browser, 'the expanded view', async () => (await shownAppFrames(browser)).map((frame) => frame.view), ['expanded'])
+    await pointerClick(browser, scratchPart('[data-action="delete"]'))
+    await waitForValue(browser, 'the prompt of an expanded app', () => promptMessage(browser), deletePrompt('scratch'))
+    expect(await isOnTop(browser, '.confirm-dialog')).toBe(true)
+    await pointerClick(browser, '.confirm-btn--confirm')
+    await waitForValue(browser, 'the runs after the delete', runs, [])
+    await waitForValue(browser, 'the conversation after the delete of a run', () => threadSections(browser), replyWith(`First:\n${scratchTag}\nSecond:\n`))
+    expect(await filesIn(appsDir)).not.toContain('scratch')
+    await waitForValue(browser, 'the card that stays', () => shownAppCards(browser), [
+      { app: 'scratch', state: 'note', text: 'scratch\nThis app is gone: its folder is not there any more.' },
+    ])
+    expect(await shownAppCorners(browser)).toStrictEqual([{ app: 'scratch', size: null, trash: 'Remove the card of the app scratch' }])
+    expect(await focusedArea(browser)).toBe('editor')
+    expect(await openToasts(browser)).toStrictEqual([])
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('asks for the menu of an app at a context click on its card, on its bar, and in its page', async () => {
+    await openSeededConversation(browser, setup.app.home, 'app-host-context', [
+      { role: 'user', text: 'Show me my apps.' },
+      { role: 'agent', text: `${appTagText('notes')}\n${appTagText('gone')}` },
+      { role: 'user', text: '' },
+    ])
+    await waitForValue(browser, 'the posters', async () => (await shownAppCards(browser)).map((card) => card.state), ['run', 'note'])
+    const folder = appFilePath(setup.app.home, 'apps', 'notes')
+    const record: MenuRecord = { files: [], canceled: [] }
+    // A context click at `point` of Dez's page, which asks for the menu
+    // with `file`.
+    const expectMenu = async (label: string, point: Point, file: string | null): Promise<void> => {
+      await pointerRightClickAt(browser, point)
+      record.files.push(file)
+      record.canceled.push(true)
+      await waitForValue(browser, `the menu of ${label}`, () => menuRecord(browser), record)
+    }
+
+    // The menu of a card has the folder of its app, and no file for an app
+    // that is gone.
+    await expectMenu('a card', await cardPoint('notes', 0, '.dez-app__name'), folder)
+    await expectMenu('the card of an app that is gone', await cardPoint('gone', 0, '.dez-app__name'), null)
+    // The read of the last card scrolled the conversation.
+    await scrollEditorToTop(browser)
+    await runNotes()
+    await expectMenu('a bar', await elementCenter(browser, BAR_NAME), folder)
+
+    // In the page of an app, the script of Dez asks for the menu. The
+    // click is an event of that page, not of Dez's page.
+    await pointerRightClickAt(browser, await elementCenter(browser, FRAME))
+    record.files.push(folder)
+    await waitForValue(browser, 'the menu of the page of an app', () => menuRecord(browser), record)
+
+    // The webview keeps its own menu in a text field of the app. No real
+    // click here: WebDriver cannot close that menu.
+    const contextMenuKept = (selector: string): Promise<boolean> => inRunningApp(browser, 'notes', () => browser.execute((target: string) => {
+      const element = document.querySelector(target)
+      if (!element) throw new Error(`no ${target} in the page of the app`)
+      return element.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+    }, selector))
+    expect(await contextMenuKept('#text')).toBe(true)
+    // The page of an app gets no menu while the pointer is not over it.
+    await movePointer(browser, await elementCenter(browser, 'header.tab-bar'))
+    expect(await contextMenuKept('body')).toBe(false)
+    // A wrong menu would come in the next frames.
+    await browser.pause(300)
+    expect(await menuRecord(browser)).toStrictEqual(record)
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 

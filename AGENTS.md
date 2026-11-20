@@ -91,8 +91,9 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `view/editor/focus.ts`: focus the editor and keep its scroll; use `focusKeepingScroll`, not `view.focus()`.
 - `view/editor/images.ts`, `imageInsert.ts`, `pendingRanges.ts`: images shown in place of their references; image and clip paste and drop.
 - `view/editor/media.ts`, `view/media/`: `<dez:audio>` and `<dez:video>` tags shown as players (`MediaPlayer.vue`, video.js parts in Dez's own skin).
-- `view/editor/apps.ts`: `<dez:app>` tags shown as app cards (a poster with Run), and the apps that run in the editor.
-- `view/apps/`: `appFrame.ts` (the frame of one app, and its messages), `appFrameHost.ts` (the frames of the apps that run, each over its card), `appIcon.ts`.
+- `view/editor/apps.ts`: `<dez:app>` tags shown as app cards (a poster with Run, the size, a trash), the apps that run in the editor, and the delete of an app.
+- `view/apps/`: `appFrame.ts` (the frame of one app, and its messages), `appFrameHost.ts` (the frames of the apps that run, each over its card, with its bar, the expanded view, and fullscreen), `appFacts.ts` (the facts of an app for its card and its bar), `appIcon.ts`.
+- `view/fullscreen.ts`, `view/panels.ts`: `leaveFullscreen` (players and apps); the panels and the prompt of Dez that are open, and the Escape that closes the top one.
 - `view/editor/toolCalls.ts`: `<dez:tool>` blocks shown as chips, each with a panel.
 - `view/editor/hiddenAssets.ts`, `compactionChip.ts`, `AssetList.vue`: the hidden assets of a chip, the two compaction chips (assets, summary) with their panels, and the long list of kept assets.
 - `view/editor/lineBlocks.ts`, `compaction.ts`, `compactionBlock.ts`, `lineCommands.ts`: the edit rules of whole-line blocks (chips, players, app cards, the compaction block).
@@ -122,7 +123,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `model/tools/appsTool.ts`, `lineEdits.ts`, `appManifest.ts`, `appTemplates.ts`, `controller/appsTool.ts`: the `apps` tool: the files of the apps, on the virtual root `/apps/`.
 - `model/tools/appInvoke.ts`, `controller/appInvoke.ts`: `apps invoke`: a run of the code of a script app in Deno, as a job with copies of its inputs and checked output files.
 - `model/tools/appShow.ts`: `apps show`: Dez writes the `<dez:app>` tag of a UI app into the reply (`ToolRunContext.showApp`).
-- `controller/apps.ts`: `dez.controller/apps/card`, the facts of an app for its card.
+- `controller/apps.ts`: `dez.controller/apps/*`: the facts of an app for its card, its delete, and its context menu.
 - `model/systemPrompt/`: the built-in system prompt (`systemPrompt.md`), the variables of a template, and its checks.
 - `model/modelOutputs.ts`, `modelInputs.ts`, `modelSearch.ts`: the output types, what Dez can send a model, and the model filter.
 - `controller/notifications.ts`, `view/sound.ts`, `assets/sounds/`: the reply-end alerts (sound, system notification).
@@ -229,7 +230,7 @@ The JSON and conversation files go through `dez.persistence/*` only; the asset f
 - `assets/images/`, `assets/audio/`, `assets/video/`: pasted files, and dropped files that Dez copies (`src/controller/images.ts`, `media.ts`).
 - `assets/generated/images/`, `audio/`, `video/`: files that models and Dez tools made, and clips that the user saved.
 - `assets/generated/views/`: the copies of the pictures that Dez showed a model (`src/model/chat/shownPictures.ts`).
-- `apps/<name>/`: the files of an app, which the `apps` tool makes and changes (`src/model/tools/appsTool.ts`).
+- `apps/<name>/`: the files of an app, which the `apps` tool makes and changes (`src/model/tools/appsTool.ts`). The trash of an app deletes the folder (`dez.controller/apps/delete`).
 - `<OS cache>/dez/media/`: temp copies of clips that are not saved (`src/model/chat/mediaFiles.ts`).
 - `<OS cache>/dez/work/<id>/`: the work folder of a bundled tool (`src/model/tools/workFolders.ts`).
 - Linked files: a dropped file that is in no temp folder and no Dez folder stays where it is (`src/model/chat/linkedFiles.ts`). Dez never deletes it.
@@ -262,6 +263,8 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 - **Chip spacing is view only** (`ChipSpacing`, `view/editor/toolCalls.ts`): never change the text of a reply for its look, as the rounds of a reply are read from it.
 - **The apps that run are a part of the editor state**: code that gives the view a new state carries them over (`carriedAppRuns`) and calls `syncAppFrames` (`view/editor/apps.ts`). A tab switch stops them.
 - **The frame of an app is never in a widget**: CodeMirror makes each widget again, and a frame that moves in the DOM loads again. The host puts it over the card (`view/apps/appFrameHost.ts`).
+- **An app that covers the conversation is a modal** for the app keys (`isAppExpanded`, `view/apps/appFrameHost.ts`), and Escape closes a panel of Dez before it (`closeTopPanel`, `view/panels.ts`).
+- **An app in fullscreen on Linux gets no Escape, `f`, or `F`**: WebKitGTK takes the three keys to leave fullscreen (`stepOut`, `view/apps/appFrameHost.ts`).
 - **Never hard-code a shortcut key**: every binding path reads the effective keys from `src/model/shortcuts.ts` and the settings store.
 - **Shortcut key order differs by platform**: on Linux the menu accelerator gets the key first; put context checks in the selector both paths call, never only in a key handler.
 
@@ -308,7 +311,7 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 - **Local clips play from a blob URL with a type that WebKit knows**: WebKitGTK loads no media from the asset protocol; macOS reads the blob's type (`MediaPlayer.vue`, `clipPlayType`).
 - **A new editor state makes new players**: a stream end or a tab switch stops a clip that plays (`view/editor/media.ts`).
 - **A removed media element frees nothing by itself**: a media element that Vue can remove needs `v-release-on-remove` (`view/media/releaseMedia.ts`).
-- **A fullscreen player hides the app's layers**: code that shows a prompt or a toast for a player calls `leaveFullscreen` first (`view/editor/media.ts`).
+- **A fullscreen player or app hides Dez's layers**: code that shows a prompt or a toast for one calls `leaveFullscreen` first (`view/fullscreen.ts`).
 - **File drops differ by platform**: Tauri's native drop on Linux, HTML5 drops on macOS (`dez.controller/images/watchFileDrops`, `droppedFilePaths`); a drop copies or links its file.
 - **A bundled tool gets copies, never links**, into its work folder or one private subfolder of it (`fonts/<file>`), and Rust does not check its arguments: the caller keeps every path outside the work folder out of them (`src-tauri/src/bundled_tools.rs`).
 - **The argument rule of the `video` tool is string checks; the OS rule guards the files, and the ffmpeg build has no network code** (`src/model/tools/videoTool.ts`, `src-tauri/src/confinement.rs`): keep all three.
@@ -382,14 +385,14 @@ Brief comments are encouraged above functions that do anything non-trivial expla
 - E2E clicks: never use webdriverio's `.click()`; use the click helpers of `tests/e2e/harness/dom.ts`.
 - E2E model data: a spec answers the model list data and the price requests of its model with `jsonAnswers` (`tests/e2e/harness/mockProviderApp.ts`; see `tests/e2e/music.e2e.ts`).
 - The e2e app has its own `HOME`, `XDG_CONFIG_HOME`, and `XDG_CACHE_HOME` in a temp folder (`tests/e2e/harness/app.ts`).
-- E2E cannot send GTK menu accelerators, real clipboard data, or OS file drags; the manual recipes are in `vitest.e2e.config.ts`.
+- E2E cannot send GTK menu accelerators, real clipboard data, or OS file drags; the manual recipes are in `vitest.e2e.config.ts`. It cannot drive a native menu: specs record the context menus that the page asks for (`tests/e2e/harness/menus.ts`).
 - E2E specs that restart the app use `MockProviderApp.relaunch()`, after a wait for `model_cache.json` with `readModelCache` (`tests/e2e/harness/fixtures.ts`).
 - E2E seeds turn the reply-end alerts off (`quietAppState`); alert specs use the fake notification server (`tests/e2e/harness/notificationServer.ts`).
 - E2E clips must be in a format that the CI GStreamer packages decode (VP9 in webm or mp4, wav, Opus in WebM; `.github/workflows/e2e.yml`).
 - E2E bundled tools: the specs run the real ffmpeg, ffprobe, and Deno of the debug build (`tests/e2e/bundled-tools.e2e.ts`, `tests/e2e/video-tool.e2e.ts`, `tests/e2e/js-eval.e2e.ts`, and the sandbox audit of Deno, `tests/e2e/js-eval-sandbox.e2e.ts`).
 - E2E `apps` tool: `tests/e2e/apps-tool.e2e.ts` runs the file subcommands on the real file commands of the backend, with links in the folder of an app, and `show`; `tests/e2e/apps-invoke.e2e.ts` runs script apps in the real Deno. The unit tests use the in-memory files of `fakeAppFiles` (`src/controller/testing.ts`).
 - E2E app frames: `tests/e2e/app-frames.e2e.ts` is the audit of the guards of the app frames: pages that try to get out, a server that counts what reaches it, and the controls in Dez's own page (`tests/e2e/harness/appFrames.ts`).
-- E2E apps in a conversation: `tests/e2e/app-host.e2e.ts` (the poster, Run, Stop, the keyboard). A read of the page of a frame gives the frame the keyboard for WebDriver: read the doc comment of `inFrame` (`tests/e2e/harness/appFrames.ts`) before you use it.
+- E2E apps in a conversation: `tests/e2e/app-host.e2e.ts` (the poster, Run, Stop, the keyboard, the trash, the context click, the expanded view, fullscreen). A read of the page of a frame gives the frame the keyboard for WebDriver: read the doc comment of `inFrame` (`tests/e2e/harness/appFrames.ts`) before you use it.
 - A `browser.execute` result must not be an object with a set `error` field: webdriverio takes it for a failure of the script.
 - E2E specs that open a URL call `stopOpenUrl` (`tests/e2e/harness/dom.ts`), so no browser opens.
 - **No display server** (every spec fails with `Hook timed out in 120000ms` in `beforeAll`): run under headless `kwin_wayland`; the recipe is in `vitest.e2e.config.ts`.

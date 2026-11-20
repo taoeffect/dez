@@ -2592,7 +2592,9 @@ export const dezTheme = EditorView.theme({
     userSelect: 'none',
     WebkitUserSelect: 'none',
   },
+  // The box is also the frame of reference of the corner tools.
   '.dez-app__box': {
+    position: 'relative',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -2689,6 +2691,55 @@ export const dezTheme = EditorView.theme({
     width: editorSize(12),
     height: editorSize(12),
   },
+  // The corner of a poster: the size of the folder of the app, and the
+  // trash. It always shows, as a card has room for it.
+  '.dez-app__tools': {
+    position: 'absolute',
+    top: editorSize(6),
+    right: editorSize(6),
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: editorSize(6),
+    color: 'var(--color-muted, #888)',
+    fontSize: editorSize(12),
+  },
+  '.dez-app__size, .dez-app-frame__size': {
+    flex: 'none',
+    whiteSpace: 'nowrap',
+    fontVariantNumeric: 'tabular-nums',
+  },
+  // The buttons with an icon only: the trash of a poster, and Expand,
+  // Fullscreen, and the trash of the bar of an app that runs.
+  '.dez-app__trash, .dez-app-frame__button': {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flex: 'none',
+    boxSizing: 'border-box',
+    width: editorSize(22),
+    height: editorSize(22),
+    margin: '0',
+    padding: '0',
+    border: 'none',
+    borderRadius: editorSize(4),
+    background: 'transparent',
+    color: 'var(--color-muted, #888)',
+    cursor: 'pointer',
+  },
+  '.dez-app__trash svg, .dez-app-frame__button svg': {
+    display: 'block',
+    width: editorSize(15),
+    height: editorSize(15),
+  },
+  '.dez-app-frame__button:hover': {
+    background: 'color-mix(in srgb, var(--color-text) 10%, transparent)',
+    color: 'var(--color-text)',
+  },
+  // A trash is red under the pointer, as the trash of an image is.
+  '.dez-app__trash:hover, .dez-app-frame__button[data-action="delete"]:hover': {
+    background: 'var(--color-error-fill, #c4302b)',
+    color: '#fff',
+  },
   // The frame host of an app that runs (src/view/apps/appFrameHost.ts): a
   // child of the scroller, over the box of the card, with the place and the
   // size of that box as inline styles. The scroller is a stacking context
@@ -2712,6 +2763,34 @@ export const dezTheme = EditorView.theme({
   '.dez-app-frame:focus-within': {
     borderColor: 'var(--color-accent, #4c8dff)',
     boxShadow: '0 0 0 1px var(--color-accent, #4c8dff)',
+  },
+  // The expanded view: the host covers the conversation view. Its place is
+  // the box of the scroller in the window (inline styles), so it is over
+  // the text, and it does not scroll. No edge shows around it. The panels
+  // and the prompt of Dez are outside the scroller, and show over it.
+  '.dez-app-frame[data-expanded]': {
+    position: 'fixed',
+    zIndex: '6',
+    border: '0',
+    borderRadius: '0',
+    boxShadow: 'none',
+  },
+  // The scroller draws its scrollbar over all that is in it, so also over
+  // an app that covers it, and a drag of the scrollbar would move text
+  // that the user cannot see. So the conversation has no scrollbar while
+  // an app covers it. An older WebKit knows only the second rule.
+  '.cm-scroller:has(> .dez-app-frame[data-expanded])': {
+    scrollbarWidth: 'none',
+  },
+  '.cm-scroller:has(> .dez-app-frame[data-expanded])::-webkit-scrollbar': {
+    display: 'none',
+  },
+  // Fullscreen: the browser gives the host the place and the size of the
+  // screen, with rules that are stronger than its inline place.
+  '.dez-app-frame:fullscreen': {
+    border: '0',
+    borderRadius: '0',
+    boxShadow: 'none',
   },
   '.dez-app-frame__bar': {
     display: 'flex',

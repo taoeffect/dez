@@ -87,6 +87,13 @@ export function factsOf(path: AppsPath): Promise<FileTree> {
   return treeOf(path, 0)
 }
 
+/** The listing of the app at `app`, with as many entries as an app can
+ *  have: for its size (`appSize`) and the room that it has left. Throws a
+ *  `ToolError` when the native side fails. */
+export function appTreeOf(app: AppsPath): Promise<FileTree> {
+  return treeOf(app, APPS_MAX_ENTRIES)
+}
+
 /** The bytes of the file at the path `path` of the apps. The native side
  *  reads a file of any size: check its size first (`factsOf`). Throws a
  *  `ToolError` for a read that fails. */
@@ -152,7 +159,7 @@ export async function readAppFile(args: SubcommandArguments): Promise<AppsResult
 /** `apps write`. */
 export async function writeAppFile(args: SubcommandArguments): Promise<AppsResult> {
   const call = writeCall(args)
-  const [target, app] = await Promise.all([factsOf(call.path), treeOf(appOf(call.path), APPS_MAX_ENTRIES)])
+  const [target, app] = await Promise.all([factsOf(call.path), appTreeOf(appOf(call.path))])
   const plan = writePlan(call, target, app)
   if (plan.folder) await makeFolder(plan.folder)
   await save(call.path, call.bytes)
@@ -168,7 +175,7 @@ export async function editAppFile(args: SubcommandArguments): Promise<AppsResult
   const { content, isError, bytes } = editResult(call, fileText(call.path, before))
   if (bytes) {
     const app = appOf(call.path)
-    if (bytes.length > before.length) checkAppRoom(app, await treeOf(app, APPS_MAX_ENTRIES), { entries: 0, bytes: bytes.length - before.length })
+    if (bytes.length > before.length) checkAppRoom(app, await appTreeOf(app), { entries: 0, bytes: bytes.length - before.length })
     await save(call.path, bytes)
   }
   return { content, isError }
@@ -201,7 +208,7 @@ export async function moveAppPaths(args: SubcommandArguments, signal: AbortSigna
 /** `apps mkdir`. */
 export async function makeAppFolder(args: SubcommandArguments): Promise<AppsResult> {
   const { path } = mkdirCall(args)
-  const [target, app] = await Promise.all([factsOf(path), treeOf(appOf(path), APPS_MAX_ENTRIES)])
+  const [target, app] = await Promise.all([factsOf(path), appTreeOf(appOf(path))])
   const step = mkdirStep(path, target, app)
   if (step.make) await makeFolder(path)
   return step.text
@@ -220,7 +227,7 @@ export async function listApps(args: SubcommandArguments): Promise<AppsResult> {
   const folders = await native('list the apps', () => sbp('dez.native/listAppFiles', APPS_ROOT.file, 'app', { folders: true }) as Promise<AppFileEntry[]>)
   const apps = await Promise.all(folders.map(async ({ name }): Promise<ListedApp> => {
     const app = pathIn(APPS_ROOT, name)
-    const tree = await treeOf(app, APPS_MAX_ENTRIES)
+    const tree = await appTreeOf(app)
     const manifest = hasReadableManifest(tree) ? await readBytes(pathIn(app, MANIFEST_FILE)) : null
     return { name, tree, manifest }
   }))

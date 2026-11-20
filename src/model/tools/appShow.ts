@@ -1,5 +1,5 @@
 import { APP_NAME_SOURCE, MANIFEST_FILE, parseAppManifest } from './appManifest'
-import { appNamed, checkAppIsThere, checkedAppKind, kindName, pathIn, type AppsPath, type PathFacts } from './appsTool'
+import { appNamed, appSize, checkAppIsThere, checkedAppKind, kindName, pathIn, type AppSize, type AppsPath, type AppsTree, type PathFacts } from './appsTool'
 import { UI_INDEX_FILE } from './appTemplates'
 import { ToolError, type SubcommandArguments } from './types'
 
@@ -71,26 +71,33 @@ export function checkShowTarget({ app, manifest, index }: ShowCall, target: Show
  *    manifest.
  *  - `missing`: there is no folder of that name, so the app is gone.
  *  - `broken`: what is there is no UI app that Dez can show.
- *  - `unreadable`: Dez could not read what is there. */
+ *  - `unreadable`: Dez could not read what is there.
+ *
+ *  `size` is the size of the folder of the app; null when what is there
+ *  is no folder. */
 export type AppCardFacts =
-  | { state: 'ready', description: string }
-  | { state: 'missing' | 'broken' | 'unreadable' }
+  | { state: 'ready', description: string, size: AppSize | null }
+  | { state: 'broken', size: AppSize | null }
+  | { state: 'missing' | 'unreadable' }
 
-/** The facts of the card of the app of `call`, from what is at its paths.
- *  The card follows the one rule of a `show` call (`checkShowTarget`): Dez
- *  runs for the user only an app that it would show for a model. */
-export function appCardFacts(call: ShowCall, target: ShowTarget): AppCardFacts {
+/** The facts of the card of the app of `call`, from what is at its paths,
+ *  and from `tree`, the listing of the app with `APPS_MAX_ENTRIES`, for
+ *  its size. The card follows the one rule of a `show` call
+ *  (`checkShowTarget`): Dez runs for the user only an app that it would
+ *  show for a model. */
+export function appCardFacts(call: ShowCall, target: ShowTarget, tree: AppsTree): AppCardFacts {
   if (target.app.kind === 'missing') return { state: 'missing' }
+  const size = tree.kind === 'folder' ? appSize(tree) : null
   try {
     checkShowTarget(call, target)
   } catch (error) {
-    if (error instanceof ToolError) return { state: 'broken' }
+    if (error instanceof ToolError) return { state: 'broken', size }
     throw error
   }
   // The check read the kind from the manifest, so its bytes are there and
   // they parse.
   const manifest = target.manifestBytes && parseAppManifest(new TextDecoder().decode(target.manifestBytes))
-  return manifest ? { state: 'ready', description: manifest.description } : { state: 'broken' }
+  return manifest ? { state: 'ready', description: manifest.description, size } : { state: 'broken', size }
 }
 
 /** The start of the sentence with which a tool result tells that Dez put
