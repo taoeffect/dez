@@ -24,10 +24,10 @@ import { codePanel, hiddenPart, hidingPart, intermediateParts, pressToolChip, re
 // in this process. The app runs the code of each call in the real Deno of
 // the debug build:
 // - the result of a call is the value that the code returned (a string as
-//   it is, data as JSON, any other value as Deno shows it), then the
-//   console output of the code; the code can be TypeScript, it can load a
-//   built-in module, it has the time zone of the app, and a timer that it
-//   leaves does not hold the call;
+//   it is, data as JSON, any other value as Deno shows it, also data with a
+//   value in it that JSON loses), then the console output of the code; the
+//   code can be TypeScript, it can load a built-in module, it has the time
+//   zone of the app, and a timer that it leaves does not hold the call;
 // - code that threw gives an error result that names the lines of the code
 //   as lines of `/work/code.ts`, with the causes of the error; a syntax
 //   error, a static `import`, a refused permission, and a refused package
@@ -125,6 +125,10 @@ describe('js_eval tool', () => {
         'console.error("a warning")',
         'return { length: Math.hypot(point.x, point.y), hash: createHash("sha256").update("dez").digest("hex").length }',
       ].join('\n')),
+      // JSON would give `{}` for the `Map` and the `Set`, and `null` for
+      // `NaN`; a `Date` in data that JSON keeps whole stays JSON.
+      evalCall('call_lost', 'return { counts: new Map([["a", 3]]), unique: new Set([1]), list: [1, NaN] }'),
+      evalCall('call_date', 'return { when: new Date(0) }'),
       evalCall('call_place', 'return [Deno.cwd(), import.meta.url, Intl.DateTimeFormat().resolvedOptions().timeZone].join(" ")'),
       // Without the end that Dez gives the run, the timer would hold the
       // call until its time limit.
@@ -136,6 +140,8 @@ describe('js_eval tool', () => {
     expect(toolResult(second, 'call_exact')).toBe('18446744073709551616n')
     expect(toolResult(second, 'call_text')).toBe('one\ntwo')
     expect(toolResult(second, 'call_data')).toBe('{\n  "length": 5,\n  "hash": 64\n}\n\nConsole output of the code:\nthe point { x: 3, y: 4 }\na warning')
+    expect(toolResult(second, 'call_lost')).toBe('{ counts: Map(1) { "a" => 3 }, unique: Set(1) { 1 }, list: [ 1, NaN ] }')
+    expect(toolResult(second, 'call_date')).toBe('{\n  "when": "1970-01-01T00:00:00.000Z"\n}')
     expect(toolResult(second, 'call_place')).toBe(`/work file:///work/code.ts ${APP_TIME_ZONE}`)
     expect(toolResult(second, 'call_timer')).toBe('done')
     expect(toolResult(second, 'call_none')).toBe('The code returned no value, and it wrote nothing to the console. Give the result with `return`.')

@@ -140,7 +140,7 @@ const INVOKE_UI_HELP = `A UI app runs as its page (${UI_INDEX_FILE}), which Dez 
 const INVOKE_HELP = `Runs the code of an app on the user's computer, with the parameters of the call. ${JOB_CALL_NOTE} The kind of the app tells how it runs.\n\n`
   + 'A script app runs in a sandbox (Deno). '
   + `The run calls the default export of ${SCRIPT_MAIN} with two arguments, \`(parameters, dez)\`, and waits for its promise. `
-  + 'The value that the function returns is the result of the job: a string as it is, any other value as JSON. '
+  + 'The value that the function returns is the result of the job: a string as it is, JSON data as JSON, and any other value as Deno shows it. '
   + 'What the code writes with `console.log` comes after it. `parameters` is the object of the call. `dez` has three members:\n'
   + '- `dez.inputs`: one `{ id, kind, type, path }` for each id of `inputs`, in their order. `kind` is "image", "audio", or "video", `type` is the media type, '
   + 'and `path` is the path of a copy of the file. A change of the copy changes nothing of the image or the clip.\n'

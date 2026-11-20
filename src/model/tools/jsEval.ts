@@ -107,7 +107,7 @@ export const JS_EVAL_TOOL: ToolDefinition = {
   description: 'Run JavaScript or TypeScript code in a sandbox on the user\'s computer (Deno), and get what it returns. '
     + 'Use it when code does the work better than you: exact arithmetic, dates and times, sorting and counting, work on text and JSON. '
     + '`code` is the body of an async function, so `await` works, and the value that it gives with `return` is the result: '
-    + 'a string as it is, any other value as JSON. What the code writes with `console.log` comes after the result. '
+    + 'a string as it is, JSON data as JSON, and any other value as Deno shows it. What the code writes with `console.log` comes after the result. '
     + 'The code has no network, no files, and no environment variables, and it can start no program; no flag and no import changes that. '
     + 'It can load the built-in modules with `await import("node:crypto")`, but a static `import` does not work, '
     + 'and no package of npm, of JSR, or from a URL loads. '

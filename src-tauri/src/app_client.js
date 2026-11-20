@@ -94,7 +94,10 @@
   // string as it is, JSON data as JSON with the indent `indent`, and any
   // other value as its plain text (a number too, as JSON gives `null` for
   // `NaN`). No text for no value. A value that JSON refuses (a cycle, a
-  // BigInt in it) goes as its plain text.
+  // BigInt in it) goes as its plain text. Unlike `resultText`, it checks
+  // only the top value: the page has no `Deno.inspect`, and the plain text
+  // of an object is `[object Object]`, so an array or a plain object goes
+  // as JSON also when JSON loses a value in it (a `Map` gives `{}`).
   const valueText = (value, indent) => {
     if (typeof value === 'string' || value === undefined) return value
     let json

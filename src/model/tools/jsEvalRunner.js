@@ -31,6 +31,7 @@ import RUN from './run.json' with { type: 'json' }
 // result line, a tool call, or the end of the run.
 const { stringify, parse } = JSON
 const { isArray } = Array
+const { isFinite } = Number
 const { getPrototypeOf, prototype: objectPrototype, freeze } = Object
 const BaseError = Error
 const BasePromise = Promise
@@ -57,31 +58,45 @@ function send(line) {
   while (bytes.length > 0) bytes = bytes.subarray(writeSync(bytes))
 }
 
-// Whether JSON keeps what `value` holds: an array, a plain object, or an
-// object that tells its own JSON form. JSON gives `{}` for a `Map`, a
-// `Set`, and an `Error`, and loses the class of an instance.
-function isJsonData(value) {
-  if (value === null || typeof value !== 'object') return false
-  if (isArray(value) || typeof value.toJSON === 'function') return true
-  const prototype = getPrototypeOf(value)
+// Whether JSON keeps all of `item`, one value of a result as the replacer
+// of `JSON.stringify` gets it: after its own `toJSON`, which JSON does not
+// call again. JSON gives `null` for `NaN`, `Infinity`, and a hole of an
+// array, leaves out `undefined`, a function, and a symbol, gives `{}` for a
+// `Map`, a `Set`, and an `Error`, and loses the class of an instance.
+function keepsItem(item) {
+  if (item === null || typeof item === 'string' || typeof item === 'boolean') return true
+  if (typeof item === 'number') return isFinite(item)
+  if (typeof item !== 'object') return false
+  if (isArray(item)) return true
+  const prototype = getPrototypeOf(item)
   return prototype === objectPrototype || prototype === null
 }
 
+// The replacer of the JSON form of a result: it stops `JSON.stringify` at
+// the first value that JSON loses, so that a `Map` in an object does not
+// go as `{}`. A `Date` in the data stays JSON (its `toJSON` gives a string).
+function keptItem(key, item) {
+  if (!keepsItem(item)) throw new BaseError('JSON loses a value of the result')
+  return item
+}
+
+// How Deno shows a result: all of it, as JSON does. By default Deno shows
+// only 4 levels, and 100 entries of a list.
+const WHOLE_VALUE = { depth: Infinity, iterableLimit: Infinity }
+
 // The text of the value that the code returned: a string as it is, JSON
-// data as JSON, and any other value as Deno shows it (a number too, as
-// JSON gives `null` for `NaN`). No text for no value. A value that JSON
-// refuses (a cycle, a BigInt in it) goes as Deno shows it.
+// data as JSON, and any other value as Deno shows it. JSON data has no
+// value that JSON loses at any depth (`keepsItem`), so a list with a `NaN`
+// or an object with a `Map` goes as Deno shows it, and so does a value
+// that JSON refuses (a cycle, a BigInt in it). No text for no value.
 function resultText(value) {
   if (typeof value === 'string' || value === undefined) return value
-  let json
-  if (isJsonData(value)) {
-    try {
-      json = stringify(value, null, 2)
-    } catch {
-      // Not JSON data after all.
-    }
+  try {
+    return stringify(value, keptItem, 2)
+  } catch {
+    // JSON loses or refuses a part of the value.
   }
-  return json ?? inspect(value)
+  return inspect(value, WHOLE_VALUE)
 }
 
 // `lines` of a stack, with no line of this module: the model did not write
