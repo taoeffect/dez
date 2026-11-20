@@ -663,7 +663,8 @@ function onOverlayClick(event: MouseEvent) {
               <li>
                 On macOS, the rule of the system guards the files and the network, but it has no
                 filter of system calls: such code can reach other programs of yours there, for
-                example with a signal. The rule was tested with attack code on Linux only.
+                example with a signal. There, only the guards of the files and the network were
+                tested with attack code.
               </li>
             </ul>
 

@@ -47,7 +47,9 @@
 //!   reason: the policy of a page ends with the page.
 //! - A frame runs on the thread of Dez's page: a page that never pauses
 //!   stops Dez.
-//! - No Mac ran the macOS half of the guards of the webview (`platform`).
+//! - The audit runs on Linux only. Its pages ran by hand on a Mac, with the
+//!   outcomes of Linux; run them there again after an update of macOS,
+//!   wry, or Tauri.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -587,8 +589,8 @@ mod platform {
     }
 }
 
-// WKWebView. Written with no Mac: the macOS check of the task must run
-// the frame audit by hand.
+// WKWebView. No CI runs the frame audit on macOS (see the top of this
+// file).
 #[cfg(target_os = "macos")]
 mod platform {
     use std::cell::Cell;
