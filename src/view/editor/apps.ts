@@ -11,6 +11,7 @@ import { FRAME_PLACE_ATTRIBUTE, placeAppFrames, type AppFrameActions, type AppRu
 import { appIcon } from '../apps/appIcon'
 import { leaveFullscreen } from '../fullscreen'
 import { APP_BOX_HEIGHT_PX, APP_CARD_PADDING_PX, docToSections, editorSizePx, pillsField, sectionsField, type SectionModel } from '../thread/cmEditor'
+import { selectedAssetLook } from './assetSelection'
 import { compactionBlockEnd } from './compactionBlock'
 import { syncDomSelection } from './focus'
 import { insertSavedFile } from './imageInsert'
@@ -510,8 +511,10 @@ const appFramesSync = EditorView.updateListener.of((update) => {
  *  with the runs `carried` of the state before it. The cards are line
  *  blocks (`lineBlocks.ts`), as the media players are. Find skips the
  *  hidden text (`protectedRanges` in `find.ts`). The trash follows its tag
- *  as a pending range. The CSS of the card and of the frame host is in
- *  `dezTheme`. The state needs `sectionsField`. */
+ *  as a pending range. A card in a selection gets the tint of an image or
+ *  a player (`assetSelection.ts`), also while its app runs. The CSS of the
+ *  card and of the frame host is in `dezTheme`. The state needs
+ *  `sectionsField`. */
 export function markdownApps(carried: readonly CarriedAppRun[] = []): Extension {
   return [
     carried.length === 0 ? appsField : appsField.init((state) => {
@@ -521,5 +524,6 @@ export function markdownApps(carried: readonly CarriedAppRun[] = []): Extension 
     lineBlocks(renderedApps),
     pendingRanges(),
     appFramesSync,
+    selectedAssetLook(ROOT_CLASS, renderedApps),
   ]
 }

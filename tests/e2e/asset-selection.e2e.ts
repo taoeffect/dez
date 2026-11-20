@@ -2,7 +2,7 @@ import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { startApp, type RunningApp } from './harness/app'
-import { consoleErrors, pointerClickAt, pointerDrag, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
+import { consoleErrors, pointerClickAt, pointerDrag, resetConsoleErrors, screenshotOnFailure, themeColor, waitFor, waitForValue } from './harness/dom'
 import { appFilePath, mediaTempDir, seedAppState, writeTestFile } from './harness/fixtures'
 import { shownImages, solidPng } from './harness/images'
 import { WEBM_VIDEO, clipTag, shownPlayers, silentWav } from './harness/media'
@@ -44,18 +44,6 @@ describe('assets in a selection', () => {
         return { selected: root.hasAttribute('data-selected'), tint: hasTint ? after.backgroundColor : null }
       },
     ))
-  }
-
-  // The color of a CSS variable of the page, as a computed background.
-  async function themeColor (name: string): Promise<string> {
-    return browser.execute((variable: string) => {
-      const probe = document.createElement('div')
-      probe.style.background = `var(${variable})`
-      document.body.append(probe)
-      const color = getComputedStyle(probe).backgroundColor
-      probe.remove()
-      return color
-    }, name)
   }
 
   // The widget roots of the images and players, and their image, card, and
@@ -116,8 +104,8 @@ describe('assets in a selection', () => {
     await waitForValue(browser, 'shown images', () => shownImages(browser), [{ alt: 'selection.png', width: 120, height: 60 }])
     await waitFor(browser, '.cm-content .dez-image-missing')
     await markAssetElements()
-    const focused = await themeColor('--color-selection-tint')
-    const notFocused = await themeColor('--color-selection-tint-inactive')
+    const focused = await themeColor(browser, '--color-selection-tint')
+    const notFocused = await themeColor(browser, '--color-selection-tint-inactive')
     expect(focused).not.toBe(notFocused)
     const unselected = [{ selected: false, tint: null }, { selected: false, tint: null }]
     const firstSelected = [{ selected: true, tint: focused }, { selected: false, tint: null }]
@@ -195,7 +183,7 @@ describe('assets in a selection', () => {
     await markAssetElements()
     const marks = await stillMarked()
     expect(marks.length).toBeGreaterThanOrEqual(6)
-    const focused = await themeColor('--color-selection-tint')
+    const focused = await themeColor(browser, '--color-selection-tint')
 
     await focusEditor(browser)
     await browser.keys([Key.Alt, 'a'])
@@ -230,7 +218,7 @@ describe('assets in a selection', () => {
     await browser.keys([Key.Alt, 'a'])
     await waitForValue(browser, 'select all', () => editorSelection(browser), { anchor: 0, head: (await editorDoc(browser)).length })
     await scrollEditorToEnd(browser)
-    await waitForValue(browser, 'image drawn in the selection', assetLooks, [{ selected: true, tint: await themeColor('--color-selection-tint') }])
+    await waitForValue(browser, 'image drawn in the selection', assetLooks, [{ selected: true, tint: await themeColor(browser, '--color-selection-tint') }])
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 })

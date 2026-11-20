@@ -1569,6 +1569,29 @@ export const dezTheme = EditorView.theme({
   '&.cm-focused .dez-image[data-selected]:has(> .dez-image__img)::after, &.cm-focused .dez-media[data-selected] .media-player__card:not(:fullscreen)::after': {
     background: 'var(--color-selection-tint, rgba(184, 178, 234, 0.5))',
   },
+  // An app card that a selection holds. The corner tools of a poster are
+  // over this tint (their z-index).
+  '.dez-app[data-selected] .dez-app__box::after': {
+    content: '""',
+    position: 'absolute',
+    inset: '0',
+    borderRadius: 'inherit',
+    background: 'var(--color-selection-tint-inactive, rgba(100, 149, 237, 0.35))',
+    pointerEvents: 'none',
+  },
+  '&.cm-focused .dez-app[data-selected] .dez-app__box::after': {
+    background: 'var(--color-selection-tint, rgba(184, 178, 234, 0.5))',
+  },
+  // While its app runs, the frame host (`.dez-app-frame`, z-index 5)
+  // covers the box, so the tint goes over the host. Nothing between the
+  // box and the scroller makes a stacking context, so the two z-indexes
+  // compare in the scroller's. The expanded host has the same z-index and
+  // comes later in the scroller, so it covers the tint: an app over the
+  // conversation is not tinted. A poster keeps a lower tint, as its
+  // tools must stay under the expanded host of another app.
+  '.dez-app[data-selected] .dez-app__box[data-app-frame-place]::after': {
+    zIndex: '6',
+  },
   // The flash of an asset that a mention chip names (`flashDrawnAsset`,
   // drawnAssets.ts): a ring in the mention color. It is an inset shadow on
   // the box of the selection tint above; the two rules set other
@@ -2575,7 +2598,9 @@ export const dezTheme = EditorView.theme({
   // box of the app in it. The box has one size, for its poster and as the
   // placeholder of a run: a start and a stop move no text, and the editor
   // knows the height of a card that it has not drawn. The box has a border
-  // and a faint fill, through which the selection layer behind it shows.
+  // and a faint fill. The fill is opaque, as the card of a player is: in a
+  // selection, only the tint shows (see above), and not also the selection
+  // layer behind the box.
   '.dez-app': {
     display: 'inline-flex',
     flexDirection: 'column',
@@ -2592,7 +2617,8 @@ export const dezTheme = EditorView.theme({
     userSelect: 'none',
     WebkitUserSelect: 'none',
   },
-  // The box is also the frame of reference of the corner tools.
+  // The box is also the frame of reference of the corner tools, and of the
+  // tint of a selection.
   '.dez-app__box': {
     position: 'relative',
     display: 'flex',
@@ -2603,7 +2629,7 @@ export const dezTheme = EditorView.theme({
     height: editorSize(APP_BOX_HEIGHT_PX),
     border: '1px solid var(--color-border, #d0d0d0)',
     borderRadius: editorSize(8),
-    background: 'color-mix(in srgb, var(--color-text) 5%, transparent)',
+    background: 'color-mix(in srgb, var(--color-text) 5%, var(--color-bg))',
     overflow: 'hidden',
   },
   // The placeholder of a run draws nothing: the frame host is over it, and
@@ -2692,11 +2718,13 @@ export const dezTheme = EditorView.theme({
     height: editorSize(12),
   },
   // The corner of a poster: the size of the folder of the app, and the
-  // trash. It always shows, as a card has room for it.
+  // trash. It always shows, as a card has room for it. It is over the tint
+  // of a selection, and under a frame host (z-index 5 and 6).
   '.dez-app__tools': {
     position: 'absolute',
     top: editorSize(6),
     right: editorSize(6),
+    zIndex: '1',
     display: 'inline-flex',
     alignItems: 'center',
     gap: editorSize(6),

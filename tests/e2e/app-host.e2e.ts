@@ -31,6 +31,7 @@ import {
   promptMessage,
   resetConsoleErrors,
   screenshotOnFailure,
+  themeColor,
   typeKeys,
   waitFor,
   waitForValue,
@@ -38,7 +39,7 @@ import {
 } from './harness/dom'
 import { DROPPED_FILES_TEXT, expectNoLinkedFile, linkedDropDir, openDroppedFiles } from './harness/drops'
 import { appFilePath, filesIn, newFileIn, storedFileName } from './harness/fixtures'
-import { generatedImagesDir, shownImages, solidPng, STRIPES_PNG } from './harness/images'
+import { colorDistance, generatedImagesDir, screenPixels, shownImages, solidPng, STRIPES_PNG } from './harness/images'
 import { WEBM_VIDEO } from './harness/media'
 import { menuRecord, recordAssetMenus, resetMenuRecord, type MenuRecord } from './harness/menus'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
@@ -141,7 +142,8 @@ const LONG_TEXT = Array.from({ length: 300 }, (_, index) => `Line ${index + 1}`)
 // The part `part` of the frame host of the app `app` that runs.
 const hostPart = (app: string, part: string): string => `.cm-scroller > .dez-app-frame[data-app="${app}"] ${part}`
 
-const RUN = '.cm-content .dez-app[data-app="notes"] .dez-app__run'
+const NOTES_CARD = '.cm-content .dez-app[data-app="notes"]'
+const RUN = `${NOTES_CARD} .dez-app__run`
 const FRAME = hostPart('notes', 'iframe')
 const BAR_NAME = hostPart('notes', '.dez-app-frame__name')
 const EXPAND = hostPart('notes', '[data-action="expand"]')
@@ -204,6 +206,18 @@ interface ReadBlob {
 
 // What Dez answers a save of `BOARD_PNG` that it stored as the asset `id`.
 const savedPng = (id: string): Outcome<unknown> => ({ value: { id, kind: 'image', type: 'image/png' } })
+
+// The red, green, blue, and alpha of a computed CSS color.
+function colorParts (color: string): number[] {
+  const parts = color.match(/[\d.]+/g)?.map(Number) ?? []
+  return parts.length === 3 ? [...parts, 1] : parts
+}
+
+// The color (red, green, blue) that the color `tint` (with its alpha)
+// gives over the color `under`.
+function tintedColor (under: readonly number[], [red, green, blue, alpha]: readonly number[]): number[] {
+  return [red, green, blue].map((value, index) => Math.round(value * alpha + under[index] * (1 - alpha)))
+}
 
 // What a test reads of the page of `notes`; each part is null while the
 // page loads.
@@ -608,6 +622,65 @@ describe('apps in a conversation', () => {
     await focusEditor(browser)
     await waitForValue(browser, 'the app after a focus of the editor', frameViews, atCard)
     expect(await focusedArea(browser)).toBe('editor')
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('tints the card of an app in a selection, also over the page of an app that runs, and not an app over the conversation view', async () => {
+    // Whether the card of `notes` has the selected look (`data-selected`,
+    // src/view/editor/assetSelection.ts).
+    const cardSelected = (): Promise<boolean> =>
+      browser.execute((card: string) => document.querySelector(card)?.hasAttribute('data-selected') ?? false, NOTES_CARD)
+    // How the window shows the point `at`: 'clear' in the color `clear`
+    // that it has with no selection, 'tinted' in the color of the tint
+    // `tint` over that color, else its pixel.
+    const screenLook = async (at: Point, clear: readonly number[], tint: readonly number[]): Promise<'clear' | 'tinted' | number[]> => {
+      const [pixel] = await screenPixels(browser, [at])
+      if (colorDistance(pixel, clear.slice(0, 3)) <= 3) return 'clear'
+      if (colorDistance(pixel, tintedColor(clear, tint)) <= 3) return 'tinted'
+      return pixel
+    }
+
+    await openNotes('app-host-selection')
+    const tint = colorParts(await themeColor(browser, '--color-selection-tint'))
+    // A point of the box of the card near its left edge, in its middle
+    // row: on no part of the poster, and in the page of the app that runs.
+    const point = await browser.execute((card: string) => {
+      const box = document.querySelector(`${card} .dez-app__box`)?.getBoundingClientRect()
+      if (!box) throw new Error('no box of the card of notes')
+      return { x: Math.round(box.left + 24), y: Math.round(box.top + box.height / 2) }
+    }, NOTES_CARD)
+
+    // The poster gets the tint of an image, with no other color under it.
+    const [poster] = await screenPixels(browser, [point])
+    await focusEditor(browser)
+    await browser.keys([Key.Alt, 'a'])
+    await waitForValue(browser, 'the poster in Select All', cardSelected, true)
+    await waitForValue(browser, 'the tint over the poster', () => screenLook(point, poster, tint), 'tinted')
+    await setCaret(browser, 0)
+    await waitForValue(browser, 'the poster with a caret', () => screenLook(point, poster, tint), 'clear')
+
+    // The page of an app that runs gets the tint too: the frame host is
+    // over the card, and the tint is over the host.
+    const { run } = await runNotes()
+    await browser.keys(Key.Escape)
+    await waitForValue(browser, 'the focus after Escape', () => focusedArea(browser), 'editor')
+    const [page] = await screenPixels(browser, [point])
+    await browser.keys([Key.Alt, 'a'])
+    await waitForValue(browser, 'the card of the app in Select All', cardSelected, true)
+    await waitForValue(browser, 'the tint over the app', () => screenLook(point, page, tint), 'tinted')
+
+    // The app over the conversation view covers the tint of its card: the
+    // point looks the same with the selection and with a caret.
+    await pointerClick(browser, EXPAND)
+    await waitForValue(browser, 'the expanded view', frameViews, [{ run, view: 'expanded', inPlace: true }])
+    expect(await cardSelected()).toBe(true)
+    const [covered] = await screenPixels(browser, [point])
+    await setCaret(browser, 0)
+    await waitForValue(browser, 'the card with a caret', cardSelected, false)
+    expect(await screenLook(point, covered, tint)).toBe('clear')
+
+    await pointerClick(browser, EXPAND)
+    await waitForValue(browser, 'the app at its card', frameViews, [{ run, view: 'card', inPlace: true }])
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 
