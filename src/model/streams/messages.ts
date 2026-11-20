@@ -2,7 +2,7 @@ import type { MessagePart, ModelRef, Section, SectionThinking, ThinkingReplay } 
 import { appTagsForRequest, appTagText, findAppTags } from '../chat/appTags'
 import { assetTextPieces } from '../chat/assetMentions'
 import { blockLinkedRule, COMPACTION_MESSAGE_INTRO, COMPACTION_USER_MESSAGE_LABEL, compactionMessageEnd, isCarriedUserAssets, partsImageReferences, sectionCompactionBlock, sectionLinkedRuleParts, sectionTextParts, type CompactionBlock, type LinkedRulePart } from '../chat/compaction'
-import { messageFence, notesMessages } from '../chat/compactionNotes'
+import { messageFence, notesMessageParts, notesMessages } from '../chat/compactionNotes'
 import { sectionIsEmpty, sectionPlainText } from '../chat/content'
 import { findAssetMentions, type AssetMention } from '../chat/imageMentions'
 import { findImageReferences, IMAGE_TOOL_KEY, type ImageReference, type LinkedPathRule } from '../chat/images'
@@ -302,13 +302,15 @@ function partListText(list: PartList): string {
 // An `@id` mention adds no part here. A tool block (only a paste can put
 // one into the notes) goes as its text.
 //
-// A message part of the notes (`notesMessages`) goes as a text of the
-// user (`addUserText`), with the same rule: its text with no escape, its
-// images, and the images of its mentions (`imagesById`). In place of its
-// start line and its end line go the lines of a code fence
-// (`messageFence`), so the model sees where the words of the user start
-// and end; the image parts go at their places, inside the fence. Its
-// heading goes as it is.
+// A user part of the notes (`notesMessages`) goes as a text of the user
+// (`addUserText`), with the same rule: its text with no escape, its
+// images, and the images of its mentions (`imagesById`). The reply part of
+// the final message pair goes as its text with no escape of model text,
+// after the path scrub, and with no image: it holds no reference, and a
+// mention adds no part in the notes. In place of the start line and the
+// end line of a part go the lines of a code fence (`messageFence`), so the
+// model sees where the words of a message start and end; the image parts
+// go at their places, inside the fence. Its heading goes as it is.
 //
 // A reference that is over the limit of `images` goes as its text only,
 // and a picture that is over it does not go, with its label.
@@ -317,13 +319,14 @@ function addCompactionNotes(list: PartList, block: CompactionBlock, imagesById: 
   const notes = block.notes.trim()
   list.pendingText += notes === '' ? COMPACTION_MESSAGE_INTRO : `${COMPACTION_MESSAGE_INTRO}\n\n`
   let end = 0
-  for (const message of notesMessages(notes)) {
-    addNotesText(list, notes.slice(end, message.partFrom), rule, images)
-    const fence = messageFence(message.text)
+  for (const part of notesMessageParts(notes)) {
+    addNotesText(list, notes.slice(end, part.partFrom), rule, images)
+    const fence = messageFence(part.text)
     list.pendingText += `${fence}\n`
-    addUserText(list, message.text, imagesById, images, true, rule)
+    if (part.role === 'user') addUserText(list, part.text, imagesById, images, true, rule)
+    else list.pendingText += withoutStoredFilePaths(part.text)
     list.pendingText += `\n${fence}`
-    end = message.partTo
+    end = part.partTo
   }
   addNotesText(list, notes.slice(end), rule, images)
   if (!sendPictures) return
@@ -554,20 +557,26 @@ function roundRequestText(rounds: readonly AgentRound[], index: number): string 
 
 // `text` without the image references and the media tags of the assets
 // `ids` that have the mark of a Dez tool, and without the tags of the
-// apps `apps`, which only Dez writes. Each one goes with the line breaks
-// around it, which Dez wrote (`writeOwnParagraph` and `writeModelText`,
-// controller/stream.ts); one blank line stays where text is on both sides.
-// So a round that wrote only calls gives a blank text, and a round's
-// answer starts with the model's own words.
+// apps `apps`, which only Dez writes (`withoutAssetLines`). So a round
+// that wrote only calls gives a blank text, and a round's answer starts
+// with the model's own words.
 function withoutToolAssets(text: string, ids: ReadonlySet<string>, apps: ReadonlySet<string>): string {
-  const assets: { from: number, to: number }[] = [
+  return withoutAssetLines(text, [
     ...findImageReferences(text, 'agent').filter(({ id, metadata }) => id !== null && ids.has(id) && metadata.some((item) => item.key === IMAGE_TOOL_KEY)),
     ...findMediaTags(text, 'agent').filter(({ id, other }) => ids.has(id) && other.some((attribute) => attribute.name === MEDIA_TOOL_ATTRIBUTE)),
     ...findAppTags(text, 'agent').filter(({ name }) => apps.has(name)),
-  ]
+  ])
+}
+
+/** `text`, the text of a reply, without the runs `ranges` of it: image
+ *  references, media tags, and app tags that Dez wrote on lines of their
+ *  own. Each one goes with the line breaks around it, which Dez wrote
+ *  (`writeOwnParagraph` and `writeModelText`, controller/stream.ts); one
+ *  blank line stays where text is on both sides. */
+export function withoutAssetLines(text: string, ranges: readonly { from: number, to: number }[]): string {
   let rest = text
   // From the last one, so that the offsets of the earlier ones still hold.
-  for (const { from, to } of assets.sort((a, b) => b.from - a.from)) {
+  for (const { from, to } of [...ranges].sort((a, b) => b.from - a.from)) {
     const before = rest.slice(0, from).replace(/\n+$/, '')
     const after = rest.slice(to).replace(/^\n+/, '')
     rest = before !== '' && after !== '' ? `${before}\n\n${after}` : before + after

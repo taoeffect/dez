@@ -4,7 +4,7 @@ import { toolDefinition } from '../tools/registry'
 import type { ToolArguments, ToolArgumentValue, ToolParameterType } from '../tools/types'
 import { APP_TAG_NAME, appTagText, splitAppTags } from './appTags'
 import { bridgedCallsText, hasBridgedCalls, readBridgedCalls, type BridgedCalls } from './bridgedCalls'
-import { COMPACTION_TAG_NAME, USER_MESSAGE_TAG_NAME } from './compaction'
+import { AGENT_MESSAGE_TAG_NAME, COMPACTION_TAG_NAME, USER_MESSAGE_TAG_NAME } from './compaction'
 import { stripLiveSentinels } from './content'
 import { MEDIA_TAG_NAMES, mediaTagRequestText, splitMediaTags } from './mediaTags'
 import { readShownPictures, shownPicturesText, type ShownPicture } from './shownPictures'
@@ -271,10 +271,11 @@ export function withoutToolBlocks(text: string): string {
 
 // Model answer text gets the `tagEscape` escape for the tags that Dez itself
 // writes into agent text: `dez:tool`, the media tags (mediaTags.ts), the
-// app tag (appTags.ts), the compaction tag (compaction.ts), and the tag of
-// a message of the user in the notes (compactionNotes.ts). So no answer
+// app tag (appTags.ts), the compaction tag (compaction.ts), and the tags of
+// the message parts in the notes (compactionNotes.ts): a message of the
+// user, and the reply of the assistant before the final one. So no answer
 // can hold a block's opening or closing tag, a media tag, an app tag, a
-// compaction tag, or a message of the user. Requests remove the escape
+// compaction tag, or a message part. Requests remove the escape
 // (`agentTextForRequest`, `unescapedModelText`), so the provider gets the
 // model's own bytes. Prose about other tags (`dez:pill`) keeps its bytes.
 // The escape takes each name as the start of a name, so `<dez:apps` gets
@@ -284,7 +285,7 @@ export function withoutToolBlocks(text: string): string {
 // it, and no way tells the two apart. So a line of such a text that has
 // the form of a media tag reads as one, and an old `<\dez:audio` or
 // `<\dez:compaction` loses its `\` in a request. Stored text never changes.
-const MODEL_TEXT_TAGS: readonly string[] = ['dez:tool', ...MEDIA_TAG_NAMES, APP_TAG_NAME, COMPACTION_TAG_NAME, USER_MESSAGE_TAG_NAME]
+const MODEL_TEXT_TAGS: readonly string[] = ['dez:tool', ...MEDIA_TAG_NAMES, APP_TAG_NAME, COMPACTION_TAG_NAME, USER_MESSAGE_TAG_NAME, AGENT_MESSAGE_TAG_NAME]
 const modelTextEscape = tagEscape(...MODEL_TEXT_TAGS)
 
 /** Text that a model wrote, as a provider gets it: with the

@@ -35,7 +35,10 @@ import { budgetAfter, contextImageCost, type PictureBudget } from './pictureBudg
 // model kept (`keptMiddleMessages`), and the final one, the one that the
 // reply answers. So the sections of the user leave the conversation. A
 // later compaction copies these messages from the notes before, and the
-// model can drop a middle one then. Every other image and clip that stays
+// model can drop a middle one then. The reply right before the final
+// message goes with it (`CompactionScope.finalReply`), as the user saw it:
+// with mentions and labels in place of its assets, so it holds no asset,
+// no linked path, and no app tag. Every other image and clip that stays
 // has its reference or tag in the notes, with its line: also one of a
 // middle message that the model dropped. The user gave the linked files
 // of these texts, so the tag lists them (`linked`), and they still count
@@ -229,6 +232,7 @@ export function compactedSections(input: CompactedSectionsInput): CompactedSecti
       middleMessages: quoted.slice(1, scope.last === null ? quoted.length : -1),
       leftOutMessages,
       finalMessage: scope.last === null ? null : quoted[quoted.length - 1],
+      finalReply: scope.finalReply,
       requirements: answer.requirements,
       assets,
       unnamed: unnamed.map((reference) => imageReferenceTextWithKeptMark(reference, true)),

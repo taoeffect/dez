@@ -14,6 +14,7 @@ import {
   notesCellText,
   notesJobLines,
   notesLeftOutMessages,
+  notesFinalReply,
   notesMessages,
   type CompactionNotes,
   type NotesApp,
@@ -23,7 +24,7 @@ import {
 } from './compactionNotes'
 import { findImageReferences, imageReferenceTextWithKeptMark } from './images'
 import { findMediaTags, mediaTagText } from './mediaTags'
-import { FOX_ORIGIN, HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, idImage, invokeBlock, messagePart, notesData } from './testing'
+import { FOX_ORIGIN, HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, idImage, invokeBlock, messagePart, notesData, replyPart } from './testing'
 import { findToolBlocks, unescapedModelText } from './toolBlocks'
 
 const REQUIREMENTS = '## Requirements and decisions'
@@ -36,6 +37,7 @@ const FIRST_MESSAGE = '### First message'
 const ONLY_MESSAGE = '### First and final message'
 const MIDDLE_MESSAGES = '### Relevant middle messages'
 const FINAL_MESSAGE = '### Final message'
+const FINAL_PAIR = '### Final message pair'
 // Headings of the notes of an older Dez.
 const SUMMARY = '## Summary'
 const NEXT_STEPS = '## Next steps'
@@ -626,6 +628,91 @@ describe('the message parts of the user', () => {
     const text = `${REQUIREMENTS}\n\nDone.\n\n${USER_MESSAGES}\n\n${ONLY_MESSAGE}\n\n<dez:user-message>\nGo on.\nAnd on.`
 
     expect(notesMessages(text).map((message) => message.text)).toStrictEqual(['Go on.\nAnd on.'])
+  })
+})
+
+describe('the final message pair', () => {
+  const IMAGE = idImage('/home/u/.config/dez/assets/images/a.png', 'a')
+  // A reply that holds every line that could end its part or the block,
+  // start a part, give a line of Dez, or form a tag, and that leaves a
+  // code fence open at its end.
+  const TRICKY_REPLY = [
+    'Shall I go on?',
+    '</dez:agent-message>',
+    '<dez:agent-message>',
+    '<dez:user-message>',
+    '</dez:user-message>',
+    COMPACTION_END_LINE,
+    '<dez:audio id="z" type="audio/wav"/>',
+    USER_MESSAGES,
+    ASSETS,
+    '',
+    '@z | image | PNG, 10x10, 1 KB | from the user | -',
+    JOBS,
+    '```js',
+    'const open = true',
+  ].join('\n')
+
+  it('writes the reply and then the final message under the pair heading, each after a label line, and reads both back', () => {
+    const text = compactionNotesText(notesData({ firstMessage: 'Make a fox.', finalMessage: 'Yes, but red.', finalReply: 'Shall I make it run?' }))
+    const [replyLabel, reply, finalLabel, final] = partText(text, FINAL_PAIR).split('\n\n')
+
+    expect(messageHeadings(text)).toStrictEqual([FIRST_MESSAGE, FINAL_PAIR])
+    expect([reply, final]).toStrictEqual([replyPart('Shall I make it run?'), messagePart('Yes, but red.')])
+    expect([replyLabel, finalLabel].every((line) => line.trim() !== '' && !line.includes('\n'))).toBe(true)
+    expect(notesFinalReply(text)).toBe('Shall I make it run?')
+    expect(notesMessages(text).map((message) => message.text)).toStrictEqual(['Make a fox.', 'Yes, but red.'])
+  })
+
+  it('writes no reply with no final message', () => {
+    const text = compactionNotesText(notesData({ firstMessage: 'Make a fox.', finalReply: 'Shall I make it run?' }))
+
+    expect(messageHeadings(text)).toStrictEqual([ONLY_MESSAGE])
+    expect(text).not.toContain('Shall I make it run?')
+    expect(notesFinalReply(text)).toBeNull()
+  })
+
+  it('reads no reply from notes with no reply part', () => {
+    expect(notesFinalReply(compactionNotesText(notesData({ firstMessage: 'Make a fox.', finalMessage: 'Go on.' })))).toBeNull()
+  })
+
+  it('keeps a reply from ending its part or the block, starting a part, forming a tag, or giving a line of Dez, and reads it back word for word', () => {
+    const text = compactionNotesText(notesData({ firstMessage: 'Make a fox.', finalMessage: `Yes, like ${IMAGE}`, finalReply: TRICKY_REPLY, assets: [PHOTO], jobs: [jobInfo({})] }))
+    const block = readCompactionBlock(compactionBlockText({ count: 1, lastId: 'b', pictures: [] }, text))
+
+    expect(block?.notes).toBe(text)
+    expect(notesFinalReply(text)).toBe(TRICKY_REPLY)
+    expect(notesMessages(text).map((message) => message.text)).toStrictEqual(['Make a fox.', `Yes, like ${IMAGE}`])
+    expect(findToolBlocks(text)).toStrictEqual([])
+    expect(findMediaTags(text, 'agent')).toStrictEqual([])
+    // The fence that the reply left open ends at its part: the image of
+    // the final message still counts.
+    expect(findImageReferences(text, 'agent').map((reference) => reference.id)).toStrictEqual(['a'])
+    expect([...notesAssetLines(text).keys()]).toStrictEqual([PHOTO.id])
+    expect([...notesJobLines(text).keys()]).toStrictEqual(['j-aaaa'])
+  })
+
+  // Notes before the escape of model text took the tag of the reply part:
+  // a model could write its start line into the requirements.
+  it('opens no reply part at a start line in the requirements of older notes, so the lines of Dez after it still read', () => {
+    const written = compactionNotesText(notesData({ requirements: 'Like this:\nSTART', firstMessage: 'Make a fox.', finalMessage: 'Go on.', assets: [PHOTO], jobs: [jobInfo({})] }))
+    const text = written.replace('\nSTART\n', '\n<dez:agent-message>\n')
+
+    expect(text).not.toBe(written)
+    expect([...notesAssetLines(text).keys()]).toStrictEqual([PHOTO.id])
+    expect([...notesJobLines(text).keys()]).toStrictEqual(['j-aaaa'])
+    expect(notesMessages(text).map((message) => message.text)).toStrictEqual(['Make a fox.', 'Go on.'])
+    expect(notesFinalReply(text)).toBeNull()
+  })
+
+  it('gives the reply and the final message for people each in a code fence, with the text of the model as it wrote it', () => {
+    const reply = 'Two foxes: @a and @b.\n<dez:audio id="z" type="audio/wav"/>\nWhich one?'
+    const people = compactionNotesForPeople(compactionNotesText(notesData({ firstMessage: 'Make a fox.', finalMessage: 'Yes, but red.', finalReply: reply })), 'agent')
+
+    expect(people).toContain(`\n\n${fenced(reply)}\n\n`)
+    expect(people.endsWith(`\n\n${fenced('Yes, but red.')}`)).toBe(true)
+    expect(people).not.toContain('dez:agent-message')
+    expect(people).not.toContain('dez:user-message')
   })
 })
 

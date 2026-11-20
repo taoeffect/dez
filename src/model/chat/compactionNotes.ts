@@ -5,7 +5,7 @@ import { APPS_VIRTUAL_ROOT } from '../tools/appsTool'
 import { ASSET_NAME_SOURCE, ASSET_NAMES, jobResultLegend, jobResultState, type JobAssetKind, type JobInfo, type JobResultState, type JobStatus } from '../tools/jobs'
 import { labelAppTags } from './appTags'
 import { openFenceCloser } from './codeRanges'
-import { blockLinkedRule, COMPACTION_TAG_NAME, readCompactionBlock, USER_MESSAGE_TAG_NAME } from './compaction'
+import { AGENT_MESSAGE_TAG_NAME, blockLinkedRule, COMPACTION_TAG_NAME, readCompactionBlock, USER_MESSAGE_TAG_NAME } from './compaction'
 import type { ConversationCost } from './conversationCost'
 import { IMAGE_ID_SOURCE, labelImageReferences, type LinkedPathRule } from './images'
 import { labelMediaTags } from './mediaTags'
@@ -68,13 +68,21 @@ import type { Role } from './types'
 //   <a middle message that the model kept, word for word>
 //   </dez:user-message>
 //
-//   ### Final message
+//   ### Final message pair
+//
+//   <label line: the reply of the assistant before the final message>
+//
+//   <dez:agent-message>
+//   <that reply, as the user saw it, with no tool call>
+//   </dez:agent-message>
+//
+//   <label line: the final message of the user>
 //
 //   <dez:user-message>
 //   <the message that the reply answers, word for word>
 //   </dez:user-message>
 //
-// - The messages of the user are the message parts (`notesMessages`), in
+// - The messages of the user are the user parts (`notesMessages`), in
 //   the order of the conversation, and they are read by their place: the
 //   first part is the first message of the conversation, which a later
 //   compaction copies from the notes before. Of two or more parts, the
@@ -84,6 +92,15 @@ import type { Role } from './types'
 //   message is the final one, the notes hold one part, with the heading
 //   `### First and final message`. The model reads the final message
 //   last, right before the reply goes on.
+// - The final message pair: the reply of the assistant right before the
+//   final message, in a reply part (`notesFinalReply`), then the final
+//   message, each after a label line of Dez. A short answer of the user
+//   ("yes, but …") needs the text that it answers. The reply is the text
+//   that the user saw, with no tool block, no hidden asset, and each
+//   image reference, media tag, and app tag as its mention or label
+//   (streams/compactionAssets.ts), so the part holds no asset. With no
+//   such reply, the heading is `### Final message`, with the user part
+//   only. Notes of an older Dez have no reply part.
 // - The middle part starts with one line that tells how many middle
 //   messages Dez left out, when it left out one or more: at this
 //   compaction and at the ones before. With no middle message and none
@@ -94,16 +111,17 @@ import type { Role } from './types'
 //   model, and `## Newest message of the user` at the end. The readers
 //   read them too: the parts are read by place, and a reader of a part of
 //   Dez finds its heading.
-// - A part is the text of the message with an escape of its own
-//   (`messageEscape`), between a start line and an end line, each a whole
-//   line. The escape takes only the tags that would end the part or the
-//   block, or form a tool block in this agent section; the image
+// - A part is the text of its message between a start line and an end
+//   line, each a whole line. A user part has an escape of its own
+//   (`messageEscape`). It takes only the tags that would end the part or
+//   the block, or form a tool block in this agent section; the image
 //   references and the media tags of the user stay as they are, so they
-//   still count, at their places. A request sends a part as a message of
-//   the user (streams/messages.ts), and a request and a text for people
-//   show it in a code fence (`messageFence`) in place of its two tag
-//   lines. A reader of the lines of Dez skips the parts, so a line of the
-//   user is never a line of Dez.
+//   still count, at their places. A reply part has the escape of model
+//   text. A request sends a user part as a message of the user
+//   (streams/messages.ts), and a request and a text for people show each
+//   part in a code fence (`messageFence`) in place of its two tag lines.
+//   A reader of the lines of Dez skips the parts, so a line of a message
+//   is never a line of Dez.
 // - The requirements and decisions are the text part of the answer of
 //   the model to the compaction request (streams/compactionRequest.ts). A
 //   blank part is left out. A part that leaves a code fence open gets a
@@ -156,10 +174,11 @@ import type { Role } from './types'
 //   line of a model for a line of Dez: a model can copy a heading of
 //   earlier notes into its answer. `## User messages` is there only with
 //   a first message, but no line of a model has it: the reader of the
-//   answer takes each such line as a heading. The part of the apps is
-//   there only with an app, so its reader takes it only after the part
-//   of the assets, where no text of a model is. No reader looks into a
-//   message part.
+//   answer takes each such line as a heading. So a reply part counts only
+//   after that heading (`scanMessages`). The part of the apps is there
+//   only with an app, so its reader takes it only after the part of the
+//   assets, where no text of a model is. No reader looks into a message
+//   part.
 // - Saved conversations hold these lines, and later compactions and
 //   `asset_info` read them back. So a new form of a line needs a reader
 //   that still takes the old form. The reader of the tables reads a line
@@ -176,19 +195,33 @@ const FIRST_MESSAGE_HEADING = '### First message'
 const ONLY_MESSAGE_HEADING = '### First and final message'
 const MIDDLE_MESSAGES_HEADING = '### Relevant middle messages'
 const FINAL_MESSAGE_HEADING = '### Final message'
+const FINAL_PAIR_HEADING = '### Final message pair'
 
 const MESSAGE_START_LINE = `<${USER_MESSAGE_TAG_NAME}>`
 const MESSAGE_END_LINE = `</${USER_MESSAGE_TAG_NAME}>`
-// The escape of the text of a message part. Not the escape of model text:
+const REPLY_START_LINE = `<${AGENT_MESSAGE_TAG_NAME}>`
+const REPLY_END_LINE = `</${AGENT_MESSAGE_TAG_NAME}>`
+// The escape of the text of a user part. Not the escape of model text:
 // that one also takes the media tags, so a clip of the user would not
 // count, and its unescape would change a text of the user that holds
-// `<\dez:audio`.
+// `<\dez:audio`. A user part needs no escape of the reply tag: no start
+// line opens a part in a part.
 const messageEscape = tagEscape('dez:tool', COMPACTION_TAG_NAME, USER_MESSAGE_TAG_NAME)
+
+// The start line, the end line, and the unescape of the text of each kind
+// of message part, by the role of its message.
+const PART_FORMS: Readonly<Record<Role, { start: string, end: string, unescape: (text: string) => string }>> = {
+  user: { start: MESSAGE_START_LINE, end: MESSAGE_END_LINE, unescape: messageEscape.unescape },
+  agent: { start: REPLY_START_LINE, end: REPLY_END_LINE, unescape: unescapedModelText },
+}
 
 // These texts are in the cached prefix of every request of the
 // conversation: never a date, a running count, or a random value.
 const NO_NOTES_ASSETS_TEXT = 'None: these notes keep no image and no clip.'
 const NO_NOTES_JOBS_TEXT = 'None: no job of a reply ran at this compaction.'
+// The label lines of the two parts of the final message pair.
+const REPLY_LABEL = 'The last reply of the assistant before the final message of the user, with its tool calls left out:'
+const FINAL_LABEL = 'The final message of the user, which came after that reply:'
 
 // The line at the start of the middle part that tells how many middle
 // messages Dez left out (`CompactionNotes.leftOutMessages`), and its
@@ -349,6 +382,11 @@ export interface CompactionNotes {
   /** The message of the user that the reply that runs answers; null when
    *  it is the first message, or when there is none. */
   finalMessage: string | null
+  /** The reply of the assistant right before `finalMessage`, as the user
+   *  saw it (`CompactionScope.finalReply`, streams/compactionAssets.ts),
+   *  with no escape; null for none. The notes hold it only with a final
+   *  message. */
+  finalReply: string | null
   /** The text part of the model's answer, with no escape. */
   requirements: string
   assets: readonly NotesAsset[]
@@ -409,22 +447,31 @@ export function conversationCostText(cost: ConversationCost | undefined, upTo: s
   return `${start} (an estimate): ${usdText(usd)} for ${count}.${rest}`
 }
 
-// The text of a message part: the start line, the text with its escape,
-// and the end line.
+// The text of a user part: the start line, the text with its escape, and
+// the end line.
 function messagePartText(text: string): string {
   return `${MESSAGE_START_LINE}\n${messageEscape.escape(text)}\n${MESSAGE_END_LINE}`
 }
 
+// The text of a reply part: the start line, the text with the escape of
+// model text, and the end line.
+function replyPartText(text: string): string {
+  return `${REPLY_START_LINE}\n${escapedModelText(text)}\n${REPLY_END_LINE}`
+}
+
 // The part of the messages of the user in `notes`, with no heading: a
 // sub-part for each kind of message, in the order of the conversation.
-function userMessagesText({ firstMessage, middleMessages, leftOutMessages, finalMessage }: CompactionNotes): string {
+function userMessagesText({ firstMessage, middleMessages, leftOutMessages, finalMessage, finalReply }: CompactionNotes): string {
   const parts: string[] = []
   if (firstMessage !== null) parts.push(`${finalMessage === null ? ONLY_MESSAGE_HEADING : FIRST_MESSAGE_HEADING}\n\n${messagePartText(firstMessage)}`)
   if (middleMessages.length > 0 || leftOutMessages > 0) {
     const lines = [...(leftOutMessages > 0 ? [leftOutText(leftOutMessages)] : []), ...middleMessages.map(messagePartText)]
     parts.push(`${MIDDLE_MESSAGES_HEADING}\n\n${lines.join('\n\n')}`)
   }
-  if (finalMessage !== null) parts.push(`${FINAL_MESSAGE_HEADING}\n\n${messagePartText(finalMessage)}`)
+  if (finalMessage !== null && finalReply === null) parts.push(`${FINAL_MESSAGE_HEADING}\n\n${messagePartText(finalMessage)}`)
+  if (finalMessage !== null && finalReply !== null) {
+    parts.push([FINAL_PAIR_HEADING, REPLY_LABEL, replyPartText(finalReply), FINAL_LABEL, messagePartText(finalMessage)].join('\n\n'))
+  }
   return parts.join('\n\n')
 }
 
@@ -452,6 +499,9 @@ export function compactionNotesText(notes: CompactionNotes): string {
 
 /** One message part of the notes. The offsets are in the notes. */
 export interface NotesMessage {
+  /** `user` for a message of the user, `agent` for the reply of the
+   *  assistant in the final message pair. */
+  role: Role
   /** The text of the message, with the escape of the part removed. */
   text: string
   /** The text with its escape: from the line after the start line to
@@ -465,44 +515,73 @@ export interface NotesMessage {
 }
 
 // The message parts of `notes`, and whether each of its lines is a line of
-// a part. A line that is the start line opens a part, and the first later
-// line that is the end line closes it. With no end line, the part runs to
-// the end of the notes.
+// a part. A line that is a start line opens a part, and the first later
+// line that is the end line of its kind closes it. With no end line, the
+// part runs to the end of the notes.
+//
+// The start line of a reply opens a part only after the first line
+// `## User messages` outside the parts. The reader of the answer of a
+// model takes each such line as a heading (streams/compactionRequest.ts),
+// so the requirements never hold one, and the first one is the heading of
+// Dez. The requirements of the notes before the escape of model text took
+// the reply tag can hold its start line bare, and they come before that
+// heading. Such a line must open no part: the part would hide the lines of
+// Dez after it (`partLines`), and the next compaction would lose them.
 function scanMessages(notes: string): { messages: NotesMessage[], lines: string[], inMessage: boolean[] } {
   const lines = notes.split('\n')
   const inMessage = lines.map(() => false)
   const messages: NotesMessage[] = []
-  const add = (partFrom: number, endLineFrom: number, partTo: number) => {
-    const from = Math.min(partFrom + MESSAGE_START_LINE.length + 1, notes.length)
+  const add = (role: Role, partFrom: number, endLineFrom: number, partTo: number) => {
+    const form = PART_FORMS[role]
+    const from = Math.min(partFrom + form.start.length + 1, notes.length)
     const to = Math.max(from, endLineFrom - 1)
-    messages.push({ text: messageEscape.unescape(notes.slice(from, to)), from, to, partFrom, partTo })
+    messages.push({ role, text: form.unescape(notes.slice(from, to)), from, to, partFrom, partTo })
   }
-  let start: number | null = null
+  let open: { role: Role, from: number } | null = null
+  let afterHeading = false
   let offset = 0
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index]
-    if (start !== null) {
+    if (open !== null) {
       inMessage[index] = true
-      if (line === MESSAGE_END_LINE) {
-        add(start, offset, offset + line.length)
-        start = null
+      if (line === PART_FORMS[open.role].end) {
+        add(open.role, open.from, offset, offset + line.length)
+        open = null
       }
-    } else if (line === MESSAGE_START_LINE) {
+    } else if (line === MESSAGE_START_LINE || (afterHeading && line === REPLY_START_LINE)) {
       inMessage[index] = true
-      start = offset
+      open = { role: line === MESSAGE_START_LINE ? 'user' : 'agent', from: offset }
+    } else if (line === USER_MESSAGES_HEADING) {
+      afterHeading = true
     }
     offset += line.length + 1
   }
-  if (start !== null) add(start, notes.length + 1, notes.length)
+  if (open !== null) add(open.role, open.from, notes.length + 1, notes.length)
   return { messages, lines, inMessage }
 }
 
-/** The message parts of the notes `notes` (`CompactionBlock.notes`), in
+/** The message parts of the notes `notes` (`CompactionBlock.notes`) of
+ *  both kinds, the user parts and the reply part, in order. */
+export function notesMessageParts(notes: string): NotesMessage[] {
+  return scanMessages(notes).messages
+}
+
+/** The user parts of the notes `notes` (`CompactionBlock.notes`), in
  *  order. The first one is the first message of the user; of two or more,
  *  the last one is the final message, and the ones between them are the
  *  middle messages. */
 export function notesMessages(notes: string): NotesMessage[] {
-  return scanMessages(notes).messages
+  return scanMessages(notes).messages.filter((message) => message.role === 'user')
+}
+
+/** The reply of the final message pair of the notes `notes`
+ *  (`CompactionNotes.finalReply`), with no escape: the reply part right
+ *  before the last user part; null when there is none. Any other reply
+ *  part (a hand edit) counts for nothing. */
+export function notesFinalReply(notes: string): string | null {
+  const parts = scanMessages(notes).messages
+  const last = parts.findLastIndex((part) => part.role === 'user')
+  return last > 0 && parts[last - 1].role === 'agent' ? parts[last - 1].text : null
 }
 
 /** How many middle messages of the user the notes `notes` left out
@@ -516,12 +595,12 @@ export function notesLeftOutMessages(notes: string): number {
   return 0
 }
 
-/** The fence of a code block that quotes the message `text` of the user:
- *  backticks, one more than the longest run of backticks in `text`, and at
- *  least 3. A run inside a code block that is shorter than its fence does
- *  not close it (CommonMark), so the text can hold any fence of its own.
- *  The request form and the form for people of a message only make its
- *  runs shorter, so the fence of its raw text fits each form. */
+/** The fence of a code block that quotes the message `text` of a message
+ *  part: backticks, one more than the longest run of backticks in `text`,
+ *  and at least 3. A run inside a code block that is shorter than its
+ *  fence does not close it (CommonMark), so the text can hold any fence of
+ *  its own. The request form and the form for people of a message only
+ *  make its runs shorter, so the fence of its raw text fits each form. */
 export function messageFence(text: string): string {
   let longest = 0
   let run = 0
@@ -611,10 +690,11 @@ export function compactionNotesForPeople(notes: string, rule: LinkedPathRule): s
   const labeled = (text: string) => labelAppTags(labelMediaTags(labelImageReferences(text, rule), rule), rule)
   const pieces: string[] = []
   let from = 0
-  for (const message of notesMessages(notes)) {
-    const fence = messageFence(message.text)
-    pieces.push(unescapedModelText(labeled(notes.slice(from, message.partFrom))), `${fence}\n${labeled(message.text)}\n${fence}`)
-    from = message.partTo
+  for (const part of notesMessageParts(notes)) {
+    const fence = messageFence(part.text)
+    const text = part.role === 'user' ? labeled(part.text) : unescapedModelText(labeled(notes.slice(part.from, part.to)))
+    pieces.push(unescapedModelText(labeled(notes.slice(from, part.partFrom))), `${fence}\n${text}\n${fence}`)
+    from = part.partTo
   }
   pieces.push(unescapedModelText(labeled(notes.slice(from))))
   return pieces.join('')
@@ -641,7 +721,7 @@ export function compactionTextForPeople(text: string, index: number, role: Role,
 /** The notes for the two chips of a compaction, each for people
  *  (`compactionNotesForPeople`, with `rule`): `assets` is the part of the
  *  assets of the conversation, with no heading, and `summary` every other
- *  line, in its order, with the headings and the messages of the user.
+ *  line, in its order, with the headings and the message parts.
  *  The assets part is the last one with its heading, as the readers of
  *  the lines of Dez take it (`partLines`). */
 export function compactionNotesParts(notes: string, rule: LinkedPathRule): { assets: string, summary: string } {

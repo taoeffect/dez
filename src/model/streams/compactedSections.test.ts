@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { assetPlaces } from '../chat/assetOrigins'
 import { blockLinkedRule, sectionCompactionBlock, sectionTextParts } from '../chat/compaction'
-import { notesAssetLines, notesLeftOutMessages, notesMessages } from '../chat/compactionNotes'
+import { notesAssetLines, notesFinalReply, notesLeftOutMessages, notesMessages } from '../chat/compactionNotes'
 import { sectionPlainText, textNode } from '../chat/content'
 import { findKeptAssets } from '../chat/hiddenAssets'
 import { findImageReferences, imageMarkdown, imageReferenceTextWithKeptMark, isKeptImage } from '../chat/images'
@@ -10,7 +10,7 @@ import type { ShownPicture } from '../chat/shownPictures'
 import { idImage } from '../chat/testing'
 import type { ModelRef, Section } from '../chat/types'
 import { compactedSections, type CompactedSections, type CompactedSectionsInput } from './compactedSections'
-import { assetDecisions, compactionAssets, compactionScope, keptUserTexts } from './compactionAssets'
+import { assetDecisions, compactionAssets, compactionScope, keptTexts } from './compactionAssets'
 import { readCompactionAnswer } from './compactionRequest'
 import { conversationAssets } from './mediaRequest'
 import { sectionsToStreamMessages } from './messages'
@@ -49,7 +49,7 @@ function compact(sections: Section[], answerText: string, replySectionId: string
     sections,
     replySectionId,
     model: NOTES_MODEL,
-    choices: assetDecisions(assets, answer, { keptTexts: keptUserTexts(sections, scope, answer) }),
+    choices: assetDecisions(assets, answer, { keptTexts: keptTexts(sections, scope, answer) }),
     answer,
     apps: [],
     jobs: [],
@@ -320,6 +320,31 @@ describe('compactedSections', () => {
     expect(sent(headOf(result)).images).toStrictEqual([linked('first')])
   })
 
+  it('quotes the reply right before the final message in the notes, and keeps each asset that it names, whatever the answer tells', () => {
+    const sections = [
+      user('u0', 'Make a fox'),
+      reply('r1', `Two foxes:\n${idImage(made('fox'), 'a')}\n${idImage(made('wolf'), 'b')}\nWhich one?`),
+      user('u1', 'The first one.'),
+      reply('r2', ''),
+    ]
+    const result = compact(sections, `${NOTES}\n## Assets\n@a: drop - the fox\n@b: drop - the wolf`, 'r2')
+
+    expect(result.dropped).toStrictEqual([])
+    expect(notesFinalReply(notesText(result))).toBe('Two foxes:\n@a\n@b\nWhich one?')
+    expect(messagesOf(result)).toStrictEqual(['Make a fox', 'The first one.'])
+    expect([...notesAssetLines(notesText(result)).keys()]).toStrictEqual(['a', 'b'])
+  })
+
+  it('quotes a linked image of that reply as a label, so that its path is in no notes and no tag', () => {
+    const path = '/home/u/Pictures/model.png'
+    const sections = [user('u0', 'Make a fox'), reply('r1', `Like ${imageMarkdown(path)}?`), user('u1', 'Yes.'), reply('r2', '')]
+    const result = compact(sections, NOTES, 'r2')
+
+    expect(notesFinalReply(notesText(result))).toBe('Like [image]?')
+    expect(notesText(result)).not.toContain(path)
+    expect(sectionCompactionBlock(result.sections[0])?.linked).toBeUndefined()
+  })
+
   // The dropped id is the highest one, so a tag that read only the ids
   // that stay would give `a`.
   it('takes a dropped asset out of the conversation, and keeps its id out of the new ids', () => {
@@ -345,9 +370,13 @@ describe('compactedSections', () => {
   })
 
   it('drops at the first compaction an asset of an earlier reply that the answer has no line for, and keeps one of the reply that runs', () => {
+    // The reply right before the final message names no asset: the notes
+    // quote it, and its mentions keep their assets.
     const sections = [
       user('u0', 'Make a fox'),
       reply('r1', idImage(made('fox'), 'a')),
+      user('u0b', 'Fine.'),
+      reply('r1b', 'What next?'),
       user('u1', 'Now a hare'),
       reply('r2', `${idImage(made('hare'), 'b')}\n${idImage(made('draft'), 'c')}`),
     ]

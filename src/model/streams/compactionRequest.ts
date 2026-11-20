@@ -187,7 +187,7 @@ function appsList(apps: readonly NotesApp[]): string {
 export function compactionInstruction({ middleMessages, assetTable, apps, jobs, cost, tools }: CompactionInstruction): string {
   const text = `[Request from Dez, not a message of the user]
 
-The conversation is near the limit of what one request can hold. So Dez now takes every message above out of the conversation and puts your answer to this request in their place, as notes. The work goes on right after that, from the notes alone: the next request holds only your notes and the messages of the user that Dez quotes in them word for word (the first message, the middle messages that you keep, and the newest message). The tool calls and their results are gone then, and so is your thinking.
+The conversation is near the limit of what one request can hold. So Dez now takes every message above out of the conversation and puts your answer to this request in their place, as notes. The work goes on right after that, from the notes alone: the next request holds only your notes and the messages of the user that Dez quotes in them word for word (the first message, the middle messages that you keep, and the newest message), and your last reply before the newest message, with no tool call. So your notes need not repeat these texts. The tool calls and their results are gone then, and so is your thinking.
 
 Write only the notes, as plain text, with these three headings and nothing before or after them.${tools ? ' Call no tool in this answer: Dez does not run it.' : ''}
 

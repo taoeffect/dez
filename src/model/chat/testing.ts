@@ -2,14 +2,15 @@
 // tool blocks that own them (the block of a call that started a job, and
 // the block of a `js_eval` call whose code did), which the model tests and
 // the editor tests share; the reference of an image with an id; a
-// compaction tag, the data of its notes, a message part of its notes, and
-// an origin of its notes; and the start of a JPEG file with no picture
-// data, which the model tests and the controller tests share.
+// compaction tag, the data of its notes, a message part and a reply part
+// of its notes, and an origin of its notes; and the start of a JPEG file
+// with no picture data, which the model tests and the controller tests
+// share.
 import type { PromptInput } from '../streams/mediaRequest'
 import { jobStartedText } from '../tools/jobs'
 import { invocationInputsText } from '../tools/modelInvoke'
 import type { BridgedCall } from './bridgedCalls'
-import { compactionTagText, USER_MESSAGE_TAG_NAME } from './compaction'
+import { AGENT_MESSAGE_TAG_NAME, compactionTagText, USER_MESSAGE_TAG_NAME } from './compaction'
 import type { CompactionNotes } from './compactionNotes'
 import { IMAGE_HIDDEN_KEY, IMAGE_TOOL_KEY, imageMarkdown, imageReferenceTextWithKeptMark } from './images'
 import { MEDIA_HIDDEN_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE, mediaTagText, type MediaTagKind } from './mediaTags'
@@ -37,6 +38,7 @@ export function notesData(fields: Partial<CompactionNotes>): CompactionNotes {
     middleMessages: [],
     leftOutMessages: 0,
     finalMessage: null,
+    finalReply: null,
     requirements: 'Every frame is 16:9.',
     assets: [],
     unnamed: [],
@@ -52,6 +54,13 @@ export function notesData(fields: Partial<CompactionNotes>): CompactionNotes {
  *  compactionNotes.ts) that holds the message `text`, with no escape. */
 export function messagePart(text: string): string {
   return `<${USER_MESSAGE_TAG_NAME}>\n${text}\n</${USER_MESSAGE_TAG_NAME}>`
+}
+
+/** The reply part of the final message pair of the notes of a compaction
+ *  (`notesFinalReply`, compactionNotes.ts) that holds the reply `text`,
+ *  with no escape. */
+export function replyPart(text: string): string {
+  return `<${AGENT_MESSAGE_TAG_NAME}>\n${text}\n</${AGENT_MESSAGE_TAG_NAME}>`
 }
 
 /** The reference of the image `id` at `path`, with the kept mark of a

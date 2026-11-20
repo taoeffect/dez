@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { appTagText } from '../chat/appTags'
 import { CARRIED_USER_ASSETS_LABEL, COMPACTION_MESSAGE_INTRO, COMPACTION_USER_MESSAGE_LABEL, compactionBlockText, compactionTagText, sectionsBeforeReply } from '../chat/compaction'
+import { compactionNotesText } from '../chat/compactionNotes'
 import { imageMarkdown } from '../chat/images'
 import { MEDIA_HIDDEN_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE, mediaTagRequestText, mediaTagText, type MediaTagData } from '../chat/mediaTags'
 import { SHOWN_PICTURE_OVER_LIMIT_NOTE, type ShownPicture } from '../chat/shownPictures'
-import { messagePart } from '../chat/testing'
+import { messagePart, notesData } from '../chat/testing'
 import { toolBlockText, type ToolBlockData, type ToolBlockStatus } from '../chat/toolBlocks'
 import type { Section, SectionThinking, ThinkingReplay } from '../chat/types'
 import type { ClipInputRules, MediaKind } from '../providers/types'
@@ -1453,6 +1454,22 @@ describe('sectionsToStreamMessages: a compacted conversation', () => {
         { role: 'agent', content: 'Done.' },
         { role: 'user', content: [{ type: 'text', text: 'Thanks ![id=d](image)' }, { type: 'image', path: OTHER_IMAGE }] },
       ])
+    })
+
+    it('sends the reply of the final message pair in a code fence too, as text with no image part, and reads the final message as the newest one', () => {
+      // Only a reference in code stays in a reply part (`finalReplyText`).
+      const replyText = `Like this?\n${FENCE}\n![id=b](${GENERATED})\n${FENCE}`
+      const notes = compactionNotesText(notesData({ requirements: 'Notes.', firstMessage: 'Make a fox.', finalReply: replyText, finalMessage: `Yes, with ![id=d](${OTHER_IMAGE})` }))
+      const { messages, newestUserMessage } = sent([partsBlock(notes), reply('r', '')])
+      const parts = messages.flatMap((message) => (message.role === 'user' && Array.isArray(message.content) ? message.content : []))
+      const texts = parts.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('')
+
+      expect(messages).toHaveLength(1)
+      expect(parts.filter((part) => part.type !== 'text')).toStrictEqual([{ type: 'image', path: OTHER_IMAGE }])
+      expect(texts).toContain(`\n${'````'}\nLike this?\n${FENCE}\n![id=b](image)\n${FENCE}\n${'````'}\n`)
+      expect(texts).not.toContain('/home/u')
+      expect(texts).not.toContain('dez:agent-message')
+      expect(newestUserMessage).toStrictEqual([{ type: 'text', text: 'Yes, with ![id=d](image)' }, { type: 'image', path: OTHER_IMAGE }])
     })
 
     it('sends a linked image and a linked clip of the messages with no path, and only when the tag lists them', () => {

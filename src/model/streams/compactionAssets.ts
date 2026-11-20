@@ -1,19 +1,22 @@
 import { oneLineCut } from '../../utils/oneLineCut'
-import { labelAppTags } from '../chat/appTags'
+import { appTagLabel, labelAppTags } from '../chat/appTags'
+import { assetTextPieces } from '../chat/assetMentions'
 import type { AssetPlace } from '../chat/assetOrigins'
 import { blockLinkedRule, compactionMessageEnd, isCarriedUserAssets, sectionCompactionBlock, sectionTextParts } from '../chat/compaction'
-import { notesAssetLines, notesCellText, notesMessages, type NotesAssetLine } from '../chat/compactionNotes'
+import { notesAssetLines, notesCellText, notesFinalReply, notesMessages, type NotesAssetLine } from '../chat/compactionNotes'
 import { sectionIsEmpty, sectionPlainText } from '../chat/content'
+import { findHiddenAssets } from '../chat/hiddenAssets'
 import { findAssetMentions } from '../chat/imageMentions'
-import { IMAGE_HIDDEN_KEY, labelImageReferences, type LinkedPathRule } from '../chat/images'
+import { findImageReferences, IMAGE_HIDDEN_KEY, IMAGE_LABEL, labelImageReferences, type LinkedPathRule } from '../chat/images'
 import { labelMediaTags, MEDIA_HIDDEN_ATTRIBUTE } from '../chat/mediaTags'
 import { withoutStoredFilePaths } from '../chat/storedFilePaths'
+import { findToolBlocks, unescapedModelText, withoutToolBlocks } from '../chat/toolBlocks'
 import type { Section } from '../chat/types'
 import { assetOriginText } from '../tools/assetInfo'
 import { ASSET_NAMES, isOpenJob, type JobAssetKind, type JobInfo } from '../tools/jobs'
 import { MAX_ASSET_SENTENCE_LENGTH, type AssetDecision, type CompactionAnswer } from './compactionRequest'
 import { foundAssetFrom, type FoundAsset } from './mediaRequest'
-import { messageMentionIds } from './messages'
+import { messageMentionIds, withoutAssetLines } from './messages'
 
 // The images and the clips of a conversation at a compaction: what Dez
 // tells the model about each one in the compaction request (the asset
@@ -24,11 +27,12 @@ import { messageMentionIds } from './messages'
 // reader of its answer, must never remove an asset of the user, or an
 // asset that a later step needs. This module also tells which messages of
 // the user the notes keep word for word (`compactionScope`,
-// `keptMiddleMessages`), with the same rule for the words of the user.
+// `keptMiddleMessages`), with the same rule for the words of the user, and
+// the reply right before the final one (`CompactionScope.finalReply`).
 // All pure; controller/compaction.ts reads the files.
 
 /** A message of the user that a compaction can keep word for word: a
- *  user section, or a message part of the notes of the compaction before
+ *  user section, or a user part of the notes of the compaction before
  *  (`notesMessages`, chat/compactionNotes.ts). */
 export interface KeptMessage {
   /** The index of its section. */
@@ -64,6 +68,12 @@ export interface CompactionScope {
   /** The final message of the user, which stays word for word: the one
    *  that the reply answers. Null when it is `first`, or there is none. */
   last: KeptMessage | null
+  /** The reply of the assistant right before `last`, as the user saw it
+   *  (`finalReplyText`), with no escape of model text; null with no
+   *  `last`, with no such reply, or for a reply with no text. The notes
+   *  keep it word for word before `last`, so that a short answer of the
+   *  user ("yes, but …") still has the text that it answers. */
+  finalReply: string | null
 }
 
 /** The scope of a compaction of `sections` in the reply whose section has
@@ -77,7 +87,12 @@ export interface CompactionScope {
  *  compaction before. The parts are read by their place: the first one is
  *  the first message; of two or more, the last one is the final message,
  *  and the ones between them are middle messages. A user section came
- *  after the parts, so with one, the final part is a middle message now. */
+ *  after the parts, so with one, the final part is a middle message now.
+ *
+ *  The final reply is the reply part of the notes before while their
+ *  final part stays the final message. Else it is the first section
+ *  before the final message that is not empty, when that is an agent
+ *  section: a message of the user there means no reply. */
 export function compactionScope(sections: readonly Section[], replySectionId: string): CompactionScope {
   const found = sections.findIndex((section) => section.id === replySectionId)
   const reply = found < 0 ? null : found
@@ -102,13 +117,69 @@ export function compactionScope(sections: readonly Section[], replySectionId: st
   const messages = [...parts, ...userSections]
   // With no user section, the final part stays the final message.
   const last = messages.length > 1 ? messages[messages.length - 1] : null
+  let finalReply: string | null = null
+  if (last !== null && userSections.length === 0) finalReply = block === null ? null : notesFinalReply(block.notes)
+  if (last !== null && userSections.length > 0) finalReply = replyBefore(sections, last.section)
   return {
     reply,
     end: reply === null ? sections.length : reply + 1,
     first: messages[0] ?? null,
     middle: messages.slice(1, -1),
     last,
+    finalReply,
   }
+}
+
+// The text of the reply right before the user section `index`
+// (`finalReplyText`): the first section before it that is not empty, when
+// that is an agent section; null for none.
+function replyBefore(sections: readonly Section[], index: number): string | null {
+  let at = index - 1
+  while (at >= 0 && sectionIsEmpty(sections[at])) at--
+  return at >= 0 && sections[at].role === 'agent' ? finalReplyText(sections, at) : null
+}
+
+/** The text of the reply of section `index` of `sections` as the user saw
+ *  it, for the final message pair of the notes: with no escape of model
+ *  text, and null for a reply that showed no text. In the compaction
+ *  section, the reply is its text after the block.
+ *
+ *  1. The hidden assets go, each with the line breaks around it: the user
+ *     did not see them, and a mention of them would keep them.
+ *  2. The tool blocks go, as the chips are no words of the reply.
+ *  3. Each other image reference and media tag becomes its `@id` mention
+ *     (an image with no id its label `[image]`), and each app tag its
+ *     label `[app <name>]`. In the notes, a reference would count as an
+ *     asset of the block, and a linked path that a model wrote must never
+ *     count. The pieces are read with the rule of the user, where each
+ *     linked path counts, so no reference stays that the rule of a block
+ *     could take. Markdown code stays as it is: code is text.
+ *
+ *  The rule of the user does not end code at a `<dez:` line, as the rule
+ *  of a reply does. So a tag of Dez after a fence that the reply left open
+ *  stays as text, and the notes quote it in code. */
+function finalReplyText(sections: readonly Section[], index: number): string | null {
+  const chipSections = sections.slice(0, index + 1).map((section, at) => {
+    const { text } = sectionTextParts(section, at)
+    return { role: section.role, text, blocks: section.role === 'agent' ? findToolBlocks(text) : [] }
+  })
+  const text = withoutToolBlocks(withoutAssetLines(chipSections[index].text, findHiddenAssets(chipSections)[index]))
+  const shown = assetTextPieces(text, 'user').map((piece) => {
+    switch (piece.kind) {
+      case 'media': return `@${piece.tag.id}`
+      case 'app': return appTagLabel(piece.tag.name)
+      case 'codeTag': return text.slice(piece.tag.from, piece.tag.to)
+      case 'reference': {
+        const id = findImageReferences(text.slice(piece.from, piece.to), 'user')[0]?.id ?? null
+        return id === null ? IMAGE_LABEL : `@${id}`
+      }
+      default: return text.slice(piece.from, piece.to)
+    }
+  }).join('')
+  // Blank lines at the two ends go; the spaces of the first line stay, as
+  // they can make it a line of code.
+  const trimmed = shown.replace(/^(?:[^\S\n]*\n)+/, '').trimEnd()
+  return trimmed === '' ? null : unescapedModelText(trimmed)
 }
 
 /** The middle messages of `scope` that the notes keep word for word: each
@@ -302,13 +373,18 @@ export interface AssetChoice {
   rank: number
 }
 
-/** The texts of the user that stay word for word after a compaction of
- *  `scope` with `answer`: the messages that the notes quote
- *  (`quotedMessages`), and each user section after the sections that the
- *  compaction replaces. An `@id` mention of them must still name its asset
- *  (`assetDecisions`). */
-export function keptUserTexts(sections: readonly Section[], scope: CompactionScope, answer: CompactionAnswer): string[] {
-  return [...quotedMessages(scope, answer).map((message) => message.text), ...sections.slice(scope.end).filter((section) => section.role === 'user').map(sectionPlainText)]
+/** The texts that stay word for word after a compaction of `scope` with
+ *  `answer`: the messages of the user that the notes quote
+ *  (`quotedMessages`), the reply of the final message pair
+ *  (`CompactionScope.finalReply`), and each user section after the
+ *  sections that the compaction replaces. An `@id` mention of them must
+ *  still name its asset (`assetDecisions`). */
+export function keptTexts(sections: readonly Section[], scope: CompactionScope, answer: CompactionAnswer): string[] {
+  return [
+    ...quotedMessages(scope, answer).map((message) => message.text),
+    ...(scope.finalReply === null ? [] : [scope.finalReply]),
+    ...sections.slice(scope.end).filter((section) => section.role === 'user').map(sectionPlainText),
+  ]
 }
 
 /** The label of the picture of a clip that a compaction keeps for its
@@ -332,7 +408,7 @@ export function clipPictureLabel(shows: string): string {
  *    asset of the user; an input of an open job (`jobInput`); an asset
  *    that a file of an app of the conversation names (`appInput`); and an
  *    asset that a text names which stays, the notes of the answer or a
- *    text of the user (`keptUserTexts`).
+ *    text that the notes quote or that stays after them (`keptTexts`).
  *  - Any other line counts as it is: the model can drop an asset of the
  *    reply that runs. */
 export function assetDecisions(

@@ -2,8 +2,9 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
+import { appTagLabel } from '../../src/model/chat/appTags'
 import { CARRIED_USER_ASSETS_LABEL, COMPACTION_END_LINE, COMPACTION_MESSAGE_INTRO, COMPACTION_USER_MESSAGE_LABEL, compactionBlockText, compactionTagText, readCompactionBlock, type CompactionBlock } from '../../src/model/chat/compaction'
-import { compactionNotesText, messageFence, notesMessages } from '../../src/model/chat/compactionNotes'
+import { compactionNotesText, messageFence, notesFinalReply, notesMessageParts, notesMessages } from '../../src/model/chat/compactionNotes'
 import { newMediaIds } from '../../src/model/chat/mediaIds'
 import type { ShownPicture } from '../../src/model/chat/shownPictures'
 import type { ConversationData, SectionData } from '../../src/model/persistence/types'
@@ -347,15 +348,17 @@ describe('a compacted conversation', () => {
   // The one message of a request right after a compaction that kept no
   // image: the notes of the compaction block of the tab, with each message
   // part as its text in a code fence. The reply text after the block does
-  // not change it. `messages` are the texts of the parts: the messages of
-  // the user that the notes keep, word for word.
-  async function notesMessage (...messages: string[]): Promise<Record<string, unknown>> {
+  // not change it. `messages` are the texts of the user parts: the
+  // messages of the user that the notes keep, word for word. `reply` is
+  // the text of the reply part: the reply right before the final message,
+  // as the user saw it; null for notes with no reply part.
+  async function notesMessage (messages: string[], reply: string | null = null): Promise<Record<string, unknown>> {
     const notes = (await compactedSection()).read.notes.trim()
-    const parts = notesMessages(notes)
-    expect(parts.map(({ text }) => text)).toStrictEqual(messages)
+    expect(notesMessages(notes).map(({ text }) => text)).toStrictEqual(messages)
+    expect(notesFinalReply(notes)).toBe(reply)
     // A code fence takes the place of the start line and the end line of
     // a part.
-    const content = parts.reduceRight((text, part) => {
+    const content = notesMessageParts(notes).reduceRight((text, part) => {
       const fence = messageFence(part.text)
       return `${text.slice(0, part.partFrom)}${fence}\n${part.text}\n${fence}${text.slice(part.partTo)}`
     }, notes)
@@ -1039,7 +1042,7 @@ describe('a compacted conversation', () => {
     // from them, in the same section after the block: the call is gone.
     // The question is in the notes: no section of the user is left.
     const second = await takeRequest(setup, CHAT_PATH)
-    expect(JSON.parse(second.body)).toStrictEqual(openAiChatBody(PROVIDER, [await notesMessage(question)]))
+    expect(JSON.parse(second.body)).toStrictEqual(openAiChatBody(PROVIDER, [await notesMessage([question])]))
     const [firstSection, ...rest] = await threadSections(browser)
     const { block, read, reply } = await compactedSection()
     expect(read.count).toBe(1)
@@ -1110,7 +1113,7 @@ describe('a compacted conversation', () => {
     // The first request of the reply holds the notes, with the first
     // message of the user and the new one in them.
     const request = await takeRequest(setup, CHAT_PATH)
-    expect(JSON.parse(request.body)).toStrictEqual(openAiChatBody(PROVIDER, [await notesMessage(thread[0].text, 'Go on.')]))
+    expect(JSON.parse(request.body)).toStrictEqual(openAiChatBody(PROVIDER, [await notesMessage([thread[0].text, 'Go on.'], thread[1].text)]))
     await sendChatReply(request.reply, 'the reader of the notes')
     const { block, read } = await compactedSection()
     expect(read.count).toBe(1)
@@ -1202,7 +1205,8 @@ describe('a compacted conversation', () => {
     sendChatText(compaction.reply, NOTES_ANSWER, { promptTokens: LARGE_TOKENS + 1000 })
 
     const request = await takeRequest(setup, CHAT_PATH)
-    expect(JSON.parse(request.body)).toStrictEqual(openAiChatBody(PROVIDER, [await notesMessage(thread[0].text, 'Go on.')]))
+    // The notes quote the reply before "Go on." with a label for its app.
+    expect(JSON.parse(request.body)).toStrictEqual(openAiChatBody(PROVIDER, [await notesMessage([thread[0].text, 'Go on.'], `The board of the foxes:\n${appTagLabel(board.name)}`)]))
     await sendChatReply(request.reply, 'the reader of the notes')
     const { block, read } = await compactedSection()
     await waitForThread(browser, [{ role: 'agent', text: `${block}\n${replyText('the reader of the notes')}` }, { role: 'user', text: '' }])
@@ -1243,6 +1247,7 @@ describe('a compacted conversation', () => {
       middleMessages: [],
       leftOutMessages: 0,
       finalMessage: null,
+      finalReply: null,
       jobs: [],
       jobInputs: new Map(),
       cost: undefined,
@@ -1260,7 +1265,7 @@ describe('a compacted conversation', () => {
     const request = await takeRequest(setup, CHAT_PATH)
     // The first message of the old layout and the new message are in the
     // notes now.
-    expect(JSON.parse(request.body)).toStrictEqual(openAiChatBody(PROVIDER, [await notesMessage(thread[1].text, 'Now a wolf.')]))
+    expect(JSON.parse(request.body)).toStrictEqual(openAiChatBody(PROVIDER, [await notesMessage([thread[1].text, 'Now a wolf.'], thread[2].text)]))
     await sendChatReply(request.reply, 'the wolf')
 
     // The second compaction left both images out of the conversation, and
@@ -1334,15 +1339,15 @@ describe('a compacted conversation', () => {
     const compaction = await takeRequest(setup, CHAT_PATH)
     sendChatText(compaction.reply, NOTES_ANSWER)
 
-    // One user message: the notes, with the two messages word for word in
-    // code fences, and each image right after its reference. No text holds
-    // a path.
+    // One user message: the notes, with the two messages and the reply
+    // between them word for word in code fences, and each image right
+    // after its reference. No text holds a path.
     const request = await takeRequest(setup, CHAT_PATH)
     const notes = await compactedSection()
     expect(notes.read.linked).toStrictEqual([linked])
     const text = notes.read.notes.trim()
-    const [firstPart, newestPart] = notesMessages(text)
-    expect([firstPart.text, newestPart.text]).toStrictEqual([first, 'Go on.'])
+    const [firstPart, replyPart, newestPart] = notesMessageParts(text)
+    expect([firstPart.text, replyPart.text, newestPart.text]).toStrictEqual([first, 'An earlier answer.', 'Go on.'])
     const fence = messageFence(first)
     expect(JSON.parse(request.body)).toStrictEqual(openAiChatBody(PROVIDER, [{
       role: 'user',
@@ -1351,7 +1356,7 @@ describe('a compacted conversation', () => {
         imagePart(LINKED_PNG),
         { type: 'text', text: ' and ![id=b](image)' },
         imagePart(KEPT_PNG),
-        { type: 'text', text: `\n${fence}${text.slice(firstPart.partTo, newestPart.partFrom)}${fence}\nGo on.\n${fence}${text.slice(newestPart.partTo)}` },
+        { type: 'text', text: `\n${fence}${text.slice(firstPart.partTo, replyPart.partFrom)}${fence}\nAn earlier answer.\n${fence}${text.slice(replyPart.partTo, newestPart.partFrom)}${fence}\nGo on.\n${fence}${text.slice(newestPart.partTo)}` },
       ],
     }]))
     expect(request.body).not.toContain(linkedDir)
@@ -1405,20 +1410,26 @@ describe('a compacted conversation', () => {
     sendChatText(compaction.reply, '## Requirements and decisions\nThe film has three parts.\n\n## Middle messages\nm1: keep\nm2: drop\n\n## Assets\n@b: drop - The user rejected the renders.\n')
 
     // The next request quotes the first, the kept middle, and the final
-    // message, each in a code fence, and the image of the middle message
-    // right after its reference, in its fence.
+    // message, and the reply right before the final one ("Fine."), each in
+    // a code fence, and the image of the middle message right after its
+    // reference, in its fence.
     const request = await takeRequest(setup, CHAT_PATH)
     const { block, read } = await compactedSection()
     const text = read.notes.trim()
-    const [first, middle, final] = notesMessages(text)
-    expect(notesMessages(text).map((part) => part.text)).toStrictEqual(['Make a short film in three parts.', instruction, 'Now the end part.'])
+    const [first, middle, pairReply, final] = notesMessageParts(text)
+    expect(notesMessageParts(text).map((part) => [part.role, part.text])).toStrictEqual([
+      ['user', 'Make a short film in three parts.'],
+      ['user', instruction],
+      ['agent', 'Fine.'],
+      ['user', 'Now the end part.'],
+    ])
     const fence = messageFence(instruction)
     expect(JSON.parse(request.body)).toStrictEqual(openAiChatBody(PROVIDER, [{
       role: 'user',
       content: [
         { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\n${text.slice(0, first.partFrom)}${fence}\n${first.text}\n${fence}${text.slice(first.partTo, middle.partFrom)}${fence}\nFor the middle part use my screenshot, not the renders:\n![id=a](image)` },
         imagePart(SHOT_PNG),
-        { type: 'text', text: `\n${fence}${text.slice(middle.partTo, final.partFrom)}${fence}\nNow the end part.\n${fence}${text.slice(final.partTo)}` },
+        { type: 'text', text: `\n${fence}${text.slice(middle.partTo, pairReply.partFrom)}${fence}\nFine.\n${fence}${text.slice(pairReply.partTo, final.partFrom)}${fence}\nNow the end part.\n${fence}${text.slice(final.partTo)}` },
       ],
     }]))
     await sendChatReply(request.reply, 'the end part')
@@ -1429,16 +1440,20 @@ describe('a compacted conversation', () => {
     expect([shot, render].filter((file) => block.includes(file))).toStrictEqual([shot])
 
     // The summary chip shows the three kinds of message, each kept one in
-    // a code fence, and tells that one message is left out. The assets
-    // chip shows the screenshot and no render.
+    // a code fence, and tells that one message is left out. Under the
+    // heading of the final message pair, the reply comes before the final
+    // message, each in a code fence. The assets chip shows the screenshot
+    // and no render.
     await scrollEditorToTop(browser)
     await pressToolChip(browser, 1)
     await waitForValue(browser, 'summary panel', async () => (await chipNotes('summary')) !== null, true)
-    const shown = await chipNotes('summary')
+    const shown = await chipNotes('summary') ?? ''
     expect(shown).toContain('## User messages\n\n### First message\n\n```\nMake a short film in three parts.\n```')
     expect(shown).toContain('### Relevant middle messages\n\nDez left out 1 other message of the user here')
     expect(shown).toContain('```\nFor the middle part use my screenshot, not the renders:\n')
-    expect(shown).toContain('### Final message\n\n```\nNow the end part.\n```')
+    const pair = ['### Final message pair\n\n', '```\nFine.\n```', '```\nNow the end part.\n```'].map((piece) => shown.indexOf(piece))
+    expect(pair.filter((at) => at < 0)).toStrictEqual([])
+    expect(pair).toStrictEqual([...pair].sort((a, b) => a - b))
     expect(shown).not.toContain('```\nok\n```')
     await pressToolChip(browser, 0)
     await waitForValue(browser, 'images in the assets panel', () => shownImages(browser), [SHOT_IMAGE])
@@ -1466,7 +1481,7 @@ describe('a compacted conversation', () => {
     sendChatText(compaction.reply, NOTES_ANSWER)
 
     const request = await takeRequest(setup, CHAT_PATH)
-    expect(JSON.parse(request.body)).toStrictEqual(openAiChatBody(PROVIDER, [await notesMessage('Go on.')]))
+    expect(JSON.parse(request.body)).toStrictEqual(openAiChatBody(PROVIDER, [await notesMessage(['Go on.'])]))
     await sendChatReply(request.reply, 'the new layout')
     const { block, read } = await compactedSection()
     expect(read.count).toBe(2)
@@ -1494,7 +1509,7 @@ describe('a compacted conversation', () => {
     // The reply goes on after the block, with no thinking yet: the pill
     // shows the spinner.
     const second = await takeRequest(setup, chatPath)
-    expect(requestMessages(second)).toStrictEqual([await notesMessage(question)])
+    expect(requestMessages(second)).toStrictEqual([await notesMessage([question])])
     await waitForValue(browser, 'pills after the first compaction', pillRoles, [{ index: 0, role: 'agent' }])
     expect((await pillThinking(browser, 0))?.slot).toBe('spinner')
     expect(await pillStreams(0)).toBe(true)
@@ -1517,7 +1532,7 @@ describe('a compacted conversation', () => {
     // The chip of the call comes after the two chips of the compaction.
     const third = await takeRequest(setup, chatPath)
     expect(requestMessages(third)).toStrictEqual([
-      await notesMessage(question),
+      await notesMessage([question]),
       { role: 'assistant', content: '', tool_calls: [secondCall], reasoning_content: plan },
       { role: 'tool', tool_call_id: 'call_2', content: toolResult(third, 'call_2') },
     ])
@@ -1545,7 +1560,7 @@ describe('a compacted conversation', () => {
     // The new block takes the place of the old one and of the rounds after
     // it. The thinking of those rounds goes with them.
     const last = await takeRequest(setup, chatPath)
-    expect(requestMessages(last)).toStrictEqual([await notesMessage(question)])
+    expect(requestMessages(last)).toStrictEqual([await notesMessage([question])])
     const { block, read, reply } = await compactedSection()
     expect([read.count, block.includes(secondSummary), reply]).toStrictEqual([2, true, ''])
     expect(await pillRoles()).toStrictEqual([{ index: 0, role: 'agent' }])
@@ -1615,7 +1630,7 @@ describe('a compacted conversation', () => {
     expect(reply).toBe(replyText('the reader of the notes'))
     await submit(browser, 'And next?')
     const next = await takeRequest(setup, CHAT_PATH, openAiChatBody(PROVIDER, [
-      await notesMessage('The task.', 'Go on.'),
+      await notesMessage(['The task.', 'Go on.'], 'An earlier answer.'),
       { role: 'assistant', content: replyText('the reader of the notes') },
       { role: 'user', content: 'And next?' },
     ]))

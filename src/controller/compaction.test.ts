@@ -38,6 +38,11 @@ const SECTIONS: Section[] = [
   user('u2', 'Make it longer.'),
   reply('r', 'I look at the film first.'),
 ]
+// One more exchange, for a place before the final message of SECTIONS: the
+// notes quote the reply right before that message, and each of its
+// mentions keeps its asset, so a test that drops an asset of `r1` puts this
+// between them.
+const ASIDE: Section[] = [user('u1b', 'Good.'), reply('r1b', 'What next?')]
 const MESSAGES: StreamMessage[] = [{ role: 'user', content: 'Make a fox film.' }, { role: 'agent', content: 'A draft.' }]
 const TOOLS: ToolDefinition[] = [{ name: 'model_list', description: 'Lists the models.', parameters: [] }]
 const NOTES = '## Requirements and decisions\nThe user wants a fox film.\nMake the film longer.'
@@ -208,7 +213,7 @@ describe('compactConversation', () => {
   it('takes an asset out of the conversation that the answer drops, and keeps as text the ones that it keeps', async () => {
     streamChat = answers(`${NOTES}\n\n## Assets\n@b: drop - An old draft.\n@c: keep - The first film.`)
 
-    const compaction = await compactConversation(compactionInput())
+    const compaction = await compactConversation(compactionInput({ sections: [...SECTIONS.slice(0, 2), ...ASIDE, ...SECTIONS.slice(2)] }))
 
     expect(compaction.dropped.map(({ asset }) => asset.id)).toStrictEqual(['b'])
     expect([...notesAssetLines(notesOf(compaction)).keys()]).toStrictEqual(['a', 'c'])
@@ -220,7 +225,7 @@ describe('compactConversation', () => {
   it('drops a made asset of an earlier reply that the answer has no line for, but not one that an open job of the reply uses', async () => {
     const job = jobInfo({ call: { number: 1, label: 'Make @c longer' }, inputs: ['c'] })
     const started = invokeBlock(job.id, { prompt: 'Make @c longer', intermediate: false, inputs: [{ id: 'c', kind: 'video' }] })
-    const sections = [...SECTIONS.slice(0, 3), reply('r', `I make the film longer.\n\n${started}`)]
+    const sections = [...SECTIONS.slice(0, 2), ...ASIDE, SECTIONS[2], reply('r', `I make the film longer.\n\n${started}`)]
     streamChat = answers(`${NOTES}\n\n## Assets\n@a: keep - The photo of the user.`)
 
     const compaction = await compactConversation(compactionInput({ sections, jobs: [job] }))
@@ -280,6 +285,7 @@ describe('compactConversation', () => {
     const sections = [
       SECTIONS[0],
       reply('r1', `A draft:\n${idImage(DRAFT, 'b')}\n${SCENE_TAG}\nI wrote /apps/sheet/main.js, and /apps/gone is no more.\n${appTagText('viewer')}`),
+      ...ASIDE,
       ...SECTIONS.slice(2),
     ]
     const APPS = { ...appFiles('sheet', { 'main.js': 'export default () => 1' }), ...appFiles('viewer', {}, 'ui') }

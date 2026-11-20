@@ -3628,11 +3628,10 @@ describe('dez.stream/start compaction', () => {
       { role: 'user', content: 'More' },
     ])
     // The first and the final message of the user stay word for word, in
-    // the notes.
+    // the notes, with the reply right before the final one.
     expect(sent[1].map((message) => message.role)).toStrictEqual(['user'])
     const next = JSON.stringify(sent[1])
-    for (const kept of [NOTES_REQUIREMENTS, 'Hi', 'More']) expect(next).toContain(kept)
-    expect(next).not.toContain('An earlier answer.')
+    for (const kept of [NOTES_REQUIREMENTS, 'Hi', 'An earlier answer.', 'More']) expect(next).toContain(kept)
     expect(sectionCompactionBlock(activeTab().sections[0])?.count).toBe(1)
     expect(replyText()).toBe('None.')
     expect(sectionTexts().slice(1)).toStrictEqual([{ role: 'user', text: '' }])

@@ -12,9 +12,9 @@ import type { ContentNode, Role, Section } from './types'
 // compaction block, at the start of the compaction section: the first
 // section of the conversation, an agent section. The notes in the block
 // hold the messages of the user that the work needs, word for word: the
-// first one, the middle ones that the model kept, and the final one
-// (compactionNotes.ts). This module is the one place that writes and
-// recognizes the block.
+// first one, the middle ones that the model kept, and the final one, with
+// the reply of the assistant right before it (compactionNotes.ts). This
+// module is the one place that writes and recognizes the block.
 //
 // The compaction section is the section of the reply that ran the
 // compaction: the block, then the text of that reply, with the id, the
@@ -94,6 +94,10 @@ export const COMPACTION_END_LINE = `</${COMPACTION_TAG_NAME}>`
  *  message. */
 export const USER_MESSAGE_TAG_NAME = 'dez:user-message'
 
+/** The name of the tag of the reply of the assistant in the final message
+ *  pair of the notes (compactionNotes.ts), for the escape of model text. */
+export const AGENT_MESSAGE_TAG_NAME = 'dez:agent-message'
+
 /** What a compaction tag holds. */
 export interface CompactionTagData {
   /** The number of this compaction in its conversation: 1 or more. */
@@ -162,11 +166,13 @@ export function compactionsField(compactions: Compactions | undefined): { compac
  *  request of its conversation: never a date, a running count, or a
  *  random value. It is true for the older layouts too: the notes of the
  *  first layout with message parts hold only the first and the newest
- *  message, and the kept messages of the oldest layout come after the
- *  notes, each after `COMPACTION_USER_MESSAGE_LABEL`, with no fence. */
+ *  message, the notes before the final message pair hold no reply, and
+ *  the kept messages of the oldest layout come after the notes, each
+ *  after `COMPACTION_USER_MESSAGE_LABEL`, with no fence. */
 export const COMPACTION_MESSAGE_INTRO = '[Compaction: this conversation was long, so Dez put the notes below in place of its earlier messages. '
   + 'The notes are what the assistant wrote about the work so far, with the facts that Dez added. '
   + 'Dez kept word for word the messages of the user that the work needs: the first one, the middle ones that still count, and the newest one at the compaction. '
+  + 'When the notes hold it, Dez also kept the reply of the assistant right before the newest message of the user. '
   + 'Each one is in a code fence under its heading in the notes, or after the notes after its label.]'
 
 /** The line before each user section of the compaction message: a message

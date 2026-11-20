@@ -209,7 +209,9 @@ function onOverlayClick(event: MouseEvent) {
               the earlier messages and replies. The notes keep your first message, your newest
               message, and each message between them that the work still needs, word for word, with
               their images. The model chooses which of the messages between them to keep, and the
-              notes tell how many of them Dez left out so far. The bottom bar shows "Compacting…"
+              notes tell how many of them Dez left out so far. The notes also keep the reply right
+              before your newest message, so that an answer such as "yes, but…" still makes sense.
+              The bottom bar shows "Compacting…"
               while the model writes the notes. A compacted
               conversation starts with one Agent message: first two chips, then the reply, which
               goes on under the chips. Click the summary chip to read the notes and the messages of

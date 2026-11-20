@@ -17,7 +17,7 @@ import {
   clipPictureLabel,
   compactionAssets,
   compactionScope,
-  keptUserTexts,
+  keptTexts,
   middleMessageStarts,
   openJobInputs,
   type AssetChoice,
@@ -317,7 +317,7 @@ export async function compactConversation(input: CompactionInput): Promise<Compa
     console.error('The answer to a compaction request holds no notes.')
     throw new ExplainedError(NO_COMPACTION_NOTES_TEXT)
   }
-  const choices = assetDecisions(assets, answer, { keptTexts: keptUserTexts(sections, scope, answer) })
+  const choices = assetDecisions(assets, answer, { keptTexts: keptTexts(sections, scope, answer) })
 
   // The model of the next request: it reads the pictures of the result.
   const reader = input.readerModel ?? model
