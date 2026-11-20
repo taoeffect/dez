@@ -382,7 +382,11 @@ export function textForModel(text: string, workFolders: readonly string[], appsR
   }
   for (const folder of workFolders) {
     result = result.replaceAll(folder, WORK_FOLDER_NAME)
-    result = result.replace(new RegExp(`file://\\S*?/${regexSource(folder.slice(folder.lastIndexOf('/') + 1))}`, 'g'), `file://${WORK_FOLDER_NAME}`)
+    const id = folder.slice(folder.lastIndexOf('/') + 1)
+    // A try stops at the next `file://`, which no path holds: a lazy `\S*?`
+    // alone tries each end of a long run of URLs with no white space (the
+    // JSON of a list), which takes quadratic time.
+    if (result.includes(id)) result = result.replace(new RegExp(`file://(?:(?!file://)\\S)*?/${regexSource(id)}`, 'g'), `file://${WORK_FOLDER_NAME}`)
   }
   return withoutLocalPaths(result)
 }

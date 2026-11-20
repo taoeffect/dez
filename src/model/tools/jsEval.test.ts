@@ -276,6 +276,17 @@ describe('jsEvalResult', () => {
     expect(resultOf(output).text).toBe('at file:///work/code.ts:1:40 and file:///etc/hosts')
   })
 
+  it('finds the work folder in a short time in a long list of URLs with no white space', () => {
+    // The URL with escapes keeps the id of the folder in the text, so the
+    // URL rule runs on the JSON of the list.
+    const list = JSON.stringify(Array.from({ length: 10_000 }, (_, index) => `file:///usr/share/icons/${index}.png`))
+    const started = performance.now()
+    const text = textForModel(`at file:///home/J%C3%BCrgen%20M/.cache/dez/work/${FOLDER_ID}/code.ts:1:40 ${list}`, [REAL, JOINED])
+
+    expect(performance.now() - started).toBeLessThan(200)
+    expect(text).toBe(`at file:///work/code.ts:1:40 ${list}`)
+  })
+
   it('hides every other local path', () => {
     const output = written('/home/u/apps/dez-deno(+0x27bc) [0xaaaa]\n', protocolLine({ type: 'result', text: 'The program is /Users/u/Applications/Dez.app/Contents/MacOS/dez-deno' }))
 
