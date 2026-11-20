@@ -10,7 +10,7 @@ import { unreadableImageText } from '../model/tools/imageTool'
 import { jobStartedText, jobTimedOutText } from '../model/tools/jobs'
 import { JS_EVAL_OUTPUT_BYTES, JS_EVAL_RUNNER, JS_EVAL_RUNNER_FILE, RUN_DESCRIPTION_FILE } from '../model/tools/jsEval'
 import { PROGRAM_READS_INPUTS, programNotStartedText } from '../model/tools/programRuns'
-import { appsArgs, CONVERSATION, FILM, RED, SKY } from '../model/tools/testing'
+import { appsArgs, CONVERSATION, FILM, PNG_BYTES, protocolLine, RED, SKY, textBytes, WAV_BYTES } from '../model/tools/testing'
 import type { ToolRunResult } from '../model/tools/types'
 import { checkedInvokeCall, runAppFrameJob, runAppJob } from './appInvoke'
 import { TabJobs, type MadeAsset } from './jobs'
@@ -27,7 +27,6 @@ import {
   FILE_ID,
   heldStep,
   native,
-  protocolLine,
   refusalOf,
   resetNative,
   running,
@@ -45,9 +44,7 @@ import './tools'
 // what a run gets, and what Dez stores of what the run left.
 
 const MAIN = 'export default async function main() { return 1 }\n'
-const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13])
-const WAV = new TextEncoder().encode('RIFF\0\0\0\0WAVEfmt ')
-const TEXT = new TextEncoder().encode('Just some notes.\n')
+const TEXT = textBytes('Just some notes.\n')
 // A program whose code returned `text`.
 const returns = (text: string): StubProgram => writes('stdout', protocolLine({ type: 'result', text }))
 
@@ -85,10 +82,10 @@ sbp('sbp/selectors/register', {
   // one does.
   async 'dez.controller/images/readFile' (path: string): Promise<File> {
     readImages.push(path)
-    return new File([PNG], path.slice(path.lastIndexOf('/') + 1), { type: 'image/png' })
+    return new File([PNG_BYTES], path.slice(path.lastIndexOf('/') + 1), { type: 'image/png' })
   },
   async 'dez.controller/media/readClip' (clip: { type: string }): Promise<Blob> {
-    return new Blob([WAV], { type: clip.type })
+    return new Blob([WAV_BYTES], { type: clip.type })
   },
   'dez.ui/runAppFrame' (run: AppFrameRun): Promise<AppFrameEnd> {
     frameRuns.push(run)
@@ -330,7 +327,7 @@ describe('runAppJob', () => {
 
   it('gives the error of the code with the files of the app as the apps tool names them, and keeps no file of the run', async () => {
     native.program = writes('stdout', protocolLine({ type: 'error', text: `Error: no rows\n    at main (file://${APP_DIR}/apps/notes/main.ts:2:9)` }))
-    outputFolderHolds({ 'sheet.png': PNG })
+    outputFolderHolds({ 'sheet.png': PNG_BYTES })
 
     const outcome = await runJob()
 
@@ -378,7 +375,7 @@ describe('runAppJob', () => {
 
   it('stores a copy of each output file under the type that its bytes tell, in the order of the names', async () => {
     native.program = returns('done')
-    outputFolderHolds({ 'voice.dat': WAV, 'sheet_10.png': PNG, 'sheet_2.txt': PNG })
+    outputFolderHolds({ 'voice.dat': WAV_BYTES, 'sheet_10.png': PNG_BYTES, 'sheet_2.txt': PNG_BYTES })
 
     const outcome = await runJob()
 
@@ -388,9 +385,9 @@ describe('runAppJob', () => {
     // have put another file at the place of a checked one.
     expect(native.moves).toStrictEqual([])
     expect(stored().map(({ path, content }) => [path.replace(FILE_ID, '<id>'), content])).toStrictEqual([
-      ['assets/generated/images/<id>.png', PNG],
-      ['assets/generated/images/<id>.png', PNG],
-      ['assets/generated/audio/<id>.wav', WAV],
+      ['assets/generated/images/<id>.png', PNG_BYTES],
+      ['assets/generated/images/<id>.png', PNG_BYTES],
+      ['assets/generated/audio/<id>.wav', WAV_BYTES],
     ])
     const [first, second, third] = stored().map(({ path }) => `${APP_DIR}/${path}`)
     expect(outcome.assets).toStrictEqual([
@@ -407,7 +404,7 @@ describe('runAppJob', () => {
 
   it('keeps no entry that is no file of a type that Dez stores, reads none that the listing rules out, and tells of each', async () => {
     native.program = returns('done')
-    outputFolderHolds({ 'frames': null, 'empty.png': new Uint8Array(), 'notes.png': TEXT, 'sheet.png': PNG, 'gone.png': PNG })
+    outputFolderHolds({ 'frames': null, 'empty.png': new Uint8Array(), 'notes.png': TEXT, 'sheet.png': PNG_BYTES, 'gone.png': PNG_BYTES })
     const read = native.fileBytes
     native.fileBytes = (file) => {
       if (file.path.endsWith('/gone.png')) throw new Error(`Failed to read ${CACHE_DIR}/${file.path}: not a regular file`)
@@ -418,7 +415,7 @@ describe('runAppJob', () => {
 
     const folder = deletedWorkFolder()
     expect(native.readFiles.map(({ path }) => path)).toStrictEqual(['gone.png', 'notes.png', 'sheet.png'].map((name) => `${folder}/output/${name}`))
-    expect(stored().map(({ content }) => content)).toStrictEqual([PNG])
+    expect(stored().map(({ content }) => content)).toStrictEqual([PNG_BYTES])
     expect(outcome.assets).toHaveLength(1)
     expect(outcome.isError).toBe(false)
     for (const fragment of ['sheet.png (image)', 'frames/ (a folder', 'empty.png (it is empty)', 'notes.png (Dez stores no file of its type)', 'gone.png (Dez could not read it)']) {
@@ -430,7 +427,7 @@ describe('runAppJob', () => {
 
   it('keeps no file of a run that left more files than Dez keeps, and still gives the value', async () => {
     native.program = returns('made 30 frames')
-    outputFolderHolds(Object.fromEntries(Array.from({ length: 30 }, (_, index) => [`frame_${index}.png`, PNG])))
+    outputFolderHolds(Object.fromEntries(Array.from({ length: 30 }, (_, index) => [`frame_${index}.png`, PNG_BYTES])))
 
     const outcome = await runJob()
 
@@ -443,7 +440,7 @@ describe('runAppJob', () => {
 
   it('keeps none of the files when one does not go into the Dez folder', async () => {
     native.program = returns('done')
-    outputFolderHolds({ 'a.png': PNG, 'b.wav': WAV })
+    outputFolderHolds({ 'a.png': PNG_BYTES, 'b.wav': WAV_BYTES })
     const failure = new Error(`${APP_DIR}: the disk is full`)
     native.saveAppFile = async (file) => {
       if (file.root === 'app' && file.path.endsWith('.wav')) throw failure
@@ -476,7 +473,7 @@ describe('runAppJob', () => {
   it('deletes the files that it stored at a stop of the job, and rejects with the stop', async () => {
     const stop = new AbortController()
     native.program = returns('done')
-    outputFolderHolds({ 'a.png': PNG, 'b.png': PNG })
+    outputFolderHolds({ 'a.png': PNG_BYTES, 'b.png': PNG_BYTES })
     native.saveAppFile = async (file) => {
       if (file.root === 'app') stop.abort(STOP)
     }
@@ -493,7 +490,7 @@ describe('runAppJob', () => {
     const stop = new AbortController()
     let end: (end: BundledToolEnd) => void = () => {}
     native.program = () => new Promise((resolve) => { end = resolve })
-    outputFolderHolds({ 'a.png': PNG })
+    outputFolderHolds({ 'a.png': PNG_BYTES })
 
     const work = failureOf(runJob(invoke(), stop.signal))
     await vi.waitFor(() => expect(native.runs).toHaveLength(1))
@@ -512,7 +509,7 @@ describe('runAppJob', () => {
 
   it('gives the text of the time limit for a run that the backend stopped at it, and keeps no file', async () => {
     native.program = async () => ({ kind: 'timedOut' })
-    outputFolderHolds({ 'a.png': PNG })
+    outputFolderHolds({ 'a.png': PNG_BYTES })
 
     const outcome = await runJob(invoke({ timeout_seconds: 20 }))
 
@@ -576,7 +573,7 @@ describe('runAppFrameJob', () => {
       if (file.path.endsWith('.png')) await new Promise((resolve) => setTimeout(resolve, 5))
     }
     page = async (run) => {
-      answers = await Promise.all([save(run, PNG), save(run, WAV)])
+      answers = await Promise.all([save(run, PNG_BYTES), save(run, WAV_BYTES)])
       return returned('2 files')
     }
 
@@ -585,8 +582,8 @@ describe('runAppFrameJob', () => {
     // An asset of a job has no id until a reader takes the result.
     expect(answers).toStrictEqual([{ id: null, kind: 'image', type: 'image/png' }, { id: null, kind: 'audio', type: 'audio/wav' }])
     expect(stored().map(({ path, content }) => [path.replace(FILE_ID, '<id>'), content])).toStrictEqual([
-      ['assets/generated/images/<id>.png', PNG],
-      ['assets/generated/audio/<id>.wav', WAV],
+      ['assets/generated/images/<id>.png', PNG_BYTES],
+      ['assets/generated/audio/<id>.wav', WAV_BYTES],
     ])
     const [first, second] = stored().map(({ path }) => `${APP_DIR}/${path}`)
     expect(outcome.assets).toStrictEqual([
@@ -620,10 +617,10 @@ describe('runAppFrameJob', () => {
     expect(readImages).toStrictEqual([linked])
     expect(blob).not.toBeInstanceOf(File)
     expect(blob?.type).toBe('image/png')
-    expect(new Uint8Array(await (blob as Blob).arrayBuffer())).toStrictEqual(PNG)
+    expect(new Uint8Array(await (blob as Blob).arrayBuffer())).toStrictEqual(PNG_BYTES)
     expect(refused).toBeInstanceOf(AppCallError)
     expect((refused as Error).message).toBe(notAnInputText('e', call.inputs))
-    expect(outcome.text).toBe(`${PNG.length} bytes`)
+    expect(outcome.text).toBe(`${PNG_BYTES.length} bytes`)
     for (const text of [JSON.stringify(frameRuns[0].inputs), invokeInputsText(call.inputs, 'ui'), (refused as Error).message, outcome.text]) expect(text).not.toContain('private-name')
   })
 
@@ -634,8 +631,8 @@ describe('runAppFrameJob', () => {
     ['whose page loaded again', { kind: 'navigated' }, 'loaded again'],
   ])('keeps no file of a run %s', async (_, end, fragment) => {
     page = async (run) => {
-      await save(run, PNG)
-      await save(run, WAV)
+      await save(run, PNG_BYTES)
+      await save(run, WAV_BYTES)
       return end
     }
 
@@ -653,7 +650,7 @@ describe('runAppFrameJob', () => {
     const stop = new AbortController()
     // As the frame does: a stop closes it and rejects with the reason.
     page = async (run) => {
-      await save(run, PNG)
+      await save(run, PNG_BYTES)
       stop.abort(STOP)
       throw run.signal.reason
     }
@@ -672,7 +669,7 @@ describe('runAppFrameJob', () => {
     native.saveAppFile = () => write.wait
     let late: Promise<unknown> = Promise.resolve()
     page = async (run) => {
-      late = failureOf(save(run, PNG))
+      late = failureOf(save(run, PNG_BYTES))
       return returned('done')
     }
 
@@ -690,8 +687,8 @@ describe('runAppFrameJob', () => {
   it('refuses the save after the most files of one run', async () => {
     let refused: unknown
     page = async (run) => {
-      for (let count = 0; count < APP_RUN_MAX_OUTPUT_FILES; count += 1) await save(run, PNG)
-      refused = await failureOf(save(run, PNG))
+      for (let count = 0; count < APP_RUN_MAX_OUTPUT_FILES; count += 1) await save(run, PNG_BYTES)
+      refused = await failureOf(save(run, PNG_BYTES))
       return returned()
     }
 
@@ -728,8 +725,8 @@ describe('runAppFrameJob', () => {
     }
     let refused: unknown
     page = async (run) => {
-      await save(run, PNG)
-      refused = await failureOf(save(run, WAV))
+      await save(run, PNG_BYTES)
+      refused = await failureOf(save(run, WAV_BYTES))
       return returned('done')
     }
 
@@ -778,7 +775,7 @@ describe('apps invoke', () => {
 
   it('starts a job at once and tells its inputs; jobs_wait gives what the code returned and puts the output files into the reply', async () => {
     native.program = returns('2 rows')
-    outputFolderHolds({ 'sheet.png': PNG })
+    outputFolderHolds({ 'sheet.png': PNG_BYTES })
     fakeAppFiles(appFiles('notes', { 'main.ts': MAIN }))
 
     const started = await invokeTool({ parameters: { rows: 2 }, inputs: '@c @a' })
@@ -800,7 +797,7 @@ describe('apps invoke', () => {
 
   it('marks the files of a call with `is_intermediate` as hidden assets of its job', async () => {
     native.program = returns('done')
-    outputFolderHolds({ 'voice.wav': WAV })
+    outputFolderHolds({ 'voice.wav': WAV_BYTES })
     fakeAppFiles(appFiles('notes', { 'main.ts': MAIN }))
 
     await invokeTool({ is_intermediate: true })
@@ -813,7 +810,7 @@ describe('apps invoke', () => {
   it('runs the page of a UI app in a frame with no program, and puts the files that it saved into the reply', async () => {
     fakeAppFiles(appFiles('notes', { 'index.html': '<!doctype html>\n' }, 'ui'))
     page = async (run) => {
-      await save(run, PNG)
+      await save(run, PNG_BYTES)
       return { kind: 'returned', value: 'drawn', log: 'a line of the page\n' }
     }
 

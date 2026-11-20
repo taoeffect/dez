@@ -8,7 +8,7 @@ import { AppCallError, clipNotReadText, imageNotReadText, SaveNotStoredError, un
 import { SaveCount } from '../model/tools/appInvoke'
 import type { AppCardFacts } from '../model/tools/appShow'
 import { APP_RUN_MAX_OUTPUT_FILES } from '../model/tools/appsTool'
-import { CONVERSATION, SONG } from '../model/tools/testing'
+import { CONVERSATION, PNG_BYTES, SONG, textBytes, WAV_BYTES } from '../model/tools/testing'
 import { APP_DIR, appFiles, fakeAppFiles, failureOf, FILE_ID, native, resetNative } from './testing'
 // Side-effect import: registers the selectors under test.
 import './apps'
@@ -32,9 +32,6 @@ let deletedClips: string[] = []
 // The error of each read of a file; null for a read that gives the bytes.
 let readFailure: Error | null = null
 
-const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13])
-const WAV = new TextEncoder().encode('RIFF\0\0\0\0WAVEfmt ')
-
 sbp('sbp/selectors/register', {
   'dez.ui/toast' (_area: string, toast: Toast): void {
     toasts.push(toast)
@@ -47,11 +44,11 @@ sbp('sbp/selectors/register', {
   async 'dez.controller/images/readFile' (path: string): Promise<File> {
     readImages.push(path)
     if (readFailure) throw readFailure
-    return new File([PNG], path.slice(path.lastIndexOf('/') + 1), { type: 'image/png' })
+    return new File([PNG_BYTES], path.slice(path.lastIndexOf('/') + 1), { type: 'image/png' })
   },
   async 'dez.controller/media/readClip' (clip: { type: string }): Promise<Blob> {
     if (readFailure) throw readFailure
-    return new Blob([WAV], { type: clip.type })
+    return new Blob([WAV_BYTES], { type: clip.type })
   },
   async 'dez.controller/images/delete' (path: string): Promise<void> {
     deletedImages.push(path)
@@ -209,14 +206,14 @@ describe('dez.controller/apps/readAsset', () => {
     expect(readImages).toStrictEqual([linked])
     expect(blob).not.toBeInstanceOf(File)
     expect(blob.type).toBe('image/png')
-    expect(new Uint8Array(await blob.arrayBuffer())).toStrictEqual(PNG)
+    expect(new Uint8Array(await blob.arrayBuffer())).toStrictEqual(PNG_BYTES)
   })
 
   it('gives the bytes of a clip with the type of the clip', async () => {
     const blob = await readAsset('b')
 
     expect(blob.type).toBe('audio/wav')
-    expect(new Uint8Array(await blob.arrayBuffer())).toStrictEqual(WAV)
+    expect(new Uint8Array(await blob.arrayBuffer())).toStrictEqual(WAV_BYTES)
   })
 
   it('refuses an id of no image and no clip, and names the ones that the conversation has', async () => {
@@ -267,12 +264,12 @@ describe('dez.controller/apps/saveAsset', () => {
 
   // The type is the one that the bytes tell, and not the type of the Blob.
   it('stores the bytes under the type that they tell, gives the file to the conversation, and its id to the page', async () => {
-    const image = await saveAsset(PNG)
-    const clip = await saveAsset(WAV)
+    const image = await saveAsset(PNG_BYTES)
+    const clip = await saveAsset(WAV_BYTES)
 
     expect(native.savedFiles.map(({ file, content }) => [file.path.replace(FILE_ID, '<id>'), content])).toStrictEqual([
-      ['assets/generated/images/<id>.png', PNG],
-      ['assets/generated/audio/<id>.wav', WAV],
+      ['assets/generated/images/<id>.png', PNG_BYTES],
+      ['assets/generated/audio/<id>.wav', WAV_BYTES],
     ])
     const [first, second] = storedPaths()
     expect(inserted).toStrictEqual([{ path: first, kind: 'image', type: 'image/png' }, { path: second, kind: 'audio', type: 'audio/wav' }])
@@ -286,8 +283,8 @@ describe('dez.controller/apps/saveAsset', () => {
   it('deletes the stored file when the conversation cannot take it, and rejects with the reason', async () => {
     insertFailure = new AppCallError('The app stopped.')
 
-    const image = await failureOf(saveAsset(PNG))
-    const clip = await failureOf(saveAsset(WAV))
+    const image = await failureOf(saveAsset(PNG_BYTES))
+    const clip = await failureOf(saveAsset(WAV_BYTES))
 
     expect(image).toBe(insertFailure)
     expect(clip).toBe(insertFailure)
@@ -298,7 +295,7 @@ describe('dez.controller/apps/saveAsset', () => {
   })
 
   it('writes no file and shows no toast for a save that Dez refuses', async () => {
-    const error = await failureOf(saveAsset(new TextEncoder().encode('Just some notes.\n')))
+    const error = await failureOf(saveAsset(textBytes('Just some notes.\n')))
 
     expect(error).toBeInstanceOf(AppCallError)
     expect((error as Error).message).toContain('no file of a type that Dez stores')
@@ -311,7 +308,7 @@ describe('dez.controller/apps/saveAsset', () => {
     const saves = new SaveCount()
     for (let count = 0; count < APP_RUN_MAX_OUTPUT_FILES; count += 1) saves.take()
 
-    const error = await failureOf(saveAsset(PNG, saves))
+    const error = await failureOf(saveAsset(PNG_BYTES, saves))
 
     expect(error).toBeInstanceOf(AppCallError)
     expect((error as Error).message).toContain('this run has used them')
@@ -322,7 +319,7 @@ describe('dez.controller/apps/saveAsset', () => {
     const failure = new Error(`Failed to write ${APP_DIR}/assets/generated/images/x.png: No space left on device (os error 28)`)
     native.saveAppFile = async () => { throw failure }
 
-    const error = await failureOf(saveAsset(PNG))
+    const error = await failureOf(saveAsset(PNG_BYTES))
 
     expect(error).toBeInstanceOf(SaveNotStoredError)
     expect((error as Error).message).not.toContain('/home/u')

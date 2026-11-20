@@ -42,7 +42,7 @@ import {
 } from './appsTool'
 import { checkArgumentValues } from './arguments'
 import { parseSubcommandCall } from './subcommands'
-import { appsArgs as args, CONVERSATION, fileTree as file, FOLDER_FACTS as FOLDER, folderTree as folder, MISSING_TREE as MISSING, refusal } from './testing'
+import { appsArgs as args, CONVERSATION, fileTree as file, FOLDER_FACTS as FOLDER, folderTree as folder, MISSING_TREE as MISSING, refusal, textBytes } from './testing'
 import type { SubcommandArguments } from './types'
 
 // The listing of an app with `count` files of `size` bytes.
@@ -50,7 +50,6 @@ function filled(count: number, size = 1): AppsTree {
   return folder(Object.fromEntries(Array.from({ length: count }, (_, index) => [`f${index}.txt`, size])))
 }
 
-const bytes = (text: string) => new TextEncoder().encode(text)
 const text = (content: Uint8Array | null) => (content === null ? null : new TextDecoder().decode(content))
 
 describe('APPS_TOOL', () => {
@@ -234,7 +233,7 @@ describe('init', () => {
 
 describe('read', () => {
   const path = appsPath('/apps/notes/main.js', 'path')
-  const read = (parameters: Record<string, unknown>, content: string) => readText(readCall(args('read', { path: path.virtual, ...parameters })), content, bytes(content).length)
+  const read = (parameters: Record<string, unknown>, content: string) => readText(readCall(args('read', { path: path.virtual, ...parameters })), content, textBytes(content).length)
 
   it('gives each line after its number, under the facts of the file', () => {
     expect(read({}, 'const a = 1\n\n  return a\n')).toBe([
@@ -317,7 +316,7 @@ describe('read', () => {
   it('refuses a file that is no text', () => {
     const noText = '/apps/notes/main.js is no text file (it holds a zero byte, or bytes that are no UTF-8), and the apps tool reads and edits text files only.'
 
-    expect(fileText(path, bytes('gr\u00fc\u00dfe \ud83d\ude00\n'))).toBe('gr\u00fc\u00dfe \ud83d\ude00\n')
+    expect(fileText(path, textBytes('gr\u00fc\u00dfe \ud83d\ude00\n'))).toBe('gr\u00fc\u00dfe \ud83d\ude00\n')
     expect(refusal(() => fileText(path, new Uint8Array([0x61, 0x00, 0x62])))).toBe(noText)
     expect(refusal(() => fileText(path, new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0xff])))).toBe(noText)
     // A file that grew after its size check.
@@ -327,7 +326,7 @@ describe('read', () => {
   it('keeps a byte order mark, so that an edit writes it back', () => {
     const marked = new Uint8Array([0xef, 0xbb, 0xbf, 0x61, 0x0a])
 
-    expect(bytes(fileText(path, marked))).toStrictEqual(marked)
+    expect(textBytes(fileText(path, marked))).toStrictEqual(marked)
   })
 })
 
@@ -678,7 +677,7 @@ describe('ls', () => {
 })
 
 describe('list_apps', () => {
-  const manifest = (kind: string, description: string) => bytes(JSON.stringify({ name: 'x', description, kind }))
+  const manifest = (kind: string, description: string) => textBytes(JSON.stringify({ name: 'x', description, kind }))
   const app = (name: string, size: number, manifestBytes: Uint8Array | null = manifest('ui', `The ${name} app.`)): ListedApp => ({
     name,
     tree: folder({ ...(manifestBytes ? { 'manifest.json': manifestBytes.length } : {}), 'main.js': size }),
@@ -727,7 +726,7 @@ describe('list_apps', () => {
   it('lists an app whose manifest Dez cannot read, so that a model can repair it', () => {
     const rows = list({}, [
       app('bare', 10, null),
-      app('broken', 10, bytes('{ "name": ')),
+      app('broken', 10, textBytes('{ "name": ')),
       app('odd', 10, manifest('game', 'x')),
       { name: 'huge', tree: folder({ 'manifest.json': MANIFEST_MAX_BYTES + 1 }), manifest: null },
       app('blank', 10, manifest('ui', '  ')),

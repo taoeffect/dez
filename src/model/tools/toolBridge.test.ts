@@ -1,16 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { JS_EVAL_MAX_TOOL_CALLS } from './jsEval'
 import { TOOL_DEFINITIONS } from './registry'
+import { JOINED_WORK_FOLDER, REAL_WORK_FOLDER, WORK_FOLDER_ID, WORK_FOLDERS } from './testing'
 import { bridgedToolCall, shownSelector, type BridgedCallCheck } from './toolBridge'
-
-const FOLDER_ID = '0b0c1a5e-7b1f-4c3a-9d1e-2f3a4b5c6d7e'
-// The work folder of the run as Dez made its path, and its real path.
-const JOINED = `/home/u/.cache/dez/work/${FOLDER_ID}`
-const REAL = `/mnt/disk/cache/dez/work/${FOLDER_ID}`
 
 // What the first call line of a run asks for.
 function checked(selector: string, args?: unknown, number = 1): BridgedCallCheck {
-  return bridgedToolCall(args === undefined ? { selector } : { selector, arguments: args }, number, [REAL, JOINED])
+  return bridgedToolCall(args === undefined ? { selector } : { selector, arguments: args }, number, WORK_FOLDERS)
 }
 
 // The error text of a call line that Dez refuses.
@@ -141,7 +137,7 @@ describe('bridgedToolCall', () => {
   })
 
   it('takes the paths of this computer out of the arguments', () => {
-    const check = checked('dez.tools/model_invoke', { model: 'p/m', prompt: `Read ${REAL}/code.ts and ${JOINED}, then /home/u/apps/dez-deno` })
+    const check = checked('dez.tools/model_invoke', { model: 'p/m', prompt: `Read ${REAL_WORK_FOLDER}/code.ts and ${JOINED_WORK_FOLDER}, then /home/u/apps/dez-deno` })
 
     expect(check).toStrictEqual({
       ok: true,
@@ -150,7 +146,7 @@ describe('bridgedToolCall', () => {
   })
 
   it('takes the paths of this computer out of the parameters of a subcommand, also out of a name', () => {
-    const check = checked('dez.tools/video/ffmpeg', { arguments: `-i @c ${REAL}/out.mp4`, [`${JOINED}/x`]: [`${REAL}/y`] })
+    const check = checked('dez.tools/video/ffmpeg', { arguments: `-i @c ${REAL_WORK_FOLDER}/out.mp4`, [`${JOINED_WORK_FOLDER}/x`]: [`${REAL_WORK_FOLDER}/y`] })
 
     expect(check).toStrictEqual({
       ok: true,
@@ -159,7 +155,7 @@ describe('bridgedToolCall', () => {
   })
 
   it('takes the paths of this computer out of the strings of a parameters text, and keeps its JSON whole', () => {
-    const parameters = JSON.stringify({ arguments: `-i @c ${REAL}/out.mp4 -t 2`, [`${JOINED}/x`]: ['/tmp/a b', 'c'] })
+    const parameters = JSON.stringify({ arguments: `-i @c ${REAL_WORK_FOLDER}/out.mp4 -t 2`, [`${JOINED_WORK_FOLDER}/x`]: ['/tmp/a b', 'c'] })
     const check = checked('dez.tools/video', { command: 'ffmpeg', parameters })
 
     expect(check).toStrictEqual({
@@ -181,10 +177,10 @@ describe('bridgedToolCall', () => {
   })
 
   it('takes the paths of this computer out of a selector that it tells back', () => {
-    const error = refusal(`${REAL}/code.ts`)
+    const error = refusal(`${REAL_WORK_FOLDER}/code.ts`)
 
     expect(error).toContain('"/work/code.ts"')
-    expect(error).not.toContain(FOLDER_ID)
+    expect(error).not.toContain(WORK_FOLDER_ID)
   })
 
   it('tells back only the start of a long name', () => {
@@ -202,13 +198,13 @@ describe('bridgedToolCall', () => {
 
 describe('shownSelector', () => {
   it('gives a selector as it is', () => {
-    expect(shownSelector('dez.tools/image/flip', [REAL, JOINED])).toBe('dez.tools/image/flip')
+    expect(shownSelector('dez.tools/image/flip', WORK_FOLDERS)).toBe('dez.tools/image/flip')
   })
 
   it('gives a selector with no path of this computer, on one line, and short', () => {
-    expect(shownSelector(`${REAL}/code.ts\n${JOINED}`, [REAL, JOINED])).toBe('/work/code.ts /work')
-    expect([...shownSelector('x'.repeat(2_000_000), [REAL, JOINED])].length).toBeLessThanOrEqual(80)
+    expect(shownSelector(`${REAL_WORK_FOLDER}/code.ts\n${JOINED_WORK_FOLDER}`, WORK_FOLDERS)).toBe('/work/code.ts /work')
+    expect([...shownSelector('x'.repeat(2_000_000), WORK_FOLDERS)].length).toBeLessThanOrEqual(80)
     // The path goes before the cut: a cut inside it would leave a part.
-    expect(shownSelector(`${'x'.repeat(60)}${REAL}/code.ts`, [REAL, JOINED])).not.toContain('mnt')
+    expect(shownSelector(`${'x'.repeat(60)}${REAL_WORK_FOLDER}/code.ts`, WORK_FOLDERS)).not.toContain('mnt')
   })
 })

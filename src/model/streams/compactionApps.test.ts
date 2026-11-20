@@ -3,7 +3,7 @@ import { appTagText } from '../chat/appTags'
 import { compactionBlockText } from '../chat/compaction'
 import { compactionNotesText, type NotesApp } from '../chat/compactionNotes'
 import { notesData } from '../chat/testing'
-import { folderTree, notesManifest } from '../tools/testing'
+import { folderTree, notesManifest, textBytes } from '../tools/testing'
 import {
   APP_MENTION_FILE_BYTES,
   APP_MENTION_MAX_BYTES,
@@ -118,11 +118,9 @@ describe('appMentionFiles', () => {
 })
 
 describe('appFileMentions', () => {
-  const bytes = (text: string) => new TextEncoder().encode(text)
-
   it('gives each id that the text of a file names with @id, one time', () => {
-    expect(appFileMentions(bytes('const INPUTS = ["@a", "@c"]\n// @a is the photo, me@example.com is no id.'))).toStrictEqual(new Set(['a', 'c']))
-    expect(appFileMentions(bytes('export default () => 1'))).toStrictEqual(new Set())
+    expect(appFileMentions(textBytes('const INPUTS = ["@a", "@c"]\n// @a is the photo, me@example.com is no id.'))).toStrictEqual(new Set(['a', 'c']))
+    expect(appFileMentions(textBytes('export default () => 1'))).toStrictEqual(new Set())
   })
 
   it('gives no id for a file with a zero byte: it is no text', () => {
@@ -130,6 +128,6 @@ describe('appFileMentions', () => {
   })
 
   it('still gives the ids of a text with bytes that are no UTF-8', () => {
-    expect(appFileMentions(new Uint8Array([0xff, 0xfe, 0x20, ...bytes('use @b here')]))).toStrictEqual(new Set(['b']))
+    expect(appFileMentions(new Uint8Array([0xff, 0xfe, 0x20, ...textBytes('use @b here')]))).toStrictEqual(new Set(['b']))
   })
 })

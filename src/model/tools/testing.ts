@@ -2,6 +2,7 @@ import { mediaTagText, type MediaTagData } from '../chat/mediaTags'
 import { reply, user } from '../streams/testing'
 import { appManifestText, type AppKind } from './appManifest'
 import { APPS_TOOL, type AppsEntryKind, type AppsTree, type PathFacts } from './appsTool'
+import type { JsEvalLine } from './jsEval'
 import type { JobInfo } from './jobs'
 import { parseSubcommandCall } from './subcommands'
 import { ToolError, type SubcommandArguments } from './types'
@@ -9,19 +10,44 @@ import { ToolError, type SubcommandArguments } from './types'
 // Shared helpers of the unit tests of the Dez tools: the text of a refused
 // call, the facts of a job, a conversation with images and clips for the
 // `video` tool, the output of the ffprobe run that reads the facts of a
-// clip for a join (`joinProbeArgs`), and the arguments and the listings of
-// the `apps` tool.
+// clip for a join (`joinProbeArgs`), the arguments and the listings of the
+// `apps` tool, the protocol lines and the work folder of a `js_eval` run,
+// and the bytes of a file. This module registers no selector, so a test of
+// the model can import it; controller/testing.ts imports it too.
 
-/** The text of the `ToolError` that `call` throws. */
-export function refusal(call: () => unknown): string {
+/** The message of the error of `errorClass` (a `ToolError` if not given)
+ *  that `call` throws. */
+export function refusal(call: () => unknown, errorClass: abstract new (...args: never[]) => Error = ToolError): string {
   try {
     call()
   } catch (error) {
-    if (error instanceof ToolError) return error.message
+    if (error instanceof errorClass) return error.message
     throw error
   }
   throw new Error('The call was not refused.')
 }
+
+/** A protocol line of a `js_eval` run, as the module of Dez writes it
+ *  (jsEvalRunner.js). */
+export function protocolLine(line: JsEvalLine): string {
+  return `\x1e${JSON.stringify(line)}\n`
+}
+
+/** The work folder of a `js_eval` run as Dez made its path, its real path,
+ *  and the two together, as the code of a run gets them. */
+export const WORK_FOLDER_ID = '0b0c1a5e-7b1f-4c3a-9d1e-2f3a4b5c6d7e'
+export const JOINED_WORK_FOLDER = `/home/u/.cache/dez/work/${WORK_FOLDER_ID}`
+export const REAL_WORK_FOLDER = `/mnt/disk/cache/dez/work/${WORK_FOLDER_ID}`
+export const WORK_FOLDERS = [REAL_WORK_FOLDER, JOINED_WORK_FOLDER]
+
+/** The UTF-8 bytes of `text`. */
+export function textBytes(text: string): Uint8Array {
+  return new TextEncoder().encode(text)
+}
+
+/** The first bytes of a PNG image and of a WAV clip. */
+export const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13])
+export const WAV_BYTES = textBytes('RIFF\0\0\0\0WAVEfmt ')
 
 /** The facts of the job `j-aaaa`, job 1 of its reply: a `model_invoke` job
  *  that runs, with no state, no label, and no input, unless `fields` give
@@ -75,7 +101,7 @@ export const FOLDER_FACTS: PathFacts = { kind: 'folder', size: 0 }
 
 /** The bytes of a valid manifest file of the app `notes` of `kind`. */
 export function notesManifest(kind: AppKind): Uint8Array {
-  return new TextEncoder().encode(appManifestText({ name: 'notes', description: 'Keeps notes.', kind }))
+  return textBytes(appManifestText({ name: 'notes', description: 'Keeps notes.', kind }))
 }
 
 /** The listing of a file of `size` bytes. */

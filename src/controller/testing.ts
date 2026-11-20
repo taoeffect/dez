@@ -3,6 +3,7 @@ import { expect, vi } from 'vitest'
 import { NO_CALL_PICTURE_BUDGET } from '../model/streams/pictureBudget'
 import { appManifestText, type AppKind } from '../model/tools/appManifest'
 import type { JsEvalLine } from '../model/tools/jsEval'
+import { protocolLine } from '../model/tools/testing'
 import { ToolError, type ToolRunResult } from '../model/tools/types'
 import type { NativeDownloadRule, NativeHttpDownload, NativeHttpRequest } from '../utils/protocol/nativeHttp'
 import { TabJobs, type JobOutcome, type JobWork, type MadeAsset } from './jobs'
@@ -435,12 +436,6 @@ export function writes(stream: BundledToolOutput['stream'], text: string, end: B
     onOutput({ stream, text })
     return end
   }
-}
-
-/** A protocol line of a `js_eval` run, as the module of Dez writes it
- *  (model/tools/jsEvalRunner.js). */
-export function protocolLine(line: JsEvalLine): string {
-  return `\x1e${JSON.stringify(line)}\n`
 }
 
 /** A `js_eval` program whose code makes one tool call for each of

@@ -25,17 +25,13 @@ import {
 } from './appInvoke'
 import { APP_RUN_MAX_OUTPUT_BYTES, APP_RUN_MAX_OUTPUT_FILES } from './appsTool'
 import { JS_EVAL_OUTPUT_BYTES, textForModel, type RunOutcome } from './jsEval'
-import { appsArgs, CONVERSATION, fileTree, FOLDER_FACTS, folderTree, MISSING_TREE, notesManifest, refusal } from './testing'
+import { appsArgs, CONVERSATION, fileTree, FOLDER_FACTS, folderTree, MISSING_TREE, notesManifest, PNG_BYTES, refusal, textBytes, WAV_BYTES } from './testing'
 
 const NOT_STARTED = 'Dez started no job.'
 
 function invoke(parameters: Record<string, unknown>) {
   return invokeCall(appsArgs('invoke', parameters), CONVERSATION)
 }
-
-const bytes = (text: string) => new TextEncoder().encode(text)
-const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13])
-const WAV = bytes('RIFF\0\0\0\0WAVEfmt ')
 
 describe('invokeCall', () => {
   it('names the app, its manifest, and its main file, with no parameters, no input, and the default time limit', () => {
@@ -128,7 +124,7 @@ describe('checkInvokeTarget', () => {
     // The file went between the two reads of the check.
     expect(check({ manifestBytes: null })).toContain('/apps/notes/manifest.json is no plain file')
 
-    const invalid = check({ manifestBytes: bytes('{"name": "notes"') })
+    const invalid = check({ manifestBytes: textBytes('{"name": "notes"') })
     expect(invalid).toContain('/apps/notes/manifest.json is not valid')
     for (const text of [missing, invalid]) {
       expect(text).toContain(NOT_STARTED)
@@ -318,13 +314,13 @@ describe('listedOutputs', () => {
 
 describe('checkedOutput', () => {
   it('takes the type of a file from its first bytes, not from its name', () => {
-    expect(checkedOutput('chart.txt', PNG)).toStrictEqual({ kept: { name: 'chart.txt', kind: 'image', type: 'image/png', extension: 'png' } })
-    expect(checkedOutput('song.png', WAV)).toStrictEqual({ kept: { name: 'song.png', kind: 'audio', type: 'audio/wav', extension: 'wav' } })
+    expect(checkedOutput('chart.txt', PNG_BYTES)).toStrictEqual({ kept: { name: 'chart.txt', kind: 'image', type: 'image/png', extension: 'png' } })
+    expect(checkedOutput('song.png', WAV_BYTES)).toStrictEqual({ kept: { name: 'song.png', kind: 'audio', type: 'audio/wav', extension: 'wav' } })
   })
 
   it('keeps no file of a type that Dez does not store, and no file that Dez could not read', () => {
-    expect(checkedOutput('notes.png', bytes('Three notes.'))).toStrictEqual({ notKept: 'notes.png (Dez stores no file of its type)' })
-    expect(checkedOutput('page.html', bytes('<!doctype html><html></html>'))).toStrictEqual({ notKept: 'page.html (Dez stores no file of its type)' })
+    expect(checkedOutput('notes.png', textBytes('Three notes.'))).toStrictEqual({ notKept: 'notes.png (Dez stores no file of its type)' })
+    expect(checkedOutput('page.html', textBytes('<!doctype html><html></html>'))).toStrictEqual({ notKept: 'page.html (Dez stores no file of its type)' })
     expect(checkedOutput('chart.png', null)).toStrictEqual({ notKept: 'chart.png (Dez could not read it)' })
   })
 })
@@ -498,36 +494,26 @@ describe('appFrameResult', () => {
 })
 
 describe('the checks of a save of a page', () => {
-  const refused = (work: () => unknown): string => {
-    try {
-      work()
-    } catch (error) {
-      if (error instanceof AppCallError) return error.message
-      throw error
-    }
-    throw new Error('The save was not refused.')
-  }
-
   it('takes a size from one byte to the limit of one file', () => {
     expect(() => checkSaveSize(1)).not.toThrow()
     expect(() => checkSaveSize(APP_RUN_MAX_OUTPUT_BYTES)).not.toThrow()
-    expect(refused(() => checkSaveSize(0))).toContain('no bytes')
-    expect(refused(() => checkSaveSize(APP_RUN_MAX_OUTPUT_BYTES + 1))).toContain(byteSizeText(APP_RUN_MAX_OUTPUT_BYTES))
+    expect(refusal(() => checkSaveSize(0), AppCallError)).toContain('no bytes')
+    expect(refusal(() => checkSaveSize(APP_RUN_MAX_OUTPUT_BYTES + 1), AppCallError)).toContain(byteSizeText(APP_RUN_MAX_OUTPUT_BYTES))
   })
 
   it('counts as many saves as the limit of a run, and refuses each one after them', () => {
     const count = new SaveCount()
 
     for (let save = 0; save < APP_RUN_MAX_OUTPUT_FILES; save++) count.take()
-    expect(refused(() => count.take())).toContain(`at most ${APP_RUN_MAX_OUTPUT_FILES} files`)
-    expect(refused(() => count.take())).toContain(`at most ${APP_RUN_MAX_OUTPUT_FILES} files`)
+    expect(refusal(() => count.take(), AppCallError)).toContain(`at most ${APP_RUN_MAX_OUTPUT_FILES} files`)
+    expect(refusal(() => count.take(), AppCallError)).toContain(`at most ${APP_RUN_MAX_OUTPUT_FILES} files`)
     // Each run has its own count.
     expect(() => new SaveCount().take()).not.toThrow()
   })
 
   it('takes the type of a save from its first bytes, and refuses bytes of a type that Dez does not store', () => {
-    expect(savedFileType(PNG)).toStrictEqual({ kind: 'image', type: 'image/png', extension: 'png' })
-    expect(savedFileType(WAV)).toStrictEqual({ kind: 'audio', type: 'audio/wav', extension: 'wav' })
-    expect(refused(() => savedFileType(bytes('<!doctype html><html></html>')))).toContain('no file of a type that Dez stores')
+    expect(savedFileType(PNG_BYTES)).toStrictEqual({ kind: 'image', type: 'image/png', extension: 'png' })
+    expect(savedFileType(WAV_BYTES)).toStrictEqual({ kind: 'audio', type: 'audio/wav', extension: 'wav' })
+    expect(refusal(() => savedFileType(textBytes('<!doctype html><html></html>')), AppCallError)).toContain('no file of a type that Dez stores')
   })
 })

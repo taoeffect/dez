@@ -10,18 +10,7 @@ import {
   notAnInputText,
   unknownAssetText,
 } from './appBridge'
-import { CONVERSATION } from './testing'
-
-// The text of the `AppCallError` that `work` throws.
-function refused(work: () => unknown): string {
-  try {
-    work()
-  } catch (error) {
-    if (error instanceof AppCallError) return error.message
-    throw error
-  }
-  throw new Error('The call was not refused.')
-}
+import { CONVERSATION, refusal } from './testing'
 
 describe('appCall', () => {
   it('takes a read of an id, with or without the @', () => {
@@ -32,9 +21,9 @@ describe('appCall', () => {
 
   it('refuses a read of a text that is no id, and a read with no text', () => {
     for (const given of ['A', 'a b', '@', '', '../red.jpg', '/home/u/red.jpg', 4, null, undefined, { id: 'a' }]) {
-      expect(refused(() => appCall(APP_READ_ASSET, [given])), String(given)).toContain(`dez.sbp('${APP_READ_ASSET}', 'a')`)
+      expect(refusal(() => appCall(APP_READ_ASSET, [given]), AppCallError), String(given)).toContain(`dez.sbp('${APP_READ_ASSET}', 'a')`)
     }
-    expect(refused(() => appCall(APP_READ_ASSET, []))).toContain(APP_READ_ASSET)
+    expect(refusal(() => appCall(APP_READ_ASSET, []), AppCallError)).toContain(APP_READ_ASSET)
   })
 
   it('takes a save of a Blob, as it is', () => {
@@ -57,13 +46,13 @@ describe('appCall', () => {
 
   it('refuses a save of a value that holds no bytes', () => {
     for (const given of ['iVBORw0KGgo=', [137, 80, 78, 71], { size: 3, type: 'image/png' }, null, undefined]) {
-      expect(refused(() => appCall(APP_SAVE_ASSET, [given]))).toContain('a Blob, an ArrayBuffer, or a typed array')
+      expect(refusal(() => appCall(APP_SAVE_ASSET, [given]), AppCallError)).toContain('a Blob, an ArrayBuffer, or a typed array')
     }
   })
 
   it('refuses every other selector, and names the two that an app has', () => {
     for (const selector of ['dez.tools/image', 'dez.app/deleteAsset', 'dez.model/tabs/activeId', 'sbp/selectors/register', '']) {
-      const text = refused(() => appCall(selector, [{}]))
+      const text = refusal(() => appCall(selector, [{}]), AppCallError)
 
       expect(text, selector).toContain(JSON.stringify(selector))
       expect(text).toContain(APP_READ_ASSET)

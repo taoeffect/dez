@@ -13,6 +13,7 @@ import {
   type JsEvalCall,
 } from '../model/tools/jsEval'
 import { programNotConfinedText, programNotStartedText } from '../model/tools/programRuns'
+import { protocolLine } from '../model/tools/testing'
 import { runJsEval } from './jsEval'
 import type { BundledToolEnd } from './nativeTypes'
 import {
@@ -23,7 +24,6 @@ import {
   ENDED,
   failureOf,
   native,
-  protocolLine,
   refusalOf,
   resetNative,
   running,

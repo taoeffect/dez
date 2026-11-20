@@ -19,7 +19,7 @@ import { PRICE_LIFETIME_MS } from '../model/providers/modelPrices'
 import type { ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderMediaQuote, ProviderMediaQuoteInput, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers/streamTypes'
 import { providerInfo } from '../model/providers/testing'
 import type { ModelInfo, ProviderInfo, ProviderInputImageRules, ProviderSettingsDescriptor } from '../model/providers/types'
-import { MAX_REQUEST_IMAGE_BYTES, NO_CALL_PICTURE_BUDGET, type CallPictureBudget, type PictureBudget } from '../model/streams/pictureBudget'
+import { MAX_REQUEST_IMAGE_BYTES, type CallPictureBudget, type PictureBudget } from '../model/streams/pictureBudget'
 import { assetProbeArgs, clipNotReadFacts } from '../model/tools/assetFacts'
 import { ASSET_INFO_COLUMNS } from '../model/tools/assetInfo'
 import { clipChecksArgs, SCENE_CUT_FILTER } from '../model/tools/clipAnalysis'
@@ -68,8 +68,8 @@ import type { RequestLogRow } from './diagnostics/requestLog'
 import { TabJobs, type JobOutcome } from './jobs'
 import { invokeModel } from './modelInvoke'
 import type { BundledToolEnd } from './nativeTypes'
-import { APP_DIR, audioProgress, callingProgram, CLIP_FORMAT, deletedWorkFolder, ENDED, FILE_ID, H264_STREAM, heldWork, LONG, native, resetNative, running, showinfoLog, writes } from './testing'
-import type { ToolRunCall, ToolRunContext } from './tools'
+import { APP_DIR, audioProgress, callContext, callingProgram, CLIP_FORMAT, deletedWorkFolder, ENDED, FILE_ID, H264_STREAM, heldWork, LONG, native, resetNative, running, showinfoLog, writes } from './testing'
+import type { ToolRunCall } from './tools'
 // Side-effect imports: register the dez.model/* selectors and the selector
 // under test.
 import '../model/state/index'
@@ -209,14 +209,10 @@ sbp('sbp/selectors/register', {
 // calls name, so that a result tells which of the two the tool read.
 const REPLY_MODEL: ModelRef = { providerId: 'venice', modelId: 'venice-glm-5' }
 
-// The picture budget of a context of a reply that shows no picture.
-const NO_PICTURES: Pick<ToolRunContext, 'pictureBudget'> = { pictureBudget: async () => NO_CALL_PICTURE_BUDGET }
-
 // Runs a call of a reply of `model` that takes no image and no clip, and
 // has no job.
 function run(call: ToolRunCall, { signal = new AbortController().signal, model = REPLY_MODEL } = {}): Promise<ToolRunResult> {
-  const context: ToolRunContext = { tabId: '', model, jobs: new TabJobs(), writeImage: () => null, writeClip: () => null, showApp: () => false, ...NO_PICTURES }
-  return sbp('dez.controller/tools/run', call, signal, context) as Promise<ToolRunResult>
+  return sbp('dez.controller/tools/run', call, signal, callContext({ model })) as Promise<ToolRunResult>
 }
 
 let consoleError: MockInstance<typeof console.error>
@@ -676,18 +672,14 @@ describe('dez.controller/tools/run', () => {
     let tabId: string
 
     function image(command: string, parameters: Record<string, unknown>, signal = new AbortController().signal): Promise<ToolRunResult> {
-      const context: ToolRunContext = {
+      const context = callContext({
         tabId,
         model: REPLY_MODEL,
-        jobs: new TabJobs(),
         writeImage: (path) => {
           written.push(path)
           return newImageId
         },
-        writeClip: () => null,
-        showApp: () => false,
-        ...NO_PICTURES,
-      }
+      })
       const args = { command, parameters: JSON.stringify(parameters) }
       return sbp('dez.controller/tools/run', { name: 'image', arguments: args }, signal, context) as Promise<ToolRunResult>
     }
@@ -851,18 +843,14 @@ describe('dez.controller/tools/run', () => {
     let tabId: string
 
     function clip(parameters: Record<string, unknown>, signal = new AbortController().signal): Promise<ToolRunResult> {
-      const context: ToolRunContext = {
+      const context = callContext({
         tabId,
         model: REPLY_MODEL,
-        jobs: new TabJobs(),
-        writeImage: () => null,
         writeClip: (data) => {
           written.push(data)
           return newClipId
         },
-        showApp: () => false,
-        ...NO_PICTURES,
-      }
+      })
       const args = { command: 'clip', parameters: JSON.stringify(parameters) }
       return sbp('dez.controller/tools/run', { name: 'audio', arguments: args }, signal, context) as Promise<ToolRunResult>
     }
@@ -972,7 +960,7 @@ describe('dez.controller/tools/run', () => {
     let newIds: (string | null)[]
 
     function jobTool(name: string, args: ToolArguments = {}, signal = new AbortController().signal): Promise<ToolRunResult> {
-      const context: ToolRunContext = {
+      const context = callContext({
         tabId,
         model: REPLY_MODEL,
         jobs,
@@ -984,9 +972,7 @@ describe('dez.controller/tools/run', () => {
           written.push({ path: clip.src, ...options })
           return newIds.shift() ?? null
         },
-        showApp: () => false,
-        ...NO_PICTURES,
-      }
+      })
       return sbp('dez.controller/tools/run', { name, arguments: args }, signal, context) as Promise<ToolRunResult>
     }
 
@@ -1799,7 +1785,7 @@ describe('dez.controller/tools/run', () => {
     let tabId: string
 
     function assetInfo(assets: string, checks?: string): Promise<ToolRunResult> {
-      const context: ToolRunContext = { tabId, model: REPLY_MODEL, jobs: new TabJobs(), writeImage: () => null, writeClip: () => null, showApp: () => false, ...NO_PICTURES }
+      const context = callContext({ tabId, model: REPLY_MODEL })
       const args = checks === undefined ? { assets } : { assets, checks }
       return sbp('dez.controller/tools/run', { name: 'asset_info', arguments: args }, running(), context) as Promise<ToolRunResult>
     }
@@ -2033,15 +2019,7 @@ describe('dez.controller/tools/run', () => {
     // takes `roundPictures` pictures more, and adds the pictures of its
     // result to `shown`.
     async function assetView(args: ToolArguments, { signal = running() } = {}): Promise<ToolRunResult> {
-      const context: ToolRunContext = {
-        tabId,
-        model: REPLY_MODEL,
-        jobs: new TabJobs(),
-        writeImage: () => null,
-        writeClip: () => null,
-        showApp: () => false,
-        pictureBudget: async () => ({ left: budget, roundPictures }),
-      }
+      const context = callContext({ tabId, model: REPLY_MODEL, pictureBudget: async () => ({ left: budget, roundPictures }) })
       const result = await sbp('dez.controller/tools/run', { name: 'asset_view', arguments: args }, signal, context) as ToolRunResult
       shown.push(...(result.pictures ?? []).map(savedPicture))
       return result
@@ -2982,18 +2960,15 @@ describe('dez.controller/tools/run', () => {
     let budgetReads: number
 
     async function conversationInfo(): Promise<ToolRunResult> {
-      const context: ToolRunContext = {
+      const context = callContext({
         tabId,
         model: REPLY_MODEL,
         jobs,
-        writeImage: () => null,
-        writeClip: () => null,
-        showApp: () => false,
         pictureBudget: async () => {
           budgetReads += 1
           return BUDGET
         },
-      }
+      })
       return await sbp('dez.controller/tools/run', { name: 'conversation_info', arguments: {} }, new AbortController().signal, context) as ToolRunResult
     }
     const sizeNow = () => sbp('dez.model/tabs/contextSize', tabId, REPLY_MODEL) as ContextSize
