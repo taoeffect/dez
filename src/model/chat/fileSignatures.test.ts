@@ -49,6 +49,22 @@ describe('storedTypeOfBytes', () => {
       .toStrictEqual({ kind: 'image', type: 'image/svg+xml', extension: 'svg' })
   })
 
+  it.each([
+    ['a DOCTYPE with an internal subset', '<?xml version="1.0"?>\n<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "svg11.dtd" [\n\t<!ENTITY ns "x">\n] >\n<svg>'],
+    ['white space before the end of a DOCTYPE', '<!DOCTYPE svg >\n<svg/>'],
+  ])('tells an SVG image with %s', (_case, value) => {
+    expect(imageTypeOfBytes(text(value))).toBe('image/svg+xml')
+  })
+
+  // The text of a file that the code of a model wrote: the check runs on the
+  // thread of the page, so a slow one freezes Dez.
+  it('gives no type for a DOCTYPE with no end in a short time', () => {
+    const started = performance.now()
+
+    expect(storedTypeOfBytes(text(`<!DOCTYPE svg${' '.repeat(64 * 1024)}`))).toBeNull()
+    expect(performance.now() - started).toBeLessThan(200)
+  })
+
   // A script names its file as it likes, so a type that Dez does not store
   // must not pass for one that looks like it.
   it.each([

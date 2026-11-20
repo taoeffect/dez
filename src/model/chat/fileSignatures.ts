@@ -36,10 +36,13 @@ function textAt(data: Uint8Array, offset: number, length: number): string {
 // The start of the text of an SVG file (the decoder drops a UTF-8 byte
 // order mark): the XML prolog (white space, processing instructions such as
 // the `<?xml …?>` declaration, comments, and a DOCTYPE of the root `svg`),
-// then the root `svg` element. Each prolog part ends at its first end mark
-// and the repeated item takes one white-space char at a time, so a text
-// that is no SVG fails in one pass, with no backtracking blow-up.
-const SVG_START = /^(?:\s|<\?(?:[^?]|\?(?!>))*\?>|<!--(?:[^-]|-(?!->))*-->|<!DOCTYPE\s+svg\b[^[>]*(?:\[[^\]]*\])?\s*>)*<svg[\s/>]/
+// then the root `svg` element. Each prolog part ends at its first end mark,
+// the repeated item takes one white-space char at a time, and no two
+// quantifiers in a row can take the same char, so a text that is no SVG
+// fails in linear time. In the DOCTYPE, the white space before `>` is
+// `[^[>]*`'s alone: a second `\s*` there made `<!DOCTYPE svg` and a long
+// run of spaces backtrack in quadratic time (seconds for 64 KB).
+const SVG_START = /^(?:\s|<\?(?:[^?]|\?(?!>))*\?>|<!--(?:[^-]|-(?!->))*-->|<!DOCTYPE\s+svg\b[^[>]*(?:\[[^\]]*\]\s*)?>)*<svg[\s/>]/
 // The part of the bytes in which `SVG_START` looks for the root element:
 // far more than the prolog of any SVG that a program writes (an editor's
 // DOCTYPE with its entities is about 1 KB), and a bound on the text that a
