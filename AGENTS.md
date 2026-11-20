@@ -50,7 +50,7 @@ Dez follows an SBP MVC pattern: selectors are the cross-layer API, and code live
 - `src/controller/`: user workflows, startup/shutdown, native/Tauri boundaries, the native menubar, HTTP runtime orchestration, updates, and diagnostics.
 - `src/view/`: Vue UI, view composables, CodeMirror editor services, toast/theme/clipboard UI selectors, and reactive read adapters.
 - `src/utils/`: cross-layer utilities only.
-- `src-tauri/`: Rust commands, native HTTP bridge, persistence file I/O, credential storage, and app bootstrap.
+- `src-tauri/`: Rust commands, native HTTP bridge, persistence file I/O, the runs of the bundled programs, the scheme of the app frames, credential storage, and app bootstrap.
 
  Always build code cleanly, modularly, and with proper architecture and separation of concerns.
 
@@ -82,7 +82,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `view/thread/cmEditor.ts`: doc ⇄ sections, sentinels, state fields, role pill widgets, clipboard format, markdown parsing and styles, `dezTheme`.
 - `view/thread/modelChip.ts`, `thinkingPill.ts`, `pillDuration.ts`: the parts of an agent pill (model, thinking, reply time).
 - `view/thread/editorMeasure.ts`: forced CodeMirror re-measures.
-- `view/editor/selectors.ts`: `dez.editor/*`, the active-editor bridge (stream patching, scroll follow, Copy Markdown, the rebuild after a compaction).
+- `view/editor/selectors.ts`: `dez.editor/*`, the active-editor bridge (stream patching, scroll follow, Copy Markdown, the rebuild after a compaction, the cards of a deleted app).
 - `view/editor/find.ts`, `findState.ts`, `findHistory.ts`, `view/thread/FindDropdown.vue`: find and replace.
 - `view/editor/tables.ts`, `links.ts`, `mentions.ts`: GFM tables, markdown links, and `@id` mentions, shown in place.
 - `view/editor/pressClicks.ts`: the one click rule of a clickable mark (a link, a mention chip).
@@ -92,7 +92,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `view/editor/images.ts`, `imageInsert.ts`, `pendingRanges.ts`: images shown in place of their references; image and clip paste and drop.
 - `view/editor/media.ts`, `view/media/`: `<dez:audio>` and `<dez:video>` tags shown as players (`MediaPlayer.vue`, video.js parts in Dez's own skin).
 - `view/editor/apps.ts`: `<dez:app>` tags shown as app cards (a poster with Run, the size, a trash), the apps that run in the editor, and the delete of an app.
-- `view/apps/`: `appFrame.ts` (the frame of one app, and its messages), `appFrameHost.ts` (the frames of the apps that run, each over its card, with its bar, the expanded view, and fullscreen), `appFacts.ts` (the facts of an app for its card and its bar), `appIcon.ts`.
+- `view/apps/`: `appFrame.ts` (the frame of one app, and its messages), `appFrameHost.ts` (the frames of the apps that run, each over its card, with its bar, the expanded view, and fullscreen), `hiddenAppFrame.ts` (`dez.ui/runAppFrame`: the frame of one `apps invoke` run of a UI app, which the user does not see), `appFacts.ts` (the facts of an app for its card and its bar), `appIcon.ts`.
 - `view/fullscreen.ts`, `view/panels.ts`: `leaveFullscreen` (players and apps); the panels and the prompt of Dez that are open, and the Escape that closes the top one.
 - `view/editor/toolCalls.ts`: `<dez:tool>` blocks shown as chips, each with a panel.
 - `view/editor/hiddenAssets.ts`, `compactionChip.ts`, `AssetList.vue`: the hidden assets of a chip, the two compaction chips (assets, summary) with their panels, and the long list of kept assets.
@@ -101,17 +101,17 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `view/editor/assetSelection.ts`, `view/assetFacts.ts`, `view/assetIcons.ts`: the selected look, the facts text, and the symbol of an asset.
 - `controller/images.ts`: `dez.controller/images/*`: store, delete, read, and redraw images; file drops.
 - `controller/media.ts`, `clipSources.ts`: `dez.controller/media/*`: save, delete, read, and decode clips; the cleanup of old temp copies.
-- `controller/unusedFiles.ts`, `cacheHolds.ts`, `workFolders.ts`: find and delete the files and cache entries that nothing uses.
+- `controller/unusedFiles.ts`, `cacheHolds.ts`, `workFolders.ts`: find and delete the files, the apps, and the cache entries that nothing uses.
 - `model/chat/`: `Section` / `ContentNode` types and helpers, and the text forms of a conversation, each with one writer and recognizer:
   - `images.ts` (image references), `mediaTags.ts` (clips), `appTags.ts` (shown apps), `toolBlocks.ts` (tool calls), `bridgedCalls.ts` (the tool calls of the code of a `js_eval` call), `pillMarker.ts` (pill markers), `compaction.ts`, `compactionNotes.ts`, `notesTable.ts` (the compaction block, the notes, and the tables of the notes).
   - `mediaIds.ts`, `imageMentions.ts`, `assetMentions.ts` (asset ids and `@id` mentions), `codeRanges.ts` (Markdown code), `hiddenAssets.ts`, `shownPictures.ts`, `fileSignatures.ts` (the type of a file from its first bytes).
-  - `storedFilePaths.ts`, `linkedFiles.ts`, `mediaFiles.ts`, `unusedFiles.ts` (stored, linked, and unused files).
+  - `storedFilePaths.ts`, `linkedFiles.ts`, `mediaFiles.ts`, `unusedFiles.ts` (stored, linked, and unused files), `appNames.ts` (the apps that a text names).
 - `model/state/`: Pinia stores (internal) and `dez.model/*` selectors; views read state through `view/modelState.ts`.
 - `controller/thread.ts`: `dez.controller/submitTab`. `controller/tabs.ts`: `dez.controller/newTab`.
 - `controller/stream.ts`, `model/state/streams.ts`, `controller/http.ts`: stream lifecycle (one reply), per-tab sessions, native HTTP streams.
 - `model/streams/`: the pure parts of a reply: `messages.ts` (request messages), `toolRound.ts`, `mediaRequest.ts`, `pictureBudget.ts`.
 - `model/chat/contextSize.ts`, `model/streams/contextEstimate.ts`: the context size of a tab (the provider's count, plus Dez's estimate; no tokenizer).
-- Compaction (a model's notes take the place of the conversation): `controller/compaction.ts`, `model/streams/compaction*.ts`, `compactedSections.ts`; `compactIfDue` (`controller/stream.ts`) runs it.
+- Compaction (a model's notes take the place of the conversation): `controller/compaction.ts`, `compactionApps.ts`, `model/streams/compaction*.ts`, `compactedSections.ts`; `compactIfDue` (`controller/stream.ts`) runs it.
 - `model/tools/`: the Dez tools (Dez runs them for a model; not a provider's own tools): `registry.ts` (`TOOL_DEFINITIONS`), `arguments.ts`, `subcommands.ts`, and one module per tool.
 - `controller/tools.ts`: `dez.controller/tools/run`, the runner of each tool (`ToolRunContext`).
 - `controller/modelInvoke.ts`, `videoTool.ts`, `audioTool.ts`, `assetInfo.ts`, `assetView.ts`, `jsEval.ts`: the work of a tool; they register no selector.
@@ -121,9 +121,10 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `model/tools/jsEval.ts`, `jsEvalRunner.js`: the `js_eval` tool (code of a model in Deno): Dez's module of a run, its line protocol, and the result texts.
 - `model/tools/toolBridge.ts`, `controller/toolBridge.ts`: the tool bridge of `js_eval`: the Dez tools that the code of a run calls with `dez.sbp`.
 - `model/tools/appsTool.ts`, `lineEdits.ts`, `appManifest.ts`, `appTemplates.ts`, `controller/appsTool.ts`: the `apps` tool: the files of the apps, on the virtual root `/apps/`.
-- `model/tools/appInvoke.ts`, `controller/appInvoke.ts`: `apps invoke`: a run of the code of a script app in Deno, as a job with copies of its inputs and checked output files.
+- `model/tools/appInvoke.ts`, `controller/appInvoke.ts`: `apps invoke`: one run of an app as a job, with checked output files: the code of a script app in Deno, with copies of its inputs, or the handler of the page of a UI app in a hidden frame.
+- `model/tools/appBridge.ts`, `controller/appBridge.ts`: the frame bridge: the calls between the page of a UI app and Dez (the read and the save of an image or a clip, and the handler that `apps invoke` runs).
 - `model/tools/appShow.ts`: `apps show`: Dez writes the `<dez:app>` tag of a UI app into the reply (`ToolRunContext.showApp`).
-- `controller/apps.ts`: `dez.controller/apps/*`: the facts of an app for its card, its delete, and its context menu.
+- `controller/apps.ts`: `dez.controller/apps/*`: the facts of an app for its card, its delete, its context menu, and the asset read and save of a shown app.
 - `model/systemPrompt/`: the built-in system prompt (`systemPrompt.md`), the variables of a template, and its checks.
 - `model/modelOutputs.ts`, `modelInputs.ts`, `modelSearch.ts`: the output types, what Dez can send a model, and the model filter.
 - `controller/notifications.ts`, `view/sound.ts`, `assets/sounds/`: the reply-end alerts (sound, system notification).
@@ -136,7 +137,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `view/composables/useActiveContextSize.ts`: the one view read of the context size; never read it in a `computed`.
 - `view/model-selector/`: `ModelPicker.vue` (a virtual list), `ModelOutputFilter.vue`, `ProviderSettingsPopup.vue` (toggles and "Model Parameters" of the active model).
 - `view/history/HistoryPanel.vue`: saved conversations.
-- `view/help/HelpView.vue`: the Help panel. Keep its texts true when a rule that they tell changes (the Assets page tells the asset rules).
+- `view/help/HelpView.vue`: the Help panel. Keep its texts true when a rule that they tell changes (the Assets page tells the asset rules; the Apps page tells the rules of the apps, of the code that a model runs, and of the sandbox).
 - `view/confirm/`: `dez.ui/confirm`, the in-app yes/no prompt.
 - `view/prompts/PromptManager.vue`, `view/thread/PromptAutocomplete.vue`: saved prompts and `/prompt ` insertion.
 - `view/settings/`: Settings (`SettingsView.vue`, `ProviderManager.vue`, `ShortcutManager.vue`, `SystemPromptSettings.vue`, `unusedFiles.ts`).
@@ -157,7 +158,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `dez.native/*`: `src/controller/native.ts`, the only frontend module that calls Tauri `invoke()`
 - `dez.diagnostics/*`: `src/controller/diagnostics/` (sanitized probes, and the developer's request log; no secrets)
 - `dez.editor/*`: `src/view/editor/selectors.ts`
-- `dez.ui/*`: `src/view/toast/selectors.ts`, `src/view/confirm/selectors.ts`, `src/view/theme.ts`, `src/view/clipboard.ts`, `src/view/sound.ts`
+- `dez.ui/*`: `src/view/toast/selectors.ts`, `src/view/confirm/selectors.ts`, `src/view/theme.ts`, `src/view/clipboard.ts`, `src/view/sound.ts`, `src/view/apps/hiddenAppFrame.ts`
 
 Rules:
 
@@ -205,10 +206,10 @@ Rules:
 - **Keep Rust barebones**: a thin, generic OS interface, not a per-feature API. Reuse or generalize a command (e.g. `load_app_file`) instead of adding a near-copy.
 - `commands.rs`, `http_bridge.rs`, `notification.rs`, `idle.rs`: Tauri commands, registered in `lib.rs`.
 - `http_bridge.rs`: generic HTTP request, stream, and download. A request body is text or base64 text, never a JSON number array (slow).
-- `bundled_tools.rs`, `confinement.rs`: one run of a program of `../binaries/` in a work folder of the cache root, under an OS rule on the files that it can open.
+- `bundled_tools.rs`, `confinement.rs`: one run of a program of `../binaries/` in a work folder of the cache root, by the rules of its program (`ProgramRules`) and under the OS rule of its run (the files that it can open, no network; on Linux also its system calls).
 - `app_frames.rs`, `app_client.js`: the `dezapp://` scheme that serves the files of a UI app to its frame, the guards of the app frames (the policy of each answer, the navigation guard, the rules of the webview), and Dez's script for the page of an app (`~dez.js`).
 - `notification.rs`, `idle.rs`, `session_bus.rs`: system notifications, the user's idle time, and the one Linux D-Bus session connection.
-- `persistence.rs`: the file roots (`app`, `cache`) and raw private-file I/O; write every private file with `write_private_file` or `PrivateFileWriter`.
+- `persistence.rs`: the file roots (`app`, `cache`) and raw private-file I/O; write every private file with `write_private_file` or `PrivateFileWriter`. The places that programs own (`is_program_owned`: the cache root, `apps/`) have rules of their own.
 - `key_store.rs`: `provider_keys.json`. `copilot.rs`: Copilot device flow and token refresh.
 - `lib.rs`: plugins, permission reasons, app bootstrap, and the quit hook that stops the bundled tools.
 - `../tauri.linux.conf.json`: the Linux copy of the main window, with Tauri's native file drop on.
@@ -230,7 +231,7 @@ The JSON and conversation files go through `dez.persistence/*` only; the asset f
 - `assets/images/`, `assets/audio/`, `assets/video/`: pasted files, and dropped files that Dez copies (`src/controller/images.ts`, `media.ts`).
 - `assets/generated/images/`, `audio/`, `video/`: files that models and Dez tools made, and clips that the user saved.
 - `assets/generated/views/`: the copies of the pictures that Dez showed a model (`src/model/chat/shownPictures.ts`).
-- `apps/<name>/`: the files of an app, which the `apps` tool makes and changes (`src/model/tools/appsTool.ts`). The trash of an app deletes the folder (`dez.controller/apps/delete`).
+- `apps/<name>/`: the files of an app, which the `apps` tool makes and changes (`src/model/tools/appsTool.ts`), and a script app those of its own folder. The trash of an app deletes the folder (`dez.controller/apps/delete`), and Delete Unused Files deletes an app that no text names (`src/model/chat/appNames.ts`).
 - `<OS cache>/dez/media/`: temp copies of clips that are not saved (`src/model/chat/mediaFiles.ts`).
 - `<OS cache>/dez/work/<id>/`: the work folder of a bundled tool (`src/model/tools/workFolders.ts`).
 - Linked files: a dropped file that is in no temp folder and no Dez folder stays where it is (`src/model/chat/linkedFiles.ts`). Dez never deletes it.
@@ -280,7 +281,8 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 - **An app is no asset**: an app tag holds only the name of the app, with no id and no path (`src/model/chat/appTags.ts`).
 - **A hidden asset and a kept asset are normal assets with a mark**: only the view hides them (`src/model/chat/hiddenAssets.ts`, `compaction.ts`); the compaction block is out of view as a whole, and its assets show in the assets chip.
 - **The notes of a compaction section are read back** (`src/model/chat/compactionNotes.ts`): a change of a line's form needs a reader of the old form.
-- **The unused-files scan must read every text that can name a stored file**: a new text place, stored-file folder, or kind of cache entry must join it (`src/controller/unusedFiles.ts`).
+- **The unused-files scan must read every text that can name a stored file or an app**: a new text place, stored-file folder, or kind of cache entry must join it (`src/controller/unusedFiles.ts`). The files of an app are no such text.
+- **An app stays only while a text names it** (`namedApps`, `src/model/chat/appNames.ts`): Delete Unused Files deletes an app that no text names, so a compaction lists the apps of its conversation in its notes (`src/model/streams/compactionApps.ts`).
 - **Long work in the cache root holds its entry** with `holdingCachePath` (`src/controller/cacheHolds.ts`), or the cleanup deletes it.
 
 ### Requests and replies
@@ -313,23 +315,31 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 - **A removed media element frees nothing by itself**: a media element that Vue can remove needs `v-release-on-remove` (`view/media/releaseMedia.ts`).
 - **A fullscreen player or app hides Dez's layers**: code that shows a prompt or a toast for one calls `leaveFullscreen` first (`view/fullscreen.ts`).
 - **File drops differ by platform**: Tauri's native drop on Linux, HTML5 drops on macOS (`dez.controller/images/watchFileDrops`, `droppedFilePaths`); a drop copies or links its file.
-- **A bundled tool gets copies, never links**, into its work folder or one private subfolder of it (`fonts/<file>`), and Rust does not check its arguments: the caller keeps every path outside the work folder out of them (`src-tauri/src/bundled_tools.rs`).
+- **A bundled tool gets copies, never links**, into its work folder or one private subfolder of it (`fonts/<file>`). Rust does not check the arguments of ffmpeg and ffprobe: the caller keeps every path outside the work folder out of them. Rust builds the command line of Deno itself (`src-tauri/src/bundled_tools.rs`).
 - **The argument rule of the `video` tool is string checks; the OS rule guards the files, and the ffmpeg build has no network code** (`src/model/tools/videoTool.ts`, `src-tauri/src/confinement.rs`): keep all three.
 - **After `scripts/update-ffmpeg.js`**, check `REFUSED_PROTOCOLS` and `REFUSED_DEVICES` (`src/model/tools/videoTool.ts`) against the new ffmpeg, that its `-buildconf` still has `--disable-network`, the demuxers that read names from a file's text (`src/model/tools/videoTextFiles.ts`), and whether its x86 bug that `frameCompareArgs` (`src/model/tools/clipAnalysis.ts`) works around is fixed.
+- **Deno runs the code of a model behind two guards: the OS rule and Deno's own permissions** (`DENO_RULES`, `src-tauri/src/bundled_tools.rs`; `confinement.rs`). Keep both, and keep its flags and its environment in Rust: only the OS rule holds an `import` in the folders of a run, and one variable of the environment turns the flags off. Deno does not run where the OS cannot confine it.
+- **Dez follows no link in a place that programs own** (the cache root and `apps/`; `is_program_owned`, `src-tauri/src/persistence.rs`): Dez's own file code is not confined.
+- **Each text of a Deno run goes through `textForModel` as a whole, before any cut** (`src/model/tools/jsEval.ts`): it hides the paths of the computer.
+- **After `scripts/update-deno.js`**, run the two sandbox audits: `tests/e2e/js-eval-sandbox.e2e.ts`, and the Rust tests of the OS rule (`mod runs`, `src-tauri/src/bundled_tools.rs`).
 
 ### App, build, and tools
 
 - **The asset protocol reads every file** (`assetProtocol` in `tauri.conf.json`), so the webview must never load remote code.
 - **CSP disabled**: `"csp": null` in `tauri.conf.json` on purpose during development.
 - **An app frame loads only from `dezapp://`**, never from the asset protocol, in an `<iframe sandbox="allow-scripts">`. Its guards are in `src-tauri/src/app_frames.rs`; the audit `tests/e2e/app-frames.e2e.ts` must pass after an update of WebKit, wry, or Tauri.
-- **An app is one page**: a frame that loads a second time (a reload, a link) is stopped (`src/view/apps/appFrame.ts`).
+- **An app is one page**: a frame that loads a second time, or whose page is not the page of its app (a reload, a link), is closed (`src/view/apps/appFrame.ts`).
 - **`~dez.js` is a reserved name** of the app scheme: no file of an app can have it (`src-tauri/src/app_frames.rs`).
+- **The page of an app runs on the thread of Dez's page**: a page that never yields stops Dez, and no time limit of Dez ends it (`src/view/apps/hiddenAppFrame.ts`). So a shown app starts only on a click (`src/view/editor/apps.ts`).
+- **The page of an app has no origin**: WebKit hides the errors of a script file that the page loads without `crossorigin` (`UI_OWN_SCRIPT_TAG`, `src/model/tools/appTemplates.ts`).
+- **Dez trusts nothing of the page of an app**: the page gets the two asset calls of the frame bridge and no Dez tool (`src/model/tools/appBridge.ts`), and a shown app saves only into the message that the user writes, while the user works in the app (`saveProblem`, `src/view/editor/apps.ts`; `SAVE_NEEDS_USER_TEXT`).
+- **`src/model/tools/appBridge.ts` imports no other module of the apps**: `appsTool.ts`, `appTemplates.ts`, and `appInvoke.ts` import it.
 - **Linux needs WebKitGTK 2.42 or newer**, to build and to run (`src-tauri/Cargo.toml`, `app_frames.rs`).
 - **Tauri capabilities**: a new plugin or core command needs a permission in `src-tauri/capabilities/default.json`; app commands registered in `lib.rs` need none.
 - **Copilot auth differs**: device flow commands, not the API-key commands.
 - **The window starts hidden**: `dez.controller/window/restore` shows it, so a frontend failure before init shows no window; read the Vite output.
 - **Saved window position units differ by platform**: logical points on macOS, physical px elsewhere (`src/controller/window.ts`).
-- **Wayland windows have no place**: GTK's Wayland backend cannot read or set the window position (`src/controller/window.ts`). The AppImage runs on X11.
+- **Wayland windows have no place**: GTK's Wayland backend cannot read or set the window position (`src/controller/window.ts`). The AppImage is on Wayland too in a Wayland session: its GTK hook does not force X11 (tauri-bundler 2.10 or newer).
 - **Long lists draw only the rows in view** (`virtua`; `ModelPicker.vue`, the kept assets list `AssetList.vue`): a far row has no DOM, and a far kept clip has no player unless it plays.
 - **Vite port is fixed**: `1420` with `strictPort: true`.
 - **`@tauri-apps/plugin-store` is unused**: app files use Dez's own Rust file I/O.
@@ -375,9 +385,11 @@ Brief comments are encouraged above functions that do anything non-trivial expla
 
 - Unit tests: Vitest with colocated `*.test.ts` files; `npm test` also runs `scripts/*.test.js`. Rust unit tests are in the `src-tauri/src/*.rs` files.
 - Shared unit test helpers are in a `testing.ts` module next to their tests; never copy one into a test file.
+- A module that the editor modules import must not register a selector that a unit test of them registers as a stub: SBP keeps the first registration, and the test hangs (`src/view/confirm/request.ts`).
 - Run `npm run build` at the end of a task step with frontend changes (it type-checks), not after every edit.
 - Run `npm test` after frontend logic changes.
 - Run `cd src-tauri && cargo check` after significant Rust changes, and `cargo test` when touching Rust logic with tests.
+- CI runs only `typecheck:e2e` and `test:e2e` (`.github/workflows/e2e.yml`): no unit test and no Rust test runs there.
 - Run `npm run test:e2e` after UI behavior changes covered by `tests/e2e/`. It runs the existing debug binary: rebuild first (`tests/e2e/harness/app.ts`).
 - Run `npm run typecheck:e2e` after changing the e2e harness or specs.
 - No test may call a real provider or run a paid generation: media specs use mock servers only (`tests/e2e/harness/mockServer.ts`, `media.ts`).
@@ -389,10 +401,10 @@ Brief comments are encouraged above functions that do anything non-trivial expla
 - E2E specs that restart the app use `MockProviderApp.relaunch()`, after a wait for `model_cache.json` with `readModelCache` (`tests/e2e/harness/fixtures.ts`).
 - E2E seeds turn the reply-end alerts off (`quietAppState`); alert specs use the fake notification server (`tests/e2e/harness/notificationServer.ts`).
 - E2E clips must be in a format that the CI GStreamer packages decode (VP9 in webm or mp4, wav, Opus in WebM; `.github/workflows/e2e.yml`).
-- E2E bundled tools: the specs run the real ffmpeg, ffprobe, and Deno of the debug build (`tests/e2e/bundled-tools.e2e.ts`, `tests/e2e/video-tool.e2e.ts`, `tests/e2e/js-eval.e2e.ts`, and the sandbox audit of Deno, `tests/e2e/js-eval-sandbox.e2e.ts`).
-- E2E `apps` tool: `tests/e2e/apps-tool.e2e.ts` runs the file subcommands on the real file commands of the backend, with links in the folder of an app, and `show`; `tests/e2e/apps-invoke.e2e.ts` runs script apps in the real Deno. The unit tests use the in-memory files of `fakeAppFiles` (`src/controller/testing.ts`).
+- E2E bundled tools: the specs run the real ffmpeg, ffprobe, and Deno of the debug build (`tests/e2e/bundled-tools.e2e.ts`, `tests/e2e/video-tool.e2e.ts`, `tests/e2e/js-eval.e2e.ts`, and the sandbox audit of Deno, `tests/e2e/js-eval-sandbox.e2e.ts`). The audit of the OS rule alone is Rust tests (`mod runs`, `src-tauri/src/bundled_tools.rs`).
+- E2E `apps` tool: `tests/e2e/apps-tool.e2e.ts` runs the file subcommands on the real file commands of the backend, with links in the folder of an app, and `show`; `tests/e2e/apps-invoke.e2e.ts` runs script apps in the real Deno and UI apps in the hidden frame. The unit tests use the in-memory files of `fakeAppFiles` (`src/controller/testing.ts`).
 - E2E app frames: `tests/e2e/app-frames.e2e.ts` is the audit of the guards of the app frames: pages that try to get out, a server that counts what reaches it, and the controls in Dez's own page (`tests/e2e/harness/appFrames.ts`).
-- E2E apps in a conversation: `tests/e2e/app-host.e2e.ts` (the poster, Run, Stop, the keyboard, the trash, the context click, the expanded view, fullscreen). A read of the page of a frame gives the frame the keyboard for WebDriver: read the doc comment of `inFrame` (`tests/e2e/harness/appFrames.ts`) before you use it.
+- E2E apps in a conversation: `tests/e2e/app-host.e2e.ts` (the poster, Run, Stop, the keyboard, the trash, the context click, the expanded view, fullscreen, the asset calls of a shown app, the one-page rule). A read of the page of a frame gives the frame the keyboard for WebDriver: read the doc comment of `inFrame` (`tests/e2e/harness/appFrames.ts`) before you use it.
 - A `browser.execute` result must not be an object with a set `error` field: webdriverio takes it for a failure of the script.
 - E2E specs that open a URL call `stopOpenUrl` (`tests/e2e/harness/dom.ts`), so no browser opens.
 - **No display server** (every spec fails with `Hook timed out in 120000ms` in `beforeAll`): run under headless `kwin_wayland`; the recipe is in `vitest.e2e.config.ts`.
