@@ -96,11 +96,12 @@ export interface ToolRunContext {
 }
 
 // The code of each Dez tool (TOOL_DEFINITIONS), by tool name. A runner gives
-// the result text, or the result with the copies of the pictures that the
-// call showed (`ToolRunResult.pictures`), or throws a `ToolError` for an
-// error result. `signal` aborts when the user stops the reply; a runner
-// that waits on something must stop then.
-type ToolRunner = (args: ToolArguments, signal: AbortSignal, context: ToolRunContext) => Promise<string | Omit<ToolRunResult, 'isError'>>
+// the result text, or the result with what its block keeps next to the
+// text (`ToolRunResult.pictures`, `bridged`), or throws a `ToolError` for
+// an error result. A runner whose error result has more than its text
+// gives it with `isError` (`runJsEval`). `signal` aborts when the user
+// stops the reply; a runner that waits on something must stop then.
+type ToolRunner = (args: ToolArguments, signal: AbortSignal, context: ToolRunContext) => Promise<string | (Omit<ToolRunResult, 'isError'> & { isError?: boolean })>
 
 // The sections of the tab of a call, where a tool finds the images and
 // the clips that the call names; none for a tab that is gone.
@@ -501,7 +502,10 @@ export default sbp('sbp/selectors/register', {
     }
     try {
       const output = await runner(call.arguments, signal, context)
-      return typeof output === 'string' ? { content: output, isError: false } : { ...output, isError: false }
+      const result = typeof output === 'string' ? { content: output, isError: false } : { isError: false, ...output }
+      // An error result that a runner gave is logged as one that it threw.
+      if (result.isError && !signal.aborted) console.error(`The tool ${call.name} failed:`, result.content)
+      return result
     } catch (error) {
       // A run that the user stopped did not fail; the reply drops its result.
       if (!signal.aborted) console.error(`The tool ${call.name} failed:`, error)

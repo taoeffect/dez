@@ -100,7 +100,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `controller/media.ts`, `clipSources.ts`: `dez.controller/media/*`: save, delete, read, and decode clips; the cleanup of old temp copies.
 - `controller/unusedFiles.ts`, `cacheHolds.ts`, `workFolders.ts`: find and delete the files and cache entries that nothing uses.
 - `model/chat/`: `Section` / `ContentNode` types and helpers, and the text forms of a conversation, each with one writer and recognizer:
-  - `images.ts` (image references), `mediaTags.ts` (clips), `toolBlocks.ts` (tool calls), `pillMarker.ts` (pill markers), `compaction.ts`, `compactionNotes.ts`, `notesTable.ts` (the compaction block, the notes, and the tables of the notes).
+  - `images.ts` (image references), `mediaTags.ts` (clips), `toolBlocks.ts` (tool calls), `bridgedCalls.ts` (the tool calls of the code of a `js_eval` call), `pillMarker.ts` (pill markers), `compaction.ts`, `compactionNotes.ts`, `notesTable.ts` (the compaction block, the notes, and the tables of the notes).
   - `mediaIds.ts`, `imageMentions.ts`, `assetMentions.ts` (asset ids and `@id` mentions), `codeRanges.ts` (Markdown code), `hiddenAssets.ts`, `shownPictures.ts`.
   - `storedFilePaths.ts`, `linkedFiles.ts`, `mediaFiles.ts`, `unusedFiles.ts` (stored, linked, and unused files).
 - `model/state/`: Pinia stores (internal) and `dez.model/*` selectors; views read state through `view/modelState.ts`.
@@ -135,7 +135,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `view/settings/`: Settings (`SettingsView.vue`, `ProviderManager.vue`, `ShortcutManager.vue`, `SystemPromptSettings.vue`, `unusedFiles.ts`).
 - `view/tabs/TabBar.vue`: tabs (activity colors, drag to reorder).
 - `view/modelLabel.ts`: model display names and tooltip text. `view/theme.ts`: theme and editor font size.
-- `utils/`: one place for each shared rule: `byteSize.ts`, `countText.ts`, `oneLineCut.ts`, `formatName.ts`, `homePath.ts`, `errorText.ts`, `abort.ts`, `dezLinks.ts`.
+- `utils/`: one place for each shared rule: `byteSize.ts`, `countText.ts`, `oneLineCut.ts`, `textCut.ts`, `formatName.ts`, `homePath.ts`, `errorText.ts`, `abort.ts`, `dezLinks.ts`.
 
 ### SBP
 
@@ -287,6 +287,7 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 - **Reply images and clips are written only while the reply is current** (`replyIsCurrent`, `controller/stream.ts`): a cancelled request can still give a response.
 - **Raw model entries are in memory only** (`dez.model/modelCache/rawModel`): a fact of a model that a request or the UI needs must be a field of `ModelInfo`.
 - **Provider data in a tool result** goes through `jsonWithoutLocalPaths` (`src/model/tools/localPaths.ts`): a tool result is stored as it was sent.
+- **The tool calls of the code of a `js_eval` call are for its panel only** (the `bridged` attribute, `src/model/chat/bridgedCalls.ts`): no request sends them. A job that one of them started belongs to the chip of the `js_eval` call (`blockJobStarts`, `src/model/tools/jobs.ts`).
 - **Persistence starts after init**: settings changes made before `dez.model/settings/startPersistence` can be lost.
 
 ### Media and bundled programs

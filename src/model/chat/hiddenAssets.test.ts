@@ -4,7 +4,7 @@ import { CARRIED_USER_ASSETS_LABEL, compactionBlockText, compactionTagText } fro
 import { findHiddenAssets, findJobResults, findKeptAssets, type ChipSection, type HiddenAssetOwner } from './hiddenAssets'
 import { findImageReferences, imageIdChange, imageMarkdown, IMAGE_TOOL_KEY } from './images'
 import { findMediaTags, mediaTagText, mediaTagTextWithKeptMark, savedMediaTag, unsavedMediaTag } from './mediaTags'
-import { HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, idImage, invokeBlock as invoke, waitBlock as wait } from './testing'
+import { bridgedInvoke, evalBlock, HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, idImage, invokeBlock as invoke, waitBlock as wait } from './testing'
 import { findToolBlocks, toolBlockText } from './toolBlocks'
 import type { Role } from './types'
 
@@ -45,6 +45,17 @@ describe('findHiddenAssets', () => {
 
     expect(found(text)).toStrictEqual([])
     expect(found(hiddenImage('j-aaaa'))).toStrictEqual([])
+  })
+
+  it('gives the chip of a js_eval call the assets of each job that a tool call of its code started', () => {
+    const image = hiddenImage('j-aaaa')
+    const clip = hiddenClip('j-bbbb')
+    const text = `${evalBlock([bridgedInvoke('j-aaaa'), bridgedInvoke('j-bbbb', 2)])}\n${wait('2 jobs ended.')}\n\n${image}\n\n${clip}`
+
+    expect(found(text)).toStrictEqual([['j-aaaa call_e', image], ['j-bbbb call_e', clip]])
+    // A later reply wrote the asset of a job of the code.
+    expect(foundIn([['agent', evalBlock([bridgedInvoke('j-aaaa')])], ['user', 'Go on.'], ['agent', `${wait('1 job ended.')}\n\n${image}`]]))
+      .toStrictEqual([[], [], [['j-aaaa call_e', image]]])
   })
 
   it('takes an image reference only when it is alone on its line', () => {

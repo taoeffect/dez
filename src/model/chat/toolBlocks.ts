@@ -2,6 +2,7 @@ import { MARKER_ATTRIBUTES, escapeMarkerAttribute, markerAttributes } from '../.
 import { fitsParameterType } from '../tools/arguments'
 import { toolDefinition } from '../tools/registry'
 import type { ToolArguments, ToolArgumentValue, ToolParameterType } from '../tools/types'
+import { bridgedCallsText, hasBridgedCalls, readBridgedCalls, type BridgedCalls } from './bridgedCalls'
 import { COMPACTION_TAG_NAME, USER_MESSAGE_TAG_NAME } from './compaction'
 import { stripLiveSentinels } from './content'
 import { MEDIA_TAG_NAMES, mediaTagRequestText, splitMediaTags } from './mediaTags'
@@ -25,9 +26,10 @@ import { tagEscape } from './tagEscape'
 //   is a tag with no `id` or no `name`.
 // - Attributes, in this order: `id` (the provider's call id, sent back byte
 //   for byte), `name` (the tool name as the model gave it), `status` (absent
-//   for success), `pictures` (absent when the call showed none), then one
-//   per argument, in definition order. A string argument is written as it
-//   is, a number or boolean as its JSON text; on read, the tool's definition
+//   for success), `pictures` (absent when the call showed none), `bridged`
+//   (absent when the code of the call made no tool call), then one per
+//   argument, in definition order. A string argument is written as it is,
+//   a number or boolean as its JSON text; on read, the tool's definition
 //   gives the type back. Values are escaped (`escapeMarkerAttribute`), so
 //   the tag stays on one line.
 // - The body is the result, escaped (`resultEscape`) so that no body line
@@ -71,6 +73,11 @@ export interface ToolBlockData {
    *  panel of its chip shows them. No request sends the attribute. Absent
    *  when there are none. */
   pictures?: readonly ShownPicture[]
+  /** The tool calls that the code of a `js_eval` call made
+   *  (bridgedCalls.ts), for the panel of its chip and for the rule of the
+   *  jobs (`blockJobStarts`, tools/jobs.ts). No request sends the
+   *  attribute. Absent when the code made none. */
+  bridged?: BridgedCalls
 }
 
 /** One block in a text. */
@@ -88,7 +95,7 @@ export type ToolTextPiece =
 
 /** The attributes that every block writes before the arguments. No tool
  *  parameter may use these names. */
-export const RESERVED_TOOL_ATTRIBUTES: readonly string[] = ['id', 'name', 'status', 'pictures']
+export const RESERVED_TOOL_ATTRIBUTES: readonly string[] = ['id', 'name', 'status', 'pictures', 'bridged']
 
 const OPEN_PREFIX = '<dez:tool'
 const CLOSE_TAG = '</dez:tool>'
@@ -131,6 +138,7 @@ export function toolBlockText(block: ToolBlockData): string {
   let tag = `${OPEN_PREFIX} id="${attributeValue(block.id)}" name="${attributeValue(block.name)}"`
   if (block.status !== 'success') tag += ` status="${block.status}"`
   if (block.pictures !== undefined && block.pictures.length > 0) tag += ` pictures="${attributeValue(shownPicturesText(block.pictures))}"`
+  if (block.bridged !== undefined && hasBridgedCalls(block.bridged)) tag += ` bridged="${attributeValue(bridgedCallsText(block.bridged))}"`
   for (const [name, value] of inDefinitionOrder(block.name, Object.entries(block.arguments))) {
     tag += ` ${name}="${attributeValue(typeof value === 'string' ? value : JSON.stringify(value))}"`
   }
@@ -197,6 +205,8 @@ function readBlock(text: string, from: number): ToolBlock | null {
   const body = text.slice(tagEnd + 1, close)
   const picturesText = attributes.get('pictures')
   const pictures = picturesText === undefined ? [] : readShownPictures(picturesText)
+  const bridgedText = attributes.get('bridged')
+  const bridged = bridgedText === undefined ? null : readBridgedCalls(bridgedText)
   return {
     from,
     to,
@@ -206,6 +216,7 @@ function readBlock(text: string, from: number): ToolBlock | null {
     arguments: readArguments(name, attributes),
     result: resultEscape.unescape(body.slice(0, -1)),
     ...(pictures.length > 0 ? { pictures } : {}),
+    ...(bridged !== null && hasBridgedCalls(bridged) ? { bridged } : {}),
   }
 }
 

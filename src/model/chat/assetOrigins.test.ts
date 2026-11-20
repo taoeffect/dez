@@ -7,7 +7,7 @@ import { CARRIED_USER_ASSETS_LABEL, compactionTagText } from './compaction'
 import { compactionNotesText, type CompactionNotes, type NotesAsset } from './compactionNotes'
 import { findImageReferences, IMAGE_MADE_BY_KEY, IMAGE_TOOL_KEY, imageMarkdown, imageReferenceTextWithKeptMark } from './images'
 import { MEDIA_MADE_BY_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE, mediaTagText } from './mediaTags'
-import { FOX_ORIGIN, HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, idImage, invokeBlock, messagePart, notesData, waitBlock } from './testing'
+import { bridgedInvoke, evalBlock, FOX_ORIGIN, HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, idImage, invokeBlock, messagePart, notesData, waitBlock } from './testing'
 import { toolBlockText } from './toolBlocks'
 import type { ModelRef, Section } from './types'
 
@@ -79,6 +79,15 @@ describe('assetPlaces', () => {
 
     expect(placeOf([reply], 'b')).toStrictEqual({ origin: job, hidden: true })
     expect(placeOf([reply], 'c')).toStrictEqual({ origin: job, hidden: true })
+  })
+
+  // The block is the one of the `js_eval` call; the tool call of its code
+  // tells the number of the job and the label.
+  it('names the job that a tool call of the code of a js_eval call started, from the arguments of that tool call', () => {
+    const block = evalBlock([bridgedInvoke('j-aaaa'), bridgedInvoke('j-bbbb', 2, 'A dog')])
+    const reply = section('agent', `${block}\n\n${hiddenImage('j-bbbb', 'b')}`, PAINTER)
+
+    expect(placeOf([reply], 'b')).toStrictEqual({ origin: { kind: 'job', tool: 'model_invoke', number: 2, label: 'A dog' }, hidden: true })
   })
 
   it('reads no number from the start text of an older Dez', () => {

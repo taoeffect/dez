@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { toolBlockText } from '../../src/model/chat/toolBlocks'
 import { ASSET_INFO_COLUMNS } from '../../src/model/tools/assetInfo'
 import { PICTURES_SHOWN_NOTE } from '../../src/model/tools/assetView'
 import { jobStartedText, jobsWaitResults, NO_JOBS_TEXT, startedJobId } from '../../src/model/tools/jobs'
@@ -17,6 +18,7 @@ import { mockChatPath, replyText, sendChatReply, sendToolCalls, toolResult, type
 import { processExists, runningProgram } from './harness/processes'
 import type { E2EBrowser } from './harness/session'
 import { endedReply, newTab, openSeededConversation, openToasts, pickModel, submit } from './harness/thread'
+import { codePanel, hiddenPart, hidingPart, intermediateParts, pressToolChip, revealingPart, toolChips, toolPanel } from './harness/toolChips'
 
 // The `js_eval` tool, driven through the real app against a mock chat model
 // in this process. The app runs the code of each call in the real Deno of
@@ -43,7 +45,12 @@ import { endedReply, newTab, openSeededConversation, openToasts, pickModel, subm
 //   of an `asset_view` call of the code, in each later request too;
 // - a job that the code started is a job of the reply: the code can wait
 //   for it, the result of the call names each job that is still open, and
-//   the model gets the result of such a job with `jobs_wait`.
+//   the model gets the result of such a job with `jobs_wait`;
+// - the panel of the chip of a call shows its code, and each tool call
+//   that the code made with its arguments and what the code got from it;
+//   the chip hides the image of a job that the code started with
+//   `is_intermediate`, and its panel shows it. A saved call shows the same
+//   list, with a tool call that the end of the code cut.
 // No request holds a path of the test HOME (`takeRequest` checks each one):
 // the work folder of each run is in that HOME, and Deno names it in an error
 // stack, in `import.meta.url`, and in `Deno.cwd()`. No request holds the
@@ -362,5 +369,97 @@ describe('js_eval tool', () => {
     ])
     expect(reply.endsWith(`\n\n${replyText(CALLER.modelName)}`)).toBe(true)
     await expectRunsEnded(setup)
+  })
+
+  it('shows in the panel of a call its code and the tool calls of the code, and hides the image of an intermediate job of the code under the chip', async () => {
+    await submit(browser, 'Make a draft.')
+    const first = await chatRequest()
+    const draw = { arguments: '-f lavfi -i color=c=red:size=16x16:duration=1 -frames:v 1 -update 1 draft.png', is_intermediate: true }
+    const badImage = { image: 'zz', width: 4 }
+    const code = [
+      'await dez.sbp("dez.tools/jobs_list")',
+      'let failure',
+      'try {',
+      `  await dez.sbp("dez.tools/image/scale", ${JSON.stringify(badImage)})`,
+      '} catch (error) {',
+      '  failure = error.message',
+      '}',
+      `await dez.sbp("dez.tools/video/ffmpeg", ${JSON.stringify(draw)})`,
+      'await dez.sbp("dez.tools/jobs_wait")',
+      'return failure',
+    ].join('\n')
+    sendToolCalls(first.reply, [evalCall('call_panel', code, { timeout_seconds: 60 })])
+
+    const second = await chatRequest()
+    const result = toolResult(second, 'call_panel')
+    const [failure] = result.split('\n\nFrom the tool calls of the code:\n')
+    expect(failure).toBe('This conversation has no images, so it has no image @zz. Do not call the image tool until the user adds an image to the conversation.')
+    await sendChatReply(second.reply, CALLER.modelName)
+    // The image is in the reply with the mark of its job, which hides it.
+    const reply = await endedReply(browser)
+    const jobId = String(/\|hidden=([^|\]]+)\]/.exec(reply)?.[1])
+    expect(madeImages(reply)).toStrictEqual([{ id: 'a', marks: `tool=video|made-by=${jobId}|hidden=${jobId}`, stored: true }])
+
+    // The image of the job does not show at its place: the chip of the
+    // call whose code started the job hides it.
+    await waitForValue(browser, 'chip after the reply', () => intermediateParts(browser), [hidingPart('image')])
+    expect(await shownImages(browser)).toStrictEqual([])
+
+    await pressToolChip(browser, 0)
+    await waitForValue(browser, 'image in the panel', async () => (await shownImages(browser)).map(({ width, height }) => ({ width, height })), [{ width: 16, height: 16 }])
+    expect(await intermediateParts(browser)).toStrictEqual([revealingPart('image')])
+    expect(await hiddenPart(browser, 0)).toStrictEqual({ heading: 'Intermediate asset', assets: 1, text: null })
+    // The code is not a parameter row, and the result is what the model got.
+    expect(await toolPanel(browser, 0)).toStrictEqual({ parameters: [['timeout_seconds', '60']], result, failed: false })
+    const panel = await codePanel(browser, 0)
+    expect(panel?.headings).toStrictEqual(['Intermediate asset', 'Code', 'Parameters', 'Result', 'Tool calls of the code'])
+    expect(panel?.code).toBe(code)
+    expect(panel?.more).toBeNull()
+    // Each tool call of the code, in the form of a call of the model, with
+    // the text that the code got. The result of the `video` call tells of
+    // the inputs of its run after the job.
+    const calls = panel?.calls ?? []
+    expect(calls).toMatchObject([
+      { name: 'jobs_list', status: 'success', stateWord: null, parameters: [], result: NO_JOBS_TEXT, failed: false },
+      { name: 'image', status: 'error', stateWord: 'failed', parameters: [['command', 'scale'], ['parameters', JSON.stringify(badImage)]], result: failure, failed: true },
+      { name: 'video', status: 'success', stateWord: null, parameters: [['command', 'ffmpeg'], ['parameters', JSON.stringify(draw)]], failed: false },
+      { name: 'jobs_wait', status: 'success', stateWord: null, parameters: [], failed: false },
+    ])
+    expect(calls[2].result.startsWith(jobStartedText(jobId, 1))).toBe(true)
+    expect(jobsWaitResults(calls[3].result).map(({ id, tool, status }) => ({ id, tool, status }))).toStrictEqual([{ id: jobId, tool: 'video', status: 'finished' }])
+    await expectRunsEnded(setup)
+  })
+
+  it('shows the tool calls of the code of a saved call: one that the end of the code cut, and how many the list does not hold', async () => {
+    const code = 'dez.sbp("dez.tools/jobs_wait")\nthrow new Error("stop")'
+    const result = 'The code threw an error:\nError: stop'
+    const block = toolBlockText({
+      id: 'call_saved',
+      name: 'js_eval',
+      status: 'error',
+      arguments: { code },
+      result,
+      bridged: { calls: [{ name: 'jobs_wait', arguments: { all: true }, status: 'cut', result: '' }], more: 2 },
+    })
+    await openSeededConversation(browser, setup.app.home, 'js-eval-saved', [{ role: 'user', text: 'Run it.' }, { role: 'agent', text: block }, { role: 'user', text: '' }])
+    await waitForValue(browser, 'chips', async () => (await toolChips(browser)).map(({ name, state }) => ({ name, state })), [{ name: 'js_eval', state: 'error' }])
+
+    await pressToolChip(browser, 0)
+    await waitForValue(browser, 'panel of the saved call', () => codePanel(browser, 0), {
+      headings: ['Code', 'Result', 'Tool calls of the code'],
+      code,
+      calls: [{
+        name: 'jobs_wait',
+        status: 'cut',
+        stateWord: 'not finished',
+        parameters: [['all', 'true']],
+        result: '',
+        placeholder: 'The code ended before this tool call did.',
+        failed: false,
+      }],
+      more: '2 more tool calls of the code are not in this list.',
+    })
+    expect(await toolPanel(browser, 0)).toStrictEqual({ parameters: [], result, failed: true })
+    expect(await consoleErrors(browser)).toStrictEqual([])
   })
 })

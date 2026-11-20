@@ -105,6 +105,35 @@ describe('ToolBridge', () => {
     await vi.waitFor(() => expect(answers).toHaveLength(JS_EVAL_MAX_TOOL_CALLS + 2))
     expect(toolRuns.calls).toHaveLength(JS_EVAL_MAX_TOOL_CALLS)
     expect(answers.map((answer) => answer.isError)).toStrictEqual([...Array<boolean>(JS_EVAL_MAX_TOOL_CALLS).fill(false), true, true])
+    // The list of the calls has no entry for such a line, only a count.
+    const { bridged } = await bridge.end()
+    expect(bridged.calls).toHaveLength(JS_EVAL_MAX_TOOL_CALLS)
+    expect(bridged.more).toBe(2)
+  })
+
+  it('keeps a list of the calls in the order of their lines: the tool and the arguments of each call, and what the code got', async () => {
+    toolRuns.tool = async (call) => (call.name === 'asset_info'
+      ? { content: 'The image @z is not in this conversation.', isError: true }
+      : { content: `result of ${String(call.arguments.command)}`, isError: false })
+    const refused = callLine(3, '/mnt/disk/cache/dez/work/1/no\ntool', { a: 1 })
+    const bridge = new ToolBridge(callContext(), ['/mnt/disk/cache/dez/work/1'], running())
+
+    bridge.call(callLine(1, 'dez.tools/image/scale', { image: 'a', width: 8 }), write)
+    bridge.call(callLine(2, 'dez.tools/asset_info', { assets: '@z' }), write)
+    bridge.call(refused, write)
+    await vi.waitFor(() => expect(answers).toHaveLength(3))
+
+    expect((await bridge.end()).bridged).toStrictEqual({
+      calls: [
+        { name: 'image', arguments: { command: 'scale', parameters: '{"image":"a","width":8}' }, status: 'success', result: 'result of scale' },
+        { name: 'asset_info', arguments: { assets: '@z' }, status: 'error', result: 'The image @z is not in this conversation.' },
+        // No call of a tool: the selector of the line, with no path of
+        // this computer, and the error that the code got.
+        { name: '/work/no tool', arguments: {}, status: 'error', result: answers[2].text },
+      ],
+      more: 0,
+    })
+    expect(answers[2].isError).toBe(true)
   })
 
   it('counts a line that Dez refuses in the limit of a run', async () => {
@@ -203,7 +232,7 @@ describe('ToolBridge', () => {
     expect((await ending).toolCalls.jobs).toStrictEqual([started[1], started[2]])
   })
 
-  it('stops the call that runs at the end of the run, and runs no call after it', async () => {
+  it('stops the call that runs at the end of the run, runs no call after it, and keeps both as calls that the end cut', async () => {
     let callSignal: AbortSignal | undefined
     toolRuns.tool = (_call, signal) => new Promise((resolve) => {
       callSignal = signal
@@ -212,7 +241,8 @@ describe('ToolBridge', () => {
     const bridge = new ToolBridge(callContext(), [], running())
 
     bridge.call(callLine(1), write)
-    bridge.call(callLine(2), write)
+    bridge.call(callLine(2, 'dez.tools/image/flip', { image: 'a' }), write)
+    bridge.call(callLine(3, 'dez.tools/no_tool'), write)
     await vi.waitFor(() => expect(toolRuns.calls).toHaveLength(1))
     const end = await bridge.end()
     await moment()
@@ -220,10 +250,18 @@ describe('ToolBridge', () => {
     expect(callSignal?.aborted).toBe(true)
     expect(toolRuns.calls).toHaveLength(1)
     expect(answers).toStrictEqual([])
-    expect(end.toolCalls.unanswered).toBe(2)
+    expect(end.toolCalls.unanswered).toBe(3)
+    expect(end.bridged).toStrictEqual({
+      calls: [
+        { name: 'jobs_list', arguments: {}, status: 'cut', result: '' },
+        { name: 'image', arguments: { command: 'flip', parameters: '{"image":"a"}' }, status: 'cut', result: '' },
+        { name: 'dez.tools/no_tool', arguments: {}, status: 'cut', result: '' },
+      ],
+      more: 0,
+    })
   })
 
-  it('takes no asset and no picture of a call that ends after the end of the run', async () => {
+  it('takes no asset and no picture of a call that ends after the end of the run, and keeps its result in the list of the calls', async () => {
     const written: string[] = []
     const late = heldStep()
     let got: unknown
@@ -253,7 +291,11 @@ describe('ToolBridge', () => {
 
     expect(got).toStrictEqual({ image: null, clip: null, budget: NO_CALL_PICTURE_BUDGET })
     expect(written).toStrictEqual([])
-    expect(end).toStrictEqual({ toolCalls: { assets: [], jobs: [], unanswered: 1, pictures: 0 }, pictures: [] })
+    expect(end).toStrictEqual({
+      toolCalls: { assets: [], jobs: [], unanswered: 1, pictures: 0 },
+      pictures: [],
+      bridged: { calls: [{ name: 'jobs_list', arguments: {}, status: 'success', result: TOOL_DONE.content }], more: 0 },
+    })
     expect(answers).toStrictEqual([])
     await vi.waitFor(() => expect(native.deletedFiles).toStrictEqual([{ root: 'app', path: `${SHOWN_PICTURE_FOLDER}/${PICTURE.file}`, folder: false }]))
   })
@@ -309,5 +351,6 @@ describe('ToolBridge', () => {
       { id: 2, text: 'done', isError: false },
     ])
     expect(toolRuns.calls).toHaveLength(1)
+    expect((await bridge.end()).bridged.calls[0]).toStrictEqual({ name: 'dez.tools/jobs_list', arguments: {}, status: 'error', result: UNEXPECTED_BRIDGE_ERROR_TEXT })
   })
 })

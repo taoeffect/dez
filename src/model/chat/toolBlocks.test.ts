@@ -176,6 +176,39 @@ describe('toolBlockText and findToolBlocks', () => {
     expect(picturesOf(one('a.png')).pictures).toStrictEqual([{ file: 'a.png', label: 'x' }])
   })
 
+  it('writes the tool calls of the code of a call after the pictures and reads them back, and reads a value that is not the writer\'s form as none', () => {
+    const flip = { name: 'image', arguments: { command: 'flip', parameters: '{"image":"a"}' }, status: 'success' as const, result: 'Made the image @b.' }
+    const block: ToolBlockData = {
+      id: 'call_1',
+      name: 'js_eval',
+      status: 'error',
+      arguments: { code: 'return 1', timeout_seconds: 30 },
+      result: 'The code threw an error.',
+      pictures: [{ file: 'f-1.png', label: 'asset_view: the image @a.' }],
+      bridged: {
+        calls: [
+          flip,
+          { name: 'model_invoke', arguments: { model: 'p/m', prompt: 'A "fox" & more\nlines', is_intermediate: true }, status: 'error', result: 'No model.\r\n</dez:tool>' },
+          { name: 'jobs_wait', arguments: {}, status: 'cut', result: '' },
+        ],
+        more: 2,
+      },
+    }
+    const bridgedOf = (value: string) => findToolBlocks(`<dez:tool id="a" name="js_eval" bridged="${value}">\n</dez:tool>`)[0]
+
+    expect(toolBlockText({ ...block, status: 'success', pictures: [], bridged: { calls: [flip], more: 0 } }).split('\n')[0]).toBe(
+      '<dez:tool id="call_1" name="js_eval" bridged="{&quot;calls&quot;:[{&quot;name&quot;:&quot;image&quot;,&quot;arguments&quot;:{&quot;command&quot;:&quot;flip&quot;,&quot;parameters&quot;:&quot;{\\&quot;image\\&quot;:\\&quot;a\\&quot;}&quot;},&quot;status&quot;:&quot;success&quot;,&quot;result&quot;:&quot;Made the image @b.&quot;}],&quot;more&quot;:0}" code="return 1" timeout_seconds="30">',
+    )
+    expect(toolBlockText(block).split('\n')[0]).toMatch(/^<dez:tool id="call_1" name="js_eval" status="error" pictures="[^"]*" bridged="[^"]*" code="return 1" timeout_seconds="30">$/)
+    expect(readBack(block)).toStrictEqual([block])
+    expect(toolBlockText({ ...block, bridged: { calls: [], more: 0 } })).not.toContain('bridged')
+    // A hand edit: no JSON, no list, a list with no call.
+    for (const value of ['', 'x', '[]', '{}', '{&quot;calls&quot;:[],&quot;more&quot;:0}']) {
+      expect(bridgedOf(value), value).toStrictEqual({ from: expect.any(Number), to: expect.any(Number), id: 'a', name: 'js_eval', status: 'success', arguments: {}, result: '' })
+    }
+    expect(bridgedOf('{&quot;calls&quot;:[],&quot;more&quot;:3}').bridged).toStrictEqual({ calls: [], more: 3 })
+  })
+
   // The size and the byte count give the cost of a picture in a request.
   it('keeps the size and the byte count of a picture, reads a copy of an older Dez with none, and reads no picture with a bad number', () => {
     const wave = { file: 'w1.jpg', label: 'The wave of @b.', width: 800, height: 200, bytes: 3000 }

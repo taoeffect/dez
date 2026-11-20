@@ -1,4 +1,4 @@
-import { JOBS_WAIT_TOOL, jobsWaitResults, startedJobId, type JobResult } from '../tools/jobs'
+import { blockJobStarts, JOBS_WAIT_TOOL, jobsWaitResults, type JobResult } from '../tools/jobs'
 import { blockLinkedRule, isCarriedUserAssets, readCompactionBlock } from './compaction'
 import { findImageReferences, IMAGE_HIDDEN_KEY, IMAGE_KEPT_KEY, isKeptImage, type ImageReference, type LinkedPathRule } from './images'
 import { findMediaTags, isKeptClip, MEDIA_HIDDEN_ATTRIBUTE, type MediaTag } from './mediaTags'
@@ -12,7 +12,9 @@ import type { Role } from './types'
 // job is (after the blocks of the `jobs_wait` group that gave its result),
 // with a marker that names its job (`IMAGE_HIDDEN_KEY`,
 // `MEDIA_HIDDEN_ATTRIBUTE`). The editor shows it under the chip of the
-// call that started that job, and not at its own place.
+// call that started that job, and not at its own place. A tool call of the
+// code of a `js_eval` call can start the job too (`blockJobStarts`): the
+// chip of that `js_eval` call then shows the asset.
 //
 // The marker alone hides nothing. An asset is hidden only while a chip of
 // a call that started its job can show it: a tool block of its agent
@@ -68,17 +70,18 @@ interface BlockPlace {
 }
 
 // For each of `sections`, the index in its `blocks` of each block that
-// started a job, by job id, in text order. None for a user section.
+// started a job (`blockJobStarts`), by job id, in text order. None for a
+// user section.
 function jobStarts(sections: readonly ChipSection[]): Map<string, number[]>[] {
   return sections.map(({ role, blocks }) => {
     const starts = new Map<string, number[]>()
     if (role !== 'agent') return starts
     blocks.forEach((block, index) => {
-      const jobId = startedJobId(block.result)
-      if (jobId === null) return
-      const found = starts.get(jobId)
-      if (found) found.push(index)
-      else starts.set(jobId, [index])
+      for (const { id } of blockJobStarts(block)) {
+        const found = starts.get(id)
+        if (found) found.push(index)
+        else starts.set(id, [index])
+      }
     })
     return starts
   })
@@ -229,10 +232,11 @@ export function findKeptAssets(sections: readonly { role: Role, text: string }[]
  *  block that started the job. It also belongs to each copy of that block
  *  in its section (a block of the job with the same call id), as each chip
  *  of a copy shows the assets of the job. When two `jobs_wait` blocks give
- *  one for the same block, the first one counts. Null for a block that
- *  started no job, and for a job with no result (it still runs, its
- *  replies ended first, it was cancelled, or the `jobs_wait` block is
- *  gone). */
+ *  one for the same block, the first one counts; so a block that started
+ *  more than one job (a `js_eval` block, `blockJobStarts`) has the first
+ *  result of one of them. Null for a block that started no job, and for a
+ *  job with no result (it still runs, its replies ended first, it was
+ *  cancelled, or the `jobs_wait` block is gone). */
 export function findJobResults(sections: readonly ChipSection[]): (JobResult | null)[][] {
   const results: (JobResult | null)[][] = sections.map(({ blocks }) => blocks.map(() => null))
   const gaveResults = (block: ToolBlock) => block.name === JOBS_WAIT_TOOL.name && block.status === 'success'

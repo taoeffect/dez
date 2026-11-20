@@ -2337,7 +2337,8 @@ export const dezTheme = EditorView.theme({
   },
   // The panel hangs from the disclosure triangle by a thin rule: the
   // parameters as name and value rows, then the result in a read-only
-  // field. The field scrolls past about 16 lines.
+  // field. The field scrolls past about 16 lines. The code of a `js_eval`
+  // call shows in such a field too.
   '.dez-tool-call__panel': {
     display: 'flex',
     flexDirection: 'column',
@@ -2396,6 +2397,51 @@ export const dezTheme = EditorView.theme({
     borderColor: 'var(--color-error-border, #d9534f)',
     background: 'var(--color-error-bg, rgba(217,83,79,0.08))',
     color: 'var(--color-error, #d9534f)',
+  },
+  // The tool calls of the code of a `js_eval` call (`createBridgedCalls`
+  // in toolCalls.ts), one under the other: the tool and how the call
+  // ended, its arguments as parameter rows, and its result in a field. A
+  // call that failed has the red word and the red field of a failed chip.
+  // The tool has its own class: a name of the chip turns red with the
+  // chip (`.dez-tool-call__name`), and a call of code that failed can
+  // have passed.
+  '.dez-tool-call__bridged': {
+    display: 'flex',
+    flexDirection: 'column',
+    alignSelf: 'stretch',
+    gap: editorSize(10),
+    minWidth: '0',
+  },
+  '.dez-tool-call__bridged-call': {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: editorSize(4),
+    minWidth: '0',
+  },
+  '.dez-tool-call__bridged-title': {
+    display: 'flex',
+    alignItems: 'baseline',
+    gap: editorSize(8),
+    minWidth: '0',
+  },
+  '.dez-tool-call__bridged-name': {
+    minWidth: '0',
+    overflowWrap: 'anywhere',
+    color: 'var(--color-text)',
+    fontFamily: MONO_FONT_FAMILY,
+    fontSize: editorSize(12.5),
+    fontWeight: '600',
+  },
+  '.dez-tool-call__bridged-state': {
+    flex: 'none',
+    color: 'var(--color-error, #d9534f)',
+    fontSize: editorSize(11.5),
+  },
+  // A call that the end of the code cut did not fail: as the word of a
+  // call that did not run (`[data-state="notRun"]` above).
+  '.dez-tool-call__bridged-call[data-status="cut"] .dez-tool-call__bridged-state, .dez-tool-call__bridged-more': {
+    color: 'inherit',
+    fontStyle: 'italic',
   },
   // The pictures that a call showed its model (`createPictures` in
   // toolCalls.ts): each one under the text that went before it in the

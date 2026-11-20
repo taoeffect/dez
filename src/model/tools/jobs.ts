@@ -1,6 +1,7 @@
 import { countOf } from '../../utils/countText'
 import { oneLineCut } from '../../utils/oneLineCut'
 import { tagEscape } from '../chat/tagEscape'
+import type { ToolBlockData } from '../chat/toolBlocks'
 import { usdText } from '../providers/modelPrices'
 import { argumentWords } from './arguments'
 import { ToolError, type ToolArguments, type ToolDefinition, type ToolParameter } from './types'
@@ -109,6 +110,32 @@ export function startedJob(resultText: string): { id: string, number: number | n
  *  (`jobStartedText`); null for any other text. */
 export function startedJobId(resultText: string): string | null {
   return startedJob(resultText)?.id ?? null
+}
+
+/** A job that a call of a tool block started. */
+export interface BlockJobStart {
+  id: string
+  /** `JobCall.number`; null when the result text does not tell it. */
+  number: number | null
+  /** The tool and the arguments of the call that started the job: those
+   *  of the block, or those of a tool call of its code. */
+  name: string
+  arguments: ToolArguments
+}
+
+/** The jobs that the calls of `block` started, from their result texts
+ *  (`startedJob`), one entry for each job: the tool calls of the code of a
+ *  `js_eval` block in their order (`ToolBlockData.bridged`), then the call
+ *  of the block itself. The first call that tells a job has its entry:
+ *  code can return the result text of its tool call, and the result of
+ *  its block then starts with the start text of that call. */
+export function blockJobStarts(block: Pick<ToolBlockData, 'name' | 'arguments' | 'result' | 'bridged'>): BlockJobStart[] {
+  const starts: BlockJobStart[] = []
+  for (const { name, arguments: args, result } of [...block.bridged?.calls ?? [], block]) {
+    const started = startedJob(result)
+    if (started && !starts.some((start) => start.id === started.id)) starts.push({ ...started, name, arguments: args })
+  }
+  return starts
 }
 
 // What an open job is (`MAX_OPEN_JOBS`), in each text that tells the limit.

@@ -1,12 +1,14 @@
 // Unit tests only: the texts of hidden assets (hiddenAssets.ts) and of the
-// tool blocks that own them, which the model tests and the editor tests
-// share; the reference of an image with an id; a compaction tag, the data
-// of its notes, a message part of its notes, and an origin of its notes;
-// and the start of a JPEG file with no picture data, which the model tests
-// and the controller tests share.
+// tool blocks that own them (the block of a call that started a job, and
+// the block of a `js_eval` call whose code did), which the model tests and
+// the editor tests share; the reference of an image with an id; a
+// compaction tag, the data of its notes, a message part of its notes, and
+// an origin of its notes; and the start of a JPEG file with no picture
+// data, which the model tests and the controller tests share.
 import type { PromptInput } from '../streams/mediaRequest'
 import { jobStartedText } from '../tools/jobs'
 import { invocationInputsText } from '../tools/modelInvoke'
+import type { BridgedCall } from './bridgedCalls'
 import { compactionTagText, USER_MESSAGE_TAG_NAME } from './compaction'
 import type { CompactionNotes } from './compactionNotes'
 import { IMAGE_HIDDEN_KEY, IMAGE_TOOL_KEY, imageMarkdown, imageReferenceTextWithKeptMark } from './images'
@@ -96,6 +98,18 @@ interface InvokeBlockOptions {
 export function invokeBlock(jobId: string, { number = 1, id = `call_${number}`, prompt = 'A cat', intermediate = true, inputs }: InvokeBlockOptions = {}): string {
   const result = inputs === undefined ? jobStartedText(jobId, number) : `${jobStartedText(jobId, number)}\n${invocationInputsText(inputs)}`
   return toolBlockText({ id, name: 'model_invoke', status: 'success', arguments: { model: 'studio/paint', prompt, ...(intermediate && { is_intermediate: true }) }, result })
+}
+
+/** A tool call of the code of a `js_eval` call (`evalBlock`): a
+ *  `model_invoke` call that started the job `jobId`, the job `number` of
+ *  its reply, and that asked to hide what the job makes. */
+export function bridgedInvoke(jobId: string, number = 1, prompt = 'A cat'): BridgedCall {
+  return { name: 'model_invoke', arguments: { model: 'studio/paint', prompt, is_intermediate: true }, status: 'success', result: jobStartedText(jobId, number) }
+}
+
+/** The block of a `js_eval` call whose code made the tool calls `calls`. */
+export function evalBlock(calls: readonly BridgedCall[], id = 'call_e'): string {
+  return toolBlockText({ id, name: 'js_eval', status: 'success', arguments: { code: 'return 1' }, result: '1', bridged: { calls, more: 0 } })
 }
 
 /** The block of a `jobs_wait` call with the result text `result`. */

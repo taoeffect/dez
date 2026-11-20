@@ -1,6 +1,7 @@
 import * as z from 'zod'
 import { byteSizeText } from '../../utils/byteSize'
 import { countOf, countText } from '../../utils/countText'
+import { endOf, startOf } from '../../utils/textCut'
 import { jobStartedText, madeAssetIds, madeAssetText, type JobAssetKind } from './jobs'
 import RUNNER from './jsEvalRunner.js?raw'
 import { withoutLocalPaths } from './localPaths'
@@ -73,6 +74,10 @@ const MAX_SECONDS = 300
 // The name of the work folder of a run in every text for a model.
 const WORK_FOLDER_NAME = '/work'
 
+/** The parameter that holds the code of a call. The panel of the call's
+ *  chip shows it as code, not as a parameter row (toolCalls.ts). */
+export const JS_EVAL_CODE_PARAMETER = 'code'
+
 // Static text only (no count that changes, no date): the tools array and
 // the system prompt, which lists the tools, are in the provider's prompt
 // cache.
@@ -98,7 +103,7 @@ export const JS_EVAL_TOOL: ToolDefinition = {
     + `An error names the lines of your code as lines of \`${WORK_FOLDER_NAME}/${JS_EVAL_CODE_FILE}\`.`,
   parameters: [
     {
-      name: 'code',
+      name: JS_EVAL_CODE_PARAMETER,
       type: 'string',
       description: 'The code: the body of an async function, in JavaScript or TypeScript. For example: `return new Date().toISOString()`.',
       required: true,
@@ -122,7 +127,7 @@ export interface JsEvalCall {
 /** The call that the arguments `args` ask for. Throws a `ToolError` for
  *  no code and for a time limit outside the range. */
 export function jsEvalCall(args: ToolArguments): JsEvalCall {
-  const { code, timeout_seconds: seconds = DEFAULT_SECONDS } = args
+  const { [JS_EVAL_CODE_PARAMETER]: code, timeout_seconds: seconds = DEFAULT_SECONDS } = args
   if (typeof code !== 'string' || code.trim() === '') {
     throw new ToolError('`code` is missing or blank, so Dez ran nothing. Give the code to run as `code`: the body of an async function '
       + 'that gives its result with `return`, for example `return new Date().toISOString()`.')
@@ -315,18 +320,6 @@ export function textForModel(text: string, workFolders: readonly string[]): stri
     result = result.replace(new RegExp(`file://\\S*?/${name}`, 'g'), `file://${WORK_FOLDER_NAME}`)
   }
   return withoutLocalPaths(result)
-}
-
-// The first `length` characters of `text`, with no half of a character at
-// the cut.
-function startOf(text: string, length: number): string {
-  return text.slice(0, length).replace(/[\uD800-\uDBFF]$/, '')
-}
-
-// The last `length` characters of `text`, with no half of a character at
-// the cut.
-function endOf(text: string, length: number): string {
-  return text.slice(-length).replace(/^[\uDC00-\uDFFF]/, '')
 }
 
 // A text of a run as a result holds it, with the note that tells of its

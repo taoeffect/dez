@@ -1,10 +1,11 @@
 import sbp from '@sbp/sbp'
+import { cappedBridgedCalls, type BridgedCall, type BridgedCalls } from '../model/chat/bridgedCalls'
 import type { ShownPicture } from '../model/chat/shownPictures'
 import { modelFamily } from '../model/providers/modelFamilies'
 import { NO_CALL_PICTURE_BUDGET, pictureBudgetLeft, shownPictureCost, totalCost } from '../model/streams/pictureBudget'
 import { isOpenJob, startedJobId, type JobAssetKind } from '../model/tools/jobs'
-import { jsEvalAnswerLine, type JsEvalCallLine, type JsEvalToolCalls } from '../model/tools/jsEval'
-import { bridgedToolCall, UNEXPECTED_BRIDGE_ERROR_TEXT } from '../model/tools/toolBridge'
+import { JS_EVAL_MAX_TOOL_CALLS, jsEvalAnswerLine, type JsEvalCallLine, type JsEvalToolCalls } from '../model/tools/jsEval'
+import { bridgedToolCall, shownSelector, UNEXPECTED_BRIDGE_ERROR_TEXT } from '../model/tools/toolBridge'
 import type { ToolRunResult } from '../model/tools/types'
 import type { ProgramInputWriter } from './programRuns'
 import { discardShownPictures } from './shownPictures'
@@ -21,7 +22,8 @@ import type { ToolRunContext } from './tools'
 // is a job of the reply, and its pictures count against the budget of the
 // round. Only the result differs: the code gets it, not the model, so the
 // result of the `js_eval` call tells the model what the calls left
-// (`JsEvalToolCalls`).
+// (`JsEvalToolCalls`), and the block of that call keeps a list of the
+// calls for the user (`BridgedCalls`).
 
 /** What the tool calls of the code of a run left, at the end of the run. */
 export interface ToolBridgeEnd {
@@ -31,6 +33,9 @@ export interface ToolBridgeEnd {
    *  order. The result of the `js_eval` call takes them, or its runner
    *  deletes them (`discardShownPictures`). */
   pictures: readonly ShownPicture[]
+  /** The calls of the code, for the block of the `js_eval` call
+   *  (`ToolBlockData.bridged`). */
+  bridged: BridgedCalls
 }
 
 /** The bridged tool calls of one `js_eval` run. `context` is the context
@@ -59,6 +64,10 @@ export class ToolBridge {
   // The ids of the jobs that the calls started.
   private readonly startedJobs = new Set<string>()
   private readonly pictures: ShownPicture[] = []
+  // One entry for each call line up to the limit of a run, in the order of
+  // the lines. An entry starts as a call that the end of the run cut, and
+  // its call fills it.
+  private readonly records: BridgedCall[] = []
 
   constructor(private readonly context: ToolRunContext, private readonly workFolders: readonly string[], callSignal: AbortSignal) {
     const stop = () => this.stop.abort(callSignal.reason)
@@ -98,23 +107,37 @@ export class ToolBridge {
         pictures: this.pictures.length,
       },
       pictures: this.pictures,
+      bridged: cappedBridgedCalls(this.records, this.callLines - this.records.length),
     }
   }
 
-  // Runs the call of the call line `number` of the run, and writes its
-  // answer. It never rejects: a rejection would end the chain of the calls
-  // (`tail`), and the code would wait for each later answer to its time
-  // limit.
+  // Runs the call of the call line `number` of the run, writes its answer,
+  // and keeps its entry of the list of the calls. It never rejects: a
+  // rejection would end the chain of the calls (`tail`), and the code would
+  // wait for each later answer to its time limit.
   private async answer(line: JsEvalCallLine, number: number, write: ProgramInputWriter): Promise<void> {
-    if (this.ended) return
-    let answer: { text: string, isError: boolean }
+    // A line after the limit of a run has no entry: code can write lines
+    // without end, and the list counts them (`BridgedCalls.more`).
+    const record: BridgedCall | null = number > JS_EVAL_MAX_TOOL_CALLS
+      ? null
+      : { name: shownSelector(line.selector, this.workFolders), arguments: {}, status: 'cut', result: '' }
+    if (record) this.records.push(record)
+    let answer: { text: string, isError: boolean } | null
     try {
-      answer = await this.run(line, number)
+      answer = await this.run(line, number, record)
     } catch (error) {
       // A forged line can hold a value that the checks cannot walk (some
       // thousand arrays in each other).
       console.error('A tool call of the code of a js_eval run failed:', error)
       answer = { text: UNEXPECTED_BRIDGE_ERROR_TEXT, isError: true }
+    }
+    // The entry of a call that the end of the run cut stays as it started.
+    // An error after the end is such a call too: the end stops the call
+    // that runs, and the error of a stopped call is no answer of its tool.
+    if (answer === null || (answer.isError && this.ended)) return
+    if (record) {
+      record.status = answer.isError ? 'error' : 'success'
+      record.result = answer.text
     }
     if (this.ended) return
     try {
@@ -130,8 +153,16 @@ export class ToolBridge {
 
   // The answer to the call line `number` of the run: the result of its
   // tool, or the error of a line that Dez refuses (`bridgedToolCall`).
-  private async run(line: JsEvalCallLine, number: number): Promise<{ text: string, isError: boolean }> {
+  // Null for a line whose call did not run, as the run ended before it.
+  // `record`, the entry of the line, gets the tool and the arguments of
+  // the call, also when the call does not run.
+  private async run(line: JsEvalCallLine, number: number, record: BridgedCall | null): Promise<{ text: string, isError: boolean } | null> {
     const check = bridgedToolCall(line, number, this.workFolders)
+    if (check.ok && record) {
+      record.name = check.call.name
+      record.arguments = check.call.arguments
+    }
+    if (this.ended) return null
     if (!check.ok) return { text: check.error, isError: true }
     const result = await sbp('dez.controller/tools/run', check.call, this.stop.signal, this.callContext(check.call.name)) as ToolRunResult
     if (result.isError) return { text: result.content, isError: true }

@@ -2,7 +2,8 @@ import sbp from '@sbp/sbp'
 import { StateEffect, StateField, type EditorState, type Extension } from '@codemirror/state'
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view'
 import { createApp, h, shallowRef, type App, type ShallowRef } from 'vue'
-import { findJobResults, type HiddenAsset, type HiddenAssetOwner } from '../../model/chat/hiddenAssets'
+import type { BridgedCalls, BridgedCallStatus } from '../../model/chat/bridgedCalls'
+import { findJobResults, type HiddenAsset } from '../../model/chat/hiddenAssets'
 import type { MediaTagData } from '../../model/chat/mediaTags'
 import { parseModelRefKey } from '../../model/chat/modelRef'
 import type { ShownPicture } from '../../model/chat/shownPictures'
@@ -11,9 +12,11 @@ import { MODEL_OUTPUT_IDS, effectiveOutputs, type ModelOutput } from '../../mode
 import { isRecord } from '../../model/providers/modelParsing'
 import type { ModelInfo } from '../../model/providers/types'
 import { isRoundLimitResult } from '../../model/streams/toolRound'
-import { INTERMEDIATE_PARAMETER, jobOwnText, startedJobId, type JobResult, type JobResultStatus } from '../../model/tools/jobs'
+import { blockJobStarts, INTERMEDIATE_PARAMETER, jobOwnText, type JobResult, type JobResultStatus } from '../../model/tools/jobs'
+import { JS_EVAL_CODE_PARAMETER, JS_EVAL_TOOL } from '../../model/tools/jsEval'
 import { isIntermediateCall, toolDefinition } from '../../model/tools/registry'
-import type { ToolArguments } from '../../model/tools/types'
+import type { ToolArguments, ToolArgumentValue } from '../../model/tools/types'
+import { countOf } from '../../utils/countText'
 import { assetIcon } from '../assetIcons'
 import { sectionsField, type SectionModel } from '../thread/cmEditor'
 import { measureLineHeights } from '../thread/editorMeasure'
@@ -36,6 +39,10 @@ import { ROUND_STROKE, svgIcon } from './svgIcon'
 // Space while it has the focus, opens a panel under it with the parameters,
 // the result, and the pictures that the call showed its model. The block's
 // text stays in the doc as it is: the chip only hides it.
+//
+// The panel of a `js_eval` call shows its code in a field of its own, and
+// after the result the tool calls that the code made (`BridgedCalls`),
+// which show nowhere else.
 //
 // The chip of an intermediate call (`IntermediateCall`) also has an eye, a
 // symbol for the type of what the call made, and a label; its panel shows
@@ -79,24 +86,29 @@ export function panelAsset(asset: HiddenAsset, linkedSrc: boolean): PanelAsset {
  *  every chip. A call is intermediate when it asks to hide what its job
  *  makes (`isIntermediateCall`: `is_intermediate` of `model_invoke`, or of
  *  a `video` subcommand), and it runs or started a job; or when it owns a
- *  hidden asset. A call that failed before it started a job is a failed
- *  call as any other. The assets and the result of its job can be in a
- *  later agent section than the chip: a later reply can take over the jobs
- *  of a reply that stopped. */
+ *  hidden asset, as a `js_eval` call does for a job that a tool call of
+ *  its code started. A call that failed before it started a job is a
+ *  failed call as any other. The assets and the result of its job can be
+ *  in a later agent section than the chip: a later reply can take over the
+ *  jobs of a reply that stopped. */
 export interface IntermediateCall {
-  /** The Dez job that the call started; null while the call runs. */
-  jobId: string | null
-  /** The images and clips of the job that the chip hides, in doc order:
-   *  the hidden assets that it owns (`HiddenAssetOwner`, by the rule of
+  /** The Dez jobs that the call started (`blockJobStarts`): its own job,
+   *  or the jobs of the tool calls of its code. None while the call
+   *  runs. */
+  jobIds: readonly string[]
+  /** The images and clips of those jobs that the chip hides, in doc
+   *  order: the hidden assets that it owns (`ownedBy`, by the rule of
    *  `findHiddenAssets`). */
   assets: readonly PanelAsset[]
-  /** The text that the job made, when that is all it made: it is in the
-   *  result of a `jobs_wait` block (`status`), which few users open. Blank
-   *  for a job with assets, and for one that did not finish. */
+  /** The text that the job of the call made, when that is all it made: it
+   *  is in the result of a `jobs_wait` block (`status`), which few users
+   *  open. Blank for a call with assets, and for a job that did not
+   *  finish. */
   text: string
-  /** The status of the job's result in a `jobs_wait` block of the chip's
-   *  section or of a later one (`findJobResults`); null while no block has
-   *  one (the job runs, its replies ended first, or it was cancelled). */
+  /** The status of the result of the job of the call, in a `jobs_wait`
+   *  block of the chip's section or of a later one (`findJobResults`);
+   *  null while no block has one (the job runs, its replies ended first,
+   *  or it was cancelled). */
   status: JobResultStatus | null
 }
 
@@ -307,16 +319,16 @@ function addSectionSpacing(spacing: ChipSpacing, text: string, offset: number, c
 
 /** What the chip of `call` shows as an intermediate call, or null
  *  (`IntermediateCall`). `ofCalls` are the hidden assets of the doc that
- *  chips of calls own, and `result` the result of the job of the call
- *  (`findJobResults`). */
+ *  chips of calls own, and `result` the result of the job that the call
+ *  itself started (`findJobResults`). */
 function intermediateCall(call: ToolBlock, state: ToolCallState, ofCalls: readonly HiddenAsset[], result: JobResult | null): IntermediateCall | null {
-  const jobId = startedJobId(call.result)
-  const assets = jobId === null ? [] : ofCalls.filter((asset) => ownedBy(asset, { kind: 'job', jobId, callId: call.id }))
-  const asked = (state === 'running' || jobId !== null) && isIntermediateCall(call.name, call.arguments)
+  const jobIds = blockJobStarts(call).map((start) => start.id)
+  const assets = ofCalls.filter((asset) => ownedBy(asset, { kind: 'call', callId: call.id, jobIds }))
+  const asked = (state === 'running' || jobIds.length > 0) && isIntermediateCall(call.name, call.arguments)
   if (assets.length === 0 && !asked) return null
   const text = result?.status === 'finished' && assets.length === 0 ? jobOwnText(result.text) : ''
   return {
-    jobId,
+    jobIds,
     // A job's assets are in agent sections only, where no linked file
     // counts.
     assets: assets.map((asset) => panelAsset(asset, false)),
@@ -615,14 +627,19 @@ function assetKey(asset: { kind: 'image', path: string, id: string | null, linke
 /** The key (`PanelAssetRow.key`) of each asset that a panel draws. */
 const drawnAssetKeys = new WeakMap<Element, string>()
 
-/** Whether the chip of `owner` hides `asset`: the chip of a call owns an
- *  asset of the job that it started only when the asset names its call
- *  too (`findHiddenAssets`). A call that started no job has the owner
- *  null, which hides nothing. */
-function ownedBy(asset: HiddenAsset, owner: HiddenAssetOwner | null): boolean {
-  if (owner === null) return false
-  if (asset.owner.kind === 'job' && owner.kind === 'job') return asset.owner.jobId === owner.jobId && asset.owner.callId === owner.callId
-  return asset.owner.kind === owner.kind
+/** A chip whose panel shows hidden assets: the chip of the call `callId`,
+ *  which started the jobs `jobIds` (`IntermediateCall.jobIds`), or the
+ *  assets chip of the compaction. */
+export type AssetsChip =
+  | { kind: 'call', callId: string, jobIds: readonly string[] }
+  | { kind: 'compaction' }
+
+/** Whether `chip` hides `asset`: the chip of a call owns an asset of a job
+ *  that it started only when the asset names its call too
+ *  (`findHiddenAssets`). A call that started no job hides nothing. */
+function ownedBy(asset: HiddenAsset, chip: AssetsChip): boolean {
+  if (chip.kind === 'compaction') return asset.owner.kind === 'compaction'
+  return asset.owner.kind === 'job' && asset.owner.callId === chip.callId && chip.jobIds.includes(asset.owner.jobId)
 }
 
 /** One asset of a panel, as a row that a panel draws (`renderAssets`,
@@ -637,11 +654,11 @@ export interface PanelAssetRow {
   create: () => HTMLElement
 }
 
-/** The rows of `assets`, the hidden assets of the chip of `owner`. Each
- *  asset tells where its text is in the doc now (`AssetPlace`) by its
- *  owner and its key, as its element is at the place of the chip. That
- *  text can be in a later agent section than the chip. */
-function panelAssetRows(view: EditorView, owner: HiddenAssetOwner | null, assets: readonly PanelAsset[]): PanelAssetRow[] {
+/** The rows of `assets`, the hidden assets of `chip`. Each asset tells
+ *  where its text is in the doc now (`AssetPlace`) by its chip and its
+ *  key, as its element is at the place of the chip. That text can be in a
+ *  later agent section than the chip. */
+function panelAssetRows(view: EditorView, chip: AssetsChip, assets: readonly PanelAsset[]): PanelAssetRow[] {
   // How many of the assets so far have each key: two references to one
   // file (a duplicated line) are two rows.
   const counts = new Map<string, number>()
@@ -650,7 +667,7 @@ function panelAssetRows(view: EditorView, owner: HiddenAssetOwner | null, assets
     const count = counts.get(key) ?? 0
     counts.set(key, count + 1)
     const place: AssetPlace = () => hiddenAssets(view.state)
-      .filter((hidden) => ownedBy(hidden, owner) && assetKey(hidden.kind === 'image' ? { ...hidden.image, kind: 'image' } : hidden) === key)[count]?.from ?? null
+      .filter((hidden) => ownedBy(hidden, chip) && assetKey(hidden.kind === 'image' ? { ...hidden.image, kind: 'image' } : hidden) === key)[count]?.from ?? null
     return {
       key: `${count}:${key}${asset.kind === 'clip' ? `:${asset.linkedSrc}` : ''}`,
       asset,
@@ -659,7 +676,7 @@ function panelAssetRows(view: EditorView, owner: HiddenAssetOwner | null, assets
   })
 }
 
-/** Draws `assets`, the hidden assets of the chip of `owner`, in `list`,
+/** Draws `assets`, the hidden assets of `chip`, in `list`,
  *  each as it shows at its own place when it is not hidden: an image with
  *  its toolbar, a clip in its player (`createImage`, `createPlayer`).
  *
@@ -669,10 +686,10 @@ function panelAssetRows(view: EditorView, owner: HiddenAssetOwner | null, assets
  *  changes its tag, keeps its player (`updatePlayer`). A clip whose
  *  `linkedSrc` changed gets a new player, as the `linkedSrc` of a player
  *  is the one of its mount (`MediaWidget.updateDOM` does the same). */
-function renderAssets(view: EditorView, list: HTMLElement, owner: HiddenAssetOwner | null, assets: readonly PanelAsset[]): void {
+function renderAssets(view: EditorView, list: HTMLElement, chip: AssetsChip, assets: readonly PanelAsset[]): void {
   const drawn = new Map<string, HTMLElement>()
   for (const element of list.children) drawn.set(drawnAssetKeys.get(element) ?? '', element as HTMLElement)
-  const next = panelAssetRows(view, owner, assets).map((row) => {
+  const next = panelAssetRows(view, chip, assets).map((row) => {
     const kept = drawn.get(row.key)
     if (kept) {
       drawn.delete(row.key)
@@ -708,8 +725,8 @@ const mountedAssetLists = new WeakMap<Element, MountedAssetList>()
  *  whole file and holds a connection to the sound server, which refuses
  *  new ones past some count; a player that it refused shows the card of a
  *  clip that cannot play. */
-function renderAssetList(view: EditorView, list: HTMLElement, owner: HiddenAssetOwner | null, assets: readonly PanelAsset[]): void {
-  const rows = panelAssetRows(view, owner, assets)
+function renderAssetList(view: EditorView, list: HTMLElement, chip: AssetsChip, assets: readonly PanelAsset[]): void {
+  const rows = panelAssetRows(view, chip, assets)
   const mounted = mountedAssetLists.get(list)
   if (mounted) {
     mounted.rows.value = rows
@@ -752,12 +769,12 @@ export function destroyPanelPlayers(panel: Element): void {
   }
 }
 
-/** Draws the hidden assets of the chip of `owner` as the first part of its
- *  open `panel`: `heading`, then the assets (`renderAssets`, or
+/** Draws the hidden assets of `chip` as the first part of its open
+ *  `panel`: `heading`, then the assets (`renderAssets`, or
  *  `renderAssetList` when `long`). With no asset, `text` shows in their
  *  place, in a field that has the heading as its name. The part is gone
  *  when it has neither. */
-export function renderHiddenPart(view: EditorView, panel: HTMLElement, owner: HiddenAssetOwner | null, heading: string, assets: readonly PanelAsset[], { text = '', long = false } = {}): void {
+export function renderHiddenPart(view: EditorView, panel: HTMLElement, chip: AssetsChip, heading: string, assets: readonly PanelAsset[], { text = '', long = false } = {}): void {
   let part = panel.querySelector<HTMLElement>(`.${HIDDEN_PART_CLASS}`)
   if (assets.length === 0 && text === '') {
     if (part) destroyPanelPlayers(part)
@@ -770,8 +787,8 @@ export function renderHiddenPart(view: EditorView, panel: HTMLElement, owner: Hi
     panel.prepend(part)
   }
   const [headingElement, list] = part.children
-  if (long) renderAssetList(view, list as HTMLElement, owner, assets)
-  else renderAssets(view, list as HTMLElement, owner, assets)
+  if (long) renderAssetList(view, list as HTMLElement, chip, assets)
+  else renderAssets(view, list as HTMLElement, chip, assets)
   part.querySelector(`.${RESULT_CLASS}`)?.remove()
   headingElement.textContent = heading
   if (assets.length === 0) part.appendChild(createField(text, heading, ''))
@@ -781,10 +798,9 @@ export function renderHiddenPart(view: EditorView, panel: HTMLElement, owner: Hi
  *  hidden assets, else the text of its job, as the reason to open the chip
  *  of an intermediate call is to see that. */
 function renderIntermediatePart(view: EditorView, panel: HTMLElement, call: RenderedToolCall): void {
-  const jobId = call.intermediate?.jobId ?? null
   const assets = call.intermediate?.assets ?? []
   const heading = assets.length > 1 ? 'Intermediate assets' : assets.length === 1 ? 'Intermediate asset' : 'Intermediate text'
-  renderHiddenPart(view, panel, jobId === null ? null : { kind: 'job', jobId, callId: call.id }, heading, assets, { text: call.intermediate?.text ?? '' })
+  renderHiddenPart(view, panel, { kind: 'call', callId: call.id, jobIds: call.intermediate?.jobIds ?? [] }, heading, assets, { text: call.intermediate?.text ?? '' })
 }
 
 /** The part of an open panel that shows the copies of the pictures that a
@@ -816,20 +832,64 @@ export function createPictures(view: EditorView, pictures: readonly ShownPicture
   return [span(HEADING_CLASS, heading), ...items]
 }
 
+// The rows of the arguments `parameters` of a call: each name, then its
+// value, a text as it is and any other value as its JSON text.
+function createParameters(parameters: readonly [string, ToolArgumentValue][]): HTMLElement {
+  const rows = span('dez-tool-call__parameters')
+  for (const [name, value] of parameters) {
+    rows.append(span('dez-tool-call__parameter-name', name), span('dez-tool-call__parameter-value', typeof value === 'string' ? value : JSON.stringify(value)))
+  }
+  return rows
+}
+
+// What the panel says after the tool of a tool call of the code that did
+// not end well.
+const BRIDGED_STATE_WORDS: Partial<Record<BridgedCallStatus, string>> = { error: 'failed', cut: 'not finished' }
+
+// What the result field of a tool call of the code shows when the code
+// ended before the call did: such a call has no result.
+const BRIDGED_CUT_TEXT = 'The code ended before this tool call did.'
+
+/** The part of the open panel of a `js_eval` call that lists the tool
+ *  calls of its code (`BridgedCalls`): a heading, then each call with its
+ *  tool, how it ended (`BRIDGED_STATE_WORDS`), its arguments, and what the
+ *  code got from it, in a field. A last line tells how many calls the list
+ *  does not hold. */
+function createBridgedCalls({ calls, more }: BridgedCalls): HTMLElement[] {
+  const list = span('dez-tool-call__bridged')
+  calls.forEach((call, index) => {
+    const item = span('dez-tool-call__bridged-call')
+    item.setAttribute('data-status', call.status)
+    const title = span('dez-tool-call__bridged-title')
+    title.appendChild(span('dez-tool-call__bridged-name', call.name))
+    const word = BRIDGED_STATE_WORDS[call.status]
+    if (word) title.appendChild(span('dez-tool-call__bridged-state', word))
+    item.appendChild(title)
+    const parameters = Object.entries(call.arguments)
+    if (parameters.length > 0) item.appendChild(createParameters(parameters))
+    const result = createField(call.result, `Result of tool call ${index + 1}`, call.status === 'cut' ? BRIDGED_CUT_TEXT : EMPTY_TOOL_RESULT)
+    if (call.status === 'error') result.setAttribute('data-error', '')
+    item.appendChild(result)
+    list.appendChild(item)
+  })
+  if (more > 0) list.appendChild(span('dez-tool-call__bridged-more', `${countOf(more, 'more tool call')} of the code ${more === 1 ? 'is' : 'are'} not in this list.`))
+  return [span(HEADING_CLASS, 'Tool calls of the code'), list]
+}
+
 function createPanel(view: EditorView, call: RenderedToolCall): HTMLElement {
   const panel = span(PANEL_CLASS)
-  const parameters = Object.entries(call.arguments)
-  if (parameters.length > 0) {
-    const rows = span('dez-tool-call__parameters')
-    for (const [name, value] of parameters) {
-      rows.append(span('dez-tool-call__parameter-name', name), span('dez-tool-call__parameter-value', typeof value === 'string' ? value : JSON.stringify(value)))
-    }
-    panel.append(span(HEADING_CLASS, 'Parameters'), rows)
-  }
+  // The code of a `js_eval` call shows as code, in a field: it has many
+  // lines, and the user selects and copies it.
+  const code = call.name === JS_EVAL_TOOL.name ? call.arguments[JS_EVAL_CODE_PARAMETER] : undefined
+  const shownCode = typeof code === 'string' ? code : null
+  if (shownCode !== null) panel.append(span(HEADING_CLASS, 'Code'), createField(shownCode, 'Code', ''))
+  const parameters = Object.entries(call.arguments).filter(([name]) => shownCode === null || name !== JS_EVAL_CODE_PARAMETER)
+  if (parameters.length > 0) panel.append(span(HEADING_CLASS, 'Parameters'), createParameters(parameters))
   const result = createField(call.state === 'interrupted' ? INTERRUPTED_TOOL_RESULT : call.result, 'Result', call.state === 'running' ? 'Running…' : EMPTY_TOOL_RESULT)
   if (call.state === 'error' || call.state === 'interrupted') result.setAttribute('data-error', '')
   panel.append(span(HEADING_CLASS, 'Result'), result)
   if (call.pictures) panel.append(...createPictures(view, call.pictures, call.pictures.length > 1 ? 'Pictures' : 'Picture'))
+  if (call.bridged) panel.append(...createBridgedCalls(call.bridged))
   renderIntermediatePart(view, panel, call)
   return panel
 }
@@ -866,10 +926,11 @@ function renderCallOpenState(view: EditorView, root: HTMLElement, call: Rendered
 
 // Every part of a call that the chip draws, but its intermediate data and
 // its summary. Arguments keep their definition order, so equal ones give
-// equal JSON, and so do the pictures of two reads of one block.
+// equal JSON, and so do the pictures and the tool calls of the code of two
+// reads of one block.
 function sameCall(a: RenderedToolCall, b: RenderedToolCall): boolean {
   return a.id === b.id && a.name === b.name && a.state === b.state && a.result === b.result && JSON.stringify(a.arguments) === JSON.stringify(b.arguments)
-    && JSON.stringify(a.pictures) === JSON.stringify(b.pictures)
+    && JSON.stringify(a.pictures) === JSON.stringify(b.pictures) && JSON.stringify(a.bridged) === JSON.stringify(b.bridged)
 }
 
 /** A chip and, while open, its panel. The open state is not part of the

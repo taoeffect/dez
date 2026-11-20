@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { JS_EVAL_MAX_TOOL_CALLS } from './jsEval'
 import { TOOL_DEFINITIONS } from './registry'
-import { bridgedToolCall, type BridgedCallCheck } from './toolBridge'
+import { bridgedToolCall, shownSelector, type BridgedCallCheck } from './toolBridge'
 
 const FOLDER_ID = '0b0c1a5e-7b1f-4c3a-9d1e-2f3a4b5c6d7e'
 // The work folder of the run as Dez made its path, and its real path.
@@ -153,5 +153,18 @@ describe('bridgedToolCall', () => {
 
   it('tells back a name with line ends on one line', () => {
     expect(refusal('dez.tools/a\nb').split('\n')).toHaveLength(1)
+  })
+})
+
+describe('shownSelector', () => {
+  it('gives a selector as it is', () => {
+    expect(shownSelector('dez.tools/image/flip', [REAL, JOINED])).toBe('dez.tools/image/flip')
+  })
+
+  it('gives a selector with no path of this computer, on one line, and short', () => {
+    expect(shownSelector(`${REAL}/code.ts\n${JOINED}`, [REAL, JOINED])).toBe('/work/code.ts /work')
+    expect([...shownSelector('x'.repeat(2_000_000), [REAL, JOINED])].length).toBeLessThanOrEqual(80)
+    // The path goes before the cut: a cut inside it would leave a part.
+    expect(shownSelector(`${'x'.repeat(60)}${REAL}/code.ts`, [REAL, JOINED])).not.toContain('mnt')
   })
 })

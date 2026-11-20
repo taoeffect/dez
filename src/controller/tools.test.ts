@@ -3080,13 +3080,27 @@ describe('dez.controller/tools/run', () => {
   })
 
   describe('js_eval', () => {
-    it('runs a tool call of the code as a call of the reply, and gives the code its result', async () => {
+    // The entry of the `jobs_list` call of the code of a reply with no job.
+    const LIST_CALL = { name: 'jobs_list', arguments: {}, status: 'success', result: NO_JOBS_TEXT }
+
+    it('runs a tool call of the code as a call of the reply, gives the code its result, and gives the list of the calls for the block', async () => {
       native.program = callingProgram(['dez.tools/jobs_list'])
 
       const result = await run({ name: 'js_eval', arguments: { code: 'await dez.sbp("dez.tools/jobs_list")\nreturn "ok"' } })
 
-      expect(result).toStrictEqual({ content: 'ok', isError: false })
+      expect(result).toStrictEqual({ content: 'ok', isError: false, bridged: { calls: [LIST_CALL], more: 0 } })
       expect(native.inputWrites.map(({ text }) => text)).toStrictEqual([jsEvalAnswerLine(1, { text: NO_JOBS_TEXT, isError: false })])
+    })
+
+    // The runner gives this result and does not throw it, so that it has
+    // the list.
+    it('gives the error result of code that threw with the list of its calls, and logs it', async () => {
+      native.program = callingProgram(['dez.tools/jobs_list'], { type: 'error', text: 'Error: x' })
+
+      const result = await run({ name: 'js_eval', arguments: { code: 'await dez.sbp("dez.tools/jobs_list")\nthrow new Error("x")' } })
+
+      expect(result).toStrictEqual({ content: 'The code threw an error:\nError: x', isError: true, bridged: { calls: [LIST_CALL], more: 0 } })
+      expect(consoleError).toHaveBeenCalledWith('The tool js_eval failed:', result.content)
     })
   })
 })

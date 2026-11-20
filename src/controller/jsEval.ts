@@ -1,4 +1,5 @@
 import sbp from '@sbp/sbp'
+import { hasBridgedCalls } from '../model/chat/bridgedCalls'
 import {
   JS_EVAL_CODE_FILE,
   JS_EVAL_OUTPUT_BYTES,
@@ -48,11 +49,17 @@ async function workFolderPaths(folder: string): Promise<string[]> {
  *  that the code returned, what its tool calls left, then its console
  *  output, and the pictures that its tool calls showed. `context` is the
  *  context of the call, which the tool calls of the code run with
- *  (`ToolBridge`). Throws a `ToolError` with the error result of any other
- *  end (`jsEvalResult`) and of a run that did not start, and the stop of
- *  `signal`, which also stops the code and its tool call. A call that
- *  throws shows no picture: it deletes the copies. */
-export function runJsEval(call: JsEvalCall, signal: AbortSignal, context: ToolRunContext): Promise<Omit<ToolRunResult, 'isError'>> {
+ *  (`ToolBridge`).
+ *
+ *  Any other end of the code gives its error result (`jsEvalResult`), and
+ *  throws no `ToolError`: an error result also has the list of the tool
+ *  calls of the code (`ToolRunResult.bridged`), which a `ToolError` cannot
+ *  carry. It shows no picture: the call deletes the copies.
+ *
+ *  Throws a `ToolError` for a run that did not start, and the stop of
+ *  `signal`, which also stops the code and its tool call. Such a call has
+ *  no list, and deletes the copies too. */
+export function runJsEval(call: JsEvalCall, signal: AbortSignal, context: ToolRunContext): Promise<ToolRunResult> {
   return inWorkFolder(async (folder) => {
     const files = [
       { name: JS_EVAL_RUNNER_FILE, text: JS_EVAL_RUNNER },
@@ -84,12 +91,13 @@ export function runJsEval(call: JsEvalCall, signal: AbortSignal, context: ToolRu
       await discardShownPictures((await bridge.end()).pictures)
       throw error
     }
-    const { toolCalls, pictures } = await bridge.end()
+    const { toolCalls, pictures, bridged } = await bridge.end()
     const { text, isError } = jsEvalResult(call, end, output, folders, toolCalls)
+    const list = hasBridgedCalls(bridged) ? { bridged } : {}
     if (isError) {
       await discardShownPictures(pictures)
-      throw new ToolError(text)
+      return { content: text, isError: true, ...list }
     }
-    return { content: text, ...(pictures.length > 0 && { pictures }) }
+    return { content: text, isError: false, ...(pictures.length > 0 && { pictures }), ...list }
   })
 }

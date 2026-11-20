@@ -42,12 +42,24 @@ const CALL_FORMS = `Call a Dez tool with ${toolCallForm('<tool>')}, and a subcom
 // The most characters of a name of a call line that an error text shows.
 const SHOWN_NAME_CHARS = 80
 
-// A name that a call line gave (a selector, a part of one), for an error
-// text: quoted, on one line, and short, as a line can hold a name of any
-// length. The first cut keeps `oneLineCut` from a split of a text of
-// megabytes into its characters.
+// A name that a call line gave (a selector, a part of one), on one line
+// and short, as a line can hold a name of any length. The first cut keeps
+// `oneLineCut` from a split of a text of megabytes into its characters.
+function shortName(name: string): string {
+  return oneLineCut(name.slice(0, SHOWN_NAME_CHARS * 4), SHOWN_NAME_CHARS)
+}
+
+// A name that a call line gave, for an error text: quoted.
 function shown(name: string): string {
-  return JSON.stringify(oneLineCut(name.slice(0, SHOWN_NAME_CHARS * 4), SHOWN_NAME_CHARS))
+  return JSON.stringify(shortName(name))
+}
+
+/** The selector of a call line as the list of the tool calls of a run
+ *  names a line that Dez refused (`BridgedCall.name`): with no path of
+ *  this computer (`workFolders`, as for `bridgedToolCall`), on one line,
+ *  and short. */
+export function shownSelector(selector: string, workFolders: readonly string[]): string {
+  return shortName(textForModel(selector, workFolders))
 }
 
 /** The error that the code gets for a tool call that failed with an error

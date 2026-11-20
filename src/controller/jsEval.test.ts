@@ -28,6 +28,8 @@ const CALL: JsEvalCall = { code: 'return 1 + 1', timeoutMs: 30_000 }
 const PICTURE: ShownPicture = { file: 'p1.jpg', label: 'The image @a', width: 512, height: 512, bytes: 3000 }
 // The delete of the copy of `PICTURE`.
 const PICTURE_DELETE = { root: 'app', path: `${SHOWN_PICTURE_FOLDER}/${PICTURE.file}`, folder: false }
+// The entry of a `jobs_list` call of the code that gave `TOOL_DONE`.
+const LIST_CALL = { name: 'jobs_list', arguments: {}, status: 'success', result: TOOL_DONE.content }
 
 // Makes `timeZone` the time zone of this computer.
 function setTimeZone(timeZone: string): void {
@@ -52,7 +54,7 @@ describe('runJsEval', () => {
     const result = await runJsEval(CALL, running(), callContext())
 
     const folder = deletedWorkFolder()
-    expect(result).toStrictEqual({ content: '2' })
+    expect(result).toStrictEqual({ content: '2', isError: false })
     expect(native.savedFiles).toStrictEqual([
       { file: { root: 'cache', path: `${folder}/${JS_EVAL_RUNNER_FILE}` }, content: JS_EVAL_RUNNER },
       { file: { root: 'cache', path: `${folder}/${JS_EVAL_CODE_FILE}` }, content: jsEvalCodeFile(CALL.code) },
@@ -87,10 +89,10 @@ describe('runJsEval', () => {
       return ENDED
     }
 
-    expect(await runJsEval(CALL, running(), callContext())).toStrictEqual({ content: '2\n\nConsole output of the code:\nstep 1\na warning' })
+    expect(await runJsEval(CALL, running(), callContext())).toStrictEqual({ content: '2\n\nConsole output of the code:\nstep 1\na warning', isError: false })
   })
 
-  it('throws the error result of code that threw, with /work for the real path of the work folder and for the path that Dez made', async () => {
+  it('gives the error result of code that threw, with /work for the real path of the work folder and for the path that Dez made', async () => {
     native.canonicalPath = (path) => path.replace('/home/u/.cache', '/mnt/disk/cache')
     native.program = async ({ folder }, onOutput) => {
       const joined = `${CACHE_DIR}/${folder}`
@@ -99,13 +101,16 @@ describe('runJsEval', () => {
       return ENDED
     }
 
-    const refusal = await refusalOf(runJsEval(CALL, running(), callContext()))
+    const result = await runJsEval(CALL, running(), callContext())
 
-    expect(refusal).toBe('The code threw an error:\nError: x\n    at default (file:///work/code.ts:1:41)\n\nConsole output of the code:\ncwd /work, made as /work')
+    expect(result).toStrictEqual({
+      content: 'The code threw an error:\nError: x\n    at default (file:///work/code.ts:1:41)\n\nConsole output of the code:\ncwd /work, made as /work',
+      isError: true,
+    })
     deletedWorkFolder()
   })
 
-  it('runs a tool call of the code with the context of the call, gives the code its answer, and tells the model what the call made', async () => {
+  it('runs a tool call of the code with the context of the call, gives the code its answer, and tells the model what the call made and the user what the call was', async () => {
     native.program = callingProgram(['dez.tools/image/flip'])
     toolRuns.tool = async (_call, _signal, context) => ({ content: `${madeAssetText('image', context.writeImage('/x/flipped.png') ?? '')}.`, isError: false })
 
@@ -113,7 +118,11 @@ describe('runJsEval', () => {
 
     expect(toolRuns.calls).toStrictEqual([{ name: 'image', arguments: { command: 'flip', parameters: '{}' } }])
     expect(native.inputWrites).toStrictEqual([{ runId: native.runs[0].runId, text: jsEvalAnswerLine(1, { text: 'Made the image @b.', isError: false }) }])
-    expect(result).toStrictEqual({ content: 'ok\n\nFrom the tool calls of the code:\nMade the image @b.' })
+    expect(result).toStrictEqual({
+      content: 'ok\n\nFrom the tool calls of the code:\nMade the image @b.',
+      isError: false,
+      bridged: { calls: [{ name: 'image', arguments: { command: 'flip', parameters: '{}' }, status: 'success', result: 'Made the image @b.' }], more: 0 },
+    })
     deletedWorkFolder()
   })
 
@@ -123,15 +132,18 @@ describe('runJsEval', () => {
 
     const result = await runJsEval(CALL, running(), callContext())
 
-    expect(result).toStrictEqual({ content: 'ok', pictures: [PICTURE] })
+    expect(result).toStrictEqual({ content: 'ok', isError: false, pictures: [PICTURE], bridged: { calls: [LIST_CALL], more: 0 } })
     expect(native.deletedFiles).not.toContainEqual(PICTURE_DELETE)
   })
 
-  it('deletes the pictures of the tool calls of code that failed', async () => {
+  it('gives the error result of code that failed with the tool calls of the code, and deletes their pictures', async () => {
     native.program = callingProgram(['dez.tools/jobs_list'], { type: 'error', text: 'Error: x' })
     toolRuns.tool = async () => ({ ...TOOL_DONE, pictures: [PICTURE] })
 
-    await refusalOf(runJsEval(CALL, running(), callContext()))
+    const result = await runJsEval(CALL, running(), callContext())
+
+    expect(result).toMatchObject({ isError: true, bridged: { calls: [LIST_CALL], more: 0 } })
+    expect(result).not.toHaveProperty('pictures')
 
     expect(native.deletedFiles).toContainEqual(PICTURE_DELETE)
     deletedWorkFolder()

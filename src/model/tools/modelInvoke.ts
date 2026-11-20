@@ -1,3 +1,4 @@
+import { startOf } from '../../utils/textCut'
 import { sectionPlainText } from '../chat/content'
 import { newMediaIds } from '../chat/mediaIds'
 import { modelRefKey } from '../chat/modelRef'
@@ -345,10 +346,7 @@ export function answerIsCut(answer: string): boolean {
  *  names. */
 export function invocationAnswerText(answer: string): string {
   if (answerIsCut(answer)) {
-    // A cut between the two halves of a character pair (an emoji) would
-    // leave a half that is no text: a provider can refuse a request that
-    // holds it.
-    const start = answer.slice(0, INVOCATION_TEXT_CAP).replace(/[\uD800-\uDBFF]$/, '')
+    const start = startOf(answer, INVOCATION_TEXT_CAP)
     return `The start of the text that ${GIVEN_TEXT}. `
       + `The answer had more than ${INVOCATION_TEXT_CAP} characters, and the result of a job holds no more, so the rest is lost. `
       + `When you need the rest, call again and ask for a shorter answer, or for the answer in parts:\n${start.trim()}`

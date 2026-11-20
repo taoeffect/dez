@@ -4,7 +4,7 @@ import { imageMarkdown } from '../chat/images'
 import { MEDIA_HIDDEN_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE, mediaTagRequestText, mediaTagText, type MediaTagData } from '../chat/mediaTags'
 import { SHOWN_PICTURE_OVER_LIMIT_NOTE, type ShownPicture } from '../chat/shownPictures'
 import { messagePart } from '../chat/testing'
-import { toolBlockText, type ToolBlockStatus } from '../chat/toolBlocks'
+import { toolBlockText, type ToolBlockData, type ToolBlockStatus } from '../chat/toolBlocks'
 import type { Section, SectionThinking, ThinkingReplay } from '../chat/types'
 import type { ClipInputRules, MediaKind } from '../providers/types'
 import { audioCutResultText } from '../tools/audioTool'
@@ -101,6 +101,32 @@ describe('agentSectionMessages', () => {
     expect(JSON.stringify(agentSectionMessages(agent(text), model, false))).not.toMatch(/f1\.png|the image @a/)
     // A call that goes as text has no round to put its pictures after.
     expect(JSON.stringify(agentSectionMessages(agent(text), model, false, newRequestImages()))).not.toMatch(/f1\.png|the image @a/)
+  })
+
+  // The list of the tool calls of the code is for the panel of the chip.
+  it('sends the same request for a js_eval call with and without the list of the tool calls of its code', () => {
+    const block: ToolBlockData = { id: 'call_1', name: 'js_eval', status: 'success', arguments: { code: 'return 1', timeout_seconds: 30 }, result: 'The code gave: 1' }
+    const bridged: ToolBlockData['bridged'] = {
+      calls: [
+        { name: 'model_invoke', arguments: { model: 'p/m', prompt: 'A fox' }, status: 'success', result: jobStartedText('j-k3x9', 1) },
+        { name: 'image', arguments: {}, status: 'error', result: 'The required parameter "command" is missing.' },
+      ],
+      more: 2,
+    }
+    const text = (data: ToolBlockData) => `Look.\n${toolBlockText(data)}\nDone.`
+    const withList = text({ ...block, bridged })
+
+    expect(withList).toContain('bridged="')
+    for (const tools of [true, false]) {
+      const sent = JSON.stringify(agentSectionMessages(agent(withList), model, tools, newRequestImages()))
+      expect(sent, `tools ${tools}`).toBe(JSON.stringify(agentSectionMessages(agent(text(block)), model, tools, newRequestImages())))
+      expect(sent).not.toMatch(/bridged|A fox|j-k3x9/)
+    }
+    expect(agentSectionMessages(agent(withList), model, true)).toStrictEqual([
+      { role: 'agent', content: 'Look.', toolCalls: [{ id: 'call_1', name: 'js_eval', arguments: { code: 'return 1', timeout_seconds: 30 } }] },
+      { role: 'tool', results: [result('call_1', 'The code gave: 1')] },
+      { role: 'agent', content: 'Done.' },
+    ])
   })
 
   it('puts the pictures of a round in one user message right after its results, each after its label, in the order of the calls', () => {
