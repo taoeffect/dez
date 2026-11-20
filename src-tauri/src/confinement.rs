@@ -55,7 +55,10 @@
 //!   there. The rules on system calls are Linux only: the profile allows
 //!   what it does not deny, so native code in a program can still reach
 //!   other programs of the user (their services, shared memory, signals).
-//!   No audit with native code ran on a Mac.
+//!   No step of Dez closes its open files there, as the one of Linux does
+//!   (`close_range`). So a file that a library of Dez opened with no mark
+//!   to close it at the start of a program can go to the program: no test
+//!   on a Mac looked for one. No audit with native code ran on a Mac.
 
 use std::path::{Path, PathBuf};
 
@@ -572,8 +575,17 @@ pub(crate) fn confined_command(program: &Path, args: &[String], confinement: &Co
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    // The version of the Landlock of this kernel (1 is Linux 5.13, 4 is
+    // 6.7, 6 is 6.12), or a number below 1 for a kernel with none. The call
+    // with these arguments gives it.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn landlock_version() -> libc::c_long {
+        // SAFETY: the kernel reads no memory for this flag.
+        unsafe { libc::syscall(libc::SYS_landlock_create_ruleset, 0 as libc::c_ulong, 0 as libc::c_ulong, 1 as libc::c_ulong) }
+    }
 
     // The page tells such an error from the others by its start.
     #[test]
@@ -584,5 +596,119 @@ mod tests {
 
         assert!(error.starts_with(NO_CONFINEMENT), "{error}");
         assert_eq!(without_file_rule("this kernel has no Landlock", &Confinement::default()), Ok(()));
+    }
+
+    // What the call filter answers to the system call `call` of a program
+    // of the machine `machine`, with `first_argument`. It runs the steps of
+    // the filter as the kernel does (classic BPF): a jump counts from the
+    // step after it. A step that `call_filter` does not use is a panic.
+    #[cfg(target_os = "linux")]
+    fn filter_answer(machine: u32, call: libc::c_long, first_argument: u64) -> u32 {
+        const LOAD: u32 = libc::BPF_LD | libc::BPF_W | libc::BPF_ABS;
+        const JUMP_IF_EQUAL: u32 = libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K;
+        const JUMP_IF_NOT_BELOW: u32 = libc::BPF_JMP | libc::BPF_JGE | libc::BPF_K;
+        const ANSWER: u32 = libc::BPF_RET | libc::BPF_K;
+
+        let data = libc::seccomp_data { nr: call as libc::c_int, arch: machine, instruction_pointer: 0, args: [first_argument, 0, 0, 0, 0, 0] };
+        // SAFETY: the struct is plain numbers with no gap between them.
+        let bytes: [u8; size_of::<libc::seccomp_data>()] = unsafe { std::mem::transmute(data) };
+        let filter = call_filter();
+        let (mut next, mut loaded) = (0, 0);
+        loop {
+            let step = filter[next];
+            next += 1;
+            let jump = |taken: bool| usize::from(if taken { step.jt } else { step.jf });
+            match u32::from(step.code) {
+                LOAD => loaded = u32::from_ne_bytes(bytes[step.k as usize..][..4].try_into().expect("four bytes")),
+                JUMP_IF_EQUAL => next += jump(loaded == step.k),
+                JUMP_IF_NOT_BELOW => next += jump(loaded >= step.k),
+                ANSWER => return step.k,
+                code => panic!("the filter has a step that this test does not know: {code:#x}"),
+            }
+        }
+    }
+
+    // The parts of the filter that no run of a program can show on this
+    // computer (a call of another machine), and the jumps of each row: a
+    // jump that is off by one gives a call the answer of its neighbor.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_call_filter_answers_each_call_by_its_row() {
+        let refused = |error: libc::c_int| libc::SECCOMP_RET_ERRNO | error as u32;
+        let other_process = 0x1234;
+
+        for (call, error) in REFUSED_CALLS.iter().chain(OLD_REFUSED_CALLS) {
+            assert_eq!(filter_answer(CALL_MACHINE, *call, 0), refused(*error), "the call {call}");
+        }
+        for call in [libc::SYS_read, libc::SYS_openat, libc::SYS_socketpair, libc::SYS_fchmod, libc::SYS_getpid] {
+            assert_eq!(filter_answer(CALL_MACHINE, call, other_process), libc::SECCOMP_RET_ALLOW, "the call {call}");
+        }
+        for call in OWN_PROCESS_CALLS {
+            assert_eq!(filter_answer(CALL_MACHINE, *call, 0), libc::SECCOMP_RET_ALLOW, "the call {call} on itself");
+            assert_eq!(filter_answer(CALL_MACHINE, *call, other_process), refused(libc::EPERM), "the call {call} on another process");
+            // The kernel reads only the low half of a process id.
+            assert_eq!(filter_answer(CALL_MACHINE, *call, 1 << 32), libc::SECCOMP_RET_ALLOW, "the call {call} with a high half");
+        }
+        // The machines of the two processors, and the 32-bit ones of each
+        // (i386, arm): a call in the form of any machine but the own one.
+        for machine in [0xC000_003E, 0xC000_00B7, 0x4000_0003, 0x4000_0028].into_iter().filter(|machine| *machine != CALL_MACHINE) {
+            for call in [libc::SYS_read, libc::SYS_socket] {
+                assert_eq!(filter_answer(machine, call, 0), libc::SECCOMP_RET_KILL_PROCESS, "the call {call} of the machine {machine:#x}");
+            }
+        }
+        // An x32 call: the number of a call that is allowed, with the bit.
+        #[cfg(target_arch = "x86_64")]
+        assert_eq!(filter_answer(CALL_MACHINE, 0x4000_0000 + libc::SYS_read, 0), libc::SECCOMP_RET_KILL_PROCESS);
+    }
+
+    // The network rules of Landlock by themselves. In a run, the call
+    // filter refuses each socket before Landlock sees it (`REFUSED_CALLS`),
+    // so no run shows these rules. Here a thread of the test takes the
+    // rules of a run and no filter: Landlock holds only the thread that
+    // takes it, and the thread ends in the test.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn landlock_alone_refuses_tcp_and_the_abstract_sockets_of_other_programs() {
+        use std::os::fd::AsRawFd;
+        use std::os::linux::net::SocketAddrExt;
+        use std::os::unix::net::{SocketAddr, UnixListener, UnixStream};
+
+        let version = landlock_version();
+        if version < 4 {
+            eprintln!("Not checked: the Landlock of this kernel (version {version}) has no network rule.");
+            return;
+        }
+        let dir = crate::persistence::tests::TempDir::new("confinement-network");
+        let tcp = std::net::TcpListener::bind("127.0.0.1:0").expect("listen");
+        let tcp_address = tcp.local_addr().expect("address");
+        // A socket with a name and no file (Linux), which no file rule
+        // covers.
+        let unix_address = SocketAddr::from_abstract_name(format!("dez-test-{}", std::process::id())).expect("address");
+        let _unix = UnixListener::bind_addr(&unix_address).expect("listen");
+        let kind = |error: std::io::Error| error.kind();
+        let connects = move || (std::net::TcpStream::connect(tcp_address).map(drop).map_err(kind), UnixStream::connect_addr(&unix_address).map(drop).map_err(kind));
+        let rules = landlock_rules(&std::env::current_exe().expect("the test program"), &Confinement { folder: dir.0.clone(), ..Confinement::default() })
+            .expect("rules")
+            .expect("a kernel with Landlock");
+
+        // A thread with no rule reaches both servers.
+        let free = std::thread::spawn(connects.clone()).join().expect("a thread");
+        let confined = std::thread::spawn(move || {
+            // SAFETY: both calls change only this thread, and read no
+            // memory of the test.
+            unsafe {
+                assert_eq!(libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1 as libc::c_ulong, 0 as libc::c_ulong, 0 as libc::c_ulong, 0 as libc::c_ulong), 0);
+                assert_eq!(libc::syscall(libc::SYS_landlock_restrict_self, rules.as_raw_fd() as libc::c_ulong, 0 as libc::c_ulong), 0);
+            }
+            connects()
+        })
+        .join()
+        .expect("a thread");
+
+        let refused = Err(std::io::ErrorKind::PermissionDenied);
+        assert_eq!(free, (Ok(()), Ok(())));
+        assert_eq!(confined.0, refused);
+        // The scope of the abstract sockets is newer (Linux 6.12).
+        assert_eq!(confined.1, if version >= 6 { refused } else { Ok(()) });
     }
 }

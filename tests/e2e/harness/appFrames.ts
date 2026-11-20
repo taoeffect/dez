@@ -88,6 +88,10 @@ export function appFrameUrl (app: string, config: FrameConfig = {}, file = 'inde
 //   that does not end.
 // - `loadElement(tag, attributes, parent)` adds an element, and gives the
 //   name of its first `load` or `error` event.
+// - `refusedBy(directive, work)` does the try `work`, and tells when the
+//   policy of the page refused a load by its directive `directive`. So a
+//   try that another guard stops too still shows that the policy has the
+//   directive. A try that the policy lets through has no answer.
 // - `runProbes(probes)` runs each function of `probes` at the same time,
 //   and gives the outcome of each by its name. It removes the elements
 //   that the probes made, so a run in Dez's own page leaves none.
@@ -114,6 +118,12 @@ const loadElement = (tag, attributes, parentNode = document.body) => new Promise
   madeElements.push(element)
   parentNode.append(element)
 })
+const refusedBy = (directive, work) => new Promise((resolve) => {
+  addEventListener('securitypolicyviolation', (event) => {
+    if (event.effectiveDirective === directive && event.disposition === 'enforce') resolve('refused by ' + directive)
+  })
+  Promise.resolve().then(work).catch(() => {})
+})
 const runProbes = async (probes) => {
   const names = Object.keys(probes)
   const outcomes = await Promise.all(names.map((name) => outcome(probes[name])))
@@ -124,7 +134,7 @@ const runProbes = async (probes) => {
 
 /** The script that each probe page of an app loads first: the config of
  *  the page from the fragment of its URL (`appFrameUrl`), then `report`,
- *  `outcome`, `loadElement`, and `runProbes`. */
+ *  `outcome`, `loadElement`, `refusedBy`, and `runProbes`. */
 export const FRAME_LIBRARY = `'use strict'
 const config = JSON.parse(decodeURIComponent(location.hash.slice(1)))
 ${PROBE_HELPERS}`

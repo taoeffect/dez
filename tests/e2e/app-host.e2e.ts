@@ -7,6 +7,8 @@ import { SAVE_NEEDS_DRAFT_TEXT, SAVE_NEEDS_USER_TEXT } from '../../src/model/too
 import {
   appFolderSize,
   inRunningApp,
+  movingAppFiles,
+  pageFrameGuards,
   runningAppPoint,
   seedApp,
   shownAppBars,
@@ -81,10 +83,14 @@ import {
 // - the page of an app reads the bytes of each image and clip of its
 //   conversation, also of a file that the user linked, and calls nothing
 //   else of Dez: Dez drops each message of the page that it does not know;
+// - each side of the bridge takes a message only from the other side: an
+//   app that runs cannot call a handler of another app, answer its calls,
+//   or get its answers;
 // - a save of the page goes into the message that the user writes, as a
 //   stored file with a new id, only while the user works in the app and
 //   while the conversation ends with that message;
-// - an app whose frame goes to another page is stopped.
+// - an app whose frame goes to another page is stopped, also when its
+//   page goes while it loads.
 // The pages come from the real scheme of the app frames, with Dez's client
 // script (`~dez.js`). The guards of a frame have their own audit
 // (app-frames.e2e.ts).
@@ -346,6 +352,7 @@ describe('apps in a conversation', () => {
     await seedApp(appsDir, { name: 'timer', description: 'Counts down.', kind: 'ui' }, { 'index.html': '<!doctype html>\n<p>Timer</p>\n' })
     await seedApp(appsDir, { name: 'sum', description: 'Adds numbers.', kind: 'script' }, { 'main.ts': 'export default () => 1\n' })
     await seedApp(appsDir, { name: 'board', description: 'Works with pictures.', kind: 'ui' }, uiAppFiles(BOARD_MAIN, BOARD_BODY))
+    await seedApp(appsDir, { name: 'hop', description: 'Goes away.', kind: 'ui' }, movingAppFiles('board'))
     await recordAssetMenus(browser)
   })
 
@@ -399,9 +406,10 @@ describe('apps in a conversation', () => {
     await focusEditor(browser)
     const { run } = await runNotes()
 
-    // The frame covers the card, which is an empty placeholder now. The
-    // bar above the frame has the name and the size of the app, and its
-    // controls.
+    // The frame covers the card, which is an empty placeholder now. It is
+    // a sandboxed frame of the scheme of the app frames. The bar above the
+    // frame has the name and the size of the app, and its controls.
+    expect(await pageFrameGuards(browser)).toStrictEqual([{ sandbox: 'allow-scripts', src: 'dezapp://localhost/notes/index.html' }])
     expect(await shownAppCards(browser)).toStrictEqual([{ app: 'notes', state: 'running', text: '' }])
     expect(await framesInPlace()).toStrictEqual([{ app: 'notes', run, inPlace: true }])
     expect(await shownAppBars(browser)).toStrictEqual([{
@@ -851,6 +859,64 @@ describe('apps in a conversation', () => {
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 
+  // The window of an app can post to the window of each other app that
+  // runs (`parent[index]`). No other window can post to an app or to Dez:
+  // the sandbox, the policy, and the navigation guard leave the page of an
+  // app no frame of its own that runs code.
+  it('takes a message of the bridge only from its other side, and not from another app that runs', async () => {
+    await openSeededConversation(browser, setup.app.home, 'app-host-two-apps', [
+      { role: 'user', text: 'Show me the apps.' },
+      { role: 'agent', text: `${appTagText('notes')}\n\n${appTagText('board')}` },
+      { role: 'user', text: '' },
+    ])
+    await runNotes()
+    // At `go`, the page of `notes` posts to the app that asked: a call of
+    // a handler, and an answer for each call of that app that can wait.
+    // It also calls Dez itself.
+    await inRunningApp(browser, 'notes', () => browser.execute(() => {
+      window.addEventListener('message', (event) => {
+        const other = event.source
+        if (event.data !== 'go' || !other) return
+        other.postMessage({ dez: 'call', id: 1, selector: 'app/probe', args: [] }, { targetOrigin: '*' })
+        for (let id = 0; id <= 100; id++) other.postMessage({ dez: 'answer', id, ok: true, value: 'forged' }, { targetOrigin: '*' })
+        parent.postMessage({ dez: 'call', id: 907, selector: 'dez.model/tabs/list', args: [] }, '*')
+        other.postMessage('posted', { targetOrigin: '*' })
+      })
+    }))
+    await pointerClickAt(browser, await cardPoint('board', 0, '.dez-app__run'))
+    await waitFor(browser, hostPart('board', 'iframe'))
+    await waitForValue(browser, 'the page of the app', () => inRunningApp(browser, 'board', () => browser.execute(() => typeof Reflect.get(window, 'outcome'))), 'function')
+
+    const refused = 'Dez has no selector "dez.model/tabs/list" for an app. An app can call dez.app/readAsset and dez.app/saveAsset, and no Dez tool.'
+    expect(await inRunningApp(browser, 'board', () => browser.execute(async () => {
+      const outcome = Reflect.get(window, 'outcome') as (call: Promise<unknown>) => Promise<Outcome<unknown>>
+      const dez = Reflect.get(window, 'dez') as { sbp: (selector: string, ...args: unknown[]) => Promise<unknown> }
+      let handlerRan = false
+      void dez.sbp('sbp/selectors/register', { 'app/probe': () => { handlerRan = true } })
+      // What came to this page, in its order.
+      const came: string[] = []
+      const listen = (event: MessageEvent): void => {
+        const message = event.data as { dez?: unknown, id?: unknown } | string | null
+        if (message === 'posted') came.push('the posts of the other app')
+        else if (event.source === parent && typeof message === 'object' && message?.dez === 'answer') {
+          came.push(message.id === 907 ? 'the answer of Dez for the other app' : 'the answer of Dez')
+        }
+      }
+      window.addEventListener('message', listen)
+      // The other app gets `go` before Dez gets the call of this page, so
+      // its posts come while the call waits for the answer of Dez.
+      for (let index = 0; index < parent.length; index++) {
+        if (parent[index] !== window) parent[index].postMessage('go', '*')
+      }
+      const got = await outcome(dez.sbp('dez.model/tabs/list'))
+      for (let tries = 0; tries < 250 && came.length < 2; tries++) await new Promise((resolve) => setTimeout(resolve, 20))
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      window.removeEventListener('message', listen)
+      return { handlerRan, got, came }
+    }))).toStrictEqual({ handlerRan: false, got: { refused }, came: ['the posts of the other app', 'the answer of Dez'] })
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
   it('puts a save of a shown app into the message that the user writes, as a stored file with a new id, and refuses a save that has no place', async () => {
     await openBoard('app-host-save')
     const before = await filesIn(imagesDir)
@@ -923,17 +989,32 @@ describe('apps in a conversation', () => {
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 
-  // The last test: its toast stays open for some seconds.
-  it('stops an app whose frame goes to another page, and tells the user', async () => {
-    await openNotes('app-host-moves')
+  // The last test: its toasts stay open for some seconds.
+  it('stops an app whose frame goes to another page, also while its page loads, and tells the user', async () => {
+    const hopPoster: ShownAppCard = { app: 'hop', state: 'run', text: 'hop\nGoes away.' }
+    await openSeededConversation(browser, setup.app.home, 'app-host-moves', [
+      { role: 'user', text: 'Show me the apps.' },
+      { role: 'agent', text: `${appTagText('notes')}\n\n${appTagText('hop')}` },
+      { role: 'user', text: '' },
+    ])
+    await waitForValue(browser, 'the posters', () => shownAppCards(browser), [NOTES_POSTER, hopPoster])
+    const stoppedApps = async (): Promise<string[]> => (await openToasts(browser, 'warning')).map((toast) => toast.title)
     await runNotes()
 
     // The page of another app: no guard of the webview stops this move.
     await inRunningApp(browser, 'notes', () => browser.execute(() => { location.href = '../timer/index.html' }))
 
     await waitForValue(browser, 'the frames after the move', () => shownAppFrames(browser), [])
-    expect(await shownAppCards(browser)).toStrictEqual([NOTES_POSTER])
-    expect((await openToasts(browser, 'warning')).map((toast) => toast.title)).toStrictEqual(['Dez stopped the app notes'])
+    expect(await shownAppCards(browser)).toStrictEqual([NOTES_POSTER, hopPoster])
+    expect(await stoppedApps()).toStrictEqual(['Dez stopped the app notes'])
+    expect(await focusedArea(browser)).toBe('editor')
+
+    // A page that goes while it loads gives its frame only one load, that
+    // of the other page. Dez's script in that page tells Dez where it is.
+    await pointerClickAt(browser, await cardPoint('hop', 0, '.dez-app__run'))
+    await waitForValue(browser, 'the apps that Dez stopped', stoppedApps, ['Dez stopped the app notes', 'Dez stopped the app hop'])
+    expect(await shownAppFrames(browser)).toStrictEqual([])
+    expect(await shownAppCards(browser)).toStrictEqual([NOTES_POSTER, hopPoster])
     expect(await focusedArea(browser)).toBe('editor')
     expect(await consoleErrors(browser)).toStrictEqual([])
   })

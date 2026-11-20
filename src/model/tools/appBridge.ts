@@ -230,8 +230,8 @@ export interface AppFrameRun {
  *  - `threw`: the handler threw; `error` is the text of what it threw.
  *  - `unregistered`: the page registered no handler.
  *  - `noClient`: the page loaded, but Dez's client script did not answer.
- *  - `navigated`: the frame loaded a second time, which may be another
- *    page. */
+ *  - `navigated`: the frame left the one page of its app: it loaded a
+ *    second time, or went to another page. */
 export type AppFrameEnd =
   | { kind: 'returned', value: string | undefined, log: string }
   | { kind: 'threw', error: string, log: string }

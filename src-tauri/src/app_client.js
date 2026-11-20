@@ -320,7 +320,9 @@
     else if (message.dez === 'call') void runHandler(message)
   })
 
-  // Tells Dez that this script runs in the page. Dez can call a handler
-  // from now on: the call waits until the page has loaded (`runHandler`).
-  host.postMessage({ dez: 'ready' }, '*')
+  // Tells Dez that this script runs in the page, and which page it is: Dez
+  // closes a frame whose script runs in another page than that of its app.
+  // Dez can call a handler from now on: the call waits until the page has
+  // loaded (`runHandler`).
+  host.postMessage({ dez: 'ready', page: location.pathname }, '*')
 })()

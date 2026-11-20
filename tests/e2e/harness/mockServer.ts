@@ -282,6 +282,15 @@ export function toolResult (request: HeldRequest, callId: string): string {
   return content
 }
 
+/** The messages of the OpenAI-format chat request `request` with no system
+ *  message: what the request sends of the conversation. The system prompt
+ *  tells a model of the text forms of Dez (a tag, a block), so a check
+ *  that a request holds none of them reads these messages. */
+export function requestMessages (request: HeldRequest): Array<Record<string, unknown>> {
+  const { messages } = JSON.parse(request.body) as { messages: Array<Record<string, unknown>> }
+  return messages.filter((message) => message.role !== 'system')
+}
+
 /** Writes the chat completion SSE frame with which OpenRouter stops a 200
  *  reply that failed: a top-level `error` (`{ code, message, metadata: {
  *  error_type } }`) and `finish_reason: "error"`. */

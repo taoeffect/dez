@@ -9,6 +9,7 @@ import type { ShownPicture } from '../../src/model/chat/shownPictures'
 import type { ConversationData, SectionData } from '../../src/model/persistence/types'
 import { compactionInstruction } from '../../src/model/streams/compactionRequest'
 import { shortDuration } from '../../src/view/thread/pillDuration'
+import { ageApp, seedApp, shownAppCards, uiAppFiles } from './harness/apps'
 import { anthropicChatBody, anthropicMarkedUser, openAiChatBody } from './harness/chatBody'
 import { click, consoleErrors, movePointer, pointerClick, pointerClickAt, promptMessage, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
 import { linkedDropDir } from './harness/drops'
@@ -18,7 +19,7 @@ import { pasteImageReference, pngDataUrl, shownImages, solidPng, type ShownImage
 import { clipTag, MP4_VIDEO, problemCards, shownPlayers, silentWav, tempClipTag, WEBM_VIDEO, type ShownPlayer } from './harness/media'
 import { assetInView, flashedAssets, pressMention, recordFlashes } from './harness/mentions'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
-import { LARGE_TOKENS, mockChatPath, openAiToolCall, replyText, sendAnthropicReply, sendChatReply, sendChatText, sendToolCalls, startEventStream, toolResult, writeChatFrame, writeUsage, type HeldRequest, type MockProvider } from './harness/mockServer'
+import { LARGE_TOKENS, mockChatPath, openAiToolCall, replyText, requestMessages, sendAnthropicReply, sendChatReply, sendChatText, sendToolCalls, startEventStream, toolResult, writeChatFrame, writeUsage, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
 import { activeConversationId, activeTabStreaming, activeTabTitle, assetPartPoint, AT_BOTTOM_PX, docPos, editorCaret, editorDoc, focusEditor, misplacedLines, newTab, openToasts, pickModel, pillThinking, pressRolePill, savedPillLines, sbpCall, scrollEditorToTop, setCaret, submit, threadSections, viewFromBottom, waitForThread, type ThreadSection } from './harness/thread'
 import { hiddenAssetNotes, hiddenPart, pressToolChip, toolChips, toolPanelPictures, type ToolChipView } from './harness/toolChips'
@@ -89,6 +90,9 @@ import { hiddenAssetNotes, hiddenPart, pressToolChip, toolChips, toolPanelPictur
 // - Dez deletes the file of a dropped image that the user saw only in the
 //   panel of a call, and the picture copies of the tag before. The file
 //   of any other dropped image stays.
+// - Each app that the conversation named keeps a line in the notes, and
+//   the instruction of the compaction request lists it. Delete Unused
+//   Files keeps an app that only that line names.
 //
 // One app session serves the whole file. The relaunch test reopens the
 // conversation of the request test, and a conversation that compacted at
@@ -303,11 +307,11 @@ describe('a compacted conversation', () => {
     return openSeeded(id, sections, provider, { cost, compactions: { count: 1, tokens: 52_000, cost }, ...more })
   }
 
-  // Seeds and opens the conversation `id` with one reply, whose request
-  // held `LARGE_TOKENS` tokens: the first request of its next reply is due
-  // for a compaction.
-  async function openLarge (id: string): Promise<ThreadSection[]> {
-    return openSeeded(id, [textSection('user', 'The task.'), textSection('agent', 'An earlier answer.'), textSection('user', '')], PROVIDER, {
+  // Seeds and opens the conversation `id` with one reply, the text
+  // `answer`, whose request held `LARGE_TOKENS` tokens: the first request
+  // of its next reply is due for a compaction.
+  async function openLarge (id: string, answer = 'An earlier answer.'): Promise<ThreadSection[]> {
+    return openSeeded(id, [textSection('user', 'The task.'), textSection('agent', answer), textSection('user', '')], PROVIDER, {
       context: { tokens: LARGE_TOKENS, estimate: 0 },
     })
   }
@@ -322,14 +326,6 @@ describe('a compacted conversation', () => {
     const instruction = body.messages.at(-1)
     expect(instruction?.role).toBe('user')
     expect(typeof instruction?.content === 'string' && instruction.content.startsWith(INSTRUCTION_START)).toBe(true)
-  }
-
-  // The messages of an OpenAI-format request with no system message: the
-  // other fields of a request to a model with thinking are not the
-  // business of these tests.
-  function requestMessages (request: HeldRequest): Array<Record<string, unknown>> {
-    const { messages } = JSON.parse(request.body) as { messages: Array<Record<string, unknown>> }
-    return messages.filter((message) => message.role !== 'system')
   }
 
   // Whether the pill before section `index` shows that its reply streams.
@@ -1172,6 +1168,52 @@ describe('a compacted conversation', () => {
     // A stop is no failure: a second compaction request would come at once.
     await browser.pause(300)
     expect(setup.mock.hasWaitingRequest()).toBe(false)
+  })
+
+  // A compaction takes the tags and the calls of the apps out of the
+  // conversation. Without its line in the notes, no text would name the
+  // app, and Delete Unused Files would delete it.
+  it('keeps a line in the notes for each app that the conversation named, and Delete Unused Files keeps that app', async () => {
+    const appsDir = appFilePath(setup.app.home, 'apps')
+    const board = { name: 'compaction-board', description: 'A board of the foxes.', kind: 'ui' } as const
+    const spare = 'compaction-spare'
+    await seedApp(appsDir, board, uiAppFiles(''))
+    await seedApp(appsDir, { name: spare, description: 'An app of no conversation.', kind: 'script' }, { 'main.ts': 'export default () => "spare"\n' })
+    // Delete Unused Files takes no app with a new file.
+    for (const name of [board.name, spare]) await ageApp(appsDir, name, 60 * 60 * 1000)
+    const appLine = `/apps/${board.name} | ${board.kind} | ${board.description}`
+    const appLines = (text: string): string[] => text.split('\n').filter((line) => line.startsWith('/apps/'))
+    // The folders of the apps that Delete Unused Files would delete now.
+    const unusedApps = async (): Promise<string[]> => browser.execute(async () => {
+      const sbp = Reflect.get(window, 'sbp') as (selector: string, onProgress: () => void) => Promise<{ files: Array<{ path: string }> }>
+      const { files } = await sbp('dez.controller/unusedFiles/find', () => {})
+      return files.map(({ path }) => path).filter((path) => path.startsWith('apps/'))
+    })
+
+    const id = 'compaction-apps'
+    const thread = await openLarge(id, `The board of the foxes:\n<dez:app name="${board.name}"/>`)
+    await waitForValue(browser, 'card of the app', async () => (await shownAppCards(browser)).map(({ app }) => app), [board.name])
+    expect(await unusedApps()).toStrictEqual([`apps/${spare}`])
+
+    await submit(browser, 'Go on.')
+    const compaction = await takeRequest(setup, CHAT_PATH)
+    const { messages } = JSON.parse(compaction.body) as { messages: Array<{ content: string }> }
+    expect(appLines(messages.at(-1)?.content ?? '')).toStrictEqual([appLine])
+    sendChatText(compaction.reply, NOTES_ANSWER, { promptTokens: LARGE_TOKENS + 1000 })
+
+    const request = await takeRequest(setup, CHAT_PATH)
+    expect(JSON.parse(request.body)).toStrictEqual(openAiChatBody(PROVIDER, [await notesMessage(thread[0].text, 'Go on.')]))
+    await sendChatReply(request.reply, 'the reader of the notes')
+    const { block, read } = await compactedSection()
+    await waitForThread(browser, [{ role: 'agent', text: `${block}\n${replyText('the reader of the notes')}` }, { role: 'user', text: '' }])
+    // The tag left with the text: only the line of the notes names the
+    // app now.
+    expect(block).not.toContain('<dez:app')
+    expect(appLines(read.notes)).toStrictEqual([appLine])
+    // The scan reads the file of the conversation, so it runs after the
+    // save.
+    await waitForValue(browser, 'saved compaction', () => savedNumbers(id, /^compactions/), ['compactions: 1'])
+    expect(await unusedApps()).toStrictEqual([`apps/${spare}`])
   })
 
   // The conversation file holds a first compaction in the old layout: a

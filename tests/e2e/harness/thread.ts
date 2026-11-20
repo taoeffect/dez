@@ -370,19 +370,22 @@ export async function docPosPoint (browser: E2EBrowser, pos: number, side: -1 | 
 
 /** Scrolls the element `part` of the asset `asset` (such as `.dez-image`
  *  or `.media-player`) at `index` (doc order) of the active editor into
- *  view, and gives its center. The center is read in a second call, after
- *  the scroll. */
+ *  view, and gives its center. The center is read two frames after the
+ *  scroll: CodeMirror then draws the lines that came into view and
+ *  measures them, and that can move the element. */
 export async function assetPartPoint (browser: E2EBrowser, asset: string, index: number, part: string): Promise<Point> {
   await browser.execute((wantedAsset: string, at: number, wantedPart: string) => {
     const element = document.querySelectorAll(`.cm-content ${wantedAsset}`)[at]?.querySelector(wantedPart)
     if (!element) throw new Error(`assetPartPoint: no ${wantedPart} in ${wantedAsset} ${at}`)
     element.scrollIntoView({ block: 'center' })
   }, asset, index, part)
-  return browser.execute((wantedAsset: string, at: number, wantedPart: string) => {
-    const box = document.querySelectorAll(`.cm-content ${wantedAsset}`)[at]?.querySelector(wantedPart)?.getBoundingClientRect()
-    if (!box) throw new Error(`assetPartPoint: ${wantedPart} in ${wantedAsset} ${at} went away`)
-    return { x: (box.left + box.right) / 2, y: (box.top + box.bottom) / 2 }
-  }, asset, index, part)
+  return browser.execute((wantedAsset: string, at: number, wantedPart: string) => new Promise<Point>((resolve, reject) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const box = document.querySelectorAll(`.cm-content ${wantedAsset}`)[at]?.querySelector(wantedPart)?.getBoundingClientRect()
+      if (!box) reject(new Error(`assetPartPoint: ${wantedPart} in ${wantedAsset} ${at} went away`))
+      else resolve({ x: (box.left + box.right) / 2, y: (box.top + box.bottom) / 2 })
+    }))
+  }), asset, index, part)
 }
 
 /** The height of every role pill of the active editor. */

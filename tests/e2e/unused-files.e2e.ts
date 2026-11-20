@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { startApp, type RunningApp } from './harness/app'
+import { ageApp, seedApp } from './harness/apps'
 import { consoleErrors, pointerClick, promptMessage, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
 import { appFilePath, conversationFilePath, makeConversation, mediaTempDir, seedAppState, seedConversation, workDir } from './harness/fixtures'
 import { solidPng } from './harness/images'
@@ -11,9 +12,9 @@ import { activeTabId, newTab, openToasts, sbpCall } from './harness/thread'
 
 // Settings › General › Unused files, driven through the real app: the
 // button scans the stored files (pasted, dropped, and generated images and
-// clips) and the cache folder, and shows a progress bar, a prompt states
-// the count and the size of the files that nothing uses, and a "Yes"
-// deletes them.
+// clips), the apps, and the cache folder, and shows a progress bar, a
+// prompt states the count and the size of what nothing uses and names the
+// apps, and a "Yes" deletes them.
 //
 // The seeded stored files, with what must happen to each one:
 // - an image that a saved conversation refers to: stays;
@@ -30,6 +31,12 @@ import { activeTabId, newTab, openToasts, sbpCall } from './harness/thread'
 // - a temp copy that no text names, the part file of a download that did
 //   not end, and a work folder with its files: deleted;
 // - a work folder with a new file time: stays (a run can be in it).
+// The seeded apps (folders of `apps/` in the app folder):
+// - an app that a saved conversation shows with its tag: stays;
+// - an app that no text names: deleted, with all its files;
+// - an app that no text names, with one file that has a new file time:
+//   stays (`apps init` writes the files of an app before the block of its
+//   call names it).
 //
 // One app session serves the whole file, and the tests run in order.
 
@@ -41,9 +48,14 @@ const PART_BYTES = 50_000
 // The two files of the work folder that no run holds.
 const WORK_INPUT_BYTES = 200_000
 const WORK_OUTPUT_BYTES = 300_000
-// Two stored files, two cache files, and one work folder: 2_750_000 B in
-// all.
-const DELETE_PROMPT = 'Are you sure you want to delete 5 unused files? This frees 2.6 MB, and it cannot be undone.'
+// The code file of each seeded app.
+const APP_CODE_FILE = 'main.ts'
+// The size of that file in the app that no text names. Its manifest adds
+// less than 100 B.
+const LEFT_APP_BYTES = 150_000
+// Two stored files, two cache files, one work folder, and one app: a bit
+// more than 2_900_000 B in all.
+const DELETE_PROMPT = 'Are you sure you want to delete 5 unused files and 1 unused app (left-app)? This frees 2.8 MB, and it cannot be undone.'
 
 const KEPT_FILES = [
   'assets/generated/audio/clip-saved.wav',
@@ -57,6 +69,9 @@ const UNUSED_FILES = ['assets/generated/video/video-unused.webm', 'assets/images
 // The entries of the cache folder that this spec seeds, relative to it.
 const KEPT_CACHE_ENTRIES = ['media/copy-used.webm', 'work/work-young/in.webm']
 const UNUSED_CACHE_ENTRIES = ['media/copy-unused.webm', 'media/download-left.part', 'work/work-left/in.webm', 'work/work-left/out.webm']
+
+const KEPT_APPS = ['shown-app', 'young-app']
+const UNUSED_APPS = ['left-app']
 
 /** One state of the row while a cleanup runs. */
 interface RunStep {
@@ -92,6 +107,19 @@ describe('Settings: delete unused files', () => {
     const time = new Date(Date.now() - HOUR_MS)
     fs.utimesSync(file, time, time)
     if (relative.startsWith('work/')) fs.utimesSync(path.dirname(file), time, time)
+  }
+
+  // Writes the app `name` with the code file `code`. Its folder and its
+  // files get a file time of one hour ago.
+  async function seedOldApp (name: string, code: string): Promise<void> {
+    const appsDir = appFilePath(app.home, 'apps')
+    await seedApp(appsDir, { name, description: `The app ${name}`, kind: 'script' }, { [APP_CODE_FILE]: code })
+    await ageApp(appsDir, name, HOUR_MS)
+  }
+
+  // The folders of the apps.
+  function appFolders (): string[] {
+    return fs.readdirSync(appFilePath(app.home, 'apps')).sort()
   }
 
   // The files of the media folder and of the work folders of the cache
@@ -158,6 +186,9 @@ describe('Settings: delete unused files', () => {
       seedCacheFile('work/work-left/in.webm', Buffer.alloc(WORK_INPUT_BYTES), { old: true })
       seedCacheFile('work/work-left/out.webm', Buffer.alloc(WORK_OUTPUT_BYTES), { old: true })
       seedCacheFile('work/work-young/in.webm', Buffer.alloc(10), { old: false })
+      await seedOldApp('shown-app', 'export default () => "shown"\n')
+      await seedOldApp('left-app', `// ${'x'.repeat(LEFT_APP_BYTES - 4)}\n`)
+      await seedOldApp('young-app', 'export default () => "young"\n')
       await seedConversation(app.home, makeConversation({
         id: 'with-image',
         title: 'With image',
@@ -173,7 +204,8 @@ describe('Settings: delete unused files', () => {
             nodes: [{
               kind: 'text',
               text: `<dez:audio id="a" type="audio/wav" src="${appFilePath(app.home, 'assets/generated/audio/clip-saved.wav')}"/>\n`
-                + `<dez:video id="b" type="video/webm" src="${path.join(mediaTempDir(app.home), 'copy-used.webm')}"/>`,
+                + `<dez:video id="b" type="video/webm" src="${path.join(mediaTempDir(app.home), 'copy-used.webm')}"/>\n`
+                + '<dez:app name="shown-app"/>',
             }],
           },
           { role: 'user', nodes: [{ kind: 'text', text: '' }] },
@@ -213,9 +245,11 @@ describe('Settings: delete unused files', () => {
   })
 
   it('shows the progress of the scan, then asks with the count and the size, and deletes nothing on a No', async () => {
-    // A file time of now, as a paste that just stored its file gives.
+    // A file time of now, as a paste that just stored its file gives, and
+    // as a write of a file of an app gives.
     const now = new Date()
     fs.utimesSync(appFilePath(app.home, 'assets/images/image-young.png'), now, now)
+    fs.utimesSync(appFilePath(app.home, 'apps', 'young-app', APP_CODE_FILE), now, now)
     expect(await rowState()).toStrictEqual({ percent: null, buttonOff: false })
 
     await pointerClick(browser, '.unused-files-btn')
@@ -235,19 +269,21 @@ describe('Settings: delete unused files', () => {
     expect(await promptMessage(browser)).toBeNull()
     expect(storedFiles()).toStrictEqual([...KEPT_FILES, ...UNUSED_FILES].sort())
     expect(cacheFiles()).toStrictEqual([...KEPT_CACHE_ENTRIES, ...UNUSED_CACHE_ENTRIES].sort())
+    expect(appFolders()).toStrictEqual([...KEPT_APPS, ...UNUSED_APPS].sort())
     expect(await openToasts(browser)).toEqual([])
   })
 
-  it('deletes on a Yes only the old files that no conversation and no open tab names, and the old cache entries that nothing uses', async () => {
+  it('deletes on a Yes only the old files and apps that no conversation and no open tab names, and the old cache entries that nothing uses', async () => {
     await pointerClick(browser, '.unused-files-btn')
     await waitForValue(browser, 'prompt', () => promptMessage(browser), DELETE_PROMPT)
     await pointerClick(browser, '.confirm-btn--confirm')
 
-    await waitForValue(browser, 'result toast', () => openToasts(browser), [{ title: '', message: 'Deleted 5 unused files (2.6 MB).' }])
+    await waitForValue(browser, 'result toast', () => openToasts(browser), [{ title: '', message: 'Deleted 5 unused files and 1 unused app (2.8 MB).' }])
     await waitForValue(browser, 'row after the delete', rowState, { percent: null, buttonOff: false })
     expect(storedFiles()).toStrictEqual(KEPT_FILES)
     expect(cacheFiles()).toStrictEqual(KEPT_CACHE_ENTRIES)
     expect(fs.existsSync(path.join(workDir(app.home), 'work-left'))).toBe(false)
+    expect(appFolders()).toStrictEqual(KEPT_APPS)
     // The tab's text was never on disk, so only the texts in memory kept
     // its image.
     expect(fs.existsSync(conversationFilePath(app.home, unsavedConversationId))).toBe(false)
@@ -261,6 +297,7 @@ describe('Settings: delete unused files', () => {
     expect(await promptMessage(browser)).toBeNull()
     expect(storedFiles()).toStrictEqual(KEPT_FILES)
     expect(cacheFiles()).toStrictEqual(KEPT_CACHE_ENTRIES)
+    expect(appFolders()).toStrictEqual(KEPT_APPS)
     expect(await consoleErrors(browser)).toEqual([])
   })
 })

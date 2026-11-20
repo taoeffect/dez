@@ -1086,20 +1086,30 @@ mod tests {
     }
 
     // Deno splits the folder list of a flag at each comma, so a comma in a
-    // path would make two other paths of it. The error can go to a model,
-    // so it names no path.
+    // path would make two other paths of it, and a flag is text, so it
+    // cannot hold a path that is not UTF-8. The check is on each of the two
+    // folders: here only one of them has such a path. The error can go to a
+    // model, so it names no path.
     #[test]
-    fn a_deno_run_with_an_app_folder_is_refused_when_a_folder_path_has_a_comma() {
-        let dir = TempDir::new("tools-deno-comma");
-        let roots = fake_roots(&dir.0.join("private,folder"));
-        std::fs::create_dir_all(roots.app.join(APPS_FOLDER).join("my-app")).expect("create");
-        let run = tool_run("dez-deno", &["main.ts"], "work/a");
+    fn a_deno_run_with_an_app_folder_is_refused_when_a_folder_path_cannot_be_in_a_flag() {
+        let dir = TempDir::new("tools-deno-flag-path");
+        let mut roots = vec![
+            Roots { cache: dir.0.join("private,cache"), ..fake_roots(&dir.0) },
+            Roots { app: dir.0.join("private,config"), ..fake_roots(&dir.0) },
+        ];
+        // No folder is made on this path, which macOS would refuse.
+        #[cfg(unix)]
+        roots.push(Roots { cache: dir.0.join(<std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(b"private\xffcache")), ..fake_roots(&dir.0) });
+        for roots in roots {
+            std::fs::create_dir_all(roots.app.join(APPS_FOLDER).join("my-app")).expect("create");
+            let run = tool_run("dez-deno", &["main.ts"], "work/a");
 
-        // A run with no app folder has no flag that names a folder.
-        assert!(resolved_run(run.clone(), &roots).is_ok());
-        let error = resolved_run(ToolRun { app_folder: Some("my-app".to_string()), ..run }, &roots).err().expect("refused");
-        assert!(error.contains("comma"), "{error}");
-        assert!(!error.contains("private"), "{error}");
+            // A run with no app folder has no flag that names a folder.
+            assert!(resolved_run(run.clone(), &roots).is_ok(), "{}", roots.cache.display());
+            let error = resolved_run(ToolRun { app_folder: Some("my-app".to_string()), ..run }, &roots).err().expect("refused");
+            assert!(error.contains("comma") && error.contains("UTF-8"), "{error}");
+            assert!(!error.contains("private"), "{error}");
+        }
     }
 
     // A `TZ` can also name a file of the computer (`:/path`), so only the
@@ -2146,6 +2156,68 @@ mod tests {
             assert_eq!(std::fs::read(&private).expect("read"), b"export const text = 'private text'\n");
         }
 
+        // Two flags of a Deno run, with the real Deno and the command line
+        // that Dez builds. `--no-remote`: Deno itself allows an import
+        // from a few hosts, and the flag refuses it before any request.
+        // `--no-config`: a `deno.json` in the work folder does not change
+        // what an import means. The last import shows that the files of
+        // the config are there.
+        // `--no-prompt` and `--no-lock` have no test: a run has no terminal
+        // to ask on, and Deno reads a lock file only next to a config file.
+        #[tokio::test]
+        async fn deno_loads_no_code_from_the_network_and_reads_no_config_file() {
+            let dir = TempDir::new("tools-run-deno-flags");
+            let roots = real_roots(&dir.0);
+            let (config, mapped) = (dir.0.join("deno.json"), dir.0.join("mapped.ts"));
+            std::fs::write(&config, r#"{ "imports": { "mapped": "./mapped.ts" } }"#).expect("write");
+            std::fs::write(&mapped, "export const text = 'mapped'\n").expect("write");
+            // Each import names its module in the code: Deno's permissions
+            // cover an import of a name that the script computes.
+            let text = r#"
+                const outcome = (module: Promise<{ text?: string }>) => module.then((module) => `loaded ${module.text}`, (error) => error.message.split('\n')[0])
+                console.log(await outcome(import('https://deno.land/x/dez_audit/mod.ts')))
+                console.log(await outcome(import('mapped')))
+                console.log(await outcome(import('./mapped.ts')))
+            "#;
+            let mut run = deno_run(&dir.0, "a", text);
+            run.inputs.extend([input("deno.json", &config), input("mapped.ts", &mapped)]);
+
+            let sent = finished(resolved_run(run, &roots).expect("a run that the rules allow")).await;
+
+            let lines = [
+                r#"A remote specifier was requested: "https://deno.land/x/dez_audit/mod.ts", but --no-remote is specified."#,
+                r#"Import "mapped" not a dependency"#,
+                "loaded mapped",
+            ];
+            assert_eq!(sent.stdout, lines.join("\n") + "\n", "{}", sent.stderr);
+            assert_eq!(sent.ends, exited(0), "{}", sent.stderr);
+        }
+
+        // The heap limit of V8, the only memory limit of a run on macOS: a
+        // script whose objects grow without end is ended near 512 MB. On
+        // Linux the data limit ends the same script when the heap flag is
+        // gone, with the same first words of V8, but only at about 1.7 GB.
+        // So the test reads the size of the heap.
+        #[tokio::test]
+        async fn deno_ends_a_script_whose_objects_grow_past_the_heap_limit() {
+            let dir = TempDir::new("tools-run-deno-heap");
+            let roots = real_roots(&dir.0);
+            let text = r#"
+                const all: number[][] = []
+                for (;;) {
+                  all.push(new Array(100_000).fill(all.length))
+                  if (all.length % 50 === 0) console.log(Deno.memoryUsage().heapUsed)
+                }
+            "#;
+
+            let sent = finished(resolved_run(deno_run(&dir.0, "a", text), &roots).expect("a run that the rules allow")).await;
+
+            let largest = sent.stdout.lines().filter_map(|line| line.parse::<u64>().ok()).max().expect("the size of the heap");
+            assert!((400_000_000..600_000_000).contains(&largest), "the heap had {largest} bytes\n{}", sent.stderr);
+            assert!(sent.stderr.contains("Fatal JavaScript out of memory"), "{}", sent.stderr);
+            assert_eq!(sent.ends, [ToolRunEnd::Exited { code: None }]);
+        }
+
         // The data limit of a Deno run (Linux). The heap limit of V8 does
         // not count the bytes of a typed array, so the data limit is their
         // end, and it is an error that the script can catch.
@@ -2442,6 +2514,13 @@ mod tests {
             ("variables of Dez", "Deno.readTextFile(`/proc/${Deno.ppid}/environ`)", "PermissionDenied 13"),
             ("root folder", "Array.fromAsync(Deno.readDir('/'))", "PermissionDenied 13"),
             ("temp folder", "Array.fromAsync(Deno.readDir('/tmp'))", "PermissionDenied 13"),
+            // What the rule gives a run next to its folder is narrow: the
+            // loader reads a library by its path and lists no folder, and
+            // a run has three device files.
+            ("library folder", "Array.fromAsync(Deno.readDir('/usr/lib')).then((entries) => entries.length)", "PermissionDenied 13"),
+            ("another device", "Deno.open('/dev/zero').then((file) => file.close())", "PermissionDenied 13"),
+            // This run has no app folder, as a `js_eval` run.
+            ("file of an app", "Deno.readTextFile(`${above}/config/apps/other/data.txt`)", "PermissionDenied 13"),
             ("mode of an own file", "Deno.chmod('made.txt', 0o777)", "PermissionDenied 1"),
             ("times of an own file", "Deno.utime('made.txt', 0, 0)", "PermissionDenied 1"),
             ("watch of the own folder", "Deno.watchFs('.').close()", "PermissionDenied 1"),
@@ -2488,16 +2567,26 @@ mod tests {
         // Deno loads the C library and calls its `syscall`, so no code of
         // Deno is between the script and the kernel. A bug of V8 can give a
         // script the same. An outcome is `ok` or the name of the error.
-        // `__CALLS__` holds the numbers of the calls on this processor.
+        // `__CALLS__` holds the numbers of the calls on this processor,
+        // and `__OLD_CALLS__` those of `OLD_NATIVE_PROBES`.
         #[cfg(target_os = "linux")]
         const NATIVE_AUDIT: &str = r#"
             const libc = Deno.dlopen('libc.so.6', {
               __errno_location: { parameters: [], result: 'pointer' },
               syscall: { parameters: ['i64', 'i64', 'i64', 'i64', 'i64', 'i64', 'i64'], result: 'i64' },
             })
-            // `fchmodat2`, `getxattrat`, and `listxattrat` have one number
-            // on every processor, and the libc crate does not name them.
-            const CALLS: Record<string, number> = { ...__CALLS__, fchmodat2: 452, getxattrat: 464, listxattrat: 465 }
+            // The calls with a number here have that number on every
+            // processor, and the libc crate does not name them.
+            const CALLS: Record<string, number> = {
+              ...__CALLS__,
+              ...__OLD_CALLS__,
+              fchmodat2: 452,
+              setxattrat: 463,
+              getxattrat: 464,
+              listxattrat: 465,
+              removexattrat: 466,
+              file_setattr: 469,
+            }
             const ERRORS: Record<number, string> = { 1: 'EPERM', 2: 'ENOENT', 13: 'EACCES', 14: 'EFAULT', 18: 'EXDEV', 22: 'EINVAL', 38: 'ENOSYS' }
             // The kernel reads these bytes at a later call, so they must
             // stay.
@@ -2540,10 +2629,13 @@ mod tests {
         "#;
 
         // The probes of native code.
-        // - Only calls that every processor has (`openat`, not `open`).
+        // - Only calls that every processor has (`openat`, not `open`); the
+        //   older calls of x86_64 are in `OLD_NATIVE_PROBES`.
         // - No probe changes something outside the run when the OS rule
-        //   fails: a key that no program has, a signal with the number 0, a
-        //   trace that does not stop Dez (`PTRACE_SEIZE`).
+        //   fails: a key that no program has, the id -1, which names no
+        //   shared object (the kernel itself answers `EINVAL`), a signal
+        //   with the number 0, a trace that does not stop Dez
+        //   (`PTRACE_SEIZE`).
         // - `EACCES` and `EXDEV` come from Landlock, and so does the `EPERM`
         //   of the probes of Dez's process from "memory of Dez" to
         //   `pidfd_send_signal`. `ENOSYS` and the other `EPERM` come from
@@ -2575,7 +2667,14 @@ mod tests {
             ("utimensat", "call('SYS_utimensat', AT_FDCWD, text(file), 0, 0)", "EPERM"),
             ("truncate", "call('SYS_truncate', text(file), 0)", "EPERM"),
             ("setxattr", "call('SYS_setxattr', text(file), text(attribute), text('value'), 5, 0)", "EPERM"),
+            ("lsetxattr", "call('SYS_lsetxattr', text(file), text(attribute), text('value'), 5, 0)", "EPERM"),
             ("removexattr", "call('SYS_removexattr', text(file), text(attribute))", "EPERM"),
+            ("lremovexattr", "call('SYS_lremovexattr', text(file), text(attribute))", "EPERM"),
+            // The attribute as a `struct xattr_args` with no value, and
+            // the facts as a `struct file_attr` of zeros.
+            ("setxattrat", "call('setxattrat', AT_FDCWD, text(file), 0, text(attribute), pair(0n, 0n), 16)", "EPERM"),
+            ("removexattrat", "call('removexattrat', AT_FDCWD, text(file), 0, text(attribute))", "EPERM"),
+            ("file_setattr", "call('file_setattr', AT_FDCWD, text(file), buffer(24), 24, 0)", "EPERM"),
             ("getxattr", "call('SYS_getxattr', text(file), text(attribute), buffer(64), 64)", "EPERM"),
             ("lgetxattr", "call('SYS_lgetxattr', text(file), text(attribute), buffer(64), 64)", "EPERM"),
             ("listxattr", "call('SYS_listxattr', text(file), buffer(256), 256)", "EPERM"),
@@ -2602,14 +2701,44 @@ mod tests {
             // The shared objects of the kernel.
             ("shmget", "call('SYS_shmget', key, 4096, 0o600)", "EPERM"),
             ("shmat", "call('SYS_shmat', -1, 0, 0)", "EPERM"),
+            ("shmctl", "call('SYS_shmctl', -1, 2, buffer(128))", "EPERM"),
             ("msgget", "call('SYS_msgget', key, 0o600)", "EPERM"),
+            ("msgsnd", "call('SYS_msgsnd', -1, buffer(16), 8, 0x800)", "EPERM"),
+            ("msgrcv", "call('SYS_msgrcv', -1, buffer(16), 8, 0, 0x800)", "EPERM"),
+            ("msgctl", "call('SYS_msgctl', -1, 2, buffer(128))", "EPERM"),
             ("semget", "call('SYS_semget', key, 1, 0o600)", "EPERM"),
+            ("semop", "call('SYS_semop', -1, buffer(8), 1)", "EPERM"),
+            ("semtimedop", "call('SYS_semtimedop', -1, buffer(8), 1, 0)", "EPERM"),
+            ("semctl", "call('SYS_semctl', -1, 0, 2, 0)", "EPERM"),
             ("mq_open", "call('SYS_mq_open', text('/dez-audit'), 0, 0, 0)", "EPERM"),
             ("mq_unlink", "call('SYS_mq_unlink', text('/dez-audit'))", "EPERM"),
             ("add_key", "call('SYS_add_key', text('user'), text('dez-audit'), text('value'), 5, -2)", "EPERM"),
             ("request_key", "call('SYS_request_key', text('user'), text('dez-audit'), 0, 0)", "EPERM"),
             ("keyctl", "call('SYS_keyctl', 0, -3, 0)", "EPERM"),
         ];
+
+        // The probes of the older calls of x86_64, which do what a call of
+        // `NATIVE_PROBES` does, and their numbers. arm64 has none of them.
+        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        const OLD_NATIVE_PROBES: &[Probe] = &[
+            ("chmod", "call('SYS_chmod', text(file), 0o666)", "EPERM"),
+            ("chown", "call('SYS_chown', text(file), -1, -1)", "EPERM"),
+            ("lchown", "call('SYS_lchown', text(file), -1, -1)", "EPERM"),
+            ("utime", "call('SYS_utime', text(file), 0)", "EPERM"),
+            ("utimes", "call('SYS_utimes', text(file), 0)", "EPERM"),
+            ("futimesat", "call('SYS_futimesat', AT_FDCWD, text(file), 0)", "EPERM"),
+        ];
+        #[cfg(all(target_os = "linux", not(target_arch = "x86_64")))]
+        const OLD_NATIVE_PROBES: &[Probe] = &[];
+
+        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        fn old_call_numbers() -> String {
+            call_numbers!(SYS_chmod, SYS_chown, SYS_lchown, SYS_utime, SYS_utimes, SYS_futimesat)
+        }
+        #[cfg(all(target_os = "linux", not(target_arch = "x86_64")))]
+        fn old_call_numbers() -> String {
+            "{}".to_string()
+        }
 
         // Native code in a program reaches no file outside its run, no
         // socket, nothing of Dez's process, and none of the kernel's shared
@@ -2620,23 +2749,23 @@ mod tests {
             let dir = TempDir::new("tools-audit-native");
             let calls = call_numbers!(
                 SYS_socket, SYS_io_uring_setup, SYS_openat, SYS_readlinkat, SYS_linkat, SYS_symlinkat, SYS_mknodat,
-                SYS_fchmodat, SYS_fchownat, SYS_utimensat, SYS_truncate, SYS_setxattr, SYS_removexattr,
+                SYS_fchmodat, SYS_fchownat, SYS_utimensat, SYS_truncate,
+                SYS_setxattr, SYS_lsetxattr, SYS_removexattr, SYS_lremovexattr,
                 SYS_getxattr, SYS_lgetxattr, SYS_listxattr, SYS_llistxattr,
                 SYS_inotify_init1, SYS_inotify_add_watch, SYS_fanotify_init,
                 SYS_process_vm_readv, SYS_ptrace, SYS_kcmp, SYS_pidfd_open, SYS_pidfd_getfd, SYS_kill, SYS_pidfd_send_signal,
                 SYS_prlimit64, SYS_setpgid,
-                SYS_shmget, SYS_shmat, SYS_msgget, SYS_semget, SYS_mq_open, SYS_mq_unlink,
+                SYS_shmget, SYS_shmat, SYS_shmctl, SYS_msgget, SYS_msgsnd, SYS_msgrcv, SYS_msgctl,
+                SYS_semget, SYS_semop, SYS_semtimedop, SYS_semctl, SYS_mq_open, SYS_mq_unlink,
                 SYS_add_key, SYS_request_key, SYS_keyctl,
             );
-            let text = NATIVE_AUDIT.replace("__CALLS__", &calls).replace("__PROBES__", &probe_object(NATIVE_PROBES));
-            let mut lines = probe_lines(NATIVE_PROBES);
+            let probes: Vec<Probe> = NATIVE_PROBES.iter().chain(OLD_NATIVE_PROBES).copied().collect();
+            let text = NATIVE_AUDIT.replace("__CALLS__", &calls).replace("__OLD_CALLS__", &old_call_numbers()).replace("__PROBES__", &probe_object(&probes));
+            let mut lines = probe_lines(&probes);
             // Landlock keeps a program from a signal to a program outside
             // its run only since its version 6 (Linux 6.12): a limit that
-            // confinement.rs states. The call with these arguments gives
-            // the version.
-            // SAFETY: the kernel reads no memory for this flag.
-            let landlock_version = unsafe { libc::syscall(libc::SYS_landlock_create_ruleset, 0 as libc::c_ulong, 0 as libc::c_ulong, 1 as libc::c_ulong) };
-            if landlock_version < 6 {
+            // confinement.rs states.
+            if crate::confinement::tests::landlock_version() < 6 {
                 lines = lines.replace("kill: EPERM", "kill: ok").replace("pidfd_send_signal: EPERM", "pidfd_send_signal: ok");
             }
 

@@ -10,7 +10,7 @@ import { consoleErrors, resetConsoleErrors, screenshotOnFailure, waitForValue } 
 import { linkedDropDir } from './harness/drops'
 import { appFilePath, conversationFilePath, filesIn, writeTestFile } from './harness/fixtures'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
-import { mockChatPath, replyText, sendChatReply, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
+import { mockChatPath, replyText, requestMessages, sendChatReply, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
 import { activeConversationId, endedReply, newTab, openToasts, submit } from './harness/thread'
 
@@ -41,6 +41,10 @@ describe('apps tool', () => {
   let outsideDir: string
 
   const chatRequest = (): Promise<HeldRequest> => takeRequest(setup, CHAT_PATH)
+
+  // Whether `request` sends the tag of an app as a part of the
+  // conversation.
+  const sendsAppTag = (request: HeldRequest): boolean => JSON.stringify(requestMessages(request)).includes('dez:app')
 
   // The rights of the file or the folder at `relative`, a path in the
   // folder of the apps.
@@ -246,7 +250,7 @@ describe('apps tool', () => {
     expect(toolResult(second, 'call_script')).toContain('/apps/sum is a script app, and show shows only a UI app')
     expect(toolResult(second, 'call_bare')).toContain('The app /apps/bare has no index.html, the page that Dez shows.')
     expect(toolResult(second, 'call_gone')).toContain('/apps/gone')
-    expect(second.body).not.toContain('dez:app')
+    expect(sendsAppTag(second)).toBe(false)
     await sendChatReply(second.reply, CALLER.modelName)
 
     // One tag, for the one app that Dez can show: a paragraph of its own
@@ -266,7 +270,7 @@ describe('apps tool', () => {
     await submit(browser, 'Thanks.')
     const third = await chatRequest()
     expect(toolResult(third, 'call_show')).toBe(showResultText('notes'))
-    expect(third.body).not.toContain('dez:app')
+    expect(sendsAppTag(third)).toBe(false)
     const sentBefore = (JSON.parse(second.body) as { messages: unknown[] }).messages
     expect((JSON.parse(third.body) as { messages: unknown[] }).messages.slice(0, sentBefore.length)).toStrictEqual(sentBefore)
     await sendChatReply(third.reply, CALLER.modelName)

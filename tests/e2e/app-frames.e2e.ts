@@ -30,6 +30,9 @@ import { createSession, destroySession, type E2EBrowser } from './harness/sessio
 //   policy.
 // - A page reads no file of the computer (the asset protocol, a `file:`
 //   URL), no file of another app, and nothing of Dez's own page.
+// - The policy of a page has each directive that another guard hides: the
+//   page tells of the refusal of the policy itself, for a load that the
+//   rule list, the navigation guard, or a missing loader would stop too.
 // - A frame cannot leave the scheme: each way to go to another page leaves
 //   it where it is, with no request and no TCP connection. A click on a
 //   link to a new window is one of the ways: WebKit connects to the server
@@ -51,7 +54,10 @@ import { createSession, destroySession, type E2EBrowser } from './harness/sessio
 // Not covered here: the name lookup of a `<link rel="dns-prefetch">`
 // (nothing here counts lookups; the rule list stops it with the same rule
 // as the preconnect), WebRTC (WebKitGTK has none, which the audit checks),
-// a page that never pauses (it stops Dez's page), and macOS.
+// the `worker-src`, `form-action`, and `webrtc` directives of the policy by
+// themselves (the sandbox and WebKitGTK stop each try first, with no
+// report of the policy), a page that never pauses (it stops Dez's page),
+// and macOS.
 //
 // One app session serves the whole file. The spec adds each `<iframe>` to
 // Dez's page itself (harness/appFrames.ts).
@@ -164,6 +170,8 @@ const NETWORK_TRIES: Readonly<Record<string, string>> = {
   audio: "(url) => loadElement('audio', { src: url })",
   video: "(url) => loadElement('video', { src: url })",
   preload: "(url) => loadElement('link', { rel: 'preload', as: 'fetch', href: url, crossorigin: 'anonymous' }, document.head)",
+  'preload-image': "(url) => loadElement('link', { rel: 'preload', as: 'image', href: url }, document.head)",
+  modulepreload: "(url) => loadElement('link', { rel: 'modulepreload', href: url }, document.head)",
   prefetch: "(url) => loadElement('link', { rel: 'prefetch', href: url }, document.head)",
   'module-import': '(url) => import(url)',
   'worker-fetch': `(url) => ${blobWorker("'fetch(' + JSON.stringify(url) + ').then(() => postMessage(\"fetched\"), (error) => postMessage(\"threw \" + error.name))'")}`,
@@ -216,6 +224,27 @@ const OTHER_PLACES: readonly ControlledProbe[] = [
   ['a script of another app', scriptTry("'dezapp://localhost/other/secret.js'", 'otherScript'), 'error; the script did not run', 'load; the script ran'],
   ['an image of another app', "() => loadElement('img', { src: 'dezapp://localhost/other/dot.svg' })", 'error', 'load'],
   ['a stylesheet of another app', "() => loadElement('link', { rel: 'stylesheet', href: 'dezapp://localhost/other/style.css' }, document.head)", 'error', 'load'],
+  // A `<base>` would make each relative URL of the page a URL of its
+  // choice. The element goes at once: in the control it is in Dez's page.
+  [
+    'a base URL in another app',
+    "() => { const base = document.createElement('base'); base.href = 'dezapp://localhost/other/'; document.head.append(base); try { return new URL('x', document.baseURI).href } finally { base.remove() } }",
+    'dezapp://localhost/places/x',
+    'dezapp://localhost/other/x',
+  ],
+]
+
+// The directives of the policy that no other try isolates: another guard
+// stops the same load too (the rule list, the navigation guard), or the
+// load gives the same error with and without the policy. Each try is
+// refused by one directive, and waits for the report of the policy for it
+// (`refusedBy`): a policy without the directive gives `no answer`.
+const POLICY_ONLY: readonly Probe[] = [
+  ['a font of another app', "() => refusedBy('font-src', () => new FontFace('audit', 'url(\"dezapp://localhost/other/secret.txt\")').load())", 'refused by font-src'],
+  ['a clip of another app', "() => refusedBy('media-src', () => loadElement('audio', { src: 'dezapp://localhost/other/secret.txt' }))", 'refused by media-src'],
+  ['an object', "() => refusedBy('object-src', () => loadElement('object', { data: 'dezapp://localhost/other/dot.svg', type: 'image/svg+xml' }))", 'refused by object-src'],
+  ['a frame in the page', "() => refusedBy('frame-src', () => loadElement('iframe', { src: 'dot.svg' }))", 'refused by frame-src'],
+  ['a fetch from a server', "() => refusedBy('connect-src', () => fetch(config.server + '/hit/policy'))", 'refused by connect-src'],
 ]
 
 // Each way of a frame to go to another page: the code of the move, with
@@ -395,6 +424,7 @@ describe('app frames audit', () => {
       await seedApp(appsDir, ui('sandbox'), probePageFiles(probesScript(probesSource(NO_PLACE))))
       await seedApp(appsDir, ui('network'), probePageFiles(probesScript(NETWORK_PROBES)))
       await seedApp(appsDir, ui('places'), probePageFiles(probesScript(probesSource(OTHER_PLACES))))
+      await seedApp(appsDir, ui('policy'), { ...probePageFiles(probesScript(probesSource(POLICY_ONLY))), 'dot.svg': DOT_SVG })
       await seedApp(appsDir, ui('other'), {
         'secret.txt': PRIVATE,
         'secret.js': 'window.otherScript = true\n',
@@ -479,6 +509,11 @@ describe('app frames audit', () => {
     const controls = OTHER_PLACES.filter(([, , , control]) => control !== null)
     expect(await runProbesInDez(browser, 'page', probesSource(controls), placesConfig))
       .toEqual(Object.fromEntries(controls.map(([name, , , control]) => [name, control])))
+    await expectNothingReachedTheServer()
+  })
+
+  it('refuses by the policy of a page each load that another guard stops too', async () => {
+    expect(await outcomesInFrame('policy', { server: server.url })).toEqual(frameOutcomes(POLICY_ONLY))
     await expectNothingReachedTheServer()
   })
 

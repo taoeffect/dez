@@ -11,8 +11,18 @@ import { UI_INDEX_FILE } from '../../model/tools/appTemplates'
 //   protocol, with `sandbox="allow-scripts"` and never `allow-same-origin`.
 // - It shows one page. The navigation guard of the webview cannot tell
 //   where a frame goes (the page of another app, a blank page), so a frame
-//   that loads a second time may not show the app that the user started:
-//   the owner of the frame closes it (`onNavigated`).
+//   that left its first page may not show the app that the user started:
+//   the owner of the frame closes it (`onNavigated`). Dez's page cannot
+//   read where a frame is, so it knows a frame that left from two signs:
+//   - The frame loads a second time.
+//   - Dez's client script tells that it runs in another page than that of
+//     the app. A page that goes away while it loads gives the frame only
+//     one load, that of the other page.
+//   A known limit: no sign tells of a frame that goes away while it loads
+//   to a page without the client script. Dez calls no handler of such a
+//   page, but it still answers the calls that the code of the page posts
+//   by hand. The page is the page of an app too, and each app gets the
+//   same answers in its own frame.
 // - An `<iframe>` that moves in the DOM loads again. So the owner puts the
 //   frame into the page once, and never moves it.
 //
@@ -29,7 +39,8 @@ import { UI_INDEX_FILE } from '../../model/tools/appTemplates'
 
 /** A message of the page of an app, which can hold anything: Dez drops
  *  one that this schema does not know.
- *  - `ready`: Dez's client script runs in the page.
+ *  - `ready`: Dez's client script runs in the page whose URL path is
+ *    `page`.
  *  - `escape`: the user pressed Escape, and the page did not take the key
  *    for itself.
  *  - `menu`: a context click that the page did not take for itself, at a
@@ -44,7 +55,7 @@ import { UI_INDEX_FILE } from '../../model/tools/appTemplates'
  *    script cuts the log, and each reader cuts what it shows. A dropped
  *    answer would leave the call with no end. */
 const frameMessageSchema = z.discriminatedUnion('dez', [
-  z.object({ dez: z.literal('ready') }),
+  z.object({ dez: z.literal('ready'), page: z.string() }),
   z.object({ dez: z.literal('escape') }),
   z.object({ dez: z.literal('menu') }),
   z.object({ dez: z.literal('call'), id: z.number(), selector: z.string().max(APP_SELECTOR_MAX_CHARS), args: z.array(z.unknown()) }),
@@ -80,7 +91,7 @@ export interface AppFrameOwner {
   /** Does a checked call of the page, and gives the value for its answer.
    *  An `AppCallError` tells the page why Dez refuses the call. */
   onCall (call: AppCall): Promise<unknown>
-  /** The frame loaded a second time: close it. */
+  /** The frame left the one page of its app: close it. */
   onNavigated (): void
 }
 
@@ -104,7 +115,9 @@ async function answerCall(frame: HTMLIFrameElement, owner: AppFrameOwner, { id, 
 
 // The one message listener of Dez's page for all the open frames. A
 // message of any other window, and one that the schema does not know, is
-// dropped.
+// dropped. A frame whose client script runs in another page than the one
+// that Dez gave the frame has left its app: no code of a page can change
+// the `src` of its frame.
 function onWindowMessage(event: MessageEvent): void {
   if (!event.source) return
   for (const [frame, owner] of owners) {
@@ -112,6 +125,7 @@ function onWindowMessage(event: MessageEvent): void {
     const message = frameMessageSchema.safeParse(event.data)
     if (!message.success) return
     if (message.data.dez === 'call') void answerCall(frame, owner, message.data)
+    else if (message.data.dez === 'ready' && message.data.page !== new URL(frame.src).pathname) owner.onNavigated()
     else owner.onMessage(message.data)
     return
   }

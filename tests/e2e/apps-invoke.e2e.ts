@@ -3,7 +3,7 @@ import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { APP_RUNS_STATE } from '../../src/model/tools/appInvoke'
 import { jobStartedText, jobsWaitResults, jobTimedOutText, startedJobId } from '../../src/model/tools/jobs'
-import { appsCall, pageFrameCount, seedApp, uiAppFiles } from './harness/apps'
+import { appsCall, movingAppFiles, pageFrameCount, pageFrameGuards, seedApp, uiAppFiles } from './harness/apps'
 import { consoleErrors, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
 import { expectNoLinkedFile, linkedDropDir, openDroppedFiles } from './harness/drops'
 import { appFilePath, filesIn, newFileIn, storedFileName } from './harness/fixtures'
@@ -63,6 +63,8 @@ import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolC
 //   a page without Dez's script give one that tells what to write; a run
 //   that does not end stops at its time limit. Dez keeps no file of those
 //   runs;
+// - a run whose page goes to another page stops, also when the page goes
+//   while it loads, and Dez calls no handler of the other page;
 // - the frame of every run is gone after it.
 //
 // No request holds a path of the test HOME (`takeRequest` checks each one):
@@ -575,6 +577,40 @@ describe('apps invoke', () => {
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 
+  it('stops a run of a UI app whose page goes to the page of another app, in its handler or while it loads, and calls no handler of that page', async () => {
+    await seedApp(appsDir, { name: 'echo', description: 'Answers.', kind: 'ui' }, uiAppFiles('dez.sbp("sbp/selectors/register", { "app/invoke": () => "echo ran" })\n'))
+    // The frame of this run loads a second time.
+    await seedApp(appsDir, { name: 'late', description: 'Goes away in its run.', kind: 'ui' }, uiAppFiles([
+      'dez.sbp("sbp/selectors/register", {',
+      '  "app/invoke": () => {',
+      '    location.href = "../echo/index.html"',
+      '    return new Promise(() => {})',
+      '  },',
+      '})',
+      '',
+    ].join('\n')))
+    // The frame of this run loads only once, with the page of `echo`.
+    await seedApp(appsDir, { name: 'hop', description: 'Goes away at once.', kind: 'ui' }, movingAppFiles('echo'))
+    const stopped = 'Dez stopped the app: its page loaded again, or went to another page. Dez kept no file of the run.'
+    await submit(browser, 'Run the pages.')
+
+    // The page of `echo` answers a run of its own app.
+    const echo = await invoke(await chatRequest(), 'call_echo', { name: 'echo' })
+    expect({ status: echo.result.status, text: echo.result.text }).toStrictEqual({ status: 'finished', text: 'echo ran' })
+
+    const late = await invoke(echo.next, 'call_late', { name: 'late' })
+    expect(late.result.status).toBe('failed')
+    expect(late.result.text).toContain(stopped)
+
+    const hop = await invoke(late.next, 'call_hop', { name: 'hop' })
+    expect(hop.result.status).toBe('failed')
+    expect(hop.result.text).toContain(stopped)
+
+    await expectReplyEnd(setup, CALLER, hop.next)
+    expect(await pageFrameCount(browser)).toBe(0)
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
   it('stops a run of a UI app that does not end at its time limit, closes its frame, and deletes the file that its page saved', async () => {
     await seedApp(appsDir, { name: 'stuck', description: 'Never ends.', kind: 'ui' }, uiAppFiles(STUCK_MAIN))
     const before = await filesIn(imagesDir)
@@ -585,8 +621,10 @@ describe('apps invoke', () => {
     const jobId = startedJob(second, 'call_stuck')
 
     // While the run goes on, its frame is in the page with the size of a
-    // run, and the user does not see it.
+    // run, and the user does not see it. It is a sandboxed frame of the
+    // scheme of the app frames, as a frame of the editor is.
     await newFileIn(browser, imagesDir, before)
+    expect(await pageFrameGuards(browser)).toStrictEqual([{ sandbox: 'allow-scripts', src: 'dezapp://localhost/stuck/index.html' }])
     expect(await browser.execute(() => Array.from(document.querySelectorAll('iframe'), (frame) => {
       const { width, height } = frame.getBoundingClientRect()
       return { width, height, visibility: getComputedStyle(frame).visibility, inert: frame.closest<HTMLElement>('[inert]') !== null }

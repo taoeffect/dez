@@ -28,6 +28,18 @@ export async function seedApp (appsDir: string, manifest: AppManifest, files: Re
   for (const [name, text] of Object.entries(files)) await writeTestFile(path.join(folder, name), Buffer.from(text))
 }
 
+/** Gives the folder of the app `name` of `appsDir`, and each file and
+ *  folder in it, a file time of `ageMs` ago: Delete Unused Files takes an
+ *  app only when all of them are old. */
+export async function ageApp (appsDir: string, name: string, ageMs: number): Promise<void> {
+  const folder = path.join(appsDir, name)
+  const time = new Date(Date.now() - ageMs)
+  for (const entry of await fs.promises.readdir(folder, { recursive: true, withFileTypes: true })) {
+    await fs.promises.utimes(path.join(entry.parentPath, entry.name), time, time)
+  }
+  await fs.promises.utimes(folder, time, time)
+}
+
 /** The files of a UI app for `seedApp`: a page with the elements `body`
  *  that loads Dez's client script, then `script` as `main.js`, as the page
  *  that `init` makes does. */
@@ -47,11 +59,34 @@ export function uiAppFiles (script: string, body = ''): Record<string, string> {
   }
 }
 
+/** The files of a UI app for `seedApp` whose page goes to the page of the
+ *  app `to` while it loads, before any other script of it runs. The
+ *  webview gives the frame of such a page only one load, that of the page
+ *  of `to`. */
+export function movingAppFiles (to: string): Record<string, string> {
+  return {
+    'index.html': [
+      '<!doctype html>',
+      `<script>location.href = "../${to}/index.html"</script>`,
+      '<script src="~dez.js"></script>',
+      '',
+    ].join('\n'),
+  }
+}
+
 /** How many frames Dez's page has: one for each app that runs in the
  *  editor, and one for each run of a UI app that goes on (`apps invoke`),
  *  which the user does not see. */
 export async function pageFrameCount (browser: E2EBrowser): Promise<number> {
   return browser.execute(() => document.querySelectorAll('iframe').length)
+}
+
+/** The frames of Dez's page, each with the two attributes that keep the
+ *  page of an app apart from Dez: its sandbox, and the URL that it loads.
+ *  The audit of the guards (app-frames.e2e.ts) makes its frames itself, so
+ *  a spec of the real frames reads them here. */
+export async function pageFrameGuards (browser: E2EBrowser): Promise<Array<{ sandbox: string | null, src: string | null }>> {
+  return browser.execute(() => Array.from(document.querySelectorAll('iframe'), (frame) => ({ sandbox: frame.getAttribute('sandbox'), src: frame.getAttribute('src') })))
 }
 
 /** The size of the folder of the app `name` of `appsDir`, as Dez tells
