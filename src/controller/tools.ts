@@ -34,7 +34,7 @@ import { ToolError, type ArgumentsOf, type SubcommandParameter, type ToolArgumen
 import { ffmpegCall, ffprobeCall, joinClipsCall, VIDEO_TOOL, videoCallLabel, videoInputsText } from '../model/tools/videoTool'
 import { untilAborted } from '../utils/abort'
 import { rawErrorText } from '../utils/errorText'
-import { checkedInvokeCall, runAppJob } from './appInvoke'
+import { checkedInvokeCall, runAppFrameJob, runAppJob } from './appInvoke'
 import { editAppFile, initApp, listAppFolder, listApps, makeAppFolder, moveAppPaths, readAppFile, removeAppPaths, showApp, writeAppFile } from './appsTool'
 import { assetInfoResult } from './assetInfo'
 import { assetViewResult } from './assetView'
@@ -509,11 +509,13 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // reads nothing of the conversation. A stop of the reply stops `rm` and
   // `mv` between two paths; any other call is short and runs to its end.
   //
-  // `invoke` runs the code of a script app in Deno (appInvoke.ts), as a
-  // job of the reply: code that a model wrote can run for long. The checks
-  // of the call and of the files of the app run first
-  // (`checkedInvokeCall`): a call that Dez refuses starts no job and no
-  // program. The result tells the inputs that go, as for `model_invoke`.
+  // `invoke` runs the code of an app (appInvoke.ts), as a job of the
+  // reply: code that a model wrote can run for long. The kind of the app
+  // picks the work: a script app runs in Deno, and the page of a UI app
+  // in a frame that the user does not see. The checks of the call and of
+  // the files of the app run first (`checkedInvokeCall`): a call that Dez
+  // refuses starts no job, no program, and no frame. The result tells the
+  // inputs that go, as for `model_invoke`.
   //
   // `show` puts a UI app into the reply (appShow.ts): it runs no code.
   apps: subcommandRunner(APPS_TOOL, {
@@ -529,11 +531,12 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     show: (args, _signal, context) => showApp(args, context),
     async invoke (args, callSignal, context) {
       const call = await checkedInvokeCall(args, callSections(context))
-      return startJob(context, callSignal, APPS_TOOL.name, (signal, report, _reportCost, keepAsset) => runAppJob(call, signal, report, keepAsset), {
+      const run = call.kind === 'ui' ? runAppFrameJob : runAppJob
+      return startJob(context, callSignal, APPS_TOOL.name, (signal, report, _reportCost, keepAsset) => run(call, signal, report, keepAsset), {
         timeoutMs: call.timeoutMs,
         hidesAssets: isIntermediate(args),
         label: invokeLabel(args),
-      }, invokeInputsText(call.inputs))
+      }, invokeInputsText(call.inputs, call.kind))
     },
   }),
 }

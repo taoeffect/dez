@@ -1,5 +1,7 @@
 import type { EditorView } from '@codemirror/view'
 import sbp from '@sbp/sbp'
+import { APP_READ_ASSET, AppCallError, SAVE_NEEDS_USER_TEXT, type SavedAssetAnswer } from '../../model/tools/appBridge'
+import { SaveCount } from '../../model/tools/appInvoke'
 import { focusKeepingScroll } from '../editor/focus'
 import { ROUND_STROKE, svgIcon, trashIcon } from '../editor/svgIcon'
 import { leaveFullscreen } from '../fullscreen'
@@ -37,8 +39,9 @@ import { appIcon } from './appIcon'
 //   from each of the two other sizes, to which it goes back.
 //
 // This module knows nothing of the editor state. The editor tells it which
-// apps run (`AppRun`), and does what a control of the bar asks for in its
-// state (`AppFrameActions`).
+// apps run (`AppRun`), and does what a control of the bar and a call of
+// the page of an app (the frame bridge, model/tools/appBridge.ts) ask for
+// in its state (`AppFrameActions`).
 
 const HOST_CLASS = 'dez-app-frame'
 
@@ -52,13 +55,20 @@ export interface AppRun {
   from: number
 }
 
-/** What the editor does for a control of the bar of a run of `view`, by
- *  the id of the run, in the state that gives the runs. */
+/** What the editor does for a control of the bar of a run of `view` and
+ *  for a call of its page, by the id of the run, in the state that gives
+ *  the runs. A call that the editor refuses rejects with an `AppCallError`,
+ *  whose text the page gets. */
 export interface AppFrameActions {
   /** Ends the run. */
   stop (view: EditorView, runId: string): void
   /** The trash: deletes the app of the run, after a prompt. */
   remove (view: EditorView, runId: string): void
+  /** The bytes of the image or the clip `id` of the conversation. */
+  readAsset (view: EditorView, id: string): Promise<Blob>
+  /** Puts the save `blob` of the page of the run into the conversation.
+   *  `saves` counts the saves of the run. */
+  saveAsset (view: EditorView, runId: string, blob: Blob, saves: SaveCount): Promise<SavedAssetAnswer>
 }
 
 /** The attribute of the element that the frame of a run covers (the
@@ -276,7 +286,10 @@ function hostFrame(view: EditorView, run: AppRun, actions: AppFrameActions): Hos
   // the app then.
   bar.append(icon, barPart('name', run.name), barPart('size', appSizeLabel(knownAppFacts(run.name))), expandButton, fullscreenButton, stopButton, trashButton)
 
+  const saves = new SaveCount()
   const frame = openAppFrame(run.name, {
+    // `ready` and `answer` are for a run that calls a handler of the page
+    // (hiddenAppFrame.ts): a shown app has no such call.
     onMessage(message) {
       // A frame that is far out of view runs slowly, so its message can
       // come after the user gave the keyboard to something else, or moved
@@ -288,6 +301,16 @@ function hostFrame(view: EditorView, run: AppRun, actions: AppFrameActions): Hos
         // The menu shows at the pointer, so only while it is over the app.
         void sbp('dez.controller/apps/popupMenu', run.name)
       }
+    },
+    async onCall(call) {
+      if (call.selector === APP_READ_ASSET) return await actions.readAsset(view, call.id)
+      // A save puts a file into the message that the user writes. The page
+      // of an app can ask for one at any time (a timer, a model's code
+      // that runs on its own), so Dez takes it only while the user works
+      // in the app: the app has the keyboard, or the pointer is over it.
+      // Dez's page cannot read whether a key or a click made the call.
+      if (document.activeElement !== frame && !frame.matches(':hover')) throw new AppCallError(SAVE_NEEDS_USER_TEXT)
+      return await actions.saveAsset(view, run.id, call.blob, saves)
     },
     onNavigated() {
       // The toast is outside of an app that fills the screen.

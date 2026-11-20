@@ -9,7 +9,7 @@ import { FileTooLargeError, MAX_SAVED_CLIP_BYTES } from '../../model/chat/mediaF
 import { mediaTagText, type MediaTagData, type MediaTagKind } from '../../model/chat/mediaTags'
 import type { Role } from '../../model/chat/types'
 import { SECTION_SEP, clipboardPasteTransaction, encodePrompt, pillsField, sectionsField } from '../thread/cmEditor'
-import { dropFilePaths, dropFiles, filePasteAndDrop, pasteFiles } from './imageInsert'
+import { dropFilePaths, dropFiles, filePasteAndDrop, insertSavedFile, pasteFiles } from './imageInsert'
 import { markdownImages, renderedImages } from './images'
 
 interface SaveCall {
@@ -774,5 +774,35 @@ describe('image and clip ids', () => {
     const moved = state.update({ changes: [{ from: 0, to: stored('b').length }, { from: doc.length, insert: stored('b') }], userEvent }).state
 
     expect(moved.doc.toString()).toBe(` ${stored('a', 'a')} ${stored('b')}`)
+  })
+})
+
+describe('insertSavedFile', () => {
+  const GENERATED = '/home/u/.config/dez/assets/generated'
+
+  it('puts an image on a line of its own at the end, with the next id, as an edit that an undo takes back', () => {
+    const doc = `${reference(1, 'a')}\nLook at this`
+    const editor = createEditor(doc, doc.length)
+
+    const id = insertSavedFile(editor.view, { path: `${GENERATED}/images/x.png`, kind: 'image', type: 'image/png' })
+
+    expect(id).toBe('b')
+    expect(editor.doc()).toBe(`${doc}\n${imageMarkdown(`${GENERATED}/images/x.png`, [{ key: 'id', value: 'b' }])}`)
+    // The caret was at the end of the text: it stays there.
+    expect(editor.view.state.selection.main.head).toBe(editor.doc().length)
+    expect(undo(editor.view)).toBe(true)
+    expect(editor.doc()).toBe(doc)
+  })
+
+  it('puts a clip in as a media tag, and leaves a caret that is at another place', () => {
+    const doc = 'Look at this\n'
+    const editor = createEditor(doc, 4)
+    const src = `${GENERATED}/audio/x.wav`
+
+    const id = insertSavedFile(editor.view, { path: src, kind: 'audio', type: 'audio/wav' })
+
+    expect(id).toBe('a')
+    expect(editor.doc()).toBe(doc + mediaTagText({ kind: 'audio', id: 'a', type: 'audio/wav', src, url: null, expires: null, other: [] }))
+    expect(editor.view.state.selection.main).toMatchObject({ anchor: 4, head: 4 })
   })
 })

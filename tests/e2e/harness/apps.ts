@@ -10,8 +10,8 @@ import type { E2EBrowser } from './session'
 
 // What the specs of the apps share: the calls of the `apps` tool
 // (apps-tool.e2e.ts, the file subcommands; apps-invoke.e2e.ts, the runs of
-// a script app), and the cards and the frames of the apps that the editor
-// shows (app-host.e2e.ts).
+// a script app and of a UI app), and the cards and the frames of the apps
+// that the editor shows (app-host.e2e.ts).
 
 /** An `apps` call of the mock model: the subcommand `command` with
  *  `parameters`, in the form of a subcommand tool. */
@@ -26,6 +26,32 @@ export async function seedApp (appsDir: string, manifest: AppManifest, files: Re
   const folder = path.join(appsDir, manifest.name)
   await writeTestFile(path.join(folder, MANIFEST_FILE), Buffer.from(appManifestText(manifest)))
   for (const [name, text] of Object.entries(files)) await writeTestFile(path.join(folder, name), Buffer.from(text))
+}
+
+/** The files of a UI app for `seedApp`: a page with the elements `body`
+ *  that loads Dez's client script, then `script` as `main.js`, as the page
+ *  that `init` makes does. */
+export function uiAppFiles (script: string, body = ''): Record<string, string> {
+  return {
+    'index.html': [
+      '<!doctype html>',
+      '<html><head><meta charset="utf-8"><title>app</title></head>',
+      '<body>',
+      body,
+      '<script src="~dez.js"></script>',
+      '<script src="main.js" crossorigin></script>',
+      '</body></html>',
+      '',
+    ].join('\n'),
+    'main.js': script,
+  }
+}
+
+/** How many frames Dez's page has: one for each app that runs in the
+ *  editor, and one for each run of a UI app that goes on (`apps invoke`),
+ *  which the user does not see. */
+export async function pageFrameCount (browser: E2EBrowser): Promise<number> {
+  return browser.execute(() => document.querySelectorAll('iframe').length)
 }
 
 /** The size of the folder of the app `name` of `appsDir`, as Dez tells

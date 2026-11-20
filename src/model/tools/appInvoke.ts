@@ -2,16 +2,18 @@ import { byteSizeText } from '../../utils/byteSize'
 import { countOf } from '../../utils/countText'
 import type { JsonObject } from '../../utils/json'
 import { startOf } from '../../utils/textCut'
-import { storedTypeOfBytes } from '../chat/fileSignatures'
+import { storedTypeOfBytes, type StoredFileType } from '../chat/fileSignatures'
 import { imageExtension, imageMediaType } from '../chat/images'
 import type { Section } from '../chat/types'
 import { conversationAssets, type ConversationAssets } from '../streams/mediaRequest'
-import { MANIFEST_FILE } from './appManifest'
+import { APP_FRAME_ROOT_URL, APP_HANDLER_EXAMPLE, AppCallError, type AppFrameEnd, type AppFrameInput } from './appBridge'
+import { MANIFEST_FILE, type AppKind } from './appManifest'
 import {
   APP_RUN_DEFAULT_SECONDS,
   APP_RUN_MAX_OUTPUT_BYTES,
   APP_RUN_MAX_OUTPUT_FILES,
   APPS_TOOL,
+  APPS_VIRTUAL_ROOT,
   appNamed,
   checkAppIsThere,
   checkedAppKind,
@@ -22,37 +24,48 @@ import {
   type AppsTree,
   type PathFacts,
 } from './appsTool'
-import { SCRIPT_MAIN_FILE } from './appTemplates'
+import { SCRIPT_MAIN_FILE, UI_CLIENT_SCRIPT_TAG, UI_INDEX_FILE } from './appTemplates'
 import { assetIdWords } from './arguments'
-import { ASSET_NAMES, jobCallLabel, jobTimeoutMs } from './jobs'
-import { JS_EVAL_OUTPUT_BYTES, namesDenoFlag, runResultText, type JsEvalEndLine, type RunOutcome } from './jsEval'
+import { ASSET_NAMES, jobCallLabel, jobTimeoutMs, type JobAssetKind } from './jobs'
+import { JS_EVAL_OUTPUT_BYTES, namesDenoFlag, runResultText, textForModel, type JsEvalEndLine, type RunOutcome } from './jsEval'
 import { clipInput, tellUserConsole, type ClipInput, type KeptFile, type ProgramEnd } from './programRuns'
 import { assetText, unknownAssetsText } from './toolInputs'
 import { ToolError, type SubcommandArguments } from './types'
 
-// `apps invoke` for a script app: one run of the code of an app, as a job.
-// Deno runs the module of Dez (jsEvalRunner.js), which calls the default
-// export of the `main.ts` of the app with the parameters of the call. The
-// code can open two folders: the folder of its app, where its state stays
-// from one run to the next, and the work folder of the run, which holds a
-// copy of each input and the output folder. It has no network and no tool
-// bridge (`dez.sbp`). controller/appInvoke.ts does the run.
+// `apps invoke`: one run of the code of an app, as a job. The kind of the
+// app (its manifest) picks what runs it.
+//
+// A script app: Deno runs the module of Dez (jsEvalRunner.js), which calls
+// the default export of the `main.ts` of the app with the parameters of
+// the call. The code can open two folders: the folder of its app, where
+// its state stays from one run to the next, and the work folder of the
+// run, which holds a copy of each input and the output folder. It has no
+// network and no tool bridge (`dez.sbp`).
+//
+// A UI app: Dez loads the page of the app in a hidden frame, and calls the
+// handler that the page registered (`APP_INVOKE_HANDLER`) with the
+// parameters of the call. The page reads the inputs and saves its files
+// over the frame bridge (appBridge.ts). It has no network, no file, and
+// no storage.
+//
+// controller/appInvoke.ts does both runs.
 //
 // This module has the pure parts: the checks of a call, the description of
-// a run (`run.json`), the rules of the output folder, and every text that
-// the calling model reads.
+// a run (`run.json`), the rules of the output folder and of a save of a
+// page, and every text that the calling model reads.
 //
-// Dez trusts nothing that a run leaves. A file of the output folder is kept
-// only as a type that Dez stores, which its first bytes tell
-// (`storedTypeOfBytes`), never its name. The limits of a run
+// Dez trusts nothing that a run leaves. A file of the output folder or of
+// a save is kept only as a type that Dez stores, which its first bytes
+// tell (`storedTypeOfBytes`), never its name. The limits of a run
 // (`APP_RUN_MAX_OUTPUT_FILES`, `APP_RUN_MAX_OUTPUT_BYTES`) are next to the
 // other limits of the apps (appsTool.ts), as the help of `invoke` states
 // them.
 //
 // Every text here is a tool result: it goes to the chat provider. A text of
 // a run (its value, its error, its console output) goes into a result only
-// through `textForModel` (jsEval.ts) with the folders of the run, which
-// `appRunResult` gets as `forModel`.
+// through `textForModel` (jsEval.ts): with the folders of the run for a
+// script app, which `appRunResult` gets as `forModel`, and after
+// `frameTextForModel` for a UI app.
 
 // What Dez did not do for a call that it refuses.
 const NOT_DONE = 'Dez started no job.'
@@ -70,6 +83,9 @@ export const APP_OUTPUT_LISTED_ENTRIES = 200
 /** The state of a job while the code of its app runs. */
 export const APP_RUNS_STATE = 'The code of the app runs.'
 
+/** The state of a job of a UI app until its page is ready for the run. */
+export const APP_PAGE_LOADS_STATE = 'The page of the app loads.'
+
 /** An image of a call, as the code of the app gets it: a copy of the
  *  image's own file, of any type (an SVG too: the code reads its text). */
 export interface AppImageInput {
@@ -84,11 +100,11 @@ export interface AppImageInput {
 
 export type AppInput = AppImageInput | ClipInput
 
-// The input that the id `id` names; null for an id of no image and no
-// clip. The name of an image's copy is the id and the extension of the
-// file's type, as for a clip (`clipInput`), so it tells nothing of the
-// user's file name.
-function inputOf(id: string, assets: ConversationAssets): AppInput | null {
+/** The input that the id `id` names; null for an id of no image and no
+ *  clip. The name of an image's copy is the id and the extension of the
+ *  file's type, as for a clip (`clipInput`), so it tells nothing of the
+ *  user's file name. */
+export function inputOf(id: string, assets: ConversationAssets): AppInput | null {
   const path = assets.images.get(id)
   if (path !== undefined) {
     const type = imageMediaType(path)
@@ -98,19 +114,34 @@ function inputOf(id: string, assets: ConversationAssets): AppInput | null {
   return clip ? clipInput(clip) : null
 }
 
+/** An input as the handler of a page gets it (`run.inputs`): no copy and
+ *  no path, as the page reads the bytes over the frame bridge. */
+export function frameInputs(inputs: readonly AppInput[]): AppFrameInput[] {
+  return inputs.map((input) => ({ id: input.id, kind: input.kind, type: input.kind === 'image' ? input.type : input.clip.type }))
+}
+
 /** The run of an app that an `invoke` call asks for. */
 export interface InvokeCall {
   app: AppsPath
   /** The manifest file of the app, which tells its kind. */
   manifest: AppsPath
-  /** The file whose default export the run calls. */
+  /** The file of a script app whose default export the run calls. */
   main: AppsPath
+  /** The page of a UI app, which registers the handler that the run
+   *  calls. */
+  index: AppsPath
   /** The first argument of that function, as the call gave it. */
   parameters: JsonObject
   /** The images and the clips of the call, each one once, in the order of
    *  the call. */
   inputs: AppInput[]
   timeoutMs: number
+}
+
+/** A call whose app can run (`checkInvokeTarget`), with the kind of the
+ *  app, which picks what runs it. */
+export interface CheckedInvokeCall extends InvokeCall {
+  kind: AppKind
 }
 
 function parametersOf(args: SubcommandArguments): JsonObject {
@@ -136,7 +167,15 @@ export function invokeCall(args: SubcommandArguments, sections: readonly Section
     else unknown.push(id)
   }
   if (unknown.length > 0) throw new ToolError(unknownAssetsText(unknown, assets, { argument: '`inputs`', notDone: NOT_DONE }))
-  return { app, manifest: pathIn(app, MANIFEST_FILE), main: pathIn(app, SCRIPT_MAIN_FILE), parameters: parametersOf(args), inputs, timeoutMs }
+  return {
+    app,
+    manifest: pathIn(app, MANIFEST_FILE),
+    main: pathIn(app, SCRIPT_MAIN_FILE),
+    index: pathIn(app, UI_INDEX_FILE),
+    parameters: parametersOf(args),
+    inputs,
+    timeoutMs,
+  }
 }
 
 /** What is at the paths of an app that a call runs. Each fact is exact
@@ -149,17 +188,28 @@ export interface InvokeTarget {
    *  (`isReadableManifest`). */
   manifestBytes: Uint8Array | null
   main: PathFacts
+  index: PathFacts
 }
 
 const MAIN_EXPORT = '`export default async function main(parameters, dez) { … }`'
 
-/** Throws a `ToolError` unless the app of `call` is a script app that a
- *  run can start: its folder, a manifest that tells the kind `script`, and
- *  its main file. */
-export function checkInvokeTarget({ app, manifest, main }: InvokeCall, target: InvokeTarget): void {
+/** The kind of the app of `call`, which a run can start. Throws a
+ *  `ToolError` unless the app has its folder, a manifest that tells its
+ *  kind, and the file that a run of that kind needs: the main file of a
+ *  script app, or the page of a UI app. */
+export function checkInvokeTarget({ app, manifest, main, index }: InvokeCall, target: InvokeTarget): AppKind {
   checkAppIsThere(app, target.app)
-  if (checkedAppKind(app, manifest, target.manifest, target.manifestBytes, NOT_DONE) !== 'script') {
-    throw new ToolError(`${app.virtual} is a UI app, and invoke runs only a script app: an app whose ${MANIFEST_FILE} has the kind "script", with its code in ${SCRIPT_MAIN_FILE}. ${NOT_DONE}`)
+  const kind = checkedAppKind(app, manifest, target.manifest, target.manifestBytes, NOT_DONE)
+  if (kind === 'ui') {
+    if (target.index.kind === 'missing') {
+      throw new ToolError(`The app ${app.virtual} has no ${UI_INDEX_FILE}, the page whose handler a run calls. `
+        + `Write ${index.virtual}: it loads Dez's script with ${UI_CLIENT_SCRIPT_TAG}, and a script of the page registers the handler, as in ${APP_HANDLER_EXAMPLE}. ${NOT_DONE}`)
+    }
+    if (target.index.kind !== 'file') {
+      throw new ToolError(`${index.virtual} is ${kindName(target.index.kind)} and no file, so a run has no page to load. `
+        + `Delete it with rm, and write the page of the app as that file. ${NOT_DONE}`)
+    }
+    return kind
   }
   if (target.main.kind === 'missing') {
     throw new ToolError(`The app ${app.virtual} has no ${SCRIPT_MAIN_FILE}, the file whose code a run calls. `
@@ -169,6 +219,7 @@ export function checkInvokeTarget({ app, manifest, main }: InvokeCall, target: I
     throw new ToolError(`${main.virtual} is ${kindName(target.main.kind)} and no file, so a run has no code to call. `
       + `Delete it with rm, and write the file with the function of the app as its default export, as in ${MAIN_EXPORT}. ${NOT_DONE}`)
   }
+  return kind
 }
 
 /** The file URL of the absolute path `path`, as the module of Dez imports
@@ -216,9 +267,11 @@ export function appRunDescription(call: Pick<InvokeCall, 'parameters' | 'inputs'
 
 /** What the result of a call that started a job adds after
  *  `jobStartedText`: the inputs of the run, so that the model sees at once
- *  what the code gets. Each `@id` of this text is an input of the job. */
-export function invokeInputsText(inputs: readonly AppInput[]): string {
-  return inputs.length === 0 ? 'The run has no input.' : `The inputs of the run, in the order of dez.inputs: ${inputs.map(assetText).join(', ')}.`
+ *  what the code gets, and where (by the kind of the app). Each `@id` of
+ *  this text is an input of the job. */
+export function invokeInputsText(inputs: readonly AppInput[], kind: AppKind): string {
+  if (inputs.length === 0) return 'The run has no input.'
+  return `The inputs of the run, in the order of ${kind === 'ui' ? 'run.inputs' : 'dez.inputs'}: ${inputs.map(assetText).join(', ')}.`
 }
 
 /** The label of an `invoke` call (`JobCall.label`): the app, and the
@@ -414,4 +467,94 @@ export function appRunResult(outcome: RunOutcome, log: string, forModel: (text: 
  *  file into the Dez folder. */
 export function appOutputNotStoredText(): string {
   return `The app ended with no error, but Dez could not get the files of its output folder into the Dez folder, so it kept none. ${tellUserConsole(APPS_TOOL.name)}`
+}
+
+/** A text of the page of a run (its value, its error, its console output)
+ *  as a result holds it. The URL of a file of an app reads as the `apps`
+ *  tool names the file (`/apps/<app>/main.js`): the stack of an error
+ *  names a file by its URL in the scheme of the app frames. A page knows
+ *  no path of this computer, but the parameters of a call can hold one,
+ *  so the text goes through `textForModel` too. */
+export function frameTextForModel(text: string): string {
+  return textForModel(text.replaceAll(APP_FRAME_ROOT_URL, `${APPS_VIRTUAL_ROOT}/`), [])
+}
+
+// The outcome of a run of the handler of a page that ended with `end`.
+function frameOutcome(end: AppFrameEnd): RunOutcome {
+  const failed = (lead: string): RunOutcome => ({ isError: true, lead, given: null, advice: [] })
+  switch (end.kind) {
+    case 'returned':
+      return returnedOutcome(end.value)
+    case 'threw':
+      return { isError: true, lead: `The code of the app threw an error. ${KEPT_NONE} The error:`, given: { text: end.error, name: 'text of the error' }, advice: [] }
+    case 'unregistered':
+      return failed(`The page of the app has no handler for a run. ${KEPT_NONE} `
+        + `A script of the page must register the handler while the page loads, before its first \`await\`, as in ${APP_HANDLER_EXAMPLE}.`)
+    case 'noClient':
+      return failed(`The page of the app loaded, but it did not answer Dez. ${KEPT_NONE} `
+        + `The usual cause: ${UI_INDEX_FILE} does not load Dez's script. Put ${UI_CLIENT_SCRIPT_TAG} before the other scripts of the page.`)
+    case 'navigated':
+      return failed(`Dez stopped the app: its page loaded again, or went to another page. ${KEPT_NONE} `
+        + 'An app is one page: its code must not reload the page, set `location`, or send a form.')
+  }
+}
+
+// What a result tells of the files that a page saved (their kinds, in the
+// order of the saves, which is the order of the assets of the job), as its
+// paragraphs.
+function savedParagraphs(kinds: readonly JobAssetKind[]): string[] {
+  if (kinds.length === 0) return []
+  const names = kinds.map((kind) => ASSET_NAMES[kind]).join(', ')
+  return [kinds.length === 1
+    ? `Dez keeps the 1 file that the app saved (${names}). The line at the end gives its id.`
+    : `Dez keeps the ${kinds.length} files that the app saved, in the order of the saves: ${names}. The lines at the end give their ids in this order.`]
+}
+
+/** The result of a run of the handler of a page that ended with `end`:
+ *  what the handler returned or threw, the files that the page saved
+ *  (`saved`: their kinds, in the order of the saves), then the console
+ *  output of the page. Only a run whose handler returned keeps its files:
+ *  for any other end, give no saved file. */
+export function appFrameResult(end: AppFrameEnd, saved: readonly JobAssetKind[]): { text: string, isError: boolean } {
+  const outcome = frameOutcome(end)
+  const log = 'log' in end ? end.log : ''
+  return { text: runResultText(outcome, log, frameTextForModel, () => savedParagraphs(saved)), isError: outcome.isError }
+}
+
+/** Throws an `AppCallError` for a save of a page with `size` bytes that
+ *  Dez does not take: no bytes, or more than one file of a run can have.
+ *  This check reads no byte, so a save that it refuses does not count
+ *  (`SaveCount`). */
+export function checkSaveSize(size: number): void {
+  if (size === 0) throw new AppCallError('Dez saved nothing: the save has no bytes.')
+  if (size > APP_RUN_MAX_OUTPUT_BYTES) {
+    throw new AppCallError(`Dez saved nothing: the file has ${byteSizeText(size)}, and an app can save at most ${byteSizeText(APP_RUN_MAX_OUTPUT_BYTES)} in one file.`)
+  }
+}
+
+/** The saves of one run of a page that got past the size check, counted.
+ *  A save of a type that Dez refuses counts too: Dez read its bytes. */
+export class SaveCount {
+  private taken = 0
+
+  /** Counts one save. Throws an `AppCallError` for a save over
+   *  `APP_RUN_MAX_OUTPUT_FILES`. */
+  take(): void {
+    if (this.taken >= APP_RUN_MAX_OUTPUT_FILES) {
+      throw new AppCallError(`Dez saved nothing: an app can save at most ${APP_RUN_MAX_OUTPUT_FILES} files in one run, and this run has used them.`)
+    }
+    this.taken += 1
+  }
+}
+
+/** The type of a save of a page with the bytes `bytes`, which their first
+ *  bytes tell, never a name or the type of the Blob. Throws an
+ *  `AppCallError` for bytes of a type that Dez does not store. */
+export function savedFileType(bytes: Uint8Array): StoredFileType {
+  const type = storedTypeOfBytes(bytes)
+  if (type === null) {
+    throw new AppCallError('Dez saved nothing: the bytes are no file of a type that Dez stores. '
+      + 'Dez reads the type from the first bytes: an image (PNG, JPEG, GIF, WebP, or SVG) or a clip (MP4, MOV, WebM, WAV, MP3, M4A, AAC, FLAC, or Ogg).')
+  }
+  return type
 }

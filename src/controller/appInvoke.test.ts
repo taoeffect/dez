@@ -2,16 +2,17 @@ import sbp from '@sbp/sbp'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { Section } from '../model/chat/types'
 import { user } from '../model/streams/testing'
-import { APP_RUNS_STATE, appOutputNotStoredText, invokeCall, invokeInputsText } from '../model/tools/appInvoke'
+import { APP_READ_ASSET, APP_SAVE_ASSET, APP_STOPPED_TEXT, AppCallError, notAnInputText, SaveNotStoredError, type AppFrameEnd, type AppFrameRun, type SavedAssetAnswer } from '../model/tools/appBridge'
+import { APP_PAGE_LOADS_STATE, APP_RUNS_STATE, appOutputNotStoredText, invokeCall, invokeInputsText, type CheckedInvokeCall } from '../model/tools/appInvoke'
 import { MANIFEST_MAX_BYTES } from '../model/tools/appManifest'
-import { APPS_MAX_ENTRIES } from '../model/tools/appsTool'
+import { APP_RUN_MAX_OUTPUT_FILES, APPS_MAX_ENTRIES } from '../model/tools/appsTool'
 import { unreadableImageText } from '../model/tools/imageTool'
 import { jobStartedText, jobTimedOutText } from '../model/tools/jobs'
 import { JS_EVAL_OUTPUT_BYTES, JS_EVAL_RUNNER, JS_EVAL_RUNNER_FILE, RUN_DESCRIPTION_FILE } from '../model/tools/jsEval'
 import { PROGRAM_READS_INPUTS, programNotStartedText } from '../model/tools/programRuns'
-import { appsArgs, CONVERSATION, FILM, RED } from '../model/tools/testing'
+import { appsArgs, CONVERSATION, FILM, RED, SKY } from '../model/tools/testing'
 import type { ToolRunResult } from '../model/tools/types'
-import { checkedInvokeCall, runAppJob } from './appInvoke'
+import { checkedInvokeCall, runAppFrameJob, runAppJob } from './appInvoke'
 import { TabJobs, type MadeAsset } from './jobs'
 import type { AppFileRef, BundledToolEnd, FileTree } from './nativeTypes'
 import {
@@ -24,6 +25,7 @@ import {
   failureOf,
   fakeAppFiles,
   FILE_ID,
+  heldStep,
   native,
   protocolLine,
   refusalOf,
@@ -62,6 +64,13 @@ let consoleError: MockInstance<typeof console.error>
 // The sections of the tab of a call through the tool.
 let tabSections: Section[] = []
 
+// The frame of a run of a UI app: the runs that Dez asked for, and what
+// the page of the app does in one (the stub of `dez.ui/runAppFrame`).
+let frameRuns: AppFrameRun[] = []
+let page: (run: AppFrameRun) => Promise<AppFrameEnd>
+// The paths of the images that Dez read for a page.
+let readImages: string[] = []
+
 sbp('sbp/selectors/register', {
   'dez.model/tab' (): { sections: Section[] } {
     return { sections: tabSections }
@@ -72,7 +81,32 @@ sbp('sbp/selectors/register', {
   async 'dez.controller/media/delete' (path: string): Promise<void> {
     deletedClips.push(path)
   },
+  // The read gives a file with the name of the user's file, as the real
+  // one does.
+  async 'dez.controller/images/readFile' (path: string): Promise<File> {
+    readImages.push(path)
+    return new File([PNG], path.slice(path.lastIndexOf('/') + 1), { type: 'image/png' })
+  },
+  async 'dez.controller/media/readClip' (clip: { type: string }): Promise<Blob> {
+    return new Blob([WAV], { type: clip.type })
+  },
+  'dez.ui/runAppFrame' (run: AppFrameRun): Promise<AppFrameEnd> {
+    frameRuns.push(run)
+    return page(run)
+  },
 })
+
+// A page whose handler returned `value`.
+const returned = (value?: string): AppFrameEnd => ({ kind: 'returned', value, log: '' })
+
+// The calls of a page of the run `run`.
+function save(run: AppFrameRun, bytes: Uint8Array): Promise<SavedAssetAnswer> {
+  return run.onCall({ selector: APP_SAVE_ASSET, blob: new Blob([bytes]) }) as Promise<SavedAssetAnswer>
+}
+
+function read(run: AppFrameRun, id: string): Promise<Blob> {
+  return run.onCall({ selector: APP_READ_ASSET, id }) as Promise<Blob>
+}
 
 function isOutputFolder(file: AppFileRef): boolean {
   return file.root === 'cache' && file.path.endsWith('/output')
@@ -114,6 +148,14 @@ function runJob(call = invoke(), signal: AbortSignal = running()) {
   return runAppJob(call, signal, (state) => states.push(state), (asset) => keptAssets.push(asset))
 }
 
+function uiCall(parameters: Record<string, unknown> = {}, sections = CONVERSATION): CheckedInvokeCall {
+  return { ...invoke(parameters, sections), kind: 'ui' }
+}
+
+function runFrameJob(call = uiCall(), signal: AbortSignal = running()) {
+  return runAppFrameJob(call, signal, (state) => states.push(state), (asset) => keptAssets.push(asset))
+}
+
 beforeEach(() => {
   resetNative()
   deletedImages = []
@@ -121,6 +163,9 @@ beforeEach(() => {
   states = []
   keptAssets = []
   outputListings = 0
+  frameRuns = []
+  readImages = []
+  page = async () => returned()
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
   outputFolderHolds({})
 })
@@ -143,11 +188,21 @@ describe('checkedInvokeCall', () => {
     expect(call.timeoutMs).toBe(20_000)
   })
 
+  it('gives the run of a UI app that has its page', async () => {
+    fakeAppFiles(appFiles('notes', { 'index.html': '<!doctype html>\n' }, 'ui'))
+
+    const call = await checked({ inputs: '@a' })
+
+    expect(call.kind).toBe('ui')
+    expect(call.index.virtual).toBe('/apps/notes/index.html')
+  })
+
   it.each([
     ['an app that is not there', appFiles('other', { 'main.ts': MAIN }), 'There is no app /apps/notes'],
     ['an app with no manifest', { 'apps/notes/main.ts': MAIN }, 'has no manifest.json'],
     ['a manifest that is not valid', { 'apps/notes/manifest.json': '{"name": "notes"', 'apps/notes/main.ts': MAIN }, 'is not valid'],
-    ['a UI app', appFiles('notes', { 'main.ts': MAIN }, 'ui'), 'is a UI app'],
+    ['a UI app with no page', appFiles('notes', { 'main.ts': MAIN }, 'ui'), 'has no index.html'],
+    ['a folder at the place of the page of a UI app', appFiles('notes', { 'index.html': null }, 'ui'), '/apps/notes/index.html is a folder'],
     ['an app with no main file', appFiles('notes', { 'lib/main.ts': MAIN }), 'has no main.ts'],
     ['a folder at the place of the main file', appFiles('notes', { 'main.ts': null }), '/apps/notes/main.ts is a folder'],
   ])('refuses %s', async (_, files, fragment) => {
@@ -310,7 +365,7 @@ describe('runAppJob', () => {
     const folder = deletedWorkFolder()
     expect(native.runs[0].run.inputs).toStrictEqual([{ name: 'a.png', source: linked }])
     expect(outcome.text).toBe('read /work/a.png')
-    for (const text of [JSON.stringify(runDescription(folder)), invokeInputsText(call.inputs), outcome.text]) expect(text).not.toContain('private-name')
+    for (const text of [JSON.stringify(runDescription(folder)), invokeInputsText(call.inputs, 'script'), outcome.text]) expect(text).not.toContain('private-name')
   })
 
   it('runs no program for an image that Dez cannot read', async () => {
@@ -493,6 +548,200 @@ describe('runAppJob', () => {
   })
 })
 
+// The run of the page of a UI app, on a stub of the frame: the tests tell
+// what a page reads, and what Dez keeps of what it saved.
+describe('runAppFrameJob', () => {
+  it('gives the frame the app, the parameters, and the inputs with no path, and runs no program', async () => {
+    page = async (run) => {
+      run.onRuns()
+      return returned('done')
+    }
+
+    const outcome = await runFrameJob(uiCall({ parameters: { columns: 4 }, inputs: '@a @c' }))
+
+    expect(frameRuns).toHaveLength(1)
+    expect(frameRuns[0].name).toBe('notes')
+    expect(frameRuns[0].parameters).toStrictEqual({ columns: 4 })
+    expect(frameRuns[0].inputs).toStrictEqual([{ id: 'a', kind: 'image', type: 'image/jpeg' }, { id: 'c', kind: 'video', type: 'video/webm' }])
+    expect(states).toStrictEqual([APP_PAGE_LOADS_STATE, APP_RUNS_STATE])
+    expect(outcome).toStrictEqual({ text: 'done', isError: false, assets: [] })
+    expect(native.runs).toStrictEqual([])
+    expect(native.createdFolders).toStrictEqual([])
+  })
+
+  it('keeps the files that the page saved as the assets of the job, in the order of the saves', async () => {
+    let answers: SavedAssetAnswer[] = []
+    // The first write is the slow one.
+    native.saveAppFile = async (file) => {
+      if (file.path.endsWith('.png')) await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    page = async (run) => {
+      answers = await Promise.all([save(run, PNG), save(run, WAV)])
+      return returned('2 files')
+    }
+
+    const outcome = await runFrameJob()
+
+    // An asset of a job has no id until a reader takes the result.
+    expect(answers).toStrictEqual([{ id: null, kind: 'image', type: 'image/png' }, { id: null, kind: 'audio', type: 'audio/wav' }])
+    expect(stored().map(({ path, content }) => [path.replace(FILE_ID, '<id>'), content])).toStrictEqual([
+      ['assets/generated/images/<id>.png', PNG],
+      ['assets/generated/audio/<id>.wav', WAV],
+    ])
+    const [first, second] = stored().map(({ path }) => `${APP_DIR}/${path}`)
+    expect(outcome.assets).toStrictEqual([
+      { kind: 'image', path: first },
+      { kind: 'clip', clip: { kind: 'audio', type: 'audio/wav', src: second, url: null, expires: null } },
+    ])
+    // Until the result names a file, only this list keeps it from Delete
+    // Unused Files.
+    expect(keptAssets).toStrictEqual(outcome.assets)
+    expect(outcome.isError).toBe(false)
+    expect(outcome.text).toContain('2 files')
+    expect(outcome.text).toContain('in the order of the saves: image, audio clip')
+    expect(outcome.text).not.toContain('/home/u')
+  })
+
+  // A linked file is outside the Dez folders: the page gets its bytes, and
+  // nothing that goes to the page or to the provider tells its name.
+  it('gives an input of the call as a Blob with no name, also of a linked file, and no other asset', async () => {
+    const linked = '/home/u/Pictures/private-name.png'
+    const call = uiCall({ inputs: '@a' }, [user('u1', `![id=a](${linked})\n![id=e](${SKY})`)])
+    let blob: Blob | undefined
+    let refused: unknown
+    page = async (run) => {
+      blob = await read(run, 'a')
+      refused = await failureOf(read(run, 'e'))
+      return returned(`${blob.size} bytes`)
+    }
+
+    const outcome = await runFrameJob(call)
+
+    expect(readImages).toStrictEqual([linked])
+    expect(blob).not.toBeInstanceOf(File)
+    expect(blob?.type).toBe('image/png')
+    expect(new Uint8Array(await (blob as Blob).arrayBuffer())).toStrictEqual(PNG)
+    expect(refused).toBeInstanceOf(AppCallError)
+    expect((refused as Error).message).toBe(notAnInputText('e', call.inputs))
+    expect(outcome.text).toBe(`${PNG.length} bytes`)
+    for (const text of [JSON.stringify(frameRuns[0].inputs), invokeInputsText(call.inputs, 'ui'), (refused as Error).message, outcome.text]) expect(text).not.toContain('private-name')
+  })
+
+  it.each<[string, AppFrameEnd, string]>([
+    ['whose handler threw', { kind: 'threw', error: 'Error: no rows\n    at dezapp://localhost/notes/main.js:2:9', log: '' }, 'Error: no rows\n    at /apps/notes/main.js:2:9'],
+    ['whose page has no handler', { kind: 'unregistered', log: '' }, 'has no handler'],
+    ['whose page did not answer', { kind: 'noClient' }, 'did not answer Dez'],
+    ['whose page loaded again', { kind: 'navigated' }, 'loaded again'],
+  ])('keeps no file of a run %s', async (_, end, fragment) => {
+    page = async (run) => {
+      await save(run, PNG)
+      await save(run, WAV)
+      return end
+    }
+
+    const outcome = await runFrameJob()
+
+    expect(outcome).toMatchObject({ isError: true, assets: [] })
+    expect(outcome.text).toContain(fragment)
+    expect(outcome.text).not.toContain('dezapp:')
+    const [image, clip] = stored().map(({ path }) => `${APP_DIR}/${path}`)
+    expect(deletedImages).toStrictEqual([image])
+    expect(deletedClips).toStrictEqual([clip])
+  })
+
+  it('deletes the files that it stored at a stop of the job, and rejects with the stop', async () => {
+    const stop = new AbortController()
+    // As the frame does: a stop closes it and rejects with the reason.
+    page = async (run) => {
+      await save(run, PNG)
+      stop.abort(STOP)
+      throw run.signal.reason
+    }
+
+    const error = await failureOf(runFrameJob(uiCall(), stop.signal))
+
+    expect(error).toBe(STOP)
+    expect(stored()).toHaveLength(1)
+    expect(deletedImages).toStrictEqual([`${APP_DIR}/${stored()[0].path}`])
+  })
+
+  // The page of a run that ended is closed, but a write that it started
+  // can still end.
+  it('keeps no file of a save that ends after the run ended', async () => {
+    const write = heldStep()
+    native.saveAppFile = () => write.wait
+    let late: Promise<unknown> = Promise.resolve()
+    page = async (run) => {
+      late = failureOf(save(run, PNG))
+      return returned('done')
+    }
+
+    const outcome = await runFrameJob()
+    write.finish()
+    const error = await late
+
+    expect(outcome).toStrictEqual({ text: 'done', isError: false, assets: [] })
+    expect(keptAssets).toStrictEqual([])
+    expect(error).toBeInstanceOf(AppCallError)
+    expect((error as Error).message).toBe(APP_STOPPED_TEXT)
+    expect(deletedImages).toStrictEqual([`${APP_DIR}/${stored()[0].path}`])
+  })
+
+  it('refuses the save after the most files of one run', async () => {
+    let refused: unknown
+    page = async (run) => {
+      for (let count = 0; count < APP_RUN_MAX_OUTPUT_FILES; count += 1) await save(run, PNG)
+      refused = await failureOf(save(run, PNG))
+      return returned()
+    }
+
+    const outcome = await runFrameJob()
+
+    expect(refused).toBeInstanceOf(AppCallError)
+    expect((refused as Error).message).toContain(`at most ${APP_RUN_MAX_OUTPUT_FILES} files in one run`)
+    expect(stored()).toHaveLength(APP_RUN_MAX_OUTPUT_FILES)
+    expect(outcome.assets).toHaveLength(APP_RUN_MAX_OUTPUT_FILES)
+  })
+
+  it.each([
+    ['bytes of a type that Dez does not store', TEXT, 'no file of a type that Dez stores'],
+    ['a save with no bytes', new Uint8Array(), 'the save has no bytes'],
+  ])('writes no file for %s', async (_, bytes, fragment) => {
+    let refused: unknown
+    page = async (run) => {
+      refused = await failureOf(save(run, bytes))
+      return returned('done')
+    }
+
+    const outcome = await runFrameJob()
+
+    expect(refused).toBeInstanceOf(AppCallError)
+    expect((refused as Error).message).toContain(fragment)
+    expect(native.savedFiles).toStrictEqual([])
+    expect(outcome).toStrictEqual({ text: 'done', isError: false, assets: [] })
+  })
+
+  it('tells the page of a write that failed, with no path, and keeps the files that it stored', async () => {
+    const failure = new Error(`${APP_DIR}: the disk is full`)
+    native.saveAppFile = async (file) => {
+      if (file.path.endsWith('.wav')) throw failure
+    }
+    let refused: unknown
+    page = async (run) => {
+      await save(run, PNG)
+      refused = await failureOf(save(run, WAV))
+      return returned('done')
+    }
+
+    const outcome = await runFrameJob()
+
+    expect(refused).toBeInstanceOf(SaveNotStoredError)
+    expect((refused as Error).message).not.toContain('/home/u')
+    expect(consoleError).toHaveBeenCalledWith('Failed to store a file that an app saved:', failure)
+    expect(outcome.assets).toStrictEqual([{ kind: 'image', path: `${APP_DIR}/${stored()[0].path}` }])
+  })
+})
+
 // The call as a model makes it, through the runner of the tools.
 describe('apps invoke', () => {
   let jobs: TabJobs
@@ -561,15 +810,40 @@ describe('apps invoke', () => {
     expect(written).toStrictEqual([{ path: `${APP_DIR}/${stored()[0].path}`, tool: 'apps', madeBy: id, hidden: id }])
   })
 
-  it('starts no job and no program for an app that cannot run', async () => {
+  it('runs the page of a UI app in a frame with no program, and puts the files that it saved into the reply', async () => {
+    fakeAppFiles(appFiles('notes', { 'index.html': '<!doctype html>\n' }, 'ui'))
+    page = async (run) => {
+      await save(run, PNG)
+      return { kind: 'returned', value: 'drawn', log: 'a line of the page\n' }
+    }
+
+    const started = await invokeTool({ parameters: { rows: 2 }, inputs: '@a' })
+
+    const [job] = jobs.list()
+    expect(started.content.split('\n')[0]).toBe(jobStartedText(job.id, 1))
+    expect(started.content).toContain('in the order of run.inputs: the image @a')
+
+    const result = (await tool('jobs_wait', {})).content
+    expect(frameRuns).toHaveLength(1)
+    expect(frameRuns[0].parameters).toStrictEqual({ rows: 2 })
+    expect(result).toContain('drawn')
+    expect(result).toContain('a line of the page')
+    expect(result).toContain('Made the image @g.')
+    expect(written).toStrictEqual([{ path: `${APP_DIR}/${stored()[0].path}`, tool: 'apps', madeBy: job.id }])
+    expect(native.runs).toStrictEqual([])
+    expect(native.createdFolders).toStrictEqual([])
+  })
+
+  it('starts no job, no program, and no frame for an app that cannot run', async () => {
     fakeAppFiles(appFiles('notes', { 'main.ts': MAIN }, 'ui'))
 
     const result = await invokeTool({ inputs: '@a' })
 
     expect(result.isError).toBe(true)
-    expect(result.content).toContain('is a UI app')
+    expect(result.content).toContain('has no index.html')
     expect(jobs.list()).toStrictEqual([])
     expect(native.runs).toStrictEqual([])
+    expect(frameRuns).toStrictEqual([])
     expect(native.createdFolders).toStrictEqual([])
   })
 })

@@ -1,19 +1,25 @@
 import { describe, expect, it } from 'vitest'
 import { byteSizeText } from '../../utils/byteSize'
+import { AppCallError } from './appBridge'
 import { APP_KINDS, MANIFEST_MAX_BYTES } from './appManifest'
 import {
   APP_OUTPUT_LISTED_ENTRIES,
+  appFrameResult,
   appRunDescription,
   appRunOutcome,
   appRunResult,
   checkedOutput,
   checkInvokeTarget,
+  checkSaveSize,
   fileUrl,
+  frameInputs,
   invokeCall,
   invokeInputsText,
   invokeLabel,
   listedOutputs,
   NO_APP_OUTPUTS,
+  SaveCount,
+  savedFileType,
   type AppOutputs,
   type InvokeTarget,
 } from './appInvoke'
@@ -90,15 +96,21 @@ describe('invokeCall', () => {
 // What is at the paths of a script app that can run, with `changes`.
 function target(changes: Partial<InvokeTarget> = {}): InvokeTarget {
   const manifestBytes = notesManifest('script')
-  return { app: FOLDER_FACTS, manifest: { kind: 'file', size: manifestBytes.length }, manifestBytes, main: { kind: 'file', size: 120 }, ...changes }
+  return { app: FOLDER_FACTS, manifest: { kind: 'file', size: manifestBytes.length }, manifestBytes, main: { kind: 'file', size: 120 }, index: MISSING_TREE, ...changes }
+}
+
+// What is at the paths of a UI app that can run, with `changes`.
+function uiTarget(changes: Partial<InvokeTarget> = {}): InvokeTarget {
+  return target({ manifestBytes: notesManifest('ui'), main: MISSING_TREE, index: { kind: 'file', size: 300 }, ...changes })
 }
 
 describe('checkInvokeTarget', () => {
   const call = invoke({ name: 'notes' })
   const check = (changes: Partial<InvokeTarget>) => refusal(() => checkInvokeTarget(call, target(changes)))
 
-  it('takes a script app with a main file', () => {
-    expect(() => checkInvokeTarget(call, target())).not.toThrow()
+  it('takes a script app with a main file, and a UI app with a page, and tells the kind', () => {
+    expect(checkInvokeTarget(call, target())).toBe('script')
+    expect(checkInvokeTarget(call, uiTarget())).toBe('ui')
   })
 
   it('refuses an app that is not there, and a file at its place', () => {
@@ -124,11 +136,15 @@ describe('checkInvokeTarget', () => {
     }
   })
 
-  it('refuses a UI app before it looks at the main file', () => {
-    const text = check({ manifestBytes: notesManifest('ui'), main: MISSING_TREE })
+  it('refuses a UI app with no page, and one with a folder at its place', () => {
+    const missing = refusal(() => checkInvokeTarget(call, uiTarget({ index: MISSING_TREE, main: { kind: 'file', size: 120 } })))
+    expect(missing).toContain('has no index.html')
+    expect(missing).toContain('Write /apps/notes/index.html')
+    expect(missing).toContain('<script src="~dez.js"></script>')
+    expect(missing).toContain('\'app/invoke\'')
+    expect(missing).toContain(NOT_STARTED)
 
-    expect(text).toContain('/apps/notes is a UI app')
-    expect(text).toContain(NOT_STARTED)
+    expect(refusal(() => checkInvokeTarget(call, uiTarget({ index: FOLDER_FACTS })))).toContain('/apps/notes/index.html is a folder and no file')
   })
 
   it('refuses a script app with no main file, and one with a folder at its place', () => {
@@ -187,12 +203,25 @@ describe('appRunDescription', () => {
 })
 
 describe('invokeInputsText', () => {
-  it('names each input by its kind and its id, in the order of the call', () => {
-    expect(invokeInputsText(invoke({ name: 'notes', inputs: '@c @a @b' }).inputs)).toContain('the video clip @c, the image @a, the audio clip @b')
+  it('names each input by its kind and its id, in the order of the call, and where the code of the kind of app finds them', () => {
+    const { inputs } = invoke({ name: 'notes', inputs: '@c @a @b' })
+
+    expect(invokeInputsText(inputs, 'script')).toBe('The inputs of the run, in the order of dez.inputs: the video clip @c, the image @a, the audio clip @b.')
+    expect(invokeInputsText(inputs, 'ui')).toBe('The inputs of the run, in the order of run.inputs: the video clip @c, the image @a, the audio clip @b.')
   })
 
   it('tells of a run with no input', () => {
-    expect(invokeInputsText([])).toBe('The run has no input.')
+    for (const kind of APP_KINDS) expect(invokeInputsText([], kind)).toBe('The run has no input.')
+  })
+})
+
+describe('frameInputs', () => {
+  it('gives the handler of a page the id, the kind, and the type of each input, and nothing of its file', () => {
+    expect(frameInputs(invoke({ name: 'notes', inputs: '@c @a @d' }).inputs)).toStrictEqual([
+      { id: 'c', kind: 'video', type: 'video/webm' },
+      { id: 'a', kind: 'image', type: 'image/jpeg' },
+      { id: 'd', kind: 'video', type: 'video/webm' },
+    ])
   })
 })
 
@@ -410,5 +439,95 @@ describe('appRunResult', () => {
     expect(text).toContain('at main (file:///apps/notes/main.ts:7:11)')
     expect(text).toContain('wrote /work/output/a.png')
     expect(text).not.toContain('/home/ann')
+  })
+})
+
+describe('appFrameResult', () => {
+  it('gives the value, then the saved files in the order of the saves, then the console output of the page', () => {
+    const { text, isError } = appFrameResult({ kind: 'returned', value: 'Drew the chart.', log: 'drew 3 bars\n' }, ['image', 'audio'])
+
+    expect(isError).toBe(false)
+    expect(text.split('\n\n')).toStrictEqual([
+      'Drew the chart.',
+      'Dez keeps the 2 files that the app saved, in the order of the saves: image, audio clip. The lines at the end give their ids in this order.',
+      'Console output of the code:\ndrew 3 bars',
+    ])
+  })
+
+  it('tells of one saved file, and of a handler that returned no value', () => {
+    expect(appFrameResult({ kind: 'returned', value: undefined, log: '' }, ['video'])).toStrictEqual({
+      text: 'The app ended with no error and returned no value.\n\nDez keeps the 1 file that the app saved (video clip). The line at the end gives its id.',
+      isError: false,
+    })
+  })
+
+  it('gives the error of a handler that threw, with the files of the app by their paths in the apps tool, and the console output', () => {
+    const { text, isError } = appFrameResult({
+      kind: 'threw',
+      error: 'TypeError: bars is not iterable\ndraw@dezapp://localhost/notes/chart.js:4:9\n@dezapp://localhost/notes/main.js:12:20',
+      log: 'error: no file at /home/ann/Pictures/bars.png\n',
+    }, [])
+
+    expect(isError).toBe(true)
+    expect(text).toContain('The code of the app threw an error. Dez kept no file of the run. The error:\nTypeError: bars is not iterable')
+    expect(text).toContain('draw@/apps/notes/chart.js:4:9\n@/apps/notes/main.js:12:20')
+    expect(text).toContain('Console output of the code:')
+    expect(text).not.toContain('dezapp:')
+    expect(text).not.toContain('/home/ann')
+  })
+
+  it('tells a model how to fix a page that has no handler, and one that does not load the script of Dez', () => {
+    const unregistered = appFrameResult({ kind: 'unregistered', log: 'ready\n' }, [])
+    expect(unregistered.isError).toBe(true)
+    expect(unregistered.text).toContain('dez.sbp(\'sbp/selectors/register\', { \'app/invoke\': async (parameters, run) => { … } })')
+    expect(unregistered.text).toContain('before its first `await`')
+    expect(unregistered.text).toContain('Console output of the code:\nready')
+
+    const noClient = appFrameResult({ kind: 'noClient' }, [])
+    expect(noClient.isError).toBe(true)
+    expect(noClient.text).toContain('<script src="~dez.js"></script>')
+  })
+
+  it('tells of a page that Dez stopped because it loaded again', () => {
+    const { text, isError } = appFrameResult({ kind: 'navigated' }, [])
+
+    expect(isError).toBe(true)
+    expect(text).toContain('Dez stopped the app')
+    expect(text).toContain('Dez kept no file of the run.')
+  })
+})
+
+describe('the checks of a save of a page', () => {
+  const refused = (work: () => unknown): string => {
+    try {
+      work()
+    } catch (error) {
+      if (error instanceof AppCallError) return error.message
+      throw error
+    }
+    throw new Error('The save was not refused.')
+  }
+
+  it('takes a size from one byte to the limit of one file', () => {
+    expect(() => checkSaveSize(1)).not.toThrow()
+    expect(() => checkSaveSize(APP_RUN_MAX_OUTPUT_BYTES)).not.toThrow()
+    expect(refused(() => checkSaveSize(0))).toContain('no bytes')
+    expect(refused(() => checkSaveSize(APP_RUN_MAX_OUTPUT_BYTES + 1))).toContain(byteSizeText(APP_RUN_MAX_OUTPUT_BYTES))
+  })
+
+  it('counts as many saves as the limit of a run, and refuses each one after them', () => {
+    const count = new SaveCount()
+
+    for (let save = 0; save < APP_RUN_MAX_OUTPUT_FILES; save++) count.take()
+    expect(refused(() => count.take())).toContain(`at most ${APP_RUN_MAX_OUTPUT_FILES} files`)
+    expect(refused(() => count.take())).toContain(`at most ${APP_RUN_MAX_OUTPUT_FILES} files`)
+    // Each run has its own count.
+    expect(() => new SaveCount().take()).not.toThrow()
+  })
+
+  it('takes the type of a save from its first bytes, and refuses bytes of a type that Dez does not store', () => {
+    expect(savedFileType(PNG)).toStrictEqual({ kind: 'image', type: 'image/png', extension: 'png' })
+    expect(savedFileType(WAV)).toStrictEqual({ kind: 'audio', type: 'audio/wav', extension: 'wav' })
+    expect(refused(() => savedFileType(bytes('<!doctype html><html></html>')))).toContain('no file of a type that Dez stores')
   })
 })

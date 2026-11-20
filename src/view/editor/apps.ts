@@ -3,14 +3,17 @@ import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemir
 import sbp from '@sbp/sbp'
 import { findAppTags, type AppTag } from '../../model/chat/appTags'
 import { SENTINEL_CHAR, plainLiveText } from '../../model/chat/content'
+import type { Section } from '../../model/chat/types'
+import { APP_STOPPED_TEXT, AppCallError, SAVE_NEEDS_DRAFT_TEXT, SaveNotStoredError, type SavedAppFile, type SavedAssetAnswer } from '../../model/tools/appBridge'
 import type { AppCardFacts } from '../../model/tools/appShow'
 import { appSizeLabel, knownAppFacts, readAppFacts, setAppDeleted } from '../apps/appFacts'
 import { FRAME_PLACE_ATTRIBUTE, placeAppFrames, type AppFrameActions, type AppRun } from '../apps/appFrameHost'
 import { appIcon } from '../apps/appIcon'
 import { leaveFullscreen } from '../fullscreen'
-import { APP_BOX_HEIGHT_PX, APP_CARD_PADDING_PX, editorSizePx, sectionsField, type SectionModel } from '../thread/cmEditor'
+import { APP_BOX_HEIGHT_PX, APP_CARD_PADDING_PX, docToSections, editorSizePx, pillsField, sectionsField, type SectionModel } from '../thread/cmEditor'
 import { compactionBlockEnd } from './compactionBlock'
 import { syncDomSelection } from './focus'
+import { insertSavedFile } from './imageInsert'
 import { linesRemovalRange } from './images'
 import { lineBlocks, sectionRolesChanged, sectionTexts } from './lineBlocks'
 import { followShownRange, pendingRanges } from './pendingRanges'
@@ -430,13 +433,51 @@ export async function deleteApp(view: EditorView, from: number): Promise<void> {
   if (range) syncDomSelection(view)
 }
 
-// What the controls of the bar of a run do in the editor state.
+// The sections of the conversation that `state` shows, with the text as it
+// is in the editor now: the store gets an edit a moment later.
+function shownSections(state: EditorState): Section[] {
+  return docToSections(state.doc.toString(), state.field(sectionsField), state.field(pillsField))
+}
+
+// Why the conversation of `view` cannot take a save of the page of the run
+// `runId` now; null when it can. The app can have stopped while Dez stored
+// the file (a Stop, a tab switch). A save goes into the message that the
+// user writes, the last section: while a reply runs, the last section is
+// that reply, and the user can make the last section an agent section.
+function saveProblem(view: EditorView, runId: string): string | null {
+  if (!appRuns(view.state).some((run) => run.id === runId)) return APP_STOPPED_TEXT
+  return view.state.field(sectionsField).at(-1)?.role === 'user' ? null : SAVE_NEEDS_DRAFT_TEXT
+}
+
+// What the controls of the bar of a run and the calls of its page do in
+// the editor state.
 const FRAME_ACTIONS: AppFrameActions = {
   // A program write: no `userEvent`.
   stop: (view, runId) => view.dispatch({ effects: stopAppEffect.of(runId) }),
   remove(view, runId) {
     const run = appRuns(view.state).find((run) => run.id === runId)
     if (run) void deleteApp(view, run.from)
+  },
+  // A shown app reads the images and the clips that its user sees: those
+  // of the conversation that shows it.
+  readAsset: (view, id) => sbp('dez.controller/apps/readAsset', id, shownSections(view.state)) as Promise<Blob>,
+  async saveAsset(view, runId, blob, saves) {
+    // Before the store, so that a save that cannot go writes no file.
+    const problem = saveProblem(view, runId)
+    if (problem !== null) throw new AppCallError(problem)
+    try {
+      return await sbp('dez.controller/apps/saveAsset', blob, saves, (file: SavedAppFile) => {
+        // The store took time: the conversation can have changed.
+        const problemNow = saveProblem(view, runId)
+        if (problemNow !== null) throw new AppCallError(problemNow)
+        return insertSavedFile(view, file)
+      }) as SavedAssetAnswer
+    } catch (error) {
+      // The controller has logged the failed write and shown a toast,
+      // which is outside of an app that fills the screen.
+      if (error instanceof SaveNotStoredError) void leaveFullscreen(view.dom)
+      throw error
+    }
   },
 }
 

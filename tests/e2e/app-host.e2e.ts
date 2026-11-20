@@ -1,6 +1,9 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { appTagText } from '../../src/model/chat/appTags'
+import { SAVE_NEEDS_DRAFT_TEXT, SAVE_NEEDS_USER_TEXT } from '../../src/model/tools/appBridge'
 import {
   appFolderSize,
   inRunningApp,
@@ -10,6 +13,7 @@ import {
   shownAppCards,
   shownAppCorners,
   shownAppFrames,
+  uiAppFiles,
   waitForAppFullscreen,
   type ShownAppCard,
   type ShownAppFrame,
@@ -30,7 +34,10 @@ import {
   waitForValue,
   type Point,
 } from './harness/dom'
-import { appFilePath, filesIn } from './harness/fixtures'
+import { DROPPED_FILES_TEXT, expectNoLinkedFile, linkedDropDir, openDroppedFiles } from './harness/drops'
+import { appFilePath, filesIn, newFileIn, storedFileName } from './harness/fixtures'
+import { generatedImagesDir, shownImages, solidPng, STRIPES_PNG } from './harness/images'
+import { WEBM_VIDEO } from './harness/media'
 import { menuRecord, recordAssetMenus, resetMenuRecord, type MenuRecord } from './harness/menus'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, sendChatReply, type MockProvider } from './harness/mockServer'
@@ -71,6 +78,12 @@ import {
 //   and Escape goes one step back for each key;
 // - a context click on a card, on a bar, and in the page of an app asks
 //   for the menu of the app, with its folder (harness/menus.ts);
+// - the page of an app reads the bytes of each image and clip of its
+//   conversation, also of a file that the user linked, and calls nothing
+//   else of Dez: Dez drops each message of the page that it does not know;
+// - a save of the page goes into the message that the user writes, as a
+//   stored file with a new id, only while the user works in the app and
+//   while the conversation ends with that message;
 // - an app whose frame goes to another page is stopped.
 // The pages come from the real scheme of the app frames, with Dez's client
 // script (`~dez.js`). The guards of a frame have their own audit
@@ -132,6 +145,60 @@ const STOP = hostPart('notes', '.dez-app-frame__stop')
 const deletePrompt = (app: string): string =>
   `Are you sure you want to delete the app ${app}? Dez deletes the folder of the app with all its files. No conversation can run the app after that.`
 
+// The image that the app `board` saves.
+const BOARD_PNG = solidPng(16, 16, [200, 120, 40])
+
+// The script of the page of the app `board`, which calls Dez (the frame
+// bridge, src/model/tools/appBridge.ts). A test calls its functions in
+// the page, and a click on the button of the page saves `BOARD_PNG`, as
+// the app of a model saves at a click of the user.
+const BOARD_MAIN = [
+  `const PNG = Uint8Array.from(atob("${BOARD_PNG.toString('base64')}"), (char) => char.charCodeAt(0))`,
+  '// What a call of Dez gave: its value, or the message of its error.',
+  'function outcome (call) {',
+  '  return call.then((value) => ({ value }), (error) => ({ refused: error.message }))',
+  '}',
+  '// What the read of the asset `id` gave: the facts of its Blob.',
+  'async function read (id) {',
+  '  const got = await outcome(dez.sbp("dez.app/readAsset", id))',
+  '  if (!(got.value instanceof Blob)) return got',
+  '  const bytes = new Uint8Array(await got.value.arrayBuffer())',
+  '  return { value: { type: got.value.type, size: got.value.size, isFile: got.value instanceof File, base64: btoa(String.fromCharCode(...bytes)) } }',
+  '}',
+  'function save (bytes) {',
+  '  return outcome(dez.sbp("dez.app/saveAsset", bytes))',
+  '}',
+  'function savePng () {',
+  '  return save(new Blob([PNG]))',
+  '}',
+  'document.getElementById("save").addEventListener("click", async () => {',
+  '  document.getElementById("saved").textContent = JSON.stringify(await savePng())',
+  '})',
+  '',
+].join('\n')
+
+const BOARD_BODY = '<button id="save">Save</button>\n<pre id="saved"></pre>'
+
+const BOARD_RUN = '.cm-content .dez-app[data-app="board"] .dez-app__run'
+
+// What a call of Dez gave the page of `board` (`outcome` in `BOARD_MAIN`).
+type Outcome<T> = { value: T } | { refused: string }
+
+// A function of `BOARD_MAIN` that calls Dez.
+type BoardCall<T> = (value?: unknown) => Promise<Outcome<T>>
+
+// What the page of `board` tells of a Blob that it read (`read` in
+// `BOARD_MAIN`).
+interface ReadBlob {
+  type: string
+  size: number
+  isFile: boolean
+  base64: string
+}
+
+// What Dez answers a save of `BOARD_PNG` that it stored as the asset `id`.
+const savedPng = (id: string): Outcome<unknown> => ({ value: { id, kind: 'image', type: 'image/png' } })
+
 // What a test reads of the page of `notes`; each part is null while the
 // page loads.
 interface NotesPage {
@@ -155,6 +222,11 @@ describe('apps in a conversation', () => {
   let browser: E2EBrowser
   // The folder of the apps of the test HOME.
   let appsDir: string
+  // The folder of the images that Dez stores for a tool or an app.
+  let imagesDir: string
+  // A folder that is not in the test HOME, so that the app links a file of
+  // it in place.
+  let linkedDir: string
 
   const notesPage = (): Promise<NotesPage> => inRunningApp(browser, 'notes', () => browser.execute(() => ({
     load: document.body?.dataset.load ?? null,
@@ -231,13 +303,49 @@ describe('apps in a conversation', () => {
     return { run, page }
   }
 
+  // Opens a conversation whose reply shows the app `board`. The message
+  // that the user writes has the files of `openDroppedFiles`.
+  async function openBoard (id: string): Promise<void> {
+    await openDroppedFiles(setup, CALLER, linkedDir, id, [
+      { role: 'user', text: 'Show me the board app.' },
+      { role: 'agent', text: appTagText('board') },
+    ])
+    await waitForValue(browser, 'the poster', async () => (await shownAppCards(browser)).map((card) => card.state), ['run'])
+  }
+
+  // Clicks Run of the card of `board`, and waits for the script of its
+  // page.
+  async function runBoard (): Promise<void> {
+    await pointerClick(browser, BOARD_RUN)
+    await waitFor(browser, hostPart('board', 'iframe'))
+    await waitForValue(browser, 'the page of the app', () => inRunningApp(browser, 'board', () => browser.execute(() => typeof Reflect.get(window, 'savePng'))), 'function')
+  }
+
+  // Clicks the button of the page of `board`, which saves `BOARD_PNG`. The
+  // card is at the start of the conversation, and a reply can have moved
+  // the view.
+  async function clickBoardSave (): Promise<void> {
+    await scrollEditorToTop(browser)
+    await pointerClickAt(browser, await runningAppPoint(browser, 'board', '#save'))
+  }
+
+  // What Dez answered the last click on the button of `board`; null before
+  // the first answer.
+  async function boardSaved (): Promise<Outcome<unknown> | null> {
+    const text = await inRunningApp(browser, 'board', () => browser.execute(() => document.querySelector('#saved')?.textContent ?? ''))
+    return text === '' ? null : JSON.parse(text) as Outcome<unknown>
+  }
+
   beforeAll(async () => {
+    linkedDir = await linkedDropDir('app-host')
     setup = await startMockProviderApp(CALLER)
     browser = setup.browser
     appsDir = appFilePath(setup.app.home, 'apps')
+    imagesDir = generatedImagesDir(setup.app.home)
     await seedApp(appsDir, { name: 'notes', description: 'Keeps notes.', kind: 'ui' }, NOTES_FILES)
     await seedApp(appsDir, { name: 'timer', description: 'Counts down.', kind: 'ui' }, { 'index.html': '<!doctype html>\n<p>Timer</p>\n' })
     await seedApp(appsDir, { name: 'sum', description: 'Adds numbers.', kind: 'script' }, { 'main.ts': 'export default () => 1\n' })
+    await seedApp(appsDir, { name: 'board', description: 'Works with pictures.', kind: 'ui' }, uiAppFiles(BOARD_MAIN, BOARD_BODY))
     await recordAssetMenus(browser)
   })
 
@@ -253,6 +361,7 @@ describe('apps in a conversation', () => {
 
   afterAll(async () => {
     await setup?.stop()
+    if (linkedDir) await fs.promises.rm(linkedDir, { recursive: true, force: true })
   })
 
   it('shows each app as a poster, with Run only for an app that Dez can start', async () => {
@@ -662,6 +771,155 @@ describe('apps in a conversation', () => {
     // A wrong menu would come in the next frames.
     await browser.pause(300)
     expect(await menuRecord(browser)).toStrictEqual(record)
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('gives a shown app the bytes of each image and clip of its conversation, also of a linked file, and nothing else of Dez', async () => {
+    await openBoard('app-host-reads')
+    const doc = await editorDoc(browser)
+    const before = await filesIn(imagesDir)
+    await runBoard()
+
+    // A read gives a Blob with the type of its asset, and no file name.
+    // The id can have its `@`.
+    const reads = await inRunningApp(browser, 'board', () => browser.execute(async () => {
+      const read = Reflect.get(window, 'read') as BoardCall<ReadBlob>
+      return [await read('a'), await read('@b'), await read('c'), await read('z'), await read('a b'), await read()]
+    }))
+    const blob = (type: string, bytes: Buffer): Outcome<ReadBlob> => ({ value: { type, size: bytes.length, isFile: false, base64: bytes.toString('base64') } })
+    const noId: Outcome<ReadBlob> = { refused: 'dez.app/readAsset takes the id of an image or a clip, as in dez.sbp(\'dez.app/readAsset\', \'a\'). It got no such id.' }
+    expect(reads).toStrictEqual([
+      blob('image/png', STRIPES_PNG),
+      blob('image/png', STRIPES_PNG),
+      blob('video/webm', WEBM_VIDEO),
+      { refused: 'Dez gave no bytes for @z: it names no image and no clip of this conversation. The conversation has the image @a, the image @b, the video clip @c.' },
+      noId,
+      noId,
+    ])
+
+    // The page calls no selector of Dez's own page.
+    const refused = (selector: string): Outcome<unknown> =>
+      ({ refused: `Dez has no selector "${selector}" for an app. An app can call dez.app/readAsset and dez.app/saveAsset, and no Dez tool.` })
+    expect(await inRunningApp(browser, 'board', () => browser.execute(async () => {
+      const outcome = Reflect.get(window, 'outcome') as (call: Promise<unknown>) => Promise<Outcome<unknown>>
+      const dez = Reflect.get(window, 'dez') as { sbp: (selector: string, ...args: unknown[]) => Promise<unknown> }
+      return [await outcome(dez.sbp('dez.model/tabs/list')), await outcome(dez.sbp('dez.controller/apps/delete', 'notes'))]
+    }))).toStrictEqual([refused('dez.model/tabs/list'), refused('dez.controller/apps/delete')])
+    expect(fs.existsSync(path.join(appsDir, 'notes', 'index.html'))).toBe(true)
+
+    // The page can post any message to Dez with no help of Dez's script.
+    // Dez drops each one that is no message of the bridge, and answers a
+    // call as it answers one of its script.
+    const answers = await inRunningApp(browser, 'board', () => browser.execute(async () => {
+      const got: Array<[unknown, unknown, unknown]> = []
+      const listen = (event: MessageEvent): void => {
+        const message = event.data as { dez?: unknown, id?: unknown, ok?: unknown, error?: unknown } | null
+        if (message?.dez === 'answer') got.push([message.id, message.ok, message.error ?? null])
+      }
+      window.addEventListener('message', listen)
+      const messages: unknown[] = [
+        'call',
+        null,
+        { dez: 'call' },
+        { dez: 'call', id: '901', selector: 'dez.app/readAsset', args: ['a'] },
+        { dez: 'call', id: 902, selector: `dez.app/readAsset${' '.repeat(100)}`, args: ['a'] },
+        { dez: 'call', id: 903, selector: 'dez.app/readAsset' },
+        { dez: 'read', id: 905, selector: 'dez.app/readAsset', args: ['a'] },
+        // The answer of a call that Dez did not make.
+        { dez: 'answer', id: 906, ok: true, value: 'x', log: 'x' },
+        { dez: 'call', id: 904, selector: 'dez.model/tabs/list', args: [] },
+      ]
+      for (const message of messages) parent.postMessage(message, '*')
+      // Dez answers the last message at once. A read that it did for a
+      // message before that one would take a moment more.
+      while (!got.some(([id]) => id === 904)) await new Promise((resolve) => setTimeout(resolve, 20))
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      window.removeEventListener('message', listen)
+      return got
+    }))
+    expect(answers).toStrictEqual([[904, false, 'Dez has no selector "dez.model/tabs/list" for an app. An app can call dez.app/readAsset and dez.app/saveAsset, and no Dez tool.']])
+
+    // A save puts a file into the message of the user, so Dez takes none
+    // while the user does not work in the app: the editor has the keyboard,
+    // and the pointer is not over the app.
+    await browser.keys(Key.Escape)
+    await waitForValue(browser, 'the focus after Escape', () => focusedArea(browser), 'editor')
+    await movePointer(browser, await elementCenter(browser, 'header.tab-bar'))
+    expect(await inRunningApp(browser, 'board', () => browser.execute(() => (Reflect.get(window, 'savePng') as BoardCall<unknown>)()))).toStrictEqual({ refused: SAVE_NEEDS_USER_TEXT })
+    expect(await filesIn(imagesDir)).toStrictEqual(before)
+    expect(await editorDoc(browser)).toBe(doc)
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('puts a save of a shown app into the message that the user writes, as a stored file with a new id, and refuses a save that has no place', async () => {
+    await openBoard('app-host-save')
+    const before = await filesIn(imagesDir)
+    const draft = (await threadSections(browser))[2].text
+    expect(draft.endsWith(`\n${DROPPED_FILES_TEXT}`)).toBe(true)
+    await runBoard()
+
+    // Dez checks the bytes of a save before it writes a file: the type by
+    // the first bytes, and the size.
+    const bad = await inRunningApp(browser, 'board', () => browser.execute(async () => {
+      const save = Reflect.get(window, 'save') as BoardCall<unknown>
+      return [await save(new TextEncoder().encode('no image')), await save(new Blob([])), await save('a')]
+    }))
+    expect(bad).toStrictEqual([
+      {
+        refused: 'Dez saved nothing: the bytes are no file of a type that Dez stores. '
+          + 'Dez reads the type from the first bytes: an image (PNG, JPEG, GIF, WebP, or SVG) or a clip (MP4, MOV, WebM, WAV, MP3, M4A, AAC, FLAC, or Ogg).',
+      },
+      { refused: 'Dez saved nothing: the save has no bytes.' },
+      { refused: 'dez.app/saveAsset takes the bytes of one image or clip: a Blob, an ArrayBuffer, or a typed array, as in dez.sbp(\'dez.app/saveAsset\', blob). It got none of them.' },
+    ])
+    expect(await filesIn(imagesDir)).toStrictEqual(before)
+    expect((await threadSections(browser))[2].text).toBe(draft)
+
+    // A click of the user in the app saves. The file is a stored file, and
+    // its reference is on a line of its own after the text of the message,
+    // with the next id of the conversation.
+    await clickBoardSave()
+    await waitForValue(browser, 'the answer of the save', boardSaved, savedPng('d'))
+    const first = await newFileIn(browser, imagesDir, before)
+    expect(first).toMatch(storedFileName('png'))
+    expect(fs.readFileSync(path.join(imagesDir, first)).equals(BOARD_PNG)).toBe(true)
+    await waitForValue(browser, 'the message with the saved image', async () => (await threadSections(browser)).at(-1), {
+      role: 'user',
+      text: `${draft}\n![id=d](${path.join(imagesDir, first)})`,
+    })
+    // The editor draws no image that is far below the view.
+    await scrollEditorToEnd(browser)
+    await waitForValue(browser, 'the saved image in the editor', async () => {
+      const shown = (await shownImages(browser)).at(-1)
+      return { width: shown?.width, height: shown?.height }
+    }, { width: 16, height: 16 })
+
+    // While a reply runs, the last section is that reply: a save has no
+    // message of the user to go into. The pointer is over the app, so the
+    // user works in it.
+    await browser.keys(Key.Escape)
+    await waitForValue(browser, 'the focus after Escape', () => focusedArea(browser), 'editor')
+    // The text has no capital letter: in a run of the whole file, WebDriver
+    // types one as a small letter here.
+    await submit(browser, ' and go on.')
+    const request = await takeRequest(setup, CHAT_PATH)
+    await clickBoardSave()
+    await waitForValue(browser, 'the answer of the save in a reply', boardSaved, { refused: SAVE_NEEDS_DRAFT_TEXT })
+    expect(await filesIn(imagesDir)).toStrictEqual([...before, first].sort())
+
+    // After the reply, the save goes into the new message of the user.
+    await sendChatReply(request.reply, CALLER.modelName)
+    await endedReply(browser, 3)
+    await clickBoardSave()
+    await waitForValue(browser, 'the answer of the save after the reply', boardSaved, savedPng('e'))
+    const second = await newFileIn(browser, imagesDir, [...before, first])
+    expect(fs.readFileSync(path.join(imagesDir, second)).equals(BOARD_PNG)).toBe(true)
+    await waitForValue(browser, 'the new message with the saved image', async () => (await threadSections(browser)).at(-1), {
+      role: 'user',
+      text: `![id=e](${path.join(imagesDir, second)})`,
+    })
+    expect((await threadSections(browser))[2].text).toBe(`${draft}\n![id=d](${path.join(imagesDir, first)}) and go on.`)
+    expectNoLinkedFile([request], linkedDir)
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 

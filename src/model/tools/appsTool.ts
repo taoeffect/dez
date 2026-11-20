@@ -2,8 +2,9 @@ import { byteSizeText } from '../../utils/byteSize'
 import { countOf, countText } from '../../utils/countText'
 import { oneLineCut } from '../../utils/oneLineCut'
 import { startOf } from '../../utils/textCut'
+import { APP_HANDLER_EXAMPLE, APP_READ_ASSET, APP_RUN_FRAME_SIZE, APP_SAVE_ASSET } from './appBridge'
 import { APP_KINDS, isAppName, MANIFEST_FILE, MANIFEST_MAX_BYTES, MAX_DESCRIPTION_LENGTH, parseAppManifest, type AppKind, type AppManifest } from './appManifest'
-import { appTemplateFiles, SCRIPT_MAIN_FILE, UI_INDEX_FILE } from './appTemplates'
+import { appTemplateFiles, SCRIPT_MAIN_FILE, UI_CLIENT_SCRIPT_TAG, UI_INDEX_FILE, UI_OWN_SCRIPT_TAG } from './appTemplates'
 import { unknownValuesText } from './arguments'
 import { INTERMEDIATE_PARAMETER, JOB_CALL_NOTE, jobTimeoutParameter } from './jobs'
 import { linesName, linesText, planLineEdits, textLines, type LineEdit } from './lineEdits'
@@ -103,20 +104,48 @@ const PATH_PARAMETER = `as in "${EXAMPLE_FILE}".`
 const EXAMPLE_SCRIPT_APP = 'contact-sheet'
 const SCRIPT_MAIN = `${APPS_VIRTUAL_ROOT}/<name>/${SCRIPT_MAIN_FILE}`
 
-// The help of `invoke`: all that a model must know to write the code of a
-// script app, as the system prompt tells only that the tool is there. It
-// states each limit of the sandbox that makes plain code fail (the OS rule
-// of src-tauri/src/confinement.rs, and the flags of bundled_tools.rs), so
-// that a model does not learn them one failed run at a time.
-const INVOKE_HELP = `Runs the code of a script app in a sandbox on the user's computer (Deno). ${JOB_CALL_NOTE} `
+// What Dez stores of the files that a run gives back, for both kinds of
+// app.
+const STORED_TYPES = '(an image: PNG, JPEG, GIF, WebP, or SVG; a clip: MP4, MOV, WebM, WAV, MP3, M4A, AAC, FLAC, or Ogg)'
+
+const SAVE_BYTES = 'a Blob, an ArrayBuffer, or a typed array'
+
+// The help of `invoke` for a UI app: what the page of an app needs for a
+// run, and the limits of a page that make plain code fail (the frame
+// bridge, appBridge.ts; the guards of the app frames,
+// src-tauri/src/app_frames.rs).
+const INVOKE_UI_HELP = `A UI app runs as its page (${UI_INDEX_FILE}), which Dez loads in a frame that the user does not see, `
+  + `${APP_RUN_FRAME_SIZE.width} by ${APP_RUN_FRAME_SIZE.height} CSS pixels. `
+  + `The page must load Dez's script before its own scripts (${UI_CLIENT_SCRIPT_TAG}), and a script of the page must register the handler of a run `
+  + `while the page loads, before its first \`await\`: ${APP_HANDLER_EXAMPLE}. The run calls the handler and waits for its promise. `
+  + 'The value that the handler returns is the result of the job (a string as it is, any other value as JSON), '
+  + 'and what the page writes to the console comes after it, with the errors that nothing caught. '
+  + `Load each script file of the page with \`crossorigin\`, as in ${UI_OWN_SCRIPT_TAG}, or as a module: the result has no details of an error of a script file that the page loads in another way. `
+  + '`parameters` is the object of the call. `run.inputs` has one `{ id, kind, type }` for each id of `inputs`, in their order. The page has two calls of Dez:\n'
+  + `- \`await dez.sbp('${APP_READ_ASSET}', id)\` gives the bytes of an input as a Blob. A run reads only its inputs.\n`
+  + `- \`await dez.sbp('${APP_SAVE_ASSET}', bytes)\` saves ${SAVE_BYTES} as a new image or clip of the conversation, by the rules of an output file of a script app `
+  + `(the type from the first bytes, at most ${APP_RUN_MAX_OUTPUT_FILES} saves of one run, at most ${byteSizeText(APP_RUN_MAX_OUTPUT_BYTES)} for one). `
+  + 'In a run it gives `{ id: null, kind, type }`: the result of the job gives the ids, in the order of the saves. A run whose handler throws keeps no file.\n'
+  + 'A call that Dez refuses rejects with an error whose message tells why. '
+  + 'The page is new for each run and keeps no state. It has no network, no storage, and no file but those of its app, which it loads by a relative URL, and it calls no Dez tool. '
+  + 'Use a UI app for work that needs a page (a canvas, the Web Audio API, a layout). '
+  + 'A script of the page that never yields stops Dez\'s window, and no time limit can end it: heavy work belongs in a script app.'
+
+// The help of `invoke`: all that a model must know to write the code of
+// an app that a run calls, as the system prompt tells only that the tool
+// is there. For a script app it states each limit of the sandbox that
+// makes plain code fail (the OS rule of src-tauri/src/confinement.rs, and
+// the flags of bundled_tools.rs), so that a model does not learn them one
+// failed run at a time.
+const INVOKE_HELP = `Runs the code of an app on the user's computer, with the parameters of the call. ${JOB_CALL_NOTE} The kind of the app tells how it runs.\n\n`
+  + 'A script app runs in a sandbox (Deno). '
   + `The run calls the default export of ${SCRIPT_MAIN} with two arguments, \`(parameters, dez)\`, and waits for its promise. `
   + 'The value that the function returns is the result of the job: a string as it is, any other value as JSON. '
   + 'What the code writes with `console.log` comes after it. `parameters` is the object of the call. `dez` has three members:\n'
   + '- `dez.inputs`: one `{ id, kind, type, path }` for each id of `inputs`, in their order. `kind` is "image", "audio", or "video", `type` is the media type, '
   + 'and `path` is the path of a copy of the file. A change of the copy changes nothing of the image or the clip.\n'
   + '- `dez.outputFolder`: the path of an empty folder. After a run that ends with no error, Dez keeps each file directly in it as a new image or clip of the conversation, '
-  + 'and the result gives their ids. Dez keeps only a file of a type that it stores, which it reads from the first bytes of the file and not from its name '
-  + '(an image: PNG, JPEG, GIF, WebP, or SVG; a clip: MP4, MOV, WebM, WAV, MP3, M4A, AAC, FLAC, or Ogg), '
+  + `and the result gives their ids. Dez keeps only a file of a type that it stores, which it reads from the first bytes of the file and not from its name ${STORED_TYPES}, `
   + `at most ${APP_RUN_MAX_OUTPUT_FILES} files of one run, and at most ${byteSizeText(APP_RUN_MAX_OUTPUT_BYTES)} for one file. A run that fails keeps no file.\n`
   + '- `dez.appFolder`: the path of the folder of the app. The code reads and writes the files of its app there, and they stay for the next run: '
   + 'keep the state of an app in a file of this folder.\n'
@@ -129,7 +158,8 @@ const INVOKE_HELP = `Runs the code of a script app in a sandbox on the user's co
   + '`Deno.chmod`, `Deno.utime`, `Deno.symlink`, and `Deno.watchFs`. '
   + 'The code calls no Dez tool (it has no `dez.sbp`): call the tools yourself, before or after the run. '
   + 'The clock and the time zone are those of the user\'s computer. '
-  + `An error names a line of the code by its path in the apps tool, as in ${APPS_VIRTUAL_ROOT}/${EXAMPLE_SCRIPT_APP}/${SCRIPT_MAIN_FILE}:12.`
+  + `An error names a line of the code by its path in the apps tool, as in ${APPS_VIRTUAL_ROOT}/${EXAMPLE_SCRIPT_APP}/${SCRIPT_MAIN_FILE}:12.\n\n`
+  + INVOKE_UI_HELP
 
 export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
   name: 'apps',
@@ -277,9 +307,15 @@ export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
       name: APPS_SHOW,
       summary: 'Show a UI app to the user: Dez puts it into your reply, after this call, as a card with a Run button.',
       description: `Puts a UI app into your reply, after this call, as a card with a Run button. The app starts when the user clicks Run: its page then shows in the conversation. `
-        + `The page of the app is its ${UI_INDEX_FILE}: Dez refuses an app that has none, and a script app, which has no page (invoke runs a script app). `
+        + `The page of the app is its ${UI_INDEX_FILE}: Dez refuses an app that has none, and a script app, which has no page. `
         + 'The call runs no code and changes no file. Dez writes the app into the conversation itself, as a line `<dez:app name="…"/>`: '
-        + 'never write such a line yourself, as the user reads yours as plain text.',
+        + 'never write such a line yourself, as the user reads yours as plain text.\n'
+        + `A page that loads Dez's script before its own scripts (${UI_CLIENT_SCRIPT_TAG}) can work with the images and the clips of the conversation:\n`
+        + `- \`await dez.sbp('${APP_READ_ASSET}', id)\` gives the bytes of the image or the clip with that id as a Blob.\n`
+        + `- \`await dez.sbp('${APP_SAVE_ASSET}', bytes)\` puts ${SAVE_BYTES} as a new image or clip into the message that the user writes, and gives \`{ id, kind, type }\`. `
+        + `Dez takes only a file of a type that it stores ${STORED_TYPES}, at most ${byteSizeText(APP_RUN_MAX_OUTPUT_BYTES)}, and at most ${APP_RUN_MAX_OUTPUT_FILES} saves from one click on Run to Stop. `
+        + 'It takes a save only while the user works in the app (save in the handler of a click or a key), and not while a reply runs.\n'
+        + 'A call that Dez refuses rejects with an error whose message tells why: show it to the user. The page calls no Dez tool, and it has no network and no storage.',
       parameters: [
         { name: 'name', type: 'string', description: `The name of the app, as in "${EXAMPLE_APP}": the name of its folder in ${APPS_VIRTUAL_ROOT}/.`, required: true },
       ],
@@ -287,7 +323,7 @@ export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
     },
     {
       name: APPS_INVOKE,
-      summary: `Run a script app: the code of its ${SCRIPT_MAIN_FILE}, with your parameters, on copies of images and clips, to get a text and new images and clips.`,
+      summary: `Run an app with your parameters, on images and clips, to get a text and new images and clips: the code of the ${SCRIPT_MAIN_FILE} of a script app, or the handler of the page of a UI app.`,
       description: INVOKE_HELP,
       parameters: [
         { name: 'name', type: 'string', description: `The name of the app, as in "${EXAMPLE_SCRIPT_APP}": the name of its folder in ${APPS_VIRTUAL_ROOT}/.`, required: true },
@@ -300,7 +336,8 @@ export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
         {
           name: 'inputs',
           type: 'string',
-          description: 'The ids of the images and the clips that the run gets, as in "@a @c". The code finds a copy of each one in `dez.inputs`, in this order. '
+          description: 'The ids of the images and the clips that the run gets, as in "@a @c", in this order: '
+            + 'the code of a script app finds a copy of each one in `dez.inputs`, and the handler of a UI app finds each one in `run.inputs`. '
             + 'Leave it out for a run with no input.',
           required: false,
         },

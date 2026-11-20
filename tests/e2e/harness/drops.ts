@@ -72,6 +72,9 @@ export async function linkedDropDir (name: string): Promise<string> {
   return dir
 }
 
+/** The text of the message of `openDroppedFiles` after its files. */
+export const DROPPED_FILES_TEXT = 'Here are my files.'
+
 // A word of the name of each linked file of `openDroppedFiles`. No code of
 // a spec holds one, so a request holds one only when the app sent the name
 // of a file.
@@ -79,20 +82,27 @@ const LINKED_IMAGE_WORD = 'holiday'
 const LINKED_CLIP_WORD = 'beach'
 
 /** Opens the conversation `name` with files that the user dropped, all in
- *  its one user section, picks the model of `provider`, and gives the path
- *  of each file by its id. The next new id of the conversation is `d`.
+ *  its last section, a message of the user that comes after the sections
+ *  `earlier`. Picks the model of `provider`, and gives the path of each
+ *  file by its id. The next new id of the conversation is `d`.
  *  - `@a`: `STRIPES_PNG` as an image that Dez copied (a stored file);
  *  - `@b`: the same image as a file that the user linked, in `linkedDir`
  *    (`linkedDropDir`);
  *  - `@c`: `WEBM_VIDEO` as a file that the user linked. */
-export async function openDroppedFiles (setup: MockProviderApp, provider: MockProvider, linkedDir: string, name: string): Promise<Record<'a' | 'b' | 'c', string>> {
+export async function openDroppedFiles (
+  setup: MockProviderApp,
+  provider: MockProvider,
+  linkedDir: string,
+  name: string,
+  earlier: ReadonlyArray<{ role: 'user' | 'agent', text: string }> = [],
+): Promise<Record<'a' | 'b' | 'c', string>> {
   const { home } = setup.app
   const a = await writeTestFile(appFilePath(home, 'assets', 'images', `${name}-a.png`), STRIPES_PNG)
   const b = await writeTestFile(path.join(linkedDir, `${name}-${LINKED_IMAGE_WORD}.png`), STRIPES_PNG)
   const c = await writeTestFile(path.join(linkedDir, `${name}-${LINKED_CLIP_WORD}.webm`), WEBM_VIDEO)
-  await openSeededConversation(setup.browser, home, name, [{
+  await openSeededConversation(setup.browser, home, name, [...earlier, {
     role: 'user',
-    text: [`![id=a](${a})`, `![id=b](${b})`, clipTag('video', { id: 'c', type: 'video/webm', src: c }), 'Here are my files.'].join('\n'),
+    text: [`![id=a](${a})`, `![id=b](${b})`, clipTag('video', { id: 'c', type: 'video/webm', src: c }), DROPPED_FILES_TEXT].join('\n'),
   }])
   await pickModel(setup.browser, provider.name, provider.modelName)
   return { a, b, c }
