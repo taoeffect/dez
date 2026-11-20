@@ -158,6 +158,28 @@ describe('bridgedToolCall', () => {
     })
   })
 
+  it('takes the paths of this computer out of the strings of a parameters text, and keeps its JSON whole', () => {
+    const parameters = JSON.stringify({ arguments: `-i @c ${REAL}/out.mp4 -t 2`, [`${JOINED}/x`]: ['/tmp/a b', 'c'] })
+    const check = checked('dez.tools/video', { command: 'ffmpeg', parameters })
+
+    expect(check).toStrictEqual({
+      ok: true,
+      call: { name: 'video', arguments: { command: 'ffmpeg', parameters: '{"arguments":"-i @c /work/out.mp4 -t 2","/work/x":["/tmp/…","c"]}' } },
+    })
+  })
+
+  it('takes a path that a parameters text writes with escapes out of it', () => {
+    const check = checked('dez.tools/video', { command: 'ffmpeg', parameters: String.raw`{"arguments":"-i \/home\/alice\/a.mp4"}` })
+
+    expect(check).toStrictEqual({ ok: true, call: { name: 'video', arguments: { command: 'ffmpeg', parameters: '{"arguments":"-i /home/…"}' } } })
+  })
+
+  it('takes the paths of this computer out of a parameters text that is no JSON', () => {
+    const check = checked('dez.tools/video', { command: 'ffmpeg', parameters: '{"arguments":"-i /home/alice/a.mp4"' })
+
+    expect(check).toStrictEqual({ ok: true, call: { name: 'video', arguments: { command: 'ffmpeg', parameters: '{"arguments":"-i /home/…' } } })
+  })
+
   it('takes the paths of this computer out of a selector that it tells back', () => {
     const error = refusal(`${REAL}/code.ts`)
 

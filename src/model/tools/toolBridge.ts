@@ -86,6 +86,25 @@ export function shownSelector(selector: string, workFolders: readonly string[]):
 export const UNEXPECTED_BRIDGE_ERROR_TEXT = 'Dez hit an error that it did not expect while it ran this tool call of the code. '
   + 'Tell the user that the tool call failed (Help › Developer Console shows the error), and do not make the same call again.'
 
+// The `parameters` text of a call of a tool with subcommands, with no path
+// of this computer (`forModel`). The cut of a path runs to the end of its
+// line (`withoutLocalPaths`), and a JSON text is often one line: a cut of
+// the text would take the end of the JSON with it, and the tool would
+// refuse JSON that the code gave whole. A JSON text can also write a path
+// with escapes (`\/home\/x`), which a cut of the text does not see. So the
+// cut goes into the strings of the parsed value, as for the parameters of
+// the subcommand form. A text that is no JSON gets the cut of a plain text:
+// the tool refuses it anyway.
+function parametersForModel(text: string, forModel: (text: string) => string): string {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return forModel(text)
+  }
+  return JSON.stringify(mapJsonStrings(parsed, forModel))
+}
+
 /** A call that the bridge runs: a Dez tool, and the arguments that its
  *  definition accepted (a `ToolRunCall`, controller/tools.ts). */
 export interface BridgedToolCall {
@@ -113,10 +132,11 @@ export type BridgedCallCheck =
  *
  *  The selector and every text of the arguments first lose the paths of
  *  this computer (`textForModel`, with the paths `workFolders` of the work
- *  folder of the run). The code can read the path of its work folder and
- *  of the Deno program, and an argument can go on to another provider (the
- *  prompt of a `model_invoke` call) or into the conversation (the label of
- *  a job). */
+ *  folder of the run); the `parameters` text of a tool with subcommands
+ *  loses them in the strings of its JSON (`parametersForModel`). The code
+ *  can read the path of its work folder and of the Deno program, and an
+ *  argument can go on to another provider (the prompt of a `model_invoke`
+ *  call) or into the conversation (the label of a job). */
 export function bridgedToolCall(line: Pick<JsEvalCallLine, 'selector' | 'arguments'>, number: number, workFolders: readonly string[]): BridgedCallCheck {
   const refused = (error: string): BridgedCallCheck => ({ ok: false, error })
   if (number > JS_EVAL_MAX_TOOL_CALLS) {
@@ -147,6 +167,8 @@ export function bridgedToolCall(line: Pick<JsEvalCallLine, 'selector' | 'argumen
   const values = mapJsonStrings(given, forModel) as Record<string, unknown>
 
   if (subcommand === undefined) {
+    const parameters: unknown = (given as Record<string, unknown>).parameters
+    if (definition.subcommands && typeof parameters === 'string') values.parameters = parametersForModel(parameters, forModel)
     const checked = checkArgumentValues(definition, values)
     if (checked.ok) {
       if (isUnbridgedSubcommand(definition.name, checked.arguments.command)) return refused(UNBRIDGED_SUBCOMMAND_TEXT)
