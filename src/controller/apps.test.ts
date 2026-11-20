@@ -282,7 +282,7 @@ describe('dez.controller/apps/saveAsset', () => {
     expect(toasts).toStrictEqual([])
   })
 
-  // No text names the file, so only Delete Unused Files would find it.
+  // No text names the file, so only Delete Unreferenced Files would find it.
   it('deletes the stored file when the conversation cannot take it, and rejects with the reason', async () => {
     insertFailure = new AppCallError('The app stopped.')
 

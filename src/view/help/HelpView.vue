@@ -338,8 +338,8 @@ function onOverlayClick(event: MouseEvent) {
             </p>
             <p>
               A hidden asset is an asset as any other: it has an id, you can name it with
-              <code>@</code> and the id, its trash and Save work in the open chip, and Delete Unused
-              Files keeps its file.
+              <code>@</code> and the id, its trash and Save work in the open chip, and Delete
+              Unreferenced Files keeps its file.
             </p>
 
             <h3>Compaction</h3>
@@ -365,7 +365,8 @@ function onOverlayClick(event: MouseEvent) {
               of yours names stays too, when the notes keep that message. So to keep an asset
               of an earlier reply, name it in your message with <code>@</code> and its id. A dropped
               asset leaves the conversation. Dez deletes the file of a dropped intermediate asset at
-              once. The file of any other dropped asset stays until you click Delete Unused Files.
+              once. The file of any other dropped asset stays until you click Delete Unreferenced
+              Files.
             </p>
 
             <h3>Where the files are</h3>
@@ -385,8 +386,8 @@ function onOverlayClick(event: MouseEvent) {
               <code v-if="tempDir">{{ tempDir }}</code><template v-else>the cache folder of the system</template>,
               which Dez deletes after {{ TEMP_COPY_HOURS }} hours. The clock on its player tells
               until when the clip is available. Click Save on the player to keep the clip. Before
-              that time, Delete Unused Files in Settings › General deletes a temporary copy that no
-              conversation uses.
+              that time, Delete Unreferenced Files in Settings › General deletes a temporary copy
+              that no conversation uses.
             </p>
             <p>
               A Dez tool that cuts, joins, or converts clips stores its new clips and images at
@@ -398,7 +399,7 @@ function onOverlayClick(event: MouseEvent) {
               and the text files that the model writes for it, for example subtitles or a title.
               Dez does not store these files as assets. Dez deletes the work folder at the end
               of the work, or {{ WORK_FOLDER_HOURS }} hours later if Dez closed before that. Before
-              that time, Delete Unused Files deletes such a work folder.
+              that time, Delete Unreferenced Files deletes such a work folder.
             </p>
             <!-- The rule is in src-tauri/src/confinement.rs (Landlock on
                  Linux, Seatbelt on macOS), its folders are in
@@ -443,13 +444,13 @@ function onOverlayClick(event: MouseEvent) {
                 deletes the stored file of the clip.
               </li>
               <li>
-                Click Delete Unused Files in Settings › General. Dez finds the stored files that no
-                conversation uses, and deletes them after you say yes. It also deletes each app
-                that no conversation and no saved prompt names, with all its files (see the
+                Click Delete Unreferenced Files in Settings › General. Dez finds the stored files
+                that no conversation uses, and deletes them after you say yes. In the cache folder,
+                it also deletes the temporary copies of clips that no conversation uses, and the
+                work folders and downloads that Dez did not finish. It never deletes an app: Delete
+                Unreferenced Apps does that (see the
                 <button type="button" class="help-link" @click="page = 'apps'">Apps</button>
-                page). In the cache folder, it also
-                deletes the temporary copies of clips that no conversation uses, and the work folders
-                and downloads that Dez did not finish.
+                page).
               </li>
             </ul>
             <p>
@@ -675,12 +676,14 @@ function onOverlayClick(event: MouseEvent) {
             <ul>
               <li>You click the trash of the app, and say yes.</li>
               <li>
-                You click Delete Unused Files in Settings › General, and say yes. Dez then deletes
-                each app that no conversation and no saved prompt names: the question tells which
-                apps. A text names an app by its path (<code>{{ APPS_VIRTUAL_ROOT }}/</code> and
-                its name), by its card, or by a call of the <code>apps</code> tool with its name.
-                Dez keeps an app that changed in the last {{ APP_LIMITS.unusedMinutes }} minutes,
-                and an app with more than {{ APP_LIMITS.entries }} files and folders.
+                You click Delete Unreferenced Apps in Settings › General, and say yes. Dez then
+                deletes each app that no conversation and no saved prompt names: the question names
+                each of these apps. A text names an app by its path
+                (<code>{{ APPS_VIRTUAL_ROOT }}/</code> and its name), by its card, or by a call of
+                the <code>apps</code> tool with its name. Dez keeps an app that changed in the last
+                {{ APP_LIMITS.unusedMinutes }} minutes, and an app with more than
+                {{ APP_LIMITS.entries }} files and folders. Delete Unreferenced Files never deletes
+                an app.
               </li>
               <li>
                 A model deletes the app, or files of it, with the <code>apps</code> tool. Dez does

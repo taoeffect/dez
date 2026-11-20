@@ -14,7 +14,7 @@ import { APPS_ROOT, manifestColumns, pathIn, type AppsPath, type AppsTree, type 
 // notes (chat/compactionNotes.ts), and the compaction request lists them
 // (compactionRequest.ts). The compaction removes the calls and the tags
 // that named these apps. Without the lines, no text of the conversation
-// would name them, and Delete Unused Files would delete them.
+// would name them, and Delete Unreferenced Apps would delete them.
 //
 // A file of an app can name an image or a clip of the conversation with
 // its @id: a page that reads an asset over its bridge, or a list of the

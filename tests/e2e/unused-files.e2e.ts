@@ -10,11 +10,13 @@ import { silentWav } from './harness/media'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
 import { activeTabId, newTab, openToasts, sbpCall } from './harness/thread'
 
-// Settings › General › Unused files, driven through the real app: the
-// button scans the stored files (pasted, dropped, and generated images and
-// clips), the apps, and the cache folder, and shows a progress bar, a
-// prompt states the count and the size of what nothing uses and names the
-// apps, and a "Yes" deletes them.
+// Settings › General › Unreferenced files and Unreferenced apps, driven
+// through the real app. Each button scans and shows a progress bar, a
+// prompt states the count and the size of what nothing uses (and names
+// each app), and a "Yes" deletes them. Delete Unreferenced Files scans the
+// stored files (pasted, dropped, and generated images and clips) and the
+// cache folder, and never deletes an app. Delete Unreferenced Apps scans
+// only the apps.
 //
 // The seeded stored files, with what must happen to each one:
 // - an image that a saved conversation refers to: stays;
@@ -33,7 +35,8 @@ import { activeTabId, newTab, openToasts, sbpCall } from './harness/thread'
 // - a work folder with a new file time: stays (a run can be in it).
 // The seeded apps (folders of `apps/` in the app folder):
 // - an app that a saved conversation shows with its tag: stays;
-// - an app that no text names: deleted, with all its files;
+// - an app that no text names: deleted, with all its files, by Delete
+//   Unreferenced Apps only;
 // - an app that no text names, with one file that has a new file time:
 //   stays (`apps init` writes the files of an app before the block of its
 //   call names it).
@@ -53,9 +56,10 @@ const APP_CODE_FILE = 'main.ts'
 // The size of that file in the app that no text names. Its manifest adds
 // less than 100 B.
 const LEFT_APP_BYTES = 150_000
-// Two stored files, two cache files, one work folder, and one app: a bit
-// more than 2_900_000 B in all.
-const DELETE_PROMPT = 'Are you sure you want to delete 5 unused files and 1 unused app (left-app)? This frees 2.8 MB, and it cannot be undone.'
+// Two stored files, two cache files, and one work folder: 2_750_000 B.
+const FILES_PROMPT = 'Are you sure you want to delete 5 unreferenced files? This frees 2.6 MB, and it cannot be undone.'
+// The app that no text names: a bit more than 150_000 B.
+const APPS_PROMPT = 'Are you sure you want to delete 1 unreferenced app (left-app) with all its files? This frees 147 KB, and it cannot be undone.'
 
 const KEPT_FILES = [
   'assets/generated/audio/clip-saved.wav',
@@ -73,14 +77,24 @@ const UNUSED_CACHE_ENTRIES = ['media/copy-unused.webm', 'media/download-left.par
 const KEPT_APPS = ['shown-app', 'young-app']
 const UNUSED_APPS = ['left-app']
 
-/** One state of the row while a cleanup runs. */
-interface RunStep {
-  /** The `aria-valuenow` of the progress bar. */
+/** One state of the two cleanup rows. */
+interface RowState {
+  /** The `aria-label` of the progress bar that shows, or null with no
+   *  bar. One cleanup runs at a time, so at most one bar shows. */
+  bar: string | null
+  /** The `aria-valuenow` of that bar. */
   percent: string | null
-  buttonOff: boolean
+  /** Whether Delete Unreferenced Files is off. */
+  filesOff: boolean
+  /** Whether Delete Unreferenced Apps is off. */
+  appsOff: boolean
 }
 
-describe('Settings: delete unused files', () => {
+const IDLE: RowState = { bar: null, percent: null, filesOff: false, appsOff: false }
+const FILES_BAR = 'Looking for unreferenced files'
+const APPS_BAR = 'Looking for unreferenced apps'
+
+describe('Settings: delete unreferenced files and apps', () => {
   let app: RunningApp
   let browser: E2EBrowser
   // The conversation of the tab whose text is only in memory.
@@ -139,34 +153,56 @@ describe('Settings: delete unused files', () => {
       .sort()
   }
 
-  // The bar's percent (null with no bar) and whether the button is off.
-  async function rowState (): Promise<RunStep> {
-    return browser.execute(() => ({
-      percent: document.querySelector('.settings-progress')?.getAttribute('aria-valuenow') ?? null,
-      buttonOff: document.querySelector<HTMLButtonElement>('.unused-files-btn')?.disabled ?? false,
-    }))
+  // The state of the two rows. The page reads it, as the recorder below
+  // does.
+  async function rowState (): Promise<RowState> {
+    return browser.execute(() => {
+      const bar = document.querySelector('.settings-progress')
+      return {
+        bar: bar?.getAttribute('aria-label') ?? null,
+        percent: bar?.getAttribute('aria-valuenow') ?? null,
+        filesOff: document.querySelector<HTMLButtonElement>('.unused-files-btn')?.disabled ?? false,
+        appsOff: document.querySelector<HTMLButtonElement>('.unused-apps-btn')?.disabled ?? false,
+      }
+    })
   }
 
-  // Records each state of the row in which the bar shows a new percent.
-  // The scan of this spec's few files ends between two WebDriver commands,
-  // so the page records the steps itself.
+  // Records each state of the rows in which a bar shows a new percent, or
+  // the bar of the other cleanup. The scan of this spec's few files ends
+  // between two WebDriver commands, so the page records the steps itself.
   async function recordRunSteps (): Promise<void> {
     await browser.execute(() => {
       const section = document.querySelector('.settings-section')
       if (!section) throw new Error('recordRunSteps: no Settings section')
-      const steps: RunStep[] = []
+      const steps: RowState[] = []
       Reflect.set(window, '__e2eRunSteps', steps)
       new MutationObserver(() => {
         const bar = section.querySelector('.settings-progress')
-        const percent = bar?.getAttribute('aria-valuenow') ?? null
-        if (!bar || steps.at(-1)?.percent === percent) return
-        steps.push({ percent, buttonOff: section.querySelector<HTMLButtonElement>('.unused-files-btn')?.disabled ?? false })
+        if (!bar) return
+        const label = bar.getAttribute('aria-label')
+        const percent = bar.getAttribute('aria-valuenow')
+        const last = steps.at(-1)
+        if (last?.bar === label && last.percent === percent) return
+        steps.push({
+          bar: label,
+          percent,
+          filesOff: section.querySelector<HTMLButtonElement>('.unused-files-btn')?.disabled ?? false,
+          appsOff: section.querySelector<HTMLButtonElement>('.unused-apps-btn')?.disabled ?? false,
+        })
       }).observe(section, { subtree: true, childList: true, attributes: true, attributeFilter: ['aria-valuenow'] })
     })
   }
 
-  async function runSteps (): Promise<RunStep[]> {
-    return browser.execute(() => Reflect.get(window, '__e2eRunSteps') as RunStep[])
+  // Gives the steps that the recorder took since the last call, and
+  // forgets them.
+  async function takeRunSteps (): Promise<RowState[]> {
+    return browser.execute(() => (Reflect.get(window, '__e2eRunSteps') as RowState[]).splice(0))
+  }
+
+  // The steps of a scan of the two conversation files: one for the start,
+  // and one for each file. Both buttons are off for the whole run.
+  function scanSteps (bar: string): RowState[] {
+    return ['0', '50', '100'].map((percent) => ({ bar, percent, filesOff: true, appsOff: true }))
   }
 
   beforeAll(async () => {
@@ -244,28 +280,22 @@ describe('Settings: delete unused files', () => {
     await app?.stop()
   })
 
-  it('shows the progress of the scan, then asks with the count and the size, and deletes nothing on a No', async () => {
+  it('shows the progress of the scan of the files, then asks with the count and the size, and deletes nothing on a No', async () => {
     // A file time of now, as a paste that just stored its file gives, and
     // as a write of a file of an app gives.
     const now = new Date()
     fs.utimesSync(appFilePath(app.home, 'assets/images/image-young.png'), now, now)
     fs.utimesSync(appFilePath(app.home, 'apps', 'young-app', APP_CODE_FILE), now, now)
-    expect(await rowState()).toStrictEqual({ percent: null, buttonOff: false })
+    expect(await rowState()).toStrictEqual(IDLE)
 
     await pointerClick(browser, '.unused-files-btn')
-    await waitForValue(browser, 'prompt', () => promptMessage(browser), DELETE_PROMPT)
+    await waitForValue(browser, 'prompt', () => promptMessage(browser), FILES_PROMPT)
 
-    // One step for the start, and one for each of the two conversation
-    // files.
-    expect(await runSteps()).toStrictEqual([
-      { percent: '0', buttonOff: true },
-      { percent: '50', buttonOff: true },
-      { percent: '100', buttonOff: true },
-    ])
-    expect(await rowState()).toStrictEqual({ percent: '100', buttonOff: true })
+    expect(await takeRunSteps()).toStrictEqual(scanSteps(FILES_BAR))
+    expect(await rowState()).toStrictEqual({ bar: FILES_BAR, percent: '100', filesOff: true, appsOff: true })
 
     await pointerClick(browser, '.confirm-btn--cancel')
-    await waitForValue(browser, 'row after No', rowState, { percent: null, buttonOff: false })
+    await waitForValue(browser, 'row after No', rowState, IDLE)
     expect(await promptMessage(browser)).toBeNull()
     expect(storedFiles()).toStrictEqual([...KEPT_FILES, ...UNUSED_FILES].sort())
     expect(cacheFiles()).toStrictEqual([...KEPT_CACHE_ENTRIES, ...UNUSED_CACHE_ENTRIES].sort())
@@ -273,30 +303,55 @@ describe('Settings: delete unused files', () => {
     expect(await openToasts(browser)).toEqual([])
   })
 
-  it('deletes on a Yes only the old files and apps that no conversation and no open tab names, and the old cache entries that nothing uses', async () => {
+  it('deletes on a Yes only the old files that no conversation and no open tab names, and the old cache entries that nothing uses, and no app', async () => {
     await pointerClick(browser, '.unused-files-btn')
-    await waitForValue(browser, 'prompt', () => promptMessage(browser), DELETE_PROMPT)
+    await waitForValue(browser, 'prompt', () => promptMessage(browser), FILES_PROMPT)
     await pointerClick(browser, '.confirm-btn--confirm')
 
-    await waitForValue(browser, 'result toast', () => openToasts(browser), [{ title: '', message: 'Deleted 5 unused files and 1 unused app (2.8 MB).' }])
-    await waitForValue(browser, 'row after the delete', rowState, { percent: null, buttonOff: false })
+    await waitForValue(browser, 'result toast', () => openToasts(browser), [{ title: '', message: 'Deleted 5 unreferenced files (2.6 MB).' }])
+    await waitForValue(browser, 'row after the delete', rowState, IDLE)
     expect(storedFiles()).toStrictEqual(KEPT_FILES)
     expect(cacheFiles()).toStrictEqual(KEPT_CACHE_ENTRIES)
     expect(fs.existsSync(path.join(workDir(app.home), 'work-left'))).toBe(false)
-    expect(appFolders()).toStrictEqual(KEPT_APPS)
+    expect(appFolders()).toStrictEqual([...KEPT_APPS, ...UNUSED_APPS].sort())
     // The tab's text was never on disk, so only the texts in memory kept
     // its image.
     expect(fs.existsSync(conversationFilePath(app.home, unsavedConversationId))).toBe(false)
   })
 
-  it('tells that there are no unused files, with no prompt', async () => {
+  it('tells that there are no unreferenced files, with no prompt', async () => {
     await pointerClick(browser, '.unused-files-btn')
 
-    await waitForValue(browser, 'toast', async () => (await openToasts(browser)).some((toast) => toast.message === 'No unused files found'), true)
-    await waitForValue(browser, 'row after the scan', rowState, { percent: null, buttonOff: false })
+    await waitForValue(browser, 'toast', async () => (await openToasts(browser)).some((toast) => toast.message === 'No unreferenced files found'), true)
+    await waitForValue(browser, 'row after the scan', rowState, IDLE)
     expect(await promptMessage(browser)).toBeNull()
     expect(storedFiles()).toStrictEqual(KEPT_FILES)
     expect(cacheFiles()).toStrictEqual(KEPT_CACHE_ENTRIES)
+    expect(appFolders()).toStrictEqual([...KEPT_APPS, ...UNUSED_APPS].sort())
+  })
+
+  it('shows the progress of the scan of the apps, asks with the name of each app and the size, and deletes on a Yes only the old apps that no text names', async () => {
+    await takeRunSteps()
+    await pointerClick(browser, '.unused-apps-btn')
+    await waitForValue(browser, 'prompt', () => promptMessage(browser), APPS_PROMPT)
+
+    expect(await takeRunSteps()).toStrictEqual(scanSteps(APPS_BAR))
+    expect(await rowState()).toStrictEqual({ bar: APPS_BAR, percent: '100', filesOff: true, appsOff: true })
+
+    await pointerClick(browser, '.confirm-btn--confirm')
+    await waitForValue(browser, 'result toast', async () => (await openToasts(browser)).some((toast) => toast.message === 'Deleted 1 unreferenced app (147 KB).'), true)
+    await waitForValue(browser, 'row after the delete', rowState, IDLE)
+    expect(appFolders()).toStrictEqual(KEPT_APPS)
+    expect(storedFiles()).toStrictEqual(KEPT_FILES)
+    expect(cacheFiles()).toStrictEqual(KEPT_CACHE_ENTRIES)
+  })
+
+  it('tells that there are no unreferenced apps, with no prompt', async () => {
+    await pointerClick(browser, '.unused-apps-btn')
+
+    await waitForValue(browser, 'toast', async () => (await openToasts(browser)).some((toast) => toast.message === 'No unreferenced apps found'), true)
+    await waitForValue(browser, 'row after the scan', rowState, IDLE)
+    expect(await promptMessage(browser)).toBeNull()
     expect(appFolders()).toStrictEqual(KEPT_APPS)
     expect(await consoleErrors(browser)).toEqual([])
   })

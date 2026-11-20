@@ -149,7 +149,7 @@ import type { Role } from './types'
 //   named have a part of their own, one line for each. The compaction
 //   removes the calls and the tags that named them, so these lines are
 //   all that still names them: they tell a model that the apps are
-//   there, and their paths keep the apps out of Delete Unused Files
+//   there, and their paths keep the apps out of Delete Unreferenced Apps
 //   (`namedApps`, appNames.ts). The next compaction finds the names with
 //   that same rule, and reads a line only for the kind and the
 //   description of an app whose manifest it cannot read. An app is no

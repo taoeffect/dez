@@ -399,7 +399,7 @@ describe('runAppJob', () => {
       { kind: 'clip', clip: { kind: 'audio', type: 'audio/wav', src: third, url: null, expires: null } },
     ])
     // Until the result names a file, only this list keeps it from Delete
-    // Unused Files.
+    // Unreferenced Files.
     expect(keptAssets).toStrictEqual(outcome.assets)
     expect(outcome.isError).toBe(false)
     expect(outcome.text).toContain('sheet_2.txt (image), sheet_10.png (image), voice.dat (audio clip)')
@@ -594,7 +594,7 @@ describe('runAppFrameJob', () => {
       { kind: 'clip', clip: { kind: 'audio', type: 'audio/wav', src: second, url: null, expires: null } },
     ])
     // Until the result names a file, only this list keeps it from Delete
-    // Unused Files.
+    // Unreferenced Files.
     expect(keptAssets).toStrictEqual(outcome.assets)
     expect(outcome.isError).toBe(false)
     expect(outcome.text).toContain('2 files')

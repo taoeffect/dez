@@ -101,7 +101,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `view/editor/assetSelection.ts`, `view/assetFacts.ts`, `view/assetIcons.ts`: the selected look, the facts text, and the symbol of an asset.
 - `controller/images.ts`: `dez.controller/images/*`: store, delete, read, and redraw images; file drops.
 - `controller/media.ts`, `clipSources.ts`: `dez.controller/media/*`: save, delete, read, and decode clips; the cleanup of old temp copies.
-- `controller/unusedFiles.ts`, `cacheHolds.ts`, `workFolders.ts`: find and delete the files, the apps, and the cache entries that nothing uses.
+- `controller/unusedFiles.ts`, `cacheHolds.ts`, `workFolders.ts`: the two cleanups of Settings: the files and the cache entries that nothing uses, and the apps that no text names.
 - `model/chat/`: `Section` / `ContentNode` types and helpers, and the text forms of a conversation, each with one writer and recognizer:
   - `images.ts` (image references), `mediaTags.ts` (clips), `appTags.ts` (shown apps), `toolBlocks.ts` (tool calls), `bridgedCalls.ts` (the tool calls of the code of a `js_eval` call), `pillMarker.ts` (pill markers), `compaction.ts`, `compactionNotes.ts`, `notesTable.ts` (the compaction block, the notes, and the tables of the notes).
   - `mediaIds.ts`, `imageMentions.ts`, `assetMentions.ts` (asset ids and `@id` mentions), `codeRanges.ts` (Markdown code), `hiddenAssets.ts`, `shownPictures.ts`, `fileSignatures.ts` (the type of a file from its first bytes).
@@ -231,11 +231,11 @@ The JSON and conversation files go through `dez.persistence/*` only; the asset f
 - `assets/images/`, `assets/audio/`, `assets/video/`: pasted files, and dropped files that Dez copies (`src/controller/images.ts`, `media.ts`).
 - `assets/generated/images/`, `audio/`, `video/`: files that models and Dez tools made, and clips that the user saved.
 - `assets/generated/views/`: the copies of the pictures that Dez showed a model (`src/model/chat/shownPictures.ts`).
-- `apps/<name>/`: the files of an app, which the `apps` tool makes and changes (`src/model/tools/appsTool.ts`), and a script app those of its own folder. The trash of an app deletes the folder (`dez.controller/apps/delete`), and Delete Unused Files deletes an app that no text names (`src/model/chat/appNames.ts`).
+- `apps/<name>/`: the files of an app, which the `apps` tool makes and changes (`src/model/tools/appsTool.ts`), and a script app those of its own folder. The trash of an app deletes the folder (`dez.controller/apps/delete`), and Delete Unreferenced Apps deletes an app that no text names (`src/model/chat/appNames.ts`).
 - `<OS cache>/dez/media/`: temp copies of clips that are not saved (`src/model/chat/mediaFiles.ts`).
 - `<OS cache>/dez/work/<id>/`: the work folder of a bundled tool (`src/model/tools/workFolders.ts`).
 - Linked files: a dropped file that is in no temp folder and no Dez folder stays where it is (`src/model/chat/linkedFiles.ts`). Dez never deletes it.
-- A text edit or a conversation delete leaves the stored files. The trash of an image or a player, Delete Unused Files (`src/model/chat/unusedFiles.ts`), or a compaction (`src/model/streams/compactionFiles.ts`) deletes a stored file.
+- A text edit or a conversation delete leaves the stored files. The trash of an image or a player, Delete Unreferenced Files (`src/model/chat/unusedFiles.ts`), or a compaction (`src/model/streams/compactionFiles.ts`) deletes a stored file.
 - `provider_keys.json`: API keys and Copilot tokens (`src-tauri/src/key_store.rs`).
 
 Do not ever read, view, print, or `cat` `~/.config/dez/provider_keys.json`; it can contain API keys and OAuth tokens.
@@ -281,8 +281,8 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 - **An app is no asset**: an app tag holds only the name of the app, with no id and no path (`src/model/chat/appTags.ts`).
 - **A hidden asset and a kept asset are normal assets with a mark**: only the view hides them (`src/model/chat/hiddenAssets.ts`, `compaction.ts`); the compaction block is out of view as a whole, and its assets show in the assets chip.
 - **The notes of a compaction section are read back** (`src/model/chat/compactionNotes.ts`): a change of a line's form needs a reader of the old form.
-- **The unused-files scan must read every text that can name a stored file or an app**: a new text place, stored-file folder, or kind of cache entry must join it (`src/controller/unusedFiles.ts`). The files of an app are no such text.
-- **An app stays only while a text names it** (`namedApps`, `src/model/chat/appNames.ts`): Delete Unused Files deletes an app that no text names, so a compaction lists the apps of its conversation in its notes (`src/model/streams/compactionApps.ts`).
+- **The scans of the two cleanups must read every text that can name a stored file or an app**: a new text place, stored-file folder, or kind of cache entry must join them (`src/controller/unusedFiles.ts`). The files of an app are no such text.
+- **An app stays only while a text names it** (`namedApps`, `src/model/chat/appNames.ts`): Delete Unreferenced Apps deletes an app that no text names (Delete Unreferenced Files never does), so a compaction lists the apps of its conversation in its notes (`src/model/streams/compactionApps.ts`).
 - **Long work in the cache root holds its entry** with `holdingCachePath` (`src/controller/cacheHolds.ts`), or the cleanup deletes it.
 
 ### Requests and replies

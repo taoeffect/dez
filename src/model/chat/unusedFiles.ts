@@ -8,15 +8,16 @@ import { savedMediaFile, tempMediaFile } from './mediaFiles'
 import { MEDIA_CACHE_FOLDER, MEDIA_FOLDERS } from './mediaTags'
 import { SHOWN_PICTURE_FOLDER, shownPictureFile } from './shownPictures'
 
-// The stored files that no text uses any more, for the cleanup in Settings ›
-// General. Dez stores a file for each pasted or dropped image and clip, for
-// each image that a model or a Dez tool made, for each clip that the user
-// saved or a Dez tool made, and for each picture that an `asset_view` call
-// showed its model (shownPictures.ts). A text names the file by its path:
-// in an image reference (images.ts) or in the `src` of a media tag
-// (mediaTags.ts); or by its name, in the `pictures` attribute of a tool
-// block (toolBlocks.ts) or of a compaction tag (compaction.ts). A text
-// edit or a conversation delete leaves the file on disk.
+// The files and the apps that no text uses any more, for the two cleanups
+// of Settings › General (`CleanupKind`). Dez stores a file for each pasted
+// or dropped image and clip, for each image that a model or a Dez tool
+// made, for each clip that the user saved or a Dez tool made, and for each
+// picture that an `asset_view` call showed its model (shownPictures.ts). A
+// text names the file by its path: in an image reference (images.ts) or in
+// the `src` of a media tag (mediaTags.ts); or by its name, in the
+// `pictures` attribute of a tool block (toolBlocks.ts) or of a compaction
+// tag (compaction.ts). A text edit or a conversation delete leaves the
+// file on disk.
 //
 // The rule here: a file is in use when a text holds its file name, in any
 // form (a reference, a tag, a path as plain text, with any route to the
@@ -24,21 +25,31 @@ import { SHOWN_PICTURE_FOLDER, shownPictureFile } from './shownPictures'
 // find, so the cleanup can keep a file that nothing shows, but it never
 // deletes a file that Dez shows or sends.
 //
-// The cleanup also takes the files of Dez's cache folder that nothing uses
-// (`cacheEntryKind`): a temp copy of a clip that no text names, and what
-// work of Dez left there (a download or a work folder whose app stopped
-// before its end). The hourly cleanup (controller/media.ts) deletes them
-// too, but only at the end of their lifetime (`MEDIA_TEMP_LIFETIME_MS`,
-// `WORK_FOLDER_LIFETIME_MS`).
+// The cleanup of the files also takes the files of Dez's cache folder that
+// nothing uses (`cacheEntryKind`): a temp copy of a clip that no text
+// names, and what work of Dez left there (a download or a work folder whose
+// app stopped before its end). The hourly cleanup (controller/media.ts)
+// deletes them too, but only at the end of their lifetime
+// (`MEDIA_TEMP_LIFETIME_MS`, `WORK_FOLDER_LIFETIME_MS`).
 //
-// And it takes the apps that no text names (`oldAppFolder`): an app is a
-// folder of `apps/` in the app folder, which the `apps` tool made
-// (tools/appsTool.ts). It stays from one conversation to the next, so it
-// is unused only when no conversation and no saved prompt names it by the
-// rule of appNames.ts. The files of an app are not read for the names of
-// stored files: a run of an app gets copies of its inputs, or their bytes,
-// and never a path of a stored file, so Dez writes no such path into an
-// app.
+// The cleanup of the apps takes the apps that no text names
+// (`oldAppFolder`): an app is a folder of `apps/` in the app folder, which
+// the `apps` tool made (tools/appsTool.ts). It stays from one conversation
+// to the next, so it is unreferenced only when no conversation and no
+// saved prompt names it by the rule of appNames.ts. An app is the work of
+// a model for the user, and not a copy of a file: the cleanup of the files
+// never takes one, so a user who frees disk space cannot lose an app by
+// accident. The files of an app are not read for the names of stored
+// files: a run of an app gets copies of its inputs, or their bytes, and
+// never a path of a stored file, so Dez writes no such path into an app.
+
+/** What one cleanup of Settings › General looks for. */
+export type CleanupKind = 'files' | 'apps'
+
+/** The noun of one thing of a cleanup of the kind `kind`. */
+export function cleanupNoun(kind: CleanupKind): 'file' | 'app' {
+  return kind === 'apps' ? 'app' : 'file'
+}
 
 /** The folders of the stored files, relative to the app folder. A new
  *  folder of stored files joins here and in `storedFilePath`, or the
@@ -71,32 +82,28 @@ export interface StoredFile {
 /** A file of the cleanup, with no size. */
 export type FileRef = Pick<StoredFile, 'root' | 'path'>
 
-/** What a scan for unused files found (`dez.controller/unusedFiles/find`). */
+/** What a scan for unreferenced files or apps found
+ *  (`dez.controller/unusedFiles/find`). */
 export interface UnusedFiles {
+  /** What the scan looked for: `files` holds only things of this kind. */
+  kind: CleanupKind
   files: StoredFile[]
   /** The total size of `files`, in bytes. */
   bytes: number
 }
 
-/** What a delete did with the files, or with the apps, of a scan. */
-export interface DeleteCounts {
+/** What a delete did with the files or the apps of a scan
+ *  (`dez.controller/unusedFiles/delete`). */
+export interface UnusedFilesDeleted {
   /** How many are deleted. */
   deleted: number
+  /** The total size of what is deleted, in bytes. */
+  bytes: number
   /** How many are in use since the scan: a text names them, or work of
    *  Dez holds them. They stay. */
   inUse: number
   /** How many could not be deleted. */
   failed: number
-}
-
-/** What a delete did with the files of a scan
- *  (`dez.controller/unusedFiles/delete`): the counts of the files and the
- *  cache entries, without the apps. */
-export interface UnusedFilesDeleted extends DeleteCounts {
-  /** The total size of what is deleted, the apps too, in bytes. */
-  bytes: number
-  /** The counts of the apps. */
-  apps: DeleteCounts
 }
 
 /** One file of a folder listing (`dez.native/listAppFiles`). */
@@ -181,7 +188,7 @@ export function isHeldCacheEntry(path: string, held: ReadonlySet<string>): boole
 // clip in the cache folder `cacheDir`. A download and a work folder have no
 // name that a text holds: only live work keeps them (`isHeldCacheEntry`).
 // An app is not for this rule: a text names it by the rule of appNames.ts
-// (`unusedAppName`).
+// (`cleanupAppName`).
 function textCanName(file: FileRef, cacheDir: string): boolean {
   return file.root === 'app' || cacheEntryKind(file.path, cacheDir) === 'copy'
 }
@@ -200,9 +207,10 @@ export function oldCacheEntries(folder: string, entries: readonly ListedFile[], 
   })
 }
 
-/** The name of the app whose folder the file `file` of the cleanup is
- *  (`apps/<name>` in the app folder); null for any other file. */
-export function unusedAppName(file: FileRef): string | null {
+/** The name of the app whose folder the file `file` of a cleanup is
+ *  (`apps/<name>` in the app folder), whether a text names the app or not;
+ *  null for any other file. */
+export function cleanupAppName(file: FileRef): string | null {
   if (file.root !== 'app') return null
   const [folder, name, ...below] = file.path.split('/')
   return folder === APPS_ROOT.file && name !== undefined && below.length === 0 && isAppName(name) ? name : null
@@ -279,7 +287,7 @@ export interface UnnamedFiles {
 export function unnamedFiles(files: readonly FileRef[], cacheDir: string): UnnamedFiles {
   const unnamed: UnnamedFiles = { fileNames: new Set(), apps: new Set() }
   for (const file of files) {
-    const app = unusedAppName(file)
+    const app = cleanupAppName(file)
     if (app !== null) unnamed.apps.add(app)
     else if (textCanName(file, cacheDir)) unnamed.fileNames.add(fileNameOf(file.path))
   }
@@ -302,7 +310,7 @@ export function removeNamed(unnamed: UnnamedFiles, text: string): void {
 /** Whether a text named the file `file` since `unnamed` was made from it
  *  (`unnamedFiles`). False for a file that no text can name. */
 export function isNamed(file: FileRef, unnamed: UnnamedFiles, cacheDir: string): boolean {
-  const app = unusedAppName(file)
+  const app = cleanupAppName(file)
   if (app !== null) return !unnamed.apps.has(app)
   return textCanName(file, cacheDir) && !unnamed.fileNames.has(fileNameOf(file.path))
 }

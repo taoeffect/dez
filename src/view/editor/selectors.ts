@@ -244,9 +244,9 @@ export default sbp('sbp/selectors/register', {
     return true
   },
 
-  /** Dez deleted the app `name` with no click on a card (Delete Unused
-   *  Files): the cards of the app tell that it is gone, and its runs end
-   *  (`showAppDeleted`). The cleanup deletes only an app that no
+  /** Dez deleted the app `name` with no click on a card (Delete
+   *  Unreferenced Apps): the cards of the app tell that it is gone, and its
+   *  runs end (`showAppDeleted`). The cleanup deletes only an app that no
    *  conversation names, but a paste can bring a tag of it in while the
    *  delete runs. */
   'dez.editor/appDeleted' (name: string): void {

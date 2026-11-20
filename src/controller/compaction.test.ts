@@ -306,7 +306,7 @@ describe('compactConversation', () => {
         { name: 'sheet', kind: 'script', description: 'The sheet app.' },
         { name: 'viewer', kind: 'ui', description: 'The viewer app.' },
       ])
-      // The rule by which Delete Unused Files keeps an app.
+      // The rule by which Delete Unreferenced Apps keeps an app.
       expect([...namedApps(notesOf(compaction))].sort()).toStrictEqual(['sheet', 'viewer'])
     })
 

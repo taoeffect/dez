@@ -16,8 +16,8 @@ import { imageMediaType, type ImageMediaType } from './images'
 // request sends the name of a copy. Dez deletes the copies of a call whose
 // result no block takes, such as a stopped call
 // (controller/shownPictures.ts), and the copies of the calls that a
-// compaction takes out; else only Delete Unused Files deletes a copy, when
-// no text names it (unusedFiles.ts).
+// compaction takes out; else only Delete Unreferenced Files deletes a copy,
+// when no text names it (unusedFiles.ts).
 
 /** One picture that a tool call showed its model, as its block keeps it.
  *  The size and the byte count give the cost of the picture in a request

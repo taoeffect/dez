@@ -1761,7 +1761,7 @@ describe('dez.controller/tools/run', () => {
         })
 
         // No text names them before the job ends, which can be long after
-        // them: Delete Unused Files keeps them by this list.
+        // them: Delete Unreferenced Files keeps them by this list.
         it('tells the job the image and the clip of an answer that goes on', async () => {
           const answer = heldAnswer(async (input) => {
             await input.onImage(PNG)

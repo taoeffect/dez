@@ -26,7 +26,7 @@ import type { Role } from './types'
 // job, can be in a later agent section than the block that started it.
 // The asset of a deleted block, and the text in a user section, show as
 // any other asset. Only the view hides it: its id, its `@id` mentions, the
-// requests, and Delete Unused Files treat it as any other asset.
+// requests, and Delete Unreferenced Files treat it as any other asset.
 //
 // A compaction hides assets too: every asset of its block, with or without
 // the kept mark (`IMAGE_KEPT_KEY`, `MEDIA_KEPT_ATTRIBUTE`), and, in the

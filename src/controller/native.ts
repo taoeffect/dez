@@ -68,9 +68,9 @@ export default sbp('sbp/selectors/register', {
   // accepts is saved (`download_app_file` in src-tauri/src/http_bridge.rs);
   // read `saved` of the result. Rejects on a network error, a body over
   // `rule.maxBytes`, and a cancel. A download into the cache root holds its
-  // target while it runs, so that Delete Unused Files does not take its
-  // files (cacheHolds.ts); every download of a clip comes here, the ones of
-  // the model layer too.
+  // target while it runs, so that Delete Unreferenced Files does not take
+  // its files (cacheHolds.ts); every download of a clip comes here, the
+  // ones of the model layer too.
   'dez.native/downloadAppFile' (request: NativeHttpRequest, requestId: string, file: AppFileRef, rule: NativeDownloadRule): Promise<NativeHttpDownload> {
     const download = () => invoke<NativeHttpDownload>('download_app_file', { request, requestId, root: file.root, path: file.path, rule })
     return file.root === 'cache' ? holdingCachePath(file.path, download) : download()

@@ -29,8 +29,8 @@ export async function seedApp (appsDir: string, manifest: AppManifest, files: Re
 }
 
 /** Gives the folder of the app `name` of `appsDir`, and each file and
- *  folder in it, a file time of `ageMs` ago: Delete Unused Files takes an
- *  app only when all of them are old. */
+ *  folder in it, a file time of `ageMs` ago: Delete Unreferenced Apps
+ *  takes an app only when all of them are old. */
 export async function ageApp (appsDir: string, name: string, ageMs: number): Promise<void> {
   const folder = path.join(appsDir, name)
   const time = new Date(Date.now() - ageMs)

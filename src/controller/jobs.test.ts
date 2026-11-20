@@ -309,7 +309,7 @@ describe('TabJobs', () => {
     expect(started).toBe(true)
   })
 
-  // Delete Unused Files keeps these files: no text names them before a
+  // Delete Unreferenced Files keeps these files: no text names them before a
   // reader writes them into the reply.
   it('gives the sources of the files that a running job kept, and of the results that ended, also after a reader took them', async () => {
     const keptImage = `${APP_DIR}/assets/generated/images/kept.png`

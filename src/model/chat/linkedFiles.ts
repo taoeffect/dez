@@ -16,7 +16,7 @@ import { findMediaTags, isLinkedMediaPath } from './mediaTags'
 // choose a file of this computer that Dez then reads. Dez never deletes a
 // linked file; its trash removes only the reference or the tag. Providers
 // get no linked path (`withoutStoredFilePaths`, storedFilePaths.ts), and
-// the unused-files scan lists only the files that Dez stores.
+// Delete Unreferenced Files lists only the files that Dez stores.
 
 /** True when the absolute path `path` is the folder `folder` or a path in
  *  it. Both must be canonical (`dez.native/canonicalPath`), as a link or a

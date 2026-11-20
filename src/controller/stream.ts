@@ -964,7 +964,7 @@ async function compactIfDue(args: StreamStartArgs, reply: ReplyRuntime, jobs: Ta
   // Before the delete, which keeps each file that a conversation file
   // names: the old file of this conversation names the files that left.
   await sbp('dez.model/tabs/save', tabId)
-  // Not awaited: it waits for a scan of the unused files that runs, and it
+  // Not awaited: it waits for the scan of a cleanup that runs, and it
   // logs its own failures.
   void sbp('dez.controller/unusedFiles/deleteUnnamed', compactionLeftFiles({ sections, replySectionId: sectionId, dropped: result.dropped, keptPictures: result.pictures }))
   reply.imageBytes = imageFileSizes(base.messages)
@@ -1391,7 +1391,7 @@ export default sbp('sbp/selectors/register', {
   // (`TabJobs.madeAssetSources`; the jobs that a tab holds too); and the
   // names of the picture copies of the calls of a tool round that runs
   // (shownPictures.ts), which a round can hold for longer than the age
-  // rule of the cleanup. Delete Unused Files keeps those files, as it
+  // rule of the cleanup. Delete Unreferenced Files keeps those files, as it
   // keeps the files that a text names.
   'dez.stream/unnamedMadeFiles' (): string[] {
     const replies = [...repliesByTab.values()]

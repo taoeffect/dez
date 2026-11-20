@@ -2,7 +2,7 @@ import { APP_NAME_SOURCE, isAppName } from '../tools/appManifest'
 import { APPS_VIRTUAL_ROOT } from '../tools/appsTool'
 
 // The apps that a text names: the one rule for "this text uses the app".
-// Delete Unused Files keeps an app that a text names
+// Delete Unreferenced Apps keeps an app that a text names
 // (controller/unusedFiles.ts), and a compaction keeps the names of the apps
 // of the text that it replaces (controller/compactionApps.ts).
 //

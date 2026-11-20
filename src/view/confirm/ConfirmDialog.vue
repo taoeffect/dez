@@ -103,8 +103,13 @@ function onOverlayClick(event: MouseEvent) {
   background: rgba(0, 0, 0, 0.4);
 }
 
+/* A long question (the names of many apps) scrolls inside the dialog, so
+   the buttons stay on screen. */
 .confirm-dialog {
+  display: flex;
+  flex-direction: column;
   width: min(400px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
   padding: 20px;
   background: var(--color-bg);
   border: 1px solid var(--color-border);
@@ -114,6 +119,8 @@ function onOverlayClick(event: MouseEvent) {
 }
 
 .confirm-message {
+  min-height: 0;
+  overflow-y: auto;
   font-size: 14px;
   line-height: 20px;
   overflow-wrap: anywhere;

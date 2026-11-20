@@ -92,8 +92,8 @@ import { hiddenAssetNotes, hiddenPart, pressToolChip, toolChips, toolPanelPictur
 //   panel of a call, and the picture copies of the tag before. The file
 //   of any other dropped image stays.
 // - Each app that the conversation named keeps a line in the notes, and
-//   the instruction of the compaction request lists it. Delete Unused
-//   Files keeps an app that only that line names.
+//   the instruction of the compaction request lists it. Delete
+//   Unreferenced Apps keeps an app that only that line names.
 //
 // One app session serves the whole file. The relaunch test reopens the
 // conversation of the request test, and a conversation that compacted at
@@ -1175,22 +1175,23 @@ describe('a compacted conversation', () => {
 
   // A compaction takes the tags and the calls of the apps out of the
   // conversation. Without its line in the notes, no text would name the
-  // app, and Delete Unused Files would delete it.
-  it('keeps a line in the notes for each app that the conversation named, and Delete Unused Files keeps that app', async () => {
+  // app, and Delete Unreferenced Apps would delete it.
+  it('keeps a line in the notes for each app that the conversation named, and Delete Unreferenced Apps keeps that app', async () => {
     const appsDir = appFilePath(setup.app.home, 'apps')
     const board = { name: 'compaction-board', description: 'A board of the foxes.', kind: 'ui' } as const
     const spare = 'compaction-spare'
     await seedApp(appsDir, board, uiAppFiles(''))
     await seedApp(appsDir, { name: spare, description: 'An app of no conversation.', kind: 'script' }, { 'main.ts': 'export default () => "spare"\n' })
-    // Delete Unused Files takes no app with a new file.
+    // Delete Unreferenced Apps takes no app with a new file.
     for (const name of [board.name, spare]) await ageApp(appsDir, name, 60 * 60 * 1000)
     const appLine = `/apps/${board.name} | ${board.kind} | ${board.description}`
     const appLines = (text: string): string[] => text.split('\n').filter((line) => line.startsWith('/apps/'))
-    // The folders of the apps that Delete Unused Files would delete now.
+    // The folders of the apps that Delete Unreferenced Apps would delete
+    // now.
     const unusedApps = async (): Promise<string[]> => browser.execute(async () => {
-      const sbp = Reflect.get(window, 'sbp') as (selector: string, onProgress: () => void) => Promise<{ files: Array<{ path: string }> }>
-      const { files } = await sbp('dez.controller/unusedFiles/find', () => {})
-      return files.map(({ path }) => path).filter((path) => path.startsWith('apps/'))
+      const sbp = Reflect.get(window, 'sbp') as (selector: string, kind: 'apps', onProgress: () => void) => Promise<{ files: Array<{ path: string }> }>
+      const { files } = await sbp('dez.controller/unusedFiles/find', 'apps', () => {})
+      return files.map(({ path }) => path)
     })
 
     const id = 'compaction-apps'
@@ -1318,7 +1319,7 @@ describe('a compacted conversation', () => {
     await waitForValue(browser, 'compaction chips', () => toolChips(browser), [assetsChipView(['2 kept', '1 dropped'], false), summaryChipView(false)])
     expect(await compactionChipCounts()).toStrictEqual(['2 kept', '1 dropped'])
     // The user saw the dropped image in the reply, so its file stays until
-    // Delete Unused Files.
+    // Delete Unreferenced Files.
     expect((await filesIn(madeDir)).filter((name) => name === names.kept || name === names.gone)).toStrictEqual([names.gone, names.kept])
   })
 

@@ -7,8 +7,8 @@ import { compactionScope, type CompactionAsset } from './compactionAssets'
 // The files that a compaction leaves with no text that names them. A
 // compaction takes text out of a conversation, and the editor cannot bring
 // that text back (the tab gets a new editor state, with no undo history).
-// So Dez deletes these files at once, and not at the next Delete Unused
-// Files:
+// So Dez deletes these files at once, and not at the next Delete
+// Unreferenced Files:
 //
 // - The file of a dropped asset that a call made as a part of its work
 //   (`CompactionAsset.intermediate`). The user saw it only in the panel of
@@ -18,8 +18,8 @@ import { compactionScope, type CompactionAsset } from './compactionAssets'
 //   tag before. No request reads them again.
 //
 // The file of any other dropped asset stays: the user saw that asset in
-// the conversation, and can still have a use for its file. Delete Unused
-// Files finds it.
+// the conversation, and can still have a use for its file. Delete
+// Unreferenced Files finds it.
 //
 // This list is only what the compaction itself tells. Another text (a
 // second conversation, a saved prompt) can still name one of the files, so

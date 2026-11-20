@@ -13,8 +13,8 @@ import type { FileTree } from './nativeTypes'
 // It calls the native side directly, not through the helpers of the `apps`
 // tool (appsTool.ts): those throw a text for a model that made a call. No
 // read here fails the compaction. A compaction cannot be undone, so an app
-// whose folder Dez cannot read keeps its line (Delete Unused Files must
-// not delete it for one failed read), and a file that Dez cannot read
+// whose folder Dez cannot read keeps its line (Delete Unreferenced Apps
+// must not delete it for one failed read), and a file that Dez cannot read
 // only names no asset.
 
 /** What a compaction reads of the apps of its conversation. */

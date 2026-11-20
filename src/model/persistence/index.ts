@@ -99,7 +99,7 @@ export default sbp('sbp/selectors/register', {
 
   // Deletes only the conversation file. The stored files that it names
   // stay: another text (a second conversation, a saved prompt) can still
-  // name them, and Delete Unused Files finds the rest.
+  // name them, and Delete Unreferenced Files finds the rest.
   async 'dez.persistence/deleteConversation' (id: string): Promise<void> {
     try {
       await sbp('dez.native/deleteConversationFile', id)

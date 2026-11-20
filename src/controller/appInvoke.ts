@@ -115,7 +115,7 @@ async function outputBytes(folder: string, name: string): Promise<Uint8Array | n
 // `keepAsset` gets each file when it is stored: the files of a run can be
 // large, so the last write can come long after the first, and until the
 // result of the job names a file only that list keeps it from Delete
-// Unused Files (`JobWork`).
+// Unreferenced Files (`JobWork`).
 //
 // A list or a write that fails keeps no file: the stored ones are deleted,
 // and a `ToolError` tells the model. A stop of `signal` deletes them too,

@@ -2729,8 +2729,8 @@ describe('dez.stream/start pictures that a tool shows', () => {
   })
 
   // A round runs its calls one after the other, and can take longer than
-  // the age rule of Delete Unused Files.
-  it('tells Delete Unused Files the copies of the calls that ended while their round runs', async () => {
+  // the age rule of Delete Unreferenced Files.
+  it('tells Delete Unreferenced Files the copies of the calls that ended while their round runs', async () => {
     const held: string[][] = []
     native.saveAppFile = async () => {
       held.push(sbp('dez.stream/unnamedMadeFiles') as string[])
@@ -3201,7 +3201,7 @@ describe('dez.stream/start jobs', () => {
     expect(alerts).toStrictEqual([])
 
     // A job that ends while no reply runs keeps its image for the next
-    // reply, also through Delete Unused Files.
+    // reply, also through Delete Unreferenced Files.
     jobs[0].end({ media: [png], clips: [] })
     await settled()
     expect(sectionVisibleText(agentSection('a1'))).toBe(`${invokeBlock('c1')}I started it.`)

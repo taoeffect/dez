@@ -61,8 +61,8 @@ const NO_CONFINEMENT = 'No confinement: '
  *  with all that it holds when the work ends, also after an error or a
  *  stop. The folder is not made here: the first write into it makes it. A
  *  delete that fails leaves the folder to the cleanup of the old work
- *  folders (workFolders.ts). Delete Unused Files does not take the folder
- *  until its delete here (cacheHolds.ts). */
+ *  folders (workFolders.ts). Delete Unreferenced Files does not take the
+ *  folder until its delete here (cacheHolds.ts). */
 export function inWorkFolder<T>(work: (folder: string) => Promise<T>): Promise<T> {
   const folder = workFolderPath(crypto.randomUUID())
   return holdingCachePath(folder, async () => {
