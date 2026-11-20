@@ -35,6 +35,36 @@ export interface AppFileEntry {
   size: number
 }
 
+// What a path of `dez.native/listFileTree` is. `other` is all that is no
+// regular file and no folder: a link (the listing follows none), a named
+// pipe, a socket.
+export type FileTreeEntryKind = 'file' | 'folder' | 'other'
+
+// One file, folder, or other entry below the folder of a tree listing.
+// `path` is from that folder, with `/` between folders; it can hold a name
+// that is no valid path segment of the app-file selectors (a script of an
+// app can make any name). `size` is in bytes, and 0 for all but a file.
+// `updatedAt` is in milliseconds since the Unix epoch; null when the time
+// cannot be read, so never take such an entry for an old one.
+export interface FileTreeEntry {
+  path: string
+  kind: FileTreeEntryKind
+  size: number
+  updatedAt: number | null
+}
+
+// What `dez.native/listFileTree` gives: the facts of the path itself
+// (`missing`: nothing is there) and, for a folder, the entries below it, in
+// no fixed order. `more` tells that the folder holds more entries than the
+// call asked for.
+export interface FileTree {
+  kind: FileTreeEntryKind | 'missing'
+  size: number
+  updatedAt: number | null
+  entries: FileTreeEntry[]
+  more: boolean
+}
+
 // The programs that Dez ships and can run (`bundle.externalBin` in
 // src-tauri/tauri.conf.json). The backend has the rules of each one
 // (`ProgramRules` in bundled_tools.rs): what its `args` are, which folders

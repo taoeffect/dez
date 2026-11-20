@@ -7,7 +7,7 @@ use tauri::ipc::InvokeBody;
 
 use crate::copilot::{CopilotChatToken, DeviceFlowResponse};
 use crate::native_error::NativeError;
-use crate::persistence::{AppFileEntry, ConversationFile, FileRoot};
+use crate::persistence::{AppFileEntry, ConversationFile, FileRoot, FileTree};
 
 const RELEASES_URL: &str = "https://github.com/taoeffect/dez/releases";
 const LATEST_RELEASE_API: &str = "https://api.github.com/repos/taoeffect/dez/releases/latest";
@@ -291,11 +291,21 @@ pub async fn load_app_file_bytes(root: FileRoot, path: String) -> Result<tauri::
 }
 
 // A missing file or folder is not an error. `folder` deletes a folder with
-// all that it holds, in the cache root only.
+// all that it holds, where a folder can change (`allows_folder_change` in
+// persistence.rs).
 #[tauri::command]
 pub async fn delete_app_file(root: FileRoot, path: String, folder: bool) -> Result<(), String> {
     crate::persistence::delete_app_file(root, &path, folder)
 }
+
+// Makes a private folder, and the missing folders above it, where a folder
+// can change.
+#[tauri::command]
+pub async fn create_folder(root: FileRoot, path: String) -> Result<(), String> {
+    crate::persistence::create_folder(root, &path)
+}
+
+// Moves a file, or a folder where a folder can change.
 
 #[tauri::command]
 pub async fn move_app_file(
@@ -311,6 +321,12 @@ pub async fn move_app_file(
 #[tauri::command]
 pub async fn list_app_files(root: FileRoot, path: String, folders: bool) -> Result<Vec<AppFileEntry>, String> {
     crate::persistence::list_app_files(root, &path, folders)
+}
+
+// What is at a path, and every entry below a folder, up to `max_entries`.
+#[tauri::command]
+pub async fn list_file_tree(root: FileRoot, path: String, max_entries: usize) -> Result<FileTree, String> {
+    crate::persistence::list_file_tree(root, &path, max_entries)
 }
 
 #[tauri::command]

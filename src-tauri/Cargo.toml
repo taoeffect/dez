@@ -87,7 +87,8 @@ landlock = "=0.4.7"
 # Landlock rules, the seccomp filter, the data limit (`setrlimit`), and the
 # close of the inherited files (`close_range`) (confinement.rs); on Linux
 # and macOS, the kill of the process group of a bundled program run
-# (bundled_tools.rs).
+# (bundled_tools.rs), and the open flags of a read in a place that programs
+# own (persistence.rs).
 [target.'cfg(unix)'.dependencies]
 libc = "=0.2.191"
 

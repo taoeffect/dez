@@ -23,7 +23,7 @@
 //!     run on a computer with no confinement, and its memory has a limit.
 //!
 //!   No program can make a symlink, and Dez follows no link of the cache
-//!   root (`has_link_below`).
+//!   root or of `APPS_FOLDER` (`has_link_below`).
 //! - It ends at its time limit, at its output cap, at a cancel
 //!   (`cancel_bundled_tool`, also one that came before the run command),
 //!   and when the app quits (`stop_all_runs`). The end of a run ends the
@@ -47,7 +47,7 @@ use tokio::process::ChildStdin;
 use tokio::sync::{Notify, mpsc, watch};
 
 use crate::confinement::{Confinement, confined_command};
-use crate::persistence::{FileRoot, has_link_below, is_app_file_segment, root_dir};
+use crate::persistence::{APPS_FOLDER, FileRoot, has_link_below, is_app_file_segment, make_private_folder, root_dir};
 
 // The programs that a run can name (`const BUNDLED_TOOLS: &[&str]`): the
 // `bundle.externalBin` programs of tauri.conf.json, under the names that
@@ -63,11 +63,6 @@ include!(concat!(env!("OUT_DIR"), "/bundled_tools.rs"));
 // conversations/, and Landlock cannot take a folder back out of an allowed
 // one. A constant and not a command parameter, so no page code can widen it.
 const PROGRAM_APP_FOLDER: &str = "assets";
-
-// The folder of the app folder that holds the apps, one folder for each. A
-// run with an app folder (`ToolRun::app_folder`) gets one of them, by its
-// name.
-const APPS_FOLDER: &str = "apps";
 
 // The folder of the cache root that holds the work folders (`WORK_ROOT` in
 // src/model/tools/workFolders.ts).
@@ -466,27 +461,6 @@ fn prepare_work_folder(folder: &Path, inputs: &[ToolInput], link_root: &Path) ->
     }
     make_private_folder(folder).map_err(|error| format!("Failed to make the work folder: {}", error))?;
     inputs.iter().try_for_each(|input| copy_input(folder, input, link_root))
-}
-
-// A work folder holds copies of the user's files and what a program makes
-// from them, so only the user can open it. The mode is set again after the
-// create: a folder that was there can have another mode (`ensure_dir` of
-// persistence.rs makes folders with the default one).
-fn make_private_folder(folder: &Path) -> std::io::Result<()> {
-    let mut builder = std::fs::DirBuilder::new();
-    builder.recursive(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        builder.mode(0o700);
-    }
-    builder.create(folder)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(folder, std::fs::Permissions::from_mode(0o700))?;
-    }
-    Ok(())
 }
 
 // Puts one input file into the work folder, as a copy. Never a symlink or a

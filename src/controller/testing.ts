@@ -5,7 +5,7 @@ import type { JsEvalLine } from '../model/tools/jsEval'
 import { ToolError, type ToolRunResult } from '../model/tools/types'
 import type { NativeDownloadRule, NativeHttpDownload, NativeHttpRequest } from '../utils/protocol/nativeHttp'
 import { TabJobs, type JobOutcome, type JobWork, type MadeAsset } from './jobs'
-import type { AppFileEntry, AppFileRef, BundledToolEnd, BundledToolOutput, BundledToolRun } from './nativeTypes'
+import type { AppFileEntry, AppFileRef, BundledToolEnd, BundledToolOutput, BundledToolRun, FileTree } from './nativeTypes'
 import type { ToolRunCall, ToolRunContext } from './tools'
 
 // Shared helpers of the unit tests of the controller code that runs the
@@ -62,6 +62,10 @@ function newNative() {
     saveAppFile: async (): Promise<void> => {},
     deletedFiles: [] as (AppFileRef & { folder: boolean })[],
     deleteAppFile: async (): Promise<void> => {},
+    createdFolders: [] as AppFileRef[],
+    // What is at a path, and below it; nothing is at a path that a test
+    // does not set.
+    fileTree: ((): FileTree => ({ kind: 'missing', size: 0, updatedAt: null, entries: [], more: false })) as (file: AppFileRef) => FileTree,
     downloads: [] as StubDownload[],
     downloadAppFile: (async () => SAVED) as () => Promise<NativeHttpDownload>,
     cancelledDownloads: [] as string[],
@@ -128,6 +132,12 @@ sbp('sbp/selectors/register', {
   async 'dez.native/deleteAppFile' (path: string, root = 'app', { folder = false }: { folder?: boolean } = {}): Promise<void> {
     await native.deleteAppFile()
     native.deletedFiles.push({ root, path, folder } as AppFileRef & { folder: boolean })
+  },
+  async 'dez.native/createFolder' (path: string, root = 'app'): Promise<void> {
+    native.createdFolders.push({ root, path } as AppFileRef)
+  },
+  async 'dez.native/listFileTree' (path: string, _maxEntries: number, root = 'app'): Promise<FileTree> {
+    return native.fileTree({ root, path } as AppFileRef)
   },
   'dez.native/downloadAppFile' (request: NativeHttpRequest, requestId: string, file: AppFileRef, rule: NativeDownloadRule): Promise<NativeHttpDownload> {
     native.downloads.push({ request, requestId, file, rule })
