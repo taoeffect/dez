@@ -53,13 +53,14 @@
 
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::io::{Read, Seek, SeekFrom};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use tauri::http::{Method, Request, Response, StatusCode, Uri, header, response};
 use tauri::plugin::{Builder, TauriPlugin};
 use tauri::{Manager, Runtime, Url, Webview};
 
-use crate::persistence::{APPS_FOLDER, FileRoot, is_app_file_segment, load_app_file_bytes};
+use crate::persistence::{APPS_FOLDER, FileRoot, is_app_file_segment, open_app_file};
 
 const SCHEME: &str = "dezapp";
 
@@ -264,7 +265,7 @@ fn refusal(status: StatusCode, text: impl Into<Cow<'static, str>>) -> Answer {
 
 // A count of bytes in a `Range` header: digits only (`parse` alone also
 // takes a `+`).
-fn byte_count(text: &str) -> Option<usize> {
+fn byte_count(text: &str) -> Option<u64> {
     if text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;
     }
@@ -276,7 +277,7 @@ fn byte_count(text: &str) -> Option<usize> {
 // (the last bytes). None for a list of ranges, a range that the file does
 // not have, and each other form: the answer is then the whole file, which
 // HTTP allows for every `Range` header.
-fn byte_range(value: &str, size: usize) -> Option<(usize, usize)> {
+fn byte_range(value: &str, size: u64) -> Option<(u64, u64)> {
     let (first, last) = value.strip_prefix("bytes=")?.split_once('-')?;
     let end = size.checked_sub(1)?;
     let (first, last) = if first.is_empty() {
@@ -290,16 +291,38 @@ fn byte_range(value: &str, size: usize) -> Option<(usize, usize)> {
     (first <= last).then_some((first, last))
 }
 
+// The bytes of a file that a request gets. With a `Range` header that
+// `byte_range` takes, only the bytes of its span, with the first and the
+// last byte and the size of the file; else the whole file. A page that
+// reads a large file in parts must not cost a read of the whole file for
+// each part.
+fn read_span(file: &mut (impl Read + Seek), range: Option<&str>) -> std::io::Result<(Vec<u8>, Option<(u64, u64, u64)>)> {
+    if let Some(range) = range {
+        let size = file.seek(SeekFrom::End(0))?;
+        if let Some((first, last)) = byte_range(range, size) {
+            file.seek(SeekFrom::Start(first))?;
+            let mut bytes = vec![0; usize::try_from(last - first + 1).map_err(|_| std::io::ErrorKind::OutOfMemory)?];
+            // A file that became shorter after the size was read fails here.
+            file.read_exact(&mut bytes)?;
+            return Ok((bytes, Some((first, last, size))));
+        }
+        file.rewind()?;
+    }
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    Ok((bytes, None))
+}
+
 // Whether the guards of a webview itself are on (no link preconnect, and
 // the content rule list), or why they are not.
 type WebviewGuards = Result<(), String>;
 
 // The answer to one request of the scheme. `guards` are those of the
-// webview of the request. `read` gives the bytes of a file of the app root
-// (`load_app_file_bytes`: it refuses a path through a link and all that is
-// no regular file); it gets only a path that `app_file` passed. The client
+// webview of the request. `open` opens a file of the app root
+// (`open_app_file`: it refuses a path through a link and all that is no
+// regular file); it gets only a path that `app_file` passed. The client
 // script is read from no file.
-fn serve(request: &Request<Vec<u8>>, guards: &WebviewGuards, read: impl FnOnce(&str) -> Result<Vec<u8>, String>) -> Answer {
+fn serve<F: Read + Seek>(request: &Request<Vec<u8>>, guards: &WebviewGuards, open: impl FnOnce(&str) -> Result<F, String>) -> Answer {
     if let Err(problem) = guards {
         // No code of an app can read this text: with a guard off, no page
         // of an app loads.
@@ -321,24 +344,18 @@ fn serve(request: &Request<Vec<u8>>, guards: &WebviewGuards, read: impl FnOnce(&
     let Some(file) = app_file(request.uri()) else {
         return refusal(StatusCode::NOT_FOUND, NO_SUCH_FILE);
     };
-    let Ok(mut bytes) = read(&format!("{APPS_FOLDER}/{}", file.path)) else {
+    let Ok(mut opened) = open(&format!("{APPS_FOLDER}/{}", file.path)) else {
         return refusal(StatusCode::NOT_FOUND, NO_SUCH_FILE);
     };
-    let size = bytes.len();
+    let range = request.headers().get(header::RANGE).and_then(|value| value.to_str().ok());
+    let Ok((bytes, span)) = read_span(&mut opened, range) else {
+        return refusal(StatusCode::NOT_FOUND, NO_SUCH_FILE);
+    };
     let found = answer(StatusCode::OK, content_type(file.path), &app_policy(file.app)).header(header::ACCEPT_RANGES, "bytes");
-    let range = request
-        .headers()
-        .get(header::RANGE)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| byte_range(value, size));
-    let found = match range {
-        Some((first, last)) => {
-            bytes.truncate(last + 1);
-            bytes.drain(..first);
-            found
-                .status(StatusCode::PARTIAL_CONTENT)
-                .header(header::CONTENT_RANGE, format!("bytes {first}-{last}/{size}"))
-        }
+    let found = match span {
+        Some((first, last, size)) => found
+            .status(StatusCode::PARTIAL_CONTENT)
+            .header(header::CONTENT_RANGE, format!("bytes {first}-{last}/{size}")),
         None => found,
     };
     // The name of the app is the one part of a header value that is no
@@ -396,7 +413,7 @@ impl Gate {
                 }
             }
         };
-        // Outside the lock: `work` reads a file.
+        // Outside the lock: `work` is the code of the caller.
         work(&guards);
     }
 
@@ -740,7 +757,15 @@ pub fn plugin<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("app-frames")
         .register_asynchronous_uri_scheme_protocol(SCHEME, move |context, request, responder| {
             scheme_gate.when_decided(context.webview_label(), move |guards| {
-                responder.respond(serve(&request, guards, |path| load_app_file_bytes(FileRoot::App, path)));
+                // WebKit asks for each request on the main thread, and
+                // `decide` runs there too. A file of an app can be large,
+                // and a read there would stop the UI of Dez until it ends.
+                // WebKit still takes the bytes of the answer on the main
+                // thread, so a large answer stops the UI for a while.
+                let guards = guards.clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    responder.respond(serve(&request, &guards, |path| open_app_file(FileRoot::App, path)));
+                });
             });
         })
         .on_navigation(|webview, url| {
@@ -770,9 +795,13 @@ pub fn plugin<R: Runtime>() -> TauriPlugin<R> {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
+
+    // A file of an app, in memory.
+    type MemoryFile = Cursor<&'static [u8]>;
 
     fn get(uri: &str) -> Request<Vec<u8>> {
         Request::builder().uri(uri).body(Vec::new()).expect("request")
@@ -787,9 +816,29 @@ mod tests {
         answer.headers().get(name).expect("header").to_str().expect("header text")
     }
 
-    // A reader that must not run: the request is refused before a read.
-    fn no_read(path: &str) -> Result<Vec<u8>, String> {
+    // An open that must not run: the request is refused before a file opens.
+    fn no_read(path: &str) -> Result<MemoryFile, String> {
         panic!("read of {path}")
+    }
+
+    // A file in memory that counts the bytes that reads take from it.
+    struct CountedFile {
+        file: MemoryFile,
+        read: usize,
+    }
+
+    impl Read for CountedFile {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            let count = self.file.read(buffer)?;
+            self.read += count;
+            Ok(count)
+        }
+    }
+
+    impl Seek for CountedFile {
+        fn seek(&mut self, to: SeekFrom) -> std::io::Result<u64> {
+            self.file.seek(to)
+        }
     }
 
     #[test]
@@ -849,7 +898,7 @@ mod tests {
     fn a_file_is_served_under_the_policy_of_its_own_app() {
         let answer = serve(&get("dezapp://localhost/my-app/js/main.js?v=2"), &Ok(()), |path| {
             assert_eq!(path, "apps/my-app/js/main.js");
-            Ok(b"let a = 1".to_vec())
+            Ok(MemoryFile::new(b"let a = 1"))
         });
 
         assert_eq!(answer.status(), StatusCode::OK);
@@ -908,23 +957,39 @@ mod tests {
     }
 
     #[test]
-    fn a_range_request_gets_only_its_bytes() {
-        let mut request = get("dezapp://localhost/my-app/clip.webm");
-        request.headers_mut().insert(header::RANGE, header::HeaderValue::from_static("bytes=2-4"));
+    fn a_range_request_reads_and_gets_only_its_bytes() {
+        // The answer to `range` for a file of 10 bytes, and the count of
+        // the bytes that it read.
+        let ranged = |range: &'static str| {
+            let mut request = get("dezapp://localhost/my-app/clip.webm");
+            request.headers_mut().insert(header::RANGE, header::HeaderValue::from_static(range));
+            let mut file = CountedFile { file: MemoryFile::new(b"0123456789"), read: 0 };
+            let opened = &mut file;
+            let answer = serve(&request, &Ok(()), move |_| Ok(opened));
+            (answer, file.read)
+        };
 
-        let answer = serve(&request, &Ok(()), |_| Ok(b"0123456789".to_vec()));
-
+        let (answer, read) = ranged("bytes=2-4");
         assert_eq!(answer.status(), StatusCode::PARTIAL_CONTENT);
         assert_eq!(answer.body().as_ref(), b"234");
+        assert_eq!(read, 3, "a range must not cost a read of the whole file");
         assert_eq!(header_of(&answer, header::CONTENT_RANGE), "bytes 2-4/10");
         assert_eq!(header_of(&answer, header::CONTENT_TYPE), "video/webm");
+
+        // A range that the file does not have gets the whole file.
+        let (answer, _) = ranged("bytes=10-");
+        assert_eq!(answer.status(), StatusCode::OK);
+        assert_eq!(answer.body().as_ref(), b"0123456789");
+        assert!(answer.headers().get(header::CONTENT_RANGE).is_none());
     }
 
     // A refusal is a page too: it must load and run nothing, and it tells
     // the code of an app no path and no reason.
     #[test]
     fn a_refusal_is_a_locked_page_that_tells_no_path() {
-        let missing = serve(&get("dezapp://localhost/my-app/gone.js"), &Ok(()), |path| Err(format!("Failed to read /home/user/.config/dez/{path}")));
+        let missing = serve(&get("dezapp://localhost/my-app/gone.js"), &Ok(()), |path| {
+            Err::<MemoryFile, _>(format!("Failed to read /home/user/.config/dez/{path}"))
+        });
         let outside = serve(&get("dezapp://localhost/my-app/../../provider_keys.json"), &Ok(()), no_read);
         let mut post = get("dezapp://localhost/my-app/index.html");
         *post.method_mut() = Method::POST;

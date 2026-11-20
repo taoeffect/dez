@@ -463,19 +463,35 @@ pub fn load_app_file(relative: &str) -> Result<String, String> {
 // Unlike `load_app_file`, a missing file is an error: a file that is gone
 // (an image) must not read as an empty one.
 pub fn load_app_file_bytes(root: FileRoot, relative: &str) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::new();
+    open_app_file(root, relative)?
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("Failed to read {}: {}", relative, e))?;
+    Ok(bytes)
+}
+
+// Opens a file of a root for a read, with the checks of
+// `load_app_file_bytes`, for a caller that reads only a part of the file
+// (the span of a `Range` request, app_frames.rs).
+pub fn open_app_file(root: FileRoot, relative: &str) -> Result<std::fs::File, String> {
     let path = app_file_path(root, relative)?;
-    read_file(&path, is_program_owned(root, relative)).map_err(|e| format!("Failed to read {}: {}", relative, e))
+    open_file(&path, is_program_owned(root, relative)).map_err(|e| format!("Failed to read {}: {}", relative, e))
 }
 
 // The bytes of a file; with `plain_only`, for a place that programs own,
 // only of a regular file (`open_plain_file`).
 fn read_file(path: &Path, plain_only: bool) -> std::io::Result<Vec<u8>> {
-    if !plain_only {
-        return std::fs::read(path);
-    }
     let mut bytes = Vec::new();
-    open_plain_file(path)?.read_to_end(&mut bytes)?;
+    open_file(path, plain_only)?.read_to_end(&mut bytes)?;
     Ok(bytes)
+}
+
+fn open_file(path: &Path, plain_only: bool) -> std::io::Result<std::fs::File> {
+    if plain_only {
+        open_plain_file(path)
+    } else {
+        std::fs::File::open(path)
+    }
 }
 
 // Opens a file of a place that programs own for a read, and only a regular
