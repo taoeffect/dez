@@ -38,6 +38,12 @@ To run the native build for the current platform only:
 npm run build:desktop
 ```
 
+## What Dez needs to run
+
+- Linux: WebKitGTK 2.42 or newer, to build Dez and to run it. Dez calls functions of WebKitGTK 2.42 to set the guards of the app frames (`src-tauri/src/app_frames.rs`). The AppImage includes the WebKitGTK of the build machine, so the build machine must have 2.42 or newer. A build that is not an AppImage uses the WebKitGTK of the system.
+- Linux: Landlock, a part of the kernel since Linux 5.13, keeps ffmpeg, ffprobe, and Deno in the Dez folders (`src-tauri/src/confinement.rs`). It must be on: `landlock` is in `/sys/kernel/security/lsm`. Without Landlock, Dez does not run Deno (`js_eval` and script apps give the model an error), and ffmpeg and ffprobe run with only the argument checks of Dez as their guard. Before Linux 6.12, a program that Dez runs can also send a signal to the other programs of the user.
+- macOS: the page of an app (a shown app, or a run of a UI app) loads only on macOS 13.3 or newer. Its guard turns off a WebKit feature with an API that an older macOS does not have. The rule of the bundled programs is Seatbelt (`/usr/bin/sandbox-exec`), which is a part of macOS.
+
 ## Tagged releases
 
 First set the version in the npm, Tauri, and Cargo files, and commit them. Then push a version tag on that commit to start the desktop release workflow:
