@@ -1,8 +1,15 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { expect } from 'vitest'
 import type { Point } from './dom'
+import { appFilePath, writeTestFile } from './fixtures'
+import { STRIPES_PNG } from './images'
+import { clipTag, WEBM_VIDEO } from './media'
+import type { MockProviderApp } from './mockProviderApp'
+import type { HeldRequest, MockProvider } from './mockServer'
 import type { E2EBrowser } from './session'
+import { openSeededConversation, pickModel } from './thread'
 
 const linkedDropsDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../artifacts/linked-drops')
 
@@ -63,4 +70,40 @@ export async function linkedDropDir (name: string): Promise<string> {
   await fs.promises.rm(dir, { recursive: true, force: true })
   await fs.promises.mkdir(dir, { recursive: true })
   return dir
+}
+
+// A word of the name of each linked file of `openDroppedFiles`. No code of
+// a spec holds one, so a request holds one only when the app sent the name
+// of a file.
+const LINKED_IMAGE_WORD = 'holiday'
+const LINKED_CLIP_WORD = 'beach'
+
+/** Opens the conversation `name` with files that the user dropped, all in
+ *  its one user section, picks the model of `provider`, and gives the path
+ *  of each file by its id. The next new id of the conversation is `d`.
+ *  - `@a`: `STRIPES_PNG` as an image that Dez copied (a stored file);
+ *  - `@b`: the same image as a file that the user linked, in `linkedDir`
+ *    (`linkedDropDir`);
+ *  - `@c`: `WEBM_VIDEO` as a file that the user linked. */
+export async function openDroppedFiles (setup: MockProviderApp, provider: MockProvider, linkedDir: string, name: string): Promise<Record<'a' | 'b' | 'c', string>> {
+  const { home } = setup.app
+  const a = await writeTestFile(appFilePath(home, 'assets', 'images', `${name}-a.png`), STRIPES_PNG)
+  const b = await writeTestFile(path.join(linkedDir, `${name}-${LINKED_IMAGE_WORD}.png`), STRIPES_PNG)
+  const c = await writeTestFile(path.join(linkedDir, `${name}-${LINKED_CLIP_WORD}.webm`), WEBM_VIDEO)
+  await openSeededConversation(setup.browser, home, name, [{
+    role: 'user',
+    text: [`![id=a](${a})`, `![id=b](${b})`, clipTag('video', { id: 'c', type: 'video/webm', src: c }), 'Here are my files.'].join('\n'),
+  }])
+  await pickModel(setup.browser, provider.name, provider.modelName)
+  return { a, b, c }
+}
+
+/** Checks that no body of `requests` names a linked file of
+ *  `openDroppedFiles`: not its folder `linkedDir`, and not its name. */
+export function expectNoLinkedFile (requests: readonly HeldRequest[], linkedDir: string): void {
+  for (const { body } of requests) {
+    expect(body).not.toContain(linkedDir)
+    expect(body).not.toContain(LINKED_IMAGE_WORD)
+    expect(body).not.toContain(LINKED_CLIP_WORD)
+  }
 }

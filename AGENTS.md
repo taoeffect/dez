@@ -101,7 +101,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `controller/unusedFiles.ts`, `cacheHolds.ts`, `workFolders.ts`: find and delete the files and cache entries that nothing uses.
 - `model/chat/`: `Section` / `ContentNode` types and helpers, and the text forms of a conversation, each with one writer and recognizer:
   - `images.ts` (image references), `mediaTags.ts` (clips), `toolBlocks.ts` (tool calls), `bridgedCalls.ts` (the tool calls of the code of a `js_eval` call), `pillMarker.ts` (pill markers), `compaction.ts`, `compactionNotes.ts`, `notesTable.ts` (the compaction block, the notes, and the tables of the notes).
-  - `mediaIds.ts`, `imageMentions.ts`, `assetMentions.ts` (asset ids and `@id` mentions), `codeRanges.ts` (Markdown code), `hiddenAssets.ts`, `shownPictures.ts`.
+  - `mediaIds.ts`, `imageMentions.ts`, `assetMentions.ts` (asset ids and `@id` mentions), `codeRanges.ts` (Markdown code), `hiddenAssets.ts`, `shownPictures.ts`, `fileSignatures.ts` (the type of a file from its first bytes).
   - `storedFilePaths.ts`, `linkedFiles.ts`, `mediaFiles.ts`, `unusedFiles.ts` (stored, linked, and unused files).
 - `model/state/`: Pinia stores (internal) and `dez.model/*` selectors; views read state through `view/modelState.ts`.
 - `controller/thread.ts`: `dez.controller/submitTab`. `controller/tabs.ts`: `dez.controller/newTab`.
@@ -118,6 +118,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `model/tools/jsEval.ts`, `jsEvalRunner.js`: the `js_eval` tool (code of a model in Deno): Dez's module of a run, its line protocol, and the result texts.
 - `model/tools/toolBridge.ts`, `controller/toolBridge.ts`: the tool bridge of `js_eval`: the Dez tools that the code of a run calls with `dez.sbp`.
 - `model/tools/appsTool.ts`, `lineEdits.ts`, `appManifest.ts`, `appTemplates.ts`, `controller/appsTool.ts`: the `apps` tool: the files of the apps, on the virtual root `/apps/`.
+- `model/tools/appInvoke.ts`, `controller/appInvoke.ts`: `apps invoke`: a run of the code of a script app in Deno, as a job with copies of its inputs and checked output files.
 - `model/systemPrompt/`: the built-in system prompt (`systemPrompt.md`), the variables of a template, and its checks.
 - `model/modelOutputs.ts`, `modelInputs.ts`, `modelSearch.ts`: the output types, what Dez can send a model, and the model filter.
 - `controller/notifications.ts`, `view/sound.ts`, `assets/sounds/`: the reply-end alerts (sound, system notification).
@@ -373,7 +374,7 @@ Brief comments are encouraged above functions that do anything non-trivial expla
 - E2E seeds turn the reply-end alerts off (`quietAppState`); alert specs use the fake notification server (`tests/e2e/harness/notificationServer.ts`).
 - E2E clips must be in a format that the CI GStreamer packages decode (VP9 in webm or mp4, wav, Opus in WebM; `.github/workflows/e2e.yml`).
 - E2E bundled tools: the specs run the real ffmpeg, ffprobe, and Deno of the debug build (`tests/e2e/bundled-tools.e2e.ts`, `tests/e2e/video-tool.e2e.ts`, `tests/e2e/js-eval.e2e.ts`, and the sandbox audit of Deno, `tests/e2e/js-eval-sandbox.e2e.ts`).
-- E2E `apps` tool: `tests/e2e/apps-tool.e2e.ts` runs the file subcommands on the real file commands of the backend, with links in the folder of an app. The unit tests use the in-memory files of `fakeAppFiles` (`src/controller/testing.ts`).
+- E2E `apps` tool: `tests/e2e/apps-tool.e2e.ts` runs the file subcommands on the real file commands of the backend, with links in the folder of an app; `tests/e2e/apps-invoke.e2e.ts` runs script apps in the real Deno. The unit tests use the in-memory files of `fakeAppFiles` (`src/controller/testing.ts`).
 - A `browser.execute` result must not be an object with a set `error` field: webdriverio takes it for a failure of the script.
 - E2E specs that open a URL call `stopOpenUrl` (`tests/e2e/harness/dom.ts`), so no browser opens.
 - **No display server** (every spec fails with `Hook timed out in 120000ms` in `beforeAll`): run under headless `kwin_wayland`; the recipe is in `vitest.e2e.config.ts`.

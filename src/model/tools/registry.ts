@@ -1,5 +1,6 @@
 import type { JsonObject } from '../../utils/json'
-import { APPS_TOOL_DEFINITION } from './appsTool'
+import { invokeLabel } from './appInvoke'
+import { APPS_INVOKE, APPS_TOOL, APPS_TOOL_DEFINITION } from './appsTool'
 import { ASSET_INFO_TOOL } from './assetInfo'
 import { ASSET_VIEW_TOOL } from './assetView'
 import { AUDIO_TOOL_DEFINITION } from './audioTool'
@@ -10,8 +11,8 @@ import { JS_EVAL_TOOL } from './jsEval'
 import { MODEL_INFO_TOOL } from './modelInfo'
 import { invocationLabel, MODEL_INVOKE_TOOL } from './modelInvoke'
 import { MODEL_LIST_TOOL } from './modelList'
-import { parseSubcommandCall } from './subcommands'
-import { ToolError, type ToolArguments, type ToolDefinition } from './types'
+import { parseSubcommandCall, type SubcommandCall, type SubcommandTool } from './subcommands'
+import { ToolError, type SubcommandParameter, type ToolArguments, type ToolDefinition } from './types'
 import { VIDEO_TOOL, VIDEO_TOOL_DEFINITION, videoCallLabel } from './videoTool'
 
 /** Every Dez tool, in the order that requests and the system prompt list
@@ -48,11 +49,12 @@ export function toolDefinition(name: string): ToolDefinition | undefined {
   return TOOL_DEFINITIONS.find((tool) => tool.name === name)
 }
 
-// The subcommand that a `video` call runs, with its own arguments; null for
-// a call that Dez refuses or that asks for a help text.
-function videoRunCall(args: ToolArguments) {
+// The subcommand that a call of the subcommand tool `tool` runs, with its
+// own arguments; null for a call that Dez refuses or that asks for a help
+// text.
+function runCall<P extends SubcommandParameter>(tool: SubcommandTool<P>, args: ToolArguments): Extract<SubcommandCall<P>, { kind: 'run' }> | null {
   try {
-    const call = parseSubcommandCall(VIDEO_TOOL, args)
+    const call = parseSubcommandCall(tool, args)
     return call.kind === 'run' ? call : null
   } catch (error) {
     if (error instanceof ToolError) return null
@@ -60,17 +62,22 @@ function videoRunCall(args: ToolArguments) {
   }
 }
 
+// The subcommand tools with a subcommand whose job makes images or clips,
+// and that takes `INTERMEDIATE_PARAMETER`.
+const HIDING_SUBCOMMAND_TOOLS: readonly SubcommandTool<SubcommandParameter>[] = [VIDEO_TOOL, APPS_TOOL]
+
 /** Whether a call, as its tool block holds it (`name` and `args`), asks
  *  Dez to hide the images and clips that its job makes
  *  (`INTERMEDIATE_PARAMETER`, jobs.ts). The flag is an argument of
- *  `model_invoke`, and a parameter of the `video` subcommands that make
- *  files, in the `parameters` text, where their runners read it. False
- *  for the call of any other tool, and for a `video` call that Dez
- *  refuses or that asks for a help text. */
+ *  `model_invoke`, and a parameter of the subcommands that make files
+ *  (those of `video`, and `apps invoke`), in the `parameters` text, where
+ *  their runners read it. False for the call of any other tool, and for a
+ *  call of a subcommand tool that Dez refuses or that asks for a help
+ *  text. */
 export function isIntermediateCall(name: string, args: ToolArguments): boolean {
   if (name === MODEL_INVOKE_TOOL.name) return isIntermediate(args)
-  if (name !== VIDEO_TOOL.name) return false
-  const call = videoRunCall(args)
+  const tool = HIDING_SUBCOMMAND_TOOLS.find((candidate) => candidate.name === name)
+  const call = tool ? runCall(tool, args) : null
   return call !== null && isIntermediate(call.arguments)
 }
 
@@ -83,8 +90,12 @@ export function isIntermediateCall(name: string, args: ToolArguments): boolean {
 export function callLabel(name: string, args: ToolArguments): string {
   if (name === MODEL_INVOKE_TOOL.name) return invocationLabel(args)
   if (name === VIDEO_TOOL.name) {
-    const call = videoRunCall(args)
+    const call = runCall(VIDEO_TOOL, args)
     if (call !== null) return videoCallLabel(call.name, call.arguments)
+  }
+  if (name === APPS_TOOL.name) {
+    const call = runCall(APPS_TOOL, args)
+    if (call?.name === APPS_INVOKE) return invokeLabel(call.arguments)
   }
   return typeof args.command === 'string' ? jobCallLabel(`${args.command} ${String(args.parameters ?? '')}`) : ''
 }

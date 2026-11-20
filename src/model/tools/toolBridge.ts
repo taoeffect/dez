@@ -1,5 +1,6 @@
 import { mapJsonStrings } from '../../utils/json'
 import { oneLineCut } from '../../utils/oneLineCut'
+import { APPS_INVOKE, APPS_TOOL } from './appsTool'
 import { checkArgumentValues } from './arguments'
 import { JS_EVAL_MAX_TOOL_CALLS, JS_EVAL_TOOL, textForModel, type JsEvalCallLine } from './jsEval'
 import { TOOL_DEFINITIONS, toolDefinition } from './registry'
@@ -31,6 +32,21 @@ import type { ToolArguments } from './types'
  *  other run of code: the limits of a run (its time, the count of its tool
  *  calls) would not hold for the work that it starts. */
 const UNBRIDGED_TOOLS: readonly string[] = [JS_EVAL_TOOL.name]
+
+// The subcommand of a tool that the code of a run cannot call, for the
+// same cause: `apps invoke` runs the code of an app. The other subcommands
+// of the tool go.
+const UNBRIDGED_SUBCOMMAND = { tool: APPS_TOOL.name, subcommand: APPS_INVOKE }
+
+// Whether a call of the tool `tool` names the subcommand that code cannot
+// call. `command` is the subcommand as the call gave it: the runner of a
+// subcommand tool trims the text (`parseSubcommandCall`), so this does too.
+function isUnbridgedSubcommand(tool: string, command: unknown): boolean {
+  return tool === UNBRIDGED_SUBCOMMAND.tool && typeof command === 'string' && command.trim() === UNBRIDGED_SUBCOMMAND.subcommand
+}
+
+const UNBRIDGED_SUBCOMMAND_TEXT = `Code cannot call ${UNBRIDGED_SUBCOMMAND.tool} ${UNBRIDGED_SUBCOMMAND.subcommand}: a run of code starts no other run of code. `
+  + `Call ${UNBRIDGED_SUBCOMMAND.tool} ${UNBRIDGED_SUBCOMMAND.subcommand} yourself, as a tool call of your own, before or after this code.`
 
 const SELECTOR_START = 'dez.tools/'
 
@@ -88,8 +104,9 @@ export type BridgedCallCheck =
  *  after the limit of a run (`JS_EVAL_MAX_TOOL_CALLS`) gets no call.
  *
  *  Refused with a text for the model: a selector that names no Dez tool,
- *  a tool that code cannot call (`UNBRIDGED_TOOLS`), a subcommand that the
- *  tool does not have, arguments that are no object, and arguments that
+ *  a tool or a subcommand that code cannot call (`UNBRIDGED_TOOLS`,
+ *  `UNBRIDGED_SUBCOMMAND`, in both forms of a selector), a subcommand that
+ *  the tool does not have, arguments that are no object, and arguments that
  *  the definition of the tool does not take (`checkArgumentValues`). The
  *  parameters of a subcommand are not checked here: the runner of its tool
  *  checks them, as for a call of the model (`parseSubcommandCall`).
@@ -131,7 +148,10 @@ export function bridgedToolCall(line: Pick<JsEvalCallLine, 'selector' | 'argumen
 
   if (subcommand === undefined) {
     const checked = checkArgumentValues(definition, values)
-    if (checked.ok) return { ok: true, call: { name: definition.name, arguments: checked.arguments } }
+    if (checked.ok) {
+      if (isUnbridgedSubcommand(definition.name, checked.arguments.command)) return refused(UNBRIDGED_SUBCOMMAND_TEXT)
+      return { ok: true, call: { name: definition.name, arguments: checked.arguments } }
+    }
     return refused(definition.subcommands
       ? `${checked.error} In code, you can also name the subcommand in the selector and give its parameters as an object: ${subcommandCallForm(definition.name)}.`
       : checked.error)
@@ -141,5 +161,6 @@ export function bridgedToolCall(line: Pick<JsEvalCallLine, 'selector' | 'argumen
     return refused(`The ${definition.name} tool has no subcommand ${shown(subcommand)}. Its subcommands: ${definition.subcommands.join(', ')}. `
       + `Call one with ${subcommandCallForm(definition.name)}.`)
   }
+  if (isUnbridgedSubcommand(definition.name, subcommand)) return refused(UNBRIDGED_SUBCOMMAND_TEXT)
   return { ok: true, call: { name: definition.name, arguments: { command: subcommand, parameters: JSON.stringify(values) } } }
 }

@@ -7,13 +7,14 @@ import { ToolError, type ArgumentsOf, type SubcommandArguments, type SubcommandP
 // parameter is a flat scalar (types.ts): `command`, the subcommand's name,
 // and `parameters`, the subcommand's own parameters as the text of a JSON
 // object. So a parameter of a subcommand can also be a list
-// (`ToolListParameter`). A call with no arguments lists the subcommands;
-// the built-in `help` subcommand, or a subcommand that needs parameters
-// called with none, gives the details of one.
+// (`ToolListParameter`) or an object (`ToolObjectParameter`). A call with
+// no arguments lists the subcommands; the built-in `help` subcommand, or a
+// subcommand that needs parameters called with none, gives the details of
+// one.
 //
 // `P` is the kind of parameter that the subcommands of a tool have. A tool
-// with no list parameter keeps the default, and its code gets flat
-// arguments (`ArgumentsOf`).
+// with no list and no object parameter keeps the default, and its code
+// gets flat arguments (`ArgumentsOf`).
 
 /** One subcommand of a `SubcommandTool`. */
 export interface Subcommand<P extends SubcommandParameter = ToolParameter> {
@@ -116,8 +117,8 @@ function exampleCall(subcommand: AnySubcommand, parameters: Readonly<SubcommandA
 // parameters does not tell it the fix. The subcommand of the call comes
 // first, else the first one that has the parameter. The example holds the
 // call's own value when it is a number or true/false of the parameter's
-// type; a text or a list can be long, and the example parameters show how
-// one looks.
+// type; a text, a list, or an object can be long, and the example
+// parameters show how one looks.
 function misplacedParameterText(tool: AnyTool, key: string, values: Readonly<Record<string, unknown>>): string | null {
   const named = typeof values.command === 'string' ? values.command.trim() : ''
   const subcommands = [...tool.subcommands].sort((a, b) => Number(b.name === named) - Number(a.name === named))
@@ -125,7 +126,8 @@ function misplacedParameterText(tool: AnyTool, key: string, values: Readonly<Rec
     const parameter = subcommand.parameters.find((candidate) => candidate.name === key)
     if (!parameter) continue
     const given = values[key]
-    const example = parameter.type !== 'list' && typeof given !== 'string' && fitsParameterType(parameter.type, given) ? { ...subcommand.example, [key]: given } : subcommand.example
+    const isShortValue = parameter.type !== 'list' && parameter.type !== 'object' && typeof given !== 'string' && fitsParameterType(parameter.type, given)
+    const example = isShortValue ? { ...subcommand.example, [key]: given } : subcommand.example
     return `${JSON.stringify(key)} is a parameter of the subcommand ${subcommand.name}, so it goes inside "parameters", `
       + `the text of a JSON object, and not next to "command", as in ${exampleCall(subcommand, example)}.`
   }

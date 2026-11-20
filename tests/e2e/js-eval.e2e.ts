@@ -7,17 +7,17 @@ import { PICTURES_SHOWN_NOTE } from '../../src/model/tools/assetView'
 import { jobStartedText, jobsWaitResults, NO_JOBS_TEXT, startedJobId } from '../../src/model/tools/jobs'
 import { byteSizeText } from '../../src/utils/byteSize'
 import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
-import { linkedDropDir } from './harness/drops'
-import { appFilePath, filesIn, workDir, writeTestFile } from './harness/fixtures'
+import { expectNoLinkedFile, linkedDropDir, openDroppedFiles } from './harness/drops'
+import { filesIn, workDir } from './harness/fixtures'
 import { generatedImagesDir, pngDataUrl, shownImages, STRIPES_PNG } from './harness/images'
 import { waitCall } from './harness/jobs'
 import { evalCall, expectReplyEnd as expectEnd, expectRunsEnded } from './harness/jsEval'
-import { clipTag, WEBM_VIDEO } from './harness/media'
+import { WEBM_VIDEO } from './harness/media'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendChatReply, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
 import { processExists, runningProgram } from './harness/processes'
 import type { E2EBrowser } from './harness/session'
-import { endedReply, newTab, openSeededConversation, openToasts, pickModel, submit } from './harness/thread'
+import { endedReply, newTab, openSeededConversation, openToasts, submit } from './harness/thread'
 import { codePanel, hiddenPart, hidingPart, intermediateParts, pressToolChip, revealingPart, toolChips, toolPanel } from './harness/toolChips'
 
 // The `js_eval` tool, driven through the real app against a mock chat model
@@ -84,23 +84,6 @@ describe('js_eval tool', () => {
   function madeImages (reply: string): Array<{ id: string, marks: string, stored: boolean }> {
     return [...reply.matchAll(/!\[id=([a-z]+)\|([^\]]+)\]\(([^)\s]+)\)/g)]
       .map(([, id, marks, file]) => ({ id, marks, stored: path.dirname(file) === imagesDir && fs.existsSync(file) }))
-  }
-
-  // Opens a conversation with files that the user dropped, all in its one
-  // user section. The next new id of the conversation is `d`.
-  // - `@a`: a PNG image that Dez copied (a stored file);
-  // - `@b`: the same image as a file that the user linked;
-  // - `@c`: a video clip as a file that the user linked.
-  async function openDrops (name: string): Promise<void> {
-    const { home } = setup.app
-    const stored = await writeTestFile(appFilePath(home, 'assets', 'images', `${name}-a.png`), STRIPES_PNG)
-    const image = await writeTestFile(path.join(linkedDir, `${name}-holiday.png`), STRIPES_PNG)
-    const clip = await writeTestFile(path.join(linkedDir, `${name}-beach.webm`), WEBM_VIDEO)
-    await openSeededConversation(browser, home, name, [{
-      role: 'user',
-      text: [`![id=a](${stored})`, `![id=b](${image})`, clipTag('video', { id: 'c', type: 'video/webm', src: clip }), 'Here are my files.'].join('\n'),
-    }])
-    await pickModel(browser, CALLER.name, CALLER.modelName)
   }
 
   beforeAll(async () => {
@@ -244,7 +227,7 @@ describe('js_eval tool', () => {
   })
 
   it('runs the Dez tools that the code of a call names with dez.sbp, on a stored image and on linked files: their results, their images, their picture, and their errors', async () => {
-    await openDrops('bridge')
+    await openDroppedFiles(setup, CALLER, linkedDir, 'bridge')
     await submit(browser, ' Work on them.')
     const first = await chatRequest()
     const badCall = 'dez.sbp("dez.tools/image/scale", { image: "zz", width: 4 })'
@@ -311,11 +294,7 @@ describe('js_eval tool', () => {
     expect(scaled.startsWith('@e | image | PNG | 45x10 | ')).toBe(true)
     const { messages: laterMessages } = JSON.parse(third.body) as { messages: unknown[] }
     expect(laterMessages.slice(0, messages.length)).toStrictEqual(messages)
-    for (const { body } of [first, second, third]) {
-      expect(body).not.toContain(linkedDir)
-      expect(body).not.toContain('holiday')
-      expect(body).not.toContain('beach')
-    }
+    expectNoLinkedFile([first, second, third], linkedDir)
 
     await expectReplyEnd(third)
     // Each image is in the reply with the name of the tool that made it,

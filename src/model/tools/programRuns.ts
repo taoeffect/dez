@@ -71,6 +71,9 @@ export function programNotConfinedText(program: ShippedProgram, tool: string): s
     + `Tell the user that the ${tool} tool cannot run here and that Help › Developer Console shows why, and do the work without the tool.`
 }
 
+/** The state of a job before its program runs. */
+export const PROGRAM_READS_INPUTS = 'Dez gets the input files ready.'
+
 /** The details of a clip that Dez does not give to the program because its
  *  file is too large. */
 export const INPUT_CLIP_TOO_LARGE = `The file of the clip is larger than ${byteSizeText(MAX_SAVED_CLIP_BYTES)}, the most that Dez gives to a tool.`

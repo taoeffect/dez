@@ -287,3 +287,70 @@ describe('a list parameter of a subcommand', () => {
     })
   })
 })
+
+// The parameters of a run of an app are such a value: Dez hands the object
+// on, and checks none of its fields.
+describe('an object parameter of a subcommand', () => {
+  const PLAYER: SubcommandTool<SubcommandParameter> = {
+    name: 'player',
+    summary: 'Play sounds.',
+    subcommands: [{
+      name: 'play',
+      summary: 'Play a sound.',
+      description: 'Plays a sound with options.',
+      parameters: [
+        { name: 'sound', type: 'string', description: 'The id of the sound.', required: true },
+        { name: 'options', type: 'object', description: 'The options of the player.', required: false },
+      ],
+      example: { sound: 'b', options: { loop: true } },
+    }],
+  }
+  const PLAY_CALL = '{"command":"play","parameters":"{\\"sound\\":\\"b\\",\\"options\\":{\\"loop\\":true}}"}'
+  const where = `The parameters go in "parameters" as the text of a JSON object, as in ${PLAY_CALL}.`
+  const play = (parameters: unknown) => parseSubcommandCall(PLAYER, { command: 'play', parameters: JSON.stringify(parameters) })
+
+  it('gives an object as it is, with fields of any type and depth', () => {
+    const options = { loop: true, speeds: [1, 1.5], names: { first: 'a', none: null }, '': '' }
+    expect(play({ sound: 'b', options })).toStrictEqual({ kind: 'run', name: 'play', arguments: { sound: 'b', options } })
+    expect(play({ sound: 'b', options: {} })).toStrictEqual({ kind: 'run', name: 'play', arguments: { sound: 'b', options: {} } })
+  })
+
+  it('leaves an absent or null object out', () => {
+    for (const parameters of [{ sound: 'b' }, { sound: 'b', options: null }]) {
+      expect(play(parameters)).toStrictEqual({ kind: 'run', name: 'play', arguments: { sound: 'b' } })
+    }
+  })
+
+  it.each([
+    ['a list', [{ loop: true }]],
+    ['a text', '{"loop": true}'],
+    ['a number', 3],
+    ['true', true],
+  ])('refuses %s in place of an object, and shows an object', (_name, options) => {
+    expect(refusal(() => play({ sound: 'b', options }))).toBe(`The parameter "options" must be an object, as in {"options": {}}. ${where}`)
+  })
+
+  it('tells the type in the help and in the list of the parameters of an error', () => {
+    expect(parseSubcommandCall(PLAYER, { command: 'help', parameters: '{"command": "play"}' })).toStrictEqual({
+      kind: 'text',
+      text: [
+        'The subcommand play of the player tool: Plays a sound with options.',
+        'Its parameters, in the text of a JSON object in "parameters":',
+        '- sound (string, required): The id of the sound.',
+        '- options (object, optional): The options of the player.',
+        `Example call: ${PLAY_CALL}`,
+      ].join('\n'),
+    })
+    expect(refusal(() => play({ sound: 'b', option: {} })))
+      .toBe(`player play has no parameter "option". The parameters of player play are: sound (string, required), options (object). ${where}`)
+  })
+
+  // An object can be long, as a text can.
+  it('keeps an object that is next to "command" out of the example', () => {
+    const parsed = parseToolArguments(subcommandToolDefinition(PLAYER), JSON.stringify({ command: 'play', options: { loop: false } }))
+    expect(parsed).toStrictEqual({
+      ok: false,
+      error: `player has no parameter "options". "options" is a parameter of the subcommand play, so it goes inside "parameters", the text of a JSON object, and not next to "command", as in ${PLAY_CALL}.`,
+    })
+  })
+})

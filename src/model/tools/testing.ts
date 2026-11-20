@@ -1,12 +1,15 @@
 import { mediaTagText, type MediaTagData } from '../chat/mediaTags'
 import { reply, user } from '../streams/testing'
+import { APPS_TOOL, type AppsEntryKind, type AppsTree, type PathFacts } from './appsTool'
 import type { JobInfo } from './jobs'
-import { ToolError } from './types'
+import { parseSubcommandCall } from './subcommands'
+import { ToolError, type SubcommandArguments } from './types'
 
 // Shared helpers of the unit tests of the Dez tools: the text of a refused
 // call, the facts of a job, a conversation with images and clips for the
-// `video` tool, and the output of the ffprobe run that reads the facts of a
-// clip for a join (`joinProbeArgs`).
+// `video` tool, the output of the ffprobe run that reads the facts of a
+// clip for a join (`joinProbeArgs`), and the arguments and the listings of
+// the `apps` tool.
 
 /** The text of the `ToolError` that `call` throws. */
 export function refusal(call: () => unknown): string {
@@ -55,4 +58,35 @@ export const WEBM = { format_name: 'matroska,webm', duration: '2.000000' }
 /** The probe output of a clip with `streams`. */
 export function probeOutput(streams: object[], format: object = WEBM): string {
   return JSON.stringify({ streams, format })
+}
+
+/** The checked arguments of a call of the subcommand `command` of the
+ *  `apps` tool with `parameters`, as its runner gets them. */
+export function appsArgs(command: string, parameters: Record<string, unknown>): SubcommandArguments {
+  const call = parseSubcommandCall(APPS_TOOL, { command, parameters: JSON.stringify(parameters) })
+  if (call.kind !== 'run') throw new Error(`The call does not run: ${call.text}`)
+  return call.arguments
+}
+
+/** The listing of a path with nothing at it. */
+export const MISSING_TREE: AppsTree = { kind: 'missing', size: 0, entries: [], more: false }
+export const FOLDER_FACTS: PathFacts = { kind: 'folder', size: 0 }
+
+/** The listing of a file of `size` bytes. */
+export function fileTree(size: number): AppsTree {
+  return { kind: 'file', size, entries: [], more: false }
+}
+
+/** The listing of a folder with `entries`: the size of each file by its
+ *  path, null for a folder, and `other` for a link or a special file. */
+export function folderTree(entries: Record<string, number | null | 'other'> = {}, more = false): AppsTree {
+  return {
+    kind: 'folder',
+    size: 0,
+    more,
+    entries: Object.entries(entries).map(([path, size]) => {
+      const kind: AppsEntryKind = size === null ? 'folder' : size === 'other' ? 'other' : 'file'
+      return { path, kind, size: typeof size === 'number' ? size : 0 }
+    }),
+  }
 }

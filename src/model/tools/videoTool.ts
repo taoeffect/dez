@@ -1039,9 +1039,6 @@ export class OutputStart {
   }
 }
 
-/** The state of a job before its program runs. */
-export const VIDEO_READS_INPUTS = 'Dez gets the input files ready.'
-
 /** The state of a `join_clips` job while ffprobe reads its clips. */
 export const JOIN_READS_CLIPS = 'Dez reads the facts of the clips.'
 

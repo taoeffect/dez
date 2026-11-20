@@ -4,7 +4,7 @@ import { tagEscape } from '../chat/tagEscape'
 import type { ToolBlockData } from '../chat/toolBlocks'
 import { usdText } from '../providers/modelPrices'
 import { argumentWords } from './arguments'
-import { ToolError, type ToolArguments, type ToolDefinition, type ToolParameter } from './types'
+import { ToolError, type SubcommandArguments, type ToolArguments, type ToolDefinition, type ToolParameter } from './types'
 
 // Jobs: the slow work of a Dez tool, such as a request to a media model. A
 // call of such a tool only starts a job and returns its id at once
@@ -190,7 +190,7 @@ export function jobTimeoutParameter(defaultSeconds: number): ToolParameter {
 /** The time limit of the job of a call, in milliseconds: its
  *  `timeout_seconds` (`jobTimeoutParameter`), else `defaultSeconds`.
  *  Throws a `ToolError` for a value outside the range. */
-export function jobTimeoutMs(args: ToolArguments, defaultSeconds: number): number {
+export function jobTimeoutMs(args: SubcommandArguments, defaultSeconds: number): number {
   const seconds = args.timeout_seconds
   if (seconds === undefined) return defaultSeconds * 1000
   if (typeof seconds !== 'number' || !Number.isInteger(seconds) || seconds < MIN_JOB_TIMEOUT_SECONDS || seconds > MAX_JOB_TIMEOUT_SECONDS) {
@@ -202,10 +202,10 @@ export function jobTimeoutMs(args: ToolArguments, defaultSeconds: number): numbe
 
 /** The `is_intermediate` parameter of a tool whose job makes images or
  *  clips (`model_invoke`, the `join_clips` and `ffmpeg` subcommands of
- *  `video`). With `true`, the job marks what it makes as hidden assets
- *  (`hidesAssets` of `TabJobs.start`, chat/hiddenAssets.ts). Nothing of
- *  a request or of a result that the model reads changes. Static text: it
- *  goes into a tool definition or a help text. */
+ *  `video`, `apps invoke`). With `true`, the job marks what it makes as
+ *  hidden assets (`hidesAssets` of `TabJobs.start`, chat/hiddenAssets.ts).
+ *  Nothing of a request or of a result that the model reads changes.
+ *  Static text: it goes into a tool definition or a help text. */
 export const INTERMEDIATE_PARAMETER: ToolParameter = {
   name: 'is_intermediate',
   type: 'boolean',
@@ -219,7 +219,7 @@ export const INTERMEDIATE_PARAMETER: ToolParameter = {
 
 /** Whether the checked arguments of a call set `is_intermediate`
  *  (`INTERMEDIATE_PARAMETER`). */
-export function isIntermediate(args: ToolArguments): boolean {
+export function isIntermediate(args: SubcommandArguments): boolean {
   return args[INTERMEDIATE_PARAMETER.name] === true
 }
 

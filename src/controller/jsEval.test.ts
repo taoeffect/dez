@@ -1,7 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SHOWN_PICTURE_FOLDER, type ShownPicture } from '../model/chat/shownPictures'
 import { madeAssetText } from '../model/tools/jobs'
-import { JS_EVAL_CODE_FILE, JS_EVAL_OUTPUT_BYTES, JS_EVAL_RUNNER, JS_EVAL_RUNNER_FILE, JS_EVAL_TOOL, jsEvalAnswerLine, jsEvalCodeFile, type JsEvalCall } from '../model/tools/jsEval'
+import {
+  JS_EVAL_CODE_FILE,
+  JS_EVAL_OUTPUT_BYTES,
+  JS_EVAL_RUNNER,
+  JS_EVAL_RUNNER_FILE,
+  JS_EVAL_TOOL,
+  jsEvalAnswerLine,
+  jsEvalCodeFile,
+  RUN_DESCRIPTION_FILE,
+  type JsEvalCall,
+} from '../model/tools/jsEval'
 import { programNotConfinedText, programNotStartedText } from '../model/tools/programRuns'
 import { runJsEval } from './jsEval'
 import type { BundledToolEnd } from './nativeTypes'
@@ -48,7 +58,7 @@ afterEach(() => {
 })
 
 describe('runJsEval', () => {
-  it('writes the module of Dez and the code into a new work folder, and runs the module with Deno, with an input', async () => {
+  it('writes the module of Dez, the description of the run, and the code into a new work folder, and runs the module with Deno, with an input', async () => {
     native.program = writes('stdout', protocolLine({ type: 'result', text: '2' }))
 
     const result = await runJsEval(CALL, running(), callContext())
@@ -57,6 +67,7 @@ describe('runJsEval', () => {
     expect(result).toStrictEqual({ content: '2', isError: false })
     expect(native.savedFiles).toStrictEqual([
       { file: { root: 'cache', path: `${folder}/${JS_EVAL_RUNNER_FILE}` }, content: JS_EVAL_RUNNER },
+      { file: { root: 'cache', path: `${folder}/${RUN_DESCRIPTION_FILE}` }, content: '{"kind":"code"}' },
       { file: { root: 'cache', path: `${folder}/${JS_EVAL_CODE_FILE}` }, content: jsEvalCodeFile(CALL.code) },
     ])
     expect(native.runs.map(({ run }) => run)).toStrictEqual([{

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { MANIFEST_MAX_BYTES, parseAppManifest } from './appManifest'
+import { invokeCall } from './appInvoke'
 import {
   APPS_MAX_BYTES,
   APPS_MAX_ENTRIES,
@@ -34,45 +35,14 @@ import {
   writeCall,
   writePlan,
   writeText,
-  type AppsEntryKind,
   type AppsTree,
   type ListedApp,
   type MoveFacts,
-  type PathFacts,
 } from './appsTool'
 import { checkArgumentValues } from './arguments'
 import { parseSubcommandCall } from './subcommands'
-import { refusal } from './testing'
+import { appsArgs as args, CONVERSATION, fileTree as file, FOLDER_FACTS as FOLDER, folderTree as folder, MISSING_TREE as MISSING, refusal } from './testing'
 import type { SubcommandArguments } from './types'
-
-// The checked arguments of a call of the subcommand `command` with
-// `parameters`, as its runner gets them.
-function args(command: string, parameters: Record<string, unknown>): SubcommandArguments {
-  const call = parseSubcommandCall(APPS_TOOL, { command, parameters: JSON.stringify(parameters) })
-  if (call.kind !== 'run') throw new Error(`The call does not run: ${call.text}`)
-  return call.arguments
-}
-
-const MISSING: AppsTree = { kind: 'missing', size: 0, entries: [], more: false }
-const FOLDER: PathFacts = { kind: 'folder', size: 0 }
-
-function file(size: number): AppsTree {
-  return { kind: 'file', size, entries: [], more: false }
-}
-
-// The listing of a folder with `entries`: the size of each file by its
-// path, null for a folder, and `other` for a link or a special file.
-function folder(entries: Record<string, number | null | 'other'> = {}, more = false): AppsTree {
-  return {
-    kind: 'folder',
-    size: 0,
-    more,
-    entries: Object.entries(entries).map(([path, size]) => {
-      const kind: AppsEntryKind = size === null ? 'folder' : size === 'other' ? 'other' : 'file'
-      return { path, kind, size: typeof size === 'number' ? size : 0 }
-    }),
-  }
-}
 
 // The listing of an app with `count` files of `size` bytes.
 function filled(count: number, size = 1): AppsTree {
@@ -83,7 +53,7 @@ const bytes = (text: string) => new TextEncoder().encode(text)
 const text = (content: Uint8Array | null) => (content === null ? null : new TextDecoder().decode(content))
 
 describe('APPS_TOOL', () => {
-  it('has the file subcommands, in the order of the list that a model reads', () => {
+  it('has the file subcommands and invoke, in the order of the list that a model reads', () => {
     expect(APPS_TOOL_DEFINITION.name).toBe('apps')
     expect(APPS_TOOL.subcommands.map(({ name, parameters }) => [name, parameters.map((parameter) => parameter.name)])).toStrictEqual([
       ['init', ['name', 'kind', 'description']],
@@ -95,12 +65,14 @@ describe('APPS_TOOL', () => {
       ['ls', ['path']],
       ['mkdir', ['path']],
       ['mv', ['moves']],
+      ['invoke', ['name', 'parameters', 'inputs', 'is_intermediate', 'timeout_seconds']],
     ])
   })
 
   it('gives each subcommand an example that its parameters and its checks take', () => {
     const checks: Record<string, (call: SubcommandArguments) => unknown> = {
       init: initCall, read: readCall, write: writeCall, edit: editCall, rm: rmCall, list_apps: listAppsCall, ls: lsCall, mkdir: mkdirCall, mv: mvCall,
+      invoke: (call) => invokeCall(call, CONVERSATION),
     }
     for (const subcommand of APPS_TOOL.subcommands) {
       expect(checkArgumentValues(subcommand, subcommand.example).ok, subcommand.name).toBe(true)

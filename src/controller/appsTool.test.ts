@@ -1,9 +1,9 @@
 import sbp from '@sbp/sbp'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
-import { appManifestText, MANIFEST_MAX_BYTES, parseAppManifest, type AppKind } from '../model/tools/appManifest'
+import { MANIFEST_MAX_BYTES, parseAppManifest } from '../model/tools/appManifest'
 import { APPS_MAX_BYTES, APPS_MAX_FILE_BYTES } from '../model/tools/appsTool'
 import type { ToolRunResult } from '../model/tools/types'
-import { APP_DIR, callContext, fakeAppFiles, native, resetNative, running, STOP, type FakeAppFiles } from './testing'
+import { APP_DIR, appFiles, callContext, fakeAppFiles, native, resetNative, running, STOP, type FakeAppFiles } from './testing'
 import type { ToolRunCall } from './tools'
 // Side-effect import: registers the selector under test.
 import './tools'
@@ -18,15 +18,6 @@ import './tools'
 function apps(command: string, parameters: Record<string, unknown> = {}, signal: AbortSignal = running()): Promise<ToolRunResult> {
   const call: ToolRunCall = { name: 'apps', arguments: { command, parameters: JSON.stringify(parameters) } }
   return sbp('dez.controller/tools/run', call, signal, callContext()) as Promise<ToolRunResult>
-}
-
-// The start of the fake for an app with a manifest and the files `more`,
-// each by its path in the app (null for a folder).
-function appFiles(name: string, more: Record<string, string | null> = {}, kind: AppKind = 'script'): Record<string, string | null> {
-  return {
-    [`apps/${name}/manifest.json`]: appManifestText({ name, description: `The ${name} app.`, kind }),
-    ...Object.fromEntries(Object.entries(more).map(([path, content]) => [`apps/${name}/${path}`, content])),
-  }
 }
 
 const decoder = new TextDecoder()

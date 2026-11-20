@@ -84,8 +84,9 @@ export function panelAsset(asset: HiddenAsset, linkedSrc: boolean): PanelAsset {
 
 /** What the chip of an intermediate call shows on top of the parts of
  *  every chip. A call is intermediate when it asks to hide what its job
- *  makes (`isIntermediateCall`: `is_intermediate` of `model_invoke`, or of
- *  a `video` subcommand), and it runs or started a job; or when it owns a
+ *  makes (`isIntermediateCall`: `is_intermediate` of `model_invoke`, of
+ *  a `video` subcommand, or of `apps invoke`), and it runs or started a
+ *  job; or when it owns a
  *  hidden asset, as a `js_eval` call does for a job that a tool call of
  *  its code started. A call that failed before it started a job is a
  *  failed call as any other. The assets and the result of its job can be

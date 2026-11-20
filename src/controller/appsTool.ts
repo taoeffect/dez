@@ -48,7 +48,8 @@ import type { AppFileEntry, FileTree } from './nativeTypes'
 // runs one subcommand on the folder `apps/` of the app root, through the
 // native file selectors. The model module checks the call, decides what to
 // do from what is at the paths, and builds every text; the functions here
-// only ask the native side and do what the model module decided.
+// only ask the native side and do what the model module decided. The run
+// of an app (`invoke`) is in appInvoke.ts.
 //
 // A check and the file operation after it are two native calls, so a
 // program that changes the folder between them can make the operation
@@ -76,12 +77,16 @@ function treeOf(path: AppsPath, maxEntries: number): Promise<FileTree> {
   return native(`list ${path.virtual}`, () => sbp('dez.native/listFileTree', path.file, maxEntries) as Promise<FileTree>)
 }
 
-// What is at `path`, with nothing of what is below it.
-function factsOf(path: AppsPath): Promise<FileTree> {
+/** What is at the path `path` of the apps, with nothing of what is below
+ *  it. Throws a `ToolError` when the native side fails. */
+export function factsOf(path: AppsPath): Promise<FileTree> {
   return treeOf(path, 0)
 }
 
-function readBytes(path: AppsPath): Promise<Uint8Array> {
+/** The bytes of the file at the path `path` of the apps. The native side
+ *  reads a file of any size: check its size first (`factsOf`). Throws a
+ *  `ToolError` for a read that fails. */
+export function readBytes(path: AppsPath): Promise<Uint8Array> {
   return native(`read ${path.virtual}`, () => sbp('dez.native/loadAppFileBytes', path.file) as Promise<Uint8Array>)
 }
 

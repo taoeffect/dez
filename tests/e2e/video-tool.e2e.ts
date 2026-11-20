@@ -5,7 +5,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { MAX_REQUEST_IMAGE_BYTES } from '../../src/model/streams/pictureBudget'
 import { ASSET_INFO_COLUMNS } from '../../src/model/tools/assetInfo'
 import { pictureBudgetLeftText, PICTURES_SHOWN_NOTE } from '../../src/model/tools/assetView'
-import { jobStartedText, jobsWaitResults, startedJobId, type JobResult } from '../../src/model/tools/jobs'
+import { jobStartedText, jobsWaitResults, startedJobId } from '../../src/model/tools/jobs'
 import { REFUSED_DEVICES, REFUSED_PROTOCOLS } from '../../src/model/tools/videoTool'
 import { byteSizeText } from '../../src/utils/byteSize'
 import { sentImageUrls } from './harness/chatBody'
@@ -13,7 +13,7 @@ import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, w
 import { linkedDropDir } from './harness/drops'
 import { appFilePath, conversationFilePath, filesIn, mediaTempDir, newFileIn, storedFileName, workDir, writeTestFile } from './harness/fixtures'
 import { generatedImagesDir, shownImages, solidPng } from './harness/images'
-import { startedJob, waitCall } from './harness/jobs'
+import { runToolJob, startedJob, waitCall, type EndedJob } from './harness/jobs'
 import { clipTag, MP4_VIDEO, shownPlayers, silentWav, startClipServer, WEBM_VIDEO, type ClipServer, type ShownPlayer } from './harness/media'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, openAiToolCall, replyText, sendChatReply, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
@@ -153,18 +153,6 @@ const loudnessLine = (part: string) => new RegExp(`^Loudness of ${part}: -\\d+(\
 
 const videoCall = (id: string, command: string, parameters: Record<string, unknown>) =>
   openAiToolCall(id, 'video', { command, parameters: JSON.stringify(parameters) })
-
-/** A job of a `video` call that ended, as the mock model got it. */
-interface EndedJob {
-  jobId: string
-  /** The result of the call that started the job. */
-  started: string
-  /** The result of the job, from the `jobs_wait` call after it. */
-  result: JobResult
-  /** The chat request that holds the result of the job. It waits for its
-   *  answer. */
-  next: HeldRequest
-}
 
 /** A message of an OpenAI-format chat request, as the mock got it. */
 interface WireMessage {
@@ -352,20 +340,9 @@ describe('video tool', () => {
     return files
   }
 
-  // Answers the chat request `request` with the `video` call `callId`,
-  // and the request after it with a `jobs_wait` call, which gives the
-  // result of the job of that call.
-  async function runJob (request: HeldRequest, callId: string, command: string, parameters: Record<string, unknown>): Promise<EndedJob> {
-    sendToolCalls(request.reply, [videoCall(callId, command, parameters)])
-    const second = await chatRequest()
-    const jobId = startedJob(second, callId)
-    sendToolCalls(second.reply, [waitCall(`${callId}_wait`)])
-    const next = await chatRequest()
-    const waited = toolResult(next, `${callId}_wait`)
-    expect(waited.startsWith('1 job ended. No job still runs.\n\n')).toBe(true)
-    const results = jobsWaitResults(waited)
-    expect(results.map(({ id, tool }) => ({ id, tool }))).toStrictEqual([{ id: jobId, tool: 'video' }])
-    return { jobId, started: toolResult(second, callId), result: results[0], next }
+  // Runs the job of the `video` call `callId` (`runToolJob`).
+  function runJob (request: HeldRequest, callId: string, command: string, parameters: Record<string, unknown>): Promise<EndedJob> {
+    return runToolJob(chatRequest, request, 'video', callId, videoCall(callId, command, parameters))
   }
 
   // After the calls of a test: no work folder stays, no file of the

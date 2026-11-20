@@ -1,3 +1,4 @@
+import type { JsonObject } from '../../utils/json'
 import { IMAGE_ID_SOURCE } from '../chat/images'
 import {
   ToolError,
@@ -8,6 +9,7 @@ import {
   type ToolArguments,
   type ToolArgumentValue,
   type ToolListParameter,
+  type ToolObjectParameter,
   type ToolParameter,
   type ToolParameterType,
 } from './types'
@@ -18,7 +20,8 @@ import {
 
 /** What a call's arguments are checked against: the tool's name, for the
  *  error texts, and its parameters. A `ToolDefinition` is one. Only the
- *  rules of a subcommand can hold a list parameter (`ToolListParameter`). */
+ *  rules of a subcommand can hold a list parameter (`ToolListParameter`)
+ *  or an object parameter (`ToolObjectParameter`). */
 export interface ArgumentRules<P extends SubcommandParameter = ToolParameter> {
   name: string
   parameters: readonly P[]
@@ -48,21 +51,38 @@ export type ToolArgumentsParse<P extends SubcommandParameter = ToolParameter> =
   | { ok: false; error: string }
 
 /** The name of the type of a parameter, as the lists of parameters show
- *  it: `integer`, `list of strings`, `list of objects`. */
+ *  it: `integer`, `object`, `list of strings`, `list of objects`. */
 export function parameterTypeName(parameter: SubcommandParameter): string {
   if (parameter.type !== 'list') return parameter.type
   return typeof parameter.items === 'string' ? `list of ${parameter.items}s` : 'list of objects'
 }
 
+// What the value of an object parameter is, and one as JSON, for the error
+// texts (`TYPE_RULES` has those of the scalars).
+const OBJECT_RULE = { text: 'an object', example: '{}' }
+
+/** True when a JSON value is an object: not a list, and not null. */
+function isJsonObject(value: unknown): value is JsonObject {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+// Whether a JSON value is of the type of a parameter that is no list, with
+// no coercion.
+function fitsParameter(parameter: ToolParameter | ToolObjectParameter, value: unknown): value is ToolArgumentValue | JsonObject {
+  return parameter.type === 'object' ? isJsonObject(value) : TYPE_RULES[parameter.type].matches(value)
+}
+
 // What a value of a parameter is, for the error texts: `an integer`, `a
 // list of strings`.
 function valueText(parameter: SubcommandParameter): string {
-  return parameter.type === 'list' ? `a ${parameterTypeName(parameter)}` : TYPE_RULES[parameter.type].text
+  if (parameter.type === 'list') return `a ${parameterTypeName(parameter)}`
+  return parameter.type === 'object' ? OBJECT_RULE.text : TYPE_RULES[parameter.type].text
 }
 
 // A value of the type of a parameter, as JSON, for the error texts. A list
 // of objects shows one item with its required fields (else its first one).
 function exampleValue(parameter: SubcommandParameter): string {
+  if (parameter.type === 'object') return OBJECT_RULE.example
   if (parameter.type !== 'list') return TYPE_RULES[parameter.type].example
   if (typeof parameter.items === 'string') return `[${TYPE_RULES[parameter.items].example}]`
   return `[${exampleArguments(exampleParameters(parameter.items))}]`
@@ -151,7 +171,8 @@ function checkedList(parameter: ToolListParameter, value: unknown): { ok: true; 
  *  types, where the key belongs (`ArgumentRules.misplacedParameter`), or
  *  an example). A `null` value counts as absent. The value of a list
  *  parameter must be a list whose items are all of its item type; a list
- *  with no item is a value. */
+ *  with no item is a value. The value of an object parameter must be a
+ *  JSON object; its fields are the caller's data, which nothing checks. */
 export function checkArgumentValues<P extends SubcommandParameter = ToolParameter>(rules: ArgumentRules<P>, values: Record<string, unknown>): ToolArgumentsParse<P> {
   // The checks read the widest kind of parameter.
   const parameters: readonly SubcommandParameter[] = rules.parameters
@@ -178,13 +199,13 @@ export function checkArgumentValues<P extends SubcommandParameter = ToolParamete
       parsed[parameter.name] = list.items
       continue
     }
-    if (!TYPE_RULES[parameter.type].matches(value)) {
+    if (!fitsParameter(parameter, value)) {
       return { ok: false, error: `The parameter "${parameter.name}" must be ${valueText(parameter)}, as in ${exampleArguments([parameter])}.` }
     }
     parsed[parameter.name] = value
   }
-  // `parsed` holds a list only for a list parameter, which only rules of
-  // the wide kind have (`ArgumentsOf`).
+  // `parsed` holds a list or an object only for a parameter of that type,
+  // which only rules of the wide kind have (`ArgumentsOf`).
   return { ok: true, arguments: parsed as ArgumentsOf<P> }
 }
 
@@ -207,7 +228,7 @@ export function assetIdArgument(value: ToolArgumentValue | undefined, asset: str
 /** The words of the text argument `parameter` of a call, separated by
  *  white space or commas, in the order of the call: none for an absent
  *  value or a value that is no text. */
-export function argumentWords(args: ToolArguments, parameter: string): string[] {
+export function argumentWords(args: SubcommandArguments, parameter: string): string[] {
   const value = args[parameter]
   return (typeof value === 'string' ? value : '').split(/[\s,]+/).filter((word) => word !== '')
 }
@@ -218,7 +239,7 @@ export function argumentWords(args: ToolArguments, parameter: string): string[] 
  *  word that is no id. `asset` is the kind of asset with its article (`a
  *  clip`), and `advice` ends the error text: the form of a good argument,
  *  and what Dez did not do. */
-export function assetIdWords(args: ToolArguments, parameter: string, asset: string, advice: string): string[] {
+export function assetIdWords(args: SubcommandArguments, parameter: string, asset: string, advice: string): string[] {
   return argumentWords(args, parameter).map((word) => {
     const id = ASSET_ID_ARGUMENT.exec(word)?.[1]
     if (id === undefined) throw new ToolError(`\`${parameter}\` holds ${JSON.stringify(word)}, which is no id of ${asset}. ${advice}`)

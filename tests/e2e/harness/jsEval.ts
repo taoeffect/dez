@@ -5,8 +5,9 @@ import { openAiToolCall, replyText, sendChatReply, type HeldRequest, type MockPr
 import { pidsWithCwdIn } from './processes'
 import { endedReply, openToasts } from './thread'
 
-// The parts that the specs of the `js_eval` tool share: a call of the mock
-// model, and the checks at the end of the reply that made the calls.
+// The parts that the specs of the tools that run code in Deno share
+// (`js_eval`, and `apps invoke`): a `js_eval` call of the mock model, and
+// the checks at the end of the reply that made the calls.
 
 /** A `js_eval` call of a mock model: `code`, and with `more` the other
  *  arguments of the call (`timeout_seconds`). */
@@ -15,9 +16,9 @@ export function evalCall (id: string, code: string, more: Record<string, unknown
 }
 
 /**
- * Checks that the runs of the `js_eval` calls of a reply that ended left
- * nothing: the app sends no other request, no program of a call runs, no
- * work folder stays, and no error toast shows.
+ * Checks that the runs of the calls of a reply that ended left nothing:
+ * the app sends no other request, no program of a call runs, no work
+ * folder stays, and no error toast shows.
  */
 export async function expectRunsEnded (setup: MockProviderApp): Promise<void> {
   const workRoot = workDir(setup.app.home)

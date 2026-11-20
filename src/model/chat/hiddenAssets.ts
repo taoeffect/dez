@@ -6,9 +6,10 @@ import type { ToolBlock } from './toolBlocks'
 import type { Role } from './types'
 
 // Hidden assets: the images and clips that a call made as a part of its
-// work (`is_intermediate` of `model_invoke`, and of the `join_clips` and
-// `ffmpeg` subcommands of `video`; `isIntermediateCall`,
-// tools/registry.ts). The text of such an asset is where every asset of a
+// work (`is_intermediate` of `model_invoke`, of the `join_clips` and
+// `ffmpeg` subcommands of `video`, and of the `invoke` subcommand of
+// `apps`; `isIntermediateCall`, tools/registry.ts). The text of such an
+// asset is where every asset of a
 // job is (after the blocks of the `jobs_wait` group that gave its result),
 // with a marker that names its job (`IMAGE_HIDDEN_KEY`,
 // `MEDIA_HIDDEN_ATTRIBUTE`). The editor shows it under the chip of the

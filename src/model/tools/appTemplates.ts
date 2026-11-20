@@ -2,7 +2,9 @@ import { appManifestText, MANIFEST_FILE, type AppManifest } from './appManifest'
 
 // The first files of a new app (`apps init`, appsTool.ts): the manifest,
 // and a small app of its kind that works as it is, so that a model changes
-// a file that runs and does not start from nothing.
+// a file that runs and does not start from nothing. The main file of a
+// script app also tells what a run gives its code (the `dez` object of
+// `appDez`, jsEvalRunner.js): keep the two the same.
 //
 // The name of the app goes into the files as it is: `apps init` takes only
 // a name of lower-case letters, digits, `-`, and `_`, which is safe in
@@ -20,16 +22,34 @@ export interface TemplateFile {
   content: string
 }
 
+/** The file of a script app whose default export a run of the app calls
+ *  (`apps invoke`, appInvoke.ts). */
+export const SCRIPT_MAIN_FILE = 'main.ts'
+
 function scriptFiles(name: string): TemplateFile[] {
   return [{
-    name: 'main.ts',
+    name: SCRIPT_MAIN_FILE,
     content: `// The code of the app "${name}".
 //
-// A run of the app calls the function that this file exports as its
-// default, with the parameters of the run (a JSON object). The text that
-// the function returns is the result of the run.
-export default async function main(parameters: Record<string, unknown>): Promise<string> {
-  return \`Hello from ${name}. The parameters of this run: \${JSON.stringify(parameters)}\`
+// A run of the app (apps invoke) calls the function that this file exports
+// as its default, with the parameters of the run (a JSON object) and the
+// \`dez\` object of the run. The value that the function returns is the
+// result of the run.
+
+/** What a run gives the code. Each path is absolute: build the path of a
+ *  file from one of them. */
+interface Dez {
+  /** A copy of each image and clip of the run, in the order of the call. */
+  inputs: readonly { id: string, kind: 'image' | 'audio' | 'video', type: string, path: string }[]
+  /** Dez keeps the images and the clips that the run writes into this
+   *  folder. */
+  outputFolder: string
+  /** The folder of this app. Its files stay from one run to the next. */
+  appFolder: string
+}
+
+export default async function main(parameters: Record<string, unknown>, dez: Dez): Promise<string> {
+  return \`Hello from ${name}. The parameters of this run: \${JSON.stringify(parameters)}. The run has \${dez.inputs.length} input files.\`
 }
 `,
   }]

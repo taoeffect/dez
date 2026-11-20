@@ -3,11 +3,12 @@ import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { appManifestText, parseAppManifest } from '../../src/model/tools/appManifest'
 import { byteSizeText } from '../../src/utils/byteSize'
+import { appsCall } from './harness/apps'
 import { consoleErrors, resetConsoleErrors, screenshotOnFailure } from './harness/dom'
 import { linkedDropDir } from './harness/drops'
 import { appFilePath, filesIn, writeTestFile } from './harness/fixtures'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
-import { mockChatPath, openAiToolCall, replyText, sendChatReply, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
+import { mockChatPath, replyText, sendChatReply, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
 import { endedReply, newTab, openToasts, submit } from './harness/thread'
 
@@ -26,11 +27,6 @@ import { endedReply, newTab, openToasts, submit } from './harness/thread'
 
 const CALLER: MockProvider = { id: 'caller', name: 'Caller Mock', modelId: 'caller-model', modelName: 'Caller Model' }
 const CHAT_PATH = mockChatPath(CALLER)
-
-/** An `apps` call of the mock model. */
-function appsCall (id: string, command: string, parameters: Record<string, unknown> = {}): Record<string, unknown> {
-  return openAiToolCall(id, 'apps', { command, parameters: JSON.stringify(parameters) })
-}
 
 describe('apps tool', () => {
   let setup: MockProviderApp

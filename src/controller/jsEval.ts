@@ -1,6 +1,7 @@
 import sbp from '@sbp/sbp'
 import { hasBridgedCalls } from '../model/chat/bridgedCalls'
 import {
+  CODE_RUN_DESCRIPTION,
   JS_EVAL_CODE_FILE,
   JS_EVAL_OUTPUT_BYTES,
   JS_EVAL_RUNNER,
@@ -9,11 +10,13 @@ import {
   JsEvalOutput,
   jsEvalCodeFile,
   jsEvalResult,
+  RUN_DESCRIPTION_FILE,
   type JsEvalCall,
 } from '../model/tools/jsEval'
 import { programNotStartedText, type ProgramEnd } from '../model/tools/programRuns'
 import { ToolError, type ToolRunResult } from '../model/tools/types'
-import { inWorkFolder, runProgram } from './programRuns'
+import type { BundledToolRun } from './nativeTypes'
+import { folderPathForms, inWorkFolder, runProgram } from './programRuns'
 import { discardShownPictures } from './shownPictures'
 import { ToolBridge } from './toolBridge'
 import type { ToolRunContext } from './tools'
@@ -21,28 +24,48 @@ import type { ToolRunContext } from './tools'
 // The run of a `js_eval` call (model/tools/jsEval.ts): the code of a model
 // in Deno, the program that Dez ships. This module registers no selector.
 //
-// The run has its own new work folder, with two files that Dez writes:
-// its own module, which Deno runs, and the code of the call. The page
-// gives Rust only the name of the module: Rust writes the Deno command
-// line, with no permission for the code (src-tauri/src/bundled_tools.rs).
+// The run has its own new work folder, with three files that Dez writes:
+// its own module, which Deno runs, the description of the run, which tells
+// the module what to run, and the code of the call. The page gives Rust
+// only the name of the module: Rust writes the Deno command line, with no
+// permission for the code (src-tauri/src/bundled_tools.rs).
 //
 // The code calls the other Dez tools over the input and the output of the
 // program (toolBridge.ts).
-
-// The paths of the work folder `folder` (a path in the cache root) on this
-// computer, as a text of the run can name them: the real path, which Deno
-// gives its code, and the path that Dez made. The folder must be there.
 //
-// Throws a `ToolError` when Dez cannot get the real path: without it, a
-// text of the run could show the model a path of the user's computer.
-async function workFolderPaths(folder: string): Promise<string[]> {
-  try {
-    const joined = `${await sbp('dez.native/getAppDir', 'cache') as string}/${folder}`
-    return [...new Set([await sbp('dez.native/canonicalPath', joined) as string, joined])]
-  } catch (error) {
-    console.error('Failed to get the real path of the work folder of a Deno run:', error)
-    throw new ToolError(programNotStartedText('deno', JS_EVAL_TOOL.name), '', { cause: error })
+// A run of an app (appInvoke.ts) runs the same module, with its own
+// description: `writeRunFiles` and `moduleRun` serve both.
+
+/** Writes the files of a run of Dez's module into the work folder
+ *  `folder`: the module, the description of the run (the text
+ *  `description`), and `more`. Throws a `ToolError` for a write that
+ *  fails (the run of the tool `toolName` does not start), and the stop of
+ *  `signal`. */
+export async function writeRunFiles(
+  folder: string,
+  description: string,
+  more: readonly { name: string, text: string }[],
+  signal: AbortSignal,
+  toolName: string,
+): Promise<void> {
+  const files = [{ name: JS_EVAL_RUNNER_FILE, text: JS_EVAL_RUNNER }, { name: RUN_DESCRIPTION_FILE, text: description }, ...more]
+  for (const { name, text } of files) {
+    signal.throwIfAborted()
+    try {
+      await sbp('dez.native/saveAppFile', `${folder}/${name}`, text, 'cache')
+    } catch (error) {
+      console.error(`Failed to write the file ${name} of a Deno run:`, error)
+      throw new ToolError(programNotStartedText('deno', toolName), '', { cause: error })
+    }
   }
+}
+
+/** The run of Dez's module in the work folder `folder`, with no input
+ *  file. The code gets the time zone of the user, so that its local time
+ *  is the user's: Rust gives a program no other fact of the computer. */
+export function moduleRun(folder: string, timeoutMs: number): Omit<BundledToolRun, 'tool'> {
+  const { timeZone } = Intl.DateTimeFormat().resolvedOptions()
+  return { args: [JS_EVAL_RUNNER_FILE], folder, inputs: [], timeoutMs, maxOutputBytes: JS_EVAL_OUTPUT_BYTES, ...(timeZone ? { timeZone } : {}) }
 }
 
 /** Runs the code of `call` to its end, and gives the result: the value
@@ -61,27 +84,12 @@ async function workFolderPaths(folder: string): Promise<string[]> {
  *  no list, and deletes the copies too. */
 export function runJsEval(call: JsEvalCall, signal: AbortSignal, context: ToolRunContext): Promise<ToolRunResult> {
   return inWorkFolder(async (folder) => {
-    const files = [
-      { name: JS_EVAL_RUNNER_FILE, text: JS_EVAL_RUNNER },
-      { name: JS_EVAL_CODE_FILE, text: jsEvalCodeFile(call.code) },
-    ]
-    for (const { name, text } of files) {
-      signal.throwIfAborted()
-      try {
-        await sbp('dez.native/saveAppFile', `${folder}/${name}`, text, 'cache')
-      } catch (error) {
-        console.error(`Failed to write the file ${name} of a Deno run:`, error)
-        throw new ToolError(programNotStartedText('deno', JS_EVAL_TOOL.name), '', { cause: error })
-      }
-    }
-    const folders = await workFolderPaths(folder)
-    // The code gets the time zone of the user, so that its local time is
-    // the user's: Rust gives a program no other fact of the computer.
-    const { timeZone } = Intl.DateTimeFormat().resolvedOptions()
+    await writeRunFiles(folder, CODE_RUN_DESCRIPTION, [{ name: JS_EVAL_CODE_FILE, text: jsEvalCodeFile(call.code) }], signal, JS_EVAL_TOOL.name)
+    const { forms: folders } = await folderPathForms(folder, 'cache', JS_EVAL_TOOL.name)
     const output = new JsEvalOutput()
     const bridge = new ToolBridge(context, folders, signal)
     // `stdin`: the answers of the tool calls go to the input of the program.
-    const run = { args: [JS_EVAL_RUNNER_FILE], folder, inputs: [], timeoutMs: call.timeoutMs, maxOutputBytes: JS_EVAL_OUTPUT_BYTES, stdin: true, ...(timeZone ? { timeZone } : {}) }
+    const run = { ...moduleRun(folder, call.timeoutMs), stdin: true }
     let end: ProgramEnd
     try {
       end = await runProgram('deno', JS_EVAL_TOOL.name, run, signal, ({ stream, text }, writeInput) => {

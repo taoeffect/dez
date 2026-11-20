@@ -3,6 +3,7 @@ import { IMAGE_FOLDERS } from '../model/chat/images'
 import { ClipReadError, MAX_SAVED_CLIP_BYTES } from '../model/chat/mediaFiles'
 import { MEDIA_FOLDERS } from '../model/chat/mediaTags'
 import { newStoredFilePath } from '../model/chat/storedFilePaths'
+import { unreadableImageText } from '../model/tools/imageTool'
 import {
   INPUT_CLIP_TOO_LARGE,
   outputNotStoredText,
@@ -21,13 +22,13 @@ import { rawErrorText } from '../utils/errorText'
 import { holdingCachePath } from './cacheHolds'
 import { clipFromSources, downloadClip, type ClipSource } from './clipSources'
 import { discardMadeAssets, type MadeAsset } from './jobs'
-import type { BundledTool, BundledToolEnd, BundledToolInput, BundledToolOutput, BundledToolRun } from './nativeTypes'
+import type { AppFileRoot, BundledTool, BundledToolEnd, BundledToolInput, BundledToolOutput, BundledToolRun } from './nativeTypes'
 
 // The runs of the programs that Dez ships (ffmpeg, ffprobe, Deno), for the
 // Dez tools that run them (videoTool.ts, audioTool.ts, assetInfo.ts,
-// assetView.ts, jsEval.ts). This module registers no selector. Its texts
-// for a model are in model/tools/programRuns.ts; `toolName` is the Dez
-// tool of the call, which those texts name.
+// assetView.ts, jsEval.ts, appInvoke.ts). This module registers no
+// selector. Its texts for a model are in model/tools/programRuns.ts;
+// `toolName` is the Dez tool of the call, which those texts name.
 //
 // Each call has its own new work folder in the cache root
 // (model/tools/workFolders.ts). The program runs in it and gets only
@@ -40,8 +41,10 @@ import type { BundledTool, BundledToolEnd, BundledToolInput, BundledToolOutput, 
 // rule is tighter (its own work folder, and the app folder of the run when
 // it has one), and Rust starts no Deno run where the OS cannot hold it to
 // that rule. The folder goes at the end of the call, with all that the
-// program wrote. Only the files that Dez keeps move out of it first, into
-// the generated folders of the Dez folder.
+// program wrote. Only the files that Dez keeps leave it first, for the
+// generated folders of the Dez folder: a move for a program that Dez
+// trusts (`storeOutputs`), a checked copy for the code of an app
+// (appInvoke.ts).
 //
 // An error of the system (a native error text) can hold a path: it goes to
 // the log only, never into a text for a model.
@@ -82,6 +85,32 @@ export async function readableFileSize(path: string): Promise<number | null> {
     console.error('Failed to read the size of an input file of a tool:', error)
     return null
   }
+}
+
+/** The folder at `path` of the root folder `root` on this computer, as a
+ *  text of a Deno run can name it: `joined` is the path that Dez made from
+ *  the root, which Rust gives Deno as a folder that the code can open, and
+ *  `forms` has it with the real path, which Deno gives its code (the two
+ *  differ when a folder above is a link). The folder must be there.
+ *
+ *  Throws a `ToolError` when Dez cannot get the real path: without it, a
+ *  text of the run could show the model a path of the user's computer. */
+export async function folderPathForms(path: string, root: AppFileRoot, toolName: string): Promise<{ joined: string, forms: string[] }> {
+  try {
+    const joined = `${await sbp('dez.native/getAppDir', root) as string}/${path}`
+    return { joined, forms: [...new Set([await sbp('dez.native/canonicalPath', joined) as string, joined])] }
+  } catch (error) {
+    console.error('Failed to get the real path of a folder of a Deno run:', error)
+    throw new ToolError(programNotStartedText('deno', toolName), '', { cause: error })
+  }
+}
+
+/** The file of an input image that goes to the program as it is: the
+ *  image's own file, which the run copies under `name`. Throws a
+ *  `ToolError` for an image whose file Dez cannot read. */
+export async function imageFileInput({ id, name, path }: { id: string, name: string, path: string }): Promise<BundledToolInput> {
+  if (await readableFileSize(path) === null) throw new ToolError(unreadableImageText(id))
+  return { name, source: path }
 }
 
 /** The file of an input clip for the program, from the first source of

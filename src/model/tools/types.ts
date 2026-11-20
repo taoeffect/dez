@@ -32,8 +32,19 @@ export interface ToolListParameter {
   required: boolean
 }
 
+/** A parameter of a subcommand whose value is one JSON object with any
+ *  fields: data that Dez hands on as it is, and whose fields it does not
+ *  check (the parameters of a run of an app). Only a subcommand can have
+ *  one, as for a list. */
+export interface ToolObjectParameter {
+  name: string
+  type: 'object'
+  description: string
+  required: boolean
+}
+
 /** A parameter of a subcommand. */
-export type SubcommandParameter = ToolParameter | ToolListParameter
+export type SubcommandParameter = ToolParameter | ToolListParameter | ToolObjectParameter
 
 /** For a key of a call that is none of a tool's parameters: the text that
  *  tells the model where the key belongs, from the call's arguments
@@ -66,16 +77,16 @@ export type ToolArgumentValue = string | number | boolean
  *  parameter has no key. */
 export type ToolArguments = Record<string, ToolArgumentValue>
 
-export type SubcommandArgumentValue = ToolArgumentValue | ToolArgumentValue[] | ToolArguments[]
+export type SubcommandArgumentValue = ToolArgumentValue | ToolArgumentValue[] | ToolArguments[] | JsonObject
 
-/** Checked arguments of a call of a subcommand that can have a list
- *  parameter, keyed by parameter name. An absent optional parameter has no
- *  key. */
+/** Checked arguments of a call of a subcommand that can have a list or an
+ *  object parameter, keyed by parameter name. An absent optional parameter
+ *  has no key. */
 export type SubcommandArguments = Record<string, SubcommandArgumentValue>
 
 /** The checked arguments of a call with parameters of the kind `P`: flat
- *  scalars, unless a parameter can be a list. So the code of a tool with no
- *  list parameter never has to tell a list from a scalar. */
+ *  scalars, unless a parameter can be a list or an object. So the code of
+ *  a tool with no such parameter never has to tell one from a scalar. */
 export type ArgumentsOf<P extends SubcommandParameter> = [P] extends [ToolParameter] ? ToolArguments : SubcommandArguments
 
 /** A call that a model made, as later requests send it back. */

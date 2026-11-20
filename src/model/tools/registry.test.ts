@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { RESERVED_TOOL_ATTRIBUTES } from '../chat/toolBlocks'
-import { callLabel, TOOL_DEFINITIONS, toolDefinition, toolJsonSchema, unknownToolText } from './registry'
+import { callLabel, isIntermediateCall, TOOL_DEFINITIONS, toolDefinition, toolJsonSchema, unknownToolText } from './registry'
 import type { ToolDefinition } from './types'
 
 const SAMPLE: ToolDefinition = {
@@ -61,13 +61,38 @@ describe('callLabel', () => {
     expect(callLabel('video', { command: 'ffmpeg', parameters: '{"arguments": "-i @a out.mp4"}' })).toBe('ffmpeg -i @a out.mp4')
   })
 
+  it('gives the app and the parameters of the run of an apps invoke call', () => {
+    expect(callLabel('apps', { command: 'invoke', parameters: '{"name": "contact-sheet", "inputs": "@a @b", "is_intermediate": true}' })).toBe('invoke contact-sheet')
+    expect(callLabel('apps', { command: ' invoke ', parameters: '{"name": "contact-sheet", "parameters": {"columns": 4}}' })).toBe('invoke contact-sheet {\'columns\':4}')
+  })
+
   it('gives the subcommand and its parameters of another call, also a bad video call', () => {
     expect(callLabel('image', { command: 'crop', parameters: '{"image": "a"}' })).toBe('crop {\'image\': \'a\'}')
     expect(callLabel('video', { command: 'join_clips', parameters: 'clips @a' })).toBe('join_clips clips @a')
+    expect(callLabel('apps', { command: 'ls', parameters: '{"path": "/apps/notes"}' })).toBe('ls {\'path\': \'/apps/notes\'}')
+    expect(callLabel('apps', { command: 'invoke', parameters: '{"name": 5}' })).toBe('invoke {\'name\': 5}')
   })
 
   it('gives no label for a call with no subcommand', () => {
     expect(callLabel('jobs_wait', {})).toBe('')
+  })
+})
+
+describe('isIntermediateCall', () => {
+  it('is true for a call that asks Dez to hide what its job makes', () => {
+    expect(isIntermediateCall('model_invoke', { model: 'studio/paint', prompt: 'a fox', is_intermediate: true })).toBe(true)
+    expect(isIntermediateCall('video', { command: 'join_clips', parameters: '{"clips": "@a @b", "is_intermediate": true}' })).toBe(true)
+    expect(isIntermediateCall('apps', { command: 'invoke', parameters: '{"name": "contact-sheet", "is_intermediate": true}' })).toBe(true)
+  })
+
+  it('is false for a call with no such flag, for a call that Dez refuses, and for a tool with no such parameter', () => {
+    expect(isIntermediateCall('model_invoke', { model: 'studio/paint', prompt: 'a fox' })).toBe(false)
+    expect(isIntermediateCall('apps', { command: 'invoke', parameters: '{"name": "contact-sheet", "is_intermediate": false}' })).toBe(false)
+    expect(isIntermediateCall('apps', { command: 'invoke', parameters: '{"name": "contact-sheet"}' })).toBe(false)
+    expect(isIntermediateCall('apps', { command: 'ls', parameters: '{"is_intermediate": true}' })).toBe(false)
+    expect(isIntermediateCall('apps', { command: 'invoke', parameters: '{"name": 5, "is_intermediate": true}' })).toBe(false)
+    expect(isIntermediateCall('video', { command: 'join_clips', parameters: 'is_intermediate' })).toBe(false)
+    expect(isIntermediateCall('image', { command: 'crop', parameters: '{"image": "a", "is_intermediate": true}' })).toBe(false)
   })
 })
 

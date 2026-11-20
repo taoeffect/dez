@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { byteSizeText } from '../../utils/byteSize'
 import { jobStartedText, madeAssetIds } from './jobs'
-import { JS_EVAL_OUTPUT_BYTES, JS_EVAL_TEXT_CAP, JsEvalOutput, jsEvalAnswerLine, jsEvalCall, jsEvalCodeFile, jsEvalResult, type JsEvalLine, type JsEvalToolCalls } from './jsEval'
+import { JS_EVAL_OUTPUT_BYTES, JS_EVAL_TEXT_CAP, JsEvalOutput, endedRun, jsEvalAnswerLine, jsEvalCall, jsEvalCodeFile, jsEvalResult, textForModel, type JsEvalLine, type JsEvalToolCalls } from './jsEval'
 import type { ProgramEnd } from './programRuns'
 import { ToolError, type ToolArguments } from './types'
 
@@ -448,5 +448,72 @@ describe('jsEvalResult', () => {
 
   it('tells nothing of the pictures in a result that shows them', () => {
     expect(resultOf(written(protocolLine({ type: 'result', text: 'done' })), EXITED, { pictures: 2 })).toStrictEqual({ text: 'done', isError: false })
+  })
+})
+
+describe('textForModel with the folder of the apps', () => {
+  // The folder of the apps as Dez made its path, and its real path.
+  const APPS = '/home/u/.config/dez/apps'
+  const REAL_APPS = '/mnt/disk/config/dez/apps'
+  const forModel = (text: string, roots: readonly string[] = [REAL_APPS, APPS]) => textForModel(text, [REAL, JOINED], roots)
+
+  it('names a file of an app as the apps tool does, for each form of the path', () => {
+    expect(forModel(`open '${APPS}/notes/data.json' and ${REAL_APPS}/notes/main.ts:3`)).toBe('open \'/apps/notes/data.json\' and /apps/notes/main.ts:3')
+  })
+
+  it('names a file of an app in a URL, as the stack of an error has it', () => {
+    expect(forModel(`Error: x\n    at main (file://${APPS}/notes/main.ts:3:9)\n    at file://${REAL_APPS}/notes/lib/a.ts:1:1`))
+      .toBe('Error: x\n    at main (file:///apps/notes/main.ts:3:9)\n    at file:///apps/notes/lib/a.ts:1:1')
+  })
+
+  it.each([
+    ['upper-case escapes', 'file:///home/J%C3%BCrgen%20M/.config/dez/apps/notes/main.ts:1:1'],
+    ['lower-case escapes', 'file:///home/J%c3%bcrgen%20M/.config/dez/apps/notes/main.ts:1:1'],
+    ['escapes of only some characters', 'file:///home/Jürgen%20M/.config/dez/apps/notes/main.ts:1:1'],
+    ['no escapes', 'file:///home/Jürgen M/.config/dez/apps/notes/main.ts:1:1'],
+  ])('finds the folder in a URL with %s', (_name, url) => {
+    expect(forModel(`at ${url}`, ['/home/Jürgen M/.config/dez/apps'])).toBe('at file:///apps/notes/main.ts:1:1')
+  })
+
+  it('takes a character of a regex in the path as it is', () => {
+    expect(forModel('/home/a+b (c)/.config/dez/apps/notes/x and file:///home/a+b%20(c)/.config/dez/apps/notes/x', ['/home/a+b (c)/.config/dez/apps']))
+      .toBe('/apps/notes/x and file:///apps/notes/x')
+  })
+
+  it('names the folder of the apps itself', () => {
+    expect(forModel(`${APPS} and ${APPS}/ and file://${APPS}`)).toBe('/apps and /apps/ and file:///apps')
+  })
+
+  it.each([`${APPS}-old/notes/x`, `${APPS}.bak/x`, `${APPS}2/x`, `file://${APPS}%20old/x`])('leaves %s, which is another folder, to the rule of the local paths', (path) => {
+    const text = forModel(`see ${path}`)
+
+    expect(text).not.toContain('/apps/')
+    expect(text).toMatch(/^see (?:file:\/\/)?\/home\/…$/)
+  })
+
+  it('still names the work folder /work', () => {
+    expect(forModel(`${REAL}/output/a.png, file://${JOINED}/runner.js, ${APPS}/notes/a.txt`)).toBe('/work/output/a.png, file:///work/runner.js, /apps/notes/a.txt')
+  })
+
+  it('finds the folder when one form of its path starts the other', () => {
+    expect(forModel('/data/dez/apps/real/dez/apps/notes/x', ['/data/dez/apps', '/data/dez/apps/real/dez/apps'])).toBe('/apps/notes/x')
+  })
+
+  it('leaves the folder of the apps of a run with no app to the rule of the local paths', () => {
+    expect(textForModel(`${APPS}/notes/x`, [REAL, JOINED])).toBe('/home/…')
+  })
+})
+
+describe('endedRun', () => {
+  it('gives the line of a run that ended with the code 0', () => {
+    const output = written('log\n', protocolLine({ type: 'result', text: 'done' }))
+
+    expect(endedRun(EXITED, output)).toStrictEqual({ line: { type: 'result', text: 'done' }, log: 'log\n' })
+  })
+
+  it.each<ProgramEnd>([{ kind: 'exited', code: 1 }, { kind: 'exited', code: null }, { kind: 'timedOut' }, { kind: 'outputTooLarge' }])('takes no line of a run with the end %o', (end) => {
+    const output = written(protocolLine({ type: 'result', text: 'done' }))
+
+    expect(endedRun(end, output)).toStrictEqual({ line: null, log: '' })
   })
 })

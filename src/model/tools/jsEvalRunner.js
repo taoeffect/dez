@@ -1,11 +1,17 @@
-// The main module of a `js_eval` run (jsEval.ts). Dez writes this file into
-// the work folder of the run, next to the code of the call (`code.ts`), and
-// Deno runs it. It runs the code once and writes what the code gave as one
-// protocol line to its standard output.
+// The main module of every run of code in Deno: a `js_eval` run (jsEval.ts)
+// and a run of a script app (appInvoke.ts). Dez writes this file into the
+// work folder of the run, next to the description of the run (`run.json`),
+// and Deno runs it. It runs the code once and writes what the code gave as
+// one protocol line to its standard output.
 //
-// The code gets one object, `dez`. With `dez.sbp` it calls the other Dez
-// tools: this module writes one `call` line for each call, and Dez writes
-// the answer as one line to the standard input (`jsEvalAnswerLine`).
+// The code of a `js_eval` call (`code.ts`, next to this file) gets one
+// object, `dez`. With `dez.sbp` it calls the other Dez tools: this module
+// writes one `call` line for each call, and Dez writes the answer as one
+// line to the standard input (`jsEvalAnswerLine`).
+//
+// The code of an app (the default export of its `main.ts`) gets the
+// parameters of the run and its own `dez` object, with the input files and
+// the folders of the run (`appDez`).
 //
 // The code of a model runs in this same program, so it can write any line
 // itself: the page (`JsEvalOutput`, `bridgedToolCall`) trusts no line, and
@@ -13,6 +19,12 @@
 //
 // The page gets this file as a text (`?raw` in jsEval.ts). Nothing of the
 // app imports it as code, and no type check reads it.
+
+// The description of the run (`CODE_RUN_DESCRIPTION`, jsEval.ts;
+// `appRunDescription`, appInvoke.ts). The name is a literal
+// (`RUN_DESCRIPTION_FILE`), and the import is static: Deno then needs no
+// permission to read the file.
+import RUN from './run.json' with { type: 'json' }
 
 // Taken before the code runs: code that changes a global (a stub of
 // `JSON.stringify`, a `Deno.exit` that does nothing) must not break the
@@ -205,14 +217,38 @@ function sbp(selector, args) {
   })
 }
 
-const dez = freeze({ sbp })
-
-let line
-try {
+// Runs the code of a `js_eval` call.
+async function runCode() {
   // The name of the code file is a literal: Deno then needs no permission
   // to import it. A syntax error of the code is thrown here.
   const { default: run } = await import('./code.ts')
-  line = { type: 'result', text: resultText(await run(dez)) }
+  return run(freeze({ sbp }))
+}
+
+// The `dez` object of a run of an app: the copies of the input assets
+// (`inputs`, each with the path of its file), the folder for the files
+// that the run gives back (`outputFolder`), and the folder of the app
+// (`appFolder`). It has no `sbp`: the code of an app calls no Dez tool.
+function appDez({ inputs, outputFolder, appFolder }) {
+  return freeze({ inputs: freeze(inputs.map((input) => freeze({ ...input }))), outputFolder, appFolder })
+}
+
+// Runs an app: the default export of its `main.ts`, with the parameters of
+// the run. The `dez` object is made first, before code of the app can
+// change a global. A syntax error of the app is thrown at the import.
+async function runApp() {
+  const dez = appDez(RUN)
+  const { default: main } = await import(RUN.main)
+  if (typeof main !== 'function') {
+    throw new BaseError('main.ts has no default export that is a function. '
+      + 'Export the function of the app as the default, as in `export default async function main(parameters, dez) { … }`.')
+  }
+  return main(RUN.parameters, dez)
+}
+
+let line
+try {
+  line = { type: 'result', text: resultText(await (RUN.kind === 'app' ? runApp() : runCode())) }
 } catch (error) {
   line = { type: 'error', text: errorText(error) }
 }

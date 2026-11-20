@@ -79,6 +79,28 @@ describe('bridgedToolCall', () => {
     expect(refusal('dez.tools/js_eval', { code: 'return 1' })).toContain('Code cannot call js_eval')
   })
 
+  // A run of code starts no other run of code, by either form of a call.
+  it('refuses apps invoke in both forms of a selector, and tells the model to make the call itself', () => {
+    const errors = [
+      refusal('dez.tools/apps/invoke', { name: 'notes' }),
+      refusal('dez.tools/apps', { command: 'invoke', parameters: '{"name": "notes"}' }),
+      refusal('dez.tools/apps', { command: ' invoke\n' }),
+    ]
+
+    for (const error of errors) {
+      expect(error).toContain('Code cannot call apps invoke')
+      expect(error).toContain('as a tool call of your own')
+    }
+  })
+
+  it('runs the other subcommands of the apps tool', () => {
+    expect(checked('dez.tools/apps/ls', { path: '/apps/notes' })).toStrictEqual({
+      ok: true,
+      call: { name: 'apps', arguments: { command: 'ls', parameters: '{"path":"/apps/notes"}' } },
+    })
+    expect(checked('dez.tools/apps', { command: 'list_apps' }).ok).toBe(true)
+  })
+
   it('refuses a selector with more parts than a tool and a subcommand', () => {
     expect(refusal('dez.tools/image/scale/more', { image: 'a' })).toContain('too many parts')
     expect(refusal('dez.tools/image/scale/', { image: 'a' })).toContain('too many parts')

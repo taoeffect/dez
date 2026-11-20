@@ -1,6 +1,7 @@
 import sbp from '@sbp/sbp'
 import { expect, vi } from 'vitest'
 import { NO_CALL_PICTURE_BUDGET } from '../model/streams/pictureBudget'
+import { appManifestText, type AppKind } from '../model/tools/appManifest'
 import type { JsEvalLine } from '../model/tools/jsEval'
 import { ToolError, type ToolRunResult } from '../model/tools/types'
 import type { NativeDownloadRule, NativeHttpDownload, NativeHttpRequest } from '../utils/protocol/nativeHttp'
@@ -9,12 +10,13 @@ import type { AppFileEntry, AppFileRef, BundledToolEnd, BundledToolOutput, Bundl
 import type { ToolRunCall, ToolRunContext } from './tools'
 
 // Shared helpers of the unit tests of the controller code that runs the
-// programs that Dez ships (videoTool.ts, audioTool.ts, the frame sheets of
-// compaction.ts, and the tool calls of tools.ts and stream.ts), the file
-// work of the `apps` tool (appsTool.ts), and the jobs of a reply (jobs.ts):
-// a stub of the native side, a fake of the files of the app root
-// (`fakeAppFiles`), the outputs of the programs, and helpers for the work
-// of a call or a job.
+// programs that Dez ships (videoTool.ts, audioTool.ts, jsEval.ts, the
+// frame sheets of compaction.ts, and the tool calls of tools.ts and
+// stream.ts), the file work of the `apps` tool (appsTool.ts) and the runs
+// of its apps (appInvoke.ts), and the jobs of a reply (jobs.ts): a stub of
+// the native side, a fake of the files of the app root (`fakeAppFiles`,
+// with the files of an app from `appFiles`), the outputs of the programs,
+// and helpers for the work of a call or a job.
 //
 // An import of this module registers the stub selectors of the app
 // folders, the resource folder, the real paths, the files, the downloads,
@@ -220,6 +222,16 @@ export function fakeAppFiles(start: Record<string, string | null> = {}): FakeApp
     }
   }
   return files
+}
+
+/** The start of `fakeAppFiles` for the app `name`: its manifest, of the
+ *  kind `kind`, and the files `more`, each by its path in the app (null
+ *  for a folder). */
+export function appFiles(name: string, more: Record<string, string | null> = {}, kind: AppKind = 'script'): Record<string, string | null> {
+  return {
+    [`apps/${name}/manifest.json`]: appManifestText({ name, description: `The ${name} app.`, kind }),
+    ...Object.fromEntries(Object.entries(more).map(([path, content]) => [`apps/${name}/${path}`, content])),
+  }
 }
 
 sbp('sbp/selectors/register', {

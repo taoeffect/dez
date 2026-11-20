@@ -2,6 +2,7 @@ import * as z from 'zod'
 import { byteSizeText } from '../../utils/byteSize'
 import { countOf, countText } from '../../utils/countText'
 import { endOf, startOf } from '../../utils/textCut'
+import { APPS_VIRTUAL_ROOT } from './appsTool'
 import { jobStartedText, madeAssetIds, madeAssetText, type JobAssetKind } from './jobs'
 import RUNNER from './jsEvalRunner.js?raw'
 import { withoutLocalPaths } from './localPaths'
@@ -15,11 +16,17 @@ import { ToolError, type ToolArguments, type ToolDefinition } from './types'
 // (src-tauri/src/bundled_tools.rs, confinement.rs).
 // controller/jsEval.ts does the run.
 //
-// A run has two files in its work folder: Dez's own module
-// (jsEvalRunner.js), which Deno runs, and the code of the call, which that
-// module imports. The module writes what the code gave as one protocol
-// line to its standard output. All other output of the run is the console
-// output of the code.
+// A run has three files in its work folder: Dez's own module
+// (jsEvalRunner.js), which Deno runs, the description of the run
+// (`RUN_DESCRIPTION_FILE`), which tells the module what to run, and the
+// code of the call, which the module imports. The module writes what the
+// code gave as one protocol line to its standard output. All other output
+// of the run is the console output of the code.
+//
+// The same module runs the code of a script app (appInvoke.ts): the
+// description of that run names the `main.ts` of the app. Such a run
+// shares the protocol lines (`JsEvalOutput`), the rule of the paths
+// (`textForModel`), and the layout of a result (`runResultText`).
 //
 // The code can call the other Dez tools (`dez.sbp` of the module): the
 // module writes one `call` line for each call, and reads the answer of Dez
@@ -39,6 +46,17 @@ export const JS_EVAL_RUNNER_FILE = 'runner.js'
  *  same. The ending makes Deno take the code as TypeScript: it strips the
  *  types and checks none, and plain JavaScript is TypeScript too. */
 export const JS_EVAL_CODE_FILE = 'code.ts'
+
+/** The name of the description of a run in its work folder: one JSON
+ *  object that tells the kind of the run (`kind`), and for a run of an app
+ *  what it runs (`appRunDescription`, appInvoke.ts). The module of Dez
+ *  imports this name as a literal (jsEvalRunner.js): keep the two the
+ *  same. */
+export const RUN_DESCRIPTION_FILE = 'run.json'
+
+/** The text of the description of a `js_eval` run: the module runs the
+ *  code file. */
+export const CODE_RUN_DESCRIPTION = '{"kind":"code"}'
 
 /** The text of Dez's module (jsEvalRunner.js). */
 export const JS_EVAL_RUNNER: string = RUNNER
@@ -179,8 +197,8 @@ export type JsEvalLine = z.infer<typeof lineSchema>
 /** The protocol line of a tool call of the code. */
 export type JsEvalCallLine = Extract<JsEvalLine, { type: 'call' }>
 
-// The protocol line that tells what the code gave.
-type JsEvalEndLine = Exclude<JsEvalLine, JsEvalCallLine>
+/** The protocol line that tells what the code gave. */
+export type JsEvalEndLine = Exclude<JsEvalLine, JsEvalCallLine>
 
 // The protocol line that `text` is, the text between a record separator and
 // a line end; null for any other text.
@@ -300,24 +318,66 @@ export class JsEvalOutput {
   }
 }
 
+// `text` as the source of a regex that matches only it.
+function regexSource(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+// The characters of a path that every writer of a file URL leaves as they
+// are.
+const URL_PLAIN_CHAR = /[A-Za-z0-9._~/-]/
+
+// The regex source of the path `path` as a file URL holds it. A URL has
+// any other character as it is, or as the escapes of its UTF-8 bytes (a
+// space is `%20`, `é` is `%C3%A9`). Which characters get an escape differs
+// from one writer to the next (Deno, the webview), and so does the case of
+// the hex digits, so each such character matches in every form.
+function urlPathSource(path: string): string {
+  const encoder = new TextEncoder()
+  return Array.from(path, (char) => {
+    if (URL_PLAIN_CHAR.test(char)) return regexSource(char)
+    const escapes = Array.from(encoder.encode(char), (byte) => `%${byte.toString(16).padStart(2, '0').replace(/[a-f]/g, (digit) => `[${digit}${digit.toUpperCase()}]`)}`)
+    return `(?:${regexSource(char)}|${escapes.join('')})`
+  }).join('')
+}
+
+// What must not come after the path of the apps folder: a character of a
+// name, or the start of an escape of one in a URL. The path then names
+// another folder (`apps-old`), which is not the apps folder.
+const NAME_GOES_ON = '(?![A-Za-z0-9._%-])'
+
 /** `text` of a run with no path of this computer: the work folder of the
- *  run is `WORK_FOLDER_NAME`, and any other local path goes as its known
- *  start (`withoutLocalPaths`; the path of the Deno program is one, which
- *  the code can read with no permission). `workFolders` are the paths of
- *  the work folder that a text can hold: its real path, which Deno names,
- *  and the path that Dez made (the two differ when a folder above is a
- *  link). Deno writes a path in a URL with escapes (a space is `%20`), so
- *  the URL form is found by the name of the folder, a random id that no
- *  other text holds.
+ *  run is `WORK_FOLDER_NAME`, the folder of the apps is
+ *  `APPS_VIRTUAL_ROOT`, and any other local path goes as its known start
+ *  (`withoutLocalPaths`; the path of the Deno program is one, which the
+ *  code can read with no permission).
+ *
+ *  `workFolders` are the paths of the work folder that a text can hold:
+ *  its real path, which Deno names, and the path that Dez made (the two
+ *  differ when a folder above is a link). Deno writes a path in a URL with
+ *  escapes (a space is `%20`), so the URL form is found by the name of the
+ *  folder, a random id that no other text holds.
+ *
+ *  `appsRoots` are the paths of the folder of the apps, in the same two
+ *  forms; only a run of an app has them (its code can open the folder of
+ *  its app). So a path of a file of an app reads as the `apps` tool names
+ *  it (`/apps/<app>/main.ts`), also in the stack of an error, which names
+ *  a file as a URL.
  *
  *  A text goes through this as a whole, before any cut: a cut path would
  *  get past it. */
-export function textForModel(text: string, workFolders: readonly string[]): string {
+export function textForModel(text: string, workFolders: readonly string[], appsRoots: readonly string[] = []): string {
   let result = text
+  // The longer path first: one form of the path can be the start of the
+  // other.
+  for (const root of [...appsRoots].sort((a, b) => b.length - a.length)) {
+    result = result
+      .replace(new RegExp(`file://${urlPathSource(root)}${NAME_GOES_ON}`, 'g'), `file://${APPS_VIRTUAL_ROOT}`)
+      .replace(new RegExp(`${regexSource(root)}${NAME_GOES_ON}`, 'g'), APPS_VIRTUAL_ROOT)
+  }
   for (const folder of workFolders) {
     result = result.replaceAll(folder, WORK_FOLDER_NAME)
-    const name = folder.slice(folder.lastIndexOf('/') + 1).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    result = result.replace(new RegExp(`file://\\S*?/${name}`, 'g'), `file://${WORK_FOLDER_NAME}`)
+    result = result.replace(new RegExp(`file://\\S*?/${regexSource(folder.slice(folder.lastIndexOf('/') + 1))}`, 'g'), `file://${WORK_FOLDER_NAME}`)
   }
   return withoutLocalPaths(result)
 }
@@ -357,6 +417,12 @@ function consolePart(log: string, room: number): ResultPart | null {
 // import the flag that refuses it.
 const NAMES_FLAG = /--(?:allow-[a-z]+|no-npm|no-remote)\b/
 
+/** Whether the text of an error of a run names a flag of Deno. A model
+ *  can set none, so a result tells it so. */
+export function namesDenoFlag(error: string): boolean {
+  return NAMES_FLAG.test(error)
+}
+
 // The error of a static `import` in the code.
 const STATIC_IMPORT = /'import', and 'export' cannot be used outside of module code/
 
@@ -364,7 +430,7 @@ const STATIC_IMPORT = /'import', and 'export' cannot be used outside of module c
 // the errors whose own text misleads a model.
 function errorAdvice(error: string): string[] {
   return [
-    ...(NAMES_FLAG.test(error)
+    ...(namesDenoFlag(error)
       ? ['Dez runs the code with no network, no files, no environment variables, no start of programs, and no packages. '
         + 'No flag changes that, and you can set none: do the work without them.']
       : []),
@@ -374,8 +440,9 @@ function errorAdvice(error: string): string[] {
   ]
 }
 
-// What a result tells before the console output of the code.
-interface Outcome {
+/** What a result of a run of code tells before the console output of the
+ *  code. */
+export interface RunOutcome {
   isError: boolean
   /** What Dez tells about the end of the run; null for a run that tells
    *  all with its value. */
@@ -390,8 +457,8 @@ interface Outcome {
 // The outcome of a run whose code returned `value`. A string with no
 // visible character does not go as it is: a blank result reads as a
 // failure of the tool.
-function returnedOutcome(value: string | undefined, hasConsole: boolean): Outcome {
-  const told = (lead: string): Outcome => ({ isError: false, lead, given: null, advice: [] })
+function returnedOutcome(value: string | undefined, hasConsole: boolean): RunOutcome {
+  const told = (lead: string): RunOutcome => ({ isError: false, lead, given: null, advice: [] })
   if (value === undefined) {
     return told(hasConsole ? 'The code returned no value.' : 'The code returned no value, and it wrote nothing to the console. Give the result with `return`.')
   }
@@ -403,12 +470,12 @@ function returnedOutcome(value: string | undefined, hasConsole: boolean): Outcom
 // The outcome of a run of `call` with the end `end` and the protocol line
 // `line`. `hasConsole` tells that the code wrote console output, which
 // goes after it.
-function runOutcome(call: JsEvalCall, end: ProgramEnd, line: JsEvalEndLine | null, hasConsole: boolean): Outcome {
+function runOutcome(call: JsEvalCall, end: ProgramEnd, line: JsEvalEndLine | null, hasConsole: boolean): RunOutcome {
   if (line?.type === 'result') return returnedOutcome(line.text, hasConsole)
   if (line?.type === 'error') {
     return { isError: true, lead: 'The code threw an error:', given: { text: line.text, name: 'text of the error' }, advice: errorAdvice(line.text) }
   }
-  const failed = (lead: string): Outcome => ({ isError: true, lead, given: null, advice: [] })
+  const failed = (lead: string): RunOutcome => ({ isError: true, lead, given: null, advice: [] })
   if (end.kind === 'timedOut') {
     return failed(`Dez stopped the code: it did not end within ${countOf(call.timeoutMs / 1000, 'second')}. `
       + `Make the code do less work, or give it more time with \`timeout_seconds\` (at most ${MAX_SECONDS}).`)
@@ -475,28 +542,45 @@ function toolCallParagraphs(calls: JsEvalToolCalls, given: string, isError: bool
   ]
 }
 
+/** What a run that ended with `end` and wrote `output` gave: its protocol
+ *  line (null for none) and the console output of its code. The module of
+ *  Dez ends the program with the code 0 right after its line, so a line of
+ *  a run with another end is one that the code wrote: it does not count. */
+export function endedRun(end: ProgramEnd, output: JsEvalOutput): { line: JsEvalEndLine | null, log: string } {
+  const ended = output.ended()
+  return { line: end.kind === 'exited' && end.code === 0 ? ended.line : null, log: ended.log }
+}
+
+/** The text of the result of a run of code with the outcome `outcome` and
+ *  the console output `log`: the lead and the given text, the advice, the
+ *  paragraphs of `more` (which gets the given text as the result holds
+ *  it), then the console output. A first line tells of each cut.
+ *  `forModel` takes the paths of this computer out of a text of the run
+ *  (`textForModel`, with the folders of the run). */
+export function runResultText({ lead, given, advice }: RunOutcome, log: string, forModel: (text: string) => string, more: (given: string) => string[]): string {
+  const main = given === null ? null : mainPart(forModel(given.text), given.name)
+  // The console output gets the room that the given text leaves.
+  const written = consolePart(forModel(log), Math.max(JS_EVAL_TEXT_CAP - (main?.text.length ?? 0), LEAST_CONSOLE_ROOM))
+  const paragraphs = [
+    [...(lead === null ? [] : [lead]), ...(main === null ? [] : [main.text])].join('\n'),
+    ...advice,
+    ...more(main?.text ?? ''),
+    ...(written === null ? [] : [`Console output of the code:\n${written.text}`]),
+  ]
+  const notes = [main, written].flatMap((part) => part?.note ?? [])
+  return [...notes, paragraphs.join('\n\n')].join('\n')
+}
+
 /** The result of a run of `call` that ended with `end` and wrote `output`:
  *  the returned value, what its tool calls left (`toolCalls`), then the
  *  console output of the code. Any other end is an error result
  *  (`isError`) that tells the model what happened and what to do: the code
- *  threw an error, Dez stopped it at a limit, or it ended with no value. A
- *  first line tells of each cut. `workFolders` are the paths of the work
- *  folder of the run on this computer (`textForModel`). */
+ *  threw an error, Dez stopped it at a limit, or it ended with no value.
+ *  `workFolders` are the paths of the work folder of the run on this
+ *  computer (`textForModel`). */
 export function jsEvalResult(call: JsEvalCall, end: ProgramEnd, output: JsEvalOutput, workFolders: readonly string[], toolCalls: JsEvalToolCalls): { text: string, isError: boolean } {
-  const ended = output.ended()
-  // The module of Dez ends the program with the code 0 right after its
-  // line. A line of a run with another end is one that the code wrote.
-  const line = end.kind === 'exited' && end.code === 0 ? ended.line : null
-  const { isError, lead, given, advice } = runOutcome(call, end, line, ended.log.trim() !== '')
-  const main = given === null ? null : mainPart(textForModel(given.text, workFolders), given.name)
-  // The console output gets the room that the given text leaves.
-  const log = consolePart(textForModel(ended.log, workFolders), Math.max(JS_EVAL_TEXT_CAP - (main?.text.length ?? 0), LEAST_CONSOLE_ROOM))
-  const paragraphs = [
-    [...(lead === null ? [] : [lead]), ...(main === null ? [] : [main.text])].join('\n'),
-    ...advice,
-    ...toolCallParagraphs(toolCalls, main?.text ?? '', isError),
-    ...(log === null ? [] : [`Console output of the code:\n${log.text}`]),
-  ]
-  const notes = [main, log].flatMap((part) => part?.note ?? [])
-  return { text: [...notes, paragraphs.join('\n\n')].join('\n'), isError }
+  const { line, log } = endedRun(end, output)
+  const outcome = runOutcome(call, end, line, log.trim() !== '')
+  const text = runResultText(outcome, log, (part) => textForModel(part, workFolders), (given) => toolCallParagraphs(toolCalls, given, outcome.isError))
+  return { text, isError: outcome.isError }
 }

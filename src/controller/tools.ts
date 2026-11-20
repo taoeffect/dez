@@ -17,6 +17,7 @@ import type { ProviderMediaQuote } from '../model/providers/streamTypes'
 import { effectiveRequest, type ModelInfo, type ProviderInfo, type ProviderInputImageRules, type ProviderSettingsDescriptor } from '../model/providers/types'
 import type { SettingsSnapshot } from '../model/state'
 import type { CallPictureBudget } from '../model/streams/pictureBudget'
+import { invokeInputsText, invokeLabel } from '../model/tools/appInvoke'
 import { APPS_TOOL } from '../model/tools/appsTool'
 import { AUDIO_TOOL, audioClipId, audioClipOf, audioCutPart, audioCutRequest, audioCutResultText, audioLengthText } from '../model/tools/audioTool'
 import { conversationInfoText } from '../model/tools/conversationInfo'
@@ -33,6 +34,7 @@ import { ToolError, type ArgumentsOf, type SubcommandParameter, type ToolArgumen
 import { ffmpegCall, ffprobeCall, joinClipsCall, VIDEO_TOOL, videoCallLabel, videoInputsText } from '../model/tools/videoTool'
 import { untilAborted } from '../utils/abort'
 import { rawErrorText } from '../utils/errorText'
+import { checkedInvokeCall, runAppJob } from './appInvoke'
 import { editAppFile, initApp, listAppFolder, listApps, makeAppFolder, moveAppPaths, readAppFile, removeAppPaths, writeAppFile } from './appsTool'
 import { assetInfoResult } from './assetInfo'
 import { assetViewResult } from './assetView'
@@ -405,7 +407,8 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // `is_intermediate` changes nothing of the request or of the results
   // that the model reads: the job only marks its images and clips as
   // hidden (`hidesAssets`), and the editor shows them under the chip of
-  // this call. The same holds for `join_clips` and `ffmpeg` of `video`.
+  // this call. The same holds for `join_clips` and `ffmpeg` of `video`,
+  // and for `invoke` of `apps`.
   async model_invoke (args, callSignal, context) {
     const providers = await sbp('dez.provider/infos') as ProviderInfo[]
     const { modelParameters, providerSettings } = sbp('dez.model/settings/snapshot') as SettingsSnapshot
@@ -492,11 +495,17 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   async js_eval (args, signal, context) {
     return runJsEval(jsEvalCall(args), signal, context)
   },
-  // The files of the apps, the small programs that a model writes for the
-  // user (appsTool.ts). Each subcommand works on the folder `apps/` of the
+  // The apps, the small programs that a model writes for the user
+  // (appsTool.ts). Each file subcommand works on the folder `apps/` of the
   // app root and is done when the call returns: it starts no job, and it
   // reads nothing of the conversation. A stop of the reply stops `rm` and
   // `mv` between two paths; any other call is short and runs to its end.
+  //
+  // `invoke` runs the code of a script app in Deno (appInvoke.ts), as a
+  // job of the reply: code that a model wrote can run for long. The checks
+  // of the call and of the files of the app run first
+  // (`checkedInvokeCall`): a call that Dez refuses starts no job and no
+  // program. The result tells the inputs that go, as for `model_invoke`.
   apps: subcommandRunner(APPS_TOOL, {
     init: initApp,
     read: readAppFile,
@@ -507,6 +516,14 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     ls: listAppFolder,
     mkdir: makeAppFolder,
     mv: moveAppPaths,
+    async invoke (args, callSignal, context) {
+      const call = await checkedInvokeCall(args, callSections(context))
+      return startJob(context, callSignal, APPS_TOOL.name, (signal, report, _reportCost, keepAsset) => runAppJob(call, signal, report, keepAsset), {
+        timeoutMs: call.timeoutMs,
+        hidesAssets: isIntermediate(args),
+        label: invokeLabel(args),
+      }, invokeInputsText(call.inputs))
+    },
   }),
 }
 
