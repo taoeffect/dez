@@ -1,14 +1,14 @@
 import { oneLineCut } from '../../utils/oneLineCut'
-import { appTagLabel, labelAppTags } from '../chat/appTags'
+import { appTagLabel } from '../chat/appTags'
 import { assetTextPieces } from '../chat/assetMentions'
 import type { AssetPlace } from '../chat/assetOrigins'
 import { blockLinkedRule, compactionMessageEnd, isCarriedUserAssets, sectionCompactionBlock, sectionTextParts } from '../chat/compaction'
-import { notesAssetLines, notesCellText, notesFinalReply, notesMessages, type NotesAssetLine } from '../chat/compactionNotes'
+import { notesAssetLines, notesCellText, notesFinalReply, notesMessages, withAssetLabels, type NotesAssetLine } from '../chat/compactionNotes'
 import { sectionIsEmpty, sectionPlainText } from '../chat/content'
 import { findHiddenAssets } from '../chat/hiddenAssets'
 import { findAssetMentions } from '../chat/imageMentions'
-import { findImageReferences, IMAGE_HIDDEN_KEY, IMAGE_LABEL, labelImageReferences, type LinkedPathRule } from '../chat/images'
-import { labelMediaTags, MEDIA_HIDDEN_ATTRIBUTE } from '../chat/mediaTags'
+import { findImageReferences, IMAGE_HIDDEN_KEY, IMAGE_LABEL, type LinkedPathRule } from '../chat/images'
+import { MEDIA_HIDDEN_ATTRIBUTE } from '../chat/mediaTags'
 import { withoutStoredFilePaths } from '../chat/storedFilePaths'
 import { findToolBlocks, unescapedModelText, withoutToolBlocks } from '../chat/toolBlocks'
 import type { Section } from '../chat/types'
@@ -204,15 +204,14 @@ const MESSAGE_START_LENGTH = 160
 
 /** The start of each middle message of `scope`, in order, as the list of
  *  the instruction shows it (`CompactionInstruction.middleMessages`): on
- *  one line, and each image reference, media tag, and app tag as its label
- *  (`[image]`, `[video]`, `[app <name>]`), as the notes for people show
- *  them.
+ *  one line, and each image reference, clip tag, and app tag as its label
+ *  (`withAssetLabels`), as the notes for people show them.
  *
  *  The path scrub runs before the cut: it finds a path by its end, so it
  *  would not see the part of a path before a cut, and the provider would
  *  get the user's name and folders. */
 export function middleMessageStarts(scope: CompactionScope): string[] {
-  return scope.middle.map(({ text, rule }) => oneLineCut(withoutStoredFilePaths(labelAppTags(labelMediaTags(labelImageReferences(text, rule), rule), rule)), MESSAGE_START_LENGTH))
+  return scope.middle.map(({ text, rule }) => oneLineCut(withoutStoredFilePaths(withAssetLabels(text, rule)), MESSAGE_START_LENGTH))
 }
 
 /** The asset lines of the notes of the compaction section of `sections`,

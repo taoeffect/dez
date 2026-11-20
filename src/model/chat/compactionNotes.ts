@@ -674,6 +674,28 @@ export function notesAppLines(notes: string): Map<string, NotesApp> {
   return found
 }
 
+/** The labels of `withAssetLabels`. A missing one is the label of its
+ *  kind: `IMAGE_LABEL`, `MEDIA_TAG_LABELS`, `appTagLabel`. */
+export interface AssetLabels {
+  image?: string
+  clip?: string
+  app?: (name: string) => string
+}
+
+/** `text`, whose linked paths count by `rule`, with a label in place of
+ *  each image reference, clip tag, and app tag, for a text that people
+ *  read: the notes for people, the list of messages of a compaction, the
+ *  tab title, the History preview, and the search. A reference or a tag in
+ *  code stays as its text.
+ *
+ *  The images go first: in a text that is not a user's, a clip tag and an
+ *  app tag are lines of Dez, which end the code before them
+ *  (codeRanges.ts). With their labels in first, an image after a fence
+ *  that a reply left open would read as code, with its path. */
+export function withAssetLabels(text: string, rule: LinkedPathRule, labels: AssetLabels = {}): string {
+  return labelAppTags(labelMediaTags(labelImageReferences(text, rule, labels.image), rule, labels.clip), rule, labels.app)
+}
+
 /** The notes `notes` (`CompactionBlock.notes`, or a part of them), whose
  *  linked paths count by `rule` (`blockLinkedRule`), as a text for people
  *  to read: each image reference, media tag, and app tag as its label
@@ -687,7 +709,7 @@ export function notesAppLines(notes: string): Map<string, NotesApp> {
  *  escape: with the escape removed first, a tag that a model wrote would
  *  read as a tag of Dez. */
 export function compactionNotesForPeople(notes: string, rule: LinkedPathRule): string {
-  const labeled = (text: string) => labelAppTags(labelMediaTags(labelImageReferences(text, rule), rule), rule)
+  const labeled = (text: string) => withAssetLabels(text, rule)
   const pieces: string[] = []
   let from = 0
   for (const part of notesMessageParts(notes)) {

@@ -1,6 +1,5 @@
-import { labelAppTags } from '../chat/appTags'
+import { withAssetLabels } from '../chat/compactionNotes'
 import { labelImageReferences } from '../chat/images'
-import { labelMediaTags } from '../chat/mediaTags'
 import { modelRefKey } from '../chat/modelRef'
 import { labelToolBlocks } from '../chat/toolBlocks'
 import type { Role } from '../chat/types'
@@ -55,8 +54,7 @@ export function clearConversationSearchCache(): void {
 // search text as the chips show them, labels included.
 function nodeSearchText(node: ContentNodeData, role: Role): string {
   if (node.kind !== 'text') return `${node.name} ${labelImageReferences(node.body, role, ' ')}`
-  const tagsOut = labelAppTags(labelMediaTags(role === 'agent' ? labelToolBlocks(node.text, ' ') : node.text, role, ' '), role, (name) => name)
-  return labelImageReferences(tagsOut, role, ' ')
+  return withAssetLabels(role === 'agent' ? labelToolBlocks(node.text, ' ') : node.text, role, { image: ' ', clip: ' ', app: (name) => name })
 }
 
 // Flatten a conversation into one searchable line. Whitespace is collapsed

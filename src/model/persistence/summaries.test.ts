@@ -48,6 +48,15 @@ describe('conversation summaries', () => {
     expect(conversationPreview(sections)).toBe('Like: [audio] [video] Here it is. [video] [audio] Done.')
   })
 
+  // A clip tag is a line of Dez: it ends the fence that a reply left open,
+  // so the image after it is no code.
+  it('shows an image of agent text after a clip tag that ends an open fence as a label', () => {
+    const audio = '<dez:audio id="c" type="audio/mpeg"/>'
+    const sections = [section('agent', [textNode(`\`\`\`js\nlet a =\n${audio}\n${idImage(HIDDEN_IMAGE_PATH, 'd')}`)])]
+
+    expect(conversationPreview(sections)).toBe('```js let a = [audio] [image]')
+  })
+
   it('shows the app tags of agent and user text as labels with the name of the app, and a tag in code as its text', () => {
     const sections = [
       section('user', [textNode('Why is it empty?\n<dez:app name="notes"/>\n\n`<dez:app name="notes"/>`')]),

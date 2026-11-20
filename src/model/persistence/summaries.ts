@@ -1,7 +1,5 @@
-import { labelAppTags } from '../chat/appTags'
-import { compactionTextForPeople } from '../chat/compactionNotes'
+import { compactionTextForPeople, withAssetLabels } from '../chat/compactionNotes'
 import { labelImageReferences } from '../chat/images'
-import { labelMediaTags } from '../chat/mediaTags'
 import { cloneModelRef } from '../chat/modelRef'
 import { labelToolBlocks } from '../chat/toolBlocks'
 import type { Role } from '../chat/types'
@@ -26,7 +24,7 @@ export function readableTexts(sections: SectionData[], nodeText: (node: ContentN
 // as its text, path included.
 function nodePlainText(node: ContentNodeData, role: Role): string {
   if (node.kind === 'prompt') return labelImageReferences(node.body, role)
-  return labelImageReferences(labelAppTags(labelMediaTags(role === 'agent' ? labelToolBlocks(node.text, ' ') : node.text, role), role), role)
+  return withAssetLabels(role === 'agent' ? labelToolBlocks(node.text, ' ') : node.text, role)
 }
 
 function sectionHasVisibleContent(section: SectionData): boolean {
