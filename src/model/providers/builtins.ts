@@ -371,11 +371,16 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // shape. `created` is 0 for every model, so there is no release date.
     // https://api.trustedrouter.com/v1/models
     modelImageInput: { path: 'architecture.input_modalities' },
-    // An image goes as an `image_url` data URL (checked live, 2026-11-19).
+    // An image goes as an `image_url` data URL (checked live with
+    // `deepseek/deepseek-v4.1-flash`, 2026-11-19).
     // A list of request fields that the model takes: "tools" for a model
     // that calls tools, "reasoning" for one that takes the `reasoning`
     // field of `thinking` below. A tool round and its replay with the
-    // `tool` message passed (checked live, 2026-11-19).
+    // `tool` message passed with `deepseek/deepseek-v4-flash` and
+    // `anthropic/claude-haiku-4.5` (checked live, 2026-11-19). Claude
+    // models also answer with Dez's 13 tools in the request
+    // (`claude-haiku-4.5`, `claude-haiku-5.5`, `claude-sonnet-5.5`;
+    // checked live, 2026-11-20).
     modelToolCalling: { path: 'supported_parameters' },
     modelThinking: { path: 'supported_parameters' },
     // A list. The image, speech, transcription, and video models answer
@@ -436,11 +441,16 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // it too (checked live, 2026-11-19).
     // https://trustedrouter.com/docs/prompt-caching
     promptCacheKey: true,
-    // OpenRouter's field, which TrustedRouter takes; it goes only to a model
-    // whose `supported_parameters` has "reasoning" (`modelThinking`). Some
-    // models must think, so there is no off field. The thinking streams in
-    // `reasoning` and `reasoning_content`, and a replay of either on the
-    // assistant message of a tool round passed (checked live, 2026-11-19).
+    // OpenRouter's field, which TrustedRouter maps to each provider's own
+    // control (OpenAI models get `reasoning_effort`); it goes only to a
+    // model whose `supported_parameters` has "reasoning" (`modelThinking`).
+    // Some models must think, so there is no off field. The thinking
+    // streams in `reasoning` and `reasoning_content`, and a replay of either
+    // on the assistant message of a tool round passed with
+    // `deepseek/deepseek-v4-flash` and `anthropic/claude-haiku-4.5` (checked
+    // live, 2026-11-19). `openai/gpt-5-nano` and `gpt-5-mini` take the field,
+    // and `claude-haiku-5.5` and `claude-sonnet-5.5` stream their thinking
+    // (checked live, 2026-11-20).
     thinking: { enabledBody: { reasoning: { enabled: true } } },
   },
   {
