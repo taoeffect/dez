@@ -1,8 +1,8 @@
 import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
-import { toolBlockText } from '../model/chat/toolBlocks'
 import type { Section, Tab } from '../model/chat/types'
+import { toolGroupText } from '../model/streams/toolRound'
 import { MANIFEST_MAX_BYTES, parseAppManifest } from '../model/tools/appManifest'
 import { showResultText } from '../model/tools/appShow'
 import { APPS_MAX_BYTES, APPS_MAX_FILE_BYTES, EDIT_HINT, withEditHint } from '../model/tools/appsTool'
@@ -227,14 +227,14 @@ describe('apps edit', () => {
     // A reply with the blocks of `results`, the results of edit calls, as
     // the end of their round writes them.
     function reply(id: string, results: readonly ToolRunResult[]): Section {
-      const blocks = results.map((result, index) => toolBlockText({
+      const blocks = results.map((result, index) => ({
         id: `call_${index}`,
         name: 'apps',
-        status: result.isError ? 'error' : 'success',
+        status: result.isError ? 'error' as const : 'success' as const,
         arguments: { command: 'edit', parameters: JSON.stringify(EDIT) },
         result: result.content,
       }))
-      return { id, role: 'agent', model: MODEL, content: [{ kind: 'text', text: blocks.join('') }] }
+      return { id, role: 'agent', model: MODEL, content: [{ kind: 'text', text: toolGroupText(blocks) }] }
     }
 
     const keep = (sections: readonly Section[]): void => {
