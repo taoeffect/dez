@@ -300,6 +300,10 @@ export class Provider {
     const sentMessages = thinkingOn ? messages : messages.map(withoutThinking)
     const { body, prefixHash } = this.format.chatBody(sentMessages, model.id, this.config, context)
     if (this.config.requestBody) mergeBodyPart(body, this.config.requestBody)
+    const ownPrompt = this.config.providerSystemPrompt
+    if (ownPrompt) {
+      writeBodyPath(body, ownPrompt.bodyPath, context.providerSystemPrompt ? (ownPrompt.onValue ?? true) : (ownPrompt.offValue ?? false))
+    }
     // A fixed part for a model, so the body stays the same in every request
     // of a conversation with that model (the prompt cache).
     if (context.imageOutput && this.config.imageOutputBody) mergeBodyPart(body, this.config.imageOutputBody)

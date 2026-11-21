@@ -11,8 +11,8 @@ import type { ChatRequestContext, GeneratedClip, GeneratedMedia, MediaKind, Prov
 // the request.
 export type ProviderChatInputMessage = RequestMessage<MessagePart>
 
-// `conversationId`, `system`, `tools`, `imageOutput`, and `audioOutput` go
-// into the request body (ChatRequestContext).
+// `conversationId`, `system`, `tools`, `imageOutput`, `audioOutput`, and
+// `providerSystemPrompt` go into the request body (ChatRequestContext).
 export interface ProviderStreamChatInput extends ChatRequestContext {
   providerId: ProviderId
   modelId: string

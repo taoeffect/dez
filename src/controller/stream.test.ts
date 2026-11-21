@@ -173,7 +173,7 @@ function sectionTexts(): Array<{ role: string, text: string }> {
 
 // Starts the reply of the section `sectionId`. `messages` are the messages
 // of its first request, which hold the conversation before the reply.
-async function startStream({ sendTools = false, sectionId = 'a1', newestUserMessage = 'Hi', messages = [{ role: 'user', content: newestUserMessage }] as StreamMessage[] } = {}): Promise<void> {
+async function startStream({ sendTools = false, incognito = false, sectionId = 'a1', newestUserMessage = 'Hi', messages = [{ role: 'user', content: newestUserMessage }] as StreamMessage[] } = {}): Promise<void> {
   await sbp('dez.stream/start', {
     tabId: activeTab().id,
     sectionId,
@@ -183,6 +183,7 @@ async function startStream({ sendTools = false, sectionId = 'a1', newestUserMess
     imagesOverLimit: 0,
     newestUserMessage,
     sendTools,
+    incognito,
     imageOutput: false,
     audioOutput: false,
   })
@@ -1277,6 +1278,29 @@ describe('dez.controller/submitTab system prompt', () => {
 
     expect(mediaInputs.map((input) => input.prompt)).toStrictEqual(['Hi'])
     expect(toasts.filter((toast) => toast.data.title === 'Cannot send')).toStrictEqual([])
+  })
+
+  // An incognito tab sends no system prompt of Dez and no tools, so the
+  // template needs no check, and the provider's own system prompt goes on
+  // (`requestParts`).
+  it('sends no system prompt and no tools from an incognito tab, even with a template that has a problem', async () => {
+    sbp('dez.model/settings/setSystemPrompt', '{{model_name}}')
+    expect(sbp('dez.model/tabs/turnOnIncognito', activeTab().id)).toBe(true)
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect(requests.map(({ system, tools, providerSystemPrompt }) => ({ system, tools, providerSystemPrompt }))).toStrictEqual([
+      { system: undefined, tools: [], providerSystemPrompt: true },
+    ])
+    expect(toasts).toStrictEqual([])
+  })
+
+  it('sends the tools and turns the provider\'s own system prompt off in a normal tab', async () => {
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect(requests.map(({ tools, providerSystemPrompt }) => ({ tools, providerSystemPrompt }))).toStrictEqual([
+      { tools: TOOL_DEFINITIONS, providerSystemPrompt: false },
+    ])
   })
 })
 
@@ -3523,6 +3547,24 @@ describe('dez.stream/start compaction', () => {
     ])
     expect(savedConversations[0].compactions?.count).toBe(1)
     expect(leftFiles).toStrictEqual([{ sources: [], pictures: [] }])
+    expect(toasts).toStrictEqual([])
+  })
+
+  // An incognito request sends nothing of Dez (`requestParts`): a large
+  // conversation goes as it is, and the provider tells when it is too
+  // large.
+  it('never compacts the conversation of an incognito tab', async () => {
+    // On before the earlier reply: a tab with a reply cannot turn it on.
+    sbp('dez.model/tabs/replaceSections', activeTab().id, [{ id: 'u1', role: 'user', content: [{ kind: 'text', text: 'Hi' }] }])
+    expect(sbp('dez.model/tabs/turnOnIncognito', activeTab().id)).toBe(true)
+    setLargeConversation()
+    replyRounds([lastRound])
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect(requests.map(isCompactionRequest)).toStrictEqual([false])
+    expect(activeTab().compactions).toBeUndefined()
+    expect(sectionTexts()).toStrictEqual([...largeConversationTexts, { role: 'agent', text: 'None.' }, { role: 'user', text: '' }])
     expect(toasts).toStrictEqual([])
   })
 

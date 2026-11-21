@@ -6,6 +6,7 @@ import { sectionPlainText } from '../model/chat/content'
 import { compactionDueSize, type ContextSize } from '../model/chat/contextSize'
 import type { ConversationCost } from '../model/chat/conversationCost'
 import { IMAGE_HIDDEN_KEY, IMAGE_MADE_BY_KEY, IMAGE_TOOL_KEY, imageMarkdown } from '../model/chat/images'
+import { requestParts } from '../model/chat/incognito'
 import { modelRefKey, sameModelRef } from '../model/chat/modelRef'
 import { newMediaIds } from '../model/chat/mediaIds'
 import { MEDIA_HIDDEN_ATTRIBUTE, MEDIA_JOB_ATTRIBUTE, MEDIA_MADE_BY_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE, mediaTagText } from '../model/chat/mediaTags'
@@ -77,6 +78,8 @@ import type { ToolRunCall, ToolRunContext } from './tools'
 // clip of the reply. `dez.stream/start` then runs the chat rounds
 // (`runChatRounds`: a compaction check before each request, then the
 // tool calls of the round) or the one media round (`runMediaRound`).
+// An incognito tab sends only the parts of `requestParts`: no system
+// prompt of Dez, no tools, and no compaction.
 // Each request that went counts in the cost of the tab
 // (`countRequestCost`). The end (`endReply`) waits for the open jobs of
 // the reply, then ends its stream session (`finalizeStream`).
@@ -104,6 +107,10 @@ interface StreamStartArgs {
   newestUserMessage: string | MessagePart[]
   // Offer the Dez tools (RequestMessages.sendTools).
   sendTools: boolean
+  // The tab is incognito (`Tab.incognito`): the chat rounds send the parts
+  // of `requestParts`. It cannot change while the reply runs, as a tab that
+  // sent a request cannot turn it on (`canTurnOnIncognito`).
+  incognito: boolean
   // The model's known outputs hold `image`: its chat requests ask for
   // image output (ChatRequestContext.imageOutput).
   imageOutput: boolean
@@ -766,7 +773,8 @@ function messagesBefore(sections: Section[], sectionId: string, model: ModelRef,
 // chose a smaller model): the model of the newest reply before it, which
 // read the whole conversation in its last request. It gets a chat request
 // of its own: the sections before `replySectionId` as it reads them, with
-// its system prompt, its tools, and its settings.
+// its system prompt, its tools, and its settings. Only a normal tab compacts
+// (`requestParts`), so it is the request of a normal tab.
 //
 // Null when the model of the new reply must write the notes itself: no
 // earlier reply tells its model, or that model is `replyModel`. The window
@@ -989,13 +997,16 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
   // settings consistently.
   const settings = sbp('dez.model/settings/snapshot') as SettingsSnapshot
   const providerSettings = settings.providerSettings[args.model.providerId]
+  const parts = requestParts(args)
   // The prompt lists exactly the tools that the request offers.
   const tools = args.sendTools ? TOOL_DEFINITIONS : []
   // A template error or a deleted provider throws, which ends the stream
   // session. Built once per reply, so a provider rename or a template edit
   // during the reply does not change the prompt of its later rounds. A
-  // blank template gives no system prompt.
-  const system = buildSystemPrompt(systemPromptTemplate(settings.systemPrompt), args.model, requireProvider(args.model.providerId).name, tools)
+  // blank template gives no system prompt, and so does an incognito tab.
+  const system = parts.dezSystemPrompt
+    ? buildSystemPrompt(systemPromptTemplate(settings.systemPrompt), args.model, requireProvider(args.model.providerId).name, tools)
+    : undefined
   const frame: RequestFrame = { system, tools, imageOutput: args.imageOutput, audioOutput: args.audioOutput, providerSettings }
   // The messages of the sections before the reply's section: each request
   // sends them, then the rounds of the reply so far. A compaction in the
@@ -1020,8 +1031,10 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
   for (;;) {
     // No check, and so no wait, for a request that needs none: a first
     // message, and the request right after a compaction. A compaction that
-    // made no room would come again and again.
-    if (requestSinceCompaction) {
+    // made no room would come again and again. An incognito tab never
+    // compacts: a conversation that grows too large for the model gets the
+    // provider's error.
+    if (parts.compaction && requestSinceCompaction) {
       const step = await compactIfDue(args, reply, jobs, frame, { messages, kept, firstCheck })
       if (step.kind === 'ended') return
       if (step.kind === 'compacted') {
@@ -1069,6 +1082,7 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
         messages,
         requestId,
         providerSettings: frame.providerSettings,
+        providerSystemPrompt: parts.providerSystemPrompt,
         onSent: () => { sent = true },
         onToken: (token: string) => {
           if (!roundIsCurrent()) return

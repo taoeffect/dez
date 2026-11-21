@@ -28,9 +28,11 @@ const template = computed(() => systemPromptTemplate(settings.value.systemPrompt
 const problem = computed(() => systemPromptProblem(template.value))
 const blank = computed(() => systemPromptIsBlank(template.value))
 
-// The prompt of a chat request in the active tab now: its model, the name
-// of its provider, and the tools that the request offers. A text in place
-// of the prompt when there is none to show.
+// The prompt of a chat request of a normal tab now, to the model of the
+// active tab: its model, the name of its provider, and the tools that the
+// request offers. An incognito tab sends no prompt (`requestParts`), and
+// the preview is the prompt that the user edits. A text in place of the
+// prompt when there is none to show.
 const preview = computed((): { text: string, model: string } | { note: string } => {
   const model = activeModel.value
   if (!model) return { note: 'No model is selected. Choose a model in the bottom bar to see the prompt that it gets.' }

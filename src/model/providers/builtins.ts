@@ -342,9 +342,9 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // In a live check, Qwen3-VL cached nothing without it.
     // https://docs.venice.ai/guides/features/prompt-caching
     promptCacheKey: true,
-    // Venice adds its own system prompt when this field is missing, so every
-    // request turns it off.
-    requestBody: { venice_parameters: { include_venice_system_prompt: false } },
+    // Venice adds its own system prompt when this field is missing, so a
+    // request turns it off; an incognito tab turns it on.
+    providerSystemPrompt: { bodyPath: 'venice_parameters.include_venice_system_prompt' },
     // The image, speech, music, and video models take Venice's own media
     // API.
     mediaApi: { format: 'venice' },

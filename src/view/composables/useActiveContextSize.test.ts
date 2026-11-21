@@ -13,6 +13,7 @@ const state = reactive({
   activeTabId: 'first',
   sizes: {} as Record<string, ContextSize>,
   compactions: {} as Record<string, Compactions>,
+  incognitoTabs: [] as string[],
   activeModel: null as ActiveModel | null,
   cachedModel: null as ModelInfo | null,
 })
@@ -27,6 +28,7 @@ sbp('sbp/selectors/register', {
     return size && { ...size }
   },
   'dez.model/tabs/compactions': (tabId: string) => state.compactions[tabId],
+  'dez.model/tabs/incognito': (tabId: string) => state.incognitoTabs.includes(tabId),
   'dez.model/activeModel': () => state.activeModel,
   'dez.model/modelCache/model': () => state.cachedModel,
 })
@@ -47,6 +49,7 @@ describe('useActiveContextSize', () => {
     state.activeTabId = 'first'
     state.sizes = { first: { tokens: 100, estimated: false }, second: { tokens: 7000, estimated: true } }
     state.compactions = {}
+    state.incognitoTabs = []
     state.activeModel = null
     state.cachedModel = null
     reads = 0
@@ -59,13 +62,13 @@ describe('useActiveContextSize', () => {
 
   it('gives the size of the active tab, and the one of another tab at once after a switch', () => {
     const shown = shownSize()
-    expect(shown.value).toStrictEqual({ tokens: 100, estimated: false, contextWindow: undefined, compactions: undefined })
+    expect(shown.value).toStrictEqual({ tokens: 100, estimated: false, contextWindow: undefined, compactions: undefined, incognito: false })
 
     // A change right before the switch: the read interval has not passed.
     setTokens('first', 150)
     state.activeTabId = 'second'
 
-    expect(shown.value).toStrictEqual({ tokens: 7000, estimated: true, contextWindow: undefined, compactions: undefined })
+    expect(shown.value).toStrictEqual({ tokens: 7000, estimated: true, contextWindow: undefined, compactions: undefined, incognito: false })
   })
 
   it('gives the compaction numbers of the tab with its size, also the numbers of a new compaction', () => {
@@ -82,7 +85,22 @@ describe('useActiveContextSize', () => {
     state.compactions.second = numbers(3)
     vi.advanceTimersByTime(CONTEXT_SIZE_READ_INTERVAL_MS)
 
-    expect(shown.value).toStrictEqual({ tokens: 20, estimated: true, contextWindow: undefined, compactions: numbers(3) })
+    expect(shown.value).toStrictEqual({ tokens: 20, estimated: true, contextWindow: undefined, compactions: numbers(3), incognito: false })
+  })
+
+  // A turn-on changes the tooltip, also with no change of the text.
+  it('tells whether the tab is incognito, also after a turn-on', () => {
+    state.incognitoTabs = ['second']
+    const shown = shownSize()
+    expect(shown.value?.incognito).toBe(false)
+
+    state.activeTabId = 'second'
+    expect(shown.value?.incognito).toBe(true)
+
+    state.activeTabId = 'first'
+    state.incognitoTabs.push('first')
+    vi.advanceTimersByTime(CONTEXT_SIZE_READ_INTERVAL_MS)
+    expect(shown.value?.incognito).toBe(true)
   })
 
   it('reads at most once in each interval while the tab keeps changing, and once more after the last change', () => {

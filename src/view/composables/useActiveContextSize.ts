@@ -14,10 +14,13 @@ import { effectiveRequest, type ModelInfo } from '../../model/providers/types'
  *  conversation (undefined before its first one), which give the size of
  *  the whole conversation. They come from the same read as the size: a
  *  compaction changes both, and a later read of only one of them would
- *  show the old size with the new sum for a moment. */
+ *  show the old size with the new sum for a moment. `incognito`: the tab
+ *  is incognito (`Tab.incognito`), so its requests send no system prompt
+ *  and no tools of Dez, and Dez never compacts it. */
 export interface ActiveContextSize extends ContextSize {
   contextWindow: number | undefined
   compactions: Compactions | undefined
+  incognito: boolean
 }
 
 /** The least time between two reads of the size while the tab changes. */
@@ -48,6 +51,7 @@ export function useActiveContextSize(): Readonly<ShallowRef<ActiveContextSize | 
       ...size,
       contextWindow: contextWindowOfModel(sbp('dez.model/activeModel') as ActiveModel | null),
       compactions: sbp('dez.model/tabs/compactions', shownTabId) as Compactions | undefined,
+      incognito: sbp('dez.model/tabs/incognito', shownTabId) as boolean,
     }
   }, {
     scheduler: () => {

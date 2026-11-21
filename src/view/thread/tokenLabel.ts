@@ -1,5 +1,6 @@
 import type { Compactions } from '../../model/chat/compaction'
 import { compactionDueSize, type ContextSize } from '../../model/chat/contextSize'
+import { requestParts } from '../../model/chat/incognito'
 import { countText } from '../../utils/countText'
 
 /** The text and the tooltip of the token label of the bottom bar. */
@@ -48,7 +49,8 @@ function windowShareText(tokens: number, contextWindow: number): string {
  *  undefined when Dez knows none: no model, or a model of no chat request),
  *  and at which size Dez compacts it (`compactionDueSize`), or that it
  *  compacts sooner when the images and pictures are near a limit of the
- *  model (`compactionReason`).
+ *  model (`compactionReason`). An `incognito` conversation sends no system
+ *  prompt and no tools of Dez, and Dez never compacts it (`requestParts`).
  *
  *  After a compaction (`compactions`), that count is the size of the
  *  buffer, and `total` is the size of the whole conversation: the sizes
@@ -56,7 +58,8 @@ function windowShareText(tokens: number, contextWindow: number): string {
  *  the sum of the tokens of all requests, which is much more: each request
  *  sends its conversation again. Help › General (`HelpView.vue`) tells the
  *  user the mark and the two numbers. */
-export function tokenLabelTexts(size: ContextSize, contextWindow: number | undefined, compactions?: Compactions): TokenLabelTexts {
+export function tokenLabelTexts(size: ContextSize, contextWindow: number | undefined, compactions?: Compactions, incognito = false): TokenLabelTexts {
+  const parts = requestParts({ incognito })
   const about = size.estimated ? 'about ' : ''
   const subject = compactions ? 'buffer' : 'conversation'
   const sent = 'what your next message sends to the model'
@@ -64,7 +67,9 @@ export function tokenLabelTexts(size: ContextSize, contextWindow: number | undef
     `Size of this ${subject}: ${about}${countText(size.tokens)} tokens`,
     compactions
       ? `The buffer is the conversation since its last compaction: the notes of that compaction, and all after them. It is ${sent}, with the system prompt and the tools that go with it.`
-      : `It is ${sent}: the conversation, with the system prompt and the tools that go with it.`,
+      : parts.dezSystemPrompt
+        ? `It is ${sent}: the conversation, with the system prompt and the tools that go with it.`
+        : `It is ${sent}: the conversation only. An incognito conversation sends no system prompt and no tools of Dez.`,
     size.estimated
       ? 'Dez estimates it (~): no provider counted the conversation as it is now.'
       : 'The provider counted it in the newest reply.',
@@ -73,9 +78,11 @@ export function tokenLabelTexts(size: ContextSize, contextWindow: number | undef
     const dueSize = countText(compactionDueSize(contextWindow, compactions))
     lines.push(
       `Context window of the model: ${countText(contextWindow)} tokens. The ${subject} fills ${windowShareText(size.tokens, contextWindow)} of it.`,
-      compactions
-        ? `Dez compacts the conversation again when the buffer gets to ${dueSize} tokens, or sooner when its images and pictures are near a limit of the model.`
-        : `Dez compacts the conversation when it gets to ${dueSize} tokens, or sooner when its images and pictures are near a limit of the model: notes of the model then take the place of the earlier messages.`,
+      !parts.compaction
+        ? 'Dez does not compact an incognito conversation: when it gets too large for the model, the provider refuses the request.'
+        : compactions
+          ? `Dez compacts the conversation again when the buffer gets to ${dueSize} tokens, or sooner when its images and pictures are near a limit of the model.`
+          : `Dez compacts the conversation when it gets to ${dueSize} tokens, or sooner when its images and pictures are near a limit of the model: notes of the model then take the place of the earlier messages.`,
     )
   }
   const texts: TokenLabelTexts = { text: `${size.estimated ? '~' : ''}${labelTokenText(size.tokens)}`, tooltip: lines.join('\n') }

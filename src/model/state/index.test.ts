@@ -491,6 +491,18 @@ describe('context size of a tab', () => {
     }
   })
 
+  // An incognito tab sends neither (`requestParts`).
+  it('counts no system prompt and no tools of Dez in an incognito tab', () => {
+    sbp('dez.model/settings/setSystemPrompt', letters(40))
+    sbp('dez.model/settings/resetProviderSettings', 'local', ['tools'])
+    const normal = tabOf(gpt, letters(100))
+    const incognito = tabOf(gpt, letters(100))
+    expect(sbp('dez.model/tabs/turnOnIncognito', incognito.id)).toBe(true)
+
+    expect(size(incognito.id)).toStrictEqual({ tokens: 25, estimated: true })
+    expect(size(normal.id)?.tokens).toBe(estimatedRequestTokens({ system: letters(40), tools: TOOL_DEFINITIONS, messages: [{ role: 'user', content: letters(100) }] }, modelFamily(gpt.modelId)))
+  })
+
   it('keeps the count of a request in its own tab, as a whole number, and nothing for a missing tab', () => {
     const tab = tabOf(gpt, letters(100))
     const other = tabOf(gpt, letters(100))
@@ -1667,5 +1679,14 @@ describe('dez.model/streamMessagesForTab tools', () => {
 
     sbp('dez.model/settings/resetProviderSettings', 'local', ['tools'])
     expect(sendTools()).toBe(true)
+  })
+
+  // Settings › System Prompt previews the prompt of a normal tab.
+  it('sends no tools in an incognito tab, and the tools of a normal tab to a caller that names no tab', () => {
+    cacheModel(true)
+    expect(sbp('dez.model/tabs/turnOnIncognito', activeId())).toBe(true)
+
+    expect(sendTools()).toBe(false)
+    expect(sbp('dez.model/requestSendsTools', model)).toBe(true)
   })
 })

@@ -38,7 +38,7 @@ import { compactionsField, sectionCompactionBlock, type Compactions } from '../c
 import { notesMessages, withAssetLabels } from '../chat/compactionNotes'
 import { contextField, contextSize, type ContextSize } from '../chat/contextSize'
 import { agentTextEditedField, costField, withRequestCost, type ConversationCost } from '../chat/conversationCost'
-import { canTurnOnIncognito, incognitoField, requestSentField } from '../chat/incognito'
+import { canTurnOnIncognito, incognitoField, requestParts, requestSentField } from '../chat/incognito'
 import { durationField } from '../chat/duration'
 import { modelRefField, modelRefKey, parseModelRefKey } from '../chat/modelRef'
 import { thinkingField } from '../chat/thinking'
@@ -193,7 +193,7 @@ function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
   const {
     id, name, baseUrl, apiFormat, models, fetchModels, modelListQuery, modelImageInput, modelToolCalling,
     modelThinking, modelOutputs, modelReadableName, modelReleased, modelTokenPrices, modelContextWindow, modelImageLimit, modelMessageImageLimit, auth, headers, imageRequestHeaders,
-    maxOutputTokens, cacheBreakpoints, toolMessageCacheMark, promptCacheKey, requestBody, imageOutputBody,
+    maxOutputTokens, cacheBreakpoints, toolMessageCacheMark, promptCacheKey, requestBody, providerSystemPrompt, imageOutputBody,
     audioOutputs, mediaApi, settings, thinking,
     ...uncopied
   } = config
@@ -227,6 +227,7 @@ function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
   if (toolMessageCacheMark) clone.toolMessageCacheMark = toolMessageCacheMark
   if (promptCacheKey !== undefined) clone.promptCacheKey = promptCacheKey
   if (requestBody) clone.requestBody = cloneJsonObject(requestBody)
+  if (providerSystemPrompt) clone.providerSystemPrompt = { ...providerSystemPrompt }
   if (imageOutputBody) clone.imageOutputBody = cloneJsonObject(imageOutputBody)
   if (audioOutputs) clone.audioOutputs = audioOutputs.map((entry) => ({ ...entry, body: cloneJsonObject(entry.body) }))
   if (mediaApi) {
@@ -513,8 +514,9 @@ function cachedModel(model: ModelRef): ModelInfo | undefined {
 
 // Dez's estimate of the tokens of a chat request of `tab` to `model` as the
 // tab and the settings are now (`estimatedRequestTokens`): the request
-// messages of the sections, the system prompt, and the tools. `answerCalls`
-// are the tool calls of an answer whose blocks the tab does not hold yet.
+// messages of the sections, and the system prompt and the tools that the
+// request sends (`requestParts`). `answerCalls` are the tool calls of an
+// answer whose blocks the tab does not hold yet.
 //
 // The context size of a tab is the difference of two of these numbers on
 // top of a provider's count (`contextSize`), so both must come from here.
@@ -533,10 +535,11 @@ function tabContextEstimate(tab: Tab, model: ModelRef | null, answerCalls: reado
 
   const { messages, sendTools } = sbp('dez.model/streamMessagesForTab', tab.id, model) as RequestMessages
   const tools = sendTools ? TOOL_DEFINITIONS : []
-  // Only a chat request has a system prompt. A template with a problem
-  // sends no request, and `buildSystemPrompt` throws for it.
+  // Only a chat request has a system prompt, and only a normal tab sends
+  // Dez's. A template with a problem sends no request, and
+  // `buildSystemPrompt` throws for it.
   const template = systemPromptTemplate(useSettingsStore().systemPrompt)
-  const system = effectiveRequest(cachedModel(model) ?? {}) === 'chat' && systemPromptProblem(template) === null
+  const system = requestParts(tab).dezSystemPrompt && effectiveRequest(cachedModel(model) ?? {}) === 'chat' && systemPromptProblem(template) === null
     ? buildSystemPrompt(template, model, getProvider(model.providerId)?.name ?? model.providerId, tools)
     : undefined
   return estimatedRequestTokens({ system, tools, messages, answerCalls }, modelFamily(model.modelId))
@@ -1059,26 +1062,31 @@ export default sbp('sbp/selectors/register', {
   // `model`: the model the request goes to. It decides what earlier thinking
   // goes back, whether the images and the pictures go and how many of
   // them (`imageOptionsOf`), and whether the tools go
-  // (`dez.model/requestSendsTools`). A model that the model cache knows not
-  // to read images gets only the text of each reference, with no path. An
-  // unknown model (no flag, or not in the cache yet) gets the images.
+  // (`dez.model/requestSendsTools`, which also reads whether the tab is
+  // incognito). A model that the model cache knows not to read images gets
+  // only the text of each reference, with no path. An unknown model (no
+  // flag, or not in the cache yet) gets the images.
   'dez.model/streamMessagesForTab' (tabId: string, model: ModelRef): RequestMessages {
     const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
     if (!tab) return { messages: [], imagesLeftOut: 0, imagesOverLimit: 0, newestUserMessage: '', sendTools: false }
 
-    const sendTools = sbp('dez.model/requestSendsTools', model) as boolean
+    const sendTools = sbp('dez.model/requestSendsTools', model, tabId) as boolean
     const options = { ...imageOptionsOf(cachedModel(model) ?? { id: model.modelId }), sendTools }
     return { ...sectionsToStreamMessages(tab.sections, model, options), sendTools }
   },
 
-  // Whether a chat request to `model` offers the Dez tools now: only to a
-  // model that the Tools toggle applies to (`toolsApply`: not one that is
-  // known not to call tools, and no media model), and only while that toggle
-  // of its provider is on. An unknown model (not in the cache yet) gets the
-  // tools. Settings › System Prompt fills `{{tools_list}}` of its preview
-  // with it.
-  'dez.model/requestSendsTools' (model: ModelRef): boolean {
-    return toolsApply(cachedModel(model) ?? {}) && isToolsEnabled(useSettingsStore().providerSettings[model.providerId])
+  // Whether a chat request to `model` offers the Dez tools now: only in a
+  // tab whose requests send them (`requestParts`: not an incognito tab),
+  // only to a model that the Tools toggle applies to (`toolsApply`: not one
+  // that is known not to call tools, and no media model), and only while
+  // that toggle of its provider is on. An unknown model (not in the cache
+  // yet) gets the tools. With no `tabId`, the request of a normal tab:
+  // Settings › System Prompt fills `{{tools_list}}` of its preview with it.
+  'dez.model/requestSendsTools' (model: ModelRef, tabId?: string): boolean {
+    const tab = tabId === undefined ? undefined : useTabStore().tabs.find((candidate) => candidate.id === tabId)
+    return requestParts(tab ?? {}).dezTools
+      && toolsApply(cachedModel(model) ?? {})
+      && isToolsEnabled(useSettingsStore().providerSettings[model.providerId])
   },
 
   // Starts a reply in the tab: stamps the agent section with the model of

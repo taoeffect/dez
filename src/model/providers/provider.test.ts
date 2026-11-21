@@ -434,7 +434,7 @@ describe('declarative provider settings', () => {
     })
   })
 
-  it('maps every toggle flipped away from its default, and always turns the Venice system prompt off', () => {
+  it('maps every toggle flipped away from its default, and turns the Venice system prompt off in a normal request', () => {
     // An app_state.json from before the toggle was removed can still hold
     // `veniceSystemPrompt: true`.
     const flipped = {
@@ -448,6 +448,31 @@ describe('declarative provider settings', () => {
       enable_x_search: false,
       enable_web_scraping: false,
     })
+  })
+
+  // An incognito tab asks for the provider's own system prompt
+  // (`requestParts`). The field stays the first of `venice_parameters`, so a
+  // normal request keeps its bytes (the prompt cache).
+  it('turns the Venice system prompt on only for a request that asks for it, before the settings', () => {
+    const parameters = (context?: ChatRequestContext) =>
+      JSON.stringify(requestBody(venice.chatRequest(messages, { id: 'llama-3.3-70b' }, key, {}, context).request).venice_parameters)
+
+    expect(parameters()).toBe('{"include_venice_system_prompt":false,"enable_web_search":"on","enable_web_scraping":true}')
+    expect(parameters({ providerSystemPrompt: false })).toBe(parameters())
+    expect(parameters({ providerSystemPrompt: true })).toBe('{"include_venice_system_prompt":true,"enable_web_search":"on","enable_web_scraping":true}')
+  })
+
+  it('writes the values of a custom providerSystemPrompt after the requestBody, and nothing for a config with none', () => {
+    const provider = customProvider({
+      requestBody: { extra: { fixed: 1 } },
+      providerSystemPrompt: { bodyPath: 'extra.own_prompt', onValue: 'on', offValue: 'off' },
+      settings: [{ key: 'flag', label: 'Flag', type: 'boolean', default: true, bodyPath: 'extra.flag' }],
+    })
+    const body = (sender: Provider, context?: ChatRequestContext) => requestBody(sender.chatRequest(messages, { id: 'm' }, key, {}, context).request)
+
+    expect(JSON.stringify(body(provider).extra)).toBe('{"fixed":1,"own_prompt":"off","flag":true}')
+    expect(JSON.stringify(body(provider, { providerSystemPrompt: true }).extra)).toBe('{"fixed":1,"own_prompt":"on","flag":true}')
+    expect(body(customProvider({}), { providerSystemPrompt: true })).toStrictEqual(body(customProvider({})))
   })
 
   it('merges a config requestBody before the settings and the thinking body, and never changes the config', () => {

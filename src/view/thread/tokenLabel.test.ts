@@ -41,6 +41,18 @@ describe('token label', () => {
     expect(tooltip()).not.toContain('compacts')
   })
 
+  // An incognito request sends nothing of Dez (`requestParts`).
+  it('tells in the tooltip of an incognito conversation that it goes alone and that Dez never compacts it', () => {
+    const tooltip = (incognito: boolean) => tokenLabelTexts({ tokens: 81_234, estimated: false }, 200_000, undefined, incognito).tooltip
+
+    expect(tooltip(true)).toContain('sends no system prompt and no tools of Dez')
+    expect(tooltip(true)).toContain('Dez does not compact an incognito conversation')
+    expect(tooltip(true)).not.toContain('130,000')
+    expect(tooltip(true)).toContain('41%')
+    expect(tooltip(false)).toContain('with the system prompt and the tools')
+    expect(tooltip(false)).not.toContain('incognito')
+  })
+
   it('shows no total before the first compaction', () => {
     expect(tokenLabelTexts({ tokens: 81_234, estimated: true }, 200_000)).not.toHaveProperty('total')
   })

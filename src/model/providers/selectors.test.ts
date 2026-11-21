@@ -1292,7 +1292,7 @@ describe('the audio of a chat reply', () => {
 
 describe('media requests', () => {
   // A media API in the Venice format, and chat fields (`requestBody`,
-  // `settings`) that media requests must not take.
+  // `providerSystemPrompt`, `settings`) that media requests must not take.
   beforeEach(() => {
     sbp('dez.model/customProviders/save', {
       id: 'media',
@@ -1303,7 +1303,8 @@ describe('media requests', () => {
       fetchModels: true,
       auth: 'apiKey',
       headers: { 'X-Team': 'blue' },
-      requestBody: { venice_parameters: { include_venice_system_prompt: false } },
+      requestBody: { stream_options: { include_usage: true } },
+      providerSystemPrompt: { bodyPath: 'venice_parameters.include_venice_system_prompt' },
       settings: [{ key: 'webSearch', label: 'Web search', type: 'boolean', default: true, bodyPath: 'venice_parameters.enable_web_search' }],
       mediaApi: { format: 'venice' },
     })

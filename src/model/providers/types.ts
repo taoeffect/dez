@@ -319,6 +319,10 @@ export interface ChatRequestContext {
   // The model's known outputs hold `audio`: the body gets the `body` of the
   // config's `audioOutputs` entry of the model, which asks for audio output.
   audioOutput?: boolean
+  // The provider's own system prompt goes on (an incognito tab): the body
+  // gets the config's `providerSystemPrompt.onValue` in place of its
+  // `offValue`. Only the chat rounds of a reply set it.
+  providerSystemPrompt?: boolean
 }
 
 // One parsed SSE `data:` payload yields zero or more of these, in either

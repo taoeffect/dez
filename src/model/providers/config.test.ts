@@ -246,6 +246,18 @@ describe('provider config schema', () => {
     expect(parse({ mediaApi: {} }).success).toBe(false)
   })
 
+  it('keeps a providerSystemPrompt, and rejects a bad body path or a value that is no scalar', () => {
+    const parse = (providerSystemPrompt: unknown) =>
+      providerConfigSchema.safeParse({ id: 'p', name: 'P', baseUrl: 'http://h', providerSystemPrompt })
+    const field = { bodyPath: 'params.own_prompt', onValue: 'on', offValue: 0 }
+
+    expect(parse(field).data?.providerSystemPrompt).toStrictEqual(field)
+    expect(parse({ bodyPath: 'params.own_prompt' }).success).toBe(true)
+    for (const bad of [{}, { bodyPath: 'params..own_prompt' }, { bodyPath: 'params.__proto__' }, { bodyPath: 'own', onValue: { on: true } }, 'params.own_prompt']) {
+      expect(parse(bad).success, JSON.stringify(bad)).toBe(false)
+    }
+  })
+
   it('takes a model request body only for a media kind, a model id prefix, and a JSON object', () => {
     const parse = (part: Record<string, unknown>) => providerConfigSchema.safeParse({
       id: 'p',

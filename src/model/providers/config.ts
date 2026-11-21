@@ -116,6 +116,14 @@ const modelCapabilityPathSchema = z.object({
 
 const settingBodyValueSchema = z.union([z.string(), z.number(), z.boolean()])
 
+// Dot path in the chat request body, e.g. 'venice_parameters.enable_web_search'.
+// A `__proto__` segment would make the body writer in provider.ts assign
+// the object's prototype instead of a JSON field, so the value would be lost.
+const bodyPathSchema = z.string().refine(
+  (path) => path.split('.').every((segment) => segment.length > 0 && segment !== '__proto__'),
+  'Body path must be dot-separated names, none empty or "__proto__"',
+)
+
 // One toggle in the model picker's provider settings popup. The toggle state
 // is stored under `key` in settings.providerSettings[providerId], and a chat
 // request to a model that the toggle applies to writes the matching value at
@@ -128,13 +136,7 @@ export const providerSettingDefSchema = z.object({
   label: z.string().trim().min(1),
   type: z.literal('boolean'),
   default: z.boolean(),
-  // Dot path in the chat request body, e.g. 'venice_parameters.enable_web_search'.
-  // A `__proto__` segment would make the body writer in provider.ts assign
-  // the object's prototype instead of a JSON field, so the value would be lost.
-  bodyPath: z.string().refine(
-    (path) => path.split('.').every((segment) => segment.length > 0 && segment !== '__proto__'),
-    'Body path must be dot-separated names, none empty or "__proto__"',
-  ),
+  bodyPath: bodyPathSchema,
   // Written when the toggle is on (default true) / off (default false).
   onValue: settingBodyValueSchema.optional(),
   offValue: settingBodyValueSchema.optional(),
@@ -344,6 +346,18 @@ export const providerConfigSchema = z.object({
   // (`stream_options: { include_usage: true }`): no format sends that field
   // by itself, as a server that does not know it can refuse the request.
   requestBody: requestBodyPartSchema.optional(),
+  // The provider's own system prompt, which the server adds to a chat
+  // request by itself (Venice). A chat request writes `offValue` (default
+  // false) at `bodyPath`, so Dez's system prompt is the only one; an
+  // incognito tab sends no system prompt of Dez and writes `onValue`
+  // (default true), as an app with no system prompt of its own gets it
+  // (`requestParts`, chat/incognito.ts). Written right after `requestBody`
+  // and before the settings, which can write into the same object.
+  providerSystemPrompt: z.object({
+    bodyPath: bodyPathSchema,
+    onValue: settingBodyValueSchema.optional(),
+    offValue: settingBodyValueSchema.optional(),
+  }).optional(),
   // Merged into the body of a chat request to a model whose known outputs
   // hold `image` (ModelInfo.outputs), right after `requestBody`: the part
   // asks the server for image output (OpenRouter's `modalities`). Missing:

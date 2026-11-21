@@ -1,4 +1,5 @@
 import sbp from '@sbp/sbp'
+import { requestParts } from '../model/chat/incognito'
 import type { MediaTagKind } from '../model/chat/mediaTags'
 import { modelRefKey } from '../model/chat/modelRef'
 import { effectiveOutputs } from '../model/modelOutputs'
@@ -88,10 +89,11 @@ export default sbp('sbp/selectors/register', {
       const sentClips = { audio: 0, video: 0 }
       for (const clip of input.clips) sentClips[clip.kind]++
       mediaClips = { sent: sentClips, leftOut: input.clipsLeftOut }
-    } else {
+    } else if (requestParts(tab).dezSystemPrompt) {
       // A chat request sends the system prompt (`dez.stream/start`), whose
       // template the user can edit. A template with a problem would fail
-      // the request after the new agent section exists.
+      // the request after the new agent section exists. An incognito tab
+      // sends no template, so it needs no check.
       const { systemPrompt } = sbp('dez.model/settings/snapshot') as SettingsSnapshot
       const problem = systemPromptProblem(systemPromptTemplate(systemPrompt))
       if (problem !== null) message = systemPromptErrorText(problem)
@@ -146,6 +148,7 @@ export default sbp('sbp/selectors/register', {
       imagesOverLimit,
       newestUserMessage,
       sendTools,
+      incognito: tab.incognito === true,
       imageOutput: outputs.includes('image'),
       audioOutput: outputs.includes('audio'),
       inputRules,
