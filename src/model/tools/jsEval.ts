@@ -1,6 +1,7 @@
 import * as z from 'zod'
 import { byteSizeText } from '../../utils/byteSize'
 import { countOf, countText } from '../../utils/countText'
+import { regExpSource } from '../../utils/regExpSource'
 import { endOf, startOf } from '../../utils/textCut'
 import { shownAppNames, shownAppText } from './appShow'
 import { APPS_INVOKE, APPS_TOOL, APPS_VIRTUAL_ROOT } from './appsTool'
@@ -323,11 +324,6 @@ export class JsEvalOutput {
   }
 }
 
-// `text` as the source of a regex that matches only it.
-function regexSource(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
 // The characters of a path that every writer of a file URL leaves as they
 // are.
 const URL_PLAIN_CHAR = /[A-Za-z0-9._~/-]/
@@ -340,9 +336,9 @@ const URL_PLAIN_CHAR = /[A-Za-z0-9._~/-]/
 function urlPathSource(path: string): string {
   const encoder = new TextEncoder()
   return Array.from(path, (char) => {
-    if (URL_PLAIN_CHAR.test(char)) return regexSource(char)
+    if (URL_PLAIN_CHAR.test(char)) return regExpSource(char)
     const escapes = Array.from(encoder.encode(char), (byte) => `%${byte.toString(16).padStart(2, '0').replace(/[a-f]/g, (digit) => `[${digit}${digit.toUpperCase()}]`)}`)
-    return `(?:${regexSource(char)}|${escapes.join('')})`
+    return `(?:${regExpSource(char)}|${escapes.join('')})`
   }).join('')
 }
 
@@ -378,7 +374,7 @@ export function textForModel(text: string, workFolders: readonly string[], appsR
   for (const root of [...appsRoots].sort((a, b) => b.length - a.length)) {
     result = result
       .replace(new RegExp(`file://${urlPathSource(root)}${NAME_GOES_ON}`, 'g'), `file://${APPS_VIRTUAL_ROOT}`)
-      .replace(new RegExp(`${regexSource(root)}${NAME_GOES_ON}`, 'g'), APPS_VIRTUAL_ROOT)
+      .replace(new RegExp(`${regExpSource(root)}${NAME_GOES_ON}`, 'g'), APPS_VIRTUAL_ROOT)
   }
   for (const folder of workFolders) {
     result = result.replaceAll(folder, WORK_FOLDER_NAME)
@@ -386,7 +382,7 @@ export function textForModel(text: string, workFolders: readonly string[], appsR
     // A try stops at the next `file://`, which no path holds: a lazy `\S*?`
     // alone tries each end of a long run of URLs with no white space (the
     // JSON of a list), which takes quadratic time.
-    if (result.includes(id)) result = result.replace(new RegExp(`file://(?:(?!file://)\\S)*?/${regexSource(id)}`, 'g'), `file://${WORK_FOLDER_NAME}`)
+    if (result.includes(id)) result = result.replace(new RegExp(`file://(?:(?!file://)\\S)*?/${regExpSource(id)}`, 'g'), `file://${WORK_FOLDER_NAME}`)
   }
   return withoutLocalPaths(result)
 }

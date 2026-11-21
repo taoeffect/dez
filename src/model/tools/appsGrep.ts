@@ -1,6 +1,7 @@
 import { byteSizeText } from '../../utils/byteSize'
 import { countOf, countText } from '../../utils/countText'
 import { rawErrorText } from '../../utils/errorText'
+import { regExpSource } from '../../utils/regExpSource'
 import { startOf } from '../../utils/textCut'
 import {
   APPS_MAX_FILE_BYTES,
@@ -76,7 +77,7 @@ export interface GrepCall {
 // that starts no repeat, each as the character itself.
 function patternRegExp(pattern: string, literal: boolean, ignoreCase: boolean): RegExp {
   const caseFlag = ignoreCase ? 'i' : ''
-  if (literal) return new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), `u${caseFlag}`)
+  if (literal) return new RegExp(regExpSource(pattern), `u${caseFlag}`)
   try {
     return new RegExp(pattern, `u${caseFlag}`)
   } catch (error) {
@@ -93,7 +94,7 @@ function patternRegExp(pattern: string, literal: boolean, ignoreCase: boolean): 
 // is any characters, `?` is one character, and every other character is
 // itself.
 function globPieceSource(piece: string): string {
-  return piece.replace(/[.*+?^${}()|[\]\\]/g, (char) => (char === '*' ? '.*' : char === '?' ? '.' : `\\${char}`))
+  return piece.split('*').map((part) => part.split('?').map(regExpSource).join('.')).join('.*')
 }
 
 // The rule of the glob of `include` for the name of a file. `{a,b}` is one
