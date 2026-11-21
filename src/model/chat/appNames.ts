@@ -34,10 +34,12 @@ import { APPS_VIRTUAL_ROOT } from '../tools/appsTool'
 //
 // What the rule keeps with no need: an app that has the name of a Dez tool
 // (`<dez:tool … name="video">`), an app that the `name` filter of a
-// `list_apps` call gives, and a path that only looks like one of the tool
-// (`https://example.com/apps/x`). A result of `list_apps` or of `ls` gives
-// bare names, and one of `find` gives paths after `/apps/`, so it keeps no
-// app: a list of every app must not keep every app.
+// `list_apps` call gives, a path that only looks like one of the tool
+// (`https://example.com/apps/x`), and an app that a line of a `grep`
+// result names (the `"name": "x"` of a manifest). A result of `list_apps`
+// or of `ls` gives bare names, and one of `find` or `grep` gives paths
+// after `/apps/`, so it keeps no app: a list of every app must not keep
+// every app.
 //
 // What the rule misses: code of a `js_eval` call that builds the name of an
 // app from parts (a variable), when the call has no record of its tool

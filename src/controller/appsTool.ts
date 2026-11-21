@@ -44,7 +44,9 @@ import {
   type PathFacts,
 } from '../model/tools/appsTool'
 import { MANIFEST_FILE } from '../model/tools/appManifest'
+import { grepCall, grepPlan, grepRequest, grepText, grepTimeoutError } from '../model/tools/appsGrep'
 import { appNotShownText, checkShowTarget, showCall, showResultText, type ShowCall, type ShowTarget } from '../model/tools/appShow'
+import { grepFiles, GREP_TIME_LIMIT_SECONDS, type GrepOutcome, type GrepRequest } from '../model/tools/grepMatch'
 import { ToolError, type SubcommandArguments } from '../model/tools/types'
 import { rawErrorText } from '../utils/errorText'
 import type { AppFileEntry, FileTree } from './nativeTypes'
@@ -56,7 +58,8 @@ import type { AppFileEntry, FileTree } from './nativeTypes'
 // only ask the native side and do what the model module decided. The run
 // of an app (`invoke`) is in appInvoke.ts. `show` changes no file: it
 // checks the files of the app, and the reply of its call writes the app
-// into itself.
+// into itself. `grep` matches the lines of the files in a Web Worker
+// (grepWorker.ts), with a time limit.
 //
 // A check and the file operation after it are two native calls, so a
 // program that changes the folder between them can make the operation
@@ -253,6 +256,85 @@ export async function listAppFolder(args: SubcommandArguments): Promise<AppsResu
 export async function findAppFiles(args: SubcommandArguments): Promise<AppsResult> {
   const call = findCall(args)
   return findText(call, await treeOf(call.path, LS_MAX_ENTRIES))
+}
+
+// How many files `grep` reads at once.
+const GREP_PARALLEL_READS = 8
+
+// The bytes of the files at `paths`, in their order, `GREP_PARALLEL_READS`
+// reads at a time. A stop of the reply ends the reads before the next one.
+// A failed read ends them all: the call fails with it.
+async function readEach(paths: readonly AppsPath[], signal: AbortSignal): Promise<Uint8Array[]> {
+  const bytes: Uint8Array[] = []
+  let next = 0
+  let failed = false
+  const reader = async () => {
+    while (next < paths.length && !failed) {
+      signal.throwIfAborted()
+      const index = next
+      next += 1
+      try {
+        bytes[index] = await readBytes(paths[index])
+      } catch (error) {
+        failed = true
+        throw error
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(GREP_PARALLEL_READS, paths.length) }, reader))
+  return bytes
+}
+
+// Runs `grepFiles` on `request` in a Web Worker (grepWorker.ts), so that a
+// slow regular expression cannot stop the window, and gives its outcome:
+// null when the matching runs for more than `GREP_TIME_LIMIT_SECONDS`.
+// The end of the work, the time limit, and a stop of the reply each end
+// the worker. The bytes of the files move to the worker: the caller must
+// not read them after the call.
+function grepInWorker(request: GrepRequest, signal: AbortSignal): Promise<GrepOutcome | null> {
+  signal.throwIfAborted()
+  const worker = new Worker(new URL('./grepWorker.ts', import.meta.url), { type: 'module' })
+  return new Promise((resolve, reject) => {
+    const end = (settle: () => void) => {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', onAbort)
+      worker.terminate()
+      settle()
+    }
+    const onAbort = () => end(() => reject(signal.reason))
+    const timer = setTimeout(() => end(() => resolve(null)), GREP_TIME_LIMIT_SECONDS * 1000)
+    signal.addEventListener('abort', onAbort)
+    worker.onmessage = (event: MessageEvent<GrepOutcome>) => end(() => resolve(event.data))
+    worker.onerror = (event) => end(() => reject(new Error(`The search worker failed: ${event.message || 'it did not start'}`)))
+    worker.onmessageerror = () => end(() => reject(new Error('The search worker gave an outcome that Dez cannot read')))
+    // Two files never share a buffer (`dez.native/loadAppFileBytes` gives
+    // each its own), but a transfer list must not name one twice.
+    const buffers = new Set(request.files.map((file) => file.bytes.buffer).filter((buffer): buffer is ArrayBuffer => buffer instanceof ArrayBuffer))
+    worker.postMessage(request, [...buffers])
+  })
+}
+
+/** `apps grep`: one listing of the path, as `ls` asks for, the reads of the
+ *  files that `grepPlan` picks, and the matching in a worker. A stop of
+ *  the reply ends the reads and the matching. */
+export async function grepAppFiles(args: SubcommandArguments, signal: AbortSignal): Promise<AppsResult> {
+  const call = grepCall(args)
+  const plan = grepPlan(call, await treeOf(call.path, LS_MAX_ENTRIES))
+  if (plan.kind === 'text') return plan.text
+  const request = grepRequest(call, plan.files, await readEach(plan.files.map((file) => file.path), signal))
+  // With no file to search, the outcome is the empty one: no worker.
+  if (request.files.length === 0) return grepText(call, plan, grepFiles(request))
+
+  let outcome: GrepOutcome | null
+  try {
+    outcome = await grepInWorker(request, signal)
+  } catch (error) {
+    if (signal.aborted) throw error
+    console.error('apps tool: Dez could not search the files:', error)
+    throw nativeFailure('search the files', rawErrorText(error))
+  }
+  if (outcome === null) throw grepTimeoutError()
+  return grepText(call, plan, outcome)
 }
 
 /** `apps list_apps`: one listing for each folder of `apps/`, for its size,

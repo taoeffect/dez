@@ -1,7 +1,9 @@
 import { mediaTagText, type MediaTagData } from '../chat/mediaTags'
 import { reply, user } from '../streams/testing'
 import { appManifestText, type AppKind } from './appManifest'
+import { grepCall, grepPlan, grepRequest, grepText } from './appsGrep'
 import { APPS_TOOL, type AppsEntryKind, type AppsTree, type PathFacts } from './appsTool'
+import { grepFiles } from './grepMatch'
 import type { JsEvalLine } from './jsEval'
 import type { JobInfo } from './jobs'
 import { parseSubcommandCall } from './subcommands'
@@ -10,10 +12,11 @@ import { ToolError, type SubcommandArguments } from './types'
 // Shared helpers of the unit tests of the Dez tools: the text of a refused
 // call, the facts of a job, a conversation with images and clips for the
 // `video` tool, the output of the ffprobe run that reads the facts of a
-// clip for a join (`joinProbeArgs`), the arguments and the listings of the
-// `apps` tool, the protocol lines and the work folder of a `js_eval` run,
-// and the bytes of a file. This module registers no selector, so a test of
-// the model can import it; controller/testing.ts imports it too.
+// clip for a join (`joinProbeArgs`), the arguments, the listings, and the
+// `grep` results of the `apps` tool, the protocol lines and the work
+// folder of a `js_eval` run, and the bytes of a file. This module
+// registers no selector, so a test of the model can import it;
+// controller/testing.ts imports it too.
 
 /** The message of the error of `errorClass` (a `ToolError` if not given)
  *  that `call` throws. */
@@ -121,4 +124,17 @@ export function folderTree(entries: Record<string, number | null | 'other'> = {}
       return { path, kind, size: typeof size === 'number' ? size : 0 }
     }),
   }
+}
+
+/** The result of an `apps grep` call with `parameters` on the folder of its
+ *  `path` (`/apps` when it has none), which holds `files`: the text or the
+ *  bytes of each file, by its path in the folder. The plan, the matching,
+ *  and the text are the real ones, with no worker. */
+export function grepResult(parameters: Record<string, unknown>, files: Record<string, string | Uint8Array>): string {
+  const call = grepCall(appsArgs('grep', parameters))
+  const contents = Object.fromEntries(Object.entries(files).map(([path, content]) => [path, typeof content === 'string' ? textBytes(content) : content]))
+  const plan = grepPlan(call, folderTree(Object.fromEntries(Object.entries(contents).map(([path, bytes]) => [path, bytes.length]))))
+  if (plan.kind === 'text') return plan.text
+  const bytes = plan.files.map((file) => contents[file.path.names.slice(call.path.names.length).join('/')])
+  return grepText(call, plan, grepFiles(grepRequest(call, plan.files, bytes)))
 }

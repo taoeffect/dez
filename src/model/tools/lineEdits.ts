@@ -1,13 +1,27 @@
 import { countOf } from '../../utils/countText'
 
-// The lines of a text file, and edits of them by line number (the `edit`
-// subcommand of the `apps` tool, appsTool.ts): what each edit of a call
-// does, the new lines of the file, and a diff of the change.
+// The text and the lines of a text file, and edits of them by line number
+// (the `edit` subcommand of the `apps` tool, appsTool.ts): what each edit
+// of a call does, the new lines of the file, and a diff of the change.
 //
 // Every line number of a call is a number of the file before the call.
 // So a model never has to work out how an earlier edit of the same call
 // moved the lines: it takes the numbers that `read` gave. The edits apply
 // all at once, and each one passes or fails by itself.
+
+/** The text of a file from its bytes, or null for a file that is no text:
+ *  one with a zero byte, or with bytes that are no UTF-8. A byte order mark
+ *  stays in the text, so that an edit writes it back. The one rule of a
+ *  text file of the `apps` tool, so that `grep` searches the files that
+ *  `read` and `edit` take. */
+export function textOfBytes(bytes: Uint8Array): string | null {
+  if (bytes.includes(0)) return null
+  try {
+    return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes)
+  } catch {
+    return null
+  }
+}
 
 /** The lines of a text: the pieces between its `\n`. A `\n` at the end of
  *  the text ends the last line and starts no new one: `a\nb\n` and `a\nb`

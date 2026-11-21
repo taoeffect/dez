@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { MANIFEST_MAX_BYTES, parseAppManifest } from './appManifest'
 import { invokeCall } from './appInvoke'
+import { grepCall } from './appsGrep'
 import { showCall } from './appShow'
 import {
   APPS_MAX_BYTES,
@@ -66,6 +67,7 @@ describe('APPS_TOOL', () => {
       ['list_apps', ['name', 'min_bytes', 'max_bytes', 'sort']],
       ['ls', ['path']],
       ['find', ['query', 'path']],
+      ['grep', ['pattern', 'path', 'include', 'ignore_case', 'literal', 'context']],
       ['mkdir', ['path']],
       ['mv', ['moves']],
       ['show', ['name']],
@@ -75,7 +77,7 @@ describe('APPS_TOOL', () => {
 
   it('gives each subcommand an example that its parameters and its checks take', () => {
     const checks: Record<string, (call: SubcommandArguments) => unknown> = {
-      init: initCall, read: readCall, write: writeCall, edit: editCall, rm: rmCall, list_apps: listAppsCall, ls: lsCall, find: findCall, mkdir: mkdirCall, mv: mvCall,
+      init: initCall, read: readCall, write: writeCall, edit: editCall, rm: rmCall, list_apps: listAppsCall, ls: lsCall, find: findCall, grep: grepCall, mkdir: mkdirCall, mv: mvCall,
       show: showCall,
       invoke: (call) => invokeCall(call, CONVERSATION),
     }

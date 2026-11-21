@@ -6,6 +6,7 @@ import type { Section, Tab } from '../model/chat/types'
 import { MANIFEST_MAX_BYTES, parseAppManifest } from '../model/tools/appManifest'
 import { showResultText } from '../model/tools/appShow'
 import { APPS_MAX_BYTES, APPS_MAX_FILE_BYTES, EDIT_HINT, withEditHint } from '../model/tools/appsTool'
+import { grepFiles, GREP_TIME_LIMIT_SECONDS, type GrepOutcome, type GrepRequest } from '../model/tools/grepMatch'
 import type { ToolRunResult } from '../model/tools/types'
 import { APP_DIR, appFiles, callContext, fakeAppFiles, native, resetNative, running, STOP, type FakeAppFiles } from './testing'
 import type { ToolRunCall, ToolRunContext } from './tools'
@@ -565,6 +566,123 @@ describe('apps find', () => {
       content: 'There is no app /apps/todo. Call list_apps to see the apps that are there.',
       isError: true,
     })
+  })
+})
+
+// A stand-in for the Web Worker of `grep` (Node has none). It runs the
+// matching of a request as grepWorker.ts does, after a timer tick; with
+// `hangs` it gives nothing, as on a slow pattern, and with `fails` it fails
+// as a worker that runs out of memory. It keeps each worker that the runner
+// made, for the checks of `terminate`.
+class FakeGrepWorker {
+  static made: FakeGrepWorker[] = []
+  static hangs = false
+  static fails = false
+  onmessage: ((event: { data: GrepOutcome }) => void) | null = null
+  onerror: ((event: { message: string }) => void) | null = null
+  onmessageerror: (() => void) | null = null
+  terminated = false
+
+  constructor() {
+    FakeGrepWorker.made.push(this)
+  }
+
+  postMessage(request: GrepRequest): void {
+    if (FakeGrepWorker.hangs) return
+    setTimeout(() => {
+      if (this.terminated) return
+      if (FakeGrepWorker.fails) this.onerror?.({ message: 'Out of memory' })
+      else this.onmessage?.({ data: grepFiles(request) })
+    })
+  }
+
+  terminate(): void {
+    this.terminated = true
+  }
+}
+
+describe('apps grep', () => {
+  beforeEach(() => {
+    FakeGrepWorker.made = []
+    FakeGrepWorker.hangs = false
+    FakeGrepWorker.fails = false
+    vi.stubGlobal('Worker', FakeGrepWorker)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+
+  const terminated = () => FakeGrepWorker.made.map((worker) => worker.terminated)
+  // Waits with real timer turns until the runner has read the files and
+  // made its worker; `vi.waitFor` would move fake timers on as it waits.
+  const workerMade = async () => {
+    while (FakeGrepWorker.made.length === 0) await new Promise((resolve) => setImmediate(resolve))
+  }
+
+  it('reads the files whose names match, matches their lines in a worker, and ends the worker', async () => {
+    fakeAppFiles({ ...appFiles('notes', { 'main.ts': 'const units = 1\nconvert(units)\n', 'src/a.js': 'no\n' }), ...appFiles('calc', { 'calc.js': 'units()\n' }) })
+
+    expect(await apps('grep', { pattern: 'units', include: '*.{ts,js}' })).toStrictEqual({
+      content: [
+        '/apps: 3 lines in 2 of 3 files match "units" (paths after /apps/), by path.',
+        '',
+        'calc/calc.js',
+        '1: units()',
+        '',
+        'notes/main.ts',
+        '1: const units = 1',
+        '2: convert(units)',
+      ].join('\n'),
+      isError: false,
+    })
+    expect(native.readFiles.map((file) => file.path).sort()).toStrictEqual(['apps/calc/calc.js', 'apps/notes/main.ts', 'apps/notes/src/a.js'])
+    expect(terminated()).toStrictEqual([true])
+  })
+
+  it('stops a search at the time limit', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    FakeGrepWorker.hangs = true
+    fakeAppFiles(appFiles('notes', { 'main.js': `${'a'.repeat(40)}!\n` }))
+
+    const result = apps('grep', { pattern: '(a+)+$' })
+    await workerMade()
+    await vi.advanceTimersByTimeAsync(GREP_TIME_LIMIT_SECONDS * 1000 - 100)
+    expect(terminated()).toStrictEqual([false])
+    await vi.advanceTimersByTimeAsync(100)
+
+    expect(await result).toStrictEqual({
+      content: 'The search ran for more than 10 seconds, so Dez stopped it. A repeat in a repeat, as "(a+)+", or ".*" at the start of a pattern, can take very long on some lines. '
+        + 'Make the pattern simpler, or search fewer files with `path` or `include`.',
+      isError: true,
+    })
+    expect(terminated()).toStrictEqual([true])
+  })
+
+  it('ends the worker when the reply stops', async () => {
+    FakeGrepWorker.hangs = true
+    fakeAppFiles(appFiles('notes', { 'main.js': 'a\n' }))
+    const stop = new AbortController()
+
+    const result = apps('grep', { pattern: 'a' }, stop.signal)
+    await workerMade()
+    stop.abort(STOP)
+
+    expect((await result).isError).toBe(true)
+    expect(terminated()).toStrictEqual([true])
+  })
+
+  it('tells the model to try again when the worker fails', async () => {
+    FakeGrepWorker.fails = true
+    fakeAppFiles(appFiles('notes', { 'main.js': 'a\n' }))
+
+    expect(await apps('grep', { pattern: 'a' })).toStrictEqual({
+      content: 'Dez could not search the files. This is most likely no fault of the call: try it again, and tell the user when it fails again.\n\n'
+        + 'Details: The search worker failed: Out of memory',
+      isError: true,
+    })
+    expect(terminated()).toStrictEqual([true])
   })
 })
 

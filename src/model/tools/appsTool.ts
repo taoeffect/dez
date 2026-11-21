@@ -7,8 +7,9 @@ import { APP_HANDLER_EXAMPLE, APP_READ_ASSET, APP_RUN_FRAME_SIZE, APP_SAVE_ASSET
 import { APP_KINDS, isAppName, MANIFEST_FILE, MANIFEST_MAX_BYTES, MAX_DESCRIPTION_LENGTH, parseAppManifest, UNKNOWN_APP_KIND, type AppKind, type AppManifest, type ListedAppKind } from './appManifest'
 import { appTemplateFiles, SCRIPT_MAIN_FILE, UI_CLIENT_SCRIPT_TAG, UI_INDEX_FILE, UI_OWN_SCRIPT_TAG } from './appTemplates'
 import { unknownValuesText } from './arguments'
+import { GREP_LINE_MAX_CHARACTERS, GREP_MAX_CHARACTERS, GREP_MAX_CONTEXT, GREP_MAX_MATCHES, GREP_TIME_LIMIT_SECONDS } from './grepMatch'
 import { INTERMEDIATE_PARAMETER, JOB_CALL_NOTE, jobTimeoutParameter } from './jobs'
-import { linesName, linesText, planLineEdits, textLines, type DiffHunk, type LineEdit } from './lineEdits'
+import { linesName, linesText, planLineEdits, textLines, textOfBytes, type DiffHunk, type LineEdit } from './lineEdits'
 import { withoutLocalPaths } from './localPaths'
 import { subcommandToolDefinition, type SubcommandTool } from './subcommands'
 import { ToolError, type SubcommandArguments, type SubcommandParameter, type ToolArguments } from './types'
@@ -22,9 +23,10 @@ import { ToolError, type SubcommandArguments, type SubcommandParameter, type Too
 // This module has the pure parts: the definition, the checks of a call,
 // the rules of a path, the limits, and every text that the calling model
 // reads. controller/appsTool.ts does the file work. Of `invoke`, which
-// runs a script app, and of `show`, which puts a UI app into the reply, it
-// has only the definition and the help: the rules and the texts of a run
-// are in appInvoke.ts, and those of `show` in appShow.ts.
+// runs a script app, of `show`, which puts a UI app into the reply, and of
+// `grep`, which searches the lines of files, it has only the definition and
+// the help: the rules and the texts of a run are in appInvoke.ts, those of
+// `show` in appShow.ts, and those of `grep` in appsGrep.ts and grepMatch.ts.
 //
 // Every text here is a tool result: it goes to the chat provider. The tool
 // builds its texts from virtual paths only. It does not send them through
@@ -307,6 +309,39 @@ export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
       example: { query: 'units js', path: `${APPS_VIRTUAL_ROOT}/${EXAMPLE_APP}` },
     },
     {
+      name: 'grep',
+      summary: 'Find the lines of the text files of apps that a regular expression matches.',
+      description: 'Searches the text files below a folder, or one file, line by line, as `rg -n` does. It gives each matching line after its number (`12: text`), '
+        + `the files sorted by path, and in a search of a folder each file under its path after ${APPS_VIRTUAL_ROOT}/. `
+        + 'With `context` it gives the lines around each match too (`11- text`), and "--" between groups of lines that do not follow each other. '
+        + 'The numbers are those of read, so read and edit take them. '
+        + '`pattern` is a regular expression of JavaScript, with no "/" around it, which each line matches by itself: no match runs over the end of a line. '
+        + 'Put a "\\" before a character that is special in a regular expression to find it as it is, or set `literal` to true. '
+        + `One result shows at most ${GREP_MAX_MATCHES} matching lines, ${countText(GREP_MAX_CHARACTERS)} characters, and ${GREP_LINE_MAX_CHARACTERS} characters of a line, `
+        + 'and it tells how many more lines match in which files. '
+        + `It skips a file that is no text, and one of more than ${FILE_LIMIT}. Dez stops a search that runs for more than ${GREP_TIME_LIMIT_SECONDS} seconds.`,
+      parameters: [
+        { name: 'pattern', type: 'string', description: 'The regular expression, as in "convert(Length|Weight)".', required: true },
+        {
+          name: 'path',
+          type: 'string',
+          description: `The folder to search, or one file, as in "${APPS_VIRTUAL_ROOT}/${EXAMPLE_APP}". Leave it out for ${APPS_VIRTUAL_ROOT}: all the apps.`,
+          required: false,
+        },
+        {
+          name: 'include',
+          type: 'string',
+          description: 'Only the files whose name matches this glob, as in "*.js" or "*.{ts,css}": "*" is any characters, and "?" is one character. '
+            + 'It matches the name of a file, not the names of its folders, and upper and lower case differ.',
+          required: false,
+        },
+        { name: 'ignore_case', type: 'boolean', description: 'true to take upper and lower case as the same. The default is false.', required: false },
+        { name: 'literal', type: 'boolean', description: 'true to find `pattern` as plain text, in which no character is special. The default is false.', required: false },
+        { name: 'context', type: 'integer', description: `How many lines to show before and after each matching line, from 0 to ${GREP_MAX_CONTEXT}. The default is 0.`, required: false },
+      ],
+      example: { pattern: 'convert(Length|Weight)', path: `${APPS_VIRTUAL_ROOT}/${EXAMPLE_APP}`, include: '*.js', context: 2 },
+    },
+    {
       name: 'mkdir',
       summary: 'Make a folder in an app, with the folders above it that are missing.',
       description: 'Makes a folder in an app, and the folders of the path that are missing. A folder that is there already is no error. '
@@ -492,15 +527,17 @@ function filePath(args: SubcommandArguments, parameter: string): AppsPath {
     : `${path.virtual} is the folder of an app, not a file. Give the path of a file in it, as in "${path.virtual}/main.js".`)
 }
 
-// The values of a call that `checkArgumentValues` checked: each one is of
-// the type of its parameter, and an absent one has no key.
-
-function textArgument(args: SubcommandArguments | ToolArguments, name: string): string {
+/** The values of a call that `checkArgumentValues` checked: each one is of
+ *  the type of its parameter, and an absent one has no key. A text
+ *  parameter gives `''` when it is absent. */
+export function textArgument(args: SubcommandArguments | ToolArguments, name: string): string {
   const value = args[name]
   return typeof value === 'string' ? value : ''
 }
 
-function integerArgument(args: SubcommandArguments | ToolArguments, name: string): number | undefined {
+/** An integer parameter of a checked call, or undefined when it is
+ *  absent. */
+export function integerArgument(args: SubcommandArguments | ToolArguments, name: string): number | undefined {
   const value = args[name]
   return typeof value === 'number' ? value : undefined
 }
@@ -716,20 +753,17 @@ export function checkTextFile(path: AppsPath, facts: PathFacts): void {
   }
 }
 
-/** The text of the file at `path` from its bytes. Throws for a file that
- *  is no text: one with a zero byte, or with bytes that are no UTF-8. A
- *  byte order mark stays in the text, so that an edit writes it back. */
+/** Why a file is no text file, for a text that tells it. */
+export const NO_TEXT = 'it holds a zero byte, or bytes that are no UTF-8'
+
+/** The text of the file at `path` from its bytes (`textOfBytes`). Throws
+ *  for a file that is no text. */
 export function fileText(path: AppsPath, bytes: Uint8Array): string {
   // The file can have grown after the size check.
   checkTextFile(path, { kind: 'file', size: bytes.length })
-  if (!bytes.includes(0)) {
-    try {
-      return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes)
-    } catch {
-      // No UTF-8: the error below.
-    }
-  }
-  throw new ToolError(`${path.virtual} is no text file (it holds a zero byte, or bytes that are no UTF-8), and the apps tool reads and edits text files only.`)
+  const text = textOfBytes(bytes)
+  if (text === null) throw new ToolError(`${path.virtual} is no text file (${NO_TEXT}), and the apps tool reads and edits text files only.`)
+  return text
 }
 
 // The lines `from` to `last` of a file, both in it. A range of a `read`
@@ -1133,9 +1167,9 @@ export function mkdirStep(path: AppsPath, target: PathFacts, app: AppsTree): { m
   return { make: true, text: `Made the folder ${path.virtual}${above.length === 0 ? '' : `, and above it ${above.join(' and ')}`}.` }
 }
 
-// The folder that the `path` of a call names: the folder of all apps for a
-// call with no `path`.
-function folderArgument(args: SubcommandArguments): AppsPath {
+/** The folder that the `path` of a call names: the folder of all apps for
+ *  a call with no `path`. */
+export function folderArgument(args: SubcommandArguments): AppsPath {
   return args.path === undefined ? APPS_ROOT : appsPath(args.path, 'path')
 }
 
@@ -1143,10 +1177,11 @@ export function lsCall(args: SubcommandArguments): { path: AppsPath } {
   return { path: folderArgument(args) }
 }
 
-const NO_APPS = 'There are no apps yet. Make one with init.'
+/** The text of a call on the folder of all apps while there is none. */
+export const NO_APPS = 'There are no apps yet. Make one with init.'
 
-// The refusal of a call that names a folder where nothing is.
-function noFolderError(path: AppsPath): ToolError {
+/** The refusal of a call that names a folder where nothing is. */
+export function noFolderError(path: AppsPath): ToolError {
   return new ToolError(path.names.length === 1
     ? `There is no app ${path.virtual}. Call list_apps to see the apps that are there.`
     : `There is no folder ${path.virtual}. Call ls with "${parentOf(path).virtual}" to see what is there.`)
