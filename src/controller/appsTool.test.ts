@@ -571,13 +571,15 @@ describe('apps find', () => {
 
 // A stand-in for the Web Worker of `grep` (Node has none). It runs the
 // matching of a request as grepWorker.ts does, after a timer tick; with
-// `hangs` it gives nothing, as on a slow pattern, and with `fails` it fails
-// as a worker that runs out of memory. It keeps each worker that the runner
-// made, for the checks of `terminate`.
+// `hangs` it gives nothing, as on a slow pattern, with `fails` it fails
+// as a worker that runs out of memory, and with `refuses` its
+// `postMessage` throws, as for a buffer that it cannot move. It keeps each
+// worker that the runner made, for the checks of `terminate`.
 class FakeGrepWorker {
   static made: FakeGrepWorker[] = []
   static hangs = false
   static fails = false
+  static refuses = false
   onmessage: ((event: { data: GrepOutcome }) => void) | null = null
   onerror: ((event: { message: string }) => void) | null = null
   onmessageerror: (() => void) | null = null
@@ -588,6 +590,7 @@ class FakeGrepWorker {
   }
 
   postMessage(request: GrepRequest): void {
+    if (FakeGrepWorker.refuses) throw new DOMException('An ArrayBuffer is detached and could not be cloned.', 'DataCloneError')
     if (FakeGrepWorker.hangs) return
     setTimeout(() => {
       if (this.terminated) return
@@ -606,6 +609,7 @@ describe('apps grep', () => {
     FakeGrepWorker.made = []
     FakeGrepWorker.hangs = false
     FakeGrepWorker.fails = false
+    FakeGrepWorker.refuses = false
     vi.stubGlobal('Worker', FakeGrepWorker)
   })
 
@@ -680,6 +684,18 @@ describe('apps grep', () => {
     expect(await apps('grep', { pattern: 'a' })).toStrictEqual({
       content: 'Dez could not search the files. This is most likely no fault of the call: try it again, and tell the user when it fails again.\n\n'
         + 'Details: The search worker failed: Out of memory',
+      isError: true,
+    })
+    expect(terminated()).toStrictEqual([true])
+  })
+
+  it('ends the worker when it cannot take the request', async () => {
+    FakeGrepWorker.refuses = true
+    fakeAppFiles(appFiles('notes', { 'main.js': 'a\n' }))
+
+    expect(await apps('grep', { pattern: 'a' })).toStrictEqual({
+      content: 'Dez could not search the files. This is most likely no fault of the call: try it again, and tell the user when it fails again.\n\n'
+        + 'Details: An ArrayBuffer is detached and could not be cloned.',
       isError: true,
     })
     expect(terminated()).toStrictEqual([true])

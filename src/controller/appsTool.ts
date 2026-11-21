@@ -288,9 +288,9 @@ async function readEach(paths: readonly AppsPath[], signal: AbortSignal): Promis
 // Runs `grepFiles` on `request` in a Web Worker (grepWorker.ts), so that a
 // slow regular expression cannot stop the window, and gives its outcome:
 // null when the matching runs for more than `GREP_TIME_LIMIT_SECONDS`.
-// The end of the work, the time limit, and a stop of the reply each end
-// the worker. The bytes of the files move to the worker: the caller must
-// not read them after the call.
+// The end of the work, the time limit, a stop of the reply, and a request
+// that the worker cannot take each end the worker. The bytes of the files
+// move to the worker: the caller must not read them after the call.
 function grepInWorker(request: GrepRequest, signal: AbortSignal): Promise<GrepOutcome | null> {
   signal.throwIfAborted()
   // Vite finds and bundles the worker only in this form: `new URL` with a
@@ -313,7 +313,13 @@ function grepInWorker(request: GrepRequest, signal: AbortSignal): Promise<GrepOu
     // Two files never share a buffer (`dez.native/loadAppFileBytes` gives
     // each its own), but a transfer list must not name one twice.
     const buffers = new Set(request.files.map((file) => file.bytes.buffer).filter((buffer): buffer is ArrayBuffer => buffer instanceof ArrayBuffer))
-    worker.postMessage(request, [...buffers])
+    // `postMessage` throws when it cannot copy or move the request (a
+    // `DataCloneError`, as for a detached buffer).
+    try {
+      worker.postMessage(request, [...buffers])
+    } catch (error) {
+      end(() => reject(error))
+    }
   })
 }
 
