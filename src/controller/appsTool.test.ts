@@ -39,11 +39,21 @@ function pathsIn(files: FakeAppFiles, folder: string): string[] {
     .sort()
 }
 
+// The apps that the editor was told are gone (`dez.editor/appDeleted`).
+let goneApps: string[] = []
+
+sbp('sbp/selectors/register', {
+  'dez.editor/appDeleted' (name: string): void {
+    goneApps.push(name)
+  },
+})
+
 let consoleError: MockInstance<typeof console.error>
 
 beforeEach(() => {
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
   resetNative()
+  goneApps = []
 })
 
 afterEach(() => {
@@ -211,13 +221,21 @@ describe('apps rm', () => {
       isError: false,
     })
     expect(pathsIn(files, 'apps/notes')).toStrictEqual(['apps/notes/', 'apps/notes/keep.js', 'apps/notes/manifest.json'])
+    expect(goneApps).toStrictEqual([])
   })
 
-  it('deletes an app as a whole', async () => {
-    const files = fakeAppFiles({ ...appFiles('notes', { 'main.ts': 'x\n' }), ...appFiles('calc') })
+  it('deletes an app as a whole, and tells the editor that the app is gone', async () => {
+    const files = fakeAppFiles({ ...appFiles('notes', { 'main.ts': 'x\n' }), ...appFiles('calc'), ...appFiles('draw') })
+    const remove = native.deleteAppFile
+    native.deleteAppFile = async (file) => {
+      if (file.path === 'apps/calc') throw new Error(`Failed to delete ${APP_DIR}/apps/calc: Permission denied (os error 13)`)
+      await remove(file)
+    }
 
-    expect((await apps('rm', { paths: ['/apps/notes/'] })).isError).toBe(false)
-    expect(pathsIn(files, 'apps')).toStrictEqual(['apps/', 'apps/calc/', 'apps/calc/manifest.json'])
+    expect((await apps('rm', { paths: ['/apps/notes/', '/apps/calc', '/apps/draw/manifest.json'] })).isError).toBe(false)
+    expect(pathsIn(files, 'apps')).toStrictEqual(['apps/', 'apps/calc/', 'apps/calc/manifest.json', 'apps/draw/'])
+    // The app that a failed delete left keeps its runs and its cards.
+    expect(goneApps).toStrictEqual(['notes'])
   })
 
   it('gives an error when no path was deleted', async () => {
@@ -321,13 +339,23 @@ describe('apps mv', () => {
     expect(pathsIn(files, 'apps/notes')).toStrictEqual(['apps/notes/', 'apps/notes/manifest.json'])
   })
 
-  it('renames an app with all its files', async () => {
-    const files = fakeAppFiles(appFiles('notes', { 'src/a.js': 'a\n' }))
+  it('renames an app with all its files, and tells the editor that the app of the old name is gone', async () => {
+    const files = fakeAppFiles(appFiles('notes', { 'src/a.js': 'a\n', 'lib/b.js': 'b\n' }))
 
-    const result = await apps('mv', { moves: [{ from: '/apps/notes', to: '/apps/journal' }] })
+    const result = await apps('mv', { moves: [{ from: '/apps/notes/lib', to: '/apps/shared' }, { from: '/apps/notes', to: '/apps/journal' }] })
 
     expect(result.content).toContain('Renamed the app /apps/notes to /apps/journal.')
-    expect(pathsIn(files, 'apps')).toStrictEqual(['apps/', 'apps/journal/', 'apps/journal/manifest.json', 'apps/journal/src/', 'apps/journal/src/a.js'])
+    expect(pathsIn(files, 'apps')).toStrictEqual([
+      'apps/',
+      'apps/journal/',
+      'apps/journal/manifest.json',
+      'apps/journal/src/',
+      'apps/journal/src/a.js',
+      'apps/shared/',
+      'apps/shared/b.js',
+    ])
+    // A folder that leaves an app takes no app away.
+    expect(goneApps).toStrictEqual(['notes'])
   })
 
   it('moves no more after the reply stopped', async () => {

@@ -181,18 +181,22 @@ export async function editAppFile(args: SubcommandArguments): Promise<AppsResult
   return { content, isError }
 }
 
-/** `apps rm`. */
+/** `apps rm`. A delete of a whole app tells the editor
+ *  (`dez.editor/appDeleted`), as the trash of its card does: the runs of
+ *  the app end, and its cards tell that it is gone. */
 export async function removeAppPaths(args: SubcommandArguments, signal: AbortSignal): Promise<AppsResult> {
   const { paths } = rmCall(args)
   return rmResult(await eachByItself(paths, signal, async (path) => {
     const step = rmStep(path, await treeOf(path, RM_LISTED_ENTRIES))
     await native(`delete ${path.virtual}`, () => sbp('dez.native/deleteAppFile', path.file, 'app', { folder: step.folder }) as Promise<void>)
+    if (path.names.length === 1) sbp('dez.editor/appDeleted', path.names[0])
     return step.text
   }))
 }
 
 /** `apps mv`. The moves run one after the other, so a later move of the
- *  call sees what an earlier one did. */
+ *  call sees what an earlier one did. A move of a whole app tells the
+ *  editor that the app of the old name is gone, as `rm` does. */
 export async function moveAppPaths(args: SubcommandArguments, signal: AbortSignal): Promise<AppsResult> {
   const { moves } = mvCall(args)
   return mvResult(await eachByItself(moves, signal, async (move) => {
@@ -201,6 +205,7 @@ export async function moveAppPaths(args: SubcommandArguments, signal: AbortSigna
     const step = moveStep(move, { source, target, app, parent })
     if (step.folder) await makeFolder(step.folder)
     await native(`move ${from.virtual} to ${to.virtual}`, () => sbp('dez.native/moveAppFile', { root: 'app', path: from.file }, { root: 'app', path: to.file }) as Promise<void>)
+    if (from.names.length === 1) sbp('dez.editor/appDeleted', from.names[0])
     return step.text
   }))
 }
