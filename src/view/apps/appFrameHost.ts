@@ -309,7 +309,14 @@ function hostFrame(view: EditorView, run: AppRun, actions: AppFrameActions): Hos
       // that runs on its own), so Dez takes it only while the user works
       // in the app: the app has the keyboard, or the pointer is over it.
       // Dez's page cannot read whether a key or a click made the call.
-      if (document.activeElement !== frame && !frame.matches(':hover')) throw new AppCallError(SAVE_NEEDS_USER_TEXT)
+      // The frame stays the active element while the user works in another
+      // program, so the keyboard rule also needs Dez's window to have the
+      // focus (`hasFocus()` is true while a frame of the page has it). The
+      // pointer rule has no such check, so that the click that brings Dez's
+      // window to the front can save: Dez does not know whether WebKit
+      // tells the page of the focus before that click.
+      const hasKeyboard = document.hasFocus() && document.activeElement === frame
+      if (!hasKeyboard && !frame.matches(':hover')) throw new AppCallError(SAVE_NEEDS_USER_TEXT)
       return await actions.saveAsset(view, run.id, call.blob, saves)
     },
     onNavigated() {
