@@ -1,5 +1,6 @@
 import type { EditorView } from '@codemirror/view'
 import sbp from '@sbp/sbp'
+import { keyName } from 'w3c-keyname'
 import { coverBox, type Box } from './coverBox'
 import { focusKeepingScroll } from './focus'
 import { ROUND_STROKE, svgIcon } from './svgIcon'
@@ -209,9 +210,11 @@ function buildZoom(view: EditorView, request: ZoomRequest): OpenZoom {
   // The X is the only control, so Tab puts the keyboard on it, and keeps
   // it there: the text under the layer must not get the keyboard. Escape
   // goes on to the window, whose handler closes the top layer
-  // (`closeTopPanel`).
+  // (`closeTopPanel`). `keyName`, not `event.key`: WebKitGTK gives
+  // Shift+Tab the key `Unidentified` (GTK's `ISO_Left_Tab` has no key
+  // value there), and `keyName` reads its key code.
   layer.addEventListener('keydown', (event) => {
-    if (event.key !== 'Tab') return
+    if (keyName(event) !== 'Tab') return
     event.preventDefault()
     closeButton.focus({ preventScroll: true })
   })
