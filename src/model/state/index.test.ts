@@ -354,7 +354,7 @@ describe('incognito and the sent mark of a tab', () => {
   const incognito = (tabId: string) => sbp('dez.model/tabs/incognito', tabId) as boolean
   const tabNow = (tabId: string) => sbp('dez.model/tab', tabId) as Tab
   // What submitTab does before the request goes.
-  const startReply = (tabId: string) => sbp('dez.model/ensureTrailingAgentSectionForTab', tabId, model) as Section
+  const startReply = (tabId: string) => sbp('dez.model/tabs/startReply', tabId, model) as Section
 
   it('turns incognito on in a tab that sent nothing, and only once', () => {
     const tab = tabWithText('secret')
@@ -892,7 +892,7 @@ describe('section models', () => {
   }
 
   function ensureAgentSection (model: ModelRef): Section {
-    return sbp('dez.model/ensureTrailingAgentSectionForTab', activeId(), model) as Section
+    return sbp('dez.model/tabs/startReply', activeId(), model) as Section
   }
 
   // What the editor does on a doc change: it writes every section back.

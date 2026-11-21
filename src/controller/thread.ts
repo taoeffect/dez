@@ -113,7 +113,7 @@ export default sbp('sbp/selectors/register', {
     }
     const { messages, newestUserMessage, imagesLeftOut, imagesOverLimit, sendTools } = request
 
-    const agentSection = sbp('dez.model/ensureTrailingAgentSectionForTab', tabId, model)
+    const agentSection = sbp('dez.model/tabs/startReply', tabId, model)
     if (!agentSection) return
 
     // The request still goes. A message whose images do not go as image

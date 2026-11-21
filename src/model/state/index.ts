@@ -1104,8 +1104,9 @@ export default sbp('sbp/selectors/register', {
   // Starts a reply in the tab: stamps the agent section with the model of
   // the request that will fill it, and marks the tab `requestSent`. The
   // mark stays when the section goes again (`endStreamSection`), as the
-  // request went (`canTurnOnIncognito`).
-  'dez.model/ensureTrailingAgentSectionForTab' (tabId: string, model: ModelRef): Section | null {
+  // request went (`canTurnOnIncognito`). Call it only when a request goes
+  // (`submitTab`): the mark stops incognito in the tab for good.
+  'dez.model/tabs/startReply' (tabId: string, model: ModelRef): Section | null {
     const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
     if (!tab) return null
     tab.requestSent = true

@@ -175,7 +175,7 @@ export default sbp('sbp/selectors/register', {
    *  nothing and returns false when another tab is visible; the store
    *  already has the token. The token goes at the doc end, so `sectionId`
    *  is not used: at stream start the streaming agent section is the last
-   *  section (`dez.model/ensureTrailingAgentSectionForTab`). */
+   *  section (`dez.model/tabs/startReply`). */
   'dez.editor/appendTokenIfVisible' (tabId: string, _sectionId: string, token: string): boolean {
     if (!activeView || activeViewTabId !== tabId) return false
     dispatchStreamChange(activeView, tabId, {
