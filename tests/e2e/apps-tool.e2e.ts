@@ -99,7 +99,7 @@ describe('apps tool', () => {
       appsCall('call_write', 'write', { path: '/apps/notes/src/lib/units.js', content: units }),
       appsCall('call_mkdir', 'mkdir', { path: '/apps/notes/data/cache' }),
       appsCall('call_read', 'read', { path: '/apps/notes/src/lib/units.js' }),
-      appsCall('call_edit', 'edit', { path: '/apps/notes/src/lib/units.js', edits: [{ after_line: 2, text: 'export const CM = 0.01' }] }),
+      appsCall('call_edit', 'edit', { path: '/apps/notes/src/lib/units.js', edits: [{ after_line: 2, content: 'export const CM = 0.01' }] }),
     ])
 
     const second = await chatRequest()
@@ -205,11 +205,11 @@ describe('apps tool', () => {
       'Range 3 is left out. It names lines 3-5, and range 1 names lines 2-3 already. Make one range of the two, as in {"from_line": 2, "to_line": 5}.',
     ].join('\n'))
     sendToolCalls(second.reply, [
-      appsCall('call_edit', 'edit', { path: file, edits: [{ from_line: 5, to_line: 20, text: upper.join('\n') }, { after_line: 30, text: 'item 31' }] }),
+      appsCall('call_edit', 'edit', { path: file, edits: [{ from_line: 5, to_line: 20, content: upper.join('\n') }, { after_line: 30, content: 'item 31' }] }),
     ])
 
-    // The first edit call of the tab gets the hint. A hunk of more than 12
-    // lines shows its first 4 and its last 4; a shorter one shows whole.
+    // The first edit call of the tab gets the hint. A hunk of more than 20
+    // lines shows its first 8 and its last 8; a shorter one shows whole.
     const third = await chatRequest()
     expect(toolResult(third, 'call_edit')).toBe(withEditHint([
       `Edited ${file}: 2 of 2 edits done. The file had 30 lines, and it has 31 now.`,
@@ -222,7 +222,15 @@ describe('apps tool', () => {
       ' item 3',
       ' item 4',
       '-item 5',
-      '… 30 lines of this hunk are not shown, to save context. read gives the file as it is now.',
+      '-item 6',
+      '-item 7',
+      '-item 8',
+      '-item 9',
+      '… 22 lines of this hunk are not shown, to save context. read gives the file as it is now.',
+      '+ITEM 16',
+      '+ITEM 17',
+      '+ITEM 18',
+      '+ITEM 19',
       '+ITEM 20',
       ' item 21',
       ' item 22',
@@ -233,7 +241,7 @@ describe('apps tool', () => {
       ' item 30',
       '+item 31',
     ].join('\n')))
-    sendToolCalls(third.reply, [appsCall('call_edit_again', 'edit', { path: file, edits: [{ from_line: 1, text: 'first item' }] })])
+    sendToolCalls(third.reply, [appsCall('call_edit_again', 'edit', { path: file, edits: [{ from_line: 1, content: 'first item' }] })])
 
     // The conversation of the tab holds the hint now: the next edit call
     // gets none.
@@ -257,7 +265,7 @@ describe('apps tool', () => {
     await newTab(browser)
     await submit(browser, 'Take the last item out.')
     const other = await chatRequest()
-    sendToolCalls(other.reply, [appsCall('call_edit_tab', 'edit', { path: file, edits: [{ from_line: 31, text: '' }] })])
+    sendToolCalls(other.reply, [appsCall('call_edit_tab', 'edit', { path: file, edits: [{ from_line: 31, content: '' }] })])
 
     const otherSecond = await chatRequest()
     expect(toolResult(otherSecond, 'call_edit_tab')).toBe(withEditHint([
@@ -301,7 +309,7 @@ describe('apps tool', () => {
     const refusal = toolResult(second, 'call_wrong')
     expect(refusal.startsWith('Item 1 of the parameter "edits" is not valid: an item of "edits" has no parameter "old_text".')).toBe(true)
     expect(hinted(refusal)).toBe(true)
-    sendToolCalls(second.reply, [appsCall('call_edit', 'edit', { path: file, edits: [{ from_line: 1, text: 'A' }] })])
+    sendToolCalls(second.reply, [appsCall('call_edit', 'edit', { path: file, edits: [{ from_line: 1, content: 'A' }] })])
 
     // The refusal holds the hint: the good call after it gets none.
     const third = await chatRequest()
@@ -313,7 +321,7 @@ describe('apps tool', () => {
     await newTab(browser)
     await submit(browser, 'Change the memo.')
     const objectFirst = await chatRequest()
-    sendToolCalls(objectFirst.reply, [openAiToolCall('call_object', 'apps', { command: 'edit', parameters: { path: file, edits: [{ from_line: 1, text: 'x' }] } })])
+    sendToolCalls(objectFirst.reply, [openAiToolCall('call_object', 'apps', { command: 'edit', parameters: { path: file, edits: [{ from_line: 1, content: 'x' }] } })])
 
     const objectSecond = await chatRequest()
     const objectRefusal = toolResult(objectSecond, 'call_object')
@@ -329,7 +337,7 @@ describe('apps tool', () => {
 
     const afterHelp = await chatRequest()
     expect(toolResult(afterHelp, 'call_help').split(EDIT_HINT)).toHaveLength(2)
-    sendToolCalls(afterHelp.reply, [appsCall('call_edit_after_help', 'edit', { path: file, edits: [{ from_line: 2, text: 'B' }] })])
+    sendToolCalls(afterHelp.reply, [appsCall('call_edit_after_help', 'edit', { path: file, edits: [{ from_line: 2, content: 'B' }] })])
 
     const done = await chatRequest()
     expect(toolResult(done, 'call_edit_after_help')).toBe(edited(2, [' A', '-b', '+B']))
@@ -464,7 +472,7 @@ describe('apps tool', () => {
       appsCall('call_read_below', 'read', { path: '/apps/safe/out/secret.txt' }),
       appsCall('call_write_link', 'write', { path: '/apps/safe/secret.txt', content: 'changed' }),
       appsCall('call_write_below', 'write', { path: '/apps/safe/out/new.txt', content: 'new' }),
-      appsCall('call_edit_link', 'edit', { path: '/apps/safe/secret.txt', edits: [{ from_line: 1, text: 'changed' }] }),
+      appsCall('call_edit_link', 'edit', { path: '/apps/safe/secret.txt', edits: [{ from_line: 1, content: 'changed' }] }),
       appsCall('call_mkdir_below', 'mkdir', { path: '/apps/safe/out/sub' }),
       appsCall('call_ls_below', 'ls', { path: '/apps/safe/out' }),
       appsCall('call_mv_link', 'mv', { moves: [{ from: '/apps/safe/secret.txt', to: '/apps/safe/moved.txt' }] }),

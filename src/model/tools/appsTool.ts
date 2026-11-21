@@ -96,9 +96,11 @@ const DIFF_MAX_CHARACTERS = 20_000
 // The most lines that one hunk of an `edit` result shows (the lines after
 // its `@@` line). A longer hunk shows only its first and its last
 // `HUNK_END_LINES` lines: the model gave the new lines and read the old
-// ones, so all of them again would only fill its context.
-const HUNK_MAX_LINES = 12
-const HUNK_END_LINES = 4
+// ones, so all of them again would only fill its context. A hunk is cut
+// only when the cut leaves out more than 4 lines: a note line in place of
+// fewer saves little.
+const HUNK_END_LINES = 8
+const HUNK_MAX_LINES = 2 * HUNK_END_LINES + 4
 // The most rows of an `ls` and of a `list_apps` result, and the most paths
 // that `rm` lists for one deleted folder.
 const LS_MAX_ROWS = 500
@@ -255,7 +257,7 @@ export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
       name: APPS_EDIT,
       summary: 'Change lines of a text file of an app by their numbers: replace lines, delete lines, or put new lines in.',
       description: 'Applies a list of edits to one file, all at once. Each edit names lines by the numbers that read gave. '
-        + 'An edit with `from_line` replaces the lines `from_line` to `to_line` with the lines of `text`. An edit with `after_line` puts the lines of `text` in after that line. '
+        + 'An edit with `from_line` replaces the lines `from_line` to `to_line` with the lines of `content`. An edit with `after_line` puts the lines of `content` in after that line. '
         + 'Each edit passes or fails by itself: the result tells what each one did, or why it failed, and gives a diff of the change.\n\n'
         + EDIT_HINT,
       parameters: [
@@ -268,7 +270,7 @@ export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
             { name: 'to_line', type: 'integer', description: 'The last line to replace. Leave it out to replace only the line `from_line`.', required: false },
             { name: 'after_line', type: 'integer', description: 'The line after which the new lines go; no line is replaced. 0 puts them before the first line.', required: false },
             {
-              name: 'text',
+              name: 'content',
               type: 'string',
               description: 'The new lines, with "\\n" between them; one "\\n" at the end adds no line, and "\\n" alone is one empty line. '
                 + 'With `from_line`, "" deletes the lines.',
@@ -281,7 +283,7 @@ export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
       ],
       example: {
         path: EXAMPLE_FILE,
-        edits: [{ from_line: 12, to_line: 14, text: 'const factor = 0.3048' }, { after_line: 30, text: '\nconsole.log(factor)' }],
+        edits: [{ from_line: 12, to_line: 14, content: 'const factor = 0.3048' }, { after_line: 30, content: '\nconsole.log(factor)' }],
       },
     },
     {
@@ -940,9 +942,9 @@ export function editCall(args: SubcommandArguments): EditCall {
     fromLine: integerArgument(edit, 'from_line'),
     toLine: integerArgument(edit, 'to_line'),
     afterLine: integerArgument(edit, 'after_line'),
-    text: textArgument(edit, 'text'),
+    content: textArgument(edit, 'content'),
   }))
-  if (edits.length === 0) throw new ToolError('`edits` is an empty list. Give at least one edit, as in {"edits": [{"from_line": 3, "to_line": 4, "text": "..."}]}.')
+  if (edits.length === 0) throw new ToolError('`edits` is an empty list. Give at least one edit, as in {"edits": [{"from_line": 3, "to_line": 4, "content": "..."}]}.')
   return { path, edits }
 }
 

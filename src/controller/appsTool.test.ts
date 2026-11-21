@@ -172,7 +172,7 @@ describe('apps edit', () => {
   it('writes the file with the edits that passed', async () => {
     const files = fakeAppFiles(appFiles('notes', { 'main.js': 'const a = 1\nrun(a)\n' }))
 
-    const result = await apps('edit', { path: '/apps/notes/main.js', edits: [{ from_line: 1, text: 'const a = 2' }, { from_line: 9, text: 'x' }] })
+    const result = await apps('edit', { path: '/apps/notes/main.js', edits: [{ from_line: 1, content: 'const a = 2' }, { from_line: 9, content: 'x' }] })
 
     expect(result.isError).toBe(false)
     expect(result.content).toContain('Edited /apps/notes/main.js: 1 of 2 edits done.')
@@ -182,8 +182,8 @@ describe('apps edit', () => {
   it('writes nothing when no edit changed the file', async () => {
     fakeAppFiles(appFiles('notes', { 'main.js': 'const a = 1\nrun(a)\n' }))
 
-    const failed = await apps('edit', { path: '/apps/notes/main.js', edits: [{ from_line: 9, text: 'x' }] })
-    const same = await apps('edit', { path: '/apps/notes/main.js', edits: [{ from_line: 2, text: 'run(a)' }] })
+    const failed = await apps('edit', { path: '/apps/notes/main.js', edits: [{ from_line: 9, content: 'x' }] })
+    const same = await apps('edit', { path: '/apps/notes/main.js', edits: [{ from_line: 2, content: 'run(a)' }] })
 
     expect(failed.isError).toBe(true)
     expect(failed.content).toContain('No edit of /apps/notes/main.js was done')
@@ -196,13 +196,13 @@ describe('apps edit', () => {
     const files = fakeAppFiles(appFiles('notes', { 'main.js': 'const a = 1\nrun(a)\n' }))
     files.set('apps/notes/data.bin', new Uint8Array(APPS_MAX_BYTES))
 
-    const longer = await apps('edit', { path: '/apps/notes/main.js', edits: [{ after_line: 2, text: 'done()' }] })
+    const longer = await apps('edit', { path: '/apps/notes/main.js', edits: [{ after_line: 2, content: 'done()' }] })
 
     expect(longer.isError).toBe(true)
     expect(longer.content).toContain('and this call would add 7 B.')
     expect(textAt(files, 'apps/notes/main.js')).toBe('const a = 1\nrun(a)\n')
 
-    const shorter = await apps('edit', { path: '/apps/notes/main.js', edits: [{ from_line: 2, text: '' }] })
+    const shorter = await apps('edit', { path: '/apps/notes/main.js', edits: [{ from_line: 2, content: '' }] })
 
     expect(shorter.isError).toBe(false)
     expect(textAt(files, 'apps/notes/main.js')).toBe('const a = 1\n')
@@ -210,7 +210,7 @@ describe('apps edit', () => {
 
   describe('the hint', () => {
     const PATH = '/apps/notes/main.js'
-    const EDIT = { path: PATH, edits: [{ from_line: 1, text: 'const a = 2' }] }
+    const EDIT = { path: PATH, edits: [{ from_line: 1, content: 'const a = 2' }] }
     const MODEL = { providerId: 'venice', modelId: 'venice-glm-5' }
     // The tab of the calls.
     let tabId: string
@@ -260,7 +260,7 @@ describe('apps edit', () => {
     it('ends the result of the first edit of a tab with the hint, and of no edit while the tab holds it', async () => {
       const first = await edit()
       keep([ask('u1'), reply('a1', [first])])
-      const second = await edit({}, { path: PATH, edits: [{ from_line: 2, text: 'run(a, 2)' }] })
+      const second = await edit({}, { path: PATH, edits: [{ from_line: 2, content: 'run(a, 2)' }] })
 
       expect(first.isError).toBe(false)
       expect(hinted(first)).toBe(true)
@@ -308,7 +308,7 @@ describe('apps edit', () => {
     })
 
     it('gives the hint with edits that all failed, and with a call that Dez refuses', async () => {
-      const failed = await edit({}, { path: PATH, edits: [{ from_line: 9, text: 'x' }] })
+      const failed = await edit({}, { path: PATH, edits: [{ from_line: 9, content: 'x' }] })
       const refused = await edit({}, { ...EDIT, path: '/apps/notes/gone.js' })
 
       expect(failed.isError).toBe(true)

@@ -2950,7 +2950,7 @@ describe('dez.stream/start the hint of apps edit', () => {
   const editCall = (id: string, line: number) => ({
     id,
     name: 'apps',
-    argumentsText: JSON.stringify({ command: 'edit', parameters: JSON.stringify({ path: '/apps/sum/main.ts', edits: [{ from_line: line, text: `// ${id}` }] }) }),
+    argumentsText: JSON.stringify({ command: 'edit', parameters: JSON.stringify({ path: '/apps/sum/main.ts', edits: [{ from_line: line, content: `// ${id}` }] }) }),
   })
   // An edit call with an item that edit does not take, as a model that did
   // not read the help of edit writes it.
@@ -3013,7 +3013,7 @@ describe('dez.stream/start the hint of apps edit', () => {
     const objectParameters = {
       id: 'c1',
       name: 'apps',
-      argumentsText: JSON.stringify({ command: 'edit', parameters: { path: '/apps/sum/main.ts', edits: [{ from_line: 1, text: 'x' }] } }),
+      argumentsText: JSON.stringify({ command: 'edit', parameters: { path: '/apps/sum/main.ts', edits: [{ from_line: 1, content: 'x' }] } }),
     }
     replyRounds([
       async (input) => ({ requestId: input.requestId as string, toolCalls: [objectParameters, editCall('c2', 1)] }),

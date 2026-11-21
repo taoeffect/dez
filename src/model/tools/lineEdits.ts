@@ -43,13 +43,13 @@ export function linesText(lines: readonly string[], finalLineEnd: boolean): stri
 
 /** One edit of a call, as the model gave it: it replaces the lines
  *  `fromLine` to `toLine` (only `fromLine` with no `toLine`) with the lines
- *  of `text`, or it puts them in after the line `afterLine` (0: before the
- *  first line). An empty `text` has no line, so it deletes. */
+ *  of `content`, or it puts them in after the line `afterLine` (0: before
+ *  the first line). An empty `content` has no line, so it deletes. */
 export interface LineEdit {
   fromLine?: number
   toLine?: number
   afterLine?: number
-  text: string
+  content: string
 }
 
 /** What became of one edit: `text` tells what it did, or why it failed. */
@@ -114,14 +114,14 @@ export function planLineEdits(lines: readonly string[], edits: readonly LineEdit
   const outcomes = edits.map((edit, index): LineEditOutcome => {
     const number = index + 1
     const { fromLine, toLine, afterLine } = edit
-    const newLines = textLines(edit.text)
+    const newLines = textLines(edit.content)
     if (fromLine !== undefined && afterLine !== undefined) return failed(`It has both \`from_line\` and \`after_line\`. ${KINDS_ADVICE}`)
 
     if (afterLine !== undefined) {
       if (toLine !== undefined) return failed('It has `to_line` with `after_line`. `to_line` goes with `from_line` only: an edit with `after_line` replaces no line.')
       if (afterLine < 0) return failed(`\`after_line\` is ${afterLine}. Give 0 to put the lines in before the first line.`)
       if (afterLine > total) return failed(`\`after_line\` is ${afterLine}, and ${fileLength}.`)
-      if (newLines.length === 0) return failed('Its `text` is empty, so there is no line to put in. Give "\\n" for one empty line.')
+      if (newLines.length === 0) return failed('Its `content` is empty, so there is no line to put in. Give "\\n" for one empty line.')
       const around = replacements.find(({ from, to }) => from <= afterLine && afterLine < to)
       if (around) return failed(`Line ${afterLine} is inside the ${linesName(around.from, around.to)} that edit ${around.number} replaces. ${ONE_EDIT_ADVICE}`)
       insertions.push({ number, after: afterLine, lines: newLines })
