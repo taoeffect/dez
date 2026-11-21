@@ -89,7 +89,8 @@ pub(crate) struct Confinement {
     pub(crate) system_libraries: bool,
     // Whether the run does not start where the OS has no file rule.
     pub(crate) required: bool,
-    // The most bytes of data that the program can have (Linux only).
+    // The most bytes of data that the program can have (Linux only). A
+    // lower hard limit of Dez wins.
     pub(crate) data_limit: Option<u64>,
 }
 
@@ -133,7 +134,18 @@ pub(crate) fn confined_command(program: &Path, args: &[String], confinement: &Co
     }
     // Made here, before the fork: the child must not allocate.
     let filter = call_filter();
-    let data_limit = confinement.data_limit.map(|bytes| libc::rlimit { rlim_cur: bytes, rlim_max: bytes });
+    // The data limit is never above the hard limit that Dez has now, which
+    // the child gets at the fork: with no `CAP_SYS_RESOURCE`, `setrlimit`
+    // refuses to raise it (`EPERM`), and no run would start where an
+    // administrator set a lower limit. When the read fails, the limit is
+    // `data_limit`.
+    let data_limit = confinement.data_limit.map(|bytes| {
+        let mut current = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+        // SAFETY: `current` is a valid rlimit for the call to fill.
+        let hard = if unsafe { libc::getrlimit(libc::RLIMIT_DATA, &mut current) } == 0 { current.rlim_max } else { libc::RLIM_INFINITY };
+        let limit = bytes.min(hard);
+        libc::rlimit { rlim_cur: limit, rlim_max: limit }
+    });
     let mut command = Command::new(program);
     command.args(args);
     // SAFETY: the closure runs in the child between fork and exec, where
