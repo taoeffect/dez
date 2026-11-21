@@ -129,6 +129,12 @@ export interface ToolRunContext {
 // subcommand, which can hold lists (`subcommandRunner`).
 type ToolRunner<A = ToolArguments> = (args: A, signal: AbortSignal, context: ToolRunContext) => Promise<string | (Omit<ToolRunResult, 'isError'> & { isError?: boolean })>
 
+// The result of the output of a runner: a string, or a result with no
+// `isError`, is a result that is no error.
+function runnerResult(output: Awaited<ReturnType<ToolRunner>>): ToolRunResult {
+  return typeof output === 'string' ? { content: output, isError: false } : { isError: false, ...output }
+}
+
 // The sections of the tab of a call, where a tool finds the images and
 // the clips that the call names; none for a tab that is gone.
 function callSections(context: ToolRunContext): Section[] {
@@ -172,9 +178,7 @@ function withEditHintWhenDue(runner: ToolRunner): ToolRunner {
     const due = isEditCall(APPS_TOOL.name, args) && !context.isBridged && editHintIsDue(callSections(context), context.roundResults)
     if (!due) return runner(args, signal, context)
     try {
-      const output = await runner(args, signal, context)
-      // As `dez.controller/tools/run` reads the output of a runner.
-      const result = typeof output === 'string' ? { content: output } : output
+      const result = runnerResult(await runner(args, signal, context))
       return result.content.includes(EDIT_HINT) ? result : { ...result, content: withEditHint(result.content) }
     } catch (error) {
       if (!(error instanceof ToolError)) throw error
@@ -595,8 +599,7 @@ export default sbp('sbp/selectors/register', {
       return { content: unknownToolText(call.name), isError: true }
     }
     try {
-      const output = await runner(call.arguments, signal, context)
-      const result = typeof output === 'string' ? { content: output, isError: false } : { isError: false, ...output }
+      const result = runnerResult(await runner(call.arguments, signal, context))
       // An error result that a runner gave is logged as one that it threw.
       if (result.isError && !signal.aborted) console.error(`The tool ${call.name} failed:`, result.content)
       return result
