@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import { appTagText } from '../chat/appTags'
 import { CARRIED_USER_ASSETS_LABEL, compactionBlockText } from '../chat/compaction'
 import { compactionNotesText, type CompactionNotes, type NotesAsset } from '../chat/compactionNotes'
+import { sectionPlainText, textNode } from '../chat/content'
 import { IMAGE_MADE_BY_KEY, IMAGE_TOOL_KEY, imageMarkdown } from '../chat/images'
 import { mediaTagText } from '../chat/mediaTags'
 import { COMPACTION_TAG, FOX_ORIGIN, HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, idImage, invokeBlock, notesData } from '../chat/testing'
@@ -13,7 +15,7 @@ import {
   carriedAssetLines,
   compactionScope,
   keptMiddleMessages,
-  keptUserTexts,
+  keptTexts,
   middleMessageStarts,
   openJobInputs,
   type CompactionAsset,
@@ -186,7 +188,7 @@ describe('compactionScope of notes with message parts', () => {
   it('gives the messages of the parts as the kept texts of the user', () => {
     const sections = [partsCompaction(), reply('r', 'Running.'), user('u3', 'Then use @b again.')]
 
-    expect(keptUserTexts(sections, compactionScope(sections, 'r'), answerWith())).toStrictEqual(['Make a fox.', RUN_LIKE_THIS, 'Then use @b again.'])
+    expect(keptTexts(sections, compactionScope(sections, 'r'), answerWith())).toStrictEqual(['Make a fox.', RUN_LIKE_THIS, 'Then use @b again.'])
   })
 
   it('counts an asset of a message part as an asset of the user, whatever its line tells, and an asset whose line tells the user', () => {
@@ -198,6 +200,88 @@ describe('compactionScope of notes with message parts', () => {
     const seen = assetsOf([partsCompaction({ assets }), reply('r', '')], FACTS, { replySectionId: 'r' })
 
     expect(byId(seen, 'fromUser')).toStrictEqual({ e: true, a: true, b: false })
+  })
+})
+
+describe('the reply of the final message pair', () => {
+  // The reply that `compactionScope` keeps for a conversation in which the
+  // reply `text` came right before the final message of the user.
+  const finalReplyOf = (text: string): string | null => compactionScope([user('u1', 'Make a fox.'), reply('r1', text), user('u2', 'Yes, but red.'), reply('r', '')], 'r').finalReply
+
+  it('takes the reply right before the final message of the user, over empty sections', () => {
+    const sections = [user('u1', 'Make a fox.'), reply('r1', 'A fox.'), user('u2', 'Red?'), reply('r2', 'Shall I make it red?'), user('e', ' \n'), reply('e2', ''), user('u3', 'Yes.'), reply('r', '')]
+
+    expect(compactionScope(sections, 'r').finalReply).toBe('Shall I make it red?')
+  })
+
+  it('takes no reply when a message of the user came right before the final one', () => {
+    const sections = [user('u1', 'Make a fox.'), reply('r1', 'A fox.'), user('u2', 'Red.'), user('u3', 'Now.'), reply('r', '')]
+
+    expect(compactionScope(sections, 'r').finalReply).toBeNull()
+  })
+
+  it('takes no reply with no final message', () => {
+    expect(compactionScope([user('u1', 'Make a fox.'), reply('r', 'A fox.')], 'r').finalReply).toBeNull()
+  })
+
+  it.each([
+    ['only a tool block', invokeBlock('j-aaaa', { intermediate: false })],
+    ['only a hidden asset, with the call of its job', `${invokeBlock('j-aaaa')}\n${hiddenImage('j-aaaa', 'c')}`],
+    ['only blank lines', ' \n\n'],
+  ])('takes no reply that showed no text: %s', (_case, text) => {
+    expect(finalReplyOf(text)).toBeNull()
+  })
+
+  it('takes the reply as the user saw it: no tool block, no hidden asset, a mention in place of an asset, and a label in place of an image with no id and of an app', () => {
+    const text = [
+      'Here is the fox:',
+      invokeBlock('j-aaaa'),
+      hiddenImage('j-aaaa', 'c'),
+      idImage(RED, 'a'),
+      mediaTagText(SONG),
+      imageMarkdown(SKY, []),
+      appTagText('viewer'),
+      'Run `<dez:app name="viewer"/>` to see it.',
+      '```',
+      idImage(RED, 'a'),
+      '```',
+    ].join('\n')
+
+    // A blank line joins the text on the two sides of a tool block
+    // (`withoutToolBlocks`).
+    expect(finalReplyOf(text)).toBe([
+      'Here is the fox:',
+      '',
+      '@a',
+      '@b',
+      '[image]',
+      '[app viewer]',
+      'Run `<dez:app name="viewer"/>` to see it.',
+      '```',
+      idImage(RED, 'a'),
+      '```',
+    ].join('\n'))
+  })
+
+  it('takes a linked image of the reply as its mention, so that its path never counts in the notes', () => {
+    expect(finalReplyOf(`Like this: ${idImage(LINKED, 'e')}`)).toBe('Like this: @e')
+  })
+
+  it('takes the text after the block of the compaction section as the reply', () => {
+    const compaction = partsCompaction()
+    const withText = { ...compaction, content: [textNode(`${sectionPlainText(compaction)}\nShall I make it run?`)] }
+
+    expect(compactionScope([withText, user('u2', 'Yes.'), reply('r', '')], 'r').finalReply).toBe('Shall I make it run?')
+  })
+
+  it('keeps the reply part of the notes while their final part stays the final message', () => {
+    expect(compactionScope([partsCompaction({ finalReply: 'Shall I make it run?' }), reply('r', 'Running.')], 'r').finalReply).toBe('Shall I make it run?')
+  })
+
+  it('drops the reply part of the notes when a user section came after the parts', () => {
+    const sections = [partsCompaction({ finalReply: 'Shall I make it run?' }), reply('r1', ''), user('u2', 'Now a wolf.'), reply('r', '')]
+
+    expect(compactionScope(sections, 'r').finalReply).toBeNull()
   })
 })
 
@@ -305,19 +389,19 @@ describe('compactionAssets', () => {
 })
 
 describe('assetTableText', () => {
-  it('gives one row for each asset: its id, its kind, and whether it is from the user, intermediate, of this reply, and an input of an open job', () => {
-    const assets = assetsOf(COMPACTED, FACTS, { replySectionId: 'r', jobInputs: new Map([['j-bbbb', ['b']]]) })
+  it('gives one row for each asset: its id, its kind, and whether it is from the user, intermediate, of this reply, an input of an open job, and named by a file of an app', () => {
+    const assets = assetsOf(COMPACTED, FACTS, { replySectionId: 'r', jobInputs: new Map([['j-bbbb', ['b']]]), appInputs: new Set(['c', 'z']) })
     const [, ...rows] = assetTableText(assets).split('\n')
-    // The id, the kind, and the four columns after the facts and the origin.
+    // The id, the kind, and the five columns after the facts and the origin.
     const marks = new Map(rows.map((row) => row.split(' | ')).map((cells) => [cells[0], [cells[1], ...cells.slice(4)]]))
 
     expect(rows).toHaveLength(assets.length)
     expect(marks).toStrictEqual(new Map([
-      ['@a', ['image', 'user', '-', '-', '-']],
-      ['@b', ['image', 'made', '-', 'earlier', 'open job']],
-      ['@c', ['image', 'made', 'intermediate', 'this reply', '-']],
-      ['@d', ['audio clip', 'made', 'intermediate', 'this reply', '-']],
-      ['@e', ['image', 'user', '-', '-', '-']],
+      ['@a', ['image', 'user', '-', '-', '-', '-']],
+      ['@b', ['image', 'made', '-', 'earlier', 'open job', '-']],
+      ['@c', ['image', 'made', 'intermediate', 'this reply', '-', 'app file']],
+      ['@d', ['audio clip', 'made', 'intermediate', 'this reply', '-', '-']],
+      ['@e', ['image', 'user', '-', '-', '-', '-']],
     ]))
   })
 
@@ -378,20 +462,20 @@ describe('keptMiddleMessages', () => {
 })
 
 describe('middleMessageStarts', () => {
-  it('gives the start of each middle message on one line, with a label in place of each image and clip', () => {
+  it('gives the start of each middle message on one line, with a label in place of each image, clip, and app', () => {
     const screen = mediaTagText({ kind: 'video', id: 'd', type: 'video/webm', src: '/home/u/Videos/screen.webm', url: null, expires: null, other: [] })
     const sections = [
       user('u0', 'Make a film.'),
       reply('r0', 'ok'),
       user('u1', `For the middle part use\n${idImage(LINKED, 'e')}  and\n${screen}\nnot the renders.`),
       reply('r1', 'ok'),
-      user('u2', 'ok'),
+      user('u2', 'Why is this empty?\n<dez:app name="notes" open="1"/>'),
       reply('r2', 'ok'),
       user('u3', 'Now make the film.'),
       reply('r', ''),
     ]
 
-    expect(middleMessageStarts(compactionScope(sections, 'r'))).toStrictEqual(['For the middle part use [image] and [video] not the renders.', 'ok'])
+    expect(middleMessageStarts(compactionScope(sections, 'r'))).toStrictEqual(['For the middle part use [image] and [video] not the renders.', 'Why is this empty? [app notes]'])
   })
 
   it('labels an image of a message part by the linked paths of the tag', () => {
@@ -424,38 +508,38 @@ describe('middleMessageStarts', () => {
   })
 })
 
-describe('keptUserTexts', () => {
+describe('keptTexts', () => {
   it('gives the first and the final message of the user, and each user section after the replaced ones', () => {
     const sections = [...COMPACTED, reply('later', 'More.'), user('u3', 'Then use @b again.')]
 
-    expect(keptUserTexts(sections, compactionScope(sections, 'r'), answerWith())).toStrictEqual([
+    expect(keptTexts(sections, compactionScope(sections, 'r'), answerWith())).toStrictEqual([
       'Make a fox.',
       `Make it run like this:\n${idImage(SKY, 'e')}`,
       'Then use @b again.',
     ])
   })
 
-  it('gives the middle messages that the answer keeps, in order, and not the ones that it drops', () => {
+  it('gives the middle messages that the answer keeps, in order, and not the ones that it drops, then the reply right before the final message', () => {
     const sections = [
       user('u0', 'Make a fox.'),
       reply('r0', 'A fox.'),
       user('u1', 'Use the fur of @b.'),
       reply('r1', 'ok'),
       user('u2', 'Then use @c.'),
-      reply('r2', 'ok'),
+      reply('r2', 'Done with @c.'),
       user('u3', 'Now make it run.'),
       reply('r', 'working'),
     ]
     const scope = compactionScope(sections, 'r')
 
-    expect(keptUserTexts(sections, scope, answerWith())).toStrictEqual(['Make a fox.', 'Use the fur of @b.', 'Then use @c.', 'Now make it run.'])
-    expect(keptUserTexts(sections, scope, answerWith([{ number: 2, decision: 'drop' }]))).toStrictEqual(['Make a fox.', 'Use the fur of @b.', 'Now make it run.'])
+    expect(keptTexts(sections, scope, answerWith())).toStrictEqual(['Make a fox.', 'Use the fur of @b.', 'Then use @c.', 'Now make it run.', 'Done with @c.'])
+    expect(keptTexts(sections, scope, answerWith([{ number: 2, decision: 'drop' }]))).toStrictEqual(['Make a fox.', 'Use the fur of @b.', 'Now make it run.', 'Done with @c.'])
   })
 
   it('gives only the one message of a conversation in which the user wrote one', () => {
     const sections = [user('u1', 'Make a fox.'), reply('r', 'A fox.')]
 
-    expect(keptUserTexts(sections, compactionScope(sections, 'r'), answerWith())).toStrictEqual(['Make a fox.'])
+    expect(keptTexts(sections, compactionScope(sections, 'r'), answerWith())).toStrictEqual(['Make a fox.'])
   })
 })
 
@@ -522,6 +606,7 @@ describe('assetDecisions', () => {
   it.each<[string, CompactionAsset, Guards, Partial<CompactionAnswer>]>([
     ['an asset of the user', USER, NO_GUARDS, {}],
     ['an input of an open job', { ...EARLIER, jobInput: true }, NO_GUARDS, {}],
+    ['an asset that a file of an app names', { ...EARLIER, appInput: true }, NO_GUARDS, {}],
     ['an asset that the requirements name', EARLIER, NO_GUARDS, { requirements: 'Keep the fur of @b.' }],
     ['an asset that a kept message of the user names', EARLIER, { keptTexts: ['Make it run like @b.'] }, {}],
   ])('keeps %s that the answer drops or has no line for, and shows it when the answer shows it', (_name, asset, guards, notes) => {

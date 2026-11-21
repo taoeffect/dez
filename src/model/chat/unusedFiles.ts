@@ -1,18 +1,23 @@
+import { fileNameOf } from '../../utils/fileName'
+import { isAppName } from '../tools/appManifest'
+import { APPS_ROOT, appSize, pathIn, type AppsTree, type AppsTreeEntry } from '../tools/appsTool'
 import { WORK_ROOT } from '../tools/workFolders'
+import { namedApps } from './appNames'
 import { IMAGE_FOLDERS, storedImageFile } from './images'
 import { savedMediaFile, tempMediaFile } from './mediaFiles'
 import { MEDIA_CACHE_FOLDER, MEDIA_FOLDERS } from './mediaTags'
 import { SHOWN_PICTURE_FOLDER, shownPictureFile } from './shownPictures'
 
-// The stored files that no text uses any more, for the cleanup in Settings ›
-// General. Dez stores a file for each pasted or dropped image and clip, for
-// each image that a model or a Dez tool made, for each clip that the user
-// saved or a Dez tool made, and for each picture that an `asset_view` call
-// showed its model (shownPictures.ts). A text names the file by its path:
-// in an image reference (images.ts) or in the `src` of a media tag
-// (mediaTags.ts); or by its name, in the `pictures` attribute of a tool
-// block (toolBlocks.ts) or of a compaction tag (compaction.ts). A text
-// edit or a conversation delete leaves the file on disk.
+// The files and the apps that no text uses any more, for the two cleanups
+// of Settings › General (`CleanupKind`). Dez stores a file for each pasted
+// or dropped image and clip, for each image that a model or a Dez tool
+// made, for each clip that the user saved or a Dez tool made, and for each
+// picture that an `asset_view` call showed its model (shownPictures.ts). A
+// text names the file by its path: in an image reference (images.ts) or in
+// the `src` of a media tag (mediaTags.ts); or by its name, in the
+// `pictures` attribute of a tool block (toolBlocks.ts) or of a compaction
+// tag (compaction.ts). A text edit or a conversation delete leaves the
+// file on disk.
 //
 // The rule here: a file is in use when a text holds its file name, in any
 // form (a reference, a tag, a path as plain text, with any route to the
@@ -20,12 +25,31 @@ import { SHOWN_PICTURE_FOLDER, shownPictureFile } from './shownPictures'
 // find, so the cleanup can keep a file that nothing shows, but it never
 // deletes a file that Dez shows or sends.
 //
-// The cleanup also takes the files of Dez's cache folder that nothing uses
-// (`cacheEntryKind`): a temp copy of a clip that no text names, and what
-// work of Dez left there (a download or a work folder whose app stopped
-// before its end). The hourly cleanup (controller/media.ts) deletes them
-// too, but only at the end of their lifetime (`MEDIA_TEMP_LIFETIME_MS`,
-// `WORK_FOLDER_LIFETIME_MS`).
+// The cleanup of the files also takes the files of Dez's cache folder that
+// nothing uses (`cacheEntryKind`): a temp copy of a clip that no text
+// names, and what work of Dez left there (a download or a work folder whose
+// app stopped before its end). The hourly cleanup (controller/media.ts)
+// deletes them too, but only at the end of their lifetime
+// (`MEDIA_TEMP_LIFETIME_MS`, `WORK_FOLDER_LIFETIME_MS`).
+//
+// The cleanup of the apps takes the apps that no text names
+// (`oldAppFolder`): an app is a folder of `apps/` in the app folder, which
+// the `apps` tool made (tools/appsTool.ts). It stays from one conversation
+// to the next, so it is unreferenced only when no conversation and no
+// saved prompt names it by the rule of appNames.ts. An app is the work of
+// a model for the user, and not a copy of a file: the cleanup of the files
+// never takes one, so a user who frees disk space cannot lose an app by
+// accident. The files of an app are not read for the names of stored
+// files: a run of an app gets copies of its inputs, or their bytes, and
+// never a path of a stored file, so Dez writes no such path into an app.
+
+/** What one cleanup of Settings › General looks for. */
+export type CleanupKind = 'files' | 'apps'
+
+/** The noun of one thing of a cleanup of the kind `kind`. */
+export function cleanupNoun(kind: CleanupKind): 'file' | 'app' {
+  return kind === 'apps' ? 'app' : 'file'
+}
 
 /** The folders of the stored files, relative to the app folder. A new
  *  folder of stored files joins here and in `storedFilePath`, or the
@@ -47,31 +71,38 @@ export type StoredFileRoot = 'app' | 'cache'
 
 export interface StoredFile {
   root: StoredFileRoot
-  /** Relative to the root: `assets/images/<name>` in the app folder;
-   *  `media/<name>` or `work/<id>` (a folder) in the cache folder. */
+  /** Relative to the root: `assets/images/<name>` or `apps/<name>` (the
+   *  folder of an app) in the app folder; `media/<name>` or `work/<id>` (a
+   *  folder) in the cache folder. */
   path: string
-  /** In bytes; for a work folder, the size of the files in it. */
+  /** In bytes; for a folder, the size of the files in it. */
   size: number
 }
 
-/** What a scan for unused files found (`dez.controller/unusedFiles/find`). */
+/** A file of the cleanup, with no size. */
+export type FileRef = Pick<StoredFile, 'root' | 'path'>
+
+/** What a scan for unreferenced files or apps found
+ *  (`dez.controller/unusedFiles/find`). */
 export interface UnusedFiles {
+  /** What the scan looked for: `files` holds only things of this kind. */
+  kind: CleanupKind
   files: StoredFile[]
   /** The total size of `files`, in bytes. */
   bytes: number
 }
 
-/** What a delete did with the files of a scan
+/** What a delete did with the files or the apps of a scan
  *  (`dez.controller/unusedFiles/delete`). */
 export interface UnusedFilesDeleted {
-  /** The number of the files that are deleted. */
+  /** How many are deleted. */
   deleted: number
-  /** The total size of the deleted files, in bytes. */
+  /** The total size of what is deleted, in bytes. */
   bytes: number
-  /** The number of the files that are in use since the scan: a text names
-   *  them, or work of Dez holds them. They stay. */
+  /** How many are in use since the scan: a text names them, or work of
+   *  Dez holds them. They stay. */
   inUse: number
-  /** The number of the files that could not be deleted. */
+  /** How many could not be deleted. */
   failed: number
 }
 
@@ -152,11 +183,13 @@ export function isHeldCacheEntry(path: string, held: ReadonlySet<string>): boole
   return held.has(path.replace(WRITE_TEMP_END, ''))
 }
 
-/** Whether a text can name the file `file` of the cleanup, and so keep it
- *  (`removeNamedFiles`): a stored file, or a temp copy of a clip in the
- *  cache folder `cacheDir`. A download and a work folder have no name that
- *  a text holds: only live work keeps them (`isHeldCacheEntry`). */
-export function textCanName(file: StoredFile, cacheDir: string): boolean {
+// Whether a text can name the file `file` of the cleanup by its file name,
+// and so keep it (`removeNamedFiles`): a stored file, or a temp copy of a
+// clip in the cache folder `cacheDir`. A download and a work folder have no
+// name that a text holds: only live work keeps them (`isHeldCacheEntry`).
+// An app is not for this rule: a text names it by the rule of appNames.ts
+// (`cleanupAppName`).
+function textCanName(file: FileRef, cacheDir: string): boolean {
   return file.root === 'app' || cacheEntryKind(file.path, cacheDir) === 'copy'
 }
 
@@ -172,6 +205,42 @@ export function oldCacheEntries(folder: string, entries: readonly ListedFile[], 
     if (updatedAt + UNUSED_FILE_MIN_AGE_MS > now || cacheEntryKind(path, cacheDir) === null || isHeldCacheEntry(path, held)) return []
     return [{ root: 'cache', path, size }]
   })
+}
+
+/** The name of the app whose folder the file `file` of a cleanup is
+ *  (`apps/<name>` in the app folder), whether a text names the app or not;
+ *  null for any other file. */
+export function cleanupAppName(file: FileRef): string | null {
+  if (file.root !== 'app') return null
+  const [folder, name, ...below] = file.path.split('/')
+  return folder === APPS_ROOT.file && name !== undefined && below.length === 0 && isAppName(name) ? name : null
+}
+
+/** A listing of the folder of an app with the time of each entry
+ *  (`dez.native/listFileTree`), in milliseconds since the Unix epoch; null
+ *  for a time that the system did not give. */
+export interface TimedAppTree extends AppsTree {
+  updatedAt: number | null
+  entries: readonly (AppsTreeEntry & { updatedAt: number | null })[]
+}
+
+/** The folder of the app `name` as a file of the cleanup, which can delete
+ *  it when no text names the app; null for an app that it must keep
+ *  whatever the texts hold. `tree` is the listing of the folder, with as
+ *  many entries as an app of the `apps` tool can have. Kept:
+ *  - a name that is no name of an app, and a path that is no folder: the
+ *    `apps` tool made neither;
+ *  - an app that changed less than `UNUSED_FILE_MIN_AGE_MS` before the time
+ *    `now`: `apps init` makes the folder first, and the text that names the
+ *    app comes after that. A change of any file or folder of the app
+ *    counts, and so does a time that the system did not give;
+ *  - an app with more entries than the listing has: Dez did not see them
+ *    all. */
+export function oldAppFolder(name: string, tree: TimedAppTree, now: number): StoredFile | null {
+  if (!isAppName(name) || tree.kind !== 'folder' || tree.more) return null
+  const times = [tree.updatedAt, ...tree.entries.map((entry) => entry.updatedAt)]
+  if (times.some((time) => time === null || time + UNUSED_FILE_MIN_AGE_MS > now)) return null
+  return { root: 'app', path: pathIn(APPS_ROOT, name).file, size: appSize(tree).bytes }
 }
 
 // A character of the part of a stored file's name before its `.`
@@ -202,4 +271,46 @@ export function removeNamedFiles(names: Set<string>, text: string): void {
     while (end < text.length && isExtensionChar(text.charCodeAt(end))) end++
     if (start < dot && end > dot + 1) names.delete(text.slice(start, end))
   }
+}
+
+/** The files of a cleanup that no text names yet: the file names of the
+ *  files that a text keeps by its file name, and the names of the apps.
+ *  `removeNamed` takes out what a text names. */
+export interface UnnamedFiles {
+  fileNames: Set<string>
+  apps: Set<string>
+}
+
+/** The names by which a text can keep one of `files` (in the cache folder
+ *  `cacheDir` or in the app folder). A file that no text can name, such as
+ *  a work folder, adds nothing. */
+export function unnamedFiles(files: readonly FileRef[], cacheDir: string): UnnamedFiles {
+  const unnamed: UnnamedFiles = { fileNames: new Set(), apps: new Set() }
+  for (const file of files) {
+    const app = cleanupAppName(file)
+    if (app !== null) unnamed.apps.add(app)
+    else if (textCanName(file, cacheDir)) unnamed.fileNames.add(fileNameOf(file.path))
+  }
+  return unnamed
+}
+
+/** Whether `unnamed` has a name left. With none, no text needs a read. */
+export function hasUnnamed(unnamed: UnnamedFiles): boolean {
+  return unnamed.fileNames.size > 0 || unnamed.apps.size > 0
+}
+
+/** Takes out of `unnamed` each file and each app that `text` names
+ *  (`removeNamedFiles`; `namedApps`, appNames.ts). */
+export function removeNamed(unnamed: UnnamedFiles, text: string): void {
+  if (unnamed.fileNames.size > 0) removeNamedFiles(unnamed.fileNames, text)
+  if (unnamed.apps.size === 0) return
+  for (const name of namedApps(text)) unnamed.apps.delete(name)
+}
+
+/** Whether a text named the file `file` since `unnamed` was made from it
+ *  (`unnamedFiles`). False for a file that no text can name. */
+export function isNamed(file: FileRef, unnamed: UnnamedFiles, cacheDir: string): boolean {
+  const app = cleanupAppName(file)
+  if (app !== null) return !unnamed.apps.has(app)
+  return textCanName(file, cacheDir) && !unnamed.fileNames.has(fileNameOf(file.path))
 }

@@ -12,10 +12,11 @@ import { pidsWithCwd } from './harness/processes'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
 import { sbpCall } from './harness/thread'
 
-// The programs that Dez ships (ffmpeg and ffprobe), run by the real app
-// through `dez.native/runBundledTool`: the work folder, the copies of the
-// input files, the ends of a run, and the cleanup. No provider, and no tool
-// of a model: the spec calls the native selectors in the page.
+// The programs that Dez ships (ffmpeg, ffprobe, and Deno), run by the real
+// app through `dez.native/runBundledTool`: the work folder, the copies of
+// the input files, the ends of a run, the input of a run, and the cleanup.
+// No provider, and no tool of a model: the spec calls the native selectors
+// in the page.
 
 /** What the page got of one run. */
 interface RunRecord {
@@ -44,6 +45,24 @@ function endlessRun (folder: string): BundledToolRun {
     ...WIDE_LIMITS,
   }
 }
+
+/** A Deno script that tells that it runs, with its time zone, and then
+ *  answers each line of its input, the path of a file, with what a read of
+ *  the file and a change of its mode gave: the text, or the name of the
+ *  error. The line `end` ends it with the exit code 3. */
+const FILE_ANSWERS_SCRIPT = `
+const outcome = (work: () => Promise<unknown>) => work().then(String, (error) => error.name)
+const zone: string = Intl.DateTimeFormat().resolvedOptions().timeZone
+console.log(\`ready in \${zone}\`)
+const decoder = new TextDecoder()
+for await (const piece of Deno.stdin.readable) {
+  const file = decoder.decode(piece).trim()
+  if (file === 'end') Deno.exit(3)
+  const read = await outcome(() => Deno.readTextFile(file))
+  const chmod = await outcome(() => Deno.chmod(file, 0o644).then(() => 'changed'))
+  console.log(JSON.stringify({ read, chmod }))
+}
+`
 
 /** Starts a run in the page and does not wait for its end: `runRecord`
  *  reads what the page got of it. */
@@ -183,7 +202,7 @@ describe('bundled tools', () => {
 
     const outside = randomUUID()
     await startRun(browser, outside, { tool: 'dez-ffmpeg', args: ['-version'], folder: '../outside', inputs: [], ...WIDE_LIMITS })
-    expect(await endedRun(browser, outside)).toStrictEqual({ stdout: '', stderr: '', end: null, refusal: 'Invalid app file path: ../outside' })
+    expect(await endedRun(browser, outside)).toStrictEqual({ stdout: '', stderr: '', end: null, refusal: 'Invalid work folder path: ../outside' })
 
     // No refused run made a folder.
     expect(fs.existsSync(path.join(workDir(app.home), id))).toBe(false)
@@ -252,6 +271,54 @@ describe('bundled tools', () => {
     expect(fs.existsSync(written)).toBe(false)
 
     await sbpCall(browser, 'dez.native/deleteAppFile', folder, 'cache', { folder: true })
+  })
+
+  // Deno under its rules (`DENO_RULES` in src-tauri/src/bundled_tools.rs):
+  // the page gives the name of a script and writes to its input. The script
+  // has the time zone of its run, and opens its app folder but no other
+  // file of the user. Two guards keep it there:
+  // - Deno's own permissions (`NotCapable`);
+  // - the OS rule of src-tauri/src/confinement.rs, which refuses what
+  //   Deno's permissions do not cover: a change of the mode of a file that
+  //   the script can write, and an `import` of a file outside the folders.
+  it('runs a Deno script that gets the texts of the page and opens only the folders of its run', async () => {
+    const appFile = await writeTestFile(appFilePath(app.home, 'apps', 'e2e-app', 'data.txt'), Buffer.from('app data'))
+    const privateFile = await writeTestFile(path.join(app.home, 'private.ts'), Buffer.from("export const text = 'private text'\n"))
+    fs.chmodSync(appFile, 0o600)
+    /** Starts a run of `script` in a work folder of its own, and gives the
+     *  id of the run, which is also the name of the folder. */
+    const startScript = async (script: string, options: Partial<BundledToolRun>): Promise<string> => {
+      const runId = randomUUID()
+      const source = await writeTestFile(path.join(app.home, 'scripts', `${runId}.ts`), Buffer.from(script))
+      await startRun(browser, runId, { tool: 'dez-deno', args: ['main.ts'], folder: workFolderPath(runId), inputs: [{ name: 'main.ts', source }], ...WIDE_LIMITS, ...options })
+      return runId
+    }
+
+    const runId = await startScript(FILE_ANSWERS_SCRIPT, { stdin: true, appFolder: 'e2e-app', timeZone: 'Asia/Tokyo' })
+    let stdout = 'ready in Asia/Tokyo\n'
+    const waitForStdout = () => waitForValue(browser, 'what the page got of the script', () => runRecord(browser, runId), { stdout, stderr: '', end: null, refusal: null })
+    await waitForStdout()
+    const answers = [
+      { file: appFile, answer: { read: 'app data', chmod: 'PermissionDenied' } },
+      { file: privateFile, answer: { read: 'NotCapable', chmod: 'NotCapable' } },
+    ]
+    for (const { file, answer } of answers) {
+      await sbpCall(browser, 'dez.native/writeBundledToolInput', runId, `${file}\n`)
+      stdout += `${JSON.stringify(answer)}\n`
+      await waitForStdout()
+    }
+    await sbpCall(browser, 'dez.native/writeBundledToolInput', runId, 'end\n')
+    expect(await endedRun(browser, runId)).toStrictEqual({ stdout, stderr: '', end: { kind: 'exited', code: 3 }, refusal: null })
+    expect(fs.statSync(appFile).mode & 0o777).toBe(0o600)
+
+    const importId = await startScript(`import { text } from '${privateFile}'\nconsole.log(text)\n`, { appFolder: 'e2e-app' })
+    const imported = await endedRun(browser, importId)
+    expect({ stdout: imported.stdout, end: imported.end }).toStrictEqual({ stdout: '', end: { kind: 'exited', code: 1 } })
+    expect(imported.stderr).toContain('Permission denied')
+
+    for (const id of [runId, importId]) {
+      await sbpCall(browser, 'dez.native/deleteAppFile', workFolderPath(id), 'cache', { folder: true })
+    }
   })
 
   it('stops a program on a cancel, at its time limit, and at its output cap', async () => {

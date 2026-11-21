@@ -47,6 +47,8 @@ export async function toolChips (browser: E2EBrowser): Promise<ToolChipView[]> {
 
 /** What the panel of an open chip shows of the call. */
 export interface ToolPanelView {
+  /** The parameter rows of the call. The code of a `js_eval` call is not
+   *  one of them (`codePanel`). */
   parameters: Array<[string, string]>
   result: string | null
   /** The call is in the error or the interrupted state. Not `error`: a
@@ -55,19 +57,80 @@ export interface ToolPanelView {
 }
 
 /** The panel of the chip `index` (doc order); null while it is closed. The
- *  result field is found by its name: the panel of an intermediate call
- *  can hold a second field, before it (`hiddenPart`). */
+ *  result field is found by its name, and the parameter rows as the ones
+ *  of the panel itself: the panel of an intermediate call can hold a
+ *  second field, before it (`hiddenPart`), and the panel of a `js_eval`
+ *  call the rows and the fields of the tool calls of its code
+ *  (`codePanel`). */
 export async function toolPanel (browser: E2EBrowser, index: number): Promise<ToolPanelView | null> {
   return browser.execute((chipIndex: number) => {
     const panel = document.querySelectorAll('.cm-content .dez-tool-call')[chipIndex]?.querySelector('.dez-tool-call__panel')
     if (!panel) return null
-    const names = Array.from(panel.querySelectorAll('.dez-tool-call__parameter-name'), (name) => name.textContent ?? '')
-    const values = Array.from(panel.querySelectorAll('.dez-tool-call__parameter-value'), (value) => value.textContent ?? '')
+    const names = Array.from(panel.querySelectorAll(':scope > .dez-tool-call__parameters > .dez-tool-call__parameter-name'), (name) => name.textContent ?? '')
+    const values = Array.from(panel.querySelectorAll(':scope > .dez-tool-call__parameters > .dez-tool-call__parameter-value'), (value) => value.textContent ?? '')
     const result = panel.querySelector<HTMLTextAreaElement>('textarea[aria-label="Result"]')
     return {
       parameters: names.map((name, at): [string, string] => [name, values[at] ?? '']),
       result: result?.value ?? null,
       failed: result?.closest('.dez-tool-call__result')?.hasAttribute('data-error') ?? false,
+    }
+  }, index)
+}
+
+/** One tool call of the code of a `js_eval` call, as the panel of its chip
+ *  shows it. */
+export interface CodeToolCallView {
+  name: string
+  /** `data-status` of the call. */
+  status: string | null
+  /** "failed" or "not finished"; null for a call that gave a result. */
+  stateWord: string | null
+  parameters: Array<[string, string]>
+  /** The text of the result field, and what the field shows in its place
+   *  while that is blank. */
+  result: string
+  placeholder: string
+  /** The result field has the look of an error. */
+  failed: boolean
+}
+
+/** What the open panel of a `js_eval` chip shows of the code of its call. */
+export interface CodePanelView {
+  /** The headings of the panel, in order. */
+  headings: string[]
+  /** The text of the code field; null for a panel with none. */
+  code: string | null
+  /** The tool calls of the code, in order. */
+  calls: CodeToolCallView[]
+  /** The line that tells how many tool calls the list does not hold; null
+   *  for none. */
+  more: string | null
+}
+
+/** The code part and the tool calls of the code in the panel of the chip
+ *  `index` (doc order); null while the panel is closed. */
+export async function codePanel (browser: E2EBrowser, index: number): Promise<CodePanelView | null> {
+  return browser.execute((chipIndex: number) => {
+    const panel = document.querySelectorAll('.cm-content .dez-tool-call')[chipIndex]?.querySelector('.dez-tool-call__panel')
+    if (!panel) return null
+    return {
+      headings: Array.from(panel.querySelectorAll('.dez-tool-call__heading'), (heading) => heading.textContent ?? ''),
+      code: panel.querySelector<HTMLTextAreaElement>('textarea[aria-label="Code"]')?.value ?? null,
+      calls: Array.from(panel.querySelectorAll<HTMLElement>('.dez-tool-call__bridged-call'), (call) => {
+        const names = Array.from(call.querySelectorAll('.dez-tool-call__parameter-name'), (name) => name.textContent ?? '')
+        const values = Array.from(call.querySelectorAll('.dez-tool-call__parameter-value'), (value) => value.textContent ?? '')
+        const result = call.querySelector<HTMLTextAreaElement>('textarea')
+        return {
+          name: call.querySelector('.dez-tool-call__bridged-name')?.textContent ?? '',
+          status: call.dataset.status ?? null,
+          stateWord: call.querySelector('.dez-tool-call__bridged-state')?.textContent ?? null,
+          parameters: names.map((name, at): [string, string] => [name, values[at] ?? '']),
+          result: result?.value ?? '',
+          placeholder: result?.placeholder ?? '',
+          failed: result?.closest('.dez-tool-call__result')?.hasAttribute('data-error') ?? false,
+        }
+      }),
+      more: panel.querySelector('.dez-tool-call__bridged-more')?.textContent ?? null,
     }
   }, index)
 }

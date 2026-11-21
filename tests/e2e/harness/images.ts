@@ -1,5 +1,5 @@
 import zlib from 'node:zlib'
-import { waitForValue } from './dom'
+import { waitForValue, type Point } from './dom'
 import { appFilePath } from './fixtures'
 import type { E2EBrowser } from './session'
 import { threadSections } from './thread'
@@ -112,6 +112,16 @@ export async function decodedImage (browser: E2EBrowser, url: string, points: Ar
       }),
     }
   }, url, wantedPoints)
+}
+
+/** The colors (red, green, blue, alpha) of the window at `points` (in
+ *  viewport px), from a WebDriver screenshot: what the user sees, also the
+ *  pages of frames and what CSS draws over them. */
+export async function screenPixels (browser: E2EBrowser, points: readonly Point[]): Promise<number[][]> {
+  const scale = await browser.execute(() => window.devicePixelRatio)
+  const shot = `data:image/png;base64,${await browser.takeScreenshot()}`
+  const scaled = points.map(({ x, y }): [number, number] => [Math.round(x * scale), Math.round(y * scale)])
+  return (await decodedImage(browser, shot, scaled)).pixels
 }
 
 /** The JPEG that the WebView encodes from the PNG `png`, at full quality:

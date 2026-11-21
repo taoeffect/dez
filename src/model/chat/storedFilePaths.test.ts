@@ -149,6 +149,24 @@ describe('withoutStoredFilePaths', () => {
     }
   })
 
+  // The code of an app can write the real path of its folder into a file,
+  // which `apps read` shows.
+  it.each([
+    ['a file of an app', 'state: /home/ann/.config/dez/apps/notes/data/state.json (3 notes)', 'state: /apps/notes/data/state.json (3 notes)'],
+    ['the folder of an app in a home folder with spaces', 'in /Users/Zoë Ann/.config/dez/apps/notes', 'in /apps/notes'],
+    ['the folder of the apps itself', '"/home/ann/.config/dez/apps"', '"/apps"'],
+    ['a file URL of a file of an app', 'at file:///home/ann/.config/dez/apps/notes/main.ts:12:3', 'at file:/apps/notes/main.ts:12:3'],
+  ])('sends the path of %s as the path that the apps tool takes', (_case, text, sent) => {
+    expect(withoutStoredFilePaths(text)).toBe(sent)
+    expect(withoutStoredFilePaths(sent)).toBe(sent)
+  })
+
+  it('leaves the path of a folder next to the folder of the apps as it is', () => {
+    for (const text of ['/home/ann/.config/dez/apps-old/notes/main.ts', '/home/ann/.config/dez/apps.zip', '/home/ann/.config/dez2/apps/notes']) {
+      expect(withoutStoredFilePaths(text)).toBe(text)
+    }
+  })
+
   // A regex that rescans a line from each `/` takes seconds on a long line,
   // and every send scrubs every message.
   it('takes linear time on a long line with many slashes', () => {

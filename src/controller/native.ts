@@ -21,6 +21,7 @@ import type {
   BundledToolRun,
   CopilotChatToken,
   CopilotDeviceFlowResponse,
+  FileTree,
   LatestRelease,
 } from './nativeTypes'
 import { holdingCachePath } from './cacheHolds'
@@ -67,9 +68,9 @@ export default sbp('sbp/selectors/register', {
   // accepts is saved (`download_app_file` in src-tauri/src/http_bridge.rs);
   // read `saved` of the result. Rejects on a network error, a body over
   // `rule.maxBytes`, and a cancel. A download into the cache root holds its
-  // target while it runs, so that Delete Unused Files does not take its
-  // files (cacheHolds.ts); every download of a clip comes here, the ones of
-  // the model layer too.
+  // target while it runs, so that Delete Unreferenced Files does not take
+  // its files (cacheHolds.ts); every download of a clip comes here, the
+  // ones of the model layer too.
   'dez.native/downloadAppFile' (request: NativeHttpRequest, requestId: string, file: AppFileRef, rule: NativeDownloadRule): Promise<NativeHttpDownload> {
     const download = () => invoke<NativeHttpDownload>('download_app_file', { request, requestId, root: file.root, path: file.path, rule })
     return file.root === 'cache' ? holdingCachePath(file.path, download) : download()
@@ -119,21 +120,37 @@ export default sbp('sbp/selectors/register', {
     return invoke<string>('load_app_file', { path })
   },
 
-  // Rejects when the file is missing.
+  // Rejects when the file is missing. In a place that programs own (the
+  // cache root, and `apps/` of the app root; `is_program_owned` in
+  // src-tauri/src/persistence.rs) it also rejects for all that is no regular
+  // file. It has no size limit: ask `dez.native/listFileTree` for the size
+  // of a file that a program can have made.
   async 'dez.native/loadAppFileBytes' (path: string, root: AppFileRoot = 'app'): Promise<Uint8Array> {
     return new Uint8Array(await invoke<ArrayBuffer>('load_app_file_bytes', { root, path }))
   },
 
   // A missing file is not an error. With `folder`, the path names a folder,
-  // which goes with all that it holds; only a folder of the cache root can
-  // be deleted.
+  // which goes with all that it holds; only a folder of the cache root, or
+  // one below `apps/` of the app root, can be deleted.
   'dez.native/deleteAppFile' (path: string, root: AppFileRoot = 'app', { folder = false }: { folder?: boolean } = {}): Promise<void> {
     return invoke('delete_app_file', { root, path, folder })
+  },
+
+  // Makes a folder that only the user can open, with the missing folders
+  // above it. A folder that is there already is not an error. Only in the
+  // cache root, and below `apps/` of the app root. Make the folder of an app
+  // with this: a save or a move makes a missing folder that others can open.
+  'dez.native/createFolder' (path: string, root: AppFileRoot = 'app'): Promise<void> {
+    return invoke('create_folder', { root, path })
   },
 
   // Moves a file, also from one root to the other. A file at `to` is
   // replaced; a missing file at `from` rejects. Only the user can read the
   // file after the move.
+  //
+  // A folder at `from` moves with all that it holds, where a folder can be
+  // deleted (`dez.native/deleteAppFile`), and only inside one file system.
+  // Unlike a file, it replaces nothing: a file or a folder at `to` rejects.
   'dez.native/moveAppFile' (from: AppFileRef, to: AppFileRef): Promise<void> {
     return invoke('move_app_file', { fromRoot: from.root, fromPath: from.path, toRoot: to.root, toPath: to.path })
   },
@@ -143,6 +160,15 @@ export default sbp('sbp/selectors/register', {
   // entry whose name is no valid path segment of the app-file selectors.
   'dez.native/listAppFiles' (path: string, root: AppFileRoot = 'app', { folders = false }: { folders?: boolean } = {}): Promise<AppFileEntry[]> {
     return invoke<AppFileEntry[]>('list_app_files', { root, path, folders })
+  },
+
+  // What is at a path and, for a folder, every entry below it at any depth
+  // (`FileTree`). Unlike `dez.native/listAppFiles` it leaves nothing out,
+  // and it follows no link. It lists at most `maxEntries` entries, so that a
+  // folder which a program filled costs a known amount of work; with 0 it
+  // tells only what the path is, and whether a folder holds anything.
+  'dez.native/listFileTree' (path: string, maxEntries: number, root: AppFileRoot = 'app'): Promise<FileTree> {
+    return invoke<FileTree>('list_file_tree', { root, path, maxEntries })
   },
 
   // The absolute path of a root folder.
@@ -155,7 +181,10 @@ export default sbp('sbp/selectors/register', {
   // program chose. `onOutput` gets the output while the program runs, as
   // pieces of text in the order of each stream (a piece is not a line).
   // Rejects when the run did not start: a bad folder path or input file, a
-  // `runId` that is active, a program that is missing.
+  // `runId` that is active, a program that is missing, a run that the rules
+  // of its program refuse. The error of a program that must be confined, on
+  // a computer whose OS cannot confine it, starts with `No confinement: `
+  // (`NO_CONFINEMENT` in src-tauri/src/confinement.rs).
   //
   // The channel is made here, not by the caller as for `streamHttp`: the end
   // of a run is its last channel event (a command result can come before
@@ -195,6 +224,20 @@ export default sbp('sbp/selectors/register', {
   // run is kept too, so give each run a new `runId`.
   'dez.native/cancelBundledTool' (runId: string): Promise<void> {
     return invoke('cancel_bundled_tool', { runId })
+  },
+
+  // Writes `text` to the input of a `runBundledTool` run with `stdin`, after
+  // the texts of the earlier writes; the program gets it as it is, so a line
+  // needs its `\n`. Resolves when the text is in the queue of the run, which
+  // waits while the program does not read. Rejects when no run with this id
+  // is active, when the run has no `stdin`, and when its program closed its
+  // input. The backend runs each command as its own task, so:
+  // - a write can come before its run is active: write only after the run
+  //   gave an output;
+  // - two writes at the same time have no order: wait for each one.
+  // The input stays open to the end of the run; there is no way to close it.
+  'dez.native/writeBundledToolInput' (runId: string, text: string): Promise<void> {
+    return invoke('write_bundled_tool_input', { runId, text })
   },
 
   // The canonical paths of the OS temp folders that exist

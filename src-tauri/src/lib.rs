@@ -1,3 +1,4 @@
+mod app_frames;
 mod bundled_tools;
 mod commands;
 mod confinement;
@@ -38,6 +39,8 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())
+        // The scheme of the app frames, with their guards (app_frames.rs).
+        .plugin(app_frames::plugin())
         .manage(reqwest::Client::new())
         .manage(http_bridge::HttpStreamState::new())
         .manage(bundled_tools::ToolRuns::default())
@@ -70,8 +73,10 @@ pub fn run() {
             commands::load_app_file,
             commands::load_app_file_bytes,
             commands::delete_app_file,
+            commands::create_folder,
             commands::move_app_file,
             commands::list_app_files,
+            commands::list_file_tree,
             commands::get_app_dir,
             commands::temp_folders,
             commands::canonical_path,
@@ -83,6 +88,7 @@ pub fn run() {
             idle::user_idle_ms,
             bundled_tools::run_bundled_tool,
             bundled_tools::cancel_bundled_tool,
+            bundled_tools::write_bundled_tool_input,
         ]);
     // macOS brings the app to the front when it starts, and with it each
     // window that is visible at that time. The main window starts hidden

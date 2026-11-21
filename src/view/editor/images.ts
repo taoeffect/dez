@@ -16,7 +16,7 @@ import { noteDrawnAsset, type AssetPlace } from './drawnAssets'
 import { HiddenAssetWidget, hiddenAssetLines, hiddenAssetOwnerKinds } from './hiddenAssets'
 import { sectionRolesChanged, sectionTexts } from './lineBlocks'
 import { followShownRange, pendingRanges, type DocRange } from './pendingRanges'
-import { ROUND_STROKE, svgIcon } from './svgIcon'
+import { trashIcon } from './svgIcon'
 import { tableRowStarts } from './tables'
 
 interface ImageDecorations {
@@ -85,13 +85,6 @@ async function showFileSize(path: string, facts: HTMLElement): Promise<void> {
   if (size === null) return
   fileSizes.set(path, size)
   facts.textContent = imageFactsText(path)
-}
-
-/** The trash can of the History and Prompts lists. */
-function trashIcon(): SVGSVGElement {
-  return svgIcon('0 0 12 12', [
-    ['path', { d: 'M2.5 3.5h7m-5.5 0V2.5a.5.5 0 01.5-.5h2a.5.5 0 01.5.5V3.5m-3 0v6a.5.5 0 00.5.5h4a.5.5 0 00.5-.5v-6', ...ROUND_STROKE, 'stroke-width': '1.1' }],
-  ])
 }
 
 /** The button that deletes the image whose reference is at `place`

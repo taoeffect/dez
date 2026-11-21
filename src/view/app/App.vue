@@ -41,10 +41,11 @@ onUnmounted(() => {
   --color-code: #c792ea;
   --color-selection: #d7d4f0;
   --color-selection-inactive: rgba(100, 149, 237, 0.35);
-  /* The tints over an image or a player's card in a selection, with the
-     editor focus and without it. They are translucent, so the asset stays
-     clear, and over the background they give the two selection colors
-     above, so that the asset reads as a part of the selection. */
+  /* The tints over an image, a player's card, or an app card in a
+     selection, with the editor focus and without it. They are
+     translucent, so the asset stays clear, and over the background they
+     give the two selection colors above, so that the asset reads as a
+     part of the selection. */
   --color-selection-tint: rgba(184, 178, 234, 0.5);
   --color-selection-tint-inactive: rgba(100, 149, 237, 0.35);
   --color-find-match: rgba(255, 190, 60, 0.35);

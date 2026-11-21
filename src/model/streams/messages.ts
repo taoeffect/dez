@@ -1,7 +1,8 @@
 import type { MessagePart, ModelRef, Section, SectionThinking, ThinkingReplay } from '../chat/types'
+import { appTagsForRequest, appTagText, findAppTags } from '../chat/appTags'
 import { assetTextPieces } from '../chat/assetMentions'
 import { blockLinkedRule, COMPACTION_MESSAGE_INTRO, COMPACTION_USER_MESSAGE_LABEL, compactionMessageEnd, isCarriedUserAssets, partsImageReferences, sectionCompactionBlock, sectionLinkedRuleParts, sectionTextParts, type CompactionBlock, type LinkedRulePart } from '../chat/compaction'
-import { messageFence, notesMessages } from '../chat/compactionNotes'
+import { messageFence, notesMessageParts, notesMessages } from '../chat/compactionNotes'
 import { sectionIsEmpty, sectionPlainText } from '../chat/content'
 import { findAssetMentions, type AssetMention } from '../chat/imageMentions'
 import { findImageReferences, IMAGE_TOOL_KEY, type ImageReference, type LinkedPathRule } from '../chat/images'
@@ -15,6 +16,7 @@ import type { ClipAttachment } from '../providers/clipInputs'
 import { minInputImages } from '../providers/clipImages'
 import { imageLimitOf, messageImageLimitOf } from '../providers/modelFamilies'
 import type { ClipInputRules, MediaKind, ModelInfo } from '../providers/types'
+import { shownAppNames } from '../tools/appShow'
 import { madeAssetIds } from '../tools/jobs'
 import type { ToolCall, ToolResult } from '../tools/types'
 import { conversationAssets, preparedMediaRequest, type MediaRequestInput } from './mediaRequest'
@@ -103,7 +105,9 @@ export function imageOptionsOf(model: Pick<ModelInfo, 'id' | 'imageInput' | 'ima
 // its reference or tag is in the reply, at the start of the text of the
 // round after the tool's group. An agent message leaves it out when a
 // result of that group names the asset (`roundRequestText`): the result
-// already tells the model the id.
+// already tells the model the id. The tag of an app that `apps show`
+// shows is in the same place, and goes by the same rule
+// (chat/appTags.ts).
 //
 // Prompt cache: a message of the sections is the same bytes in every later
 // request: it is built from its own section and the sections before it,
@@ -151,7 +155,7 @@ export function sectionsToStreamMessages(sections: Section[], requestModel: Mode
     // The count is of the image parts that the message has for a model
     // that reads images, so the toast and the request always agree.
     if (parts !== null && !options.sendImages) imagesLeftOut = parts.filter((part) => part.type === 'image').length
-    newestUserMessage = parts !== null && options.sendImages ? parts : withoutStoredFilePaths(mediaTagsForRequest(messageText))
+    newestUserMessage = parts !== null && options.sendImages ? parts : withoutStoredFilePaths(userTextForRequest(messageText))
   }
   sections.forEach((section, index) => {
     if (sectionIsEmpty(section)) return
@@ -182,7 +186,7 @@ export function sectionsToStreamMessages(sections: Section[], requestModel: Mode
       addUserText(compaction, text, imagesById, images, true)
     } else {
       startMessage(images)
-      messages.push({ role: 'user', content: (options.sendImages ? userMessageContent(text, imagesById, images) : null) ?? withoutStoredFilePaths(mediaTagsForRequest(text)) })
+      messages.push({ role: 'user', content: (options.sendImages ? userMessageContent(text, imagesById, images) : null) ?? withoutStoredFilePaths(userTextForRequest(text)) })
     }
     if (index === newestUser) takeNewest(text, 'user')
   })
@@ -192,6 +196,14 @@ export function sectionsToStreamMessages(sections: Section[], requestModel: Mode
   }
 
   return { messages, imagesLeftOut, imagesOverLimit: images.overLimit.size, newestUserMessage }
+}
+
+// The text of a message of the user as a request sends it with no image
+// part, before the path scrub: each media tag and each app tag in its
+// request form, as `messageTextPieces` gives them to a message with image
+// parts.
+function userTextForRequest(text: string): string {
+  return appTagsForRequest(mediaTagsForRequest(text))
 }
 
 /** The image and picture parts of the messages of one request while they
@@ -290,13 +302,15 @@ function partListText(list: PartList): string {
 // An `@id` mention adds no part here. A tool block (only a paste can put
 // one into the notes) goes as its text.
 //
-// A message part of the notes (`notesMessages`) goes as a text of the
-// user (`addUserText`), with the same rule: its text with no escape, its
-// images, and the images of its mentions (`imagesById`). In place of its
-// start line and its end line go the lines of a code fence
-// (`messageFence`), so the model sees where the words of the user start
-// and end; the image parts go at their places, inside the fence. Its
-// heading goes as it is.
+// A user part of the notes (`notesMessages`) goes as a text of the user
+// (`addUserText`), with the same rule: its text with no escape, its
+// images, and the images of its mentions (`imagesById`). The reply part of
+// the final message pair goes as its text with no escape of model text,
+// after the path scrub, and with no image: it holds no reference, and a
+// mention adds no part in the notes. In place of the start line and the
+// end line of a part go the lines of a code fence (`messageFence`), so the
+// model sees where the words of a message start and end; the image parts
+// go at their places, inside the fence. Its heading goes as it is.
 //
 // A reference that is over the limit of `images` goes as its text only,
 // and a picture that is over it does not go, with its label.
@@ -305,13 +319,14 @@ function addCompactionNotes(list: PartList, block: CompactionBlock, imagesById: 
   const notes = block.notes.trim()
   list.pendingText += notes === '' ? COMPACTION_MESSAGE_INTRO : `${COMPACTION_MESSAGE_INTRO}\n\n`
   let end = 0
-  for (const message of notesMessages(notes)) {
-    addNotesText(list, notes.slice(end, message.partFrom), rule, images)
-    const fence = messageFence(message.text)
+  for (const part of notesMessageParts(notes)) {
+    addNotesText(list, notes.slice(end, part.partFrom), rule, images)
+    const fence = messageFence(part.text)
     list.pendingText += `${fence}\n`
-    addUserText(list, message.text, imagesById, images, true, rule)
+    if (part.role === 'user') addUserText(list, part.text, imagesById, images, true, rule)
+    else list.pendingText += withoutStoredFilePaths(part.text)
     list.pendingText += `\n${fence}`
-    end = message.partTo
+    end = part.partTo
   }
   addNotesText(list, notes.slice(end), rule, images)
   if (!sendPictures) return
@@ -326,11 +341,16 @@ function addCompactionNotes(list: PartList, block: CompactionBlock, imagesById: 
 
 // Adds `notes`, a text of the notes out of the message parts, with the
 // linked paths that count by `rule` (see `addCompactionNotes`). Code is
-// model text as a gap is, with no image.
+// model text as a gap is, with no image. An app tag is a line of Dez, in
+// the text of its writer.
 function addNotesText(list: PartList, notes: string, rule: LinkedPathRule, images: RequestImages): void {
   for (const piece of assetTextPieces(notes, rule)) {
     if (piece.kind === 'media' || piece.kind === 'codeTag') {
       list.pendingText += withoutStoredFilePaths(mediaTagRequestText(piece.tag))
+      continue
+    }
+    if (piece.kind === 'app') {
+      list.pendingText += appTagText(piece.tag.name)
       continue
     }
     const pieceText = notes.slice(piece.from, piece.to)
@@ -511,7 +531,8 @@ function pictureParts(block: ToolBlock, images: RequestImages): MessagePart[] {
 // scrub: the text that the model wrote (`agentTextForRequest`), without
 // the references and the tags of the images and the clips that the tools
 // of the group before the round made and named in their results
-// (`madeAssetIds`, tools/jobs.ts).
+// (`madeAssetIds`, tools/jobs.ts), and without the tags of the apps that
+// those results tell that Dez shows (`shownAppNames`, tools/appShow.ts).
 //
 // Dez writes such an asset after the group, so its text is the start of
 // the model's own message of the next round. A model that reads two of
@@ -523,27 +544,39 @@ function pictureParts(block: ToolBlock, images: RequestImages): MessagePart[] {
 // An asset that no result of that group names keeps its text: the model's
 // own image, and the asset of a job whose result the model did not take
 // (`settleJobs`, controller/stream.ts), which nothing else tells it of.
-// The stored text never changes, and the stored result of a block never
-// changes, so a round is the same bytes in every request.
+// So does the tag of an app that no result of that group names (a tag
+// that the user moved there). The stored text never changes, and the
+// stored result of a block never changes, so a round is the same bytes in
+// every request.
 function roundRequestText(rounds: readonly AgentRound[], index: number): string {
-  const made = new Set(rounds[index - 1]?.blocks.flatMap((block) => madeAssetIds(block.result)))
-  return agentTextForRequest(made.size === 0 ? rounds[index].text : withoutToolAssets(rounds[index].text, made))
+  const results = rounds[index - 1]?.blocks.map((block) => block.result) ?? []
+  const made = new Set(results.flatMap(madeAssetIds))
+  const shown = new Set(results.flatMap(shownAppNames))
+  return agentTextForRequest(made.size === 0 && shown.size === 0 ? rounds[index].text : withoutToolAssets(rounds[index].text, made, shown))
 }
 
 // `text` without the image references and the media tags of the assets
-// `ids` that have the mark of a Dez tool. Each one goes with the line
-// breaks around it, which Dez wrote (`writeAsset` and `writeModelText`,
-// controller/stream.ts); one blank line stays where text is on both sides.
-// So a round that wrote only calls gives a blank text, and a round's
-// answer starts with the model's own words.
-function withoutToolAssets(text: string, ids: ReadonlySet<string>): string {
-  const assets = [
+// `ids` that have the mark of a Dez tool, and without the tags of the
+// apps `apps`, which only Dez writes (`withoutAssetLines`). So a round
+// that wrote only calls gives a blank text, and a round's answer starts
+// with the model's own words.
+function withoutToolAssets(text: string, ids: ReadonlySet<string>, apps: ReadonlySet<string>): string {
+  return withoutAssetLines(text, [
     ...findImageReferences(text, 'agent').filter(({ id, metadata }) => id !== null && ids.has(id) && metadata.some((item) => item.key === IMAGE_TOOL_KEY)),
     ...findMediaTags(text, 'agent').filter(({ id, other }) => ids.has(id) && other.some((attribute) => attribute.name === MEDIA_TOOL_ATTRIBUTE)),
-  ]
+    ...findAppTags(text, 'agent').filter(({ name }) => apps.has(name)),
+  ])
+}
+
+/** `text`, the text of a reply, without the runs `ranges` of it: image
+ *  references, media tags, and app tags that Dez wrote on lines of their
+ *  own. Each one goes with the line breaks around it, which Dez wrote
+ *  (`writeOwnParagraph` and `writeModelText`, controller/stream.ts); one
+ *  blank line stays where text is on both sides. */
+export function withoutAssetLines(text: string, ranges: readonly { from: number, to: number }[]): string {
   let rest = text
   // From the last one, so that the offsets of the earlier ones still hold.
-  for (const { from, to } of assets.sort((a, b) => b.from - a.from)) {
+  for (const { from, to } of [...ranges].sort((a, b) => b.from - a.from)) {
     const before = rest.slice(0, from).replace(/\n+$/, '')
     const after = rest.slice(to).replace(/^\n+/, '')
     rest = before !== '' && after !== '' ? `${before}\n\n${after}` : before + after
@@ -759,9 +792,9 @@ function addUserText(list: PartList, text: string, imagesById: ReadonlyMap<strin
 // A run of the text of a user message, as a request reads it: a media tag,
 // an image reference (its text after the path scrub, its path, and whether
 // it has the kept mark of a compaction), a text between them (after the
-// path scrub, with its `@id` mentions), or a run of Markdown code (after
-// the path scrub, and a tag in it in its request form), which names
-// nothing.
+// path scrub, with its `@id` mentions), or a text that names nothing: a
+// run of Markdown code (after the path scrub, and a media tag in it in its
+// request form), or an app tag (in the text of its writer).
 type MessageTextPiece =
   | { kind: 'media', tag: MediaTag }
   | { kind: 'reference', text: string, path: string, kept: boolean }
@@ -783,6 +816,7 @@ function messageTextPieces(text: string, rule: LinkedPathRule = 'user'): Message
   return assetTextPieces(text, rule).map((piece): MessageTextPiece => {
     if (piece.kind === 'media') return piece
     if (piece.kind === 'codeTag') return { kind: 'text', text: withoutStoredFilePaths(mediaTagRequestText(piece.tag)) }
+    if (piece.kind === 'app') return { kind: 'text', text: appTagText(piece.tag.name) }
     const scrubbed = withoutStoredFilePaths(text.slice(piece.from, piece.to))
     if (piece.kind === 'code') return { kind: 'text', text: scrubbed }
     return piece.kind === 'reference'

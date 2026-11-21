@@ -1,6 +1,6 @@
 import { foundAssetFrom, type FoundAsset } from '../streams/mediaRequest'
 import { assetOriginText } from '../tools/assetInfo'
-import { JOBS_WAIT_TOOL, jobsWaitResults, madeAssetIds, startedJob } from '../tools/jobs'
+import { blockJobStarts, JOBS_WAIT_TOOL, jobsWaitResults, madeAssetIds } from '../tools/jobs'
 import { callLabel } from '../tools/registry'
 import { compactionMessageEnd, sectionTextParts } from './compaction'
 import { notesAssetLines, notesJobLines, notesMessages, type NotesAssetLine, type NotesJobLine } from './compactionNotes'
@@ -61,7 +61,9 @@ interface ToolMarks {
 // Who made the asset `id` of an agent section with the tool marks `marks`,
 // from the tool blocks of that section, in this order:
 // 1. the block that started its job, which tells the number of the job and
-//    the arguments of its call;
+//    the arguments of its call; for a job that a tool call of the code of
+//    a `js_eval` block started, the arguments of that tool call
+//    (`blockJobStarts`);
 // 2. the result of a `jobs_wait` block that names its job or the asset (an
 //    asset of a job whose block is gone, or that has no job mark);
 // 3. for an asset with a job mark, that job alone (its blocks are gone):
@@ -74,8 +76,8 @@ function toolOrigin(id: string, marks: ToolMarks, blocks: readonly ToolBlock[], 
   const { tool, jobId } = marks
   if (jobId !== null) {
     for (const block of blocks) {
-      const started = startedJob(block.result)
-      if (started?.id === jobId) return { kind: 'job', tool, number: started.number, label: callLabel(block.name, block.arguments) }
+      const start = blockJobStarts(block).find((started) => started.id === jobId)
+      if (start) return { kind: 'job', tool, number: start.number, label: callLabel(start.name, start.arguments) }
     }
   }
   for (const block of blocks) {

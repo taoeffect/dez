@@ -1,6 +1,5 @@
-import { compactionTextForPeople } from '../chat/compactionNotes'
+import { compactionTextForPeople, withAssetLabels } from '../chat/compactionNotes'
 import { labelImageReferences } from '../chat/images'
-import { labelMediaTags } from '../chat/mediaTags'
 import { cloneModelRef } from '../chat/modelRef'
 import { labelToolBlocks } from '../chat/toolBlocks'
 import type { Role } from '../chat/types'
@@ -20,11 +19,12 @@ export function readableTexts(sections: SectionData[], nodeText: (node: ContentN
 // An image reference shows as `[image]`, not as its path. Prompt bodies
 // too: their references are sent as images. A tool block in agent text
 // gives a space: its markup and its result are not reply text. A media tag
-// shows as `[audio]` or `[video]`. A reference or a tag in Markdown code is
-// text (codeRanges.ts), so it stays as its text, path included.
+// shows as `[audio]` or `[video]`, and an app tag as `[app <name>]`. A
+// reference or a tag in Markdown code is text (codeRanges.ts), so it stays
+// as its text, path included.
 function nodePlainText(node: ContentNodeData, role: Role): string {
   if (node.kind === 'prompt') return labelImageReferences(node.body, role)
-  return labelImageReferences(labelMediaTags(role === 'agent' ? labelToolBlocks(node.text, ' ') : node.text, role), role)
+  return withAssetLabels(role === 'agent' ? labelToolBlocks(node.text, ' ') : node.text, role)
 }
 
 function sectionHasVisibleContent(section: SectionData): boolean {

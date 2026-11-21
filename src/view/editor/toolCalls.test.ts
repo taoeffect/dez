@@ -2,7 +2,7 @@ import { EditorSelection, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { describe, expect, it } from 'vitest'
 import { compactionBlockText } from '../../model/chat/compaction'
-import { HIDDEN_CLIP_PATH, HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, invokeBlock, waitBlock } from '../../model/chat/testing'
+import { bridgedInvoke, evalBlock, HIDDEN_CLIP_PATH, HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, invokeBlock, waitBlock } from '../../model/chat/testing'
 import type { Role } from '../../model/chat/types'
 import { toolBlockText, type ToolBlockStatus } from '../../model/chat/toolBlocks'
 import { jobStartedText, jobsWaitText, type JobResultStatus } from '../../model/tools/jobs'
@@ -129,7 +129,7 @@ describe('the intermediate data of a call (RenderedToolCall.intermediate)', () =
   it('holds the hidden assets of the job that the call started, in doc order', () => {
     const call = intermediate([INVOKE, '', hiddenClip('j-aaaa'), '', hiddenImage('j-aaaa'), '', 'Done.'])
 
-    expect(call).toMatchObject({ jobId: 'j-aaaa', text: '', status: null })
+    expect(call).toMatchObject({ jobIds: ['j-aaaa'], text: '', status: null })
     expect(call?.assets.map((asset) => asset.kind === 'image' ? ['image', asset.id, asset.path] : [asset.tag.kind, asset.tag.id, asset.tag.src])).toStrictEqual([
       ['audio', 'c', HIDDEN_CLIP_PATH],
       ['image', 'b', HIDDEN_IMAGE_PATH],
@@ -150,31 +150,31 @@ describe('the intermediate data of a call (RenderedToolCall.intermediate)', () =
   })
 
   it('marks a call with is_intermediate that runs, or that started a job, with nothing to show yet', () => {
-    expect(intermediate([invoke('running')], true)).toStrictEqual({ jobId: null, assets: [], text: '', status: null })
-    expect(intermediate([INVOKE])).toStrictEqual({ jobId: 'j-aaaa', assets: [], text: '', status: null })
+    expect(intermediate([invoke('running')], true)).toStrictEqual({ jobIds: [], assets: [], text: '', status: null })
+    expect(intermediate([INVOKE])).toStrictEqual({ jobIds: ['j-aaaa'], assets: [], text: '', status: null })
   })
 
   it('holds the text of a finished job that made no asset', () => {
-    expect(intermediate([INVOKE, waited('finished', 'The cat is blue.\nIt sleeps.')])).toStrictEqual({ jobId: 'j-aaaa', assets: [], text: 'The cat is blue.\nIt sleeps.', status: 'finished' })
+    expect(intermediate([INVOKE, waited('finished', 'The cat is blue.\nIt sleeps.')])).toStrictEqual({ jobIds: ['j-aaaa'], assets: [], text: 'The cat is blue.\nIt sleeps.', status: 'finished' })
     // A job with no output.
-    expect(intermediate([INVOKE, waited('finished', '')])).toStrictEqual({ jobId: 'j-aaaa', assets: [], text: '', status: 'finished' })
+    expect(intermediate([INVOKE, waited('finished', '')])).toStrictEqual({ jobIds: ['j-aaaa'], assets: [], text: '', status: 'finished' })
   })
 
   it('holds no text for a job with a hidden asset, and none of the lines that name its assets', () => {
     expect(intermediate([INVOKE, waited('finished', 'Made the image @b.'), '', hiddenImage('j-aaaa')])).toMatchObject({ text: '', status: 'finished' })
     // The asset is gone (its trash), and its line stays in the result.
-    expect(intermediate([INVOKE, waited('finished', 'Made the image @b.')])).toStrictEqual({ jobId: 'j-aaaa', assets: [], text: '', status: 'finished' })
+    expect(intermediate([INVOKE, waited('finished', 'Made the image @b.')])).toStrictEqual({ jobIds: ['j-aaaa'], assets: [], text: '', status: 'finished' })
   })
 
   it('holds the status of a job that failed or timed out, with no text: the Result of jobs_wait shows the error', () => {
-    expect(intermediate([INVOKE, waited('failed', 'The provider refused the prompt.')])).toStrictEqual({ jobId: 'j-aaaa', assets: [], text: '', status: 'failed' })
+    expect(intermediate([INVOKE, waited('failed', 'The provider refused the prompt.')])).toStrictEqual({ jobIds: ['j-aaaa'], assets: [], text: '', status: 'failed' })
     expect(intermediate([INVOKE, waited('timed out', 'No answer.')])).toMatchObject({ text: '', status: 'timed out' })
   })
 
   it('holds the assets and the result that a later reply gave for its job, past a user section', () => {
     const [chip, wait] = renderedToolCalls(turns(['ask', [INVOKE, '', 'Working.'].join('\n'), 'Go on.', [waited('finished', 'Made the image @b.'), '', hiddenClip('j-aaaa'), '', hiddenImage('j-aaaa')].join('\n')]))
 
-    expect(chip.intermediate).toMatchObject({ jobId: 'j-aaaa', text: '', status: 'finished' })
+    expect(chip.intermediate).toMatchObject({ jobIds: ['j-aaaa'], text: '', status: 'finished' })
     expect(chip.intermediate?.assets.map((asset) => asset.kind === 'image' ? ['image', asset.id] : [asset.tag.kind, asset.tag.id])).toStrictEqual([['audio', 'c'], ['image', 'b']])
     expect(wait.intermediate).toBeNull()
   })
@@ -182,8 +182,8 @@ describe('the intermediate data of a call (RenderedToolCall.intermediate)', () =
   it('holds the text and the status of the result that a later reply gave for its job', () => {
     const later = (wait: string) => renderedToolCalls(turns(['ask', INVOKE, 'Go on.', wait]))[0].intermediate
 
-    expect(later(waited('finished', 'The cat is blue.'))).toStrictEqual({ jobId: 'j-aaaa', assets: [], text: 'The cat is blue.', status: 'finished' })
-    expect(later(waited('failed', 'The provider refused the prompt.'))).toStrictEqual({ jobId: 'j-aaaa', assets: [], text: '', status: 'failed' })
+    expect(later(waited('finished', 'The cat is blue.'))).toStrictEqual({ jobIds: ['j-aaaa'], assets: [], text: 'The cat is blue.', status: 'finished' })
+    expect(later(waited('failed', 'The provider refused the prompt.'))).toStrictEqual({ jobIds: ['j-aaaa'], assets: [], text: '', status: 'failed' })
   })
 
   it('gives the assets and the result of a job id that two replies started to the chip of the nearest one', () => {
@@ -217,8 +217,8 @@ describe('the intermediate data of a call (RenderedToolCall.intermediate)', () =
   }
 
   it('marks a join_clips or ffmpeg call of the video tool whose parameters have is_intermediate, and holds the assets of its job', () => {
-    expect(intermediate([video('running', 'ffmpeg', { arguments: '-i @c cut.mp4', is_intermediate: true })], true)).toStrictEqual({ jobId: null, assets: [], text: '', status: null })
-    expect(intermediate([video('success', 'join_clips', { clips: '@c @d', is_intermediate: true })])).toStrictEqual({ jobId: 'j-aaaa', assets: [], text: '', status: null })
+    expect(intermediate([video('running', 'ffmpeg', { arguments: '-i @c cut.mp4', is_intermediate: true })], true)).toStrictEqual({ jobIds: [], assets: [], text: '', status: null })
+    expect(intermediate([video('success', 'join_clips', { clips: '@c @d', is_intermediate: true })])).toStrictEqual({ jobIds: ['j-aaaa'], assets: [], text: '', status: null })
 
     const call = intermediate([video('success', 'ffmpeg', { arguments: '-i @c cut.mp4', is_intermediate: true }), '', hiddenClip('j-aaaa', 'e', 'video')])
     expect(call?.assets.map((asset) => asset.kind === 'clip' && [asset.tag.kind, asset.tag.id])).toStrictEqual([['video', 'e']])
@@ -228,6 +228,23 @@ describe('the intermediate data of a call (RenderedToolCall.intermediate)', () =
     expect(intermediate([video('success', 'join_clips', { clips: '@c @d' })])).toBeNull()
     expect(intermediate([video('running', 'ffmpeg', { arguments: '-i @c cut.mp4' }, { is_intermediate: true })], true)).toBeNull()
     expect(intermediate([video('running', 'ffprobe', { arguments: '@c', is_intermediate: true })], true)).toBeNull()
+  })
+
+  // The code of a `js_eval` call started the jobs: its chip is the only
+  // one that the reply has for them.
+  it('holds for a js_eval call the hidden assets of each job that a tool call of its code started', () => {
+    const code = evalBlock([bridgedInvoke('j-aaaa'), bridgedInvoke('j-bbbb', 2)])
+    const call = intermediate([code, '', hiddenClip('j-bbbb'), '', hiddenImage('j-aaaa')])
+
+    expect(call).toMatchObject({ jobIds: ['j-aaaa', 'j-bbbb'], text: '' })
+    expect(call?.assets.map((asset) => asset.kind === 'image' ? ['image', asset.id] : [asset.tag.kind, asset.tag.id])).toStrictEqual([['audio', 'c'], ['image', 'b']])
+  })
+
+  it('is null for a js_eval call that hides nothing: its jobs made no asset yet, or only text', () => {
+    const code = evalBlock([bridgedInvoke('j-aaaa')])
+
+    expect(intermediate([code])).toBeNull()
+    expect(intermediate([code, waited('finished', 'The cat is blue.')])).toBeNull()
   })
 })
 
@@ -458,7 +475,7 @@ describe('the label and the type symbols of an intermediate chip', () => {
   const clip = (kind: 'audio' | 'video') => ({ kind: 'clip', tag: { kind, id: 'c', type: `${kind}/x`, src: null, url: null, expires: null, other: [] }, linkedSrc: false }) as const
 
   function call(more: Partial<IntermediateCall>): IntermediateCall {
-    return { jobId: 'j-aaaa', assets: [], text: '', status: null, ...more }
+    return { jobIds: ['j-aaaa'], assets: [], text: '', status: null, ...more }
   }
 
   it('says what the chip hides, and that it is hidden only while the panel is closed', () => {
@@ -471,7 +488,7 @@ describe('the label and the type symbols of an intermediate chip', () => {
   })
 
   it('says only "intermediate" for a call that hides nothing', () => {
-    for (const nothing of [call({}), call({ jobId: null }), call({ status: 'failed' }), call({ status: 'timed out' }), call({ status: 'finished' })]) {
+    for (const nothing of [call({}), call({ jobIds: [] }), call({ status: 'failed' }), call({ status: 'timed out' }), call({ status: 'finished' })]) {
       expect(intermediateLabel(nothing, false)).toBe('intermediate')
       expect(intermediateLabel(nothing, true)).toBe('intermediate')
     }
@@ -485,7 +502,7 @@ describe('the label and the type symbols of an intermediate chip', () => {
 
   it('shows what the model makes while the job has no result: its one type that is not text, else text', () => {
     expect(intermediateSymbols(call({}), ['image'])).toStrictEqual(['image'])
-    expect(intermediateSymbols(call({ jobId: null }), ['text', 'video'])).toStrictEqual(['video'])
+    expect(intermediateSymbols(call({ jobIds: [] }), ['text', 'video'])).toStrictEqual(['video'])
     expect(intermediateSymbols(call({}), ['text'])).toStrictEqual(['text'])
     // The type is not known: two types, no outputs, a model that Dez does
     // not have.

@@ -1,5 +1,5 @@
+import { withAssetLabels } from '../chat/compactionNotes'
 import { labelImageReferences } from '../chat/images'
-import { labelMediaTags } from '../chat/mediaTags'
 import { modelRefKey } from '../chat/modelRef'
 import { labelToolBlocks } from '../chat/toolBlocks'
 import type { Role } from '../chat/types'
@@ -46,15 +46,15 @@ export function clearConversationSearchCache(): void {
 // Tool blocks in agent text are left out the same way: their markup (`dez`,
 // `tool`, call ids) and tool results are not reply text. So are the media
 // tags, in agent and in user text: their markup, path, and URL, and a label
-// too (`video` would match every conversation with a clip). A reference or
-// a tag in Markdown code is text (codeRanges.ts), so it stays as its text,
-// path included. The notes of a compaction block are the exception: they
-// never come here (`readableTexts`), and go into the search text as the
-// chips show them, labels included.
+// too (`video` would match every conversation with a clip). An app tag
+// gives the name of its app, which its card shows, and no more. A
+// reference or a tag in Markdown code is text (codeRanges.ts), so it stays
+// as its text, path included. The notes of a compaction block are the
+// exception: they never come here (`readableTexts`), and go into the
+// search text as the chips show them, labels included.
 function nodeSearchText(node: ContentNodeData, role: Role): string {
-  return node.kind === 'text'
-    ? labelImageReferences(labelMediaTags(role === 'agent' ? labelToolBlocks(node.text, ' ') : node.text, role, ' '), role, ' ')
-    : `${node.name} ${labelImageReferences(node.body, role, ' ')}`
+  if (node.kind !== 'text') return `${node.name} ${labelImageReferences(node.body, role, ' ')}`
+  return withAssetLabels(role === 'agent' ? labelToolBlocks(node.text, ' ') : node.text, role, { image: ' ', clip: ' ', app: (name) => name })
 }
 
 // Flatten a conversation into one searchable line. Whitespace is collapsed

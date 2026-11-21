@@ -8,7 +8,7 @@ import ProviderManager from './ProviderManager.vue'
 import ModelPicker from '../model-selector/ModelPicker.vue'
 import ShortcutManager from './ShortcutManager.vue'
 import SystemPromptSettings from './SystemPromptSettings.vue'
-import { deleteUnusedFiles, unusedFilesProgress } from './unusedFiles'
+import { CLEANUP_BUTTONS, deleteUnreferenced, runningCleanup } from './unusedFiles'
 
 const { settings, modelCache } = useModelState()
 
@@ -287,28 +287,55 @@ function onOverlayClick(e: MouseEvent) {
 
             <div class="settings-group">
               <div class="settings-row">
-                <label class="settings-label">Unused files</label>
+                <label class="settings-label">Unreferenced files</label>
                 <button
                   class="settings-btn settings-btn--sm unused-files-btn"
-                  :disabled="unusedFilesProgress !== null"
-                  @click="deleteUnusedFiles()"
+                  :disabled="runningCleanup !== null"
+                  @click="deleteUnreferenced('files')"
                 >
-                  Delete Unused Files…
+                  {{ CLEANUP_BUTTONS.files }}…
                 </button>
               </div>
               <p class="settings-hint">
-                Removes old images, audio and video that no conversation or prompt references.
+                Removes old images, audio, and video that no conversation or prompt references.
               </p>
               <div
-                v-if="unusedFilesProgress !== null"
+                v-if="runningCleanup?.kind === 'files'"
                 class="settings-progress"
                 role="progressbar"
-                aria-label="Looking for unused files"
+                aria-label="Looking for unreferenced files"
                 aria-valuemin="0"
                 aria-valuemax="100"
-                :aria-valuenow="Math.round(unusedFilesProgress * 100)"
+                :aria-valuenow="Math.round(runningCleanup.progress * 100)"
               >
-                <div class="settings-progress-fill" :style="{ width: `${unusedFilesProgress * 100}%` }" />
+                <div class="settings-progress-fill" :style="{ width: `${runningCleanup.progress * 100}%` }" />
+              </div>
+            </div>
+
+            <div class="settings-group">
+              <div class="settings-row">
+                <label class="settings-label">Unreferenced apps</label>
+                <button
+                  class="settings-btn settings-btn--sm unused-apps-btn"
+                  :disabled="runningCleanup !== null"
+                  @click="deleteUnreferenced('apps')"
+                >
+                  {{ CLEANUP_BUTTONS.apps }}…
+                </button>
+              </div>
+              <p class="settings-hint">
+                Removes the apps that no conversation or prompt references, with all their files.
+              </p>
+              <div
+                v-if="runningCleanup?.kind === 'apps'"
+                class="settings-progress"
+                role="progressbar"
+                aria-label="Looking for unreferenced apps"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                :aria-valuenow="Math.round(runningCleanup.progress * 100)"
+              >
+                <div class="settings-progress-fill" :style="{ width: `${runningCleanup.progress * 100}%` }" />
               </div>
             </div>
           </div>

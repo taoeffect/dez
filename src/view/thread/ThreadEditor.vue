@@ -52,6 +52,8 @@ import { markdownTables } from '../editor/tables'
 import { deleteImageBang, deleteImageParen, markdownImages } from '../editor/images'
 import { markdownToolCalls, openToolCalls } from '../editor/toolCalls'
 import { markdownMedia } from '../editor/media'
+import { carriedAppRuns, markdownApps, syncAppFrames, type CarriedAppRun } from '../editor/apps'
+import { removeAppFrames } from '../apps/appFrameHost'
 import { caretAfterCompactionBlock, compactionBlockRules } from '../editor/compaction'
 import { compactionChip, openCompactionChips, type CompactionChipsOpen } from '../editor/compactionChip'
 import { deleteLineBlockBackward, deleteLineBlockForward, joinsLineBlock } from '../editor/lineBlocks'
@@ -647,20 +649,22 @@ function editorShortcutKeymap(): Extension {
   return Prec.highest(keymap.of(bindings))
 }
 
-/** The open panels that a new editor state keeps; without them, all start
- *  closed. `thinking` holds section ids, `toolCalls` call ids, and
+/** What a new editor state keeps of the state before it: the open panels
+ *  (without them, all start closed), and the apps that run (without them,
+ *  each app stops). `thinking` holds section ids, `toolCalls` call ids, and
  *  `compaction` tells which panels of the compaction chips are open. */
-interface OpenPanels {
+interface CarriedState {
   thinking: ReadonlySet<string>
   toolCalls: ReadonlySet<string>
   compaction: CompactionChipsOpen
+  appRuns: readonly CarriedAppRun[]
 }
 
-/** A new editor state for the active tab, with the panels of `openPanels`
- *  open. Its caret is at the first place for text: the doc start, or the
- *  place after the compaction block of a compaction section (the rule of
- *  `compactionBlockRules` applies only to a transaction). */
-function buildState(openPanels?: OpenPanels): EditorState {
+/** A new editor state for the active tab, with what `carried` keeps of the
+ *  state before it. Its caret is at the first place for text: the doc
+ *  start, or the place after the compaction block of a compaction section
+ *  (the rule of `compactionBlockRules` applies only to a transaction). */
+function buildState(carried?: CarriedState): EditorState {
   const sections = activeSections.value
   const models = initialSectionModels(sections)
   const pillMeta = initialPillMetadata(sections)
@@ -818,7 +822,7 @@ function buildState(openPanels?: OpenPanels): EditorState {
       modelDisplayNamesField.init(() => modelDisplayNames.value),
       streamingSectionField.init(() => activeTabStreamingSectionId.value),
       pillsField.init(() => pillMeta),
-      thinkingExpandedField.init(() => openPanels?.thinking ?? new Set()),
+      thinkingExpandedField.init(() => carried?.thinking ?? new Set()),
       roleSeparators,
       roleSeparatorAtomicRanges,
       roleSeparatorMouseHandler,
@@ -856,10 +860,11 @@ function buildState(openPanels?: OpenPanels): EditorState {
       findExtension(activeFindQuery()),
       markdownTables(),
       markdownImages(),
-      markdownToolCalls(openPanels?.toolCalls),
+      markdownToolCalls(carried?.toolCalls),
       markdownMedia(),
+      markdownApps(carried?.appRuns),
       compactionBlockRules(),
-      compactionChip(openPanels?.compaction),
+      compactionChip(carried?.compaction),
       markdownLinks(),
       mentionChips(),
       filePasteAndDrop(),
@@ -1018,16 +1023,22 @@ function resetViewToActiveTab(streamEnd?: { followBottom: boolean }) {
   keepBottomOnLateLoad = false
   cancelAnimationFrame(bottomScrollFrame)
   // A rebuild of the same tab, such as the reset at the end of each
-  // stream, keeps the open thinking, tool call, and compaction panels;
-  // another tab starts with all closed.
+  // stream, keeps the open thinking, tool call, and compaction panels, and
+  // the apps that run; another tab starts with all closed, and its apps do
+  // not run.
   const sameTab = viewTabId === activeTabId.value
   // The new state has no line heights yet, so its scrollTop would show
   // other lines. The snapshot holds the top line and its offset instead.
   const scrollSnapshot = streamEnd && !streamEnd.followBottom ? view.scrollSnapshot() : null
   const state = buildState(sameTab
-    ? { thinking: view.state.field(thinkingExpandedField), toolCalls: openToolCalls(view.state), compaction: openCompactionChips(view.state) }
+    ? { thinking: view.state.field(thinkingExpandedField), toolCalls: openToolCalls(view.state), compaction: openCompactionChips(view.state), appRuns: carriedAppRuns(view.state) }
     : undefined)
   view.setState(state)
+  // setState runs no update listeners, so the frames of the apps would
+  // stay as the state before had them: the frame of an app that does not
+  // run in the new state goes now, and each frame that stays gets its
+  // place in the new text.
+  syncAppFrames(view)
   viewTabId = activeTabId.value
   viewConversationId = activeConversationId.value
   const place = sameTab ? undefined : viewPlaces.get(viewConversationId)
@@ -1135,6 +1146,7 @@ onBeforeUnmount(() => {
   sbp('okTurtles.events/off', 'dez.editor.stream-finished', onEditorStreamFinished)
   sbp('okTurtles.events/off', 'dez.editor.rebuild', onEditorRebuild)
   refreshFindStatusDebounced.clear()
+  if (view) removeAppFrames(view)
   view?.destroy()
   view = null
 })

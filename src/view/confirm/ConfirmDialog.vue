@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import sbp from '@sbp/sbp'
-import { answerConfirm, confirmRequest } from './selectors'
+import { inAppFrameHost } from '../apps/appFrameHost'
+import { answerConfirm, confirmRequest } from './request'
 
 const cancelButton = ref<HTMLButtonElement | null>(null)
 const confirmButton = ref<HTMLButtonElement | null>(null)
@@ -32,8 +33,10 @@ function restoreFocus() {
   opener = null
   if (!(element instanceof HTMLElement) || !element.isConnected) return
   // `dez.editor/focus` puts back the editor's scroll, which WebKit can move
-  // when the editor gets the focus again (focus.ts).
-  if (element.closest('.cm-editor')) sbp('dez.editor/focus')
+  // when the editor gets the focus again (focus.ts). An app that runs in
+  // the editor (its frame, a control of its bar) is not the editor: the
+  // keyboard goes back to the app, also while it covers the conversation.
+  if (element.closest('.cm-editor') && !inAppFrameHost(element)) sbp('dez.editor/focus')
   else element.focus({ preventScroll: true })
 }
 
@@ -100,8 +103,13 @@ function onOverlayClick(event: MouseEvent) {
   background: rgba(0, 0, 0, 0.4);
 }
 
+/* A long question (the names of many apps) scrolls inside the dialog, so
+   the buttons stay on screen. */
 .confirm-dialog {
+  display: flex;
+  flex-direction: column;
   width: min(400px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
   padding: 20px;
   background: var(--color-bg);
   border: 1px solid var(--color-border);
@@ -111,6 +119,8 @@ function onOverlayClick(event: MouseEvent) {
 }
 
 .confirm-message {
+  min-height: 0;
+  overflow-y: auto;
   font-size: 14px;
   line-height: 20px;
   overflow-wrap: anywhere;

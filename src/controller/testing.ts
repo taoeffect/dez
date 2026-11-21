@@ -1,20 +1,28 @@
 import sbp from '@sbp/sbp'
 import { expect, vi } from 'vitest'
-import { ToolError } from '../model/tools/types'
+import { NO_CALL_PICTURE_BUDGET } from '../model/streams/pictureBudget'
+import { appManifestText, type AppKind } from '../model/tools/appManifest'
+import type { JsEvalLine } from '../model/tools/jsEval'
+import { protocolLine } from '../model/tools/testing'
+import { ToolError, type ToolRunResult } from '../model/tools/types'
 import type { NativeDownloadRule, NativeHttpDownload, NativeHttpRequest } from '../utils/protocol/nativeHttp'
-import type { JobOutcome, JobWork, MadeAsset } from './jobs'
-import type { AppFileEntry, AppFileRef, BundledToolEnd, BundledToolOutput, BundledToolRun } from './nativeTypes'
+import { TabJobs, type JobOutcome, type JobWork, type MadeAsset } from './jobs'
+import type { AppFileEntry, AppFileRef, BundledToolEnd, BundledToolOutput, BundledToolRun, FileTree } from './nativeTypes'
+import type { ToolRunCall, ToolRunContext } from './tools'
 
 // Shared helpers of the unit tests of the controller code that runs the
-// programs that Dez ships (videoTool.ts, audioTool.ts, the frame sheets of
-// compaction.ts, and the tool calls of tools.ts and stream.ts) and the jobs
-// of a reply (jobs.ts): a stub of the native side, the outputs of the
-// programs, and helpers for the work of a call or a job.
+// programs that Dez ships (videoTool.ts, audioTool.ts, jsEval.ts, the
+// frame sheets of compaction.ts, and the tool calls of tools.ts and
+// stream.ts), the file work of the `apps` tool (appsTool.ts) and the runs
+// of its apps (appInvoke.ts), and the jobs of a reply (jobs.ts): a stub of
+// the native side, a fake of the files of the app root (`fakeAppFiles`,
+// with the files of an app from `appFiles`), the outputs of the programs,
+// and helpers for the work of a call or a job.
 //
 // An import of this module registers the stub selectors of the app
-// folders, the resource folder, the files, the downloads, and the program
-// runs (`dez.native/*`, `dez.controller/images/fileSize`, and
-// `dez.provider/chatImageSizes`), so a test file must register none of
+// folders, the resource folder, the real paths, the files, the downloads,
+// and the program runs (`dez.native/*`, `dez.controller/images/fileSize`,
+// and `dez.provider/chatImageSizes`), so a test file must register none of
 // them. Each test starts with `resetNative()`.
 
 export const APP_DIR = '/home/u/.config/dez'
@@ -48,16 +56,24 @@ function newNative() {
     runs: [] as { run: BundledToolRun, runId: string }[],
     program: (async () => ENDED) as StubProgram,
     cancelledRuns: [] as string[],
+    inputWrites: [] as { runId: string, text: string }[],
     // The files of every work folder after a run, and the size of each.
     folderFiles: [] as string[],
     folderFileSize: 10,
+    // The entries of a folder; null for `folderFiles`.
+    folderEntries: ((): AppFileEntry[] | null => null) as (file: AppFileRef, folders: boolean) => AppFileEntry[] | null,
     listedFolders: [] as AppFileRef[],
     moves: [] as { from: AppFileRef, to: AppFileRef }[],
-    moveAppFile: async (_from: AppFileRef): Promise<void> => {},
+    moveAppFile: (async () => {}) as (from: AppFileRef, to: AppFileRef) => Promise<void>,
     savedFiles: [] as { file: AppFileRef, content: string | Uint8Array }[],
-    saveAppFile: async (): Promise<void> => {},
+    saveAppFile: (async () => {}) as (file: AppFileRef, content: string | Uint8Array) => Promise<void>,
     deletedFiles: [] as (AppFileRef & { folder: boolean })[],
-    deleteAppFile: async (): Promise<void> => {},
+    deleteAppFile: (async () => {}) as (file: AppFileRef & { folder: boolean }) => Promise<void>,
+    createdFolders: [] as AppFileRef[],
+    createFolder: (async () => {}) as (file: AppFileRef) => Promise<void>,
+    // What is at a path, and at most `maxEntries` of what is below it;
+    // nothing is at a path that a test does not set.
+    fileTree: ((): FileTree => ({ kind: 'missing', size: 0, updatedAt: null, entries: [], more: false })) as (file: AppFileRef, maxEntries: number) => FileTree,
     downloads: [] as StubDownload[],
     downloadAppFile: (async () => SAVED) as () => Promise<NativeHttpDownload>,
     cancelledDownloads: [] as string[],
@@ -73,6 +89,9 @@ function newNative() {
     // The path of a file of the resource folder; a throw for a folder that
     // Dez cannot find.
     resourcePath: ((relative: string): string => `${RESOURCE_DIR}/${relative}`) as (relative: string) => string,
+    // The real path of a file or a folder; a throw for one that is not
+    // there.
+    canonicalPath: ((path: string): string => path) as (path: string) => string,
   }
 }
 
@@ -86,12 +105,145 @@ export function resetNative(): void {
   Object.assign(native, newNative())
 }
 
+/** The files of the app root of a test: the bytes of each file by its path
+ *  from the root (`apps/notes/main.js`), and null for a folder. */
+export type FakeAppFiles = Map<string, Uint8Array | null>
+
+// The folder that holds `path`; empty for a path directly in the root.
+function folderOf(path: string): string {
+  return path.slice(0, Math.max(0, path.lastIndexOf('/')))
+}
+
+function isAtOrBelow(path: string, folder: string): boolean {
+  return path === folder || path.startsWith(`${folder}/`)
+}
+
+// Where the native side makes, moves, and deletes a folder of the app
+// root: only below the folder of the apps (`allows_folder_change`).
+function allowsFolderChange(path: string): boolean {
+  return path.startsWith('apps/')
+}
+
+/** Makes the stub native side keep the files of the app root in memory,
+ *  and work on them as the native side works on the disk
+ *  (src-tauri/src/persistence.rs), for the tests of code whose result
+ *  depends on what its earlier file calls did. Call it after
+ *  `resetNative()`. `start` has the text of each file by its path from the
+ *  app root, and null for an empty folder; the folders above each path are
+ *  there too. A test reads and changes the files in the map that it
+ *  gets. A call on the cache root does what the stub did before.
+ *
+ *  What it keeps of the native rules:
+ *  - a tree listing gives the direct entries first, at most as many as
+ *    the call asks for, and tells when there are more;
+ *  - nothing is at a path below a file, and a read of what is no file
+ *    fails;
+ *  - a save and a move make the missing folders above their target;
+ *  - a delete of nothing passes, and one with the wrong `folder` fails;
+ *  - a file moves over a file, and a folder only to a free path;
+ *  - a folder is made, moved, and deleted only below `apps/`. */
+export function fakeAppFiles(start: Record<string, string | null> = {}): FakeAppFiles {
+  const files: FakeAppFiles = new Map()
+  const encoder = new TextEncoder()
+  // As `mkdir -p`.
+  const makeFolders = (path: string): void => {
+    if (!path) return
+    makeFolders(folderOf(path))
+    const there = files.get(path)
+    if (there === undefined) files.set(path, null)
+    else if (there !== null) throw new Error(`Not a directory (os error 20): ${path}`)
+  }
+  const put = (path: string, content: string | Uint8Array | null): void => {
+    makeFolders(content === null ? path : folderOf(path))
+    if (content !== null) files.set(path, typeof content === 'string' ? encoder.encode(content) : content.slice())
+  }
+  for (const [path, content] of Object.entries(start)) put(path, content)
+
+  const before = { ...native }
+  native.fileTree = (file, maxEntries) => {
+    if (file.root !== 'app') return before.fileTree(file, maxEntries)
+    const at = files.get(file.path)
+    if (at === undefined) return { kind: 'missing', size: 0, updatedAt: null, entries: [], more: false }
+    if (at !== null) return { kind: 'file', size: at.length, updatedAt: 0, entries: [], more: false }
+    const depth = (path: string) => path.split('/').length
+    const below = [...files]
+      .filter(([path]) => path.startsWith(`${file.path}/`))
+      .map(([path, content]) => ({ path: path.slice(file.path.length + 1), kind: content === null ? 'folder' as const : 'file' as const, size: content?.length ?? 0, updatedAt: 0 }))
+      .sort((a, b) => depth(a.path) - depth(b.path))
+    return { kind: 'folder', size: 0, updatedAt: 0, entries: below.slice(0, maxEntries), more: below.length > maxEntries }
+  }
+  native.fileBytes = (file) => {
+    if (file.root !== 'app') return before.fileBytes(file)
+    const at = files.get(file.path)
+    if (at === undefined) throw new Error(`Failed to read ${file.path}: No such file or directory (os error 2)`)
+    if (at === null) throw new Error(`Failed to read ${file.path}: not a regular file`)
+    return at.slice()
+  }
+  native.folderEntries = (file, folders) => {
+    if (file.root !== 'app') return before.folderEntries(file, folders)
+    return [...files]
+      .filter(([path, content]) => folderOf(path) === file.path && (content === null) === folders)
+      .map(([path, content]) => ({ name: path.slice(file.path.length + 1), updatedAt: 0, size: content?.length ?? 0 }))
+  }
+  native.saveAppFile = async (file, content) => {
+    if (file.root !== 'app') return before.saveAppFile(file, content)
+    if (files.get(file.path) === null) throw new Error(`Failed to write ${file.path}: Is a directory (os error 21)`)
+    put(file.path, content)
+  }
+  native.createFolder = async (file) => {
+    if (file.root !== 'app') return before.createFolder(file)
+    if (!allowsFolderChange(file.path)) throw new Error(`Failed to make the folder ${file.path}: a folder can be made only below a folder that programs own`)
+    makeFolders(file.path)
+  }
+  native.deleteAppFile = async (file) => {
+    if (file.root !== 'app') return before.deleteAppFile(file)
+    if (file.folder && !allowsFolderChange(file.path)) throw new Error(`Failed to delete ${file.path}: a folder can be deleted only below a folder that programs own`)
+    const at = files.get(file.path)
+    if (at === undefined) return
+    if ((at === null) !== file.folder) throw new Error(`Failed to delete ${file.path}: ${file.folder ? 'Not a directory (os error 20)' : 'Is a directory (os error 21)'}`)
+    for (const path of [...files.keys()]) if (isAtOrBelow(path, file.path)) files.delete(path)
+  }
+  native.moveAppFile = async (from, to) => {
+    if (from.root !== 'app' || to.root !== 'app') return before.moveAppFile(from, to)
+    const failed = (why: string) => new Error(`Failed to move ${from.path} to ${to.path}: ${why}`)
+    const source = files.get(from.path)
+    if (source === undefined) throw failed('No such file or directory (os error 2)')
+    if (source === null) {
+      if (!allowsFolderChange(from.path) || !allowsFolderChange(to.path)) throw failed('a folder can be moved only below a folder that programs own')
+      if (files.has(to.path)) throw failed('the target is there already')
+      if (isAtOrBelow(to.path, from.path)) throw failed('the target is in the folder itself')
+    } else if (files.get(to.path) === null) {
+      throw failed('Is a directory (os error 21)')
+    }
+    makeFolders(folderOf(to.path))
+    for (const [path, content] of [...files]) {
+      if (!isAtOrBelow(path, from.path)) continue
+      files.delete(path)
+      files.set(`${to.path}${path.slice(from.path.length)}`, content)
+    }
+  }
+  return files
+}
+
+/** The start of `fakeAppFiles` for the app `name`: its manifest, of the
+ *  kind `kind`, and the files `more`, each by its path in the app (null
+ *  for a folder). */
+export function appFiles(name: string, more: Record<string, string | null> = {}, kind: AppKind = 'script'): Record<string, string | null> {
+  return {
+    [`apps/${name}/manifest.json`]: appManifestText({ name, description: `The ${name} app.`, kind }),
+    ...Object.fromEntries(Object.entries(more).map(([path, content]) => [`apps/${name}/${path}`, content])),
+  }
+}
+
 sbp('sbp/selectors/register', {
   async 'dez.native/getAppDir' (root = 'app'): Promise<string> {
     return root === 'cache' ? CACHE_DIR : APP_DIR
   },
   async 'dez.native/resourcePath' (relative: string): Promise<string> {
     return native.resourcePath(relative)
+  },
+  async 'dez.native/canonicalPath' (path: string): Promise<string> {
+    return native.canonicalPath(path)
   },
   'dez.native/runBundledTool' (run: BundledToolRun, runId: string, onOutput: (output: BundledToolOutput) => void): Promise<BundledToolEnd> {
     native.runs.push({ run, runId })
@@ -100,21 +252,35 @@ sbp('sbp/selectors/register', {
   async 'dez.native/cancelBundledTool' (runId: string): Promise<void> {
     native.cancelledRuns.push(runId)
   },
-  async 'dez.native/listAppFiles' (path: string, root = 'app'): Promise<AppFileEntry[]> {
-    native.listedFolders.push({ root, path } as AppFileRef)
-    return native.folderFiles.map((name) => ({ name, updatedAt: 0, size: native.folderFileSize }))
+  async 'dez.native/writeBundledToolInput' (runId: string, text: string): Promise<void> {
+    native.inputWrites.push({ runId, text })
+  },
+  async 'dez.native/listAppFiles' (path: string, root = 'app', { folders = false }: { folders?: boolean } = {}): Promise<AppFileEntry[]> {
+    const file = { root, path } as AppFileRef
+    native.listedFolders.push(file)
+    return native.folderEntries(file, folders) ?? native.folderFiles.map((name) => ({ name, updatedAt: 0, size: native.folderFileSize }))
   },
   async 'dez.native/moveAppFile' (from: AppFileRef, to: AppFileRef): Promise<void> {
-    await native.moveAppFile(from)
+    await native.moveAppFile(from, to)
     native.moves.push({ from, to })
   },
   async 'dez.native/saveAppFile' (path: string, content: string | Uint8Array, root = 'app'): Promise<void> {
-    await native.saveAppFile()
-    native.savedFiles.push({ file: { root, path } as AppFileRef, content })
+    const file = { root, path } as AppFileRef
+    await native.saveAppFile(file, content)
+    native.savedFiles.push({ file, content })
   },
   async 'dez.native/deleteAppFile' (path: string, root = 'app', { folder = false }: { folder?: boolean } = {}): Promise<void> {
-    await native.deleteAppFile()
-    native.deletedFiles.push({ root, path, folder } as AppFileRef & { folder: boolean })
+    const file = { root, path, folder } as AppFileRef & { folder: boolean }
+    await native.deleteAppFile(file)
+    native.deletedFiles.push(file)
+  },
+  async 'dez.native/createFolder' (path: string, root = 'app'): Promise<void> {
+    const file = { root, path } as AppFileRef
+    await native.createFolder(file)
+    native.createdFolders.push(file)
+  },
+  async 'dez.native/listFileTree' (path: string, maxEntries: number, root = 'app'): Promise<FileTree> {
+    return native.fileTree({ root, path } as AppFileRef, maxEntries)
   },
   'dez.native/downloadAppFile' (request: NativeHttpRequest, requestId: string, file: AppFileRef, rule: NativeDownloadRule): Promise<NativeHttpDownload> {
     native.downloads.push({ request, requestId, file, rule })
@@ -144,6 +310,68 @@ sbp('sbp/selectors/register', {
 /** A signal that never stops. */
 export function running(): AbortSignal {
   return new AbortController().signal
+}
+
+/** The context of a call of a reply that takes no image, no clip, and no
+ *  app, shows no picture, and has no job, with `more` in place of its
+ *  parts. */
+export function callContext(more: Partial<ToolRunContext> = {}): ToolRunContext {
+  return {
+    tabId: '',
+    model: { providerId: 'venice', modelId: 'venice-glm-5' },
+    jobs: new TabJobs(),
+    writeImage: () => null,
+    writeClip: () => null,
+    showApp: () => false,
+    pictureBudget: async () => NO_CALL_PICTURE_BUDGET,
+    ...more,
+  }
+}
+
+/** What the stub of `dez.controller/tools/run` does for one call. */
+export type StubTool = (call: ToolRunCall, signal: AbortSignal, context: ToolRunContext) => Promise<ToolRunResult>
+
+/** The result of a stub tool that has nothing to tell. */
+export const TOOL_DONE: ToolRunResult = { content: 'done', isError: false }
+
+// The stub tools at the start of a test: no call ran, and each call gives
+// `TOOL_DONE`.
+function newToolRuns() {
+  return {
+    calls: [] as ToolRunCall[],
+    tool: (async () => TOOL_DONE) as StubTool,
+  }
+}
+
+/** The stub of the Dez tools, for the tests of the code that runs the tool
+ *  calls of a `js_eval` run (toolBridge.ts, jsEval.ts): the calls that
+ *  ran, and what a call does. */
+export const toolRuns = newToolRuns()
+
+let toolRunsRegistered = false
+
+/** Puts the stub of `dez.controller/tools/run` (`toolRuns`) back to its
+ *  start, and registers it at the first call. This module does not
+ *  register it on import, as its other stubs: the tests of the real
+ *  selector (tools.test.ts) import this module too. Each test of a file
+ *  that needs the stub starts with it. */
+export function stubToolRuns(): void {
+  Object.assign(toolRuns, newToolRuns())
+  if (toolRunsRegistered) return
+  toolRunsRegistered = true
+  sbp('sbp/selectors/register', {
+    'dez.controller/tools/run' (call: ToolRunCall, signal: AbortSignal, context: ToolRunContext): Promise<ToolRunResult> {
+      toolRuns.calls.push(call)
+      return toolRuns.tool(call, signal, context)
+    },
+  })
+}
+
+/** A step that a test ends by hand: `wait` resolves at `finish()`. */
+export function heldStep(): { wait: Promise<void>, finish: () => void } {
+  let finish!: () => void
+  const wait = new Promise<void>((resolve) => { finish = resolve })
+  return { wait, finish }
 }
 
 /** The options of a job whose time limit no test reaches. */
@@ -207,6 +435,20 @@ export function writes(stream: BundledToolOutput['stream'], text: string, end: B
   return async (_run, onOutput) => {
     onOutput({ stream, text })
     return end
+  }
+}
+
+/** A `js_eval` program whose code makes one tool call for each of
+ *  `selectors`, each after the answer of the one before, and then ends
+ *  with the line `last`. */
+export function callingProgram(selectors: readonly string[], last: JsEvalLine = { type: 'result', text: 'ok' }): StubProgram {
+  return async (_run, onOutput) => {
+    for (const [index, selector] of selectors.entries()) {
+      onOutput({ stream: 'stdout', text: protocolLine({ type: 'call', id: index + 1, selector }) })
+      await vi.waitFor(() => expect(native.inputWrites).toHaveLength(index + 1))
+    }
+    onOutput({ stream: 'stdout', text: protocolLine(last) })
+    return ENDED
   }
 }
 

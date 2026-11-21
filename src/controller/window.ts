@@ -45,11 +45,12 @@ function positionOf (geometry: WindowGeometry | null): Point | null {
 
 // GTK's Wayland backend gives no window positions: `outerPosition()` reads
 // (0,0), `setPosition()` does nothing, and the compositor places the window.
-// That is Dez in a Wayland session; only the AppImage runs GTK on X11 there
-// (its GTK hook sets GDK_BACKEND=x11). Under Wayland the tracker keeps the
-// saved place, from an X11 run that shares app_state.json (such as the
-// AppImage), instead of saving (0,0) over it. (0,0) is also a real X11
-// place, so the GDK backend tells the two apart, not the read.
+// That is Dez in a Wayland session, the AppImage too: its GTK hook does not
+// set GDK_BACKEND=x11 (tauri-bundler 2.10 or newer). Under Wayland the
+// tracker keeps the saved place, from an X11 run that shares app_state.json
+// (an X11 session, or GDK_BACKEND=x11), instead of saving (0,0) over it.
+// (0,0) is also a real X11 place, so the GDK backend tells the two apart,
+// not the read.
 // A failed read counts as no positions: a lost move is the smaller harm.
 async function windowPositionsReadable (): Promise<boolean> {
   try {

@@ -1,9 +1,10 @@
 import { countOf } from '../../utils/countText'
 import { oneLineCut } from '../../utils/oneLineCut'
 import { tagEscape } from '../chat/tagEscape'
+import type { ToolBlockData } from '../chat/toolBlocks'
 import { usdText } from '../providers/modelPrices'
 import { argumentWords } from './arguments'
-import { ToolError, type ToolArguments, type ToolDefinition, type ToolParameter } from './types'
+import { ToolError, type SubcommandArguments, type ToolArguments, type ToolDefinition, type ToolParameter } from './types'
 
 // Jobs: the slow work of a Dez tool, such as a request to a media model. A
 // call of such a tool only starts a job and returns its id at once
@@ -111,6 +112,32 @@ export function startedJobId(resultText: string): string | null {
   return startedJob(resultText)?.id ?? null
 }
 
+/** A job that a call of a tool block started. */
+export interface BlockJobStart {
+  id: string
+  /** `JobCall.number`; null when the result text does not tell it. */
+  number: number | null
+  /** The tool and the arguments of the call that started the job: those
+   *  of the block, or those of a tool call of its code. */
+  name: string
+  arguments: ToolArguments
+}
+
+/** The jobs that the calls of `block` started, from their result texts
+ *  (`startedJob`), one entry for each job: the tool calls of the code of a
+ *  `js_eval` block in their order (`ToolBlockData.bridged`), then the call
+ *  of the block itself. The first call that tells a job has its entry:
+ *  code can return the result text of its tool call, and the result of
+ *  its block then starts with the start text of that call. */
+export function blockJobStarts(block: Pick<ToolBlockData, 'name' | 'arguments' | 'result' | 'bridged'>): BlockJobStart[] {
+  const starts: BlockJobStart[] = []
+  for (const { name, arguments: args, result } of [...block.bridged?.calls ?? [], block]) {
+    const started = startedJob(result)
+    if (started && !starts.some((start) => start.id === started.id)) starts.push({ ...started, name, arguments: args })
+  }
+  return starts
+}
+
 // What an open job is (`MAX_OPEN_JOBS`), in each text that tells the limit.
 const OPEN_JOB_MEANING = 'a job that runs, or an ended job whose result no jobs_wait call gave yet'
 
@@ -163,7 +190,7 @@ export function jobTimeoutParameter(defaultSeconds: number): ToolParameter {
 /** The time limit of the job of a call, in milliseconds: its
  *  `timeout_seconds` (`jobTimeoutParameter`), else `defaultSeconds`.
  *  Throws a `ToolError` for a value outside the range. */
-export function jobTimeoutMs(args: ToolArguments, defaultSeconds: number): number {
+export function jobTimeoutMs(args: SubcommandArguments, defaultSeconds: number): number {
   const seconds = args.timeout_seconds
   if (seconds === undefined) return defaultSeconds * 1000
   if (typeof seconds !== 'number' || !Number.isInteger(seconds) || seconds < MIN_JOB_TIMEOUT_SECONDS || seconds > MAX_JOB_TIMEOUT_SECONDS) {
@@ -175,10 +202,10 @@ export function jobTimeoutMs(args: ToolArguments, defaultSeconds: number): numbe
 
 /** The `is_intermediate` parameter of a tool whose job makes images or
  *  clips (`model_invoke`, the `join_clips` and `ffmpeg` subcommands of
- *  `video`). With `true`, the job marks what it makes as hidden assets
- *  (`hidesAssets` of `TabJobs.start`, chat/hiddenAssets.ts). Nothing of
- *  a request or of a result that the model reads changes. Static text: it
- *  goes into a tool definition or a help text. */
+ *  `video`, `apps invoke`). With `true`, the job marks what it makes as
+ *  hidden assets (`hidesAssets` of `TabJobs.start`, chat/hiddenAssets.ts).
+ *  Nothing of a request or of a result that the model reads changes.
+ *  Static text: it goes into a tool definition or a help text. */
 export const INTERMEDIATE_PARAMETER: ToolParameter = {
   name: 'is_intermediate',
   type: 'boolean',
@@ -192,7 +219,7 @@ export const INTERMEDIATE_PARAMETER: ToolParameter = {
 
 /** Whether the checked arguments of a call set `is_intermediate`
  *  (`INTERMEDIATE_PARAMETER`). */
-export function isIntermediate(args: ToolArguments): boolean {
+export function isIntermediate(args: SubcommandArguments): boolean {
   return args[INTERMEDIATE_PARAMETER.name] === true
 }
 
@@ -433,6 +460,13 @@ export type JobResultState = '-' | 'given' | 'ready'
 export function jobResultState(job: Pick<JobInfo, 'status' | 'delivered'>): JobResultState {
   if (!hasJobResult(job.status)) return '-'
   return job.delivered ? 'given' : 'ready'
+}
+
+/** Whether `job` is open (`MAX_OPEN_JOBS`): it still runs, or it ended
+ *  with a result that no `jobs_wait` gave yet. A stopped or cancelled job
+ *  has no result, so it is not open. */
+export function isOpenJob(job: Pick<JobInfo, 'status' | 'delivered'>): boolean {
+  return job.status === 'running' || jobResultState(job) === 'ready'
 }
 
 const JOB_RESULT_STATES: readonly JobResultState[] = ['ready', 'given', '-']

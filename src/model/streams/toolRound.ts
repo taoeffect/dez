@@ -85,7 +85,8 @@ export function toolCallBlock(call: CheckedToolCall, result?: ToolRunResult): To
   if (call.refusal !== undefined) return { ...block, status: 'error', result: call.refusal }
   if (!result) return { ...block, status: 'running', result: '' }
   const pictures = result.pictures?.length ? { pictures: result.pictures } : {}
-  return { ...block, status: result.isError ? 'error' : 'success', result: result.content, ...pictures }
+  const bridged = result.bridged ? { bridged: result.bridged } : {}
+  return { ...block, status: result.isError ? 'error' : 'success', result: result.content, ...pictures, ...bridged }
 }
 
 /** The text of a group of blocks: each block and a `\n` after it, as

@@ -86,7 +86,7 @@ function hiddenTargets(state: EditorState, hidden: readonly HiddenAsset[], menti
     if (!named) return []
     const { owner } = asset
     if (owner.kind === 'compaction') return [{ from: asset.from, holder: { kind: 'compaction', row } }]
-    const call = calls.find(({ id, intermediate }) => id === owner.callId && intermediate?.jobId === owner.jobId)
+    const call = calls.find(({ id, intermediate }) => id === owner.callId && intermediate?.jobIds.includes(owner.jobId))
     return call ? [{ from: asset.from, holder: { kind: 'call', id: call.id, from: call.from } }] : []
   })
 }

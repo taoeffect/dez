@@ -1,3 +1,4 @@
+import { findAppTags, type AppTag } from './appTags'
 import { codeRanges, inCode } from './codeRanges'
 import { linkedRuleParts, partsImageReferences, partsMediaTags } from './compaction'
 import { findAssetMentions, type AssetMention } from './imageMentions'
@@ -17,23 +18,27 @@ import type { Role } from './types'
 // the rules of the request builder (`sectionsToStreamMessages`,
 // `messageClips`); a test ties the two.
 
-/** A run of a section's text: a media tag, an image reference, a run of
- *  Markdown code (codeRanges.ts), or other text between them (a gap).
- *  `from` and `to` are offsets in that text. `kept` tells whether a
- *  reference has the kept mark of a compaction (`IMAGE_KEPT_KEY`,
- *  images.ts). A tag in code is text, but a request still sends it in its
- *  request form, so it is a piece of its own (`codeTag`): a reader that
- *  looks for `media` never takes it for a clip. */
+/** A run of a section's text: a media tag, an app tag (appTags.ts), an
+ *  image reference, a run of Markdown code (codeRanges.ts), or other text
+ *  between them (a gap). `from` and `to` are offsets in that text. `kept`
+ *  tells whether a reference has the kept mark of a compaction
+ *  (`IMAGE_KEPT_KEY`, images.ts). A media tag in code is text, but a
+ *  request still sends it in its request form, so it is a piece of its own
+ *  (`codeTag`): a reader that looks for `media` never takes it for a clip.
+ *  An app tag in code is a part of its code piece: it goes as it is. */
 export type AssetTextPiece =
   | { kind: 'media', tag: MediaTag }
   | { kind: 'codeTag', tag: MediaTag }
+  | { kind: 'app', tag: AppTag }
   | { kind: 'reference', from: number, to: number, path: string, kept: boolean }
   | { kind: 'gap', from: number, to: number }
   | { kind: 'code', from: number, to: number }
 
+type TagPiece = Extract<AssetTextPiece, { tag: unknown }>
+
 /** The pieces of a section's text, in order, with no empty gap and no
- *  empty code. References are read in the text outside the media tags,
- *  with `rule` (where a linked reference counts, images.ts). A reference in
+ *  empty code. References are read in the text outside the tags, with
+ *  `rule` (where a linked reference counts, images.ts). A reference in
  *  code is a part of its code piece. Mentions count only in a gap: the
  *  path and the metadata of a reference, the attributes of a tag, and code
  *  can hold an `@`. */
@@ -69,11 +74,19 @@ export function assetTextPieces(text: string, rule: LinkedPathRule): AssetTextPi
     }
     addRun(end, to)
   }
+  // The tag lines. A tag is a whole line, so no two tags share text, and
+  // the two kinds sort into text order by their starts.
+  const tags: TagPiece[] = findMediaTags(text, rule, { inCode: true }).map((tag) => ({ kind: inCode(code, tag.from) ? 'codeTag' : 'media', tag }))
+  const apps = findAppTags(text, rule, { inCode: true }).filter((tag) => !inCode(code, tag.from))
+  if (apps.length > 0) {
+    for (const tag of apps) tags.push({ kind: 'app', tag })
+    tags.sort((a, b) => a.tag.from - b.tag.from)
+  }
   let start = 0
-  for (const tag of findMediaTags(text, rule, { inCode: true })) {
-    addText(start, tag.from)
-    pieces.push({ kind: inCode(code, tag.from) ? 'codeTag' : 'media', tag })
-    start = tag.to
+  for (const piece of tags) {
+    addText(start, piece.tag.from)
+    pieces.push(piece)
+    start = piece.tag.to
   }
   addText(start, text.length)
   return pieces

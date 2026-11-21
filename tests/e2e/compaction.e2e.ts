@@ -2,13 +2,15 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
+import { appTagLabel } from '../../src/model/chat/appTags'
 import { CARRIED_USER_ASSETS_LABEL, COMPACTION_END_LINE, COMPACTION_MESSAGE_INTRO, COMPACTION_USER_MESSAGE_LABEL, compactionBlockText, compactionTagText, readCompactionBlock, type CompactionBlock } from '../../src/model/chat/compaction'
-import { compactionNotesText, messageFence, notesMessages } from '../../src/model/chat/compactionNotes'
+import { compactionNotesText, messageFence, notesFinalReply, notesMessageParts, notesMessages } from '../../src/model/chat/compactionNotes'
 import { newMediaIds } from '../../src/model/chat/mediaIds'
 import type { ShownPicture } from '../../src/model/chat/shownPictures'
 import type { ConversationData, SectionData } from '../../src/model/persistence/types'
 import { compactionInstruction } from '../../src/model/streams/compactionRequest'
 import { shortDuration } from '../../src/view/thread/pillDuration'
+import { ageApp, seedApp, shownAppCards, uiAppFiles } from './harness/apps'
 import { anthropicChatBody, anthropicMarkedUser, openAiChatBody } from './harness/chatBody'
 import { click, consoleErrors, movePointer, pointerClick, pointerClickAt, promptMessage, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
 import { linkedDropDir } from './harness/drops'
@@ -18,7 +20,7 @@ import { pasteImageReference, pngDataUrl, shownImages, solidPng, type ShownImage
 import { clipTag, MP4_VIDEO, problemCards, shownPlayers, silentWav, tempClipTag, WEBM_VIDEO, type ShownPlayer } from './harness/media'
 import { assetInView, flashedAssets, pressMention, recordFlashes } from './harness/mentions'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
-import { LARGE_TOKENS, mockChatPath, openAiToolCall, replyText, sendAnthropicReply, sendChatReply, sendChatText, sendToolCalls, startEventStream, toolResult, writeChatFrame, writeUsage, type HeldRequest, type MockProvider } from './harness/mockServer'
+import { LARGE_TOKENS, mockChatPath, openAiToolCall, replyText, requestMessages, sendAnthropicReply, sendChatReply, sendChatText, sendToolCalls, startEventStream, toolResult, writeChatFrame, writeUsage, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
 import { activeConversationId, activeTabStreaming, activeTabTitle, assetPartPoint, AT_BOTTOM_PX, docPos, editorCaret, editorDoc, focusEditor, misplacedLines, newTab, openToasts, pickModel, pillThinking, pressRolePill, savedPillLines, sbpCall, scrollEditorToTop, setCaret, submit, threadSections, viewFromBottom, waitForThread, type ThreadSection } from './harness/thread'
 import { hiddenAssetNotes, hiddenPart, pressToolChip, toolChips, toolPanelPictures, type ToolChipView } from './harness/toolChips'
@@ -89,6 +91,9 @@ import { hiddenAssetNotes, hiddenPart, pressToolChip, toolChips, toolPanelPictur
 // - Dez deletes the file of a dropped image that the user saw only in the
 //   panel of a call, and the picture copies of the tag before. The file
 //   of any other dropped image stays.
+// - Each app that the conversation named keeps a line in the notes, and
+//   the instruction of the compaction request lists it. Delete
+//   Unreferenced Apps keeps an app that only that line names.
 //
 // One app session serves the whole file. The relaunch test reopens the
 // conversation of the request test, and a conversation that compacted at
@@ -103,7 +108,7 @@ const MODEL_KEY = `${PROVIDER.id}/${PROVIDER.modelId}`
 const CHAT_PATH = mockChatPath(PROVIDER)
 
 // The first line of the instruction of a compaction request.
-const INSTRUCTION_START = compactionInstruction({ middleMessages: [], assetTable: '', jobs: [], cost: undefined, tools: false }).split('\n')[0]
+const INSTRUCTION_START = compactionInstruction({ middleMessages: [], assetTable: '', apps: [], jobs: [], cost: undefined, tools: false }).split('\n')[0]
 const NOTES_REQUIREMENTS = 'The user wants to go on with the task.'
 // An answer to a compaction request: requirements, and no other part.
 const NOTES_ANSWER = `## Requirements and decisions\n${NOTES_REQUIREMENTS}\n`
@@ -303,11 +308,11 @@ describe('a compacted conversation', () => {
     return openSeeded(id, sections, provider, { cost, compactions: { count: 1, tokens: 52_000, cost }, ...more })
   }
 
-  // Seeds and opens the conversation `id` with one reply, whose request
-  // held `LARGE_TOKENS` tokens: the first request of its next reply is due
-  // for a compaction.
-  async function openLarge (id: string): Promise<ThreadSection[]> {
-    return openSeeded(id, [textSection('user', 'The task.'), textSection('agent', 'An earlier answer.'), textSection('user', '')], PROVIDER, {
+  // Seeds and opens the conversation `id` with one reply, the text
+  // `answer`, whose request held `LARGE_TOKENS` tokens: the first request
+  // of its next reply is due for a compaction.
+  async function openLarge (id: string, answer = 'An earlier answer.'): Promise<ThreadSection[]> {
+    return openSeeded(id, [textSection('user', 'The task.'), textSection('agent', answer), textSection('user', '')], PROVIDER, {
       context: { tokens: LARGE_TOKENS, estimate: 0 },
     })
   }
@@ -322,14 +327,6 @@ describe('a compacted conversation', () => {
     const instruction = body.messages.at(-1)
     expect(instruction?.role).toBe('user')
     expect(typeof instruction?.content === 'string' && instruction.content.startsWith(INSTRUCTION_START)).toBe(true)
-  }
-
-  // The messages of an OpenAI-format request with no system message: the
-  // other fields of a request to a model with thinking are not the
-  // business of these tests.
-  function requestMessages (request: HeldRequest): Array<Record<string, unknown>> {
-    const { messages } = JSON.parse(request.body) as { messages: Array<Record<string, unknown>> }
-    return messages.filter((message) => message.role !== 'system')
   }
 
   // Whether the pill before section `index` shows that its reply streams.
@@ -351,15 +348,17 @@ describe('a compacted conversation', () => {
   // The one message of a request right after a compaction that kept no
   // image: the notes of the compaction block of the tab, with each message
   // part as its text in a code fence. The reply text after the block does
-  // not change it. `messages` are the texts of the parts: the messages of
-  // the user that the notes keep, word for word.
-  async function notesMessage (...messages: string[]): Promise<Record<string, unknown>> {
+  // not change it. `messages` are the texts of the user parts: the
+  // messages of the user that the notes keep, word for word. `reply` is
+  // the text of the reply part: the reply right before the final message,
+  // as the user saw it; null for notes with no reply part.
+  async function notesMessage (messages: string[], reply: string | null = null): Promise<Record<string, unknown>> {
     const notes = (await compactedSection()).read.notes.trim()
-    const parts = notesMessages(notes)
-    expect(parts.map(({ text }) => text)).toStrictEqual(messages)
+    expect(notesMessages(notes).map(({ text }) => text)).toStrictEqual(messages)
+    expect(notesFinalReply(notes)).toBe(reply)
     // A code fence takes the place of the start line and the end line of
     // a part.
-    const content = parts.reduceRight((text, part) => {
+    const content = notesMessageParts(notes).reduceRight((text, part) => {
       const fence = messageFence(part.text)
       return `${text.slice(0, part.partFrom)}${fence}\n${part.text}\n${fence}${text.slice(part.partTo)}`
     }, notes)
@@ -1043,7 +1042,7 @@ describe('a compacted conversation', () => {
     // from them, in the same section after the block: the call is gone.
     // The question is in the notes: no section of the user is left.
     const second = await takeRequest(setup, CHAT_PATH)
-    expect(JSON.parse(second.body)).toStrictEqual(openAiChatBody(PROVIDER, [await notesMessage(question)]))
+    expect(JSON.parse(second.body)).toStrictEqual(openAiChatBody(PROVIDER, [await notesMessage([question])]))
     const [firstSection, ...rest] = await threadSections(browser)
     const { block, read, reply } = await compactedSection()
     expect(read.count).toBe(1)
@@ -1114,7 +1113,7 @@ describe('a compacted conversation', () => {
     // The first request of the reply holds the notes, with the first
     // message of the user and the new one in them.
     const request = await takeRequest(setup, CHAT_PATH)
-    expect(JSON.parse(request.body)).toStrictEqual(openAiChatBody(PROVIDER, [await notesMessage(thread[0].text, 'Go on.')]))
+    expect(JSON.parse(request.body)).toStrictEqual(openAiChatBody(PROVIDER, [await notesMessage([thread[0].text, 'Go on.'], thread[1].text)]))
     await sendChatReply(request.reply, 'the reader of the notes')
     const { block, read } = await compactedSection()
     expect(read.count).toBe(1)
@@ -1174,6 +1173,54 @@ describe('a compacted conversation', () => {
     expect(setup.mock.hasWaitingRequest()).toBe(false)
   })
 
+  // A compaction takes the tags and the calls of the apps out of the
+  // conversation. Without its line in the notes, no text would name the
+  // app, and Delete Unreferenced Apps would delete it.
+  it('keeps a line in the notes for each app that the conversation named, and Delete Unreferenced Apps keeps that app', async () => {
+    const appsDir = appFilePath(setup.app.home, 'apps')
+    const board = { name: 'compaction-board', description: 'A board of the foxes.', kind: 'ui' } as const
+    const spare = 'compaction-spare'
+    await seedApp(appsDir, board, uiAppFiles(''))
+    await seedApp(appsDir, { name: spare, description: 'An app of no conversation.', kind: 'script' }, { 'main.ts': 'export default () => "spare"\n' })
+    // Delete Unreferenced Apps takes no app with a new file.
+    for (const name of [board.name, spare]) await ageApp(appsDir, name, 60 * 60 * 1000)
+    const appLine = `/apps/${board.name} | ${board.kind} | ${board.description}`
+    const appLines = (text: string): string[] => text.split('\n').filter((line) => line.startsWith('/apps/'))
+    // The folders of the apps that Delete Unreferenced Apps would delete
+    // now.
+    const unusedApps = async (): Promise<string[]> => browser.execute(async () => {
+      const sbp = Reflect.get(window, 'sbp') as (selector: string, kind: 'apps', onProgress: () => void) => Promise<{ files: Array<{ path: string }> }>
+      const { files } = await sbp('dez.controller/unusedFiles/find', 'apps', () => {})
+      return files.map(({ path }) => path)
+    })
+
+    const id = 'compaction-apps'
+    const thread = await openLarge(id, `The board of the foxes:\n<dez:app name="${board.name}"/>`)
+    await waitForValue(browser, 'card of the app', async () => (await shownAppCards(browser)).map(({ app }) => app), [board.name])
+    expect(await unusedApps()).toStrictEqual([`apps/${spare}`])
+
+    await submit(browser, 'Go on.')
+    const compaction = await takeRequest(setup, CHAT_PATH)
+    const { messages } = JSON.parse(compaction.body) as { messages: Array<{ content: string }> }
+    expect(appLines(messages.at(-1)?.content ?? '')).toStrictEqual([appLine])
+    sendChatText(compaction.reply, NOTES_ANSWER, { promptTokens: LARGE_TOKENS + 1000 })
+
+    const request = await takeRequest(setup, CHAT_PATH)
+    // The notes quote the reply before "Go on." with a label for its app.
+    expect(JSON.parse(request.body)).toStrictEqual(openAiChatBody(PROVIDER, [await notesMessage([thread[0].text, 'Go on.'], `The board of the foxes:\n${appTagLabel(board.name)}`)]))
+    await sendChatReply(request.reply, 'the reader of the notes')
+    const { block, read } = await compactedSection()
+    await waitForThread(browser, [{ role: 'agent', text: `${block}\n${replyText('the reader of the notes')}` }, { role: 'user', text: '' }])
+    // The tag left with the text: only the line of the notes names the
+    // app now.
+    expect(block).not.toContain('<dez:app')
+    expect(appLines(read.notes)).toStrictEqual([appLine])
+    // The scan reads the file of the conversation, so it runs after the
+    // save.
+    await waitForValue(browser, 'saved compaction', () => savedNumbers(id, /^compactions/), ['compactions: 1'])
+    expect(await unusedApps()).toStrictEqual([`apps/${spare}`])
+  })
+
   // The conversation file holds a first compaction in the old layout: a
   // kept user section after the block. Its notes have a line for each of
   // its two made images, and its tag has a picture. The second compaction
@@ -1196,10 +1243,12 @@ describe('a compacted conversation', () => {
         { id: 'b', kind: 'image', facts: 'PNG, 30x20', origin: 'made by the model_invoke job 2 of its reply: "A fox"', sentence: 'The fox.', byReply: false, text: `![id=b|tool=model_invoke](${seen})` },
       ],
       unnamed: [],
+      apps: [],
       firstMessage: null,
       middleMessages: [],
       leftOutMessages: 0,
       finalMessage: null,
+      finalReply: null,
       jobs: [],
       jobInputs: new Map(),
       cost: undefined,
@@ -1217,7 +1266,7 @@ describe('a compacted conversation', () => {
     const request = await takeRequest(setup, CHAT_PATH)
     // The first message of the old layout and the new message are in the
     // notes now.
-    expect(JSON.parse(request.body)).toStrictEqual(openAiChatBody(PROVIDER, [await notesMessage(thread[1].text, 'Now a wolf.')]))
+    expect(JSON.parse(request.body)).toStrictEqual(openAiChatBody(PROVIDER, [await notesMessage([thread[1].text, 'Now a wolf.'], thread[2].text)]))
     await sendChatReply(request.reply, 'the wolf')
 
     // The second compaction left both images out of the conversation, and
@@ -1270,7 +1319,7 @@ describe('a compacted conversation', () => {
     await waitForValue(browser, 'compaction chips', () => toolChips(browser), [assetsChipView(['2 kept', '1 dropped'], false), summaryChipView(false)])
     expect(await compactionChipCounts()).toStrictEqual(['2 kept', '1 dropped'])
     // The user saw the dropped image in the reply, so its file stays until
-    // Delete Unused Files.
+    // Delete Unreferenced Files.
     expect((await filesIn(madeDir)).filter((name) => name === names.kept || name === names.gone)).toStrictEqual([names.gone, names.kept])
   })
 
@@ -1291,15 +1340,15 @@ describe('a compacted conversation', () => {
     const compaction = await takeRequest(setup, CHAT_PATH)
     sendChatText(compaction.reply, NOTES_ANSWER)
 
-    // One user message: the notes, with the two messages word for word in
-    // code fences, and each image right after its reference. No text holds
-    // a path.
+    // One user message: the notes, with the two messages and the reply
+    // between them word for word in code fences, and each image right
+    // after its reference. No text holds a path.
     const request = await takeRequest(setup, CHAT_PATH)
     const notes = await compactedSection()
     expect(notes.read.linked).toStrictEqual([linked])
     const text = notes.read.notes.trim()
-    const [firstPart, newestPart] = notesMessages(text)
-    expect([firstPart.text, newestPart.text]).toStrictEqual([first, 'Go on.'])
+    const [firstPart, replyPart, newestPart] = notesMessageParts(text)
+    expect([firstPart.text, replyPart.text, newestPart.text]).toStrictEqual([first, 'An earlier answer.', 'Go on.'])
     const fence = messageFence(first)
     expect(JSON.parse(request.body)).toStrictEqual(openAiChatBody(PROVIDER, [{
       role: 'user',
@@ -1308,7 +1357,7 @@ describe('a compacted conversation', () => {
         imagePart(LINKED_PNG),
         { type: 'text', text: ' and ![id=b](image)' },
         imagePart(KEPT_PNG),
-        { type: 'text', text: `\n${fence}${text.slice(firstPart.partTo, newestPart.partFrom)}${fence}\nGo on.\n${fence}${text.slice(newestPart.partTo)}` },
+        { type: 'text', text: `\n${fence}${text.slice(firstPart.partTo, replyPart.partFrom)}${fence}\nAn earlier answer.\n${fence}${text.slice(replyPart.partTo, newestPart.partFrom)}${fence}\nGo on.\n${fence}${text.slice(newestPart.partTo)}` },
       ],
     }]))
     expect(request.body).not.toContain(linkedDir)
@@ -1362,20 +1411,26 @@ describe('a compacted conversation', () => {
     sendChatText(compaction.reply, '## Requirements and decisions\nThe film has three parts.\n\n## Middle messages\nm1: keep\nm2: drop\n\n## Assets\n@b: drop - The user rejected the renders.\n')
 
     // The next request quotes the first, the kept middle, and the final
-    // message, each in a code fence, and the image of the middle message
-    // right after its reference, in its fence.
+    // message, and the reply right before the final one ("Fine."), each in
+    // a code fence, and the image of the middle message right after its
+    // reference, in its fence.
     const request = await takeRequest(setup, CHAT_PATH)
     const { block, read } = await compactedSection()
     const text = read.notes.trim()
-    const [first, middle, final] = notesMessages(text)
-    expect(notesMessages(text).map((part) => part.text)).toStrictEqual(['Make a short film in three parts.', instruction, 'Now the end part.'])
+    const [first, middle, pairReply, final] = notesMessageParts(text)
+    expect(notesMessageParts(text).map((part) => [part.role, part.text])).toStrictEqual([
+      ['user', 'Make a short film in three parts.'],
+      ['user', instruction],
+      ['agent', 'Fine.'],
+      ['user', 'Now the end part.'],
+    ])
     const fence = messageFence(instruction)
     expect(JSON.parse(request.body)).toStrictEqual(openAiChatBody(PROVIDER, [{
       role: 'user',
       content: [
         { type: 'text', text: `${COMPACTION_MESSAGE_INTRO}\n\n${text.slice(0, first.partFrom)}${fence}\n${first.text}\n${fence}${text.slice(first.partTo, middle.partFrom)}${fence}\nFor the middle part use my screenshot, not the renders:\n![id=a](image)` },
         imagePart(SHOT_PNG),
-        { type: 'text', text: `\n${fence}${text.slice(middle.partTo, final.partFrom)}${fence}\nNow the end part.\n${fence}${text.slice(final.partTo)}` },
+        { type: 'text', text: `\n${fence}${text.slice(middle.partTo, pairReply.partFrom)}${fence}\nFine.\n${fence}${text.slice(pairReply.partTo, final.partFrom)}${fence}\nNow the end part.\n${fence}${text.slice(final.partTo)}` },
       ],
     }]))
     await sendChatReply(request.reply, 'the end part')
@@ -1386,16 +1441,20 @@ describe('a compacted conversation', () => {
     expect([shot, render].filter((file) => block.includes(file))).toStrictEqual([shot])
 
     // The summary chip shows the three kinds of message, each kept one in
-    // a code fence, and tells that one message is left out. The assets
-    // chip shows the screenshot and no render.
+    // a code fence, and tells that one message is left out. Under the
+    // heading of the final message pair, the reply comes before the final
+    // message, each in a code fence. The assets chip shows the screenshot
+    // and no render.
     await scrollEditorToTop(browser)
     await pressToolChip(browser, 1)
     await waitForValue(browser, 'summary panel', async () => (await chipNotes('summary')) !== null, true)
-    const shown = await chipNotes('summary')
+    const shown = await chipNotes('summary') ?? ''
     expect(shown).toContain('## User messages\n\n### First message\n\n```\nMake a short film in three parts.\n```')
     expect(shown).toContain('### Relevant middle messages\n\nDez left out 1 other message of the user here')
     expect(shown).toContain('```\nFor the middle part use my screenshot, not the renders:\n')
-    expect(shown).toContain('### Final message\n\n```\nNow the end part.\n```')
+    const pair = ['### Final message pair\n\n', '```\nFine.\n```', '```\nNow the end part.\n```'].map((piece) => shown.indexOf(piece))
+    expect(pair.filter((at) => at < 0)).toStrictEqual([])
+    expect(pair).toStrictEqual([...pair].sort((a, b) => a - b))
     expect(shown).not.toContain('```\nok\n```')
     await pressToolChip(browser, 0)
     await waitForValue(browser, 'images in the assets panel', () => shownImages(browser), [SHOT_IMAGE])
@@ -1423,7 +1482,7 @@ describe('a compacted conversation', () => {
     sendChatText(compaction.reply, NOTES_ANSWER)
 
     const request = await takeRequest(setup, CHAT_PATH)
-    expect(JSON.parse(request.body)).toStrictEqual(openAiChatBody(PROVIDER, [await notesMessage('Go on.')]))
+    expect(JSON.parse(request.body)).toStrictEqual(openAiChatBody(PROVIDER, [await notesMessage(['Go on.'])]))
     await sendChatReply(request.reply, 'the new layout')
     const { block, read } = await compactedSection()
     expect(read.count).toBe(2)
@@ -1451,7 +1510,7 @@ describe('a compacted conversation', () => {
     // The reply goes on after the block, with no thinking yet: the pill
     // shows the spinner.
     const second = await takeRequest(setup, chatPath)
-    expect(requestMessages(second)).toStrictEqual([await notesMessage(question)])
+    expect(requestMessages(second)).toStrictEqual([await notesMessage([question])])
     await waitForValue(browser, 'pills after the first compaction', pillRoles, [{ index: 0, role: 'agent' }])
     expect((await pillThinking(browser, 0))?.slot).toBe('spinner')
     expect(await pillStreams(0)).toBe(true)
@@ -1474,7 +1533,7 @@ describe('a compacted conversation', () => {
     // The chip of the call comes after the two chips of the compaction.
     const third = await takeRequest(setup, chatPath)
     expect(requestMessages(third)).toStrictEqual([
-      await notesMessage(question),
+      await notesMessage([question]),
       { role: 'assistant', content: '', tool_calls: [secondCall], reasoning_content: plan },
       { role: 'tool', tool_call_id: 'call_2', content: toolResult(third, 'call_2') },
     ])
@@ -1502,7 +1561,7 @@ describe('a compacted conversation', () => {
     // The new block takes the place of the old one and of the rounds after
     // it. The thinking of those rounds goes with them.
     const last = await takeRequest(setup, chatPath)
-    expect(requestMessages(last)).toStrictEqual([await notesMessage(question)])
+    expect(requestMessages(last)).toStrictEqual([await notesMessage([question])])
     const { block, read, reply } = await compactedSection()
     expect([read.count, block.includes(secondSummary), reply]).toStrictEqual([2, true, ''])
     expect(await pillRoles()).toStrictEqual([{ index: 0, role: 'agent' }])
@@ -1572,7 +1631,7 @@ describe('a compacted conversation', () => {
     expect(reply).toBe(replyText('the reader of the notes'))
     await submit(browser, 'And next?')
     const next = await takeRequest(setup, CHAT_PATH, openAiChatBody(PROVIDER, [
-      await notesMessage('The task.', 'Go on.'),
+      await notesMessage(['The task.', 'Go on.'], 'An earlier answer.'),
       { role: 'assistant', content: replyText('the reader of the notes') },
       { role: 'user', content: 'And next?' },
     ]))

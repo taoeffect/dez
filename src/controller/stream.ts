@@ -1,5 +1,6 @@
 import sbp from '@sbp/sbp'
 import type { ActiveModel, MessagePart, ModelRef, Section, SectionThinking, Tab } from '../model/chat/types'
+import { appTagText } from '../model/chat/appTags'
 import { sectionsBeforeReply, sectionTextParts, type Compactions } from '../model/chat/compaction'
 import { sectionPlainText } from '../model/chat/content'
 import { compactionDueSize, type ContextSize } from '../model/chat/contextSize'
@@ -506,8 +507,8 @@ function replyPictureParts(base: readonly StreamMessage[], model: ModelRef): Req
 // Runs the calls of one round, in order: appends their running blocks (a
 // refused call gets its error block at once), runs each call, then replaces
 // the running blocks with the final ones. Nothing else of the reply writes
-// the section meanwhile, but a tool can put an image or a clip after the
-// blocks (`toolAssetWriters`). `model` is the reply's
+// the section meanwhile, but a tool can put an image, a clip, or an app
+// after the blocks (`toolAssetWriters`, `showApp`). `model` is the reply's
 // model, for a tool that reads it, and `messages` the request that gave
 // the calls, for the picture budget. Returns the reply after the round,
 // or null when the run did not end here: the user stopped the reply, or a
@@ -522,7 +523,9 @@ function replyPictureParts(base: readonly StreamMessage[], model: ModelRef): Req
 // keeps its text, and both rounds keep their thinking: a request sends no
 // thinking for a round whose text holds an image of the model
 // (`roundThinking`, streams/messages.ts), and the request after a round of
-// calls needs that round's thinking.
+// calls needs that round's thinking. The tag of an app that `apps show`
+// shows goes the same way (chat/appTags.ts), with no mark of a tool: only
+// Dez writes that tag.
 async function runToolRound(tabId: string, reply: ReplyRuntime, jobs: TabJobs, model: ModelRef, calls: CheckedToolCall[], replyText: string, messages: readonly StreamMessage[]): Promise<StreamingReply | null> {
   const runningBlocks = calls.map((call) => toolCallBlock(call))
   const run: ToolRun = {
@@ -546,6 +549,7 @@ async function runToolRound(tabId: string, reply: ReplyRuntime, jobs: TabJobs, m
       model,
       jobs,
       ...toolAssetWriters(tabId, reply, call.name, takesAssets),
+      showApp: (name) => takesAssets() && writeOwnParagraph(tabId, reply, () => appTagText(name)),
       // The read of the file sizes takes a moment, so a stop can come
       // during it.
       pictureBudget: async () => {
@@ -578,30 +582,42 @@ function replyIsCurrent(tabId: string, reply: ReplyRuntime): boolean {
   return repliesByTab.get(tabId) === reply && !reply.cancelling
 }
 
-// The line breaks that put a reference of the reply (an image, a clip) in
-// a paragraph of its own after `replyText`. A clip's tag needs it: a tag
-// counts only as a whole line (mediaTags.ts).
+// The line breaks that put a line of Dez in the reply (an image, a clip,
+// an app) in a paragraph of its own after `replyText`. A tag needs it: a
+// tag counts only as a whole line (mediaTags.ts, appTags.ts).
 function paragraphGap(replyText: string): string {
   return replyText === '' || replyText.endsWith('\n\n') ? '' : replyText.endsWith('\n') ? '\n' : '\n\n'
 }
 
-// Writes an image reference or a clip tag at the end of the reply's
-// section, as a paragraph of its own; `assetText` gives its text with a new
-// media id. Returns the id, or null when the section takes no text: the
-// user merged it into the one before, or the stream ended. The id and the
-// write are in one tick, so that no paste takes the id (the editor gives
-// ids only to pasted and dropped references). The model text that comes
-// next starts a new paragraph (`writeModelText`). Right after a compaction,
-// the reply text is empty, so the asset starts on the line after the end
-// line of the block.
-function writeAsset(tabId: string, reply: ReplyRuntime, assetText: (id: string) => string): string | null {
+// Writes a line of Dez (an image reference, a clip tag, an app tag) at the
+// end of the reply's section, as a paragraph of its own; `lineText` gives
+// its text from the sections of the tab as they are now, in the tick of
+// the write. Returns false, and writes nothing, when the section takes no
+// text: the user merged it into the one before, or the stream ended. The
+// model text that comes next starts a new paragraph (`writeModelText`).
+// Right after a compaction, the reply text is empty, so the line starts on
+// the line after the end line of the block.
+function writeOwnParagraph(tabId: string, reply: ReplyRuntime, lineText: (sections: readonly Section[]) => string): boolean {
   const sections = (sbp('dez.model/tab', tabId) as Tab | null)?.sections ?? []
   const index = sections.findIndex((section) => section.id === reply.sectionId)
-  if (index < 0 || !streamWritesSection(tabId, reply.sectionId)) return null
-  const [id] = newMediaIds(sections.map(sectionPlainText), 1)
-  receiveToken(tabId, reply.sectionId, paragraphGap(sectionTextParts(sections[index], index).text) + assetText(id))
+  if (index < 0 || !streamWritesSection(tabId, reply.sectionId)) return false
+  receiveToken(tabId, reply.sectionId, paragraphGap(sectionTextParts(sections[index], index).text) + lineText(sections))
   reply.afterAsset = true
-  return id
+  return true
+}
+
+// Writes an image reference or a clip tag into the reply
+// (`writeOwnParagraph`); `assetText` gives its text with a new media id.
+// Returns the id, or null when the section takes no text. The id and the
+// write are in one tick, so that no paste takes the id (the editor gives
+// ids only to pasted and dropped references).
+function writeAsset(tabId: string, reply: ReplyRuntime, assetText: (id: string) => string): string | null {
+  let id = ''
+  const written = writeOwnParagraph(tabId, reply, (sections) => {
+    [id] = newMediaIds(sections.map(sectionPlainText), 1)
+    return assetText(id)
+  })
+  return written ? id : null
 }
 
 // Puts an image of a chat reply at the end of its section: saves the file
@@ -948,7 +964,7 @@ async function compactIfDue(args: StreamStartArgs, reply: ReplyRuntime, jobs: Ta
   // Before the delete, which keeps each file that a conversation file
   // names: the old file of this conversation names the files that left.
   await sbp('dez.model/tabs/save', tabId)
-  // Not awaited: it waits for a scan of the unused files that runs, and it
+  // Not awaited: it waits for the scan of a cleanup that runs, and it
   // logs its own failures.
   void sbp('dez.controller/unusedFiles/deleteUnnamed', compactionLeftFiles({ sections, replySectionId: sectionId, dropped: result.dropped, keptPictures: result.pictures }))
   reply.imageBytes = imageFileSizes(base.messages)
@@ -1375,7 +1391,7 @@ export default sbp('sbp/selectors/register', {
   // (`TabJobs.madeAssetSources`; the jobs that a tab holds too); and the
   // names of the picture copies of the calls of a tool round that runs
   // (shownPictures.ts), which a round can hold for longer than the age
-  // rule of the cleanup. Delete Unused Files keeps those files, as it
+  // rule of the cleanup. Delete Unreferenced Files keeps those files, as it
   // keeps the files that a text names.
   'dez.stream/unnamedMadeFiles' (): string[] {
     const replies = [...repliesByTab.values()]

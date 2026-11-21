@@ -750,6 +750,10 @@ describe('tab titles', () => {
     expect(titleFor(`${tag}\nMake it dance`)).toBe('[video]\nMake it dance')
   })
 
+  it('shows the tag of an app as a label with the name of the app', () => {
+    expect(titleFor('<dez:app name="notes"/>\nWhy is it empty?')).toBe('[app notes]\nWhy is it empty?')
+  })
+
   it('goes back to New Tab when no user text is left', () => {
     const image = '/home/user/.config/dez/assets/images/a.png'
 

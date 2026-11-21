@@ -7,7 +7,7 @@ import type { Section } from '../model/chat/types'
 import { reply, user } from '../model/streams/testing'
 import { unreadableImageText } from '../model/tools/imageTool'
 import { jobTimedOutText } from '../model/tools/jobs'
-import { INPUT_CLIP_TOO_LARGE, outputNotStoredText, programNotStartedText } from '../model/tools/programRuns'
+import { INPUT_CLIP_TOO_LARGE, outputNotStoredText, PROGRAM_READS_INPUTS, programNotStartedText } from '../model/tools/programRuns'
 import { CONVERSATION, FILM, LOOP, OPUS, PLAN, probeOutput, SKY, SONG, VP9 } from '../model/tools/testing'
 import { clipReadProblemText } from '../model/tools/toolInputs'
 import { ToolError } from '../model/tools/types'
@@ -31,7 +31,6 @@ import {
   jpegCopyNotWrittenText,
   OutputStart,
   PROGRAM_OUTPUT_CAP,
-  VIDEO_READS_INPUTS,
   type ClipFacts,
 } from '../model/tools/videoTool'
 import { errorText } from '../utils/errorText'
@@ -128,7 +127,7 @@ describe('runFfmpegJob', () => {
     expect(outcome.isError).toBe(false)
     expect(outcome.text).toContain('frame_1.jpg (image), out.mp4 (video clip)')
     expect(outcome.text).toContain('notes.txt')
-    expect(states).toStrictEqual([VIDEO_READS_INPUTS, ffmpegStateText(''), PROGRESS_STATE])
+    expect(states).toStrictEqual([PROGRAM_READS_INPUTS, ffmpegStateText(''), PROGRESS_STATE])
     expect(native.deletedFiles).toHaveLength(1)
   })
 
@@ -482,7 +481,7 @@ describe('runJoinJob', () => {
       isError: false,
       assets: [{ kind: 'clip', clip: { kind: 'video', type: 'video/webm', src: `${APP_DIR}/${native.moves[0].to.path}`, url: null, expires: null } }],
     })
-    expect(states).toStrictEqual([VIDEO_READS_INPUTS, JOIN_READS_CLIPS, ffmpegStateText('')])
+    expect(states).toStrictEqual([PROGRAM_READS_INPUTS, JOIN_READS_CLIPS, ffmpegStateText('')])
   })
 
   it('encodes clips whose streams do not match again, with no list file', async () => {

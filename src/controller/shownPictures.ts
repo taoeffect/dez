@@ -27,8 +27,8 @@ export async function saveShownPictures(pictures: readonly NewPicture[]): Promis
 
 /** Deletes the copies `pictures` of a call whose result no block took (a
  *  stopped reply), or that a compaction saved and its tag did not keep
- *  (compaction.ts). A delete that fails leaves the file to Delete Unused
- *  Files, as no text names it. */
+ *  (compaction.ts). A delete that fails leaves the file to Delete
+ *  Unreferenced Files, as no text names it. */
 export async function discardShownPictures(pictures: readonly ShownPicture[]): Promise<void> {
   await Promise.all(pictures.map(async ({ file }) => {
     try {

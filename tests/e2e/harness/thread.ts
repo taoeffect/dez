@@ -370,19 +370,22 @@ export async function docPosPoint (browser: E2EBrowser, pos: number, side: -1 | 
 
 /** Scrolls the element `part` of the asset `asset` (such as `.dez-image`
  *  or `.media-player`) at `index` (doc order) of the active editor into
- *  view, and gives its center. The center is read in a second call, after
- *  the scroll. */
+ *  view, and gives its center. The center is read two frames after the
+ *  scroll: CodeMirror then draws the lines that came into view and
+ *  measures them, and that can move the element. */
 export async function assetPartPoint (browser: E2EBrowser, asset: string, index: number, part: string): Promise<Point> {
   await browser.execute((wantedAsset: string, at: number, wantedPart: string) => {
     const element = document.querySelectorAll(`.cm-content ${wantedAsset}`)[at]?.querySelector(wantedPart)
     if (!element) throw new Error(`assetPartPoint: no ${wantedPart} in ${wantedAsset} ${at}`)
     element.scrollIntoView({ block: 'center' })
   }, asset, index, part)
-  return browser.execute((wantedAsset: string, at: number, wantedPart: string) => {
-    const box = document.querySelectorAll(`.cm-content ${wantedAsset}`)[at]?.querySelector(wantedPart)?.getBoundingClientRect()
-    if (!box) throw new Error(`assetPartPoint: ${wantedPart} in ${wantedAsset} ${at} went away`)
-    return { x: (box.left + box.right) / 2, y: (box.top + box.bottom) / 2 }
-  }, asset, index, part)
+  return browser.execute((wantedAsset: string, at: number, wantedPart: string) => new Promise<Point>((resolve, reject) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const box = document.querySelectorAll(`.cm-content ${wantedAsset}`)[at]?.querySelector(wantedPart)?.getBoundingClientRect()
+      if (!box) reject(new Error(`assetPartPoint: ${wantedPart} in ${wantedAsset} ${at} went away`))
+      else resolve({ x: (box.left + box.right) / 2, y: (box.top + box.bottom) / 2 })
+    }))
+  }), asset, index, part)
 }
 
 /** The height of every role pill of the active editor. */
@@ -520,20 +523,35 @@ export async function openToasts (browser: E2EBrowser, variant?: ToastVariant): 
   ), variant ? `.toast-card--${variant}` : '.toast-card')
 }
 
-/** Waits until the active tab holds `expected` and no stream runs, then
- *  checks that no error toast is open. */
+// The end of a stream rebuilds the editor, and when the view followed the
+// stream, it scrolls to the bottom one frame later
+// (`scrollViewToBottomAfterLayout`, `ThreadEditor.vue`). The rebuild asks
+// for that frame in the task that ends the stream, so it comes before the
+// frames that a later script asks for. With slow frames (software GL), a
+// scroll of a spec that does not wait for it is undone.
+async function streamEndScrollDone (browser: E2EBrowser): Promise<void> {
+  await browser.execute(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+  }))
+}
+
+/** Waits until the active tab holds `expected`, no stream runs, and the
+ *  scroll of the stream end is done, then checks that no error toast is
+ *  open. */
 export async function waitForThread (browser: E2EBrowser, expected: ThreadSection[]): Promise<void> {
   await waitForValue(browser, 'thread sections', () => threadSections(browser), expected)
   await waitForValue(browser, 'streaming', () => activeTabStreaming(browser), false)
+  await streamEndScrollDone(browser)
   expect(await openToasts(browser, 'error')).toEqual([])
 }
 
 /** Waits for the end of the reply at the section `replyIndex` of the
- *  active tab (the empty user section after it is there, and no stream
- *  runs), and gives its text. */
+ *  active tab (the empty user section after it is there, no stream runs,
+ *  and the scroll of the stream end is done), and gives its text. */
 export async function endedReply (browser: E2EBrowser, replyIndex = 1): Promise<string> {
   await waitForValue(browser, 'sections after the reply', async () => (await threadSections(browser)).length, replyIndex + 2)
   await waitForValue(browser, 'streaming', () => activeTabStreaming(browser), false)
+  await streamEndScrollDone(browser)
   return (await threadSections(browser))[replyIndex].text
 }
 

@@ -3,7 +3,7 @@ import { wholeImageDrawing, type DrawnImage, type ImageSize } from '../model/cha
 import { unreadableImageText } from '../model/tools/imageTool'
 import { jobTimedOutText } from '../model/tools/jobs'
 import { withoutLocalPaths } from '../model/tools/localPaths'
-import { programNotStartedText, type ClipInput, type KeptFile, type ProgramEnd } from '../model/tools/programRuns'
+import { PROGRAM_READS_INPUTS, programNotStartedText, type ClipInput, type KeptFile, type ProgramEnd } from '../model/tools/programRuns'
 import { ToolError } from '../model/tools/types'
 import { FONT_FOLDER, fontNotFoundText } from '../model/tools/videoFonts'
 import type { TextFile } from '../model/tools/videoTextFiles'
@@ -27,7 +27,6 @@ import {
   outputFiles,
   OutputStart,
   ProgramLog,
-  VIDEO_READS_INPUTS,
   VIDEO_TOOL,
   type ClipFacts,
   type FfmpegCall,
@@ -38,7 +37,7 @@ import {
 } from '../model/tools/videoTool'
 import type { JobOutcome } from './jobs'
 import type { AppFileEntry, BundledToolInput, BundledToolOutput, BundledToolRun } from './nativeTypes'
-import { clipInputFile, inWorkFolder, readableFileSize, runProgram, storeOutputs } from './programRuns'
+import { clipInputFile, imageInputAsIs, inWorkFolder, readableFileSize, runProgram, storeOutputs } from './programRuns'
 
 // The work of the `video` tool (model/tools/videoTool.ts): the runs of
 // ffmpeg and ffprobe, the programs that Dez ships. This module registers
@@ -57,11 +56,9 @@ import { clipInputFile, inWorkFolder, readableFileSize, runProgram, storeOutputs
 // the run copies, or null for an image that goes as a JPEG copy, which is
 // written into the work folder here. The webview draws the copy on white:
 // a JPEG has no transparent pixels.
-async function imageInputFile({ id, name, path, jpegCopy }: ImageInput, folder: string): Promise<BundledToolInput | null> {
-  if (!jpegCopy) {
-    if (await readableFileSize(path) === null) throw new ToolError(unreadableImageText(id))
-    return { name, source: path }
-  }
+async function imageInputFile(image: ImageInput, folder: string): Promise<BundledToolInput | null> {
+  if (!image.jpegCopy) return await imageInputAsIs(image)
+  const { id, name, path } = image
 
   let file: File
   try {
@@ -212,7 +209,7 @@ function runProbe(
  *  goes at every end. */
 export function runFfmpegJob(call: FfmpegCall, signal: AbortSignal, report: (state: string) => void): Promise<JobOutcome> {
   return inWorkFolder(async (folder) => {
-    report(VIDEO_READS_INPUTS)
+    report(PROGRAM_READS_INPUTS)
     const inputs = [...await prepareInputs(call.inputs, folder, signal), ...await fontInputs(call.fonts, signal)]
     await writeTextFiles(call.textFiles, folder, signal)
     const log = new ProgramLog()
@@ -256,7 +253,7 @@ async function probeJoinClips(clips: readonly ClipInput[], copies: BundledToolIn
  *  and the texts are as for `runFfmpegJob`. */
 export function runJoinJob(call: JoinCall, signal: AbortSignal, report: (state: string) => void): Promise<JobOutcome> {
   return inWorkFolder(async (folder) => {
-    report(VIDEO_READS_INPUTS)
+    report(PROGRAM_READS_INPUTS)
     const copies = await prepareInputs(call.inputs, folder, signal)
     report(JOIN_READS_CLIPS)
     const facts = await probeJoinClips(call.inputs, copies, folder, signal)

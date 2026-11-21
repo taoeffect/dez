@@ -12,3 +12,13 @@ function cloneJsonValue(value: JsonValue): JsonValue {
 export function cloneJsonObject(value: JsonObject): JsonObject {
   return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, cloneJsonValue(entry)]))
 }
+
+/** A copy of a JSON value with `map` applied to every string in it: the
+ *  string values at any depth, and the object keys. Two keys that get the
+ *  same text become one field, with the value of the later key. */
+export function mapJsonStrings(value: unknown, map: (text: string) => string): unknown {
+  if (typeof value === 'string') return map(value)
+  if (Array.isArray(value)) return value.map((item) => mapJsonStrings(item, map))
+  if (value === null || typeof value !== 'object') return value
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [map(key), mapJsonStrings(item, map)]))
+}

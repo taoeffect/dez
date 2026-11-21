@@ -17,7 +17,10 @@ import {
 } from './find'
 import { findHistory } from './findHistory'
 import { findState } from './findState'
+import { showAppDeleted } from './apps'
 import { focusKeepingScroll } from './focus'
+import { postToAppFrame } from '../apps/appFrame'
+import { focusedAppFrame } from '../apps/appFrameHost'
 import { dropFilePaths } from './imageInsert'
 import { isModalOpen } from '../composables/useKeyboardShortcuts'
 import { findShortcut, keyEventInit, type Shortcut, type ShortcutIdOfScope } from '../../model/shortcuts'
@@ -91,9 +94,10 @@ function isTextField(element: Element | null): element is HTMLInputElement | HTM
 }
 
 /** What `dez.editor/runKeyBinding` does while a native text field (an
- *  `<input>` or `<textarea>`, such as the find field) has focus: run the
- *  binding in the editor anyway, do nothing, or run this
- *  `document.execCommand` edit command in the field. */
+ *  `<input>` or `<textarea>`, such as the find field) or the frame of an
+ *  app has focus: run the binding in the editor anyway, do nothing, or run
+ *  this `document.execCommand` edit command in the field, or in the page
+ *  of the app. */
 export type TextFieldAction = 'editor' | 'none' | 'insertLineBreak' | 'undo' | 'redo' | 'selectAll'
 
 export default sbp('sbp/selectors/register', {
@@ -123,8 +127,9 @@ export default sbp('sbp/selectors/register', {
   },
 
   /** Puts the caret in the active editor, so the user can type at once.
-   *  Does nothing while a modal (the confirm prompt, Settings, or History)
-   *  covers the editor. With `keepTextFieldFocus`, it also does nothing
+   *  Does nothing while a modal covers the editor (`isModalOpen`: the
+   *  confirm prompt, a panel, the expanded view of an app). With
+   *  `keepTextFieldFocus`, it also does nothing
    *  while a native text field outside the editor has the focus, such as
    *  the find field, so the user can go on typing in it. A field inside the
    *  editor (the textarea of a thinking panel or a tool result) does not
@@ -239,6 +244,16 @@ export default sbp('sbp/selectors/register', {
     return true
   },
 
+  /** Dez deleted the app `name` with no click on a card (Delete
+   *  Unreferenced Apps, and an `apps rm` or `apps mv` of the whole app): the
+   *  cards of the app tell that it is gone, and its runs end
+   *  (`showAppDeleted`). The cleanup deletes only an app that no
+   *  conversation names, but a paste can bring a tag of it in while the
+   *  delete runs. */
+  'dez.editor/appDeleted' (name: string): void {
+    showAppDeleted(activeView, name)
+  },
+
   /** Cmd/Ctrl+F: open the find dropdown (or refocus it), prefilled from the
    *  editor selection when `findPrefillText` allows it. Does nothing while
    *  a modal covers the editor (`isModalOpen`). Returns whether it opened. */
@@ -331,11 +346,13 @@ export default sbp('sbp/selectors/register', {
    *  their checks (an open prompt autocomplete, several cursors, section
    *  splits). On Linux a menu accelerator takes the key before the page
    *  sees it, so the menu item must do what the key would do where focus
-   *  is; see `TextFieldAction`. Without a focused text field, every action
-   *  except `'editor'` focuses the editor before the binding runs. While a
-   *  modal covers the editor (`isModalOpen`), the binding runs only if the
-   *  editor still has focus, as a key press would. Returns whether anything
-   *  ran. */
+   *  is; see `TextFieldAction`. An app whose frame has the focus gets the
+   *  edit command as a message (`postToAppFrame`): the key was for the app,
+   *  so the editor must not change, and the focus stays in the frame.
+   *  Without a focused text field or app, every action except `'editor'`
+   *  focuses the editor before the binding runs. While a modal covers the
+   *  editor (`isModalOpen`), the binding runs only if the editor still has
+   *  focus, as a key press would. Returns whether anything ran. */
   'dez.editor/runKeyBinding' (id: ShortcutIdOfScope<'editor'>, inTextField: TextFieldAction = 'editor'): boolean {
     const focused = document.activeElement
     if (inTextField !== 'editor' && isTextField(focused)) {
@@ -344,6 +361,12 @@ export default sbp('sbp/selectors/register', {
       return inTextField !== 'none' && document.execCommand(inTextField)
     }
     const view = activeView
+    const appFrame = view ? focusedAppFrame(view) : null
+    if (inTextField !== 'editor' && appFrame) {
+      if (inTextField === 'none') return false
+      postToAppFrame(appFrame, { dez: 'edit', command: inTextField })
+      return true
+    }
     if (!view || (isModalOpen() && !view.hasFocus)) return false
     const { key } = findShortcut(sbp('dez.model/settings/shortcuts') as readonly Shortcut[], id)
     if (inTextField !== 'editor' && !view.hasFocus) focusKeepingScroll(view)

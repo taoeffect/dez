@@ -5,38 +5,81 @@
   "files": {
     "dez-ffmpeg-aarch64-unknown-linux-gnu": {
       "asset": "ffmpeg-linux-arm64",
+      "url": "https://github.com/taoeffect/dez-ffmpeg/releases/download/n9.0.2-4/ffmpeg-linux-arm64",
       "size": 38490360,
       "sha256": "79e8771b2d9ac9dd708ee589946cb98f0ab3d68a004ef46086560d6374e39f73"
     },
     "dez-ffprobe-aarch64-unknown-linux-gnu": {
       "asset": "ffprobe-linux-arm64",
+      "url": "https://github.com/taoeffect/dez-ffmpeg/releases/download/n9.0.2-4/ffprobe-linux-arm64",
       "size": 38359256,
       "sha256": "7c896b84b18b41b0886f8cfa447258534f2b9c6f288d420d522ca9b934e6c550"
     },
     "dez-ffmpeg-x86_64-unknown-linux-gnu": {
       "asset": "ffmpeg-linux-x64",
+      "url": "https://github.com/taoeffect/dez-ffmpeg/releases/download/n9.0.2-4/ffmpeg-linux-x64",
       "size": 50529112,
       "sha256": "171ad68a90bb0502f7976fbc710c5d968016601fd325741c370455a191ff50a2"
     },
     "dez-ffprobe-x86_64-unknown-linux-gnu": {
       "asset": "ffprobe-linux-x64",
+      "url": "https://github.com/taoeffect/dez-ffmpeg/releases/download/n9.0.2-4/ffprobe-linux-x64",
       "size": 50328344,
       "sha256": "2d97591fa2867f7ff7e6c873233f0475574f2629a7cce6e09cb30796bd08f1b6"
     },
     "dez-ffmpeg-aarch64-apple-darwin": {
       "asset": "ffmpeg-macos-arm64",
+      "url": "https://github.com/taoeffect/dez-ffmpeg/releases/download/n9.0.2-4/ffmpeg-macos-arm64",
       "size": 36177352,
       "sha256": "dfd54c268e91e87303731bc87e588fb1295e273d9aca29041f2dcd7418413691"
     },
     "dez-ffprobe-aarch64-apple-darwin": {
       "asset": "ffprobe-macos-arm64",
+      "url": "https://github.com/taoeffect/dez-ffmpeg/releases/download/n9.0.2-4/ffprobe-macos-arm64",
       "size": 35985800,
       "sha256": "ec3e73f09a2743eaedc06b1cee021ab7f5e2868aaa52d33b2962099b27d05441"
+    },
+    "dez-deno-aarch64-unknown-linux-gnu": {
+      "asset": "deno-aarch64-unknown-linux-gnu.zip",
+      "url": "https://github.com/denoland/deno/releases/download/v2.9.8/deno-aarch64-unknown-linux-gnu.zip",
+      "zip": {
+        "member": "deno",
+        "size": 40120596,
+        "sha256": "d49596c20b9788cf8f5d8ddf644103d4bde56ed239753f0bdb92ba9361d51905"
+      },
+      "size": 85561832,
+      "sha256": "b484f780e5149ca05c673f1f79f7fb466f12a2295933bdad917af4a8a5c020e8"
+    },
+    "dez-deno-x86_64-unknown-linux-gnu": {
+      "asset": "deno-x86_64-unknown-linux-gnu.zip",
+      "url": "https://github.com/denoland/deno/releases/download/v2.9.8/deno-x86_64-unknown-linux-gnu.zip",
+      "zip": {
+        "member": "deno",
+        "size": 41963064,
+        "sha256": "e890975bc2549807bbcc0b584ffafda72cc7c93349dd99c80483dd784f6c4609"
+      },
+      "size": 96055992,
+      "sha256": "368bca08999e02c6911b8f248167b582276b1f547db5712b6e736d7eda1dbda7"
+    },
+    "dez-deno-aarch64-apple-darwin": {
+      "asset": "deno-aarch64-apple-darwin.zip",
+      "url": "https://github.com/denoland/deno/releases/download/v2.9.8/deno-aarch64-apple-darwin.zip",
+      "zip": {
+        "member": "deno",
+        "size": 38770795,
+        "sha256": "9f0bf660393da2eaff044cdc7444cb08c73f235849b61d224d825a194ce7c98e"
+      },
+      "size": 81512928,
+      "sha256": "d1e99265e5e6ee096c5780d88ff7d3e6cfdf33b1953a118b4889cab8ca6980ba"
     }
   },
   "licenseTexts": {
     "asset": "LICENSES.txt",
     "size": 161962,
     "sha256": "26882e523bbcc99a6d7363411e55fabe54f70089dc17c89433d301eeec536818"
+  },
+  "deno": {
+    "version": "2.9.8",
+    "source": "https://github.com/denoland/deno/releases/tag/v2.9.8"
   }
 }

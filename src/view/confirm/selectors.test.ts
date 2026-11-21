@@ -1,6 +1,8 @@
 import sbp from '@sbp/sbp'
 import { afterEach, describe, expect, it } from 'vitest'
-import { answerConfirm, confirmRequest, type ConfirmOptions } from './selectors'
+import { answerConfirm, confirmRequest } from './request'
+import './selectors'
+import type { ConfirmOptions } from './selectors'
 
 function confirm(options: ConfirmOptions): Promise<boolean> {
   return sbp('dez.ui/confirm', options) as Promise<boolean>

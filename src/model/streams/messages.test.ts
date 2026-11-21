@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest'
+import { appTagText } from '../chat/appTags'
 import { CARRIED_USER_ASSETS_LABEL, COMPACTION_MESSAGE_INTRO, COMPACTION_USER_MESSAGE_LABEL, compactionBlockText, compactionTagText, sectionsBeforeReply } from '../chat/compaction'
+import { compactionNotesText } from '../chat/compactionNotes'
 import { imageMarkdown } from '../chat/images'
 import { MEDIA_HIDDEN_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE, mediaTagRequestText, mediaTagText, type MediaTagData } from '../chat/mediaTags'
 import { SHOWN_PICTURE_OVER_LIMIT_NOTE, type ShownPicture } from '../chat/shownPictures'
-import { messagePart } from '../chat/testing'
-import { toolBlockText, type ToolBlockStatus } from '../chat/toolBlocks'
+import { messagePart, notesData } from '../chat/testing'
+import { toolBlockText, type ToolBlockData, type ToolBlockStatus } from '../chat/toolBlocks'
 import type { Section, SectionThinking, ThinkingReplay } from '../chat/types'
 import type { ClipInputRules, MediaKind } from '../providers/types'
+import { showResultText } from '../tools/appShow'
 import { audioCutResultText } from '../tools/audioTool'
 import { imageResultText } from '../tools/imageTool'
 import { jobResultText, jobStartedText, jobsWaitText, type WrittenJobAsset } from '../tools/jobs'
@@ -101,6 +104,32 @@ describe('agentSectionMessages', () => {
     expect(JSON.stringify(agentSectionMessages(agent(text), model, false))).not.toMatch(/f1\.png|the image @a/)
     // A call that goes as text has no round to put its pictures after.
     expect(JSON.stringify(agentSectionMessages(agent(text), model, false, newRequestImages()))).not.toMatch(/f1\.png|the image @a/)
+  })
+
+  // The list of the tool calls of the code is for the panel of the chip.
+  it('sends the same request for a js_eval call with and without the list of the tool calls of its code', () => {
+    const block: ToolBlockData = { id: 'call_1', name: 'js_eval', status: 'success', arguments: { code: 'return 1', timeout_seconds: 30 }, result: 'The code gave: 1' }
+    const bridged: ToolBlockData['bridged'] = {
+      calls: [
+        { name: 'model_invoke', arguments: { model: 'p/m', prompt: 'A fox' }, status: 'success', result: jobStartedText('j-k3x9', 1) },
+        { name: 'image', arguments: {}, status: 'error', result: 'The required parameter "command" is missing.' },
+      ],
+      more: 2,
+    }
+    const text = (data: ToolBlockData) => `Look.\n${toolBlockText(data)}\nDone.`
+    const withList = text({ ...block, bridged })
+
+    expect(withList).toContain('bridged="')
+    for (const tools of [true, false]) {
+      const sent = JSON.stringify(agentSectionMessages(agent(withList), model, tools, newRequestImages()))
+      expect(sent, `tools ${tools}`).toBe(JSON.stringify(agentSectionMessages(agent(text(block)), model, tools, newRequestImages())))
+      expect(sent).not.toMatch(/bridged|A fox|j-k3x9/)
+    }
+    expect(agentSectionMessages(agent(withList), model, true)).toStrictEqual([
+      { role: 'agent', content: 'Look.', toolCalls: [{ id: 'call_1', name: 'js_eval', arguments: { code: 'return 1', timeout_seconds: 30 } }] },
+      { role: 'tool', results: [result('call_1', 'The code gave: 1')] },
+      { role: 'agent', content: 'Done.' },
+    ])
   })
 
   it('puts the pictures of a round in one user message right after its results, each after its label, in the order of the calls', () => {
@@ -375,6 +404,72 @@ describe('agentSectionMessages', () => {
         .toStrictEqual([{ role: 'agent', content: '\n<dez:video id="d" type="video/mp4"/>\n\nDone.' }])
       // An image of the model itself, with no mark of a tool.
       expect(sentAfterGroup(WAIT_RESULT, `\n![id=a](${IMAGE})\n\nDone.`)).toStrictEqual([{ role: 'agent', content: '\n![id=a](image)\n\nDone.' }])
+    })
+  })
+
+  // Dez writes the tag of an app after the group of its `apps show` call,
+  // as it writes the asset of a tool.
+  describe('apps that a Dez tool shows', () => {
+    const TAG = appTagText('notes')
+    const show = (id: string, name: string, toolResult = showResultText(name)) =>
+      toolBlockText({ id, name: 'apps', status: 'success', arguments: { command: 'show', parameters: JSON.stringify({ name }) }, result: toolResult })
+    const showCallOf = (id: string, name: string) => ({ id, name: 'apps', arguments: { command: 'show', parameters: JSON.stringify({ name }) } })
+
+    it('sends the result of the call, and no tag of the app that the result names', () => {
+      const text = `Here.\n${show('call_1', 'notes')}\n\n${TAG}\n\nTry it.`
+
+      expect(agentSectionMessages(agent(text), model, true)).toStrictEqual([
+        { role: 'agent', content: 'Here.', toolCalls: [showCallOf('call_1', 'notes')] },
+        { role: 'tool', results: [result('call_1', showResultText('notes'))] },
+        { role: 'agent', content: 'Try it.' },
+      ])
+    })
+
+    it('sends the same bytes for the round when the reply goes on, and when the tag has more attributes', () => {
+      const first = `${show('call_1', 'notes')}\n\n${TAG}\n${show('call_2', 'timer')}\n\n${appTagText('timer')}\n\nBoth are ready.`
+      const sent = agentSectionMessages(agent(first), model, true)
+
+      expect(sent).toStrictEqual([
+        { role: 'agent', content: '', toolCalls: [showCallOf('call_1', 'notes')] },
+        { role: 'tool', results: [result('call_1', showResultText('notes'))] },
+        { role: 'agent', content: '', toolCalls: [showCallOf('call_2', 'timer')] },
+        { role: 'tool', results: [result('call_2', showResultText('timer'))] },
+        { role: 'agent', content: 'Both are ready.' },
+      ])
+      expect(agentSectionMessages(agent(`${first}\n\nMore words.`), model, true).slice(0, 4)).toStrictEqual(sent.slice(0, 4))
+      expect(agentSectionMessages(agent(first.replace(TAG, '<dez:app name="notes" open="1"/>')), model, true)).toStrictEqual(sent)
+    })
+
+    it('leaves the tag out of the text of a request with no tools too', () => {
+      const text = `Here.\n${show('call_1', 'notes')}\n\n${TAG}\n\nTry it.`
+
+      expect(agentSectionMessages(agent(text), model, false)).toStrictEqual([{
+        role: 'agent',
+        content: `Here.\n[Tool call: apps {"command":"show","parameters":"{\\"name\\":\\"notes\\"}"}]\n${showResultText('notes')}\n[End of tool result]\nTry it.`,
+      }])
+    })
+
+    it('keeps a tag that no result of the group before names, in the form of the writer', () => {
+      // The tag of another app, and a tag after a call that Dez refused.
+      expect(agentSectionMessages(agent(`${show('call_1', 'notes')}\n\n${TAG}\n\n<dez:app name="timer" open="1"/>\n\nDone.`), model, true).at(-1))
+        .toStrictEqual({ role: 'agent', content: `${appTagText('timer')}\n\nDone.` })
+      expect(agentSectionMessages(agent(`${show('call_1', 'notes', 'The app /apps/notes has no index.html. Dez shows no app.')}\n\n${TAG}\n\nDone.`), model, true).at(-1))
+        .toStrictEqual({ role: 'agent', content: `\n${TAG}\n\nDone.` })
+      // A tag in a reply with no call.
+      expect(agentSectionMessages(agent(`See:\n\n<dez:app name="notes" open="1"/>`), model, true)).toStrictEqual([{ role: 'agent', content: `See:\n\n${TAG}` }])
+    })
+
+    it('sends a tag of a user message in the form of the writer, with and without an image in the message', () => {
+      const sent = (text: string) => sectionsToStreamMessages([user('u1', text), reply('new', '')], model, { sendImages: true, sendTools: true }).messages
+      const stored = '<dez:app name="notes" open="1"/>'
+
+      expect(sent(`Why is this empty?\n${stored}`)).toStrictEqual([{ role: 'user', content: `Why is this empty?\n${TAG}` }])
+      expect(sent(`Why is this empty?\n${stored}\n![id=a](${IMAGE})`)).toStrictEqual([{
+        role: 'user',
+        content: [{ type: 'text', text: `Why is this empty?\n${TAG}\n![id=a](image)` }, { type: 'image', path: IMAGE }],
+      }])
+      // A tag in code is text.
+      expect(sent(`\`\`\`\n${stored}\n\`\`\``)).toStrictEqual([{ role: 'user', content: `\`\`\`\n${stored}\n\`\`\`` }])
     })
   })
 
@@ -1359,6 +1454,22 @@ describe('sectionsToStreamMessages: a compacted conversation', () => {
         { role: 'agent', content: 'Done.' },
         { role: 'user', content: [{ type: 'text', text: 'Thanks ![id=d](image)' }, { type: 'image', path: OTHER_IMAGE }] },
       ])
+    })
+
+    it('sends the reply of the final message pair in a code fence too, as text with no image part, and reads the final message as the newest one', () => {
+      // Only a reference in code stays in a reply part (`finalReplyText`).
+      const replyText = `Like this?\n${FENCE}\n![id=b](${GENERATED})\n${FENCE}`
+      const notes = compactionNotesText(notesData({ requirements: 'Notes.', firstMessage: 'Make a fox.', finalReply: replyText, finalMessage: `Yes, with ![id=d](${OTHER_IMAGE})` }))
+      const { messages, newestUserMessage } = sent([partsBlock(notes), reply('r', '')])
+      const parts = messages.flatMap((message) => (message.role === 'user' && Array.isArray(message.content) ? message.content : []))
+      const texts = parts.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('')
+
+      expect(messages).toHaveLength(1)
+      expect(parts.filter((part) => part.type !== 'text')).toStrictEqual([{ type: 'image', path: OTHER_IMAGE }])
+      expect(texts).toContain(`\n${'````'}\nLike this?\n${FENCE}\n![id=b](image)\n${FENCE}\n${'````'}\n`)
+      expect(texts).not.toContain('/home/u')
+      expect(texts).not.toContain('dez:agent-message')
+      expect(newestUserMessage).toStrictEqual([{ type: 'text', text: 'Yes, with ![id=d](image)' }, { type: 'image', path: OTHER_IMAGE }])
     })
 
     it('sends a linked image and a linked clip of the messages with no path, and only when the tag lists them', () => {

@@ -71,7 +71,7 @@ jobs:
       fail-fast: false
       matrix:
         # `target` is the Rust target triple of the runner: the names of
-        # the ffmpeg and ffprobe programs in src-tauri/binaries/ end with it.
+        # the bundled programs in src-tauri/binaries/ end with it.
         include:
           - arch: x86_64
             runner: ubuntu-22.04
@@ -95,21 +95,26 @@ jobs:
       - name: Fix Ubuntu runner CA root bundle
         uses: okTurtles/libcheloniajs/.github/actions/fix-ubuntu-ca-roots@main
 
-      # No `lfs: true`; the next step gets the Git LFS files that this
-      # build needs (see the two comments at the checkout in e2e.yml).
+      # No `lfs: true`; the next step gets the Git LFS files (see the two
+      # comments at the checkout in e2e.yml).
       - name: Checkout
         uses: actions/checkout@v7
 
       - name: Pull Git LFS files
         uses: ./.github/actions/pull-lfs-files
-        with:
-          target: ${{ matrix.target }}
 
       - name: Setup Node
         uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
+
+      # The bundled programs of this target (see the comment at this step
+      # in e2e.yml).
+      - name: Fetch bundled programs
+        uses: ./.github/actions/fetch-programs
+        with:
+          target: ${{ matrix.target }}
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -196,21 +201,26 @@ jobs:
             [ -s "$t" ] && sudo install -m 0644 -o root -g wheel "$t" /etc/ssl/cert.pem; rm -f "$t"
           ls -lA /etc/ssl/cert.pem
 
-      # No `lfs: true`; the next step gets the Git LFS files that this
-      # build needs (see the two comments at the checkout in e2e.yml).
+      # No `lfs: true`; the next step gets the Git LFS files (see the two
+      # comments at the checkout in e2e.yml).
       - name: Checkout
         uses: actions/checkout@v7
 
       - name: Pull Git LFS files
         uses: ./.github/actions/pull-lfs-files
-        with:
-          target: aarch64-apple-darwin
 
       - name: Setup Node
         uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
+
+      # The bundled programs of this target (see the comment at this step
+      # in e2e.yml).
+      - name: Fetch bundled programs
+        uses: ./.github/actions/fetch-programs
+        with:
+          target: aarch64-apple-darwin
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable

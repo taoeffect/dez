@@ -5,7 +5,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { MAX_REQUEST_IMAGE_BYTES } from '../../src/model/streams/pictureBudget'
 import { ASSET_INFO_COLUMNS } from '../../src/model/tools/assetInfo'
 import { pictureBudgetLeftText, PICTURES_SHOWN_NOTE } from '../../src/model/tools/assetView'
-import { jobStartedText, jobsWaitResults, startedJobId, type JobResult } from '../../src/model/tools/jobs'
+import { jobStartedText, jobsWaitResults, startedJobId } from '../../src/model/tools/jobs'
 import { REFUSED_DEVICES, REFUSED_PROTOCOLS } from '../../src/model/tools/videoTool'
 import { byteSizeText } from '../../src/utils/byteSize'
 import { sentImageUrls } from './harness/chatBody'
@@ -13,11 +13,11 @@ import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, w
 import { linkedDropDir } from './harness/drops'
 import { appFilePath, conversationFilePath, filesIn, mediaTempDir, newFileIn, storedFileName, workDir, writeTestFile } from './harness/fixtures'
 import { generatedImagesDir, shownImages, solidPng } from './harness/images'
-import { startedJob, waitCall } from './harness/jobs'
+import { runToolJob, startedJob, waitCall, type EndedJob } from './harness/jobs'
 import { clipTag, MP4_VIDEO, shownPlayers, silentWav, startClipServer, WEBM_VIDEO, type ClipServer, type ShownPlayer } from './harness/media'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, openAiToolCall, replyText, sendChatReply, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
-import { pidsWithCwd, processExists } from './harness/processes'
+import { processExists, runningProgram } from './harness/processes'
 import type { E2EBrowser } from './harness/session'
 import { activeConversationId, endedReply, newTab, openSeededConversation, openToasts, pickModel, submit, waitForThread } from './harness/thread'
 import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolChip, revealingPart, toolChips, toolPanelPictures } from './harness/toolChips'
@@ -153,18 +153,6 @@ const loudnessLine = (part: string) => new RegExp(`^Loudness of ${part}: -\\d+(\
 
 const videoCall = (id: string, command: string, parameters: Record<string, unknown>) =>
   openAiToolCall(id, 'video', { command, parameters: JSON.stringify(parameters) })
-
-/** A job of a `video` call that ended, as the mock model got it. */
-interface EndedJob {
-  jobId: string
-  /** The result of the call that started the job. */
-  started: string
-  /** The result of the job, from the `jobs_wait` call after it. */
-  result: JobResult
-  /** The chat request that holds the result of the job. It waits for its
-   *  answer. */
-  next: HeldRequest
-}
 
 /** A message of an OpenAI-format chat request, as the mock got it. */
 interface WireMessage {
@@ -352,31 +340,9 @@ describe('video tool', () => {
     return files
   }
 
-  // Answers the chat request `request` with the `video` call `callId`,
-  // and the request after it with a `jobs_wait` call, which gives the
-  // result of the job of that call.
-  async function runJob (request: HeldRequest, callId: string, command: string, parameters: Record<string, unknown>): Promise<EndedJob> {
-    sendToolCalls(request.reply, [videoCall(callId, command, parameters)])
-    const second = await chatRequest()
-    const jobId = startedJob(second, callId)
-    sendToolCalls(second.reply, [waitCall(`${callId}_wait`)])
-    const next = await chatRequest()
-    const waited = toolResult(next, `${callId}_wait`)
-    expect(waited.startsWith('1 job ended. No job still runs.\n\n')).toBe(true)
-    const results = jobsWaitResults(waited)
-    expect(results.map(({ id, tool }) => ({ id, tool }))).toStrictEqual([{ id: jobId, tool: 'video' }])
-    return { jobId, started: toolResult(second, callId), result: results[0], next }
-  }
-
-  // The pid of the program of the one call that runs: waits until the work
-  // root holds one folder, and one program works in it. Dez deletes the
-  // folder at the end of the call, so a check that the program ended reads
-  // this pid, not the folder (`pidsWithCwd`).
-  async function runningProgram (): Promise<number> {
-    await waitForValue(browser, 'programs in the work folders', async () => (await filesIn(workRoot)).map((name) => pidsWithCwd(path.join(workRoot, name)).length), [1])
-    const [name] = await filesIn(workRoot)
-    const [pid] = pidsWithCwd(path.join(workRoot, name))
-    return pid
+  // Runs the job of the `video` call `callId` (`runToolJob`).
+  function runJob (request: HeldRequest, callId: string, command: string, parameters: Record<string, unknown>): Promise<EndedJob> {
+    return runToolJob(chatRequest, request, 'video', callId, videoCall(callId, command, parameters))
   }
 
   // After the calls of a test: no work folder stays, no file of the
@@ -1098,7 +1064,7 @@ describe('video tool', () => {
     const second = await chatRequest()
     const started = toolResult(second, 'call_tone')
     expect(started).toBe(`${jobStartedText(startedJob(second, 'call_tone'), 1)}\nThe run has no input image and no input clip.`)
-    const program = await runningProgram()
+    const program = await runningProgram(browser, workRoot)
 
     // While a reply runs, the Submit button stops it. The job goes on for
     // the next reply of the tab.
@@ -1130,7 +1096,7 @@ describe('video tool', () => {
     sendToolCalls(first.reply, [videoCall('call_tone', 'ffmpeg', { arguments: ENDLESS_TONE, timeout_seconds: 10 })])
     const second = await chatRequest()
     const jobId = startedJob(second, 'call_tone')
-    const program = await runningProgram()
+    const program = await runningProgram(browser, workRoot)
     sendToolCalls(second.reply, [waitCall('call_wait')])
 
     // The wait is longer than `waitForValue` takes.

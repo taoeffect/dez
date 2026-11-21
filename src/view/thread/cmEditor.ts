@@ -1474,6 +1474,12 @@ const TABLE_DELIMITER_ROW_EM = 0.6
  *  in px at the default font size. */
 export const IMAGE_MAX_HEIGHT_PX = 320
 
+/** The height of the box of an app card (`src/view/editor/apps.ts`), which
+ *  is the height of the frame host of an app that runs, and the space
+ *  above and below the box, in px at the default font size. */
+export const APP_BOX_HEIGHT_PX = 400
+export const APP_CARD_PADDING_PX = 6
+
 /** The height of a line of body text, in em of the editor font. */
 const TEXT_LINE_HEIGHT = 1.6
 
@@ -1562,6 +1568,29 @@ export const dezTheme = EditorView.theme({
   },
   '&.cm-focused .dez-image[data-selected]:has(> .dez-image__img)::after, &.cm-focused .dez-media[data-selected] .media-player__card:not(:fullscreen)::after': {
     background: 'var(--color-selection-tint, rgba(184, 178, 234, 0.5))',
+  },
+  // An app card that a selection holds. The corner tools of a poster are
+  // over this tint (their z-index).
+  '.dez-app[data-selected] .dez-app__box::after': {
+    content: '""',
+    position: 'absolute',
+    inset: '0',
+    borderRadius: 'inherit',
+    background: 'var(--color-selection-tint-inactive, rgba(100, 149, 237, 0.35))',
+    pointerEvents: 'none',
+  },
+  '&.cm-focused .dez-app[data-selected] .dez-app__box::after': {
+    background: 'var(--color-selection-tint, rgba(184, 178, 234, 0.5))',
+  },
+  // While its app runs, the frame host (`.dez-app-frame`, z-index 5)
+  // covers the box, so the tint goes over the host. Nothing between the
+  // box and the scroller makes a stacking context, so the two z-indexes
+  // compare in the scroller's. The expanded host has the same z-index and
+  // comes later in the scroller, so it covers the tint: an app over the
+  // conversation is not tinted. A poster keeps a lower tint, as its
+  // tools must stay under the expanded host of another app.
+  '.dez-app[data-selected] .dez-app__box[data-app-frame-place]::after': {
+    zIndex: '6',
   },
   // The flash of an asset that a mention chip names (`flashDrawnAsset`,
   // drawnAssets.ts): a ring in the mention color. It is an inset shadow on
@@ -2337,7 +2366,8 @@ export const dezTheme = EditorView.theme({
   },
   // The panel hangs from the disclosure triangle by a thin rule: the
   // parameters as name and value rows, then the result in a read-only
-  // field. The field scrolls past about 16 lines.
+  // field. The field scrolls past about 16 lines. The code of a `js_eval`
+  // call shows in such a field too.
   '.dez-tool-call__panel': {
     display: 'flex',
     flexDirection: 'column',
@@ -2396,6 +2426,51 @@ export const dezTheme = EditorView.theme({
     borderColor: 'var(--color-error-border, #d9534f)',
     background: 'var(--color-error-bg, rgba(217,83,79,0.08))',
     color: 'var(--color-error, #d9534f)',
+  },
+  // The tool calls of the code of a `js_eval` call (`createBridgedCalls`
+  // in toolCalls.ts), one under the other: the tool and how the call
+  // ended, its arguments as parameter rows, and its result in a field. A
+  // call that failed has the red word and the red field of a failed chip.
+  // The tool has its own class: a name of the chip turns red with the
+  // chip (`.dez-tool-call__name`), and a call of code that failed can
+  // have passed.
+  '.dez-tool-call__bridged': {
+    display: 'flex',
+    flexDirection: 'column',
+    alignSelf: 'stretch',
+    gap: editorSize(10),
+    minWidth: '0',
+  },
+  '.dez-tool-call__bridged-call': {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: editorSize(4),
+    minWidth: '0',
+  },
+  '.dez-tool-call__bridged-title': {
+    display: 'flex',
+    alignItems: 'baseline',
+    gap: editorSize(8),
+    minWidth: '0',
+  },
+  '.dez-tool-call__bridged-name': {
+    minWidth: '0',
+    overflowWrap: 'anywhere',
+    color: 'var(--color-text)',
+    fontFamily: MONO_FONT_FAMILY,
+    fontSize: editorSize(12.5),
+    fontWeight: '600',
+  },
+  '.dez-tool-call__bridged-state': {
+    flex: 'none',
+    color: 'var(--color-error, #d9534f)',
+    fontSize: editorSize(11.5),
+  },
+  // A call that the end of the code cut did not fail: as the word of a
+  // call that did not run (`[data-state="notRun"]` above).
+  '.dez-tool-call__bridged-call[data-status="cut"] .dez-tool-call__bridged-state, .dez-tool-call__bridged-more': {
+    color: 'inherit',
+    fontStyle: 'italic',
   },
   // The pictures that a call showed its model (`createPictures` in
   // toolCalls.ts): each one under the text that went before it in the
@@ -2517,6 +2592,282 @@ export const dezTheme = EditorView.theme({
     cursor: 'default',
     userSelect: 'none',
     WebkitUserSelect: 'none',
+  },
+  // App cards (src/view/editor/apps.ts). The widget is the only thing on
+  // its line, as a media player is: a column as wide as the line, with the
+  // box of the app in it. The box has one size, for its poster and as the
+  // placeholder of a run: a start and a stop move no text, and the editor
+  // knows the height of a card that it has not drawn. The box has a border
+  // and a faint fill. The fill is opaque, as the card of a player is: in a
+  // selection, only the tint shows (see above), and not also the selection
+  // layer behind the box.
+  '.dez-app': {
+    display: 'inline-flex',
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    boxSizing: 'border-box',
+    width: '100%',
+    padding: editorSize(APP_CARD_PADDING_PX, 0),
+    verticalAlign: 'top',
+    fontFamily: UI_FONT_FAMILY,
+    lineHeight: '1.5',
+    letterSpacing: 'normal',
+    whiteSpace: 'normal',
+    cursor: 'default',
+    userSelect: 'none',
+    WebkitUserSelect: 'none',
+  },
+  // The box is also the frame of reference of the corner tools, and of the
+  // tint of a selection.
+  '.dez-app__box': {
+    position: 'relative',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    boxSizing: 'border-box',
+    width: '100%',
+    height: editorSize(APP_BOX_HEIGHT_PX),
+    border: '1px solid var(--color-border, #d0d0d0)',
+    borderRadius: editorSize(8),
+    background: 'color-mix(in srgb, var(--color-text) 5%, var(--color-bg))',
+    overflow: 'hidden',
+  },
+  // The placeholder of a run draws nothing: the frame host is over it, and
+  // an edge of the box must not show next to an edge of the host.
+  '.dez-app__box[data-app-frame-place]': {
+    borderColor: 'transparent',
+    background: 'none',
+  },
+  '.dez-app__poster': {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: editorSize(10),
+    boxSizing: 'border-box',
+    maxWidth: `min(100%, ${editorSize(440)})`,
+    padding: editorSize(16),
+    textAlign: 'center',
+  },
+  '.dez-app__title': {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: editorSize(8),
+    maxWidth: '100%',
+    color: 'var(--color-text)',
+    fontSize: editorSize(15),
+  },
+  '.dez-app__icon': {
+    display: 'inline-flex',
+    flex: 'none',
+    color: 'var(--color-muted, #888)',
+  },
+  '.dez-app__icon svg': {
+    display: 'block',
+    width: editorSize(17),
+    height: editorSize(17),
+  },
+  // A long name gives way with an ellipsis.
+  '.dez-app__name': {
+    minWidth: '0',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    fontFamily: MONO_FONT_FAMILY,
+    fontWeight: '600',
+  },
+  '.dez-app__description, .dez-app__note': {
+    maxWidth: '100%',
+    color: 'var(--color-muted, #888)',
+    fontSize: editorSize(13),
+    overflowWrap: 'anywhere',
+  },
+  // The description is the text of a model: at most three lines of it.
+  '.dez-app__description': {
+    display: '-webkit-box',
+    WebkitBoxOrient: 'vertical',
+    WebkitLineClamp: '3',
+    overflow: 'hidden',
+  },
+  // Run, and the Stop of the frame host: the look of the buttons of the
+  // bottom bar.
+  '.dez-app__run, .dez-app-frame__stop': {
+    display: 'inline-flex',
+    alignItems: 'center',
+    flex: 'none',
+    border: '1px solid var(--color-border, #d0d0d0)',
+    background: 'var(--color-bg)',
+    color: 'var(--color-text)',
+    fontFamily: 'inherit',
+    lineHeight: '1',
+    cursor: 'pointer',
+  },
+  '.dez-app__run:hover, .dez-app-frame__stop:hover': {
+    borderColor: 'var(--color-muted, #888)',
+  },
+  '.dez-app__run': {
+    gap: editorSize(6),
+    marginTop: editorSize(4),
+    padding: editorSize(7, 16, 7, 12),
+    borderRadius: editorSize(6),
+    fontSize: editorSize(13),
+    fontWeight: '600',
+  },
+  '.dez-app__run svg': {
+    display: 'block',
+    width: editorSize(12),
+    height: editorSize(12),
+  },
+  // The corner of a poster: the size of the folder of the app, and the
+  // trash. It always shows, as a card has room for it. It is over the tint
+  // of a selection, and under a frame host (z-index 5 and 6).
+  '.dez-app__tools': {
+    position: 'absolute',
+    top: editorSize(6),
+    right: editorSize(6),
+    zIndex: '1',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: editorSize(6),
+    color: 'var(--color-muted, #888)',
+    fontSize: editorSize(12),
+  },
+  '.dez-app__size, .dez-app-frame__size': {
+    flex: 'none',
+    whiteSpace: 'nowrap',
+    fontVariantNumeric: 'tabular-nums',
+  },
+  // The buttons with an icon only: the trash of a poster, and Expand,
+  // Fullscreen, and the trash of the bar of an app that runs.
+  '.dez-app__trash, .dez-app-frame__button': {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flex: 'none',
+    boxSizing: 'border-box',
+    width: editorSize(22),
+    height: editorSize(22),
+    margin: '0',
+    padding: '0',
+    border: 'none',
+    borderRadius: editorSize(4),
+    background: 'transparent',
+    color: 'var(--color-muted, #888)',
+    cursor: 'pointer',
+  },
+  '.dez-app__trash svg, .dez-app-frame__button svg': {
+    display: 'block',
+    width: editorSize(15),
+    height: editorSize(15),
+  },
+  '.dez-app-frame__button:hover': {
+    background: 'color-mix(in srgb, var(--color-text) 10%, transparent)',
+    color: 'var(--color-text)',
+  },
+  // A trash is red under the pointer, as the trash of an image is.
+  '.dez-app__trash:hover, .dez-app-frame__button[data-action="delete"]:hover': {
+    background: 'var(--color-error-fill, #c4302b)',
+    color: '#fff',
+  },
+  // The frame host of an app that runs (src/view/apps/appFrameHost.ts): a
+  // child of the scroller, over the box of the card, with the place and the
+  // size of that box as inline styles. The scroller is a stacking context
+  // (CM gives it `z-index: 0`), and the host is above the text and the
+  // layers of the editor in it.
+  '.dez-app-frame': {
+    position: 'absolute',
+    zIndex: '5',
+    display: 'flex',
+    flexDirection: 'column',
+    boxSizing: 'border-box',
+    border: '1px solid var(--color-border, #d0d0d0)',
+    borderRadius: editorSize(8),
+    background: 'var(--color-bg)',
+    overflow: 'hidden',
+    fontFamily: UI_FONT_FAMILY,
+    lineHeight: '1.5',
+    letterSpacing: 'normal',
+  },
+  // The app has the keyboard: the keys do not go to the editor.
+  '.dez-app-frame:focus-within': {
+    borderColor: 'var(--color-accent, #4c8dff)',
+    boxShadow: '0 0 0 1px var(--color-accent, #4c8dff)',
+  },
+  // The expanded view: the host covers the conversation view. Its place is
+  // the box of the scroller in the window (inline styles), so it is over
+  // the text, and it does not scroll. No edge shows around it. The panels
+  // and the prompt of Dez are outside the scroller, and show over it.
+  '.dez-app-frame[data-expanded]': {
+    position: 'fixed',
+    zIndex: '6',
+    border: '0',
+    borderRadius: '0',
+    boxShadow: 'none',
+  },
+  // The scroller draws its scrollbar over all that is in it, so also over
+  // an app that covers it, and a drag of the scrollbar would move text
+  // that the user cannot see. So the conversation has no scrollbar while
+  // an app covers it. An older WebKit knows only the second rule.
+  '.cm-scroller:has(> .dez-app-frame[data-expanded])': {
+    scrollbarWidth: 'none',
+  },
+  '.cm-scroller:has(> .dez-app-frame[data-expanded])::-webkit-scrollbar': {
+    display: 'none',
+  },
+  // Fullscreen: the browser gives the host the place and the size of the
+  // screen, with rules that are stronger than its inline place.
+  '.dez-app-frame:fullscreen': {
+    border: '0',
+    borderRadius: '0',
+    boxShadow: 'none',
+  },
+  '.dez-app-frame__bar': {
+    display: 'flex',
+    alignItems: 'center',
+    flex: 'none',
+    gap: editorSize(8),
+    padding: editorSize(4, 6, 4, 10),
+    borderBottom: '1px solid var(--color-border, #d0d0d0)',
+    background: 'color-mix(in srgb, var(--color-text) 5%, transparent)',
+    color: 'var(--color-muted, #888)',
+    fontSize: editorSize(12),
+    cursor: 'default',
+    userSelect: 'none',
+    WebkitUserSelect: 'none',
+  },
+  '.dez-app-frame__icon': {
+    display: 'inline-flex',
+    flex: 'none',
+  },
+  '.dez-app-frame__icon svg': {
+    display: 'block',
+    width: editorSize(14),
+    height: editorSize(14),
+  },
+  '.dez-app-frame__name': {
+    flex: '1 1 0',
+    minWidth: '0',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    color: 'var(--color-text)',
+    fontFamily: MONO_FONT_FAMILY,
+    fontWeight: '600',
+  },
+  '.dez-app-frame__stop': {
+    padding: editorSize(4, 10),
+    borderRadius: editorSize(4),
+    fontSize: editorSize(12),
+  },
+  // The page of the app. A page that sets no background is drawn on white,
+  // as in a browser: the frame is see-through for such a page, and the dark
+  // theme of Dez must not show under its black text.
+  '.dez-app-frame__page': {
+    display: 'block',
+    flex: '1 1 0',
+    width: '100%',
+    minHeight: '0',
+    border: '0',
+    background: '#fff',
   },
   // Rendered links (src/view/editor/links.ts): only the link text shows. An
   // autolink's address has the `t.url` style of `dezHighlightStyle`, which

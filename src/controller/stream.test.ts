@@ -2,6 +2,7 @@ import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { ActiveModel, Section, SectionThinking, Tab, ThinkingReplay } from '../model/chat/types'
+import { appTagText } from '../model/chat/appTags'
 import { compactionTagText, sectionCompactionBlock, sectionTextParts } from '../model/chat/compaction'
 import { compactionNotesText, notesLeftOutMessages, notesMessages } from '../model/chat/compactionNotes'
 import { sectionVisibleText } from '../model/chat/content'
@@ -24,6 +25,7 @@ import type { CompactionLeftFiles } from '../model/streams/compactionFiles'
 import { compactionInstruction } from '../model/streams/compactionRequest'
 import type { RequestMessages, StreamMessage } from '../model/streams/types'
 import { STOPPED_TOOL_RESULT, stoppedToolResult } from '../model/streams/toolRound'
+import { showResultText } from '../model/tools/appShow'
 import { systemPromptErrorText } from '../model/systemPrompt'
 import { PICTURE_ROUND_FULL_NOTE, pictureBudgetLeftText } from '../model/tools/assetView'
 import { jobsWaitText, jobTimedOutText, startedJobId } from '../model/tools/jobs'
@@ -32,7 +34,7 @@ import { NO_MODELS_TEXT } from '../model/tools/modelList'
 import { TOOL_DEFINITIONS, unknownToolText } from '../model/tools/registry'
 import type { ToastData } from '../view/toast/selectors'
 import { ExplainedError, UNEXPECTED_ERROR } from '../utils/errorText'
-import { APP_DIR, audioProgress, CACHE_DIR, native, resetNative, settled, writes } from './testing'
+import { APP_DIR, appFiles, audioProgress, CACHE_DIR, fakeAppFiles, native, resetNative, settled, writes } from './testing'
 import type { RequestLogRow } from './diagnostics/requestLog'
 // Side-effect imports: register the dez.model/* selectors and the selectors
 // under test.
@@ -201,7 +203,7 @@ function replyRounds(rounds: Array<(input: ProviderStreamChatInput) => Promise<P
 }
 
 // The first line of the instruction of a compaction request.
-const COMPACTION_INSTRUCTION_START = compactionInstruction({ middleMessages: [], assetTable: '', jobs: [], cost: undefined, tools: false }).split('\n')[0]
+const COMPACTION_INSTRUCTION_START = compactionInstruction({ middleMessages: [], assetTable: '', apps: [], jobs: [], cost: undefined, tools: false }).split('\n')[0]
 
 // Whether `input` is a compaction request: its last message is the
 // instruction of Dez.
@@ -2727,8 +2729,8 @@ describe('dez.stream/start pictures that a tool shows', () => {
   })
 
   // A round runs its calls one after the other, and can take longer than
-  // the age rule of Delete Unused Files.
-  it('tells Delete Unused Files the copies of the calls that ended while their round runs', async () => {
+  // the age rule of Delete Unreferenced Files.
+  it('tells Delete Unreferenced Files the copies of the calls that ended while their round runs', async () => {
     const held: string[][] = []
     native.saveAppFile = async () => {
       held.push(sbp('dez.stream/unnamedMadeFiles') as string[])
@@ -2837,6 +2839,80 @@ describe('dez.stream/start clips that a tool makes', () => {
     expect(sectionVisibleText(agentSection())).not.toContain('<dez:audio')
     expect(deletedClips).toStrictEqual([madeClip()])
     expect(sent).toHaveLength(1)
+  })
+})
+
+describe('dez.stream/start apps that a tool shows', () => {
+  const showCall = (id: string, name: string) => ({ id, name: 'apps', argumentsText: JSON.stringify({ command: 'show', parameters: JSON.stringify({ name }) }) })
+  const listCall = { id: 'c2', name: 'model_list', argumentsText: '{"filter":"gemini"}' }
+  const listBlock = `<dez:tool id="c2" name="model_list" filter="gemini">\n${NO_MODELS_TEXT}\n</dez:tool>\n`
+
+  // The text of the reply after the block of its first call.
+  function textAfterFirstBlock(): string {
+    const text = sectionVisibleText(agentSection())
+    const blockEnd = '</dez:tool>\n'
+    return text.slice(text.indexOf(blockEnd) + blockEnd.length)
+  }
+
+  beforeEach(() => {
+    fakeAppFiles({ ...appFiles('notes', { 'index.html': '<p>Notes</p>\n' }, 'ui'), ...appFiles('sum', { 'main.ts': 'export default () => 1\n' }) })
+    sbp('dez.model/tabs/replaceSections', activeTab().id, [
+      { id: 'u1', role: 'user', content: [{ kind: 'text', text: 'Hi' }] },
+      { id: 'a1', role: 'agent', content: [{ kind: 'text', text: '' }], model },
+    ])
+  })
+
+  it('puts the tag of the app after the blocks of its round, and sends the app only in the result of the call', async () => {
+    replyRounds([
+      async (input) => {
+        await input.onToken('Here.')
+        return { requestId: input.requestId as string, toolCalls: [showCall('c1', 'notes')] }
+      },
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [listCall] }),
+      async (input) => {
+        await input.onToken('Try it.')
+        return { requestId: input.requestId as string }
+      },
+    ])
+
+    await startStream({ sendTools: true })
+
+    expect(textAfterFirstBlock()).toBe(`\n${appTagText('notes')}\n${listBlock}Try it.`)
+    expect(sent[1].at(-1)).toStrictEqual({ role: 'tool', results: [{ callId: 'c1', content: showResultText('notes'), isError: false }] })
+    expect(sent[2].at(-2)).toStrictEqual({ role: 'agent', content: '', toolCalls: [{ id: 'c2', name: 'model_list', arguments: { filter: 'gemini' } }] })
+    // A later request sends the reply with the same bytes, and no tag.
+    const stored = (sbp('dez.model/streamMessagesForTab', activeTab().id, model) as RequestMessages).messages
+    expect(stored.slice(0, sent[2].length)).toStrictEqual(sent[2])
+    expect(JSON.stringify(stored)).not.toContain('dez:app')
+  })
+
+  it('starts the next text in a new paragraph after the tag, so that the tag stays a whole line', async () => {
+    replyRounds([
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [showCall('c1', 'notes')] }),
+      async (input) => {
+        await input.onToken('Try it.')
+        return { requestId: input.requestId as string }
+      },
+    ])
+
+    await startStream({ sendTools: true })
+
+    expect(textAfterFirstBlock()).toBe(`\n${appTagText('notes')}\n\nTry it.`)
+  })
+
+  it('writes no tag for a call that Dez refuses', async () => {
+    replyRounds([
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [showCall('c1', 'sum')] }),
+      async (input) => {
+        await input.onToken('It has no page.')
+        return { requestId: input.requestId as string }
+      },
+    ])
+
+    await startStream({ sendTools: true })
+
+    expect(findToolBlocks(sectionVisibleText(agentSection()))[0]).toMatchObject({ status: 'error' })
+    expect(textAfterFirstBlock()).toBe('It has no page.')
   })
 })
 
@@ -3125,7 +3201,7 @@ describe('dez.stream/start jobs', () => {
     expect(alerts).toStrictEqual([])
 
     // A job that ends while no reply runs keeps its image for the next
-    // reply, also through Delete Unused Files.
+    // reply, also through Delete Unreferenced Files.
     jobs[0].end({ media: [png], clips: [] })
     await settled()
     expect(sectionVisibleText(agentSection('a1'))).toBe(`${invokeBlock('c1')}I started it.`)
@@ -3552,11 +3628,10 @@ describe('dez.stream/start compaction', () => {
       { role: 'user', content: 'More' },
     ])
     // The first and the final message of the user stay word for word, in
-    // the notes.
+    // the notes, with the reply right before the final one.
     expect(sent[1].map((message) => message.role)).toStrictEqual(['user'])
     const next = JSON.stringify(sent[1])
-    for (const kept of [NOTES_REQUIREMENTS, 'Hi', 'More']) expect(next).toContain(kept)
-    expect(next).not.toContain('An earlier answer.')
+    for (const kept of [NOTES_REQUIREMENTS, 'Hi', 'An earlier answer.', 'More']) expect(next).toContain(kept)
     expect(sectionCompactionBlock(activeTab().sections[0])?.count).toBe(1)
     expect(replyText()).toBe('None.')
     expect(sectionTexts().slice(1)).toStrictEqual([{ role: 'user', text: '' }])

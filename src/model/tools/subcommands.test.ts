@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { parseToolArguments } from './arguments'
 import { parseSubcommandCall, subcommandToolDefinition, type SubcommandTool } from './subcommands'
+import type { SubcommandParameter } from './types'
 import { refusal } from './testing'
 
 const TOOL: SubcommandTool = {
@@ -27,9 +28,46 @@ const TOOL: SubcommandTool = {
   ],
 }
 
+// A tool with list parameters, and with a subcommand whose parameters are
+// all optional.
+const MIXER: SubcommandTool<SubcommandParameter> = {
+  name: 'mixer',
+  summary: 'Mix sounds.',
+  subcommands: [
+    {
+      name: 'find',
+      summary: 'Find sounds.',
+      description: 'Lists the sounds, or those with a name.',
+      parameters: [{ name: 'name', type: 'string', description: 'A part of the name.', required: false }],
+      example: { name: 'rain' },
+    },
+    {
+      name: 'mix',
+      summary: 'Mix sounds into one.',
+      description: 'Makes one sound from many.',
+      parameters: [
+        { name: 'sounds', type: 'list', items: 'string', description: 'The ids of the sounds.', required: true },
+        {
+          name: 'fades',
+          type: 'list',
+          items: [
+            { name: 'sound', type: 'string', description: 'The id of the sound to fade.', required: true },
+            { name: 'seconds', type: 'number', description: 'How long the fade is.', required: false },
+          ],
+          description: 'The fades.',
+          required: false,
+        },
+      ],
+      example: { sounds: ['b', 'c'], fades: [{ sound: 'b', seconds: 2 }] },
+    },
+  ],
+}
+const MIX_CALL = '{"command":"mix","parameters":"{\\"sounds\\":[\\"b\\",\\"c\\"],\\"fades\\":[{\\"sound\\":\\"b\\",\\"seconds\\":2}]}"}'
+const mix = (parameters: unknown) => parseSubcommandCall(MIXER, { command: 'mix', parameters: JSON.stringify(parameters) })
+
 const CUT_CALL = '{"command":"cut","parameters":"{\\"sound\\":\\"b\\",\\"start\\":1.5}"}'
 const DETAILS = 'To get the details of a subcommand (what it does, its parameters, and an example call), call help with its name, '
-  + 'as in {"command":"help","parameters":"{\\"command\\":\\"cut\\"}"}, or call a subcommand that takes parameters with none, as in {"command":"cut"}.'
+  + 'as in {"command":"help","parameters":"{\\"command\\":\\"cut\\"}"}, or call a subcommand that needs parameters with none, as in {"command":"cut"}.'
 const LIST = [
   'The subcommands of the sound tool:',
   '- cut: Cut a part of a sound.',
@@ -56,18 +94,19 @@ describe('subcommandToolDefinition', () => {
     ])
   })
 
-  // A subcommand that takes no parameters runs when a call gives none, so it
+  // A subcommand that needs no parameters runs when a call gives none, so it
   // is never the example of a details call with no parameters.
-  it('gives a details call with no parameters only for a subcommand that takes parameters, and none when no subcommand does', () => {
+  it('gives a details call with no parameters only for a subcommand that needs parameters, and none when no subcommand does', () => {
     const [cut, list] = TOOL.subcommands
     expect(subcommandToolDefinition({ ...TOOL, subcommands: [list, cut] }).description).toBe('Change sounds. It has subcommands (list, cut, help). '
       + 'Call it with no arguments to list them with what each one does. '
       + 'To get the details of a subcommand (what it does, its parameters, and an example call), call help with its name, '
-      + 'as in {"command":"help","parameters":"{\\"command\\":\\"list\\"}"}, or call a subcommand that takes parameters with none, as in {"command":"cut"}.')
+      + 'as in {"command":"help","parameters":"{\\"command\\":\\"list\\"}"}, or call a subcommand that needs parameters with none, as in {"command":"cut"}.')
     expect(subcommandToolDefinition({ ...TOOL, subcommands: [list] }).description).toBe('Change sounds. It has subcommands (list, help). '
       + 'Call it with no arguments to list them with what each one does. '
       + 'To get the details of a subcommand (what it does, its parameters, and an example call), call help with its name, '
       + 'as in {"command":"help","parameters":"{\\"command\\":\\"list\\"}"}.')
+    expect(subcommandToolDefinition(MIXER).description).toContain('or call a subcommand that needs parameters with none, as in {"command":"mix"}.')
   })
 })
 
@@ -159,5 +198,159 @@ describe('parseSubcommandCall', () => {
       .toBe(`The required parameter "sound" is missing. Add it as a string, as in {"sound": "..."}. ${where}`)
     expect(refusal(() => parseSubcommandCall(TOOL, { command: 'cut', parameters: '{"sound": "b", "start": "3"}' })))
       .toBe(`The parameter "start" must be a number, as in {"start": 1.5}. ${where}`)
+  })
+
+  // `list_apps` of the `apps` tool is such a subcommand: a call with no
+  // parameters must list, not explain.
+  it('runs a subcommand whose parameters are all optional when the call gives none', () => {
+    for (const parameters of [undefined, ' ', '{}']) {
+      expect(parseSubcommandCall(MIXER, { command: 'find', ...(parameters !== undefined && { parameters }) })).toStrictEqual({ kind: 'run', name: 'find', arguments: {} })
+    }
+    expect(parseSubcommandCall(MIXER, { command: 'find', parameters: '{"name": "rain"}' })).toStrictEqual({ kind: 'run', name: 'find', arguments: { name: 'rain' } })
+    expect(parseSubcommandCall(MIXER, { command: 'mix' }).kind).toBe('text')
+  })
+})
+
+describe('a list parameter of a subcommand', () => {
+  const where = `The parameters go in "parameters" as the text of a JSON object, as in ${MIX_CALL}.`
+
+  it('gives the items of a list of scalars and of a list of objects, each object with its fields in definition order', () => {
+    const call = mix({ fades: [{ seconds: 1, sound: 'b' }, { sound: 'c', seconds: null }], sounds: ['b', 'c'] })
+    expect(call).toStrictEqual({ kind: 'run', name: 'mix', arguments: { sounds: ['b', 'c'], fades: [{ sound: 'b', seconds: 1 }, { sound: 'c' }] } })
+    expect(call.kind === 'run' && Object.keys((call.arguments.fades as object[])[0])).toStrictEqual(['sound', 'seconds'])
+  })
+
+  it('takes a list with no item, and leaves an absent optional list out', () => {
+    expect(mix({ sounds: [], fades: null })).toStrictEqual({ kind: 'run', name: 'mix', arguments: { sounds: [] } })
+  })
+
+  it.each([
+    ['a text', 'b'],
+    ['an object', { 0: 'b' }],
+    ['a number', 3],
+  ])('refuses %s in place of a list, and shows a list', (_name, sounds) => {
+    expect(refusal(() => mix({ sounds }))).toBe(`The parameter "sounds" must be a list of strings, as in {"sounds": ["..."]}. ${where}`)
+  })
+
+  it('refuses a missing required list, and shows a list', () => {
+    expect(refusal(() => mix({ fades: [] }))).toBe(`The required parameter "sounds" is missing. Add it as a list of strings, as in {"sounds": ["..."]}. ${where}`)
+  })
+
+  it('names the first item of the wrong type by its place', () => {
+    expect(refusal(() => mix({ sounds: ['b', 3, null] }))).toBe(`Item 2 of the parameter "sounds" must be a string, as in {"sounds": ["..."]}. ${where}`)
+    expect(refusal(() => mix({ sounds: [['b']] }))).toBe(`Item 1 of the parameter "sounds" must be a string, as in {"sounds": ["..."]}. ${where}`)
+  })
+
+  it('refuses an item of a list of objects that is no object, and shows an item with its required fields', () => {
+    const shown = 'as in {"fades": [{"sound": "..."}]}'
+    expect(refusal(() => mix({ sounds: ['b'], fades: 'b' }))).toBe(`The parameter "fades" must be a list of objects, ${shown}. ${where}`)
+    for (const item of ['b', null, ['b']]) {
+      expect(refusal(() => mix({ sounds: ['b'], fades: [{ sound: 'b' }, item] }))).toBe(`Item 2 of the parameter "fades" must be an object, ${shown}. ${where}`)
+    }
+  })
+
+  it('checks the fields of an object item as the parameters of a call', () => {
+    const bad = (item: unknown) => refusal(() => mix({ sounds: ['b'], fades: [item] }))
+    const notValid = 'Item 1 of the parameter "fades" is not valid:'
+    expect(bad({ seconds: 2 })).toBe(`${notValid} The required parameter "sound" is missing. Add it as a string, as in {"sound": "..."}. ${where}`)
+    expect(bad({ sound: 'b', seconds: '2' })).toBe(`${notValid} The parameter "seconds" must be a number, as in {"seconds": 1.5}. ${where}`)
+    expect(bad({ sound: 'b', length: 2 }))
+      .toBe(`${notValid} an item of "fades" has no parameter "length". The parameters of an item of "fades" are: sound (string, required), seconds (number). ${where}`)
+  })
+
+  it('tells the type of each list in the list of the parameters of an error', () => {
+    expect(refusal(() => mix({ sounds: ['b'], fade: [] })))
+      .toBe(`mixer mix has no parameter "fade". The parameters of mixer mix are: sounds (list of strings, required), fades (list of objects). ${where}`)
+  })
+
+  it('tells the item type of a list in the help, and each field of an object item', () => {
+    expect(parseSubcommandCall(MIXER, { command: 'help', parameters: '{"command": "mix"}' })).toStrictEqual({
+      kind: 'text',
+      text: [
+        'The subcommand mix of the mixer tool: Makes one sound from many.',
+        'Its parameters, in the text of a JSON object in "parameters":',
+        '- sounds (list of strings, required): The ids of the sounds.',
+        '- fades (list of objects, optional): The fades. The fields of an item:',
+        '  - sound (string, required): The id of the sound to fade.',
+        '  - seconds (number, optional): How long the fade is.',
+        `Example call: ${MIX_CALL}`,
+      ].join('\n'),
+    })
+  })
+
+  // A list can be long, as a text can.
+  it('keeps a list that is next to "command" out of the example', () => {
+    const parsed = parseToolArguments(subcommandToolDefinition(MIXER), JSON.stringify({ command: 'mix', sounds: ['x', 'y', 'z'] }))
+    expect(parsed).toStrictEqual({
+      ok: false,
+      error: `mixer has no parameter "sounds". "sounds" is a parameter of the subcommand mix, so it goes inside "parameters", the text of a JSON object, and not next to "command", as in ${MIX_CALL}.`,
+    })
+  })
+})
+
+// The parameters of a run of an app are such a value: Dez hands the object
+// on, and checks none of its fields.
+describe('an object parameter of a subcommand', () => {
+  const PLAYER: SubcommandTool<SubcommandParameter> = {
+    name: 'player',
+    summary: 'Play sounds.',
+    subcommands: [{
+      name: 'play',
+      summary: 'Play a sound.',
+      description: 'Plays a sound with options.',
+      parameters: [
+        { name: 'sound', type: 'string', description: 'The id of the sound.', required: true },
+        { name: 'options', type: 'object', description: 'The options of the player.', required: false },
+      ],
+      example: { sound: 'b', options: { loop: true } },
+    }],
+  }
+  const PLAY_CALL = '{"command":"play","parameters":"{\\"sound\\":\\"b\\",\\"options\\":{\\"loop\\":true}}"}'
+  const where = `The parameters go in "parameters" as the text of a JSON object, as in ${PLAY_CALL}.`
+  const play = (parameters: unknown) => parseSubcommandCall(PLAYER, { command: 'play', parameters: JSON.stringify(parameters) })
+
+  it('gives an object as it is, with fields of any type and depth', () => {
+    const options = { loop: true, speeds: [1, 1.5], names: { first: 'a', none: null }, '': '' }
+    expect(play({ sound: 'b', options })).toStrictEqual({ kind: 'run', name: 'play', arguments: { sound: 'b', options } })
+    expect(play({ sound: 'b', options: {} })).toStrictEqual({ kind: 'run', name: 'play', arguments: { sound: 'b', options: {} } })
+  })
+
+  it('leaves an absent or null object out', () => {
+    for (const parameters of [{ sound: 'b' }, { sound: 'b', options: null }]) {
+      expect(play(parameters)).toStrictEqual({ kind: 'run', name: 'play', arguments: { sound: 'b' } })
+    }
+  })
+
+  it.each([
+    ['a list', [{ loop: true }]],
+    ['a text', '{"loop": true}'],
+    ['a number', 3],
+    ['true', true],
+  ])('refuses %s in place of an object, and shows an object', (_name, options) => {
+    expect(refusal(() => play({ sound: 'b', options }))).toBe(`The parameter "options" must be an object, as in {"options": {}}. ${where}`)
+  })
+
+  it('tells the type in the help and in the list of the parameters of an error', () => {
+    expect(parseSubcommandCall(PLAYER, { command: 'help', parameters: '{"command": "play"}' })).toStrictEqual({
+      kind: 'text',
+      text: [
+        'The subcommand play of the player tool: Plays a sound with options.',
+        'Its parameters, in the text of a JSON object in "parameters":',
+        '- sound (string, required): The id of the sound.',
+        '- options (object, optional): The options of the player.',
+        `Example call: ${PLAY_CALL}`,
+      ].join('\n'),
+    })
+    expect(refusal(() => play({ sound: 'b', option: {} })))
+      .toBe(`player play has no parameter "option". The parameters of player play are: sound (string, required), options (object). ${where}`)
+  })
+
+  // An object can be long, as a text can.
+  it('keeps an object that is next to "command" out of the example', () => {
+    const parsed = parseToolArguments(subcommandToolDefinition(PLAYER), JSON.stringify({ command: 'play', options: { loop: false } }))
+    expect(parsed).toStrictEqual({
+      ok: false,
+      error: `player has no parameter "options". "options" is a parameter of the subcommand play, so it goes inside "parameters", the text of a JSON object, and not next to "command", as in ${PLAY_CALL}.`,
+    })
   })
 })

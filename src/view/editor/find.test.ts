@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { PILL_NL, PILL_OPEN, SECTION_SEP, encodePrompt, pillsField, scanPills, sectionsField, type PillMetadata } from '../thread/cmEditor'
 import { CARRIED_USER_ASSETS_LABEL, compactionBlockText, compactionTagText } from '../../model/chat/compaction'
 import { toolBlockText } from '../../model/chat/toolBlocks'
+import { renderedApps } from './apps'
 import {
   FIND_COUNT_LIMIT,
   createFindQuery,
@@ -20,7 +21,7 @@ import {
 } from './find'
 import { markdownImages } from './images'
 import { markdownToolCalls, renderedToolCalls } from './toolCalls'
-import { createState as createSectionsState, keptClip, keptImage } from './testing'
+import { APP_CARD, createState as createSectionsState, keptClip, keptImage } from './testing'
 
 function createState(doc: string, selection?: [number, number], extensions: Extension[] = []): EditorState {
   return EditorState.create({
@@ -128,6 +129,19 @@ describe('find match filter', () => {
     const next = apply(state, replaceAllMatchesTransaction(state, regex('\\n')))
     expect(next.doc.toString()).toBe(`ask\n${SECTION_SEP}\nab\n${TOOL_BLOCK}\ncd`)
     expect(renderedToolCalls(next)).toHaveLength(1)
+  })
+
+  it('skips the hidden source of an app card and the line breaks that frame it, but not a tag in code', () => {
+    const tag = APP_CARD
+    const state = createSectionsState([`notes\n\`${tag}\``, `the notes\n${tag}\nare here`], ['user', 'agent'])
+    const doc = state.doc.toString()
+    const next = apply(state, replaceAllMatchesTransaction(state, regex('\\n')))
+
+    // The word of the user, the name in the code, and the word of the reply.
+    expect(matchRanges(state, plain('notes'))).toEqual(['notes', 'notes"/>`', 'notes\n<dez'].map((at) => [doc.indexOf(at), doc.indexOf(at) + 5]))
+    expect(matchTexts(state, plain('dez:app'))).toEqual(['dez:app'])
+    expect(next.doc.toString()).toBe(sectioned(`notes\`${tag}\``, `the notes\n${tag}\nare here`))
+    expect(renderedApps(next)).toHaveLength(1)
   })
 
   it('skips the compaction block and its line break, but not a tag on a later line', () => {
@@ -282,6 +296,20 @@ describe('find prefill', () => {
     const from = doc.indexOf(TOOL_BLOCK)
     const to = from + TOOL_BLOCK.length
     const prefill = (selection: [number, number]) => findPrefillText(agentState(`look\n${TOOL_BLOCK}\nhere`, selection), false)
+    expect(prefill([from, to])).toBeNull()
+    expect(prefill([look, from + 1])).toBeNull()
+    expect(prefill([look, from])).toBe('look\n')
+    expect(prefill([to, doc.length])).toBe('\nhere')
+  })
+
+  it('takes nothing when the selection touches an app card', () => {
+    const tag = APP_CARD
+    const texts = ['ask', `look\n${tag}\nhere`]
+    const doc = createSectionsState(texts, ['user', 'agent']).doc.toString()
+    const look = doc.indexOf('look')
+    const from = doc.indexOf(tag)
+    const to = from + tag.length
+    const prefill = (selection: [number, number]) => findPrefillText(createSectionsState(texts, ['user', 'agent'], [selection]), false)
     expect(prefill([from, to])).toBeNull()
     expect(prefill([look, from + 1])).toBeNull()
     expect(prefill([look, from])).toBe('look\n')

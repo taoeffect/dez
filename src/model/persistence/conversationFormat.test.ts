@@ -1102,4 +1102,23 @@ describe('conversation Markdown export', () => {
       `# Chat\n\n## User\n\nLike this?\n[video](${pasted})\n[audio]\n\n## Agent\n\nHere:\n[video](${saved})\n\n[audio](https://cdn.example/a.mp3)\n[audio]\nDone.\n`,
     )
   })
+
+  it('writes each app that Dez shows as a label with its name, in agent and user text', () => {
+    const block = toolBlockText({ id: 'call_1', name: 'apps', status: 'success', arguments: { command: 'show', parameters: '{"name":"notes"}' }, result: 'Dez shows the app notes in your reply.' })
+    const data: ConversationData = {
+      id: 'conversation',
+      title: 'Chat',
+      sections: [
+        section('user', [textNode('Show me the notes app.')]),
+        section('agent', [textNode(`Here:\n${block}\n\n<dez:app name="notes"/>\n\nTry it.`)]),
+        section('user', [textNode('This one is empty:\n<dez:app name="notes" open="1"/>')]),
+      ],
+      activeModel: null,
+      created_at: 1000,
+    }
+
+    expect(serializeConversationAsMarkdown(data)).toBe(
+      '# Chat\n\n## User\n\nShow me the notes app.\n\n## Agent\n\nHere:\n\n[app notes]\n\nTry it.\n\n## User\n\nThis one is empty:\n[app notes]\n',
+    )
+  })
 })

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  blockJobStarts,
   cancelledJobIds,
   jobCallLabel,
   jobCancelText,
@@ -82,6 +83,54 @@ describe('startedJob', () => {
 
   it('gives null for any other text', () => {
     expect(startedJob('1 job ended. No job still runs.')).toBeNull()
+  })
+})
+
+describe('blockJobStarts', () => {
+  const invoke = { model: 'p/m', prompt: 'A fox' }
+  const bridgedCall = (name: string, args: Record<string, string>, result: string, status: 'success' | 'error' | 'cut' = 'success') => ({ name, arguments: args, status, result })
+
+  it('gives the job that the call of a block started, with its tool and arguments', () => {
+    const block = { name: 'model_invoke', arguments: invoke, result: `${jobStartedText('j-aaaa', 3)}\nThe model takes about 2 minutes.` }
+
+    expect(blockJobStarts(block)).toStrictEqual([{ id: 'j-aaaa', number: 3, name: 'model_invoke', arguments: invoke }])
+    expect(blockJobStarts({ ...block, result: 'No model has the id "p/m".' })).toStrictEqual([])
+  })
+
+  it('gives the jobs that the tool calls of the code of a block started, in their order, each with its tool and arguments', () => {
+    const ffmpeg = { command: 'ffmpeg', parameters: '{"arguments":"-i @c out.mp4"}' }
+    const block = {
+      name: 'js_eval',
+      arguments: { code: 'return 1' },
+      result: 'The code gave: 1',
+      bridged: {
+        calls: [
+          bridgedCall('model_invoke', invoke, jobStartedText('j-aaaa', 1)),
+          bridgedCall('jobs_list', {}, '1 job runs.'),
+          bridgedCall('model_invoke', invoke, 'No model has the id "p/m".', 'error'),
+          bridgedCall('jobs_wait', {}, '', 'cut'),
+          bridgedCall('video', ffmpeg, jobStartedText('j-bbbb', 2)),
+        ],
+        more: 0,
+      },
+    }
+
+    expect(blockJobStarts(block)).toStrictEqual([
+      { id: 'j-aaaa', number: 1, name: 'model_invoke', arguments: invoke },
+      { id: 'j-bbbb', number: 2, name: 'video', arguments: ffmpeg },
+    ])
+  })
+
+  // Code that returns the result text of its call.
+  it('gives a job once, as a job of the tool call of the code, when the result of the block starts with the same start text', () => {
+    const block = {
+      name: 'js_eval',
+      arguments: { code: 'return await dez.sbp("dez.tools/model_invoke", {})' },
+      result: jobStartedText('j-aaaa', 1),
+      bridged: { calls: [bridgedCall('model_invoke', invoke, jobStartedText('j-aaaa', 1))], more: 0 },
+    }
+
+    expect(blockJobStarts(block)).toStrictEqual([{ id: 'j-aaaa', number: 1, name: 'model_invoke', arguments: invoke }])
   })
 })
 

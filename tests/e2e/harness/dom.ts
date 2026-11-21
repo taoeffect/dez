@@ -219,6 +219,19 @@ export async function isOnTop (browser: E2EBrowser, selector: string): Promise<b
   }, selector)
 }
 
+/** The color of the CSS variable `name` of the page, as a computed
+ *  background (`rgb(…)` or `rgba(…)`). */
+export async function themeColor (browser: E2EBrowser, name: string): Promise<string> {
+  return browser.execute((variable: string) => {
+    const probe = document.createElement('div')
+    probe.style.background = `var(${variable})`
+    document.body.append(probe)
+    const color = getComputedStyle(probe).backgroundColor
+    probe.remove()
+    return color
+  }, name)
+}
+
 /** Move the mouse pointer to `point`, with no button down. */
 export async function movePointer (browser: E2EBrowser, point: Point): Promise<void> {
   await browser.action('pointer', { parameters: { pointerType: 'mouse' } })

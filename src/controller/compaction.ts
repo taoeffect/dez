@@ -17,7 +17,7 @@ import {
   clipPictureLabel,
   compactionAssets,
   compactionScope,
-  keptUserTexts,
+  keptTexts,
   middleMessageStarts,
   openJobInputs,
   type AssetChoice,
@@ -35,6 +35,7 @@ import { ToolError, type ToolDefinition } from '../model/tools/types'
 import { ExplainedError } from '../utils/errorText'
 import { probeClip, readImageFacts } from './assetInfo'
 import { viewClip } from './assetView'
+import { readCompactionApps } from './compactionApps'
 import { logRequest } from './diagnostics/requestLog'
 import { discardMadeAssets, generatedClipAsset } from './jobs'
 import { inWorkFolder } from './programRuns'
@@ -45,8 +46,9 @@ import { discardShownPictures, saveShownPictures } from './shownPictures'
 // sections that take the place of the conversation. The pure parts are in
 // model/streams (compactionRequest.ts: the instruction and the reader of
 // the answer; compactionAssets.ts: the assets and what happens to each
-// one; compactedSections.ts: the new sections). This module does their
-// work on the files and sends the request.
+// one; compactionApps.ts: the apps; compactedSections.ts: the new
+// sections). This module does their work on the files and sends the
+// request; compactionApps.ts reads the apps.
 //
 // It registers no selector, and it changes no tab: its caller puts the
 // result into the tab, when the reply is still the one that asked.
@@ -276,29 +278,32 @@ async function saveClipPictures(choices: readonly AssetChoice[], count: number, 
   }))
 }
 
-/** Compacts the conversation of `input`: reads the files of its assets,
- *  sends the compaction request, and builds the sections that take the
- *  place of the conversation from the answer (`compactedSections`). It
- *  changes no tab.
+/** Compacts the conversation of `input`: reads the files of its assets
+ *  and of its apps, sends the compaction request, and builds the sections
+ *  that take the place of the conversation from the answer
+ *  (`compactedSections`). It changes no tab.
  *
  *  Rejects, with nothing left behind, for a request that failed, for a
  *  stop of `input.signal`, and with an `ExplainedError` for an answer with
  *  no notes. A file that Dez cannot read fails nothing: its asset keeps a
- *  text that says so, and goes to no request as pixels. */
+ *  text that says so, and goes to no request as pixels, and an app keeps
+ *  its line in the notes (`readCompactionApps`). */
 export async function compactConversation(input: CompactionInput): Promise<Compaction> {
   const { sections, replySectionId, model, signal } = input
   signal.throwIfAborted()
   const scope = compactionScope(sections, replySectionId)
   const found = [...conversationAssets(sections).found.values()].filter((asset) => asset.section < scope.end)
   const { facts, imageBytes } = await readAssetFiles(sections, scope.end, found, signal)
+  const { apps, appInputs } = await readCompactionApps(sections.slice(0, scope.end), new Set(found.map((asset) => asset.id)), signal)
   // No request after a stop while a file was read.
   signal.throwIfAborted()
   const jobInputs = openJobInputs(input.jobs)
-  const assets = compactionAssets({ sections, scope, found, places: assetPlaces(sections, found), facts, jobInputs, replySections: input.replySections })
+  const assets = compactionAssets({ sections, scope, found, places: assetPlaces(sections, found), facts, jobInputs, appInputs, replySections: input.replySections })
 
   const instruction = compactionInstruction({
     middleMessages: middleMessageStarts(scope),
     assetTable: assetTableText(assets),
+    apps,
     jobs: input.jobs,
     cost: input.cost(),
     tools: input.tools.length > 0,
@@ -312,7 +317,7 @@ export async function compactConversation(input: CompactionInput): Promise<Compa
     console.error('The answer to a compaction request holds no notes.')
     throw new ExplainedError(NO_COMPACTION_NOTES_TEXT)
   }
-  const choices = assetDecisions(assets, answer, { keptTexts: keptUserTexts(sections, scope, answer) })
+  const choices = assetDecisions(assets, answer, { keptTexts: keptTexts(sections, scope, answer) })
 
   // The model of the next request: it reads the pictures of the result.
   const reader = input.readerModel ?? model
@@ -331,6 +336,7 @@ export async function compactConversation(input: CompactionInput): Promise<Compa
       model,
       choices,
       answer,
+      apps,
       jobs: input.jobs,
       jobInputs,
       cost: input.cost(),

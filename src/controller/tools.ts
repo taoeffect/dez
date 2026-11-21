@@ -17,24 +17,30 @@ import type { ProviderMediaQuote } from '../model/providers/streamTypes'
 import { effectiveRequest, type ModelInfo, type ProviderInfo, type ProviderInputImageRules, type ProviderSettingsDescriptor } from '../model/providers/types'
 import type { SettingsSnapshot } from '../model/state'
 import type { CallPictureBudget } from '../model/streams/pictureBudget'
+import { invokeInputsText, invokeLabel } from '../model/tools/appInvoke'
+import { APPS_TOOL } from '../model/tools/appsTool'
 import { AUDIO_TOOL, audioClipId, audioClipOf, audioCutPart, audioCutRequest, audioCutResultText, audioLengthText } from '../model/tools/audioTool'
 import { conversationInfoText } from '../model/tools/conversationInfo'
 import { brightnessPlan, contrastPlan, convertPlan, cropPlan, flipPlan, IMAGE_TOOL, imageIdArgument, imageOf, imageResultText, invertPlan, rotatePlan, saturationPlan, scalePlan, unreadableImageText, unwritableFormatError, type ImagePlan } from '../model/tools/imageTool'
 import { cancelledJobIds, isIntermediate, jobCancelText, jobInspectText, jobResultText, jobsListText, jobStartedText, jobsWaitText, unknownJobText, waitedJobIds, type JobResult } from '../model/tools/jobs'
+import { jsEvalCall } from '../model/tools/jsEval'
 import { parameterValuesArgument, type ModelTarget } from '../model/tools/modelArguments'
 import { modelCost, modelInfoSelection, modelInfoText, modelInfoTarget, type ModelInfoFacts } from '../model/tools/modelInfo'
 import { invocationInputsText, invocationLabel, MODEL_INVOKE_TOOL, modelInvocation } from '../model/tools/modelInvoke'
 import { modelListArguments, modelListText } from '../model/tools/modelList'
 import { unexpectedToolErrorText, unknownToolText } from '../model/tools/registry'
 import { parseSubcommandCall, type SubcommandTool } from '../model/tools/subcommands'
-import { ToolError, type ToolArguments, type ToolRunResult } from '../model/tools/types'
+import { ToolError, type ArgumentsOf, type SubcommandParameter, type ToolArguments, type ToolRunResult } from '../model/tools/types'
 import { ffmpegCall, ffprobeCall, joinClipsCall, VIDEO_TOOL, videoCallLabel, videoInputsText } from '../model/tools/videoTool'
 import { untilAborted } from '../utils/abort'
 import { rawErrorText } from '../utils/errorText'
+import { checkedInvokeCall, runAppFrameJob, runAppJob } from './appInvoke'
+import { editAppFile, initApp, listAppFolder, listApps, makeAppFolder, moveAppPaths, readAppFile, removeAppPaths, showApp, writeAppFile } from './appsTool'
 import { assetInfoResult } from './assetInfo'
 import { assetViewResult } from './assetView'
 import { audioClipSeconds, cutAudioClip } from './audioTool'
 import { discardMadeAssets, writeJobAssets, type JobWork, type TabJobs } from './jobs'
+import { runJsEval } from './jsEval'
 import { invokeModel } from './modelInvoke'
 import { runFfmpegJob, runFfprobe, runJoinJob } from './videoTool'
 
@@ -80,6 +86,14 @@ export interface ToolRunContext {
    *  (a stop ended the tool round): the runner then deletes the file. The
    *  result of the call must name the new id, as for `writeImage`. */
   writeClip(clip: Omit<MediaTagData, 'id' | 'other'>, options?: { tool?: string, jobId?: string, madeBy?: string, hidden?: string }): string | null
+  /** Writes the tag of the app `name` into the reply (`<dez:app>`,
+   *  chat/appTags.ts), after the blocks of the calls, as the writers above
+   *  write an asset. False when the reply takes no text any more (a stop
+   *  ended the tool round).
+   *
+   *  The result of the call must name the app with `shownAppText`
+   *  (tools/appShow.ts): a request sends that result and not the tag. */
+  showApp(name: string): boolean
   /** What the pictures of the call can cost (streams/pictureBudget.ts): the
    *  limits of a request to the model of the reply, less the images and
    *  the pictures that the context holds now, and less the pictures of the
@@ -94,11 +108,14 @@ export interface ToolRunContext {
 }
 
 // The code of each Dez tool (TOOL_DEFINITIONS), by tool name. A runner gives
-// the result text, or the result with the copies of the pictures that the
-// call showed (`ToolRunResult.pictures`), or throws a `ToolError` for an
-// error result. `signal` aborts when the user stops the reply; a runner
-// that waits on something must stop then.
-type ToolRunner = (args: ToolArguments, signal: AbortSignal, context: ToolRunContext) => Promise<string | Omit<ToolRunResult, 'isError'>>
+// the result text, or the result with what its block keeps next to the
+// text (`ToolRunResult.pictures`, `bridged`), or throws a `ToolError` for
+// an error result. A runner whose error result has more than its text
+// gives it with `isError` (`runJsEval`). `signal` aborts when the user
+// stops the reply; a runner that waits on something must stop then. `A` is
+// what the runner gets as the arguments: those of the call, or those of a
+// subcommand, which can hold lists (`subcommandRunner`).
+type ToolRunner<A = ToolArguments> = (args: A, signal: AbortSignal, context: ToolRunContext) => Promise<string | (Omit<ToolRunResult, 'isError'> & { isError?: boolean })>
 
 // The sections of the tab of a call, where a tool finds the images and
 // the clips that the call names; none for a tab that is gone.
@@ -124,7 +141,7 @@ async function modelInfoLookup(args: ToolArguments, replyModel: ModelRef): Promi
 // The runner of a tool with subcommands (subcommands.ts): gives the list or
 // the help that a call asks for, else runs the runner of the subcommand
 // with the subcommand's own checked arguments.
-function subcommandRunner(tool: SubcommandTool, runners: Record<string, ToolRunner>): ToolRunner {
+function subcommandRunner<P extends SubcommandParameter>(tool: SubcommandTool<P>, runners: Record<string, ToolRunner<ArgumentsOf<P>>>): ToolRunner {
   return async (args, signal, context) => {
     const call = parseSubcommandCall(tool, args)
     return call.kind === 'text' ? call.text : await runners[call.name](call.arguments, signal, context)
@@ -398,7 +415,8 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // `is_intermediate` changes nothing of the request or of the results
   // that the model reads: the job only marks its images and clips as
   // hidden (`hidesAssets`), and the editor shows them under the chip of
-  // this call. The same holds for `join_clips` and `ffmpeg` of `video`.
+  // this call. The same holds for `join_clips` and `ffmpeg` of `video`,
+  // and for `invoke` of `apps`.
   async model_invoke (args, callSignal, context) {
     const providers = await sbp('dez.provider/infos') as ProviderInfo[]
     const { modelParameters, providerSettings } = sbp('dez.model/settings/snapshot') as SettingsSnapshot
@@ -476,6 +494,51 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
       pictureBudget: model?.imageInput === false ? null : await context.pictureBudget(),
     })
   },
+  // One run of code that the model wrote, in Deno, the JavaScript runtime
+  // that Dez ships (jsEval.ts). The code gets no network and no file; it
+  // calls the other Dez tools through Dez, with the context of this call
+  // (toolBridge.ts). The call waits for the end of the code and starts no
+  // job: the time limit of a run is short, and the model needs the value
+  // for its next step. A stop of the reply stops the code.
+  async js_eval (args, signal, context) {
+    return runJsEval(jsEvalCall(args), signal, context)
+  },
+  // The apps, the small programs that a model writes for the user
+  // (appsTool.ts). Each file subcommand works on the folder `apps/` of the
+  // app root and is done when the call returns: it starts no job, and it
+  // reads nothing of the conversation. A stop of the reply stops `rm` and
+  // `mv` between two paths; any other call is short and runs to its end.
+  //
+  // `invoke` runs the code of an app (appInvoke.ts), as a job of the
+  // reply: code that a model wrote can run for long. The kind of the app
+  // picks the work: a script app runs in Deno, and the page of a UI app
+  // in a frame that the user does not see. The checks of the call and of
+  // the files of the app run first (`checkedInvokeCall`): a call that Dez
+  // refuses starts no job, no program, and no frame. The result tells the
+  // inputs that go, as for `model_invoke`.
+  //
+  // `show` puts a UI app into the reply (appShow.ts): it runs no code.
+  apps: subcommandRunner(APPS_TOOL, {
+    init: initApp,
+    read: readAppFile,
+    write: writeAppFile,
+    edit: editAppFile,
+    rm: removeAppPaths,
+    list_apps: listApps,
+    ls: listAppFolder,
+    mkdir: makeAppFolder,
+    mv: moveAppPaths,
+    show: (args, _signal, context) => showApp(args, context),
+    async invoke (args, callSignal, context) {
+      const call = await checkedInvokeCall(args, callSections(context))
+      const run = call.kind === 'ui' ? runAppFrameJob : runAppJob
+      return startJob(context, callSignal, APPS_TOOL.name, (signal, report, _reportCost, keepAsset) => run(call, signal, report, keepAsset), {
+        timeoutMs: call.timeoutMs,
+        hidesAssets: isIntermediate(args),
+        label: invokeLabel(args),
+      }, invokeInputsText(call.inputs, call.kind))
+    },
+  }),
 }
 
 export default sbp('sbp/selectors/register', {
@@ -490,7 +553,10 @@ export default sbp('sbp/selectors/register', {
     }
     try {
       const output = await runner(call.arguments, signal, context)
-      return typeof output === 'string' ? { content: output, isError: false } : { ...output, isError: false }
+      const result = typeof output === 'string' ? { content: output, isError: false } : { isError: false, ...output }
+      // An error result that a runner gave is logged as one that it threw.
+      if (result.isError && !signal.aborted) console.error(`The tool ${call.name} failed:`, result.content)
+      return result
     } catch (error) {
       // A run that the user stopped did not fail; the reply drops its result.
       if (!signal.aborted) console.error(`The tool ${call.name} failed:`, error)

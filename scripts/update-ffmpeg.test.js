@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { hostTriple } from './bundled-programs.js';
 import {
   LIBRARIES,
   PLATFORMS,
   TOOLS,
-  hostTriple,
   licenseProblem,
   licenseTextsFile,
   licenseTextsProblem,
@@ -14,26 +14,16 @@ import {
   vendoredFiles,
   vendoredName
 } from './update-ffmpeg.js';
-
-const sha = letter => letter.repeat(64);
+import { githubReleaseData, sha } from './testing.js';
 
 // The release data of the GitHub API, with the files that Dez takes and
-// some that it does not. Each file has its own size and SHA-256.
-function release(tag = 'n9.0.2-3') {
-  const names = [
+// some that it does not.
+const release = (tag = 'n9.0.2-3') =>
+  githubReleaseData(tag, [
     'ffmpeg-linux-arm64', 'ffmpeg-linux-arm64-ubuntu-24.04', 'ffmpeg-linux-x64', 'ffmpeg-macos-arm64',
     'ffmpeg-osx-x64', 'ffmpeg-win-x64.exe', 'ffprobe-linux-arm64', 'ffprobe-linux-x64',
     'ffprobe-linux-x64-ubuntu-24.04', 'ffprobe-macos-arm64', 'LICENSES.txt'
-  ];
-  return {
-    tag_name: tag,
-    assets: names.map((name, index) => ({
-      name,
-      size: 1000 + index,
-      digest: `sha256:${sha(index.toString(16))}`
-    }))
-  };
-}
+  ]);
 
 describe('parseArgs', () => {
   it('takes one release tag', () => {
@@ -120,8 +110,10 @@ describe('licenseTextsProblem', () => {
 });
 
 describe('manifestText', () => {
+  const text = (manifest, tag = 'n9.0.2-3') => manifestText(manifest, tag, vendoredFiles(release(tag)), licenseTextsFile(release(tag)));
+
   it('names each file as the build names it, for every target and program', () => {
-    const manifest = JSON.parse(manifestText('n9.0.2-3', vendoredFiles(release()), licenseTextsFile(release())));
+    const manifest = JSON.parse(text({}));
     expect(manifest).toMatchObject({
       ffmpegVersion: 'n9.0.2',
       releaseTag: 'n9.0.2-3',
@@ -130,12 +122,34 @@ describe('manifestText', () => {
     // build.rs finds a file by `dez-<program>-<TARGET>`.
     const names = Object.keys(PLATFORMS).flatMap(triple => TOOLS.map(tool => vendoredName(tool, triple)));
     expect(Object.keys(manifest.files).sort()).toEqual(names.sort());
+    // The pin of a program: fetch-programs.js downloads it from `url`, and
+    // takes only a file of that size and SHA-256.
     expect(manifest.files['dez-ffprobe-x86_64-unknown-linux-gnu']).toEqual({
       asset: 'ffprobe-linux-x64',
+      url: 'https://github.com/taoeffect/dez-ffmpeg/releases/download/n9.0.2-3/ffprobe-linux-x64',
       size: 1007,
       sha256: sha('7')
     });
     expect(manifest.licenseTexts).toEqual({ asset: 'LICENSES.txt', size: 1010, sha256: sha('a') });
+  });
+
+  it('keeps the part of another update script as it is, and replaces all of its own part', () => {
+    const deno = { version: '2.9.8', source: 'https://example.com/deno' };
+    const denoFile = { url: 'https://example.com/deno.zip', zip: { member: 'deno', size: 3, sha256: sha('e') }, size: 9, sha256: sha('f') };
+    const before = JSON.parse(text({}, 'n9.0.2-3'));
+    before.deno = deno;
+    before.files['dez-deno-x86_64-unknown-linux-gnu'] = denoFile;
+    // A program of a platform that the script has no more.
+    before.files['dez-ffmpeg-x86_64-apple-darwin'] = { size: 1 };
+
+    const after = JSON.parse(text(before, 'n9.1-1'));
+    expect(after.deno).toEqual(deno);
+    expect(after.files['dez-deno-x86_64-unknown-linux-gnu']).toEqual(denoFile);
+    // Without the part of the other script, the manifest is the one of a
+    // first run for the new tag: nothing of the old tag is left.
+    delete after.deno;
+    delete after.files['dez-deno-x86_64-unknown-linux-gnu'];
+    expect(after).toEqual(JSON.parse(text({}, 'n9.1-1')));
   });
 });
 
@@ -158,14 +172,8 @@ describe('noticeText', () => {
   });
 });
 
-describe('hostTriple', () => {
-  it('gives the target triple of each platform of Dez, and none for another computer', () => {
-    expect(hostTriple('linux', 'arm64')).toBe('aarch64-unknown-linux-gnu');
-    expect(hostTriple('linux', 'x64')).toBe('x86_64-unknown-linux-gnu');
-    expect(hostTriple('darwin', 'arm64')).toBe('aarch64-apple-darwin');
-    expect(hostTriple('darwin', 'x64')).toBeUndefined();
-    expect(hostTriple('win32', 'x64')).toBeUndefined();
-    // Every triple that it gives has programs.
+describe('PLATFORMS', () => {
+  it('has programs for every computer that hostTriple names', () => {
     for (const [platform, arch] of [['linux', 'arm64'], ['linux', 'x64'], ['darwin', 'arm64']]) {
       expect(PLATFORMS).toHaveProperty(hostTriple(platform, arch));
     }

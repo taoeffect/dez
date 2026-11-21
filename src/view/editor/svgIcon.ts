@@ -19,3 +19,11 @@ export function svgIcon(viewBox: string, shapes: IconShapes): SVGSVGElement {
 
 /** The attributes of a stroked shape with round ends and joins. */
 export const ROUND_STROKE = { fill: 'none', stroke: 'currentColor', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }
+
+/** The trash can of the History and Prompts lists, for the trash of an
+ *  image and of an app. */
+export function trashIcon(): SVGSVGElement {
+  return svgIcon('0 0 12 12', [
+    ['path', { d: 'M2.5 3.5h7m-5.5 0V2.5a.5.5 0 01.5-.5h2a.5.5 0 01.5.5V3.5m-3 0v6a.5.5 0 00.5.5h4a.5.5 0 00.5-.5v-6', ...ROUND_STROKE, 'stroke-width': '1.1' }],
+  ])
+}

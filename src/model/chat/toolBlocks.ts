@@ -2,7 +2,9 @@ import { MARKER_ATTRIBUTES, escapeMarkerAttribute, markerAttributes } from '../.
 import { fitsParameterType } from '../tools/arguments'
 import { toolDefinition } from '../tools/registry'
 import type { ToolArguments, ToolArgumentValue, ToolParameterType } from '../tools/types'
-import { COMPACTION_TAG_NAME, USER_MESSAGE_TAG_NAME } from './compaction'
+import { APP_TAG_NAME, appTagText, splitAppTags } from './appTags'
+import { bridgedCallsText, hasBridgedCalls, readBridgedCalls, type BridgedCalls } from './bridgedCalls'
+import { AGENT_MESSAGE_TAG_NAME, COMPACTION_TAG_NAME, USER_MESSAGE_TAG_NAME } from './compaction'
 import { stripLiveSentinels } from './content'
 import { MEDIA_TAG_NAMES, mediaTagRequestText, splitMediaTags } from './mediaTags'
 import { readShownPictures, shownPicturesText, type ShownPicture } from './shownPictures'
@@ -25,9 +27,10 @@ import { tagEscape } from './tagEscape'
 //   is a tag with no `id` or no `name`.
 // - Attributes, in this order: `id` (the provider's call id, sent back byte
 //   for byte), `name` (the tool name as the model gave it), `status` (absent
-//   for success), `pictures` (absent when the call showed none), then one
-//   per argument, in definition order. A string argument is written as it
-//   is, a number or boolean as its JSON text; on read, the tool's definition
+//   for success), `pictures` (absent when the call showed none), `bridged`
+//   (absent when the code of the call made no tool call), then one per
+//   argument, in definition order. A string argument is written as it is,
+//   a number or boolean as its JSON text; on read, the tool's definition
 //   gives the type back. Values are escaped (`escapeMarkerAttribute`), so
 //   the tag stays on one line.
 // - The body is the result, escaped (`resultEscape`) so that no body line
@@ -71,6 +74,11 @@ export interface ToolBlockData {
    *  panel of its chip shows them. No request sends the attribute. Absent
    *  when there are none. */
   pictures?: readonly ShownPicture[]
+  /** The tool calls that the code of a `js_eval` call made
+   *  (bridgedCalls.ts), for the panel of its chip and for the rule of the
+   *  jobs (`blockJobStarts`, tools/jobs.ts). No request sends the
+   *  attribute. Absent when the code made none. */
+  bridged?: BridgedCalls
 }
 
 /** One block in a text. */
@@ -88,7 +96,7 @@ export type ToolTextPiece =
 
 /** The attributes that every block writes before the arguments. No tool
  *  parameter may use these names. */
-export const RESERVED_TOOL_ATTRIBUTES: readonly string[] = ['id', 'name', 'status', 'pictures']
+export const RESERVED_TOOL_ATTRIBUTES: readonly string[] = ['id', 'name', 'status', 'pictures', 'bridged']
 
 const OPEN_PREFIX = '<dez:tool'
 const CLOSE_TAG = '</dez:tool>'
@@ -131,6 +139,7 @@ export function toolBlockText(block: ToolBlockData): string {
   let tag = `${OPEN_PREFIX} id="${attributeValue(block.id)}" name="${attributeValue(block.name)}"`
   if (block.status !== 'success') tag += ` status="${block.status}"`
   if (block.pictures !== undefined && block.pictures.length > 0) tag += ` pictures="${attributeValue(shownPicturesText(block.pictures))}"`
+  if (block.bridged !== undefined && hasBridgedCalls(block.bridged)) tag += ` bridged="${attributeValue(bridgedCallsText(block.bridged))}"`
   for (const [name, value] of inDefinitionOrder(block.name, Object.entries(block.arguments))) {
     tag += ` ${name}="${attributeValue(typeof value === 'string' ? value : JSON.stringify(value))}"`
   }
@@ -197,6 +206,8 @@ function readBlock(text: string, from: number): ToolBlock | null {
   const body = text.slice(tagEnd + 1, close)
   const picturesText = attributes.get('pictures')
   const pictures = picturesText === undefined ? [] : readShownPictures(picturesText)
+  const bridgedText = attributes.get('bridged')
+  const bridged = bridgedText === undefined ? null : readBridgedCalls(bridgedText)
   return {
     from,
     to,
@@ -206,6 +217,7 @@ function readBlock(text: string, from: number): ToolBlock | null {
     arguments: readArguments(name, attributes),
     result: resultEscape.unescape(body.slice(0, -1)),
     ...(pictures.length > 0 ? { pictures } : {}),
+    ...(bridged !== null && hasBridgedCalls(bridged) ? { bridged } : {}),
   }
 }
 
@@ -259,23 +271,27 @@ export function withoutToolBlocks(text: string): string {
 
 // Model answer text gets the `tagEscape` escape for the tags that Dez itself
 // writes into agent text: `dez:tool`, the media tags (mediaTags.ts), the
-// compaction tag (compaction.ts), and the tag of a message of the user in
-// the notes (compactionNotes.ts). So no answer can hold a block's opening
-// or closing tag, a media tag, a compaction tag, or a message of the user.
-// Requests remove the escape (`agentTextForRequest`,
-// `unescapedModelText`), so the provider gets the model's own bytes. Prose
-// about other tags (`dez:pill`) keeps its bytes.
+// app tag (appTags.ts), the compaction tag (compaction.ts), and the tags of
+// the message parts in the notes (compactionNotes.ts): a message of the
+// user, and the reply of the assistant before the final one. So no answer
+// can hold a block's opening or closing tag, a media tag, an app tag, a
+// compaction tag, or a message part. Requests remove the escape
+// (`agentTextForRequest`, `unescapedModelText`), so the provider gets the
+// model's own bytes. Prose about other tags (`dez:pill`) keeps its bytes.
+// The escape takes each name as the start of a name, so `<dez:apps` gets
+// it too, and loses it again in a request.
 //
 // Text that a model wrote before a tag was in this list has no escape for
 // it, and no way tells the two apart. So a line of such a text that has
 // the form of a media tag reads as one, and an old `<\dez:audio` or
 // `<\dez:compaction` loses its `\` in a request. Stored text never changes.
-const MODEL_TEXT_TAGS: readonly string[] = ['dez:tool', ...MEDIA_TAG_NAMES, COMPACTION_TAG_NAME, USER_MESSAGE_TAG_NAME]
+const MODEL_TEXT_TAGS: readonly string[] = ['dez:tool', ...MEDIA_TAG_NAMES, APP_TAG_NAME, COMPACTION_TAG_NAME, USER_MESSAGE_TAG_NAME, AGENT_MESSAGE_TAG_NAME]
 const modelTextEscape = tagEscape(...MODEL_TEXT_TAGS)
 
 /** Text that a model wrote, as a provider gets it: with the
- *  `ModelTextEscaper` escape removed. For a text that holds no tool block
- *  and no media tag of Dez (a caller that reads those first). */
+ *  `ModelTextEscaper` escape removed. For a text that holds no tool block,
+ *  no media tag, and no app tag of Dez (a caller that reads those
+ *  first). */
 export function unescapedModelText(text: string): string {
   return modelTextEscape.unescape(text)
 }
@@ -289,12 +305,22 @@ export function escapedModelText(text: string): string {
 
 /** The text of an agent section outside its tool blocks, as a provider
  *  gets it: the answer text as the model wrote it (the `ModelTextEscaper`
- *  escape removed), and each media tag in its request form. The tags are
- *  found first: after the unescape, a tag that a model wrote would read as
- *  one that Dez wrote. */
+ *  escape removed), each media tag in its request form, and each app tag
+ *  in the text of its writer. The tags are found first: after the
+ *  unescape, a tag that a model wrote would read as one that Dez wrote. */
 export function agentTextForRequest(text: string): string {
   return splitMediaTags(text, 'agent')
-    .map((piece) => (piece.kind === 'text' ? unescapedModelText(piece.text) : mediaTagRequestText(piece.tag)))
+    .map((piece) => (piece.kind === 'text' ? modelTextAroundAppTags(piece.text) : mediaTagRequestText(piece.tag)))
+    .join('')
+}
+
+// `text`, a run of an agent section between two media tags, as a provider
+// gets it. A run starts and ends where a line of the section does (a media
+// tag is a whole line), so the app tags of the run are those of the
+// section.
+function modelTextAroundAppTags(text: string): string {
+  return splitAppTags(text, 'agent')
+    .map((piece) => (piece.kind === 'text' ? unescapedModelText(piece.text) : appTagText(piece.tag.name)))
     .join('')
 }
 

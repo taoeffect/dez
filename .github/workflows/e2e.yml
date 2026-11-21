@@ -52,27 +52,35 @@ jobs:
         uses: okTurtles/libcheloniajs/.github/actions/fix-ubuntu-ca-roots@main
 
       # No `lfs: true`: the checkout leaves a small pointer file in the
-      # place of every Git LFS file, and the next step gets only the files
-      # that this build needs.
+      # place of every Git LFS file, and the next step gets the files, from
+      # a cache when it can.
       - name: Checkout
         uses: actions/checkout@v7
 
-      # The build needs three kinds of Git LFS files. Vite inlines
+      # The build needs two kinds of Git LFS files. Vite inlines
       # src/assets/sounds/ding.mp3: a pointer file gives no build error,
       # and only the sound fails to play. src-tauri/build.rs checks the
-      # ffmpeg and ffprobe programs of this platform and the fonts, and
-      # stops the build on a pointer file. The header of the action tells
-      # why it does not pull every LFS file.
+      # fonts, and stops the build on a pointer file. The header of the
+      # action tells why the checkout does not pull them.
       - name: Pull Git LFS files
         uses: ./.github/actions/pull-lfs-files
-        with:
-          target: x86_64-unknown-linux-gnu
 
       - name: Setup Node
         uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
+
+      # The programs that Dez ships (ffmpeg, ffprobe, Deno) are not in Git:
+      # a script downloads those of this platform, and takes only the files
+      # that src-tauri/binaries/manifest.json pins. src-tauri/build.rs
+      # checks them again, and stops the build when one is missing. The
+      # script needs Node, so the step is after the Node setup. The header
+      # of the action tells the rest.
+      - name: Fetch bundled programs
+        uses: ./.github/actions/fetch-programs
+        with:
+          target: x86_64-unknown-linux-gnu
 
       - name: Install frontend dependencies
         run: npm ci

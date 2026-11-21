@@ -15,6 +15,7 @@ import {
 import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view'
 import { SENTINEL_CHAR } from '../../model/chat/content'
 import { SECTION_SEP, pillsField, scanPills, type PillMetadata } from '../thread/cmEditor'
+import { renderedApps } from './apps'
 import { compactionBlockRange } from './compactionBlock'
 import { renderedImages } from './images'
 import { renderedMedia } from './media'
@@ -97,6 +98,7 @@ interface ProtectedRangesCacheEntry {
   images: readonly DocRange[]
   toolCalls: readonly DocRange[]
   media: readonly DocRange[]
+  apps: readonly DocRange[]
   ranges: DocRange[]
 }
 
@@ -114,27 +116,29 @@ const protectedRangesCache = new WeakMap<Text, ProtectedRangesCacheEntry>()
  *    image (hiddenAssets.ts: the asset of an intermediate call, or one that
  *    a compaction keeps) is one of them, with a placeholder as its widget;
  *  - the line blocks (`lineBlocks.ts`) that the editor shows: tool call
- *    chips (`renderedToolCalls`) and media players (`renderedMedia`, a
- *    hidden clip too), plus the line breaks on both sides. Their source is
- *    hidden, and a replace in one could break it. Replacing a framing `\n`
- *    with nothing puts text on the block's first or last line, and the
- *    block then shows as its source; `keepTextOffLineBlocks` (lineBlocks.ts)
- *    adds a line break back only for a non-empty insert;
+ *    chips (`renderedToolCalls`), media players (`renderedMedia`, a
+ *    hidden clip too), and app cards (`renderedApps`), plus the line
+ *    breaks on both sides. Their source is hidden, and a replace in one
+ *    could break it. Replacing a framing `\n` with nothing puts text on
+ *    the block's first or last line, and the block then shows as its
+ *    source; `keepTextOffLineBlocks` (lineBlocks.ts) adds a line break
+ *    back only for a non-empty insert;
  *  - the compaction block (`compactionBlockRange`), plus its line break:
  *    the pill of the section and the compaction chips (compactionChip.ts)
  *    are in its place, and a replace in its tag line would make the
  *    section a user section.
  *  Pills without metadata (or a state without `pillsField`) count as
  *  collapsed, matching `decodeSectionContent`. Cached per doc + pill map
- *  + images + tool calls + media because the highlighter asks on every
- *  viewport change (the block comes from the doc alone). */
+ *  + images + tool calls + media + apps because the highlighter asks on
+ *  every viewport change (the block comes from the doc alone). */
 function protectedRanges(state: EditorState): DocRange[] {
   const pills = state.field(pillsField, false)
   const images = renderedImages(state)
   const toolCalls = renderedToolCalls(state)
   const media = renderedMedia(state)
+  const apps = renderedApps(state)
   const cached = protectedRangesCache.get(state.doc)
-  if (cached && cached.pills === pills && cached.images === images && cached.toolCalls === toolCalls && cached.media === media) return cached.ranges
+  if (cached && cached.pills === pills && cached.images === images && cached.toolCalls === toolCalls && cached.media === media && cached.apps === apps) return cached.ranges
 
   const doc = state.doc.toString()
   const raw: DocRange[] = []
@@ -150,7 +154,7 @@ function protectedRanges(state: EditorState): DocRange[] {
     }
   }
   for (const { from, to } of images) raw.push({ from, to })
-  for (const blocks of [toolCalls, media, compactionBlockRange(state.doc)]) {
+  for (const blocks of [toolCalls, media, apps, compactionBlockRange(state.doc)]) {
     for (const { from, to } of blocks) raw.push({ from: Math.max(0, from - 1), to: Math.min(doc.length, to + 1) })
   }
   raw.sort((a, b) => a.from - b.from)
@@ -161,7 +165,7 @@ function protectedRanges(state: EditorState): DocRange[] {
     if (last && range.from <= last.to) last.to = Math.max(last.to, range.to)
     else ranges.push({ ...range })
   }
-  protectedRangesCache.set(state.doc, { pills, images, toolCalls, media, ranges })
+  protectedRangesCache.set(state.doc, { pills, images, toolCalls, media, apps, ranges })
   return ranges
 }
 
@@ -278,9 +282,9 @@ const REGEXP_SYNTAX_CHARS = /[\^$\\.*+?()[\]{}|/]/g
 /** Search text that Cmd/Ctrl+F takes from the main selection, escaped in
  *  regex mode. `null` (keep the current search) when the selection is
  *  empty, longer than 3 lines, holds a sentinel, overlaps a shown image,
- *  tool call chip, or media player (their source is hidden and never
- *  matches, see `protectedRanges`), or already is a match of the open
- *  query: the match text would replace a regex that the user typed. */
+ *  tool call chip, media player, or app card (their source is hidden and
+ *  never matches, see `protectedRanges`), or already is a match of the
+ *  open query: the match text would replace a regex that the user typed. */
 export function findPrefillText(state: EditorState, regexp: boolean): string | null {
   const { from, to } = state.selection.main
   if (from === to) return null
@@ -288,7 +292,7 @@ export function findPrefillText(state: EditorState, regexp: boolean): string | n
   const text = state.sliceDoc(from, to)
   if (SENTINEL_CHAR.test(text)) return null
   const overlaps = (range: DocRange) => range.from < to && range.to > from
-  if (renderedImages(state).some(overlaps) || renderedToolCalls(state).some(overlaps) || renderedMedia(state).some(overlaps)) return null
+  if ([renderedImages, renderedToolCalls, renderedMedia, renderedApps].some((rendered) => rendered(state).some(overlaps))) return null
   const query = state.field(findQueryField, false)
   if (query && findMatchAt(state, query, from, to)) return null
   return regexp ? text.replace(REGEXP_SYNTAX_CHARS, '\\$&') : text

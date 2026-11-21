@@ -5,23 +5,55 @@ use std::{env, fs, io, path::Path, process};
 /// programs that Dez ships next to its own program.
 const CONFIG_PATH: &str = "tauri.conf.json";
 
-/// A folder of src-tauri/ that a script vendors: Git LFS files, and a
-/// `manifest.json` that names the size and the SHA-256 of each one.
+/// A folder of src-tauri/ that a script vendors: files that are not plain
+/// Git files, and a `manifest.json` that names the size and the SHA-256 of
+/// each one.
 struct VendoredFolder {
     folder: &'static str,
+    source: FileSource,
     /// The script call that vendors the files again, for the error texts.
     vendor_step: &'static str,
 }
 
-/// The ffmpeg and ffprobe programs of every build target.
+/// Where a checkout gets the files of a vendored folder.
+enum FileSource {
+    /// Git LFS: a checkout without LFS has a small pointer file in the place
+    /// of each file.
+    GitLfs,
+    /// Git ignores the files (.gitignore), and scripts/fetch-programs.js
+    /// downloads the ones of a build target from the URLs of the manifest.
+    /// This build script downloads nothing, so that no build needs the
+    /// network: it only names that script in its error texts.
+    FetchScript,
+}
+
+impl FileSource {
+    /// What gets a file of the folder as its manifest names it: the first
+    /// part of the advice of an error text.
+    fn get_step(&self) -> String {
+        match self {
+            Self::GitLfs => "Install Git LFS and run `git lfs pull` to get the file of the repository".to_string(),
+            Self::FetchScript => format!(
+                "Run `node scripts/fetch-programs.js --target {}` in the folder of the repository to download it",
+                build_target()
+            ),
+        }
+    }
+}
+
+/// The programs of every build target (ffmpeg, ffprobe, Deno). Each program
+/// has an update script that vendors it.
 const BINARIES: VendoredFolder = VendoredFolder {
     folder: "binaries",
-    vendor_step: "run `node scripts/update-ffmpeg.js <release tag>` to vendor another version",
+    source: FileSource::FetchScript,
+    vendor_step: "run the update script of the program (scripts/update-ffmpeg.js, \
+                  scripts/update-deno.js) to vendor another version",
 };
 
 /// The fonts that the programs can use, the same for every build target.
 const FONTS: VendoredFolder = VendoredFolder {
     folder: "fonts",
+    source: FileSource::GitLfs,
     vendor_step: "run `node scripts/update-fonts.js` to vendor the fonts of its list",
 };
 
@@ -97,21 +129,27 @@ fn write_bundled_tools(tools: &[String]) -> Result<(), String> {
         .map_err(|error| format!("Cannot write {}: {error}", path.display()))
 }
 
+/// The target triple of the build.
+fn build_target() -> String {
+    env::var("TARGET").expect("cargo sets TARGET for a build script")
+}
+
 /// Checks that the bundled tools of the build target are the files that
 /// binaries/manifest.json names (size and SHA-256), before tauri-build
 /// copies them next to the Dez program.
 ///
-/// Why: the files are in Git LFS, so a checkout without LFS has a small
-/// pointer file in the place of each one, and Tauri would bundle that with
-/// no error. And a program that Dez runs must be the one that
-/// scripts/update-ffmpeg.js checked and vendored.
+/// Why: the programs are not in Git, so a new checkout has none until
+/// scripts/fetch-programs.js downloads them (`FileSource::FetchScript`).
+/// And a program that Dez runs must be the one that its update script
+/// (scripts/update-ffmpeg.js, scripts/update-deno.js) checked and pinned,
+/// whatever put the file there.
 ///
 /// Cargo runs the build script again only when a file that it names with
 /// `rerun-if-changed` changes (tauri-build names the config files), so most
 /// builds do not hash the programs.
 fn check_bundled_tools(tools: &[String]) -> Result<(), String> {
     let manifest = BINARIES.manifest()?;
-    let target = env::var("TARGET").expect("cargo sets TARGET for a build script");
+    let target = build_target();
 
     for tool in tools {
         let name = format!("{tool}-{target}");
@@ -119,7 +157,7 @@ fn check_bundled_tools(tools: &[String]) -> Result<(), String> {
             return Err(format!(
                 "Dez has no {tool} program for the build target {target}: \
                  {} does not name {name}. \
-                 scripts/update-ffmpeg.js has the platforms that Dez ships programs for.",
+                 scripts/bundled-programs.js has the platforms that Dez ships programs for.",
                 BINARIES.shown_manifest()
             ));
         };
@@ -164,16 +202,13 @@ fn check_file(
     println!("cargo:rerun-if-changed={}", path.display());
     let shown = format!("src-tauri/{}", path.display());
     let manifest = vendored.shown_manifest();
-    let advice = format!(
-        "Install Git LFS and run `git lfs pull` to get the file of the repository, or {}.",
-        vendored.vendor_step
-    );
+    let advice = format!("{}, or {}.", vendored.source.get_step(), vendored.vendor_step);
 
     let found_size = fs::metadata(&path)
         .map_err(|error| format!("{shown} is missing ({error}). {advice}"))?
         .len();
     if found_size != size {
-        if found_size < 1024 && is_lfs_pointer(&path) {
+        if matches!(vendored.source, FileSource::GitLfs) && found_size < 1024 && is_lfs_pointer(&path) {
             return Err(format!(
                 "{shown} is a Git LFS pointer file, not the file that {manifest} names. \
                  Install Git LFS and run `git lfs pull`."

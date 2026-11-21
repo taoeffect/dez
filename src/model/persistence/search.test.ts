@@ -73,6 +73,18 @@ describe('conversationPlainText', () => {
     expect(conversationPlainText(sections)).toBe('Like: Here it is. Done.')
   })
 
+  // The card of an app shows its name, so a search for the name finds the
+  // conversation; a search for `app` or `dez` must not find every
+  // conversation with an app.
+  it('gives only the name of the app for an app tag of agent and user text', () => {
+    const sections = [
+      section('user', [textNode('Why is it empty?\n<dez:app name="notes"/>')]),
+      section('agent', [textNode('Here it is.\n\n<dez:app name="unit-converter" open="1"/>\n\nTry it.')]),
+    ]
+
+    expect(conversationPlainText(sections)).toBe('Why is it empty? notes Here it is. unit-converter Try it.')
+  })
+
   // A search for `compaction` or `count` must not find every compacted
   // conversation.
   it('leaves out the tag line and the end line of a compaction block', () => {

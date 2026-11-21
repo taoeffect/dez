@@ -7,6 +7,7 @@ import { imageMarkdown, isImageMediaType, isLinkedImagePath, type ImageMediaType
 import { CLIP_FILE_EXTENSIONS, FileTooLargeError, MAX_SAVED_CLIP_BYTES, storableClip } from '../../model/chat/mediaFiles'
 import { newMediaIds, pastedMediaIdChanges } from '../../model/chat/mediaIds'
 import { MEDIA_TAG_NAMES, isLinkedMediaPath, mediaTagText, type MediaTagKind } from '../../model/chat/mediaTags'
+import type { SavedAppFile } from '../../model/tools/appBridge'
 import { byteSizeText } from '../../utils/byteSize'
 import { errorText, rawErrorText } from '../../utils/errorText'
 import { fileNameOf } from '../../utils/fileName'
@@ -332,6 +333,27 @@ async function insertFiles(view: EditorView, stores: ReadonlyArray<Promise<Added
     scrollIntoView: true,
     userEvent,
   })
+}
+
+/** Puts a file that the page of a shown app saved
+ *  (`dez.controller/apps/saveAsset`) at the end of the conversation, as a
+ *  paste of the user does, and gives its new id. The file gets lines of
+ *  its own, after the text of the message that the user writes. The page
+ *  of the app can save at any time, so the caret follows the file only
+ *  when it was at the end of the text, and the view does not scroll: the
+ *  user can read or write at another place. */
+export function insertSavedFile(view: EditorView, { path, kind, type }: SavedAppFile): string {
+  const end = view.state.doc.length
+  const [id] = newMediaIds([view.state.doc.toString()], 1)
+  const text = addedFileText({ path, clip: kind === 'image' ? null : { kind, type } }, id)
+  const { insert, caret } = insertionText(view.state, { from: end, to: end }, text, true)
+  const { main } = view.state.selection
+  view.dispatch({
+    changes: { from: end, insert },
+    ...(main.empty && main.head === end && { selection: { anchor: end + caret } }),
+    userEvent: 'input.paste',
+  })
+  return id
 }
 
 /** A paste with no plain text and with image or clip files puts them in

@@ -1,49 +1,41 @@
 import { computed, onMounted, onUnmounted } from "vue";
 import sbp from "@sbp/sbp";
+import { closeExpandedApp, isAppExpanded } from "../apps/appFrameHost";
 import { findState } from "../editor/findState";
-import { answerConfirm, confirmRequest } from "../confirm/selectors";
 import { useModelState } from "../modelState";
+import { closeTopPanel, isPanelOpen } from "../panels";
 import { matchShortcut, type ShortcutIdOfScope } from "../../model/shortcuts";
 
 // While the confirm prompt, Settings, History, or Help is open, Esc closes it
 // first, so the find Esc handlers in the editor and in the dropdown pass Esc
 // on to this handler. The find selectors also do nothing while one of them
-// covers the editor.
+// covers the editor. An app in its expanded view (apps/appFrameHost.ts)
+// covers the conversation the same way: the editor under it takes no key
+// and no focus of Dez.
 export function isModalOpen(): boolean {
-  return (
-    confirmRequest.value !== null ||
-    (sbp("dez.model/settings/isOpen") as boolean) ||
-    (sbp("dez.model/settings/isHistoryOpen") as boolean) ||
-    (sbp("dez.model/settings/isHelpOpen") as boolean)
-  );
+  return isPanelOpen() || isAppExpanded();
 }
 
 // Esc closes the innermost open thing first: a model picker's output filter
 // dropdown and the model dropdown (ModelOutputFilter.vue and
 // ModelSelector.vue take the key before this handler), the confirm prompt
-// (it can sit on top of Settings or History), Settings, History, or Help
-// (only one of them is open at a time), the prompt autocomplete, find. With
-// none open, it is the Stop key (Esc by default).
+// and the panels (`closeTopPanel`), the expanded view of an app (the panels
+// show over it), the prompt autocomplete, find. With none open, it is the
+// Stop key (Esc by default).
 // tests/e2e/submit-stop.e2e.ts covers the order.
 //
-// Only this handler closes the prompt and the panels on Esc. An Esc
-// handler on a modal would run first when the focus is inside it, and this
-// handler would then see no modal and also close find or stop the stream.
+// Esc in the page of an app does not come here: a frame keeps its keys, and
+// its host does the same steps (`stepOut`, apps/appFrameHost.ts).
+//
+// Only this handler closes the prompt and the panels on an Esc key of
+// Dez's page. An Esc handler on a modal would run first when the focus is
+// inside it, and this handler would then see no modal and also close find
+// or stop the stream.
 //
 // Returns whether one of them was open.
 function closeOnEscape(e: KeyboardEvent): boolean {
-  if (confirmRequest.value) {
+  if (closeTopPanel() || closeExpandedApp()) {
     e.preventDefault();
-    answerConfirm(false);
-  } else if (sbp("dez.model/settings/isOpen") as boolean) {
-    e.preventDefault();
-    sbp("dez.model/settings/close");
-  } else if (sbp("dez.model/settings/isHistoryOpen") as boolean) {
-    e.preventDefault();
-    sbp("dez.model/settings/historyClose");
-  } else if (sbp("dez.model/settings/isHelpOpen") as boolean) {
-    e.preventDefault();
-    sbp("dez.model/settings/helpClose");
   } else if (findState.open) {
     // Esc in the editor was already handled by CodeMirror, which prevents
     // the default even when no binding ran (an open prompt autocomplete

@@ -25,12 +25,21 @@ const APP_FOLDER_SOURCE = String.raw`\/\.config\/dez\/`
 // only their own folders. A new folder of stored files that no entry covers
 // gets one here, or its paths go to providers; the cleanup needs it too
 // (`STORED_FILE_FOLDERS` and `storedFilePath`, unusedFiles.ts).
+//
+// The last entry is the folder of the apps (model/tools/appsTool.ts). Dez
+// writes no such path into a conversation: a tool names a file of an app
+// by its virtual path (`/apps/<app>/main.ts`). But the code of an app knows
+// the real path of its folder and can write it into a file of the app,
+// which `apps read` then shows. The entry ends at the folder itself, so the
+// rest of the path stays and reads as the virtual path. Its look-ahead is
+// no group, and it keeps a folder next to it (`apps-old`) as it is.
 const STORED_FILE_PATH_ENDS: readonly { source: string, standIn: string }[] = [
   { source: `${APP_FOLDER_SOURCE}${IMAGE_PATH_END_SOURCE}`, standIn: 'image' },
   { source: `${APP_FOLDER_SOURCE}${SHOWN_PICTURE_PATH_END_SOURCE}`, standIn: 'image' },
   { source: `${APP_FOLDER_SOURCE}${SAVED_MEDIA_PATH_END_SOURCES.audio}`, standIn: 'audio' },
   { source: `${APP_FOLDER_SOURCE}${SAVED_MEDIA_PATH_END_SOURCES.video}`, standIn: 'video' },
   { source: String.raw`\/${MEDIA_CACHE_PATH_END_SOURCE}`, standIn: 'media' },
+  { source: `${APP_FOLDER_SOURCE}apps(?![A-Za-z0-9._-])`, standIn: '/apps' },
 ]
 // One capture group for each entry, in order, so a match tells its entry.
 // The sources have no groups of their own.

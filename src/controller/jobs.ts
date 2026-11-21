@@ -62,11 +62,11 @@ export interface JobOutcome {
  *  (`writeJobAssets`). A work that keeps a file while it goes on (an image
  *  of an answer whose stream goes on) tells it at once with `keepAsset`:
  *  until its result names the file, only that list keeps it from Delete
- *  Unused Files (`madeAssetSources`). The result still holds the asset. A
- *  work whose files come right before its end needs no call: the cleanup
- *  keeps a file younger than `UNUSED_FILE_MIN_AGE_MS`. A work that throws
- *  fails its job, as a runner that throws fails its call: a `ToolError`
- *  gives its text as the result. */
+ *  Unreferenced Files (`madeAssetSources`). The result still holds the
+ *  asset. A work whose files come right before its end needs no call: the
+ *  cleanup keeps a file younger than `UNUSED_FILE_MIN_AGE_MS`. A work that
+ *  throws fails its job, as a runner that throws fails its call: a
+ *  `ToolError` gives its text as the result. */
 export type JobWork = (
   signal: AbortSignal,
   report: (state: string) => void,
@@ -121,8 +121,8 @@ function madeAssetSource(asset: MadeAsset): string | null {
  *  the results of a job that nobody read before its reply stopped, what a
  *  work still gave after its job ended, and the output of a tool call or a
  *  media round whose reply took it no more. A clip at a provider URL has
- *  no file. A failure is only logged: Settings › General › Delete Unused
- *  Files finds a file that stays. */
+ *  no file. A failure is only logged: Settings › General › Delete
+ *  Unreferenced Files finds a file that stays. */
 export async function discardMadeAssets(assets: readonly MadeAsset[]): Promise<void> {
   for (const asset of assets) {
     const path = madeAssetSource(asset)
@@ -396,8 +396,8 @@ export class TabJobs {
    *  that runs kept so far, and of the assets of every job that ended with
    *  a result: the ones that no reader took yet, and the ones that a reader
    *  took but may not have written into the reply yet. No text names their
-   *  files until the write, so Delete Unused Files keeps them by this list
-   *  (`dez.stream/unnamedMadeFiles`). */
+   *  files until the write, so Delete Unreferenced Files keeps them by this
+   *  list (`dez.stream/unnamedMadeFiles`). */
   madeAssetSources(): string[] {
     return [...this.jobs.values()].flatMap((job) => job.assets.flatMap((asset) => madeAssetSource(asset) ?? []))
   }

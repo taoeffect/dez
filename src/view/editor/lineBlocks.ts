@@ -1,7 +1,8 @@
 import { EditorState, Facet, type ChangeSpec, type Extension, type Transaction } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
-import { SENTINEL_CHAR } from '../../model/chat/content'
+import { SENTINEL_CHAR, plainLiveText } from '../../model/chat/content'
 import { findToolBlocks, type ToolBlock } from '../../model/chat/toolBlocks'
+import type { Role } from '../../model/chat/types'
 import { SECTION_SEP, sectionsField, type SectionModel } from '../thread/cmEditor'
 import { linesRemovalRange } from './images'
 import type { DocRange } from './pendingRanges'
@@ -52,6 +53,38 @@ export function agentSectionTexts(doc: string, sections: readonly SectionModel[]
  *  must stay the only ones there. */
 export function chipBlocks(text: string): ToolBlock[] {
   return findToolBlocks(text).filter((block) => !SENTINEL_CHAR.test(text.slice(block.from, block.to)))
+}
+
+/** A tag that the editor shows as a widget, with its section; `from` and
+ *  `to` are its range in the doc, and `tag` keeps the range in the text of
+ *  its section. */
+export interface ShownSectionTag<Tag extends DocRange> extends DocRange {
+  tag: Tag
+  section: SectionModel
+}
+
+/** The tags that `find` finds in the sections of `doc` that the editor
+ *  shows as widgets, in doc order. Each section is read on its own
+ *  (`sectionTexts`). Left as text: a line that `find` does not take, a tag
+ *  that holds a sentinel (a prompt pill), whose widgets and atomic ranges
+ *  must stay the only ones there, and a tag in Markdown code of the
+ *  section's plain text (`plainLiveText`), which a request reads. */
+export function shownSectionTags<Tag extends DocRange>(
+  doc: string,
+  sections: readonly SectionModel[],
+  find: (text: string, role: Role, options?: { inCode?: boolean }) => Tag[],
+): Array<ShownSectionTag<Tag>> {
+  const shown: Array<ShownSectionTag<Tag>> = []
+  for (const { section, from, text } of sectionTexts(doc, sections)) {
+    const tags = find(text, section.role, { inCode: true }).filter((tag) => !SENTINEL_CHAR.test(text.slice(tag.from, tag.to)))
+    if (tags.length === 0) continue
+    const plain = plainLiveText(text)
+    const outOfCode = new Set(find(plain.text, section.role).map((tag) => plain.liveOffset(tag.from)))
+    for (const tag of tags) {
+      if (outOfCode.has(tag.from)) shown.push({ tag, section, from: from + tag.from, to: from + tag.to })
+    }
+  }
+  return shown
 }
 
 /** Whether `tr` changed which sections there are, or the role of one. Each

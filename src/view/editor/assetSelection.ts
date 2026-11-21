@@ -2,12 +2,14 @@ import { Facet, type EditorSelection, type EditorState, type Extension } from '@
 import { ViewPlugin, type EditorView } from '@codemirror/view'
 import type { DocRange } from './pendingRanges'
 
-// Images and players are widgets in place of their source text. CM draws a
-// selection as a layer behind the text (`tables.ts`), and the opaque box of
-// an image or of a player's card hides that layer, so an asset inside a
-// selection did not look selected. This module marks the drawn widget of
-// each asset that a selection holds with `data-selected`, and `dezTheme`
-// (cmEditor.ts) draws a tint of the selection color over it.
+// Images, players, and app cards are widgets in place of their source
+// text. CM draws a selection as a layer behind the text (`tables.ts`), and
+// the opaque box of an image, of a player's card, or of an app card (also
+// the frame host over the card of an app that runs) hides that layer, so
+// a widget inside a selection did not look selected. This module marks the
+// drawn widget of each asset or app that a selection holds with
+// `data-selected`, and `dezTheme` (cmEditor.ts) draws a tint of the
+// selection color over it.
 
 const SELECTED_ATTRIBUTE = 'data-selected'
 

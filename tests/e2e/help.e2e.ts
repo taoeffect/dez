@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { Key } from 'webdriverio'
 import { STORED_FILE_FOLDERS } from '../../src/model/chat/unusedFiles'
 import { DEZ_DISCUSSIONS_URL } from '../../src/utils/dezLinks'
-import bundledFfmpeg from '../../src-tauri/binaries/manifest.json'
+import bundledPrograms from '../../src-tauri/binaries/manifest.json'
 import bundledFonts from '../../src-tauri/fonts/manifest.json'
 import { startApp, type RunningApp } from './harness/app'
 import { clearOpenedUrls, consoleErrors, openedUrls, pointerClick, pointerClickAt, pointerDrag, resetConsoleErrors, screenshotOnFailure, stopOpenUrl, waitFor, waitForValue } from './harness/dom'
@@ -22,8 +22,9 @@ const NAV = {
   General: '.help-nav-btn:nth-child(1)',
   Tips: '.help-nav-btn:nth-child(2)',
   Assets: '.help-nav-btn:nth-child(3)',
-  Support: '.help-nav-btn:nth-child(4)',
-  ThankYou: '.help-nav-btn:nth-child(5)',
+  Apps: '.help-nav-btn:nth-child(4)',
+  Support: '.help-nav-btn:nth-child(5)',
+  ThankYou: '.help-nav-btn:nth-child(6)',
 }
 
 describe('Help panel', () => {
@@ -52,6 +53,27 @@ describe('Help panel', () => {
   async function openWithButton (): Promise<void> {
     await pointerClick(browser, '.help-button')
     await waitFor(browser, '.help-overlay')
+  }
+
+  // Clicks the link with the text `label` in the shown page `page`. A page
+  // can have more than one link, and it can be longer than the panel: a
+  // click needs its link in view.
+  async function clickPageLink (page: string, label: string): Promise<void> {
+    const link = await browser.execute((page, label) => {
+      const link = [...document.querySelectorAll(`${page} .help-link`)].find((button) => button.textContent?.trim() === label)
+      if (!link) throw new Error(`no ${label} link in ${page}`)
+      link.scrollIntoView({ block: 'center' })
+      const box = link.getBoundingClientRect()
+      return { x: box.left + box.width / 2, y: box.top + box.height / 2 }
+    }, page, label)
+    await pointerClickAt(browser, link)
+  }
+
+  // The folders of this computer that the `code` elements of `selector`
+  // show, in text order. The app of this spec has its own home folder, with
+  // the cache folder in it (`startApp`), so every folder shows with `~`.
+  async function shownFolders (selector: string): Promise<string[]> {
+    return browser.execute((selector) => [...document.querySelectorAll(selector)].map((code) => code.textContent ?? '').filter((text) => text.startsWith('~/')), selector)
   }
 
   beforeAll(async () => {
@@ -98,6 +120,8 @@ describe('Help panel', () => {
     await waitForValue(browser, 'Tips page', shownPage, { nav: 'Tips', page: 'help-page--tips' })
     await pointerClick(browser, NAV.Assets)
     await waitForValue(browser, 'Assets page', shownPage, { nav: 'Assets', page: 'help-page--assets' })
+    await pointerClick(browser, NAV.Apps)
+    await waitForValue(browser, 'Apps page', shownPage, { nav: 'Apps', page: 'help-page--apps' })
     await pointerClick(browser, NAV.Support)
     await waitForValue(browser, 'Support page', shownPage, { nav: 'Support', page: 'help-page--support' })
     await pointerClick(browser, NAV.ThankYou)
@@ -168,56 +192,48 @@ describe('Help panel', () => {
     await openWithButton()
     await pointerClick(browser, NAV.Assets)
     await waitFor(browser, '.help-page--assets')
-    // Assets has more than one page link; this one is in the paragraph of
-    // the work folder, below the first view of the page.
-    const fontsLink = await browser.execute(() => {
-      const link = [...document.querySelectorAll('.help-page--assets .help-link')].find((button) => button.textContent?.trim() === 'Thank You')
-      if (!link) throw new Error('no Thank You link on Assets')
-      link.scrollIntoView({ block: 'center' })
-      const box = link.getBoundingClientRect()
-      return { x: box.left + box.width / 2, y: box.top + box.height / 2 }
-    })
-    await pointerClickAt(browser, fontsLink)
+    // The link is in the paragraph of the work folder, below the first view
+    // of the page.
+    await clickPageLink('.help-page--assets', 'Thank You')
     await waitForValue(browser, 'Thank You page', shownPage, { nav: 'Thank You', page: 'help-page--thanks' })
 
-    // The release of the ffmpeg and ffprobe programs that the app holds.
-    await pointerClick(browser, '.help-page--thanks .help-link--ffmpeg')
-    await waitForValue(browser, 'opened URLs', () => openedUrls(browser), [bundledFfmpeg.source])
-    // The source of the fonts that the app holds: one link for each
-    // repository, in the order of the manifest. The links are at the end of
-    // the page, which can be longer than the panel: a click needs the link
-    // in view.
-    const fontSources = [...new Set(Object.values(bundledFonts.fonts).map(({ repository }) => repository))]
-    for (let i = 1; i <= fontSources.length; i++) {
-      const link = `.help-page--thanks li:nth-child(${i}) .help-link--font`
+    // The page can be longer than the panel: a click needs its link in view.
+    const clickInView = async (link: string) => {
       await browser.execute((link) => document.querySelector(link)?.scrollIntoView({ block: 'center' }), link)
       await pointerClick(browser, link)
     }
-    await waitForValue(browser, 'opened URLs', () => openedUrls(browser), [bundledFfmpeg.source, ...fontSources])
+    // The release of the ffmpeg and ffprobe programs that the app holds,
+    // then the release of its Deno program.
+    const programSources = [bundledPrograms.source, bundledPrograms.deno.source]
+    await clickInView('.help-page--thanks .help-link--ffmpeg')
+    await clickInView('.help-page--thanks .help-link--deno')
+    await waitForValue(browser, 'opened URLs', () => openedUrls(browser), programSources)
+    // The source of the fonts that the app holds: one link for each
+    // repository, in the order of the manifest.
+    const fontSources = [...new Set(Object.values(bundledFonts.fonts).map(({ repository }) => repository))]
+    for (let i = 1; i <= fontSources.length; i++) {
+      await clickInView(`.help-page--thanks li:nth-child(${i}) .help-link--font`)
+    }
+    await waitForValue(browser, 'opened URLs', () => openedUrls(browser), [...programSources, ...fontSources])
     expect(await helpOpen()).toBe(true)
   })
 
-  // The app of this spec has its own home folder, with the cache folder in
-  // it (`startApp`), so every folder shows with `~`.
   it('opens Assets from the link of General, with the folders of this computer, and scrolls to its end', async () => {
-    // The texts of the `code` elements of `selector`, in text order.
-    const codeTexts = async (selector: string): Promise<string[]> =>
-      browser.execute((selector) => [...document.querySelectorAll(`.help-page--assets ${selector}`)].map((code) => code.textContent ?? ''), selector)
-
     await openWithButton()
-    // General is longer than the panel, and the link is in its last
-    // paragraph: a click needs the link in view.
-    await browser.execute(() => document.querySelector('.help-page--general .help-link')?.scrollIntoView({ block: 'center' }))
-    await pointerClick(browser, '.help-page--general .help-link')
+    // The link is in the last paragraph of General.
+    await clickPageLink('.help-page--general', 'Assets')
     await waitForValue(browser, 'Assets page', shownPage, { nav: 'Assets', page: 'help-page--assets' })
 
     // The paths come from a native read after the panel opens.
-    await waitForValue(browser, 'the Dez folder, the temp folder, the work folder, and the cache folder on Assets', async () => {
-      const paths = await codeTexts('p code')
-      return paths.filter((path) => path.startsWith('~/'))
-    }, ['~/.config/dez', '~/.cache/dez/media', '~/.cache/dez/work', '~/.cache/dez'])
+    await waitForValue(
+      browser,
+      'the Dez folder, the temp folder, the work folder, and the cache folder on Assets',
+      () => shownFolders('.help-page--assets p code'),
+      ['~/.config/dez', '~/.cache/dez/media', '~/.cache/dez/work', '~/.cache/dez'],
+    )
     // The list has every folder of stored files.
-    expect((await codeTexts('.help-folders code')).sort()).toEqual([...STORED_FILE_FOLDERS].sort())
+    const listed = await browser.execute(() => [...document.querySelectorAll('.help-page--assets .help-folders code')].map((code) => code.textContent ?? ''))
+    expect(listed.sort()).toEqual([...STORED_FILE_FOLDERS].sort())
 
     // The page is longer than the panel: it scrolls in the panel, down to
     // its last line.
@@ -230,6 +246,15 @@ describe('Help panel', () => {
     })
     expect(end.scrolled).toBeGreaterThan(0)
     expect(end.lastBottom).toBeLessThanOrEqual(end.contentBottom)
+  })
+
+  it('opens Apps from the link of General, with the folders of this computer', async () => {
+    await openWithButton()
+    await clickPageLink('.help-page--general', 'Apps')
+    await waitForValue(browser, 'Apps page', shownPage, { nav: 'Apps', page: 'help-page--apps' })
+    // The folder of the apps, and the folder of the work folders of the
+    // code that a model runs.
+    await waitForValue(browser, 'the folders on Apps', () => shownFolders('.help-page--apps code'), ['~/.config/dez/apps', '~/.cache/dez/work'])
   })
 
   // Help › Dez Help calls this selector.

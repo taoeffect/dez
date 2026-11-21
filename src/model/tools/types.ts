@@ -1,5 +1,6 @@
 import { ExplainedError } from '../../utils/errorText'
 import type { JsonObject } from '../../utils/json'
+import type { BridgedCalls } from '../chat/bridgedCalls'
 import type { ShownPicture } from '../chat/shownPictures'
 
 // The Dez tools: tools that the Dez app itself runs for a model, as opposed
@@ -15,6 +16,35 @@ export interface ToolParameter {
   description: string
   required: boolean
 }
+
+/** A parameter of a subcommand (subcommands.ts) whose value is a list: of
+ *  scalars of one type, or of objects whose fields are flat scalars. Only a
+ *  subcommand can have one: its parameters are JSON in one text argument of
+ *  the call, and a parameter of a tool itself must fit in one block
+ *  attribute. */
+export interface ToolListParameter {
+  name: string
+  type: 'list'
+  /** The type of each item, or the fields of each item of a list of
+   *  objects. */
+  items: ToolParameterType | readonly ToolParameter[]
+  description: string
+  required: boolean
+}
+
+/** A parameter of a subcommand whose value is one JSON object with any
+ *  fields: data that Dez hands on as it is, and whose fields it does not
+ *  check (the parameters of a run of an app). Only a subcommand can have
+ *  one, as for a list. */
+export interface ToolObjectParameter {
+  name: string
+  type: 'object'
+  description: string
+  required: boolean
+}
+
+/** A parameter of a subcommand. */
+export type SubcommandParameter = ToolParameter | ToolListParameter | ToolObjectParameter
 
 /** For a key of a call that is none of a tool's parameters: the text that
  *  tells the model where the key belongs, from the call's arguments
@@ -35,6 +65,10 @@ export interface ToolDefinition {
   /** Only a tool whose calls hold more parameters inside one of these
    *  (subcommands.ts). No part of a request. */
   misplacedParameter?: MisplacedParameterText
+  /** Only a tool with subcommands (subcommands.ts): the names of all of
+   *  them, in the order of its list. The tool bridge reads it
+   *  (toolBridge.ts). No part of a request. */
+  subcommands?: readonly string[]
 }
 
 export type ToolArgumentValue = string | number | boolean
@@ -42,6 +76,18 @@ export type ToolArgumentValue = string | number | boolean
 /** Checked arguments of a call, keyed by parameter name. An absent optional
  *  parameter has no key. */
 export type ToolArguments = Record<string, ToolArgumentValue>
+
+export type SubcommandArgumentValue = ToolArgumentValue | ToolArgumentValue[] | ToolArguments[] | JsonObject
+
+/** Checked arguments of a call of a subcommand that can have a list or an
+ *  object parameter, keyed by parameter name. An absent optional parameter
+ *  has no key. */
+export type SubcommandArguments = Record<string, SubcommandArgumentValue>
+
+/** The checked arguments of a call with parameters of the kind `P`: flat
+ *  scalars, unless a parameter can be a list or an object. So the code of
+ *  a tool with no such parameter never has to tell one from a scalar. */
+export type ArgumentsOf<P extends SubcommandParameter> = [P] extends [ToolParameter] ? ToolArguments : SubcommandArguments
 
 /** A call that a model made, as later requests send it back. */
 export interface ToolCall {
@@ -83,6 +129,9 @@ export interface ToolRunResult {
   /** The saved copies of the pictures that the call showed its model
    *  (`ToolBlockData.pictures`). */
   pictures?: readonly ShownPicture[]
+  /** The tool calls that the code of the call made
+   *  (`ToolBlockData.bridged`). An error result has them too. */
+  bridged?: BridgedCalls
 }
 
 /** An error whose text Dez wrote for the model that made a call: what is
