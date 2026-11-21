@@ -1,9 +1,8 @@
-import fs from 'node:fs'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { INCOGNITO_STAYS_ON, INCOGNITO_TOO_LATE } from '../../src/controller/tabs'
 import { anthropicChatBody, anthropicMarkedUser, openAiChatBody } from './harness/chatBody'
 import { consoleErrors, pointerClick, promptButtons, promptMessage, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
-import { conversationFilePath, readAppState } from './harness/fixtures'
+import { readAppState, savedTextCount } from './harness/fixtures'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendAnthropicReply, sendChatReply, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
@@ -76,12 +75,6 @@ describe('incognito tabs', () => {
     await waitForValue(browser, 'notice after OK', () => promptMessage(browser), null)
     expect(await maskOn()).toBe(on)
     expect(await incognito(await activeTabId(browser))).toBe(on)
-  }
-
-  // How many times the saved file of `conversationId` holds `text`.
-  async function savedCount (conversationId: string, text: string): Promise<number> {
-    const content = await fs.promises.readFile(conversationFilePath(setup.app.home, conversationId), 'utf8').catch(() => '')
-    return content.split(text).length - 1
   }
 
   beforeAll(async () => {
@@ -177,7 +170,7 @@ describe('incognito tabs', () => {
       const tabs = ((await readAppState(setup.app.home))?.tabs ?? []) as Array<{ id: string, incognito?: true }>
       return [tabId, emptyTabId].map((id) => tabs.find((tab) => tab.id === id)?.incognito ?? null)
     }, [true, true])
-    await waitForValue(browser, 'saved reply', () => savedCount(conversationId, reply), 1)
+    await waitForValue(browser, 'saved reply', () => savedTextCount(setup.app.home, conversationId, reply), 1)
 
     browser = await setup.relaunch()
     // A new page: the record that beforeEach started is gone.
@@ -207,7 +200,7 @@ describe('incognito tabs', () => {
 
     // A conversation that History opens has no entry in app_state.json: its
     // file keeps the mark.
-    await waitForValue(browser, 'saved second reply', () => savedCount(conversationId, reply), 2)
+    await waitForValue(browser, 'saved second reply', () => savedTextCount(setup.app.home, conversationId, reply), 2)
     await sbpCall(browser, 'dez.controller/closeTab', tabId)
     const reopened = await sbpCall(browser, 'dez.model/tabs/openConversation', conversationId) as { id: string } | null
     if (!reopened) throw new Error('History did not open the conversation')

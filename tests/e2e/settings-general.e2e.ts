@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { startApp, type RunningApp } from './harness/app'
-import { screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
+import { screenshotOnFailure, waitFor, waitForValue, withSmallerWindow } from './harness/dom'
 import { seedAppState } from './harness/fixtures'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
 import { sbpCall } from './harness/thread'
@@ -122,18 +122,11 @@ describe('Settings › General layout', () => {
   })
 
   it('keeps the layout in the narrowest window', async () => {
-    const rect = await browser.getWindowRect()
-    const pageWidth = (): Promise<number> => browser.execute(() => window.innerWidth)
-    const widePage = await pageWidth()
-    try {
-      await browser.setWindowRect(null, null, NARROWEST_WINDOW, rect.height)
-      await waitForValue(browser, 'narrow page', async () => await pageWidth() <= NARROWEST_WINDOW, true)
+    await withSmallerWindow(browser, ({ height }) => ({ width: NARROWEST_WINDOW, height }), async () => {
+      await waitForValue(browser, 'narrow page', async () => await browser.execute(() => window.innerWidth) <= NARROWEST_WINDOW, true)
       const all = await controls()
       expect(offRightEdge(all)).toEqual([])
       expect(rowProblems(all)).toEqual([])
-    } finally {
-      await browser.setWindowRect(null, null, rect.width, rect.height)
-      await waitForValue(browser, 'page width after the window size is back', pageWidth, widePage)
-    }
+    })
   })
 })

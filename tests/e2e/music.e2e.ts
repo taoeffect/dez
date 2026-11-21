@@ -3,7 +3,7 @@ import { click, consoleErrors, resetConsoleErrors, screenshotOnFailure, waitForV
 import { readAppState } from './harness/fixtures'
 import { answerVeniceJob, shownPlayers, silentWav } from './harness/media'
 import { expectSendRefused, startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
-import type { MockProvider } from './harness/mockServer'
+import { mockModelKey, type MockProvider } from './harness/mockServer'
 import { changeParameterField, closePopup, openPopup, popupOpen, popupView, type PopupView } from './harness/parameterPopup'
 import type { E2EBrowser } from './harness/session'
 import { editorDoc, newTab, pasteText, pickModel, setCaret, submit, threadSections, waitForThread } from './harness/thread'
@@ -75,7 +75,7 @@ describe('music models', () => {
 
   // The values that app_state.json holds for the model `modelId`, or null.
   async function storedParameters (modelId: string): Promise<unknown> {
-    return (await readAppState(setup.app.home))?.modelParameters?.[`${SONGS.id}/${modelId}`] ?? null
+    return (await readAppState(setup.app.home))?.modelParameters?.[mockModelKey(SONGS, modelId)] ?? null
   }
 
   beforeAll(async () => {
@@ -180,7 +180,7 @@ describe('music models', () => {
     const reply = await answerVeniceJob(setup, queue, { retrievePath: RETRIEVE_PATH, modelId: LYRICS_MODEL.id, queueId: 'queue-1', clip: { type: 'audio/wav', bytes: TONE }, replyIndex: 1 })
     // The tag keeps the id of the job, the only way back to a paid clip, and
     // the model that made the clip.
-    expect(reply).toMatch(/^<dez:audio id="a" type="audio\/wav" src="[^"]+\.wav" expires="[^"]+" model="songs\/lyrics-model" job="queue-1"\/>$/)
+    expect(reply).toMatch(new RegExp(String.raw`^<dez:audio id="a" type="audio/wav" src="[^"]+\.wav" expires="[^"]+" model="${mockModelKey(SONGS, LYRICS_MODEL.id)}" job="queue-1"/>$`))
     await waitForThread(browser, [
       { role: 'user', text: message },
       { role: 'agent', text: reply },

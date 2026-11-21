@@ -6,7 +6,7 @@ import { Key } from 'webdriverio'
 import { openAiSystemMessage, sentImageUrls } from './harness/chatBody'
 import { consoleErrors, elementCenter, movePointer, pointerClick, pointerClickAt, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue, type Point } from './harness/dom'
 import { dropFiles, linkedDropDir, nativeDrop } from './harness/drops'
-import { appFilePath, conversationFilePath, filesIn, storedFileName, writeTestFile } from './harness/fixtures'
+import { appFilePath, conversationFilePath, filesIn, savedTextCount, storedFileName, writeTestFile } from './harness/fixtures'
 import { colorDistance, decodedImage, pasteImage, pasteImageReference, referencePath, shownImages, solidPng, STRIPE_COLORS, stripedPng, type ShownImage } from './harness/images'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendAnthropicReply, sendChatReply, type HeldRequest, type MockProvider } from './harness/mockServer'
@@ -1281,10 +1281,7 @@ describe('images', () => {
     expect(await fs.promises.readFile(referencePath(reference))).toEqual(LARGE_PNG)
 
     const conversationId = await activeConversationId(browser)
-    await waitForValue(browser, 'saved second reply', async () => {
-      const content = await fs.promises.readFile(conversationFilePath(setup.app.home, conversationId), 'utf8').catch(() => '')
-      return content.split(reply).length - 1
-    }, 2)
+    await waitForValue(browser, 'saved second reply', () => savedTextCount(setup.app.home, conversationId, reply), 2)
     sentLargeImage = { conversationId, thread, url }
   })
 

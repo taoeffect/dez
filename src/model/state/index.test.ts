@@ -8,6 +8,7 @@ import { sectionPlainText } from '../chat/content'
 import { notesData } from '../chat/testing'
 import { toolBlockText } from '../chat/toolBlocks'
 import type { ActiveModel, ContentNode, ModelRef, Section, SectionThinking, Tab, ThinkingReplay } from '../chat/types'
+import { MODEL_PICKER_SIZE_DEFAULT } from '../modelPickerSize'
 import type { AppStatePayload, ConversationData, ModelCache } from '../persistence/types'
 import { PRICE_LIFETIME_MS, type PriceQuote } from '../providers/modelPrices'
 import type { ProviderConfig } from '../providers/config'
@@ -437,6 +438,9 @@ describe('context size of a tab', () => {
   const size = (tabId: string) => sbp('dez.model/tabs/contextSize', tabId) as ContextSize | undefined
   const counted = (tabId: string) => (sbp('dez.model/tabs/conversationData', tabId) as ConversationData).context
   const letters = (count: number) => 'x'.repeat(count)
+  // Dez's estimate of the one 100-letter message of a `gpt` tab, with a
+  // 40-letter system prompt and the Dez tools.
+  const withPromptAndTools = estimatedRequestTokens({ system: letters(40), tools: TOOL_DEFINITIONS, messages: [{ role: 'user', content: letters(100) }] }, modelFamily(gpt.modelId))
 
   // A new tab of `model` with one user message. The tab is the active one.
   function tabOf (model: ModelRef, text: string): Tab {
@@ -483,9 +487,8 @@ describe('context size of a tab', () => {
       expect(tokens()).toBe(25)
 
       sbp('dez.model/modelCache/applyProviderResult', 'local', { ok: true, models: [{ id: gpt.modelId, name: 'G', provider: 'local' }] })
-      const withTools = estimatedRequestTokens({ system: letters(40), tools: TOOL_DEFINITIONS, messages: [{ role: 'user', content: letters(100) }] }, modelFamily(gpt.modelId))
-      expect(tokens()).toBe(withTools)
-      expect(withTools).toBeGreaterThan(35)
+      expect(tokens()).toBe(withPromptAndTools)
+      expect(withPromptAndTools).toBeGreaterThan(35)
     } finally {
       consoleError.mockRestore()
     }
@@ -500,7 +503,7 @@ describe('context size of a tab', () => {
     expect(sbp('dez.model/tabs/turnOnIncognito', incognito.id)).toBe(true)
 
     expect(size(incognito.id)).toStrictEqual({ tokens: 25, estimated: true })
-    expect(size(normal.id)?.tokens).toBe(estimatedRequestTokens({ system: letters(40), tools: TOOL_DEFINITIONS, messages: [{ role: 'user', content: letters(100) }] }, modelFamily(gpt.modelId)))
+    expect(size(normal.id)?.tokens).toBe(withPromptAndTools)
   })
 
   it('keeps the count of a request in its own tab, as a whole number, and nothing for a missing tab', () => {
@@ -1300,9 +1303,9 @@ describe('dez.model/settings/setModelPickerSize', () => {
 
   it('rounds the size and keeps it at least the default in each dimension', () => {
     sbp('dez.model/settings/setModelPickerSize', { width: 500.6, maxHeight: 100 })
-    expect(size()).toStrictEqual({ width: 501, maxHeight: 360 })
+    expect(size()).toStrictEqual({ width: 501, maxHeight: MODEL_PICKER_SIZE_DEFAULT.maxHeight })
     sbp('dez.model/settings/setModelPickerSize', { width: 0, maxHeight: 640.2 })
-    expect(size()).toStrictEqual({ width: 320, maxHeight: 640 })
+    expect(size()).toStrictEqual({ width: MODEL_PICKER_SIZE_DEFAULT.width, maxHeight: 640 })
   })
 
   it('loads the saved size, saves a change, and saves nothing for the same size', async () => {

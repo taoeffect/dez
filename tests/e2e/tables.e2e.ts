@@ -3,7 +3,7 @@ import { OVERLAY_SCROLLBAR_PX } from '../../src/view/editor/tables'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { startApp, type RunningApp } from './harness/app'
-import { consoleErrors, pointerClickAt, resetConsoleErrors, screenshotOnFailure, typeKeys, waitFor, waitForValue } from './harness/dom'
+import { consoleErrors, pointerClickAt, resetConsoleErrors, screenshotOnFailure, typeKeys, waitFor, waitForValue, withSmallerWindow } from './harness/dom'
 import { makeConversation, seedAppState, seedConversation } from './harness/fixtures'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
 import { docPos, docPosPoint, editorCaret, focusEditor } from './harness/thread'
@@ -290,11 +290,6 @@ describe('markdown tables', () => {
       }
       return broken
     })
-  }
-
-  // The size of the page, which the editor fills.
-  async function pageSize (): Promise<string> {
-    return browser.execute(() => `${window.innerWidth}x${window.innerHeight}`)
   }
 
   // The CSS line height of the first rendered header cell, in px.
@@ -749,14 +744,8 @@ describe('markdown tables', () => {
     // floors of Id and Mid plus Mid's floor once more (11 + 35 + 35 = 81ch,
     // about 733 px). So the level is below Mid's floor, and Mid and Long
     // share the room after Id equally.
-    // WebDriver's window rect sets back the exact size that it read. The
-    // window API's sizes do not, under the kwin recipe's client-side
-    // decorations, and the later tests need the editor width they had.
-    const page = await pageSize()
-    const rect = await browser.getWindowRect()
     const { contentWidth } = await layout()
-    try {
-      await browser.setWindowRect(null, null, rect.width - 200, rect.height)
+    await withSmallerWindow(browser, ({ width, height }) => ({ width: width - 200, height }), async () => {
       await waitForValue(browser, 'table inside the narrower editor', async () => {
         const narrower = await layout()
         return narrower.contentWidth < contentWidth - 100 && narrower.tableFits
@@ -765,10 +754,7 @@ describe('markdown tables', () => {
       expect(await brokenWords(), 'broken words in the narrower editor').toEqual([MID_WORD, LONG_WORD])
       const [, mid, long] = (await layout()).headerWidths
       expect(mid, 'width of Mid next to Long').toBeCloseTo(long, 0)
-    } finally {
-      await browser.setWindowRect(null, null, rect.width, rect.height)
-      await waitForValue(browser, 'page size after the window size is back', pageSize, page)
-    }
+    })
   })
 
   // A caret in the padding would show at the text edge, but typing there

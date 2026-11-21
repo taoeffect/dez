@@ -182,6 +182,13 @@ export function mockChatPath (provider: MockProvider): string {
     : `/${provider.id}/v1/chat/completions`
 }
 
+/** The full id of the model `modelId` of `provider` (`<provider>/<model>`),
+ *  as the app writes it in the model mark of an asset, the `model` of a
+ *  pill, a tool call, and the keys of `modelParameters`. */
+export function mockModelKey (provider: Pick<MockProvider, 'id' | 'modelId'>, modelId = provider.modelId): string {
+  return `${provider.id}/${modelId}`
+}
+
 /** The `customProviders` entry of `provider` on the mock server at
  *  `serverUrl`. The app fetches no model list for it, so its model has no
  *  list data (parameters, text, image, and clip rules): a spec that needs

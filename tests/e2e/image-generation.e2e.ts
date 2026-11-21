@@ -8,7 +8,7 @@ import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, w
 import { conversationFilePath, filesIn, newFileIn, storedFileName } from './harness/fixtures'
 import { generatedImagesDir, pasteImageReference, pngDataUrl, shownImages, solidPng } from './harness/images'
 import { expectSendRefused, startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
-import { answerHeld, mockChatPath, startEventStream, writeChatFrame, type MockProvider } from './harness/mockServer'
+import { answerHeld, mockChatPath, mockModelKey, startEventStream, writeChatFrame, type MockProvider } from './harness/mockServer'
 import { changeParameterField, closePopup, openPopup, popupOpen, popupView } from './harness/parameterPopup'
 import type { E2EBrowser } from './harness/session'
 import { activeConversationId, AT_BOTTOM_PX, focusEditor, newTab, openToasts, pickModel, submit, threadSections, viewFromBottom, waitForThread } from './harness/thread'
@@ -58,7 +58,7 @@ const SKETCH_MODEL = { id: 'sketch-model', name: 'Sketch Model' }
 // A chat model that writes text and makes images in one reply.
 const CHAT_MODEL = { id: 'chat-paint-model', name: 'Chat Paint Model' }
 // The model mark of an image that the model `modelId` of the mock made.
-const madeBy = (modelId: string) => `model=${PAINTER.id}/${modelId}`
+const madeBy = (modelId: string) => `model=${mockModelKey(PAINTER, modelId)}`
 const GENERATE_PATH = `/${PAINTER.id}/v1/image/generate`
 const EDIT_PATH = `/${PAINTER.id}/v1/image/multi-edit`
 const UPSCALE_PATH = `/${PAINTER.id}/v1/image/upscale`

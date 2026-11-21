@@ -3,7 +3,7 @@ import { longDuration, shortDuration } from '../../src/view/thread/pillDuration'
 import { consoleErrors, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
 import { makeConversation, seedConversation } from './harness/fixtures'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
-import { replyText, sendChatReply, type MockProvider } from './harness/mockServer'
+import { mockModelKey, replyText, sendChatReply, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
 import { activeTabStreaming, newTab, pressRolePill, rolePillHeights, savedPillLines, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
 
@@ -15,7 +15,7 @@ import { activeTabStreaming, newTab, pressRolePill, rolePillHeights, savedPillLi
 // conversation of the first test.
 
 const PROVIDER: MockProvider = { id: 'duration', name: 'Duration Mock', modelId: 'duration-model', modelName: 'Duration Model' }
-const MODEL_KEY = `${PROVIDER.id}/${PROVIDER.modelId}`
+const MODEL_KEY = mockModelKey(PROVIDER)
 // The mock holds the reply open this long, so the time is over a second.
 const HOLD_MS = 1200
 

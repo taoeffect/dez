@@ -11,7 +11,7 @@ import { byteSizeText } from '../../src/utils/byteSize'
 import { sentImageUrls } from './harness/chatBody'
 import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
 import { linkedDropDir } from './harness/drops'
-import { appFilePath, conversationFilePath, filesIn, mediaTempDir, newFileIn, storedFileName, workDir, writeTestFile } from './harness/fixtures'
+import { appFilePath, filesIn, mediaTempDir, newFileIn, savedTextCount, storedFileName, workDir, writeTestFile } from './harness/fixtures'
 import { generatedImagesDir, shownImages, solidPng } from './harness/images'
 import { runToolJob, startedJob, waitCall, type EndedJob } from './harness/jobs'
 import { clipTag, MP4_VIDEO, shownPlayers, silentWav, startClipServer, WEBM_VIDEO, type ClipServer, type ShownPlayer } from './harness/media'
@@ -745,8 +745,7 @@ describe('video tool', () => {
     // The blocks of the calls name the copies in the conversation file, so
     // the panels show them after a relaunch.
     const conversationId = await activeConversationId(browser)
-    const conversationFile = conversationFilePath(home, conversationId)
-    await waitForValue(browser, 'saved pictures of the calls', async () => (await fs.promises.readFile(conversationFile, 'utf8').catch(() => '')).split(' pictures="').length - 1, 3)
+    await waitForValue(browser, 'saved pictures of the calls', () => savedTextCount(home, conversationId, ' pictures="'), 3)
     browser = await setup.relaunch()
     // A new page: the record that beforeEach started is gone.
     await resetConsoleErrors(browser)

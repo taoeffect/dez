@@ -1,5 +1,7 @@
 import { Key } from 'webdriverio'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { MODEL_PICKER_SIZE_DEFAULT } from '../../src/model/modelPickerSize'
+import { PICKER_ROOM_MARGIN_PX } from '../../src/view/model-selector/pickerResize'
 import { startApp, type RunningApp } from './harness/app'
 import {
   consoleErrors,
@@ -29,10 +31,6 @@ import { drawnPickerRows, openPicker, pickerOpen, sbpCall, selectedModelName } f
 const PROVIDER = 'Mock'
 const MODELS = Array.from({ length: 200 }, (_, index) => `Model ${String(index + 1).padStart(4, '0')}`)
 const SEEDED_SIZE = { width: 480, maxHeight: 420 }
-const DEFAULT_SIZE = { width: 320, maxHeight: 360 }
-// `PICKER_ROOM_MARGIN_PX`: the picker stays this far from the window's top
-// and right edges.
-const ROOM_MARGIN = 8
 
 const BOTTOM = '.model-dropdown'
 
@@ -53,13 +51,13 @@ describe('model picker resize', () => {
   // The size of the picker at the end of the last drag that the store kept.
   let keptSize = { width: 0, height: 0 }
 
-  async function pickerBox (selector = BOTTOM): Promise<Box> {
+  async function pickerBox (): Promise<Box> {
     return browser.execute((sel: string) => {
       const element = document.querySelector(sel)
       if (!element) throw new Error(`pickerBox: no ${sel}`)
       const { left, top, right, bottom, width, height } = element.getBoundingClientRect()
       return { left, top, right, bottom, width, height }
-    }, selector)
+    }, BOTTOM)
   }
 
   // A point on each handle: the middle of the strip on the top edge and of
@@ -186,19 +184,19 @@ describe('model picker resize', () => {
     const view = await viewport()
     await dragHandle('top', { to: { x: handlePoint(await pickerBox(), 'top').x, y: 0 } })
     let box = await pickerBox()
-    expect(box.top).toBeGreaterThanOrEqual(ROOM_MARGIN)
-    expect(box.top).toBeLessThan(ROOM_MARGIN + 1)
+    expect(box.top).toBeGreaterThanOrEqual(PICKER_ROOM_MARGIN_PX)
+    expect(box.top).toBeLessThan(PICKER_ROOM_MARGIN_PX + 1)
 
     await dragHandle('right', { to: { x: view.width - 1, y: handlePoint(box, 'right').y } })
     box = await pickerBox()
-    expect(box.right).toBeLessThanOrEqual(view.width - ROOM_MARGIN)
-    expect(box.right).toBeGreaterThan(view.width - ROOM_MARGIN - 1)
+    expect(box.right).toBeLessThanOrEqual(view.width - PICKER_ROOM_MARGIN_PX)
+    expect(box.right).toBeGreaterThan(view.width - PICKER_ROOM_MARGIN_PX - 1)
 
     await dragHandle('top', { to: { x: handlePoint(box, 'top').x, y: view.height - 1 } })
     await dragHandle('right', { to: { x: 0, y: handlePoint(await pickerBox(), 'right').y } })
     box = await pickerBox()
-    expect(box.width).toBeCloseTo(DEFAULT_SIZE.width, 0)
-    expect(box.height).toBeCloseTo(DEFAULT_SIZE.maxHeight, 0)
+    expect(box.width).toBeCloseTo(MODEL_PICKER_SIZE_DEFAULT.width, 0)
+    expect(box.height).toBeCloseTo(MODEL_PICKER_SIZE_DEFAULT.maxHeight, 0)
   })
 
   it('grows up by the top edge, to the right by the right edge, and both ways by the corner', async () => {

@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { Key } from 'webdriverio'
 import { ZOOM_MARGIN_PX } from '../../src/view/editor/imageZoom'
 import { startApp, type RunningApp } from './harness/app'
-import { closeSettings, consoleErrors, elementCenter, isOnTop, movePointer, pointerClick, pointerClickAt, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
+import { closeSettings, consoleErrors, elementCenter, isOnTop, movePointer, pointerClick, pointerClickAt, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue, withSmallerWindow } from './harness/dom'
 import { FIND_FIELD, findDropdownOpen } from './harness/find'
 import { appFilePath, seedAppState, writeTestFile } from './harness/fixtures'
 import { colorDistance, screenPixels, shownImages, solidPng, type Rgb } from './harness/images'
@@ -140,10 +140,6 @@ describe('image zoom', () => {
       drawn: document.querySelectorAll('.cm-content .dez-image__img').length,
       hidden: document.querySelectorAll('.cm-content .dez-image__img[data-zoomed]').length,
     }))
-  }
-
-  async function pageSize (): Promise<string> {
-    return browser.execute(() => `${window.innerWidth}x${window.innerHeight}`)
   }
 
   // Opens the conversation `id` in a new tab: `LINES`, the references of
@@ -323,21 +319,12 @@ describe('image zoom', () => {
     await openZoom()
     const before = await expectFitted('the zoom before the resize')
 
-    // WebDriver's window rect sets back the exact size that it read
-    // (tables.e2e.ts tells why the window API does not).
-    const page = await pageSize()
-    const rect = await browser.getWindowRect()
-    try {
-      await browser.setWindowRect(null, null, rect.width - 240, rect.height - 120)
-      await waitForValue(browser, 'a smaller page', async () => await pageSize() !== page, true)
+    await withSmallerWindow(browser, ({ width, height }) => ({ width: width - 240, height: height - 120 }), async () => {
       await waitForValue(browser, 'the zoom on the smaller view', async () => fitProblems(await zoomLayout()), [])
       const after = await zoomLayout()
       expect(after.size.width).toBeLessThan(before.size.width)
       expect(after.size.height).toBeLessThan(before.size.height)
-    } finally {
-      await browser.setWindowRect(null, null, rect.width, rect.height)
-      await waitForValue(browser, 'page size after the window size is back', pageSize, page)
-    }
+    })
     await waitForValue(browser, 'the zoom on the view as it was', async () => fitProblems(await zoomLayout()), [])
     expect((await zoomLayout()).size).toStrictEqual(before.size)
 

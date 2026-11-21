@@ -9,7 +9,7 @@ import { appFilePath, conversationFilePath, filesIn, makeConversation, seedConve
 import { decodedImage, generatedImagesDir, pasteImageReference, pngDataUrl, referencePath, shownImages, STRIPE_COLORS, STRIPES_PNG, STRIPES_SVG, WEBKIT_SVG_SIZES } from './harness/images'
 import { WAV_SAMPLE_RATE, monoWav, shownPlayers } from './harness/media'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
-import { mockChatPath, openAiToolCall, replyText, sendAnthropicReply, sendChatReply, sendToolCalls, startEventStream, toolResult, writeAnthropicEvent, writeChatFrame, type MockProvider } from './harness/mockServer'
+import { mockChatPath, mockModelKey, openAiToolCall, replyText, sendAnthropicReply, sendChatReply, sendToolCalls, startEventStream, toolResult, writeAnthropicEvent, writeChatFrame, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
 import { activeConversationId, activeTabStreaming, busyDotsShown, docPos, editorCaret, editorDoc, focusEditor, focusedArea, newTab, openSeededConversation, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread, type ThreadSection } from './harness/thread'
 import { modelListBlock, pressToolChip, toolChips, toolPanel, type ToolChipView } from './harness/toolChips'
@@ -63,8 +63,8 @@ const SONG_WAV = monoWav(Buffer.alloc(2 * WAV_SAMPLE_RATE * 2), 2)
 // out, so they are chat models of unknown type and date: Dez sends them
 // text and images.
 const LIST_COLUMNS = '(full id | name | provider | type | inputs | released | price). Letters: t text, i image, a audio, v video; ? unknown, - none.'
-const TOOLER_LIST = `1 model matches "tool" ${LIST_COLUMNS}\n${TOOLER.id}/${TOOLER.modelId} | ${TOOLER.modelName} | ${TOOLER.name} | ? | t,i | ? | ?`
-const CLAUDE_LIST = `1 model matches "claude" ${LIST_COLUMNS}\n${CLAUDE.id}/${CLAUDE.modelId} | ${CLAUDE.modelName} | ${CLAUDE.name} | ? | t,i | ? | ?`
+const TOOLER_LIST = `1 model matches "tool" ${LIST_COLUMNS}\n${mockModelKey(TOOLER)} | ${TOOLER.modelName} | ${TOOLER.name} | ? | t,i | ? | ?`
+const CLAUDE_LIST = `1 model matches "claude" ${LIST_COLUMNS}\n${mockModelKey(CLAUDE)} | ${CLAUDE.modelName} | ${CLAUDE.name} | ? | t,i | ? | ?`
 
 const EPHEMERAL = { type: 'ephemeral' }
 
@@ -416,7 +416,7 @@ describe('tool calls', () => {
     const question = 'Tell me about the tool model.'
     await submit(browser, question)
     const first = await setup.mock.waitForRequest(browser)
-    const model = `${TOOLER.id}/${TOOLER.modelId}`
+    const model = mockModelKey(TOOLER)
     const call = { id: 'call_info', type: 'function', function: { name: 'model_info', arguments: JSON.stringify({ model }) } }
     startEventStream(first.reply)
     writeChatFrame(first.reply, { tool_calls: [{ index: 0, ...call }] }, 'tool_calls')
@@ -493,7 +493,7 @@ describe('tool calls', () => {
       { role: 'tool', tool_call_id: 'call_own', content: result },
     ]))
     expect(JSON.parse(result)).toMatchObject({
-      id: `${TOOLER.id}/${TOOLER.modelId}`,
+      id: mockModelKey(TOOLER),
       name: TOOLER.modelName,
       provider: { id: TOOLER.id, name: TOOLER.name },
       providerEntry: { id: TOOLER.modelId, name: TOOLER.modelName },

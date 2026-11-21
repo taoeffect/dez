@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from 'node:util'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import type { ActiveModel } from '../../src/model/chat/types'
-import { consoleErrors, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
+import { consoleErrors, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue, withSmallerWindow } from './harness/dom'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { LARGE_TOKENS, openAiToolCall, replyText, sendChatReply, sendChatText, sendToolCalls, toolResult, type MockProvider, type MockUsage } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
@@ -114,29 +114,25 @@ describe('usage label', () => {
   // the window all the time.
   async function textsWhileRoomGoes (): Promise<string[][]> {
     const model = await sbpCall(browser, 'dez.model/activeModel') as ActiveModel
-    const rect = await browser.getWindowRect()
-    const pageWidth = (): Promise<number> => browser.execute(() => window.innerWidth)
-    const widePage = await pageWidth()
     const shown: string[][] = []
-    try {
-      // The least width of the window (`minWidth`, tauri.conf.json).
-      await browser.setWindowRect(null, null, 600, rect.height)
-      await waitForValue(browser, 'narrow page', async () => await pageWidth() <= 600, true)
-      // The model name gets one narrow character longer in each step, so
-      // it takes the room of the label bit by bit, and no state of the
-      // label is left out.
-      for (let dots = 0; dots < 250 && shown.at(-1)?.length !== 0; dots += 1) {
-        await sbpCall(browser, 'dez.model/setActiveModel', model.providerId, model.modelId, `Model ${'.'.repeat(dots)}`)
-        const texts = await usageTexts()
-        if (!isDeepStrictEqual(texts, shown.at(-1))) shown.push(texts)
-        const submitInWindow = await browser.execute(() => document.querySelector('.bottom-bar-end')!.getBoundingClientRect().right <= document.documentElement.clientWidth)
-        expect(submitInWindow, `Submit in the window, with ${dots} dots in the model name`).toBe(true)
+    // The least width of the window (`minWidth`, tauri.conf.json).
+    await withSmallerWindow(browser, ({ height }) => ({ width: 600, height }), async () => {
+      try {
+        await waitForValue(browser, 'narrow page', async () => await browser.execute(() => window.innerWidth) <= 600, true)
+        // The model name gets one narrow character longer in each step, so
+        // it takes the room of the label bit by bit, and no state of the
+        // label is left out.
+        for (let dots = 0; dots < 250 && shown.at(-1)?.length !== 0; dots += 1) {
+          await sbpCall(browser, 'dez.model/setActiveModel', model.providerId, model.modelId, `Model ${'.'.repeat(dots)}`)
+          const texts = await usageTexts()
+          if (!isDeepStrictEqual(texts, shown.at(-1))) shown.push(texts)
+          const submitInWindow = await browser.execute(() => document.querySelector('.bottom-bar-end')!.getBoundingClientRect().right <= document.documentElement.clientWidth)
+          expect(submitInWindow, `Submit in the window, with ${dots} dots in the model name`).toBe(true)
+        }
+      } finally {
+        await sbpCall(browser, 'dez.model/setActiveModel', model.providerId, model.modelId, model.modelName)
       }
-    } finally {
-      await sbpCall(browser, 'dez.model/setActiveModel', model.providerId, model.modelId, model.modelName)
-      await browser.setWindowRect(null, null, rect.width, rect.height)
-      await waitForValue(browser, 'page width after the window size is back', pageWidth, widePage)
-    }
+    })
     return shown
   }
 

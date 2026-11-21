@@ -100,6 +100,13 @@ export function conversationFilePath (home: string, id: string): string {
   return path.join(conversationsDir(home), `${sanitizeId(id)}.md`)
 }
 
+/** How many times the saved file of the conversation `id` holds `text`; 0
+ *  while the app has not saved it. */
+export async function savedTextCount (home: string, id: string, text: string): Promise<number> {
+  const content = await fs.promises.readFile(conversationFilePath(home, id), 'utf8').catch(() => '')
+  return content.split(text).length - 1
+}
+
 /** Minimal `ConversationData` factory so specs can seed uniquely-worded
  * conversations without repeating every required field. The optional
  * fields of `overrides` (the cost, the compaction numbers) stay as given. */

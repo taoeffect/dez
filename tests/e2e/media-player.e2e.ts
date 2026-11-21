@@ -8,7 +8,7 @@ import { linkedDropDir, nativeDrop } from './harness/drops'
 import { appFilePath, conversationFilePath, filesIn, mediaTempDir, newFileIn, storedFileName, writeTestFile } from './harness/fixtures'
 import { NOT_A_CLIP, WAV_SAMPLE_RATE, WEBM_VIDEO, clipTag, monoWav, openPlayerTooltips, problemCards, shownPlayers, silentWav, startClipServer, waitForPlayerFullscreen, type ClipKind, type ClipServer, type ProblemCard, type ShownPlayer } from './harness/media'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
-import { mockChatPath, replyText, sendChatReply, type MockProvider } from './harness/mockServer'
+import { mockChatPath, mockModelKey, replyText, sendChatReply, type MockProvider } from './harness/mockServer'
 import { threadCount, webProcessPid } from './harness/processes'
 import type { E2EBrowser } from './harness/session'
 import { copySelection, docPosPoint, editorCaret, editorDoc, focusEditor, focusedArea, newTab, openSeededConversation, openToasts, pasteText, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread, type ThreadSection } from './harness/thread'
@@ -153,7 +153,7 @@ describe('media player', () => {
     const tempPath = path.join(tempDir(), name)
     const reply = (await threadSections(browser))[1].text
     const expires = /^<dez:audio id="a" type="audio\/wav" src="[^"]+" expires="([^"]+)" model="[^"]+"\/>$/.exec(reply)?.[1] ?? ''
-    expect(reply).toBe(clipTag('audio', { id: 'a', type: 'audio/wav', src: tempPath, expires, model: `${speaker.id}/${speaker.modelId}` }))
+    expect(reply).toBe(clipTag('audio', { id: 'a', type: 'audio/wav', src: tempPath, expires, model: mockModelKey(speaker) }))
     return { tempPath, reply, expires }
   }
 

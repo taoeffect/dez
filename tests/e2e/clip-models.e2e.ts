@@ -3,7 +3,7 @@ import { click, consoleErrors, resetConsoleErrors, screenshotOnFailure, waitForV
 import { readAppState } from './harness/fixtures'
 import { MP4_VIDEO, WEBM_VIDEO, answerVeniceJob, silentWav, tempClipTag } from './harness/media'
 import { expectSendRefused, startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
-import { answerHeld, requestForm, type MockProvider } from './harness/mockServer'
+import { answerHeld, mockModelKey, requestForm, type MockProvider } from './harness/mockServer'
 import { changeParameterField, closePopup, openPopup, popupOpen, popupView, type ParameterRow } from './harness/parameterPopup'
 import type { E2EBrowser } from './harness/session'
 import { newTab, openSeededConversation, pickModel, submit, waitForThread } from './harness/thread'
@@ -159,7 +159,7 @@ describe('models that change or write down a clip', () => {
     ])
     const reply = await answerVeniceJob(setup, queue, { retrievePath: VOICE_RETRIEVE_PATH, modelId: VOICE.id, queueId: 'job-1', clip: { type: 'audio/wav', bytes: silentWav(2) }, replyIndex: 3 })
 
-    expect(reply).toMatch(/^<dez:audio id="b" type="audio\/wav" src="[^"]+\.wav" expires="[^"]+" model="clipmodels\/elevenlabs-voice-changer" job="job-1"\/>$/)
+    expect(reply).toMatch(new RegExp(String.raw`^<dez:audio id="b" type="audio/wav" src="[^"]+\.wav" expires="[^"]+" model="${mockModelKey(CLIPS, VOICE.id)}" job="job-1"/>$`))
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 
@@ -168,7 +168,7 @@ describe('models that change or write down a clip', () => {
     const listed: ParameterRow = { name: 'voice', label: 'Voice', options: ['Aria', 'Roger', 'Other…'], picked: 'Aria' }
     const typed: ParameterRow = { ...listed, picked: 'Other…', text: ownVoice }
     const voiceRow = async () => (await popupView(browser)).rows.find((row) => row.name === 'voice')
-    const storedParameters = async () => (await readAppState(setup.app.home))?.modelParameters?.[`${CLIPS.id}/${VOICE.id}`] ?? null
+    const storedParameters = async () => (await readAppState(setup.app.home))?.modelParameters?.[mockModelKey(CLIPS, VOICE.id)] ?? null
     const beat = await tempClipTag(setup.app.home, 'audio', 'a', 'own-voice.wav', BEAT)
     await openClip('own-voice', beat, '@a', VOICE.name)
     await openPopup(browser)
@@ -220,7 +220,7 @@ describe('models that change or write down a clip', () => {
     })
     const reply = await answerVeniceJob(setup, queue, { retrievePath: VIDEO_RETRIEVE_PATH, modelId: EDIT.id, queueId: 'job-1', clip: { type: 'video/webm', bytes: WEBM_VIDEO }, replyIndex: 3 })
 
-    expect(reply).toMatch(/^<dez:video id="b" type="video\/webm" src="[^"]+\.webm" expires="[^"]+" model="clipmodels\/wan-2-7-video-to-video" job="job-1"\/>$/)
+    expect(reply).toMatch(new RegExp(String.raw`^<dez:video id="b" type="video/webm" src="[^"]+\.webm" expires="[^"]+" model="${mockModelKey(CLIPS, EDIT.id)}" job="job-1"/>$`))
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 

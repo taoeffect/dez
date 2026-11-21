@@ -7,7 +7,7 @@ import { click, consoleErrors, resetConsoleErrors, screenshotOnFailure, waitForV
 import { filesIn, newFileIn, storedFileName } from './harness/fixtures'
 import { generatedImagesDir, pasteImageReference, pngDataUrl, shownImages, solidPng } from './harness/images'
 import { expectSendRefused, startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
-import { answerHeld, type MockProvider } from './harness/mockServer'
+import { answerHeld, mockModelKey, type MockProvider } from './harness/mockServer'
 import { changeParameterField, closePopup, openPopup, popupOpen, popupView } from './harness/parameterPopup'
 import type { E2EBrowser } from './harness/session'
 import { focusEditor, newTab, openToasts, pickModel, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
@@ -42,7 +42,7 @@ const VECTOR_MODEL = { id: 'vector-model', name: 'Vector Model' }
 // Makes only TIFF files, which Dez does not store.
 const SCAN_MODEL = { id: 'scan-model', name: 'Scan Model' }
 // The model mark of an image that the model `modelId` of the mock made.
-const madeBy = (modelId: string) => `model=${ROUTER.id}/${modelId}`
+const madeBy = (modelId: string) => `model=${mockModelKey(ROUTER, modelId)}`
 const IMAGES_PATH = `/${ROUTER.id}/v1/images`
 // The entries of the image list, in the shape of OpenRouter's (2026-11-11).
 const IMAGE_LIST = {

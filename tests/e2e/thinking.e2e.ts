@@ -7,7 +7,7 @@ import { startApp, type RunningApp } from './harness/app'
 import { anthropicChatBody, anthropicMarkedUser, openAiChatBody } from './harness/chatBody'
 import { click, closeSettings, consoleErrors, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
 import { conversationFilePath, makeConversation, readAppState, seedConversation, seedRawAppState } from './harness/fixtures'
-import { startChatMock, startEventStream, writeAnthropicEvent, writeChatFrame, type MockServer } from './harness/mockServer'
+import { mockModelKey, startChatMock, startEventStream, writeAnthropicEvent, writeChatFrame, type MockServer } from './harness/mockServer'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
 import { activeConversationId, activeTabStreaming, maskPillDuration, newTab, pickModel, pillThinking, pressRolePill, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
 
@@ -91,7 +91,7 @@ function claudeThinking (n: number): unknown {
 // answer. The last line is the blank line before the next marker.
 function savedThinkerReply (n: number): string[] {
   return [
-    `<dez:pill type="agent" model="${THINKER.id}/${THINKER.modelId}" duration-ms="#" ${FIELD_REPLAY_ATTRIBUTE}>`,
+    `<dez:pill type="agent" model="${mockModelKey(THINKER)}" duration-ms="#" ${FIELD_REPLAY_ATTRIBUTE}>`,
     ...thinkingText(n).split('\n'),
     '</dez:pill>',
     answerText(n),
@@ -569,7 +569,7 @@ describe('thinking', () => {
     await waitForValue(browser, 'saved replies', savedAgentReplies, [
       savedThinkerReply(1),
       savedThinkerReply(2),
-      [`<dez:pill type="agent" model="${THINKER.id}/${THINKER.modelId}" duration-ms="#"/>`, answerText(3), ''],
+      [`<dez:pill type="agent" model="${mockModelKey(THINKER)}" duration-ms="#"/>`, answerText(3), ''],
     ])
 
     // "Reset to defaults" turns thinking on again and drops the saved value.
@@ -799,7 +799,7 @@ describe('thinking', () => {
     ]))
     // The app saves the conversation again after the reply; the file still
     // holds the encrypted line.
-    const seededMarker = `<dez:pill type="agent" model="${THINKER.id}/${THINKER.modelId}" ${FIELD_REPLAY_ATTRIBUTE}>`
+    const seededMarker = `<dez:pill type="agent" model="${mockModelKey(THINKER)}" ${FIELD_REPLAY_ATTRIBUTE}>`
     await waitForValue(browser, 'saved replies', savedAgentReplies, [
       [seededMarker, ...PLAIN_SEEDED_THINKING.split('\n'), '</dez:pill>', 'Encrypted answer 1', ''],
       [seededMarker, ...ENCRYPTED_THINKING.split('\n'), '</dez:pill>', 'Encrypted answer 2', ''],

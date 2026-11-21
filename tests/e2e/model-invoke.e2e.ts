@@ -11,7 +11,7 @@ import { generatedImagesDir, pasteImageReference, pngDataUrl, shownImages, solid
 import { startedJob, waitCall } from './harness/jobs'
 import { finishVeniceJob, shownPlayers, silentWav, type ShownPlayer } from './harness/media'
 import { startMockProviderApp, takeRequestTo, type MockProviderApp } from './harness/mockProviderApp'
-import { answerHeld, mockChatPath, openAiToolCall, replyText, sendChatReply, sendToolCalls, startEventStream, toolResult, writeChatFrame, type HeldRequest, type MockProvider } from './harness/mockServer'
+import { answerHeld, mockChatPath, mockModelKey, openAiToolCall, replyText, sendChatReply, sendToolCalls, startEventStream, toolResult, writeChatFrame, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
 import { activeConversationId, activeTabStreaming, assetModelLabels, assetPartPoint, busyDotsShown, docPos, editorDoc, endedReply, focusEditor, newTab, openToasts, setCaret, submit, threadSections, waitForThread } from './harness/thread'
 import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolChip, revealingPart, toolChips, toolPanel } from './harness/toolChips'
@@ -76,9 +76,9 @@ const EDIT_MODEL = { id: 'edit-model', name: 'Edit Model' }
 const SONG_MODEL = { id: 'song-model', name: 'Song Model' }
 // The model marks of the images and the clips of the jobs of the studio's
 // models.
-const PAINT_MARK = `model=${STUDIO.id}/${STUDIO.modelId}`
-const EDIT_MARK = `model=${STUDIO.id}/${EDIT_MODEL.id}`
-const SONG_MARK = `model="${STUDIO.id}/${SONG_MODEL.id}"`
+const PAINT_MARK = `model=${mockModelKey(STUDIO)}`
+const EDIT_MARK = `model=${mockModelKey(STUDIO, EDIT_MODEL.id)}`
+const SONG_MARK = `model="${mockModelKey(STUDIO, SONG_MODEL.id)}"`
 const CHAT_PATH = mockChatPath(CALLER)
 const HELPER_PATH = mockChatPath(HELPER)
 const GENERATE_PATH = `/${STUDIO.id}/v1/image/generate`
@@ -110,8 +110,8 @@ const MADE_PNG = solidPng(48, 36, [200, 120, 20])
 const SONG_WAV = silentWav(2)
 
 const PAINT_PROMPT = 'A fox in the snow'
-const paintCall = (id: string, more: Record<string, unknown> = {}) => openAiToolCall(id, 'model_invoke', { model: `${STUDIO.id}/${STUDIO.modelId}`, prompt: PAINT_PROMPT, ...more })
-const askCall = (id: string, prompt: string, more: Record<string, unknown> = {}) => openAiToolCall(id, 'model_invoke', { model: `${HELPER.id}/${HELPER.modelId}`, prompt, ...more })
+const paintCall = (id: string, more: Record<string, unknown> = {}) => openAiToolCall(id, 'model_invoke', { model: mockModelKey(STUDIO), prompt: PAINT_PROMPT, ...more })
+const askCall = (id: string, prompt: string, more: Record<string, unknown> = {}) => openAiToolCall(id, 'model_invoke', { model: mockModelKey(HELPER), prompt, ...more })
 const PAINT_BODY = { model: STUDIO.modelId, prompt: PAINT_PROMPT, format: 'webp', hide_watermark: true, safe_mode: false }
 
 describe('model_invoke', () => {
@@ -181,7 +181,7 @@ describe('model_invoke', () => {
     await pasteImageReference(browser, PASTED_PNG, 'a')
     await submit(browser, '')
     const first = await requestTo(CHAT_PATH)
-    sendToolCalls(first.reply, [openAiToolCall('call_edit', 'model_invoke', { model: `${STUDIO.id}/${EDIT_MODEL.id}`, prompt: 'Make @a orange' })])
+    sendToolCalls(first.reply, [openAiToolCall('call_edit', 'model_invoke', { model: mockModelKey(STUDIO, EDIT_MODEL.id), prompt: 'Make @a orange' })])
 
     // The call returns at once, while the request of its job waits for the
     // answer of the provider.
@@ -221,7 +221,7 @@ describe('model_invoke', () => {
     const first = await requestTo(CHAT_PATH)
     sendToolCalls(first.reply, [
       paintCall('call_paint'),
-      openAiToolCall('call_song', 'model_invoke', { model: `${STUDIO.id}/${SONG_MODEL.id}`, prompt: 'A slow song' }),
+      openAiToolCall('call_song', 'model_invoke', { model: mockModelKey(STUDIO, SONG_MODEL.id), prompt: 'A slow song' }),
     ])
 
     // Both requests wait for their answers at the same time.
@@ -270,7 +270,7 @@ describe('model_invoke', () => {
     const first = await requestTo(CHAT_PATH)
     sendToolCalls(first.reply, [
       paintCall('call_paint'),
-      openAiToolCall('call_song', 'model_invoke', { model: `${STUDIO.id}/${SONG_MODEL.id}`, prompt: 'A slow song' }),
+      openAiToolCall('call_song', 'model_invoke', { model: mockModelKey(STUDIO, SONG_MODEL.id), prompt: 'A slow song' }),
     ])
     const paint = await requestTo(GENERATE_PATH, PAINT_BODY)
     const queue = await requestTo(QUEUE_PATH, { model: SONG_MODEL.id, prompt: 'A slow song' })
@@ -337,7 +337,7 @@ describe('model_invoke', () => {
   // (issue `voice-selection-bugfix`).
   it('sends a voice id that the list of the model does not hold, gives a refusal of the provider as the result of its job, and refuses the id at once for a model whose list is complete', async () => {
     const speech = 'Hello there'
-    const speakCall = (id: string, modelId: string, voice: string) => openAiToolCall(id, 'model_invoke', { model: `${VOICES.id}/${modelId}`, prompt: speech, parameters: JSON.stringify({ voice }) })
+    const speakCall = (id: string, modelId: string, voice: string) => openAiToolCall(id, 'model_invoke', { model: mockModelKey(VOICES, modelId), prompt: speech, parameters: JSON.stringify({ voice }) })
     // The list comes with the model check of the app start.
     await waitForValue(browser, 'model list of the voice provider', async () => (await readModelCache(setup.app.home))?.providers[VOICES.id]?.models.map((model) => model.id) ?? [], [VOICES.modelId, CLOSED_VOICE_MODEL.id])
     await submit(browser, 'Say hello in my voice.')
@@ -576,7 +576,7 @@ describe('model_invoke', () => {
     // the next reply of the tab.
     await pointerClick(browser, '.submit-button')
     await waitForValue(browser, 'chat request closed', async () => second.closed, true)
-    const block = `<dez:tool id="call_ask" name="model_invoke" model="${HELPER.id}/${HELPER.modelId}" prompt="${prompt}">\n${started}\n</dez:tool>\n`
+    const block = `<dez:tool id="call_ask" name="model_invoke" model="${mockModelKey(HELPER)}" prompt="${prompt}">\n${started}\n</dez:tool>\n`
     await waitForThread(browser, [
       { role: 'user', text: 'Ask the helper.' },
       { role: 'agent', text: block },
@@ -677,7 +677,7 @@ describe('model_invoke', () => {
     // The image does not show at its place, and its lines take no room.
     // The chip of its call tells of it; the `jobs_wait` chip does not.
     await waitForValue(browser, 'chips after the reply', () => intermediateParts(browser), [hidingPart('image'), null])
-    expect((await toolChips(browser))[0].label).toBe(`Tool call model_invoke, "${STUDIO.id}/${STUDIO.modelId}" "${PAINT_PROMPT}", intermediate asset hidden`)
+    expect((await toolChips(browser))[0].label).toBe(`Tool call model_invoke, "${mockModelKey(STUDIO)}" "${PAINT_PROMPT}", intermediate asset hidden`)
     expect(await shownImages(browser)).toStrictEqual([])
     const note = 'Hidden intermediate image @a. Open its tool call to see it.'
     expect(await hiddenAssetNotes(browser)).toStrictEqual([{ text: note, visible: false }])
@@ -692,7 +692,7 @@ describe('model_invoke', () => {
     await pressToolChip(browser, 0)
     await waitForValue(browser, 'image in the panel', imageSizes, [{ width: 48, height: 36 }])
     expect(await intermediateParts(browser)).toStrictEqual([revealingPart('image'), null])
-    expect((await toolChips(browser))[0].label).toBe(`Tool call model_invoke, "${STUDIO.id}/${STUDIO.modelId}" "${PAINT_PROMPT}", intermediate asset`)
+    expect((await toolChips(browser))[0].label).toBe(`Tool call model_invoke, "${mockModelKey(STUDIO)}" "${PAINT_PROMPT}", intermediate asset`)
     expect(await hiddenPart(browser, 0)).toStrictEqual({ heading: 'Intermediate asset', assets: 1, text: null })
     expect((await toolPanel(browser, 0))?.result).toBe(started)
 
@@ -761,7 +761,7 @@ describe('model_invoke', () => {
   it('hides the clip of an intermediate call under its chip, and keeps its player in the open panel over a Save', async () => {
     await submit(browser, 'Make a draft song.')
     const first = await requestTo(CHAT_PATH)
-    sendToolCalls(first.reply, [openAiToolCall('call_song', 'model_invoke', { model: `${STUDIO.id}/${SONG_MODEL.id}`, prompt: 'A slow song', is_intermediate: true })])
+    sendToolCalls(first.reply, [openAiToolCall('call_song', 'model_invoke', { model: mockModelKey(STUDIO, SONG_MODEL.id), prompt: 'A slow song', is_intermediate: true })])
     const queue = await requestTo(QUEUE_PATH, { model: SONG_MODEL.id, prompt: 'A slow song' })
     const second = await requestTo(CHAT_PATH)
     const jobId = startedJob(second, 'call_song')
@@ -806,7 +806,7 @@ describe('model_invoke', () => {
   // chip would make a new player, which stops a clip that plays, and take
   // the focus from the chip: the drawn chip takes the new summary in place.
   it('keeps the chip and the player of its open panel when a new call of the same tool changes its summary', async () => {
-    const model = `${STUDIO.id}/${SONG_MODEL.id}`
+    const model = mockModelKey(STUDIO, SONG_MODEL.id)
     const prompt = 'A slow song for a rainy night'
     await submit(browser, 'Make a draft song.')
     const first = await requestTo(CHAT_PATH)

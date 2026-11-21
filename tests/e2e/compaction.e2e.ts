@@ -20,7 +20,7 @@ import { pasteImageReference, pngDataUrl, shownImages, solidPng, type ShownImage
 import { clipTag, MP4_VIDEO, problemCards, shownPlayers, silentWav, tempClipTag, WEBM_VIDEO, type ShownPlayer } from './harness/media'
 import { assetInView, flashedAssets, pressMention, recordFlashes } from './harness/mentions'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
-import { LARGE_TOKENS, mockChatPath, openAiToolCall, replyText, requestMessages, sendAnthropicReply, sendChatReply, sendChatText, sendToolCalls, startEventStream, toolResult, writeChatFrame, writeUsage, type HeldRequest, type MockProvider } from './harness/mockServer'
+import { LARGE_TOKENS, mockChatPath, mockModelKey, openAiToolCall, replyText, requestMessages, sendAnthropicReply, sendChatReply, sendChatText, sendToolCalls, startEventStream, toolResult, writeChatFrame, writeUsage, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
 import { activeConversationId, activeTabStreaming, activeTabTitle, assetPartPoint, AT_BOTTOM_PX, docPos, editorCaret, editorDoc, focusEditor, misplacedLines, newTab, openToasts, pickModel, pillThinking, pressRolePill, savedPillLines, sbpCall, scrollEditorToTop, setCaret, submit, threadSections, viewFromBottom, waitForThread, type ThreadSection } from './harness/thread'
 import { hiddenAssetNotes, hiddenPart, pressToolChip, toolChips, toolPanelPictures, type ToolChipView } from './harness/toolChips'
@@ -104,7 +104,7 @@ const CLAUDE: MockProvider = { id: 'claude', name: 'Claude Mock', modelId: 'clau
 // A model with thinking (`thinking: {}`), for the pill of a reply that
 // compacts.
 const THINKER: MockProvider = { id: 'thinker', name: 'Thinker Mock', modelId: 'think-model', modelName: 'Think Model' }
-const MODEL_KEY = `${PROVIDER.id}/${PROVIDER.modelId}`
+const MODEL_KEY = mockModelKey(PROVIDER)
 const CHAT_PATH = mockChatPath(PROVIDER)
 
 // The first line of the instruction of a compaction request.

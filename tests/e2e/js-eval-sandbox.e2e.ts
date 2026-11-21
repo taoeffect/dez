@@ -10,7 +10,7 @@ import { consoleErrors, resetConsoleErrors, screenshotOnFailure } from './harnes
 import { appFilePath, makeConversation, mediaTempDir, seedConversation, workDir, writeTestFile } from './harness/fixtures'
 import { evalCall, expectReplyEnd } from './harness/jsEval'
 import { startMockProviderApp, takeRequest, takeRequestTo, type MockProviderApp } from './harness/mockProviderApp'
-import { mockChatPath, replyText, sendChatReply, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
+import { mockChatPath, mockModelKey, replyText, sendChatReply, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
 import { newTab, submit } from './harness/thread'
 
@@ -576,7 +576,7 @@ describe('js_eval sandbox', () => {
     const first = await chatRequest()
     sendToolCalls(first.reply, [evalCall('call_ask', [
       'const prompt = `Where is ${Deno.cwd()}?\\nAnd what is ${Deno.execPath()}`',
-      `await dez.sbp("dez.tools/model_invoke", { model: "${HELPER.id}/${HELPER.modelId}", prompt })`,
+      `await dez.sbp("dez.tools/model_invoke", { model: "${mockModelKey(HELPER)}", prompt })`,
       'return await dez.sbp("dez.tools/jobs_wait")',
     ].join('\n'))])
 

@@ -364,6 +364,34 @@ export async function pointerRelease (browser: E2EBrowser): Promise<void> {
   await browser.action('pointer', DRAG_POINTER).up({ button: 0 }).perform()
 }
 
+/** The outer size of the app window, as WebDriver's window rect gives it. */
+export interface WindowSize {
+  width: number
+  height: number
+}
+
+/**
+ * Run `work` in a smaller window, whose size `resize` gives from the size
+ * of the window. Then set the window back to the size that it had, and wait
+ * until the page has its old size again: the later tests of a spec need it.
+ * WebDriver's window rect sets back the exact size that it read. The window
+ * API's sizes do not, under the kwin recipe's client-side decorations.
+ */
+export async function withSmallerWindow (browser: E2EBrowser, resize: (size: WindowSize) => WindowSize, work: () => Promise<void>): Promise<void> {
+  const pageSize = (): Promise<string> => browser.execute(() => `${window.innerWidth}x${window.innerHeight}`)
+  const page = await pageSize()
+  const { width, height } = await browser.getWindowRect()
+  try {
+    const smaller = resize({ width, height })
+    await browser.setWindowRect(null, null, smaller.width, smaller.height)
+    await waitForValue(browser, 'a smaller page', async () => await pageSize() !== page, true)
+    await work()
+  } finally {
+    await browser.setWindowRect(null, null, width, height)
+    await waitForValue(browser, 'page size after the window size is back', pageSize, page)
+  }
+}
+
 /**
  * Open the history panel by clicking the toolbar toggle button and
  * waiting for the overlay to render.
