@@ -139,7 +139,8 @@ export interface MentionPastePlan {
 }
 
 // The marks that tie an asset to its own conversation: a copy leaves them
-// out.
+// out. The model mark (assetModels.ts) stays: the copy shows the same
+// file, which the same model made.
 const COPY_LEFT_OUT_IMAGE_KEYS: ReadonlySet<string> = new Set([IMAGE_TOOL_KEY, IMAGE_MADE_BY_KEY, IMAGE_HIDDEN_KEY, IMAGE_KEPT_KEY])
 const COPY_LEFT_OUT_TAG_ATTRIBUTES: ReadonlySet<string> = new Set([MEDIA_TOOL_ATTRIBUTE, MEDIA_MADE_BY_ATTRIBUTE, MEDIA_HIDDEN_ATTRIBUTE, MEDIA_KEPT_ATTRIBUTE])
 

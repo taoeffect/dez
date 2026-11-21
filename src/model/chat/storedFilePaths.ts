@@ -1,5 +1,5 @@
 import { ExplainedError } from '../../utils/errorText'
-import { IMAGE_DESTINATION_SOURCE, IMAGE_PATH_END_SOURCE, LINKED_IMAGE_PATH_SOURCE, UNCLOSED_IMAGE_REFERENCE_SOURCE, isImagePath } from './images'
+import { IMAGE_DESTINATION_SOURCE, IMAGE_METADATA_SOURCE, IMAGE_PATH_END_SOURCE, LINKED_IMAGE_PATH_SOURCE, UNCLOSED_IMAGE_REFERENCE_SOURCE, imageMetadataForRequest, isImagePath } from './images'
 import { MEDIA_CACHE_PATH_END_SOURCE, MEDIA_TAG_KINDS, SAVED_MEDIA_PATH_END_SOURCES, isSavedMediaPath, type MediaTagKind } from './mediaTags'
 import { SHOWN_PICTURE_PATH_END_SOURCE } from './shownPictures'
 
@@ -11,6 +11,8 @@ import { SHOWN_PICTURE_PATH_END_SOURCE } from './shownPictures'
 // the copies of the pictures that tools showed (shownPictures.ts);
 // the linked files are the dropped files that Dez reads in place
 // (linkedFiles.ts). Every request text goes through `withoutStoredFilePaths`.
+// It also takes the model mark out of an image reference: the name of a
+// model that made an image is for the view only (assetModels.ts).
 
 // The start of the end of every path in the app folder, on any machine and
 // in any home: `$HOME/.config/dez/` (`base_dir()` in persistence.rs). Many
@@ -58,8 +60,9 @@ const BRACKET_FREE_RUN = /[^\[\]\r\n]+/g
 // valid (the Backspace rule's `![id=a](/…/x.png`, the next Backspace's
 // `![id=a](</…/x y.png`, the Delete rule's `[id=a](/…/x.png)`, bad
 // metadata), of one in an agent section, where it is plain text, and of a
-// markdown link to such a path.
-const IMAGE_DESTINATION_PATH = new RegExp(String.raw`\]\(${IMAGE_DESTINATION_SOURCE}`, 'g')
+// markdown link to such a path. Group 1 is the `![` of a reference whose
+// metadata (group 2, absent when empty) is valid: its model mark goes too.
+const IMAGE_DESTINATION_PATH = new RegExp(String.raw`(?:(!\[)(${IMAGE_METADATA_SOURCE})?)?\]\(${IMAGE_DESTINATION_SOURCE}`, 'g')
 // What is left of the path of a reference whose source Backspace deletes
 // from its end, once the path has lost a char of its extension
 // (`![id=a](/…/x.pn`). It needs the `!` and the metadata, so a markdown
@@ -93,12 +96,14 @@ export function holdsStoredFilePath(text: string): boolean {
  *  the tag's kind (`audio` or `video`), also for a temp copy; any other
  *  such path becomes `image`, `audio`, `video`, or `media` (a temp copy).
  *  So an image reference goes as `![id=a](image)`, with its metadata as it
- *  is in the text, and a reference that is not valid (the Backspace rule's
- *  `![id=a](/…/x.png`, also after more Backspaces, as `![id=a](/…/x.p`;
- *  bad metadata), a `src` path of a media tag line that is not valid, and,
- *  for a stored file, a bare path and a path in a metadata value lose their
- *  paths too. A text with no such path comes back as it is, so text-only
- *  request bodies keep their bytes (prompt cache).
+ *  is in the text less the model mark (`imageMetadataForRequest`), and a
+ *  reference that is not valid (the Backspace rule's `![id=a](/…/x.png`,
+ *  also after more Backspaces, as `![id=a](/…/x.p`, which loses its model
+ *  mark too; bad metadata), a `src` path of a media tag line that is not
+ *  valid, and, for a stored file, a bare path and a path in a metadata
+ *  value lose their paths too. A text with no such path comes back as it
+ *  is, so text-only request bodies keep their bytes (prompt cache), and so
+ *  do the references that Dez wrote before the model mark.
  *
  *  A linked path is found only where Dez writes it, or wrote it: in the
  *  destination of an image reference (`](/…/x.png`, `](</…/x.png>`), in
@@ -115,8 +120,10 @@ export function holdsStoredFilePath(text: string): boolean {
  *  from each `/`, which took 0.5 s on a 200 KB base64 line. */
 export function withoutStoredFilePaths(text: string): string {
   const unlinked = text
-    .replace(IMAGE_DESTINATION_PATH, '](image')
-    .replace(UNCLOSED_IMAGE_REFERENCE, '$1image')
+    .replace(IMAGE_DESTINATION_PATH, (_reference, bang: string | undefined, metadata: string | undefined) =>
+      bang === undefined ? '](image' : `![${imageMetadataForRequest(metadata ?? '')}](image`)
+    // Group 1 is `![<metadata>](`.
+    .replace(UNCLOSED_IMAGE_REFERENCE, (_reference, start: string) => `![${imageMetadataForRequest(start.slice(2, -2))}](image`)
     .replace(IMAGE_ALT_TEXT_PATH, '[image](')
     .replace(MEDIA_TAG_LINE, (line, kind: string) => line.replace(MEDIA_TAG_SRC_PATH, `$1${kind}"`))
   if (!holdsStoredFilePath(unlinked)) return unlinked

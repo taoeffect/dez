@@ -1,5 +1,6 @@
 import sbp from '@sbp/sbp'
 import type { ActiveModel, MessagePart, ModelRef, Section, SectionThinking, Tab } from '../model/chat/types'
+import { clipModelMark, imageModelMark } from '../model/chat/assetModels'
 import { appTagText } from '../model/chat/appTags'
 import { sectionsBeforeReply, sectionTextParts, type Compactions } from '../model/chat/compaction'
 import { sectionPlainText } from '../model/chat/content'
@@ -433,19 +434,22 @@ function stopToolRun(tabId: string, reply: ReplyRuntime): boolean {
 // (`ToolRunContext`): each puts its asset at the section end, with the
 // name of the tool that made it (`IMAGE_TOOL_KEY`, `MEDIA_TOOL_ATTRIBUTE`).
 // That is `tool`, or the tool that a write names (`jobs_wait` writes what
-// the job of another tool made). A clip that a provider made as a job
-// keeps the provider's job id too (`MEDIA_JOB_ATTRIBUTE`), as the clip of
-// a media reply does. An asset of a Dez job keeps the id of that job
-// (`IMAGE_MADE_BY_KEY`, `MEDIA_MADE_BY_ATTRIBUTE`), and an asset that its
-// call made as a part of its work keeps the id again last
-// (`IMAGE_HIDDEN_KEY`, `MEDIA_HIDDEN_ATTRIBUTE`). A write while
-// `takesAssets` gives false writes nothing and gives null.
+// the job of another tool made). An asset that a model made for the tool
+// (`model_invoke`) keeps that model (`imageModelMark`, `clipModelMark`). A
+// clip that a provider made as a job keeps the provider's job id too
+// (`MEDIA_JOB_ATTRIBUTE`), as the clip of a media reply does. An asset of
+// a Dez job keeps the id of that job (`IMAGE_MADE_BY_KEY`,
+// `MEDIA_MADE_BY_ATTRIBUTE`), and an asset that its call made as a part of
+// its work keeps the id again last (`IMAGE_HIDDEN_KEY`,
+// `MEDIA_HIDDEN_ATTRIBUTE`). A write while `takesAssets` gives false
+// writes nothing and gives null.
 function toolAssetWriters(tabId: string, reply: ReplyRuntime, tool: string, takesAssets: () => boolean): Pick<ToolRunContext, 'writeImage' | 'writeClip'> {
   return {
     writeImage: (path, options) => (takesAssets()
       ? writeAsset(tabId, reply, (id) => imageMarkdown(path, [
         { key: 'id', value: id },
         { key: IMAGE_TOOL_KEY, value: options?.tool ?? tool },
+        ...imageModelMark(options?.model),
         ...(options?.madeBy === undefined ? [] : [{ key: IMAGE_MADE_BY_KEY, value: options.madeBy }]),
         ...(options?.hidden === undefined ? [] : [{ key: IMAGE_HIDDEN_KEY, value: options.hidden }]),
       ]))
@@ -456,6 +460,7 @@ function toolAssetWriters(tabId: string, reply: ReplyRuntime, tool: string, take
         id,
         other: [
           { name: MEDIA_TOOL_ATTRIBUTE, value: options?.tool ?? tool },
+          ...clipModelMark(options?.model),
           ...(options?.jobId === undefined ? [] : [{ name: MEDIA_JOB_ATTRIBUTE, value: options.jobId }]),
           ...(options?.madeBy === undefined ? [] : [{ name: MEDIA_MADE_BY_ATTRIBUTE, value: options.madeBy }]),
           ...(options?.hidden === undefined ? [] : [{ name: MEDIA_HIDDEN_ATTRIBUTE, value: options.hidden }]),
@@ -628,10 +633,11 @@ function writeAsset(tabId: string, reply: ReplyRuntime, assetText: (id: string) 
 }
 
 // Puts an image of a chat reply at the end of its section: saves the file
-// in the generated image folder, then writes its reference. No answer text
-// comes meanwhile: dez.provider/streamChat waits for this. A failed save
-// leaves the image out, and the reply goes on.
-async function writeReplyImage(tabId: string, reply: ReplyRuntime, image: GeneratedMedia): Promise<void> {
+// in the generated image folder, then writes its reference, with the model
+// of the reply as its model mark. No answer text comes meanwhile:
+// dez.provider/streamChat waits for this. A failed save leaves the image
+// out, and the reply goes on.
+async function writeReplyImage(tabId: string, reply: ReplyRuntime, image: GeneratedMedia, model: ModelRef): Promise<void> {
   let path: string
   try {
     path = await sbp('dez.controller/images/save', image.bytes, image.mediaType, { folder: 'generated' }) as string
@@ -647,15 +653,16 @@ async function writeReplyImage(tabId: string, reply: ReplyRuntime, image: Genera
   // Text that the escaper holds is answer text from before the image. The
   // reference itself is not model text, so it gets no escape.
   if (current) flushModelText(tabId, reply)
-  if (!current || writeAsset(tabId, reply, (id) => imageMarkdown(path, [{ key: 'id', value: id }])) === null) {
+  if (!current || writeAsset(tabId, reply, (id) => imageMarkdown(path, [{ key: 'id', value: id }, ...imageModelMark(model)])) === null) {
     await sbp('dez.controller/images/delete', path).catch(() => {})
   }
 }
 
 // Puts the audio of a chat reply (a temp copy) at the end of its section,
-// after the answer text, as a media reply's clip is. A temp copy that no
-// tag names is deleted: the reply ended, or the section takes no text.
-async function writeReplyClip(tabId: string, reply: ReplyRuntime, clip: GeneratedClip): Promise<void> {
+// after the answer text, as a media reply's clip is, with the model of the
+// reply as its model mark. A temp copy that no tag names is deleted: the
+// reply ended, or the section takes no text.
+async function writeReplyClip(tabId: string, reply: ReplyRuntime, clip: GeneratedClip, model: ModelRef): Promise<void> {
   const current = replyIsCurrent(tabId, reply)
   if (current) flushModelText(tabId, reply)
   const written = current && writeAsset(tabId, reply, (id) => mediaTagText({
@@ -665,7 +672,7 @@ async function writeReplyClip(tabId: string, reply: ReplyRuntime, clip: Generate
     src: clip.src,
     url: clip.url,
     expires: clip.expires,
-    other: [],
+    other: clipModelMark(model),
   })) !== null
   if (!written) await discardMadeAssets([generatedClipAsset(clip)])
 }
@@ -1096,9 +1103,9 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
         // stopped reply must not grow later.
         onImage: async (image: GeneratedMedia) => {
           madeImage = true
-          if (replyIsCurrent(args.tabId, reply)) await writeReplyImage(args.tabId, reply, image)
+          if (replyIsCurrent(args.tabId, reply)) await writeReplyImage(args.tabId, reply, image, args.model)
         },
-        onClip: (clip: GeneratedClip) => writeReplyClip(args.tabId, reply, clip),
+        onClip: (clip: GeneratedClip) => writeReplyClip(args.tabId, reply, clip, args.model),
       }) as ProviderStreamChatResult
     } catch (error) {
       if (sent) countRound(failedChatRequestCost(error))
@@ -1259,8 +1266,9 @@ async function runMediaRound(args: StreamStartArgs, reply: ReplyRuntime, kind: M
   // The ids and the write in one tick, so that no paste takes one of the
   // ids (the editor gives ids only to pasted and dropped references).
   const ids = newMediaIds(texts, paths.length + clips.length)
+  // Each asset keeps the model of the reply as its model mark.
   const references = [
-    ...paths.map((path, index) => imageMarkdown(path, [{ key: 'id', value: ids[index] }])),
+    ...paths.map((path, index) => imageMarkdown(path, [{ key: 'id', value: ids[index] }, ...imageModelMark(args.model)])),
     // The job id is tag metadata (`MEDIA_JOB_ATTRIBUTE`).
     ...clips.map((clip, index) => mediaTagText({
       kind: clip.kind,
@@ -1269,7 +1277,7 @@ async function runMediaRound(args: StreamStartArgs, reply: ReplyRuntime, kind: M
       src: clip.src,
       url: clip.url,
       expires: clip.expires,
-      other: clip.jobId === null ? [] : [{ name: MEDIA_JOB_ATTRIBUTE, value: clip.jobId }],
+      other: [...clipModelMark(args.model), ...(clip.jobId === null ? [] : [{ name: MEDIA_JOB_ATTRIBUTE, value: clip.jobId }])],
     })),
   ]
   // A transcription is escaped as the text of a chat reply

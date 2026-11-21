@@ -31,8 +31,8 @@ import type { Role } from './types'
 // code span: codeRanges.ts) is plain text too; only the id sequence
 // (mediaIds.ts) reads it, so that its id stays taken. The editor, the
 // request builder, and the title, preview, and search text all use this
-// one recognizer. Providers get no path, only the reference's metadata
-// (`withoutStoredFilePaths`, storedFilePaths.ts).
+// one recognizer. Providers get no path, only the reference's metadata,
+// less the model mark (`withoutStoredFilePaths`, storedFilePaths.ts).
 
 // The image types that Dez stores as they are; the paste and drop code
 // converts other image types to PNG. OpenAI, Anthropic, and Venice accept
@@ -163,6 +163,13 @@ export interface ImageMetadataItem {
  *  the model wrote in its reply (`roundThinking`, streams/messages.ts). */
 export const IMAGE_TOOL_KEY = 'tool'
 
+/** The metadata key of an image that a model made, as in
+ *  `![id=b|model=openai/gpt-image-1](<path>)` for an image of a reply, or
+ *  `![id=b|tool=model_invoke|model=…|made-by=j-k3x9](<path>)` for an image
+ *  of a `model_invoke` job; its value is the `modelRefKey` of that model
+ *  (assetModels.ts). A request leaves it out (`imageMetadataForRequest`). */
+export const IMAGE_MODEL_KEY = 'model'
+
 /** The metadata key of an image that a call made as a part of its work
  *  (`is_intermediate` of `model_invoke` or of a `video` subcommand), as in
  *  `![id=b|tool=model_invoke|made-by=j-k3x9|hidden=j-k3x9](<path>)`; its
@@ -239,6 +246,25 @@ function parseImageMetadata(source: string): ImageMetadataItem[] | null {
 /** The alt text of a reference with these items. */
 function metadataText(metadata: readonly ImageMetadataItem[]): string {
   return metadata.map(({ key, value }) => `${key}=${value.replace(/[\\|[\]]/g, '\\$&')}`).join('|')
+}
+
+// One metadata item, for a scan of the items of a metadata text that
+// `METADATA_SOURCE` matched: an item ends at the first unescaped `|`, so
+// each match is one whole item. Global for `match` only, which resets it.
+const METADATA_ITEM = new RegExp(METADATA_ITEM_SOURCE, 'g')
+
+/** Regex source of the metadata of an image reference, its alt text with
+ *  the escapes as they are in the text. No capture groups. */
+export const IMAGE_METADATA_SOURCE = METADATA_SOURCE
+
+/** The metadata text `metadata` (a match of `IMAGE_METADATA_SOURCE`) as a
+ *  request sends it: with no model mark (`IMAGE_MODEL_KEY`), so that no
+ *  model name goes to a provider, and the bytes of an earlier message stay
+ *  the ones of a reference with no mark (prompt cache). The other items
+ *  stay as they are, in their order. */
+export function imageMetadataForRequest(metadata: string): string {
+  if (!metadata.includes(`${IMAGE_MODEL_KEY}=`)) return metadata
+  return (metadata.match(METADATA_ITEM) ?? []).filter((item) => !item.startsWith(`${IMAGE_MODEL_KEY}=`)).join('|')
 }
 
 /** The destination text of an image path: `<path>` for a path with a

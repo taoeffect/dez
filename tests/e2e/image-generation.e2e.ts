@@ -57,6 +57,8 @@ const UPSCALE_MODEL = { id: 'upscale-model', name: 'Upscale Model' }
 const SKETCH_MODEL = { id: 'sketch-model', name: 'Sketch Model' }
 // A chat model that writes text and makes images in one reply.
 const CHAT_MODEL = { id: 'chat-paint-model', name: 'Chat Paint Model' }
+// The model mark of an image that the model `modelId` of the mock made.
+const madeBy = (modelId: string) => `model=${PAINTER.id}/${modelId}`
 const GENERATE_PATH = `/${PAINTER.id}/v1/image/generate`
 const EDIT_PATH = `/${PAINTER.id}/v1/image/multi-edit`
 const UPSCALE_PATH = `/${PAINTER.id}/v1/image/upscale`
@@ -160,7 +162,7 @@ describe('image generation', () => {
     expect(generatedName).toMatch(STORED_IMAGE_NAME)
     const generatedPath = path.join(generatedDir(), generatedName)
     expect(await fs.promises.readFile(generatedPath)).toEqual(GENERATED_PNG)
-    const generatedReference = `![id=a](${generatedPath})`
+    const generatedReference = `![id=a|${madeBy(PAINTER.modelId)}](${generatedPath})`
     await waitForThread(browser, [
       { role: 'user', text: 'Draw a fox' },
       { role: 'agent', text: generatedReference },
@@ -193,7 +195,7 @@ describe('image generation', () => {
       { role: 'user', text: 'Draw a fox' },
       { role: 'agent', text: generatedReference },
       { role: 'user', text: 'Make it orange' },
-      { role: 'agent', text: `![id=b](${editedPath})` },
+      { role: 'agent', text: `![id=b|${madeBy(EDIT_MODEL.id)}](${editedPath})` },
       { role: 'user', text: '' },
     ])
     await waitForValue(browser, 'shown images', () => shownImages(browser), [
@@ -212,7 +214,7 @@ describe('image generation', () => {
     const foxName = await newFileIn(browser, generatedDir(), before)
     const foxReply = [
       { role: 'user', text: 'Draw a fox' },
-      { role: 'agent', text: `![id=a](${path.join(generatedDir(), foxName)})` },
+      { role: 'agent', text: `![id=a|${madeBy(PAINTER.modelId)}](${path.join(generatedDir(), foxName)})` },
     ]
     await waitForThread(browser, [...foxReply, { role: 'user', text: '' }])
 
@@ -222,7 +224,7 @@ describe('image generation', () => {
     const catName = await newFileIn(browser, generatedDir(), [...before, foxName])
     const catReply = [
       { role: 'user', text: 'Draw a cat' },
-      { role: 'agent', text: `![id=b](${path.join(generatedDir(), catName)})` },
+      { role: 'agent', text: `![id=b|${madeBy(PAINTER.modelId)}](${path.join(generatedDir(), catName)})` },
     ]
     await waitForThread(browser, [...foxReply, ...catReply, { role: 'user', text: '' }])
 
@@ -245,7 +247,7 @@ describe('image generation', () => {
       ...foxReply,
       ...catReply,
       { role: 'user', text: 'Edit @a to add an apple' },
-      { role: 'agent', text: `![id=c](${path.join(generatedDir(), editedName)})` },
+      { role: 'agent', text: `![id=c|${madeBy(EDIT_MODEL.id)}](${path.join(generatedDir(), editedName)})` },
       { role: 'user', text: '' },
     ])
     expect(await consoleErrors(browser)).toEqual([])
@@ -311,15 +313,15 @@ describe('image generation', () => {
     expect(await fs.promises.readFile(foxPath)).toEqual(GENERATED_PNG)
     const foxReply = [
       { role: 'user', text: 'Draw a fox' },
-      { role: 'agent', text: `Here is a fox.\n\n![id=a](${foxPath})\n\nIt is green.` },
+      { role: 'agent', text: `Here is a fox.\n\n![id=a|${madeBy(CHAT_MODEL.id)}](${foxPath})\n\nIt is green.` },
     ]
     await waitForThread(browser, [...foxReply, { role: 'user', text: '' }])
     await waitForValue(browser, 'shown image', () => shownImages(browser), [{ alt: foxName, width: 320, height: 256 }])
 
     await submit(browser, 'Make @a orange')
 
-    // The reply's image goes back as text only; the mention adds the image
-    // part to the user message.
+    // The reply's image goes back as text only, with no model mark; the
+    // mention adds the image part to the user message.
     const second = await setup.mock.waitForRequest(browser)
     expect(JSON.parse(second.body)).toEqual({
       ...openAiChatBody(chatModel, [
@@ -349,7 +351,7 @@ describe('image generation', () => {
     await waitForThread(browser, [
       ...foxReply,
       { role: 'user', text: 'Make @a orange' },
-      { role: 'agent', text: `![id=b](${editedPath})` },
+      { role: 'agent', text: `![id=b|${madeBy(CHAT_MODEL.id)}](${editedPath})` },
       { role: 'user', text: '' },
     ])
     await waitForValue(browser, 'shown images', () => shownImages(browser), [
@@ -359,7 +361,7 @@ describe('image generation', () => {
     const file = conversationFilePath(setup.app.home, await activeConversationId(browser))
     await waitForValue(browser, 'saved references', async () => {
       const content = await fs.promises.readFile(file, 'utf8').catch(() => '')
-      return content.includes(`![id=a](${foxPath})`) && content.includes(`![id=b](${editedPath})`)
+      return content.includes(`![id=a|${madeBy(CHAT_MODEL.id)}](${foxPath})`) && content.includes(`![id=b|${madeBy(CHAT_MODEL.id)}](${editedPath})`)
     }, true)
     expect(await consoleErrors(browser)).toEqual([])
   })
@@ -383,7 +385,7 @@ describe('image generation', () => {
     const name = await newFileIn(browser, generatedDir(), before)
     await waitForThread(browser, [
       { role: 'user', text: `${question}\nDraw a tall fox` },
-      { role: 'agent', text: `![id=a](${path.join(generatedDir(), name)})` },
+      { role: 'agent', text: `![id=a|${madeBy(PAINTER.modelId)}](${path.join(generatedDir(), name)})` },
       { role: 'user', text: '' },
     ])
     // The rebuild at the end of the reply scrolls in a later frame.
@@ -430,7 +432,7 @@ describe('image generation', () => {
     expect(await fs.promises.readFile(upscaledPath)).toEqual(UPSCALED_PNG)
     await waitForThread(browser, [
       { role: 'user', text: `${reference}Make it larger` },
-      { role: 'agent', text: `![id=b](${upscaledPath})` },
+      { role: 'agent', text: `![id=b|${madeBy(UPSCALE_MODEL.id)}](${upscaledPath})` },
       { role: 'user', text: '' },
     ])
     await waitForValue(browser, 'shown image sizes', async () => (await shownImages(browser)).map(({ width, height }) => [width, height]), [[256, 256], [512, 512]])

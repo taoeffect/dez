@@ -1259,7 +1259,7 @@ describe('dez.controller/tools/run', () => {
         vi.useRealTimers()
       })
 
-      it('starts a job at once and tells its number and the inputs that go; jobs_wait puts the image of the model into the reply, with the start of the prompt', async () => {
+      it('starts a job at once and tells its number and the inputs that go; jobs_wait puts the image of the model into the reply, with the start of the prompt and the invoked model', async () => {
         generateMedia = async () => ({ media: [PNG], clips: [] })
 
         const started = await jobTool('model_invoke', { ...PAINT, timeout_seconds: 60 })
@@ -1273,7 +1273,7 @@ describe('dez.controller/tools/run', () => {
         expect(await jobResult()).toContain(`<job id="${job.id}" number="1" tool="model_invoke" status="finished" call="The fox of @a in snow.">\nMade the image @c.\n</job>`)
         expect(mediaRequests).toMatchObject([{ providerId: 'venice', modelId: 'painter', kind: 'image', images: [FOX], clips: [], reader: 'model', timeoutMs: 60_000 }])
         expect(savedImages).toStrictEqual([{ mediaType: 'image/png', options: { folder: 'generated' } }])
-        expect(written).toStrictEqual([{ path: MADE_IMAGE, tool: 'model_invoke', madeBy: job.id }])
+        expect(written).toStrictEqual([{ path: MADE_IMAGE, tool: 'model_invoke', madeBy: job.id, model: { providerId: 'venice', modelId: 'painter' } }])
       })
 
       // Calls that begin with the same words: only the number tells which
@@ -1302,7 +1302,7 @@ describe('dez.controller/tools/run', () => {
 
         request.answer({ media: [], clips: [MADE_VIDEO] })
         expect(await jobResult()).toContain('Made the video clip @c.')
-        expect(written).toStrictEqual([{ path: TEMP_COPY, tool: 'model_invoke', madeBy: id, jobId: 'q-17' }])
+        expect(written).toStrictEqual([{ path: TEMP_COPY, tool: 'model_invoke', madeBy: id, model: { providerId: 'venice', modelId: 'filmer' }, jobId: 'q-17' }])
         expect(native.deletedFiles).toStrictEqual([])
       })
 
@@ -1316,8 +1316,8 @@ describe('dez.controller/tools/run', () => {
 
         expect(await jobResult()).toContain(`<job id="${id}" number="1" tool="model_invoke" status="finished" call="A fox runs.">\nMade the video clip @c.\nMade the image @d.\n</job>`)
         expect(written).toStrictEqual([
-          { path: TEMP_COPY, tool: 'model_invoke', madeBy: id, hidden: id, jobId: 'q-17' },
-          { path: MADE_IMAGE, tool: 'model_invoke', madeBy: id, hidden: id },
+          { path: TEMP_COPY, tool: 'model_invoke', madeBy: id, model: { providerId: 'venice', modelId: 'filmer' }, hidden: id, jobId: 'q-17' },
+          { path: MADE_IMAGE, tool: 'model_invoke', madeBy: id, model: { providerId: 'venice', modelId: 'filmer' }, hidden: id },
         ])
       })
 
@@ -1327,7 +1327,7 @@ describe('dez.controller/tools/run', () => {
         await jobTool('model_invoke', { ...PAINT, is_intermediate: false })
         await jobResult()
 
-        expect(written).toStrictEqual([{ path: MADE_IMAGE, tool: 'model_invoke', madeBy: jobs.list()[0].id }])
+        expect(written).toStrictEqual([{ path: MADE_IMAGE, tool: 'model_invoke', madeBy: jobs.list()[0].id, model: { providerId: 'venice', modelId: 'painter' } }])
       })
 
       it('gives the text of a model that writes down speech as the result of the job, and writes nothing into the reply', async () => {
@@ -1563,7 +1563,7 @@ describe('dez.controller/tools/run', () => {
           expect(await jobResult()).toContain(`${invocationAnswerText('Here it is.')}\nMade the image @c.\n</job>`)
           expect(chatRequests[0].imageOutput).toBe(true)
           expect(savedImages).toStrictEqual([{ mediaType: 'image/png', options: { folder: 'generated' } }])
-          expect(written).toStrictEqual([{ path: MADE_IMAGE, tool: 'model_invoke', madeBy: jobs.list()[0].id }])
+          expect(written).toStrictEqual([{ path: MADE_IMAGE, tool: 'model_invoke', madeBy: jobs.list()[0].id, model: { providerId: 'venice', modelId: 'sketcher' } }])
         })
 
         it('asks a model that makes audio for it, and jobs_wait puts the clip of the answer into the reply', async () => {
@@ -1576,7 +1576,7 @@ describe('dez.controller/tools/run', () => {
 
           expect(await jobResult()).toContain(`${invocationAnswerText('<instrumental>')}\nMade the audio clip @c.\n</job>`)
           expect(chatRequests[0]).toMatchObject({ imageOutput: false, audioOutput: true })
-          expect(written).toStrictEqual([{ path: MADE_SONG.src, tool: 'model_invoke', madeBy: jobs.list()[0].id }])
+          expect(written).toStrictEqual([{ path: MADE_SONG.src, tool: 'model_invoke', madeBy: jobs.list()[0].id, model: { providerId: 'venice', modelId: 'singer' } }])
         })
 
         it('tells in the state of the job how much text came so far', async () => {

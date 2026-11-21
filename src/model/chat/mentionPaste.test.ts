@@ -2,13 +2,14 @@ import { describe, expect, it } from 'vitest'
 import type { MentionSection } from './assetMentions'
 import { compactionTagText } from './compaction'
 import { findAssetMentions } from './imageMentions'
-import { IMAGE_HIDDEN_KEY, IMAGE_KEPT_KEY, IMAGE_MADE_BY_KEY, IMAGE_TOOL_KEY, imageMarkdown, KEPT_MARK_VALUE } from './images'
+import { IMAGE_HIDDEN_KEY, IMAGE_KEPT_KEY, IMAGE_MADE_BY_KEY, IMAGE_MODEL_KEY, IMAGE_TOOL_KEY, imageMarkdown, KEPT_MARK_VALUE } from './images'
 import { pastedMediaIdChanges } from './mediaIds'
 import {
   MEDIA_HIDDEN_ATTRIBUTE,
   MEDIA_JOB_ATTRIBUTE,
   MEDIA_KEPT_ATTRIBUTE,
   MEDIA_MADE_BY_ATTRIBUTE,
+  MEDIA_MODEL_ATTRIBUTE,
   MEDIA_TOOL_ATTRIBUTE,
   mediaTagText,
   type MediaTagData,
@@ -215,28 +216,32 @@ describe('mentionPastePlan', () => {
     })
   })
 
-  it('leaves out of a copy the marks that tie an asset to its own conversation, and keeps the rest', () => {
+  // The model mark stays: the copy is the same file, which the same model
+  // made.
+  it('leaves out of a copy the marks that tie an asset to its own conversation, and keeps the rest, also the model mark', () => {
     const marks = (value: string) => [
       { key: IMAGE_TOOL_KEY, value: 'model_invoke' },
       { key: IMAGE_MADE_BY_KEY, value },
       { key: IMAGE_HIDDEN_KEY, value },
       { key: IMAGE_KEPT_KEY, value: KEPT_MARK_VALUE },
     ]
+    const model = { key: IMAGE_MODEL_KEY, value: 'venice/painter' }
     const other = [
       { name: MEDIA_TOOL_ATTRIBUTE, value: 'model_invoke' },
+      { name: MEDIA_MODEL_ATTRIBUTE, value: 'venice/filmer' },
       { name: MEDIA_MADE_BY_ATTRIBUTE, value: 'j-1' },
       { name: MEDIA_HIDDEN_ATTRIBUTE, value: 'j-1' },
       { name: MEDIA_KEPT_ATTRIBUTE, value: KEPT_MARK_VALUE },
       { name: MEDIA_JOB_ATTRIBUTE, value: 'q-1' },
     ]
     const marked: MentionSection[] = [
-      { role: 'agent', text: `${imageMarkdown(DUCK, [{ key: 'id', value: 'a' }, ...marks('j-1'), { key: 'desc', value: 'a duck' }])}\n${clip('b', { src: SAVED_VIDEO, other })}` },
+      { role: 'agent', text: `${imageMarkdown(DUCK, [{ key: 'id', value: 'a' }, ...marks('j-1'), model, { key: 'desc', value: 'a duck' }])}\n${clip('b', { src: SAVED_VIDEO, other })}` },
       { role: 'user', text: 'Edit @a and @b' },
     ]
 
     expect(paste(marked, [{ role: 'user', text: PASTE_PLACE }], 'Edit @a and @b')).toEqual([[
-      imageMarkdown(DUCK, [{ key: 'id', value: 'a' }, { key: 'desc', value: 'a duck' }]),
-      clip('b', { src: SAVED_VIDEO, other: [{ name: MEDIA_JOB_ATTRIBUTE, value: 'q-1' }] }),
+      imageMarkdown(DUCK, [{ key: 'id', value: 'a' }, model, { key: 'desc', value: 'a duck' }]),
+      clip('b', { src: SAVED_VIDEO, other: [{ name: MEDIA_MODEL_ATTRIBUTE, value: 'venice/filmer' }, { name: MEDIA_JOB_ATTRIBUTE, value: 'q-1' }] }),
       'Edit @a and @b',
     ].join('\n')])
   })

@@ -41,6 +41,8 @@ const STYLE_MODEL = { id: 'style-model', name: 'Style Model' }
 const VECTOR_MODEL = { id: 'vector-model', name: 'Vector Model' }
 // Makes only TIFF files, which Dez does not store.
 const SCAN_MODEL = { id: 'scan-model', name: 'Scan Model' }
+// The model mark of an image that the model `modelId` of the mock made.
+const madeBy = (modelId: string) => `model=${ROUTER.id}/${modelId}`
 const IMAGES_PATH = `/${ROUTER.id}/v1/images`
 // The entries of the image list, in the shape of OpenRouter's (2026-11-11).
 const IMAGE_LIST = {
@@ -148,7 +150,7 @@ describe('images of the OpenRouter image API', () => {
     expect(await fs.promises.readFile(file)).toEqual(MADE_PNG)
     await waitForThread(browser, [
       { role: 'user', text: 'Draw a fox' },
-      { role: 'agent', text: `![id=a](${file})` },
+      { role: 'agent', text: `![id=a|${madeBy(FLUX.id)}](${file})` },
       { role: 'user', text: '' },
     ])
     await waitForValue(browser, 'shown image', () => shownImages(browser), [{ alt: name, width: 24, height: 16 }])
@@ -187,7 +189,7 @@ describe('images of the OpenRouter image API', () => {
     const name = await newFileIn(browser, generatedDir(), before)
     await waitForThread(browser, [
       { role: 'user', text: `${references}Mix them` },
-      { role: 'agent', text: `![id=c](${path.join(generatedDir(), name)})` },
+      { role: 'agent', text: `![id=c|${madeBy(FLUX.id)}](${path.join(generatedDir(), name)})` },
       { role: 'user', text: '' },
     ])
     expect(await openToasts(browser, 'warning')).toEqual([])
@@ -221,7 +223,7 @@ describe('images of the OpenRouter image API', () => {
     const name = await newFileIn(browser, generatedDir(), before)
     await waitForThread(browser, [
       { role: 'user', text: `${references}In this style` },
-      { role: 'agent', text: `![id=c](${path.join(generatedDir(), name)})` },
+      { role: 'agent', text: `![id=c|${madeBy(STYLE_MODEL.id)}](${path.join(generatedDir(), name)})` },
       { role: 'user', text: '' },
     ])
     expect(await consoleErrors(browser)).toEqual([])
@@ -247,7 +249,7 @@ describe('images of the OpenRouter image API', () => {
     expect(await fs.promises.readFile(file)).toEqual(MADE_SVG)
     await waitForThread(browser, [
       { role: 'user', text: 'Draw a logo' },
-      { role: 'agent', text: `![id=a](${file})` },
+      { role: 'agent', text: `![id=a|${madeBy(VECTOR_MODEL.id)}](${file})` },
       { role: 'user', text: '' },
     ])
     await waitForValue(browser, 'shown image', () => shownImages(browser), [{ alt: name, width: 40, height: 24 }])

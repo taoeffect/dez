@@ -143,17 +143,17 @@ describe('media player', () => {
     await waitForValue(browser, 'trash', saveLabel, 'Delete the saved file')
   }
 
-  // Waits for the end of a speech reply whose one new file in the temp
-  // folder is a WAV file, and gives that file and the reply's tag with its
-  // expiry.
-  async function speechReply (tempBefore: string[]): Promise<{ tempPath: string, reply: string, expires: string }> {
+  // Waits for the end of a speech reply of `speaker`'s model whose one new
+  // file in the temp folder is a WAV file, and gives that file and the
+  // reply's tag with its expiry.
+  async function speechReply (tempBefore: string[], speaker: MockProvider): Promise<{ tempPath: string, reply: string, expires: string }> {
     await waitForValue(browser, 'sections of the reply', async () => (await threadSections(browser)).map((section) => section.role), ['user', 'agent', 'user'])
     const name = await newFileIn(browser, tempDir(), tempBefore)
     expect(name).toMatch(STORED_WAV_NAME)
     const tempPath = path.join(tempDir(), name)
     const reply = (await threadSections(browser))[1].text
-    const expires = /^<dez:audio id="a" type="audio\/wav" src="[^"]+" expires="([^"]+)"\/>$/.exec(reply)?.[1] ?? ''
-    expect(reply).toBe(clipTag('audio', { id: 'a', type: 'audio/wav', src: tempPath, expires }))
+    const expires = /^<dez:audio id="a" type="audio\/wav" src="[^"]+" expires="([^"]+)" model="[^"]+"\/>$/.exec(reply)?.[1] ?? ''
+    expect(reply).toBe(clipTag('audio', { id: 'a', type: 'audio/wav', src: tempPath, expires, model: `${speaker.id}/${speaker.modelId}` }))
     return { tempPath, reply, expires }
   }
 
@@ -765,7 +765,7 @@ describe('media player', () => {
     // The reply ends after the download, which goes into a `.part` file
     // first. The audio is a temp copy, which stays for 24 hours after the
     // request.
-    const { tempPath, reply, expires } = await speechReply(tempBefore)
+    const { tempPath, reply, expires } = await speechReply(tempBefore, SPEAKER)
     expect(new Date(expires).toISOString()).toBe(expires)
     expect(Date.parse(expires)).toBeGreaterThanOrEqual(sent + 24 * HOUR_MS)
     expect(Date.parse(expires)).toBeLessThanOrEqual(Date.now() + 24 * HOUR_MS)
@@ -816,7 +816,7 @@ describe('media player', () => {
 
     // The samples go into a `.part` file, which is gone when the reply
     // ends: the one new file is the WAV file.
-    const { tempPath } = await speechReply(tempBefore)
+    const { tempPath } = await speechReply(tempBefore, RAW_SPEAKER)
     expect(await fs.promises.readFile(tempPath)).toStrictEqual(monoWav(RAW_SAMPLES, 2))
     await waitForValue(browser, 'player of the reply', () => shownPlayers(browser), [
       { kind: 'audio', id: 'a', available: true, source: 'blob', seconds: 1, picture: null, clock: 'Not saved', save: 'save' },

@@ -8,7 +8,7 @@ import { compactionNotesText, notesLeftOutMessages, notesMessages } from '../mod
 import { sectionVisibleText } from '../model/chat/content'
 import type { ContextSize } from '../model/chat/contextSize'
 import type { DrawnImage, DrawnMediaType, ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
-import { findMediaTags, mediaTagText } from '../model/chat/mediaTags'
+import { findMediaTags } from '../model/chat/mediaTags'
 import { HIDDEN_IMAGE_PATH, hiddenImage, notesData } from '../model/chat/testing'
 import { agentTextForRequest, findToolBlocks } from '../model/chat/toolBlocks'
 import type { ConversationData } from '../model/persistence/types'
@@ -44,6 +44,8 @@ import './thread'
 import './tools'
 
 const model: ActiveModel = { providerId: 'thinker', modelId: 'm', modelName: 'M' }
+// The model mark of an image or a clip that `model` made in its reply.
+const MODEL_MARK = 'thinker/m'
 // The path of a pasted image and of a made image, and a made image.
 const image = (name: string) => `/home/u/.config/dez/assets/images/${name}`
 const generated = (name: string) => `/home/u/.config/dez/assets/generated/images/${name}`
@@ -1497,7 +1499,9 @@ describe('dez.stream/start media round', () => {
   // a job of the provider.
   const speech: GeneratedClip = { kind: 'audio', mediaType: 'audio/mpeg', src: '/home/u/.cache/dez/media/s1.mp3', url: null, expires: EXPIRES, jobId: null }
   const film: GeneratedClip = { kind: 'video', mediaType: 'video/mp4', src: FILM_URL, url: FILM_URL, expires: EXPIRES, jobId: 'q-1' }
-  const speechTag = (id: string) => `<dez:audio id="${id}" type="audio/mpeg" src="${speech.src}" expires="${EXPIRES}"/>`
+  // The tag of `speech`; `made` for one that Dez wrote for the reply, with
+  // its model mark.
+  const speechTag = (id: string, made = false) => `<dez:audio id="${id}" type="audio/mpeg" src="${speech.src}" expires="${EXPIRES}"${made ? ` model="${MODEL_MARK}"` : ''}/>`
   const conversation = (lastUserText = 'Make it red.') => [
     { role: 'user', text: `A fox: ![id=a](${image('fox.png')})` },
     { role: 'agent', text: `![id=b](${generated('old.png')})` },
@@ -1567,7 +1571,7 @@ describe('dez.stream/start media round', () => {
     expect(saves).toStrictEqual([{ folder: 'generated' }, { folder: 'generated' }])
     expect(sectionTexts()).toStrictEqual([
       ...conversation(),
-      { role: 'agent', text: `![id=c](${generated('g1.png')})\n\n![id=d](${generated('g2.png')})` },
+      { role: 'agent', text: `![id=c|model=${MODEL_MARK}](${generated('g1.png')})\n\n![id=d|model=${MODEL_MARK}](${generated('g2.png')})` },
       { role: 'user', text: '' },
     ])
     expect(savedConversations.at(-1)?.sections).toHaveLength(5)
@@ -1737,7 +1741,7 @@ describe('dez.stream/start media round', () => {
     expect(mediaInputs.map((input) => input.signal?.aborted)).toStrictEqual([true, false])
     expect(sectionTexts()).toStrictEqual([
       ...conversation(),
-      { role: 'agent', text: `![id=c](${generated('g1.png')})` },
+      { role: 'agent', text: `![id=c|model=${MODEL_MARK}](${generated('g1.png')})` },
       { role: 'user', text: '' },
     ])
   })
@@ -1783,7 +1787,7 @@ describe('dez.stream/start media round', () => {
 
     expect(sectionTexts()).toStrictEqual([
       ...conversation(),
-      { role: 'agent', text: `<dez:video id="c" type="video/mp4" src="${FILM_URL}" url="${FILM_URL}" expires="${EXPIRES}" job="q-1"/>\n\n${speechTag('d')}` },
+      { role: 'agent', text: `<dez:video id="c" type="video/mp4" src="${FILM_URL}" url="${FILM_URL}" expires="${EXPIRES}" model="${MODEL_MARK}" job="q-1"/>\n\n${speechTag('d', true)}` },
       { role: 'user', text: '' },
     ])
     expect(alerts).toStrictEqual([{ tabId: activeTab().id, status: 'finished' }])
@@ -2133,7 +2137,7 @@ describe('dez.stream/start media round', () => {
 
     await sbp('dez.controller/submitTab', activeTab().id)
 
-    expect(sectionTexts().at(-2)).toStrictEqual({ role: 'agent', text: `My note\n\n${speechTag('c')}` })
+    expect(sectionTexts().at(-2)).toStrictEqual({ role: 'agent', text: `My note\n\n${speechTag('c', true)}` })
   })
 
   it.each([
@@ -2184,7 +2188,7 @@ describe('dez.stream/start media round', () => {
 
     expect(mediaInputs.map(({ kind, prompt, lyrics }) => ({ kind, prompt, lyrics })))
       .toStrictEqual([{ kind: 'music', prompt: 'Slow piano ballad', lyrics: '[Verse]\nRain on the roof' }])
-    expect(sectionTexts().at(-2)).toStrictEqual({ role: 'agent', text: speechTag('c') })
+    expect(sectionTexts().at(-2)).toStrictEqual({ role: 'agent', text: speechTag('c', true) })
   })
 
   it('sends the whole message as the prompt, with no lyrics, when a model that can take lyrics gets none', async () => {
@@ -2239,7 +2243,7 @@ describe('dez.stream/start images of a chat reply', () => {
     ])
   })
 
-  it('saves each image in the generated folder and writes its reference, with a new id, as a paragraph between the text around it', async () => {
+  it('saves each image in the generated folder and writes its reference, with a new id and the model of the reply, as a paragraph between the text around it', async () => {
     streamChat = async (input) => {
       await input.onToken('Two views.')
       await input.onImage(png)
@@ -2252,7 +2256,7 @@ describe('dez.stream/start images of a chat reply', () => {
 
     await startStream()
 
-    const text = `Two views.\n\n![id=b](${generated('g1.png')})\n\n![id=c](${generated('g2.png')})\n\nThe last one:\n\n![id=d](${generated('g3.png')})`
+    const text = `Two views.\n\n![id=b|model=${MODEL_MARK}](${generated('g1.png')})\n\n![id=c|model=${MODEL_MARK}](${generated('g2.png')})\n\nThe last one:\n\n![id=d|model=${MODEL_MARK}](${generated('g3.png')})`
     expect(saves).toStrictEqual([{ folder: 'generated' }, { folder: 'generated' }, { folder: 'generated' }])
     expect(sectionVisibleText(agentSection())).toBe(text)
     expect(editorTokens.join('')).toBe(text)
@@ -2273,7 +2277,7 @@ describe('dez.stream/start images of a chat reply', () => {
 
     await startStream()
 
-    expect(sectionVisibleText(agentSection())).toBe(`See <dez\n\n![id=b](${generated('g1.png')})\n\n:tool id="x" name="y">`)
+    expect(sectionVisibleText(agentSection())).toBe(`See <dez\n\n![id=b|model=${MODEL_MARK}](${generated('g1.png')})\n\n:tool id="x" name="y">`)
     expect(findToolBlocks(sectionVisibleText(agentSection()))).toStrictEqual([])
   })
 
@@ -2317,7 +2321,7 @@ describe('dez.stream/start images of a chat reply', () => {
 
     await startStream()
 
-    expect(sectionVisibleText(agentSection())).toBe(`First. Second.\n\n![id=b](${generated('g2.png')})`)
+    expect(sectionVisibleText(agentSection())).toBe(`First. Second.\n\n![id=b|model=${MODEL_MARK}](${generated('g2.png')})`)
     expect(alerts).toStrictEqual([{ tabId: activeTab().id, status: 'finished' }])
     expect(toasts).toStrictEqual([])
     expect(deletedImages).toStrictEqual([])
@@ -2362,7 +2366,7 @@ describe('dez.stream/start images of a chat reply', () => {
     expect(sectionVisibleText(agentSection())).toBe('Before. Late.')
   })
 
-  it('sends the image of a tool round back as text with no path, and starts no new paragraph after the tool blocks', async () => {
+  it('sends the image of a tool round back as text with no path and no model mark, and starts no new paragraph after the tool blocks', async () => {
     const block = `<dez:tool id="c1" name="model_list" filter="gemini">\n${NO_MODELS_TEXT}\n</dez:tool>\n`
     replyRounds([
       async (input) => {
@@ -2377,9 +2381,10 @@ describe('dez.stream/start images of a chat reply', () => {
 
     await startStream({ sendTools: true })
 
-    expect(sectionVisibleText(agentSection())).toBe(`![id=b](${generated('g1.png')})\n${block}None.`)
+    expect(sectionVisibleText(agentSection())).toBe(`![id=b|model=${MODEL_MARK}](${generated('g1.png')})\n${block}None.`)
     expect(JSON.stringify(sent[1])).toContain('![id=b](image)')
     expect(JSON.stringify(sent[1])).not.toContain('/home/u')
+    expect(JSON.stringify(sent[1])).not.toContain(MODEL_MARK)
   })
 
   // The replay of a round with an image is the provider's signature of
@@ -2394,7 +2399,7 @@ describe('dez.stream/start images of a chat reply', () => {
 
     await startStream()
 
-    expect(sectionVisibleText(agentSection())).toBe(`![id=b](${generated('g1.png')})`)
+    expect(sectionVisibleText(agentSection())).toBe(`![id=b|model=${MODEL_MARK}](${generated('g1.png')})`)
     expect(agentSection().thinking).toBeUndefined()
     expect(savedConversations.at(-1)?.sections[1].thinking).toBeUndefined()
     expect(editorThinking).toStrictEqual([])
@@ -2441,9 +2446,9 @@ describe('dez.stream/start audio of a chat reply', () => {
   // A temp copy of the audio of the answer, as dez.provider/streamChat
   // gives it.
   const song = { kind: 'audio', mediaType: 'audio/mpeg', src: `${CACHE_DIR}/media/song.mp3`, url: null, expires: '2026-12-01T00:00:00.000Z', jobId: null } as const
-  const songTag = (id: string) => mediaTagText({ kind: 'audio', id, type: 'audio/mpeg', src: song.src, url: null, expires: song.expires, other: [] })
+  const songTag = (id: string) => `<dez:audio id="${id}" type="audio/mpeg" src="${song.src}" expires="${song.expires}" model="${MODEL_MARK}"/>`
 
-  it('writes the tag of the clip, with a new id, as a whole line after the answer text', async () => {
+  it('writes the tag of the clip, with a new id and the model of the reply, as a whole line after the answer text', async () => {
     sbp('dez.model/tabs/replaceSections', activeTab().id, [
       { id: 'u1', role: 'user', content: [{ kind: 'text', text: `A fox: ![id=a](${image('fox.png')})` }] },
       { id: 'a1', role: 'agent', content: [{ kind: 'text', text: '' }], model },
@@ -2947,8 +2952,9 @@ describe('dez.stream/start jobs', () => {
   // A `model_invoke` call, which starts a job.
   const invokeCall = (id: string, target = PAINTER) => ({ id, name: 'model_invoke', argumentsText: JSON.stringify({ model: target, prompt: PROMPT }) })
   const fox = generated('fox.png')
-  // The reference of the image of the job of the call `callId`.
-  const foxReference = (callId: string) => `![id=a|tool=model_invoke|made-by=${jobId(callId)}](${fox})`
+  // The reference of the image of the job of the call `callId`, which the
+  // invoked model made.
+  const foxReference = (callId: string) => `![id=a|tool=model_invoke|model=${PAINTER}|made-by=${jobId(callId)}](${fox})`
   // A clip that the provider made as its job `q-17`, in a temp copy.
   const run: GeneratedClip = { kind: 'video', mediaType: 'video/mp4', src: '/home/u/.cache/dez/media/run.mp4', url: null, expires: '2026-12-01T00:00:00.000Z', jobId: 'q-17' }
   // The requests of the jobs, in the order of the starts: the signal of
@@ -3059,7 +3065,7 @@ describe('dez.stream/start jobs', () => {
     jobs[0].end({ media: [], clips: [run] })
     await stream
 
-    const tag = `<dez:video id="a" type="video/mp4" src="${run.src}" expires="${run.expires}" tool="model_invoke" job="q-17" made-by="${jobId('c1')}"/>`
+    const tag = `<dez:video id="a" type="video/mp4" src="${run.src}" expires="${run.expires}" tool="model_invoke" model="${FILMER}" job="q-17" made-by="${jobId('c1')}"/>`
     expect(sectionTexts()).toStrictEqual([
       { role: 'user', text: 'Hi' },
       { role: 'agent', text: `${invokeBlock('c1', FILMER)}I started it.\n\n${tag}` },
@@ -3096,8 +3102,8 @@ describe('dez.stream/start jobs', () => {
     expect(callResult('c3')).toBe(jobsWaitText([{ id: jobId('c1'), tool: 'model_invoke', status: 'finished', text: 'Made the image @a.', call: { number: 1, label: PROMPT } }], 1))
     const text = sectionVisibleText(agentSection())
     expect(text.slice(text.lastIndexOf('</dez:tool>\n'))).toBe(
-      `</dez:tool>\n\n![id=a|tool=model_invoke|made-by=${jobId('c1')}|hidden=${jobId('c1')}](${fox})\n\nDone.\n\n`
-      + `<dez:video id="b" type="video/mp4" src="${run.src}" expires="${run.expires}" tool="model_invoke" job="q-17" made-by="${jobId('c2')}" hidden="${jobId('c2')}"/>`,
+      `</dez:tool>\n\n![id=a|tool=model_invoke|model=${PAINTER}|made-by=${jobId('c1')}|hidden=${jobId('c1')}](${fox})\n\nDone.\n\n`
+      + `<dez:video id="b" type="video/mp4" src="${run.src}" expires="${run.expires}" tool="model_invoke" model="${FILMER}" job="q-17" made-by="${jobId('c2')}" hidden="${jobId('c2')}"/>`,
     )
     expect(toasts).toStrictEqual([])
   })
@@ -3196,7 +3202,7 @@ describe('dez.stream/start jobs', () => {
       { id: second, tool: 'model_invoke', status: 'finished', text: 'Made the image @b.', call: { number: 2, label: PROMPT } },
     ], 0))
     expect(sectionVisibleText(agentSection('a2'))).toContain(`made-by="${first}"/>`)
-    expect(sectionVisibleText(agentSection('a2'))).toContain(`![id=b|tool=model_invoke|made-by=${second}](${fox})`)
+    expect(sectionVisibleText(agentSection('a2'))).toContain(`![id=b|tool=model_invoke|model=${PAINTER}|made-by=${second}](${fox})`)
     expect(sectionVisibleText(agentSection('a1'))).toBe(invokeBlock('c1', FILMER))
     expect(toasts).toStrictEqual([])
   })
@@ -3436,7 +3442,7 @@ describe('dez.stream/start jobs', () => {
 
     expect(callResult('c1')).toBe('')
     expect(callResult('c2')).toBe(jobsWaitText([{ id: startedId, tool: 'model_invoke', status: 'finished', text: 'Made the image @a.', call: { number: 1, label: PROMPT } }], 0))
-    expect(sectionVisibleText(agentSection())).toContain(`![id=a|tool=model_invoke|made-by=${startedId}](${fox})`)
+    expect(sectionVisibleText(agentSection())).toContain(`![id=a|tool=model_invoke|model=${PAINTER}|made-by=${startedId}](${fox})`)
     // The notes tell the model of the job that still ran.
     expect(sectionVisibleText(activeTab().sections[0])).toContain(startedId)
     expect(toasts).toStrictEqual([])
@@ -3630,7 +3636,7 @@ describe('dez.stream/start compaction', () => {
 
     await startStream({ sendTools: true })
 
-    expect(sectionVisibleText(activeTab().sections[0]).slice(blockEnd())).toBe(`\n![id=a](${generated('g1.png')})\n\nHere.`)
+    expect(sectionVisibleText(activeTab().sections[0]).slice(blockEnd())).toBe(`\n![id=a|model=${MODEL_MARK}](${generated('g1.png')})\n\nHere.`)
   })
 
   // The notes hold the message of the user, so the section stays, and the

@@ -178,8 +178,9 @@ describe('music models', () => {
 
     const queue = await takeRequest(setup, QUEUE_PATH, { model: LYRICS_MODEL.id, prompt: STYLE, lyrics_prompt: LYRICS })
     const reply = await answerVeniceJob(setup, queue, { retrievePath: RETRIEVE_PATH, modelId: LYRICS_MODEL.id, queueId: 'queue-1', clip: { type: 'audio/wav', bytes: TONE }, replyIndex: 1 })
-    // The tag keeps the id of the job, the only way back to a paid clip.
-    expect(reply).toMatch(/^<dez:audio id="a" type="audio\/wav" src="[^"]+\.wav" expires="[^"]+" job="queue-1"\/>$/)
+    // The tag keeps the id of the job, the only way back to a paid clip, and
+    // the model that made the clip.
+    expect(reply).toMatch(/^<dez:audio id="a" type="audio\/wav" src="[^"]+\.wav" expires="[^"]+" model="songs\/lyrics-model" job="queue-1"\/>$/)
     await waitForThread(browser, [
       { role: 'user', text: message },
       { role: 'agent', text: reply },

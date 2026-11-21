@@ -183,8 +183,9 @@ describe('image-to-video models', () => {
     })
     const clip = await answerJob(queue, 'queue-1', 1)
 
-    // The tag keeps the id of the job, the only way back to a paid clip.
-    expect(clip).toMatch(/^<dez:video id="b" type="video\/webm" src="[^"]+\.webm" expires="[^"]+" job="queue-1"\/>$/)
+    // The tag keeps the id of the job, the only way back to a paid clip, and
+    // the model that made the clip.
+    expect(clip).toMatch(/^<dez:video id="b" type="video\/webm" src="[^"]+\.webm" expires="[^"]+" model="films\/frames-model" job="queue-1"\/>$/)
     const first = [{ role: 'user', text: message }, { role: 'agent', text: clip }]
     await waitForThread(browser, [...first, { role: 'user', text: '' }])
     await waitForValue(browser, 'player of the video', () => shownPlayers(browser), [
@@ -197,7 +198,7 @@ describe('image-to-video models', () => {
     const next = await queueRequest({ prompt: 'Now it jumps.', duration: '5s', resolution: '480p', audio: true, image_url: pngDataUrl(FIRST_PNG) })
     const nextClip = await answerJob(next, 'queue-2', 3)
 
-    expect(nextClip).toMatch(/^<dez:video id="c" type="video\/webm" src="[^"]+\.webm" expires="[^"]+" job="queue-2"\/>$/)
+    expect(nextClip).toMatch(/^<dez:video id="c" type="video\/webm" src="[^"]+\.webm" expires="[^"]+" model="films\/frames-model" job="queue-2"\/>$/)
     await waitForThread(browser, [...first, { role: 'user', text: 'Now it jumps.' }, { role: 'agent', text: nextClip }, { role: 'user', text: '' }])
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
@@ -245,7 +246,7 @@ describe('image-to-video models', () => {
       title: 'Image not sent',
       message: `${FILMS.modelName} takes only 2 images, so 1 image was left out of the request.`,
     }])
-    expect(await answerJob(queue, 'queue-3', 1)).toMatch(/^<dez:video id="d" type="video\/webm" src="[^"]+\.webm" expires="[^"]+" job="queue-3"\/>$/)
+    expect(await answerJob(queue, 'queue-3', 1)).toMatch(/^<dez:video id="d" type="video\/webm" src="[^"]+\.webm" expires="[^"]+" model="films\/frames-model" job="queue-3"\/>$/)
 
     // The other tests send the default of the switch.
     await openPopup(browser)
@@ -331,7 +332,7 @@ describe('image-to-video models', () => {
     })
 
     const clip = await answerJob(queue, 'queue-4', 1)
-    expect(clip).toMatch(/^<dez:video id="b" type="video\/webm" src="[^"]+\.webm" expires="[^"]+" job="queue-4"\/>$/)
+    expect(clip).toMatch(/^<dez:video id="b" type="video\/webm" src="[^"]+\.webm" expires="[^"]+" model="films\/frames-model" job="queue-4"\/>$/)
     await waitForThread(browser, [{ role: 'user', text: message }, { role: 'agent', text: clip }, { role: 'user', text: '' }])
     const storedPath = referencePath(message)
     expect(await fs.promises.readFile(storedPath)).toStrictEqual(WIDE_PNG)
@@ -358,7 +359,7 @@ describe('image-to-video models', () => {
     })
     const clip = await answerJob(queue, 'queue-5', 1, REFERENCES.id)
 
-    expect(clip).toMatch(/^<dez:video id="d" type="video\/webm" src="[^"]+\.webm" expires="[^"]+" job="queue-5"\/>$/)
+    expect(clip).toMatch(/^<dez:video id="d" type="video\/webm" src="[^"]+\.webm" expires="[^"]+" model="films\/grok-imagine-reference-to-video-mock" job="queue-5"\/>$/)
     // The message keeps its references and its mention.
     await waitForThread(browser, [{ role: 'user', text: message }, { role: 'agent', text: clip }, { role: 'user', text: '' }])
     expect(message).toMatch(/^The fox !\[id=a\]\([^)]+\) meets the bird !\[id=b\]\([^)]+\) in the park !\[id=c\]\([^)]+\)\. Keep @a in front\.$/)

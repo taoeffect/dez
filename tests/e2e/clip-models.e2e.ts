@@ -159,7 +159,7 @@ describe('models that change or write down a clip', () => {
     ])
     const reply = await answerVeniceJob(setup, queue, { retrievePath: VOICE_RETRIEVE_PATH, modelId: VOICE.id, queueId: 'job-1', clip: { type: 'audio/wav', bytes: silentWav(2) }, replyIndex: 3 })
 
-    expect(reply).toMatch(/^<dez:audio id="b" type="audio\/wav" src="[^"]+\.wav" expires="[^"]+" job="job-1"\/>$/)
+    expect(reply).toMatch(/^<dez:audio id="b" type="audio\/wav" src="[^"]+\.wav" expires="[^"]+" model="clipmodels\/elevenlabs-voice-changer" job="job-1"\/>$/)
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 
@@ -220,7 +220,7 @@ describe('models that change or write down a clip', () => {
     })
     const reply = await answerVeniceJob(setup, queue, { retrievePath: VIDEO_RETRIEVE_PATH, modelId: EDIT.id, queueId: 'job-1', clip: { type: 'video/webm', bytes: WEBM_VIDEO }, replyIndex: 3 })
 
-    expect(reply).toMatch(/^<dez:video id="b" type="video\/webm" src="[^"]+\.webm" expires="[^"]+" job="job-1"\/>$/)
+    expect(reply).toMatch(/^<dez:video id="b" type="video\/webm" src="[^"]+\.webm" expires="[^"]+" model="clipmodels\/wan-2-7-video-to-video" job="job-1"\/>$/)
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 

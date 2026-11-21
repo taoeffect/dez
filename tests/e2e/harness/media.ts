@@ -113,9 +113,10 @@ export async function startClipServer (clips: Readonly<Record<string, ServedClip
 export type ClipKind = 'audio' | 'video'
 
 /** The text of a media tag, written out here so that the specs do not take
- *  the format from the code under test. No value needs an escape. */
-export function clipTag (kind: ClipKind, fields: { id: string, type: string, src?: string, url?: string, expires?: string }): string {
-  const attributes = (['id', 'type', 'src', 'url', 'expires'] as const)
+ *  the format from the code under test. No value needs an escape. `model`
+ *  is the mark of the model that made the clip (`providerId/modelId`). */
+export function clipTag (kind: ClipKind, fields: { id: string, type: string, src?: string, url?: string, expires?: string, model?: string }): string {
+  const attributes = (['id', 'type', 'src', 'url', 'expires', 'model'] as const)
     .flatMap((name) => fields[name] === undefined ? [] : [` ${name}="${fields[name]}"`])
   return `<dez:${kind}${attributes.join('')}/>`
 }

@@ -19,6 +19,7 @@ describe('withoutStoredFilePaths', () => {
     ['a home folder with spaces, parentheses, and non-ASCII names', '![id=a](</Users/Zoë Ann (work)/.config/dez/assets/images/x_1-2.webp>)', '![id=a](image)'],
     ['a path in <…> that needs none', `![id=a](<${PNG}>)`, '![id=a](image)'],
     ['a generated image', `![id=b](${GENERATED})`, '![id=b](image)'],
+    ['items that are not the model mark but hold its key', `![id=a|desc=model=x|models=2](${PNG})`, '![id=a|desc=model=x|models=2](image)'],
   ])('sends a reference with %s as ](image) and its metadata as it is', (_case, text, sent) => {
     expect(withoutStoredFilePaths(text)).toBe(sent)
   })
@@ -35,6 +36,20 @@ describe('withoutStoredFilePaths', () => {
     ['a bare generated path', `see ${GENERATED} now`, 'see image now'],
     ['a bare path of a copy of a shown picture', 'see /home/ann/.config/dez/assets/generated/views/0c4e7a51-9b2d-4f6a-8e13-5d7c9a2b4f60.jpg now', 'see image now'],
   ])('takes the path out of %s', (_case, text, sent) => {
+    expect(withoutStoredFilePaths(text)).toBe(sent)
+  })
+
+  // The model mark is for the view only (assetModels.ts): a request sends
+  // the bytes of the reference with no mark.
+  it.each([
+    ['a reference of a reply', `![id=a|model=openai/gpt-image-1](${GENERATED})`, '![id=a](image)'],
+    ['a reference of a job, whose other marks stay in their order', `![id=b|tool=model_invoke|model=venice/painter|made-by=j-k3x9|hidden=j-k3x9](${GENERATED})`, '![id=b|tool=model_invoke|made-by=j-k3x9|hidden=j-k3x9](image)'],
+    ['a reference with only the mark', `![model=openai/gpt-image-1](${PNG})`, '![](image)'],
+    ['a mark with an escaped char', String.raw`![model=a/b\|c|id=a](${PNG})`, '![id=a](image)'],
+    ['a linked image in <…>', '![id=a|model=x/y](</home/ann/My photo.png>)', '![id=a](image)'],
+    ['the source that the Backspace rule leaves', `![id=a|model=openai/gpt-image-1](${PNG.slice(0, -1)}`, '![id=a](image'],
+    ['the source of a path in <…> that the Backspace rule leaves', '![id=a|model=x/y](</Users/Zoë Ann/.config/dez/assets/images/x.png> more', '![id=a](image more'],
+  ])('leaves the model mark out of %s', (_case, text, sent) => {
     expect(withoutStoredFilePaths(text)).toBe(sent)
   })
 

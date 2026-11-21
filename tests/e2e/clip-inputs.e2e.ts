@@ -186,7 +186,7 @@ describe('clips that a message names', () => {
     const clip = await answerJob(queue, 'queue-1', 3, REFERENCES.id)
 
     // The message keeps its mentions; the new clip gets the next id.
-    expect(clip).toMatch(/^<dez:video id="d" type="video\/webm" src="[^"]+\.webm" expires="[^"]+" job="queue-1"\/>$/)
+    expect(clip).toMatch(/^<dez:video id="d" type="video\/webm" src="[^"]+\.webm" expires="[^"]+" model="clipfilms\/seedance-2-0-reference-to-video-mock" job="queue-1"\/>$/)
     await waitForThread(browser, [
       { role: 'user', text: 'Make clips' },
       { role: 'agent', text: `${beat}\n\n${dance}` },
@@ -242,7 +242,7 @@ describe('clips that a message names', () => {
       reference_audio_urls: [`data:audio/wav;base64,${BEAT.toString('base64')}`],
     })
     const clip = await answerJob(queue, 'queue-drop', 1, REFERENCES.id)
-    expect(clip).toMatch(/^<dez:video id="d" type="video\/webm" src="[^"]+\.webm" expires="[^"]+" job="queue-drop"\/>$/)
+    expect(clip).toMatch(/^<dez:video id="d" type="video\/webm" src="[^"]+\.webm" expires="[^"]+" model="clipfilms\/seedance-2-0-reference-to-video-mock" job="queue-drop"\/>$/)
     await waitForThread(browser, [
       { role: 'user', text: message },
       { role: 'agent', text: clip },
@@ -368,7 +368,7 @@ describe('clips that a message names', () => {
       title: 'Clips not sent',
       message: `${FILMS.modelName} takes no clip, so 2 clips were left out of the request.`,
     }])
-    expect(await answerJob(queue, 'queue-2', 3, FILMS.modelId)).toMatch(/^<dez:video id="d" type="video\/webm" src="[^"]+\.webm" expires="[^"]+" job="queue-2"\/>$/)
+    expect(await answerJob(queue, 'queue-2', 3, FILMS.modelId)).toMatch(/^<dez:video id="d" type="video\/webm" src="[^"]+\.webm" expires="[^"]+" model="clipfilms\/frames-model" job="queue-2"\/>$/)
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 

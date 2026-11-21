@@ -65,27 +65,30 @@ export interface ToolRunContext {
   /** Writes the reference of a stored image that the tool made into the
    *  reply, with a new image id, and returns that id. The reference names
    *  the tool of the call, or `tool` (the `jobs_wait` runner writes what
-   *  the job of another tool made). `madeBy` is the id of the Dez job that
-   *  made the image (`IMAGE_MADE_BY_KEY`), which `asset_info` reads.
-   *  `hidden` is the id of the Dez job that made the image as a part of its
-   *  work: the reference keeps it (`IMAGE_HIDDEN_KEY`), and the editor shows
-   *  the image under the chip of that job's call. Null when the reply takes
-   *  no image any more (a stop ended the tool round): the runner then
-   *  deletes the file.
+   *  the job of another tool made). `model` is the model that made the
+   *  image for the tool (`model_invoke`), which the reference keeps as its
+   *  model mark (`imageModelMark`, chat/assetModels.ts). `madeBy` is the id
+   *  of the Dez job that made the image (`IMAGE_MADE_BY_KEY`), which
+   *  `asset_info` reads. `hidden` is the id of the Dez job that made the
+   *  image as a part of its work: the reference keeps it
+   *  (`IMAGE_HIDDEN_KEY`), and the editor shows the image under the chip
+   *  of that job's call. Null when the reply takes no image any more (a
+   *  stop ended the tool round): the runner then deletes the file.
    *
    *  The result of the call must name the new id with `madeAssetText`
    *  (tools/jobs.ts): a request sends that result and not the reference,
    *  so only the result tells the model of the image. */
-  writeImage(path: string, options?: { tool?: string, madeBy?: string, hidden?: string }): string | null
+  writeImage(path: string, options?: { tool?: string, model?: ModelRef, madeBy?: string, hidden?: string }): string | null
   /** Writes the tag of a clip that the tool made into the reply, with a new
    *  media id and the tool's name (`tool`, as for `writeImage`), and
    *  returns that id. `jobId` is the provider's id of the job that made
-   *  the clip, which the tag keeps (`MEDIA_JOB_ATTRIBUTE`); `madeBy` and
-   *  `hidden` are as for `writeImage` (`MEDIA_MADE_BY_ATTRIBUTE`,
-   *  `MEDIA_HIDDEN_ATTRIBUTE`). Null when the reply takes no clip any more
-   *  (a stop ended the tool round): the runner then deletes the file. The
-   *  result of the call must name the new id, as for `writeImage`. */
-  writeClip(clip: Omit<MediaTagData, 'id' | 'other'>, options?: { tool?: string, jobId?: string, madeBy?: string, hidden?: string }): string | null
+   *  the clip, which the tag keeps (`MEDIA_JOB_ATTRIBUTE`); `model`,
+   *  `madeBy`, and `hidden` are as for `writeImage` (`clipModelMark`,
+   *  `MEDIA_MADE_BY_ATTRIBUTE`, `MEDIA_HIDDEN_ATTRIBUTE`). Null when the
+   *  reply takes no clip any more (a stop ended the tool round): the
+   *  runner then deletes the file. The result of the call must name the
+   *  new id, as for `writeImage`. */
+  writeClip(clip: Omit<MediaTagData, 'id' | 'other'>, options?: { tool?: string, model?: ModelRef, jobId?: string, madeBy?: string, hidden?: string }): string | null
   /** Writes the tag of the app `name` into the reply (`<dez:app>`,
    *  chat/appTags.ts), after the blocks of the calls, as the writers above
    *  write an asset. False when the reply takes no text any more (a stop
@@ -416,7 +419,8 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // that the model reads: the job only marks its images and clips as
   // hidden (`hidesAssets`), and the editor shows them under the chip of
   // this call. The same holds for `join_clips` and `ffmpeg` of `video`,
-  // and for `invoke` of `apps`.
+  // and for `invoke` of `apps`. The images and the clips of the job keep
+  // the invoked model as their model mark (chat/assetModels.ts).
   async model_invoke (args, callSignal, context) {
     const providers = await sbp('dez.provider/infos') as ProviderInfo[]
     const { modelParameters, providerSettings } = sbp('dez.model/settings/snapshot') as SettingsSnapshot
@@ -430,6 +434,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     return startJob(context, callSignal, MODEL_INVOKE_TOOL.name, (signal, report, reportCost, keepAsset) => invokeModel(invocation, context.tabId, signal, report, reportCost, keepAsset, { toolsAllowed: false }), {
       timeoutMs: invocation.timeoutMs,
       hidesAssets: isIntermediate(args),
+      model: { providerId: invocation.provider.id, modelId: invocation.model.id },
       label: invocationLabel(args),
     }, invocationInputsText(invocation.inputs))
   },

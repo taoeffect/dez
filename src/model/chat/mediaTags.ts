@@ -34,10 +34,11 @@ import { IMAGE_ID_SOURCE, KEPT_MARK_VALUE, linkedPathCounts, type LinkedPathRule
 //   - `expires`: the ISO time after which the source that is not saved (the
 //     URL, or the temp copy) stops working.
 //   - Any other attribute is metadata that the tag code does not read, as
-//     the marks of the work of a tool (`tool`, `job`, `made-by`, `hidden`)
-//     and the mark of a compaction (`kept`): the constants below. A
-//     rewrite (read a tag, change fields, write it) keeps it, after the
-//     known attributes and in its order.
+//     the marks of the work of a tool (`tool`, `job`, `made-by`, `hidden`),
+//     the mark of the model that made the clip (`model`), and the mark of a
+//     compaction (`kept`): the constants below. A rewrite (read a tag,
+//     change fields, write it) keeps it, after the known attributes and in
+//     its order.
 // - Tags count in every section, and callers find them in one section at a
 //   time. A tag in a user section comes from a paste or a drop of a clip
 //   file. A linked `src` counts only where the user put it
@@ -173,6 +174,14 @@ export interface MediaTagData {
  *  is the name of the tool. It is in an agent section, but it is no part of
  *  what the model wrote, as `IMAGE_TOOL_KEY` (images.ts) for an image. */
 export const MEDIA_TOOL_ATTRIBUTE = 'tool'
+
+/** The attribute of a clip that a model made, as in
+ *  `<dez:audio id="c" type="audio/wav" src="…" model="openai/gpt-audio"/>`
+ *  for a clip of a reply, as `IMAGE_MODEL_KEY` (images.ts) for an image;
+ *  its value is the `modelRefKey` of that model (assetModels.ts). A request
+ *  leaves it out, as every attribute of a tag other than `id` and `type`
+ *  (`mediaTagRequestText`). */
+export const MEDIA_MODEL_ATTRIBUTE = 'model'
 
 /** The attribute of a clip that a provider made as a job, as in
  *  `<dez:video id="b" type="video/mp4" src="…" job="q-1"/>`; its value is
