@@ -110,7 +110,9 @@ describe('Help panel', () => {
 
   it('opens from the ? button on General, keeps the editor focus, switches pages, and closes on Esc', async () => {
     // The seed leaves `incognitoOption` off: no incognito mask next to the
-    // ? button.
+    // ? button. The store default is off too, so first wait for a seeded
+    // value that is not its default: then the check reads the loaded file.
+    await waitForValue(browser, 'seeded settings', async () => (await sbpCall(browser, 'dez.model/settings/snapshot') as { checkForUpdates: boolean }).checkForUpdates, false)
     expect(await browser.execute(() => document.querySelector('.bottom-bar-end .incognito-button') !== null)).toBe(false)
     await focusEditor(browser)
     await openWithButton()
