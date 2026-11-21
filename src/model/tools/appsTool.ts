@@ -655,6 +655,14 @@ export function readCall(args: SubcommandArguments): ReadCall {
   return { path, fromLine, toLine }
 }
 
+/** A size over `limit` and the limit, as texts for a refusal. They are byte
+ *  counts when the rounded sizes read the same (2 MiB and 1 byte reads
+ *  `2.0 MB`), so that the model sees by how much the size is over. */
+function overLimitSizes(bytes: number, limit: number): [string, string] {
+  const [size, most] = [byteSizeText(bytes), byteSizeText(limit)]
+  return size === most ? [`${countText(bytes)} bytes`, `${countText(limit)} bytes`] : [size, most]
+}
+
 /** Throws unless a file that `read` and `edit` take is at `path`: a plain
  *  file of at most `APPS_MAX_FILE_BYTES`. */
 export function checkTextFile(path: AppsPath, facts: PathFacts): void {
@@ -664,7 +672,8 @@ export function checkTextFile(path: AppsPath, facts: PathFacts): void {
   if (facts.kind === 'folder') throw new ToolError(`${path.virtual} is a folder, not a file. Call ls to see what is in it.`)
   if (facts.kind === 'other') throw new ToolError(`${path.virtual} is ${OTHER_KIND}, and the apps tool opens plain files only.`)
   if (facts.size > APPS_MAX_FILE_BYTES) {
-    throw new ToolError(`${path.virtual} has ${byteSizeText(facts.size)}, and the apps tool reads and edits a file of at most ${FILE_LIMIT}.`)
+    const [size, limit] = overLimitSizes(facts.size, APPS_MAX_FILE_BYTES)
+    throw new ToolError(`${path.virtual} has ${size}, and the apps tool reads and edits a file of at most ${limit}.`)
   }
 }
 
@@ -738,7 +747,8 @@ export function writeCall(args: SubcommandArguments): WriteCall {
   const content = textArgument(args, 'content')
   const bytes = new TextEncoder().encode(content)
   if (bytes.length > APPS_MAX_FILE_BYTES) {
-    throw new ToolError(`\`content\` has ${byteSizeText(bytes.length)}, and a file is at most ${FILE_LIMIT}. Write a smaller file, or put the text into more files.`)
+    const [size, limit] = overLimitSizes(bytes.length, APPS_MAX_FILE_BYTES)
+    throw new ToolError(`\`content\` has ${size}, and a file is at most ${limit}. Write a smaller file, or put the text into more files.`)
   }
   return { path, bytes, lines: textLines(content).length }
 }
@@ -831,7 +841,8 @@ export function editResult({ path, edits }: EditCall, text: string): { content: 
 
   const bytes = new TextEncoder().encode(linesText(plan.lines, text === '' || text.endsWith('\n')))
   if (bytes.length > APPS_MAX_FILE_BYTES) {
-    throw new ToolError(`With these edits ${path.virtual} would have ${byteSizeText(bytes.length)}, and a file is at most ${FILE_LIMIT}. Dez did not change the file.`)
+    const [size, limit] = overLimitSizes(bytes.length, APPS_MAX_FILE_BYTES)
+    throw new ToolError(`With these edits ${path.virtual} would have ${size}, and a file is at most ${limit}. Dez did not change the file.`)
   }
   const content = [
     `Edited ${path.virtual}: ${passed} of ${countOf(edits.length, 'edit')} done. The file had ${countOf(before.length, 'line')}, and it has ${countText(plan.lines.length)} now.`,
@@ -884,13 +895,14 @@ export function rmStep(path: AppsPath, tree: AppsTree): { folder: boolean, text:
 
   const below = tree.entries.map((entry) => `${path.virtual}/${shownEntryPath(entry.path)}${entry.kind === 'folder' ? '/' : ''}`).sort()
   const rest = below.length - RM_MAX_SHOWN_PATHS
-  const more = tree.more ? 'more than ' : ''
+  // A cut listing (`tree.more`) holds only a part of the folder.
+  const count = tree.more ? `more than ${countText(below.length)}` : `the ${countText(below.length)}`
   return {
     folder: true,
     text: [
-      `Deleted the folder ${path.virtual} with the ${more}${countText(below.length)} files and folders in it (${appSizeText(appSize(tree))}):`,
+      `Deleted the folder ${path.virtual} with ${count} files and folders in it (${appSizeText(appSize(tree))}):`,
       ...below.slice(0, RM_MAX_SHOWN_PATHS),
-      ...(rest > 0 ? [`… and ${more}${countText(rest)} more.`] : []),
+      ...(rest > 0 ? [tree.more ? `… and more than ${countText(rest)} others.` : `… and ${countText(rest)} more.`] : []),
     ].join('\n'),
   }
 }

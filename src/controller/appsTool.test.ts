@@ -121,7 +121,7 @@ describe('apps read', () => {
     const files = fakeAppFiles(appFiles('notes', { data: null }))
     files.set('apps/notes/big.txt', new Uint8Array(APPS_MAX_FILE_BYTES + 1).fill(0x61))
 
-    expect((await apps('read', { path: '/apps/notes/big.txt' })).content).toContain('the apps tool reads and edits a file of at most 2.0 MB')
+    expect((await apps('read', { path: '/apps/notes/big.txt' })).content).toContain('the apps tool reads and edits a file of at most 2,097,152 bytes')
     expect((await apps('read', { path: '/apps/notes/data' })).content).toContain('/apps/notes/data is a folder, not a file.')
     expect((await apps('read', { path: '/apps/notes/gone.txt' })).content).toContain('There is no file /apps/notes/gone.txt.')
     expect(native.readFiles).toStrictEqual([])

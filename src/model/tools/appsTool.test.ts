@@ -310,7 +310,8 @@ describe('read', () => {
     expect(refusal(() => checkTextFile(path, MISSING))).toBe('There is no file /apps/notes/main.js. Call ls to see the files of its folder, as in {"path": "/apps/notes"}.')
     expect(refusal(() => checkTextFile(path, FOLDER))).toBe('/apps/notes/main.js is a folder, not a file. Call ls to see what is in it.')
     expect(refusal(() => checkTextFile(path, { kind: 'other', size: 0 }))).toContain('the apps tool opens plain files only')
-    expect(refusal(() => checkTextFile(path, file(APPS_MAX_FILE_BYTES + 1)))).toBe('/apps/notes/main.js has 2.0 MB, and the apps tool reads and edits a file of at most 2.0 MB.')
+    expect(refusal(() => checkTextFile(path, file(APPS_MAX_FILE_BYTES + 1)))).toBe('/apps/notes/main.js has 2,097,153 bytes, and the apps tool reads and edits a file of at most 2,097,152 bytes.')
+    expect(refusal(() => checkTextFile(path, file(3 * APPS_MAX_FILE_BYTES)))).toBe('/apps/notes/main.js has 6.0 MB, and the apps tool reads and edits a file of at most 2.0 MB.')
   })
 
   it('refuses a file that is no text', () => {
@@ -320,7 +321,7 @@ describe('read', () => {
     expect(refusal(() => fileText(path, new Uint8Array([0x61, 0x00, 0x62])))).toBe(noText)
     expect(refusal(() => fileText(path, new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0xff])))).toBe(noText)
     // A file that grew after its size check.
-    expect(refusal(() => fileText(path, new Uint8Array(APPS_MAX_FILE_BYTES + 1).fill(0x61)))).toContain('reads and edits a file of at most 2.0 MB')
+    expect(refusal(() => fileText(path, new Uint8Array(APPS_MAX_FILE_BYTES + 1).fill(0x61)))).toContain('reads and edits a file of at most 2,097,152 bytes')
   })
 
   it('keeps a byte order mark, so that an edit writes it back', () => {
@@ -345,7 +346,7 @@ describe('write', () => {
 
   it('refuses a text of more than 2 MiB', () => {
     expect(() => write('/apps/notes/a.txt', 'a'.repeat(APPS_MAX_FILE_BYTES))).not.toThrow()
-    expect(refusal(() => write('/apps/notes/a.txt', 'a'.repeat(APPS_MAX_FILE_BYTES + 1)))).toContain('`content` has 2.0 MB, and a file is at most 2.0 MB.')
+    expect(refusal(() => write('/apps/notes/a.txt', 'a'.repeat(APPS_MAX_FILE_BYTES + 1)))).toContain('`content` has 2,097,153 bytes, and a file is at most 2,097,152 bytes.')
   })
 
   it('takes the path of a file in an app only, with no name that Dez would hide', () => {
@@ -454,7 +455,7 @@ describe('edit', () => {
 
     expect(() => editResult(edit([{ from_line: 1, text: long }]), 'a\n')).not.toThrow()
     expect(refusal(() => editResult(edit([{ after_line: 1, text: long }, { after_line: 1, text: 'b'.repeat(10) }]), 'a\n')))
-      .toBe('With these edits /apps/notes/main.js would have 2.0 MB, and a file is at most 2.0 MB. Dez did not change the file.')
+      .toBe('With these edits /apps/notes/main.js would have 2,097,156 bytes, and a file is at most 2,097,152 bytes. Dez did not change the file.')
   })
 
   it('cuts a long diff, and still writes the whole file', () => {
@@ -513,8 +514,8 @@ describe('rm', () => {
     expect(lines.at(-1)).toBe('… and 30 more.')
 
     const cut = rmStep(path, { ...filled(120), more: true }).text.split('\n')
-    expect(cut[0]).toBe('Deleted the folder /apps/notes/old with the more than 120 files and folders in it (more than 120 B):')
-    expect(cut.at(-1)).toBe('… and more than 20 more.')
+    expect(cut[0]).toBe('Deleted the folder /apps/notes/old with more than 120 files and folders in it (more than 120 B):')
+    expect(cut.at(-1)).toBe('… and more than 20 others.')
     expect(rmStep(path, { ...filled(3), more: true }).text.split('\n')).toHaveLength(4)
   })
 
