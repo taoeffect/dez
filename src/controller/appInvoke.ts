@@ -33,7 +33,7 @@ import { factsOf, readableManifestBytes } from './appsTool'
 import { discardMadeAssets, type JobOutcome, type MadeAsset } from './jobs'
 import { moduleRun, writeRunFiles } from './jsEval'
 import type { BundledToolInput, FileTree } from './nativeTypes'
-import { clipInputFile, folderPathForms, imageFileInput, inWorkFolder, runProgram } from './programRuns'
+import { clipInputFile, folderPathForms, imageInputAsIs, inWorkFolder, runProgram } from './programRuns'
 
 // The run of an `apps invoke` call (model/tools/appInvoke.ts), as a job of
 // the reply. This module registers no selector: the `invoke` runner
@@ -87,7 +87,7 @@ async function inputCopies(inputs: readonly AppInput[], folder: string, signal: 
   const copies: BundledToolInput[] = []
   for (const input of inputs) {
     signal.throwIfAborted()
-    const copy = input.kind === 'image' ? await imageFileInput(input) : await clipInputFile(input, folder, signal, APPS_TOOL.name)
+    const copy = input.kind === 'image' ? await imageInputAsIs(input) : await clipInputFile(input, folder, signal, APPS_TOOL.name)
     if (copy) copies.push(copy)
   }
   signal.throwIfAborted()

@@ -139,9 +139,9 @@ function misplacedParameterText(tool: AnyTool, key: string, values: Readonly<Rec
 // none, so only `help` gives the details of every subcommand; the shortcut
 // call is told only with a subcommand that needs parameters.
 function detailsText(tool: AnyTool): string {
-  const needy = tool.subcommands.find(needsParameters)
-  const shortcut = needy
-    ? `, or call a subcommand that needs parameters with none, as in ${JSON.stringify({ command: needy.name })}`
+  const withRequiredParameters = tool.subcommands.find(needsParameters)
+  const shortcut = withRequiredParameters
+    ? `, or call a subcommand that needs parameters with none, as in ${JSON.stringify({ command: withRequiredParameters.name })}`
     : ''
   return `To get the details of a subcommand (what it does, its parameters, and an example call), call ${HELP_NAME} with its name, `
     + `as in ${exampleCall(helpSubcommand(tool))}${shortcut}.`

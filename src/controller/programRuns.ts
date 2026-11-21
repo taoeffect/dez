@@ -108,7 +108,7 @@ export async function folderPathForms(path: string, root: AppFileRoot, toolName:
 /** The file of an input image that goes to the program as it is: the
  *  image's own file, which the run copies under `name`. Throws a
  *  `ToolError` for an image whose file Dez cannot read. */
-export async function imageFileInput({ id, name, path }: { id: string, name: string, path: string }): Promise<BundledToolInput> {
+export async function imageInputAsIs({ id, name, path }: { id: string, name: string, path: string }): Promise<BundledToolInput> {
   if (await readableFileSize(path) === null) throw new ToolError(unreadableImageText(id))
   return { name, source: path }
 }

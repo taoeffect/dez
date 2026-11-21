@@ -748,7 +748,7 @@ describe('apps in a conversation', () => {
       { app: 'scratch', state: 'run' },
     ])
     const scratchPart = (part: string): string => hostPart('scratch', part)
-    const runs = async (): Promise<Array<string | null>> => (await shownAppFrames(browser)).map((frame) => frame.app)
+    const runningApps = async (): Promise<Array<string | null>> => (await shownAppFrames(browser)).map((frame) => frame.app)
 
     // "No" deletes nothing.
     await pointerClickAt(browser, await cardPoint('draft', 0, '.dez-app__trash'))
@@ -783,7 +783,7 @@ describe('apps in a conversation', () => {
     expect(await isOnTop(browser, '.confirm-dialog')).toBe(true)
     await pointerClick(browser, '.confirm-btn--cancel')
     await waitForValue(browser, 'the prompt of a bar after No', () => promptMessage(browser), null)
-    expect(await runs()).toStrictEqual(['scratch'])
+    expect(await runningApps()).toStrictEqual(['scratch'])
 
     // The prompt shows over an expanded app. "Yes" ends the run, and takes
     // out the line of its card. The other card of the app stays, and tells
@@ -794,7 +794,7 @@ describe('apps in a conversation', () => {
     await waitForValue(browser, 'the prompt of an expanded app', () => promptMessage(browser), deletePrompt('scratch'))
     expect(await isOnTop(browser, '.confirm-dialog')).toBe(true)
     await pointerClick(browser, '.confirm-btn--confirm')
-    await waitForValue(browser, 'the runs after the delete', runs, [])
+    await waitForValue(browser, 'the running apps after the delete', runningApps, [])
     await waitForValue(browser, 'the conversation after the delete of a run', () => threadSections(browser), replyWith(`First:\n${scratchTag}\nSecond:\n`))
     expect(await filesIn(appsDir)).not.toContain('scratch')
     await waitForValue(browser, 'the card that stays', () => shownAppCards(browser), [
@@ -1072,7 +1072,7 @@ describe('apps in a conversation', () => {
       { role: 'user', text: '' },
     ])
     await waitForValue(browser, 'the posters', () => shownAppCards(browser), [NOTES_POSTER, hopPoster])
-    const stoppedApps = async (): Promise<string[]> => (await openToasts(browser, 'warning')).map((toast) => toast.title)
+    const stopToastTitles = async (): Promise<string[]> => (await openToasts(browser, 'warning')).map((toast) => toast.title)
     await runNotes()
 
     // The page of another app: no guard of the webview stops this move.
@@ -1080,13 +1080,13 @@ describe('apps in a conversation', () => {
 
     await waitForValue(browser, 'the frames after the move', () => shownAppFrames(browser), [])
     expect(await shownAppCards(browser)).toStrictEqual([NOTES_POSTER, hopPoster])
-    expect(await stoppedApps()).toStrictEqual(['Dez stopped the app notes'])
+    expect(await stopToastTitles()).toStrictEqual(['Dez stopped the app notes'])
     expect(await focusedArea(browser)).toBe('editor')
 
     // A page that goes while it loads gives its frame only one load, that
     // of the other page. Dez's script in that page tells Dez where it is.
     await pointerClickAt(browser, await cardPoint('hop', 0, '.dez-app__run'))
-    await waitForValue(browser, 'the apps that Dez stopped', stoppedApps, ['Dez stopped the app notes', 'Dez stopped the app hop'])
+    await waitForValue(browser, 'the toasts of the stopped apps', stopToastTitles, ['Dez stopped the app notes', 'Dez stopped the app hop'])
     expect(await shownAppFrames(browser)).toStrictEqual([])
     expect(await shownAppCards(browser)).toStrictEqual([NOTES_POSTER, hopPoster])
     expect(await focusedArea(browser)).toBe('editor')

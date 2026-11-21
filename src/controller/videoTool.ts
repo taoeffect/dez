@@ -37,7 +37,7 @@ import {
 } from '../model/tools/videoTool'
 import type { JobOutcome } from './jobs'
 import type { AppFileEntry, BundledToolInput, BundledToolOutput, BundledToolRun } from './nativeTypes'
-import { clipInputFile, imageFileInput, inWorkFolder, readableFileSize, runProgram, storeOutputs } from './programRuns'
+import { clipInputFile, imageInputAsIs, inWorkFolder, readableFileSize, runProgram, storeOutputs } from './programRuns'
 
 // The work of the `video` tool (model/tools/videoTool.ts): the runs of
 // ffmpeg and ffprobe, the programs that Dez ships. This module registers
@@ -57,7 +57,7 @@ import { clipInputFile, imageFileInput, inWorkFolder, readableFileSize, runProgr
 // written into the work folder here. The webview draws the copy on white:
 // a JPEG has no transparent pixels.
 async function imageInputFile(image: ImageInput, folder: string): Promise<BundledToolInput | null> {
-  if (!image.jpegCopy) return await imageFileInput(image)
+  if (!image.jpegCopy) return await imageInputAsIs(image)
   const { id, name, path } = image
 
   let file: File

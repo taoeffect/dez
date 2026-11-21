@@ -413,10 +413,10 @@ export function clipPictureLabel(shows: string): string {
 export function assetDecisions(
   assets: readonly CompactionAsset[],
   answer: CompactionAnswer,
-  { keptTexts }: { keptTexts: readonly string[] },
+  { keptTexts: texts }: { keptTexts: readonly string[] },
 ): AssetChoice[] {
   const named = new Set(findAssetMentions(answer.requirements).map((mention) => mention.id))
-  for (const text of keptTexts) {
+  for (const text of texts) {
     for (const id of messageMentionIds(text)) named.add(id)
   }
   const lines = new Map(answer.assets.map((line, index) => [line.id, { line, index }]))
