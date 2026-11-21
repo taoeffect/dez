@@ -240,7 +240,7 @@ function onOverlayClick(e: MouseEvent) {
                `aria-describedby` to the hint of its row. -->
           <div v-if="settings.settingsSection === 'general'" class="settings-section">
             <div class="settings-card-group" role="group" aria-labelledby="general-new-tabs-title">
-              <h3 id="general-new-tabs-title" class="settings-card-title">New tabs</h3>
+              <h3 id="general-new-tabs-title" class="settings-title settings-card-title">New tabs</h3>
               <div class="settings-card">
                 <div class="settings-card-row">
                   <div class="settings-card-text">
@@ -277,7 +277,7 @@ function onOverlayClick(e: MouseEvent) {
             </div>
 
             <div class="settings-card-group" role="group" aria-labelledby="general-updates-title">
-              <h3 id="general-updates-title" class="settings-card-title">Updates</h3>
+              <h3 id="general-updates-title" class="settings-title settings-card-title">Updates</h3>
               <div class="settings-card">
                 <div class="settings-card-row">
                   <div class="settings-card-text">
@@ -318,7 +318,7 @@ function onOverlayClick(e: MouseEvent) {
             </div>
 
             <div class="settings-card-group" role="group" aria-labelledby="general-storage-title">
-              <h3 id="general-storage-title" class="settings-card-title">Storage</h3>
+              <h3 id="general-storage-title" class="settings-title settings-card-title">Storage</h3>
               <div class="settings-card">
                 <div class="settings-card-row">
                   <div class="settings-card-text">
@@ -581,15 +581,10 @@ function onOverlayClick(e: MouseEvent) {
   gap: 6px;
 }
 
-/* The look of the group titles of Settings › Shortcuts. */
+/* The title starts at the text of the rows. */
 .settings-card-title {
   padding: 0 14px;
-  font-size: 11px;
-  font-weight: 600;
   line-height: 16px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--color-muted);
 }
 
 .settings-card {
@@ -750,6 +745,16 @@ function onOverlayClick(e: MouseEvent) {
 .settings-hint {
   font-size: 12px;
   line-height: 1.4;
+  color: var(--color-muted);
+}
+
+/* The title of a group of settings (the groups of Settings › General and
+   of Settings › Shortcuts): small muted capitals. */
+.settings-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
   color: var(--color-muted);
 }
 

@@ -98,7 +98,7 @@ onUnmounted(stopRecording)
   <div class="shortcut-manager">
     <p class="shortcut-hint">Click a shortcut, then press the new keys. Esc cancels.</p>
     <section v-for="group in groups" :key="group.name" class="shortcut-group">
-      <h3 class="shortcut-group-title">{{ group.name }}</h3>
+      <h3 class="settings-title shortcut-group-title">{{ group.name }}</h3>
       <ul class="shortcut-list">
         <li
           v-for="shortcut in group.shortcuts"
@@ -155,11 +155,6 @@ onUnmounted(stopRecording)
 
 .shortcut-group-title {
   margin-bottom: 4px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--color-muted);
 }
 
 .shortcut-list {

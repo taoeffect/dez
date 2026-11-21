@@ -1486,6 +1486,16 @@ const TEXT_LINE_HEIGHT = 1.6
 const UI_FONT_FAMILY = "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif"
 const MONO_FONT_FAMILY = "ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace"
 
+// The dark glass of the image toolbar, in both themes, which the X of the
+// image zoom has too.
+const IMAGE_TOOLBAR_GLASS = {
+  border: '1px solid var(--color-image-toolbar-border, rgba(255, 255, 255, 0.18))',
+  background: 'var(--color-image-toolbar, rgba(18, 18, 22, 0.72))',
+  boxShadow: '0 1px 2px rgba(0, 0, 0, 0.22), 0 6px 18px rgba(0, 0, 0, 0.24)',
+  WebkitBackdropFilter: 'blur(14px) saturate(130%)',
+  backdropFilter: 'blur(14px) saturate(130%)',
+}
+
 export const dezTheme = EditorView.theme({
   '&': {
     height: '100%',
@@ -2079,12 +2089,8 @@ export const dezTheme = EditorView.theme({
     marginLeft: 'auto',
     padding: editorSize(3),
     borderRadius: editorSize(9),
-    border: '1px solid var(--color-image-toolbar-border, rgba(255, 255, 255, 0.18))',
-    background: 'var(--color-image-toolbar, rgba(18, 18, 22, 0.72))',
+    ...IMAGE_TOOLBAR_GLASS,
     color: '#fff',
-    boxShadow: '0 1px 2px rgba(0, 0, 0, 0.22), 0 6px 18px rgba(0, 0, 0, 0.24)',
-    WebkitBackdropFilter: 'blur(14px) saturate(130%)',
-    backdropFilter: 'blur(14px) saturate(130%)',
     fontFamily: UI_FONT_FAMILY,
     fontSize: editorSize(12.5),
     lineHeight: '1',
@@ -2137,15 +2143,6 @@ export const dezTheme = EditorView.theme({
     height: editorSize(14),
     opacity: '0.72',
   },
-  '.dez-image__id::after': {
-    content: '""',
-    position: 'absolute',
-    top: '25%',
-    bottom: '25%',
-    right: `calc(${editorSize(-1.5)} - 0.5px)`,
-    width: '1px',
-    background: 'var(--color-image-toolbar-border, rgba(255, 255, 255, 0.18))',
-  },
   // The facts (pixels, format, file size) are less strong than the id, with
   // digits of one width. The `::after` is the divider before the model
   // label or the magnifier.
@@ -2159,15 +2156,6 @@ export const dezTheme = EditorView.theme({
     color: 'rgba(255, 255, 255, 0.78)',
     fontWeight: '500',
     fontVariantNumeric: 'tabular-nums',
-  },
-  '.dez-image__facts::after': {
-    content: '""',
-    position: 'absolute',
-    top: '25%',
-    bottom: '25%',
-    right: `calc(${editorSize(-1.5)} - 0.5px)`,
-    width: '1px',
-    background: 'var(--color-image-toolbar-border, rgba(255, 255, 255, 0.18))',
   },
   // The model that made the image (assetModelLabel.ts): a sparkle, then the
   // model name, as quiet as the facts. A long name ends in an ellipsis. The
@@ -2199,7 +2187,9 @@ export const dezTheme = EditorView.theme({
     lineHeight: '1.4',
     textOverflow: 'ellipsis',
   },
-  '.dez-image__model::after': {
+  // The divider in the middle of the gap after the id, the facts, and the
+  // model label.
+  '.dez-image__id::after, .dez-image__facts::after, .dez-image__model::after': {
     content: '""',
     position: 'absolute',
     top: '25%',
@@ -2310,13 +2300,9 @@ export const dezTheme = EditorView.theme({
     height: '32px',
     margin: '0',
     padding: '0',
-    border: '1px solid var(--color-image-toolbar-border, rgba(255, 255, 255, 0.18))',
+    ...IMAGE_TOOLBAR_GLASS,
     borderRadius: '50%',
-    background: 'var(--color-image-toolbar, rgba(18, 18, 22, 0.72))',
     color: 'rgba(255, 255, 255, 0.92)',
-    boxShadow: '0 1px 2px rgba(0, 0, 0, 0.22), 0 6px 18px rgba(0, 0, 0, 0.24)',
-    WebkitBackdropFilter: 'blur(14px) saturate(130%)',
-    backdropFilter: 'blur(14px) saturate(130%)',
     cursor: 'pointer',
     outline: 'none',
     transition: 'background-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease',

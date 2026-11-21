@@ -1228,17 +1228,19 @@ function onContextMenu(event: MouseEvent): void {
   letter-spacing: 0.02em;
 }
 
-.media-player__id > .media-player__icon {
+.media-player__id > .media-player__icon,
+.media-player__model > .media-player__icon {
   width: calc(var(--u) * 14);
   height: calc(var(--u) * 14);
   opacity: 0.72;
 }
 
 /* An id is one or two letters. A tag that a user wrote can have a long
-   one, which must not make the badge wider than its max width. The line
-   height keeps `overflow` from cutting the letters that go below the
-   line. */
-.media-player__id-text {
+   one, which must not make the badge wider than its max width; a long
+   model name ends in an ellipsis too. The line height keeps `overflow`
+   from cutting the letters that go below the line. */
+.media-player__id-text,
+.media-player__model-name {
   min-width: 0;
   overflow: hidden;
   line-height: 1.4;
@@ -1274,19 +1276,6 @@ function onContextMenu(event: MouseEvent): void {
   padding: 0 calc(var(--u) * 8) 0 calc(var(--u) * 7);
   color: rgba(255, 255, 255, 0.78);
   font-weight: 500;
-}
-
-.media-player__model > .media-player__icon {
-  width: calc(var(--u) * 14);
-  height: calc(var(--u) * 14);
-  opacity: 0.72;
-}
-
-.media-player__model-name {
-  min-width: 0;
-  overflow: hidden;
-  line-height: 1.4;
-  text-overflow: ellipsis;
 }
 
 /* The divider in the middle of the gap before the facts or the model
