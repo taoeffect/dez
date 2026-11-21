@@ -417,11 +417,15 @@ export const providerConfigSchema = z.object({
       modelIdPrefix: z.string().min(1),
       body: requestBodyPartSchema,
     })).optional(),
-    // Dot paths in a `/models` entry, for facts of a media model that the
-    // format's own lists do not tell (`ClipFormat.parameters` and
-    // `MediaFormat.clipRules` read them, mediaFormats.ts). A value that is
-    // not of its form counts as none. TrustedRouter tells them under
-    // `trustedrouter.*`, which the format does not know.
+    // Dot paths in the entries of a media model, for facts that the
+    // format's own fields do not tell (`ClipFormat.parameters`,
+    // `ClipFormat.entryPrice`, `MediaFormat.clipRules`, and
+    // `MediaFormat.listPrice` read them, mediaFormats.ts). The first three
+    // are in the model's `/models` entry (`entry`); the `video` ones in its
+    // entry of a list of the media API (`mediaEntry`,
+    // `MediaFormat.modelLists`). A value that is not of its form counts as
+    // none. TrustedRouter tells them under `trustedrouter.*` and in its own
+    // price tables, which the format does not know.
     modelEntryPaths: z.object({
       // A list of the names of the speech formats that the model makes
       // (`mp3`, `wav`): the choices of the Format row.
@@ -432,6 +436,19 @@ export const providerConfigSchema = z.object({
       // The most bytes of the clip of a transcription: a positive whole
       // number.
       transcriptionMaxBytes: modelEntryPathSchema.optional(),
+      // The sound of the videos of a video model: the text `configurable`
+      // (the request can turn it off: an Audio switch, on by default),
+      // `always`, or `none`. With no path, the format's own flag tells it.
+      videoAudioMode: modelEntryPathSchema.optional(),
+      // The prices of a video model, as an object with one entry for each
+      // route of the provider that can serve the request. With this path,
+      // these are the prices of the provider's video models: the format's
+      // own price list is not read.
+      videoRoutePrices: modelEntryPathSchema.optional(),
+      // The name of the route that a request of a video model takes, when
+      // `videoRoutePrices` has it. Else, or with no path, only a price
+      // object with one route tells a price.
+      videoRoute: modelEntryPathSchema.optional(),
     }).optional(),
   }).optional(),
   settings: z.array(providerSettingDefSchema).optional(),

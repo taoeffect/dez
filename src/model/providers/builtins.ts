@@ -219,20 +219,25 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // The media APIs have OpenRouter's paths and shapes (`/images`,
     // `/audio/speech`, `/audio/transcriptions`, `/videos`), and the same
     // two media lists: `/images/models` (the image models, with
-    // OpenRouter's entry shape) and `/videos/models` (with the key). A
-    // video entry tells only the names of the fields that its model takes,
-    // not its lengths, resolutions, or prices, so a video request goes with
-    // no length, at the model's default (`lightricks/ltx-2.3-fast`: 6 s),
-    // and its price is unknown until the finished job tells it
-    // (`usage.cost`). A finished job has no `urls`, so the clip comes from
-    // the content endpoint, with the key. The docs ask for one download
-    // ("Download once"): the provider keeps the clip until the first full
-    // download, or for 24 hours. Dez downloads it once, into a temp copy (a
-    // second GET still gave the clip). The `/models` entries tell the
-    // formats of the speech and transcription models, which OpenRouter's
-    // do not (`trustedrouter` fields; every transcription model takes mp3
-    // and wav files of at most 7 MiB). Checked live, 2026-11-20.
+    // OpenRouter's entry shape) and `/videos/models`. A video entry tells
+    // its lengths, resolutions, and aspect ratios as OpenRouter's do
+    // (`supported_*`), and its sound (`trustedrouter.audio_mode`) and its
+    // prices by route (`pricing.routes`) in fields of its own. A request
+    // with no `provider` field goes to the route that
+    // `trustedrouter.provider` names when the prices have it, else to the
+    // one route of the prices (`routeVideoPrice`, mediaFormats.ts); the
+    // charge of each live job was the listed price of its route. A
+    // finished job has no `urls`, so the clip comes from the content
+    // endpoint, with the key. The docs ask for one download ("Download
+    // once"): the provider keeps the clip until the first full download,
+    // or for 24 hours. Dez downloads it once, into a temp copy (a second
+    // GET still gave the clip). The `/models` entries tell the formats of
+    // the speech and transcription models, which OpenRouter's do not
+    // (`trustedrouter` fields; every transcription model takes mp3 and wav
+    // files of at most 7 MiB). Checked live, 2026-11-20; the video entries
+    // and their routes, 2026-11-21.
     // https://trustedrouter.com/docs/video
+    // https://trustedrouter.com/docs#media-discovery
     // https://trustedrouter.com/docs (Text to speech, Audio transcription)
     mediaApi: {
       format: 'openrouter',
@@ -240,6 +245,9 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
         speechFormats: 'trustedrouter.speech.response_formats',
         transcriptionFormats: 'trustedrouter.transcription.input_formats',
         transcriptionMaxBytes: 'trustedrouter.transcription.max_audio_bytes',
+        videoAudioMode: 'trustedrouter.audio_mode',
+        videoRoutePrices: 'pricing.routes',
+        videoRoute: 'trustedrouter.provider',
       },
     },
     // Texts of USD per token. The router and panel models

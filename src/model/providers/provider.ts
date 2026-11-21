@@ -276,12 +276,13 @@ export class Provider {
   // those parameters.
   withPrices(models: readonly ModelInfo[], entries: ReadonlyMap<string, unknown>, mediaEntries: ReadonlyMap<string, unknown>): ModelInfo[] {
     const listPrice = this.mediaFormatOrNone()?.listPrice
+    const paths = this.config.mediaApi?.modelEntryPaths ?? {}
     return models.map((model) => {
       const kind = effectiveRequest(model)
       const entry = entries.get(model.id)
       const price = kind === 'chat'
         ? isRecord(entry) ? modelTokenPrice(entry, this.config.modelTokenPrices, effectiveOutputs(model)) : undefined
-        : kind === 'none' ? undefined : listPrice?.(kind, effectiveParameterValues(model.parameters ?? []), entry, mediaEntries.get(model.id))
+        : kind === 'none' ? undefined : listPrice?.(kind, effectiveParameterValues(model.parameters ?? []), entry, mediaEntries.get(model.id), paths)
       return price ? { ...model, price } : model
     })
   }
@@ -479,7 +480,7 @@ export class Provider {
   // for, from the model's raw entries (`ClipFormat.entryPrice`); undefined
   // when they tell none.
   clipEntryPrice(kind: ClipKind, values: ParameterValues, entry: unknown, mediaEntry: unknown): ClipEntryPrice | undefined {
-    return this.mediaFormatOrNone()?.clips?.entryPrice?.(kind, values, entry, mediaEntry)
+    return this.mediaFormatOrNone()?.clips?.entryPrice?.(kind, values, entry, mediaEntry, this.config.mediaApi?.modelEntryPaths ?? {})
   }
 
   // How to tell the price of one image request of `kind`

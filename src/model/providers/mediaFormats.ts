@@ -239,9 +239,10 @@ export interface ClipFormat {
   job(kind: ClipKind, baseUrl: string, modelId: string, data: unknown): ClipJob
   quote?: ClipQuoteFormat
   // The price of one request of `kind` with `values`, from the model's
-  // entries (as for `parameters`), for an API whose model lists hold the
-  // prices of its clips. Undefined when they hold none for the model.
-  entryPrice?(kind: ClipKind, values: ParameterValues, entry: unknown, mediaEntry: unknown): ClipEntryPrice | undefined
+  // entries and the paths of the facts that they tell (as for
+  // `parameters`), for an API whose model lists hold the prices of its
+  // clips. Undefined when they hold none for the model.
+  entryPrice?(kind: ClipKind, values: ParameterValues, entry: unknown, mediaEntry: unknown, paths: MediaEntryPaths): ClipEntryPrice | undefined
   // The size in bits of one sample of the raw PCM audio (`audio/pcm`,
   // pcmAudio.ts) that the API can answer with. A response tells the rate
   // and the channels, but not this. Missing: the API's docs do not tell
@@ -290,10 +291,11 @@ export interface MediaFormat {
   // far as the API tells.
   clipRules?(kind: MediaKind, entry: unknown, mediaEntry: unknown, paths: MediaEntryPaths): InputClipRules | undefined
   // The list price of a model of `kind` (`ModelInfo.price`), from the same
-  // two entries, for the default values of its parameters (`values`).
-  // Undefined when the entries tell no price, or none that Dez can read
-  // with no input of the request.
-  listPrice?(kind: MediaKind, values: ParameterValues, entry: unknown, mediaEntry: unknown): ModelPrice | undefined
+  // two entries and the paths of the facts that they tell (as for
+  // `ClipFormat.parameters`), for the default values of its parameters
+  // (`values`). Undefined when the entries tell no price, or none that Dez
+  // can read with no input of the request.
+  listPrice?(kind: MediaKind, values: ParameterValues, entry: unknown, mediaEntry: unknown, paths: MediaEntryPaths): ModelPrice | undefined
 }
 
 function jsonBody(body: Uint8Array): unknown {
@@ -1497,6 +1499,35 @@ function openRouterPriceError(reason: string): { error: string } {
   }
 }
 
+// The sound of the videos of an OpenRouter-format video model: `choice`
+// when a request can turn it on or off (the Audio switch), else whether
+// they have sound; undefined when its entry tells nothing. The provider's
+// own sound mode (`videoAudioMode`, config.ts) wins over the `generate_audio`
+// flag of OpenRouter's video list, which is true for a model that can make
+// sound. A request of a `choice` model with no `generate_audio` field gets
+// sound in both: OpenRouter's field "Defaults to the endpoint's
+// generate_audio capability flag", and every TrustedRouter model with
+// `configurable` sound had `generate_audio.default: true` in
+// `trustedrouter.media.parameters` (2026-11-21).
+// https://openrouter.ai/docs/api/api-reference/video-generation/create-videos
+// https://trustedrouter.com/docs#media-discovery
+function openRouterVideoSound(mediaEntry: unknown, paths: MediaEntryPaths): boolean | 'choice' | undefined {
+  if (paths.videoAudioMode !== undefined) {
+    const mode = valueAtPath(mediaEntry, paths.videoAudioMode)
+    return mode === 'configurable' ? 'choice' : mode === 'always' ? true : mode === 'none' ? false : undefined
+  }
+  const flag = valueAtPath(mediaEntry, 'generate_audio')
+  return flag === true ? 'choice' : flag === false ? false : undefined
+}
+
+// Whether the video of a request with `values` has sound: the Audio
+// switch, else the sound of the model (`openRouterVideoSound`).
+function openRouterRequestSound(values: ParameterValues, mediaEntry: unknown, paths: MediaEntryPaths): boolean | undefined {
+  if (typeof values.generate_audio === 'boolean') return values.generate_audio
+  const sound = openRouterVideoSound(mediaEntry, paths)
+  return sound === 'choice' ? true : sound
+}
+
 // The price in USD of one OpenRouter video request with `values` and no
 // input image or clip, from the model's prices (`pricing_skus`), with the
 // rate that applies, the price of each input image (when the model has
@@ -1514,10 +1545,10 @@ function openRouterPriceError(reason: string): { error: string } {
 // rule Dez does not know gives an error that tells the calling model to
 // read the prices itself.
 //
-// A request with no `generate_audio` field gets the sound of the model's
-// entry flag (the comment of the Audio switch): a model whose flag is
-// false has no Audio switch, and its video has no sound.
-function openRouterVideoRequestPrice(values: ParameterValues, mediaEntry: unknown): { usd: number, rate: OpenRouterVideoSku, inputImageUsd?: number, skus: OpenRouterVideoSku[] } | { error: string } | undefined {
+// A request with no `generate_audio` field gets the sound of the model
+// (`openRouterRequestSound`): a model with no Audio switch makes its videos
+// always or never with sound.
+function openRouterVideoRequestPrice(values: ParameterValues, mediaEntry: unknown, paths: MediaEntryPaths): { usd: number, rate: OpenRouterVideoSku, inputImageUsd?: number, skus: OpenRouterVideoSku[] } | { error: string } | undefined {
   const table = valueAtPath(mediaEntry, 'pricing_skus')
   if (!isRecord(table)) return undefined
   const skus: OpenRouterVideoSku[] = []
@@ -1533,8 +1564,7 @@ function openRouterVideoRequestPrice(values: ParameterValues, mediaEntry: unknow
   if (skus.length === 0) return undefined
 
   const resolution = typeof values.resolution === 'string' ? values.resolution.toLowerCase() : undefined
-  const entryAudio = valueAtPath(mediaEntry, 'generate_audio')
-  const audio = typeof values.generate_audio === 'boolean' ? values.generate_audio : typeof entryAudio === 'boolean' ? entryAudio : undefined
+  const audio = openRouterRequestSound(values, mediaEntry, paths)
   const fits = skus.filter((sku) => sku.per !== 'inputImage' && !sku.videoInput
     && (sku.resolution === undefined || sku.resolution === resolution)
     && (sku.audio === undefined || sku.audio === audio))
@@ -1561,11 +1591,102 @@ function openRouterVideoRequestPrice(values: ParameterValues, mediaEntry: unknow
   return { usd: roundedUsd(usd), rate, ...(inputImage && { inputImageUsd: roundedUsd(inputImage.usd) }), skus }
 }
 
-// The price of one OpenRouter video request (`openRouterVideoRequestPrice`)
-// for the model that reads `model_info`, with a note of the estimate and of
-// the prices of input images and clips.
-function openRouterVideoPrice(values: ParameterValues, mediaEntry: unknown): ClipEntryPrice | undefined {
-  const price = openRouterVideoRequestPrice(values, mediaEntry)
+// The total in USD of a request of `seconds` by one price example of a
+// route (`routeVideoPrice`); undefined when the example tells none for
+// that length. No live entry had `usd_by_duration` (2026-11-21), and the
+// docs do not show its form: Dez reads it as totals by the seconds of the
+// length, and any other form gives no price, never a price by the second.
+function routeExampleTotal(example: Record<string, unknown>, seconds: number): number | undefined {
+  if (example.usd_by_duration !== undefined) {
+    return isRecord(example.usd_by_duration) ? priceNumber(example.usd_by_duration[String(seconds)]) : undefined
+  }
+  const perSecond = priceNumber(example.usd_per_second)
+  if (perSecond !== undefined && Array.isArray(example.priced_durations) && example.priced_durations.includes(seconds)) return perSecond * seconds
+  return example.duration === seconds ? priceNumber(example.cost_usd) : undefined
+}
+
+// The price in USD of one video request with `values` and only a prompt,
+// from a provider's prices by route at `pricesPath` of the model's entry
+// (`videoRoutePrices`, config.ts): TrustedRouter's `pricing.routes` of its
+// video list. Undefined for a model with no prices there: "an empty route
+// map means no prepaid price is available".
+//
+// The prices are "by prepaid provider route". The route of a request is
+// the one that `videoRoute` names when the prices have it, else the one
+// route of the prices; with more routes and none named, the route is
+// unknown, and so is the price. Two live jobs with no `provider` field
+// (2026-11-21) went to such a route and cost its price: Wan 2.7 to
+// `alibaba`, which `trustedrouter.provider` names (its prices also have
+// `venice`), and Veo 3.1 Fast to `google-vertex`, the one route of its
+// prices, though `trustedrouter.provider` names `google-ai-studio`.
+//
+// The prices of a route are `{ unit: 'job', examples }`. An example is
+// "the total for the exact settings shown" (`cost_usd` for its
+// `duration`, `resolution`, `generate_audio`, and `input_mode`), with the
+// price of a second (`usd_per_second`) for each length of
+// `priced_durations`, or the exact totals by length (`usd_by_duration`)
+// "where rounding or a minimum applies". An example fits a request of its
+// resolution and sound, with only a prompt (`input_mode: text`): "Match
+// the provider, resolution, audio and input mode". Fitting examples with
+// other prices leave the price unknown, and so does a route that "quotes
+// each job" (`status: live_quote`) or that bills by another unit (a price
+// of a million output tokens: no data tells the tokens of a video).
+// "Neither means free."
+// https://trustedrouter.com/docs#media-discovery
+function routeVideoPrice(values: ParameterValues, mediaEntry: unknown, paths: MediaEntryPaths, pricesPath: string): number | { error: string } | undefined {
+  const routes = valueAtPath(mediaEntry, pricesPath)
+  if (!isRecord(routes) || Object.keys(routes).length === 0) return undefined
+  const names = Object.keys(routes)
+  const error = (reason: string) => ({
+    error: `Dez cannot compute the price of a request with these values: ${reason}. The prices by route are in \`${pricesPath}\` of \`mediaEntry\`.`,
+  })
+  const named = paths.videoRoute === undefined ? undefined : valueAtPath(mediaEntry, paths.videoRoute)
+  const route = typeof named === 'string' && Object.hasOwn(routes, named) ? named : names.length === 1 ? names[0] : undefined
+  if (route === undefined) return error(`the prices are by route (${names.map((name) => `\`${name}\``).join(', ')}), and no data tells which route the request takes`)
+  const prices = routes[route]
+  if (valueAtPath(prices, 'status') === 'live_quote') return error(`the route of the request (\`${route}\`) tells its price only when it runs the job (\`live_quote\`)`)
+  const unit = valueAtPath(prices, 'unit')
+  if (unit !== 'job') {
+    return error(`the route of the request (\`${route}\`) bills by ${typeof unit === 'string' ? `the unit \`${unit}\`` : 'a unit that no data tells'}, and no data tells how many of them a video takes`)
+  }
+
+  const seconds = values.duration
+  if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) return error('the price is by the length, and the request has no length (`duration`)')
+  const resolution = typeof values.resolution === 'string' ? values.resolution.toLowerCase() : undefined
+  const sound = openRouterRequestSound(values, mediaEntry, paths)
+  const examples = valueAtPath(prices, 'examples')
+  const fits = (Array.isArray(examples) ? examples : []).filter(isRecord).filter((example) => (example.input_mode === undefined || example.input_mode === 'text')
+    && (example.resolution === undefined || (typeof example.resolution === 'string' && example.resolution.toLowerCase() === resolution))
+    && (example.generate_audio === undefined || example.generate_audio === sound))
+  const totals = new Set(fits.flatMap((example) => {
+    const total = routeExampleTotal(example, seconds)
+    return total === undefined ? [] : [roundedUsd(total)]
+  }))
+  const request = `${seconds} s, ${resolution ?? 'no resolution'}${sound === undefined ? '' : sound ? ', with sound' : ', no sound'}, and only a prompt (\`input_mode\` \`text\`)`
+  if (totals.size === 0) return error(`no price of the route \`${route}\` fits a request of ${request}`)
+  if (totals.size > 1) return error(`the route \`${route}\` has several prices that fit a request of ${request}, and no data tells which one applies`)
+  return [...totals][0]
+}
+
+// The length and the resolution of a video request, for the note of its
+// list price.
+function videoValuesText(values: ParameterValues): string[] {
+  return [`${String(values.duration)} s`, ...(values.resolution === undefined ? [] : [String(values.resolution)])]
+}
+
+// The price of one OpenRouter-format video request for the model that
+// reads `model_info`: by route, for a provider whose config has a path to
+// such prices (`routeVideoPrice`), else from `pricing_skus`
+// (`openRouterVideoRequestPrice`), with a note of the estimate and of the
+// prices of input images and clips.
+function openRouterVideoPrice(values: ParameterValues, mediaEntry: unknown, paths: MediaEntryPaths): ClipEntryPrice | undefined {
+  if (paths.videoRoutePrices !== undefined) {
+    const usd = routeVideoPrice(values, mediaEntry, paths, paths.videoRoutePrices)
+    return typeof usd === 'number'
+      ? { usd, note: '`usd` is for a request with only a prompt (`input_mode` `text`): a request with an input image or clip can have another price.' }
+      : usd
+  }
+  const price = openRouterVideoRequestPrice(values, mediaEntry, paths)
   if (price === undefined || 'error' in price) return price
   const { usd, rate, inputImageUsd, skus } = price
   const notes = [
@@ -1578,25 +1699,30 @@ function openRouterVideoPrice(values: ParameterValues, mediaEntry: unknown): Cli
   return { usd, ...(notes.length > 0 && { note: notes.join(' ') }) }
 }
 
-// The list price of an OpenRouter model of a media kind. A video: the
-// price of one clip for the default values (the shortest length, the
-// lowest resolution) and no input image, which the note names with the
-// price of each input image, if any. Speech and transcription: the
-// rates of the main list (`pricing`), which are per character of the text
-// (`prompt`), or per second of the clip (speech: `completion`, with no
-// `prompt` price; transcription: `prompt`, with no `completion` price),
-// or, with both, per token. An image-only model gets none: the main list
-// has only its price per output token, and its price per image is in its
-// endpoint records, a request of its own (`ImageQuoteFormat`).
+// The list price of an OpenRouter-format model of a media kind. A video:
+// the price of one clip for the default values (the shortest length, the
+// lowest resolution, the sound of the Audio switch) and only a prompt; for
+// prices from `pricing_skus`, the note names the price of each input
+// image, if any. Speech and transcription: the rates of the main list
+// (`pricing`), which are per character of the text (`prompt`), or per
+// second of the clip (speech: `completion`, with no `prompt` price;
+// transcription: `prompt`, with no `completion` price), or, with both,
+// per token. An image-only model gets none: the main list has only its
+// price per output token, and its price per image is in its endpoint
+// records, a request of its own (`ImageQuoteFormat`).
 // https://openrouter.ai/docs/guides/overview/multimodal/tts
 // https://openrouter.ai/docs/guides/overview/multimodal/stt
-function openRouterListPrice(kind: MediaKind, values: ParameterValues, entry: unknown, mediaEntry: unknown): ModelPrice | undefined {
+function openRouterListPrice(kind: MediaKind, values: ParameterValues, entry: unknown, mediaEntry: unknown, paths: MediaEntryPaths): ModelPrice | undefined {
   switch (kind) {
     case 'video':
     case 'imageToVideo': {
-      const price = openRouterVideoRequestPrice(values, mediaEntry)
+      if (paths.videoRoutePrices !== undefined) {
+        const usd = routeVideoPrice(values, mediaEntry, paths, paths.videoRoutePrices)
+        return typeof usd === 'number' ? unitPrice('clip', usd, videoValuesText(values).join(', ')) : undefined
+      }
+      const price = openRouterVideoRequestPrice(values, mediaEntry, paths)
       if (price === undefined || 'error' in price) return undefined
-      const options = [`${String(values.duration)} s`, ...(values.resolution === undefined ? [] : [String(values.resolution)]), ...(price.rate.per === 'token' ? ['estimate'] : [])]
+      const options = [...videoValuesText(values), ...(price.rate.per === 'token' ? ['estimate'] : [])]
       const notes = [options.join(', '), ...(price.inputImageUsd === undefined ? [] : [`+${usdText(price.inputImageUsd)} per input image`])]
       return unitPrice('clip', price.usd, notes.join('; '))
     }
@@ -1741,11 +1867,10 @@ const openRouterFormat: MediaFormat = {
             ...lowestFirstParameter('resolution', 'Resolution', valueAtPath(mediaEntry, 'supported_resolutions'), resolutionLines),
             // No default: the model's own aspect ratio applies.
             ...optionsParameter('aspect_ratio', 'Aspect ratio', listedValues(valueAtPath(mediaEntry, 'supported_aspect_ratios'))),
-            // `generate_audio` is true in the entry of a model that can
-            // make sound, and a request with no field then gets sound
-            // ("Defaults to the endpoint's generate_audio capability
-            // flag"). So the switch is on by default, as for Venice.
-            ...switchParameter('generate_audio', 'Audio', valueAtPath(mediaEntry, 'generate_audio'), true),
+            // The switch is for a model whose videos can have sound or
+            // not (`openRouterVideoSound`), on by default, as for Venice: a
+            // request with no field gets sound.
+            ...switchParameter('generate_audio', 'Audio', openRouterVideoSound(mediaEntry, paths) === 'choice', true),
             ...optionsParameter(OPENROUTER_IMAGES_AS, 'Images as', imagesAs, imagesAs[0]),
           ]
         }
@@ -1786,9 +1911,7 @@ const openRouterFormat: MediaFormat = {
           // `duration` is no required field of the request. Its price is
           // then unknown. OpenRouter's models that change a video of the
           // user (`runway/aleph-2`; their pages send no length) are such
-          // models (checked 2026-11-15), and so is every model of a provider
-          // whose video list tells only the names of the fields that a
-          // model takes (`supported_parameters`; seen 2026-11-20).
+          // models (checked 2026-11-15).
           // https://openrouter.ai/docs/api/api-reference/video-generation/create-videos
           // https://openrouter.ai/runway/aleph-2/llms.txt
           // The images are frames of the video (`frame_images`) or
@@ -1880,10 +2003,11 @@ const openRouterFormat: MediaFormat = {
         },
       }
     },
-    // The video list gives each model's prices (`pricing_skus`); a
-    // request of a model with a source clip has prices of their own,
-    // which `openRouterVideoPrice` tells only in a note.
-    entryPrice: (kind, values, _entry, mediaEntry) => (kind === 'video' || kind === 'imageToVideo' ? openRouterVideoPrice(values, mediaEntry) : undefined),
+    // The video list gives each model's prices (`pricing_skus`), or the
+    // provider's prices by route (`videoRoutePrices`, config.ts); a
+    // request of a model with an input image or clip can have prices of
+    // its own, which `openRouterVideoPrice` tells only in a note.
+    entryPrice: (kind, values, _entry, mediaEntry, paths) => (kind === 'video' || kind === 'imageToVideo' ? openRouterVideoPrice(values, mediaEntry, paths) : undefined),
     // "audio/pcm for pcm — 16-bit little-endian"
     // https://openrouter.ai/docs/api/api-reference/tts/create-speech
     pcmSampleBits: 16,

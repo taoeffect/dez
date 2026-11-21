@@ -1046,7 +1046,7 @@ describe('venice clip quotes', () => {
 // https://docs.venice.ai/pricing
 describe('venice list prices', () => {
   const listPrice = (kind: MediaKind, pricing: Record<string, unknown>, values: ParameterValues = {}) =>
-    MEDIA_FORMATS.venice.listPrice?.(kind, values, { id: 'm', model_spec: { pricing } }, undefined)
+    MEDIA_FORMATS.venice.listPrice?.(kind, values, { id: 'm', model_spec: { pricing } }, undefined, {})
   // The tiers of `ace-step-15` and of `elevenlabs-voice-changer`.
   const SONG_TIERS = {
     60: { ...venicePrice(0.03), min_seconds: 60, max_seconds: 60 },
@@ -1300,7 +1300,7 @@ describe('openrouter clip parameters', () => {
 // `pricing_skus` shapes of the live video list (2026-11-13).
 describe('openrouter clip prices', () => {
   const price = (skus: Record<string, unknown>, values: ParameterValues, kind: ClipKind = 'video') =>
-    openRouterClips.entryPrice?.(kind, values, { id: 'm' }, { id: 'm', pricing_skus: skus })
+    openRouterClips.entryPrice?.(kind, values, { id: 'm' }, { id: 'm', pricing_skus: skus }, {})
   const VEO_LITE = { duration_seconds_with_audio: '0.08', duration_seconds_without_audio: '0.05', duration_seconds_with_audio_720p: '0.05', duration_seconds_without_audio_720p: '0.03' }
   const SEEDANCE = {
     video_tokens: '0.000007',
@@ -1350,7 +1350,7 @@ describe('openrouter clip prices', () => {
     ['the sound of the request over the sound of the entry', true, { generate_audio: false }, 0.12],
   ])('prices %s', (_name, generateAudio, values, usd) => {
     const mediaEntry = { id: 'm', generate_audio: generateAudio, pricing_skus: VEO_LITE }
-    expect(openRouterClips.entryPrice?.('video', { duration: 4, resolution: '720p', ...values }, { id: 'm' }, mediaEntry)).toStrictEqual({ usd })
+    expect(openRouterClips.entryPrice?.('video', { duration: 4, resolution: '720p', ...values }, { id: 'm' }, mediaEntry, {})).toStrictEqual({ usd })
   })
 
   it.each([
@@ -1381,7 +1381,7 @@ describe('openrouter clip prices', () => {
     ['a model whose prices are all 0', 'video', { long_duration_seconds: '0' }],
     ['a request of another kind', 'videoToVideo', { duration_seconds: '0.1' }],
   ] as const)('tells no price for %s', (_name, kind, skus) => {
-    expect(openRouterClips.entryPrice?.(kind, { duration: 5 }, { id: 'm' }, { id: 'm', ...(skus && { pricing_skus: skus }) })).toBeUndefined()
+    expect(openRouterClips.entryPrice?.(kind, { duration: 5 }, { id: 'm' }, { id: 'm', ...(skus && { pricing_skus: skus }) }, {})).toBeUndefined()
   })
 })
 
@@ -1390,9 +1390,9 @@ describe('openrouter clip prices', () => {
 // https://openrouter.ai/docs/guides/overview/multimodal/stt
 describe('openrouter list prices', () => {
   const listPrice = (kind: MediaKind, pricing: Record<string, unknown>) =>
-    MEDIA_FORMATS.openrouter.listPrice?.(kind, {}, { id: 'm', pricing }, undefined)
+    MEDIA_FORMATS.openrouter.listPrice?.(kind, {}, { id: 'm', pricing }, undefined, {})
   const videoPrice = (skus: Record<string, unknown>, values: ParameterValues) =>
-    MEDIA_FORMATS.openrouter.listPrice?.('video', values, { id: 'm', pricing: { prompt: '0', completion: '0' } }, { id: 'm', pricing_skus: skus })
+    MEDIA_FORMATS.openrouter.listPrice?.('video', values, { id: 'm', pricing: { prompt: '0', completion: '0' } }, { id: 'm', pricing_skus: skus }, {})
 
   it.each([
     ['speech with a price per character', 'tts', { prompt: '0.000004', completion: '0' }, { unit: 'character', usd: 4 }],
@@ -1435,6 +1435,118 @@ describe('openrouter list prices', () => {
     ['no prices', {}, { duration: 5 }],
   ])('gives a video model no price for %s', (_name, skus, values) => {
     expect(videoPrice(skus, values)).toBeUndefined()
+  })
+})
+
+// Abridged entries of TrustedRouter's video list (2026-11-21), read at the
+// paths of its config.
+// https://trustedrouter.com/docs#media-discovery
+describe('openrouter video sound and prices by route', () => {
+  const ROUTE_PATHS = { videoAudioMode: 'trustedrouter.audio_mode', videoRoutePrices: 'pricing.routes', videoRoute: 'trustedrouter.provider' }
+  const routeEntry = (provider: string, audioMode: string, routes?: unknown) => ({
+    id: 'm',
+    ...(routes !== undefined && { pricing: { currency: 'USD', routes } }),
+    trustedrouter: { provider, audio_mode: audioMode },
+  })
+  const price = (provider: string, audioMode: string, routes: unknown, values: ParameterValues) =>
+    openRouterClips.entryPrice?.('video', values, { id: 'm' }, routeEntry(provider, audioMode, routes), ROUTE_PATHS)
+  const PROMPT_ONLY = expect.stringContaining('only a prompt')
+  const LTX_FAST = {
+    ltx: {
+      unit: 'job',
+      examples: [
+        { aspect_ratio: '16:9', cost_usd: '0.432000', duration: 6, generate_audio: true, input_mode: 'text', priced_durations: [6, 8, 10], resolution: '1080p', usd_per_second: '0.072000' },
+        { aspect_ratio: '16:9', cost_usd: '0.432000', duration: 6, generate_audio: false, input_mode: 'text', priced_durations: [6, 8, 10], resolution: '1080p', usd_per_second: '0.072000' },
+        { aspect_ratio: '16:9', cost_usd: '0.864000', duration: 6, generate_audio: true, input_mode: 'text', priced_durations: [6, 8, 10], resolution: '1440p', usd_per_second: '0.144000' },
+      ],
+    },
+    venice: { unit: 'job', status: 'live_quote' },
+  }
+  // Its entry names the route `google-ai-studio`; a live job went to
+  // `google-vertex` and cost its price.
+  const VEO_FAST = {
+    'google-vertex': {
+      unit: 'job',
+      examples: [
+        { aspect_ratio: '16:9', cost_usd: '0.960000', duration: 8, generate_audio: true, input_mode: 'text', priced_durations: [4, 6, 8], resolution: '720p', usd_per_second: '0.120000' },
+        { aspect_ratio: '16:9', cost_usd: '1.152000', duration: 8, generate_audio: true, input_mode: 'text', resolution: '1080p' },
+      ],
+    },
+  }
+  const RUNWAY = {
+    runway: { unit: 'job', examples: [{ aspect_ratio: '16:9', cost_usd: '0.720000', duration: 5, generate_audio: false, input_mode: 'text', priced_durations: [2, 3, 4, 5], resolution: '720p', usd_per_second: '0.144000' }] },
+  }
+
+  it.each([
+    ['configurable', [{ name: 'generate_audio', default: true }, IMAGES_AS_REFERENCES]],
+    ['always', [IMAGES_AS_REFERENCES]],
+    ['none', [IMAGES_AS_REFERENCES]],
+    ['unknown', [IMAGES_AS_REFERENCES]],
+  ])('gives a video model whose sound mode is %s an Audio switch only when the request can turn its sound off', (audioMode, expected) => {
+    expect(parameters(openRouterClips, 'video', { id: 'm' }, routeEntry('p', audioMode), ROUTE_PATHS)).toStrictEqual(expected)
+  })
+
+  it('reads the sound mode of the path, not the flag of OpenRouter\'s video list', () => {
+    const mediaEntry = { ...routeEntry('p', 'none'), generate_audio: true }
+
+    expect(parameters(openRouterClips, 'video', { id: 'm' }, mediaEntry, ROUTE_PATHS)).toStrictEqual([IMAGES_AS_REFERENCES])
+  })
+
+  it.each([
+    ['a length of `priced_durations` by the price of a second', 'ltx', 'configurable', LTX_FAST, { duration: 8, resolution: '1080p', generate_audio: false }, 0.576],
+    ['the example of the resolution and the sound', 'ltx', 'configurable', LTX_FAST, { duration: 10, resolution: '1440p', generate_audio: true }, 1.44],
+    ['the one route of the prices, when the entry names a route that they do not have', 'google-ai-studio', 'always', VEO_FAST, { duration: 4, resolution: '720p' }, 0.48],
+    ['the total of an example with no price of a second, for its own length', 'google-ai-studio', 'always', VEO_FAST, { duration: 8, resolution: '1080p' }, 1.152],
+    ['the sound of a model with no Audio switch', 'runway', 'none', RUNWAY, { duration: 2, resolution: '720p' }, 0.288],
+  ] as const)('prices %s', (_name, provider, audioMode, routes, values, usd) => {
+    expect(price(provider, audioMode, routes, values)).toStrictEqual({ usd, note: PROMPT_ONLY })
+  })
+
+  // The docs name `usd_by_duration` "where rounding or a minimum applies";
+  // no live entry had it (2026-11-21).
+  it('takes the total of the length from `usd_by_duration`, never the price of a second, when an example has both', () => {
+    const routes = {
+      r: { unit: 'job', examples: [{ duration: 5, generate_audio: false, input_mode: 'text', priced_durations: [5, 10], resolution: '720p', usd_per_second: '0.1', usd_by_duration: { 5: '0.6' } }] },
+    }
+
+    expect([price('r', 'none', routes, { duration: 5, resolution: '720p' }), price('r', 'none', routes, { duration: 10, resolution: '720p' })])
+      .toStrictEqual([{ usd: 0.6, note: PROMPT_ONLY }, { error: expect.any(String) }])
+  })
+
+  it.each([
+    ['a route that quotes each job', 'kling', 'configurable', { venice: { unit: 'job', status: 'live_quote' } }, { duration: 5, resolution: '720p', generate_audio: true }],
+    ['a route that bills by output token', 'byteplus', 'configurable', { byteplus: { unit: 'million_output_tokens', usd_by_resolution: { '720p': '7.385' } } }, { duration: 5, resolution: '720p', generate_audio: true }],
+    ['several routes, none of which the entry names', 'minimax', 'configurable', LTX_FAST, { duration: 6, resolution: '1080p', generate_audio: true }],
+    ['the route of the entry that quotes each job, though another route has prices', 'venice', 'configurable', LTX_FAST, { duration: 6, resolution: '1080p', generate_audio: true }],
+    ['a length that no example prices', 'ltx', 'configurable', LTX_FAST, { duration: 7, resolution: '1080p', generate_audio: true }],
+    ['a length of no example of the resolution', 'google-ai-studio', 'always', VEO_FAST, { duration: 4, resolution: '1080p' }],
+    ['a request with no length', 'ltx', 'configurable', LTX_FAST, { resolution: '1080p', generate_audio: true }],
+    ['a resolution with no example', 'runway', 'none', RUNWAY, { duration: 5, resolution: '1080p' }],
+    ['prices only of a request with an input video', 'decart', 'none', { decart: { unit: 'job', examples: [{ duration: 5, generate_audio: false, input_mode: 'video', priced_durations: [5], resolution: '720p', usd_per_second: '0.048000' }] } }, { duration: 5, resolution: '720p' }],
+    ['examples of the same values with other prices', 'r', 'none', { r: { unit: 'job', examples: [{ generate_audio: false, input_mode: 'text', priced_durations: [5], resolution: '720p', usd_per_second: '0.1' }, { generate_audio: false, input_mode: 'text', priced_durations: [5], resolution: '720p', usd_per_second: '0.2' }] } }, { duration: 5, resolution: '720p' }],
+  ] as const)('tells why there is no price for %s', (_name, provider, audioMode, routes, values) => {
+    expect(price(provider, audioMode, routes, values)).toStrictEqual({ error: expect.any(String) })
+  })
+
+  // "an empty route map means no prepaid price is available"
+  it.each([
+    ['an empty price object', {}],
+    ['no price object', undefined],
+  ])('gives no price for %s', (_name, routes) => {
+    expect(price('fal', 'always', routes, { duration: 5, resolution: '720p' })).toBeUndefined()
+  })
+
+  it('reads no `pricing_skus` when the provider gives its prices by route', () => {
+    const mediaEntry = { ...routeEntry('p', 'none'), pricing_skus: { duration_seconds: '0.1' } }
+
+    expect(openRouterClips.entryPrice?.('video', { duration: 5 }, { id: 'm' }, mediaEntry, ROUTE_PATHS)).toBeUndefined()
+  })
+
+  it('gives a video model the list price of one clip for its default values, and none when the route tells none', () => {
+    const listPrice = (provider: string, routes: unknown) =>
+      MEDIA_FORMATS.openrouter.listPrice?.('video', { duration: 6, resolution: '1080p', generate_audio: true }, { id: 'm' }, routeEntry(provider, 'configurable', routes), ROUTE_PATHS)
+
+    expect([listPrice('ltx', LTX_FAST), listPrice('venice', LTX_FAST)]).toStrictEqual([{ unit: 'clip', usd: 0.432, note: '6 s, 1080p' }, undefined])
   })
 })
 
