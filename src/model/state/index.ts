@@ -1093,9 +1093,10 @@ export default sbp('sbp/selectors/register', {
   // that is known not to call tools, and no media model), and only while
   // that toggle of its provider is on. An unknown model (not in the cache
   // yet) gets the tools. With no `tabId`, the request of a normal tab:
-  // Settings › System Prompt fills `{{tools_list}}` of its preview with it.
+  // Settings › System Prompt fills `{{tools_list}}` of its preview with it,
+  // and the compaction request (`earlierReplyWriter`) is one.
   'dez.model/requestSendsTools' (model: ModelRef, tabId?: string): boolean {
-    const tab = tabId === undefined ? undefined : useTabStore().tabs.find((candidate) => candidate.id === tabId)
+    const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
     return requestParts(tab ?? {}).dezTools
       && toolsApply(cachedModel(model) ?? {})
       && isToolsEnabled(useSettingsStore().providerSettings[model.providerId])
