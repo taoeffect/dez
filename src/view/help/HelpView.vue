@@ -610,8 +610,10 @@ function onOverlayClick(event: MouseEvent) {
               The code has no files, no network, and no environment variables, and it can start no
               program. It can call the other Dez tools (but not <code>apps invoke</code>), at most
               {{ CODE_LIMITS.toolCalls }} times in one run, so one piece of code can do a chain of
-              tool calls. It works on your images and clips only through those tools, by their
-              ids: it gets no file. Dez stops code that
+              tool calls. The one exception to "no files" comes from those calls: with the
+              <code>apps</code> tool, the code can read and change the files of the apps, and no
+              other file. It works on your images and clips only through those tools, by their
+              ids: it gets no file of them. Dez stops code that
               runs longer than {{ CODE_LIMITS.seconds }} seconds (a model can ask for up to
               {{ CODE_LIMITS.mostMinutes }} minutes), and code that writes more than
               {{ CODE_LIMITS.output }} of output. Click the chip of the call to see the code, its

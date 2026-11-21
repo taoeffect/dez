@@ -110,6 +110,8 @@ export const JS_EVAL_TOOL: ToolDefinition = {
     + '`code` is the body of an async function, so `await` works, and the value that it gives with `return` is the result: '
     + 'a string as it is, JSON data as JSON, and any other value as Deno shows it. What the code writes with `console.log` comes after the result. '
     + 'The code has no network, no files, and no environment variables, and it can start no program; no flag and no import changes that. '
+    + `The one exception: with calls of the \`${APPS_TOOL.name}\` tool (\`dez.tools/${APPS_TOOL.name}/<subcommand>\`, as below), `
+    + `the code can read and change the files of the apps in \`${APPS_VIRTUAL_ROOT}/\`, and no other file. `
     + 'It can load the built-in modules with `await import("node:crypto")`, but a static `import` does not work, '
     + 'and no package of npm, of JSR, or from a URL loads. '
     + 'The code can call the other Dez tools: `await dez.sbp("dez.tools/<tool>", { …arguments })`, '
