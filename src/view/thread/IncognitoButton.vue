@@ -1,17 +1,16 @@
 <script setup lang="ts">
-import { computed, useId } from 'vue'
+import { computed } from 'vue'
 import sbp from '@sbp/sbp'
 import { useModelState } from '../modelState'
 
 const { activeTabId, activeTabIncognito } = useModelState()
 
-// An SVG id is global to the page, so the gradient of the mask gets one of
-// its own.
-const gradientId = `incognito-mask-${useId()}`
-
 // A domino mask with two eye holes. Off: its outline, grey as the Help
-// button. On: filled with the gradient, with the eyes cut out (`evenodd`).
-const MASK_PATH = 'M1.3 5.7C3.6 4.3 6.1 4.7 8 5.6c1.9-.9 4.4-1.3 6.7.1.5 2.6-.4 5.3-2.9 5.5-1.6.1-2.7-.8-3.8-1.9-1.1 1.1-2.2 2-3.8 1.9-2.5-.2-3.4-2.9-2.9-5.5Z'
+// button. On: filled purple with the eyes cut out (`evenodd`), and a
+// brighter purple rim on the outer edge only: the eye holes are about 1.5
+// units tall, and a rim in them would close them.
+const MASK_EDGE = 'M1.3 5.7C3.6 4.3 6.1 4.7 8 5.6c1.9-.9 4.4-1.3 6.7.1.5 2.6-.4 5.3-2.9 5.5-1.6.1-2.7-.8-3.8-1.9-1.1 1.1-2.2 2-3.8 1.9-2.5-.2-3.4-2.9-2.9-5.5Z'
+const MASK_PATH = MASK_EDGE
   + 'M3.6 7.6c.5-.9 2.4-1 3 .1-.6.9-2.4 1-3-.1Z'
   + 'M9.4 7.7c.6-1.1 2.5-1 3-.1-.6 1.1-2.4 1-3 .1Z'
 
@@ -23,7 +22,7 @@ const tooltip = computed(() => [
   'So a provider cannot easily tell your requests from the requests of other apps: you hide in a larger crowd.',
   'This is no guarantee of privacy: your messages, the model that you pick, your network address, your provider account, and more can still tell who you are. Dez still saves the conversation on this computer.',
   activeTabIncognito.value
-    ? 'Incognito cannot be turned off.'
+    ? 'Incognito cannot be turned off in a tab once enabled.'
     : 'Incognito can go on only before the first message of a tab, and it cannot be turned off.',
 ].join('\n'))
 
@@ -48,21 +47,10 @@ function onClick (event: MouseEvent): void {
     @click="onClick"
   >
     <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
-      <defs v-if="activeTabIncognito">
-        <linearGradient :id="gradientId" x1="1" y1="4" x2="15" y2="12" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stop-color="#ff3d8b"/>
-          <stop offset="0.3" stop-color="#ff9a3c"/>
-          <stop offset="0.55" stop-color="#ffd23f"/>
-          <stop offset="0.75" stop-color="#2fd6a7"/>
-          <stop offset="1" stop-color="#7b5cff"/>
-        </linearGradient>
-      </defs>
-      <path
-        v-if="activeTabIncognito"
-        :fill="`url(#${gradientId})`"
-        fill-rule="evenodd"
-        :d="MASK_PATH"
-      />
+      <template v-if="activeTabIncognito">
+        <path class="incognito-mask-fill" fill-rule="evenodd" :d="MASK_PATH"/>
+        <path class="incognito-mask-rim" :d="MASK_EDGE"/>
+      </template>
       <path
         v-else
         fill="none"
@@ -98,13 +86,25 @@ function onClick (event: MouseEvent): void {
   opacity: 0.8;
 }
 
-/* On: the full colors, with a soft glow in the pink of the gradient. */
+/* On: full opacity, a vibrant purple with a brighter purple rim, and a
+   soft glow in the purple of the rim. */
 .incognito-button--on,
 .incognito-button--on:hover {
   opacity: 1;
 }
 
 .incognito-button--on svg {
-  filter: drop-shadow(0 0 2px rgba(255, 61, 139, 0.45));
+  filter: drop-shadow(0 0 2px rgba(185, 138, 255, 0.5));
+}
+
+.incognito-mask-fill {
+  fill: #7b2ff7;
+}
+
+.incognito-mask-rim {
+  fill: none;
+  stroke: #b98aff;
+  stroke-width: 1;
+  stroke-linejoin: round;
 }
 </style>
