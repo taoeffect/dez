@@ -281,7 +281,7 @@ const modelUpdaters = new WeakMap<HTMLElement, (label: ModelFacts | null) => voi
 
 /** What `createImage` draws: an image reference, with the label of the
  *  model that made it (null for none). */
-export type DrawnImage = Pick<ImageReference, 'path' | 'id' | 'linked'> & { model: ModelFacts | null }
+type ImageToDraw = Pick<ImageReference, 'path' | 'id' | 'linked'> & { model: ModelFacts | null }
 
 /** Draws an image, with an overlay that shows while the pointer is over
  *  the image: a small toolbar in its top-right corner with its id (null for
@@ -298,7 +298,7 @@ export type DrawnImage = Pick<ImageReference, 'path' | 'id' | 'linked'> & { mode
  *  reference, and its DOM tells (`ImageWidget`). A hidden image is drawn in
  *  the panel of its chip (toolCalls.ts), whose DOM is at the chip's place,
  *  so the chip gives the place. */
-export function createImage(view: EditorView, { path, id, linked, model }: DrawnImage, place?: AssetPlace): HTMLElement {
+export function createImage(view: EditorView, { path, id, linked, model }: ImageToDraw, place?: AssetPlace): HTMLElement {
   // The image is in a wrapper, so that the root element stays the same
   // when an image that fails to load becomes a box. The wrapper is as big
   // as the image (`.dez-image` in `dezTheme`), so the overlay can be placed
