@@ -116,7 +116,7 @@ export interface ToolRunContext {
   roundResults: readonly string[]
   /** True for a call of the code of a `js_eval` run (toolBridge.ts): its
    *  result goes to that code, and no request sends it to the model. */
-  bridged: boolean
+  isBridged: boolean
 }
 
 // The code of each Dez tool (TOOL_DEFINITIONS), by tool name. A runner gives
@@ -540,7 +540,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     init: initApp,
     read: readAppFile,
     write: writeAppFile,
-    edit: (args, _signal, context) => editAppFile(args, !context.bridged && editHintIsDue(callSections(context), context.roundResults)),
+    edit: (args, _signal, context) => editAppFile(args, !context.isBridged && editHintIsDue(callSections(context), context.roundResults)),
     rm: removeAppPaths,
     list_apps: listApps,
     ls: listAppFolder,

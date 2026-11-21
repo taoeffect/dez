@@ -310,8 +310,8 @@ describe('apps edit', () => {
 
     // Its result goes to the code that made the call, not to the model.
     it('never gives the hint to a call of js_eval code', async () => {
-      const done = await edit({ bridged: true })
-      const refused = await edit({ bridged: true }, { ...EDIT, path: '/apps/notes/gone.js' })
+      const done = await edit({ isBridged: true })
+      const refused = await edit({ isBridged: true }, { ...EDIT, path: '/apps/notes/gone.js' })
 
       expect(done.isError).toBe(false)
       expect(done.content).not.toContain(EDIT_HINT)

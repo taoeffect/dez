@@ -325,7 +325,7 @@ export function callContext(more: Partial<ToolRunContext> = {}): ToolRunContext 
     showApp: () => false,
     pictureBudget: async () => NO_CALL_PICTURE_BUDGET,
     roundResults: [],
-    bridged: false,
+    isBridged: false,
     ...more,
   }
 }

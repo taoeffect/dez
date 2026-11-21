@@ -220,7 +220,7 @@ export class ToolBridge {
         }
       },
       roundResults: context.roundResults,
-      bridged: true,
+      isBridged: true,
     }
   }
 }
