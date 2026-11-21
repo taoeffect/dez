@@ -15,14 +15,14 @@ describe('assetModelTexts', () => {
   it('tells the facts of the agent pill: the id with the pretty name, the provider, and the key', () => {
     const label = assetModelLabel(MODEL, names({ [KEY]: 'GPT Image' }, { openrouter: 'OpenRouter' }))!
     expect(assetModelTexts(label, 'video')).toStrictEqual({
-      title: 'Model that made this video',
+      title: 'Model that made this video clip',
       lines: ['openai/gpt-image-1 (GPT Image)', 'OpenRouter', KEY],
       ariaLabel: 'Made by openai/gpt-image-1 (GPT Image), Provider: OpenRouter',
     })
   })
 
-  it('names an unknown provider', () => {
+  it('names an unknown provider, and an image as no clip', () => {
     const label = assetModelLabel(MODEL, names())!
-    expect(assetModelTexts(label, 'image')).toMatchObject({ lines: ['openai/gpt-image-1', 'Unknown provider', KEY], ariaLabel: 'Made by openai/gpt-image-1, Provider: Unknown provider' })
+    expect(assetModelTexts(label, 'image')).toMatchObject({ title: 'Model that made this image', lines: ['openai/gpt-image-1', 'Unknown provider', KEY], ariaLabel: 'Made by openai/gpt-image-1, Provider: Unknown provider' })
   })
 })

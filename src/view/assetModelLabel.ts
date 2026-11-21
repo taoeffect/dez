@@ -21,7 +21,7 @@ export function assetModelLabel(model: ModelRef | null, names: ModelDisplayNames
  *  the lines of its tooltip, and its accessible name. */
 export function assetModelTexts(label: ModelFacts, kind: 'image' | MediaTagKind): { title: string, lines: string[], ariaLabel: string } {
   return {
-    title: `Model that made this ${kind}`,
+    title: `Model that made this ${kind === 'image' ? 'image' : `${kind} clip`}`,
     lines: modelFactLines(label),
     ariaLabel: `Made by ${label.tooltipName}, Provider: ${label.providerName ?? UNKNOWN_PROVIDER}`,
   }

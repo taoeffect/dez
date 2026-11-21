@@ -237,7 +237,7 @@ describe('asset facts', () => {
     await movePointer(browser, await assetPartPoint(browser, '.media-player', 0, '.media-player__card'))
     await movePointer(browser, await assetPartPoint(browser, '.media-player', 0, '.media-player__model'))
     await waitForValue(browser, 'tooltip of the player label', modelTooltips, [
-      { title: 'Model that made this video', lines: ['films', 'Unknown provider', 'studio/films'], rows: true },
+      { title: 'Model that made this video clip', lines: ['films', 'Unknown provider', 'studio/films'], rows: true },
     ])
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
