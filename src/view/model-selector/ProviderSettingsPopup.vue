@@ -16,9 +16,11 @@ import {
   type SwitchParameter,
 } from '../../model/providers/modelParameters'
 import { toggleRows, toggleValue } from '../../model/providers/modelToggles'
+import { TOOLS_SETTING_KEY } from '../../model/providers/toolsSetting'
+import { requestParts } from '../../model/chat/incognito'
 import ProviderSettingsSwitch from './ProviderSettingsSwitch.vue'
 
-const { activeModel, settings } = useModelState()
+const { activeModel, activeTabIncognito, settings } = useModelState()
 
 // Display name + the toggles that apply to the active model, read through
 // the provider selector boundary (handles unknown/invalid provider ids by
@@ -51,6 +53,15 @@ function toggleSetting(key: string, defaultValue: boolean) {
   const providerId = activeModel.value?.providerId
   if (!providerId) return
   sbp('dez.model/settings/setProviderSetting', providerId, key, !settingValue(key, defaultValue))
+}
+
+// An incognito tab sends no Dez tools (`requestParts`), whatever the Tools
+// toggle of the provider says: in such a tab the row shows off, with a note,
+// and takes no click. The stored value stays, for the other tabs.
+const toolsLeftOut = computed(() => !requestParts({ incognito: activeTabIncognito.value }).dezTools)
+
+function leftOut(key: string): boolean {
+  return key === TOOLS_SETTING_KEY && toolsLeftOut.value
 }
 
 // What the model cache knows of the active model, so it changes with the
@@ -217,7 +228,9 @@ function resetToDefaults() {
             v-for="def in settingDefs"
             :key="def.key"
             :label="def.label"
-            :on="settingValue(def.key, def.default)"
+            :on="!leftOut(def.key) && settingValue(def.key, def.default)"
+            :disabled="leftOut(def.key)"
+            :note="leftOut(def.key) ? 'An incognito tab sends no Dez tools.' : undefined"
             @toggle="toggleSetting(def.key, def.default)"
           />
         </div>

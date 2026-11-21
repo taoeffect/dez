@@ -9,7 +9,8 @@ import { shallowRef } from 'vue'
 export interface ConfirmRequest {
   message: string
   confirmLabel: string
-  cancelLabel: string
+  /** `null`: the prompt has no cancel button. */
+  cancelLabel: string | null
   resolve: (confirmed: boolean) => void
 }
 

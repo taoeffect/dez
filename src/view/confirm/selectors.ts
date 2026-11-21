@@ -6,7 +6,9 @@ export interface ConfirmOptions {
   /** The default button: it has the focus when the prompt opens, so Enter
    *  picks it. */
   confirmLabel?: string
-  cancelLabel?: string
+  /** `null` gives a prompt with only the confirm button: a notice that the
+   *  user can only take note of (an "OK"). */
+  cancelLabel?: string | null
 }
 
 export default sbp('sbp/selectors/register', {

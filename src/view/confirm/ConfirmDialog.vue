@@ -46,7 +46,8 @@ function restoreFocus() {
 // Enter on a button clicks that button. Enter anywhere else in the dialog
 // (after a click on its text) picks the default button. Tab and Shift+Tab
 // move only between the two buttons, so the focus never goes to the editor
-// behind the overlay.
+// behind the overlay. A prompt with no cancel button keeps the focus on its
+// one button (the cancel ref is null).
 function onKeydown(event: KeyboardEvent) {
   if (event.key === 'Enter' && !(event.target instanceof HTMLButtonElement)) {
     event.preventDefault()
@@ -80,7 +81,12 @@ function onOverlayClick(event: MouseEvent) {
     >
       <p id="confirm-message" class="confirm-message">{{ confirmRequest.message }}</p>
       <div class="confirm-actions">
-        <button ref="cancelButton" class="confirm-btn confirm-btn--cancel" @click="answerConfirm(false)">
+        <button
+          v-if="confirmRequest.cancelLabel !== null"
+          ref="cancelButton"
+          class="confirm-btn confirm-btn--cancel"
+          @click="answerConfirm(false)"
+        >
           {{ confirmRequest.cancelLabel }}
         </button>
         <button ref="confirmButton" class="confirm-btn confirm-btn--confirm" @click="answerConfirm(true)">

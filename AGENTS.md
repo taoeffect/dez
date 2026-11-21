@@ -108,6 +108,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
   - `storedFilePaths.ts`, `linkedFiles.ts`, `mediaFiles.ts`, `unusedFiles.ts` (stored, linked, and unused files), `appNames.ts` (the apps that a text names).
 - `model/state/`: Pinia stores (internal) and `dez.model/*` selectors; views read state through `view/modelState.ts`.
 - `controller/thread.ts`: `dez.controller/submitTab`. `controller/tabs.ts`: `dez.controller/newTab`.
+- Incognito tabs: `model/chat/incognito.ts` (the rules), `view/thread/IncognitoButton.vue` (the mask of the bottom bar), `dez.controller/turnOnIncognito` (`controller/tabs.ts`).
 - `controller/stream.ts`, `model/state/streams.ts`, `controller/http.ts`: stream lifecycle (one reply), per-tab sessions, native HTTP streams.
 - `model/streams/`: the pure parts of a reply: `messages.ts` (request messages), `toolRound.ts`, `mediaRequest.ts`, `pictureBudget.ts`.
 - `model/chat/contextSize.ts`, `model/streams/contextEstimate.ts`: the context size of a tab (the provider's count, plus Dez's estimate; no tokenizer).
@@ -132,7 +133,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `model/shortcuts.ts`: the editable shortcut registry; user overrides are in the settings store.
 - `controller/menu.ts`: the native menubar (Tauri only). `view/composables/useKeyboardShortcuts.ts`: app keys.
 - `controller/window.ts`, `windowFit.ts`: restore and save the window size and position.
-- `view/app/AppLayout.vue`: layout and bottom bar (`ModelSelector.vue`, `view/thread/UsageLabel.vue`, `view/thread/SubmitButton.vue`, the Help button).
+- `view/app/AppLayout.vue`: layout and bottom bar (`ModelSelector.vue`, `view/thread/UsageLabel.vue`, `view/thread/SubmitButton.vue`, `view/thread/IncognitoButton.vue`, the Help button).
 - `view/thread/UsageLabel.vue`, `tokenLabel.ts`, `costLabel.ts`: the token count and the cost of the active tab's conversation.
 - `view/composables/useActiveContextSize.ts`: the one view read of the context size; never read it in a `computed`.
 - `view/model-selector/`: `ModelPicker.vue` (a virtual list), `ModelOutputFilter.vue`, `ProviderSettingsPopup.vue` (toggles and "Model Parameters" of the active model).
@@ -290,6 +291,7 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 
 - **A request never starts with an agent message**: the block of the compaction section goes as a `user` message, and the reply text after it as agent rounds (`sectionsToStreamMessages`, `src/model/streams/messages.ts`).
 - **Provider role mapping**: internal role `agent` maps to API role `assistant` in both formats.
+- **An incognito request has no Dez system prompt, no Dez tools, and no compaction**, by one rule that every reader takes (`requestParts`, `src/model/chat/incognito.ts`). Incognito goes on only before the first request of a tab, and never off (`canTurnOnIncognito`).
 - **No stored file path to providers**: every request text goes through `withoutStoredFilePaths` (`src/model/chat/storedFilePaths.ts`); a new request text needs the same.
 - **A request holds at most the request form of a media tag** (`mediaTagsForRequest`), so a Save, a Delete, or an expiry changes no request bytes.
 - **The system prompt and the tools are in the cached prefix**: never put a value that changes between requests (a date, a running count, a random value) into `systemPrompt.md`, its placeholder values, or a tool definition. A constant of the code, such as a limit, is fine.

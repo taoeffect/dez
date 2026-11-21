@@ -7,6 +7,7 @@ import ThreadEditor from "../thread/ThreadEditor.vue";
 import SettingsView from "../settings/SettingsView.vue";
 import ModelSelector from "../model-selector/ModelSelector.vue";
 import SubmitButton from "../thread/SubmitButton.vue";
+import IncognitoButton from "../thread/IncognitoButton.vue";
 import UsageLabel from "../thread/UsageLabel.vue";
 import TabBar from "../tabs/TabBar.vue";
 import HistoryPanel from "../history/HistoryPanel.vue";
@@ -76,6 +77,7 @@ onUnmounted(() => {
       <UsageLabel />
       <div class="bottom-bar-end">
         <SubmitButton />
+        <IncognitoButton />
         <!-- `mousedown.prevent` keeps the focus and the caret where they are. -->
         <button
           class="help-button"
@@ -164,13 +166,13 @@ onUnmounted(() => {
 }
 
 /* Three columns: the model picker, the usage label (`UsageLabel.vue`: the
-   token count and the cost), and Submit with Help. The two side columns
-   share the free space, so the label stays in the middle of the bar, also
-   when Submit turns into the narrower Stop. A side column is never narrower
-   than its content, so a long model name does not wrap: it pushes the label
-   to the right. Only the column of the label can get narrower than its
-   content (`minmax(0, auto)`): in a bar with too little room the label
-   hides its parts, and Submit stays in view. */
+   token count and the cost), and Submit with the incognito mask and Help.
+   The two side columns share the free space, so the label stays in the
+   middle of the bar, also when Submit turns into the narrower Stop. A side
+   column is never narrower than its content, so a long model name does not
+   wrap: it pushes the label to the right. Only the column of the label can
+   get narrower than its content (`minmax(0, auto)`): in a bar with too
+   little room the label hides its parts, and Submit stays in view. */
 .bottom-bar {
   display: grid;
   grid-template-columns: minmax(max-content, 1fr) minmax(0, auto) minmax(max-content, 1fr);
@@ -184,8 +186,8 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
-/* Submit and Help at the right end of the bar, in the last column also
-   while there is no usage label. */
+/* Submit, the incognito mask, and Help at the right end of the bar, in the
+   last column also while there is no usage label. */
 .bottom-bar-end {
   grid-column: 3;
   justify-self: end;

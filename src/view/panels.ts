@@ -17,8 +17,9 @@ export function isPanelOpen(): boolean {
   )
 }
 
-/** Escape for the top one of them: answers the confirm prompt with its
- *  cancel button (the prompt can be over Settings or History), or closes
+/** Escape for the top one of them: answers the confirm prompt `false`, as
+ *  its cancel button does (the prompt can be over Settings or History; a
+ *  prompt with only an OK button closes too), or closes
  *  Settings, History, or Help (only one of them is open at a time).
  *  Returns whether one was open. */
 export function closeTopPanel(): boolean {

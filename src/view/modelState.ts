@@ -40,6 +40,7 @@ export interface ViewModelState {
   activeTabStreamingSectionId: ComputedRef<string | null>
   tabActivity: ComputedRef<Record<string, TabActivity>>
   activeTabCost: ComputedRef<ActiveTabCost>
+  activeTabIncognito: ComputedRef<boolean>
   shortcuts: ComputedRef<readonly Shortcut[]>
 }
 
@@ -100,6 +101,9 @@ export function useModelState(): ViewModelState {
         compactions: sbp('dez.model/tabs/compactions', activeTabId) as Compactions | undefined,
       }
     }),
+    // The active tab is incognito (`Tab.incognito`): the mask of the bottom
+    // bar, and the Tools row of the provider settings popup.
+    activeTabIncognito: computed(() => sbp('dez.model/tabs/incognito', sbp('dez.model/tabs/activeId')) as boolean),
     // Every shortcut with its effective key; changes when the user sets a key.
     shortcuts: computed(() => sbp('dez.model/settings/shortcuts') as readonly Shortcut[]),
   }

@@ -31,6 +31,14 @@ describe('dez.ui/confirm', () => {
     await expect(no).resolves.toBe(false)
   })
 
+  // A null label is no cancel button: it must not fall back to "No".
+  it('shows a notice with only its OK button', async () => {
+    const read = confirm({ message: 'Incognito stays on.', confirmLabel: 'OK', cancelLabel: null })
+    expect(confirmRequest.value).toMatchObject({ confirmLabel: 'OK', cancelLabel: null })
+    answerConfirm(true)
+    await expect(read).resolves.toBe(true)
+  })
+
   it('answers an open prompt No when a new prompt takes its place', async () => {
     const first = confirm({ message: 'First?' })
     const second = confirm({ message: 'Second?' })

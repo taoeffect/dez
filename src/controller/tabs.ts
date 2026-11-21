@@ -8,6 +8,10 @@ import { safeFileName } from '../utils/fileName'
 // key and a menu item for the same shortcut) must not open a second dialog.
 let saveDialogOpen = false
 
+// The notices of `dez.controller/turnOnIncognito`.
+const INCOGNITO_STAYS_ON = 'Incognito stays on in this tab. If it went off, the next request would send the whole conversation, also the messages that went in incognito, with the system prompt and the tools of Dez, so the provider could tie all of it to Dez. To go on without incognito, copy the conversation and paste it into a new tab.'
+const INCOGNITO_TOO_LATE = 'Incognito can go on only in a tab that has sent no message and has no reply, as the provider can already tie this conversation to Dez. To start an incognito conversation, open a new tab and turn incognito on before you send your first message.'
+
 export default sbp('sbp/selectors/register', {
   // Every "new tab" path (the `+` button, the keys, the File menu) calls
   // this, so the user can type in the new tab at once. On Linux the menu
@@ -31,6 +35,18 @@ export default sbp('sbp/selectors/register', {
     if ('step' in target) sbp('dez.model/tabs/cycle', target.step)
     else sbp('dez.model/tabs/switchToIndex', target.index)
     sbp('dez.editor/focus', { keepTextFieldFocus: true })
+  },
+
+  // The mask of the bottom bar. Turns incognito on in the tab when its rule
+  // allows it (`canTurnOnIncognito`), with no prompt: the tab has sent
+  // nothing yet, and a new tab is never incognito. Else a notice with one
+  // OK button tells why the click changes nothing: incognito never goes
+  // off, and it goes on only before the first message of a tab.
+  async 'dez.controller/turnOnIncognito' (tabId: string): Promise<void> {
+    if (sbp('dez.model/tabs/turnOnIncognito', tabId)) return
+    if (!sbp('dez.model/tab', tabId)) return
+    const on = sbp('dez.model/tabs/incognito', tabId) as boolean
+    await sbp('dez.ui/confirm', { message: on ? INCOGNITO_STAYS_ON : INCOGNITO_TOO_LATE, confirmLabel: 'OK', cancelLabel: null })
   },
 
   // A close ends the reply of the tab and its jobs (`endJobs`): no later
