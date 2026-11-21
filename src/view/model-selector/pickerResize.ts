@@ -39,10 +39,11 @@ export function fitPickerSize(size: ModelPickerSize, room: PickerRoom | null): M
 
 export interface PickerDragStart {
   edge: PickerEdge
-  // The size of the picker on the screen at the press. A dimension that
-  // the edge moves starts from it, not from the stored size: the picker is
-  // shorter than its height limit when its list is short, and the edge
-  // must move with the pointer at once.
+  // The size of the picker on the screen at the press. It can be smaller
+  // than the stored size: a short list draws a picker shorter than its
+  // height limit, and a small window draws a smaller picker
+  // (`fitPickerSize`). A move that makes a dimension smaller starts from
+  // it, so that the edge moves with the pointer at once.
   rendered: { width: number; height: number }
   // The stored size: a dimension that the edge does not move keeps it.
   size: ModelPickerSize
@@ -53,16 +54,25 @@ export interface PickerDragStart {
 // to the right make the picker larger. Each dimension that the edge moves
 // is rounded and stays between the minimum (the default size) and the room;
 // when the window is too small for the minimum, the room wins, as in
-// `fitPickerSize`.
+// `fitPickerSize`. A move that makes a dimension smaller starts from the
+// drawn picker. A move that makes it larger never lowers the stored size: a
+// short list or a small window stops the edge, and the stored size comes
+// back with a long list or a larger window. A dimension with no move keeps
+// its stored size.
 export function draggedPickerSize(start: PickerDragStart, dx: number, dy: number): ModelPickerSize {
   const within = (value: number, min: number, max: number) => Math.min(max, Math.max(min, Math.round(value)))
+  const dragged = (drawn: number, stored: number, grow: number, min: number, room: number) => {
+    if (grow === 0) return stored
+    const size = within(drawn + grow, min, room)
+    return grow > 0 ? Math.max(stored, size) : size
+  }
   return {
     width: start.edge === 'top'
       ? start.size.width
-      : within(start.rendered.width + dx, MODEL_PICKER_SIZE_DEFAULT.width, start.room.width),
+      : dragged(start.rendered.width, start.size.width, dx, MODEL_PICKER_SIZE_DEFAULT.width, start.room.width),
     maxHeight: start.edge === 'right'
       ? start.size.maxHeight
-      : within(start.rendered.height - dy, MODEL_PICKER_SIZE_DEFAULT.maxHeight, start.room.height),
+      : dragged(start.rendered.height, start.size.maxHeight, -dy, MODEL_PICKER_SIZE_DEFAULT.maxHeight, start.room.height),
   }
 }
 

@@ -6,7 +6,8 @@
 // `maxHeight` is a limit, not a height: the picker is as tall as its list,
 // up to this limit (`ModelPicker.vue`), so a search with few results still
 // gives a short picker. So a drag up of a picker whose list is shorter than
-// it raises the limit, but the top edge stops at the end of the list.
+// it never lowers the limit (it can raise it), but the top edge stops at the
+// end of the list (`draggedPickerSize`).
 export interface ModelPickerSize {
   width: number
   maxHeight: number

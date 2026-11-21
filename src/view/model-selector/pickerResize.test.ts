@@ -21,10 +21,13 @@ describe('draggedPickerSize', () => {
   })
 
   // A short list: the picker is 400 px tall under a limit of 600.
-  it('starts a moved dimension from the drawn picker, and keeps the stored limit of the other one', () => {
+  it('starts a move down from the drawn picker, and a move up or no move keeps the stored limit', () => {
     const short = { width: 400, height: 400 }
     const size = { width: 400, maxHeight: 600 }
-    expect(draggedPickerSize(start('top', short, size), 0, -10)).toStrictEqual({ width: 400, maxHeight: 410 })
+    expect(draggedPickerSize(start('top', short, size), 0, -10)).toStrictEqual({ width: 400, maxHeight: 600 })
+    expect(draggedPickerSize(start('top', short, size), 0, -250)).toStrictEqual({ width: 400, maxHeight: 650 })
+    expect(draggedPickerSize(start('top', short, size), 0, 10)).toStrictEqual({ width: 400, maxHeight: 390 })
+    expect(draggedPickerSize(start('corner', short, size), 50, 0)).toStrictEqual({ width: 450, maxHeight: 600 })
     expect(draggedPickerSize(start('right', short, size), 50, 0)).toStrictEqual({ width: 450, maxHeight: 600 })
   })
 
@@ -33,9 +36,16 @@ describe('draggedPickerSize', () => {
     expect(draggedPickerSize(start('corner'), 1000, -1000)).toStrictEqual({ width: 1000, maxHeight: 700 })
   })
 
+  // The stored 400 × 500 does not fit: `fitPickerSize` draws 300 × 250.
+  const small = { ...start('corner', { width: 300, height: 250 }), room: { width: 300, height: 250 } }
+
+  it('keeps the stored size when a small window stops a move up and to the right', () => {
+    expect(draggedPickerSize(small, 40, -40)).toStrictEqual({ width: 400, maxHeight: 500 })
+    expect(draggedPickerSize(small, 0, -40)).toStrictEqual({ width: 400, maxHeight: 500 })
+  })
+
   it('gives the room when the window is too small for the default size', () => {
-    const small = { ...start('corner', { width: 300, height: 250 }), room: { width: 300, height: 250 } }
-    expect(draggedPickerSize(small, 40, -40)).toStrictEqual({ width: 300, maxHeight: 250 })
+    expect(draggedPickerSize(small, -40, 40)).toStrictEqual({ width: 300, maxHeight: 250 })
   })
 
   it('rounds to whole px', () => {
