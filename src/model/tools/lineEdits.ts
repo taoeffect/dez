@@ -210,22 +210,22 @@ function hunkRange(linesBefore: number, count: number): string {
 // touch are one hunk.
 function diffHunks(ops: readonly LineOp[]): DiffHunk[] {
   // The first and the last op of each hunk.
-  const hunks: { start: number; end: number }[] = []
+  const ranges: { start: number; end: number }[] = []
   ops.forEach((op, index) => {
     if (op.kind === 'keep') return
     const start = Math.max(0, index - DIFF_CONTEXT_LINES)
     const end = Math.min(ops.length - 1, index + DIFF_CONTEXT_LINES)
-    const last = hunks.at(-1)
+    const last = ranges.at(-1)
     if (last && start <= last.end + 1) last.end = end
-    else hunks.push({ start, end })
+    else ranges.push({ start, end })
   })
 
-  const diff: DiffHunk[] = []
+  const hunks: DiffHunk[] = []
   // How many lines of the old and the new file are before the op.
   let oldLines = 0
   let newLines = 0
   let next = 0
-  for (const { start, end } of hunks) {
+  for (const { start, end } of ranges) {
     for (; next < start; next += 1) {
       if (ops[next].kind !== 'add') oldLines += 1
       if (ops[next].kind !== 'remove') newLines += 1
@@ -233,7 +233,7 @@ function diffHunks(ops: readonly LineOp[]): DiffHunk[] {
     const part = ops.slice(start, end + 1)
     const oldCount = part.filter((op) => op.kind !== 'add').length
     const newCount = part.filter((op) => op.kind !== 'remove').length
-    diff.push({
+    hunks.push({
       header: `@@ -${hunkRange(oldLines, oldCount)} +${hunkRange(newLines, newCount)} @@`,
       lines: part.map((op) => `${DIFF_MARKS[op.kind]}${op.text}`),
     })
@@ -241,5 +241,5 @@ function diffHunks(ops: readonly LineOp[]): DiffHunk[] {
     newLines += newCount
     next = end + 1
   }
-  return diff
+  return hunks
 }
