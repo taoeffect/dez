@@ -117,7 +117,7 @@ describe('apps read', () => {
   it('gives the lines of a file', async () => {
     fakeAppFiles(appFiles('notes', { 'src/units.js': 'export const KM = 1000\nexport const M = 1\n' }))
 
-    expect(await apps('read', { path: '/apps/notes/src/units.js', from_line: 2 })).toStrictEqual({
+    expect(await apps('read', { path: '/apps/notes/src/units.js', ranges: [{ from_line: 2 }] })).toStrictEqual({
       content: '/apps/notes/src/units.js: line 2 of 2 (42 B)\n2: export const M = 1',
       isError: false,
     })

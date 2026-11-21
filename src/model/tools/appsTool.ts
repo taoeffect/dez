@@ -191,14 +191,24 @@ export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
       name: 'read',
       summary: 'Read a text file of an app, with the number of each line.',
       description: 'Gives the text of a file, each line after its number (`12: text`), and tells how many lines and bytes the file has. '
-        + `One call gives at most ${READ_MAX_LINES} lines and ${countText(READ_MAX_CHARACTERS)} characters: the result tells when it left lines out, and from which line to read on. `
+        + 'With `ranges` it gives only the lines of those ranges, in the order of the list. '
+        + `One call gives at most ${READ_MAX_LINES} lines and ${countText(READ_MAX_CHARACTERS)} characters: the result tells when it left lines out, and which ranges to read next. `
         + `edit takes the line numbers of this result. Dez refuses a file that is no text, and one of more than ${FILE_LIMIT}.`,
       parameters: [
         { name: 'path', type: 'string', description: `The path of the file, ${PATH_PARAMETER}`, required: true },
-        { name: 'from_line', type: 'integer', description: 'The first line to read; the first line of a file is line 1. Leave it out to read from line 1.', required: false },
-        { name: 'to_line', type: 'integer', description: 'The last line to read. Leave it out to read to the end of the file.', required: false },
+        {
+          name: 'ranges',
+          type: 'list',
+          items: [
+            { name: 'from_line', type: 'integer', description: 'The first line of the range; the first line of a file is line 1.', required: true },
+            { name: 'to_line', type: 'integer', description: 'The last line of the range. Leave it out to read to the end of the file.', required: false },
+          ],
+          description: 'The ranges of lines to read. Leave it out to read the file from line 1. '
+            + 'Give each line in one range only: a range that overlaps an earlier range of the list is left out.',
+          required: false,
+        },
       ],
-      example: { path: EXAMPLE_FILE, from_line: 1, to_line: 200 },
+      example: { path: EXAMPLE_FILE, ranges: [{ from_line: 1, to_line: 40 }, { from_line: 120, to_line: 160 }] },
     },
     {
       name: 'write',
@@ -644,22 +654,28 @@ export function initText({ app, manifest, files }: InitCall): string {
   ].join('\n')
 }
 
-export interface ReadCall {
-  path: AppsPath
+/** One range of lines of a `read` call, as the model gave it. */
+export interface ReadRange {
   fromLine: number
   /** null: to the end of the file. */
   toLine: number | null
 }
 
+export interface ReadCall {
+  path: AppsPath
+  /** In the order of the call, at least one: a call with no ranges reads
+   *  from line 1. */
+  ranges: ReadRange[]
+}
+
 export function readCall(args: SubcommandArguments): ReadCall {
   const path = filePath(args, 'path')
-  const fromLine = integerArgument(args, 'from_line') ?? 1
-  const toLine = integerArgument(args, 'to_line') ?? null
-  if (fromLine < 1) throw new ToolError(`\`from_line\` is ${fromLine}. The first line of a file is line 1.`)
-  if (toLine !== null && toLine < fromLine) {
-    throw new ToolError(`\`to_line\` (${toLine}) is before \`from_line\` (${fromLine}). Give the first and the last line to read, as in {"from_line": ${fromLine}, "to_line": ${fromLine + 99}}.`)
-  }
-  return { path, fromLine, toLine }
+  const ranges = objectItems(args, 'ranges').map((range): ReadRange => ({
+    // The argument check makes `from_line` required.
+    fromLine: integerArgument(range, 'from_line') ?? 1,
+    toLine: integerArgument(range, 'to_line') ?? null,
+  }))
+  return { path, ranges: ranges.length > 0 ? ranges : [{ fromLine: 1, toLine: null }] }
 }
 
 /** A size over `limit` and the limit, as texts for a refusal. They are byte
@@ -700,45 +716,99 @@ export function fileText(path: AppsPath, bytes: Uint8Array): string {
   throw new ToolError(`${path.virtual} is no text file (it holds a zero byte, or bytes that are no UTF-8), and the apps tool reads and edits text files only.`)
 }
 
-/** The result of a `read` call: the lines that the call asks for of the
- *  file with `text` and `size` bytes, each after its number, under a line
- *  that tells which lines these are. A last line tells which lines the
- *  limits of one call left out. Throws for a first line that the file does
- *  not have. */
-export function readText({ path, fromLine, toLine }: ReadCall, text: string, size: number): string {
+// The lines `from` to `last` of a file, both in it. A range of a `read`
+// call names its part: the part of an empty file is the empty one, from
+// line 1 to line 0.
+interface LinePart {
+  from: number
+  last: number
+}
+
+// "line 4, lines 7-9, and line 12".
+function linePartsName(parts: readonly LinePart[]): string {
+  return new Intl.ListFormat('en', { type: 'conjunction' }).format(parts.map(({ from, last }) => linesName(from, last)))
+}
+
+// A range of a `read` call as JSON, for the texts that tell how to call
+// read; with no `to_line`, it reads to the end of the file.
+function rangeJson(from: number, to: number | null): string {
+  return to === null ? `{"from_line": ${from}}` : `{"from_line": ${from}, "to_line": ${to}}`
+}
+
+// The part of a file with `total` lines that `range` names, or the text
+// of why it gives none. `taken` are the parts of the earlier ranges of the
+// call that passed: a range shows no line twice, as an edit of `edit`
+// changes no line of an earlier edit of its call (lineEdits.ts).
+function readPart({ fromLine, toLine }: ReadRange, total: number, path: AppsPath, taken: readonly (LinePart & { number: number })[]): LinePart | string {
+  if (fromLine < 1) return `\`from_line\` is ${fromLine}. The first line of a file is line 1.`
+  if (toLine !== null && toLine < fromLine) {
+    return `\`to_line\` (${toLine}) is before \`from_line\` (${fromLine}). Give the first and the last line to read, as in ${rangeJson(fromLine, fromLine + 99)}.`
+  }
+  if (total === 0) return fromLine === 1 ? { from: 1, last: 0 } : `\`from_line\` is ${fromLine}, and ${path.virtual} is an empty file.`
+  if (fromLine > total) return `\`from_line\` is ${fromLine}, and ${path.virtual} has ${countOf(total, 'line')}.`
+  const last = Math.min(toLine ?? total, total)
+  const other = taken.find((part) => part.from <= last && fromLine <= part.last)
+  if (!other) return { from: fromLine, last }
+  return `It names ${linesName(fromLine, last)}, and range ${other.number} names ${linesName(other.from, other.last)} already. `
+    + `Make one range of the two, as in ${rangeJson(Math.min(fromLine, other.from), Math.max(last, other.last))}.`
+}
+
+/** The result of a `read` call: the lines of the ranges of the call, in
+ *  their order, of the file with `text` and `size` bytes, each after its
+ *  number, under a line that tells which lines these are. A range that
+ *  the file does not have, or that overlaps an earlier range, shows no
+ *  line: a note line tells why. The limits of one call count the lines of
+ *  all ranges, and a last line gives the ranges that they left out. Throws
+ *  when no range shows a line. */
+export function readText({ path, ranges }: ReadCall, text: string, size: number): string {
   const lines = textLines(text)
   const total = lines.length
-  if (total === 0) {
-    if (fromLine > 1) throw new ToolError(`\`from_line\` is ${fromLine}, and ${path.virtual} is an empty file.`)
-    return `${path.virtual} is an empty file.`
+  const parts: (LinePart & { number: number })[] = []
+  const refusals: string[] = []
+  for (const [index, range] of ranges.entries()) {
+    const part = readPart(range, total, path, parts)
+    if (typeof part !== 'string') {
+      parts.push({ ...part, number: index + 1 })
+    } else {
+      // The one range of a call is the call: its text needs no number.
+      refusals.push(ranges.length === 1 ? part : `Range ${index + 1} is left out. ${part}`)
+    }
   }
-  if (fromLine > total) throw new ToolError(`\`from_line\` is ${fromLine}, and ${path.virtual} has ${countOf(total, 'line')}.`)
-  const last = Math.min(toLine ?? total, total)
+  if (parts.length === 0) throw new ToolError(refusals.join('\n'))
+  if (total === 0) return [`${path.virtual} is an empty file.`, ...refusals].join('\n')
 
   const rows: string[] = []
   const notes: string[] = []
+  const shown: LinePart[] = []
+  const left: LinePart[] = []
   let characters = 0
-  let line = fromLine
-  for (; line <= last && rows.length < READ_MAX_LINES; line += 1) {
-    const row = `${line}: ${lines[line - 1]}`
-    if (characters + row.length > READ_MAX_CHARACTERS) {
-      if (rows.length > 0) break
-      // One line that is longer than a whole result (a minified file):
-      // its start shows, and the next call goes on after it.
-      rows.push(`${startOf(row, READ_MAX_CHARACTERS)}…`)
-      notes.push(`Line ${line} has ${countText(lines[line - 1].length)} characters, and only its start shows.`)
-      line += 1
-      break
+  let full = false
+  for (const part of parts) {
+    let line = part.from
+    for (; !full && line <= part.last && rows.length < READ_MAX_LINES; line += 1) {
+      const row = `${line}: ${lines[line - 1]}`
+      if (characters + row.length > READ_MAX_CHARACTERS) {
+        full = true
+        if (rows.length > 0) break
+        // One line that is longer than a whole result (a minified file):
+        // its start shows, and the next call goes on after it.
+        rows.push(`${startOf(row, READ_MAX_CHARACTERS)}…`)
+        notes.push(`Line ${line} has ${countText(lines[line - 1].length)} characters, and only its start shows.`)
+        line += 1
+        break
+      }
+      rows.push(row)
+      characters += row.length + 1
     }
-    rows.push(row)
-    characters += row.length + 1
+    if (line > part.from) shown.push({ from: part.from, last: line - 1 })
+    if (line <= part.last) left.push({ from: line, last: part.last })
   }
-  const shownLast = line - 1
-  if (shownLast < last) {
-    notes.push(`Not shown: ${linesName(shownLast + 1, last)}. One call gives at most ${READ_MAX_LINES} lines and ${countText(READ_MAX_CHARACTERS)} characters: `
-      + `call read again with "from_line": ${shownLast + 1} for the next ones.`)
+  if (left.length > 0) {
+    const next = left.map(({ from, last }) => rangeJson(from, last < total ? last : null)).join(', ')
+    notes.push(`Not shown: ${linePartsName(left)}. One call gives at most ${READ_MAX_LINES} lines and ${countText(READ_MAX_CHARACTERS)} characters: `
+      + `call read again with "ranges": [${next}] for the next ones.`)
   }
-  return [`${path.virtual}: ${linesName(fromLine, shownLast)} of ${total} (${byteSizeText(size)})`, ...rows, ...notes].join('\n')
+  return [`${path.virtual}: ${linePartsName(shown)} of ${total} (${byteSizeText(size)})`, ...rows, ...refusals, ...notes].join('\n')
 }
 
 export interface WriteCall {

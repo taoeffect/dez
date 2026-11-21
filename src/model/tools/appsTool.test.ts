@@ -57,7 +57,7 @@ describe('APPS_TOOL', () => {
     expect(APPS_TOOL_DEFINITION.name).toBe('apps')
     expect(APPS_TOOL.subcommands.map(({ name, parameters }) => [name, parameters.map((parameter) => parameter.name)])).toStrictEqual([
       ['init', ['name', 'kind', 'description']],
-      ['read', ['path', 'from_line', 'to_line']],
+      ['read', ['path', 'ranges']],
       ['write', ['path', 'content']],
       ['edit', ['path', 'edits']],
       ['rm', ['paths']],
@@ -234,6 +234,7 @@ describe('init', () => {
 describe('read', () => {
   const path = appsPath('/apps/notes/main.js', 'path')
   const read = (parameters: Record<string, unknown>, content: string) => readText(readCall(args('read', { path: path.virtual, ...parameters })), content, textBytes(content).length)
+  const readRanges = (ranges: Record<string, number>[], content: string) => read({ ranges }, content)
 
   it('gives each line after its number, under the facts of the file', () => {
     expect(read({}, 'const a = 1\n\n  return a\n')).toBe([
@@ -243,25 +244,65 @@ describe('read', () => {
       '3:   return a',
     ].join('\n'))
     expect(read({}, 'one line, no line end')).toBe('/apps/notes/main.js: line 1 of 1 (21 B)\n1: one line, no line end')
+    expect(readRanges([], 'one line, no line end')).toBe('/apps/notes/main.js: line 1 of 1 (21 B)\n1: one line, no line end')
   })
 
   it('gives the lines of a range, and ends it at the end of the file', () => {
     const content = 'a\nb\nc\nd\n'
 
-    expect(read({ from_line: 2, to_line: 3 }, content)).toBe('/apps/notes/main.js: lines 2-3 of 4 (8 B)\n2: b\n3: c')
-    expect(read({ from_line: 4 }, content)).toBe('/apps/notes/main.js: line 4 of 4 (8 B)\n4: d')
-    expect(read({ from_line: 3, to_line: 90 }, content)).toBe('/apps/notes/main.js: lines 3-4 of 4 (8 B)\n3: c\n4: d')
+    expect(readRanges([{ from_line: 2, to_line: 3 }], content)).toBe('/apps/notes/main.js: lines 2-3 of 4 (8 B)\n2: b\n3: c')
+    expect(readRanges([{ from_line: 4 }], content)).toBe('/apps/notes/main.js: line 4 of 4 (8 B)\n4: d')
+    expect(readRanges([{ from_line: 3, to_line: 90 }], content)).toBe('/apps/notes/main.js: lines 3-4 of 4 (8 B)\n3: c\n4: d')
   })
 
-  it('refuses a range that the file does not have', () => {
-    expect(refusal(() => read({ from_line: 5 }, 'a\nb\nc\nd\n'))).toBe('`from_line` is 5, and /apps/notes/main.js has 4 lines.')
-    expect(refusal(() => read({ from_line: 0 }, 'a\n'))).toBe('`from_line` is 0. The first line of a file is line 1.')
-    expect(refusal(() => read({ from_line: 3, to_line: 2 }, 'a\n'))).toContain('`to_line` (2) is before `from_line` (3).')
+  it('gives the ranges in the order of the call', () => {
+    expect(readRanges([{ from_line: 5 }, { from_line: 1, to_line: 2 }, { from_line: 4, to_line: 4 }], 'a\nb\nc\nd\ne\nf\n')).toBe([
+      '/apps/notes/main.js: lines 5-6, lines 1-2, and line 4 of 6 (12 B)',
+      '5: e',
+      '6: f',
+      '1: a',
+      '2: b',
+      '4: d',
+    ].join('\n'))
+  })
+
+  it('leaves out a range that overlaps an earlier range, and gives the others', () => {
+    expect(readRanges([{ from_line: 2, to_line: 4 }, { from_line: 4, to_line: 9 }, { from_line: 6 }, { from_line: 1, to_line: 2 }], 'a\nb\nc\nd\ne\nf\n')).toBe([
+      '/apps/notes/main.js: lines 2-4 and line 6 of 6 (12 B)',
+      '2: b',
+      '3: c',
+      '4: d',
+      '6: f',
+      'Range 2 is left out. It names lines 4-6, and range 1 names lines 2-4 already. Make one range of the two, as in {"from_line": 2, "to_line": 6}.',
+      'Range 4 is left out. It names lines 1-2, and range 1 names lines 2-4 already. Make one range of the two, as in {"from_line": 1, "to_line": 4}.',
+    ].join('\n'))
+  })
+
+  it('leaves out each range that the file does not have, and gives the others', () => {
+    expect(readRanges([{ from_line: 0 }, { from_line: 2 }, { from_line: 3, to_line: 1 }, { from_line: 9 }], 'a\nb\nc\nd\n')).toBe([
+      '/apps/notes/main.js: lines 2-4 of 4 (8 B)',
+      '2: b',
+      '3: c',
+      '4: d',
+      'Range 1 is left out. `from_line` is 0. The first line of a file is line 1.',
+      'Range 3 is left out. `to_line` (1) is before `from_line` (3). Give the first and the last line to read, as in {"from_line": 3, "to_line": 102}.',
+      'Range 4 is left out. `from_line` is 9, and /apps/notes/main.js has 4 lines.',
+    ].join('\n'))
+  })
+
+  it('refuses a call whose ranges give no line', () => {
+    expect(refusal(() => readRanges([{ from_line: 5 }], 'a\nb\nc\nd\n'))).toBe('`from_line` is 5, and /apps/notes/main.js has 4 lines.')
+    expect(refusal(() => readRanges([{ from_line: 0 }], 'a\n'))).toBe('`from_line` is 0. The first line of a file is line 1.')
+    expect(refusal(() => readRanges([{ from_line: 3, to_line: 2 }], 'a\n'))).toContain('`to_line` (2) is before `from_line` (3).')
+    expect(refusal(() => readRanges([{ from_line: 2 }, { from_line: 0 }], 'a\n'))).toBe([
+      'Range 1 is left out. `from_line` is 2, and /apps/notes/main.js has 1 line.',
+      'Range 2 is left out. `from_line` is 0. The first line of a file is line 1.',
+    ].join('\n'))
   })
 
   it('tells that a file is empty', () => {
     expect(read({}, '')).toBe('/apps/notes/main.js is an empty file.')
-    expect(refusal(() => read({ from_line: 2 }, ''))).toBe('`from_line` is 2, and /apps/notes/main.js is an empty file.')
+    expect(refusal(() => readRanges([{ from_line: 2 }], ''))).toBe('`from_line` is 2, and /apps/notes/main.js is an empty file.')
   })
 
   it('gives at most 900 lines, and tells where to read on', () => {
@@ -270,14 +311,25 @@ describe('read', () => {
     expect(result[0]).toBe('/apps/notes/main.js: lines 1-900 of 1000 (2 KB)')
     expect(result).toHaveLength(902)
     expect(result[900]).toBe('900: x')
-    expect(result[901]).toBe('Not shown: lines 901-1000. One call gives at most 900 lines and 50,000 characters: call read again with "from_line": 901 for the next ones.')
+    expect(result[901]).toBe('Not shown: lines 901-1000. One call gives at most 900 lines and 50,000 characters: call read again with "ranges": [{"from_line": 901}] for the next ones.')
   })
 
   it('names as not shown only the lines that the call asked for', () => {
-    const result = read({ from_line: 50, to_line: 960 }, 'x\n'.repeat(1000)).split('\n')
+    const result = readRanges([{ from_line: 50, to_line: 960 }], 'x\n'.repeat(1000)).split('\n')
 
     expect(result[0]).toBe('/apps/notes/main.js: lines 50-949 of 1000 (2 KB)')
     expect(result.at(-1)).toContain('Not shown: lines 950-960.')
+    expect(result.at(-1)).toContain('"ranges": [{"from_line": 950, "to_line": 960}]')
+  })
+
+  it('counts the limits over all the ranges, and gives the ranges that they left out', () => {
+    const result = readRanges([{ from_line: 1, to_line: 500 }, { from_line: 551 }, { from_line: 501, to_line: 510 }], 'x\n'.repeat(1000)).split('\n')
+
+    expect(result[0]).toBe('/apps/notes/main.js: lines 1-500 and lines 551-950 of 1000 (2 KB)')
+    expect(result).toHaveLength(902)
+    expect(result[501]).toBe('551: x')
+    expect(result.at(-1)).toBe('Not shown: lines 951-1000 and lines 501-510. One call gives at most 900 lines and 50,000 characters: '
+      + 'call read again with "ranges": [{"from_line": 951}, {"from_line": 501, "to_line": 510}] for the next ones.')
   })
 
   it('gives at most 50,000 characters', () => {
@@ -285,7 +337,7 @@ describe('read', () => {
 
     expect(result[0]).toBe('/apps/notes/main.js: lines 1-49 of 100 (98 KB)')
     expect(result.at(-1)).toContain('Not shown: lines 50-100.')
-    expect(result.at(-1)).toContain('"from_line": 50')
+    expect(result.at(-1)).toContain('"ranges": [{"from_line": 50}]')
     expect(result.join('\n').length).toBeLessThan(51_000)
   })
 
@@ -296,7 +348,7 @@ describe('read', () => {
     expect(result[1]).toBe(`1: ${'z'.repeat(49_997)}…`)
     expect(result.slice(2)).toStrictEqual([
       'Line 1 has 60,000 characters, and only its start shows.',
-      'Not shown: line 2. One call gives at most 900 lines and 50,000 characters: call read again with "from_line": 2 for the next ones.',
+      'Not shown: line 2. One call gives at most 900 lines and 50,000 characters: call read again with "ranges": [{"from_line": 2}] for the next ones.',
     ])
   })
 
