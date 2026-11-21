@@ -11,8 +11,8 @@ import { usePromptsStore, type Prompt } from './prompts'
 import { useSettingsStore, type DefaultModel, type SettingsSection, type Theme, type WindowGeometry } from './settings'
 import { clampEditorFontSize } from '../editorFontSize'
 import { normalizeOutputs, type ModelOutput } from '../modelOutputs'
-import { clampDoneSoundVolume } from '../doneSoundVolume'
-import { clampClipVolume, type ClipVolume, type ClipVolumes } from '../clipVolume'
+import { clampVolumePercent } from '../volumePercent'
+import type { ClipVolume, ClipVolumes } from '../clipVolume'
 import type { MediaTagKind } from '../chat/mediaTags'
 import { clampModelPickerSize, type ModelPickerSize } from '../modelPickerSize'
 import { currentShortcutPlatform, findShortcut, normalizeShortcutKey, validateShortcutKey, type Shortcut, type ShortcutId, type ShortcutOverrides } from '../shortcuts'
@@ -1393,7 +1393,7 @@ export default sbp('sbp/selectors/register', {
   // The Settings › Notifications volume slider; any number is rounded and
   // kept in 0-100.
   'dez.model/settings/setDoneSoundVolume' (percent: number): void {
-    useSettingsStore().doneSoundVolume = clampDoneSoundVolume(percent)
+    useSettingsStore().doneSoundVolume = clampVolumePercent(percent)
   },
 
   'dez.model/settings/setDoneNotification' (enabled: boolean): void {
@@ -1414,7 +1414,7 @@ export default sbp('sbp/selectors/register', {
     const volumes = useSettingsStore().clipVolumes
     const current = volumes[kind]
     const next = {
-      volume: change.volume === undefined ? current.volume : clampClipVolume(change.volume),
+      volume: change.volume === undefined ? current.volume : clampVolumePercent(change.volume),
       muted: change.muted ?? current.muted,
     }
     if (next.volume !== current.volume || next.muted !== current.muted) volumes[kind] = next

@@ -12,8 +12,9 @@ import { MEDIA_TAG_KINDS } from '../chat/mediaTags'
 import type { AppStatePayload } from './types'
 import type { DefaultModel, Theme, WindowGeometry } from '../state/settings'
 import { EDITOR_FONT_SIZE_DEFAULT, clampEditorFontSize } from '../editorFontSize'
-import { DONE_SOUND_VOLUME_DEFAULT, clampDoneSoundVolume } from '../doneSoundVolume'
-import { clampClipVolume, defaultClipVolumes, type ClipVolumes } from '../clipVolume'
+import { DONE_SOUND_VOLUME_DEFAULT } from '../doneSoundVolume'
+import { defaultClipVolumes, type ClipVolumes } from '../clipVolume'
+import { clampVolumePercent } from '../volumePercent'
 import { MODEL_PICKER_SIZE_DEFAULT, clampModelPickerSize, type ModelPickerSize } from '../modelPickerSize'
 import { currentShortcutPlatform, parseShortcutOverrides } from '../shortcuts'
 import { normalizeOutputs } from '../modelOutputs'
@@ -130,7 +131,7 @@ function clipVolumes(value: unknown): ClipVolumes {
   for (const kind of MEDIA_TAG_KINDS) {
     const entry = value[kind]
     if (!isRecord(entry)) continue
-    if (typeof entry.volume === 'number') volumes[kind].volume = clampClipVolume(entry.volume)
+    if (typeof entry.volume === 'number') volumes[kind].volume = clampVolumePercent(entry.volume)
     if (typeof entry.muted === 'boolean') volumes[kind].muted = entry.muted
   }
   return volumes
@@ -266,7 +267,7 @@ export function parseAppStateJson(content: string): AppStatePayload {
       // Like editorFontSize: a hand-edited volume is rounded and kept in
       // range, not dropped.
       doneSoundVolume: typeof parsed.doneSoundVolume === 'number'
-        ? clampDoneSoundVolume(parsed.doneSoundVolume)
+        ? clampVolumePercent(parsed.doneSoundVolume)
         : fallback.doneSoundVolume,
       doneNotification: typeof parsed.doneNotification === 'boolean'
         ? parsed.doneNotification
