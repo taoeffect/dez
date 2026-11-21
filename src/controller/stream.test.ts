@@ -2952,6 +2952,13 @@ describe('dez.stream/start the hint of apps edit', () => {
     name: 'apps',
     argumentsText: JSON.stringify({ command: 'edit', parameters: JSON.stringify({ path: '/apps/sum/main.ts', edits: [{ from_line: line, text: `// ${id}` }] }) }),
   })
+  // An edit call with an item that edit does not take, as a model that did
+  // not read the help of edit writes it.
+  const wrongItemCall = (id: string) => ({
+    id,
+    name: 'apps',
+    argumentsText: JSON.stringify({ command: 'edit', parameters: JSON.stringify({ path: '/apps/sum/main.ts', edits: [{ old_text: 'a', new_text: 'b' }] }) }),
+  })
   // Whether the request `index` sends each result of the round before it
   // with the hint at its end.
   const hintedResults = (index: number) => {
@@ -2981,6 +2988,61 @@ describe('dez.stream/start the hint of apps edit', () => {
     await startStream({ sendTools: true })
 
     expect(hintedResults(1)).toStrictEqual([true, false])
+    expect(hintedResults(2)).toStrictEqual([false])
+  })
+
+  // A first edit call is often wrong: the hint goes with its refusal.
+  it('gives the hint to a first edit call whose parameters Dez refuses, and none to the good call after it', async () => {
+    replyRounds([
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [wrongItemCall('c1')] }),
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [editCall('c2', 1)] }),
+      async (input) => {
+        await input.onToken('Done.')
+        return { requestId: input.requestId as string }
+      },
+    ])
+
+    await startStream({ sendTools: true })
+
+    expect(hintedResults(1)).toStrictEqual([true])
+    expect(hintedResults(2)).toStrictEqual([false])
+  })
+
+  // Dez refuses such a call before any call of the round runs.
+  it('gives the hint to an edit call that the definition of apps refuses, and to no later call', async () => {
+    const objectParameters = {
+      id: 'c1',
+      name: 'apps',
+      argumentsText: JSON.stringify({ command: 'edit', parameters: { path: '/apps/sum/main.ts', edits: [{ from_line: 1, text: 'x' }] } }),
+    }
+    replyRounds([
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [objectParameters, editCall('c2', 1)] }),
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [editCall('c3', 2)] }),
+      async (input) => {
+        await input.onToken('Done.')
+        return { requestId: input.requestId as string }
+      },
+    ])
+
+    await startStream({ sendTools: true })
+
+    expect(hintedResults(1)).toStrictEqual([true, false])
+    expect(hintedResults(2)).toStrictEqual([false])
+  })
+
+  it('gives no hint to an edit call after the help of edit', async () => {
+    const helpCall = { id: 'c1', name: 'apps', argumentsText: JSON.stringify({ command: 'help', parameters: JSON.stringify({ command: 'edit' }) }) }
+    replyRounds([
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [helpCall] }),
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [editCall('c2', 1)] }),
+      async (input) => {
+        await input.onToken('Done.')
+        return { requestId: input.requestId as string }
+      },
+    ])
+
+    await startStream({ sendTools: true })
+
     expect(hintedResults(2)).toStrictEqual([false])
   })
 })

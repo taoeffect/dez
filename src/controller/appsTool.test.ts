@@ -219,19 +219,30 @@ describe('apps edit', () => {
       return apps('edit', parameters, running(), { tabId, ...context })
     }
 
+    // An edit call whose `parameters` text is `parameters`, as the model
+    // wrote it.
+    function rawEdit(parameters: string, context: Partial<ToolRunContext> = {}): Promise<ToolRunResult> {
+      const call: ToolRunCall = { name: 'apps', arguments: { command: 'edit', parameters } }
+      return sbp('dez.controller/tools/run', call, running(), callContext({ tabId, ...context })) as Promise<ToolRunResult>
+    }
+
     // The result ends with the hint, in a paragraph of its own.
     const hinted = (result: ToolRunResult): boolean => result.content.endsWith(`\n\n${EDIT_HINT}`)
 
     const ask = (id: string): Section => ({ id, role: 'user', content: [{ kind: 'text', text: 'Fix the app.' }] })
 
-    // A reply with the blocks of `results`, the results of edit calls, as
-    // the end of their round writes them.
-    function reply(id: string, results: readonly ToolRunResult[]): Section {
+    const EDIT_ARGUMENTS = { command: 'edit', parameters: JSON.stringify(EDIT) }
+    const HELP_ARGUMENTS = { command: 'help', parameters: JSON.stringify({ command: 'edit' }) }
+
+    // A reply with the blocks of `results`, the results of calls with the
+    // arguments `args` (edit calls by default), as the end of their round
+    // writes them.
+    function reply(id: string, results: readonly ToolRunResult[], args: Record<string, string> = EDIT_ARGUMENTS): Section {
       const blocks = results.map((result, index) => ({
         id: `call_${index}`,
         name: 'apps',
         status: result.isError ? 'error' as const : 'success' as const,
-        arguments: { command: 'edit', parameters: JSON.stringify(EDIT) },
+        arguments: args,
         result: result.content,
       }))
       return { id, role: 'agent', model: MODEL, content: [{ kind: 'text', text: toolGroupText(blocks) }] }
@@ -306,6 +317,45 @@ describe('apps edit', () => {
       expect(refused.isError).toBe(true)
       expect(refused.content).toContain('There is no file /apps/notes/gone.js.')
       expect(hinted(refused)).toBe(true)
+    })
+
+    // A first edit call is often wrong: its refusal tells the fix, and the
+    // hint tells how to use edit.
+    it('gives the hint with a call whose parameters Dez refuses, and none to such a call of js_eval code', async () => {
+      const wrongItem = { path: PATH, edits: [{ old_text: 'a', new_text: 'b' }] }
+      const noEdits = { path: PATH }
+      const noJson = 'path: /apps/notes/main.js'
+      const results = [await edit({}, wrongItem), await edit({}, noEdits), await rawEdit(noJson)]
+      const bridged = [await edit({ isBridged: true }, wrongItem), await edit({ isBridged: true }, noEdits), await rawEdit(noJson, { isBridged: true })]
+
+      expect(bridged[0].content).toMatch(/^Item 1 of the parameter "edits" is not valid: an item of "edits" has no parameter "old_text"\./)
+      expect(bridged[1].content).toMatch(/^The required parameter "edits" is missing\./)
+      expect(bridged[2].content).toMatch(/^"parameters" is not the text of a JSON object\./)
+      expect(bridged.some((result) => result.content.includes(EDIT_HINT))).toBe(false)
+      expect(results.map((result) => result.isError)).toStrictEqual([true, true, true])
+      expect(results.map((result) => result.content)).toStrictEqual(bridged.map((result) => withEditHint(result.content)))
+    })
+
+    it('gives no hint to the edit after a refused call that got it', async () => {
+      const refused = await edit({}, { path: PATH, edits: [{ old_text: 'a', new_text: 'b' }] })
+      keep([ask('u1'), reply('a1', [refused])])
+
+      expect(hinted(refused)).toBe(true)
+      expect((await edit()).content).not.toContain(EDIT_HINT)
+    })
+
+    // The help of edit tells what the hint tells.
+    it('holds the hint once in the help of edit, and gives none to an edit while the tab holds the help', async () => {
+      const helps = [await apps('edit', {}, running(), { tabId }), await apps('help', { command: 'edit' }, running(), { tabId })]
+      keep([ask('u1'), reply('a1', [helps[1]], HELP_ARGUMENTS)])
+      const afterHelp = await edit()
+      keep([ask('u1'), reply('a1', [])])
+      const afterDelete = await edit()
+
+      expect(helps.map((help) => help.content.split(EDIT_HINT).length - 1)).toStrictEqual([1, 1])
+      expect(afterHelp.content).toContain(`Edited ${PATH}: 1 of 1 edit done.`)
+      expect(afterHelp.content).not.toContain(EDIT_HINT)
+      expect(hinted(afterDelete)).toBe(true)
     })
 
     // Its result goes to the code that made the call, not to the model.

@@ -124,7 +124,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `model/tools/jsEval.ts`, `jsEvalRunner.js`: the `js_eval` tool (code of a model in Deno): Dez's module of a run, its line protocol, and the result texts.
 - `model/tools/toolBridge.ts`, `controller/toolBridge.ts`: the tool bridge of `js_eval`: the Dez tools that the code of a run calls with `dez.sbp`.
 - `model/tools/appsTool.ts`, `lineEdits.ts`, `appManifest.ts`, `appTemplates.ts`, `controller/appsTool.ts`: the `apps` tool: the files of the apps, on the virtual root `/apps/`.
-- `model/tools/editHint.ts`: when an `apps edit` result ends with the hint of `edit`: while the conversation of the tab does not hold it.
+- `model/tools/editHint.ts`: when the result of an `apps edit` call, a refused one too, ends with the hint of `edit`: while the conversation of the tab does not hold it (the help of `edit` holds it).
 - `model/tools/appsGrep.ts`, `grepMatch.ts`, `controller/grepWorker.ts`: `apps grep`: the checks of a call, the files to search, and the result texts; the matching (a leaf module); the Web Worker that runs the matching, with a time limit.
 - `model/tools/appInvoke.ts`, `controller/appInvoke.ts`: `apps invoke`: one run of an app as a job, with checked output files: the code of a script app in Deno, with copies of its inputs, or the handler of the page of a UI app in a hidden frame.
 - `model/tools/appBridge.ts`, `controller/appBridge.ts`: the frame bridge: the calls between the page of a UI app and Dez (the read and the save of an image or a clip, and the handler that `apps invoke` runs).

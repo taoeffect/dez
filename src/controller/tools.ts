@@ -18,10 +18,10 @@ import { effectiveRequest, type ModelInfo, type ProviderInfo, type ProviderInput
 import type { SettingsSnapshot } from '../model/state'
 import type { CallPictureBudget } from '../model/streams/pictureBudget'
 import { invokeInputsText, invokeLabel } from '../model/tools/appInvoke'
-import { APPS_TOOL } from '../model/tools/appsTool'
+import { APPS_TOOL, EDIT_HINT, withEditHint } from '../model/tools/appsTool'
 import { AUDIO_TOOL, audioClipId, audioClipOf, audioCutPart, audioCutRequest, audioCutResultText, audioLengthText } from '../model/tools/audioTool'
 import { conversationInfoText } from '../model/tools/conversationInfo'
-import { editHintIsDue } from '../model/tools/editHint'
+import { editHintIsDue, isEditCall } from '../model/tools/editHint'
 import { brightnessPlan, contrastPlan, convertPlan, cropPlan, flipPlan, IMAGE_TOOL, imageIdArgument, imageOf, imageResultText, invertPlan, rotatePlan, saturationPlan, scalePlan, unreadableImageText, unwritableFormatError, type ImagePlan } from '../model/tools/imageTool'
 import { cancelledJobIds, isIntermediate, jobCancelText, jobInspectText, jobResultText, jobsListText, jobStartedText, jobsWaitText, unknownJobText, waitedJobIds, type JobResult } from '../model/tools/jobs'
 import { jsEvalCall } from '../model/tools/jsEval'
@@ -157,6 +157,29 @@ function subcommandRunner<P extends SubcommandParameter>(tool: SubcommandTool<P>
   return async (args, signal, context) => {
     const call = parseSubcommandCall(tool, args)
     return call.kind === 'text' ? call.text : await runners[call.name](call.arguments, signal, context)
+  }
+}
+
+// The `apps` runner `runner` with the hint of `edit` (editHint.ts): while
+// the hint is due, each result of an `edit` call ends with it. That is
+// every outcome: edits done or failed, no change, and a call that Dez
+// refuses, also for its parameters (`parseSubcommandCall`), as a first
+// call often has wrong ones. The help of `edit` (a call with no
+// parameters) holds the hint already, and gets no second copy. A bridged
+// call gets no hint: its result goes to code.
+function withEditHintWhenDue(runner: ToolRunner): ToolRunner {
+  return async (args, signal, context) => {
+    const due = isEditCall(APPS_TOOL.name, args) && !context.isBridged && editHintIsDue(callSections(context), context.roundResults)
+    if (!due) return runner(args, signal, context)
+    try {
+      const output = await runner(args, signal, context)
+      // As `dez.controller/tools/run` reads the output of a runner.
+      const result = typeof output === 'string' ? { content: output } : output
+      return result.content.includes(EDIT_HINT) ? result : { ...result, content: withEditHint(result.content) }
+    } catch (error) {
+      if (!(error instanceof ToolError)) throw error
+      return { content: withEditHint(error.message), isError: true }
+    }
   }
 }
 
@@ -523,9 +546,9 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // of the reply stops `rm` and `mv` between two paths, and `grep` between
   // two reads or in its matching; any other call is short and runs to its
   // end. `grep` matches in a Web Worker, which Dez ends at a time limit
-  // (appsGrep.ts). Of the file subcommands, only `edit` reads the
-  // conversation: whether its model reads the hint of `edit` already
-  // (editHint.ts). A bridged call gets no hint: its result goes to code.
+  // (appsGrep.ts). Every result of an `edit` call can end with the hint of
+  // `edit` (`withEditHintWhenDue`): of the file subcommands, only `edit`
+  // reads the conversation, for whether its model reads the hint already.
   //
   // `invoke` runs the code of an app (appInvoke.ts), as a job of the
   // reply: code that a model wrote can run for long. The kind of the app
@@ -536,11 +559,11 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // inputs that go, as for `model_invoke`.
   //
   // `show` puts a UI app into the reply (appShow.ts): it runs no code.
-  apps: subcommandRunner(APPS_TOOL, {
+  apps: withEditHintWhenDue(subcommandRunner(APPS_TOOL, {
     init: initApp,
     read: readAppFile,
     write: writeAppFile,
-    edit: (args, _signal, context) => editAppFile(args, !context.isBridged && editHintIsDue(callSections(context), context.roundResults)),
+    edit: editAppFile,
     rm: removeAppPaths,
     list_apps: listApps,
     ls: listAppFolder,
@@ -558,7 +581,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
         label: invokeLabel(args),
       }, invokeInputsText(call.inputs, call.kind))
     },
-  }),
+  })),
 }
 
 export default sbp('sbp/selectors/register', {

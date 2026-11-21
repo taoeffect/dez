@@ -34,7 +34,6 @@ import {
   rmCall,
   rmResult,
   rmStep,
-  withEditHint,
   writeCall,
   writePlan,
   writeText,
@@ -180,22 +179,10 @@ export async function writeAppFile(args: SubcommandArguments): Promise<AppsResul
   return writeText(call, plan.replaced)
 }
 
-/** `apps edit`. With `hint`, the result ends with the hint of `edit`
- *  (`withEditHint`), for each outcome: edits done or failed, no change,
- *  and a call that Dez refuses. */
-export async function editAppFile(args: SubcommandArguments, hint: boolean): Promise<AppsResult> {
-  try {
-    const { content, isError } = await editFile(args)
-    return { content: hint ? withEditHint(content) : content, isError }
-  } catch (error) {
-    if (!hint || !(error instanceof ToolError)) throw error
-    return { content: withEditHint(error.message), isError: true }
-  }
-}
-
-// The edits of an `apps edit` call. It writes only when an edit changed a
-// line, and it lists the app only when the file grows.
-async function editFile(args: SubcommandArguments): Promise<{ content: string, isError: boolean }> {
+/** `apps edit`. It writes only when an edit changed a line, and it lists
+ *  the app only when the file grows. The `apps` runner adds the hint of
+ *  `edit` to its results (`withEditHintWhenDue`, tools.ts). */
+export async function editAppFile(args: SubcommandArguments): Promise<AppsResult> {
   const call = editCall(args)
   checkTextFile(call.path, await factsOf(call.path))
   const before = await readBytes(call.path)

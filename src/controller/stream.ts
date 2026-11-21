@@ -56,6 +56,7 @@ import {
   type SettingsSnapshot,
 } from '../model/state'
 import { buildSystemPrompt, systemPromptTemplate } from '../model/systemPrompt'
+import { withEditHintRefusals } from '../model/tools/editHint'
 import { TOOL_DEFINITIONS } from '../model/tools/registry'
 import type { ToolDefinition, ToolRunResult } from '../model/tools/types'
 import {
@@ -1151,8 +1152,10 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
     }
 
     // Only the tool blocks of the reply text: the notes of a block hold
-    // none.
-    const calls = checkToolCalls(streamedCalls, findToolBlocks(replied.text).map((block) => block.id))
+    // none. The refusal of an `apps edit` call can get the hint of `edit`,
+    // by the sections of the tab before the round (editHint.ts).
+    const checkedCalls = checkToolCalls(streamedCalls, findToolBlocks(replied.text).map((block) => block.id))
+    const calls = withEditHintRefusals(checkedCalls, streamedCalls, (sbp('dez.model/tab', args.tabId) as Tab | null)?.sections ?? [])
     const replySoFar = await runToolRound(args.tabId, reply, jobs, args.model, calls, replied.text, messages)
     if (!replySoFar) {
       // Still current only when the user deleted the running blocks:

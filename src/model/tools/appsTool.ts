@@ -64,6 +64,10 @@ export const APP_RUN_DEFAULT_SECONDS = 300
 export const APP_RUN_MAX_OUTPUT_FILES = 20
 export const APP_RUN_MAX_OUTPUT_BYTES = 256 * 1024 * 1024
 
+/** The subcommand that changes lines of a file. Its results get the hint
+ *  of `edit` (`EDIT_HINT`, editHint.ts). */
+export const APPS_EDIT = 'edit'
+
 /** The subcommand that runs an app. The readers of a call that tell it
  *  from the file subcommands name it by this (registry.ts,
  *  toolBridge.ts). */
@@ -173,6 +177,26 @@ const INVOKE_HELP = `Runs the code of an app on the user's computer, with the pa
   + `An error names a line of the code by its path in the apps tool, as in ${APPS_VIRTUAL_ROOT}/${EXAMPLE_SCRIPT_APP}/${SCRIPT_MAIN_FILE}:12.\n\n`
   + INVOKE_UI_HELP
 
+/** The hint of `edit`: how to give the line numbers of a call. A model
+ *  that did not know that the edits of one call do not move the lines of
+ *  each other made one edit, read the file, made the next edit, and so on.
+ *  The description of `edit` ends with it, so its help holds it, and the
+ *  result of an `edit` call of the model ends with it while the
+ *  conversation does not hold it (editHint.ts). */
+export const EDIT_HINT = [
+  'How to use edit:',
+  '- Give each line number as it was in the file when you read it, before this call. Dez does all the edits of one call at once and moves the lines itself: never add or subtract to make up for another edit of the call.',
+  '- Put all the changes of a file into one call, with no read between them.',
+  '- The edits of one call must not overlap: an edit that overlaps an earlier edit of the call fails, and the others are still done.',
+  '- After the call the lines have new numbers. Read the file again only before your next edit call of that file.',
+].join('\n')
+
+/** The result text `result` with the hint of `edit` after it, as a
+ *  paragraph of its own. */
+export function withEditHint(result: string): string {
+  return `${result}\n\n${EDIT_HINT}`
+}
+
 export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
   name: 'apps',
   summary: `Make, change, show, and run apps: small programs that you write for the user, each in its own folder ${APPS_VIRTUAL_ROOT}/<name>/. `
@@ -228,13 +252,12 @@ export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
       example: { path: `${APPS_VIRTUAL_ROOT}/${EXAMPLE_APP}/units.js`, content: 'export const METERS_PER_FOOT = 0.3048\n' },
     },
     {
-      name: 'edit',
+      name: APPS_EDIT,
       summary: 'Change lines of a text file of an app by their numbers: replace lines, delete lines, or put new lines in.',
       description: 'Applies a list of edits to one file, all at once. Each edit names lines by the numbers that read gave. '
-        + 'Every number is a number of the file before this call: the edits of one call do not move the lines of each other, so never change a number because of another edit of the call. '
         + 'An edit with `from_line` replaces the lines `from_line` to `to_line` with the lines of `text`. An edit with `after_line` puts the lines of `text` in after that line. '
-        + 'Each edit passes or fails by itself: the result tells what each one did, or why it failed, and gives a diff of the change. '
-        + 'Put all the changes of a file into one call. After the call the lines have new numbers: read the file again before the next edit of it.',
+        + 'Each edit passes or fails by itself: the result tells what each one did, or why it failed, and gives a diff of the change.\n\n'
+        + EDIT_HINT,
       parameters: [
         { name: 'path', type: 'string', description: `The path of the file, ${PATH_PARAMETER}`, required: true },
         {
@@ -1005,25 +1028,6 @@ export function editResult({ path, edits }: EditCall, text: string): { content: 
     ...cutDiff(plan.hunks.flatMap(hunkRows)),
   ].join('\n')
   return { content, isError: false, bytes }
-}
-
-/** The hint of `edit`: how to give the line numbers of a call. A model
- *  that did not know that the edits of one call do not move the lines of
- *  each other made one edit, read the file, made the next edit, and so on.
- *  The result of an `edit` call of the model ends with it while the
- *  conversation does not hold it (editHint.ts). */
-export const EDIT_HINT = [
-  'How to use edit:',
-  '- Give each line number as it was in the file when you read it, before this call. Dez does all the edits of one call at once and moves the lines itself: never add or subtract to make up for another edit of the call.',
-  '- Put all the changes of a file into one call, with no read between them.',
-  '- The edits of one call must not overlap: an edit that overlaps an earlier edit of the call fails, and the others are still done.',
-  '- After the call the lines have new numbers. Read the file again only before your next edit call of that file.',
-].join('\n')
-
-/** The result text `result` with the hint of `edit` after it, as a
- *  paragraph of its own. */
-export function withEditHint(result: string): string {
-  return `${result}\n\n${EDIT_HINT}`
 }
 
 /** The text of the failure of one item, on one line. */

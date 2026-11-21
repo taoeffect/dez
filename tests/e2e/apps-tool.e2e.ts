@@ -5,7 +5,7 @@ import { appTagText } from '../../src/model/chat/appTags'
 import { appManifestText, parseAppManifest } from '../../src/model/tools/appManifest'
 import { showResultText } from '../../src/model/tools/appShow'
 import { grepTimeoutError } from '../../src/model/tools/appsGrep'
-import { withEditHint } from '../../src/model/tools/appsTool'
+import { EDIT_HINT, withEditHint } from '../../src/model/tools/appsTool'
 import { GREP_TIME_LIMIT_SECONDS } from '../../src/model/tools/grepMatch'
 import { byteSizeText } from '../../src/utils/byteSize'
 import { appsCall, seedApp, shownAppCards, type ShownAppCard } from './harness/apps'
@@ -13,7 +13,7 @@ import { consoleErrors, resetConsoleErrors, screenshotOnFailure, waitForValue } 
 import { linkedDropDir } from './harness/drops'
 import { appFilePath, conversationFilePath, filesIn, writeTestFile } from './harness/fixtures'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
-import { mockChatPath, replyText, requestMessages, sendChatReply, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
+import { mockChatPath, openAiToolCall, replyText, requestMessages, sendChatReply, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
 import { activeConversationId, endedReply, newTab, openToasts, submit } from './harness/thread'
 
@@ -23,7 +23,8 @@ import { activeConversationId, endedReply, newTab, openToasts, submit } from './
 // - a model makes an app, and writes, reads, edits, moves, lists, and
 //   deletes its files; only the user can open what the tool made;
 // - a model reads ranges of the lines of a file, and its first edit call
-//   in each tab gets the hint of edit;
+//   in each tab gets the hint of edit, also when Dez refuses the call; a
+//   model that read the help of edit gets no hint;
 // - a model finds files by their paths, and lines by a regular
 //   expression; the matching runs in a worker, so the window answers
 //   while a slow pattern runs, and Dez ends it at its time limit;
@@ -273,6 +274,71 @@ describe('apps tool', () => {
     await expectReplyEnd(otherSecond)
     expect(fs.readFileSync(path.join(appsDir, 'list/items.txt'), 'utf8')).toBe(`${['first item', ...items.slice(1, 4), ...upper, ...items.slice(20)].join('\n')}\n`)
     expect(await consoleErrors(browser)).toStrictEqual([])
+
+    await fs.promises.rm(appsDir, { recursive: true, force: true })
+  })
+
+  it('gives the hint of edit with a first edit call that Dez refuses, and none after the help of edit', async () => {
+    await seedApp(appsDir, { name: 'memo', description: 'Keeps a memo.', kind: 'script' }, { 'memo.txt': 'a\nb\n' })
+    const file = '/apps/memo/memo.txt'
+    const hinted = (result: string): boolean => result.endsWith(`\n\n${EDIT_HINT}`)
+    const edited = (line: number, diff: string[]): string => [
+      `Edited ${file}: 1 of 1 edit done. The file had 2 lines, and it has 2 now.`,
+      `1. Done. Replaced line ${line} with 1 line.`,
+      'The lines have new numbers now: read the file again before the next edit of it.',
+      'The change:',
+      '@@ -1,2 +1,2 @@',
+      ...diff,
+    ].join('\n')
+
+    // A model that did not read the help of edit gives an item that edit
+    // does not take: the refusal tells the fix, then the hint.
+    await submit(browser, 'Change the memo.')
+    const first = await chatRequest()
+    sendToolCalls(first.reply, [appsCall('call_wrong', 'edit', { path: file, edits: [{ old_text: 'a', new_text: 'A' }] })])
+
+    const second = await chatRequest()
+    const refusal = toolResult(second, 'call_wrong')
+    expect(refusal.startsWith('Item 1 of the parameter "edits" is not valid: an item of "edits" has no parameter "old_text".')).toBe(true)
+    expect(hinted(refusal)).toBe(true)
+    sendToolCalls(second.reply, [appsCall('call_edit', 'edit', { path: file, edits: [{ from_line: 1, text: 'A' }] })])
+
+    // The refusal holds the hint: the good call after it gets none.
+    const third = await chatRequest()
+    expect(toolResult(third, 'call_edit')).toBe(edited(1, ['-a', '+A', ' b']))
+    await expectReplyEnd(third)
+
+    // A call whose `parameters` is an object, not its text: the definition
+    // of the tool refuses it before the round runs, with the hint.
+    await newTab(browser)
+    await submit(browser, 'Change the memo.')
+    const objectFirst = await chatRequest()
+    sendToolCalls(objectFirst.reply, [openAiToolCall('call_object', 'apps', { command: 'edit', parameters: { path: file, edits: [{ from_line: 1, text: 'x' }] } })])
+
+    const objectSecond = await chatRequest()
+    const objectRefusal = toolResult(objectSecond, 'call_object')
+    expect(objectRefusal.startsWith('Dez did not run this call. ')).toBe(true)
+    expect(hinted(objectRefusal)).toBe(true)
+    await expectReplyEnd(objectSecond)
+
+    // The help of edit holds the hint: the first edit after it gets none.
+    await newTab(browser)
+    await submit(browser, 'Change the memo again.')
+    const help = await chatRequest()
+    sendToolCalls(help.reply, [appsCall('call_help', 'help', { command: 'edit' })])
+
+    const afterHelp = await chatRequest()
+    expect(toolResult(afterHelp, 'call_help').split(EDIT_HINT)).toHaveLength(2)
+    sendToolCalls(afterHelp.reply, [appsCall('call_edit_after_help', 'edit', { path: file, edits: [{ from_line: 2, text: 'B' }] })])
+
+    const done = await chatRequest()
+    expect(toolResult(done, 'call_edit_after_help')).toBe(edited(2, [' A', '-b', '+B']))
+    await expectReplyEnd(done)
+    expect(fs.readFileSync(path.join(appsDir, 'memo/memo.txt'), 'utf8')).toBe('A\nB\n')
+    // Dez logs the call that the apps runner refused, and nothing else.
+    expect((await consoleErrors(browser)).map((error) => error.split('\n')[0])).toStrictEqual([
+      expect.stringMatching(/^The tool apps failed: Item 1 of the parameter "edits" is not valid: /),
+    ])
 
     await fs.promises.rm(appsDir, { recursive: true, force: true })
   })
