@@ -15,12 +15,15 @@ import { EditorView } from '@codemirror/view'
  *  This does the same as that fallback on every platform. It only puts
  *  back the place where the user left the view; it never scrolls the view
  *  to a new place. When the focus does not scroll, it writes nothing. Code
- *  that gives the editor the focus calls this, never `view.focus()`.
+ *  that gives the editor the focus calls this, never `view.focus()`. It
+ *  also guards the caret against the start caret of WebKit
+ *  (`keepCaretAfterFocus`).
  *
  *  https://github.com/codemirror/dev/issues/1626
  *  https://github.com/codemirror/view/commit/b4a5a0261fe4
  *  https://github.com/markrahq/markra/pull/737 */
 export function focusKeepingScroll(view: EditorView): void {
+  keepCaretAfterFocus(view)
   const saved: { element: Element, top: number, left: number }[] = []
   for (let element = view.contentDOM.parentElement; element; element = element.parentElement) {
     saved.push({ element, top: element.scrollTop, left: element.scrollLeft })
@@ -30,6 +33,42 @@ export function focusKeepingScroll(view: EditorView): void {
     if (element.scrollTop !== top) element.scrollTop = top
     if (element.scrollLeft !== left) element.scrollLeft = left
   }
+}
+
+// The time after a focus in which CodeMirror takes a caret at the editor
+// start for the one that the browser put there on focus (@codemirror/view
+// 6.43.15, `readSelectionRange`).
+const FOCUS_START_CARET_MS = 200
+
+/** For a short time after the focus, puts the DOM selection back where the
+ *  editor state has it when the DOM caret goes to the doc start.
+ *
+ *  Why: WebKit can move the DOM caret to the editor start a few ms after
+ *  the editor gets the focus, when CodeMirror has already written its own
+ *  caret. CodeMirror knows this move and wants to put its caret back, but
+ *  it compares the state with its record of the DOM selection, which still
+ *  matches, so it writes nothing (the same rule as in `syncDomSelection`).
+ *  Its next read, at the next measure, takes the start caret for the
+ *  user's, and the caret goes to the doc start. Seen when a click outside
+ *  a confirm prompt gave the focus back, under CPU load.
+ *
+ *  CodeMirror reads the DOM selection on `selectionchange` of the
+ *  document; this listens in the capture phase of the window, so it puts
+ *  the DOM selection back before CodeMirror reads it. A caret at the doc
+ *  start that the user makes comes from a CodeMirror handler (a click, a
+ *  key), which puts the state's caret there first. */
+function keepCaretAfterFocus(view: EditorView): void {
+  const win = view.dom.ownerDocument.defaultView
+  if (!win) return
+  const onSelectionChange = () => {
+    const selection = view.hasFocus ? win.document.getSelection() : null
+    const node = selection?.focusNode
+    const { main } = view.state.selection
+    if (!selection?.isCollapsed || !node || !view.contentDOM.contains(node) || (main.empty && main.head === 0)) return
+    if (view.posAtDOM(node, selection.focusOffset) === 0) syncDomSelection(view)
+  }
+  win.addEventListener('selectionchange', onSelectionChange, true)
+  win.setTimeout(() => win.removeEventListener('selectionchange', onSelectionChange, true), FOCUS_START_CARET_MS)
 }
 
 /** Puts the DOM selection back where the editor state has it, after a

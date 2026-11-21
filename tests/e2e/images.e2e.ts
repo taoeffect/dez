@@ -290,6 +290,33 @@ describe('images', () => {
     ]
   }
 
+  // WebKit can move the DOM caret to the editor start a few ms after the
+  // editor gets the focus back, when CodeMirror has already put its own
+  // caret there. Seen on a click outside the prompt under CPU load: the
+  // caret then went to the doc start. This makes the same move on the next
+  // focus of the editor, so that each run checks that Dez puts the caret
+  // back (`focusKeepingScroll`, src/view/editor/focus.ts).
+  // `startCaretSettled` is true when CodeMirror has read the DOM selection
+  // again since the move: in the `selectionchange` of the move, in its focus
+  // timer (10 ms), and in the measure frame after that timer.
+  async function moveCaretToStartAfterFocus (): Promise<void> {
+    await browser.execute(() => {
+      const content = document.querySelector('.cm-content')
+      if (!content) throw new Error('moveCaretToStartAfterFocus: .cm-content not found')
+      Reflect.set(window, 'startCaretSettled', false)
+      content.addEventListener('focus', () => setTimeout(() => {
+        document.getSelection()?.collapse(content, 0)
+        setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(() => {
+          Reflect.set(window, 'startCaretSettled', true)
+        })), 20)
+      }), { once: true })
+    })
+  }
+
+  async function startCaretSettled (): Promise<boolean> {
+    return browser.execute(() => Reflect.get(window, 'startCaretSettled') === true)
+  }
+
   // Puts `text` at the end of the doc as typed text, which gets no image ids
   // (only a paste or a drop does).
   async function typeAtEnd (text: string): Promise<void> {
@@ -650,8 +677,10 @@ describe('images', () => {
       })
       expect(await docAndCaret()).toEqual(unchanged)
 
+      await moveCaretToStartAfterFocus()
       await cancel()
       await waitForValue(browser, `prompt after ${label}`, promptState, { message: null, buttons: [], focus: 'editor' })
+      await waitForValue(browser, `the caret move after ${label}`, startCaretSettled, true)
       expect(await docAndCaret()).toEqual(unchanged)
       expect(await storedImages()).toContain(path.basename(image.path))
       expect(await shownImages(browser)).toEqual(shown)

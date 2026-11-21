@@ -86,7 +86,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `view/editor/pressClicks.ts`: the one click rule of a clickable mark (a link, a mention chip).
 - `view/editor/assetJump.ts`, `drawnAssets.ts`: a click on a mention goes to its asset and flashes it; the drawn assets.
 - `view/editor/mentionPaste.ts`, `model/chat/mentionPaste.ts`: a paste of `@id` mentions copied in another conversation brings along the assets that they name.
-- `view/editor/focus.ts`: focus the editor and keep its scroll; use `focusKeepingScroll`, not `view.focus()`.
+- `view/editor/focus.ts`: focus the editor and keep its scroll and caret; use `focusKeepingScroll`, not `view.focus()`.
 - `view/editor/images.ts`, `imageInsert.ts`, `pendingRanges.ts`: images shown in place of their references; image and clip paste and drop.
 - `view/editor/media.ts`, `view/media/`: `<dez:audio>` and `<dez:video>` tags shown as players (`MediaPlayer.vue`, video.js parts in Dez's own skin).
 - `view/editor/toolCalls.ts`: `<dez:tool>` blocks shown as chips, each with a panel.

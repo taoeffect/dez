@@ -169,7 +169,8 @@ function createState(doc: string, anchor: number, head = anchor, roles: Role[] =
 }
 
 /** A view stand-in: the handlers read the state, dispatch, focus, and map
- *  drop coordinates (here `clientX` is the doc position). */
+ *  drop coordinates (here `clientX` is the doc position). Its DOM has no
+ *  window, so the focus sets no caret guard (`focusKeepingScroll`). */
 function createEditor(doc: string, anchor: number, head = anchor, roles?: Role[]) {
   let state = createState(doc, anchor, head, roles)
   const view = {
@@ -183,6 +184,7 @@ function createEditor(doc: string, anchor: number, head = anchor, roles?: Role[]
       return coords.x
     },
     contentDOM: { parentElement: null },
+    dom: { ownerDocument: { defaultView: null } },
     focus() {},
   } as unknown as EditorView
   return {
