@@ -329,8 +329,8 @@ describe('media player', () => {
     })
   }
 
-  // From now on, each media element keeps the last volume (in percent) and
-  // mute that page code assigned to it. The spec checks those, not the
+  // From now on, each media element keeps the last volume (0-1) and mute
+  // that page code assigned to it. The spec checks those, not the
   // element's read-back: in WebKitGTK that is what the sound server last
   // reported, late (`recordSoundPlays`, notifications.e2e.ts). The setters
   // are wrapped once per page. A player calls the setters that are there
