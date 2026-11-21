@@ -11,22 +11,16 @@ import {
   statedSha256,
   vendoredName
 } from './update-deno.js';
-
-const sha = letter => letter.repeat(64);
+import { githubReleaseData, sha } from './testing.js';
 
 // The release data of the GitHub API, with the files that Dez takes and
-// some that it does not. Each file has its own size and SHA-256.
-function release(version = '2.9.8') {
-  const names = [
+// some that it does not.
+const release = (version = '2.9.8') =>
+  githubReleaseData(`v${version}`, [
     'deno-aarch64-apple-darwin.zip', 'deno-aarch64-apple-darwin.zip.sha256sum', 'deno-aarch64-unknown-linux-gnu.zip',
     'deno-x86_64-apple-darwin.zip', 'deno-x86_64-pc-windows-msvc.zip', 'deno-x86_64-unknown-linux-gnu.zip',
     'denort-x86_64-unknown-linux-gnu.zip', 'deno_src.tar.gz', 'lib.deno.d.ts'
-  ];
-  return {
-    tag_name: `v${version}`,
-    assets: names.map((name, index) => ({ name, size: 1000 + index, digest: `sha256:${sha(index.toString(16))}` }))
-  };
-}
+  ]);
 
 // The files of a release as the script vendors them: each zip file of
 // `releaseZipFiles` with the size and the SHA-256 of its program.

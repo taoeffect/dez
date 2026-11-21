@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 
-import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -8,6 +7,7 @@ import {
   BINARIES_DIR,
   PROGRAM_MODE,
   TARGETS,
+  checkHostProgram,
   downloadBytes,
   downloadPinned,
   downloadZipMember,
@@ -15,7 +15,8 @@ import {
   hostTriple,
   manifestFileText,
   manifestWith,
-  releaseFile
+  releaseFile,
+  releaseFileUrl
 } from './bundled-programs.js';
 import { denoLicenseSources, licenseTextsFile } from './deno-licenses.js';
 
@@ -60,8 +61,13 @@ crate that it names (about 300 MB), for their license texts.
 Example:
   node scripts/update-deno.js 2.9.8`;
 
-// A Deno version. A release tag is `v` and the version.
+// A Deno version.
 const VERSION_PATTERN = /^\d+\.\d+\.\d+$/;
+
+// The tag of the release of a Deno version: `v` and the version.
+function releaseTag(version) {
+  return `v${version}`;
+}
 
 // The name of the program in a zip file of a release.
 const ZIP_MEMBER = 'deno';
@@ -104,12 +110,6 @@ export function releaseZipFiles(release) {
   });
 }
 
-// The URL of a file of a release. The script builds it from the version and
-// from a file name of its own; it takes no URL of the API answer.
-function releaseFileUrl(version, asset) {
-  return `${DENO_REPO_URL}/releases/download/v${version}/${asset}`;
-}
-
 // The SHA-256 that the text of a `.sha256sum` file of a release states for
 // the file `fileName`: one line "<SHA-256>  <file name>", as the sha256sum
 // program writes it. Undefined for a text of another form, or for another
@@ -129,12 +129,13 @@ export function statedSha256(text, fileName) {
 // program comes from: the zip file with its pin, and the name of the
 // program in it. `deno` is what the Help page reads.
 export function manifestText(manifest, version, files) {
+  const tag = releaseTag(version);
   return manifestFileText(
     manifestWith(
       manifest,
-      { deno: { version, source: `${DENO_REPO_URL}/releases/tag/v${version}` } },
+      { deno: { version, source: `${DENO_REPO_URL}/releases/tag/${tag}` } },
       Object.fromEntries(
-        files.map(({ name, asset, zip, size, sha256 }) => [name, { asset, url: releaseFileUrl(version, asset), zip, size, sha256 }])
+        files.map(({ name, asset, zip, size, sha256 }) => [name, { asset, url: releaseFileUrl(DENO_REPO, tag, asset), zip, size, sha256 }])
       ),
       name => name.startsWith(vendoredName(''))
     )
@@ -161,7 +162,7 @@ export function licenseProblem(license) {
 // search path (RUNPATH) in each program of the bundle that links
 // dynamically, and Deno is one.
 export function noticeText(version, v8Version) {
-  const tag = `v${version}`;
+  const tag = releaseTag(version);
   return `# Deno in Dez
 
 <!-- Written by scripts/update-deno.js. Do not edit it by hand. -->
@@ -227,25 +228,14 @@ export function reportedVersion(versionOutput) {
   return /^deno (\S+)/.exec(versionOutput)?.[1];
 }
 
-// Runs a downloaded program of this computer with `--version` and throws
-// unless it reports the Deno version of the release.
-function checkHostProgram(path, name, version) {
-  // The check must not make Deno ask its servers for a newer version.
-  const env = { ...process.env, DENO_NO_UPDATE_CHECK: '1' };
-  const result = spawnSync(path, ['--version'], { encoding: 'utf8', env });
-  if (result.error || result.status !== 0) {
-    throw new Error(`${name} does not run on this computer: ${result.error?.message ?? result.stderr}`);
-  }
-  const reported = reportedVersion(result.stdout);
-  if (reported !== version) {
-    throw new Error(`${name} reports the version ${reported ?? '(none)'}, not ${version}.`);
-  }
-}
+// How the program prints its version (`checkHostProgram`). The run must not
+// make Deno ask its servers for a newer version.
+const VERSION_CALL = { args: ['--version'], env: { DENO_NO_UPDATE_CHECK: '1' }, reportedVersion };
 
-// The SHA-256 that the release states for `fileName` in its `.sha256sum`
-// file `asset`. Throws when the file states none.
-async function releaseStatedSha256(version, asset, fileName) {
-  const text = (await downloadBytes(releaseFileUrl(version, asset))).toString('utf8');
+// The SHA-256 that the release `tag` states for `fileName` in its
+// `.sha256sum` file `asset`. Throws when the file states none.
+async function releaseStatedSha256(tag, asset, fileName) {
+  const text = (await downloadBytes(releaseFileUrl(DENO_REPO, tag, asset))).toString('utf8');
   const sha256 = statedSha256(text, fileName);
   if (!sha256) {
     throw new Error(`${asset} of the release states no SHA-256 for ${fileName}.`);
@@ -253,17 +243,18 @@ async function releaseStatedSha256(version, asset, fileName) {
   return sha256;
 }
 
-// Downloads the zip file of one platform into `downloadDir`, writes its
-// program there under the name of the program in Dez, and gives the file
-// (`releaseZipFiles`) with the size and the SHA-256 of the program.
+// Downloads the zip file of one platform of the release `tag` into
+// `downloadDir`, writes its program there under the name of the program in
+// Dez, and gives the file (`releaseZipFiles`) with the size and the SHA-256
+// of the program.
 //
 // Three statements must agree. GitHub states the SHA-256 of the zip file
 // (the pin of the download). The Deno project states it too, and the
 // SHA-256 of the program in the zip file, in two `.sha256sum` files of the
 // release: a zip file that was put in the place of another, or a reader
 // that takes other bytes out of it, fails here.
-async function vendoredProgram(version, file, downloadDir) {
-  const zipSha256 = await releaseStatedSha256(version, `${file.asset}.sha256sum`, file.asset);
+async function vendoredProgram(tag, file, downloadDir) {
+  const zipSha256 = await releaseStatedSha256(tag, `${file.asset}.sha256sum`, file.asset);
   if (zipSha256 !== file.zip.sha256) {
     throw new Error(
       `${file.asset}.sha256sum of the release states the SHA-256 ${zipSha256} for ${file.asset}, and GitHub states ${file.zip.sha256}.`
@@ -271,14 +262,14 @@ async function vendoredProgram(version, file, downloadDir) {
   }
   console.log(`Downloading ${file.asset} (${file.zip.size} bytes)`);
   const program = await downloadZipMember(
-    releaseFileUrl(version, file.asset),
+    releaseFileUrl(DENO_REPO, tag, file.asset),
     join(downloadDir, file.name),
     PROGRAM_MODE,
     file.zip,
     'GitHub'
   );
   const programSums = `deno-${file.triple}.sha256sum`;
-  const programSha256 = await releaseStatedSha256(version, programSums, ZIP_MEMBER);
+  const programSha256 = await releaseStatedSha256(tag, programSums, ZIP_MEMBER);
   if (programSha256 !== program.sha256) {
     throw new Error(
       `${programSums} of the release states the SHA-256 ${programSha256} for the program, ` +
@@ -309,19 +300,20 @@ async function main(args) {
   // version whole.
   const downloadDir = mkdtempSync(join(BINARIES_DIR, '.update-'));
   try {
-    const release = await githubRelease(DENO_REPO, `v${version}`);
+    const tag = releaseTag(version);
+    const release = await githubRelease(DENO_REPO, tag);
     const zipFiles = releaseZipFiles(release);
     const sourceArchive = releaseFile(release, SOURCE_ARCHIVE);
 
     const files = [];
     for (const file of zipFiles) {
-      files.push(await vendoredProgram(version, file, downloadDir));
+      files.push(await vendoredProgram(tag, file, downloadDir));
     }
 
     const triple = hostTriple(process.platform, process.arch);
     if (triple) {
       const name = vendoredName(triple);
-      checkHostProgram(join(downloadDir, name), name, version);
+      checkHostProgram(join(downloadDir, name), name, version, VERSION_CALL);
       console.log(`The program of this computer (${triple}) runs and reports ${version}.`);
     } else {
       console.log('Dez ships no programs for this computer, so the script did not run one.');
@@ -329,7 +321,7 @@ async function main(args) {
 
     console.log(`Downloading ${sourceArchive.asset} (${sourceArchive.size} bytes)`);
     const sourcePath = join(downloadDir, sourceArchive.asset);
-    await downloadPinned(releaseFileUrl(version, sourceArchive.asset), sourcePath, 0o600, sourceArchive, 'GitHub');
+    await downloadPinned(releaseFileUrl(DENO_REPO, tag, sourceArchive.asset), sourcePath, 0o600, sourceArchive, 'GitHub');
     const licenses = await denoLicenseSources(version, readFileSync(sourcePath));
     const problem = licenseProblem(licenses.denoLicense);
     if (problem) throw new Error(`${problem}.`);

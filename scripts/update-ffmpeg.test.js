@@ -14,26 +14,16 @@ import {
   vendoredFiles,
   vendoredName
 } from './update-ffmpeg.js';
-
-const sha = letter => letter.repeat(64);
+import { githubReleaseData, sha } from './testing.js';
 
 // The release data of the GitHub API, with the files that Dez takes and
-// some that it does not. Each file has its own size and SHA-256.
-function release(tag = 'n9.0.2-3') {
-  const names = [
+// some that it does not.
+const release = (tag = 'n9.0.2-3') =>
+  githubReleaseData(tag, [
     'ffmpeg-linux-arm64', 'ffmpeg-linux-arm64-ubuntu-24.04', 'ffmpeg-linux-x64', 'ffmpeg-macos-arm64',
     'ffmpeg-osx-x64', 'ffmpeg-win-x64.exe', 'ffprobe-linux-arm64', 'ffprobe-linux-x64',
     'ffprobe-linux-x64-ubuntu-24.04', 'ffprobe-macos-arm64', 'LICENSES.txt'
-  ];
-  return {
-    tag_name: tag,
-    assets: names.map((name, index) => ({
-      name,
-      size: 1000 + index,
-      digest: `sha256:${sha(index.toString(16))}`
-    }))
-  };
-}
+  ]);
 
 describe('parseArgs', () => {
   it('takes one release tag', () => {

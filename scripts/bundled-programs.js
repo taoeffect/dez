@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -10,7 +11,8 @@ import { inflateRawSync } from 'node:zlib';
 // update-ffmpeg.js, update-deno.js): the folder of the programs, the build
 // targets, a download that gives the size and the SHA-256 of what it wrote,
 // the check of a file against a pin, a reader of one file of a zip file,
-// and the rule of the manifest that the update scripts share.
+// and what the update scripts share: the rule of the manifest, the files of
+// a GitHub release, and the version check of a downloaded program.
 //
 // The programs are not in Git (src-tauri/.gitignore). manifest.json of
 // their folder pins the URL, the size, and the SHA-256 of each one: a
@@ -153,6 +155,13 @@ export function releaseFile(release, assetName) {
   return { asset: assetName, size: asset.size, sha256 };
 }
 
+// The URL of the file `asset` of the release `tag` of a GitHub repository
+// (`owner/name`). An update script builds it from the tag and from a file
+// name of its own; it takes no URL of the API answer.
+export function releaseFileUrl(repo, tag, asset) {
+  return `https://github.com/${repo}/releases/download/${tag}/${asset}`;
+}
+
 // Throws unless `got`, the size and the SHA-256 of a file, are those of
 // `pin`. `what` names the file, and `pinnedBy` tells who names the pin, for
 // the error text.
@@ -171,6 +180,24 @@ export function checkPin(what, got, pin, pinnedBy) {
 // names them, for the error text.
 export async function downloadPinned(url, path, mode, pin, pinnedBy) {
   checkPin(url, await download(url, path, mode), pin, pinnedBy);
+}
+
+// Runs `path`, a downloaded program of this computer, so that it prints its
+// version, and throws unless it reports `version`. `name` names the program
+// in the error text. `versionCall` tells how the program prints its
+// version: `args` are its arguments, `env` the variables that the run adds
+// to the environment, and `reportedVersion` reads the version from the
+// output (undefined when the output has none).
+export function checkHostProgram(path, name, version, versionCall) {
+  const { args, env, reportedVersion } = versionCall;
+  const result = spawnSync(path, args, { encoding: 'utf8', env: { ...process.env, ...env } });
+  if (result.error || result.status !== 0) {
+    throw new Error(`${name} does not run on this computer: ${result.error?.message ?? result.stderr}`);
+  }
+  const reported = reportedVersion(result.stdout);
+  if (reported !== version) {
+    throw new Error(`${name} reports the version ${reported ?? '(none)'}, not ${version}.`);
+  }
 }
 
 const ZIP_END_SIGNATURE = Buffer.from([0x50, 0x4b, 0x05, 0x06]);

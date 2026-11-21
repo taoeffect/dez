@@ -1,18 +1,19 @@
 #!/usr/bin/env node
 
-import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
   BINARIES_DIR,
   PROGRAM_MODE,
+  checkHostProgram,
   downloadPinned,
   githubRelease,
   hostTriple,
   manifestFileText,
   manifestWith,
-  releaseFile
+  releaseFile,
+  releaseFileUrl
 } from './bundled-programs.js';
 
 // Vendors the ffmpeg and ffprobe programs that Dez ships: downloads the
@@ -112,12 +113,6 @@ export function licenseTextsFile(release) {
   return { name: LICENSE_TEXTS, ...releaseFile(release, LICENSE_TEXTS) };
 }
 
-// The URL of a file of a release. The script builds it from the tag and from
-// a file name of its own; it takes no URL of the API answer.
-function releaseFileUrl(tag, asset) {
-  return `${BUILD_REPO_URL}/releases/download/${tag}/${asset}`;
-}
-
 // The text of src-tauri/binaries/manifest.json: what build.rs checks the
 // programs against, and where they come from. The `url`, `size`, and
 // `sha256` of a program are its pin: scripts/fetch-programs.js downloads
@@ -137,7 +132,7 @@ export function manifestText(manifest, tag, files, licenseTexts) {
         licenseTexts: { asset: licenseTexts.asset, size: licenseTexts.size, sha256: licenseTexts.sha256 }
       },
       Object.fromEntries(
-        files.map(({ name, asset, size, sha256 }) => [name, { asset, url: releaseFileUrl(tag, asset), size, sha256 }])
+        files.map(({ name, asset, size, sha256 }) => [name, { asset, url: releaseFileUrl(BUILD_REPO, tag, asset), size, sha256 }])
       ),
       name => TOOLS.some(tool => name.startsWith(vendoredName(tool, '')))
     )
@@ -252,6 +247,9 @@ export function reportedVersion(versionOutput) {
   return /^ff(?:mpeg|probe) version (\S+)/.exec(versionOutput)?.[1];
 }
 
+// How a program of a release prints its version (`checkHostProgram`).
+const VERSION_CALL = { args: ['-version'], reportedVersion };
+
 // Why the license notice (`noticeText`) would be false for a program, or
 // undefined when it is true. The check reads the bytes of the file: FFmpeg
 // keeps its configure line as text in the program (`-version` prints it),
@@ -269,20 +267,7 @@ export function licenseProblem(bytes) {
 // unless it is the file that GitHub states.
 async function downloadReleaseFile(tag, file, path, mode) {
   console.log(`Downloading ${file.asset} (${file.size} bytes)`);
-  await downloadPinned(releaseFileUrl(tag, file.asset), path, mode, file, 'GitHub');
-}
-
-// Runs a downloaded program of this computer with `-version` and throws
-// unless it reports the FFmpeg version of the release tag.
-function checkHostProgram(path, name, version) {
-  const result = spawnSync(path, ['-version'], { encoding: 'utf8' });
-  if (result.error || result.status !== 0) {
-    throw new Error(`${name} does not run on this computer: ${result.error?.message ?? result.stderr}`);
-  }
-  const reported = reportedVersion(result.stdout);
-  if (reported !== version) {
-    throw new Error(`${name} reports the version ${reported ?? '(none)'}, not ${version}.`);
-  }
+  await downloadPinned(releaseFileUrl(BUILD_REPO, tag, file.asset), path, mode, file, 'GitHub');
 }
 
 async function main(args) {
@@ -327,7 +312,7 @@ async function main(args) {
     if (triple) {
       for (const tool of TOOLS) {
         const name = vendoredName(tool, triple);
-        checkHostProgram(join(downloadDir, name), name, version);
+        checkHostProgram(join(downloadDir, name), name, version, VERSION_CALL);
       }
       console.log(`The programs of this computer (${triple}) run and report ${version}.`);
     } else {

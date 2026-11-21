@@ -1,10 +1,24 @@
 import { createHash } from 'node:crypto';
 import { crc32, deflateRawSync, gzipSync } from 'node:zlib';
 
-// What the tests of the scripts share: the SHA-256 of bytes, and writers of
-// the archive files that the scripts read (a zip file, a `.tar.gz` file).
+// What the tests of the scripts share: the SHA-256 of bytes, made-up
+// SHA-256 texts and GitHub release data, and writers of the archive files
+// that the scripts read (a zip file, a `.tar.gz` file).
 
 export const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
+
+// A made-up SHA-256 text: 64 times `letter`.
+export const sha = letter => letter.repeat(64);
+
+// The release data of the GitHub API for the release `tag` with the files
+// `names` (at most 16). Each file has its own size and SHA-256: the file
+// at the index `i` has the size 1000 + i, and `sha` of `i` in hex.
+export function githubReleaseData(tag, names) {
+  return {
+    tag_name: tag,
+    assets: names.map((name, index) => ({ name, size: 1000 + index, digest: `sha256:${sha(index.toString(16))}` }))
+  };
+}
 
 // An extra field of a zip header: an id that no tool knows, and data of
 // `length` bytes.
