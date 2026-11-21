@@ -4,7 +4,9 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { appTagText } from '../../src/model/chat/appTags'
 import { appManifestText, parseAppManifest } from '../../src/model/tools/appManifest'
 import { showResultText } from '../../src/model/tools/appShow'
+import { grepTimeoutError } from '../../src/model/tools/appsGrep'
 import { withEditHint } from '../../src/model/tools/appsTool'
+import { GREP_TIME_LIMIT_SECONDS } from '../../src/model/tools/grepMatch'
 import { byteSizeText } from '../../src/utils/byteSize'
 import { appsCall, seedApp, shownAppCards, type ShownAppCard } from './harness/apps'
 import { consoleErrors, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
@@ -20,6 +22,11 @@ import { activeConversationId, endedReply, newTab, openToasts, submit } from './
 // through the file commands of the backend:
 // - a model makes an app, and writes, reads, edits, moves, lists, and
 //   deletes its files; only the user can open what the tool made;
+// - a model reads ranges of the lines of a file, and its first edit call
+//   in each tab gets the hint of edit;
+// - a model finds files by their paths, and lines by a regular
+//   expression; the matching runs in a worker, so the window answers
+//   while a slow pattern runs, and Dez ends it at its time limit;
 // - a model shows a UI app: Dez writes the tag of the app into the reply,
 //   the editor draws it as a card, and a request tells of the app only in
 //   the result of the call;
@@ -170,6 +177,207 @@ describe('apps tool', () => {
     expect(await filesIn(appsDir)).toStrictEqual([])
     await expectReplyEnd(fourth)
     expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('reads ranges of lines, gives the hint of edit in the first edit call of each tab, and cuts a long hunk to its ends', async () => {
+    const items = Array.from({ length: 30 }, (_, index) => `item ${index + 1}`)
+    const itemsText = `${items.join('\n')}\n`
+    await seedApp(appsDir, { name: 'list', description: 'Keeps a list.', kind: 'script' }, { 'items.txt': itemsText })
+    const file = '/apps/list/items.txt'
+    const upper = items.slice(4, 20).map((item) => item.toUpperCase())
+
+    await submit(browser, 'Change the list.')
+    const first = await chatRequest()
+    sendToolCalls(first.reply, [
+      appsCall('call_read', 'read', { path: file, ranges: [{ from_line: 2, to_line: 3 }, { from_line: 29 }, { from_line: 3, to_line: 5 }] }),
+    ])
+
+    // The ranges show in the order of the call, and a range that overlaps
+    // an earlier one shows no line.
+    const second = await chatRequest()
+    expect(toolResult(second, 'call_read')).toBe([
+      `${file}: lines 2-3 and lines 29-30 of 30 (${byteSizeText(Buffer.byteLength(itemsText))})`,
+      '2: item 2',
+      '3: item 3',
+      '29: item 29',
+      '30: item 30',
+      'Range 3 is left out. It names lines 3-5, and range 1 names lines 2-3 already. Make one range of the two, as in {"from_line": 2, "to_line": 5}.',
+    ].join('\n'))
+    sendToolCalls(second.reply, [
+      appsCall('call_edit', 'edit', { path: file, edits: [{ from_line: 5, to_line: 20, text: upper.join('\n') }, { after_line: 30, text: 'item 31' }] }),
+    ])
+
+    // The first edit call of the tab gets the hint. A hunk of more than 12
+    // lines shows its first 4 and its last 4; a shorter one shows whole.
+    const third = await chatRequest()
+    expect(toolResult(third, 'call_edit')).toBe(withEditHint([
+      `Edited ${file}: 2 of 2 edits done. The file had 30 lines, and it has 31 now.`,
+      '1. Done. Replaced lines 5-20 with 16 lines.',
+      '2. Done. Put 1 line in after line 30.',
+      'The lines have new numbers now: read the file again before the next edit of it.',
+      'The change:',
+      '@@ -2,22 +2,22 @@',
+      ' item 2',
+      ' item 3',
+      ' item 4',
+      '-item 5',
+      '… 30 lines of this hunk are not shown, to save context. read gives the file as it is now.',
+      '+ITEM 20',
+      ' item 21',
+      ' item 22',
+      ' item 23',
+      '@@ -28,3 +28,4 @@',
+      ' item 28',
+      ' item 29',
+      ' item 30',
+      '+item 31',
+    ].join('\n')))
+    sendToolCalls(third.reply, [appsCall('call_edit_again', 'edit', { path: file, edits: [{ from_line: 1, text: 'first item' }] })])
+
+    // The conversation of the tab holds the hint now: the next edit call
+    // gets none.
+    const fourth = await chatRequest()
+    expect(toolResult(fourth, 'call_edit_again')).toBe([
+      `Edited ${file}: 1 of 1 edit done. The file had 31 lines, and it has 31 now.`,
+      '1. Done. Replaced line 1 with 1 line.',
+      'The lines have new numbers now: read the file again before the next edit of it.',
+      'The change:',
+      '@@ -1,4 +1,4 @@',
+      '-item 1',
+      '+first item',
+      ' item 2',
+      ' item 3',
+      ' item 4',
+    ].join('\n'))
+    await expectReplyEnd(fourth)
+
+    // The conversation of a new tab does not hold the hint: its first edit
+    // call gets it again.
+    await newTab(browser)
+    await submit(browser, 'Take the last item out.')
+    const other = await chatRequest()
+    sendToolCalls(other.reply, [appsCall('call_edit_tab', 'edit', { path: file, edits: [{ from_line: 31, text: '' }] })])
+
+    const otherSecond = await chatRequest()
+    expect(toolResult(otherSecond, 'call_edit_tab')).toBe(withEditHint([
+      `Edited ${file}: 1 of 1 edit done. The file had 31 lines, and it has 30 now.`,
+      '1. Done. Deleted line 31.',
+      'The lines have new numbers now: read the file again before the next edit of it.',
+      'The change:',
+      '@@ -28,4 +28,3 @@',
+      ' item 28',
+      ' item 29',
+      ' item 30',
+      '-item 31',
+    ].join('\n')))
+    await expectReplyEnd(otherSecond)
+    expect(fs.readFileSync(path.join(appsDir, 'list/items.txt'), 'utf8')).toBe(`${['first item', ...items.slice(1, 4), ...upper, ...items.slice(20)].join('\n')}\n`)
+    expect(await consoleErrors(browser)).toStrictEqual([])
+
+    await fs.promises.rm(appsDir, { recursive: true, force: true })
+  })
+
+  it('finds files by their paths, and lines by a regular expression', async () => {
+    await seedApp(appsDir, { name: 'trip', description: 'Gives the length of a trip.', kind: 'script' }, {
+      'main.ts': [
+        "import { KM } from './units.ts'",
+        '',
+        '// The length of the trip, in km.',
+        'const trip = 12',
+        '',
+        '// Gives the trip in m, as the units tell.',
+        'export default () => trip * KM',
+      ].join('\n') + '\n',
+      'units.ts': 'export const KM = 1000\n',
+    })
+    // A line on which the engine of WebKit gives up: the repeat in a
+    // repeat backtracks too much before the "x" at its end can match.
+    await seedApp(appsDir, { name: 'slow', description: 'Has a slow line.', kind: 'script' }, { 'slow.txt': `${'a'.repeat(60)}!x\n` })
+
+    await submit(browser, 'Find the units in my apps.')
+    const first = await chatRequest()
+    sendToolCalls(first.reply, [
+      appsCall('call_find_all', 'find', { query: '*' }),
+      appsCall('call_find_words', 'find', { query: 'trip ts' }),
+      appsCall('call_grep', 'grep', { pattern: 'units?\\b', path: '/apps/trip', context: 1 }),
+      appsCall('call_grep_bad', 'grep', { pattern: 'trip (' }),
+      appsCall('call_grep_slow', 'grep', { pattern: '^(a+)+$|x', path: '/apps/slow/slow.txt' }),
+    ])
+
+    const second = await chatRequest()
+    expect(toolResult(second, 'call_find_all')).toBe([
+      '/apps: 5 files (paths after /apps/), by path.',
+      'slow/manifest.json',
+      'slow/slow.txt',
+      'trip/main.ts',
+      'trip/manifest.json',
+      'trip/units.ts',
+    ].join('\n'))
+    expect(toolResult(second, 'call_find_words')).toBe([
+      '/apps: 2 of 5 files match "trip ts" (paths after /apps/), by path.',
+      'trip/main.ts',
+      'trip/units.ts',
+    ].join('\n'))
+    expect(toolResult(second, 'call_grep')).toBe([
+      '/apps/trip: 2 lines in 1 of 3 files match "units?\\\\b" (paths after /apps/), by path.',
+      '',
+      'trip/main.ts',
+      "1: import { KM } from './units.ts'",
+      '2- ',
+      '--',
+      '5- ',
+      '6: // Gives the trip in m, as the units tell.',
+      '7- export default () => trip * KM',
+    ].join('\n'))
+    const [badText, badDetails] = toolResult(second, 'call_grep_bad').split('\n\nDetails: ')
+    expect(badText).toBe('`pattern` is no regular expression that JavaScript takes. '
+      + 'Put a "\\" before a special character to find the character itself, or set `literal` to true to find the pattern as plain text.')
+    expect(badDetails).toMatch(/^Invalid regular expression: /)
+    // The line matches, but the engine gave up on it: the result must not
+    // tell the model that no line matches and stop there.
+    expect(toolResult(second, 'call_grep_slow')).toBe([
+      'No line of /apps/slow/slow.txt matches "^(a+)+$|x".',
+      '',
+      'Not sure: 1 line took too long to match, and it can match: line 1. '
+        + 'The engine of regular expressions gives up on a line that takes too long, as if the line did not match. '
+        + 'A repeat in a repeat, as "(a+)+", or ".*" at the start of a pattern, can take very long on some lines. '
+        + 'Make the pattern simpler, or read these lines.',
+    ].join('\n'))
+    await expectReplyEnd(second)
+    // Dez logs the call that it refuses, and nothing else.
+    expect((await consoleErrors(browser)).map((error) => error.split('\n')[0])).toStrictEqual([`The tool apps failed: ToolError: ${badText}`])
+
+    await fs.promises.rm(appsDir, { recursive: true, force: true })
+  })
+
+  it('ends a grep at its time limit, and the window answers while it runs', async () => {
+    await seedApp(appsDir, { name: 'long', description: 'Has a long line.', kind: 'script' }, { 'long.txt': `${'b'.repeat(1024 * 1024)}\n` })
+
+    await submit(browser, 'Find zzz in the long app.')
+    const first = await chatRequest()
+    const sent = Date.now()
+    // ".*" at the start makes the engine try each start of the line, each
+    // to its end: much more than the time limit on a line of 1 MiB.
+    sendToolCalls(first.reply, [appsCall('call_grep', 'grep', { pattern: '.*zzz', path: '/apps/long' })])
+
+    // The search runs in a worker, so the page answers at once while it
+    // runs. `chatRequest` waits only 10 seconds, so the page is asked first.
+    let slowestAnswerMs = 0
+    while (Date.now() - sent < 5_000) {
+      const asked = Date.now()
+      expect(await browser.execute(() => document.readyState)).toBe('complete')
+      slowestAnswerMs = Math.max(slowestAnswerMs, Date.now() - asked)
+      await new Promise((resolve) => setTimeout(resolve, 500))
+    }
+    expect(slowestAnswerMs).toBeLessThan(1_000)
+    expect(setup.mock.hasWaitingRequest()).toBe(false)
+
+    const second = await chatRequest()
+    expect(Date.now() - sent).toBeGreaterThanOrEqual(GREP_TIME_LIMIT_SECONDS * 1000)
+    expect(toolResult(second, 'call_grep')).toBe(grepTimeoutError().message)
+    await expectReplyEnd(second)
+
+    await fs.promises.rm(appsDir, { recursive: true, force: true })
   })
 
   it('reaches no file of the computer through a link in the folder of an app', async () => {

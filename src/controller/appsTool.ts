@@ -293,6 +293,9 @@ async function readEach(paths: readonly AppsPath[], signal: AbortSignal): Promis
 // not read them after the call.
 function grepInWorker(request: GrepRequest, signal: AbortSignal): Promise<GrepOutcome | null> {
   signal.throwIfAborted()
+  // Vite finds and bundles the worker only in this form: `new URL` with a
+  // literal path, right in `new Worker`, with literal options. Keep it.
+  // https://vite.dev/guide/features.html#web-workers
   const worker = new Worker(new URL('./grepWorker.ts', import.meta.url), { type: 'module' })
   return new Promise((resolve, reject) => {
     const end = (settle: () => void) => {

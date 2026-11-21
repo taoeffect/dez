@@ -125,12 +125,13 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `model/tools/toolBridge.ts`, `controller/toolBridge.ts`: the tool bridge of `js_eval`: the Dez tools that the code of a run calls with `dez.sbp`.
 - `model/tools/appsTool.ts`, `lineEdits.ts`, `appManifest.ts`, `appTemplates.ts`, `controller/appsTool.ts`: the `apps` tool: the files of the apps, on the virtual root `/apps/`.
 - `model/tools/editHint.ts`: when an `apps edit` result ends with the hint of `edit`: while the conversation of the tab does not hold it.
+- `model/tools/appsGrep.ts`, `grepMatch.ts`, `controller/grepWorker.ts`: `apps grep`: the checks of a call, the files to search, and the result texts; the matching (a leaf module); the Web Worker that runs the matching, with a time limit.
 - `model/tools/appInvoke.ts`, `controller/appInvoke.ts`: `apps invoke`: one run of an app as a job, with checked output files: the code of a script app in Deno, with copies of its inputs, or the handler of the page of a UI app in a hidden frame.
 - `model/tools/appBridge.ts`, `controller/appBridge.ts`: the frame bridge: the calls between the page of a UI app and Dez (the read and the save of an image or a clip, and the handler that `apps invoke` runs).
 - `model/tools/appShow.ts`: `apps show`: Dez writes the `<dez:app>` tag of a UI app into the reply (`ToolRunContext.showApp`).
 - `controller/apps.ts`: `dez.controller/apps/*`: the facts of an app for its card, its delete, its context menu, and the asset read and save of a shown app.
 - `model/systemPrompt/`: the built-in system prompt (`systemPrompt.md`), the variables of a template, and its checks.
-- `model/modelOutputs.ts`, `modelInputs.ts`, `modelSearch.ts`: the output types, what Dez can send a model, and the model filter.
+- `model/modelOutputs.ts`, `modelInputs.ts`, `modelSearch.ts`, `textSearch.ts`: the output types, what Dez can send a model, the model filter, and the one search rule of the model picker, `model_list`, and `apps find`.
 - `controller/notifications.ts`, `view/sound.ts`, `assets/sounds/`: the reply-end alerts (sound, system notification).
 - `controller/diagnostics/`: `dez.diagnostics/*`: sanitized probes, and the developer's request log (`requestLog.ts`).
 - `model/shortcuts.ts`: the editable shortcut registry; user overrides are in the settings store.
@@ -341,6 +342,7 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 - **The page of an app has no origin**: WebKit hides the errors of a script file that the page loads without `crossorigin` (`UI_OWN_SCRIPT_TAG`, `src/model/tools/appTemplates.ts`).
 - **Dez trusts nothing of the page of an app**: the page gets the two asset calls of the frame bridge and no Dez tool (`src/model/tools/appBridge.ts`), and a shown app saves only into the message that the user writes, while the user works in the app (`saveProblem`, `src/view/editor/apps.ts`; `SAVE_NEEDS_USER_TEXT`).
 - **`src/model/tools/appBridge.ts` imports no other module of the apps**: `appsTool.ts`, `appTemplates.ts`, and `appInvoke.ts` import it.
+- **`apps grep` matches in a Web Worker** (`grepInWorker`, `src/controller/appsTool.ts`): keep the `new Worker(new URL(…))` call in the one form that Vite bundles, and keep `src/model/tools/grepMatch.ts` a leaf module. WebKit gives up on a match that backtracks too much, with no error (`GREP_SLOW_LINE_MS`, `grepMatch.ts`).
 - **Linux needs WebKitGTK 2.42 or newer**, to build and to run (`src-tauri/Cargo.toml`, `app_frames.rs`).
 - **Tauri capabilities**: a new plugin or core command needs a permission in `src-tauri/capabilities/default.json`; app commands registered in `lib.rs` need none.
 - **Copilot auth differs**: device flow commands, not the API-key commands.
