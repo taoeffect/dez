@@ -58,7 +58,7 @@ function windowShareText(tokens: number, contextWindow: number): string {
  *  the sum of the tokens of all requests, which is much more: each request
  *  sends its conversation again. Help › General (`HelpView.vue`) tells the
  *  user the mark and the two numbers. */
-export function tokenLabelTexts(size: ContextSize, contextWindow: number | undefined, compactions?: Compactions, incognito = false): TokenLabelTexts {
+export function tokenLabelTexts({ contextWindow, compactions, incognito = false, ...size }: ContextSize & { contextWindow?: number, compactions?: Compactions, incognito?: boolean }): TokenLabelTexts {
   const parts = requestParts({ incognito })
   const about = size.estimated ? 'about ' : ''
   const subject = compactions ? 'buffer' : 'conversation'

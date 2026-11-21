@@ -12,7 +12,7 @@ const contextSize = useActiveContextSize()
 // there is no token count.
 const tokens = computed(() => {
   const size = contextSize.value
-  return size && size.tokens > 0 ? tokenLabelTexts(size, size.contextWindow, size.compactions, size.incognito) : null
+  return size && size.tokens > 0 ? tokenLabelTexts(size) : null
 })
 
 // Null while the active tab's conversation has no counted request: then

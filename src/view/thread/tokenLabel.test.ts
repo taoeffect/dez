@@ -15,12 +15,12 @@ describe('token label', () => {
   })
 
   it('marks an estimate with a tilde', () => {
-    const text = (estimated: boolean) => tokenLabelTexts({ tokens: 81_234, estimated }, undefined).text
+    const text = (estimated: boolean) => tokenLabelTexts({ tokens: 81_234, estimated }).text
     expect([text(false), text(true)]).toEqual(['81.2k', '~81.2k'])
   })
 
   it('tells the whole count in the tooltip, and the share of the window of a model that has one', () => {
-    const tooltip = (tokens: number, contextWindow?: number) => tokenLabelTexts({ tokens, estimated: false }, contextWindow).tooltip
+    const tooltip = (tokens: number, contextWindow?: number) => tokenLabelTexts({ tokens, estimated: false, contextWindow }).tooltip
 
     expect(tooltip(81_234)).toContain('81,234 tokens')
     expect(tooltip(81_234)).not.toContain('%')
@@ -34,7 +34,7 @@ describe('token label', () => {
 
   // 65% of the window, and never more than 250,000 tokens.
   it('tells in the tooltip at which size Dez compacts a conversation of the model, and nothing for a model with no window', () => {
-    const tooltip = (contextWindow?: number) => tokenLabelTexts({ tokens: 81_234, estimated: false }, contextWindow).tooltip
+    const tooltip = (contextWindow?: number) => tokenLabelTexts({ tokens: 81_234, estimated: false, contextWindow }).tooltip
 
     expect(tooltip(200_000)).toContain('Dez compacts the conversation when it gets to 130,000 tokens')
     expect(tooltip(1_000_000)).toContain('when it gets to 250,000 tokens')
@@ -43,7 +43,7 @@ describe('token label', () => {
 
   // An incognito request sends nothing of Dez (`requestParts`).
   it('tells in the tooltip of an incognito conversation that it goes alone and that Dez never compacts it', () => {
-    const tooltip = (incognito: boolean) => tokenLabelTexts({ tokens: 81_234, estimated: false }, 200_000, undefined, incognito).tooltip
+    const tooltip = (incognito: boolean) => tokenLabelTexts({ tokens: 81_234, estimated: false, contextWindow: 200_000, incognito }).tooltip
 
     expect(tooltip(true)).toContain('sends no system prompt and no tools of Dez')
     expect(tooltip(true)).toContain('Dez does not compact an incognito conversation')
@@ -54,12 +54,12 @@ describe('token label', () => {
   })
 
   it('shows no total before the first compaction', () => {
-    expect(tokenLabelTexts({ tokens: 81_234, estimated: true }, 200_000)).not.toHaveProperty('total')
+    expect(tokenLabelTexts({ tokens: 81_234, estimated: true, contextWindow: 200_000 })).not.toHaveProperty('total')
   })
 
   describe('after a compaction', () => {
     const cost = { usd: 7.38, requests: 131, unpriced: 0 }
-    const texts = (estimated: boolean, count = 3) => tokenLabelTexts({ tokens: 81_234, estimated }, 200_000, { count, tokens: 1_150_000, cost })
+    const texts = (estimated: boolean, count = 3) => tokenLabelTexts({ tokens: 81_234, estimated, contextWindow: 200_000, compactions: { count, tokens: 1_150_000, cost } })
 
     it('shows the size of the buffer, and in parentheses the sizes at the compactions plus the buffer', () => {
       expect([texts(true).text, texts(true).total?.text]).toEqual(['~81.2k', '(1.2M)'])
@@ -83,7 +83,7 @@ describe('token label', () => {
     // A window of 200,000 tokens: a threshold of 130,000, a quarter of it
     // is 32,500.
     it('tells a later compaction size when the compaction left the buffer near the threshold', () => {
-      const tooltip = (left: number) => tokenLabelTexts({ tokens: 125_000, estimated: false }, 200_000, { count: 1, tokens: 300_000, cost, left }).tooltip
+      const tooltip = (left: number) => tokenLabelTexts({ tokens: 125_000, estimated: false, contextWindow: 200_000, compactions: { count: 1, tokens: 300_000, cost, left } }).tooltip
 
       expect(tooltip(120_000)).toContain('Dez compacts the conversation again when the buffer gets to 152,500 tokens')
       expect(tooltip(20_000)).toContain('when the buffer gets to 130,000 tokens')
