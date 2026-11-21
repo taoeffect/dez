@@ -6,9 +6,10 @@ import { linkedPathCounts } from '../../model/chat/images'
 import type { ShownPicture } from '../../model/chat/shownPictures'
 import { countOf } from '../../utils/countText'
 import { measureLineHeights } from '../thread/editorMeasure'
+import { modelDisplayNames } from '../thread/modelChip'
 import { compactionBlockRange } from './compactionBlock'
 import { hiddenAssets, hiddenAssetsOfChips } from './hiddenAssets'
-import { sectionRolesChanged } from './lineBlocks'
+import { assetModelsChanged, sectionRolesChanged } from './lineBlocks'
 import { isInSelectableTooltip } from './media'
 import { ROUND_STROKE, svgIcon } from './svgIcon'
 import {
@@ -96,6 +97,7 @@ export function compactionChipData(state: EditorState): CompactionChipData | nul
   if (!block) return null
   const rule = blockLinkedRule(block)
   const kept = hiddenAssets(state).filter((asset) => asset.owner.kind === 'compaction')
+  const names = modelDisplayNames(state)
   const { assets, summary } = notesParts(blockText, block)
   return {
     count: block.count,
@@ -103,7 +105,7 @@ export function compactionChipData(state: EditorState): CompactionChipData | nul
     assets: kept.map((asset) => {
       const inBlock = asset.from < blockText.length
       const src = asset.kind === 'clip' ? asset.tag.src : null
-      return panelAsset(asset, inBlock ? src !== null && linkedPathCounts(src, rule) : true)
+      return panelAsset(asset, inBlock ? src !== null && linkedPathCounts(src, rule) : true, names)
     }),
     pictures: block.pictures,
     assetsText: assets,
@@ -331,10 +333,11 @@ function buildCompactionChips(state: EditorState): DecorationSet {
 
 /** The chips, as a block after the tag line, which shows as the pill of
  *  the section, and the other lines of the block out of view. Block
- *  decorations must come from a state field. */
+ *  decorations must come from a state field. A new model label of a kept
+ *  asset (`assetModelsChanged`) goes into the panel of the assets chip. */
 const compactionChipField = StateField.define<DecorationSet>({
   create: buildCompactionChips,
-  update: (value, tr) => tr.docChanged || sectionRolesChanged(tr) ? buildCompactionChips(tr.state) : value,
+  update: (value, tr) => tr.docChanged || sectionRolesChanged(tr) || assetModelsChanged(tr) ? buildCompactionChips(tr.state) : value,
   provide: (field) => EditorView.decorations.from(field),
 })
 

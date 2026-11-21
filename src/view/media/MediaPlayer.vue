@@ -29,6 +29,7 @@ import { MAX_SAVED_CLIP_BYTES, mediaFileExtension } from '../../model/chat/media
 import { isPastedMediaPath, type MediaTagKind } from '../../model/chat/mediaTags'
 import { assetFactsText } from '../assetFacts'
 import { ASSET_ICON_SHAPES } from '../assetIcons'
+import { MODEL_ICON_SHAPES, assetModelTexts, type AssetModelLabel } from '../assetModelLabel'
 import { clipFile, clipPlayType, clipProblem, clipSourceKind, expiryNotice, problemCard, type ClipLoadFailure, type ClipProblem } from './clipState'
 import { releaseRemovedMedia } from './releaseMedia'
 import { videoAspectRatios } from './videoSizes'
@@ -64,6 +65,9 @@ const props = defineProps<{
   expires: string | null
   /** A Save or a Delete of this clip runs. */
   busy: boolean
+  /** The label of the model that made the clip (assetModelLabel.ts); null
+   *  for a clip that no known model made. */
+  model: AssetModelLabel | null
 }>()
 
 const emit = defineEmits<{ save: [], delete: [] }>()
@@ -348,6 +352,10 @@ const factsText = computed(() => unavailable.value === 'gone' ? '' : assetFactsT
   extension: mediaFileExtension(props.type ?? '', props.src),
   bytes: fileBytes.value,
 }))
+
+// The model label after the facts: the model name, and the texts of its
+// tooltip and of its accessible name.
+const modelView = computed(() => props.model && { name: props.model.name, ...assetModelTexts(props.model, props.kind) })
 
 // How long the clock's tooltip stays after the pointer left it or the
 // clock. A move from the clock to the tooltip that leaves the clock through
@@ -701,13 +709,13 @@ function onContextMenu(event: MouseEvent): void {
         <video v-if="kind === 'video' && !card" class="media-player__stand-in" />
       </div>
     </media-container>
-    <!-- The id badge and the facts of the clip, in one toolbar as an image
-         has them (`ImageWidget` in src/view/editor/images.ts). A model gets
-         the id in the request form of the clip's tag
-         (`mediaTagRequestText`), or in the result of the tool that made
-         the clip, so a message can name the clip by it. The tooltip belongs
-         to the badge, the element before it. The symbol of the kind is the
-         one of the editor's chips (assetIcons.ts). -->
+    <!-- The id badge, the facts, and the model label of the clip, in one
+         toolbar as an image has them (`ImageWidget` in
+         src/view/editor/images.ts). A model gets the id in the request form
+         of the clip's tag (`mediaTagRequestText`), or in the result of the
+         tool that made the clip, so a message can name the clip by it. A
+         tooltip belongs to the element before it. The symbol of the kind is
+         the one of the editor's chips (assetIcons.ts). -->
     <span class="media-player__overlay">
       <span class="media-player__id" role="img" :aria-label="`${kindName} id: ${id}`">
         <svg class="media-player__icon" viewBox="0 0 16 16" aria-hidden="true">
@@ -720,6 +728,20 @@ function onContextMenu(event: MouseEvent): void {
         <span class="media-player__tooltip-text">Refer to this clip in a message as <code>{{ kind }} @{{ id }}</code>.</span>
       </media-tooltip>
       <span v-if="factsText" class="media-player__facts">{{ factsText }}</span>
+      <template v-if="modelView">
+        <span class="media-player__model" role="img" :aria-label="modelView.ariaLabel">
+          <svg class="media-player__icon" viewBox="0 0 16 16" aria-hidden="true">
+            <component :is="tag" v-for="([tag, attributes], index) in MODEL_ICON_SHAPES" :key="index" v-bind="attributes" />
+          </svg>
+          <span class="media-player__model-name">{{ modelView.name }}</span>
+        </span>
+        <media-tooltip class="media-player__tooltip media-player__tooltip--notice" boundary="viewport">
+          <span class="media-player__tooltip-title">{{ modelView.title }}</span>
+          <span class="media-player__tooltip-text">
+            <span v-for="(line, index) in modelView.lines" :key="index" class="media-player__tooltip-line">{{ line }}</span>
+          </span>
+        </media-tooltip>
+      </template>
     </span>
   </component>
 </template>
@@ -1237,7 +1259,40 @@ function onContextMenu(event: MouseEvent): void {
   font-variant-numeric: tabular-nums;
 }
 
-.media-player__facts::before {
+/* The model that made the clip, as an image shows it (`.dez-image__model`
+   in `dezTheme`): a sparkle, then the model name, as quiet as the facts. A
+   long name ends in an ellipsis. */
+.media-player__model {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: calc(var(--u) * 5);
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: calc(var(--u) * 160);
+  height: calc(var(--u) * 24);
+  padding: 0 calc(var(--u) * 8) 0 calc(var(--u) * 7);
+  color: rgba(255, 255, 255, 0.78);
+  font-weight: 500;
+}
+
+.media-player__model > .media-player__icon {
+  width: calc(var(--u) * 14);
+  height: calc(var(--u) * 14);
+  opacity: 0.72;
+}
+
+.media-player__model-name {
+  min-width: 0;
+  overflow: hidden;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+}
+
+/* The divider in the middle of the gap before the facts or the model
+   label. */
+.media-player__facts::before,
+.media-player__model::before {
   content: "";
   position: absolute;
   top: 25%;
@@ -1341,6 +1396,13 @@ function onContextMenu(event: MouseEvent): void {
 /* A path has no spaces: it breaks at any character, so a long one stays
    inside the tooltip. */
 .media-player__tooltip-path {
+  overflow-wrap: anywhere;
+}
+
+/* A line of the model label's tooltip (the model, the provider, the key):
+   a model id or a key has no spaces, so it breaks at any char. */
+.media-player__tooltip-line {
+  display: block;
   overflow-wrap: anywhere;
 }
 

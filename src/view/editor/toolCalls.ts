@@ -10,7 +10,7 @@ import type { ShownPicture } from '../../model/chat/shownPictures'
 import { EMPTY_TOOL_RESULT, INTERRUPTED_TOOL_RESULT, type ToolBlock } from '../../model/chat/toolBlocks'
 import { MODEL_OUTPUT_IDS, effectiveOutputs, type ModelOutput } from '../../model/modelOutputs'
 import { isRecord } from '../../model/providers/modelParsing'
-import type { ModelInfo } from '../../model/providers/types'
+import type { ModelDisplayNames, ModelInfo } from '../../model/providers/types'
 import { isRoundLimitResult } from '../../model/streams/toolRound'
 import { blockJobStarts, INTERMEDIATE_PARAMETER, jobOwnText, type JobResult, type JobResultStatus } from '../../model/tools/jobs'
 import { JS_EVAL_CODE_PARAMETER, JS_EVAL_TOOL } from '../../model/tools/jsEval'
@@ -18,15 +18,16 @@ import { isIntermediateCall, toolDefinition } from '../../model/tools/registry'
 import type { ToolArguments, ToolArgumentValue } from '../../model/tools/types'
 import { countOf } from '../../utils/countText'
 import { assetIcon } from '../assetIcons'
+import { assetModelLabel, type AssetModelLabel } from '../assetModelLabel'
 import { sectionsField, type SectionModel } from '../thread/cmEditor'
 import { measureLineHeights } from '../thread/editorMeasure'
-import { streamingSectionField } from '../thread/modelChip'
+import { modelDisplayNames, streamingSectionField } from '../thread/modelChip'
 import AssetList from './AssetList.vue'
 import { compactionBlockEnd } from './compactionBlock'
 import type { AssetPlace } from './drawnAssets'
-import { eyeIcon, hiddenAssets, hiddenAssetsOfChips, hiddenLineStarts } from './hiddenAssets'
-import { createImage } from './images'
-import { agentSectionTexts, chipBlocks, lineBlocks, sectionRolesChanged } from './lineBlocks'
+import { eyeIcon, hiddenAssets, hiddenAssetsOfChips, hiddenLineStarts, type HiddenDocAsset } from './hiddenAssets'
+import { createImage, updateImageModel } from './images'
+import { agentSectionTexts, assetModelsChanged, chipBlocks, lineBlocks, sectionRolesChanged } from './lineBlocks'
 import { createPlayer, destroyPlayer, isInSelectableTooltip, updatePlayer } from './media'
 import type { DocRange } from './pendingRanges'
 import { ROUND_STROKE, svgIcon } from './svgIcon'
@@ -68,18 +69,21 @@ function toolCallState(block: ToolBlock, streaming: boolean): ToolCallState {
 /** A hidden asset as the panel of its chip draws it, with no doc offsets:
  *  what `createImage` or `createPlayer` takes. A clip has `linkedSrc`,
  *  which tells its player whether a linked file counts where its tag is
- *  (an image's `linked` tells that already). */
+ *  (an image's `linked` tells that already). `model` is the label of the
+ *  model that made the asset (assetModelLabel.ts). */
 export type PanelAsset =
-  | { kind: 'image', path: string, id: string | null, linked: boolean }
-  | { kind: 'clip', tag: MediaTagData, linkedSrc: boolean }
+  | { kind: 'image', path: string, id: string | null, linked: boolean, model: AssetModelLabel | null }
+  | { kind: 'clip', tag: MediaTagData, linkedSrc: boolean, model: AssetModelLabel | null }
 
 /** The hidden asset `asset` as a panel draws it; `linkedSrc` tells whether
- *  a linked `src` of a clip counts where its tag is. Without the offsets,
- *  which every token before it changes. */
-export function panelAsset(asset: HiddenAsset, linkedSrc: boolean): PanelAsset {
-  if (asset.kind === 'image') return { kind: 'image', path: asset.image.path, id: asset.image.id, linked: asset.image.linked }
+ *  a linked `src` of a clip counts where its tag is, and `names` are the
+ *  names of the models. Without the offsets, which every token before it
+ *  changes. */
+export function panelAsset(asset: HiddenDocAsset, linkedSrc: boolean, names: ModelDisplayNames): PanelAsset {
+  const model = assetModelLabel(asset.model, names)
+  if (asset.kind === 'image') return { kind: 'image', path: asset.image.path, id: asset.image.id, linked: asset.image.linked, model }
   const { kind, id, type, src, url, expires, other } = asset.tag
-  return { kind: 'clip', tag: { kind, id, type, src, url, expires, other }, linkedSrc }
+  return { kind: 'clip', tag: { kind, id, type, src, url, expires, other }, linkedSrc, model }
 }
 
 /** What the chip of an intermediate call shows on top of the parts of
@@ -320,9 +324,10 @@ function addSectionSpacing(spacing: ChipSpacing, text: string, offset: number, c
 
 /** What the chip of `call` shows as an intermediate call, or null
  *  (`IntermediateCall`). `ofCalls` are the hidden assets of the doc that
- *  chips of calls own, and `result` the result of the job that the call
- *  itself started (`findJobResults`). */
-function intermediateCall(call: ToolBlock, state: ToolCallState, ofCalls: readonly HiddenAsset[], result: JobResult | null): IntermediateCall | null {
+ *  chips of calls own, `result` the result of the job that the call
+ *  itself started (`findJobResults`), and `names` the names of the
+ *  models. */
+function intermediateCall(call: ToolBlock, state: ToolCallState, ofCalls: readonly HiddenDocAsset[], result: JobResult | null, names: ModelDisplayNames): IntermediateCall | null {
   const jobIds = blockJobStarts(call).map((start) => start.id)
   const assets = ofCalls.filter((asset) => ownedBy(asset, { kind: 'call', callId: call.id, jobIds }))
   const asked = (state === 'running' || jobIds.length > 0) && isIntermediateCall(call.name, call.arguments)
@@ -332,7 +337,7 @@ function intermediateCall(call: ToolBlock, state: ToolCallState, ofCalls: readon
     jobIds,
     // A job's assets are in agent sections only, where no linked file
     // counts.
-    assets: assets.map((asset) => panelAsset(asset, false)),
+    assets: assets.map((asset) => panelAsset(asset, false, names)),
     text: text.trim() === '' ? '' : text,
     status: result?.status ?? null,
   }
@@ -349,7 +354,7 @@ function intermediateCall(call: ToolBlock, state: ToolCallState, ofCalls: readon
  *  are the hidden assets of the doc, with doc offsets. A chip gets the
  *  hidden assets that it owns, and the result of its job, from any later
  *  agent section too (`intermediateCall`). */
-function findRenderedToolCalls(doc: string, sections: readonly SectionModel[], streamingSectionId: string | null, hidden: readonly HiddenAsset[], blockEnd: number): { calls: RenderedToolCall[], spacing: ChipSpacing } {
+function findRenderedToolCalls(doc: string, sections: readonly SectionModel[], streamingSectionId: string | null, hidden: readonly HiddenDocAsset[], blockEnd: number, names: ModelDisplayNames): { calls: RenderedToolCall[], spacing: ChipSpacing } {
   const calls: RenderedToolCall[] = []
   const spacing: ChipSpacing = { gapLines: [], contentAbove: [], contentBelow: [] }
   if (!doc.includes('<dez:tool')) return { calls, spacing }
@@ -369,7 +374,7 @@ function findRenderedToolCalls(doc: string, sections: readonly SectionModel[], s
         from: from + block.from,
         to: from + block.to,
         state,
-        intermediate: intermediateCall(block, state, ofCalls, results[sectionIndex][index]),
+        intermediate: intermediateCall(block, state, ofCalls, results[sectionIndex][index], names),
         summary: summaries[index],
       })
     })
@@ -653,6 +658,10 @@ export interface PanelAssetRow {
   asset: PanelAsset
   /** Makes the element of the asset (`createImage`, `createPlayer`). */
   create: () => HTMLElement
+  /** Gives the drawn element of the row, which `create` made for a row of
+   *  the same key, the asset of this row: a clip's new tag
+   *  (`updatePlayer`), and the new model label (`updateImageModel`). */
+  update: (element: HTMLElement) => void
 }
 
 /** The rows of `assets`, the hidden assets of `chip`. Each asset tells
@@ -672,7 +681,11 @@ function panelAssetRows(view: EditorView, chip: AssetsChip, assets: readonly Pan
     return {
       key: `${count}:${key}${asset.kind === 'clip' ? `:${asset.linkedSrc}` : ''}`,
       asset,
-      create: () => asset.kind === 'image' ? createImage(view, asset, place) : createPlayer(view, asset.tag, asset.linkedSrc, place),
+      create: () => asset.kind === 'image' ? createImage(view, asset, place) : createPlayer(view, asset.tag, asset.linkedSrc, asset.model, place),
+      update: (element) => {
+        if (asset.kind === 'image') updateImageModel(element, asset.model)
+        else updatePlayer(element, asset.tag, asset.model)
+      },
     }
   })
 }
@@ -684,9 +697,10 @@ function panelAssetRows(view: EditorView, chip: AssetsChip, assets: readonly Pan
  *  A drawn asset that is still there keeps its element, and a kept element
  *  moves only when the order changed: a player that leaves the document
  *  stops, and ends its fullscreen. So a Save of a hidden clip, which
- *  changes its tag, keeps its player (`updatePlayer`). A clip whose
- *  `linkedSrc` changed gets a new player, as the `linkedSrc` of a player
- *  is the one of its mount (`MediaWidget.updateDOM` does the same). */
+ *  changes its tag, keeps its player, and a new model label changes in
+ *  place (`PanelAssetRow.update`). A clip whose `linkedSrc` changed gets
+ *  a new player, as the `linkedSrc` of a player is the one of its mount
+ *  (`MediaWidget.updateDOM` does the same). */
 function renderAssets(view: EditorView, list: HTMLElement, chip: AssetsChip, assets: readonly PanelAsset[]): void {
   const drawn = new Map<string, HTMLElement>()
   for (const element of list.children) drawn.set(drawnAssetKeys.get(element) ?? '', element as HTMLElement)
@@ -694,7 +708,7 @@ function renderAssets(view: EditorView, list: HTMLElement, chip: AssetsChip, ass
     const kept = drawn.get(row.key)
     if (kept) {
       drawn.delete(row.key)
-      if (row.asset.kind === 'clip') updatePlayer(kept, row.asset.tag)
+      row.update(kept)
       return kept
     }
     const element = row.create()
@@ -1002,7 +1016,7 @@ const spaceAboveChip = Decoration.line({ class: 'dez-tool-call-line--after-conte
 const spaceBelowChip = Decoration.line({ class: 'dez-tool-call-line--before-content' })
 
 function buildToolCallDecorations(state: EditorState): ToolCallDecorations {
-  const { calls, spacing } = findRenderedToolCalls(state.doc.toString(), state.field(sectionsField, false) ?? [], state.field(streamingSectionField, false) ?? null, hiddenAssets(state), compactionBlockEnd(state.doc))
+  const { calls, spacing } = findRenderedToolCalls(state.doc.toString(), state.field(sectionsField, false) ?? [], state.field(streamingSectionField, false) ?? null, hiddenAssets(state), compactionBlockEnd(state.doc), modelDisplayNames(state))
   // A blank line between two chips can also be a line that goes out of
   // view with a hidden asset.
   const noHeightLines = [...new Set([...spacing.gapLines, ...hiddenLineStarts(state)])].sort((a, b) => a - b)
@@ -1042,11 +1056,12 @@ function collapsedLines(state: EditorState, { noHeightLines, collapsed }: ToolCa
  *  spans lines, which only decorations from a state field can replace. The
  *  ranges are atomic, so the caret is never inside the hidden text. The
  *  lines around the chips get their spacing (`ChipSpacing`), and the lines
- *  of the hidden assets take no height. */
+ *  of the hidden assets take no height. A new model label of a hidden
+ *  asset (`assetModelsChanged`) goes into the panel of its chip. */
 const toolCallDecorationsField = StateField.define<ToolCallDecorations>({
   create: buildToolCallDecorations,
   update(value, tr) {
-    const changed = tr.docChanged || sectionRolesChanged(tr) || tr.state.field(streamingSectionField, false) !== tr.startState.field(streamingSectionField, false)
+    const changed = tr.docChanged || sectionRolesChanged(tr) || assetModelsChanged(tr) || tr.state.field(streamingSectionField, false) !== tr.startState.field(streamingSectionField, false)
     return changed ? buildToolCallDecorations(tr.state) : value
   },
   provide: (field) => [
@@ -1061,8 +1076,8 @@ const NO_CALLS: readonly RenderedToolCall[] = []
 
 /** The calls that the editor shows as chips in `state`, in doc order; none
  *  for a state without `markdownToolCalls()`. The array is the same object
- *  until the doc, the sections, or the streaming section change, so callers
- *  can cache by it. */
+ *  until the doc, the sections, the streaming section, or the names of the
+ *  models change, so callers can cache by it. */
 export function renderedToolCalls(state: EditorState): readonly RenderedToolCall[] {
   return state.field(toolCallDecorationsField, false)?.calls ?? NO_CALLS
 }

@@ -3,9 +3,11 @@ import { EditorView, type Decoration } from '@codemirror/view'
 import { describe, expect, it } from 'vitest'
 import { CARRIED_USER_ASSETS_LABEL, COMPACTION_END_LINE, compactionBlockText, compactionTagText } from '../../model/chat/compaction'
 import type { ShownPicture } from '../../model/chat/shownPictures'
+import { displayNames } from '../../model/providers/testing'
+import { setModelDisplayNamesEffect } from '../thread/modelChip'
 import type { PanelAsset } from './toolCalls'
-import { compactionChip, compactionChipData, openCompactionChips, toggleCompactionChipEffect } from './compactionChip'
-import { CHIP, PLAYER, createState, keptClip, keptImage } from './testing'
+import { compactionChip, compactionChipData, openCompactionChips, toggleCompactionChipEffect, type CompactionChipData } from './compactionChip'
+import { CHIP, PLAYER, createState, drawnWidgets, keptClip, keptImage, withSectionModels } from './testing'
 
 const PICTURES: ShownPicture[] = [{ file: 'f1.png', label: 'asset_view: the sheet of the video clip @d.', width: 64, height: 48, bytes: 300 }]
 const SHOWN = '![id=s](/home/u/.config/dez/assets/images/shown.png)'
@@ -84,7 +86,7 @@ describe('compactionChipData', () => {
     const tag = compactionTagText({ count: 2, lastId: 'z', pictures: [] }).replace(/>$/, '/>')
     const state = createState([`${tag}\nNotes.\n\n${keptImage('k')}`, 'Ask.'], ['agent', 'user'])
 
-    expect(compactionChipData(state)).toStrictEqual({ count: 2, dropped: null, assets: [{ kind: 'image', path: expect.any(String), id: 'k', linked: false }], pictures: [], assetsText: '', summary: 'Notes.\n\n[image]' })
+    expect(compactionChipData(state)).toStrictEqual({ count: 2, dropped: null, assets: [{ kind: 'image', path: expect.any(String), id: 'k', linked: false, model: null }], pictures: [], assetsText: '', summary: 'Notes.\n\n[image]' })
   })
 
   it('gives null for a doc with no compaction tag, and after a change takes the tag away', () => {
@@ -125,6 +127,18 @@ describe('the compaction chips', () => {
     expect(openCompactionChips(typed)).toStrictEqual({ assets: false, summary: true })
     expect(openCompactionChips(both)).toStrictEqual({ assets: true, summary: true })
     expect(openCompactionChips(both.update({ effects: toggleCompactionChipEffect.of('summary') }).state)).toStrictEqual({ assets: true, summary: false })
+  })
+
+  // The model of the compaction wrote the notes, not the assets in them.
+  it('label a kept asset only by its model mark, not by the model of the compaction, and follow the names', () => {
+    const notes = ['Notes.', '', keptImage('k', { providerId: 'studio', modelId: 'paint' }), '', keptClip('l')]
+    const state = withSectionModels(compactedState(notes, []), [{ providerId: 'mock', modelId: 'alpha' }])
+    const named = state.update({ effects: setModelDisplayNamesEffect.of(displayNames({ 'studio/paint': 'Paint Pro', 'mock/alpha': 'Alpha One' })) }).state
+    // The labels of the assets of the drawn chips.
+    const labels = (each: EditorState) => drawnWidgets(each).flatMap((widget) => 'data' in widget ? (widget.data as CompactionChipData).assets.map((asset) => asset.model?.name ?? null) : [])
+
+    expect(labels(state)).toStrictEqual(['paint', null])
+    expect(labels(named)).toStrictEqual(['Paint Pro', null])
   })
 
   // A rebuild of the same tab (ThreadEditor.vue) gives the new state the

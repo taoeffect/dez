@@ -1,14 +1,16 @@
 import { StateField, type EditorState, type Extension, type Line, type Text } from '@codemirror/state'
 import { WidgetType, type EditorView } from '@codemirror/view'
+import { assetModel } from '../../model/chat/assetModels'
 import { COMPACTION_END_LINE } from '../../model/chat/compaction'
 import { SENTINEL_CHAR } from '../../model/chat/content'
 import { findHiddenAssets, findKeptAssets, type HiddenAsset, type HiddenAssetOwner } from '../../model/chat/hiddenAssets'
 import { IMAGE_HIDDEN_KEY, IMAGE_KEPT_KEY } from '../../model/chat/images'
 import { MEDIA_HIDDEN_ATTRIBUTE, MEDIA_KEPT_ATTRIBUTE } from '../../model/chat/mediaTags'
+import type { ModelRef } from '../../model/chat/types'
 import { ASSET_NAMES, type JobAssetKind } from '../../model/tools/jobs'
 import { SECTION_SEP, sectionsField } from '../thread/cmEditor'
 import { compactionBlockEnd } from './compactionBlock'
-import { chipBlocks, sectionRolesChanged, sectionTexts } from './lineBlocks'
+import { chipBlocks, sectionModelsChanged, sectionRolesChanged, sectionTexts } from './lineBlocks'
 import type { DocRange } from './pendingRanges'
 import { ROUND_STROKE, svgIcon } from './svgIcon'
 import { tableRowStarts } from './tables'
@@ -31,9 +33,13 @@ import { tableRowStarts } from './tables'
 // images.ts, media.ts, toolCalls.ts, and compactionChip.ts read this
 // module. It must import none of them.
 
+/** A hidden asset of the doc, with doc offsets, and the model that made it
+ *  (`assetModel`), for the model label in the panel of its chip. */
+export type HiddenDocAsset = HiddenAsset & { model: ModelRef | null }
+
 interface HiddenAssetsInDoc {
-  /** In doc order, with doc offsets. */
-  assets: readonly HiddenAsset[]
+  /** In doc order. */
+  assets: readonly HiddenDocAsset[]
   /** The start of each line that the assets out of the compaction block
    *  take out of view, in doc order (`hiddenLines`). */
   lines: readonly number[]
@@ -135,8 +141,8 @@ function findHiddenAssetsInDoc(state: EditorState): HiddenAssetsInDoc {
     text,
     blocks: section.role === 'agent' ? chipBlocks(text).filter((block) => offset + block.from >= blockEnd) : [],
   })))
-  const assets: HiddenAsset[] = []
-  texts.forEach(({ from: offset }, index) => {
+  const assets: HiddenDocAsset[] = []
+  texts.forEach(({ section, from: offset }, index) => {
     // An asset with both marks shows under the chip of its call.
     const ofCompaction = kept[index].filter((asset) => !ofJobs[index].some((other) => other.from === asset.from))
     for (const asset of [...ofJobs[index], ...ofCompaction]) {
@@ -144,9 +150,10 @@ function findHiddenAssetsInDoc(state: EditorState): HiddenAssetsInDoc {
       const to = offset + asset.to
       const line = state.doc.lineAt(from)
       if (SENTINEL_CHAR.test(line.text) || (asset.kind === 'image' && tableRowStarts(state.doc).has(line.from))) continue
+      const model = assetModel(asset.kind === 'image' ? asset.image : asset.tag, section, from < blockEnd)
       assets.push(asset.kind === 'image'
-        ? { ...asset, from, to, image: { ...asset.image, from, to } }
-        : { ...asset, from, to, tag: { ...asset.tag, from, to } })
+        ? { ...asset, from, to, image: { ...asset.image, from, to }, model }
+        : { ...asset, from, to, tag: { ...asset.tag, from, to }, model })
     }
   })
   assets.sort((a, b) => a.from - b.from)
@@ -162,16 +169,18 @@ function findHiddenAssetsInDoc(state: EditorState): HiddenAssetsInDoc {
   }
 }
 
+// A new model of a section is the model of each of its hidden assets that
+// has no model mark (`assetModel`).
 const hiddenAssetsField = StateField.define<HiddenAssetsInDoc>({
   create: findHiddenAssetsInDoc,
-  update: (value, tr) => tr.docChanged || sectionRolesChanged(tr) ? findHiddenAssetsInDoc(tr.state) : value,
+  update: (value, tr) => tr.docChanged || sectionRolesChanged(tr) || sectionModelsChanged(tr) ? findHiddenAssetsInDoc(tr.state) : value,
 })
 
 /** The assets that a chip hides in `state` (the chip of a call, or the
  *  assets chip of a compaction), in doc order, with doc offsets; none for
  *  a state without `markdownToolCalls()` or `compactionChip()`. The array
- *  is the same object until the doc or the sections change. */
-export function hiddenAssets(state: EditorState): readonly HiddenAsset[] {
+ *  is the same object until the doc, the sections, or the models change. */
+export function hiddenAssets(state: EditorState): readonly HiddenDocAsset[] {
   return (state.field(hiddenAssetsField, false) ?? NOTHING_HIDDEN).assets
 }
 

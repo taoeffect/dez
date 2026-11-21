@@ -13,7 +13,7 @@ import { finishVeniceJob, shownPlayers, silentWav, type ShownPlayer } from './ha
 import { startMockProviderApp, takeRequestTo, type MockProviderApp } from './harness/mockProviderApp'
 import { answerHeld, mockChatPath, openAiToolCall, replyText, sendChatReply, sendToolCalls, startEventStream, toolResult, writeChatFrame, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeConversationId, activeTabStreaming, assetPartPoint, busyDotsShown, docPos, editorDoc, endedReply, focusEditor, newTab, openToasts, setCaret, submit, threadSections, waitForThread } from './harness/thread'
+import { activeConversationId, activeTabStreaming, assetModelLabels, assetPartPoint, busyDotsShown, docPos, editorDoc, endedReply, focusEditor, newTab, openToasts, setCaret, submit, threadSections, waitForThread } from './harness/thread'
 import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolChip, revealingPart, toolChips, toolPanel } from './harness/toolChips'
 
 // The `model_invoke` tool, driven through the real app against a mock chat
@@ -892,6 +892,8 @@ describe('model_invoke', () => {
 
     await pressToolChip(browser, 0)
     await waitForValue(browser, 'image in the panel', imageSizes, [{ width: 48, height: 36 }])
+    // The image in the panel names the model that made it.
+    expect(await assetModelLabels(browser)).toStrictEqual([{ name: STUDIO.modelName, label: `Made by ${STUDIO.modelId} (${STUDIO.modelName}), provider: ${STUDIO.name}` }])
 
     // The trash of the image works as at its own place: after the prompt,
     // the file is gone, and the reference leaves the reply with the blank

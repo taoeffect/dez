@@ -316,6 +316,13 @@ function onOverlayClick(event: MouseEvent) {
               hides the asset, Dez opens that chip first.
             </p>
             <p>
+              When you point at an image or a player, Dez also shows the name of the model that made
+              it: an image or a clip of a reply, or one that a model made for a
+              <code>model_invoke</code> call. Point at the name to
+              see the model, its provider, and its key. An asset that you pasted or dropped, or that
+              a Dez tool made (for example <code>video</code>), names no model.
+            </p>
+            <p>
               Copy text that names assets in one conversation and paste it into another, and Dez
               asks whether to bring the assets along. With Yes, a name of an asset that this
               conversation has in the message of the paste, or in a message before it, changes to the

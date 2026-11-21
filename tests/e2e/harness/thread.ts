@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import type { EditorView } from '@codemirror/view'
 import { expect } from 'vitest'
 import { Key } from 'webdriverio'
+import type { ModelRef } from '../../../src/model/chat/types'
 import type { ToastVariant } from '../../../src/view/toast/selectors'
 import { click, typeKeys, waitFor, waitForValue, type Point } from './dom'
 import { conversationFilePath, makeConversation, seedConversation } from './fixtures'
@@ -388,6 +389,18 @@ export async function assetPartPoint (browser: E2EBrowser, asset: string, index:
   }), asset, index, part)
 }
 
+/** The model label of each image and player of the active editor that has
+ *  one, in doc order: the name that it shows, and its accessible name. */
+export async function assetModelLabels (browser: E2EBrowser): Promise<Array<{ name: string, label: string }>> {
+  return browser.execute(() => Array.from(
+    document.querySelectorAll('.cm-content .dez-image__model, .cm-content .media-player__model'),
+    (item) => ({
+      name: item.querySelector('.dez-image__model-name, .media-player__model-name')?.textContent ?? '',
+      label: item.getAttribute('aria-label') ?? '',
+    }),
+  ))
+}
+
 /** The height of every role pill of the active editor. */
 export async function rolePillHeights (browser: E2EBrowser): Promise<number[]> {
   return browser.execute(() =>
@@ -556,13 +569,14 @@ export async function endedReply (browser: E2EBrowser, replyIndex = 1): Promise<
 }
 
 /** Seeds the conversation `id` with `sections` in the test HOME `home`,
- *  opens it in a new tab, and waits for it as `waitForThread` does. */
-export async function openSeededConversation (browser: E2EBrowser, home: string, id: string, sections: Array<{ role: 'user' | 'agent', text: string }>): Promise<void> {
+ *  opens it in a new tab, and waits for it as `waitForThread` does. A
+ *  section with a `model` is a reply of that model. */
+export async function openSeededConversation (browser: E2EBrowser, home: string, id: string, sections: Array<{ role: 'user' | 'agent', text: string, model?: ModelRef }>): Promise<void> {
   await seedConversation(home, makeConversation({
     id,
     title: id,
-    sections: sections.map(({ role, text }) => ({ role, nodes: [{ kind: 'text', text }] })),
+    sections: sections.map(({ role, text, model }) => ({ role, nodes: [{ kind: 'text', text }], ...(model && { model }) })),
   }))
   await sbpCall(browser, 'dez.model/tabs/openConversation', id)
-  await waitForThread(browser, sections)
+  await waitForThread(browser, sections.map(({ role, text }) => ({ role, text })))
 }

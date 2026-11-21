@@ -3,11 +3,15 @@ import { history, undo } from '@codemirror/commands'
 import { EditorState, type Transaction, type TransactionSpec } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { clipModelMark } from '../../model/chat/assetModels'
 import { mediaTagText, type MediaTagData, type MediaTagKind } from '../../model/chat/mediaTags'
 import type { Role } from '../../model/chat/types'
+import { displayNames } from '../../model/providers/testing'
 import { PILL_OPEN, SECTION_SEP, sectionsField, setSectionThinkingEffect } from '../thread/cmEditor'
+import { setModelDisplayNamesEffect } from '../thread/modelChip'
 import { editsAgentText } from './agentTextEdits'
 import { deleteSavedClip, markdownMedia, renderedMedia } from './media'
+import { createState as createThreadState, drawnAssetModels, withSectionModels } from './testing'
 
 let confirmMessages: string[] = []
 let deletedPaths: string[] = []
@@ -102,6 +106,19 @@ describe('renderedMedia', () => {
     const typed = thought.update({ changes: { from: 0, insert: 'x' } }).state
     expect(renderedMedia(typed)).not.toBe(media)
     expect(renderedMedia(typed)[0].from).toBe(media[0].from + 1)
+  })
+})
+
+// The label changes in place (`updatePlayer`): a clip that plays goes on.
+describe('the model label of a player', () => {
+  it('names the model of its mark, else the model of its own reply, follows the names, and keeps the players', () => {
+    const marked = mediaTagText({ kind: 'audio', id: 'c', type: 'audio/webm', src: null, url: 'https://cdn.example/c.webm', expires: null, other: clipModelMark({ providerId: 'studio', modelId: 'paint' }) })
+    const state = withSectionModels(createThreadState([tag('video', 'a'), `${tag('video', 'b')}\n\n${marked}`], ['user', 'agent']), [undefined, { providerId: 'mock', modelId: 'alpha' }])
+    const named = state.update({ effects: setModelDisplayNamesEffect.of(displayNames({ 'mock/alpha': 'Alpha One', 'studio/paint': 'Paint Pro' })) }).state
+
+    expect(drawnAssetModels(state)).toStrictEqual([['a', null], ['b', 'alpha'], ['c', 'paint']])
+    expect(drawnAssetModels(named)).toStrictEqual([['a', null], ['b', 'Alpha One'], ['c', 'Paint Pro']])
+    expect(renderedMedia(named)).toBe(renderedMedia(state))
   })
 })
 

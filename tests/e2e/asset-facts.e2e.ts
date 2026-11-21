@@ -6,7 +6,7 @@ import { appFilePath, mediaTempDir, seedAppState, writeTestFile } from './harnes
 import { shownImages, solidPng } from './harness/images'
 import { NOT_A_CLIP, WEBM_VIDEO, clipTag, problemCards, shownPlayers, silentWav, startClipServer, type ClipServer } from './harness/media'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { assetPartPoint, openSeededConversation } from './harness/thread'
+import { assetModelLabels, assetPartPoint, openSeededConversation } from './harness/thread'
 
 // The facts of an asset in its hover toolbar, driven through the real app:
 // next to the id badge, an image shows its pixels, its format, and the size
@@ -14,7 +14,7 @@ import { assetPartPoint, openSeededConversation } from './harness/thread'
 // file. A fact that Dez does not know is left out: a clip that plays from
 // its URL has no file size here, and a clip that this computer cannot play
 // has no length. A missing image and a clip whose file is gone show no
-// facts.
+// facts. After the facts, the toolbar names the model that made the asset.
 //
 // One app session serves the whole file.
 
@@ -59,6 +59,27 @@ describe('asset facts', () => {
         && inner.top >= outer.top && inner.bottom <= outer.bottom
       return getComputedStyle(toolbar).opacity === '1' && facts.width > 0 && inside(facts, bar) && inside(bar, box)
     }, asset, index)
+  }
+
+  // The model tooltip that shows (of an image, a CodeMirror tooltip, or of
+  // a player): its title, its lines, and whether each line is on a row of
+  // its own.
+  async function modelTooltips (): Promise<Array<{ title: string, lines: string[], rows: boolean }>> {
+    return browser.execute(() => {
+      const read = (tip: Element, titleClass: string, lineClass: string) => {
+        const lines = Array.from(tip.querySelectorAll(lineClass))
+        const tops = lines.map((line) => line.getBoundingClientRect().top)
+        return {
+          title: tip.querySelector(titleClass)?.textContent ?? '',
+          lines: lines.map((line) => line.textContent ?? ''),
+          rows: tops.every((top, index) => index === 0 || top > tops[index - 1]),
+        }
+      }
+      return [
+        ...Array.from(document.querySelectorAll('.cm-tooltip.dez-image-tooltip'), (tip) => read(tip, '.dez-image-tooltip__title', '.dez-image-tooltip__line')),
+        ...Array.from(document.querySelectorAll('.cm-content .media-player__tooltip[data-open]'), (tip) => read(tip, '.media-player__tooltip-title', '.media-player__tooltip-line')),
+      ]
+    })
   }
 
   beforeAll(async () => {
@@ -170,5 +191,54 @@ describe('asset facts', () => {
       expect.stringMatching(/^\[MediaPlayer\] The clip did not load; media error code: [34]$/),
       '[MediaPlayer] The file of the clip could not be read',
     ])
+  })
+
+  // A seeded reply holds the marks as a reply of Dez writes them.
+  it('names the model that made an image or a clip after the facts, with the model, its provider, and its key in a tooltip', async () => {
+    const pasted = await writeTestFile(appFilePath(app.home, 'assets', 'images', 'model-pasted.png'), PNG)
+    const made = await writeTestFile(appFilePath(app.home, 'assets', 'generated', 'images', 'model-made.png'), PNG)
+    const clip = await writeTestFile(appFilePath(app.home, 'assets', 'generated', 'video', 'model-made.webm'), WEBM_VIDEO)
+    const reply = [
+      `![id=b|model=studio/paint](${made})`,
+      clipTag('video', { id: 'c', type: 'video/webm', src: clip, model: 'studio/films' }),
+      // No mark: the model of the reply made it.
+      `![id=d](${made})`,
+    ].join('\n\n')
+    await openSeededConversation(browser, app.home, 'asset-facts-models', [
+      { role: 'user', text: `Draw it as ![id=a](${pasted})` },
+      { role: 'agent', text: reply, model: { providerId: 'chat', modelId: 'writer' } },
+      { role: 'user', text: 'Thanks' },
+    ])
+    await waitForValue(browser, 'shown images', async () => (await shownImages(browser)).length, 3)
+
+    const imageFacts = `dez-image__facts: 40 × 24 · PNG · ${PNG.length} B`
+    await waitForValue(browser, 'image toolbars', () => toolbars('.dez-image'), [
+      // An image of the user names no model.
+      ['dez-image__id', imageFacts, 'dez-image__trash'],
+      ['dez-image__id', imageFacts, 'dez-image__model', 'dez-image__trash'],
+      ['dez-image__id', imageFacts, 'dez-image__model', 'dez-image__trash'],
+    ])
+    await waitForValue(browser, 'player toolbar', () => toolbars('.media-player'), [
+      ['media-player__id', `media-player__facts: 0:02 · WebM · ${WEBM_VIDEO.length} B`, 'media-player__model'],
+    ])
+    // No provider of this app has these models, so a label shows the id of
+    // its model.
+    expect(await assetModelLabels(browser)).toStrictEqual([
+      { name: 'paint', label: 'Made by paint, provider: Unknown provider' },
+      { name: 'films', label: 'Made by films, provider: Unknown provider' },
+      { name: 'writer', label: 'Made by writer, provider: Unknown provider' },
+    ])
+
+    await movePointer(browser, await assetPartPoint(browser, '.dez-image', 1, '.dez-image__img'))
+    await movePointer(browser, await assetPartPoint(browser, '.dez-image', 1, '.dez-image__model'))
+    await waitForValue(browser, 'tooltip of the image label', modelTooltips, [
+      { title: 'Model that made this image', lines: ['paint', 'Unknown provider', 'studio/paint'], rows: true },
+    ])
+    await movePointer(browser, await assetPartPoint(browser, '.media-player', 0, '.media-player__card'))
+    await movePointer(browser, await assetPartPoint(browser, '.media-player', 0, '.media-player__model'))
+    await waitForValue(browser, 'tooltip of the player label', modelTooltips, [
+      { title: 'Model that made this video', lines: ['films', 'Unknown provider', 'studio/films'], rows: true },
+    ])
+    expect(await consoleErrors(browser)).toStrictEqual([])
   })
 })

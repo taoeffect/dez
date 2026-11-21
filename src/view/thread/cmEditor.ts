@@ -2112,7 +2112,8 @@ export const dezTheme = EditorView.theme({
   },
   // The id reads as a label of the image: an image icon, then the id. The
   // `::after` is the divider in the middle of the gap before the facts (or
-  // before the trash, in the "Image not found" box, which has no facts).
+  // before the model label or the trash, in the "Image not found" box,
+  // which has no facts).
   '.dez-image__id': {
     position: 'relative',
     display: 'inline-flex',
@@ -2140,7 +2141,8 @@ export const dezTheme = EditorView.theme({
     background: 'var(--color-image-toolbar-border, rgba(255, 255, 255, 0.18))',
   },
   // The facts (pixels, format, file size) are less strong than the id, with
-  // digits of one width. The `::after` is the divider before the trash.
+  // digits of one width. The `::after` is the divider before the model
+  // label or the trash.
   '.dez-image__facts': {
     position: 'relative',
     display: 'inline-flex',
@@ -2153,6 +2155,45 @@ export const dezTheme = EditorView.theme({
     fontVariantNumeric: 'tabular-nums',
   },
   '.dez-image__facts::after': {
+    content: '""',
+    position: 'absolute',
+    top: '25%',
+    bottom: '25%',
+    right: `calc(${editorSize(-1.5)} - 0.5px)`,
+    width: '1px',
+    background: 'var(--color-image-toolbar-border, rgba(255, 255, 255, 0.18))',
+  },
+  // The model that made the image (assetModelLabel.ts): a sparkle, then the
+  // model name, as quiet as the facts. A long name ends in an ellipsis. The
+  // `::after` is the divider before the trash.
+  '.dez-image__model': {
+    position: 'relative',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: editorSize(5),
+    boxSizing: 'border-box',
+    maxWidth: editorSize(160),
+    height: editorSize(24),
+    padding: editorSize(0, 8, 0, 7),
+    color: 'rgba(255, 255, 255, 0.78)',
+    fontWeight: '500',
+  },
+  '.dez-image__model svg': {
+    display: 'block',
+    flex: 'none',
+    width: editorSize(14),
+    height: editorSize(14),
+    opacity: '0.72',
+  },
+  // The line height keeps `overflow` from cutting the letters that go
+  // below the line.
+  '.dez-image__model-name': {
+    minWidth: '0',
+    overflow: 'hidden',
+    lineHeight: '1.4',
+    textOverflow: 'ellipsis',
+  },
+  '.dez-image__model::after': {
     content: '""',
     position: 'absolute',
     top: '25%',
@@ -2948,6 +2989,12 @@ export const dezTheme = EditorView.theme({
   '.dez-image-tooltip__text': {
     marginTop: editorSize(2),
     opacity: '0.8',
+  },
+  // A line of the model label's tooltip (the model, the provider, the key):
+  // a model id or a key has no spaces, so it breaks at any char.
+  '.dez-image-tooltip__line': {
+    display: 'block',
+    overflowWrap: 'anywhere',
   },
   '.dez-image-tooltip code': {
     padding: editorSize(0, 3),

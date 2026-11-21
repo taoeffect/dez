@@ -1,4 +1,4 @@
-import type { ProviderInfo } from './types'
+import type { ModelDisplayNames, ProviderInfo } from './types'
 
 /** Unit tests only: the info of a custom OpenAI-format provider with no
  *  thinking, configured (with a key) unless `configured` is false. */
@@ -11,4 +11,11 @@ export function providerInfo(id: string, name: string, configured = true): Provi
 export function today(): string {
   const now = new Date()
   return [now.getFullYear(), now.getMonth() + 1, now.getDate()].map((part) => String(part).padStart(2, '0')).join('-')
+}
+
+/** Unit tests only: the names of the models (`dez.provider/modelDisplayNames`):
+ *  the model names and the readable names by `modelRefKey`, and the
+ *  provider names by provider id. */
+export function displayNames(models: Record<string, string> = {}, providers: Record<string, string> = {}, readableNames: Record<string, string> = {}): ModelDisplayNames {
+  return { models: new Map(Object.entries(models)), providers: new Map(Object.entries(providers)), readableNames: new Map(Object.entries(readableNames)) }
 }

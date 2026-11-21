@@ -5,12 +5,13 @@ import { compactionBlockText } from '../../model/chat/compaction'
 import { bridgedInvoke, evalBlock, HIDDEN_CLIP_PATH, HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, invokeBlock, waitBlock } from '../../model/chat/testing'
 import type { Role } from '../../model/chat/types'
 import { toolBlockText, type ToolBlockStatus } from '../../model/chat/toolBlocks'
+import { displayNames } from '../../model/providers/testing'
 import { jobStartedText, jobsWaitText, type JobResultStatus } from '../../model/tools/jobs'
 import { STOPPED_TOOL_RESULT } from '../../model/streams/toolRound'
 import type { ToolArguments } from '../../model/tools/types'
 import { PILL_OPEN, SECTION_SEP, sectionsField, setSectionsEffect, setSectionThinkingEffect } from '../thread/cmEditor'
-import { setStreamingSectionEffect, streamingSectionField } from '../thread/modelChip'
-import { PLAYER, RED } from './testing'
+import { setModelDisplayNamesEffect, setStreamingSectionEffect, streamingSectionField } from '../thread/modelChip'
+import { PLAYER, RED, createState as createThreadState, withSectionModels } from './testing'
 import { intermediateLabel, intermediateSymbols, markdownToolCalls, renderedToolCalls, toolCallLabel, toolCallSummaries, type IntermediateCall } from './toolCalls'
 
 function block(id: string, status: ToolBlockStatus = 'success', result = 'ok'): string {
@@ -246,6 +247,18 @@ describe('the intermediate data of a call (RenderedToolCall.intermediate)', () =
     expect(intermediate([code])).toBeNull()
     expect(intermediate([code, waited('finished', 'The cat is blue.')])).toBeNull()
   })
+
+  // A `model_invoke` job writes the model that it called as the model mark
+  // of its assets; an asset of a Dez tool has a tool mark and no model.
+  it('labels each hidden asset by its model mark, never by the model of the reply, and follows the names', () => {
+    const doc = [INVOKE, '', hiddenImage('j-aaaa', 'b', { providerId: 'studio', modelId: 'paint' }), '', hiddenImage('j-aaaa', 'c')].join('\n')
+    const state = withSectionModels(createThreadState(['ask', doc], ['user', 'agent']), [undefined, { providerId: 'mock', modelId: 'alpha' }])
+    const named = state.update({ effects: setModelDisplayNamesEffect.of(displayNames({ 'studio/paint': 'Paint Pro', 'mock/alpha': 'Alpha One' })) }).state
+    const labels = (each: EditorState) => renderedToolCalls(each)[0].intermediate?.assets.map((asset) => asset.model?.name ?? null)
+
+    expect(labels(state)).toStrictEqual(['paint', null])
+    expect(labels(named)).toStrictEqual(['Paint Pro', null])
+  })
 })
 
 describe('the spacing of the chip lines', () => {
@@ -471,8 +484,8 @@ describe('toolCallLabel', () => {
 })
 
 describe('the label and the type symbols of an intermediate chip', () => {
-  const image = { kind: 'image', path: HIDDEN_IMAGE_PATH, id: 'b', linked: false } as const
-  const clip = (kind: 'audio' | 'video') => ({ kind: 'clip', tag: { kind, id: 'c', type: `${kind}/x`, src: null, url: null, expires: null, other: [] }, linkedSrc: false }) as const
+  const image = { kind: 'image', path: HIDDEN_IMAGE_PATH, id: 'b', linked: false, model: null } as const
+  const clip = (kind: 'audio' | 'video') => ({ kind: 'clip', tag: { kind, id: 'c', type: `${kind}/x`, src: null, url: null, expires: null, other: [] }, linkedSrc: false, model: null }) as const
 
   function call(more: Partial<IntermediateCall>): IntermediateCall {
     return { jobIds: ['j-aaaa'], assets: [], text: '', status: null, ...more }

@@ -9,12 +9,14 @@
 import type { PromptInput } from '../streams/mediaRequest'
 import { jobStartedText } from '../tools/jobs'
 import { invocationInputsText } from '../tools/modelInvoke'
+import { imageModelMark } from './assetModels'
 import type { BridgedCall } from './bridgedCalls'
 import { AGENT_MESSAGE_TAG_NAME, compactionTagText, USER_MESSAGE_TAG_NAME } from './compaction'
 import type { CompactionNotes } from './compactionNotes'
 import { IMAGE_HIDDEN_KEY, IMAGE_TOOL_KEY, imageMarkdown, imageReferenceTextWithKeptMark } from './images'
 import { MEDIA_HIDDEN_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE, mediaTagText, type MediaTagKind } from './mediaTags'
 import { toolBlockText } from './toolBlocks'
+import type { ModelRef } from './types'
 
 /** The stored file of `hiddenImage`. */
 export const HIDDEN_IMAGE_PATH = '/home/u/.config/dez/assets/generated/images/one.png'
@@ -64,15 +66,16 @@ export function replyPart(text: string): string {
 }
 
 /** The reference of the image `id` at `path`, with the kept mark of a
- *  compaction when `kept`. */
-export function idImage(path: string, id: string, kept = false): string {
-  return imageReferenceTextWithKeptMark({ path, metadata: [{ key: 'id', value: id }] }, kept)
+ *  compaction when `kept`, and the model mark of `model` when given. */
+export function idImage(path: string, id: string, kept = false, model?: ModelRef): string {
+  return imageReferenceTextWithKeptMark({ path, metadata: [{ key: 'id', value: id }, ...imageModelMark(model)] }, kept)
 }
 
 /** The reference of an image that the job `jobId` made for an intermediate
- *  call. */
-export function hiddenImage(jobId: string, id = 'b'): string {
-  return imageMarkdown(HIDDEN_IMAGE_PATH, [{ key: 'id', value: id }, { key: IMAGE_TOOL_KEY, value: 'model_invoke' }, { key: IMAGE_HIDDEN_KEY, value: jobId }])
+ *  call, with the model mark of `model` when given, as a `model_invoke`
+ *  job writes it. */
+export function hiddenImage(jobId: string, id = 'b', model?: ModelRef): string {
+  return imageMarkdown(HIDDEN_IMAGE_PATH, [{ key: 'id', value: id }, ...imageModelMark(model), { key: IMAGE_TOOL_KEY, value: 'model_invoke' }, { key: IMAGE_HIDDEN_KEY, value: jobId }])
 }
 
 /** The tag of a saved clip that the job `jobId` made for an intermediate

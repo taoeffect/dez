@@ -3,11 +3,13 @@ import { history, undo } from '@codemirror/commands'
 import { EditorSelection, EditorState, type Transaction, type TransactionSpec } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { HIDDEN_IMAGE_PATH, hiddenImage, invokeBlock } from '../../model/chat/testing'
+import { HIDDEN_IMAGE_PATH, hiddenImage, idImage, invokeBlock } from '../../model/chat/testing'
+import { displayNames } from '../../model/providers/testing'
 import { SECTION_SEP, encodePrompt, sectionsField } from '../thread/cmEditor'
+import { setModelDisplayNamesEffect } from '../thread/modelChip'
 import { editsAgentText } from './agentTextEdits'
 import { deleteImage, deleteImageBang, deleteImageParen, imageRemovalRange, imageTooltip, imageTooltipDelay, markdownImages, renderedImages, setImageTooltip } from './images'
-import { createState as createThreadState, joinSections, runCommand } from './testing'
+import { createState as createThreadState, drawnAssetModels, joinSections, runCommand, withSectionModels } from './testing'
 
 interface ConfirmCall {
   message: string
@@ -496,5 +498,31 @@ describe('image overlay tooltips', () => {
     expect(imageTooltipDelay(1000, -Infinity)).toBe(300)
     expect(imageTooltipDelay(1000, 800)).toBe(0)
     expect(imageTooltipDelay(1000, 700)).toBe(300)
+  })
+})
+
+describe('the model label of an image', () => {
+  const ALPHA = { providerId: 'mock', modelId: 'alpha' }
+  const BETA = { providerId: 'mock', modelId: 'beta' }
+  const PAINT = { providerId: 'studio', modelId: 'paint' }
+  const NAMES = displayNames({ 'mock/alpha': 'Alpha One', 'mock/beta': 'Beta Two' })
+
+  it('names the model of its mark, else the model of its own reply, and no model for an image of the user', () => {
+    const texts = [`ask ${idImage(RED, 'a')}`, idImage(RED, 'b'), `more ${idImage(BLUE, 'c', false, PAINT)}`, `${idImage(BLUE, 'd')}\n${idImage(BLUE, 'e', false, PAINT)}`]
+    const state = withSectionModels(createThreadState(texts, ['user', 'agent', 'user', 'agent']), [undefined, ALPHA, undefined, BETA])
+
+    expect(drawnAssetModels(state)).toStrictEqual([['a', null], ['b', 'alpha'], ['c', 'paint'], ['d', 'beta'], ['e', 'paint']])
+  })
+
+  // The label changes in place (`ImageWidget.updateDOM`): the image does
+  // not load again.
+  it('changes when the names come in or the reply gets another model, and the images stay the same', () => {
+    const state = withSectionModels(createThreadState(['ask', idImage(RED, 'a')], ['user', 'agent']), [undefined, ALPHA])
+    const named = state.update({ effects: setModelDisplayNamesEffect.of(NAMES) }).state
+    const changed = withSectionModels(named, [undefined, BETA])
+
+    expect([state, named, changed].map(drawnAssetModels)).toStrictEqual([[['a', 'alpha']], [['a', 'Alpha One']], [['a', 'Beta Two']]])
+    expect(renderedImages(named)).toBe(renderedImages(state))
+    expect(renderedImages(changed)).toBe(renderedImages(state))
   })
 })

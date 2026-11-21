@@ -99,6 +99,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `view/editor/lineBlocks.ts`, `compaction.ts`, `compactionBlock.ts`, `lineCommands.ts`: the edit rules of whole-line blocks (chips, players, app cards, the compaction block).
 - `view/editor/agentTextEdits.ts`: whether a user edit changed the text of a reply (the edited mark of a tab).
 - `view/editor/assetSelection.ts`, `view/assetFacts.ts`, `view/assetIcons.ts`: the selected look, the facts text, and the symbol of an asset.
+- `view/assetModelLabel.ts`: the model label of an asset's overlay (name, tooltip, symbol).
 - `controller/images.ts`: `dez.controller/images/*`: store, delete, read, and redraw images; file drops.
 - `controller/media.ts`, `clipSources.ts`: `dez.controller/media/*`: save, delete, read, and decode clips; the cleanup of old temp copies.
 - `controller/unusedFiles.ts`, `cacheHolds.ts`, `workFolders.ts`: the two cleanups of Settings: the files and the cache entries that nothing uses, and the apps that no text names.

@@ -2,19 +2,22 @@ import sbp from '@sbp/sbp'
 import { StateField, type EditorState, type Extension } from '@codemirror/state'
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view'
 import { createApp, h, reactive, shallowRef, type App, type ShallowRef } from 'vue'
+import { assetModel } from '../../model/chat/assetModels'
 import { MEDIA_TAG_NAMES, findMediaTags, isLinkedMediaPath, isPastedMediaPath, isTempMediaPath, mediaTagText, savedMediaTag, unsavedMediaTag, type MediaTag, type MediaTagData } from '../../model/chat/mediaTags'
+import { assetModelLabel, sameAssetModelLabel, type AssetModelLabel } from '../assetModelLabel'
 import { leaveFullscreen } from '../fullscreen'
 import MediaPlayer from '../media/MediaPlayer.vue'
 import { expiryNotice } from '../media/clipState'
 import { sectionsField, type SectionModel } from '../thread/cmEditor'
 import { measureLineHeights } from '../thread/editorMeasure'
+import { modelDisplayNames } from '../thread/modelChip'
 import { selectedAssetLook } from './assetSelection'
 import { focusKeepingScroll, syncDomSelection } from './focus'
 import { compactionBlockEnd } from './compactionBlock'
 import { noteDrawnAsset, type AssetPlace } from './drawnAssets'
 import { HiddenAssetWidget, hiddenAssetOwnerKinds } from './hiddenAssets'
 import { linesRemovalRange } from './images'
-import { lineBlocks, sectionRolesChanged, shownSectionTags } from './lineBlocks'
+import { assetModelsChanged, lineBlocks, sectionRolesChanged, shownSectionTags } from './lineBlocks'
 import { followShownRange, pendingRanges } from './pendingRanges'
 
 // The audio and video clips of every section (media tags,
@@ -46,6 +49,12 @@ interface RenderedMedia extends MediaTag {
   linkedSrc: boolean
 }
 
+/** A tag of `renderedMedia`, with the section that holds it. */
+interface MediaInSection {
+  tag: RenderedMedia
+  section: SectionModel
+}
+
 interface MediaDecorations {
   /** In doc order. */
   media: readonly RenderedMedia[]
@@ -74,6 +83,8 @@ interface MountedPlayer {
   app: App
   /** The tag that the player shows now. */
   tag: ShallowRef<MediaTagData>
+  /** The model label that the player shows now. */
+  model: ShallowRef<AssetModelLabel | null>
   observer: ResizeObserver
 }
 
@@ -81,19 +92,21 @@ const mountedPlayers = new WeakMap<HTMLElement, MountedPlayer>()
 
 /** Mounts the player of the clip `shownTag`, and returns its root element.
  *  `linkedSrc` tells whether a linked `src` counts where the tag is
- *  (`clipSourceKind`). `destroyPlayer` must take it down.
+ *  (`clipSourceKind`), and `shownModel` is the label of the model that
+ *  made the clip. `destroyPlayer` must take it down.
  *
  *  `place` tells where the tag is in the doc now, for the Save and the
  *  Delete. With none, the player is drawn in place of its tag, and its DOM
  *  tells (`MediaWidget`). The player of a hidden clip is drawn in the panel
  *  of its chip (toolCalls.ts), whose DOM is at the chip's place, so the
  *  chip gives the place. */
-export function createPlayer(view: EditorView, shownTag: MediaTagData, linkedSrc: boolean, place?: AssetPlace): HTMLElement {
+export function createPlayer(view: EditorView, shownTag: MediaTagData, linkedSrc: boolean, shownModel: AssetModelLabel | null, place?: AssetPlace): HTMLElement {
   const root = document.createElement('span')
   root.className = ROOT_CLASS
   const tagPlace = place ?? (() => view.contentDOM.contains(root) ? view.posAtDOM(root) : null)
   noteDrawnAsset(root, tagPlace)
   const tag = shallowRef(shownTag)
+  const model = shallowRef(shownModel)
   const app = createApp({
     // The player gets the source as the tag has it, and makes the URL
     // that loads it.
@@ -107,6 +120,7 @@ export function createPlayer(view: EditorView, shownTag: MediaTagData, linkedSrc
         linkedSrc,
         expires,
         busy: src !== null && busyClips.has(src),
+        model: model.value,
         onSave: () => { void saveClip(view, root, tagPlace, tag.value) },
         onDelete: () => { void deleteSavedClip(view, root, tagPlace, tag.value) },
       })
@@ -126,7 +140,7 @@ export function createPlayer(view: EditorView, shownTag: MediaTagData, linkedSrc
     measureLineHeights(view)
   })
   observer.observe(root)
-  mountedPlayers.set(root, { app, tag, observer })
+  mountedPlayers.set(root, { app, tag, model, observer })
   // A press on the player keeps the caret and the focus where they are, as
   // a press on a tool call chip does. The controls work by pointer and
   // click events, which this does not stop. A press on the text of the
@@ -183,11 +197,12 @@ export function createPlayer(view: EditorView, shownTag: MediaTagData, linkedSrc
 }
 
 /** Gives the mounted player `root` the new tag of its clip, after a Save or
- *  a Delete changed the tag's `src`. A new player would start from zero,
- *  with no Save animation; the drawn one keeps its place in the clip over a
- *  new source (`MediaPlayer.vue`). False when `root` has no player of that
- *  clip (a clip's kind and id never change). */
-export function updatePlayer(root: HTMLElement, tag: MediaTagData): boolean {
+ *  a Delete changed the tag's `src`, and the new label of the model that
+ *  made it, after the names of the models came in. A new player would
+ *  start from zero, with no Save animation; the drawn one keeps its place
+ *  in the clip over a new source (`MediaPlayer.vue`). False when `root`
+ *  has no player of that clip (a clip's kind and id never change). */
+export function updatePlayer(root: HTMLElement, tag: MediaTagData, model: AssetModelLabel | null): boolean {
   const player = mountedPlayers.get(root)
   if (!player || player.tag.value.kind !== tag.kind || player.tag.value.id !== tag.id) return false
   // The player keeps its height, so its observer writes no entry for the
@@ -196,6 +211,7 @@ export function updatePlayer(root: HTMLElement, tag: MediaTagData): boolean {
   const height = playerHeights.get(heightKey(player.tag.value))
   if (height !== undefined) playerHeights.set(heightKey(tag), height)
   player.tag.value = tag
+  player.model.value = model
   return true
 }
 
@@ -212,7 +228,7 @@ export function destroyPlayer(root: HTMLElement): void {
 
 /** The player of one clip, in place of its tag. */
 class MediaWidget extends WidgetType {
-  constructor(readonly tag: MediaTagData, readonly linkedSrc: boolean) {
+  constructor(readonly tag: MediaTagData, readonly linkedSrc: boolean, readonly model: AssetModelLabel | null) {
     super()
   }
   // Every field that the player shows or that Save and Delete read. Doc
@@ -222,15 +238,16 @@ class MediaWidget extends WidgetType {
     const a = this.tag
     const b = other.tag
     return this.linkedSrc === other.linkedSrc && a.kind === b.kind && a.id === b.id && a.type === b.type && a.src === b.src && a.url === b.url && a.expires === b.expires
+      && sameAssetModelLabel(this.model, other.model)
   }
   toDOM(view: EditorView): HTMLElement {
-    return createPlayer(view, this.tag, this.linkedSrc)
+    return createPlayer(view, this.tag, this.linkedSrc, this.model)
   }
-  // A changed tag goes to the drawn player (`updatePlayer`), so CM makes no
-  // new one, and a clip that plays goes on. A new editor state
-  // (`view.setState`: a tab switch, the end of a stream), a role change of
-  // the section (which changes `linkedSrc`), or a hidden or kept mark makes
-  // a new widget, so it stops a clip that plays.
+  // A changed tag or model label goes to the drawn player (`updatePlayer`),
+  // so CM makes no new one, and a clip that plays goes on. A new editor
+  // state (`view.setState`: a tab switch, the end of a stream), a role
+  // change of the section (which changes `linkedSrc`), or a hidden or kept
+  // mark makes a new widget, so it stops a clip that plays.
   //
   // The player's element also stays in the document while CM draws its line
   // again, which a player that fills the screen needs: an element that
@@ -242,7 +259,7 @@ class MediaWidget extends WidgetType {
   // make the DOM agree, so a Save in fullscreen ended the fullscreen (the
   // e2e case "keeps a video in fullscreen over a Save" covers it).
   updateDOM(dom: HTMLElement, _view: EditorView, from: MediaWidget): boolean {
-    return from.linkedSrc === this.linkedSrc && updatePlayer(dom, this.tag)
+    return from.linkedSrc === this.linkedSrc && updatePlayer(dom, this.tag, this.model)
   }
   destroy(dom: HTMLElement): void {
     destroyPlayer(dom)
@@ -259,35 +276,43 @@ class MediaWidget extends WidgetType {
 
 /** The tags that the editor shows as players (`shownSectionTags`), in doc
  *  order, each with whether a linked `src` counts in its section. */
-function findRenderedMedia(doc: string, sections: readonly SectionModel[]): RenderedMedia[] {
+function findRenderedMedia(doc: string, sections: readonly SectionModel[]): MediaInSection[] {
   if (!MEDIA_TAG_NAMES.some((name) => doc.includes(`<${name}`))) return []
-  return shownSectionTags(doc, sections, findMediaTags).map(({ tag, section, from, to }) => ({ ...tag, from, to, linkedSrc: section.role === 'user' }))
+  return shownSectionTags(doc, sections, findMediaTags).map(({ tag, section, from, to }) => ({ tag: { ...tag, from, to, linkedSrc: section.role === 'user' }, section }))
 }
 
 function buildMediaDecorations(state: EditorState): MediaDecorations {
-  const media = findRenderedMedia(state.doc.toString(), state.field(sectionsField, false) ?? [])
+  const rendered = findRenderedMedia(state.doc.toString(), state.field(sectionsField, false) ?? [])
   // A clip of the compaction block gets no widget: the block is out of
   // view as a whole, and its clips play in the panel of the assets chip.
   const blockEnd = compactionBlockEnd(state.doc)
-  const blocks = blockEnd === 0 ? media : media.filter((tag) => tag.from >= blockEnd)
+  const shown = blockEnd === 0 ? rendered : rendered.filter(({ tag }) => tag.from >= blockEnd)
   // A hidden clip plays in the panel of its chip (hiddenAssets.ts). It
   // stays a line block here; only its widget is the one of a hidden asset,
   // so that no second player of the clip is made.
   const hidden = hiddenAssetOwnerKinds(state)
-  const decorations = Decoration.set(blocks.map((tag) => {
+  const names = modelDisplayNames(state)
+  const decorations = Decoration.set(shown.map(({ tag, section }) => {
     const owner = hidden.get(tag.from)
+    // The filter left out the clips of the compaction block.
+    const model = owner ? null : assetModelLabel(assetModel(tag, section, false), names)
     return Decoration.replace({
-      widget: owner ? new HiddenAssetWidget(tag.kind, tag.id, owner) : new MediaWidget(tag, tag.linkedSrc),
+      widget: owner ? new HiddenAssetWidget(tag.kind, tag.id, owner) : new MediaWidget(tag, tag.linkedSrc, model),
     }).range(tag.from, tag.to)
   }))
-  return { media, blocks, decorations }
+  return { media: rendered.map(({ tag }) => tag), blocks: shown.map(({ tag }) => tag), decorations }
 }
 
 /** Each media tag is replaced by its player. The ranges are atomic, so the
- *  caret is never inside the hidden text. */
+ *  caret is never inside the hidden text. A new model label
+ *  (`assetModelsChanged`) changes no tag, so the tags stay the same
+ *  objects. */
 const mediaDecorationsField = StateField.define<MediaDecorations>({
   create: buildMediaDecorations,
-  update: (value, tr) => tr.docChanged || sectionRolesChanged(tr) ? buildMediaDecorations(tr.state) : value,
+  update(value, tr) {
+    if (tr.docChanged || sectionRolesChanged(tr)) return buildMediaDecorations(tr.state)
+    return assetModelsChanged(tr) ? { ...value, decorations: buildMediaDecorations(tr.state).decorations } : value
+  },
   provide: (field) => [
     EditorView.decorations.from(field, (value) => value.decorations),
     EditorView.atomicRanges.of((view) => view.state.field(field).decorations),

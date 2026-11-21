@@ -1,20 +1,23 @@
 import sbp from '@sbp/sbp'
 import { StateEffect, StateField, type EditorState, type Extension, type Text } from '@codemirror/state'
 import { Decoration, EditorView, ViewPlugin, WidgetType, showTooltip, type DecorationSet, type PluginValue, type Rect, type Tooltip } from '@codemirror/view'
+import { assetModel } from '../../model/chat/assetModels'
 import { SENTINEL_CHAR, plainLiveText } from '../../model/chat/content'
 import { findImageReferences, imageExtension, imageMediaType, type ImageReference } from '../../model/chat/images'
 import { fileNameOf } from '../../utils/fileName'
 import { isMacPlatform } from '../../utils/platform'
 import { assetFactsText } from '../assetFacts'
 import { assetIcon } from '../assetIcons'
-import { IMAGE_MAX_HEIGHT_PX, SECTION_SEP, editorSizePx, sectionsField } from '../thread/cmEditor'
+import { assetModelLabel, assetModelTexts, modelIcon, sameAssetModelLabel, type AssetModelLabel } from '../assetModelLabel'
+import { IMAGE_MAX_HEIGHT_PX, SECTION_SEP, editorSizePx, sectionsField, type SectionModel } from '../thread/cmEditor'
 import { measureLineHeights } from '../thread/editorMeasure'
+import { modelDisplayNames } from '../thread/modelChip'
 import { selectedAssetLook } from './assetSelection'
 import { syncDomSelection } from './focus'
 import { compactionBlockEnd } from './compactionBlock'
 import { noteDrawnAsset, type AssetPlace } from './drawnAssets'
 import { HiddenAssetWidget, hiddenAssetLines, hiddenAssetOwnerKinds } from './hiddenAssets'
-import { sectionRolesChanged, sectionTexts } from './lineBlocks'
+import { assetModelsChanged, sectionRolesChanged, sectionTexts } from './lineBlocks'
 import { followShownRange, pendingRanges, type DocRange } from './pendingRanges'
 import { trashIcon } from './svgIcon'
 import { tableRowStarts } from './tables'
@@ -137,6 +140,31 @@ function idTooltip(id: string): HTMLElement {
   return tooltipContent(`Image id: ${id}`, 'Refer to this image in a message as ', source, '.')
 }
 
+/** The model label of an image (`.dez-image__model` in `dezTheme`): the
+ *  model name, with the model facts as its accessible name. */
+function modelItem(label: AssetModelLabel): HTMLElement {
+  const item = document.createElement('span')
+  item.className = 'dez-image__model'
+  item.setAttribute('role', 'img')
+  item.setAttribute('aria-label', assetModelTexts(label, 'image').ariaLabel)
+  const name = document.createElement('span')
+  name.className = 'dez-image__model-name'
+  name.textContent = label.name
+  item.append(modelIcon(), name)
+  return item
+}
+
+/** The model label's tooltip: the facts of the model, each on a line. */
+function modelTooltip(label: AssetModelLabel): HTMLElement {
+  const { title, lines } = assetModelTexts(label, 'image')
+  return tooltipContent(title, ...lines.map((text) => {
+    const line = document.createElement('span')
+    line.className = 'dez-image-tooltip__line'
+    line.textContent = text
+    return line
+  }))
+}
+
 /** The trash's tooltip. The "Image not found" box has no file to delete
  *  (`dez.controller/images/delete` deletes none), and Dez never deletes a
  *  linked file (linkedFiles.ts), so their texts say that only the image's
@@ -194,10 +222,19 @@ function addAssetMenu(view: EditorView, wrapper: HTMLElement, path: string): voi
   })
 }
 
+/** The function that shows a new model label in the overlay of each drawn
+ *  image, by its root element (`updateImageModel`). */
+const modelUpdaters = new WeakMap<HTMLElement, (label: AssetModelLabel | null) => void>()
+
+/** What `createImage` draws: an image reference, with the label of the
+ *  model that made it (null for none). */
+export type DrawnImage = Pick<ImageReference, 'path' | 'id' | 'linked'> & { model: AssetModelLabel | null }
+
 /** Draws an image, with an overlay that shows while the pointer is over
  *  the image: a small toolbar in its top-right corner with its id (null for
- *  an old reference with no id) in a badge, the facts of the image, and a
- *  trash button; the badge and the trash have a tooltip. A reference to a
+ *  an old reference with no id) in a badge, the facts of the image, the
+ *  label of the model that made it (`model`), and a trash button; the
+ *  badge, the model label, and the trash have a tooltip. A reference to a
  *  file that does not load shows an "Image not found" box with the same
  *  overlay after its text, with no facts, so that its text can go too.
  *  `linked`: the file is a linked file (linkedFiles.ts), which the trash
@@ -208,7 +245,7 @@ function addAssetMenu(view: EditorView, wrapper: HTMLElement, path: string): voi
  *  reference, and its DOM tells (`ImageWidget`). A hidden image is drawn in
  *  the panel of its chip (toolCalls.ts), whose DOM is at the chip's place,
  *  so the chip gives the place. */
-export function createImage(view: EditorView, { path, id, linked }: Pick<ImageReference, 'path' | 'id' | 'linked'>, place?: AssetPlace): HTMLElement {
+export function createImage(view: EditorView, { path, id, linked, model }: DrawnImage, place?: AssetPlace): HTMLElement {
   // The image is in a wrapper, so that the root element stays the same
   // when an image that fails to load becomes a box. The wrapper is as big
   // as the image (`.dez-image` in `dezTheme`), so the overlay can be placed
@@ -236,6 +273,22 @@ export function createImage(view: EditorView, { path, id, linked }: Pick<ImageRe
   const trash = trashButton(view, placeNow, path, linked)
   addTooltip(view, placeNow, trash, () => trashTooltip(trash.closest('.dez-image-missing') !== null, linked))
   overlay.appendChild(trash)
+  // The names of the models can come in after the draw: the label changes
+  // in place (`updateImageModel`), so the image does not load again.
+  let modelElement: HTMLElement | null = null
+  const showModel = (label: AssetModelLabel | null): void => {
+    let next: HTMLElement | null = null
+    if (label) {
+      next = modelItem(label)
+      addTooltip(view, placeNow, next, () => modelTooltip(label))
+    }
+    if (modelElement && next) modelElement.replaceWith(next)
+    else if (modelElement) modelElement.remove()
+    else if (next) overlay.insertBefore(next, trash)
+    modelElement = next
+  }
+  showModel(model)
+  modelUpdaters.set(wrapper, showModel)
   const cached = naturalSizes.get(path)
   if (cached) setBoxSize(img, cached)
   // A load or an error changes the line's height in place, which CM does
@@ -272,16 +325,30 @@ export function createImage(view: EditorView, { path, id, linked }: Pick<ImageRe
   return wrapper
 }
 
+/** Shows the model label `label` in the overlay of the image that
+ *  `createImage` drew in `root`; false when `root` is no such image. */
+export function updateImageModel(root: HTMLElement, label: AssetModelLabel | null): boolean {
+  const showModel = modelUpdaters.get(root)
+  showModel?.(label)
+  return showModel !== undefined
+}
+
 /** An image in place of its reference (`createImage`). */
 class ImageWidget extends WidgetType {
-  constructor(readonly path: string, readonly id: string | null, readonly linked: boolean) {
+  constructor(readonly path: string, readonly id: string | null, readonly linked: boolean, readonly model: AssetModelLabel | null) {
     super()
   }
   eq(other: WidgetType): boolean {
     return other instanceof ImageWidget && other.path === this.path && other.id === this.id && other.linked === this.linked
+      && sameAssetModelLabel(other.model, this.model)
   }
   toDOM(view: EditorView): HTMLElement {
     return createImage(view, this)
+  }
+  // A new model label (the names came in, or the section got its model)
+  // goes into the drawn overlay, so the image does not load again.
+  updateDOM(dom: HTMLElement, _view: EditorView, from: ImageWidget): boolean {
+    return from.path === this.path && from.id === this.id && from.linked === this.linked && updateImageModel(dom, this.model)
   }
   // CM uses this for the lines that it has not drawn yet: the image's box at
   // the editor font size of now, as `dezTheme` scales its max height. The
@@ -297,30 +364,34 @@ class ImageWidget extends WidgetType {
   }
 }
 
+/** An image that the editor shows, with the section that holds it. */
+interface RenderedImage {
+  image: ImageReference
+  section: Pick<SectionModel, 'role' | 'model'>
+}
+
 /** The image references that the editor shows as images, in doc order. Each
  *  section is read as a request reads it: its plain text (`plainLiveText`),
  *  with the role of the section (`findImageReferences`): a linked reference
  *  shows only in a user section, and a reference in Markdown code is text.
- *  With no `sectionsField`, the doc is one text with the agent rule (stored
- *  paths only). Not shown, so left as source text:
+ *  With no `sectionsField`, the doc is one agent section with no model (the
+ *  agent rule: stored paths only). Not shown, so left as source text:
  *  - a reference on a line with a sentinel (a section separator or a pill
  *    marker), whose widgets and atomic ranges must stay the only ones there;
  *  - a reference on a table row line (`tableRowStarts`): a widget there
  *    becomes an extra table cell (see `tableDecorationsField` in
  *    `tables.ts`). */
-function findRenderedImages(state: EditorState): ImageReference[] {
+function findRenderedImages(state: EditorState): RenderedImage[] {
   const { doc } = state
   const docText = doc.toString()
   if (!docText.includes('![')) return []
   const sections = state.field(sectionsField, false)
-  const texts = sections
-    ? sectionTexts(docText, sections).map(({ section, from, text }) => ({ rule: section.role, from, text }))
-    : [{ rule: 'agent' as const, from: 0, text: docText }]
-  const images: ImageReference[] = []
-  for (const { rule, from, text } of texts) {
+  const texts = sections ? sectionTexts(docText, sections) : [{ section: { role: 'agent' as const }, from: 0, text: docText }]
+  const images: RenderedImage[] = []
+  for (const { section, from, text } of texts) {
     if (!text.includes('![')) continue
     const plain = plainLiveText(text)
-    for (const reference of findImageReferences(plain.text, rule)) {
+    for (const reference of findImageReferences(plain.text, section.role)) {
       const start = from + plain.liveOffset(reference.from)
       // The offset of the last char, not of the char after the reference:
       // a marker right after the reference is not part of it.
@@ -328,14 +399,14 @@ function findRenderedImages(state: EditorState): ImageReference[] {
       if (end - start !== reference.to - reference.from) continue
       const line = doc.lineAt(start)
       if (SENTINEL_CHAR.test(line.text) || tableRowStarts(doc).has(line.from)) continue
-      images.push({ ...reference, from: start, to: end })
+      images.push({ image: { ...reference, from: start, to: end }, section })
     }
   }
   return images
 }
 
 function buildImageDecorations(state: EditorState): ImageDecorations {
-  const images = findRenderedImages(state)
+  const rendered = findRenderedImages(state)
   // An image of the compaction block gets no widget: the block is out of
   // view as a whole, and its images show in the panel of the assets chip.
   // It stays in `images`, where its trash finds it.
@@ -344,13 +415,16 @@ function buildImageDecorations(state: EditorState): ImageDecorations {
   // stays an image here, so that its source keeps every rule of an image's
   // source; only its widget is the one of a hidden asset.
   const hidden = hiddenAssetOwnerKinds(state)
-  const decorations = Decoration.set(images.filter((image) => image.from >= blockEnd).map((image) => {
+  const names = modelDisplayNames(state)
+  const decorations = Decoration.set(rendered.filter(({ image }) => image.from >= blockEnd).map(({ image, section }) => {
     const owner = hidden.get(image.from)
+    // The filter leaves out the images of the compaction block.
+    const model = owner ? null : assetModelLabel(assetModel(image, section, false), names)
     return Decoration.replace({
-      widget: owner ? new HiddenAssetWidget('image', image.id, owner) : new ImageWidget(image.path, image.id, image.linked),
+      widget: owner ? new HiddenAssetWidget('image', image.id, owner) : new ImageWidget(image.path, image.id, image.linked, model),
     }).range(image.from, image.to)
   }))
-  return { images, decorations }
+  return { images: rendered.map(({ image }) => image), decorations }
 }
 
 /** Each image reference (`src/model/chat/images.ts`) is replaced by its
@@ -358,10 +432,14 @@ function buildImageDecorations(state: EditorState): ImageDecorations {
  *  never from the cursor: an edit that breaks a reference shows its source,
  *  and the image comes back as soon as the source is valid again (a typed
  *  `)`, an undo). The ranges are atomic, so the caret is never inside the
- *  hidden source. */
+ *  hidden source. A new model label (`assetModelsChanged`) changes no
+ *  image, so the images stay the same object. */
 const imageDecorationsField = StateField.define<ImageDecorations>({
   create: buildImageDecorations,
-  update: (value, tr) => tr.docChanged || sectionRolesChanged(tr) ? buildImageDecorations(tr.state) : value,
+  update(value, tr) {
+    if (tr.docChanged || sectionRolesChanged(tr)) return buildImageDecorations(tr.state)
+    return assetModelsChanged(tr) ? { ...buildImageDecorations(tr.state), images: value.images } : value
+  },
   provide: (field) => [
     EditorView.decorations.from(field, (value) => value.decorations),
     EditorView.atomicRanges.of((view) => view.state.field(field).decorations),

@@ -3,7 +3,7 @@ import type { EditorView } from '@codemirror/view'
 import { Virtualizer, type VirtualizerHandle } from 'virtua/vue'
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch, type Directive } from 'vue'
 import { measureLineHeights } from '../thread/editorMeasure'
-import { destroyPlayer, updatePlayer } from './media'
+import { destroyPlayer } from './media'
 import type { PanelAssetRow } from './toolCalls'
 
 // A long list of the assets of a panel (`renderAssetList` in toolCalls.ts):
@@ -50,11 +50,12 @@ const vPanelAsset: Directive<HTMLElement, PanelAssetRow> = {
     drawnRows.set(rowElement, { element, key: value.key })
     rowElement.appendChild(element)
   },
-  // A Save or a Delete changes the tag of a clip, but not its key: the
-  // player takes the new tag in place, and so keeps its place in the clip.
+  // A Save or a Delete changes the tag of a clip, and a new name changes
+  // the model label of an asset, but not its key: the element takes the
+  // new asset in place (`PanelAssetRow.update`), so a clip keeps its place.
   updated(rowElement, { value, oldValue }) {
     const drawn = drawnRows.get(rowElement)
-    if (drawn && value.asset !== oldValue?.asset && value.asset.kind === 'clip') updatePlayer(drawn.element, value.asset.tag)
+    if (drawn && value.asset !== oldValue?.asset) value.update(drawn.element)
   },
   beforeUnmount(rowElement) {
     const drawn = drawnRows.get(rowElement)

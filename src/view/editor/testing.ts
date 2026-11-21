@@ -1,14 +1,15 @@
 // Unit tests only: the helpers that several editor tests share.
 import { history } from '@codemirror/commands'
 import { EditorSelection, EditorState, type Transaction, type TransactionSpec } from '@codemirror/state'
-import type { EditorView } from '@codemirror/view'
+import { EditorView, type WidgetType } from '@codemirror/view'
 import { appTagText } from '../../model/chat/appTags'
 import { mediaTagText, mediaTagTextWithKeptMark } from '../../model/chat/mediaTags'
 import { HIDDEN_CLIP_PATH, HIDDEN_IMAGE_PATH, idImage } from '../../model/chat/testing'
 import { toolBlockText } from '../../model/chat/toolBlocks'
-import type { Role } from '../../model/chat/types'
-import { SECTION_SEP, pillsField, promptAtomicRanges, sectionsField, unwrapBrokenPills, type PillMetadata } from '../thread/cmEditor'
-import { streamingSectionField } from '../thread/modelChip'
+import type { ModelRef, Role } from '../../model/chat/types'
+import type { AssetModelLabel } from '../assetModelLabel'
+import { SECTION_SEP, pillsField, promptAtomicRanges, sectionsField, setSectionsEffect, unwrapBrokenPills, type PillMetadata } from '../thread/cmEditor'
+import { modelDisplayNamesField, streamingSectionField } from '../thread/modelChip'
 import { markdownApps } from './apps'
 import { compactionBlockRules } from './compaction'
 import { compactionChip } from './compactionChip'
@@ -32,9 +33,10 @@ export const RED = idImage('/home/u/.config/dez/assets/images/red.png', 'a')
 /** An audio clip from a URL that a mention names as `@b`. */
 export const SONG = mediaTagText({ kind: 'audio', id: 'b', type: 'audio/mpeg', src: null, url: 'https://cdn.example/s.mp3', expires: null, other: [] })
 
-/** The reference of an image that a compaction keeps out of view. */
-export function keptImage(id = 'b'): string {
-  return idImage(HIDDEN_IMAGE_PATH, id, true)
+/** The reference of an image that a compaction keeps out of view, with the
+ *  model mark of `model` when given. */
+export function keptImage(id = 'b', model?: ModelRef): string {
+  return idImage(HIDDEN_IMAGE_PATH, id, true, model)
 }
 
 /** The tag of a clip (a saved one, unless `src` is given) that a
@@ -62,7 +64,8 @@ export function selectionOf(ranges: ReadonlyArray<number | [number, number]>): E
  *  is an anchor and a head; no range puts the caret at the doc start), and
  *  the prompt pill metadata `pills`. The first section is `user`, or
  *  `agent` when its text starts with a compaction tag
- *  (`normalizeSectionModels` in cmEditor.ts). */
+ *  (`normalizeSectionModels` in cmEditor.ts). The sections have no model,
+ *  and the models no name (`withSectionModels`, `setModelDisplayNamesEffect`). */
 export function createState(texts: string[], roles: Role[], ranges: Array<number | [number, number]> = [], pills: Record<string, PillMetadata> = {}): EditorState {
   return EditorState.create({
     doc: joinSections(texts),
@@ -70,6 +73,7 @@ export function createState(texts: string[], roles: Role[], ranges: Array<number
     extensions: [
       sectionsField.init(() => roles.map((role, index) => ({ id: `s${index}`, role }))),
       streamingSectionField.init(() => null),
+      modelDisplayNamesField,
       pillsField.init(() => new Map(Object.entries(pills))),
       unwrapBrokenPills,
       promptAtomicRanges,
@@ -83,6 +87,39 @@ export function createState(texts: string[], roles: Role[], ranges: Array<number
       history(),
       EditorState.allowMultipleSelections.of(true),
     ],
+  })
+}
+
+/** `state` with `models[i]` as the model of section `i`; a section with no
+ *  entry keeps its model. */
+export function withSectionModels(state: EditorState, models: ReadonlyArray<ModelRef | undefined>): EditorState {
+  const sections = state.field(sectionsField).map((section, index) => {
+    const model = models[index]
+    return model ? { ...section, model } : section
+  })
+  return state.update({ effects: setSectionsEffect.of(sections) }).state
+}
+
+/** The widgets of the decorations of `state` that no view plugin draws. */
+export function drawnWidgets(state: EditorState): WidgetType[] {
+  const widgets: WidgetType[] = []
+  for (const source of state.facet(EditorView.decorations)) {
+    if (typeof source === 'function') continue
+    for (const cursor = source.iter(); cursor.value; cursor.next()) {
+      const widget = cursor.value.spec.widget as WidgetType | undefined
+      if (widget) widgets.push(widget)
+    }
+  }
+  return widgets
+}
+
+/** The id of each image or player that `state` draws in place of its text,
+ *  with the name that its model label shows (null for no label): the
+ *  widgets with a `model` (`ImageWidget`, `MediaWidget`). */
+export function drawnAssetModels(state: EditorState): Array<[string | null, string | null]> {
+  return drawnWidgets(state).flatMap((widget) => {
+    const asset = widget as Partial<{ id: string | null, tag: { id: string | null }, model: AssetModelLabel | null }>
+    return asset.model === undefined ? [] : [[asset.tag?.id ?? asset.id ?? null, asset.model?.name ?? null]]
   })
 }
 

@@ -1,4 +1,4 @@
-import { StateEffect, StateField } from '@codemirror/state'
+import { StateEffect, StateField, type EditorState } from '@codemirror/state'
 import type { ModelRef, Role } from '../../model/chat/types'
 import { modelRefKey } from '../../model/chat/modelRef'
 import type { ModelDisplayNames } from '../../model/providers/types'
@@ -49,6 +49,14 @@ export const modelDisplayNamesField = StateField.define<ModelDisplayNames>({
     return value
   },
 })
+
+const NO_NAMES: ModelDisplayNames = { providers: new Map(), models: new Map(), readableNames: new Map() }
+
+/** The names of the models in `state` (`modelDisplayNamesField`); none in
+ *  a state without the field. */
+export function modelDisplayNames(state: EditorState): ModelDisplayNames {
+  return state.field(modelDisplayNamesField, false) ?? NO_NAMES
+}
 
 /** Id of the section that the active tab's stream writes into, or null.
  *  ThreadEditor seeds it and sends `setStreamingSectionEffect` when the

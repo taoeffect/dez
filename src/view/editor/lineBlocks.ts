@@ -2,8 +2,10 @@ import { EditorState, Facet, type ChangeSpec, type Extension, type Transaction }
 import type { EditorView } from '@codemirror/view'
 import { SENTINEL_CHAR, plainLiveText } from '../../model/chat/content'
 import { findToolBlocks, type ToolBlock } from '../../model/chat/toolBlocks'
+import { modelRefKey } from '../../model/chat/modelRef'
 import type { Role } from '../../model/chat/types'
 import { SECTION_SEP, sectionsField, type SectionModel } from '../thread/cmEditor'
+import { modelDisplayNamesField } from '../thread/modelChip'
 import { linesRemovalRange } from './images'
 import type { DocRange } from './pendingRanges'
 
@@ -95,6 +97,27 @@ export function sectionRolesChanged(tr: Transaction): boolean {
   const startSections = tr.startState.field(sectionsField, false)
   return sections !== startSections &&
     (sections?.length !== startSections?.length || !!sections?.some((section, index) => section.id !== startSections?.[index].id || section.role !== startSections?.[index].role))
+}
+
+function sectionModelKey(section: SectionModel | undefined): string | null {
+  return section?.model ? modelRefKey(section.model) : null
+}
+
+/** Whether `tr` changed the model of a section, which an asset with no
+ *  model mark takes (`assetModel`). Each thinking token gives
+ *  `sectionsField` a new array with the same models; a change of which
+ *  sections there are is `sectionRolesChanged`. */
+export function sectionModelsChanged(tr: Transaction): boolean {
+  const sections = tr.state.field(sectionsField, false)
+  const startSections = tr.startState.field(sectionsField, false)
+  return sections !== startSections && !!sections?.some((section, index) => sectionModelKey(section) !== sectionModelKey(startSections?.[index]))
+}
+
+/** Whether `tr` changed what the model label of an asset shows
+ *  (assetModelLabel.ts): the model of a section, or the names of the
+ *  models. */
+export function assetModelsChanged(tr: Transaction): boolean {
+  return tr.state.field(modelDisplayNamesField, false) !== tr.startState.field(modelDisplayNamesField, false) || sectionModelsChanged(tr)
 }
 
 /** The doc ranges of one kind of block in a state, in doc order. */
