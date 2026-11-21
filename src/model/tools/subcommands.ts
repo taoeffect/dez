@@ -168,7 +168,9 @@ function parameterLines(parameter: SubcommandParameter): string[] {
 }
 
 // The details of a subcommand. Those of `help` are the list, which tells
-// how to use it.
+// how to use it. An empty line ends the description: a description can end
+// in a list (the hint of `apps edit`), and the parameter list must not read
+// as more of that list.
 function helpText(tool: AnyTool, subcommand: AnySubcommand): string {
   if (subcommand.name === HELP_NAME) return listText(tool)
   const parameters = subcommand.parameters.length === 0
@@ -176,6 +178,7 @@ function helpText(tool: AnyTool, subcommand: AnySubcommand): string {
     : ['Its parameters, in the text of a JSON object in "parameters":', ...subcommand.parameters.flatMap(parameterLines)]
   return [
     `The subcommand ${subcommand.name} of the ${tool.name} tool: ${subcommand.description}`,
+    '',
     ...parameters,
     `Example call: ${exampleCall(subcommand)}`,
   ].join('\n')

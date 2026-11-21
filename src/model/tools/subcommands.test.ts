@@ -77,6 +77,7 @@ const LIST = [
 ].join('\n')
 const CUT_HELP = [
   'The subcommand cut of the sound tool: Makes a new sound from a part of a sound.',
+  '',
   'Its parameters, in the text of a JSON object in "parameters":',
   '- sound (string, required): The id of the sound.',
   '- start (number, optional): The start in seconds.',
@@ -268,6 +269,7 @@ describe('a list parameter of a subcommand', () => {
       kind: 'text',
       text: [
         'The subcommand mix of the mixer tool: Makes one sound from many.',
+        '',
         'Its parameters, in the text of a JSON object in "parameters":',
         '- sounds (list of strings, required): The ids of the sounds.',
         '- fades (list of objects, optional): The fades. The fields of an item:',
@@ -335,6 +337,7 @@ describe('an object parameter of a subcommand', () => {
       kind: 'text',
       text: [
         'The subcommand play of the player tool: Plays a sound with options.',
+        '',
         'Its parameters, in the text of a JSON object in "parameters":',
         '- sound (string, required): The id of the sound.',
         '- options (object, optional): The options of the player.',
