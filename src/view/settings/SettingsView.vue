@@ -285,9 +285,15 @@ function onOverlayClick(e: MouseEvent) {
               </button>
             </div>
 
+            <!-- One header and one hint for both cleanups: the label of
+                 each button names its kind. -->
             <div class="settings-group">
-              <div class="settings-row">
-                <label class="settings-label">Unreferenced files</label>
+              <span id="unreferenced-label" class="settings-label">Unreferenced files and apps</span>
+              <p class="settings-hint">
+                Removes old images, audio, video, and apps (with all their files) that no
+                conversation or prompt references.
+              </p>
+              <div class="unreferenced-buttons" role="group" aria-labelledby="unreferenced-label">
                 <button
                   class="settings-btn settings-btn--sm unused-files-btn"
                   :disabled="runningCleanup !== null"
@@ -295,26 +301,6 @@ function onOverlayClick(e: MouseEvent) {
                 >
                   {{ CLEANUP_BUTTONS.files }}…
                 </button>
-              </div>
-              <p class="settings-hint">
-                Removes old images, audio, and video that no conversation or prompt references.
-              </p>
-              <div
-                v-if="runningCleanup?.kind === 'files'"
-                class="settings-progress"
-                role="progressbar"
-                aria-label="Looking for unreferenced files"
-                aria-valuemin="0"
-                aria-valuemax="100"
-                :aria-valuenow="Math.round(runningCleanup.progress * 100)"
-              >
-                <div class="settings-progress-fill" :style="{ width: `${runningCleanup.progress * 100}%` }" />
-              </div>
-            </div>
-
-            <div class="settings-group">
-              <div class="settings-row">
-                <label class="settings-label">Unreferenced apps</label>
                 <button
                   class="settings-btn settings-btn--sm unused-apps-btn"
                   :disabled="runningCleanup !== null"
@@ -323,14 +309,11 @@ function onOverlayClick(e: MouseEvent) {
                   {{ CLEANUP_BUTTONS.apps }}…
                 </button>
               </div>
-              <p class="settings-hint">
-                Removes the apps that no conversation or prompt references, with all their files.
-              </p>
               <div
-                v-if="runningCleanup?.kind === 'apps'"
+                v-if="runningCleanup !== null"
                 class="settings-progress"
                 role="progressbar"
-                aria-label="Looking for unreferenced apps"
+                :aria-label="`Looking for unreferenced ${runningCleanup.kind}`"
                 aria-valuemin="0"
                 aria-valuemax="100"
                 :aria-valuenow="Math.round(runningCleanup.progress * 100)"
@@ -541,6 +524,15 @@ function onOverlayClick(e: MouseEvent) {
   height: 100%;
   background: var(--color-accent);
   transition: width 0.15s;
+}
+
+/* Left-aligned with the text above; the buttons stretch to the width of
+   the widest one. */
+.unreferenced-buttons {
+  display: flex;
+  flex-direction: column;
+  align-self: flex-start;
+  gap: 8px;
 }
 
 /* Searchable default-model picker (replaces the old native <select>). The

@@ -10,8 +10,8 @@ import { silentWav } from './harness/media'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
 import { activeTabId, newTab, openToasts, sbpCall } from './harness/thread'
 
-// Settings › General › Unreferenced files and Unreferenced apps, driven
-// through the real app. Each button scans and shows a progress bar, a
+// Settings › General › Unreferenced files and apps, driven through the
+// real app. Each of its two buttons scans and shows the progress bar, a
 // prompt states the count and the size of what nothing uses (and names
 // each app), and a "Yes" deletes them. Delete Unreferenced Files scans the
 // stored files (pasted, dropped, and generated images and clips) and the
@@ -77,10 +77,10 @@ const UNUSED_CACHE_ENTRIES = ['media/copy-unused.webm', 'media/download-left.par
 const KEPT_APPS = ['shown-app', 'young-app']
 const UNUSED_APPS = ['left-app']
 
-/** One state of the two cleanup rows. */
-interface RowState {
-  /** The `aria-label` of the progress bar that shows, or null with no
-   *  bar. One cleanup runs at a time, so at most one bar shows. */
+/** One state of the cleanup group. */
+interface CleanupState {
+  /** The `aria-label` of the progress bar, which tells the kind of the
+   *  cleanup that runs, or null with no bar. */
   bar: string | null
   /** The `aria-valuenow` of that bar. */
   percent: string | null
@@ -90,7 +90,7 @@ interface RowState {
   appsOff: boolean
 }
 
-const IDLE: RowState = { bar: null, percent: null, filesOff: false, appsOff: false }
+const IDLE: CleanupState = { bar: null, percent: null, filesOff: false, appsOff: false }
 const FILES_BAR = 'Looking for unreferenced files'
 const APPS_BAR = 'Looking for unreferenced apps'
 
@@ -153,9 +153,8 @@ describe('Settings: delete unreferenced files and apps', () => {
       .sort()
   }
 
-  // The state of the two rows. The page reads it, as the recorder below
-  // does.
-  async function rowState (): Promise<RowState> {
+  // The state of the group. The page reads it, as the recorder below does.
+  async function cleanupState (): Promise<CleanupState> {
     return browser.execute(() => {
       const bar = document.querySelector('.settings-progress')
       return {
@@ -167,14 +166,14 @@ describe('Settings: delete unreferenced files and apps', () => {
     })
   }
 
-  // Records each state of the rows in which a bar shows a new percent, or
-  // the bar of the other cleanup. The scan of this spec's few files ends
+  // Records each state of the group in which the bar shows a new percent,
+  // or the label of the other cleanup. The scan of this spec's few files ends
   // between two WebDriver commands, so the page records the steps itself.
   async function recordRunSteps (): Promise<void> {
     await browser.execute(() => {
       const section = document.querySelector('.settings-section')
       if (!section) throw new Error('recordRunSteps: no Settings section')
-      const steps: RowState[] = []
+      const steps: CleanupState[] = []
       Reflect.set(window, '__e2eRunSteps', steps)
       new MutationObserver(() => {
         const bar = section.querySelector('.settings-progress')
@@ -189,19 +188,19 @@ describe('Settings: delete unreferenced files and apps', () => {
           filesOff: section.querySelector<HTMLButtonElement>('.unused-files-btn')?.disabled ?? false,
           appsOff: section.querySelector<HTMLButtonElement>('.unused-apps-btn')?.disabled ?? false,
         })
-      }).observe(section, { subtree: true, childList: true, attributes: true, attributeFilter: ['aria-valuenow'] })
+      }).observe(section, { subtree: true, childList: true, attributes: true, attributeFilter: ['aria-label', 'aria-valuenow'] })
     })
   }
 
   // Gives the steps that the recorder took since the last call, and
   // forgets them.
-  async function takeRunSteps (): Promise<RowState[]> {
-    return browser.execute(() => (Reflect.get(window, '__e2eRunSteps') as RowState[]).splice(0))
+  async function takeRunSteps (): Promise<CleanupState[]> {
+    return browser.execute(() => (Reflect.get(window, '__e2eRunSteps') as CleanupState[]).splice(0))
   }
 
   // The steps of a scan of the two conversation files: one for the start,
   // and one for each file. Both buttons are off for the whole run.
-  function scanSteps (bar: string): RowState[] {
+  function scanSteps (bar: string): CleanupState[] {
     return ['0', '50', '100'].map((percent) => ({ bar, percent, filesOff: true, appsOff: true }))
   }
 
@@ -286,16 +285,16 @@ describe('Settings: delete unreferenced files and apps', () => {
     const now = new Date()
     fs.utimesSync(appFilePath(app.home, 'assets/images/image-young.png'), now, now)
     fs.utimesSync(appFilePath(app.home, 'apps', 'young-app', APP_CODE_FILE), now, now)
-    expect(await rowState()).toStrictEqual(IDLE)
+    expect(await cleanupState()).toStrictEqual(IDLE)
 
     await pointerClick(browser, '.unused-files-btn')
     await waitForValue(browser, 'prompt', () => promptMessage(browser), FILES_PROMPT)
 
     expect(await takeRunSteps()).toStrictEqual(scanSteps(FILES_BAR))
-    expect(await rowState()).toStrictEqual({ bar: FILES_BAR, percent: '100', filesOff: true, appsOff: true })
+    expect(await cleanupState()).toStrictEqual({ bar: FILES_BAR, percent: '100', filesOff: true, appsOff: true })
 
     await pointerClick(browser, '.confirm-btn--cancel')
-    await waitForValue(browser, 'row after No', rowState, IDLE)
+    await waitForValue(browser, 'state after No', cleanupState, IDLE)
     expect(await promptMessage(browser)).toBeNull()
     expect(storedFiles()).toStrictEqual([...KEPT_FILES, ...UNUSED_FILES].sort())
     expect(cacheFiles()).toStrictEqual([...KEPT_CACHE_ENTRIES, ...UNUSED_CACHE_ENTRIES].sort())
@@ -309,7 +308,7 @@ describe('Settings: delete unreferenced files and apps', () => {
     await pointerClick(browser, '.confirm-btn--confirm')
 
     await waitForValue(browser, 'result toast', () => openToasts(browser), [{ title: '', message: 'Deleted 5 unreferenced files (2.6 MB).' }])
-    await waitForValue(browser, 'row after the delete', rowState, IDLE)
+    await waitForValue(browser, 'state after the delete', cleanupState, IDLE)
     expect(storedFiles()).toStrictEqual(KEPT_FILES)
     expect(cacheFiles()).toStrictEqual(KEPT_CACHE_ENTRIES)
     expect(fs.existsSync(path.join(workDir(app.home), 'work-left'))).toBe(false)
@@ -323,7 +322,7 @@ describe('Settings: delete unreferenced files and apps', () => {
     await pointerClick(browser, '.unused-files-btn')
 
     await waitForValue(browser, 'toast', async () => (await openToasts(browser)).some((toast) => toast.message === 'No unreferenced files found'), true)
-    await waitForValue(browser, 'row after the scan', rowState, IDLE)
+    await waitForValue(browser, 'state after the scan', cleanupState, IDLE)
     expect(await promptMessage(browser)).toBeNull()
     expect(storedFiles()).toStrictEqual(KEPT_FILES)
     expect(cacheFiles()).toStrictEqual(KEPT_CACHE_ENTRIES)
@@ -336,11 +335,11 @@ describe('Settings: delete unreferenced files and apps', () => {
     await waitForValue(browser, 'prompt', () => promptMessage(browser), APPS_PROMPT)
 
     expect(await takeRunSteps()).toStrictEqual(scanSteps(APPS_BAR))
-    expect(await rowState()).toStrictEqual({ bar: APPS_BAR, percent: '100', filesOff: true, appsOff: true })
+    expect(await cleanupState()).toStrictEqual({ bar: APPS_BAR, percent: '100', filesOff: true, appsOff: true })
 
     await pointerClick(browser, '.confirm-btn--confirm')
     await waitForValue(browser, 'result toast', async () => (await openToasts(browser)).some((toast) => toast.message === 'Deleted 1 unreferenced app (147 KB).'), true)
-    await waitForValue(browser, 'row after the delete', rowState, IDLE)
+    await waitForValue(browser, 'state after the delete', cleanupState, IDLE)
     expect(appFolders()).toStrictEqual(KEPT_APPS)
     expect(storedFiles()).toStrictEqual(KEPT_FILES)
     expect(cacheFiles()).toStrictEqual(KEPT_CACHE_ENTRIES)
@@ -350,7 +349,7 @@ describe('Settings: delete unreferenced files and apps', () => {
     await pointerClick(browser, '.unused-apps-btn')
 
     await waitForValue(browser, 'toast', async () => (await openToasts(browser)).some((toast) => toast.message === 'No unreferenced apps found'), true)
-    await waitForValue(browser, 'row after the scan', rowState, IDLE)
+    await waitForValue(browser, 'state after the scan', cleanupState, IDLE)
     expect(await promptMessage(browser)).toBeNull()
     expect(appFolders()).toStrictEqual(KEPT_APPS)
     expect(await consoleErrors(browser)).toEqual([])

@@ -4,10 +4,10 @@ import { cleanupAppName, cleanupNoun, type CleanupKind, type UnusedFiles, type U
 import { byteSizeText } from '../../utils/byteSize'
 import type { ToastData } from '../toast/selectors'
 
-// The two cleanup rows of Settings › General, "Unreferenced files" and
-// "Unreferenced apps": the scan with its progress, the prompt with the
-// count and the size, the delete, and the toast that tells the result. The
-// file work is in `dez.controller/unusedFiles/*`.
+// The cleanup group of Settings › General, "Unreferenced files and apps",
+// with one button for each kind: the scan with its progress, the prompt
+// with the count and the size, the delete, and the toast that tells the
+// result. The file work is in `dez.controller/unusedFiles/*`.
 
 /** The cleanup that runs, with the part of its scan that is done, from 0
  *  to 1 (it stays 1 during the prompt and the delete); `null` while none
