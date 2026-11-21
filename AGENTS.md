@@ -206,6 +206,7 @@ Rules:
 - **Keep Rust barebones**: a thin, generic OS interface, not a per-feature API. Reuse or generalize a command (e.g. `load_app_file`) instead of adding a near-copy.
 - `commands.rs`, `http_bridge.rs`, `notification.rs`, `idle.rs`: Tauri commands, registered in `lib.rs`.
 - `http_bridge.rs`: generic HTTP request, stream, and download. A request body is text or base64 text, never a JSON number array (slow).
+- Rust HTTP is reqwest with rustls and the OS root store, not native-tls (no OpenSSL); the reason is in `Cargo.toml`.
 - `bundled_tools.rs`, `confinement.rs`: one run of a program of `../binaries/` in a work folder of the cache root, by the rules of its program (`ProgramRules`) and under the OS rule of its run (the files that it can open, no network; on Linux also its system calls).
 - `app_frames.rs`, `app_client.js`: the `dezapp://` scheme that serves the files of a UI app to its frame, the guards of the app frames (the policy of each answer, the navigation guard, the rules of the webview), and Dez's script for the page of an app (`~dez.js`).
 - `notification.rs`, `idle.rs`, `session_bus.rs`: system notifications, the user's idle time, and the one Linux D-Bus session connection.
