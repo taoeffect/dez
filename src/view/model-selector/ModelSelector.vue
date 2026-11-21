@@ -211,7 +211,6 @@ onUnmounted(() => {
    the text of a block. */
 .model-selector-provider {
   display: block;
-  box-sizing: border-box;
   height: 18px;
   line-height: 18px;
   max-width: 14em;

@@ -302,7 +302,7 @@ function onOverlayClick(e: MouseEvent) {
                      that checks now sits next to it. -->
                 <div class="settings-card-row">
                   <div class="settings-card-text">
-                    <span id="general-version-label" class="settings-card-label">Current version</span>
+                    <span class="settings-card-label">Current version</span>
                     <p id="general-version-hint" class="settings-hint">Dez {{ appVersion }}</p>
                   </div>
                   <button
@@ -322,7 +322,7 @@ function onOverlayClick(e: MouseEvent) {
               <div class="settings-card">
                 <div class="settings-card-row">
                   <div class="settings-card-text">
-                    <span id="general-folder-label" class="settings-card-label">Dez folder</span>
+                    <span class="settings-card-label">Dez folder</span>
                     <p id="general-folder-hint" class="settings-hint">Where Dez keeps your conversations, settings, and files.</p>
                   </div>
                   <button

@@ -47,10 +47,7 @@ const FADE_MS = 160
 const EASE_OUT = 'cubic-bezier(0.2, 0.8, 0.2, 1)'
 const EASE_IN_OUT = 'cubic-bezier(0.4, 0, 0.2, 1)'
 
-export interface Size {
-  width: number
-  height: number
-}
+type Size = Pick<Box, 'width' | 'height'>
 
 /** Where the zoomed image of natural size `natural` goes in an area of
  *  size `area`, relative to the area: as large as it fits with `margin` on
