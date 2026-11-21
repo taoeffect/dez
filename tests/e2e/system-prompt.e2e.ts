@@ -80,7 +80,7 @@ describe('Settings › System Prompt', () => {
   // system prompt of `template`, then answers it.
   async function sendAndExpect (text: string, template: string): Promise<void> {
     await submit(browser, text)
-    const request = await takeRequest(setup, mockChatPath(PROVIDER), openAiChatBody(PROVIDER, [{ role: 'user', content: text }], template))
+    const request = await takeRequest(setup, mockChatPath(PROVIDER), openAiChatBody(PROVIDER, [{ role: 'user', content: text }], { template }))
     await sendChatReply(request.reply, PROVIDER.modelName)
     await waitForThread(browser, [
       { role: 'user', text },

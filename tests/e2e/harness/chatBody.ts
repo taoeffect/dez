@@ -4,10 +4,11 @@ import { TOOL_DEFINITIONS, toolJsonSchema } from '../../../src/model/tools/regis
 // The parts of a chat request body that the app adds to its messages: Dez's
 // system prompt and the Dez tools. The app offers the tools to every model
 // that its model cache does not mark as unable to call them, so every mock
-// model gets them. The specs build the expected prompt with the app's own
-// builder, so a change of its wording breaks no spec; the unit tests pin
-// the text (src/model/systemPrompt/index.test.ts) and the wire shapes
-// (src/model/providers/provider.test.ts).
+// model gets them. An incognito tab sends neither (`requestParts`,
+// src/model/chat/incognito.ts). The specs build the expected prompt with
+// the app's own builder, so a change of its wording breaks no spec; the
+// unit tests pin the text (src/model/systemPrompt/index.test.ts) and the
+// wire shapes (src/model/providers/provider.test.ts).
 
 /** A provider id and name and the id of one of its models, as
  *  `MockProvider` has them. */
@@ -43,19 +44,35 @@ export const ANTHROPIC_TOOLS = TOOL_DEFINITIONS.map((tool) => ({
   input_schema: toolJsonSchema(tool),
 }))
 
+/** What a chat request adds to its messages. */
+export interface ChatBodyOptions {
+  /** The template of Dez's system prompt: the built-in one when absent; a
+   *  blank one sends no system prompt. */
+  template?: string
+  /** The request of an incognito tab: no system prompt and no tools. */
+  incognito?: boolean
+}
+
 /** The body of an OpenAI-format chat request to `model` with no thinking
- *  fields: the system message of `template` (the built-in one when absent;
- *  none for a blank one), then `messages`. */
-export function openAiChatBody (model: ChatModel, messages: unknown[], template = BUILT_IN_SYSTEM_PROMPT): Record<string, unknown> {
-  const system = systemPrompt(model, template)
+ *  fields: the system message (see `ChatBodyOptions`), then `messages`. */
+export function openAiChatBody (model: ChatModel, messages: unknown[], { template = BUILT_IN_SYSTEM_PROMPT, incognito = false }: ChatBodyOptions = {}): Record<string, unknown> {
+  const system = incognito ? undefined : systemPrompt(model, template)
   const systemMessages = system === undefined ? [] : [{ role: 'system', content: system }]
-  return { model: model.modelId, stream: true, messages: [...systemMessages, ...messages], tools: OPENAI_TOOLS }
+  return { model: model.modelId, stream: true, messages: [...systemMessages, ...messages], ...(!incognito && { tools: OPENAI_TOOLS }) }
 }
 
 /** The body of an Anthropic-format chat request to `model` with no
  *  thinking field and the default `max_tokens`. */
-export function anthropicChatBody (model: ChatModel, messages: unknown[]): Record<string, unknown> {
-  return { model: model.modelId, stream: true, max_tokens: 32000, system: systemPrompt(model), tools: ANTHROPIC_TOOLS, messages }
+export function anthropicChatBody (model: ChatModel, messages: unknown[], { template = BUILT_IN_SYSTEM_PROMPT, incognito = false }: ChatBodyOptions = {}): Record<string, unknown> {
+  const system = incognito ? undefined : systemPrompt(model, template)
+  return {
+    model: model.modelId,
+    stream: true,
+    max_tokens: 32000,
+    ...(system !== undefined && { system }),
+    ...(!incognito && { tools: ANTHROPIC_TOOLS }),
+    messages,
+  }
 }
 
 /** A user message that the Anthropic format marks as a cache breakpoint:

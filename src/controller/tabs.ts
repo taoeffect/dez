@@ -8,9 +8,10 @@ import { safeFileName } from '../utils/fileName'
 // key and a menu item for the same shortcut) must not open a second dialog.
 let saveDialogOpen = false
 
-// The notices of `dez.controller/turnOnIncognito`.
-const INCOGNITO_STAYS_ON = 'Incognito stays on in this tab. If it went off, the next request would send the whole conversation, also the messages that went in incognito, with the system prompt and the tools of Dez, so the provider could tie all of it to Dez. To go on without incognito, copy the conversation and paste it into a new tab.'
-const INCOGNITO_TOO_LATE = 'Incognito can go on only in a tab that has sent no message and has no reply, as the provider can already tie this conversation to Dez. To start an incognito conversation, open a new tab and turn incognito on before you send your first message.'
+// The notices of `dez.controller/turnOnIncognito`. The e2e spec reads them,
+// so a change of their wording breaks no spec.
+export const INCOGNITO_STAYS_ON = 'Incognito stays on in this tab. If it went off, the next request would send the whole conversation, also the messages that went in incognito, with the system prompt and the tools of Dez, so the provider could tie all of it to Dez. To go on without incognito, copy the conversation and paste it into a new tab.'
+export const INCOGNITO_TOO_LATE = 'Incognito can go on only in a tab that has sent no message and has no reply, as the provider can already tie this conversation to Dez. To start an incognito conversation, open a new tab and turn incognito on before you send your first message.'
 
 export default sbp('sbp/selectors/register', {
   // Every "new tab" path (the `+` button, the keys, the File menu) calls
