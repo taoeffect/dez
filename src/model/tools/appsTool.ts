@@ -7,7 +7,7 @@ import { APP_KINDS, isAppName, MANIFEST_FILE, MANIFEST_MAX_BYTES, MAX_DESCRIPTIO
 import { appTemplateFiles, SCRIPT_MAIN_FILE, UI_CLIENT_SCRIPT_TAG, UI_INDEX_FILE, UI_OWN_SCRIPT_TAG } from './appTemplates'
 import { unknownValuesText } from './arguments'
 import { INTERMEDIATE_PARAMETER, JOB_CALL_NOTE, jobTimeoutParameter } from './jobs'
-import { linesName, linesText, planLineEdits, textLines, type LineEdit } from './lineEdits'
+import { linesName, linesText, planLineEdits, textLines, type DiffHunk, type LineEdit } from './lineEdits'
 import { withoutLocalPaths } from './localPaths'
 import { subcommandToolDefinition, type SubcommandTool } from './subcommands'
 import { ToolError, type SubcommandArguments, type SubcommandParameter, type ToolArguments } from './types'
@@ -86,6 +86,12 @@ const READ_MAX_LINES = 900
 const READ_MAX_CHARACTERS = 50_000
 // The most characters of the diff of an `edit` result.
 const DIFF_MAX_CHARACTERS = 20_000
+// The most lines that one hunk of an `edit` result shows (the lines after
+// its `@@` line). A longer hunk shows only its first and its last
+// `HUNK_END_LINES` lines: the model gave the new lines and read the old
+// ones, so all of them again would only fill its context.
+const HUNK_MAX_LINES = 12
+const HUNK_END_LINES = 4
 // The most rows of an `ls` and of a `list_apps` result, and the most paths
 // that `rm` lists for one deleted folder.
 const LS_MAX_ROWS = 500
@@ -809,6 +815,20 @@ function outcomeLines(outcomes: readonly ItemOutcome[]): string[] {
   return outcomes.map((outcome, index) => `${index + 1}. ${outcome.done ? 'Done' : 'Failed'}. ${outcome.text}`)
 }
 
+// The lines of one hunk of an `edit` result: a long hunk shows its ends,
+// and between them a line with no diff mark that tells how many lines it
+// leaves out. The `@@` line keeps the counts of the whole hunk.
+function hunkLines({ header, lines }: DiffHunk): string[] {
+  if (lines.length <= HUNK_MAX_LINES) return [header, ...lines]
+  const hidden = lines.length - 2 * HUNK_END_LINES
+  return [
+    header,
+    ...lines.slice(0, HUNK_END_LINES),
+    `… ${countOf(hidden, 'line')} of this hunk are not shown, to save context. read gives the file as it is now.`,
+    ...lines.slice(-HUNK_END_LINES),
+  ]
+}
+
 // The first lines of a diff that fit a result, and a line that tells how
 // many it leaves out.
 function cutDiff(diff: readonly string[]): string[] {
@@ -850,7 +870,7 @@ export function editResult({ path, edits }: EditCall, text: string): { content: 
     ...outcomes,
     'The lines have new numbers now: read the file again before the next edit of it.',
     'The change:',
-    ...cutDiff(plan.diff),
+    ...cutDiff(plan.hunks.flatMap(hunkLines)),
   ].join('\n')
   return { content, isError: false, bytes }
 }

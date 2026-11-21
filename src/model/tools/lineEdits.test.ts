@@ -45,21 +45,10 @@ describe('planLineEdits', () => {
       { done: true, text: 'Put 1 line in after line 5.' },
       { done: true, text: 'Deleted line 9.' },
     ])
-    expect(plan.diff).toStrictEqual([
-      '@@ -1,10 +1,9 @@',
-      ' one',
-      '-two',
-      '-three',
-      '+TWO',
-      ' four',
-      ' five',
-      '+five and a half',
-      ' six',
-      ' seven',
-      ' eight',
-      '-nine',
-      ' ten',
-    ])
+    expect(plan.hunks).toStrictEqual([{
+      header: '@@ -1,10 +1,9 @@',
+      lines: [' one', '-two', '-three', '+TWO', ' four', ' five', '+five and a half', ' six', ' seven', ' eight', '-nine', ' ten'],
+    }])
   })
 
   it('applies the edits in the order of the file, whatever the order of the call', () => {
@@ -71,52 +60,38 @@ describe('planLineEdits', () => {
   it('gives each far change its own hunk, with three lines around it', () => {
     const lines = Array.from({ length: 20 }, (_, index) => `l${index + 1}`)
 
-    expect(planLineEdits(lines, [{ fromLine: 2, text: 'L2' }, { fromLine: 15, text: 'L15' }]).diff).toStrictEqual([
-      '@@ -1,5 +1,5 @@',
-      ' l1',
-      '-l2',
-      '+L2',
-      ' l3',
-      ' l4',
-      ' l5',
-      '@@ -12,7 +12,7 @@',
-      ' l12',
-      ' l13',
-      ' l14',
-      '-l15',
-      '+L15',
-      ' l16',
-      ' l17',
-      ' l18',
+    expect(planLineEdits(lines, [{ fromLine: 2, text: 'L2' }, { fromLine: 15, text: 'L15' }]).hunks).toStrictEqual([
+      { header: '@@ -1,5 +1,5 @@', lines: [' l1', '-l2', '+L2', ' l3', ' l4', ' l5'] },
+      { header: '@@ -12,7 +12,7 @@', lines: [' l12', ' l13', ' l14', '-l15', '+L15', ' l16', ' l17', ' l18'] },
     ])
   })
 
   it('counts the lines of a hunk after an earlier hunk that made the file longer', () => {
     const lines = Array.from({ length: 20 }, (_, index) => `l${index + 1}`)
 
-    const { diff } = planLineEdits(lines, [{ afterLine: 1, text: 'a\nb' }, { fromLine: 15, toLine: 16, text: '' }])
+    const { hunks } = planLineEdits(lines, [{ afterLine: 1, text: 'a\nb' }, { fromLine: 15, toLine: 16, text: '' }])
 
-    expect(diff.filter((line) => line.startsWith('@@'))).toStrictEqual(['@@ -1,4 +1,6 @@', '@@ -12,8 +14,6 @@'])
+    expect(hunks.map((hunk) => hunk.header)).toStrictEqual(['@@ -1,4 +1,6 @@', '@@ -12,8 +14,6 @@'])
   })
 
   it('shows as changed only the lines of a replacement that differ', () => {
     const plan = planLineEdits(['a', 'b', 'c', 'd', 'e'], [{ fromLine: 2, toLine: 4, text: 'b\nX\nd' }])
 
     expect(plan.outcomes).toStrictEqual([{ done: true, text: 'Replaced lines 2-4 with 3 lines.' }])
-    expect(plan.diff).toStrictEqual(['@@ -1,5 +1,5 @@', ' a', ' b', '-c', '+X', ' d', ' e'])
+    expect(plan.hunks).toStrictEqual([{ header: '@@ -1,5 +1,5 @@', lines: [' a', ' b', '-c', '+X', ' d', ' e'] }])
   })
 
   it('tells that a replacement with the same text changes nothing', () => {
     const plan = planLineEdits(['a', 'b', 'c'], [{ fromLine: 2, text: 'b\n' }])
 
-    expect(plan).toStrictEqual({ outcomes: [{ done: true, text: 'No change: line 2 had this text already.' }], lines: ['a', 'b', 'c'], changed: false, diff: [] })
+    expect(plan).toStrictEqual({ outcomes: [{ done: true, text: 'No change: line 2 had this text already.' }], lines: ['a', 'b', 'c'], changed: false, hunks: [] })
   })
 
   it('puts lines into an empty file, and before the first line', () => {
     const made = planLineEdits([], [{ afterLine: 0, text: 'a\nb\n' }])
     expect(made.lines).toStrictEqual(['a', 'b'])
     expect(made.outcomes).toStrictEqual([{ done: true, text: 'Put 2 lines in at the start of the file.' }])
-    expect(made.diff).toStrictEqual(['@@ -0,0 +1,2 @@', '+a', '+b'])
+    expect(made.hunks).toStrictEqual([{ header: '@@ -0,0 +1,2 @@', lines: ['+a', '+b'] }])
 
     expect(planLineEdits(['a'], [{ afterLine: 0, text: 'first' }]).lines).toStrictEqual(['first', 'a'])
     expect(planLineEdits(['a'], [{ afterLine: 1, text: '\n' }]).lines).toStrictEqual(['a', ''])

@@ -51,6 +51,13 @@ interface LineOp {
   text: string
 }
 
+/** One hunk of a unified diff: its `@@ -old +new @@` line, and its lines
+ *  after that one, each with its mark (` `, `-`, `+`). */
+export interface DiffHunk {
+  header: string
+  lines: string[]
+}
+
 export interface LineEditPlan {
   /** One for each edit, in the order of the call. */
   outcomes: LineEditOutcome[]
@@ -58,9 +65,9 @@ export interface LineEditPlan {
   lines: string[]
   /** Whether a line of the file changes. */
   changed: boolean
-  /** The change as the hunks of a unified diff, one line each; none when
-   *  nothing changes. */
-  diff: string[]
+  /** The change as the hunks of a unified diff; none when nothing
+   *  changes. */
+  hunks: DiffHunk[]
 }
 
 // An edit that passed its checks: it replaces the lines `from` to `to`, or
@@ -128,7 +135,7 @@ export function planLineEdits(lines: readonly string[], edits: readonly LineEdit
     outcomes,
     lines: ops.filter((op) => op.kind !== 'remove').map((op) => op.text),
     changed: ops.some((op) => op.kind !== 'keep'),
-    diff: diffLines(ops),
+    hunks: diffHunks(ops),
   }
 }
 
@@ -187,7 +194,7 @@ function hunkRange(linesBefore: number, count: number): string {
 // The hunks of a unified diff of `ops`: each change with the lines around
 // it, under a `@@ -old +new @@` line. Two changes whose lines around them
 // touch are one hunk.
-function diffLines(ops: readonly LineOp[]): string[] {
+function diffHunks(ops: readonly LineOp[]): DiffHunk[] {
   // The first and the last op of each hunk.
   const hunks: { start: number; end: number }[] = []
   ops.forEach((op, index) => {
@@ -199,7 +206,7 @@ function diffLines(ops: readonly LineOp[]): string[] {
     else hunks.push({ start, end })
   })
 
-  const diff: string[] = []
+  const diff: DiffHunk[] = []
   // How many lines of the old and the new file are before the op.
   let oldLines = 0
   let newLines = 0
@@ -212,7 +219,10 @@ function diffLines(ops: readonly LineOp[]): string[] {
     const part = ops.slice(start, end + 1)
     const oldCount = part.filter((op) => op.kind !== 'add').length
     const newCount = part.filter((op) => op.kind !== 'remove').length
-    diff.push(`@@ -${hunkRange(oldLines, oldCount)} +${hunkRange(newLines, newCount)} @@`, ...part.map((op) => `${DIFF_MARKS[op.kind]}${op.text}`))
+    diff.push({
+      header: `@@ -${hunkRange(oldLines, oldCount)} +${hunkRange(newLines, newCount)} @@`,
+      lines: part.map((op) => `${DIFF_MARKS[op.kind]}${op.text}`),
+    })
     oldLines += oldCount
     newLines += newCount
     next = end + 1
