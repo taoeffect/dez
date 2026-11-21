@@ -25,7 +25,6 @@ import {
   mvCall,
   mvResult,
   nativeFailure,
-  parentOf,
   pathIn,
   readCall,
   readText,
@@ -201,8 +200,8 @@ export async function moveAppPaths(args: SubcommandArguments, signal: AbortSigna
   const { moves } = mvCall(args)
   return mvResult(await eachByItself(moves, signal, async (move) => {
     const { from, to } = move
-    const [source, target, app, parent] = await Promise.all([from, to, appOf(to), parentOf(to)].map(factsOf))
-    const step = moveStep(move, { source, target, app, parent })
+    const [source, target, app] = await Promise.all([factsOf(from), factsOf(to), appTreeOf(appOf(to))])
+    const step = moveStep(move, { source, target, app })
     if (step.folder) await makeFolder(step.folder)
     await native(`move ${from.virtual} to ${to.virtual}`, () => sbp('dez.native/moveAppFile', { root: 'app', path: from.file }, { root: 'app', path: to.file }) as Promise<void>)
     if (from.names.length === 1) sbp('dez.editor/appDeleted', from.names[0])

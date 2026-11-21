@@ -941,18 +941,16 @@ export function mvCall(args: SubcommandArguments): { moves: Move[] } {
 export interface MoveFacts {
   source: PathFacts
   target: PathFacts
-  /** The app of `to`. */
-  app: PathFacts
-  /** The folder of `to`. */
-  parent: PathFacts
+  /** The listing of the app of `to`, with `APPS_MAX_ENTRIES`. */
+  app: AppsTree
 }
 
 /** What `mv` does for one move: the folder to make first (it and the
  *  missing ones above it), null for none, and what the result tells when
  *  the move is done. Throws for a move that Dez does not make: one to the
  *  same path or into the moved folder itself, one of nothing or of a link,
- *  one onto a path that is taken, a file directly in `/apps/`, and one
- *  into an app that is not there. */
+ *  one onto a path that is taken, a file directly in `/apps/`, one into an
+ *  app that is not there, and one below a file. */
 export function moveStep({ from, to }: Move, facts: MoveFacts): { folder: AppsPath | null, text: string } {
   if (from.file === to.file) throw new ToolError(`\`from\` and \`to\` are the same path, ${from.virtual}.`)
   if (isBelow(to, from)) throw new ToolError(`${to.virtual} is in ${from.virtual}, and a folder cannot move into itself.`)
@@ -976,11 +974,7 @@ export function moveStep({ from, to }: Move, facts: MoveFacts): { folder: AppsPa
   }
 
   checkAppIsThere(appOf(to), facts.app)
-  const parent = parentOf(to)
-  if (facts.parent.kind !== 'folder' && facts.parent.kind !== 'missing') {
-    throw new ToolError(`${parent.virtual} is ${kindName(facts.parent.kind)}, so nothing can be in it.`)
-  }
-  return { folder: facts.parent.kind === 'missing' ? parent : null, text: `Moved ${from.virtual} to ${to.virtual}.` }
+  return { folder: foldersToMake(parentOf(to), facts.app).at(-1) ?? null, text: `Moved ${from.virtual} to ${to.virtual}.` }
 }
 
 export function mvResult(outcomes: readonly ItemOutcome[]): { content: string, isError: boolean } {

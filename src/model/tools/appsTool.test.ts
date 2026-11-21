@@ -538,7 +538,7 @@ describe('rm', () => {
 
 describe('mv', () => {
   const move = (from: string, to: string) => mvCall(args('mv', { moves: [{ from, to }] })).moves[0]
-  const facts = (more: Partial<MoveFacts> = {}): MoveFacts => ({ source: file(3), target: MISSING, app: FOLDER, parent: FOLDER, ...more })
+  const facts = (more: Partial<MoveFacts> = {}): MoveFacts => ({ source: file(3), target: MISSING, app: folder({ lib: null }), ...more })
 
   it('refuses the whole call for a move that it cannot take', () => {
     expect(refusal(() => mvCall(args('mv', { moves: [] })))).toContain('`moves` is an empty list.')
@@ -554,7 +554,8 @@ describe('mv', () => {
     const step = move('/apps/notes/a.js', '/apps/other/lib/a.js')
 
     expect(moveStep(step, facts())).toStrictEqual({ folder: null, text: 'Moved /apps/notes/a.js to /apps/other/lib/a.js.' })
-    expect(moveStep(step, facts({ parent: MISSING })).folder?.file).toBe('apps/other/lib')
+    expect(moveStep(step, facts({ app: folder() })).folder?.file).toBe('apps/other/lib')
+    expect(moveStep(move('/apps/notes/a.js', '/apps/other/lib/a/b/a.js'), facts()).folder?.virtual).toBe('/apps/other/lib/a/b')
     expect(moveStep(move('/apps/notes/lib', '/apps/notes/src/lib'), facts({ source: FOLDER })).text).toBe('Moved /apps/notes/lib to /apps/notes/src/lib.')
   })
 
@@ -574,11 +575,13 @@ describe('mv', () => {
     expect(refusal(() => moveStep(move('/apps/notes/link', '/apps/notes/b'), facts({ source: { kind: 'other', size: 0 } })))).toContain('which the apps tool does not move')
   })
 
-  it('moves only into an app that is there, and into a folder', () => {
+  it('moves only into an app that is there, and never below a file', () => {
     const step = move('/apps/notes/a.js', '/apps/other/lib/a.js')
 
     expect(refusal(() => moveStep(step, facts({ app: MISSING })))).toContain('There is no app /apps/other.')
-    expect(refusal(() => moveStep(step, facts({ parent: file(2) })))).toBe('/apps/other/lib is a file, so nothing can be in it.')
+    expect(refusal(() => moveStep(step, facts({ app: folder({ lib: 2 }) })))).toBe('/apps/other/lib is a file, so nothing can be in it.')
+    expect(refusal(() => moveStep(move('/apps/notes/a.js', '/apps/other/x.js/sub/y.js'), facts({ app: folder({ 'x.js': 2 }) }))))
+      .toBe('/apps/other/x.js is a file, so nothing can be in it.')
   })
 
   it('renames an app, and makes an app of a folder', () => {

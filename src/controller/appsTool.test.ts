@@ -314,6 +314,16 @@ describe('apps mv', () => {
     expect(files.has('apps/notes/a.js')).toBe(false)
   })
 
+  it('refuses a target below a file, and makes no folder for it', async () => {
+    const files = fakeAppFiles(appFiles('notes', { 'a.js': 'a\n', 'x.js': 'x\n' }))
+
+    const result = await apps('mv', { moves: [{ from: '/apps/notes/a.js', to: '/apps/notes/x.js/sub/y.js' }] })
+
+    expect(result).toStrictEqual({ content: 'Did 0 of 1 move.\n1. Failed. /apps/notes/x.js is a file, so nothing can be in it.', isError: true })
+    expect(native.createdFolders).toStrictEqual([])
+    expect(textAt(files, 'apps/notes/a.js')).toBe('a\n')
+  })
+
   it('moves nothing over a file, and goes on with the next move', async () => {
     const files = fakeAppFiles(appFiles('notes', { 'a.js': 'a\n', 'b.js': 'b\n', 'c.js': 'c\n' }))
 
