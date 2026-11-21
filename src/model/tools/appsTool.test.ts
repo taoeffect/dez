@@ -15,6 +15,8 @@ import {
   editCall,
   editResult,
   fileText,
+  findCall,
+  findText,
   hasReadableManifest,
   initCall,
   initText,
@@ -63,6 +65,7 @@ describe('APPS_TOOL', () => {
       ['rm', ['paths']],
       ['list_apps', ['name', 'min_bytes', 'max_bytes', 'sort']],
       ['ls', ['path']],
+      ['find', ['query', 'path']],
       ['mkdir', ['path']],
       ['mv', ['moves']],
       ['show', ['name']],
@@ -72,7 +75,7 @@ describe('APPS_TOOL', () => {
 
   it('gives each subcommand an example that its parameters and its checks take', () => {
     const checks: Record<string, (call: SubcommandArguments) => unknown> = {
-      init: initCall, read: readCall, write: writeCall, edit: editCall, rm: rmCall, list_apps: listAppsCall, ls: lsCall, mkdir: mkdirCall, mv: mvCall,
+      init: initCall, read: readCall, write: writeCall, edit: editCall, rm: rmCall, list_apps: listAppsCall, ls: lsCall, find: findCall, mkdir: mkdirCall, mv: mvCall,
       show: showCall,
       invoke: (call) => invokeCall(call, CONVERSATION),
     }
@@ -772,6 +775,74 @@ describe('ls', () => {
     expect(result[0]).toBe('/apps/notes: 0 folders and 520 files (name | size).')
     expect(result).toHaveLength(502)
     expect(result.at(-1)).toBe('… and 20 more.')
+  })
+})
+
+describe('find', () => {
+  const find = (parameters: Record<string, unknown>, tree: AppsTree) => findText(findCall(args('find', parameters)), tree)
+  const APPS = folder({
+    'unit-converter': null,
+    'unit-converter/manifest.json': 80,
+    'unit-converter/src/units.js': 300,
+    'unit-converter/src/MainView.vue': 900,
+    'unit-converter/data': null,
+    notes: null,
+    'notes/main.ts': 12,
+    'notes/lib/units.ts': 40,
+  })
+
+  it('lists every file for "*", sorted by path, each as its path after /apps/', () => {
+    expect(find({ query: '*' }, APPS)).toBe([
+      '/apps: 5 files (paths after /apps/), by path.',
+      'notes/lib/units.ts',
+      'notes/main.ts',
+      'unit-converter/manifest.json',
+      'unit-converter/src/MainView.vue',
+      'unit-converter/src/units.js',
+    ].join('\n'))
+  })
+
+  it('lists the files whose paths match every word of the query, by the rule of the model picker', () => {
+    expect(find({ query: 'units' }, APPS)).toBe('/apps: 2 of 5 files match "units" (paths after /apps/), by path.\nnotes/lib/units.ts\nunit-converter/src/units.js')
+    // A word can run from a folder into a file name, as starts of words
+    // that follow each other.
+    expect(find({ query: 'srcunits' }, APPS).split('\n').slice(1)).toStrictEqual(['unit-converter/src/units.js'])
+    expect(find({ query: 'ucsmv' }, APPS).split('\n').slice(1)).toStrictEqual(['unit-converter/src/MainView.vue'])
+    expect(find({ query: 'lib units' }, APPS).split('\n').slice(1)).toStrictEqual(['notes/lib/units.ts'])
+  })
+
+  it('searches only below the folder of `path`, and still matches the path after /apps/', () => {
+    const notes = folder({ 'main.ts': 12, lib: null, 'lib/units.ts': 40 })
+
+    expect(find({ query: 'notes units', path: '/apps/notes' }, notes)).toBe('/apps/notes: 1 of 2 files matches "notes units" (paths after /apps/), by path.\nnotes/lib/units.ts')
+  })
+
+  it('tells when no file matches, and when there is no file', () => {
+    expect(find({ query: 'zzz' }, APPS)).toBe('No file in /apps matches "zzz" (5 files searched). Give fewer or shorter words, or "*" to list every file.')
+    expect(find({ query: '*', path: '/apps/notes/data' }, folder({ cache: null }))).toBe('/apps/notes/data has no files.')
+    expect(find({ query: '*' }, MISSING)).toBe('There are no apps yet. Make one with init.')
+    expect(find({ query: '*' }, folder())).toBe('There are no apps yet. Make one with init.')
+  })
+
+  it('refuses a path where no folder is', () => {
+    expect(refusal(() => find({ query: '*', path: '/apps/notes' }, MISSING))).toBe('There is no app /apps/notes. Call list_apps to see the apps that are there.')
+    expect(refusal(() => find({ query: '*', path: '/apps/notes/lib' }, MISSING))).toBe('There is no folder /apps/notes/lib. Call ls with "/apps/notes" to see what is there.')
+    expect(refusal(() => find({ query: 'x', path: '/apps/notes/main.ts' }, file(12))))
+      .toBe('/apps/notes/main.ts is a file, not a folder: find searches the files below a folder. Give a folder in `path`, as in "/apps/notes".')
+  })
+
+  it('shows a path that no call takes on one line, and tells so', () => {
+    expect(find({ query: 'file' }, folder({ 'notes/my\nfile.txt': 3 })).split('\n').slice(1)).toStrictEqual(['"notes/my\\nfile.txt" (a path that the apps tool does not take)'])
+  })
+
+  it('lists at most 300 paths, and tells when the listing of the folder was cut', () => {
+    const result = find({ query: 'txt', path: '/apps/notes' }, filled(320)).split('\n')
+
+    expect(result[0]).toBe('/apps/notes: 320 of 320 files match "txt" (paths after /apps/), by path.')
+    expect(result).toHaveLength(302)
+    expect(result.at(-1)).toBe('… and 20 more. Give more words, or a folder in `path`, to get a shorter list.')
+    expect(find({ query: '*' }, folder({ 'notes/a.js': 5 }, true)).split('\n')[0])
+      .toBe('/apps: 1 file (paths after /apps/), by path. The folder holds more than 5,000 files and folders at all depths, so find searched only a part of them: search the folders in it one by one.')
   })
 })
 

@@ -1,11 +1,12 @@
 import { modelRefKey } from '../chat/modelRef'
 import { modelInputs } from '../modelInputs'
 import { MODEL_OUTPUT_IDS, OUTPUT_LETTER_LEGEND, outputLetters, parseOutputTypes, type ModelOutput } from '../modelOutputs'
-import { availableModels, matchingModelsByProvider, searchTerms } from '../modelSearch'
+import { availableModels, matchingModelsByProvider } from '../modelSearch'
 import type { ModelCache } from '../persistence/types'
 import { effectiveParameterValues } from '../providers/modelParameters'
 import { freshQuote, isFreshPrice, PRICE_LIFETIME_MS, PRICE_UNITS, priceText, type ModelPrice, type PriceQuote } from '../providers/modelPrices'
 import { effectiveRequest, isClipKind, isTextKind, type ModelInfo, type ProviderInfo } from '../providers/types'
+import { searchTerms } from '../textSearch'
 import { unknownValuesText } from './arguments'
 import { ToolError, type ToolArguments, type ToolDefinition } from './types'
 

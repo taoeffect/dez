@@ -545,6 +545,29 @@ describe('apps ls', () => {
   })
 })
 
+describe('apps find', () => {
+  it('finds the files of every app, or of one folder, by words of their paths', async () => {
+    fakeAppFiles({ ...appFiles('notes', { 'main.ts': 'main\n', 'src/lib/b.js': 'bb\n', data: null }), ...appFiles('calc') })
+
+    expect(await apps('find', { query: '*' })).toStrictEqual({
+      content: [
+        '/apps: 4 files (paths after /apps/), by path.',
+        'calc/manifest.json',
+        'notes/main.ts',
+        'notes/manifest.json',
+        'notes/src/lib/b.js',
+      ].join('\n'),
+      isError: false,
+    })
+    expect((await apps('find', { query: 'src b', path: '/apps/notes' })).content)
+      .toBe('/apps/notes: 1 of 3 files matches "src b" (paths after /apps/), by path.\nnotes/src/lib/b.js')
+    expect(await apps('find', { query: '*', path: '/apps/todo' })).toStrictEqual({
+      content: 'There is no app /apps/todo. Call list_apps to see the apps that are there.',
+      isError: true,
+    })
+  })
+})
+
 describe('apps list_apps', () => {
   it('lists each app with the facts of its manifest and the size of all its files', async () => {
     fakeAppFiles({

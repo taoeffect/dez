@@ -9,6 +9,8 @@ import {
   editCall,
   editResult,
   fileText,
+  findCall,
+  findText,
   hasReadableManifest,
   isReadableManifest,
   initCall,
@@ -245,6 +247,12 @@ export async function makeAppFolder(args: SubcommandArguments): Promise<AppsResu
 export async function listAppFolder(args: SubcommandArguments): Promise<AppsResult> {
   const { path } = lsCall(args)
   return lsText(path, await treeOf(path, LS_MAX_ENTRIES))
+}
+
+/** `apps find`: one listing of the folder, as `ls` asks for. */
+export async function findAppFiles(args: SubcommandArguments): Promise<AppsResult> {
+  const call = findCall(args)
+  return findText(call, await treeOf(call.path, LS_MAX_ENTRIES))
 }
 
 /** `apps list_apps`: one listing for each folder of `apps/`, for its size,

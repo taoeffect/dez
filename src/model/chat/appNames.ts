@@ -36,8 +36,8 @@ import { APPS_VIRTUAL_ROOT } from '../tools/appsTool'
 // (`<dez:tool … name="video">`), an app that the `name` filter of a
 // `list_apps` call gives, and a path that only looks like one of the tool
 // (`https://example.com/apps/x`). A result of `list_apps` or of `ls` gives
-// bare names, so it keeps no app: a list of every app must not keep every
-// app.
+// bare names, and one of `find` gives paths after `/apps/`, so it keeps no
+// app: a list of every app must not keep every app.
 //
 // What the rule misses: code of a `js_eval` call that builds the name of an
 // app from parts (a variable), when the call has no record of its tool

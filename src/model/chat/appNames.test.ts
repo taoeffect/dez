@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { escapeMarkerAttribute } from '../../utils/markerAttribute'
+import { findCall, findText } from '../tools/appsTool'
+import { appsArgs, folderTree } from '../tools/testing'
 import { appTagText } from './appTags'
 import { namedApps } from './appNames'
 import { toolBlockText } from './toolBlocks'
@@ -69,6 +71,13 @@ describe('namedApps', () => {
     expect(names(list)).toStrictEqual([])
     expect(names('/apps: 2 folders and 0 files (name | size).\nclock/ | 4 files, 2 KB\nnotes/ | 3 files, 9 KB')).toStrictEqual([])
     expect(names('No app matches `name` "x". /apps/ has 3 apps: call list_apps with no parameters to list them all.')).toStrictEqual([])
+  })
+
+  it('takes no app of a find of the files of every app', () => {
+    const tree = folderTree({ clock: null, 'clock/main.js': 5, notes: null, 'notes/src/main.js': 9 })
+    const result = findText(findCall(appsArgs('find', { query: '*' })), tree)
+    expect(result).toContain('notes/src/main.js')
+    expect(names(result)).toStrictEqual([])
   })
 
   it('keeps an app that only looks named: the safe side', () => {

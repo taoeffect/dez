@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { ModelOutput } from '../../model/modelOutputs'
-import { searchTerms } from '../../model/modelSearch'
 import { providerInfo } from '../../model/providers/testing'
 import type { ModelInfo } from '../../model/providers'
+import { searchTerms } from '../../model/textSearch'
 import { pickerRows, type PickerRow, type PickerRowsInput } from './pickerRows'
 
 const ACME = providerInfo('acme', 'Acme Cloud')

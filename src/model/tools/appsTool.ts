@@ -2,6 +2,7 @@ import { byteSizeText } from '../../utils/byteSize'
 import { countOf, countText } from '../../utils/countText'
 import { oneLineCut } from '../../utils/oneLineCut'
 import { startOf } from '../../utils/textCut'
+import { searchTerms, textMatches } from '../textSearch'
 import { APP_HANDLER_EXAMPLE, APP_READ_ASSET, APP_RUN_FRAME_SIZE, APP_SAVE_ASSET } from './appBridge'
 import { APP_KINDS, isAppName, MANIFEST_FILE, MANIFEST_MAX_BYTES, MAX_DESCRIPTION_LENGTH, parseAppManifest, UNKNOWN_APP_KIND, type AppKind, type AppManifest, type ListedAppKind } from './appManifest'
 import { appTemplateFiles, SCRIPT_MAIN_FILE, UI_CLIENT_SCRIPT_TAG, UI_INDEX_FILE, UI_OWN_SCRIPT_TAG } from './appTemplates'
@@ -97,6 +98,8 @@ const HUNK_END_LINES = 4
 const LS_MAX_ROWS = 500
 const LIST_APPS_MAX_ROWS = 200
 const RM_MAX_SHOWN_PATHS = 100
+// The most paths of a `find` result: a path is longer than a name of `ls`.
+const FIND_MAX_ROWS = 300
 
 const EXAMPLE_APP = 'unit-converter'
 const EXAMPLE_FILE = `${APPS_VIRTUAL_ROOT}/${EXAMPLE_APP}/main.js`
@@ -289,6 +292,19 @@ export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
         { name: 'path', type: 'string', description: `The folder, as in "${APPS_VIRTUAL_ROOT}/${EXAMPLE_APP}". Leave it out for ${APPS_VIRTUAL_ROOT}.`, required: false },
       ],
       example: { path: `${APPS_VIRTUAL_ROOT}/${EXAMPLE_APP}` },
+    },
+    {
+      name: 'find',
+      summary: 'Find files of apps by words of their paths.',
+      description: 'Lists the files below a folder whose paths have every word of `query`, sorted by path; "*" lists every file. '
+        + `A word matches a part of the path after ${APPS_VIRTUAL_ROOT}/ ("conv" in ${EXAMPLE_APP}/src/units.js), or the starts of words that follow each other in it ("ucs" or "srcunits"). `
+        + 'Upper and lower case are the same, and a character other than a letter or a digit only splits words: the query is no glob and no regular expression. '
+        + `Each row of the result is a path after ${APPS_VIRTUAL_ROOT}/: put ${APPS_VIRTUAL_ROOT}/ before it to read the file.`,
+      parameters: [
+        { name: 'query', type: 'string', description: 'The words to find in the paths, as in "units js", or "*" for every file.', required: true },
+        { name: 'path', type: 'string', description: `The folder to search, as in "${APPS_VIRTUAL_ROOT}/${EXAMPLE_APP}". Leave it out for ${APPS_VIRTUAL_ROOT}: all the apps.`, required: false },
+      ],
+      example: { query: 'units js', path: `${APPS_VIRTUAL_ROOT}/${EXAMPLE_APP}` },
     },
     {
       name: 'mkdir',
@@ -1117,11 +1133,24 @@ export function mkdirStep(path: AppsPath, target: PathFacts, app: AppsTree): { m
   return { make: true, text: `Made the folder ${path.virtual}${above.length === 0 ? '' : `, and above it ${above.join(' and ')}`}.` }
 }
 
+// The folder that the `path` of a call names: the folder of all apps for a
+// call with no `path`.
+function folderArgument(args: SubcommandArguments): AppsPath {
+  return args.path === undefined ? APPS_ROOT : appsPath(args.path, 'path')
+}
+
 export function lsCall(args: SubcommandArguments): { path: AppsPath } {
-  return { path: args.path === undefined ? pathOf([]) : appsPath(args.path, 'path') }
+  return { path: folderArgument(args) }
 }
 
 const NO_APPS = 'There are no apps yet. Make one with init.'
+
+// The refusal of a call that names a folder where nothing is.
+function noFolderError(path: AppsPath): ToolError {
+  return new ToolError(path.names.length === 1
+    ? `There is no app ${path.virtual}. Call list_apps to see the apps that are there.`
+    : `There is no folder ${path.virtual}. Call ls with "${parentOf(path).virtual}" to see what is there.`)
+}
 
 /** The result of an `ls` call: the files and the folders in the folder at
  *  `path`, by name, each with its size; a folder with the number and the
@@ -1132,9 +1161,7 @@ export function lsText(path: AppsPath, tree: AppsTree): string {
   const isRoot = path.names.length === 0
   if (tree.kind === 'missing') {
     if (isRoot) return NO_APPS
-    throw new ToolError(path.names.length === 1
-      ? `There is no app ${path.virtual}. Call list_apps to see the apps that are there.`
-      : `There is no folder ${path.virtual}. Call ls with "${parentOf(path).virtual}" to see what is there.`)
+    throw noFolderError(path)
   }
   if (tree.kind === 'file') return `${path.virtual} is a file (${byteSizeText(tree.size)}), not a folder. read gives its text.`
   if (tree.kind === 'other') return `${path.virtual} is ${OTHER_KIND}, not a folder.`
@@ -1174,6 +1201,65 @@ export function lsText(path: AppsPath, tree: AppsTree): string {
     ? ` The folder holds more than ${countText(LS_MAX_ENTRIES)} files and folders at all depths, so the numbers of its folders count only a part of them, and names can be missing.`
     : ''
   return [`${path.virtual}: ${countOf(folders, 'folder')} and ${countOf(sorted.length - folders, 'file')} (name | size).${cut}`, ...texts].join('\n')
+}
+
+export interface FindCall {
+  /** The query of the call, with no space at its ends. */
+  query: string
+  /** The words of the query (`searchTerms`): none for `*`, which lists
+   *  every file. */
+  terms: string[]
+  path: AppsPath
+}
+
+export function findCall(args: SubcommandArguments): FindCall {
+  const query = textArgument(args, 'query').trim()
+  return { query, terms: searchTerms(query), path: folderArgument(args) }
+}
+
+/** The result of a `find` call: the files below the folder at `path` whose
+ *  path after `/apps/` matches the terms of the call (`textMatches`, the
+ *  rule of the model picker), sorted by path. `tree` is the listing of the
+ *  path with `LS_MAX_ENTRIES`. Throws when no folder is at the path. */
+export function findText({ query, terms, path }: FindCall, tree: AppsTree): string {
+  const isRoot = path.names.length === 0
+  if (tree.kind === 'missing') {
+    if (isRoot) return NO_APPS
+    throw noFolderError(path)
+  }
+  if (tree.kind !== 'folder') {
+    throw new ToolError(`${path.virtual} is ${kindName(tree.kind)}, not a folder: find searches the files below a folder. `
+      + `Give a folder in \`path\`, as in "${parentOf(path).virtual}".`)
+  }
+  if (isRoot && tree.entries.length === 0) return NO_APPS
+
+  // A row is the path after `/apps/`, the one field that the terms match,
+  // so a term can run from a folder into a file name. A row names no app
+  // as `/apps/<name>` does (appNames.ts): a list of the files of every app
+  // must not keep every app from Delete Unreferenced Apps.
+  const files = tree.entries.flatMap((entry) => (entry.kind === 'file' ? [[...path.names, entry.path].join('/')] : []))
+  const cut = tree.more
+    ? ` The folder holds more than ${countText(LS_MAX_ENTRIES)} files and folders at all depths, so find searched only a part of them: search the folders in it one by one.`
+    : ''
+  if (files.length === 0) return `${path.virtual} has no files.${cut}`
+
+  const quotedQuery = JSON.stringify(query)
+  const matches = files.filter((file) => textMatches([file], terms)).sort((a, b) => (a < b ? -1 : 1))
+  if (matches.length === 0) {
+    return `No file in ${path.virtual} matches ${quotedQuery} (${countOf(files.length, 'file')} searched). Give fewer or shorter words, or "*" to list every file.${cut}`
+  }
+
+  const rows = matches.slice(0, FIND_MAX_ROWS).map((file) => {
+    const shown = shownEntryPath(file)
+    return shown === file ? file : `${shown} (a path that the apps tool does not take)`
+  })
+  if (matches.length > FIND_MAX_ROWS) {
+    rows.push(`… and ${countText(matches.length - FIND_MAX_ROWS)} more. Give more words, or a folder in \`path\`, to get a shorter list.`)
+  }
+  const count = terms.length === 0
+    ? countOf(files.length, 'file')
+    : `${matches.length} of ${countOf(files.length, 'file')} ${matches.length === 1 ? 'matches' : 'match'} ${quotedQuery}`
+  return [`${path.virtual}: ${count} (paths after ${APPS_VIRTUAL_ROOT}/), by path.${cut}`, ...rows].join('\n')
 }
 
 const APPS_SORTS = ['name', 'largest', 'smallest'] as const

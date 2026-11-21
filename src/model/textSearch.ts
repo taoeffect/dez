@@ -1,0 +1,62 @@
+// The search rule of the model picker and of the `model_list` tool
+// (modelSearch.ts), and of `apps find` (tools/appsTool.ts): one rule, so
+// that a query finds what it finds in the picker. It filters; it does not
+// rank.
+
+// Lower case, and each run of characters other than `a-z0-9` becomes one
+// space, so `Llama-3.1`, `llama 3 1`, and `LLAMA_3_1` read the same.
+function normalizeSearchText(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+}
+
+// The lower-case words of a field. A word starts after a character other
+// than `A-Za-z0-9`, at a change from lower to upper case, and at a change
+// between letters and digits: `DeepSeek-V3.1` gives `deep seek v 3 1`, and
+// `gpt-4o` gives `gpt 4 o`. Capitals and the lower-case letters after them
+// stay one word (`GPTs`).
+function fieldWords(field: string): string[] {
+  return (field.match(/[a-z]+|[A-Z]+[a-z]*|[0-9]+/g) ?? []).map((word) => word.toLowerCase())
+}
+
+// True when `term` splits into pieces that each start a word, in
+// consecutive words: `gem3pro` in `gemini 3 pro`. `reached` holds the term
+// offsets that a match can be at when the next word starts; 0 is always one
+// of them, as a match can start at any word.
+function startsConsecutiveWords(words: readonly string[], term: string): boolean {
+  let reached = new Set([0])
+  for (const word of words) {
+    const next = new Set([0])
+    for (const offset of reached) {
+      for (let length = 1; length <= word.length && term[offset + length - 1] === word[length - 1]; length += 1) {
+        if (offset + length === term.length) return true
+        next.add(offset + length)
+      }
+    }
+    reached = next
+  }
+  return false
+}
+
+/** The normalized words of a search query, in query order. A blank query
+ *  has none, and so has `*`. */
+export function searchTerms(query: string): string[] {
+  return normalizeSearchText(query).split(' ').filter(Boolean)
+}
+
+/** True when every term matches one of `fields`. A term matches a field
+ *  when it is a substring of the field (`mini` in `gpt-4o-mini`), or when
+ *  it splits into pieces that each start a word, in consecutive words of
+ *  the field (`gpt4o` in `gpt-4o`, `dsv4` in `DeepSeek V4`). No terms
+ *  match every text.
+ *
+ *  This is the VS Code command palette rule with fixed limits: a term never
+ *  spans two fields, and its pieces never skip a word. Either one lets
+ *  short terms match long texts by chance: with skips, `pro` finds "Pareto
+ *  Code Router"; as letters in order over all fields, `gemini` finds GPT-5
+ *  Mini. The user types two words instead (`gpt mini`). */
+export function textMatches(fields: readonly string[], terms: readonly string[]): boolean {
+  if (terms.length === 0) return true
+  const searched = fields.map((field) => ({ text: normalizeSearchText(field), words: fieldWords(field) }))
+  return terms.every((term) => searched.some(({ text, words }) =>
+    text.includes(term) || startsConsecutiveWords(words, term)))
+}
