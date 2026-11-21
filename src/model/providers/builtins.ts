@@ -9,6 +9,146 @@ import type { ProviderConfig } from './config'
 // here (config.test.ts checks this).
 export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
   {
+    id: 'venice',
+    name: 'Venice',
+    baseUrl: 'https://api.venice.ai/api/v1',
+    apiFormat: 'openai',
+    models: [],
+    fetchModels: true,
+    // Without it, /models lists only the text models.
+    modelListQuery: { type: 'all' },
+    modelImageInput: { path: 'model_spec.capabilities.supportsVision' },
+    modelToolCalling: { path: 'model_spec.capabilities.supportsFunctionCalling' },
+    modelThinking: { path: 'model_spec.capabilities.supportsReasoning' },
+    modelReadableName: { path: 'model_spec.name' },
+    // "Release date on Venice API": the day that Venice added the model, at
+    // midnight UTC (Unix seconds; checked live, 2026-11-12).
+    modelReleased: { path: 'created', format: 'unixSeconds' },
+    // `{ usd, diem }` objects per 1M tokens. Some models have `cache_write`,
+    // the rate of a 5-minute cache write, and for some of them it is under
+    // the input rate (chatRequestCost has the floor). `extended`: the rates
+    // of a prompt over `context_token_threshold` tokens (checked live,
+    // 2026-11-14).
+    modelTokenPrices: {
+      input: 'model_spec.pricing.input.usd',
+      output: 'model_spec.pricing.output.usd',
+      cachedInput: 'model_spec.pricing.cache_input.usd',
+      cacheWrite: 'model_spec.pricing.cache_write.usd',
+      perTokens: 1_000_000,
+      otherRates: 'model_spec.pricing.extended',
+    },
+    // The window of a text model, and the most images that Venice states
+    // for a model that reads images ("Check ... `maxImages` under
+    // `model_spec.capabilities` ... before sending several"). That count
+    // is a limit of one message, not of a request: a request with 11
+    // images in one message gets HTTP 400 ("At most 10 image(s) may be
+    // provided in one request."), one with 6 and 5 images in two messages
+    // passes, and so does one with 12 images in several messages (Claude
+    // models; checked live, 2026-11-14).
+    // https://docs.venice.ai/guides/features/vision
+    modelContextWindow: { paths: ['model_spec.availableContextTokens'] },
+    modelMessageImageLimit: { paths: ['model_spec.capabilities.maxImages'] },
+    // One `type` per model. `inpaint` models edit images, and `upscale`
+    // models make an image larger. `music` models also make sounds and
+    // speech; one of them is a voice changer (`model_spec.voice_changer`),
+    // which says the speech of an audio clip in another voice. Every video
+    // model has the type `video`, and `model_spec.constraints.model_type`
+    // tells what it needs: just a text (`text-to-video`), an image
+    // (`image-to-video`), or a video (`video`: an edit, a motion control,
+    // an extension, an upscale). `asr` models write down the speech of an
+    // audio clip.
+    modelOutputs: {
+      path: 'type',
+      values: {
+        text: { outputs: ['text'], request: 'chat' },
+        image: { outputs: ['image'], request: 'image' },
+        inpaint: { outputs: ['image'], request: 'imageEdit' },
+        upscale: { outputs: ['image'], request: 'upscale' },
+        tts: { outputs: ['audio'], request: 'tts' },
+        music: {
+          outputs: ['audio'],
+          request: 'music',
+          requestBy: { path: 'model_spec.voice_changer', values: { true: 'voiceChange' } },
+        },
+        video: {
+          outputs: ['video'],
+          requestBy: {
+            path: 'model_spec.constraints.model_type',
+            values: { 'text-to-video': 'video', 'image-to-video': 'imageToVideo', video: 'videoToVideo' },
+          },
+        },
+        asr: { outputs: ['text'], request: 'transcription' },
+        embedding: { outputs: [] },
+        decision: { outputs: [] },
+      },
+    },
+    auth: 'apiKey',
+    // The Venice docs say that Venice adds the marks for Claude. A live check
+    // (2026-11-14, Claude Haiku 5.5) found two marks of Venice: at the end of
+    // the system prompt, and on the message before the last user message.
+    // They do not store the newest messages, and an older live check got no
+    // Claude cache hits without Dez's marks, so Dez sets its own. Venice's
+    // other models take the marks with no error (also checked live).
+    cacheBreakpoints: true,
+    // A live check with Claude Haiku 5.5: a mark on a tool message's text
+    // part stored nothing, a mark on the message stored the prompt up to it.
+    // Its other models took the message mark with no error.
+    toolMessageCacheMark: 'message',
+    // In a live check, Qwen3-VL cached nothing without it.
+    // https://docs.venice.ai/guides/features/prompt-caching
+    promptCacheKey: true,
+    // Venice adds its own system prompt when this field is missing, so a
+    // request turns it off; an incognito tab turns it on.
+    providerSystemPrompt: { bodyPath: 'venice_parameters.include_venice_system_prompt' },
+    // The image, speech, music, and video models take Venice's own media
+    // API.
+    mediaApi: { format: 'venice' },
+    // A chat request sends these `venice_parameters` too, with these defaults
+    // when the user has not changed a toggle in the provider settings popup.
+    // Each text model's `model_spec.capabilities` tells which searches it
+    // takes (`modelSupport`).
+    settings: [
+      {
+        key: 'webSearch',
+        label: 'Web search',
+        type: 'boolean',
+        default: true,
+        bodyPath: 'venice_parameters.enable_web_search',
+        // Venice takes a string here ('auto' | 'on' | 'off'); the other flags
+        // are booleans.
+        onValue: 'on',
+        offValue: 'off',
+        modelSupport: { path: 'model_spec.capabilities.supportsWebSearch' },
+      },
+      {
+        key: 'xSearch',
+        label: 'X search',
+        type: 'boolean',
+        default: true,
+        bodyPath: 'venice_parameters.enable_x_search',
+        // X search applies only to Grok models, and every Grok model id
+        // Venice serves starts with `grok-` (e.g. grok-4-20). The prefix
+        // is the rule for a model that the model cache does not have yet;
+        // the flag of the list then leaves out a Grok model with no X
+        // search (`grok-build-0-1`, 2026-11-10).
+        modelIdPrefix: 'grok-',
+        modelSupport: { path: 'model_spec.capabilities.supportsXSearch' },
+      },
+      {
+        key: 'webScraping',
+        label: 'Web scraping',
+        type: 'boolean',
+        default: true,
+        bodyPath: 'venice_parameters.enable_web_scraping',
+      },
+    ],
+    // Venice's own off switch, which also removes the thinking from replies.
+    thinking: {
+      enabledBody: { reasoning: { enabled: true } },
+      disabledBody: { venice_parameters: { disable_thinking: true } },
+    },
+  },
+  {
     id: 'trustedrouter',
     name: 'TrustedRouter',
     baseUrl: 'https://api.trustedrouter.com/v1',
@@ -264,6 +404,18 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     thinking: { enabledBody: { reasoning: { enabled: true } } },
   },
   {
+    id: 'charm_hyper',
+    name: 'Charm Hyper',
+    baseUrl: 'https://hyper.charm.land/v1',
+    apiFormat: 'openai',
+    models: [],
+    fetchModels: true,
+    auth: 'apiKey',
+    // Hyper's models think by default, and their effort levels differ per
+    // model, so no field is sent.
+    thinking: {},
+  },
+  {
     id: 'zai',
     name: 'Z.ai',
     baseUrl: 'https://api.z.ai/api/coding/paas/v4',
@@ -288,158 +440,6 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     auth: 'apiKey',
     // GLM-5.3 refuses `type: 'disabled'`, so there is no off field.
     thinking: { enabledBody: { thinking: { type: 'enabled' } } },
-  },
-  {
-    id: 'venice',
-    name: 'Venice',
-    baseUrl: 'https://api.venice.ai/api/v1',
-    apiFormat: 'openai',
-    models: [],
-    fetchModels: true,
-    // Without it, /models lists only the text models.
-    modelListQuery: { type: 'all' },
-    modelImageInput: { path: 'model_spec.capabilities.supportsVision' },
-    modelToolCalling: { path: 'model_spec.capabilities.supportsFunctionCalling' },
-    modelThinking: { path: 'model_spec.capabilities.supportsReasoning' },
-    modelReadableName: { path: 'model_spec.name' },
-    // "Release date on Venice API": the day that Venice added the model, at
-    // midnight UTC (Unix seconds; checked live, 2026-11-12).
-    modelReleased: { path: 'created', format: 'unixSeconds' },
-    // `{ usd, diem }` objects per 1M tokens. Some models have `cache_write`,
-    // the rate of a 5-minute cache write, and for some of them it is under
-    // the input rate (chatRequestCost has the floor). `extended`: the rates
-    // of a prompt over `context_token_threshold` tokens (checked live,
-    // 2026-11-14).
-    modelTokenPrices: {
-      input: 'model_spec.pricing.input.usd',
-      output: 'model_spec.pricing.output.usd',
-      cachedInput: 'model_spec.pricing.cache_input.usd',
-      cacheWrite: 'model_spec.pricing.cache_write.usd',
-      perTokens: 1_000_000,
-      otherRates: 'model_spec.pricing.extended',
-    },
-    // The window of a text model, and the most images that Venice states
-    // for a model that reads images ("Check ... `maxImages` under
-    // `model_spec.capabilities` ... before sending several"). That count
-    // is a limit of one message, not of a request: a request with 11
-    // images in one message gets HTTP 400 ("At most 10 image(s) may be
-    // provided in one request."), one with 6 and 5 images in two messages
-    // passes, and so does one with 12 images in several messages (Claude
-    // models; checked live, 2026-11-14).
-    // https://docs.venice.ai/guides/features/vision
-    modelContextWindow: { paths: ['model_spec.availableContextTokens'] },
-    modelMessageImageLimit: { paths: ['model_spec.capabilities.maxImages'] },
-    // One `type` per model. `inpaint` models edit images, and `upscale`
-    // models make an image larger. `music` models also make sounds and
-    // speech; one of them is a voice changer (`model_spec.voice_changer`),
-    // which says the speech of an audio clip in another voice. Every video
-    // model has the type `video`, and `model_spec.constraints.model_type`
-    // tells what it needs: just a text (`text-to-video`), an image
-    // (`image-to-video`), or a video (`video`: an edit, a motion control,
-    // an extension, an upscale). `asr` models write down the speech of an
-    // audio clip.
-    modelOutputs: {
-      path: 'type',
-      values: {
-        text: { outputs: ['text'], request: 'chat' },
-        image: { outputs: ['image'], request: 'image' },
-        inpaint: { outputs: ['image'], request: 'imageEdit' },
-        upscale: { outputs: ['image'], request: 'upscale' },
-        tts: { outputs: ['audio'], request: 'tts' },
-        music: {
-          outputs: ['audio'],
-          request: 'music',
-          requestBy: { path: 'model_spec.voice_changer', values: { true: 'voiceChange' } },
-        },
-        video: {
-          outputs: ['video'],
-          requestBy: {
-            path: 'model_spec.constraints.model_type',
-            values: { 'text-to-video': 'video', 'image-to-video': 'imageToVideo', video: 'videoToVideo' },
-          },
-        },
-        asr: { outputs: ['text'], request: 'transcription' },
-        embedding: { outputs: [] },
-        decision: { outputs: [] },
-      },
-    },
-    auth: 'apiKey',
-    // The Venice docs say that Venice adds the marks for Claude. A live check
-    // (2026-11-14, Claude Haiku 5.5) found two marks of Venice: at the end of
-    // the system prompt, and on the message before the last user message.
-    // They do not store the newest messages, and an older live check got no
-    // Claude cache hits without Dez's marks, so Dez sets its own. Venice's
-    // other models take the marks with no error (also checked live).
-    cacheBreakpoints: true,
-    // A live check with Claude Haiku 5.5: a mark on a tool message's text
-    // part stored nothing, a mark on the message stored the prompt up to it.
-    // Its other models took the message mark with no error.
-    toolMessageCacheMark: 'message',
-    // In a live check, Qwen3-VL cached nothing without it.
-    // https://docs.venice.ai/guides/features/prompt-caching
-    promptCacheKey: true,
-    // Venice adds its own system prompt when this field is missing, so a
-    // request turns it off; an incognito tab turns it on.
-    providerSystemPrompt: { bodyPath: 'venice_parameters.include_venice_system_prompt' },
-    // The image, speech, music, and video models take Venice's own media
-    // API.
-    mediaApi: { format: 'venice' },
-    // A chat request sends these `venice_parameters` too, with these defaults
-    // when the user has not changed a toggle in the provider settings popup.
-    // Each text model's `model_spec.capabilities` tells which searches it
-    // takes (`modelSupport`).
-    settings: [
-      {
-        key: 'webSearch',
-        label: 'Web search',
-        type: 'boolean',
-        default: true,
-        bodyPath: 'venice_parameters.enable_web_search',
-        // Venice takes a string here ('auto' | 'on' | 'off'); the other flags
-        // are booleans.
-        onValue: 'on',
-        offValue: 'off',
-        modelSupport: { path: 'model_spec.capabilities.supportsWebSearch' },
-      },
-      {
-        key: 'xSearch',
-        label: 'X search',
-        type: 'boolean',
-        default: true,
-        bodyPath: 'venice_parameters.enable_x_search',
-        // X search applies only to Grok models, and every Grok model id
-        // Venice serves starts with `grok-` (e.g. grok-4-20). The prefix
-        // is the rule for a model that the model cache does not have yet;
-        // the flag of the list then leaves out a Grok model with no X
-        // search (`grok-build-0-1`, 2026-11-10).
-        modelIdPrefix: 'grok-',
-        modelSupport: { path: 'model_spec.capabilities.supportsXSearch' },
-      },
-      {
-        key: 'webScraping',
-        label: 'Web scraping',
-        type: 'boolean',
-        default: true,
-        bodyPath: 'venice_parameters.enable_web_scraping',
-      },
-    ],
-    // Venice's own off switch, which also removes the thinking from replies.
-    thinking: {
-      enabledBody: { reasoning: { enabled: true } },
-      disabledBody: { venice_parameters: { disable_thinking: true } },
-    },
-  },
-  {
-    id: 'charm_hyper',
-    name: 'Charm Hyper',
-    baseUrl: 'https://hyper.charm.land/v1',
-    apiFormat: 'openai',
-    models: [],
-    fetchModels: true,
-    auth: 'apiKey',
-    // Hyper's models think by default, and their effort levels differ per
-    // model, so no field is sent.
-    thinking: {},
   },
   {
     id: 'minimax',
