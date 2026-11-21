@@ -568,6 +568,8 @@ async function runToolRound(tabId: string, reply: ReplyRuntime, jobs: TabJobs, m
         const budget = takesAssets() ? await pictureBudgetOf(reply, model, messages, run) : NO_CALL_PICTURE_BUDGET
         return takesAssets() ? budget : NO_CALL_PICTURE_BUDGET
       },
+      roundResults: run.results.flatMap((result) => (result ? [result.content] : [])),
+      bridged: false,
     }
     const result = await sbp('dez.controller/tools/run', toolCall, run.abort.signal, context) as ToolRunResult
     if (reply.toolRun !== run) {

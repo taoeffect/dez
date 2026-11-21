@@ -21,6 +21,7 @@ import { invokeInputsText, invokeLabel } from '../model/tools/appInvoke'
 import { APPS_TOOL } from '../model/tools/appsTool'
 import { AUDIO_TOOL, audioClipId, audioClipOf, audioCutPart, audioCutRequest, audioCutResultText, audioLengthText } from '../model/tools/audioTool'
 import { conversationInfoText } from '../model/tools/conversationInfo'
+import { editHintIsDue } from '../model/tools/editHint'
 import { brightnessPlan, contrastPlan, convertPlan, cropPlan, flipPlan, IMAGE_TOOL, imageIdArgument, imageOf, imageResultText, invertPlan, rotatePlan, saturationPlan, scalePlan, unreadableImageText, unwritableFormatError, type ImagePlan } from '../model/tools/imageTool'
 import { cancelledJobIds, isIntermediate, jobCancelText, jobInspectText, jobResultText, jobsListText, jobStartedText, jobsWaitText, unknownJobText, waitedJobIds, type JobResult } from '../model/tools/jobs'
 import { jsEvalCall } from '../model/tools/jsEval'
@@ -108,6 +109,14 @@ export interface ToolRunContext {
    *  after the results of the call's round, until a compaction takes the
    *  round out. */
   pictureBudget(): Promise<CallPictureBudget>
+  /** The result texts of the calls of the round that ran before this call,
+   *  in order. The model reads them with the rest of the conversation, but
+   *  the section of the reply gets the blocks of a round only at the end
+   *  of the round (`runToolRound`, stream.ts). */
+  roundResults: readonly string[]
+  /** True for a call of the code of a `js_eval` run (toolBridge.ts): its
+   *  result goes to that code, and no request sends it to the model. */
+  bridged: boolean
 }
 
 // The code of each Dez tool (TOOL_DEFINITIONS), by tool name. A runner gives
@@ -510,9 +519,11 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   },
   // The apps, the small programs that a model writes for the user
   // (appsTool.ts). Each file subcommand works on the folder `apps/` of the
-  // app root and is done when the call returns: it starts no job, and it
-  // reads nothing of the conversation. A stop of the reply stops `rm` and
-  // `mv` between two paths; any other call is short and runs to its end.
+  // app root and is done when the call returns: it starts no job. A stop
+  // of the reply stops `rm` and `mv` between two paths; any other call is
+  // short and runs to its end. Of the file subcommands, only `edit` reads
+  // the conversation: whether its model reads the hint of `edit` already
+  // (editHint.ts). A bridged call gets no hint: its result goes to code.
   //
   // `invoke` runs the code of an app (appInvoke.ts), as a job of the
   // reply: code that a model wrote can run for long. The kind of the app
@@ -527,7 +538,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     init: initApp,
     read: readAppFile,
     write: writeAppFile,
-    edit: editAppFile,
+    edit: (args, _signal, context) => editAppFile(args, !context.bridged && editHintIsDue(callSections(context), context.roundResults)),
     rm: removeAppPaths,
     list_apps: listApps,
     ls: listAppFolder,

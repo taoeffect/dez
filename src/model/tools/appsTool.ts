@@ -213,7 +213,7 @@ export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
         + 'Every number is a number of the file before this call: the edits of one call do not move the lines of each other, so never change a number because of another edit of the call. '
         + 'An edit with `from_line` replaces the lines `from_line` to `to_line` with the lines of `text`. An edit with `after_line` puts the lines of `text` in after that line. '
         + 'Each edit passes or fails by itself: the result tells what each one did, or why it failed, and gives a diff of the change. '
-        + 'After the call the lines have new numbers: read the file again before the next edit of it.',
+        + 'Put all the changes of a file into one call. After the call the lines have new numbers: read the file again before the next edit of it.',
       parameters: [
         { name: 'path', type: 'string', description: `The path of the file, ${PATH_PARAMETER}`, required: true },
         {
@@ -853,6 +853,25 @@ export function editResult({ path, edits }: EditCall, text: string): { content: 
     ...cutDiff(plan.diff),
   ].join('\n')
   return { content, isError: false, bytes }
+}
+
+/** The hint of `edit`: how to give the line numbers of a call. A model
+ *  that did not know that the edits of one call do not move the lines of
+ *  each other made one edit, read the file, made the next edit, and so on.
+ *  The result of an `edit` call of the model ends with it while the
+ *  conversation does not hold it (editHint.ts). */
+export const EDIT_HINT = [
+  'How to use edit:',
+  '- Give each line number as it was in the file when you read it, before this call. Dez does all the edits of one call at once and moves the lines itself: never add or subtract to make up for another edit of the call.',
+  '- Put all the changes of a file into one call, with no read between them.',
+  '- The edits of one call must not overlap: an edit that overlaps an earlier edit of the call fails, and the others are still done.',
+  '- After the call the lines have new numbers. Read the file again only before your next edit call of that file.',
+].join('\n')
+
+/** The result text `result` with the hint of `edit` after it, as a
+ *  paragraph of its own. */
+export function withEditHint(result: string): string {
+  return `${result}\n\n${EDIT_HINT}`
 }
 
 /** The text of the failure of one item, on one line. */

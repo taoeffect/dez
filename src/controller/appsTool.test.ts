@@ -1,12 +1,17 @@
 import sbp from '@sbp/sbp'
+import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
+import { toolBlockText } from '../model/chat/toolBlocks'
+import type { Section, Tab } from '../model/chat/types'
 import { MANIFEST_MAX_BYTES, parseAppManifest } from '../model/tools/appManifest'
 import { showResultText } from '../model/tools/appShow'
-import { APPS_MAX_BYTES, APPS_MAX_FILE_BYTES } from '../model/tools/appsTool'
+import { APPS_MAX_BYTES, APPS_MAX_FILE_BYTES, EDIT_HINT, withEditHint } from '../model/tools/appsTool'
 import type { ToolRunResult } from '../model/tools/types'
 import { APP_DIR, appFiles, callContext, fakeAppFiles, native, resetNative, running, STOP, type FakeAppFiles } from './testing'
 import type { ToolRunCall, ToolRunContext } from './tools'
-// Side-effect import: registers the selector under test.
+// Side-effect imports: register the dez.model/* selectors, which give the
+// sections of a tab, and the selector under test.
+import '../model/state/index'
 import './tools'
 
 // The `apps` tool, from a call of a model to the files of the app root:
@@ -51,6 +56,7 @@ sbp('sbp/selectors/register', {
 let consoleError: MockInstance<typeof console.error>
 
 beforeEach(() => {
+  setActivePinia(createPinia())
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
   resetNative()
   goneApps = []
@@ -199,6 +205,118 @@ describe('apps edit', () => {
 
     expect(shorter.isError).toBe(false)
     expect(textAt(files, 'apps/notes/main.js')).toBe('const a = 1\n')
+  })
+
+  describe('the hint', () => {
+    const PATH = '/apps/notes/main.js'
+    const EDIT = { path: PATH, edits: [{ from_line: 1, text: 'const a = 2' }] }
+    const MODEL = { providerId: 'venice', modelId: 'venice-glm-5' }
+    // The tab of the calls.
+    let tabId: string
+
+    function edit(context: Partial<ToolRunContext> = {}, parameters: Record<string, unknown> = EDIT): Promise<ToolRunResult> {
+      return apps('edit', parameters, running(), { tabId, ...context })
+    }
+
+    // The result ends with the hint, in a paragraph of its own.
+    const hinted = (result: ToolRunResult): boolean => result.content.endsWith(`\n\n${EDIT_HINT}`)
+
+    const ask = (id: string): Section => ({ id, role: 'user', content: [{ kind: 'text', text: 'Fix the app.' }] })
+
+    // A reply with the blocks of `results`, the results of edit calls, as
+    // the end of their round writes them.
+    function reply(id: string, results: readonly ToolRunResult[]): Section {
+      const blocks = results.map((result, index) => toolBlockText({
+        id: `call_${index}`,
+        name: 'apps',
+        status: result.isError ? 'error' : 'success',
+        arguments: { command: 'edit', parameters: JSON.stringify(EDIT) },
+        result: result.content,
+      }))
+      return { id, role: 'agent', model: MODEL, content: [{ kind: 'text', text: blocks.join('') }] }
+    }
+
+    const keep = (sections: readonly Section[]): void => {
+      sbp('dez.model/tabs/replaceSections', tabId, sections)
+    }
+
+    beforeEach(() => {
+      fakeAppFiles(appFiles('notes', { 'main.js': 'const a = 1\nrun(a)\n' }))
+      tabId = sbp('dez.model/tabs/activeId') as string
+    })
+
+    it('ends the result of the first edit of a tab with the hint, and of no edit while the tab holds it', async () => {
+      const first = await edit()
+      keep([ask('u1'), reply('a1', [first])])
+      const second = await edit({}, { path: PATH, edits: [{ from_line: 2, text: 'run(a, 2)' }] })
+
+      expect(first.isError).toBe(false)
+      expect(hinted(first)).toBe(true)
+      expect(second.content).toContain(`Edited ${PATH}: 1 of 1 edit done.`)
+      expect(second.content).not.toContain(EDIT_HINT)
+    })
+
+    it('gives the hint to the first edit of each tab, while another tab holds it', async () => {
+      keep([ask('u1'), reply('a1', [await edit()])])
+      tabId = (sbp('dez.model/tabs/create') as Tab).id
+
+      expect(hinted(await edit())).toBe(true)
+    })
+
+    it('gives the hint again after the user deleted the block that held it', async () => {
+      keep([ask('u1'), reply('a1', [await edit()])])
+      keep([ask('u1'), reply('a1', [])])
+
+      expect(hinted(await edit())).toBe(true)
+    })
+
+    it('gives the hint again after a compaction took out the block that held it', async () => {
+      keep([ask('u1'), reply('a1', [await edit()]), ask('u2'), reply('a2', [])])
+      sbp('dez.model/tabs/compact', tabId, {
+        sections: [
+          { id: 'notes', role: 'agent', model: MODEL, content: [{ kind: 'text', text: '<dez:compaction count="1"/>\nThe notes.' }] },
+          ask('u2'),
+          reply('a2', []),
+        ],
+        replySectionId: 'a2',
+        tokens: 1000,
+        model: MODEL,
+      })
+
+      expect(hinted(await edit())).toBe(true)
+    })
+
+    // The results of a round reach the section only at the end of the
+    // round.
+    it('gives no hint when an earlier call of the round got it', async () => {
+      const first = await edit()
+
+      expect(hinted(await edit({ roundResults: ['Wrote the new file /apps/notes/a.js (1 B, 1 line).', first.content] }))).toBe(false)
+      expect(hinted(await edit({ roundResults: ['Wrote the new file /apps/notes/a.js (1 B, 1 line).'] }))).toBe(true)
+    })
+
+    it('gives the hint with edits that all failed, and with a call that Dez refuses', async () => {
+      const failed = await edit({}, { path: PATH, edits: [{ from_line: 9, text: 'x' }] })
+      const refused = await edit({}, { ...EDIT, path: '/apps/notes/gone.js' })
+
+      expect(failed.isError).toBe(true)
+      expect(failed.content).toContain(`No edit of ${PATH} was done`)
+      expect(hinted(failed)).toBe(true)
+      expect(refused.isError).toBe(true)
+      expect(refused.content).toContain('There is no file /apps/notes/gone.js.')
+      expect(hinted(refused)).toBe(true)
+    })
+
+    // Its result goes to the code that made the call, not to the model.
+    it('never gives the hint to a call of js_eval code', async () => {
+      const done = await edit({ bridged: true })
+      const refused = await edit({ bridged: true }, { ...EDIT, path: '/apps/notes/gone.js' })
+
+      expect(done.isError).toBe(false)
+      expect(done.content).not.toContain(EDIT_HINT)
+      expect(refused.isError).toBe(true)
+      expect(withEditHint(refused.content)).toBe((await edit({}, { ...EDIT, path: '/apps/notes/gone.js' })).content)
+    })
   })
 })
 

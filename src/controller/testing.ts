@@ -312,9 +312,9 @@ export function running(): AbortSignal {
   return new AbortController().signal
 }
 
-/** The context of a call of a reply that takes no image, no clip, and no
- *  app, shows no picture, and has no job, with `more` in place of its
- *  parts. */
+/** The context of the first call of a round of a reply that takes no
+ *  image, no clip, and no app, shows no picture, and has no job, with
+ *  `more` in place of its parts. */
 export function callContext(more: Partial<ToolRunContext> = {}): ToolRunContext {
   return {
     tabId: '',
@@ -324,6 +324,8 @@ export function callContext(more: Partial<ToolRunContext> = {}): ToolRunContext 
     writeClip: () => null,
     showApp: () => false,
     pictureBudget: async () => NO_CALL_PICTURE_BUDGET,
+    roundResults: [],
+    bridged: false,
     ...more,
   }
 }

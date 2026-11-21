@@ -26,6 +26,7 @@ import { compactionInstruction } from '../model/streams/compactionRequest'
 import type { RequestMessages, StreamMessage } from '../model/streams/types'
 import { STOPPED_TOOL_RESULT, stoppedToolResult } from '../model/streams/toolRound'
 import { showResultText } from '../model/tools/appShow'
+import { EDIT_HINT } from '../model/tools/appsTool'
 import { systemPromptErrorText } from '../model/systemPrompt'
 import { PICTURE_ROUND_FULL_NOTE, pictureBudgetLeftText } from '../model/tools/assetView'
 import { jobsWaitText, jobTimedOutText, startedJobId } from '../model/tools/jobs'
@@ -2942,6 +2943,45 @@ describe('dez.stream/start apps that a tool shows', () => {
 
     expect(findToolBlocks(sectionVisibleText(agentSection()))[0]).toMatchObject({ status: 'error' })
     expect(textAfterFirstBlock()).toBe('It has no page.')
+  })
+})
+
+describe('dez.stream/start the hint of apps edit', () => {
+  const editCall = (id: string, line: number) => ({
+    id,
+    name: 'apps',
+    argumentsText: JSON.stringify({ command: 'edit', parameters: JSON.stringify({ path: '/apps/sum/main.ts', edits: [{ from_line: line, text: `// ${id}` }] }) }),
+  })
+  // Whether the request `index` sends each result of the round before it
+  // with the hint at its end.
+  const hintedResults = (index: number) => {
+    const message = sent[index].at(-1) as { role: string, results: Array<{ content: string }> }
+    expect(message.role).toBe('tool')
+    return message.results.map((result) => result.content.endsWith(`\n\n${EDIT_HINT}`))
+  }
+
+  beforeEach(() => {
+    fakeAppFiles(appFiles('sum', { 'main.ts': 'a\nb\nc\n' }))
+    sbp('dez.model/tabs/replaceSections', activeTab().id, [
+      { id: 'u1', role: 'user', content: [{ kind: 'text', text: 'Hi' }] },
+      { id: 'a1', role: 'agent', content: [{ kind: 'text', text: '' }], model },
+    ])
+  })
+
+  it('gives the hint to the first edit call of a reply, and to no later call of its round or of a later round', async () => {
+    replyRounds([
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [editCall('c1', 1), editCall('c2', 2)] }),
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [editCall('c3', 3)] }),
+      async (input) => {
+        await input.onToken('Done.')
+        return { requestId: input.requestId as string }
+      },
+    ])
+
+    await startStream({ sendTools: true })
+
+    expect(hintedResults(1)).toStrictEqual([true, false])
+    expect(hintedResults(2)).toStrictEqual([false])
   })
 })
 

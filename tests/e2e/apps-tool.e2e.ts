@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { appTagText } from '../../src/model/chat/appTags'
 import { appManifestText, parseAppManifest } from '../../src/model/tools/appManifest'
 import { showResultText } from '../../src/model/tools/appShow'
+import { withEditHint } from '../../src/model/tools/appsTool'
 import { byteSizeText } from '../../src/utils/byteSize'
 import { appsCall, seedApp, shownAppCards, type ShownAppCard } from './harness/apps'
 import { consoleErrors, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
@@ -98,7 +99,8 @@ describe('apps tool', () => {
     expect(toolResult(second, 'call_write')).toBe('Wrote the new file /apps/notes/src/lib/units.js (42 B, 2 lines).')
     expect(toolResult(second, 'call_mkdir')).toBe('Made the folder /apps/notes/data/cache, and above it /apps/notes/data.')
     expect(toolResult(second, 'call_read')).toBe('/apps/notes/src/lib/units.js: lines 1-2 of 2 (42 B)\n1: export const KM = 1000\n2: export const M = 1')
-    expect(toolResult(second, 'call_edit')).toBe([
+    // The first edit call of the tab gets the hint of edit.
+    expect(toolResult(second, 'call_edit')).toBe(withEditHint([
       'Edited /apps/notes/src/lib/units.js: 1 of 1 edit done. The file had 2 lines, and it has 3 now.',
       '1. Done. Put 1 line in after line 2.',
       'The lines have new numbers now: read the file again before the next edit of it.',
@@ -107,7 +109,7 @@ describe('apps tool', () => {
       ' export const KM = 1000',
       ' export const M = 1',
       '+export const CM = 0.01',
-    ].join('\n'))
+    ].join('\n')))
     expect(fs.readFileSync(path.join(appsDir, 'notes/src/lib/units.js'), 'utf8')).toBe(`${units}export const CM = 0.01\n`)
     expect(parseAppManifest(fs.readFileSync(path.join(appsDir, 'notes/manifest.json'), 'utf8'))).toStrictEqual({ name: 'notes', description: 'Keeps notes.', kind: 'script' })
     // Only the user can open the folders and the files that the tool made.
