@@ -446,6 +446,32 @@ describe('OpenAiStreamParser usage', () => {
     expect(end.usage).toStrictEqual({ inputTokens: 1200, outputTokens: 5, cachedInputTokens: 1024, providerCost: 2.4e-7 })
   })
 
+  // TrustedRouter's docs (2026-11-19): the usage chunk tells the charge as
+  // integer microdollars, `total_cost_microdollars` first.
+  it.each([
+    ['both fields', { cost_microdollars: 1200, total_cost_microdollars: 1500 }, 0.0015],
+    ['only cost_microdollars', { cost_microdollars: 1200 }, 0.0012],
+    ['a known free request', { cost_microdollars: 0, total_cost_microdollars: 0 }, 0],
+  ])('reads a cost in microdollars: %s', (_name, cost, providerCost) => {
+    const { end } = run([
+      chunk({ content: 'Done.' }, 'stop'),
+      JSON.stringify({ choices: [], usage: { prompt_tokens: 11, completion_tokens: 5, ...cost } }),
+      '[DONE]',
+    ])
+
+    expect(end.usage).toStrictEqual({ inputTokens: 11, outputTokens: 5, providerCost })
+  })
+
+  it('knows no cost when the microdollar fields are missing or not numbers', () => {
+    const { end } = run([
+      chunk({ content: 'Done.' }, 'stop'),
+      JSON.stringify({ choices: [], usage: { prompt_tokens: 11, completion_tokens: 5, cost_microdollars: '1200' } }),
+      '[DONE]',
+    ])
+
+    expect(end.usage).toStrictEqual({ inputTokens: 11, outputTokens: 5 })
+  })
+
   // The two names of the docs: OpenRouter's `cache_write_tokens` and
   // Venice's `cache_creation_input_tokens`.
   it.each([

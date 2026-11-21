@@ -283,6 +283,18 @@ export const providerConfigSchema = z.object({
     cacheWrite: modelEntryPathSchema.optional(),
     perTokens: z.number().positive(),
     otherRates: modelEntryPathSchema.optional(),
+    // Where an entry tells a second, higher rate of the same tokens (the
+    // dearest model that a router can pick). Such a price is not one
+    // number, so with a price at this path Dez knows none, as with
+    // OpenRouter's `-1`.
+    variableRate: modelEntryPathSchema.optional(),
+    // For the entries whose price is not one number but that tell no
+    // `variableRate` (a panel of models whose list price is 0): a value at
+    // `path` that `values` holds makes the price unknown too.
+    variableRateBy: z.object({
+      path: modelEntryPathSchema,
+      values: z.array(z.string()).min(1, 'Values must not be empty'),
+    }).optional(),
     imageOutput: modelEntryPathSchema.optional(),
     audioOutput: modelEntryPathSchema.optional(),
   }).optional(),

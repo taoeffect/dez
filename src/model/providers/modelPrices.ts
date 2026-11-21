@@ -153,6 +153,13 @@ export function modelTokenPrice(entry: Record<string, unknown>, config: Provider
   const input = priceNumber(valueAtPath(entry, config.input))
   const output = priceNumber(valueAtPath(entry, config.output))
   if (input === undefined || output === undefined) return undefined
+  // A router or a panel of models has no one price: unknown, never its
+  // cheapest rate (`variableRate`, `variableRateBy` in config.ts).
+  if (config.variableRate !== undefined && priceNumber(valueAtPath(entry, config.variableRate)) !== undefined) return undefined
+  if (config.variableRateBy !== undefined) {
+    const kind = valueAtPath(entry, config.variableRateBy.path)
+    if (typeof kind === 'string' && config.variableRateBy.values.includes(kind)) return undefined
+  }
   const perMillion = (usd: number): number => roundedPrice(usd * 1_000_000 / config.perTokens)
   const pathPrice = (path: string | undefined) => path === undefined ? undefined : priceNumber(valueAtPath(entry, path))
   const cachedInput = pathPrice(config.cachedInput)

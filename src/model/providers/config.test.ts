@@ -222,6 +222,11 @@ describe('provider config schema', () => {
     // A price per 0 tokens would divide by 0.
     expect(tokenPrices({ perTokens: 0 })).toBe(false)
     expect(tokenPrices({ cachedInput: 'p..cache' })).toBe(false)
+    expect(tokenPrices({ variableRate: 'p.max', variableRateBy: { path: 'meta.kind', values: ['panel'] } })).toBe(true)
+    expect(tokenPrices({ variableRate: 'p..max' })).toBe(false)
+    expect(tokenPrices({ variableRateBy: { path: 'meta.kind', values: [] } })).toBe(false)
+    expect(tokenPrices({ variableRateBy: { path: 'meta.kind', values: [true] } })).toBe(false)
+    expect(tokenPrices({ variableRateBy: { values: ['panel'] } })).toBe(false)
     expect(parse({ modelContextWindow: { paths: [] } }).success).toBe(false)
     expect(parse({ modelContextWindow: { paths: ['limits..window'] } }).success).toBe(false)
     expect(parse({ modelContextWindow: { path: 'context_length' } }).success).toBe(false)

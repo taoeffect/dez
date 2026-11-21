@@ -330,6 +330,7 @@ describe('prompt cache', () => {
     expect(requestBody(keyed.chatRequest(messages, { id: 'm' }, key).request)).not.toHaveProperty('prompt_cache_key')
     expect(requestBody(openAi.chatRequest(messages, { id: 'm' }, key, {}, { conversationId: 'conv-1' }).request)).not.toHaveProperty('prompt_cache_key')
     expect(requestBody(keyedAnthropic.chatRequest(messages, { id: 'm' }, key, {}, { conversationId: 'conv-1' }).request)).not.toHaveProperty('prompt_cache_key')
+    expect(requestBody(builtInProvider('trustedrouter').chatRequest(messages, { id: 'm' }, key, {}, { conversationId: 'conv-1' }).request).prompt_cache_key).toBe('conv-1')
   })
 })
 
@@ -540,6 +541,7 @@ describe('thinking request bodies', () => {
     expect(bodyWith(builtInProvider('zai'))).toEqual({ ...base, thinking: { type: 'enabled' } })
     expect(bodyWith(builtInProvider('minimax'))).toEqual({ ...markedBase, max_tokens: 65536, thinking: { type: 'adaptive' } })
     expect(bodyWith(builtInProvider('venice')).reasoning).toEqual({ enabled: true })
+    expect(bodyWith(builtInProvider('trustedrouter'))).toEqual({ ...base, stream_options: { include_usage: true }, reasoning: { enabled: true } })
   })
 
   it('adds only the format default to a built-in with an empty thinking config', () => {
@@ -559,6 +561,7 @@ describe('thinking request bodies', () => {
     expect(bodyWith(builtInProvider('openrouter'), { thinking: false })).toEqual(markedBase)
     expect(bodyWith(builtInProvider('minimax'), { thinking: false })).toEqual({ ...markedBase, max_tokens: 65536 })
     expect(bodyWith(builtInProvider('kimi'), { thinking: false })).toEqual({ ...markedBase, max_tokens: 32000 })
+    expect(bodyWith(builtInProvider('trustedrouter'), { thinking: false })).toEqual({ ...base, stream_options: { include_usage: true } })
   })
 
   it('merges the Venice disabledBody into the venice_parameters that the settings wrote', () => {
@@ -1487,6 +1490,27 @@ describe('provider models', () => {
       ['google/lyria-3-clip-preview', ['text', 'audio'], 'chat'],
       ['text-audio', ['text'], 'chat'],
       ['speech-to-text', ['text'], 'transcription'],
+    ])
+    // TrustedRouter (checked live 2026-11-19): only text models stay, a
+    // model that writes text and images is a text model, and an entry with
+    // no chat route takes no request.
+    expect(kinds('trustedrouter', [
+      { id: 'text', architecture: { output_modalities: ['text'] } },
+      { id: 'text-image', architecture: { output_modalities: ['text', 'image'] } },
+      { id: 'image', architecture: { output_modalities: ['image'] } },
+      { id: 'speech', architecture: { output_modalities: ['speech'] } },
+      { id: 'speech-to-text', architecture: { output_modalities: ['transcription'] } },
+      { id: 'video', architecture: { output_modalities: ['video'] } },
+      { id: 'embed', architecture: { output_modalities: ['embeddings'] } },
+      { id: 'decide', architecture: { output_modalities: ['decision'] } },
+      // An entry with "text" but no chat route (an embedding model).
+      { id: 'embed-text', architecture: { output_modalities: ['text'] }, trustedrouter: { supports_chat: false } },
+      { id: 'chat-text', architecture: { output_modalities: ['text'] }, trustedrouter: { supports_chat: true } },
+    ])).toEqual([
+      ['text', ['text'], 'chat'],
+      ['text-image', ['text'], 'chat'],
+      ['embed-text', ['text'], 'none'],
+      ['chat-text', ['text'], 'chat'],
     ])
     expect(kinds('copilot', [
       { id: 'chat', capabilities: { type: 'chat' } },
