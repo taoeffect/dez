@@ -153,7 +153,17 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     name: 'TrustedRouter',
     baseUrl: 'https://api.trustedrouter.com/v1',
     apiFormat: 'openai',
-    models: [],
+    // The list entry of the Fortanix route of GLM 5.3 Flash tells only
+    // "max_tokens" in `supported_parameters`, and `trustedrouter.capabilities`
+    // says no tools and no reasoning. But the route calls tools, and it
+    // always thinks: `reasoning` and `reasoning_content` come with no field
+    // and with `reasoning: { enabled: true }`. A streamed tool round with
+    // Dez's tools, and its replay with `reasoning_content`, passed. It
+    // refuses an image part (HTTP 400), as its entry tells. Checked live,
+    // 2026-11-21.
+    models: [
+      { id: 'fortanix/glm-5.3-flash', fetchedOnly: true, toolCalling: true, thinking: true },
+    ],
     fetchModels: true,
     // /models lists every model with no query; `output_modalities=all`
     // lists none (checked live, 2026-11-19). The entries have OpenRouter's

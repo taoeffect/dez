@@ -71,8 +71,8 @@ export const providerModelConfigSchema = z.object({
   // or unknown.
   thinking: z.boolean().optional(),
   // What the model makes. Wins over what the server reports; missing: the
-  // server's outputs, or unknown. A config model is always listed, so it
-  // must make at least one type.
+  // server's outputs, or unknown. A config model is listed, so it must make
+  // at least one type.
   outputs: z.array(z.enum(MODEL_OUTPUT_IDS)).min(1, 'Model outputs must not be empty').optional(),
   // How Dez sends the model a request. Wins over the server's kind; missing:
   // the server's kind, or `chat`.
@@ -81,6 +81,11 @@ export const providerModelConfigSchema = z.object({
   // a model whose server tells none. Wins over the server's number
   // (`modelContextWindow`); missing: the server's number, or unknown.
   contextWindow: z.number().int().positive().optional(),
+  // true: the entry only corrects the facts of the server's model of this
+  // id. Dez lists the model only while the server's list has it, in the
+  // server's place, not first (`Provider.mergeModels`); a model that the
+  // server drops does not stay listed with requests that fail.
+  fetchedOnly: z.boolean().optional(),
 })
 
 // A dot path into one `/models` entry, such as
@@ -250,7 +255,8 @@ export const providerConfigSchema = z.object({
     .overwrite(trimTrailingSlashes)
     .refine(isValidBaseUrl, 'Base URL must be an http:// or https:// URL with no query, fragment, user name, or password'),
   apiFormat: z.enum(API_FORMAT_IDS).default('openai'),
-  // Always listed; merged in front of the models the server reports.
+  // Always listed, in front of the models the server reports; an entry with
+  // `fetchedOnly` only corrects the server's model of its id.
   models: z.array(providerModelConfigSchema).default(() => []),
   // false: never call the models endpoint, list only `models`.
   fetchModels: z.boolean().default(true),
@@ -454,6 +460,7 @@ export function configIssueText(error: z.ZodError): string {
 export type ApiFormatId = (typeof API_FORMAT_IDS)[number]
 export type ProviderSettingDef = z.infer<typeof providerSettingDefSchema>
 export type ProviderConfig = z.infer<typeof providerConfigSchema>
+export type ProviderModelConfig = ProviderConfig['models'][number]
 export type ProviderThinkingConfig = z.infer<typeof thinkingConfigSchema>
 export type ModelCapabilityPath = z.infer<typeof modelCapabilityPathSchema>
 export type ModelCountPaths = z.infer<typeof modelCountPathsSchema>

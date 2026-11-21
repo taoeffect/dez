@@ -8,6 +8,7 @@ import { BUILT_IN_PROVIDER_CONFIGS } from './builtins'
 import { TooManyImagesError } from './clipImages'
 import { customProviderConfigSchema } from './config'
 import { providerStatusError } from './errors'
+import { modelToggles } from './modelToggles'
 import { Provider } from './provider'
 import { providerModel, type ChatMessage, type ChatPart, type ChatRequestContext, type ModelInfo } from './types'
 
@@ -1219,6 +1220,88 @@ describe('provider models', () => {
     expect(provider.mergeModels(fetched)).toStrictEqual([
       { id: 'm', name: 'm', provider: 'local', imageInput: true, toolCalling: false },
     ])
+  })
+
+  it('lists a fetchedOnly config model only while the server lists it, in the server\'s place, with the config facts winning', () => {
+    const provider = customProvider({
+      modelToolCalling: { path: 'tools' },
+      models: [
+        { id: 'always' },
+        { id: 'fixed', name: 'Fixed', fetchedOnly: true, toolCalling: true },
+        { id: 'gone', fetchedOnly: true, toolCalling: true },
+        // The first entry of an id counts, as for the other config models.
+        { id: 'fixed', toolCalling: false },
+      ],
+    })
+    const fetched = provider.parseModels({
+      data: [{ id: 'first', tools: true }, { id: 'fixed', name: 'Server Fixed', tools: false }, { id: 'last' }],
+    })
+
+    expect(provider.mergeModels(fetched)).toStrictEqual([
+      { id: 'always', name: 'always', provider: 'local' },
+      { id: 'first', name: 'first', provider: 'local', toolCalling: true },
+      { id: 'fixed', name: 'Fixed', provider: 'local', toolCalling: true },
+      { id: 'last', name: 'last', provider: 'local' },
+    ])
+    expect(provider.configModels()).toStrictEqual([{ id: 'always', name: 'always', provider: 'local' }])
+  })
+
+  // The two routes of GLM 5.3 Flash in TrustedRouter's list (2026-11-21,
+  // abridged). The Fortanix route's entry tells no tools and no reasoning,
+  // but the route calls tools and thinks (builtins.ts).
+  describe('TrustedRouter\'s Fortanix route of GLM 5.3 Flash', () => {
+    const trustedRouter = builtInProvider('trustedrouter')
+    const zai = {
+      id: 'z-ai/glm-5.3-flash',
+      name: 'Z.ai: GLM 5.3 Flash',
+      architecture: { input_modalities: ['text', 'image'], output_modalities: ['text'] },
+      supported_parameters: ['tools', 'tool_choice', 'max_tokens', 'reasoning', 'reasoning_effort'],
+      pricing: { prompt: '0.000000026375', completion: '0.00000007385' },
+      context_length: 200000,
+      trustedrouter: { supports_chat: true, route_kind: 'model' },
+    }
+    const fortanix = {
+      id: 'fortanix/glm-5.3-flash',
+      name: 'GLM 5.3 Flash (Fortanix)',
+      architecture: { input_modalities: ['text'], output_modalities: ['text'] },
+      supported_parameters: ['max_tokens'],
+      reasoning: null,
+      pricing: { prompt: '0.00000001', completion: '0.00000001' },
+      context_length: 1048576,
+      top_provider: { context_length: 1048576 },
+      trustedrouter: { supports_chat: true, route_kind: 'model', capabilities: { reasoning_effort: null, tools: false, vision: false } },
+    }
+    const listed = (entries: unknown[]): ModelInfo[] => {
+      const data = { data: entries }
+      const merged = trustedRouter.mergeModels(trustedRouter.parseModels(data))
+      return trustedRouter.withPrices(merged, trustedRouter.modelEntries(merged, data), new Map())
+    }
+
+    it('gives the route tools and thinking, in its place in the list, with the facts and the price of its entry', () => {
+      const models = listed([zai, fortanix, { ...zai, id: 'z-ai/glm-5.2' }])
+
+      expect(models.map((model) => model.id)).toStrictEqual(['z-ai/glm-5.3-flash', 'fortanix/glm-5.3-flash', 'z-ai/glm-5.2'])
+      expect(models[1]).toStrictEqual({
+        id: 'fortanix/glm-5.3-flash',
+        name: 'GLM 5.3 Flash (Fortanix)',
+        provider: 'trustedrouter',
+        imageInput: false,
+        toolCalling: true,
+        thinking: true,
+        outputs: ['text'],
+        request: 'chat',
+        price: { unit: 'token', input: 0.01, output: 0.01 },
+        contextWindow: 1048576,
+      })
+      // The rows of the provider settings popup: the same as the Z.ai route.
+      expect(modelToggles(trustedRouter.config, models[1])).toStrictEqual({ thinking: true, tools: true, settings: [] })
+      expect(modelToggles(trustedRouter.config, models[0])).toStrictEqual(modelToggles(trustedRouter.config, models[1]))
+    })
+
+    it('does not list the route when the list drops it', () => {
+      expect(listed([zai]).map((model) => model.id)).toStrictEqual(['z-ai/glm-5.3-flash'])
+      expect(trustedRouter.configModels()).toStrictEqual([])
+    })
   })
 
   it('lists the toggles that the entry says the model does not take: a false flag, or a list without the first name of the body path', () => {

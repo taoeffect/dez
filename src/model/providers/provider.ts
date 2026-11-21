@@ -6,7 +6,7 @@ import type { ImageSize } from '../chat/imageDrawing'
 import { effectiveOutputs } from '../modelOutputs'
 import { API_FORMATS, type ApiFormat } from './apiFormats'
 import { TooManyImagesError } from './clipImages'
-import { FORBIDDEN_BODY_KEYS, type AudioOutputConfig, type ProviderConfig } from './config'
+import { FORBIDDEN_BODY_KEYS, type AudioOutputConfig, type ProviderConfig, type ProviderModelConfig } from './config'
 import { ProviderHttpError } from './errors'
 import type { ImageSizeRules, InputImageLimits } from './imageSize'
 import { MEDIA_FORMATS, type AnswerCost, type ClipEntryPrice, type ClipFormat, type ClipInput, type ClipJob, type ImageFormat, type ImageQuoteFormat, type MediaFormat, type MediaInput, type MediaWireRequest, type TextFormat } from './mediaFormats'
@@ -141,7 +141,9 @@ export class Provider {
   // over the fetched one for the same id; the readable name, the release
   // date, and the image limits are always the fetched ones. A fetched model
   // that is known to make none of the output types (embeddings, rerank) is
-  // left out; a config model is always listed.
+  // left out; a config model is always listed. A `fetchedOnly` config model
+  // is not: its facts win over those of the fetched model of its id, in the
+  // fetched model's place, and only while the server lists it.
   mergeModels(fetched: ModelInfo[]): ModelInfo[] {
     const fetchedById = new Map<string, ModelInfo>()
     for (const model of fetched) {
@@ -149,31 +151,39 @@ export class Provider {
     }
 
     const merged = new Map<string, ModelInfo>()
+    const corrections = new Map<string, ProviderModelConfig>()
     for (const model of this.config.models) {
-      if (merged.has(model.id)) continue
-
-      const fetchedModel = fetchedById.get(model.id)
-      const name = model.name ?? fetchedModel?.name ?? model.id
-      merged.set(model.id, providerModel(this.id, model.id, name, {
-        readableName: fetchedModel?.readableName,
-        released: fetchedModel?.released,
-        imageInput: model.imageInput ?? fetchedModel?.imageInput,
-        toolCalling: model.toolCalling ?? fetchedModel?.toolCalling,
-        thinking: model.thinking ?? fetchedModel?.thinking,
-        unsupportedSettings: fetchedModel?.unsupportedSettings,
-        outputs: model.outputs ?? fetchedModel?.outputs,
-        request: model.request ?? fetchedModel?.request,
-        contextWindow: model.contextWindow ?? fetchedModel?.contextWindow,
-        imageLimit: fetchedModel?.imageLimit,
-        messageImageLimit: fetchedModel?.messageImageLimit,
-      }))
+      if (merged.has(model.id) || corrections.has(model.id)) continue
+      if (model.fetchedOnly) corrections.set(model.id, model)
+      else merged.set(model.id, this.configModel(model, fetchedById.get(model.id)))
     }
 
     for (const [id, model] of fetchedById) {
-      if (!merged.has(id) && model.outputs?.length !== 0) merged.set(id, providerModel(this.id, id, model.name, model))
+      if (merged.has(id)) continue
+      const correction = corrections.get(id)
+      const listed = correction ? this.configModel(correction, model) : providerModel(this.id, id, model.name, model)
+      if (listed.outputs?.length !== 0) merged.set(id, listed)
     }
 
     return [...merged.values()]
+  }
+
+  // A config model (`models[]` entry) with the facts of the fetched model of
+  // its id that the entry does not set (`mergeModels`).
+  private configModel(model: ProviderModelConfig, fetchedModel: ModelInfo | undefined): ModelInfo {
+    return providerModel(this.id, model.id, model.name ?? fetchedModel?.name ?? model.id, {
+      readableName: fetchedModel?.readableName,
+      released: fetchedModel?.released,
+      imageInput: model.imageInput ?? fetchedModel?.imageInput,
+      toolCalling: model.toolCalling ?? fetchedModel?.toolCalling,
+      thinking: model.thinking ?? fetchedModel?.thinking,
+      unsupportedSettings: fetchedModel?.unsupportedSettings,
+      outputs: model.outputs ?? fetchedModel?.outputs,
+      request: model.request ?? fetchedModel?.request,
+      contextWindow: model.contextWindow ?? fetchedModel?.contextWindow,
+      imageLimit: fetchedModel?.imageLimit,
+      messageImageLimit: fetchedModel?.messageImageLimit,
+    })
   }
 
   configModels(): ModelInfo[] {
