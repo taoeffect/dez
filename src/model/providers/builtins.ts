@@ -231,20 +231,37 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // endpoint, with the key. The docs ask for one download ("Download
     // once"): the provider keeps the clip until the first full download,
     // or for 24 hours. Dez downloads it once, into a temp copy (a second
-    // GET still gave the clip). The `/models` entries tell the formats of
-    // the speech and transcription models, which OpenRouter's do not
-    // (`trustedrouter` fields; every transcription model takes mp3 and wav
-    // files of at most 7 MiB). Checked live, 2026-11-20; the video entries
-    // and their routes, 2026-11-21.
+    // GET still gave the clip). The `/models` entries tell the formats, the
+    // speeds, and the text and clip limits of the speech and transcription
+    // models, which OpenRouter's do not (`trustedrouter` fields; every
+    // transcription model takes mp3 and wav files of at most 7 MiB and 10
+    // minutes; only Grok's voice has a range of speeds). Their `pricing`
+    // has OpenRouter's token rates (`prompt`, `completion`) for the Gemini
+    // and Voxtral Small models, and else one rate of its own: USD per
+    // character of the text (`input_character`), per minute of the clip
+    // (`input_audio_minute`), or per request (`request`). The answers tell
+    // their cost (speech: `X-Usage-Cost`; transcription: `usage.cost`). The
+    // image list tells each model's default resolution, which a request
+    // with no resolution gets (`openRouterImageUsd`, mediaFormats.ts).
+    // Checked live, 2026-11-20; the video entries and their routes, and the
+    // image, speech, and transcription entries, 2026-11-21.
     // https://trustedrouter.com/docs/video
     // https://trustedrouter.com/docs#media-discovery
     // https://trustedrouter.com/docs (Text to speech, Audio transcription)
+    // https://github.com/Lore-Hex/quill-router/blob/main/docs/text-to-speech.md
+    // https://github.com/Lore-Hex/quill-router/blob/main/docs/transcription.md
     mediaApi: {
       format: 'openrouter',
       modelEntryPaths: {
         speechFormats: 'trustedrouter.speech.response_formats',
+        speechSpeed: 'trustedrouter.speech.speed',
+        speechMaxCharacters: 'trustedrouter.speech.max_input_characters',
+        speechCharacterPrice: 'pricing.input_character',
         transcriptionFormats: 'trustedrouter.transcription.input_formats',
         transcriptionMaxBytes: 'trustedrouter.transcription.max_audio_bytes',
+        transcriptionMaxSeconds: 'trustedrouter.transcription.max_duration_seconds',
+        transcriptionMinutePrice: 'pricing.input_audio_minute',
+        requestPrice: 'pricing.request',
         videoAudioMode: 'trustedrouter.audio_mode',
         videoRoutePrices: 'pricing.routes',
         videoRoute: 'trustedrouter.provider',

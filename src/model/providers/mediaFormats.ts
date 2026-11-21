@@ -218,8 +218,9 @@ export interface ClipFormat {
   // for one that `request` reads itself (OpenRouter's `images_as`).
   parameters(kind: ClipKind, entry: unknown, mediaEntry: unknown, paths: MediaEntryPaths): ModelParameter[]
   // What a model of `kind` takes as the text of a request, from the same
-  // two entries; undefined when the API tells nothing about it.
-  textRules?(kind: ClipKind, entry: unknown, mediaEntry: unknown): ClipTextRules | undefined
+  // two entries and `paths`; undefined when the API tells nothing about
+  // it.
+  textRules?(kind: ClipKind, entry: unknown, mediaEntry: unknown, paths: MediaEntryPaths): ClipTextRules | undefined
   request(kind: ClipKind, baseUrl: string, modelId: string, input: ClipInput): MediaWireRequest
   // The most input images that a model of `kind` takes, when `body` (the
   // JSON of the provider's refusal of a first request with the status
@@ -1324,6 +1325,17 @@ function isStoredImageFormat(format: OptionValue): boolean {
 // https://openrouter.ai/docs/api/api-reference/tts/create-speech
 const OPENROUTER_STORED_SPEECH_FORMATS: readonly OptionValue[] = ['mp3', 'wav', 'pcm']
 
+// The value at a path of the provider's config (`mediaApi.modelEntryPaths`)
+// in an entry; none with no path.
+function entryValue(entry: unknown, path: string | undefined): unknown {
+  return path === undefined ? undefined : valueAtPath(entry, path)
+}
+
+// A positive whole number of an entry, else none.
+function positiveWholeNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined
+}
+
 // The Format row of a speech model whose entry lists the formats that it
 // makes, at the provider's `paths.speechFormats`: the listed formats that
 // Dez stores. mp3 is the default when the list has it (the smallest file),
@@ -1337,28 +1349,40 @@ function openRouterSpeechFormat(entry: unknown, paths: MediaEntryPaths): ModelPa
   return optionsParameter('response_format', 'Format', formats, preferred)
 }
 
+// The Speed row of a speech model whose entry tells its speeds, at the
+// provider's `paths.speechSpeed` (`{ min, max, default }`): only for a
+// real range. The request schema has `speed`, but OpenRouter's entries
+// tell no range, so its config has no path.
+// https://openrouter.ai/docs/api/api-reference/tts/create-speech
+function openRouterSpeechSpeed(entry: unknown, paths: MediaEntryPaths): ModelParameter[] {
+  const speed = entryValue(entry, paths.speechSpeed)
+  return speedParameter(valueAtPath(speed, 'min'), valueAtPath(speed, 'max'), valueAtPath(speed, 'default'))
+}
+
 // The audio clip that an OpenRouter transcription model takes: one, as a
 // form file. The docs: "The format is derived from the filename extension
 // or the file part content type. Max 25 MB"; the types are those of the
 // docs' list that Dez stores ("Supported formats vary by provider"). An
-// entry can tell its own file formats and size at the provider's `paths`
-// (`transcriptionFormats`, a list of extension names such as `mp3`;
-// `transcriptionMaxBytes`, a positive whole number); a value of another
-// form counts as none. With a list that has `wav`, a clip of another type
-// goes as a WAV copy (`needsWavCopy`).
+// entry can tell its own file formats, size, and length at the provider's
+// `paths` (`transcriptionFormats`, a list of extension names such as
+// `mp3`; `transcriptionMaxBytes`, a positive whole number;
+// `transcriptionMaxSeconds`, a positive number); a value of another form
+// counts as none. With a list that has `wav`, a clip of another type goes
+// as a WAV copy (`needsWavCopy`).
 // https://openrouter.ai/docs/api/api-reference/stt/create-transcription
 function openRouterTranscriptionRules(entry: unknown, paths: MediaEntryPaths): InputClipRules {
-  const names = paths.transcriptionFormats === undefined ? [] : listedValues(valueAtPath(entry, paths.transcriptionFormats))
+  const names = listedValues(entryValue(entry, paths.transcriptionFormats))
   const listedTypes = names.flatMap((name) => {
     const type = typeof name === 'string' ? clipMediaTypeOfExtension(name) : null
     return type?.startsWith('audio/') ? [type] : []
   })
-  const maxBytes = paths.transcriptionMaxBytes === undefined ? undefined : valueAtPath(entry, paths.transcriptionMaxBytes)
+  const maxSeconds = entryValue(entry, paths.transcriptionMaxSeconds)
   return {
     audio: {
       use: 'source',
       maxClips: 1,
-      maxBytes: typeof maxBytes === 'number' && Number.isSafeInteger(maxBytes) && maxBytes > 0 ? maxBytes : 25 * 1024 ** 2,
+      maxBytes: positiveWholeNumber(entryValue(entry, paths.transcriptionMaxBytes)) ?? 25 * 1024 ** 2,
+      ...(typeof maxSeconds === 'number' && Number.isFinite(maxSeconds) && maxSeconds > 0 && { maxSeconds }),
       types: listedTypes.length > 0 ? [...new Set(listedTypes)] : ['audio/wav', 'audio/mpeg', 'audio/flac', 'audio/mp4', 'audio/ogg', 'audio/aac'],
     },
   }
@@ -1394,7 +1418,11 @@ function openRouterReferenceRules(mediaEntry: unknown): InputImageRules | undefi
 // the model does with the request. Of plain records, the price is the one
 // that every resolution has, else the record of the request's resolution,
 // else the record with no variant (the one of the resolutions that have
-// no record of their own).
+// no record of their own). A request with no resolution gets the model's
+// own default, which an entry of TrustedRouter's image list tells
+// (`supported_parameters.resolution.default`) and one of OpenRouter's does
+// not (both checked 2026-11-21): its price is that of the default.
+// https://trustedrouter.com/docs#media-discovery
 function openRouterImageUsd(values: ParameterValues, mediaEntry: unknown, records: unknown): number | undefined {
   const endpoints = valueAtPath(records, 'endpoints')
   if (!Array.isArray(endpoints) || endpoints.length === 0) return undefined
@@ -1420,7 +1448,8 @@ function openRouterImageUsd(values: ParameterValues, mediaEntry: unknown, record
   }
   const costs = new Set(prices.values())
   if (costs.size === 1) return [...costs][0]
-  const resolution = values.resolution
+  const ownDefault = valueAtPath(mediaEntry, 'supported_parameters.resolution.default')
+  const resolution = values.resolution ?? (typeof ownDefault === 'string' && resolutions.includes(ownDefault.toLowerCase()) ? ownDefault : undefined)
   return (resolution === undefined ? undefined : prices.get(String(resolution).toLowerCase())) ?? prices.get(undefined)
 }
 
@@ -1640,7 +1669,7 @@ function routeVideoPrice(values: ParameterValues, mediaEntry: unknown, paths: Me
   const error = (reason: string) => ({
     error: `Dez cannot compute the price of a request with these values: ${reason}. The prices by route are in \`${pricesPath}\` of \`mediaEntry\`.`,
   })
-  const named = paths.videoRoute === undefined ? undefined : valueAtPath(mediaEntry, paths.videoRoute)
+  const named = entryValue(mediaEntry, paths.videoRoute)
   const route = typeof named === 'string' && Object.hasOwn(routes, named) ? named : names.length === 1 ? names[0] : undefined
   if (route === undefined) return error(`the prices are by route (${names.map((name) => `\`${name}\``).join(', ')}), and no data tells which route the request takes`)
   const prices = routes[route]
@@ -1699,11 +1728,29 @@ function openRouterVideoPrice(values: ParameterValues, mediaEntry: unknown, path
   return { usd, ...(notes.length > 0 && { note: notes.join(' ') }) }
 }
 
+// The price of a speech or transcription model at the provider's paths,
+// for an API whose main list has rates that OpenRouter's does not: per
+// character of the text of a speech request (`speechCharacterPrice`), per
+// minute of the clip of a transcription (`transcriptionMinutePrice`, as a
+// price per second), or per request, whatever the length of the text or
+// the clip (`requestPrice`, as a price per clip). None when the entry has
+// no such rate.
+// https://trustedrouter.com/docs#media-discovery
+function openRouterAudioRatePrice(kind: 'tts' | 'transcription', entry: unknown, paths: MediaEntryPaths): ModelPrice | undefined {
+  const rate = (path: string | undefined) => priceNumber(entryValue(entry, path))
+  const perCharacter = kind === 'tts' ? rate(paths.speechCharacterPrice) : undefined
+  if (perCharacter !== undefined) return unitPrice('character', perCharacter * 1_000_000)
+  const perMinute = kind === 'transcription' ? rate(paths.transcriptionMinutePrice) : undefined
+  if (perMinute !== undefined) return unitPrice('second', perMinute / 60)
+  return unitPrice('clip', rate(paths.requestPrice))
+}
+
 // The list price of an OpenRouter-format model of a media kind. A video:
 // the price of one clip for the default values (the shortest length, the
 // lowest resolution, the sound of the Audio switch) and only a prompt; for
 // prices from `pricing_skus`, the note names the price of each input
-// image, if any. Speech and transcription: the rates of the main list
+// image, if any. Speech and transcription: the rates at the provider's
+// paths (`openRouterAudioRatePrice`), else the rates of the main list
 // (`pricing`), which are per character of the text (`prompt`), or per
 // second of the clip (speech: `completion`, with no `prompt` price;
 // transcription: `prompt`, with no `completion` price), or, with both,
@@ -1728,6 +1775,8 @@ function openRouterListPrice(kind: MediaKind, values: ParameterValues, entry: un
     }
     case 'tts':
     case 'transcription': {
+      const rate = openRouterAudioRatePrice(kind, entry, paths)
+      if (rate) return rate
       const input = priceNumber(valueAtPath(entry, 'pricing.prompt'))
       const output = priceNumber(valueAtPath(entry, 'pricing.completion'))
       if (input === undefined || output === undefined) return undefined
@@ -1851,7 +1900,7 @@ const openRouterFormat: MediaFormat = {
           // https://openrouter.ai/docs/guides/overview/multimodal/tts
           // https://openrouter.ai/blog/announcements/elevenlabs-on-openrouter/
           const voices = listedValues(valueAtPath(entry, 'supported_voices'))
-          return [...optionsParameter('voice', 'Voice', voices, voices[0], true), ...openRouterSpeechFormat(entry, paths)]
+          return [...optionsParameter('voice', 'Voice', voices, voices[0], true), ...openRouterSpeechFormat(entry, paths), ...openRouterSpeechSpeed(entry, paths)]
         }
         case 'video':
         case 'imageToVideo': {
@@ -1879,6 +1928,13 @@ const openRouterFormat: MediaFormat = {
         case 'voiceChange':
           return []
       }
+    },
+    // The most characters of the text of a speech request, when the entry
+    // tells it at the provider's `paths.speechMaxCharacters`. OpenRouter's
+    // entries tell none, so its config has no path.
+    textRules: (kind, entry, _mediaEntry, paths) => {
+      const maxPromptLength = kind === 'tts' ? positiveWholeNumber(entryValue(entry, paths.speechMaxCharacters)) : undefined
+      return maxPromptLength === undefined ? undefined : { maxPromptLength }
     },
     request: (kind, baseUrl, modelId, { prompt, images, clips = [], values }) => {
       const base = trimTrailingSlashes(baseUrl)
@@ -2006,8 +2062,15 @@ const openRouterFormat: MediaFormat = {
     // The video list gives each model's prices (`pricing_skus`), or the
     // provider's prices by route (`videoRoutePrices`, config.ts); a
     // request of a model with an input image or clip can have prices of
-    // its own, which `openRouterVideoPrice` tells only in a note.
-    entryPrice: (kind, values, _entry, mediaEntry, paths) => (kind === 'video' || kind === 'imageToVideo' ? openRouterVideoPrice(values, mediaEntry, paths) : undefined),
+    // its own, which `openRouterVideoPrice` tells only in a note. A speech
+    // model with a price per request (`requestPrice`) costs that, whatever
+    // the values; one with a price per character has no entry price, as
+    // its price needs the text (`textLengthCost`, modelPrices.ts).
+    entryPrice: (kind, values, entry, mediaEntry, paths) => {
+      if (kind === 'video' || kind === 'imageToVideo') return openRouterVideoPrice(values, mediaEntry, paths)
+      const price = kind === 'tts' ? openRouterAudioRatePrice(kind, entry, paths) : undefined
+      return price?.unit === 'clip' ? { usd: price.usd } : undefined
+    },
     // "audio/pcm for pcm — 16-bit little-endian"
     // https://openrouter.ai/docs/api/api-reference/tts/create-speech
     pcmSampleBits: 16,

@@ -765,7 +765,7 @@ describe('venice refusals of images', () => {
 
 describe('venice clip text rules', () => {
   const spec = (modelSpec: Record<string, unknown>) => ({ id: 'm', model_spec: modelSpec })
-  const rules = (kind: ClipKind, entry: unknown) => veniceClips.textRules?.(kind, entry, undefined)
+  const rules = (kind: ClipKind, entry: unknown) => veniceClips.textRules?.(kind, entry, undefined, {})
 
   it('gives every speech model the text limits of the speech request', () => {
     expect(rules('tts', undefined)).toStrictEqual({ minPromptLength: 1, maxPromptLength: 4096 })
@@ -1251,6 +1251,39 @@ describe('openrouter clip parameters', () => {
     expect(parameters(openRouterClips, 'tts', { id: 'm', own: { speech: { formats: ['wav'] } } }).map((parameter) => parameter.name)).toStrictEqual(['voice'])
   })
 
+  // Grok's voice (TrustedRouter, 2026-11-21); its other speech models
+  // list 1 to 1.
+  const speedRow = (speed: unknown, paths: MediaEntryPaths = { speechSpeed: 'own.speech.speed' }) =>
+    parameters(openRouterClips, 'tts', { id: 'm', own: { speech: { speed } } }, undefined, paths).filter((parameter) => parameter.name === 'speed')
+
+  it('gives a speech model whose entry tells a range of speeds a Speed row, with its default', () => {
+    expect(speedRow({ min: 0.7, max: 1.5, default: 1 })).toStrictEqual([{ name: 'speed', min: 0.7, max: 1.5, step: 0.05, anyNumber: true, default: 1 }])
+  })
+
+  it.each([
+    ['one speed', { min: 1, max: 1, default: 1 }, undefined],
+    ['no speeds', undefined, undefined],
+    ['no path', { min: 0.7, max: 1.5, default: 1 }, {}],
+  ])('gives a speech model with %s no Speed row', (_name, speed, paths) => {
+    expect(speedRow(speed, paths)).toStrictEqual([])
+  })
+
+  // The text limits of TrustedRouter's speech models (2026-11-21).
+  const textRules = (kind: ClipKind, maxCharacters: unknown, paths: MediaEntryPaths = { speechMaxCharacters: 'own.speech.max_characters' }) =>
+    openRouterClips.textRules?.(kind, { id: 'm', own: { speech: { max_characters: maxCharacters } } }, undefined, paths)
+
+  it('gives a speech model the most characters of its text that its entry tells', () => {
+    expect(textRules('tts', 4096)).toStrictEqual({ maxPromptLength: 4096 })
+  })
+
+  it.each([
+    ['with no path', 'tts', 4096, {}],
+    ['with no positive whole number', 'tts', '4096', undefined],
+    ['of video', 'video', 4096, undefined],
+  ] as const)('gives a model %s no text rules', (_name, kind, maxCharacters, paths) => {
+    expect(textRules(kind, maxCharacters, paths)).toBeUndefined()
+  })
+
   it('gives a video model the lengths and resolutions of its video list entry, lowest first and as the default, and no default aspect ratio', () => {
     const mediaEntry = {
       id: 'x-ai/grok-imagine-video-1.5-lite',
@@ -1438,6 +1471,51 @@ describe('openrouter list prices', () => {
   })
 })
 
+// Abridged entries of TrustedRouter's model list (2026-11-21), read at the
+// paths of its config: one rate of its own (per character, per minute of
+// audio, or per request), or OpenRouter's token rates.
+// https://trustedrouter.com/docs#media-discovery
+describe('openrouter speech and transcription rates at the paths of the provider', () => {
+  const RATE_PATHS = { speechCharacterPrice: 'pricing.input_character', transcriptionMinutePrice: 'pricing.input_audio_minute', requestPrice: 'pricing.request' }
+  const listPrice = (kind: MediaKind, pricing: Record<string, unknown>, paths: MediaEntryPaths = RATE_PATHS) =>
+    MEDIA_FORMATS.openrouter.listPrice?.(kind, {}, { id: 'm', pricing }, undefined, paths)
+  const entryPrice = (kind: ClipKind, pricing: Record<string, unknown>, paths: MediaEntryPaths = RATE_PATHS) =>
+    openRouterClips.entryPrice?.(kind, { voice: 'serena', response_format: 'wav' }, { id: 'm', pricing }, undefined, paths)
+
+  it.each([
+    // x-ai/grok-voice-tts-1.0
+    ['speech per character', 'tts', { input_character: '0.000015825' }, { unit: 'character', usd: 15.825 }],
+    ['speech per character, over token rates of 0', 'tts', { prompt: '0', completion: '0', input_character: '0.0000422' }, { unit: 'character', usd: 42.2 }],
+    // qwen/qwen3-tts
+    ['speech per request', 'tts', { request: '0.01055' }, { unit: 'clip', usd: 0.01055 }],
+    // google/gemini-3.8-flash-tts
+    ['speech per token', 'tts', { prompt: '0.0000005275', completion: '0.000009495' }, { unit: 'token', input: 0.5275, output: 9.495 }],
+    // openai/whisper-1
+    ['a transcription per minute of its clip, as a price per second', 'transcription', { input_audio_minute: '0.00633' }, { unit: 'second', usd: 0.0001055 }],
+    // openai/whisper-large-v3-turbo
+    ['a transcription per request', 'transcription', { request: '0.01055' }, { unit: 'clip', usd: 0.01055 }],
+  ] as const)('reads %s', (_name, kind, pricing, expected) => {
+    expect(listPrice(kind, pricing)).toStrictEqual(expected)
+  })
+
+  it('reads no rate of the other kind, and no rate with no path', () => {
+    expect([
+      listPrice('transcription', { input_character: '0.000015825' }),
+      listPrice('tts', { input_audio_minute: '0.00633' }),
+      listPrice('tts', { input_character: '0.000015825', request: '0.01055' }, {}),
+    ]).toStrictEqual([undefined, undefined, undefined])
+  })
+
+  // A price per character needs the text (`textLengthCost`).
+  it('gives a speech model with a price per request that price as the price of a request, and none for a price per character', () => {
+    expect([
+      entryPrice('tts', { request: '0.01055' }),
+      entryPrice('tts', { input_character: '0.000015825' }),
+      entryPrice('tts', { request: '0.01055' }, {}),
+    ]).toStrictEqual([{ usd: 0.01055 }, undefined, undefined])
+  })
+})
+
 // Abridged entries of TrustedRouter's video list (2026-11-21), read at the
 // paths of its config.
 // https://trustedrouter.com/docs#media-discovery
@@ -1610,21 +1688,21 @@ describe('openrouter clip rules', () => {
 
   // The live lists of a provider whose entries tell them, at the paths of
   // its config (TrustedRouter, 2026-11-20).
-  const TRANSCRIPTION_PATHS = { transcriptionFormats: 'own.stt.formats', transcriptionMaxBytes: 'own.stt.max_bytes' }
+  const TRANSCRIPTION_PATHS = { transcriptionFormats: 'own.stt.formats', transcriptionMaxBytes: 'own.stt.max_bytes', transcriptionMaxSeconds: 'own.stt.max_seconds' }
   const transcriptionRules = (stt: Record<string, unknown>, paths: MediaEntryPaths = TRANSCRIPTION_PATHS) =>
     MEDIA_FORMATS.openrouter.clipRules?.('transcription', { id: 'm', own: { stt } }, undefined, paths)
 
-  it('takes the file types and the most bytes that the entry of a transcription model tells, at the paths of the provider', () => {
-    expect(transcriptionRules({ formats: ['mp3', 'wav'], max_bytes: 7340032 })).toStrictEqual({
-      audio: { use: 'source', maxClips: 1, maxBytes: 7340032, types: ['audio/mpeg', 'audio/wav'] },
+  it('takes the file types, the most bytes, and the longest clip that the entry of a transcription model tells, at the paths of the provider', () => {
+    expect(transcriptionRules({ formats: ['mp3', 'wav'], max_bytes: 7340032, max_seconds: 600 })).toStrictEqual({
+      audio: { use: 'source', maxClips: 1, maxBytes: 7340032, maxSeconds: 600, types: ['audio/mpeg', 'audio/wav'] },
     })
   })
 
   it.each([
-    ['no paths', { formats: ['mp3', 'wav'], max_bytes: 7340032 }, {}],
+    ['no paths', { formats: ['mp3', 'wav'], max_bytes: 7340032, max_seconds: 600 }, {}],
     ['no values', {}, TRANSCRIPTION_PATHS],
-    ['values of another form', { formats: ['pcm', 'webm', 7], max_bytes: '7 MiB' }, TRANSCRIPTION_PATHS],
-    ['no positive whole size', { formats: 'mp3', max_bytes: 0.5 }, TRANSCRIPTION_PATHS],
+    ['values of another form', { formats: ['pcm', 'webm', 7], max_bytes: '7 MiB', max_seconds: '10 min' }, TRANSCRIPTION_PATHS],
+    ['no positive whole size and no positive length', { formats: 'mp3', max_bytes: 0.5, max_seconds: 0 }, TRANSCRIPTION_PATHS],
   ])('keeps the rules of the docs for a transcription model with %s', (_name, stt, paths) => {
     expect(transcriptionRules(stt, paths)).toStrictEqual({
       audio: { use: 'source', maxClips: 1, maxBytes: 25 * 1024 ** 2, types: ['audio/wav', 'audio/mpeg', 'audio/flac', 'audio/mp4', 'audio/ogg', 'audio/aac'] },
@@ -1690,6 +1768,22 @@ describe('openrouter images', () => {
     const body = json({ data: [{ b64_json: bytesToBase64(PNG) }], ...fields })
 
     expect(openRouterImages.parseResponse('image', head('application/json'), body)).toStrictEqual({ media: [{ bytes: PNG, mediaType: 'image/png' }] })
+  })
+
+  // `decart/lucy-image-2` of TrustedRouter's image list (2026-11-21), whose
+  // entry tells the model's own default; OpenRouter's entries tell none.
+  it('gives a request with no resolution the price of the model\'s own default resolution, when its entry tells one of its resolutions', () => {
+    const records = { endpoints: [{ pricing: [
+      { billable: 'output_image', unit: 'image', variant: '480p', cost_usd: 0.01055 },
+      { billable: 'output_image', unit: 'image', variant: '720p', cost_usd: 0.0211 },
+    ] }] }
+    const usd = (ownDefault: string | undefined, values: ParameterValues = {}) => openRouterImages.quote?.usd('image', values, {
+      entry: { id: 'decart/lucy-image-2' },
+      mediaEntry: entry({ resolution: { type: 'enum', values: ['480p', '720p'], ...(ownDefault !== undefined && { default: ownDefault }) } }),
+      records,
+    })
+
+    expect([usd('720p'), usd('720p', { resolution: '480p' }), usd(undefined), usd('1080p')]).toStrictEqual([0.0211, 0.01055, undefined, undefined])
   })
 
   it.each([

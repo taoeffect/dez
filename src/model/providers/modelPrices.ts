@@ -22,8 +22,8 @@ export const PRICE_UNITS = ['token', ...SINGLE_PRICE_UNITS] as const
 // - `character`: per 1M characters of the request's text (speech).
 // - `second`: per second of audio that the model makes or reads.
 // - `image`: per image that the model makes.
-// - `clip`: per clip that the model makes, for the default values of its
-//   parameters.
+// - `clip`: per clip that the model makes or reads (one request), for the
+//   default values of its parameters.
 // `note` tells the parameter values or the tier of the price, or that some
 // requests have another price. Never empty.
 export type ModelPrice =

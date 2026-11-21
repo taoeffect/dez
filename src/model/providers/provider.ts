@@ -255,7 +255,7 @@ export class Provider {
       const images = imageRules?.(kind, entry, mediaEntry)
       const inputClips = clipRules?.(kind, entry, mediaEntry, paths)
       const parameters = (isClipKind(kind) ? clips?.parameters(kind, entry, mediaEntry, paths) : isTextKind(kind) ? [] : imageFormat?.parameters?.(kind, entry, mediaEntry)) ?? []
-      const text = isClipKind(kind) ? clips?.textRules?.(kind, entry, mediaEntry) : undefined
+      const text = isClipKind(kind) ? clips?.textRules?.(kind, entry, mediaEntry, paths) : undefined
       const unstoredOutput = isClipKind(kind) || isTextKind(kind) ? undefined : imageFormat?.unstoredOutput?.(kind, entry, mediaEntry)
       return {
         ...model,

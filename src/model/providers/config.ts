@@ -419,23 +419,41 @@ export const providerConfigSchema = z.object({
     })).optional(),
     // Dot paths in the entries of a media model, for facts that the
     // format's own fields do not tell (`ClipFormat.parameters`,
-    // `ClipFormat.entryPrice`, `MediaFormat.clipRules`, and
-    // `MediaFormat.listPrice` read them, mediaFormats.ts). The first three
-    // are in the model's `/models` entry (`entry`); the `video` ones in its
-    // entry of a list of the media API (`mediaEntry`,
-    // `MediaFormat.modelLists`). A value that is not of its form counts as
-    // none. TrustedRouter tells them under `trustedrouter.*` and in its own
-    // price tables, which the format does not know.
+    // `ClipFormat.textRules`, `ClipFormat.entryPrice`,
+    // `MediaFormat.clipRules`, and `MediaFormat.listPrice` read them,
+    // mediaFormats.ts). The `video` ones are in the model's entry of a list
+    // of the media API (`mediaEntry`, `MediaFormat.modelLists`); the others
+    // in its `/models` entry (`entry`). A value that is not of its form
+    // counts as none. TrustedRouter tells them under `trustedrouter.*` and
+    // in its own price tables, which the format does not know.
     modelEntryPaths: z.object({
       // A list of the names of the speech formats that the model makes
       // (`mp3`, `wav`): the choices of the Format row.
       speechFormats: modelEntryPathSchema.optional(),
+      // The speeds of a speech model, as an object `{ min, max, default }`
+      // (1 is the normal speed): a Speed row when `min` is less than `max`.
+      speechSpeed: modelEntryPathSchema.optional(),
+      // The most characters of the text of a speech request: a positive
+      // whole number.
+      speechMaxCharacters: modelEntryPathSchema.optional(),
+      // The price in USD of each character of the text of a speech
+      // request: a number, or a text of a number.
+      speechCharacterPrice: modelEntryPathSchema.optional(),
       // A list of the names of the file formats that a transcription model
       // reads (`mp3`, `wav`).
       transcriptionFormats: modelEntryPathSchema.optional(),
       // The most bytes of the clip of a transcription: a positive whole
       // number.
       transcriptionMaxBytes: modelEntryPathSchema.optional(),
+      // The most seconds of the clip of a transcription: a positive
+      // number.
+      transcriptionMaxSeconds: modelEntryPathSchema.optional(),
+      // The price in USD of each minute of the clip of a transcription: a
+      // number, or a text of a number.
+      transcriptionMinutePrice: modelEntryPathSchema.optional(),
+      // The price in USD of one speech or transcription request, whatever
+      // the length of its text or clip: a number, or a text of a number.
+      requestPrice: modelEntryPathSchema.optional(),
       // The sound of the videos of a video model: the text `configurable`
       // (the request can turn it off: an Audio switch, on by default),
       // `always`, or `none`. With no path, the format's own flag tells it.
