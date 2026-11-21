@@ -12,7 +12,7 @@ import { CLEANUP_BUTTONS, deleteUnreferenced, runningCleanup } from './unusedFil
 
 const { settings, modelCache } = useModelState()
 
-// Searchable picker for the "Default model for new tabs" setting, replacing the
+// Searchable picker for the "Default model" setting of new tabs, replacing the
 // old unsearchable native <select>. Reuses the same ModelPicker as the
 // bottom-left model selector so the two stay DRY.
 const defaultModelPickerOpen = ref(false)
@@ -75,6 +75,8 @@ const sections = Object.keys(sectionLabels) as SettingsSection[]
 const contentScrolls = computed(() => settings.value.settingsSection !== 'providers' && settings.value.settingsSection !== 'prompts')
 
 const checkingUpdates = ref(false)
+// A Vite define: a template reaches only the names of its component.
+const appVersion = __APP_VERSION__
 
 const themes: { value: Theme; label: string }[] = [
   { value: 'system', label: 'System' },
@@ -231,94 +233,147 @@ function onOverlayClick(e: MouseEvent) {
             <ShortcutManager />
           </div>
 
-          <!-- General -->
+          <!-- General: titled groups of boxed rows (see the CSS of
+               `.settings-card`). Each control is tied to its row: by
+               `aria-labelledby` when it has no text of its own (the toggle)
+               or its text is a value (the picker), and by
+               `aria-describedby` to the hint of its row. -->
           <div v-if="settings.settingsSection === 'general'" class="settings-section">
-            <div class="settings-row">
-              <label class="settings-label">Default model for new tabs</label>
-              <div ref="defaultModelPickerEl" class="settings-model-picker">
-                <button class="settings-model-trigger" @click="toggleDefaultModelPicker">
-                  <span class="settings-model-trigger-label">{{ defaultNewTabModelLabel }}</span>
-                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none" class="settings-model-chevron" :class="{ 'settings-model-chevron--open': defaultModelPickerOpen }">
-                    <path d="M2 4l3 3 3-3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
-                  </svg>
-                </button>
-                <div v-if="defaultModelPickerOpen" class="settings-model-dropdown">
-                  <ModelPicker
-                    ref="defaultModelPicker"
-                    :selected-provider-id="settings.defaultNewTabModel?.providerId ?? null"
-                    :selected-model-id="settings.defaultNewTabModel?.modelId ?? null"
-                    none-label="None (use last used)"
-                    :show-footer="false"
-                    @select="selectDefaultNewTabModel"
-                    @select-none="clearDefaultNewTabModel"
-                    @configure="closeDefaultModelPicker"
-                  />
+            <div class="settings-card-group" role="group" aria-labelledby="general-new-tabs-title">
+              <h3 id="general-new-tabs-title" class="settings-card-title">New tabs</h3>
+              <div class="settings-card">
+                <div class="settings-card-row">
+                  <div class="settings-card-text">
+                    <span id="general-default-model-label" class="settings-card-label">Default model</span>
+                    <p id="general-default-model-hint" class="settings-hint">A new tab starts with this model.</p>
+                  </div>
+                  <div ref="defaultModelPickerEl" class="settings-model-picker">
+                    <button
+                      class="settings-model-trigger"
+                      aria-labelledby="general-default-model-label general-default-model-value"
+                      aria-describedby="general-default-model-hint"
+                      @click="toggleDefaultModelPicker"
+                    >
+                      <span id="general-default-model-value" class="settings-model-trigger-label">{{ defaultNewTabModelLabel }}</span>
+                      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" class="settings-model-chevron" :class="{ 'settings-model-chevron--open': defaultModelPickerOpen }">
+                        <path d="M2 4l3 3 3-3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+                      </svg>
+                    </button>
+                    <div v-if="defaultModelPickerOpen" class="settings-model-dropdown">
+                      <ModelPicker
+                        ref="defaultModelPicker"
+                        :selected-provider-id="settings.defaultNewTabModel?.providerId ?? null"
+                        :selected-model-id="settings.defaultNewTabModel?.modelId ?? null"
+                        none-label="None (use last used)"
+                        :show-footer="false"
+                        @select="selectDefaultNewTabModel"
+                        @select-none="clearDefaultNewTabModel"
+                        @configure="closeDefaultModelPicker"
+                      />
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
 
-            <div class="settings-row">
-              <label class="settings-label">Check for updates</label>
-              <button
-                class="settings-toggle"
-                :class="{ 'settings-toggle--on': settings.checkForUpdates }"
-                @click="sbp('dez.model/settings/setCheckForUpdates', !settings.checkForUpdates)"
-              >
-                <span class="settings-toggle-knob" />
-              </button>
-            </div>
-
-            <div class="settings-row settings-row--end">
-              <button
-                class="settings-btn settings-btn--sm"
-                :disabled="checkingUpdates"
-                @click="manuallyCheckForUpdates()"
-              >
-                {{ checkingUpdates ? 'Checking…' : 'Check for updates' }}
-              </button>
-            </div>
-
-            <div class="settings-row">
-              <label class="settings-label">Dez folder</label>
-              <button class="settings-btn settings-btn--sm" @click="sbp('dez.controller/openAppFolder')">
-                Open Dez Folder
-              </button>
-            </div>
-
-            <!-- One header and one hint for both cleanups: the label of
-                 each button names its kind. -->
-            <div class="settings-group">
-              <span id="unreferenced-label" class="settings-label">Unreferenced files and apps</span>
-              <p class="settings-hint">
-                Removes old images, audio, video, and apps (with all their files) that no
-                conversation or prompt references.
-              </p>
-              <div class="unreferenced-buttons" role="group" aria-labelledby="unreferenced-label">
-                <button
-                  class="settings-btn settings-btn--sm unused-files-btn"
-                  :disabled="runningCleanup !== null"
-                  @click="deleteUnreferenced('files')"
-                >
-                  {{ CLEANUP_BUTTONS.files }}…
-                </button>
-                <button
-                  class="settings-btn settings-btn--sm unused-apps-btn"
-                  :disabled="runningCleanup !== null"
-                  @click="deleteUnreferenced('apps')"
-                >
-                  {{ CLEANUP_BUTTONS.apps }}…
-                </button>
+            <div class="settings-card-group" role="group" aria-labelledby="general-updates-title">
+              <h3 id="general-updates-title" class="settings-card-title">Updates</h3>
+              <div class="settings-card">
+                <div class="settings-card-row">
+                  <div class="settings-card-text">
+                    <span id="general-auto-update-label" class="settings-card-label">Check for updates automatically</span>
+                    <p id="general-auto-update-hint" class="settings-hint">
+                      Once a day, Dez asks GitHub for a newer version, and tells you when one is out.
+                    </p>
+                  </div>
+                  <button
+                    class="settings-toggle"
+                    :class="{ 'settings-toggle--on': settings.checkForUpdates }"
+                    role="switch"
+                    :aria-checked="settings.checkForUpdates"
+                    aria-labelledby="general-auto-update-label"
+                    aria-describedby="general-auto-update-hint"
+                    @click="sbp('dez.model/settings/setCheckForUpdates', !settings.checkForUpdates)"
+                  >
+                    <span class="settings-toggle-knob" />
+                  </button>
+                </div>
+                <!-- The version is what the check compares, so the button
+                     that checks now sits next to it. -->
+                <div class="settings-card-row">
+                  <div class="settings-card-text">
+                    <span id="general-version-label" class="settings-card-label">Current version</span>
+                    <p id="general-version-hint" class="settings-hint">Dez {{ appVersion }}</p>
+                  </div>
+                  <button
+                    class="settings-btn settings-btn--sm"
+                    :disabled="checkingUpdates"
+                    aria-describedby="general-version-hint"
+                    @click="manuallyCheckForUpdates()"
+                  >
+                    {{ checkingUpdates ? 'Checking…' : 'Check Now' }}
+                  </button>
+                </div>
               </div>
-              <div
-                v-if="runningCleanup !== null"
-                class="settings-progress"
-                role="progressbar"
-                :aria-label="`Looking for unreferenced ${runningCleanup.kind}`"
-                aria-valuemin="0"
-                aria-valuemax="100"
-                :aria-valuenow="Math.round(runningCleanup.progress * 100)"
-              >
-                <div class="settings-progress-fill" :style="{ width: `${runningCleanup.progress * 100}%` }" />
+            </div>
+
+            <div class="settings-card-group" role="group" aria-labelledby="general-storage-title">
+              <h3 id="general-storage-title" class="settings-card-title">Storage</h3>
+              <div class="settings-card">
+                <div class="settings-card-row">
+                  <div class="settings-card-text">
+                    <span id="general-folder-label" class="settings-card-label">Dez folder</span>
+                    <p id="general-folder-hint" class="settings-hint">Where Dez keeps your conversations, settings, and files.</p>
+                  </div>
+                  <button
+                    class="settings-btn settings-btn--sm"
+                    aria-describedby="general-folder-hint"
+                    @click="sbp('dez.controller/openAppFolder')"
+                  >
+                    Open Dez Folder
+                  </button>
+                </div>
+                <!-- One label and one hint for both cleanups: the label of
+                     each button names its kind. The bar of a cleanup that
+                     runs goes under the text and the buttons. -->
+                <div class="settings-card-row">
+                  <div class="settings-card-text">
+                    <span id="general-unreferenced-label" class="settings-card-label">Unreferenced files and apps</span>
+                    <p id="general-unreferenced-hint" class="settings-hint">
+                      Removes old images, audio, video, and apps (with all their files) that no
+                      conversation or prompt references.
+                    </p>
+                  </div>
+                  <div class="unreferenced-buttons" role="group" aria-labelledby="general-unreferenced-label">
+                    <button
+                      class="settings-btn settings-btn--sm unused-files-btn"
+                      :disabled="runningCleanup !== null"
+                      aria-describedby="general-unreferenced-hint"
+                      @click="deleteUnreferenced('files')"
+                    >
+                      {{ CLEANUP_BUTTONS.files }}…
+                    </button>
+                    <button
+                      class="settings-btn settings-btn--sm unused-apps-btn"
+                      :disabled="runningCleanup !== null"
+                      aria-describedby="general-unreferenced-hint"
+                      @click="deleteUnreferenced('apps')"
+                    >
+                      {{ CLEANUP_BUTTONS.apps }}…
+                    </button>
+                  </div>
+                  <div
+                    v-if="runningCleanup !== null"
+                    class="settings-progress"
+                    role="progressbar"
+                    :aria-label="`Looking for unreferenced ${runningCleanup.kind}`"
+                    aria-valuemin="0"
+                    aria-valuemax="100"
+                    :aria-valuenow="Math.round(runningCleanup.progress * 100)"
+                  >
+                    <div class="settings-progress-fill" :style="{ width: `${runningCleanup.progress * 100}%` }" />
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -512,8 +567,70 @@ function onOverlayClick(e: MouseEvent) {
   font-variant-numeric: tabular-nums;
 }
 
-/* The bar of a task that runs, drawn as the volume slider's track. */
+/* Settings › General: titled groups of boxed rows, as in the system
+   settings of macOS and GNOME. In the wide pane a short label is far from
+   its control; the box of a row and the line between two rows take the eye
+   from the label to its control. All text starts at one left edge, and all
+   controls end at one right edge. No card or row clips (`overflow`) or
+   makes a stacking context (a z-index, a transform, an opacity): either
+   would hide the dropdown of the default-model picker under the cards
+   below it. */
+.settings-card-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* The look of the group titles of Settings › Shortcuts. */
+.settings-card-title {
+  padding: 0 14px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-muted);
+}
+
+.settings-card {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+
+/* The text column keeps room for a label in a narrow window. The control
+   column takes the width of its control while there is room, and less in
+   a narrow window, where the picker shrinks to it (`max-width: 100%`).
+   (With `auto`, the fixed width of the picker would be the least width of
+   the column, and the picker would run out of its row.) */
+.settings-card-row {
+  display: grid;
+  grid-template-columns: minmax(100px, 1fr) minmax(0, max-content);
+  align-items: center;
+  gap: 10px 24px;
+  padding: 10px 14px;
+}
+
+.settings-card-row + .settings-card-row {
+  border-top: 1px solid var(--color-border);
+}
+
+.settings-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-card-label {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+/* The bar of a task that runs, drawn as the volume slider's track. In a
+   row, it goes under the text and the control. */
 .settings-progress {
+  grid-column: 1 / -1;
   height: 4px;
   border-radius: 2px;
   background: var(--color-border);
@@ -526,21 +643,22 @@ function onOverlayClick(e: MouseEvent) {
   transition: width 0.15s;
 }
 
-/* Left-aligned with the text above; the buttons stretch to the width of
-   the widest one. */
+/* The two cleanup buttons, one above the other, stretched to the width of
+   the wider one. */
 .unreferenced-buttons {
   display: flex;
   flex-direction: column;
-  align-self: flex-start;
   gap: 8px;
 }
 
 /* Searchable default-model picker (replaces the old native <select>). The
-   dropdown is absolutely positioned under the trigger and reuses ModelPicker. */
+   dropdown is absolutely positioned under the trigger and reuses ModelPicker.
+   A fixed width, so that its left edge does not follow the length of the
+   model name; it shrinks only in a narrow window. */
 .settings-model-picker {
   position: relative;
-  flex: 1;
-  max-width: 320px;
+  width: 260px;
+  max-width: 100%;
 }
 
 .settings-model-trigger {

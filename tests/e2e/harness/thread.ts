@@ -536,6 +536,17 @@ export async function openToasts (browser: E2EBrowser, variant?: ToastVariant): 
   ), variant ? `.toast-card--${variant}` : '.toast-card')
 }
 
+/** Closes every open toast, and waits until no card is left (a card that
+ *  closes stays in the DOM for its leave animation). A spec calls it so
+ *  that a test sees only the toasts that it causes, and so that a toast of
+ *  an earlier test does not catch a pointer click near the bottom right. */
+export async function closeToasts (browser: E2EBrowser): Promise<void> {
+  await browser.execute(() => {
+    document.querySelectorAll<HTMLElement>('.toast-card:not(.toast-card--closing) .toast-close').forEach((button) => button.click())
+  })
+  await waitForValue(browser, 'toasts closed', () => browser.execute(() => document.querySelectorAll('.toast-card').length), 0)
+}
+
 // The end of a stream rebuilds the editor, and when the view followed the
 // stream, it scrolls to the bottom one frame later
 // (`scrollViewToBottomAfterLayout`, `ThreadEditor.vue`). The rebuild asks

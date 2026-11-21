@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { startApp, type RunningApp } from './harness/app'
 import { ageApp, seedApp } from './harness/apps'
 import { consoleErrors, pointerClick, promptMessage, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
@@ -8,15 +8,15 @@ import { appFilePath, conversationFilePath, makeConversation, mediaTempDir, seed
 import { solidPng } from './harness/images'
 import { silentWav } from './harness/media'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { activeTabId, newTab, openToasts, sbpCall } from './harness/thread'
+import { activeTabId, closeToasts, newTab, openToasts, sbpCall } from './harness/thread'
 
-// Settings › General › Unreferenced files and apps, driven through the
-// real app. Each of its two buttons scans and shows the progress bar, a
-// prompt states the count and the size of what nothing uses (and names
-// each app), and a "Yes" deletes them. Delete Unreferenced Files scans the
-// stored files (pasted, dropped, and generated images and clips) and the
-// cache folder, and never deletes an app. Delete Unreferenced Apps scans
-// only the apps.
+// Settings › General › Storage › Unreferenced files and apps, driven
+// through the real app. Each of its two buttons scans and shows the
+// progress bar, a prompt states the count and the size of what nothing
+// uses (and names each app), and a "Yes" deletes them. Delete Unreferenced
+// Files scans the stored files (pasted, dropped, and generated images and
+// clips) and the cache folder, and never deletes an app. Delete
+// Unreferenced Apps scans only the apps.
 //
 // The seeded stored files, with what must happen to each one:
 // - an image that a saved conversation refers to: stays;
@@ -268,6 +268,12 @@ describe('Settings: delete unreferenced files and apps', () => {
     await sbpCall(browser, 'dez.model/settings/open', 'general')
     await waitFor(browser, '.unused-files-btn', 10_000)
     await recordRunSteps()
+  })
+
+  // The two buttons are at the bottom right of the dialog, where the
+  // toasts of an earlier test stack: one of them would catch the click.
+  beforeEach(async () => {
+    await closeToasts(browser)
   })
 
   afterEach(async (ctx) => {

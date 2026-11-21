@@ -11,7 +11,7 @@ import { colorDistance, decodedImage, pasteImage, pasteImageReference, reference
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendAnthropicReply, sendChatReply, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeConversationId, activeTabTitle, copySelection, docPos, docPosPoint, editorCaret, editorDoc, focusEditor, newTab, openToasts, pasteText, pickModel, pressRolePill, sbpCall, setCaret, threadSections, waitForThread } from './harness/thread'
+import { activeConversationId, activeTabTitle, closeToasts, copySelection, docPos, docPosPoint, editorCaret, editorDoc, focusEditor, newTab, openToasts, pasteText, pickModel, pressRolePill, sbpCall, setCaret, threadSections, waitForThread } from './harness/thread'
 
 // Images in a conversation, driven through the real app: a paste or a drop
 // stores the file and puts its reference, with a new image id, in the doc,
@@ -328,15 +328,6 @@ describe('images', () => {
     }, text)
   }
 
-  // Closes every toast, so that a test sees only the toasts it causes (the
-  // non-image toast of one drop test stays open into the next).
-  async function closeToasts (): Promise<void> {
-    await browser.execute(() => {
-      document.querySelectorAll<HTMLElement>('.toast-card:not(.toast-card--closing) .toast-close').forEach((button) => button.click())
-    })
-    await waitForValue(browser, 'toasts closed', () => browser.execute(() => document.querySelectorAll('.toast-card').length), 0)
-  }
-
   // A viewport point just inside the char after doc position `pos`, on the
   // middle of its line: CodeMirror maps it back to `pos`.
   async function docPoint (pos: number): Promise<Point> {
@@ -425,7 +416,8 @@ describe('images', () => {
 
   beforeEach(async () => {
     await resetConsoleErrors(browser)
-    await closeToasts()
+    // The non-image toast of one drop test stays open into the next.
+    await closeToasts(browser)
   })
 
   afterEach(async (ctx) => {
