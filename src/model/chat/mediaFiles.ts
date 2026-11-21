@@ -75,14 +75,22 @@ export function canonicalMediaType(type: string): string {
  *  drop, for the text that tells the user. */
 export const CLIP_FILE_EXTENSIONS: readonly string[] = Object.keys(MEDIA_TYPE_BY_EXTENSION)
 
+/** The media type of a clip file of `extension` (any case), as Dez writes
+ *  it into a tag: `audio/mpeg` for `mp3`. Null for an extension of a file
+ *  that Dez does not store as a clip. */
+export function clipMediaTypeOfExtension(extension: string): string | null {
+  const name = extension.toLowerCase()
+  return Object.hasOwn(MEDIA_TYPE_BY_EXTENSION, name) ? MEDIA_TYPE_BY_EXTENSION[name] : null
+}
+
 /** The kind and the media type of a file that the user pastes or drops,
  *  from its type as the system gives it (can be empty or an alias), else
  *  from the extension of its name. Null for a file that Dez does not store
  *  as a clip. */
 export function storableClip(type: string, fileName: string): { kind: MediaTagKind, type: string } | null {
-  const extension = mediaFileExtension(type, null) ?? /\.([A-Za-z0-9]+)$/.exec(fileName)?.[1].toLowerCase()
-  if (extension === undefined || !Object.hasOwn(MEDIA_TYPE_BY_EXTENSION, extension)) return null
-  const mediaType = MEDIA_TYPE_BY_EXTENSION[extension]
+  const extension = mediaFileExtension(type, null) ?? /\.([A-Za-z0-9]+)$/.exec(fileName)?.[1]
+  const mediaType = extension === undefined ? null : clipMediaTypeOfExtension(extension)
+  if (mediaType === null) return null
   return { kind: mediaType.startsWith('audio/') ? 'audio' : 'video', type: mediaType }
 }
 

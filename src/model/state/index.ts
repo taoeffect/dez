@@ -234,10 +234,13 @@ function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
   if (imageOutputBody) clone.imageOutputBody = cloneJsonObject(imageOutputBody)
   if (audioOutputs) clone.audioOutputs = audioOutputs.map((entry) => ({ ...entry, body: cloneJsonObject(entry.body) }))
   if (mediaApi) {
-    const { format, modelRequestBodies } = mediaApi
+    const { format, modelRequestBodies, modelEntryPaths, ...uncopiedMediaApi } = mediaApi
+    // The same compile guard as above.
+    uncopiedMediaApi satisfies Record<string, never>
     clone.mediaApi = {
       format,
       ...(modelRequestBodies && { modelRequestBodies: modelRequestBodies.map((part) => ({ ...part, body: cloneJsonObject(part.body) })) }),
+      ...(modelEntryPaths && { modelEntryPaths: { ...modelEntryPaths } }),
     }
   }
   if (settings) {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { ExplainedError } from '../../utils/errorText'
 import { base64ToBytes, bytesToBase64 } from '../../utils/base64'
 import type { NativeHttpResponseHead } from '../../utils/protocol/nativeHttp'
+import type { MediaEntryPaths } from './config'
 import { ClipNotMadeError, UnusableAnswerError } from './errors'
 import { MEDIA_FORMATS, NO_VIDEO_LENGTH_MESSAGE, type ClipFormat, type ClipQuoteFormat, type ImageFormat, type InputClipPart } from './mediaFormats'
 import { effectiveParameterValues, type ModelParameter, type ParameterValues } from './modelParameters'
@@ -42,9 +43,10 @@ function withoutLabels(parameters: ModelParameter[]): Omit<ModelParameter, 'labe
   return parameters.map(({ label: _label, ...parameter }) => parameter)
 }
 
-// The parameters of a model with no labels.
-function parameters(format: ClipFormat, kind: ClipKind, entry: unknown, mediaEntry?: unknown): Omit<ModelParameter, 'label'>[] {
-  return withoutLabels(format.parameters(kind, entry, mediaEntry))
+// The parameters of a model with no labels; `paths` as the provider's
+// `mediaApi.modelEntryPaths` give them.
+function parameters(format: ClipFormat, kind: ClipKind, entry: unknown, mediaEntry?: unknown, paths: MediaEntryPaths = {}): Omit<ModelParameter, 'label'>[] {
+  return withoutLabels(format.parameters(kind, entry, mediaEntry, paths))
 }
 
 // Two input images, and each one as the data URL that a request sends.
@@ -653,7 +655,7 @@ describe('venice image rules', () => {
 // https://docs.venice.ai/api-reference/endpoint/video/queue
 describe('venice clip rules', () => {
   const rules = (kind: MediaKind, id: string, constraints: Record<string, unknown> = {}) =>
-    MEDIA_FORMATS.venice.clipRules?.(kind, { id, model_spec: { constraints: { model_type: 'image-to-video', ...constraints } } }, undefined)
+    MEDIA_FORMATS.venice.clipRules?.(kind, { id, model_spec: { constraints: { model_type: 'image-to-video', ...constraints } } }, undefined, {})
   const VIDEO_TYPES = ['video/mp4', 'video/quicktime']
   const AUDIO_TYPES = ['audio/wav', 'audio/mpeg']
   const MB = 1024 ** 2
@@ -717,13 +719,13 @@ describe('venice clip rules', () => {
   it('takes one audio clip of the types and the length of the voice changer\'s entry, at most 25 MB', () => {
     const entry = { id: 'elevenlabs-voice-changer', model_spec: { voice_changer: true, accepted_audio_formats: ['mp3', 'wav', 'ogg', 'flac'], max_source_audio_duration_seconds: 300 } }
 
-    expect(MEDIA_FORMATS.venice.clipRules?.('voiceChange', entry, undefined)).toStrictEqual({
+    expect(MEDIA_FORMATS.venice.clipRules?.('voiceChange', entry, undefined, {})).toStrictEqual({
       audio: { use: 'source', maxClips: 1, maxSeconds: 300, maxBytes: 25 * MB, types: ['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/opus'] },
     })
   })
 
   it('takes one audio clip of a type that the transcription endpoint reads and Dez stores', () => {
-    expect(MEDIA_FORMATS.venice.clipRules?.('transcription', { id: 'openai/whisper-large-v3', model_spec: {} }, undefined)).toStrictEqual({
+    expect(MEDIA_FORMATS.venice.clipRules?.('transcription', { id: 'openai/whisper-large-v3', model_spec: {} }, undefined, {})).toStrictEqual({
       audio: { use: 'source', maxClips: 1, types: ['audio/wav', 'audio/flac', 'audio/mp4', 'audio/aac', 'audio/mpeg', 'audio/ogg'] },
     })
   })
@@ -1220,6 +1222,35 @@ describe('openrouter clip parameters', () => {
     expect(parameters(openRouterClips, 'tts', entry)).toStrictEqual([{ name: 'voice', options: [], custom: true }])
   })
 
+  // The format lists of a provider whose entries tell them, at the paths
+  // of its config (TrustedRouter's live lists, 2026-11-20).
+  const SPEECH_PATHS = { speechFormats: 'own.speech.formats' }
+  const formatRow = (formats: unknown) => parameters(openRouterClips, 'tts', { id: 'm', own: { speech: { formats } } }, undefined, SPEECH_PATHS)
+    .filter((parameter) => parameter.name === 'response_format')
+
+  it.each([
+    ['mp3 and pcm', ['pcm', 'mp3'], 'mp3'],
+    ['only mp3', ['mp3'], 'mp3'],
+    ['pcm and wav', ['pcm', 'wav'], 'wav'],
+    ['only wav', ['wav'], 'wav'],
+    ['only pcm', ['pcm'], 'pcm'],
+  ])('gives a speech model whose entry lists %s a Format row of them, with mp3, else wav, else the first as the default', (_name, formats, expected) => {
+    expect(formatRow(formats)).toStrictEqual([{ name: 'response_format', options: formats, default: expected }])
+  })
+
+  it('leaves the formats that Dez does not store out of the Format row, and gives no row when none is left or the entry lists none', () => {
+    expect([formatRow(['flac', 'wav', 'opus']), formatRow(['flac', 'opus']), formatRow(null), formatRow(undefined)]).toStrictEqual([
+      [{ name: 'response_format', options: ['wav'], default: 'wav' }],
+      [],
+      [],
+      [],
+    ])
+  })
+
+  it('gives a speech model no Format row when the provider tells no path of the formats', () => {
+    expect(parameters(openRouterClips, 'tts', { id: 'm', own: { speech: { formats: ['wav'] } } }).map((parameter) => parameter.name)).toStrictEqual(['voice'])
+  })
+
   it('gives a video model the lengths and resolutions of its video list entry, lowest first and as the default, and no default aspect ratio', () => {
     const mediaEntry = {
       id: 'x-ai/grok-imagine-video-1.5-lite',
@@ -1440,7 +1471,7 @@ describe('openrouter image rules', () => {
 // The docs tell no count, length, type, size, or prompt name of a clip.
 // https://openrouter.ai/docs/guides/overview/multimodal/video-generation
 describe('openrouter clip rules', () => {
-  const rules = (kind: MediaKind, inputs: unknown) => MEDIA_FORMATS.openrouter.clipRules?.(kind, { id: 'm', architecture: { input_modalities: inputs } }, undefined)
+  const rules = (kind: MediaKind, inputs: unknown) => MEDIA_FORMATS.openrouter.clipRules?.(kind, { id: 'm', architecture: { input_modalities: inputs } }, undefined, {})
 
   it.each([
     ['audio', ['text', 'image', 'audio'], { audio: { use: 'reference', urlOnly: true } }],
@@ -1461,6 +1492,29 @@ describe('openrouter clip rules', () => {
   // https://openrouter.ai/docs/api/api-reference/stt/create-transcription
   it('takes one audio clip of at most 25 MB as the file of a transcription', () => {
     expect(rules('transcription', ['audio'])).toStrictEqual({
+      audio: { use: 'source', maxClips: 1, maxBytes: 25 * 1024 ** 2, types: ['audio/wav', 'audio/mpeg', 'audio/flac', 'audio/mp4', 'audio/ogg', 'audio/aac'] },
+    })
+  })
+
+  // The live lists of a provider whose entries tell them, at the paths of
+  // its config (TrustedRouter, 2026-11-20).
+  const TRANSCRIPTION_PATHS = { transcriptionFormats: 'own.stt.formats', transcriptionMaxBytes: 'own.stt.max_bytes' }
+  const transcriptionRules = (stt: Record<string, unknown>, paths: MediaEntryPaths = TRANSCRIPTION_PATHS) =>
+    MEDIA_FORMATS.openrouter.clipRules?.('transcription', { id: 'm', own: { stt } }, undefined, paths)
+
+  it('takes the file types and the most bytes that the entry of a transcription model tells, at the paths of the provider', () => {
+    expect(transcriptionRules({ formats: ['mp3', 'wav'], max_bytes: 7340032 })).toStrictEqual({
+      audio: { use: 'source', maxClips: 1, maxBytes: 7340032, types: ['audio/mpeg', 'audio/wav'] },
+    })
+  })
+
+  it.each([
+    ['no paths', { formats: ['mp3', 'wav'], max_bytes: 7340032 }, {}],
+    ['no values', {}, TRANSCRIPTION_PATHS],
+    ['values of another form', { formats: ['pcm', 'webm', 7], max_bytes: '7 MiB' }, TRANSCRIPTION_PATHS],
+    ['no positive whole size', { formats: 'mp3', max_bytes: 0.5 }, TRANSCRIPTION_PATHS],
+  ])('keeps the rules of the docs for a transcription model with %s', (_name, stt, paths) => {
+    expect(transcriptionRules(stt, paths)).toStrictEqual({
       audio: { use: 'source', maxClips: 1, maxBytes: 25 * 1024 ** 2, types: ['audio/wav', 'audio/mpeg', 'audio/flac', 'audio/mp4', 'audio/ogg', 'audio/aac'] },
     })
   })
@@ -1620,6 +1674,12 @@ describe('openrouter clip requests', () => {
     })
   })
 
+  it('asks for the speech format of the Format row', () => {
+    expect(openRouterClips.request('tts', OPENROUTER_URL, 'qwen/qwen3-tts', { prompt: 'Hi', images: [], values: { voice: 'aiden', response_format: 'wav' } }).body).toStrictEqual({
+      voice: 'aiden', model: 'qwen/qwen3-tts', input: 'Hi', response_format: 'wav',
+    })
+  })
+
   it('asks for a video from a text with each value as its request field, and no frame', () => {
     const values = { duration: 1, resolution: '480p', generate_audio: false }
 
@@ -1702,7 +1762,7 @@ describe('openrouter clip requests', () => {
   // `runway/aleph-2`: `supported_durations: null` in the video list.
   it('sends a video request with no length for a model of the video list that tells no lengths', () => {
     const entry = { id: 'runway/aleph-2', supported_durations: null, supported_resolutions: ['720p'], supported_frame_images: null }
-    const values = effectiveParameterValues(openRouterClips.parameters('video', undefined, entry))
+    const values = effectiveParameterValues(openRouterClips.parameters('video', undefined, entry, {}))
     const clips: InputClipPart[] = [{ kind: 'video', use: 'reference', url: 'https://cdn.example.com/v.mp4' }]
 
     expect(values).toStrictEqual({ resolution: '720p', images_as: 'references' })

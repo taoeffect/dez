@@ -240,7 +240,7 @@ describe('modelUsage', () => {
 
       for (const { format, entry } of speechModels) {
         const clipFormat = MEDIA_FORMATS[format].clips as ClipFormat
-        const model: ModelInfo = { id: entry.id, name: 'M', provider: 'p', request: 'tts', parameters: clipFormat.parameters('tts', entry, undefined) }
+        const model: ModelInfo = { id: entry.id, name: 'M', provider: 'p', request: 'tts', parameters: clipFormat.parameters('tts', entry, undefined, {}) }
         let values: ParameterValues | null
         try {
           values = parameterValuesArgument(model, { parameters: JSON.stringify({ voice: 'af_bella' }) })
@@ -352,7 +352,7 @@ describe('modelUsage', () => {
         for (const kind of ['video', 'imageToVideo'] as const) {
           for (const { format, id, entry, mediaEntry, values } of formatModels) {
             const images = inputImageRulesFor(MEDIA_FORMATS[format].imageRules?.(kind, entry, mediaEntry), values)
-            const clipRules = MEDIA_FORMATS[format].clipRules?.(kind, entry, mediaEntry)
+            const clipRules = MEDIA_FORMATS[format].clipRules?.(kind, entry, mediaEntry, {})
             const usage = modelUsage({ id, name: 'M', provider: 'p', request: kind, ...(images && { images }), ...(clipRules && { clips: clipRules }) }, NO_FACTS)
             const clips = (['audio', 'video'] as const).flatMap((clipKind) => {
               const use = clipRules?.[clipKind]?.use

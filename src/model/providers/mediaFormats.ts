@@ -6,8 +6,8 @@ import { responseContentType, type NativeHttpResponseHead } from '../../utils/pr
 import type { ImageSize } from '../chat/imageDrawing'
 import { imageMediaType } from '../chat/images'
 import type { MediaTagKind } from '../chat/mediaTags'
-import { mediaFileExtension } from '../chat/mediaFiles'
-import { trimTrailingSlashes, type MediaApiFormatId } from './config'
+import { clipMediaTypeOfExtension, mediaFileExtension } from '../chat/mediaFiles'
+import { trimTrailingSlashes, type MediaApiFormatId, type MediaEntryPaths } from './config'
 import type { ClipUse, InputClipRules } from './clipInputs'
 import type { InputImageRules } from './clipImages'
 import type { ClipTextRules } from './clipText'
@@ -212,10 +212,11 @@ export interface ClipFormat {
   // What a request to a model of `kind` can set, from the model's entry in
   // the provider's model list (`entry`) and in a list of the media API
   // (`MediaFormat.modelLists`, `mediaEntry`). Each one is undefined when
-  // its list does not have the model. The name of a parameter is the name
-  // of its request field, but for one that `request` reads itself
-  // (OpenRouter's `images_as`).
-  parameters(kind: ClipKind, entry: unknown, mediaEntry: unknown): ModelParameter[]
+  // its list does not have the model. `paths` are where `entry` tells
+  // more (`mediaApi.modelEntryPaths` of the provider's config; `{}` with
+  // none). The name of a parameter is the name of its request field, but
+  // for one that `request` reads itself (OpenRouter's `images_as`).
+  parameters(kind: ClipKind, entry: unknown, mediaEntry: unknown, paths: MediaEntryPaths): ModelParameter[]
   // What a model of `kind` takes as the text of a request, from the same
   // two entries; undefined when the API tells nothing about it.
   textRules?(kind: ClipKind, entry: unknown, mediaEntry: unknown): ClipTextRules | undefined
@@ -284,9 +285,10 @@ export interface MediaFormat {
   // Undefined for a model that takes none, as far as the API tells.
   imageRules?(kind: MediaKind, entry: unknown, mediaEntry: unknown): InputImageRules | undefined
   // What a model of `kind` takes as input clips, from the same two
-  // entries. Undefined for a model that takes none, as far as the API
-  // tells.
-  clipRules?(kind: MediaKind, entry: unknown, mediaEntry: unknown): InputClipRules | undefined
+  // entries, and the paths of the facts that `entry` tells (as for
+  // `ClipFormat.parameters`). Undefined for a model that takes none, as
+  // far as the API tells.
+  clipRules?(kind: MediaKind, entry: unknown, mediaEntry: unknown, paths: MediaEntryPaths): InputClipRules | undefined
   // The list price of a model of `kind` (`ModelInfo.price`), from the same
   // two entries, for the default values of its parameters (`values`).
   // Undefined when the entries tell no price, or none that Dez can read
@@ -1314,6 +1316,52 @@ function isStoredImageFormat(format: OptionValue): boolean {
   return typeof format === 'string' && imageMediaType(`.${format.toLowerCase()}`) !== null
 }
 
+// The values of `response_format` of OpenRouter's speech request whose
+// answer Dez stores: a file (`mp3`, `wav`), or raw PCM (`pcm`), of which
+// Dez makes a WAV file (`pcmSampleBits`).
+// https://openrouter.ai/docs/api/api-reference/tts/create-speech
+const OPENROUTER_STORED_SPEECH_FORMATS: readonly OptionValue[] = ['mp3', 'wav', 'pcm']
+
+// The Format row of a speech model whose entry lists the formats that it
+// makes, at the provider's `paths.speechFormats`: the listed formats that
+// Dez stores. mp3 is the default when the list has it (the smallest file),
+// else wav (a file that plays), else the first. None with no list, or with
+// no stored format: the request then asks for mp3 (`clips.request`).
+// OpenRouter's entries list no formats, so its config has no path.
+function openRouterSpeechFormat(entry: unknown, paths: MediaEntryPaths): ModelParameter[] {
+  if (paths.speechFormats === undefined) return []
+  const formats = listedValues(valueAtPath(entry, paths.speechFormats)).filter((format) => OPENROUTER_STORED_SPEECH_FORMATS.includes(format))
+  const preferred = formats.includes('mp3') ? 'mp3' : formats.includes('wav') ? 'wav' : formats[0]
+  return optionsParameter('response_format', 'Format', formats, preferred)
+}
+
+// The audio clip that an OpenRouter transcription model takes: one, as a
+// form file. The docs: "The format is derived from the filename extension
+// or the file part content type. Max 25 MB"; the types are those of the
+// docs' list that Dez stores ("Supported formats vary by provider"). An
+// entry can tell its own file formats and size at the provider's `paths`
+// (`transcriptionFormats`, a list of extension names such as `mp3`;
+// `transcriptionMaxBytes`, a positive whole number); a value of another
+// form counts as none. With a list that has `wav`, a clip of another type
+// goes as a WAV copy (`needsWavCopy`).
+// https://openrouter.ai/docs/api/api-reference/stt/create-transcription
+function openRouterTranscriptionRules(entry: unknown, paths: MediaEntryPaths): InputClipRules {
+  const names = paths.transcriptionFormats === undefined ? [] : listedValues(valueAtPath(entry, paths.transcriptionFormats))
+  const listedTypes = names.flatMap((name) => {
+    const type = typeof name === 'string' ? clipMediaTypeOfExtension(name) : null
+    return type?.startsWith('audio/') ? [type] : []
+  })
+  const maxBytes = paths.transcriptionMaxBytes === undefined ? undefined : valueAtPath(entry, paths.transcriptionMaxBytes)
+  return {
+    audio: {
+      use: 'source',
+      maxClips: 1,
+      maxBytes: typeof maxBytes === 'number' && Number.isSafeInteger(maxBytes) && maxBytes > 0 ? maxBytes : 25 * 1024 ** 2,
+      types: listedTypes.length > 0 ? [...new Set(listedTypes)] : ['audio/wav', 'audio/mpeg', 'audio/flac', 'audio/mp4', 'audio/ogg', 'audio/aac'],
+    },
+  }
+}
+
 // The reference images that an OpenRouter image model takes: the range of
 // `input_references` in its entry of the image list (`{ type: 'range',
 // min, max }`, a count of images). A model with no such field takes none
@@ -1655,7 +1703,7 @@ const openRouterFormat: MediaFormat = {
     return [{ url: `${base}/images/models` }, { url: `${base}/videos/models` }]
   },
   clips: {
-    parameters: (kind, entry, mediaEntry) => {
+    parameters: (kind, entry, mediaEntry, paths) => {
       switch (kind) {
         case 'tts': {
           // `voice` is a text for every model ("Voice identifier
@@ -1677,7 +1725,7 @@ const openRouterFormat: MediaFormat = {
           // https://openrouter.ai/docs/guides/overview/multimodal/tts
           // https://openrouter.ai/blog/announcements/elevenlabs-on-openrouter/
           const voices = listedValues(valueAtPath(entry, 'supported_voices'))
-          return optionsParameter('voice', 'Voice', voices, voices[0], true)
+          return [...optionsParameter('voice', 'Voice', voices, voices[0], true), ...openRouterSpeechFormat(entry, paths)]
         }
         case 'video':
         case 'imageToVideo': {
@@ -1710,16 +1758,20 @@ const openRouterFormat: MediaFormat = {
     request: (kind, baseUrl, modelId, { prompt, images, clips = [], values }) => {
       const base = trimTrailingSlashes(baseUrl)
       switch (kind) {
-        case 'tts':
+        case 'tts': {
           // The answer is the audio. The default format is raw PCM, which
-          // no player plays, so the request asks for mp3. A few models make
-          // only PCM (Gemini TTS, HeyGen Voice) and answer 400 to this; no
-          // field of a model entry tells which, so the provider's config
+          // no player plays, so the request asks for mp3, or the format of
+          // the model's Format row (`openRouterSpeechFormat`), last in the
+          // body as `mp3` was before the row came. A few models make only
+          // PCM (Gemini TTS, HeyGen Voice) and answer 400 to mp3; no field
+          // of an OpenRouter entry tells which, so the provider's config
           // names them and gives them `pcm` in place of `mp3`
           // (`mediaApi.modelRequestBodies`), and the refusal of a new one
           // sends the request again with `pcm` (`refusalBody`).
           // https://openrouter.ai/docs/guides/overview/multimodal/tts
-          return { url: `${base}/audio/speech`, body: { ...values, model: modelId, input: prompt, response_format: 'mp3' } }
+          const { response_format: format = 'mp3', ...fields } = values
+          return { url: `${base}/audio/speech`, body: { ...fields, model: modelId, input: prompt, response_format: format } }
+        }
         case 'video':
         case 'imageToVideo': {
           // A request with no length gets the provider's default length,
@@ -1728,12 +1780,15 @@ const openRouterFormat: MediaFormat = {
           // the list did not load) gets no request. Such a model has no
           // `images_as` value either: only a model of the loaded video list
           // has that parameter, and it always has a default.
-          // A model of the list that tells no lengths
-          // (`supported_durations: null`: the models that change a video
-          // of the user, such as `runway/aleph-2`) takes no length, so its
-          // request goes with none: `duration` is no required field of
-          // the request, and the pages of these models send none. Its
-          // price is then unknown. Checked 2026-11-15.
+          // A model of the list whose entry tells no lengths
+          // (`supported_durations` null or absent) takes no length, so its
+          // request goes with none, at the provider's default length:
+          // `duration` is no required field of the request. Its price is
+          // then unknown. OpenRouter's models that change a video of the
+          // user (`runway/aleph-2`; their pages send no length) are such
+          // models (checked 2026-11-15), and so is every model of a provider
+          // whose video list tells only the names of the fields that a
+          // model takes (`supported_parameters`; seen 2026-11-20).
           // https://openrouter.ai/docs/api/api-reference/video-generation/create-videos
           // https://openrouter.ai/runway/aleph-2/llms.txt
           // The images are frames of the video (`frame_images`) or
@@ -1860,16 +1915,11 @@ const openRouterFormat: MediaFormat = {
   // input_references[0].audio_url.url: Only HTTPS URLs are allowed";
   // `video_url` the same, 2026-11-11). The docs tell no count, length,
   // type, size, or prompt name, so the provider checks them.
-  // A transcription model takes one audio clip as a form file: "The
-  // format is derived from the filename extension or the file part
-  // content type. Max 25 MB". The formats are those of the docs' list
-  // that Dez stores ("Supported formats vary by provider").
+  // A transcription model takes one audio clip as a form file
+  // (`openRouterTranscriptionRules`).
   // https://openrouter.ai/docs/guides/overview/multimodal/video-generation
-  // https://openrouter.ai/docs/api/api-reference/stt/create-transcription
-  clipRules: (kind, entry) => {
-    if (kind === 'transcription') {
-      return { audio: { use: 'source', maxClips: 1, maxBytes: 25 * 1024 ** 2, types: ['audio/wav', 'audio/mpeg', 'audio/flac', 'audio/mp4', 'audio/ogg', 'audio/aac'] } }
-    }
+  clipRules: (kind, entry, _mediaEntry, paths) => {
+    if (kind === 'transcription') return openRouterTranscriptionRules(entry, paths)
     if (kind !== 'video' && kind !== 'imageToVideo') return undefined
     const inputs = listedValues(valueAtPath(entry, 'architecture.input_modalities'))
     const rules: InputClipRules = {

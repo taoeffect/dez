@@ -1084,6 +1084,7 @@ describe('dez.model/customProviders/save', () => {
       models: [{ id: 'm', thinking: false, contextWindow: 8192 }],
       fetchModels: true,
       modelThinking: { path: 'caps.thinks', missing: false },
+      modelOutputs: { path: 'arch.out', values: { image: { outputs: ['image'], request: 'image', exclusive: true } } },
       modelContextWindow: { paths: ['limits.window'] },
       modelImageLimit: { paths: ['limits.images'] },
       modelMessageImageLimit: { paths: ['limits.imagesPerMessage'] },
@@ -1093,7 +1094,11 @@ describe('dez.model/customProviders/save', () => {
         { key: 'plain', label: 'Plain', type: 'boolean', default: false, bodyPath: 'plain' },
       ],
       thinking: {},
-      mediaApi: { format: 'openrouter', modelRequestBodies: [{ request: 'tts', modelIdPrefix: 'heygen/', body: { response_format: 'pcm' } }] },
+      mediaApi: {
+        format: 'openrouter',
+        modelRequestBodies: [{ request: 'tts', modelIdPrefix: 'heygen/', body: { response_format: 'pcm' } }],
+        modelEntryPaths: { speechFormats: 'own.speech.formats', transcriptionMaxBytes: 'own.max_bytes' },
+      },
     }
     const saved = structuredClone(config)
 
@@ -1102,6 +1107,7 @@ describe('dez.model/customProviders/save', () => {
     Object.assign(config.modelThinking ?? {}, { path: 'changed' })
     Object.assign(config.settings?.[0].modelSupport ?? {}, { path: 'changed' })
     Object.assign(config.mediaApi?.modelRequestBodies?.[0].body ?? {}, { response_format: 'changed' })
+    Object.assign(config.mediaApi?.modelEntryPaths ?? {}, { speechFormats: 'changed' })
     config.modelContextWindow?.paths.push('changed')
     config.modelImageLimit?.paths.push('changed')
     config.modelMessageImageLimit?.paths.push('changed')

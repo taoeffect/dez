@@ -1307,6 +1307,8 @@ describe('provider models', () => {
           // A JSON key is a text: `true` names the boolean value.
           voice: { outputs: ['audio'], request: 'music', requestBy: { path: 'spec.changer', values: { true: 'none' } } },
           priced: { outputs: ['image'], requiredPath: 'price.image' },
+          // Its request wins over chat, and only its outputs count.
+          only: { outputs: ['image'], request: 'image', exclusive: true },
           embed: { outputs: [] },
         },
       },
@@ -1315,6 +1317,7 @@ describe('provider models', () => {
       data: [
         { id: 'string', arch: { out: 'video' } },
         { id: 'chat-wins', arch: { out: ['image', 'text'] } },
+        { id: 'exclusive-wins', arch: { out: ['text', 'only', 'video'] } },
         { id: 'first-kind', arch: { out: ['video', 'edit', 'gen'] } },
         { id: 'union', arch: { out: ['video', 'image', 'video'] } },
         { id: 'skips-unknown', arch: { out: ['speech', 7, 'gen'] } },
@@ -1341,6 +1344,7 @@ describe('provider models', () => {
     expect(models).toStrictEqual([
       listed('string', { outputs: ['video'], request: 'none' }),
       listed('chat-wins', { outputs: ['text', 'image'], request: 'chat' }),
+      listed('exclusive-wins', { outputs: ['image'], request: 'image' }),
       listed('first-kind', { outputs: ['image', 'video'], request: 'imageEdit' }),
       listed('union', { outputs: ['image', 'video'], request: 'none' }),
       listed('skips-unknown', { outputs: ['image'], request: 'image' }),
@@ -1516,12 +1520,15 @@ describe('provider models', () => {
       ['text-audio', ['text'], 'chat'],
       ['speech-to-text', ['text'], 'transcription'],
     ])
-    // TrustedRouter (checked live 2026-11-19): only text models stay, a
-    // model that writes text and images is a text model, and an entry with
-    // no chat route takes no request.
+    // TrustedRouter (checked live 2026-11-20): image, speech, transcription,
+    // and video models take the media API; a model that writes images and
+    // text is an image model, in either order and with or without a chat
+    // route (the two Gemini image models); embedding and decision models
+    // are left out; and an entry with no chat route takes no request.
     expect(kinds('trustedrouter', [
       { id: 'text', architecture: { output_modalities: ['text'] } },
-      { id: 'text-image', architecture: { output_modalities: ['text', 'image'] } },
+      { id: 'image-text', architecture: { output_modalities: ['image', 'text'] }, trustedrouter: { supports_chat: false } },
+      { id: 'text-image', architecture: { output_modalities: ['text', 'image'] }, trustedrouter: { supports_chat: true } },
       { id: 'image', architecture: { output_modalities: ['image'] } },
       { id: 'speech', architecture: { output_modalities: ['speech'] } },
       { id: 'speech-to-text', architecture: { output_modalities: ['transcription'] } },
@@ -1533,7 +1540,12 @@ describe('provider models', () => {
       { id: 'chat-text', architecture: { output_modalities: ['text'] }, trustedrouter: { supports_chat: true } },
     ])).toEqual([
       ['text', ['text'], 'chat'],
-      ['text-image', ['text'], 'chat'],
+      ['image-text', ['image'], 'image'],
+      ['text-image', ['image'], 'image'],
+      ['image', ['image'], 'image'],
+      ['speech', ['audio'], 'tts'],
+      ['speech-to-text', ['text'], 'transcription'],
+      ['video', ['video'], 'video'],
       ['embed-text', ['text'], 'none'],
       ['chat-text', ['text'], 'chat'],
     ])

@@ -144,7 +144,8 @@ function typeRequest(model: Record<string, unknown>, { request, requestBy }: Mod
 // them, such as OpenRouter's `architecture.output_modalities`). Types that
 // `values` does not name are skipped, as is a type whose `requiredPath` has
 // no value in the entry (or null); with no known type, all stay unknown.
-// The outputs are the union of the known types' outputs. The request kind is
+// When a known type is `exclusive`, only the exclusive types count. The
+// outputs are the union of the counted types' outputs. The request kind is
 // `chat` when one type gives it (`typeRequest`), so an image+text model
 // stays a chat model; else the first other kind in list order; else `none`.
 export function modelOutputsAndRequest(model: Record<string, unknown>, mapping: ModelOutputsConfig | undefined): Pick<ModelCapabilities, 'outputs' | 'request'> {
@@ -160,9 +161,11 @@ export function modelOutputsAndRequest(model: Record<string, unknown>, mapping: 
     .filter((entry) => entry.requiredPath === undefined || hasValueAtPath(model, entry.requiredPath))
   if (known.length === 0) return {}
 
-  const kinds = known.map((entry) => typeRequest(model, entry))
+  const exclusive = known.filter((entry) => entry.exclusive)
+  const counted = exclusive.length > 0 ? exclusive : known
+  const kinds = counted.map((entry) => typeRequest(model, entry))
   return {
-    outputs: normalizeOutputs(known.flatMap((entry) => entry.outputs)),
+    outputs: normalizeOutputs(counted.flatMap((entry) => entry.outputs)),
     request: kinds.includes('chat') ? 'chat' : kinds.find((kind) => kind !== 'none') ?? 'none',
   }
 }

@@ -189,7 +189,7 @@ describe('provider config schema', () => {
         path: 'arch.out',
         values: {
           text: { outputs: ['text'], request: 'chat' },
-          image: { outputs: ['image'], requiredPath: 'price.image' },
+          image: { outputs: ['image'], requiredPath: 'price.image', exclusive: true },
           // The request kind depends on a second value of the entry.
           video: { outputs: ['video'], requestBy: { path: 'spec.kind', values: { 'text-to-video': 'video', video: 'videoToVideo' } } },
           asr: { outputs: ['text'], request: 'transcription' },
@@ -203,7 +203,11 @@ describe('provider config schema', () => {
       modelImageLimit: { paths: ['caps.maxImages'] },
       modelMessageImageLimit: { paths: ['caps.imagesPerMessage'] },
       imageOutputBody: { modalities: ['image', 'text'] },
-      mediaApi: { format: 'openrouter', modelRequestBodies: [{ request: 'tts', modelIdPrefix: 'heygen/', body: { response_format: 'pcm' } }] },
+      mediaApi: {
+        format: 'openrouter',
+        modelRequestBodies: [{ request: 'tts', modelIdPrefix: 'heygen/', body: { response_format: 'pcm' } }],
+        modelEntryPaths: { speechFormats: 'own.speech.formats', transcriptionFormats: 'own.stt.formats', transcriptionMaxBytes: 'own.stt.max_bytes' },
+      },
     }
 
     expect(parse(fields).data).toMatchObject(fields)
@@ -241,9 +245,12 @@ describe('provider config schema', () => {
     expect(outputs({ video: { outputs: ['video'], requestBy: { path: 'spec.kind', values: { 'text-to-video': 'film' } } } })).toBe(false)
     expect(outputs({ video: { outputs: ['video'], requestBy: { path: 'spec.kind' } } })).toBe(false)
     expect(outputs({ image: { outputs: ['image'], requiredPath: 'price..image' } })).toBe(false)
+    // The flag is on or absent.
+    expect(outputs({ image: { outputs: ['image'], exclusive: false } })).toBe(false)
     expect(parse({ imageOutputBody: ['image'] }).success).toBe(false)
     expect(parse({ mediaApi: { format: 'openai' } }).success).toBe(false)
     expect(parse({ mediaApi: {} }).success).toBe(false)
+    expect(parse({ mediaApi: { format: 'openrouter', modelEntryPaths: { speechFormats: 'own..formats' } } }).success).toBe(false)
   })
 
   it('keeps a providerSystemPrompt, and rejects a bad body path or a value that is no scalar', () => {

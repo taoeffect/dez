@@ -236,14 +236,15 @@ export class Provider {
     const format = this.mediaFormatOrNone()
     if (!format) return [...models]
     const { images: imageFormat, clips, imageRules, clipRules } = format
+    const paths = this.config.mediaApi?.modelEntryPaths ?? {}
     return models.map((model) => {
       const kind = effectiveRequest(model)
       if (kind === 'chat' || kind === 'none') return model
       const entry = entries.get(model.id)
       const mediaEntry = mediaEntries.get(model.id)
       const images = imageRules?.(kind, entry, mediaEntry)
-      const inputClips = clipRules?.(kind, entry, mediaEntry)
-      const parameters = (isClipKind(kind) ? clips?.parameters(kind, entry, mediaEntry) : isTextKind(kind) ? [] : imageFormat?.parameters?.(kind, entry, mediaEntry)) ?? []
+      const inputClips = clipRules?.(kind, entry, mediaEntry, paths)
+      const parameters = (isClipKind(kind) ? clips?.parameters(kind, entry, mediaEntry, paths) : isTextKind(kind) ? [] : imageFormat?.parameters?.(kind, entry, mediaEntry)) ?? []
       const text = isClipKind(kind) ? clips?.textRules?.(kind, entry, mediaEntry) : undefined
       const unstoredOutput = isClipKind(kind) || isTextKind(kind) ? undefined : imageFormat?.unstoredOutput?.(kind, entry, mediaEntry)
       return {

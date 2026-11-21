@@ -227,6 +227,12 @@ const modelOutputsConfigSchema = z.object({
       path: modelEntryPathSchema,
       values: z.record(z.string(), z.enum(MODEL_REQUESTS)),
     }).optional(),
+    // The type's request wins over chat: when an entry has a known type
+    // with this flag, only such types count, for its outputs and its
+    // request kind. For a server whose chat cannot give what the type
+    // makes: TrustedRouter's chat refuses to make images (501 for
+    // `modalities`), so an image + text model there takes the image API.
+    exclusive: z.literal(true).optional(),
   })),
 })
 
@@ -405,6 +411,22 @@ export const providerConfigSchema = z.object({
       modelIdPrefix: z.string().min(1),
       body: requestBodyPartSchema,
     })).optional(),
+    // Dot paths in a `/models` entry, for facts of a media model that the
+    // format's own lists do not tell (`ClipFormat.parameters` and
+    // `MediaFormat.clipRules` read them, mediaFormats.ts). A value that is
+    // not of its form counts as none. TrustedRouter tells them under
+    // `trustedrouter.*`, which the format does not know.
+    modelEntryPaths: z.object({
+      // A list of the names of the speech formats that the model makes
+      // (`mp3`, `wav`): the choices of the Format row.
+      speechFormats: modelEntryPathSchema.optional(),
+      // A list of the names of the file formats that a transcription model
+      // reads (`mp3`, `wav`).
+      transcriptionFormats: modelEntryPathSchema.optional(),
+      // The most bytes of the clip of a transcription: a positive whole
+      // number.
+      transcriptionMaxBytes: modelEntryPathSchema.optional(),
+    }).optional(),
   }).optional(),
   settings: z.array(providerSettingDefSchema).optional(),
   thinking: thinkingConfigSchema.optional(),
@@ -438,4 +460,5 @@ export type ModelCountPaths = z.infer<typeof modelCountPathsSchema>
 export type ModelOutputsConfig = z.infer<typeof modelOutputsConfigSchema>
 export type AudioOutputConfig = NonNullable<ProviderConfig['audioOutputs']>[number]
 export type MediaApiFormatId = (typeof MEDIA_API_FORMAT_IDS)[number]
+export type MediaEntryPaths = NonNullable<NonNullable<ProviderConfig['mediaApi']>['modelEntryPaths']>
 export type ProviderAuth = ProviderConfig['auth']
