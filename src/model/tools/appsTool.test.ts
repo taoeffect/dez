@@ -518,14 +518,14 @@ describe('edit', () => {
   // The lines of an `edit` result after its `The change:` line.
   const change = (content: string) => content.split('\n').slice(content.split('\n').indexOf('The change:') + 1)
   const numbered = (count: number) => Array.from({ length: count }, (_, index) => `l${index + 1}`)
-  const fileText = (lines: readonly string[]) => `${lines.join('\n')}\n`
+  const linesText = (lines: readonly string[]) => `${lines.join('\n')}\n`
 
   it('shows a hunk of 12 lines whole', () => {
     const result = editResult(edit([
       { from_line: 2, to_line: 3, text: 'L2' },
       { after_line: 5, text: 'new' },
       { from_line: 9, text: '' },
-    ]), fileText(numbered(10)))
+    ]), linesText(numbered(10)))
 
     expect(change(result.content)).toStrictEqual(['@@ -1,10 +1,9 @@', ' l1', '-l2', '-l3', '+L2', ' l4', ' l5', '+new', ' l6', ' l7', ' l8', '-l9', ' l10'])
   })
@@ -535,7 +535,7 @@ describe('edit', () => {
       { from_line: 5, to_line: 7, text: 'A\nB\nC\nD' },
       { from_line: 20, text: 'X' },
       { from_line: 30, to_line: 32, text: 'E\nF\nG\nH' },
-    ]), fileText(numbered(40)))
+    ]), linesText(numbered(40)))
 
     const note = '… 5 lines of this hunk are not shown, to save context. read gives the file as it is now.'
     expect(change(result.content)).toStrictEqual([
@@ -547,7 +547,7 @@ describe('edit', () => {
 
   it('gives a short result for an edit of a whole long file, and still writes the whole file', () => {
     const lines = numbered(400)
-    const result = editResult(edit([{ from_line: 1, to_line: 400, text: lines.map((line) => `${line}!`).join('\n') }]), fileText(lines))
+    const result = editResult(edit([{ from_line: 1, to_line: 400, text: lines.map((line) => `${line}!`).join('\n') }]), linesText(lines))
 
     expect(change(result.content)).toStrictEqual([
       '@@ -1,400 +1,400 @@', '-l1', '-l2', '-l3', '-l4',
@@ -560,7 +560,7 @@ describe('edit', () => {
   it('cuts a long diff of many hunks, and still writes the whole file', () => {
     const lines = Array.from({ length: 400 }, (_, index) => `line ${index + 1} ${'-'.repeat(90)}`)
     const edits = Array.from({ length: 40 }, (_, index) => ({ from_line: index * 10 + 1, text: `${lines[index * 10]}!` }))
-    const result = editResult(edit(edits), fileText(lines))
+    const result = editResult(edit(edits), linesText(lines))
 
     const shown = change(result.content)
     expect(shown.at(-1)).toMatch(/^… [\d,]+ more lines of the diff are not shown\. read gives the file as it is now\.$/)
@@ -571,12 +571,12 @@ describe('edit', () => {
   it('counts the lines of the diff that a cut leaves out, with those that the note of a long hunk stands for', () => {
     const cutNote = (count: number) => `… ${count} more lines of the diff are not shown. read gives the file as it is now.`
     const long = numbered(20).map((line) => line.padEnd(5_000, '.'))
-    const cutBeforeNote = editResult(edit([{ from_line: 1, to_line: 20, text: long.map((line) => line.replaceAll('.', '!')).join('\n') }]), fileText(long))
+    const cutBeforeNote = editResult(edit([{ from_line: 1, to_line: 20, text: long.map((line) => line.replaceAll('.', '!')).join('\n') }]), linesText(long))
 
     expect(change(cutBeforeNote.content)).toStrictEqual(['@@ -1,20 +1,20 @@', ...long.slice(0, 3).map((line) => `-${line}`), cutNote(37)])
 
     const longNew = numbered(20).map((line) => line.padEnd(7_000, '!'))
-    const cutAfterNote = editResult(edit([{ from_line: 1, to_line: 20, text: longNew.join('\n') }]), fileText(numbered(20)))
+    const cutAfterNote = editResult(edit([{ from_line: 1, to_line: 20, text: longNew.join('\n') }]), linesText(numbered(20)))
 
     expect(change(cutAfterNote.content)).toStrictEqual([
       '@@ -1,20 +1,20 @@', '-l1', '-l2', '-l3', '-l4',
