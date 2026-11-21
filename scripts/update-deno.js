@@ -304,7 +304,9 @@ async function main(args) {
 
   // The downloads go into a folder next to the final files (the same file
   // system, so a rename moves them), and the final files change only after
-  // every check passed: a failed run leaves the vendored version whole.
+  // every check passed and every new text is made (a manifest that does not
+  // parse fails before the first rename): a failed run leaves the vendored
+  // version whole.
   const downloadDir = mkdtempSync(join(BINARIES_DIR, '.update-'));
   try {
     const release = await githubRelease(DENO_REPO, `v${version}`);
@@ -332,19 +334,18 @@ async function main(args) {
     const problem = licenseProblem(licenses.denoLicense);
     if (problem) throw new Error(`${problem}.`);
 
+    const manifestPath = join(BINARIES_DIR, 'manifest.json');
+    const manifest = manifestText(JSON.parse(readFileSync(manifestPath, 'utf8')), version, files);
+    const notice = noticeText(version, licenses.v8Version);
+    const licenseTexts = licenseTextsFile(licenseTextsIntro(version), licenses.sources, licenses.crates);
+    const noticeDir = join(BINARIES_DIR, NOTICE_FOLDER);
+    mkdirSync(noticeDir, { recursive: true });
     for (const file of files) {
       renameSync(join(downloadDir, file.name), join(BINARIES_DIR, file.name));
     }
-    const manifestPath = join(BINARIES_DIR, 'manifest.json');
-    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
-    writeFileSync(manifestPath, manifestText(manifest, version, files));
-    const noticeDir = join(BINARIES_DIR, NOTICE_FOLDER);
-    mkdirSync(noticeDir, { recursive: true });
-    writeFileSync(join(noticeDir, 'NOTICE.md'), noticeText(version, licenses.v8Version));
-    writeFileSync(
-      join(noticeDir, 'LICENSES.txt'),
-      licenseTextsFile(licenseTextsIntro(version), licenses.sources, licenses.crates)
-    );
+    writeFileSync(manifestPath, manifest);
+    writeFileSync(join(noticeDir, 'NOTICE.md'), notice);
+    writeFileSync(join(noticeDir, 'LICENSES.txt'), licenseTexts);
 
     console.log(`Vendored Deno ${version} in src-tauri/binaries/.
 Next: build and test Dez, then commit manifest.json, ${NOTICE_FOLDER}/NOTICE.md, and ${NOTICE_FOLDER}/LICENSES.txt.

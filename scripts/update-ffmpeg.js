@@ -301,7 +301,9 @@ async function main(args) {
 
   // The downloads go into a folder next to the final files (the same file
   // system, so a rename moves them), and the final files change only after
-  // every check passed: a failed run leaves the vendored version whole.
+  // every check passed and every new text is made (a manifest that does not
+  // parse fails before the first rename): a failed run leaves the vendored
+  // version whole.
   const downloadDir = mkdtempSync(join(BINARIES_DIR, '.update-'));
   try {
     const release = await githubRelease(BUILD_REPO, tag);
@@ -332,13 +334,14 @@ async function main(args) {
       console.log('Dez ships no programs for this computer, so the script did not run one.');
     }
 
+    const manifestPath = join(BINARIES_DIR, 'manifest.json');
+    const manifest = manifestText(JSON.parse(readFileSync(manifestPath, 'utf8')), tag, files, licenseTexts);
+    const notice = noticeText(tag);
     for (const file of [...files, licenseTexts]) {
       renameSync(join(downloadDir, file.name), join(BINARIES_DIR, file.name));
     }
-    const manifestPath = join(BINARIES_DIR, 'manifest.json');
-    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
-    writeFileSync(manifestPath, manifestText(manifest, tag, files, licenseTexts));
-    writeFileSync(join(BINARIES_DIR, 'NOTICE.md'), noticeText(tag));
+    writeFileSync(manifestPath, manifest);
+    writeFileSync(join(BINARIES_DIR, 'NOTICE.md'), notice);
 
     console.log(`Vendored FFmpeg ${version} (release ${tag}) in src-tauri/binaries/.
 Next: build and test Dez, then commit manifest.json, NOTICE.md, and LICENSES.txt.
