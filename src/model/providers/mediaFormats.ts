@@ -1516,11 +1516,25 @@ function openRouterVideoSku(key: string, price: number): OpenRouterVideoSku | nu
   return null
 }
 
-function openRouterPriceError(reason: string): { error: string } {
-  return {
-    error: `Dez cannot compute the price of a request with these values: ${reason}. `
-      + 'The prices are in `pricing_skus` of `mediaEntry` (a key with `cents` in its name is in US cents); the zeros of `pricing` in `providerEntry` are no price.',
-  }
+// The error of a video price that Dez cannot compute: why, then `where`,
+// the sentence that tells the calling model where the prices are, so that
+// it can read them itself.
+function videoPriceError(reason: string, where: string): { error: string } {
+  return { error: `Dez cannot compute the price of a request with these values: ${reason}. ${where}` }
+}
+
+// The sound of a video request, in the text of a price error.
+function soundText(sound: boolean | undefined): string {
+  return sound === undefined ? '' : sound ? ', with sound' : ', no sound'
+}
+
+// The length in seconds of a video request with `values`, for a price by
+// the length; an error (`videoPriceError`) when the request has none.
+function videoPriceSeconds(values: ParameterValues, where: string): number | { error: string } {
+  const seconds = values.duration
+  return typeof seconds === 'number' && Number.isFinite(seconds) && seconds > 0
+    ? seconds
+    : videoPriceError('the price is by the length, and the request has no length (`duration`)', where)
 }
 
 // The sound of the videos of an OpenRouter-format video model: `choice`
@@ -1572,9 +1586,10 @@ function openRouterRequestSound(values: ParameterValues, mediaEntry: unknown, pa
 // A request with no `generate_audio` field gets the sound of the model
 // (`openRouterRequestSound`): a model with no Audio switch makes its videos
 // always or never with sound.
-function openRouterVideoRequestPrice(values: ParameterValues, mediaEntry: unknown, paths: MediaEntryPaths): { usd: number, rate: OpenRouterVideoSku, inputImageUsd?: number, skus: OpenRouterVideoSku[] } | { error: string } | undefined {
+function skuVideoPrice(values: ParameterValues, mediaEntry: unknown, paths: MediaEntryPaths): { usd: number, rate: OpenRouterVideoSku, inputImageUsd?: number, skus: OpenRouterVideoSku[] } | { error: string } | undefined {
   const table = valueAtPath(mediaEntry, 'pricing_skus')
   if (!isRecord(table)) return undefined
+  const where = 'The prices are in `pricing_skus` of `mediaEntry` (a key with `cents` in its name is in US cents); the zeros of `pricing` in `providerEntry` are no price.'
   const skus: OpenRouterVideoSku[] = []
   const unknownKeys: string[] = []
   for (const [key, value] of Object.entries(table)) {
@@ -1584,7 +1599,7 @@ function openRouterVideoRequestPrice(values: ParameterValues, mediaEntry: unknow
     // A price of 0 adds nothing to a request, whatever its rule.
     else if (price !== 0) unknownKeys.push(`\`${key}\``)
   }
-  if (unknownKeys.length > 0) return openRouterPriceError(`no data tells the rule of the prices ${unknownKeys.join(', ')}`)
+  if (unknownKeys.length > 0) return videoPriceError(`no data tells the rule of the prices ${unknownKeys.join(', ')}`, where)
   if (skus.length === 0) return undefined
 
   const resolution = typeof values.resolution === 'string' ? values.resolution.toLowerCase() : undefined
@@ -1594,21 +1609,19 @@ function openRouterVideoRequestPrice(values: ParameterValues, mediaEntry: unknow
     && (sku.audio === undefined || sku.audio === audio))
   const namedCounts = fits.map((sku) => Number(sku.resolution !== undefined) + Number(sku.audio !== undefined))
   const best = fits.filter((_, index) => namedCounts[index] === Math.max(...namedCounts))
-  const request = `${resolution ?? 'no resolution'}${audio === undefined ? '' : audio ? ', with sound' : ', no sound'}`
-  if (best.length === 0) return openRouterPriceError(`no price fits a request of ${request}`)
+  const request = `${resolution ?? 'no resolution'}${soundText(audio)}`
+  if (best.length === 0) return videoPriceError(`no price fits a request of ${request}`, where)
   if (new Set(best.map((sku) => `${sku.per} ${sku.usd}`)).size > 1) {
-    return openRouterPriceError(`the prices ${best.map((sku) => `\`${sku.key}\``).join(', ')} each fit a request of ${request}, and no data tells which one applies`)
+    return videoPriceError(`the prices ${best.map((sku) => `\`${sku.key}\``).join(', ')} each fit a request of ${request}, and no data tells which one applies`, where)
   }
 
   const rate = best[0]
-  const seconds = values.duration
-  if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) {
-    return openRouterPriceError('the price is by the length, and the request has no length (`duration`)')
-  }
+  const seconds = videoPriceSeconds(values, where)
+  if (typeof seconds !== 'number') return seconds
   let usd = rate.usd * seconds
   if (rate.per === 'token') {
     const pixels = resolution !== undefined && Object.hasOwn(OPENROUTER_TOKEN_FRAME_PIXELS, resolution) ? OPENROUTER_TOKEN_FRAME_PIXELS[resolution] : undefined
-    if (pixels === undefined) return openRouterPriceError(`the price is by video token, and Dez does not know the size in pixels of a video of ${resolution ?? 'no resolution'}`)
+    if (pixels === undefined) return videoPriceError(`the price is by video token, and Dez does not know the size in pixels of a video of ${resolution ?? 'no resolution'}`, where)
     usd *= pixels * OPENROUTER_TOKEN_FPS / OPENROUTER_PIXELS_PER_TOKEN
   }
   const inputImage = skus.find((sku) => sku.per === 'inputImage' && sku.usd > 0)
@@ -1657,25 +1670,24 @@ function routeExampleTotal(example: Record<string, unknown>, seconds: number): n
 // of a million output tokens: no data tells the tokens of a video).
 // "Neither means free."
 // https://trustedrouter.com/docs#media-discovery
-function routeVideoPrice(values: ParameterValues, mediaEntry: unknown, paths: MediaEntryPaths, pricesPath: string): number | { error: string } | undefined {
+function routeVideoPrice(values: ParameterValues, mediaEntry: unknown, paths: MediaEntryPaths, pricesPath: string): { usd: number, byRoute: true } | { error: string } | undefined {
   const routes = valueAtPath(mediaEntry, pricesPath)
-  if (!isRecord(routes) || Object.keys(routes).length === 0) return undefined
+  if (!isRecord(routes)) return undefined
   const names = Object.keys(routes)
-  const error = (reason: string) => ({
-    error: `Dez cannot compute the price of a request with these values: ${reason}. The prices by route are in \`${pricesPath}\` of \`mediaEntry\`.`,
-  })
+  if (names.length === 0) return undefined
+  const where = `The prices by route are in \`${pricesPath}\` of \`mediaEntry\`.`
   const named = entryValue(mediaEntry, paths.videoRoute)
   const route = typeof named === 'string' && Object.hasOwn(routes, named) ? named : names.length === 1 ? names[0] : undefined
-  if (route === undefined) return error(`the prices are by route (${names.map((name) => `\`${name}\``).join(', ')}), and no data tells which route the request takes`)
+  if (route === undefined) return videoPriceError(`the prices are by route (${names.map((name) => `\`${name}\``).join(', ')}), and no data tells which route the request takes`, where)
   const prices = routes[route]
-  if (valueAtPath(prices, 'status') === 'live_quote') return error(`the route of the request (\`${route}\`) tells its price only when it runs the job (\`live_quote\`)`)
+  if (valueAtPath(prices, 'status') === 'live_quote') return videoPriceError(`the route of the request (\`${route}\`) tells its price only when it runs the job (\`live_quote\`)`, where)
   const unit = valueAtPath(prices, 'unit')
   if (unit !== 'job') {
-    return error(`the route of the request (\`${route}\`) bills by ${typeof unit === 'string' ? `the unit \`${unit}\`` : 'a unit that no data tells'}, and no data tells how many of them a video takes`)
+    return videoPriceError(`the route of the request (\`${route}\`) bills by ${typeof unit === 'string' ? `the unit \`${unit}\`` : 'a unit that no data tells'}, and no data tells how many of them a video takes`, where)
   }
 
-  const seconds = values.duration
-  if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) return error('the price is by the length, and the request has no length (`duration`)')
+  const seconds = videoPriceSeconds(values, where)
+  if (typeof seconds !== 'number') return seconds
   const resolution = typeof values.resolution === 'string' ? values.resolution.toLowerCase() : undefined
   const sound = openRouterRequestSound(values, mediaEntry, paths)
   const examples = valueAtPath(prices, 'examples')
@@ -1686,10 +1698,10 @@ function routeVideoPrice(values: ParameterValues, mediaEntry: unknown, paths: Me
     const total = routeExampleTotal(example, seconds)
     return total === undefined ? [] : [roundedUsd(total)]
   }))
-  const request = `${seconds} s, ${resolution ?? 'no resolution'}${sound === undefined ? '' : sound ? ', with sound' : ', no sound'}, and only a prompt (\`input_mode\` \`text\`)`
-  if (totals.size === 0) return error(`no price of the route \`${route}\` fits a request of ${request}`)
-  if (totals.size > 1) return error(`the route \`${route}\` has several prices that fit a request of ${request}, and no data tells which one applies`)
-  return [...totals][0]
+  const request = `${seconds} s, ${resolution ?? 'no resolution'}${soundText(sound)}, and only a prompt (\`input_mode\` \`text\`)`
+  if (totals.size === 0) return videoPriceError(`no price of the route \`${route}\` fits a request of ${request}`, where)
+  if (totals.size > 1) return videoPriceError(`the route \`${route}\` has several prices that fit a request of ${request}, and no data tells which one applies`, where)
+  return { usd: [...totals][0], byRoute: true }
 }
 
 // The length and the resolution of a video request, for the note of its
@@ -1698,20 +1710,25 @@ function videoValuesText(values: ParameterValues): string[] {
   return [`${String(values.duration)} s`, ...(values.resolution === undefined ? [] : [String(values.resolution)])]
 }
 
+// The price in USD of one OpenRouter-format video request with `values`
+// and no input image or clip: by route, for a provider whose config has a
+// path to such prices (`routeVideoPrice`; the model's `pricing_skus` are
+// then not read), else from `pricing_skus` (`skuVideoPrice`).
+function openRouterVideoRequestPrice(values: ParameterValues, mediaEntry: unknown, paths: MediaEntryPaths): ReturnType<typeof skuVideoPrice> | ReturnType<typeof routeVideoPrice> {
+  return paths.videoRoutePrices === undefined
+    ? skuVideoPrice(values, mediaEntry, paths)
+    : routeVideoPrice(values, mediaEntry, paths, paths.videoRoutePrices)
+}
+
 // The price of one OpenRouter-format video request for the model that
-// reads `model_info`: by route, for a provider whose config has a path to
-// such prices (`routeVideoPrice`), else from `pricing_skus`
-// (`openRouterVideoRequestPrice`), with a note of the estimate and of the
-// prices of input images and clips.
+// reads `model_info` (`openRouterVideoRequestPrice`), with a note of the
+// estimate and of the prices of input images and clips.
 function openRouterVideoPrice(values: ParameterValues, mediaEntry: unknown, paths: MediaEntryPaths): ClipEntryPrice | undefined {
-  if (paths.videoRoutePrices !== undefined) {
-    const usd = routeVideoPrice(values, mediaEntry, paths, paths.videoRoutePrices)
-    return typeof usd === 'number'
-      ? { usd, note: '`usd` is for a request with only a prompt (`input_mode` `text`): a request with an input image or clip can have another price.' }
-      : usd
-  }
   const price = openRouterVideoRequestPrice(values, mediaEntry, paths)
   if (price === undefined || 'error' in price) return price
+  if ('byRoute' in price) {
+    return { usd: price.usd, note: '`usd` is for a request with only a prompt (`input_mode` `text`): a request with an input image or clip can have another price.' }
+  }
   const { usd, rate, inputImageUsd, skus } = price
   const notes = [
     ...(rate.per === 'token'
@@ -1758,12 +1775,9 @@ function openRouterListPrice(kind: MediaKind, values: ParameterValues, entry: un
   switch (kind) {
     case 'video':
     case 'imageToVideo': {
-      if (paths.videoRoutePrices !== undefined) {
-        const usd = routeVideoPrice(values, mediaEntry, paths, paths.videoRoutePrices)
-        return typeof usd === 'number' ? unitPrice('clip', usd, videoValuesText(values).join(', ')) : undefined
-      }
       const price = openRouterVideoRequestPrice(values, mediaEntry, paths)
       if (price === undefined || 'error' in price) return undefined
+      if ('byRoute' in price) return unitPrice('clip', price.usd, videoValuesText(values).join(', '))
       const options = [...videoValuesText(values), ...(price.rate.per === 'token' ? ['estimate'] : [])]
       const notes = [options.join(', '), ...(price.inputImageUsd === undefined ? [] : [`+${usdText(price.inputImageUsd)} per input image`])]
       return unitPrice('clip', price.usd, notes.join('; '))
