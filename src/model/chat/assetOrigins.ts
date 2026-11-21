@@ -2,6 +2,7 @@ import { foundAssetFrom, type FoundAsset } from '../streams/mediaRequest'
 import { assetOriginText } from '../tools/assetInfo'
 import { blockJobStarts, JOBS_WAIT_TOOL, jobsWaitResults, madeAssetIds } from '../tools/jobs'
 import { callLabel } from '../tools/registry'
+import { assetMark } from './assetModels'
 import { compactionMessageEnd, sectionTextParts } from './compaction'
 import { notesAssetLines, notesJobLines, notesMessages, type NotesAssetLine, type NotesJobLine } from './compactionNotes'
 import { sectionPlainText } from './content'
@@ -95,14 +96,12 @@ function toolOrigin(id: string, marks: ToolMarks, blocks: readonly ToolBlock[], 
 
 // The tool marks of `asset`; null for an asset that no Dez tool made.
 function toolMarks(asset: FoundAsset): ToolMarks | null {
-  if (asset.kind === 'image') {
-    const mark = (key: string) => asset.reference.metadata.find((item) => item.key === key)?.value ?? null
-    const tool = mark(IMAGE_TOOL_KEY)
-    return tool === null ? null : { tool, jobId: mark(IMAGE_MADE_BY_KEY) ?? mark(IMAGE_HIDDEN_KEY) }
-  }
-  const mark = (name: string) => asset.tag.other.find((attribute) => attribute.name === name)?.value ?? null
-  const tool = mark(MEDIA_TOOL_ATTRIBUTE)
-  return tool === null ? null : { tool, jobId: mark(MEDIA_MADE_BY_ATTRIBUTE) ?? mark(MEDIA_HIDDEN_ATTRIBUTE) }
+  const marked = asset.kind === 'image' ? asset.reference : asset.tag
+  const tool = assetMark(marked, IMAGE_TOOL_KEY, MEDIA_TOOL_ATTRIBUTE)
+  if (tool === null) return null
+  const jobId = assetMark(marked, IMAGE_MADE_BY_KEY, MEDIA_MADE_BY_ATTRIBUTE)
+    ?? assetMark(marked, IMAGE_HIDDEN_KEY, MEDIA_HIDDEN_ATTRIBUTE)
+  return { tool, jobId }
 }
 
 const NO_JOB_LINES: ReadonlyMap<string, NotesJobLine> = new Map()

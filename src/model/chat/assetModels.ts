@@ -44,15 +44,12 @@ export function clipModelMark(model: ModelRef | undefined): MediaTagAttribute[] 
  *  image reference, or the other attributes of a clip's tag. */
 export type MarkedAsset = Pick<ImageReference, 'metadata'> | Pick<MediaTagData, 'other'>
 
-// The model mark and the tool mark of `asset`; null for a mark that it
-// does not have.
-function marksOf(asset: MarkedAsset): { model: string | null, tool: string | null } {
-  if ('metadata' in asset) {
-    const mark = (key: string) => asset.metadata.find((item) => item.key === key)?.value ?? null
-    return { model: mark(IMAGE_MODEL_KEY), tool: mark(IMAGE_TOOL_KEY) }
-  }
-  const mark = (name: string) => asset.other.find((attribute) => attribute.name === name)?.value ?? null
-  return { model: mark(MEDIA_MODEL_ATTRIBUTE), tool: mark(MEDIA_TOOL_ATTRIBUTE) }
+/** The value of a mark of `asset`: the metadata item `imageKey` of an
+ *  image, or the attribute `clipName` of a clip; null when it has none. */
+export function assetMark(asset: MarkedAsset, imageKey: string, clipName: string): string | null {
+  return 'metadata' in asset
+    ? asset.metadata.find((item) => item.key === imageKey)?.value ?? null
+    : asset.other.find((attribute) => attribute.name === clipName)?.value ?? null
 }
 
 /** The model that made `asset`, in `section`, for the label of its view.
@@ -64,9 +61,10 @@ function marksOf(asset: MarkedAsset): { model: string | null, tool: string | nul
  *  user, of a Dez tool, or in the compaction block (the model of the
  *  compaction wrote the notes, not the assets in them). */
 export function assetModel(asset: MarkedAsset, section: Pick<Section, 'role' | 'model'>, inCompactionBlock: boolean): ModelRef | null {
-  const marks = marksOf(asset)
-  const marked = marks.model === null ? null : parseModelRefKey(marks.model)
+  const modelMark = assetMark(asset, IMAGE_MODEL_KEY, MEDIA_MODEL_ATTRIBUTE)
+  const marked = modelMark === null ? null : parseModelRefKey(modelMark)
   if (marked) return marked
-  if (section.role !== 'agent' || inCompactionBlock || marks.tool !== null) return null
+  const toolMade = assetMark(asset, IMAGE_TOOL_KEY, MEDIA_TOOL_ATTRIBUTE) !== null
+  if (section.role !== 'agent' || inCompactionBlock || toolMade) return null
   return section.model ?? null
 }
