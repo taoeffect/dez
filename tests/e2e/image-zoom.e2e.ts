@@ -165,15 +165,20 @@ describe('image zoom', () => {
 
   // Opens the zoom of the image at `index` (doc order) from its magnifier,
   // as a user does: the pointer goes to the image, its toolbar shows, and
-  // a click on the magnifier. Waits until the zoom shows the image.
-  async function openZoom (index = 0): Promise<void> {
+  // a click on the magnifier. Waits until the zoom shows the image. Gives
+  // the editor's scroll position just before that click: the steps before
+  // it scroll the image and the magnifier into the view.
+  async function openZoom (index = 0): Promise<number> {
     await movePointer(browser, await assetPartPoint(browser, '.dez-image', index, '.dez-image__img'))
     await waitForValue(browser, `the toolbar of image ${index}`, () => browser.execute((at: number) => {
       const toolbar = document.querySelectorAll('.cm-content .dez-image')[at]?.querySelector('.dez-image__overlay')
       return toolbar != null && getComputedStyle(toolbar).opacity === '1' && getComputedStyle(toolbar).transform === 'none'
     }, index), true)
-    await pointerClickAt(browser, await assetPartPoint(browser, '.dez-image', index, '.dez-image__zoom'))
+    const magnifier = await assetPartPoint(browser, '.dez-image', index, '.dez-image__zoom')
+    const scrollTop = await editorScrollTop(browser)
+    await pointerClickAt(browser, magnifier)
     await waitForValue(browser, `the zoom of image ${index}`, zoomPhase, 'open')
+    return scrollTop
   }
 
   async function expectFitted (label: string): Promise<ZoomLayout> {
@@ -213,7 +218,7 @@ describe('image zoom', () => {
     await focusEditor(browser)
     await setCaret(browser, 0)
 
-    await openZoom()
+    const scrollTop = await openZoom()
     const layout = await expectFitted('the open zoom')
     expect(layout).toMatchObject({ role: 'dialog', modal: 'true', label: 'Zoom of image a', inEditorRoot: true, natural: { width: 160, height: 90 } })
     // The image grew: the room is far larger than the image.
@@ -227,7 +232,6 @@ describe('image zoom', () => {
     expect(await zoomFocus()).toBe('layer')
 
     // A click on the image itself does not close the zoom.
-    const scrollTop = await editorScrollTop(browser)
     await pointerClick(browser, ZOOM_IMAGE)
     // A wrong close would start in the next frames.
     await browser.pause(300)
