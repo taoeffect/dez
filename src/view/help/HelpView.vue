@@ -591,9 +591,10 @@ function onOverlayClick(event: MouseEvent) {
               With the Dez tool <code>js_eval</code>, a model runs a short piece of JavaScript or
               TypeScript and gets its result: for example for exact arithmetic, a date, or a sort.
               The code has no files, no network, and no environment variables, and it can start no
-              program. It can call the other Dez tools, at most {{ CODE_LIMITS.toolCalls }} times in
-              one run, so one piece of code can do a chain of tool calls. It works on your images
-              and clips only through those tools, by their ids: it gets no file. Dez stops code that
+              program. It can call the other Dez tools (but not <code>apps invoke</code>), at most
+              {{ CODE_LIMITS.toolCalls }} times in one run, so one piece of code can do a chain of
+              tool calls. It works on your images and clips only through those tools, by their
+              ids: it gets no file. Dez stops code that
               runs longer than {{ CODE_LIMITS.seconds }} seconds (a model can ask for up to
               {{ CODE_LIMITS.mostMinutes }} minutes), and code that writes more than
               {{ CODE_LIMITS.output }} of output. Click the chip of the call to see the code, its
@@ -626,7 +627,9 @@ function onOverlayClick(event: MouseEvent) {
                 The rule of the system lets the code of <code>js_eval</code> open only the work
                 folder of its run, in
                 <code v-if="workDir">{{ workDir }}</code><template v-else>the cache folder of the system</template>,
-                and Deno lets it open no file at all. Dez deletes that folder at the end of the run.
+                and the permissions of Deno let it read and write no file (only the rule of the
+                system stops an <code>import</code> of a file). Dez deletes that folder at the end
+                of the run.
               </li>
               <li>
                 The code of a script app can open only the work folder of its run and the folder of
