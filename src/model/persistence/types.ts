@@ -2,6 +2,7 @@ import type { Compactions } from '../chat/compaction'
 import type { CountedContext } from '../chat/contextSize'
 import type { ConversationCost } from '../chat/conversationCost'
 import type { ActiveModel, ModelRef, SectionThinking } from '../chat/types'
+import type { ClipVolumes } from '../clipVolume'
 import type { ModelOutput } from '../modelOutputs'
 import type { ModelPickerSize } from '../modelPickerSize'
 import type { ProviderConfig } from '../providers/config'
@@ -147,6 +148,9 @@ export interface AppStatePayload {
   doneSound?: boolean
   doneSoundVolume?: number
   doneNotification?: boolean
+  // The remembered volume of the clip players, one for each kind of clip
+  // (src/model/clipVolume.ts).
+  clipVolumes?: ClipVolumes
   // The user's shortcut keys that differ from the defaults
   // (src/model/shortcuts.ts).
   shortcuts?: ShortcutOverrides

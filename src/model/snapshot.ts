@@ -1,3 +1,4 @@
+import type { ClipVolumes } from './clipVolume'
 import type { Compactions } from './chat/compaction'
 import type { CountedContext } from './chat/contextSize'
 import type { ConversationCost } from './chat/conversationCost'
@@ -51,6 +52,7 @@ export interface ModelSnapshot {
     doneSound: boolean
     doneSoundVolume: number
     doneNotification: boolean
+    clipVolumes: ClipVolumes
     shortcutOverrides: ShortcutOverrides
     systemPrompt: string | null
     incognitoOption: boolean

@@ -175,6 +175,22 @@ describe('app state persistence format', () => {
     expect(parse({ doneNotification: 0 }).doneNotification).toBe(true)
   })
 
+  it('keeps the clip volumes, rounds and clamps a hand-edited volume, and reads each bad value as its default', () => {
+    const parseVolumes = (value: unknown) => parseAppStateJson(JSON.stringify({ clipVolumes: value })).clipVolumes
+    const full = { volume: 100, muted: false }
+    const saved = { audio: { volume: 35, muted: true }, video: { volume: 0, muted: false } }
+
+    expect(parseAppStateJson('{}').clipVolumes).toStrictEqual({ audio: full, video: full })
+    expect(parseAppStateJson(serializeAppStateJson({ clipVolumes: saved })).clipVolumes).toStrictEqual(saved)
+    expect(parseVolumes({ audio: { volume: 33.5, muted: true }, video: { volume: 250 } }))
+      .toStrictEqual({ audio: { volume: 34, muted: true }, video: full })
+    expect(parseAppStateJson('{ "clipVolumes": { "video": { "volume": 1e400 } } }').clipVolumes?.video).toStrictEqual(full)
+    expect(parseVolumes({ audio: { volume: -3, muted: 'yes' }, video: { volume: '20', muted: true } }))
+      .toStrictEqual({ audio: { volume: 0, muted: false }, video: { volume: 100, muted: true } })
+    expect(parseVolumes({ audio: 40, video: null })).toStrictEqual({ audio: full, video: full })
+    expect(parseVolumes([{ volume: 40 }])).toStrictEqual({ audio: full, video: full })
+  })
+
   it('keeps any system prompt text, also an empty one, and reads any other value as the built-in prompt', () => {
     const parsePrompt = (value: unknown) => parseAppStateJson(JSON.stringify({ systemPrompt: value })).systemPrompt
     expect(parseAppStateJson('{}').systemPrompt).toBeNull()

@@ -5,6 +5,7 @@ import type { ParameterValues } from '../providers/modelParameters'
 import type { ModelOutput } from '../modelOutputs'
 import { EDITOR_FONT_SIZE_DEFAULT } from '../editorFontSize'
 import { DONE_SOUND_VOLUME_DEFAULT } from '../doneSoundVolume'
+import { defaultClipVolumes, type ClipVolumes } from '../clipVolume'
 import { MODEL_PICKER_SIZE_DEFAULT, type ModelPickerSize } from '../modelPickerSize'
 import { currentShortcutPlatform, resolveShortcuts, type ShortcutOverrides } from '../shortcuts'
 
@@ -64,6 +65,9 @@ export const useSettingsStore = defineStore('settings', () => {
   const doneSound = ref(true)
   const doneSoundVolume = ref(DONE_SOUND_VOLUME_DEFAULT)
   const doneNotification = ref(true)
+  // The remembered volume of the clip players, one for each kind of clip
+  // (src/model/clipVolume.ts).
+  const clipVolumes = ref<ClipVolumes>(defaultClipVolumes())
   // The user's shortcut keys that differ from the defaults, already
   // normalized and validated. Replaced as a whole on each change.
   const shortcutOverrides = ref<ShortcutOverrides>({})
@@ -138,6 +142,7 @@ export const useSettingsStore = defineStore('settings', () => {
     doneSound,
     doneSoundVolume,
     doneNotification,
+    clipVolumes,
     shortcutOverrides,
     systemPrompt,
     incognitoOption,

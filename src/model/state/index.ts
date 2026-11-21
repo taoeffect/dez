@@ -12,6 +12,8 @@ import { useSettingsStore, type DefaultModel, type SettingsSection, type Theme, 
 import { clampEditorFontSize } from '../editorFontSize'
 import { normalizeOutputs, type ModelOutput } from '../modelOutputs'
 import { clampDoneSoundVolume } from '../doneSoundVolume'
+import { clampClipVolume, type ClipVolume, type ClipVolumes } from '../clipVolume'
+import type { MediaTagKind } from '../chat/mediaTags'
 import { clampModelPickerSize, type ModelPickerSize } from '../modelPickerSize'
 import { currentShortcutPlatform, findShortcut, normalizeShortcutKey, validateShortcutKey, type Shortcut, type ShortcutId, type ShortcutOverrides } from '../shortcuts'
 import { MAX_CLOSED_TABS, NEW_TAB_TITLE, useTabStore } from './tabs'
@@ -73,6 +75,7 @@ export interface SettingsSnapshot {
   doneSound: boolean
   doneSoundVolume: number
   doneNotification: boolean
+  clipVolumes: ClipVolumes
   shortcutOverrides: ShortcutOverrides
   systemPrompt: string | null
   incognitoOption: boolean
@@ -293,6 +296,7 @@ function cloneSettings(settings = useSettingsStore()): SettingsSnapshot {
     doneSound: settings.doneSound,
     doneSoundVolume: settings.doneSoundVolume,
     doneNotification: settings.doneNotification,
+    clipVolumes: { audio: { ...settings.clipVolumes.audio }, video: { ...settings.clipVolumes.video } },
     shortcutOverrides: { ...settings.shortcutOverrides },
     systemPrompt: settings.systemPrompt,
     incognitoOption: settings.incognitoOption,
@@ -964,6 +968,7 @@ export default sbp('sbp/selectors/register', {
         doneSound: settings.doneSound,
         doneSoundVolume: settings.doneSoundVolume,
         doneNotification: settings.doneNotification,
+        clipVolumes: settings.clipVolumes,
         shortcuts: settings.shortcutOverrides,
         systemPrompt: settings.systemPrompt,
         // Not in the watch list of startPersistence (only a hand edit sets
@@ -1135,6 +1140,7 @@ export default sbp('sbp/selectors/register', {
       if (typeof state.doneSound === 'boolean') settings.doneSound = state.doneSound
       if (typeof state.doneSoundVolume === 'number') settings.doneSoundVolume = state.doneSoundVolume
       if (typeof state.doneNotification === 'boolean') settings.doneNotification = state.doneNotification
+      if (state.clipVolumes) settings.clipVolumes = state.clipVolumes
       if (state.shortcuts) settings.shortcutOverrides = state.shortcuts
       if (state.systemPrompt !== undefined) settings.systemPrompt = state.systemPrompt
       if (typeof state.incognitoOption === 'boolean') settings.incognitoOption = state.incognitoOption
@@ -1174,6 +1180,7 @@ export default sbp('sbp/selectors/register', {
         () => settings.doneSound,
         () => settings.doneSoundVolume,
         () => settings.doneNotification,
+        () => settings.clipVolumes,
         () => settings.shortcutOverrides,
         () => settings.systemPrompt,
       ],
@@ -1391,6 +1398,26 @@ export default sbp('sbp/selectors/register', {
 
   'dez.model/settings/setDoneNotification' (enabled: boolean): void {
     useSettingsStore().doneNotification = enabled
+  },
+
+  // The remembered volume of the clip players of `kind`. A read inside a
+  // computed or watch tracks its changes.
+  'dez.model/settings/clipVolume' (kind: MediaTagKind): ClipVolume {
+    return { ...useSettingsStore().clipVolumes[kind] }
+  },
+
+  // The volume slider or the mute button of a clip player: every player of
+  // `kind` takes the value. Sets the fields given; the volume is rounded
+  // and kept in 0-100. A value that is already the remembered one changes
+  // nothing, so it saves nothing (a drag of the slider sets many).
+  'dez.model/settings/setClipVolume' (kind: MediaTagKind, change: Partial<ClipVolume>): void {
+    const volumes = useSettingsStore().clipVolumes
+    const current = volumes[kind]
+    const next = {
+      volume: change.volume === undefined ? current.volume : clampClipVolume(change.volume),
+      muted: change.muted ?? current.muted,
+    }
+    if (next.volume !== current.volume || next.muted !== current.muted) volumes[kind] = next
   },
 
   // Settings › System Prompt: the user's template, or null for Dez's own.

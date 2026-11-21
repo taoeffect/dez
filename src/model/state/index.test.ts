@@ -8,6 +8,8 @@ import { sectionPlainText } from '../chat/content'
 import { notesData } from '../chat/testing'
 import { toolBlockText } from '../chat/toolBlocks'
 import type { ActiveModel, ContentNode, ModelRef, Section, SectionThinking, Tab, ThinkingReplay } from '../chat/types'
+import type { MediaTagKind } from '../chat/mediaTags'
+import type { ClipVolume } from '../clipVolume'
 import { MODEL_PICKER_SIZE_DEFAULT } from '../modelPickerSize'
 import type { AppStatePayload, ConversationData, ModelCache } from '../persistence/types'
 import { PRICE_LIFETIME_MS, type PriceQuote } from '../providers/modelPrices'
@@ -1322,6 +1324,46 @@ describe('dez.model/settings/setModelPickerSize', () => {
     // A press on a handle with no move: the same size after the round.
     const saveCount = savedAppStates.length
     sbp('dez.model/settings/setModelPickerSize', { width: 600.3, maxHeight: 419.8 })
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(savedAppStates).toHaveLength(saveCount)
+  })
+})
+
+describe('dez.model/settings clip volumes', () => {
+  const clipVolume = (kind: MediaTagKind) => sbp('dez.model/settings/clipVolume', kind) as ClipVolume
+
+  afterEach(() => {
+    sbp('dez.model/settings/stopPersistence')
+    vi.useRealTimers()
+  })
+
+  it('sets only the given fields of one kind, rounds the volume, and keeps it in 0-100', () => {
+    // A volume that WebKit reads back as a float.
+    sbp('dez.model/settings/setClipVolume', 'video', { volume: 0.4500000059604645 * 100 })
+    expect(clipVolume('video')).toStrictEqual({ volume: 45, muted: false })
+    sbp('dez.model/settings/setClipVolume', 'video', { muted: true })
+    expect(clipVolume('video')).toStrictEqual({ volume: 45, muted: true })
+    sbp('dez.model/settings/setClipVolume', 'video', { volume: -10 })
+    expect(clipVolume('video')).toStrictEqual({ volume: 0, muted: true })
+    sbp('dez.model/settings/setClipVolume', 'video', { volume: 140 })
+    expect(clipVolume('video').volume).toBe(100)
+    expect(clipVolume('audio')).toStrictEqual({ volume: 100, muted: false })
+  })
+
+  it('loads the saved volumes, saves a change, and saves nothing for the volume that it has', async () => {
+    diskAppState = { clipVolumes: { audio: { volume: 70, muted: true }, video: { volume: 40, muted: false } } }
+    await sbp('dez.model/settings/init')
+    expect([clipVolume('audio'), clipVolume('video')]).toStrictEqual([{ volume: 70, muted: true }, { volume: 40, muted: false }])
+
+    vi.useFakeTimers()
+    sbp('dez.model/settings/startPersistence')
+    sbp('dez.model/settings/setClipVolume', 'audio', { volume: 55 })
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(savedAppStates.at(-1)?.clipVolumes).toStrictEqual({ audio: { volume: 55, muted: true }, video: { volume: 40, muted: false } })
+
+    // Each step of a slider drag sets the volume; only a change saves.
+    const saveCount = savedAppStates.length
+    sbp('dez.model/settings/setClipVolume', 'audio', { volume: 55.2, muted: true })
     await vi.advanceTimersByTimeAsync(1000)
     expect(savedAppStates).toHaveLength(saveCount)
   })

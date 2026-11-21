@@ -5,13 +5,13 @@ import { Key } from 'webdriverio'
 import { openAiChatBody } from './harness/chatBody'
 import { click, consoleErrors, elementCenter, isOnTop, movePointer, pointerClick, pointerClickAt, pointerDrag, promptMessage, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue, type Point } from './harness/dom'
 import { linkedDropDir, nativeDrop } from './harness/drops'
-import { appFilePath, conversationFilePath, filesIn, mediaTempDir, newFileIn, storedFileName, writeTestFile } from './harness/fixtures'
+import { appFilePath, conversationFilePath, filesIn, mediaTempDir, newFileIn, readAppState, storedFileName, writeTestFile } from './harness/fixtures'
 import { NOT_A_CLIP, WAV_SAMPLE_RATE, WEBM_VIDEO, clipTag, monoWav, openPlayerTooltips, problemCards, shownPlayers, silentWav, startClipServer, waitForPlayerFullscreen, type ClipKind, type ClipServer, type ProblemCard, type ShownPlayer } from './harness/media'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, mockModelKey, replyText, sendChatReply, type MockProvider } from './harness/mockServer'
 import { threadCount, webProcessPid } from './harness/processes'
 import type { E2EBrowser } from './harness/session'
-import { copySelection, docPosPoint, editorCaret, editorDoc, focusEditor, focusedArea, newTab, openSeededConversation, openToasts, pasteText, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread, type ThreadSection } from './harness/thread'
+import { copySelection, docPosPoint, editorCaret, editorDoc, focusEditor, focusedArea, newTab, openSeededConversation, openToasts, pasteText, pickModel, sbpCall, scrollEditorToEnd, scrollEditorToTop, setCaret, submit, threadSections, waitForThread, type ThreadSection } from './harness/thread'
 
 // The players of audio and video clips (media tags in agent sections),
 // driven through the real app. The clips come from a clip server of the
@@ -60,7 +60,10 @@ import { copySelection, docPosPoint, editorCaret, editorDoc, focusEditor, focuse
 // - a native drop of a clip out of every temp folder links the file in
 //   place: its player has the check from the start, a chat request gets
 //   only the clip's id and type, and the trash asks first and removes only
-//   the tag.
+//   the tag;
+// - the volume slider and the mute button of a player set the volume of
+//   every player of its kind, of those on the screen and of one that comes
+//   back into view, and the app state keeps that volume.
 //
 // One app session serves the whole file; each test starts in a new tab.
 
@@ -323,6 +326,59 @@ describe('media player', () => {
       const urls = Reflect.get(window, '__e2eBlobUrls') as string[]
       const live = await Promise.all(urls.map((url) => fetch(url).then(() => true, () => false)))
       return { made: urls.length, live: live.filter(Boolean).length }
+    })
+  }
+
+  // From now on, each media element keeps the last volume (in percent) and
+  // mute that page code assigned to it. The spec checks those, not the
+  // element's read-back: in WebKitGTK that is what the sound server last
+  // reported, late (`recordSoundPlays`, notifications.e2e.ts). The setters
+  // are wrapped once per page. A player calls the setters that are there
+  // when it starts, so call this before the players of a test are made.
+  async function recordClipVolumes (): Promise<void> {
+    await browser.execute(() => {
+      if (Reflect.get(window, '__e2eClipVolumesWrapped')) return
+      Reflect.set(window, '__e2eClipVolumesWrapped', true)
+      for (const name of ['volume', 'muted'] as const) {
+        const property = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, name)!
+        Object.defineProperty(HTMLMediaElement.prototype, name, {
+          ...property,
+          set (this: HTMLMediaElement, value: number | boolean) {
+            property.set!.call(this, value)
+            Reflect.set(this, `__e2eAssigned_${name}`, value)
+          },
+        })
+      }
+    })
+  }
+
+  interface PlayerVolume {
+    id: string
+    /** The last volume that page code assigned, in percent; null for none. */
+    volume: number | null
+    muted: boolean | null
+    /** False for a media element that `markShownMedia` marked. */
+    fresh: boolean
+  }
+
+  // The volume of each player of the active editor, in doc order.
+  async function playerVolumes (): Promise<PlayerVolume[]> {
+    return browser.execute(() => Array.from(document.querySelectorAll<HTMLElement>('.cm-content .media-player'), (player) => {
+      const media = player.querySelector<HTMLMediaElement>('video, audio')
+      const volume = media ? Reflect.get(media, '__e2eAssigned_volume') as number | undefined : undefined
+      const muted = media ? Reflect.get(media, '__e2eAssigned_muted') as boolean | undefined : undefined
+      return {
+        id: player.querySelector('.media-player__id')?.textContent?.trim() ?? '',
+        volume: volume === undefined ? null : Math.round(volume * 100),
+        muted: muted ?? null,
+        fresh: media !== null && !Reflect.has(media, '__e2eShownBefore'),
+      }
+    }))
+  }
+
+  async function markShownMedia (): Promise<void> {
+    await browser.execute(() => {
+      for (const media of document.querySelectorAll('.cm-content .media-player video, .cm-content .media-player audio')) Reflect.set(media, '__e2eShownBefore', true)
     })
   }
 
@@ -897,6 +953,71 @@ describe('media player', () => {
       { kind: 'video', id: 'a', available: true, source: videoUrl, seconds: 2, picture: { width: 48, height: 36 }, clock: 'Not saved', save: 'save' },
       { kind: 'audio', id: 'b', available: true, source: audioUrl, seconds: 2, picture: null, clock: 'Not saved', save: 'save' },
     ])
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('gives every player of a kind the volume and the mute that a player of that kind set, also a player that comes back into view, and saves them', async () => {
+    await recordClipVolumes()
+    const audioUrl = clips.clipUrl('tone.wav')
+    const videoUrl = clips.clipUrl('video.webm')
+    const expires = new Date(Date.now() + HOUR_MS).toISOString()
+    const audio = { type: 'audio/wav', src: audioUrl, url: audioUrl, expires }
+    // Text after the players, so that they go out of view at its end, and
+    // CodeMirror removes them.
+    const lines = Array.from({ length: 150 }, (_, line) => `Line ${line + 1} after the clips.`)
+    await openReply('clip-volumes', [
+      clipTag('audio', { id: 'a', ...audio }),
+      clipTag('audio', { id: 'b', ...audio }),
+      clipTag('video', { id: 'c', type: 'video/webm', src: videoUrl, url: videoUrl, expires }),
+      ...lines,
+    ].join('\n\n'))
+    await waitForValue(browser, 'loaded players', async () => (await shownPlayers(browser)).map((player) => player.seconds), [2, 2, 2])
+
+    // Each new player gets the remembered volume: at first, the default.
+    const full = { volume: 100, muted: false }
+    expect(await playerVolumes()).toStrictEqual([
+      { id: 'a', ...full, fresh: true },
+      { id: 'b', ...full, fresh: true },
+      { id: 'c', ...full, fresh: true },
+    ])
+
+    // The slider of one audio player sets the volume of both, and not of
+    // the video.
+    await pointerClick(browser, '.media-player[data-kind="audio"] .media-player__slider--volume')
+    const half = { volume: 50, muted: false }
+    await waitForValue(browser, 'audio volume', () => sbpCall(browser, 'dez.model/settings/clipVolume', 'audio'), half)
+    await waitForValue(browser, 'players after the slider', playerVolumes, [
+      { id: 'a', ...half, fresh: true },
+      { id: 'b', ...half, fresh: true },
+      { id: 'c', ...full, fresh: true },
+    ])
+
+    // The mute button of the video mutes only the videos. The bar of the
+    // video is under the bottom of the window.
+    const videoMute = '.media-player[data-kind="video"] .media-player__mute'
+    await browser.execute((selector: string) => document.querySelector(selector)?.scrollIntoView({ block: 'center' }), videoMute)
+    await pointerClick(browser, videoMute)
+    const muted = { volume: 100, muted: true }
+    await waitForValue(browser, 'video volume', () => sbpCall(browser, 'dez.model/settings/clipVolume', 'video'), muted)
+    await waitForValue(browser, 'players after the mute', playerVolumes, [
+      { id: 'a', ...half, fresh: true },
+      { id: 'b', ...half, fresh: true },
+      { id: 'c', ...muted, fresh: true },
+    ])
+    await waitForValue(browser, 'clip volumes in the app state', async () => (await readAppState(setup.app.home))?.clipVolumes, { audio: half, video: muted })
+
+    // Players that CodeMirror makes again get the volume of their kind.
+    await markShownMedia()
+    await scrollEditorToEnd(browser)
+    await waitForValue(browser, 'players out of view', playerVolumes, [])
+    await scrollEditorToTop(browser)
+    await waitForValue(browser, 'players back in view', playerVolumes, [
+      { id: 'a', ...half, fresh: true },
+      { id: 'b', ...half, fresh: true },
+      { id: 'c', ...muted, fresh: true },
+    ])
+    expect(await sbpCall(browser, 'dez.model/settings/clipVolume', 'audio')).toStrictEqual(half)
+    expect(await sbpCall(browser, 'dez.model/settings/clipVolume', 'video')).toStrictEqual(muted)
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 })

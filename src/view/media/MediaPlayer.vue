@@ -32,6 +32,7 @@ import { ASSET_ICON_SHAPES } from '../assetIcons'
 import { MODEL_ICON_SHAPES, assetModelTexts } from '../assetModelLabel'
 import type { ModelFacts } from '../modelLabel'
 import { clipFile, clipPlayType, clipProblem, clipSourceKind, expiryNotice, problemCard, type ClipLoadFailure, type ClipProblem } from './clipState'
+import { followClipVolume } from './clipVolume'
 import { releaseRemovedMedia } from './releaseMedia'
 import { videoAspectRatios } from './videoSizes'
 
@@ -264,6 +265,18 @@ onBeforeUnmount(() => {
 // card of a clip that does not play took its place. A removed element
 // frees nothing by itself.
 const vReleaseOnRemove: ObjectDirective<HTMLMediaElement> = { unmounted: releaseRemovedMedia }
+
+// The media element plays at the remembered volume of its kind, and its
+// volume slider and mute button set that volume (`followClipVolume`). So a
+// player that CodeMirror makes again (the clip comes back into view) has
+// the volume that the user left. `sync`: the element follows it from the
+// moment that Vue gives it to the ref, before its load.
+let stopClipVolume: (() => void) | null = null
+watch(media, (element) => {
+  stopClipVolume?.()
+  stopClipVolume = element ? followClipVolume(element, props.kind) : null
+}, { flush: 'sync' })
+onBeforeUnmount(() => stopClipVolume?.())
 
 function play(element: HTMLMediaElement): void {
   element.play().catch((error: unknown) => {

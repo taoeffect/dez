@@ -8,10 +8,12 @@ import {
 } from '../providers/config'
 import { isParameterValue, type ParameterValues } from '../providers/modelParameters'
 import { parseModelRefKey } from '../chat/modelRef'
+import { MEDIA_TAG_KINDS } from '../chat/mediaTags'
 import type { AppStatePayload } from './types'
 import type { DefaultModel, Theme, WindowGeometry } from '../state/settings'
 import { EDITOR_FONT_SIZE_DEFAULT, clampEditorFontSize } from '../editorFontSize'
 import { DONE_SOUND_VOLUME_DEFAULT, clampDoneSoundVolume } from '../doneSoundVolume'
+import { clampClipVolume, defaultClipVolumes, type ClipVolumes } from '../clipVolume'
 import { MODEL_PICKER_SIZE_DEFAULT, clampModelPickerSize, type ModelPickerSize } from '../modelPickerSize'
 import { currentShortcutPlatform, parseShortcutOverrides } from '../shortcuts'
 import { normalizeOutputs } from '../modelOutputs'
@@ -119,6 +121,21 @@ function modelParameters(value: unknown): Record<string, ParameterValues> {
   return output
 }
 
+// Each kind and each field on its own. Like doneSoundVolume, a hand-edited
+// volume is rounded and kept in range, not dropped; any other bad value
+// gets its default.
+function clipVolumes(value: unknown): ClipVolumes {
+  const volumes = defaultClipVolumes()
+  if (!isRecord(value)) return volumes
+  for (const kind of MEDIA_TAG_KINDS) {
+    const entry = value[kind]
+    if (!isRecord(entry)) continue
+    if (typeof entry.volume === 'number') volumes[kind].volume = clampClipVolume(entry.volume)
+    if (typeof entry.muted === 'boolean') volumes[kind].muted = entry.muted
+  }
+  return volumes
+}
+
 // Drops the invalid items of a hand-edited list one at a time, so one bad
 // item does not drop the whole provider.
 function validItems(list: unknown[], schema: z.ZodType, itemName: string, entryIndex: number): unknown[] {
@@ -195,6 +212,7 @@ export function defaultAppState(): AppStatePayload {
     doneSound: true,
     doneSoundVolume: DONE_SOUND_VOLUME_DEFAULT,
     doneNotification: true,
+    clipVolumes: defaultClipVolumes(),
     shortcuts: {},
     systemPrompt: null,
     incognitoOption: false,
@@ -253,6 +271,7 @@ export function parseAppStateJson(content: string): AppStatePayload {
       doneNotification: typeof parsed.doneNotification === 'boolean'
         ? parsed.doneNotification
         : fallback.doneNotification,
+      clipVolumes: clipVolumes(parsed.clipVolumes),
       shortcuts: parseShortcutOverrides(parsed.shortcuts, currentShortcutPlatform),
       // Any text is kept as it is, also an empty one (no system prompt); a
       // template problem is shown in Settings and refuses a send.

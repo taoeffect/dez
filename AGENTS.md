@@ -91,7 +91,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `view/editor/focus.ts`: focus the editor and keep its scroll and caret; use `focusKeepingScroll`, not `view.focus()`.
 - `view/editor/images.ts`, `imageInsert.ts`, `pendingRanges.ts`: images shown in place of their references; image and clip paste and drop.
 - `view/editor/imageZoom.ts`, `coverBox.ts`: the image zoom (the magnifier of an image's toolbar shows the image over the conversation view), and the box that it and the expanded view of an app cover.
-- `view/editor/media.ts`, `view/media/`: `<dez:audio>` and `<dez:video>` tags shown as players (`MediaPlayer.vue`, video.js parts in Dez's own skin).
+- `view/editor/media.ts`, `view/media/`: `<dez:audio>` and `<dez:video>` tags shown as players (`MediaPlayer.vue`, video.js parts in Dez's own skin); `clipVolume.ts`: the one remembered volume of each clip kind.
 - `view/editor/apps.ts`: `<dez:app>` tags shown as app cards (a poster with Run, the size, a trash), the apps that run in the editor, and the delete of an app.
 - `view/apps/`: `appFrame.ts` (the frame of one app, and its messages), `appFrameHost.ts` (the frames of the apps that run, each over its card, with its bar, the expanded view, and fullscreen), `hiddenAppFrame.ts` (`dez.ui/runAppFrame`: the frame of one `apps invoke` run of a UI app, which the user does not see), `appFacts.ts` (the facts of an app for its card and its bar), `appIcon.ts`.
 - `view/fullscreen.ts`, `view/panels.ts`: `leaveFullscreen` (players and apps); the panels and the prompt of Dez that are open, and the Escape that closes the top one.
@@ -321,6 +321,7 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 - **Local clips play from a blob URL with a type that WebKit knows**: WebKitGTK loads no media from the asset protocol; macOS reads the blob's type (`MediaPlayer.vue`, `clipPlayType`).
 - **A new editor state makes new players**: a stream end or a tab switch stops a clip that plays (`view/editor/media.ts`).
 - **A removed media element frees nothing by itself**: a media element that Vue can remove needs `v-release-on-remove` (`view/media/releaseMedia.ts`).
+- **A clip's volume is what its controls set, not what its element reads back**: WebKitGTK reads back the sound server's late reports (`followClipVolume`, `view/media/clipVolume.ts`).
 - **A fullscreen player or app hides Dez's layers**: code that shows a prompt or a toast for one calls `leaveFullscreen` first (`view/fullscreen.ts`).
 - **File drops differ by platform**: Tauri's native drop on Linux, HTML5 drops on macOS (`dez.controller/images/watchFileDrops`, `droppedFilePaths`); a drop copies or links its file.
 - **A bundled tool gets copies, never links**, into its work folder or one private subfolder of it (`fonts/<file>`). Rust does not check the arguments of ffmpeg and ffprobe: the caller keeps every path outside the work folder out of them. Rust builds the command line of Deno itself (`src-tauri/src/bundled_tools.rs`).
