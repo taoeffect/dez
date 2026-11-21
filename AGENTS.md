@@ -141,7 +141,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `view/model-selector/`: `ModelPicker.vue` (a virtual list), `ModelOutputFilter.vue`, `ProviderSettingsPopup.vue` (toggles and "Model Parameters" of the active model), `pickerResize.ts` (the resize of the picker of the bottom bar).
 - `view/history/HistoryPanel.vue`: saved conversations.
 - `view/help/HelpView.vue`: the Help panel. Keep its texts true when a rule that they tell changes (the Assets page tells the asset rules; the Apps page tells the rules of the apps, of the code that a model runs, and of the sandbox).
-- `view/confirm/`: `dez.ui/confirm`, the in-app yes/no prompt.
+- `view/confirm/`: `dez.ui/confirm`, the in-app yes/no prompt, or a notice with one OK button.
 - `view/prompts/PromptManager.vue`, `view/thread/PromptAutocomplete.vue`: saved prompts and `/prompt ` insertion.
 - `view/settings/`: Settings (`SettingsView.vue`, `ProviderManager.vue`, `ShortcutManager.vue`, `SystemPromptSettings.vue`, `unusedFiles.ts`).
 - `view/tabs/TabBar.vue`: tabs (activity colors, drag to reorder).
