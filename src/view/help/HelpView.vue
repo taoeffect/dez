@@ -323,6 +323,11 @@ function onOverlayClick(event: MouseEvent) {
               a Dez tool made (for example <code>video</code>), names no model.
             </p>
             <p>
+              To see an image large, point at it and click the magnifier: the image shows as large
+              as the conversation view. Press Escape, click the X at the top right, or click next to
+              the image to close it.
+            </p>
+            <p>
               Copy text that names assets in one conversation and paste it into another, and Dez
               asks whether to bring the assets along. With Yes, a name of an asset that this
               conversation has in the message of the paste, or in a message before it, changes to the

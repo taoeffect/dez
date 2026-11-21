@@ -1933,8 +1933,8 @@ export const dezTheme = EditorView.theme({
       animation: 'dez-role-pill-shimmer 2.4s linear infinite',
     },
     // The image toolbar (`.dez-image__overlay` below) drops into place from
-    // its top-right corner as it fades in, and its trash gets a little
-    // smaller while pressed.
+    // its top-right corner as it fades in, and its magnifier and its trash
+    // get a little smaller while pressed.
     '.dez-image__overlay': {
       transform: `translateY(${editorSize(-4)}) scale(0.97)`,
       transformOrigin: 'top right',
@@ -1942,7 +1942,7 @@ export const dezTheme = EditorView.theme({
     '.dez-image:hover .dez-image__overlay': {
       transform: 'none',
     },
-    '.dez-image__trash:active': {
+    '.dez-image__zoom:active, .dez-image__trash:active': {
       transform: 'scale(0.92)',
     },
     '.dez-image[data-flash]::after, .dez-media[data-flash] .media-player__card:not(:fullscreen)::after': {
@@ -2031,6 +2031,12 @@ export const dezTheme = EditorView.theme({
     aspectRatio: 'var(--dez-image-width) / var(--dez-image-height)',
     borderRadius: editorSize(6),
   },
+  // The drawn image whose image the zoom shows (`data-zoomed`, imageZoom.ts)
+  // keeps its room in the text, empty, so the zoomed image looks as if it
+  // came out of it.
+  '.dez-image__img[data-zoomed]': {
+    opacity: '0',
+  },
   '.dez-image-missing': {
     display: 'inline-block',
     padding: editorSize(1, 8),
@@ -2043,11 +2049,11 @@ export const dezTheme = EditorView.theme({
     userSelect: 'none',
   },
   // The overlay of an image (`ImageWidget`): one small floating toolbar with
-  // the id badge, the facts of the image, and the trash button, shown only
-  // while the pointer is over the image, and never a part of the layout, so
-  // a hover changes no size. Its glass surface is dark in both themes, with
-  // white text, a hairline border, and a shadow, so it reads on light, dark,
-  // and busy images.
+  // the id badge, the facts of the image, the model label, the magnifier,
+  // and the trash button, shown only while the pointer is over the image,
+  // and never a part of the layout, so a hover changes no size. Its glass
+  // surface is dark in both themes, with white text, a hairline border, and
+  // a shadow, so it reads on light, dark, and busy images.
   //
   // Over an image, it sits at the right end of a row along the image's top
   // edge, inset as far from the top as from the right, and draws over the
@@ -2142,7 +2148,7 @@ export const dezTheme = EditorView.theme({
   },
   // The facts (pixels, format, file size) are less strong than the id, with
   // digits of one width. The `::after` is the divider before the model
-  // label or the trash.
+  // label or the magnifier.
   '.dez-image__facts': {
     position: 'relative',
     display: 'inline-flex',
@@ -2165,7 +2171,7 @@ export const dezTheme = EditorView.theme({
   },
   // The model that made the image (assetModelLabel.ts): a sparkle, then the
   // model name, as quiet as the facts. A long name ends in an ellipsis. The
-  // `::after` is the divider before the trash.
+  // `::after` is the divider before the buttons.
   '.dez-image__model': {
     position: 'relative',
     display: 'inline-flex',
@@ -2202,8 +2208,10 @@ export const dezTheme = EditorView.theme({
     width: '1px',
     background: 'var(--color-image-toolbar-border, rgba(255, 255, 255, 0.18))',
   },
-  // Its corners follow the toolbar's: toolbar radius minus its padding.
-  '.dez-image__trash': {
+  // The buttons: the magnifier and the trash, with no divider between
+  // them. Their corners follow the toolbar's: toolbar radius minus its
+  // padding.
+  '.dez-image__zoom, .dez-image__trash': {
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -2220,10 +2228,16 @@ export const dezTheme = EditorView.theme({
     cursor: 'pointer',
     transition: 'background-color 0.12s ease, color 0.12s ease, transform 0.08s ease',
   },
-  '.dez-image__trash svg': {
+  '.dez-image__zoom svg, .dez-image__trash svg': {
     display: 'block',
     width: editorSize(15),
     height: editorSize(15),
+  },
+  // The magnifier changes nothing, so its hover is a neutral light fill;
+  // the trash's is the color of a delete.
+  '.dez-image__zoom:hover': {
+    background: 'rgba(255, 255, 255, 0.16)',
+    color: '#fff',
   },
   '.dez-image__trash:hover': {
     background: 'var(--color-error-fill, #c4302b)',
@@ -2231,8 +2245,97 @@ export const dezTheme = EditorView.theme({
   },
   // Pressed: the fill a little darker (and the button a little smaller, in
   // the `prefers-reduced-motion: no-preference` block above).
-  '.dez-image__trash:active': {
+  '.dez-image__zoom:active, .dez-image__trash:active': {
     boxShadow: 'inset 0 0 0 999px rgba(0, 0, 0, 0.16)',
+  },
+  // The image zoom (src/view/editor/imageZoom.ts): a layer with a fixed
+  // place on the conversation view, in the editor's root. Its z-index puts
+  // it over the editor and its frame hosts (those compare in the
+  // scroller's stacking context, which is under it) and under the model
+  // pickers of the bottom bar (z-index 50), which open upward over the
+  // editor. Its sizes are in px, not in the editor's font size: it is no
+  // part of the text. Its animations are the module's (Web Animations),
+  // which check `prefers-reduced-motion` themselves. The layer takes the
+  // keyboard at the open and draws no ring for it.
+  '.dez-image-zoom': {
+    position: 'fixed',
+    zIndex: '40',
+    overflow: 'hidden',
+    outline: 'none',
+    fontFamily: UI_FONT_FAMILY,
+    WebkitUserSelect: 'none',
+    userSelect: 'none',
+  },
+  // A closed zoom takes no pointer while it animates out.
+  '.dez-image-zoom[data-closing]': {
+    pointerEvents: 'none',
+  },
+  // A dark scrim in both themes, so the image stands out, with the
+  // conversation blurred under it. A click on it closes the zoom.
+  '.dez-image-zoom__backdrop': {
+    position: 'absolute',
+    inset: '0',
+    background: 'rgba(12, 12, 16, 0.62)',
+    WebkitBackdropFilter: 'blur(10px) saturate(120%)',
+    backdropFilter: 'blur(10px) saturate(120%)',
+    cursor: 'zoom-out',
+  },
+  // The module gives the place and the size. The page color behind the
+  // image shows a transparent image as it is in the text. The shadow is
+  // deep, in layers: a hairline edge, a near shadow, and a wide soft one.
+  // The FLIP of the module scales the image from its top-left corner.
+  '.dez-image-zoom__img': {
+    position: 'absolute',
+    display: 'block',
+    boxSizing: 'border-box',
+    objectFit: 'contain',
+    borderRadius: '8px',
+    background: 'var(--color-bg)',
+    boxShadow: '0 0 0 1px rgba(255, 255, 255, 0.08), 0 2px 6px rgba(0, 0, 0, 0.24), 0 14px 36px rgba(0, 0, 0, 0.34), 0 36px 90px rgba(0, 0, 0, 0.42)',
+    transformOrigin: '0 0',
+    cursor: 'default',
+  },
+  // The X: a round button of the dark glass of the image toolbar, in the
+  // top-right corner, in the room that the module keeps clear of the image
+  // (`ZOOM_MARGIN_PX`).
+  '.dez-image-zoom__close': {
+    position: 'absolute',
+    top: '12px',
+    right: '12px',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    boxSizing: 'border-box',
+    width: '32px',
+    height: '32px',
+    margin: '0',
+    padding: '0',
+    border: '1px solid var(--color-image-toolbar-border, rgba(255, 255, 255, 0.18))',
+    borderRadius: '50%',
+    background: 'var(--color-image-toolbar, rgba(18, 18, 22, 0.72))',
+    color: 'rgba(255, 255, 255, 0.92)',
+    boxShadow: '0 1px 2px rgba(0, 0, 0, 0.22), 0 6px 18px rgba(0, 0, 0, 0.24)',
+    WebkitBackdropFilter: 'blur(14px) saturate(130%)',
+    backdropFilter: 'blur(14px) saturate(130%)',
+    cursor: 'pointer',
+    outline: 'none',
+    transition: 'background-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease',
+  },
+  '.dez-image-zoom__close svg': {
+    display: 'block',
+    width: '14px',
+    height: '14px',
+  },
+  '.dez-image-zoom__close:hover': {
+    background: 'rgba(64, 64, 72, 0.86)',
+    color: '#fff',
+  },
+  '.dez-image-zoom__close:active': {
+    boxShadow: 'inset 0 0 0 999px rgba(0, 0, 0, 0.16)',
+  },
+  // The keyboard's ring (Tab keeps the keyboard on the X).
+  '.dez-image-zoom__close:focus-visible': {
+    boxShadow: '0 0 0 2px var(--color-link, #4a9eff), 0 6px 18px rgba(0, 0, 0, 0.24)',
   },
   // Tool call chips (src/view/editor/toolCalls.ts). The widget is the only
   // thing on its line: a column as wide as the line, with the chip, and

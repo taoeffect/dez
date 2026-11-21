@@ -6,12 +6,12 @@ import { useModelState } from "../modelState";
 import { closeTopPanel, isPanelOpen } from "../panels";
 import { matchShortcut, type ShortcutIdOfScope } from "../../model/shortcuts";
 
-// While the confirm prompt, Settings, History, or Help is open, Esc closes it
-// first, so the find Esc handlers in the editor and in the dropdown pass Esc
-// on to this handler. The find selectors also do nothing while one of them
-// covers the editor. An app in its expanded view (apps/appFrameHost.ts)
-// covers the conversation the same way: the editor under it takes no key
-// and no focus of Dez.
+// While the confirm prompt, Settings, History, Help, or the image zoom is
+// open, Esc closes it first, so the find Esc handlers in the editor and in
+// the dropdown pass Esc on to this handler. The find selectors also do
+// nothing while one of them covers the editor. An app in its expanded view
+// (apps/appFrameHost.ts) covers the conversation the same way: the editor
+// under it takes no key and no focus of Dez.
 export function isModalOpen(): boolean {
   return isPanelOpen() || isAppExpanded();
 }
@@ -19,9 +19,9 @@ export function isModalOpen(): boolean {
 // Esc closes the innermost open thing first: a model picker's output filter
 // dropdown and the model dropdown (ModelOutputFilter.vue and
 // ModelSelector.vue take the key before this handler), the confirm prompt
-// and the panels (`closeTopPanel`), the expanded view of an app (the panels
-// show over it), the prompt autocomplete, find. With none open, it is the
-// Stop key (Esc by default).
+// and the panels, then the image zoom under them (`closeTopPanel`), the
+// expanded view of an app (the panels show over it), the prompt
+// autocomplete, find. With none open, it is the Stop key (Esc by default).
 // tests/e2e/submit-stop.e2e.ts covers the order.
 //
 // Esc in the page of an app does not come here: a frame keeps its keys, and

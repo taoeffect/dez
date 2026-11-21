@@ -2,6 +2,7 @@ import type { EditorView } from '@codemirror/view'
 import sbp from '@sbp/sbp'
 import { APP_READ_ASSET, AppCallError, SAVE_NEEDS_USER_TEXT, type SavedAssetAnswer } from '../../model/tools/appBridge'
 import { SaveCount } from '../../model/tools/appInvoke'
+import { coverBox, type Box } from '../editor/coverBox'
 import { focusKeepingScroll } from '../editor/focus'
 import { ROUND_STROKE, svgIcon, trashIcon } from '../editor/svgIcon'
 import { leaveFullscreen } from '../fullscreen'
@@ -75,24 +76,17 @@ export interface AppFrameActions {
  *  placeholder of the run). Its value is the id of the run. */
 export const FRAME_PLACE_ATTRIBUTE = 'data-app-frame-place'
 
-// A place in px: of a host over its card, from the start of the scrollable
-// area of the scroller; of an expanded host, in the window.
-interface Box {
-  left: number
-  top: number
-  width: number
-  height: number
-}
-
 interface HostedFrame {
   element: HTMLDivElement
   frame: HTMLIFrameElement
   expandButton: HTMLButtonElement
   fullscreenButton: HTMLButtonElement
-  /** The place of the host over its card, to which an expanded host goes
-   *  back; null before the first one. */
+  /** The place of the host over its card, from the start of the scrollable
+   *  area of the scroller, to which an expanded host goes back; null before
+   *  the first one. */
   box: Box | null
-  /** The place that the styles of `element` have now. */
+  /** The place that the styles of `element` have now: over its card, or,
+   *  expanded, in the window (`coverBox`). */
   styled: Box | null
 }
 
@@ -162,13 +156,6 @@ function place(hosted: HostedFrame, box: Box): void {
     if (hosted.styled?.[side] !== box[side]) style[side] = `${box[side]}px`
   }
   hosted.styled = box
-}
-
-// The place of a host that covers the conversation view of `view`: the box
-// of the scroller in the window, with its scrollbar.
-function coverBox(view: EditorView): Box {
-  const { left, top, width, height } = view.scrollDOM.getBoundingClientRect()
-  return { left, top, width, height }
 }
 
 // Puts the expanded host back over its card. The keyboard stays where it

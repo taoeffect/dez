@@ -90,6 +90,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `view/editor/mentionPaste.ts`, `model/chat/mentionPaste.ts`: a paste of `@id` mentions copied in another conversation brings along the assets that they name.
 - `view/editor/focus.ts`: focus the editor and keep its scroll and caret; use `focusKeepingScroll`, not `view.focus()`.
 - `view/editor/images.ts`, `imageInsert.ts`, `pendingRanges.ts`: images shown in place of their references; image and clip paste and drop.
+- `view/editor/imageZoom.ts`, `coverBox.ts`: the image zoom (the magnifier of an image's toolbar shows the image over the conversation view), and the box that it and the expanded view of an app cover.
 - `view/editor/media.ts`, `view/media/`: `<dez:audio>` and `<dez:video>` tags shown as players (`MediaPlayer.vue`, video.js parts in Dez's own skin).
 - `view/editor/apps.ts`: `<dez:app>` tags shown as app cards (a poster with Run, the size, a trash), the apps that run in the editor, and the delete of an app.
 - `view/apps/`: `appFrame.ts` (the frame of one app, and its messages), `appFrameHost.ts` (the frames of the apps that run, each over its card, with its bar, the expanded view, and fullscreen), `hiddenAppFrame.ts` (`dez.ui/runAppFrame`: the frame of one `apps invoke` run of a UI app, which the user does not see), `appFacts.ts` (the facts of an app for its card and its bar), `appIcon.ts`.
@@ -268,6 +269,7 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 - **The apps that run are a part of the editor state**: code that gives the view a new state carries them over (`carriedAppRuns`) and calls `syncAppFrames` (`view/editor/apps.ts`). A tab switch stops them.
 - **The frame of an app is never in a widget**: CodeMirror makes each widget again, and a frame that moves in the DOM loads again. The host puts it over the card (`view/apps/appFrameHost.ts`).
 - **An app that covers the conversation is a modal** for the app keys (`isAppExpanded`, `view/apps/appFrameHost.ts`), and Escape closes a panel of Dez before it (`closeTopPanel`, `view/panels.ts`).
+- **The image zoom is a modal too** (`isPanelOpen`, `view/panels.ts`), at z-index 40: under the model pickers of the bottom bar, which open over the editor. It follows the reference of its image into each new editor state (`ImageZoomFollow`, `view/editor/images.ts`).
 - **An app in fullscreen on Linux gets no Escape, `f`, or `F`**: WebKitGTK takes the three keys to leave fullscreen (`stepOut`, `view/apps/appFrameHost.ts`).
 - **Never hard-code a shortcut key**: every binding path reads the effective keys from `src/model/shortcuts.ts` and the settings store.
 - **Shortcut key order differs by platform**: on Linux the menu accelerator gets the key first; put context checks in the selector both paths call, never only in a key handler.

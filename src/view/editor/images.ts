@@ -1,6 +1,6 @@
 import sbp from '@sbp/sbp'
 import { StateEffect, StateField, type EditorState, type Extension, type Text } from '@codemirror/state'
-import { Decoration, EditorView, ViewPlugin, WidgetType, showTooltip, type DecorationSet, type PluginValue, type Rect, type Tooltip } from '@codemirror/view'
+import { Decoration, EditorView, ViewPlugin, WidgetType, showTooltip, type DecorationSet, type PluginValue, type Rect, type Tooltip, type ViewUpdate } from '@codemirror/view'
 import { assetModel } from '../../model/chat/assetModels'
 import { SENTINEL_CHAR, plainLiveText } from '../../model/chat/content'
 import { findImageReferences, imageExtension, imageMediaType, type ImageReference } from '../../model/chat/images'
@@ -15,11 +15,13 @@ import { modelDisplayNames } from '../thread/modelChip'
 import { selectedAssetLook } from './assetSelection'
 import { syncDomSelection } from './focus'
 import { compactionBlockEnd } from './compactionBlock'
-import { noteDrawnAsset, type AssetPlace } from './drawnAssets'
+import { coverBox } from './coverBox'
+import { drawnAssetAt, noteDrawnAsset, type AssetPlace } from './drawnAssets'
 import { HiddenAssetWidget, hiddenAssetLines, hiddenAssetOwnerKinds } from './hiddenAssets'
+import { closeImageZoom, hideIfZoomed, openImageZoom, placeImageZoom, zoomedImage } from './imageZoom'
 import { assetModelsChanged, sectionRolesChanged, sectionTexts } from './lineBlocks'
 import { followShownRange, pendingRanges, type DocRange } from './pendingRanges'
-import { trashIcon } from './svgIcon'
+import { ROUND_STROKE, svgIcon, trashIcon } from './svgIcon'
 import { tableRowStarts } from './tables'
 
 interface ImageDecorations {
@@ -115,6 +117,51 @@ function trashButton(view: EditorView, place: AssetPlace, path: string, linked: 
   return button
 }
 
+/** A magnifier with a plus, for the zoom button. */
+function zoomIcon(): SVGSVGElement {
+  return svgIcon('0 0 16 16', [
+    ['circle', { cx: '7', cy: '7', r: '4.75', ...ROUND_STROKE, 'stroke-width': '1.4' }],
+    ['path', { d: 'M10.5 10.5l3.25 3.25M7 5v4M5 7h4', ...ROUND_STROKE, 'stroke-width': '1.4' }],
+  ])
+}
+
+/** The drawn image of the reference with `path` and `id` in `view`; null
+ *  when the editor draws none of it now. */
+function drawnImageOf(view: EditorView, path: string, id: string | null): HTMLImageElement | null {
+  const image = renderedImages(view.state).find((image) => image.path === path && image.id === id)
+  const root = image ? drawnAssetAt(view, image.from) : null
+  return root?.querySelector<HTMLImageElement>('img.dez-image__img') ?? null
+}
+
+/** The magnifier: shows the drawn image `img` as large as the conversation
+ *  view (imageZoom.ts). Its press keeps the focus where it is, as the
+ *  trash's does, and the zoom gives the keyboard back to the editor on
+ *  close. Like the trash, it is out of the Tab order, and its tooltip is
+ *  Dez's own (`zoomTooltip`). */
+function zoomButton(view: EditorView, img: HTMLImageElement, path: string, id: string | null): HTMLButtonElement {
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = 'dez-image__zoom'
+  button.setAttribute('aria-label', 'Zoom image')
+  button.tabIndex = -1
+  button.appendChild(zoomIcon())
+  button.addEventListener('mousedown', (event) => {
+    event.preventDefault()
+    // The zoom covers the item of the tooltip.
+    view.plugin(imageTooltipHover)?.hide()
+  })
+  button.addEventListener('click', () => openImageZoom(view, {
+    tabId: sbp('dez.model/tabs/activeId') as string,
+    path,
+    id,
+    url: img.src,
+    alt: img.alt,
+    // CodeMirror draws the image again after a rebuild of the tab.
+    findSource: () => img.isConnected ? img : drawnImageOf(view, path, id),
+  }))
+  return button
+}
+
 /** The content of a tooltip with a title (`.dez-image-tooltip` in
  *  `dezTheme`): what the item is, then what it is for. The items of an
  *  image overlay and the mention chips (mentions.ts) use it. */
@@ -163,6 +210,11 @@ function modelTooltip(label: AssetModelLabel): HTMLElement {
     line.textContent = text
     return line
   }))
+}
+
+/** The magnifier's tooltip. */
+function zoomTooltip(): HTMLElement {
+  return tooltipContent('Zoom', 'Shows the image as large as the conversation view. Press Escape or click next to the image to close it.')
 }
 
 /** The trash's tooltip. The "Image not found" box has no file to delete
@@ -233,12 +285,12 @@ export type DrawnImage = Pick<ImageReference, 'path' | 'id' | 'linked'> & { mode
 /** Draws an image, with an overlay that shows while the pointer is over
  *  the image: a small toolbar in its top-right corner with its id (null for
  *  an old reference with no id) in a badge, the facts of the image, the
- *  label of the model that made it (`model`), and a trash button; the
- *  badge, the model label, and the trash have a tooltip. A reference to a
- *  file that does not load shows an "Image not found" box with the same
- *  overlay after its text, with no facts, so that its text can go too.
- *  `linked`: the file is a linked file (linkedFiles.ts), which the trash
- *  does not delete.
+ *  label of the model that made it (`model`), a magnifier that zooms the
+ *  image (imageZoom.ts), and a trash button; each item but the facts has a
+ *  tooltip. A reference to a file that does not load shows an "Image not
+ *  found" box with the same overlay after its text, with no facts and no
+ *  magnifier, so that its text can go too. `linked`: the file is a linked
+ *  file (linkedFiles.ts), which the trash does not delete.
  *
  *  `place` tells where the image's reference is in the doc now, for the
  *  trash and the tooltips. With none, the image is drawn in place of its
@@ -270,6 +322,9 @@ export function createImage(view: EditorView, { path, id, linked, model }: Drawn
   facts.className = 'dez-image__facts'
   facts.textContent = imageFactsText(path)
   overlay.appendChild(facts)
+  let zoom: HTMLButtonElement | null = zoomButton(view, img, path, id)
+  addTooltip(view, placeNow, zoom, zoomTooltip)
+  overlay.appendChild(zoom)
   const trash = trashButton(view, placeNow, path, linked)
   addTooltip(view, placeNow, trash, () => trashTooltip(trash.closest('.dez-image-missing') !== null, linked))
   overlay.appendChild(trash)
@@ -284,7 +339,7 @@ export function createImage(view: EditorView, { path, id, linked, model }: Drawn
     }
     if (modelElement && next) modelElement.replaceWith(next)
     else if (modelElement) modelElement.remove()
-    else if (next) overlay.insertBefore(next, trash)
+    else if (next) overlay.insertBefore(next, zoom ?? trash)
     modelElement = next
   }
   showModel(model)
@@ -304,6 +359,8 @@ export function createImage(view: EditorView, { path, id, linked, model }: Drawn
   img.addEventListener('error', () => {
     naturalSizes.delete(path)
     facts.remove()
+    zoom?.remove()
+    zoom = null
     const box = document.createElement('span')
     box.className = 'dez-image-missing'
     box.textContent = `Image not found: ${img.alt}`
@@ -315,6 +372,7 @@ export function createImage(view: EditorView, { path, id, linked, model }: Drawn
     measureLineHeights(view)
   })
   img.src = sbp('dez.controller/images/displayUrl', path) as string
+  hideIfZoomed(view, img, path, id)
   // The row along the image's top edge in which the overlay sits, at the
   // right end (`.dez-image__overlay-row` in `dezTheme`).
   const row = document.createElement('span')
@@ -358,9 +416,10 @@ class ImageWidget extends WidgetType {
     return size ? Math.min(size.height, editorSizePx(IMAGE_MAX_HEIGHT_PX)) : -1
   }
   // CM takes the mouse events, so a click on an image puts the caret before
-  // or after it. The trash button takes its own (`trashButton`).
+  // or after it. The magnifier and the trash take their own (`zoomButton`,
+  // `trashButton`).
   ignoreEvent(event: Event): boolean {
-    return event.target instanceof Element && event.target.closest('.dez-image__trash') !== null
+    return event.target instanceof Element && event.target.closest('.dez-image__zoom, .dez-image__trash') !== null
   }
 }
 
@@ -702,11 +761,59 @@ class ImageTooltipHover implements PluginValue {
 
 const imageTooltipHover = ViewPlugin.fromClass(ImageTooltipHover)
 
+/** Keeps the zoom of an image (imageZoom.ts) on its image. It closes when
+ *  the editor shows another tab, and when the editor state has no
+ *  reference with the path and the id of its image (a delete, an undo, an
+ *  edit of the reference). A rebuild of the same tab (`setState` at the
+ *  end of a stream, a compaction that keeps the image) keeps it, so that
+ *  the zoom does not close under the user. It goes on the new box of the
+ *  conversation view after each change of the layout. */
+class ImageZoomFollow implements PluginValue {
+  // `setState` makes the plugins anew, so the constructor sees each new
+  // state. CodeMirror is still in its update then, and the old DOM is in
+  // the page: a close there only fades, with no look for the drawn image.
+  constructor(private readonly view: EditorView) {
+    this.check(view.state)
+  }
+
+  update(update: ViewUpdate): void {
+    if (zoomedImage()?.view !== this.view) return
+    if (renderedImages(update.state) !== renderedImages(update.startState) && !this.check(update.state)) return
+    if (update.geometryChanged) {
+      this.view.requestMeasure({ key: this, read: (view) => coverBox(view), write: (box, view) => placeImageZoom(view, box) })
+    }
+  }
+
+  // An editor that leaves the page takes the zoom's layer with it, and the
+  // zoom must not stay a modal. `setState` destroys each plugin too, while
+  // the editor stays in the page.
+  destroy(): void {
+    const { view } = this
+    queueMicrotask(() => {
+      if (zoomedImage()?.view === view && !view.dom.isConnected) closeImageZoom('now')
+    })
+  }
+
+  // Closes the zoom of this editor when `state` does not show its image.
+  // Returns whether the zoom of this editor still shows.
+  private check(state: EditorState): boolean {
+    const zoom = zoomedImage()
+    if (zoom?.view !== this.view) return false
+    const shown = zoom.tabId === sbp('dez.model/tabs/activeId')
+      && renderedImages(state).some((image) => image.path === zoom.path && image.id === zoom.id)
+    if (!shown) closeImageZoom('fade')
+    return shown
+  }
+}
+
+const imageZoomFollow = ViewPlugin.fromClass(ImageZoomFollow)
+
 /** Images for the thread editor (`buildState()` in `ThreadEditor.vue`).
  *  The Backspace and Delete rules (`deleteImageParen`, `deleteImageBang`)
  *  are in its `sectionKeymap`, and find skips the hidden source
  *  (`protectedRanges` in `find.ts`). An image inside a selection looks
- *  selected (`assetSelection.ts`). The CSS is in `dezTheme`. */
+ *  selected (`assetSelection.ts`). The zoom of an image follows its
+ *  reference (`ImageZoomFollow`). The CSS is in `dezTheme`. */
 export function markdownImages(): Extension {
-  return [imageDecorationsField, pendingRanges(), imageTooltipField, imageTooltipHover, selectedAssetLook('dez-image', renderedImages)]
+  return [imageDecorationsField, pendingRanges(), imageTooltipField, imageTooltipHover, imageZoomFollow, selectedAssetLook('dez-image', renderedImages)]
 }

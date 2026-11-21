@@ -109,7 +109,7 @@ describe('asset facts', () => {
     await clips?.stop()
   })
 
-  it('shows the pixels, the format, and the file size of an image between its id and its trash, and no facts for a missing image', async () => {
+  it('shows the pixels, the format, and the file size of an image between its id and its buttons, and no facts or magnifier for a missing image', async () => {
     const stored = await writeTestFile(appFilePath(app.home, 'assets', 'images', 'facts.png'), PNG)
     const missing = appFilePath(app.home, 'assets', 'images', 'facts-missing.png')
     await openSeededConversation(browser, app.home, 'asset-facts-images', [{ role: 'user', text: `Images:\n![id=a](${stored})\n![id=b](${missing})\nEnd.` }])
@@ -119,7 +119,7 @@ describe('asset facts', () => {
     // The file size comes in after the image loaded.
     expect(PNG.length).toBeLessThan(1024)
     await waitForValue(browser, 'image toolbars', () => toolbars('.dez-image'), [
-      ['dez-image__id', `dez-image__facts: 40 × 24 · PNG · ${PNG.length} B`, 'dez-image__trash'],
+      ['dez-image__id', `dez-image__facts: 40 × 24 · PNG · ${PNG.length} B`, 'dez-image__zoom', 'dez-image__trash'],
       ['dez-image__id', 'dez-image__trash'],
     ])
 
@@ -214,9 +214,9 @@ describe('asset facts', () => {
     const imageFacts = `dez-image__facts: 40 × 24 · PNG · ${PNG.length} B`
     await waitForValue(browser, 'image toolbars', () => toolbars('.dez-image'), [
       // An image of the user names no model.
-      ['dez-image__id', imageFacts, 'dez-image__trash'],
-      ['dez-image__id', imageFacts, 'dez-image__model', 'dez-image__trash'],
-      ['dez-image__id', imageFacts, 'dez-image__model', 'dez-image__trash'],
+      ['dez-image__id', imageFacts, 'dez-image__zoom', 'dez-image__trash'],
+      ['dez-image__id', imageFacts, 'dez-image__model', 'dez-image__zoom', 'dez-image__trash'],
+      ['dez-image__id', imageFacts, 'dez-image__model', 'dez-image__zoom', 'dez-image__trash'],
     ])
     await waitForValue(browser, 'player toolbar', () => toolbars('.media-player'), [
       ['media-player__id', `media-player__facts: 0:02 · WebM · ${WEBM_VIDEO.length} B`, 'media-player__model'],
