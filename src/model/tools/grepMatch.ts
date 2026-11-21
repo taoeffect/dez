@@ -129,13 +129,12 @@ interface Room {
 }
 
 // A line as a row shows it: the whole line, or a part of a long one. A
-// matching line (`regExp`) shows from a little before its first match, so
-// that the row shows the match also in a minified file; another line shows
-// its start.
-function shownText(text: string, regExp: RegExp | null): string {
+// matching line shows from a little before its first match (`from`, the
+// index of that match), so that the row shows the match also in a
+// minified file; another line (`from` 0) shows its start.
+function shownText(text: string, from: number): string {
   if (text.length <= GREP_LINE_MAX_CHARACTERS) return text
-  const first = regExp?.exec(text)?.index ?? 0
-  const start = Math.max(0, Math.min(first - LINE_LEAD, text.length - GREP_LINE_MAX_CHARACTERS))
+  const start = Math.max(0, Math.min(from - LINE_LEAD, text.length - GREP_LINE_MAX_CHARACTERS))
   const end = start + GREP_LINE_MAX_CHARACTERS
   const part = startOf(endOf(text.slice(0, end), GREP_LINE_MAX_CHARACTERS), GREP_LINE_MAX_CHARACTERS)
   return `${start > 0 ? '…' : ''}${part}${end < text.length ? '…' : ''}`
@@ -149,11 +148,12 @@ function lineAt(lines: readonly string[], line: number): string {
   return text.endsWith('\r') ? text.slice(0, -1) : text
 }
 
-// The matches of the file at `path` with `lines`, where `matches` tests
-// one line. A shown match brings the `context` lines before it that no row
+// The matches of the file at `path` with `lines`, where `firstMatch` tests
+// one line and gives the index of its first match, or -1 when it does not
+// match. A shown match brings the `context` lines before it that no row
 // shows yet, and the ones after it come as the loop reaches them. The rows
 // take from `room`.
-function fileMatches(path: string, lines: readonly string[], regExp: RegExp, matches: (text: string, line: number) => boolean, context: number, room: Room): GrepFileMatches | null {
+function fileMatches(path: string, lines: readonly string[], firstMatch: (text: string, line: number) => number, context: number, room: Room): GrepFileMatches | null {
   const file: GrepFileMatches = { path, matches: 0, shown: 0, rows: [] }
   const lastRow = () => file.rows.at(-1)?.line ?? 0
   // Adds a group of rows when it fits in the room, with the path line of
@@ -177,7 +177,8 @@ function fileMatches(path: string, lines: readonly string[], regExp: RegExp, mat
   let contextEnd = 0
   for (let line = 1; line <= lines.length; line += 1) {
     const text = lineAt(lines, line)
-    const match = matches(text, line)
+    const first = firstMatch(text, line)
+    const match = first >= 0
     if (match) file.matches += 1
     if (room.full) continue
     if (match) {
@@ -187,15 +188,15 @@ function fileMatches(path: string, lines: readonly string[], regExp: RegExp, mat
       }
       const rows: GrepRow[] = []
       for (let before = Math.max(line - context, lastRow() + 1); before < line; before += 1) {
-        rows.push({ line: before, text: shownText(lineAt(lines, before), null), match: false })
+        rows.push({ line: before, text: shownText(lineAt(lines, before), 0), match: false })
       }
-      rows.push({ line, text: shownText(text, regExp), match: true })
+      rows.push({ line, text: shownText(text, first), match: true })
       if (!added(rows)) continue
       room.matches -= 1
       file.shown += 1
       contextEnd = line + context
     } else if (line <= contextEnd) {
-      added([{ line, text: shownText(text, null), match: false }])
+      added([{ line, text: shownText(text, 0), match: false }])
     }
   }
   return file.matches === 0 ? null : file
@@ -218,13 +219,17 @@ export function grepFiles({ source, flags, context, files }: GrepRequest, now: (
       continue
     }
     outcome.searched += 1
-    const matchesLine = (lineText: string, line: number): boolean => {
+    // One run of the expression for each line, under the timer: it gives
+    // both the answer and the index of the first match, for the part of a
+    // long line that a row shows. The flags are never `g` or `y`, so
+    // `lastIndex` does not count.
+    const firstMatch = (lineText: string, line: number): number => {
       const start = now()
-      const match = regExp.test(lineText)
-      if (!match && now() - start > GREP_SLOW_LINE_MS) outcome.slowLines.push({ path: file.path, line })
-      return match
+      const found = regExp.exec(lineText)
+      if (found === null && now() - start > GREP_SLOW_LINE_MS) outcome.slowLines.push({ path: file.path, line })
+      return found?.index ?? -1
     }
-    const matches = fileMatches(file.path, textLines(text.replace(/^\uFEFF/, '')), regExp, matchesLine, context, room)
+    const matches = fileMatches(file.path, textLines(text.replace(/^\uFEFF/, '')), firstMatch, context, room)
     if (matches) outcome.files.push(matches)
   }
   outcome.cutLines = room.cutLines
