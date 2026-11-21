@@ -2,12 +2,14 @@
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import sbp from '@sbp/sbp'
 import { useModelState } from '../modelState'
+import { modelLabel, modelTooltipName } from '../modelLabel'
+import { modelRefKey } from '../../model/chat/modelRef'
 import type { ModelInfo } from '../../model/providers'
 import ModelPicker from './ModelPicker.vue'
 import ProviderSettingsPopup from './ProviderSettingsPopup.vue'
 import { PICKER_EDGES, usePickerResize } from './pickerResize'
 
-const { activeModel, settings } = useModelState()
+const { activeModel, settings, modelDisplayNames } = useModelState()
 
 const isOpen = ref(false)
 const settingsOpen = ref(false)
@@ -16,11 +18,30 @@ const picker = ref<InstanceType<typeof ModelPicker> | null>(null)
 const pickerBox = ref<HTMLElement | null>(null)
 const { shownSize, startResize } = usePickerResize(pickerBox, () => settings.value.modelPickerSize)
 
-const displayName = computed(() => {
-  if (activeModel.value) {
-    return activeModel.value.modelName
+// What the model button shows: the provider in a tag, then the model name.
+// A router names some models after the company that made them ("Z.ai: GLM
+// 5.3 FlashX" of TrustedRouter), so a name alone can read as a model of
+// that company's own provider; the tag gives the provider a shape of its
+// own. The provider name has no fallback (`modelLabel`: never a provider
+// id, as custom ids are UUIDs), so an unknown or deleted provider says so.
+// The name is the snapshot of the tab (`ActiveModel.modelName`), as before;
+// the title and the accessible name tell the facts of the agent pill
+// (`addModelToPill`), so a cut provider name is there in full.
+const shownModel = computed(() => {
+  const model = activeModel.value
+  if (!model) return null
+  const names = modelDisplayNames.value
+  const key = modelRefKey(model)
+  const { modelName, providerName } = modelLabel(model, names)
+  const provider = providerName ?? 'Unknown provider'
+  const tooltipName = modelTooltipName(model.modelId, modelName, names.readableNames.get(key))
+  return {
+    name: model.modelName,
+    provider,
+    providerKnown: providerName !== null,
+    title: [tooltipName, provider, key].join('\n'),
+    ariaLabel: `Model: ${tooltipName}, Provider: ${provider}`,
   }
-  return 'Select model'
 })
 
 function toggle() {
@@ -95,8 +116,19 @@ onUnmounted(() => {
 
 <template>
   <div ref="dropdownEl" class="model-selector">
-    <button class="model-selector-btn" @click="toggle">
-      <span class="model-selector-label">{{ displayName }}</span>
+    <button
+      class="model-selector-btn"
+      :class="{ 'model-selector-btn--open': isOpen }"
+      :title="shownModel?.title"
+      :aria-label="shownModel?.ariaLabel"
+      @click="toggle"
+    >
+      <span
+        v-if="shownModel"
+        class="model-selector-provider"
+        :class="{ 'model-selector-provider--unknown': !shownModel.providerKnown }"
+      >{{ shownModel.provider }}</span>
+      <span class="model-selector-label">{{ shownModel?.name ?? 'Select model' }}</span>
       <svg width="10" height="10" viewBox="0 0 10 10" fill="none" class="model-selector-chevron" :class="{ 'model-selector-chevron--open': isOpen }">
         <path d="M2 4l3 3 3-3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
@@ -168,8 +200,44 @@ onUnmounted(() => {
   transition: opacity 0.15s;
 }
 
-.model-selector-btn:hover {
+/* Full opacity while the picker is open too, so the button does not fade
+   next to its own picker. */
+.model-selector-btn:hover,
+.model-selector-btn--open {
   opacity: 1;
+}
+
+/* The provider of the model, in a box with a soft fill before the model
+   name, so it reads as its own thing and not as the start of the name.
+   Smaller than the name, and medium weight, not bold, so the name stays
+   the main text. A long custom provider name is cut; the title tells it in
+   full. A block with a line height, not a flex box: an ellipsis cuts only
+   the text of a block. */
+.model-selector-provider {
+  display: block;
+  box-sizing: border-box;
+  height: 18px;
+  line-height: 18px;
+  max-width: 14em;
+  flex-shrink: 0;
+  margin-right: 2px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--color-text) 9%, transparent);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* An unknown or deleted provider: an outline with no fill, a missing
+   source rather than a name. The border takes 2px of the line. */
+.model-selector-provider--unknown {
+  line-height: 16px;
+  background: transparent;
+  border: 1px dashed color-mix(in srgb, var(--color-text) 35%, transparent);
+  font-style: italic;
 }
 
 .model-selector-chevron {

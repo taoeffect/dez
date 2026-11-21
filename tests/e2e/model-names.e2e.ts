@@ -6,9 +6,10 @@ import { replyText, sendChatReply, startChatMock, type MockServer } from './harn
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
 import { activeConversationId, activeTabStreaming, editorSelection, maskPillDuration, newTab, openPicker, pickerRows, pickModel, pressRolePill, rolePillHeights, savedPillLines, sbpCall, setCaret, submit, threadSections, waitForThread } from './harness/thread'
 
-// The model on agent role pills, the model names in history rows, and the
+// The model on agent role pills, the model names in history rows, the
 // tooltips of the models (the id, then the pretty name) in the model picker
-// and on the pills, driven through the real app against a mock
+// and on the pills, and the provider and the model in the model button of
+// the bottom bar, driven through the real app against a mock
 // OpenAI-compatible server in this process.
 //
 // One custom provider ("Mock Provider") has three named config models. Its id
@@ -48,6 +49,21 @@ interface SeparatorView {
   index: number
   role: string
   chip: ChipView | null
+}
+
+/** The model button of the bottom bar. */
+interface ModelButtonView {
+  /** The text of the provider tag; null with no tag. */
+  provider: string | null
+  /** Whether the tag has the form of an unknown provider. */
+  unknown: boolean
+  name: string
+  /** Whether the tag ends left of the model name. */
+  providerFirst: boolean
+  title: string | null
+  ariaLabel: string | null
+  /** `textContent` of the whole button. */
+  text: string
 }
 
 /** A model of the spec. */
@@ -123,6 +139,23 @@ interface MockState {
   hold: Promise<void> | null
 }
 
+// What the model button of the bottom bar must show for `model` of a
+// provider named `provider` (null: unknown). Its title tells the facts of
+// the pill's title, and its aria-label names the model and the provider.
+// Its text is only the tag and the name, so it never holds a provider id.
+function expectedModelButton (model: { key: string, name: string, tooltipName: string }, provider: string | null): ModelButtonView {
+  const providerText = provider ?? 'Unknown provider'
+  return {
+    provider: providerText,
+    unknown: provider === null,
+    name: model.name,
+    providerFirst: true,
+    title: [model.tooltipName, providerText, model.key].join('\n'),
+    ariaLabel: `Model: ${model.tooltipName}, Provider: ${providerText}`,
+    text: `${providerText}${model.name}`,
+  }
+}
+
 describe('model names', () => {
   let app: RunningApp
   let browser: E2EBrowser
@@ -175,6 +208,31 @@ describe('model names', () => {
           meta: row.querySelector('.history-row-meta')?.textContent ?? '',
         }])
     ), titles)
+  }
+
+  // The model button of the bottom bar.
+  async function modelButton (): Promise<ModelButtonView> {
+    return browser.execute(() => {
+      const button = document.querySelector<HTMLElement>('.model-selector-btn')
+      const tag = button?.querySelector<HTMLElement>('.model-selector-provider') ?? null
+      const name = button?.querySelector<HTMLElement>('.model-selector-label') ?? null
+      return {
+        provider: tag?.textContent ?? null,
+        unknown: tag?.classList.contains('model-selector-provider--unknown') ?? false,
+        name: name?.textContent ?? '',
+        providerFirst: tag !== null && name !== null && tag.getBoundingClientRect().right <= name.getBoundingClientRect().left,
+        title: button?.getAttribute('title') ?? null,
+        ariaLabel: button?.getAttribute('aria-label') ?? null,
+        text: button?.textContent ?? '',
+      }
+    })
+  }
+
+  // Saves the first provider of the spec with the name `name`.
+  async function renameProvider (name: string): Promise<void> {
+    const providers = await sbpCall(browser, 'dez.model/customProviders/list') as Array<{ id: string }>
+    const config = providers.find((provider) => provider.id === PROVIDER.id)
+    await sbpCall(browser, 'dez.controller/providers/save', { ...config, name })
   }
 
   beforeAll(async () => {
@@ -459,9 +517,7 @@ describe('model names', () => {
     })
 
     // A rename updates the open panel.
-    const providers = await sbpCall(browser, 'dez.model/customProviders/list') as Array<{ id: string }>
-    const config = providers.find((provider) => provider.id === PROVIDER.id)
-    await sbpCall(browser, 'dez.controller/providers/save', { ...config, name: 'Renamed Provider' })
+    await renameProvider('Renamed Provider')
     await waitForValue(browser, 'renamed history row', async () => (await historyRows(['Custom provider chat']))['Custom provider chat'], {
       model: ALPHA.name,
       provider: 'Renamed Provider',
@@ -485,5 +541,31 @@ describe('model names', () => {
       { index: 1, role: 'agent', chip: expectedChip(READABLE, READABLE_PROVIDER.name) },
       { index: 2, role: 'user', chip: null },
     ])
+  })
+
+  it('shows the provider before the model name in the bottom bar', async () => {
+    // The test of the history rows renamed the provider.
+    await renameProvider(PROVIDER.name)
+    await newTab(browser)
+    await pickModel(browser, PROVIDER.name, ALPHA.name)
+    await waitForValue(browser, 'model button', modelButton, expectedModelButton(ALPHA, PROVIDER.name))
+
+    // A rename shows at once.
+    try {
+      await renameProvider('Renamed Provider')
+      await waitForValue(browser, 'renamed model button', modelButton, expectedModelButton(ALPHA, 'Renamed Provider'))
+    } finally {
+      await renameProvider(PROVIDER.name)
+    }
+
+    // A model named by its id: the button shows the id, and its title adds
+    // the readable name.
+    await pickModel(browser, READABLE_PROVIDER.name, READABLE.modelId)
+    await waitForValue(browser, 'readable model button', modelButton, expectedModelButton(READABLE, READABLE_PROVIDER.name))
+
+    // A model of a deleted provider: the tag tells that the provider is
+    // unknown, and only the title holds the provider id, in the key.
+    await sbpCall(browser, 'dez.model/setActiveModel', GONE.providerId, GONE.modelId, GONE.modelId)
+    await waitForValue(browser, 'unknown provider model button', modelButton, expectedModelButton(GONE, null))
   })
 })

@@ -306,8 +306,10 @@ describe('submit and stop a streaming reply', () => {
     expect(JSON.parse(request.body).messages).toEqual([openAiSystemMessage(PROVIDER), { role: 'user', content: 'Sent by the button' }])
     expect(await focusedArea(browser), 'focus after the click').toBe('editor')
     await waitForValue(browser, 'button while streaming', submitButtonFace, STOP_FACE)
+    // By the accessible name of each button, not its text: the text of the
+    // model button holds the provider name, "Stop Mock".
     const stopButtons = await browser.execute(() => Array.from(document.querySelectorAll('button')).filter(
-      (button) => button.textContent?.includes('Stop')
+      (button) => (button.getAttribute('aria-label') ?? button.textContent ?? '').trim().startsWith('Stop')
     ).length)
     expect(stopButtons, 'Stop buttons').toBe(1)
 
