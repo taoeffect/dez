@@ -229,8 +229,8 @@ export function grepFiles({ source, flags, context, files }: GrepRequest, now: (
       if (found === null && now() - start > GREP_SLOW_LINE_MS) outcome.slowLines.push({ path: file.path, line })
       return found?.index ?? -1
     }
-    const matches = fileMatches(file.path, textLines(text.replace(/^\uFEFF/, '')), firstMatch, context, room)
-    if (matches) outcome.files.push(matches)
+    const fileResult = fileMatches(file.path, textLines(text.replace(/^\uFEFF/, '')), firstMatch, context, room)
+    if (fileResult) outcome.files.push(fileResult)
   }
   outcome.cutLines = room.cutLines
   return outcome
