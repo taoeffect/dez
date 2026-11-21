@@ -631,8 +631,8 @@ export async function deleteImage(view: EditorView, from: number, path: string):
   if (range) syncDomSelection(view)
 }
 
-/** The tooltip of an overlay item (the id badge or the trash) of the image
- *  whose reference starts at `from`. */
+/** The tooltip of an overlay item (the id badge, the model label, the
+ *  magnifier, or the trash) of the image whose reference starts at `from`. */
 export interface ImageTooltip {
   from: number
   /** The image's path and id, so that the tooltip goes when they change. */
@@ -646,8 +646,8 @@ export interface ImageTooltip {
 export const setImageTooltip = StateEffect.define<ImageTooltip | null>()
 
 /** The overlay item tooltip, if one shows. CM's `hoverTooltip` (the link
- *  tooltip) finds a tooltip from a doc position only, and both items are in
- *  one widget at one position, so the items show and hide theirs
+ *  tooltip) finds a tooltip from a doc position only, and all the items are
+ *  in one widget at one position, so the items show and hide theirs
  *  (`imageTooltipHover`). It never outlives its image: it follows the image
  *  through edits around it (a stream in another section), and goes when the
  *  image's reference changes or goes, as its widget is drawn again then, and
@@ -708,7 +708,8 @@ function tooltipAnchor(item: HTMLElement, dom: HTMLElement): Rect {
 
 /** Shows and hides the overlay item tooltips (`imageTooltipField`) as the
  *  pointer comes onto an item and leaves it (`addTooltip`), and hides them
- *  when the trash is pressed (`trashButton`). */
+ *  when the trash or the magnifier is pressed (`trashButton`,
+ *  `zoomButton`), and on a context press of the image (`addAssetMenu`). */
 class ImageTooltipHover implements PluginValue {
   // `number`, the browser's timer id type (see `closeTimer` in
   // ToastCard.vue).

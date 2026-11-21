@@ -276,7 +276,8 @@ class MediaWidget extends WidgetType {
 }
 
 /** The tags that the editor shows as players (`shownSectionTags`), in doc
- *  order, each with whether a linked `src` counts in its section. */
+ *  order, each with the section that holds it (for `assetModel`) and
+ *  whether a linked `src` counts there. */
 function findRenderedMedia(doc: string, sections: readonly SectionModel[]): MediaInSection[] {
   if (!MEDIA_TAG_NAMES.some((name) => doc.includes(`<${name}`))) return []
   return shownSectionTags(doc, sections, findMediaTags).map(({ tag, section, from, to }) => ({ tag: { ...tag, from, to, linkedSrc: section.role === 'user' }, section }))

@@ -1169,15 +1169,16 @@ function onContextMenu(event: MouseEvent): void {
   border-radius: 50%;
 }
 
-/* The toolbar of the id badge and the facts has the look of an image's
-   toolbar (`.dez-image__overlay`, `.dez-image__id`, and
-   `.dez-image__facts` in `dezTheme`, cmEditor.ts): dark glass with white
-   text in both themes, shown only while the pointer is over the player.
-   Beside an audio card and the card of a clip that does not play, it
-   covers no control of the bar, and it keeps its room while hidden, so a
-   hover changes no size; the rule below puts it over the picture of a
-   video. It is outside the card, which cuts its content (`overflow`); so
-   the fullscreen view, which is the card, has no toolbar. */
+/* The toolbar of the id badge, the facts, and the model label has the look
+   of an image's toolbar (`.dez-image__overlay`, `.dez-image__id`,
+   `.dez-image__facts`, and `.dez-image__model` in `dezTheme`, cmEditor.ts):
+   dark glass with white text in both themes, shown only while the pointer
+   is over the player. Beside an audio card and the card of a clip that
+   does not play, it covers no control of the bar, and it keeps its room
+   while hidden, so a hover changes no size; the rule below puts it over
+   the picture of a video. It is outside the card, which cuts its content
+   (`overflow`); so the fullscreen view, which is the card, has no
+   toolbar. */
 .media-player__overlay {
   z-index: 2;
   display: inline-flex;
@@ -1245,9 +1246,7 @@ function onContextMenu(event: MouseEvent): void {
 }
 
 /* The facts (length, format, file size) are less strong than the id, with
-   digits of one width. The `::before` is the divider in the middle of the
-   gap after the id. The video.js tooltip between the two is a popover,
-   which takes no room in the toolbar. */
+   digits of one width. */
 .media-player__facts {
   position: relative;
   display: inline-flex;
@@ -1291,7 +1290,8 @@ function onContextMenu(event: MouseEvent): void {
 }
 
 /* The divider in the middle of the gap before the facts or the model
-   label. */
+   label. The two video.js tooltips of the toolbar (of the id and of the
+   model label) are popovers, which take no room in it. */
 .media-player__facts::before,
 .media-player__model::before {
   content: "";
