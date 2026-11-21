@@ -323,14 +323,14 @@ function onOverlayClick(event: MouseEvent) {
             <p>
               When you point at an image or a player, Dez also shows the name of the model that made
               it: an image or a clip of a reply, or one that a model made for a
-              <code>model_invoke</code> call. Point at the name to
-              see the model, its provider, and its key. An asset that you pasted or dropped, or that
-              a Dez tool made (for example <code>video</code>), names no model.
+              <code>model_invoke</code> call. Point at the name to see the model, its provider, and
+              its full id. An asset that you pasted or dropped, or that a Dez tool made (for example
+              <code>video</code>), names no model.
             </p>
             <p>
-              To see an image large, point at it and click the magnifier: the image shows as large
-              as the conversation view. Press Escape, click the X at the top right, or click next to
-              the image to close it.
+              To see an image large, point at it and click the magnifier: the image shows as large as
+              it fits in the conversation view. Press Escape, click the X at the top right, or click
+              next to the image to close it.
             </p>
             <p>
               Copy text that names assets in one conversation and paste it into another, and Dez
