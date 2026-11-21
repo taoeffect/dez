@@ -175,7 +175,7 @@ function sectionTexts(): Array<{ role: string, text: string }> {
 
 // Starts the reply of the section `sectionId`. `messages` are the messages
 // of its first request, which hold the conversation before the reply.
-async function startStream({ sendTools = false, incognito = false, sectionId = 'a1', newestUserMessage = 'Hi', messages = [{ role: 'user', content: newestUserMessage }] as StreamMessage[] } = {}): Promise<void> {
+async function startStream({ sendTools = false, sectionId = 'a1', newestUserMessage = 'Hi', messages = [{ role: 'user', content: newestUserMessage }] as StreamMessage[] } = {}): Promise<void> {
   await sbp('dez.stream/start', {
     tabId: activeTab().id,
     sectionId,
@@ -185,7 +185,7 @@ async function startStream({ sendTools = false, incognito = false, sectionId = '
     imagesOverLimit: 0,
     newestUserMessage,
     sendTools,
-    incognito,
+    incognito: false,
     imageOutput: false,
     audioOutput: false,
   })
