@@ -178,12 +178,27 @@
   const HIDDEN_ERROR_NOTE = 'Uncaught error in a script file of the page. The webview hides its details, because the page loads that file without `crossorigin`. '
     + 'Load each script file as in <script src="main.js" crossorigin></script>, or with type="module", to get the error.'
 
+  // The URL of the file that `element` could not load; blank for none.
+  // The `src` and the `href` of an HTML element are absolute URLs. Those
+  // of an SVG element (`<image>`, `<script>`) are an `SVGAnimatedString`
+  // of the text of the attribute, made absolute here as an HTML one is.
+  const fileUrl = (element) => {
+    const url = element.src || element.href
+    if (!(url instanceof SVGAnimatedString)) return url
+    if (url.baseVal === '') return ''
+    try {
+      return new URL(url.baseVal, element.baseURI).href
+    } catch {
+      return url.baseVal
+    }
+  }
+
   // An error that no code of the page caught, and a file that an element
   // of the page could not load (its error event does not bubble: the
   // capture phase gets it).
   window.addEventListener('error', (event) => {
     if (event.target instanceof Element) {
-      addLog(`The page could not load ${event.target.src || event.target.href || `the file of a <${event.target.localName}>`}`)
+      addLog(`The page could not load ${fileUrl(event.target) || `the file of a <${event.target.localName}>`}`)
     } else if (event.error !== null && event.error !== undefined) {
       addLog(`Uncaught ${errorText(event.error)}`)
     } else if (event.message === HIDDEN_ERROR_MESSAGE && !event.filename) {

@@ -212,9 +212,10 @@ const BROKEN_MAIN = [
 
 // The script of the page of the `loose` app. Its handler does not wait
 // for its save, which Dez refuses: the bytes are no image and no clip.
-// The page also asks for an image that the app does not have, loads a
-// script file that throws (`old.js`) without `crossorigin`, and its own
-// script ends with an error that nothing catches.
+// The page also asks for two images that the app does not have (an HTML
+// one and an SVG one), loads a script file that throws (`old.js`) without
+// `crossorigin`, and its own script ends with an error that nothing
+// catches.
 const LOOSE_MAIN = [
   'dez.sbp("sbp/selectors/register", {',
   '  "app/invoke": () => {',
@@ -223,6 +224,7 @@ const LOOSE_MAIN = [
   '  },',
   '})',
   'document.body.append(Object.assign(new Image(), { src: "none.png" }))',
+  'document.body.insertAdjacentHTML("beforeend", \'<svg><image href="none.svg"/></svg>\')',
   'document.body.append(Object.assign(document.createElement("script"), { src: "old.js" }))',
   'missingFunction()',
 ].join('\n')
@@ -554,16 +556,18 @@ describe('apps invoke', () => {
     await waitForValue(browser, 'the images after the run that failed', () => filesIn(imagesDir), before)
 
     // A run that ended with no error tells of the errors that no code of
-    // the page caught: the error of a script, a file that did not load, and
-    // the save that Dez refused and that the handler did not wait for. The
-    // webview hides the error of a script file that the page loaded
-    // without `crossorigin`: the result tells how to get it.
+    // the page caught: the error of a script, the files that did not load
+    // (also by the URL of an SVG element), and the save that Dez refused
+    // and that the handler did not wait for. The webview hides the error
+    // of a script file that the page loaded without `crossorigin`: the
+    // result tells how to get it.
     const loose = await invoke(broken.next, 'call_loose', { name: 'loose' })
     expect(loose.result.status).toBe('finished')
     const [returned, log] = loose.result.text.split('\n\nConsole output of the code:\n')
     expect(returned).toBe('done')
-    expect(log).toContain('Uncaught ReferenceError: Can\'t find variable: missingFunction\nglobal code@/apps/loose/main.js:9:16')
+    expect(log).toContain('Uncaught ReferenceError: Can\'t find variable: missingFunction\nglobal code@/apps/loose/main.js:10:16')
     expect(log).toContain('The page could not load /apps/loose/none.png')
+    expect(log).toContain('The page could not load /apps/loose/none.svg')
     expect(log).toContain('Uncaught error in a script file of the page. The webview hides its details, because the page loads that file without `crossorigin`.')
     expect(log).not.toContain('otherMissing')
     expect(log).toContain('Uncaught (in a promise) Error: Dez saved nothing: the bytes are no file of a type that Dez stores.')

@@ -32,8 +32,10 @@ import { codePanel, hiddenPart, hidingPart, intermediateParts, pressToolChip, re
 //   as lines of `/work/code.ts`, with the causes of the error; a syntax
 //   error, a static `import`, a refused permission, and a refused package
 //   each get the text that tells the model what to do;
-// - code that ended with no value, and code that Dez stopped at the time
-//   limit of its call, give an error result;
+// - code that ended before it returned a value, and code that Dez stopped
+//   at the time limit of its call, give an error result, and the chip of
+//   such a call shows that it failed; code that returned no value gives a
+//   result that tells so, and no error;
 // - Stop ends the code of a call that runs;
 // - every work folder is gone after its call;
 // - the code of a call runs the other Dez tools with `dez.sbp`, in both
@@ -77,6 +79,9 @@ describe('js_eval tool', () => {
   const chatRequest = (): Promise<HeldRequest> => takeRequest(setup, CHAT_PATH)
 
   const expectReplyEnd = (request: HeldRequest): Promise<void> => expectEnd(setup, CALLER, request)
+
+  // The state of each tool call chip of the active editor, in doc order.
+  const chipStates = async (): Promise<Array<string | null>> => (await toolChips(browser)).map(({ state }) => state)
 
   // The images that the tools of a reply made, from the text `reply` of its
   // section, in its order: the id and the marks of each reference, and
@@ -146,6 +151,7 @@ describe('js_eval tool', () => {
     expect(toolResult(second, 'call_timer')).toBe('done')
     expect(toolResult(second, 'call_none')).toBe('The code returned no value, and it wrote nothing to the console. Give the result with `return`.')
     await expectReplyEnd(second)
+    await waitForValue(browser, 'chip states', chipStates, Array(8).fill('success'))
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 
@@ -198,6 +204,7 @@ describe('js_eval tool', () => {
     expect(late).toContain('late failure')
     expect(late).toContain('file:///work/code.ts:1:')
     await expectReplyEnd(second)
+    await waitForValue(browser, 'chip states', chipStates, Array(6).fill('error'))
   })
 
   it('stops code that runs longer than the time limit of its call', async () => {
@@ -212,6 +219,7 @@ describe('js_eval tool', () => {
       + '\n\nConsole output of the code:\nstarted',
     )
     await expectReplyEnd(second)
+    await waitForValue(browser, 'chip states', chipStates, ['error'])
   })
 
   it('ends the code of a call when the user stops the reply, and deletes its work folder', async () => {

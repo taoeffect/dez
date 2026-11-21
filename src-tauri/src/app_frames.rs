@@ -325,10 +325,16 @@ type WebviewGuards = Result<(), String>;
 fn serve<F: Read + Seek>(request: &Request<Vec<u8>>, guards: &WebviewGuards, open: impl FnOnce(&str) -> Result<F, String>) -> Answer {
     if let Err(problem) = guards {
         // No code of an app can read this text: with a guard off, no page
-        // of an app loads.
+        // of an app loads. The user sees it in the frame of a shown app.
+        // A restart does not help on a macOS that lacks an API of a guard
+        // (`platform`), so the text tells that floor first.
         return refusal(
             StatusCode::SERVICE_UNAVAILABLE,
-            format!("Dez cannot show apps: a guard of the app frames did not start. This is a fault of Dez. Start Dez again. Details: {problem}"),
+            format!(
+                "Dez cannot show apps: a guard of the app frames did not start, and Dez shows no app without all of its guards. \
+                 On a Mac, the guards need macOS 13.3 or newer: an older macOS shows no app, also after a restart of Dez. \
+                 Else, start Dez again. If the error stays, report it at Help › Dez on GitHub.\n\nDetails: {problem}"
+            ),
         );
     }
     if request.method() != Method::GET {

@@ -74,7 +74,8 @@ interface Dez {
 }
 
 export default async function main(parameters: Record<string, unknown>, dez: Dez): Promise<string> {
-  return \`Hello from ${name}. The parameters of this run: \${JSON.stringify(parameters)}. The run has \${dez.inputs.length} input files.\`
+  const count = dez.inputs.length
+  return \`Hello from ${name}. The parameters of this run: \${JSON.stringify(parameters)}. The run has \${count} input \${count === 1 ? 'file' : 'files'}.\`
 }
 `,
   }]
@@ -123,7 +124,8 @@ document.getElementById('output').textContent = 'Hello from ${name}.'
 // here, while the page loads.
 dez.sbp('sbp/selectors/register', {
   '${APP_INVOKE_HANDLER}': async (parameters, run) => {
-    return \`Hello from ${name}. The parameters of this run: \${JSON.stringify(parameters)}. The run has \${run.inputs.length} input files.\`
+    const count = run.inputs.length
+    return \`Hello from ${name}. The parameters of this run: \${JSON.stringify(parameters)}. The run has \${count} input \${count === 1 ? 'file' : 'files'}.\`
   },
 })
 `,
