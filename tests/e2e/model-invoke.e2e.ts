@@ -893,7 +893,7 @@ describe('model_invoke', () => {
     await pressToolChip(browser, 0)
     await waitForValue(browser, 'image in the panel', imageSizes, [{ width: 48, height: 36 }])
     // The image in the panel names the model that made it.
-    expect(await assetModelLabels(browser)).toStrictEqual([{ name: STUDIO.modelName, label: `Made by ${STUDIO.modelId} (${STUDIO.modelName}), provider: ${STUDIO.name}` }])
+    expect(await assetModelLabels(browser)).toStrictEqual([{ name: STUDIO.modelName, label: `Made by ${STUDIO.modelId} (${STUDIO.modelName}), Provider: ${STUDIO.name}` }])
 
     // The trash of the image works as at its own place: after the prompt,
     // the file is gone, and the reference leaves the reply with the blank

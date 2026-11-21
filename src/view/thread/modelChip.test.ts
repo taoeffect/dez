@@ -44,20 +44,20 @@ describe('sectionModelChips', () => {
       { role: 'agent', model: DELETED },
     ), NAMES, null)
 
-    expect(chips.map((chip) => [chip?.modelName, chip?.providerName])).toEqual([
+    expect(chips.map((chip) => [chip?.name, chip?.providerName])).toEqual([
       ['Alpha One', 'Mock'],
       ['unnamed/model', 'Mock'],
       ['gpt-4o', null],
     ])
   })
 
-  it('gives each chip the readable name of its model, or null', () => {
+  it('takes the readable name of each model for its tooltip name', () => {
     const chips = sectionModelChips(sections(
       { role: 'agent', model: ALPHA },
       { role: 'agent', model: BETA },
     ), NAMES, null)
 
-    expect(chips.map((chip) => chip?.readableName)).toEqual([null, 'Beta Readable'])
+    expect(chips.map((chip) => chip?.tooltipName)).toEqual(['alpha (Alpha One)', 'beta (Beta Readable)'])
   })
 
   it('marks a switch against the nearest earlier agent section that has a model', () => {
@@ -179,7 +179,7 @@ describe('role separator model chips', () => {
     })
     const finished = state.update({ effects: setStreamingSectionEffect.of(null) }).state
 
-    expect(separatorWidgets(state)).toMatchObject([{ index: 0, role: 'agent', chip: { modelName: 'Alpha One', streaming: true } }])
+    expect(separatorWidgets(state)).toMatchObject([{ index: 0, role: 'agent', chip: { name: 'Alpha One', streaming: true } }])
     expect(separatorWidgets(finished)).toMatchObject([{ index: 0, chip: { streaming: false } }])
   })
 })

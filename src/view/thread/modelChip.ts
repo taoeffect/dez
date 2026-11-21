@@ -1,18 +1,10 @@
 import { StateEffect, StateField, type EditorState } from '@codemirror/state'
 import type { ModelRef, Role } from '../../model/chat/types'
-import { modelRefKey } from '../../model/chat/modelRef'
 import type { ModelDisplayNames } from '../../model/providers/types'
-import { modelLabel, modelTooltipName } from '../modelLabel'
+import { UNKNOWN_PROVIDER, modelFactLines, modelFacts, sameModelFacts, type ModelFacts } from '../modelLabel'
 
 /** What the model part of an agent role pill shows. */
-export interface ModelChip {
-  key: string
-  /** The model id, which the tooltip shows first (`modelTooltipName`). */
-  modelId: string
-  modelName: string
-  /** The model's readable name, for the tooltip; null when unknown. */
-  readableName: string | null
-  providerName: string | null
+export interface ModelChip extends ModelFacts {
   /** Label of the model of the nearest earlier agent section that has a
    *  model, when that model differs from this one; else null. */
   switchedFrom: string | null
@@ -24,15 +16,7 @@ export interface ModelChip {
  *  `addModelToPill` renders, or CodeMirror keeps stale pill DOM. */
 export function sameModelChip(a: ModelChip | null, b: ModelChip | null): boolean {
   if (!a || !b) return !a && !b
-  return (
-    a.key === b.key &&
-    a.modelId === b.modelId &&
-    a.modelName === b.modelName &&
-    a.readableName === b.readableName &&
-    a.providerName === b.providerName &&
-    a.switchedFrom === b.switchedFrom &&
-    a.streaming === b.streaming
-  )
+  return sameModelFacts(a, b) && a.switchedFrom === b.switchedFrom && a.streaming === b.streaming
 }
 
 /** Provider and model names for the agent pills (`dez.provider/modelDisplayNames`).
@@ -88,19 +72,10 @@ export function sectionModelChips(
   let previous: { key: string; label: string } | null = null
   return sections.map((section) => {
     if (section.role !== 'agent' || !section.model) return null
-    const key = modelRefKey(section.model)
-    const { modelName, providerName } = modelLabel(section.model, names)
-    const switchedFrom = previous && previous.key !== key ? previous.label : null
-    previous = { key, label: providerName ? `${modelName} (${providerName})` : modelName }
-    return {
-      key,
-      modelId: section.model.modelId,
-      modelName,
-      readableName: names.readableNames.get(key) ?? null,
-      providerName,
-      switchedFrom,
-      streaming: section.id === streamingSectionId,
-    }
+    const facts = modelFacts(section.model, names)
+    const switchedFrom = previous && previous.key !== facts.key ? previous.label : null
+    previous = { key: facts.key, label: facts.providerName ? `${facts.name} (${facts.providerName})` : facts.name }
+    return { ...facts, switchedFrom, streaming: section.id === streamingSectionId }
   })
 }
 
@@ -131,19 +106,16 @@ function span(className: string, text = ''): HTMLSpanElement {
 
 /** Shows the model inside the agent role pill, after the role word: the
  *  switch icon, the model name, and the provider name. The pill also gets
- *  the model facts as its tooltip, and the model part gets them as its
- *  accessible name: the id with the pretty name (`modelTooltipName`), the
- *  provider name, and the key, which is the only fact that holds the
- *  provider id (all that Dez knows of a deleted provider). One pill and one
- *  color for every model: the name, not a color, tells models apart. Styles
- *  are in `dezTheme` (`cmEditor.ts`). The model is widget DOM, not doc text,
- *  so find and copy never see it. */
+ *  the model facts (`modelFactLines`) as its tooltip, and the model part
+ *  gets them as its accessible name. One pill and one color for every
+ *  model: the name, not a color, tells models apart. Styles are in
+ *  `dezTheme` (`cmEditor.ts`). The model is widget DOM, not doc text, so
+ *  find and copy never see it. */
 export function addModelToPill(pill: HTMLElement, chip: ModelChip): void {
   pill.setAttribute('data-model-key', chip.key)
-  const provider = chip.providerName ?? 'Unknown provider'
+  const provider = chip.providerName ?? UNKNOWN_PROVIDER
   const switched = chip.switchedFrom ? `Switched from ${chip.switchedFrom}` : null
-  const name = modelTooltipName(chip.modelId, chip.modelName, chip.readableName)
-  pill.title = [name, provider, chip.key, switched].filter(Boolean).join('\n')
+  pill.title = [...modelFactLines(chip), switched].filter(Boolean).join('\n')
   if (chip.streaming) pill.setAttribute('data-streaming', '1')
   const model = span('dez-role-separator__model')
   // A plain span cannot carry an aria-label, so the model part is one
@@ -154,12 +126,12 @@ export function addModelToPill(pill: HTMLElement, chip: ModelChip): void {
   // readers must reach.
   model.setAttribute('role', 'img')
   const generating = chip.streaming ? 'Generating' : null
-  model.setAttribute('aria-label', [`Model: ${name}`, `Provider: ${provider}`, chip.key, switched, generating].filter(Boolean).join(', '))
+  model.setAttribute('aria-label', [`Model: ${chip.tooltipName}`, `Provider: ${provider}`, chip.key, switched, generating].filter(Boolean).join(', '))
   if (chip.switchedFrom) {
     pill.setAttribute('data-switched', '1')
     model.appendChild(switchIcon())
   }
-  model.appendChild(span('dez-role-separator__model-name', chip.modelName))
+  model.appendChild(span('dez-role-separator__model-name', chip.name))
   if (chip.providerName) model.appendChild(span('dez-role-separator__model-provider', chip.providerName))
   pill.appendChild(model)
 }

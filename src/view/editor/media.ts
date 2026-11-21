@@ -4,7 +4,8 @@ import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemir
 import { createApp, h, reactive, shallowRef, type App, type ShallowRef } from 'vue'
 import { assetModel } from '../../model/chat/assetModels'
 import { MEDIA_TAG_NAMES, findMediaTags, isLinkedMediaPath, isPastedMediaPath, isTempMediaPath, mediaTagText, savedMediaTag, unsavedMediaTag, type MediaTag, type MediaTagData } from '../../model/chat/mediaTags'
-import { assetModelLabel, sameAssetModelLabel, type AssetModelLabel } from '../assetModelLabel'
+import { assetModelLabel } from '../assetModelLabel'
+import { sameModelFacts, type ModelFacts } from '../modelLabel'
 import { leaveFullscreen } from '../fullscreen'
 import MediaPlayer from '../media/MediaPlayer.vue'
 import { expiryNotice } from '../media/clipState'
@@ -84,7 +85,7 @@ interface MountedPlayer {
   /** The tag that the player shows now. */
   tag: ShallowRef<MediaTagData>
   /** The model label that the player shows now. */
-  model: ShallowRef<AssetModelLabel | null>
+  model: ShallowRef<ModelFacts | null>
   observer: ResizeObserver
 }
 
@@ -100,7 +101,7 @@ const mountedPlayers = new WeakMap<HTMLElement, MountedPlayer>()
  *  tells (`MediaWidget`). The player of a hidden clip is drawn in the panel
  *  of its chip (toolCalls.ts), whose DOM is at the chip's place, so the
  *  chip gives the place. */
-export function createPlayer(view: EditorView, shownTag: MediaTagData, linkedSrc: boolean, shownModel: AssetModelLabel | null, place?: AssetPlace): HTMLElement {
+export function createPlayer(view: EditorView, shownTag: MediaTagData, linkedSrc: boolean, shownModel: ModelFacts | null, place?: AssetPlace): HTMLElement {
   const root = document.createElement('span')
   root.className = ROOT_CLASS
   const tagPlace = place ?? (() => view.contentDOM.contains(root) ? view.posAtDOM(root) : null)
@@ -202,7 +203,7 @@ export function createPlayer(view: EditorView, shownTag: MediaTagData, linkedSrc
  *  start from zero, with no Save animation; the drawn one keeps its place
  *  in the clip over a new source (`MediaPlayer.vue`). False when `root`
  *  has no player of that clip (a clip's kind and id never change). */
-export function updatePlayer(root: HTMLElement, tag: MediaTagData, model: AssetModelLabel | null): boolean {
+export function updatePlayer(root: HTMLElement, tag: MediaTagData, model: ModelFacts | null): boolean {
   const player = mountedPlayers.get(root)
   if (!player || player.tag.value.kind !== tag.kind || player.tag.value.id !== tag.id) return false
   // The player keeps its height, so its observer writes no entry for the
@@ -228,7 +229,7 @@ export function destroyPlayer(root: HTMLElement): void {
 
 /** The player of one clip, in place of its tag. */
 class MediaWidget extends WidgetType {
-  constructor(readonly tag: MediaTagData, readonly linkedSrc: boolean, readonly model: AssetModelLabel | null) {
+  constructor(readonly tag: MediaTagData, readonly linkedSrc: boolean, readonly model: ModelFacts | null) {
     super()
   }
   // Every field that the player shows or that Save and Delete read. Doc
@@ -238,7 +239,7 @@ class MediaWidget extends WidgetType {
     const a = this.tag
     const b = other.tag
     return this.linkedSrc === other.linkedSrc && a.kind === b.kind && a.id === b.id && a.type === b.type && a.src === b.src && a.url === b.url && a.expires === b.expires
-      && sameAssetModelLabel(this.model, other.model)
+      && sameModelFacts(this.model, other.model)
   }
   toDOM(view: EditorView): HTMLElement {
     return createPlayer(view, this.tag, this.linkedSrc, this.model)

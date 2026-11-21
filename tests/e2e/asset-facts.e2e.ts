@@ -224,9 +224,9 @@ describe('asset facts', () => {
     // No provider of this app has these models, so a label shows the id of
     // its model.
     expect(await assetModelLabels(browser)).toStrictEqual([
-      { name: 'paint', label: 'Made by paint, provider: Unknown provider' },
-      { name: 'films', label: 'Made by films, provider: Unknown provider' },
-      { name: 'writer', label: 'Made by writer, provider: Unknown provider' },
+      { name: 'paint', label: 'Made by paint, Provider: Unknown provider' },
+      { name: 'films', label: 'Made by films, Provider: Unknown provider' },
+      { name: 'writer', label: 'Made by writer, Provider: Unknown provider' },
     ])
 
     await movePointer(browser, await assetPartPoint(browser, '.dez-image', 1, '.dez-image__img'))

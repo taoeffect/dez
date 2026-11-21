@@ -8,7 +8,8 @@ import { fileNameOf } from '../../utils/fileName'
 import { isMacPlatform } from '../../utils/platform'
 import { assetFactsText } from '../assetFacts'
 import { assetIcon } from '../assetIcons'
-import { assetModelLabel, assetModelTexts, modelIcon, sameAssetModelLabel, type AssetModelLabel } from '../assetModelLabel'
+import { assetModelLabel, assetModelTexts, modelIcon } from '../assetModelLabel'
+import { sameModelFacts, type ModelFacts } from '../modelLabel'
 import { IMAGE_MAX_HEIGHT_PX, SECTION_SEP, editorSizePx, sectionsField, type SectionModel } from '../thread/cmEditor'
 import { measureLineHeights } from '../thread/editorMeasure'
 import { modelDisplayNames } from '../thread/modelChip'
@@ -189,7 +190,7 @@ function idTooltip(id: string): HTMLElement {
 
 /** The model label of an image (`.dez-image__model` in `dezTheme`): the
  *  model name, with the model facts as its accessible name. */
-function modelItem(label: AssetModelLabel): HTMLElement {
+function modelItem(label: ModelFacts): HTMLElement {
   const item = document.createElement('span')
   item.className = 'dez-image__model'
   item.setAttribute('role', 'img')
@@ -202,7 +203,7 @@ function modelItem(label: AssetModelLabel): HTMLElement {
 }
 
 /** The model label's tooltip: the facts of the model, each on a line. */
-function modelTooltip(label: AssetModelLabel): HTMLElement {
+function modelTooltip(label: ModelFacts): HTMLElement {
   const { title, lines } = assetModelTexts(label, 'image')
   return tooltipContent(title, ...lines.map((text) => {
     const line = document.createElement('span')
@@ -276,11 +277,11 @@ function addAssetMenu(view: EditorView, wrapper: HTMLElement, path: string): voi
 
 /** The function that shows a new model label in the overlay of each drawn
  *  image, by its root element (`updateImageModel`). */
-const modelUpdaters = new WeakMap<HTMLElement, (label: AssetModelLabel | null) => void>()
+const modelUpdaters = new WeakMap<HTMLElement, (label: ModelFacts | null) => void>()
 
 /** What `createImage` draws: an image reference, with the label of the
  *  model that made it (null for none). */
-export type DrawnImage = Pick<ImageReference, 'path' | 'id' | 'linked'> & { model: AssetModelLabel | null }
+export type DrawnImage = Pick<ImageReference, 'path' | 'id' | 'linked'> & { model: ModelFacts | null }
 
 /** Draws an image, with an overlay that shows while the pointer is over
  *  the image: a small toolbar in its top-right corner with its id (null for
@@ -331,7 +332,7 @@ export function createImage(view: EditorView, { path, id, linked, model }: Drawn
   // The names of the models can come in after the draw: the label changes
   // in place (`updateImageModel`), so the image does not load again.
   let modelElement: HTMLElement | null = null
-  const showModel = (label: AssetModelLabel | null): void => {
+  const showModel = (label: ModelFacts | null): void => {
     let next: HTMLElement | null = null
     if (label) {
       next = modelItem(label)
@@ -385,7 +386,7 @@ export function createImage(view: EditorView, { path, id, linked, model }: Drawn
 
 /** Shows the model label `label` in the overlay of the image that
  *  `createImage` drew in `root`; false when `root` is no such image. */
-export function updateImageModel(root: HTMLElement, label: AssetModelLabel | null): boolean {
+export function updateImageModel(root: HTMLElement, label: ModelFacts | null): boolean {
   const showModel = modelUpdaters.get(root)
   showModel?.(label)
   return showModel !== undefined
@@ -393,12 +394,12 @@ export function updateImageModel(root: HTMLElement, label: AssetModelLabel | nul
 
 /** An image in place of its reference (`createImage`). */
 class ImageWidget extends WidgetType {
-  constructor(readonly path: string, readonly id: string | null, readonly linked: boolean, readonly model: AssetModelLabel | null) {
+  constructor(readonly path: string, readonly id: string | null, readonly linked: boolean, readonly model: ModelFacts | null) {
     super()
   }
   eq(other: WidgetType): boolean {
     return other instanceof ImageWidget && other.path === this.path && other.id === this.id && other.linked === this.linked
-      && sameAssetModelLabel(other.model, this.model)
+      && sameModelFacts(other.model, this.model)
   }
   toDOM(view: EditorView): HTMLElement {
     return createImage(view, this)

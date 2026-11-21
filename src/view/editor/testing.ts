@@ -7,7 +7,7 @@ import { mediaTagText, mediaTagTextWithKeptMark } from '../../model/chat/mediaTa
 import { HIDDEN_CLIP_PATH, HIDDEN_IMAGE_PATH, idImage } from '../../model/chat/testing'
 import { toolBlockText } from '../../model/chat/toolBlocks'
 import type { ModelRef, Role } from '../../model/chat/types'
-import type { AssetModelLabel } from '../assetModelLabel'
+import type { ModelFacts } from '../modelLabel'
 import { SECTION_SEP, pillsField, promptAtomicRanges, sectionsField, setSectionsEffect, unwrapBrokenPills, type PillMetadata } from '../thread/cmEditor'
 import { modelDisplayNamesField, streamingSectionField } from '../thread/modelChip'
 import { markdownApps } from './apps'
@@ -118,7 +118,7 @@ export function drawnWidgets(state: EditorState): WidgetType[] {
  *  widgets with a `model` (`ImageWidget`, `MediaWidget`). */
 export function drawnAssetModels(state: EditorState): Array<[string | null, string | null]> {
   return drawnWidgets(state).flatMap((widget) => {
-    const asset = widget as Partial<{ id: string | null, tag: { id: string | null }, model: AssetModelLabel | null }>
+    const asset = widget as Partial<{ id: string | null, tag: { id: string | null }, model: ModelFacts | null }>
     return asset.model === undefined ? [] : [[asset.tag?.id ?? asset.id ?? null, asset.model?.name ?? null]]
   })
 }

@@ -2,8 +2,7 @@
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import sbp from '@sbp/sbp'
 import { useModelState } from '../modelState'
-import { modelLabel, modelTooltipName } from '../modelLabel'
-import { modelRefKey } from '../../model/chat/modelRef'
+import { UNKNOWN_PROVIDER, modelFactLines, modelFacts } from '../modelLabel'
 import type { ModelInfo } from '../../model/providers'
 import ModelPicker from './ModelPicker.vue'
 import ProviderSettingsPopup from './ProviderSettingsPopup.vue'
@@ -26,21 +25,18 @@ const { shownSize, startResize } = usePickerResize(pickerBox, () => settings.val
 // id, as custom ids are UUIDs), so an unknown or deleted provider says so.
 // The name is the snapshot of the tab (`ActiveModel.modelName`), as before;
 // the title and the accessible name tell the facts of the agent pill
-// (`addModelToPill`), so a cut provider name is there in full.
+// (`modelFacts`, `addModelToPill`), so a cut provider name is there in full.
 const shownModel = computed(() => {
   const model = activeModel.value
   if (!model) return null
-  const names = modelDisplayNames.value
-  const key = modelRefKey(model)
-  const { modelName, providerName } = modelLabel(model, names)
-  const provider = providerName ?? 'Unknown provider'
-  const tooltipName = modelTooltipName(model.modelId, modelName, names.readableNames.get(key))
+  const facts = modelFacts(model, modelDisplayNames.value)
+  const provider = facts.providerName ?? UNKNOWN_PROVIDER
   return {
     name: model.modelName,
     provider,
-    providerKnown: providerName !== null,
-    title: [tooltipName, provider, key].join('\n'),
-    ariaLabel: `Model: ${tooltipName}, Provider: ${provider}`,
+    providerKnown: facts.providerName !== null,
+    title: modelFactLines(facts).join('\n'),
+    ariaLabel: `Model: ${facts.tooltipName}, Provider: ${provider}`,
   }
 })
 

@@ -29,7 +29,8 @@ import { MAX_SAVED_CLIP_BYTES, mediaFileExtension } from '../../model/chat/media
 import { isPastedMediaPath, type MediaTagKind } from '../../model/chat/mediaTags'
 import { assetFactsText } from '../assetFacts'
 import { ASSET_ICON_SHAPES } from '../assetIcons'
-import { MODEL_ICON_SHAPES, assetModelTexts, type AssetModelLabel } from '../assetModelLabel'
+import { MODEL_ICON_SHAPES, assetModelTexts } from '../assetModelLabel'
+import type { ModelFacts } from '../modelLabel'
 import { clipFile, clipPlayType, clipProblem, clipSourceKind, expiryNotice, problemCard, type ClipLoadFailure, type ClipProblem } from './clipState'
 import { releaseRemovedMedia } from './releaseMedia'
 import { videoAspectRatios } from './videoSizes'
@@ -65,9 +66,9 @@ const props = defineProps<{
   expires: string | null
   /** A Save or a Delete of this clip runs. */
   busy: boolean
-  /** The label of the model that made the clip (assetModelLabel.ts); null
+  /** The facts of the model that made the clip (`assetModelLabel`); null
    *  for a clip that no known model made. */
-  model: AssetModelLabel | null
+  model: ModelFacts | null
 }>()
 
 const emit = defineEmits<{ save: [], delete: [] }>()

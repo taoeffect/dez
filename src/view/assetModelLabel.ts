@@ -1,54 +1,29 @@
 import type { MediaTagKind } from '../model/chat/mediaTags'
-import { modelRefKey } from '../model/chat/modelRef'
 import type { ModelRef } from '../model/chat/types'
 import type { ModelDisplayNames } from '../model/providers/types'
 import { ROUND_STROKE, svgIcon, type IconShapes } from './editor/svgIcon'
-import { modelLabel, modelTooltipName } from './modelLabel'
+import { UNKNOWN_PROVIDER, modelFactLines, modelFacts, type ModelFacts } from './modelLabel'
 
 // The label of the model that made an image or a clip, in the hover overlay
 // of the asset, after its facts (`createImage` in editor/images.ts,
 // `MediaPlayer.vue`). The model comes from `assetModel`
 // (model/chat/assetModels.ts); the names come from
-// `dez.provider/modelDisplayNames`, as for the agent pill (modelChip.ts).
-// The label shows the model name, and its tooltip tells the same facts as
-// the title of the agent pill.
+// `dez.provider/modelDisplayNames`. The label shows the model name, and its
+// tooltip tells the model facts (`modelFacts`), as the agent pill does.
 
-/** What the model label of an asset shows. */
-export interface AssetModelLabel {
-  /** `modelRefKey` of the model: the only fact that holds the provider id. */
-  key: string
-  /** The name that the label shows: the model name, else the model id. */
-  name: string
-  /** The id with the pretty name (`modelTooltipName`), for the tooltip. */
-  tooltipName: string
-  /** Null for an unknown or a deleted provider (`modelLabel`). */
-  providerName: string | null
-}
-
-/** The label of the model `model` with the names `names`; null for an
+/** The facts of the model `model` with the names `names`; null for an
  *  asset that no known model made. */
-export function assetModelLabel(model: ModelRef | null, names: ModelDisplayNames): AssetModelLabel | null {
-  if (!model) return null
-  const key = modelRefKey(model)
-  const { modelName, providerName } = modelLabel(model, names)
-  return { key, name: modelName, tooltipName: modelTooltipName(model.modelId, modelName, names.readableNames.get(key)), providerName }
-}
-
-/** Whether `a` and `b` show the same label. A widget compares its label
- *  with this, or it keeps a stale label. */
-export function sameAssetModelLabel(a: AssetModelLabel | null, b: AssetModelLabel | null): boolean {
-  if (!a || !b) return !a && !b
-  return a.key === b.key && a.name === b.name && a.tooltipName === b.tooltipName && a.providerName === b.providerName
+export function assetModelLabel(model: ModelRef | null, names: ModelDisplayNames): ModelFacts | null {
+  return model && modelFacts(model, names)
 }
 
 /** The texts of the model label of an asset of kind `kind`: the title and
  *  the lines of its tooltip, and its accessible name. */
-export function assetModelTexts(label: AssetModelLabel, kind: 'image' | MediaTagKind): { title: string, lines: string[], ariaLabel: string } {
-  const provider = label.providerName ?? 'Unknown provider'
+export function assetModelTexts(label: ModelFacts, kind: 'image' | MediaTagKind): { title: string, lines: string[], ariaLabel: string } {
   return {
     title: `Model that made this ${kind}`,
-    lines: [label.tooltipName, provider, label.key],
-    ariaLabel: `Made by ${label.tooltipName}, provider: ${provider}`,
+    lines: modelFactLines(label),
+    ariaLabel: `Made by ${label.tooltipName}, Provider: ${label.providerName ?? UNKNOWN_PROVIDER}`,
   }
 }
 

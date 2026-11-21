@@ -18,7 +18,8 @@ import { isIntermediateCall, toolDefinition } from '../../model/tools/registry'
 import type { ToolArguments, ToolArgumentValue } from '../../model/tools/types'
 import { countOf } from '../../utils/countText'
 import { assetIcon } from '../assetIcons'
-import { assetModelLabel, type AssetModelLabel } from '../assetModelLabel'
+import { assetModelLabel } from '../assetModelLabel'
+import type { ModelFacts } from '../modelLabel'
 import { sectionsField, type SectionModel } from '../thread/cmEditor'
 import { measureLineHeights } from '../thread/editorMeasure'
 import { modelDisplayNames, streamingSectionField } from '../thread/modelChip'
@@ -69,11 +70,11 @@ function toolCallState(block: ToolBlock, streaming: boolean): ToolCallState {
 /** A hidden asset as the panel of its chip draws it, with no doc offsets:
  *  what `createImage` or `createPlayer` takes. A clip has `linkedSrc`,
  *  which tells its player whether a linked file counts where its tag is
- *  (an image's `linked` tells that already). `model` is the label of the
- *  model that made the asset (assetModelLabel.ts). */
+ *  (an image's `linked` tells that already). `model` is the facts of the
+ *  model that made the asset (`assetModelLabel`). */
 export type PanelAsset =
-  | { kind: 'image', path: string, id: string | null, linked: boolean, model: AssetModelLabel | null }
-  | { kind: 'clip', tag: MediaTagData, linkedSrc: boolean, model: AssetModelLabel | null }
+  | { kind: 'image', path: string, id: string | null, linked: boolean, model: ModelFacts | null }
+  | { kind: 'clip', tag: MediaTagData, linkedSrc: boolean, model: ModelFacts | null }
 
 /** The hidden asset `asset` as a panel draws it; `linkedSrc` tells whether
  *  a linked `src` of a clip counts where its tag is, and `names` are the
