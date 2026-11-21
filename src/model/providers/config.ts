@@ -365,16 +365,16 @@ export const providerConfigSchema = z.object({
     offValue: settingBodyValueSchema.optional(),
   }).optional(),
   // Merged into the body of a chat request to a model whose known outputs
-  // hold `image` (ModelInfo.outputs), right after `requestBody`: the part
-  // asks the server for image output (OpenRouter's `modalities`). Missing:
-  // no chat request asks for images. Only the OpenAI format reads the
-  // images of a reply (openaiSse.ts).
+  // hold `image` (ModelInfo.outputs), after `requestBody` and
+  // `providerSystemPrompt`: the part asks the server for image output
+  // (OpenRouter's `modalities`). Missing: no chat request asks for images.
+  // Only the OpenAI format reads the images of a reply (openaiSse.ts).
   imageOutputBody: requestBodyPartSchema.optional(),
   // The chat models whose known outputs hold `audio` answer with audio only
   // when their request asks for it, and models differ in the fields of
   // that ask. An entry is for the models whose ids start with
   // `modelIdPrefix` (the first entry that matches wins): its `body` is
-  // merged into their chat requests right after `requestBody`, and
+  // merged into their chat requests right after `imageOutputBody`, and
   // `contentType` is the type of the audio that comes back, a file type
   // (`audio/mpeg`), or raw PCM with its rate and channels
   // (`audio/pcm;rate=24000`, pcmAudio.ts) and `pcmSampleBits`. An entry
