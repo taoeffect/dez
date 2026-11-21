@@ -70,9 +70,13 @@ async function successfulResponse(url, headers) {
 
 // The error of a download that failed. A network failure of `fetch` has
 // only the text "fetch failed"; its cause tells what failed (the name
-// lookup, the connection).
+// lookup, the connection). When the name of the host has more than one
+// address, the cause is an AggregateError with an empty message, and only
+// its code (ECONNREFUSED) tells what failed.
 function downloadError(url, error) {
-  return new Error(`Cannot download ${url}: ${error.cause?.message ?? error.message}.`, { cause: error });
+  const cause = error.cause;
+  const reason = cause?.message || cause?.code || error.message;
+  return new Error(`Cannot download ${url}: ${reason}.`, { cause: error });
 }
 
 // Downloads `url` into a new file `path` with the mode `mode` (less the
@@ -117,11 +121,20 @@ export async function downloadBytes(url, headers) {
 // the GitHub API.
 export async function githubRelease(repo, tag) {
   const url = `https://api.github.com/repos/${repo}/releases/tags/${tag}`;
-  const response = await fetch(url, { headers: { Accept: 'application/vnd.github+json' } });
+  let response;
+  try {
+    response = await fetch(url, { headers: { Accept: 'application/vnd.github+json' } });
+  } catch (error) {
+    throw downloadError(url, error);
+  }
   if (!response.ok) {
     throw new Error(`GitHub answered ${response.status} for ${url}. Check the tag: https://github.com/${repo}/releases`);
   }
-  return response.json();
+  try {
+    return await response.json();
+  } catch (error) {
+    throw downloadError(url, error);
+  }
 }
 
 // A file of the release data of the GitHub API (`githubRelease`), with the

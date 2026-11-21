@@ -1,8 +1,9 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { hostTriple, isPinnedFile, manifestWith, zipMember } from './bundled-programs.js';
+import { downloadBytes, hostTriple, isPinnedFile, manifestWith, zipMember } from './bundled-programs.js';
 import { sha256, zipFile } from './testing.js';
 
 describe('hostTriple', () => {
@@ -43,6 +44,19 @@ describe('isPinnedFile', () => {
     expect(await isPinnedFile(join(dir, 'missing'), pin)).toBe(false);
     mkdirSync(join(dir, 'folder'));
     expect(await isPinnedFile(join(dir, 'folder'), pin)).toBe(false);
+  });
+});
+
+describe('downloadBytes', () => {
+  // `localhost` has two addresses (::1 and 127.0.0.1), so the cause of the
+  // failed fetch is an AggregateError, whose message is empty.
+  it('names the cause of a refused connection to a name with two addresses', async () => {
+    const server = createServer();
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address();
+    await new Promise(resolve => server.close(resolve));
+    const url = `http://localhost:${port}/file`;
+    await expect(downloadBytes(url)).rejects.toThrow(new RegExp(`^Cannot download ${url}: .*ECONNREFUSED`));
   });
 });
 
