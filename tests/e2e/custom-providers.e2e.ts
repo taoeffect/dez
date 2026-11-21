@@ -52,13 +52,13 @@ const SERVER_MODELS = [
 ]
 
 const BUILT_INS: ProviderRow[] = [
+  { id: 'trustedrouter', name: 'TrustedRouter' },
   { id: 'openrouter', name: 'OpenRouter' },
   { id: 'zai', name: 'Z.ai' },
   { id: 'venice', name: 'Venice' },
   { id: 'charm_hyper', name: 'Charm Hyper' },
   { id: 'minimax', name: 'MiniMax' },
   { id: 'kimi', name: 'Kimi' },
-  { id: 'trustedrouter', name: 'TrustedRouter' },
   { id: 'copilot', name: 'GitHub Copilot' },
 ]
 

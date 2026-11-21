@@ -9,6 +9,100 @@ import type { ProviderConfig } from './config'
 // here (config.test.ts checks this).
 export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
   {
+    id: 'trustedrouter',
+    name: 'TrustedRouter',
+    baseUrl: 'https://api.trustedrouter.com/v1',
+    apiFormat: 'openai',
+    models: [],
+    fetchModels: true,
+    // /models lists every model with no query; `output_modalities=all`
+    // lists none (checked live, 2026-11-19). The entries have OpenRouter's
+    // shape. `created` is 0 for every model, so there is no release date.
+    // https://api.trustedrouter.com/v1/models
+    modelImageInput: { path: 'architecture.input_modalities' },
+    // An image goes as an `image_url` data URL (checked live with
+    // `deepseek/deepseek-v4.1-flash`, 2026-11-19).
+    // A list of request fields that the model takes: "tools" for a model
+    // that calls tools, "reasoning" for one that takes the `reasoning`
+    // field of `thinking` below. A tool round and its replay with the
+    // `tool` message passed with `deepseek/deepseek-v4-flash` and
+    // `anthropic/claude-haiku-4.5` (checked live, 2026-11-19). Claude
+    // models also answer with Dez's 13 tools in the request
+    // (`claude-haiku-4.5`, `claude-haiku-5.5`, `claude-sonnet-5.5`;
+    // checked live, 2026-11-20).
+    modelToolCalling: { path: 'supported_parameters' },
+    modelThinking: { path: 'supported_parameters' },
+    // A list. The image, speech, transcription, and video models answer
+    // through APIs that Dez has no format for here, so they are left out,
+    // with the models whose type is embeddings or decision; a model that
+    // writes text and images is a text model (checked live, 2026-11-19).
+    modelOutputs: {
+      path: 'architecture.output_modalities',
+      values: {
+        text: {
+          outputs: ['text'],
+          request: 'chat',
+          // Some entries tell "text" but have no chat route: embedding
+          // models ("text->embedding"), a Responses-only route, and tools
+          // such as `deepseek/fetch`. Dez lists them and refuses a request
+          // (checked live, 2026-11-19).
+          requestBy: { path: 'trustedrouter.supports_chat', values: { false: 'none' } },
+        },
+        image: { outputs: [] },
+        speech: { outputs: [] },
+        transcription: { outputs: [] },
+        video: { outputs: [] },
+        embeddings: { outputs: [] },
+        decision: { outputs: [] },
+      },
+    },
+    // Texts of USD per token. The router and panel models
+    // (`trustedrouter/auto`) give the price of their cheapest model, and
+    // the price of their dearest one in `prompt_max`, which only they
+    // have; so their price is unknown. Five panel and orchestration models
+    // (`trustedrouter/synth`) list "0" for their tokens and no `prompt_max`;
+    // their `route_kind` makes their price unknown too. `trustedrouter/free`
+    // also lists "0", and it is free (`route_kind` "free_pool"). Checked
+    // live, 2026-11-19.
+    modelTokenPrices: {
+      input: 'pricing.prompt',
+      output: 'pricing.completion',
+      cachedInput: 'pricing.input_cache_read',
+      perTokens: 1,
+      variableRate: 'pricing.prompt_max',
+      variableRateBy: { path: 'trustedrouter.route_kind', values: ['fusion_panel', 'advisor_orchestration'] },
+    },
+    // The two numbers are the same for every model, and null for some
+    // (checked live, 2026-11-19); the smaller one counts, as for
+    // OpenRouter.
+    modelContextWindow: { paths: ['context_length', 'top_provider.context_length'] },
+    auth: 'apiKey',
+    // A stream tells its token counts only when the request asks for them;
+    // its usage chunk then has `cost_microdollars` and
+    // `total_cost_microdollars` (checked live, 2026-11-19). TrustedRouter
+    // refuses a field that it does not know (400) or does not support
+    // (501), so the config sends no other fixed field.
+    // https://trustedrouter.com/docs
+    // https://trustedrouter.com/docs/migrate-from-openrouter
+    requestBody: { stream_options: { include_usage: true } },
+    // The key keeps a conversation on its last provider, whose prompt cache
+    // holds it. A model whose `supported_parameters` lacks the field takes
+    // it too (checked live, 2026-11-19).
+    // https://trustedrouter.com/docs/prompt-caching
+    promptCacheKey: true,
+    // OpenRouter's field, which TrustedRouter maps to each provider's own
+    // control (OpenAI models get `reasoning_effort`); it goes only to a
+    // model whose `supported_parameters` has "reasoning" (`modelThinking`).
+    // Some models must think, so there is no off field. The thinking
+    // streams in `reasoning` and `reasoning_content`, and a replay of either
+    // on the assistant message of a tool round passed with
+    // `deepseek/deepseek-v4-flash` and `anthropic/claude-haiku-4.5` (checked
+    // live, 2026-11-19). `openai/gpt-5-nano` and `gpt-5-mini` take the field,
+    // and `claude-haiku-5.5` and `claude-sonnet-5.5` stream their thinking
+    // (checked live, 2026-11-20).
+    thinking: { enabledBody: { reasoning: { enabled: true } } },
+  },
+  {
     id: 'openrouter',
     name: 'OpenRouter',
     baseUrl: 'https://openrouter.ai/api/v1',
@@ -358,100 +452,6 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // User-Agent header: requests work without one, and Kimi's terms forbid
     // a false client name.
     thinking: {},
-  },
-  {
-    id: 'trustedrouter',
-    name: 'TrustedRouter',
-    baseUrl: 'https://api.trustedrouter.com/v1',
-    apiFormat: 'openai',
-    models: [],
-    fetchModels: true,
-    // /models lists every model with no query; `output_modalities=all`
-    // lists none (checked live, 2026-11-19). The entries have OpenRouter's
-    // shape. `created` is 0 for every model, so there is no release date.
-    // https://api.trustedrouter.com/v1/models
-    modelImageInput: { path: 'architecture.input_modalities' },
-    // An image goes as an `image_url` data URL (checked live with
-    // `deepseek/deepseek-v4.1-flash`, 2026-11-19).
-    // A list of request fields that the model takes: "tools" for a model
-    // that calls tools, "reasoning" for one that takes the `reasoning`
-    // field of `thinking` below. A tool round and its replay with the
-    // `tool` message passed with `deepseek/deepseek-v4-flash` and
-    // `anthropic/claude-haiku-4.5` (checked live, 2026-11-19). Claude
-    // models also answer with Dez's 13 tools in the request
-    // (`claude-haiku-4.5`, `claude-haiku-5.5`, `claude-sonnet-5.5`;
-    // checked live, 2026-11-20).
-    modelToolCalling: { path: 'supported_parameters' },
-    modelThinking: { path: 'supported_parameters' },
-    // A list. The image, speech, transcription, and video models answer
-    // through APIs that Dez has no format for here, so they are left out,
-    // with the models whose type is embeddings or decision; a model that
-    // writes text and images is a text model (checked live, 2026-11-19).
-    modelOutputs: {
-      path: 'architecture.output_modalities',
-      values: {
-        text: {
-          outputs: ['text'],
-          request: 'chat',
-          // Some entries tell "text" but have no chat route: embedding
-          // models ("text->embedding"), a Responses-only route, and tools
-          // such as `deepseek/fetch`. Dez lists them and refuses a request
-          // (checked live, 2026-11-19).
-          requestBy: { path: 'trustedrouter.supports_chat', values: { false: 'none' } },
-        },
-        image: { outputs: [] },
-        speech: { outputs: [] },
-        transcription: { outputs: [] },
-        video: { outputs: [] },
-        embeddings: { outputs: [] },
-        decision: { outputs: [] },
-      },
-    },
-    // Texts of USD per token. The router and panel models
-    // (`trustedrouter/auto`) give the price of their cheapest model, and
-    // the price of their dearest one in `prompt_max`, which only they
-    // have; so their price is unknown. Five panel and orchestration models
-    // (`trustedrouter/synth`) list "0" for their tokens and no `prompt_max`;
-    // their `route_kind` makes their price unknown too. `trustedrouter/free`
-    // also lists "0", and it is free (`route_kind` "free_pool"). Checked
-    // live, 2026-11-19.
-    modelTokenPrices: {
-      input: 'pricing.prompt',
-      output: 'pricing.completion',
-      cachedInput: 'pricing.input_cache_read',
-      perTokens: 1,
-      variableRate: 'pricing.prompt_max',
-      variableRateBy: { path: 'trustedrouter.route_kind', values: ['fusion_panel', 'advisor_orchestration'] },
-    },
-    // The two numbers are the same for every model, and null for some
-    // (checked live, 2026-11-19); the smaller one counts, as for
-    // OpenRouter.
-    modelContextWindow: { paths: ['context_length', 'top_provider.context_length'] },
-    auth: 'apiKey',
-    // A stream tells its token counts only when the request asks for them;
-    // its usage chunk then has `cost_microdollars` and
-    // `total_cost_microdollars` (checked live, 2026-11-19). TrustedRouter
-    // refuses a field that it does not know (400) or does not support
-    // (501), so the config sends no other fixed field.
-    // https://trustedrouter.com/docs
-    // https://trustedrouter.com/docs/migrate-from-openrouter
-    requestBody: { stream_options: { include_usage: true } },
-    // The key keeps a conversation on its last provider, whose prompt cache
-    // holds it. A model whose `supported_parameters` lacks the field takes
-    // it too (checked live, 2026-11-19).
-    // https://trustedrouter.com/docs/prompt-caching
-    promptCacheKey: true,
-    // OpenRouter's field, which TrustedRouter maps to each provider's own
-    // control (OpenAI models get `reasoning_effort`); it goes only to a
-    // model whose `supported_parameters` has "reasoning" (`modelThinking`).
-    // Some models must think, so there is no off field. The thinking
-    // streams in `reasoning` and `reasoning_content`, and a replay of either
-    // on the assistant message of a tool round passed with
-    // `deepseek/deepseek-v4-flash` and `anthropic/claude-haiku-4.5` (checked
-    // live, 2026-11-19). `openai/gpt-5-nano` and `gpt-5-mini` take the field,
-    // and `claude-haiku-5.5` and `claude-sonnet-5.5` stream their thinking
-    // (checked live, 2026-11-20).
-    thinking: { enabledBody: { reasoning: { enabled: true } } },
   },
   {
     id: 'copilot',

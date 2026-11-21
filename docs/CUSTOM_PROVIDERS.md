@@ -28,7 +28,7 @@ You can also add custom providers by hand in `~/.config/dez/app_state.json`. **C
 
 | Field | Required | Meaning |
 |---|---|---|
-| `id` | yes | 1 to 64 letters, digits, `-`, or `_`. It must not be a built-in id (`openrouter`, `zai`, `venice`, `charm_hyper`, `minimax`, `kimi`, `trustedrouter`, `copilot`), `__favorites__`, or a JavaScript `Object.prototype` name such as `__proto__` or `constructor`. |
+| `id` | yes | 1 to 64 letters, digits, `-`, or `_`. It must not be a built-in id (`trustedrouter`, `openrouter`, `zai`, `venice`, `charm_hyper`, `minimax`, `kimi`, `copilot`), `__favorites__`, or a JavaScript `Object.prototype` name such as `__proto__` or `constructor`. |
 | `name` | yes | The name in the model picker and in Settings. |
 | `baseUrl` | yes | An `http://` or `https://` URL with no query (`?`), fragment (`#`), user name, or password. See the base URL rule below. |
 | `apiFormat` | no | `openai` (default) or `anthropic`. |
