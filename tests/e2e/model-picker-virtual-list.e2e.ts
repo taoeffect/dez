@@ -4,7 +4,7 @@ import { startApp, type RunningApp } from './harness/app'
 import { consoleErrors, isOnTop, pointerClick, pointerClickAt, resetConsoleErrors, screenshotOnFailure, typeInto, waitFor, waitForValue, type Point } from './harness/dom'
 import { seedRawAppState } from './harness/fixtures'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { drawnPickerRows, openPicker, pickerGroups, pickerOpen, sbpCall } from './harness/thread'
+import { drawnPickerRows, openPicker, pickerGroups, pickerOpen, sbpCall, selectedModelName } from './harness/thread'
 
 // The virtual list of the model pickers, driven through the real app. A
 // custom provider with `fetchModels: false` gives 1000 config models, and a
@@ -201,9 +201,7 @@ describe('model picker virtual list', () => {
     const far = await middleRow()
     expect(BIG_MODELS.slice(400, 600)).toContain(far.name)
     await pointerClickAt(browser, far.center)
-    await waitForValue(browser, 'selected model', () => browser.execute(
-      () => document.querySelector('.model-selector-label')?.textContent?.trim() ?? null
-    ), far.name)
+    await waitForValue(browser, 'selected model', () => selectedModelName(browser), far.name)
     expect(await pickerOpen(browser)).toBe(false)
 
     // A new picker starts at the top, where the selected row is not drawn.

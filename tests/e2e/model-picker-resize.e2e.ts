@@ -16,7 +16,7 @@ import {
 } from './harness/dom'
 import { readAppState, seedRawAppState } from './harness/fixtures'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
-import { drawnPickerRows, openPicker, pickerOpen, sbpCall } from './harness/thread'
+import { drawnPickerRows, openPicker, pickerOpen, sbpCall, selectedModelName } from './harness/thread'
 
 // The resize of the model picker of the bottom bar (`pickerResize.ts`): a
 // drag of its top edge, its right edge, or its top right corner, with a
@@ -271,9 +271,7 @@ describe('model picker resize', () => {
       return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
     }, BOTTOM)
     await pointerClickAt(browser, row)
-    await waitForValue(browser, 'selected model', () => browser.execute(
-      () => document.querySelector('.model-selector-label')?.textContent?.trim() ?? null
-    ), 'Model 0150')
+    await waitForValue(browser, 'selected model', () => selectedModelName(browser), 'Model 0150')
     expect(await pickerOpen(browser)).toBe(false)
   })
 

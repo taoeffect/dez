@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { Key } from 'webdriverio'
 import { ZOOM_MARGIN_PX } from '../../src/view/editor/imageZoom'
 import { startApp, type RunningApp } from './harness/app'
-import { consoleErrors, elementCenter, isOnTop, movePointer, pointerClick, pointerClickAt, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
+import { closeSettings, consoleErrors, elementCenter, isOnTop, movePointer, pointerClick, pointerClickAt, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
 import { FIND_FIELD, findDropdownOpen } from './harness/find'
 import { appFilePath, seedAppState, writeTestFile } from './harness/fixtures'
 import { colorDistance, screenPixels, shownImages, solidPng, type Rgb } from './harness/images'
@@ -290,8 +290,7 @@ describe('image zoom', () => {
     await browser.keys([Key.Control, ','])
     await waitFor(browser, '.settings-overlay', 10_000)
     expect(await isOnTop(browser, '.settings-overlay')).toBe(true)
-    await browser.keys(Key.Escape)
-    await waitForValue(browser, 'Settings after Escape', () => browser.execute(() => document.querySelector('.settings-overlay') !== null), false)
+    await closeSettings(browser)
     expect(await zoomPhase()).toBe('open')
 
     await pointerClick(browser, '.help-button')

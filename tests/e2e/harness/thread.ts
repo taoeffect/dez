@@ -199,6 +199,11 @@ export async function pickerOpen (browser: E2EBrowser, root = '.model-dropdown')
   return browser.execute((rootSelector: string) => document.querySelector(rootSelector) !== null, root)
 }
 
+/** The name of the model that the model button of the bottom bar shows. */
+export async function selectedModelName (browser: E2EBrowser): Promise<string | null> {
+  return browser.execute(() => document.querySelector('.model-selector-label')?.textContent?.trim() ?? null)
+}
+
 /** Picks the model named `modelName` in the picker group of `providerName`. */
 export async function pickModel (browser: E2EBrowser, providerName: string, modelName: string): Promise<void> {
   await openPicker(browser)
@@ -206,9 +211,7 @@ export async function pickModel (browser: E2EBrowser, providerName: string, mode
   // there.
   await waitForValue(browser, `${providerName} › ${modelName} picked`, async () =>
     (await browser.execute(scanPicker, '.model-dropdown', true, { provider: providerName, model: modelName })).picked, true)
-  await waitForValue(browser, 'selected model', () => browser.execute(
-    () => document.querySelector('.model-selector-label')?.textContent?.trim() ?? null
-  ), modelName)
+  await waitForValue(browser, 'selected model', () => selectedModelName(browser), modelName)
 }
 
 /** Moves the focus into the thread editor. */

@@ -390,6 +390,15 @@ export async function promptMessage (browser: E2EBrowser): Promise<string | null
   return browser.execute(() => document.querySelector('.confirm-dialog .confirm-message')?.textContent ?? null)
 }
 
+/** The labels of the buttons of the open `dez.ui/confirm` prompt, in
+ *  order; null when none is open. */
+export async function promptButtons (browser: E2EBrowser): Promise<string[] | null> {
+  return browser.execute(() => {
+    const dialog = document.querySelector('.confirm-dialog')
+    return dialog && Array.from(dialog.querySelectorAll('.confirm-btn'), (button) => button.textContent?.trim() ?? '')
+  })
+}
+
 /**
  * Save a WebDriver screenshot to `tests/e2e/artifacts/` on test failure.
  * Call from an `afterEach` hook with the Vitest task context so the

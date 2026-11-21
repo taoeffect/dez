@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { INCOGNITO_STAYS_ON, INCOGNITO_TOO_LATE } from '../../src/controller/tabs'
 import { anthropicChatBody, anthropicMarkedUser, openAiChatBody } from './harness/chatBody'
-import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
+import { consoleErrors, pointerClick, promptButtons, promptMessage, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
 import { conversationFilePath, readAppState } from './harness/fixtures'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendAnthropicReply, sendChatReply, type MockProvider } from './harness/mockServer'
@@ -34,12 +34,6 @@ const PROVIDER: MockProvider = { id: 'masked', name: 'Masked Mock', modelId: 'ma
 const OWN: MockProvider = { id: 'own', name: 'Own Prompt Mock', modelId: 'own-model', modelName: 'Own Model', apiFormat: 'anthropic' }
 const OWN_PROMPT = { bodyPath: 'own.prompt', onValue: 'on', offValue: 'off' }
 
-/** The open prompt: its text and the labels of its buttons. */
-interface NoticeView {
-  message: string
-  buttons: string[]
-}
-
 describe('incognito tabs', () => {
   let setup: MockProviderApp
   let browser: E2EBrowser
@@ -51,17 +45,6 @@ describe('incognito tabs', () => {
     return browser.execute(() => {
       const mask = document.querySelector('.incognito-button')
       return mask ? mask.getAttribute('aria-pressed') === 'true' : null
-    })
-  }
-
-  async function notice (): Promise<NoticeView | null> {
-    return browser.execute(() => {
-      const dialog = document.querySelector('.confirm-dialog')
-      if (!dialog) return null
-      return {
-        message: dialog.querySelector('.confirm-message')?.textContent ?? '',
-        buttons: Array.from(dialog.querySelectorAll('.confirm-btn'), (button) => button.textContent?.trim() ?? ''),
-      }
     })
   }
 
@@ -77,7 +60,7 @@ describe('incognito tabs', () => {
     expect(await maskOn()).toBe(false)
     await pointerClick(browser, '.incognito-button')
     await waitForValue(browser, 'mask', maskOn, true)
-    expect(await notice()).toBeNull()
+    expect(await promptMessage(browser)).toBeNull()
     const tabId = await activeTabId(browser)
     expect(await incognito(tabId)).toBe(true)
     return tabId
@@ -87,9 +70,10 @@ describe('incognito tabs', () => {
   // OK closes it: the active tab stays incognito when `on`, else normal.
   async function expectNotice (message: string, on: boolean): Promise<void> {
     await pointerClick(browser, '.incognito-button')
-    await waitForValue(browser, 'notice', notice, { message, buttons: ['OK'] })
+    await waitForValue(browser, 'notice', () => promptMessage(browser), message)
+    expect(await promptButtons(browser)).toStrictEqual(['OK'])
     await pointerClick(browser, '.confirm-btn--confirm')
-    await waitForValue(browser, 'notice after OK', notice, null)
+    await waitForValue(browser, 'notice after OK', () => promptMessage(browser), null)
     expect(await maskOn()).toBe(on)
     expect(await incognito(await activeTabId(browser))).toBe(on)
   }
