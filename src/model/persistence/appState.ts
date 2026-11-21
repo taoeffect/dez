@@ -30,6 +30,10 @@ const tabSchema = z.object({
     modelName: z.string(),
   }).nullable().catch(null),
   createdAt: z.number().catch(() => Date.now()),
+  // The marks of `Tab`, absent when not set. A bad value drops only the
+  // mark, not the tab.
+  incognito: z.literal(true).optional().catch(undefined),
+  requestSent: z.literal(true).optional().catch(undefined),
 })
 
 // A `window` value that is not a whole geometry is dropped as a whole; the

@@ -63,6 +63,16 @@ describe('app state persistence format', () => {
     expect(parseAppStateJson(serializeAppStateJson(state))).toEqual(state)
   })
 
+  it('keeps the incognito flag and the sent mark of a tab, and drops a bad mark but not its tab', () => {
+    const tab = { id: 'tab', title: 'Tab', conversationId: 'conversation', activeModel: null, createdAt: 34 }
+    const parseTabs = (tabs: unknown[]) => parseAppStateJson(JSON.stringify({ tabs })).tabs
+    const marked = parseTabs([{ ...tab, incognito: true, requestSent: true }])
+
+    expect(marked).toStrictEqual([{ ...tab, incognito: true, requestSent: true }])
+    expect(parseAppStateJson(serializeAppStateJson({ tabs: marked })).tabs).toStrictEqual(marked)
+    expect(parseTabs([{ ...tab, incognito: 'yes', requestSent: false }])).toEqual([tab])
+  })
+
   it('tolerates missing or malformed providerSettings', () => {
     expect(parseAppStateJson('{}').providerSettings).toEqual({})
     expect(parseAppStateJson('{ "providerSettings": 42 }').providerSettings).toEqual({})

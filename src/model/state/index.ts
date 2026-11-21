@@ -38,6 +38,7 @@ import { compactionsField, sectionCompactionBlock, type Compactions } from '../c
 import { notesMessages, withAssetLabels } from '../chat/compactionNotes'
 import { contextField, contextSize, type ContextSize } from '../chat/contextSize'
 import { agentTextEditedField, costField, withRequestCost, type ConversationCost } from '../chat/conversationCost'
+import { canTurnOnIncognito, incognitoField, requestSentField } from '../chat/incognito'
 import { durationField } from '../chat/duration'
 import { modelRefField, modelRefKey, parseModelRefKey } from '../chat/modelRef'
 import { thinkingField } from '../chat/thinking'
@@ -89,6 +90,8 @@ interface TabData {
   conversationId: string
   activeModel: ActiveModel | null
   createdAt: number
+  incognito?: true
+  requestSent?: true
 }
 
 let settingsPersistenceReady = false
@@ -152,6 +155,8 @@ function cloneTab(tab: Tab): ModelSnapshot['tabs'][number] {
     ...agentTextEditedField(tab.agentTextEdited),
     ...contextField(tab.context),
     ...compactionsField(tab.compactions),
+    ...incognitoField(tab.incognito),
+    ...requestSentField(tab.requestSent),
   }
 }
 
@@ -388,6 +393,10 @@ function tabFromConversation(conv: ConversationData, overrides: Partial<Tab> = {
     ...agentTextEditedField(conv.agentTextEdited),
     ...contextField(conv.context),
     ...compactionsField(conv.compactions),
+    // A restored tab has the marks in its tab entry too (app_state.json);
+    // either place that has a mark sets it, as nothing clears one.
+    ...incognitoField(overrides.incognito || conv.incognito),
+    ...requestSentField(overrides.requestSent || conv.requestSent),
   }
 }
 
@@ -793,6 +802,23 @@ export default sbp('sbp/selectors/register', {
     return useTabStore().tabs.find((candidate) => candidate.id === tabId)?.agentTextEdited === true
   },
 
+  // Turns incognito on in the tab when `canTurnOnIncognito` allows it, and
+  // saves the conversation file and the tab entry, which both keep the flag
+  // (an incognito tab with no text has no file). False, with no change,
+  // when the rule says no or the tab is missing. Nothing turns it off.
+  'dez.model/tabs/turnOnIncognito' (tabId: string): boolean {
+    const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
+    if (!tab || !canTurnOnIncognito(tab)) return false
+    tab.incognito = true
+    void sbp('dez.model/tabs/save', tabId)
+    void sbp('dez.model/appState/save')
+    return true
+  },
+
+  'dez.model/tabs/incognito' (tabId: string): boolean {
+    return useTabStore().tabs.find((candidate) => candidate.id === tabId)?.incognito === true
+  },
+
   // The persisted form of a tab. Null when the tab is missing or every
   // section is empty: an empty conversation is neither saved nor exported.
   'dez.model/tabs/conversationData' (tabId: string): ConversationData | null {
@@ -814,6 +840,8 @@ export default sbp('sbp/selectors/register', {
       ...agentTextEditedField(tab.agentTextEdited),
       ...contextField(tab.context),
       ...compactionsField(tab.compactions),
+      ...incognitoField(tab.incognito),
+      ...requestSentField(tab.requestSent),
     }
   },
 
@@ -902,6 +930,8 @@ export default sbp('sbp/selectors/register', {
       conversationId: tab.conversationId,
       activeModel: tab.activeModel,
       createdAt: tab.createdAt,
+      ...incognitoField(tab.incognito),
+      ...requestSentField(tab.requestSent),
     }))
     try {
       await sbp('dez.persistence/saveAppState', {
@@ -944,6 +974,8 @@ export default sbp('sbp/selectors/register', {
           conversationId: tabData.conversationId,
           activeModel: tabData.activeModel ?? conversation.activeModel ?? null,
           createdAt: tabData.createdAt || conversation.created_at || Date.now(),
+          ...incognitoField(tabData.incognito),
+          ...requestSentField(tabData.requestSent),
         }))
       } catch {
         restored.push({
@@ -953,6 +985,8 @@ export default sbp('sbp/selectors/register', {
           sections: [{ id: crypto.randomUUID(), role: 'user', content: emptyContent() }],
           activeModel: tabData.activeModel ?? null,
           createdAt: tabData.createdAt || Date.now(),
+          ...incognitoField(tabData.incognito),
+          ...requestSentField(tabData.requestSent),
         })
       }
     }
@@ -1047,11 +1081,15 @@ export default sbp('sbp/selectors/register', {
     return toolsApply(cachedModel(model) ?? {}) && isToolsEnabled(useSettingsStore().providerSettings[model.providerId])
   },
 
-  // Stamps the agent section with the model of the request that will fill it.
+  // Starts a reply in the tab: stamps the agent section with the model of
+  // the request that will fill it, and marks the tab `requestSent`. The
+  // mark stays when the section goes again (`endStreamSection`), as the
+  // request went (`canTurnOnIncognito`).
   'dez.model/ensureTrailingAgentSectionForTab' (tabId: string, model: ModelRef): Section | null {
     const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
-    const section = tab ? ensureTrailingAgentSection(tab.sections, model) : null
-    return section ? cloneSections([section])[0] as Section : null
+    if (!tab) return null
+    tab.requestSent = true
+    return cloneSections([ensureTrailingAgentSection(tab.sections, model)])[0] as Section
   },
 
   async 'dez.model/settings/init' (): Promise<AppStatePayload> {

@@ -160,6 +160,15 @@ export interface Tab {
   /** The numbers of the compactions of the conversation (compaction.ts).
    *  Absent before the first compaction; never set to `undefined`. */
   compactions?: Compactions
+  /** The tab is incognito: its chat requests leave out what tells a
+   *  provider that they come from Dez. Absent when off; never set to
+   *  `undefined`. Turned on only by `dez.model/tabs/turnOnIncognito`, by
+   *  the rule of `canTurnOnIncognito` (incognito.ts); never turned off. */
+  incognito?: true
+  /** A request of a reply of the tab went to a provider, also one whose
+   *  agent section is gone again. Absent before the first reply; never set
+   *  to `undefined`. Never cleared. */
+  requestSent?: true
 }
 
 export type StreamEvent =

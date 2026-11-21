@@ -68,6 +68,10 @@ export interface ConversationData {
   context?: CountedContext
   /** `Tab.compactions`; absent in a conversation with no compaction. */
   compactions?: Compactions
+  /** `Tab.incognito`. */
+  incognito?: true
+  /** `Tab.requestSent`. */
+  requestSent?: true
 }
 
 export interface ConversationSummary {

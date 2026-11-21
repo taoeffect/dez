@@ -3,6 +3,7 @@ import { compactionTextForPeople } from '../chat/compactionNotes'
 import { stripLiveSentinels } from '../chat/content'
 import { contextField, type CountedContext } from '../chat/contextSize'
 import { agentTextEditedField, costField, type ConversationCost } from '../chat/conversationCost'
+import { incognitoField, requestSentField } from '../chat/incognito'
 import { durationField } from '../chat/duration'
 import { messagesAsMarkdown, sectionTextAsMarkdown } from '../chat/markdown'
 import { modelRefKey, parseModelRefKey } from '../chat/modelRef'
@@ -14,7 +15,7 @@ import type { ContentNodeData, ConversationData, SectionData } from './types'
 // (persistence.rs keeps only the ASCII letters, digits, `-`, and `_` of the
 // id):
 //
-//   <!-- title: X | model: provider/model | created: N | cost: 0.42 | requests: 7 | unpriced: 1 | edited: yes | context: 81200 | context-estimate: 90400 | compactions: 2 | compacted-tokens: 412000 | compacted-cost: 0.31 | compacted-requests: 5 | compacted-left: 24100 -->
+//   <!-- title: X | model: provider/model | created: N | cost: 0.42 | requests: 7 | unpriced: 1 | edited: yes | incognito: yes | sent: yes | context: 81200 | context-estimate: 90400 | compactions: 2 | compacted-tokens: 412000 | compacted-cost: 0.31 | compacted-requests: 5 | compacted-left: 24100 -->
 //
 //   <dez:pill type="user"/>
 //   text
@@ -32,6 +33,10 @@ import type { ContentNodeData, ConversationData, SectionData } from './types'
 //   set (`unpriced:` only when more than 0). Files of an older Dez have
 //   none of them, and an older Dez ignores them. A cost with a bad or a
 //   missing value is ignored as a whole.
+// - `incognito: yes` is `Tab.incognito`, and `sent: yes` is
+//   `Tab.requestSent`, each there only when set. A conversation that the
+//   user opens from History has no tab entry in app_state.json, so the file
+//   keeps them too. Any value other than `yes` is no mark.
 // - `context:` and `context-estimate:` are `Tab.context` (its `tokens` and
 //   its `estimate`), there only when set. A context with a bad or a
 //   missing value is ignored as a whole.
@@ -109,10 +114,12 @@ function costParts(cost: ConversationCost, usd: string, requests: string, unpric
 }
 
 // The header parts that are only there when set, each with its ` | `.
-function optionalHeaderParts({ cost, agentTextEdited, context, compactions }: ConversationData): string {
+function optionalHeaderParts({ cost, agentTextEdited, incognito, requestSent, context, compactions }: ConversationData): string {
   const parts: string[] = []
   if (cost) parts.push(...costParts(cost, 'cost', 'requests', 'unpriced'))
   if (agentTextEdited) parts.push('edited: yes')
+  if (incognito) parts.push('incognito: yes')
+  if (requestSent) parts.push('sent: yes')
   if (context) parts.push(`context: ${context.tokens}`, `context-estimate: ${context.estimate}`)
   if (compactions) {
     parts.push(
@@ -150,6 +157,8 @@ interface ConversationHeader {
   createdAt: number
   cost?: ConversationCost
   agentTextEdited?: true
+  incognito?: true
+  requestSent?: true
   context?: CountedContext
   compactions?: Compactions
 }
@@ -233,6 +242,8 @@ function parseHeader(line: string): ConversationHeader {
     createdAt,
     ...costField(headerCost(values.get('cost'), values.get('requests'), values.get('unpriced'))),
     ...agentTextEditedField(values.get('edited') === 'yes'),
+    ...incognitoField(values.get('incognito') === 'yes'),
+    ...requestSentField(values.get('sent') === 'yes'),
     ...contextField(headerContext(values.get('context'), values.get('context-estimate'))),
     ...compactionsField(headerCompactions(values)),
   }
@@ -418,6 +429,8 @@ export function parseConversation(id: string, content: string): ConversationData
     created_at: header.createdAt,
     ...costField(header.cost),
     ...agentTextEditedField(header.agentTextEdited),
+    ...incognitoField(header.incognito),
+    ...requestSentField(header.requestSent),
     ...contextField(header.context),
     ...compactionsField(header.compactions),
   }

@@ -696,7 +696,7 @@ describe('agent pill durations', () => {
   })
 })
 
-describe('conversation cost, edited flag, and counted context in the header', () => {
+describe('conversation cost, marks, and counted context in the header', () => {
   const conversation = (fields: Partial<ConversationData>): ConversationData => ({
     id: 'conversation',
     title: 'Chat',
@@ -754,6 +754,15 @@ describe('conversation cost, edited flag, and counted context in the header', ()
 
     expect(parsed.map((data) => 'cost' in data)).toEqual([...parts.slice(0, -1).map(() => false), true])
     expect(parsed.some((data) => 'agentTextEdited' in data)).toBe(false)
+  })
+
+  it('round-trips the incognito flag and the sent mark, and reads a value other than yes as no mark', () => {
+    const marked = conversation({ agentTextEdited: true, incognito: true, requestSent: true, context: { tokens: 5, estimate: 7 } })
+    const bad = ['incognito: no', 'incognito: true', 'incognito:', 'sent: 1', 'sent: Yes'].map(parseWithHeaderPart)
+
+    expect(headerLine(serializeConversation(marked))).toBe('<!-- title: Chat | model:  | created: 1 | edited: yes | incognito: yes | sent: yes | context: 5 | context-estimate: 7 -->')
+    expect(parseConversation('conversation', serializeConversation(marked))).toStrictEqual(marked)
+    expect(bad.some((data) => 'incognito' in data || 'requestSent' in data)).toBe(false)
   })
 
   it('round-trips the counted context, after the other parts', () => {

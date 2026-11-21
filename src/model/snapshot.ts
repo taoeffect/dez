@@ -28,6 +28,8 @@ export interface ModelSnapshot {
     agentTextEdited?: true
     context?: CountedContext
     compactions?: Compactions
+    incognito?: true
+    requestSent?: true
   }[]
   activeTabId: string
   activeModel: ActiveModel | null

@@ -28,8 +28,12 @@ import { TOOL_DEFINITIONS } from '../tools/registry'
 let loadCalls: string[] = []
 
 // Conversations that the stub disk load below returns instead of its default
-// one. Reset in beforeEach.
+// one, and that the stub save writes. Reset in beforeEach.
 const diskConversations = new Map<string, ConversationData>()
+
+// Conversation ids whose stub disk load fails, as for a tab that never had
+// a file. Reset in beforeEach.
+const missingConversations = new Set<string>()
 
 // What the stub app state load below returns, and each payload that the stub
 // save got. Reset in beforeEach.
@@ -45,6 +49,7 @@ let savedModelCaches: ModelCache[] = []
 sbp('sbp/selectors/register', {
   async 'dez.persistence/loadConversation' (id: string): Promise<ConversationData> {
     loadCalls.push(id)
+    if (missingConversations.has(id)) throw new Error(`No file for ${id}`)
     const saved = diskConversations.get(id)
     if (saved) return saved
     return {
@@ -54,6 +59,9 @@ sbp('sbp/selectors/register', {
       activeModel: null,
       created_at: 1000,
     }
+  },
+  async 'dez.persistence/saveConversation' (data: ConversationData): Promise<void> {
+    diskConversations.set(data.id, JSON.parse(JSON.stringify(data)) as ConversationData)
   },
   async 'dez.persistence/loadAppState' (): Promise<AppStatePayload> {
     return structuredClone(diskAppState)
@@ -107,6 +115,7 @@ beforeEach(() => {
   setActivePinia(createPinia())
   loadCalls = []
   diskConversations.clear()
+  missingConversations.clear()
   diskAppState = {}
   savedAppStates = []
   savedModelCaches = []
@@ -335,6 +344,89 @@ describe('conversation cost and edited flag of a tab', () => {
     expect(activeTab().compactions).toStrictEqual(expected)
     expect(loaded.sections[0].role).toBe('agent')
     expect(conversationData(tabWithText('plain').id)).not.toHaveProperty('compactions')
+  })
+})
+
+describe('incognito and the sent mark of a tab', () => {
+  const model: ModelRef = { providerId: 'local', modelId: 'm' }
+  const turnOn = (tabId: string) => sbp('dez.model/tabs/turnOnIncognito', tabId) as boolean
+  const incognito = (tabId: string) => sbp('dez.model/tabs/incognito', tabId) as boolean
+  const tabNow = (tabId: string) => sbp('dez.model/tab', tabId) as Tab
+  // What submitTab does before the request goes.
+  const startReply = (tabId: string) => sbp('dez.model/ensureTrailingAgentSectionForTab', tabId, model) as Section
+
+  it('turns incognito on in a tab that sent nothing, and only once', () => {
+    const tab = tabWithText('secret')
+    const other = tabWithText('other')
+
+    expect(turnOn(tab.id)).toBe(true)
+    expect(turnOn(tab.id)).toBe(false)
+    expect(turnOn('missing')).toBe(false)
+
+    expect(incognito(tab.id)).toBe(true)
+    expect(incognito(other.id)).toBe(false)
+    expect(tabNow(other.id)).not.toHaveProperty('incognito')
+  })
+
+  // A stopped reply with no text removes its agent section, but its
+  // request went to the provider.
+  it('refuses a tab whose reply started, also after the stop of the reply removed its agent section', () => {
+    const tab = tabWithText('question')
+    const agent = startReply(tab.id)
+    finalizeStreamSectionForTab({ tabId: tab.id, sectionId: agent.id, status: 'cancelled', model: { ...model, modelName: 'M' }, startedAt: 1000, finishedAt: 1500, compacting: false })
+
+    expect(tabNow(tab.id).sections.map((section) => section.role)).toEqual(['user'])
+    expect(turnOn(tab.id)).toBe(false)
+    expect(incognito(tab.id)).toBe(false)
+  })
+
+  // A paste of copied replies, or a conversation of an older Dez, has
+  // agent sections but no sent mark.
+  it('refuses a tab with an agent section that no request of the tab wrote', () => {
+    const tab = tabWithText('question')
+    sbp('dez.model/tabs/replaceSections', tab.id, [
+      { id: 'u1', role: 'user', content: [{ kind: 'text', text: 'question' }] },
+      { id: 'a1', role: 'agent', content: [{ kind: 'text', text: 'pasted answer' }] },
+    ])
+
+    expect(turnOn(tab.id)).toBe(false)
+    expect(tabNow(tab.id)).not.toHaveProperty('requestSent')
+  })
+
+  // An incognito tab with no text has no conversation file, so only its
+  // entry in app_state.json keeps the flag. The turn-on saves both places
+  // itself; the end of a reply saves them after the sent mark.
+  it('saves the marks at once, and keeps them through a restart, also of a tab with no text', async () => {
+    const empty = (sbp('dez.model/tabs/create') as Tab).id
+    const typed = tabWithText('typed').id
+    const sent = tabWithText('sent').id
+    startReply(sent)
+    await sbp('dez.model/tabs/save', sent)
+    turnOn(empty)
+    turnOn(typed)
+
+    expect(diskConversations.get(tabNow(typed).conversationId)?.incognito).toBe(true)
+    missingConversations.add(tabNow(empty).conversationId)
+    setActivePinia(createPinia())
+    await sbp('dez.model/appState/restore', savedAppStates.at(-1))
+
+    expect([empty, typed, sent].map((id) => [incognito(id), tabNow(id).requestSent === true])).toEqual([[true, false], [true, false], [false, true]])
+  })
+
+  // A conversation that History opens has no entry in app_state.json.
+  it('keeps both marks through a reopen of the closed tab and a load of the conversation file', async () => {
+    const tab = tabWithText('kept')
+    turnOn(tab.id)
+    startReply(tab.id)
+    await sbp('dez.model/tabs/save', tab.id)
+
+    sbp('dez.model/tabs/close', tab.id)
+    sbp('dez.model/tabs/reopenClosed')
+    const reopened = activeTab()
+    sbp('dez.model/tabs/close', reopened.id)
+    const loaded = await openConversation(tab.conversationId) as Tab
+
+    expect([reopened, loaded].map((copy) => [copy.incognito, copy.requestSent])).toEqual([[true, true], [true, true]])
   })
 })
 
