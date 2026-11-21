@@ -108,7 +108,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
   - `storedFilePaths.ts`, `linkedFiles.ts`, `mediaFiles.ts`, `unusedFiles.ts` (stored, linked, and unused files), `appNames.ts` (the apps that a text names).
 - `model/state/`: Pinia stores (internal) and `dez.model/*` selectors; views read state through `view/modelState.ts`.
 - `controller/thread.ts`: `dez.controller/submitTab`. `controller/tabs.ts`: `dez.controller/newTab`.
-- Incognito tabs: `model/chat/incognito.ts` (the rules), `view/thread/IncognitoButton.vue` (the mask of the bottom bar), `dez.controller/turnOnIncognito` (`controller/tabs.ts`).
+- Incognito tabs: `model/chat/incognito.ts` (the rules), `view/thread/IncognitoButton.vue` (the mask of the bottom bar, shown only when `incognitoOption` is true in `app_state.json`), `dez.controller/turnOnIncognito` (`controller/tabs.ts`).
 - `controller/stream.ts`, `model/state/streams.ts`, `controller/http.ts`: stream lifecycle (one reply), per-tab sessions, native HTTP streams.
 - `model/streams/`: the pure parts of a reply: `messages.ts` (request messages), `toolRound.ts`, `mediaRequest.ts`, `pictureBudget.ts`.
 - `model/chat/contextSize.ts`, `model/streams/contextEstimate.ts`: the context size of a tab (the provider's count, plus Dez's estimate; no tokenizer).

@@ -170,6 +170,16 @@ describe('app state persistence format', () => {
     expect(parsePrompt(['Hi'])).toBeNull()
   })
 
+  it('keeps a hand-set incognitoOption, and reads a missing or non-boolean one as false', () => {
+    const parseOption = (value: unknown) => parseAppStateJson(JSON.stringify({ incognitoOption: value })).incognitoOption
+    expect(parseAppStateJson('{}').incognitoOption).toBe(false)
+    expect(parseOption(true)).toBe(true)
+    expect(parseOption(false)).toBe(false)
+    expect(parseOption('true')).toBe(false)
+    expect(parseOption(1)).toBe(false)
+    expect(parseOption(null)).toBe(false)
+  })
+
   it('keeps a whole window geometry and drops a bad one as a whole', () => {
     const geometry = { width: 1000, height: 700, x: -1280, y: 40, maximized: true }
     const parseWindow = (value: unknown) => parseAppStateJson(JSON.stringify({ window: value })).window

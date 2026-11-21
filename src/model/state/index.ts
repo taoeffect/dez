@@ -73,6 +73,7 @@ export interface SettingsSnapshot {
   doneNotification: boolean
   shortcutOverrides: ShortcutOverrides
   systemPrompt: string | null
+  incognitoOption: boolean
   settingsOpen: boolean
   settingsSection: SettingsSection
   historyOpen: boolean
@@ -288,6 +289,7 @@ function cloneSettings(settings = useSettingsStore()): SettingsSnapshot {
     doneNotification: settings.doneNotification,
     shortcutOverrides: { ...settings.shortcutOverrides },
     systemPrompt: settings.systemPrompt,
+    incognitoOption: settings.incognitoOption,
     settingsOpen: settings.settingsOpen,
     settingsSection: settings.settingsSection,
     historyOpen: settings.historyOpen,
@@ -957,6 +959,9 @@ export default sbp('sbp/selectors/register', {
         doneNotification: settings.doneNotification,
         shortcuts: settings.shortcutOverrides,
         systemPrompt: settings.systemPrompt,
+        // Not in the watch list of startPersistence (only a hand edit sets
+        // it), but written back, or the first save would drop it.
+        incognitoOption: settings.incognitoOption,
       })
     } catch (error) {
       console.error('Failed to save app state', error)
@@ -1122,6 +1127,7 @@ export default sbp('sbp/selectors/register', {
       if (typeof state.doneNotification === 'boolean') settings.doneNotification = state.doneNotification
       if (state.shortcuts) settings.shortcutOverrides = state.shortcuts
       if (state.systemPrompt !== undefined) settings.systemPrompt = state.systemPrompt
+      if (typeof state.incognitoOption === 'boolean') settings.incognitoOption = state.incognitoOption
     }
 
     sbp('dez.ui/applyTheme', settings.theme)

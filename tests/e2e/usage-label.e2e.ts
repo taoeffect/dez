@@ -148,7 +148,9 @@ describe('usage label', () => {
   }
 
   beforeAll(async () => {
-    setup = await startMockProviderApp(PROVIDER)
+    // The incognito mask makes the right end of the bar wider: the room
+    // test checks Submit in the widest bar.
+    setup = await startMockProviderApp(PROVIDER, {}, { appState: { incognitoOption: true } })
     browser = setup.browser
   })
 

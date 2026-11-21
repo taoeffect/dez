@@ -77,7 +77,7 @@ onUnmounted(() => {
       <UsageLabel />
       <div class="bottom-bar-end">
         <SubmitButton />
-        <IncognitoButton />
+        <IncognitoButton v-if="settings.incognitoOption" />
         <!-- `mousedown.prevent` keeps the focus and the caret where they are. -->
         <button
           class="help-button"

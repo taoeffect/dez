@@ -109,6 +109,9 @@ describe('Help panel', () => {
   })
 
   it('opens from the ? button on General, keeps the editor focus, switches pages, and closes on Esc', async () => {
+    // The seed leaves `incognitoOption` off: no incognito mask next to the
+    // ? button.
+    expect(await browser.execute(() => document.querySelector('.bottom-bar-end .incognito-button') !== null)).toBe(false)
     await focusEditor(browser)
     await openWithButton()
     expect(await focusedArea(browser)).toBe('editor')

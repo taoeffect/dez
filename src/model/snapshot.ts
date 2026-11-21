@@ -51,6 +51,7 @@ export interface ModelSnapshot {
     doneNotification: boolean
     shortcutOverrides: ShortcutOverrides
     systemPrompt: string | null
+    incognitoOption: boolean
     settingsOpen: boolean
     settingsSection: string
     historyOpen: boolean

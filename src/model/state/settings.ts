@@ -70,6 +70,10 @@ export const useSettingsStore = defineStore('settings', () => {
   // Dez's own template (`BUILT_IN_SYSTEM_PROMPT`). An empty or blank text
   // is kept: it sends no system prompt.
   const systemPrompt = ref<string | null>(null)
+  // Shows the incognito mask in the bottom bar. Only a hand edit of
+  // app_state.json sets it (no Settings control); a tab's incognito flag
+  // and its requests do not read it.
+  const incognitoOption = ref(false)
   // The overlay panels. At most one is open: opening one closes the others.
   const settingsOpen = ref(false)
   const settingsSection = ref<SettingsSection>('general')
@@ -131,6 +135,7 @@ export const useSettingsStore = defineStore('settings', () => {
     doneNotification,
     shortcutOverrides,
     systemPrompt,
+    incognitoOption,
     shortcuts,
     settingsOpen,
     settingsSection,

@@ -33,6 +33,10 @@ export interface MockProviderAppOptions extends AppOptions {
    *  logs a console error for a price request that fails, so a spec
    *  answers each one. */
   jsonAnswers?: Readonly<Record<string, unknown>>
+  /** Raw `app_state.json` keys of the seed, such as `incognitoOption`
+   *  (`seedRawAppState`). `customProviders` is not one of them: the mock
+   *  providers set it. */
+  appState?: Readonly<Record<string, unknown>>
 }
 
 /**
@@ -49,7 +53,7 @@ export async function startMockProviderApp (
   config: Record<string, unknown> = {},
   options: MockProviderAppOptions = {},
 ): Promise<MockProviderApp> {
-  const { moreProviders = [], heldPaths = [], jsonAnswers = {}, ...appOptions } = options
+  const { moreProviders = [], heldPaths = [], jsonAnswers = {}, appState = {}, ...appOptions } = options
   const providers = [{ provider, config }, ...moreProviders]
   const mock = await startHoldingChatMock([...providers.map((entry) => mockChatPath(entry.provider)), ...heldPaths], jsonAnswers)
   let app: RunningApp | undefined
@@ -62,6 +66,7 @@ export async function startMockProviderApp (
   try {
     app = await startApp(appOptions)
     await seedRawAppState(app.home, {
+      ...appState,
       customProviders: providers.map((entry) => ({ ...mockProviderConfig(entry.provider, mock.url), ...entry.config })),
     })
     browser = await createSession(app.binary, app.port)

@@ -182,6 +182,7 @@ export function defaultAppState(): AppStatePayload {
     doneNotification: true,
     shortcuts: {},
     systemPrompt: null,
+    incognitoOption: false,
   }
 }
 
@@ -240,6 +241,9 @@ export function parseAppStateJson(content: string): AppStatePayload {
       // Any text is kept as it is, also an empty one (no system prompt); a
       // template problem is shown in Settings and refuses a send.
       systemPrompt: typeof parsed.systemPrompt === 'string' ? parsed.systemPrompt : fallback.systemPrompt,
+      incognitoOption: typeof parsed.incognitoOption === 'boolean'
+        ? parsed.incognitoOption
+        : fallback.incognitoOption,
     }
   } catch {
     return defaultAppState()

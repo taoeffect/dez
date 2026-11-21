@@ -1320,6 +1320,31 @@ describe('dez.model/settings/setSystemPrompt', () => {
   })
 })
 
+describe('dez.model/settings incognitoOption', () => {
+  afterEach(() => {
+    sbp('dez.model/settings/stopPersistence')
+    vi.useRealTimers()
+  })
+
+  // Only a hand edit of app_state.json sets the option, and a save writes
+  // the whole file: the save of another setting must write it back, also
+  // when the file had no such key.
+  it.each([
+    [{ incognitoOption: true }, true],
+    [{}, false],
+  ] as [AppStatePayload, boolean][])('loads %j, and the save of another setting writes the option %s', async (disk, option) => {
+    diskAppState = disk
+    await sbp('dez.model/settings/init')
+    expect((sbp('dez.model/settings/snapshot') as SettingsSnapshot).incognitoOption).toBe(option)
+
+    vi.useFakeTimers()
+    sbp('dez.model/settings/startPersistence')
+    sbp('dez.model/settings/setDoneSound', false)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(savedAppStates.at(-1)?.incognitoOption).toBe(option)
+  })
+})
+
 describe('dez.model/settings model parameters', () => {
   const film: ModelRef = { providerId: 'venice', modelId: 'film' }
   const song: ModelRef = { providerId: 'venice', modelId: 'song' }

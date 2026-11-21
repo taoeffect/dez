@@ -223,21 +223,6 @@ function onOverlayClick(event: MouseEvent) {
               first the size and the cost of the conversation since its last compaction, and after
               each of them, in parentheses, the one of the whole conversation.
             </p>
-            <!-- The rules of src/model/chat/incognito.ts (`requestParts`,
-                 `canTurnOnIncognito`): a change of them must change this
-                 text too. -->
-            <p>
-              Click the mask at the lower right to make the tab incognito. An incognito tab sends
-              no Dez tools and no system prompt of Dez, also not your own from Settings › System
-              Prompt, and Dez does not compact its conversation: when it gets too large for the
-              model, the provider refuses the request. A provider that has a system prompt of its
-              own, such as Venice, gets it turned on. So a provider cannot easily tell your requests
-              from the requests of other apps. Incognito is no guarantee of privacy: your messages,
-              the model that you pick, your network address, your provider account, and more can
-              still tell who you are. Dez still saves the conversation on this computer. You can
-              turn incognito on only before the first message of the tab, and you cannot turn it
-              off. To go on without it, copy the conversation and paste it into a new tab.
-            </p>
             <p>
               Paste or drop images, audio, and video into a message. A model that makes images,
               audio, or video puts them in its reply. The

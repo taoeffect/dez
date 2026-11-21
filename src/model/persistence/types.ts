@@ -150,4 +150,7 @@ export interface AppStatePayload {
   // The user's system prompt template (Settings › System Prompt); null (or
   // missing) for Dez's own template. An empty text sends no system prompt.
   systemPrompt?: string | null
+  // Shows the incognito mask in the bottom bar. Only a hand edit of
+  // app_state.json sets it; it does not change what a request sends.
+  incognitoOption?: boolean
 }

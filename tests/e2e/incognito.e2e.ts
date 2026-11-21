@@ -24,8 +24,10 @@ import { activeConversationId, activeTabId, newTab, pickModel, sbpCall, submit, 
 //   app_state.json keeps it), and when History opens the conversation again
 //   (its file keeps it).
 //
-// One app session serves the whole file. The relaunch test goes on in the
-// incognito tab of the first test.
+// The seed sets `incognitoOption`, which shows the mask; the mask after the
+// relaunch shows that the saves of the app kept it. One app session serves
+// the whole file. The relaunch test goes on in the incognito tab of the
+// first test.
 
 const PROVIDER: MockProvider = { id: 'masked', name: 'Masked Mock', modelId: 'masked-model', modelName: 'Masked Model' }
 // An Anthropic-format provider with a system prompt of its own.
@@ -99,7 +101,10 @@ describe('incognito tabs', () => {
   }
 
   beforeAll(async () => {
-    setup = await startMockProviderApp(PROVIDER, {}, { moreProviders: [{ provider: OWN, config: { providerSystemPrompt: OWN_PROMPT } }] })
+    setup = await startMockProviderApp(PROVIDER, {}, {
+      moreProviders: [{ provider: OWN, config: { providerSystemPrompt: OWN_PROMPT } }],
+      appState: { incognitoOption: true },
+    })
     browser = setup.browser
   })
 
@@ -197,6 +202,7 @@ describe('incognito tabs', () => {
     // restore sets the active tab: the empty tab. Switch only after it, or
     // the restore switches back.
     await waitForValue(browser, 'restored active tab', () => activeTabId(browser), emptyTabId)
+    // With no mask (a save that dropped `incognitoOption`), maskOn is null.
     await waitForValue(browser, 'mask of the empty tab', maskOn, true)
 
     // The next request of the tab with a reply has no system prompt and no
