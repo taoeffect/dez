@@ -3,6 +3,7 @@ import type { CountedContext } from './chat/contextSize'
 import type { ConversationCost } from './chat/conversationCost'
 import type { ActiveModel, ContentNode, ModelRef, SectionThinking } from './chat/types'
 import type { ModelOutput } from './modelOutputs'
+import type { ModelPickerSize } from './modelPickerSize'
 import type { ProviderConfig } from './providers/config'
 import type { ParameterValues } from './providers/modelParameters'
 import type { Prompt } from './state/prompts'
@@ -42,6 +43,7 @@ export interface ModelSnapshot {
     lastUsedModel: DefaultModel | null
     favorites: DefaultModel[]
     modelOutputFilter: ModelOutput[]
+    modelPickerSize: ModelPickerSize
     providerSettings: Record<string, Record<string, boolean>>
     modelParameters: Record<string, ParameterValues>
     checkForUpdates: boolean

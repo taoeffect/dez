@@ -12,6 +12,7 @@ import type { AppStatePayload } from './types'
 import type { DefaultModel, Theme, WindowGeometry } from '../state/settings'
 import { EDITOR_FONT_SIZE_DEFAULT, clampEditorFontSize } from '../editorFontSize'
 import { DONE_SOUND_VOLUME_DEFAULT, clampDoneSoundVolume } from '../doneSoundVolume'
+import { MODEL_PICKER_SIZE_DEFAULT, clampModelPickerSize, type ModelPickerSize } from '../modelPickerSize'
 import { currentShortcutPlatform, parseShortcutOverrides } from '../shortcuts'
 import { normalizeOutputs } from '../modelOutputs'
 
@@ -47,6 +48,11 @@ const windowGeometrySchema = z.object({
   maximized: z.boolean(),
 }).refine((geometry) => (geometry.x === undefined) === (geometry.y === undefined))
 
+const modelPickerSizeSchema = z.object({
+  width: z.number(),
+  maxHeight: z.number(),
+})
+
 type TabData = z.infer<typeof tabSchema>
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -65,6 +71,14 @@ function defaultModel(value: unknown): DefaultModel | null {
 function windowGeometry(value: unknown): WindowGeometry | undefined {
   const result = windowGeometrySchema.safeParse(value)
   return result.success ? result.data : undefined
+}
+
+// Like editorFontSize: a hand-edited size is rounded and raised to the
+// minimum, not dropped. A size that is not two finite numbers gets the
+// default.
+function modelPickerSize(value: unknown): ModelPickerSize {
+  const result = modelPickerSizeSchema.safeParse(value)
+  return result.success ? clampModelPickerSize(result.data) : { ...MODEL_PICKER_SIZE_DEFAULT }
 }
 
 function tabData(value: unknown): TabData | null {
@@ -173,6 +187,7 @@ export function defaultAppState(): AppStatePayload {
     lastUsedModel: null,
     favorites: [],
     modelOutputFilter: [],
+    modelPickerSize: { ...MODEL_PICKER_SIZE_DEFAULT },
     providerSettings: {},
     modelParameters: {},
     checkForUpdates: true,
@@ -220,6 +235,7 @@ export function parseAppStateJson(content: string): AppStatePayload {
       modelOutputFilter: Array.isArray(parsed.modelOutputFilter)
         ? normalizeOutputs(parsed.modelOutputFilter)
         : fallback.modelOutputFilter,
+      modelPickerSize: modelPickerSize(parsed.modelPickerSize),
       providerSettings: providerSettings(parsed.providerSettings),
       modelParameters: modelParameters(parsed.modelParameters),
       checkForUpdates: typeof parsed.checkForUpdates === 'boolean'

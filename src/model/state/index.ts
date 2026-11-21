@@ -12,6 +12,7 @@ import { useSettingsStore, type DefaultModel, type SettingsSection, type Theme, 
 import { clampEditorFontSize } from '../editorFontSize'
 import { normalizeOutputs, type ModelOutput } from '../modelOutputs'
 import { clampDoneSoundVolume } from '../doneSoundVolume'
+import { clampModelPickerSize, type ModelPickerSize } from '../modelPickerSize'
 import { currentShortcutPlatform, findShortcut, normalizeShortcutKey, validateShortcutKey, type Shortcut, type ShortcutId, type ShortcutOverrides } from '../shortcuts'
 import { MAX_CLOSED_TABS, NEW_TAB_TITLE, useTabStore } from './tabs'
 import type { AppStatePayload, CachedProvider, ContentNodeData, ConversationData, ConversationSearchOutcome, ModelCache } from '../persistence/types'
@@ -64,6 +65,7 @@ export interface SettingsSnapshot {
   lastUsedModel: DefaultModel | null
   favorites: DefaultModel[]
   modelOutputFilter: ModelOutput[]
+  modelPickerSize: ModelPickerSize
   providerSettings: Record<string, Record<string, boolean>>
   modelParameters: Record<string, ParameterValues>
   checkForUpdates: boolean
@@ -280,6 +282,7 @@ function cloneSettings(settings = useSettingsStore()): SettingsSnapshot {
     lastUsedModel: cloneDefaultModel(settings.lastUsedModel),
     favorites: settings.favorites.map((favorite) => ({ ...favorite })),
     modelOutputFilter: [...settings.modelOutputFilter],
+    modelPickerSize: { ...settings.modelPickerSize },
     providerSettings: cloneRecords(settings.providerSettings),
     modelParameters: cloneRecords(settings.modelParameters),
     checkForUpdates: settings.checkForUpdates,
@@ -950,6 +953,7 @@ export default sbp('sbp/selectors/register', {
         lastUsedModel: settings.lastUsedModel,
         favorites: settings.favorites,
         modelOutputFilter: settings.modelOutputFilter,
+        modelPickerSize: settings.modelPickerSize,
         providerSettings: settings.providerSettings,
         modelParameters: settings.modelParameters,
         checkForUpdates: settings.checkForUpdates,
@@ -1118,6 +1122,7 @@ export default sbp('sbp/selectors/register', {
       if (state.lastUsedModel !== undefined) settings.lastUsedModel = state.lastUsedModel
       if (Array.isArray(state.favorites)) settings.favorites = state.favorites
       if (Array.isArray(state.modelOutputFilter)) settings.modelOutputFilter = state.modelOutputFilter
+      if (state.modelPickerSize) settings.modelPickerSize = state.modelPickerSize
       if (state.providerSettings) settings.providerSettings = state.providerSettings
       if (state.modelParameters) settings.modelParameters = state.modelParameters
       if (typeof state.checkForUpdates === 'boolean') settings.checkForUpdates = state.checkForUpdates
@@ -1156,6 +1161,7 @@ export default sbp('sbp/selectors/register', {
         () => settings.lastUsedModel,
         () => settings.favorites,
         () => settings.modelOutputFilter,
+        () => settings.modelPickerSize,
         () => settings.providerSettings,
         () => settings.modelParameters,
         () => settings.checkForUpdates,
@@ -1406,6 +1412,17 @@ export default sbp('sbp/selectors/register', {
   // empty shows every model. Unknown types are dropped.
   'dez.model/settings/setModelOutputFilter' (outputs: readonly ModelOutput[]): void {
     useSettingsStore().modelOutputFilter = normalizeOutputs(outputs)
+  },
+
+  // The drag of an edge of the bottom bar's model picker calls it once, at
+  // the end of the drag. An unchanged size is not assigned, so a press on a
+  // handle with no move writes no app_state.json.
+  'dez.model/settings/setModelPickerSize' (size: ModelPickerSize): void {
+    const settings = useSettingsStore()
+    const next = clampModelPickerSize(size)
+    const current = settings.modelPickerSize
+    if (current.width === next.width && current.maxHeight === next.maxHeight) return
+    settings.modelPickerSize = next
   },
 
   'dez.model/customProviders/list' (): ProviderConfig[] {

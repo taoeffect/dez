@@ -1284,6 +1284,40 @@ describe('dez.model/settings/setModelOutputFilter', () => {
   })
 })
 
+describe('dez.model/settings/setModelPickerSize', () => {
+  const size = () => (sbp('dez.model/settings/snapshot') as SettingsSnapshot).modelPickerSize
+
+  afterEach(() => {
+    sbp('dez.model/settings/stopPersistence')
+    vi.useRealTimers()
+  })
+
+  it('rounds the size and keeps it at least the default in each dimension', () => {
+    sbp('dez.model/settings/setModelPickerSize', { width: 500.6, maxHeight: 100 })
+    expect(size()).toStrictEqual({ width: 501, maxHeight: 360 })
+    sbp('dez.model/settings/setModelPickerSize', { width: 0, maxHeight: 640.2 })
+    expect(size()).toStrictEqual({ width: 320, maxHeight: 640 })
+  })
+
+  it('loads the saved size, saves a change, and saves nothing for the same size', async () => {
+    diskAppState = { modelPickerSize: { width: 480, maxHeight: 420 } }
+    await sbp('dez.model/settings/init')
+    expect(size()).toStrictEqual({ width: 480, maxHeight: 420 })
+
+    vi.useFakeTimers()
+    sbp('dez.model/settings/startPersistence')
+    sbp('dez.model/settings/setModelPickerSize', { width: 600, maxHeight: 420 })
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(savedAppStates.at(-1)?.modelPickerSize).toStrictEqual({ width: 600, maxHeight: 420 })
+
+    // A press on a handle with no move: the same size after the round.
+    const saveCount = savedAppStates.length
+    sbp('dez.model/settings/setModelPickerSize', { width: 600.3, maxHeight: 419.8 })
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(savedAppStates).toHaveLength(saveCount)
+  })
+})
+
 describe('dez.model/settings/setSystemPrompt', () => {
   const systemPrompt = () => (sbp('dez.model/settings/snapshot') as SettingsSnapshot).systemPrompt
 

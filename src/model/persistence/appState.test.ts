@@ -126,6 +126,22 @@ describe('app state persistence format', () => {
     expect(parseFilter('image')).toEqual([])
   })
 
+  it('rounds a hand-edited modelPickerSize and raises it to the minimum, and reads a bad one as the default', () => {
+    const parseSize = (value: unknown) => parseAppStateJson(JSON.stringify({ modelPickerSize: value })).modelPickerSize
+    const defaultSize = { width: 320, maxHeight: 360 }
+    expect(parseAppStateJson('{}').modelPickerSize).toStrictEqual(defaultSize)
+    expect(parseAppStateJson(serializeAppStateJson({ modelPickerSize: { width: 480, maxHeight: 420 } })).modelPickerSize)
+      .toStrictEqual({ width: 480, maxHeight: 420 })
+    expect(parseSize({ width: 480.4, maxHeight: 619.5 })).toStrictEqual({ width: 480, maxHeight: 620 })
+    expect(parseSize({ width: 100, maxHeight: 900 })).toStrictEqual({ width: 320, maxHeight: 900 })
+    expect(parseSize({ width: 500, maxHeight: -4 })).toStrictEqual({ width: 500, maxHeight: 360 })
+    expect(parseAppStateJson('{ "modelPickerSize": { "width": 1e400, "maxHeight": 500 } }').modelPickerSize).toStrictEqual(defaultSize)
+    expect(parseSize({ width: '500', maxHeight: 500 })).toStrictEqual(defaultSize)
+    expect(parseSize({ width: 500 })).toStrictEqual(defaultSize)
+    expect(parseSize([500, 500])).toStrictEqual(defaultSize)
+    expect(parseSize(null)).toStrictEqual(defaultSize)
+  })
+
   it('rounds and clamps a hand-edited editorFontSize, and ignores a bad type', () => {
     const parseFontSize = (value: unknown) => parseAppStateJson(JSON.stringify({ editorFontSize: value })).editorFontSize
     expect(parseAppStateJson('{}').editorFontSize).toBe(15)

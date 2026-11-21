@@ -3,6 +3,7 @@ import type { CountedContext } from '../chat/contextSize'
 import type { ConversationCost } from '../chat/conversationCost'
 import type { ActiveModel, ModelRef, SectionThinking } from '../chat/types'
 import type { ModelOutput } from '../modelOutputs'
+import type { ModelPickerSize } from '../modelPickerSize'
 import type { ProviderConfig } from '../providers/config'
 import type { ParameterValues } from '../providers/modelParameters'
 import type { PriceQuote } from '../providers/modelPrices'
@@ -133,6 +134,8 @@ export interface AppStatePayload {
   favorites?: DefaultModel[]
   // The model pickers' output filter; empty (or missing) shows every model.
   modelOutputFilter?: ModelOutput[]
+  // The size of the model picker of the bottom bar (src/model/modelPickerSize.ts).
+  modelPickerSize?: ModelPickerSize
   providerSettings?: Record<string, Record<string, boolean>>
   // The parameter values that the user chose for media models: full model
   // id (`modelRefKey`) -> parameter name -> value. Only the choices; a
