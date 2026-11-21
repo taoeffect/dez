@@ -568,6 +568,23 @@ describe('edit', () => {
     expect(text(result.bytes)?.split('\n')).toHaveLength(401)
   })
 
+  it('counts the lines of the diff that a cut leaves out, with those that the note of a long hunk stands for', () => {
+    const cutNote = (count: number) => `… ${count} more lines of the diff are not shown. read gives the file as it is now.`
+    const long = numbered(20).map((line) => line.padEnd(5_000, '.'))
+    const cutBeforeNote = editResult(edit([{ from_line: 1, to_line: 20, text: long.map((line) => line.replaceAll('.', '!')).join('\n') }]), fileText(long))
+
+    expect(change(cutBeforeNote.content)).toStrictEqual(['@@ -1,20 +1,20 @@', ...long.slice(0, 3).map((line) => `-${line}`), cutNote(37)])
+
+    const longNew = numbered(20).map((line) => line.padEnd(7_000, '!'))
+    const cutAfterNote = editResult(edit([{ from_line: 1, to_line: 20, text: longNew.join('\n') }]), fileText(numbered(20)))
+
+    expect(change(cutAfterNote.content)).toStrictEqual([
+      '@@ -1,20 +1,20 @@', '-l1', '-l2', '-l3', '-l4',
+      '… 32 lines of this hunk are not shown, to save context. read gives the file as it is now.',
+      `+${longNew[16]}`, `+${longNew[17]}`, cutNote(2),
+    ])
+  })
+
   it('needs an edit, and the path of a file', () => {
     expect(refusal(() => edit([]))).toContain('`edits` is an empty list.')
     expect(refusal(() => editCall(args('edit', { path: '/apps/notes', edits: [{ from_line: 1, text: '' }] })))).toContain('is the folder of an app, not a file')

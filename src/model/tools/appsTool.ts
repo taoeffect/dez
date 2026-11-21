@@ -935,31 +935,43 @@ function outcomeLines(outcomes: readonly ItemOutcome[]): string[] {
   return outcomes.map((outcome, index) => `${index + 1}. ${outcome.done ? 'Done' : 'Failed'}. ${outcome.text}`)
 }
 
-// The lines of one hunk of an `edit` result: a long hunk shows its ends,
-// and between them a line with no diff mark that tells how many lines it
+// One row of the diff of an `edit` result, and the number of lines of the
+// diff that it stands for: 1, or for the note of a long hunk the lines
+// that the note leaves out.
+interface DiffRow {
+  text: string
+  lines: number
+}
+
+// The rows of one hunk of an `edit` result: a long hunk shows its ends,
+// and between them a row with no diff mark that tells how many lines it
 // leaves out. The `@@` line keeps the counts of the whole hunk.
-function hunkLines({ header, lines }: DiffHunk): string[] {
-  if (lines.length <= HUNK_MAX_LINES) return [header, ...lines]
+function hunkRows({ header, lines }: DiffHunk): DiffRow[] {
+  const row = (text: string): DiffRow => ({ text, lines: 1 })
+  if (lines.length <= HUNK_MAX_LINES) return [header, ...lines].map(row)
   const hidden = lines.length - 2 * HUNK_END_LINES
   return [
-    header,
-    ...lines.slice(0, HUNK_END_LINES),
-    `… ${countOf(hidden, 'line')} of this hunk are not shown, to save context. read gives the file as it is now.`,
-    ...lines.slice(-HUNK_END_LINES),
+    row(header),
+    ...lines.slice(0, HUNK_END_LINES).map(row),
+    { text: `… ${countOf(hidden, 'line')} of this hunk are not shown, to save context. read gives the file as it is now.`, lines: hidden },
+    ...lines.slice(-HUNK_END_LINES).map(row),
   ]
 }
 
-// The first lines of a diff that fit a result, and a line that tells how
-// many it leaves out.
-function cutDiff(diff: readonly string[]): string[] {
+// The first rows of a diff that fit a result, and a row that tells how
+// many lines of the diff the rows after them stand for. The lines that a
+// shown note of a long hunk leaves out are told already, so they do not
+// count.
+function cutDiff(rows: readonly DiffRow[]): string[] {
   const shown: string[] = []
   let characters = 0
-  for (const line of diff) {
-    if (characters + line.length + 1 > DIFF_MAX_CHARACTERS) break
-    shown.push(line)
-    characters += line.length + 1
+  let rest = rows.reduce((sum, row) => sum + row.lines, 0)
+  for (const { text, lines } of rows) {
+    if (characters + text.length + 1 > DIFF_MAX_CHARACTERS) break
+    shown.push(text)
+    characters += text.length + 1
+    rest -= lines
   }
-  const rest = diff.length - shown.length
   return rest === 0 ? shown : [...shown, `… ${countOf(rest, 'more line')} of the diff ${rest === 1 ? 'is' : 'are'} not shown. read gives the file as it is now.`]
 }
 
@@ -990,7 +1002,7 @@ export function editResult({ path, edits }: EditCall, text: string): { content: 
     ...outcomes,
     'The lines have new numbers now: read the file again before the next edit of it.',
     'The change:',
-    ...cutDiff(plan.hunks.flatMap(hunkLines)),
+    ...cutDiff(plan.hunks.flatMap(hunkRows)),
   ].join('\n')
   return { content, isError: false, bytes }
 }
