@@ -463,45 +463,63 @@ export interface RunOutcome {
   advice: string[]
 }
 
-// The outcome of a run whose code returned `value`. A string with no
-// visible character does not go as it is: a blank result reads as a
-// failure of the tool.
-function returnedOutcome(value: string | undefined, hasConsole: boolean): RunOutcome {
+/** What ran, as the result of a run names it: the code of a `js_eval`
+ *  call, or an app (`apps invoke`). */
+export type RunSubject = 'code' | 'app'
+
+/** The outcome of a run that failed, with the text `lead`. */
+export function failedOutcome(lead: string): RunOutcome {
+  return { isError: true, lead, given: null, advice: [] }
+}
+
+/** The outcome of a run of `subject` whose code returned `value`;
+ *  `noValue` is the lead for no value. A string with no visible character
+ *  does not go as it is: a blank result reads as a failure of the tool. */
+export function returnedOutcome(value: string | undefined, subject: RunSubject, noValue: string): RunOutcome {
   const told = (lead: string): RunOutcome => ({ isError: false, lead, given: null, advice: [] })
-  if (value === undefined) {
-    return told(hasConsole ? 'The code returned no value.' : 'The code returned no value, and it wrote nothing to the console. Give the result with `return`.')
-  }
-  if (value === '') return told('The code returned an empty string.')
-  if (value.trim() === '') return told(`The code returned a string of only white space (${countOf(value.length, 'character')}).`)
+  if (value === undefined) return told(noValue)
+  if (value === '') return told(`The ${subject} returned an empty string.`)
+  if (value.trim() === '') return told(`The ${subject} returned a string of only white space (${countOf(value.length, 'character')}).`)
   return { isError: false, lead: null, given: { text: value, name: 'returned value' }, advice: [] }
+}
+
+/** The outcome of a run of `subject` that ended with `end` before its code
+ *  returned or threw, and that Dez did not stop at a time limit.
+ *  `hasConsole` tells that the code wrote console output, which goes after
+ *  it. `lost` tells what the run lost by its end, as a sentence right
+ *  after the cause; blank for nothing. */
+export function endedOutcome(end: Exclude<ProgramEnd, { kind: 'timedOut' }>, subject: RunSubject, hasConsole: boolean, lost: string): RunOutcome {
+  const told = (cause: string, rest: string) => failedOutcome([cause, lost, rest].filter((part) => part !== '').join(' '))
+  if (end.kind === 'outputTooLarge') {
+    return told(`Dez stopped the ${subject}: it wrote more than ${byteSizeText(JS_EVAL_OUTPUT_BYTES)} of output.`, 'Write less to the console, and return only what you need.')
+  }
+  const silent = hasConsole ? '' : ` The ${subject} wrote nothing to the console.`
+  // A signal that Dez did not send ended the program. V8 ends it this way
+  // at the limit of its memory.
+  if (end.code === null) {
+    return told(`The system ended the ${subject} before it returned a value.`, 'The usual cause: the code used more memory than a run can have. '
+      + `Use less memory (smaller arrays and strings, or the work in parts), and call again.${silent}`)
+  }
+  return told(`The ${subject} ended before it returned a value (exit code ${end.code}).`, 'The usual causes: an error in a timer or in a promise that the code did not await, '
+    + `an \`await\` of a promise that never settles, or a call of \`Deno.exit\`.${hasConsole ? ' The console output tells which.' : silent}`)
 }
 
 // The outcome of a run of `call` with the end `end` and the protocol line
 // `line`. `hasConsole` tells that the code wrote console output, which
 // goes after it.
 function runOutcome(call: JsEvalCall, end: ProgramEnd, line: JsEvalEndLine | null, hasConsole: boolean): RunOutcome {
-  if (line?.type === 'result') return returnedOutcome(line.text, hasConsole)
+  if (line?.type === 'result') {
+    const noValue = hasConsole ? 'The code returned no value.' : 'The code returned no value, and it wrote nothing to the console. Give the result with `return`.'
+    return returnedOutcome(line.text, 'code', noValue)
+  }
   if (line?.type === 'error') {
     return { isError: true, lead: 'The code threw an error:', given: { text: line.text, name: 'text of the error' }, advice: errorAdvice(line.text) }
   }
-  const failed = (lead: string): RunOutcome => ({ isError: true, lead, given: null, advice: [] })
   if (end.kind === 'timedOut') {
-    return failed(`Dez stopped the code: it did not end within ${countOf(call.timeoutMs / 1000, 'second')}. `
+    return failedOutcome(`Dez stopped the code: it did not end within ${countOf(call.timeoutMs / 1000, 'second')}. `
       + `Make the code do less work, or give it more time with \`timeout_seconds\` (at most ${JS_EVAL_MAX_SECONDS}).`)
   }
-  if (end.kind === 'outputTooLarge') {
-    return failed(`Dez stopped the code: it wrote more than ${byteSizeText(JS_EVAL_OUTPUT_BYTES)} of output. `
-      + 'Write less to the console, and return only what you need.')
-  }
-  const silent = hasConsole ? '' : ' The code wrote nothing to the console.'
-  // A signal that Dez did not send ended the program. V8 ends it this way
-  // at the limit of its memory.
-  if (end.code === null) {
-    return failed('The system ended the code before it returned a value. The usual cause: the code used more memory than a run can have. '
-      + `Use less memory (smaller arrays and strings, or the work in parts), and call again.${silent}`)
-  }
-  return failed(`The code ended before it returned a value (exit code ${end.code}). The usual causes: an error in a timer or in a promise that the code did not await, `
-    + `an \`await\` of a promise that never settles, or a call of \`Deno.exit\`.${hasConsole ? ' The console output tells which.' : silent}`)
+  return endedOutcome(end, 'code', hasConsole, '')
 }
 
 /** What the tool calls of the code of a run (`dez.sbp`) left, for the

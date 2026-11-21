@@ -229,6 +229,24 @@ export async function runFfmpegLog(
   return { end, log }
 }
 
+/** A new file in the generated folder of its kind, under a new name, for
+ *  a file that a run or an app gives back. Nothing is written yet. */
+export interface GeneratedFile {
+  /** The path relative to the app root, for the native file calls. */
+  target: string
+  /** The absolute path. */
+  path: string
+  /** The file as a made asset. */
+  asset: MadeAsset
+}
+
+/** A `GeneratedFile` of the type `type` in the app root `appDir`. */
+export function newGeneratedFile(appDir: string, { kind, type, extension }: Pick<KeptFile, 'kind' | 'type' | 'extension'>): GeneratedFile {
+  const target = `${kind === 'image' ? IMAGE_FOLDERS.generated : MEDIA_FOLDERS.generated[kind]}/${crypto.randomUUID()}.${extension}`
+  const path = newStoredFilePath(appDir, target, kind)
+  return { target, path, asset: kind === 'image' ? { kind, path } : { kind: 'clip', clip: { kind, type, src: path, url: null, expires: null } } }
+}
+
 /** Moves the new files `files` of a work folder into the generated folders
  *  of the Dez folder, each under a new name, and gives them as made
  *  assets. A move that fails keeps none of them: the ones that moved are
@@ -237,11 +255,10 @@ export async function storeOutputs(folder: string, files: readonly KeptFile[], t
   const assets: MadeAsset[] = []
   try {
     const appDir = await sbp('dez.native/getAppDir') as string
-    for (const { name, kind, type, extension } of files) {
-      const target = `${kind === 'image' ? IMAGE_FOLDERS.generated : MEDIA_FOLDERS.generated[kind]}/${crypto.randomUUID()}.${extension}`
-      const path = newStoredFilePath(appDir, target, kind)
-      await sbp('dez.native/moveAppFile', { root: 'cache', path: `${folder}/${name}` }, { root: 'app', path: target })
-      assets.push(kind === 'image' ? { kind, path } : { kind: 'clip', clip: { kind, type, src: path, url: null, expires: null } })
+    for (const file of files) {
+      const { target, asset } = newGeneratedFile(appDir, file)
+      await sbp('dez.native/moveAppFile', { root: 'cache', path: `${folder}/${file.name}` }, { root: 'app', path: target })
+      assets.push(asset)
     }
   } catch (error) {
     console.error(`Failed to store the new files of the ${toolName} tool:`, error)

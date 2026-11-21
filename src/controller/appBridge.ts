@@ -1,13 +1,10 @@
 import sbp from '@sbp/sbp'
 import type { StoredFileType } from '../model/chat/fileSignatures'
-import { IMAGE_FOLDERS } from '../model/chat/images'
 import { ClipReadError } from '../model/chat/mediaFiles'
-import { MEDIA_FOLDERS } from '../model/chat/mediaTags'
-import { newStoredFilePath } from '../model/chat/storedFilePaths'
 import { AppCallError, clipNotReadText, imageNotReadText, SaveNotStoredError } from '../model/tools/appBridge'
 import { checkSaveSize, savedFileType, type AppInput, type SaveCount } from '../model/tools/appInvoke'
 import type { KeptFile } from '../model/tools/programRuns'
-import type { MadeAsset } from './jobs'
+import { newGeneratedFile, type GeneratedFile } from './programRuns'
 
 // The work of the two calls of the page of a UI app (the frame bridge,
 // model/tools/appBridge.ts): the read of an image or a clip as a Blob, and
@@ -21,21 +18,13 @@ import type { MadeAsset } from './jobs'
 // A page gets no path and no file name: a Blob has neither, and the text
 // of each refused call names an asset by its id only.
 
-/** A file that Dez stored for an app: its absolute path, and the file as
- *  a made asset. */
-export interface StoredFile {
-  path: string
-  asset: MadeAsset
-}
-
 /** Writes the checked bytes `bytes` of the type `type` into the generated
- *  folder of their kind, under a new name. `appDir` is the app root.
- *  Rejects when the write fails. */
-export async function storeCheckedFile(appDir: string, bytes: Uint8Array, { kind, type, extension }: Pick<KeptFile, 'kind' | 'type' | 'extension'>): Promise<StoredFile> {
-  const target = `${kind === 'image' ? IMAGE_FOLDERS.generated : MEDIA_FOLDERS.generated[kind]}/${crypto.randomUUID()}.${extension}`
-  const path = newStoredFilePath(appDir, target, kind)
-  await sbp('dez.native/saveAppFile', target, bytes)
-  return { path, asset: kind === 'image' ? { kind, path } : { kind: 'clip', clip: { kind, type, src: path, url: null, expires: null } } }
+ *  folder of their kind, under a new name (`newGeneratedFile`). `appDir`
+ *  is the app root. Rejects when the write fails. */
+export async function storeCheckedFile(appDir: string, bytes: Uint8Array, type: Pick<KeptFile, 'kind' | 'type' | 'extension'>): Promise<GeneratedFile> {
+  const file = newGeneratedFile(appDir, type)
+  await sbp('dez.native/saveAppFile', file.target, bytes)
+  return file
 }
 
 /** The bytes of the image or the clip `input` for a page, also of a
@@ -61,7 +50,7 @@ export async function assetBlob(input: AppInput, signal?: AbortSignal): Promise<
 }
 
 /** A save of a page that Dez stored, with its type. */
-export interface StoredSave extends StoredFile {
+export interface StoredSave extends GeneratedFile {
   type: StoredFileType
 }
 

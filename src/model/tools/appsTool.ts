@@ -104,9 +104,10 @@ const PATH_PARAMETER = `as in "${EXAMPLE_FILE}".`
 const EXAMPLE_SCRIPT_APP = 'contact-sheet'
 const SCRIPT_MAIN = `${APPS_VIRTUAL_ROOT}/<name>/${SCRIPT_MAIN_FILE}`
 
-// What Dez stores of the files that a run gives back, for both kinds of
-// app.
-const STORED_TYPES = '(an image: PNG, JPEG, GIF, WebP, or SVG; a clip: MP4, MOV, WebM, WAV, MP3, M4A, AAC, FLAC, or Ogg)'
+/** The types that Dez stores of the files that an app gives back (the
+ *  output files of a script app, the saves of a page), as the texts of the
+ *  apps tool tell them: the types of `storedTypeOfBytes`. */
+export const STORED_TYPES = '(an image: PNG, JPEG, GIF, WebP, or SVG; a clip: MP4, MOV, WebM, WAV, MP3, M4A, AAC, FLAC, or Ogg)'
 
 const SAVE_BYTES = 'a Blob, an ArrayBuffer, or a typed array'
 

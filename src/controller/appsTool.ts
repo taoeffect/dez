@@ -38,6 +38,7 @@ import {
   type AppsPath,
   type ItemOutcome,
   type ListedApp,
+  type PathFacts,
 } from '../model/tools/appsTool'
 import { MANIFEST_FILE } from '../model/tools/appManifest'
 import { appNotShownText, checkShowTarget, showCall, showResultText, type ShowCall, type ShowTarget } from '../model/tools/appShow'
@@ -93,11 +94,19 @@ export function appTreeOf(app: AppsPath): Promise<FileTree> {
   return treeOf(app, APPS_MAX_ENTRIES)
 }
 
-/** The bytes of the file at the path `path` of the apps. The native side
- *  reads a file of any size: check its size first (`factsOf`). Throws a
- *  `ToolError` for a read that fails. */
-export function readBytes(path: AppsPath): Promise<Uint8Array> {
+// The bytes of the file at the path `path` of the apps. The native side
+// reads a file of any size: check its size first (`factsOf`). Throws a
+// `ToolError` for a read that fails.
+function readBytes(path: AppsPath): Promise<Uint8Array> {
   return native(`read ${path.virtual}`, () => sbp('dez.native/loadAppFileBytes', path.file) as Promise<Uint8Array>)
+}
+
+/** The bytes of the manifest file at `path`, whose facts are `facts`; null
+ *  when Dez does not read it (`isReadableManifest`). The native side reads
+ *  a file of any size, so the size check is first. Throws a `ToolError`
+ *  for a read that fails. */
+export async function readableManifestBytes(path: AppsPath, facts: PathFacts): Promise<Uint8Array | null> {
+  return isReadableManifest(facts) ? await readBytes(path) : null
 }
 
 function save(path: AppsPath, content: string | Uint8Array): Promise<void> {
@@ -242,9 +251,7 @@ export async function listApps(args: SubcommandArguments): Promise<AppsResult> {
  *  its path. Throws a `ToolError` when the native side fails. */
 export async function showTargetOf(call: ShowCall): Promise<ShowTarget> {
   const [app, manifest, index] = await Promise.all([call.app, call.manifest, call.index].map(factsOf))
-  // The native side reads a file of any size, so the size check is first.
-  const manifestBytes = isReadableManifest(manifest) ? await readBytes(call.manifest) : null
-  return { app, manifest, manifestBytes, index }
+  return { app, manifest, manifestBytes: await readableManifestBytes(call.manifest, manifest), index }
 }
 
 /** `apps show`: checks that the app is a UI app with its page

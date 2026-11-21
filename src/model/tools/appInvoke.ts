@@ -1,5 +1,4 @@
 import { byteSizeText } from '../../utils/byteSize'
-import { countOf } from '../../utils/countText'
 import type { JsonObject } from '../../utils/json'
 import { startOf } from '../../utils/textCut'
 import { storedTypeOfBytes, type StoredFileType } from '../chat/fileSignatures'
@@ -14,6 +13,7 @@ import {
   APP_RUN_MAX_OUTPUT_FILES,
   APPS_TOOL,
   APPS_VIRTUAL_ROOT,
+  STORED_TYPES,
   appNamed,
   checkAppIsThere,
   checkedAppKind,
@@ -27,7 +27,7 @@ import {
 import { SCRIPT_MAIN_FILE, UI_CLIENT_SCRIPT_TAG, UI_INDEX_FILE } from './appTemplates'
 import { assetIdWords } from './arguments'
 import { ASSET_NAMES, jobCallLabel, jobTimeoutMs, type JobAssetKind } from './jobs'
-import { JS_EVAL_OUTPUT_BYTES, namesDenoFlag, runResultText, textForModel, type JsEvalEndLine, type RunOutcome } from './jsEval'
+import { endedOutcome, failedOutcome, namesDenoFlag, returnedOutcome, runResultText, textForModel, type JsEvalEndLine, type RunOutcome } from './jsEval'
 import { clipInput, tellUserConsole, type ClipInput, type KeptFile, type ProgramEnd } from './programRuns'
 import { assetText, unknownAssetsText } from './toolInputs'
 import { ToolError, type SubcommandArguments } from './types'
@@ -293,16 +293,8 @@ const SANDBOX_ADVICE = 'The code of an app can open only the folder of its app a
 
 const KEPT_NONE = 'Dez kept no file of the run.'
 
-// The outcome of a run whose code returned `value`. A string with no
-// visible character does not go as it is: a blank result reads as a
-// failure of the tool.
-function returnedOutcome(value: string | undefined): RunOutcome {
-  const told = (lead: string): RunOutcome => ({ isError: false, lead, given: null, advice: [] })
-  if (value === undefined) return told('The app ended with no error and returned no value.')
-  if (value === '') return told('The app returned an empty string.')
-  if (value.trim() === '') return told(`The app returned a string of only white space (${countOf(value.length, 'character')}).`)
-  return { isError: false, lead: null, given: { text: value, name: 'returned value' }, advice: [] }
-}
+// The lead of a run whose code returned no value.
+const NO_VALUE = 'The app ended with no error and returned no value.'
 
 /** The outcome of a run of an app that ended with `end` and gave the
  *  protocol line `line` (`endedRun`, jsEval.ts). `hasConsole` tells that
@@ -310,7 +302,7 @@ function returnedOutcome(value: string | undefined): RunOutcome {
  *  stopped at its time limit is not here: the job has the text of its own
  *  time limit (`jobTimedOutText`). */
 export function appRunOutcome(end: Exclude<ProgramEnd, { kind: 'timedOut' }>, line: JsEvalEndLine | null, hasConsole: boolean): RunOutcome {
-  if (line?.type === 'result') return returnedOutcome(line.text)
+  if (line?.type === 'result') return returnedOutcome(line.text, 'app', NO_VALUE)
   if (line?.type === 'error') {
     return {
       isError: true,
@@ -319,21 +311,7 @@ export function appRunOutcome(end: Exclude<ProgramEnd, { kind: 'timedOut' }>, li
       advice: namesDenoFlag(line.text) ? [SANDBOX_ADVICE] : [],
     }
   }
-  const failed = (lead: string): RunOutcome => ({ isError: true, lead, given: null, advice: [] })
-  if (end.kind === 'outputTooLarge') {
-    return failed(`Dez stopped the app: it wrote more than ${byteSizeText(JS_EVAL_OUTPUT_BYTES)} of output. ${KEPT_NONE} `
-      + 'Make the code write less to the console and return only what you need.')
-  }
-  const silent = hasConsole ? '' : ' The app wrote nothing to the console.'
-  // A signal that Dez did not send ended the program. V8 ends it this way
-  // at the limit of its memory.
-  if (end.code === null) {
-    return failed(`The system ended the app before it returned a value. ${KEPT_NONE} The usual cause: the code used more memory than a run can have. `
-      + `Make the code use less memory (smaller arrays and strings, or the work in parts), and call again.${silent}`)
-  }
-  return failed(`The app ended before it returned a value (exit code ${end.code}). ${KEPT_NONE} `
-    + 'The usual causes: an error in a timer or in a promise that the code did not await, '
-    + `an \`await\` of a promise that never settles, or a call of \`Deno.exit\`.${hasConsole ? ' The console output tells which.' : silent}`)
+  return endedOutcome(end, 'app', hasConsole, KEPT_NONE)
 }
 
 /** What Dez found in the output folder of a run. */
@@ -481,20 +459,19 @@ export function frameTextForModel(text: string): string {
 
 // The outcome of a run of the handler of a page that ended with `end`.
 function frameOutcome(end: AppFrameEnd): RunOutcome {
-  const failed = (lead: string): RunOutcome => ({ isError: true, lead, given: null, advice: [] })
   switch (end.kind) {
     case 'returned':
-      return returnedOutcome(end.value)
+      return returnedOutcome(end.value, 'app', NO_VALUE)
     case 'threw':
       return { isError: true, lead: `The code of the app threw an error. ${KEPT_NONE} The error:`, given: { text: end.error, name: 'text of the error' }, advice: [] }
     case 'unregistered':
-      return failed(`The page of the app has no handler for a run. ${KEPT_NONE} `
+      return failedOutcome(`The page of the app has no handler for a run. ${KEPT_NONE} `
         + `A script of the page must register the handler while the page loads, before its first \`await\`, as in ${APP_HANDLER_EXAMPLE}.`)
     case 'noClient':
-      return failed(`The page of the app loaded, but it did not answer Dez. ${KEPT_NONE} `
+      return failedOutcome(`The page of the app loaded, but it did not answer Dez. ${KEPT_NONE} `
         + `The usual cause: ${UI_INDEX_FILE} does not load Dez's script. Put ${UI_CLIENT_SCRIPT_TAG} before the other scripts of the page.`)
     case 'navigated':
-      return failed(`Dez stopped the app: its page loaded again, or went to another page. ${KEPT_NONE} `
+      return failedOutcome(`Dez stopped the app: its page loaded again, or went to another page. ${KEPT_NONE} `
         + 'An app is one page: its code must not reload the page, set `location`, or send a form.')
   }
 }
@@ -554,7 +531,7 @@ export function savedFileType(bytes: Uint8Array): StoredFileType {
   const type = storedTypeOfBytes(bytes)
   if (type === null) {
     throw new AppCallError('Dez saved nothing: the bytes are no file of a type that Dez stores. '
-      + 'Dez reads the type from the first bytes: an image (PNG, JPEG, GIF, WebP, or SVG) or a clip (MP4, MOV, WebM, WAV, MP3, M4A, AAC, FLAC, or Ogg).')
+      + `Dez reads the type from the first bytes, and it stores only these types ${STORED_TYPES}.`)
   }
   return type
 }

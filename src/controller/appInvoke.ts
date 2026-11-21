@@ -23,13 +23,13 @@ import {
   type CheckedInvokeCall,
   type InvokeCall,
 } from '../model/tools/appInvoke'
-import { APPS_ROOT, APPS_TOOL, isReadableManifest } from '../model/tools/appsTool'
+import { APPS_ROOT, APPS_TOOL } from '../model/tools/appsTool'
 import { jobTimedOutText } from '../model/tools/jobs'
 import { endedRun, JsEvalOutput, textForModel } from '../model/tools/jsEval'
 import { PROGRAM_READS_INPUTS, programNotStartedText, type KeptFile } from '../model/tools/programRuns'
 import { ToolError, type SubcommandArguments } from '../model/tools/types'
 import { assetBlob, storeCheckedFile, storeSave, type StoredSave } from './appBridge'
-import { factsOf, readBytes } from './appsTool'
+import { factsOf, readableManifestBytes } from './appsTool'
 import { discardMadeAssets, type JobOutcome, type MadeAsset } from './jobs'
 import { moduleRun, writeRunFiles } from './jsEval'
 import type { BundledToolInput, FileTree } from './nativeTypes'
@@ -74,8 +74,7 @@ import { clipInputFile, folderPathForms, imageFileInput, inWorkFolder, runProgra
 export async function checkedInvokeCall(args: SubcommandArguments, sections: readonly Section[]): Promise<CheckedInvokeCall> {
   const call = invokeCall(args, sections)
   const [app, manifest, main, index] = await Promise.all([call.app, call.manifest, call.main, call.index].map(factsOf))
-  // The native side reads a file of any size, so the size check is first.
-  const manifestBytes = isReadableManifest(manifest) ? await readBytes(call.manifest) : null
+  const manifestBytes = await readableManifestBytes(call.manifest, manifest)
   return { ...call, kind: checkInvokeTarget(call, { app, manifest, manifestBytes, main, index }) }
 }
 

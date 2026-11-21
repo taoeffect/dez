@@ -1006,7 +1006,8 @@ describe('apps in a conversation', () => {
     expect(bad).toStrictEqual([
       {
         refused: 'Dez saved nothing: the bytes are no file of a type that Dez stores. '
-          + 'Dez reads the type from the first bytes: an image (PNG, JPEG, GIF, WebP, or SVG) or a clip (MP4, MOV, WebM, WAV, MP3, M4A, AAC, FLAC, or Ogg).',
+          + 'Dez reads the type from the first bytes, and it stores only these types '
+          + '(an image: PNG, JPEG, GIF, WebP, or SVG; a clip: MP4, MOV, WebM, WAV, MP3, M4A, AAC, FLAC, or Ogg).',
       },
       { refused: 'Dez saved nothing: the save has no bytes.' },
       { refused: 'dez.app/saveAsset takes the bytes of one image or clip: a Blob, an ArrayBuffer, or a typed array, as in dez.sbp(\'dez.app/saveAsset\', blob). It got none of them.' },
