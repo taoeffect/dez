@@ -14,7 +14,7 @@ import type { ClipTextRules } from './clipText'
 import { usageNumber } from './chatUsage'
 import { ClipNotMadeError, UnusableAnswerError } from './errors'
 import { generatedBase64Image, generatedImage } from './generatedImages'
-import { imageSizeRules, type ImageSizeRules, type InputImageLimits } from './imageSize'
+import { imageSizeRules, positiveLimit, type ImageSizeRules, type InputImageLimits } from './imageSize'
 import type { MultipartField } from './multipart'
 import { isOptionValue, parameterTakes, type ModelParameter, type OptionsParameter, type OptionValue, type ParameterValues, type RangeParameter } from './modelParameters'
 import { priceNumber, roundedPrice, unitPrice, usdText, type ModelPrice } from './modelPrices'
@@ -1331,11 +1331,6 @@ function entryValue(entry: unknown, path: string | undefined): unknown {
   return path === undefined ? undefined : valueAtPath(entry, path)
 }
 
-// A positive whole number of an entry, else none.
-function positiveWholeNumber(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined
-}
-
 // The Format row of a speech model whose entry lists the formats that it
 // makes, at the provider's `paths.speechFormats`: the listed formats that
 // Dez stores. mp3 is the default when the list has it (the smallest file),
@@ -1376,13 +1371,13 @@ function openRouterTranscriptionRules(entry: unknown, paths: MediaEntryPaths): I
     const type = typeof name === 'string' ? clipMediaTypeOfExtension(name) : null
     return type?.startsWith('audio/') ? [type] : []
   })
-  const maxSeconds = entryValue(entry, paths.transcriptionMaxSeconds)
+  const maxSeconds = positiveLimit(entryValue(entry, paths.transcriptionMaxSeconds), false)
   return {
     audio: {
       use: 'source',
       maxClips: 1,
-      maxBytes: positiveWholeNumber(entryValue(entry, paths.transcriptionMaxBytes)) ?? 25 * 1024 ** 2,
-      ...(typeof maxSeconds === 'number' && Number.isFinite(maxSeconds) && maxSeconds > 0 && { maxSeconds }),
+      maxBytes: positiveLimit(entryValue(entry, paths.transcriptionMaxBytes), true) ?? 25 * 1024 ** 2,
+      ...(maxSeconds !== undefined && { maxSeconds }),
       types: listedTypes.length > 0 ? [...new Set(listedTypes)] : ['audio/wav', 'audio/mpeg', 'audio/flac', 'audio/mp4', 'audio/ogg', 'audio/aac'],
     },
   }
@@ -1933,7 +1928,7 @@ const openRouterFormat: MediaFormat = {
     // tells it at the provider's `paths.speechMaxCharacters`. OpenRouter's
     // entries tell none, so its config has no path.
     textRules: (kind, entry, _mediaEntry, paths) => {
-      const maxPromptLength = kind === 'tts' ? positiveWholeNumber(entryValue(entry, paths.speechMaxCharacters)) : undefined
+      const maxPromptLength = kind === 'tts' ? positiveLimit(entryValue(entry, paths.speechMaxCharacters), true) : undefined
       return maxPromptLength === undefined ? undefined : { maxPromptLength }
     },
     request: (kind, baseUrl, modelId, { prompt, images, clips = [], values }) => {
