@@ -1199,6 +1199,12 @@ export function noFolderError(path: AppsPath): ToolError {
     : `There is no folder ${path.virtual}. Call ls with "${parentOf(path).virtual}" to see what is there.`)
 }
 
+/** The note of a `find` or `grep` result whose listing holds only a part
+ *  of its folder. */
+export function cutListingNote(subcommand: 'find' | 'grep'): string {
+  return ` The folder holds more than ${countText(LS_MAX_ENTRIES)} files and folders at all depths, so ${subcommand} searched only a part of them: search the folders in it one by one.`
+}
+
 /** The result of an `ls` call: the files and the folders in the folder at
  *  `path`, by name, each with its size; a folder with the number and the
  *  bytes of the files below it. `tree` is the listing of the path with
@@ -1285,9 +1291,7 @@ export function findText({ query, terms, path }: FindCall, tree: AppsTree): stri
   // as `/apps/<name>` does (appNames.ts): a list of the files of every app
   // must not keep every app from Delete Unreferenced Apps.
   const files = tree.entries.flatMap((entry) => (entry.kind === 'file' ? [[...path.names, entry.path].join('/')] : []))
-  const cut = tree.more
-    ? ` The folder holds more than ${countText(LS_MAX_ENTRIES)} files and folders at all depths, so find searched only a part of them: search the folders in it one by one.`
-    : ''
+  const cut = tree.more ? cutListingNote('find') : ''
   if (files.length === 0) return `${path.virtual} has no files.${cut}`
 
   const quotedQuery = JSON.stringify(query)

@@ -6,10 +6,10 @@ import {
   APPS_MAX_FILE_BYTES,
   APPS_VIRTUAL_ROOT,
   checkTextFile,
+  cutListingNote,
   folderArgument,
   integerArgument,
   isPathName,
-  LS_MAX_ENTRIES,
   NO_APPS,
   NO_TEXT,
   noFolderError,
@@ -169,10 +169,6 @@ export interface GrepSearch {
  *  search. */
 export type GrepPlan = GrepSearch | { kind: 'text', text: string }
 
-// The note of a search whose listing holds only a part of its folder.
-const CUT_LISTING = ` The folder holds more than ${countText(LS_MAX_ENTRIES)} files and folders at all depths, `
-  + 'so grep searched only a part of them: search the folders in it one by one.'
-
 /** The files that `call` searches, from `tree`, the listing of its path
  *  with `LS_MAX_ENTRIES`. Throws a `ToolError` when nothing is at the path,
  *  and for a path of a file that the tool does not read. */
@@ -189,7 +185,7 @@ export function grepPlan({ path, include }: GrepCall, tree: AppsTree): GrepPlan 
   }
   if (isRoot && tree.entries.length === 0) return { kind: 'text', text: NO_APPS }
 
-  const cut = tree.more ? CUT_LISTING : ''
+  const cut = tree.more ? cutListingNote('grep') : ''
   const notFolders = tree.entries.filter((entry) => entry.kind !== 'folder')
   if (notFolders.length === 0) return { kind: 'text', text: `${path.virtual} has no files.${cut}` }
   const named = include === null ? notFolders : notFolders.filter((entry) => include.rule.test(entry.path.slice(entry.path.lastIndexOf('/') + 1)))
@@ -290,7 +286,7 @@ export function grepText(call: GrepCall, plan: GrepSearch, outcome: GrepOutcome)
     return withNotes([head, ...grepRowLines(found.rows, call.context)], [slowLines, notShownText(outcome.files, true), cutLines])
   }
 
-  const cut = plan.more ? CUT_LISTING : ''
+  const cut = plan.more ? cutListingNote('grep') : ''
   const slowLines = slowLinesText(outcome.slowLines, false)
   const notSearched = notSearchedText(plan.skips, outcome.notText)
   if (outcome.files.length === 0) {
