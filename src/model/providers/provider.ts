@@ -6,7 +6,7 @@ import type { ImageSize } from '../chat/imageDrawing'
 import { effectiveOutputs } from '../modelOutputs'
 import { API_FORMATS, type ApiFormat } from './apiFormats'
 import { TooManyImagesError } from './clipImages'
-import { FORBIDDEN_BODY_KEYS, type AudioOutputConfig, type ProviderConfig, type ProviderModelConfig } from './config'
+import { FORBIDDEN_BODY_KEYS, type AudioOutputConfig, type MediaEntryPaths, type ProviderConfig, type ProviderModelConfig } from './config'
 import { ProviderHttpError } from './errors'
 import type { ImageSizeRules, InputImageLimits } from './imageSize'
 import { MEDIA_FORMATS, type AnswerCost, type ClipEntryPrice, type ClipFormat, type ClipInput, type ClipJob, type ImageFormat, type ImageQuoteFormat, type MediaFormat, type MediaInput, type MediaWireRequest, type TextFormat } from './mediaFormats'
@@ -246,7 +246,7 @@ export class Provider {
     const format = this.mediaFormatOrNone()
     if (!format) return [...models]
     const { images: imageFormat, clips, imageRules, clipRules } = format
-    const paths = this.config.mediaApi?.modelEntryPaths ?? {}
+    const paths = this.mediaEntryPaths
     return models.map((model) => {
       const kind = effectiveRequest(model)
       if (kind === 'chat' || kind === 'none') return model
@@ -276,7 +276,7 @@ export class Provider {
   // those parameters.
   withPrices(models: readonly ModelInfo[], entries: ReadonlyMap<string, unknown>, mediaEntries: ReadonlyMap<string, unknown>): ModelInfo[] {
     const listPrice = this.mediaFormatOrNone()?.listPrice
-    const paths = this.config.mediaApi?.modelEntryPaths ?? {}
+    const paths = this.mediaEntryPaths
     return models.map((model) => {
       const kind = effectiveRequest(model)
       const entry = entries.get(model.id)
@@ -480,7 +480,7 @@ export class Provider {
   // for, from the model's raw entries (`ClipFormat.entryPrice`); undefined
   // when they tell none.
   clipEntryPrice(kind: ClipKind, values: ParameterValues, entry: unknown, mediaEntry: unknown): ClipEntryPrice | undefined {
-    return this.mediaFormatOrNone()?.clips?.entryPrice?.(kind, values, entry, mediaEntry, this.config.mediaApi?.modelEntryPaths ?? {})
+    return this.mediaFormatOrNone()?.clips?.entryPrice?.(kind, values, entry, mediaEntry, this.mediaEntryPaths)
   }
 
   // How to tell the price of one image request of `kind`
@@ -546,6 +546,11 @@ export class Provider {
   private mediaFormatOrNone(): MediaFormat | undefined {
     const mediaApi = this.config.mediaApi
     return mediaApi ? MEDIA_FORMATS[mediaApi.format] : undefined
+  }
+
+  // The dot paths of `mediaApi.modelEntryPaths`; none when it is not set.
+  private get mediaEntryPaths(): MediaEntryPaths {
+    return this.config.mediaApi?.modelEntryPaths ?? {}
   }
 
   // The native bridge appends every header entry and header names are
