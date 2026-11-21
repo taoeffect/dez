@@ -71,8 +71,8 @@ export const providerModelConfigSchema = z.object({
   // or unknown.
   thinking: z.boolean().optional(),
   // What the model makes. Wins over what the server reports; missing: the
-  // server's outputs, or unknown. A config model is listed, so it must make
-  // at least one type.
+  // server's outputs, or unknown. A config model is listed (a `fetchedOnly`
+  // one while the server lists it), so it must make at least one type.
   outputs: z.array(z.enum(MODEL_OUTPUT_IDS)).min(1, 'Model outputs must not be empty').optional(),
   // How Dez sends the model a request. Wins over the server's kind; missing:
   // the server's kind, or `chat`.

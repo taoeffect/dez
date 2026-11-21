@@ -162,7 +162,8 @@ describe('provider config schema', () => {
     const fields = { outputs: ['image', 'text'], request: 'imageEdit' }
 
     expect(parseModel(fields).data?.models).toStrictEqual([{ id: 'm', ...fields }])
-    // A config model is always listed, so it must make something.
+    // A config model is listed (a `fetchedOnly` one while the server lists
+    // it), so it must make something.
     expect(parseModel({ outputs: [] }).success).toBe(false)
     expect(parseModel({ outputs: ['speech'] }).success).toBe(false)
     expect(parseModel({ outputs: 'image' }).success).toBe(false)
