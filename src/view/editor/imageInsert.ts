@@ -2,7 +2,7 @@ import sbp from '@sbp/sbp'
 import { EditorState, type Extension } from '@codemirror/state'
 import { EditorView, dropCursor } from '@codemirror/view'
 import { SENTINEL_CHAR } from '../../model/chat/content'
-import { MAX_DATA_FILE_BYTES, dataFileExtension, type DataFileExtension } from '../../model/chat/dataFiles'
+import { DATA_FILE_EXTENSIONS, MAX_DATA_FILE_BYTES, dataFileExtension, type DataFileExtension } from '../../model/chat/dataFiles'
 import { wholeImageDrawing, type DrawnImage } from '../../model/chat/imageDrawing'
 import { requestParts } from '../../model/chat/incognito'
 import { imageMarkdown, isImageMediaType, isLinkedImagePath, type ImageMediaType } from '../../model/chat/images'
@@ -485,13 +485,15 @@ export function pasteFiles(event: ClipboardEvent, view: EditorView): boolean {
   return true
 }
 
-// The clip file extensions as a list in a sentence: `a, b, or c`.
-const CLIP_EXTENSIONS_TEXT = `${CLIP_FILE_EXTENSIONS.slice(0, -1).join(', ')}, or ${CLIP_FILE_EXTENSIONS.at(-1)}`
+// A list of file extensions in a sentence: `a, b, or c`.
+const listText = (items: readonly string[]) => `${items.slice(0, -1).join(', ')}, or ${items.at(-1)}`
+const CLIP_EXTENSIONS_TEXT = listText(CLIP_FILE_EXTENSIONS)
+const DATA_EXTENSIONS_TEXT = listText(DATA_FILE_EXTENSIONS)
 
 function showUnsupportedDropToast(): void {
   sbp('dez.ui/toast', 'app-global', {
     message: 'Only images, audio and video clips, and data files can be dropped into a conversation. '
-      + `Clips must be ${CLIP_EXTENSIONS_TEXT} files, and data files csv, tsv, json, or txt files.`,
+      + `Clips must be ${CLIP_EXTENSIONS_TEXT} files, and data files ${DATA_EXTENSIONS_TEXT} files.`,
     duration: 8000,
   })
 }
