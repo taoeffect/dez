@@ -206,8 +206,14 @@ function onOverlayClick(event: MouseEvent) {
               A <code>+</code> after it means that Dez knows no price for some requests, so the cost
               is higher. <code>(?)</code> means that you changed or deleted a reply: its cost stays
               in the amount. Point at the amount to see the details. A model can read the size and
-              the cost too, with a Dez tool. So you can give a model a budget, as in "spend at most
-              5 dollars".
+              the cost too, with a Dez tool.
+            </p>
+            <p>
+              The coin after the amount is the money limit of the tab. Click it to set the most that
+              the requests of the tab can cost, in USD. Dez then sends no request that would go over
+              the limit, also none that a model sends with a Dez tool, and tells you why. Dez also
+              sends no request whose price it does not know, unless you check "Allow unknown
+              prices": such a request is then not in the count. No model can change the limit.
             </p>
             <p>
               A long conversation can get too large for one request to the model. Dez then compacts

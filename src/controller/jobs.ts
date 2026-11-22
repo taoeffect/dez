@@ -301,6 +301,16 @@ export class TabJobs implements ToolJobs {
     return this.unread.filter(this.modelView).length
   }
 
+  /** The quotes of the paid requests of the jobs that run, of every job,
+   *  in USD: money that the tab spends already, which its cost counts only
+   *  at the end of each job (the money limit, moneyLimit.ts). A request
+   *  with no known price holds nothing. */
+  get heldCost(): number {
+    let usd = 0
+    for (const job of this.jobs.values()) if (job.status === 'running' && typeof job.cost === 'number') usd += job.cost
+    return usd
+  }
+
   private runningIn(view: JobView): number {
     let count = 0
     for (const job of this.jobs.values()) if (job.status === 'running' && view(job)) count++

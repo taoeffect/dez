@@ -6,6 +6,7 @@ import { drawnMediaType, UnwritableImageTypeError, type DrawnImage, type ImageSi
 import { findAssetMentions } from '../model/chat/imageMentions'
 import type { MediaTagData } from '../model/chat/mediaTags'
 import { modelRefKey } from '../model/chat/modelRef'
+import { chatRequestPrice, type RequestPrice, type TabMoney } from '../model/chat/moneyLimit'
 import type { ModelRef, Section } from '../model/chat/types'
 import type { ModelCache } from '../model/persistence/types'
 import type { KnownLimit } from '../model/providers/knownLimits'
@@ -129,6 +130,15 @@ export interface ToolRunContext {
    *  script app (toolBridge.ts): its result goes to that code, and no
    *  request sends it to the model. */
   isBridged: boolean
+  /** The money limit of the tab (model/chat/moneyLimit.ts), read now: the
+   *  limit (undefined with none), and what the tab spent, with the quotes
+   *  of the paid requests that still run. */
+  money(): TabMoney
+  /** Throws a `ToolError` when the money limit of the tab refuses a
+   *  request with `price` now; its text tells the model to stop and ask
+   *  the user. A tool calls it right before each paid request, also in a
+   *  job that runs on after the end of the reply. */
+  checkMoney(price: RequestPrice): void
 }
 
 // The code of each Dez tool (TOOL_DEFINITIONS), by tool name. A runner gives
@@ -440,7 +450,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     return jobsWaitText(results, context.jobs.running, context.jobs.ready, cancelled)
   },
   async jobs_list (_args, _signal, context) {
-    return jobsListText(context.jobs.list())
+    return jobsListText(context.jobs.list(), context.money())
   },
   async job_inspect (args, _signal, context) {
     const id = String(args.job_id).trim()
@@ -470,6 +480,12 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // The caller is a text model (only a chat reply runs tools), so an
   // invoked text model gets no tools (`InvocationRights.toolsAllowed`).
   //
+  // The money limit of the tab refuses the call before its job when the
+  // tab spent the limit, or when the price of a text model is unknown and
+  // the user did not allow that. The quote of a media request is known
+  // only right before it goes, so the work checks again there
+  // (`InvocationRights.checkMoney`); here a media request counts as free.
+  //
   // `is_intermediate` changes nothing of the request or of the results
   // that the model reads: the job only marks its images and clips as
   // hidden (`hidesAssets`), and the editor shows them under the chip of
@@ -486,7 +502,9 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
       providerSettings,
       sections: context.sections(),
     })
-    return startJob(context, callSignal, MODEL_INVOKE_TOOL.name, (signal, report, reportCost, keepAsset) => invokeModel(invocation, context.tabId, signal, report, reportCost, keepAsset, { toolsAllowed: false }), {
+    context.checkMoney(invocation.kind === 'chat' ? chatRequestPrice(invocation.model.price) : { kind: 'quote', usd: 0 })
+    const rights = { toolsAllowed: false, checkMoney: context.checkMoney } as const
+    return startJob(context, callSignal, MODEL_INVOKE_TOOL.name, (signal, report, reportCost, keepAsset) => invokeModel(invocation, context.tabId, signal, report, reportCost, keepAsset, rights), {
       timeoutMs: invocation.timeoutMs,
       hidesAssets: isIntermediate(args),
       model: { providerId: invocation.provider.id, modelId: invocation.model.id },
@@ -558,6 +576,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
       jobs: context.jobs.list(),
       // A model that reads no images gets no pictures, as in asset_view.
       pictureBudget: model?.imageInput === false ? null : await context.pictureBudget(),
+      money: context.money(),
     })
   },
   // One run of code that the model wrote, in Deno, the JavaScript runtime

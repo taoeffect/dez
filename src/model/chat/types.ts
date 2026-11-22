@@ -1,6 +1,7 @@
 import type { Compactions } from './compaction'
 import type { CountedContext } from './contextSize'
 import type { ConversationCost } from './conversationCost'
+import type { MoneyLimit } from './moneyLimit'
 import type { ShownPicture } from './shownPictures'
 import type { ToolCall, ToolResult } from '../tools/types'
 import type { JsonObject } from '../../utils/json'
@@ -169,6 +170,10 @@ export interface Tab {
    *  agent section is gone again. Absent before the first reply; never set
    *  to `undefined`. Never cleared. */
   requestSent?: true
+  /** The money limit of the tab (moneyLimit.ts), which the user set.
+   *  Absent with no limit; never set to `undefined`. Only
+   *  `dez.model/tabs/setMoneyLimit` changes it; a compaction keeps it. */
+  moneyLimit?: MoneyLimit
 }
 
 export type StreamEvent =

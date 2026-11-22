@@ -347,9 +347,9 @@ export function running(): AbortSignal {
 }
 
 /** The context of the first call of a round of a reply that takes no
- *  image, no clip, and no app, shows no picture, and has no job, with
- *  `more` in place of its parts. Its sections are those of the tab
- *  `tabId` (of `more` too). */
+ *  image, no clip, and no app, shows no picture, has no job, and has no
+ *  money limit, with `more` in place of its parts. Its sections are those
+ *  of the tab `tabId` (of `more` too). */
 export function callContext(more: Partial<ToolRunContext> = {}): ToolRunContext {
   const context: ToolRunContext = {
     tabId: '',
@@ -363,6 +363,8 @@ export function callContext(more: Partial<ToolRunContext> = {}): ToolRunContext 
     pictureBudget: async () => NO_CALL_PICTURE_BUDGET,
     roundResults: [],
     isBridged: false,
+    money: () => ({ limit: undefined, spent: { counted: 0, held: 0 } }),
+    checkMoney: () => {},
     ...more,
   }
   return context

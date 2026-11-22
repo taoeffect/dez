@@ -1,4 +1,5 @@
 import sbp from '@sbp/sbp'
+import { chatRequestPrice, type RequestPrice } from '../model/chat/moneyLimit'
 import { failedChatRequestCost, type ChatUsage } from '../model/providers/chatUsage'
 import { TooManyImagesError, tooManyImagesMessage } from '../model/providers/clipImages'
 import { InputImageError, isProviderRefusal } from '../model/providers/errors'
@@ -33,10 +34,12 @@ import { discardMadeAssets, generatedClipAsset, type JobOutcome, type MadeAsset 
 // of the call (`modelInvocation`).
 
 // The failure of a request as the error of its job: a `ToolError` whose
-// text the calling model reads, for a failure that Dez knows. Any other
-// error stays as it is, and the job then tells only that Dez did not
-// expect it (its text can hold a local path).
+// text the calling model reads, for a failure that Dez knows (a refusal of
+// the money limit is one already). Any other error stays as it is, and the
+// job then tells only that Dez did not expect it (its text can hold a
+// local path).
 function invocationError({ model, imageIds }: ModelInvocation, error: unknown): unknown {
+  if (error instanceof ToolError) return error
   if (error instanceof InputImageError) {
     // Never the error's own text: it names the file, and the name of a
     // linked file is private.
@@ -51,6 +54,11 @@ function invocationError({ model, imageIds }: ModelInvocation, error: unknown): 
 
 /** What the caller of `invokeModel` lets the invoked model do. */
 export interface InvocationRights {
+  /** The money gate of the tab of the call (`ToolRunContext.checkMoney`),
+   *  which the work calls right before its paid request goes: a throw (a
+   *  `ToolError`) stops the request. The job can run long after the call,
+   *  so the call alone does not check enough. */
+  checkMoney(price: RequestPrice): void
   /** Whether an invoked text model gets the Dez tools: the internal
    *  `tools_allowed` rule. It is no argument of the tool, so no model can
    *  set it. The `model_invoke` runner passes `false`, because its caller
@@ -78,7 +86,7 @@ export interface InvocationRights {
 //   answer that Dez cannot use, the time limit): the provider can have
 //   taken the money. A stopped or timed-out job keeps its quote too:
 //   `TabJobs` takes no report after the end of a job.
-async function invokeMediaModel(invocation: MediaInvocation, signal: AbortSignal, report: (state: string) => void, reportCost: (usd: number | null) => void): Promise<JobOutcome> {
+async function invokeMediaModel(invocation: MediaInvocation, signal: AbortSignal, report: (state: string) => void, reportCost: (usd: number | null) => void, { checkMoney }: InvocationRights): Promise<JobOutcome> {
   const { provider, model, kind, request, parameters, timeoutMs } = invocation
   report(INVOCATION_READS_INPUTS)
   let sent = false
@@ -97,6 +105,9 @@ async function invokeMediaModel(invocation: MediaInvocation, signal: AbortSignal
       parameters,
       signal,
       timeoutMs,
+      // The quote is known only here, and the hold of the quote
+      // (`reportCost` at `sent`) comes in the same tick.
+      beforeSend: (usd: number | undefined) => checkMoney({ kind: 'quote', usd: usd ?? null }),
       onProgress: (progress: MediaProgress) => {
         if (progress.phase === 'sent') {
           sent = true
@@ -154,7 +165,7 @@ async function invokeTextModel(
   report: (state: string) => void,
   reportCost: (usd: number | null) => void,
   keepAsset: (asset: MadeAsset) => void,
-  { toolsAllowed }: InvocationRights,
+  { toolsAllowed, checkMoney }: InvocationRights,
 ): Promise<JobOutcome> {
   const { provider, model, content, imageOutput, audioOutput, providerSettings } = invocation
   const requestId = crypto.randomUUID()
@@ -179,6 +190,8 @@ async function invokeTextModel(
     logRequest({ tabId, kind: 'model_invoke', model: { providerId: provider.id, modelId: model.id }, startedAt, usage, cost, imageCount: requestImageCount(messages) })
   }
   report(invocationAnswerStateText(0))
+  // Outside the try: no request went, so the job counts no cost.
+  checkMoney(chatRequestPrice(model.price))
   try {
     const result = await sbp('dez.provider/streamChat', {
       providerId: provider.id,
@@ -246,7 +259,8 @@ async function invokeTextModel(
  *  request of `invocation` (a media request, or a chat request to a text
  *  model), and gives what the model made. `tabId` is the tab of the call,
  *  which the developer's request log names, and `rights` is what the
- *  caller lets an invoked text model do.
+ *  caller lets the invoked model do (the money limit of the tab, and the
+ *  tools of an invoked text model).
  *
  *  - An image and a clip are the assets of the job. The reader of the
  *    job's result writes them into the reply (`writeJobAssets`), with a
@@ -259,7 +273,8 @@ async function invokeTextModel(
  *    goes on (`JobWork`).
  *
  *  Rejects with a `ToolError` for a failure that Dez knows
- *  (`invocationError`); `TabJobs` logs it with its cause. When `signal`
+ *  (`invocationError`), and for a refusal of the money limit, before the
+ *  request goes; `TabJobs` logs it with its cause. When `signal`
  *  aborts (the job timed out, or Dez stopped it), the request ends,
  *  `TabJobs` takes no result and no error any more, and it deletes the
  *  files of a result that still comes. */
@@ -274,5 +289,5 @@ export function invokeModel(
 ): Promise<JobOutcome> {
   return invocation.kind === 'chat'
     ? invokeTextModel(invocation, tabId, signal, report, reportCost, keepAsset, rights)
-    : invokeMediaModel(invocation, signal, report, reportCost)
+    : invokeMediaModel(invocation, signal, report, reportCost, rights)
 }

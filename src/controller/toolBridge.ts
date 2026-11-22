@@ -285,6 +285,8 @@ export class ToolBridge extends CallBridge {
       },
       roundResults: context.roundResults,
       isBridged: true,
+      money: context.money,
+      checkMoney: context.checkMoney,
     }
   }
 }
@@ -468,6 +470,8 @@ export class AppRunBridge extends CallBridge {
       pictureBudget: async () => NO_CALL_PICTURE_BUDGET,
       roundResults: [],
       isBridged: true,
+      money: context.money,
+      checkMoney: context.checkMoney,
     }
   }
 }

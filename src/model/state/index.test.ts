@@ -8,6 +8,7 @@ import { sectionPlainText } from '../chat/content'
 import { notesData } from '../chat/testing'
 import { toolBlockText } from '../chat/toolBlocks'
 import type { ActiveModel, ContentNode, ModelRef, Section, SectionThinking, Tab, ThinkingReplay } from '../chat/types'
+import type { MoneyLimit } from '../chat/moneyLimit'
 import type { MediaTagKind } from '../chat/mediaTags'
 import type { ClipVolume } from '../clipVolume'
 import { MODEL_PICKER_SIZE_DEFAULT } from '../modelPickerSize'
@@ -430,6 +431,38 @@ describe('incognito and the sent mark of a tab', () => {
     const loaded = await openConversation(tab.conversationId) as Tab
 
     expect([reopened, loaded].map((copy) => [copy.incognito, copy.requestSent])).toEqual([[true, true], [true, true]])
+  })
+})
+
+describe('the money limit of a tab', () => {
+  const limitOf = (tabId: string) => sbp('dez.model/tabs/moneyLimit', tabId) as MoneyLimit | undefined
+  const tabNow = (tabId: string) => sbp('dez.model/tab', tabId) as Tab
+
+  // A tab with no text has no conversation file, so only its entry in
+  // app_state.json keeps the limit; a conversation that History opens has
+  // no entry.
+  it('saves a set limit at once, and keeps it through a restart, a reopen, and a load of the file', async () => {
+    const empty = (sbp('dez.model/tabs/create') as Tab).id
+    const typed = tabWithText('typed')
+    const removed = tabWithText('removed').id
+    sbp('dez.model/tabs/setMoneyLimit', empty, { usd: 2, unknownPrices: false })
+    sbp('dez.model/tabs/setMoneyLimit', typed.id, { usd: 0.5, unknownPrices: true })
+    sbp('dez.model/tabs/setMoneyLimit', removed, { usd: 9, unknownPrices: false })
+    sbp('dez.model/tabs/setMoneyLimit', removed, null)
+    await vi.waitFor(() => expect(diskConversations.get(typed.conversationId)?.moneyLimit).toStrictEqual({ usd: 0.5, unknownPrices: true }))
+
+    missingConversations.add(tabNow(empty).conversationId)
+    setActivePinia(createPinia())
+    await sbp('dez.model/appState/restore', savedAppStates.at(-1))
+    expect([empty, typed.id, removed].map(limitOf)).toStrictEqual([{ usd: 2, unknownPrices: false }, { usd: 0.5, unknownPrices: true }, undefined])
+    expect(tabNow(removed)).not.toHaveProperty('moneyLimit')
+
+    sbp('dez.model/tabs/close', typed.id)
+    sbp('dez.model/tabs/reopenClosed')
+    const reopened = activeTab()
+    sbp('dez.model/tabs/close', reopened.id)
+    const loaded = await openConversation(typed.conversationId) as Tab
+    expect([reopened, loaded].map((copy) => copy.moneyLimit)).toStrictEqual([{ usd: 0.5, unknownPrices: true }, { usd: 0.5, unknownPrices: true }])
   })
 })
 

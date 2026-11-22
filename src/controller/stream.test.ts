@@ -9,6 +9,7 @@ import { sectionVisibleText } from '../model/chat/content'
 import type { ContextSize } from '../model/chat/contextSize'
 import type { DrawnImage, DrawnMediaType, ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
 import { findMediaTags } from '../model/chat/mediaTags'
+import { moneyProblem } from '../model/chat/moneyLimit'
 import { HIDDEN_IMAGE_PATH, hiddenImage, notesData } from '../model/chat/testing'
 import { agentTextForRequest, findToolBlocks } from '../model/chat/toolBlocks'
 import type { ConversationData } from '../model/persistence/types'
@@ -38,9 +39,9 @@ import { ExplainedError, UNEXPECTED_ERROR } from '../utils/errorText'
 import { APP_DIR, appFiles, audioProgress, CACHE_DIR, fakeAppFiles, native, resetNative, settled, writes } from './testing'
 import type { RequestLogRow } from './diagnostics/requestLog'
 // Side-effect imports: register the dez.model/* selectors and the selectors
-// under test.
+// under test (`./stream` with them).
 import '../model/state/index'
-import './stream'
+import { moneyRefusal } from './stream'
 import './thread'
 import './tools'
 
@@ -714,6 +715,71 @@ describe('conversation cost', () => {
     await startStream()
 
     await vi.waitFor(() => expect(savedConversations.at(-1)?.cost).toStrictEqual({ usd: 0.25, requests: 1, unpriced: 0 }))
+  })
+})
+
+describe('the money limit of a tab', () => {
+  const setLimit = (usd: number, unknownPrices = false) => sbp('dez.model/tabs/setMoneyLimit', activeTab().id, { usd, unknownPrices })
+  const toastTexts = () => toasts.map(({ data }) => [data.title, data.message])
+  const answer = (cost?: number) => async (input: ProviderStreamChatInput): Promise<ProviderStreamChatResult> => {
+    input.onSent?.()
+    await input.onToken('Done.')
+    return { requestId: input.requestId as string, ...(cost !== undefined && { cost }) }
+  }
+  const priceModel = () => sbp('dez.model/modelCache/applyProviderResult', model.providerId, {
+    ok: true,
+    models: [{ id: model.modelId, name: model.modelName, provider: model.providerId, price: { unit: 'token', input: 1, output: 2 } }],
+  })
+
+  beforeEach(() => {
+    sbp('dez.model/setActiveModel', model.providerId, model.modelId, model.modelName)
+    setConversation([{ text: 'Hi' }, { text: 'Hello.' }, { text: 'Paint a fox.' }])
+  })
+
+  // The model `m` has no price in the model cache.
+  it('refuses a chat request whose price Dez does not know at the submit, unless the tab allows unknown prices', async () => {
+    setLimit(5)
+    replyRounds([answer(0.25)])
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+    const refusal = moneyProblem({ usd: 5, unknownPrices: false }, { counted: 0, held: 0 }, { kind: 'tokens', known: false }, 'user')
+    expect([requests.length, toastTexts()]).toStrictEqual([0, [['Cannot send', refusal]]])
+
+    setLimit(5, true)
+    await sbp('dez.controller/submitTab', activeTab().id)
+    expect([requests.length, toastTexts().length, activeTab().cost?.usd]).toStrictEqual([1, 1, 0.25])
+  })
+
+  it('refuses a chat request at the submit when the tab spent its limit', async () => {
+    priceModel()
+    setLimit(0.25)
+    sbp('dez.model/tabs/countRequestCost', activeTab().id, 0.25)
+    replyRounds([answer()])
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect(requests).toHaveLength(0)
+    expect(toastTexts()).toStrictEqual([['Cannot send', moneyProblem({ usd: 0.25, unknownPrices: false }, { counted: 0.25, held: 0 }, { kind: 'tokens', known: true }, 'user')]])
+  })
+
+  // A reply can spend the limit in a round: the next round of its tool
+  // loop must not go.
+  it('ends a reply before a round when its earlier rounds spent the limit, with a toast of its own', async () => {
+    priceModel()
+    setLimit(0.3)
+    replyRounds([
+      async (input) => {
+        input.onSent?.()
+        return { requestId: input.requestId as string, toolCalls: [geminiCall], cost: 0.3 }
+      },
+      answer(),
+    ])
+
+    await startStream({ sendTools: true })
+
+    expect(requests).toHaveLength(1)
+    expect(toastTexts()).toStrictEqual([['Money limit', moneyProblem({ usd: 0.3, unknownPrices: false }, { counted: 0.3, held: 0 }, { kind: 'tokens', known: true }, 'user')]])
+    expect(activeTab().cost).toStrictEqual({ usd: 0.3, requests: 1, unpriced: 0 })
   })
 })
 
@@ -1567,6 +1633,7 @@ describe('dez.stream/start media round', () => {
       images: [],
       requestId: expect.any(String),
       signal: expect.any(AbortSignal),
+      beforeSend: expect.any(Function),
       onProgress: expect.any(Function),
     }])
     expect(saves).toStrictEqual([{ folder: 'generated' }, { folder: 'generated' }])
@@ -2225,6 +2292,62 @@ describe('dez.stream/start media round', () => {
     expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message } }])
     expect(consoleError).toHaveBeenCalledWith(`Cannot send: ${message}`)
     expect(alerts).toStrictEqual([])
+  })
+
+  describe('with a money limit', () => {
+    const LIMIT = { usd: 1, unknownPrices: false }
+    const toastTexts = () => toasts.map(({ data }) => [data.title, data.message])
+    // An answer that gives its quote as generateMedia does: to the last
+    // check of the caller, then in the `sent` step; `during` runs while
+    // the request runs.
+    const quoted = (quote: number, during: () => void = () => {}) => async (input: ProviderGenerateMediaInput): Promise<ProviderGenerateMediaResult> => {
+      input.beforeSend?.(quote)
+      mediaInputs.push(input)
+      input.onProgress?.({ phase: 'sent', jobId: null, quote })
+      during()
+      return { media: [png], clips: [], cost: quote }
+    }
+
+    beforeEach(() => {
+      sbp('dez.model/tabs/setMoneyLimit', activeTab().id, LIMIT)
+      sbp('dez.model/tabs/countRequestCost', activeTab().id, 0.6)
+    })
+
+    it('sends no request whose quote is over what is left, and ends the reply with a toast of its own', async () => {
+      generateMedia = quoted(0.5)
+
+      await sbp('dez.controller/submitTab', activeTab().id)
+
+      expect(mediaInputs).toStrictEqual([])
+      expect(toastTexts()).toStrictEqual([['Money limit', moneyProblem(LIMIT, { counted: 0.6, held: 0 }, { kind: 'quote', usd: 0.5 }, 'user')]])
+      expect([saves, activeTab().cost]).toStrictEqual([[], { usd: 0.6, requests: 1, unpriced: 0 }])
+    })
+
+    it('holds the quote of a request that went until the tab counts its cost, and then counts it once', async () => {
+      const tabId = activeTab().id
+      let refusalDuring: string | null = null
+      generateMedia = quoted(0.3, () => {
+        refusalDuring = moneyRefusal(tabId, { kind: 'quote', usd: 0.2 }, 'user')
+      })
+
+      await sbp('dez.controller/submitTab', tabId)
+
+      expect(refusalDuring).toBe(moneyProblem(LIMIT, { counted: 0.6, held: 0.3 }, { kind: 'quote', usd: 0.2 }, 'user'))
+      expect(moneyRefusal(tabId, { kind: 'quote', usd: 0.1 }, 'user')).toBeNull()
+      expect(saves).toHaveLength(1)
+    })
+
+    // The quote comes only in generateMedia, so the submit refuses only a
+    // tab that spent its limit.
+    it('refuses the submit once the tab spent its limit', async () => {
+      sbp('dez.model/tabs/countRequestCost', activeTab().id, 0.4)
+      generateMedia = quoted(0)
+
+      await sbp('dez.controller/submitTab', activeTab().id)
+
+      expect(mediaInputs).toStrictEqual([])
+      expect(toastTexts()).toStrictEqual([['Cannot send', moneyProblem(LIMIT, { counted: 1, held: 0 }, { kind: 'quote', usd: 0 }, 'user')]])
+    })
   })
 })
 
@@ -3147,6 +3270,34 @@ describe('dez.stream/start jobs', () => {
     expect(callResult('c2')).toBe(result)
     expect(text.slice(text.lastIndexOf('</dez:tool>\n'))).toBe(`</dez:tool>\n\n${foxReference('c1')}\n\nHere it is.`)
     expect(toasts).toStrictEqual([])
+  })
+
+  // The quote of the request is known only in the job, right before the
+  // request goes. The model `m` has no price, so its own rounds need the
+  // allowance of unknown prices.
+  it('sends no request of a job whose quote is over the money limit, and gives the model the refusal as the result of the job', async () => {
+    const limit = { usd: 1, unknownPrices: true }
+    sbp('dez.model/tabs/setMoneyLimit', activeTab().id, limit)
+    let requestsSent = 0
+    generateMedia = async (input) => {
+      input.beforeSend?.(1.5)
+      requestsSent += 1
+      return { media: [png], clips: [] }
+    }
+    replyRounds([
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [invokeCall('c1')] }),
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [{ id: 'c2', name: 'jobs_wait', argumentsText: '{}' }] }),
+      async (input) => {
+        await input.onToken('Shall I raise it?')
+        return { requestId: input.requestId as string }
+      },
+    ])
+
+    await startStream({ sendTools: true })
+
+    const refusal = moneyProblem(limit, { counted: 0, held: 0 }, { kind: 'quote', usd: 1.5 }, 'model') as string
+    expect(requestsSent).toBe(0)
+    expect(callResult('c2')).toBe(jobsWaitText([{ id: jobId('c1'), tool: 'model_invoke', status: 'failed', text: refusal, call: { number: 1, label: PROMPT } }], 0))
   })
 
   it('waits for a job that still runs at the end of the reply, then puts its clip at the section end with the name of its tool and the provider\'s job id', async () => {

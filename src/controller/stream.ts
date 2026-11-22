@@ -11,6 +11,7 @@ import { requestParts } from '../model/chat/incognito'
 import { modelRefKey, sameModelRef } from '../model/chat/modelRef'
 import { newMediaIds } from '../model/chat/mediaIds'
 import { MEDIA_HIDDEN_ATTRIBUTE, MEDIA_JOB_ATTRIBUTE, MEDIA_MADE_BY_ATTRIBUTE, MEDIA_TOOL_ATTRIBUTE, mediaTagText } from '../model/chat/mediaTags'
+import { chatRequestPrice, moneyProblem, MoneyLimitError, type MoneyLimit, type MoneyReader, type MoneySpent, type RequestPrice, type TabMoney } from '../model/chat/moneyLimit'
 import { findToolBlocks, ModelTextEscaper } from '../model/chat/toolBlocks'
 import { effectiveOutputs } from '../model/modelOutputs'
 import { failedChatRequestCost, type ChatUsage } from '../model/providers/chatUsage'
@@ -58,7 +59,7 @@ import {
 import { buildSystemPrompt, systemPromptTemplate } from '../model/systemPrompt'
 import { withEditHintRefusals } from '../model/tools/editHint'
 import { TOOL_DEFINITIONS } from '../model/tools/registry'
-import type { ToolDefinition, ToolRunResult } from '../model/tools/types'
+import { ToolError, type ToolDefinition, type ToolRunResult } from '../model/tools/types'
 import {
   cancelStreamSession,
   errorStreamSession,
@@ -244,6 +245,54 @@ function finalizeStream(tabId: string, session: EndedStreamSession | null): void
 function countRequestCost(tabId: string, usd: number | null): void {
   sbp('dez.model/tabs/countRequestCost', tabId, usd)
   if (!streamIsStreaming(tabId)) sbp('dez.model/tabs/save', tabId).catch(() => {})
+}
+
+// The quotes of the media rounds of each tab whose requests went, until
+// the tab counts their cost (`runMediaRound`): money that the tab spends
+// already, for its money limit. A round of a cut reply holds its quote
+// until its count too. One object for each round.
+const quoteHolds = new Map<string, Set<{ usd: number }>>()
+
+function holdQuote(tabId: string, hold: { usd: number }): void {
+  const holds = quoteHolds.get(tabId) ?? new Set()
+  quoteHolds.set(tabId, holds.add(hold))
+}
+
+function releaseQuote(tabId: string, hold: { usd: number }): void {
+  const holds = quoteHolds.get(tabId)
+  holds?.delete(hold)
+  if (holds?.size === 0) quoteHolds.delete(tabId)
+}
+
+// What the requests of the tab cost so far, for its money limit: the
+// counted cost, and the quotes of its paid requests that still run, of
+// its jobs (those that a cut reply left, and those of the reply that runs;
+// a reply that ended on its own ended its jobs) and of its media rounds.
+function moneySpent(tabId: string): MoneySpent {
+  let held = 0
+  for (const jobs of new Set([heldJobsByTab.get(tabId), repliesByTab.get(tabId)?.jobs?.tabJobs])) held += jobs?.heldCost ?? 0
+  for (const hold of quoteHolds.get(tabId) ?? []) held += hold.usd
+  return { counted: (sbp('dez.model/tabs/cost', tabId) as ConversationCost | undefined)?.usd ?? 0, held }
+}
+
+// The money limit of the tab now, and what the tab spent, with the quotes
+// of the paid requests that still run.
+function tabMoney(tabId: string): TabMoney {
+  return { limit: sbp('dez.model/tabs/moneyLimit', tabId) as MoneyLimit | undefined, spent: moneySpent(tabId) }
+}
+
+/** Why the money limit of the tab refuses a request with `price` now, as
+ *  a text for `reader` (`moneyProblem`); null when the request may go. */
+export function moneyRefusal(tabId: string, price: RequestPrice, reader: MoneyReader): string | null {
+  const { limit, spent } = tabMoney(tabId)
+  return moneyProblem(limit, spent, price, reader)
+}
+
+// The money gate of each request of a reply: a refusal ends the reply,
+// with its own toast title (`dez.stream/start`).
+function checkReplyMoney(tabId: string, price: RequestPrice): void {
+  const refusal = moneyRefusal(tabId, price, 'user')
+  if (refusal !== null) throw new MoneyLimitError(refusal)
 }
 
 // The toast group (`ToastData.group`) of the reply errors of a tab.
@@ -573,6 +622,11 @@ async function runToolRound(tabId: string, conversationId: string, reply: ReplyR
       },
       roundResults: run.results.flatMap((result) => (result ? [result.content] : [])),
       isBridged: false,
+      money: () => tabMoney(tabId),
+      checkMoney: (price) => {
+        const refusal = moneyRefusal(tabId, price, 'model')
+        if (refusal !== null) throw new ToolError(refusal)
+      },
     }
     const result = await sbp('dez.controller/tools/run', toolCall, run.abort.signal, context) as ToolRunResult
     if (reply.toolRun !== run) {
@@ -833,12 +887,14 @@ function earlierReplyWriter(sections: Section[], replySectionId: string, replyMo
 // (`reply.requestId`), so a stop cancels it, and the stream session tells
 // the bottom bar that the reply waits for a compaction. Null when a stop
 // or a new submit ended the reply meanwhile: that is no failure. Throws
-// the failure of the second try.
+// the failure of the second try, and a refusal of the money limit of the
+// tab (`MoneyLimitError`), which Dez checks before each try.
 async function requestCompaction(args: StreamStartArgs, reply: ReplyRuntime, jobs: TabJobs, sections: Section[], writer: NotesWriter): Promise<Compaction | null> {
   const { tabId } = args
   setStreamCompacting(tabId, true)
   try {
     for (let tries = 1; ; tries++) {
+      checkReplyMoney(tabId, chatRequestPrice(modelInfoOf(writer.model).price))
       const requestId = crypto.randomUUID()
       reply.requestId = requestId
       try {
@@ -953,6 +1009,8 @@ async function compactIfDue(args: StreamStartArgs, reply: ReplyRuntime, jobs: Ta
   try {
     result = await requestCompaction(args, reply, jobs, sections, writer)
   } catch (error) {
+    // The money limit refused a try: the reply ends with its own toast.
+    if (error instanceof MoneyLimitError) throw error
     return endUncompactedReply(tabId, reply, error, compactionFailedMessage(error, writer.model))
   }
   if (result === null) return REPLY_ENDED
@@ -1059,6 +1117,8 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
       }
     }
     firstCheck = false
+    // Each round: the jobs and the rounds before it spent money too.
+    checkReplyMoney(args.tabId, chatRequestPrice(modelInfoOf(args.model).price))
     if (untoldImagesOverLimit > 0) {
       warnImagesOverLimit(args.model, untoldImagesOverLimit)
       untoldImagesOverLimit = 0
@@ -1211,6 +1271,9 @@ async function runMediaRound(args: StreamStartArgs, reply: ReplyRuntime, kind: M
   let sentCost: number | null | undefined
   // The provider runs the request as a job of its own, which it bills.
   let queued = false
+  // The quote of the request, which the tab holds from the moment that the
+  // request went until the tab counts its cost (the money limit).
+  const hold = { usd: 0 }
   let result: ProviderGenerateMediaResult
   try {
     result = await sbp('dez.provider/generateMedia', {
@@ -1224,8 +1287,14 @@ async function runMediaRound(args: StreamStartArgs, reply: ReplyRuntime, kind: M
       ...(parameters && { parameters }),
       requestId,
       signal: reply.abort.signal,
+      // The money gate, right before the request goes, with its quote.
+      beforeSend: (usd: number | undefined) => checkReplyMoney(args.tabId, { kind: 'quote', usd: usd ?? null }),
       onProgress: (progress: MediaProgress) => {
-        if (progress.phase === 'sent') sentCost = progress.quote ?? null
+        if (progress.phase === 'sent') {
+          sentCost = progress.quote ?? null
+          hold.usd = progress.quote ?? 0
+          holdQuote(args.tabId, hold)
+        }
         if (progress.phase === 'queued') queued = true
       },
     }) as ProviderGenerateMediaResult
@@ -1237,6 +1306,9 @@ async function runMediaRound(args: StreamStartArgs, reply: ReplyRuntime, kind: M
     // keep the quote: the provider can have taken the money.
     if (sentCost !== undefined) countRequestCost(args.tabId, !queued && isProviderRefusal(error) ? 0 : sentCost)
     throw error
+  } finally {
+    // Next to the count of the cost, with no wait between the two.
+    releaseQuote(args.tabId, hold)
   }
   countRequestCost(args.tabId, result.cost ?? null)
   const { media, clips, text = '' } = result
@@ -1347,7 +1419,8 @@ export default sbp('sbp/selectors/register', {
       if (replyIsCurrent(args.tabId, reply)) {
         console.error(args.request === 'chat' ? 'Chat request failed:' : 'Media request failed:', error)
         flushModelText(args.tabId, reply)
-        if (await endReply(args.tabId, reply, 'error')) showReplyError(args.tabId, 'Request failed', replyError(error, args.model).message)
+        const title = error instanceof MoneyLimitError ? 'Money limit' : 'Request failed'
+        if (await endReply(args.tabId, reply, 'error')) showReplyError(args.tabId, title, replyError(error, args.model).message)
       }
     } finally {
       // A reply that ended on its own ends its jobs: nothing could take

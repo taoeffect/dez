@@ -2,11 +2,11 @@ import { isDeepStrictEqual } from 'node:util'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import type { ActiveModel } from '../../src/model/chat/types'
-import { consoleErrors, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue, withSmallerWindow } from './harness/dom'
+import { click, consoleErrors, resetConsoleErrors, screenshotOnFailure, typeKeys, waitFor, waitForValue, withSmallerWindow } from './harness/dom'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { LARGE_TOKENS, openAiToolCall, replyText, sendChatReply, sendChatText, sendToolCalls, toolResult, type MockProvider, type MockUsage } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeTabId, docPos, endedReply, focusEditor, newTab, sbpCall, setCaret, submit, waitForThread } from './harness/thread'
+import { activeTabId, closeToasts, docPos, endedReply, focusEditor, newTab, openToasts, sbpCall, setCaret, submit, waitForThread } from './harness/thread'
 
 // The usage label of the bottom bar (the token count, a dot, the cost),
 // through the real app against a mock server in this process:
@@ -23,7 +23,9 @@ import { activeTabId, docPos, endedReply, focusEditor, newTab, sbpCall, setCaret
 //   conversation in parentheses, each with its own tooltip and its own
 //   `+`; a model reads the same numbers with the `conversation_info` tool;
 // - in a bar with too little room, the label hides whole parts, and Submit
-//   stays in the window.
+//   stays in the window;
+// - the coin after the cost opens the popup of the money limit of the tab,
+//   and the limit refuses the requests that it does not allow.
 //
 // One app session serves the whole file; each test starts in a new tab.
 
@@ -323,5 +325,56 @@ describe('usage label', () => {
     await askAndAnswer('Question', 'the model', { usd: 0.5 })
     await waitForValue(browser, 'label in a bar with room', usageTexts, ['9', DOT, '$0.50'])
     expect(await textsWhileRoomGoes()).toEqual([['9', DOT, '$0.50'], ['9'], []])
+  })
+
+  it('sets the money limit of the tab in the popup of its coin, and sends no request that the limit refuses', async () => {
+    const limitText = () => browser.execute(() => document.querySelector('.bottom-bar .money-limit-button')?.textContent?.trim() ?? null)
+    const popupOpen = () => browser.execute(() => document.querySelector('.money-limit-popup') !== null)
+    const savedLimit = async () => sbpCall(browser, 'dez.model/tabs/moneyLimit', await activeTabId(browser))
+    // Each refused submit shows one "Cannot send" toast, and logs it.
+    async function expectRefusal (label: string): Promise<void> {
+      await waitForValue(browser, label, async () => (await openToasts(browser, 'error')).map(({ title }) => title), ['Cannot send'])
+      expect(setup.mock.hasWaitingRequest()).toBe(false)
+      expect((await consoleErrors(browser)).map((text) => text.split(':')[0])).toEqual(['Cannot send'])
+      await closeToasts(browser)
+      await resetConsoleErrors(browser)
+    }
+    // A new tab has no limit: only the coin.
+    expect(await limitText()).toBe('')
+
+    // The field has the focus when the popup opens; Enter sets the limit.
+    await click(browser, '.bottom-bar .money-limit-button')
+    await waitFor(browser, '.money-limit-popup')
+    await typeKeys(browser, '0.3')
+    await browser.keys([Key.Enter])
+    await waitForValue(browser, 'popup open after Enter', popupOpen, false)
+    expect([await limitText(), await savedLimit()]).toEqual(['limit $0.30', { usd: 0.3, unknownPrices: false }])
+
+    // Escape closes the popup and sets nothing.
+    await click(browser, '.bottom-bar .money-limit-button')
+    await waitFor(browser, '.money-limit-popup')
+    await typeKeys(browser, '9')
+    await browser.keys([Key.Escape])
+    await waitForValue(browser, 'popup open after Escape', popupOpen, false)
+    expect(await savedLimit()).toEqual({ usd: 0.3, unknownPrices: false })
+
+    // The mock model has no list price, so Dez knows no price of its
+    // requests.
+    await submit(browser, 'Question')
+    await expectRefusal('toast of a request with no known price')
+
+    await click(browser, '.bottom-bar .money-limit-button')
+    await waitFor(browser, '.money-limit-popup')
+    await click(browser, '.money-limit-popup input[type="checkbox"]')
+    await browser.keys([Key.Escape])
+    await waitForValue(browser, 'limit after the check', savedLimit, { usd: 0.3, unknownPrices: true })
+
+    // The provider's price of the reply spends the whole limit.
+    await submit(browser, ' again')
+    await sendChatReply((await setup.mock.waitForRequest(browser)).reply, 'the model', { usd: 0.3 })
+    await endedReply(browser)
+    await waitForValue(browser, 'cost after the reply', labelLook, { text: '$0.30', look: 'idle', italic: false })
+    await submit(browser, 'Next question')
+    await expectRefusal('toast of a spent limit')
   })
 })

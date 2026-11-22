@@ -114,6 +114,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `controller/stream.ts`, `model/state/streams.ts`, `controller/http.ts`: stream lifecycle (one reply), per-tab sessions, native HTTP streams.
 - `model/streams/`: the pure parts of a reply: `messages.ts` (request messages), `toolRound.ts`, `mediaRequest.ts`, `pictureBudget.ts`.
 - `model/chat/contextSize.ts`, `model/streams/contextEstimate.ts`: the context size of a tab (the provider's count, plus Dez's estimate; no tokenizer).
+- `model/chat/moneyLimit.ts`: the money limit of a tab, the one rule that each paid request path checks (`moneyProblem`; the gates are in `controller/stream.ts`).
 - Compaction (a model's notes take the place of the conversation): `controller/compaction.ts`, `compactionApps.ts`, `model/streams/compaction*.ts`, `compactedSections.ts`; `compactIfDue` (`controller/stream.ts`) runs it.
 - `model/tools/`: the Dez tools (Dez runs them for a model; not a provider's own tools): `registry.ts` (`TOOL_DEFINITIONS`), `arguments.ts`, `subcommands.ts`, and one module per tool.
 - `controller/tools.ts`: `dez.controller/tools/run`, the runner of each tool (`ToolRunContext`).
@@ -139,7 +140,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `controller/menu.ts`: the native menubar (Tauri only). `view/composables/useKeyboardShortcuts.ts`: app keys.
 - `controller/window.ts`, `windowFit.ts`: restore and save the window size and position.
 - `view/app/AppLayout.vue`: layout and bottom bar (`ModelSelector.vue`, `view/thread/UsageLabel.vue`, `view/thread/SubmitButton.vue`, `view/thread/IncognitoButton.vue`, the Help button).
-- `view/thread/UsageLabel.vue`, `tokenLabel.ts`, `costLabel.ts`: the token count and the cost of the active tab's conversation.
+- `view/thread/UsageLabel.vue`, `tokenLabel.ts`, `costLabel.ts`, `moneyLimitLabel.ts`: the token count, the cost, and the money limit (with its popup) of the active tab's conversation.
 - `view/composables/useActiveContextSize.ts`: the one view read of the context size; never read it in a `computed`.
 - `view/model-selector/`: `ModelPicker.vue` (a virtual list), `ModelOutputFilter.vue`, `ProviderSettingsPopup.vue` (toggles and "Model Parameters" of the active model), `pickerResize.ts` (the resize of the picker of the bottom bar).
 - `view/history/HistoryPanel.vue`: saved conversations.

@@ -692,8 +692,9 @@ export default sbp('sbp/selectors/register', {
   //   dez.http/stream, and the text of its answer in `text`.
   //
   // Before an image or a clip request goes, Dez gets its price at no cost
-  // (`mediaRequestQuote`): the `sent` step tells it, and the result's
-  // `cost` is the price that the answer tells, else that one.
+  // (`mediaRequestQuote`): `beforeSend` and the `sent` step tell it, and
+  // the result's `cost` is the price that the answer tells, else that one.
+  // A text request has no quote.
   //
   // A provider takes the money for a job when it starts. So after that
   // point, a failure and a stop log the job id, and the message of a
@@ -710,6 +711,11 @@ export default sbp('sbp/selectors/register', {
     signal?.addEventListener('abort', cancelRequest)
     let jobId: string | null = null
     const progress = (phase: MediaProgress['phase'], quote?: number) => input.onProgress?.({ phase, jobId, ...(quote !== undefined && { quote }) })
+    // The last check of the caller, then the `sent` step, in one tick.
+    const send = (quote?: number) => {
+      input.beforeSend?.(quote)
+      progress('sent', quote)
+    }
     // The `cost` of a result: absent when no price is known.
     const priced = (cost: number | undefined) => (cost === undefined ? {} : { cost })
     try {
@@ -743,7 +749,7 @@ export default sbp('sbp/selectors/register', {
       if (isTextKind(kind)) {
         const request = provider.textRequest(kind, modelId, { prompt: input.prompt, images, clips: clipParts, values }, await requestSecret(provider))
         signal?.throwIfAborted()
-        progress('sent')
+        send()
         const { response, chunks } = await sbp('dez.http/stream', request, requestId) as NativeHttpStreamResult
         await assertStreamResponseOk(provider, response, chunks)
         const { text, cost } = provider.textResult(kind, await readNativeChunkBytes(chunks))
@@ -754,7 +760,7 @@ export default sbp('sbp/selectors/register', {
         const request = provider.imageRequest(kind, modelId, { prompt: input.prompt, images, values }, await requestSecret(provider))
         const quote = await mediaRequestQuote(provider, input, values, cachedModel)
         signal?.throwIfAborted()
-        progress('sent', quote)
+        send(quote)
         const { response, chunks } = await sbp('dez.http/stream', request, requestId) as NativeHttpStreamResult
         await assertStreamResponseOk(provider, response, chunks)
         const { media, cost } = provider.imageResult(kind, response, await readNativeChunkBytes(chunks))
@@ -786,7 +792,7 @@ export default sbp('sbp/selectors/register', {
       const firstRequest = provider.clipRequest(kind, modelId, clipInput)
       const quote = await mediaRequestQuote(provider, input, values, cachedModel)
       signal?.throwIfAborted()
-      progress('sent', quote)
+      send(quote)
       const first = await sendClipRequest(run, apiRequest(firstRequest), null, cacheDir).catch(async (error: unknown) => {
         const refusal = provider.imageCountRefusal(kind, error, images.length)
         if (refusal) {

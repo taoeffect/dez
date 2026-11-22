@@ -256,8 +256,8 @@ describe('TabJobs', () => {
   })
 
   // The conversation total adds the price of each job once, at the end of
-  // the job.
-  it('lists the last price that the work of a job reported, keeps the price of a job that ended, and gives it to onCost at the end', async () => {
+  // the job; until then the money limit of the tab holds it (`heldCost`).
+  it('lists the last price that the work of a job reported, keeps the price of a job that ended, gives it to onCost at the end, and holds it only while the job runs', async () => {
     const counted: (number | null)[] = []
     jobs = new TabJobs((usd) => counted.push(usd))
     const paid = heldWork()
@@ -272,10 +272,10 @@ describe('TabJobs', () => {
     paid.reportCost(0.35)
     unpriced.reportCost(null)
     stopped.reportCost(1.2)
-    expect(counted).toStrictEqual([])
+    expect([counted, jobs.heldCost]).toStrictEqual([[], 0.35 + 1.2])
     paid.finish()
     await settled()
-    expect(counted).toStrictEqual([0.35])
+    expect([counted, jobs.heldCost]).toStrictEqual([[0.35], 1.2])
     jobs.stopAll()
     // A price that a work reports after its job ended does not count.
     paid.reportCost(9)
@@ -284,7 +284,7 @@ describe('TabJobs', () => {
     // A job whose work reported no price has no `cost`.
     expect(jobs.list().map((job) => job.cost)).toStrictEqual([0.35, null, 1.2, undefined])
     expect(Object.hasOwn(jobs.list()[3], 'cost')).toBe(false)
-    expect(counted).toStrictEqual([0.35, null, 1.2])
+    expect([counted, jobs.heldCost]).toStrictEqual([[0.35, null, 1.2], 0])
   })
 
   // A reply has no limit of tool rounds, so the limit counts only the open

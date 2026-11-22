@@ -125,6 +125,14 @@ export interface ProviderGenerateMediaInput {
   timeoutMs?: number
   // Called at each step of the request, in order.
   onProgress?: (progress: MediaProgress) => void
+  // Called right before the paid request goes, after the checks of the
+  // input and the quote, with the quote that the `sent` step gives (in
+  // USD; undefined when Dez knows no price). A throw stops the request:
+  // generateMedia then rejects with that error, and no request went. The
+  // call and the `sent` step come in the same tick, so a check here and a
+  // hold of the quote at `sent` have no wait between them (the money
+  // limit of a tab).
+  beforeSend?: (quote: number | undefined) => void
   // Who reads the text of an input that the model does not take or that
   // Dez cannot read, and of a request that failed (requestReader.ts); the
   // user with none.

@@ -42,6 +42,7 @@ import { notesMessages, withAssetLabels } from '../chat/compactionNotes'
 import { contextField, contextSize, type ContextSize } from '../chat/contextSize'
 import { agentTextEditedField, costField, withRequestCost, type ConversationCost } from '../chat/conversationCost'
 import { canTurnOnIncognito, incognitoField, requestParts, requestSentField } from '../chat/incognito'
+import { moneyLimitField, type MoneyLimit } from '../chat/moneyLimit'
 import { durationField } from '../chat/duration'
 import { modelRefField, modelRefKey, parseModelRefKey } from '../chat/modelRef'
 import { thinkingField } from '../chat/thinking'
@@ -98,6 +99,7 @@ interface TabData {
   createdAt: number
   incognito?: true
   requestSent?: true
+  moneyLimit?: MoneyLimit
 }
 
 let settingsPersistenceReady = false
@@ -163,6 +165,7 @@ function cloneTab(tab: Tab): ModelSnapshot['tabs'][number] {
     ...compactionsField(tab.compactions),
     ...incognitoField(tab.incognito),
     ...requestSentField(tab.requestSent),
+    ...moneyLimitField(tab.moneyLimit),
   }
 }
 
@@ -410,6 +413,9 @@ function tabFromConversation(conv: ConversationData, overrides: Partial<Tab> = {
     // either place that has a mark sets it, as nothing clears one.
     ...incognitoField(overrides.incognito || conv.incognito),
     ...requestSentField(overrides.requestSent || conv.requestSent),
+    // A restored tab has it in its tab entry too, which a set saves at
+    // the same time; a tab entry of an older Dez has none.
+    ...moneyLimitField(overrides.moneyLimit ?? conv.moneyLimit),
   }
 }
 
@@ -839,6 +845,24 @@ export default sbp('sbp/selectors/register', {
     return useTabStore().tabs.find((candidate) => candidate.id === tabId)?.incognito === true
   },
 
+  // The money limit of the tab (a copy); undefined with no limit, and for
+  // a missing tab.
+  'dez.model/tabs/moneyLimit' (tabId: string): MoneyLimit | undefined {
+    return moneyLimitField(useTabStore().tabs.find((candidate) => candidate.id === tabId)?.moneyLimit).moneyLimit
+  },
+
+  // Sets the money limit of the tab, or removes it (null), and saves the
+  // conversation file and the tab entry, which both keep it (a tab with no
+  // text has no file). Only the user sets it: no tool calls this.
+  'dez.model/tabs/setMoneyLimit' (tabId: string, limit: MoneyLimit | null): void {
+    const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
+    if (!tab) return
+    if (limit) tab.moneyLimit = { usd: limit.usd, unknownPrices: limit.unknownPrices }
+    else delete tab.moneyLimit
+    void sbp('dez.model/tabs/save', tabId)
+    void sbp('dez.model/appState/save')
+  },
+
   // The persisted form of a tab. Null when the tab is missing or every
   // section is empty: an empty conversation is neither saved nor exported.
   'dez.model/tabs/conversationData' (tabId: string): ConversationData | null {
@@ -862,6 +886,7 @@ export default sbp('sbp/selectors/register', {
       ...compactionsField(tab.compactions),
       ...incognitoField(tab.incognito),
       ...requestSentField(tab.requestSent),
+      ...moneyLimitField(tab.moneyLimit),
     }
   },
 
@@ -955,6 +980,7 @@ export default sbp('sbp/selectors/register', {
       createdAt: tab.createdAt,
       ...incognitoField(tab.incognito),
       ...requestSentField(tab.requestSent),
+      ...moneyLimitField(tab.moneyLimit),
     }))
     try {
       await sbp('dez.persistence/saveAppState', {
@@ -1004,6 +1030,7 @@ export default sbp('sbp/selectors/register', {
           createdAt: tabData.createdAt || conversation.created_at || Date.now(),
           ...incognitoField(tabData.incognito),
           ...requestSentField(tabData.requestSent),
+          ...moneyLimitField(tabData.moneyLimit),
         }))
       } catch {
         restored.push({
@@ -1015,6 +1042,7 @@ export default sbp('sbp/selectors/register', {
           createdAt: tabData.createdAt || Date.now(),
           ...incognitoField(tabData.incognito),
           ...requestSentField(tabData.requestSent),
+          ...moneyLimitField(tabData.moneyLimit),
         })
       }
     }

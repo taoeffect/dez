@@ -2,6 +2,7 @@ import type { ClipVolumes } from './clipVolume'
 import type { Compactions } from './chat/compaction'
 import type { CountedContext } from './chat/contextSize'
 import type { ConversationCost } from './chat/conversationCost'
+import type { MoneyLimit } from './chat/moneyLimit'
 import type { ActiveModel, ContentNode, ModelRef, SectionThinking } from './chat/types'
 import type { ModelOutput } from './modelOutputs'
 import type { ModelPickerSize } from './modelPickerSize'
@@ -32,6 +33,7 @@ export interface ModelSnapshot {
     compactions?: Compactions
     incognito?: true
     requestSent?: true
+    moneyLimit?: MoneyLimit
   }[]
   activeTabId: string
   activeModel: ActiveModel | null

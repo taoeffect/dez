@@ -1,5 +1,6 @@
 import { countOf } from '../../utils/countText'
 import { oneLineCut } from '../../utils/oneLineCut'
+import { moneyLimitText, type TabMoney } from '../chat/moneyLimit'
 import { tagEscape } from '../chat/tagEscape'
 import type { ToolBlockData } from '../chat/toolBlocks'
 import { usdText } from '../providers/modelPrices'
@@ -505,10 +506,12 @@ function spendText(jobs: readonly JobInfo[]): string {
 /** The result of a `jobs_list` call: a first line with the count, the
  *  columns, and what their values mean, then one line for each job, in the
  *  order of their starts, and a last line with the spend of the reply on
- *  paid requests. The label of the call is the last column of a job line:
- *  it is free text, which can hold the column mark. */
-export function jobsListText(jobs: readonly JobInfo[]): string {
-  if (jobs.length === 0) return NO_JOBS_TEXT
+ *  paid requests, then the line of the money limit of the tab when `money`
+ *  is given. The label of the call is the last column of a job line: it is
+ *  free text, which can hold the column mark. */
+export function jobsListText(jobs: readonly JobInfo[], money?: TabMoney): string {
+  const moneyLines = money ? [moneyLimitText(money.limit, money.spent)] : []
+  if (jobs.length === 0) return [NO_JOBS_TEXT, ...moneyLines].join('\n')
   const head = `${countOf(jobs.length, 'job')} of this reply (number | id | tool | status | result | seconds | call). `
     + 'number: the place of the job in the order of the starts. '
     + `${jobResultLegend()} `
@@ -517,7 +520,7 @@ export function jobsListText(jobs: readonly JobInfo[]): string {
   const rows = jobs.map((job) => [
     job.call.number, job.id, job.tool, job.status, jobResultState(job), Math.round(job.elapsedMs / 1000), job.call.label === '' ? '-' : job.call.label,
   ].join(' | '))
-  return [head, ...rows, spendText(jobs)].join('\n')
+  return [head, ...rows, spendText(jobs), ...moneyLines].join('\n')
 }
 
 /** The result of a `job_inspect` call: the status of the job, what to do

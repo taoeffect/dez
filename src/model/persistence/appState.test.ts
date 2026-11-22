@@ -73,6 +73,18 @@ describe('app state persistence format', () => {
     expect(parseTabs([{ ...tab, incognito: 'yes', requestSent: false }])).toEqual([tab])
   })
 
+  // A bad flag allows no unknown price: the side that spends less.
+  it('keeps the money limit of a tab, drops a limit with a bad sum but not its tab, and reads a bad flag as off', () => {
+    const tab = { id: 'tab', title: 'Tab', conversationId: 'conversation', activeModel: null, createdAt: 34 }
+    const parseTabs = (tabs: unknown[]) => parseAppStateJson(JSON.stringify({ tabs })).tabs
+    const limited = parseTabs([{ ...tab, moneyLimit: { usd: 2.5, unknownPrices: true } }])
+
+    expect(limited).toStrictEqual([{ ...tab, moneyLimit: { usd: 2.5, unknownPrices: true } }])
+    expect(parseAppStateJson(serializeAppStateJson({ tabs: limited })).tabs).toStrictEqual(limited)
+    expect(parseTabs([{ ...tab, moneyLimit: { usd: 2.5, unknownPrices: 'yes' } }])).toStrictEqual([{ ...tab, moneyLimit: { usd: 2.5, unknownPrices: false } }])
+    expect(parseTabs([{ ...tab, moneyLimit: { usd: -1, unknownPrices: true } }, { ...tab, moneyLimit: 5 }])).toEqual([tab, tab])
+  })
+
   it('tolerates missing or malformed providerSettings', () => {
     expect(parseAppStateJson('{}').providerSettings).toEqual({})
     expect(parseAppStateJson('{ "providerSettings": 42 }').providerSettings).toEqual({})

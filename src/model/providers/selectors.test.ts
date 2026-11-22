@@ -1335,6 +1335,15 @@ describe('media requests', () => {
     expect(steps).toStrictEqual([[{ phase: 'sent', jobId: null }, 0]])
   })
 
+  // The money limit of a tab checks there (stream.ts).
+  it('calls the last check of the caller right before the request of an image goes, with no quote when Dez knows none', async () => {
+    const checks: Array<[number | undefined, number]> = []
+
+    await generate({ kind: 'image', beforeSend: (usd: number | undefined) => checks.push([usd, streamRequests.length]) })
+
+    expect([checks, streamRequests.length]).toStrictEqual([[[undefined, 0]], 1])
+  })
+
   it('edits stored images of both folders, sent as data URLs, and returns the whole image of a binary answer', async () => {
     const result = await generate({ kind: 'imageEdit', images: [`${APP_DIR}/assets/generated/images/red.png`, `${APP_DIR}/assets/images/red.png`] })
 
@@ -1940,6 +1949,23 @@ describe('the price of a clip', () => {
 
     expect([await routed({}), await routed({ duration: 5, resolution: '720p' })]).toStrictEqual([{ usd: 0.015 }, { usd: 0.05 }])
     expect(httpRequests).toStrictEqual([])
+  })
+
+  // The money limit of a tab checks there (stream.ts).
+  it('gives the quote to the last check of the caller before the request goes, and sends no request when the check throws', async () => {
+    cacheModel()
+    const refusal = new ExplainedError('Over the money limit.')
+    const checks: Array<number | undefined> = []
+    const steps: MediaProgress[] = []
+    const beforeSend = (usd: number | undefined) => {
+      checks.push(usd)
+      throw refusal
+    }
+
+    const request = sbp('dez.provider/generateMedia', { providerId: 'media', modelId: 'm', kind: 'video', prompt: 'A red fox', beforeSend, onProgress: (progress: MediaProgress) => steps.push(progress) })
+
+    await expect(request).rejects.toBe(refusal)
+    expect([checks, steps, downloadRequests]).toStrictEqual([[0.07], [], []])
   })
 })
 

@@ -2,6 +2,7 @@ import sbp from '@sbp/sbp'
 import { requestParts } from '../model/chat/incognito'
 import type { MediaTagKind } from '../model/chat/mediaTags'
 import { modelRefKey } from '../model/chat/modelRef'
+import { chatRequestPrice } from '../model/chat/moneyLimit'
 import { effectiveOutputs } from '../model/modelOutputs'
 import { clipsText } from '../model/providers/clipInputs'
 import { imagesText } from '../model/providers/clipImages'
@@ -12,7 +13,7 @@ import { mediaInputRules, mediaRequestProblem } from '../model/streams/mediaRequ
 import { mediaRequestInput } from '../model/streams/messages'
 import type { RequestMessages } from '../model/streams/types'
 import { systemPromptErrorText, systemPromptProblem, systemPromptTemplate } from '../model/systemPrompt'
-import { warnImagesNotSent } from './stream'
+import { moneyRefusal, warnImagesNotSent } from './stream'
 
 // Tells the user that the request goes with `count` fewer images than the
 // message has, because the model `reason` (e.g. "does not read images").
@@ -58,7 +59,7 @@ export default sbp('sbp/selectors/register', {
     // A model that the cache does not have has no request kind, so it gets
     // a chat request, as before models had one. A refusal changes nothing,
     // so it comes before the end of a running reply's output.
-    const cachedModel: Pick<ModelInfo, 'outputs' | 'request' | 'text' | 'images' | 'clips' | 'parameters' | 'unstoredOutput' | 'learnedImageLimit'> = sbp('dez.model/modelCache/model', model.providerId, model.modelId) ?? {}
+    const cachedModel: Pick<ModelInfo, 'outputs' | 'request' | 'text' | 'images' | 'clips' | 'parameters' | 'unstoredOutput' | 'learnedImageLimit' | 'price'> = sbp('dez.model/modelCache/model', model.providerId, model.modelId) ?? {}
     const kind = effectiveRequest(cachedModel)
     let message: string | null = null
     // How many images and clips of the message a media request takes and
@@ -98,6 +99,11 @@ export default sbp('sbp/selectors/register', {
       const problem = systemPromptProblem(systemPromptTemplate(systemPrompt))
       if (problem !== null) message = systemPromptErrorText(problem)
     }
+    // The money limit of the tab; `dez.stream/start` checks each request
+    // of the reply again. The quote of a media request is known only right
+    // before it goes (`generateMedia`), so here the request counts as free:
+    // this refuses it only when the tab spent its limit.
+    message ??= moneyRefusal(tabId, kind === 'chat' ? chatRequestPrice(cachedModel.price) : { kind: 'quote', usd: 0 }, 'user')
     if (message !== null) {
       console.error(`Cannot send: ${message}`)
       sbp('dez.ui/toast', 'app-global', { variant: 'error', title: 'Cannot send', message })

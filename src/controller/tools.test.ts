@@ -54,7 +54,7 @@ import {
   VIEW_FAILED_NOTE,
 } from '../model/tools/assetView'
 import { conversationInfoText } from '../model/tools/conversationInfo'
-import { jobCancelText, jobsListText, jobStartedText, jobsWaitResults, jobsWaitText, NO_JOBS_TEXT, NO_OPEN_JOBS_TEXT } from '../model/tools/jobs'
+import { jobCancelText, jobsListText, jobStartedText, jobsWaitResults, jobsWaitText, NO_OPEN_JOBS_TEXT } from '../model/tools/jobs'
 import { jsEvalAnswerLine } from '../model/tools/jsEval'
 import { modelCost, modelInfoText, type ModelInfoFacts } from '../model/tools/modelInfo'
 import { IMAGE_NOT_SAVED_TEXT, INVOCATION_TEXT_CAP, invocationAnswerStateText, invocationAnswerText, modelInvocation } from '../model/tools/modelInvoke'
@@ -1106,8 +1106,9 @@ describe('dez.controller/tools/run', () => {
       expect(consoleError).not.toHaveBeenCalled()
     })
 
-    it('jobs_list lists the jobs of the reply and does not wait', async () => {
-      expect(await jobTool('jobs_list')).toStrictEqual({ content: NO_JOBS_TEXT, isError: false })
+    it('jobs_list lists the jobs of the reply, with the money limit of the tab, and does not wait', async () => {
+      const money = { limit: undefined, spent: { counted: 0, held: 0 } }
+      expect(await jobTool('jobs_list')).toStrictEqual({ content: jobsListText([], money), isError: false })
 
       const running = jobs.start('model_invoke', heldWork().work, { ...LONG, label: 'A red fox' }).id
       const ended = jobs.start('video', async () => ({ text: 'Done.', isError: false, assets: [] }), LONG).id
@@ -1117,7 +1118,7 @@ describe('dez.controller/tools/run', () => {
         content: jobsListText([
           jobInfo({ id: running, call: { number: 1, label: 'A red fox' } }),
           jobInfo({ id: ended, tool: 'video', status: 'finished', delivered: true, call: { number: 2, label: '' } }),
-        ]),
+        ], money),
         isError: false,
       })
     })
@@ -1418,7 +1419,7 @@ describe('dez.controller/tools/run', () => {
       it('saves no image that still comes after its job ended', async () => {
         const request = heldRequest()
         const abort = new AbortController()
-        const work = invokeModel(invocationOf(PAINT), tabId, abort.signal, () => {}, () => {}, () => {}, { toolsAllowed: false })
+        const work = invokeModel(invocationOf(PAINT), tabId, abort.signal, () => {}, () => {}, () => {}, { toolsAllowed: false, checkMoney: () => {} })
 
         abort.abort()
         request.answer({ media: [PNG], clips: [] })
@@ -1729,7 +1730,7 @@ describe('dez.controller/tools/run', () => {
             await input.onImage(PNG)
           }
 
-          expect(await invokeModel(invocationOf(SKETCH), tabId, abort.signal, () => {}, () => {}, () => {}, { toolsAllowed: false })).toStrictEqual({ text: '', isError: false, assets: [] })
+          expect(await invokeModel(invocationOf(SKETCH), tabId, abort.signal, () => {}, () => {}, () => {}, { toolsAllowed: false, checkMoney: () => {} })).toStrictEqual({ text: '', isError: false, assets: [] })
           expect(savedImages).toStrictEqual([])
         })
 
@@ -2998,6 +2999,7 @@ describe('dez.controller/tools/run', () => {
           cost: { usd: 0.25, requests: 2, unpriced: 1 },
           jobs: [],
           pictureBudget: BUDGET,
+          money: { limit: undefined, spent: { counted: 0, held: 0 } },
         }),
         isError: false,
       })
@@ -3059,8 +3061,10 @@ describe('dez.controller/tools/run', () => {
   })
 
   describe('js_eval', () => {
-    // The entry of the `jobs_list` call of the code of a reply with no job.
-    const LIST_CALL = { name: 'jobs_list', arguments: {}, status: 'success', result: NO_JOBS_TEXT }
+    // The result and the entry of the `jobs_list` call of the code of a
+    // reply with no job, in a tab with no money limit.
+    const LIST_TEXT = jobsListText([], { limit: undefined, spent: { counted: 0, held: 0 } })
+    const LIST_CALL = { name: 'jobs_list', arguments: {}, status: 'success', result: LIST_TEXT }
 
     it('runs a tool call of the code as a call of the reply, gives the code its result, and gives the list of the calls for the block', async () => {
       native.program = callingProgram(['dez.tools/jobs_list'])
@@ -3068,7 +3072,7 @@ describe('dez.controller/tools/run', () => {
       const result = await run({ name: 'js_eval', arguments: { code: 'await dez.sbp("dez.tools/jobs_list")\nreturn "ok"' } })
 
       expect(result).toStrictEqual({ content: 'ok', isError: false, bridged: { calls: [LIST_CALL], more: 0 } })
-      expect(native.inputWrites.map(({ text }) => text)).toStrictEqual([jsEvalAnswerLine(1, { text: NO_JOBS_TEXT, isError: false })])
+      expect(native.inputWrites.map(({ text }) => text)).toStrictEqual([jsEvalAnswerLine(1, { text: LIST_TEXT, isError: false })])
     })
 
     // The runner gives this result and does not throw it, so that it has
