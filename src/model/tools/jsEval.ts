@@ -439,7 +439,8 @@ function errorAdvice(error: string): string[] {
   return [
     ...(namesDenoFlag(error)
       ? ['Dez runs the code with no network, no files, no environment variables, no start of programs, and no packages. '
-        + 'No flag changes that, and you can set none: do the work without them.']
+        + 'No flag changes that, and you can set none: do the work without them. '
+        + `The one exception is the files of the apps in \`${APPS_VIRTUAL_ROOT}/\`: the code reads and changes them only with \`dez.tools/${APPS_TOOL.name}/<subcommand>\` calls.`]
       : []),
     ...(STATIC_IMPORT.test(error)
       ? ['The code is the body of a function, so a static `import` does not work in it. Load a built-in module with `await import("node:…")`.']
