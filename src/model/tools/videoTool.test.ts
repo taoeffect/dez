@@ -99,7 +99,7 @@ describe('the video tool', () => {
         }
       })
 
-    expect(examples).toHaveLength(19)
+    expect(examples).toHaveLength(22)
     expect(ffmpegWords(String(examples[0].arguments))).toStrictEqual(['-i', 'c.webm', '-i', 'b.wav', '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac', '-shortest', 'out.mp4'])
     // The filter graph of the mix is one word, without its quotes.
     expect(ffmpegWords(String(examples[7].arguments))).toContain('[1:a]volume=0.25[music];[0:a][music]amix=inputs=2:duration=first:normalize=0[a]')
@@ -114,6 +114,12 @@ describe('the video tool', () => {
     expect(ffmpegCall(examples[14], videoContext(CONVERSATION)).workInputs.map(({ name }) => name)).toStrictEqual(['work/seg/s1.mov', 'work/seg/s2.mov'])
     expect(ffmpegCall(examples[15], videoContext(CONVERSATION)).fonts).toStrictEqual(['NotoSans-Bold.ttf'])
     expect(ffmpegCall(examples[17], videoContext(CONVERSATION)).nullOutput).toBe(true)
+    expect(ffmpegWords(String(examples[19].arguments))).toStrictEqual(['-i', 'b.wav', '-af', 'rubberband=tempo=0.8:pitch=1.189:formant=preserved:pitchq=quality', 'voice.wav'])
+    expect(ffmpegCall(examples[20], videoContext(CONVERSATION))).toMatchObject({ nullOutput: true, saveTo: { virtual: '/work/stab' } })
+    // Pass 2 reads the file of pass 1 from a copy at the path of the filter.
+    const stable = ffmpegCall(examples[21], videoContext(CONVERSATION))
+    expect(stable.workInputs.map(({ name }) => name)).toStrictEqual(['work/stab/transforms.trf'])
+    expect(stable.args).toContain('vidstabtransform=input=work/stab/transforms.trf,unsharp=5:5:0.8:3:3:0.4')
     for (const example of examples) expect(() => ffmpegCall(example, videoContext(CONVERSATION)), String(example.arguments)).not.toThrow()
     expect(() => ffmpegCall(subcommand('ffmpeg').example as ToolArguments, videoContext(CONVERSATION))).not.toThrow()
     expect(() => ffprobeCall(subcommand('ffprobe').example as ToolArguments, videoContext(CONVERSATION))).not.toThrow()

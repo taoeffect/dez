@@ -164,6 +164,20 @@ export const LIBRARIES = [
     license: 'the GNU Lesser General Public License, version 2.1 or later'
   },
   { id: 'libass', name: 'libass', url: 'https://github.com/libass/libass', license: 'the ISC License' },
+  {
+    id: 'rubberband',
+    name: 'Rubber Band Library',
+    url: 'https://breakfastquay.com/rubberband/',
+    license: 'the GNU General Public License, version 2 or later'
+  },
+  // vid.stab compiles its sse2neon part only where the compiler defines
+  // __ARM_NEON__: clang on macOS arm64, not GCC on Linux arm64.
+  {
+    id: 'vidstab',
+    name: 'vid.stab',
+    url: 'https://github.com/georgmartius/vid.stab',
+    license: 'the GNU General Public License, version 2 or later; its sse2neon part (only in the macOS files): the MIT License'
+  },
   // The Linux files are static musl builds (PLATFORMS).
   { id: 'musl', name: 'musl (only in the Linux files)', url: 'https://musl.libc.org/', license: 'the MIT License' }
 ];

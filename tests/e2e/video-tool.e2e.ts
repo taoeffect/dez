@@ -49,6 +49,10 @@ import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolC
 //   exact count of frames in `/work`, a join of them that loses no frame, a
 //   clip with alpha that ffmpeg makes and puts over the edit, and the two
 //   passes of loudnorm;
+// - the examples of the help for the two filters of this build that use a
+//   library: rubberband slows a tone and raises its pitch, and the two
+//   passes of vid.stab, through a file of `/work`, make a shaky clip
+//   stable;
 // - a call whose arguments name a file of the computer (a font too), the
 //   network, a device, or a commands file of a filter is refused at once:
 //   no job, and no work folder;
@@ -221,6 +225,34 @@ describe('video tool', () => {
   // them when it decodes the stream.
   function frameCount (file: string): number {
     return Number(programOutput(setup.app, 'dez-ffprobe', ['-v', 'error', '-count_frames', '-select_streams', 'v:0', '-show_entries', 'stream=nb_read_frames', '-of', 'csv=p=0', file]).trim())
+  }
+
+  // The path of the file of the clip `id` that the reply text `reply`
+  // shows.
+  function madeClipPath (reply: string, id: string): string {
+    const match = new RegExp(`<dez:(?:video|audio) id="${id}" type="[^"]+" src="([^"]+)"`).exec(reply)
+    expect(match, `the tag of @${id}`).not.toBeNull()
+    return match![1]
+  }
+
+  // The mean change of the video clip `file` from one frame to the next:
+  // the mean gray level (0 to 255) of the difference of each two frames.
+  function meanFrameChange (file: string): number {
+    const log = programOutput(setup.app, 'dez-ffmpeg', ['-v', 'error', '-i', file, '-vf', 'tblend=all_mode=difference,signalstats,metadata=mode=print:key=lavfi.signalstats.YAVG:file=-', '-f', 'null', '-'])
+    const values = Array.from(log.matchAll(/^lavfi\.signalstats\.YAVG=([\d.]+)$/gm), (match) => Number(match[1]))
+    expect(values.length).toBeGreaterThan(10)
+    return values.reduce((sum, value) => sum + value, 0) / values.length
+  }
+
+  // The frequency of the tone of the audio clip `file`, in Hz: the count of
+  // its rises through 0 in each second, from 0.25 s to its end.
+  function toneFrequency (file: string): number {
+    const pcm = programRun(setup.app, 'dez-ffmpeg', ['-v', 'error', '-i', file, '-f', 's16le', '-ac', '1', '-ar', '44100', '-'])
+    const samples = new Int16Array(pcm.buffer, pcm.byteOffset, pcm.length / 2)
+    const from = 0.25 * 44100
+    let rises = 0
+    for (let index = from + 1; index < samples.length; index++) if (samples[index - 1] < 0 && samples[index] >= 0) rises++
+    return rises / ((samples.length - from) / 44100)
   }
 
   // The streams of the picture of the data URL `url`, which must be a
@@ -1102,11 +1134,7 @@ describe('video tool', () => {
     await sendChatReply(check.next.reply, CALLER.modelName)
 
     const reply = await endedReply(browser)
-    const clipPath = (id: string): string => {
-      const match = new RegExp(`<dez:(?:video|audio) id="${id}" type="[^"]+" src="([^"]+)"`).exec(reply)
-      expect(match, `the tag of @${id}`).not.toBeNull()
-      return match![1]
-    }
+    const clipPath = (id: string): string => madeClipPath(reply, id)
     expect(mediaFacts(setup.app, clipPath('b'))).toStrictEqual({ streams: ['video vp9 160x90'], seconds: 1.5 })
     expect(frameCount(clipPath('b'))).toBe(36)
     expect(mediaFacts(setup.app, clipPath('c'))).toStrictEqual({ streams: ['video png 160x90'], seconds: 0.5 })
@@ -1122,6 +1150,42 @@ describe('video tool', () => {
     expect(mediaFacts(setup.app, clipPath('f'))).toStrictEqual({ streams: ['audio pcm_s16le'], seconds: 8 })
     expect(programOutput(setup.app, 'dez-ffprobe', ['-v', 'error', '-show_entries', 'stream=sample_rate', '-of', 'csv=p=0', clipPath('f')]).trim()).toBe('48000')
     await expectCleanEnd({})
+  })
+
+  // The examples of the help for rubberband and for the two passes of
+  // vid.stab. The shaky clip is a color chart that does not move, under a
+  // crop that moves by up to 12 px from one frame to the next, so only the
+  // shake changes its frames. As in `SUBTITLES_ARGS`, VP9 in WebM takes the
+  // place of H.264 in MP4.
+  it('slows a tone and raises its pitch with rubberband, and makes a shaky clip stable in two passes through /work, with the examples of the help', async () => {
+    const files = await openShots('stabilize')
+    await submit(browser, 'Slow my tone and raise it, and make a shaky clip stable.')
+    const stabFolder = appFilePath(setup.app.home, 'work', await activeConversationId(browser), 'stab')
+    const voice = await runJob(await chatRequest(), 'call_voice', 'ffmpeg', { arguments: '-i @b -af rubberband=tempo=0.8:pitch=1.189:formant=preserved:pitchq=quality voice.wav' })
+    expect(voice.result.text.endsWith('\nMade the audio clip @f.')).toBe(true)
+
+    const shaky = await runJob(voice.next, 'call_shaky', 'ffmpeg', {
+      arguments: '-f lavfi -i "colorchart=rate=24:patch_size=48x48,trim=duration=3,crop=240:150:\'24+12*sin(n*1.7)\':\'21+9*cos(n*2.3)\'" -c:v libvpx-vp9 -pix_fmt yuv420p shaky.webm',
+    })
+    expect(shaky.result.text.endsWith('\nMade the video clip @g.')).toBe(true)
+    const detect = await runJob(shaky.next, 'call_detect', 'ffmpeg', { arguments: '-i @g -vf vidstabdetect=shakiness=8:result=transforms.trf -f null -', save_to: '/work/stab' })
+    expect(detect.result.text.startsWith('ffmpeg ended with no error, and Dez saved its 1 new file into /work/stab: /work/stab/transforms.trf.')).toBe(true)
+    expect(await filesIn(stabFolder)).toStrictEqual(['transforms.trf'])
+    const stable = await runJob(detect.next, 'call_stable', 'ffmpeg', {
+      arguments: '-i @g -vf "vidstabtransform=input=/work/stab/transforms.trf,unsharp=5:5:0.8:3:3:0.4" -c:v libvpx-vp9 -c:a copy stable.webm',
+    })
+    expect(stable.result.text.endsWith('\nMade the video clip @h.')).toBe(true)
+    await sendChatReply(stable.next.reply, CALLER.modelName)
+
+    const reply = await endedReply(browser)
+    // 1 s at 80% of its speed, and 440 Hz times 1.189.
+    const voicePath = madeClipPath(reply, 'f')
+    expect(Number(programOutput(setup.app, 'dez-ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', voicePath]))).toBeCloseTo(1.25, 2)
+    expect(Math.abs(toneFrequency(voicePath) - 523)).toBeLessThanOrEqual(5)
+    expect(mediaFacts(setup.app, madeClipPath(reply, 'h'))).toStrictEqual({ streams: ['video vp9 240x150'], seconds: 3 })
+    // The local build of the release changed the frames by 16.3 and 1.8.
+    expect(meanFrameChange(madeClipPath(reply, 'h'))).toBeLessThan(meanFrameChange(madeClipPath(reply, 'g')) / 4)
+    await expectCleanEnd(files, shotSources)
   })
 
   it('gives the output of ffprobe as the result of its call, with the names of the copies and no job', async () => {

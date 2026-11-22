@@ -192,6 +192,8 @@ const FFMPEG_HELP = [
     + 'and a commands file of sendcmd or asendcmd (f=, filename=): write the commands into the filter, as in "asendcmd=c=\'2 volume volume 0.5\',volume=1".',
   'Encoders of this build: libx264, libx265, libvpx-vp9, libvpx, libsvtav1, ffv1 (lossless) (video); aac, libmp3lame, libopus, flac, pcm_s16le (audio); mjpeg, png, gif (images). '
     + 'png in a MOV file also makes a video clip with an alpha channel. '
+    + 'Filters of this build that use a library: rubberband (the tempo of a sound with no change of its pitch, and its pitch with no change of its tempo, for a voice or music better than atempo), '
+    + 'and vidstabdetect and vidstabtransform (the two passes of a video stabilization; see the examples). '
     + 'The ffprobe subcommand gives the full lists with no job (-encoders, -filters, -h filter=scale).',
   'Text (drawtext, subtitles, ass): this ffmpeg has no font of the system. It reads a font only from the folder fonts of the run folder, which holds a copy of each font that the `fonts` parameter names. '
     + `The fonts that Dez ships: ${SHIPPED_FONTS_TEXT}. `
@@ -234,6 +236,13 @@ const FFMPEG_HELP = [
   'The log of pass 2 tells the Normalization Type. Linear changes only the level. '
     + 'Dynamic also changes the sound: loudnorm uses it when the measured LRA is 0 or above LRA, or when the new level puts the true peak above TP. '
     + 'In Dynamic mode loudnorm writes 192 kHz, so keep -ar 48000.',
+  '- Slow the voice @b to 80% of its speed with no change of its pitch, and raise its pitch by 3 semitones (2^(3/12) = 1.189) with its formants kept, so that it still sounds like the same voice: '
+    + '-i @b -af rubberband=tempo=0.8:pitch=1.189:formant=preserved:pitchq=quality voice.wav',
+  '- Pass 1 of a stabilization of the shaky video clip @c, which measures the motion of each frame into the file transforms.trf '
+    + `(Dez keeps no .trf file of a run without \`save_to\`), with "${WORK_VIRTUAL_ROOT}/stab" in \`save_to\`: `
+    + '-i @c -vf vidstabdetect=shakiness=8:result=transforms.trf -f null -',
+  '- Pass 2, which reads that file and writes the stable clip (vidstabtransform zooms in a little, so that the moving edges do not show; unsharp makes the frames sharp again): '
+    + `-i @c -vf "vidstabtransform=input=${WORK_VIRTUAL_ROOT}/stab/transforms.trf,unsharp=5:5:0.8:3:3:0.4" -c:v libx264 -c:a copy stable.mp4`,
 ].join('\n')
 
 // Static text only (no count that changes, no date): the tools array is in
