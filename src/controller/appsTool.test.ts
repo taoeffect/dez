@@ -620,7 +620,7 @@ describe('apps find', () => {
 })
 
 describe('apps wc', () => {
-  it('counts each path by itself, and reads only the files that read takes', async () => {
+  it('counts each path by itself, and reads no file of more than 2 MiB', async () => {
     const files = fakeAppFiles(appFiles('notes', { 'main.ts': 'a\nb\n', 'last.txt': 'a\nb', data: null }))
     files.set('apps/notes/big.txt', new Uint8Array(APPS_MAX_FILE_BYTES + 1).fill(0x61))
     files.set('apps/notes/logo.png', new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00]))

@@ -337,10 +337,10 @@ export async function grepAppFiles(args: SubcommandArguments, signal: AbortSigna
   return grepText(call, plan, outcome)
 }
 
-/** `apps wc`: what is at each path, then the bytes of each file that `read`
- *  takes, one file at a time, so that the webview holds at most one file
- *  of `APPS_MAX_FILE_BYTES`. A stop of the reply ends the call before the
- *  next path. */
+/** `apps wc`: what is at each path, then the bytes of each file of at most
+ *  `APPS_MAX_FILE_BYTES` (`wcRowOfFacts`), one file at a time, so that the
+ *  webview holds at most one such file. A stop of the reply ends the call
+ *  before the next path. */
 export async function countAppFiles(args: SubcommandArguments, signal: AbortSignal): Promise<AppsResult> {
   const { paths } = wcCall(args)
   return wcResult(await eachByItself(paths, signal, async (path) => wcRowOfFacts(path, await factsOf(path)) ?? wcRowOfBytes(path, await readBytes(path))))
