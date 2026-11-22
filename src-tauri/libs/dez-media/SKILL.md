@@ -99,7 +99,8 @@ gap, and `frames.json`: `{"fps": 30, "width": 1280, "height": 720, "count": 90, 
 and the height must be even); with `"alpha": true` it is MOV with the PNG codec.
 
 `new FrameWriter(dez.outputFolder, "intro", { fps, width, height, alpha })` writes such a folder:
-`frames.add(canvas)` or `frames.add(rgbaBytes)` for each frame, then `frames.end()`.
+`frames.add(canvas)` or `frames.add(rgbaBytes)` for each frame, then `frames.end()`. It throws at once for facts
+out of these limits, and for a frame past the 36,000th.
 
 ## Titles
 

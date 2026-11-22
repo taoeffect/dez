@@ -20,6 +20,18 @@ const NAME = /^[A-Za-z0-9._-]+$/
 // src/model/tools/frameSequences.ts).
 const FRAME_DIGITS = 6
 
+// The limits of a frame sequence that Dez checks after the run (`parsedFacts`,
+// src/model/tools/frameSequences.ts): `FRAMES_MIN_FPS`, `FRAMES_MAX_FPS`,
+// `FRAMES_MAX_SIDE`, and `APP_RUN_MAX_FRAMES` of src/model/tools/appsTool.ts.
+// A run cannot import the TypeScript of Dez, so these are copies, which
+// tests/dez-media/frames.test.ts checks against it. The writer checks them
+// before the first frame, so that a run does not draw a clip that Dez
+// refuses after it.
+const MIN_FPS = 0.01
+const MAX_FPS = 240
+const MAX_SIDE = 4096
+const MAX_FRAMES = 36_000
+
 /**
  * A canvas of skia-canvas, or another object that gives its pixels as a
  * PNG file.
@@ -27,8 +39,9 @@ const FRAME_DIGITS = 6
  */
 
 /**
- * The facts of a clip, as frames.json gives them. With `alpha`, the clip
- * keeps the alpha of each pixel (MOV with the PNG codec, for an overlay
+ * The facts of a clip, as frames.json gives them: `fps` from 0.01 to 240,
+ * and a `width` and a `height` of at most 4096 pixels. With `alpha`, the
+ * clip keeps the alpha of each pixel (MOV with the PNG codec, for an overlay
  * with `video ffmpeg`); with no alpha, it is H.264 in MP4, and the width and
  * the height must be even.
  * @typedef {{ fps: number, width: number, height: number, alpha?: boolean }} ClipFacts
@@ -39,8 +52,9 @@ const FRAME_DIGITS = 6
  * frame at a time, so that the code holds one frame at a time. A frame is a
  * canvas, which the writer writes as a PNG file, or the raw RGBA pixels of
  * width × height (4 bytes for each pixel, row after row). The first frame
- * sets the kind of all the frames. `end()` writes frames.json, with the
- * count of the frames: Dez encodes no folder without it.
+ * sets the kind of all the frames, and a clip has at most 36,000 frames.
+ * `end()` writes frames.json, with the count of the frames: Dez encodes no
+ * folder without it.
  */
 export class FrameWriter {
   /** @type {string} */
@@ -64,11 +78,18 @@ export class FrameWriter {
       throw new RangeError(`FrameWriter takes the name of a clip, with only ASCII letters, digits, "-", "_", and ".": ${JSON.stringify(name)} is not one.`)
     }
     const { fps, width, height, alpha = false } = facts ?? {}
-    if (typeof fps !== 'number' || !(fps > 0) || !Number.isFinite(fps)) throw new RangeError('FrameWriter takes the frames per second of the clip as `fps`, a number above 0.')
-    if (!Number.isInteger(width) || width < 1 || !Number.isInteger(height) || height < 1) {
-      throw new RangeError('FrameWriter takes the size of the clip in pixels as `width` and `height`, whole numbers above 0.')
+    if (typeof fps !== 'number' || !(fps >= MIN_FPS && fps <= MAX_FPS)) {
+      throw new RangeError(`FrameWriter takes the frames per second of the clip as \`fps\`, a number from ${MIN_FPS} to ${MAX_FPS}.`)
+    }
+    if (!Number.isInteger(width) || width < 1 || width > MAX_SIDE || !Number.isInteger(height) || height < 1 || height > MAX_SIDE) {
+      throw new RangeError(`FrameWriter takes the size of the clip in pixels as \`width\` and \`height\`, whole numbers from 1 to ${MAX_SIDE}.`)
     }
     if (typeof alpha !== 'boolean') throw new TypeError('FrameWriter takes `alpha` as true or false.')
+    // H.264 stores the color of each 2 × 2 pixels once (4:2:0).
+    if (!alpha && (width % 2 !== 0 || height % 2 !== 0)) {
+      throw new RangeError(`FrameWriter: a clip with no alpha is H.264, which needs an even \`width\` and an even \`height\`, and ${width} × ${height} is not. `
+        + 'Give an even size, or `alpha: true` for a MOV clip of any size.')
+    }
     this.#folder = `${outputFolder}/${name}.frames`
     this.#facts = { fps, width, height, alpha }
     mkdirSync(this.#folder, { recursive: true })
@@ -80,6 +101,7 @@ export class FrameWriter {
    */
   add(frame) {
     if (this.#ended) throw new Error('FrameWriter.add came after end(): add every frame, then call end() once.')
+    if (this.#count === MAX_FRAMES) throw new RangeError(`FrameWriter takes at most ${MAX_FRAMES.toLocaleString('en-US')} frames, the most that Dez encodes into one clip.`)
     const raw = frame instanceof Uint8Array || frame instanceof Uint8ClampedArray
     if (!raw && typeof frame?.toBufferSync !== 'function') {
       throw new TypeError('FrameWriter.add takes a canvas of skia-canvas, or the raw RGBA pixels of a frame as a Uint8Array or a Uint8ClampedArray.')
