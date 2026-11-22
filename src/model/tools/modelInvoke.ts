@@ -1,3 +1,4 @@
+import { countOf } from '../../utils/countText'
 import { startOf } from '../../utils/textCut'
 import { sectionPlainText } from '../chat/content'
 import { newMediaIds } from '../chat/mediaIds'
@@ -8,10 +9,11 @@ import type { ModelCache } from '../persistence/types'
 import { unusedImagesProblem } from '../providers/clipImages'
 import type { ParameterValues } from '../providers/modelParameters'
 import type { MediaProgress } from '../providers/streamTypes'
-import { effectiveRequest, sendsPrompt, type MediaKind, type ModelInfo, type ProviderInfo } from '../providers/types'
+import { effectiveRequest, sendsPrompt, type MediaKind, type ModelInfo, type ProviderInfo, type TranscriptTimes } from '../providers/types'
 import { unstoredOutputMessage, unusableModelMessage } from '../providers/unusableModel'
 import { conversationAssets, mediaInputRules, preparedMediaRequest, promptRequestProblem, promptRequestSource, type MediaRequestInput, type PromptInput, type PromptPart, type PromptRequestSource } from '../streams/mediaRequest'
 import { chatClipsProblem } from './chatClips'
+import { WORK_VIRTUAL_ROOT } from './conversationWork'
 import { INTERMEDIATE_PARAMETER, JOB_CALL_NOTE, jobCallLabel, jobTimeoutMs, jobTimeoutParameter } from './jobs'
 import { withoutLocalPaths } from './localPaths'
 import { FIND_MODELS, namedModelTarget, parameterValuesArgument } from './modelArguments'
@@ -331,6 +333,62 @@ export function invocationTextResult(text: string): string {
   return words === ''
     ? 'The model gave no text: it found no words in the input.'
     : `The text that ${GIVEN_TEXT}:\n${words}`
+}
+
+/** The name of the file in the work folder of the conversation that holds
+ *  the times of a transcription of the clip `clipId` by the model
+ *  `modelId`. Each model gets its own file, so two models that write down
+ *  one clip at one time do not write over each other; a later call of the
+ *  same model on the same clip does. The model part has only the
+ *  characters of a file name of an app path (`is_app_file_segment`,
+ *  src-tauri/src/persistence.rs). */
+export function transcriptTimesFileName(clipId: string, modelId: string): string {
+  const model = modelId.slice(modelId.lastIndexOf('/') + 1).toLowerCase().replace(/[^a-z0-9._-]/g, '-').slice(0, 64)
+  return `transcript-${clipId}-${model}.json`
+}
+
+/** The text of the times file of a transcription: each field on its own
+ *  line, and each word and each segment on its own line, so that `apps
+ *  read` and `apps grep` show a word with its times. It is the form of the
+ *  result files of the built-in apps (`resultJson`,
+ *  src-tauri/libs/dez-media/results.js). */
+export function transcriptTimesJson({ clipId, model, text, times }: { clipId: string, model: string, text: string, times: TranscriptTimes }): string {
+  const list = (entries: readonly object[]) => (entries.length === 0 ? '[]' : `[\n${entries.map((entry) => `    ${JSON.stringify(entry)}`).join(',\n')}\n  ]`)
+  const fields: [string, string][] = [
+    ['id', JSON.stringify(clipId)],
+    ['model', JSON.stringify(model)],
+    ['duration', JSON.stringify(times.duration)],
+    ['text', JSON.stringify(text.trim())],
+    ['words', list(times.words)],
+    ['segments', list(times.segments)],
+  ]
+  return `{\n${fields.map(([key, value]) => `  "${key}": ${value}`).join(',\n')}\n}\n`
+}
+
+/** Where the times of a transcription went: the file `name` in the work
+ *  folder, or why Dez could not keep them (`noWorkFolder`: the
+ *  conversation has none; `notWritten`: the write failed). */
+export type TimesFile = { name: string } | { problem: 'noWorkFolder' | 'notWritten' }
+
+/** The result text of a job whose model wrote `text` of the clip `clipId`
+ *  with `times`: what the times cover and where they are, then the text
+ *  (`invocationTextResult`). The times go only into a file, as a long clip
+ *  has thousands of words. */
+export function invocationTimesResult(text: string, clipId: string, times: TranscriptTimes, file: TimesFile): string {
+  const { words, segments } = times
+  const counts = [...(words.length > 0 ? [countOf(words.length, 'word')] : []), ...(segments.length > 0 ? [countOf(segments.length, 'segment')] : [])].join(' and ')
+  // A loop, not Math.min(...list): a long clip has more words than a call
+  // can take as arguments.
+  const span = [...words, ...segments].reduce((range, { start, end }) => ({ start: Math.min(range.start, start), end: Math.max(range.end, end) }), { start: Infinity, end: 0 })
+  const gave = `The model gave the times of ${counts}, from ${span.start} s to ${span.end} s of @${clipId}.`
+  const where = 'name' in file
+    ? ` They are in ${WORK_VIRTUAL_ROOT}/${file.name}, a JSON object with id (the clip), model, duration (seconds, or null), text, `
+      + 'words ([{word, start, end}]), and segments ([{text, start, end}]). Each time is in seconds from the start of the clip. '
+      + 'Read the file with apps read, or with code (js_eval, a script app) in `dez.workFolder`.'
+    : file.problem === 'noWorkFolder'
+      ? ` Dez could not keep them: this conversation has no ${WORK_VIRTUAL_ROOT} folder, as its id can name no folder. This is a fault of Dez, not of your call: tell the user.`
+      : ` Dez could not write them into ${WORK_VIRTUAL_ROOT}. This is not a fault of your call: tell the user.`
+  return `${gave}${where}\n${invocationTextResult(text)}`
 }
 
 /** The state of a job whose text model gave `characters` characters of

@@ -6,7 +6,7 @@ import type { ParameterValues } from '../providers/modelParameters'
 import { providerInfo } from '../providers/testing'
 import type { ModelInfo, ProviderInfo } from '../providers/types'
 import { reply, user } from '../streams/testing'
-import { answerIsCut, DEFAULT_INVOKE_TIMEOUT_SECONDS, INVOCATION_TEXT_CAP, invocationAnswerStateText, invocationAnswerText, invocationFailedText, invocationInputsText, invocationStateText, invocationTextResult, MODEL_INVOKE_TOOL, modelInvocation, type ChatInvocation, type MediaInvocation, type ModelInvocation } from './modelInvoke'
+import { answerIsCut, DEFAULT_INVOKE_TIMEOUT_SECONDS, INVOCATION_TEXT_CAP, invocationAnswerStateText, invocationAnswerText, invocationFailedText, invocationInputsText, invocationStateText, invocationTextResult, invocationTimesResult, MODEL_INVOKE_TOOL, modelInvocation, transcriptTimesFileName, type ChatInvocation, type MediaInvocation, type ModelInvocation } from './modelInvoke'
 import { refusal } from './testing'
 import type { ToolArguments } from './types'
 
@@ -346,6 +346,23 @@ describe('the texts of a call', () => {
   it('gives the text of the model as it is, and says so when there is none', () => {
     expect(invocationTextResult('  Hello there.\nSecond line. \n')).toMatch(/\nHello there\.\nSecond line\.$/)
     expect(invocationTextResult(' \n')).toContain('no text')
+  })
+
+  // Two models can write down one clip at one time.
+  it('names the times file of a transcription by the clip and the model, with only the characters of a file name', () => {
+    expect(transcriptTimesFileName('c', 'elevenlabs/scribe-v2')).toBe('transcript-c-scribe-v2.json')
+    expect(transcriptTimesFileName('c', 'openai/whisper-large-v3')).toBe('transcript-c-whisper-large-v3.json')
+    expect(transcriptTimesFileName('ab', 'Whisper Large:v3+')).toBe('transcript-ab-whisper-large-v3-.json')
+  })
+
+  it('tells why the times are not in a file, and still gives the text', () => {
+    const times = { duration: null, words: [], segments: [{ text: 'Hi.', start: 1.5, end: 2 }] }
+    const noFolder = invocationTimesResult('Hi.', 'c', times, { problem: 'noWorkFolder' })
+
+    expect(noFolder).toContain('the times of 1 segment, from 1.5 s to 2 s of @c')
+    expect(noFolder).toContain('This is a fault of Dez')
+    expect(noFolder).toMatch(/\nHi\.$/)
+    expect(invocationTimesResult('Hi.', 'c', times, { problem: 'notWritten' })).toContain('could not write them into /work.')
   })
 
   it('tells how much text a text model gave so far', () => {

@@ -18,7 +18,7 @@ import { contextWindowOf } from '../model/providers/modelFamilies'
 import { PRICE_LIFETIME_MS } from '../model/providers/modelPrices'
 import type { ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderMediaQuote, ProviderMediaQuoteInput, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers/streamTypes'
 import { providerInfo } from '../model/providers/testing'
-import type { ModelInfo, ProviderInfo, ProviderInputImageRules, ProviderSettingsDescriptor } from '../model/providers/types'
+import type { ModelInfo, ProviderInfo, ProviderInputImageRules, ProviderSettingsDescriptor, TranscriptTimes } from '../model/providers/types'
 import { MAX_REQUEST_IMAGE_BYTES, type CallPictureBudget, type PictureBudget } from '../model/streams/pictureBudget'
 import { assetProbeArgs, clipNotReadFacts } from '../model/tools/assetFacts'
 import { ASSET_INFO_COLUMNS } from '../model/tools/assetInfo'
@@ -60,7 +60,7 @@ import { modelCost, modelInfoText, type ModelInfoFacts } from '../model/tools/mo
 import { IMAGE_NOT_SAVED_TEXT, INVOCATION_TEXT_CAP, invocationAnswerStateText, invocationAnswerText, modelInvocation } from '../model/tools/modelInvoke'
 import { modelListArguments, modelListText } from '../model/tools/modelList'
 import { TOOL_DEFINITIONS, unexpectedToolErrorText, unknownToolText } from '../model/tools/registry'
-import { jobInfo, probeOutput } from '../model/tools/testing'
+import { CONVERSATION_ID, jobInfo, probeOutput } from '../model/tools/testing'
 import type { ToolArguments, ToolRunResult } from '../model/tools/types'
 import { FFPROBE_TIMEOUT_MS } from '../model/tools/videoTool'
 import { ExplainedError } from '../utils/errorText'
@@ -68,7 +68,7 @@ import type { RequestLogRow } from './diagnostics/requestLog'
 import { TabJobs, type JobOutcome } from './jobs'
 import { invokeModel } from './modelInvoke'
 import type { BundledToolEnd } from './nativeTypes'
-import { APP_DIR, audioProgress, callContext, callingProgram, CLIP_FORMAT, deletedWorkFolder, ENDED, FILE_ID, H264_STREAM, heldWork, LONG, native, resetNative, running, showinfoLog, writes } from './testing'
+import { APP_DIR, audioProgress, callContext, callingProgram, CLIP_FORMAT, CONVERSATION_WORK_FOLDER, deletedWorkFolder, ENDED, FILE_ID, H264_STREAM, heldWork, LONG, native, resetNative, running, showinfoLog, writes } from './testing'
 import type { ToolRunCall } from './tools'
 // Side-effect imports: register the dez.model/* selectors and the selector
 // under test.
@@ -1340,7 +1340,67 @@ describe('dez.controller/tools/run', () => {
         expect(result).toContain('status="finished"')
         expect(result).toContain('Hello there.')
         expect(mediaRequests[0].clips?.map((clip) => clip.id)).toStrictEqual(['c'])
+        expect(mediaRequests[0].wordTimes).toBe(true)
         expect(written).toStrictEqual([])
+        // An answer with no times gives no file.
+        expect(native.savedFiles).toStrictEqual([])
+      })
+
+      describe('to a model that writes down speech with times', () => {
+        const TIMES: TranscriptTimes = {
+          duration: 3,
+          words: [{ word: 'Hello', start: 0.12, end: 0.4 }, { word: 'there.', start: 0.5, end: 0.9 }],
+          segments: [{ text: 'Hello there.', start: 0.12, end: 0.9 }],
+        }
+        const FILE = `${CONVERSATION_WORK_FOLDER}/transcript-c-scribe.json`
+
+        beforeEach(() => {
+          generateMedia = async () => ({ media: [], clips: [], text: ' Hello there. ', times: TIMES })
+        })
+
+        // A long clip has thousands of words: they go into a file, one on
+        // each line, and the result tells where it is.
+        it('writes the times into a file of the work folder of the conversation, and names it in the result', async () => {
+          await jobTool('model_invoke', { model: 'venice/scribe', prompt: '@c' })
+
+          const result = await jobResult()
+          expect(result).toContain('status="finished"')
+          expect(result).toContain('the times of 2 words and 1 segment, from 0.12 s to 0.9 s of @c')
+          expect(result).toContain('/work/transcript-c-scribe.json')
+          expect(result).toContain('Hello there.')
+          expect(native.createdFolders).toStrictEqual([{ root: 'app', path: CONVERSATION_WORK_FOLDER }])
+          expect(native.savedFiles.map(({ file }) => file)).toStrictEqual([{ root: 'app', path: FILE }])
+          const content = String(native.savedFiles[0].content)
+          expect(JSON.parse(content)).toStrictEqual({ id: 'c', model: 'venice/scribe', text: 'Hello there.', ...TIMES })
+          expect(content.split('\n').filter((line) => line.includes('"start"'))).toHaveLength(3)
+          expect(written).toStrictEqual([])
+        })
+
+        // The text came, and the provider took the money for it.
+        it('gives the text when the file cannot be written, and tells that the times are lost', async () => {
+          native.saveAppFile = async () => { throw new Error('No space left on device') }
+
+          await jobTool('model_invoke', { model: 'venice/scribe', prompt: '@c' })
+
+          const result = await jobResult()
+          expect(result).toContain('status="finished"')
+          expect(result).toContain('Dez could not write them into /work.')
+          expect(result).toContain('Hello there.')
+          expect(result).not.toContain('transcript-c-scribe.json')
+          expect(consoleError).toHaveBeenCalledOnce()
+        })
+
+        it('writes no file for a job that ended before the answer came', async () => {
+          const request = heldRequest()
+          const abort = new AbortController()
+          const work = invokeModel(invocationOf({ model: 'venice/scribe', prompt: '@c' }), { tabId, conversationId: CONVERSATION_ID }, abort.signal, () => {}, () => {}, () => {}, { toolsAllowed: false, checkMoney: () => {} })
+
+          abort.abort()
+          request.answer({ media: [], clips: [], text: 'Hello there.', times: TIMES })
+
+          expect((await work).text).toBe('')
+          expect(native.savedFiles).toStrictEqual([])
+        })
       })
 
       it.each([
@@ -1419,7 +1479,7 @@ describe('dez.controller/tools/run', () => {
       it('saves no image that still comes after its job ended', async () => {
         const request = heldRequest()
         const abort = new AbortController()
-        const work = invokeModel(invocationOf(PAINT), tabId, abort.signal, () => {}, () => {}, () => {}, { toolsAllowed: false, checkMoney: () => {} })
+        const work = invokeModel(invocationOf(PAINT), { tabId, conversationId: CONVERSATION_ID }, abort.signal, () => {}, () => {}, () => {}, { toolsAllowed: false, checkMoney: () => {} })
 
         abort.abort()
         request.answer({ media: [PNG], clips: [] })
@@ -1730,7 +1790,7 @@ describe('dez.controller/tools/run', () => {
             await input.onImage(PNG)
           }
 
-          expect(await invokeModel(invocationOf(SKETCH), tabId, abort.signal, () => {}, () => {}, () => {}, { toolsAllowed: false, checkMoney: () => {} })).toStrictEqual({ text: '', isError: false, assets: [] })
+          expect(await invokeModel(invocationOf(SKETCH), { tabId, conversationId: CONVERSATION_ID }, abort.signal, () => {}, () => {}, () => {}, { toolsAllowed: false, checkMoney: () => {} })).toStrictEqual({ text: '', isError: false, assets: [] })
           expect(savedImages).toStrictEqual([])
         })
 

@@ -119,6 +119,28 @@ export interface GeneratedClip {
   jobId: string | null
 }
 
+// The times that a transcription model gave with its text, in seconds from
+// the start of the clip. The key names are those of the OpenAI and Venice
+// answers, which a model knows. A model can give words, segments, or both.
+export interface TranscriptTimes {
+  // The length of the clip that the model heard; null when it tells none.
+  duration: number | null
+  words: TimedWord[]
+  segments: TimedSegment[]
+}
+
+export interface TimedWord {
+  word: string
+  start: number
+  end: number
+}
+
+export interface TimedSegment {
+  text: string
+  start: number
+  end: number
+}
+
 export interface ModelInfo {
   id: string
   name: string

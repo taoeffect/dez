@@ -504,7 +504,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     })
     context.checkMoney(invocation.kind === 'chat' ? chatRequestPrice(invocation.model.price) : { kind: 'quote', usd: 0 })
     const rights = { toolsAllowed: false, checkMoney: context.checkMoney } as const
-    return startJob(context, callSignal, MODEL_INVOKE_TOOL.name, (signal, report, reportCost, keepAsset) => invokeModel(invocation, context.tabId, signal, report, reportCost, keepAsset, rights), {
+    return startJob(context, callSignal, MODEL_INVOKE_TOOL.name, (signal, report, reportCost, keepAsset) => invokeModel(invocation, context, signal, report, reportCost, keepAsset, rights), {
       timeoutMs: invocation.timeoutMs,
       hidesAssets: isIntermediate(args),
       model: { providerId: invocation.provider.id, modelId: invocation.model.id },

@@ -2075,6 +2075,57 @@ describe('transcriptions', () => {
     ])
   })
 
+  // OpenRouter gives times only with `verbose_json`, which only some of
+  // its providers give: it asks for none.
+  it('asks Venice for the times of the words and the segments of a call that wants them, and OpenRouter for no times', () => {
+    expect([
+      MEDIA_FORMATS.venice.texts?.request('transcription', VENICE_URL, 'elevenlabs/scribe-v2', { ...input, wordTimes: true })?.form,
+      MEDIA_FORMATS.openrouter.texts?.request('transcription', OPENROUTER_URL, 'openai/whisper-1', { ...input, wordTimes: true })?.form,
+    ]).toStrictEqual([
+      [{ name: 'model', value: 'elevenlabs/scribe-v2' }, { name: 'response_format', value: 'json' }, { name: 'timestamps', value: 'true' }, FILE],
+      [{ name: 'model', value: 'openai/whisper-1' }, FILE],
+    ])
+  })
+
+  // The shapes of the answers of `elevenlabs/scribe-v2` (words) and
+  // `openai/whisper-large-v3` (segments) with `timestamps=true`.
+  it('reads the words and the segments of a Venice answer to the millisecond, and leaves out the characters and each entry that is not of their form', () => {
+    const parse = (data: unknown) => MEDIA_FORMATS.venice.texts?.parseResponse('transcription', json(data))
+
+    expect(parse({
+      text: 'Hello there.',
+      duration: 3.0000000001,
+      timestamps: {
+        word: [
+          { word: 'Hello', start: 0.12, end: 0.48000000000000004 },
+          { word: 'there.', start: 0.5, end: 0.5 },
+          { word: 'late', start: 2, end: 1 },
+          { word: 'before', start: -1, end: 0 },
+          { word: 7, start: 0, end: 1 },
+          { word: 'no end', start: 1 },
+          'loose',
+        ],
+        segment: [{ text: ' Hello there.', start: 0.12, end: 0.5 }, { start: 0, end: 1 }],
+        char: [{ char: 'H', start: 0.12, end: 0.2 }],
+      },
+    })).toStrictEqual({
+      text: 'Hello there.',
+      times: {
+        duration: 3,
+        words: [{ word: 'Hello', start: 0.12, end: 0.48 }, { word: 'there.', start: 0.5, end: 0.5 }],
+        segments: [{ text: ' Hello there.', start: 0.12, end: 0.5 }],
+      },
+    })
+    expect(parse({ text: 'Hi.', timestamps: { segment: [{ text: 'Hi.', start: 0, end: 1 }] } })?.times?.duration).toBeNull()
+  })
+
+  it('gives no times for a Venice answer with no timed entry', () => {
+    expect([
+      MEDIA_FORMATS.venice.texts?.parseResponse('transcription', json({ text: 'Hi.', timestamps: { word: [], segment: [{ text: 'Hi.' }], char: [{ char: 'H', start: 0, end: 1 }] } })),
+      MEDIA_FORMATS.venice.texts?.parseResponse('transcription', json({ text: 'Hi.', timestamps: 'none' })),
+    ]).toStrictEqual([{ text: 'Hi.' }, { text: 'Hi.' }])
+  })
+
   it.each(['venice', 'openrouter'] as const)('reads the text of a %s answer as it is, and an empty text as the transcript of a clip with no speech', (format) => {
     const parse = (data: unknown) => MEDIA_FORMATS[format].texts?.parseResponse('transcription', json(data))
 

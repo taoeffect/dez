@@ -16,7 +16,7 @@ import { modelTokenPrice } from './modelPrices'
 import { isRecord, modelCapability, modelCount, modelData, modelOutputsAndRequest, modelReadableName, modelReleased, unsupportedSettings } from './modelParsing'
 import { isThinkingEnabled, modelToggles, toggleValue, type ToggleModel } from './modelToggles'
 import { multipartBody, type MultipartField } from './multipart'
-import { ProviderError, effectiveRequest, isClipKind, isTextKind, providerModel, type ChatMessage, type ChatRequestContext, type ClipKind, type GeneratedMedia, type ImageKind, type MediaKind, type ModelInfo, type ProviderInfo, type TextKind } from './types'
+import { ProviderError, effectiveRequest, isClipKind, isTextKind, providerModel, type ChatMessage, type ChatRequestContext, type ClipKind, type GeneratedMedia, type ImageKind, type MediaKind, type ModelInfo, type ProviderInfo, type TextKind, type TranscriptTimes } from './types'
 
 export interface ProviderOptions {
   builtIn: boolean
@@ -394,9 +394,11 @@ export class Provider {
     return this.mediaApiRequest(this.withModelBody(kind, modelId, this.textFormat().request(kind, this.config.baseUrl, modelId, input)), secret)
   }
 
-  // The text of the body of a 2xx response to `textRequest`, with the
-  // price of the request when the answer tells it.
-  textResult(kind: TextKind, body: Uint8Array): { text: string } & AnswerCost {
+  // The text of the body of a 2xx response to `textRequest`, with the times
+  // of its words and segments when the request asked for them
+  // (`MediaInput.wordTimes`) and the answer holds some, and the price of
+  // the request when the answer tells it.
+  textResult(kind: TextKind, body: Uint8Array): { text: string, times?: TranscriptTimes } & AnswerCost {
     return this.textFormat().parseResponse(kind, body)
   }
 

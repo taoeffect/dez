@@ -4,7 +4,7 @@ import type { ChatUsage } from './chatUsage'
 import type { ClipAttachment } from './clipInputs'
 import type { ParameterValues } from './modelParameters'
 import type { RequestReader } from './requestReader'
-import type { ChatRequestContext, GeneratedClip, GeneratedMedia, MediaKind, ProviderId } from './types'
+import type { ChatRequestContext, GeneratedClip, GeneratedMedia, MediaKind, ProviderId, TranscriptTimes } from './types'
 
 // A message as dez.provider/streamChat takes it: an image part holds the
 // path of a stored image, and streamChat reads its bytes before it builds
@@ -120,6 +120,9 @@ export interface ProviderGenerateMediaInput {
   // by parameter name. A parameter with no value here, or with one that
   // the model does not take, gets its default.
   parameters?: Readonly<ParameterValues>
+  // A transcription asks for the times of its words and segments, where
+  // the provider's media API can give them (`MediaInput.wordTimes`).
+  wordTimes?: true
   // dez.http/cancelStream with this id cancels the request that runs. A
   // clip can take many requests, one after the other, and a wait between
   // them; `signal` stops all of that.
@@ -153,6 +156,9 @@ export interface ProviderGenerateMediaResult {
   clips: GeneratedClip[]
   // The text that the model wrote (a transcription), which can be empty.
   text?: string
+  // With `wordTimes`: the times that the model gave with `text`. Absent
+  // when it gave none, or when the API cannot give them.
+  times?: TranscriptTimes
   // The price in USD of the request: the one that the provider's answer
   // tells, else the quote of the `sent` step. Absent when Dez knows none.
   cost?: number

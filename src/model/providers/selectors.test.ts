@@ -113,6 +113,8 @@ const BROKEN_STREAM = [
 // upscale with the image's bytes, and a transcription with JSON, each in
 // two chunks. The file host answers the same way. The OpenRouter-format
 // image request (`/images`) gets JSON with the price of the request.
+// Like Venice, it gives the times of a transcription only to a form that
+// asks for them (`#timestamps`).
 const MEDIA_BASE_URL = 'http://localhost:5050/api/v1'
 const WEBP_IMAGE = new TextEncoder().encode('RIFF\x0c\x00\x00\x00WEBPVP8 ')
 const JPEG_IMAGE = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0, 1])
@@ -124,10 +126,19 @@ const MEDIA_ANSWERS = new Map([
   [`${MEDIA_BASE_URL}/image/multi-edit`, { contentType: 'image/png', body: STORED_IMAGE }],
   [`${MEDIA_BASE_URL}/image/upscale`, { contentType: 'image/png', body: STORED_IMAGE }],
   [`${MEDIA_BASE_URL}/audio/transcriptions`, { contentType: 'application/json', body: new TextEncoder().encode(JSON.stringify({ text: ' Hello there. ', duration: 3 })) }],
+  [`${MEDIA_BASE_URL}/audio/transcriptions#timestamps`, {
+    contentType: 'application/json',
+    body: new TextEncoder().encode(JSON.stringify({ text: ' Hello there. ', duration: 3, timestamps: { word: [{ word: 'Hello', start: 0.1, end: 0.4 }, { word: 'there.', start: 0.5, end: 0.9 }] } })),
+  }],
   [`${MEDIA_BASE_URL}/images`, { contentType: 'application/json', body: new TextEncoder().encode(JSON.stringify({ data: [{ b64_json: bytesToBase64(WEBP_IMAGE) }], usage: { cost: ANSWERED_IMAGE_COST } })) }],
   [HOSTED_IMAGE_URL, { contentType: 'image/jpeg', body: JPEG_IMAGE }],
   [HOSTED_PAGE_URL, { contentType: 'image/jpeg', body: new TextEncoder().encode('<html>Not here</html>') }],
 ])
+
+// The form of a multipart request, as a server reads it.
+async function requestForm({ headers, body }: NativeHttpRequest): Promise<FormData> {
+  return await new Response(typeof body === 'object' ? base64ToBytes(body.base64) : body, { headers }).formData()
+}
 
 // The reply of this chat server is text, then one image for each of
 // `painterImageUrls` (each in a chunk of its own, as OpenRouter sends
@@ -225,7 +236,8 @@ sbp('sbp/selectors/register', {
     streamRequests.push(request)
     streamRequestIds.push(requestId)
     if (request.url.startsWith(CLOSED_BASE_URL)) throw new NativeHttpError(`error sending request for url (${request.url})`)
-    const media = MEDIA_ANSWERS.get(request.url)
+    const timed = request.url === `${MEDIA_BASE_URL}/audio/transcriptions` && (await requestForm(request)).get('timestamps') === 'true'
+    const media = MEDIA_ANSWERS.get(timed ? `${request.url}#timestamps` : request.url)
     if (media) {
       const half = media.body.length >> 1
       return {
@@ -1873,13 +1885,30 @@ describe('media requests', () => {
       audioSeconds = 3
 
       const result = await generate({ modelId: 'whisper', kind: 'transcription', clips: [clip('audio', 'a1', 'audio/mpeg')], requestId: 'reply-1' })
-      const [{ url, headers, body }] = streamRequests
-      const form = await new Response(typeof body === 'object' ? base64ToBytes(body.base64) : body, { headers }).formData()
+      const [request] = streamRequests
+      const form = await requestForm(request)
       const file = form.get('file')
 
       expect(result).toStrictEqual({ media: [], clips: [], text: ' Hello there. ' })
-      expect([streamRequestIds, url, downloadRequests]).toStrictEqual([['reply-1'], `${MEDIA_BASE_URL}/audio/transcriptions`, []])
+      expect([streamRequestIds, request.url, downloadRequests]).toStrictEqual([['reply-1'], `${MEDIA_BASE_URL}/audio/transcriptions`, []])
       expect(file instanceof Blob && new Uint8Array(await file.arrayBuffer())).toStrictEqual(MP3_AUDIO)
+      expect(form.get('timestamps')).toBeNull()
+    })
+
+    it('asks for the times of the words of a transcription that wants them, and gives them with the text', async () => {
+      useTranscriptionModel()
+      clipFiles = { a1: MP3_AUDIO }
+      audioSeconds = 3
+
+      const result = await generate({ modelId: 'whisper', kind: 'transcription', clips: [clip('audio', 'a1', 'audio/mpeg')], wordTimes: true })
+
+      expect((await requestForm(streamRequests[0])).get('timestamps')).toBe('true')
+      expect(result).toStrictEqual({
+        media: [],
+        clips: [],
+        text: ' Hello there. ',
+        times: { duration: 3, words: [{ word: 'Hello', start: 0.1, end: 0.4 }, { word: 'there.', start: 0.5, end: 0.9 }], segments: [] },
+      })
     })
 
     it('refuses a transcription with no audio clip before any request', async () => {

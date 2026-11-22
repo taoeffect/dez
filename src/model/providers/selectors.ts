@@ -690,7 +690,9 @@ export default sbp('sbp/selectors/register', {
   //   a later call with more images rejects before any request
   //   (`learnedImagesProblem`).
   // - A text (a transcription of an audio clip): one request through
-  //   dez.http/stream, and the text of its answer in `text`.
+  //   dez.http/stream, and the text of its answer in `text`. With
+  //   `input.wordTimes`, a format that can ask for times does, and `times`
+  //   holds those that the answer gives.
   //
   // Before an image or a clip request goes, Dez gets its price at no cost
   // (`mediaRequestQuote`): `beforeSend` and the `sent` step tell it, and
@@ -761,13 +763,13 @@ export default sbp('sbp/selectors/register', {
       const clipParts = await inputClipParts(modelName, cachedModel?.clips, clips, signal, reader)
 
       if (isTextKind(kind)) {
-        const request = provider.textRequest(kind, modelId, { prompt: input.prompt, images, clips: clipParts, values }, await requestSecret(provider))
+        const request = provider.textRequest(kind, modelId, { prompt: input.prompt, images, clips: clipParts, values, ...(input.wordTimes && { wordTimes: true }) }, await requestSecret(provider))
         signal?.throwIfAborted()
         send()
         const { response, chunks } = await sbp('dez.http/stream', request, requestId) as NativeHttpStreamResult
         await assertStreamResponseOk(provider, response, chunks)
-        const { text, cost } = provider.textResult(kind, await readNativeChunkBytes(chunks))
-        return { media: [], clips: [], text, ...priced(cost) }
+        const { text, times, cost } = provider.textResult(kind, await readNativeChunkBytes(chunks))
+        return { media: [], clips: [], text, ...(times && { times }), ...priced(cost) }
       }
 
       if (!isClipKind(kind)) {

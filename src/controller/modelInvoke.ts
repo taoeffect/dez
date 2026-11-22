@@ -1,12 +1,14 @@
 import sbp from '@sbp/sbp'
+import { modelRefKey } from '../model/chat/modelRef'
 import { chatRequestPrice, type RequestPrice } from '../model/chat/moneyLimit'
 import { failedChatRequestCost, type ChatUsage } from '../model/providers/chatUsage'
 import { TooManyImagesError, tooManyImagesMessage } from '../model/providers/clipImages'
 import { InputImageError, isProviderRefusal } from '../model/providers/errors'
 import type { MediaProgress, ProviderGenerateMediaResult, ProviderStreamChatResult } from '../model/providers/streamTypes'
-import type { GeneratedClip, GeneratedMedia } from '../model/providers/types'
+import type { GeneratedClip, GeneratedMedia, TranscriptTimes } from '../model/providers/types'
 import { requestImageCount } from '../model/streams/pictureBudget'
 import type { StreamMessage } from '../model/streams/types'
+import { conversationWorkFolder } from '../model/tools/conversationWork'
 import { unreadableImageText } from '../model/tools/imageTool'
 import {
   answerIsCut,
@@ -17,6 +19,9 @@ import {
   invocationFailedText,
   invocationStateText,
   invocationTextResult,
+  invocationTimesResult,
+  transcriptTimesFileName,
+  transcriptTimesJson,
   undrawnImageText,
   type ChatInvocation,
   type MediaInvocation,
@@ -74,10 +79,35 @@ export interface InvocationRights {
   toolsAllowed: false
 }
 
+// The result text of a transcription that came with `times`. Dez writes the
+// times into the work folder of the conversation, as a long clip has too
+// many words for the result of a job. A write that fails loses only the
+// times: the text came, and the request is paid, so the job does not fail.
+async function timesResultText({ provider, model, request }: MediaInvocation, conversationId: string, text: string, times: TranscriptTimes): Promise<string> {
+  // The one source clip of the request (`ModelInfo.clips`).
+  const clipId = request.clips[0]?.id
+  if (clipId === undefined) return invocationTextResult(text)
+  const folder = conversationWorkFolder(conversationId)
+  if (folder === null) return invocationTimesResult(text, clipId, times, { problem: 'noWorkFolder' })
+  const name = transcriptTimesFileName(clipId, model.id)
+  try {
+    // Only the user can open the folder; a save makes a missing folder with
+    // the default mode.
+    await sbp('dez.native/createFolder', folder, 'app')
+    await sbp('dez.native/saveAppFile', `${folder}/${name}`, transcriptTimesJson({ clipId, model: modelRefKey({ providerId: provider.id, modelId: model.id }), text, times }), 'app')
+  } catch (error) {
+    console.error('Failed to write the times of a transcription into the work folder of its conversation:', error)
+    return invocationTimesResult(text, clipId, times, { problem: 'notWritten' })
+  }
+  return invocationTimesResult(text, clipId, times, { name })
+}
+
 // The one media request of `invocation`, as the work of its job.
 // - An image is saved in the generated image folder, and a clip stays at
 //   the provider's URL or in a temp copy, as in a reply of a media model.
-// - A text (a transcription) is the result text of the job.
+// - A text (a transcription) is the result text of the job. A
+//   transcription asks for the times of its words, which go into a file in
+//   the work folder of `conversationId` (`timesResultText`).
 // - `report` gets each step of the request, with the provider's own job id
 //   as soon as there is one.
 // - `reportCost` gets the quote when the request goes, then the cost of
@@ -87,7 +117,7 @@ export interface InvocationRights {
 //   answer that Dez cannot use, the time limit): the provider can have
 //   taken the money. A stopped or timed-out job keeps its quote too:
 //   `TabJobs` takes no report after the end of a job.
-async function invokeMediaModel(invocation: MediaInvocation, signal: AbortSignal, report: JobReport, reportCost: (usd: number | null) => void, { checkMoney }: InvocationRights): Promise<JobOutcome> {
+async function invokeMediaModel(invocation: MediaInvocation, conversationId: string, signal: AbortSignal, report: JobReport, reportCost: (usd: number | null) => void, { checkMoney }: InvocationRights): Promise<JobOutcome> {
   const { provider, model, kind, request, parameters, timeoutMs } = invocation
   report(INVOCATION_READS_INPUTS)
   let sent = false
@@ -103,6 +133,7 @@ async function invokeMediaModel(invocation: MediaInvocation, signal: AbortSignal
       ...(request.lyrics !== undefined && { lyrics: request.lyrics }),
       images: request.images,
       clips: request.clips,
+      ...(kind === 'transcription' && { wordTimes: true as const }),
       parameters,
       signal,
       timeoutMs,
@@ -141,7 +172,8 @@ async function invokeMediaModel(invocation: MediaInvocation, signal: AbortSignal
     await discardMadeAssets(assets)
     throw new ToolError(IMAGE_NOT_SAVED_TEXT, '', { cause: error })
   }
-  return { text: result.text === undefined ? '' : invocationTextResult(result.text), isError: false, assets }
+  if (result.text === undefined) return { text: '', isError: false, assets }
+  return { text: result.times ? await timesResultText(invocation, conversationId, result.text, result.times) : invocationTextResult(result.text), isError: false, assets }
 }
 
 // The one chat request of `invocation`, as the work of its job: the one
@@ -265,9 +297,10 @@ async function invokeTextModel(
 /** The work of the job of a `model_invoke` call (`JobWork`): sends the one
  *  request of `invocation` (a media request, or a chat request to a text
  *  model), and gives what the model made. `tabId` is the tab of the call,
- *  which the developer's request log names, and `rights` is what the
- *  caller lets the invoked model do (the money limit of the tab, and the
- *  tools of an invoked text model).
+ *  which the developer's request log names, `conversationId` the
+ *  conversation of that tab, whose work folder gets the times of a
+ *  transcription, and `rights` is what the caller lets the invoked model
+ *  do (the money limit of the tab, and the tools of an invoked text model).
  *
  *  - An image and a clip are the assets of the job. The reader of the
  *    job's result writes them into the reply (`writeJobAssets`), with a
@@ -287,7 +320,7 @@ async function invokeTextModel(
  *  files of a result that still comes. */
 export function invokeModel(
   invocation: ModelInvocation,
-  tabId: string,
+  { tabId, conversationId }: { tabId: string, conversationId: string },
   signal: AbortSignal,
   report: JobReport,
   reportCost: (usd: number | null) => void,
@@ -296,5 +329,5 @@ export function invokeModel(
 ): Promise<JobOutcome> {
   return invocation.kind === 'chat'
     ? invokeTextModel(invocation, tabId, signal, report, reportCost, keepAsset, rights)
-    : invokeMediaModel(invocation, signal, report, reportCost, rights)
+    : invokeMediaModel(invocation, conversationId, signal, report, reportCost, rights)
 }
