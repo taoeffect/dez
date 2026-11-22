@@ -20,6 +20,7 @@ import {
   invokeLabel,
   listedOutputs,
   NO_APP_OUTPUTS,
+  runNativeCanvas,
   SaveCount,
   savedFileType,
   type AppOutputs,
@@ -29,6 +30,7 @@ import {
 import { APP_RUN_MAX_OUTPUT_BYTES, APP_RUN_MAX_OUTPUT_FILES } from './appsTool'
 import { JS_EVAL_OUTPUT_BYTES, textForModel, type RunOutcome } from './jsEval'
 import { appsArgs, CONVERSATION, fileTree, FOLDER_FACTS, folderTree, MISSING_TREE, notesManifest, PNG_BYTES, refusal, textBytes, WAV_BYTES } from './testing'
+import { SHIPPED_FONTS } from './videoFonts'
 
 const NOT_STARTED = 'Dez started no job.'
 
@@ -254,6 +256,41 @@ describe('checkInvokeTarget', () => {
   })
 })
 
+describe('runNativeCanvas', () => {
+  const call = invoke({ name: 'notes' })
+  const manifestWith = (native: unknown, kind = 'script') => textBytes(JSON.stringify({ name: 'notes', description: 'Draws notes.', kind, native }))
+
+  it('lets a script app load skia-canvas only when its manifest asks for it', () => {
+    expect(runNativeCanvas(call, 'script', manifestWith(['skia-canvas']))).toBe(true)
+    expect(runNativeCanvas(call, 'script', manifestWith(['skia-canvas', 'skia-canvas']))).toBe(true)
+    expect(runNativeCanvas(call, 'script', manifestWith([]))).toBe(false)
+    expect(runNativeCanvas(call, 'script', notesManifest('script'))).toBe(false)
+  })
+
+  it('refuses a field that is no list, and a name of another library, by the path of the manifest', () => {
+    for (const [native, problem] of [
+      ['skia-canvas', 'it must be a list of names of native libraries'],
+      [{ 'skia-canvas': true }, 'it must be a list of names of native libraries'],
+      [['skia-canvas', 'sharp'], 'it names "sharp", and the one native library that a script app can load is "skia-canvas"'],
+      [[7], 'it names a value that is no name'],
+    ] as const) {
+      const text = refusal(() => runNativeCanvas(call, 'script', manifestWith(native)))
+
+      expect(text).toContain(`The field "native" of /apps/notes/manifest.json is not valid: ${problem}`)
+      expect(text).toContain('write the field as "native": ["skia-canvas"]; else delete it.')
+      expect(text.endsWith(NOT_STARTED)).toBe(true)
+    }
+  })
+
+  it('refuses the field in the manifest of a UI app, and takes an empty list there', () => {
+    const text = refusal(() => runNativeCanvas(call, 'ui', manifestWith(['skia-canvas'], 'ui')))
+
+    expect(text).toContain('/apps/notes/manifest.json has the field "native", which only a script app takes')
+    expect(text).toContain('Delete the field.')
+    expect(runNativeCanvas(call, 'ui', manifestWith([], 'ui'))).toBe(false)
+  })
+})
+
 describe('fileUrl', () => {
   it.each([
     ['/home/u/.config/dez/apps/notes/main.ts', 'file:///home/u/.config/dez/apps/notes/main.ts'],
@@ -268,9 +305,9 @@ describe('fileUrl', () => {
 })
 
 describe('appRunDescription', () => {
-  const folders = { run: '/home/u/.cache/dez/work/w1', app: '/home/u/.config/dez/apps/notes', work: '/home/u/.config/dez/work/c1' }
+  const folders = { run: '/home/u/.cache/dez/work/w1', app: '/home/u/.config/dez/apps/notes', work: '/home/u/.config/dez/work/c1', fonts: '/usr/lib/dez/fonts' }
 
-  it('tells the main file as a URL, the parameters, the copy of each input, and the three folders of the code', () => {
+  it('tells the main file as a URL, the parameters, the copy of each input, the three folders of the code, and the fonts', () => {
     const call = invoke({ name: 'notes', parameters: { columns: 4 }, inputs: '@c @a' })
 
     expect(JSON.parse(appRunDescription(call, folders))).toStrictEqual({
@@ -284,7 +321,18 @@ describe('appRunDescription', () => {
       outputFolder: '/home/u/.cache/dez/work/w1/output',
       appFolder: '/home/u/.config/dez/apps/notes',
       workFolder: '/home/u/.config/dez/work/c1',
+      fonts: expect.any(Array),
     })
+  })
+
+  it('lists each font that Dez ships, in the order of its manifest, with its weight and the path of its file', () => {
+    const { fonts } = JSON.parse(appRunDescription(invoke({ name: 'notes' }), folders)) as { fonts: { file: string }[] }
+
+    expect(fonts.map(({ file }) => file)).toStrictEqual(SHIPPED_FONTS.map(({ file }) => file))
+    expect(fonts.slice(0, 2)).toStrictEqual([
+      { file: 'NotoSans-Regular.ttf', family: 'Noto Sans', weight: 400, scripts: 'Latin, Greek, Cyrillic', path: '/usr/lib/dez/fonts/NotoSans-Regular.ttf' },
+      { file: 'NotoSans-Bold.ttf', family: 'Noto Sans', weight: 700, scripts: 'Latin, Greek, Cyrillic', path: '/usr/lib/dez/fonts/NotoSans-Bold.ttf' },
+    ])
   })
 
   it('holds no path of the file of an input', () => {
@@ -436,10 +484,10 @@ const asIs = (text: string) => text
 
 describe('appRunOutcome', () => {
   it('gives the returned value as it is, and tells of a run that returned none or a blank one', () => {
-    expect(appRunOutcome(EXITED, { type: 'result', text: 'Made 3 notes.' }, false)).toStrictEqual({ isError: false, lead: null, given: { text: 'Made 3 notes.', name: 'returned value' }, advice: [] })
+    expect(appRunOutcome(EXITED, { type: 'result', text: 'Made 3 notes.' }, false, false)).toStrictEqual({ isError: false, lead: null, given: { text: 'Made 3 notes.', name: 'returned value' }, advice: [] })
 
     for (const text of [undefined, '', ' \n ']) {
-      const outcome = appRunOutcome(EXITED, text === undefined ? { type: 'result' } : { type: 'result', text }, true)
+      const outcome = appRunOutcome(EXITED, text === undefined ? { type: 'result' } : { type: 'result', text }, true, false)
 
       expect([outcome.isError, outcome.given]).toStrictEqual([false, null])
       expect(outcome.lead).not.toBeNull()
@@ -447,33 +495,47 @@ describe('appRunOutcome', () => {
   })
 
   it('gives the error of the code, and the limits of the sandbox only for an error that names a flag of Deno', () => {
-    const thrown = appRunOutcome(EXITED, { type: 'error', text: 'TypeError: notes is not iterable\n    at main (/apps/notes/main.ts:4:9)' }, false)
+    const thrown = appRunOutcome(EXITED, { type: 'error', text: 'TypeError: notes is not iterable\n    at main (/apps/notes/main.ts:4:9)' }, false, false)
     expect(thrown.isError).toBe(true)
     expect(thrown.given?.text).toContain('notes is not iterable')
     expect(thrown.lead).toContain('Dez kept no file of the run.')
     expect(thrown.advice).toStrictEqual([])
 
-    const refused = appRunOutcome(EXITED, { type: 'error', text: 'NotCapable: Requires read access to "./state.json", run again with the --allow-read flag' }, false)
+    const refused = appRunOutcome(EXITED, { type: 'error', text: 'NotCapable: Requires read access to "./state.json", run again with the --allow-read flag' }, false, false)
     expect(refused.advice).toHaveLength(1)
     expect(refused.advice[0]).toContain('dez.appFolder')
     expect(refused.advice[0]).toContain('A relative path does not work.')
   })
 
+  // skia-canvas reads environment variables when it loads, and then its
+  // native file; Deno refuses both to a run whose manifest does not ask
+  // for it.
+  it('tells an app that loads skia-canvas with no field "native" to add the field, and an app with it the limits of the sandbox', () => {
+    const envRefused = 'NotCapable: Requires env access to "https_proxy", run again with the --allow-env flag\n'
+      + '    at Object.<anonymous> (file:///opt/dez/libs/skia-canvas/lib/urls.js:8:15)'
+    const withoutField = appRunOutcome(EXITED, { type: 'error', text: envRefused }, false, false)
+    expect(withoutField.advice).toHaveLength(1)
+    expect(withoutField.advice[0]).toContain('Add that field to the manifest.json of the app, and run the app again.')
+    expect(withoutField.advice[0]).toContain('"native": ["skia-canvas"]')
+
+    expect(appRunOutcome(EXITED, { type: 'error', text: envRefused }, false, true).advice[0]).toContain('A relative path does not work.')
+  })
+
   it('tells why a run with no line ended', () => {
-    const tooMuch = appRunOutcome({ kind: 'outputTooLarge' }, null, true)
+    const tooMuch = appRunOutcome({ kind: 'outputTooLarge' }, null, true, false)
     expect([tooMuch.isError, tooMuch.given]).toStrictEqual([true, null])
     expect(tooMuch.lead).toContain(byteSizeText(JS_EVAL_OUTPUT_BYTES))
 
-    const killed = appRunOutcome({ kind: 'exited', code: null }, null, false)
+    const killed = appRunOutcome({ kind: 'exited', code: null }, null, false, false)
     expect(killed.isError).toBe(true)
     expect(killed.lead).toContain('memory')
     expect(killed.lead).toContain('wrote nothing to the console')
 
-    const exited = appRunOutcome({ kind: 'exited', code: 1 }, null, true)
+    const exited = appRunOutcome({ kind: 'exited', code: 1 }, null, true, false)
     expect(exited.isError).toBe(true)
     expect(exited.lead).toContain('exit code 1')
     expect(exited.lead).toContain('The console output tells which.')
-    expect(appRunOutcome({ kind: 'exited', code: 1 }, null, false).lead).toContain('wrote nothing to the console')
+    expect(appRunOutcome({ kind: 'exited', code: 1 }, null, false, false).lead).toContain('wrote nothing to the console')
   })
 })
 
@@ -525,7 +587,7 @@ describe('appRunResult', () => {
     expect(isError).toBe(true)
     expect(text.startsWith(`${problem} The app returned:\nMade the sheet.`)).toBe(true)
 
-    const noValue = appRunResult(appRunOutcome(EXITED, { type: 'result' }, false), '', asIs, outputs({ problem }))
+    const noValue = appRunResult(appRunOutcome(EXITED, { type: 'result' }, false, false), '', asIs, outputs({ problem }))
     expect(noValue.isError).toBe(true)
     expect(noValue.text).toBe(`${problem} The app ended with no error and returned no value.`)
   })
@@ -534,7 +596,7 @@ describe('appRunResult', () => {
     const runFolder = '/home/ann/.cache/dez/work/w1'
     const workFolder = '/home/ann/.config/dez/work/c1'
     const forModel = (text: string) => textForModel(text, { run: [runFolder], apps: ['/home/ann/.config/dez/apps'], work: [workFolder] })
-    const thrown = appRunOutcome(EXITED, { type: 'error', text: 'Error: no file /home/ann/.config/dez/apps/notes/state.json\n    at main (file:///home/ann/.config/dez/apps/notes/main.ts:7:11)' }, true)
+    const thrown = appRunOutcome(EXITED, { type: 'error', text: 'Error: no file /home/ann/.config/dez/apps/notes/state.json\n    at main (file:///home/ann/.config/dez/apps/notes/main.ts:7:11)' }, true, false)
     const { text, isError } = appRunResult(thrown, `wrote ${runFolder}/output/a.png and ${workFolder}/cache.json\n`, forModel, NO_APP_OUTPUTS)
 
     expect(isError).toBe(true)

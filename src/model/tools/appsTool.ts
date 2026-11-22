@@ -4,7 +4,7 @@ import { oneLineCut } from '../../utils/oneLineCut'
 import { startOf } from '../../utils/textCut'
 import { searchTerms, textMatches } from '../textSearch'
 import { APP_HANDLER_EXAMPLE, APP_READ_ASSET, APP_RUN_FRAME_SIZE, APP_SAVE_ASSET } from './appBridge'
-import { APP_KINDS, BUILT_IN_APP_PREFIX, isAppName, isBuiltInApp, MANIFEST_FILE, MANIFEST_MAX_BYTES, MAX_DESCRIPTION_LENGTH, parseAppManifest, UNKNOWN_APP_KIND, type AppKind, type AppManifest, type ListedAppKind } from './appManifest'
+import { APP_KINDS, BUILT_IN_APP_PREFIX, isAppName, isBuiltInApp, MANIFEST_FILE, MANIFEST_MAX_BYTES, MAX_DESCRIPTION_LENGTH, NATIVE_CANVAS_LIBRARY, parseAppManifest, UNKNOWN_APP_KIND, type AppKind, type AppManifest, type ListedAppKind } from './appManifest'
 import { appTemplateFiles, SCRIPT_MAIN_FILE, UI_CLIENT_SCRIPT_TAG, UI_INDEX_FILE, UI_OWN_SCRIPT_TAG } from './appTemplates'
 import { unknownValuesText } from './arguments'
 import { conversationWorkFolder, WORK_VIRTUAL_ROOT } from './conversationWork'
@@ -202,7 +202,7 @@ const INVOKE_HELP = `Runs the code of an app on the user's computer, with the pa
   + 'A script app runs in a sandbox (Deno). '
   + `The run calls the default export of ${SCRIPT_MAIN} with two arguments, \`(parameters, dez)\`, and waits for its promise. `
   + 'The value that the function returns is the result of the job: a string as it is, JSON data as JSON, and any other value as Deno shows it. '
-  + 'What the code writes with `console.log` comes after it. `parameters` is the object of the call. `dez` has three members:\n'
+  + 'What the code writes with `console.log` comes after it. `parameters` is the object of the call. `dez` has five members:\n'
   + '- `dez.inputs`: one `{ id, kind, type, path }` for each id of `inputs`, in their order. `kind` is "image", "audio", or "video", `type` is the media type, '
   + 'and `path` is the path of a copy of the file. A change of the copy changes nothing of the image or the clip. '
   + 'When the run decodes its clips (`decode`), each clip also has the facts of its decoded files, `audio` and `frames`.\n'
@@ -211,11 +211,18 @@ const INVOKE_HELP = `Runs the code of an app on the user's computer, with the pa
   + `at most ${APP_RUN_MAX_OUTPUT_FILES} files of one run, and at most ${byteSizeText(APP_RUN_MAX_OUTPUT_BYTES)} for one file. A run that fails keeps no file.\n`
   + '- `dez.appFolder`: the path of the folder of the app. The code reads and writes the files of its app there, and they stay for the next run: '
   + 'keep the state of an app in a file of this folder.\n'
-  + 'The code can open only two places: the folder of its app, and the run folder (the copies of the inputs and the output folder), which Dez deletes after the run. '
+  + `- \`dez.workFolder\`: the path of the work folder of this conversation, which the file subcommands name ${WORK_VIRTUAL_ROOT}/. Its files stay for the next run and for the other tools.\n`
+  + '- `dez.fonts`: the fonts that Dez ships, one `{ file, family, weight, scripts, path }` for each font file.\n'
+  + 'The code can open only three places: the folder of its app, the run folder (the copies of the inputs and the output folder), which Dez deletes after the run, '
+  + `and the work folder. It can also read the libraries of ${LIBS_VIRTUAL_ROOT}/ and the fonts of \`dez.fonts\`. `
   + 'Build each path from a path of `dez`, as in `${dez.outputFolder}/chart.png`: a relative path does not work. '
   + 'The code has no network and no environment variables, and it can start no program; no flag changes that. '
   + 'It can import the other files of its app (`import { parse } from "./parse.ts"`) and the built-in modules (`node:fs`), '
   + 'but no package of npm, of JSR, or from a URL. '
+  + `To draw with ${NATIVE_CANVAS_LIBRARY} (\`import { Canvas } from "${NATIVE_CANVAS_LIBRARY}"\`), the ${MANIFEST_FILE} of the app must have the field \`"native": ["${NATIVE_CANVAS_LIBRARY}"]\`, `
+  + 'and each canvas must draw with no GPU: `new Canvas(1280, 720, { gpu: false })`. The run sees no font of the computer, so a canvas draws text only after '
+  + '`const families = useShippedFonts(dez.fonts)` (`import { useShippedFonts } from "dez-media/canvas"`). It returns a list of every shipped family for `ctx.font`, '
+  + 'which draws each script that the fonts cover, as in ``ctx.font = `bold 48px ${families}` ``; a family of `dez.fonts` alone draws only its own scripts. '
   + 'Some file calls fail in the sandbox: a rename or a hard link from one folder to another (copy the file, then delete the old one), '
   + '`Deno.chmod`, `Deno.utime`, `Deno.symlink`, and `Deno.watchFs`. '
   + 'The code calls no Dez tool (it has no `dez.sbp`): call the tools yourself, before or after the run. '

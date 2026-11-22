@@ -8,6 +8,7 @@
     "@kurkle/color": "./kurkle-color/dist/color.esm.js",
     "fft.js": "./fft.js/lib/fft.esm.js",
     "skia-canvas": "./skia-canvas/lib/mod.mjs",
-    "dez-media": "./dez-media/mod.js"
+    "dez-media": "./dez-media/mod.js",
+    "dez-media/canvas": "./dez-media/canvas.js"
   }
 }

@@ -37,6 +37,11 @@ import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolC
 // - a built-in app runs from the bundle of the debug build, with the
 //   decode of its manifest, and writes its result file into the work
 //   folder of the conversation;
+// - an app whose manifest has `"native": ["skia-canvas"]` draws text with
+//   skia-canvas and the fonts that Dez ships (`useShippedFonts` of
+//   dez-media/canvas), and a text of the run names a font by the name of
+//   its file; the run of an app without the field cannot load skia-canvas,
+//   and its result tells the model to add the field;
 // - a run with `is_intermediate` hides its asset under the chip of its
 //   call;
 // - a call that names no app, or an app without the file that a run
@@ -171,6 +176,32 @@ const BURSTS_WAV = monoWav(Buffer.from(Int16Array.from({ length: 2 * WAV_SAMPLE_
 }).buffer), 2)
 // The color of `WEBM_VIDEO`.
 const VIDEO_COLOR = [0x2a, 0x7f, 0xd4]
+
+// The code of the `title` app: it draws a line of text in three scripts
+// with skia-canvas and the fonts that Dez ships, counts the dark pixels,
+// and leaves the picture in the output folder.
+const TITLE_MAIN = [
+  'import { Canvas } from "skia-canvas"',
+  'import { useShippedFonts } from "dez-media/canvas"',
+  '',
+  'export default async function main(parameters, dez) {',
+  '  const families = useShippedFonts(dez.fonts)',
+  '  const canvas = new Canvas(240, 64, { gpu: false })',
+  '  const ctx = canvas.getContext("2d")',
+  '  ctx.fillStyle = "white"',
+  '  ctx.fillRect(0, 0, canvas.width, canvas.height)',
+  '  ctx.fillStyle = "black"',
+  '  ctx.font = `bold 28px ${families}`',
+  '  ctx.fillText("Dez 日本 مرحبا", 8, 44)',
+  '  const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height)',
+  '  let ink = 0',
+  '  for (let index = 0; index < data.length; index += 4) if (data[index] < 128) ink += 1',
+  '  await canvas.toFile(`${dez.outputFolder}/title.png`)',
+  '  const bold = dez.fonts.find(({ family, weight }) => family === "Noto Sans" && weight === 700)',
+  '  console.log(`drew with ${bold.path}`)',
+  '  return { ink, first: families.split(", ")[0] }',
+  '}',
+].join('\n')
 
 const DRAFT_MAIN = [
   'export default async function main(parameters, dez) {',
@@ -503,6 +534,37 @@ describe('apps invoke', () => {
     expect(JSON.parse(fs.readFileSync(path.join(workFolder, 'video', 'cuts.json'), 'utf8'))).toStrictEqual({ id: 'a', fps: 5, frames: 10, duration: 2, threshold: 0.35, cuts: [] })
 
     await expectReplyEnd(setup, CALLER, cuts.next)
+    await expectRunsEnded(setup)
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('draws text with skia-canvas and the shipped fonts in an app whose manifest asks for the library, and tells an app without the field to add it', async () => {
+    const manifest = { name: 'title', description: 'Draws a title.', kind: 'script' } as const
+    await seedApp(appsDir, manifest, { 'main.ts': TITLE_MAIN, 'manifest.json': JSON.stringify({ ...manifest, native: ['skia-canvas'] }) })
+    await seedApp(appsDir, { ...manifest, name: 'bare' }, { 'main.ts': TITLE_MAIN })
+    const before = await filesIn(imagesDir)
+    await submit(browser, 'Draw a title.')
+
+    // skia-canvas reads environment variables and a native file as it
+    // loads, which the run of an app without the field may not do.
+    const bare = await invoke(await chatRequest(), 'call_bare', { name: 'bare' })
+    expect(bare.result.status).toBe('failed')
+    expect(bare.result.text).toContain('file:///libs/skia-canvas/')
+    expect(bare.result.text).toContain('skia-canvas loads a native file, which only the run of an app whose manifest.json has "native": ["skia-canvas"] may load. Add that field to the manifest.json of the app, and run the app again.')
+
+    const title = await invoke(bare.next, 'call_title', { name: 'title' })
+    expect(title.result.status).toBe('finished')
+    const { ink, first } = JSON.parse(title.result.text.split('\n\n')[0]) as { ink: number, first: string }
+    expect(first).toBe('"Noto Sans"')
+    expect(ink).toBeGreaterThan(300)
+    expect(title.result.text).toContain('Dez keeps 1 file of the output folder: title.png (image).')
+    expect(title.result.text).toContain('Console output of the code:\ndrew with NotoSans-Bold.ttf')
+    expect(title.result.text.endsWith('\nMade the image @a.')).toBe(true)
+    await sendChatReply(title.next.reply, CALLER.modelName)
+
+    await endedReply(browser)
+    const picture = fs.readFileSync(path.join(imagesDir, await newFileIn(browser, imagesDir, before)))
+    expect([picture.readUInt32BE(16), picture.readUInt32BE(20)]).toStrictEqual([240, 64])
     await expectRunsEnded(setup)
     expect(await consoleErrors(browser)).toStrictEqual([])
   })

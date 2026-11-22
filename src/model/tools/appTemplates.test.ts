@@ -5,14 +5,15 @@ import { UI_IMPORT_MAP_TAG, UI_LIBS_ROUTE } from './appTemplates'
 
 describe('the import map of the page of a UI app', () => {
   // A name of the map that names no shipped file fails only when a page
-  // imports it, and skia-canvas, with its native file, loads in no page.
+  // imports it, and skia-canvas, with its native file, loads in no page;
+  // nor does dez-media/canvas, which imports it.
   // `bundle.resources` ships the libs folder as it is: the vendored files
   // that manifest.json pins, and Dez's own libraries (dez-media).
-  it('names each shipped library but skia-canvas, at a file that Dez ships', () => {
+  it('names each shipped library but skia-canvas and the module of Dez that imports it, at a file that Dez ships', () => {
     const map = UI_IMPORT_MAP_TAG.slice('<script type="importmap">'.length, -'</script>'.length)
     const imports: Record<string, string> = JSON.parse(map).imports
 
-    expect(Object.keys(imports)).toStrictEqual(Object.keys(shippedImportMap.imports).filter((name) => name !== 'skia-canvas'))
+    expect(Object.keys(imports)).toStrictEqual(Object.keys(shippedImportMap.imports).filter((name) => name !== 'skia-canvas' && name !== 'dez-media/canvas'))
     const route = `./${UI_LIBS_ROUTE}/`
     for (const [name, target] of Object.entries(imports)) {
       expect(target.startsWith(route), `${name}: ${target}`).toBe(true)

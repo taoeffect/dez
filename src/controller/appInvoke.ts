@@ -18,6 +18,7 @@ import {
   frameInputs,
   listedOutputs,
   NO_APP_OUTPUTS,
+  runNativeCanvas,
   SaveCount,
   type AppInput,
   type AppOutputs,
@@ -30,6 +31,7 @@ import { APP_DECODES_STATE, asksForDecode, runDecode, type DecodedClip } from '.
 import { endedRun, JsEvalOutput, textForModel } from '../model/tools/jsEval'
 import { PROGRAM_READS_INPUTS, programNotStartedText, type KeptFile } from '../model/tools/programRuns'
 import { ToolError, type ToolArguments } from '../model/tools/types'
+import { FONT_FOLDER } from '../model/tools/videoFonts'
 import { assetBlob, storeCheckedFile, storeSave, type StoredSave } from './appBridge'
 import { factsOf, readableManifestBytes } from './appsTool'
 import { decodeClips } from './inputDecode'
@@ -54,9 +56,11 @@ import { clipInputFile, conversationWorkForms, folderPathForms, imageInputAsIs, 
 // with the same module of Dez and its own description of the run. The run
 // folder also holds a copy of each input of the call and the output
 // folder. Rust lets the code open that folder, the folder of its app, and
-// the work folder of the conversation of the call, and nothing else
-// (src-tauri/src/bundled_tools.rs). The code gets no input of the program
-// and calls no Dez tool.
+// the work folder of the conversation of the call, and read the libraries
+// and the fonts that Dez ships, and nothing else; an app whose manifest
+// asks for it (`runNativeCanvas`) can also load the native file of
+// skia-canvas (src-tauri/src/bundled_tools.rs). The code gets no input of
+// the program and calls no Dez tool.
 //
 // Dez trusts nothing that the code leaves. It reads each file of the
 // output folder, checks the type by the bytes that it read, and writes
@@ -71,10 +75,12 @@ import { clipInputFile, conversationWorkForms, folderPathForms, imageInputAsIs, 
 // a save is a file of the job, by the checks of appBridge.ts.
 
 /** The run that `call` asks for (`invokeCall`, `aliasInvokeCall`), after
- *  the checks of the files of the app, with the kind of the app and the
- *  decode of the run. Throws a `ToolError`, whose text tells the model how
- *  to fix the call, for an app that cannot run (`checkInvokeTarget`), and
- *  for a decode that the app cannot have (`runDecode`).
+ *  the checks of the files of the app, with the kind of the app, the
+ *  decode of the run, and whether it may load skia-canvas. Throws a
+ *  `ToolError`, whose text tells the model how to fix the call, for an
+ *  app that cannot run (`checkInvokeTarget`), for a decode that the app
+ *  cannot have (`runDecode`), and for a field "native" of its manifest
+ *  that is not valid (`runNativeCanvas`).
  *
  *  Each fact is one exact read of its path, and not from a listing of the
  *  app: the code of an app can make more files than a listing holds. */
@@ -82,7 +88,7 @@ export async function checkedAppRun(call: InvokeCall): Promise<CheckedInvokeCall
   const [app, manifest, main, index] = await Promise.all([call.app, call.manifest, call.main, call.index].map(factsOf))
   const manifestBytes = await readableManifestBytes(call.manifest, manifest)
   const kind = checkInvokeTarget(call, { app, manifest, manifestBytes, main, index })
-  return { ...call, kind, decode: runDecode(call, kind, manifestBytes) }
+  return { ...call, kind, decode: runDecode(call, kind, manifestBytes), nativeCanvas: runNativeCanvas(call, kind, manifestBytes) }
 }
 
 // Gets the inputs of a call of the tool `toolName` ready. It gives the
@@ -204,8 +210,9 @@ export function runAppJob(
       ? await folderPathForms(BUILT_IN_APPS_FOLDER, 'resource', toolName)
       : await folderPathForms(APPS_ROOT.file, 'app', toolName)
     const libs = await folderPathForms(LIBS_ROOT.file, LIBS_ROOT.root, toolName)
+    const fonts = await folderPathForms(FONT_FOLDER, 'resource', toolName)
     const work = await conversationWorkForms(conversationId, toolName)
-    const forModel = (text: string): string => textForModel(text, { run: runFolder.forms, apps: apps.forms, libs: libs.forms, work: work.forms })
+    const forModel = (text: string): string => textForModel(text, { run: runFolder.forms, apps: apps.forms, libs: libs.forms, work: work.forms, fonts: fonts.forms })
 
     const [appName] = call.app.names
     const decodesClips = asksForDecode(call.decode)
@@ -219,7 +226,7 @@ export function runAppJob(
     // The description holds the paths that Dez joined, not the real ones:
     // Deno checks a path of the code against the folders of its flags as
     // text, and Rust writes the flags from the same joined paths.
-    const description = appRunDescription(call, { run: runFolder.joined, app: `${apps.joined}/${appName}`, work: work.joined }, decoded)
+    const description = appRunDescription(call, { run: runFolder.joined, app: `${apps.joined}/${appName}`, work: work.joined, fonts: fonts.joined }, decoded)
     await writeRunFiles(folder, description, [], signal, toolName)
 
     report(APP_RUNS_STATE)
@@ -227,7 +234,7 @@ export function runAppJob(
     // No `stdin`, and a `call` line of the code gets no answer: the code of
     // an app calls no Dez tool.
     const appFolder = builtIn ? { builtInApp: appName } : { appFolder: appName }
-    const run = { ...moduleRun(folder, call.timeoutMs), inputs, ...appFolder, conversationFolder: conversationId }
+    const run = { ...moduleRun(folder, call.timeoutMs), inputs, ...appFolder, conversationFolder: conversationId, nativeCanvas: call.nativeCanvas }
     const end = await runProgram('deno', toolName, run, signal, ({ stream, text }) => {
       output.add(stream, text)
     })
@@ -237,7 +244,7 @@ export function runAppJob(
     if (end.kind === 'timedOut') return { text: texts.timedOut(call.timeoutMs, APP_RUNS_STATE), isError: true, assets: [] }
 
     const { line, log } = endedRun(end, output)
-    const outcome = appRunOutcome(end, line, log.trim() !== '')
+    const outcome = appRunOutcome(end, line, log.trim() !== '', call.nativeCanvas)
     if (outcome.isError) return { ...appRunResult(outcome, log, forModel, NO_APP_OUTPUTS), assets: [] }
     const { outputs, assets } = await keptOutputs(folder, signal, keepAsset, toolName)
     return { ...appRunResult(outcome, log, forModel, outputs), assets }

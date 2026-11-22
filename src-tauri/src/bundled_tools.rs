@@ -100,6 +100,13 @@ const CANVAS_NATIVE_LIBRARY: &str = "skia.node";
 // allow is an error, and the script would not load.
 const CANVAS_VARIABLES: &[&str] = &["https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY", "LC_ALL", "LC_MESSAGES", "LANG", "LANGUAGE", "SKIA_CANVAS_STRICT"];
 
+// The fontconfig file of a run that loads skia-canvas, in `LIBS_FOLDER`,
+// which the variable `FONTCONFIG_FILE` names. It names no font folder and
+// no cache folder: the native code of skia-canvas then reads no font of the
+// computer, and writes no error about the system's file, which the OS rule
+// hides. macOS draws text with no fontconfig.
+const CANVAS_FONT_CONFIG: &str = "dez-media/fonts.conf";
+
 // How long a quit of the app waits for the runs to end (`stop_all_runs`).
 const EXIT_WAIT: Duration = Duration::from_secs(2);
 
@@ -506,8 +513,8 @@ fn is_time_zone(text: &str) -> bool {
         && text.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '+' | '-' | '/'))
 }
 
-// The places of a run beyond its work folder, in the OS rule and in the
-// flags of its program.
+// The places of a run beyond its work folder, in the OS rule, in the flags
+// of its program, and in its environment.
 #[derive(Default)]
 struct RunPlaces {
     // The flags that name the places.
@@ -518,6 +525,8 @@ struct RunPlaces {
     // The work folder of the conversation, which `resolved_run` makes
     // when the run passes every check.
     conversation: Option<PathBuf>,
+    // The variables of the environment that name a place.
+    env: Vec<(String, OsString)>,
 }
 
 // The places of a run: those that the page names (an app or a built-in
@@ -535,7 +544,8 @@ struct RunPlaces {
 // - A run with a conversation reads and changes the folder of it. The code
 //   of a model (`js_eval`, no app) gets no other file flag.
 // - The native code of skia-canvas opens files with no check of Deno, so
-//   only a run of an app gets it, when the page asks for it.
+//   only a run of an app gets it, when the page asks for it. Its fontconfig
+//   file is a place of the environment (`CANVAS_FONT_CONFIG`).
 // Each path goes into a flag through `flag_path`.
 fn run_places(run: &ToolRun, rules: &ProgramRules, roots: &Roots, folder: &Path) -> Result<RunPlaces, String> {
     let Some(flags) = &rules.place_flags else {
@@ -560,7 +570,7 @@ fn run_places(run: &ToolRun, rules: &ProgramRules, roots: &Roots, folder: &Path)
     let fonts = if app.is_some() { Some(shipped(&roots.resources, FONTS_FOLDER, Path::is_dir)?) } else { None };
     let canvas_library = if run.native_canvas {
         let script_folder = shipped(&libs, CANVAS_SCRIPT_FOLDER, Path::is_dir)?;
-        Some(shipped(&script_folder, CANVAS_NATIVE_LIBRARY, Path::is_file)?)
+        Some((shipped(&script_folder, CANVAS_NATIVE_LIBRARY, Path::is_file)?, shipped(&libs, CANVAS_FONT_CONFIG, Path::is_file)?))
     } else {
         None
     };
@@ -576,9 +586,10 @@ fn run_places(run: &ToolRun, rules: &ProgramRules, roots: &Roots, folder: &Path)
             places.flags.push(format!("{flag}={}", list.join(",")));
         }
     }
-    if let Some(library) = &canvas_library {
-        places.flags.push(format!("{}={}", flags.native_library, flag_path(library)?));
+    if let Some((library, font_config)) = canvas_library {
+        places.flags.push(format!("{}={}", flags.native_library, flag_path(&library)?));
         places.flags.push(format!("{}={}", flags.variables, CANVAS_VARIABLES.join(",")));
+        places.env.push(("FONTCONFIG_FILE".to_string(), font_config.into_os_string()));
     }
 
     places.readable.push(libs);
@@ -616,6 +627,7 @@ fn resolved_run(run: ToolRun, roots: &Roots) -> Result<ProgramRun, String> {
     if let Some((name, subfolder)) = rules.state_folder {
         env.push((name.to_string(), folder.join(subfolder).into_os_string()));
     }
+    env.extend(places.env);
     if let Some(zone) = run.time_zone {
         if !is_time_zone(&zone) {
             return Err(format!("Invalid time zone: {}", zone));
@@ -1210,10 +1222,12 @@ mod tests {
     fn fake_roots(dir: &Path) -> Roots {
         let roots = Roots { tools: dir.join("tools"), cache: dir.join("cache"), app: dir.join("config"), resources: dir.join("resources") };
         let canvas = roots.resources.join(LIBS_FOLDER).join(CANVAS_SCRIPT_FOLDER);
-        for folder in [roots.tools.clone(), canvas.clone(), roots.resources.join(FONTS_FOLDER), roots.resources.join(BUILT_IN_APPS_FOLDER).join(FAKE_BUILT_IN_APP)] {
+        let font_config = roots.resources.join(LIBS_FOLDER).join(CANVAS_FONT_CONFIG);
+        let font_config_folder = font_config.parent().expect("a folder").to_path_buf();
+        for folder in [roots.tools.clone(), canvas.clone(), font_config_folder, roots.resources.join(FONTS_FOLDER), roots.resources.join(BUILT_IN_APPS_FOLDER).join(FAKE_BUILT_IN_APP)] {
             std::fs::create_dir_all(folder).expect("create");
         }
-        let files = BUNDLED_TOOLS.iter().map(|tool| roots.tools.join(tool)).chain([roots.resources.join(LIBS_FOLDER).join(LIBS_IMPORT_MAP), canvas.join(CANVAS_NATIVE_LIBRARY)]);
+        let files = BUNDLED_TOOLS.iter().map(|tool| roots.tools.join(tool)).chain([roots.resources.join(LIBS_FOLDER).join(LIBS_IMPORT_MAP), canvas.join(CANVAS_NATIVE_LIBRARY), font_config]);
         for file in files {
             std::fs::write(file, b"").expect("write");
         }
@@ -1399,12 +1413,16 @@ mod tests {
         assert_eq!((run.confinement.also_owned, run.confinement.also_readable), (vec![conversation.clone()], vec![libs.clone(), fonts.clone(), built_in.clone()]));
 
         // The native library: exactly its file, and the variables that the
-        // script of skia-canvas reads. Its folder is in the libraries.
+        // script of skia-canvas reads. Its folder is in the libraries, and
+        // so is the fontconfig file that the environment names.
         let run = run_of(ToolRun { built_in_app: Some(FAKE_BUILT_IN_APP.to_string()), native_canvas: true, ..deno() });
         let read = format!("--allow-read={}", list(&[&work, &built_in, &conversation, &libs, &fonts]));
         let ffi = format!("--allow-ffi={}", canvas.join(CANVAS_NATIVE_LIBRARY).display());
         let env = "--allow-env=https_proxy,HTTPS_PROXY,http_proxy,HTTP_PROXY,LC_ALL,LC_MESSAGES,LANG,LANGUAGE,SKIA_CANVAS_STRICT";
         assert_eq!(place_flags(&run), [import_map.as_str(), read.as_str(), write.as_str(), ffi.as_str(), env]);
+        let font_config = |run: &ProgramRun| run.env.iter().find(|(name, _)| name == "FONTCONFIG_FILE").map(|(_, value)| PathBuf::from(value));
+        assert_eq!(font_config(&run), Some(libs.join(CANVAS_FONT_CONFIG)));
+        assert_eq!(font_config(&run_of(ToolRun { built_in_app: Some(FAKE_BUILT_IN_APP.to_string()), ..deno() })), None);
         assert_eq!(run.confinement.also_readable, [libs.clone(), fonts.clone(), built_in.clone()]);
         assert_eq!(run.args.last().map(String::as_str), Some("./main.ts"));
     }
@@ -1472,9 +1490,12 @@ mod tests {
         let app_run = || ToolRun { app_folder: Some("my-app".to_string()), ..deno() };
         let missing = |error: String| assert!(error.contains("install Dez again") && !error.contains(&dir.0.display().to_string()), "{error}");
 
-        std::fs::remove_file(roots.resources.join(LIBS_FOLDER).join(CANVAS_SCRIPT_FOLDER).join(CANVAS_NATIVE_LIBRARY)).expect("remove");
+        std::fs::remove_file(roots.resources.join(LIBS_FOLDER).join(CANVAS_FONT_CONFIG)).expect("remove");
         missing(resolve(ToolRun { native_canvas: true, ..app_run() }).err().expect("refused"));
         assert!(resolve(app_run()).is_ok());
+
+        std::fs::remove_file(roots.resources.join(LIBS_FOLDER).join(CANVAS_SCRIPT_FOLDER).join(CANVAS_NATIVE_LIBRARY)).expect("remove");
+        missing(resolve(ToolRun { native_canvas: true, ..app_run() }).err().expect("refused"));
 
         std::fs::remove_dir(roots.resources.join(FONTS_FOLDER)).expect("remove");
         missing(resolve(app_run()).err().expect("refused"));
@@ -2715,6 +2736,9 @@ mod tests {
             let os_refused = |line: &str, name: &str| line.starts_with(&format!("{name}: Error:")) && (line.contains("Permission denied") || line.contains("Operation not permitted"));
             assert!(lines.len() == 7 && os_refused(lines[5], "outside font") && os_refused(lines[6], "outside file"), "{NOT_CONFINED}\n{}", sent.stdout);
             assert!(!outside_image.exists(), "{NOT_CONFINED}");
+            // fontconfig reads the file that Dez ships, and writes no error
+            // about the system's file, which the OS rule hides.
+            assert_eq!(sent.stderr, "");
         }
 
         // Two flags of a Deno run, with the real Deno and the command line

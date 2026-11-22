@@ -3,6 +3,7 @@ import { byteSizeText } from '../../utils/byteSize'
 import { countOf, countText } from '../../utils/countText'
 import { regExpSource } from '../../utils/regExpSource'
 import { endOf, startOf } from '../../utils/textCut'
+import { NATIVE_CANVAS_LIBRARY } from './appManifest'
 import { shownAppNames, shownAppText } from './appShow'
 import { APPS_INVOKE, APPS_TOOL, APPS_VIRTUAL_ROOT, LIBS_VIRTUAL_ROOT } from './appsTool'
 import { WORK_VIRTUAL_ROOT } from './conversationWork'
@@ -382,12 +383,16 @@ export interface RunFolderForms {
   /** The work folder of the conversation (conversationWork.ts); a run
    *  with no conversation has none. */
   work?: readonly string[]
+  /** The folder of the fonts that Dez ships; a run of an app reads them
+   *  (`dez.fonts`). */
+  fonts?: readonly string[]
 }
 
 /** `text` of a run with no path of this computer: the run folder is
  *  `RUN_FOLDER_NAME`, the folder of the apps is `APPS_VIRTUAL_ROOT`, the
  *  folder of the libraries is `LIBS_VIRTUAL_ROOT`, the work folder of the
- *  conversation is `WORK_VIRTUAL_ROOT`, and any other local path goes as
+ *  conversation is `WORK_VIRTUAL_ROOT`, a font that Dez ships is the name
+ *  of its file (as `dez.fonts` names it), and any other local path goes as
  *  its known start (`withoutLocalPaths`; the path of the Deno program is
  *  one, which the code can read with no permission).
  *
@@ -414,6 +419,13 @@ export function textForModel(text: string, folders: RunFolderForms): string {
     result = result
       .replace(new RegExp(`file://${urlPathSource(path)}${NAME_GOES_ON}`, 'g'), `file://${name}`)
       .replace(new RegExp(`${regExpSource(path)}${NAME_GOES_ON}`, 'g'), name)
+  }
+  // The fonts folder has no name for a model: a path of a font in it is
+  // the name of the file, with no `file://` of a URL.
+  for (const path of [...folders.fonts ?? []].sort((a, b) => b.length - a.length)) {
+    result = result
+      .replace(new RegExp(`file://${urlPathSource(path)}/`, 'g'), '')
+      .replaceAll(`${path}/`, '')
   }
   for (const folder of folders.run) {
     result = result.replaceAll(folder, RUN_FOLDER_NAME)
@@ -467,19 +479,37 @@ export function namesDenoFlag(error: string): boolean {
   return NAMES_FLAG.test(error)
 }
 
+/** Whether the text of an error of a run tells that skia-canvas could not
+ *  load: Deno refused a permission (`namesDenoFlag`) in a file of the
+ *  library, whose path holds `/libs/skia-canvas/` as the computer names
+ *  it and as a model reads it. The library reads environment variables
+ *  and loads its native file, which only a run of an app whose manifest
+ *  asks for it may do (`runNativeCanvas`, appInvoke.ts). */
+export function skiaCanvasRefused(error: string): boolean {
+  return namesDenoFlag(error) && error.includes(`${LIBS_VIRTUAL_ROOT}/${NATIVE_CANVAS_LIBRARY}/`)
+}
+
 // The error of a static `import` in the code.
 const STATIC_IMPORT = /'import', and 'export' cannot be used outside of module code/
+
+// What a `js_eval` result tells of a Deno flag that its error names: the
+// limits of the run, or that only a script app loads skia-canvas.
+function flagAdvice(error: string): string {
+  if (skiaCanvasRefused(error)) {
+    return `The code of \`${JS_EVAL_TOOL.name}\` cannot load ${NATIVE_CANVAS_LIBRARY}: it loads a native file, which only the run of a script app may load. `
+      + `Write a script app whose manifest.json has the field \`"native": ["${NATIVE_CANVAS_LIBRARY}"]\`, and run it with \`${APPS_TOOL.name} ${APPS_INVOKE}\`.`
+  }
+  return 'Dez runs the code with no network, no environment variables, no start of programs, and no packages, '
+    + `and it opens no file but those of the work folder of this conversation (\`dez.workFolder\`, which Dez names \`${WORK_VIRTUAL_ROOT}\`). `
+    + 'No flag changes that, and you can set none: do the work without them. '
+    + `The code reads and changes the files of the apps in \`${APPS_VIRTUAL_ROOT}/\` only with \`dez.tools/${APPS_TOOL.name}/<subcommand>\` calls.`
+}
 
 // The advice that goes with the text of an error that the code threw, for
 // the errors whose own text misleads a model.
 function errorAdvice(error: string): string[] {
   return [
-    ...(namesDenoFlag(error)
-      ? ['Dez runs the code with no network, no environment variables, no start of programs, and no packages, '
-        + `and it opens no file but those of the work folder of this conversation (\`dez.workFolder\`, which Dez names \`${WORK_VIRTUAL_ROOT}\`). `
-        + 'No flag changes that, and you can set none: do the work without them. '
-        + `The code reads and changes the files of the apps in \`${APPS_VIRTUAL_ROOT}/\` only with \`dez.tools/${APPS_TOOL.name}/<subcommand>\` calls.`]
-      : []),
+    ...(namesDenoFlag(error) ? [flagAdvice(error)] : []),
     ...(STATIC_IMPORT.test(error)
       ? ['The code is the body of a function, so a static `import` does not work in it. Load a built-in module with `await import("node:…")`.']
       : []),

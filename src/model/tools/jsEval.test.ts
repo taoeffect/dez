@@ -254,6 +254,18 @@ describe('jsEvalResult', () => {
     expect(text.indexOf(advice)).toBeLessThan(text.indexOf(CONSOLE_TITLE))
   })
 
+  // skia-canvas loads a native file, which Deno refuses to a `js_eval`
+  // run: the result points to a script app, and not to the limits of the
+  // run alone.
+  it('tells that only a script app loads skia-canvas, for a refused permission in a file of the library', () => {
+    const error = 'NotCapable: Requires read access to "/opt/dez/libs/skia-canvas/lib", run again with the --allow-read flag'
+    const { text } = resultOf(written(protocolLine({ type: 'error', text: error })))
+
+    expect(text).toContain('cannot load skia-canvas')
+    expect(text).toContain('Write a script app whose manifest.json has the field `"native": ["skia-canvas"]`, and run it with `apps invoke`.')
+    expect(text).not.toContain('No flag changes that')
+  })
+
   it('names the run folder /run in every text of the run', () => {
     const output = written(
       `${REAL_RUN_FOLDER}/deno-dir and ${JOINED_RUN_FOLDER}\n`,
@@ -568,6 +580,15 @@ describe('textForModel with the folder of the libraries', () => {
       '    at main (file:///apps/dez-media/main.ts:2:3)',
       'see /libs/import_map.json',
     ].join('\n'))
+  })
+})
+
+describe('textForModel with the folder of the fonts', () => {
+  it('names a font that Dez ships by the name of its file, as a path and as a URL', () => {
+    const folders = { run: [], libs: ['/opt/Dez Mo/libs'], fonts: ['/opt/Dez Mo/fonts', '/mnt/opt/Dez Mo/fonts'] }
+    const text = 'loaded /opt/Dez Mo/fonts/NotoSans-Bold.ttf, file:///mnt/opt/Dez%20Mo/fonts/NotoSansJP-Regular.otf, and /opt/Dez Mo/libs/skia-canvas/lib/index.js'
+
+    expect(textForModel(text, folders)).toBe('loaded NotoSans-Bold.ttf, NotoSansJP-Regular.otf, and /libs/skia-canvas/lib/index.js')
   })
 })
 

@@ -16,8 +16,13 @@
     /* dez-media is JavaScript with JSDoc types (// @ts-check) */
     "allowJs": true,
     /* The built-in apps import dez-media by its name in the import map of
-       the Deno runs (src-tauri/libs/import_map.json) */
-    "paths": { "dez-media": ["./src-tauri/libs/dez-media/mod.js"] },
+       the Deno runs (src-tauri/libs/import_map.json), and dez-media/canvas
+       imports skia-canvas by its name there */
+    "paths": {
+      "dez-media": ["./src-tauri/libs/dez-media/mod.js"],
+      "dez-media/canvas": ["./src-tauri/libs/dez-media/canvas.js"],
+      "skia-canvas": ["./src-tauri/libs/skia-canvas/lib/index.d.ts"]
+    },
 
     /* Linting */
     "strict": true,

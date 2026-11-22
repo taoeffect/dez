@@ -16,6 +16,7 @@ import { PROGRAM_READS_INPUTS, programNotStartedText } from '../model/tools/prog
 import { appsArgs, CONVERSATION, CONVERSATION_ID, FILM, OPUS, PNG_BYTES, probeOutput, protocolLine, RED, SKY, SONG, textBytes, VP9, WAV_BYTES } from '../model/tools/testing'
 import type { ToolRunResult } from '../model/tools/types'
 import { FFPROBE_TIMEOUT_MS } from '../model/tools/videoTool'
+import { FONT_FOLDER, SHIPPED_FONTS } from '../model/tools/videoFonts'
 import { checkedAppRun, runAliasCall, runAppFrameJob, runAppJob } from './appInvoke'
 import { TabJobs, type MadeAsset } from './jobs'
 import type { AppFileRef, BundledToolEnd, FileTree } from './nativeTypes'
@@ -145,10 +146,10 @@ function runDescription(folder: string): Record<string, unknown> {
 }
 
 // The checked call of the script app `notes`: with the call's own decode,
-// as no manifest gives one.
+// as no manifest gives one, and with no native library.
 function invoke(parameters: Record<string, unknown> = {}, sections = CONVERSATION): CheckedInvokeCall {
   const call = invokeCall(appsArgs('invoke', { name: 'notes', ...parameters }), sections)
-  return { ...call, kind: 'script', decode: call.decode ?? NO_DECODE }
+  return { ...call, kind: 'script', decode: call.decode ?? NO_DECODE, nativeCanvas: false }
 }
 
 function runJob(call = invoke(), signal: AbortSignal = running()) {
@@ -212,6 +213,18 @@ describe('checkedAppRun', () => {
 
     expect((await checked()).decode).toStrictEqual({ audio: { rate: 22050 }, frames: null })
     expect((await checked({ decode: { frames: { width: 12, height: 9 } } })).decode).toStrictEqual({ audio: null, frames: { width: 12, height: 9, fps: null } })
+  })
+
+  it('lets the run load skia-canvas only when the manifest of the app asks for it', async () => {
+    const manifest = (native: unknown) => JSON.stringify({ name: 'notes', description: 'Draws notes.', kind: 'script', native })
+    fakeAppFiles(appFiles('notes', { 'manifest.json': manifest(['skia-canvas']), 'main.ts': MAIN }))
+    expect((await checked()).nativeCanvas).toBe(true)
+
+    fakeAppFiles(appFiles('notes', { 'main.ts': MAIN }))
+    expect((await checked()).nativeCanvas).toBe(false)
+
+    fakeAppFiles(appFiles('notes', { 'manifest.json': manifest(['sharp']), 'main.ts': MAIN }))
+    expect(await refusalOf(checked())).toContain('The field "native" of /apps/notes/manifest.json is not valid')
   })
 
   it.each([
@@ -292,6 +305,7 @@ describe('runAppJob', () => {
       outputFolder: `${CACHE_DIR}/${folder}/output`,
       appFolder: `${APP_DIR}/apps/notes`,
       workFolder: `${APP_DIR}/${CONVERSATION_WORK_FOLDER}`,
+      fonts: SHIPPED_FONTS.map(({ file, family, weight, scripts }) => ({ file, family, weight, scripts, path: `${RESOURCE_DIR}/${FONT_FOLDER}/${file}` })),
     })
     expect(native.runs).toHaveLength(1)
     const { run } = native.runs[0]
@@ -304,10 +318,21 @@ describe('runAppJob', () => {
       maxOutputBytes: JS_EVAL_OUTPUT_BYTES,
       appFolder: 'notes',
       conversationFolder: CONVERSATION_ID,
+      nativeCanvas: false,
     })
     // The code of an app gets no input of the program.
     expect(run).not.toHaveProperty('stdin')
     expect(states).toStrictEqual([PROGRAM_READS_INPUTS, APP_RUNS_STATE])
+  })
+
+  // Rust lets the run load skia-canvas only when the call tells it so.
+  it('lets the run of an app whose manifest asks for skia-canvas load it, and names a font that it read by the name of its file', async () => {
+    native.program = returns(`drew with ${RESOURCE_DIR}/${FONT_FOLDER}/NotoSans-Bold.ttf`)
+
+    const outcome = await runJob({ ...invoke(), nativeCanvas: true })
+
+    expect(native.runs[0].run).toMatchObject({ tool: 'dez-deno', nativeCanvas: true })
+    expect(outcome.text).toBe('drew with NotoSans-Bold.ttf')
   })
 
   it('answers no tool call line of the code', async () => {

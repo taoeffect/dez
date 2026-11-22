@@ -7,7 +7,7 @@ import type { Section } from '../chat/types'
 import { conversationAssets, type ConversationAssets } from '../streams/mediaRequest'
 import { aliasCallText, aliasNotDoneText, ALIAS_TIMEOUT_MS, type AppAlias } from './appAliases'
 import { APP_FRAME_ROOT_URL, APP_HANDLER_EXAMPLE, AppCallError, type AppFrameEnd, type AppFrameInput } from './appBridge'
-import { MANIFEST_FILE, type AppKind } from './appManifest'
+import { MANIFEST_FILE, NATIVE_CANVAS_LIBRARY, type AppKind } from './appManifest'
 import {
   APP_RUN_DEFAULT_SECONDS,
   APP_RUN_MAX_OUTPUT_BYTES,
@@ -29,10 +29,11 @@ import { SCRIPT_MAIN_FILE, UI_CLIENT_SCRIPT_TAG, UI_INDEX_FILE } from './appTemp
 import { assetIdWords } from './arguments'
 import { callDecode, DECODED_TOO_LARGE_TEXT, decodedInputFacts, decodeFailedText, type DecodedClip, type InputDecode } from './inputDecode'
 import { ASSET_NAMES, jobCallLabel, jobTimedOutText, jobTimeoutMs, type JobAssetKind } from './jobs'
-import { endedOutcome, failedOutcome, namesDenoFlag, returnedOutcome, runResultText, textForModel, type JsEvalEndLine, type RunOutcome } from './jsEval'
+import { endedOutcome, failedOutcome, namesDenoFlag, returnedOutcome, runResultText, skiaCanvasRefused, textForModel, type JsEvalEndLine, type RunOutcome } from './jsEval'
 import { clipInput, tellUserConsole, type ClipInput, type KeptFile, type ProgramEnd } from './programRuns'
 import { assetText, unknownAssetsText } from './toolInputs'
 import { ToolError, type SubcommandArguments, type ToolArguments } from './types'
+import { SHIPPED_FONTS } from './videoFonts'
 
 // `apps invoke`: one run of the code of an app, as a job. The kind of the
 // app (its manifest) picks what runs it.
@@ -43,8 +44,11 @@ import { ToolError, type SubcommandArguments, type ToolArguments } from './types
 // its state stays from one run to the next, the run folder, which holds a
 // copy of each input, the decoded files of the input clips when the run
 // decodes them (inputDecode.ts), and the output folder, and the work
-// folder of the conversation of the call (conversationWork.ts). It has no
-// network and no tool bridge (`dez.sbp`).
+// folder of the conversation of the call (conversationWork.ts). It reads
+// the libraries and the fonts that Dez ships (`dez.fonts`), and an app
+// whose manifest has `"native": ["skia-canvas"]` can also load the native
+// file of skia-canvas (`runNativeCanvas`). It has no network and no tool
+// bridge (`dez.sbp`).
 //
 // A UI app: Dez loads the page of the app in a hidden frame, and calls the
 // handler that the page registered (`APP_INVOKE_HANDLER`) with the
@@ -146,11 +150,13 @@ export interface InvokeCall {
 }
 
 /** A call whose app can run (`checkInvokeTarget`), with the kind of the
- *  app, which picks what runs it, and the decode of the run
- *  (`runDecode`). */
+ *  app, which picks what runs it, the decode of the run (`runDecode`), and
+ *  whether the run may load the native file of skia-canvas
+ *  (`runNativeCanvas`). */
 export interface CheckedInvokeCall extends Omit<InvokeCall, 'decode'> {
   kind: AppKind
   decode: InputDecode
+  nativeCanvas: boolean
 }
 
 /** The error texts of a run of a script app that depend on the call that
@@ -314,6 +320,47 @@ export function checkInvokeTarget({ app, manifest, main, index }: InvokeCall, ta
   return kind
 }
 
+const NATIVE_FIELD_EXAMPLE = `"native": ["${NATIVE_CANVAS_LIBRARY}"]`
+
+// The problem of the value `value` of the field "native" of a manifest, as
+// a part of a sentence; null for a value that is valid.
+function nativeFieldProblem(value: unknown): string | null {
+  if (!Array.isArray(value)) return 'it must be a list of names of native libraries'
+  const other = value.find((name) => name !== NATIVE_CANVAS_LIBRARY)
+  if (other === undefined) return null
+  const named = typeof other === 'string' ? `"${startOf(other, SHOWN_NAME_CHARS)}"` : 'a value that is no name'
+  return `it names ${named}, and the one native library that a script app can load is "${NATIVE_CANVAS_LIBRARY}"`
+}
+
+/** Whether a run of the app of `call`, of the kind `kind`, may load the
+ *  native file of skia-canvas: the manifest, whose bytes are
+ *  `manifestBytes`, has the field `"native": ["skia-canvas"]`. An empty
+ *  list asks for nothing. Bytes that are no JSON object give false
+ *  (`checkedAppKind` refuses them first). Throws a `ToolError` for a field
+ *  that is not valid, and for the field in the manifest of a UI app. */
+export function runNativeCanvas({ app, manifest }: Pick<InvokeCall, 'app' | 'manifest'>, kind: AppKind, manifestBytes: Uint8Array | null): boolean {
+  let value: unknown
+  try {
+    value = JSON.parse(new TextDecoder().decode(manifestBytes ?? new Uint8Array()))
+  } catch {
+    return false
+  }
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
+  const native: unknown = (value as Record<string, unknown>).native
+  if (native === undefined) return false
+  const problem = nativeFieldProblem(native)
+  if (problem !== null) {
+    throw new ToolError(`The field "native" of ${manifest.virtual} is not valid: ${problem}. `
+      + `For a script app that draws with skia-canvas, write the field as ${NATIVE_FIELD_EXAMPLE}; else delete it. ${NOT_DONE}`)
+  }
+  if ((native as unknown[]).length === 0) return false
+  if (kind === 'ui') {
+    throw new ToolError(`${manifest.virtual} has the field "native", which only a script app takes: the page of ${app.virtual} cannot load a native library. `
+      + `Delete the field. ${NOT_DONE}`)
+  }
+  return true
+}
+
 /** The file URL of the absolute path `path`, as the module of Dez imports
  *  it. A setter of a URL's path escapes most characters that a URL does not
  *  hold as they are (a space, `?`, `#`). It keeps a `%` (so `%41` in a
@@ -337,6 +384,9 @@ export interface AppRunFolders {
   /** The work folder of the conversation of the call
    *  (conversationWork.ts). */
   work: string
+  /** The folder of the fonts that Dez ships, which every run of an app
+   *  reads. */
+  fonts: string
 }
 
 /** The text of the description of a run of `call` (`RUN_DESCRIPTION_FILE`,
@@ -344,8 +394,9 @@ export interface AppRunFolders {
  *  a file URL, the parameters, and what the `dez` object of the code holds
  *  (`appDez`, jsEvalRunner.js): each input with the path of its copy and
  *  the facts of its decoded files (`decoded`, by id; `decodedInputFacts`),
- *  the output folder, the folder of the app, and the work folder of the
- *  conversation. */
+ *  the output folder, the folder of the app, the work folder of the
+ *  conversation, and each font that Dez ships with the path of its file,
+ *  for `useShippedFonts` of `dez-media/canvas`. */
 export function appRunDescription(call: Pick<InvokeCall, 'parameters' | 'inputs'>, folders: AppRunFolders, decoded: ReadonlyMap<string, DecodedClip> = new Map()): string {
   return JSON.stringify({
     kind: 'app',
@@ -364,6 +415,7 @@ export function appRunDescription(call: Pick<InvokeCall, 'parameters' | 'inputs'
     outputFolder: `${folders.run}/${APP_OUTPUT_FOLDER}`,
     appFolder: folders.app,
     workFolder: folders.work,
+    fonts: SHIPPED_FONTS.map(({ file, family, weight, scripts }) => ({ file, family, weight, scripts, path: `${folders.fonts}/${file}` })),
   })
 }
 
@@ -388,10 +440,17 @@ export function invokeLabel(args: SubcommandArguments): string {
 // What an error text of Deno that names a flag gets as advice: a model can
 // set no flag, and the usual cause is a path that is in no folder of the
 // run (a relative path, a path of the computer).
-const SANDBOX_ADVICE = 'The code of an app can open only the folder of its app, its run folder, and the work folder of the conversation. '
+const SANDBOX_ADVICE = 'The code of an app can open only the folder of its app, its run folder, and the work folder of the conversation, '
+  + 'and read the libraries and the fonts that Dez ships. '
   + 'It has no network and no environment variables, it starts no program, and it loads no package of npm, of JSR, or from a URL. '
   + 'No flag changes that, and you can set none. For a file, use only the paths that `dez` gives: '
-  + '`dez.appFolder`, `dez.outputFolder`, `dez.workFolder`, and the `path` of each of `dez.inputs`. A relative path does not work.'
+  + '`dez.appFolder`, `dez.outputFolder`, `dez.workFolder`, the `path` of each of `dez.inputs`, and the `path` of each of `dez.fonts`. '
+  + 'A relative path does not work.'
+
+// The advice for an app that loads skia-canvas, and whose manifest does not
+// ask for it (`skiaCanvasRefused`).
+const NATIVE_CANVAS_ADVICE = `${NATIVE_CANVAS_LIBRARY} loads a native file, which only the run of an app whose manifest.json has ${NATIVE_FIELD_EXAMPLE} may load. `
+  + 'Add that field to the manifest.json of the app, and run the app again.'
 
 const KEPT_NONE = 'Dez kept no file of the run.'
 
@@ -400,17 +459,18 @@ const NO_VALUE = 'The app ended with no error and returned no value.'
 
 /** The outcome of a run of an app that ended with `end` and gave the
  *  protocol line `line` (`endedRun`, jsEval.ts). `hasConsole` tells that
- *  the code wrote console output, which goes after it. A run that Dez
+ *  the code wrote console output, which goes after it, and `nativeCanvas`
+ *  that the run could load skia-canvas (`runNativeCanvas`). A run that Dez
  *  stopped at its time limit is not here: its caller has the text of its
  *  own time limit (`AppRunTexts.timedOut`). */
-export function appRunOutcome(end: Exclude<ProgramEnd, { kind: 'timedOut' }>, line: JsEvalEndLine | null, hasConsole: boolean): RunOutcome {
+export function appRunOutcome(end: Exclude<ProgramEnd, { kind: 'timedOut' }>, line: JsEvalEndLine | null, hasConsole: boolean, nativeCanvas: boolean): RunOutcome {
   if (line?.type === 'result') return returnedOutcome(line.text, 'app', NO_VALUE)
   if (line?.type === 'error') {
     return {
       isError: true,
       lead: `The code of the app threw an error. ${KEPT_NONE} The error:`,
       given: { text: line.text, name: 'text of the error' },
-      advice: namesDenoFlag(line.text) ? [SANDBOX_ADVICE] : [],
+      advice: namesDenoFlag(line.text) ? [!nativeCanvas && skiaCanvasRefused(line.text) ? NATIVE_CANVAS_ADVICE : SANDBOX_ADVICE] : [],
     }
   }
   return endedOutcome(end, 'app', hasConsole, KEPT_NONE)

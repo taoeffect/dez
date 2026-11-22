@@ -67,16 +67,22 @@ export const UI_MAIN_MODULE_TAG = '<script type="module" src="main.js"></script>
  *  shipped libs folder at `~libs/<path>`. */
 export const UI_LIBS_ROUTE = '~libs'
 
+// The names of Dez's own modules (`OWN_LIBRARIES`, scripts/update-libs.js)
+// that import a library with a native file, so that a page cannot load
+// them.
+const DENO_ONLY_IMPORTS: readonly string[] = ['dez-media/canvas']
+
 // The import map of the page of a UI app: the names of the import map of
 // the runs of Deno (src-tauri/libs/import_map.json, whose entries are
 // `./<folder>/<path>` of the libs folder), at the route of the libraries.
 // A library with a native file (skia-canvas) runs only in Deno, so the
-// page gets no name of it. The entries are relative to the page, so they
+// page gets no name of it, and no name of a module of Dez that imports it
+// (`DENO_ONLY_IMPORTS`). The entries are relative to the page, so they
 // hold for each name of the app, also after `apps mv`.
 function pageImportMap(): { imports: Record<string, string> } {
   const denoOnly = Object.entries(shippedLibraries).filter(([, library]) => 'native' in library).map(([folder]) => `./${folder}/`)
   const imports = Object.entries(shippedImportMap.imports)
-    .filter(([, target]) => !denoOnly.some((folder) => target.startsWith(folder)))
+    .filter(([name, target]) => !DENO_ONLY_IMPORTS.includes(name) && !denoOnly.some((folder) => target.startsWith(folder)))
     .map(([name, target]) => [name, `./${UI_LIBS_ROUTE}/${target.slice('./'.length)}`])
   return { imports: Object.fromEntries(imports) }
 }
@@ -107,6 +113,12 @@ interface Dez {
   outputFolder: string
   /** The folder of this app. Its files stay from one run to the next. */
   appFolder: string
+  /** The work folder of the conversation (/work/ in the apps tool). */
+  workFolder: string
+  /** The fonts that Dez ships. The run sees no other font: a canvas of
+   *  skia-canvas draws text only after useShippedFonts(dez.fonts) of
+   *  'dez-media/canvas'. */
+  fonts: readonly { file: string, family: string, weight: number, scripts: string, path: string }[]
 }
 
 export default async function main(parameters: Record<string, unknown>, dez: Dez): Promise<string> {

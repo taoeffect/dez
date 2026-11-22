@@ -59,6 +59,14 @@ const manifestSchema = z.object({
 
 export type AppManifest = z.infer<typeof manifestSchema>
 
+/** The one native library that the manifest of a script app can ask for,
+ *  with the field `"native": ["skia-canvas"]`: a run of the app then may
+ *  load the native file of skia-canvas in /libs (`nativeCanvas`,
+ *  bundled_tools.rs). `manifestSchema` does not read the field, so a list
+ *  of the apps still lists an app whose field is not valid; only a run
+ *  checks it (`runNativeCanvas`, appInvoke.ts). */
+export const NATIVE_CANVAS_LIBRARY = 'skia-canvas'
+
 /** The text of the manifest file of an app. */
 export function appManifestText({ name, description, kind }: AppManifest): string {
   return `${JSON.stringify({ name, description, kind }, null, 2)}\n`

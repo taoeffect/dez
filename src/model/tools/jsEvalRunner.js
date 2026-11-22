@@ -246,11 +246,17 @@ async function runCode() {
 // (`inputs`, each with the path of its file, and with the facts of its
 // decoded files, `audio` and `frames`, when the run decodes its clips),
 // the folder for the files that the run gives back (`outputFolder`), the
-// folder of the app (`appFolder`), and the work folder of the
-// conversation (`workFolder`). It has no `sbp`: the code of an app calls
-// no Dez tool.
-function appDez({ inputs, outputFolder, appFolder, workFolder }) {
-  return freeze({ inputs: freeze(inputs.map(frozenInput)), outputFolder, appFolder, workFolder })
+// folder of the app (`appFolder`), the work folder of the conversation
+// (`workFolder`), and the fonts that Dez ships (`fonts`, each with the path
+// of its file). It has no `sbp`: the code of an app calls no Dez tool.
+function appDez({ inputs, outputFolder, appFolder, workFolder, fonts }) {
+  return freeze({
+    inputs: freeze(inputs.map(frozenInput)),
+    outputFolder,
+    appFolder,
+    workFolder,
+    fonts: freeze(fonts.map((font) => freeze({ ...font }))),
+  })
 }
 
 // A frozen copy of an input of a run, with the facts of its decoded files.
