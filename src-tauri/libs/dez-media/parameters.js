@@ -20,7 +20,8 @@ const quotedList = (list) => list.map((item) => JSON.stringify(item)).join(', ')
 export function checkParameterNames(app, parameters, known) {
   const unknown = Object.keys(parameters).filter((name) => !known.includes(name))
   if (unknown.length === 0) return
-  throw new RangeError(`${app} does not take the parameter ${quotedList(unknown)}. It takes only ${quotedList(known)}.`)
+  const noun = unknown.length === 1 ? 'the parameter' : 'the parameters'
+  throw new RangeError(`${app} does not take ${noun} ${quotedList(unknown)}. It takes only ${quotedList(known)}.`)
 }
 
 /**

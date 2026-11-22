@@ -51,6 +51,7 @@ const STYLES: Readonly<Record<ChartParameters['theme'], Omit<ChartStyle, 'fontSi
 
 const quoted = (value: unknown) => JSON.stringify(value) ?? String(value)
 const listed = (values: readonly string[]) => values.map((value) => `"${value}"`).join(', ')
+const forCount = (items: readonly unknown[], one: string, many: string) => (items.length === 1 ? one : many)
 
 // A text parameter of one line; "" when the call has none.
 function textParameter(name: string, value: unknown): string {
@@ -156,15 +157,21 @@ function axis(label: string, style: ChartStyle) {
  */
 export function chartConfig(table: Table, parameters: ChartParameters): ChartPlan {
   const { columns, rows } = table
-  if (rows.length === 0) throw new RangeError(`${parameters.data} has no row of data, only its header.`)
-  const missing = [parameters.x, ...(parameters.y ?? [])].filter((name): name is string => name !== null && !columns.includes(name))
-  if (missing.length > 0) throw new RangeError(`${parameters.data} has no column ${listed(missing)}. Its columns are ${listed(columns)}.`)
+  if (rows.length === 0) throw new RangeError(`${parameters.data} has no row of data.`)
+  const missing = [...new Set([parameters.x, ...(parameters.y ?? [])])].filter((name): name is string => name !== null && !columns.includes(name))
+  if (missing.length > 0) {
+    throw new RangeError(`${parameters.data} has ${forCount(missing, 'no column', 'none of the columns')} ${listed(missing)}. `
+      + `${forCount(columns, 'Its only column is', 'Its columns are')} ${listed(columns)}.`)
+  }
   const x = parameters.x ?? columns[0]
   const numeric = numericColumns(table)
   const series = parameters.y ?? numeric.filter((name) => name !== x)
   if (series.length === 0) throw new RangeError(`${parameters.data} has no column of numbers besides ${quoted(x)}. Give the columns of the series as y.`)
-  const notNumbers = series.filter((name) => !numeric.includes(name))
-  if (notNumbers.length > 0) throw new RangeError(`The column ${listed(notNumbers)} of ${parameters.data} does not hold only numbers, and a series takes only numbers.`)
+  const notNumbers = [...new Set(series)].filter((name) => !numeric.includes(name))
+  if (notNumbers.length > 0) {
+    throw new RangeError(`The ${forCount(notNumbers, 'column', 'columns')} ${listed(notNumbers)} of ${parameters.data} `
+      + `${forCount(notNumbers, 'does', 'do')} not hold only numbers, and a series takes only numbers.`)
+  }
   if (parameters.type === 'scatter' && !numeric.includes(x)) {
     throw new RangeError(`A scatter chart takes its x values from a column of numbers, and ${quoted(x)} is not one. Give such a column as x, or another type.`)
   }
