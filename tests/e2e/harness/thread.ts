@@ -214,12 +214,21 @@ export async function pickModel (browser: E2EBrowser, providerName: string, mode
   await waitForValue(browser, 'selected model', () => selectedModelName(browser), modelName)
 }
 
-/** Moves the focus into the thread editor. */
+/** Moves the focus into the thread editor and keeps its view where it is,
+ *  with CodeMirror's `focus()`, as a click in the text does.
+ *
+ *  Why not `content.focus()`: on the first focus of the editor in an app
+ *  session, the DOM selection is not in the editor, so WebKit puts its
+ *  caret at the doc start and scrolls the view there. A spec that scrolled
+ *  to an image first then had no image in the view. CodeMirror focuses
+ *  with `preventScroll`, and on WebKit puts back each scroll position that
+ *  the focus changed. */
 export async function focusEditor (browser: E2EBrowser): Promise<void> {
   await browser.execute(() => {
-    const content = document.querySelector<HTMLElement>('.cm-content')
+    const content = document.querySelector('.cm-content')
     if (!content) throw new Error('focusEditor: .cm-content not found')
-    content.focus()
+    const view = Reflect.get(Reflect.get(content, 'cmTile'), 'root').view as EditorView
+    view.focus()
   })
 }
 
