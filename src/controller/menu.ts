@@ -4,6 +4,7 @@ import { isTauri } from '@tauri-apps/api/core'
 import { Image } from '@tauri-apps/api/image'
 import { Menu, MenuItem, Submenu, type MenuItemOptions, type PredefinedMenuItemOptions } from '@tauri-apps/api/menu'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import type { AssetExport } from '../model/chat/assetExport'
 import { currentShortcutPlatform, findShortcut, shortcutAccelerator, type Shortcut, type ShortcutId } from '../model/shortcuts'
 import { isMacPlatform } from '../utils/platform'
 import { DEZ_REPO_URL } from '../utils/dezLinks'
@@ -322,27 +323,35 @@ export default sbp('sbp/selectors/register', {
     return sbp('okTurtles.eventQueue/queueEvent', 'dez.controller/menu/accelerators', updateAccelerators)
   },
 
-  // The context menu of an image or a clip in the editor, at the pointer.
-  // Its "Reveal in File Manager" shows `file` in the system file manager.
-  // `file` is null for an asset with no file on this computer (a missing
-  // image, a clip that plays from its URL only); the item is then disabled.
+  // The context menu of an image, a clip, or an app in the editor, at the
+  // pointer. Its "Reveal in File Manager" shows `file` in the system file
+  // manager; `file` is null for an asset with no file on this computer (a
+  // missing image, a clip that plays from its URL only), and the item is
+  // then disabled. An image or a clip also gives `export`, for its
+  // "Export…" item (`dez.controller/exportAsset`): null disables the item
+  // (an asset whose bytes are gone), and an app, which is no asset, gives
+  // none, so its menu has no such item.
   // A native menu gives the platform's look and keys with no new UI. A new
   // menu for each popup is simpler than one shared menu whose item changes.
   // Without Tauri (`npm run dev`) there is no menu, and the webview's own
   // menu does not show either (the widgets cancel the event).
-  'dez.controller/menu/popupAsset' (file: string | null): Promise<void> {
+  'dez.controller/menu/popupAsset' ({ file, export: asset }: { file: string | null, export?: AssetExport | null }): Promise<void> {
     if (!isTauri()) return Promise.resolve()
     return sbp('okTurtles.eventQueue/queueEvent', 'dez.controller/menu/asset', async () => {
       const previous = lastAssetMenu
       lastAssetMenu = null
       await previous?.close().catch((error: unknown) => console.error('Failed to close the last asset menu:', error))
-      const label = 'Reveal in File Manager'
+      const reveal = 'Reveal in File Manager'
+      const items: MenuItemOptions[] = [file === null
+        ? { text: reveal, enabled: false }
+        : { text: reveal, action: () => void sbp('dez.controller/revealInFileManager', file) }]
+      if (asset !== undefined) {
+        items.push(asset === null
+          ? { text: 'Export…', enabled: false }
+          : { text: 'Export…', action: () => void sbp('dez.controller/exportAsset', asset) })
+      }
       try {
-        const menu = await Menu.new({
-          items: [file === null
-            ? { text: label, enabled: false }
-            : { text: label, action: () => void sbp('dez.controller/revealInFileManager', file) }],
-        })
+        const menu = await Menu.new({ items })
         lastAssetMenu = menu
         await menu.popup()
       } catch (error) {

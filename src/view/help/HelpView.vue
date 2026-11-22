@@ -487,6 +487,18 @@ function onOverlayClick(event: MouseEvent) {
               that time, Delete Unreferenced Files in Settings › General deletes a temporary copy
               that no conversation uses.
             </p>
+            <!-- The menu: `dez.controller/menu/popupAsset`
+                 (src/controller/menu.ts); the Export:
+                 `dez.controller/exportAsset`
+                 (src/controller/exportAsset.ts). -->
+            <p>
+              A context click on an image or a player shows Reveal in File Manager, which shows the
+              file of the asset in the file manager of the system, and Export…, which copies the
+              asset to a file that you pick. A clip that plays from its web address downloads
+              before the copy. The copy is your file: Dez does not track it, and a delete in Dez
+              leaves it. Reveal in File Manager is not available for a clip that has no file on
+              this computer, and neither item is available for an asset whose file is gone.
+            </p>
             <p>
               A Dez tool that cuts, joins, or converts clips stores its new clips and images at
               once, in the folders above. It works on copies of the assets and of the files of the

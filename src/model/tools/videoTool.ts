@@ -156,7 +156,8 @@ const SAVE_TO_PARAMETER: ToolParameter = {
 
 // The help of the `ffmpeg` subcommand. It is long, and only a `help` call
 // sends it: the tools array holds one short entry for the whole tool. Each
-// example ran with this build (tests/e2e/video-tool.e2e.ts runs some).
+// example ran with this build, and tests/e2e/video-tool.e2e.ts runs most
+// of them.
 const FFMPEG_HELP = [
   'Runs the ffmpeg that Dez ships once, with the arguments that you give, in a new run folder. '
     + `${JOB_CALL_NOTE} `
@@ -189,7 +190,8 @@ const FFMPEG_HELP = [
     + 'the options -safe, -protocol_whitelist, -protocol_blacklist, -filter_script, -filter_complex_script, -graph_file, -hls_key_info_file, '
     + '-enable_drefs, -use_absolute_path, -dump_attachment, and each option that starts with "-/", '
     + 'and a commands file of sendcmd or asendcmd (f=, filename=): write the commands into the filter, as in "asendcmd=c=\'2 volume volume 0.5\',volume=1".',
-  'Encoders of this build: libx264, libx265, libvpx-vp9, libvpx, libsvtav1 (video); aac, libmp3lame, libopus, flac, pcm_s16le (audio); mjpeg, png, gif (images). '
+  'Encoders of this build: libx264, libx265, libvpx-vp9, libvpx, libsvtav1, ffv1 (lossless) (video); aac, libmp3lame, libopus, flac, pcm_s16le (audio); mjpeg, png, gif (images). '
+    + 'png in a MOV file also makes a video clip with an alpha channel. '
     + 'The ffprobe subcommand gives the full lists with no job (-encoders, -filters, -h filter=scale).',
   'Text (drawtext, subtitles, ass): this ffmpeg has no font of the system. It reads a font only from the folder fonts of the run folder, which holds a copy of each font that the `fonts` parameter names. '
     + `The fonts that Dez ships: ${SHIPPED_FONTS_TEXT}. `
@@ -216,6 +218,22 @@ const FFMPEG_HELP = [
     + '-i @c -vf "subtitles=words.srt:fontsdir=fonts:force_style=\'FontName=Noto Sans\'" -c:v libx264 -c:a aac subtitled.mp4',
   `- Write one frame of each second of @c as a PNG image into the folder ${WORK_VIRTUAL_ROOT}/frames, with "${WORK_VIRTUAL_ROOT}/frames" in \`save_to\`: -i @c -vf fps=1 f%04d.png`,
   `- Put the sound ${WORK_VIRTUAL_ROOT}/parts/voice.wav on the video clip ${WORK_VIRTUAL_ROOT}/parts/scene.mp4, as a clip of your reply: -i ${WORK_VIRTUAL_ROOT}/parts/scene.mp4 -i ${WORK_VIRTUAL_ROOT}/parts/voice.wav -map 0:v -map 1:a -c:v copy -c:a aac -shortest scene_voice.mp4`,
+  '- Cut a lossless segment of exactly 48 frames at 24 fps from second 3 of @c, for an edit that a later call joins '
+    + `(FFV1 in MOV; ffmpeg warns that the file "may be unplayable", as players do not read it, but ffmpeg does), with "${WORK_VIRTUAL_ROOT}/seg" in \`save_to\`: `
+    + '-ss 3 -i @c -frames:v 48 -an -c:v ffv1 -r 24 s1.mov',
+  '- Join such segments into one clip of your reply, with a new time for each frame (setpts=N/(24*TB) after the concat, at the frame rate of the segments), so that no frame is lost or added: '
+    + `-i ${WORK_VIRTUAL_ROOT}/seg/s1.mov -i ${WORK_VIRTUAL_ROOT}/seg/s2.mov -filter_complex "[0:v][1:v]concat=n=2:v=1:a=0,setpts=N/(24*TB)[v]" -map "[v]" -r 24 -c:v libx264 -pix_fmt yuv420p edit.mp4`,
+  '- Make a 3-second clip with an alpha channel (PNG in MOV), where only the text shows, with "NotoSans-Bold.ttf" in `fonts`: '
+    + '-f lavfi -i color=c=black@0:size=1280x720:rate=24:duration=3,format=rgba -vf "drawtext=fontfile=fonts/NotoSans-Bold.ttf:text=\'Night Drive\':fontsize=64:fontcolor=white:borderw=4:x=60:y=h-text_h-60" -c:v png lower.mov',
+  '- Put the clip with alpha @d (PNG in MOV, as from the title subcommand) over the video clip @c, from second 2 of @c: '
+    + '-i @c -itsoffset 2 -i @d -filter_complex "[0:v][1:v]overlay=eof_action=pass,format=yuv420p[v]" -map "[v]" -map "0:a?" -c:v libx264 -c:a copy titled.mp4',
+  '- Pass 1 of a loudness of -14 LUFS for @b, which measures with no new file, and whose log ends with the values as JSON: '
+    + '-v info -i @b -af loudnorm=I=-14:TP=-1.2:LRA=11:print_format=json -f null -',
+  '- Pass 2, which gives the values of pass 1 (input_i, input_tp, input_lra, input_thresh, target_offset) as measured_I, measured_TP, measured_LRA, measured_thresh, and offset: '
+    + '-v info -i @b -af loudnorm=I=-14:TP=-1.2:LRA=11:measured_I=-17.57:measured_TP=-10.46:measured_LRA=2.60:measured_thresh=-28.48:offset=0.21:linear=true:print_format=summary -ar 48000 loud.wav',
+  'The log of pass 2 tells the Normalization Type. Linear changes only the level. '
+    + 'Dynamic also changes the sound: loudnorm uses it when the measured LRA is 0 or above LRA, or when the new level puts the true peak above TP. '
+    + 'In Dynamic mode loudnorm writes 192 kHz, so keep -ar 48000.',
 ].join('\n')
 
 // Static text only (no count that changes, no date): the tools array is in

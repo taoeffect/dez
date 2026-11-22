@@ -52,7 +52,7 @@ use tokio::process::ChildStdin;
 use tokio::sync::{Notify, mpsc, watch};
 
 use crate::confinement::{Confinement, confined_command};
-use crate::persistence::{APPS_FOLDER, CONVERSATION_WORK_FOLDERS, FileRoot, has_link_below, is_app_file_segment, make_private_folder, program_owned_folders, root_dir};
+use crate::persistence::{APPS_FOLDER, CONVERSATION_WORK_FOLDERS, FileRoot, has_link_below, is_app_file_segment, link_roots, make_private_folder, root_dir, through_link};
 
 // The programs that a run can name (`const BUNDLED_TOOLS: &[&str]`): the
 // `bundle.externalBin` programs of tauri.conf.json, under the names that
@@ -667,11 +667,6 @@ fn resolved_run(run: ToolRun, roots: &Roots) -> Result<ProgramRun, String> {
     })
 }
 
-// The folders below which Dez follows no link for a run (`ProgramRun::link_roots`).
-fn link_roots(cache: &Path, app: &Path) -> Vec<PathBuf> {
-    std::iter::once(cache.to_path_buf()).chain(program_owned_folders(app)).collect()
-}
-
 // Makes the work folder and puts the input files into it. The folder can be
 // there already: a caller runs more than one program in one folder (a probe
 // of the inputs, then the work), and a download can write into it first. A
@@ -683,11 +678,6 @@ fn prepare_work_folder<P: AsRef<Path>>(folder: &Path, inputs: &[ToolInput], link
     }
     make_private_folder(folder).map_err(|error| format!("Failed to make the work folder: {}", error))?;
     inputs.iter().try_for_each(|input| copy_input(folder, input, link_roots))
-}
-
-// Whether `path` goes through a link below one of `link_roots`.
-fn through_link<P: AsRef<Path>>(link_roots: &[P], path: &Path) -> bool {
-    link_roots.iter().any(|root| has_link_below(root.as_ref(), path))
 }
 
 // Puts one input file into the work folder, as a copy. Never a symlink or a

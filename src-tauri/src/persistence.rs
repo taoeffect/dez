@@ -230,8 +230,19 @@ fn is_program_owned(root: FileRoot, relative: &str) -> bool {
 
 // The folders of the app root `app_root` that programs own
 // (`PROGRAM_OWNED_FOLDERS`), below which Dez follows no link.
-pub(crate) fn program_owned_folders(app_root: &Path) -> impl Iterator<Item = PathBuf> + '_ {
+fn program_owned_folders(app_root: &Path) -> impl Iterator<Item = PathBuf> + '_ {
     PROGRAM_OWNED_FOLDERS.iter().map(move |name| app_root.join(name))
+}
+
+// The folders below which Dez follows no link (`through_link`): the cache
+// root `cache`, and the folders of the app root `app` that programs own.
+pub(crate) fn link_roots(cache: &Path, app: &Path) -> Vec<PathBuf> {
+    std::iter::once(cache.to_path_buf()).chain(program_owned_folders(app)).collect()
+}
+
+// Whether `path` goes through a link below one of `link_roots`.
+pub(crate) fn through_link<P: AsRef<Path>>(link_roots: &[P], path: &Path) -> bool {
+    link_roots.iter().any(|root| has_link_below(root.as_ref(), path))
 }
 
 // Whether a folder at a path of a root can be made, moved, and deleted
@@ -537,7 +548,7 @@ fn read_file(path: &Path, plain_only: bool) -> std::io::Result<Vec<u8>> {
 
 fn open_file(path: &Path, plain_only: bool) -> std::io::Result<std::fs::File> {
     if plain_only {
-        open_plain_file(path)
+        open_plain_file(path, false)
     } else {
         std::fs::File::open(path)
     }
@@ -550,15 +561,19 @@ fn open_file(path: &Path, plain_only: bool) -> std::io::Result<std::fs::File> {
 // return at once, and the check is on the open file, so no program can put
 // a pipe in place of a file between a check and the open. `O_NOFOLLOW`
 // refuses a link in place of the file: the path check (`has_link_below`)
-// was some time before the open.
-fn open_plain_file(path: &Path) -> std::io::Result<std::fs::File> {
+// was some time before the open. With `follow_link`, for a file outside
+// those places (a linked file of the user), a link is opened as the file
+// that it names.
+fn open_plain_file(path: &Path, follow_link: bool) -> std::io::Result<std::fs::File> {
     let mut options = std::fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW);
+        options.custom_flags(libc::O_NONBLOCK | if follow_link { 0 } else { libc::O_NOFOLLOW });
     }
+    #[cfg(not(unix))]
+    let _ = follow_link;
     let file = options.open(path)?;
     if !file.metadata()?.is_file() {
         return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "not a regular file"));
@@ -729,6 +744,54 @@ fn copy_then_remove(source: &Path, target: &Path) -> Result<(), String> {
         let _ = std::fs::remove_file(target);
         error.to_string()
     })
+}
+
+// Copies the file at the absolute path `source` to `target`, a path that
+// the user picked in the save dialog: the Export of an image or a clip
+// (`export_file` in commands.rs checks the target). The copy is the user's
+// file, so it gets the default mode, not the 0600 of `PrivateFileWriter`;
+// `std::fs::copy` would copy the 0600 of a source in the Dez folders.
+pub fn export_file(source: &str, target: &Path) -> Result<(), String> {
+    let app = base_dir();
+    // A system with no cache folder has no file there to guard.
+    let roots = match root_dir(FileRoot::Cache) {
+        Ok(cache) => link_roots(&cache, &app),
+        Err(_) => program_owned_folders(&app).collect(),
+    };
+    export_copy(Path::new(source), target, &roots)
+}
+
+// `export_file` with the folders below which it follows no link. A source
+// there can be the work of a program (a temp copy of a clip, a file of a
+// work folder), and a link there can name any file of the user, the API
+// keys too, so it is refused, as the input of a bundled tool is
+// (`copy_input` in bundled_tools.rs). A link elsewhere is the user's own (a
+// linked file). Only a regular file is copied (`open_plain_file`). The copy
+// goes into a part file next to the target, which a rename puts in place:
+// a failed copy leaves the target as it was, and a target that is the
+// source itself loses no byte.
+fn export_copy<P: AsRef<Path>>(source: &Path, target: &Path, link_roots: &[P]) -> Result<(), String> {
+    // `through_link` compares the parts of the path as text.
+    if !source.is_absolute() || source.components().any(|part| part == std::path::Component::ParentDir) {
+        return Err("The path of the file to export is not absolute, or has `..` in it".to_string());
+    }
+    if through_link(link_roots, source) {
+        return Err("The file to export goes through a link in a folder that programs own".to_string());
+    }
+    let below_root = link_roots.iter().any(|root| source.starts_with(root));
+    let mut input = open_plain_file(source, !below_root).map_err(|error| format!("Failed to read the file to export: {}", error))?;
+    let mut part_name = target.as_os_str().to_owned();
+    part_name.push(format!(".{}.{}.part", std::process::id(), TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed)));
+    let part = PathBuf::from(part_name);
+    // `create_new` never opens a file or a link that is at the name already.
+    let mut output = std::fs::OpenOptions::new().write(true).create_new(true).open(&part).map_err(write_error)?;
+    std::io::copy(&mut input, &mut output)
+        .and_then(|_| output.sync_all())
+        .and_then(|()| std::fs::rename(&part, target))
+        .map_err(|error| {
+            let _ = std::fs::remove_file(&part);
+            write_error(error)
+        })
 }
 
 // Lists the files directly in a folder of a root, or with `folders` the
@@ -1720,5 +1783,84 @@ pub(crate) mod tests {
                 "more": true,
             })
         );
+    }
+
+    // An export of a private file of the Dez folders gives the user a file
+    // with the default mode, as a new file of that folder has, and replaces
+    // a file that is at the target with no part file left over.
+    #[cfg(unix)]
+    #[test]
+    fn an_export_copies_the_bytes_into_a_file_of_the_user() {
+        let dir = TempDir::new("export-copy");
+        let (app, out) = (dir.0.join("app"), dir.0.join("out"));
+        std::fs::create_dir_all(app.join("assets")).expect("create");
+        std::fs::create_dir(&out).expect("create");
+        let source = app.join("assets").join("clip.webm");
+        write_private_file(&source, &[0, 1, 2, 255]).expect("write");
+        let (target, fresh) = (out.join("My clip.webm"), out.join("fresh"));
+        std::fs::write(&target, b"an older export").expect("write");
+        std::fs::File::create(&fresh).expect("create");
+
+        export_copy(&source, &target, &link_roots(&dir.0.join("cache"), &app)).expect("export");
+
+        assert_eq!(std::fs::read(&target).expect("read"), [0, 1, 2, 255]);
+        assert_eq!(mode_of(&target), mode_of(&fresh));
+        assert_eq!(mode_of(&source), 0o600);
+        let mut names = std::fs::read_dir(&out).expect("list").map(|entry| entry.expect("entry").file_name()).collect::<Vec<_>>();
+        names.sort();
+        assert_eq!(names, ["My clip.webm", "fresh"]);
+
+        // The source itself as the target.
+        export_copy(&source, &source, &link_roots(&dir.0.join("cache"), &app)).expect("export");
+        assert_eq!(std::fs::read(&source).expect("read"), [0, 1, 2, 255]);
+    }
+
+    // A link where programs own the files can name any file of the user
+    // (the API keys), and a named pipe there would never end its read; a
+    // link of the user (a linked clip) is exported as the file it names.
+    // No refused export leaves a file at the target.
+    #[cfg(unix)]
+    #[test]
+    fn an_export_takes_no_link_and_no_pipe_where_programs_own_the_files() {
+        use std::os::unix::fs::symlink;
+        let dir = TempDir::new("export-links");
+        let (cache, app, home) = (dir.0.join("cache"), dir.0.join("app"), dir.0.join("home"));
+        let media = cache.join("media");
+        let work = app.join(CONVERSATION_WORK_FOLDERS).join("c1");
+        for folder in [&media, &work, &home, &app.join("assets")] {
+            std::fs::create_dir_all(folder).expect("create");
+        }
+        let keys = home.join("provider_keys.json");
+        std::fs::write(&keys, b"keys").expect("write");
+        symlink(&keys, media.join("keys.webm")).expect("link");
+        symlink(&home, work.join("home")).expect("link");
+        make_pipe(&media.join("pipe.webm"));
+        std::fs::create_dir(media.join("folder.webm")).expect("create");
+        let roots = link_roots(&cache, &app);
+        let target = home.join("export.webm");
+
+        let refused = [
+            media.join("keys.webm"),
+            work.join("home").join("provider_keys.json"),
+            media.join("pipe.webm"),
+            media.join("folder.webm"),
+            media.join("missing.webm"),
+            PathBuf::from("media/keys.webm"),
+            media.join("..").join("..").join("home").join("provider_keys.json"),
+        ];
+        for source in refused {
+            let (sender, receiver) = std::sync::mpsc::channel();
+            let (roots, target) = (roots.clone(), target.clone());
+            std::thread::spawn(move || sender.send(export_copy(&source, &target, &roots).is_err()));
+            assert_eq!(receiver.recv_timeout(std::time::Duration::from_secs(10)), Ok(true));
+        }
+        let mut names = std::fs::read_dir(&home).expect("list").map(|entry| entry.expect("entry").file_name()).collect::<Vec<_>>();
+        names.sort();
+        assert_eq!(names, ["provider_keys.json"]);
+
+        let linked = app.join("assets").join("linked.webm");
+        symlink(&keys, &linked).expect("link");
+        export_copy(&linked, &target, &roots).expect("a link of the user");
+        assert_eq!(std::fs::read(&target).expect("read"), b"keys");
     }
 }

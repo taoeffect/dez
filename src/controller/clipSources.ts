@@ -1,8 +1,9 @@
 import sbp from '@sbp/sbp'
 import { ClipReadError, MAX_SAVED_CLIP_BYTES } from '../model/chat/mediaFiles'
 import { isLinkedMediaPath, isSavedMediaPath, isTempMediaPath, type MediaTagData } from '../model/chat/mediaTags'
+import { signedUrlGone } from '../model/providers/errors'
 import { byteSizeText } from '../utils/byteSize'
-import { rawErrorText } from '../utils/errorText'
+import { ExplainedError, rawErrorText } from '../utils/errorText'
 import type { NativeHttpDownload } from '../utils/protocol/nativeHttp'
 import type { AppFileRef } from './nativeTypes'
 
@@ -73,6 +74,32 @@ export async function downloadClip (url: string, file: AppFileRef, signal: Abort
   } finally {
     signal?.removeEventListener('abort', cancel)
   }
+}
+
+// What went wrong when the server of a clip refused its download, and what
+// the user can do. The URL is one that the provider gave, and a download
+// sends no key with it: so an access refusal or a missing file tells that
+// the link has expired or that the clip was deleted, and not that a key is
+// wrong.
+function clipDownloadRefusal (status: number): string {
+  if (signedUrlGone(status)) {
+    return 'The clip is not on its server any more: its link has expired, or the provider deleted it. Make the clip again.'
+  }
+  if (status >= 500) return 'The server of the clip has a problem. Try again later.'
+  return 'The server of the clip refused to send it. Try again later. If the error stays, make the clip again.'
+}
+
+/** The error of a `downloadClip` that the user asked for (the Save or the
+ *  Export of a clip), worded for the user: an `ExplainedError` for a
+ *  `ClipDownloadError`, and any other error as it is. */
+export function explainedDownloadError (error: unknown): unknown {
+  if (!(error instanceof ClipDownloadError)) return error
+  if (error.status !== null) return new ExplainedError(clipDownloadRefusal(error.status), `HTTP ${error.status}`, { cause: error })
+  return new ExplainedError(
+    `Dez could not download the clip. The network failed, the clip is larger than ${byteSizeText(MAX_SAVED_CLIP_BYTES)} (the most that Dez saves), or the system did not let Dez write the file: the details tell which. Try again, unless the clip is too large.`,
+    rawErrorText(error.cause),
+    { cause: error },
+  )
 }
 
 /** A place that Dez may take a clip from: a file of this computer

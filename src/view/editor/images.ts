@@ -1,6 +1,7 @@
 import sbp from '@sbp/sbp'
 import { StateEffect, StateField, type EditorState, type Extension, type Text } from '@codemirror/state'
 import { Decoration, EditorView, ViewPlugin, WidgetType, showTooltip, type DecorationSet, type PluginValue, type Rect, type Tooltip, type ViewUpdate } from '@codemirror/view'
+import { imageExport } from '../../model/chat/assetExport'
 import { assetModel } from '../../model/chat/assetModels'
 import { SENTINEL_CHAR, plainLiveText } from '../../model/chat/content'
 import { findImageReferences, imageExtension, imageMediaType, type ImageReference } from '../../model/chat/images'
@@ -247,11 +248,11 @@ function addTooltip(view: EditorView, place: AssetPlace, item: HTMLElement, cont
 
 /** Gives the image widget `wrapper` the asset menu: a context click on the
  *  image (or on its "Image not found" box) pops up the native menu with
- *  "Reveal in File Manager" (`dez.controller/menu/popupAsset`), in place of
- *  the webview's own menu. The item is disabled while the box shows, as
- *  the file is not there. The click leaves the caret, the selection, and
- *  the focus where they are. */
-function addAssetMenu(view: EditorView, wrapper: HTMLElement, path: string): void {
+ *  "Reveal in File Manager" and "Export…" (`dez.controller/menu/popupAsset`),
+ *  in place of the webview's own menu. The items are disabled while the box
+ *  shows, as the file is not there. The click leaves the caret, the
+ *  selection, and the focus where they are. */
+function addAssetMenu(view: EditorView, wrapper: HTMLElement, path: string, id: string | null): void {
   // A context press (the right button, or on macOS the main button with
   // Ctrl) is canceled: CodeMirror skips a canceled press, so the caret does
   // not move, and the focus does not change. The overlay's tooltip closes,
@@ -271,7 +272,7 @@ function addAssetMenu(view: EditorView, wrapper: HTMLElement, path: string): voi
   wrapper.addEventListener('contextmenu', (event) => {
     event.preventDefault()
     const missing = wrapper.querySelector('.dez-image-missing') !== null
-    void sbp('dez.controller/menu/popupAsset', missing ? null : path)
+    void sbp('dez.controller/menu/popupAsset', missing ? { file: null, export: null } : { file: path, export: imageExport(path, id) })
   })
 }
 
@@ -380,7 +381,7 @@ export function createImage(view: EditorView, { path, id, linked, model }: Image
   row.className = 'dez-image__overlay-row'
   row.appendChild(overlay)
   wrapper.append(img, row)
-  addAssetMenu(view, wrapper, path)
+  addAssetMenu(view, wrapper, path, id)
   return wrapper
 }
 

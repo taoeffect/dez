@@ -71,7 +71,8 @@ export default sbp('sbp/selectors/register', {
   /** Shows the context menu of the app `name` at the pointer
    *  (`dez.controller/menu/popupAsset`): its "Reveal in File Manager" shows
    *  the folder of the app in the folder of the apps. The item is disabled
-   *  for an app that is gone, and when Dez cannot tell. It never rejects. */
+   *  for an app that is gone, and when Dez cannot tell. An app is no asset,
+   *  so the menu has no Export. It never rejects. */
   async 'dez.controller/apps/popupMenu' (name: string): Promise<void> {
     let folder: string | null = null
     try {
@@ -81,7 +82,7 @@ export default sbp('sbp/selectors/register', {
       // A `ToolError` is a failed read, which appsTool.ts logged.
       if (!(error instanceof ToolError)) console.error(`Failed to find the folder of the app ${JSON.stringify(name)}:`, error)
     }
-    await sbp('dez.controller/menu/popupAsset', folder)
+    await sbp('dez.controller/menu/popupAsset', { file: folder })
   },
 
   /** The bytes of the image or the clip with the id `id` of a conversation

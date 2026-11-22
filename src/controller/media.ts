@@ -3,13 +3,11 @@ import { AUDIO_CUT_RATE, type DecodedAudio } from '../model/chat/audioCut'
 import { MAX_SAVED_CLIP_BYTES, MEDIA_TEMP_LIFETIME_MS, mediaFileExtension, savedMediaFile, tempMediaFile } from '../model/chat/mediaFiles'
 import { MEDIA_CACHE_FOLDER, MEDIA_FOLDERS, type MediaTagData } from '../model/chat/mediaTags'
 import { newStoredFilePath } from '../model/chat/storedFilePaths'
-import { signedUrlGone } from '../model/providers/errors'
 import { wavFileOfChannels } from '../model/providers/pcmAudio'
-import { byteSizeText } from '../utils/byteSize'
 import { ExplainedError, errorText, explainedError, rawErrorText } from '../utils/errorText'
 import { fileNameOf } from '../utils/fileName'
 import type { NativeHttpStreamResult } from '../utils/protocol/nativeHttp'
-import { ClipDownloadError, clipFromSources, downloadClip } from './clipSources'
+import { clipFromSources, downloadClip, explainedDownloadError } from './clipSources'
 import type { AppFileEntry } from './nativeTypes'
 import { deleteOldWorkFolders } from './workFolders'
 
@@ -60,18 +58,6 @@ function downloadFileName ({ type, url }: Pick<MediaTagData, 'type' | 'url'>): s
     throw new ExplainedError('Dez cannot save this clip: its temp copy is not on this computer, and it has no web address to download it from. Make the clip again.')
   }
   return newClipFileName(type, url)
-}
-
-// What went wrong when the server of a clip refused its download, and what
-// the user can do. The URL is one that the provider gave, and Save sends no
-// key with it: so an access refusal or a missing file tells that the link
-// has expired or that the clip was deleted, and not that a key is wrong.
-function clipDownloadRefusal (status: number): string {
-  if (signedUrlGone(status)) {
-    return 'The clip is not on its server any more: its link has expired, or the provider deleted it. Make the clip again.'
-  }
-  if (status >= 500) return 'The server of the clip has a problem. Try again later.'
-  return 'The server of the clip refused to send it. Try again later. If the error stays, make the clip again.'
 }
 
 // The bytes of a clip from its http or https URL (`downloadClip`): the
@@ -138,13 +124,7 @@ export default sbp('sbp/selectors/register', {
       }
       // `downloadFileName` refused a clip with no http or https URL.
       await downloadClip(clip.url as string, { root: 'app', path: file }, undefined).catch((error: unknown) => {
-        if (!(error instanceof ClipDownloadError)) throw error
-        if (error.status !== null) throw new ExplainedError(clipDownloadRefusal(error.status), `HTTP ${error.status}`, { cause: error })
-        throw new ExplainedError(
-          `Dez could not download the clip. The network failed, the clip is larger than ${byteSizeText(MAX_SAVED_CLIP_BYTES)} (the most that Dez saves), or the system did not let Dez write the file: the details tell which. Try again, unless the clip is too large.`,
-          rawErrorText(error.cause),
-          { cause: error },
-        )
+        throw explainedDownloadError(error)
       })
       return path
     } catch (error) {

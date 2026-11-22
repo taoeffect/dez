@@ -4,7 +4,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { MAX_REQUEST_IMAGE_BYTES } from '../../src/model/streams/pictureBudget'
 import { ASSET_INFO_COLUMNS } from '../../src/model/tools/assetInfo'
 import { pictureBudgetLeftText, PICTURES_SHOWN_NOTE } from '../../src/model/tools/assetView'
-import { jobStartedText, jobsWaitResults, startedJobId } from '../../src/model/tools/jobs'
+import { jobStartedText, jobsWaitResults, NO_JOBS_TEXT, startedJobId } from '../../src/model/tools/jobs'
 import { REFUSED_DEVICES, REFUSED_PROTOCOLS, workInputNotFileText, workPathUnreadableText } from '../../src/model/tools/videoTool'
 import { byteSizeText } from '../../src/utils/byteSize'
 import { sentImageUrls } from './harness/chatBody'
@@ -45,6 +45,10 @@ import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolC
 //   `/work`, with no asset; later `ffmpeg` and `ffprobe` calls read those
 //   files of `/work` as copies; a path of `/work` that is no file is
 //   refused with no run, and so is a link there, which Dez does not follow;
+// - the examples of the help for an edit: lossless FFV1 segments of an
+//   exact count of frames in `/work`, a join of them that loses no frame, a
+//   clip with alpha that ffmpeg makes and puts over the edit, and the two
+//   passes of loudnorm;
 // - a call whose arguments name a file of the computer (a font too), the
 //   network, a device, or a commands file of a filter is refused at once:
 //   no job, and no work folder;
@@ -151,6 +155,21 @@ const SUBTITLES_FONT = 'NotoSans-Regular.ttf'
 const SUBTITLES_FILES = { 'words.srt': '1\n00:00:00,000 --> 00:00:02,500\nNight: Drive\n' }
 const SUBTITLES_ARGS = '-i @a -vf "subtitles=words.srt:fontsdir=fonts:force_style=\'FontName=Noto Sans\'" -c:v libvpx-vp9 subtitled.webm'
 
+// A tone of 8 s whose level goes up and down: loudnorm does a linear pass 2
+// only when the measured loudness range is above 0, which a tone of one
+// level does not have.
+const SWELL_SOURCE = 'aevalsrc=0.3*sin(2*PI*440*t)*(0.55+0.45*sin(2*PI*0.25*t)):s=48000:d=8'
+// The targets of the loudnorm examples of the help.
+const LOUDNORM_TARGETS = 'loudnorm=I=-14:TP=-1.2:LRA=11'
+
+// The values of the JSON of loudnorm in the log of an ffmpeg call, by key
+// (`input_i`: "-17.57").
+function loudnormValues (text: string): Record<string, string> {
+  const values = Object.fromEntries(Array.from(text.matchAll(/^\s*"(\w+)" : "([^"]*)",?$/gm), ([, key, value]) => [key, value]))
+  expect(Object.keys(values)).toContain('input_i')
+  return values
+}
+
 // The ids of the files of the conversation that `openShots` opens.
 type ShotId = 'a' | 'b' | 'c' | 'd' | 'e'
 const SHOT_IDS: ShotId[] = ['a', 'b', 'c', 'd', 'e']
@@ -196,6 +215,12 @@ describe('video tool', () => {
   function lightPixels (file: string, seconds = 0): number {
     const gray = programRun(setup.app, 'dez-ffmpeg', ['-v', 'error', '-ss', String(seconds), '-i', file, '-frames:v', '1', '-vf', 'format=gray', '-f', 'rawvideo', '-'])
     return gray.filter((value) => value > 128).length
+  }
+
+  // The number of frames of the video stream of `file`, as ffprobe counts
+  // them when it decodes the stream.
+  function frameCount (file: string): number {
+    return Number(programOutput(setup.app, 'dez-ffprobe', ['-v', 'error', '-count_frames', '-select_streams', 'v:0', '-show_entries', 'stream=nb_read_frames', '-of', 'csv=p=0', file]).trim())
   }
 
   // The streams of the picture of the data URL `url`, which must be a
@@ -1020,6 +1045,85 @@ describe('video tool', () => {
     await expectCleanEnd({})
   })
 
+  // The examples of the help for an edit from lossless segments, a clip
+  // with alpha that ffmpeg makes over it, and two-pass loudnorm. The source
+  // is a black clip, so the white text of the clip with alpha is the only
+  // light part. As in `SUBTITLES_ARGS`, VP9 in WebM takes the place of H.264
+  // in MP4 in each clip that a player shows.
+  it('cuts lossless segments into /work, joins them with no lost frame, puts a clip with alpha that ffmpeg makes over the edit, and sets the loudness of a tone in two passes, with the examples of the help', async () => {
+    await submit(browser, 'Edit a dark clip from two segments, put a lower third over it, and set the loudness of a tone.')
+    const segFolder = appFilePath(setup.app.home, 'work', await activeConversationId(browser), 'seg')
+    const dark = await runJob(await chatRequest(), 'call_dark', 'ffmpeg', { arguments: '-f lavfi -i color=c=black:size=160x90:rate=24:duration=4 -c:v libvpx-vp9 dark.webm' })
+    expect(dark.result.text.endsWith('\nMade the video clip @a.')).toBe(true)
+
+    // 24 frames from second 2, and 12 frames from the start.
+    const first = await runJob(dark.next, 'call_s1', 'ffmpeg', { arguments: '-ss 2 -i @a -frames:v 24 -an -c:v ffv1 -r 24 s1.mov', save_to: '/work/seg' })
+    expect(first.result.text.startsWith('ffmpeg ended with no error, and Dez saved its 1 new file into /work/seg: /work/seg/s1.mov.')).toBe(true)
+    const second = await runJob(first.next, 'call_s2', 'ffmpeg', { arguments: '-i @a -frames:v 12 -an -c:v ffv1 -r 24 s2.mov', save_to: '/work/seg' })
+    expect(second.result.text.startsWith('ffmpeg ended with no error, and Dez saved its 1 new file into /work/seg: /work/seg/s2.mov.')).toBe(true)
+    expect(await filesIn(segFolder)).toStrictEqual(['s1.mov', 's2.mov'])
+    for (const [name, frames] of [['s1.mov', 24], ['s2.mov', 12]] as const) {
+      const file = path.join(segFolder, name)
+      expect(mediaFacts(setup.app, file).streams).toStrictEqual(['video ffv1 160x90'])
+      expect(frameCount(file), name).toBe(frames)
+    }
+
+    const edit = await runJob(second.next, 'call_edit', 'ffmpeg', {
+      arguments: '-i /work/seg/s1.mov -i /work/seg/s2.mov -filter_complex "[0:v][1:v]concat=n=2:v=1:a=0,setpts=N/(24*TB)[v]" -map "[v]" -r 24 -c:v libvpx-vp9 edit.webm',
+    })
+    expect(edit.result.text.endsWith('\nMade the video clip @b.')).toBe(true)
+
+    // The text shows from 0.5 s to 1 s of the edit of 1.5 s.
+    const lower = await runJob(edit.next, 'call_lower', 'ffmpeg', {
+      arguments: `-f lavfi -i color=c=black@0:size=160x90:rate=24:duration=0.5,format=rgba -vf "drawtext=fontfile=fonts/${TITLE_FONT}:text='Night Drive':fontsize=20:fontcolor=white:borderw=2:x=10:y=h-text_h-10" -c:v png lower.mov`,
+      fonts: TITLE_FONT,
+    })
+    expect(lower.result.text.endsWith('\nMade the video clip @c.')).toBe(true)
+    const over = await runJob(lower.next, 'call_over', 'ffmpeg', {
+      arguments: '-i @b -itsoffset 0.5 -i @c -filter_complex "[0:v][1:v]overlay=eof_action=pass,format=yuv420p[v]" -map "[v]" -map "0:a?" -c:v libvpx-vp9 -c:a copy over.webm',
+    })
+    expect(over.result.text.endsWith('\nMade the video clip @d.')).toBe(true)
+
+    const swell = await runJob(over.next, 'call_swell', 'ffmpeg', { arguments: `-f lavfi -i ${SWELL_SOURCE} swell.wav` })
+    expect(swell.result.text.endsWith('\nMade the audio clip @e.')).toBe(true)
+    const measure = await runJob(swell.next, 'call_measure', 'ffmpeg', { arguments: `-v info -i @e -af ${LOUDNORM_TARGETS}:print_format=json -f null -` })
+    expect(measure.result.text.startsWith('ffmpeg ended with no error. It made no file, as the call asked for with -f null.\n')).toBe(true)
+    const measured = loudnormValues(measure.result.text)
+    expect(Number(measured.input_i)).toBeLessThan(-16)
+    const loud = await runJob(measure.next, 'call_loud', 'ffmpeg', {
+      arguments: `-v info -i @e -af ${LOUDNORM_TARGETS}:measured_I=${measured.input_i}:measured_TP=${measured.input_tp}:measured_LRA=${measured.input_lra}`
+        + `:measured_thresh=${measured.input_thresh}:offset=${measured.target_offset}:linear=true:print_format=summary -ar 48000 loud.wav`,
+    })
+    expect(loud.result.text).toMatch(/\nNormalization Type: +Linear\n/)
+    expect(loud.result.text.endsWith('\nMade the audio clip @f.')).toBe(true)
+    // Pass 1 on the new clip: its loudness is the target.
+    const check = await runJob(loud.next, 'call_check', 'ffmpeg', { arguments: `-v info -i @f -af ${LOUDNORM_TARGETS}:print_format=json -f null -` })
+    expect(Math.abs(Number(loudnormValues(check.result.text).input_i) + 14)).toBeLessThanOrEqual(0.5)
+    await sendChatReply(check.next.reply, CALLER.modelName)
+
+    const reply = await endedReply(browser)
+    const clipPath = (id: string): string => {
+      const match = new RegExp(`<dez:(?:video|audio) id="${id}" type="[^"]+" src="([^"]+)"`).exec(reply)
+      expect(match, `the tag of @${id}`).not.toBeNull()
+      return match![1]
+    }
+    expect(mediaFacts(setup.app, clipPath('b'))).toStrictEqual({ streams: ['video vp9 160x90'], seconds: 1.5 })
+    expect(frameCount(clipPath('b'))).toBe(36)
+    expect(mediaFacts(setup.app, clipPath('c'))).toStrictEqual({ streams: ['video png 160x90'], seconds: 0.5 })
+    // Most pixels of a frame of the clip with alpha are transparent; the
+    // letters are opaque.
+    const pixels = programRun(setup.app, 'dez-ffmpeg', ['-v', 'error', '-i', clipPath('c'), '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgba', '-'])
+    const alphas = pixels.filter((_, index) => index % 4 === 3)
+    expect(alphas.filter((alpha) => alpha === 0).length).toBeGreaterThan(alphas.length / 2)
+    expect(alphas.filter((alpha) => alpha === 255).length).toBeGreaterThan(50)
+    expect(lightPixels(clipPath('d'), 0.25)).toBe(0)
+    expect(lightPixels(clipPath('d'), 0.75)).toBeGreaterThan(50)
+    expect(lightPixels(clipPath('d'), 1.25)).toBe(0)
+    expect(mediaFacts(setup.app, clipPath('f'))).toStrictEqual({ streams: ['audio pcm_s16le'], seconds: 8 })
+    expect(programOutput(setup.app, 'dez-ffprobe', ['-v', 'error', '-show_entries', 'stream=sample_rate', '-of', 'csv=p=0', clipPath('f')]).trim()).toBe('48000')
+    await expectCleanEnd({})
+  })
+
   it('gives the output of ffprobe as the result of its call, with the names of the copies and no job', async () => {
     const files = await openClips('ffprobe')
     await submit(browser, 'What are these files?')
@@ -1143,7 +1247,8 @@ describe('video tool', () => {
 
     sendToolCalls(second.reply, [openAiToolCall('call_list', 'jobs_list', {})])
     const third = await chatRequest()
-    expect(toolResult(third, 'call_list')).toBe('This reply has started no job.')
+    // The lines after the first tell the money limit of the tab.
+    expect(toolResult(third, 'call_list').split('\n')[0]).toBe(NO_JOBS_TEXT)
     await sendChatReply(third.reply, CALLER.modelName)
 
     const reply = await endedReply(browser)

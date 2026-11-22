@@ -311,4 +311,12 @@ export default sbp('sbp/selectors/register', {
   'dez.native/writeTextFile' (path: string, content: string): Promise<void> {
     return writeTextFile(path, content)
   },
+
+  // Copies the file at the absolute path `source` to `target`, as a file
+  // of the user (src-tauri/src/commands.rs `export_file`). Rust refuses a
+  // `target` that is not in the fs scope: only a path that the user picked
+  // with `showSaveDialog` (or dropped) is.
+  'dez.native/exportFile' (source: string, target: string): Promise<void> {
+    return invoke('export_file', { source, target })
+  },
 })

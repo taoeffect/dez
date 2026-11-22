@@ -31,7 +31,9 @@ pub fn run() {
     // - dialog:allow-save and fs:allow-write-text-file, with no static fs
     //   scope: Save As Markdown, which has no Rust command. The save dialog
     //   adds the picked path to the fs scope at run time, so the webview can
-    //   write only files that the user picked.
+    //   write only files that the user picked. The app command
+    //   `export_file` (the Export of an asset) checks its target against the
+    //   same scope.
     // - store:default: the store plugin is installed but not used. App state,
     //   prompts, conversations, and keys use persistence.rs and key_store.rs.
     let builder = tauri::Builder::default()
@@ -78,6 +80,7 @@ pub fn run() {
             commands::list_app_files,
             commands::list_file_tree,
             commands::get_app_dir,
+            commands::export_file,
             commands::temp_folders,
             commands::canonical_path,
             commands::dragged_file_paths,
