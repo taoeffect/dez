@@ -13,9 +13,13 @@ export function f32Samples(bytes) {
   if (view.byteLength % 4 !== 0) throw new RangeError(`f32Samples: ${view.byteLength} bytes are not whole float32 samples (4 bytes each). Decode with ffmpeg -f f32le.`)
   // A Float32Array reads the bytes in the byte order of the computer, and
   // each computer that Dez runs on is little-endian, as f32le. It needs a
-  // start at a multiple of 4 bytes: else the bytes are copied.
+  // start at a multiple of 4 bytes: else the bytes are copied. The copy does
+  // not use `slice`: a Node Buffer (a `node:fs` read) has its own `slice`,
+  // which gives a view of the same memory, not a copy.
   if (view.byteOffset % 4 === 0) return new Float32Array(view.buffer, view.byteOffset, view.byteLength / 4)
-  return new Float32Array(view.slice().buffer)
+  const samples = new Float32Array(view.byteLength / 4)
+  new Uint8Array(samples.buffer).set(view)
+  return samples
 }
 
 /**

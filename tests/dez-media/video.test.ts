@@ -64,6 +64,16 @@ describe('dez-media readers of decoded inputs', () => {
     expect(() => f32Samples(new Uint8Array(6))).toThrow(/f32le/)
   })
 
+  it('copies the samples of a Node Buffer that does not start at a multiple of 4 bytes', () => {
+    // Buffer's own slice gives a view of the whole memory, not a copy.
+    const bytes = new Uint8Array(Float32Array.of(0.25, -1, 3.5).buffer)
+    for (const size of [14, 16]) {
+      const buffer = Buffer.alloc(size)
+      buffer.set(bytes, 2)
+      expect(Array.from(f32Samples(buffer.subarray(2, 14)))).toEqual([0.25, -1, 3.5])
+    }
+  })
+
   it('refuses RGB bytes that are not whole frames of the size', () => {
     expect(rgbFrames(new Uint8Array(4 * 3 * 3 * 2), 4, 3).count).toBe(2)
     expect(() => rgbFrames(new Uint8Array(4 * 3 * 3 + 1), 4, 3)).toThrow(/rgb24/)
