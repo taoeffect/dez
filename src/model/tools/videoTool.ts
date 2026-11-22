@@ -611,9 +611,8 @@ export type VideoInput = ImageInput | ClipInput
 export interface WorkInput {
   /** The path as a model writes it: `/work/clips/a.mp4`. */
   virtual: string
-  /** The path of its copy in the work folder of the run: the same path
-   *  with no `/` at its start (`work/clips/a.mp4`), so no two inputs have
-   *  one name. */
+  /** The path of its copy in the run folder: the same path with no `/` at
+   *  its start (`work/clips/a.mp4`), so no two inputs have one name. */
   name: string
   /** The path of the file from the app root (`AppsPath.file`). */
   file: string
@@ -622,9 +621,11 @@ export interface WorkInput {
 // A path of the work folder of the conversation in a word: `/work`, then
 // the rest of the path up to a char that ends a value of ffmpeg (white
 // space, a quote, a separator of a filter graph or of its options) or an
-// `@`. As for `ABSOLUTE_PATH`, no name char, `.`, `)`, or `]` comes before
-// it (`iw/work` is no path). A name such as `/workshop` is no such path:
-// the refusal of absolute paths tells the model the rule.
+// `@`. As for `ABSOLUTE_PATH`, no name char, `.`, or `)` comes before it
+// (`iw/work` is no path). Nor does a `]`, which `ABSOLUTE_PATH` takes as
+// the end of a filter label, so it refuses `[v]/work/a.mp4` as an absolute
+// path. A name such as `/workshop` is no such path: the refusal of
+// absolute paths tells the model the rule.
 const PATH_END = String.raw`\s'"[\],;:=|@`
 const WORK_PATH = new RegExp(String.raw`(?<![${NAME_CHARS}.)\]])${WORK_VIRTUAL_ROOT}(?:/[^${PATH_END}]*)?(?![^${PATH_END}])`, 'g')
 

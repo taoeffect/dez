@@ -1158,9 +1158,9 @@ describe('video tool', () => {
 
   // The examples of the help for rubberband and for the two passes of
   // vid.stab. The shaky clip is a color chart that does not move, under a
-  // crop that moves by up to 12 px from one frame to the next, so only the
-  // shake changes its frames. As in `SUBTITLES_ARGS`, VP9 in WebM takes the
-  // place of H.264 in MP4.
+  // crop that moves up to 12 px across and 9 px up or down from its center,
+  // so only the shake changes its frames. As in `SUBTITLES_ARGS`, VP9 in
+  // WebM takes the place of H.264 in MP4.
   it('slows a tone and raises its pitch with rubberband, and makes a shaky clip stable in two passes through /work, with the examples of the help', async () => {
     const files = await openShots('stabilize')
     await submit(browser, 'Slow my tone and raise it, and make a shaky clip stable.')

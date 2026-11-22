@@ -96,7 +96,8 @@ function refusalEnd(reader: MoneyReader, unknown: boolean): string {
  *  nothing. The rules:
  *  - a request with no known price goes only when the tab allows unknown
  *    prices;
- *  - a chat request goes only while the money spent is under the limit;
+ *  - no request goes once the money spent reaches the limit, not even one
+ *    with a quote of $0;
  *  - a request with a quote goes only when the money spent plus its quote
  *    is not over the limit. */
 export function moneyProblem(limit: MoneyLimit | undefined, spent: MoneySpent, price: RequestPrice, reader: MoneyReader): string | null {

@@ -141,9 +141,9 @@ export async function checkWorkPaths(call: Pick<ProgramCall, 'workInputs'> & { s
 }
 
 // The copies of the inputs of `/work` of a call, each at its path in the
-// work folder of the run (`WorkInput.name`). The run copies them from the
-// work folder of the conversation, and refuses a source that goes through
-// a link there (`link_roots`, src-tauri/src/bundled_tools.rs).
+// run folder (`WorkInput.name`). The run copies them from the work folder
+// of the conversation, and refuses a source that goes through a link there
+// (`link_roots`, src-tauri/src/persistence.rs).
 async function workInputCopies(inputs: readonly WorkInput[], program: VideoProgram): Promise<BundledToolInput[]> {
   if (inputs.length === 0) return []
   try {

@@ -385,7 +385,7 @@ fn serve<F: Read + Seek>(request: &Request<Vec<u8>>, guards: &WebviewGuards, ope
         None => found,
     };
     // The name of the app is the one part of a header value that is no
-    // constant and no number, and `app_file` passed it.
+    // constant and no number, and `scheme_file` passed it.
     found.body(Cow::Owned(bytes)).expect("each header value is plain ASCII")
 }
 

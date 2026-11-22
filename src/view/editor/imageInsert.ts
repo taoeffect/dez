@@ -358,7 +358,7 @@ function insertionText(state: EditorState, { from, to }: DocRange, text: string,
 }
 
 // The kinds of files counted in a text, as a list in a sentence: `images`,
-// `images and a clip`, `an image, clips, and a data file`.
+// `images and clip`, `image, clips, and data file`.
 function kindsText(files: readonly AddedFile[]): string {
   const words = (['image', 'clip', 'data'] as const).flatMap((kind) => {
     const count = files.filter((file) => file.kind === kind).length

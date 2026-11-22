@@ -24,7 +24,7 @@
 // The page gets this file as a text (`?raw` in jsEval.ts). Nothing of the
 // app imports it as code, and no type check reads it.
 
-// The description of the run (`CODE_RUN_DESCRIPTION`, jsEval.ts;
+// The description of the run (`codeRunDescription`, jsEval.ts;
 // `appRunDescription`, appInvoke.ts). The name is a literal
 // (`RUN_DESCRIPTION_FILE`), and the import is static: Deno then needs no
 // permission to read the file.

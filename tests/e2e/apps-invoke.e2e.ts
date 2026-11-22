@@ -58,14 +58,15 @@ import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolC
 //   needs, starts no job; code that threw gives an error result that names
 //   the line by its path in the tool (`/apps/<name>/main.ts`), and Dez
 //   keeps no file of that run;
-// - the code opens no file outside the folder of its app and the work
-//   folder of its run: not a file of another app, not the list of the
-//   apps, and not a file of the Dez folder. Dez's module loads the main
-//   file of an app by a path that it makes, so Deno checks the read
-//   permission of each import of the code too (in a `js_eval` run only the
-//   OS rule stops an import of a literal path). The audit of all that Deno
-//   and the OS rule refuse is js-eval-sandbox.e2e.ts;
-// - every work folder is gone after its run.
+// - the code opens no file outside its places (the folder of its app, the
+//   run folder, and the work folder of the conversation; the libraries and
+//   the fonts only to read): not a file of another app, not the list of
+//   the apps, and not the state of Dez. Dez's module loads the main file
+//   of an app by a path that it makes, so Deno checks the read permission
+//   of each import of the code too (in a `js_eval` run only the OS rule
+//   stops an import of a literal path). The audit of all that Deno and the
+//   OS rule refuse is js-eval-sandbox.e2e.ts;
+// - every run folder is gone after its run.
 //
 // The app loads the page of a UI app in a frame that the user does not
 // see, from the real scheme of the app frames, and calls the handler that
@@ -266,8 +267,8 @@ const DRAFT_MAIN = [
   '}',
 ].join('\n')
 
-// What the code of the `one` app tries outside its two folders, by the
-// name of each try, with the outcome that the run must give for it.
+// What the code of the `one` app tries outside its places, by the name of
+// each try, with the outcome that the run must give for it.
 const ESCAPES = [
   ['read a file of another app', 'Deno.readTextFile(`${dez.appFolder}/../two/manifest.json`)', 'NotCapable: Requires read access'],
   ['write into another app', 'Deno.writeTextFile(`${dez.appFolder}/../two/new.txt`, "x")', 'NotCapable: Requires write access'],
@@ -483,8 +484,8 @@ describe('apps invoke', () => {
     const run = await invoke(await chatRequest(), 'call_sheet', { name: 'sheet', inputs: '@c @b @a' })
     expect(run.started).toBe(`${jobStartedText(run.jobId, 1)}\nThe inputs of the run, in the order of dez.inputs: the video clip @c, the image @b, the image @a.`)
     expect(run.result.status).toBe('finished')
-    // The inputs are in the order of the call, each a copy in the work
-    // folder of the run.
+    // The inputs are in the order of the call, each a copy in the run
+    // folder.
     const [facts, outputs] = run.result.text.split('\n\n')
     expect(facts.split('\n')).toStrictEqual([
       `c video video/webm /run/c.webm ${WEBM_VIDEO.length}`,

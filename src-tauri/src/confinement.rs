@@ -78,8 +78,8 @@ pub(crate) struct Confinement {
     pub(crate) folder: PathBuf,
     // Folders that the program has the same rights on, but with no move or
     // link of a file from or to another folder (Linux): the folder of a
-    // script app. So the program can leave no hard link there to a file of
-    // `folder` that Dez stores later.
+    // script app, and the work folder of a conversation. So the program can
+    // leave no hard link there to a file of `folder` that Dez stores later.
     pub(crate) also_owned: Vec<PathBuf>,
     // Folders whose files the program can read, make, and change, but
     // never delete, move, or link; it can make no folder there.

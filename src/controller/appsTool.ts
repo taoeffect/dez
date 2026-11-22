@@ -59,15 +59,17 @@ import { rawErrorText } from '../utils/errorText'
 import type { AppFileEntry, FileTree } from './nativeTypes'
 
 // The file work of the `apps` tool (model/tools/appsTool.ts): each function
-// runs one subcommand on the apps, through the native file selectors: the
-// folder `apps/` of the app root, and the built-in apps in the files that
-// Dez ships (`AppsPath.root`). The model module checks the call, decides
-// what to do from what is at the paths, and builds every text; the
-// functions here only ask the native side and do what the model module
-// decided. The run of an app (`invoke`) is in appInvoke.ts. `show` changes
-// no file: it checks the files of the app, and the reply of its call
-// writes the app into itself. `grep` matches the lines of the files in a
-// Web Worker (grepWorker.ts), with a time limit.
+// runs one subcommand through the native file selectors, on the three top
+// folders of a path (`AppsPath`): `/apps` (the folder `apps/` of the app
+// root, and the built-in apps in the files that Dez ships), `/libs` (the
+// libraries that Dez ships, only to read), and `/work` (the work folder of
+// the conversation). The model module checks the call, decides what to do
+// from what is at the paths, and builds every text; the functions here
+// only ask the native side and do what the model module decided. The run
+// of an app (`invoke`) is in appInvoke.ts. `show` changes no file: it
+// checks the files of the app, and the reply of its call writes the app
+// into itself. `grep` matches the lines of the files in a Web Worker
+// (grepWorker.ts), with a time limit.
 //
 // A check and the file operation after it are two native calls, so a
 // program that changes the folder between them can make the operation
