@@ -24,10 +24,11 @@ import type { ToolRunContext } from './tools'
 // The run of a `js_eval` call (model/tools/jsEval.ts): the code of a model
 // in Deno, the program that Dez ships. This module registers no selector.
 //
-// The run has its own new work folder, with three files that Dez writes:
-// its own module, which Deno runs, the description of the run, which tells
-// the module what to run, and the code of the call. The page gives Rust
-// only the name of the module: Rust writes the Deno command line, with no
+// The run has its own new run folder (a work folder of the cache root,
+// `inWorkFolder`), with three files that Dez writes: its own module,
+// which Deno runs, the description of the run, which tells the module
+// what to run, and the code of the call. The page gives Rust only the
+// name of the module: Rust writes the Deno command line, with no
 // permission for the code (src-tauri/src/bundled_tools.rs).
 //
 // The code calls the other Dez tools over the input and the output of the
@@ -36,7 +37,7 @@ import type { ToolRunContext } from './tools'
 // A run of an app (appInvoke.ts) runs the same module, with its own
 // description: `writeRunFiles` and `moduleRun` serve both.
 
-/** Writes the files of a run of Dez's module into the work folder
+/** Writes the files of a run of Dez's module into the run folder
  *  `folder`: the module, the description of the run (the text
  *  `description`), and `more`. Throws a `ToolError` for a write that
  *  fails (the run of the tool `toolName` does not start), and the stop of
@@ -60,7 +61,7 @@ export async function writeRunFiles(
   }
 }
 
-/** The run of Dez's module in the work folder `folder`, with no input
+/** The run of Dez's module in the run folder `folder`, with no input
  *  file. The code gets the time zone of the user, so that its local time
  *  is the user's: Rust gives a program no other fact of the computer. */
 export function moduleRun(folder: string, timeoutMs: number): Omit<BundledToolRun, 'tool'> {
@@ -85,9 +86,9 @@ export function moduleRun(folder: string, timeoutMs: number): Omit<BundledToolRu
 export function runJsEval(call: JsEvalCall, signal: AbortSignal, context: ToolRunContext): Promise<ToolRunResult> {
   return inWorkFolder(async (folder) => {
     await writeRunFiles(folder, CODE_RUN_DESCRIPTION, [{ name: JS_EVAL_CODE_FILE, text: jsEvalCodeFile(call.code) }], signal, JS_EVAL_TOOL.name)
-    const { forms: folders } = await folderPathForms(folder, 'cache', JS_EVAL_TOOL.name)
+    const { forms: runFolders } = await folderPathForms(folder, 'cache', JS_EVAL_TOOL.name)
     const output = new JsEvalOutput()
-    const bridge = new ToolBridge(context, folders, signal)
+    const bridge = new ToolBridge(context, runFolders, signal)
     // `stdin`: the answers of the tool calls go to the input of the program.
     const run = { ...moduleRun(folder, call.timeoutMs), stdin: true }
     let end: ProgramEnd
@@ -100,7 +101,7 @@ export function runJsEval(call: JsEvalCall, signal: AbortSignal, context: ToolRu
       throw error
     }
     const { toolCalls, pictures, bridged } = await bridge.end()
-    const { text, isError } = jsEvalResult(call, end, output, folders, toolCalls)
+    const { text, isError } = jsEvalResult(call, end, output, runFolders, toolCalls)
     const list = hasBridgedCalls(bridged) ? { bridged } : {}
     if (isError) {
       await discardShownPictures(pictures)

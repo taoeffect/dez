@@ -29,7 +29,7 @@ import { codePanel, hiddenPart, hidingPart, intermediateParts, pressToolChip, re
 //   code can be TypeScript, it can load a built-in module, it has the time
 //   zone of the app, and a timer that it leaves does not hold the call;
 // - code that threw gives an error result that names the lines of the code
-//   as lines of `/work/code.ts`, with the causes of the error; a syntax
+//   as lines of `/run/code.ts`, with the causes of the error; a syntax
 //   error, a static `import`, a refused permission, and a refused package
 //   each get the text that tells the model what to do;
 // - code that ended before it returned a value, and code that Dez stopped
@@ -147,7 +147,7 @@ describe('js_eval tool', () => {
     expect(toolResult(second, 'call_data')).toBe('{\n  "length": 5,\n  "hash": 64\n}\n\nConsole output of the code:\nthe point { x: 3, y: 4 }\na warning')
     expect(toolResult(second, 'call_lost')).toBe('{ counts: Map(1) { "a" => 3 }, unique: Set(1) { 1 }, list: [ 1, NaN ] }')
     expect(toolResult(second, 'call_date')).toBe('{\n  "when": "1970-01-01T00:00:00.000Z"\n}')
-    expect(toolResult(second, 'call_place')).toBe(`/work file:///work/code.ts ${APP_TIME_ZONE}`)
+    expect(toolResult(second, 'call_place')).toBe(`/run file:///run/code.ts ${APP_TIME_ZONE}`)
     expect(toolResult(second, 'call_timer')).toBe('done')
     expect(toolResult(second, 'call_none')).toBe('The code returned no value, and it wrote nothing to the console. Give the result with `return`.')
     await expectReplyEnd(second)
@@ -178,16 +178,16 @@ describe('js_eval tool', () => {
 
     const second = await chatRequest()
     const thrown = toolResult(second, 'call_throw')
-    expect(thrown.startsWith('The code threw an error:\nRangeError: too large\n    at check (file:///work/code.ts:2:')).toBe(true)
-    expect(thrown).toContain('\n    at default (file:///work/code.ts:4:')
-    expect(thrown).toContain('\nCaused by: Error: the cause\n    at check (file:///work/code.ts:2:')
+    expect(thrown.startsWith('The code threw an error:\nRangeError: too large\n    at check (file:///run/code.ts:2:')).toBe(true)
+    expect(thrown).toContain('\n    at default (file:///run/code.ts:4:')
+    expect(thrown).toContain('\nCaused by: Error: the cause\n    at check (file:///run/code.ts:2:')
     // No line of the module of Dez, which the model did not write.
     expect(thrown).not.toContain('runner.js')
 
     const syntax = toolResult(second, 'call_syntax')
     expect(syntax.startsWith('The code threw an error:\n')).toBe(true)
     expect(syntax).toContain('Expression expected')
-    expect(syntax).toContain('file:///work/code.ts:1:')
+    expect(syntax).toContain('file:///run/code.ts:1:')
 
     const noFlag = 'No flag changes that, and you can set none: do the work without them.'
     expect(toolResult(second, 'call_import')).toContain('a static `import` does not work in it. Load a built-in module with `await import("node:…")`.')
@@ -202,7 +202,7 @@ describe('js_eval tool', () => {
     expect(late.startsWith('The code ended before it returned a value (exit code 1).')).toBe(true)
     expect(late).toContain('\n\nConsole output of the code:\n')
     expect(late).toContain('late failure')
-    expect(late).toContain('file:///work/code.ts:1:')
+    expect(late).toContain('file:///run/code.ts:1:')
     await expectReplyEnd(second)
     await waitForValue(browser, 'chip states', chipStates, Array(6).fill('error'))
   })
@@ -287,7 +287,7 @@ describe('js_eval tool', () => {
     const failure = 'No image of this conversation has the id @zz. Its images are @a, @b, @d, @e: call again with one of these ids.'
     expect(toolResult(second, 'call_caught')).toBe(`Error: ${failure}\n${NO_JOBS_TEXT}`)
     // The stack names the line of the code that made the call.
-    expect(toolResult(second, 'call_thrown')).toBe(`The code threw an error:\nError: ${failure}\n    at default (file:///work/code.ts:2:11)`)
+    expect(toolResult(second, 'call_thrown')).toBe(`The code threw an error:\nError: ${failure}\n    at default (file:///run/code.ts:2:11)`)
 
     // The model sees the picture of the `asset_view` call of the code as
     // after a call of its own: in one user message after the tool

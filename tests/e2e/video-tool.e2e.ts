@@ -952,7 +952,7 @@ describe('video tool', () => {
 
     const subtitles = await runJob(title.next, 'call_subtitles', 'ffmpeg', { arguments: SUBTITLES_ARGS, fonts: SUBTITLES_FONT, text_files: JSON.stringify(SUBTITLES_FILES) })
     expect(subtitles.started).toBe(`${jobStartedText(subtitles.jobId, 3)}\nThe inputs of the run: the video clip @a as a.webm. `
-      + `The fonts of the run, in its fonts folder: ${SUBTITLES_FONT}. The text files of the run, in its work folder: words.srt.`)
+      + `The fonts of the run, in its fonts folder: ${SUBTITLES_FONT}. The text files of the run, in its run folder: words.srt.`)
     expect(subtitles.result.text).toMatch(/^ffmpeg ended with no error and made 1 file that Dez keeps: subtitled\.webm \(video clip\)\. The line at the end gives its id\.\n[\s\S]+\nMade the video clip @c\.$/)
     // No request names the folder of the fonts that Dez ships.
     expect(subtitles.next.body).not.toContain(path.dirname(setup.app.binary))
@@ -1024,12 +1024,12 @@ describe('video tool', () => {
     ])
 
     const second = await chatRequest()
-    const workFolderOnly = 'The program works only in its own work folder: name an input as @id, and an output as a new file name with no folder.'
-    const absolutePath = (word: string) => `Dez refuses ${JSON.stringify(word)} in \`arguments\`: it holds an absolute path. ${workFolderOnly} `
+    const runFolderOnly = 'The program works only in its own run folder: name an input as @id, and an output as a new file name with no folder.'
+    const absolutePath = (word: string) => `Dez refuses ${JSON.stringify(word)} in \`arguments\`: it holds an absolute path. ${runFolderOnly} `
       + 'For a run with no output file, end the arguments with -f null - (not with a path of the system). '
       + 'In an expression, write a division with no space before the "/", as in iw/2. Dez started no job.'
     expect(toolResult(second, 'call_path')).toBe(absolutePath('/etc/hostname'))
-    expect(toolResult(second, 'call_url')).toBe(`Dez refuses "https://example.com/clip.mp4" in \`arguments\`: it holds a URL. ${workFolderOnly} Dez did not run ffprobe.`)
+    expect(toolResult(second, 'call_url')).toBe(`Dez refuses "https://example.com/clip.mp4" in \`arguments\`: it holds a URL. ${runFolderOnly} Dez did not run ffprobe.`)
     expect(toolResult(second, 'call_camera')).toBe(
       'Dez refuses "v4l2" in `arguments`: it names the device v4l2. '
       + 'Dez lets the program use no camera, no microphone, no screen, and no sound output of this computer. Dez started no job.',
@@ -1037,7 +1037,7 @@ describe('video tool', () => {
     expect(toolResult(second, 'call_font')).toBe(absolutePath('drawtext=fontfile=/usr/share/fonts/x.ttf:text=Hi'))
     expect(toolResult(second, 'call_commands')).toBe(
       'Dez refuses "sendcmd=f=cmds.txt,curves" in `arguments`: it gives sendcmd a commands file. '
-      + 'Dez does not check the text of a file, and a command can make a filter open a file outside of its work folder. '
+      + 'Dez does not check the text of a file, and a command can make a filter open a file outside of its run folder. '
       + 'Write the commands into the filter, as in "asendcmd=c=\'2 volume volume 0.5\',volume=1". Dez started no job.',
     )
     for (const callId of ['call_path', 'call_url', 'call_camera', 'call_font', 'call_commands']) expect(startedJobId(toolResult(second, callId))).toBeNull()

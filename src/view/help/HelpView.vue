@@ -97,7 +97,7 @@ const keys = computed(() => ({
 }))
 
 // The Dez folder, Dez's cache folder (which the bundled programs can open),
-// the folder of the temp copies of clips, the folder of the work folders,
+// the folder of the temp copies of clips, the folder of the run folders,
 // and the folder of the apps, as the Assets page and the Apps page show
 // them (`~` for the home folder). The cache folder differs by system, so
 // the page reads the folders and spells none. Null until the read ends,
@@ -408,15 +408,15 @@ function onOverlayClick(event: MouseEvent) {
             </p>
             <p>
               A Dez tool that cuts, joins, or converts clips stores its new clips and images at
-              once, in the folders above. It works on copies of the assets, in a work folder in
+              once, in the folders above. It works on copies of the assets, in a run folder in
               <code v-if="workDir">{{ workDir }}</code><template v-else>the cache folder of the system</template>,
-              so the assets that it reads stay as they are. When the tool draws text, the work
+              so the assets that it reads stay as they are. When the tool draws text, the run
               folder also holds copies of the fonts that it uses (fonts that come with Dez, see
               <button type="button" class="help-link" @click="page = 'thanks'">Thank You</button>),
               and the text files that the model writes for it, for example subtitles or a title.
-              Dez does not store these files as assets. Dez deletes the work folder at the end
+              Dez does not store these files as assets. Dez deletes the run folder at the end
               of the work, or {{ WORK_FOLDER_HOURS }} hours later if Dez closed before that. Before
-              that time, Delete Unreferenced Files deletes such a work folder.
+              that time, Delete Unreferenced Files deletes such a run folder.
             </p>
             <!-- The rule is in src-tauri/src/confinement.rs (Landlock on
                  Linux, Seatbelt on macOS), its folders are in
@@ -464,7 +464,7 @@ function onOverlayClick(event: MouseEvent) {
                 Click Delete Unreferenced Files in Settings › General. Dez finds the stored files
                 that no conversation uses, and deletes them after you say yes. In the cache folder,
                 it also deletes the temporary copies of clips that no conversation uses, and the
-                work folders and downloads that Dez did not finish. It never deletes an app: Delete
+                run folders and downloads that Dez did not finish. It never deletes an app: Delete
                 Unreferenced Apps does that (see the
                 <button type="button" class="help-link" @click="page = 'apps'">Apps</button>
                 page).
@@ -643,21 +643,21 @@ function onOverlayClick(event: MouseEvent) {
             </p>
             <ul>
               <li>
-                The rule of the system lets the code of <code>js_eval</code> open only the work
-                folder of its run, in
+                The rule of the system lets the code of <code>js_eval</code> open only the run
+                folder of its call, in
                 <code v-if="workDir">{{ workDir }}</code><template v-else>the cache folder of the system</template>,
                 and the permissions of Deno let it read and write no file (only the rule of the
                 system stops an <code>import</code> of a file). Dez deletes that folder at the end
                 of the run.
               </li>
               <li>
-                The code of a script app can open only the work folder of its run and the folder of
-                its own app. So a script app can keep data in its folder from one run to the next.
-                Dez deletes the work folder at the end of the run.
+                The code of a script app can open only its run folder and the folder of its own
+                app. So a script app can keep data in its folder from one run to the next. Dez
+                deletes the run folder at the end of the run.
               </li>
               <li>
                 No code can open your conversations, your API keys, the <code>assets</code> folder,
-                another app, another work folder, or any other file of yours.
+                another app, another run folder, or any other file of yours.
               </li>
               <li>
                 No code can connect to the internet or to another program, and none can load a

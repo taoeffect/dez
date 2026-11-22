@@ -88,13 +88,13 @@ describe('ToolBridge', () => {
     expect(toolRuns.calls).toStrictEqual([])
   })
 
-  it('takes the paths of the work folder out of the arguments of a call', async () => {
+  it('takes the paths of the run folder out of the arguments of a call', async () => {
     const bridge = new ToolBridge(callContext(), ['/mnt/disk/cache/dez/work/1'], running())
 
     bridge.call(callLine(1, 'dez.tools/jobs_wait', { jobs: 'j-1 /mnt/disk/cache/dez/work/1/code.ts' }), write)
 
     await vi.waitFor(() => expect(answers).toHaveLength(1))
-    expect(toolRuns.calls).toStrictEqual([{ name: 'jobs_wait', arguments: { jobs: 'j-1 /work/code.ts' } }])
+    expect(toolRuns.calls).toStrictEqual([{ name: 'jobs_wait', arguments: { jobs: 'j-1 /run/code.ts' } }])
   })
 
   it('runs no call of a line after the limit of a run', async () => {
@@ -129,7 +129,7 @@ describe('ToolBridge', () => {
         { name: 'asset_info', arguments: { assets: '@z' }, status: 'error', result: 'The image @z is not in this conversation.' },
         // No call of a tool: the selector of the line, with no path of
         // this computer, and the error that the code got.
-        { name: '/work/no tool', arguments: {}, status: 'error', result: answers[2].text },
+        { name: '/run/no tool', arguments: {}, status: 'error', result: answers[2].text },
       ],
       more: 0,
     })

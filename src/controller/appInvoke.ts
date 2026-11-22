@@ -44,8 +44,8 @@ import { clipInputFile, folderPathForms, imageInputAsIs, inWorkFolder, runProgra
 //
 // A script app:
 //
-// A run has its own new work folder, as a `js_eval` run has (jsEval.ts),
-// with the same module of Dez and its own description of the run. The work
+// A run has its own new run folder, as a `js_eval` run has (jsEval.ts),
+// with the same module of Dez and its own description of the run. The run
 // folder also holds a copy of each input of the call and the output
 // folder. Rust lets the code open that folder and the folder of its app,
 // and nothing else (src-tauri/src/bundled_tools.rs). The code gets no
@@ -79,7 +79,7 @@ export async function checkedInvokeCall(args: SubcommandArguments, sections: rea
 }
 
 // Gets the inputs of a call ready. It gives the files that the run must
-// copy into its work folder; a downloaded clip is in the folder after
+// copy into its run folder; a downloaded clip is in the folder after
 // this. An image goes as its own file, of any type: the code reads what it
 // can. Throws a `ToolError` for an input that Dez cannot read, and the
 // stop of `signal`.
@@ -153,20 +153,20 @@ async function keptOutputs(folder: string, signal: AbortSignal, keepAsset: (asse
 }
 
 /** The work of the job of an `apps invoke` call (`JobWork`): one run of
- *  the code of the app of `call`, in a new work folder that holds copies
+ *  the code of the app of `call`, in a new run folder that holds copies
  *  of the call's inputs and the output folder. The files of the output
  *  folder that Dez keeps are the assets of the job; the text tells what
  *  the code returned or threw, what Dez did with the files, and the
  *  console output. A run that failed keeps no file.
  *
  *  A stop of `signal` (Dez stopped the job, or its time limit passed)
- *  stops the program and rejects, which `TabJobs` drops. The work folder
+ *  stops the program and rejects, which `TabJobs` drops. The run folder
  *  goes at every end; the files that the code wrote into the folder of its
  *  app stay. */
 export function runAppJob(call: InvokeCall, signal: AbortSignal, report: (state: string) => void, keepAsset: (asset: MadeAsset) => void): Promise<JobOutcome> {
   return inWorkFolder(async (folder) => {
     report(PROGRAM_READS_INPUTS)
-    // The first write of the run: it makes the work folder too, for the
+    // The first write of the run: it makes the run folder too, for the
     // user only, so the folder is there when Dez asks for its real path.
     try {
       await sbp('dez.native/createFolder', `${folder}/${APP_OUTPUT_FOLDER}`, 'cache')
@@ -174,7 +174,7 @@ export function runAppJob(call: InvokeCall, signal: AbortSignal, report: (state:
       console.error('Failed to make the output folder of a run of an app:', error)
       throw new ToolError(programNotStartedText('deno', APPS_TOOL.name), '', { cause: error })
     }
-    const work = await folderPathForms(folder, 'cache', APPS_TOOL.name)
+    const runFolder = await folderPathForms(folder, 'cache', APPS_TOOL.name)
     // A built-in app is in the files that Dez ships, and Rust finds its
     // folder there by its name (`builtInApp`); its texts show the folder of
     // the built-in apps as /apps too.
@@ -182,14 +182,14 @@ export function runAppJob(call: InvokeCall, signal: AbortSignal, report: (state:
     const apps = builtIn
       ? await folderPathForms(BUILT_IN_APPS_FOLDER, 'resource', APPS_TOOL.name)
       : await folderPathForms(APPS_ROOT.file, 'app', APPS_TOOL.name)
-    const forModel = (text: string): string => textForModel(text, work.forms, apps.forms)
+    const forModel = (text: string): string => textForModel(text, runFolder.forms, apps.forms)
 
     const [appName] = call.app.names
     const inputs = await inputCopies(call.inputs, folder, signal)
     // The description holds the paths that Dez joined, not the real ones:
     // Deno checks a path of the code against the folders of its flags as
     // text, and Rust writes the flags from the same joined paths.
-    const description = appRunDescription(call, { work: work.joined, app: `${apps.joined}/${appName}` })
+    const description = appRunDescription(call, { run: runFolder.joined, app: `${apps.joined}/${appName}` })
     await writeRunFiles(folder, description, [], signal, APPS_TOOL.name)
 
     report(APP_RUNS_STATE)

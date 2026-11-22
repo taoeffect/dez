@@ -14,11 +14,13 @@ import { ToolError, type ToolArguments, type ToolDefinition } from './types'
 // `js_eval`: one run of code that a model wrote, in Deno, the JavaScript
 // runtime that Dez ships (`dez-deno`). Rust gives Deno no permission (no
 // network, no file, no environment variable, no program) and writes the
-// whole command line, and the OS holds the program to its work folder
+// whole command line, and the OS holds the program to its run folder
 // (src-tauri/src/bundled_tools.rs, confinement.rs).
 // controller/jsEval.ts does the run.
 //
-// A run has three files in its work folder: Dez's own module
+// The run folder is a new work folder of the cache root
+// (model/tools/workFolders.ts); every text for a model names it
+// `RUN_FOLDER_NAME`. It has three files: Dez's own module
 // (jsEvalRunner.js), which Deno runs, the description of the run
 // (`RUN_DESCRIPTION_FILE`), which tells the module what to run, and the
 // code of the call, which the module imports. The module writes what the
@@ -36,20 +38,20 @@ import { ToolError, type ToolArguments, type ToolDefinition } from './types'
 // and controller/toolBridge.ts runs them.
 //
 // Every text here is a tool result: it goes to the chat provider. A text of
-// a run can name the work folder or the program (`import.meta.url`, an
+// a run can name the run folder or the program (`import.meta.url`, an
 // error stack, `Deno.execPath()`), so none goes into a result before
 // `textForModel` took the paths out.
 
-/** The name of Dez's module in the work folder of a run. */
+/** The name of Dez's module in the run folder. */
 export const JS_EVAL_RUNNER_FILE = 'runner.js'
 
-/** The name of the code of a call in the work folder of a run. The module
- *  of Dez imports this name as a literal (jsEvalRunner.js): keep the two the
+/** The name of the code of a call in the run folder. The module of Dez
+ *  imports this name as a literal (jsEvalRunner.js): keep the two the
  *  same. The ending makes Deno take the code as TypeScript: it strips the
  *  types and checks none, and plain JavaScript is TypeScript too. */
 export const JS_EVAL_CODE_FILE = 'code.ts'
 
-/** The name of the description of a run in its work folder: one JSON
+/** The name of the description of a run in its run folder: one JSON
  *  object that tells the kind of the run (`kind`), and for a run of an app
  *  what it runs (`appRunDescription`, appInvoke.ts). The module of Dez
  *  imports this name as a literal (jsEvalRunner.js): keep the two the
@@ -93,8 +95,12 @@ export const JS_EVAL_DEFAULT_SECONDS = 30
 const MIN_SECONDS = 1
 export const JS_EVAL_MAX_SECONDS = 300
 
-// The name of the work folder of a run in every text for a model.
-const WORK_FOLDER_NAME = '/work'
+// The name of the run folder in every text for a model. `/run/media/` and
+// `/run/user/` are known starts of a local path (localPaths.ts), so a path
+// in a folder `media` or `user` of the run folder reads as `/run/media/…`
+// (the rest of its line goes too): a name that the model loses, and no
+// path of the computer.
+const RUN_FOLDER_NAME = '/run'
 
 /** The parameter that holds the code of a call. The panel of the call's
  *  chip shows it as code, not as a parameter row (toolCalls.ts). */
@@ -126,7 +132,7 @@ export const JS_EVAL_TOOL: ToolDefinition = {
     + 'The clock and the time zone are those of the user\'s computer. '
     + 'Each call is a new run: nothing stays from one call to the next. '
     + `The call waits for the end of the code. A result holds at most the first ${JS_EVAL_TEXT_CAP} characters of the value. `
-    + `An error names the lines of your code as lines of \`${WORK_FOLDER_NAME}/${JS_EVAL_CODE_FILE}\`.`,
+    + `An error names the lines of your code as lines of \`${RUN_FOLDER_NAME}/${JS_EVAL_CODE_FILE}\`.`,
   parameters: [
     {
       name: JS_EVAL_CODE_PARAMETER,
@@ -349,14 +355,14 @@ function urlPathSource(path: string): string {
 // another folder (`apps-old`), which is not the apps folder.
 const NAME_GOES_ON = '(?![A-Za-z0-9._%-])'
 
-/** `text` of a run with no path of this computer: the work folder of the
- *  run is `WORK_FOLDER_NAME`, the folder of the apps is
- *  `APPS_VIRTUAL_ROOT`, and any other local path goes as its known start
- *  (`withoutLocalPaths`; the path of the Deno program is one, which the
- *  code can read with no permission).
+/** `text` of a run with no path of this computer: the run folder is
+ *  `RUN_FOLDER_NAME`, the folder of the apps is `APPS_VIRTUAL_ROOT`, and
+ *  any other local path goes as its known start (`withoutLocalPaths`; the
+ *  path of the Deno program is one, which the code can read with no
+ *  permission).
  *
- *  `workFolders` are the paths of the work folder that a text can hold:
- *  its real path, which Deno names, and the path that Dez made (the two
+ *  `runFolders` are the paths of the run folder that a text can hold: its
+ *  real path, which Deno names, and the path that Dez made (the two
  *  differ when a folder above is a link). Deno writes a path in a URL with
  *  escapes (a space is `%20`), so the URL form is found by the name of the
  *  folder, a random id that no other text holds.
@@ -369,7 +375,7 @@ const NAME_GOES_ON = '(?![A-Za-z0-9._%-])'
  *
  *  A text goes through this as a whole, before any cut: a cut path would
  *  get past it. */
-export function textForModel(text: string, workFolders: readonly string[], appsRoots: readonly string[] = []): string {
+export function textForModel(text: string, runFolders: readonly string[], appsRoots: readonly string[] = []): string {
   let result = text
   // The longer path first: one form of the path can be the start of the
   // other.
@@ -378,13 +384,13 @@ export function textForModel(text: string, workFolders: readonly string[], appsR
       .replace(new RegExp(`file://${urlPathSource(root)}${NAME_GOES_ON}`, 'g'), `file://${APPS_VIRTUAL_ROOT}`)
       .replace(new RegExp(`${regExpSource(root)}${NAME_GOES_ON}`, 'g'), APPS_VIRTUAL_ROOT)
   }
-  for (const folder of workFolders) {
-    result = result.replaceAll(folder, WORK_FOLDER_NAME)
+  for (const folder of runFolders) {
+    result = result.replaceAll(folder, RUN_FOLDER_NAME)
     const id = folder.slice(folder.lastIndexOf('/') + 1)
     // A try stops at the next `file://`, which no path holds: a lazy `\S*?`
     // alone tries each end of a long run of URLs with no white space (the
     // JSON of a list), which takes quadratic time.
-    if (result.includes(id)) result = result.replace(new RegExp(`file://(?:(?!file://)\\S)*?/${regExpSource(id)}`, 'g'), `file://${WORK_FOLDER_NAME}`)
+    if (result.includes(id)) result = result.replace(new RegExp(`file://(?:(?!file://)\\S)*?/${regExpSource(id)}`, 'g'), `file://${RUN_FOLDER_NAME}`)
   }
   return withoutLocalPaths(result)
 }
@@ -609,11 +615,11 @@ export function runResultText({ lead, given, advice }: RunOutcome, log: string, 
  *  console output of the code. Any other end is an error result
  *  (`isError`) that tells the model what happened and what to do: the code
  *  threw an error, Dez stopped it at a limit, or it ended with no value.
- *  `workFolders` are the paths of the work folder of the run on this
- *  computer (`textForModel`). */
-export function jsEvalResult(call: JsEvalCall, end: ProgramEnd, output: JsEvalOutput, workFolders: readonly string[], toolCalls: JsEvalToolCalls): { text: string, isError: boolean } {
+ *  `runFolders` are the paths of the run folder on this computer
+ *  (`textForModel`). */
+export function jsEvalResult(call: JsEvalCall, end: ProgramEnd, output: JsEvalOutput, runFolders: readonly string[], toolCalls: JsEvalToolCalls): { text: string, isError: boolean } {
   const { line, log } = endedRun(end, output)
   const outcome = runOutcome(call, end, line, log.trim() !== '')
-  const text = runResultText(outcome, log, (part) => textForModel(part, workFolders), (given) => toolCallParagraphs(toolCalls, given, outcome.isError))
+  const text = runResultText(outcome, log, (part) => textForModel(part, runFolders), (given) => toolCallParagraphs(toolCalls, given, outcome.isError))
   return { text, isError: outcome.isError }
 }

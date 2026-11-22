@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { JS_EVAL_MAX_TOOL_CALLS } from './jsEval'
 import { TOOL_DEFINITIONS } from './registry'
-import { JOINED_WORK_FOLDER, REAL_WORK_FOLDER, WORK_FOLDER_ID, WORK_FOLDERS } from './testing'
+import { JOINED_RUN_FOLDER, REAL_RUN_FOLDER, RUN_FOLDER_ID, RUN_FOLDERS } from './testing'
 import { bridgedToolCall, shownSelector, type BridgedCallCheck } from './toolBridge'
 
 // What the first call line of a run asks for.
 function checked(selector: string, args?: unknown, number = 1): BridgedCallCheck {
-  return bridgedToolCall(args === undefined ? { selector } : { selector, arguments: args }, number, WORK_FOLDERS)
+  return bridgedToolCall(args === undefined ? { selector } : { selector, arguments: args }, number, RUN_FOLDERS)
 }
 
 // The error text of a call line that Dez refuses.
@@ -137,30 +137,30 @@ describe('bridgedToolCall', () => {
   })
 
   it('takes the paths of this computer out of the arguments', () => {
-    const check = checked('dez.tools/model_invoke', { model: 'p/m', prompt: `Read ${REAL_WORK_FOLDER}/code.ts and ${JOINED_WORK_FOLDER}, then /home/u/apps/dez-deno` })
+    const check = checked('dez.tools/model_invoke', { model: 'p/m', prompt: `Read ${REAL_RUN_FOLDER}/code.ts and ${JOINED_RUN_FOLDER}, then /home/u/apps/dez-deno` })
 
     expect(check).toStrictEqual({
       ok: true,
-      call: { name: 'model_invoke', arguments: { model: 'p/m', prompt: 'Read /work/code.ts and /work, then /home/…' } },
+      call: { name: 'model_invoke', arguments: { model: 'p/m', prompt: 'Read /run/code.ts and /run, then /home/…' } },
     })
   })
 
   it('takes the paths of this computer out of the parameters of a subcommand, also out of a name', () => {
-    const check = checked('dez.tools/video/ffmpeg', { arguments: `-i @c ${REAL_WORK_FOLDER}/out.mp4`, [`${JOINED_WORK_FOLDER}/x`]: [`${REAL_WORK_FOLDER}/y`] })
+    const check = checked('dez.tools/video/ffmpeg', { arguments: `-i @c ${REAL_RUN_FOLDER}/out.mp4`, [`${JOINED_RUN_FOLDER}/x`]: [`${REAL_RUN_FOLDER}/y`] })
 
     expect(check).toStrictEqual({
       ok: true,
-      call: { name: 'video', arguments: { command: 'ffmpeg', parameters: '{"arguments":"-i @c /work/out.mp4","/work/x":["/work/y"]}' } },
+      call: { name: 'video', arguments: { command: 'ffmpeg', parameters: '{"arguments":"-i @c /run/out.mp4","/run/x":["/run/y"]}' } },
     })
   })
 
   it('takes the paths of this computer out of the strings of a parameters text, and keeps its JSON whole', () => {
-    const parameters = JSON.stringify({ arguments: `-i @c ${REAL_WORK_FOLDER}/out.mp4 -t 2`, [`${JOINED_WORK_FOLDER}/x`]: ['/tmp/a b', 'c'] })
+    const parameters = JSON.stringify({ arguments: `-i @c ${REAL_RUN_FOLDER}/out.mp4 -t 2`, [`${JOINED_RUN_FOLDER}/x`]: ['/tmp/a b', 'c'] })
     const check = checked('dez.tools/video', { command: 'ffmpeg', parameters })
 
     expect(check).toStrictEqual({
       ok: true,
-      call: { name: 'video', arguments: { command: 'ffmpeg', parameters: '{"arguments":"-i @c /work/out.mp4 -t 2","/work/x":["/tmp/…","c"]}' } },
+      call: { name: 'video', arguments: { command: 'ffmpeg', parameters: '{"arguments":"-i @c /run/out.mp4 -t 2","/run/x":["/tmp/…","c"]}' } },
     })
   })
 
@@ -177,10 +177,10 @@ describe('bridgedToolCall', () => {
   })
 
   it('takes the paths of this computer out of a selector that it tells back', () => {
-    const error = refusal(`${REAL_WORK_FOLDER}/code.ts`)
+    const error = refusal(`${REAL_RUN_FOLDER}/code.ts`)
 
-    expect(error).toContain('"/work/code.ts"')
-    expect(error).not.toContain(WORK_FOLDER_ID)
+    expect(error).toContain('"/run/code.ts"')
+    expect(error).not.toContain(RUN_FOLDER_ID)
   })
 
   it('tells back only the start of a long name', () => {
@@ -198,13 +198,13 @@ describe('bridgedToolCall', () => {
 
 describe('shownSelector', () => {
   it('gives a selector as it is', () => {
-    expect(shownSelector('dez.tools/image/flip', WORK_FOLDERS)).toBe('dez.tools/image/flip')
+    expect(shownSelector('dez.tools/image/flip', RUN_FOLDERS)).toBe('dez.tools/image/flip')
   })
 
   it('gives a selector with no path of this computer, on one line, and short', () => {
-    expect(shownSelector(`${REAL_WORK_FOLDER}/code.ts\n${JOINED_WORK_FOLDER}`, WORK_FOLDERS)).toBe('/work/code.ts /work')
-    expect([...shownSelector('x'.repeat(2_000_000), WORK_FOLDERS)].length).toBeLessThanOrEqual(80)
+    expect(shownSelector(`${REAL_RUN_FOLDER}/code.ts\n${JOINED_RUN_FOLDER}`, RUN_FOLDERS)).toBe('/run/code.ts /run')
+    expect([...shownSelector('x'.repeat(2_000_000), RUN_FOLDERS)].length).toBeLessThanOrEqual(80)
     // The path goes before the cut: a cut inside it would leave a part.
-    expect(shownSelector(`${'x'.repeat(60)}${REAL_WORK_FOLDER}/code.ts`, WORK_FOLDERS)).not.toContain('mnt')
+    expect(shownSelector(`${'x'.repeat(60)}${REAL_RUN_FOLDER}/code.ts`, RUN_FOLDERS)).not.toContain('mnt')
   })
 })

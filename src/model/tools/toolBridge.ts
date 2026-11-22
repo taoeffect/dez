@@ -72,10 +72,10 @@ function shown(name: string): string {
 
 /** The selector of a call line as the list of the tool calls of a run
  *  names a line that Dez refused (`BridgedCall.name`): with no path of
- *  this computer (`workFolders`, as for `bridgedToolCall`), on one line,
+ *  this computer (`runFolders`, as for `bridgedToolCall`), on one line,
  *  and short. */
-export function shownSelector(selector: string, workFolders: readonly string[]): string {
-  return shortName(textForModel(selector, workFolders))
+export function shownSelector(selector: string, runFolders: readonly string[]): string {
+  return shortName(textForModel(selector, runFolders))
 }
 
 /** The error that the code gets for a tool call that failed with an error
@@ -131,19 +131,19 @@ export type BridgedCallCheck =
  *  checks them, as for a call of the model (`parseSubcommandCall`).
  *
  *  The selector and every text of the arguments first lose the paths of
- *  this computer (`textForModel`, with the paths `workFolders` of the work
- *  folder of the run); the `parameters` text of a tool with subcommands
- *  loses them in the strings of its JSON (`parametersForModel`). The code
- *  can read the path of its work folder and of the Deno program, and an
- *  argument can go on to another provider (the prompt of a `model_invoke`
- *  call) or into the conversation (the label of a job). */
-export function bridgedToolCall(line: Pick<JsEvalCallLine, 'selector' | 'arguments'>, number: number, workFolders: readonly string[]): BridgedCallCheck {
+ *  this computer (`textForModel`, with the paths `runFolders` of the run
+ *  folder); the `parameters` text of a tool with subcommands loses them
+ *  in the strings of its JSON (`parametersForModel`). The code can read
+ *  the path of its run folder and of the Deno program, and an argument
+ *  can go on to another provider (the prompt of a `model_invoke` call) or
+ *  into the conversation (the label of a job). */
+export function bridgedToolCall(line: Pick<JsEvalCallLine, 'selector' | 'arguments'>, number: number, runFolders: readonly string[]): BridgedCallCheck {
   const refused = (error: string): BridgedCallCheck => ({ ok: false, error })
   if (number > JS_EVAL_MAX_TOOL_CALLS) {
     return refused(`The code made more than ${JS_EVAL_MAX_TOOL_CALLS} tool calls, the most of one ${JS_EVAL_TOOL.name} call, so Dez did not run this one. `
       + `Make fewer calls in one run: do the rest of the work in a new ${JS_EVAL_TOOL.name} call.`)
   }
-  const forModel = (text: string) => textForModel(text, workFolders)
+  const forModel = (text: string) => textForModel(text, runFolders)
   const selector = forModel(line.selector)
   if (!selector.startsWith(SELECTOR_START)) return refused(`\`dez.sbp\` has no selector ${shown(selector)}. ${CALL_FORMS}`)
   const [toolName, subcommand, ...more] = selector.slice(SELECTOR_START.length).split('/')

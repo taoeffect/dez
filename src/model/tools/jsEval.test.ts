@@ -4,7 +4,7 @@ import { shownAppNames, showResultText } from './appShow'
 import { jobStartedText, madeAssetIds } from './jobs'
 import { JS_EVAL_OUTPUT_BYTES, JS_EVAL_TEXT_CAP, JsEvalOutput, endedRun, jsEvalAnswerLine, jsEvalCall, jsEvalCodeFile, jsEvalResult, textForModel, type JsEvalToolCalls } from './jsEval'
 import type { ProgramEnd } from './programRuns'
-import { JOINED_WORK_FOLDER, protocolLine, REAL_WORK_FOLDER, WORK_FOLDER_ID, WORK_FOLDERS } from './testing'
+import { JOINED_RUN_FOLDER, protocolLine, REAL_RUN_FOLDER, RUN_FOLDER_ID, RUN_FOLDERS } from './testing'
 import { ToolError, type ToolArguments } from './types'
 
 // The start of a protocol line.
@@ -23,7 +23,7 @@ function written(...pieces: string[]): JsEvalOutput {
 // The result of a run with a time limit of 30 seconds, whose tool calls
 // left `toolCalls`.
 function resultOf(output: JsEvalOutput, end: ProgramEnd = EXITED, toolCalls: Partial<JsEvalToolCalls> = {}) {
-  return jsEvalResult({ code: 'return 1', timeoutMs: 30_000 }, end, output, WORK_FOLDERS, { ...NO_TOOL_CALLS, ...toolCalls })
+  return jsEvalResult({ code: 'return 1', timeoutMs: 30_000 }, end, output, RUN_FOLDERS, { ...NO_TOOL_CALLS, ...toolCalls })
 }
 
 describe('jsEvalCall', () => {
@@ -254,30 +254,30 @@ describe('jsEvalResult', () => {
     expect(text.indexOf(advice)).toBeLessThan(text.indexOf(CONSOLE_TITLE))
   })
 
-  it('names the work folder /work in every text of the run', () => {
+  it('names the run folder /run in every text of the run', () => {
     const output = written(
-      `${REAL_WORK_FOLDER}/deno-dir and ${JOINED_WORK_FOLDER}\n`,
-      protocolLine({ type: 'error', text: `Error: x\n    at default (file://${REAL_WORK_FOLDER}/code.ts:3:1)` }),
+      `${REAL_RUN_FOLDER}/deno-dir and ${JOINED_RUN_FOLDER}\n`,
+      protocolLine({ type: 'error', text: `Error: x\n    at default (file://${REAL_RUN_FOLDER}/code.ts:3:1)` }),
     )
 
-    expect(resultOf(output).text).toBe(`The code threw an error:\nError: x\n    at default (file:///work/code.ts:3:1)\n\n${CONSOLE_TITLE}\n/work/deno-dir and /work`)
+    expect(resultOf(output).text).toBe(`The code threw an error:\nError: x\n    at default (file:///run/code.ts:3:1)\n\n${CONSOLE_TITLE}\n/run/deno-dir and /run`)
   })
 
-  it('finds the work folder in a URL with escapes', () => {
-    const output = written(protocolLine({ type: 'result', text: `at file:///home/J%C3%BCrgen%20M/.cache/dez/work/${WORK_FOLDER_ID}/code.ts:1:40 and file:///etc/hosts` }))
+  it('finds the run folder in a URL with escapes', () => {
+    const output = written(protocolLine({ type: 'result', text: `at file:///home/J%C3%BCrgen%20M/.cache/dez/work/${RUN_FOLDER_ID}/code.ts:1:40 and file:///etc/hosts` }))
 
-    expect(resultOf(output).text).toBe('at file:///work/code.ts:1:40 and file:///etc/hosts')
+    expect(resultOf(output).text).toBe('at file:///run/code.ts:1:40 and file:///etc/hosts')
   })
 
-  it('finds the work folder in a short time in a long list of URLs with no white space', () => {
+  it('finds the run folder in a short time in a long list of URLs with no white space', () => {
     // The URL with escapes keeps the id of the folder in the text, so the
     // URL rule runs on the JSON of the list.
     const list = JSON.stringify(Array.from({ length: 10_000 }, (_, index) => `file:///usr/share/icons/${index}.png`))
     const started = performance.now()
-    const text = textForModel(`at file:///home/J%C3%BCrgen%20M/.cache/dez/work/${WORK_FOLDER_ID}/code.ts:1:40 ${list}`, WORK_FOLDERS)
+    const text = textForModel(`at file:///home/J%C3%BCrgen%20M/.cache/dez/work/${RUN_FOLDER_ID}/code.ts:1:40 ${list}`, RUN_FOLDERS)
 
     expect(performance.now() - started).toBeLessThan(200)
-    expect(text).toBe(`at file:///work/code.ts:1:40 ${list}`)
+    expect(text).toBe(`at file:///run/code.ts:1:40 ${list}`)
   })
 
   it('hides every other local path', () => {
@@ -287,11 +287,11 @@ describe('jsEvalResult', () => {
   })
 
   it('takes the paths out before it cuts a text', () => {
-    const value = `${'x'.repeat(JS_EVAL_TEXT_CAP - 10)}${JOINED_WORK_FOLDER}/code.ts`
+    const value = `${'x'.repeat(JS_EVAL_TEXT_CAP - 10)}${JOINED_RUN_FOLDER}/code.ts`
     const { text } = resultOf(written(protocolLine({ type: 'result', text: value })))
 
     expect(text).not.toContain('/home')
-    expect(text.endsWith('x/work/code')).toBe(true)
+    expect(text.endsWith('x/run/code.')).toBe(true)
   })
 
   it('cuts a long value at its limit and tells so first', () => {
@@ -331,7 +331,7 @@ describe('jsEvalResult', () => {
 
   it('tells of a time limit with the seconds of the call', () => {
     const output = written('step 1\n')
-    const { text, isError } = jsEvalResult({ code: 'for (;;) {}', timeoutMs: 5000 }, { kind: 'timedOut' }, output, [JOINED_WORK_FOLDER], NO_TOOL_CALLS)
+    const { text, isError } = jsEvalResult({ code: 'for (;;) {}', timeoutMs: 5000 }, { kind: 'timedOut' }, output, [JOINED_RUN_FOLDER], NO_TOOL_CALLS)
 
     expect(isError).toBe(true)
     expect(text).toContain('within 5 seconds')
@@ -473,7 +473,7 @@ describe('textForModel with the folder of the apps', () => {
   // The folder of the apps as Dez made its path, and its real path.
   const APPS = '/home/u/.config/dez/apps'
   const REAL_APPS = '/mnt/disk/config/dez/apps'
-  const forModel = (text: string, roots: readonly string[] = [REAL_APPS, APPS]) => textForModel(text, WORK_FOLDERS, roots)
+  const forModel = (text: string, roots: readonly string[] = [REAL_APPS, APPS]) => textForModel(text, RUN_FOLDERS, roots)
 
   it('names a file of an app as the apps tool does, for each form of the path', () => {
     expect(forModel(`open '${APPS}/notes/data.json' and ${REAL_APPS}/notes/main.ts:3`)).toBe('open \'/apps/notes/data.json\' and /apps/notes/main.ts:3')
@@ -509,8 +509,8 @@ describe('textForModel with the folder of the apps', () => {
     expect(text).toMatch(/^see (?:file:\/\/)?\/home\/…$/)
   })
 
-  it('still names the work folder /work', () => {
-    expect(forModel(`${REAL_WORK_FOLDER}/output/a.png, file://${JOINED_WORK_FOLDER}/runner.js, ${APPS}/notes/a.txt`)).toBe('/work/output/a.png, file:///work/runner.js, /apps/notes/a.txt')
+  it('still names the run folder /run', () => {
+    expect(forModel(`${REAL_RUN_FOLDER}/output/a.png, file://${JOINED_RUN_FOLDER}/runner.js, ${APPS}/notes/a.txt`)).toBe('/run/output/a.png, file:///run/runner.js, /apps/notes/a.txt')
   })
 
   it('finds the folder when one form of its path starts the other', () => {
@@ -518,7 +518,7 @@ describe('textForModel with the folder of the apps', () => {
   })
 
   it('leaves the folder of the apps of a run with no app to the rule of the local paths', () => {
-    expect(textForModel(`${APPS}/notes/x`, WORK_FOLDERS)).toBe('/home/…')
+    expect(textForModel(`${APPS}/notes/x`, RUN_FOLDERS)).toBe('/home/…')
   })
 })
 

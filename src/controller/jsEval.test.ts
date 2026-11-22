@@ -103,7 +103,7 @@ describe('runJsEval', () => {
     expect(await runJsEval(CALL, running(), callContext())).toStrictEqual({ content: '2\n\nConsole output of the code:\nstep 1\na warning', isError: false })
   })
 
-  it('gives the error result of code that threw, with /work for the real path of the work folder and for the path that Dez made', async () => {
+  it('gives the error result of code that threw, with /run for the real path of the run folder and for the path that Dez made', async () => {
     native.canonicalPath = (path) => path.replace('/home/u/.cache', '/mnt/disk/cache')
     native.program = async ({ folder }, onOutput) => {
       const joined = `${CACHE_DIR}/${folder}`
@@ -115,7 +115,7 @@ describe('runJsEval', () => {
     const result = await runJsEval(CALL, running(), callContext())
 
     expect(result).toStrictEqual({
-      content: 'The code threw an error:\nError: x\n    at default (file:///work/code.ts:1:41)\n\nConsole output of the code:\ncwd /work, made as /work',
+      content: 'The code threw an error:\nError: x\n    at default (file:///run/code.ts:1:41)\n\nConsole output of the code:\ncwd /run, made as /run',
       isError: true,
     })
     deletedWorkFolder()

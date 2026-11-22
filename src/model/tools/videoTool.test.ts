@@ -211,7 +211,7 @@ describe('ffmpegCall', () => {
 
     expect(call.textFiles).toStrictEqual([{ name: 'title.txt', text: 'Night: Drive, 100%' }, { name: 'words.srt', text: '1\n00:00:00,000 --> 00:00:02,000\nHi\n' }])
     expect(videoInputsText(call.inputs, call.fonts, call.textFiles)).toBe('The inputs of the run: the video clip @c as c.webm. '
-      + 'The fonts of the run, in its fonts folder: NotoSans-Bold.ttf. The text files of the run, in its work folder: title.txt, words.srt.')
+      + 'The fonts of the run, in its fonts folder: NotoSans-Bold.ttf. The text files of the run, in its run folder: title.txt, words.srt.')
     expect(refusal(() => ffmpegCall({ arguments: '-i @c out.mp4', text_files: '{"../x.txt": "x"}' }, CONVERSATION))).toContain('Dez started no job.')
   })
 

@@ -1,6 +1,6 @@
 // The main module of every run of code in Deno: a `js_eval` run (jsEval.ts)
 // and a run of a script app (appInvoke.ts). Dez writes this file into the
-// work folder of the run, next to the description of the run (`run.json`),
+// run folder, next to the description of the run (`run.json`),
 // and Deno runs it. It runs the code once and writes what the code gave as
 // one protocol line to its standard output.
 //

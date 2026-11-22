@@ -179,7 +179,7 @@ const INVOKE_HELP = `Runs the code of an app on the user's computer, with the pa
   + `at most ${APP_RUN_MAX_OUTPUT_FILES} files of one run, and at most ${byteSizeText(APP_RUN_MAX_OUTPUT_BYTES)} for one file. A run that fails keeps no file.\n`
   + '- `dez.appFolder`: the path of the folder of the app. The code reads and writes the files of its app there, and they stay for the next run: '
   + 'keep the state of an app in a file of this folder.\n'
-  + 'The code can open only two places: the folder of its app, and the work folder of the run (the copies of the inputs and the output folder), which Dez deletes after the run. '
+  + 'The code can open only two places: the folder of its app, and the run folder (the copies of the inputs and the output folder), which Dez deletes after the run. '
   + 'Build each path from a path of `dez`, as in `${dez.outputFolder}/chart.png`: a relative path does not work. '
   + 'The code has no network and no environment variables, and it can start no program; no flag changes that. '
   + 'It can import the other files of its app (`import { parse } from "./parse.ts"`) and the built-in modules (`node:fs`), '

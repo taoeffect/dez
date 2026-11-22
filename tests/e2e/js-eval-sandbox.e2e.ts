@@ -33,7 +33,7 @@ import { newTab, submit } from './harness/thread'
 //   form of Dez's own result line changes no result. No program and no
 //   work folder stays (`expectReplyEnd`). The time limit of a call, with
 //   code that never ends, is a case of js-eval.e2e.ts.
-// - A result names the work folder of its run as `/work`, and holds only
+// - A result names the run folder of its call as `/run`, and holds only
 //   the known start of any other path of the computer. The code can read
 //   these paths, and each text of a run goes to the provider. This covers
 //   a path as the code got it: code that changes the text of a path (a
@@ -162,14 +162,14 @@ describe('js_eval sandbox', () => {
     return request
   }
 
-  // The path of `file` as the code of a call names it: from the work folder
-  // of a run, with no folder of the test HOME in it. The code of a call is
-  // in the next request, which must hold no path of the test HOME.
-  const fromWorkFolder = (file: string): string => path.relative(path.join(workDir(setup.app.home), 'run'), file)
+  // The path of `file` as the code of a call names it: from the run folder
+  // of the call, with no folder of the test HOME in it. The code of a call
+  // is in the next request, which must hold no path of the test HOME.
+  const fromRunFolder = (file: string): string => path.relative(path.join(workDir(setup.app.home), 'run'), file)
 
   // The JavaScript string literal of the path of `file` for the code of a
   // call.
-  const literal = (file: string): string => JSON.stringify(fromWorkFolder(file))
+  const literal = (file: string): string => JSON.stringify(fromRunFolder(file))
 
   // Notes the text of the private file `file`, and gives `file`.
   function privateFile (file: string): string {
@@ -239,7 +239,7 @@ describe('js_eval sandbox', () => {
     const refusedSys = 'NotCapable: Requires sys access'
     const refusedRun = 'NotCapable: Requires run access'
     const probes: Probe[] = [
-      // Files, also the ones of the work folder of the run.
+      // Files, also the ones of the run folder.
       ['read a file', `() => Deno.readTextFile(${file})`, refusedRead],
       ['read a file with Node', `async () => (await import("node:fs")).readFileSync(${file}, "utf8")`, refusedRead],
       ['open a file', `() => Deno.open(${file})`, refusedRead],
@@ -249,10 +249,10 @@ describe('js_eval sandbox', () => {
       // the code, so it asks for this one.
       ['import a file by a path that the code makes', `() => import([${file}].join(""))`, 'TypeError: Requires read access'],
       ['list the home folder', `() => Array.fromAsync(Deno.readDir(${home}))`, refusedRead],
-      ['list the work folder', '() => Array.fromAsync(Deno.readDir("."))', refusedRead],
+      ['list the run folder', '() => Array.fromAsync(Deno.readDir("."))', refusedRead],
       ['go to another folder', `async () => Deno.chdir(${home})`, refusedRead],
       ['write a file', `() => Deno.writeTextFile(${file}, "changed")`, refusedWrite],
-      ['write a file of the work folder', '() => Deno.writeTextFile("note.txt", "text")', refusedWrite],
+      ['write a file of the run folder', '() => Deno.writeTextFile("note.txt", "text")', refusedWrite],
       ['make a folder', '() => Deno.mkdir("made")', refusedWrite],
       ['make a temp file', '() => Deno.makeTempFile()', refusedWrite],
       ['delete a file', `() => Deno.remove(${file})`, refusedWrite],
@@ -325,7 +325,7 @@ describe('js_eval sandbox', () => {
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 
-  it('loads no file outside the work folder of a run, where only the OS stops Deno', async () => {
+  it('loads no file outside the run folder of a call, where only the OS stops Deno', async () => {
     const refused = 'TypeError: Permission denied (os error 13)'
     const text = '{ with: { type: "text" } }'
     const json = '{ with: { type: "json" } }'
@@ -342,7 +342,7 @@ describe('js_eval sandbox', () => {
       ['a temp file of Dez', `() => import(${literal(cached)}, ${text})`, refused],
       ['an asset', `() => import(${literal(asset)}, ${text})`, refused],
       ['a file of the system', `() => import("/etc/passwd", ${text})`, refused],
-      // Code of the work folder loads, and so does code in a URL.
+      // Code of the run folder loads, and so does code in a URL.
       ['the module of Dez', '() => import("./runner.js").then(() => "loaded")', 'ok: "loaded"'],
       ['code in a URL', '() => import("data:text/javascript,export default 5").then((module) => module.default)', 'ok: 5'],
     ]
@@ -361,8 +361,8 @@ describe('js_eval sandbox', () => {
       'The code threw an error:',
       'TypeError: Import \'file:///etc/passwd\' failed.',
       '    0: Permission denied (os error 13)',
-      '    at file:///work/code.ts:1:58',
-      '    at async default (file:///work/code.ts:1:45)',
+      '    at file:///run/code.ts:1:58',
+      '    at async default (file:///run/code.ts:1:45)',
     ].join('\n'))
     await expectReplyEnd(setup, CALLER, second)
     expectPrivateFilesUnchanged()
@@ -416,7 +416,7 @@ describe('js_eval sandbox', () => {
     expect(Number(arrays?.[1])).toBeGreaterThan(0)
     expect(Number(arrays?.[1])).toBeLessThan(8)
 
-    expect(toolResult(second, 'call_lines')).toBe('The code threw an error:\nError: the real end\n    at default (file:///work/code.ts:3:7)')
+    expect(toolResult(second, 'call_lines')).toBe('The code threw an error:\nError: the real end\n    at default (file:///run/code.ts:3:7)')
     expect(toolResult(second, 'call_exit')).toBe(
       'The code ended before it returned a value (exit code 3). The usual causes: an error in a timer or in a promise that the code did not await, '
       + 'an `await` of a promise that never settles, or a call of `Deno.exit`. The code wrote nothing to the console.',
@@ -424,7 +424,7 @@ describe('js_eval sandbox', () => {
     await expectReplyEnd(setup, CALLER, second)
   })
 
-  it('names the work folder of a run as /work, and cuts each other path of the computer at its known start', async () => {
+  it('names the run folder of a call as /run, and cuts each other path of the computer at its known start', async () => {
     // The Deno program is next to the app. The code can read its path, and
     // Dez knows no folder of it: a result names it as the rule of the known
     // starts of a local path leaves it (`/home/…`), so a program in a folder
@@ -440,18 +440,18 @@ describe('js_eval sandbox', () => {
         '].join("\\n")',
       ].join('\n')),
       evalCall('call_thrown', 'console.log(Deno.cwd())\nthrow new Error(`in ${import.meta.dirname}`, { cause: Deno.mainModule })'),
-      // A path of the test HOME outside the work folder: `takeRequest`
+      // A path of the test HOME outside the run folder: `takeRequest`
       // fails for a result that holds it whole.
       evalCall('call_outside', `return [import.meta.resolve(${literal(keys)}), new URL(${literal(keys)}, import.meta.url).pathname].join("\\n")`),
     ])
 
     const second = await chatRequest()
     expect(toolResult(second, 'call_places').split('\n')).toStrictEqual([
-      program, program, program, '/work/runner.js', 'file:///work/runner.js',
-      'file:///work/code.ts', '/work/code.ts', '/work', '/work', '/work',
+      program, program, program, '/run/runner.js', 'file:///run/runner.js',
+      'file:///run/code.ts', '/run/code.ts', '/run', '/run', '/run',
     ])
     expect(toolResult(second, 'call_thrown')).toBe(
-      'The code threw an error:\nError: in /work\n    at default (file:///work/code.ts:2:7)\nCaused by: "file:///work/runner.js"\n\nConsole output of the code:\n/work',
+      'The code threw an error:\nError: in /run\n    at default (file:///run/code.ts:2:7)\nCaused by: "file:///run/runner.js"\n\nConsole output of the code:\n/run',
     )
     expect(toolResult(second, 'call_outside').split('\n')).toStrictEqual([withoutLocalPaths(pathToFileURL(keys).href), withoutLocalPaths(keys)])
     await expectReplyEnd(setup, CALLER, second)
@@ -578,7 +578,7 @@ describe('js_eval sandbox', () => {
 
   it('takes the paths of the computer out of the arguments of a tool call of the code', async () => {
     const program = withoutLocalPaths(path.join(path.dirname(setup.app.binary), 'dez-deno'))
-    const prompt = `Where is /work?\nAnd what is ${program}`
+    const prompt = `Where is /run?\nAnd what is ${program}`
     await submit(browser, 'Ask the helper.')
     const first = await chatRequest()
     sendToolCalls(first.reply, [evalCall('call_ask', [

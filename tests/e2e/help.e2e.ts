@@ -197,7 +197,7 @@ describe('Help panel', () => {
     await openWithButton()
     await pointerClick(browser, NAV.Assets)
     await waitFor(browser, '.help-page--assets')
-    // The link is in the paragraph of the work folder, below the first view
+    // The link is in the paragraph of the run folders, below the first view
     // of the page.
     await clickPageLink('.help-page--assets', 'Thank You')
     await waitForValue(browser, 'Thank You page', shownPage, { nav: 'Thank You', page: 'help-page--thanks' })
@@ -232,7 +232,7 @@ describe('Help panel', () => {
     // The paths come from a native read after the panel opens.
     await waitForValue(
       browser,
-      'the Dez folder, the temp folder, the work folder, and the cache folder on Assets',
+      'the Dez folder, the temp folder, the folder of the run folders, and the cache folder on Assets',
       () => shownFolders('.help-page--assets p code'),
       ['~/.config/dez', '~/.cache/dez/media', '~/.cache/dez/work', '~/.cache/dez'],
     )
@@ -257,8 +257,8 @@ describe('Help panel', () => {
     await openWithButton()
     await clickPageLink('.help-page--general', 'Apps')
     await waitForValue(browser, 'Apps page', shownPage, { nav: 'Apps', page: 'help-page--apps' })
-    // The folder of the apps, and the folder of the work folders of the
-    // code that a model runs.
+    // The folder of the apps, and the folder of the run folders of the code
+    // that a model runs.
     await waitForValue(browser, 'the folders on Apps', () => shownFolders('.help-page--apps code'), ['~/.config/dez/apps', '~/.cache/dez/work'])
   })
 

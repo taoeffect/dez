@@ -321,8 +321,8 @@ describe('runAppJob', () => {
       outputFolder: `${CACHE_DIR}/${folder}/output`,
       appFolder: `${APP_DIR}/apps/notes`,
     })
-    expect(outcome.text).toContain('wrote /work/output/sheet.png with /apps/notes/lib/draw.ts')
-    expect(outcome.text).toContain('cwd /work, state in /apps/notes/state.json')
+    expect(outcome.text).toContain('wrote /run/output/sheet.png with /apps/notes/lib/draw.ts')
+    expect(outcome.text).toContain('cwd /run, state in /apps/notes/state.json')
     expect(outcome.text).not.toContain('/home/u')
   })
 
@@ -377,7 +377,7 @@ describe('runAppJob', () => {
 
     const folder = deletedWorkFolder()
     expect(native.runs[0].run.inputs).toStrictEqual([{ name: 'a.png', source: linked }])
-    expect(outcome.text).toBe('read /work/a.png')
+    expect(outcome.text).toBe('read /run/a.png')
     for (const text of [JSON.stringify(runDescription(folder)), invokeInputsText(call.inputs, 'script'), outcome.text]) expect(text).not.toContain('private-name')
   })
 

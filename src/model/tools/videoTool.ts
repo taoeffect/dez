@@ -114,14 +114,14 @@ const FONTS_PARAMETER: ToolParameter = {
   name: 'fonts',
   type: 'string',
   description: 'The file names of the fonts that the text of the run needs, as in "NotoSans-Bold.ttf NotoSansArabic-Regular.ttf". '
-    + 'Dez puts a copy of each one into the folder fonts of the work folder. The help of the subcommand lists the fonts and tells how to use them.',
+    + 'Dez puts a copy of each one into the folder fonts of the run folder. The help of the subcommand lists the fonts and tells how to use them.',
   required: false,
 }
 
 const TEXT_FILES_PARAMETER: ToolParameter = {
   name: 'text_files',
   type: 'string',
-  description: 'Texts that Dez writes into the work folder as files (UTF-8) before the run, as the text of a JSON object from file name to text, as in {"title.txt":"Night: Drive"}. '
+  description: 'Texts that Dez writes into the run folder as files (UTF-8) before the run, as the text of a JSON object from file name to text, as in {"title.txt":"Night: Drive"}. '
     + `In it, ${TEXT_FILE_NAME_TEXT}. At most ${MAX_TEXT_FILES} files and ${byteSizeText(MAX_TEXT_FILES_BYTES)} in all. `
     + 'The help of the subcommand tells how drawtext, subtitles, and ass read them.',
   required: false,
@@ -131,14 +131,14 @@ const TEXT_FILES_PARAMETER: ToolParameter = {
 // sends it: the tools array holds one short entry for the whole tool. Each
 // example ran with this build (tests/e2e/video-tool.e2e.ts runs some).
 const FFMPEG_HELP = [
-  'Runs the ffmpeg that Dez ships once, with the arguments that you give, in a new work folder. '
+  'Runs the ffmpeg that Dez ships once, with the arguments that you give, in a new run folder. '
     + `${JOB_CALL_NOTE} `
     + 'The result has the end of the log of ffmpeg and the id of each new clip and image. '
     + 'They go into your reply, where the user sees them unless the call sets `is_intermediate`. '
     + 'A run can end with no error and still make a wrong clip: check each new clip with asset_view before you report it.',
   'Inputs: name a video clip, an audio clip, or an image of this conversation by its id with an @, as in `-i @c`. '
-    + 'Dez puts a copy of that file into the work folder and writes the name of the copy (as in c.mp4) in place of the @id. '
-    + 'The file itself never changes. Name no other file: Dez refuses an argument that names a file outside the work folder. '
+    + 'Dez puts a copy of that file into the run folder and writes the name of the copy (as in c.mp4) in place of the @id. '
+    + 'The file itself never changes. Name no other file: Dez refuses an argument that names a file outside the run folder. '
     + 'On Linux with Landlock and on macOS, the system also lets ffmpeg open no file outside the cache folder and the assets folder of Dez, so a file that names another file (a playlist, a list) cannot reach the other files of the user. '
     + 'A PNG, JPEG, GIF, or WebP image goes as its own file, with its transparent pixels. An SVG image goes as a JPEG copy, with white in place of transparent pixels: ffmpeg reads no SVG. '
     + 'An encode to a pixel format with no transparency (as yuv420p for libx264) drops the transparency, and each transparent pixel shows the color that it hides, often black. '
@@ -158,7 +158,7 @@ const FFMPEG_HELP = [
     + 'and a commands file of sendcmd or asendcmd (f=, filename=): write the commands into the filter, as in "asendcmd=c=\'2 volume volume 0.5\',volume=1".',
   'Encoders of this build: libx264, libx265, libvpx-vp9, libvpx, libsvtav1 (video); aac, libmp3lame, libopus, flac, pcm_s16le (audio); mjpeg, png, gif (images). '
     + 'The ffprobe subcommand gives the full lists with no job (-encoders, -filters, -h filter=scale).',
-  'Text (drawtext, subtitles, ass): this ffmpeg has no font of the system. It reads a font only from the folder fonts of the work folder, which holds a copy of each font that the `fonts` parameter names. '
+  'Text (drawtext, subtitles, ass): this ffmpeg has no font of the system. It reads a font only from the folder fonts of the run folder, which holds a copy of each font that the `fonts` parameter names. '
     + `The fonts that Dez ships: ${SHIPPED_FONTS_TEXT}. `
     + 'drawtext needs the font as fontfile=fonts/<file>, as in the example; with no fontfile, it fails. '
     + 'A text= value cannot hold ":" (ffmpeg needs a backslash escape for it, which Dez refuses): put such a text into a file of `text_files`, and give it to drawtext as textfile=<name>. '
@@ -461,7 +461,7 @@ function wordForms(word: string): string[] {
   return word.includes('\'') ? [word, word.replaceAll('\'', ''), filterGraphText(word), filterOptionsText(word)] : [word]
 }
 
-const WORK_FOLDER_ONLY = 'The program works only in its own work folder: name an input as @id, and an output as a new file name with no folder.'
+const RUN_FOLDER_ONLY = 'The program works only in its own run folder: name an input as @id, and an output as a new file name with no folder.'
 
 // Why Dez refuses the word `words[index]` of a command line of ffmpeg or
 // ffprobe (one rule for both); null for a word that can go. `words` are
@@ -483,26 +483,26 @@ function argumentProblem(words: readonly string[], index: number): string | null
     return 'it holds a backslash, and Dez takes no backslash escape. In a filter, put the value in single quotes in place of the escape, '
       + 'and the whole argument in double quotes, as in "select=\'eq(n,0)\'".'
   }
-  if (found(/:\/\//)) return `it holds a URL. ${WORK_FOLDER_ONLY}`
+  if (found(/:\/\//)) return `it holds a URL. ${RUN_FOLDER_ONLY}`
   if (/^-+\//.test(word)) return 'it is an option that reads its value from a file, and Dez does not check that file. Write the value into the arguments.'
-  if (word.includes('~')) return `it holds "~". ${WORK_FOLDER_ONLY}`
-  if (found(PARENT_FOLDER)) return `it names a parent folder (".."). ${WORK_FOLDER_ONLY}`
+  if (word.includes('~')) return `it holds "~". ${RUN_FOLDER_ONLY}`
+  if (found(PARENT_FOLDER)) return `it names a parent folder (".."). ${RUN_FOLDER_ONLY}`
   if (found(ABSOLUTE_PATH)) {
-    return `it holds an absolute path. ${WORK_FOLDER_ONLY} For a run with no output file, end the arguments with -f null - (not with a path of the system). `
+    return `it holds an absolute path. ${RUN_FOLDER_ONLY} For a run with no output file, end the arguments with -f null - (not with a path of the system). `
       + 'In an expression, write a division with no space before the "/", as in iw/2.'
   }
   const protocol = found(PROTOCOL_FORM)
   if (protocol) {
     const name = (protocol[1] ?? protocol[2]).toLowerCase()
-    return `it holds the protocol form "${name}". ${WORK_FOLDER_ONLY}`
+    return `it holds the protocol form "${name}". ${RUN_FOLDER_ONLY}`
       + (name.startsWith('concat') ? ' To join clips, use the join_clips subcommand or the concat filter.' : '')
   }
   const option = /^-+([^:=]+)/.exec(word)?.[1].toLowerCase()
   const key = option !== undefined && REFUSED_OPTIONS.includes(option) ? option : found(OPTION_KEY)?.[1].toLowerCase()
-  if (key !== undefined) return `Dez does not allow the option ${key}: with it, the program could open a file outside of its work folder.`
+  if (key !== undefined) return `Dez does not allow the option ${key}: with it, the program could open a file outside of its run folder.`
   const commandsFile = found(SENDCMD_FILE)
   if (commandsFile) {
-    return `it gives ${commandsFile[1].toLowerCase()} a commands file. Dez does not check the text of a file, and a command can make a filter open a file outside of its work folder. `
+    return `it gives ${commandsFile[1].toLowerCase()} a commands file. Dez does not check the text of a file, and a command can make a filter open a file outside of its run folder. `
       + 'Write the commands into the filter, as in "asendcmd=c=\'2 volume volume 0.5\',volume=1".'
   }
   const format = FORMAT_OPTION.test(words[index - 1] ?? '') ? word.toLowerCase() : undefined
@@ -515,7 +515,7 @@ function argumentProblem(words: readonly string[], index: number): string | null
   // the name of its output (the output can be the copy of such a file) and
   // deletes its old segments, each one by the folder of the newest line.
   if (found(HLS_NAME)) {
-    return 'it names the hls format or an .m3u8 or .m3u file. An HLS playlist can name files outside the work folder by paths that Dez cannot check, '
+    return 'it names the hls format or an .m3u8 or .m3u file. An HLS playlist can name files outside the run folder by paths that Dez cannot check, '
       + 'and ffmpeg reads those files as segments, or deletes them as old segments. So Dez lets the program read and write no HLS playlist. '
       + 'To cut a clip into short clips, use the segment format, as in -f segment -segment_time 5 -reset_timestamps 1 part%03d.mp4.'
   }
@@ -657,7 +657,7 @@ export function videoInputsText(inputs: readonly VideoInput[], fonts: readonly s
   return [
     inputs.length === 0 ? 'The run has no input image and no input clip.' : `The inputs of the run: ${parts.join(', ')}.`,
     ...(fonts.length === 0 ? [] : [`The fonts of the run, in its fonts folder: ${fonts.join(', ')}.`]),
-    ...(textFiles.length === 0 ? [] : [`The text files of the run, in its work folder: ${textFiles.map(({ name }) => name).join(', ')}.`]),
+    ...(textFiles.length === 0 ? [] : [`The text files of the run, in its run folder: ${textFiles.map(({ name }) => name).join(', ')}.`]),
   ].join(' ')
 }
 
@@ -1085,7 +1085,7 @@ const FFMPEG_CALL_ADVICE: FfmpegAdvice = {
   // A model that read the name of a copy in an earlier result (`c.mp4`)
   // can take it for a file that stays.
   failed: 'Read the end of its log: fix the arguments and call again, or, when the log tells that an input file is the problem, tell the user. '
-    + 'Each call has a new work folder, which holds only the inputs that the call names as @id, and the fonts and the text files of the call.',
+    + 'Each call has a new run folder, which holds only the inputs that the call names as @id, and the fonts and the text files of the call.',
   tooMuchOutput: 'Call again with a lower log level (-v error gives only the errors), and with no option that prints data.',
 }
 

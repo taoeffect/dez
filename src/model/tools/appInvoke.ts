@@ -39,9 +39,9 @@ import { ToolError, type SubcommandArguments } from './types'
 // A script app: Deno runs the module of Dez (jsEvalRunner.js), which calls
 // the default export of the `main.ts` of the app with the parameters of
 // the call. The code can open two folders: the folder of its app, where
-// its state stays from one run to the next, and the work folder of the
-// run, which holds a copy of each input and the output folder. It has no
-// network and no tool bridge (`dez.sbp`).
+// its state stays from one run to the next, and the run folder, which
+// holds a copy of each input and the output folder. It has no network and
+// no tool bridge (`dez.sbp`).
 //
 // A UI app: Dez loads the page of the app in a hidden frame, and calls the
 // handler that the page registered (`APP_INVOKE_HANDLER`) with the
@@ -71,8 +71,8 @@ import { ToolError, type SubcommandArguments } from './types'
 // What Dez did not do for a call that it refuses.
 const NOT_DONE = 'Dez started no job.'
 
-/** The name of the folder for the files that a run gives back, in the work
- *  folder of the run. Dez makes it before the run. */
+/** The name of the folder for the files that a run gives back, in the run
+ *  folder. Dez makes it before the run. */
 export const APP_OUTPUT_FOLDER = 'output'
 
 /** How many entries of the output folder Dez asks for after a run. The
@@ -92,7 +92,7 @@ export const APP_PAGE_LOADS_STATE = 'The page of the app loads.'
 export interface AppImageInput {
   kind: 'image'
   id: string
-  /** The name of its copy in the work folder. */
+  /** The name of its copy in the run folder. */
   name: string
   path: string
   /** Its media type, by the ending of its file name. */
@@ -240,8 +240,8 @@ export function fileUrl(path: string): string {
  *  gives Deno the same texts as the folders that the code can open, and
  *  Deno checks a path against them as text (bundled_tools.rs). */
 export interface AppRunFolders {
-  /** The work folder of the run. */
-  work: string
+  /** The run folder. */
+  run: string
   /** The folder of the app. */
   app: string
 }
@@ -260,9 +260,9 @@ export function appRunDescription(call: Pick<InvokeCall, 'parameters' | 'inputs'
       id: input.id,
       kind: input.kind,
       type: input.kind === 'image' ? input.type : input.clip.type,
-      path: `${folders.work}/${input.name}`,
+      path: `${folders.run}/${input.name}`,
     })),
-    outputFolder: `${folders.work}/${APP_OUTPUT_FOLDER}`,
+    outputFolder: `${folders.run}/${APP_OUTPUT_FOLDER}`,
     appFolder: folders.app,
   })
 }
@@ -288,7 +288,7 @@ export function invokeLabel(args: SubcommandArguments): string {
 // What an error text of Deno that names a flag gets as advice: a model can
 // set no flag, and the usual cause is a path that is in no folder of the
 // run (a relative path, a path of the computer).
-const SANDBOX_ADVICE = 'The code of an app can open only the folder of its app and the work folder of its run. '
+const SANDBOX_ADVICE = 'The code of an app can open only the folder of its app and its run folder. '
   + 'It has no network and no environment variables, it starts no program, and it loads no package of npm, of JSR, or from a URL. '
   + 'No flag changes that, and you can set none. For a file, use only the paths that `dez` gives: '
   + '`dez.appFolder`, `dez.outputFolder`, and the `path` of each of `dez.inputs`. A relative path does not work.'

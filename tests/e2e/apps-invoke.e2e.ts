@@ -68,8 +68,8 @@ import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolC
 // - the frame of every run is gone after it.
 //
 // No request holds a path of the test HOME (`takeRequest` checks each one):
-// a result names the folder of an app as `/apps/<name>` and the work folder
-// as `/work`. No request holds the path or the name of a linked file.
+// a result names the folder of an app as `/apps/<name>` and the run folder
+// as `/run`. No request holds the path or the name of a linked file.
 //
 // One app session serves the whole file; each test starts in a new tab and
 // works on apps of its own.
@@ -341,9 +341,9 @@ describe('apps invoke', () => {
     // folder of the run.
     const [facts, outputs] = run.result.text.split('\n\n')
     expect(facts.split('\n')).toStrictEqual([
-      `c video video/webm /work/c.webm ${WEBM_VIDEO.length}`,
-      `b image image/png /work/b.png ${STRIPES_PNG.length}`,
-      `a image image/png /work/a.png ${STRIPES_PNG.length}`,
+      `c video video/webm /run/c.webm ${WEBM_VIDEO.length}`,
+      `b image image/png /run/b.png ${STRIPES_PNG.length}`,
+      `a image image/png /run/a.png ${STRIPES_PNG.length}`,
     ])
     expect(outputs).toContain('Dez keeps 2 files of the output folder: clip.webm (video clip), picture.dat (image).')
     expect(outputs).toContain('Dez did not keep notes.txt')

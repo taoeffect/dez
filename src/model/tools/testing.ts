@@ -36,12 +36,12 @@ export function protocolLine(line: JsEvalLine): string {
   return `\x1e${JSON.stringify(line)}\n`
 }
 
-/** The work folder of a `js_eval` run as Dez made its path, its real path,
+/** The run folder of a `js_eval` run as Dez made its path, its real path,
  *  and the two together, as the code of a run gets them. */
-export const WORK_FOLDER_ID = '0b0c1a5e-7b1f-4c3a-9d1e-2f3a4b5c6d7e'
-export const JOINED_WORK_FOLDER = `/home/u/.cache/dez/work/${WORK_FOLDER_ID}`
-export const REAL_WORK_FOLDER = `/mnt/disk/cache/dez/work/${WORK_FOLDER_ID}`
-export const WORK_FOLDERS = [REAL_WORK_FOLDER, JOINED_WORK_FOLDER]
+export const RUN_FOLDER_ID = '0b0c1a5e-7b1f-4c3a-9d1e-2f3a4b5c6d7e'
+export const JOINED_RUN_FOLDER = `/home/u/.cache/dez/work/${RUN_FOLDER_ID}`
+export const REAL_RUN_FOLDER = `/mnt/disk/cache/dez/work/${RUN_FOLDER_ID}`
+export const RUN_FOLDERS = [REAL_RUN_FOLDER, JOINED_RUN_FOLDER]
 
 /** The UTF-8 bytes of `text`. */
 export function textBytes(text: string): Uint8Array {
