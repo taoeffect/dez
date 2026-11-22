@@ -67,6 +67,12 @@ describe('checkShowTarget', () => {
     expect(text).toContain(NOT_SHOWN)
   })
 
+  it('refuses a built-in UI app, as a fault of Dez', () => {
+    const text = refusal(() => checkShowTarget(show('dez-board'), target()))
+
+    expect(text).toBe(`/apps/dez-board is a built-in app of Dez with the kind "ui", and Dez shows and runs no built-in UI app. This is a fault of Dez, not of your call: tell the user. ${NOT_SHOWN}`)
+  })
+
   it('refuses a UI app with no page, and one with a folder or a link at its place', () => {
     const missing = check({ index: MISSING_TREE })
     expect(missing).toContain('has no index.html')

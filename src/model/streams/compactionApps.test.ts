@@ -35,6 +35,12 @@ describe('sectionAppNames', () => {
 
     expect(sectionAppNames([reply('n', `${block}\nThe reply so far.`)])).toStrictEqual(['notes'])
   })
+
+  it('leaves out a built-in app: Dez ships it, so the notes need not keep it', () => {
+    const sections = [reply('r1', `Done.\n${appTagText('notes')}\nI ran /apps/dez-media/main.ts too.`)]
+
+    expect(sectionAppNames(sections)).toStrictEqual(['notes'])
+  })
 })
 
 describe('carriedAppLines', () => {

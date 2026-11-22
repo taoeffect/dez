@@ -22,6 +22,17 @@ export function isAppName(name: string): boolean {
   return APP_NAME.test(name)
 }
 
+/** The start of the name of every built-in app of Dez. */
+export const BUILT_IN_APP_PREFIX = 'dez-'
+
+/** Whether `name` is the name of a built-in app of Dez: the apps that Dez
+ *  ships, read only, in its resource folder (`builtin-apps/`). The prefix
+ *  is reserved, so no app of the user can have such a name, and a path of
+ *  `/apps/` goes to the bundle by its name alone (`pathOf`, appsTool.ts). */
+export function isBuiltInApp(name: string): boolean {
+  return name.startsWith(BUILT_IN_APP_PREFIX)
+}
+
 /** What an app is: code that runs with no page (`script`), or a web page
  *  (`ui`). */
 export const APP_KINDS = ['script', 'ui'] as const

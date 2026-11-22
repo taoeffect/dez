@@ -27,7 +27,7 @@ export interface CompactionApps {
 }
 
 function fileBytes(path: AppsPath): Promise<Uint8Array> {
-  return sbp('dez.native/loadAppFileBytes', path.file) as Promise<Uint8Array>
+  return sbp('dez.native/loadAppFileBytes', path.file, path.root) as Promise<Uint8Array>
 }
 
 // What Dez reads of the app at `app` now: the listing of its folder, with
@@ -36,7 +36,7 @@ function fileBytes(path: AppsPath): Promise<Uint8Array> {
 // like the name of an app (`namedApps`). `notRead` for a read that failed.
 async function listedApp(name: string, app: AppsPath): Promise<ListedApp | 'missing' | 'notRead'> {
   try {
-    const tree = await sbp('dez.native/listFileTree', app.file, APPS_MAX_ENTRIES) as FileTree
+    const tree = await sbp('dez.native/listFileTree', app.file, APPS_MAX_ENTRIES, app.root) as FileTree
     if (tree.kind !== 'folder') return 'missing'
     return { name, tree, manifest: hasReadableManifest(tree) ? await fileBytes(pathIn(app, MANIFEST_FILE)) : null }
   } catch (error) {

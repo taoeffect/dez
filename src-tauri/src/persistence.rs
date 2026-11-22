@@ -1,8 +1,9 @@
-//! Raw private-file I/O under the two file roots (`FileRoot`: the app folder
-//! `~/.config/dez/`, and Dez's folder in the OS cache folder), plus id and
-//! app-file path sanitization. TypeScript owns every file format (app state,
-//! prompts, conversations, model cache); Rust never parses them. The generic
-//! app-file commands (`save_app_file`, `load_app_file`, `load_app_file_bytes`,
+//! Raw private-file I/O under the three file roots (`FileRoot`: the app
+//! folder `~/.config/dez/`, Dez's folder in the OS cache folder, and the
+//! files that Dez ships, read only), plus id and app-file path
+//! sanitization. TypeScript owns every file format (app state, prompts,
+//! conversations, model cache); Rust never parses them. The generic app-file
+//! commands (`save_app_file`, `load_app_file`, `load_app_file_bytes`,
 //! `delete_app_file`, `move_app_file`, `list_app_files`, `list_file_tree`,
 //! `create_folder`, and `download_app_file` in http_bridge.rs) take a path
 //! from TypeScript that is relative to a root folder (`FileRoot`), so a new
@@ -16,6 +17,7 @@
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,11 +39,16 @@ pub struct ConversationFile {
 //   ask to keep, such as the temp copies of clips and the work folders of
 //   the bundled tools (bundled_tools.rs). It is outside the app folder, so
 //   those files do not fill it.
+// - `resource`: Tauri's resource dir, with the files that Dez ships for its
+//   runs (the libraries, the fonts, the built-in apps). Only the read
+//   commands take it (`writable_file_path`): it is no Dez folder, and no
+//   user, model, or app changes what Dez ships.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FileRoot {
     App,
     Cache,
+    Resource,
 }
 
 // One file or folder of a folder listing (`list_app_files`).
@@ -126,6 +133,23 @@ const PROGRAM_OWNED_FOLDERS: &[&str] = &[APPS_FOLDER, CONVERSATION_WORK_FOLDERS]
 // Why a folder command refuses a path (`allows_folder_change`).
 const NO_FOLDER_CHANGE: &str = "a folder can be made, moved, or deleted only in the cache root, and in the app root only below a folder that programs own";
 
+// Why a command that changes a file refuses the resource root
+// (`writable_file_path`).
+const READ_ONLY_ROOT: &str = "the files that Dez ships cannot change";
+
+// Tauri's resource dir, which only the app handle gives
+// (`set_resource_dir`). The text is Tauri's, with no canonical form: the
+// page and Rust build the paths of a run from it (bundled_tools.rs), and
+// Deno compares the paths of its flags as text.
+static RESOURCE_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+// Keeps Tauri's resource dir for `FileRoot::Resource`. The setup of the app
+// calls it once, before any command can run (lib.rs). A later call changes
+// nothing.
+pub(crate) fn set_resource_dir(dir: PathBuf) {
+    let _ = RESOURCE_DIR.set(dir);
+}
+
 // All app data is under `$HOME/.config/dez/` on every OS. The path comes from
 // $HOME on purpose, not from Tauri's path API. `key_store_path` in
 // key_store.rs builds the same folder. The `assetProtocol` scope in
@@ -142,6 +166,7 @@ pub(crate) fn root_dir(root: FileRoot) -> Result<PathBuf, String> {
         FileRoot::Cache => dirs::cache_dir()
             .map(|dir| dir.join("dez"))
             .ok_or_else(|| "This system has no cache folder".to_string()),
+        FileRoot::Resource => RESOURCE_DIR.get().cloned().ok_or_else(|| "Dez could not find the folder of the files that it ships".to_string()),
     }
 }
 
@@ -180,6 +205,15 @@ fn path_in(dir: &Path, root: FileRoot, relative: &str) -> Result<PathBuf, String
     Ok(path)
 }
 
+// `app_file_path` for a command that writes, moves, or deletes: the
+// resource root is an error, whatever the path.
+pub(crate) fn writable_file_path(root: FileRoot, relative: &str) -> Result<PathBuf, String> {
+    if root == FileRoot::Resource {
+        return Err(format!("Failed to change {}: {}", relative, READ_ONLY_ROOT));
+    }
+    app_file_path(root, relative)
+}
+
 // Whether programs own the place of a path of a root: every path of the
 // cache root, and in the app root each of `PROGRAM_OWNED_FOLDERS` with all
 // that is below it. What is there is the work of a program, so Dez's own
@@ -190,6 +224,7 @@ fn is_program_owned(root: FileRoot, relative: &str) -> bool {
     match root {
         FileRoot::Cache => true,
         FileRoot::App => relative.split('/').next().is_some_and(|first| PROGRAM_OWNED_FOLDERS.contains(&first)),
+        FileRoot::Resource => false,
     }
 }
 
@@ -203,6 +238,7 @@ fn allows_folder_change(root: FileRoot, relative: &str) -> bool {
     match root {
         FileRoot::Cache => true,
         FileRoot::App => is_program_owned(root, relative) && relative.contains('/'),
+        FileRoot::Resource => false,
     }
 }
 
@@ -525,7 +561,7 @@ fn open_plain_file(path: &Path) -> std::io::Result<std::fs::File> {
 }
 
 pub fn save_app_file(root: FileRoot, relative: &str, content: &[u8]) -> Result<(), String> {
-    let path = app_file_path(root, relative)?;
+    let path = writable_file_path(root, relative)?;
     write_private_file(&path, content)
 }
 
@@ -535,7 +571,7 @@ pub fn save_app_file(root: FileRoot, relative: &str, content: &[u8]) -> Result<(
 // make the folder of an app with this, as `save_app_file` and
 // `move_app_file` make a missing folder on their way with the default mode.
 pub fn create_folder(root: FileRoot, relative: &str) -> Result<(), String> {
-    let path = app_file_path(root, relative)?;
+    let path = writable_file_path(root, relative)?;
     if !allows_folder_change(root, relative) {
         return Err(format!("Failed to make the folder {}: {}", relative, NO_FOLDER_CHANGE));
     }
@@ -546,7 +582,7 @@ pub fn create_folder(root: FileRoot, relative: &str) -> Result<(), String> {
 // missing one is not an error. A folder goes only where a folder can change
 // (`allows_folder_change`).
 pub fn delete_app_file(root: FileRoot, relative: &str, folder: bool) -> Result<(), String> {
-    let path = app_file_path(root, relative)?;
+    let path = writable_file_path(root, relative)?;
     let deleted = if !folder {
         remove_file_if_present(&path)
     } else if allows_folder_change(root, relative) {
@@ -608,8 +644,8 @@ fn unlock_folders(folder: &Path) {
 // A source that is a folder moves with all that it holds, when a folder can
 // change at both paths (`allows_folder_change`).
 pub fn move_app_file(from_root: FileRoot, from: &str, to_root: FileRoot, to: &str) -> Result<(), String> {
-    let source = app_file_path(from_root, from)?;
-    let target = app_file_path(to_root, to)?;
+    let source = writable_file_path(from_root, from)?;
+    let target = writable_file_path(to_root, to)?;
     let folders = allows_folder_change(from_root, from) && allows_folder_change(to_root, to);
     move_path(&source, &target, folders).map_err(|e| format!("Failed to move {} to {}: {}", from, to, e))
 }
@@ -815,12 +851,16 @@ fn entries_below(folder: &Path, max_entries: usize) -> std::io::Result<(Vec<Tree
 
 // Returns a root folder for callers that need its full path: to hand it to
 // the OS (to open it in the file manager), or to build and check the
-// absolute paths that conversations hold. The folder is created first because
-// the opener plugin rejects a path that does not exist. A non-UTF-8 path is
-// an error, because a lossy string would name a different folder.
+// absolute paths that conversations hold. The folder of the app root or the
+// cache root is created first because the opener plugin rejects a path that
+// does not exist; the resource root is never made, as Dez writes nothing
+// there. A non-UTF-8 path is an error, because a lossy string would name a
+// different folder.
 pub fn app_dir(root: FileRoot) -> Result<String, String> {
     let dir = root_dir(root)?;
-    ensure_dir(&dir)?;
+    if root != FileRoot::Resource {
+        ensure_dir(&dir)?;
+    }
     dir.into_os_string()
         .into_string()
         .map_err(|path| format!("Folder path is not valid UTF-8: {:?}", path))
@@ -938,9 +978,18 @@ pub(crate) mod tests {
         assert_eq!(dir.file_names(), ["clip.mp4"]);
     }
 
+    // The resource dir of the tests: one fixed path for the whole test run,
+    // as the root is set only once.
+    pub(crate) fn test_resource_dir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("dez-test-resources-{}", std::process::id()));
+        set_resource_dir(dir.clone());
+        dir
+    }
+
     #[test]
     fn app_file_paths_stay_inside_their_root() {
-        for root in [FileRoot::App, FileRoot::Cache] {
+        test_resource_dir();
+        for root in [FileRoot::App, FileRoot::Cache, FileRoot::Resource] {
             let dir = root_dir(root).expect("root folder");
             for valid in ["app_state.json", "assets/images/0b7e-4c1f_a.png", "media/0b7e.mp4", ".hidden"] {
                 assert_eq!(app_file_path(root, valid), Ok(dir.join(valid)), "{valid}");
@@ -1211,8 +1260,9 @@ pub(crate) mod tests {
     // no file, so even a broken path rule would change nothing.
     #[test]
     fn file_commands_reject_a_path_outside_their_root() {
+        test_resource_dir();
         let name = "dez-test-no-such-file";
-        for root in [FileRoot::App, FileRoot::Cache] {
+        for root in [FileRoot::App, FileRoot::Cache, FileRoot::Resource] {
             for folder in [false, true] {
                 assert!(delete_app_file(root, "../dez-test-no-such-file", folder).is_err());
                 assert!(delete_app_file(root, "/tmp/dez-test-no-such-file", folder).is_err());
@@ -1229,7 +1279,7 @@ pub(crate) mod tests {
 
     #[test]
     fn programs_own_the_cache_root_and_the_apps_and_work_folders_of_the_app_root() {
-        use FileRoot::{App, Cache};
+        use FileRoot::{App, Cache, Resource};
         // The root, the path, whether programs own it, and whether a folder
         // can be made, moved, and deleted there.
         let cases = [
@@ -1251,11 +1301,57 @@ pub(crate) mod tests {
             (App, "assets/apps/my-app", false, false),
             (App, "assets/work/a", false, false),
             (App, "conversations", false, false),
+            (Resource, "builtin-apps", false, false),
+            (Resource, "builtin-apps/dez-x", false, false),
+            (Resource, "libs", false, false),
         ];
         for (root, path, owned, folder_change) in cases {
             assert_eq!(is_program_owned(root, path), owned, "{root:?} {path}");
             assert_eq!(allows_folder_change(root, path), folder_change, "{root:?} {path}");
         }
+    }
+
+    // No command changes a file of the resource root, which holds the files
+    // that Dez ships; the reads work as in the other roots. Only this test
+    // writes the folder of the test resource root.
+    #[test]
+    fn the_resource_root_can_be_read_and_never_changed() {
+        let dir = test_resource_dir();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(app_dir(FileRoot::Resource), Ok(dir.to_string_lossy().into_owned()));
+        assert!(!dir.exists(), "app_dir must not make the resource root");
+
+        let app = dir.join("builtin-apps/dez-x");
+        std::fs::create_dir_all(&app).expect("make the built-in");
+        std::fs::write(app.join("main.ts"), "old").expect("write main.ts");
+        let resource = FileRoot::Resource;
+
+        assert_eq!(load_app_file_bytes(resource, "builtin-apps/dez-x/main.ts"), Ok(b"old".to_vec()));
+        let folders = list_app_files(resource, "builtin-apps", true).expect("list folders");
+        assert_eq!(folders.iter().map(|entry| entry.name.as_str()).collect::<Vec<_>>(), ["dez-x"]);
+        let tree = list_file_tree(resource, "builtin-apps", 10).expect("list tree");
+        assert_eq!(tree.entries.iter().map(|entry| entry.path.as_str()).collect::<Vec<_>>(), ["dez-x", "dez-x/main.ts"]);
+
+        let main = "builtin-apps/dez-x/main.ts";
+        let refusals = [
+            save_app_file(resource, main, b"new"),
+            save_app_file(resource, "builtin-apps/dez-x/new.ts", b"new"),
+            create_folder(resource, "builtin-apps/dez-y"),
+            delete_app_file(resource, main, false),
+            delete_app_file(resource, "builtin-apps/dez-x", true),
+            move_app_file(resource, main, FileRoot::Cache, "dez-test-no-such-file"),
+            move_app_file(FileRoot::Cache, "dez-test-no-such-file", resource, main),
+            writable_file_path(resource, main).map(|_| ()),
+        ];
+        for (index, refusal) in refusals.into_iter().enumerate() {
+            let error = refusal.expect_err("a change of the resource root");
+            assert!(error.contains(READ_ONLY_ROOT), "{index}: {error}");
+        }
+        assert_eq!(std::fs::read_to_string(app.join("main.ts")).expect("read main.ts"), "old");
+        assert!(!dir.join("builtin-apps/dez-x/new.ts").exists());
+        assert!(!dir.join("builtin-apps/dez-y").exists());
+
+        std::fs::remove_dir_all(&dir).expect("remove the test resource root");
     }
 
     // A script of an app can change every file of the folder of its app,

@@ -109,6 +109,14 @@ describe('checkInvokeTarget', () => {
     expect(checkInvokeTarget(call, uiTarget())).toBe('ui')
   })
 
+  it('runs a built-in script app, and refuses a built-in UI app as a fault of Dez', () => {
+    expect(checkInvokeTarget(invoke({ name: 'dez-media' }), target())).toBe('script')
+    const text = refusal(() => checkInvokeTarget(invoke({ name: 'dez-board' }), uiTarget()))
+    expect(text).toContain('/apps/dez-board is a built-in app of Dez with the kind "ui"')
+    expect(text).toContain('This is a fault of Dez, not of your call: tell the user.')
+    expect(text).toContain(NOT_STARTED)
+  })
+
   it('refuses an app that is not there, and a file at its place', () => {
     expect(check({ app: MISSING_TREE })).toContain('There is no app /apps/notes')
     expect(check({ app: { kind: 'file', size: 3 } })).toContain('/apps/notes is a file and no folder')

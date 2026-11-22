@@ -23,7 +23,7 @@ import {
   type CheckedInvokeCall,
   type InvokeCall,
 } from '../model/tools/appInvoke'
-import { APPS_ROOT, APPS_TOOL } from '../model/tools/appsTool'
+import { APPS_ROOT, APPS_TOOL, BUILT_IN_APPS_FOLDER } from '../model/tools/appsTool'
 import { jobTimedOutText } from '../model/tools/jobs'
 import { endedRun, JsEvalOutput, textForModel } from '../model/tools/jsEval'
 import { PROGRAM_READS_INPUTS, programNotStartedText, type KeptFile } from '../model/tools/programRuns'
@@ -175,7 +175,13 @@ export function runAppJob(call: InvokeCall, signal: AbortSignal, report: (state:
       throw new ToolError(programNotStartedText('deno', APPS_TOOL.name), '', { cause: error })
     }
     const work = await folderPathForms(folder, 'cache', APPS_TOOL.name)
-    const apps = await folderPathForms(APPS_ROOT.file, 'app', APPS_TOOL.name)
+    // A built-in app is in the files that Dez ships, and Rust finds its
+    // folder there by its name (`builtInApp`); its texts show the folder of
+    // the built-in apps as /apps too.
+    const builtIn = call.app.root === 'resource'
+    const apps = builtIn
+      ? await folderPathForms(BUILT_IN_APPS_FOLDER, 'resource', APPS_TOOL.name)
+      : await folderPathForms(APPS_ROOT.file, 'app', APPS_TOOL.name)
     const forModel = (text: string): string => textForModel(text, work.forms, apps.forms)
 
     const [appName] = call.app.names
@@ -190,7 +196,8 @@ export function runAppJob(call: InvokeCall, signal: AbortSignal, report: (state:
     const output = new JsEvalOutput()
     // No `stdin`, and a `call` line of the code gets no answer: the code of
     // an app calls no Dez tool.
-    const end = await runProgram('deno', APPS_TOOL.name, { ...moduleRun(folder, call.timeoutMs), inputs, appFolder: appName }, signal, ({ stream, text }) => {
+    const appFolder = builtIn ? { builtInApp: appName } : { appFolder: appName }
+    const end = await runProgram('deno', APPS_TOOL.name, { ...moduleRun(folder, call.timeoutMs), inputs, ...appFolder }, signal, ({ stream, text }) => {
       output.add(stream, text)
     })
     // The job has the same limit and its own clock (`TabJobs`), which

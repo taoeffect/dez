@@ -4,7 +4,7 @@ import { oneLineCut } from '../../utils/oneLineCut'
 import { startOf } from '../../utils/textCut'
 import { searchTerms, textMatches } from '../textSearch'
 import { APP_HANDLER_EXAMPLE, APP_READ_ASSET, APP_RUN_FRAME_SIZE, APP_SAVE_ASSET } from './appBridge'
-import { APP_KINDS, isAppName, MANIFEST_FILE, MANIFEST_MAX_BYTES, MAX_DESCRIPTION_LENGTH, parseAppManifest, UNKNOWN_APP_KIND, type AppKind, type AppManifest, type ListedAppKind } from './appManifest'
+import { APP_KINDS, BUILT_IN_APP_PREFIX, isAppName, isBuiltInApp, MANIFEST_FILE, MANIFEST_MAX_BYTES, MAX_DESCRIPTION_LENGTH, parseAppManifest, UNKNOWN_APP_KIND, type AppKind, type AppManifest, type ListedAppKind } from './appManifest'
 import { appTemplateFiles, SCRIPT_MAIN_FILE, UI_CLIENT_SCRIPT_TAG, UI_INDEX_FILE, UI_OWN_SCRIPT_TAG } from './appTemplates'
 import { unknownValuesText } from './arguments'
 import { GREP_LINE_MAX_CHARACTERS, GREP_MAX_CHARACTERS, GREP_MAX_CONTEXT, GREP_MAX_MATCHES, GREP_TIME_LIMIT_SECONDS } from './grepMatch'
@@ -16,9 +16,12 @@ import { ToolError, type SubcommandArguments, type SubcommandParameter, type Too
 
 // The `apps` tool: the files of the apps, the small programs that a model
 // writes for the user. Each app is one folder of `apps/` in the app root,
-// and it stays from one conversation to the next. A model names a file by
-// a virtual path that starts with `/apps/` (`/apps/<app>/main.js`), so no
-// call and no result holds a path of the computer.
+// and it stays from one conversation to the next. The built-in apps of Dez
+// (`isBuiltInApp`, the `dez-` names) are in the files that Dez ships
+// (`BUILT_IN_APPS_FOLDER` of the resource root), and no call changes them
+// (`checkChangeable`). A model names a file by a virtual path that starts
+// with `/apps/` (`/apps/<app>/main.js`), so no call and no result holds a
+// path of the computer.
 //
 // This module has the pure parts: the definition, the checks of a call,
 // the rules of a path, the limits, and every text that the calling model
@@ -39,6 +42,10 @@ import { ToolError, type SubcommandArguments, type SubcommandParameter, type Too
 
 // The folder of the app root that holds the apps, one folder each.
 const APPS_FOLDER = 'apps'
+
+/** The folder of the resource root that holds the built-in apps, one
+ *  folder each. */
+export const BUILT_IN_APPS_FOLDER = 'builtin-apps'
 
 /** What a model reads and writes for the folder of the apps
  *  (`APPS_FOLDER`) in every path. */
@@ -118,7 +125,9 @@ const EXAMPLE_FILE = `${APPS_VIRTUAL_ROOT}/${EXAMPLE_APP}/main.js`
 const FILE_LIMIT = byteSizeText(APPS_MAX_FILE_BYTES)
 const APP_LIMITS = `An app holds at most ${countText(APPS_MAX_ENTRIES)} files and folders, and ${byteSizeText(APPS_MAX_BYTES)}.`
 const APP_NAME_RULE = 'The name of an app is 1 to 64 characters: lower-case letters, digits, "-", and "_", and the first one is a letter or a digit, '
-  + `as in "${EXAMPLE_APP}".`
+  + `as in "${EXAMPLE_APP}". A name that starts with "${BUILT_IN_APP_PREFIX}" is for the built-in apps of Dez.`
+// The mark of a built-in app in `list_apps` and in `ls` of `/apps`.
+const BUILT_IN_MARK = 'built-in'
 const PATH_PARAMETER = `as in "${EXAMPLE_FILE}".`
 
 const EXAMPLE_SCRIPT_APP = 'contact-sheet'
@@ -304,7 +313,8 @@ export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
       name: 'list_apps',
       summary: 'List the apps: the name, the kind, the size, and the description of each.',
       description: `Lists the apps, one line each: the name (its folder is ${APPS_VIRTUAL_ROOT}/<name>/), the kind (${APP_KINDS.join(' or ')}), the size of all its files, and the description. `
-        + 'The kind and the description are those of its manifest.json. A call with no parameters lists every app by name.',
+        + 'The kind and the description are those of its manifest.json. A call with no parameters lists every app by name. '
+        + `A built-in app of Dez has "(${BUILT_IN_MARK})" after its kind: you can read and run it, but not change it.`,
       parameters: [
         { name: 'name', type: 'string', description: 'Only the apps whose name holds this text. Upper and lower case count as the same.', required: false },
         { name: 'min_bytes', type: 'integer', description: 'Only the apps of at least this size, in bytes.', required: false },
@@ -467,13 +477,20 @@ export interface AppsPath {
   names: readonly string[]
   /** The path as a model writes and reads it: `/apps/notes/main.js`. */
   virtual: string
-  /** The path from the app root, as the native file selectors take it:
-   *  `apps/notes/main.js`. */
+  /** The root of `file` (`AppFileRoot`, controller/nativeTypes.ts): the
+   *  resource root for a built-in app, else the app root. */
+  root: 'app' | 'resource'
+  /** The path from `root`, as the native file selectors take it:
+   *  `apps/notes/main.js`, `builtin-apps/dez-x/main.ts`. */
   file: string
 }
 
+// The name of the app alone tells where its files are: a built-in app is
+// in the files that Dez ships, and its name is no name of the user's apps.
 function pathOf(names: readonly string[]): AppsPath {
-  return { names, virtual: [APPS_VIRTUAL_ROOT, ...names].join('/'), file: [APPS_FOLDER, ...names].join('/') }
+  const virtual = [APPS_VIRTUAL_ROOT, ...names].join('/')
+  if (names.length > 0 && isBuiltInApp(names[0])) return { names, virtual, root: 'resource', file: [BUILT_IN_APPS_FOLDER, ...names].join('/') }
+  return { names, virtual, root: 'app', file: [APPS_FOLDER, ...names].join('/') }
 }
 
 /** The folder of all apps. */
@@ -551,6 +568,16 @@ function checkNewNames(path: AppsPath): void {
     + 'Dez takes such a path for a path of the user\'s computer and hides it from you. Use another name.')
 }
 
+// Throws for a path that a call would make, change, move, or delete in a
+// built-in app: Dez ships those files, and the native side refuses to
+// change them too, with a text that tells the model less.
+function checkChangeable(path: AppsPath): void {
+  if (path.root !== 'resource') return
+  throw new ToolError(`${path.virtual}: the names of apps that start with "${BUILT_IN_APP_PREFIX}" are for the built-in apps of Dez, `
+    + 'and no call makes, changes, moves, or deletes a file there. Give an app of your own another name. '
+    + 'To change a built-in app, copy its files into an app of your own with read and write.')
+}
+
 /** The folder of the app that a call names with `name`. Throws a
  *  `ToolError` for a text that is no name of an app. */
 export function appNamed(name: string): AppsPath {
@@ -616,6 +643,28 @@ export interface AppsTree {
 
 /** What is at a path, with nothing of what is below it. */
 export type PathFacts = Pick<AppsTree, 'kind' | 'size'>
+
+/** The listing of `/apps`, from the listings of the two places of the
+ *  apps, each with `maxEntries`: `own` of the apps folder of the app root,
+ *  and `builtIn` of the built-in apps of the resource root. Each place
+ *  gives only its own names (`pathOf`): a `dez-` folder of `own` is one of
+ *  an older Dez, which no path reaches, and so is a folder of `builtIn`
+ *  with another name. The entries stay in the order of a native listing:
+ *  those nearer to the folder first. */
+export function appsRootTree<T extends AppsTree>(own: T, builtIn: T, maxEntries: number): T {
+  const appName = (entry: AppsTreeEntry) => entry.path.split('/', 1)[0]
+  const depth = (entry: AppsTreeEntry) => entry.path.split('/').length
+  const entries = [
+    ...builtIn.entries.filter((entry) => isBuiltInApp(appName(entry))),
+    ...own.entries.filter((entry) => !isBuiltInApp(appName(entry))),
+  ].sort((a, b) => depth(a) - depth(b))
+  return {
+    ...own,
+    kind: own.kind === 'folder' || builtIn.kind === 'folder' ? 'folder' : own.kind,
+    entries: entries.slice(0, maxEntries),
+    more: own.more || builtIn.more || entries.length > maxEntries,
+  } as T
+}
 
 const OTHER_KIND = 'a link or a special file'
 
@@ -714,6 +763,7 @@ export interface InitCall {
 export function initCall(args: SubcommandArguments): InitCall {
   const app = appNamed(textArgument(args, 'name').trim())
   const [name] = app.names
+  checkChangeable(app)
   checkNewNames(app)
 
   const kindText = textArgument(args, 'kind').trim()
@@ -916,6 +966,7 @@ export interface WriteCall {
 
 export function writeCall(args: SubcommandArguments): WriteCall {
   const path = filePath(args, 'path')
+  checkChangeable(path)
   checkNewNames(path)
   const content = textArgument(args, 'content')
   const bytes = new TextEncoder().encode(content)
@@ -959,6 +1010,7 @@ export interface EditCall {
 
 export function editCall(args: SubcommandArguments): EditCall {
   const path = filePath(args, 'path')
+  checkChangeable(path)
   const edits = objectItems(args, 'edits').map((edit): LineEdit => ({
     fromLine: integerArgument(edit, 'from_line'),
     toLine: integerArgument(edit, 'to_line'),
@@ -1077,6 +1129,7 @@ export function rmCall(args: SubcommandArguments): { paths: AppsPath[] } {
   if (all.some((path) => path.names.length === 0)) {
     throw new ToolError(`${APPS_VIRTUAL_ROOT} is the folder of all apps, and rm does not delete it. To delete an app, give its folder, as in "${APPS_VIRTUAL_ROOT}/${EXAMPLE_APP}".`)
   }
+  for (const path of all) checkChangeable(path)
   const unique = all.filter((path, index) => all.findIndex((other) => other.file === path.file) === index)
   return { paths: unique.filter((path) => !unique.some((folder) => isBelow(path, folder))) }
 }
@@ -1126,11 +1179,13 @@ export function mvCall(args: SubcommandArguments): { moves: Move[] } {
   if (moves.length === 0) throw new ToolError(`\`moves\` is an empty list. Give the moves, as in ${example}.`)
   for (const { from, to } of moves) {
     if (from.names.length === 0) throw new ToolError(`${APPS_VIRTUAL_ROOT} is the folder of all apps, and mv does not move it.`)
+    checkChangeable(from)
     if (to.names.length === 0) throw new ToolError(`\`to\` is ${APPS_VIRTUAL_ROOT}, the folder of all apps. Give the full new path of what you move, as in ${example}.`)
     if (to.names.length === 1 && !isAppName(to.names[0])) {
       throw new ToolError(`${to.virtual} is directly in ${APPS_VIRTUAL_ROOT}/, where only the folders of apps are, and "${to.names[0]}" is no name for an app. ${APP_NAME_RULE} `
         + `To move into an app, give the full new path, as in "${APPS_VIRTUAL_ROOT}/${EXAMPLE_APP}/${from.names.at(-1)}".`)
     }
+    checkChangeable(to)
     checkNewNames(to)
   }
   return { moves }
@@ -1187,6 +1242,7 @@ export function mkdirCall(args: SubcommandArguments): { path: AppsPath } {
     throw new ToolError(`mkdir makes folders in an app only, as in "${APPS_VIRTUAL_ROOT}/${EXAMPLE_APP}/data", and ${path.virtual} is ${path.names.length === 0 ? 'the folder of all apps' : 'the folder of an app'}. `
       + 'init makes a new app.')
   }
+  checkChangeable(path)
   checkNewNames(path)
   return { path }
 }
@@ -1271,7 +1327,8 @@ export function lsText(path: AppsPath, tree: AppsTree): string {
   const texts = sorted.slice(0, LS_MAX_ROWS).map((row) => {
     const name = shownEntryPath(row.name)
     const unusable = name === row.name ? '' : ' | a name that the apps tool does not take'
-    if (row.kind === 'folder') return `${name}/ | ${atLeast}${countOf(row.files, 'file')}, ${byteSizeText(row.bytes)}${unusable}`
+    const builtIn = isRoot && row.kind === 'folder' && isBuiltInApp(row.name) ? ` | ${BUILT_IN_MARK}` : ''
+    if (row.kind === 'folder') return `${name}/ | ${atLeast}${countOf(row.files, 'file')}, ${byteSizeText(row.bytes)}${unusable}${builtIn}`
     return `${name} | ${row.kind === 'file' ? byteSizeText(row.bytes) : OTHER_KIND}${unusable}`
   })
   if (sorted.length > LS_MAX_ROWS) texts.push(`… and ${countText(sorted.length - LS_MAX_ROWS)} more.`)
@@ -1468,6 +1525,16 @@ export function checkedAppKind(app: AppsPath, manifest: AppsPath, facts: PathFac
   return parsed.kind
 }
 
+/** Throws a `ToolError` for a built-in app of the kind `ui`: Dez ships
+ *  only script apps, and no app frame serves the files of the resource
+ *  root (src-tauri/src/app_frames.rs). `notDone` is the last sentence of
+ *  the text, as in `checkedAppKind`. */
+export function checkBuiltInKind(app: AppsPath, kind: AppKind, notDone: string): void {
+  if (app.root !== 'resource' || kind !== 'ui') return
+  throw new ToolError(`${app.virtual} is a built-in app of Dez with the kind "ui", and Dez shows and runs no built-in UI app. `
+    + `This is a fault of Dez, not of your call: tell the user. ${notDone}`)
+}
+
 /** The kind and the description of an app for a list, each with no column
  *  mark. An app with no manifest that Dez can read still lists: a model
  *  must see it to repair it. */
@@ -1510,7 +1577,8 @@ export function listAppsText(call: ListAppsCall, apps: readonly ListedApp[]): st
   }
   const rows = sorted.slice(0, LIST_APPS_MAX_ROWS).map(({ app, size }) => {
     const [kind, description] = manifestColumns(app)
-    return [app.name, kind, appSizeText(size), description].join(' | ')
+    const shownKind = isBuiltInApp(app.name) ? `${kind} (${BUILT_IN_MARK})` : kind
+    return [app.name, shownKind, appSizeText(size), description].join(' | ')
   })
   if (sorted.length > LIST_APPS_MAX_ROWS) rows.push(`… and ${countText(sorted.length - LIST_APPS_MAX_ROWS)} more. Use \`name\` to get a shorter list.`)
 

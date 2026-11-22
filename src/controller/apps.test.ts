@@ -9,7 +9,7 @@ import { SaveCount } from '../model/tools/appInvoke'
 import type { AppCardFacts } from '../model/tools/appShow'
 import { APP_RUN_MAX_OUTPUT_FILES } from '../model/tools/appsTool'
 import { CONVERSATION, PNG_BYTES, SONG, textBytes, WAV_BYTES } from '../model/tools/testing'
-import { APP_DIR, appFiles, fakeAppFiles, failureOf, FILE_ID, native, resetNative } from './testing'
+import { APP_DIR, appFiles, builtInAppFiles, fakeAppFiles, failureOf, FILE_ID, native, resetNative, RESOURCE_DIR } from './testing'
 // Side-effect import: registers the selectors under test.
 import './apps'
 
@@ -173,6 +173,22 @@ describe('dez.controller/apps/delete', () => {
     expect(toasts[0].message).toMatch(/^The system did not let Dez delete the folder of the app\..*\n\nDetails: Failed to list apps\/notes: Permission denied \(os error 13\)$/s)
     expect(native.deletedFiles).toStrictEqual([])
   })
+
+  it('deletes no built-in app, and no app folder with the name of one, and tells the user how to take the card away', async () => {
+    const files = fakeAppFiles(appFiles('dez-media'), builtInAppFiles('dez-media'))
+
+    const error = await failureOf(deleteApp('dez-media'))
+
+    expect(error).toBeInstanceOf(Error)
+    expect(native.deletedFiles).toStrictEqual([])
+    expect(files.has('apps/dez-media/manifest.json')).toBe(true)
+    expect(consoleError).toHaveBeenCalled()
+    expect(toasts).toStrictEqual([{
+      title: 'Could not delete the app dez-media',
+      message: 'The app is a built-in app: a part of Dez itself, which Dez never deletes. To take its card out of the conversation, delete the card in the text.',
+      variant: 'error',
+    }])
+  })
 })
 
 describe('dez.controller/apps/popupMenu', () => {
@@ -180,6 +196,12 @@ describe('dez.controller/apps/popupMenu', () => {
     fakeAppFiles(appFiles('notes', {}, 'ui'))
 
     expect(await menuOf('notes')).toBe(`${APP_DIR}/apps/notes`)
+  })
+
+  it('shows a built-in app in the files that Dez ships', async () => {
+    fakeAppFiles({}, builtInAppFiles('dez-media'))
+
+    expect(await menuOf('dez-media')).toBe(`${RESOURCE_DIR}/builtin-apps/dez-media`)
   })
 
   it('shows the menu with no file for an app that is gone, and when the read fails', async () => {

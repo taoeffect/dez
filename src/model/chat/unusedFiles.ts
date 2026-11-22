@@ -1,5 +1,5 @@
 import { fileNameOf } from '../../utils/fileName'
-import { isAppName } from '../tools/appManifest'
+import { isAppName, isBuiltInApp } from '../tools/appManifest'
 import { APPS_ROOT, appSize, pathIn, type AppsTree, type AppsTreeEntry } from '../tools/appsTool'
 import { WORK_ROOT } from '../tools/workFolders'
 import { namedApps } from './appNames'
@@ -230,6 +230,8 @@ export interface TimedAppTree extends AppsTree {
  *  many entries as an app of the `apps` tool can have. Kept:
  *  - a name that is no name of an app, and a path that is no folder: the
  *    `apps` tool made neither;
+ *  - a name of a built-in app (`isBuiltInApp`): a folder of an older Dez,
+ *    which the `apps` tool hides, as `/apps/<name>` is the built-in;
  *  - an app that changed less than `UNUSED_FILE_MIN_AGE_MS` before the time
  *    `now`: `apps init` makes the folder first, and the text that names the
  *    app comes after that. A change of any file or folder of the app
@@ -237,7 +239,7 @@ export interface TimedAppTree extends AppsTree {
  *  - an app with more entries than the listing has: Dez did not see them
  *    all. */
 export function oldAppFolder(name: string, tree: TimedAppTree, now: number): StoredFile | null {
-  if (!isAppName(name) || tree.kind !== 'folder' || tree.more) return null
+  if (!isAppName(name) || isBuiltInApp(name) || tree.kind !== 'folder' || tree.more) return null
   const times = [tree.updatedAt, ...tree.entries.map((entry) => entry.updatedAt)]
   if (times.some((time) => time === null || time + UNUSED_FILE_MIN_AGE_MS > now)) return null
   return { root: 'app', path: pathIn(APPS_ROOT, name).file, size: appSize(tree).bytes }

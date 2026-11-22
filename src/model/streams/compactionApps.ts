@@ -4,7 +4,7 @@ import { notesAppLines, type NotesApp } from '../chat/compactionNotes'
 import { sectionPlainText } from '../chat/content'
 import { findAssetMentions } from '../chat/imageMentions'
 import type { Section } from '../chat/types'
-import { UNKNOWN_APP_KIND } from '../tools/appManifest'
+import { isBuiltInApp, UNKNOWN_APP_KIND } from '../tools/appManifest'
 import { APPS_ROOT, manifestColumns, pathIn, type AppsPath, type AppsTree, type ListedApp } from '../tools/appsTool'
 
 // The apps of a conversation at a compaction (tools/appsTool.ts): the apps
@@ -30,11 +30,13 @@ import { APPS_ROOT, manifestColumns, pathIn, type AppsPath, type AppsTree, type 
 /** The names of the apps that the text of `sections` names, in the order
  *  of the names: of the sections that a compaction replaces, with the
  *  block of the compaction before, whose notes list the apps of that
- *  time. An app with such a name need not be there. */
+ *  time. An app with such a name need not be there. A built-in app is
+ *  left out: it is a part of Dez, which no cleanup deletes, and the
+ *  conversation wrote none of its files. */
 export function sectionAppNames(sections: readonly Section[]): string[] {
   const names = new Set<string>()
   for (const section of sections) {
-    for (const name of namedApps(sectionPlainText(section))) names.add(name)
+    for (const name of namedApps(sectionPlainText(section))) if (!isBuiltInApp(name)) names.add(name)
   }
   return [...names].sort()
 }

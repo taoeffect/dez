@@ -28,6 +28,7 @@ import {
   heldStep,
   native,
   refusalOf,
+  RESOURCE_DIR,
   resetNative,
   running,
   STOP,
@@ -336,6 +337,21 @@ describe('runAppJob', () => {
     expect(outputListings).toBe(0)
     expect(stored()).toStrictEqual([])
     deletedWorkFolder()
+  })
+
+  // Rust finds the folder of a built-in app in the files that Dez ships by
+  // its name, and a model knows it as /apps/<name> too.
+  it('runs a built-in app from the files that Dez ships, and gives its paths as the apps tool names them', async () => {
+    const app = `${RESOURCE_DIR}/builtin-apps/dez-media`
+    native.program = writes('stdout', protocolLine({ type: 'error', text: `Error: no rows\n    at main (file://${app}/main.ts:2:9)` }))
+
+    const outcome = await runJob(invoke({ name: 'dez-media' }))
+
+    expect(runDescription(deletedWorkFolder())).toMatchObject({ main: `file://${app}/main.ts`, appFolder: app })
+    expect(native.runs[0].run).toMatchObject({ builtInApp: 'dez-media' })
+    expect(native.runs[0].run).not.toHaveProperty('appFolder')
+    expect(outcome.text).toContain('at main (file:///apps/dez-media/main.ts:2:9)')
+    expect(outcome.text).not.toContain(RESOURCE_DIR)
   })
 
   it('downloads a clip that is only at the address of its provider into the work folder', async () => {

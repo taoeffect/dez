@@ -15,9 +15,9 @@ export interface CopilotChatToken {
 }
 
 // The folders that the app-file selectors reach (`FileRoot` in
-// src-tauri/src/persistence.rs): the app folder, and Dez's folder in the OS
-// cache folder.
-export type AppFileRoot = 'app' | 'cache'
+// src-tauri/src/persistence.rs): the app folder, Dez's folder in the OS
+// cache folder, and the files that Dez ships, which only the reads take.
+export type AppFileRoot = 'app' | 'cache' | 'resource'
 
 // A path relative to a root, with `/` between folders.
 export interface AppFileRef {

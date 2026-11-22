@@ -90,19 +90,28 @@ pub fn run() {
             bundled_tools::cancel_bundled_tool,
             bundled_tools::write_bundled_tool_input,
         ]);
-    // macOS brings the app to the front when it starts, and with it each
-    // window that is visible at that time. The main window starts hidden
-    // (`visible: false`), and the frontend shows it about a second later
-    // (`dez.controller/window/restore`). On macOS 14+ the system can refuse
-    // that later request to come to the front, so Dez stayed behind other
-    // apps. So on macOS the window shows here, at launch, at its default size
-    // and place, and the restore moves it to the saved geometry. tao's
-    // `window_activation_hack` (app_state.rs) says the same: show windows
-    // when the app starts (`StartCause::Init`, when `setup` runs).
-    // https://developer.apple.com/documentation/appkit/passing-control-from-one-app-to-another-with-cooperative-activation
-    #[cfg(target_os = "macos")]
+    // Only the app handle gives Tauri's resource dir, and the file commands
+    // of its root (`FileRoot::Resource`) run with no handle: keep it before
+    // any command can run. A Builder takes one setup closure, so the macOS
+    // part is here too.
     let builder = builder.setup(|app| {
         use tauri::Manager;
+        match app.path().resource_dir() {
+            Ok(dir) => persistence::set_resource_dir(dir),
+            Err(error) => eprintln!("Failed to find the folder of the files that Dez ships: {error}"),
+        }
+        // macOS brings the app to the front when it starts, and with it each
+        // window that is visible at that time. The main window starts hidden
+        // (`visible: false`), and the frontend shows it about a second later
+        // (`dez.controller/window/restore`). On macOS 14+ the system can
+        // refuse that later request to come to the front, so Dez stayed
+        // behind other apps. So on macOS the window shows here, at launch, at
+        // its default size and place, and the restore moves it to the saved
+        // geometry. tao's `window_activation_hack` (app_state.rs) says the
+        // same: show windows when the app starts (`StartCause::Init`, when
+        // `setup` runs).
+        // https://developer.apple.com/documentation/appkit/passing-control-from-one-app-to-another-with-cooperative-activation
+        #[cfg(target_os = "macos")]
         if let Some(window) = app.get_webview_window("main") {
             // The restore shows the window too, so a failure here is not fatal.
             if let Err(error) = window.show() {

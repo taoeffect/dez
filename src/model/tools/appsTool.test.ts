@@ -10,6 +10,7 @@ import {
   APPS_TOOL,
   APPS_TOOL_DEFINITION,
   appsPath,
+  appsRootTree,
   checkAppRoom,
   checkInitTarget,
   checkTextFile,
@@ -102,10 +103,19 @@ describe('APPS_TOOL', () => {
 
 describe('appsPath', () => {
   it('reads a path below /apps, with or without a "/" at its end', () => {
-    expect(appsPath('/apps', 'path')).toStrictEqual({ names: [], virtual: '/apps', file: 'apps' })
-    expect(appsPath('/apps/', 'path')).toStrictEqual({ names: [], virtual: '/apps', file: 'apps' })
-    expect(appsPath(' /apps/notes/ ', 'path')).toStrictEqual({ names: ['notes'], virtual: '/apps/notes', file: 'apps/notes' })
-    expect(appsPath('/apps/notes/src/main.js', 'path')).toStrictEqual({ names: ['notes', 'src', 'main.js'], virtual: '/apps/notes/src/main.js', file: 'apps/notes/src/main.js' })
+    expect(appsPath('/apps', 'path')).toStrictEqual({ names: [], virtual: '/apps', root: 'app', file: 'apps' })
+    expect(appsPath('/apps/', 'path')).toStrictEqual({ names: [], virtual: '/apps', root: 'app', file: 'apps' })
+    expect(appsPath(' /apps/notes/ ', 'path')).toStrictEqual({ names: ['notes'], virtual: '/apps/notes', root: 'app', file: 'apps/notes' })
+    expect(appsPath('/apps/notes/src/main.js', 'path')).toStrictEqual({ names: ['notes', 'src', 'main.js'], virtual: '/apps/notes/src/main.js', root: 'app', file: 'apps/notes/src/main.js' })
+  })
+
+  it('finds a built-in app by its name alone, in the files that Dez ships', () => {
+    expect(appsPath('/apps/dez-media/lib/main.ts', 'path')).toStrictEqual({
+      names: ['dez-media', 'lib', 'main.ts'], virtual: '/apps/dez-media/lib/main.ts', root: 'resource', file: 'builtin-apps/dez-media/lib/main.ts',
+    })
+    // Only the name of the app counts, not a name below it.
+    expect(appsPath('/apps/notes/dez-x', 'path')).toMatchObject({ root: 'app', file: 'apps/notes/dez-x' })
+    expect(appsPath('/apps/dez', 'path')).toMatchObject({ root: 'app', file: 'apps/dez' })
   })
 
   it('refuses a path that is not below /apps', () => {
@@ -176,7 +186,7 @@ describe('init', () => {
   it('makes the manifest and the first files of a script app', () => {
     const call = initCall(args('init', { name: 'notes', kind: 'script', description: ' Keeps  notes.\nFast. ' }))
 
-    expect(call.app).toStrictEqual({ names: ['notes'], virtual: '/apps/notes', file: 'apps/notes' })
+    expect(call.app).toStrictEqual({ names: ['notes'], virtual: '/apps/notes', root: 'app', file: 'apps/notes' })
     expect(call.manifest).toStrictEqual({ name: 'notes', description: 'Keeps notes. Fast.', kind: 'script' })
     expect(call.files.map((made) => made.path.file)).toStrictEqual(['apps/notes/manifest.json', 'apps/notes/main.ts'])
     expect(parseAppManifest(call.files[0].content)).toStrictEqual(call.manifest)
@@ -212,7 +222,8 @@ describe('init', () => {
   })
 
   it('refuses a name that is no name of an app', () => {
-    const rule = 'The name of an app is 1 to 64 characters: lower-case letters, digits, "-", and "_", and the first one is a letter or a digit, as in "unit-converter".'
+    const rule = 'The name of an app is 1 to 64 characters: lower-case letters, digits, "-", and "_", and the first one is a letter or a digit, as in "unit-converter". '
+      + 'A name that starts with "dez-" is for the built-in apps of Dez.'
     const named = (name: string) => () => initCall(args('init', { name, kind: 'ui', description: 'x' }))
 
     for (const name of ['Notes', '-notes', '_notes', 'my notes', 'notes.app', 'a/b', '', 'a'.repeat(65)]) {
@@ -239,6 +250,23 @@ describe('init', () => {
     expect(() => checkInitTarget(call, MISSING)).not.toThrow()
     expect(refusal(() => checkInitTarget(call, FOLDER))).toContain('The app /apps/notes is there already, and init replaces nothing.')
     expect(refusal(() => checkInitTarget(call, file(3)))).toBe('/apps/notes is there already, and it is a file. Give another name.')
+  })
+})
+
+describe('built-in apps', () => {
+  const refused = (path: string) => `${path}: the names of apps that start with "dez-" are for the built-in apps of Dez, and no call makes, changes, moves, or deletes a file there. `
+    + 'Give an app of your own another name. To change a built-in app, copy its files into an app of your own with read and write.'
+
+  it('refuses every call that would make, change, move, or delete a file of one', () => {
+    expect(refusal(() => initCall(args('init', { name: 'dez-notes', kind: 'script', description: 'x' })))).toBe(refused('/apps/dez-notes'))
+    expect(refusal(() => writeCall(args('write', { path: '/apps/dez-media/main.ts', content: 'x' })))).toBe(refused('/apps/dez-media/main.ts'))
+    expect(refusal(() => editCall(args('edit', { path: '/apps/dez-media/main.ts', edits: [{ after_line: 0, content: 'x' }] })))).toBe(refused('/apps/dez-media/main.ts'))
+    expect(refusal(() => mkdirCall(args('mkdir', { path: '/apps/dez-media/data' })))).toBe(refused('/apps/dez-media/data'))
+    // One built-in path fails the whole call: rm deletes nothing then.
+    expect(refusal(() => rmCall(args('rm', { paths: ['/apps/notes/old.js', '/apps/dez-media'] })))).toBe(refused('/apps/dez-media'))
+    expect(refusal(() => mvCall(args('mv', { moves: [{ from: '/apps/dez-media', to: '/apps/media' }] })))).toBe(refused('/apps/dez-media'))
+    expect(refusal(() => mvCall(args('mv', { moves: [{ from: '/apps/notes', to: '/apps/dez-notes' }] })))).toBe(refused('/apps/dez-notes'))
+    expect(refusal(() => mvCall(args('mv', { moves: [{ from: '/apps/notes/a.js', to: '/apps/dez-media/a.js' }] })))).toBe(refused('/apps/dez-media/a.js'))
   })
 })
 
@@ -780,6 +808,14 @@ describe('ls', () => {
     expect(ls('/apps/', folder())).toBe('There are no apps yet. Make one with init.')
   })
 
+  it('marks a built-in app in the list of the apps only', () => {
+    expect(ls(undefined, folder({ 'dez-media': null, 'dez-media/main.ts': 70, notes: null })).split('\n').slice(1)).toStrictEqual([
+      'dez-media/ | 1 file, 70 B | built-in',
+      'notes/ | 0 files, 0 B',
+    ])
+    expect(ls('/apps/notes', folder({ 'dez-x': null })).split('\n')[1]).toBe('dez-x/ | 0 files, 0 B')
+  })
+
   it('tells what is at a path that is no folder', () => {
     expect(ls('/apps/notes/data', folder())).toBe('/apps/notes/data is an empty folder.')
     expect(ls('/apps/notes/main.js', file(12))).toBe('/apps/notes/main.js is a file (12 B), not a folder. read gives its text.')
@@ -807,6 +843,33 @@ describe('ls', () => {
     expect(result[0]).toBe('/apps/notes: 0 folders and 520 files (name | size).')
     expect(result).toHaveLength(502)
     expect(result.at(-1)).toBe('… and 20 more.')
+  })
+})
+
+describe('appsRootTree', () => {
+  const paths = (tree: AppsTree) => tree.entries.map((entry) => entry.path)
+  const own = folder({ notes: null, 'notes/main.js': 5, 'dez-old': null, 'dez-old/x.js': 1 })
+  const builtIn = folder({ 'dez-media': null, 'dez-media/main.ts': 7, stray: null })
+
+  it('lists the apps of the user and the built-in apps, each place with only its own names', () => {
+    const tree = appsRootTree(own, builtIn, 10)
+
+    // The entries nearer to the folder come first, as in a native listing.
+    expect(paths(tree)).toStrictEqual(['dez-media', 'notes', 'dez-media/main.ts', 'notes/main.js'])
+    expect(tree).toMatchObject({ kind: 'folder', more: false })
+  })
+
+  it('cuts the entries to the most that the listing asks for, and tells so', () => {
+    expect(appsRootTree(own, builtIn, 2)).toMatchObject({ entries: [{ path: 'dez-media' }, { path: 'notes' }], more: true })
+    expect(appsRootTree(own, folder({}, true), 10).more).toBe(true)
+    expect(appsRootTree(folder({}, true), builtIn, 10).more).toBe(true)
+  })
+
+  it('is a folder when one of the two places is there', () => {
+    expect(paths(appsRootTree(MISSING, builtIn, 10))).toStrictEqual(['dez-media', 'dez-media/main.ts'])
+    expect(appsRootTree(MISSING, builtIn, 10).kind).toBe('folder')
+    expect(appsRootTree(own, MISSING, 10).kind).toBe('folder')
+    expect(appsRootTree(MISSING, MISSING, 10)).toStrictEqual(MISSING)
   })
 })
 
@@ -1016,6 +1079,13 @@ describe('list_apps', () => {
 
   it('tells that the size of an app with too many files is a part', () => {
     expect(list({}, [{ name: 'big', tree: folder({ 'a.bin': 2048 }, true), manifest: null }]).split('\n')[1]).toBe('big | ? | more than 2 KB | (no manifest.json)')
+  })
+
+  it('marks a built-in app after its kind', () => {
+    expect(list({}, [app('notes', 10), app('dez-media', 10, manifest('script', 'Edits media.'))]).split('\n').slice(1)).toStrictEqual([
+      'dez-media | script (built-in) | 67 B | Edits media.',
+      'notes | ui | 65 B | The notes app.',
+    ])
   })
 
   it('tells that there are no apps', () => {

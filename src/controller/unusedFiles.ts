@@ -23,7 +23,7 @@ import {
   type UnusedFiles,
   type UnusedFilesDeleted,
 } from '../model/chat/unusedFiles'
-import { isAppName } from '../model/tools/appManifest'
+import { isAppName, isBuiltInApp } from '../model/tools/appManifest'
 import { APPS_MAX_ENTRIES, APPS_ROOT, pathIn } from '../model/tools/appsTool'
 import { WORK_ROOT } from '../model/tools/workFolders'
 import { REPORT_ADVICE, errorText, explainedError, rawErrorText } from '../utils/errorText'
@@ -113,8 +113,9 @@ async function oldApps(now: number): Promise<StoredFile[]> {
   for (const { name } of folders) {
     // The cleanup never deletes a folder that is no app, so it does not
     // read one: a folder of the user that Dez cannot read must not fail
-    // the scan.
-    if (!isAppName(name)) continue
+    // the scan. A folder with the name of a built-in app is of an older
+    // Dez, and no path of the `apps` tool reaches it (`oldAppFolder`).
+    if (!isAppName(name) || isBuiltInApp(name)) continue
     // The listing of the folders gives the time of the folder only: the
     // age rule of an app needs the time of each file in it.
     const tree = await sbp('dez.native/listFileTree', pathIn(APPS_ROOT, name).file, APPS_MAX_ENTRIES) as FileTree

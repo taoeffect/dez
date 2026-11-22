@@ -323,7 +323,7 @@ pub async fn download_app_file(
     client: State<'_, reqwest::Client>,
     stream_state: State<'_, HttpStreamState>,
 ) -> Result<HttpDownload, String> {
-    let target = crate::persistence::app_file_path(root, &path)?;
+    let target = crate::persistence::writable_file_path(root, &path)?;
     let request_builder = build_request(&client, request)?;
     let task = tokio::spawn(download(request_builder, target, rule));
     {

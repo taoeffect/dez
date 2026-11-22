@@ -290,7 +290,7 @@ describe('dez.controller/unusedFiles/find', () => {
   })
 
   it('keeps an app that changed a moment ago, and one that it cannot tell the age or the files of', async () => {
-    folders = { 'app:apps:folders': ['young-file', 'young-folder', 'no-time', 'huge', 'Not-An-App', 'gone', 'a-file', 'old'].map((name) => file(name, 0)) }
+    folders = { 'app:apps:folders': ['young-file', 'young-folder', 'no-time', 'huge', 'Not-An-App', 'gone', 'a-file', 'dez-media', 'old'].map((name) => file(name, 0)) }
     const old = appTree({ 'main.js': 1, 'data.json': 2 })
     trees = {
       'apps/young-file': { ...old, entries: [old.entries[0], { ...old.entries[1], updatedAt: OLD + 1 }] },
@@ -301,6 +301,9 @@ describe('dez.controller/unusedFiles/find', () => {
       'apps/huge': appTree(Object.fromEntries(Array.from({ length: 1001 }, (_, index) => [`f${index}.js`, 1]))),
       // `apps/gone` went after the listing.
       'apps/a-file': { ...NO_TREE, kind: 'file', size: 5, updatedAt: OLD },
+      // A folder with the name of a built-in app, of an older Dez: no path
+      // of the `apps` tool reaches it, so the user cannot see what it holds.
+      'apps/dez-media': old,
       'apps/old': old,
     }
     // The `apps` tool makes no folder with such a name, so the scan does not

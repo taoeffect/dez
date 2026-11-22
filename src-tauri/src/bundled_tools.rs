@@ -364,9 +364,10 @@ struct Roots {
     app: PathBuf,
     // Tauri's resource dir, with the folders that Dez ships for the runs
     // (`LIBS_FOLDER`, `FONTS_FOLDER`, `BUILT_IN_APPS_FOLDER`). Its path is
-    // the one of Tauri, with no canonical form: the page builds the paths of
-    // a run from the same path (`dez.native/resourcePath`), and Deno
-    // compares the paths of its flags as text.
+    // the one of Tauri, with no canonical form (`root_dir(FileRoot::Resource)`):
+    // the page builds the paths of a run from the same path
+    // (`dez.native/getAppDir('resource')`, `dez.native/resourcePath`), and
+    // Deno compares the paths of its flags as text.
     resources: PathBuf,
 }
 
@@ -1120,15 +1121,17 @@ impl ToolRuns {
 // whose end is not known.
 #[tauri::command]
 pub async fn run_bundled_tool(
-    app: tauri::AppHandle,
     run: ToolRun,
     run_id: String,
     on_event: Channel<ToolRunEvent>,
     runs: State<'_, ToolRuns>,
 ) -> Result<(), String> {
-    use tauri::Manager;
-    let resources = app.path().resource_dir().map_err(|error| format!("Failed to find the files that Dez ships: {}", error))?;
-    let roots = Roots { tools: tools_dir()?, cache: root_dir(FileRoot::Cache)?, app: root_dir(FileRoot::App)?, resources };
+    let roots = Roots {
+        tools: tools_dir()?,
+        cache: root_dir(FileRoot::Cache)?,
+        app: root_dir(FileRoot::App)?,
+        resources: root_dir(FileRoot::Resource)?,
+    };
     let run = resolved_run(run, &roots)?;
     runs.run(&run_id, run, |event| {
         // A send fails only when the page is gone, and then nobody waits

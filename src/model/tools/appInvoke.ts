@@ -16,6 +16,7 @@ import {
   STORED_TYPES,
   appNamed,
   checkAppIsThere,
+  checkBuiltInKind,
   checkedAppKind,
   isPathName,
   kindName,
@@ -200,6 +201,7 @@ const MAIN_EXPORT = '`export default async function main(parameters, dez) { … 
 export function checkInvokeTarget({ app, manifest, main, index }: InvokeCall, target: InvokeTarget): AppKind {
   checkAppIsThere(app, target.app)
   const kind = checkedAppKind(app, manifest, target.manifest, target.manifestBytes, NOT_DONE)
+  checkBuiltInKind(app, kind, NOT_DONE)
   if (kind === 'ui') {
     if (target.index.kind === 'missing') {
       throw new ToolError(`The app ${app.virtual} has no ${UI_INDEX_FILE}, the page whose handler a run calls. `

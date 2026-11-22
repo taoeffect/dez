@@ -8,7 +8,7 @@ import { showResultText } from '../model/tools/appShow'
 import { APPS_MAX_BYTES, APPS_MAX_FILE_BYTES, EDIT_HINT, withEditHint } from '../model/tools/appsTool'
 import { grepFiles, GREP_TIME_LIMIT_SECONDS, type GrepOutcome, type GrepRequest } from '../model/tools/grepMatch'
 import type { ToolRunResult } from '../model/tools/types'
-import { APP_DIR, appFiles, callContext, fakeAppFiles, native, resetNative, running, STOP, type FakeAppFiles } from './testing'
+import { APP_DIR, appFiles, builtInAppFiles, callContext, fakeAppFiles, native, resetNative, running, STOP, type FakeAppFiles } from './testing'
 import type { ToolRunCall, ToolRunContext } from './tools'
 // Side-effect imports: register the dez.model/* selectors, which give the
 // sections of a tab, and the selector under test.
@@ -746,6 +746,21 @@ describe('apps grep', () => {
     expect(terminated()).toStrictEqual([true])
   })
 
+  it('searches a built-in app in the files that Dez ships, and no app folder with its name', async () => {
+    fakeAppFiles(
+      { ...appFiles('notes'), ...appFiles('dez-media', { 'old.ts': 'return old\n' }) },
+      builtInAppFiles('dez-media', { 'main.ts': 'export default async function main() {\n  return 1\n}\n' }),
+    )
+
+    expect((await apps('grep', { pattern: 'return', include: '*.ts' })).content).toBe([
+      '/apps: 1 line in 1 of 1 file matches "return" (paths after /apps/), by path.',
+      '',
+      'dez-media/main.ts',
+      '2:   return 1',
+    ].join('\n'))
+    expect(native.readFiles).toStrictEqual([{ root: 'resource', path: 'builtin-apps/dez-media/main.ts' }])
+  })
+
   it('stops a search at the time limit', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     FakeGrepWorker.hangs = true
@@ -833,6 +848,63 @@ describe('apps list_apps', () => {
       'odd | ? | 0 B | (a manifest.json that Dez does not read: it is no plain file of at most 16 KB)',
     ])
     expect(native.readFiles).toStrictEqual([{ root: 'app', path: 'apps/notes/manifest.json' }])
+  })
+})
+
+describe('the built-in apps', () => {
+  const MAIN = 'export default async function main() {\n  return 1\n}\n'
+  // The apps of the user, with a folder of an older Dez that has the name
+  // of a built-in app, and the built-in app that Dez ships.
+  const start = () => fakeAppFiles(
+    { ...appFiles('notes'), ...appFiles('dez-media', { 'old.ts': 'old\n' }) },
+    builtInAppFiles('dez-media', { 'main.ts': MAIN }),
+  )
+
+  it('lists them with the apps of the user, and hides an app folder with the name of one', async () => {
+    start()
+
+    expect((await apps('list_apps')).content).toBe([
+      '2 apps (name | kind | size | description), by name.',
+      'dez-media | script (built-in) | 137 B | The dez-media app.',
+      'notes | script | 77 B | The notes app.',
+    ].join('\n'))
+    expect((await apps('ls')).content).toBe('/apps: 2 folders and 0 files (name | size).\ndez-media/ | 2 files, 137 B | built-in\nnotes/ | 1 file, 77 B')
+    expect((await apps('ls', { path: '/apps/dez-media' })).content).toBe('/apps/dez-media: 0 folders and 2 files (name | size).\nmain.ts | 52 B\nmanifest.json | 85 B')
+  })
+
+  it('reads and finds their files in the files that Dez ships', async () => {
+    start()
+
+    expect((await apps('read', { path: '/apps/dez-media/main.ts', ranges: [{ from_line: 2, to_line: 2 }] })).content).toBe('/apps/dez-media/main.ts: line 2 of 3 (52 B)\n2:   return 1')
+    expect((await apps('find', { query: '*' })).content).toBe([
+      '/apps: 3 files (paths after /apps/), by path.',
+      'dez-media/main.ts',
+      'dez-media/manifest.json',
+      'notes/manifest.json',
+    ].join('\n'))
+    expect(native.readFiles.map(({ root, path }) => `${root}:${path}`)).toContain('resource:builtin-apps/dez-media/main.ts')
+    expect(native.readFiles.some(({ path }) => path.startsWith('apps/dez-media'))).toBe(false)
+  })
+
+  it('changes, moves, and deletes none of their files', async () => {
+    const files = start()
+    const before = [...files.keys()]
+
+    for (const [command, parameters] of [
+      ['write', { path: '/apps/dez-media/main.ts', content: 'x' }],
+      ['edit', { path: '/apps/dez-media/main.ts', edits: [{ from_line: 1, content: 'x' }] }],
+      ['rm', { paths: ['/apps/notes/manifest.json', '/apps/dez-media'] }],
+      ['mv', { moves: [{ from: '/apps/dez-media', to: '/apps/media' }] }],
+      ['mkdir', { path: '/apps/dez-media/data' }],
+      ['init', { name: 'dez-media', kind: 'script', description: 'x' }],
+    ] as const) {
+      const result = await apps(command, parameters)
+      expect(result.isError, command).toBe(true)
+      expect(result.content, command).toContain('the names of apps that start with "dez-" are for the built-in apps of Dez')
+    }
+    expect([...files.keys()]).toStrictEqual(before)
+    expect((await apps('read', { path: '/apps/dez-media/main.ts' })).content).toContain('1: export default async function main() {')
+    expect(goneApps).toStrictEqual([])
   })
 })
 

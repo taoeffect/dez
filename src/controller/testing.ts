@@ -124,14 +124,16 @@ function allowsFolderChange(path: string): boolean {
   return path.startsWith('apps/')
 }
 
-/** Makes the stub native side keep the files of the app root in memory,
- *  and work on them as the native side works on the disk
- *  (src-tauri/src/persistence.rs), for the tests of code whose result
- *  depends on what its earlier file calls did. Call it after
- *  `resetNative()`. `start` has the text of each file by its path from the
- *  app root, and null for an empty folder; the folders above each path are
- *  there too. A test reads and changes the files in the map that it
- *  gets. A call on the cache root does what the stub did before.
+/** Makes the stub native side keep the files of the app root and of the
+ *  resource root in memory, and work on them as the native side works on
+ *  the disk (src-tauri/src/persistence.rs), for the tests of code whose
+ *  result depends on what its earlier file calls did. Call it after
+ *  `resetNative()`. `start` has the text of each file of the app root by
+ *  its path from the root, and null for an empty folder; the folders above
+ *  each path are there too. `resources` has the files of the resource
+ *  root in the same form (`builtInAppFiles`). A test reads and changes the
+ *  files of the app root in the map that it gets. A call on the cache root
+ *  does what the stub did before.
  *
  *  What it keeps of the native rules:
  *  - a tree listing gives the direct entries first, at most as many as
@@ -141,27 +143,37 @@ function allowsFolderChange(path: string): boolean {
  *  - a save and a move make the missing folders above their target;
  *  - a delete of nothing passes, and one with the wrong `folder` fails;
  *  - a file moves over a file, and a folder only to a free path;
- *  - a folder is made, moved, and deleted only below `apps/`. */
-export function fakeAppFiles(start: Record<string, string | null> = {}): FakeAppFiles {
-  const files: FakeAppFiles = new Map()
+ *  - a folder is made, moved, and deleted only below `apps/`;
+ *  - every save, folder, delete, and move on the resource root fails. */
+export function fakeAppFiles(start: Record<string, string | null> = {}, resources: Record<string, string | null> = {}): FakeAppFiles {
+  const roots = { app: new Map(), resource: new Map() } as Record<'app' | 'resource', FakeAppFiles>
   const encoder = new TextEncoder()
   // As `mkdir -p`.
-  const makeFolders = (path: string): void => {
+  const makeFolders = (files: FakeAppFiles, path: string): void => {
     if (!path) return
-    makeFolders(folderOf(path))
+    makeFolders(files, folderOf(path))
     const there = files.get(path)
     if (there === undefined) files.set(path, null)
     else if (there !== null) throw new Error(`Not a directory (os error 20): ${path}`)
   }
-  const put = (path: string, content: string | Uint8Array | null): void => {
-    makeFolders(content === null ? path : folderOf(path))
+  const put = (files: FakeAppFiles, path: string, content: string | Uint8Array | null): void => {
+    makeFolders(files, content === null ? path : folderOf(path))
     if (content !== null) files.set(path, typeof content === 'string' ? encoder.encode(content) : content.slice())
   }
-  for (const [path, content] of Object.entries(start)) put(path, content)
+  for (const [path, content] of Object.entries(start)) put(roots.app, path, content)
+  for (const [path, content] of Object.entries(resources)) put(roots.resource, path, content)
+  // The files of a root that the fake keeps; undefined for the cache root.
+  const filesOf = (file: AppFileRef): FakeAppFiles | undefined => (file.root === 'cache' ? undefined : roots[file.root])
+  // The files of a root that a change can reach, as `writable_file_path`.
+  const changeable = (file: AppFileRef): FakeAppFiles => {
+    if (file.root === 'resource') throw new Error(`Failed to change ${file.path}: the files that Dez ships cannot change`)
+    return roots.app
+  }
 
   const before = { ...native }
   native.fileTree = (file, maxEntries) => {
-    if (file.root !== 'app') return before.fileTree(file, maxEntries)
+    const files = filesOf(file)
+    if (!files) return before.fileTree(file, maxEntries)
     const at = files.get(file.path)
     if (at === undefined) return { kind: 'missing', size: 0, updatedAt: null, entries: [], more: false }
     if (at !== null) return { kind: 'file', size: at.length, updatedAt: 0, entries: [], more: false }
@@ -173,30 +185,35 @@ export function fakeAppFiles(start: Record<string, string | null> = {}): FakeApp
     return { kind: 'folder', size: 0, updatedAt: 0, entries: below.slice(0, maxEntries), more: below.length > maxEntries }
   }
   native.fileBytes = (file) => {
-    if (file.root !== 'app') return before.fileBytes(file)
+    const files = filesOf(file)
+    if (!files) return before.fileBytes(file)
     const at = files.get(file.path)
     if (at === undefined) throw new Error(`Failed to read ${file.path}: No such file or directory (os error 2)`)
     if (at === null) throw new Error(`Failed to read ${file.path}: not a regular file`)
     return at.slice()
   }
   native.folderEntries = (file, folders) => {
-    if (file.root !== 'app') return before.folderEntries(file, folders)
+    const files = filesOf(file)
+    if (!files) return before.folderEntries(file, folders)
     return [...files]
       .filter(([path, content]) => folderOf(path) === file.path && (content === null) === folders)
       .map(([path, content]) => ({ name: path.slice(file.path.length + 1), updatedAt: 0, size: content?.length ?? 0 }))
   }
   native.saveAppFile = async (file, content) => {
-    if (file.root !== 'app') return before.saveAppFile(file, content)
+    if (file.root === 'cache') return before.saveAppFile(file, content)
+    const files = changeable(file)
     if (files.get(file.path) === null) throw new Error(`Failed to write ${file.path}: Is a directory (os error 21)`)
-    put(file.path, content)
+    put(files, file.path, content)
   }
   native.createFolder = async (file) => {
-    if (file.root !== 'app') return before.createFolder(file)
+    if (file.root === 'cache') return before.createFolder(file)
+    const files = changeable(file)
     if (!allowsFolderChange(file.path)) throw new Error(`Failed to make the folder ${file.path}: a folder can be made only below a folder that programs own`)
-    makeFolders(file.path)
+    makeFolders(files, file.path)
   }
   native.deleteAppFile = async (file) => {
-    if (file.root !== 'app') return before.deleteAppFile(file)
+    if (file.root === 'cache') return before.deleteAppFile(file)
+    const files = changeable(file)
     if (file.folder && !allowsFolderChange(file.path)) throw new Error(`Failed to delete ${file.path}: a folder can be deleted only below a folder that programs own`)
     const at = files.get(file.path)
     if (at === undefined) return
@@ -204,7 +221,9 @@ export function fakeAppFiles(start: Record<string, string | null> = {}): FakeApp
     for (const path of [...files.keys()]) if (isAtOrBelow(path, file.path)) files.delete(path)
   }
   native.moveAppFile = async (from, to) => {
-    if (from.root !== 'app' || to.root !== 'app') return before.moveAppFile(from, to)
+    if (from.root === 'cache' || to.root === 'cache') return before.moveAppFile(from, to)
+    changeable(from)
+    const files = changeable(to)
     const failed = (why: string) => new Error(`Failed to move ${from.path} to ${to.path}: ${why}`)
     const source = files.get(from.path)
     if (source === undefined) throw failed('No such file or directory (os error 2)')
@@ -215,29 +234,39 @@ export function fakeAppFiles(start: Record<string, string | null> = {}): FakeApp
     } else if (files.get(to.path) === null) {
       throw failed('Is a directory (os error 21)')
     }
-    makeFolders(folderOf(to.path))
+    makeFolders(files, folderOf(to.path))
     for (const [path, content] of [...files]) {
       if (!isAtOrBelow(path, from.path)) continue
       files.delete(path)
       files.set(`${to.path}${path.slice(from.path.length)}`, content)
     }
   }
-  return files
+  return roots.app
 }
 
 /** The start of `fakeAppFiles` for the app `name`: its manifest, of the
  *  kind `kind`, and the files `more`, each by its path in the app (null
  *  for a folder). */
 export function appFiles(name: string, more: Record<string, string | null> = {}, kind: AppKind = 'script'): Record<string, string | null> {
+  return filesOfApp(`apps/${name}`, name, more, kind)
+}
+
+/** `appFiles` for the built-in app `name`, in the resource root: the
+ *  `resources` of `fakeAppFiles`. */
+export function builtInAppFiles(name: string, more: Record<string, string | null> = {}, kind: AppKind = 'script'): Record<string, string | null> {
+  return filesOfApp(`builtin-apps/${name}`, name, more, kind)
+}
+
+function filesOfApp(folder: string, name: string, more: Record<string, string | null>, kind: AppKind): Record<string, string | null> {
   return {
-    [`apps/${name}/manifest.json`]: appManifestText({ name, description: `The ${name} app.`, kind }),
-    ...Object.fromEntries(Object.entries(more).map(([path, content]) => [`apps/${name}/${path}`, content])),
+    [`${folder}/manifest.json`]: appManifestText({ name, description: `The ${name} app.`, kind }),
+    ...Object.fromEntries(Object.entries(more).map(([path, content]) => [`${folder}/${path}`, content])),
   }
 }
 
 sbp('sbp/selectors/register', {
   async 'dez.native/getAppDir' (root = 'app'): Promise<string> {
-    return root === 'cache' ? CACHE_DIR : APP_DIR
+    return { app: APP_DIR, cache: CACHE_DIR, resource: RESOURCE_DIR }[root as 'app' | 'cache' | 'resource']
   },
   async 'dez.native/resourcePath' (relative: string): Promise<string> {
     return native.resourcePath(relative)
