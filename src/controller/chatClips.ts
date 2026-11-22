@@ -59,9 +59,11 @@ async function copyRun(modelName: string, clip: ClipAttachment, copy: ChatClipCo
 }
 
 // The request part of `clip`: the first copy of `chatClipCopies` that
-// ffmpeg makes within `maxBytes`. A stream copy that fails or that is too
-// large leaves the conversion to try, which can be smaller (a FLAC clip as
-// MP3). Throws a `ToolError` when no copy fits, or when ffmpeg made none.
+// ffmpeg makes within `maxBytes`, what the earlier clips left of the
+// limit. A stream copy that fails or that is too large leaves the
+// conversion to try, which can be smaller (a FLAC clip as MP3). Throws a
+// `ToolError` when no copy fits (its text names the limit of all clips
+// together, not `maxBytes`), or when ffmpeg made none.
 async function clipPart(modelName: string, clip: ClipAttachment, rules: ChatClipRules, maxBytes: number, signal: AbortSignal): Promise<{ part: MessagePart, size: number }> {
   return inWorkFolder(async (folder) => {
     const input = clipInput(clip)
@@ -85,7 +87,7 @@ async function clipPart(modelName: string, clip: ClipAttachment, rules: ChatClip
       const data = bytesToBase64(await sbp('dez.native/loadAppFileBytes', `${folder}/${copy.name}`, 'cache') as Uint8Array)
       return { part: { ...copy.form, data }, size: run.size }
     }
-    if (tooLarge || !failure) throw new ToolError(chatClipsTooLargeText(modelName, clip.kind, clip.id, maxBytes))
+    if (tooLarge || !failure) throw new ToolError(chatClipsTooLargeText(modelName, clip.kind, clip.id, chatClipMaxBytes(rules)))
     // The error output can name a path that the data of the file holds.
     throw new ToolError(chatClipNotCopiedText(modelName, clip.kind, clip.id), withoutLocalPaths(ffmpegRunDetails(failure.end, failure.errors, FFMPEG_OUTPUT_BYTES)))
   })

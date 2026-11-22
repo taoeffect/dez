@@ -64,7 +64,8 @@ describe('chatClipParts', () => {
 
     const text = await refusalOf(chatClipParts([{ type: 'clip', clip: SONG }, { type: 'text', text: 'and' }, { type: 'clip', clip: FILM }], 'Listener', RULES, running()))
 
-    expect(text).toContain(chatClipsTooLargeText('Listener', 'video', 'c', 400))
+    // The text names the limit of all clips together, not the 400 bytes left.
+    expect(text).toContain(chatClipsTooLargeText('Listener', 'video', 'c', 1000))
     // The WebM clip has no stream copy here: one conversion, with 400 bytes.
     expect(native.runs.map(({ run }) => run.args.slice(-3))).toStrictEqual([['-fs', '1001', STREAM_COPY], ['-fs', '401', 'chat_converted.mp4']])
     expect(native.deletedFiles.filter(({ folder }) => folder)).toHaveLength(2)
