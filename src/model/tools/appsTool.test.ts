@@ -36,6 +36,10 @@ import {
   rmCall,
   rmResult,
   rmStep,
+  wcCall,
+  wcResult,
+  wcRowOfBytes,
+  wcRowOfFacts,
   writeCall,
   writePlan,
   writeText,
@@ -68,6 +72,7 @@ describe('APPS_TOOL', () => {
       ['ls', ['path']],
       ['find', ['query', 'path']],
       ['grep', ['pattern', 'path', 'include', 'ignore_case', 'literal', 'context']],
+      ['wc', ['paths']],
       ['mkdir', ['path']],
       ['mv', ['moves']],
       ['show', ['name']],
@@ -77,7 +82,8 @@ describe('APPS_TOOL', () => {
 
   it('gives each subcommand an example that its parameters and its checks take', () => {
     const checks: Record<string, (call: SubcommandArguments) => unknown> = {
-      init: initCall, read: readCall, write: writeCall, edit: editCall, rm: rmCall, list_apps: listAppsCall, ls: lsCall, find: findCall, grep: grepCall, mkdir: mkdirCall, mv: mvCall,
+      init: initCall, read: readCall, write: writeCall, edit: editCall, rm: rmCall, list_apps: listAppsCall, ls: lsCall, find: findCall, grep: grepCall, wc: wcCall,
+      mkdir: mkdirCall, mv: mvCall,
       show: showCall,
       invoke: (call) => invokeCall(call, CONVERSATION),
     }
@@ -869,6 +875,69 @@ describe('find', () => {
     expect(result.at(-1)).toBe('… and 20 more. Give more words, or a folder in `path`, to get a shorter list.')
     expect(find({ query: '*' }, folder({ 'notes/a.js': 5 }, true)).split('\n')[0])
       .toBe('/apps: 1 file (paths after /apps/), by path. The folder holds more than 5,000 files and folders at all depths, so find searched only a part of them: search the folders in it one by one.')
+  })
+})
+
+describe('wc', () => {
+  const wc = (paths: unknown[]) => wcCall(args('wc', { paths })).paths.map((path) => path.virtual)
+  const path = appsPath('/apps/notes/main.js', 'paths')
+  const row = (content: string | Uint8Array) => wcRowOfBytes(path, typeof content === 'string' ? textBytes(content) : content)
+
+  it('counts the paths in the order of the call, a repeated path once for each time', () => {
+    expect(wc(['/apps/notes/b.js', '/apps/notes/a.js', '/apps/notes/b.js/'])).toStrictEqual(['/apps/notes/b.js', '/apps/notes/a.js', '/apps/notes/b.js'])
+    expect(wc(Array.from({ length: 100 }, (_, index) => `/apps/notes/${index}.js`))).toHaveLength(100)
+  })
+
+  it('refuses the whole call for an empty list, for too many paths, and for a path that it cannot take', () => {
+    expect(refusal(() => wc([]))).toBe('`paths` is an empty list. Give the files to count, as in {"paths": ["/apps/unit-converter/main.js"]}.')
+    expect(refusal(() => wc(Array.from({ length: 101 }, (_, index) => `/apps/notes/${index}.js`))))
+      .toBe('`paths` has 101 paths, and wc counts at most 100 files in one call. Call wc again for the rest.')
+    expect(refusal(() => wc(['/apps/notes/a.js', '/apps/notes/../x']))).toContain('does not resolve')
+  })
+
+  it('counts the lines as read does: a line end at the end of a file adds no line', () => {
+    expect(row('a\nb\n')).toBe('/apps/notes/main.js | 2 lines | 4 B')
+    expect(row('a\nb')).toBe('/apps/notes/main.js | 2 lines | 3 B')
+    expect(row('\n')).toBe('/apps/notes/main.js | 1 line | 1 B')
+    expect(row('')).toBe('/apps/notes/main.js | 0 lines | 0 B')
+  })
+
+  it('gives only the size of a file that read does not take', () => {
+    expect(row(new Uint8Array([0x61, 0x00, 0x62]))).toBe('/apps/notes/main.js | not counted: no text file | 3 B')
+    expect(row(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0xff]))).toBe('/apps/notes/main.js | not counted: no text file | 5 B')
+
+    expect(wcRowOfFacts(path, file(APPS_MAX_FILE_BYTES))).toBeNull()
+    expect(wcRowOfFacts(path, file(APPS_MAX_FILE_BYTES + 1))).toBe('/apps/notes/main.js | not counted: more than 2,097,152 bytes | 2,097,153 bytes')
+    expect(wcRowOfFacts(path, file(3 * APPS_MAX_FILE_BYTES))).toBe('/apps/notes/main.js | not counted: more than 2.0 MB | 6.0 MB')
+    // A file that grew after its size check.
+    expect(row(new Uint8Array(APPS_MAX_FILE_BYTES + 1).fill(0x61))).toBe('/apps/notes/main.js | not counted: more than 2,097,152 bytes | 2,097,153 bytes')
+  })
+
+  it('fails for a path where no plain file is', () => {
+    expect(refusal(() => wcRowOfFacts(path, MISSING))).toBe('There is no file /apps/notes/main.js. Call ls to see the files of its folder, as in {"path": "/apps/notes"}.')
+    expect(refusal(() => wcRowOfFacts(path, FOLDER))).toBe('/apps/notes/main.js is a folder, not a file. Call ls to see what is in it.')
+    expect(refusal(() => wcRowOfFacts(path, { kind: 'other', size: 0 }))).toBe('/apps/notes/main.js is a link or a special file, and the apps tool opens plain files only.')
+  })
+
+  it('tells each path that failed after the rows, and gives an error only when every path failed', () => {
+    const counted = (name: string) => ({ done: true, text: `/apps/notes/${name} | 1 line | 2 B` })
+    const failed = (name: string) => ({ done: false, text: `There is no file /apps/notes/${name}.` })
+
+    expect(wcResult([counted('a.js'), failed('b.js'), counted('c.js')])).toStrictEqual({
+      content: [
+        '2 files (path | lines | size).',
+        '/apps/notes/a.js | 1 line | 2 B',
+        '/apps/notes/c.js | 1 line | 2 B',
+        'Path 2 is left out. There is no file /apps/notes/b.js.',
+      ].join('\n'),
+      isError: false,
+    })
+    expect(wcResult([counted('a.js')])).toStrictEqual({ content: '1 file (path | lines | size).\n/apps/notes/a.js | 1 line | 2 B', isError: false })
+    expect(wcResult([failed('a.js')])).toStrictEqual({ content: 'There is no file /apps/notes/a.js.', isError: true })
+    expect(wcResult([failed('a.js'), failed('b.js')])).toStrictEqual({
+      content: 'Path 1 is left out. There is no file /apps/notes/a.js.\nPath 2 is left out. There is no file /apps/notes/b.js.',
+      isError: true,
+    })
   })
 })
 

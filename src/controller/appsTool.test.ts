@@ -619,6 +619,57 @@ describe('apps find', () => {
   })
 })
 
+describe('apps wc', () => {
+  it('counts each path by itself, and reads only the files that read takes', async () => {
+    const files = fakeAppFiles(appFiles('notes', { 'main.ts': 'a\nb\n', 'last.txt': 'a\nb', data: null }))
+    files.set('apps/notes/big.txt', new Uint8Array(APPS_MAX_FILE_BYTES + 1).fill(0x61))
+    files.set('apps/notes/logo.png', new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00]))
+
+    const result = await apps('wc', { paths: ['/apps/notes/main.ts', '/apps/notes/data', '/apps/notes/big.txt', '/apps/notes/logo.png', '/apps/notes/gone.txt', '/apps/notes/last.txt'] })
+
+    expect(result).toStrictEqual({
+      content: [
+        '4 files (path | lines | size).',
+        '/apps/notes/main.ts | 2 lines | 4 B',
+        '/apps/notes/big.txt | not counted: more than 2,097,152 bytes | 2,097,153 bytes',
+        '/apps/notes/logo.png | not counted: no text file | 5 B',
+        '/apps/notes/last.txt | 2 lines | 3 B',
+        'Path 2 is left out. /apps/notes/data is a folder, not a file. Call ls to see what is in it.',
+        'Path 5 is left out. There is no file /apps/notes/gone.txt. Call ls to see the files of its folder, as in {"path": "/apps/notes"}.',
+      ].join('\n'),
+      isError: false,
+    })
+    expect(native.readFiles.map((file) => file.path)).toStrictEqual(['apps/notes/main.ts', 'apps/notes/logo.png', 'apps/notes/last.txt'])
+  })
+
+  it('gives an error when no path was counted', async () => {
+    fakeAppFiles(appFiles('notes'))
+
+    expect(await apps('wc', { paths: ['/apps/notes/gone.js', '/apps/notes'] })).toStrictEqual({
+      content: [
+        'Path 1 is left out. There is no file /apps/notes/gone.js. Call ls to see the files of its folder, as in {"path": "/apps/notes"}.',
+        'Path 2 is left out. /apps/notes is a folder, not a file. Call ls to see what is in it.',
+      ].join('\n'),
+      isError: true,
+    })
+    expect(native.readFiles).toStrictEqual([])
+  })
+
+  it('reads no more after the reply stopped', async () => {
+    fakeAppFiles(appFiles('notes', { 'a.js': 'a\n', 'b.js': 'b\n' }))
+    const stop = new AbortController()
+    const read = native.fileBytes
+    native.fileBytes = (file) => {
+      stop.abort(STOP)
+      return read(file)
+    }
+
+    await apps('wc', { paths: ['/apps/notes/a.js', '/apps/notes/b.js'] }, stop.signal)
+
+    expect(native.readFiles.map((file) => file.path)).toStrictEqual(['apps/notes/a.js'])
+  })
+})
+
 // A stand-in for the Web Worker of `grep` (Node has none). It runs the
 // matching of a request as grepWorker.ts does, after a timer tick; with
 // `hangs` it gives nothing, as on a slow pattern, with `fails` it fails

@@ -5,7 +5,7 @@ import { appTagText } from '../../src/model/chat/appTags'
 import { appManifestText, parseAppManifest } from '../../src/model/tools/appManifest'
 import { showResultText } from '../../src/model/tools/appShow'
 import { grepTimeoutError } from '../../src/model/tools/appsGrep'
-import { EDIT_HINT, withEditHint } from '../../src/model/tools/appsTool'
+import { APPS_MAX_FILE_BYTES, EDIT_HINT, withEditHint } from '../../src/model/tools/appsTool'
 import { GREP_TIME_LIMIT_SECONDS } from '../../src/model/tools/grepMatch'
 import { byteSizeText } from '../../src/utils/byteSize'
 import { appsCall, seedApp, shownAppCards, type ShownAppCard } from './harness/apps'
@@ -28,6 +28,7 @@ import { activeConversationId, endedReply, newTab, openToasts, submit } from './
 // - a model finds files by their paths, and lines by a regular
 //   expression; the matching runs in a worker, so the window answers
 //   while a slow pattern runs, and Dez ends it at its time limit;
+// - a model counts the lines and the bytes of files;
 // - a model shows a UI app: Dez writes the tag of the app into the reply,
 //   the editor draws it as a card, and a request tells of the app only in
 //   the result of the call;
@@ -454,6 +455,37 @@ describe('apps tool', () => {
     await fs.promises.rm(appsDir, { recursive: true, force: true })
   })
 
+  it('counts the lines and the bytes of files', async () => {
+    await seedApp(appsDir, { name: 'count', description: 'Has files to count.', kind: 'script' }, {
+      'ends.txt': 'one\ntwo\n',
+      'open.txt': 'one\ntwo',
+      'empty.txt': '',
+      'zero.bin': 'a\0b',
+      'big.txt': 'a'.repeat(APPS_MAX_FILE_BYTES + 1),
+    })
+
+    await submit(browser, 'Count the files of the count app.')
+    const first = await chatRequest()
+    const files = ['ends.txt', 'open.txt', 'empty.txt', 'zero.bin', 'big.txt'].map((name) => `/apps/count/${name}`)
+    sendToolCalls(first.reply, [appsCall('call_wc', 'wc', { paths: [...files, '/apps/count', '/apps/count/gone.txt'] })])
+
+    const second = await chatRequest()
+    expect(toolResult(second, 'call_wc')).toBe([
+      '5 files (path | lines | size).',
+      // A line end at the end of a file adds no line, as in read.
+      '/apps/count/ends.txt | 2 lines | 8 B',
+      '/apps/count/open.txt | 2 lines | 7 B',
+      '/apps/count/empty.txt | 0 lines | 0 B',
+      '/apps/count/zero.bin | not counted: no text file | 3 B',
+      '/apps/count/big.txt | not counted: more than 2,097,152 bytes | 2,097,153 bytes',
+      'Path 6 is left out. /apps/count is a folder, not a file. Call ls to see what is in it.',
+      'Path 7 is left out. There is no file /apps/count/gone.txt. Call ls to see the files of its folder, as in {"path": "/apps/count"}.',
+    ].join('\n'))
+    await expectReplyEnd(second)
+
+    await fs.promises.rm(appsDir, { recursive: true, force: true })
+  })
+
   it('reaches no file of the computer through a link in the folder of an app', async () => {
     const SECRET = 'A text that no model must get.'
     const secret = await writeTestFile(path.join(outsideDir, 'secret.txt'), Buffer.from(SECRET))
@@ -478,6 +510,7 @@ describe('apps tool', () => {
       appsCall('call_mv_link', 'mv', { moves: [{ from: '/apps/safe/secret.txt', to: '/apps/safe/moved.txt' }] }),
       appsCall('call_mv_below', 'mv', { moves: [{ from: '/apps/safe/manifest.json', to: '/apps/safe/out/manifest.json' }] }),
       appsCall('call_rm_below', 'rm', { paths: ['/apps/safe/out/secret.txt'] }),
+      appsCall('call_wc_link', 'wc', { paths: ['/apps/safe/secret.txt', '/apps/safe/out/secret.txt'] }),
     ]
     sendToolCalls(first.reply, [
       ...throughLink,
@@ -490,6 +523,8 @@ describe('apps tool', () => {
       const id = call.id as string
       expect(toolResult(second, id), id).toContain('goes through a link')
     }
+    // A count gives no fact of a file that a link names: each path fails.
+    expect(toolResult(second, 'call_wc_link').split('\n').map((line) => line.includes('goes through a link'))).toStrictEqual([true, true])
     expect(toolResult(second, 'call_dots')).toContain('which the apps tool does not resolve')
     expect(toolResult(second, 'call_ls')).toBe([
       '/apps/safe: 0 folders and 4 files (name | size).',

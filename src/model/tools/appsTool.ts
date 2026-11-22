@@ -108,6 +108,9 @@ const LIST_APPS_MAX_ROWS = 200
 const RM_MAX_SHOWN_PATHS = 100
 // The most paths of a `find` result: a path is longer than a name of `ls`.
 const FIND_MAX_ROWS = 300
+// The most paths of one `wc` call, so that one call and its result stay
+// short.
+const WC_MAX_PATHS = 100
 
 const EXAMPLE_APP = 'unit-converter'
 const EXAMPLE_FILE = `${APPS_VIRTUAL_ROOT}/${EXAMPLE_APP}/main.js`
@@ -365,6 +368,18 @@ export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
         { name: 'context', type: 'integer', description: `How many lines to show before and after each matching line, from 0 to ${GREP_MAX_CONTEXT}. The default is 0.`, required: false },
       ],
       example: { pattern: 'convert(Length|Weight)', path: `${APPS_VIRTUAL_ROOT}/${EXAMPLE_APP}`, include: '*.js', context: 2 },
+    },
+    {
+      name: 'wc',
+      summary: 'Count the lines and the bytes of files of apps.',
+      description: 'Gives the number of lines and the size of each file of the list, one row each, in the order of the list. '
+        + 'The number of lines is the one that read gives: a "\\n" at the end of a file adds no line, and a last line with no "\\n" counts. '
+        + `It counts no lines of a file that is no text, or of one of more than ${FILE_LIMIT} (read and edit do not take such a file): it gives only its size. `
+        + `Each path passes or fails by itself. One call counts at most ${WC_MAX_PATHS} files.`,
+      parameters: [
+        { name: 'paths', type: 'list', items: 'string', description: `The paths of the files, as in ["${EXAMPLE_FILE}"].`, required: true },
+      ],
+      example: { paths: [EXAMPLE_FILE, `${APPS_VIRTUAL_ROOT}/${EXAMPLE_APP}/units.js`] },
     },
     {
       name: 'mkdir',
@@ -764,14 +779,20 @@ function overLimitSizes(bytes: number, limit: number): [string, string] {
   return size === most ? [`${countText(bytes)} bytes`, `${countText(limit)} bytes`] : [size, most]
 }
 
-/** Throws unless a file that `read` and `edit` take is at `path`: a plain
- *  file of at most `APPS_MAX_FILE_BYTES`. */
-export function checkTextFile(path: AppsPath, facts: PathFacts): void {
+// Throws unless a plain file is at `path`: not nothing, no folder, and no
+// link or special file.
+function checkPlainFile(path: AppsPath, facts: PathFacts): void {
   if (facts.kind === 'missing') {
     throw new ToolError(`There is no file ${path.virtual}. Call ls to see the files of its folder, as in {"path": "${parentOf(path).virtual}"}.`)
   }
   if (facts.kind === 'folder') throw new ToolError(`${path.virtual} is a folder, not a file. Call ls to see what is in it.`)
   if (facts.kind === 'other') throw new ToolError(`${path.virtual} is ${OTHER_KIND}, and the apps tool opens plain files only.`)
+}
+
+/** Throws unless a file that `read` and `edit` take is at `path`: a plain
+ *  file of at most `APPS_MAX_FILE_BYTES`. */
+export function checkTextFile(path: AppsPath, facts: PathFacts): void {
+  checkPlainFile(path, facts)
   if (facts.size > APPS_MAX_FILE_BYTES) {
     const [size, limit] = overLimitSizes(facts.size, APPS_MAX_FILE_BYTES)
     throw new ToolError(`${path.virtual} has ${size}, and the apps tool reads and edits a file of at most ${limit}.`)
@@ -949,7 +970,7 @@ export function editCall(args: SubcommandArguments): EditCall {
 }
 
 /** What became of the items of a call that pass or fail each by itself
- *  (the edits of `edit`, the paths of `rm`, the moves of `mv`). */
+ *  (the edits of `edit`, the paths of `rm` and `wc`, the moves of `mv`). */
 export interface ItemOutcome {
   done: boolean
   text: string
@@ -1317,6 +1338,61 @@ export function findText({ query, terms, path }: FindCall, tree: AppsTree): stri
     ? countOf(files.length, 'file')
     : `${matches.length} of ${countOf(files.length, 'file')} ${matches.length === 1 ? 'matches' : 'match'} ${quotedQuery}`
   return [`${path.virtual}: ${count} (paths after ${APPS_VIRTUAL_ROOT}/), by path.${cut}`, ...rows].join('\n')
+}
+
+/** The paths of a `wc` call, in its order. A path that the call gives
+ *  twice gives two rows, as in `wc`. Throws for an empty list, for a list
+ *  of more than `WC_MAX_PATHS`, and for a value that is no path of the
+ *  tool. */
+export function wcCall(args: SubcommandArguments): { paths: AppsPath[] } {
+  const values = textItems(args, 'paths')
+  if (values.length === 0) throw new ToolError(`\`paths\` is an empty list. Give the files to count, as in {"paths": ["${EXAMPLE_FILE}"]}.`)
+  if (values.length > WC_MAX_PATHS) {
+    throw new ToolError(`\`paths\` has ${countText(values.length)} paths, and wc counts at most ${WC_MAX_PATHS} files in one call. Call wc again for the rest.`)
+  }
+  return { paths: values.map((value) => appsPath(value, 'paths')) }
+}
+
+// The row of `wc` for a file of `size` bytes, more than `read` takes: it
+// has no line count. The two sizes are byte counts when they read the same
+// rounded (`overLimitSizes`).
+function wcLargeRow(path: AppsPath, size: number): string {
+  const [sizeText, limit] = overLimitSizes(size, APPS_MAX_FILE_BYTES)
+  return `${path.virtual} | not counted: more than ${limit} | ${sizeText}`
+}
+
+/** The row of `wc` for a path with the facts `facts` when Dez does not
+ *  read the file to make it: a file of more than `APPS_MAX_FILE_BYTES`,
+ *  which `read` does not take and the webview need not hold. Null for a
+ *  file whose bytes give its row (`wcRowOfBytes`). Throws for a path that
+ *  is no plain file. */
+export function wcRowOfFacts(path: AppsPath, facts: PathFacts): string | null {
+  checkPlainFile(path, facts)
+  return facts.size > APPS_MAX_FILE_BYTES ? wcLargeRow(path, facts.size) : null
+}
+
+/** The row of `wc` for the file at `path` with `bytes`: its number of
+ *  lines as `read` counts them (`textLines`), and its size. A file that is
+ *  no text gets only its size, and so does one that grew past
+ *  `APPS_MAX_FILE_BYTES` after its size check. */
+export function wcRowOfBytes(path: AppsPath, bytes: Uint8Array): string {
+  if (bytes.length > APPS_MAX_FILE_BYTES) return wcLargeRow(path, bytes.length)
+  const text = textOfBytes(bytes)
+  const lines = text === null ? 'not counted: no text file' : countOf(textLines(text).length, 'line')
+  return `${path.virtual} | ${lines} | ${byteSizeText(bytes.length)}`
+}
+
+/** The result of a `wc` call from what became of its paths, in their
+ *  order: the rows of the files that it counted under a line that names
+ *  the columns, then a line for each path that failed. An error when every
+ *  path failed. */
+export function wcResult(outcomes: readonly ItemOutcome[]): { content: string, isError: boolean } {
+  const rows = outcomes.flatMap((outcome) => (outcome.done ? [outcome.text] : []))
+  // The one path of a call is the call: its failure needs no number.
+  if (outcomes.length === 1 && rows.length === 0) return { content: outcomes[0].text, isError: true }
+  const failures = outcomes.flatMap((outcome, index) => (outcome.done ? [] : [`Path ${index + 1} is left out. ${outcome.text}`]))
+  if (rows.length === 0) return { content: failures.join('\n'), isError: true }
+  return { content: [`${countOf(rows.length, 'file')} (path | lines | size).`, ...rows, ...failures].join('\n'), isError: false }
 }
 
 const APPS_SORTS = ['name', 'largest', 'smallest'] as const

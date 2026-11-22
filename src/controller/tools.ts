@@ -36,7 +36,7 @@ import { ffmpegCall, ffprobeCall, joinClipsCall, VIDEO_TOOL, videoCallLabel, vid
 import { untilAborted } from '../utils/abort'
 import { rawErrorText } from '../utils/errorText'
 import { checkedInvokeCall, runAppFrameJob, runAppJob } from './appInvoke'
-import { editAppFile, findAppFiles, grepAppFiles, initApp, listAppFolder, listApps, makeAppFolder, moveAppPaths, readAppFile, removeAppPaths, showApp, writeAppFile } from './appsTool'
+import { countAppFiles, editAppFile, findAppFiles, grepAppFiles, initApp, listAppFolder, listApps, makeAppFolder, moveAppPaths, readAppFile, removeAppPaths, showApp, writeAppFile } from './appsTool'
 import { assetInfoResult } from './assetInfo'
 import { assetViewResult } from './assetView'
 import { audioClipSeconds, cutAudioClip } from './audioTool'
@@ -547,12 +547,13 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // The apps, the small programs that a model writes for the user
   // (appsTool.ts). Each file subcommand works on the folder `apps/` of the
   // app root and is done when the call returns: it starts no job. A stop
-  // of the reply stops `rm` and `mv` between two paths, and `grep` between
-  // two reads or in its matching; any other call is short and runs to its
-  // end. `grep` matches in a Web Worker, which Dez ends at a time limit
-  // (appsGrep.ts). Every result of an `edit` call can end with the hint of
-  // `edit` (`withEditHintWhenDue`): of the file subcommands, only `edit`
-  // reads the conversation, for whether its model reads the hint already.
+  // of the reply stops `rm`, `mv`, and `wc` between two paths, and `grep`
+  // between two reads or in its matching; any other call is short and runs
+  // to its end. `grep` matches in a Web Worker, which Dez ends at a time
+  // limit (appsGrep.ts). Every result of an `edit` call can end with the
+  // hint of `edit` (`withEditHintWhenDue`): of the file subcommands, only
+  // `edit` reads the conversation, for whether its model reads the hint
+  // already.
   //
   // `invoke` runs the code of an app (appInvoke.ts), as a job of the
   // reply: code that a model wrote can run for long. The kind of the app
@@ -573,6 +574,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     ls: listAppFolder,
     find: findAppFiles,
     grep: grepAppFiles,
+    wc: countAppFiles,
     mkdir: makeAppFolder,
     mv: moveAppPaths,
     show: (args, _signal, context) => showApp(args, context),

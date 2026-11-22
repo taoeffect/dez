@@ -34,6 +34,10 @@ import {
   rmCall,
   rmResult,
   rmStep,
+  wcCall,
+  wcResult,
+  wcRowOfBytes,
+  wcRowOfFacts,
   writeCall,
   writePlan,
   writeText,
@@ -128,7 +132,7 @@ function makeFolder(path: AppsPath): Promise<void> {
 // work throws a `ToolError` failed by itself: the next ones still run. A
 // stop of the reply (`signal`) ends the call before the next item: nobody
 // reads the result then, and the user who stopped the reply wants no more
-// deletes and moves.
+// work of it (deletes, moves, reads).
 async function eachByItself<T>(items: readonly T[], signal: AbortSignal, work: (item: T) => Promise<string>): Promise<ItemOutcome[]> {
   const outcomes: ItemOutcome[] = []
   for (const item of items) {
@@ -331,6 +335,15 @@ export async function grepAppFiles(args: SubcommandArguments, signal: AbortSigna
   }
   if (outcome === null) throw grepTimeoutError()
   return grepText(call, plan, outcome)
+}
+
+/** `apps wc`: what is at each path, then the bytes of each file that `read`
+ *  takes, one file at a time, so that the webview holds at most one file
+ *  of `APPS_MAX_FILE_BYTES`. A stop of the reply ends the call before the
+ *  next path. */
+export async function countAppFiles(args: SubcommandArguments, signal: AbortSignal): Promise<AppsResult> {
+  const { paths } = wcCall(args)
+  return wcResult(await eachByItself(paths, signal, async (path) => wcRowOfFacts(path, await factsOf(path)) ?? wcRowOfBytes(path, await readBytes(path))))
 }
 
 /** `apps list_apps`: one listing for each folder of `apps/`, for its size,
