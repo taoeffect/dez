@@ -431,6 +431,14 @@ describe('listedOutputs', () => {
     expect(notKept.find((note) => note.startsWith('big.mp4'))).toContain(byteSizeText(APP_RUN_MAX_OUTPUT_BYTES))
   })
 
+  it('shows a name with a line break on one line, and only the start of a long name', () => {
+    const [lineBreak] = listedOutputs(folderTree({ 'a\nb.png': 4 })).notKept
+    expect(lineBreak.startsWith('"a\\nb.png" (')).toBe(true)
+
+    const [long] = listedOutputs(folderTree({ [`${'x '.repeat(400)}.png`]: 4 })).notKept
+    expect(long.length).toBeLessThan(400)
+  })
+
   // The folder of a sequence holds many frames, which the listing of the
   // output folder need not hold: the encode lists the folder itself.
   it('takes a folder whose name ends with .frames as a frame sequence, in the order of the names, and no file named so', () => {
