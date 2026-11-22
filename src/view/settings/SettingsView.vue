@@ -341,7 +341,8 @@ function onOverlayClick(e: MouseEvent) {
                     <span id="general-unreferenced-label" class="settings-card-label">Unreferenced files and apps</span>
                     <p id="general-unreferenced-hint" class="settings-hint">
                       Removes old images, audio, video, and apps (with all their files) that no
-                      conversation or prompt references.
+                      conversation or prompt references, and the work folders of deleted
+                      conversations.
                     </p>
                   </div>
                   <div class="unreferenced-buttons" role="group" aria-labelledby="general-unreferenced-label">
