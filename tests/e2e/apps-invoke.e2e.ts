@@ -38,6 +38,8 @@ import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolC
 // - a built-in app runs from the bundle of the debug build, with the
 //   decode of its manifest, and writes its result file into the work
 //   folder of the conversation;
+// - the built-in app dez-chart draws a chart of a CSV file of the work
+//   folder of the conversation into a new image;
 // - an app whose manifest has `"native": ["skia-canvas"]` draws text with
 //   skia-canvas and the fonts that Dez ships (`useShippedFonts` of
 //   dez-media/canvas), and a text of the run names a font by the name of
@@ -180,6 +182,13 @@ const BURSTS_WAV = monoWav(Buffer.from(Int16Array.from({ length: 2 * WAV_SAMPLE_
 }).buffer), 2)
 // The color of `WEBM_VIDEO`.
 const VIDEO_COLOR = [0x2a, 0x7f, 0xd4]
+// The data of the dez-chart run: 4 months, with a column of text that the
+// chart leaves out (the quotes keep a comma in a value).
+const SALES_CSV = 'month,sales,cost,note\nJan,3,1,ok\nFeb,5,2,\nMar,2,2,"a, b"\nApr,8,3,x\n'
+// The colors of the bars of the two series on the white of the light
+// theme: the first two colors of the palette of Chart.js, at half alpha.
+const SALES_BAR = [154, 208, 245, 255]
+const COST_BAR = [255, 177, 193, 255]
 
 // The code of the `title` app: it draws a line of text in three scripts
 // with skia-canvas and the fonts that Dez ships, counts the dark pixels,
@@ -566,6 +575,34 @@ describe('apps invoke', () => {
     expect(JSON.parse(fs.readFileSync(path.join(workFolder, 'video', 'cuts.json'), 'utf8'))).toStrictEqual({ id: 'a', fps: 5, frames: 10, duration: 2, threshold: 0.35, cuts: [] })
 
     await expectReplyEnd(setup, CALLER, cuts.next)
+    await expectRunsEnded(setup)
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('draws a chart of a CSV file of the work folder with the built-in app dez-chart into a new image', async () => {
+    const before = await filesIn(imagesDir)
+    await submit(browser, 'Chart my sales.')
+    const workFolder = appFilePath(setup.app.home, 'work', await activeConversationId(browser))
+    await writeTestFile(path.join(workFolder, 'sales.csv'), Buffer.from(SALES_CSV))
+
+    const run = await invoke(await chatRequest(), 'call_chart', { name: 'dez-chart', parameters: { data: '/work/sales.csv', type: 'bar', title: 'Sales', width: 320, height: 200 } })
+    expect(run.result.status).toBe('finished')
+    expect(run.result.text).toBe([
+      'A bar chart of "sales", "cost" (4 rows) from /work/sales.csv: chart.png, 320×200, light theme.',
+      '',
+      'Dez keeps 1 file of the output folder: chart.png (image). The line at the end gives its id.',
+      'Made the image @a.',
+    ].join('\n'))
+    await sendChatReply(run.next.reply, CALLER.modelName)
+
+    const reply = await endedReply(browser)
+    const imagePath = path.join(imagesDir, await newFileIn(browser, imagesDir, before))
+    expect(reply.endsWith(`</dez:tool>\n\n![id=a|tool=apps|made-by=${run.jobId}](${imagePath})\n\n${replyText(CALLER.modelName)}`)).toBe(true)
+    expect(mediaFacts(setup.app, imagePath)).toStrictEqual({ streams: ['video png 320x200'], seconds: null })
+    // The white of the light theme, and a bar of each series.
+    const colors = pixelColors(setup.app, imagePath).map((color) => color.split(',').map(Number))
+    for (const color of [[255, 255, 255, 255], SALES_BAR, COST_BAR]) expect(colors.some((pixel) => colorDistance(pixel, color) <= 2), `a pixel of ${color}`).toBe(true)
+    await waitForValue(browser, 'the new image', async () => (await shownImages(browser)).at(-1)?.width, 320)
     await expectRunsEnded(setup)
     expect(await consoleErrors(browser)).toStrictEqual([])
   })

@@ -70,7 +70,11 @@ import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolC
 //   and the loudness curve of each clip;
 // - `video cuts` runs the built-in app dez-cuts in the real Deno, waits for
 //   it, and finds the cuts of the clip of 4 shots, with a JSON file of
-//   each clip in the work folder of the conversation.
+//   each clip in the work folder of the conversation;
+// - `video title` runs the built-in app dez-title in the real Deno, waits
+//   for it, and puts a clip of the title with alpha (PNG in MOV) into the
+//   reply as an asset of its call; the overlay example of the help puts it
+//   over a clip.
 // No request holds a path of the test HOME (`takeRequest` checks each one).
 // Each video clip with sound that the spec makes is VP9 and Opus in WebM:
 // the CI GStreamer (.github/workflows/e2e.yml) decodes both, so the players
@@ -961,6 +965,54 @@ describe('video tool', () => {
     expect(lightPixels(titlePath)).toBeGreaterThan(100)
     expect(lightPixels(subtitledPath, 1)).toBeGreaterThan(100)
     expect(lightPixels(subtitledPath, 2.8)).toBe(0)
+    await expectCleanEnd({})
+  })
+
+  // The overlay example of the help, with VP9 in WebM in place of H.264 in
+  // MP4, as in `SUBTITLES_ARGS`. The title shows from 0.5 s to 1.5 s.
+  it('makes a title clip with alpha with video title, which runs the built-in app dez-title and waits for it, and puts it over a clip with the overlay example of the help', async () => {
+    const videosBefore = await filesIn(videoDir)
+    await submit(browser, 'Put a title over a dark clip.')
+    const dark = await runJob(await chatRequest(), 'call_dark', 'ffmpeg', { arguments: '-f lavfi -i color=c=black:size=160x90:rate=5:duration=3 -c:v libvpx-vp9 dark.webm' })
+    expect(dark.result.text.endsWith('\nMade the video clip @a.')).toBe(true)
+    const darkName = await newFileIn(browser, videoDir, videosBefore)
+
+    sendToolCalls(dark.next.reply, [videoCall('call_title', 'title', { text: 'NEON CITY', width: 160, height: 90, fps: 5, duration: 1 })])
+    const titled = await chatRequest()
+    expect(toolResult(titled, 'call_title')).toBe([
+      'The title "NEON CITY": 5 frames of 160×90 at 5 fps (1 s), with an alpha channel, in NotoSerifCJKjp-Black.otf.',
+      '',
+      'Dez keeps 1 file of the output folder: title.frames/ (video clip: 5 frames, PNG in MOV with alpha). The line at the end gives its id.',
+      'Made the video clip @b.',
+    ].join('\n'))
+    const titleName = await newFileIn(browser, videoDir, [...videosBefore, darkName])
+    expect(titleName).toMatch(storedFileName('mov'))
+
+    const overlay = await runJob(titled, 'call_overlay', 'ffmpeg', {
+      arguments: '-i @a -itsoffset 0.5 -i @b -filter_complex "[0:v][1:v]overlay=eof_action=pass,format=yuv420p[v]" -map "[v]" -map "0:a?" -c:v libvpx-vp9 -c:a copy titled.webm',
+    })
+    expect(overlay.result.text.endsWith('\nMade the video clip @c.')).toBe(true)
+    await sendChatReply(overlay.next.reply, CALLER.modelName)
+
+    const reply = await endedReply(browser)
+    const darkPath = path.join(videoDir, darkName)
+    const titlePath = path.join(videoDir, titleName)
+    const overlaidPath = path.join(videoDir, await newFileIn(browser, videoDir, [...videosBefore, darkName, titleName]))
+    // No job made the title: its clip has the tool of its call and no job.
+    expect(reply).toContain(`</dez:tool>\n\n<dez:video id="b" type="video/quicktime" src="${titlePath}" tool="video"/>`)
+    expect(reply.endsWith(`</dez:tool>\n\n<dez:video id="c" type="video/webm" src="${overlaidPath}" tool="video" made-by="${overlay.jobId}"/>\n\n${replyText(CALLER.modelName)}`)).toBe(true)
+    expect(mediaFacts(setup.app, titlePath)).toStrictEqual({ streams: ['video png 160x90'], seconds: 1 })
+    expect(mediaFacts(setup.app, overlaidPath)).toStrictEqual({ streams: ['video vp9 160x90'], seconds: 3 })
+    // Most pixels of a frame of the title are transparent; the letters are
+    // opaque.
+    const pixels = programRun(setup.app, 'dez-ffmpeg', ['-v', 'error', '-ss', '0.5', '-i', titlePath, '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgba', '-'])
+    const alphas = pixels.filter((_, index) => index % 4 === 3)
+    expect(alphas.filter((alpha) => alpha === 0).length).toBeGreaterThan(alphas.length / 2)
+    expect(alphas.filter((alpha) => alpha === 255).length).toBeGreaterThan(100)
+    expect(lightPixels(darkPath, 1)).toBe(0)
+    expect(lightPixels(overlaidPath, 0.2)).toBe(0)
+    expect(lightPixels(overlaidPath, 1)).toBeGreaterThan(100)
+    expect(lightPixels(overlaidPath, 2.5)).toBe(0)
     await expectCleanEnd({})
   })
 

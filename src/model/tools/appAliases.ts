@@ -6,23 +6,26 @@ import { WORK_VIRTUAL_ROOT } from './conversationWork'
 import { ASSET_NAMES } from './jobs'
 import type { Subcommand } from './subcommands'
 import type { ToolParameter } from './types'
+import { SHIPPED_FONTS_TEXT } from './videoFonts'
 
 // The alias subcommands of the `audio` and the `video` tools: each one is
 // a run of one built-in app (src-tauri/builtin-apps/), with the
 // parameters of the app as its own, and its inputs in parameters with
-// names. So a model measures a clip with one short call, and needs no
-// `apps invoke`, no `inputs` in the right order, and no job. The call
-// waits for its run, as an asset_info call does: the next step of the
-// model needs the measurement. appInvoke.ts makes the run of a call
-// (`aliasInvokeCall`), and controller/appInvoke.ts runs it
-// (`runAliasCall`).
+// names. So a model measures a clip, or makes a title clip, with one
+// short call, and needs no `apps invoke`, no `inputs` in the right order,
+// and no job. The call waits for its run, as an asset_info call does: the
+// next step of the model needs the measurement or the clip. The images
+// and the clips that a run makes go into the reply as the assets of the
+// call. appInvoke.ts makes the run of a call (`aliasInvokeCall`), and
+// controller/appInvoke.ts runs it (`runAliasCall`).
 //
 // This module imports no module that imports the `audio` or the `video`
 // tool, as both tools list these subcommands.
 
 /** The time limit of the run of an alias call, from the start of the call:
- *  the read and the decode of the clips, then the code of the app. A
- *  measurement of a clip of some minutes takes seconds. */
+ *  the read and the decode of the clips, the code of the app, and the
+ *  encode of the frames that it writes. A measurement of a clip of some
+ *  minutes takes seconds, and so does a title clip. */
 export const ALIAS_TIMEOUT_MS = 10 * 60 * 1000
 
 /** A parameter of an alias that names inputs of the run. */
@@ -49,6 +52,9 @@ export interface AppAlias {
   app: string
   /** In the order of `dez.inputs` of the run. */
   inputs: readonly AliasInput[]
+  /** What the model can do after a run that did not end within the time
+   *  limit, for the error text. Default: cut the clips into shorter parts. */
+  timedOutAdvice?: string
 }
 
 // The parts of the help of every alias.
@@ -56,10 +62,10 @@ const WAITS = `The call waits for the run (no job), for at most ${ALIAS_TIMEOUT_
 const READ_FILE = `Read the file with apps read, or with code (js_eval, a script app) in \`dez.workFolder\`. Dez deletes ${WORK_VIRTUAL_ROOT}/ with the conversation.`
 const TIMING = 'Use it for each time that must be exact: you are weak at timing by ear and by eye, even when you hear a clip or see its frames.'
 
-// The first sentences of the help of an alias of `app`: what runs, and the
-// call.
-function runsText(app: string): string {
-  return `It runs the built-in app ${app} (its code is /apps/${app}/main.ts) on the clips of the call. ${WAITS}`
+// The first sentences of the help of an alias of `app`: what runs, on
+// what, and the call.
+function runsText(app: string, on = 'on the clips of the call'): string {
+  return `It runs the built-in app ${app} (its code is /apps/${app}/main.ts) ${on}. ${WAITS}`
 }
 
 // The `save_to` parameter of an alias whose run writes `file` by default.
@@ -231,6 +237,48 @@ export const VIDEO_ALIASES: readonly AppAlias[] = [
       example: { edit: '@c', song: '@b' },
     },
   },
+  {
+    tool: 'video',
+    app: 'dez-title',
+    inputs: [],
+    subcommand: {
+      name: 'title',
+      summary: 'Make an animated title clip (chrome letters with a glow, a slam entrance, a glitch exit) with a transparent background, to put over a video clip with ffmpeg.',
+      description: 'Makes an animated title clip: `text` in the look of a 1980s anime title card (chrome letters with a red outline, a pink glow, and a shadow), '
+        + 'with an optional `subtitle` line of wide letters under it. The title slams in with a flash, gets a glint, and goes out with a glitch. '
+        + `${runsText('dez-title', 'with no input clip')} `
+        + 'The new clip goes into your reply, and the result gives its id. It is a MOV file with the PNG codec and an alpha channel: only the title shows, and the rest of each frame is transparent. '
+        + 'Put it over a video clip with the ffmpeg subcommand and the overlay filter. For the title @t over the clip @c, from second 2 of @c: '
+        + '-i @c -itsoffset 2 -i @t -filter_complex "[0:v][1:v]overlay=eof_action=pass,format=yuv420p[v]" -map "[v]" -map "0:a?" -c:v libx264 -c:a copy titled.mp4. '
+        + 'Give the title the width and the height of the clip that it goes over. '
+        + 'A title has at most 600 million pixels in all its frames (width × height × fps × duration), about 9.6 seconds of 1920×1080 at 30 fps: '
+        + 'for a longer title, give a smaller width and height, and scale the title up in the filter of the overlay.',
+      parameters: [
+        { name: 'text', type: 'string', description: 'The title: one line of at most 200 characters, as in "NEON CITY".', required: true },
+        { name: 'subtitle', type: 'string', description: 'A small line under the title: one line of at most 200 characters. Default: none.', required: false },
+        {
+          name: 'font',
+          type: 'string',
+          description: `The file name of the font of the title. Default: NotoSerifCJKjp-Black.otf. It must be a font that Dez ships: ${SHIPPED_FONTS_TEXT}. `
+            + 'A character that the font does not have comes from another of these fonts.',
+          required: false,
+        },
+        { name: 'width', type: 'integer', description: 'The width of the clip in pixels, from 16 to 4096. Default: 1920.', required: false },
+        { name: 'height', type: 'integer', description: 'The height of the clip in pixels, from 16 to 4096. Default: 1080.', required: false },
+        { name: 'fps', type: 'integer', description: 'The frames per second of the clip, from 1 to 60. Default: 30.', required: false },
+        { name: 'duration', type: 'number', description: 'The length of the clip in seconds, from 1 to 30. Default: 4.', required: false },
+        { name: 'fill', type: 'string', description: 'The color of the letters: "chrome", or a hex color, as in "#ffd700". Default: "chrome".', required: false },
+        { name: 'outline', type: 'string', description: 'The color of the outline of the letters: a hex color, or "none". Default: "#c80a1e" (red).', required: false },
+        { name: 'glow', type: 'string', description: 'The color of the glow around the letters: a hex color, or "none". Default: "#ff2878" (pink).', required: false },
+        { name: 'position', type: 'string', description: 'Where the title is in the frame: "center", "top", or "bottom". Default: "center".', required: false },
+        { name: 'entrance', type: 'string', description: 'How the title comes in: "slam" (it falls in from larger, with a flash), "fade", or "none". Default: "slam".', required: false },
+        { name: 'exit', type: 'string', description: 'How the title goes out at the end of the clip: "glitch" (it breaks into moving slices), "fade", or "none". Default: "glitch".', required: false },
+        { name: 'glint', type: 'boolean', description: 'true for a glint that moves across the letters after the entrance, false for none. Default: true.', required: false },
+      ],
+      example: { text: 'NEON CITY', subtitle: 'EPISODE 1', duration: 4 },
+    },
+    timedOutAdvice: 'Give a shorter duration, a lower fps, or a smaller width and height.',
+  },
 ]
 
 /** The words of the call of `alias`, as in `audio beats`. */
@@ -254,6 +302,6 @@ export function aliasRunTexts(alias: AppAlias): AppRunTexts {
     decodedTooLarge: `The decoded clips of the call are larger than ${byteSizeText(APP_RUN_MAX_DECODED_BYTES)} together, the most that Dez decodes for one run, `
       + `so Dez stopped the decode. ${aliasNotDoneText(alias)} Give the call fewer clips, or cut the clips into shorter parts first and measure each part.`,
     timedOut: () => `${call} did not end within its time limit of ${ALIAS_TIMEOUT_MS / 60_000} minutes, so Dez stopped it. It has no result. `
-      + 'This is not a fault of the call. Cut the clips into shorter parts, and measure each part.',
+      + `This is not a fault of the call. ${alias.timedOutAdvice ?? 'Cut the clips into shorter parts, and measure each part.'}`,
   }
 }

@@ -1172,10 +1172,24 @@ function aliasOf(tool: 'audio' | 'video', name: string): AppAlias {
 // of its built-in app, which the call waits for.
 describe('the alias subcommands', () => {
   let jobs: TabJobs
+  // What the reply got for the files of a call, and the ids that it gives.
+  let written: unknown[] = []
+  let newIds: (string | null)[]
 
   function tool(name: 'audio' | 'video', command: string, parameters: Record<string, unknown>): Promise<ToolRunResult> {
     const call = { name, arguments: { command, parameters: JSON.stringify(parameters) } }
-    return sbp('dez.controller/tools/run', call, running(), callContext({ jobs })) as Promise<ToolRunResult>
+    const context = callContext({
+      jobs,
+      writeImage: (path, options) => {
+        written.push({ path, ...options })
+        return newIds.shift() ?? null
+      },
+      writeClip: (clip, options) => {
+        written.push({ path: clip.src, ...options })
+        return newIds.shift() ?? null
+      },
+    })
+    return sbp('dez.controller/tools/run', call, running(), context) as Promise<ToolRunResult>
   }
 
   // A program that runs until the test ends it with `end`.
@@ -1184,6 +1198,8 @@ describe('the alias subcommands', () => {
 
   beforeEach(() => {
     jobs = new TabJobs()
+    written = []
+    newIds = ['g', 'h']
     tabSections = CONVERSATION
   })
 
@@ -1229,19 +1245,38 @@ describe('the alias subcommands', () => {
     deletedWorkFolder()
   })
 
-  // A file there is a fault of Dez: no text of the reply names it.
-  it('deletes a file that the app left in its output folder, and still gives what it returned', async () => {
-    outputFolderHolds({ 'frame.png': PNG_BYTES })
-    fakeAppFiles({}, builtInAppFiles('dez-cuts', { 'main.ts': MAIN }))
-    native.program = returns('@c: no cut.')
+  it('puts the files that Dez keeps of the run into the reply as assets of the call, and names each one in the result', async () => {
+    outputFolderHolds({ 'title.png': PNG_BYTES, 'voice.wav': WAV_BYTES })
+    fakeAppFiles({}, builtInAppFiles('dez-title', { 'main.ts': MAIN }))
+    native.program = returns('The title "NEON CITY".')
 
-    const result = await tool('video', 'cuts', { clips: '@c' })
+    const result = await tool('video', 'title', { text: 'NEON CITY', duration: 2 })
 
+    const [image, clip] = stored().map(({ path }) => `${APP_DIR}/${path}`)
     expect(result.isError).toBe(false)
-    expect(result.content.startsWith('@c: no cut.')).toBe(true)
-    expect(stored()).toHaveLength(1)
-    expect(deletedImages).toStrictEqual([`${APP_DIR}/${stored()[0].path}`])
-    expect(consoleError).toHaveBeenCalled()
+    expect(result.content.startsWith('The title "NEON CITY".')).toBe(true)
+    expect(result.content.endsWith('\nMade the image @g.\nMade the audio clip @h.')).toBe(true)
+    // No job made them: no job id, and the tool of the call.
+    expect(written).toStrictEqual([{ path: image }, { path: clip }])
+    expect(jobs.list()).toStrictEqual([])
+    expect(runDescription(deletedWorkFolder())).toMatchObject({ parameters: { text: 'NEON CITY', duration: 2 }, inputs: [] })
+    expect(deletedImages).toStrictEqual([])
+  })
+
+  it('deletes the file of each asset that the reply takes no more, and tells that the call did not make it', async () => {
+    outputFolderHolds({ 'title.png': PNG_BYTES, 'voice.wav': WAV_BYTES })
+    fakeAppFiles({}, builtInAppFiles('dez-title', { 'main.ts': MAIN }))
+    native.program = returns('The title "NEON CITY".')
+    newIds = ['g', null]
+
+    const result = await tool('video', 'title', { text: 'NEON CITY' })
+
+    const [, clip] = stored().map(({ path }) => `${APP_DIR}/${path}`)
+    expect(result.isError).toBe(true)
+    expect(result.content.endsWith('\nMade the image @g.\nThe reply stopped before Dez could add the audio clip to it, so there is no new audio clip. This is not a fault of the call.')).toBe(true)
+    expect(deletedImages).toStrictEqual([])
+    expect(deletedClips).toStrictEqual([clip])
+    deletedWorkFolder()
   })
 
   it('stops the program at the end of the time limit of the call, and gives the text of the limit', async () => {
@@ -1250,7 +1285,7 @@ describe('the alias subcommands', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const beats = aliasOf('audio', 'beats')
 
-    const work = runAliasCall(beats, { clips: '@b' }, CONVERSATION, CONVERSATION_ID, running())
+    const work = runAliasCall(beats, { clips: '@b' }, CONVERSATION, CONVERSATION_ID, callContext(), running())
     await vi.waitFor(() => expect(native.runs).toHaveLength(1))
     vi.advanceTimersByTime(ALIAS_TIMEOUT_MS)
 
@@ -1265,7 +1300,7 @@ describe('the alias subcommands', () => {
     native.program = heldProgram
     const stop = new AbortController()
 
-    const work = failureOf(runAliasCall(aliasOf('audio', 'beats'), { clips: '@b' }, CONVERSATION, CONVERSATION_ID, stop.signal))
+    const work = failureOf(runAliasCall(aliasOf('audio', 'beats'), { clips: '@b' }, CONVERSATION, CONVERSATION_ID, callContext(), stop.signal))
     await vi.waitFor(() => expect(native.runs).toHaveLength(1))
     stop.abort(STOP)
 

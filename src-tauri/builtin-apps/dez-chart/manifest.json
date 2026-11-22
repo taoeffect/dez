@@ -1,0 +1,6 @@
+{
+  "name": "dez-chart",
+  "description": "Draws a chart (line, bar, scatter, pie, doughnut, or radar) of the data of a CSV, TSV, or JSON file in /work/ into a PNG image. Takes no input.",
+  "kind": "script",
+  "native": ["skia-canvas"]
+}

@@ -15,14 +15,16 @@
     "jsx": "preserve",
     /* dez-media is JavaScript with JSDoc types (// @ts-check) */
     "allowJs": true,
-    /* The built-in apps import dez-media by its name in the import map of
-       the Deno runs (src-tauri/libs/import_map.json), and dez-media/canvas
-       imports skia-canvas by its name there */
+    /* The built-in apps import dez-media, skia-canvas, and chart.js by
+       their names in the import map of the Deno runs
+       (src-tauri/libs/import_map.json). Chart.js ships no types there, so
+       its types come from its JavaScript */
     "paths": {
       "dez-media": ["./src-tauri/libs/dez-media/mod.js"],
       "dez-media/canvas": ["./src-tauri/libs/dez-media/canvas.js"],
       "dez-media/frames": ["./src-tauri/libs/dez-media/frames.js"],
-      "skia-canvas": ["./src-tauri/libs/skia-canvas/lib/index.d.ts"]
+      "skia-canvas": ["./src-tauri/libs/skia-canvas/lib/index.d.ts"],
+      "chart.js": ["./src-tauri/libs/chart.js/dist/chart.js"]
     },
 
     /* Linting */

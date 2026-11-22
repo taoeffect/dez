@@ -130,6 +130,7 @@ describe('aliasInvokeCall', () => {
   it('gives every other argument to the app as a parameter', () => {
     expect(aliasCall('video', 'sync', { edit: '@c', song: '@b', offset: 1.5, save_to: '/work/sync.json' }).parameters).toStrictEqual({ offset: 1.5, save_to: '/work/sync.json' })
     expect(aliasCall('audio', 'beats', { clips: '@b' }).parameters).toStrictEqual({})
+    expect(aliasCall('video', 'title', { text: 'NEON CITY', fps: 24 })).toMatchObject({ parameters: { text: 'NEON CITY', fps: 24 }, inputs: [] })
   })
 
   it('refuses an input parameter with no clip, and one with more clips than it takes', () => {
@@ -175,6 +176,13 @@ describe('aliasRunTexts', () => {
     for (const text of [failed, texts.decodedTooLarge, texts.timedOut(ALIAS_TIMEOUT_MS, 'The code of the app runs.')]) {
       expect(['`decode`', '`inputs`', 'timeout_seconds', 'apps invoke'].filter((part) => text.includes(part)), text).toStrictEqual([])
     }
+  })
+
+  it('tells what to change after a long run of an alias that makes a clip, and not to cut clips', () => {
+    const timedOut = aliasRunTexts(aliasOf('video', 'title')).timedOut(ALIAS_TIMEOUT_MS, 'The code of the app runs.')
+
+    expect(timedOut).toContain('Give a shorter duration, a lower fps, or a smaller width and height.')
+    expect(timedOut).not.toContain('Cut the clips')
   })
 })
 

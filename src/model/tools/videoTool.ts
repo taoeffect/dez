@@ -194,7 +194,8 @@ export const VIDEO_TOOL: SubcommandTool = {
   summary: 'Join, cut, mix, and convert the video clips, the audio clips, and the images of this conversation with ffmpeg, and read their facts with ffprobe. '
     + `ffmpeg can also write text on them, but only with the fonts that Dez ships, never a font of the computer: ${SHIPPED_FAMILIES_TEXT}. `
     + 'The help of the ffmpeg subcommand gives their files and tells how to use them. '
-    + 'Find the exact cuts of a video clip with the cuts subcommand, and check whether the cuts of an edit are on the beats of its song with the sync subcommand.',
+    + 'Find the exact cuts of a video clip with the cuts subcommand, and check whether the cuts of an edit are on the beats of its song with the sync subcommand. '
+    + 'Make an animated title clip with a transparent background, to put over a video clip, with the title subcommand.',
   subcommands: [
     {
       name: 'join_clips',
@@ -666,12 +667,16 @@ export function videoInputsText(inputs: readonly VideoInput[], fonts: readonly s
   ].join(' ')
 }
 
+// The argument of a `video` subcommand that tells what its call asks for,
+// when it is not `arguments` (the command line of ffmpeg and ffprobe).
+const LABEL_ARGUMENTS: Readonly<Record<string, string>> = { join_clips: 'clips', title: 'text' }
+
 /** The label of a call of a `video` subcommand (`JobCall.label`): the
  *  subcommand, and the argument that tells what the call asks for (the
- *  clips of a join, else the command line). `args` are the subcommand's own
- *  arguments. */
+ *  clips of a join, the text of a title, else the command line). `args`
+ *  are the subcommand's own arguments. */
 export function videoCallLabel(command: string, args: ToolArguments): string {
-  return jobCallLabel(`${command} ${String((command === 'join_clips' ? args.clips : args.arguments) ?? '')}`)
+  return jobCallLabel(`${command} ${String(args[LABEL_ARGUMENTS[command] ?? 'arguments'] ?? '')}`)
 }
 
 /** The clips of a `join_clips` call. */

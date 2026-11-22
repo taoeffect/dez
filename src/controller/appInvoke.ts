@@ -30,6 +30,7 @@ import {
 import { APPS_ROOT, BUILT_IN_APPS_FOLDER, LIBS_ROOT } from '../model/tools/appsTool'
 import { FRAMES_ENCODE_STATE, sequenceClipType } from '../model/tools/frameSequences'
 import { APP_DECODES_STATE, asksForDecode, runDecode, type DecodedClip } from '../model/tools/inputDecode'
+import { ASSET_NAMES, madeAssetText } from '../model/tools/jobs'
 import { endedRun, JsEvalOutput, textForModel } from '../model/tools/jsEval'
 import { PROGRAM_READS_INPUTS, programNotStartedText } from '../model/tools/programRuns'
 import { ToolError, type ToolArguments } from '../model/tools/types'
@@ -42,6 +43,7 @@ import { discardMadeAssets, type JobOutcome, type MadeAsset } from './jobs'
 import { moduleRun, writeRunFiles } from './jsEval'
 import type { BundledToolInput, FileTree } from './nativeTypes'
 import { clipInputFile, conversationWorkForms, folderPathForms, imageInputAsIs, inWorkFolder, newGeneratedFile, runProgram } from './programRuns'
+import type { ToolRunContext } from './tools'
 
 // The run of an `apps invoke` call (model/tools/appInvoke.ts), as a job of
 // the reply, and the run of a call of an alias subcommand of `audio` or
@@ -305,12 +307,21 @@ export function runAppJob(
  *  its checked arguments `args`, from the tab with `sections`, in the
  *  conversation `conversationId`: one run of the built-in app of the
  *  alias (`runAppJob`), which the call waits for, for at most the time
- *  limit of the call from its start. Gives the result of the call: what
- *  the app returned or threw, or why the run failed. Throws a `ToolError`
- *  for a call that Dez refuses (`aliasInvokeCall`) or a run that did not
- *  start, and the stop of `signal` (the user stopped the reply), which
- *  stops the run. */
-export async function runAliasCall(alias: AppAlias, args: ToolArguments, sections: readonly Section[], conversationId: string, signal: AbortSignal): Promise<{ content: string, isError: boolean }> {
+ *  limit of the call from its start. `writers` put the images and the
+ *  clips that Dez keeps of the run into the reply, as the assets of the
+ *  call. Gives the result of the call: what the app returned or threw,
+ *  or why the run failed, then a line that names each new asset
+ *  (`madeAssetText`). Throws a `ToolError` for a call that Dez refuses
+ *  (`aliasInvokeCall`) or a run that did not start, and the stop of
+ *  `signal` (the user stopped the reply), which stops the run. */
+export async function runAliasCall(
+  alias: AppAlias,
+  args: ToolArguments,
+  sections: readonly Section[],
+  conversationId: string,
+  writers: Pick<ToolRunContext, 'writeImage' | 'writeClip'>,
+  signal: AbortSignal,
+): Promise<{ content: string, isError: boolean }> {
   const call = await checkedAppRun(aliasInvokeCall(alias, args, sections))
   const caller: AppRunCaller = { toolName: alias.tool, texts: aliasRunTexts(alias) }
   signal.throwIfAborted()
@@ -322,14 +333,20 @@ export async function runAliasCall(alias: AppAlias, args: ToolArguments, section
   signal.addEventListener('abort', stop, { once: true })
   try {
     const { text, isError, assets } = await runAppJob(call, caller, conversationId, clock.signal, () => {}, () => {})
-    // The built-in apps of the aliases write their results into the work
-    // folder of the conversation, and no file into their output folder: a
-    // file there is a fault of Dez, and no text of the reply names it.
-    if (assets.length > 0) {
-      console.error(`${alias.app} left files in its output folder; Dez deletes them:`, assets)
-      await discardMadeAssets(assets)
+    const lines: string[] = []
+    const lost: MadeAsset[] = []
+    for (const asset of assets) {
+      const kind = asset.kind === 'image' ? 'image' : asset.clip.kind
+      const id = asset.kind === 'image' ? writers.writeImage(asset.path) : writers.writeClip(asset.clip)
+      if (id === null) {
+        lost.push(asset)
+        lines.push(`The reply stopped before Dez could add the ${ASSET_NAMES[kind]} to it, so there is no new ${ASSET_NAMES[kind]}. This is not a fault of the call.`)
+      } else {
+        lines.push(`${madeAssetText(kind, id)}.`)
+      }
     }
-    return { content: text, isError }
+    await discardMadeAssets(lost)
+    return { content: [...(text.trim() === '' ? [] : [text]), ...lines].join('\n'), isError: isError || lost.length > 0 }
   } catch (error) {
     if (clock.signal.aborted && !signal.aborted) return { content: caller.texts.timedOut(call.timeoutMs, APP_RUNS_STATE), isError: true }
     throw error

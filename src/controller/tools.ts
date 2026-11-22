@@ -172,11 +172,12 @@ function subcommandRunner<P extends SubcommandParameter>(tool: SubcommandTool<P>
 
 // The runners of the alias subcommands `aliases` of one tool, by the
 // names of the subcommands: each call waits for one run of the built-in
-// app of its alias (`runAliasCall`).
+// app of its alias (`runAliasCall`), and the context writes the images
+// and the clips of the run into the reply.
 function aliasRunners(aliases: readonly AppAlias[]): Record<string, ToolRunner> {
   return Object.fromEntries(aliases.map((alias): [string, ToolRunner] => [
     alias.subcommand.name,
-    (args, signal, context) => runAliasCall(alias, args, callSections(context), context.conversationId, signal),
+    (args, signal, context) => runAliasCall(alias, args, callSections(context), context.conversationId, context, signal),
   ]))
 }
 
@@ -497,8 +498,9 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // call that Dez refuses starts no job and no program. `join_clips` and
   // `ffmpeg` run as jobs of the reply, and their results tell the inputs
   // that go, as for `model_invoke`. `ffprobe` is short, so its call waits
-  // for it. `cuts` and `sync` are aliases (appAliases.ts): each runs a
-  // built-in app that measures clips, and the call waits for it.
+  // for it. `cuts`, `sync`, and `title` are aliases (appAliases.ts): each
+  // runs a built-in app, and the call waits for it. `cuts` and `sync`
+  // measure clips; `title` makes a clip, which goes into the reply.
   video: subcommandRunner(VIDEO_TOOL, {
     async join_clips (args, callSignal, context) {
       const call = joinClipsCall(args, callSections(context))
