@@ -570,17 +570,17 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // `show` puts a UI app into the reply (appShow.ts): it runs no code.
   apps: withEditHintWhenDue(subcommandRunner(APPS_TOOL, {
     init: initApp,
-    read: readAppFile,
-    write: writeAppFile,
-    edit: editAppFile,
-    rm: removeAppPaths,
+    read: (args, _signal, { conversationId }) => readAppFile(args, conversationId),
+    write: (args, _signal, { conversationId }) => writeAppFile(args, conversationId),
+    edit: (args, _signal, { conversationId }) => editAppFile(args, conversationId),
+    rm: (args, signal, { conversationId }) => removeAppPaths(args, signal, conversationId),
     list_apps: listApps,
-    ls: listAppFolder,
-    find: findAppFiles,
-    grep: grepAppFiles,
-    wc: wcAppFiles,
-    mkdir: makeAppFolder,
-    mv: moveAppPaths,
+    ls: (args, _signal, { conversationId }) => listAppFolder(args, conversationId),
+    find: (args, _signal, { conversationId }) => findAppFiles(args, conversationId),
+    grep: (args, signal, { conversationId }) => grepAppFiles(args, signal, conversationId),
+    wc: (args, signal, { conversationId }) => wcAppFiles(args, signal, conversationId),
+    mkdir: (args, _signal, { conversationId }) => makeAppFolder(args, conversationId),
+    mv: (args, signal, { conversationId }) => moveAppPaths(args, signal, conversationId),
     show: (args, _signal, context) => showApp(args, context),
     async invoke (args, callSignal, context) {
       const call = await checkedInvokeCall(args, callSections(context))

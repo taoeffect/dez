@@ -10,7 +10,9 @@ import {
   cutListingNote,
   folderArgument,
   integerArgument,
+  isAppFolder,
   isPathName,
+  listingOf,
   NO_APPS,
   NO_TEXT,
   noFolderError,
@@ -109,7 +111,7 @@ function globRule(glob: string): RegExp {
 /** The search of an `apps grep` call, from its checked arguments. Throws a
  *  `ToolError` for a pattern, a glob, or a context that Dez does not take.
  *  It reads no file: `grepPlan` picks the files from a listing. */
-export function grepCall(args: SubcommandArguments): GrepCall {
+export function grepCall(args: SubcommandArguments, conversationId: string): GrepCall {
   const pattern = textArgument(args, 'pattern')
   if (pattern === '') throw new ToolError(`\`pattern\` is empty. Give the regular expression to find, as in "${EXAMPLE_PATTERN}". To see a whole file, call read.`)
   if (/[\n\r]/.test(pattern)) {
@@ -134,7 +136,7 @@ export function grepCall(args: SubcommandArguments): GrepCall {
     include = { glob, rule: globRule(glob) }
   }
 
-  return { pattern, literal, ignoreCase, regExp: patternRegExp(pattern, literal, ignoreCase), path: folderArgument(args), include, context }
+  return { pattern, literal, ignoreCase, regExp: patternRegExp(pattern, literal, ignoreCase), path: folderArgument(args, conversationId), include, context }
 }
 
 /** One file that a call searches: the path to read, and the path that the
@@ -173,18 +175,19 @@ export type GrepPlan = GrepSearch | { kind: 'text', text: string }
 /** The files that `call` searches, from `tree`, the listing of its path
  *  with `LS_MAX_ENTRIES`. Throws a `ToolError` when nothing is at the path,
  *  and for a path of a file that the tool does not read. */
-export function grepPlan({ path, include }: GrepCall, tree: AppsTree): GrepPlan {
-  const isRoot = path.names.length === 0
+export function grepPlan({ path, include }: GrepCall, listing: AppsTree): GrepPlan {
+  const tree = listingOf(path, listing)
+  const isAppsRoot = path.top.place === 'apps' && path.names.length === 0
   if (tree.kind === 'missing') {
-    if (isRoot) return { kind: 'text', text: NO_APPS }
-    if (path.names.length === 1) throw noFolderError(path)
+    if (isAppsRoot) return { kind: 'text', text: NO_APPS }
+    if (isAppFolder(path)) throw noFolderError(path)
     throw new ToolError(`There is no file or folder ${path.virtual}. Call ls with "${parentOf(path).virtual}" to see what is there.`)
   }
   if (tree.kind !== 'folder') {
     checkTextFile(path, tree)
     return { kind: 'search', file: true, files: [{ path, shown: path.virtual }], skips: { other: 0, large: 0, badNames: 0, overBudget: 0 }, more: false }
   }
-  if (isRoot && tree.entries.length === 0) return { kind: 'text', text: NO_APPS }
+  if (isAppsRoot && tree.entries.length === 0) return { kind: 'text', text: NO_APPS }
 
   const cut = tree.more ? cutListingNote('grep') : ''
   const notFolders = tree.entries.filter((entry) => entry.kind !== 'folder')
@@ -194,9 +197,9 @@ export function grepPlan({ path, include }: GrepCall, tree: AppsTree): GrepPlan 
     return { kind: 'text', text: `No file in ${path.virtual} has a name that matches ${JSON.stringify(include?.glob)} (${countOf(notFolders.length, 'file')}).${cut}` }
   }
 
-  // A shown path is the path after `/apps/`, as in a result of `find`: a
-  // list of the files of every app must not keep every app from Delete
-  // Unreferenced Apps (appNames.ts).
+  // A shown path is the path after the top folder, as in a result of
+  // `find`: a list of the files of every app must not keep every app from
+  // Delete Unreferenced Apps (appNames.ts).
   const entries = named.map((entry) => ({ entry, shown: [...path.names, entry.path].join('/') })).sort((a, b) => (a.shown < b.shown ? -1 : 1))
   const skips: GrepSkips = { other: 0, large: 0, badNames: 0, overBudget: 0 }
   const files: GrepPlanFile[] = []
@@ -295,7 +298,7 @@ export function grepText(call: GrepCall, plan: GrepSearch, outcome: GrepOutcome)
   }
   const lines = outcome.files.reduce((sum, file) => sum + file.matches, 0)
   const head = `${path.virtual}: ${countOf(lines, 'line')} in ${outcome.files.length} of ${countOf(outcome.searched, 'file')} ${lines === 1 ? 'matches' : 'match'} ${pattern} `
-    + `(paths after ${APPS_VIRTUAL_ROOT}/), by path.${cut}`
+    + `(paths after ${path.top.virtual}/), by path.${cut}`
   const blocks = outcome.files.flatMap((file) => (file.rows.length === 0 ? [] : ['', file.path, ...grepRowLines(file.rows, call.context)]))
   return withNotes([head, ...blocks], [slowLines, notShownText(outcome.files, false), cutLines, notSearched])
 }

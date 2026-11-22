@@ -552,6 +552,25 @@ describe('textForModel with the work folder of the conversation', () => {
   })
 })
 
+describe('textForModel with the folder of the libraries', () => {
+  it('names the folder of the libraries /libs in every form of its path, apart from the built-in apps beside it', () => {
+    const folders = { run: [], apps: ['/tmp/.mount_Dez1/usr/lib/Dez/builtin-apps'], libs: ['/tmp/.mount_Dez1/usr/lib/Dez/libs', '/usr/lib/Dez/libs'] }
+    const text = [
+      'Uncaught Error: no WebGL',
+      '    at new WebGLRenderer (file:///tmp/.mount_Dez1/usr/lib/Dez/libs/three/build/three.module.js:10:5)',
+      '    at main (file:///tmp/.mount_Dez1/usr/lib/Dez/builtin-apps/dez-media/main.ts:2:3)',
+      'see /usr/lib/Dez/libs/import_map.json',
+    ].join('\n')
+
+    expect(textForModel(text, folders)).toBe([
+      'Uncaught Error: no WebGL',
+      '    at new WebGLRenderer (file:///libs/three/build/three.module.js:10:5)',
+      '    at main (file:///apps/dez-media/main.ts:2:3)',
+      'see /libs/import_map.json',
+    ].join('\n'))
+  })
+})
+
 describe('endedRun', () => {
   it('gives the line of a run that ended with the code 0', () => {
     const output = written('log\n', protocolLine({ type: 'result', text: 'done' }))

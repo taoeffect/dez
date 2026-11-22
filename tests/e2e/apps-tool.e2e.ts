@@ -181,6 +181,38 @@ describe('apps tool', () => {
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 
+  it('changes the files of /work, the work folder of the conversation, and only reads /libs, the libraries that Dez ships', async () => {
+    await seedApp(appsDir, { name: 'store', description: 'Keeps data.', kind: 'script' }, { 'main.ts': 'export default () => 1\n' })
+    await submit(browser, 'Keep some data.')
+    const first = await chatRequest()
+    const workDir = appFilePath(setup.app.home, 'work', await activeConversationId(browser))
+    sendToolCalls(first.reply, [
+      appsCall('call_write', 'write', { path: '/work/data/a.json', content: '{}\n' }),
+      appsCall('call_mv', 'mv', { moves: [{ from: '/work/data/a.json', to: '/apps/store/a.json' }, { from: '/apps/store/main.ts', to: '/work/main.ts' }] }),
+      appsCall('call_rm_work', 'rm', { paths: ['/work'] }),
+      appsCall('call_ls_libs', 'ls', { path: '/libs' }),
+      appsCall('call_read_libs', 'read', { path: '/libs/import_map.json', ranges: [{ from_line: 1, to_line: 1 }] }),
+      appsCall('call_write_libs', 'write', { path: '/libs/x.js', content: 'x' }),
+    ])
+
+    const second = await chatRequest()
+    expect(toolResult(second, 'call_write')).toBe('Wrote the new file /work/data/a.json (3 B, 1 line).')
+    expect(toolResult(second, 'call_mv')).toBe('Did 2 of 2 moves.\n1. Done. Moved /work/data/a.json to /apps/store/a.json.\n2. Done. Moved /apps/store/main.ts to /work/main.ts.')
+    expect(fs.readFileSync(path.join(appsDir, 'store/a.json'), 'utf8')).toBe('{}\n')
+    expect(await filesIn(workDir)).toStrictEqual(['data', 'main.ts'])
+    // Only the user can open the work folder and what the tool made in it.
+    expect([workDir, path.join(workDir, 'data')].map((folder) => fs.statSync(folder).mode & 0o777)).toStrictEqual([0o700, 0o700])
+    expect(toolResult(second, 'call_rm_work')).toContain('/work is the work folder of this conversation, and rm does not delete it')
+    expect(toolResult(second, 'call_ls_libs')).toMatch(/^\/libs: \d+ folders and \d+ files \(name \| size\)\.\n(.*\n)*three\/ \| \d/)
+    expect(toolResult(second, 'call_read_libs')).toMatch(/^\/libs\/import_map\.json: line 1 of \d+ \(/)
+    expect(toolResult(second, 'call_write_libs')).toContain('/libs/x.js: /libs/ holds the libraries that Dez ships')
+    await expectReplyEnd(second)
+    // Dez logs the two calls that it refuses, and nothing else.
+    expect((await consoleErrors(browser)).map((error) => error.split('\n')[0].replace(/^The tool apps failed: ToolError: (\S+ \S+).*$/, '$1'))).toStrictEqual(['/work is', '/libs/x.js: /libs/'])
+
+    await fs.promises.rm(appsDir, { recursive: true, force: true })
+  })
+
   it('reads ranges of lines, gives the hint of edit in the first edit call of each tab, and cuts a long hunk to its ends', async () => {
     const items = Array.from({ length: 30 }, (_, index) => `item ${index + 1}`)
     const itemsText = `${items.join('\n')}\n`

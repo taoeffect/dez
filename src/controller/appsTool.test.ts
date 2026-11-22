@@ -8,7 +8,7 @@ import { showResultText } from '../model/tools/appShow'
 import { APPS_MAX_BYTES, APPS_MAX_FILE_BYTES, EDIT_HINT, withEditHint } from '../model/tools/appsTool'
 import { grepFiles, GREP_TIME_LIMIT_SECONDS, type GrepOutcome, type GrepRequest } from '../model/tools/grepMatch'
 import type { ToolRunResult } from '../model/tools/types'
-import { APP_DIR, appFiles, builtInAppFiles, callContext, fakeAppFiles, native, resetNative, running, STOP, type FakeAppFiles } from './testing'
+import { APP_DIR, appFiles, builtInAppFiles, callContext, CONVERSATION_WORK_FOLDER, fakeAppFiles, native, resetNative, running, STOP, type FakeAppFiles } from './testing'
 import type { ToolRunCall, ToolRunContext } from './tools'
 // Side-effect imports: register the dez.model/* selectors, which give the
 // sections of a tab, and the selector under test.
@@ -761,6 +761,18 @@ describe('apps grep', () => {
     expect(native.readFiles).toStrictEqual([{ root: 'resource', path: 'builtin-apps/dez-media/main.ts' }])
   })
 
+  it('searches /libs in the files that Dez ships', async () => {
+    fakeAppFiles({}, { 'libs/three/three.module.js': 'export const REVISION = "170"\n' })
+
+    expect((await apps('grep', { pattern: 'REVISION', path: '/libs' })).content).toBe([
+      '/libs: 1 line in 1 of 1 file matches "REVISION" (paths after /libs/), by path.',
+      '',
+      'three/three.module.js',
+      '1: export const REVISION = "170"',
+    ].join('\n'))
+    expect(native.readFiles).toStrictEqual([{ root: 'resource', path: 'libs/three/three.module.js' }])
+  })
+
   it('stops a search at the time limit', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     FakeGrepWorker.hangs = true
@@ -960,6 +972,54 @@ describe('apps show', () => {
     expect(result.isError).toBe(true)
     expect(result.content).toContain('The reply stopped before Dez could put the app into it')
     expect(result.content).not.toContain('Dez shows the app')
+  })
+})
+
+describe('/libs and /work', () => {
+  it('makes the work folder of the conversation for the user only at the first write in it', async () => {
+    const files = fakeAppFiles()
+
+    expect((await apps('ls', { path: '/work' })).content).toBe('/work is an empty folder.')
+    expect(await apps('write', { path: '/work/data/a.json', content: '{}\n' })).toStrictEqual({ content: 'Wrote the new file /work/data/a.json (3 B, 1 line).', isError: false })
+    expect(native.createdFolders).toStrictEqual([{ root: 'app', path: `${CONVERSATION_WORK_FOLDER}/data` }])
+    expect(textAt(files, `${CONVERSATION_WORK_FOLDER}/data/a.json`)).toBe('{}\n')
+    expect((await apps('read', { path: '/work/data/a.json' })).content).toBe('/work/data/a.json: line 1 of 1 (3 B)\n1: {}')
+  })
+
+  it('makes /work with mkdir, and moves files between /apps and /work', async () => {
+    const files = fakeAppFiles(appFiles('notes', { 'a.js': 'a\n' }))
+
+    expect((await apps('mkdir', { path: '/work' })).content).toBe('Made the folder /work.')
+    expect(native.createdFolders).toStrictEqual([{ root: 'app', path: CONVERSATION_WORK_FOLDER }])
+    expect((await apps('mv', { moves: [{ from: '/apps/notes/a.js', to: '/work/a.js' }] })).isError).toBe(false)
+    expect(textAt(files, `${CONVERSATION_WORK_FOLDER}/a.js`)).toBe('a\n')
+    expect((await apps('mv', { moves: [{ from: '/work/a.js', to: '/apps/notes/b.js' }] })).isError).toBe(false)
+    expect(textAt(files, 'apps/notes/b.js')).toBe('a\n')
+    expect(goneApps).toStrictEqual([])
+  })
+
+  it('deletes in /work, but not /work itself', async () => {
+    const files = fakeAppFiles({ [`${CONVERSATION_WORK_FOLDER}/old.json`]: '{}' })
+
+    expect((await apps('rm', { paths: ['/work'] })).content).toContain('/work is the work folder of this conversation, and rm does not delete it')
+    expect((await apps('rm', { paths: ['/work/old.json'] })).content).toContain('Deleted the file /work/old.json (2 B).')
+    expect(pathsIn(files, CONVERSATION_WORK_FOLDER)).toStrictEqual([`${CONVERSATION_WORK_FOLDER}/`])
+  })
+
+  it('reads and lists /libs in the files that Dez ships, and changes nothing there', async () => {
+    fakeAppFiles({}, { 'libs/three/three.module.js': 'export const REVISION = "170"\n' })
+
+    expect((await apps('ls', { path: '/libs' })).content).toBe('/libs: 1 folder and 0 files (name | size).\nthree/ | 1 file, 30 B')
+    expect((await apps('read', { path: '/libs/three/three.module.js' })).content).toContain('1: export const REVISION = "170"')
+    const refused = await apps('write', { path: '/libs/three/three.module.js', content: 'x' })
+    expect(refused.isError).toBe(true)
+    expect(refused.content).toContain('/libs/ holds the libraries that Dez ships')
+  })
+
+  it('tells that a /libs that is not there is a fault of Dez', async () => {
+    fakeAppFiles()
+
+    expect((await apps('ls', { path: '/libs' })).content).toContain('/libs is not there: Dez is not installed in full.')
   })
 })
 

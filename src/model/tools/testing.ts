@@ -140,7 +140,7 @@ export function folderTree(entries: Record<string, number | null | 'other'> = {}
  *  bytes of each file, by its path in the folder. The plan, the matching,
  *  and the text are the real ones, with no worker. */
 export function grepResult(parameters: Record<string, unknown>, files: Record<string, string | Uint8Array>): string {
-  const call = grepCall(appsArgs('grep', parameters))
+  const call = grepCall(appsArgs('grep', parameters), CONVERSATION_ID)
   const contents = Object.fromEntries(Object.entries(files).map(([path, content]) => [path, typeof content === 'string' ? textBytes(content) : content]))
   const plan = grepPlan(call, folderTree(Object.fromEntries(Object.entries(contents).map(([path, bytes]) => [path, bytes.length]))))
   if (plan.kind === 'text') return plan.text

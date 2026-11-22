@@ -23,7 +23,7 @@ import {
   type CheckedInvokeCall,
   type InvokeCall,
 } from '../model/tools/appInvoke'
-import { APPS_ROOT, APPS_TOOL, BUILT_IN_APPS_FOLDER } from '../model/tools/appsTool'
+import { APPS_ROOT, APPS_TOOL, BUILT_IN_APPS_FOLDER, LIBS_ROOT } from '../model/tools/appsTool'
 import { jobTimedOutText } from '../model/tools/jobs'
 import { endedRun, JsEvalOutput, textForModel } from '../model/tools/jsEval'
 import { PROGRAM_READS_INPUTS, programNotStartedText, type KeptFile } from '../model/tools/programRuns'
@@ -185,8 +185,9 @@ export function runAppJob(call: InvokeCall, conversationId: string, signal: Abor
     const apps = builtIn
       ? await folderPathForms(BUILT_IN_APPS_FOLDER, 'resource', APPS_TOOL.name)
       : await folderPathForms(APPS_ROOT.file, 'app', APPS_TOOL.name)
+    const libs = await folderPathForms(LIBS_ROOT.file, LIBS_ROOT.root, APPS_TOOL.name)
     const work = await conversationWorkForms(conversationId, APPS_TOOL.name)
-    const forModel = (text: string): string => textForModel(text, { run: runFolder.forms, apps: apps.forms, work: work.forms })
+    const forModel = (text: string): string => textForModel(text, { run: runFolder.forms, apps: apps.forms, libs: libs.forms, work: work.forms })
 
     const [appName] = call.app.names
     const inputs = await inputCopies(call.inputs, folder, signal)

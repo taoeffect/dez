@@ -4,7 +4,7 @@ import { countOf, countText } from '../../utils/countText'
 import { regExpSource } from '../../utils/regExpSource'
 import { endOf, startOf } from '../../utils/textCut'
 import { shownAppNames, shownAppText } from './appShow'
-import { APPS_INVOKE, APPS_TOOL, APPS_VIRTUAL_ROOT } from './appsTool'
+import { APPS_INVOKE, APPS_TOOL, APPS_VIRTUAL_ROOT, LIBS_VIRTUAL_ROOT } from './appsTool'
 import { WORK_VIRTUAL_ROOT } from './conversationWork'
 import { jobStartedText, madeAssetIds, madeAssetText, type JobAssetKind } from './jobs'
 import RUNNER from './jsEvalRunner.js?raw'
@@ -376,6 +376,9 @@ export interface RunFolderForms {
   /** The folder of the apps; only a run of an app has it (its code can
    *  open the folder of its app). */
   apps?: readonly string[]
+  /** The folder of the libraries that Dez ships, in its files; the code
+   *  of a run can import from it. */
+  libs?: readonly string[]
   /** The work folder of the conversation (conversationWork.ts); a run
    *  with no conversation has none. */
   work?: readonly string[]
@@ -383,17 +386,19 @@ export interface RunFolderForms {
 
 /** `text` of a run with no path of this computer: the run folder is
  *  `RUN_FOLDER_NAME`, the folder of the apps is `APPS_VIRTUAL_ROOT`, the
- *  work folder of the conversation is `WORK_VIRTUAL_ROOT`, and any other
- *  local path goes as its known start (`withoutLocalPaths`; the path of
- *  the Deno program is one, which the code can read with no permission).
+ *  folder of the libraries is `LIBS_VIRTUAL_ROOT`, the work folder of the
+ *  conversation is `WORK_VIRTUAL_ROOT`, and any other local path goes as
+ *  its known start (`withoutLocalPaths`; the path of the Deno program is
+ *  one, which the code can read with no permission).
  *
  *  Deno writes a path in a URL with escapes (a space is `%20`). The URL
  *  form of the run folder is found by the name of the folder, a random id
- *  that no other text holds. The folder of the apps and the work folder
- *  are found in each form that a URL can give their paths, so a path of a
- *  file of an app or of the work folder reads as the `apps` tool names it
- *  (`/apps/<app>/main.ts`, `/work/data.json`), also in the stack of an
- *  error, which names a file as a URL.
+ *  that no other text holds. The folder of the apps, the folder of the
+ *  libraries, and the work folder are found in each form that a URL can
+ *  give their paths, so a path of a file in them reads as the `apps` tool
+ *  names it (`/apps/<app>/main.ts`, `/libs/<lib>/index.js`,
+ *  `/work/data.json`), also in the stack of an error, which names a file
+ *  as a URL.
  *
  *  A text goes through this as a whole, before any cut: a cut path would
  *  get past it. */
@@ -401,6 +406,7 @@ export function textForModel(text: string, folders: RunFolderForms): string {
   let result = text
   const roots = [
     ...(folders.apps ?? []).map((path) => ({ path, name: APPS_VIRTUAL_ROOT })),
+    ...(folders.libs ?? []).map((path) => ({ path, name: LIBS_VIRTUAL_ROOT })),
     ...(folders.work ?? []).map((path) => ({ path, name: WORK_VIRTUAL_ROOT })),
   ]
   // The longer path first: one form of a path can be the start of another.

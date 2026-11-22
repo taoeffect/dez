@@ -1,5 +1,6 @@
 import sbp from '@sbp/sbp'
 import { hasBridgedCalls } from '../model/chat/bridgedCalls'
+import { LIBS_ROOT } from '../model/tools/appsTool'
 import {
   codeRunDescription,
   JS_EVAL_CODE_FILE,
@@ -89,7 +90,11 @@ export function runJsEval(call: JsEvalCall, signal: AbortSignal, context: ToolRu
   return inWorkFolder(async (folder) => {
     const work = await conversationWorkForms(context.conversationId, JS_EVAL_TOOL.name)
     await writeRunFiles(folder, codeRunDescription(work.joined), [{ name: JS_EVAL_CODE_FILE, text: jsEvalCodeFile(call.code) }], signal, JS_EVAL_TOOL.name)
-    const folders = { run: (await folderPathForms(folder, 'cache', JS_EVAL_TOOL.name)).forms, work: work.forms }
+    const folders = {
+      run: (await folderPathForms(folder, 'cache', JS_EVAL_TOOL.name)).forms,
+      libs: (await folderPathForms(LIBS_ROOT.file, LIBS_ROOT.root, JS_EVAL_TOOL.name)).forms,
+      work: work.forms,
+    }
     const output = new JsEvalOutput()
     const bridge = new ToolBridge(context, folders, signal)
     // `stdin`: the answers of the tool calls go to the input of the program.

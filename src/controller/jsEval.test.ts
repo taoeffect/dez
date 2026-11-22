@@ -28,6 +28,7 @@ import {
   native,
   refusalOf,
   resetNative,
+  RESOURCE_DIR,
   running,
   STOP,
   stubToolRuns,
@@ -108,21 +109,21 @@ describe('runJsEval', () => {
     expect(await runJsEval(CALL, running(), callContext())).toStrictEqual({ content: '2\n\nConsole output of the code:\nstep 1\na warning', isError: false })
   })
 
-  it('gives the error result of code that threw, with /run and /work for the real paths of the run folder and the work folder and for the paths that Dez made', async () => {
+  it('gives the error result of code that threw, with /run, /work, and /libs for the real paths of the run folder, the work folder, and the libraries and for the paths that Dez made', async () => {
     native.canonicalPath = (path) => path.replace(/^\/home\/u\/\.(cache|config)/, '/mnt/disk/$1')
     const work = `${APP_DIR}/${CONVERSATION_WORK_FOLDER}`
     native.program = async ({ folder }, onOutput) => {
       const joined = `${CACHE_DIR}/${folder}`
       onOutput({ stream: 'stdout', text: `cwd ${native.canonicalPath(joined)}, made as ${joined}\n` })
       onOutput({ stream: 'stdout', text: `kept ${native.canonicalPath(work)}/a.json and ${work}/b.json\n` })
-      onOutput({ stream: 'stdout', text: protocolLine({ type: 'error', text: `Error: x\n    at default (file://${native.canonicalPath(joined)}/code.ts:1:41)` }) })
+      onOutput({ stream: 'stdout', text: protocolLine({ type: 'error', text: `Error: x\n    at f (file://${RESOURCE_DIR}/libs/three/x.js:3:1)\n    at default (file://${native.canonicalPath(joined)}/code.ts:1:41)` }) })
       return ENDED
     }
 
     const result = await runJsEval(CALL, running(), callContext())
 
     expect(result).toStrictEqual({
-      content: 'The code threw an error:\nError: x\n    at default (file:///run/code.ts:1:41)\n\nConsole output of the code:\ncwd /run, made as /run\nkept /work/a.json and /work/b.json',
+      content: 'The code threw an error:\nError: x\n    at f (file:///libs/three/x.js:3:1)\n    at default (file:///run/code.ts:1:41)\n\nConsole output of the code:\ncwd /run, made as /run\nkept /work/a.json and /work/b.json',
       isError: true,
     })
     deletedWorkFolder()
