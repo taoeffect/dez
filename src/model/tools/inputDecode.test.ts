@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { invokeCall } from './appInvoke'
+import type { AppKind, AppManifest } from './appManifest'
 import { DECODE_MAX_RATE, DECODE_MAX_SIDE } from './appsTool'
 import type { ClipProbeFacts } from './assetFacts'
 import {
@@ -15,7 +16,7 @@ import {
   type ClipDecodePlan,
   type InputDecode,
 } from './inputDecode'
-import { appsArgs, CONVERSATION, notesManifest, refusal, textBytes } from './testing'
+import { appsArgs, CONVERSATION, refusal } from './testing'
 
 const NOT_STARTED = 'Dez started no job.'
 const BOTH: InputDecode = { audio: { rate: 22050 }, frames: { width: 96, height: 54, fps: null } }
@@ -24,10 +25,15 @@ function call(parameters: Record<string, unknown> = {}) {
   return invokeCall(appsArgs('invoke', { name: 'notes', ...parameters }), CONVERSATION)
 }
 
-// The bytes of a manifest of the app `notes` of `kind` with the field
-// "decode" of `decode`.
-function manifestWith(decode: unknown, kind = 'script'): Uint8Array {
-  return textBytes(JSON.stringify({ name: 'notes', description: 'Keeps notes.', kind, decode }))
+// The manifest of the app `notes` of `kind`, with no field "decode".
+function notes(kind: AppKind): AppManifest {
+  return { name: 'notes', description: 'Keeps notes.', kind }
+}
+
+// The manifest of the app `notes` of `kind` with the field "decode" of
+// `decode`.
+function manifestWith(decode: unknown, kind: AppKind = 'script'): AppManifest {
+  return { ...notes(kind), decode }
 }
 
 const VIDEO_WITH_SOUND: ClipProbeFacts = {
@@ -74,10 +80,8 @@ describe('callDecode', () => {
 describe('manifestDecode', () => {
   const { manifest } = call()
 
-  it('gives null for a manifest with no field "decode", and for bytes that are no JSON object', () => {
-    expect(manifestDecode(notesManifest('script'), manifest)).toBeNull()
-    expect(manifestDecode(textBytes('{"name": '), manifest)).toBeNull()
-    expect(manifestDecode(null, manifest)).toBeNull()
+  it('gives null for a manifest with no field "decode"', () => {
+    expect(manifestDecode(notes('script'), manifest)).toBeNull()
   })
 
   it('takes a valid field', () => {
@@ -97,22 +101,22 @@ describe('runDecode', () => {
   const fromManifest = manifestWith({ audio: { rate: 22050 } })
 
   it('takes the field of the manifest when the call has no decode, and decodes nothing when neither has one', () => {
-    expect(runDecode(call(), 'script', fromManifest)).toStrictEqual({ audio: { rate: 22050 }, frames: null })
-    expect(runDecode(call(), 'script', notesManifest('script'))).toStrictEqual(NO_DECODE)
+    expect(runDecode(call(), fromManifest)).toStrictEqual({ audio: { rate: 22050 }, frames: null })
+    expect(runDecode(call(), notes('script'))).toStrictEqual(NO_DECODE)
   })
 
   it('takes the decode of the call in place of the field as a whole, and {} decodes nothing', () => {
-    expect(runDecode(call({ decode: { frames: { width: 12, height: 9 } } }), 'script', fromManifest)).toStrictEqual({ audio: null, frames: { width: 12, height: 9, fps: null } })
-    expect(runDecode(call({ decode: {} }), 'script', fromManifest)).toStrictEqual(NO_DECODE)
+    expect(runDecode(call({ decode: { frames: { width: 12, height: 9 } } }), fromManifest)).toStrictEqual({ audio: null, frames: { width: 12, height: 9, fps: null } })
+    expect(runDecode(call({ decode: {} }), fromManifest)).toStrictEqual(NO_DECODE)
   })
 
   it('does not read a field that is not valid when the call has its own decode', () => {
-    expect(runDecode(call({ decode: {} }), 'script', manifestWith('all'))).toStrictEqual(NO_DECODE)
+    expect(runDecode(call({ decode: {} }), manifestWith('all'))).toStrictEqual(NO_DECODE)
   })
 
   it('refuses a decode of a UI app, from the call or from the manifest', () => {
-    const fromCall = refusal(() => runDecode(call({ decode: { audio: { rate: 8000 } } }), 'ui', notesManifest('ui')))
-    const fromField = refusal(() => runDecode(call(), 'ui', manifestWith({ audio: { rate: 8000 } }, 'ui')))
+    const fromCall = refusal(() => runDecode(call({ decode: { audio: { rate: 8000 } } }), notes('ui')))
+    const fromField = refusal(() => runDecode(call(), manifestWith({ audio: { rate: 8000 } }, 'ui')))
 
     expect(fromCall).toContain('/apps/notes is a UI app, and only a script app takes `decode`')
     expect(fromCall).toContain('Call again without `decode`.')
@@ -122,7 +126,7 @@ describe('runDecode', () => {
   })
 
   it('lets a UI app run with a decode that asks for nothing', () => {
-    expect(runDecode(call({ decode: {} }), 'ui', manifestWith({ audio: { rate: 8000 } }, 'ui'))).toStrictEqual(NO_DECODE)
+    expect(runDecode(call({ decode: {} }), manifestWith({ audio: { rate: 8000 } }, 'ui'))).toStrictEqual(NO_DECODE)
   })
 })
 

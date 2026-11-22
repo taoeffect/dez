@@ -1,5 +1,6 @@
 import { byteSizeText } from '../../utils/byteSize'
 import { countOf, countText } from '../../utils/countText'
+import { isJsonObject } from '../../utils/json'
 import { oneLineCut } from '../../utils/oneLineCut'
 import { startOf } from '../../utils/textCut'
 import {
@@ -13,7 +14,7 @@ import {
   type AppsTree,
   type AppsTreeEntry,
 } from './appsTool'
-import { isObject, isWholeNumberIn, unknownFieldsProblem } from './inputDecode'
+import { isWholeNumberIn, unknownFieldsProblem } from './inputDecode'
 import type { KeptFile } from './programRuns'
 
 // The frame sequences of a run of a script app (`apps invoke`): a folder
@@ -48,10 +49,13 @@ export const FRAMES_FILE_MAX_BYTES = 64 * 1024
 /** The state of a job while Dez encodes the frame sequences of its run. */
 export const FRAMES_ENCODE_STATE = 'Dez encodes the frame sequences of the output folder into clips.'
 
-/** The format of the frames of a sequence: PNG files, or raw RGBA (4
- *  bytes for each pixel, row after row, with no header). The ending of
- *  each frame file. */
-export type FrameFormat = 'png' | 'rgba'
+// The formats of the frames of a sequence: PNG files, or raw RGBA (4 bytes
+// for each pixel, row after row, with no header). Each is the ending of a
+// frame file.
+const FRAME_FORMATS = ['png', 'rgba'] as const
+
+/** The format of the frames of a sequence (`FRAME_FORMATS`). */
+export type FrameFormat = typeof FRAME_FORMATS[number]
 
 /** A frame sequence that passed its checks: the facts of its frames.json
  *  and the format of its frames. */
@@ -69,7 +73,7 @@ export interface FrameSequence {
 // fixed length would make the order of the names differ from the order of
 // the numbers.
 const FRAME_DIGITS = 6
-const FRAME_NAME = /^(\d{6})\.(png|rgba)$/
+const FRAME_NAME = new RegExp(`^(\\d{${FRAME_DIGITS}})\\.(${FRAME_FORMATS.join('|')})$`)
 
 const FRAMES_FIELDS = ['fps', 'width', 'height', 'count', 'alpha']
 
@@ -77,7 +81,8 @@ const FRAMES_FIELDS = ['fps', 'width', 'height', 'count', 'alpha']
 // can make a name of any length.
 const SHOWN_NAME_CHARS = 100
 
-const FOLDER_RULE = `a frame sequence holds only ${FRAMES_FILE} and its frames, named 000000.png, 000001.png, and so on, or 000000.rgba, 000001.rgba, and so on`
+const FOLDER_RULE = `a frame sequence holds only ${FRAMES_FILE} and its frames, named `
+  + FRAME_FORMATS.map((format) => `${frameFileName(0, format)}, ${frameFileName(1, format)}, and so on`).join(', or ')
 
 /** Whether the entry `name` of the output folder, a folder, is a frame
  *  sequence. */
@@ -119,7 +124,7 @@ function parsedFacts(bytes: Uint8Array): Omit<FrameSequence, 'format'> | string 
   } catch {
     value = undefined
   }
-  if (!isObject(value)) return `it must be one JSON object, as in ${FRAMES_JSON_EXAMPLE}`
+  if (!isJsonObject(value)) return `it must be one JSON object, as in ${FRAMES_JSON_EXAMPLE}`
   const unknown = unknownFieldsProblem(value, FRAMES_FIELDS, 'it')
   if (unknown !== null) return unknown
   const { fps, width, height, count, alpha } = value

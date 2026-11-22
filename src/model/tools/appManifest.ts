@@ -51,7 +51,11 @@ export const MANIFEST_MAX_BYTES = 16 * 1024
 /** The most characters of the description that `apps init` takes. */
 export const MAX_DESCRIPTION_LENGTH = 200
 
-const manifestSchema = z.object({
+// More fields than these are no error, and they stay as the file has them:
+// only a run reads `decode` (`manifestDecode`, inputDecode.ts) and
+// `native` (`runNativeCanvas`, appInvoke.ts), from the one parse of its
+// manifest.
+const manifestSchema = z.looseObject({
   name: z.string(),
   description: z.string(),
   kind: z.enum(APP_KINDS),
@@ -62,7 +66,7 @@ export type AppManifest = z.infer<typeof manifestSchema>
 /** The one native library that the manifest of a script app can ask for,
  *  with the field `"native": ["skia-canvas"]`: a run of the app then may
  *  load the native file of skia-canvas in /libs (`nativeCanvas`,
- *  bundled_tools.rs). `manifestSchema` does not read the field, so a list
+ *  bundled_tools.rs). `manifestSchema` does not check the field, so a list
  *  of the apps still lists an app whose field is not valid; only a run
  *  checks it (`runNativeCanvas`, appInvoke.ts). */
 export const NATIVE_CANVAS_LIBRARY = 'skia-canvas'
@@ -78,7 +82,7 @@ export function appManifestText({ name, description, kind }: AppManifest): strin
 
 /** The manifest that the text of a manifest file holds; null for a text
  *  that is no JSON, or that lacks a field or has one of a wrong type. More
- *  fields than Dez knows are no error: they are left out. */
+ *  fields than Dez knows are no error: they stay as unknown values. */
 export function parseAppManifest(text: string): AppManifest | null {
   let value: unknown
   try {

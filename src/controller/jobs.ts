@@ -200,30 +200,41 @@ export async function discardMadeAssets(assets: readonly MadeAsset[]): Promise<v
   }
 }
 
-/** Puts the assets of an ended job into the reply with `writers`, under the
- *  name of the job's tool, with the job's id (`madeBy`), and with the model
- *  that made them when the job has one, and tells the new id of each. All
- *  the writes are in one tick. An asset that the reply takes no more (its
- *  writer gives null) has no id, and its file is deleted. The assets of a
- *  job that hides them get the job's id as their hidden marker too.
- *
- *  An asset with marks of its own (`MadeAsset`: a tool call of the code of
- *  the job made it) keeps its tool and its model, is hidden when its call
- *  made it as a part of its work, and its line names its handle. */
-export async function writeJobAssets(job: EndedJob, writers: Pick<ToolRunContext, 'writeImage' | 'writeClip'>): Promise<WrittenJobAsset[]> {
+/** Puts made assets into the reply with `writers`, each with the options
+ *  that `options` gives it, and tells the new id of each. All the writes
+ *  are in one tick. An asset that the reply takes no more (its writer
+ *  gives null) has no id, and its file is deleted. */
+export async function writeMadeAssets(
+  assets: readonly MadeAsset[],
+  writers: Pick<ToolRunContext, 'writeImage' | 'writeClip'>,
+  options: (asset: MadeAsset) => { tool?: string, model?: ModelRef, madeBy?: string, hidden?: string } = () => ({}),
+): Promise<WrittenJobAsset[]> {
   const written: WrittenJobAsset[] = []
   const lost: MadeAsset[] = []
-  for (const asset of job.assets) {
-    const model = asset.model ?? job.model
-    const options = { tool: asset.tool ?? job.tool, madeBy: job.id, ...(model && { model }), ...((job.hidesAssets || asset.hidden === true) && { hidden: job.id }) }
+  for (const asset of assets) {
     const id = asset.kind === 'image'
-      ? writers.writeImage(asset.path, options)
-      : writers.writeClip(asset.clip, { ...options, ...(asset.jobId !== undefined && { jobId: asset.jobId }) })
+      ? writers.writeImage(asset.path, options(asset))
+      : writers.writeClip(asset.clip, { ...options(asset), ...(asset.jobId !== undefined && { jobId: asset.jobId }) })
     if (id === null) lost.push(asset)
     written.push({ kind: asset.kind === 'image' ? 'image' : asset.clip.kind, id, ...(asset.handle !== undefined && { handle: asset.handle }) })
   }
   await discardMadeAssets(lost)
   return written
+}
+
+/** Puts the assets of an ended job into the reply (`writeMadeAssets`),
+ *  under the name of the job's tool, with the job's id (`madeBy`), and
+ *  with the model that made them when the job has one. The assets of a
+ *  job that hides them get the job's id as their hidden marker too.
+ *
+ *  An asset with marks of its own (`MadeAsset`: a tool call of the code of
+ *  the job made it) keeps its tool and its model, is hidden when its call
+ *  made it as a part of its work, and its line names its handle. */
+export function writeJobAssets(job: EndedJob, writers: Pick<ToolRunContext, 'writeImage' | 'writeClip'>): Promise<WrittenJobAsset[]> {
+  return writeMadeAssets(job.assets, writers, (asset) => {
+    const model = asset.model ?? job.model
+    return { tool: asset.tool ?? job.tool, madeBy: job.id, ...(model && { model }), ...((job.hidesAssets || asset.hidden === true) && { hidden: job.id }) }
+  })
 }
 
 // Which jobs a caller sees (`ToolJobs`): true for a job of the view.

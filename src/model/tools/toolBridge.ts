@@ -1,6 +1,6 @@
 import { mapJsonStrings } from '../../utils/json'
 import { oneLineCut } from '../../utils/oneLineCut'
-import { findAssetMentions } from '../chat/imageMentions'
+import { findAssetMentions, mentionRegExp } from '../chat/imageMentions'
 import { APP_RUN_MAX_TOOL_CALLS, APPS_INVOKE, APPS_SHOW, APPS_TOOL } from './appsTool'
 import { checkArgumentValues } from './arguments'
 import { JS_EVAL_MAX_TOOL_CALLS, JS_EVAL_TOOL, textForModel, type JsEvalCallLine, type RunFolderForms } from './jsEval'
@@ -110,17 +110,12 @@ export function assetHandle(number: number): string {
   return `&${number}`
 }
 
+// The form of a handle (`assetHandle`).
+const HANDLE_SOURCE = String.raw`&[1-9]\d*`
 // A handle as the whole of a text, with an `@` or with none (`&1`, `@&1`).
-const WHOLE_HANDLE = /^(@?)&([1-9]\d*)$/
-
-// The chars of a word, as for a mention (chat/imageMentions.ts).
-const WORD_CHARS = String.raw`\p{L}\p{M}\p{N}_`
-// A handle as a mention in a text (`@&1`), by the rules of a mention: no
-// word char comes before the `@` or after the number, and no `-` that
-// joins it to a word. The regex takes the char before the `@` into the
-// match, in place of a lookbehind, which older WebKit versions cannot
-// parse.
-const HANDLE_MENTION = new RegExp(String.raw`(^|[^${WORD_CHARS}])@&([1-9]\d*)(?![${WORD_CHARS}]|-[${WORD_CHARS}])`, 'gu')
+const WHOLE_HANDLE = new RegExp(`^(@?)(${HANDLE_SOURCE})$`)
+// A handle as a mention in a text (`@&1`), by the rules of a mention.
+const HANDLE_MENTION = mentionRegExp(HANDLE_SOURCE)
 
 // `text` with the id of each handle in it: a whole text that is a handle
 // becomes the id (`&1` → `d`, `@&1` → `@d`), and each handle mention in a
@@ -128,9 +123,9 @@ const HANDLE_MENTION = new RegExp(String.raw`(^|[^${WORD_CHARS}])@&([1-9]\d*)(?!
 // ids that stand for the handles, in the order of the handles. A handle
 // of no asset stays, and goes into `unknown`.
 function withHandleIds(text: string, ids: readonly string[], unknown: Set<string>): string {
-  const idOf = (number: string): string | undefined => {
-    const id = ids[Number(number) - 1]
-    if (id === undefined) unknown.add(assetHandle(Number(number)))
+  const idOf = (handle: string): string | undefined => {
+    const id = ids[Number(handle.slice(1)) - 1]
+    if (id === undefined) unknown.add(handle)
     return id
   }
   const whole = WHOLE_HANDLE.exec(text.trim())
@@ -138,8 +133,8 @@ function withHandleIds(text: string, ids: readonly string[], unknown: Set<string
     const id = idOf(whole[2])
     return id === undefined ? text : `${whole[1]}${id}`
   }
-  return text.replace(HANDLE_MENTION, (match, before: string, number: string) => {
-    const id = idOf(number)
+  return text.replace(HANDLE_MENTION, (match, before: string, handle: string) => {
+    const id = idOf(handle)
     return id === undefined ? match : `${before}@${id}`
   })
 }

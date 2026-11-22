@@ -41,7 +41,7 @@ import { assetBlob, storeCheckedFile, storeSave, type StoredSave } from './appBr
 import { factsOf, readableManifestBytes } from './appsTool'
 import { encodedSequence } from './frameSequences'
 import { decodeClips, type DecodeRun } from './inputDecode'
-import { discardMadeAssets, type JobOutcome, type MadeAsset, type ToolJobs } from './jobs'
+import { discardMadeAssets, writeMadeAssets, type JobOutcome, type MadeAsset, type ToolJobs } from './jobs'
 import { moduleRun, writeRunFiles } from './jsEval'
 import type { BundledToolInput, FileTree } from './nativeTypes'
 import { clipInputFile, conversationWorkForms, folderPathForms, imageInputAsIs, inWorkFolder, newGeneratedFile, runProgram } from './programRuns'
@@ -95,13 +95,14 @@ import type { ToolRunContext } from './tools'
  *  cannot have (`runDecode`), and for a field "native" of its manifest
  *  that is not valid (`runNativeCanvas`).
  *
- *  Each fact is one exact read of its path, and not from a listing of the
- *  app: the code of an app can make more files than a listing holds. */
+ *  The manifest is parsed once, and each check reads its fields. Each
+ *  fact is one exact read of its path, and not from a listing of the app:
+ *  the code of an app can make more files than a listing holds. */
 export async function checkedAppRun(call: InvokeCall): Promise<CheckedInvokeCall> {
   const [app, manifest, main, index] = await Promise.all([call.app, call.manifest, call.main, call.index].map(factsOf))
   const manifestBytes = await readableManifestBytes(call.manifest, manifest)
-  const kind = checkInvokeTarget(call, { app, manifest, manifestBytes, main, index })
-  return { ...call, kind, decode: runDecode(call, kind, manifestBytes), nativeCanvas: runNativeCanvas(call, kind, manifestBytes) }
+  const appManifest = checkInvokeTarget(call, { app, manifest, manifestBytes, main, index })
+  return { ...call, kind: appManifest.kind, decode: runDecode(call, appManifest), nativeCanvas: runNativeCanvas(call, appManifest) }
 }
 
 // Gets the inputs of a call of the tool `toolName` ready. It gives the
@@ -378,20 +379,11 @@ export async function runAliasCall(
   signal.addEventListener('abort', stop, { once: true })
   try {
     const { text, isError, assets } = await runAppJob(call, caller, conversationId, clock.signal, () => {}, () => {})
-    const lines: string[] = []
-    const lost: MadeAsset[] = []
-    for (const asset of assets) {
-      const kind = asset.kind === 'image' ? 'image' : asset.clip.kind
-      const id = asset.kind === 'image' ? writers.writeImage(asset.path) : writers.writeClip(asset.clip)
-      if (id === null) {
-        lost.push(asset)
-        lines.push(`The reply stopped before Dez could add the ${ASSET_NAMES[kind]} to it, so there is no new ${ASSET_NAMES[kind]}. This is not a fault of the call.`)
-      } else {
-        lines.push(`${madeAssetText(kind, id)}.`)
-      }
-    }
-    await discardMadeAssets(lost)
-    return { content: [...(text.trim() === '' ? [] : [text]), ...lines].join('\n'), isError: isError || lost.length > 0 }
+    const written = await writeMadeAssets(assets, writers)
+    const lines = written.map(({ kind, id }) => (id === null
+      ? `The reply stopped before Dez could add the ${ASSET_NAMES[kind]} to it, so there is no new ${ASSET_NAMES[kind]}. This is not a fault of the call.`
+      : `${madeAssetText(kind, id)}.`))
+    return { content: [...(text.trim() === '' ? [] : [text]), ...lines].join('\n'), isError: isError || written.some(({ id }) => id === null) }
   } catch (error) {
     if (clock.signal.aborted && !signal.aborted) return { content: caller.texts.timedOut(call.timeoutMs, APP_RUNS_STATE), isError: true }
     throw error

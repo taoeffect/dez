@@ -1778,14 +1778,14 @@ export function hasReadableManifest(tree: AppsTree): boolean {
 
 const MANIFEST_NEEDS = `a JSON object with "name", "description", and "kind", which is ${APP_KINDS.map((kind) => `"${kind}"`).join(' or ')}`
 
-/** The kind of the app at `app`, as its manifest tells it: the first
+/** The manifest of the app at `app`, with the kind of the app: the first
  *  check of a subcommand that works only on one kind of app (`invoke`,
  *  `show`). `facts` is what is at `manifest`, the path of the manifest,
  *  and `bytes` are the bytes of that file, null when Dez did not read it
  *  (`isReadableManifest`). Throws a `ToolError` for a manifest that is
  *  missing, that Dez does not read, or that is not valid; `notDone` is its
  *  last sentence, which tells what Dez did not do. */
-export function checkedAppKind(app: AppsPath, manifest: AppsPath, facts: PathFacts, bytes: Uint8Array | null, notDone: string): AppKind {
+export function checkedManifest(app: AppsPath, manifest: AppsPath, facts: PathFacts, bytes: Uint8Array | null, notDone: string): AppManifest {
   if (facts.kind === 'missing') {
     throw new ToolError(`The app ${app.virtual} has no ${MANIFEST_FILE}, so Dez does not know its kind. Write ${manifest.virtual}: ${MANIFEST_NEEDS}. ${notDone}`)
   }
@@ -1797,13 +1797,13 @@ export function checkedAppKind(app: AppsPath, manifest: AppsPath, facts: PathFac
   if (!parsed) {
     throw new ToolError(`${manifest.virtual} is not valid, so Dez does not know the kind of the app. Write it again: ${MANIFEST_NEEDS}. ${notDone}`)
   }
-  return parsed.kind
+  return parsed
 }
 
 /** Throws a `ToolError` for a built-in app of the kind `ui`: Dez ships
  *  only script apps, and no app frame serves the files of the resource
  *  root (src-tauri/src/app_frames.rs). `notDone` is the last sentence of
- *  the text, as in `checkedAppKind`. */
+ *  the text, as in `checkedManifest`. */
 export function checkBuiltInKind(app: AppsPath, kind: AppKind, notDone: string): void {
   if (app.root !== 'resource' || kind !== 'ui') return
   throw new ToolError(`${app.virtual} is a built-in app of Dez with the kind "ui", and Dez shows and runs no built-in UI app. `

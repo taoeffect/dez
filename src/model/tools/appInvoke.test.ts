@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { byteSizeText } from '../../utils/byteSize'
 import { ALIAS_TIMEOUT_MS, aliasRunTexts, AUDIO_ALIASES, VIDEO_ALIASES, type AppAlias } from './appAliases'
 import { AppCallError } from './appBridge'
-import { APP_KINDS, MANIFEST_MAX_BYTES } from './appManifest'
+import { APP_KINDS, MANIFEST_MAX_BYTES, type AppKind, type AppManifest } from './appManifest'
 import {
   aliasInvokeCall,
   APP_OUTPUT_LISTED_ENTRIES,
@@ -203,13 +203,13 @@ describe('checkInvokeTarget', () => {
   const call = invoke({ name: 'notes' })
   const check = (changes: Partial<InvokeTarget>) => refusal(() => checkInvokeTarget(call, target(changes)))
 
-  it('takes a script app with a main file, and a UI app with a page, and tells the kind', () => {
-    expect(checkInvokeTarget(call, target())).toBe('script')
-    expect(checkInvokeTarget(call, uiTarget())).toBe('ui')
+  it('takes a script app with a main file, and a UI app with a page, and gives the manifest with the kind', () => {
+    expect(checkInvokeTarget(call, target())).toStrictEqual({ name: 'notes', description: 'Keeps notes.', kind: 'script' })
+    expect(checkInvokeTarget(call, uiTarget()).kind).toBe('ui')
   })
 
   it('runs a built-in script app, and refuses a built-in UI app as a fault of Dez', () => {
-    expect(checkInvokeTarget(invoke({ name: 'dez-media' }), target())).toBe('script')
+    expect(checkInvokeTarget(invoke({ name: 'dez-media' }), target()).kind).toBe('script')
     const text = refusal(() => checkInvokeTarget(invoke({ name: 'dez-board' }), uiTarget()))
     expect(text).toContain('/apps/dez-board is a built-in app of Dez with the kind "ui"')
     expect(text).toContain('This is a fault of Dez, not of your call: tell the user.')
@@ -268,13 +268,13 @@ describe('checkInvokeTarget', () => {
 
 describe('runNativeCanvas', () => {
   const call = invoke({ name: 'notes' })
-  const manifestWith = (native: unknown, kind = 'script') => textBytes(JSON.stringify({ name: 'notes', description: 'Draws notes.', kind, native }))
+  const manifestWith = (native: unknown, kind: AppKind = 'script'): AppManifest => ({ name: 'notes', description: 'Draws notes.', kind, native })
 
   it('lets a script app load skia-canvas only when its manifest asks for it', () => {
-    expect(runNativeCanvas(call, 'script', manifestWith(['skia-canvas']))).toBe(true)
-    expect(runNativeCanvas(call, 'script', manifestWith(['skia-canvas', 'skia-canvas']))).toBe(true)
-    expect(runNativeCanvas(call, 'script', manifestWith([]))).toBe(false)
-    expect(runNativeCanvas(call, 'script', notesManifest('script'))).toBe(false)
+    expect(runNativeCanvas(call, manifestWith(['skia-canvas']))).toBe(true)
+    expect(runNativeCanvas(call, manifestWith(['skia-canvas', 'skia-canvas']))).toBe(true)
+    expect(runNativeCanvas(call, manifestWith([]))).toBe(false)
+    expect(runNativeCanvas(call, { name: 'notes', description: 'Keeps notes.', kind: 'script' })).toBe(false)
   })
 
   it('refuses a field that is no list, and a name of another library, by the path of the manifest', () => {
@@ -284,7 +284,7 @@ describe('runNativeCanvas', () => {
       [['skia-canvas', 'sharp'], 'it names "sharp", and the one native library that a script app can load is "skia-canvas"'],
       [[7], 'it names a value that is no name'],
     ] as const) {
-      const text = refusal(() => runNativeCanvas(call, 'script', manifestWith(native)))
+      const text = refusal(() => runNativeCanvas(call, manifestWith(native)))
 
       expect(text).toContain(`The field "native" of /apps/notes/manifest.json is not valid: ${problem}`)
       expect(text).toContain('write the field as "native": ["skia-canvas"]; else delete it.')
@@ -293,11 +293,11 @@ describe('runNativeCanvas', () => {
   })
 
   it('refuses the field in the manifest of a UI app, and takes an empty list there', () => {
-    const text = refusal(() => runNativeCanvas(call, 'ui', manifestWith(['skia-canvas'], 'ui')))
+    const text = refusal(() => runNativeCanvas(call, manifestWith(['skia-canvas'], 'ui')))
 
     expect(text).toContain('/apps/notes/manifest.json has the field "native", which only a script app takes')
     expect(text).toContain('Delete the field.')
-    expect(runNativeCanvas(call, 'ui', manifestWith([], 'ui'))).toBe(false)
+    expect(runNativeCanvas(call, manifestWith([], 'ui'))).toBe(false)
   })
 })
 

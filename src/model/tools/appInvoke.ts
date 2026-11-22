@@ -1,5 +1,5 @@
 import { byteSizeText } from '../../utils/byteSize'
-import type { JsonObject } from '../../utils/json'
+import { isJsonObject, type JsonObject } from '../../utils/json'
 import { startOf } from '../../utils/textCut'
 import { storedTypeOfBytes, type StoredFileType } from '../chat/fileSignatures'
 import { imageExtension, imageMediaType } from '../chat/images'
@@ -7,7 +7,7 @@ import type { Section } from '../chat/types'
 import { conversationAssets, type ConversationAssets } from '../streams/mediaRequest'
 import { aliasCallText, aliasNotDoneText, ALIAS_TIMEOUT_MS, type AppAlias } from './appAliases'
 import { APP_FRAME_ROOT_URL, APP_HANDLER_EXAMPLE, AppCallError, type AppFrameEnd, type AppFrameInput } from './appBridge'
-import { MANIFEST_FILE, NATIVE_CANVAS_LIBRARY, NATIVE_FIELD_EXAMPLE, type AppKind } from './appManifest'
+import { MANIFEST_FILE, NATIVE_CANVAS_LIBRARY, NATIVE_FIELD_EXAMPLE, type AppKind, type AppManifest } from './appManifest'
 import {
   APP_RUN_DEFAULT_SECONDS,
   APP_RUN_MAX_OUTPUT_BYTES,
@@ -17,7 +17,7 @@ import {
   appNamed,
   checkAppIsThere,
   checkBuiltInKind,
-  checkedAppKind,
+  checkedManifest,
   isPathName,
   kindName,
   pathIn,
@@ -197,8 +197,29 @@ export interface AppRunCaller {
 }
 
 function parametersOf(args: SubcommandArguments): JsonObject {
-  const value = args.parameters
-  return typeof value === 'object' && !Array.isArray(value) ? value : {}
+  return isJsonObject(args.parameters) ? args.parameters : {}
+}
+
+// The paths of the app `app` that a run reads: its folder, its manifest,
+// the main file of a script app, and the page of a UI app.
+function appRunPaths(app: AppsPath): Pick<InvokeCall, 'app' | 'manifest' | 'main' | 'index'> {
+  return { app, manifest: pathIn(app, MANIFEST_FILE), main: pathIn(app, SCRIPT_MAIN_FILE), index: pathIn(app, UI_INDEX_FILE) }
+}
+
+// The inputs of the ids `ids`, in their order, from the assets of the
+// conversation `assets`. Throws a `ToolError` for the ids that name no
+// image and no clip, whose text names the argument `argument` and ends
+// with `notDone`.
+function knownInputs(ids: Iterable<string>, assets: ConversationAssets, argument: string, notDone: string): AppInput[] {
+  const inputs: AppInput[] = []
+  const unknown: string[] = []
+  for (const id of ids) {
+    const input = inputOf(id, assets)
+    if (input) inputs.push(input)
+    else unknown.push(id)
+  }
+  if (unknown.length > 0) throw new ToolError(unknownAssetsText(unknown, assets, { argument, notDone }))
+  return inputs
 }
 
 /** The run that an `apps invoke` call asks for, from its checked arguments
@@ -211,20 +232,9 @@ export function invokeCall(args: SubcommandArguments, sections: readonly Section
   const app = appNamed((typeof args.name === 'string' ? args.name : '').trim())
   const timeoutMs = jobTimeoutMs(args, APP_RUN_DEFAULT_SECONDS)
   const ids = new Set(assetIdWords(args, 'inputs', 'an image or a clip', `Give the ids of the images and the clips, as in "@a @c". ${NOT_DONE}`))
-  const assets = conversationAssets(sections)
-  const inputs: AppInput[] = []
-  const unknown: string[] = []
-  for (const id of ids) {
-    const input = inputOf(id, assets)
-    if (input) inputs.push(input)
-    else unknown.push(id)
-  }
-  if (unknown.length > 0) throw new ToolError(unknownAssetsText(unknown, assets, { argument: '`inputs`', notDone: NOT_DONE }))
+  const inputs = knownInputs(ids, conversationAssets(sections), '`inputs`', NOT_DONE)
   return {
-    app,
-    manifest: pathIn(app, MANIFEST_FILE),
-    main: pathIn(app, SCRIPT_MAIN_FILE),
-    index: pathIn(app, UI_INDEX_FILE),
+    ...appRunPaths(app),
     parameters: parametersOf(args),
     inputs,
     timeoutMs,
@@ -254,10 +264,8 @@ export function aliasInvokeCall(alias: AppAlias, args: ToolArguments, sections: 
     const ids = [...new Set(assetIdWords(args, parameter, what.one, `${form} ${notDone}`))]
     if (ids.length === 0) throw new ToolError(`\`${parameter}\` names no clip. ${form} ${notDone}`)
     if (!many && ids.length > 1) throw new ToolError(`\`${parameter}\` names ${ids.length} clips, and it takes one. ${form} ${notDone}`)
-    const unknown = ids.filter((id) => inputOf(id, assets) === null)
-    if (unknown.length > 0) throw new ToolError(unknownAssetsText(unknown, assets, { argument: `\`${parameter}\``, notDone }))
-    for (const id of ids) {
-      const input = inputOf(id, assets) as AppInput
+    for (const input of knownInputs(ids, assets, `\`${parameter}\``, notDone)) {
+      const { id } = input
       if (input.kind === 'image' || !kinds.includes(input.kind)) {
         const article = input.kind === 'video' ? 'a' : 'an'
         throw new ToolError(`@${id} is ${article} ${ASSET_NAMES[input.kind]}, and \`${parameter}\` of ${call} takes only ${what.many}. ${form} ${notDone}`)
@@ -269,12 +277,8 @@ export function aliasInvokeCall(alias: AppAlias, args: ToolArguments, sections: 
     }
   }
   const inputParameters = new Set(alias.inputs.map((input) => input.parameter))
-  const app = appNamed(alias.app)
   return {
-    app,
-    manifest: pathIn(app, MANIFEST_FILE),
-    main: pathIn(app, SCRIPT_MAIN_FILE),
-    index: pathIn(app, UI_INDEX_FILE),
+    ...appRunPaths(appNamed(alias.app)),
     parameters: Object.fromEntries(Object.entries(args).filter(([name]) => !inputParameters.has(name))),
     inputs,
     timeoutMs: ALIAS_TIMEOUT_MS,
@@ -297,15 +301,15 @@ export interface InvokeTarget {
 
 const MAIN_EXPORT = '`export default async function main(parameters, dez) { … }`'
 
-/** The kind of the app of `call`, which a run can start. Throws a
- *  `ToolError` unless the app has its folder, a manifest that tells its
- *  kind, and the file that a run of that kind needs: the main file of a
- *  script app, or the page of a UI app. */
-export function checkInvokeTarget({ app, manifest, main, index }: InvokeCall, target: InvokeTarget): AppKind {
+/** The manifest of the app of `call`, which a run can start: its kind
+ *  picks what runs it. Throws a `ToolError` unless the app has its
+ *  folder, a manifest that tells its kind, and the file that a run of that
+ *  kind needs: the main file of a script app, or the page of a UI app. */
+export function checkInvokeTarget({ app, manifest, main, index }: InvokeCall, target: InvokeTarget): AppManifest {
   checkAppIsThere(app, target.app)
-  const kind = checkedAppKind(app, manifest, target.manifest, target.manifestBytes, NOT_DONE)
-  checkBuiltInKind(app, kind, NOT_DONE)
-  if (kind === 'ui') {
+  const appManifest = checkedManifest(app, manifest, target.manifest, target.manifestBytes, NOT_DONE)
+  checkBuiltInKind(app, appManifest.kind, NOT_DONE)
+  if (appManifest.kind === 'ui') {
     if (target.index.kind === 'missing') {
       throw new ToolError(`The app ${app.virtual} has no ${UI_INDEX_FILE}, the page whose handler a run calls. `
         + `Write ${index.virtual}: it loads Dez's script with ${UI_CLIENT_SCRIPT_TAG}, and a script of the page registers the handler, as in ${APP_HANDLER_EXAMPLE}. ${NOT_DONE}`)
@@ -314,7 +318,7 @@ export function checkInvokeTarget({ app, manifest, main, index }: InvokeCall, ta
       throw new ToolError(`${index.virtual} is ${kindName(target.index.kind)} and no file, so a run has no page to load. `
         + `Delete it with rm, and write the page of the app as that file. ${NOT_DONE}`)
     }
-    return kind
+    return appManifest
   }
   if (target.main.kind === 'missing') {
     throw new ToolError(`The app ${app.virtual} has no ${SCRIPT_MAIN_FILE}, the file whose code a run calls. `
@@ -324,7 +328,7 @@ export function checkInvokeTarget({ app, manifest, main, index }: InvokeCall, ta
     throw new ToolError(`${main.virtual} is ${kindName(target.main.kind)} and no file, so a run has no code to call. `
       + `Delete it with rm, and write the file with the function of the app as its default export, as in ${MAIN_EXPORT}. ${NOT_DONE}`)
   }
-  return kind
+  return appManifest
 }
 
 // The problem of the value `value` of the field "native" of a manifest, as
@@ -337,21 +341,11 @@ function nativeFieldProblem(value: unknown): string | null {
   return `it names ${named}, and the one native library that a script app can load is "${NATIVE_CANVAS_LIBRARY}"`
 }
 
-/** Whether a run of the app of `call`, of the kind `kind`, may load the
- *  native file of skia-canvas: the manifest, whose bytes are
- *  `manifestBytes`, has the field `"native": ["skia-canvas"]`. An empty
- *  list asks for nothing. Bytes that are no JSON object give false
- *  (`checkedAppKind` refuses them first). Throws a `ToolError` for a field
- *  that is not valid, and for the field in the manifest of a UI app. */
-export function runNativeCanvas({ app, manifest }: Pick<InvokeCall, 'app' | 'manifest'>, kind: AppKind, manifestBytes: Uint8Array | null): boolean {
-  let value: unknown
-  try {
-    value = JSON.parse(new TextDecoder().decode(manifestBytes ?? new Uint8Array()))
-  } catch {
-    return false
-  }
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
-  const native: unknown = (value as Record<string, unknown>).native
+/** Whether a run of the app of `call` may load the native file of
+ *  skia-canvas: its manifest has the field `"native": ["skia-canvas"]`. An
+ *  empty list asks for nothing. Throws a `ToolError` for a field that is
+ *  not valid, and for the field in the manifest of a UI app. */
+export function runNativeCanvas({ app, manifest }: Pick<InvokeCall, 'app' | 'manifest'>, { kind, native }: AppManifest): boolean {
   if (native === undefined) return false
   const problem = nativeFieldProblem(native)
   if (problem !== null) {

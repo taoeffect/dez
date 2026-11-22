@@ -1,5 +1,6 @@
 import { byteSizeText } from '../../utils/byteSize'
-import type { AppKind } from './appManifest'
+import { isJsonObject } from '../../utils/json'
+import type { AppManifest } from './appManifest'
 import {
   APP_RUN_MAX_DECODED_BYTES,
   APPS_INVOKE,
@@ -71,11 +72,6 @@ export const APP_DECODES_STATE = 'Dez decodes the input clips.'
 // What Dez did not do for a call that it refuses.
 const NOT_DONE = 'Dez started no job.'
 
-/** Whether `value` is a JSON object (no list, no null). */
-export function isObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-}
-
 function quotedList(names: readonly string[]): string {
   const quoted = names.map((name) => JSON.stringify(name))
   return quoted.length < 2 ? quoted.join('') : `${quoted.slice(0, -1).join(', ')} and ${quoted.at(-1)}`
@@ -97,7 +93,7 @@ export function isWholeNumberIn(value: unknown, min: number, max: number): value
 
 // The audio of a decode from `value`, or what is wrong with it.
 function parsedAudio(value: unknown): AudioDecode | string {
-  if (!isObject(value)) return '`audio` must be an object, as in {"rate": 22050}'
+  if (!isJsonObject(value)) return '`audio` must be an object, as in {"rate": 22050}'
   const unknown = unknownFieldsProblem(value, ['rate'], '`audio`')
   if (unknown !== null) return unknown
   if (!isWholeNumberIn(value.rate, DECODE_MIN_RATE, DECODE_MAX_RATE)) {
@@ -108,7 +104,7 @@ function parsedAudio(value: unknown): AudioDecode | string {
 
 // The frames of a decode from `value`, or what is wrong with them.
 function parsedFrames(value: unknown): FrameDecode | string {
-  if (!isObject(value)) return '`frames` must be an object, as in {"width": 96, "height": 54}'
+  if (!isJsonObject(value)) return '`frames` must be an object, as in {"width": 96, "height": 54}'
   const unknown = unknownFieldsProblem(value, ['width', 'height', 'fps'], '`frames`')
   if (unknown !== null) return unknown
   const { width, height, fps } = value
@@ -124,7 +120,7 @@ function parsedFrames(value: unknown): FrameDecode | string {
 // The decode that `value` asks for, or what is wrong with it: a sentence
 // with no end mark.
 function parsedDecode(value: unknown): InputDecode | string {
-  if (!isObject(value)) return `it must be a JSON object, as in ${DECODE_EXAMPLE}`
+  if (!isJsonObject(value)) return `it must be a JSON object, as in ${DECODE_EXAMPLE}`
   const unknown = unknownFieldsProblem(value, ['audio', 'frames'], 'it')
   if (unknown !== null) return unknown
   const audio = value.audio === undefined ? null : parsedAudio(value.audio)
@@ -143,21 +139,13 @@ export function callDecode(args: SubcommandArguments): InputDecode | null {
   return decode
 }
 
-/** The decode of the `decode` field of the manifest at `manifest`, whose
- *  bytes are `bytes`; null for a manifest with no such field, and for
- *  bytes that are no JSON object (`checkedAppKind`, appsTool.ts, refuses
- *  them first). A list of the apps does not read this field, so an app
- *  whose field is not valid still lists. Throws a `ToolError` for a field
- *  that is no decode. */
-export function manifestDecode(bytes: Uint8Array | null, manifest: AppsPath): InputDecode | null {
-  let value: unknown
-  try {
-    value = JSON.parse(new TextDecoder().decode(bytes ?? new Uint8Array()))
-  } catch {
-    return null
-  }
-  if (!isObject(value) || value.decode === undefined) return null
-  const decode = parsedDecode(value.decode)
+/** The decode of the `decode` field of `appManifest`, the manifest at
+ *  `manifest`; null for a manifest with no such field. A list of the apps
+ *  does not read this field, so an app whose field is not valid still
+ *  lists. Throws a `ToolError` for a field that is no decode. */
+export function manifestDecode(appManifest: AppManifest, manifest: AppsPath): InputDecode | null {
+  if (appManifest.decode === undefined) return null
+  const decode = parsedDecode(appManifest.decode)
   if (typeof decode === 'string') {
     throw new ToolError(`The field "decode" of ${manifest.virtual} is not valid: ${decode}. Write the field again, or delete it, `
       + `or give the call its own \`decode\`, which the run takes in place of the field. ${NOT_DONE}`)
@@ -165,16 +153,15 @@ export function manifestDecode(bytes: Uint8Array | null, manifest: AppsPath): In
   return decode
 }
 
-/** The decode of a run of the app `app` of the kind `kind`, whose
- *  manifest has the bytes `manifestBytes`: the `decode` of the call
- *  (`callDecode`), which takes the place of the manifest's field as a
- *  whole, or else that field (`manifestDecode`). Only a script app
- *  decodes: a UI app reads the bytes of each input itself. Throws a
- *  `ToolError` for a field of the manifest that is no decode, and for a
- *  decode of a UI app. */
-export function runDecode({ app, manifest, decode }: { app: AppsPath, manifest: AppsPath, decode: InputDecode | null }, kind: AppKind, manifestBytes: Uint8Array | null): InputDecode {
-  const resolved = decode ?? manifestDecode(manifestBytes, manifest) ?? NO_DECODE
-  if (kind === 'ui' && asksForDecode(resolved)) {
+/** The decode of a run of the app `app`, whose manifest at `manifest` is
+ *  `appManifest`: the `decode` of the call (`callDecode`), which takes the
+ *  place of the manifest's field as a whole, or else that field
+ *  (`manifestDecode`). Only a script app decodes: a UI app reads the bytes
+ *  of each input itself. Throws a `ToolError` for a field of the manifest
+ *  that is no decode, and for a decode of a UI app. */
+export function runDecode({ app, manifest, decode }: { app: AppsPath, manifest: AppsPath, decode: InputDecode | null }, appManifest: AppManifest): InputDecode {
+  const resolved = decode ?? manifestDecode(appManifest, manifest) ?? NO_DECODE
+  if (appManifest.kind === 'ui' && asksForDecode(resolved)) {
     throw new ToolError(decode !== null
       ? `${app.virtual} is a UI app, and only a script app takes \`decode\`: the page of a UI app reads the bytes of each input and decodes them itself. Call again without \`decode\`. ${NOT_DONE}`
       : `${manifest.virtual} has the field "decode", which only a script app takes: the page of a UI app reads the bytes of each input and decodes them itself. `
