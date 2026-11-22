@@ -341,7 +341,7 @@ export async function grepAppFiles(args: SubcommandArguments, signal: AbortSigna
  *  `APPS_MAX_FILE_BYTES` (`wcRowOfFacts`), one file at a time, so that the
  *  webview holds at most one such file. A stop of the reply ends the call
  *  before the next path. */
-export async function countAppFiles(args: SubcommandArguments, signal: AbortSignal): Promise<AppsResult> {
+export async function wcAppFiles(args: SubcommandArguments, signal: AbortSignal): Promise<AppsResult> {
   const { paths } = wcCall(args)
   return wcResult(await eachByItself(paths, signal, async (path) => wcRowOfFacts(path, await factsOf(path)) ?? wcRowOfBytes(path, await readBytes(path))))
 }

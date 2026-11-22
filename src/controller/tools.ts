@@ -36,7 +36,7 @@ import { ffmpegCall, ffprobeCall, joinClipsCall, VIDEO_TOOL, videoCallLabel, vid
 import { untilAborted } from '../utils/abort'
 import { rawErrorText } from '../utils/errorText'
 import { checkedInvokeCall, runAppFrameJob, runAppJob } from './appInvoke'
-import { countAppFiles, editAppFile, findAppFiles, grepAppFiles, initApp, listAppFolder, listApps, makeAppFolder, moveAppPaths, readAppFile, removeAppPaths, showApp, writeAppFile } from './appsTool'
+import { editAppFile, findAppFiles, grepAppFiles, initApp, listAppFolder, listApps, makeAppFolder, moveAppPaths, readAppFile, removeAppPaths, showApp, wcAppFiles, writeAppFile } from './appsTool'
 import { assetInfoResult } from './assetInfo'
 import { assetViewResult } from './assetView'
 import { audioClipSeconds, cutAudioClip } from './audioTool'
@@ -574,7 +574,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     ls: listAppFolder,
     find: findAppFiles,
     grep: grepAppFiles,
-    wc: countAppFiles,
+    wc: wcAppFiles,
     mkdir: makeAppFolder,
     mv: moveAppPaths,
     show: (args, _signal, context) => showApp(args, context),
