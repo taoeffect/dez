@@ -88,8 +88,9 @@ Times are seconds. Each throws a RangeError with a text that tells why.
 - `resultFiles("beats", parameters, dez)` gives the `workFile` of each input: `/work/beats-<id>.json`, or the
   `save_to` parameter of a call with one input. `resultFile("align", parameters, dez, "/work/align.json")` gives the
   one file of a run: `save_to`, else the path that you give.
-- `resultJson(value)` writes JSON that code and a model both read well: one field on each line, and a list of
-  numbers on one line. `roundTo(value, 3)` rounds a time to the millisecond.
+- `resultJson(value)` gives JSON text that code and a model both read well: one field on each line, and a list
+  of numbers on one line. It writes no file: write the text to a file yourself. `roundTo(value, 3)` rounds a time
+  to the millisecond.
 
 ## Frame sequences
 
