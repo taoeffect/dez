@@ -240,12 +240,14 @@ async function keptOutcome(result: { text: string, isError: boolean }, folder: s
 // The outcome of a job whose ffmpeg run with `save_to` ended in its time,
 // with the text of `result`: the files `names` move into the folder
 // `saveTo` of `/work`, each over a file of the same name there, and the
-// job has no asset. A run that failed saves no file. A move that fails
-// ends the save, and the files that moved stay: a file that one replaced
-// cannot come back.
+// job has no asset. A run that failed saves no file, and a run that made
+// no file (one that only prints, or `-f null`) makes no folder. A move
+// that fails ends the save, and the files that moved stay: a file that one
+// replaced cannot come back.
 async function savedOutcome(result: { text: string, isError: boolean }, folder: string, saveTo: AppsPath, names: readonly string[]): Promise<JobOutcome> {
   const text = withoutLocalPaths(result.text)
   if (result.isError) return { text, isError: true, assets: [] }
+  if (names.length === 0) return { text, isError: false, assets: [] }
   let moved = 0
   try {
     // A move makes a missing folder that others can open; this one is

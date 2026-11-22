@@ -544,6 +544,24 @@ describe('the files of /work', () => {
     expect(outcome.text).toContain('/work/frames/f01.png, /work/frames/f02.png, /work/frames/notes.txt.')
   })
 
+  // The folder files of each run hold only the copies of its inputs.
+  it.each([
+    ['-encoders', ' V....D libvpx-vp9\n', []],
+    ['-i @c -f null -', '', ['c.webm']],
+  ])('makes no folder in /work for the call %j with save_to, which saves no file', async (text, printed, inputCopies) => {
+    native.program = async (_run, onOutput) => {
+      if (printed !== '') onOutput({ stream: 'stdout', text: printed })
+      return ENDED
+    }
+    native.folderFiles = inputCopies
+
+    const outcome = await runFfmpegJob(ffmpegCall({ arguments: text, save_to: '/work/frames' }, videoContext(CONVERSATION)), running(), report)
+
+    expect(outcome).toMatchObject({ isError: false, assets: [] })
+    expect(native.createdFolders).not.toContainEqual(expect.objectContaining({ root: 'app' }))
+    expect(native.moves).toStrictEqual([])
+  })
+
   it('tells how many files moved into /work when a move fails', async () => {
     const call = ffmpegCall({ arguments: '-i @c -vf fps=1 f%02d.png', save_to: '/work/frames' }, videoContext(CONVERSATION))
     native.folderFiles = ['c.webm', 'f01.png', 'f02.png']
