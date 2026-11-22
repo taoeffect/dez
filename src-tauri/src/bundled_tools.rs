@@ -505,6 +505,13 @@ fn flag_path(path: &Path) -> Result<&str, String> {
         .ok_or_else(|| "A folder or file of the run has a comma in its path, or a path that is not UTF-8 text, which the program cannot take".to_string())
 }
 
+// A path that is the whole value of a flag (`--import-map=<a>`). Deno does
+// not split such a value, so a comma is fine; a flag is text, so a path
+// that is not UTF-8 is refused. The error names no path.
+fn flag_value_path(path: &Path) -> Result<&str, String> {
+    path.to_str().ok_or_else(|| "A file of the run has a path that is not UTF-8 text, which the program cannot take".to_string())
+}
+
 // Whether `text` can be the `TZ` of a program: the form of the name of a
 // time zone (`Europe/Berlin`, `Etc/GMT+5`, `UTC`). A `TZ` can also name a
 // file (`:/path`, a name with `..`), and this form has none of those.
@@ -547,7 +554,8 @@ struct RunPlaces {
 // - The native code of skia-canvas opens files with no check of Deno, so
 //   only a run of an app gets it, when the page asks for it. Its fontconfig
 //   file is a place of the environment (`CANVAS_FONT_CONFIG`).
-// Each path goes into a flag through `flag_path`.
+// Each path goes into a flag through `flag_path`, or through
+// `flag_value_path` for a flag of one path.
 fn run_places(run: &ToolRun, rules: &ProgramRules, roots: &Roots, folder: &Path) -> Result<RunPlaces, String> {
     let Some(flags) = &rules.place_flags else {
         if run.app_folder.is_some() || run.built_in_app.is_some() || run.conversation_folder.is_some() || run.native_canvas {
@@ -580,7 +588,7 @@ fn run_places(run: &ToolRun, rules: &ProgramRules, roots: &Roots, folder: &Path)
     let app_libs = app.as_ref().map(|_| libs.as_path());
     let read: Vec<&Path> = [run_folder, app.as_deref(), conversation.as_deref(), app_libs, fonts.as_deref()].into_iter().flatten().collect();
     let write: Vec<&Path> = [run_folder, app.as_deref().filter(|_| !built_in), conversation.as_deref()].into_iter().flatten().collect();
-    let mut places = RunPlaces { flags: vec![format!("{}={}", flags.import_map, flag_path(&import_map)?)], ..RunPlaces::default() };
+    let mut places = RunPlaces { flags: vec![format!("{}={}", flags.import_map, flag_value_path(&import_map)?)], ..RunPlaces::default() };
     for (flag, paths) in [(flags.read, &read), (flags.write, &write)] {
         if !paths.is_empty() {
             let list: Vec<&str> = paths.iter().map(|path| flag_path(path)).collect::<Result<_, _>>()?;
@@ -1337,8 +1345,9 @@ mod tests {
     // Deno splits the path list of a flag at each comma, so a comma in a
     // path would make two other paths of it, and a flag is text, so it
     // cannot hold a path that is not UTF-8. The check is on each path of a
-    // flag: here only one root has such a path. The error can go to a
-    // model, so it names no path.
+    // list flag: here only one root has such a path. The import map is the
+    // one path of its flag, which Deno does not split. The error can go to
+    // a model, so it names no path.
     #[test]
     fn a_deno_run_is_refused_when_a_path_of_its_flags_cannot_be_in_a_flag() {
         let dir = TempDir::new("tools-deno-flag-path");
@@ -1362,9 +1371,16 @@ mod tests {
             refused(resolved_run(ToolRun { app_folder: Some("my-app".to_string()), ..run }, &roots).err().expect("refused"));
         }
 
-        // The libraries that Dez ships are in the flags of every run.
-        let roots = fake_roots(&dir.0.join("private,dez"));
-        refused(resolved_run(tool_run("dez-deno", &["main.ts"], "work/a"), &roots).err().expect("refused"));
+        // The libraries that Dez ships are in the import map of every run,
+        // and in the read flag of a run of an app: a comma in the folder of
+        // the install stops only an app.
+        let roots = Roots { resources: fake_roots(&dir.0.join("private,dez")).resources, ..fake_roots(&dir.0) };
+        std::fs::create_dir_all(roots.app.join(APPS_FOLDER).join("my-app")).expect("create");
+        let run = ToolRun { conversation_folder: Some("c-1".to_string()), ..tool_run("dez-deno", &["main.ts"], "work/a") };
+        let code_of_a_model = resolved_run(run.clone(), &roots).expect("a run with no app");
+        let import_map = format!("--import-map={}", roots.resources.join(LIBS_FOLDER).join(LIBS_IMPORT_MAP).display());
+        assert_eq!(place_flags(&code_of_a_model)[0], import_map);
+        refused(resolved_run(ToolRun { app_folder: Some("my-app".to_string()), ..run }, &roots).err().expect("refused"));
         assert!(resolved_run(tool_run("dez-ffmpeg", &["-version"], "work/a"), &roots).is_ok());
     }
 
