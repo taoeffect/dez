@@ -275,7 +275,9 @@ export function titleLayer(options) {
     drawSubtitle(ctx, false)
     // A rule on each side of the subtitle, when both fit in the frame.
     const ruleY = subtitleTop + (sub.ascent + sub.descent) / 2
-    const half = (sub.right - sub.left) / 2 + 30 * k
+    // Half the ink width of the subtitle, whose ink is in the middle of the
+    // frame, and the gap between the ink and a rule.
+    const half = (sub.left + sub.right) / 2 + 30 * k
     const ruleLength = 120 * k
     if (width / 2 + half + ruleLength < width) {
       ctx.strokeStyle = 'rgba(255,255,255,0.784)'
