@@ -8,7 +8,7 @@ import { jobStartedText, jobsWaitResults, NO_JOBS_TEXT, startedJobId } from '../
 import { byteSizeText } from '../../src/utils/byteSize'
 import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
 import { expectNoLinkedFile, linkedDropDir, openDroppedFiles } from './harness/drops'
-import { filesIn, workDir } from './harness/fixtures'
+import { appFilePath, conversationFilePath, filesIn, workDir } from './harness/fixtures'
 import { generatedImagesDir, pngDataUrl, shownImages, STRIPES_PNG } from './harness/images'
 import { waitCall } from './harness/jobs'
 import { evalCall, expectReplyEnd as expectEnd, expectRunsEnded } from './harness/jsEval'
@@ -17,7 +17,7 @@ import { startMockProviderApp, takeRequest, type MockProviderApp } from './harne
 import { mockChatPath, replyText, sendChatReply, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
 import { processExists, runningProgram } from './harness/processes'
 import type { E2EBrowser } from './harness/session'
-import { endedReply, newTab, openSeededConversation, openToasts, submit } from './harness/thread'
+import { activeConversationId, endedReply, newTab, openSeededConversation, openToasts, sbpCall, submit } from './harness/thread'
 import { codePanel, hiddenPart, hidingPart, intermediateParts, pressToolChip, revealingPart, toolChips, toolPanel } from './harness/toolChips'
 
 // The `js_eval` tool, driven through the real app against a mock chat model
@@ -37,7 +37,11 @@ import { codePanel, hiddenPart, hidingPart, intermediateParts, pressToolChip, re
 //   such a call shows that it failed; code that returned no value gives a
 //   result that tells so, and no error;
 // - Stop ends the code of a call that runs;
-// - every work folder is gone after its call;
+// - every run folder is gone after its call;
+// - the code of each call gets the work folder of its conversation as
+//   `dez.workFolder`, which the model reads as `/work`: a file that one call
+//   wrote there is there for the next call, and a delete of the
+//   conversation in History deletes the folder;
 // - the code of a call runs the other Dez tools with `dez.sbp`, in both
 //   forms of a call, on the files that the user dropped (a stored image, a
 //   linked image, a linked clip) by their ids: it gets the result text of
@@ -54,9 +58,9 @@ import { codePanel, hiddenPart, hidingPart, intermediateParts, pressToolChip, re
 //   `is_intermediate`, and its panel shows it. A saved call shows the same
 //   list, with a tool call that the end of the code cut.
 // No request holds a path of the test HOME (`takeRequest` checks each one):
-// the work folder of each run is in that HOME, and Deno names it in an error
-// stack, in `import.meta.url`, and in `Deno.cwd()`. No request holds the
-// path or the name of a linked file.
+// the run folder and the work folder of each run are in that HOME, and Deno
+// names the run folder in an error stack, in `import.meta.url`, and in
+// `Deno.cwd()`. No request holds the path or the name of a linked file.
 //
 // One app session serves the whole file; each test starts in a new tab.
 
@@ -222,7 +226,7 @@ describe('js_eval tool', () => {
     await waitForValue(browser, 'chip states', chipStates, ['error'])
   })
 
-  it('ends the code of a call when the user stops the reply, and deletes its work folder', async () => {
+  it('ends the code of a call when the user stops the reply, and deletes its run folder', async () => {
     await submit(browser, 'Wait.')
     const first = await chatRequest()
     sendToolCalls(first.reply, [evalCall('call_wait', 'await new Promise((resolve) => setTimeout(resolve, 280_000))', { timeout_seconds: 300 })])
@@ -237,6 +241,30 @@ describe('js_eval tool', () => {
     expect(setup.mock.hasWaitingRequest()).toBe(false)
     expect(await openToasts(browser, 'error')).toStrictEqual([])
     // A stop is no failure of the tool.
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('keeps the files that the code writes to the work folder of the conversation for the next call, and deletes the folder with the conversation', async () => {
+    await submit(browser, 'Keep a note.')
+    const conversationId = await activeConversationId(browser)
+    const folder = appFilePath(setup.app.home, 'work', conversationId)
+    const first = await chatRequest()
+    sendToolCalls(first.reply, [evalCall('call_write', 'await Deno.writeTextFile(`${dez.workFolder}/note.txt`, "kept")\nreturn dez.workFolder')])
+
+    const second = await chatRequest()
+    expect(toolResult(second, 'call_write')).toBe('/work')
+    sendToolCalls(second.reply, [evalCall('call_read', 'return await Deno.readTextFile(`${dez.workFolder}/note.txt`)')])
+
+    const third = await chatRequest()
+    expect(toolResult(third, 'call_read')).toBe('kept')
+    await expectReplyEnd(third)
+    expect(await filesIn(folder)).toStrictEqual(['note.txt'])
+    await waitForValue(browser, 'saved conversation', async () => fs.existsSync(conversationFilePath(setup.app.home, conversationId)), true)
+
+    await sbpCall(browser, 'dez.controller/deleteConversation', conversationId)
+
+    await waitForValue(browser, 'work folder of the conversation', async () => fs.existsSync(folder), false)
+    expect(fs.existsSync(conversationFilePath(setup.app.home, conversationId))).toBe(false)
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 

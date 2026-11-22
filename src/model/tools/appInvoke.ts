@@ -38,16 +38,17 @@ import { ToolError, type SubcommandArguments } from './types'
 //
 // A script app: Deno runs the module of Dez (jsEvalRunner.js), which calls
 // the default export of the `main.ts` of the app with the parameters of
-// the call. The code can open two folders: the folder of its app, where
-// its state stays from one run to the next, and the run folder, which
-// holds a copy of each input and the output folder. It has no network and
+// the call. The code can open three folders: the folder of its app, where
+// its state stays from one run to the next, the run folder, which holds a
+// copy of each input and the output folder, and the work folder of the
+// conversation of the call (conversationWork.ts). It has no network and
 // no tool bridge (`dez.sbp`).
 //
 // A UI app: Dez loads the page of the app in a hidden frame, and calls the
 // handler that the page registered (`APP_INVOKE_HANDLER`) with the
 // parameters of the call. The page reads the inputs and saves its files
-// over the frame bridge (appBridge.ts). It has no network, no file, and
-// no storage.
+// over the frame bridge (appBridge.ts). It has no network, no file (also
+// no work folder), and no storage.
 //
 // controller/appInvoke.ts does both runs.
 //
@@ -244,13 +245,17 @@ export interface AppRunFolders {
   run: string
   /** The folder of the app. */
   app: string
+  /** The work folder of the conversation of the call
+   *  (conversationWork.ts). */
+  work: string
 }
 
 /** The text of the description of a run of `call` (`RUN_DESCRIPTION_FILE`,
  *  jsEval.ts), which the module of Dez reads: the main file of the app as
  *  a file URL, the parameters, and what the `dez` object of the code holds
  *  (`appDez`, jsEvalRunner.js): each input with the path of its copy, the
- *  output folder, and the folder of the app. */
+ *  output folder, the folder of the app, and the work folder of the
+ *  conversation. */
 export function appRunDescription(call: Pick<InvokeCall, 'parameters' | 'inputs'>, folders: AppRunFolders): string {
   return JSON.stringify({
     kind: 'app',
@@ -264,6 +269,7 @@ export function appRunDescription(call: Pick<InvokeCall, 'parameters' | 'inputs'
     })),
     outputFolder: `${folders.run}/${APP_OUTPUT_FOLDER}`,
     appFolder: folders.app,
+    workFolder: folders.work,
   })
 }
 
@@ -288,10 +294,10 @@ export function invokeLabel(args: SubcommandArguments): string {
 // What an error text of Deno that names a flag gets as advice: a model can
 // set no flag, and the usual cause is a path that is in no folder of the
 // run (a relative path, a path of the computer).
-const SANDBOX_ADVICE = 'The code of an app can open only the folder of its app and its run folder. '
+const SANDBOX_ADVICE = 'The code of an app can open only the folder of its app, its run folder, and the work folder of the conversation. '
   + 'It has no network and no environment variables, it starts no program, and it loads no package of npm, of JSR, or from a URL. '
   + 'No flag changes that, and you can set none. For a file, use only the paths that `dez` gives: '
-  + '`dez.appFolder`, `dez.outputFolder`, and the `path` of each of `dez.inputs`. A relative path does not work.'
+  + '`dez.appFolder`, `dez.outputFolder`, `dez.workFolder`, and the `path` of each of `dez.inputs`. A relative path does not work.'
 
 const KEPT_NONE = 'Dez kept no file of the run.'
 
@@ -456,7 +462,7 @@ export function appOutputNotStoredText(): string {
  *  no path of this computer, but the parameters of a call can hold one,
  *  so the text goes through `textForModel` too. */
 export function frameTextForModel(text: string): string {
-  return textForModel(text.replaceAll(APP_FRAME_ROOT_URL, `${APPS_VIRTUAL_ROOT}/`), [])
+  return textForModel(text.replaceAll(APP_FRAME_ROOT_URL, `${APPS_VIRTUAL_ROOT}/`), { run: [] })
 }
 
 // The outcome of a run of the handler of a page that ended with `end`.

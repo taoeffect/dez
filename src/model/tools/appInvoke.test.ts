@@ -181,9 +181,9 @@ describe('fileUrl', () => {
 })
 
 describe('appRunDescription', () => {
-  const folders = { run: '/home/u/.cache/dez/work/w1', app: '/home/u/.config/dez/apps/notes' }
+  const folders = { run: '/home/u/.cache/dez/work/w1', app: '/home/u/.config/dez/apps/notes', work: '/home/u/.config/dez/work/c1' }
 
-  it('tells the main file as a URL, the parameters, the copy of each input, and the two folders of the code', () => {
+  it('tells the main file as a URL, the parameters, the copy of each input, and the three folders of the code', () => {
     const call = invoke({ name: 'notes', parameters: { columns: 4 }, inputs: '@c @a' })
 
     expect(JSON.parse(appRunDescription(call, folders))).toStrictEqual({
@@ -196,6 +196,7 @@ describe('appRunDescription', () => {
       ],
       outputFolder: '/home/u/.cache/dez/work/w1/output',
       appFolder: '/home/u/.config/dez/apps/notes',
+      workFolder: '/home/u/.config/dez/work/c1',
     })
   })
 
@@ -434,14 +435,15 @@ describe('appRunResult', () => {
 
   it('gives each text of the run with no path of this computer', () => {
     const runFolder = '/home/ann/.cache/dez/work/w1'
-    const forModel = (text: string) => textForModel(text, [runFolder], ['/home/ann/.config/dez/apps'])
+    const workFolder = '/home/ann/.config/dez/work/c1'
+    const forModel = (text: string) => textForModel(text, { run: [runFolder], apps: ['/home/ann/.config/dez/apps'], work: [workFolder] })
     const thrown = appRunOutcome(EXITED, { type: 'error', text: 'Error: no file /home/ann/.config/dez/apps/notes/state.json\n    at main (file:///home/ann/.config/dez/apps/notes/main.ts:7:11)' }, true)
-    const { text, isError } = appRunResult(thrown, `wrote ${runFolder}/output/a.png\n`, forModel, NO_APP_OUTPUTS)
+    const { text, isError } = appRunResult(thrown, `wrote ${runFolder}/output/a.png and ${workFolder}/cache.json\n`, forModel, NO_APP_OUTPUTS)
 
     expect(isError).toBe(true)
     expect(text).toContain('Error: no file /apps/notes/state.json')
     expect(text).toContain('at main (file:///apps/notes/main.ts:7:11)')
-    expect(text).toContain('wrote /run/output/a.png')
+    expect(text).toContain('wrote /run/output/a.png and /work/cache.json')
     expect(text).not.toContain('/home/ann')
   })
 })

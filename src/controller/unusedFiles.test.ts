@@ -24,6 +24,8 @@ const NO_TREE: FileTree = { kind: 'missing', size: 0, updatedAt: null, entries: 
 // `trees` and of `treeErrors` is a path in the app folder (`apps/notes`);
 // an entry of `deletedFiles` is the root and the path, with ` (folder)` for
 // a folder delete; `goneApps` are the apps that the editor was told of.
+// `savedConversations` are the ids of the conversation files, and
+// `tabConversations` those of the open and closed tabs.
 let folders: Record<string, AppFileEntry[]> = {}
 let listAppFiles: (key: string) => Promise<AppFileEntry[]>
 let trees: Record<string, FileTree> = {}
@@ -34,6 +36,9 @@ let conversationsError: unknown = null
 let conversationReads = 0
 let heldTexts: string[] = []
 let unnamedMadeFiles: string[] = []
+let savedConversations: string[] = []
+let savedConversationsError: unknown = null
+let tabConversations: string[] = []
 let deletedFiles: string[] = []
 let deleteAppFile: (path: string) => Promise<void>
 let toasts: Toast[] = []
@@ -68,6 +73,13 @@ sbp('sbp/selectors/register', {
   },
   'dez.model/heldTexts' (): string[] {
     return heldTexts
+  },
+  async 'dez.persistence/conversationIds' (): Promise<string[]> {
+    if (savedConversationsError !== null) throw savedConversationsError
+    return savedConversations
+  },
+  'dez.model/heldConversationIds' (): string[] {
+    return tabConversations
   },
   'dez.stream/unnamedMadeFiles' (): string[] {
     return unnamedMadeFiles
@@ -125,6 +137,9 @@ beforeEach(() => {
   conversationReads = 0
   heldTexts = []
   unnamedMadeFiles = []
+  savedConversations = []
+  savedConversationsError = null
+  tabConversations = []
   deletedFiles = []
   deleteAppFile = async () => {}
   toasts = []
@@ -211,6 +226,36 @@ describe('dez.controller/unusedFiles/find', () => {
       ],
       bytes: 876_530,
     })
+  })
+
+  // The folder goes with its conversation, so it has no age rule. No text
+  // keeps it: a text that names a file of it is of its own conversation.
+  it('gives the work folder of each conversation that is gone, whatever its age, with the size of its files, and reads no conversation for it', async () => {
+    folders = { 'app:work:folders': ['saved', 'open', 'gone', 'gone-now', 'not.a.folder.of.dez'].map((name) => file(name, 0, name === 'gone-now' ? NOW : OLD)) }
+    savedConversations = ['saved', 'other']
+    tabConversations = ['open']
+    trees = { 'work/gone': appTree({ 'data.json': 10, 'notes/a.txt': 20 }), 'work/saved': appTree({ 'a.txt': 5 }) }
+    conversations = ['The folder work/gone is in the text.']
+
+    const { unused } = await find()
+
+    expect(unused).toStrictEqual({
+      kind: 'files',
+      files: [{ root: 'app', path: 'work/gone', size: 30 }, { root: 'app', path: 'work/gone-now', size: 0 }],
+      bytes: 30,
+    })
+    expect(conversationReads).toBe(0)
+  })
+
+  // A scan that took no conversation for a conversation it could not list
+  // would give the work folder of each one as unused.
+  it('rejects with an error toast when the conversations cannot be listed', async () => {
+    folders = { 'app:work:folders': [file('c1', 0)] }
+    savedConversationsError = 'Failed to list conversations: Permission denied (os error 13)'
+
+    await expect(find()).rejects.toBe(savedConversationsError)
+
+    expect(toasts).toStrictEqual([{ title: 'Could not look for unreferenced files', message: `${readFailure('file')}\n\nDetails: ${savedConversationsError}`, variant: 'error' }])
   })
 
   it('reads no conversation when the folders hold no old file', async () => {
@@ -410,6 +455,19 @@ describe('dez.controller/unusedFiles/delete', () => {
     expect(consoleError).toHaveBeenCalled()
   })
 
+  it('keeps the work folder of a conversation that is back since the scan, and deletes it as a folder', async () => {
+    const workFolders: UnusedFiles = {
+      kind: 'files',
+      files: [{ root: 'app', path: 'work/c1', size: 10 }, { root: 'app', path: 'work/c2', size: 200 }, { root: 'app', path: 'work/c3', size: 3000 }],
+      bytes: 3210,
+    }
+    savedConversations = ['c2']
+    tabConversations = ['c3']
+
+    expect(await deleteUnused(workFolders)).toStrictEqual({ deleted: 1, bytes: 10, inUse: 2, failed: 0 })
+    expect(deletedFiles).toEqual(['app:work/c1 (folder)'])
+  })
+
   describe('of the apps', () => {
     const apps: UnusedFiles = {
       kind: 'apps',
@@ -459,17 +517,20 @@ describe('dez.controller/unusedFiles/delete', () => {
       { root: 'app', path: 'apps/Not-An-App', size: 15 },
       { root: 'cache', path: 'apps/notes', size: 16 },
       { root: 'app', path: 'apps/notes', size: 17 },
+      { root: 'app', path: 'work/w1/a.txt', size: 18 },
+      { root: 'app', path: 'work/..', size: 19 },
+      { root: 'app', path: 'work', size: 20 },
       { root: 'app', path: 'assets/images/a.png', size: 11 },
     ]
 
-    it('deletes in a cleanup of the files only a stored file or a cache entry, and never an app', async () => {
-      expect(await deleteUnused({ kind: 'files', files, bytes: 153 })).toStrictEqual({ deleted: 1, bytes: 11, inUse: 0, failed: 16 })
-      expect(deletedFiles).toEqual(['app:assets/images/a.png'])
+    it('deletes in a cleanup of the files only a stored file, the work folder of a conversation, or a cache entry, and never an app', async () => {
+      expect(await deleteUnused({ kind: 'files', files, bytes: 210 })).toStrictEqual({ deleted: 2, bytes: 17, inUse: 0, failed: 18 })
+      expect(deletedFiles).toEqual(['app:work/w1 (folder)', 'app:assets/images/a.png'])
       expect(goneApps).toEqual([])
     })
 
     it('deletes in a cleanup of the apps only the folder of an app', async () => {
-      expect(await deleteUnused({ kind: 'apps', files, bytes: 153 })).toStrictEqual({ deleted: 1, bytes: 17, inUse: 0, failed: 16 })
+      expect(await deleteUnused({ kind: 'apps', files, bytes: 210 })).toStrictEqual({ deleted: 1, bytes: 17, inUse: 0, failed: 19 })
       expect(deletedFiles).toEqual(['app:apps/notes (folder)'])
       expect(goneApps).toEqual(['notes'])
     })

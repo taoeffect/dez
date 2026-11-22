@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { JS_EVAL_MAX_TOOL_CALLS } from './jsEval'
 import { TOOL_DEFINITIONS } from './registry'
-import { JOINED_RUN_FOLDER, REAL_RUN_FOLDER, RUN_FOLDER_ID, RUN_FOLDERS } from './testing'
+import { JOINED_RUN_FOLDER, JOINED_WORK_FOLDER, REAL_RUN_FOLDER, REAL_WORK_FOLDER, RUN_FOLDER_ID, RUN_FOLDERS } from './testing'
 import { bridgedToolCall, shownSelector, type BridgedCallCheck } from './toolBridge'
 
 // What the first call line of a run asks for.
@@ -136,21 +136,23 @@ describe('bridgedToolCall', () => {
     expect(refusal('dez.tools/nope', {}, JS_EVAL_MAX_TOOL_CALLS + 1)).toContain(`more than ${JS_EVAL_MAX_TOOL_CALLS} tool calls`)
   })
 
+  // The code gets the paths of its folders, and names a file of the work
+  // folder by its path (`dez.workFolder`); the tool gets it as /work.
   it('takes the paths of this computer out of the arguments', () => {
-    const check = checked('dez.tools/model_invoke', { model: 'p/m', prompt: `Read ${REAL_RUN_FOLDER}/code.ts and ${JOINED_RUN_FOLDER}, then /home/u/apps/dez-deno` })
+    const check = checked('dez.tools/model_invoke', { model: 'p/m', prompt: `Read ${REAL_RUN_FOLDER}/code.ts, ${JOINED_RUN_FOLDER}, and ${JOINED_WORK_FOLDER}/notes.txt, then /home/u/apps/dez-deno` })
 
     expect(check).toStrictEqual({
       ok: true,
-      call: { name: 'model_invoke', arguments: { model: 'p/m', prompt: 'Read /run/code.ts and /run, then /home/…' } },
+      call: { name: 'model_invoke', arguments: { model: 'p/m', prompt: 'Read /run/code.ts, /run, and /work/notes.txt, then /home/…' } },
     })
   })
 
   it('takes the paths of this computer out of the parameters of a subcommand, also out of a name', () => {
-    const check = checked('dez.tools/video/ffmpeg', { arguments: `-i @c ${REAL_RUN_FOLDER}/out.mp4`, [`${JOINED_RUN_FOLDER}/x`]: [`${REAL_RUN_FOLDER}/y`] })
+    const check = checked('dez.tools/video/ffmpeg', { arguments: `-i @c ${REAL_RUN_FOLDER}/out.mp4`, [`${JOINED_RUN_FOLDER}/x`]: [`${REAL_RUN_FOLDER}/y`, `${REAL_WORK_FOLDER}/z`] })
 
     expect(check).toStrictEqual({
       ok: true,
-      call: { name: 'video', arguments: { command: 'ffmpeg', parameters: '{"arguments":"-i @c /run/out.mp4","/run/x":["/run/y"]}' } },
+      call: { name: 'video', arguments: { command: 'ffmpeg', parameters: '{"arguments":"-i @c /run/out.mp4","/run/x":["/run/y","/work/z"]}' } },
     })
   })
 

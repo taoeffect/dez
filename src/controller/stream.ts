@@ -539,7 +539,7 @@ function replyPictureParts(base: readonly StreamMessage[], model: ModelRef): Req
 // calls needs that round's thinking. The tag of an app that `apps show`
 // shows goes the same way (chat/appTags.ts), with no mark of a tool: only
 // Dez writes that tag.
-async function runToolRound(tabId: string, reply: ReplyRuntime, jobs: TabJobs, model: ModelRef, calls: CheckedToolCall[], replyText: string, messages: readonly StreamMessage[]): Promise<StreamingReply | null> {
+async function runToolRound(tabId: string, conversationId: string, reply: ReplyRuntime, jobs: TabJobs, model: ModelRef, calls: CheckedToolCall[], replyText: string, messages: readonly StreamMessage[]): Promise<StreamingReply | null> {
   const runningBlocks = calls.map((call) => toolCallBlock(call))
   const run: ToolRun = {
     calls,
@@ -559,6 +559,7 @@ async function runToolRound(tabId: string, reply: ReplyRuntime, jobs: TabJobs, m
     const takesAssets = () => reply.toolRun === run
     const context: ToolRunContext = {
       tabId,
+      conversationId,
       model,
       jobs,
       ...toolAssetWriters(tabId, reply, call.name, takesAssets),
@@ -1156,7 +1157,7 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
     // by the sections of the tab before the round (editHint.ts).
     const checkedCalls = checkToolCalls(streamedCalls, findToolBlocks(replied.text).map((block) => block.id))
     const calls = withEditHintRefusals(checkedCalls, streamedCalls, (sbp('dez.model/tab', args.tabId) as Tab | null)?.sections ?? [])
-    const replySoFar = await runToolRound(args.tabId, reply, jobs, args.model, calls, replied.text, messages)
+    const replySoFar = await runToolRound(args.tabId, args.conversationId, reply, jobs, args.model, calls, replied.text, messages)
     if (!replySoFar) {
       // Still current only when the user deleted the running blocks:
       // with no calls to send back, the reply cannot go on, so it ends

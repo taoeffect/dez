@@ -10,7 +10,7 @@ import { unreadableImageText } from '../model/tools/imageTool'
 import { jobStartedText, jobTimedOutText } from '../model/tools/jobs'
 import { JS_EVAL_OUTPUT_BYTES, JS_EVAL_RUNNER, JS_EVAL_RUNNER_FILE, RUN_DESCRIPTION_FILE } from '../model/tools/jsEval'
 import { PROGRAM_READS_INPUTS, programNotStartedText } from '../model/tools/programRuns'
-import { appsArgs, CONVERSATION, FILM, PNG_BYTES, protocolLine, RED, SKY, textBytes, WAV_BYTES } from '../model/tools/testing'
+import { appsArgs, CONVERSATION, CONVERSATION_ID, FILM, PNG_BYTES, protocolLine, RED, SKY, textBytes, WAV_BYTES } from '../model/tools/testing'
 import type { ToolRunResult } from '../model/tools/types'
 import { checkedInvokeCall, runAppFrameJob, runAppJob } from './appInvoke'
 import { TabJobs, type MadeAsset } from './jobs'
@@ -20,6 +20,7 @@ import {
   appFiles,
   CACHE_DIR,
   callContext,
+  CONVERSATION_WORK_FOLDER,
   deletedWorkFolder,
   ENDED,
   failureOf,
@@ -143,7 +144,7 @@ function invoke(parameters: Record<string, unknown> = {}, sections = CONVERSATIO
 }
 
 function runJob(call = invoke(), signal: AbortSignal = running()) {
-  return runAppJob(call, signal, (state) => states.push(state), (asset) => keptAssets.push(asset))
+  return runAppJob(call, CONVERSATION_ID, signal, (state) => states.push(state), (asset) => keptAssets.push(asset))
 }
 
 function uiCall(parameters: Record<string, unknown> = {}, sections = CONVERSATION): CheckedInvokeCall {
@@ -245,7 +246,7 @@ describe('checkedInvokeCall', () => {
 })
 
 describe('runAppJob', () => {
-  it('runs the module of Dez in a new work folder with the description of the run, copies of the inputs, the output folder, and the folder of the app', async () => {
+  it('runs the module of Dez in a new work folder with the description of the run, copies of the inputs, the output folder, the folder of the app, and the work folder of the conversation', async () => {
     const call = invoke({ parameters: { columns: 4, title: 'Trip' }, inputs: '@a @c', timeout_seconds: 20 })
     native.program = returns('done')
 
@@ -254,8 +255,9 @@ describe('runAppJob', () => {
     const folder = deletedWorkFolder()
     expect(outcome).toStrictEqual({ text: 'done', isError: false, assets: [] })
     // The output folder is the first write: it makes the work folder for
-    // the user only.
-    expect(native.createdFolders).toStrictEqual([{ root: 'cache', path: `${folder}/output` }])
+    // the user only. The work folder of the conversation is there before
+    // Dez asks for its real path.
+    expect(native.createdFolders).toStrictEqual([{ root: 'cache', path: `${folder}/output` }, { root: 'app', path: CONVERSATION_WORK_FOLDER }])
     expect(native.savedFiles.map(({ file }) => file)).toStrictEqual([
       { root: 'cache', path: `${folder}/${JS_EVAL_RUNNER_FILE}` },
       { root: 'cache', path: `${folder}/${RUN_DESCRIPTION_FILE}` },
@@ -271,6 +273,7 @@ describe('runAppJob', () => {
       ],
       outputFolder: `${CACHE_DIR}/${folder}/output`,
       appFolder: `${APP_DIR}/apps/notes`,
+      workFolder: `${APP_DIR}/${CONVERSATION_WORK_FOLDER}`,
     })
     expect(native.runs).toHaveLength(1)
     const { run } = native.runs[0]
@@ -282,6 +285,7 @@ describe('runAppJob', () => {
       timeoutMs: 20_000,
       maxOutputBytes: JS_EVAL_OUTPUT_BYTES,
       appFolder: 'notes',
+      conversationFolder: CONVERSATION_ID,
     })
     // The code of an app gets no input of the program.
     expect(run).not.toHaveProperty('stdin')

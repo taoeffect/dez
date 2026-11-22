@@ -623,11 +623,15 @@ export default sbp('sbp/selectors/register', {
     return cloneTab(tab) as Tab
   },
 
-  'dez.model/tabs/close' (tabId: string): void {
+  // Closes the tab `tabId`; the last tab stays open. A tab with text goes
+  // to the closed tabs, and the file of an empty tab is deleted. Gives the
+  // id of the conversation whose file it deleted, else null, so that the
+  // controller deletes the work folder of that conversation too.
+  'dez.model/tabs/close' (tabId: string): string | null {
     const tabStore = useTabStore()
-    if (tabStore.tabs.length <= 1) return
+    if (tabStore.tabs.length <= 1) return null
     const index = tabStore.tabs.findIndex((tab) => tab.id === tabId)
-    if (index === -1) return
+    if (index === -1) return null
     const tab = tabStore.tabs[index]
     tabStore.tabs.splice(index, 1)
     tabStore.replyDoneTabIds.delete(tabId)
@@ -640,9 +644,10 @@ export default sbp('sbp/selectors/register', {
     if (tab.sections.some((section) => !sectionIsEmpty(section))) {
       tabStore.closedTabs.push({ tab: cloneTab(tab) as Tab, index })
       if (tabStore.closedTabs.length > MAX_CLOSED_TABS) tabStore.closedTabs.shift()
-    } else {
-      void sbp('dez.persistence/deleteConversation', tab.conversationId).catch(() => {})
+      return null
     }
+    void sbp('dez.persistence/deleteConversation', tab.conversationId).catch(() => {})
+    return tab.conversationId
   },
 
   // Brings back the newest closed tab at its old place and activates it.
@@ -903,13 +908,15 @@ export default sbp('sbp/selectors/register', {
     return cloneTab(tab) as Tab
   },
 
-  async 'dez.model/tabs/deleteConversation' (id: string): Promise<void> {
+  // Deletes the file of the conversation `id`, and closes its tabs. Gives
+  // false, and changes no tab, when the file could not go.
+  async 'dez.model/tabs/deleteConversation' (id: string): Promise<boolean> {
     const tabStore = useTabStore()
     try {
       await sbp('dez.persistence/deleteConversation', id)
     } catch (error) {
       console.error('Failed to delete conversation', error)
-      return
+      return false
     }
     forgetClosedConversation(id)
 
@@ -917,7 +924,7 @@ export default sbp('sbp/selectors/register', {
     for (const tab of matchingTabs) tabStore.replyDoneTabIds.delete(tab.id)
     if (!matchingTabs.length) {
       await sbp('dez.model/appState/save')
-      return
+      return true
     }
 
     if (matchingTabs.length === tabStore.tabs.length) {
@@ -927,13 +934,14 @@ export default sbp('sbp/selectors/register', {
       tabStore.tabs = [replacement]
       tabStore.activeTabId = replacement.id
       await sbp('dez.model/appState/save')
-      return
+      return true
     }
 
     const deletedActive = matchingTabs.some((tab) => tab.id === tabStore.activeTabId)
     tabStore.tabs = tabStore.tabs.filter((tab) => tab.conversationId !== id)
     if (deletedActive) tabStore.activeTabId = tabStore.tabs[0].id
     await sbp('dez.model/appState/save')
+    return true
   },
 
   async 'dez.model/appState/save' (): Promise<void> {
@@ -1753,6 +1761,15 @@ export default sbp('sbp/selectors/register', {
       ...usePromptsStore().prompts.map((prompt) => prompt.content),
       ...(systemPrompt === null ? [] : [systemPrompt]),
     ]
+  },
+
+  // The ids of the conversations of the open tabs and of the closed tabs
+  // that can come back (`reopenClosed`): such a conversation can have no
+  // file yet. The cleanup of the files (src/controller/unusedFiles.ts)
+  // keeps the work folder of each one.
+  'dez.model/heldConversationIds' (): string[] {
+    const tabStore = useTabStore()
+    return [...tabStore.tabs, ...tabStore.closedTabs.map((closed) => closed.tab)].map((tab) => tab.conversationId)
   },
 
 })

@@ -3,7 +3,7 @@ import { expect, vi } from 'vitest'
 import { NO_CALL_PICTURE_BUDGET } from '../model/streams/pictureBudget'
 import { appManifestText, type AppKind } from '../model/tools/appManifest'
 import type { JsEvalLine } from '../model/tools/jsEval'
-import { protocolLine } from '../model/tools/testing'
+import { CONVERSATION_ID, protocolLine } from '../model/tools/testing'
 import { ToolError, type ToolRunResult } from '../model/tools/types'
 import type { NativeDownloadRule, NativeHttpDownload, NativeHttpRequest } from '../utils/protocol/nativeHttp'
 import { TabJobs, type JobOutcome, type JobWork, type MadeAsset } from './jobs'
@@ -36,6 +36,9 @@ export const SAVED: NativeHttpDownload = { status: 200, statusText: 'OK', header
 export const FILE_ID = /[0-9a-f-]{36}/
 /** The reason of the stop of a call. */
 export const STOP = new Error('The reply stopped.')
+/** The path of the work folder of the conversation of `callContext` in the
+ *  app root. */
+export const CONVERSATION_WORK_FOLDER = `work/${CONVERSATION_ID}`
 
 const WORK_FOLDER = /^work\/[0-9a-f-]{36}$/
 
@@ -119,9 +122,10 @@ function isAtOrBelow(path: string, folder: string): boolean {
 }
 
 // Where the native side makes, moves, and deletes a folder of the app
-// root: only below the folder of the apps (`allows_folder_change`).
+// root: only below the folder of the apps and the folder of the work
+// folders of the conversations (`allows_folder_change`).
 function allowsFolderChange(path: string): boolean {
-  return path.startsWith('apps/')
+  return path.startsWith('apps/') || path.startsWith('work/')
 }
 
 /** Makes the stub native side keep the files of the app root and of the
@@ -143,7 +147,7 @@ function allowsFolderChange(path: string): boolean {
  *  - a save and a move make the missing folders above their target;
  *  - a delete of nothing passes, and one with the wrong `folder` fails;
  *  - a file moves over a file, and a folder only to a free path;
- *  - a folder is made, moved, and deleted only below `apps/`;
+ *  - a folder is made, moved, and deleted only below `apps/` and `work/`;
  *  - every save, folder, delete, and move on the resource root fails. */
 export function fakeAppFiles(start: Record<string, string | null> = {}, resources: Record<string, string | null> = {}): FakeAppFiles {
   const roots = { app: new Map(), resource: new Map() } as Record<'app' | 'resource', FakeAppFiles>
@@ -347,6 +351,7 @@ export function running(): AbortSignal {
 export function callContext(more: Partial<ToolRunContext> = {}): ToolRunContext {
   return {
     tabId: '',
+    conversationId: CONVERSATION_ID,
     model: { providerId: 'venice', modelId: 'venice-glm-5' },
     jobs: new TabJobs(),
     writeImage: () => null,

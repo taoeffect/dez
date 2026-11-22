@@ -33,7 +33,7 @@ import { factsOf, readableManifestBytes } from './appsTool'
 import { discardMadeAssets, type JobOutcome, type MadeAsset } from './jobs'
 import { moduleRun, writeRunFiles } from './jsEval'
 import type { BundledToolInput, FileTree } from './nativeTypes'
-import { clipInputFile, folderPathForms, imageInputAsIs, inWorkFolder, runProgram } from './programRuns'
+import { clipInputFile, conversationWorkForms, folderPathForms, imageInputAsIs, inWorkFolder, runProgram } from './programRuns'
 
 // The run of an `apps invoke` call (model/tools/appInvoke.ts), as a job of
 // the reply. This module registers no selector: the `invoke` runner
@@ -47,9 +47,10 @@ import { clipInputFile, folderPathForms, imageInputAsIs, inWorkFolder, runProgra
 // A run has its own new run folder, as a `js_eval` run has (jsEval.ts),
 // with the same module of Dez and its own description of the run. The run
 // folder also holds a copy of each input of the call and the output
-// folder. Rust lets the code open that folder and the folder of its app,
-// and nothing else (src-tauri/src/bundled_tools.rs). The code gets no
-// input of the program and calls no Dez tool.
+// folder. Rust lets the code open that folder, the folder of its app, and
+// the work folder of the conversation of the call, and nothing else
+// (src-tauri/src/bundled_tools.rs). The code gets no input of the program
+// and calls no Dez tool.
 //
 // Dez trusts nothing that the code leaves. It reads each file of the
 // output folder, checks the type by the bytes that it read, and writes
@@ -154,16 +155,18 @@ async function keptOutputs(folder: string, signal: AbortSignal, keepAsset: (asse
 
 /** The work of the job of an `apps invoke` call (`JobWork`): one run of
  *  the code of the app of `call`, in a new run folder that holds copies
- *  of the call's inputs and the output folder. The files of the output
- *  folder that Dez keeps are the assets of the job; the text tells what
- *  the code returned or threw, what Dez did with the files, and the
- *  console output. A run that failed keeps no file.
+ *  of the call's inputs and the output folder. The code can also read and
+ *  change the work folder of the conversation `conversationId`
+ *  (`dez.workFolder`). The files of the output folder that Dez keeps are
+ *  the assets of the job; the text tells what the code returned or threw,
+ *  what Dez did with the files, and the console output. A run that failed
+ *  keeps no file.
  *
  *  A stop of `signal` (Dez stopped the job, or its time limit passed)
  *  stops the program and rejects, which `TabJobs` drops. The run folder
  *  goes at every end; the files that the code wrote into the folder of its
- *  app stay. */
-export function runAppJob(call: InvokeCall, signal: AbortSignal, report: (state: string) => void, keepAsset: (asset: MadeAsset) => void): Promise<JobOutcome> {
+ *  app and into the work folder stay. */
+export function runAppJob(call: InvokeCall, conversationId: string, signal: AbortSignal, report: (state: string) => void, keepAsset: (asset: MadeAsset) => void): Promise<JobOutcome> {
   return inWorkFolder(async (folder) => {
     report(PROGRAM_READS_INPUTS)
     // The first write of the run: it makes the run folder too, for the
@@ -182,14 +185,15 @@ export function runAppJob(call: InvokeCall, signal: AbortSignal, report: (state:
     const apps = builtIn
       ? await folderPathForms(BUILT_IN_APPS_FOLDER, 'resource', APPS_TOOL.name)
       : await folderPathForms(APPS_ROOT.file, 'app', APPS_TOOL.name)
-    const forModel = (text: string): string => textForModel(text, runFolder.forms, apps.forms)
+    const work = await conversationWorkForms(conversationId, APPS_TOOL.name)
+    const forModel = (text: string): string => textForModel(text, { run: runFolder.forms, apps: apps.forms, work: work.forms })
 
     const [appName] = call.app.names
     const inputs = await inputCopies(call.inputs, folder, signal)
     // The description holds the paths that Dez joined, not the real ones:
     // Deno checks a path of the code against the folders of its flags as
     // text, and Rust writes the flags from the same joined paths.
-    const description = appRunDescription(call, { run: runFolder.joined, app: `${apps.joined}/${appName}` })
+    const description = appRunDescription(call, { run: runFolder.joined, app: `${apps.joined}/${appName}`, work: work.joined })
     await writeRunFiles(folder, description, [], signal, APPS_TOOL.name)
 
     report(APP_RUNS_STATE)
@@ -197,7 +201,8 @@ export function runAppJob(call: InvokeCall, signal: AbortSignal, report: (state:
     // No `stdin`, and a `call` line of the code gets no answer: the code of
     // an app calls no Dez tool.
     const appFolder = builtIn ? { builtInApp: appName } : { appFolder: appName }
-    const end = await runProgram('deno', APPS_TOOL.name, { ...moduleRun(folder, call.timeoutMs), inputs, ...appFolder }, signal, ({ stream, text }) => {
+    const run = { ...moduleRun(folder, call.timeoutMs), inputs, ...appFolder, conversationFolder: conversationId }
+    const end = await runProgram('deno', APPS_TOOL.name, run, signal, ({ stream, text }) => {
       output.add(stream, text)
     })
     // The job has the same limit and its own clock (`TabJobs`), which

@@ -651,6 +651,18 @@ describe('dez.model/tabs/compact', () => {
     expect(sbp('dez.model/tabs/contextSize', tab.id, model)).toMatchObject({ estimated: true })
   })
 
+  // The work folder of the conversation is named by its id
+  // (model/tools/conversationWork.ts): a new id would leave the files of
+  // its runs behind, and a compaction keeps an asset that one of them names.
+  it('keeps the conversation id of the tab', () => {
+    const tab = conversation()
+    const conversationId = tabNow(tab.id).conversationId
+
+    expect(compact(tab.id, compacted(), 1000)).toBe(true)
+
+    expect(tabNow(tab.id).conversationId).toBe(conversationId)
+  })
+
   // The user can type a next message while the compaction request runs.
   it('keeps the sections of the tab after the reply as they are at the swap', () => {
     const tab = conversation()

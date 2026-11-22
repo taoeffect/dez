@@ -4,7 +4,7 @@ import type { ShownPicture } from '../model/chat/shownPictures'
 import { modelFamily } from '../model/providers/modelFamilies'
 import { NO_CALL_PICTURE_BUDGET, pictureBudgetLeft, shownPictureCost, totalCost } from '../model/streams/pictureBudget'
 import { isOpenJob, startedJobId, type JobAssetKind } from '../model/tools/jobs'
-import { JS_EVAL_MAX_TOOL_CALLS, jsEvalAnswerLine, type JsEvalCallLine, type JsEvalToolCalls } from '../model/tools/jsEval'
+import { JS_EVAL_MAX_TOOL_CALLS, jsEvalAnswerLine, type JsEvalCallLine, type JsEvalToolCalls, type RunFolderForms } from '../model/tools/jsEval'
 import { bridgedToolCall, shownSelector, UNEXPECTED_BRIDGE_ERROR_TEXT } from '../model/tools/toolBridge'
 import type { ToolRunResult } from '../model/tools/types'
 import type { ProgramInputWriter } from './programRuns'
@@ -39,9 +39,9 @@ export interface ToolBridgeEnd {
 }
 
 /** The bridged tool calls of one `js_eval` run. `context` is the context
- *  of the `js_eval` call, `runFolders` the paths of the run folder on this
- *  computer (`textForModel`), and `callSignal` the signal of the `js_eval`
- *  call. */
+ *  of the `js_eval` call, `folders` the paths of the folders of the run on
+ *  this computer (`textForModel`), and `callSignal` the signal of the
+ *  `js_eval` call. */
 export class ToolBridge {
   // Aborts the call that runs: at a stop of the `js_eval` call, and at the
   // end of the run. A call that a stop cut must start no job (`startJob`,
@@ -71,7 +71,7 @@ export class ToolBridge {
   // its call fills it.
   private readonly records: BridgedCall[] = []
 
-  constructor(private readonly context: ToolRunContext, private readonly runFolders: readonly string[], callSignal: AbortSignal) {
+  constructor(private readonly context: ToolRunContext, private readonly folders: RunFolderForms, callSignal: AbortSignal) {
     const stop = () => this.stop.abort(callSignal.reason)
     if (callSignal.aborted) stop()
     else callSignal.addEventListener('abort', stop, { once: true })
@@ -123,7 +123,7 @@ export class ToolBridge {
     // without end, and the list counts them (`BridgedCalls.more`).
     const record: BridgedCall | null = number > JS_EVAL_MAX_TOOL_CALLS
       ? null
-      : { name: shownSelector(line.selector, this.runFolders), arguments: {}, status: 'cut', result: '' }
+      : { name: shownSelector(line.selector, this.folders), arguments: {}, status: 'cut', result: '' }
     if (record) this.records.push(record)
     let answer: { text: string, isError: boolean } | null
     try {
@@ -160,7 +160,7 @@ export class ToolBridge {
   // `record`, the entry of the line, gets the tool and the arguments of
   // the call, also when the call does not run.
   private async run(line: JsEvalCallLine, number: number, record: BridgedCall | null): Promise<{ text: string, isError: boolean } | null> {
-    const check = bridgedToolCall(line, number, this.runFolders)
+    const check = bridgedToolCall(line, number, this.folders)
     if (check.ok && record) {
       record.name = check.call.name
       record.arguments = check.call.arguments
@@ -201,6 +201,7 @@ export class ToolBridge {
     }
     return {
       tabId: context.tabId,
+      conversationId: context.conversationId,
       model: context.model,
       jobs: context.jobs,
       writeImage: (path, options) => written('image', () => context.writeImage(path, { tool, ...options })),

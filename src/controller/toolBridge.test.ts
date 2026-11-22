@@ -50,7 +50,7 @@ describe('ToolBridge', () => {
       if (call.arguments.command === 'scale') await first.wait
       return { content: `result of ${String(call.arguments.command)}`, isError: false }
     }
-    const bridge = new ToolBridge(callContext(), [], running())
+    const bridge = new ToolBridge(callContext(), { run: [] }, running())
 
     bridge.call(callLine(7, 'dez.tools/image/scale', { image: 'a', width: 8 }), write)
     bridge.call(callLine(3, 'dez.tools/image/flip'), write)
@@ -69,7 +69,7 @@ describe('ToolBridge', () => {
 
   it('gives the code the error of a tool as an error answer', async () => {
     toolRuns.tool = async () => ({ content: 'The image @z is not in this conversation.', isError: true })
-    const bridge = new ToolBridge(callContext(), [], running())
+    const bridge = new ToolBridge(callContext(), { run: [] }, running())
 
     bridge.call(callLine(1), write)
 
@@ -78,18 +78,18 @@ describe('ToolBridge', () => {
 
   it('answers a line that asks for no call that code can make with its error, and runs no tool', async () => {
     const line = callLine(1, 'dez.tools/js_eval', { code: 'return 1' })
-    const bridge = new ToolBridge(callContext(), [], running())
+    const bridge = new ToolBridge(callContext(), { run: [] }, running())
 
     bridge.call(line, write)
 
     await vi.waitFor(() => expect(answers).toHaveLength(1))
-    const check = bridgedToolCall(line, 1, [])
+    const check = bridgedToolCall(line, 1, { run: [] })
     expect(answers).toStrictEqual([{ id: 1, text: check.ok ? '' : check.error, isError: true }])
     expect(toolRuns.calls).toStrictEqual([])
   })
 
   it('takes the paths of the run folder out of the arguments of a call', async () => {
-    const bridge = new ToolBridge(callContext(), ['/mnt/disk/cache/dez/work/1'], running())
+    const bridge = new ToolBridge(callContext(), { run: ['/mnt/disk/cache/dez/work/1'] }, running())
 
     bridge.call(callLine(1, 'dez.tools/jobs_wait', { jobs: 'j-1 /mnt/disk/cache/dez/work/1/code.ts' }), write)
 
@@ -98,7 +98,7 @@ describe('ToolBridge', () => {
   })
 
   it('runs no call of a line after the limit of a run', async () => {
-    const bridge = new ToolBridge(callContext(), [], running())
+    const bridge = new ToolBridge(callContext(), { run: [] }, running())
 
     for (let id = 1; id <= JS_EVAL_MAX_TOOL_CALLS + 2; id++) bridge.call(callLine(id), write)
 
@@ -116,7 +116,7 @@ describe('ToolBridge', () => {
       ? { content: 'The image @z is not in this conversation.', isError: true }
       : { content: `result of ${String(call.arguments.command)}`, isError: false })
     const refused = callLine(3, '/mnt/disk/cache/dez/work/1/no\ntool', { a: 1 })
-    const bridge = new ToolBridge(callContext(), ['/mnt/disk/cache/dez/work/1'], running())
+    const bridge = new ToolBridge(callContext(), { run: ['/mnt/disk/cache/dez/work/1'] }, running())
 
     bridge.call(callLine(1, 'dez.tools/image/scale', { image: 'a', width: 8 }), write)
     bridge.call(callLine(2, 'dez.tools/asset_info', { assets: '@z' }), write)
@@ -137,7 +137,7 @@ describe('ToolBridge', () => {
   })
 
   it('counts a line that Dez refuses in the limit of a run', async () => {
-    const bridge = new ToolBridge(callContext(), [], running())
+    const bridge = new ToolBridge(callContext(), { run: [] }, running())
 
     for (let id = 1; id <= JS_EVAL_MAX_TOOL_CALLS; id++) bridge.call(callLine(id, 'dez.tools/no_tool'), write)
     bridge.call(callLine(JS_EVAL_MAX_TOOL_CALLS + 1), write)
@@ -169,7 +169,7 @@ describe('ToolBridge', () => {
       }
       return TOOL_DONE
     }
-    const bridge = new ToolBridge(context, [], running())
+    const bridge = new ToolBridge(context, { run: [] }, running())
 
     bridge.call(callLine(1, 'dez.tools/image/scale'), write)
     bridge.call(callLine(2, 'dez.tools/jobs_wait'), write)
@@ -192,7 +192,7 @@ describe('ToolBridge', () => {
       toolContext.showApp((JSON.parse(String(call.arguments.parameters)) as { name: string }).name)
       return TOOL_DONE
     }
-    const bridge = new ToolBridge(context, [], running())
+    const bridge = new ToolBridge(context, { run: [] }, running())
 
     for (const [id, name] of ['notes', 'gone', 'timer'].entries()) bridge.call(callLine(id, 'dez.tools/apps/show', { name }), write)
     await vi.waitFor(() => expect(answers).toHaveLength(3))
@@ -209,7 +209,7 @@ describe('ToolBridge', () => {
       budgets.push(await toolContext.pictureBudget())
       return { ...TOOL_DONE, pictures: [budgets.length === 1 ? PICTURE : second] }
     }
-    const bridge = new ToolBridge(callContext({ pictureBudget: async () => BUDGET }), [], running())
+    const bridge = new ToolBridge(callContext({ pictureBudget: async () => BUDGET }), { run: [] }, running())
 
     bridge.call(callLine(1), write)
     bridge.call(callLine(2), write)
@@ -239,7 +239,7 @@ describe('ToolBridge', () => {
     }
     // A job of the reply that no call of the code started.
     jobs.start('audio', heldWork().work, LONG)
-    const bridge = new ToolBridge(callContext({ jobs }), [], running())
+    const bridge = new ToolBridge(callContext({ jobs }), { run: [] }, running())
 
     for (const [id, command] of ['crop', 'scale', 'flip'].entries()) bridge.call(callLine(id, `dez.tools/image/${command}`), write)
     await vi.waitFor(() => expect(started).toHaveLength(3))
@@ -256,7 +256,7 @@ describe('ToolBridge', () => {
       callSignal = signal
       signal.addEventListener('abort', () => resolve({ content: 'stopped', isError: true }))
     })
-    const bridge = new ToolBridge(callContext(), [], running())
+    const bridge = new ToolBridge(callContext(), { run: [] }, running())
 
     bridge.call(callLine(1), write)
     bridge.call(callLine(2, 'dez.tools/image/flip', { image: 'a' }), write)
@@ -303,7 +303,7 @@ describe('ToolBridge', () => {
       },
       pictureBudget: async () => BUDGET,
     })
-    const bridge = new ToolBridge(context, [], running())
+    const bridge = new ToolBridge(context, { run: [] }, running())
 
     bridge.call(callLine(1), write)
     await vi.waitFor(() => expect(toolRuns.calls).toHaveLength(1))
@@ -329,7 +329,7 @@ describe('ToolBridge', () => {
       callSignal = signal
       return new Promise(() => {})
     }
-    const bridge = new ToolBridge(callContext(), [], stop.signal)
+    const bridge = new ToolBridge(callContext(), { run: [] }, stop.signal)
 
     bridge.call(callLine(1), write)
     await vi.waitFor(() => expect(toolRuns.calls).toHaveLength(1))
@@ -348,7 +348,7 @@ describe('ToolBridge', () => {
       }
       await write(text)
     }
-    const bridge = new ToolBridge(callContext(), [], running())
+    const bridge = new ToolBridge(callContext(), { run: [] }, running())
 
     bridge.call(callLine(1), closedOnce)
     bridge.call(callLine(2), closedOnce)
@@ -362,7 +362,7 @@ describe('ToolBridge', () => {
     // A forged line: more arrays in each other than the check can walk.
     let deep: unknown = 'x'
     for (let depth = 0; depth < 200_000; depth++) deep = [deep]
-    const bridge = new ToolBridge(callContext(), [], running())
+    const bridge = new ToolBridge(callContext(), { run: [] }, running())
 
     bridge.call(callLine(1, 'dez.tools/jobs_list', { deep }), write)
     bridge.call(callLine(2), write)

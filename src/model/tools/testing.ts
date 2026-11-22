@@ -4,7 +4,7 @@ import { appManifestText, type AppKind } from './appManifest'
 import { grepCall, grepPlan, grepRequest, grepText } from './appsGrep'
 import { APPS_TOOL, type AppsEntryKind, type AppsTree, type PathFacts } from './appsTool'
 import { grepFiles } from './grepMatch'
-import type { JsEvalLine } from './jsEval'
+import type { JsEvalLine, RunFolderForms } from './jsEval'
 import type { JobInfo } from './jobs'
 import { parseSubcommandCall } from './subcommands'
 import { ToolError, type SubcommandArguments } from './types'
@@ -36,12 +36,21 @@ export function protocolLine(line: JsEvalLine): string {
   return `\x1e${JSON.stringify(line)}\n`
 }
 
-/** The run folder of a `js_eval` run as Dez made its path, its real path,
- *  and the two together, as the code of a run gets them. */
+/** The run folder of a `js_eval` run as Dez made its path, and its real
+ *  path. */
 export const RUN_FOLDER_ID = '0b0c1a5e-7b1f-4c3a-9d1e-2f3a4b5c6d7e'
 export const JOINED_RUN_FOLDER = `/home/u/.cache/dez/work/${RUN_FOLDER_ID}`
 export const REAL_RUN_FOLDER = `/mnt/disk/cache/dez/work/${RUN_FOLDER_ID}`
-export const RUN_FOLDERS = [REAL_RUN_FOLDER, JOINED_RUN_FOLDER]
+
+/** The conversation of a run, and its work folder as Dez made its path
+ *  and its real path. */
+export const CONVERSATION_ID = 'c0ffee00-0000-4000-8000-000000000001'
+export const JOINED_WORK_FOLDER = `/home/u/.config/dez/work/${CONVERSATION_ID}`
+export const REAL_WORK_FOLDER = `/mnt/disk/config/dez/work/${CONVERSATION_ID}`
+
+/** The folders of a `js_eval` run, each in both forms, as the code of the
+ *  run gets them. */
+export const RUN_FOLDERS: RunFolderForms = { run: [REAL_RUN_FOLDER, JOINED_RUN_FOLDER], work: [REAL_WORK_FOLDER, JOINED_WORK_FOLDER] }
 
 /** The UTF-8 bytes of `text`. */
 export function textBytes(text: string): Uint8Array {

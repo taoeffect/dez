@@ -5,6 +5,7 @@ import { regExpSource } from '../../utils/regExpSource'
 import { endOf, startOf } from '../../utils/textCut'
 import { shownAppNames, shownAppText } from './appShow'
 import { APPS_INVOKE, APPS_TOOL, APPS_VIRTUAL_ROOT } from './appsTool'
+import { WORK_VIRTUAL_ROOT } from './conversationWork'
 import { jobStartedText, madeAssetIds, madeAssetText, type JobAssetKind } from './jobs'
 import RUNNER from './jsEvalRunner.js?raw'
 import { withoutLocalPaths } from './localPaths'
@@ -12,11 +13,17 @@ import type { ProgramEnd } from './programRuns'
 import { ToolError, type ToolArguments, type ToolDefinition } from './types'
 
 // `js_eval`: one run of code that a model wrote, in Deno, the JavaScript
-// runtime that Dez ships (`dez-deno`). Rust gives Deno no permission (no
-// network, no file, no environment variable, no program) and writes the
-// whole command line, and the OS holds the program to its run folder
+// runtime that Dez ships (`dez-deno`). Rust gives Deno no permission but
+// the work folder of the conversation (no network, no other file, no
+// environment variable, no program) and writes the whole command line, and
+// the OS holds the program to its run folder and that work folder
 // (src-tauri/src/bundled_tools.rs, confinement.rs).
 // controller/jsEval.ts does the run.
+//
+// The code gets the path of the work folder of its conversation
+// (conversationWork.ts) as `dez.workFolder`, and its files stay from one
+// run to the next. Every text for a model names that folder
+// `WORK_VIRTUAL_ROOT`.
 //
 // The run folder is a new work folder of the cache root
 // (model/tools/workFolders.ts); every text for a model names it
@@ -59,8 +66,11 @@ export const JS_EVAL_CODE_FILE = 'code.ts'
 export const RUN_DESCRIPTION_FILE = 'run.json'
 
 /** The text of the description of a `js_eval` run: the module runs the
- *  code file. */
-export const CODE_RUN_DESCRIPTION = '{"kind":"code"}'
+ *  code file, and gives the code the path `workFolder` of the work folder
+ *  of its conversation (`dez.workFolder`). */
+export function codeRunDescription(workFolder: string): string {
+  return JSON.stringify({ kind: 'code', workFolder })
+}
 
 /** The text of Dez's module (jsEvalRunner.js). */
 export const JS_EVAL_RUNNER: string = RUNNER
@@ -350,41 +360,56 @@ function urlPathSource(path: string): string {
   }).join('')
 }
 
-// What must not come after the path of the apps folder: a character of a
-// name, or the start of an escape of one in a URL. The path then names
-// another folder (`apps-old`), which is not the apps folder.
+// What must not come after the path of the apps folder or of a work
+// folder: a character of a name, or the start of an escape of one in a
+// URL. The path then names another folder (`apps-old`), which is not that
+// folder.
 const NAME_GOES_ON = '(?![A-Za-z0-9._%-])'
 
+/** The paths of the folders of a run on this computer that a text of the
+ *  run can hold, each in all its forms (`folderPathForms`,
+ *  controller/programRuns.ts): the real path, which Deno names, and the
+ *  path that Dez made (the two differ when a folder above is a link). */
+export interface RunFolderForms {
+  /** The run folder, a new work folder of the cache root. */
+  run: readonly string[]
+  /** The folder of the apps; only a run of an app has it (its code can
+   *  open the folder of its app). */
+  apps?: readonly string[]
+  /** The work folder of the conversation (conversationWork.ts); a run
+   *  with no conversation has none. */
+  work?: readonly string[]
+}
+
 /** `text` of a run with no path of this computer: the run folder is
- *  `RUN_FOLDER_NAME`, the folder of the apps is `APPS_VIRTUAL_ROOT`, and
- *  any other local path goes as its known start (`withoutLocalPaths`; the
- *  path of the Deno program is one, which the code can read with no
- *  permission).
+ *  `RUN_FOLDER_NAME`, the folder of the apps is `APPS_VIRTUAL_ROOT`, the
+ *  work folder of the conversation is `WORK_VIRTUAL_ROOT`, and any other
+ *  local path goes as its known start (`withoutLocalPaths`; the path of
+ *  the Deno program is one, which the code can read with no permission).
  *
- *  `runFolders` are the paths of the run folder that a text can hold: its
- *  real path, which Deno names, and the path that Dez made (the two
- *  differ when a folder above is a link). Deno writes a path in a URL with
- *  escapes (a space is `%20`), so the URL form is found by the name of the
- *  folder, a random id that no other text holds.
- *
- *  `appsRoots` are the paths of the folder of the apps, in the same two
- *  forms; only a run of an app has them (its code can open the folder of
- *  its app). So a path of a file of an app reads as the `apps` tool names
- *  it (`/apps/<app>/main.ts`), also in the stack of an error, which names
- *  a file as a URL.
+ *  Deno writes a path in a URL with escapes (a space is `%20`). The URL
+ *  form of the run folder is found by the name of the folder, a random id
+ *  that no other text holds. The folder of the apps and the work folder
+ *  are found in each form that a URL can give their paths, so a path of a
+ *  file of an app or of the work folder reads as the `apps` tool names it
+ *  (`/apps/<app>/main.ts`, `/work/data.json`), also in the stack of an
+ *  error, which names a file as a URL.
  *
  *  A text goes through this as a whole, before any cut: a cut path would
  *  get past it. */
-export function textForModel(text: string, runFolders: readonly string[], appsRoots: readonly string[] = []): string {
+export function textForModel(text: string, folders: RunFolderForms): string {
   let result = text
-  // The longer path first: one form of the path can be the start of the
-  // other.
-  for (const root of [...appsRoots].sort((a, b) => b.length - a.length)) {
+  const roots = [
+    ...(folders.apps ?? []).map((path) => ({ path, name: APPS_VIRTUAL_ROOT })),
+    ...(folders.work ?? []).map((path) => ({ path, name: WORK_VIRTUAL_ROOT })),
+  ]
+  // The longer path first: one form of a path can be the start of another.
+  for (const { path, name } of roots.sort((a, b) => b.path.length - a.path.length)) {
     result = result
-      .replace(new RegExp(`file://${urlPathSource(root)}${NAME_GOES_ON}`, 'g'), `file://${APPS_VIRTUAL_ROOT}`)
-      .replace(new RegExp(`${regExpSource(root)}${NAME_GOES_ON}`, 'g'), APPS_VIRTUAL_ROOT)
+      .replace(new RegExp(`file://${urlPathSource(path)}${NAME_GOES_ON}`, 'g'), `file://${name}`)
+      .replace(new RegExp(`${regExpSource(path)}${NAME_GOES_ON}`, 'g'), name)
   }
-  for (const folder of runFolders) {
+  for (const folder of folders.run) {
     result = result.replaceAll(folder, RUN_FOLDER_NAME)
     const id = folder.slice(folder.lastIndexOf('/') + 1)
     // A try stops at the next `file://`, which no path holds: a lazy `\S*?`
@@ -444,9 +469,10 @@ const STATIC_IMPORT = /'import', and 'export' cannot be used outside of module c
 function errorAdvice(error: string): string[] {
   return [
     ...(namesDenoFlag(error)
-      ? ['Dez runs the code with no network, no files, no environment variables, no start of programs, and no packages. '
+      ? ['Dez runs the code with no network, no environment variables, no start of programs, and no packages, '
+        + `and it opens no file but those of the work folder of this conversation (\`dez.workFolder\`, which Dez names \`${WORK_VIRTUAL_ROOT}\`). `
         + 'No flag changes that, and you can set none: do the work without them. '
-        + `The one exception is the files of the apps in \`${APPS_VIRTUAL_ROOT}/\`: the code reads and changes them only with \`dez.tools/${APPS_TOOL.name}/<subcommand>\` calls.`]
+        + `The code reads and changes the files of the apps in \`${APPS_VIRTUAL_ROOT}/\` only with \`dez.tools/${APPS_TOOL.name}/<subcommand>\` calls.`]
       : []),
     ...(STATIC_IMPORT.test(error)
       ? ['The code is the body of a function, so a static `import` does not work in it. Load a built-in module with `await import("node:…")`.']
@@ -615,11 +641,11 @@ export function runResultText({ lead, given, advice }: RunOutcome, log: string, 
  *  console output of the code. Any other end is an error result
  *  (`isError`) that tells the model what happened and what to do: the code
  *  threw an error, Dez stopped it at a limit, or it ended with no value.
- *  `runFolders` are the paths of the run folder on this computer
+ *  `folders` are the paths of the folders of the run on this computer
  *  (`textForModel`). */
-export function jsEvalResult(call: JsEvalCall, end: ProgramEnd, output: JsEvalOutput, runFolders: readonly string[], toolCalls: JsEvalToolCalls): { text: string, isError: boolean } {
+export function jsEvalResult(call: JsEvalCall, end: ProgramEnd, output: JsEvalOutput, folders: RunFolderForms, toolCalls: JsEvalToolCalls): { text: string, isError: boolean } {
   const { line, log } = endedRun(end, output)
   const outcome = runOutcome(call, end, line, log.trim() !== '')
-  const text = runResultText(outcome, log, (part) => textForModel(part, runFolders), (given) => toolCallParagraphs(toolCalls, given, outcome.isError))
+  const text = runResultText(outcome, log, (part) => textForModel(part, folders), (given) => toolCallParagraphs(toolCalls, given, outcome.isError))
   return { text, isError: outcome.isError }
 }

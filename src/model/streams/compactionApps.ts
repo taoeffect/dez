@@ -18,12 +18,14 @@ import { APPS_ROOT, manifestColumns, pathIn, type AppsPath, type AppsTree, type 
 //
 // A file of an app can name an image or a clip of the conversation with
 // its @id: a page that reads an asset over its bridge, or a list of the
-// inputs of a script. The compaction keeps such an asset, as it keeps an
-// input of an open job (`CompactionAsset.appInput`, compactionAssets.ts):
-// else the id in the file would name nothing. An id belongs to one
-// conversation and an app serves many, so a file can mean an asset of
-// another conversation with the same id. Then the compaction keeps an
-// asset with no need, which is the safe side.
+// inputs of a script. So can a file of the work folder of the conversation
+// (tools/conversationWork.ts), which the code of its runs writes. The
+// compaction keeps such an asset, as it keeps an input of an open job
+// (`CompactionAsset.fileInput`, compactionAssets.ts): else the id in the
+// file would name nothing. An id belongs to one conversation and an app
+// serves many, so a file of an app can mean an asset of another
+// conversation with the same id. Then the compaction keeps an asset with
+// no need, which is the safe side.
 //
 // All pure; controller/compactionApps.ts reads the folders and the files.
 
@@ -64,48 +66,69 @@ export function compactionApp(name: string, listed: ListedApp | null, carried: N
   return { name, kind, description }
 }
 
-/** The limits of the files of the apps that a compaction reads for `@id`
- *  mentions: the most bytes of one file, and the most files and bytes of
- *  one compaction. A compaction runs while the user waits for a reply,
- *  and the texts are in the webview as a whole. A source file is small:
- *  a larger file is data, or code of a library, which names no asset. */
-export const APP_MENTION_FILE_BYTES = 256 * 1024
-export const APP_MENTION_MAX_FILES = 200
-export const APP_MENTION_MAX_BYTES = 4 * 1024 * 1024
+/** The limits of the files of the apps and of the work folder that a
+ *  compaction reads for `@id` mentions: the most bytes of one file, and
+ *  the most files and bytes of one compaction. A compaction runs while the
+ *  user waits for a reply, and the texts are in the webview as a whole. A
+ *  source file is small: a larger file is data, or code of a library,
+ *  which names no asset. */
+export const MENTION_FILE_BYTES = 256 * 1024
+export const MENTION_MAX_FILES = 200
+export const MENTION_MAX_BYTES = 4 * 1024 * 1024
 
-/** The files of the apps `apps` (each with the listing of its folder) that
- *  a compaction reads for `@id` mentions (`appFileMentions`): the plain
- *  files of at most `APP_MENTION_FILE_BYTES`, while their count and their
- *  bytes are in the limits. The files nearest to the folder of their app
- *  come first, then the order of the apps, then the order of the paths:
- *  the files that a model wrote for an app are at the top of its folder,
- *  so each app gets those read before a deep folder of one app uses up
- *  the limits. A file that the rest of the bytes cannot hold is left out,
- *  and a smaller one after it can still be read. */
-export function appMentionFiles(apps: readonly { name: string, tree: AppsTree }[]): AppsPath[] {
-  const candidates = apps.flatMap(({ name, tree }, app) => tree.entries
-    .filter((entry) => entry.kind === 'file' && entry.size > 0 && entry.size <= APP_MENTION_FILE_BYTES)
-    .map((entry) => {
-      const names = entry.path.split('/')
-      return { app, depth: names.length, size: entry.size, path: names.reduce(pathIn, pathIn(APPS_ROOT, name)) }
-    }))
-  candidates.sort((a, b) => a.depth - b.depth || a.app - b.app || (a.path.file < b.path.file ? -1 : a.path.file > b.path.file ? 1 : 0))
-  const files: AppsPath[] = []
+/** A file that a compaction reads for `@id` mentions, as the native file
+ *  selectors take it, and as a model names it. */
+export type MentionFile = Pick<AppsPath, 'root' | 'file' | 'virtual'>
+
+/** A folder whose files a compaction reads for `@id` mentions, with the
+ *  listing of the folder: the folder of an app, or the work folder of the
+ *  conversation. */
+export interface MentionFolder {
+  folder: MentionFile
+  tree: AppsTree
+}
+
+/** The folder of the app `name`, with the listing `tree` of the folder, as
+ *  a folder for `mentionFiles`. */
+export function appMentionFolder({ name, tree }: { name: string, tree: AppsTree }): MentionFolder {
+  return { folder: pathIn(APPS_ROOT, name), tree }
+}
+
+/** The files of the folders `folders` that a compaction reads for `@id`
+ *  mentions (`fileMentions`): the plain files of at most
+ *  `MENTION_FILE_BYTES`, while their count and their bytes are in the
+ *  limits. The files nearest to their folder come first, then the order of
+ *  the folders, then the order of the paths: the files that a model wrote
+ *  for an app are at the top of its folder, so each folder gets those read
+ *  before a deep folder of one app uses up the limits. A file that the rest
+ *  of the bytes cannot hold is left out, and a smaller one after it can
+ *  still be read. */
+export function mentionFiles(folders: readonly MentionFolder[]): MentionFile[] {
+  const candidates = folders.flatMap(({ folder, tree }, index) => tree.entries
+    .filter((entry) => entry.kind === 'file' && entry.size > 0 && entry.size <= MENTION_FILE_BYTES)
+    .map((entry) => ({
+      index,
+      depth: entry.path.split('/').length,
+      size: entry.size,
+      path: { root: folder.root, file: `${folder.file}/${entry.path}`, virtual: `${folder.virtual}/${entry.path}` },
+    })))
+  candidates.sort((a, b) => a.depth - b.depth || a.index - b.index || (a.path.file < b.path.file ? -1 : a.path.file > b.path.file ? 1 : 0))
+  const files: MentionFile[] = []
   let bytes = 0
   for (const { size, path } of candidates) {
-    if (files.length >= APP_MENTION_MAX_FILES) break
-    if (bytes + size > APP_MENTION_MAX_BYTES) continue
+    if (files.length >= MENTION_MAX_FILES) break
+    if (bytes + size > MENTION_MAX_BYTES) continue
     bytes += size
     files.push(path)
   }
   return files
 }
 
-/** The ids that the file of an app with the bytes `bytes` names in the
- *  form of a mention (`findAssetMentions`), each one time; none for a file
- *  that is no text (it holds a zero byte). Bytes that are no UTF-8 fail
- *  nothing: a mention next to them still counts. */
-export function appFileMentions(bytes: Uint8Array): Set<string> {
+/** The ids that the file of an app or of the work folder with the bytes
+ *  `bytes` names in the form of a mention (`findAssetMentions`), each one
+ *  time; none for a file that is no text (it holds a zero byte). Bytes
+ *  that are no UTF-8 fail nothing: a mention next to them still counts. */
+export function fileMentions(bytes: Uint8Array): Set<string> {
   if (bytes.includes(0)) return new Set()
   return new Set(findAssetMentions(new TextDecoder().decode(bytes)).map((mention) => mention.id))
 }

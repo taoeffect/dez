@@ -1,7 +1,7 @@
 import sbp from '@sbp/sbp'
 import { hasBridgedCalls } from '../model/chat/bridgedCalls'
 import {
-  CODE_RUN_DESCRIPTION,
+  codeRunDescription,
   JS_EVAL_CODE_FILE,
   JS_EVAL_OUTPUT_BYTES,
   JS_EVAL_RUNNER,
@@ -16,7 +16,7 @@ import {
 import { programNotStartedText, type ProgramEnd } from '../model/tools/programRuns'
 import { ToolError, type ToolRunResult } from '../model/tools/types'
 import type { BundledToolRun } from './nativeTypes'
-import { folderPathForms, inWorkFolder, runProgram } from './programRuns'
+import { conversationWorkForms, folderPathForms, inWorkFolder, runProgram } from './programRuns'
 import { discardShownPictures } from './shownPictures'
 import { ToolBridge } from './toolBridge'
 import type { ToolRunContext } from './tools'
@@ -29,7 +29,8 @@ import type { ToolRunContext } from './tools'
 // which Deno runs, the description of the run, which tells the module
 // what to run, and the code of the call. The page gives Rust only the
 // name of the module: Rust writes the Deno command line, with no
-// permission for the code (src-tauri/src/bundled_tools.rs).
+// permission for the code but the work folder of its conversation
+// (`conversationWorkForms`; src-tauri/src/bundled_tools.rs).
 //
 // The code calls the other Dez tools over the input and the output of the
 // program (toolBridge.ts).
@@ -73,7 +74,8 @@ export function moduleRun(folder: string, timeoutMs: number): Omit<BundledToolRu
  *  that the code returned, what its tool calls left, then its console
  *  output, and the pictures that its tool calls showed. `context` is the
  *  context of the call, which the tool calls of the code run with
- *  (`ToolBridge`).
+ *  (`ToolBridge`). The code can read and change the work folder of the
+ *  conversation of the call (`dez.workFolder`).
  *
  *  Any other end of the code gives its error result (`jsEvalResult`), and
  *  throws no `ToolError`: an error result also has the list of the tool
@@ -85,12 +87,13 @@ export function moduleRun(folder: string, timeoutMs: number): Omit<BundledToolRu
  *  no list, and deletes the copies too. */
 export function runJsEval(call: JsEvalCall, signal: AbortSignal, context: ToolRunContext): Promise<ToolRunResult> {
   return inWorkFolder(async (folder) => {
-    await writeRunFiles(folder, CODE_RUN_DESCRIPTION, [{ name: JS_EVAL_CODE_FILE, text: jsEvalCodeFile(call.code) }], signal, JS_EVAL_TOOL.name)
-    const { forms: runFolders } = await folderPathForms(folder, 'cache', JS_EVAL_TOOL.name)
+    const work = await conversationWorkForms(context.conversationId, JS_EVAL_TOOL.name)
+    await writeRunFiles(folder, codeRunDescription(work.joined), [{ name: JS_EVAL_CODE_FILE, text: jsEvalCodeFile(call.code) }], signal, JS_EVAL_TOOL.name)
+    const folders = { run: (await folderPathForms(folder, 'cache', JS_EVAL_TOOL.name)).forms, work: work.forms }
     const output = new JsEvalOutput()
-    const bridge = new ToolBridge(context, runFolders, signal)
+    const bridge = new ToolBridge(context, folders, signal)
     // `stdin`: the answers of the tool calls go to the input of the program.
-    const run = { ...moduleRun(folder, call.timeoutMs), stdin: true }
+    const run = { ...moduleRun(folder, call.timeoutMs), stdin: true, conversationFolder: context.conversationId }
     let end: ProgramEnd
     try {
       end = await runProgram('deno', JS_EVAL_TOOL.name, run, signal, ({ stream, text }, writeInput) => {
@@ -101,7 +104,7 @@ export function runJsEval(call: JsEvalCall, signal: AbortSignal, context: ToolRu
       throw error
     }
     const { toolCalls, pictures, bridged } = await bridge.end()
-    const { text, isError } = jsEvalResult(call, end, output, runFolders, toolCalls)
+    const { text, isError } = jsEvalResult(call, end, output, folders, toolCalls)
     const list = hasBridgedCalls(bridged) ? { bridged } : {}
     if (isError) {
       await discardShownPictures(pictures)

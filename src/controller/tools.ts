@@ -55,6 +55,9 @@ export interface ToolRunCall {
 /** What a runner gets of the reply that made its call. */
 export interface ToolRunContext {
   tabId: string
+  /** The conversation of the tab: the runs of code get its work folder
+   *  (model/tools/conversationWork.ts). */
+  conversationId: string
   /** The model of the reply: the one that the user chose for it and that
    *  makes the call. Not the tab's active model, which the user can change
    *  while the reply runs. */
@@ -536,11 +539,12 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     })
   },
   // One run of code that the model wrote, in Deno, the JavaScript runtime
-  // that Dez ships (jsEval.ts). The code gets no network and no file; it
-  // calls the other Dez tools through Dez, with the context of this call
-  // (toolBridge.ts). The call waits for the end of the code and starts no
-  // job: the time limit of a run is short, and the model needs the value
-  // for its next step. A stop of the reply stops the code.
+  // that Dez ships (jsEval.ts). The code gets no network, and no file but
+  // the work folder of the conversation; it calls the other Dez tools
+  // through Dez, with the context of this call (toolBridge.ts). The call
+  // waits for the end of the code and starts no job: the time limit of a
+  // run is short, and the model needs the value for its next step. A stop
+  // of the reply stops the code.
   async js_eval (args, signal, context) {
     return runJsEval(jsEvalCall(args), signal, context)
   },
@@ -580,8 +584,9 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     show: (args, _signal, context) => showApp(args, context),
     async invoke (args, callSignal, context) {
       const call = await checkedInvokeCall(args, callSections(context))
-      const run = call.kind === 'ui' ? runAppFrameJob : runAppJob
-      return startJob(context, callSignal, APPS_TOOL.name, (signal, report, _reportCost, keepAsset) => run(call, signal, report, keepAsset), {
+      return startJob(context, callSignal, APPS_TOOL.name, (signal, report, _reportCost, keepAsset) => (call.kind === 'ui'
+        ? runAppFrameJob(call, signal, report, keepAsset)
+        : runAppJob(call, context.conversationId, signal, report, keepAsset)), {
         timeoutMs: call.timeoutMs,
         hidesAssets: isIntermediate(args),
         label: invokeLabel(args),

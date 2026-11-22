@@ -316,7 +316,7 @@ describe('compactConversation', () => {
 
       const compaction = await compactConversation(compactionInput({ sections }))
 
-      expect(instruction().split('\n').find((line) => line.startsWith('@b '))).toMatch(/ \| app file$/)
+      expect(instruction().split('\n').find((line) => line.startsWith('@b '))).toMatch(/ \| file$/)
       expect(compaction.dropped.map(({ asset }) => asset.id)).toStrictEqual(['c'])
       expect([...notesAssetLines(notesOf(compaction)).keys()]).toStrictEqual(['a', 'b'])
     })
@@ -341,6 +341,30 @@ describe('compactConversation', () => {
 
       expect(notesAppLines(notesOf(compaction))).toStrictEqual(notesAppLines(notesOf(first)))
       expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('/apps/sheet'), failure)
+    })
+  })
+
+  describe('the work folder of the conversation', () => {
+    it('keeps a made asset that one of its files names with its id, also when the answer drops it, and no asset that the folder of another conversation names', async () => {
+      fakeAppFiles({ 'work/conversation/frames/plan.txt': 'Cut @b at 2 s.', 'work/other/plan.txt': 'Use @c.' })
+      streamChat = answers(`${NOTES}\n\n## Assets\n@b: drop - An old draft.\n@c: drop - The first film.`)
+
+      const compaction = await compactConversation(compactionInput({ sections: [...SECTIONS.slice(0, 2), ...ASIDE, ...SECTIONS.slice(2)] }))
+
+      expect(instruction().split('\n').find((line) => line.startsWith('@b '))).toMatch(/ \| file$/)
+      expect(instruction().split('\n').find((line) => line.startsWith('@c '))).toMatch(/ \| -$/)
+      expect(compaction.dropped.map(({ asset }) => asset.id)).toStrictEqual(['c'])
+    })
+
+    it('fails nothing when Dez cannot read it', async () => {
+      const failure = new Error('Permission denied (os error 13)')
+      native.fileTree = () => { throw failure }
+      streamChat = answers(`${NOTES}\n\n## Assets\n@b: drop - An old draft.\n@c: drop - The first film.`)
+
+      const compaction = await compactConversation(compactionInput({ sections: [...SECTIONS.slice(0, 2), ...ASIDE, ...SECTIONS.slice(2)] }))
+
+      expect(compaction.dropped.map(({ asset }) => asset.id)).toStrictEqual(['b', 'c'])
+      expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('/work'), failure)
     })
   })
 

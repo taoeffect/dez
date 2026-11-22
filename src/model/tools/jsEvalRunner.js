@@ -7,7 +7,9 @@
 // The code of a `js_eval` call (`code.ts`, next to this file) gets one
 // object, `dez`. With `dez.sbp` it calls the other Dez tools: this module
 // writes one `call` line for each call, and Dez writes the answer as one
-// line to the standard input (`jsEvalAnswerLine`).
+// line to the standard input (`jsEvalAnswerLine`). `dez.workFolder` is the
+// path of the work folder of its conversation, which it can read and
+// change.
 //
 // The code of an app (the default export of its `main.ts`) gets the
 // parameters of the run and its own `dez` object, with the input files and
@@ -237,15 +239,16 @@ async function runCode() {
   // The name of the code file is a literal: Deno then needs no permission
   // to import it. A syntax error of the code is thrown here.
   const { default: run } = await import('./code.ts')
-  return run(freeze({ sbp }))
+  return run(freeze({ sbp, workFolder: RUN.workFolder }))
 }
 
 // The `dez` object of a run of an app: the copies of the input assets
 // (`inputs`, each with the path of its file), the folder for the files
-// that the run gives back (`outputFolder`), and the folder of the app
-// (`appFolder`). It has no `sbp`: the code of an app calls no Dez tool.
-function appDez({ inputs, outputFolder, appFolder }) {
-  return freeze({ inputs: freeze(inputs.map((input) => freeze({ ...input }))), outputFolder, appFolder })
+// that the run gives back (`outputFolder`), the folder of the app
+// (`appFolder`), and the work folder of the conversation (`workFolder`).
+// It has no `sbp`: the code of an app calls no Dez tool.
+function appDez({ inputs, outputFolder, appFolder, workFolder }) {
+  return freeze({ inputs: freeze(inputs.map((input) => freeze({ ...input }))), outputFolder, appFolder, workFolder })
 }
 
 // Runs an app: the default export of its `main.ts`, with the parameters of
