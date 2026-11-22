@@ -347,7 +347,12 @@ def primitives():
     def values(n):
         return [r.uniform() * 2 - 1 for _ in range(n)]
 
-    pairs = [(values(10), values(4)), (values(10), values(5)), (values(3), values(6)), (values(1), values(1))]
+    # (2, 3) and (4, 6): an even a shorter than v, where the `same` window of
+    # np.correlate starts at len(a) / 2, not at (len(a) - 1) / 2.
+    pairs = [
+        (values(10), values(4)), (values(10), values(5)), (values(3), values(6)), (values(1), values(1)),
+        (values(2), values(3)), (values(4), values(6)),
+    ]
     x16, x64, x10, x9, x1000 = values(16), values(64), values(10), values(9), values(1000)
     hist = [0, 31.999, 32, 255, 256, 257, -1, 128, 64.5]
     edges = [-1, -0.6, -0.2, 0.2, 0.6, 1, 1.0000001, -1.5] + values(40)

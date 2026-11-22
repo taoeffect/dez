@@ -7,8 +7,10 @@
 //
 // The details that a port from NumPy easily gets wrong, which these keep:
 // np.hanning is symmetric (it divides by m − 1); the `same` mode of
-// convolve and correlate starts at (min(n, m) − 1) / 2, rounded down; std
-// divides by n; argmax and argmin give the first of equal values.
+// convolve starts at (min(n, m) − 1) / 2, rounded down, and that of
+// correlate too, but at n / 2, rounded down, when a is the shorter input
+// (NumPy then swaps the inputs and reverses the result); std divides by n;
+// argmax and argmin give the first of equal values.
 
 import FFTModule from '../fft.js/lib/fft.esm.js'
 
@@ -131,8 +133,8 @@ export function diff(x) {
 /**
  * The part of the full result that a mode keeps, as NumPy: `full` all
  * n + m − 1 values; `same` max(n, m) values from (min(n, m) − 1) / 2,
- * rounded down; `valid` the max(n, m) − min(n, m) + 1 values where one
- * input covers the other.
+ * rounded down (correlate moves this start when n < m); `valid` the
+ * max(n, m) − min(n, m) + 1 values where one input covers the other.
  * @param {string} name
  * @param {number} n
  * @param {number} m
@@ -182,7 +184,12 @@ export function convolve(a, v, mode = 'full') {
 export function correlate(a, v, mode = 'valid') {
   const n = a.length
   const m = v.length
-  const { start, length } = modeSpan('correlate', n, m, mode)
+  const span = modeSpan('correlate', n, m, mode)
+  // NumPy swaps the inputs when `a` is the shorter one, and reverses the
+  // result, so its `same` window then starts at n / 2, rounded down, not at
+  // (n − 1) / 2. The two differ for an even n.
+  const start = mode === 'same' && n < m ? Math.floor(n / 2) : span.start
+  const { length } = span
   const out = new Float64Array(length)
   for (let o = 0; o < length; o++) {
     const lag = start + o - (m - 1)
