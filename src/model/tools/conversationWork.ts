@@ -22,6 +22,12 @@ export const CONVERSATION_WORK_ROOT = 'work'
  *  path. */
 export const WORK_VIRTUAL_ROOT = '/work'
 
+/** How a model reads a file that a tool wrote into the work folder, for
+ *  the texts of the tools that write one. This module imports nothing, so
+ *  the alias subcommands of the `audio` and the `video` tools take it too
+ *  (appAliases.ts). */
+export const WORK_FILE_READ_TEXT = 'Read the file with apps read, or with code (js_eval, a script app) in `dez.workFolder`.'
+
 // A conversation id that can name a folder: the characters of the stem of
 // a conversation file (`CONVERSATION_FILE_STEM`, persistence/index.ts), and
 // not empty. Dez makes each id with `crypto.randomUUID()`; only a hand

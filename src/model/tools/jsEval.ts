@@ -3,7 +3,7 @@ import { byteSizeText } from '../../utils/byteSize'
 import { countOf, countText } from '../../utils/countText'
 import { regExpSource } from '../../utils/regExpSource'
 import { endOf, startOf } from '../../utils/textCut'
-import { NATIVE_CANVAS_LIBRARY } from './appManifest'
+import { MANIFEST_FILE, NATIVE_CANVAS_LIBRARY, NATIVE_FIELD_EXAMPLE } from './appManifest'
 import { shownAppNames, shownAppText } from './appShow'
 import { APPS_INVOKE, APPS_TOOL, APPS_VIRTUAL_ROOT, LIBRARIES_TEXT, LIBS_VIRTUAL_ROOT } from './appsTool'
 import { WORK_VIRTUAL_ROOT } from './conversationWork'
@@ -501,7 +501,7 @@ const STATIC_IMPORT = /'import', and 'export' cannot be used outside of module c
 function flagAdvice(error: string): string {
   if (skiaCanvasRefused(error)) {
     return `The code of \`${JS_EVAL_TOOL.name}\` cannot load ${NATIVE_CANVAS_LIBRARY}: it loads a native file, which only the run of a script app may load. `
-      + `Write a script app whose manifest.json has the field \`"native": ["${NATIVE_CANVAS_LIBRARY}"]\`, and run it with \`${APPS_TOOL.name} ${APPS_INVOKE}\`.`
+      + `Write a script app whose ${MANIFEST_FILE} has the field \`${NATIVE_FIELD_EXAMPLE}\`, and run it with \`${APPS_TOOL.name} ${APPS_INVOKE}\`.`
   }
   return 'Dez runs the code with no network, no environment variables, and no start of programs. '
     + `The code loads no package but the libraries of \`${LIBS_VIRTUAL_ROOT}/\`. `

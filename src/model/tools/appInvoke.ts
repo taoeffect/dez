@@ -7,7 +7,7 @@ import type { Section } from '../chat/types'
 import { conversationAssets, type ConversationAssets } from '../streams/mediaRequest'
 import { aliasCallText, aliasNotDoneText, ALIAS_TIMEOUT_MS, type AppAlias } from './appAliases'
 import { APP_FRAME_ROOT_URL, APP_HANDLER_EXAMPLE, AppCallError, type AppFrameEnd, type AppFrameInput } from './appBridge'
-import { MANIFEST_FILE, NATIVE_CANVAS_LIBRARY, type AppKind } from './appManifest'
+import { MANIFEST_FILE, NATIVE_CANVAS_LIBRARY, NATIVE_FIELD_EXAMPLE, type AppKind } from './appManifest'
 import {
   APP_RUN_DEFAULT_SECONDS,
   APP_RUN_MAX_OUTPUT_BYTES,
@@ -327,8 +327,6 @@ export function checkInvokeTarget({ app, manifest, main, index }: InvokeCall, ta
   return kind
 }
 
-const NATIVE_FIELD_EXAMPLE = `"native": ["${NATIVE_CANVAS_LIBRARY}"]`
-
 // The problem of the value `value` of the field "native" of a manifest, as
 // a part of a sentence; null for a value that is valid.
 function nativeFieldProblem(value: unknown): string | null {
@@ -358,7 +356,7 @@ export function runNativeCanvas({ app, manifest }: Pick<InvokeCall, 'app' | 'man
   const problem = nativeFieldProblem(native)
   if (problem !== null) {
     throw new ToolError(`The field "native" of ${manifest.virtual} is not valid: ${problem}. `
-      + `For a script app that draws with skia-canvas, write the field as ${NATIVE_FIELD_EXAMPLE}; else delete it. ${NOT_DONE}`)
+      + `For a script app that draws with ${NATIVE_CANVAS_LIBRARY}, write the field as ${NATIVE_FIELD_EXAMPLE}; else delete it. ${NOT_DONE}`)
   }
   if ((native as unknown[]).length === 0) return false
   if (kind === 'ui') {
@@ -456,8 +454,8 @@ const SANDBOX_ADVICE = 'The code of an app can open only the folder of its app, 
 
 // The advice for an app that loads skia-canvas, and whose manifest does not
 // ask for it (`skiaCanvasRefused`).
-const NATIVE_CANVAS_ADVICE = `${NATIVE_CANVAS_LIBRARY} loads a native file, which only the run of an app whose manifest.json has ${NATIVE_FIELD_EXAMPLE} may load. `
-  + 'Add that field to the manifest.json of the app, and run the app again.'
+const NATIVE_CANVAS_ADVICE = `${NATIVE_CANVAS_LIBRARY} loads a native file, which only the run of an app whose ${MANIFEST_FILE} has ${NATIVE_FIELD_EXAMPLE} may load. `
+  + `Add that field to the ${MANIFEST_FILE} of the app, and run the app again.`
 
 const KEPT_NONE = 'Dez kept no file of the run.'
 

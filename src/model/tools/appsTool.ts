@@ -4,8 +4,8 @@ import { oneLineCut } from '../../utils/oneLineCut'
 import { startOf } from '../../utils/textCut'
 import { searchTerms, textMatches } from '../textSearch'
 import { APP_HANDLER_EXAMPLE, APP_READ_ASSET, APP_RUN_FRAME_SIZE, APP_SAVE_ASSET } from './appBridge'
-import { APP_KINDS, BUILT_IN_APP_PREFIX, isAppName, isBuiltInApp, MANIFEST_FILE, MANIFEST_MAX_BYTES, MAX_DESCRIPTION_LENGTH, NATIVE_CANVAS_LIBRARY, parseAppManifest, UNKNOWN_APP_KIND, type AppKind, type AppManifest, type ListedAppKind } from './appManifest'
-import { appTemplateFiles, SCRIPT_MAIN_FILE, UI_CLIENT_SCRIPT_TAG, UI_INDEX_FILE, UI_LIBS_ROUTE, UI_OWN_SCRIPT_TAG } from './appTemplates'
+import { APP_KINDS, BUILT_IN_APP_PREFIX, isAppName, isBuiltInApp, MANIFEST_FILE, MANIFEST_MAX_BYTES, MAX_DESCRIPTION_LENGTH, NATIVE_CANVAS_LIBRARY, NATIVE_FIELD_EXAMPLE, parseAppManifest, UNKNOWN_APP_KIND, type AppKind, type AppManifest, type ListedAppKind } from './appManifest'
+import { appTemplateFiles, DENO_ONLY_NAMES, SCRIPT_MAIN_FILE, UI_CLIENT_SCRIPT_TAG, UI_INDEX_FILE, UI_LIBS_ROUTE, UI_OWN_SCRIPT_TAG } from './appTemplates'
 import { unknownValuesText } from './arguments'
 import { conversationWorkFolder, WORK_VIRTUAL_ROOT } from './conversationWork'
 import { GREP_LINE_MAX_CHARACTERS, GREP_MAX_CHARACTERS, GREP_MAX_CONTEXT, GREP_MAX_MATCHES, GREP_TIME_LIMIT_SECONDS } from './grepMatch'
@@ -82,11 +82,15 @@ export const SHIPPED_LIBRARIES: readonly { name: string, use: string }[] = [
   { name: 'dez-media', use: 'the media measurements of Dez, NumPy-style signal functions, data tables, and frame sequences' },
 ]
 
-const libraryEntries = SHIPPED_LIBRARIES.map(({ name, use }) => `${name} (${use})`)
+// A list of names in a sentence: `a and b`, or `a, b, and c` (`or` the
+// same).
+function seriesText(items: readonly string[], conjunction: 'and' | 'or'): string {
+  return items.length < 3 ? items.join(` ${conjunction} `) : `${items.slice(0, -1).join(', ')}, ${conjunction} ${items.at(-1)}`
+}
 
 /** The libraries as the tool texts list them, with where each one tells
  *  its use: a model reads the details only when it needs them. */
-export const LIBRARIES_TEXT = `${libraryEntries.slice(0, -1).join(', ')}, and ${libraryEntries.at(-1)}. `
+export const LIBRARIES_TEXT = `${seriesText(SHIPPED_LIBRARIES.map(({ name, use }) => `${name} (${use})`), 'and')}. `
   + `Read ${LIBS_VIRTUAL_ROOT}/<library>/${LIBRARY_SKILL_FILE} before you use a library: it tells how to import it, and its rules in Dez.`
 
 /** The largest text file that `read`, `write`, and `edit` take. Its text
@@ -215,10 +219,11 @@ const SAVE_BYTES = 'a Blob, an ArrayBuffer, or a typed array'
 
 // What the page of a UI app imports of the libraries: the import map that
 // `init` writes into its index.html (`UI_IMPORT_MAP_TAG`, appTemplates.ts)
-// names each one but those that only Deno loads.
+// names each one but those that only Deno loads (`DENO_ONLY_NAMES`).
+const PAGE_LIBRARY_NAMES = SHIPPED_LIBRARIES.map(({ name }) => name).filter((name) => !DENO_ONLY_NAMES.includes(name))
 const PAGE_LIBRARIES = `A module of the page imports the libraries of ${LIBS_VIRTUAL_ROOT}/ by name, as in \`import * as THREE from "three"\`, `
   + `through the import map that init writes into ${UI_INDEX_FILE}, before the first module (each entry is a file of ./${UI_LIBS_ROUTE}/, as in "./${UI_LIBS_ROUTE}/three/build/three.module.js"): `
-  + `three, chart.js, fft.js, and dez-media, but not ${NATIVE_CANVAS_LIBRARY}, dez-media/canvas, or dez-media/frames.`
+  + `${seriesText(PAGE_LIBRARY_NAMES, 'and')}, but not ${seriesText(DENO_ONLY_NAMES, 'or')}.`
 
 // The help of `invoke` for a UI app: what the page of an app needs for a
 // run, and the limits of a page that make plain code fail (the frame
@@ -288,7 +293,7 @@ const INVOKE_HELP = `Runs the code of an app on the user's computer, with the pa
   + `and the libraries of ${LIBS_VIRTUAL_ROOT}/ by name (\`import { beatGrid } from "dez-media"\`), but no package of npm, of JSR, or from a URL. `
   + `The libraries: ${LIBRARIES_TEXT} `
   + `The code of the built-in apps (${APPS_VIRTUAL_ROOT}/${BUILT_IN_APP_PREFIX}<name>/${SCRIPT_MAIN_FILE}) is a good start for an app of your own: read it, and write a copy into your app. `
-  + `To draw with ${NATIVE_CANVAS_LIBRARY} (\`import { Canvas } from "${NATIVE_CANVAS_LIBRARY}"\`), the ${MANIFEST_FILE} of the app must have the field \`"native": ["${NATIVE_CANVAS_LIBRARY}"]\`, `
+  + `To draw with ${NATIVE_CANVAS_LIBRARY} (\`import { Canvas } from "${NATIVE_CANVAS_LIBRARY}"\`), the ${MANIFEST_FILE} of the app must have the field \`${NATIVE_FIELD_EXAMPLE}\`, `
   + 'and each canvas must draw with no GPU: `new Canvas(1280, 720, { gpu: false })`. The run sees no font of the computer, so a canvas draws text only after '
   + '`const families = useShippedFonts(dez.fonts)` (`import { useShippedFonts } from "dez-media/canvas"`). It returns a list of every shipped family for `ctx.font`, '
   + 'which draws each script that the fonts cover, as in ``ctx.font = `bold 48px ${families}` ``; a family of `dez.fonts` alone draws only its own scripts. '

@@ -2,7 +2,7 @@ import { byteSizeText } from '../../utils/byteSize'
 import type { MediaTagKind } from '../chat/mediaTags'
 import type { AppRunTexts } from './appInvoke'
 import { APP_RUN_MAX_DECODED_BYTES } from './appsTool'
-import { WORK_VIRTUAL_ROOT } from './conversationWork'
+import { WORK_FILE_READ_TEXT, WORK_VIRTUAL_ROOT } from './conversationWork'
 import { ASSET_NAMES } from './jobs'
 import type { Subcommand } from './subcommands'
 import type { ToolParameter } from './types'
@@ -59,8 +59,15 @@ export interface AppAlias {
 
 // The parts of the help of every alias.
 const WAITS = `The call waits for the run (no job), for at most ${ALIAS_TIMEOUT_MS / 60_000} minutes.`
-const READ_FILE = `Read the file with apps read, or with code (js_eval, a script app) in \`dez.workFolder\`. Dez deletes ${WORK_VIRTUAL_ROOT}/ with the conversation.`
+const READ_FILE = `${WORK_FILE_READ_TEXT} Dez deletes ${WORK_VIRTUAL_ROOT}/ with the conversation.`
 const TIMING = 'Use it for each time that must be exact: you are weak at timing by ear and by eye, even when you hear a clip or see its frames.'
+
+/** The `arguments` of a `video ffmpeg` call that puts the title clip
+ *  `title` (an id, as in "@t") over the video clip @c, from second 2 of @c:
+ *  the help of `video title` and of `video ffmpeg` give it. */
+export function titleOverlayArguments(title: string): string {
+  return `-i @c -itsoffset 2 -i ${title} -filter_complex "[0:v][1:v]overlay=eof_action=pass,format=yuv420p[v]" -map "[v]" -map "0:a?" -c:v libx264 -c:a copy titled.mp4`
+}
 
 // The first sentences of the help of an alias of `app`: what runs, on
 // what, and the call.
@@ -248,8 +255,7 @@ export const VIDEO_ALIASES: readonly AppAlias[] = [
         + 'with an optional `subtitle` line of wide letters under it. The title slams in with a flash, gets a glint, and goes out with a glitch. '
         + `${runsText('dez-title', 'with no input clip')} `
         + 'The new clip goes into your reply, and the result gives its id. It is a MOV file with the PNG codec and an alpha channel: only the title shows, and the rest of each frame is transparent. '
-        + 'Put it over a video clip with the ffmpeg subcommand and the overlay filter. For the title @t over the clip @c, from second 2 of @c: '
-        + '-i @c -itsoffset 2 -i @t -filter_complex "[0:v][1:v]overlay=eof_action=pass,format=yuv420p[v]" -map "[v]" -map "0:a?" -c:v libx264 -c:a copy titled.mp4. '
+        + `Put it over a video clip with the ffmpeg subcommand and the overlay filter. For the title @t over the clip @c, from second 2 of @c: ${titleOverlayArguments('@t')}. `
         + 'Give the title the width and the height of the clip that it goes over. '
         + 'A title has at most 600 million pixels in all its frames (width × height × fps × duration), about 9.6 seconds of 1920×1080 at 30 fps: '
         + 'for a longer title, give a smaller width and height, and scale the title up in the filter of the overlay.',

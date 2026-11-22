@@ -88,11 +88,18 @@ function pageImportMap(): { imports: Record<string, string> } {
   return { imports: Object.fromEntries(imports) }
 }
 
+const PAGE_IMPORT_MAP = pageImportMap()
+
+/** The names of the import map of the runs of Deno that the import map of
+ *  a page leaves out (`pageImportMap`), in the order of import_map.json:
+ *  only a run of Deno loads them. */
+export const DENO_ONLY_NAMES: readonly string[] = Object.keys(shippedImportMap.imports).filter((name) => !Object.hasOwn(PAGE_IMPORT_MAP.imports, name))
+
 /** The import map of the page of a new UI app, inline in its `<head>`: a
  *  module of the page imports the shipped libraries by their names, as in
  *  `import * as THREE from 'three'`. A browser takes no import map from a
  *  file, and a map after the first module of a page does nothing. */
-export const UI_IMPORT_MAP_TAG = `<script type="importmap">\n${JSON.stringify(pageImportMap(), null, 2)}\n</script>`
+export const UI_IMPORT_MAP_TAG = `<script type="importmap">\n${JSON.stringify(PAGE_IMPORT_MAP, null, 2)}\n</script>`
 
 function scriptFiles(name: string): TemplateFile[] {
   return [{

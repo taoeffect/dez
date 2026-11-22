@@ -13,7 +13,7 @@ import { effectiveRequest, sendsPrompt, type MediaKind, type ModelInfo, type Pro
 import { unstoredOutputMessage, unusableModelMessage } from '../providers/unusableModel'
 import { conversationAssets, mediaInputRules, preparedMediaRequest, promptRequestProblem, promptRequestSource, type MediaRequestInput, type PromptInput, type PromptPart, type PromptRequestSource } from '../streams/mediaRequest'
 import { chatClipsProblem } from './chatClips'
-import { WORK_VIRTUAL_ROOT } from './conversationWork'
+import { WORK_FILE_READ_TEXT, WORK_VIRTUAL_ROOT } from './conversationWork'
 import { INTERMEDIATE_PARAMETER, JOB_CALL_NOTE, jobCallLabel, jobTimeoutMs, jobTimeoutParameter } from './jobs'
 import { withoutLocalPaths } from './localPaths'
 import { FIND_MODELS, namedModelTarget, parameterValuesArgument } from './modelArguments'
@@ -391,7 +391,7 @@ export function invocationTimesResult(text: string, clipId: string, times: Trans
   const where = 'name' in file
     ? ` They are in ${WORK_VIRTUAL_ROOT}/${file.name}, a JSON object with id (the clip), model, duration (seconds, or null), text, `
       + 'words ([{word, start, end}]), and segments ([{text, start, end}]). Each time is in seconds from the start of the clip. '
-      + 'Read the file with apps read, or with code (js_eval, a script app) in `dez.workFolder`.'
+      + WORK_FILE_READ_TEXT
     : file.problem === 'noWorkFolder'
       ? ` Dez could not keep them: this conversation has no ${WORK_VIRTUAL_ROOT} folder, as its id can name no folder. This is a fault of Dez, not of your call: tell the user.`
       : ` Dez could not write them into ${WORK_VIRTUAL_ROOT}. This is not a fault of your call: tell the user.`

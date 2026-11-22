@@ -9,7 +9,7 @@ import { CLIP_FILE_EXTENSIONS, MAX_SAVED_CLIP_BYTES, storableClip } from '../cha
 import { newMediaIds } from '../chat/mediaIds'
 import type { Section } from '../chat/types'
 import { conversationAssets, type ConversationAssets } from '../streams/mediaRequest'
-import { VIDEO_ALIASES } from './appAliases'
+import { titleOverlayArguments, VIDEO_ALIASES } from './appAliases'
 import { appsPath, HIDDEN_NAMES, type AppsPath } from './appsTool'
 import { assetIdWords } from './arguments'
 import { conversationWorkFolder, WORK_VIRTUAL_ROOT } from './conversationWork'
@@ -227,8 +227,7 @@ const FFMPEG_HELP = [
     + `-i ${WORK_VIRTUAL_ROOT}/seg/s1.mov -i ${WORK_VIRTUAL_ROOT}/seg/s2.mov -filter_complex "[0:v][1:v]concat=n=2:v=1:a=0,setpts=N/(24*TB)[v]" -map "[v]" -r 24 -c:v libx264 -pix_fmt yuv420p edit.mp4`,
   '- Make a 3-second clip with an alpha channel (PNG in MOV), where only the text shows, with "NotoSans-Bold.ttf" in `fonts`: '
     + '-f lavfi -i color=c=black@0:size=1280x720:rate=24:duration=3,format=rgba -vf "drawtext=fontfile=fonts/NotoSans-Bold.ttf:text=\'Night Drive\':fontsize=64:fontcolor=white:borderw=4:x=60:y=h-text_h-60" -c:v png lower.mov',
-  '- Put the clip with alpha @d (PNG in MOV, as from the title subcommand) over the video clip @c, from second 2 of @c: '
-    + '-i @c -itsoffset 2 -i @d -filter_complex "[0:v][1:v]overlay=eof_action=pass,format=yuv420p[v]" -map "[v]" -map "0:a?" -c:v libx264 -c:a copy titled.mp4',
+  `- Put the clip with alpha @d (PNG in MOV, as from the title subcommand) over the video clip @c, from second 2 of @c: ${titleOverlayArguments('@d')}`,
   '- Pass 1 of a loudness of -14 LUFS for @b, which measures with no new file, and whose log ends with the values as JSON: '
     + '-v info -i @b -af loudnorm=I=-14:TP=-1.2:LRA=11:print_format=json -f null -',
   '- Pass 2, which gives the values of pass 1 (input_i, input_tp, input_lra, input_thresh, target_offset) as measured_I, measured_TP, measured_LRA, measured_thresh, and offset: '

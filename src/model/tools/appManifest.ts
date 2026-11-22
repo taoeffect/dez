@@ -67,6 +67,10 @@ export type AppManifest = z.infer<typeof manifestSchema>
  *  checks it (`runNativeCanvas`, appInvoke.ts). */
 export const NATIVE_CANVAS_LIBRARY = 'skia-canvas'
 
+/** The field of the manifest of a script app that asks for
+ *  `NATIVE_CANVAS_LIBRARY`, as the texts for a model write it. */
+export const NATIVE_FIELD_EXAMPLE = `"native": ["${NATIVE_CANVAS_LIBRARY}"]`
+
 /** The text of the manifest file of an app. */
 export function appManifestText({ name, description, kind }: AppManifest): string {
   return `${JSON.stringify({ name, description, kind }, null, 2)}\n`
