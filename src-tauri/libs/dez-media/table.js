@@ -180,7 +180,8 @@ export function jsonTable(value) {
   }
   const items = /** @type {Record<string, unknown>[]} */ (value)
   const columns = [...new Set(items.flatMap((item) => Object.keys(item)))]
-  const rows = items.map((item) => columns.map((column) => jsonValue(item[column])))
+  // A row that lacks a field reads it as missing, not as a field of Object.prototype (`constructor`, `__proto__`).
+  const rows = items.map((item) => columns.map((column) => jsonValue(Object.hasOwn(item, column) ? item[column] : undefined)))
   return { columns, rows }
 }
 

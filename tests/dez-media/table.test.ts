@@ -63,6 +63,14 @@ describe('dez-media jsonTable', () => {
     })
   })
 
+  it('gives null for a field that a row lacks, also when Object.prototype has that name', () => {
+    const rows = JSON.parse('[{"__proto__": 1, "constructor": 2, "toString": "a"}, {"x": 3}]')
+    expect(jsonTable(rows)).toStrictEqual({
+      columns: ['__proto__', 'constructor', 'toString', 'x'],
+      rows: [[1, 2, 'a', null], [null, null, null, 3]],
+    })
+  })
+
   it('refuses a value that is no list of objects', () => {
     for (const value of [{ a: 1 }, [1, 2], [[1]], [null], 'a']) expect(() => jsonTable(value), JSON.stringify(value)).toThrow(RangeError)
   })
