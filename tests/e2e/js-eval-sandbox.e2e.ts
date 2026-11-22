@@ -21,7 +21,8 @@ import { newTab, submit } from './harness/thread'
 // of Deno (`scripts/update-deno.js`) must pass it too.
 // - Deno refuses each thing of the computer that the code asks it for: a
 //   file, the network, a variable of the environment, a fact of the
-//   system, a program, a native library, and a new permission.
+//   system, a program, a native library, and a new permission. The code
+//   imports a library that Dez ships by its name, but reads no file of it.
 // - Deno loads a file that the code imports with no check of a permission,
 //   so only the OS rule stops such an import: no file outside the work
 //   folder of the run loads. Not the keys of the user, not a conversation,
@@ -226,6 +227,9 @@ describe('js_eval sandbox', () => {
   it('refuses each thing of the computer that the code asks Deno for', async () => {
     const file = literal(keys)
     const home = literal(setup.app.home)
+    // A file of a library that Dez ships, next to the program of the debug
+    // build (its resource dir).
+    const shippedLib = literal(path.join(path.dirname(setup.app.binary), 'libs', 'fft.js', 'lib', 'fft.esm.js'))
     // The mock server of the spec: a real server that would answer.
     const { port } = new URL(setup.mock.url)
     const refusedRead = 'NotCapable: Requires read access'
@@ -290,6 +294,9 @@ describe('js_eval sandbox', () => {
       // for it.
       ['a signal', 'async () => Deno.kill(Deno.ppid, "SIGURG")', refusedRun],
       ['a native library', 'async () => Deno.dlopen("libc.so.6", {})', 'NotCapable: Requires ffi access'],
+      // The libraries that Dez ships.
+      ['a library that Dez ships', '() => import("fft.js").then((module) => new module.default(8).size)', 'ok: 8'],
+      ['read a file of a library that Dez ships', `() => Deno.readTextFile(${shippedLib})`, refusedRead],
       // `--no-prompt`: a question is a "no".
       ['ask for each permission', 'async () => (await Promise.all(["read", "write", "net", "env", "sys", "run", "ffi"].map((name) => Deno.permissions.request({ name })))).map((status) => status.state).join(" ")', 'ok: "denied denied denied denied denied denied denied"'],
     ]

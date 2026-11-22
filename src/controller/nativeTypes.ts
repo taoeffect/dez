@@ -109,6 +109,18 @@ export interface BundledToolRun {
   // there. The program can then read and change the files of that folder.
   // Only a Deno run can have one.
   appFolder?: string
+  // The name of a built-in app: one folder of `builtin-apps/` in the files
+  // that Dez ships, which the program can then only read. Only a Deno run
+  // can have one, and not with `appFolder`.
+  builtInApp?: string
+  // The id of a conversation. The program can then read and change the
+  // files of its work folder (`work/<id>` in the app folder), which the
+  // backend makes when it is missing. Only a Deno run can have one.
+  conversationFolder?: string
+  // Whether the program can load the native library of skia-canvas, whose
+  // code opens files with no check of Deno. Only a Deno run with
+  // `appFolder` or `builtInApp` can have it: never the code of a model.
+  nativeCanvas?: boolean
   // The time zone of the program (`Europe/Berlin`), so that its local time
   // is the one of the user: a program gets no other fact of the computer.
   timeZone?: string

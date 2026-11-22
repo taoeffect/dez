@@ -17,13 +17,18 @@
 //!     folder (`PROGRAM_APP_FOLDER`). They can read and write no file
 //!     outside the cache root, and in the assets folder they can read,
 //!     make, and change files, but not delete or move them.
-//!   - Deno: the work folder of its run and, for a run with an app folder,
-//!     that one folder of `APPS_FOLDER`. Rust builds its command line, and
-//!     the page gives only the name of a script (`DENO_RULES`). It does not
-//!     run on a computer with no confinement, and its memory has a limit.
+//!   - Deno: the work folder of its run; for a run of an app, that one
+//!     folder of `APPS_FOLDER` (or of `BUILT_IN_APPS_FOLDER`, only to read)
+//!     and the fonts that Dez ships; for a run with a conversation, its
+//!     folder of `CONVERSATION_WORK_FOLDERS`; and the libraries that Dez
+//!     ships, only to read (`RunPlaces`). Rust builds its command line, and
+//!     the page gives only the name of a script and the names of the places
+//!     (`DENO_RULES`). It does not run on a computer with no confinement,
+//!     and its memory has a limit.
 //!
 //!   No program can make a symlink, and Dez follows no link of the cache
-//!   root or of `APPS_FOLDER` (`has_link_below`).
+//!   root or of the folders of `APPS_FOLDER` and `CONVERSATION_WORK_FOLDERS`
+//!   (`has_link_below`).
 //! - It ends at its time limit, at its output cap, at a cancel
 //!   (`cancel_bundled_tool`, also one that came before the run command),
 //!   and when the app quits (`stop_all_runs`). The end of a run ends the
@@ -47,7 +52,7 @@ use tokio::process::ChildStdin;
 use tokio::sync::{Notify, mpsc, watch};
 
 use crate::confinement::{Confinement, confined_command};
-use crate::persistence::{APPS_FOLDER, FileRoot, has_link_below, is_app_file_segment, make_private_folder, root_dir};
+use crate::persistence::{APPS_FOLDER, CONVERSATION_WORK_FOLDERS, FileRoot, has_link_below, is_app_file_segment, make_private_folder, root_dir};
 
 // The programs that a run can name (`const BUNDLED_TOOLS: &[&str]`): the
 // `bundle.externalBin` programs of tauri.conf.json, under the names that
@@ -67,6 +72,31 @@ const PROGRAM_APP_FOLDER: &str = "assets";
 // The folder of the cache root that holds the work folders (`WORK_ROOT` in
 // src/model/tools/workFolders.ts).
 const WORK_ROOT: &str = "work";
+
+// The folders of Tauri's resource dir that Dez ships for the runs of Deno
+// (`bundle.resources` of tauri.conf.json): the libraries, which a script
+// imports by the names of their import map, the fonts, and the built-in
+// apps, one folder for each. They are no Dez folders: the bundle holds
+// them, and no run, tool, or file code of Dez changes them.
+const LIBS_FOLDER: &str = "libs";
+const FONTS_FOLDER: &str = "fonts";
+const BUILT_IN_APPS_FOLDER: &str = "builtin-apps";
+
+// The import map of the libraries, in `LIBS_FOLDER`
+// (scripts/update-libs.js writes it). Its entries are relative to the map,
+// so the map holds in every place of the bundle.
+const LIBS_IMPORT_MAP: &str = "import_map.json";
+
+// The folder of the script of skia-canvas in `LIBS_FOLDER`, and its native
+// library there (`ToolRun::native_canvas`). The script loads the library
+// with a `require`, which reads the files of its folder through Deno.
+const CANVAS_SCRIPT_FOLDER: &str = "skia-canvas/lib";
+const CANVAS_NATIVE_LIBRARY: &str = "skia.node";
+
+// The variables of the environment that the script of skia-canvas reads
+// when it loads. A run has none of them, but a read that Deno does not
+// allow is an error, and the script would not load.
+const CANVAS_VARIABLES: &[&str] = &["https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY", "LC_ALL", "LC_MESSAGES", "LANG", "LANGUAGE", "SKIA_CANVAS_STRICT"];
 
 // How long a quit of the app waits for the runs to end (`stop_all_runs`).
 const EXIT_WAIT: Duration = Duration::from_secs(2);
@@ -112,9 +142,24 @@ pub struct ToolRun {
     #[serde(default)]
     pub stdin: bool,
     // The name of one folder of `APPS_FOLDER`, which the program can then
-    // read and change. Only for a program whose rules take one.
+    // read and change. Only for a program whose rules take places.
     #[serde(default)]
     pub app_folder: Option<String>,
+    // The name of one folder of `BUILT_IN_APPS_FOLDER`, a built-in app,
+    // which the program can then only read. Not with `app_folder`.
+    #[serde(default)]
+    pub built_in_app: Option<String>,
+    // The id of a conversation, whose folder of `CONVERSATION_WORK_FOLDERS`
+    // the program can then read and change. Rust makes the folder when it
+    // is missing.
+    #[serde(default)]
+    pub conversation_folder: Option<String>,
+    // Whether the program can load the native library of skia-canvas. Its
+    // code opens files with no check of Deno, so only a run of an app,
+    // whose manifest asks for it, gets it: never the code of a model
+    // (`js_eval`).
+    #[serde(default)]
+    pub native_canvas: bool,
     // The name of a time zone (`Europe/Berlin`), which the program gets as
     // `TZ`: its local time is then the one of the user.
     #[serde(default)]
@@ -189,10 +234,10 @@ struct ProgramRules {
     // The arguments that each run starts with.
     first_args: &'static [&'static str],
     page_args: PageArgs,
-    // `None`: a run of the program cannot have an app folder. Else the
-    // flags that a run with an app folder gets, each with the work folder
-    // and the app folder as its value (`--flag=<work>,<app>`).
-    app_folder_flags: Option<&'static [&'static str]>,
+    // `None`: a run of the program has no place but those of its rules (no
+    // app, no conversation, no library that Dez ships). Else the flags
+    // that give a run its places (`RunPlaces`).
+    place_flags: Option<PlaceFlags>,
     // The variables of the environment of each run.
     env: &'static [(&'static str, &'static str)],
     // A variable that names a folder for the own files of the program, and
@@ -208,12 +253,27 @@ struct ProgramRules {
     data_limit: Option<u64>,
 }
 
+// The flags of a program that give a run its places (`RunPlaces`). Each
+// takes its value after a `=`: one path, or a list of entries with a comma
+// between two of them.
+struct PlaceFlags {
+    // The import map of the libraries that Dez ships, for every run.
+    import_map: &'static str,
+    // The places that the run can read, and those that it can change.
+    read: &'static str,
+    write: &'static str,
+    // The two flags of a run with the native library of skia-canvas: the
+    // file of the library, and the variables that its script reads.
+    native_library: &'static str,
+    variables: &'static str,
+}
+
 // ffmpeg and ffprobe: static programs with no network code, which read and
 // write media files. The page builds their command line.
 const FFMPEG_RULES: ProgramRules = ProgramRules {
     first_args: &[],
     page_args: PageArgs::AsGiven,
-    app_folder_flags: None,
+    place_flags: None,
     env: &[],
     state_folder: None,
     confined_to: ConfinedTo::CacheRoot,
@@ -230,10 +290,13 @@ const FFMPEG_RULES: ProgramRules = ProgramRules {
 //   refused permission is an error and not a question. `--no-remote` and
 //   `--no-npm`: no code from the network. `--no-config` and `--no-lock`: no
 //   file of the work folder changes how Deno runs.
-// - No `--allow-*` flag but the two of a run with an app folder: no
-//   network, no environment, no other program, no native library. A run
-//   with no app folder has no file permission at all. Deno's file flags do
-//   not cover an `import`, which only the OS rule keeps in the folders.
+// - No `--allow-*` flag but those of the places of a run (`RunPlaces`): no
+//   network, no other program, no facts of the system. A run of the code
+//   of a model (no app) can read and change only the folder of its
+//   conversation, and loads no native library. Deno's file flags do not
+//   cover an `import`, which only the OS rule keeps in the folders: each
+//   run imports the libraries that Dez ships by the names of their import
+//   map, with no read flag.
 // - The environment is empty but for these: Deno reads many variables, and
 //   one of them (`DENO_PERMISSION_BROKER_PATH`) turns its flags off.
 //   `DENO_DIR` is where Deno keeps its caches, and it must be a folder
@@ -246,7 +309,13 @@ const FFMPEG_RULES: ProgramRules = ProgramRules {
 const DENO_RULES: ProgramRules = ProgramRules {
     first_args: &["run", "--no-prompt", "--no-remote", "--no-npm", "--no-config", "--no-lock", "--v8-flags=--max-old-space-size=512"],
     page_args: PageArgs::Script,
-    app_folder_flags: Some(&["--allow-read", "--allow-write"]),
+    place_flags: Some(PlaceFlags {
+        import_map: "--import-map",
+        read: "--allow-read",
+        write: "--allow-write",
+        native_library: "--allow-ffi",
+        variables: "--allow-env",
+    }),
     env: &[("DENO_NO_UPDATE_CHECK", "1"), ("NO_COLOR", "1")],
     state_folder: Some(("DENO_DIR", "deno-dir")),
     confined_to: ConfinedTo::WorkFolder,
@@ -293,6 +362,12 @@ struct Roots {
     tools: PathBuf,
     cache: PathBuf,
     app: PathBuf,
+    // Tauri's resource dir, with the folders that Dez ships for the runs
+    // (`LIBS_FOLDER`, `FONTS_FOLDER`, `BUILT_IN_APPS_FOLDER`). Its path is
+    // the one of Tauri, with no canonical form: the page builds the paths of
+    // a run from the same path (`dez.native/resourcePath`), and Deno
+    // compares the paths of its flags as text.
+    resources: PathBuf,
 }
 
 // `PROGRAM_APP_FOLDER` of the app folder `app_dir`, made when it is
@@ -367,7 +442,47 @@ fn app_folder(app_root: &Path, name: &str) -> Result<PathBuf, String> {
     Ok(folder)
 }
 
-// A folder path as one entry of the path list of a flag
+// The folder of a built-in app, from its name in `BUILT_IN_APPS_FOLDER` of
+// the resource dir. It must be there, as a folder.
+fn built_in_app_folder(resources: &Path, name: &str) -> Result<PathBuf, String> {
+    if !is_app_file_segment(name) {
+        return Err(format!("Invalid built-in app name: {}", name));
+    }
+    let folder = resources.join(BUILT_IN_APPS_FOLDER).join(name);
+    if !folder.is_dir() {
+        return Err(format!("There is no built-in app {}", name));
+    }
+    Ok(folder)
+}
+
+// The work folder of a conversation, from its id: one folder of
+// `CONVERSATION_WORK_FOLDERS`. The program changes every file below it,
+// so a link on its path (the user's, as no program can make one) would
+// give the program the folder that the link names. `resolved_run` makes
+// the folder when it is missing.
+fn conversation_folder(app_root: &Path, id: &str) -> Result<PathBuf, String> {
+    if !is_app_file_segment(id) {
+        return Err(format!("Invalid conversation id: {}", id));
+    }
+    let folder = app_root.join(CONVERSATION_WORK_FOLDERS).join(id);
+    if has_link_below(app_root, &folder) {
+        return Err("The work folder of the conversation goes through a link".to_string());
+    }
+    Ok(folder)
+}
+
+// A folder or file `name` of `folder` that Dez ships, which must be there:
+// the OS rule of a run opens each of its places. A missing one is a broken
+// install. The error names no path of the computer.
+fn shipped(folder: &Path, name: &str, is_there: fn(&Path) -> bool) -> Result<PathBuf, String> {
+    let path = folder.join(name);
+    if !is_there(&path) {
+        return Err(format!("Dez cannot find {} in the files that it ships: install Dez again", name));
+    }
+    Ok(path)
+}
+
+// A path as one entry of the path list of a flag
 // (`--allow-read=<a>,<b>`). Deno splits the list at each comma and has no
 // way to write a comma of a path, so such a path is refused, and one that
 // is not UTF-8 too. The error names no path: the page can pass it on to a
@@ -375,7 +490,7 @@ fn app_folder(app_root: &Path, name: &str) -> Result<PathBuf, String> {
 fn flag_path(path: &Path) -> Result<&str, String> {
     path.to_str()
         .filter(|text| !text.contains(','))
-        .ok_or_else(|| "A folder of the run has a comma in its path, or a path that is not UTF-8 text, which the program cannot take".to_string())
+        .ok_or_else(|| "A folder or file of the run has a comma in its path, or a path that is not UTF-8 text, which the program cannot take".to_string())
 }
 
 // Whether `text` can be the `TZ` of a program: the form of the name of a
@@ -387,6 +502,92 @@ fn is_time_zone(text: &str) -> bool {
         && text.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '+' | '-' | '/'))
 }
 
+// The places of a run beyond its work folder, in the OS rule and in the
+// flags of its program.
+#[derive(Default)]
+struct RunPlaces {
+    // The flags that name the places.
+    flags: Vec<String>,
+    // `Confinement::also_owned` and `Confinement::also_readable`.
+    owned: Vec<PathBuf>,
+    readable: Vec<PathBuf>,
+    // The work folder of the conversation, which `resolved_run` makes
+    // when the run passes every check.
+    conversation: Option<PathBuf>,
+}
+
+// The places of a run: those that the page names (an app or a built-in
+// app, a conversation, the native library of skia-canvas) and those that
+// Dez ships. Each kind of run gets only what it needs:
+// - Every run imports the libraries (the OS rule lets it read them; an
+//   `import` needs no flag of Deno) and changes nothing of them.
+// - A run of an app reads and changes its work folder, which holds its
+//   inputs and outputs, and the folder of its app (a built-in app only
+//   reads it), and reads the fonts.
+// - A run with a conversation reads and changes the folder of it. The code
+//   of a model (`js_eval`, no app) gets no other file flag.
+// - The native code of skia-canvas opens files with no check of Deno, so
+//   only a run of an app gets it, when the page asks for it.
+// Each path goes into a flag through `flag_path`.
+fn run_places(run: &ToolRun, rules: &ProgramRules, roots: &Roots, folder: &Path) -> Result<RunPlaces, String> {
+    let Some(flags) = &rules.place_flags else {
+        if run.app_folder.is_some() || run.built_in_app.is_some() || run.conversation_folder.is_some() || run.native_canvas {
+            return Err(format!("A run of {} cannot have an app, a conversation folder, or a native library", run.tool));
+        }
+        return Ok(RunPlaces::default());
+    };
+    let app = match (&run.app_folder, &run.built_in_app) {
+        (None, None) => None,
+        (Some(name), None) => Some(app_folder(&roots.app, name)?),
+        (None, Some(name)) => Some(built_in_app_folder(&roots.resources, name)?),
+        (Some(_), Some(_)) => return Err("A run cannot have both an app folder and a built-in app".to_string()),
+    };
+    let built_in = run.built_in_app.is_some();
+    if run.native_canvas && app.is_none() {
+        return Err("Only a run of an app can load the native library of skia-canvas".to_string());
+    }
+    let conversation = run.conversation_folder.as_deref().map(|id| conversation_folder(&roots.app, id)).transpose()?;
+    let libs = shipped(&roots.resources, LIBS_FOLDER, Path::is_dir)?;
+    let import_map = shipped(&libs, LIBS_IMPORT_MAP, Path::is_file)?;
+    let fonts = if app.is_some() { Some(shipped(&roots.resources, FONTS_FOLDER, Path::is_dir)?) } else { None };
+    let canvas = if run.native_canvas {
+        let script_folder = shipped(&libs, CANVAS_SCRIPT_FOLDER, Path::is_dir)?;
+        let library = shipped(&script_folder, CANVAS_NATIVE_LIBRARY, Path::is_file)?;
+        Some((script_folder, library))
+    } else {
+        None
+    };
+
+    let run_folder = app.as_ref().map(|_| folder);
+    let read: Vec<&Path> = [run_folder, app.as_deref(), conversation.as_deref(), fonts.as_deref(), canvas.as_ref().map(|(script_folder, _)| script_folder.as_path())]
+        .into_iter()
+        .flatten()
+        .collect();
+    let write: Vec<&Path> = [run_folder, app.as_deref().filter(|_| !built_in), conversation.as_deref()].into_iter().flatten().collect();
+    let mut places = RunPlaces { flags: vec![format!("{}={}", flags.import_map, flag_path(&import_map)?)], ..RunPlaces::default() };
+    for (flag, paths) in [(flags.read, &read), (flags.write, &write)] {
+        if !paths.is_empty() {
+            let list: Vec<&str> = paths.iter().map(|path| flag_path(path)).collect::<Result<_, _>>()?;
+            places.flags.push(format!("{flag}={}", list.join(",")));
+        }
+    }
+    if let Some((_, library)) = &canvas {
+        places.flags.push(format!("{}={}", flags.native_library, flag_path(library)?));
+        places.flags.push(format!("{}={}", flags.variables, CANVAS_VARIABLES.join(",")));
+    }
+
+    places.readable.push(libs);
+    places.readable.extend(fonts);
+    match app {
+        Some(app) if built_in => places.readable.push(app),
+        Some(app) => places.owned.push(app),
+        None => {}
+    }
+    places.owned.extend(conversation.clone());
+    places.conversation = conversation;
+    Ok(places)
+}
+
 // A run of the page as the rules of its program allow it, with its paths
 // resolved: the one place where the page's words become a command line, an
 // environment, and a confinement.
@@ -394,17 +595,10 @@ fn resolved_run(run: ToolRun, roots: &Roots) -> Result<ProgramRun, String> {
     let program = tool_path(&roots.tools, &run.tool)?;
     let rules = rules_of(&run.tool).ok_or_else(|| format!("Dez has no rules for the bundled tool {}", run.tool))?;
     let folder = work_folder(&roots.cache, &run.folder, rules)?;
-    let app_folder = match (&run.app_folder, rules.app_folder_flags) {
-        (None, _) => None,
-        (Some(name), Some(_)) => Some(app_folder(&roots.app, name)?),
-        (Some(_), None) => return Err(format!("A run of {} cannot have an app folder", run.tool)),
-    };
+    let places = run_places(&run, rules, roots, &folder)?;
 
     let mut args: Vec<String> = rules.first_args.iter().map(|arg| arg.to_string()).collect();
-    if let (Some(app_folder), Some(flags)) = (&app_folder, rules.app_folder_flags) {
-        let folders = format!("{},{}", flag_path(&folder)?, flag_path(app_folder)?);
-        args.extend(flags.iter().map(|flag| format!("{flag}={folders}")));
-    }
+    args.extend(places.flags);
     match rules.page_args {
         PageArgs::AsGiven => args.extend(run.args),
         PageArgs::Script => match run.args.as_slice() {
@@ -424,14 +618,19 @@ fn resolved_run(run: ToolRun, roots: &Roots) -> Result<ProgramRun, String> {
         env.push(("TZ".to_string(), zone.into()));
     }
 
+    // Made only now, so that a run that a check refuses makes no folder.
+    if let Some(conversation) = &places.conversation {
+        make_private_folder(conversation).map_err(|error| format!("Failed to make the work folder of the conversation: {}", error))?;
+    }
     let confinement = Confinement {
         folder: match rules.confined_to {
             ConfinedTo::CacheRoot => roots.cache.clone(),
             ConfinedTo::WorkFolder => folder.clone(),
         },
-        also_owned: app_folder.into_iter().collect(),
+        also_owned: places.owned,
         also_writable: if rules.assets_writable { vec![program_app_folder(&roots.app)?] } else { Vec::new() },
-        also_readable: Vec::new(),
+        also_readable: places.readable,
+        also_startable: Vec::new(),
         system_libraries: rules.system_libraries,
         required: rules.must_be_confined,
         data_limit: rules.data_limit,
@@ -921,12 +1120,15 @@ impl ToolRuns {
 // whose end is not known.
 #[tauri::command]
 pub async fn run_bundled_tool(
+    app: tauri::AppHandle,
     run: ToolRun,
     run_id: String,
     on_event: Channel<ToolRunEvent>,
     runs: State<'_, ToolRuns>,
 ) -> Result<(), String> {
-    let roots = Roots { tools: tools_dir()?, cache: root_dir(FileRoot::Cache)?, app: root_dir(FileRoot::App)? };
+    use tauri::Manager;
+    let resources = app.path().resource_dir().map_err(|error| format!("Failed to find the files that Dez ships: {}", error))?;
+    let roots = Roots { tools: tools_dir()?, cache: root_dir(FileRoot::Cache)?, app: root_dir(FileRoot::App)?, resources };
     let run = resolved_run(run, &roots)?;
     runs.run(&run_id, run, |event| {
         // A send fails only when the page is gone, and then nobody waits
@@ -986,19 +1188,34 @@ mod tests {
             max_output_bytes: 1024 * 1024,
             stdin: false,
             app_folder: None,
+            built_in_app: None,
+            conversation_folder: None,
+            native_canvas: false,
             time_zone: None,
         }
     }
 
+    // The built-in app of `fake_roots`.
+    const FAKE_BUILT_IN_APP: &str = "dez-built-in";
+
     // The folders of a run in `dir`, with an empty file in place of each
-    // bundled program.
+    // bundled program and of each file that Dez ships for a run.
     fn fake_roots(dir: &Path) -> Roots {
-        let roots = Roots { tools: dir.join("tools"), cache: dir.join("cache"), app: dir.join("config") };
-        std::fs::create_dir_all(&roots.tools).expect("create");
-        for tool in BUNDLED_TOOLS {
-            std::fs::write(roots.tools.join(tool), b"").expect("write");
+        let roots = Roots { tools: dir.join("tools"), cache: dir.join("cache"), app: dir.join("config"), resources: dir.join("resources") };
+        let canvas = roots.resources.join(LIBS_FOLDER).join(CANVAS_SCRIPT_FOLDER);
+        for folder in [roots.tools.clone(), canvas.clone(), roots.resources.join(FONTS_FOLDER), roots.resources.join(BUILT_IN_APPS_FOLDER).join(FAKE_BUILT_IN_APP)] {
+            std::fs::create_dir_all(folder).expect("create");
+        }
+        let files = BUNDLED_TOOLS.iter().map(|tool| roots.tools.join(tool)).chain([roots.resources.join(LIBS_FOLDER).join(LIBS_IMPORT_MAP), canvas.join(CANVAS_NATIVE_LIBRARY)]);
+        for file in files {
+            std::fs::write(file, b"").expect("write");
         }
         roots
+    }
+
+    // The flags of a Deno run that give it its places.
+    fn place_flags(run: &ProgramRun) -> Vec<&str> {
+        run.args.iter().map(String::as_str).filter(|arg| arg.starts_with("--allow") || arg.starts_with("--import-map")).collect()
     }
 
     #[test]
@@ -1020,8 +1237,11 @@ mod tests {
         // `run`, and not `eval`, which has every permission.
         assert_eq!(args.first().map(String::as_str), Some("run"));
         assert_eq!(args.last().map(String::as_str), Some("./main.ts"));
-        // A run with no app folder has no permission of Deno.
+        // A run with no app and no conversation has no permission of Deno:
+        // only the import map of the libraries that Dez ships.
         assert!(!args.iter().any(|arg| arg.starts_with("--allow") || arg == "-A"), "{args:?}");
+        let import_map = format!("--import-map={}", roots.resources.join(LIBS_FOLDER).join(LIBS_IMPORT_MAP).display());
+        assert_eq!(args[DENO_RULES.first_args.len()..], [import_map, "./main.ts".to_string()]);
         // A file can have the name of a flag.
         assert_eq!(args_of(&["--allow-all"]).expect("a file name").last().map(String::as_str), Some("./--allow-all"));
         let refused: [&[&str]; 8] = [&[], &["--allow-all", "main.ts"], &["main.ts", "extra"], &[""], &["../main.ts"], &["sub/main.ts"], &["/tmp/main.ts"], &["main.ts "]];
@@ -1043,7 +1263,8 @@ mod tests {
         assert_eq!(run.folder, roots.cache.join("work").join("a"));
         assert_eq!(run.confinement.folder, run.folder);
         assert!(run.confinement.required);
-        assert!(run.confinement.also_writable.is_empty() && run.confinement.also_owned.is_empty());
+        assert!(run.confinement.also_writable.is_empty() && run.confinement.also_owned.is_empty() && run.confinement.also_startable.is_empty());
+        assert_eq!(run.confinement.also_readable, [roots.resources.join(LIBS_FOLDER)]);
         for folder in ["work", "work/a/b", "media/a", "a", "", "work/", "work/..", "work/../media", "/work/a", "work//a"] {
             assert!(run_in("dez-deno", folder).is_err(), "the folder {folder:?}");
         }
@@ -1051,6 +1272,7 @@ mod tests {
         let run = run_in("dez-ffmpeg", "work/a/b").expect("a folder of the cache root");
         assert_eq!(run.confinement.folder, roots.cache);
         assert_eq!(run.confinement.also_writable, [roots.app.join(PROGRAM_APP_FOLDER)]);
+        assert!(run.confinement.also_owned.is_empty() && run.confinement.also_readable.is_empty());
         assert!(!run.confinement.required);
         for folder in ["", "../a", "/tmp/a", "work/../../a"] {
             assert!(run_in("dez-ffmpeg", folder).is_err(), "the folder {folder:?}");
@@ -1058,7 +1280,8 @@ mod tests {
     }
 
     // The app folder of a run is one folder of `apps/` that is there, by
-    // its name. Deno gets it and the work folder in its two file flags.
+    // its name. Deno gets it and the work folder in its two file flags, and
+    // reads the fonts that Dez ships.
     #[test]
     fn an_app_folder_is_one_real_folder_of_the_apps_and_only_deno_takes_one() {
         let dir = TempDir::new("tools-app-folder");
@@ -1074,9 +1297,10 @@ mod tests {
 
         let run = with_app("dez-deno", "my-app").expect("an app folder");
         assert_eq!(run.confinement.also_owned, [app.clone()]);
+        let fonts = roots.resources.join(FONTS_FOLDER);
+        assert_eq!(run.confinement.also_readable, [roots.resources.join(LIBS_FOLDER), fonts.clone()]);
         let folders = format!("{},{}", roots.cache.join("work").join("a").display(), app.display());
-        let flags: Vec<&String> = run.args.iter().filter(|arg| arg.starts_with("--allow")).collect();
-        assert_eq!(flags, [&format!("--allow-read={folders}"), &format!("--allow-write={folders}")]);
+        assert_eq!(place_flags(&run)[1..], [format!("--allow-read={folders},{}", fonts.display()), format!("--allow-write={folders}")]);
         assert_eq!(run.args.last().map(String::as_str), Some("./main.ts"));
 
         for name in ["", ".", "..", "../config", "my-app/sub", "/tmp", "no-such-app", "a-file", "linked"] {
@@ -1085,13 +1309,13 @@ mod tests {
         assert!(with_app("dez-ffmpeg", "my-app").is_err(), "ffmpeg with an app folder");
     }
 
-    // Deno splits the folder list of a flag at each comma, so a comma in a
+    // Deno splits the path list of a flag at each comma, so a comma in a
     // path would make two other paths of it, and a flag is text, so it
-    // cannot hold a path that is not UTF-8. The check is on each of the two
-    // folders: here only one of them has such a path. The error can go to a
+    // cannot hold a path that is not UTF-8. The check is on each path of a
+    // flag: here only one root has such a path. The error can go to a
     // model, so it names no path.
     #[test]
-    fn a_deno_run_with_an_app_folder_is_refused_when_a_folder_path_cannot_be_in_a_flag() {
+    fn a_deno_run_is_refused_when_a_path_of_its_flags_cannot_be_in_a_flag() {
         let dir = TempDir::new("tools-deno-flag-path");
         let mut roots = vec![
             Roots { cache: dir.0.join("private,cache"), ..fake_roots(&dir.0) },
@@ -1100,16 +1324,156 @@ mod tests {
         // No folder is made on this path, which macOS would refuse.
         #[cfg(unix)]
         roots.push(Roots { cache: dir.0.join(<std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(b"private\xffcache")), ..fake_roots(&dir.0) });
+        let refused = |error: String| {
+            assert!(error.contains("comma") && error.contains("UTF-8"), "{error}");
+            assert!(!error.contains("private"), "{error}");
+        };
         for roots in roots {
             std::fs::create_dir_all(roots.app.join(APPS_FOLDER).join("my-app")).expect("create");
             let run = tool_run("dez-deno", &["main.ts"], "work/a");
 
-            // A run with no app folder has no flag that names a folder.
+            // A run with no app folder has no flag that names these roots.
             assert!(resolved_run(run.clone(), &roots).is_ok(), "{}", roots.cache.display());
-            let error = resolved_run(ToolRun { app_folder: Some("my-app".to_string()), ..run }, &roots).err().expect("refused");
-            assert!(error.contains("comma") && error.contains("UTF-8"), "{error}");
-            assert!(!error.contains("private"), "{error}");
+            refused(resolved_run(ToolRun { app_folder: Some("my-app".to_string()), ..run }, &roots).err().expect("refused"));
         }
+
+        // The libraries that Dez ships are in the flags of every run.
+        let roots = fake_roots(&dir.0.join("private,dez"));
+        refused(resolved_run(tool_run("dez-deno", &["main.ts"], "work/a"), &roots).err().expect("refused"));
+        assert!(resolved_run(tool_run("dez-ffmpeg", &["-version"], "work/a"), &roots).is_ok());
+    }
+
+    // The rights of each kind of Deno run: the code of a model, an app, a
+    // built-in app, and an app with the native library of skia-canvas. Each
+    // gets the flags of Deno and the places of the OS rule of its kind, and
+    // no more.
+    #[test]
+    fn each_kind_of_deno_run_gets_only_the_places_of_its_kind() {
+        let dir = TempDir::new("tools-run-places");
+        let roots = fake_roots(&dir.0);
+        let (work, app) = (roots.cache.join("work").join("a"), roots.app.join(APPS_FOLDER).join("my-app"));
+        std::fs::create_dir_all(&app).expect("create");
+        let conversation = roots.app.join(CONVERSATION_WORK_FOLDERS).join("c-1");
+        let (libs, fonts) = (roots.resources.join(LIBS_FOLDER), roots.resources.join(FONTS_FOLDER));
+        let built_in = roots.resources.join(BUILT_IN_APPS_FOLDER).join(FAKE_BUILT_IN_APP);
+        let canvas = libs.join(CANVAS_SCRIPT_FOLDER);
+        let list = |paths: &[&Path]| paths.iter().map(|path| path.display().to_string()).collect::<Vec<_>>().join(",");
+        let import_map = format!("--import-map={}", libs.join(LIBS_IMPORT_MAP).display());
+        let run_of = |run: ToolRun| {
+            let run = ToolRun { conversation_folder: Some("c-1".to_string()), ..run };
+            resolved_run(ToolRun { args: vec!["main.ts".to_string()], folder: "work/a".to_string(), ..run }, &roots).expect("a run")
+        };
+        let deno = || tool_run("dez-deno", &[], "");
+
+        // The code of a model reads and changes only the folder of its
+        // conversation, which Rust makes.
+        assert!(!conversation.exists());
+        let run = run_of(deno());
+        assert!(conversation.is_dir());
+        #[cfg(unix)]
+        assert_eq!(std::os::unix::fs::PermissionsExt::mode(&std::fs::metadata(&conversation).expect("metadata").permissions()) & 0o777, 0o700);
+        let conversation_flags = [format!("--allow-read={}", conversation.display()), format!("--allow-write={}", conversation.display())];
+        assert_eq!(place_flags(&run), [import_map.as_str(), conversation_flags[0].as_str(), conversation_flags[1].as_str()]);
+        assert_eq!((run.confinement.also_owned, run.confinement.also_readable), (vec![conversation.clone()], vec![libs.clone()]));
+
+        let run = run_of(ToolRun { app_folder: Some("my-app".to_string()), ..deno() });
+        let read = format!("--allow-read={}", list(&[&work, &app, &conversation, &fonts]));
+        let write = format!("--allow-write={}", list(&[&work, &app, &conversation]));
+        assert_eq!(place_flags(&run), [import_map.as_str(), read.as_str(), write.as_str()]);
+        assert_eq!((run.confinement.also_owned, run.confinement.also_readable), (vec![app.clone(), conversation.clone()], vec![libs.clone(), fonts.clone()]));
+
+        // A built-in app is a place to read.
+        let run = run_of(ToolRun { built_in_app: Some(FAKE_BUILT_IN_APP.to_string()), ..deno() });
+        let read = format!("--allow-read={}", list(&[&work, &built_in, &conversation, &fonts]));
+        let write = format!("--allow-write={}", list(&[&work, &conversation]));
+        assert_eq!(place_flags(&run), [import_map.as_str(), read.as_str(), write.as_str()]);
+        assert_eq!((run.confinement.also_owned, run.confinement.also_readable), (vec![conversation.clone()], vec![libs.clone(), fonts.clone(), built_in.clone()]));
+
+        // The native library: exactly its file, and the variables that the
+        // script of skia-canvas reads. Its folder is in the libraries.
+        let run = run_of(ToolRun { built_in_app: Some(FAKE_BUILT_IN_APP.to_string()), native_canvas: true, ..deno() });
+        let read = format!("--allow-read={}", list(&[&work, &built_in, &conversation, &fonts, &canvas]));
+        let ffi = format!("--allow-ffi={}", canvas.join(CANVAS_NATIVE_LIBRARY).display());
+        let env = "--allow-env=https_proxy,HTTPS_PROXY,http_proxy,HTTP_PROXY,LC_ALL,LC_MESSAGES,LANG,LANGUAGE,SKIA_CANVAS_STRICT";
+        assert_eq!(place_flags(&run), [import_map.as_str(), read.as_str(), write.as_str(), ffi.as_str(), env]);
+        assert_eq!(run.confinement.also_readable, [libs.clone(), fonts.clone(), built_in.clone()]);
+        assert_eq!(run.args.last().map(String::as_str), Some("./main.ts"));
+    }
+
+    // A run can have only the places of its kind, by names that are one
+    // folder each. A refused run makes no folder.
+    #[test]
+    fn a_run_is_refused_the_places_that_its_kind_cannot_have() {
+        let dir = TempDir::new("tools-refused-places");
+        let roots = fake_roots(&dir.0);
+        std::fs::create_dir_all(roots.app.join(APPS_FOLDER).join("my-app")).expect("create");
+        // Runs that are good but for the field under test.
+        let deno = || tool_run("dez-deno", &["main.ts"], "work/a");
+        let ffmpeg = || tool_run("dez-ffmpeg", &["-version"], "work/a");
+        let app = || Some("my-app".to_string());
+        let built_in = || Some(FAKE_BUILT_IN_APP.to_string());
+        let conversation = || Some("c-1".to_string());
+        assert!(resolved_run(deno(), &roots).is_ok() && resolved_run(ffmpeg(), &roots).is_ok());
+
+        let refused = [
+            // The native library is never for the code of a model.
+            ToolRun { native_canvas: true, ..deno() },
+            ToolRun { native_canvas: true, conversation_folder: conversation(), ..deno() },
+            ToolRun { app_folder: app(), built_in_app: built_in(), ..deno() },
+            ToolRun { app_folder: app(), ..ffmpeg() },
+            ToolRun { built_in_app: built_in(), ..ffmpeg() },
+            ToolRun { conversation_folder: conversation(), ..ffmpeg() },
+            ToolRun { native_canvas: true, ..ffmpeg() },
+            // The other checks of a run come before the folder is made.
+            ToolRun { conversation_folder: conversation(), args: vec!["../main.ts".to_string()], ..deno() },
+            ToolRun { conversation_folder: conversation(), time_zone: Some(":/etc/localtime".to_string()), ..deno() },
+        ];
+        for run in refused {
+            let description = format!("{run:?}");
+            assert!(resolved_run(run, &roots).is_err(), "{description}");
+        }
+        for id in ["", ".", "..", "../config", "a/b", "/tmp"] {
+            assert!(resolved_run(ToolRun { conversation_folder: Some(id.to_string()), ..deno() }, &roots).is_err(), "the conversation {id:?}");
+        }
+        for name in ["", ".", "..", "../libs", "a/b", "/tmp", "no-such-app", "my-app"] {
+            assert!(resolved_run(ToolRun { built_in_app: Some(name.to_string()), ..deno() }, &roots).is_err(), "the built-in app {name:?}");
+        }
+        assert!(!roots.app.join(CONVERSATION_WORK_FOLDERS).exists(), "a refused run made a folder");
+
+        // The folder of a conversation through a link of the user.
+        #[cfg(unix)]
+        {
+            let outside = dir.0.join("outside");
+            std::fs::create_dir_all(roots.app.join(CONVERSATION_WORK_FOLDERS)).expect("create");
+            std::fs::create_dir_all(&outside).expect("create");
+            std::os::unix::fs::symlink(&outside, roots.app.join(CONVERSATION_WORK_FOLDERS).join("linked")).expect("link");
+            assert!(resolved_run(ToolRun { conversation_folder: Some("linked".to_string()), ..deno() }, &roots).is_err());
+        }
+    }
+
+    // A part that Dez ships and that a run needs is missing: the run does
+    // not start, with a text that names no path of the computer.
+    #[test]
+    fn a_run_does_not_start_when_a_file_that_dez_ships_is_missing() {
+        let dir = TempDir::new("tools-missing-parts");
+        let roots = fake_roots(&dir.0);
+        std::fs::create_dir_all(roots.app.join(APPS_FOLDER).join("my-app")).expect("create");
+        let resolve = |run: ToolRun| resolved_run(ToolRun { args: vec!["main.ts".to_string()], folder: "work/a".to_string(), ..run }, &roots);
+        let deno = || tool_run("dez-deno", &[], "");
+        let app_run = || ToolRun { app_folder: Some("my-app".to_string()), ..deno() };
+        let missing = |error: String| assert!(error.contains("install Dez again") && !error.contains(&dir.0.display().to_string()), "{error}");
+
+        std::fs::remove_file(roots.resources.join(LIBS_FOLDER).join(CANVAS_SCRIPT_FOLDER).join(CANVAS_NATIVE_LIBRARY)).expect("remove");
+        missing(resolve(ToolRun { native_canvas: true, ..app_run() }).err().expect("refused"));
+        assert!(resolve(app_run()).is_ok());
+
+        std::fs::remove_dir(roots.resources.join(FONTS_FOLDER)).expect("remove");
+        missing(resolve(app_run()).err().expect("refused"));
+        assert!(resolve(deno()).is_ok());
+
+        std::fs::remove_file(roots.resources.join(LIBS_FOLDER).join(LIBS_IMPORT_MAP)).expect("remove");
+        missing(resolve(deno()).err().expect("refused"));
+        assert!(resolve(tool_run("dez-ffmpeg", &[], "")).is_ok());
     }
 
     // A `TZ` can also name a file of the computer (`:/path`), so only the
@@ -1190,6 +1554,7 @@ mod tests {
         assert_eq!((run.inputs[0].name.as_str(), run.inputs[0].source.as_str()), ("in.mp4", "/home/ann/clip.mp4"));
         // A run with no option has none.
         assert_eq!((run.stdin, run.app_folder, run.time_zone), (false, None, None));
+        assert_eq!((run.built_in_app, run.conversation_folder, run.native_canvas), (None, None, false));
         let run: ToolRun = serde_json::from_value(json!({
             "tool": "dez-deno",
             "args": ["main.ts"],
@@ -1199,10 +1564,14 @@ mod tests {
             "maxOutputBytes": 1024,
             "stdin": true,
             "appFolder": "my-app",
+            "builtInApp": "dez-tool",
+            "conversationFolder": "c-1",
+            "nativeCanvas": true,
             "timeZone": "Europe/Berlin",
         }))
         .expect("run with options");
         assert_eq!((run.stdin, run.app_folder.as_deref(), run.time_zone.as_deref()), (true, Some("my-app"), Some("Europe/Berlin")));
+        assert_eq!((run.built_in_app.as_deref(), run.conversation_folder.as_deref(), run.native_canvas), (Some("dez-tool"), Some("c-1"), true));
 
         let event_json = |event: ToolRunEvent| serde_json::to_value(event).expect("event JSON");
         assert_eq!(
@@ -1267,9 +1636,9 @@ mod tests {
 
         // The environment of a run is empty, so the tests name each program
         // by its path. The program is confined to its work folder, and it
-        // can read the system's folders that `/bin/sh` and the programs that
-        // it starts need (their libraries, and the cache of the library
-        // loader in /etc).
+        // can read and start the files of the system's folders that
+        // `/bin/sh` and the programs that it starts need (their libraries,
+        // and the cache of the library loader in /etc).
         fn program_run(program: &str, args: &[&str], folder: &Path) -> ProgramRun {
             ProgramRun {
                 program: PathBuf::from(program),
@@ -1283,7 +1652,7 @@ mod tests {
                 link_root: folder.to_path_buf(),
                 confinement: Confinement {
                     folder: folder.to_path_buf(),
-                    also_readable: ["/usr", "/bin", "/lib", "/lib64", "/etc"].into_iter().map(PathBuf::from).filter(|path| path.exists()).collect(),
+                    also_startable: ["/usr", "/bin", "/lib", "/lib64", "/etc"].into_iter().map(PathBuf::from).filter(|path| path.exists()).collect(),
                     ..Confinement::default()
                 },
             }
@@ -2038,20 +2407,52 @@ mod tests {
             assert_eq!(sent(events_b).await.ends, [ToolRunEnd::Cancelled]);
         }
 
-        // The folders of the runs of the real bundled programs: a cache
-        // root and an app folder in `dir`, and the folder of the programs.
-        // tauri-build copies the programs next to the Dez program of the
-        // build (`target/<profile>/`). The folder of the test program below
-        // it depends on the version of cargo (`deps/` before Rust 1.100, a
-        // folder deep in `build/` since), so the programs are in the first
-        // folder above the test program that holds them.
-        fn real_roots(dir: &Path) -> Roots {
+        // The folder of the real bundled programs. tauri-build copies the
+        // programs next to the Dez program of the build (`target/<profile>/`).
+        // The folder of the test program below it depends on the version
+        // of cargo (`deps/` before Rust 1.100, a folder deep in `build/`
+        // since), so the programs are in the first folder above the test
+        // program that holds them.
+        fn real_tools() -> PathBuf {
             let test_dir = tools_dir().expect("the folder of the test program");
-            let tools = test_dir
+            test_dir
                 .ancestors()
                 .find(|dir| BUNDLED_TOOLS.iter().all(|tool| dir.join(tool).is_file()))
-                .unwrap_or_else(|| panic!("No folder above {} holds the bundled programs", test_dir.display()));
-            Roots { tools: tools.to_path_buf(), cache: dir.join("cache"), app: dir.join("config") }
+                .unwrap_or_else(|| panic!("No folder above {} holds the bundled programs", test_dir.display()))
+                .to_path_buf()
+        }
+
+        // The files of the small copy of the resource dir that `real_roots`
+        // makes, as paths in it, with their texts: a library of the import
+        // map, the map, a font, and a file of a built-in app.
+        const FAKE_LIB_TEXT: &str = "shipped lib";
+        const FAKE_SHIPPED_FILES: [(&str, &str); 4] = [
+            ("libs/import_map.json", r#"{ "imports": { "dez-test-lib": "./test-lib/mod.js" } }"#),
+            ("libs/test-lib/mod.js", "export const text = 'shipped lib'\n"),
+            ("fonts/test.ttf", "font bytes"),
+            ("builtin-apps/dez-built-in/data.txt", "built-in data"),
+        ];
+
+        // The folders of the runs of the real bundled programs, in `dir`: a
+        // cache root, an app folder, and a small resource dir with the
+        // files of `FAKE_SHIPPED_FILES`, which a run that the OS rule does
+        // not hold can change with no harm to the build.
+        fn real_roots(dir: &Path) -> Roots {
+            let roots = Roots { tools: real_tools(), cache: dir.join("cache"), app: dir.join("config"), resources: dir.join("resources") };
+            for (file, text) in FAKE_SHIPPED_FILES {
+                let path = roots.resources.join(file);
+                std::fs::create_dir_all(path.parent().expect("a folder")).expect("create");
+                std::fs::write(&path, text).expect("write");
+            }
+            roots
+        }
+
+        // The folders of the runs of the real bundled programs, in `dir`,
+        // with the real libraries and fonts: in a build, tauri-build copies
+        // the resources next to the programs too.
+        fn shipped_roots(dir: &Path) -> Roots {
+            let tools = real_tools();
+            Roots { resources: tools.clone(), tools, cache: dir.join("cache"), app: dir.join("config") }
         }
 
         // A run of a real bundled program as `run_bundled_tool` makes it,
@@ -2130,15 +2531,20 @@ mod tests {
         }
 
         // The two guards of a Deno run. Deno's own permissions: a script
-        // reads and writes its work folder and its app folder and no other
-        // file, and a run with no app folder opens no file at all. The OS
-        // rule: an `import`, which Deno's file permissions do not cover,
-        // loads no file from outside the folders of the run.
+        // reads and writes its work folder, its app folder, and the folder
+        // of its conversation, reads a built-in app and the fonts, and
+        // opens no other file; the code of a model (no app) opens only the
+        // folder of its conversation. Every run imports the libraries by
+        // their import map, but reads none of their files. The OS rule: an
+        // `import`, which Deno's file permissions do not cover, loads no
+        // file from outside the places of the run.
         #[tokio::test]
-        async fn deno_opens_only_its_work_folder_and_its_app_folder() {
+        async fn deno_opens_only_the_places_of_its_run() {
             let dir = TempDir::new("tools-run-deno-files");
             let roots = real_roots(&dir.0);
             let app = roots.app.join(APPS_FOLDER).join("my-app");
+            let built_in = roots.resources.join(BUILT_IN_APPS_FOLDER).join("dez-built-in");
+            let conversation = roots.app.join(CONVERSATION_WORK_FOLDERS).join("c-1");
             let private = dir.0.join("private.ts");
             std::fs::create_dir_all(&app).expect("create");
             std::fs::write(app.join("data.txt"), "app data").expect("write");
@@ -2151,39 +2557,135 @@ mod tests {
             // which is another text when a folder above is a link (macOS:
             // `/var` of the temp folder is a link to `/private/var`).
             let path_text = |path: &Path| serde_json::to_string(path.to_str().expect("UTF-8 path")).expect("JSON");
-            let opens = |name: &str| {
-                let (work, app, outside) = (path_text(&roots.cache.join(WORK_ROOT).join(name)), path_text(&app), path_text(&private));
+            let opens = |name: &str, app: &Path| {
+                let (work, app, outside) = (path_text(&roots.cache.join(WORK_ROOT).join(name)), path_text(app), path_text(&private));
+                let (conversation, resources) = (path_text(&conversation), path_text(&roots.resources));
                 format!(
                     r#"
+                    import {{ text }} from 'dez-test-lib'
                     const outcome = (open: () => Promise<unknown>) => open().then(String, (error) => error.name)
                     const work = {work}
                     const app = {app}
+                    const conversation = {conversation}
+                    const resources = {resources}
                     const outside = {outside}
                     console.log([
                       await outcome(() => Deno.writeTextFile(work + '/made.txt', 'made').then(() => Deno.readTextFile(work + '/made.txt'))),
                       await outcome(() => Deno.readTextFile(app + '/data.txt')),
                       await outcome(() => Deno.writeTextFile(app + '/new.txt', 'new').then(() => 'written')),
+                      await outcome(() => Deno.writeTextFile(conversation + '/made.txt', 'made').then(() => Deno.readTextFile(conversation + '/made.txt'))),
+                      await outcome(() => Deno.readTextFile(resources + '/fonts/test.ttf')),
+                      await outcome(() => Deno.readTextFile(resources + '/libs/test-lib/mod.js')),
                       await outcome(() => Deno.readTextFile(outside)),
                       await outcome(() => Deno.writeTextFile(outside, 'changed').then(() => 'written')),
+                      text,
                     ].join(', '))
                     "#
                 )
             };
             let import = "import { text } from '../../../private.ts'\nconsole.log(text)\n";
             let run = |run: ToolRun| finished(resolved_run(run, &roots).expect("a run that the rules allow"));
+            let in_conversation = |run: ToolRun| ToolRun { conversation_folder: Some("c-1".to_string()), ..run };
+            let lib = format!(", NotCapable, NotCapable, NotCapable, {FAKE_LIB_TEXT}\n");
 
-            let with_app = run(ToolRun { app_folder: Some("my-app".to_string()), ..deno_run(&dir.0, "with-app", &opens("with-app")) }).await;
-            assert_eq!(with_app.stdout, "made, app data, written, NotCapable, NotCapable\n", "{}", with_app.stderr);
+            let with_app = run(in_conversation(ToolRun { app_folder: Some("my-app".to_string()), ..deno_run(&dir.0, "with-app", &opens("with-app", &app)) })).await;
+            assert_eq!(with_app.stdout, format!("made, app data, written, made, font bytes{lib}"), "{}", with_app.stderr);
             assert_eq!(std::fs::read(app.join("new.txt")).expect("read"), b"new");
 
-            let without_app = run(deno_run(&dir.0, "without-app", &opens("without-app"))).await;
-            assert_eq!(without_app.stdout, "NotCapable, NotCapable, NotCapable, NotCapable, NotCapable\n", "{}", without_app.stderr);
+            let built_in_run = ToolRun { built_in_app: Some("dez-built-in".to_string()), ..deno_run(&dir.0, "built-in", &opens("built-in", &built_in)) };
+            let with_built_in = run(in_conversation(built_in_run)).await;
+            assert_eq!(with_built_in.stdout, format!("made, built-in data, NotCapable, made, font bytes{lib}"), "{}", with_built_in.stderr);
+            assert!(!built_in.join("new.txt").exists());
+
+            // The code of a model.
+            let model_code = run(in_conversation(deno_run(&dir.0, "model-code", &opens("model-code", &app)))).await;
+            assert_eq!(model_code.stdout, format!("NotCapable, NotCapable, NotCapable, made, NotCapable{lib}"), "{}", model_code.stderr);
+
+            let without_places = run(deno_run(&dir.0, "without-places", &opens("without-places", &app))).await;
+            assert_eq!(without_places.stdout, format!("NotCapable, NotCapable, NotCapable, NotCapable, NotCapable{lib}"), "{}", without_places.stderr);
 
             let imported = run(ToolRun { app_folder: Some("my-app".to_string()), ..deno_run(&dir.0, "import", import) }).await;
             assert_eq!(imported.stdout, "", "{NOT_CONFINED}");
             assert_ne!(imported.ends, exited(0), "{}", imported.stderr);
             assert!(imported.stderr.contains(DENIED), "{}", imported.stderr);
             assert_eq!(std::fs::read(&private).expect("read"), b"export const text = 'private text'\n");
+        }
+
+        // The libraries that Dez ships load in a run by the names of their
+        // import map, under the OS rule, with no permission of Deno: the
+        // code of a model with no conversation has none.
+        #[tokio::test]
+        async fn deno_imports_the_libraries_that_dez_ships() {
+            let dir = TempDir::new("tools-run-deno-libs");
+            let roots = shipped_roots(&dir.0);
+            let text = r#"
+                import * as THREE from 'three'
+                import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+                import { Chart } from 'chart.js'
+                import { color } from 'chart.js/helpers'
+                import FFT from 'fft.js'
+                const fft = new FFT(8)
+                const out = fft.createComplexArray()
+                fft.realTransform(out, [1, 1, 1, 1, 1, 1, 1, 1])
+                console.log([new THREE.Vector3(1, 2, 2).length(), typeof OrbitControls, typeof Chart, color('#ff0000').rgbString(), out[0]].join(', '))
+            "#;
+
+            let sent = finished(resolved_run(deno_run(&dir.0, "a", text), &roots).expect("a run that the rules allow")).await;
+
+            assert_eq!(sent.stdout, "3, function, function, rgb(255, 0, 0), 8\n", "{}", sent.stderr);
+            assert_eq!(sent.ends, exited(0), "{}", sent.stderr);
+        }
+
+        // The native library of skia-canvas loads in a run of an app that
+        // asks for it, from a folder that the run can only read, and draws.
+        // Its code opens files with no check of Deno, so the OS rule is the
+        // only guard of its file calls: it reads the fonts that Dez ships
+        // and writes into the work folder, but reads and writes no file
+        // outside the places of the run.
+        #[tokio::test]
+        async fn the_native_canvas_of_an_app_reads_and_writes_only_the_places_of_its_run() {
+            let dir = TempDir::new("tools-run-deno-canvas");
+            let roots = shipped_roots(&dir.0);
+            let app = roots.app.join(APPS_FOLDER).join("my-app");
+            std::fs::create_dir_all(&app).expect("create");
+            let (outside_font, outside_image) = (dir.0.join("private.ttf"), dir.0.join("private.png"));
+            std::fs::copy(roots.resources.join(FONTS_FOLDER).join("NotoSans-Regular.ttf"), &outside_font).expect("copy");
+            let path_text = |path: &Path| serde_json::to_string(path.to_str().expect("UTF-8 path")).expect("JSON");
+            let text = format!(
+                r#"
+                import {{ Canvas, FontLibrary }} from 'skia-canvas'
+                const outcome = (work: () => unknown) => Promise.resolve().then(work).then((value) => `ok ${{value}}`, (error) => `${{error.name}}: ${{error.message}}`)
+                const fonts = {fonts}
+                const canvas = new Canvas(64, 32, {{ gpu: false }})
+                const context = canvas.getContext('2d')
+                context.fillStyle = '#ff0000'
+                context.fillRect(0, 0, 64, 32)
+                console.log(`pixel: ${{context.getImageData(1, 1, 1, 1).data.join(' ')}}`)
+                console.log(`shipped font: ${{await outcome(() => FontLibrary.use('Shipped', [fonts + '/NotoSans-Regular.ttf']).map((font) => font.family).join(' '))}}`)
+                console.log(`own file: ${{await outcome(() => canvas.toFile('made.png').then(() => Deno.statSync('made.png').size > 0))}}`)
+                console.log(`variable of skia-canvas: ${{await outcome(() => Deno.env.get('LANG'))}}`)
+                console.log(`other variable: ${{await outcome(() => Deno.env.get('HOME'))}}`)
+                console.log(`outside font: ${{await outcome(() => FontLibrary.use('Outside', [{outside_font}]).map((font) => font.family).join(' '))}}`)
+                console.log(`outside file: ${{await outcome(() => canvas.toFile({outside_image}))}}`)
+                "#,
+                fonts = path_text(&roots.resources.join(FONTS_FOLDER)),
+                outside_font = path_text(&outside_font),
+                outside_image = path_text(&outside_image),
+            );
+            let run = ToolRun { app_folder: Some("my-app".to_string()), native_canvas: true, ..deno_run(&dir.0, "a", &text) };
+
+            let sent = finished(resolved_run(run, &roots).expect("a run that the rules allow")).await;
+
+            assert_eq!(sent.ends, exited(0), "{}\n{}", sent.stdout, sent.stderr);
+            let lines: Vec<&str> = sent.stdout.lines().collect();
+            let fixed = ["pixel: 255 0 0 255", "shipped font: ok Shipped", "own file: ok true", "variable of skia-canvas: ok undefined"];
+            assert_eq!(lines[..4], fixed, "{}", sent.stderr);
+            assert!(lines[4].starts_with("other variable: NotCapable"), "{}", sent.stdout);
+            // Native code gets the error of the OS (Linux: EACCES of
+            // Landlock; macOS: EPERM of Seatbelt), with no check of Deno.
+            let os_refused = |line: &str, name: &str| line.starts_with(&format!("{name}: Error:")) && (line.contains("Permission denied") || line.contains("Operation not permitted"));
+            assert!(lines.len() == 7 && os_refused(lines[5], "outside font") && os_refused(lines[6], "outside file"), "{NOT_CONFINED}\n{}", sent.stdout);
+            assert!(!outside_image.exists(), "{NOT_CONFINED}");
         }
 
         // Two flags of a Deno run, with the real Deno and the command line
@@ -2204,7 +2706,9 @@ mod tests {
             // Each import names its module in the code: Deno's permissions
             // cover an import of a name that the script computes.
             let text = r#"
-                const outcome = (module: Promise<{ text?: string }>) => module.then((module) => `loaded ${module.text}`, (error) => error.message.split('\n')[0])
+                // The error of a bare name ends with the path of the
+                // script, which differs in each test folder.
+                const outcome = (module: Promise<{ text?: string }>) => module.then((module) => `loaded ${module.text}`, (error) => error.message.split('\n')[0].replace(/ from "file:.*$/, ''))
                 console.log(await outcome(import('https://deno.land/x/dez_audit/mod.ts')))
                 console.log(await outcome(import('mapped')))
                 console.log(await outcome(import('./mapped.ts')))
@@ -2216,7 +2720,7 @@ mod tests {
 
             let lines = [
                 r#"A remote specifier was requested: "https://deno.land/x/dez_audit/mod.ts", but --no-remote is specified."#,
-                r#"Import "mapped" not a dependency"#,
+                r#"Import "mapped" not a dependency and not in import map"#,
                 "loaded mapped",
             ];
             assert_eq!(sent.stdout, lines.join("\n") + "\n", "{}", sent.stderr);
@@ -2328,8 +2832,9 @@ mod tests {
 
         // A Deno run with every permission of Deno. No run of the app has
         // them: Rust builds the flags (`DENO_RULES`), and no word of the
-        // page is one. Deno refuses `--allow-all` next to the flags of an
-        // app folder, so those go.
+        // page is one. Deno refuses `--allow-all` next to the other
+        // `--allow` flags, so those go. The import map stays: it gives no
+        // permission.
         fn with_every_permission(mut run: ProgramRun) -> ProgramRun {
             run.args.retain(|arg| !arg.starts_with("--allow-"));
             run.args.insert(1, "--allow-all".to_string());
@@ -2339,20 +2844,43 @@ mod tests {
         // The text of each file that no run may read.
         const PRIVATE: &str = "private text";
 
-        // The files of an audit that are outside the folders of its run
-        // (the work folder `cache/work/a` and the app folder `my-app`), as
-        // paths in the folder of the test: a file of the user, the files of
-        // the Dez folder, another app, another run, and a temp clip.
-        const PRIVATE_FILES: [&str; 8] = [
+        // The files of an audit that are outside the places of its run
+        // (the work folder `cache/work/a`, an app folder, and the folder
+        // `config/work/c-1` of its conversation), as paths in the folder of
+        // the test: a file of the user, the files of the Dez folder,
+        // another app, another run, a temp clip, and the folder of another
+        // conversation.
+        const PRIVATE_FILES: [&str; 9] = [
             "private.txt",
             "config/provider_keys.json",
             "config/app_state.json",
             "config/conversations/c.md",
             "config/assets/images/a.png",
             "config/apps/other/data.txt",
+            "config/work/other/data.txt",
             "cache/work/other/data.txt",
             "cache/media/clip.txt",
         ];
+
+        // The folders of an audit that no run may list or make a file in.
+        const PRIVATE_FOLDERS: [&str; 12] = [
+            ".",
+            "cache",
+            "cache/work",
+            "cache/work/other",
+            "config",
+            "config/apps",
+            "config/apps/other",
+            "config/conversations",
+            "config/work",
+            "config/work/other",
+            "resources",
+            "resources/builtin-apps",
+        ];
+
+        // The folders that Dez ships, in the resource dir of `real_roots`:
+        // a run reads some of them, and changes none.
+        const SHIPPED_FOLDERS: [&str; 4] = ["resources/libs", "resources/libs/test-lib", "resources/fonts", "resources/builtin-apps/dez-built-in"];
 
         fn write_private_files(dir: &Path) {
             for file in PRIVATE_FILES {
@@ -2389,10 +2917,13 @@ mod tests {
         }
 
         // The probes of a Deno script that has every permission of Deno.
-        // `__FILES__` is `PRIVATE_FILES`, and `__PORT__` a TCP port of the
-        // test. A `PermissionDenied` here is a refusal of the OS, as Deno
-        // refuses nothing. Every other error shows as it is, so a probe
-        // with a mistake does not count as refused.
+        // `__FILES__` is `PRIVATE_FILES`, `__FOLDERS__` `PRIVATE_FOLDERS`,
+        // `__SHIPPED__` the files of `FAKE_SHIPPED_FILES`, `__SHIPPED_FOLDERS__`
+        // `SHIPPED_FOLDERS`, `__APP__` the app folder of the run, and
+        // `__PORT__` a TCP port of the test. A `PermissionDenied` here is a
+        // refusal of the OS, as Deno refuses nothing. Every other error
+        // shows as it is, so a probe with a mistake does not count as
+        // refused.
         const DENO_AUDIT: &str = r#"
             // `fetch` gives the error of the OS as the cause of its own.
             const refused = (error: Error): boolean => error.name === 'PermissionDenied'
@@ -2412,33 +2943,55 @@ mod tests {
               }
               console.log(`${name}: ${open.join(', ') || 'refused'}`)
             }
+            // The probes that change the file `path`.
+            const changes = (path: string) => ({
+              write: () => Deno.writeTextFile(path, 'changed'),
+              append: () => Deno.writeTextFile(path, 'more', { append: true }),
+              truncate: () => Deno.truncate(path),
+              remove: () => Deno.remove(path),
+              rename: () => Deno.rename(path, `${path}.moved`),
+              chmod: () => Deno.chmod(path, 0o666),
+              'copy over': () => Deno.copyFile('made.txt', path),
+            })
             // The folder of the test: the work folder is `cache/work/a`.
             const above = '../../..'
+            const conversation = `${above}/config/work/c-1`
 
             console.log(`own folder: ${await outcome(() => Deno.writeTextFile('made.txt', 'made').then(() => Deno.readTextFile('made.txt')))}`)
-            console.log(`app folder: ${await outcome(() => Deno.readTextFile(`${above}/config/apps/my-app/data.txt`))}`)
+            console.log(`app folder: ${await outcome(() => Deno.readTextFile(`${above}/__APP__/data.txt`))}`)
+            console.log(`conversation folder: ${await outcome(() => Deno.writeTextFile(`${conversation}/made.txt`, 'made').then(() => Deno.readTextFile(`${conversation}/made.txt`)))}`)
+            console.log(`libraries: ${await outcome(() => import('dez-test-lib').then((module) => module.text))}`)
             for (const file of __FILES__) {
               const path = `${above}/${file}`
               await report(file, {
                 read: () => Deno.readTextFile(path),
                 import: () => import(path, { with: { type: 'text' } }).then((module) => module.default),
-                write: () => Deno.writeTextFile(path, 'changed'),
-                append: () => Deno.writeTextFile(path, 'more', { append: true }),
-                truncate: () => Deno.truncate(path),
-                remove: () => Deno.remove(path),
-                rename: () => Deno.rename(path, `${path}.moved`),
-                chmod: () => Deno.chmod(path, 0o666),
+                ...changes(path),
                 'copy out': () => Deno.copyFile(path, 'copy.txt'),
-                'copy over': () => Deno.copyFile('made.txt', path),
                 symlink: () => Deno.symlink(path, 'link.txt'),
               })
             }
-            for (const folder of ['.', 'cache', 'cache/work', 'cache/work/other', 'config', 'config/apps', 'config/apps/other']) {
+            for (const file of __SHIPPED__) {
+              const path = `${above}/${file}`
+              console.log(`read ${file}: ${await outcome(() => Deno.readTextFile(path))}`)
+              await report(`change ${file}`, changes(path))
+            }
+            for (const folder of __FOLDERS__) {
               const path = `${above}/${folder}`
               await report(`folder ${folder}`, {
                 list: async () => (await Array.fromAsync(Deno.readDir(path))).map((entry) => entry.name).join(' '),
                 'make a file': () => Deno.writeTextFile(`${path}/new.txt`, 'new'),
                 'make a folder': () => Deno.mkdir(`${path}/new`),
+              })
+            }
+            for (const folder of __SHIPPED_FOLDERS__) {
+              const path = `${above}/${folder}`
+              await report(`change folder ${folder}`, {
+                'make a file': () => Deno.writeTextFile(`${path}/new.txt`, 'new'),
+                'make a folder': () => Deno.mkdir(`${path}/new`),
+                'make a link': () => Deno.symlink('/', `${path}/link`),
+                rename: () => Deno.rename(path, `${path}-moved`),
+                remove: () => Deno.remove(path, { recursive: true }),
               })
             }
             await report('imports', {
@@ -2451,23 +3004,52 @@ mod tests {
             })
         "#;
 
-        // The lines of `DENO_AUDIT` for a run that the OS rule holds.
-        fn deno_audit_lines() -> String {
-            let mut lines = vec!["own folder: ok made".to_string(), "app folder: ok app data".to_string()];
+        // `DENO_AUDIT` for a run whose app folder is `app`, with `port` as
+        // the port of the test.
+        fn deno_audit(app: &str, port: u16) -> String {
+            let shipped: Vec<String> = FAKE_SHIPPED_FILES.iter().map(|(file, _)| format!("resources/{file}")).collect();
+            DENO_AUDIT
+                .replace("__FILES__", &json!(PRIVATE_FILES).to_string())
+                .replace("__FOLDERS__", &json!(PRIVATE_FOLDERS).to_string())
+                .replace("__SHIPPED_FOLDERS__", &json!(SHIPPED_FOLDERS).to_string())
+                .replace("__SHIPPED__", &json!(shipped).to_string())
+                .replace("__APP__", app)
+                .replace("__PORT__", &port.to_string())
+        }
+
+        // The lines of `DENO_AUDIT` for a run that the OS rule holds, whose
+        // app folder holds `app_data`, and which can read the files of
+        // `FAKE_SHIPPED_FILES` that start with one of `readable`.
+        fn deno_audit_lines(app_data: &str, readable: &[&str]) -> String {
+            let mut lines = vec![
+                "own folder: ok made".to_string(),
+                format!("app folder: ok {app_data}"),
+                "conversation folder: ok made".to_string(),
+                format!("libraries: ok {FAKE_LIB_TEXT}"),
+            ];
             lines.extend(PRIVATE_FILES.iter().map(|file| format!("{file}: refused")));
-            lines.extend(["folder .", "folder cache", "folder cache/work", "folder cache/work/other", "folder config", "folder config/apps", "folder config/apps/other", "imports", "network"].map(|name| format!("{name}: refused")));
+            for (file, text) in FAKE_SHIPPED_FILES {
+                let read = if readable.iter().any(|start| file.starts_with(start)) { format!("ok {text}") } else { "refused".to_string() };
+                lines.extend([format!("read resources/{file}: {read}"), format!("change resources/{file}: refused")]);
+            }
+            lines.extend(PRIVATE_FOLDERS.iter().map(|folder| format!("folder {folder}: refused")));
+            lines.extend(SHIPPED_FOLDERS.iter().map(|folder| format!("change folder {folder}: refused")));
+            lines.extend(["imports: refused".to_string(), "network: refused".to_string()]);
             lines.join("\n") + "\n"
         }
 
         // The end of a Deno script that ran with every permission of Deno
         // in the work folder `cache/work/a`, next to the private files. It
-        // fails when the run changed a file outside its work folder and the
-        // app folder `my-app`, or when it wrote the text of a private file.
+        // fails when the run changed a file outside its work folder, its
+        // app folder of `apps/`, and the folder of its conversation, or
+        // when it wrote the text of a private file.
         async fn audited(dir: &Path, run: ToolRun) -> Sent {
             let roots = real_roots(dir);
             write_private_files(dir);
+            let mut own = vec![roots.cache.join("work").join("a")];
+            own.extend(run.app_folder.iter().map(|name| roots.app.join(APPS_FOLDER).join(name)));
+            own.extend(run.conversation_folder.iter().map(|id| roots.app.join(CONVERSATION_WORK_FOLDERS).join(id)));
             let run = with_every_permission(resolved_run(run, &roots).expect("a run that the rules allow"));
-            let own = [roots.cache.join("work").join("a"), roots.app.join(APPS_FOLDER).join("my-app")];
             let before = files_outside(dir, &own);
 
             let sent = finished(run).await;
@@ -2478,10 +3060,12 @@ mod tests {
         }
 
         // A script with every permission of Deno reads and changes its work
-        // folder and its app folder, and nothing else: no file of the user
-        // or of Dez, no other app, no other run, and no server.
+        // folder, its app folder, and the folder of its conversation, reads
+        // the libraries and the fonts, and nothing else: no file of the
+        // user or of Dez, no other app, no other run or conversation, no
+        // built-in app, and no server. It changes no file that Dez ships.
         #[tokio::test]
-        async fn deno_with_every_permission_of_deno_stays_in_the_folders_of_its_run() {
+        async fn deno_with_every_permission_of_deno_stays_in_the_places_of_its_run() {
             let dir = TempDir::new("tools-audit-deno");
             let app = real_roots(&dir.0).app.join(APPS_FOLDER).join("my-app");
             std::fs::create_dir_all(&app).expect("create");
@@ -2489,15 +3073,31 @@ mod tests {
             std::fs::write(dir.0.join("private.ts"), format!("export const text = '{PRIVATE}'\n")).expect("write");
             let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listen");
             listener.set_nonblocking(true).expect("non-blocking");
-            let text = DENO_AUDIT
-                .replace("__FILES__", &json!(PRIVATE_FILES).to_string())
-                .replace("__PORT__", &listener.local_addr().expect("address").port().to_string());
+            let text = deno_audit("config/apps/my-app", listener.local_addr().expect("address").port());
+            let run = ToolRun { app_folder: Some("my-app".to_string()), conversation_folder: Some("c-1".to_string()), ..deno_run(&dir.0, "a", &text) };
 
-            let sent = audited(&dir.0, ToolRun { app_folder: Some("my-app".to_string()), ..deno_run(&dir.0, "a", &text) }).await;
+            let sent = audited(&dir.0, run).await;
 
-            assert_eq!(sent.stdout, deno_audit_lines(), "{NOT_CONFINED}\n{}", sent.stderr);
+            assert_eq!(sent.stdout, deno_audit_lines("app data", &["libs/", "fonts/"]), "{NOT_CONFINED}\n{}", sent.stderr);
             assert_eq!(sent.ends, exited(0), "{}", sent.stderr);
             assert_eq!(listener.accept().map(|_| ()).map_err(|error| error.kind()), Err(std::io::ErrorKind::WouldBlock));
+        }
+
+        // A built-in app is a place that a run with every permission of
+        // Deno only reads.
+        #[tokio::test]
+        async fn deno_with_every_permission_of_deno_changes_nothing_of_a_built_in_app() {
+            let dir = TempDir::new("tools-audit-deno-built-in");
+            std::fs::write(dir.0.join("private.ts"), format!("export const text = '{PRIVATE}'\n")).expect("write");
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listen");
+            listener.set_nonblocking(true).expect("non-blocking");
+            let text = deno_audit("resources/builtin-apps/dez-built-in", listener.local_addr().expect("address").port());
+            let run = ToolRun { built_in_app: Some("dez-built-in".to_string()), conversation_folder: Some("c-1".to_string()), ..deno_run(&dir.0, "a", &text) };
+
+            let sent = audited(&dir.0, run).await;
+
+            assert_eq!(sent.stdout, deno_audit_lines("built-in data", &["libs/", "fonts/", "builtin-apps/"]), "{NOT_CONFINED}\n{}", sent.stderr);
+            assert_eq!(sent.ends, exited(0), "{}", sent.stderr);
         }
 
         // One probe of an audit script on Linux: its name, its code (an

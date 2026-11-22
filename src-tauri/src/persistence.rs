@@ -107,14 +107,21 @@ pub struct FileTree {
 // (`ToolRun::app_folder` in bundled_tools.rs).
 pub(crate) const APPS_FOLDER: &str = "apps";
 
+// The folder of the app folder that holds the work folder of each
+// conversation, by its id (`ToolRun::conversation_folder` in
+// bundled_tools.rs). Not the `work` folder of the cache root, which holds
+// the work folders of the runs.
+pub(crate) const CONVERSATION_WORK_FOLDERS: &str = "work";
+
 // The folders of the app folder that programs own, as they own the cache
 // root: a bundled program makes, changes, and removes every file and folder
 // of its part of them (`Confinement::also_owned`: a Deno run in the folder
-// of its app), and a model writes any tree of files there with a Dez tool.
+// of its app and in the work folder of its conversation), and a model
+// writes any tree of files there with a Dez tool.
 // The rules of `is_program_owned` and `allows_folder_change` hold for them.
 // The rest of the app folder holds the user's data, where a link is the
 // user's own. A constant, so no page code can widen the list.
-const PROGRAM_OWNED_FOLDERS: &[&str] = &[APPS_FOLDER];
+const PROGRAM_OWNED_FOLDERS: &[&str] = &[APPS_FOLDER, CONVERSATION_WORK_FOLDERS];
 
 // Why a folder command refuses a path (`allows_folder_change`).
 const NO_FOLDER_CHANGE: &str = "a folder can be made, moved, or deleted only in the cache root, and in the app root only below a folder that programs own";
@@ -1221,7 +1228,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn programs_own_the_cache_root_and_the_apps_folder_of_the_app_root() {
+    fn programs_own_the_cache_root_and_the_apps_and_work_folders_of_the_app_root() {
         use FileRoot::{App, Cache};
         // The root, the path, whether programs own it, and whether a folder
         // can be made, moved, and deleted there.
@@ -1232,12 +1239,17 @@ pub(crate) mod tests {
             (App, "apps", true, false),
             (App, "apps/my-app", true, true),
             (App, "apps/my-app/src/lib", true, true),
+            (App, "work", true, false),
+            (App, "work/a-conversation", true, true),
+            (App, "work/a-conversation/data/old", true, true),
             (App, "app_state.json", false, false),
             (App, "apps.json", false, false),
             (App, "apps-old/my-app", false, false),
+            (App, "work.json", false, false),
             (App, "assets", false, false),
             (App, "assets/images", false, false),
             (App, "assets/apps/my-app", false, false),
+            (App, "assets/work/a", false, false),
             (App, "conversations", false, false),
         ];
         for (root, path, owned, folder_change) in cases {
@@ -1256,15 +1268,25 @@ pub(crate) mod tests {
         use std::os::unix::fs::symlink;
         let dir = TempDir::new("owned-links");
         let (app, cache, outside) = (dir.0.join("app"), dir.0.join("cache"), dir.0.join("outside"));
-        for folder in [app.join("apps").join("my-app"), cache.join("work"), outside.clone()] {
+        for folder in [app.join("apps").join("my-app"), app.join("work").join("a"), cache.join("work"), outside.clone()] {
             std::fs::create_dir_all(folder).expect("create");
         }
         symlink(&outside, app.join("apps").join("my-app").join("linked")).expect("link");
         symlink(&outside, app.join("apps").join("linked-app")).expect("link");
+        symlink(&outside, app.join("work").join("a").join("linked")).expect("link");
+        symlink(&outside, app.join("work").join("linked-conversation")).expect("link");
         symlink(&outside, app.join("conversations")).expect("link");
         symlink(&outside, cache.join("work").join("linked")).expect("link");
 
-        for refused in ["apps/my-app/linked", "apps/my-app/linked/keys.json", "apps/linked-app", "apps/linked-app/main.ts"] {
+        let refused = [
+            "apps/my-app/linked",
+            "apps/my-app/linked/keys.json",
+            "apps/linked-app",
+            "apps/linked-app/main.ts",
+            "work/a/linked/keys.json",
+            "work/linked-conversation/data.csv",
+        ];
+        for refused in refused {
             assert!(path_in(&app, FileRoot::App, refused).is_err(), "{refused}");
         }
         assert!(path_in(&cache, FileRoot::Cache, "work/linked/out.mp4").is_err());
