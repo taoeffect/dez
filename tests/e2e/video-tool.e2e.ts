@@ -846,7 +846,12 @@ describe('video tool', () => {
     expect(frame.result.status).toBe('finished')
     expect(frame.result.text).toMatch(/^ffmpeg ended with no error and made 1 file that Dez keeps: frame\.jpg \(image\)\. The line at the end gives its id\.\n[\s\S]+\nMade the image @g\.$/)
 
-    const still = await runJob(frame.next, 'call_still', 'ffmpeg', { arguments: '-loop 1 -i @c -i @e -c:v libvpx-vp9 -pix_fmt yuv420p -c:a libopus -shortest still.webm' })
+    // A set length (-t 1) and not -shortest, as the clip of the help has: with
+    // -loop 1, the picture can go past the end of the sound on a busy computer.
+    // ffmpeg holds the frames of the picture until the sound reaches them, but
+    // when it holds 10 s of them (-shortest_buf_duration), it lets them go on.
+    // On one CPU, more than half of the runs gave a clip of 1.7 s or more.
+    const still = await runJob(frame.next, 'call_still', 'ffmpeg', { arguments: '-loop 1 -i @c -i @e -c:v libvpx-vp9 -pix_fmt yuv420p -c:a libopus -t 1 still.webm' })
     expect(still.started).toBe(`${jobStartedText(still.jobId, 2)}\nThe inputs of the run: the image @c as c.png, the audio clip @e as e.wav.`)
     expect(still.result.status).toBe('finished')
     expect(still.result.text).toMatch(/^ffmpeg ended with no error and made 1 file that Dez keeps: still\.webm \(video clip\)\. The line at the end gives its id\.\n[\s\S]+\nMade the video clip @h\.$/)
