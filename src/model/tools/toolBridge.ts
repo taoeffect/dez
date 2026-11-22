@@ -36,6 +36,11 @@ const UNBRIDGED_TOOLS: readonly string[] = [JS_EVAL_TOOL.name]
 // The subcommand of a tool that the code of a run cannot call, for the
 // same cause: `apps invoke` runs the code of an app. The other subcommands
 // of the tool go.
+//
+// The alias subcommands of `audio` and `video` (appAliases.ts) also run
+// the code of an app, but they go: each runs fixed code that Dez ships,
+// not code of a model, with its own time limit, and the call waits for
+// it, so the time limit of the run that calls it still holds.
 const UNBRIDGED_SUBCOMMAND = { tool: APPS_TOOL.name, subcommand: APPS_INVOKE }
 
 // Whether a call of the tool `tool` names the subcommand that code cannot

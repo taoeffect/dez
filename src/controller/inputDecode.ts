@@ -1,20 +1,18 @@
 import sbp from '@sbp/sbp'
+import type { AppRunCaller } from '../model/tools/appInvoke'
 import { APP_RUN_MAX_DECODED_BYTES } from '../model/tools/appsTool'
 import {
   APP_DECODES_STATE,
   clipDecodeArgs,
   clipDecodePlan,
   DECODE_NOT_PROBED_DETAILS,
-  DECODED_TOO_LARGE_TEXT,
   decodedBytes,
   decodedClip,
-  decodeFailedText,
   hasDecodedFiles,
   type ClipDecodePlan,
   type DecodedClip,
   type InputDecode,
 } from '../model/tools/inputDecode'
-import { jobTimedOutText } from '../model/tools/jobs'
 import { withoutLocalPaths } from '../model/tools/localPaths'
 import { ffmpegRunDetails, type ClipInput } from '../model/tools/programRuns'
 import { clipReadProblemText } from '../model/tools/toolInputs'
@@ -46,24 +44,23 @@ async function fileSizes(folder: string): Promise<Map<string, number>> {
 // The ffmpeg run that writes the files of `plan` from the copy of the clip
 // of `input` in `folder`, with at most `maxBytes` bytes in each file.
 // Throws a `ToolError` for a run that failed, and for one that did not end
-// within the time limit of the job (the job's own clock ends it first in
-// most cases).
+// within the time limit of the run (the clock of the caller ends it first
+// in most cases).
 async function decodeClip(input: ClipInput, plan: ClipDecodePlan, maxBytes: number, folder: string, run: DecodeRun, signal: AbortSignal): Promise<void> {
   // With `-nostats` and named output files, ffmpeg writes only errors.
   const { end, log } = await runFfmpegLog(clipDecodeArgs(input.name, plan, maxBytes), folder, run, signal)
-  if (end.kind === 'timedOut') throw new ToolError(jobTimedOutText(run.timeoutMs, APP_DECODES_STATE))
+  if (end.kind === 'timedOut') throw new ToolError(run.texts.timedOut(run.timeoutMs, APP_DECODES_STATE))
   if (end.kind !== 'exited' || end.code !== 0) {
     console.error(`ffmpeg could not decode the ${input.kind} clip @${input.id}:`, end, log)
     const errorEnd = wholeLinesEnd(log.slice(-ERROR_END_CHARS), log.length > ERROR_END_CHARS)
     // The error output can name a path that the data of the file holds.
-    throw new ToolError(decodeFailedText(input), withoutLocalPaths(ffmpegRunDetails(end, errorEnd, FFMPEG_OUTPUT_BYTES)))
+    throw new ToolError(run.texts.decodeFailed(input), withoutLocalPaths(ffmpegRunDetails(end, errorEnd, FFMPEG_OUTPUT_BYTES)))
   }
 }
 
-/** The call whose job decodes: the Dez tool of the call, which the texts
- *  name, and the time limit of the job. */
-export interface DecodeRun {
-  toolName: string
+/** The run whose decode this is: its caller (the tool of the call, which
+ *  the texts name, and the error texts), and its time limit. */
+export interface DecodeRun extends AppRunCaller {
   timeoutMs: number
 }
 
@@ -83,7 +80,7 @@ export async function decodeClips(clips: readonly ClipInput[], decode: InputDeco
   for (const input of clips) {
     const probed = await probeClip(input, folder, signal, run.toolName)
     if (probed.kind === 'notRead') throw new ToolError(clipReadProblemText(input.kind, input.id, run.toolName, probed.problem))
-    if (probed.kind === 'notProbed') throw new ToolError(decodeFailedText(input), DECODE_NOT_PROBED_DETAILS)
+    if (probed.kind === 'notProbed') throw new ToolError(run.texts.decodeFailed(input), DECODE_NOT_PROBED_DETAILS)
     const plan = clipDecodePlan(input, probed.facts, decode)
     let sizes = new Map<string, number>()
     if (hasDecodedFiles(plan)) {
@@ -91,7 +88,7 @@ export async function decodeClips(clips: readonly ClipInput[], decode: InputDeco
       sizes = await fileSizes(folder)
     }
     total += decodedBytes(plan, sizes)
-    if (total > APP_RUN_MAX_DECODED_BYTES) throw new ToolError(DECODED_TOO_LARGE_TEXT)
+    if (total > APP_RUN_MAX_DECODED_BYTES) throw new ToolError(run.texts.decodedTooLarge)
     decoded.set(input.id, decodedClip(plan, decode, sizes))
   }
   return decoded

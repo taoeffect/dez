@@ -127,6 +127,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `model/tools/editHint.ts`: when the result of an `apps edit` call, a refused one too, ends with the hint of `edit`: while the conversation of the tab does not hold it (the help of `edit` holds it).
 - `model/tools/appsGrep.ts`, `grepMatch.ts`, `controller/grepWorker.ts`: `apps grep`: the checks of a call, the files to search, and the result texts; the matching (a leaf module); the Web Worker that runs the matching, with a time limit.
 - `model/tools/appInvoke.ts`, `controller/appInvoke.ts`: `apps invoke`: one run of an app as a job, with checked output files: the code of a script app in Deno, with copies of its inputs, or the handler of the page of a UI app in a hidden frame.
+- `model/tools/appAliases.ts`: the alias subcommands of `audio` and `video`, each a run of a built-in app that the call waits for (`runAliasCall`, `controller/appInvoke.ts`).
 - `model/tools/appBridge.ts`, `controller/appBridge.ts`: the frame bridge: the calls between the page of a UI app and Dez (the read and the save of an image or a clip, and the handler that `apps invoke` runs).
 - `model/tools/appShow.ts`: `apps show`: Dez writes the `<dez:app>` tag of a UI app into the reply (`ToolRunContext.showApp`).
 - `controller/apps.ts`: `dez.controller/apps/*`: the facts of an app for its card, its delete, its context menu, and the asset read and save of a shown app.

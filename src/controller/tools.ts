@@ -17,7 +17,8 @@ import type { ProviderMediaQuote } from '../model/providers/streamTypes'
 import { effectiveRequest, type ModelInfo, type ProviderInfo, type ProviderInputImageRules, type ProviderSettingsDescriptor } from '../model/providers/types'
 import type { SettingsSnapshot } from '../model/state'
 import type { CallPictureBudget } from '../model/streams/pictureBudget'
-import { invokeInputsText, invokeLabel } from '../model/tools/appInvoke'
+import { AUDIO_ALIASES, VIDEO_ALIASES, type AppAlias } from '../model/tools/appAliases'
+import { invokeCall, invokeInputsText, invokeLabel, INVOKE_RUN_TEXTS } from '../model/tools/appInvoke'
 import { APPS_TOOL, EDIT_HINT, withEditHint } from '../model/tools/appsTool'
 import { AUDIO_TOOL, audioClipId, audioClipOf, audioCutPart, audioCutRequest, audioCutResultText, audioLengthText } from '../model/tools/audioTool'
 import { conversationInfoText } from '../model/tools/conversationInfo'
@@ -35,7 +36,7 @@ import { ToolError, type ArgumentsOf, type SubcommandParameter, type ToolArgumen
 import { ffmpegCall, ffprobeCall, joinClipsCall, VIDEO_TOOL, videoCallLabel, videoInputsText } from '../model/tools/videoTool'
 import { untilAborted } from '../utils/abort'
 import { rawErrorText } from '../utils/errorText'
-import { checkedInvokeCall, runAppFrameJob, runAppJob } from './appInvoke'
+import { checkedAppRun, runAliasCall, runAppFrameJob, runAppJob } from './appInvoke'
 import { editAppFile, findAppFiles, grepAppFiles, initApp, listAppFolder, listApps, makeAppFolder, moveAppPaths, readAppFile, removeAppPaths, showApp, wcAppFiles, writeAppFile } from './appsTool'
 import { assetInfoResult } from './assetInfo'
 import { assetViewResult } from './assetView'
@@ -167,6 +168,16 @@ function subcommandRunner<P extends SubcommandParameter>(tool: SubcommandTool<P>
     const call = parseSubcommandCall(tool, args)
     return call.kind === 'text' ? call.text : await runners[call.name](call.arguments, signal, context)
   }
+}
+
+// The runners of the alias subcommands `aliases` of one tool, by the
+// names of the subcommands: each call waits for one run of the built-in
+// app of its alias (`runAliasCall`).
+function aliasRunners(aliases: readonly AppAlias[]): Record<string, ToolRunner> {
+  return Object.fromEntries(aliases.map((alias): [string, ToolRunner] => [
+    alias.subcommand.name,
+    (args, signal, context) => runAliasCall(alias, args, callSections(context), context.conversationId, signal),
+  ]))
 }
 
 // The `apps` runner `runner` with the hint of `edit` (editHint.ts): while
@@ -368,7 +379,8 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // with values that are a part of no clip is refused before Dez reads the
   // clip. The result and the error texts name a clip by its id only: they
   // go to the chat provider, which gets no path of a stored file and no
-  // signed URL. The causes are in the log.
+  // signed URL. The causes are in the log. The other subcommands are
+  // aliases (appAliases.ts): each runs a built-in app that measures clips.
   audio: subcommandRunner(AUDIO_TOOL, {
     async clip (args, signal, context) {
       const id = audioClipId(args)
@@ -386,6 +398,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
       }
       return audioCutResultText(id, newId, audioCutPart(request, cut.seconds), cut.seconds)
     },
+    ...aliasRunners(AUDIO_ALIASES),
   }),
   // The `image` tool (imageTool.ts): each subcommand makes a new image from
   // an image of the conversation (`imageRunner`).
@@ -484,7 +497,8 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // call that Dez refuses starts no job and no program. `join_clips` and
   // `ffmpeg` run as jobs of the reply, and their results tell the inputs
   // that go, as for `model_invoke`. `ffprobe` is short, so its call waits
-  // for it.
+  // for it. `cuts` and `sync` are aliases (appAliases.ts): each runs a
+  // built-in app that measures clips, and the call waits for it.
   video: subcommandRunner(VIDEO_TOOL, {
     async join_clips (args, callSignal, context) {
       const call = joinClipsCall(args, callSections(context))
@@ -497,6 +511,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     async ffprobe (args, signal, context) {
       return runFfprobe(ffprobeCall(args, callSections(context)), signal)
     },
+    ...aliasRunners(VIDEO_ALIASES),
   }),
   // The facts of the images and the clips that the call names, with who
   // made each one and whether the editor hides it, and the checks of each
@@ -563,9 +578,9 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // reply: code that a model wrote can run for long. The kind of the app
   // picks the work: a script app runs in Deno, and the page of a UI app
   // in a frame that the user does not see. The checks of the call and of
-  // the files of the app run first (`checkedInvokeCall`): a call that Dez
-  // refuses starts no job, no program, and no frame. The result tells the
-  // inputs that go, as for `model_invoke`.
+  // the files of the app run first (`invokeCall`, `checkedAppRun`): a call
+  // that Dez refuses starts no job, no program, and no frame. The result
+  // tells the inputs that go, as for `model_invoke`.
   //
   // `show` puts a UI app into the reply (appShow.ts): it runs no code.
   apps: withEditHintWhenDue(subcommandRunner(APPS_TOOL, {
@@ -583,10 +598,10 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     mv: (args, signal, { conversationId }) => moveAppPaths(args, signal, conversationId),
     show: (args, _signal, context) => showApp(args, context),
     async invoke (args, callSignal, context) {
-      const call = await checkedInvokeCall(args, callSections(context))
+      const call = await checkedAppRun(invokeCall(args, callSections(context)))
       return startJob(context, callSignal, APPS_TOOL.name, (signal, report, _reportCost, keepAsset) => (call.kind === 'ui'
         ? runAppFrameJob(call, signal, report, keepAsset)
-        : runAppJob(call, context.conversationId, signal, report, keepAsset)), {
+        : runAppJob(call, { toolName: APPS_TOOL.name, texts: INVOKE_RUN_TEXTS }, context.conversationId, signal, report, keepAsset)), {
         timeoutMs: call.timeoutMs,
         hidesAssets: isIntermediate(args),
         label: invokeLabel(args),

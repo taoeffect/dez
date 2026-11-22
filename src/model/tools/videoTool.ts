@@ -7,6 +7,7 @@ import { CLIP_FILE_EXTENSIONS, MAX_SAVED_CLIP_BYTES, storableClip } from '../cha
 import { newMediaIds } from '../chat/mediaIds'
 import type { Section } from '../chat/types'
 import { conversationAssets, type ConversationAssets } from '../streams/mediaRequest'
+import { VIDEO_ALIASES } from './appAliases'
 import { assetIdWords } from './arguments'
 import { ASSET_NAMES, INTERMEDIATE_PARAMETER, JOB_CALL_NOTE, jobCallLabel, jobTimeoutMs, jobTimeoutParameter } from './jobs'
 import { clipInput, tellUserConsole, type ClipInput, type KeptFile, type ProgramEnd, type ShippedProgram } from './programRuns'
@@ -27,6 +28,8 @@ import { MAX_TEXT_FILES, MAX_TEXT_FILES_BYTES, TEXT_FILE_NAME_TEXT, textFilesArg
 // - `join_clips` and `ffmpeg` start a job of the reply (controller/jobs.ts);
 //   with `is_intermediate`, the job hides what it makes (chat/hiddenAssets.ts).
 // - `ffprobe` is fast, so its call waits for it.
+// - `cuts` and `sync` measure clips, each with a built-in app
+//   (appAliases.ts), and the call waits for it.
 //
 // A call names an input as `@id`. The program gets a copy of that file
 // under a neutral name (`c.mp4`) in a new work folder, where it runs, and
@@ -190,7 +193,8 @@ export const VIDEO_TOOL: SubcommandTool = {
   name: 'video',
   summary: 'Join, cut, mix, and convert the video clips, the audio clips, and the images of this conversation with ffmpeg, and read their facts with ffprobe. '
     + `ffmpeg can also write text on them, but only with the fonts that Dez ships, never a font of the computer: ${SHIPPED_FAMILIES_TEXT}. `
-    + 'The help of the ffmpeg subcommand gives their files and tells how to use them.',
+    + 'The help of the ffmpeg subcommand gives their files and tells how to use them. '
+    + 'Find the exact cuts of a video clip with the cuts subcommand, and check whether the cuts of an edit are on the beats of its song with the sync subcommand.',
   subcommands: [
     {
       name: 'join_clips',
@@ -235,6 +239,7 @@ export const VIDEO_TOOL: SubcommandTool = {
       parameters: [ARGUMENTS_PARAMETER],
       example: { arguments: '-v error -show_format -show_streams -of json @c' },
     },
+    ...VIDEO_ALIASES.map((alias) => alias.subcommand),
   ],
 }
 

@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { byteSizeText } from '../../utils/byteSize'
+import { ALIAS_TIMEOUT_MS, aliasRunTexts, AUDIO_ALIASES, VIDEO_ALIASES, type AppAlias } from './appAliases'
 import { AppCallError } from './appBridge'
 import { APP_KINDS, MANIFEST_MAX_BYTES } from './appManifest'
 import {
+  aliasInvokeCall,
   APP_OUTPUT_LISTED_ENTRIES,
   appFrameResult,
   appRunDescription,
@@ -21,6 +23,7 @@ import {
   SaveCount,
   savedFileType,
   type AppOutputs,
+  type InvokeCall,
   type InvokeTarget,
 } from './appInvoke'
 import { APP_RUN_MAX_OUTPUT_BYTES, APP_RUN_MAX_OUTPUT_FILES } from './appsTool'
@@ -86,6 +89,90 @@ describe('invokeCall', () => {
 
   it('refuses a time limit outside the range of a job', () => {
     expect(refusal(() => invoke({ name: 'notes', timeout_seconds: 5 }))).toContain('timeout_seconds')
+  })
+})
+
+// The alias subcommand `name` of the tool `tool`.
+function aliasOf(tool: 'audio' | 'video', name: string): AppAlias {
+  const alias = [...AUDIO_ALIASES, ...VIDEO_ALIASES].find((each) => each.tool === tool && each.subcommand.name === name)
+  if (!alias) throw new Error(`There is no alias ${tool} ${name}.`)
+  return alias
+}
+
+// The run of a call of the alias `tool name` with `args`, in CONVERSATION:
+// the image @a, the audio clip @b, the video clips @c and @d.
+function aliasCall(tool: 'audio' | 'video', name: string, args: Record<string, string | number>): InvokeCall {
+  return aliasInvokeCall(aliasOf(tool, name), args, CONVERSATION)
+}
+
+const inputIds = (call: InvokeCall) => call.inputs.map(({ id }) => id)
+
+describe('aliasInvokeCall', () => {
+  it('runs the built-in app of the alias, with the time limit of an alias and the decode of the manifest of the app', () => {
+    const call = aliasCall('video', 'cuts', { clips: '@c' })
+
+    expect([call.app.virtual, call.manifest.virtual, call.main.virtual]).toStrictEqual(['/apps/dez-cuts', '/apps/dez-cuts/manifest.json', '/apps/dez-cuts/main.ts'])
+    expect([call.timeoutMs, call.decode]).toStrictEqual([ALIAS_TIMEOUT_MS, null])
+  })
+
+  // The order of the inputs is the order that the code of the app reads
+  // (`dez.inputs`): the clip to find before the clip to find it in.
+  it('gives the clips of the input parameters in the order of the parameters, not of the arguments, and each clip once', () => {
+    expect(inputIds(aliasCall('audio', 'align', { within: '@c', clip: '@b' }))).toStrictEqual(['b', 'c'])
+    expect(inputIds(aliasCall('video', 'sync', { song: '@b', edit: '@c' }))).toStrictEqual(['c', 'b'])
+    expect(inputIds(aliasCall('video', 'cuts', { clips: '@d @c, @d' }))).toStrictEqual(['d', 'c'])
+    // An audio clip and a video clip both have sound.
+    expect(inputIds(aliasCall('audio', 'onsets', { clips: '@c @b' }))).toStrictEqual(['c', 'b'])
+  })
+
+  it('gives every other argument to the app as a parameter', () => {
+    expect(aliasCall('video', 'sync', { edit: '@c', song: '@b', offset: 1.5, save_to: '/work/sync.json' }).parameters).toStrictEqual({ offset: 1.5, save_to: '/work/sync.json' })
+    expect(aliasCall('audio', 'beats', { clips: '@b' }).parameters).toStrictEqual({})
+  })
+
+  it('refuses an input parameter with no clip, and one with more clips than it takes', () => {
+    const none = refusal(() => aliasCall('audio', 'beats', { clips: ' , ' }))
+    expect(none).toContain('`clips` names no clip')
+    expect(none).toContain('Dez did not run dez-beats.')
+
+    const two = refusal(() => aliasCall('audio', 'align', { clip: '@b @d', within: '@c' }))
+    expect(two).toContain('`clip` names 2 clips, and it takes one')
+    expect(two).toContain('Dez did not run dez-align.')
+  })
+
+  it('refuses a word that is no id, and an id of no image and no clip', () => {
+    expect(refusal(() => aliasCall('video', 'cuts', { clips: '@c red.jpg' }))).toContain('"red.jpg"')
+
+    const unknown = refusal(() => aliasCall('video', 'cuts', { clips: '@c @z' }))
+    expect(unknown).toContain('@z')
+    expect(unknown).toContain('Dez did not run dez-cuts.')
+  })
+
+  it('refuses an image, and an audio clip where the parameter takes only video clips', () => {
+    expect(refusal(() => aliasCall('audio', 'beats', { clips: '@b @a' }))).toContain('@a is an image, and `clips` of audio beats takes only clips with sound.')
+    expect(refusal(() => aliasCall('video', 'cuts', { clips: '@b' }))).toContain('@b is an audio clip, and `clips` of video cuts takes only video clips.')
+    expect(refusal(() => aliasCall('video', 'sync', { edit: '@b', song: '@c' }))).toContain('@b is an audio clip, and `edit` of video sync takes only video clips.')
+  })
+
+  it('refuses the same clip in two input parameters', () => {
+    const same = refusal(() => aliasCall('audio', 'align', { clip: '@b', within: '@b' }))
+
+    expect(same).toContain('`clip` and `within` name the same clip @b')
+    expect(same).toContain('Dez did not run dez-align.')
+  })
+})
+
+// An alias call has no `decode`, no `inputs`, and no time limit to change.
+describe('aliasRunTexts', () => {
+  const texts = aliasRunTexts(aliasOf('video', 'cuts'))
+
+  it('tells of a failed decode and of a long run with the call of the alias, and with no advice about parameters that an alias does not have', () => {
+    const failed = texts.decodeFailed({ kind: 'video', id: 'c' })
+    expect(failed).toContain('@c for video cuts')
+
+    for (const text of [failed, texts.decodedTooLarge, texts.timedOut(ALIAS_TIMEOUT_MS, 'The code of the app runs.')]) {
+      expect(['`decode`', '`inputs`', 'timeout_seconds', 'apps invoke'].filter((part) => text.includes(part)), text).toStrictEqual([])
+    }
   })
 })
 

@@ -67,7 +67,10 @@ import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolC
 // - `layout` "grid" puts two images and the frame sheets of two video clips
 //   into one picture;
 // - the `checks` of `asset_info` find the black, frozen, and silent parts,
-//   the loudness curve, and the cuts of each clip.
+//   and the loudness curve of each clip;
+// - `video cuts` runs the built-in app dez-cuts in the real Deno, waits for
+//   it, and finds the cuts of the clip of 4 shots, with a JSON file of
+//   each clip in the work folder of the conversation.
 // No request holds a path of the test HOME (`takeRequest` checks each one).
 // Each video clip with sound that the spec makes is VP9 and Opus in WebM:
 // the CI GStreamer (.github/workflows/e2e.yml) decodes both, so the players
@@ -792,11 +795,11 @@ describe('video tool', () => {
     await expectCleanEnd(files, shotSources)
   })
 
-  it('finds the black, frozen, and silent parts, the loudness curve, and the cuts of each clip that an asset_info call checks', async () => {
+  it('finds the black, frozen, and silent parts, and the loudness curve of each clip that an asset_info call checks', async () => {
     const files = await openShots('asset-checks')
     await submit(browser, 'Check my clips.')
     const first = await chatRequest()
-    sendToolCalls(first.reply, [openAiToolCall('call_checks', 'asset_info', { assets: '@a @b @c @d', checks: 'black frozen silence loudness_curve cuts' })])
+    sendToolCalls(first.reply, [openAiToolCall('call_checks', 'asset_info', { assets: '@a @b @c @d', checks: 'black frozen silence loudness_curve' })])
 
     const checked = await chatRequest()
     const noPicture = 'no check, the clip has no picture'
@@ -813,13 +816,11 @@ describe('video tool', () => {
       // ms: the decoder of another computer can give other ms.
       expect.stringMatching(/^ {2}silence: 1(\.0\d{0,2})? s to (2\.9\d{0,2}|3) s$/),
       expect.stringMatching(curveLine(4)),
-      '  cuts: 1, 2, 3 s',
       `@b | audio | WAV | 1 s | pcm_s16le | 44100 Hz | 1 channel | ${byteSizeText(shotSources.b.length)} | shown | from the user`,
       `  black: ${noPicture}`,
       `  frozen: ${noPicture}`,
       '  silence: none',
       expect.stringMatching(curveLine(1)),
-      `  cuts: ${noPicture}`,
       // An image gets no check.
       `@c | image | PNG | 48x36 | ${byteSizeText(PICTURE_PNG.length)} | shown | from the user`,
       // A clip of one color is frozen from its first frame to its end.
@@ -828,9 +829,28 @@ describe('video tool', () => {
       '  frozen: 0 s to the end',
       `  silence: ${noSound}`,
       `  loudness_curve: ${noSound}`,
-      '  cuts: none',
     ])
     await sendChatReply(checked.reply, CALLER.modelName)
+    await endedReply(browser, CLIPS_REPLY_INDEX)
+    await expectCleanEnd(files, shotSources)
+  })
+
+  it('finds the cuts of each video clip with video cuts, which runs the built-in app dez-cuts and waits for it', async () => {
+    const files = await openShots('alias-cuts')
+    await submit(browser, 'Find the cuts of my clips.')
+    const workFolder = appFilePath(setup.app.home, 'work', await activeConversationId(browser))
+    const first = await chatRequest()
+    sendToolCalls(first.reply, [videoCall('call_cuts', 'cuts', { clips: '@a @d' })])
+
+    const measured = await chatRequest()
+    expect(toolResult(measured, 'call_cuts').split('\n')).toStrictEqual([
+      '@a (20 frames, 4.000 s at 5 fps): 3 cuts, at 1.000, 2.000, 3.000 s. In /work/cuts-a.json.',
+      '@d (10 frames, 2.000 s at 5 fps): no cut. In /work/cuts-d.json.',
+      'Each file holds id, fps, frames, duration, threshold, and cuts: {frame, time, score} each, where frame is the first frame after the cut. Times are in seconds.',
+    ])
+    const shots = JSON.parse(await fs.promises.readFile(path.join(workFolder, 'cuts-a.json'), 'utf8')) as { cuts: Array<{ frame: number, time: number }> }
+    expect(shots.cuts.map(({ frame, time }) => [frame, time])).toStrictEqual([[5, 1], [10, 2], [15, 3]])
+    await sendChatReply(measured.reply, CALLER.modelName)
     await endedReply(browser, CLIPS_REPLY_INDEX)
     await expectCleanEnd(files, shotSources)
   })

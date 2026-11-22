@@ -5,13 +5,13 @@ import { storedTypeOfBytes, type StoredFileType } from '../chat/fileSignatures'
 import { imageExtension, imageMediaType } from '../chat/images'
 import type { Section } from '../chat/types'
 import { conversationAssets, type ConversationAssets } from '../streams/mediaRequest'
+import { aliasCallText, aliasNotDoneText, ALIAS_TIMEOUT_MS, type AppAlias } from './appAliases'
 import { APP_FRAME_ROOT_URL, APP_HANDLER_EXAMPLE, AppCallError, type AppFrameEnd, type AppFrameInput } from './appBridge'
 import { MANIFEST_FILE, type AppKind } from './appManifest'
 import {
   APP_RUN_DEFAULT_SECONDS,
   APP_RUN_MAX_OUTPUT_BYTES,
   APP_RUN_MAX_OUTPUT_FILES,
-  APPS_TOOL,
   APPS_VIRTUAL_ROOT,
   STORED_TYPES,
   appNamed,
@@ -27,12 +27,12 @@ import {
 } from './appsTool'
 import { SCRIPT_MAIN_FILE, UI_CLIENT_SCRIPT_TAG, UI_INDEX_FILE } from './appTemplates'
 import { assetIdWords } from './arguments'
-import { callDecode, decodedInputFacts, type DecodedClip, type InputDecode } from './inputDecode'
-import { ASSET_NAMES, jobCallLabel, jobTimeoutMs, type JobAssetKind } from './jobs'
+import { callDecode, DECODED_TOO_LARGE_TEXT, decodedInputFacts, decodeFailedText, type DecodedClip, type InputDecode } from './inputDecode'
+import { ASSET_NAMES, jobCallLabel, jobTimedOutText, jobTimeoutMs, type JobAssetKind } from './jobs'
 import { endedOutcome, failedOutcome, namesDenoFlag, returnedOutcome, runResultText, textForModel, type JsEvalEndLine, type RunOutcome } from './jsEval'
 import { clipInput, tellUserConsole, type ClipInput, type KeptFile, type ProgramEnd } from './programRuns'
 import { assetText, unknownAssetsText } from './toolInputs'
-import { ToolError, type SubcommandArguments } from './types'
+import { ToolError, type SubcommandArguments, type ToolArguments } from './types'
 
 // `apps invoke`: one run of the code of an app, as a job. The kind of the
 // app (its manifest) picks what runs it.
@@ -153,6 +153,36 @@ export interface CheckedInvokeCall extends Omit<InvokeCall, 'decode'> {
   decode: InputDecode
 }
 
+/** The error texts of a run of a script app that depend on the call that
+ *  started it: an `apps invoke` call (`INVOKE_RUN_TEXTS`), or a call of an
+ *  alias subcommand (`aliasRunTexts`, appAliases.ts). Each tells the model
+ *  what it can change in its own call. */
+export interface AppRunTexts {
+  /** The error result of a run whose decode of the clip `input` failed:
+   *  ffprobe or ffmpeg could not read it. */
+  decodeFailed: (input: Pick<ClipInput, 'kind' | 'id'>) => string
+  /** The error result of a run whose decoded files are larger than
+   *  `APP_RUN_MAX_DECODED_BYTES` together. */
+  decodedTooLarge: string
+  /** The error result of a run that its time limit `timeoutMs` stopped in
+   *  the state `state`. */
+  timedOut: (timeoutMs: number, state: string) => string
+}
+
+/** The texts of a run of an `apps invoke` call: a job. */
+export const INVOKE_RUN_TEXTS: AppRunTexts = {
+  decodeFailed: decodeFailedText,
+  decodedTooLarge: DECODED_TOO_LARGE_TEXT,
+  timedOut: jobTimedOutText,
+}
+
+/** What started a run of a script app: the Dez tool of the call, which
+ *  the texts name, and the error texts of the run. */
+export interface AppRunCaller {
+  toolName: string
+  texts: AppRunTexts
+}
+
 function parametersOf(args: SubcommandArguments): JsonObject {
   const value = args.parameters
   return typeof value === 'object' && !Array.isArray(value) ? value : {}
@@ -186,6 +216,56 @@ export function invokeCall(args: SubcommandArguments, sections: readonly Section
     inputs,
     timeoutMs,
     decode: callDecode(args),
+  }
+}
+
+/** The run that a call of the alias subcommand `alias` asks for
+ *  (appAliases.ts), from its checked arguments `args` and the sections of
+ *  its tab: the built-in app of the alias, with the clips of the input
+ *  parameters in their order, every other argument as a parameter of the
+ *  app, the time limit of an alias, and the decode of the manifest of the
+ *  app. Throws a `ToolError`, whose text tells the model how to fix the
+ *  call, for a word that is no id, an input parameter with no id or one
+ *  with more than one id where it takes one, an id that names no clip of
+ *  the kinds that its parameter takes, and the same clip in two input
+ *  parameters. The app itself checks its parameters. */
+export function aliasInvokeCall(alias: AppAlias, args: ToolArguments, sections: readonly Section[]): InvokeCall {
+  const call = aliasCallText(alias)
+  const notDone = aliasNotDoneText(alias)
+  const assets = conversationAssets(sections)
+  const inputs: AppInput[] = []
+  // The input parameter of each id, for a clip in two of them.
+  const parameterOf = new Map<string, string>()
+  for (const { parameter, many, kinds, what } of alias.inputs) {
+    const form = many ? `Give the ids of ${what.many}, as in "@b @d".` : `Give the id of ${what.one}, as in "@b".`
+    const ids = [...new Set(assetIdWords(args, parameter, what.one, `${form} ${notDone}`))]
+    if (ids.length === 0) throw new ToolError(`\`${parameter}\` names no clip. ${form} ${notDone}`)
+    if (!many && ids.length > 1) throw new ToolError(`\`${parameter}\` names ${ids.length} clips, and it takes one. ${form} ${notDone}`)
+    const unknown = ids.filter((id) => inputOf(id, assets) === null)
+    if (unknown.length > 0) throw new ToolError(unknownAssetsText(unknown, assets, { argument: `\`${parameter}\``, notDone }))
+    for (const id of ids) {
+      const input = inputOf(id, assets) as AppInput
+      if (input.kind === 'image' || !kinds.includes(input.kind)) {
+        const article = input.kind === 'video' ? 'a' : 'an'
+        throw new ToolError(`@${id} is ${article} ${ASSET_NAMES[input.kind]}, and \`${parameter}\` of ${call} takes only ${what.many}. ${form} ${notDone}`)
+      }
+      const other = parameterOf.get(id)
+      if (other !== undefined) throw new ToolError(`\`${other}\` and \`${parameter}\` name the same clip @${id}. Give each one a different clip. ${notDone}`)
+      parameterOf.set(id, parameter)
+      inputs.push(input)
+    }
+  }
+  const inputParameters = new Set(alias.inputs.map((input) => input.parameter))
+  const app = appNamed(alias.app)
+  return {
+    app,
+    manifest: pathIn(app, MANIFEST_FILE),
+    main: pathIn(app, SCRIPT_MAIN_FILE),
+    index: pathIn(app, UI_INDEX_FILE),
+    parameters: Object.fromEntries(Object.entries(args).filter(([name]) => !inputParameters.has(name))),
+    inputs,
+    timeoutMs: ALIAS_TIMEOUT_MS,
+    decode: null,
   }
 }
 
@@ -321,8 +401,8 @@ const NO_VALUE = 'The app ended with no error and returned no value.'
 /** The outcome of a run of an app that ended with `end` and gave the
  *  protocol line `line` (`endedRun`, jsEval.ts). `hasConsole` tells that
  *  the code wrote console output, which goes after it. A run that Dez
- *  stopped at its time limit is not here: the job has the text of its own
- *  time limit (`jobTimedOutText`). */
+ *  stopped at its time limit is not here: its caller has the text of its
+ *  own time limit (`AppRunTexts.timedOut`). */
 export function appRunOutcome(end: Exclude<ProgramEnd, { kind: 'timedOut' }>, line: JsEvalEndLine | null, hasConsole: boolean): RunOutcome {
   if (line?.type === 'result') return returnedOutcome(line.text, 'app', NO_VALUE)
   if (line?.type === 'error') {
@@ -464,9 +544,9 @@ export function appRunResult(outcome: RunOutcome, log: string, forModel: (text: 
 
 /** The error result of a run whose files Dez could not get out of the
  *  output folder: the list of the folder failed, or the write of a kept
- *  file into the Dez folder. */
-export function appOutputNotStoredText(): string {
-  return `The app ended with no error, but Dez could not get the files of its output folder into the Dez folder, so it kept none. ${tellUserConsole(APPS_TOOL.name)}`
+ *  file into the Dez folder. `toolName` is the tool of the call. */
+export function appOutputNotStoredText(toolName: string): string {
+  return `The app ended with no error, but Dez could not get the files of its output folder into the Dez folder, so it kept none. ${tellUserConsole(toolName)}`
 }
 
 /** A text of the page of a run (its value, its error, its console output)

@@ -1885,8 +1885,7 @@ describe('dez.controller/tools/run', () => {
         checkLogs = {
           'b.mp4': [
             '[Parsed_blackdetect_0 @ 0xffffa1667d90] black_start:2 black_end:3 black_duration:1',
-            '[Parsed_scdet_1 @ 0xffffa1667e50] lavfi.scd.score: 41.855, lavfi.scd.time: 2',
-            '[Parsed_scdet_1 @ 0xffffa1667e50] lavfi.scd.score: 38.512, lavfi.scd.time: 3',
+            '[Parsed_freezedetect_1 @ 0xffffa1667e50] lavfi.freezedetect.freeze_start: 4',
           ].join('\n'),
           'd.wav': '[Parsed_silencedetect_0 @ 0xffffa1668090] silence_start: 1.014813',
         }
@@ -1903,18 +1902,18 @@ describe('dez.controller/tools/run', () => {
       const runs = () => native.runs.map(({ run }) => ({ tool: run.tool, args: run.args, timeoutMs: run.timeoutMs }))
 
       it('runs the checks that fit each clip over the whole clip, after its probe, and gives their lines under its line', async () => {
-        expect(await assetInfo('@a @b @d', 'cuts, silence black')).toStrictEqual({
+        expect(await assetInfo('@a @b @d', 'frozen, silence black')).toStrictEqual({
           content: [
             CHECKED_COLUMNS,
             '@a | image | PNG | 1000x500 | 2 KB | shown | from the user',
             SCENE_LINE,
             '  black: 2 s to 3 s',
+            '  frozen: 4 s to the end',
             '  silence: none',
-            '  cuts: 2, 3 s',
             VOICE_LINE,
             '  black: no check, the clip has no picture',
+            '  frozen: no check, the clip has no picture',
             '  silence: 1.015 s to the end',
-            '  cuts: no check, the clip has no picture',
           ].join('\n'),
           isError: false,
         })
@@ -1922,7 +1921,7 @@ describe('dez.controller/tools/run', () => {
         deletedWorkFolder()
         expect(runs()).toStrictEqual([
           { tool: 'dez-ffprobe', args: assetProbeArgs('b.mp4'), timeoutMs: FFPROBE_TIMEOUT_MS },
-          { tool: 'dez-ffmpeg', args: clipChecksArgs('b.mp4', ['black', 'silence', 'cuts'], { width: 854, height: 480 }), timeoutMs: ASSET_VIEW_TIMEOUT_MS },
+          { tool: 'dez-ffmpeg', args: clipChecksArgs('b.mp4', ['black', 'frozen', 'silence'], { width: 854, height: 480 }), timeoutMs: ASSET_VIEW_TIMEOUT_MS },
           { tool: 'dez-ffprobe', args: assetProbeArgs('d.wav'), timeoutMs: FFPROBE_TIMEOUT_MS },
           { tool: 'dez-ffmpeg', args: clipChecksArgs('d.wav', ['silence'], null), timeoutMs: ASSET_VIEW_TIMEOUT_MS },
         ])
@@ -1953,7 +1952,7 @@ describe('dez.controller/tools/run', () => {
 
       it('refuses a check that Dez does not have, and reads nothing', async () => {
         expect(await assetInfo('@a @b', 'black, freeze')).toStrictEqual({
-          content: 'Unknown value "freeze" in `checks`. Use any of: black, frozen, silence, loudness_curve, cuts. Dez read no facts.',
+          content: 'Unknown value "freeze" in `checks`. Use any of: black, frozen, silence, loudness_curve. Dez read no facts.',
           isError: true,
         })
         expect(readImages).toStrictEqual([])

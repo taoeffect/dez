@@ -2,8 +2,9 @@ import sbp from '@sbp/sbp'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { Section } from '../model/chat/types'
 import { user } from '../model/streams/testing'
+import { ALIAS_TIMEOUT_MS, aliasRunTexts, AUDIO_ALIASES, VIDEO_ALIASES, type AppAlias } from '../model/tools/appAliases'
 import { APP_READ_ASSET, APP_SAVE_ASSET, APP_STOPPED_TEXT, AppCallError, notAnInputText, SaveNotStoredError, type AppFrameEnd, type AppFrameRun, type SavedAssetAnswer } from '../model/tools/appBridge'
-import { APP_PAGE_LOADS_STATE, APP_RUNS_STATE, appOutputNotStoredText, invokeCall, invokeInputsText, type CheckedInvokeCall } from '../model/tools/appInvoke'
+import { APP_PAGE_LOADS_STATE, APP_RUNS_STATE, appOutputNotStoredText, invokeCall, invokeInputsText, INVOKE_RUN_TEXTS, type CheckedInvokeCall } from '../model/tools/appInvoke'
 import { MANIFEST_MAX_BYTES } from '../model/tools/appManifest'
 import { APP_RUN_MAX_DECODED_BYTES, APP_RUN_MAX_OUTPUT_FILES, APPS_MAX_ENTRIES } from '../model/tools/appsTool'
 import { assetProbeArgs } from '../model/tools/assetFacts'
@@ -15,12 +16,13 @@ import { PROGRAM_READS_INPUTS, programNotStartedText } from '../model/tools/prog
 import { appsArgs, CONVERSATION, CONVERSATION_ID, FILM, OPUS, PNG_BYTES, probeOutput, protocolLine, RED, SKY, SONG, textBytes, VP9, WAV_BYTES } from '../model/tools/testing'
 import type { ToolRunResult } from '../model/tools/types'
 import { FFPROBE_TIMEOUT_MS } from '../model/tools/videoTool'
-import { checkedInvokeCall, runAppFrameJob, runAppJob } from './appInvoke'
+import { checkedAppRun, runAliasCall, runAppFrameJob, runAppJob } from './appInvoke'
 import { TabJobs, type MadeAsset } from './jobs'
 import type { AppFileRef, BundledToolEnd, FileTree } from './nativeTypes'
 import {
   APP_DIR,
   appFiles,
+  builtInAppFiles,
   CACHE_DIR,
   callContext,
   CONVERSATION_WORK_FOLDER,
@@ -150,7 +152,7 @@ function invoke(parameters: Record<string, unknown> = {}, sections = CONVERSATIO
 }
 
 function runJob(call = invoke(), signal: AbortSignal = running()) {
-  return runAppJob(call, CONVERSATION_ID, signal, (state) => states.push(state), (asset) => keptAssets.push(asset))
+  return runAppJob(call, { toolName: 'apps', texts: INVOKE_RUN_TEXTS }, CONVERSATION_ID, signal, (state) => states.push(state), (asset) => keptAssets.push(asset))
 }
 
 function uiCall(parameters: Record<string, unknown> = {}, sections = CONVERSATION): CheckedInvokeCall {
@@ -179,8 +181,10 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('checkedInvokeCall', () => {
-  const checked = (parameters: Record<string, unknown> = {}) => checkedInvokeCall(appsArgs('invoke', { name: 'notes', ...parameters }), CONVERSATION)
+describe('checkedAppRun', () => {
+  // An async function, so that a bad call (`invokeCall`) rejects as the
+  // `invoke` runner sees it.
+  const checked = async (parameters: Record<string, unknown> = {}) => checkedAppRun(invokeCall(appsArgs('invoke', { name: 'notes', ...parameters }), CONVERSATION))
 
   it('gives the run of a script app that has its main file', async () => {
     fakeAppFiles(appFiles('notes', { 'main.ts': MAIN }))
@@ -482,7 +486,7 @@ describe('runAppJob', () => {
 
     const refusal = await refusalOf(runJob())
 
-    expect(refusal).toBe(appOutputNotStoredText())
+    expect(refusal).toBe(appOutputNotStoredText('apps'))
     expect(deletedImages).toStrictEqual(stored().map(({ path }) => `${APP_DIR}/${path}`))
     expect(deletedImages).toHaveLength(1)
     expect(deletedClips).toStrictEqual([])
@@ -499,7 +503,7 @@ describe('runAppJob', () => {
 
     const refusal = await refusalOf(runJob())
 
-    expect(refusal).toBe(appOutputNotStoredText())
+    expect(refusal).toBe(appOutputNotStoredText('apps'))
     expect(refusal).not.toContain('/home/u')
     deletedWorkFolder()
   })
@@ -990,5 +994,120 @@ describe('apps invoke', () => {
     expect(native.runs).toStrictEqual([])
     expect(frameRuns).toStrictEqual([])
     expect(native.createdFolders).toStrictEqual([])
+  })
+})
+
+// The alias subcommand `name` of the tool `tool`.
+function aliasOf(tool: 'audio' | 'video', name: string): AppAlias {
+  const alias = [...AUDIO_ALIASES, ...VIDEO_ALIASES].find((each) => each.tool === tool && each.subcommand.name === name)
+  if (!alias) throw new Error(`There is no alias ${tool} ${name}.`)
+  return alias
+}
+
+// A call of an alias subcommand of the `audio` or the `video` tool: one run
+// of its built-in app, which the call waits for.
+describe('the alias subcommands', () => {
+  let jobs: TabJobs
+
+  function tool(name: 'audio' | 'video', command: string, parameters: Record<string, unknown>): Promise<ToolRunResult> {
+    const call = { name, arguments: { command, parameters: JSON.stringify(parameters) } }
+    return sbp('dez.controller/tools/run', call, running(), callContext({ jobs })) as Promise<ToolRunResult>
+  }
+
+  // A program that runs until the test ends it with `end`.
+  let end: (end: BundledToolEnd) => void = () => {}
+  const heldProgram = (): Promise<BundledToolEnd> => new Promise((resolve) => { end = resolve })
+
+  beforeEach(() => {
+    jobs = new TabJobs()
+    tabSections = CONVERSATION
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    jobs.stopAll()
+  })
+
+  it('runs the built-in app of the alias on the clips of the call with the other arguments as parameters, waits for it, and gives what it returned', async () => {
+    fakeAppFiles({}, builtInAppFiles('dez-sync', { 'main.ts': MAIN }))
+    native.program = returns('@c: 3 cuts, all on the beat. In /work/sync-c-to-b.json.')
+
+    const result = await tool('video', 'sync', { song: '@b', edit: '@c', offset: 0.5 })
+
+    expect(result).toStrictEqual({ content: '@c: 3 cuts, all on the beat. In /work/sync-c-to-b.json.', isError: false })
+    expect(runDescription(deletedWorkFolder())).toMatchObject({
+      main: `file://${RESOURCE_DIR}/builtin-apps/dez-sync/main.ts`,
+      parameters: { offset: 0.5 },
+      inputs: [{ id: 'c', kind: 'video' }, { id: 'b', kind: 'audio' }],
+      workFolder: `${APP_DIR}/${CONVERSATION_WORK_FOLDER}`,
+    })
+    expect(native.runs.map(({ run }) => run)).toMatchObject([{ tool: 'dez-deno', builtInApp: 'dez-sync', timeoutMs: ALIAS_TIMEOUT_MS, conversationFolder: CONVERSATION_ID }])
+    expect(jobs.list()).toStrictEqual([])
+  })
+
+  it('tells the model of the tool and the call that it made when a run cannot start or a clip cannot be decoded', async () => {
+    const manifest = JSON.stringify({ name: 'dez-onsets', description: 'Finds onsets.', kind: 'script', decode: { audio: { rate: 22050 } } })
+    fakeAppFiles({}, builtInAppFiles('dez-onsets', { 'manifest.json': manifest, 'main.ts': MAIN }))
+    native.program = async (run) => {
+      if (run.tool === 'dez-deno') throw new Error('spawn failed')
+      // ffprobe reads nothing of the clip.
+      return ENDED
+    }
+
+    const undecoded = await tool('audio', 'onsets', { clips: '@b' })
+    expect(undecoded.isError).toBe(true)
+    expect(undecoded.content).toContain(aliasRunTexts(aliasOf('audio', 'onsets')).decodeFailed({ kind: 'audio', id: 'b' }))
+    expect(native.runs.map(({ run }) => run.tool)).toStrictEqual(['dez-ffprobe'])
+    deletedWorkFolder()
+
+    fakeAppFiles({}, builtInAppFiles('dez-cuts', { 'main.ts': MAIN }))
+    expect(await tool('video', 'cuts', { clips: '@c' })).toStrictEqual({ content: programNotStartedText('deno', 'video'), isError: true })
+    deletedWorkFolder()
+  })
+
+  // A file there is a fault of Dez: no text of the reply names it.
+  it('deletes a file that the app left in its output folder, and still gives what it returned', async () => {
+    outputFolderHolds({ 'frame.png': PNG_BYTES })
+    fakeAppFiles({}, builtInAppFiles('dez-cuts', { 'main.ts': MAIN }))
+    native.program = returns('@c: no cut.')
+
+    const result = await tool('video', 'cuts', { clips: '@c' })
+
+    expect(result.isError).toBe(false)
+    expect(result.content.startsWith('@c: no cut.')).toBe(true)
+    expect(stored()).toHaveLength(1)
+    expect(deletedImages).toStrictEqual([`${APP_DIR}/${stored()[0].path}`])
+    expect(consoleError).toHaveBeenCalled()
+  })
+
+  it('stops the program at the end of the time limit of the call, and gives the text of the limit', async () => {
+    fakeAppFiles({}, builtInAppFiles('dez-beats', { 'main.ts': MAIN }))
+    native.program = heldProgram
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const beats = aliasOf('audio', 'beats')
+
+    const work = runAliasCall(beats, { clips: '@b' }, CONVERSATION, CONVERSATION_ID, running())
+    await vi.waitFor(() => expect(native.runs).toHaveLength(1))
+    vi.advanceTimersByTime(ALIAS_TIMEOUT_MS)
+
+    expect(native.cancelledRuns).toStrictEqual([native.runs[0].runId])
+    end({ kind: 'cancelled' })
+    expect(await work).toStrictEqual({ content: aliasRunTexts(beats).timedOut(ALIAS_TIMEOUT_MS, APP_RUNS_STATE), isError: true })
+    deletedWorkFolder()
+  })
+
+  it('stops the program at a stop of the reply, and rejects with the stop', async () => {
+    fakeAppFiles({}, builtInAppFiles('dez-beats', { 'main.ts': MAIN }))
+    native.program = heldProgram
+    const stop = new AbortController()
+
+    const work = failureOf(runAliasCall(aliasOf('audio', 'beats'), { clips: '@b' }, CONVERSATION, CONVERSATION_ID, stop.signal))
+    await vi.waitFor(() => expect(native.runs).toHaveLength(1))
+    stop.abort(STOP)
+
+    expect(native.cancelledRuns).toStrictEqual([native.runs[0].runId])
+    end({ kind: 'cancelled' })
+    expect(await work).toBe(STOP)
+    deletedWorkFolder()
   })
 })

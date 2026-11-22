@@ -306,8 +306,15 @@ function onOverlayClick(event: MouseEvent) {
             </p>
             <p>
               With the Dez tool <code>asset_info</code>, a model reads the facts of an asset, and who
-              made it. It can also check a whole clip for black, frozen, or silent parts, for its
-              loudness over time, and for its cuts.
+              made it. It can also check a whole clip for black, frozen, or silent parts, and for its
+              loudness over time.
+            </p>
+            <p>
+              The Dez tools <code>audio</code> and <code>video</code> measure the times of clips, as a
+              model cannot hear or see them exactly: the beats of a song, where a sound starts and
+              each of its hits, where one clip starts in another, the cuts of a video clip, and
+              whether the cuts of an edit are on the beats of its song. Each measurement is a run of
+              a built-in app of Dez.
             </p>
 
             <h3>Ids</h3>

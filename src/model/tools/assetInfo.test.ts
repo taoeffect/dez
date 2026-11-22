@@ -34,8 +34,8 @@ describe('assetInfoLine', () => {
 
 describe('assetInfoChecks', () => {
   it('reads the checks in any order, case, and separator, in the order of a result', () => {
-    expect(assetInfoChecks({ assets: '@a', checks: 'Cuts, silence  BLACK,loudness_curve frozen cuts' }))
-      .toStrictEqual(['black', 'frozen', 'silence', 'loudness_curve', 'cuts'])
+    expect(assetInfoChecks({ assets: '@a', checks: 'Frozen, silence  BLACK,loudness_curve frozen' }))
+      .toStrictEqual(['black', 'frozen', 'silence', 'loudness_curve'])
   })
 
   it('has no check for a blank or absent `checks`', () => {
@@ -45,7 +45,14 @@ describe('assetInfoChecks', () => {
 
   it('refuses a word that is no check, and names the checks', () => {
     expect(() => assetInfoChecks({ assets: '@a', checks: 'black loudness freeze loudness' })).toThrow(new ToolError(
-      'Unknown values "loudness", "freeze" in `checks`. Use any of: black, frozen, silence, loudness_curve, cuts. Dez read no facts.',
+      'Unknown values "loudness", "freeze" in `checks`. Use any of: black, frozen, silence, loudness_curve. Dez read no facts.',
+    ))
+  })
+
+  // A model can read the old check in an earlier result of the conversation.
+  it('refuses the old check of the cuts, and points to video cuts', () => {
+    expect(() => assetInfoChecks({ assets: '@a', checks: 'black Cuts' })).toThrow(new ToolError(
+      'Unknown value "cuts" in `checks`. Use any of: black, frozen, silence, loudness_curve. For the cuts of a video clip, call video cuts. Dez read no facts.',
     ))
   })
 })
@@ -58,16 +65,13 @@ describe('checkLines', () => {
       '[Parsed_blackdetect_0 @ 0x1] black_start:2 black_end:3 black_duration:1',
       '[Parsed_blackdetect_0 @ 0x1] black_start:8 black_end:8.0833333 black_duration:0.0833333',
       '[Parsed_freezedetect_1 @ 0x2] lavfi.freezedetect.freeze_start: 9',
-      '[Parsed_scdet_2 @ 0x3] lavfi.scd.score: 41.855, lavfi.scd.time: 2',
-      '[Parsed_scdet_2 @ 0x3] lavfi.scd.score: 38.1, lavfi.scd.time: 3',
       ...[0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8].map((t) => `[Parsed_ebur128_4 @ 0x4] t: ${t}   TARGET:-23 LUFS    M:${t < 0.9 ? ' -21.8' : '   nan'} S:-120.7`),
     ].join('\n')
-    expect(checkLines(['black', 'frozen', 'silence', 'loudness_curve', 'cuts'], both, log)).toStrictEqual([
+    expect(checkLines(['black', 'frozen', 'silence', 'loudness_curve'], both, log)).toStrictEqual([
       '  black: 2 s to 3 s, 8 s to 8.083 s',
       '  frozen: 9 s to the end',
       '  silence: none',
       '  loudness_curve: -21.8, -inf LUFS, one value for each second from 0 s (-inf: no sound at all)',
-      '  cuts: 2, 3 s',
     ])
   })
 
@@ -78,17 +82,17 @@ describe('checkLines', () => {
   })
 
   it(`shows at most ${MAX_CHECK_ITEMS} items of a check, and counts the others`, () => {
-    const log = Array.from({ length: MAX_CHECK_ITEMS + 2 }, (_, index) => `[Parsed_scdet_0 @ 0x3] lavfi.scd.score: 20, lavfi.scd.time: ${index + 1}`).join('\n')
-    expect(checkLines(['cuts'], both, log)[0]).toMatch(/^ {2}cuts: 1, 2, .*, 49, 50 s, and 2 more$/)
+    const log = Array.from({ length: MAX_CHECK_ITEMS + 2 }, (_, index) => `[Parsed_blackdetect_0 @ 0x1] black_start:${index + 1} black_end:${index + 1.5} black_duration:0.5`).join('\n')
+    expect(checkLines(['black'], both, log)[0]).toMatch(/^ {2}black: 1 s to 1.5 s, 2 s to 2.5 s, .*, 50 s to 50.5 s, and 2 more$/)
   })
 
   it('tells which stream a clip lacks for the checks that do not fit it', () => {
     const streams = { picture: false, sound: true }
-    expect(fittingChecks(['black', 'silence', 'cuts'], streams)).toStrictEqual(['silence'])
-    expect(checkLines(['black', 'silence', 'cuts'], streams, '')).toStrictEqual([
+    expect(fittingChecks(['black', 'silence', 'frozen'], streams)).toStrictEqual(['silence'])
+    expect(checkLines(['black', 'silence', 'frozen'], streams, '')).toStrictEqual([
       '  black: no check, the clip has no picture',
       '  silence: none',
-      '  cuts: no check, the clip has no picture',
+      '  frozen: no check, the clip has no picture',
     ])
     expect(checkLines(['silence'], { picture: true, sound: false }, '')).toStrictEqual(['  silence: no check, the clip has no sound'])
   })

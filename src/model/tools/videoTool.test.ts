@@ -48,12 +48,14 @@ function subcommand(name: string) {
 }
 
 describe('the video tool', () => {
-  it('is one tool with the subcommands join_clips, ffmpeg, and ffprobe', () => {
+  it('is one tool with the subcommands join_clips, ffmpeg, ffprobe, and the aliases cuts and sync', () => {
     expect(VIDEO_TOOL_DEFINITION.name).toBe('video')
     expect(VIDEO_TOOL.subcommands.map(({ name, parameters }) => [name, parameters.map((parameter) => parameter.name)])).toStrictEqual([
       ['join_clips', ['clips', 'is_intermediate', 'timeout_seconds']],
       ['ffmpeg', ['arguments', 'fonts', 'text_files', 'is_intermediate', 'timeout_seconds']],
       ['ffprobe', ['arguments']],
+      ['cuts', ['clips', 'threshold', 'save_to']],
+      ['sync', ['edit', 'song', 'offset', 'max_lag', 'threshold', 'tolerance', 'save_to']],
     ])
   })
 
