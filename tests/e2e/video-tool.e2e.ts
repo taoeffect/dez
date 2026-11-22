@@ -5,7 +5,7 @@ import { MAX_REQUEST_IMAGE_BYTES } from '../../src/model/streams/pictureBudget'
 import { ASSET_INFO_COLUMNS } from '../../src/model/tools/assetInfo'
 import { pictureBudgetLeftText, PICTURES_SHOWN_NOTE } from '../../src/model/tools/assetView'
 import { jobStartedText, jobsWaitResults, startedJobId } from '../../src/model/tools/jobs'
-import { REFUSED_DEVICES, REFUSED_PROTOCOLS } from '../../src/model/tools/videoTool'
+import { REFUSED_DEVICES, REFUSED_PROTOCOLS, workInputNotFileText, workPathUnreadableText } from '../../src/model/tools/videoTool'
 import { byteSizeText } from '../../src/utils/byteSize'
 import { sentImageUrls } from './harness/chatBody'
 import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
@@ -41,6 +41,10 @@ import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolC
 //   is hidden under the chip of its call;
 // - `ffprobe` gives its output as the result of its call, with the neutral
 //   names of the copies;
+// - `ffmpeg` with `save_to` moves the frames of a clip into a folder of
+//   `/work`, with no asset; later `ffmpeg` and `ffprobe` calls read those
+//   files of `/work` as copies; a path of `/work` that is no file is
+//   refused with no run, and so is a link there, which Dez does not follow;
 // - a call whose arguments name a file of the computer (a font too), the
 //   network, a device, or a commands file of a filter is refused at once:
 //   no job, and no work folder;
@@ -1049,6 +1053,61 @@ describe('video tool', () => {
     await expectCleanEnd(files)
   })
 
+  it('saves the frames of a clip into a folder of /work with save_to, and gives the files of /work to later ffmpeg and ffprobe calls as copies', async () => {
+    const files = await openShots('work-files')
+    const imagesBefore = await filesIn(imagesDir)
+    await submit(browser, 'Put two frames of my clip side by side.')
+    const workFolder = appFilePath(setup.app.home, 'work', await activeConversationId(browser))
+    const frames = await runJob(await chatRequest(), 'call_frames', 'ffmpeg', { arguments: '-i @a -vf fps=1 -frames:v 2 f%02d.png', save_to: '/work/frames' })
+    expect(frames.started).toBe(`${jobStartedText(frames.jobId, 1)}\nThe inputs of the run: the video clip @a as a.webm. Dez moves the new files of the run into /work/frames.`)
+    expect(frames.result.status).toBe('finished')
+    expect(frames.result.text).toMatch(/^ffmpeg ended with no error, and Dez saved its 2 new files into \/work\/frames: \/work\/frames\/f01\.png, \/work\/frames\/f02\.png\. They are not in your reply\. [^\n]+\nThe end of the log of ffmpeg:\n/)
+    expect(frames.result.text).not.toContain('Made the')
+    expect(await filesIn(path.join(workFolder, 'frames'))).toStrictEqual(['f01.png', 'f02.png'])
+    expect(mediaFacts(setup.app, path.join(workFolder, 'frames', 'f01.png'))).toStrictEqual({ streams: ['video png 48x36'], seconds: null })
+    // A link in the work folder to a file out of it: Dez follows no link
+    // there, so it cannot read what is at its path, and it logs why.
+    const outside = path.join(linkedDir, 'work-files-outside.png')
+    await writeTestFile(outside, PICTURE_PNG)
+    await fs.promises.symlink(outside, path.join(workFolder, 'link.png'))
+
+    const pair = await runJob(frames.next, 'call_pair', 'ffmpeg', { arguments: '-i /work/frames/f01.png -i /work/frames/f02.png -filter_complex hstack -update 1 pair.png' })
+    expect(pair.started).toBe(`${jobStartedText(pair.jobId, 2)}\nThe inputs of the run: /work/frames/f01.png as work/frames/f01.png, /work/frames/f02.png as work/frames/f02.png.`)
+    expect(pair.result.status).toBe('finished')
+    expect(pair.result.text).toMatch(/^ffmpeg ended with no error and made 1 file that Dez keeps: pair\.png \(image\)\. [\s\S]+\nMade the image @f\.$/)
+
+    const missing = { virtual: '/work/frames/f03.png', name: 'work/frames/f03.png', file: '' }
+    sendToolCalls(pair.next.reply, [
+      videoCall('call_probe', 'ffprobe', { arguments: '-v error -show_entries stream=codec_name,width,height -of csv=p=0 /work/frames/f02.png' }),
+      videoCall('call_missing', 'ffprobe', { arguments: '-v error -show_entries stream=codec_name -of csv=p=0 /work/frames/f03.png' }),
+      videoCall('call_link', 'ffprobe', { arguments: '-v error -show_entries stream=codec_name -of csv=p=0 /work/link.png' }),
+      // A path of /work in the arguments is an input, also after -frames:v.
+      videoCall('call_output', 'ffmpeg', { arguments: '-i @a -frames:v 1 /work/still.png' }),
+    ])
+    const probed = await chatRequest()
+    expect(toolResult(probed, 'call_probe')).toBe('png,48,36')
+    expect(toolResult(probed, 'call_missing')).toBe(workInputNotFileText(missing, 'missing', 'ffprobe'))
+    expect(toolResult(probed, 'call_link')).toBe(workPathUnreadableText('/work/link.png', 'ffprobe'))
+    // Each refused call logs its error too.
+    expect(await consoleErrors(browser)).toContainEqual(expect.stringContaining('goes through a link'))
+    await resetConsoleErrors(browser)
+    expect(toolResult(probed, 'call_output')).toBe(workInputNotFileText({ virtual: '/work/still.png', name: 'work/still.png', file: '' }, 'missing', 'ffmpeg'))
+    expect(startedJobId(toolResult(probed, 'call_output'))).toBeNull()
+    expect(probed.body).not.toContain(linkedDir)
+    await sendChatReply(probed.reply, CALLER.modelName)
+
+    // The reply holds the one image of the pair: the saved frames are no
+    // assets.
+    const reply = await endedReply(browser, CLIPS_REPLY_INDEX)
+    const imagePath = path.join(imagesDir, await newFileIn(browser, imagesDir, imagesBefore))
+    expect(reply.match(/!\[id=/g)).toHaveLength(1)
+    expect(reply).toContain(`![id=f|tool=video|made-by=${pair.jobId}](${imagePath})`)
+    expect(mediaFacts(setup.app, imagePath)).toStrictEqual({ streams: ['video png 96x36'], seconds: null })
+    expect(await filesIn(workFolder)).toStrictEqual(['frames', 'link.png'])
+    expect((await fs.promises.readFile(outside)).equals(PICTURE_PNG)).toBe(true)
+    await expectCleanEnd(files, shotSources)
+  })
+
   it('refuses arguments that name a file of the computer, the network, a device, or a commands file at once, with no job and no work folder', async () => {
     await submit(browser, 'Read my files.')
     const first = await chatRequest()
@@ -1064,7 +1123,7 @@ describe('video tool', () => {
     ])
 
     const second = await chatRequest()
-    const runFolderOnly = 'The program works only in its own run folder: name an input as @id, and an output as a new file name with no folder.'
+    const runFolderOnly = 'The program works only in its own run folder: name an input as @id or as a path of /work/, and an output as a new file name with no folder.'
     const absolutePath = (word: string) => `Dez refuses ${JSON.stringify(word)} in \`arguments\`: it holds an absolute path. ${runFolderOnly} `
       + 'For a run with no output file, end the arguments with -f null - (not with a path of the system). '
       + 'In an expression, write a division with no space before the "/", as in iw/2. Dez started no job.'

@@ -44,7 +44,7 @@ import { audioClipSeconds, cutAudioClip } from './audioTool'
 import { discardMadeAssets, writeJobAssets, type JobOptions, type JobWork, type ToolJobs } from './jobs'
 import { runJsEval } from './jsEval'
 import { invokeModel } from './modelInvoke'
-import { runFfmpegJob, runFfprobe, runJoinJob } from './videoTool'
+import { checkWorkPaths, runFfmpegJob, runFfprobe, runJoinJob } from './videoTool'
 
 /** A call that Dez runs: a Dez tool and the arguments that its definition
  *  accepted (`checkToolCalls`). */
@@ -495,25 +495,28 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   },
   // The `video` tool (model/tools/videoTool.ts): ffmpeg and ffprobe, the
   // programs that Dez ships, on the clips and the images of the
-  // conversation (videoTool.ts runs them). The checks of a call that need
-  // no file run first (`joinClipsCall`, `ffmpegCall`, `ffprobeCall`): a
-  // call that Dez refuses starts no job and no program. `join_clips` and
-  // `ffmpeg` run as jobs of the reply, and their results tell the inputs
-  // that go, as for `model_invoke`. `ffprobe` is short, so its call waits
-  // for it. `cuts`, `sync`, and `title` are aliases (appAliases.ts): each
-  // runs a built-in app, and the call waits for it. `cuts` and `sync`
-  // measure clips; `title` makes a clip, which goes into the reply.
+  // conversation and the files of its `/work` folder (videoTool.ts runs
+  // them). The checks of a call that need no file run first
+  // (`joinClipsCall`, `ffmpegCall`, `ffprobeCall`), then the check of its
+  // paths of `/work` (`checkWorkPaths`): a call that Dez refuses starts no
+  // job and no program. `join_clips` and `ffmpeg` run as jobs of the
+  // reply, and their results tell the inputs that go, as for
+  // `model_invoke`. `ffprobe` is short, so its call waits for it. `cuts`,
+  // `sync`, and `title` are aliases (appAliases.ts): each runs a built-in
+  // app, and the call waits for it. `cuts` and `sync` measure clips;
+  // `title` makes a clip, which goes into the reply.
   video: subcommandRunner(VIDEO_TOOL, {
     async join_clips (args, callSignal, context) {
       const call = joinClipsCall(args, context.sections())
-      return startJob(context, callSignal, VIDEO_TOOL.name, (signal, report) => runJoinJob(call, signal, report), { timeoutMs: call.timeoutMs, hidesAssets: isIntermediate(args), label: videoCallLabel('join_clips', args) }, videoInputsText(call.inputs))
+      return startJob(context, callSignal, VIDEO_TOOL.name, (signal, report) => runJoinJob(call, signal, report), { timeoutMs: call.timeoutMs, hidesAssets: isIntermediate(args), label: videoCallLabel('join_clips', args) }, videoInputsText(call))
     },
     async ffmpeg (args, callSignal, context) {
-      const call = ffmpegCall(args, context.sections())
-      return startJob(context, callSignal, VIDEO_TOOL.name, (signal, report) => runFfmpegJob(call, signal, report), { timeoutMs: call.timeoutMs, hidesAssets: isIntermediate(args), label: videoCallLabel('ffmpeg', args) }, videoInputsText(call.inputs, call.fonts, call.textFiles))
+      const call = ffmpegCall(args, { sections: context.sections(), conversationId: context.conversationId })
+      await checkWorkPaths(call, 'ffmpeg')
+      return startJob(context, callSignal, VIDEO_TOOL.name, (signal, report) => runFfmpegJob(call, signal, report), { timeoutMs: call.timeoutMs, hidesAssets: isIntermediate(args), label: videoCallLabel('ffmpeg', args) }, videoInputsText(call))
     },
     async ffprobe (args, signal, context) {
-      return runFfprobe(ffprobeCall(args, context.sections()), signal)
+      return runFfprobe(ffprobeCall(args, { sections: context.sections(), conversationId: context.conversationId }), signal)
     },
     ...aliasRunners(VIDEO_ALIASES),
   }),

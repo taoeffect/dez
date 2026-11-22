@@ -73,9 +73,9 @@ export type BundledTool = 'dez-ffmpeg' | 'dez-ffprobe' | 'dez-deno'
 
 // A file that a run gets in its work folder before the program starts: a
 // copy of the file at the absolute path `source`, with the name `name`: a
-// file name, or one subfolder and a file name (`fonts/a.ttf`), where the
-// subfolder is made private as the work folder. A program can write to the
-// copy; the file at `source` stays as it is.
+// file name, or folder names and a file name (`fonts/a.ttf`,
+// `work/clips/a.mp4`), whose folders are made private as the work folder.
+// A program can write to the copy; the file at `source` stays as it is.
 export interface BundledToolInput {
   name: string
   source: string

@@ -52,7 +52,7 @@ use tokio::process::ChildStdin;
 use tokio::sync::{Notify, mpsc, watch};
 
 use crate::confinement::{Confinement, confined_command};
-use crate::persistence::{APPS_FOLDER, CONVERSATION_WORK_FOLDERS, FileRoot, has_link_below, is_app_file_segment, make_private_folder, root_dir};
+use crate::persistence::{APPS_FOLDER, CONVERSATION_WORK_FOLDERS, FileRoot, has_link_below, is_app_file_segment, make_private_folder, program_owned_folders, root_dir};
 
 // The programs that a run can name (`const BUNDLED_TOOLS: &[&str]`): the
 // `bundle.externalBin` programs of tauri.conf.json, under the names that
@@ -178,8 +178,8 @@ pub struct ToolRun {
 // A file that the work folder gets before the program starts.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ToolInput {
-    // The name of the copy in the work folder: a file name, or one subfolder
-    // and a file name (`fonts/a.ttf`).
+    // The path of the copy in the work folder: a file name, or folder names
+    // and a file name (`fonts/a.ttf`, `work/clips/a.mp4`).
     pub name: String,
     // The absolute path of the file to copy.
     pub source: String,
@@ -357,10 +357,11 @@ pub(crate) struct ProgramRun {
     env: Vec<(String, OsString)>,
     // Whether the input of the program stays open (`ToolRun::stdin`).
     takes_input: bool,
-    // The folder below which Dez follows no link when it makes the work
-    // folder and copies the inputs (`has_link_below`): the cache root,
-    // where ffmpeg can change every file.
-    link_root: PathBuf,
+    // The folders below which Dez follows no link when it makes the work
+    // folder and copies the inputs (`has_link_below`): the cache root, where
+    // ffmpeg can change every file, and the folders of the app root that
+    // programs own, where a Deno run can change every file.
+    link_roots: Vec<PathBuf>,
     // What the OS lets the program do. Its folder holds `folder`, or is
     // `folder`.
     confinement: Confinement,
@@ -661,22 +662,32 @@ fn resolved_run(run: ToolRun, roots: &Roots) -> Result<ProgramRun, String> {
         max_output_bytes: run.max_output_bytes,
         env,
         takes_input: run.stdin,
-        link_root: roots.cache.clone(),
+        link_roots: link_roots(&roots.cache, &roots.app),
         confinement,
     })
+}
+
+// The folders below which Dez follows no link for a run (`ProgramRun::link_roots`).
+fn link_roots(cache: &Path, app: &Path) -> Vec<PathBuf> {
+    std::iter::once(cache.to_path_buf()).chain(program_owned_folders(app)).collect()
 }
 
 // Makes the work folder and puts the input files into it. The folder can be
 // there already: a caller runs more than one program in one folder (a probe
 // of the inputs, then the work), and a download can write into it first. A
-// folder that goes through a link below `link_root` is refused before the
-// chmod: the link can name a folder of the user.
-fn prepare_work_folder(folder: &Path, inputs: &[ToolInput], link_root: &Path) -> Result<(), String> {
-    if has_link_below(link_root, folder) {
+// folder that goes through a link below one of `link_roots` is refused
+// before the chmod: the link can name a folder of the user.
+fn prepare_work_folder<P: AsRef<Path>>(folder: &Path, inputs: &[ToolInput], link_roots: &[P]) -> Result<(), String> {
+    if through_link(link_roots, folder) {
         return Err("The work folder goes through a link".to_string());
     }
     make_private_folder(folder).map_err(|error| format!("Failed to make the work folder: {}", error))?;
-    inputs.iter().try_for_each(|input| copy_input(folder, input, link_root))
+    inputs.iter().try_for_each(|input| copy_input(folder, input, link_roots))
+}
+
+// Whether `path` goes through a link below one of `link_roots`.
+fn through_link<P: AsRef<Path>>(link_roots: &[P], path: &Path) -> bool {
+    link_roots.iter().any(|root| has_link_below(root.as_ref(), path))
 }
 
 // Puts one input file into the work folder, as a copy. Never a symlink or a
@@ -686,29 +697,30 @@ fn prepare_work_folder(folder: &Path, inputs: &[ToolInput], link_root: &Path) ->
 // clones the file where the file system can (APFS, Linux file systems with
 // reflinks), so the copy is cheap there.
 //
-// The name is one path segment of the app-file rule, or two: a subfolder,
-// which is made private as the work folder, and a file name. So the copy
-// cannot leave the folder. A subfolder keeps files apart from the others
-// for a program that reads every file of a folder (the fonts of libass). A
-// name that the folder already has is refused: the copy would replace a
+// The name is a path of app-file segments: a file name, or folders and a
+// file name. Each folder is made private as the work folder, so the copy
+// cannot leave the folder. A folder keeps files apart from the others for a
+// program that reads every file of a folder (the fonts of libass), and the
+// files of a folder of the app root keep their own paths (`work/a/b.mp4`).
+// A name that the folder already has is refused: the copy would replace a
 // file of an earlier run, or write through a link that a program left
 // there. The error texts name the copy, never the source path.
-fn copy_input(folder: &Path, input: &ToolInput, link_root: &Path) -> Result<(), String> {
+fn copy_input<P: AsRef<Path>>(folder: &Path, input: &ToolInput, link_roots: &[P]) -> Result<(), String> {
     let name = &input.name;
-    let subfolder = match name.split_once('/') {
-        None if is_app_file_segment(name) => None,
-        Some((subfolder, file)) if is_app_file_segment(subfolder) && is_app_file_segment(file) => Some(folder.join(subfolder)),
-        _ => return Err(format!("Invalid input file name: {}", name)),
-    };
+    let segments: Vec<&str> = name.split('/').collect();
+    if !segments.iter().all(|segment| is_app_file_segment(segment)) {
+        return Err(format!("Invalid input file name: {}", name));
+    }
     let source = Path::new(&input.source);
     if !source.is_absolute() {
         return Err(format!("The source of the input file {} is not an absolute path", name));
     }
-    // A link below `link_root` (a temp clip) can be the work of a program
-    // and name any file, the API keys too. A link outside it is the user's
-    // (a linked file), and `metadata` follows it: it is an input like a file.
-    if has_link_below(link_root, source) {
-        return Err(format!("The source of the input file {} goes through a link in the folder of the program", name));
+    // A link below a link root (a temp clip, a file of a conversation's work
+    // folder) can be the work of a program and name any file, the API keys
+    // too. A link outside them is the user's (a linked file), and
+    // `metadata` follows it: it is an input like a file.
+    if through_link(link_roots, source) {
+        return Err(format!("The source of the input file {} goes through a link in the folder of a program", name));
     }
     let is_file = std::fs::metadata(source)
         .map(|metadata| metadata.is_file())
@@ -716,10 +728,12 @@ fn copy_input(folder: &Path, input: &ToolInput, link_root: &Path) -> Result<(), 
     if !is_file {
         return Err(format!("The source of the input file {} is not a file", name));
     }
-    if let Some(subfolder) = subfolder {
+    let mut subfolder = folder.to_path_buf();
+    for segment in &segments[..segments.len() - 1] {
+        subfolder.push(segment);
         // Before the chmod, as for the work folder: a link can name a
         // folder of the user.
-        if has_link_below(link_root, &subfolder) {
+        if through_link(link_roots, &subfolder) || has_link_below(folder, &subfolder) {
             return Err(format!("The folder of the input file {} goes through a link", name));
         }
         make_private_folder(&subfolder).map_err(|error| format!("Failed to make the folder of the input file {}: {}", name, error))?;
@@ -1108,8 +1122,8 @@ impl ToolRuns {
     ) -> Result<(), String> {
         let (_active, mut stopped, texts) = self.register(run_id, run.takes_input)?;
         // File copies block, so they run off the async threads.
-        let (folder, inputs, link_root) = (run.folder.clone(), std::mem::take(&mut run.inputs), run.link_root.clone());
-        tokio::task::spawn_blocking(move || prepare_work_folder(&folder, &inputs, &link_root))
+        let (folder, inputs, link_roots) = (run.folder.clone(), std::mem::take(&mut run.inputs), run.link_roots.clone());
+        tokio::task::spawn_blocking(move || prepare_work_folder(&folder, &inputs, &link_roots))
             .await
             .map_err(|error| format!("Failed to prepare the work folder: {}", error))??;
         // A copy cannot stop in its middle, so a cancel that came before the
@@ -1679,7 +1693,7 @@ mod tests {
                 max_output_bytes: 1024 * 1024,
                 env: Vec::new(),
                 takes_input: false,
-                link_root: folder.to_path_buf(),
+                link_roots: vec![folder.to_path_buf()],
                 confinement: Confinement {
                     folder: folder.to_path_buf(),
                     also_startable: ["/usr", "/bin", "/lib", "/lib64", "/etc"].into_iter().map(PathBuf::from).filter(|path| path.exists()).collect(),
@@ -1696,7 +1710,7 @@ mod tests {
         // which holds its work folder, and where Dez follows no link.
         fn in_cache(mut run: ProgramRun, cache: &Path) -> ProgramRun {
             run.confinement.folder = cache.to_path_buf();
-            run.link_root = cache.to_path_buf();
+            run.link_roots = vec![cache.to_path_buf()];
             run
         }
 
@@ -1774,12 +1788,12 @@ mod tests {
             let new = dir.0.join("work").join("new");
             let old = dir.0.join("work").join("old");
 
-            prepare_work_folder(&new, &[], &new).expect("prepare");
+            prepare_work_folder(&new, &[], &[&new]).expect("prepare");
             assert_eq!(mode_of(&new), 0o700);
 
             std::fs::create_dir(&old).expect("create folder");
             std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-            prepare_work_folder(&old, &[], &old).expect("prepare again");
+            prepare_work_folder(&old, &[], &[&old]).expect("prepare again");
             assert_eq!(mode_of(&old), 0o700);
         }
 
@@ -1795,7 +1809,7 @@ mod tests {
             std::fs::write(&source, b"the clip of the user").expect("write");
             symlink(&source, &link).expect("link");
 
-            prepare_work_folder(&folder, &[input("in.mp4", &source), input("linked.mp4", &link)], &folder).expect("prepare");
+            prepare_work_folder(&folder, &[input("in.mp4", &source), input("linked.mp4", &link)], &[&folder]).expect("prepare");
 
             for name in ["in.mp4", "linked.mp4"] {
                 let copy = folder.join(name);
@@ -1816,34 +1830,35 @@ mod tests {
             let folder = dir.0.join("work");
             std::fs::write(&source, b"clip").expect("write");
 
-            for name in ["", ".", "..", "../out.mp4", "./out.mp4", "a/b/c.mp4", "a//b.mp4", "a/", "a/..", "/tmp/dez-test-out.mp4", "a b.mp4", "a/b c.mp4"] {
-                assert!(prepare_work_folder(&folder, &[input(name, &source)], &folder).is_err(), "the name {name:?}");
+            for name in ["", ".", "..", "../out.mp4", "./out.mp4", "a/../b.mp4", "a//b.mp4", "a/", "a/..", "/tmp/dez-test-out.mp4", "a b.mp4", "a/b c.mp4"] {
+                assert!(prepare_work_folder(&folder, &[input(name, &source)], &[&folder]).is_err(), "the name {name:?}");
             }
             let relative = ToolInput { name: "in.mp4".to_string(), source: "clip.mp4".to_string() };
-            assert!(prepare_work_folder(&folder, &[relative], &folder).is_err(), "a relative source");
-            assert!(prepare_work_folder(&folder, &[input("in.mp4", &dir.0.join("gone.mp4"))], &folder).is_err(), "a missing source");
-            assert!(prepare_work_folder(&folder, &[input("in.mp4", &dir.0)], &folder).is_err(), "a folder as the source");
-            assert!(prepare_work_folder(&folder, &[input("sub/in.mp4", &dir.0.join("gone.mp4"))], &folder).is_err(), "a missing source in a subfolder");
+            assert!(prepare_work_folder(&folder, &[relative], &[&folder]).is_err(), "a relative source");
+            assert!(prepare_work_folder(&folder, &[input("in.mp4", &dir.0.join("gone.mp4"))], &[&folder]).is_err(), "a missing source");
+            assert!(prepare_work_folder(&folder, &[input("in.mp4", &dir.0)], &[&folder]).is_err(), "a folder as the source");
+            assert!(prepare_work_folder(&folder, &[input("sub/in.mp4", &dir.0.join("gone.mp4"))], &[&folder]).is_err(), "a missing source in a subfolder");
             assert_eq!(std::fs::read_dir(&folder).expect("list").count(), 0);
             assert_eq!(dir.file_names().len(), 2, "a file left the work folder");
 
             // A name that the folder has: its file stays as it was.
             std::fs::write(folder.join("in.mp4"), b"of an earlier run").expect("write");
-            assert!(prepare_work_folder(&folder, &[input("in.mp4", &source)], &folder).is_err(), "a name of the folder");
+            assert!(prepare_work_folder(&folder, &[input("in.mp4", &source)], &[&folder]).is_err(), "a name of the folder");
             assert_eq!(std::fs::read(folder.join("in.mp4")).expect("read"), b"of an earlier run");
             // Also a link that names no file: a copy would write through it.
             symlink(dir.0.join("outside.mp4"), folder.join("link.mp4")).expect("link");
-            assert!(prepare_work_folder(&folder, &[input("link.mp4", &source)], &folder).is_err(), "a link of the folder");
+            assert!(prepare_work_folder(&folder, &[input("link.mp4", &source)], &[&folder]).is_err(), "a link of the folder");
             assert!(!dir.0.join("outside.mp4").exists());
             // And a name that the same call gave before.
             let twice = [input("twice.mp4", &source), input("twice.mp4", &source)];
-            assert!(prepare_work_folder(&folder, &twice, &folder).is_err(), "a name twice");
+            assert!(prepare_work_folder(&folder, &twice, &[&folder]).is_err(), "a name twice");
         }
 
         // A subfolder keeps files apart from the other copies, for a
-        // program that reads every file of a folder (libass, the fonts).
+        // program that reads every file of a folder (libass, the fonts),
+        // and a file of a folder of the app root keeps its own path.
         #[test]
-        fn an_input_can_go_into_one_private_subfolder_that_is_no_link() {
+        fn an_input_can_go_into_private_subfolders_that_are_no_links() {
             let dir = TempDir::new("tools-input-subfolder");
             let (source, outside) = (dir.0.join("font.ttf"), dir.0.join("outside"));
             let folder = dir.0.join("work");
@@ -1851,15 +1866,57 @@ mod tests {
             std::fs::create_dir(&outside).expect("create");
             std::fs::set_permissions(&outside, std::fs::Permissions::from_mode(0o755)).expect("chmod");
 
-            prepare_work_folder(&folder, &[input("fonts/a.ttf", &source), input("fonts/b.ttf", &source)], &folder).expect("prepare");
+            let inputs = [input("fonts/a.ttf", &source), input("fonts/b.ttf", &source), input("work/clips/a.ttf", &source)];
+            prepare_work_folder(&folder, &inputs, &[&folder]).expect("prepare");
             assert_eq!(std::fs::read(folder.join("fonts").join("b.ttf")).expect("read"), b"font");
-            assert_eq!(mode_of(&folder.join("fonts")), 0o700);
+            assert_eq!(std::fs::read(folder.join("work").join("clips").join("a.ttf")).expect("read"), b"font");
+            for subfolder in ["fonts", "work", "work/clips"] {
+                assert_eq!(mode_of(&folder.join(subfolder)), 0o700, "{subfolder}");
+            }
 
-            // A link that a program left in place of the subfolder.
+            // A link that a program left in place of a subfolder, at the top
+            // or deeper.
             symlink(&outside, folder.join("linked")).expect("link");
-            assert!(prepare_work_folder(&folder, &[input("linked/a.ttf", &source)], &folder).is_err(), "a linked subfolder");
+            symlink(&outside, folder.join("work").join("linked")).expect("link");
+            for name in ["linked/a.ttf", "work/linked/a.ttf", "work/linked/more/a.ttf"] {
+                assert!(prepare_work_folder(&folder, &[input(name, &source)], &[&folder]).is_err(), "{name}");
+            }
             assert_eq!(mode_of(&outside), 0o755);
             assert_eq!(std::fs::read_dir(&outside).expect("list").count(), 0);
+        }
+
+        // A Deno run can change every file of the work folder of its
+        // conversation and of its app. A link there, in place of an input
+        // that a model names (`/work/clip.mp4`), must not take a copy of Dez
+        // to a file of the user. The rest of the app root is the user's.
+        #[test]
+        fn a_link_in_a_folder_of_the_app_root_that_programs_own_is_no_input() {
+            let dir = TempDir::new("tools-input-owned-link");
+            let (cache, app, home) = (dir.0.join("cache"), dir.0.join("app"), dir.0.join("home"));
+            let conversation = app.join(CONVERSATION_WORK_FOLDERS).join("c1");
+            let keys = home.join("provider_keys.json");
+            for folder in [&cache, &conversation, &app.join(APPS_FOLDER).join("an-app"), &app.join("assets"), &home] {
+                std::fs::create_dir_all(folder).expect("create");
+            }
+            std::fs::write(&keys, b"keys").expect("write");
+            std::fs::write(conversation.join("clip.mp4"), b"clip").expect("write");
+            symlink(&keys, conversation.join("keys.mp4")).expect("link");
+            symlink(&home, conversation.join("home")).expect("link");
+            symlink(&keys, app.join(APPS_FOLDER).join("an-app").join("keys.mp4")).expect("link");
+            symlink(&keys, app.join("assets").join("linked.mp4")).expect("link");
+            let roots = link_roots(&cache, &app);
+            let folder = cache.join("work").join("a");
+
+            for source in [conversation.join("keys.mp4"), conversation.join("home").join("provider_keys.json"), app.join(APPS_FOLDER).join("an-app").join("keys.mp4")] {
+                let error = prepare_work_folder(&folder, &[input("work/in.mp4", &source)], &roots).expect_err("a link of a program");
+                assert!(!error.contains("provider_keys"), "{error}");
+            }
+            assert_eq!(std::fs::read_dir(&folder).expect("list").count(), 0);
+
+            let inputs = [input("work/clip.mp4", &conversation.join("clip.mp4")), input("linked.mp4", &app.join("assets").join("linked.mp4"))];
+            prepare_work_folder(&folder, &inputs, &roots).expect("a file of the conversation, and a link of the user");
+            assert_eq!(std::fs::read(folder.join("work").join("clip.mp4")).expect("read"), b"clip");
+            assert_eq!(std::fs::read(folder.join("linked.mp4")).expect("read"), b"keys");
         }
 
         // The page can pass the error on to a model, which must learn no
@@ -1870,7 +1927,7 @@ mod tests {
             let missing = dir.0.join("private-folder").join("gone.mp4");
 
             let folder = dir.0.join("work");
-            let error = prepare_work_folder(&folder, &[input("in.mp4", &missing)], &folder).expect_err("refused");
+            let error = prepare_work_folder(&folder, &[input("in.mp4", &missing)], &[&folder]).expect_err("refused");
 
             assert!(error.contains("in.mp4"), "{error}");
             assert!(!error.contains("private-folder") && !error.contains("gone.mp4"), "{error}");
@@ -1896,18 +1953,18 @@ mod tests {
             symlink(&home, cache.join("linked-media")).expect("link");
             let folder = cache.join("work").join("a");
 
-            let error = prepare_work_folder(&folder, &[input("in.mp4", &clip)], &cache).expect_err("a temp clip that is a link");
+            let error = prepare_work_folder(&folder, &[input("in.mp4", &clip)], &[&cache]).expect_err("a temp clip that is a link");
             assert!(error.contains("in.mp4") && !error.contains("provider_keys"), "{error}");
             let through = cache.join("linked-media").join("provider_keys.json");
-            assert!(prepare_work_folder(&folder, &[input("in.mp4", &through)], &cache).is_err(), "a clip in a linked folder");
+            assert!(prepare_work_folder(&folder, &[input("in.mp4", &through)], &[&cache]).is_err(), "a clip in a linked folder");
             assert_eq!(std::fs::read_dir(&folder).expect("list").count(), 0);
 
             // A work folder that is a link to a folder of the user, or that
             // is below one.
             let linked = cache.join("work").join("b");
             symlink(&home, &linked).expect("link");
-            assert!(prepare_work_folder(&linked, &[input("in.mp4", &source)], &cache).is_err(), "a linked work folder");
-            assert!(prepare_work_folder(&linked.join("c"), &[], &cache).is_err(), "a work folder below a link");
+            assert!(prepare_work_folder(&linked, &[input("in.mp4", &source)], &[&cache]).is_err(), "a linked work folder");
+            assert!(prepare_work_folder(&linked.join("c"), &[], &[&cache]).is_err(), "a work folder below a link");
             assert_eq!(mode_of(&home), 0o755);
             assert_eq!(std::fs::read_dir(&home).expect("list").count(), 1);
         }

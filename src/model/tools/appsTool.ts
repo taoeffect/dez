@@ -723,9 +723,9 @@ export function appsPath(value: unknown, parameter: string, conversationId: stri
   return pathOf(top, names)
 }
 
-// The folder names that `withoutLocalPaths` takes for the start of a path
-// of the computer (the top comment).
-const HIDDEN_NAMES = ['home', 'Users']
+/** The folder names that `withoutLocalPaths` takes for the start of a
+ *  path of the computer (the top comment): no call makes a path with one. */
+export const HIDDEN_NAMES = ['home', 'Users']
 
 // Throws for a path that a call would make and that a later result could
 // not show.

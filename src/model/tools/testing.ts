@@ -1,4 +1,5 @@
 import { mediaTagText, type MediaTagData } from '../chat/mediaTags'
+import type { Section } from '../chat/types'
 import { reply, user } from '../streams/testing'
 import { appManifestText, type AppKind } from './appManifest'
 import { grepCall, grepPlan, grepRequest, grepText } from './appsGrep'
@@ -8,6 +9,7 @@ import type { JsEvalLine, RunFolderForms } from './jsEval'
 import type { JobInfo } from './jobs'
 import { parseSubcommandCall } from './subcommands'
 import { ToolError, type SubcommandArguments } from './types'
+import type { CallContext } from './videoTool'
 
 // Shared helpers of the unit tests of the Dez tools: the text of a refused
 // call, the facts of a job, a conversation with images and clips for the
@@ -84,6 +86,12 @@ export const CONVERSATION = [
   reply('a1', `${mediaTagText(FILM)}\n${mediaTagText(LOOP)}`),
   user('u2', `![id=e](${SKY})\n![id=f](${PLAN})`),
 ]
+
+/** The context of a `video` call in the conversation of `sections`, whose
+ *  id is `CONVERSATION_ID`. */
+export function videoContext(sections: readonly Section[] = CONVERSATION): CallContext {
+  return { sections, conversationId: CONVERSATION_ID }
+}
 
 /** A video stream of a probe output, as ffprobe writes it. */
 export const VP9 = { index: 0, codec_name: 'vp9', codec_type: 'video', profile: 'Profile 0', level: -99, width: 48, height: 36, pix_fmt: 'yuv420p', r_frame_rate: '5/1', avg_frame_rate: '5/1', time_base: '1/1000', sample_aspect_ratio: '1:1' }

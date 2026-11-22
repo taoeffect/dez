@@ -3,7 +3,7 @@ import { MAX_SAVED_CLIP_BYTES } from '../chat/mediaFiles'
 import { mediaTagText } from '../chat/mediaTags'
 import type { Section } from '../chat/types'
 import { reply, user } from '../streams/testing'
-import { CONVERSATION, FILM, OPUS, PLAN, probeOutput, RED, refusal, SKY, SONG, VP9, WEBM } from './testing'
+import { CONVERSATION, CONVERSATION_ID, FILM, OPUS, PLAN, probeOutput, RED, refusal, SKY, SONG, videoContext, VP9, WEBM } from './testing'
 import type { ToolArguments } from './types'
 import { SHIPPED_FONTS } from './videoFonts'
 import {
@@ -13,6 +13,7 @@ import {
   FFMPEG_FIXED_ARGS,
   ffmpegCall,
   ffmpegRunResult,
+  ffmpegSaveResult,
   ffmpegStateText,
   ffprobeCall,
   ffprobeFailedText,
@@ -22,23 +23,26 @@ import {
   joinProbeArgs,
   joinProbeFailedText,
   joinRunResult,
+  MAX_SAVED_WORK_FILES,
   MAX_VIDEO_OUTPUT_FILES,
   OutputStart,
   outputFiles,
   PROGRAM_OUTPUT_CAP,
   ProgramLog,
+  savedOutputFiles,
   VIDEO_TOOL,
   VIDEO_TOOL_DEFINITION,
   videoInputsText,
   type ClipFacts,
   type JoinPlan,
   type OutputFiles,
+  type SavedFiles,
 } from './videoTool'
 
 // The arguments that ffmpeg gets for the command line `text`, without the
 // ones that Dez adds.
 function ffmpegWords(text: string, sections: Section[] = CONVERSATION): string[] {
-  return ffmpegCall({ arguments: text }, sections).args.slice(FFMPEG_FIXED_ARGS.length)
+  return ffmpegCall({ arguments: text }, videoContext(sections)).args.slice(FFMPEG_FIXED_ARGS.length)
 }
 
 function subcommand(name: string) {
@@ -52,7 +56,7 @@ describe('the video tool', () => {
     expect(VIDEO_TOOL_DEFINITION.name).toBe('video')
     expect(VIDEO_TOOL.subcommands.map(({ name, parameters }) => [name, parameters.map((parameter) => parameter.name)])).toStrictEqual([
       ['join_clips', ['clips', 'is_intermediate', 'timeout_seconds']],
-      ['ffmpeg', ['arguments', 'fonts', 'text_files', 'is_intermediate', 'timeout_seconds']],
+      ['ffmpeg', ['arguments', 'fonts', 'text_files', 'save_to', 'is_intermediate', 'timeout_seconds']],
       ['ffprobe', ['arguments']],
       ['cuts', ['clips', 'threshold', 'save_to']],
       ['sync', ['edit', 'song', 'offset', 'max_lag', 'threshold', 'tolerance', 'save_to']],
@@ -69,37 +73,46 @@ describe('the video tool', () => {
   })
 
   it('runs a job for the time that its help states when a call gives none', () => {
-    expect(ffmpegCall({ arguments: '-i @c out.mp4' }, CONVERSATION).timeoutMs).toBe(DEFAULT_VIDEO_TIMEOUT_SECONDS * 1000)
+    expect(ffmpegCall({ arguments: '-i @c out.mp4' }, videoContext(CONVERSATION)).timeoutMs).toBe(DEFAULT_VIDEO_TIMEOUT_SECONDS * 1000)
     expect(joinClipsCall({ clips: '@c @d' }, CONVERSATION).timeoutMs).toBe(DEFAULT_VIDEO_TIMEOUT_SECONDS * 1000)
     expect(subcommand('ffmpeg').parameters.at(-1)?.description).toContain(`${DEFAULT_VIDEO_TIMEOUT_SECONDS} (10 minutes)`)
   })
 
   it('accepts every example of its own help', () => {
-    // An example that needs fonts or text files tells them in its label, as
-    // `with "<files>" in `fonts`` and `and <JSON> in `text_files``. The
-    // arguments start after the label: after the last "`: " of a label that
-    // names a parameter, as a text in the label can hold ": ".
+    // An example that needs fonts, text files, or a folder to save to
+    // tells them in its label, as `with "<files>" in `fonts``, `and <JSON>
+    // in `text_files``, and `with "<folder>" in `save_to``. The arguments
+    // start after the label: after the last "`: " of a label that names a
+    // parameter, as a text in the label can hold ": ".
     const examples = subcommand('ffmpeg').description.split('\n')
       .filter((line) => line.startsWith('- '))
       .map((line): ToolArguments => {
         const fonts = /with "([^"]+)" in `fonts`/.exec(line)?.[1]
         const textFiles = / and (\{.*\}) in `text_files`/.exec(line)?.[1]
+        const saveTo = /with "([^"]+)" in `save_to`/.exec(line)?.[1]
         const start = line.includes('`: ') ? line.lastIndexOf('`: ') + 3 : line.indexOf(': ') + 2
-        return { arguments: line.slice(start), ...(fonts === undefined ? {} : { fonts }), ...(textFiles === undefined ? {} : { text_files: textFiles }) }
+        return {
+          arguments: line.slice(start),
+          ...(fonts === undefined ? {} : { fonts }),
+          ...(textFiles === undefined ? {} : { text_files: textFiles }),
+          ...(saveTo === undefined ? {} : { save_to: saveTo }),
+        }
       })
 
-    expect(examples).toHaveLength(11)
+    expect(examples).toHaveLength(13)
     expect(ffmpegWords(String(examples[0].arguments))).toStrictEqual(['-i', 'c.webm', '-i', 'b.wav', '-map', '0:v', '-map', '1:a', '-c:v', 'copy', '-c:a', 'aac', '-shortest', 'out.mp4'])
     // The filter graph of the mix is one word, without its quotes.
     expect(ffmpegWords(String(examples[7].arguments))).toContain('[1:a]volume=0.25[music];[0:a][music]amix=inputs=2:duration=first:normalize=0[a]')
-    expect(ffmpegCall(examples[9], CONVERSATION).fonts).toStrictEqual(['NotoSans-Bold.ttf'])
-    expect(ffmpegCall(examples[10], CONVERSATION)).toMatchObject({
+    expect(ffmpegCall(examples[9], videoContext(CONVERSATION)).fonts).toStrictEqual(['NotoSans-Bold.ttf'])
+    expect(ffmpegCall(examples[10], videoContext(CONVERSATION))).toMatchObject({
       fonts: ['NotoSans-Regular.ttf'],
       textFiles: [{ name: 'words.srt', text: '1\n00:00:00,000 --> 00:00:02,500\nNight: Drive\n' }],
     })
-    for (const example of examples) expect(() => ffmpegCall(example, CONVERSATION), String(example.arguments)).not.toThrow()
-    expect(() => ffmpegCall(subcommand('ffmpeg').example as ToolArguments, CONVERSATION)).not.toThrow()
-    expect(() => ffprobeCall(subcommand('ffprobe').example as ToolArguments, CONVERSATION)).not.toThrow()
+    expect(ffmpegCall(examples[11], videoContext(CONVERSATION)).saveTo?.virtual).toBe('/work/frames')
+    expect(ffmpegCall(examples[12], videoContext(CONVERSATION)).workInputs.map(({ name }) => name)).toStrictEqual(['work/parts/scene.mp4', 'work/parts/voice.wav'])
+    for (const example of examples) expect(() => ffmpegCall(example, videoContext(CONVERSATION)), String(example.arguments)).not.toThrow()
+    expect(() => ffmpegCall(subcommand('ffmpeg').example as ToolArguments, videoContext(CONVERSATION))).not.toThrow()
+    expect(() => ffprobeCall(subcommand('ffprobe').example as ToolArguments, videoContext(CONVERSATION))).not.toThrow()
     expect(() => joinClipsCall(subcommand('join_clips').example as ToolArguments, CONVERSATION)).not.toThrow()
   })
 })
@@ -155,7 +168,7 @@ describe('commandLineWords', () => {
 
 describe('ffmpegCall', () => {
   it('puts the arguments of Dez first, and the name of each copy in place of its @id', () => {
-    const call = ffmpegCall({ arguments: '-i @c -i @b -map 0:v -map 1:a out.mp4' }, CONVERSATION)
+    const call = ffmpegCall({ arguments: '-i @c -i @b -map 0:v -map 1:a out.mp4' }, videoContext(CONVERSATION))
 
     expect(call.args).toStrictEqual(['-nostdin', '-hide_banner', '-v', 'warning', '-stats', '-i', 'c.webm', '-i', 'b.wav', '-map', '0:v', '-map', '1:a', 'out.mp4'])
     expect(call.inputs).toStrictEqual([
@@ -166,7 +179,7 @@ describe('ffmpegCall', () => {
   })
 
   it('gives an input that the arguments name more than once as one file, also inside a word', () => {
-    const call = ffmpegCall({ arguments: '-i @c -filter_complex "movie=@d[logo];[0:v][logo]overlay,movie=@c[x]" -i @d out.mp4' }, CONVERSATION)
+    const call = ffmpegCall({ arguments: '-i @c -filter_complex "movie=@d[logo];[0:v][logo]overlay,movie=@c[x]" -i @d out.mp4' }, videoContext(CONVERSATION))
 
     expect(call.args.slice(FFMPEG_FIXED_ARGS.length)).toStrictEqual(['-i', 'c.webm', '-filter_complex', 'movie=d.webm[logo];[0:v][logo]overlay,movie=c.webm[x]', '-i', 'd.webm', 'out.mp4'])
     expect(call.inputs.map(({ id }) => id)).toStrictEqual(['c', 'd'])
@@ -175,34 +188,34 @@ describe('ffmpegCall', () => {
   it('names a clip by its media type, and a clip of an unknown type as .bin', () => {
     const odd = mediaTagText({ kind: 'video', id: 'a', type: 'video/x-matroska', src: null, url: 'https://clips.example/one', expires: null, other: [] })
 
-    expect(ffmpegCall({ arguments: '-i @d out.mp4' }, CONVERSATION).inputs[0].name).toBe('d.webm')
-    expect(ffmpegCall({ arguments: '-i @a out.mp4' }, [reply('a1', odd)]).inputs[0].name).toBe('a.bin')
+    expect(ffmpegCall({ arguments: '-i @d out.mp4' }, videoContext(CONVERSATION)).inputs[0].name).toBe('d.webm')
+    expect(ffmpegCall({ arguments: '-i @a out.mp4' }, videoContext([reply('a1', odd)])).inputs[0].name).toBe('a.bin')
   })
 
   it('gives a JPEG or PNG image as its file, and an SVG image as a JPEG copy', () => {
-    const { inputs } = ffmpegCall({ arguments: '-i @a -i @e -i @f out.mp4' }, CONVERSATION)
+    const { inputs } = ffmpegCall({ arguments: '-i @a -i @e -i @f out.mp4' }, videoContext(CONVERSATION))
 
     expect(inputs).toStrictEqual([
       { kind: 'image', id: 'a', name: 'a.jpg', path: RED, jpegCopy: false },
       { kind: 'image', id: 'e', name: 'e.png', path: SKY, jpegCopy: false },
       { kind: 'image', id: 'f', name: 'f.jpg', path: PLAN, jpegCopy: true },
     ])
-    expect(videoInputsText(inputs)).toBe('The inputs of the run: the image @a as a.jpg, the image @e as e.png, the image @f as f.jpg (a JPEG copy, with white in place of transparent pixels).')
+    expect(videoInputsText({ inputs })).toBe('The inputs of the run: the image @a as a.jpg, the image @e as e.png, the image @f as f.jpg (a JPEG copy, with white in place of transparent pixels).')
   })
 
   it('tells that a run has no input', () => {
-    const { inputs } = ffmpegCall({ arguments: '-f lavfi -i sine=frequency=440:duration=1 tone.wav' }, CONVERSATION)
+    const { inputs } = ffmpegCall({ arguments: '-f lavfi -i sine=frequency=440:duration=1 tone.wav' }, videoContext(CONVERSATION))
 
-    expect(videoInputsText(inputs)).toBe('The run has no input image and no input clip.')
+    expect(videoInputsText({ inputs })).toBe('The run has no input image and no input clip.')
   })
 
   it('gives the fonts of the call to the run, and names them with the inputs', () => {
-    const call = ffmpegCall({ arguments: '-i @c -vf "drawtext=fontfile=\'fonts/NotoSansArabic-Regular.ttf\':text=\'a, b\'" out.mp4', fonts: 'NotoSans-Bold.ttf NotoSansArabic-Regular.ttf' }, CONVERSATION)
+    const call = ffmpegCall({ arguments: '-i @c -vf "drawtext=fontfile=\'fonts/NotoSansArabic-Regular.ttf\':text=\'a, b\'" out.mp4', fonts: 'NotoSans-Bold.ttf NotoSansArabic-Regular.ttf' }, videoContext(CONVERSATION))
 
     expect(call.fonts).toStrictEqual(['NotoSans-Bold.ttf', 'NotoSansArabic-Regular.ttf'])
     expect(call.args.at(-2)).toBe('drawtext=fontfile=\'fonts/NotoSansArabic-Regular.ttf\':text=\'a, b\'')
-    expect(videoInputsText(call.inputs, call.fonts)).toContain('NotoSans-Bold.ttf, NotoSansArabic-Regular.ttf')
-    expect(refusal(() => ffmpegCall({ arguments: '-i @c out.mp4', fonts: 'Arial.ttf' }, CONVERSATION))).toContain('Dez started no job.')
+    expect(videoInputsText(call)).toContain('NotoSans-Bold.ttf, NotoSansArabic-Regular.ttf')
+    expect(refusal(() => ffmpegCall({ arguments: '-i @c out.mp4', fonts: 'Arial.ttf' }, videoContext(CONVERSATION)))).toContain('Dez started no job.')
   })
 
   it('gives the text files of the call to the run, and names them after the inputs and the fonts', () => {
@@ -210,29 +223,29 @@ describe('ffmpegCall', () => {
       arguments: '-i @c -vf "drawtext=fontfile=fonts/NotoSans-Bold.ttf:textfile=title.txt:expansion=none,subtitles=words.srt:fontsdir=fonts" out.mp4',
       fonts: 'NotoSans-Bold.ttf',
       text_files: '{"title.txt": "Night: Drive, 100%", "words.srt": "1\\n00:00:00,000 --> 00:00:02,000\\nHi\\n"}',
-    }, CONVERSATION)
+    }, videoContext(CONVERSATION))
 
     expect(call.textFiles).toStrictEqual([{ name: 'title.txt', text: 'Night: Drive, 100%' }, { name: 'words.srt', text: '1\n00:00:00,000 --> 00:00:02,000\nHi\n' }])
-    expect(videoInputsText(call.inputs, call.fonts, call.textFiles)).toBe('The inputs of the run: the video clip @c as c.webm. '
+    expect(videoInputsText(call)).toBe('The inputs of the run: the video clip @c as c.webm. '
       + 'The fonts of the run, in its fonts folder: NotoSans-Bold.ttf. The text files of the run, in its run folder: title.txt, words.srt.')
-    expect(refusal(() => ffmpegCall({ arguments: '-i @c out.mp4', text_files: '{"../x.txt": "x"}' }, CONVERSATION))).toContain('Dez started no job.')
+    expect(refusal(() => ffmpegCall({ arguments: '-i @c out.mp4', text_files: '{"../x.txt": "x"}' }, videoContext(CONVERSATION)))).toContain('Dez started no job.')
   })
 
   it('refuses a font that ffprobe names: only an ffmpeg run gets fonts', () => {
-    const message = refusal(() => ffprobeCall({ arguments: '-show_format fonts/NotoSans-Bold.ttf' }, CONVERSATION))
+    const message = refusal(() => ffprobeCall({ arguments: '-show_format fonts/NotoSans-Bold.ttf' }, videoContext(CONVERSATION)))
 
     expect(message).toContain('the `fonts` parameter of the ffmpeg subcommand')
     expect(message).toContain('Dez did not run ffprobe.')
   })
 
   it('knows a run with the null format', () => {
-    expect(ffmpegCall({ arguments: '-v info -i @b -af volumedetect -f null -' }, CONVERSATION).nullOutput).toBe(true)
-    expect(ffmpegCall({ arguments: '-i @b -af volumedetect -f:a null -' }, CONVERSATION).nullOutput).toBe(true)
+    expect(ffmpegCall({ arguments: '-v info -i @b -af volumedetect -f null -' }, videoContext(CONVERSATION)).nullOutput).toBe(true)
+    expect(ffmpegCall({ arguments: '-i @b -af volumedetect -f:a null -' }, videoContext(CONVERSATION)).nullOutput).toBe(true)
   })
 
   it('takes a time limit of the call', () => {
-    expect(ffmpegCall({ arguments: '-i @c out.mp4', timeout_seconds: 30 }, CONVERSATION).timeoutMs).toBe(30_000)
-    expect(refusal(() => ffmpegCall({ arguments: '-i @c out.mp4', timeout_seconds: 5 }, CONVERSATION))).toContain('10 to 3600')
+    expect(ffmpegCall({ arguments: '-i @c out.mp4', timeout_seconds: 30 }, videoContext(CONVERSATION)).timeoutMs).toBe(30_000)
+    expect(refusal(() => ffmpegCall({ arguments: '-i @c out.mp4', timeout_seconds: 5 }, videoContext(CONVERSATION)))).toContain('10 to 3600')
   })
 
   it.each([
@@ -261,7 +274,7 @@ describe('ffmpegCall', () => {
     '-i @c frame_%03d.jpg',
     '-i @b -af "asendcmd=c=\'2 volume volume 0.5\',volume=1" out.wav',
   ])('runs %j', (text) => {
-    expect(() => ffmpegCall({ arguments: text }, CONVERSATION)).not.toThrow()
+    expect(() => ffmpegCall({ arguments: text }, videoContext(CONVERSATION))).not.toThrow()
   })
 
   it.each([
@@ -348,7 +361,7 @@ describe('ffmpegCall', () => {
     // the instance name.
     ['-i @c -vf "sendcmd@x]y=f=cmds.txt,curves" out.mp4', 'sendcmd@x]y=f=cmds.txt,curves', 'it gives sendcmd a commands file'],
   ])('refuses %j', (text, word, cause) => {
-    const message = refusal(() => ffmpegCall({ arguments: text }, CONVERSATION))
+    const message = refusal(() => ffmpegCall({ arguments: text }, videoContext(CONVERSATION)))
 
     expect(message).toContain(`Dez refuses ${JSON.stringify(word)} in \`arguments\``)
     expect(message).toContain(cause)
@@ -366,7 +379,7 @@ describe('ffmpegCall', () => {
   })
 
   it('refuses an @id that names nothing, and lists the images and the clips by their ids only', () => {
-    const message = refusal(() => ffmpegCall({ arguments: '-i @z out.mp4' }, CONVERSATION))
+    const message = refusal(() => ffmpegCall({ arguments: '-i @z out.mp4' }, videoContext(CONVERSATION)))
 
     expect(message).toContain('@z names no image and no clip of this conversation')
     expect(message).toContain('Dez started no job.')
@@ -379,17 +392,80 @@ describe('ffmpegCall', () => {
   })
 
   it('refuses a bad argument before an unknown id', () => {
-    expect(refusal(() => ffmpegCall({ arguments: '-i @z /etc/out.mp4' }, CONVERSATION))).toContain('an absolute path')
+    expect(refusal(() => ffmpegCall({ arguments: '-i @z /etc/out.mp4' }, videoContext(CONVERSATION)))).toContain('an absolute path')
+  })
+
+  it('copies each file of /work that the arguments name, once, at its path below work/', () => {
+    const call = ffmpegCall({
+      arguments: '-i /work/clips/a.mp4 -i @b -i /work/clips/a.mp4 -filter_complex "movie=/work/logo.png[l];[0:v][l]overlay" out.mp4',
+    }, videoContext(CONVERSATION))
+
+    expect(call.args.slice(FFMPEG_FIXED_ARGS.length)).toStrictEqual([
+      '-i', 'work/clips/a.mp4', '-i', 'b.wav', '-i', 'work/clips/a.mp4', '-filter_complex', 'movie=work/logo.png[l];[0:v][l]overlay', 'out.mp4',
+    ])
+    expect(call.workInputs).toStrictEqual([
+      { virtual: '/work/clips/a.mp4', name: 'work/clips/a.mp4', file: `work/${CONVERSATION_ID}/clips/a.mp4` },
+      { virtual: '/work/logo.png', name: 'work/logo.png', file: `work/${CONVERSATION_ID}/logo.png` },
+    ])
+    expect(call.inputs.map(({ id }) => id)).toStrictEqual(['b'])
+    expect(videoInputsText(call)).toBe('The inputs of the run: the audio clip @b as b.wav, /work/clips/a.mp4 as work/clips/a.mp4, /work/logo.png as work/logo.png.')
+  })
+
+  it.each([
+    ['-i /work out.mp4', 'the work folder itself'],
+    ['-i /work/ out.mp4', 'the work folder itself'],
+    ['-i /work/../apps/x/a.mp4 out.mp4', 'holds ".."'],
+    ['-i /work/a(1).mp4 out.mp4', 'holds the name "a(1).mp4"'],
+    ['-i /work/f%03d.png out.mp4', 'a pattern of file names'],
+    ['-i /work/hls/list.m3u8 out.mp4', 'an HLS playlist'],
+    ['-i /work/LIST.M3U out.mp4', 'an HLS playlist'],
+    ['-i /workshop/a.mp4 out.mp4', 'an absolute path'],
+  ])('refuses the path of %j', (text, cause) => {
+    const message = refusal(() => ffmpegCall({ arguments: text }, videoContext(CONVERSATION)))
+
+    expect(message).toContain(cause)
+    expect(message).toContain('Dez started no job.')
+  })
+
+  it('refuses a path of /work in a conversation that has no work folder', () => {
+    const message = refusal(() => ffmpegCall({ arguments: '-i /work/a.mp4 out.mp4' }, { sections: CONVERSATION, conversationId: '../x' }))
+
+    expect(message).toContain('This conversation has no /work folder')
+    expect(message).toContain('This is a fault of Dez')
+  })
+
+  it('takes save_to as a folder of /work', () => {
+    const save = (saveTo: string) => ffmpegCall({ arguments: '-i @c -vf fps=1 f%04d.png', save_to: saveTo }, videoContext(CONVERSATION)).saveTo
+
+    expect(save('/work/frames/')).toMatchObject({ virtual: '/work/frames', file: `work/${CONVERSATION_ID}/frames` })
+    expect(save(' /work ')).toMatchObject({ virtual: '/work', file: `work/${CONVERSATION_ID}` })
+    expect(save('')).toBeNull()
+    expect(ffmpegCall({ arguments: '-i @c out.mp4' }, videoContext(CONVERSATION)).saveTo).toBeNull()
+  })
+
+  it.each([
+    ['/apps/x', 'which is no folder of /work/'],
+    ['frames', 'which is no folder of /work/'],
+    ['/work/../apps', 'holds ".."'],
+    ['/work/home/frames', 'holds the name "home"'],
+    ['/work/frames/f1.png', 'looks like the name of a file'],
+    ['/work/out.MP4', 'looks like the name of a file'],
+  ])('refuses the save_to %j', (saveTo, cause) => {
+    const message = refusal(() => ffmpegCall({ arguments: '-i @c -vf fps=1 f%04d.png', save_to: saveTo }, videoContext(CONVERSATION)))
+
+    expect(message).toContain(cause)
+    expect(message).toContain('Dez started no job.')
   })
 })
 
 describe('ffprobeCall', () => {
   it('puts its own arguments first, and has the rules of an ffmpeg call', () => {
-    expect(ffprobeCall({ arguments: 'ffprobe -v error -show_format -of json @c' }, CONVERSATION)).toStrictEqual({
-      args: ['-hide_banner', '-v', 'error', '-show_format', '-of', 'json', 'c.webm'],
+    expect(ffprobeCall({ arguments: 'ffprobe -v error -show_format -of json @c /work/a.mp4' }, videoContext(CONVERSATION))).toStrictEqual({
+      args: ['-hide_banner', '-v', 'error', '-show_format', '-of', 'json', 'c.webm', 'work/a.mp4'],
       inputs: [{ kind: 'video', id: 'c', name: 'c.webm', clip: { kind: 'video', id: 'c', type: 'video/webm', src: FILM.src, url: null, expires: null } }],
+      workInputs: [{ virtual: '/work/a.mp4', name: 'work/a.mp4', file: `work/${CONVERSATION_ID}/a.mp4` }],
     })
-    expect(ffprobeCall({ arguments: '-encoders' }, CONVERSATION)).toStrictEqual({ args: ['-hide_banner', '-encoders'], inputs: [] })
+    expect(ffprobeCall({ arguments: '-encoders' }, videoContext(CONVERSATION))).toStrictEqual({ args: ['-hide_banner', '-encoders'], inputs: [], workInputs: [] })
   })
 
   it.each([
@@ -398,7 +474,7 @@ describe('ffprobeCall', () => {
     ['-f:v hls @c', 'the hls format or an .m3u8 or .m3u file'],
     ['-show_format @z', '@z names no image and no clip'],
   ])('tells that ffprobe did not run for %j', (text, cause) => {
-    const message = refusal(() => ffprobeCall({ arguments: text }, CONVERSATION))
+    const message = refusal(() => ffprobeCall({ arguments: text }, videoContext(CONVERSATION)))
 
     expect(message).toContain(cause)
     expect(message).toContain('Dez did not run ffprobe.')
@@ -628,6 +704,27 @@ describe('outputFiles', () => {
   })
 })
 
+describe('savedOutputFiles', () => {
+  it('saves every new file of any type in the order of its name, but an empty file and a name that a result could not show', () => {
+    const files = [
+      { name: 'c.webm', size: 900 },
+      { name: 'f10.png', size: 30 },
+      { name: 'f2.png', size: 30 },
+      { name: 'notes.txt', size: 4 },
+      { name: 'graph.svg', size: 4 },
+      { name: 'big.webm', size: MAX_SAVED_CLIP_BYTES + 1 },
+      { name: 'empty.wav', size: 0 },
+      { name: 'home', size: 4 },
+    ]
+    const { names, notKept } = savedOutputFiles(files, new Set(['c.webm']))
+
+    expect(names).toStrictEqual(['big.webm', 'f2.png', 'f10.png', 'graph.svg', 'notes.txt'])
+    expect(notKept).toHaveLength(2)
+    expect(notKept[0]).toBe('empty.wav (it is empty)')
+    expect(notKept[1]).toMatch(/^home \(/)
+  })
+})
+
 const PROGRESS_START = 'frame=    5 fps=0.0 q=0.0 size=       0KiB time=00:00:01.00 bitrate=   0.4kbits/s speed=1.9x    '
 const PROGRESS_END = 'frame=   10 fps=9.8 q=-0.0 Lsize=      12KiB time=00:00:02.00 bitrate=  49.1kbits/s speed=1.96x    '
 
@@ -788,6 +885,54 @@ describe('ffmpegRunResult', () => {
   })
 })
 
+describe('ffmpegSaveResult', () => {
+  const log = () => logOf('[warn] one\n', `${PROGRESS_END}\n`)
+  const saveTo = ffmpegCall({ arguments: '-i @c -vf fps=1 f%04d.png', save_to: '/work/frames' }, videoContext(CONVERSATION)).saveTo
+  if (saveTo === null) throw new Error('The call has no save_to.')
+  const saved = (count: number): SavedFiles => ({ names: Array.from({ length: count }, (_, index) => `f${index + 1}.png`), notKept: [] })
+
+  it('names the path of each saved file, and tells that the files are not in the reply', () => {
+    const { text, isError } = ffmpegSaveResult(saveTo, { nullOutput: false }, ENDED, { names: ['a.png', 'b.txt'], notKept: ['empty.wav (it is empty)'] }, log(), outputOf())
+
+    expect(isError).toBe(false)
+    expect(text).toContain('/work/frames/a.png, /work/frames/b.txt.')
+    expect(text).toContain('Dez did not keep empty.wav (it is empty).')
+    expect(text).toContain('They are not in your reply.')
+    expect(text).toContain('The end of the log of ffmpeg:\n[warn] one\nframe=10 ')
+  })
+
+  it('names at most 20 paths, and counts the rest', () => {
+    const { text } = ffmpegSaveResult(saveTo, { nullOutput: false }, ENDED, saved(25), log(), outputOf())
+
+    expect(text).toContain('/work/frames/f20.png, and 5 more.')
+    expect(text).not.toContain('/work/frames/f21.png')
+  })
+
+  it('saves no file of a run that made more files than one call can save', () => {
+    const { text, isError } = ffmpegSaveResult(saveTo, { nullOutput: false }, ENDED, saved(MAX_SAVED_WORK_FILES + 1), log(), outputOf())
+
+    expect(isError).toBe(true)
+    expect(text).toContain('so it saved none')
+    expect(ffmpegSaveResult(saveTo, { nullOutput: false }, ENDED, saved(MAX_SAVED_WORK_FILES), log(), outputOf()).isError).toBe(false)
+  })
+
+  it('gives the log of a run that failed, as an error', () => {
+    const { text, isError } = ffmpegSaveResult(saveTo, { nullOutput: false }, { kind: 'exited', code: 1 }, saved(2), logOf('bad filter\n'), outputOf())
+
+    expect(isError).toBe(true)
+    expect(text).toContain('ffmpeg ended with the error code 1, and Dez kept no file.')
+    expect(text).toContain('bad filter')
+  })
+
+  it('tells how to name an output after a run that made no file, with no list of endings', () => {
+    const { text, isError } = ffmpegSaveResult(saveTo, { nullOutput: false }, ENDED, { names: [], notKept: [] }, log(), outputOf())
+
+    expect(isError).toBe(true)
+    expect(text).toContain('Give each output a new file name with no folder')
+    expect(text).not.toContain('.mp4, .webm')
+  })
+})
+
 describe('joinRunResult', () => {
   const copy: JoinPlan = { kind: 'copy', list: { name: 'list.txt', text: '' }, args: [], output: 'joined.webm' }
   const encode: JoinPlan = { kind: 'encode', args: [], output: 'joined.mp4', format: 'MP4 (H.264, AAC)', width: 1280, height: 720, hasAudio: true }
@@ -860,7 +1005,7 @@ describe('the ffprobe results', () => {
   })
 
   it('tells of a cut and of a JPEG copy in the first lines', () => {
-    const { inputs } = ffprobeCall({ arguments: '-show_frames @e @f @a' }, CONVERSATION)
+    const { inputs } = ffprobeCall({ arguments: '-show_frames @e @f @a' }, videoContext(CONVERSATION))
     const text = ffprobeResultText(inputs, outputOf('x'.repeat(PROGRAM_OUTPUT_CAP)), outputOf('warn'))
     const lines = text.split('\n')
 

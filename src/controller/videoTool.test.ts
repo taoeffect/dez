@@ -8,7 +8,7 @@ import { reply, user } from '../model/streams/testing'
 import { unreadableImageText } from '../model/tools/imageTool'
 import { jobTimedOutText } from '../model/tools/jobs'
 import { INPUT_CLIP_TOO_LARGE, outputNotStoredText, PROGRAM_READS_INPUTS, programNotStartedText } from '../model/tools/programRuns'
-import { CONVERSATION, FILM, LOOP, OPUS, PLAN, probeOutput, SKY, SONG, VP9 } from '../model/tools/testing'
+import { CONVERSATION, FILM, LOOP, OPUS, PLAN, probeOutput, SKY, SONG, videoContext, VP9 } from '../model/tools/testing'
 import { clipReadProblemText } from '../model/tools/toolInputs'
 import { ToolError } from '../model/tools/types'
 import { fontNotFoundText } from '../model/tools/videoFonts'
@@ -31,12 +31,32 @@ import {
   jpegCopyNotWrittenText,
   OutputStart,
   PROGRAM_OUTPUT_CAP,
+  workFilesNotSavedText,
+  workInputNotFileText,
+  workPathUnreadableText,
   type ClipFacts,
 } from '../model/tools/videoTool'
 import { errorText } from '../utils/errorText'
-import type { BundledToolEnd } from './nativeTypes'
-import { APP_DIR, CACHE_DIR, deletedWorkFolder, ENDED, failureOf, FILE_ID, native, refusalOf, resetNative, RESOURCE_DIR, running, SAVED, STOP, writes, type StubProgram } from './testing'
-import { runFfmpegJob, runFfprobe, runJoinJob } from './videoTool'
+import type { AppFileRef, BundledToolEnd, FileTree } from './nativeTypes'
+import {
+  APP_DIR,
+  CACHE_DIR,
+  CONVERSATION_WORK_FOLDER,
+  deletedWorkFolder,
+  ENDED,
+  failureOf,
+  FILE_ID,
+  native,
+  refusalOf,
+  resetNative,
+  RESOURCE_DIR,
+  running,
+  SAVED,
+  STOP,
+  writes,
+  type StubProgram,
+} from './testing'
+import { checkWorkPaths, runFfmpegJob, runFfprobe, runJoinJob } from './videoTool'
 
 // A conversation whose only asset is the video clip `a`, in a user section.
 function withClip(clip: Partial<MediaTagData>): Section[] {
@@ -100,7 +120,7 @@ function report(state: string): void {
 
 describe('runFfmpegJob', () => {
   it('runs ffmpeg in a new work folder on copies of the input files, and stores its new files as the assets of the job', async () => {
-    const call = ffmpegCall({ arguments: '-i @c -i @b -map 0:v -map 1:a out.mp4', timeout_seconds: 90 }, CONVERSATION)
+    const call = ffmpegCall({ arguments: '-i @c -i @b -map 0:v -map 1:a out.mp4', timeout_seconds: 90 }, videoContext(CONVERSATION))
     native.program = writes('stderr', `${PROGRESS}\r`)
     native.folderFiles = ['b.wav', 'c.webm', 'out.mp4', 'frame_1.jpg', 'notes.txt']
 
@@ -132,7 +152,7 @@ describe('runFfmpegJob', () => {
   })
 
   it('gives a PNG image as its file, and an SVG image as a JPEG copy that the webview draws on white', async () => {
-    const call = ffmpegCall({ arguments: '-loop 1 -i @e -loop 1 -i @f -filter_complex overlay -t 2 out.mp4' }, CONVERSATION)
+    const call = ffmpegCall({ arguments: '-loop 1 -i @e -loop 1 -i @f -filter_complex overlay -t 2 out.mp4' }, videoContext(CONVERSATION))
 
     await runFfmpegJob(call, running(), report)
 
@@ -144,7 +164,7 @@ describe('runFfmpegJob', () => {
   })
 
   it('downloads a clip that is only at its web address into the folder, with no provider header', async () => {
-    const call = ffmpegCall({ arguments: '-i @d out.webm' }, CONVERSATION)
+    const call = ffmpegCall({ arguments: '-i @d out.webm' }, videoContext(CONVERSATION))
 
     await runFfmpegJob(call, running(), report)
 
@@ -159,7 +179,7 @@ describe('runFfmpegJob', () => {
   })
 
   it('takes the web address of a clip whose temp copy is gone', async () => {
-    const call = ffmpegCall({ arguments: '-i @a out.mp4' }, withClip({ src: `${CACHE_DIR}/media/gone.mp4`, url: 'https://clips.example/a.mp4' }))
+    const call = ffmpegCall({ arguments: '-i @a out.mp4' }, videoContext(withClip({ src: `${CACHE_DIR}/media/gone.mp4`, url: 'https://clips.example/a.mp4' })))
     native.fileSize = () => null
 
     await runFfmpegJob(call, running(), report)
@@ -169,7 +189,7 @@ describe('runFfmpegJob', () => {
   })
 
   it('deletes the part of a download that failed, and runs no program', async () => {
-    const call = ffmpegCall({ arguments: '-i @d out.webm' }, CONVERSATION)
+    const call = ffmpegCall({ arguments: '-i @d out.webm' }, videoContext(CONVERSATION))
     native.downloadAppFile = async () => ({ ...SAVED, saved: false, status: 403 })
 
     const refusal = await refusalOf(runFfmpegJob(call, running(), report))
@@ -204,7 +224,7 @@ describe('runFfmpegJob', () => {
       INPUT_CLIP_TOO_LARGE,
     ],
   ] as const)('refuses %s, and tells the model that the call is not at fault', async (_, clip, setup, problem, details) => {
-    const call = ffmpegCall({ arguments: '-i @a out.mp4' }, withClip(clip))
+    const call = ffmpegCall({ arguments: '-i @a out.mp4' }, videoContext(withClip(clip)))
     setup()
 
     const refusal = await refusalOf(runFfmpegJob(call, running(), report))
@@ -216,7 +236,7 @@ describe('runFfmpegJob', () => {
   })
 
   it('gives a linked clip of a user section to the program as a copy', async () => {
-    const call = ffmpegCall({ arguments: '-i @a out.mp4' }, withClip({ src: '/home/u/Videos/trip.mp4' }))
+    const call = ffmpegCall({ arguments: '-i @a out.mp4' }, videoContext(withClip({ src: '/home/u/Videos/trip.mp4' })))
     native.fileSize = () => MAX_SAVED_CLIP_BYTES
 
     await runFfmpegJob(call, running(), report)
@@ -225,7 +245,7 @@ describe('runFfmpegJob', () => {
   })
 
   it('copies the fonts of the call from the resource folder into the fonts folder of the work folder', async () => {
-    const call = ffmpegCall({ arguments: '-i @c -vf drawtext=fontfile=fonts/NotoSans-Bold.ttf:text=Hi out.mp4', fonts: 'NotoSans-Bold.ttf NotoSansCJKjp-Regular.otf' }, CONVERSATION)
+    const call = ffmpegCall({ arguments: '-i @c -vf drawtext=fontfile=fonts/NotoSans-Bold.ttf:text=Hi out.mp4', fonts: 'NotoSans-Bold.ttf NotoSansCJKjp-Regular.otf' }, videoContext(CONVERSATION))
 
     await runFfmpegJob(call, running(), report)
 
@@ -241,7 +261,7 @@ describe('runFfmpegJob', () => {
     ['the resource folder', () => { native.resourcePath = () => { throw new Error('unknown path') } }],
     ['the font file', () => { native.fileSize = (path) => path.startsWith(RESOURCE_DIR) ? null : 10 }],
   ])('runs no program when Dez cannot find %s of a font, and tells the model to tell the user', async (_, setup) => {
-    const call = ffmpegCall({ arguments: '-i @c -vf drawtext=fontfile=fonts/NotoSans-Bold.ttf:text=Hi out.mp4', fonts: 'NotoSans-Bold.ttf' }, CONVERSATION)
+    const call = ffmpegCall({ arguments: '-i @c -vf drawtext=fontfile=fonts/NotoSans-Bold.ttf:text=Hi out.mp4', fonts: 'NotoSans-Bold.ttf' }, videoContext(CONVERSATION))
     setup()
 
     const refusal = await refusalOf(runFfmpegJob(call, running(), report))
@@ -257,7 +277,7 @@ describe('runFfmpegJob', () => {
       arguments: '-i @c -vf "subtitles=words.srt:fontsdir=fonts,drawtext=fontfile=fonts/NotoSans-Bold.ttf:textfile=title.txt" out.mp4',
       fonts: 'NotoSans-Bold.ttf',
       text_files: '{"words.srt": "1\\n00:00:00,000 --> 00:00:02,000\\nHi\\n", "title.txt": "Night: Drive"}',
-    }, CONVERSATION)
+    }, videoContext(CONVERSATION))
     let savedAtRun: string[] = []
     native.program = async () => {
       savedAtRun = native.savedFiles.map(({ file }) => file.path)
@@ -279,7 +299,7 @@ describe('runFfmpegJob', () => {
   })
 
   it('runs no program when Dez cannot write a text file, and tells the model that the program did not start', async () => {
-    const call = ffmpegCall({ arguments: '-i @c -vf subtitles=words.srt:fontsdir=fonts out.mp4', fonts: 'NotoSans-Regular.ttf', text_files: '{"words.srt": "1\\n00:00:00,000 --> 00:00:02,000\\nHi\\n"}' }, CONVERSATION)
+    const call = ffmpegCall({ arguments: '-i @c -vf subtitles=words.srt:fontsdir=fonts out.mp4', fonts: 'NotoSans-Regular.ttf', text_files: '{"words.srt": "1\\n00:00:00,000 --> 00:00:02,000\\nHi\\n"}' }, videoContext(CONVERSATION))
     const failure = new Error(`${CACHE_DIR}: the disk is full`)
     native.saveAppFile = async () => { throw failure }
 
@@ -295,8 +315,8 @@ describe('runFfmpegJob', () => {
     native.fileSize = () => null
     redrawError = new Error('The image did not decode.')
 
-    const gone = await refusalOf(runFfmpegJob(ffmpegCall({ arguments: '-i @e out.mp4' }, CONVERSATION), running(), report))
-    const notDrawn = await refusalOf(runFfmpegJob(ffmpegCall({ arguments: '-i @f out.mp4' }, CONVERSATION), running(), report))
+    const gone = await refusalOf(runFfmpegJob(ffmpegCall({ arguments: '-i @e out.mp4' }, videoContext(CONVERSATION)), running(), report))
+    const notDrawn = await refusalOf(runFfmpegJob(ffmpegCall({ arguments: '-i @f out.mp4' }, videoContext(CONVERSATION)), running(), report))
 
     expect(gone).toBe(unreadableImageText('e'))
     expect(notDrawn).toBe(jpegCopyNotDrawnText('f'))
@@ -307,7 +327,7 @@ describe('runFfmpegJob', () => {
   it('tells that a JPEG copy that Dez could not write is no fault of the call, with no path', async () => {
     native.saveAppFile = async () => { throw new Error(`${CACHE_DIR}/work/w/f.jpg: the disk is full`) }
 
-    const refusal = await refusalOf(runFfmpegJob(ffmpegCall({ arguments: '-i @f out.mp4' }, CONVERSATION), running(), report))
+    const refusal = await refusalOf(runFfmpegJob(ffmpegCall({ arguments: '-i @f out.mp4' }, videoContext(CONVERSATION)), running(), report))
 
     expect(refusal).toBe(jpegCopyNotWrittenText('f'))
     expect(drawings).toHaveLength(1)
@@ -316,7 +336,7 @@ describe('runFfmpegJob', () => {
   })
 
   it('stops the program at a stop of the call, and rejects with the stop when the program is gone', async () => {
-    const call = ffmpegCall({ arguments: '-i @c out.mp4' }, CONVERSATION)
+    const call = ffmpegCall({ arguments: '-i @c out.mp4' }, videoContext(CONVERSATION))
     const stop = new AbortController()
     let end: (end: BundledToolEnd) => void = () => {}
     native.program = () => new Promise((resolve) => { end = resolve })
@@ -338,7 +358,7 @@ describe('runFfmpegJob', () => {
   })
 
   it('starts no program after a stop while it gets the inputs ready', async () => {
-    const call = ffmpegCall({ arguments: '-i @d out.webm' }, CONVERSATION)
+    const call = ffmpegCall({ arguments: '-i @d out.webm' }, videoContext(CONVERSATION))
     const stop = new AbortController()
     let fail: (error: Error) => void = () => {}
     native.downloadAppFile = () => new Promise((_resolve, reject) => { fail = reject })
@@ -357,7 +377,7 @@ describe('runFfmpegJob', () => {
   it('fails with no tool text when a run was cancelled with no stop of its call', async () => {
     native.program = async () => ({ kind: 'cancelled' })
 
-    const error = await failureOf(runFfmpegJob(ffmpegCall({ arguments: '-i @c out.mp4' }, CONVERSATION), running(), report))
+    const error = await failureOf(runFfmpegJob(ffmpegCall({ arguments: '-i @c out.mp4' }, videoContext(CONVERSATION)), running(), report))
 
     expect(error).toBeInstanceOf(Error)
     expect(error).not.toBeInstanceOf(ToolError)
@@ -368,7 +388,7 @@ describe('runFfmpegJob', () => {
     const failure = new Error(`Could not copy ${FILM.src}: permission denied`)
     native.program = async () => { throw failure }
 
-    const refusal = await refusalOf(runFfmpegJob(ffmpegCall({ arguments: '-i @c out.mp4' }, CONVERSATION), running(), report))
+    const refusal = await refusalOf(runFfmpegJob(ffmpegCall({ arguments: '-i @c out.mp4' }, videoContext(CONVERSATION)), running(), report))
 
     expect(refusal).toBe(programNotStartedText('ffmpeg', 'video'))
     expect(consoleError).toHaveBeenCalledWith('Failed to run ffmpeg:', failure)
@@ -377,7 +397,7 @@ describe('runFfmpegJob', () => {
   })
 
   it('gives the time limit text for a run that the backend stopped at the limit, and keeps no file', async () => {
-    const call = ffmpegCall({ arguments: '-i @c out.mp4', timeout_seconds: 30 }, CONVERSATION)
+    const call = ffmpegCall({ arguments: '-i @c out.mp4', timeout_seconds: 30 }, videoContext(CONVERSATION))
     native.program = writes('stderr', `${PROGRESS}\r`, { kind: 'timedOut' })
     native.folderFiles = ['c.webm', 'out.mp4']
 
@@ -392,7 +412,7 @@ describe('runFfmpegJob', () => {
     native.program = writes('stderr', `[in#0 @ 0x55] Error opening input: ${CACHE_DIR}/work/x/c.webm\n`, { kind: 'exited', code: 1 })
     native.folderFiles = ['c.webm', 'out.mp4']
 
-    const outcome = await runFfmpegJob(ffmpegCall({ arguments: '-i @c out.mp4' }, CONVERSATION), running(), report)
+    const outcome = await runFfmpegJob(ffmpegCall({ arguments: '-i @c out.mp4' }, videoContext(CONVERSATION)), running(), report)
 
     expect(outcome).toMatchObject({ isError: true, assets: [] })
     expect(outcome.text).toContain('ffmpeg ended with the error code 1')
@@ -408,7 +428,7 @@ describe('runFfmpegJob', () => {
       return ENDED
     }
 
-    const outcome = await runFfmpegJob(ffmpegCall({ arguments: '-encoders' }, CONVERSATION), running(), report)
+    const outcome = await runFfmpegJob(ffmpegCall({ arguments: '-encoders' }, videoContext(CONVERSATION)), running(), report)
 
     expect(outcome).toStrictEqual({ text: expect.stringContaining('Its output:\nV....D libvpx-vp9'), isError: false, assets: [] })
     expect(states.at(-1)).toBe(ffmpegStateText('size=1KiB title=/home/…'))
@@ -420,7 +440,7 @@ describe('runFfmpegJob', () => {
       if (from.path.endsWith('/out.mp4')) throw new Error(`${APP_DIR}: the disk is full`)
     }
 
-    const refusal = await refusalOf(runFfmpegJob(ffmpegCall({ arguments: '-i @c out.mp4 frame_%d.jpg' }, CONVERSATION), running(), report))
+    const refusal = await refusalOf(runFfmpegJob(ffmpegCall({ arguments: '-i @c out.mp4 frame_%d.jpg' }, videoContext(CONVERSATION)), running(), report))
 
     expect(refusal).toBe(outputNotStoredText('video'))
     expect(deletedImages).toStrictEqual([`${APP_DIR}/${native.moves[0].to.path}`])
@@ -432,10 +452,111 @@ describe('runFfmpegJob', () => {
     native.folderFiles = ['c.webm', 'out.mp4']
     native.deleteAppFile = async () => { throw new Error('The folder is busy.') }
 
-    const outcome = await runFfmpegJob(ffmpegCall({ arguments: '-i @c out.mp4' }, CONVERSATION), running(), report)
+    const outcome = await runFfmpegJob(ffmpegCall({ arguments: '-i @c out.mp4' }, videoContext(CONVERSATION)), running(), report)
 
     expect(outcome.assets).toHaveLength(1)
     expect(consoleError).toHaveBeenCalledWith(`Failed to delete the work folder ${native.runs[0].run.folder}:`, expect.any(Error))
+  })
+})
+
+// What is at each path of the app root in a test of the paths of `/work`:
+// the kind of each path of `kinds`, by its path below the work folder of
+// the conversation, and nothing at every other path.
+function workTree(kinds: Record<string, FileTree['kind']>): (file: AppFileRef) => FileTree {
+  return (file) => {
+    const below = file.path.startsWith(`${CONVERSATION_WORK_FOLDER}/`) ? file.path.slice(CONVERSATION_WORK_FOLDER.length + 1) : null
+    return { kind: (below === null ? undefined : kinds[below]) ?? 'missing', size: 0, updatedAt: null, entries: [], more: false }
+  }
+}
+
+describe('the files of /work', () => {
+  it('copies each file of /work into the folder work of the run, and takes none of them for a new file', async () => {
+    const call = ffmpegCall({ arguments: '-i /work/clips/a.mp4 -i @b -map 0:v -map 1:a out.mp4' }, videoContext(CONVERSATION))
+    native.folderFiles = ['b.wav', 'out.mp4']
+
+    const outcome = await runFfmpegJob(call, running(), report)
+
+    expect(native.runs[0].run.inputs).toStrictEqual([
+      { name: 'b.wav', source: SONG.src },
+      { name: 'work/clips/a.mp4', source: `${APP_DIR}/${CONVERSATION_WORK_FOLDER}/clips/a.mp4` },
+    ])
+    expect(native.runs[0].run.args).toContain('work/clips/a.mp4')
+    expect(outcome.assets).toHaveLength(1)
+    deletedWorkFolder()
+  })
+
+  it('gives ffprobe the copies of the files of /work, and runs it only when each one is a file', async () => {
+    native.fileTree = workTree({ 'a.mp4': 'file' })
+
+    await runFfprobe(ffprobeCall({ arguments: '/work/a.mp4' }, videoContext(CONVERSATION)), running())
+    const refusal = await refusalOf(runFfprobe(ffprobeCall({ arguments: '/work/b.mp4' }, videoContext(CONVERSATION)), running()))
+
+    expect(native.runs.map(({ run }) => run.inputs)).toStrictEqual([[{ name: 'work/a.mp4', source: `${APP_DIR}/${CONVERSATION_WORK_FOLDER}/a.mp4` }]])
+    expect(refusal).toContain('There is no file /work/b.mp4.')
+    expect(refusal).toContain('Dez did not run ffprobe.')
+  })
+
+  it('takes the inputs of /work that are files, and a save_to that is a folder or that is not there yet', async () => {
+    native.fileTree = workTree({ 'a.mp4': 'file', frames: 'folder' })
+
+    for (const saveTo of ['/work/frames', '/work/new', '']) {
+      await expect(checkWorkPaths(ffmpegCall({ arguments: '-i /work/a.mp4 f%04d.png', save_to: saveTo }, videoContext(CONVERSATION)), 'ffmpeg')).resolves.toBeUndefined()
+    }
+  })
+
+  it.each([
+    ['-i /work/gone.mp4 out.mp4', '', workInputNotFileText({ virtual: '/work/gone.mp4', name: 'work/gone.mp4', file: '' }, 'missing', 'ffmpeg')],
+    ['-i /work/clips out.mp4', '', workInputNotFileText({ virtual: '/work/clips', name: 'work/clips', file: '' }, 'folder', 'ffmpeg')],
+    ['-i /work/link.mp4 out.mp4', '', workInputNotFileText({ virtual: '/work/link.mp4', name: 'work/link.mp4', file: '' }, 'other', 'ffmpeg')],
+    ['-i @c f%04d.png', '/work/notes', '`save_to` is /work/notes, which is a file.'],
+  ])('refuses the call %j with the save_to %j, as its paths of /work are not what it needs', async (text, saveTo, problem) => {
+    native.fileTree = workTree({ clips: 'folder', 'link.mp4': 'other', notes: 'file' })
+
+    const refusal = await refusalOf(checkWorkPaths(ffmpegCall({ arguments: text, save_to: saveTo }, videoContext(CONVERSATION)), 'ffmpeg'))
+
+    expect(refusal).toContain(problem)
+    expect(refusal).toContain('Dez started no job.')
+  })
+
+  it('tells the user when Dez cannot read what is at a path of /work', async () => {
+    native.fileTree = () => { throw new Error(`Failed to list ${CONVERSATION_WORK_FOLDER}/a.mp4: The app file path goes through a link`) }
+
+    const refusal = await refusalOf(checkWorkPaths(ffmpegCall({ arguments: '-i /work/a.mp4 out.mp4' }, videoContext(CONVERSATION)), 'ffmpeg'))
+
+    expect(refusal).toBe(workPathUnreadableText('/work/a.mp4', 'ffmpeg'))
+    expect(consoleError).toHaveBeenCalled()
+  })
+
+  it('moves every new file of a run with save_to into its folder of /work, and gives no asset', async () => {
+    const call = ffmpegCall({ arguments: '-i @c -vf fps=1 f%02d.png', save_to: '/work/frames' }, videoContext(CONVERSATION))
+    native.folderFiles = ['c.webm', 'f01.png', 'f02.png', 'notes.txt']
+
+    const outcome = await runFfmpegJob(call, running(), report)
+
+    const folder = deletedWorkFolder()
+    expect(native.createdFolders).toContainEqual({ root: 'app', path: `${CONVERSATION_WORK_FOLDER}/frames` })
+    expect(native.moves.map(({ from, to }) => [from.root, from.path, to.root, to.path])).toStrictEqual([
+      ['cache', `${folder}/f01.png`, 'app', `${CONVERSATION_WORK_FOLDER}/frames/f01.png`],
+      ['cache', `${folder}/f02.png`, 'app', `${CONVERSATION_WORK_FOLDER}/frames/f02.png`],
+      ['cache', `${folder}/notes.txt`, 'app', `${CONVERSATION_WORK_FOLDER}/frames/notes.txt`],
+    ])
+    expect(outcome).toMatchObject({ isError: false, assets: [] })
+    expect(outcome.text).toContain('/work/frames/f01.png, /work/frames/f02.png, /work/frames/notes.txt.')
+  })
+
+  it('tells how many files moved into /work when a move fails', async () => {
+    const call = ffmpegCall({ arguments: '-i @c -vf fps=1 f%02d.png', save_to: '/work/frames' }, videoContext(CONVERSATION))
+    native.folderFiles = ['c.webm', 'f01.png', 'f02.png']
+    native.moveAppFile = async (from) => {
+      if (from.path.endsWith('/f02.png')) throw new Error(`${APP_DIR}: the disk is full`)
+    }
+
+    const refusal = await refusalOf(runFfmpegJob(call, running(), report))
+
+    expect(refusal).toBe(workFilesNotSavedText(call.saveTo ?? expect.fail('no save_to'), 1, 2))
+    expect(native.moves).toHaveLength(1)
+    expect(consoleError).toHaveBeenCalled()
+    deletedWorkFolder()
   })
 })
 
@@ -571,7 +692,7 @@ describe('runJoinJob', () => {
 
 describe('runFfprobe', () => {
   it('gives what ffprobe wrote, with no local path, from one run on copies of the inputs', async () => {
-    const call = ffprobeCall({ arguments: '-show_format -of json @c' }, CONVERSATION)
+    const call = ffprobeCall({ arguments: '-show_format -of json @c' }, videoContext(CONVERSATION))
     native.program = async (_run, onOutput) => {
       onOutput({ stream: 'stdout', text: '{ "format": { "filename": "c.webm", "tags": { "comment": "/home/u/Videos/trip.mp4" } } }\n' })
       onOutput({ stream: 'stderr', text: 'Input #0, matroska,webm\n' })
@@ -600,7 +721,7 @@ describe('runFfprobe', () => {
     const written = new OutputStart()
     written.add('c.webm: Invalid data found when processing input\n')
 
-    const refusal = await refusalOf(runFfprobe(ffprobeCall({ arguments: '@c' }, CONVERSATION), running()))
+    const refusal = await refusalOf(runFfprobe(ffprobeCall({ arguments: '@c' }, videoContext(CONVERSATION)), running()))
 
     expect(refusal).toBe(ffprobeFailedText(end, new OutputStart(), written))
     deletedWorkFolder()
@@ -611,7 +732,7 @@ describe('runFfprobe', () => {
     let end: (end: BundledToolEnd) => void = () => {}
     native.program = () => new Promise((resolve) => { end = resolve })
 
-    const work = failureOf(runFfprobe(ffprobeCall({ arguments: '@c' }, CONVERSATION), stop.signal))
+    const work = failureOf(runFfprobe(ffprobeCall({ arguments: '@c' }, videoContext(CONVERSATION)), stop.signal))
     await vi.waitFor(() => expect(native.runs).toHaveLength(1))
     stop.abort(STOP)
     end({ kind: 'cancelled' })

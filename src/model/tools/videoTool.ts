@@ -1,5 +1,7 @@
 import * as z from 'zod'
 import { byteSizeText } from '../../utils/byteSize'
+import { countOf, countText } from '../../utils/countText'
+import { startOf } from '../../utils/textCut'
 import { sectionPlainText } from '../chat/content'
 import { findAssetMentions } from '../chat/imageMentions'
 import { imageExtension, imageMediaType } from '../chat/images'
@@ -8,7 +10,9 @@ import { newMediaIds } from '../chat/mediaIds'
 import type { Section } from '../chat/types'
 import { conversationAssets, type ConversationAssets } from '../streams/mediaRequest'
 import { VIDEO_ALIASES } from './appAliases'
+import { appsPath, HIDDEN_NAMES, type AppsPath } from './appsTool'
 import { assetIdWords } from './arguments'
+import { conversationWorkFolder, WORK_VIRTUAL_ROOT } from './conversationWork'
 import { ASSET_NAMES, INTERMEDIATE_PARAMETER, JOB_CALL_NOTE, jobCallLabel, jobTimeoutMs, jobTimeoutParameter } from './jobs'
 import { clipInput, tellUserConsole, type ClipInput, type KeptFile, type ProgramEnd, type ShippedProgram } from './programRuns'
 import { subcommandToolDefinition, type SubcommandTool } from './subcommands'
@@ -36,6 +40,13 @@ import { MAX_TEXT_FILES, MAX_TEXT_FILES_BYTES, TEXT_FILE_NAME_TEXT, textFilesArg
 // the name goes in place of the `@id`. So no argument and no log line
 // holds a path of the user's computer, and the program cannot change a
 // file of the user.
+//
+// A call can also name a file of the work folder of its conversation by
+// its path (`/work/frames/f1.png`, conversationWork.ts). The program gets a
+// copy of it at the same path in its work folder (`work/frames/f1.png`),
+// so two such inputs never have the same name. With `save_to`, the new
+// files of an ffmpeg run move into a folder of `/work` and are no assets:
+// the parts of a long work, which a later call or a script reads.
 //
 // The checks of the arguments (`argumentProblem`) are string checks. They
 // give a model that makes a mistake, or that follows a text that it read,
@@ -66,6 +77,10 @@ export const FFPROBE_TIMEOUT_MS = 60_000
 /** The most new files of one ffmpeg run that Dez keeps: a run that writes
  *  each frame of a clip as an image must not fill the reply. */
 export const MAX_VIDEO_OUTPUT_FILES = 20
+
+/** The most new files of one ffmpeg run that Dez saves into `/work`
+ *  (`save_to`): they are not in the reply, but each one is a move. */
+export const MAX_SAVED_WORK_FILES = 1000
 
 /** The most output (the log) that an ffmpeg run can write. Only its end
  *  goes into a result. */
@@ -109,7 +124,7 @@ const KEPT_ENDINGS = [...CLIP_FILE_EXTENSIONS.map((extension) => `.${extension}`
 const ARGUMENTS_PARAMETER: ToolParameter = {
   name: 'arguments',
   type: 'string',
-  description: 'The arguments as one command line, without the program name. Name an input by its id with an @, as in "-i @c".',
+  description: `The arguments as one command line, without the program name. Name an input by its id with an @, as in "-i @c", or a file of the work folder by its path, as in "-i ${WORK_VIRTUAL_ROOT}/frames/f1.png".`,
   required: true,
 }
 
@@ -130,6 +145,15 @@ const TEXT_FILES_PARAMETER: ToolParameter = {
   required: false,
 }
 
+const SAVE_TO_PARAMETER: ToolParameter = {
+  name: 'save_to',
+  type: 'string',
+  description: `A folder of the work folder of this conversation, as in "${WORK_VIRTUAL_ROOT}" or "${WORK_VIRTUAL_ROOT}/frames". `
+    + 'With it, Dez moves every new file of the run into that folder under its own name (it replaces a file of the same name there), and the run adds no clip and no image to your reply. '
+    + 'Without it, the new clips and images go into your reply.',
+  required: false,
+}
+
 // The help of the `ffmpeg` subcommand. It is long, and only a `help` call
 // sends it: the tools array holds one short entry for the whole tool. Each
 // example ran with this build (tests/e2e/video-tool.e2e.ts runs some).
@@ -141,20 +165,26 @@ const FFMPEG_HELP = [
     + 'A run can end with no error and still make a wrong clip: check each new clip with asset_view before you report it.',
   'Inputs: name a video clip, an audio clip, or an image of this conversation by its id with an @, as in `-i @c`. '
     + 'Dez puts a copy of that file into the run folder and writes the name of the copy (as in c.mp4) in place of the @id. '
-    + 'The file itself never changes. Name no other file: Dez refuses an argument that names a file outside the run folder. '
+    + `The file itself never changes. Name no other file but one of ${WORK_VIRTUAL_ROOT}/ (see below): Dez refuses an argument that names a file outside the run folder. `
     + 'On Linux with Landlock and on macOS, the system also lets ffmpeg open no file outside the cache folder and the assets folder of Dez, so a file that names another file (a playlist, a list) cannot reach the other files of the user. '
     + 'A PNG, JPEG, GIF, or WebP image goes as its own file, with its transparent pixels. An SVG image goes as a JPEG copy, with white in place of transparent pixels: ffmpeg reads no SVG. '
     + 'An encode to a pixel format with no transparency (as yuv420p for libx264) drops the transparency, and each transparent pixel shows the color that it hides, often black. '
     + 'To put such an image on white, see the examples.',
   'Outputs: give each output a new file name with no folder, made of ASCII letters, digits, ".", "_", and "-" only. '
-    + `Dez keeps the new files whose name ends in ${KEPT_ENDINGS}, at most ${MAX_VIDEO_OUTPUT_FILES} for one call, and deletes every other file. `
+    + `Without \`save_to\`, Dez keeps the new files whose name ends in ${KEPT_ENDINGS}, at most ${MAX_VIDEO_OUTPUT_FILES} for one call, and deletes every other file. `
     + 'Write a PNG for an image with transparent pixels: a JPEG has none. This ffmpeg writes no WebP image. For a run whose log is the result, end the arguments with `-f null -`.',
+  `Work folder: ${WORK_VIRTUAL_ROOT}/ is the work folder of this conversation, which the apps tool and the scripts of apps also read and write. `
+    + `Name a file of it by its path, as in \`-i ${WORK_VIRTUAL_ROOT}/clips/a.mp4\`: Dez puts a copy of it into the run folder at work/clips/a.mp4 and writes that name in place of the path. `
+    + `Dez copies only the files that the arguments name by their whole paths, so a list file or a pattern (as in f%03d.png) reaches no other file of ${WORK_VIRTUAL_ROOT}/. `
+    + `With \`save_to\`, as in "${WORK_VIRTUAL_ROOT}/frames", Dez moves every new file of the run, of any type, into that folder, at most ${countText(MAX_SAVED_WORK_FILES)} for one call, and the run adds no clip and no image to your reply. `
+    + 'Use it for the parts of a long work (frames, segments) that a later call or a script reads. '
+    + `To show such a file to the user, read it in a call without \`save_to\`, as in \`-i ${WORK_VIRTUAL_ROOT}/clips/a.mp4 -c copy a.mp4\`.`,
   'Arguments: one command line without the program name. Dez splits it into words as a shell does: white space ends a word, and single or double quotes keep a word with spaces whole. '
     + 'It is not a shell: it has no pipe, no redirect, no variable, and no backslash escape. '
     + 'To give ffmpeg single quotes (around a filter value with a comma), put the whole argument in double quotes, as in "select=\'eq(n,0)\'".',
   `Dez puts \`${FFMPEG_FIXED_ARGS.join(' ')}\` before your arguments, so the log holds the warnings, the errors, and the progress. `
     + 'Add `-v info` for the lines of a filter that reports in the log (volumedetect, silencedetect, cropdetect).',
-  'Dez refuses an argument with: an absolute path, "~", "..", a backslash, a URL or a protocol form (as in http:, file:, pipe:, concat:), '
+  `Dez refuses an argument with: an absolute path (but one of ${WORK_VIRTUAL_ROOT}/), "~", "..", a backslash, a URL or a protocol form (as in http:, file:, pipe:, concat:), `
     + 'a lone "-" (only `-f null -` can have one), a capture or playback device, the hls format or an .m3u8 or .m3u file name (no HLS input and no HLS output), '
     + 'the options -safe, -protocol_whitelist, -protocol_blacklist, -filter_script, -filter_complex_script, -graph_file, -hls_key_info_file, '
     + '-enable_drefs, -use_absolute_path, -dump_attachment, and each option that starts with "-/", '
@@ -184,6 +214,8 @@ const FFMPEG_HELP = [
   '- Write a title on the frame at second 1 of @c, as a PNG image, with "NotoSans-Bold.ttf" in `fonts`: -ss 1 -i @c -frames:v 1 -vf "drawtext=fontfile=fonts/NotoSans-Bold.ttf:text=\'Night Drive\':fontsize=64:fontcolor=white:borderw=4:x=(w-text_w)/2:y=h-text_h-40" -update 1 title.png',
   '- Write the subtitles of an SRT file on @c, with "NotoSans-Regular.ttf" in `fonts` and {"words.srt":"1\\n00:00:00,000 --> 00:00:02,500\\nNight: Drive\\n"} in `text_files`: '
     + '-i @c -vf "subtitles=words.srt:fontsdir=fonts:force_style=\'FontName=Noto Sans\'" -c:v libx264 -c:a aac subtitled.mp4',
+  `- Write one frame of each second of @c as a PNG image into the folder ${WORK_VIRTUAL_ROOT}/frames, with "${WORK_VIRTUAL_ROOT}/frames" in \`save_to\`: -i @c -vf fps=1 f%04d.png`,
+  `- Put the sound ${WORK_VIRTUAL_ROOT}/parts/voice.wav on the video clip ${WORK_VIRTUAL_ROOT}/parts/scene.mp4, as a clip of your reply: -i ${WORK_VIRTUAL_ROOT}/parts/scene.mp4 -i ${WORK_VIRTUAL_ROOT}/parts/voice.wav -map 0:v -map 1:a -c:v copy -c:a aac -shortest scene_voice.mp4`,
 ].join('\n')
 
 // Static text only (no count that changes, no date): the tools array is in
@@ -225,14 +257,14 @@ export const VIDEO_TOOL: SubcommandTool = {
       name: 'ffmpeg',
       summary: 'Run ffmpeg with your own arguments on the clips and the images, for example to cut or scale a clip, to put sound on a video clip, to write text or subtitles on a picture or a clip, or to take a frame as an image.',
       description: FFMPEG_HELP,
-      parameters: [ARGUMENTS_PARAMETER, FONTS_PARAMETER, TEXT_FILES_PARAMETER, INTERMEDIATE_PARAMETER, jobTimeoutParameter(DEFAULT_VIDEO_TIMEOUT_SECONDS)],
+      parameters: [ARGUMENTS_PARAMETER, FONTS_PARAMETER, TEXT_FILES_PARAMETER, SAVE_TO_PARAMETER, INTERMEDIATE_PARAMETER, jobTimeoutParameter(DEFAULT_VIDEO_TIMEOUT_SECONDS)],
       example: { arguments: '-i @c -i @b -map 0:v -map 1:a -c:v copy -c:a aac -shortest out.mp4' },
     },
     {
       name: 'ffprobe',
       summary: 'Run ffprobe with your own arguments to read the facts of a clip or an image (its streams, codecs, size, and length).',
       description: 'Runs the ffprobe that Dez ships once, with the arguments that you give, and gives its output as the result of this call (no job), '
-        + `up to ${PROGRAM_OUTPUT_CAP} characters. Name a clip or an image by its id with an @, as in \`@c\`. `
+        + `up to ${PROGRAM_OUTPUT_CAP} characters. Name a clip or an image by its id with an @, as in \`@c\`, or a file of the work folder by its path, as in \`${WORK_VIRTUAL_ROOT}/clips/a.mp4\`. `
         + 'The inputs, the split of the arguments into words, and the refusals are those of the ffmpeg subcommand: its help tells them. '
         + 'An SVG image goes as a JPEG copy, so the facts are those of the copy. '
         + 'Ask only for what you need: -show_frames and -show_packets of a whole clip are long. '
@@ -246,8 +278,8 @@ export const VIDEO_TOOL: SubcommandTool = {
 
 export const VIDEO_TOOL_DEFINITION = subcommandToolDefinition(VIDEO_TOOL)
 
-// The programs that the `video` tool runs.
-type VideoProgram = Extract<ShippedProgram, 'ffmpeg' | 'ffprobe'>
+/** The programs that the `video` tool runs. */
+export type VideoProgram = Extract<ShippedProgram, 'ffmpeg' | 'ffprobe'>
 
 // What Dez did not do for a call that it refuses, by the program of the
 // call: `ffmpeg` runs as a job, and `ffprobe` in the call.
@@ -467,13 +499,14 @@ function wordForms(word: string): string[] {
   return word.includes('\'') ? [word, word.replaceAll('\'', ''), filterGraphText(word), filterOptionsText(word)] : [word]
 }
 
-const RUN_FOLDER_ONLY = 'The program works only in its own run folder: name an input as @id, and an output as a new file name with no folder.'
+const RUN_FOLDER_ONLY = `The program works only in its own run folder: name an input as @id or as a path of ${WORK_VIRTUAL_ROOT}/, and an output as a new file name with no folder.`
 
 // Why Dez refuses the word `words[index]` of a command line of ffmpeg or
 // ffprobe (one rule for both); null for a word that can go. `words` are
 // the words after the split, with a bare `@` in place of each `@id` that
-// names an input: the id is no part of what the program gets, and an id
-// such as `fd` or `oss` must refuse nothing.
+// names an input and of each path of `/work` (`WORK_PATH`): neither is a
+// part of what the program gets, and an id such as `fd` or `oss` must
+// refuse nothing.
 //
 // These are string checks: they cannot see a path in the content of a
 // file (a playlist). So the OS rule (src-tauri/src/confinement.rs) guards
@@ -548,6 +581,112 @@ export interface ImageInput {
 
 export type VideoInput = ImageInput | ClipInput
 
+/** A file of the work folder of the conversation, as the program gets it. */
+export interface WorkInput {
+  /** The path as a model writes it: `/work/clips/a.mp4`. */
+  virtual: string
+  /** The path of its copy in the work folder of the run: the same path
+   *  with no `/` at its start (`work/clips/a.mp4`), so no two inputs have
+   *  one name. */
+  name: string
+  /** The path of the file from the app root (`AppsPath.file`). */
+  file: string
+}
+
+// A path of the work folder of the conversation in a word: `/work`, then
+// the rest of the path up to a char that ends a value of ffmpeg (white
+// space, a quote, a separator of a filter graph or of its options) or an
+// `@`. As for `ABSOLUTE_PATH`, no name char, `.`, `)`, or `]` comes before
+// it (`iw/work` is no path). A name such as `/workshop` is no such path:
+// the refusal of absolute paths tells the model the rule.
+const PATH_END = String.raw`\s'"[\],;:=|@`
+const WORK_PATH = new RegExp(String.raw`(?<![${NAME_CHARS}.)\]])${WORK_VIRTUAL_ROOT}(?:/[^${PATH_END}]*)?(?![^${PATH_END}])`, 'g')
+
+// The ending of an HLS playlist, which the probe of the hls demuxer takes
+// for one by its name (`HLS_NAME`).
+const HLS_ENDING = /\.m3u8?$/i
+
+// The text of a call whose conversation has no work folder: only a hand
+// edit of app_state.json gives a conversation an id that can name none.
+function noWorkFolderText(conversationId: string): string | null {
+  return conversationWorkFolder(conversationId) === null
+    ? `This conversation has no ${WORK_VIRTUAL_ROOT} folder, as its id can name no folder. This is a fault of Dez, not of your call: tell the user.`
+    : null
+}
+
+// The path of `/work` of the conversation `conversationId` that `text`
+// names, by the path rule of the apps tool (`appsPath`), with the text of
+// `notDone` after the text of each refusal.
+function workPath(text: string, parameter: string, conversationId: string, notDone: string): AppsPath {
+  const noFolder = noWorkFolderText(conversationId)
+  if (noFolder !== null) throw new ToolError(`${noFolder} ${notDone}`)
+  try {
+    return appsPath(text, parameter, conversationId)
+  } catch (error) {
+    if (error instanceof ToolError) throw new ToolError(`${error.explanation} ${notDone}`, error.details, { cause: error })
+    throw error
+  }
+}
+
+// The input of the path `virtual` of `/work` in the arguments of a call.
+// Throws a `ToolError` for a path that names no file in the folder, and
+// for an HLS playlist: the mask of the path hides its name from
+// `argumentProblem`.
+function workInputOf(virtual: string, conversationId: string, program: VideoProgram): WorkInput {
+  const notDone = NOT_DONE[program]
+  const quoted = JSON.stringify(virtual)
+  if (virtual.includes('%')) {
+    throw new ToolError(`\`arguments\` names ${quoted}, a pattern of file names. Dez gives the program a copy of each file of ${WORK_VIRTUAL_ROOT}/ that the arguments name by its whole path, and of no other file. `
+      + `Name each file by its path, or make one clip of the files first with a script (the apps tool). ${notDone}`)
+  }
+  const path = workPath(virtual, '`arguments`', conversationId, notDone)
+  if (path.names.length === 0) {
+    throw new ToolError(`\`arguments\` names ${path.virtual}, the work folder itself. Name a file of it by its path, as in "${WORK_VIRTUAL_ROOT}/clips/a.mp4". ${notDone}`)
+  }
+  if (HLS_ENDING.test(path.virtual)) {
+    throw new ToolError(`\`arguments\` names ${path.virtual}, an HLS playlist. A playlist can name files outside the run folder by paths that Dez cannot check, so Dez lets the program read no HLS playlist. ${notDone}`)
+  }
+  return { virtual: path.virtual, name: path.virtual.slice(1), file: path.file }
+}
+
+/** The error result of a call whose input `input` of `/work` is no file
+ *  that the program can read: `kind` tells what is at its path (`other` is
+ *  a special file; a link, which Dez follows none of in the work folder,
+ *  gets `workPathUnreadableText`). A path of `/work` in the
+ *  arguments is always an input, so the text of a missing file also tells
+ *  a model that took it for an output how to save one. */
+export function workInputNotFileText(input: WorkInput, kind: 'missing' | 'folder' | 'other', program: VideoProgram): string {
+  const what = kind === 'missing' ? `There is no file ${input.virtual}`
+    : kind === 'folder' ? `${input.virtual} is a folder, not a file`
+      : `${input.virtual} is a special file, and Dez copies only a regular file`
+  const output = kind === 'missing' && program === 'ffmpeg'
+    ? ` A path of ${WORK_VIRTUAL_ROOT}/ in \`arguments\` names an input: to write new files into ${WORK_VIRTUAL_ROOT}/, give each output a name with no folder, and the folder in \`save_to\`.`
+    : ''
+  return `${what}. Check the path with \`apps ls\` or \`apps find\`, and call again.${output} ${NOT_DONE[program]}`
+}
+
+/** The error result of a call whose path `virtual` of `/work` Dez could
+ *  not check (a path that goes through a link is one cause: Dez follows
+ *  none in the work folder). */
+export function workPathUnreadableText(virtual: string, program: VideoProgram): string {
+  return `Dez could not read what is at ${virtual}. ${TELL_USER_CONSOLE} ${NOT_DONE[program]}`
+}
+
+/** The error result of an ffmpeg call whose `save_to` names no folder:
+ *  `kind` tells what is at its path (`other` is a special file; a link
+ *  gets `workPathUnreadableText`). */
+export function saveToNotFolderText(saveTo: AppsPath, kind: 'file' | 'other'): string {
+  return `\`save_to\` is ${saveTo.virtual}, which is ${kind === 'file' ? 'a file' : 'a special file'}. `
+    + `Give a folder that is there or that Dez can make, or leave out \`save_to\`. ${NOT_DONE.ffmpeg}`
+}
+
+/** The error result of a run with `save_to` whose new files Dez could not
+ *  all move into the folder `saveTo`: the first `moved` of the `count`
+ *  files (in the order of `SavedFiles.names`) are there. */
+export function workFilesNotSavedText(saveTo: AppsPath, moved: number, count: number): string {
+  return `ffmpeg made its files, but Dez could move only ${countText(moved)} of the ${countOf(count, 'file')} into ${saveTo.virtual} (the first ones by name), and it deleted the others. ${TELL_USER_CONSOLE}`
+}
+
 // The input that the id `id` names; null for an id of no image and no
 // clip. The name of an image's copy is the id and the extension of the
 // file's type, as for a clip (`clipInput`). This ffmpeg build reads every
@@ -566,23 +705,35 @@ function inputOf(id: string, assets: ConversationAssets): VideoInput | null {
 /** A run of a program that a call asks for. */
 export interface ProgramCall {
   /** The arguments of the program: what Dez adds, then the words of the
-   *  call with the name of each copy in place of its `@id`. */
+   *  call with the name of each copy in place of its `@id` or its path. */
   args: string[]
   /** The images and the clips that the arguments name, each one once, in
    *  the order of their first mention. */
   inputs: VideoInput[]
+  /** The files of `/work` that the arguments name, each one once, in the
+   *  order of their first mention. */
+  workInputs: WorkInput[]
 }
 
-// The run that the `arguments` of a call ask for, with the fonts `fonts`
-// in its fonts folder (videoFonts.ts). An `@id` mention (imageMentions.ts)
-// in a word is an input; any other `@` word is plain text, as in a prompt.
-// Throws a `ToolError` for a text that is no command line
-// (`commandLineWords`), a word that the argument rule or the font checks
-// refuse, and an `@id` that names nothing (`unknownInputsProblem`).
-function programCall(program: VideoProgram, fixedArgs: readonly string[], args: ToolArguments, sections: readonly Section[], fonts: readonly string[]): ProgramCall {
+// The run that the `arguments` of a call of the conversation
+// `conversationId` ask for, with the fonts `fonts` in its fonts folder
+// (videoFonts.ts). An `@id` mention (imageMentions.ts) in a word is an
+// input, and so is a path of `/work` (`WORK_PATH`); any other `@` word is
+// plain text, as in a prompt. Throws a `ToolError` for a text that is no
+// command line (`commandLineWords`), a word that the argument rule or the
+// font checks refuse, a path of `/work` that Dez does not copy
+// (`workInputOf`), and an `@id` that names nothing (`unknownInputsProblem`).
+function programCall(
+  program: VideoProgram,
+  fixedArgs: readonly string[],
+  args: ToolArguments,
+  { sections, conversationId }: CallContext,
+  fonts: readonly string[],
+): ProgramCall {
   const words = commandLineWords(typeof args.arguments === 'string' ? args.arguments : '', program)
   const assets = conversationAssets(sections)
   const inputs = new Map<string, VideoInput>()
+  const workInputs = new Map<string, WorkInput>()
   const unknownIds = new Set<string>()
   const named: string[] = []
   const masked: string[] = []
@@ -593,14 +744,24 @@ function programCall(program: VideoProgram, fixedArgs: readonly string[], args: 
       if (input) inputs.set(id, input)
       else unknownIds.add(id)
     }
+    // A path holds no `@`, so it never overlaps a mention.
+    const copies = [
+      ...mentions.flatMap(({ from, to, id }) => {
+        const input = inputs.get(id)
+        return input ? [{ from, to, name: input.name }] : []
+      }),
+      ...Array.from(word.matchAll(WORK_PATH), (match) => {
+        const input = workInputs.get(match[0]) ?? workInputOf(match[0], conversationId, program)
+        workInputs.set(match[0], input)
+        return { from: match.index, to: match.index + match[0].length, name: input.name }
+      }),
+    ]
     let name = word
     let mask = word
-    // From the last mention to the first, so that the offsets of the
-    // earlier ones stay true.
-    for (const { from, to, id } of mentions.reverse()) {
-      const input = inputs.get(id)
-      if (!input) continue
-      name = name.slice(0, from) + input.name + name.slice(to)
+    // From the last copy to the first, so that the offsets of the earlier
+    // ones stay true.
+    for (const { from, to, name: copy } of copies.sort((one, other) => other.from - one.from)) {
+      name = name.slice(0, from) + copy + name.slice(to)
       mask = `${mask.slice(0, from)}@${mask.slice(to)}`
     }
     named.push(name)
@@ -615,7 +776,37 @@ function programCall(program: VideoProgram, fixedArgs: readonly string[], args: 
   const [nextId] = newMediaIds(sections.map(sectionPlainText), 1)
   const unknown = unknownInputsProblem([...unknownIds], assets, nextId, { argument: '`arguments`', notDone: NOT_DONE[program] })
   if (unknown !== null) throw new ToolError(unknown)
-  return { args: [...fixedArgs, ...named], inputs: [...inputs.values()] }
+  return { args: [...fixedArgs, ...named], inputs: [...inputs.values()], workInputs: [...workInputs.values()] }
+}
+
+/** What a call of the `video` tool reads besides its arguments: the
+ *  sections of its tab, and the id of the conversation, whose work folder
+ *  is `/work`. */
+export interface CallContext {
+  sections: readonly Section[]
+  conversationId: string
+}
+
+// The folder of `/work` that the `save_to` of an ffmpeg call names; null
+// for a call with no `save_to`. A name of the folder that ends like a clip
+// or an image tells a model that took it for the path of one output file.
+function saveToArgument(args: ToolArguments, conversationId: string): AppsPath | null {
+  const text = typeof args.save_to === 'string' ? args.save_to.trim() : ''
+  if (text === '') return null
+  const form = `Give a folder of the work folder of this conversation, as in "${WORK_VIRTUAL_ROOT}" or "${WORK_VIRTUAL_ROOT}/frames", or leave out \`save_to\` for clips and images in your reply. ${NOT_DONE.ffmpeg}`
+  if (text !== WORK_VIRTUAL_ROOT && !text.startsWith(`${WORK_VIRTUAL_ROOT}/`)) {
+    throw new ToolError(`\`save_to\` is ${JSON.stringify(startOf(text, 300))}, which is no folder of ${WORK_VIRTUAL_ROOT}/. ${form}`)
+  }
+  const path = workPath(text, 'save_to', conversationId, NOT_DONE.ffmpeg)
+  const hidden = path.names.find((name) => HIDDEN_NAMES.includes(name))
+  if (hidden !== undefined) {
+    throw new ToolError(`\`save_to\` holds the name "${hidden}": Dez takes a path with it for a path of the user's computer and hides it from you. Use another name. ${NOT_DONE.ffmpeg}`)
+  }
+  const last = path.names.at(-1)
+  if (last !== undefined && (storableClip('', last) !== null || imageMediaType(last) !== null)) {
+    throw new ToolError(`\`save_to\` is ${path.virtual}, which looks like the name of a file. It names a folder: each new file keeps the name that the arguments give it. ${form}`)
+  }
+  return path
 }
 
 /** The run of an `ffmpeg` call, as a job. */
@@ -629,25 +820,31 @@ export interface FfmpegCall extends ProgramCall {
   /** The arguments name the null format (`-f null`): a run that makes no
    *  file did what the call asked for. */
   nullOutput: boolean
+  /** The folder of `/work` that gets the new files of the run
+   *  (`savedOutputFiles`); null for a run whose new clips and images are
+   *  the assets of its job (`outputFiles`). */
+  saveTo: AppsPath | null
 }
 
 /** The run that a `video ffmpeg` call asks for, from its checked arguments
- *  and the sections of its tab. Throws a `ToolError`, whose text tells the
- *  model how to fix the call, for a bad time limit, a font that Dez does
- *  not ship, text files that Dez does not write (`textFilesArgument`), and
- *  arguments that Dez does not run (`programCall`). */
-export function ffmpegCall(args: ToolArguments, sections: readonly Section[]): FfmpegCall {
+ *  and its tab. Throws a `ToolError`, whose text tells the model how to
+ *  fix the call, for a bad time limit, a font that Dez does not ship, text
+ *  files that Dez does not write (`textFilesArgument`), a `save_to` that
+ *  names no folder of `/work`, and arguments that Dez does not run
+ *  (`programCall`). */
+export function ffmpegCall(args: ToolArguments, context: CallContext): FfmpegCall {
   const timeoutMs = jobTimeoutMs(args, DEFAULT_VIDEO_TIMEOUT_SECONDS)
   const fonts = fontsArgument(args, NOT_DONE.ffmpeg)
   const textFiles = textFilesArgument(args, NOT_DONE.ffmpeg)
-  const call = programCall('ffmpeg', FFMPEG_FIXED_ARGS, args, sections, fonts)
-  return { ...call, fonts, textFiles, timeoutMs, nullOutput: call.args.some((word, index) => word === 'null' && FORMAT_OPTION.test(call.args[index - 1] ?? '')) }
+  const saveTo = saveToArgument(args, context.conversationId)
+  const call = programCall('ffmpeg', FFMPEG_FIXED_ARGS, args, context, fonts)
+  return { ...call, fonts, textFiles, timeoutMs, nullOutput: call.args.some((word, index) => word === 'null' && FORMAT_OPTION.test(call.args[index - 1] ?? '')), saveTo }
 }
 
 /** The run that a `video ffprobe` call asks for, as `ffmpegCall`. ffprobe
  *  gets no font. */
-export function ffprobeCall(args: ToolArguments, sections: readonly Section[]): ProgramCall {
-  return programCall('ffprobe', FFPROBE_FIXED_ARGS, args, sections, [])
+export function ffprobeCall(args: ToolArguments, context: CallContext): ProgramCall {
+  return programCall('ffprobe', FFPROBE_FIXED_ARGS, args, context, [])
 }
 
 // What the result of a call tells of an image that goes as a JPEG copy.
@@ -656,14 +853,24 @@ const JPEG_COPY_NOTE = 'a JPEG copy, with white in place of transparent pixels'
 /** What the result of a call that started a job adds after
  *  `jobStartedText`: the inputs of the run with the names of their copies,
  *  so that the model sees at once what the program gets, and by which
- *  names the log calls them, then the fonts of its fonts folder and its
- *  text files. */
-export function videoInputsText(inputs: readonly VideoInput[], fonts: readonly string[] = [], textFiles: readonly TextFile[] = []): string {
-  const parts = inputs.map((input) => `${assetText(input)} as ${input.name}${input.kind === 'image' && input.jpegCopy ? ` (${JPEG_COPY_NOTE})` : ''}`)
+ *  names the log calls them, then the fonts of its fonts folder, its text
+ *  files, and the folder of `/work` that gets its new files. */
+export function videoInputsText({ inputs, workInputs = [], fonts = [], textFiles = [], saveTo = null }: {
+  inputs: readonly VideoInput[]
+  workInputs?: readonly WorkInput[]
+  fonts?: readonly string[]
+  textFiles?: readonly TextFile[]
+  saveTo?: AppsPath | null
+}): string {
+  const parts = [
+    ...inputs.map((input) => `${assetText(input)} as ${input.name}${input.kind === 'image' && input.jpegCopy ? ` (${JPEG_COPY_NOTE})` : ''}`),
+    ...workInputs.map(({ virtual, name }) => `${virtual} as ${name}`),
+  ]
   return [
-    inputs.length === 0 ? 'The run has no input image and no input clip.' : `The inputs of the run: ${parts.join(', ')}.`,
+    parts.length === 0 ? 'The run has no input image and no input clip.' : `The inputs of the run: ${parts.join(', ')}.`,
     ...(fonts.length === 0 ? [] : [`The fonts of the run, in its fonts folder: ${fonts.join(', ')}.`]),
     ...(textFiles.length === 0 ? [] : [`The text files of the run, in its run folder: ${textFiles.map(({ name }) => name).join(', ')}.`]),
+    ...(saveTo === null ? [] : [`Dez moves the new files of the run into ${saveTo.virtual}.`]),
   ].join(' ')
 }
 
@@ -954,17 +1161,22 @@ export interface OutputFiles {
   notKept: string[]
 }
 
-/** The new files of a run from the files of its work folder after the run,
- *  in the order of their names (`frame_2.jpg` before `frame_10.jpg`).
- *  `inputNames` are the files that Dez put there. Dez keeps a file of a
- *  type that it stores, by the ending of its name: a clip (`storableClip`)
- *  or an image; no SVG, which no ffmpeg run draws. An empty file and a
- *  file over the size limit of a stored clip are not kept. */
+// The new files of a run from the files of its work folder after the run,
+// in the order of their names (`frame_2.jpg` before `frame_10.jpg`).
+// `inputNames` are the files that Dez put there.
+function newFiles(files: readonly WorkFile[], inputNames: ReadonlySet<string>): WorkFile[] {
+  return files.filter(({ name }) => !inputNames.has(name)).sort((one, other) => one.name.localeCompare(other.name, 'en', { numeric: true }))
+}
+
+/** The new files of a run (`newFiles`) that Dez keeps as assets. Dez keeps
+ *  a file of a type that it stores, by the ending of its name: a clip
+ *  (`storableClip`) or an image; no SVG, which no ffmpeg run draws. An
+ *  empty file and a file over the size limit of a stored clip are not
+ *  kept. */
 export function outputFiles(files: readonly WorkFile[], inputNames: ReadonlySet<string>): OutputFiles {
   const kept: KeptFile[] = []
   const notKept: string[] = []
-  const made = files.filter(({ name }) => !inputNames.has(name)).sort((one, other) => one.name.localeCompare(other.name, 'en', { numeric: true }))
-  for (const { name, size } of made) {
+  for (const { name, size } of newFiles(files, inputNames)) {
     const clip = storableClip('', name)
     const imageType = clip ? null : imageMediaType(name)
     const file: KeptFile | null = clip
@@ -977,6 +1189,30 @@ export function outputFiles(files: readonly WorkFile[], inputNames: ReadonlySet<
     else kept.push(file)
   }
   return { kept, notKept }
+}
+
+/** The new files of a run that Dez moves into a folder of `/work`
+ *  (`FfmpegCall.saveTo`). */
+export interface SavedFiles {
+  /** The names of the files that move, in the order of `newFiles`. */
+  names: string[]
+  /** As `OutputFiles.notKept`. */
+  notKept: string[]
+}
+
+/** The new files of a run (`newFiles`) that Dez saves into a folder of
+ *  `/work`: a file of any type, as a script can read each one. An empty
+ *  file is not saved, and nor is a file with a name that no later result
+ *  could show (`HIDDEN_NAMES`). */
+export function savedOutputFiles(files: readonly WorkFile[], inputNames: ReadonlySet<string>): SavedFiles {
+  const names: string[] = []
+  const notKept: string[] = []
+  for (const { name, size } of newFiles(files, inputNames)) {
+    if (size === 0) notKept.push(`${name} (it is empty)`)
+    else if (HIDDEN_NAMES.includes(name)) notKept.push(`${name} (Dez takes a path with this name for a path of the user's computer)`)
+    else names.push(name)
+  }
+  return { names, notKept }
 }
 
 // A progress line of ffmpeg: `frame=   20 fps=0.0 q=30.0 Lsize=…`, or
@@ -1095,7 +1331,7 @@ const FFMPEG_CALL_ADVICE: FfmpegAdvice = {
   // A model that read the name of a copy in an earlier result (`c.mp4`)
   // can take it for a file that stays.
   failed: 'Read the end of its log: fix the arguments and call again, or, when the log tells that an input file is the problem, tell the user. '
-    + 'Each call has a new run folder, which holds only the inputs that the call names as @id, and the fonts and the text files of the call.',
+    + `Each call has a new run folder, which holds only the inputs that the call names as @id or as a path of ${WORK_VIRTUAL_ROOT}/, and the fonts and the text files of the call.`,
   tooMuchOutput: 'Call again with a lower log level (-v error gives only the errors), and with no option that prints data.',
 }
 
@@ -1120,6 +1356,34 @@ function ffmpegFailureText(end: Exclude<ProgramEnd, { kind: 'timedOut' }>, log: 
   return withLog(`ffmpeg ended with the error code ${end.code}, and Dez kept no file. ${advice.failed}`, log.end(LOG_END))
 }
 
+// The most paths of saved files that the result of a run with `save_to`
+// names: a run can save a thousand frames.
+const SAVED_PATHS_SHOWN = 20
+
+// The result of an ffmpeg run that ended with no error and made no file to
+// keep or to save: what it printed, the end of its log for a run with the
+// null format, else an error that tells `advice`, how to name an output.
+function noFileResult(
+  call: Pick<FfmpegCall, 'nullOutput'>,
+  notKept: readonly string[],
+  log: ProgramLog,
+  output: OutputStart,
+  advice: string,
+): { text: string, isError: boolean } {
+  // A run that only prints (`-encoders`, `-h filter=scale`) writes to the
+  // standard output; a run with files or with the null format does not.
+  if (output.text.trim() !== '') {
+    const cut = output.cut ? ` These are its first ${PROGRAM_OUTPUT_CAP} characters.` : ''
+    return { text: `ffmpeg ended with no error and made no file.${notKeptText(notKept)} Its output:${cut}\n${output.text.trim()}`, isError: false }
+  }
+  if (call.nullOutput) {
+    return { text: withLog(`ffmpeg ended with no error. It made no file, as the call asked for with -f null.${notKeptText(notKept)}`, log.end(LOG_END)), isError: false }
+  }
+  return { text: withLog(`ffmpeg ended with no error, but it made no new file that Dez keeps.${notKeptText(notKept)} ${advice}`, log.end(LOG_END)), isError: true }
+}
+
+const OUTPUT_NAME_RULE = 'Give each output a new file name with no folder, made of ASCII letters, digits, ".", "_", and "-" only (Dez does not see a file with another name)'
+
 /** The result of an ffmpeg run that ended, before its new files move:
  *  `isError` with the text of a run that failed or that gave nothing, else
  *  the text that goes with the kept files. */
@@ -1136,7 +1400,8 @@ export function ffmpegRunResult(
   if (kept.length > MAX_VIDEO_OUTPUT_FILES) {
     return {
       text: `ffmpeg made ${kept.length} files that Dez stores, and Dez keeps at most ${MAX_VIDEO_OUTPUT_FILES} of one call, so it kept none. `
-        + `Call again for at most ${MAX_VIDEO_OUTPUT_FILES} files (for frames: a lower rate, as in -vf fps=1, or a count, as in -frames:v 10).`,
+        + `Call again for at most ${MAX_VIDEO_OUTPUT_FILES} files (for frames: a lower rate, as in -vf fps=1, or a count, as in -frames:v 10), `
+        + `or save the files into a folder of ${WORK_VIRTUAL_ROOT}/ with \`save_to\`.`,
       isError: true,
     }
   }
@@ -1144,25 +1409,44 @@ export function ffmpegRunResult(
     const names = kept.map(({ name, kind }) => `${name} (${ASSET_NAMES[kind]})`).join(', ')
     const ids = kept.length === 1 ? 'The line at the end gives its id.' : 'The lines at the end give their ids in this order.'
     return {
-      text: withLog(`ffmpeg ended with no error and made ${kept.length === 1 ? '1 file' : `${kept.length} files`} that Dez keeps: ${names}. ${ids}${notKeptText(notKept)}`, log.end(LOG_END_WITH_FILES)),
+      text: withLog(`ffmpeg ended with no error and made ${countOf(kept.length, 'file')} that Dez keeps: ${names}. ${ids}${notKeptText(notKept)}`, log.end(LOG_END_WITH_FILES)),
       isError: false,
     }
   }
-  // A run that only prints (`-encoders`, `-h filter=scale`) writes to the
-  // standard output; a run with files or with the null format does not.
-  if (output.text.trim() !== '') {
-    const cut = output.cut ? ` These are its first ${PROGRAM_OUTPUT_CAP} characters.` : ''
-    return { text: `ffmpeg ended with no error and made no file.${notKeptText(notKept)} Its output:${cut}\n${output.text.trim()}`, isError: false }
+  return noFileResult(call, notKept, log, output, `${OUTPUT_NAME_RULE}, with an ending that Dez stores (${KEPT_ENDINGS}). An output with the name of an input is not written.`)
+}
+
+/** The result of an ffmpeg run with `save_to` that ended, before its new
+ *  files move into the folder `saveTo`: as `ffmpegRunResult`. A run that
+ *  made more than `MAX_SAVED_WORK_FILES` files saves none. */
+export function ffmpegSaveResult(
+  saveTo: AppsPath,
+  call: Pick<FfmpegCall, 'nullOutput'>,
+  end: Exclude<ProgramEnd, { kind: 'timedOut' }>,
+  files: SavedFiles,
+  log: ProgramLog,
+  output: OutputStart,
+): { text: string, isError: boolean } {
+  const failure = ffmpegFailureText(end, log, FFMPEG_CALL_ADVICE)
+  if (failure !== null) return { text: failure, isError: true }
+  const { names, notKept } = files
+  if (names.length > MAX_SAVED_WORK_FILES) {
+    return {
+      text: `ffmpeg made ${countText(names.length)} files, and Dez saves at most ${countText(MAX_SAVED_WORK_FILES)} of one call, so it saved none. `
+        + `Call again for fewer files (for frames: a lower rate, as in -vf fps=1, or a part of the clip, as in -t 60).`,
+      isError: true,
+    }
   }
-  if (call.nullOutput) {
-    return { text: withLog(`ffmpeg ended with no error. It made no file, as the call asked for with -f null.${notKeptText(notKept)}`, log.end(LOG_END)), isError: false }
+  if (names.length > 0) {
+    const shown = names.slice(0, SAVED_PATHS_SHOWN).map((name) => `${saveTo.virtual}/${name}`).join(', ')
+    const more = names.length > SAVED_PATHS_SHOWN ? `, and ${countText(names.length - SAVED_PATHS_SHOWN)} more` : ''
+    return {
+      text: withLog(`ffmpeg ended with no error, and Dez saved its ${countOf(names.length, 'new file')} into ${saveTo.virtual}: ${shown}${more}.${notKeptText(notKept)} `
+        + 'They are not in your reply. To give one to the user as a clip or an image, read it in a call without `save_to`.', log.end(LOG_END_WITH_FILES)),
+      isError: false,
+    }
   }
-  return {
-    text: withLog(`ffmpeg ended with no error, but it made no new file that Dez keeps.${notKeptText(notKept)} `
-      + 'Give each output a new file name with no folder, made of ASCII letters, digits, ".", "_", and "-" only (Dez does not see a file with another name), '
-      + `with an ending that Dez stores (${KEPT_ENDINGS}). An output with the name of an input is not written.`, log.end(LOG_END)),
-    isError: true,
-  }
+  return noFileResult(call, notKept, log, output, `${OUTPUT_NAME_RULE}. An output with the name of an input is not written.`)
 }
 
 // How an ffprobe run that read no facts ended, as a part of a sentence.

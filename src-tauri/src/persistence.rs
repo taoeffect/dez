@@ -228,6 +228,12 @@ fn is_program_owned(root: FileRoot, relative: &str) -> bool {
     }
 }
 
+// The folders of the app root `app_root` that programs own
+// (`PROGRAM_OWNED_FOLDERS`), below which Dez follows no link.
+pub(crate) fn program_owned_folders(app_root: &Path) -> impl Iterator<Item = PathBuf> + '_ {
+    PROGRAM_OWNED_FOLDERS.iter().map(move |name| app_root.join(name))
+}
+
 // Whether a folder at a path of a root can be made, moved, and deleted
 // (`create_folder`, `move_app_file`, `delete_app_file`): any folder of the
 // cache root, which holds only what Dez can make again, and in the app root
