@@ -166,9 +166,18 @@ describe('appsPath', () => {
     }
   })
 
-  it('refuses "." and "..", and does not resolve them', () => {
+  it('refuses "." and "..", does not resolve them, and gives an example in the top folder of the path', () => {
     for (const path of ['/apps/notes/../other/main.js', '/apps/..', '/apps/notes/./main.js']) {
       expect(refusal(() => appsPath(path, 'path', CONVERSATION_ID)), path).toContain('which the apps tool does not resolve')
+    }
+    const examples = [
+      ['/apps/notes/../a.js', 'Give the whole path from /apps/, as in "/apps/unit-converter/main.js".'],
+      ['/libs/../three/SKILL.md', 'Give the whole path from /libs/, as in "/libs/dez-media/SKILL.md".'],
+      ['/work/../a.mp4', 'Give the whole path from /work/, as in "/work/clips/a.mp4".'],
+    ]
+    for (const [path, advice] of examples) {
+      expect(refusal(() => appsPath(path, 'path', CONVERSATION_ID)), path)
+        .toBe(`The path ${JSON.stringify(path)} holds "..", which the apps tool does not resolve. ${advice}`)
     }
   })
 

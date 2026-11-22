@@ -711,6 +711,16 @@ function topName(top: AppsTop): string {
   }[top.place]
 }
 
+// The path of a file in the top folder of a path, for a text that tells
+// how to write a path of that folder: `/apps/unit-converter/main.js`.
+function topExample(top: AppsTop): string {
+  return {
+    apps: EXAMPLE_FILE,
+    libs: `${LIBS_VIRTUAL_ROOT}/dez-media/${LIBRARY_SKILL_FILE}`,
+    work: `${WORK_VIRTUAL_ROOT}/clips/a.mp4`,
+  }[top.place]
+}
+
 // The names that the native file selectors take (`is_app_file_segment`,
 // persistence.rs): keep the two rules the same.
 const NAME = /^[A-Za-z0-9._-]+$/
@@ -747,7 +757,7 @@ export function appsPath(value: unknown, parameter: string, conversationId: stri
   for (const name of names) {
     if (name === '') throw new ToolError(`The path ${quoted} has an empty name: two "/" with nothing between them.`)
     if (name === '.' || name === '..') {
-      throw new ToolError(`The path ${quoted} holds "${name}", which the apps tool does not resolve. Give the whole path from ${top.virtual}/, ${PATH_PARAMETER}`)
+      throw new ToolError(`The path ${quoted} holds "${name}", which the apps tool does not resolve. Give the whole path from ${top.virtual}/, as in "${topExample(top)}".`)
     }
     if (!isPathName(name)) {
       throw new ToolError(`The path ${quoted} holds the name ${JSON.stringify(name)}, which the apps tool does not take. `
