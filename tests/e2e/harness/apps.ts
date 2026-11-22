@@ -41,8 +41,10 @@ export async function ageApp (appsDir: string, name: string, ageMs: number): Pro
 }
 
 /** The files of a UI app for `seedApp`: a page with the elements `body`
- *  that loads Dez's client script, then `script` as `main.js`, as the page
- *  that `init` makes does. */
+ *  that loads Dez's client script, then `script` as `main.js`: a classic
+ *  script with `crossorigin`, so that the webview tells its errors. The
+ *  page that `init` makes loads its main.js as a module, after an import
+ *  map (`UI_IMPORT_MAP_TAG`, src/model/tools/appTemplates.ts). */
 export function uiAppFiles (script: string, body = ''): Record<string, string> {
   return {
     'index.html': [

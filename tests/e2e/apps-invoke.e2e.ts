@@ -240,6 +240,16 @@ const STUCK_MAIN = [
   '})',
 ].join('\n')
 
+// The new script of the page of the `hello` app, which `init` made: a
+// module that imports three by its name in the import map of the page.
+const THREE_MAIN = [
+  'import { Vector3 } from "three"',
+  '',
+  'dez.sbp("sbp/selectors/register", {',
+  '  "app/invoke": () => String(new Vector3(1, 2, 2).length()),',
+  '})',
+].join('\n')
+
 describe('apps invoke', () => {
   let setup: MockProviderApp
   let browser: E2EBrowser
@@ -445,7 +455,7 @@ describe('apps invoke', () => {
     ])
   })
 
-  it('runs a UI app as init made it, in a frame that is gone after the run', async () => {
+  it('runs a UI app as init made it, and then its new module, which imports a library that Dez ships, in a frame that is gone after each run', async () => {
     await submit(browser, 'Make a page app.')
     const first = await chatRequest()
     sendToolCalls(first.reply, [appsCall('call_init', 'init', { name: 'hello', kind: 'ui', description: 'Says hello.' })])
@@ -459,7 +469,17 @@ describe('apps invoke', () => {
     expect(hello.result.text).toBe('Hello from hello. The parameters of this run: {"rows":2}. The run has 0 input files.')
     expect(await pageFrameCount(browser)).toBe(0)
 
-    await expectReplyEnd(setup, CALLER, hello.next)
+    // The page of a new UI app loads its main.js as a module, after the
+    // import map of the shipped libraries.
+    sendToolCalls(hello.next.reply, [appsCall('call_main', 'write', { path: '/apps/hello/main.js', content: THREE_MAIN })])
+    const fourth = await chatRequest()
+    expect(toolResult(fourth, 'call_main')).toContain('Wrote /apps/hello/main.js')
+    const vector = await invoke(fourth, 'call_vector', { name: 'hello' })
+    expect(vector.result.status).toBe('finished')
+    expect(vector.result.text).toBe('3')
+    expect(await pageFrameCount(browser)).toBe(0)
+
+    await expectReplyEnd(setup, CALLER, vector.next)
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 

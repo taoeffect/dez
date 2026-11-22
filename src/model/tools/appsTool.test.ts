@@ -244,13 +244,13 @@ describe('init', () => {
       '/apps/unit-converter/style.css',
     ])
     const page = call.files[1].content
-    // Dez's client script is first, so that it sees a key before the code
-    // of the app does. The script of the app loads with `crossorigin`: the
-    // webview hides the errors of any other script file from the page.
-    expect(page).toContain('<script src="~dez.js"></script>\n  <script src="main.js" crossorigin></script>')
+    // The import map comes before the first module, and a browser takes it
+    // from no file. Dez's client script is first of the scripts that load a
+    // file, so that it sees a key before the code of the app does. The
+    // script of the app is a module: it imports the shipped libraries, and
+    // the webview shows its errors.
+    expect(page.match(/<script[^>]*>/g)).toStrictEqual(['<script type="importmap">', '<script src="~dez.js">', '<script type="module" src="main.js">'])
     expect(page).toContain('<link rel="stylesheet" href="style.css">')
-    // Every script tag loads a file, and no tag has code in an attribute.
-    expect(page).not.toMatch(/<script(?![^>]*\ssrc=)/)
     expect(page).not.toMatch(/\son[a-z]+\s*=|<style|javascript:/i)
     expect(initText(call)).toContain('Made the UI app /apps/unit-converter with 4 files:')
   })

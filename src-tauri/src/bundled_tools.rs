@@ -77,8 +77,9 @@ const WORK_ROOT: &str = "work";
 // (`bundle.resources` of tauri.conf.json): the libraries, which a script
 // imports by the names of their import map, the fonts, and the built-in
 // apps, one folder for each. They are no Dez folders: the bundle holds
-// them, and no run, tool, or file code of Dez changes them.
-const LIBS_FOLDER: &str = "libs";
+// them, and no run, tool, or file code of Dez changes them. The pages of
+// the UI apps import the libraries too (`LIBS_ROUTE`, app_frames.rs).
+pub(crate) const LIBS_FOLDER: &str = "libs";
 const FONTS_FOLDER: &str = "fonts";
 const BUILT_IN_APPS_FOLDER: &str = "builtin-apps";
 

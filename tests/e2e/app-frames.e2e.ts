@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { UI_IMPORT_MAP_TAG } from '../../src/model/tools/appTemplates'
 import { startApp, type RunningApp } from './harness/app'
 import {
   appFrameUrl, closeAppFrame, frameReport, frameReports, inAppFrame, openAppFrame, probePageFiles, probesScript,
@@ -20,6 +21,8 @@ import { createSession, destroySession, type E2EBrowser } from './harness/sessio
 //   stylesheet, an image, a `fetch`), inline code, `eval`, WebAssembly,
 //   `data:` and Blob images, and a Worker from a Blob. So a page that
 //   fails to get out is not a page that does nothing.
+// - A page imports the libraries that Dez ships, by the names of the
+//   import map of a new UI app, from `~libs/` in the folder of its own app.
 // - A page has no place of its own and no reach into Dez: no storage, no
 //   cookie, no document of Dez, no new window, and no page script of
 //   Tauri. The policy sandboxes a frame with no `sandbox` attribute too.
@@ -42,8 +45,9 @@ import { createSession, destroySession, type E2EBrowser } from './harness/sessio
 // - A post to Tauri's IPC handler runs no command without the invoke key,
 //   which a frame cannot read. The key is the one guard there: the same
 //   post with the key runs the command (the control).
-// - The scheme serves only a regular file below the folder of an app: no
-//   link, no folder, no path that goes up, no other host, and no write.
+// - The scheme serves only a regular file below the folder of an app, or
+//   a file of the shipped libraries at `~libs/` in it: no link, no folder,
+//   no path that goes up, no other host, and no write.
 //
 // The control of a try: where the same code can run in Dez's own page, it
 // does. The policy, the rule list, and the sandbox do not cover that page,
@@ -124,6 +128,41 @@ const OWN_WORK: readonly Probe[] = [
     `() => ${blobWorker("'fetch(' + JSON.stringify(new URL('data.json', location.href).href) + ').then((response) => response.text()).then((text) => postMessage(text), (error) => postMessage(\"threw \" + error.name))'")}`,
     OWN_DATA,
   ],
+]
+
+// The libraries that Dez ships, which a page imports by the names of the
+// import map of a new UI app (`UI_IMPORT_MAP_TAG`). A library imports its
+// own parts by their names too (`three` from an addon, `@kurkle/color` from
+// chart.js). The page loads only the map: its scripts are not modules.
+const LIBRARIES: readonly Probe[] = [
+  ['three', "() => import('three').then((THREE) => new THREE.Vector3(1, 2, 2).length())", '3'],
+  ['an addon of three', "() => import('three/addons/utils/BufferGeometryUtils.js').then((module) => typeof module.mergeGeometries)", 'function'],
+  ['chart.js', "() => import('chart.js').then((module) => typeof module.Chart)", 'function'],
+  [
+    'a chart of chart.js/auto',
+    `() => import('chart.js/auto').then(({ default: Chart }) => {
+      const canvas = document.createElement('canvas')
+      canvas.width = 40
+      canvas.height = 40
+      document.body.append(canvas)
+      new Chart(canvas, {
+        type: 'bar',
+        data: { labels: ['a'], datasets: [{ data: [1], backgroundColor: 'rgb(255, 0, 0)' }] },
+        options: { animation: false, responsive: false, devicePixelRatio: 1, plugins: { legend: { display: false } }, scales: { x: { display: false }, y: { display: false, min: 0 } } },
+      })
+      const [red, green, blue] = canvas.getContext('2d').getImageData(20, 30, 1, 1).data
+      canvas.remove()
+      return red === 255 && green === 0 && blue === 0 ? 'drew' : 'rgb(' + red + ', ' + green + ', ' + blue + ')'
+    })`,
+    'drew',
+  ],
+  ['fft.js', "() => import('fft.js').then(({ default: FFT }) => new FFT(8).size)", '8'],
+  // A library with a native file runs only in Deno: the map has no name
+  // of it.
+  ['skia-canvas', "() => import('skia-canvas')", 'threw TypeError'],
+  // The libraries at the route of another app are files of that app for
+  // the policy of the page.
+  ['a library at the route of another app', "() => import('dezapp://localhost/other/~libs/fft.js/lib/fft.esm.js')", 'threw TypeError'],
 ]
 
 // What the sandbox takes from a page.
@@ -421,6 +460,7 @@ describe('app frames audit', () => {
       // it: the scheme must not follow one.
       fs.symlinkSync(secret.text, path.join(appsDir, 'works', 'link.txt'))
       fs.symlinkSync(secretDir, path.join(appsDir, 'works', 'linked'))
+      await seedApp(appsDir, ui('libraries'), probePageFiles(probesScript(probesSource(LIBRARIES)), UI_IMPORT_MAP_TAG))
       await seedApp(appsDir, ui('sandbox'), probePageFiles(probesScript(probesSource(NO_PLACE))))
       await seedApp(appsDir, ui('network'), probePageFiles(probesScript(NETWORK_PROBES)))
       await seedApp(appsDir, ui('places'), probePageFiles(probesScript(probesSource(OTHER_PLACES))))
@@ -456,6 +496,10 @@ describe('app frames audit', () => {
 
   it('lets the page of an app do its own work', async () => {
     expect(await outcomesInFrame('works', { svg: DOT_SVG, wasm: [...ADD_WASM] })).toEqual(frameOutcomes(OWN_WORK))
+  })
+
+  it('lets the page of an app import the libraries that Dez ships', async () => {
+    expect(await outcomesInFrame('libraries', {})).toEqual(frameOutcomes(LIBRARIES))
   })
 
   it('gives the page of an app no place of its own and no reach into Dez', async () => {
@@ -629,6 +673,32 @@ describe('app frames audit', () => {
     expect(await schemeAnswer('dezapp://localhost/works/data.json', { method: 'POST', body: 'data' }))
       .toEqual(['405', 'text/plain; charset=utf-8', 'The files of an app can only be read.'])
     expect(await schemeAnswer('dezapp://localhost/works/data.json', { headers: { Range: 'bytes=2-4' } })).toEqual(['206', 'application/json', 'own'])
+  })
+
+  it('serves the shipped libraries in the folder of each app, and only for a read', async () => {
+    const library = 'fft.js/lib/fft.esm.js'
+    const shipped = fs.readFileSync(new URL(`../../src-tauri/libs/${library}`, import.meta.url), 'utf8')
+    expect(await schemeAnswer(`dezapp://localhost/works/~libs/${library}`)).toEqual(['200', 'text/javascript; charset=utf-8', shipped])
+
+    // The resource folder of the debug build has the fonts next to the
+    // libraries, so a path that goes up from them would give a file.
+    const refused = {
+      'the route with no file': 'dezapp://localhost/works/~libs',
+      'the folder of the libraries': 'dezapp://localhost/works/~libs/',
+      'the folder of a library': 'dezapp://localhost/works/~libs/three',
+      'a file that is not there': 'dezapp://localhost/works/~libs/fft.js/none.js',
+      'a path that goes up with escapes': 'dezapp://localhost/works/~libs/%2e%2e/fonts/manifest.json',
+      'a path that goes up with an escaped slash': 'dezapp://localhost/works/~libs/..%2ffonts%2fmanifest.json',
+      'a path with an empty part': `dezapp://localhost/works/~libs//${library}`,
+      'the route below the folder of an app': `dezapp://localhost/works/js/~libs/${library}`,
+      'the route with no app': `dezapp://localhost/~libs/${library}`,
+      'the route in capitals': `dezapp://localhost/works/~LIBS/${library}`,
+    }
+    for (const [name, url] of Object.entries(refused)) {
+      expect(await schemeAnswer(url), name).toEqual(['404', 'text/plain; charset=utf-8', NO_SUCH_FILE])
+    }
+    expect(await schemeAnswer(`dezapp://localhost/works/~libs/${library}`, { method: 'POST', body: 'data' }))
+      .toEqual(['405', 'text/plain; charset=utf-8', 'The files of an app can only be read.'])
   })
 
   it("leaves Dez's own page as it was", async () => {
