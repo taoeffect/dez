@@ -76,8 +76,11 @@ import { DENO_VERSION_CALL } from './update-deno.js';
 // The script owns its library folders, import_map.json, and manifest.json.
 // The folders of OWN_LIBRARIES are Dez's code, in Git: the script names
 // them in the import map and loads them in its checks, but never changes
-// them, and the manifest pins none of their files. Another folder of
-// src-tauri/libs/ stays as it is.
+// them, and the manifest pins none of their files. Dez's own text of a
+// vendored library (SKILL_FILE, which a model reads before it uses the
+// library) is in Git too: the script carries it into the new folder of its
+// library, and the manifest does not pin it, so an edit of the text needs no
+// new vendor run. Another folder of src-tauri/libs/ stays as it is.
 
 const USAGE = `Vendor the libraries that Dez ships for the code of its runs into src-tauri/libs/.
 
@@ -207,6 +210,9 @@ const IMPORT_MAP = 'import_map.json';
 const MANIFEST = 'manifest.json';
 // The license texts of a native file, in the folder of its library.
 const NATIVE_LICENSES = 'NATIVE-LICENSES.txt';
+// Dez's own text of a library in its folder, which the script carries
+// over and does not pin.
+const SKILL_FILE = 'SKILL.md';
 
 // The package.json of a folder of CommonJS files (`require` of a `.js`
 // file). Deno takes a `.js` file as CommonJS by the `type` of the closest
@@ -821,6 +827,10 @@ async function main(args) {
       mkdirSync(dirname(join(libs, path)), { recursive: true });
       copyFileSync(join(full, path), join(libs, path));
     }
+    for (const library of LIBRARIES) {
+      const skill = join(LIBS_DIR, library.folder, SKILL_FILE);
+      if (existsSync(skill)) copyFileSync(skill, join(libs, library.folder, SKILL_FILE));
+    }
     // Copies, so that the checks below load Dez's own libraries next to the
     // new vendored files. The swap does not move them.
     for (const own of OWN_LIBRARIES) {
@@ -867,6 +877,7 @@ async function main(args) {
 
     const nativePaths = LIBRARIES.filter(library => library.native).map(library => `${library.folder}/${library.native.file}`);
     const ownFolders = OWN_LIBRARIES.map(own => `${own.folder}/`);
+    const skillPaths = LIBRARIES.map(library => `${library.folder}/${SKILL_FILE}`);
     const shipped = filesBelow(libs);
     const bad = badPaths(shipped);
     if (bad.length > 0) {
@@ -885,7 +896,7 @@ async function main(args) {
 
     const files = Object.fromEntries(
       shipped
-        .filter(path => !nativePaths.includes(path) && !ownFolders.some(folder => path.startsWith(folder)))
+        .filter(path => !nativePaths.includes(path) && !skillPaths.includes(path) && !ownFolders.some(folder => path.startsWith(folder)))
         .map(path => [path, bytesPin(readFileSync(join(libs, path)))])
     );
     const manifest = manifestText(libraryFacts, files);

@@ -5,7 +5,7 @@ import { regExpSource } from '../../utils/regExpSource'
 import { endOf, startOf } from '../../utils/textCut'
 import { NATIVE_CANVAS_LIBRARY } from './appManifest'
 import { shownAppNames, shownAppText } from './appShow'
-import { APPS_INVOKE, APPS_TOOL, APPS_VIRTUAL_ROOT, LIBS_VIRTUAL_ROOT } from './appsTool'
+import { APPS_INVOKE, APPS_TOOL, APPS_VIRTUAL_ROOT, LIBRARIES_TEXT, LIBS_VIRTUAL_ROOT } from './appsTool'
 import { WORK_VIRTUAL_ROOT } from './conversationWork'
 import { jobStartedText, madeAssetIds, madeAssetText, type JobAssetKind } from './jobs'
 import RUNNER from './jsEvalRunner.js?raw'
@@ -126,11 +126,15 @@ export const JS_EVAL_TOOL: ToolDefinition = {
     + 'Use it when code does the work better than you: exact arithmetic, dates and times, sorting and counting, work on text and JSON. '
     + '`code` is the body of an async function, so `await` works, and the value that it gives with `return` is the result: '
     + 'a string as it is, JSON data as JSON, and any other value as Deno shows it. What the code writes with `console.log` comes after the result. '
-    + 'The code has no network, no files, and no environment variables, and it can start no program; no flag and no import changes that. '
-    + `The one exception: with calls of the \`${APPS_TOOL.name}\` tool (\`dez.tools/${APPS_TOOL.name}/<subcommand>\`, as below), `
-    + `the code can read and change the files of the apps in \`${APPS_VIRTUAL_ROOT}/\`, and no other file. `
-    + 'It can load the built-in modules with `await import("node:crypto")`, but a static `import` does not work, '
-    + 'and no package of npm, of JSR, or from a URL loads. '
+    + 'The code has no network and no environment variables, and it can start no program; no flag changes that. '
+    + `It can read and write the files of the work folder of this conversation: \`dez.workFolder\` is its path, which the \`${APPS_TOOL.name}\` tool names \`${WORK_VIRTUAL_ROOT}/\`. `
+    + 'It opens no other file. '
+    + `With calls of the \`${APPS_TOOL.name}\` tool (\`dez.tools/${APPS_TOOL.name}/<subcommand>\`, as below), it can also read and change the files of the apps in \`${APPS_VIRTUAL_ROOT}/\`. `
+    + 'A static `import` does not work, as the code is the body of a function. '
+    + `The code loads the built-in modules with \`await import("node:crypto")\`, and the libraries of ${LIBS_VIRTUAL_ROOT}/ with \`await import("dez-media")\`: `
+    + 'give `import` the name as a literal string, as Dez refuses a name that the code builds. '
+    + `No package of npm, of JSR, or from a URL loads, and ${NATIVE_CANVAS_LIBRARY} loads only in a script app. `
+    + `The libraries: ${LIBRARIES_TEXT} `
     + 'The code can call the other Dez tools: `await dez.sbp("dez.tools/<tool>", { …arguments })`, '
     + 'and `await dez.sbp("dez.tools/<tool>/<subcommand>", { …parameters })` for a subcommand, '
     + 'as in `await dez.sbp("dez.tools/image/scale", { image: "a", width: 1024 })`. '
@@ -141,7 +145,7 @@ export const JS_EVAL_TOOL: ToolDefinition = {
     + `One run can make at most ${JS_EVAL_MAX_TOOL_CALLS} tool calls, and none of \`js_eval\` or of \`${APPS_TOOL.name} ${APPS_INVOKE}\`. `
     + 'The result names each image and clip that the calls made, and each job that they started and that is still open. '
     + 'The clock and the time zone are those of the user\'s computer. '
-    + 'Each call is a new run: nothing stays from one call to the next. '
+    + 'Each call is a new run: only the files of the work folder stay from one call to the next. '
     + `The call waits for the end of the code. A result holds at most the first ${JS_EVAL_TEXT_CAP} characters of the value. `
     + `An error names the lines of your code as lines of \`${RUN_FOLDER_NAME}/${JS_EVAL_CODE_FILE}\`.`,
   parameters: [
@@ -499,7 +503,8 @@ function flagAdvice(error: string): string {
     return `The code of \`${JS_EVAL_TOOL.name}\` cannot load ${NATIVE_CANVAS_LIBRARY}: it loads a native file, which only the run of a script app may load. `
       + `Write a script app whose manifest.json has the field \`"native": ["${NATIVE_CANVAS_LIBRARY}"]\`, and run it with \`${APPS_TOOL.name} ${APPS_INVOKE}\`.`
   }
-  return 'Dez runs the code with no network, no environment variables, no start of programs, and no packages, '
+  return 'Dez runs the code with no network, no environment variables, no start of programs, '
+    + `and no packages but the libraries of ${LIBS_VIRTUAL_ROOT}/, which it imports by a literal name (\`await import("fft.js")\`), not by a name that the code builds, `
     + `and it opens no file but those of the work folder of this conversation (\`dez.workFolder\`, which Dez names \`${WORK_VIRTUAL_ROOT}\`). `
     + 'No flag changes that, and you can set none: do the work without them. '
     + `The code reads and changes the files of the apps in \`${APPS_VIRTUAL_ROOT}/\` only with \`dez.tools/${APPS_TOOL.name}/<subcommand>\` calls.`
@@ -511,7 +516,8 @@ function errorAdvice(error: string): string[] {
   return [
     ...(namesDenoFlag(error) ? [flagAdvice(error)] : []),
     ...(STATIC_IMPORT.test(error)
-      ? ['The code is the body of a function, so a static `import` does not work in it. Load a built-in module with `await import("node:…")`.']
+      ? ['The code is the body of a function, so a static `import` does not work in it. '
+        + `Load a built-in module with \`await import("node:…")\`, and a library of ${LIBS_VIRTUAL_ROOT}/ with \`await import("dez-media")\`.`]
       : []),
   ]
 }

@@ -61,6 +61,8 @@ export const MODEL_INVOKE_TOOL: ToolDefinition = {
   description: 'Send one request to a model that the user can use, and get what it makes: '
     + 'a model that makes images, audio clips, or video clips, a model that writes down speech, or a text model. '
     + 'A request costs the user money, as a request that the user sends does. '
+    + 'When the user set a money limit for this conversation, Dez refuses a request that would go over it: then stop, and ask the user. '
+    + '`conversation_info` tells what is left of the limit. '
     + 'Call `model_info` for the model first: `usage` tells what the model needs, `dez.parameters` what a request can set, and `dez.cost` the price. '
     + '`model_list` finds models. '
     + 'The model gets only `prompt` and the inputs that `prompt` names with @id, not the conversation. '
@@ -69,8 +71,10 @@ export const MODEL_INVOKE_TOOL: ToolDefinition = {
     + 'To learn what an image shows, ask a text model that reads images about it; that model can be your own model. '
     + 'A text model that takes clips is good at what a clip holds (the words, the story, the look, the pace), and weak at exact times: '
     + 'measure each time that must be exact with `audio beats` and `video cuts`. '
+    + `A model that writes down speech can also give the times of its words and its segments: Dez writes them into a JSON file of ${WORK_VIRTUAL_ROOT}/, and the result names the file. `
     + `${JOB_CALL_NOTE} `
     + 'Jobs run at the same time: start the calls that do not need the result of another call, within that limit, then wait. '
+    + 'A media request can wait for its turn at its provider, which takes only a few at one time: that wait does not count toward the time limit of its job. '
     + 'An image or a clip that the model made goes into your reply at `jobs_wait`, with a new id that a later call can name with @id. '
     + 'The new ids follow the order in which the jobs end, not the order of your calls: each result of `jobs_wait` names its call. '
     + 'The user sees each image and each clip of your reply: set `is_intermediate` for a call that makes only a part of the result. '

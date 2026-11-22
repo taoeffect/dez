@@ -194,7 +194,7 @@ describe('js_eval tool', () => {
     expect(syntax).toContain('file:///run/code.ts:1:')
 
     const noFlag = 'No flag changes that, and you can set none: do the work without them.'
-    expect(toolResult(second, 'call_import')).toContain('a static `import` does not work in it. Load a built-in module with `await import("node:…")`.')
+    expect(toolResult(second, 'call_import')).toContain('a static `import` does not work in it.')
     const fetched = toolResult(second, 'call_fetch')
     expect(fetched.startsWith(`The code threw an error:\nNotCapable: Requires net access to "${new URL(setup.mock.url).host}"`)).toBe(true)
     expect(fetched).toContain(noFlag)

@@ -5,7 +5,7 @@ import { startOf } from '../../utils/textCut'
 import { searchTerms, textMatches } from '../textSearch'
 import { APP_HANDLER_EXAMPLE, APP_READ_ASSET, APP_RUN_FRAME_SIZE, APP_SAVE_ASSET } from './appBridge'
 import { APP_KINDS, BUILT_IN_APP_PREFIX, isAppName, isBuiltInApp, MANIFEST_FILE, MANIFEST_MAX_BYTES, MAX_DESCRIPTION_LENGTH, NATIVE_CANVAS_LIBRARY, parseAppManifest, UNKNOWN_APP_KIND, type AppKind, type AppManifest, type ListedAppKind } from './appManifest'
-import { appTemplateFiles, SCRIPT_MAIN_FILE, UI_CLIENT_SCRIPT_TAG, UI_INDEX_FILE, UI_OWN_SCRIPT_TAG } from './appTemplates'
+import { appTemplateFiles, SCRIPT_MAIN_FILE, UI_CLIENT_SCRIPT_TAG, UI_INDEX_FILE, UI_LIBS_ROUTE, UI_OWN_SCRIPT_TAG } from './appTemplates'
 import { unknownValuesText } from './arguments'
 import { conversationWorkFolder, WORK_VIRTUAL_ROOT } from './conversationWork'
 import { GREP_LINE_MAX_CHARACTERS, GREP_MAX_CHARACTERS, GREP_MAX_CONTEXT, GREP_MAX_MATCHES, GREP_TIME_LIMIT_SECONDS } from './grepMatch'
@@ -65,6 +65,29 @@ const LIBS_FOLDER = 'libs'
 /** What a model reads for the folder of the libraries (`LIBS_FOLDER`) in
  *  every path. */
 export const LIBS_VIRTUAL_ROOT = '/libs'
+
+/** The file of Dez's text for a model in the folder of a library of
+ *  `/libs/`: what the library is for, how a run imports it, and the rules
+ *  of Dez for it. scripts/update-libs.js carries it over. */
+export const LIBRARY_SKILL_FILE = 'SKILL.md'
+
+/** The libraries of `/libs/` that the code of a run imports by name, each
+ *  with what it is for: the name is also the name of its folder, which has
+ *  a `LIBRARY_SKILL_FILE`. @kurkle/color is a part of chart.js. */
+export const SHIPPED_LIBRARIES: readonly { name: string, use: string }[] = [
+  { name: 'three', use: '3D math, scenes, and 3D files' },
+  { name: 'chart.js', use: 'charts' },
+  { name: 'fft.js', use: 'the FFT' },
+  { name: NATIVE_CANVAS_LIBRARY, use: 'a 2D canvas, in a script app only' },
+  { name: 'dez-media', use: 'the media measurements of Dez, NumPy-style signal functions, data tables, and frame sequences' },
+]
+
+const libraryEntries = SHIPPED_LIBRARIES.map(({ name, use }) => `${name} (${use})`)
+
+/** The libraries as the tool texts list them, with where each one tells
+ *  its use: a model reads the details only when it needs them. */
+export const LIBRARIES_TEXT = `${libraryEntries.slice(0, -1).join(', ')}, and ${libraryEntries.at(-1)}. `
+  + `Read ${LIBS_VIRTUAL_ROOT}/<library>/${LIBRARY_SKILL_FILE} before you use a library: it tells how to import it, and its rules in Dez.`
 
 /** The largest text file that `read`, `write`, and `edit` take. Its text
  *  is in the webview as a whole, and a larger one is no source file. */
@@ -190,6 +213,13 @@ export const STORED_TYPES = '(an image: PNG, JPEG, GIF, WebP, or SVG; a clip: MP
 
 const SAVE_BYTES = 'a Blob, an ArrayBuffer, or a typed array'
 
+// What the page of a UI app imports of the libraries: the import map that
+// `init` writes into its index.html (`UI_IMPORT_MAP_TAG`, appTemplates.ts)
+// names each one but those that only Deno loads.
+const PAGE_LIBRARIES = `A module of the page imports the libraries of ${LIBS_VIRTUAL_ROOT}/ by name, as in \`import * as THREE from "three"\`, `
+  + `through the import map that init writes into ${UI_INDEX_FILE}, before the first module (each entry is a file of ./${UI_LIBS_ROUTE}/, as in "./${UI_LIBS_ROUTE}/three/build/three.module.js"): `
+  + `three, chart.js, fft.js, and dez-media, but not ${NATIVE_CANVAS_LIBRARY}, dez-media/canvas, or dez-media/frames.`
+
 // The help of `invoke` for a UI app: what the page of an app needs for a
 // run, and the limits of a page that make plain code fail (the frame
 // bridge, appBridge.ts; the guards of the app frames,
@@ -208,6 +238,7 @@ const INVOKE_UI_HELP = `A UI app runs as its page (${UI_INDEX_FILE}), which Dez 
   + 'In a run it gives `{ id: null, kind, type }`: the result of the job gives the ids, in the order of the saves. A run whose handler throws keeps no file.\n'
   + 'A call that Dez refuses rejects with an error whose message tells why. '
   + 'The page is new for each run and keeps no state. It has no network, no storage, and no file but those of its app, which it loads by a relative URL, and it calls no Dez tool. '
+  + `${PAGE_LIBRARIES} `
   + 'Use a UI app for work that needs a page (a canvas, the Web Audio API, a layout). '
   + 'A script of the page that never yields stops Dez\'s window, and no time limit can end it: heavy work belongs in a script app.'
 
@@ -253,8 +284,10 @@ const INVOKE_HELP = `Runs the code of an app on the user's computer, with the pa
   + `and the work folder. It can also read the libraries of ${LIBS_VIRTUAL_ROOT}/ and the fonts of \`dez.fonts\`. `
   + 'Build each path from a path of `dez`, as in `${dez.outputFolder}/chart.png`: a relative path does not work. '
   + 'The code has no network and no environment variables, and it can start no program; no flag changes that. '
-  + 'It can import the other files of its app (`import { parse } from "./parse.ts"`) and the built-in modules (`node:fs`), '
-  + 'but no package of npm, of JSR, or from a URL. '
+  + 'It can import the other files of its app (`import { parse } from "./parse.ts"`), the built-in modules (`node:fs`), '
+  + `and the libraries of ${LIBS_VIRTUAL_ROOT}/ by name (\`import { beatGrid } from "dez-media"\`), but no package of npm, of JSR, or from a URL. `
+  + `The libraries: ${LIBRARIES_TEXT} `
+  + `The code of the built-in apps (${APPS_VIRTUAL_ROOT}/${BUILT_IN_APP_PREFIX}<name>/${SCRIPT_MAIN_FILE}) is a good start for an app of your own: read it, and write a copy into your app. `
   + `To draw with ${NATIVE_CANVAS_LIBRARY} (\`import { Canvas } from "${NATIVE_CANVAS_LIBRARY}"\`), the ${MANIFEST_FILE} of the app must have the field \`"native": ["${NATIVE_CANVAS_LIBRARY}"]\`, `
   + 'and each canvas must draw with no GPU: `new Canvas(1280, 720, { gpu: false })`. The run sees no font of the computer, so a canvas draws text only after '
   + '`const families = useShippedFonts(dez.fonts)` (`import { useShippedFonts } from "dez-media/canvas"`). It returns a list of every shipped family for `ctx.font`, '
@@ -305,9 +338,10 @@ export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
   name: 'apps',
   summary: `Make, change, show, and run apps: small programs that you write for the user, each in its own folder ${APPS_VIRTUAL_ROOT}/<name>/. `
     + 'The apps stay from one conversation to the next, and a script app keeps its own files from one run to the next. '
-    + `The file subcommands also work in two more folders: ${LIBS_VIRTUAL_ROOT}/ holds libraries that Dez ships, which you can only read, `
+    + `The file subcommands also work in two more folders: ${LIBS_VIRTUAL_ROOT}/ holds the libraries that Dez ships, which you can only read, `
     + `and ${WORK_VIRTUAL_ROOT}/ is the work folder of this conversation, which Dez deletes with the conversation. `
-    + `Every path of a call starts with ${APPS_VIRTUAL_ROOT}/, ${LIBS_VIRTUAL_ROOT}/, or ${WORK_VIRTUAL_ROOT}/.`,
+    + `Every path of a call starts with ${APPS_VIRTUAL_ROOT}/, ${LIBS_VIRTUAL_ROOT}/, or ${WORK_VIRTUAL_ROOT}/. `
+    + `The code of an app imports the libraries by name: ${LIBRARIES_TEXT}`,
   subcommands: [
     {
       name: 'init',
@@ -533,7 +567,8 @@ export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
         + `- \`await dez.sbp('${APP_SAVE_ASSET}', bytes)\` puts ${SAVE_BYTES} as a new image or clip into the message that the user writes, and gives \`{ id, kind, type }\`. `
         + `Dez takes only a file of a type that it stores ${STORED_TYPES}, at most ${byteSizeText(APP_RUN_MAX_OUTPUT_BYTES)}, and at most ${APP_RUN_MAX_OUTPUT_FILES} saves from one click on Run to Stop. `
         + 'It takes a save only while the user works in the app (save in the handler of a click or a key), and not while a reply runs.\n'
-        + 'A call that Dez refuses rejects with an error whose message tells why: show it to the user. The page calls no Dez tool, and it has no network and no storage.',
+        + 'A call that Dez refuses rejects with an error whose message tells why: show it to the user. The page calls no Dez tool, and it has no network and no storage.\n'
+        + PAGE_LIBRARIES,
       parameters: [
         { name: 'name', type: 'string', description: `The name of the app, as in "${EXAMPLE_APP}": the name of its folder in ${APPS_VIRTUAL_ROOT}/.`, required: true },
       ],

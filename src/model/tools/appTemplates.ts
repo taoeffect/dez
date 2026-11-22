@@ -103,6 +103,10 @@ function scriptFiles(name: string): TemplateFile[] {
 // as its default, with the parameters of the run (a JSON object) and the
 // \`dez\` object of the run. The value that the function returns is the
 // result of the run.
+//
+// The code imports the libraries that Dez ships by name, as in
+// \`import { beatGrid } from 'dez-media'\`. /libs/<name>/SKILL.md tells each
+// library (apps read).
 
 /** What a run gives the code. Each path is absolute: build the path of a
  *  file from one of them. */
@@ -115,7 +119,19 @@ interface Dez {
    *  rules. */
   sbp(selector: string, args?: object): Promise<string>
   /** A copy of each image and clip of the run, in the order of the call. */
-  inputs: readonly { id: string, kind: 'image' | 'audio' | 'video', type: string, path: string }[]
+  inputs: readonly {
+    id: string
+    kind: 'image' | 'audio' | 'video'
+    type: string
+    path: string
+    /** The decoded sound of a clip (the decode of apps invoke): float32
+     *  samples, one channel. Absent when the decode asks for none, and null
+     *  for a clip with no sound. */
+    audio?: { path: string, rate: number, count: number } | null
+    /** The decoded frames of a clip: RGB pixels, frame by frame. Absent
+     *  when the decode asks for none, and null for a clip with no video. */
+    frames?: { path: string, width: number, height: number, fps: number | null, count: number } | null
+  }[]
   /** Dez keeps the images and the clips that the run writes into this
    *  folder. */
   outputFolder: string

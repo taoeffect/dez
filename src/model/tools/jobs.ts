@@ -633,6 +633,7 @@ export const JOBS_WAIT_TOOL: ToolDefinition = {
     + 'An image or a clip that a job made goes into your reply then, and the result gives its id. '
     + 'These ids follow the order of the results too: before you use them in an order (the scenes of a video), read from `number` which call made each one. '
     + 'The first line tells how many jobs still run: call `jobs_wait` again until none runs. Get the result of every job before you end your reply. '
+    + 'A media request can wait for its turn at its provider, which takes only a few at one time: that wait does not count toward the time limit of its job. '
     + 'A stop of the user or a new message does not end the jobs: they count as jobs of the next reply, which gets their results with `jobs_wait`, and their numbers count on. '
     + 'Dez ends them when the user closes the tab or quits Dez, and `job_cancel` ends the jobs that you name.',
   parameters: [
@@ -660,7 +661,8 @@ export const JOBS_LIST_TOOL: ToolDefinition = {
   name: 'jobs_list',
   description: 'List the jobs of this reply, in the order of the starts: the number, the id, the tool, and the status of each job, '
     + 'whether `jobs_wait` gave its result, how long it ran, and how its call begins. '
-    + 'The last line is an estimate of what the paid requests of these jobs cost. '
+    + 'A job whose status is `queued` waits for its turn at its provider, which takes only a few media requests at one time; that wait does not count toward its time limit. '
+    + 'Then come an estimate of what the paid requests of these jobs cost, and the money limit of this conversation that the user set, with what is left of it. '
     + 'It does not wait, and it gives no result of a job.',
   parameters: [],
 }

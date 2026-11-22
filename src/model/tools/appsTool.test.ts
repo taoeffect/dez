@@ -1,4 +1,6 @@
+import { existsSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import shippedImportMap from '../../../src-tauri/libs/import_map.json'
 import { MANIFEST_MAX_BYTES, parseAppManifest } from './appManifest'
 import { invokeCall } from './appInvoke'
 import { grepCall } from './appsGrep'
@@ -22,6 +24,7 @@ import {
   hasReadableManifest,
   initCall,
   initText,
+  LIBRARY_SKILL_FILE,
   listAppsCall,
   listAppsText,
   lsCall,
@@ -37,6 +40,7 @@ import {
   rmCall,
   rmResult,
   rmStep,
+  SHIPPED_LIBRARIES,
   wcCall,
   wcResult,
   wcRowOfBytes,
@@ -301,6 +305,19 @@ describe('built-in apps', () => {
     expect(refusal(() => mvCall(args('mv', { moves: [{ from: '/apps/dez-media', to: '/apps/media' }] }), CONVERSATION_ID))).toBe(refused('/apps/dez-media'))
     expect(refusal(() => mvCall(args('mv', { moves: [{ from: '/apps/notes', to: '/apps/dez-notes' }] }), CONVERSATION_ID))).toBe(refused('/apps/dez-notes'))
     expect(refusal(() => mvCall(args('mv', { moves: [{ from: '/apps/notes/a.js', to: '/apps/dez-media/a.js' }] }), CONVERSATION_ID))).toBe(refused('/apps/dez-media/a.js'))
+  })
+})
+
+describe('SHIPPED_LIBRARIES', () => {
+  // The tool texts tell a model to import each library by its name and to
+  // read its SKILL.md first: a name that the import map lacks, or a folder
+  // with no SKILL.md, sends the model to a file or a module that is not
+  // there.
+  it('names libraries that the import map has, each with a SKILL.md that Dez ships', () => {
+    for (const { name } of SHIPPED_LIBRARIES) {
+      expect(Object.keys(shippedImportMap.imports), name).toContain(name)
+      expect(existsSync(new URL(`../../../src-tauri/libs/${name}/${LIBRARY_SKILL_FILE}`, import.meta.url)), name).toBe(true)
+    }
   })
 })
 
