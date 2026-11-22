@@ -245,14 +245,18 @@ describe('video tool', () => {
   }
 
   // The frequency of the tone of the audio clip `file`, in Hz: the count of
-  // its rises through 0 in each second, from 0.25 s to its end.
+  // its rises through 0 in each second, with 0.25 s left out at each end.
+  // rubberband smears the hard stop of a tone over the end of its clip,
+  // which then has more rises (548 a second in the last 0.25 s of a tone of
+  // 524 Hz).
   function toneFrequency (file: string): number {
     const pcm = programRun(setup.app, 'dez-ffmpeg', ['-v', 'error', '-i', file, '-f', 's16le', '-ac', '1', '-ar', '44100', '-'])
     const samples = new Int16Array(pcm.buffer, pcm.byteOffset, pcm.length / 2)
-    const from = 0.25 * 44100
+    const edge = 0.25 * 44100
+    const end = samples.length - edge
     let rises = 0
-    for (let index = from + 1; index < samples.length; index++) if (samples[index - 1] < 0 && samples[index] >= 0) rises++
-    return rises / ((samples.length - from) / 44100)
+    for (let index = edge + 1; index < end; index++) if (samples[index - 1] < 0 && samples[index] >= 0) rises++
+    return rises / ((end - edge) / 44100)
   }
 
   // The streams of the picture of the data URL `url`, which must be a
@@ -1177,7 +1181,7 @@ describe('video tool', () => {
     expect(stable.result.text.endsWith('\nMade the video clip @h.')).toBe(true)
     await sendChatReply(stable.next.reply, CALLER.modelName)
 
-    const reply = await endedReply(browser)
+    const reply = await endedReply(browser, CLIPS_REPLY_INDEX)
     // 1 s at 80% of its speed, and 440 Hz times 1.189.
     const voicePath = madeClipPath(reply, 'f')
     expect(Number(programOutput(setup.app, 'dez-ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', voicePath]))).toBeCloseTo(1.25, 2)
