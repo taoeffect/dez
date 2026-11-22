@@ -175,6 +175,11 @@ function sectionTexts(): Array<{ role: string, text: string }> {
   return activeTab().sections.map((section) => ({ role: section.role, text: sectionVisibleText(section) }))
 }
 
+// The title and the text of each toast that was shown.
+function toastTexts(): Array<Array<string | undefined>> {
+  return toasts.map(({ data }) => [data.title, data.message])
+}
+
 // Starts the reply of the section `sectionId`. `messages` are the messages
 // of its first request, which hold the conversation before the reply.
 async function startStream({ sendTools = false, sectionId = 'a1', newestUserMessage = 'Hi', messages = [{ role: 'user', content: newestUserMessage }] as StreamMessage[] } = {}): Promise<void> {
@@ -720,7 +725,6 @@ describe('conversation cost', () => {
 
 describe('the money limit of a tab', () => {
   const setLimit = (usd: number, unknownPrices = false) => sbp('dez.model/tabs/setMoneyLimit', activeTab().id, { usd, unknownPrices })
-  const toastTexts = () => toasts.map(({ data }) => [data.title, data.message])
   const answer = (cost?: number) => async (input: ProviderStreamChatInput): Promise<ProviderStreamChatResult> => {
     input.onSent?.()
     await input.onToken('Done.')
@@ -2296,7 +2300,6 @@ describe('dez.stream/start media round', () => {
 
   describe('with a money limit', () => {
     const LIMIT = { usd: 1, unknownPrices: false }
-    const toastTexts = () => toasts.map(({ data }) => [data.title, data.message])
     // An answer that gives its quote as generateMedia does: to the last
     // check of the caller, then in the `sent` step; `during` runs while
     // the request runs.

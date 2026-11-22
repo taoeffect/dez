@@ -1,6 +1,7 @@
 import { mediaTagText, type MediaTagData } from '../chat/mediaTags'
 import type { Section } from '../chat/types'
 import { reply, user } from '../streams/testing'
+import { AUDIO_ALIASES, VIDEO_ALIASES, type AppAlias } from './appAliases'
 import { appManifestText, type AppKind } from './appManifest'
 import { grepCall, grepPlan, grepRequest, grepText } from './appsGrep'
 import { APPS_TOOL, type AppsEntryKind, type AppsTree, type PathFacts } from './appsTool'
@@ -15,10 +16,10 @@ import type { CallContext } from './videoTool'
 // call, the facts of a job, a conversation with images and clips for the
 // `video` tool, the output of the ffprobe run that reads the facts of a
 // clip for a join (`joinProbeArgs`), the arguments, the listings, and the
-// `grep` results of the `apps` tool, the protocol lines and the work
-// folder of a `js_eval` run, and the bytes of a file. This module
-// registers no selector, so a test of the model can import it;
-// controller/testing.ts imports it too.
+// `grep` results of the `apps` tool, an alias subcommand of `audio` or
+// `video`, the protocol lines and the work folder of a `js_eval` run, and
+// the bytes of a file. This module registers no selector, so a test of
+// the model can import it; controller/testing.ts imports it too.
 
 /** The message of the error of `errorClass` (a `ToolError` if not given)
  *  that `call` throws. */
@@ -154,4 +155,11 @@ export function grepResult(parameters: Record<string, unknown>, files: Record<st
   if (plan.kind === 'text') return plan.text
   const bytes = plan.files.map((file) => contents[file.path.names.slice(call.path.names.length).join('/')])
   return grepText(call, plan, grepFiles(grepRequest(call, plan.files, bytes)))
+}
+
+/** The alias subcommand `name` of the tool `tool`. */
+export function aliasOf(tool: 'audio' | 'video', name: string): AppAlias {
+  const alias = [...AUDIO_ALIASES, ...VIDEO_ALIASES].find((each) => each.tool === tool && each.subcommand.name === name)
+  if (!alias) throw new Error(`There is no alias ${tool} ${name}.`)
+  return alias
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { byteSizeText } from '../../utils/byteSize'
-import { ALIAS_TIMEOUT_MS, aliasRunTexts, AUDIO_ALIASES, VIDEO_ALIASES, type AppAlias } from './appAliases'
+import { ALIAS_TIMEOUT_MS, aliasRunTexts } from './appAliases'
 import { AppCallError } from './appBridge'
 import { APP_KINDS, MANIFEST_MAX_BYTES, type AppKind, type AppManifest } from './appManifest'
 import {
@@ -31,7 +31,7 @@ import {
 import { APP_RUN_MAX_OUTPUT_BYTES, APP_RUN_MAX_OUTPUT_FILES } from './appsTool'
 import { jobStartedText } from './jobs'
 import { JS_EVAL_OUTPUT_BYTES, textForModel, type RunOutcome } from './jsEval'
-import { appsArgs, CONVERSATION, fileTree, FOLDER_FACTS, folderTree, MISSING_TREE, notesManifest, PNG_BYTES, refusal, textBytes, WAV_BYTES } from './testing'
+import { aliasOf, appsArgs, CONVERSATION, fileTree, FOLDER_FACTS, folderTree, MISSING_TREE, notesManifest, PNG_BYTES, refusal, textBytes, WAV_BYTES } from './testing'
 import { SHIPPED_FONTS } from './videoFonts'
 
 const NOT_STARTED = 'Dez started no job.'
@@ -95,13 +95,6 @@ describe('invokeCall', () => {
     expect(refusal(() => invoke({ name: 'notes', timeout_seconds: 5 }))).toContain('timeout_seconds')
   })
 })
-
-// The alias subcommand `name` of the tool `tool`.
-function aliasOf(tool: 'audio' | 'video', name: string): AppAlias {
-  const alias = [...AUDIO_ALIASES, ...VIDEO_ALIASES].find((each) => each.tool === tool && each.subcommand.name === name)
-  if (!alias) throw new Error(`There is no alias ${tool} ${name}.`)
-  return alias
-}
 
 // The run of a call of the alias `tool name` with `args`, in CONVERSATION:
 // the image @a, the audio clip @b, the video clips @c and @d.

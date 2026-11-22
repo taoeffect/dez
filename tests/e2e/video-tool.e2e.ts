@@ -55,10 +55,10 @@ import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolC
 //   stable;
 // - a call whose arguments name a file of the computer (a font too), the
 //   network, a device, or a commands file of a filter is refused at once:
-//   no job, and no work folder;
+//   no job, and no run folder;
 // - Stop leaves the program of a job to the next reply; a close of the tab
 //   and the time limit of a call end it;
-// - every work folder is gone after its call, and no file of the
+// - every run folder is gone after its call, and no file of the
 //   conversation changes;
 // - the lists of refused protocols and devices hold every one of this
 //   ffmpeg build;
@@ -201,7 +201,7 @@ describe('video tool', () => {
   // The folder of the file that the conversation links, out of every temp
   // folder.
   let linkedDir: string
-  let workRoot: string
+  let runFoldersRoot: string
   let videoDir: string
   let audioDir: string
   let imagesDir: string
@@ -385,11 +385,11 @@ describe('video tool', () => {
     return runToolJob(chatRequest, request, 'video', callId, videoCall(callId, command, parameters))
   }
 
-  // After the calls of a test: no work folder stays, no file of the
+  // After the calls of a test: no run folder stays, no file of the
   // conversation changed (`files`, from `openClips` or `openShots`, with
   // their bytes in `sources`), and nothing failed.
   async function expectCleanEnd (files: Record<string, string>, sources: Record<string, Buffer> = SOURCES): Promise<void> {
-    expect(await filesIn(workRoot)).toStrictEqual([])
+    expect(await filesIn(runFoldersRoot)).toStrictEqual([])
     for (const [id, file] of Object.entries(files)) expect((await fs.promises.readFile(file)).equals(sources[id]), `the file of @${id} is as it was`).toBe(true)
     expect(await openToasts(browser, 'error')).toStrictEqual([])
     expect(await consoleErrors(browser)).toStrictEqual([])
@@ -406,7 +406,7 @@ describe('video tool', () => {
     setup = await startMockProviderApp(CALLER)
     browser = setup.browser
     const { home } = setup.app
-    workRoot = workDir(home)
+    runFoldersRoot = workDir(home)
     videoDir = appFilePath(home, 'assets', 'generated', 'video')
     audioDir = appFilePath(home, 'assets', 'generated', 'audio')
     imagesDir = generatedImagesDir(home)
@@ -1280,7 +1280,7 @@ describe('video tool', () => {
     await expectCleanEnd(files, shotSources)
   })
 
-  it('refuses arguments that name a file of the computer, the network, a device, or a commands file at once, with no job and no work folder', async () => {
+  it('refuses arguments that name a file of the computer, the network, a device, or a commands file at once, with no job and no run folder', async () => {
     await submit(browser, 'Read my files.')
     const first = await chatRequest()
     const blackFrame = '-f lavfi -i color=c=black:size=640x360 -frames:v 1'
@@ -1320,12 +1320,12 @@ describe('video tool', () => {
 
     const reply = await endedReply(browser)
     expect(reply.endsWith(`</dez:tool>\n${replyText(CALLER.modelName)}`)).toBe(true)
-    // A run makes its work folder first.
-    expect(await filesIn(workRoot)).toStrictEqual([])
+    // A run makes its run folder first.
+    expect(await filesIn(runFoldersRoot)).toStrictEqual([])
     expect(await openToasts(browser, 'error')).toStrictEqual([])
   })
 
-  it('keeps the program of a job when the user stops the reply, and ends it and deletes its work folder when the user closes the tab', async () => {
+  it('keeps the program of a job when the user stops the reply, and ends it and deletes its run folder when the user closes the tab', async () => {
     const before = await filesIn(audioDir)
     await submit(browser, 'Make a long tone.')
     const first = await chatRequest()
@@ -1334,7 +1334,7 @@ describe('video tool', () => {
     const second = await chatRequest()
     const started = toolResult(second, 'call_tone')
     expect(started).toBe(`${jobStartedText(startedJob(second, 'call_tone'), 1)}\nThe run has no input image and no input clip.`)
-    const program = await runningProgram(browser, workRoot)
+    const program = await runningProgram(browser, runFoldersRoot)
 
     // While a reply runs, the Submit button stops it. The job goes on for
     // the next reply of the tab.
@@ -1347,12 +1347,12 @@ describe('video tool', () => {
       { role: 'user', text: '' },
     ])
     expect(processExists(program)).toBe(true)
-    expect(await filesIn(workRoot)).toHaveLength(1)
+    expect(await filesIn(runFoldersRoot)).toHaveLength(1)
 
     // No later reply can take the job of a tab that is gone.
     await pointerClick(browser, '.tab--active .tab-close')
     await waitForValue(browser, 'the program of the call runs', async () => processExists(program), false)
-    await waitForValue(browser, 'work folders', () => filesIn(workRoot), [])
+    await waitForValue(browser, 'run folders', () => filesIn(runFoldersRoot), [])
     expect(await filesIn(audioDir)).toStrictEqual(before)
     expect(setup.mock.hasWaitingRequest()).toBe(false)
     expect(await consoleErrors(browser)).toStrictEqual([])
@@ -1366,7 +1366,7 @@ describe('video tool', () => {
     sendToolCalls(first.reply, [videoCall('call_tone', 'ffmpeg', { arguments: ENDLESS_TONE, timeout_seconds: 10 })])
     const second = await chatRequest()
     const jobId = startedJob(second, 'call_tone')
-    const program = await runningProgram(browser, workRoot)
+    const program = await runningProgram(browser, runFoldersRoot)
     sendToolCalls(second.reply, [waitCall('call_wait')])
 
     // The wait is longer than `waitForValue` takes.
@@ -1380,7 +1380,7 @@ describe('video tool', () => {
     const reply = await endedReply(browser)
     expect(reply.endsWith(`</dez:tool>\n${replyText(CALLER.modelName)}`)).toBe(true)
     await waitForValue(browser, 'the program of the call runs', async () => processExists(program), false)
-    await waitForValue(browser, 'work folders', () => filesIn(workRoot), [])
+    await waitForValue(browser, 'run folders', () => filesIn(runFoldersRoot), [])
     expect(await filesIn(audioDir)).toStrictEqual(before)
     expect(await openToasts(browser, 'error')).toStrictEqual([])
   })

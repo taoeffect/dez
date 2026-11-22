@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } fr
 import type { DrawnImage, DrawnMediaType, ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
 import type { Section } from '../model/chat/types'
 import { user } from '../model/streams/testing'
-import { ALIAS_TIMEOUT_MS, aliasRunTexts, AUDIO_ALIASES, VIDEO_ALIASES, type AppAlias } from '../model/tools/appAliases'
+import { ALIAS_TIMEOUT_MS, aliasRunTexts } from '../model/tools/appAliases'
 import { APP_READ_ASSET, APP_SAVE_ASSET, APP_STOPPED_TEXT, AppCallError, notAnInputText, SaveNotStoredError, type AppFrameEnd, type AppFrameRun, type SavedAssetAnswer } from '../model/tools/appBridge'
 import { APP_PAGE_LOADS_STATE, APP_RUNS_STATE, appOutputNotStoredText, invokeCall, invokeInputsText, INVOKE_RUN_TEXTS, type CheckedInvokeCall } from '../model/tools/appInvoke'
 import { MANIFEST_MAX_BYTES } from '../model/tools/appManifest'
@@ -15,7 +15,7 @@ import { APP_DECODES_STATE, clipDecodeArgs, DECODE_NOT_PROBED_DETAILS, DECODED_T
 import { jobStartedText, jobTimedOutText } from '../model/tools/jobs'
 import { JS_EVAL_OUTPUT_BYTES, JS_EVAL_RUNNER, JS_EVAL_RUNNER_FILE, RUN_DESCRIPTION_FILE } from '../model/tools/jsEval'
 import { PROGRAM_READS_INPUTS, programNotStartedText } from '../model/tools/programRuns'
-import { appsArgs, CONVERSATION, CONVERSATION_ID, FILM, OPUS, PNG_BYTES, probeOutput, protocolLine, RED, SKY, SONG, textBytes, VP9, WAV_BYTES } from '../model/tools/testing'
+import { aliasOf, appsArgs, CONVERSATION, CONVERSATION_ID, FILM, OPUS, PNG_BYTES, probeOutput, protocolLine, RED, SKY, SONG, textBytes, VP9, WAV_BYTES } from '../model/tools/testing'
 import type { ToolRunResult } from '../model/tools/types'
 import { FFPROBE_TIMEOUT_MS } from '../model/tools/videoTool'
 import { FONT_FOLDER, SHIPPED_FONTS } from '../model/tools/videoFonts'
@@ -456,15 +456,15 @@ describe('runAppJob', () => {
   // Rust finds the folder of a built-in app in the files that Dez ships by
   // its name, and a model knows it as /apps/<name> too.
   it('runs a built-in app from the files that Dez ships, and gives its paths as the apps tool names them', async () => {
-    const app = `${RESOURCE_DIR}/builtin-apps/dez-media`
+    const app = `${RESOURCE_DIR}/builtin-apps/dez-beats`
     native.program = writes('stdout', protocolLine({ type: 'error', text: `Error: no rows\n    at main (file://${app}/main.ts:2:9)` }))
 
-    const outcome = await runJob(invoke({ name: 'dez-media' }))
+    const outcome = await runJob(invoke({ name: 'dez-beats' }))
 
     expect(runDescription(deletedWorkFolder())).toMatchObject({ main: `file://${app}/main.ts`, appFolder: app })
-    expect(native.runs[0].run).toMatchObject({ builtInApp: 'dez-media' })
+    expect(native.runs[0].run).toMatchObject({ builtInApp: 'dez-beats' })
     expect(native.runs[0].run).not.toHaveProperty('appFolder')
-    expect(outcome.text).toContain('at main (file:///apps/dez-media/main.ts:2:9)')
+    expect(outcome.text).toContain('at main (file:///apps/dez-beats/main.ts:2:9)')
     expect(outcome.text).not.toContain(RESOURCE_DIR)
   })
 
@@ -1280,13 +1280,6 @@ describe('apps invoke', () => {
     expect(native.createdFolders).toStrictEqual([])
   })
 })
-
-// The alias subcommand `name` of the tool `tool`.
-function aliasOf(tool: 'audio' | 'video', name: string): AppAlias {
-  const alias = [...AUDIO_ALIASES, ...VIDEO_ALIASES].find((each) => each.tool === tool && each.subcommand.name === name)
-  if (!alias) throw new Error(`There is no alias ${tool} ${name}.`)
-  return alias
-}
 
 // A call of an alias subcommand of the `audio` or the `video` tool: one run
 // of its built-in app, which the call waits for.

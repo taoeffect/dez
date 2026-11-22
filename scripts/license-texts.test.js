@@ -100,7 +100,7 @@ describe('crateLicenses', () => {
     });
   });
 
-  it('gives a text with plain line ends and no space around it, so that equal texts are equal', () => {
+  it('gives a text with plain line ends, no space at the end of a line, and no empty lines around it, so that equal texts are equal', () => {
     const file = tarGzFile([{ name: 'a-1.0.0/LICENSE', text: '\uFEFF\r\n  MIT License  \r\n\r\nCopyright \t\r\n\r\n\r\n' }]);
     expect(crateLicenses(crate, file).files).toEqual([{ path: 'LICENSE', text: '  MIT License\n\nCopyright' }]);
   });

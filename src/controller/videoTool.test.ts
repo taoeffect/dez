@@ -507,10 +507,10 @@ describe('the files of /work', () => {
   it.each([
     ['-i /work/gone.mp4 out.mp4', '', workInputNotFileText({ virtual: '/work/gone.mp4', name: 'work/gone.mp4', file: '' }, 'missing', 'ffmpeg')],
     ['-i /work/clips out.mp4', '', workInputNotFileText({ virtual: '/work/clips', name: 'work/clips', file: '' }, 'folder', 'ffmpeg')],
-    ['-i /work/link.mp4 out.mp4', '', workInputNotFileText({ virtual: '/work/link.mp4', name: 'work/link.mp4', file: '' }, 'other', 'ffmpeg')],
+    ['-i /work/pipe.mp4 out.mp4', '', workInputNotFileText({ virtual: '/work/pipe.mp4', name: 'work/pipe.mp4', file: '' }, 'other', 'ffmpeg')],
     ['-i @c f%04d.png', '/work/notes', '`save_to` is /work/notes, which is a file.'],
   ])('refuses the call %j with the save_to %j, as its paths of /work are not what it needs', async (text, saveTo, problem) => {
-    native.fileTree = workTree({ clips: 'folder', 'link.mp4': 'other', notes: 'file' })
+    native.fileTree = workTree({ clips: 'folder', 'pipe.mp4': 'other', notes: 'file' })
 
     const refusal = await refusalOf(checkWorkPaths(ffmpegCall({ arguments: text, save_to: saveTo }, videoContext(CONVERSATION)), 'ffmpeg'))
 

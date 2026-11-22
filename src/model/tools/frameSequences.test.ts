@@ -14,13 +14,13 @@ import {
   sequenceClipType,
   type FrameSequence,
 } from './frameSequences'
-import { folderTree, MISSING_TREE } from './testing'
+import { folderTree, MISSING_TREE, textBytes } from './testing'
 
 const FACTS = { fps: 24, width: 64, height: 36, count: 3, alpha: false }
 const PNG_SEQUENCE: FrameSequence = { ...FACTS, format: 'png' }
 
 function json(value: unknown): Uint8Array {
-  return new TextEncoder().encode(JSON.stringify(value))
+  return textBytes(JSON.stringify(value))
 }
 
 // The listing of a frames folder with frames.json and the frames 0 to
@@ -97,7 +97,7 @@ describe('checkedSequence', () => {
 
   it('refuses a frames.json that is no object, has an unknown field, or a value out of its range', () => {
     const problems: Array<[Uint8Array, string]> = [
-      [new TextEncoder().encode('{"fps": 24,'), 'it must be one JSON object, as in {"fps": 30, "width": 1280, "height": 720, "count": 90, "alpha": false}'],
+      [textBytes('{"fps": 24,'), 'it must be one JSON object, as in {"fps": 30, "width": 1280, "height": 720, "count": 90, "alpha": false}'],
       [json([FACTS]), 'it must be one JSON object'],
       [json({ ...FACTS, frameRate: 24 }), 'it has the field "frameRate", which Dez does not know: it takes only "fps", "width", "height", "count" and "alpha"'],
       [json({ ...FACTS, fps: 0 }), '"fps" must be a number from 0.01 to 240'],
@@ -155,7 +155,7 @@ describe('frameEncodeArgs', () => {
 describe('sequenceClipType', () => {
   // A stored file has the type that its first bytes give.
   it('gives the type that the stored type of the clip bytes gives', () => {
-    const iso = (brand: string) => new Uint8Array([0, 0, 0, 0x14, ...new TextEncoder().encode(`ftyp${brand}`), 0, 0, 0, 0])
+    const iso = (brand: string) => new Uint8Array([0, 0, 0, 0x14, ...textBytes(`ftyp${brand}`), 0, 0, 0, 0])
     expect(sequenceClipType({ alpha: true })).toStrictEqual(storedTypeOfBytes(iso('qt  ')))
     expect(sequenceClipType({ alpha: false })).toStrictEqual(storedTypeOfBytes(iso('isom')))
   })
