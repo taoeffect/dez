@@ -7,6 +7,7 @@
     "chart.js/helpers": "./chart.js/helpers/helpers.js",
     "@kurkle/color": "./kurkle-color/dist/color.esm.js",
     "fft.js": "./fft.js/lib/fft.esm.js",
-    "skia-canvas": "./skia-canvas/lib/mod.mjs"
+    "skia-canvas": "./skia-canvas/lib/mod.mjs",
+    "dez-media": "./dez-media/mod.js"
   }
 }

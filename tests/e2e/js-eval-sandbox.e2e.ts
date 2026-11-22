@@ -296,6 +296,8 @@ describe('js_eval sandbox', () => {
       ['a native library', 'async () => Deno.dlopen("libc.so.6", {})', 'NotCapable: Requires ffi access'],
       // The libraries that Dez ships.
       ['a library that Dez ships', '() => import("fft.js").then((module) => new module.default(8).size)', 'ok: 8'],
+      // dez-media imports fft.js by a relative path, which rfft uses.
+      ['Dez\'s own library', '() => import("dez-media").then((media) => Array.from(media.rfft([1, 1, 1, 1]).re).join(","))', 'ok: "4,0,0"'],
       ['read a file of a library that Dez ships', `() => Deno.readTextFile(${shippedLib})`, refusedRead],
       // `--no-prompt`: a question is a "no".
       ['ask for each permission', 'async () => (await Promise.all(["read", "write", "net", "env", "sys", "run", "ffi"].map((name) => Deno.permissions.request({ name })))).map((status) => status.state).join(" ")', 'ok: "denied denied denied denied denied denied denied"'],

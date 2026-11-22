@@ -1,15 +1,30 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   badPaths,
   fftModule,
   importClosures,
+  importMap,
+  LIBRARIES,
   lockedPackages,
   nativePackages,
   npmTarballUrl,
+  OWN_LIBRARIES,
   readmeLicense,
   skiaCanvasModule,
   skiaDeps
 } from './update-libs.js';
+
+describe('importMap', () => {
+  // A library added to a list without a run of the script has no name that
+  // a run can import.
+  it('is the import map in src-tauri/libs/: each name of the vendored libraries and of Dez\'s own ones', () => {
+    const shipped = JSON.parse(readFileSync(new URL('../src-tauri/libs/import_map.json', import.meta.url), 'utf8'));
+    const map = importMap([...LIBRARIES, ...OWN_LIBRARIES]);
+    expect(shipped).toStrictEqual(map);
+    expect(Object.keys(shipped.imports)).toStrictEqual(Object.keys(map.imports));
+  });
+});
 
 describe('lockedPackages', () => {
   const libraries = [

@@ -157,6 +157,8 @@ const LIBRARIES: readonly Probe[] = [
     'drew',
   ],
   ['fft.js', "() => import('fft.js').then(({ default: FFT }) => new FFT(8).size)", '8'],
+  // dez-media imports fft.js by a relative path, which rfft uses.
+  ['dez-media', "() => import('dez-media').then((media) => Array.from(media.rfft([1, 1, 1, 1]).re).join(','))", '4,0,0'],
   // A library with a native file runs only in Deno: the map has no name
   // of it.
   ['skia-canvas', "() => import('skia-canvas')", 'threw TypeError'],

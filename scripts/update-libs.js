@@ -74,7 +74,10 @@ import { DENO_VERSION_CALL } from './update-deno.js';
 //    flags of a run of Dez: each import loads, and skia-canvas draws.
 //
 // The script owns its library folders, import_map.json, and manifest.json.
-// Another folder of src-tauri/libs/ stays as it is.
+// The folders of OWN_LIBRARIES are Dez's code, in Git: the script names
+// them in the import map and loads them in its checks, but never changes
+// them, and the manifest pins none of their files. Another folder of
+// src-tauri/libs/ stays as it is.
 
 const USAGE = `Vendor the libraries that Dez ships for the code of its runs into src-tauri/libs/.
 
@@ -188,6 +191,11 @@ export const LIBRARIES = [
     }
   }
 ];
+
+// Dez's own libraries: folders of src-tauri/libs/ that hold Dez's code, not
+// an npm package. `imports` as in LIBRARIES. dez-media imports fft.js by a
+// relative path, so it loads only next to the vendored libraries.
+export const OWN_LIBRARIES = [{ folder: 'dez-media', imports: { 'dez-media': 'mod.js' } }];
 
 // The names of the files that the script writes next to the library
 // folders.
@@ -809,7 +817,12 @@ async function main(args) {
       mkdirSync(dirname(join(libs, path)), { recursive: true });
       copyFileSync(join(full, path), join(libs, path));
     }
-    writeFileSync(join(libs, IMPORT_MAP), jsonText(importMap(LIBRARIES)));
+    // Copies, so that the checks below load Dez's own libraries next to the
+    // new vendored files. The swap does not move them.
+    for (const own of OWN_LIBRARIES) {
+      cpSync(join(LIBS_DIR, own.folder), join(libs, own.folder), { recursive: true });
+    }
+    writeFileSync(join(libs, IMPORT_MAP), jsonText(importMap([...LIBRARIES, ...OWN_LIBRARIES])));
 
     const libraryFacts = {};
     for (const library of LIBRARIES) {
@@ -849,6 +862,7 @@ async function main(args) {
     }
 
     const nativePaths = LIBRARIES.filter(library => library.native).map(library => `${library.folder}/${library.native.file}`);
+    const ownFolders = OWN_LIBRARIES.map(own => `${own.folder}/`);
     const shipped = filesBelow(libs);
     const bad = badPaths(shipped);
     if (bad.length > 0) {
@@ -856,16 +870,19 @@ async function main(args) {
     }
 
     // The final folder has all that its imports load, and runs.
-    const check = moduleGraph(deno, libs, roots, work);
-    for (const root of roots) {
+    const checkedRoots = [...roots, ...graphRoots(libs, OWN_LIBRARIES)];
+    const check = moduleGraph(deno, libs, checkedRoots, work);
+    for (const root of checkedRoots) {
       const problem = check.get(root.specifier)?.problem;
       if (problem) throw new Error(`The import ${root.specifier} does not load from the vendored files: ${problem}`);
     }
-    const smoked = smokeRun(deno, libs, roots, work);
+    const smoked = smokeRun(deno, libs, checkedRoots, work);
     console.log(`The libraries run in Deno: ${smoked.join(', ')}, and skia-canvas draws.`);
 
     const files = Object.fromEntries(
-      shipped.filter(path => !nativePaths.includes(path)).map(path => [path, bytesPin(readFileSync(join(libs, path)))])
+      shipped
+        .filter(path => !nativePaths.includes(path) && !ownFolders.some(folder => path.startsWith(folder)))
+        .map(path => [path, bytesPin(readFileSync(join(libs, path)))])
     );
     const manifest = manifestText(libraryFacts, files);
 
