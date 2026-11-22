@@ -29,13 +29,15 @@ enum FileSource {
 }
 
 impl FileSource {
-    /// What gets a file of the vendored folder `folder` as its manifest names
-    /// it: the first part of the advice of an error text.
-    fn get_step(&self, folder: &str) -> String {
+    /// What gets the file `shown` (its path from the folder of the repository)
+    /// of a vendored folder as its manifest names it: the first part of the
+    /// advice of an error text. The Git step names only that file, so that it
+    /// keeps the edits of the other files of the folder (the code of
+    /// dez-media, the `SKILL.md` files), which the manifest does not pin.
+    fn get_step(&self, shown: &str) -> String {
         match self {
             Self::PlainGit => format!(
-                "Run `git checkout -- src-tauri/{folder}` in the folder of the repository to get the files of the \
-                 repository"
+                "Run `git checkout -- {shown}` in the folder of the repository to get the file of the repository"
             ),
             Self::GitLfs => "Install Git LFS and run `git lfs pull` to get the file of the repository".to_string(),
             Self::FetchScript => format!(
@@ -277,7 +279,7 @@ fn check_file(
     println!("cargo:rerun-if-changed={}", path.display());
     let shown = format!("src-tauri/{}", path.display());
     let manifest = vendored.shown_manifest();
-    let advice = format!("{}, or {}.", vendored.source.get_step(vendored.folder), vendored.vendor_step);
+    let advice = format!("{}, or {}.", vendored.source.get_step(&shown), vendored.vendor_step);
 
     let found_size = fs::metadata(&path)
         .map_err(|error| format!("{shown} is missing ({error}). {advice}"))?
