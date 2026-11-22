@@ -47,13 +47,14 @@ export interface ChatClipCopy {
 }
 
 // The `input_audio.format` and the extension of the stream copy of an
-// audio clip of each canonical type (`canonicalMediaType`). An Opus clip
-// has none: Dez does not know whether a server that takes `ogg` reads
-// Opus in it, so the clip goes as an MP3 or a WAV copy.
+// audio clip of each canonical type (`canonicalMediaType`). An Ogg clip
+// and an Opus clip have none: an Ogg file can hold Opus (a voice note),
+// and a pasted or dropped one gets `audio/ogg` from its name
+// (`storableClip`). Dez does not know whether a server that takes `ogg`
+// reads Opus in it, so the clip goes as an MP3 or a WAV copy.
 const AUDIO_COPY_FORMATS: Readonly<Record<string, { format: string, extension: string }>> = {
   'audio/mpeg': { format: 'mp3', extension: 'mp3' },
   'audio/wav': { format: 'wav', extension: 'wav' },
-  'audio/ogg': { format: 'ogg', extension: 'ogg' },
   'audio/flac': { format: 'flac', extension: 'flac' },
   'audio/mp4': { format: 'm4a', extension: 'm4a' },
   'audio/aac': { format: 'aac', extension: 'aac' },

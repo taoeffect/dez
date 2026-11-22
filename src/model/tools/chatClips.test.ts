@@ -31,9 +31,11 @@ describe('chatClipCopies', () => {
     expect(plans('audio', 'audio/flac', { audioFormats: ['wav', 'ogg'] })).toStrictEqual([{ name: 'chat_converted.wav', form: { type: 'audio', format: 'wav' } }])
   })
 
-  // Dez does not know whether a server that takes `ogg` reads Opus in it.
-  it('converts an Opus clip, even for a provider that takes ogg', () => {
-    expect(plans('audio', 'audio/opus', MANY)).toStrictEqual([{ name: 'chat_converted.mp3', form: { type: 'audio', format: 'mp3' } }])
+  // An Ogg file can hold Opus (a voice note), and a pasted or dropped one
+  // gets `audio/ogg` from its name. Dez does not know whether a server that
+  // takes `ogg` reads Opus in it.
+  it.each(['audio/opus', 'audio/ogg'])('converts an %s clip, even for a provider that takes ogg', (type) => {
+    expect(plans('audio', type, MANY)).toStrictEqual([{ name: 'chat_converted.mp3', form: { type: 'audio', format: 'mp3' } }])
   })
 
   it('tries a stream copy of a video clip of a type that the provider takes, then an MP4 conversion', () => {
