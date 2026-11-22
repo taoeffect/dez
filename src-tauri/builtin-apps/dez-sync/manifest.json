@@ -1,0 +1,14 @@
+{
+  "name": "dez-sync",
+  "description": "Checks whether the cuts of a video edit are on the beats of its song: the error of each cut. Inputs: the edit, then the song.",
+  "kind": "script",
+  "decode": {
+    "audio": {
+      "rate": 22050
+    },
+    "frames": {
+      "width": 96,
+      "height": 54
+    }
+  }
+}

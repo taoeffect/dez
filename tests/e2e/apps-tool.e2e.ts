@@ -22,6 +22,8 @@ import { activeConversationId, endedReply, newTab, openToasts, submit } from './
 // through the file commands of the backend:
 // - a model makes an app, and writes, reads, edits, moves, lists, and
 //   deletes its files; only the user can open what the tool made;
+// - the lists of /apps hold the built-in apps that the build ships, with
+//   their mark, also after the delete of the last app of the user;
 // - a model reads ranges of the lines of a file, and its first edit call
 //   in each tab gets the hint of edit, also when Dez refuses the call; a
 //   model that read the help of edit gets no hint;
@@ -42,6 +44,25 @@ import { activeConversationId, endedReply, newTab, openToasts, submit } from './
 
 const CALLER: MockProvider = { id: 'caller', name: 'Caller Mock', modelId: 'caller-model', modelName: 'Caller Model' }
 const CHAT_PATH = mockChatPath(CALLER)
+
+// The built-in apps that the debug build ships (src-tauri/builtin-apps/),
+// by name: each listing of /apps has them besides the apps of a test. An
+// app is a folder of files, with no folder in it.
+const BUILT_IN_DIR = new URL('../../src-tauri/builtin-apps/', import.meta.url)
+const BUILT_IN_APPS = fs.readdirSync(BUILT_IN_DIR).sort().map((name) => {
+  const folder = new URL(`${name}/`, BUILT_IN_DIR)
+  const files = fs.readdirSync(folder).sort()
+  const manifest = parseAppManifest(fs.readFileSync(new URL('manifest.json', folder), 'utf8'))
+  if (!manifest) throw new Error(`The manifest of the built-in app ${name} is not valid.`)
+  return {
+    name,
+    files: files.map((file) => `${name}/${file}`),
+    bytes: files.reduce((sum, file) => sum + fs.statSync(new URL(file, folder)).size, 0),
+    kind: manifest.kind,
+    description: manifest.description,
+  }
+})
+const BUILT_IN_FILES = BUILT_IN_APPS.flatMap((app) => app.files)
 
 describe('apps tool', () => {
   let setup: MockProviderApp
@@ -150,7 +171,11 @@ describe('apps tool', () => {
       `main.ts | ${byteSizeText(mainBytes)}`,
       'manifest.json | 75 B',
     ].join('\n'))
-    expect(toolResult(third, 'call_list')).toBe(`1 app (name | kind | size | description), by name.\nnotes | script | ${byteSizeText(mainBytes + 65 + 75)} | Keeps notes.`)
+    expect(toolResult(third, 'call_list')).toBe([
+      `${BUILT_IN_APPS.length + 1} apps (name | kind | size | description), by name.`,
+      ...BUILT_IN_APPS.map((app) => `${app.name} | ${app.kind} (built-in) | ${byteSizeText(app.bytes)} | ${app.description}`),
+      `notes | script | ${byteSizeText(mainBytes + 65 + 75)} | Keeps notes.`,
+    ].join('\n'))
     expect(['notes/lib', 'notes/data/old', 'notes/data/old/lib'].map(modeOf)).toStrictEqual([0o700, 0o700, 0o700])
 
     sendToolCalls(third.reply, [
@@ -175,7 +200,11 @@ describe('apps tool', () => {
       '/apps/notes/main.ts',
       '/apps/notes/manifest.json',
     ].join('\n'))
-    expect(toolResult(fourth, 'call_none')).toBe('There are no apps yet. Make one with init.')
+    // The built-in apps stay.
+    expect(toolResult(fourth, 'call_none')).toBe([
+      `/apps: ${BUILT_IN_APPS.length} folders and 0 files (name | size).`,
+      ...BUILT_IN_APPS.map((app) => `${app.name}/ | ${app.files.length} files, ${byteSizeText(app.bytes)} | built-in`),
+    ].join('\n'))
     expect(await filesIn(appsDir)).toStrictEqual([])
     await expectReplyEnd(fourth)
     expect(await consoleErrors(browser)).toStrictEqual([])
@@ -413,7 +442,8 @@ describe('apps tool', () => {
 
     const second = await chatRequest()
     expect(toolResult(second, 'call_find_all')).toBe([
-      '/apps: 5 files (paths after /apps/), by path.',
+      `/apps: ${BUILT_IN_FILES.length + 5} files (paths after /apps/), by path.`,
+      ...BUILT_IN_FILES,
       'slow/manifest.json',
       'slow/slow.txt',
       'trip/main.ts',
@@ -421,7 +451,7 @@ describe('apps tool', () => {
       'trip/units.ts',
     ].join('\n'))
     expect(toolResult(second, 'call_find_words')).toBe([
-      '/apps: 2 of 5 files match "trip ts" (paths after /apps/), by path.',
+      `/apps: 2 of ${BUILT_IN_FILES.length + 5} files match "trip ts" (paths after /apps/), by path.`,
       'trip/main.ts',
       'trip/units.ts',
     ].join('\n'))

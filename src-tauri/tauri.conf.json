@@ -53,6 +53,7 @@
     "resources": {
       "fonts/": "fonts/",
       "libs/": "libs/",
+      "builtin-apps/": "builtin-apps/",
       "binaries/NOTICE.md": "ffmpeg/NOTICE.md",
       "binaries/LICENSES.txt": "ffmpeg/LICENSES.txt",
       "binaries/deno/NOTICE.md": "deno/NOTICE.md",

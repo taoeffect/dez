@@ -1,3 +1,5 @@
+/// <reference types="vitest/config" />
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 import pkg from "./package.json";
@@ -43,6 +45,14 @@ export default defineConfig(async () => ({
   ],
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
+  },
+
+  // The unit tests run the built-in apps (src-tauri/builtin-apps/), which
+  // import dez-media by the name that the import map of a Deno run gives.
+  test: {
+    alias: {
+      "dez-media": fileURLToPath(new URL("./src-tauri/libs/dez-media/mod.js", import.meta.url)),
+    },
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`

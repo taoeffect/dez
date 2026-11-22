@@ -86,6 +86,9 @@ describe('dez-media onsets against sfx_anchor with NumPy', () => {
 
 describe('dez-media align against sync_check.py with NumPy', () => {
   const { song, mix, noise } = alignInputs()
+  // The search of sync_check.py: the frames of the mix from its first
+  // sample only.
+  const reference = { phases: 1 }
 
   it('gets the same song, mix, and noise as numpyOracle.py', () => {
     expect(inputHash(song)).toBe(oracle.inputs.alignSong)
@@ -94,29 +97,45 @@ describe('dez-media align against sync_check.py with NumPy', () => {
   })
 
   it('finds the song at 3.72 s in the mix, with a high confidence', () => {
-    const found = align(song, mix, ALIGN_RATE)
+    const found = align(song, mix, ALIGN_RATE, reference)
     expect(found.offset).toBe(oracle.align.mix.offset)
     expect(found.offset).toBeCloseTo(3.72, 12)
     expect(found.confidence).toBeCloseTo(oracle.align.mix.confidence, 5)
     expect(found.confidence).toBeGreaterThan(0.9)
+    // The song starts on a frame: the other starts match less.
+    expect(align(song, mix, ALIGN_RATE)).toStrictEqual(found)
   })
 
   // In a mix of 8 s, align searches the offsets up to 4 s (half the mix),
   // not 6 s, and cuts the song to the 4 s of the mix after each offset.
   it('searches half of a short mix, with a cut song', () => {
-    const found = align(song, mix.subarray(0, 64000), ALIGN_RATE)
+    const found = align(song, mix.subarray(0, 64000), ALIGN_RATE, reference)
     expect(found.offset).toBe(oracle.align.shortMix.offset)
     expect(found.confidence).toBeCloseTo(oracle.align.shortMix.confidence, 5)
   })
 
   it('has a low confidence for sounds that do not match', () => {
-    const found = align(song, noise, ALIGN_RATE)
+    const found = align(song, noise, ALIGN_RATE, reference)
     expect(found.offset).toBe(oracle.align.noise.offset)
     expect(found.confidence).toBeCloseTo(oracle.align.noise.confidence, 5)
-    expect(found.confidence).toBeLessThan(0.3)
+    expect(align(song, noise, ALIGN_RATE).confidence).toBeLessThan(0.3)
   })
 
-  it('refuses a clip shorter than two of its 5 ms frames', () => {
+  // A change from sync_check.py: a song that starts half a frame (2.5 ms)
+  // after a frame start matched it with a confidence under 0.3.
+  it('finds a song that starts between two frames, with a high confidence, to 1.25 ms', () => {
+    for (const delay of [10, 20, 30]) {
+      const later = new Float32Array(mix.length + delay)
+      later.set(mix, delay)
+      const found = align(song, later, ALIGN_RATE)
+      expect(found.offset).toBeCloseTo(3.72 + delay / ALIGN_RATE, 12)
+      expect(found.confidence).toBeGreaterThan(0.9)
+    }
+  })
+
+  it('refuses a clip shorter than two of its 5 ms frames, and a count of phases that is not a whole number from 1', () => {
     expect(() => align(new Float32Array(50), mix, ALIGN_RATE)).toThrow(/too short/)
+    expect(() => align(song, mix, ALIGN_RATE, { phases: 0 })).toThrow(/phases/)
+    expect(() => align(song, mix, ALIGN_RATE, { phases: 1.5 })).toThrow(/phases/)
   })
 })

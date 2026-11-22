@@ -272,15 +272,17 @@ export function onsets(samples, rate = ANCHOR_RATE, { level = 0.3 } = {}) {
 }
 
 /**
- * The rises of the log level of a clip, every 5 ms: what align matches.
+ * The rises of the log level of a clip, every 5 ms from the sample
+ * `start`: what align matches.
  * @param {Samples} samples
  * @param {number} hop  samples in 5 ms
+ * @param {number} [start]
  */
-function riseEnvelope(samples, hop) {
+function riseEnvelope(samples, hop, start = 0) {
   // The 1e-12 of the reference code: a frame of silence gets the log of
   // 1e-4 + 1e-6, not of 1e-4.
-  const logLevels = new Float64Array(Math.floor(samples.length / hop))
-  for (let f = 0; f < logLevels.length; f++) logLevels[f] = Math.log(Math.sqrt(meanSquare(samples, f * hop, hop) + 1e-12) + 1e-4)
+  const logLevels = new Float64Array(Math.max(0, Math.floor((samples.length - start) / hop)))
+  for (let f = 0; f < logLevels.length; f++) logLevels[f] = Math.log(Math.sqrt(meanSquare(samples, start + f * hop, hop) + 1e-12) + 1e-4)
   const rises = new Float64Array(Math.max(0, logLevels.length - 1))
   for (let i = 0; i < rises.length; i++) rises[i] = Math.max(0, logLevels[i + 1] - logLevels[i])
   const average = mean(rises)
@@ -289,26 +291,15 @@ function riseEnvelope(samples, hop) {
 }
 
 /**
- * Where `clip` starts in `within` (such as a song in the sound of a video
- * edit): the offset in seconds, from 0 to `maxLag` (6 s by default), where
- * the rises of their levels match best.
- *
- * `within` is searched up to half its length at most, and the clip is cut
- * to fit it at each offset. `confidence` is the normalized correlation at
- * the offset, from −1 to 1: about 1 for the same sound, under 0.3 for
- * sounds that do not match.
- * @param {Samples} clip  mono, at `rate`
- * @param {Samples} within  mono, at `rate`
- * @param {number} [rate]  in Hz (ALIGN_RATE is enough)
- * @param {{ maxLag?: number }} [options]
+ * The lag of `withinRises` (0 to `maxLags` frames) where `clipRises`
+ * matches best, as sync_check.py finds it, and the normalized correlation
+ * there.
+ * @param {Float64Array} clipRises
+ * @param {Float64Array} withinRises
+ * @param {number} maxLags
  */
-export function align(clip, within, rate = ALIGN_RATE, { maxLag = 6 } = {}) {
-  if (!(maxLag >= 0)) throw new RangeError(`align: maxLag must be 0 s or more, not ${maxLag}.`)
-  const hop = Math.max(1, Math.round(rate * 0.005))
-  const clipRises = riseEnvelope(clip, hop)
-  const withinRises = riseEnvelope(within, hop)
-  if (clipRises.length === 0 || withinRises.length === 0) throw new RangeError('align: a clip is too short. Each needs at least 10 ms of sound.')
-  const lags = Math.min(Math.round((maxLag * rate) / hop), Math.floor(withinRises.length / 2))
+function bestLag(clipRises, withinRises, maxLags) {
+  const lags = Math.min(maxLags, Math.floor(withinRises.length / 2))
   const used = Math.min(clipRises.length, withinRises.length - lags)
   const pattern = clipRises.subarray(0, used)
   let best = 0
@@ -327,5 +318,50 @@ export function align(clip, within, rate = ALIGN_RATE, { maxLag = 6 } = {}) {
     patternEnergy += pattern[i] * pattern[i]
     segmentEnergy += withinRises[best + i] ** 2
   }
-  return { offset: (best * hop) / rate, confidence: top / (Math.sqrt(patternEnergy * segmentEnergy) + 1e-12) }
+  return { lag: best, confidence: top / (Math.sqrt(patternEnergy * segmentEnergy) + 1e-12) }
+}
+
+/**
+ * Where `clip` starts in `within` (such as a song in the sound of a video
+ * edit): the offset in seconds, from 0 to about `maxLag` (6 s by
+ * default), where the rises of their levels match best.
+ *
+ * `within` is searched up to half its length at most, and the clip is cut
+ * to fit it at each offset. `confidence` is the normalized correlation at
+ * the offset, from −1 to 1: about 1 for the same sound, under 0.3 for
+ * sounds that do not match.
+ *
+ * The levels are of 5 ms frames. A sound that starts between two frames
+ * gets other levels than the same sound on a frame: half a frame off can
+ * take the confidence of a match from 0.9 to under 0.3. So the search
+ * tries the frames of `within` from `phases` starts in the first frame (4
+ * by default: every 1.25 ms), and keeps the start with the highest
+ * confidence. `phases: 1` is the search of sync_check.py.
+ * @param {Samples} clip  mono, at `rate`
+ * @param {Samples} within  mono, at `rate`
+ * @param {number} [rate]  in Hz (ALIGN_RATE is enough)
+ * @param {{ maxLag?: number, phases?: number }} [options]
+ */
+export function align(clip, within, rate = ALIGN_RATE, { maxLag = 6, phases = 4 } = {}) {
+  if (!(maxLag >= 0)) throw new RangeError(`align: maxLag must be 0 s or more, not ${maxLag}.`)
+  if (!(Number.isInteger(phases) && phases >= 1)) throw new RangeError(`align: phases must be a whole number from 1 up, such as 4, not ${phases}.`)
+  const hop = Math.max(1, Math.round(rate * 0.005))
+  const clipRises = riseEnvelope(clip, hop)
+  const firstRises = riseEnvelope(within, hop)
+  if (clipRises.length === 0 || firstRises.length === 0) throw new RangeError('align: a clip is too short. Each needs at least 10 ms of sound.')
+  const maxLags = Math.round((maxLag * rate) / hop)
+  const first = bestLag(clipRises, firstRises, maxLags)
+  let found = { offset: (first.lag * hop) / rate, confidence: first.confidence }
+  let lastStart = 0
+  for (let phase = 1; phase < phases; phase++) {
+    const start = Math.round((phase * hop) / phases)
+    // A hop of fewer samples than phases has fewer starts.
+    if (start === lastStart) continue
+    lastStart = start
+    const withinRises = riseEnvelope(within, hop, start)
+    if (withinRises.length === 0) continue
+    const { lag, confidence } = bestLag(clipRises, withinRises, maxLags)
+    if (confidence > found.confidence) found = { offset: (lag * hop + start) / rate, confidence }
+  }
+  return found
 }

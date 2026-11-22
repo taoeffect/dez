@@ -15,6 +15,9 @@
     "jsx": "preserve",
     /* dez-media is JavaScript with JSDoc types (// @ts-check) */
     "allowJs": true,
+    /* The built-in apps import dez-media by its name in the import map of
+       the Deno runs (src-tauri/libs/import_map.json) */
+    "paths": { "dez-media": ["./src-tauri/libs/dez-media/mod.js"] },
 
     /* Linting */
     "strict": true,
@@ -28,7 +31,9 @@
     "src/**/*.tsx",
     "src/**/*.vue",
     "src-tauri/libs/dez-media/**/*.js",
-    "tests/dez-media/**/*.ts"
+    "src-tauri/builtin-apps/**/*.ts",
+    "tests/dez-media/**/*.ts",
+    "tests/builtin-apps/**/*.ts"
   ],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

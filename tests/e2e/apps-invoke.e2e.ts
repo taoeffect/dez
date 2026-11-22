@@ -14,7 +14,7 @@ import { clipTag, monoWav, shownPlayers, WAV_SAMPLE_RATE, WEBM_VIDEO } from './h
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendChatReply, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { endedReply, newTab, openSeededConversation, pickModel, submit } from './harness/thread'
+import { activeConversationId, endedReply, newTab, openSeededConversation, pickModel, submit } from './harness/thread'
 import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolChip, revealingPart } from './harness/toolChips'
 
 // The `invoke` subcommand of the `apps` tool, driven through the real app
@@ -34,6 +34,9 @@ import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolC
 //   its bytes and not its name, and keeps no other file;
 // - with `decode`, the real ffmpeg decodes each clip into the run folder
 //   first, and the code reads the samples and the pixels with dez-media;
+// - a built-in app runs from the bundle of the debug build, with the
+//   decode of its manifest, and writes its result file into the work
+//   folder of the conversation;
 // - a run with `is_intermediate` hides its asset under the chip of its
 //   call;
 // - a call that names no app, or an app without the file that a run
@@ -157,6 +160,15 @@ const TONE_WAV = monoWav(Buffer.from(Int16Array.from(
   { length: 2 * WAV_SAMPLE_RATE },
   (_, index) => Math.round(16384 * Math.sin(2 * Math.PI * 440 * index / WAV_SAMPLE_RATE)),
 ).buffer), 2)
+// 2 s of silence with two bursts of a 500 Hz tone, each 0.2 s: a soft one
+// at 0.5 s and a loud one at 1.2 s. A cycle is 16 samples, so each 10 ms
+// frame of a burst has the same samples, and the loudest frame is the
+// first one of the loud burst.
+const BURSTS_WAV = monoWav(Buffer.from(Int16Array.from({ length: 2 * WAV_SAMPLE_RATE }, (_, index) => {
+  const at = (seconds: number) => seconds * WAV_SAMPLE_RATE
+  const amplitude = index >= at(0.5) && index < at(0.7) ? 8192 : index >= at(1.2) && index < at(1.4) ? 24576 : 0
+  return Math.round(amplitude * Math.sin(2 * Math.PI * 500 * index / WAV_SAMPLE_RATE))
+}).buffer), 2)
 // The color of `WEBM_VIDEO`.
 const VIDEO_COLOR = [0x2a, 0x7f, 0xd4]
 
@@ -460,6 +472,37 @@ describe('apps invoke', () => {
     expect(ofTone).toStrictEqual({ id: 'b', audio: { path: '/run/b.f32', rate: 8000, count: 16_000 }, frames: null, frozen: true, samples: 16_000, peak: 0.5 })
 
     await expectReplyEnd(setup, CALLER, run.next)
+    await expectRunsEnded(setup)
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('runs the built-in apps dez-onsets and dez-cuts from the bundle, with the decode of their manifests, and each writes its result into the work folder', async () => {
+    const { home } = setup.app
+    const video = await writeTestFile(appFilePath(home, 'assets', 'generated', 'video', 'built-in.webm'), WEBM_VIDEO)
+    const bursts = await writeTestFile(appFilePath(home, 'assets', 'generated', 'audio', 'built-in.wav'), BURSTS_WAV)
+    await openSeededConversation(browser, home, 'apps-invoke-built-in', [{
+      role: 'user',
+      text: [clipTag('video', { id: 'a', type: 'video/webm', src: video }), clipTag('audio', { id: 'b', type: 'audio/wav', src: bursts }), 'Measure them.'].join('\n'),
+    }])
+    await pickModel(browser, CALLER.name, CALLER.modelName)
+    await submit(browser, '')
+    const workFolder = appFilePath(home, 'work', await activeConversationId(browser))
+
+    const onsets = await invoke(await chatRequest(), 'call_onsets', { name: 'dez-onsets', inputs: '@b' })
+    expect(onsets.result.status).toBe('finished')
+    expect(onsets.result.text).toBe([
+      '@b (2.000 s): the sound starts at 0.500 s, the loudest moment is at 1.200 s, 2 onsets. In /work/onsets-b.json.',
+      'Each file holds id, duration, level, first (where the sound starts), peak, and onsets. Times are in seconds.',
+    ].join('\n'))
+    expect(JSON.parse(fs.readFileSync(path.join(workFolder, 'onsets-b.json'), 'utf8'))).toStrictEqual({ id: 'b', duration: 2, level: 0.3, first: 0.5, peak: 1.2, onsets: [0.5, 1.2] })
+
+    // The video has one color: no cut. Its file has 5 frames a second.
+    const cuts = await invoke(onsets.next, 'call_cuts', { name: 'dez-cuts', inputs: '@a', parameters: { save_to: '/work/video/cuts.json' } })
+    expect(cuts.result.status).toBe('finished')
+    expect(cuts.result.text.split('\n')[0]).toBe('@a (10 frames, 2.000 s at 5 fps): no cut. In /work/video/cuts.json.')
+    expect(JSON.parse(fs.readFileSync(path.join(workFolder, 'video', 'cuts.json'), 'utf8'))).toStrictEqual({ id: 'a', fps: 5, frames: 10, duration: 2, threshold: 0.35, cuts: [] })
+
+    await expectReplyEnd(setup, CALLER, cuts.next)
     await expectRunsEnded(setup)
     expect(await consoleErrors(browser)).toStrictEqual([])
   })

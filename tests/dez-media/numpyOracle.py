@@ -299,6 +299,9 @@ def align(song, mix, max_lag=6):
     # dez-media: the confidence is the normalized correlation at the offset.
     seg = mix[best:best + used]
     confidence = float(corr[best] / (np.sqrt(np.sum(song[:used] ** 2) * np.sum(seg ** 2)) + 1e-12))
+    # dez-media: align also tries the frames of the mix from 3 more starts in
+    # its first frame (`phases`, 4 by default), and keeps the best confidence.
+    # The oracle is the search from the first sample only (`phases: 1`).
     return {"offset": best * ALIGN_HOP / ALIGN_RATE, "confidence": confidence}
 
 
