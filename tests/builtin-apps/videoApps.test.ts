@@ -66,15 +66,15 @@ describe('dez-sync', () => {
     return sound
   }
 
-  async function edit(withSound: boolean) {
+  async function edit(sound: Float32Array | null) {
     return input('a', 'video', {
-      audio: withSound ? await run.audio('a', editSound(), 22050) : null,
+      audio: sound === null ? null : await run.audio('a', sound, 22050),
       frames: await run.frames('a', shotFrames(frameCount, cutAt), 16, 9, FPS),
     })
   }
 
   it('finds the song in the sound of the edit, and tells each cut that is off the beat', async () => {
-    const text = await sync({}, run.dez([await edit(true), input('b', 'audio', { audio: await run.audio('b', song, 22050) })]))
+    const text = await sync({}, run.dez([await edit(editSound()), input('b', 'audio', { audio: await run.audio('b', song, 22050) })]))
     const result = await run.workJson('sync-a-to-b.json') as {
       offset: number, confidence: number, tolerance: number, cuts: { time: number, offBeat: boolean, error: number }[], meanError: number, maxError: number,
     }
@@ -94,17 +94,35 @@ describe('dez-sync', () => {
 
   it('takes the offset of the call, so the edit needs no sound', async () => {
     const songInput = input('b', 'audio', { audio: await run.audio('b', song, 22050) })
-    const text = await sync({ offset: OFFSET, tolerance: 0.25, save_to: '/work/sync.json' }, run.dez([await edit(false), songInput]))
+    const text = await sync({ offset: OFFSET, tolerance: 0.25, save_to: '/work/sync.json' }, run.dez([await edit(null), songInput]))
     expect(await run.workJson('sync.json')).toMatchObject({ offset: OFFSET, confidence: null, tolerance: 0.25 })
     expect(text).toContain('starts at 1.000 s in @a (given)')
     expect(text).toContain('none off the beat by more than 250 ms')
 
-    await expect(sync({}, run.dez([await edit(false), songInput]))).rejects.toThrow('@a has no sound, so dez-sync cannot find where the song starts in it. Give that time with the parameter offset')
+    await expect(sync({}, run.dez([await edit(null), songInput]))).rejects.toThrow('@a has no sound, so dez-sync cannot find where the song starts in it. Give that time with the parameter offset')
+  })
+
+  it('tells that the song can start later when the offset is at the end of the search', async () => {
+    const songInput = input('b', 'audio', { audio: await run.audio('b', song, 22050) })
+    expect(await sync({ max_lag: 0 }, run.dez([await edit(editSound()), songInput])))
+      .toContain('The offset is at the end of the search: @b can start later in @a. Run again with a larger max_lag, or give the offset with the parameter offset.')
+    // 30 ms of sound: the search stops at its half, before max_lag.
+    expect(await sync({}, run.dez([await edit(editSound().subarray(0, 662)), songInput])))
+      .toContain('The offset is at the end of the search, and dez-sync searches only the first half of the sound of @a: @b can start later.')
+  })
+
+  it('names the clip of a measurement that fails', async () => {
+    const songInput = input('b', 'audio', { audio: await run.audio('b', song, 22050) })
+    const shortSong = input('c', 'audio', { audio: await run.audio('c', new Float32Array(100), 22050) })
+    await expect(sync({}, run.dez([await edit(editSound()), shortSong]))).rejects.toThrow(/^@c: beatGrid: the song is too short/)
+    await expect(sync({}, run.dez([await edit(new Float32Array(100)), songInput]))).rejects.toThrow(/^@a: align: a clip is too short/)
+    const tinyFrames = input('a', 'video', { audio: null, frames: await run.frames('a', new Uint8Array(2 * 2 * 3 * 4), 2, 2, FPS) })
+    await expect(sync({ offset: 0 }, run.dez([tinyFrames, songInput]))).rejects.toThrow(/^@a: cuts: the frames must be at least 3×3 pixels/)
   })
 
   it('refuses the inputs in the wrong order', async () => {
     const songInput = input('b', 'audio', { audio: await run.audio('b', song, 22050) })
-    await expect(sync({}, run.dez([songInput, await edit(true)]))).rejects.toThrow('The first input, @b, must be the edit, a video.')
-    await expect(sync({}, run.dez([await edit(true)]))).rejects.toThrow(/^dez-sync needs exactly two inputs, and the run has 1/)
+    await expect(sync({}, run.dez([songInput, await edit(editSound())]))).rejects.toThrow('The first input, @b, must be the edit, a video.')
+    await expect(sync({}, run.dez([await edit(editSound())]))).rejects.toThrow(/^dez-sync needs exactly two inputs, and the run has 1/)
   })
 })

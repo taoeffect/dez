@@ -13,7 +13,8 @@
 //   does not search for the song in the sound of the edit, so the edit
 //   needs no sound. Without it, the song must be in the sound of the edit.
 // - max_lag (seconds, 0 or more, 6 by default): the latest offset to
-//   search.
+//   search. The search also stops at half of the length of the sound of
+//   the edit.
 // - threshold (more than 0, 0.35 by default): the lowest score of a cut,
 //   as in dez-cuts.
 // - tolerance (seconds, more than 0; one frame of the edit by default): a
@@ -69,6 +70,28 @@ interface Dez {
 const milliseconds = (time: number) => `${Math.round(time * 1000)} ms`
 const signedMilliseconds = (time: number) => `${time > 0 ? '+' : ''}${milliseconds(time)}`
 
+// The run has two clips, and an error of a measurement of dez-media names
+// none: the text gets the id of the clip that it is about, as in dez-beats.
+function namingClip<T>(id: string, measure: () => T): T {
+  try {
+    return measure()
+  } catch (error) {
+    if (error instanceof RangeError) throw new RangeError(`@${id}: ${error.message}`)
+    throw error
+  }
+}
+
+// As in dez-align: align steps by 5 ms, and its last step can be up to 2
+// steps short of half of the sound of the edit. An offset that near the end
+// of the search is at its end, and the song can start later: a song with a
+// steady beat can then match a whole bar early.
+function searchEndText(offset: number, maxLag: number, halfEdit: number, edit: string, song: string): string | null {
+  if (Math.min(maxLag, halfEdit) - offset >= 0.015) return null
+  return maxLag < halfEdit
+    ? `The offset is at the end of the search: @${song} can start later in @${edit}. Run again with a larger max_lag, or give the offset with the parameter offset.`
+    : `The offset is at the end of the search, and ${APP} searches only the first half of the sound of @${edit}: @${song} can start later. If you know where the song starts, give it with the parameter offset.`
+}
+
 export default async function main(parameters: Record<string, unknown>, dez: Dez): Promise<string> {
   checkParameterNames(APP, parameters, PARAMETERS)
   const givenOffset = numberParameter(parameters, 'offset', () => true, 'a number of seconds, such as 0 or 1.5')
@@ -88,25 +111,32 @@ export default async function main(parameters: Record<string, unknown>, dez: Dez
   if (songInput.audio === null) throw new RangeError(`The second input, @${songInput.id}, has no sound: it must be the song, a clip with sound.`)
   const songSound = decodedSound(APP, songInput)
   const song = f32Samples(await readFile(songSound.path))
+  // The beat grid comes before the search for the song: a song long enough
+  // for a beat grid (0.3 s or more at any rate) is long enough for align (10
+  // ms), so a "too short" error of align is about the sound of the edit.
+  const grid = namingClip(songInput.id, () => beatGrid(song, songSound.rate))
 
   let offset = givenOffset
   let confidence: number | null = null
+  let searchEnd: string | null = null
   if (offset === undefined) {
     if (editInput.audio === null) {
       throw new RangeError(`@${editInput.id} has no sound, so ${APP} cannot find where the song starts in it. `
         + 'Give that time with the parameter offset, in seconds: 0 when the song starts with the edit.')
     }
     const editSound = decodedSound(APP, editInput)
-    const found = align(song, f32Samples(await readFile(editSound.path)), songSound.rate, { maxLag })
+    const edit = f32Samples(await readFile(editSound.path))
+    const found = namingClip(editInput.id, () => align(song, edit, songSound.rate, { maxLag }))
     offset = found.offset
     confidence = found.confidence
+    searchEnd = searchEndText(found.offset, maxLag, edit.length / editSound.rate / 2, editInput.id, songInput.id)
   }
 
-  const grid = beatGrid(song, songSound.rate)
   const { path, width, height, fps: editFps, count } = editFrames
   const fps = editFps ?? DEFAULT_FPS
   const tolerance = givenTolerance ?? 1 / fps
-  const cutTimes = cuts(rgbFrames(await readFile(path), width, height), { fps, threshold }).cuts.map(({ time }) => time)
+  const frameBytes = await readFile(path)
+  const cutTimes = namingClip(editInput.id, () => cuts(rgbFrames(frameBytes, width, height), { fps, threshold })).cuts.map(({ time }) => time)
   const checked = syncCheck(cutTimes, grid.beats, { offset, tolerance })
   const rounded = (time: number | null) => time === null ? null : roundTo(time, 3)
   const result = {
@@ -133,6 +163,7 @@ export default async function main(parameters: Record<string, unknown>, dez: Dez
       ? `The song does not match the sound of @${editInput.id}, so the offset is likely wrong, and so are the errors. If you know where the song starts, give it with the parameter offset.`
       : 'The song matches the sound of the edit only weakly: check the offset, or give it with the parameter offset.')
   }
+  if (searchEnd !== null) lines.push(searchEnd)
   const left = cutTimes.length - checked.cuts.length
   const before = left > 0 ? ` (${left} ${left === 1 ? 'cut' : 'cuts'} before the song starts left out)` : ''
   if (checked.meanError === null || checked.maxError === null) {
