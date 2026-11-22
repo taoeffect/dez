@@ -2,7 +2,9 @@ import sbp from '@sbp/sbp'
 import { EditorState, type Extension } from '@codemirror/state'
 import { EditorView, dropCursor } from '@codemirror/view'
 import { SENTINEL_CHAR } from '../../model/chat/content'
+import { MAX_DATA_FILE_BYTES, dataFileExtension, type DataFileExtension } from '../../model/chat/dataFiles'
 import { wholeImageDrawing, type DrawnImage } from '../../model/chat/imageDrawing'
+import { requestParts } from '../../model/chat/incognito'
 import { imageMarkdown, isImageMediaType, isLinkedImagePath, type ImageMediaType } from '../../model/chat/images'
 import { CLIP_FILE_EXTENSIONS, FileTooLargeError, MAX_SAVED_CLIP_BYTES, storableClip } from '../../model/chat/mediaFiles'
 import { newMediaIds, pastedMediaIdChanges } from '../../model/chat/mediaIds'
@@ -26,19 +28,30 @@ interface StorableClip {
   type: string
 }
 
-/** A pasted or dropped file that Dez stored or linked: its absolute path,
- *  and the kind and media type of a clip (null for an image). */
-interface AddedFile {
-  path: string
-  clip: StorableClip | null
-}
+/** A pasted or dropped file that Dez added: the absolute path of a stored
+ *  or linked image or clip (with the kind and media type of a clip), or the
+ *  text of the copy of a data file in the work folder of the conversation
+ *  (`/work/data-1.csv`, `dez.controller/dataFiles/save`). */
+type AddedFile =
+  | { kind: 'image', path: string }
+  | { kind: 'clip', path: string, clip: StorableClip }
+  | { kind: 'data', path: string }
 
 /** What a pasted or dropped file is to Dez. */
-type AssetKind = 'image' | 'clip'
+type FileKind = AddedFile['kind']
+
+/** What Dez adds a pasted or dropped file as (`filePlan`, `pathPlan`). */
+type AddPlan =
+  | { kind: 'image' }
+  | { kind: 'clip', clip: StorableClip }
+  | { kind: 'data', extension: DataFileExtension }
+
+/** The name of each kind of file in the texts for the user. */
+const KIND_NAMES: Readonly<Record<FileKind, string>> = { image: 'image', clip: 'clip', data: 'data file' }
 
 /** The dropped files, by path, that are read as images. A dropped file can
- *  be large, so a file that is no image and no clip (`storableClip`) is
- *  left out without being read. */
+ *  be large, so a file that is no image, no clip (`storableClip`), and no
+ *  data file (`dataFileExtension`) is left out without being read. */
 const IMAGE_FILE_PATH = /\.(?:png|jpe?g|jfif|gif|webp|bmp|tiff?|avif|svg|ico|heic|heif|jxl)$/i
 
 /** The start of every text that has an id of the one id sequence: an image
@@ -85,8 +98,9 @@ function transferredFiles(data: DataTransfer): File[] {
   })
 }
 
-function showNotAddedToast(asset: AssetKind, message: string): void {
-  sbp('dez.ui/toast', 'app-global', { title: asset === 'image' ? 'Image not added' : 'Clip not added', message, variant: 'warning', duration: 8000 })
+function showNotAddedToast(kind: FileKind, message: string): void {
+  const name = KIND_NAMES[kind]
+  sbp('dez.ui/toast', 'app-global', { title: `${name[0].toUpperCase()}${name.slice(1)} not added`, message, variant: 'warning', duration: 8000 })
 }
 
 /** The warning for a clip file that is larger than the clips that Dez
@@ -94,6 +108,27 @@ function showNotAddedToast(asset: AssetKind, message: string): void {
 function showClipTooLargeToast(name: string, size: number): void {
   showNotAddedToast('clip', `Dez cannot add ${name || 'the clip'}: the file is ${byteSizeText(size)}, and Dez stores clips of up to ${byteSizeText(MAX_SAVED_CLIP_BYTES)}. `
     + 'Make the clip smaller with another app (shorter, or at a lower quality), and add it again.')
+}
+
+/** The warning for a data file that is larger than `MAX_DATA_FILE_BYTES`. */
+function showDataTooLargeToast(name: string, size: number): void {
+  showNotAddedToast('data', `Dez cannot add ${name || 'the data file'}: the file is ${byteSizeText(size)}, and Dez adds data files of up to ${byteSizeText(MAX_DATA_FILE_BYTES)}. `
+    + 'Leave out the rows or the fields that the model does not need, or split the file, and add it again.')
+}
+
+/** The bytes of a pasted or dropped clip or data file. Null, after a
+ *  warning toast, when it cannot be read. */
+async function fileBytes(file: File, kind: 'clip' | 'data'): Promise<Uint8Array | null> {
+  try {
+    return new Uint8Array(await file.arrayBuffer())
+  } catch (error) {
+    console.error(`Failed to read the ${KIND_NAMES[kind]}:`, error)
+    showNotAddedToast(kind, errorText(
+      `Dez cannot read ${file.name || `the ${KIND_NAMES[kind]}`}: the file was moved or deleted, or Dez has no permission to read it. Check the file, and add it again.`,
+      rawErrorText(error),
+    ))
+    return null
+  }
 }
 
 /** The bytes to store for an image file: the file as it is for a type that
@@ -125,7 +160,7 @@ async function storeImage(source: File | Promise<File | null>): Promise<AddedFil
   const image = await storableImage(file)
   if (!image) return null
   try {
-    return { path: await sbp('dez.controller/images/save', image.bytes, image.mediaType) as string, clip: null }
+    return { kind: 'image', path: await sbp('dez.controller/images/save', image.bytes, image.mediaType) as string }
   } catch {
     // The save selector has logged the error and shown a toast.
     return null
@@ -143,33 +178,67 @@ async function storeClip(source: File | Promise<File | null>, clip: StorableClip
     showClipTooLargeToast(file.name, file.size)
     return null
   }
-  let bytes: Uint8Array
-  try {
-    bytes = new Uint8Array(await file.arrayBuffer())
-  } catch (error) {
-    console.error('Failed to read the clip:', error)
-    showNotAddedToast('clip', errorText(
-      `Dez cannot read ${file.name || 'the clip'}: the file was moved or deleted, or Dez has no permission to read it. Check the file, and add it again.`,
-      rawErrorText(error),
-    ))
-    return null
-  }
+  const bytes = await fileBytes(file, 'clip')
+  if (!bytes) return null
   try {
     const path = await sbp('dez.controller/media/save', { kind: clip.kind, type: clip.type, src: null, url: null }, { bytes }) as string
-    return { path, clip }
+    return { kind: 'clip', path, clip }
   } catch {
     // The save selector has logged the error and shown a toast.
     return null
   }
 }
 
-/** Starts to store a pasted or dropped file: an image (any `image/` type),
- *  or a clip (`storableClip`). Null for any other file, which Dez does not
- *  store. */
-function storeFile(file: File): Promise<AddedFile | null> | null {
-  if (file.type.startsWith('image/')) return storeImage(file)
-  const clip = storableClip(file.type, file.name)
-  return clip && storeClip(file, clip)
+/** Copies one data file, or the file that `source` gives, into the work
+ *  folder of the conversation of the tab `tabId`
+ *  (`dez.controller/dataFiles/save`). A file that is larger than
+ *  `MAX_DATA_FILE_BYTES` is not read. Null when it was not copied; the user
+ *  has seen a toast. */
+async function storeData(source: File | Promise<File | null>, extension: DataFileExtension, tabId: string): Promise<AddedFile | null> {
+  const file = await source
+  if (!file) return null
+  if (file.size > MAX_DATA_FILE_BYTES) {
+    showDataTooLargeToast(file.name, file.size)
+    return null
+  }
+  const bytes = await fileBytes(file, 'data')
+  if (!bytes) return null
+  try {
+    return { kind: 'data', path: await sbp('dez.controller/dataFiles/save', tabId, bytes, extension) as string }
+  } catch {
+    // The save selector has logged the error and shown a toast.
+    return null
+  }
+}
+
+/** What Dez adds a pasted file or a file of an HTML5 drop as: an image
+ *  (any `image/` type), a clip (`storableClip`), or a data file
+ *  (`dataFileExtension`). Null for any other file, which Dez leaves out. */
+function filePlan(file: File): AddPlan | null {
+  if (file.type.startsWith('image/')) return { kind: 'image' }
+  return clipOrDataPlan(file.type, file.name)
+}
+
+/** What Dez adds a file of a native drop as, by its path: an image by its
+ *  extension (`IMAGE_FILE_PATH`), a clip, or a data file, as `filePlan`. */
+function pathPlan(path: string): AddPlan | null {
+  if (IMAGE_FILE_PATH.test(path)) return { kind: 'image' }
+  return clipOrDataPlan('', path)
+}
+
+function clipOrDataPlan(type: string, name: string): AddPlan | null {
+  const clip = storableClip(type, name)
+  if (clip) return { kind: 'clip', clip }
+  const extension = dataFileExtension(name)
+  return extension && { kind: 'data', extension }
+}
+
+/** Starts to store a pasted file as `plan` tells; a data file goes into
+ *  the work folder of the conversation of the tab `tabId`. */
+function storeFile(file: File, plan: AddPlan, tabId: string): Promise<AddedFile | null> {
+  if (plan.kind === 'image') return storeImage(file)
+  if (plan.kind === 'clip') return storeClip(file, plan.clip)
+  return storeData(file, plan.extension, tabId)
 }
 
 /** Gives the dropped file at `path` (or at the path that `path` gives;
@@ -201,16 +270,19 @@ async function linkOrStore(path: string | null | Promise<string | null>, clip: S
       return null
     }
   }
-  return { path: dropped, clip }
+  return clip === null ? { kind: 'image', path: dropped } : { kind: 'clip', path: dropped, clip }
 }
 
 /** Starts to add a file of an HTML5 drop (macOS), as `storeFile` does,
- *  but links it when `pathOf` gives its path (`linkOrStore`). A clip's size
- *  is `file.size`: `pairDroppedFiles` gave only a path with that size. */
-function dropFile(file: File, pathOf: () => Promise<string | null>): Promise<AddedFile | null> | null {
-  if (file.type.startsWith('image/')) return linkOrStore(pathOf(), null, () => storeImage(file))
-  const clip = storableClip(file.type, file.name)
-  return clip && linkOrStore(pathOf(), clip, () => storeClip(file, clip), file.size)
+ *  but links an image or a clip when `pathOf` gives its path
+ *  (`linkOrStore`). A clip's size is `file.size`: `pairDroppedFiles` gave
+ *  only a path with that size. A data file is always copied: the tools and
+ *  the code of a model read it in the work folder only. */
+function dropFile(file: File, plan: AddPlan, tabId: string, pathOf: () => Promise<string | null>): Promise<AddedFile | null> {
+  if (plan.kind === 'image') return linkOrStore(pathOf(), null, () => storeImage(file))
+  if (plan.kind === 'data') return storeData(file, plan.extension, tabId)
+  const { clip } = plan
+  return linkOrStore(pathOf(), clip, () => storeClip(file, clip), file.size)
 }
 
 /** Whether a drop at `pos` may link its files: only when `pos` is in a user
@@ -224,18 +296,22 @@ function dropMayLink(state: EditorState, pos: number): boolean {
   return state.field(sectionsField, false)?.[index]?.role === 'user'
 }
 
-/** Reads a dropped file by its path; a clip only when it is not larger
- *  than the clips that Dez stores. Null, after a warning toast, when it
- *  cannot be read or is too large. */
-async function readDroppedFile(path: string, asset: AssetKind): Promise<File | null> {
+/** Reads a dropped file by its path; a clip or a data file only when it is
+ *  not larger than Dez takes (`MAX_SAVED_CLIP_BYTES`,
+ *  `MAX_DATA_FILE_BYTES`). Null, after a warning toast, when it cannot be
+ *  read or is too large. */
+async function readDroppedFile(path: string, kind: FileKind): Promise<File | null> {
+  const maxBytes = { image: undefined, clip: MAX_SAVED_CLIP_BYTES, data: MAX_DATA_FILE_BYTES }[kind]
   try {
-    return await sbp('dez.controller/images/readFile', path, asset === 'clip' ? { maxBytes: MAX_SAVED_CLIP_BYTES } : {}) as File
+    return await sbp('dez.controller/images/readFile', path, maxBytes === undefined ? {} : { maxBytes }) as File
   } catch (error) {
-    console.error(`Failed to read the dropped ${asset}:`, error)
-    if (error instanceof FileTooLargeError) {
+    console.error(`Failed to read the dropped ${KIND_NAMES[kind]}:`, error)
+    if (error instanceof FileTooLargeError && kind === 'data') {
+      showDataTooLargeToast(fileNameOf(path), error.size)
+    } else if (error instanceof FileTooLargeError) {
       showClipTooLargeToast(fileNameOf(path), error.size)
     } else {
-      showNotAddedToast(asset, errorText(
+      showNotAddedToast(kind, errorText(
         `Dez cannot read ${fileNameOf(path)}: the file was moved or deleted, or Dez has no permission to read it. Check the file, and drop it again.`,
         rawErrorText(error),
       ))
@@ -244,31 +320,34 @@ async function readDroppedFile(path: string, asset: AssetKind): Promise<File | n
   }
 }
 
-/** Starts to add a dropped file by its path: an image by its extension
- *  (`IMAGE_FILE_PATH`), or a clip (`storableClip`), linked (when `mayLink`)
- *  or stored (`linkOrStore`). Null for any other file, which is not read. */
-function dropPath(path: string, mayLink: boolean): Promise<AddedFile | null> | null {
+/** Starts to add a dropped file by its path, as `plan` tells: an image or
+ *  a clip linked (when `mayLink`) or stored (`linkOrStore`), or a data file
+ *  copied into the work folder of the conversation of the tab `tabId`. */
+function dropPath(path: string, plan: AddPlan, tabId: string, mayLink: boolean): Promise<AddedFile | null> {
   const linkPath = mayLink ? path : null
-  if (IMAGE_FILE_PATH.test(path)) return linkOrStore(linkPath, null, () => storeImage(readDroppedFile(path, 'image')))
-  const clip = storableClip('', path)
-  return clip && linkOrStore(linkPath, clip, () => storeClip(readDroppedFile(path, 'clip'), clip))
+  if (plan.kind === 'image') return linkOrStore(linkPath, null, () => storeImage(readDroppedFile(path, 'image')))
+  if (plan.kind === 'data') return storeData(readDroppedFile(path, 'data'), plan.extension, tabId)
+  const { clip } = plan
+  return linkOrStore(linkPath, clip, () => storeClip(readDroppedFile(path, 'clip'), clip))
 }
 
-/** The text of an added file in the doc, with the id `id`: an image
- *  reference, or a media tag. */
-function addedFileText({ path, clip }: AddedFile, id: string): string {
-  if (clip === null) return imageMarkdown(path, [{ key: 'id', value: id }])
+/** The text of an added image or clip in the doc, with the id `id`: an
+ *  image reference, or a media tag. */
+function assetText(file: Exclude<AddedFile, { kind: 'data' }>, id: string): string {
+  if (file.kind === 'image') return imageMarkdown(file.path, [{ key: 'id', value: id }])
+  const { clip, path } = file
   return mediaTagText({ kind: clip.kind, id, type: clip.type, src: path, url: null, expires: null, other: [] })
 }
 
-/** The text that puts `text` (image references and media tags, or dropped
- *  links) in place of `from`..`to`, and the caret offset in it. With
- *  `ownLines` (a text that holds a media tag, which is a tag only as a
- *  whole line: mediaTags.ts), the text gets lines of its own. So does it on
- *  a line with a sentinel (a section separator, a prompt pill), which shows
- *  no image (`findRenderedImages` in images.ts). This also keeps a drop on
- *  a role pill out of the separator line, which must hold only the
- *  separator. */
+/** The text that puts `text` (image references, media tags, and the paths
+ *  of data files, or dropped links) in place of `from`..`to`, and the caret
+ *  offset in it. With `ownLines` (a text that holds a media tag, which is a
+ *  tag only as a whole line: mediaTags.ts, or the path of a data file,
+ *  which the text around it must not lengthen), the text gets lines of its
+ *  own. So does it on a line with a sentinel (a section separator, a prompt
+ *  pill), which shows no image (`findRenderedImages` in images.ts). This
+ *  also keeps a drop on a role pill out of the separator line, which must
+ *  hold only the separator. */
 function insertionText(state: EditorState, { from, to }: DocRange, text: string, ownLines = false): { insert: string, caret: number } {
   const before = state.sliceDoc(state.doc.lineAt(from).from, from)
   const after = state.sliceDoc(to, state.doc.lineAt(to).to)
@@ -278,12 +357,20 @@ function insertionText(state: EditorState, { from, to }: DocRange, text: string,
   return { insert: prefix + text + suffix, caret: prefix.length + text.length }
 }
 
+// The kinds of files counted in a text, as a list in a sentence: `images`,
+// `images and a clip`, `an image, clips, and a data file`.
+function kindsText(files: readonly AddedFile[]): string {
+  const words = (['image', 'clip', 'data'] as const).flatMap((kind) => {
+    const count = files.filter((file) => file.kind === kind).length
+    return count === 0 ? [] : [count === 1 ? KIND_NAMES[kind] : `${KIND_NAMES[kind]}s`]
+  })
+  return words.length < 3 ? words.join(' and ') : `${words.slice(0, -1).join(', ')}, and ${words.at(-1)}`
+}
+
 /** The warning for added files that a paste or a drop did not insert,
- *  worded for images, clips, or both. */
+ *  worded for the kinds of the files. */
 function showNotInsertedToast(stored: readonly AddedFile[], userEvent: 'input.paste' | 'input.drop'): void {
-  const clipCount = stored.filter((file) => file.clip !== null).length
-  const counted = (count: number, word: string) => (count === 0 ? [] : [count === 1 ? word : `${word}s`])
-  const what = [...counted(stored.length - clipCount, 'image'), ...counted(clipCount, 'clip')].join(' and ')
+  const what = kindsText(stored)
   const one = stored.length === 1
   sbp('dez.ui/toast', 'app-global', {
     title: `${what[0].toUpperCase()}${what.slice(1)} not inserted`,
@@ -295,17 +382,17 @@ function showNotInsertedToast(stored: readonly AddedFile[], userEvent: 'input.pa
 }
 
 /** Waits for the stores and links of the files of a paste or a drop
- *  (`storeFile`, `dropFile`, `dropPath`), then puts the image references
- *  and the media tags of the added files (one per line, in file order) in
- *  place of `range` in one transaction, with the caret after them. The
- *  stores are async: the range follows the edits made meanwhile
- *  (`addPendingRange`), and when its text changed, the files go after it
- *  and the new text stays. When the view no longer shows the doc of the
- *  paste or drop (another tab, or a rebuilt state), the stored files stay
- *  stored (and linked files where they are) but are not inserted, and a
- *  toast says so. Each file gets its id at the dispatch (`newMediaIds`, from
- *  the doc as it is then), as a tag with no id is no tag; so two inserts in
- *  flight never take the same id. */
+ *  (`storeFile`, `dropFile`, `dropPath`), then puts the image references,
+ *  the media tags, and the data file paths of the added files (one per
+ *  line, in file order) in place of `range` in one transaction, with the
+ *  caret after them. The stores are async: the range follows the edits
+ *  made meanwhile (`addPendingRange`), and when its text changed, the files
+ *  go after it and the new text stays. When the view no longer shows the
+ *  doc of the paste or drop (another tab, or a rebuilt state), the stored
+ *  files stay stored (and linked files where they are) but are not
+ *  inserted, and a toast says so. Each image and clip gets its id at the
+ *  dispatch (`newMediaIds`, from the doc as it is then), as a tag with no
+ *  id is no tag; so two inserts in flight never take the same id. */
 async function insertFiles(view: EditorView, stores: ReadonlyArray<Promise<AddedFile | null>>, range: DocRange, userEvent: 'input.paste' | 'input.drop'): Promise<void> {
   const replacedText = view.state.sliceDoc(range.from, range.to)
   const id = addPendingRange(view, range)
@@ -323,9 +410,11 @@ async function insertFiles(view: EditorView, stores: ReadonlyArray<Promise<Added
   // paste, another file paste) maps the range onto its own new text
   // (ChangeDesc.mapPos): keep that text, and put the files after it.
   const target = view.state.sliceDoc(pending.from, pending.to) === replacedText ? pending : { from: pending.to, to: pending.to }
-  const ids = newMediaIds([view.state.doc.toString()], stored.length)
-  const text = stored.map((file, index) => addedFileText(file, ids[index])).join('\n')
-  const { insert, caret } = insertionText(view.state, target, text, stored.some((file) => file.clip !== null))
+  // A data file takes no id: it is no asset.
+  const ids = newMediaIds([view.state.doc.toString()], stored.filter((file) => file.kind !== 'data').length)
+  let assetIndex = 0
+  const text = stored.map((file) => (file.kind === 'data' ? file.path : assetText(file, ids[assetIndex++]))).join('\n')
+  const { insert, caret } = insertionText(view.state, target, text, stored.some((file) => file.kind !== 'image'))
   view.dispatch({
     changes: { from: target.from, to: target.to, insert },
     selection: { anchor: target.from + caret },
@@ -345,7 +434,7 @@ async function insertFiles(view: EditorView, stores: ReadonlyArray<Promise<Added
 export function insertSavedFile(view: EditorView, { path, kind, type }: SavedAppFile): string {
   const end = view.state.doc.length
   const [id] = newMediaIds([view.state.doc.toString()], 1)
-  const text = addedFileText({ path, clip: kind === 'image' ? null : { kind, type } }, id)
+  const text = assetText(kind === 'image' ? { kind, path } : { kind: 'clip', path, clip: { kind, type } }, id)
   const { insert, caret } = insertionText(view.state, { from: end, to: end }, text, true)
   const { main } = view.state.selection
   view.dispatch({
@@ -356,19 +445,43 @@ export function insertSavedFile(view: EditorView, { path, kind, type }: SavedApp
   return id
 }
 
-/** A paste with no plain text and with image or clip files puts them in
- *  place of the main selection; other files are left out. Plain text wins,
- *  so that an app that copies text and a picture of it (an office app)
- *  pastes text: the text paste (ThreadEditor.vue, or CodeMirror's own)
- *  takes it. Other paste data is left to CodeMirror. With many selections
- *  only the main one gets the files. */
+/** The files of one paste or drop that Dez adds (`items`, each with what
+ *  `planOf` tells Dez to add it as), the tab of the event, and whether an
+ *  item is of no kind that Dez adds. The data files go into the work folder
+ *  of the conversation of the tab of the event: the active tab, whose doc
+ *  the view shows (as `addPendingRange`). An incognito tab takes none, as
+ *  its requests offer no Dez tools that could read them (`requestParts`):
+ *  they are left out unread, after one toast, and `refused` tells it. */
+function filesToAdd<T>(items: readonly T[], planOf: (item: T) => AddPlan | null): {
+  adds: Array<{ item: T, index: number, plan: AddPlan }>
+  tabId: string
+  unsupported: boolean
+  refused: boolean
+} {
+  const tabId = sbp('dez.model/tabs/activeId') as string
+  const plans = items.map(planOf)
+  const refused = plans.some((plan) => plan?.kind === 'data')
+    && !requestParts({ incognito: sbp('dez.model/tabs/incognito', tabId) as boolean }).dezTools
+  if (refused) {
+    showNotAddedToast('data', 'An incognito tab sends no Dez tools, so no model can read a data file in it. Add the file in a tab that is not incognito.')
+  }
+  const adds = plans.flatMap((plan, index) => (plan === null || (refused && plan.kind === 'data') ? [] : [{ item: items[index], index, plan }]))
+  return { adds, tabId, unsupported: plans.includes(null), refused }
+}
+
+/** A paste with no plain text and with image, clip, or data files puts
+ *  them in place of the main selection; other files are left out. Plain
+ *  text wins, so that an app that copies text and a picture of it (an
+ *  office app) pastes text: the text paste (ThreadEditor.vue, or
+ *  CodeMirror's own) takes it. Other paste data is left to CodeMirror. With
+ *  many selections only the main one gets the files. */
 export function pasteFiles(event: ClipboardEvent, view: EditorView): boolean {
   const data = event.clipboardData
   if (!data || data.getData('text/plain')) return false
-  const stores = transferredFiles(data).map(storeFile).filter((store) => store !== null)
-  if (stores.length === 0) return false
+  const { adds, tabId, refused } = filesToAdd(transferredFiles(data), filePlan)
+  if (adds.length === 0) return refused
   const { from, to } = view.state.selection.main
-  void insertFiles(view, stores, { from, to }, 'input.paste')
+  void insertFiles(view, adds.map(({ item, plan }) => storeFile(item, plan, tabId)), { from, to }, 'input.paste')
   return true
 }
 
@@ -377,17 +490,18 @@ const CLIP_EXTENSIONS_TEXT = `${CLIP_FILE_EXTENSIONS.slice(0, -1).join(', ')}, o
 
 function showUnsupportedDropToast(): void {
   sbp('dez.ui/toast', 'app-global', {
-    message: `Only images and audio and video clips can be dropped into a conversation. Clips must be ${CLIP_EXTENSIONS_TEXT} files.`,
+    message: 'Only images, audio and video clips, and data files can be dropped into a conversation. '
+      + `Clips must be ${CLIP_EXTENSIONS_TEXT} files, and data files csv, tsv, json, or txt files.`,
     duration: 8000,
   })
 }
 
-/** A drop of files puts the image and clip files at the drop point, and
- *  leaves out every other file with a toast. CodeMirror's own drop would
- *  insert each file as text, so a file drop never reaches it. A drag with
- *  no files (text dragged in the editor) is CodeMirror's. The drop event
- *  gives no paths, so they are read once per drop, and only when the drop
- *  has an image or a clip and may link it (`dropMayLink`,
+/** A drop of files puts the image, clip, and data files at the drop point,
+ *  and leaves out every other file with a toast. CodeMirror's own drop
+ *  would insert each file as text, so a file drop never reaches it. A drag
+ *  with no files (text dragged in the editor) is CodeMirror's. The drop
+ *  event gives no paths, so they are read once per drop, and only when the
+ *  drop has an image or a clip and may link it (`dropMayLink`,
  *  `dez.controller/images/droppedFilePaths`). */
 export function dropFiles(event: DragEvent, view: EditorView): boolean {
   const data = event.dataTransfer
@@ -396,14 +510,13 @@ export function dropFiles(event: DragEvent, view: EditorView): boolean {
   const pos = view.posAtCoords({ x: event.clientX, y: event.clientY }, false)
   const mayLink = dropMayLink(view.state, pos)
   let paths: Promise<(string | null)[]> | undefined
-  const stores = files
-    .map((file, index) => dropFile(file, async () => {
-      if (!mayLink) return null
-      paths ??= sbp('dez.controller/images/droppedFilePaths', files) as Promise<(string | null)[]>
-      return (await paths)[index]
-    }))
-    .filter((store) => store !== null)
-  if (stores.length === 0 || stores.length < files.length) showUnsupportedDropToast()
+  const { adds, tabId, unsupported } = filesToAdd(files, filePlan)
+  const stores = adds.map(({ item, index, plan }) => dropFile(item, plan, tabId, async () => {
+    if (!mayLink) return null
+    paths ??= sbp('dez.controller/images/droppedFilePaths', files) as Promise<(string | null)[]>
+    return (await paths)[index]
+  }))
+  if (files.length === 0 || unsupported) showUnsupportedDropToast()
   if (stores.length > 0) {
     focusKeepingScroll(view)
     void insertFiles(view, stores, { from: pos, to: pos }, 'input.drop')
@@ -413,12 +526,12 @@ export function dropFiles(event: DragEvent, view: EditorView): boolean {
 
 /** A drop from Tauri's native file drop (Linux only: tauri.linux.conf.json,
  *  see run() in src-tauri/src/lib.rs), at `point` in the page. As in
- *  `dropFiles`, the image and clip files go to the drop point and every
- *  other file is left out with a toast; the files are linked (in a user
- *  section only: `dropMayLink`), or read by path (`dropPath`). wry passes a
- *  URI that is not a `file://` URI as it is: a drop with no local path (a
- *  link dragged from a browser) goes in as text, as WebKit's own drop
- *  does. */
+ *  `dropFiles`, the image, clip, and data files go to the drop point and
+ *  every other file is left out with a toast; the images and clips are
+ *  linked (in a user section only: `dropMayLink`), or read by path
+ *  (`dropPath`). wry passes a URI that is not a `file://` URI as it is: a
+ *  drop with no local path (a link dragged from a browser) goes in as
+ *  text, as WebKit's own drop does. */
 export function dropFilePaths(view: EditorView, paths: readonly string[], point: { x: number, y: number }): void {
   if (paths.length === 0) return
   const pos = view.posAtCoords(point, false)
@@ -430,15 +543,16 @@ export function dropFilePaths(view: EditorView, paths: readonly string[], point:
     return
   }
   const mayLink = dropMayLink(view.state, pos)
-  const stores = localPaths.map((path) => dropPath(path, mayLink)).filter((store) => store !== null)
-  if (stores.length < paths.length) showUnsupportedDropToast()
+  const { adds, tabId, unsupported } = filesToAdd(localPaths, pathPlan)
+  const stores = adds.map(({ item, plan }) => dropPath(item, plan, tabId, mayLink))
+  if (unsupported || localPaths.length < paths.length) showUnsupportedDropToast()
   if (stores.length > 0) void insertFiles(view, stores, { from: pos, to: pos }, 'input.drop')
 }
 
-/** Paste and drop of images and clips for the thread editor (`buildState()`
- *  in `ThreadEditor.vue`), and the ids of the images and clips that a
- *  paste or a drop brings in. The window refuses file drops outside the
- *  editor (AppLayout.vue). */
+/** Paste and drop of images, clips, and data files for the thread editor
+ *  (`buildState()` in `ThreadEditor.vue`), and the ids of the images and
+ *  clips that a paste or a drop brings in. The window refuses file drops
+ *  outside the editor (AppLayout.vue). */
 export function filePasteAndDrop(): Extension {
   return [
     pendingRanges(),

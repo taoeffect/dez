@@ -56,7 +56,8 @@ const CLAUDE: MockProvider = { id: 'claude', name: 'Claude Mock', modelId: 'clau
 const UNDO_STEP_MS = 600
 
 const QUESTION = ' What color?'
-const NOT_AN_IMAGE_OR_CLIP_MESSAGE = 'Only images and audio and video clips can be dropped into a conversation. Clips must be mp4, webm, mov, mp3, wav, ogg, flac, m4a, aac, or opus files.'
+const UNSUPPORTED_DROP_MESSAGE = 'Only images, audio and video clips, and data files can be dropped into a conversation. '
+  + 'Clips must be mp4, webm, mov, mp3, wav, ogg, flac, m4a, aac, or opus files, and data files csv, tsv, json, or txt files.'
 const PASTED_PNG = solidPng(48, 32, [220, 40, 40])
 const DROPPED_PNG = solidPng(40, 24, [40, 90, 220])
 // PASTED_PNG as an OpenAI-format image part.
@@ -811,7 +812,7 @@ describe('images', () => {
     await expectDroppedImage(before)
   })
 
-  it('stores and inserts no dropped file that is not an image, and says so', async () => {
+  it('stores and inserts no dropped file of a kind that Dez does not take, and says so', async () => {
     await newTab(browser)
     await focusEditor(browser)
     await typeKeys(browser, 'Some text')
@@ -819,10 +820,10 @@ describe('images', () => {
     const before = await storedImages()
 
     const accepted = await dropFiles(browser, await docPoint('Some '.length), [
-      { name: 'notes.txt', type: 'text/plain', base64: Buffer.from('notes').toString('base64') },
+      { name: 'report.pdf', type: 'application/pdf', base64: Buffer.from('%PDF-1.7').toString('base64') },
     ])
     expect(accepted).toEqual({ dragover: true, drop: true })
-    await waitForValue(browser, 'toast', async () => (await openToasts(browser)).some((toast) => toast.message === NOT_AN_IMAGE_OR_CLIP_MESSAGE), true)
+    await waitForValue(browser, 'toast', async () => (await openToasts(browser)).some((toast) => toast.message === UNSUPPORTED_DROP_MESSAGE), true)
     expect(await editorDoc(browser)).toBe('Some text')
     expect(await storedImages()).toEqual(before)
 
@@ -849,15 +850,15 @@ describe('images', () => {
     await expectDroppedImage(before)
   })
 
-  it('leaves out a native-dropped file that is not an image, and puts a dropped link in as text', async () => {
+  it('leaves out a native-dropped file of a kind that Dez does not take, and puts a dropped link in as text', async () => {
     await newTab(browser)
     await focusEditor(browser)
     await typeKeys(browser, 'Some text')
     await waitForValue(browser, 'typed text', () => editorDoc(browser), 'Some text')
     const before = await storedImages()
 
-    await nativeDrop(browser, await docPoint('Some '.length), [path.join(setup.app.home, 'notes.txt')])
-    await waitForValue(browser, 'toast', async () => (await openToasts(browser)).some((toast) => toast.message === NOT_AN_IMAGE_OR_CLIP_MESSAGE), true)
+    await nativeDrop(browser, await docPoint('Some '.length), [path.join(setup.app.home, 'report.pdf')])
+    await waitForValue(browser, 'toast', async () => (await openToasts(browser)).some((toast) => toast.message === UNSUPPORTED_DROP_MESSAGE), true)
     expect(await editorDoc(browser)).toBe('Some text')
     expect(await storedImages()).toEqual(before)
 
@@ -866,6 +867,36 @@ describe('images', () => {
     await nativeDrop(browser, await docPoint('Some '.length), [link])
     await waitForValue(browser, 'dropped link', docAndCaret, { doc: `Some ${link}text`, caret: 'Some '.length + link.length })
     expect(await storedImages()).toEqual(before)
+  })
+
+  // A data file is no asset: Dez copies it under a new name into the work
+  // folder of the conversation, where the tools of a model read it, and the
+  // message names only the copy. A drop never links it, not even from a
+  // folder where an image would be linked.
+  it('copies a data file of an HTML5 drop and of a native drop into the work folder, and puts in only the path of the copy', async () => {
+    const salesCsv = Buffer.from('quarter,sales\nQ1,120\nQ2,180\n')
+    const budgetJson = Buffer.from('{"rent":900}\n')
+    const source = await writeTestFile(path.join(linkedDir, 'budget-2026.json'), budgetJson)
+    await newTab(browser)
+    await focusEditor(browser)
+    await typeKeys(browser, 'Plot ')
+    await waitForValue(browser, 'typed text', () => editorDoc(browser), 'Plot ')
+
+    const accepted = await dropFiles(browser, await docPoint('Plot '.length), [
+      { name: 'quarterly-sales.csv', type: 'text/csv', base64: salesCsv.toString('base64') },
+    ])
+    expect(accepted).toEqual({ dragover: true, drop: true })
+    const firstDoc = 'Plot \n/work/data-1.csv'
+    await waitForValue(browser, 'dropped data file', docAndCaret, { doc: firstDoc, caret: firstDoc.length })
+    await nativeDrop(browser, await docPoint(firstDoc.length), [source])
+    const doc = `${firstDoc}\n/work/data-2.json`
+    await waitForValue(browser, 'native-dropped data file', docAndCaret, { doc, caret: doc.length })
+
+    const workDir = appFilePath(setup.app.home, 'work', await activeConversationId(browser))
+    expect(await filesIn(workDir)).toEqual(['data-1.csv', 'data-2.json'])
+    expect(await fs.promises.readFile(path.join(workDir, 'data-1.csv'))).toEqual(salesCsv)
+    expect(await fs.promises.readFile(path.join(workDir, 'data-2.json'))).toEqual(budgetJson)
+    expect(await openToasts(browser)).toEqual([])
   })
 
   // A file in a dot folder, with a space and parens in its name: the asset

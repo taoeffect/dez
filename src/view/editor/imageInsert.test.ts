@@ -3,6 +3,7 @@ import { history, undo } from '@codemirror/commands'
 import { EditorSelection, EditorState, type TransactionSpec } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
+import { MAX_DATA_FILE_BYTES } from '../../model/chat/dataFiles'
 import type { DrawnImage, DrawnMediaType, ImageDrawing, ImageSize } from '../../model/chat/imageDrawing'
 import { imageMarkdown } from '../../model/chat/images'
 import { FileTooLargeError, MAX_SAVED_CLIP_BYTES } from '../../model/chat/mediaFiles'
@@ -32,8 +33,8 @@ interface Toast {
 
 const IMAGE_FOLDER = '/home/u/.config/dez/assets/images'
 const PNG_BYTES = new Uint8Array([137, 80, 78, 71])
-const UNSUPPORTED_DROP_MESSAGE = 'Only images and audio and video clips can be dropped into a conversation. '
-  + 'Clips must be mp4, webm, mov, mp3, wav, ogg, flac, m4a, aac, or opus files.'
+const UNSUPPORTED_DROP_MESSAGE = 'Only images, audio and video clips, and data files can be dropped into a conversation. '
+  + 'Clips must be mp4, webm, mov, mp3, wav, ogg, flac, m4a, aac, or opus files, and data files csv, tsv, json, or txt files.'
 
 let saveCalls: SaveCall[] = []
 let holdSaves = false
@@ -49,6 +50,9 @@ let reads: [string, { maxBytes?: number }][] = []
 let clipSaves: ClipSave[] = []
 /** The first bytes of the clip files whose save fails. */
 let failingClipSaves = new Set<number>()
+/** The copies of data files, in the order of their saves. */
+let dataSaves: { tabId: string, text: string, extension: string }[] = []
+let incognitoTabs = new Set<string>()
 /** The dropped paths that `dez.controller/images/linkPath` links; it gives
  *  null (copy) for any other path. */
 let linkedPaths = new Set<string>()
@@ -81,6 +85,15 @@ sbp('sbp/selectors/register', {
   },
   'dez.model/tabs/activeId' (): string {
     return activeTabId
+  },
+  'dez.model/tabs/incognito' (tabId: string): boolean {
+    return incognitoTabs.has(tabId)
+  },
+  // Numbers the copies in the order of their saves, as the controller does
+  // in a folder with no data file.
+  async 'dez.controller/dataFiles/save' (tabId: string, bytes: Uint8Array, extension: string): Promise<string> {
+    dataSaves.push({ tabId, text: new TextDecoder().decode(bytes), extension })
+    return `/work/data-${dataSaves.length}.${extension}`
   },
   'dez.controller/images/readFile' (path: string, options: { maxBytes?: number }): Promise<File> {
     reads.push([path, options])
@@ -158,6 +171,17 @@ function largeClipFile(name: string, size: number, read: () => Promise<ArrayBuff
   return file
 }
 
+/** A data file with the text `text`; its type is what the system gives
+ *  (often none, for a csv file). */
+function dataFile(name: string, text: string, type = ''): File {
+  return new File([text], name, { type })
+}
+
+/** A file that is no image, no clip, and no data file. */
+function pdf(): File {
+  return new File(['%PDF-1.7'], 'report.pdf', { type: 'application/pdf' })
+}
+
 /** A state of `doc` whose sections have the roles `roles`: all user by
  *  default. A drop links files only into a user section. */
 function createState(doc: string, anchor: number, head = anchor, roles: Role[] = doc.split(SECTION_SEP).map(() => 'user')): EditorState {
@@ -229,6 +253,8 @@ beforeEach(() => {
   unsizedPaths = new Set()
   draggedPaths = new Map()
   draggedFileReads = []
+  dataSaves = []
+  incognitoTabs = new Set()
   redraw = () => Promise.reject(new Error('No image of another type in this test.'))
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
 })
@@ -258,11 +284,10 @@ describe('pasteFiles', () => {
     expect(clipSaves).toStrictEqual([])
   })
 
-  it('leaves a paste without an image or clip file to CodeMirror', () => {
+  it('leaves a paste without an image, clip, or data file to CodeMirror', () => {
     const editor = createEditor('', 0)
-    const notes = new File(['hi'], 'notes.txt', { type: 'text/plain' })
 
-    expect(paste(editor.view, { files: [notes, clipFile('movie.mkv', 'video/x-matroska', 21)] })).toBe(false)
+    expect(paste(editor.view, { files: [pdf(), clipFile('movie.mkv', 'video/x-matroska', 21)] })).toBe(false)
     expect(paste(editor.view, {})).toBe(false)
     expect(saveCalls).toEqual([])
     expect(clipSaves).toStrictEqual([])
@@ -287,6 +312,21 @@ describe('pasteFiles', () => {
       options: { bytes: new Uint8Array([21, 0, 0]) },
     }])
     expect(editor.view.state.selection.main.head).toBe(editor.doc().length)
+  })
+
+  // A data file is no asset: it takes no id, and no name of the user's
+  // file goes into the conversation.
+  it('copies a pasted data file into the work folder of the tab and puts its path on a line of its own, with no id', async () => {
+    activeTabId = 'tab-2'
+    const editor = createEditor('Plot this', 5)
+
+    expect(paste(editor.view, { files: [dataFile('Sales Q3.CSV', 'a,b\n1,2\n'), png()] })).toBe(true)
+
+    const text = `/work/data-1.csv\n${reference()}`
+    await vi.waitFor(() => expect(editor.doc()).toBe(`Plot \n${text}\nthis`))
+    expect(dataSaves).toStrictEqual([{ tabId: 'tab-2', text: 'a,b\n1,2\n', extension: 'csv' }])
+    expect(editor.view.state.selection.main.head).toBe('Plot \n'.length + text.length)
+    expect(toasts).toStrictEqual([])
   })
 })
 
@@ -451,12 +491,11 @@ describe('dropFiles', () => {
     expect(toasts).toStrictEqual([])
   })
 
-  it('leaves out the files that are not images or clips, with a toast', async () => {
+  it('leaves out the files that are not images, clips, or data files, with a toast', async () => {
     const editor = createEditor('', 0)
-    const notes = new File(['hi'], 'notes.txt', { type: 'text/plain' })
 
-    expect(drop(editor.view, 0, { files: [notes, clipFile('movie.mkv', 'video/x-matroska', 21), png()] })).toBe(true)
-    expect(drop(editor.view, 0, { files: [notes] })).toBe(true)
+    expect(drop(editor.view, 0, { files: [pdf(), clipFile('movie.mkv', 'video/x-matroska', 21), png()] })).toBe(true)
+    expect(drop(editor.view, 0, { files: [pdf()] })).toBe(true)
 
     await vi.waitFor(() => expect(editor.doc()).toBe(reference()))
     expect(saveCalls).toHaveLength(1)
@@ -504,12 +543,12 @@ describe('dropFiles', () => {
     holdSaves = true
     const editor = createEditor('first tab', 9)
 
-    drop(editor.view, 9, { files: [png(), clipFile('dance.mp4', 'video/mp4', 21)] })
+    drop(editor.view, 9, { files: [png(), clipFile('dance.mp4', 'video/mp4', 21), dataFile('a.csv', 'x')] })
     await vi.waitFor(() => expect(saveCalls).toHaveLength(1))
     editor.replaceState(createState('first tab', 9))
     saveCalls[0].finish()
 
-    await vi.waitFor(() => expect(toasts).toStrictEqual([expect.objectContaining({ title: 'Image and clip not inserted', variant: 'warning' })]))
+    await vi.waitFor(() => expect(toasts).toStrictEqual([expect.objectContaining({ title: 'Image, clip, and data file not inserted', variant: 'warning' })]))
     expect(editor.doc()).toBe('first tab')
   })
 
@@ -522,19 +561,51 @@ describe('dropFiles', () => {
   it('links the files of a drop that have a path out of the temp and Dez folders, and copies the others, with one path read per drop', async () => {
     draggedPaths = new Map([['a.png', '/Users/u/a.png'], ['dance.mp4', '/Users/u/dance.mp4'], ['b.png', '/private/tmp/b.png']])
     linkedPaths = new Set(['/Users/u/a.png', '/Users/u/dance.mp4'])
-    const notes = new File(['hi'], 'notes.txt', { type: 'text/plain' })
     const editor = createEditor('one two', 0)
 
-    drop(editor.view, 4, { files: [png('a.png', 1), clipFile('dance.mp4', 'video/mp4', 21), png('b.png', 2), notes] })
-    drop(editor.view, 0, { files: [notes] })
+    drop(editor.view, 4, { files: [png('a.png', 1), clipFile('dance.mp4', 'video/mp4', 21), png('b.png', 2), pdf()] })
+    drop(editor.view, 0, { files: [pdf()] })
 
     const linkedImage = imageMarkdown('/Users/u/a.png', [{ key: 'id', value: 'a' }])
     const linkedClip = mediaTagText({ kind: 'video', id: 'b', type: 'video/mp4', src: '/Users/u/dance.mp4', url: null, expires: null, other: [] })
     await vi.waitFor(() => expect(editor.doc()).toBe(`one \n${linkedImage}\n${linkedClip}\n${reference(2, 'c')}\ntwo`))
-    expect(draggedFileReads).toStrictEqual([['a.png', 'dance.mp4', 'b.png', 'notes.txt']])
+    expect(draggedFileReads).toStrictEqual([['a.png', 'dance.mp4', 'b.png', 'report.pdf']])
     expect(saveCalls.map((call) => call.bytes[0])).toStrictEqual([2])
     expect(clipSaves).toStrictEqual([])
     expect(toasts.map((toast) => toast.message)).toStrictEqual([UNSUPPORTED_DROP_MESSAGE, UNSUPPORTED_DROP_MESSAGE])
+  })
+
+  // The tools and the code of a model read a data file only in the work
+  // folder, so a drop that links its images and clips copies it.
+  it('copies a dropped data file where it could link, and gives the ids to the images and clips only', async () => {
+    draggedPaths = new Map([['a.png', '/Users/u/a.png'], ['sales.csv', '/Users/u/sales.csv']])
+    linkedPaths = new Set(['/Users/u/a.png', '/Users/u/sales.csv'])
+    const editor = createEditor('one two', 0)
+
+    drop(editor.view, 4, { files: [png('a.png', 1), dataFile('sales.csv', 'a,b\n'), clipFile('dance.mp4', 'video/mp4', 21)] })
+
+    const linkedImage = imageMarkdown('/Users/u/a.png', [{ key: 'id', value: 'a' }])
+    await vi.waitFor(() => expect(editor.doc()).toBe(`one \n${linkedImage}\n/work/data-1.csv\n${clipTag('video', 'video/mp4', 21, 'b')}\ntwo`))
+    expect(dataSaves).toStrictEqual([{ tabId: 'tab-1', text: 'a,b\n', extension: 'csv' }])
+    expect(toasts).toStrictEqual([])
+  })
+
+  it('copies a data file of up to the data file limit, and leaves out a larger one without reading it', async () => {
+    const largeRead = vi.fn(() => Promise.resolve(new ArrayBuffer(1)))
+    const atLimit = dataFile('a.json', '[]')
+    const tooLarge = dataFile('log.txt', 'x')
+    Object.defineProperty(atLimit, 'size', { value: MAX_DATA_FILE_BYTES })
+    Object.defineProperties(tooLarge, { size: { value: MAX_DATA_FILE_BYTES + 1 }, arrayBuffer: { value: largeRead } })
+    const editor = createEditor('', 0)
+
+    drop(editor.view, 0, { files: [tooLarge, atLimit] })
+
+    await vi.waitFor(() => expect(editor.doc()).toBe('/work/data-1.json'))
+    expect(largeRead).not.toHaveBeenCalled()
+    expect(dataSaves).toStrictEqual([{ tabId: 'tab-1', text: '[]', extension: 'json' }])
+    expect(toasts).toStrictEqual([expect.objectContaining({ title: 'Data file not added', variant: 'warning' })])
+    expect(toasts[0].message).toContain('log.txt')
+    expect(toasts[0].message).toContain('50.0 MB')
   })
 
   // A linked path counts only in a user section: in an agent section the
@@ -559,13 +630,28 @@ describe('dropFilePaths', () => {
     localFiles = new Map([['/home/u/Pictures/a.png', png('a.png', 1)], ['/home/u/Pictures/b.JPG', jpeg('b.JPG')]])
     const editor = createEditor('one two', 0)
 
-    dropFilePaths(editor.view, ['/home/u/Pictures/a.png', '/home/u/notes.txt', '/home/u/movie.mkv', '/home/u/Pictures/b.JPG'], { x: 4, y: 0 })
+    dropFilePaths(editor.view, ['/home/u/Pictures/a.png', '/home/u/report.pdf', '/home/u/movie.mkv', '/home/u/Pictures/b.JPG'], { x: 4, y: 0 })
 
     const references = `${reference(1)}\n${reference(255, 'b', 'jpg')}`
     await vi.waitFor(() => expect(editor.doc()).toBe(`one ${references}two`))
     expect(editor.view.state.selection.main.head).toBe(4 + references.length)
     expect(reads).toStrictEqual([['/home/u/Pictures/a.png', {}], ['/home/u/Pictures/b.JPG', {}]])
     expect(toasts.map((toast) => toast.message)).toStrictEqual([UNSUPPORTED_DROP_MESSAGE])
+  })
+
+  it('reads a dropped data file by path up to the data file limit, and copies it where it could link', async () => {
+    localFiles = new Map([['/home/u/sales.tsv', dataFile('sales.tsv', 'a\tb\n')]])
+    largeFiles = new Map([['/home/u/big.json', MAX_DATA_FILE_BYTES + 1]])
+    linkedPaths = new Set(['/home/u/sales.tsv'])
+    const editor = createEditor('one two', 0)
+
+    dropFilePaths(editor.view, ['/home/u/big.json', '/home/u/sales.tsv'], { x: 4, y: 0 })
+
+    await vi.waitFor(() => expect(editor.doc()).toBe('one \n/work/data-1.tsv\ntwo'))
+    expect(reads).toStrictEqual([['/home/u/big.json', { maxBytes: MAX_DATA_FILE_BYTES }], ['/home/u/sales.tsv', { maxBytes: MAX_DATA_FILE_BYTES }]])
+    expect(dataSaves).toStrictEqual([{ tabId: 'tab-1', text: 'a\tb\n', extension: 'tsv' }])
+    expect(toasts).toStrictEqual([expect.objectContaining({ title: 'Data file not added', variant: 'warning' })])
+    expect(toasts[0].message).toContain('big.json')
   })
 
   it('reads the dropped clip files by path, up to the size of the clips that Dez stores, and puts their tags at the drop point', async () => {
@@ -697,6 +783,28 @@ describe('dropFilePaths', () => {
 
     await vi.waitFor(() => expect(editor.doc()).toBe(`${linked}${reference(1, 'b')}\nanswer`))
     expect(reads).toStrictEqual([[photo, {}]])
+  })
+})
+
+// An incognito request offers no Dez tools, so no model could read a data
+// file (`requestParts`).
+describe('data files in an incognito tab', () => {
+  it('leaves out the data files of a paste or a drop unread, with one toast, and adds the other files', async () => {
+    incognitoTabs = new Set(['tab-1'])
+    const read = vi.fn(() => Promise.resolve(new ArrayBuffer(1)))
+    const notes = dataFile('notes.txt', 'hi', 'text/plain')
+    Object.defineProperty(notes, 'arrayBuffer', { value: read })
+    const editor = createEditor('', 0)
+
+    expect(paste(editor.view, { files: [notes, dataFile('b.json', '{}')] })).toBe(true)
+    expect(drop(editor.view, 0, { files: [dataFile('a.csv', 'x'), png()] })).toBe(true)
+    dropFilePaths(editor.view, ['/home/u/a.csv', '/home/u/report.pdf'], { x: 0, y: 0 })
+
+    await vi.waitFor(() => expect(editor.doc()).toBe(reference()))
+    expect(read).not.toHaveBeenCalled()
+    expect(reads).toStrictEqual([])
+    expect(dataSaves).toStrictEqual([])
+    expect(toasts.map((toast) => toast.title ?? toast.message)).toStrictEqual(['Data file not added', 'Data file not added', 'Data file not added', UNSUPPORTED_DROP_MESSAGE])
   })
 })
 

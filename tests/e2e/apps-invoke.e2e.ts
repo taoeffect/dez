@@ -4,8 +4,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { APP_RUNS_STATE } from '../../src/model/tools/appInvoke'
 import { jobStartedText, jobsWaitResults, jobTimedOutText, startedJobId } from '../../src/model/tools/jobs'
 import { appsCall, movingAppFiles, pageFrameCount, pageFrameGuards, seedApp, uiAppFiles } from './harness/apps'
-import { consoleErrors, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
-import { expectNoLinkedFile, linkedDropDir, openDroppedFiles } from './harness/drops'
+import { consoleErrors, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
+import { dropFiles, expectNoLinkedFile, linkedDropDir, openDroppedFiles } from './harness/drops'
 import { appFilePath, filesIn, newFileIn, storedFileName, writeTestFile } from './harness/fixtures'
 import { colorDistance, decodedImage, generatedImagesDir, pngDataUrl, shownImages, solidPng, STRIPE_COLORS, STRIPES_PNG } from './harness/images'
 import { runToolJob, startedJob, waitCall, type EndedJob } from './harness/jobs'
@@ -15,7 +15,7 @@ import { startMockProviderApp, takeRequest, type MockProviderApp } from './harne
 import { mockChatPath, replyText, sendChatReply, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
 import { mediaFacts, pixelColors } from './harness/programs'
 import type { E2EBrowser } from './harness/session'
-import { activeConversationId, endedReply, newTab, openSeededConversation, pickModel, submit } from './harness/thread'
+import { activeConversationId, docPosPoint, editorDoc, endedReply, focusEditor, newTab, openSeededConversation, pickModel, submit } from './harness/thread'
 import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolChip, revealingPart } from './harness/toolChips'
 
 // The `invoke` subcommand of the `apps` tool, driven through the real app
@@ -41,8 +41,9 @@ import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolC
 // - a built-in app runs from the bundle of the debug build, with the
 //   decode of its manifest, and writes its result file into the work
 //   folder of the conversation;
-// - the built-in app dez-chart draws a chart of a CSV file of the work
-//   folder of the conversation into a new image;
+// - the built-in app dez-chart draws a chart of a CSV file that the user
+//   dropped into a new image: Dez copies the file into the work folder of
+//   the conversation, and the request names only the copy;
 // - an app whose manifest has `"native": ["skia-canvas"]` draws text with
 //   skia-canvas and the fonts that Dez ships (`useShippedFonts` of
 //   dez-media/canvas), and a text of the run names a font by the name of
@@ -625,16 +626,29 @@ describe('apps invoke', () => {
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 
-  it('draws a chart of a CSV file of the work folder with the built-in app dez-chart into a new image', async () => {
+  it('draws a chart of a CSV file that the user dropped with the built-in app dez-chart into a new image', async () => {
     const before = await filesIn(imagesDir)
-    await submit(browser, 'Chart my sales.')
+    const message = 'Chart my sales.'
+    await focusEditor(browser)
+    await typeKeys(browser, message)
+    await waitForValue(browser, 'typed text', () => editorDoc(browser), message)
+    const end = await docPosPoint(browser, message.length, -1)
+    await dropFiles(browser, { x: end.x + 1, y: end.y }, [
+      { name: 'quarterly-sales.csv', type: 'text/csv', base64: Buffer.from(SALES_CSV).toString('base64') },
+    ])
+    await waitForValue(browser, 'dropped data file', () => editorDoc(browser), `${message}\n/work/data-1.csv`)
+    await submit(browser, '')
+    const request = await chatRequest()
+    // The name of the user's file goes to no provider.
+    expect(request.body).toContain(`${message}\\n/work/data-1.csv`)
+    expect(request.body).not.toContain('quarterly')
     const workFolder = appFilePath(setup.app.home, 'work', await activeConversationId(browser))
-    await writeTestFile(path.join(workFolder, 'sales.csv'), Buffer.from(SALES_CSV))
+    expect(fs.readFileSync(path.join(workFolder, 'data-1.csv'), 'utf8')).toBe(SALES_CSV)
 
-    const run = await invoke(await chatRequest(), 'call_chart', { name: 'dez-chart', parameters: { data: '/work/sales.csv', type: 'bar', title: 'Sales', width: 320, height: 200 } })
+    const run = await invoke(request, 'call_chart', { name: 'dez-chart', parameters: { data: '/work/data-1.csv', type: 'bar', title: 'Sales', width: 320, height: 200 } })
     expect(run.result.status).toBe('finished')
     expect(run.result.text).toBe([
-      'A bar chart of "sales", "cost" (4 rows) from /work/sales.csv: chart.png, 320×200, light theme.',
+      'A bar chart of "sales", "cost" (4 rows) from /work/data-1.csv: chart.png, 320×200, light theme.',
       '',
       'Dez keeps 1 file of the output folder: chart.png (image). The line at the end gives its id.',
       'Made the image @a.',
