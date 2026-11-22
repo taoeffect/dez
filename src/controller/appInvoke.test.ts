@@ -8,6 +8,7 @@ import { APP_PAGE_LOADS_STATE, APP_RUNS_STATE, appOutputNotStoredText, invokeCal
 import { MANIFEST_MAX_BYTES } from '../model/tools/appManifest'
 import { APP_RUN_MAX_DECODED_BYTES, APP_RUN_MAX_OUTPUT_FILES, APPS_MAX_ENTRIES } from '../model/tools/appsTool'
 import { assetProbeArgs } from '../model/tools/assetFacts'
+import { frameEncodeArgs, frameFileName, FRAMES_ENCODE_STATE } from '../model/tools/frameSequences'
 import { unreadableImageText } from '../model/tools/imageTool'
 import { APP_DECODES_STATE, clipDecodeArgs, DECODE_NOT_PROBED_DETAILS, DECODED_TOO_LARGE_TEXT, decodeFailedText, NO_DECODE } from '../model/tools/inputDecode'
 import { jobStartedText, jobTimedOutText } from '../model/tools/jobs'
@@ -117,21 +118,66 @@ function isOutputFolder(file: AppFileRef): boolean {
   return file.root === 'cache' && file.path.endsWith('/output')
 }
 
+// The path of `file` in the output folder of a run; undefined for a file
+// outside it.
+function outputPath(file: AppFileRef): string | undefined {
+  return file.root === 'cache' ? /\/output\/(.+)$/.exec(file.path)?.[1] : undefined
+}
+
 // Makes the output folder of a run hold `files` after the run: the bytes
-// of each file by its name, and null for a folder. `more` tells that the
-// folder holds more entries than its listing.
+// of each file by its path in the folder, and null for a folder. `more`
+// tells that the output folder holds more entries than its listing.
 function outputFolderHolds(files: Record<string, Uint8Array | null>, more = false): void {
+  const entriesIn = (start: string) => Object.entries(files)
+    .filter(([path]) => path.startsWith(start))
+    .map(([path, bytes]) => ({ path: path.slice(start.length), kind: bytes === null ? 'folder' as const : 'file' as const, size: bytes?.length ?? 0, updatedAt: 0 }))
   native.fileTree = (file): FileTree => {
-    if (!isOutputFolder(file)) return { kind: 'missing', size: 0, updatedAt: null, entries: [], more: false }
-    outputListings += 1
-    const entries = Object.entries(files).map(([path, bytes]) => ({ path, kind: bytes === null ? 'folder' as const : 'file' as const, size: bytes?.length ?? 0, updatedAt: 0 }))
-    return { kind: 'folder', size: 0, updatedAt: 0, entries, more }
+    if (isOutputFolder(file)) {
+      outputListings += 1
+      return { kind: 'folder', size: 0, updatedAt: 0, entries: entriesIn(''), more }
+    }
+    const path = outputPath(file)
+    const at = path === undefined ? undefined : files[path]
+    if (at === null) return { kind: 'folder', size: 0, updatedAt: 0, entries: entriesIn(`${path}/`), more: false }
+    if (at !== undefined) return { kind: 'file', size: at.length, updatedAt: 0, entries: [], more: false }
+    return { kind: 'missing', size: 0, updatedAt: null, entries: [], more: false }
   }
   native.fileBytes = (file) => {
-    const bytes = files[file.path.slice(file.path.lastIndexOf('/') + 1)]
+    const bytes = files[outputPath(file) ?? '']
     if (!bytes) throw new Error(`Failed to read ${CACHE_DIR}/${file.path}: not a regular file`)
     return bytes
   }
+}
+
+// A frame sequence of the output folder, as `outputFolderHolds` takes it:
+// the folder `name`, its frames.json with `facts`, and `frames` PNG frames.
+function frameFolder(name: string, facts: Record<string, unknown>, frames: number): Record<string, Uint8Array | null> {
+  const pngs = Array.from({ length: frames }, (_, index) => [`${name}/${frameFileName(index, 'png')}`, PNG_BYTES])
+  return { [name]: null, [`${name}/frames.json`]: textBytes(JSON.stringify(facts)), ...Object.fromEntries(pngs) }
+}
+
+// Makes each ffmpeg run write a clip of `size` bytes (null: none) into the
+// run folder, and report that it encoded `frames` frames; or end with
+// `end`, after `errors` on its error output. Deno runs as before.
+function encodesClip({ frames, size = 2048, end = ENDED, errors = '' }: { frames: number, size?: number | null, end?: BundledToolEnd, errors?: string }): void {
+  const deno = native.program
+  const listing = native.fileTree
+  const clips = new Set<string>()
+  native.program = async (run, onOutput) => {
+    if (run.tool !== 'dez-ffmpeg') return deno(run, onOutput)
+    if (size !== null) clips.add(`${run.folder}/${run.args.at(-1)}`)
+    onOutput({ stream: 'stdout', text: `frame=${frames}\nfps=0.00\nprogress=end\n` })
+    if (errors !== '') onOutput({ stream: 'stderr', text: errors })
+    return end
+  }
+  native.fileTree = (file, maxEntries) => file.root === 'cache' && clips.has(file.path)
+    ? { kind: 'file', size: size ?? 0, updatedAt: 0, entries: [], more: false }
+    : listing(file, maxEntries)
+}
+
+// The ffmpeg runs of a job.
+function ffmpegRuns() {
+  return native.runs.filter(({ run }) => run.tool === 'dez-ffmpeg').map(({ run }) => run)
 }
 
 // The files that Dez wrote into the app root: the stored outputs of a run.
@@ -499,6 +545,99 @@ describe('runAppJob', () => {
     expect(outcome.text).toContain('made 30 frames')
     expect(native.readFiles).toStrictEqual([])
     expect(stored()).toStrictEqual([])
+  })
+
+  // The code ended before the encode started, so the clip at its place in
+  // the run folder is the one that ffmpeg made: Dez moves it, with no read.
+  it('encodes a frame sequence into one clip with ffmpeg, moves the clip into the Dez folder, and keeps it in the order of the names', async () => {
+    native.program = returns('drew 3 frames')
+    outputFolderHolds({ 'a.png': PNG_BYTES, ...frameFolder('intro.frames', { fps: 24, width: 64, height: 36, count: 3 }, 3) })
+    encodesClip({ frames: 3 })
+
+    const outcome = await runJob(invoke({ timeout_seconds: 20 }))
+
+    const folder = deletedWorkFolder()
+    const [encode, ...more] = ffmpegRuns()
+    const clip = encode.args.at(-1) ?? ''
+    expect(more).toStrictEqual([])
+    expect(clip).toMatch(/^[0-9a-f-]{36}\.mp4$/)
+    expect(encode).toMatchObject({
+      folder,
+      args: frameEncodeArgs('output/intro.frames', { fps: 24, width: 64, height: 36, count: 3, alpha: false, format: 'png' }, clip),
+      inputs: [],
+      timeoutMs: 20_000,
+    })
+    // Dez reads the frames.json of a sequence, and none of its frames.
+    expect(native.readFiles.map(({ path }) => path)).toStrictEqual([`${folder}/output/a.png`, `${folder}/output/intro.frames/frames.json`])
+    expect(native.moves).toStrictEqual([{ from: { root: 'cache', path: `${folder}/${clip}` }, to: { root: 'app', path: expect.stringMatching(/^assets\/generated\/video\/[0-9a-f-]{36}\.mp4$/) } }])
+    const [image] = stored().map(({ path }) => `${APP_DIR}/${path}`)
+    expect(outcome.assets).toStrictEqual([
+      { kind: 'image', path: image },
+      { kind: 'clip', clip: { kind: 'video', type: 'video/mp4', src: `${APP_DIR}/${native.moves[0].to.path}`, url: null, expires: null } },
+    ])
+    expect(keptAssets).toStrictEqual(outcome.assets)
+    expect(states).toStrictEqual([PROGRAM_READS_INPUTS, APP_RUNS_STATE, FRAMES_ENCODE_STATE])
+    expect(outcome.isError).toBe(false)
+    expect(outcome.text).toContain('Dez keeps 2 files of the output folder: a.png (image), intro.frames/ (video clip: 3 frames, H.264 in MP4).')
+  })
+
+  it('runs no ffmpeg for a frame sequence that does not match its frames.json, and tells why it kept no clip', async () => {
+    native.program = returns('done')
+    outputFolderHolds(frameFolder('intro.frames', { fps: 24, width: 64, height: 36, count: 3 }, 2))
+    encodesClip({ frames: 3 })
+
+    const outcome = await runJob()
+
+    expect(ffmpegRuns()).toStrictEqual([])
+    expect(outcome).toMatchObject({ isError: false, assets: [] })
+    expect(outcome.text).toContain('Dez did not keep intro.frames/ (its frames.json gives 3 frames, and the frame 000002.png is missing')
+    deletedWorkFolder()
+  })
+
+  // ffmpeg leaves out a PNG frame that it cannot read, with no error.
+  it('keeps no clip of an encode that left out a frame', async () => {
+    native.program = returns('done')
+    outputFolderHolds(frameFolder('glow.frames', { fps: 24, width: 64, height: 36, count: 3, alpha: true }, 3))
+    encodesClip({ frames: 2 })
+
+    const outcome = await runJob()
+
+    expect(ffmpegRuns()[0].args.at(-1)).toMatch(/\.mov$/)
+    expect(native.moves).toStrictEqual([])
+    expect(outcome).toMatchObject({ isError: false, assets: [] })
+    expect(outcome.text).toContain('Dez did not keep glow.frames/ (ffmpeg encoded 2 of its 3 frames: a frame is no PNG file that ffmpeg can read).')
+    deletedWorkFolder()
+  })
+
+  it('keeps no clip of an encode that failed, and tells the last line of its error with no path', async () => {
+    native.program = returns('done')
+    outputFolderHolds(frameFolder('intro.frames', { fps: 24, width: 64, height: 36, count: 3 }, 3))
+    const errors = `[image2 @ 0xffff8a444870] Could find no file with path '${CACHE_DIR}/w/output/intro.frames/%06d.png'\n`
+    encodesClip({ frames: 0, size: null, end: { kind: 'exited', code: 254 }, errors })
+
+    const outcome = await runJob()
+
+    expect(native.moves).toStrictEqual([])
+    expect(outcome).toMatchObject({ isError: false, assets: [] })
+    expect(outcome.text).toContain('Dez did not keep intro.frames/ (ffmpeg could not encode it: Could find no file with path ')
+    expect(outcome.text).not.toContain(CACHE_DIR)
+    expect(outcome.text).not.toContain('0xffff')
+    expect(consoleError).toHaveBeenCalledWith('ffmpeg could not encode the frame sequence intro.frames of a run of an app:', { kind: 'exited', code: 254 }, errors)
+    deletedWorkFolder()
+  })
+
+  it('keeps no file of a run whose encode did not end within the time limit, and gives the text of the limit', async () => {
+    native.program = returns('done')
+    outputFolderHolds({ 'a.png': PNG_BYTES, ...frameFolder('intro.frames', { fps: 24, width: 64, height: 36, count: 3 }, 3) })
+    encodesClip({ frames: 1, end: { kind: 'timedOut' } })
+
+    const refusal = await refusalOf(runJob(invoke({ timeout_seconds: 20 })))
+
+    expect(refusal).toBe(INVOKE_RUN_TEXTS.timedOut(20_000, FRAMES_ENCODE_STATE))
+    expect(stored()).toHaveLength(1)
+    expect(deletedImages).toStrictEqual(stored().map(({ path }) => `${APP_DIR}/${path}`))
+    expect(native.moves).toStrictEqual([])
+    deletedWorkFolder()
   })
 
   it('keeps none of the files when one does not go into the Dez folder', async () => {

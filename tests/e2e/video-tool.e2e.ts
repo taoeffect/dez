@@ -1,4 +1,3 @@
-import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
@@ -18,6 +17,7 @@ import { clipTag, MP4_VIDEO, shownPlayers, silentWav, startClipServer, WEBM_VIDE
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, openAiToolCall, replyText, sendChatReply, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
 import { processExists, runningProgram } from './harness/processes'
+import { mediaFacts, pixelColors, programOutput, programRun } from './harness/programs'
 import type { E2EBrowser } from './harness/session'
 import { activeConversationId, endedReply, newTab, openSeededConversation, openToasts, pickModel, submit, waitForThread } from './harness/thread'
 import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolChip, revealingPart, toolChips, toolPanelPictures } from './harness/toolChips'
@@ -182,44 +182,12 @@ describe('video tool', () => {
 
   const chatRequest = (): Promise<HeldRequest> => takeRequest(setup, CHAT_PATH)
 
-  // The standard output of a run of `program` of the build under test.
-  function programRun (program: 'dez-ffmpeg' | 'dez-ffprobe', args: string[]): Buffer {
-    const run = spawnSync(path.join(path.dirname(setup.app.binary), program), args)
-    if (run.status !== 0) throw new Error(`${program} ${args.join(' ')} failed: ${run.stderr.toString()}`)
-    return run.stdout
-  }
-  const programOutput = (program: 'dez-ffmpeg' | 'dez-ffprobe', args: string[]): string => programRun(program, args).toString('utf8')
-
-  // Each color of the pixels of the picture `file` once, as its red, green,
-  // blue, and alpha (`32,128,255,127`), as ffmpeg decodes it.
-  function pixelColors (file: string): string[] {
-    const pixels = programRun('dez-ffmpeg', ['-v', 'error', '-i', file, '-f', 'rawvideo', '-pix_fmt', 'rgba', '-'])
-    const colors = new Set<string>()
-    for (let start = 0; start < pixels.length; start += 4) colors.add(pixels.subarray(start, start + 4).join(','))
-    return [...colors]
-  }
-
   // The number of light pixels (gray above the middle) of the frame at
   // `seconds` of the picture or clip `file`: the white text that a call
   // draws on a black picture.
   function lightPixels (file: string, seconds = 0): number {
-    const gray = programRun('dez-ffmpeg', ['-v', 'error', '-ss', String(seconds), '-i', file, '-frames:v', '1', '-vf', 'format=gray', '-f', 'rawvideo', '-'])
+    const gray = programRun(setup.app, 'dez-ffmpeg', ['-v', 'error', '-ss', String(seconds), '-i', file, '-frames:v', '1', '-vf', 'format=gray', '-f', 'rawvideo', '-'])
     return gray.filter((value) => value > 128).length
-  }
-
-  // The facts of the media file `file`: each stream (`video vp9 48x36`,
-  // `audio opus`), and the length in s to 1 decimal place (null for an
-  // image).
-  function mediaFacts (file: string): { streams: string[], seconds: number | null } {
-    const output = programOutput('dez-ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type,codec_name,width,height:format=duration', '-of', 'json', file])
-    const { streams, format } = JSON.parse(output) as {
-      streams: Array<{ codec_type: string, codec_name: string, width?: number, height?: number }>
-      format: { duration?: string }
-    }
-    return {
-      streams: streams.map(({ codec_type: type, codec_name: codec, width, height }) => `${type} ${codec}${width === undefined ? '' : ` ${width}x${height}`}`),
-      seconds: format.duration === undefined ? null : Math.round(Number(format.duration) * 10) / 10,
-    }
   }
 
   // The streams of the picture of the data URL `url`, which must be a
@@ -230,7 +198,7 @@ describe('video tool', () => {
     expect(type).toBe('data:image/jpeg;base64')
     const file = path.join(linkedDir, name)
     await writeTestFile(file, Buffer.from(data, 'base64'))
-    return mediaFacts(file).streams
+    return mediaFacts(setup.app, file).streams
   }
 
   // The bytes of the base64 text of an image of a user message that goes
@@ -376,9 +344,9 @@ describe('video tool', () => {
     const shotsFile = path.join(linkedDir, 'shots.webm')
     const toneFile = path.join(linkedDir, 'tone.wav')
     const alphaFile = path.join(linkedDir, 'alpha.png')
-    programOutput('dez-ffmpeg', [...SHOTS_ARGS, shotsFile])
-    programOutput('dez-ffmpeg', [...TONE_ARGS, toneFile])
-    programOutput('dez-ffmpeg', [...ALPHA_ARGS, alphaFile])
+    programOutput(setup.app, 'dez-ffmpeg', [...SHOTS_ARGS, shotsFile])
+    programOutput(setup.app, 'dez-ffmpeg', [...TONE_ARGS, toneFile])
+    programOutput(setup.app, 'dez-ffmpeg', [...ALPHA_ARGS, alphaFile])
     shotSources = {
       a: await fs.promises.readFile(shotsFile),
       b: await fs.promises.readFile(toneFile),
@@ -429,7 +397,7 @@ describe('video tool', () => {
     expect(madeName).toMatch(storedFileName('webm'))
     const madePath = path.join(videoDir, madeName)
     expect(reply.endsWith(`</dez:tool>\n\n<dez:video id="g" type="video/webm" src="${madePath}" tool="video" made-by="${job.jobId}"/>\n\n${replyText(CALLER.modelName)}`)).toBe(true)
-    expect(mediaFacts(madePath)).toStrictEqual({ streams: ['video vp9 48x36'], seconds: 6 })
+    expect(mediaFacts(setup.app, madePath)).toStrictEqual({ streams: ['video vp9 48x36'], seconds: 6 })
     await waitForValue(browser, 'player of the new clip', async () => (await shownPlayers(browser)).at(-1), madeVideoPlayer('g', 6))
     await expectCleanEnd(files)
   })
@@ -456,7 +424,7 @@ describe('video tool', () => {
     expect(madeName).toMatch(storedFileName('webm'))
     const madePath = path.join(videoDir, madeName)
     expect(reply.endsWith(`</dez:tool>\n\n<dez:video id="g" type="video/webm" src="${madePath}" tool="video" made-by="${job.jobId}"/>\n\n${replyText(CALLER.modelName)}`)).toBe(true)
-    expect(mediaFacts(madePath)).toStrictEqual({ streams: ['video vp9 48x36'], seconds: 4 })
+    expect(mediaFacts(setup.app, madePath)).toStrictEqual({ streams: ['video vp9 48x36'], seconds: 4 })
     await waitForValue(browser, 'player of the new clip', async () => (await shownPlayers(browser)).at(-1), madeVideoPlayer('g', 4))
     await expectCleanEnd(files)
   })
@@ -500,7 +468,7 @@ describe('video tool', () => {
     const underPath = path.join(videoDir, await newFileIn(browser, videoDir, [...before, madeName]))
     expect(reply).toContain(`</dez:tool>\n\n<dez:video id="g" type="video/webm" src="${madePath}" tool="video" made-by="${mix.jobId}"/>\n<dez:tool id="call_loudness"`)
     expect(reply.endsWith(`</dez:tool>\n\n<dez:video id="h" type="video/webm" src="${underPath}" tool="video" made-by="${under.jobId}"/>\n\n${replyText(CALLER.modelName)}`)).toBe(true)
-    for (const file of [madePath, underPath]) expect(mediaFacts(file)).toStrictEqual({ streams: ['video vp9 48x36', 'audio opus'], seconds: 1 })
+    for (const file of [madePath, underPath]) expect(mediaFacts(setup.app, file)).toStrictEqual({ streams: ['video vp9 48x36', 'audio opus'], seconds: 1 })
     await waitForValue(browser, 'player of the last new clip', async () => (await shownPlayers(browser)).at(-1), madeVideoPlayer('h', 1))
     await expectCleanEnd(files)
   })
@@ -882,8 +850,8 @@ describe('video tool', () => {
     const videoPath = path.join(videoDir, videoName)
     expect(reply).toContain(`</dez:tool>\n\n![id=g|tool=video|made-by=${frame.jobId}](${imagePath})\n<dez:tool id="call_still"`)
     expect(reply.endsWith(`</dez:tool>\n\n<dez:video id="h" type="video/webm" src="${videoPath}" tool="video" made-by="${still.jobId}"/>\n\n${replyText(CALLER.modelName)}`)).toBe(true)
-    expect(mediaFacts(imagePath)).toStrictEqual({ streams: ['video mjpeg 48x36'], seconds: null })
-    expect(mediaFacts(videoPath)).toStrictEqual({ streams: ['video vp9 48x36', 'audio opus'], seconds: 1 })
+    expect(mediaFacts(setup.app, imagePath)).toStrictEqual({ streams: ['video mjpeg 48x36'], seconds: null })
+    expect(mediaFacts(setup.app, videoPath)).toStrictEqual({ streams: ['video vp9 48x36', 'audio opus'], seconds: 1 })
     // The editor draws only the lines near its view, so the image of the
     // first message can have no DOM: find the new image by its file name.
     await waitForValue(browser, 'the new image in the editor', async () => (await shownImages(browser)).find(({ alt }) => alt === imageName), { alt: imageName, width: 48, height: 36 })
@@ -913,9 +881,9 @@ describe('video tool', () => {
     expect(imageName).toMatch(storedFileName('png'))
     const imagePath = path.join(imagesDir, imageName)
     expect(reply.endsWith(`</dez:tool>\n\n![id=b|tool=video|made-by=${small.jobId}](${imagePath})\n\n${replyText(CALLER.modelName)}`)).toBe(true)
-    expect(mediaFacts(imagePath)).toStrictEqual({ streams: ['video png 24x18'], seconds: null })
+    expect(mediaFacts(setup.app, imagePath)).toStrictEqual({ streams: ['video png 24x18'], seconds: null })
     // Each pixel has the color and the alpha of the source.
-    expect(pixelColors(imagePath)).toStrictEqual([ALPHA_COLOR])
+    expect(pixelColors(setup.app, imagePath)).toStrictEqual([ALPHA_COLOR])
     await waitForValue(browser, 'the new image in the editor', async () => (await shownImages(browser)).find(({ alt }) => alt === imageName), { alt: imageName, width: 24, height: 18 })
     await expectCleanEnd({ a: file }, { a: alphaPng })
   })
@@ -942,13 +910,13 @@ describe('video tool', () => {
     expect(imageName).toMatch(storedFileName('jpg'))
     const imagePath = path.join(imagesDir, imageName)
     expect(reply.endsWith(`</dez:tool>\n\n![id=h|tool=video|made-by=${last.jobId}](${imagePath})\n\n${replyText(CALLER.modelName)}`)).toBe(true)
-    expect(mediaFacts(countPath)).toStrictEqual({ streams: ['video vp9 48x36'], seconds: 2 })
+    expect(mediaFacts(setup.app, countPath)).toStrictEqual({ streams: ['video vp9 48x36'], seconds: 2 })
 
     // The image is the frame at 1.8 s, the last one, and not the one
     // before it: the same ffmpeg takes each of them with a seek.
     const frames = [1.8, 1.6].map((seconds) => {
       const file = path.join(linkedDir, `last-frame-${seconds}.jpg`)
-      programOutput('dez-ffmpeg', ['-v', 'error', '-y', '-ss', String(seconds), '-i', countPath, '-frames:v', '1', '-update', '1', '-q:v', '2', file])
+      programOutput(setup.app, 'dez-ffmpeg', ['-v', 'error', '-y', '-ss', String(seconds), '-i', countPath, '-frames:v', '1', '-update', '1', '-q:v', '2', file])
       return fs.readFileSync(file)
     })
     const image = await fs.promises.readFile(imagePath)
@@ -984,8 +952,8 @@ describe('video tool', () => {
     const subtitledPath = path.join(videoDir, await newFileIn(browser, videoDir, [...videosBefore, darkName]))
     expect(reply).toContain(`</dez:tool>\n\n![id=b|tool=video|made-by=${title.jobId}](${titlePath})\n<dez:tool id="call_subtitles"`)
     expect(reply.endsWith(`</dez:tool>\n\n<dez:video id="c" type="video/webm" src="${subtitledPath}" tool="video" made-by="${subtitles.jobId}"/>\n\n${replyText(CALLER.modelName)}`)).toBe(true)
-    expect(mediaFacts(titlePath)).toStrictEqual({ streams: ['video png 640x360'], seconds: null })
-    expect(mediaFacts(subtitledPath)).toStrictEqual({ streams: ['video vp9 640x360'], seconds: 3 })
+    expect(mediaFacts(setup.app, titlePath)).toStrictEqual({ streams: ['video png 640x360'], seconds: null })
+    expect(mediaFacts(setup.app, subtitledPath)).toStrictEqual({ streams: ['video vp9 640x360'], seconds: 3 })
     // White text on the black clip: the title, and the subtitle until its
     // end. drawtext fails with no font, and libass draws no text when the
     // fonts folder has no font of the family of the style.
@@ -1138,13 +1106,13 @@ describe('video tool', () => {
   // name that the lists do not hold would pass.
   it('refuses every protocol and every device of the ffmpeg of this build, but the lavfi device', () => {
     // Each name is a line with two spaces before it.
-    const protocols = [...programOutput('dez-ffmpeg', ['-hide_banner', '-protocols']).matchAll(/^ {2}(\S+)$/gm)].map((match) => match[1])
+    const protocols = [...programOutput(setup.app, 'dez-ffmpeg', ['-hide_banner', '-protocols']).matchAll(/^ {2}(\S+)$/gm)].map((match) => match[1])
     expect(protocols).toContain('file')
     expect(protocols.filter((name) => !REFUSED_PROTOCOLS.includes(name))).toStrictEqual([])
 
     // ` DE video4linux2,v4l2 Video4Linux2 output device`: the names of a
     // device after its two flags.
-    const devices = [...programOutput('dez-ffmpeg', ['-hide_banner', '-devices']).matchAll(/^ [D ][E ] (\S+)/gm)].flatMap((match) => match[1].split(','))
+    const devices = [...programOutput(setup.app, 'dez-ffmpeg', ['-hide_banner', '-devices']).matchAll(/^ [D ][E ] (\S+)/gm)].flatMap((match) => match[1].split(','))
     expect(devices).toContain('lavfi')
     expect(devices.filter((name) => name !== 'lavfi' && !REFUSED_DEVICES.includes(name))).toStrictEqual([])
   })

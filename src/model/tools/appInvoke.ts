@@ -27,6 +27,7 @@ import {
 } from './appsTool'
 import { SCRIPT_MAIN_FILE, UI_CLIENT_SCRIPT_TAG, UI_INDEX_FILE } from './appTemplates'
 import { assetIdWords } from './arguments'
+import { FRAMES_FOLDER_ENDING, isFramesFolderName, sequenceText, type FrameSequence } from './frameSequences'
 import { callDecode, DECODED_TOO_LARGE_TEXT, decodedInputFacts, decodeFailedText, type DecodedClip, type InputDecode } from './inputDecode'
 import { ASSET_NAMES, jobCallLabel, jobTimedOutText, jobTimeoutMs, type JobAssetKind } from './jobs'
 import { endedOutcome, failedOutcome, namesDenoFlag, returnedOutcome, runResultText, skiaCanvasRefused, textForModel, type JsEvalEndLine, type RunOutcome } from './jsEval'
@@ -64,10 +65,12 @@ import { SHIPPED_FONTS } from './videoFonts'
 //
 // Dez trusts nothing that a run leaves. A file of the output folder or of
 // a save is kept only as a type that Dez stores, which its first bytes
-// tell (`storedTypeOfBytes`), never its name. The limits of a run
-// (`APP_RUN_MAX_OUTPUT_FILES`, `APP_RUN_MAX_OUTPUT_BYTES`) are next to the
-// other limits of the apps (appsTool.ts), as the help of `invoke` states
-// them.
+// tell (`storedTypeOfBytes`), never its name. A folder `<name>.frames` of
+// the output folder is a frame sequence, which Dez encodes with its ffmpeg
+// into one clip after the run (frameSequences.ts). The limits of a run
+// (`APP_RUN_MAX_OUTPUT_FILES`, `APP_RUN_MAX_OUTPUT_BYTES`,
+// `APP_RUN_MAX_FRAMES`) are next to the other limits of the apps
+// (appsTool.ts), as the help of `invoke` states them.
 //
 // Every text here is a tool result: it goes to the chat provider. A text of
 // a run (its value, its error, its console output) goes into a result only
@@ -476,11 +479,19 @@ export function appRunOutcome(end: Exclude<ProgramEnd, { kind: 'timedOut' }>, li
   return endedOutcome(end, 'app', hasConsole, KEPT_NONE)
 }
 
+/** One entry of the output folder that Dez checks: a file, or the folder
+ *  of a frame sequence (frameSequences.ts), which gives one clip. */
+export interface ListedOutput {
+  name: string
+  frames: boolean
+}
+
 /** What Dez found in the output folder of a run. */
 export interface ListedOutputs {
-  /** The names of the files that Dez reads to check their types, in the
-   *  order of their names (`frame_2.png` before `frame_10.png`). */
-  files: string[]
+  /** The files that Dez reads to check their types, and the frame
+   *  sequences that it encodes, in the order of their names
+   *  (`frame_2.png` before `frame_10.png`). */
+  outputs: ListedOutput[]
   /** Each entry that Dez does not keep, with the cause, as a part of a
    *  sentence: `notes/ (a folder: …)`. */
   notKept: string[]
@@ -496,47 +507,51 @@ const SHOWN_NAME_CHARS = 100
 const WRITE_FEWER = `Dez keeps at most ${APP_RUN_MAX_OUTPUT_FILES} files of one run: make the app write only its results into \`dez.outputFolder\`, `
   + 'and run it once for each part of a larger result.'
 
-/** The files of the output folder of a run that Dez reads, from the
- *  listing `tree` of the folder with `APP_OUTPUT_LISTED_ENTRIES`. Only a
- *  plain file directly in the folder counts, with a name that the file
- *  selectors take, that is not empty, and that is not over
- *  `APP_RUN_MAX_OUTPUT_BYTES`. A run with more such files than
+/** The files of the output folder of a run that Dez reads, and its frame
+ *  sequences, from the listing `tree` of the folder with
+ *  `APP_OUTPUT_LISTED_ENTRIES`. Only a plain file directly in the folder
+ *  counts, with a name that the file selectors take, that is not empty,
+ *  and that is not over `APP_RUN_MAX_OUTPUT_BYTES`; and a folder directly
+ *  in it whose name ends with `.frames` (`isFramesFolderName`), which
+ *  counts as one file. A run with more such entries than
  *  `APP_RUN_MAX_OUTPUT_FILES` keeps none, and neither does a run with more
  *  entries directly in the folder than the listing holds. */
 export function listedOutputs(tree: AppsTree): ListedOutputs {
-  if (tree.kind !== 'folder') return { files: [], notKept: ['the output folder (the app left no folder at its place)'], problem: null }
+  if (tree.kind !== 'folder') return { outputs: [], notKept: ['the output folder (the app left no folder at its place)'], problem: null }
   const direct = tree.entries.filter((entry) => !entry.path.includes('/'))
   // The entries of the folder itself come first in a listing
   // (`entries_below`, persistence.rs). So a cut listing holds them all when
   // it holds an entry of a folder below.
   if (tree.more && direct.length === tree.entries.length) {
     return {
-      files: [],
+      outputs: [],
       notKept: [],
       problem: `The app ended with no error, but it put more than ${APP_OUTPUT_LISTED_ENTRIES} files and folders into its output folder, so Dez kept none. ${WRITE_FEWER}`,
     }
   }
 
-  const files: string[] = []
+  const outputs: ListedOutput[] = []
   const notKept: string[] = []
   const sorted = [...direct].sort((one, other) => one.path.localeCompare(other.path, 'en', { numeric: true }))
   for (const { path: name, kind, size } of sorted) {
     if (!isPathName(name)) {
       notKept.push(`${JSON.stringify(startOf(name, SHOWN_NAME_CHARS))} (a name that Dez does not take: the name of an output file has only ASCII letters, digits, "-", "_", and ".")`)
-    } else if (kind === 'folder') notKept.push(`${name}/ (a folder: Dez keeps only the files directly in the output folder)`)
-    else if (kind !== 'file') notKept.push(`${name} (${kindName(kind)})`)
+    } else if (kind === 'folder' && isFramesFolderName(name)) outputs.push({ name, frames: true })
+    else if (kind === 'folder') {
+      notKept.push(`${name}/ (a folder: Dez keeps only the files directly in the output folder, and a frame sequence in a folder whose name ends with ${FRAMES_FOLDER_ENDING})`)
+    } else if (kind !== 'file') notKept.push(`${name} (${kindName(kind)})`)
     else if (size === 0) notKept.push(`${name} (it is empty)`)
     else if (size > APP_RUN_MAX_OUTPUT_BYTES) notKept.push(`${name} (it is larger than ${byteSizeText(APP_RUN_MAX_OUTPUT_BYTES)}, the most that Dez keeps of one file of a run)`)
-    else files.push(name)
+    else outputs.push({ name, frames: false })
   }
-  if (files.length > APP_RUN_MAX_OUTPUT_FILES) {
+  if (outputs.length > APP_RUN_MAX_OUTPUT_FILES) {
     return {
-      files: [],
+      outputs: [],
       notKept: [],
-      problem: `The app ended with no error, but it put ${files.length} files into its output folder, so Dez kept none. ${WRITE_FEWER}`,
+      problem: `The app ended with no error, but it put ${outputs.length} files into its output folder, so Dez kept none. ${WRITE_FEWER}`,
     }
   }
-  return { files, notKept, problem: null }
+  return { outputs, notKept, problem: null }
 }
 
 /** One file of the output folder after its check: the file as Dez keeps
@@ -556,10 +571,15 @@ export function checkedOutput(name: string, bytes: Uint8Array | null): CheckedOu
     : { kept: { name, kind: type.kind, type: type.type, extension: type.extension } }
 }
 
+/** A file of the output folder that Dez keeps. For the clip of a frame
+ *  sequence, `name` is the name of its folder, and `frames` has its
+ *  facts. */
+export type KeptOutput = KeptFile & { frames?: FrameSequence }
+
 /** The files of the output folder of a run, for its result. */
 export interface AppOutputs {
   /** The files that Dez keeps, in the order of the assets of the job. */
-  kept: readonly KeptFile[]
+  kept: readonly KeptOutput[]
   notKept: readonly string[]
   /** `ListedOutputs.problem`. */
   problem: string | null
@@ -576,7 +596,7 @@ const SHOWN_NOT_KEPT = 20
 function outputParagraphs({ kept, notKept }: AppOutputs): string[] {
   const sentences: string[] = []
   if (kept.length > 0) {
-    const names = kept.map(({ name, kind }) => `${name} (${ASSET_NAMES[kind]})`).join(', ')
+    const names = kept.map(({ name, kind, frames }) => (frames ? `${name}/ (${ASSET_NAMES[kind]}: ${sequenceText(frames)})` : `${name} (${ASSET_NAMES[kind]})`)).join(', ')
     sentences.push(kept.length === 1
       ? `Dez keeps 1 file of the output folder: ${names}. The line at the end gives its id.`
       : `Dez keeps ${kept.length} files of the output folder: ${names}. The lines at the end give their ids in this order.`)

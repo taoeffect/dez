@@ -21,6 +21,7 @@
     "paths": {
       "dez-media": ["./src-tauri/libs/dez-media/mod.js"],
       "dez-media/canvas": ["./src-tauri/libs/dez-media/canvas.js"],
+      "dez-media/frames": ["./src-tauri/libs/dez-media/frames.js"],
       "skia-canvas": ["./src-tauri/libs/skia-canvas/lib/index.d.ts"]
     },
 

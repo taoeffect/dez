@@ -86,6 +86,18 @@ export const APP_RUN_DEFAULT_SECONDS = 300
 export const APP_RUN_MAX_OUTPUT_FILES = 20
 export const APP_RUN_MAX_OUTPUT_BYTES = 256 * 1024 * 1024
 
+/** The limits of a frame sequence of a run (a folder `<name>.frames` in
+ *  the output folder, which Dez encodes into one clip; frameSequences.ts):
+ *  the most frames, the most pixels of a side of a frame, and the frames a
+ *  second. 36,000 frames are 10 minutes at 60 frames a second. */
+export const APP_RUN_MAX_FRAMES = 36_000
+export const FRAMES_MAX_SIDE = 4096
+export const FRAMES_MIN_FPS = 0.01
+export const FRAMES_MAX_FPS = 240
+
+/** A frames.json of a frame sequence, as the texts show it. */
+export const FRAMES_JSON_EXAMPLE = '{"fps": 30, "width": 1280, "height": 720, "count": 90, "alpha": false}'
+
 /** The limits of the decode of the input clips of a run of a script app
  *  (`decode`; inputDecode.ts): the samples a second of the audio, the most
  *  pixels of a side of a frame, the frames a second, and the most bytes of
@@ -208,7 +220,15 @@ const INVOKE_HELP = `Runs the code of an app on the user's computer, with the pa
   + 'When the run decodes its clips (`decode`), each clip also has the facts of its decoded files, `audio` and `frames`.\n'
   + '- `dez.outputFolder`: the path of an empty folder. After a run that ends with no error, Dez keeps each file directly in it as a new image or clip of the conversation, '
   + `and the result gives their ids. Dez keeps only a file of a type that it stores, which it reads from the first bytes of the file and not from its name ${STORED_TYPES}, `
-  + `at most ${APP_RUN_MAX_OUTPUT_FILES} files of one run, and at most ${byteSizeText(APP_RUN_MAX_OUTPUT_BYTES)} for one file. A run that fails keeps no file.\n`
+  + `at most ${APP_RUN_MAX_OUTPUT_FILES} files of one run, and at most ${byteSizeText(APP_RUN_MAX_OUTPUT_BYTES)} for one file. A run that fails keeps no file. `
+  + 'A folder `<name>.frames` directly in the output folder is a frame sequence: after the run, Dez encodes it into one clip, which counts as one file. '
+  + 'It holds the frames from 0 with no gap, all PNG files (000000.png, 000001.png, and so on) or all raw RGBA (000000.rgba, and so on: 4 bytes for each pixel, row after row), '
+  + `and frames.json, as in ${FRAMES_JSON_EXAMPLE}: "fps" from ${FRAMES_MIN_FPS} to ${FRAMES_MAX_FPS}, `
+  + `"width" and "height" up to ${FRAMES_MAX_SIDE} pixels, and "count" up to ${countText(APP_RUN_MAX_FRAMES)}. `
+  + 'The clip is H.264 in MP4, whose width and height must be even; with `"alpha": true`, it is MOV with the PNG codec, which keeps the alpha of each pixel (for an overlay with `video ffmpeg`). '
+  + 'Dez scales a PNG frame of another size to width × height. '
+  + '`import { FrameWriter } from "dez-media/frames"` writes such a folder: `const frames = new FrameWriter(dez.outputFolder, "intro", { fps: 30, width: 1280, height: 720 })`, '
+  + 'then `frames.add(canvas)` or `frames.add(rgbaBytes)` for each frame, and `frames.end()` after the last one.\n'
   + '- `dez.appFolder`: the path of the folder of the app. The code reads and writes the files of its app there, and they stay for the next run: '
   + 'keep the state of an app in a file of this folder.\n'
   + `- \`dez.workFolder\`: the path of the work folder of this conversation, which the file subcommands name ${WORK_VIRTUAL_ROOT}/. Its files stay for the next run and for the other tools.\n`

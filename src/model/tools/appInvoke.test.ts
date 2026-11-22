@@ -392,16 +392,18 @@ describe('invokeLabel', () => {
 })
 
 describe('listedOutputs', () => {
+  const files = (...names: string[]) => names.map((name) => ({ name, frames: false }))
+
   it('keeps the plain files directly in the folder, in the order of their names', () => {
     expect(listedOutputs(folderTree({ 'frame_10.png': 5, 'frame_2.png': 5, 'Chart.png': 9, 'b.wav': 1 }))).toStrictEqual({
-      files: ['b.wav', 'Chart.png', 'frame_2.png', 'frame_10.png'],
+      outputs: files('b.wav', 'Chart.png', 'frame_2.png', 'frame_10.png'),
       notKept: [],
       problem: null,
     })
   })
 
   it('keeps no folder, no file of a folder, no link, no empty file, no file over the size limit, and no name that the file calls refuse', () => {
-    const { files, notKept, problem } = listedOutputs(folderTree({
+    const { outputs, notKept, problem } = listedOutputs(folderTree({
       'ok.png': 10,
       'at-limit.mp4': APP_RUN_MAX_OUTPUT_BYTES,
       'big.mp4': APP_RUN_MAX_OUTPUT_BYTES + 1,
@@ -414,33 +416,45 @@ describe('listedOutputs', () => {
     }))
 
     expect(problem).toBeNull()
-    expect(files).toStrictEqual(['at-limit.mp4', 'ok.png'])
+    expect(outputs).toStrictEqual(files('at-limit.mp4', 'ok.png'))
     expect(notKept.map((note) => note.slice(0, note.indexOf(' (')))).toStrictEqual(['big.mp4', '"é.png"', 'empty.png', 'link', '"my chart.png"', 'parts/'])
     expect(notKept.find((note) => note.startsWith('big.mp4'))).toContain(byteSizeText(APP_RUN_MAX_OUTPUT_BYTES))
   })
 
-  it('shows a name with a line break on one line, and only the start of a long name', () => {
-    const [lineBreak] = listedOutputs(folderTree({ 'a\nb.png': 4 })).notKept
-    expect(lineBreak.startsWith('"a\\nb.png" (')).toBe(true)
+  // The folder of a sequence holds many frames, which the listing of the
+  // output folder need not hold: the encode lists the folder itself.
+  it('takes a folder whose name ends with .frames as a frame sequence, in the order of the names, and no file named so', () => {
+    const { outputs, notKept } = listedOutputs(folderTree({
+      'b.png': 4,
+      'intro.frames': null,
+      'intro.frames/000000.png': 9,
+      'a.frames': null,
+      'notes.frames': 9,
+      '.frames': null,
+    }, true))
 
-    const [long] = listedOutputs(folderTree({ [`${'x '.repeat(400)}.png`]: 4 })).notKept
-    expect(long.length).toBeLessThan(400)
+    expect(outputs).toStrictEqual([{ name: 'a.frames', frames: true }, { name: 'b.png', frames: false }, { name: 'intro.frames', frames: true }, { name: 'notes.frames', frames: false }])
+    expect(notKept).toStrictEqual(['.frames/ (a folder: Dez keeps only the files directly in the output folder, and a frame sequence in a folder whose name ends with .frames)'])
   })
 
-  it('keeps as many files as the limit, and none of a run with one more', () => {
-    const files = (count: number) => Object.fromEntries(Array.from({ length: count }, (_, index) => [`f${index}.png`, 4]))
+  it('keeps as many files as the limit, and none of a run with one more; a frame sequence counts as one file', () => {
+    const many = (count: number) => Object.fromEntries(Array.from({ length: count }, (_, index) => [`f${index}.png`, 4]))
 
-    expect(listedOutputs(folderTree(files(APP_RUN_MAX_OUTPUT_FILES))).files).toHaveLength(APP_RUN_MAX_OUTPUT_FILES)
+    expect(listedOutputs(folderTree(many(APP_RUN_MAX_OUTPUT_FILES))).outputs).toHaveLength(APP_RUN_MAX_OUTPUT_FILES)
 
-    const over = listedOutputs(folderTree({ ...files(APP_RUN_MAX_OUTPUT_FILES + 1), 'notes.txt': 0 }))
-    expect(over.files).toStrictEqual([])
+    const over = listedOutputs(folderTree({ ...many(APP_RUN_MAX_OUTPUT_FILES + 1), 'notes.txt': 0 }))
+    expect(over.outputs).toStrictEqual([])
     expect(over.problem).toContain(`it put ${APP_RUN_MAX_OUTPUT_FILES + 1} files into its output folder`)
+
+    const withSequence = listedOutputs(folderTree({ ...many(APP_RUN_MAX_OUTPUT_FILES), 'clip.frames': null }))
+    expect(withSequence.outputs).toStrictEqual([])
+    expect(withSequence.problem).toContain(`it put ${APP_RUN_MAX_OUTPUT_FILES + 1} files into its output folder`)
   })
 
   it('keeps none of a folder with more entries than the listing holds', () => {
     const cut = listedOutputs(folderTree({ 'a.png': 4, 'b.png': 4 }, true))
 
-    expect(cut.files).toStrictEqual([])
+    expect(cut.outputs).toStrictEqual([])
     expect(cut.problem).toContain(`more than ${APP_OUTPUT_LISTED_ENTRIES} files and folders`)
   })
 
@@ -448,17 +462,17 @@ describe('listedOutputs', () => {
   // folder below, so a cut one with a deeper entry has them all.
   it('keeps the files of a cut listing that reached a folder below', () => {
     expect(listedOutputs(folderTree({ 'a.png': 4, scratch: null, 'scratch/t1.bin': 9 }, true))).toStrictEqual({
-      files: ['a.png'],
-      notKept: ['scratch/ (a folder: Dez keeps only the files directly in the output folder)'],
+      outputs: files('a.png'),
+      notKept: ['scratch/ (a folder: Dez keeps only the files directly in the output folder, and a frame sequence in a folder whose name ends with .frames)'],
       problem: null,
     })
   })
 
   it('tells of an output folder that the app deleted or replaced', () => {
     for (const tree of [MISSING_TREE, fileTree(12)]) {
-      const { files, notKept, problem } = listedOutputs(tree)
+      const { outputs, notKept, problem } = listedOutputs(tree)
 
-      expect(files).toStrictEqual([])
+      expect(outputs).toStrictEqual([])
       expect(problem).toBeNull()
       expect(notKept).toHaveLength(1)
       expect(notKept[0]).toContain('the output folder')
@@ -543,18 +557,21 @@ describe('appRunResult', () => {
   const RETURNED: RunOutcome = { isError: false, lead: null, given: { text: 'Made the sheet.', name: 'returned value' }, advice: [] }
   const outputs = (more: Partial<AppOutputs>): AppOutputs => ({ ...NO_APP_OUTPUTS, ...more })
 
-  it('gives the value, then the kept files in the order of their ids, then the console output', () => {
+  it('gives the value, then the kept files in the order of their ids, with the clip of a frame sequence, then the console output', () => {
     const { text, isError } = appRunResult(RETURNED, 'read 2 files\n', asIs, outputs({
       kept: [
         { name: 'sheet.png', kind: 'image', type: 'image/png', extension: 'png' },
         { name: 'song.bin', kind: 'audio', type: 'audio/wav', extension: 'wav' },
+        { name: 'intro.frames', kind: 'video', type: 'video/mp4', extension: 'mp4', frames: { fps: 24, width: 64, height: 36, count: 90, alpha: false, format: 'png' } },
+        { name: 'glow.frames', kind: 'video', type: 'video/quicktime', extension: 'mov', frames: { fps: 24, width: 64, height: 36, count: 1, alpha: true, format: 'rgba' } },
       ],
     }))
 
     expect(isError).toBe(false)
     expect(text.split('\n\n')).toStrictEqual([
       'Made the sheet.',
-      'Dez keeps 2 files of the output folder: sheet.png (image), song.bin (audio clip). The lines at the end give their ids in this order.',
+      'Dez keeps 4 files of the output folder: sheet.png (image), song.bin (audio clip), intro.frames/ (video clip: 90 frames, H.264 in MP4), '
+        + 'glow.frames/ (video clip: 1 frame, PNG in MOV with alpha). The lines at the end give their ids in this order.',
       'Console output of the code:\nread 2 files',
     ])
   })

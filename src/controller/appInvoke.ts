@@ -25,20 +25,23 @@ import {
   type AppRunCaller,
   type CheckedInvokeCall,
   type InvokeCall,
+  type KeptOutput,
 } from '../model/tools/appInvoke'
 import { APPS_ROOT, BUILT_IN_APPS_FOLDER, LIBS_ROOT } from '../model/tools/appsTool'
+import { FRAMES_ENCODE_STATE, sequenceClipType } from '../model/tools/frameSequences'
 import { APP_DECODES_STATE, asksForDecode, runDecode, type DecodedClip } from '../model/tools/inputDecode'
 import { endedRun, JsEvalOutput, textForModel } from '../model/tools/jsEval'
-import { PROGRAM_READS_INPUTS, programNotStartedText, type KeptFile } from '../model/tools/programRuns'
+import { PROGRAM_READS_INPUTS, programNotStartedText } from '../model/tools/programRuns'
 import { ToolError, type ToolArguments } from '../model/tools/types'
 import { FONT_FOLDER } from '../model/tools/videoFonts'
 import { assetBlob, storeCheckedFile, storeSave, type StoredSave } from './appBridge'
 import { factsOf, readableManifestBytes } from './appsTool'
-import { decodeClips } from './inputDecode'
+import { encodedSequence } from './frameSequences'
+import { decodeClips, type DecodeRun } from './inputDecode'
 import { discardMadeAssets, type JobOutcome, type MadeAsset } from './jobs'
 import { moduleRun, writeRunFiles } from './jsEval'
 import type { BundledToolInput, FileTree } from './nativeTypes'
-import { clipInputFile, conversationWorkForms, folderPathForms, imageInputAsIs, inWorkFolder, runProgram } from './programRuns'
+import { clipInputFile, conversationWorkForms, folderPathForms, imageInputAsIs, inWorkFolder, newGeneratedFile, runProgram } from './programRuns'
 
 // The run of an `apps invoke` call (model/tools/appInvoke.ts), as a job of
 // the reply, and the run of a call of an alias subcommand of `audio` or
@@ -66,8 +69,11 @@ import { clipInputFile, conversationWorkForms, folderPathForms, imageInputAsIs, 
 // output folder, checks the type by the bytes that it read, and writes
 // those same bytes into the Dez folder: the file that Dez stores is the
 // one that it checked, whatever the code left at its place (a move would
-// take what is there). Every text of a run goes to the model through
-// `textForModel`, with the folders of the run.
+// take what is there). A frame sequence (a folder `<name>.frames`) is the
+// one exception: after the code ended, Dez's ffmpeg encodes it into a new
+// clip of the run folder (frameSequences.ts), and Dez moves that clip, as
+// no code runs any more that could change it. Every text of a run goes to
+// the model through `textForModel`, with the folders of the run.
 //
 // A UI app: the view owns the frame (`dez.ui/runAppFrame`), and this
 // module does the calls of the page (the frame bridge,
@@ -121,21 +127,46 @@ async function outputBytes(folder: string, name: string): Promise<Uint8Array | n
   }
 }
 
+// The clip of the frame sequence `name` of the output folder of a run
+// (frameSequences.ts), encoded and moved into a generated folder of the
+// Dez folder; or why Dez does not keep it. Unlike an output file, the clip
+// is not read and written again: the code of the app ended before the
+// encode started, so the clip at its place is the one that the trusted
+// ffmpeg made.
+async function keptSequence(folder: string, name: string, appDir: string, run: DecodeRun, signal: AbortSignal): Promise<{ kept: KeptOutput, asset: MadeAsset } | { notKept: string }> {
+  const encoded = await encodedSequence(folder, APP_OUTPUT_FOLDER, name, run, signal)
+  if ('notKept' in encoded) return encoded
+  const type = sequenceClipType(encoded.sequence)
+  const { target, asset } = newGeneratedFile(appDir, type)
+  await sbp('dez.native/moveAppFile', { root: 'cache', path: `${folder}/${encoded.clip}` }, { root: 'app', path: target })
+  return { kept: { name, ...type, frames: encoded.sequence }, asset }
+}
+
 // What Dez keeps of the output folder of a run that ended with no error:
 // the files that pass their checks, each stored in a generated folder of
-// the Dez folder under a new name, as the assets of the job in the order
-// of `outputs.kept`. One file is read, checked, and written before the
-// next, so that the webview holds the bytes of one file at a time.
+// the Dez folder under a new name, and the clip of each frame sequence
+// (`keptSequence`), as the assets of the job in the order of
+// `outputs.kept`. One file is read, checked, and written before the next,
+// so that the webview holds the bytes of one file at a time.
+// `report` tells the state of the job before the first encode.
 //
 // `keepAsset` gets each file when it is stored: the files of a run can be
 // large, so the last write can come long after the first, and until the
 // result of the job names a file only that list keeps it from Delete
 // Unreferenced Files (`JobWork`).
 //
-// A list or a write that fails keeps no file: the stored ones are deleted,
-// and a `ToolError` tells the model, which called the tool `toolName`. A
-// stop of `signal` deletes them too, and rejects with the stop.
-async function keptOutputs(folder: string, signal: AbortSignal, keepAsset: (asset: MadeAsset) => void, toolName: string): Promise<{ outputs: AppOutputs, assets: MadeAsset[] }> {
+// A list, a write, or an encode run that fails keeps no file: the stored
+// ones are deleted, and a `ToolError` tells the model, which called the
+// tool of `run`. An encode run that ends with an error is no such failure:
+// Dez only does not keep its sequence. A stop of `signal` deletes them
+// too, and rejects with the stop.
+async function keptOutputs(
+  folder: string,
+  run: DecodeRun,
+  signal: AbortSignal,
+  report: (state: string) => void,
+  keepAsset: (asset: MadeAsset) => void,
+): Promise<{ outputs: AppOutputs, assets: MadeAsset[] }> {
   const assets: MadeAsset[] = []
   try {
     const tree = await sbp('dez.native/listFileTree', `${folder}/${APP_OUTPUT_FOLDER}`, APP_OUTPUT_LISTED_ENTRIES, 'cache') as FileTree
@@ -143,10 +174,22 @@ async function keptOutputs(folder: string, signal: AbortSignal, keepAsset: (asse
     if (listed.problem !== null) return { outputs: { kept: [], notKept: [], problem: listed.problem }, assets }
 
     const appDir = await sbp('dez.native/getAppDir') as string
-    const kept: KeptFile[] = []
+    const kept: KeptOutput[] = []
     const notKept = [...listed.notKept]
-    for (const name of listed.files) {
+    if (listed.outputs.some(({ frames }) => frames)) report(FRAMES_ENCODE_STATE)
+    for (const { name, frames } of listed.outputs) {
       signal.throwIfAborted()
+      if (frames) {
+        const sequence = await keptSequence(folder, name, appDir, run, signal)
+        if ('notKept' in sequence) {
+          notKept.push(sequence.notKept)
+          continue
+        }
+        assets.push(sequence.asset)
+        keepAsset(sequence.asset)
+        kept.push(sequence.kept)
+        continue
+      }
       const bytes = await outputBytes(folder, name)
       const checked = checkedOutput(name, bytes)
       if ('notKept' in checked) {
@@ -163,8 +206,12 @@ async function keptOutputs(folder: string, signal: AbortSignal, keepAsset: (asse
   } catch (error) {
     await discardMadeAssets(assets)
     if (signal.aborted) throw error
+    // The `ToolError` of an encode run that did not start or did not end
+    // within the time limit tells the model more than the text of a
+    // failed write.
+    if (error instanceof ToolError) throw error
     console.error('Failed to store the output files of a run of an app:', error)
-    throw new ToolError(appOutputNotStoredText(toolName), '', { cause: error })
+    throw new ToolError(appOutputNotStoredText(run.toolName), '', { cause: error })
   }
 }
 
@@ -217,11 +264,14 @@ export function runAppJob(
     const [appName] = call.app.names
     const decodesClips = asksForDecode(call.decode)
     const inputs = await inputCopies(call.inputs, decodesClips, folder, signal, toolName)
+    // The decode and the encode of frame sequences run ffmpeg with the
+    // time limit of the call.
+    const ffmpegRun: DecodeRun = { toolName, texts, timeoutMs: call.timeoutMs }
     let decoded = new Map<string, DecodedClip>()
     if (decodesClips) {
       report(APP_DECODES_STATE)
       const clips = call.inputs.filter((input) => input.kind !== 'image')
-      decoded = await decodeClips(clips, call.decode, folder, { toolName, texts, timeoutMs: call.timeoutMs }, signal)
+      decoded = await decodeClips(clips, call.decode, folder, ffmpegRun, signal)
     }
     // The description holds the paths that Dez joined, not the real ones:
     // Deno checks a path of the code against the folders of its flags as
@@ -246,7 +296,7 @@ export function runAppJob(
     const { line, log } = endedRun(end, output)
     const outcome = appRunOutcome(end, line, log.trim() !== '', call.nativeCanvas)
     if (outcome.isError) return { ...appRunResult(outcome, log, forModel, NO_APP_OUTPUTS), assets: [] }
-    const { outputs, assets } = await keptOutputs(folder, signal, keepAsset, toolName)
+    const { outputs, assets } = await keptOutputs(folder, ffmpegRun, signal, report, keepAsset)
     return { ...appRunResult(outcome, log, forModel, outputs), assets }
   })
 }

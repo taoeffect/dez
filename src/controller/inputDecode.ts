@@ -58,8 +58,9 @@ async function decodeClip(input: ClipInput, plan: ClipDecodePlan, maxBytes: numb
   }
 }
 
-/** The run whose decode this is: its caller (the tool of the call, which
- *  the texts name, and the error texts), and its time limit. */
+/** The run whose decode this is, or whose frame sequences Dez encodes
+ *  (frameSequences.ts): its caller (the tool of the call, which the texts
+ *  name, and the error texts), and its time limit. */
 export interface DecodeRun extends AppRunCaller {
   timeoutMs: number
 }

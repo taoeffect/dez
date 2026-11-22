@@ -71,7 +71,8 @@ export const APP_DECODES_STATE = 'Dez decodes the input clips.'
 // What Dez did not do for a call that it refuses.
 const NOT_DONE = 'Dez started no job.'
 
-function isObject(value: unknown): value is Record<string, unknown> {
+/** Whether `value` is a JSON object (no list, no null). */
+export function isObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
@@ -80,15 +81,17 @@ function quotedList(names: readonly string[]): string {
   return quoted.length < 2 ? quoted.join('') : `${quoted.slice(0, -1).join(', ')} and ${quoted.at(-1)}`
 }
 
-// What is wrong with the fields of the object `value` at `where` that are
-// not in `known`; null when it has none.
-function unknownFieldsProblem(value: Record<string, unknown>, known: readonly string[], where: string): string | null {
+/** What is wrong with the fields of the object `value` at `where` that are
+ *  not in `known`; null when it has none. A JSON object that a run gives
+ *  Dez (a decode, a frames.json) refuses an unknown field, so that a typo
+ *  is not a field that Dez leaves out. */
+export function unknownFieldsProblem(value: Record<string, unknown>, known: readonly string[], where: string): string | null {
   const unknown = Object.keys(value).filter((key) => !known.includes(key))
   if (unknown.length === 0) return null
   return `${where} has the field${unknown.length === 1 ? '' : 's'} ${quotedList(unknown)}, which Dez does not know: it takes only ${quotedList(known)}`
 }
 
-function isWholeNumberIn(value: unknown, min: number, max: number): value is number {
+export function isWholeNumberIn(value: unknown, min: number, max: number): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max
 }
 

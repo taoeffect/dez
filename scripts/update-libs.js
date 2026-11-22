@@ -195,9 +195,10 @@ export const LIBRARIES = [
 // Dez's own libraries: folders of src-tauri/libs/ that hold Dez's code, not
 // an npm package. `imports` as in LIBRARIES. dez-media imports fft.js by a
 // relative path, so it loads only next to the vendored libraries.
-// 'dez-media/canvas' imports skia-canvas, so only a Deno run loads it.
+// 'dez-media/canvas' imports skia-canvas, and 'dez-media/frames' writes
+// files with node:fs, so only a Deno run loads them.
 export const OWN_LIBRARIES = [
-  { folder: 'dez-media', imports: { 'dez-media': 'mod.js', 'dez-media/canvas': 'canvas.js' } }
+  { folder: 'dez-media', imports: { 'dez-media': 'mod.js', 'dez-media/canvas': 'canvas.js', 'dez-media/frames': 'frames.js' } }
 ];
 
 // The names of the files that the script writes next to the library

@@ -13,6 +13,7 @@ import { expectReplyEnd, expectRunsEnded } from './harness/jsEval'
 import { clipTag, monoWav, shownPlayers, WAV_SAMPLE_RATE, WEBM_VIDEO } from './harness/media'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendChatReply, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
+import { mediaFacts, pixelColors } from './harness/programs'
 import type { E2EBrowser } from './harness/session'
 import { activeConversationId, endedReply, newTab, openSeededConversation, pickModel, submit } from './harness/thread'
 import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolChip, revealingPart } from './harness/toolChips'
@@ -42,6 +43,9 @@ import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolC
 //   dez-media/canvas), and a text of the run names a font by the name of
 //   its file; the run of an app without the field cannot load skia-canvas,
 //   and its result tells the model to add the field;
+// - the code writes two frame sequences with dez-media/frames, and the
+//   real ffmpeg encodes each into one clip after the run: H.264 in MP4,
+//   and PNG in MOV, which keeps the alpha of each pixel;
 // - a run with `is_intermediate` hides its asset under the chip of its
 //   call;
 // - a call that names no app, or an app without the file that a run
@@ -200,6 +204,34 @@ const TITLE_MAIN = [
   '  const bold = dez.fonts.find(({ family, weight }) => family === "Noto Sans" && weight === 700)',
   '  console.log(`drew with ${bold.path}`)',
   '  return { ink, first: families.split(", ")[0] }',
+  '}',
+].join('\n')
+
+// The size, the frames a second, and the count of the frames of the
+// sequences of the `reel` app.
+const REEL = { width: 64, height: 36, fps: 12, count: 12 }
+// The colors of the pixels of its two sequences: one with no alpha, and
+// one with half alpha.
+const REEL_COLOR = [0x2a, 0x7f, 0xd4]
+const GLOW_COLOR = [255, 128, 0, 128]
+
+// The code of the `reel` app: it writes two frame sequences of raw RGBA
+// pixels of one color with dez-media/frames, `reel` with no alpha and
+// `glow` with alpha, and returns the count of each.
+const REEL_MAIN = [
+  'import { FrameWriter } from "dez-media/frames"',
+  '',
+  'export default function main(parameters, dez) {',
+  `  const { width, height, fps, count } = ${JSON.stringify(REEL)}`,
+  '  const counts = {}',
+  `  for (const [name, color, alpha] of [["reel", ${JSON.stringify([...REEL_COLOR, 255])}, false], ["glow", ${JSON.stringify(GLOW_COLOR)}, true]]) {`,
+  '    const frames = new FrameWriter(dez.outputFolder, name, { fps, width, height, alpha })',
+  '    const pixels = new Uint8Array(width * height * 4)',
+  '    for (let index = 0; index < pixels.length; index += 4) pixels.set(color, index)',
+  '    for (let frame = 0; frame < count; frame += 1) frames.add(pixels)',
+  '    counts[name] = frames.end()',
+  '  }',
+  '  return counts',
   '}',
 ].join('\n')
 
@@ -565,6 +597,52 @@ describe('apps invoke', () => {
     await endedReply(browser)
     const picture = fs.readFileSync(path.join(imagesDir, await newFileIn(browser, imagesDir, before)))
     expect([picture.readUInt32BE(16), picture.readUInt32BE(20)]).toStrictEqual([240, 64])
+    await expectRunsEnded(setup)
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('encodes each frame sequence that the code wrote with dez-media/frames into one clip: H.264 in MP4, or PNG in MOV with the alpha of each pixel', async () => {
+    await seedApp(appsDir, { name: 'reel', description: 'Writes frames.', kind: 'script' }, { 'main.ts': REEL_MAIN })
+    const before = await filesIn(videoDir)
+    await submit(browser, 'Make a reel.')
+
+    // The clips are intermediate, so that no player loads them: the
+    // GStreamer of CI has no H.264 decoder (harness/media.ts).
+    const run = await invoke(await chatRequest(), 'call_reel', { name: 'reel', is_intermediate: true })
+    expect(run.result.status).toBe('finished')
+    const [value, outputs] = run.result.text.split('\n\n')
+    expect(JSON.parse(value)).toStrictEqual({ reel: REEL.count, glow: REEL.count })
+    expect(outputs).toContain(`Dez keeps 2 files of the output folder: glow.frames/ (video clip: ${REEL.count} frames, PNG in MOV with alpha), reel.frames/ (video clip: ${REEL.count} frames, H.264 in MP4).`)
+    expect(run.result.text.endsWith('\nMade the video clip @a.\nMade the video clip @b.')).toBe(true)
+    await sendChatReply(run.next.reply, CALLER.modelName)
+
+    const reply = await endedReply(browser)
+    const made = (await filesIn(videoDir)).filter((name) => !before.includes(name))
+    expect(made).toHaveLength(2)
+    const madePath = (extension: string): string => path.join(videoDir, made.find((name) => storedFileName(extension).test(name)) ?? `no .${extension} file`)
+    const glowPath = madePath('mov')
+    const reelPath = madePath('mp4')
+    const marks = `tool="apps" made-by="${run.jobId}" hidden="${run.jobId}"`
+    expect(reply.slice(reply.lastIndexOf('</dez:tool>'))).toBe([
+      '</dez:tool>',
+      '',
+      `<dez:video id="a" type="video/quicktime" src="${glowPath}" ${marks}/>`,
+      '',
+      `<dez:video id="b" type="video/mp4" src="${reelPath}" ${marks}/>`,
+      '',
+      replyText(CALLER.modelName),
+    ].join('\n'))
+    expect(await shownPlayers(browser)).toStrictEqual([])
+
+    // Each clip has each frame of its sequence once.
+    const size = `${REEL.width}x${REEL.height}`
+    const seconds = REEL.count / REEL.fps
+    expect(mediaFacts(setup.app, reelPath)).toStrictEqual({ streams: [`video h264 ${size}`], seconds })
+    expect(mediaFacts(setup.app, glowPath)).toStrictEqual({ streams: [`video png ${size}`], seconds })
+    // The PNG codec keeps each pixel as it is, with its alpha; H.264 keeps
+    // each color near to its value.
+    expect(pixelColors(setup.app, glowPath)).toStrictEqual([GLOW_COLOR.join(',')])
+    for (const color of pixelColors(setup.app, reelPath)) expect(colorDistance(color.split(',').map(Number), REEL_COLOR)).toBeLessThanOrEqual(8)
     await expectRunsEnded(setup)
     expect(await consoleErrors(browser)).toStrictEqual([])
   })

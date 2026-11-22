@@ -68,9 +68,10 @@ export const UI_MAIN_MODULE_TAG = '<script type="module" src="main.js"></script>
 export const UI_LIBS_ROUTE = '~libs'
 
 // The names of Dez's own modules (`OWN_LIBRARIES`, scripts/update-libs.js)
-// that import a library with a native file, so that a page cannot load
-// them.
-const DENO_ONLY_IMPORTS: readonly string[] = ['dez-media/canvas']
+// that a page cannot load: one that imports a library with a native file
+// (dez-media/canvas), and one that writes files with node:fs
+// (dez-media/frames).
+const DENO_ONLY_IMPORTS: readonly string[] = ['dez-media/canvas', 'dez-media/frames']
 
 // The import map of the page of a UI app: the names of the import map of
 // the runs of Deno (src-tauri/libs/import_map.json, whose entries are
