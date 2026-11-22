@@ -206,6 +206,7 @@ describe('provider config schema', () => {
       imageOutputBody: { modalities: ['image', 'text'] },
       mediaApi: {
         format: 'openrouter',
+        maxRequestsAtOnce: 2,
         modelRequestBodies: [{ request: 'tts', modelIdPrefix: 'heygen/', body: { response_format: 'pcm' } }],
         modelEntryPaths: { speechFormats: 'own.speech.formats', transcriptionFormats: 'own.stt.formats', transcriptionMaxBytes: 'own.stt.max_bytes' },
       },
@@ -252,6 +253,9 @@ describe('provider config schema', () => {
     expect(parse({ mediaApi: { format: 'openai' } }).success).toBe(false)
     expect(parse({ mediaApi: {} }).success).toBe(false)
     expect(parse({ mediaApi: { format: 'openrouter', modelEntryPaths: { speechFormats: 'own..formats' } } }).success).toBe(false)
+    // A cap of 0 would let no media request go.
+    expect(parse({ mediaApi: { format: 'venice', maxRequestsAtOnce: 0 } }).success).toBe(false)
+    expect(parse({ mediaApi: { format: 'venice', maxRequestsAtOnce: 1.5 } }).success).toBe(false)
   })
 
   it('keeps a providerSystemPrompt, and rejects a bad body path or a value that is no scalar', () => {

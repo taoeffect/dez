@@ -58,11 +58,14 @@ export interface JobOutcome {
  *  work must then end its requests. `report` keeps a state text for
  *  `jobs_list` and `job_inspect`, such as the phase of the work and a
  *  provider's job id; it goes to the chat provider too, and the result of
- *  a job that timed out ends with it. `reportCost` keeps the price in USD
- *  of the paid request of the work (`JobInfo.cost`; null: no price is
- *  known), for the spend line of `jobs_list`: a work that sends a paid
- *  request calls it when the request goes, and again when its price is
- *  final. A work that sends none never calls it.
+ *  a job that timed out ends with it. A report with `queued` tells that
+ *  the work waits for its turn at a provider (mediaTurns.ts): the job is
+ *  `queued` in `jobs_list` (`JobInfo.queued`), and its time limit stops
+ *  until the next report, which has no `queued`. `reportCost` keeps the
+ *  price in USD of the paid request of the work (`JobInfo.cost`; null: no
+ *  price is known), for the spend line of `jobs_list`: a work that sends a
+ *  paid request calls it when the request goes, and again when its price
+ *  is final. A work that sends none never calls it.
  *
  *  The work makes its files, but writes nothing into the reply: a job can
  *  end while the model writes text, and the asset of a tool goes after the
@@ -81,11 +84,14 @@ export interface JobOutcome {
  *  (`TabJobs.scoped`). */
 export type JobWork = (
   signal: AbortSignal,
-  report: (state: string) => void,
+  report: JobReport,
   reportCost: (usd: number | null) => void,
   keepAsset: (asset: MadeAsset) => void,
   jobs: ToolJobs,
 ) => Promise<JobOutcome>
+
+/** The `report` of a `JobWork`. */
+export type JobReport = (state: string, options?: { queued?: boolean }) => void
 
 /** The options of a job start (`ToolJobs.start`). */
 export interface JobOptions {
@@ -146,7 +152,15 @@ interface Job extends Omit<EndedJob, 'status' | 'assets'> {
   // Its own controller, not the signal of the tool round that started the
   // job: the job outlives that round.
   abort: AbortController
-  timer: ReturnType<typeof setTimeout>
+  timer: ReturnType<typeof setTimeout> | undefined
+  // The time limit of the job (`JobOptions.timeoutMs`), and what is left
+  // of it when its timer started. The timer runs only while the job is not
+  // queued: the limit is the time that the job runs.
+  timeoutMs: number
+  limitLeftMs: number
+  timerStartedAt: number
+  // The work waits for its turn at a provider (`JobWork`).
+  queued: boolean
   // The ids of the assets that its call names as inputs (`JobInfo.inputs`).
   inputs: readonly string[]
   // The id of the job of the run of an app whose code started this job
@@ -319,7 +333,8 @@ export class TabJobs implements ToolJobs {
 
   /** Starts `work` as a job of `tool` and returns the job's id and its
    *  number (`JobCall.number`) at once. The job ends as `timed out` when
-   *  the work takes more than `timeoutMs`. `hidesAssets` and `model`: see
+   *  the work runs more than `timeoutMs`: the time that it is queued
+   *  (`JobWork`) does not count. `hidesAssets` and `model`: see
    *  `EndedJob`. `label` is the label of the call (`jobCallLabel`), and
    *  `inputs` the ids of the assets that the call names as inputs
    *  (`JobInfo.inputs`). Throws a `ToolError` for one open job too many
@@ -349,11 +364,16 @@ export class TabJobs implements ToolJobs {
       endedAt: null,
       delivered: false,
       abort: new AbortController(),
-      timer: setTimeout(() => this.end(job, 'timed out', jobTimedOutText(timeoutMs, job.state)), timeoutMs),
+      timer: undefined,
+      timeoutMs,
+      limitLeftMs: timeoutMs,
+      timerStartedAt: 0,
+      queued: false,
       inputs,
       scope,
     }
     this.jobs.set(job.id, job)
+    this.runLimit(job)
 
     // In an async function, so that a work that throws before its first
     // await fails its job as a work that rejects does. The `await` listens
@@ -362,8 +382,10 @@ export class TabJobs implements ToolJobs {
     // starts would then end in the order of the starts. A report after the
     // end of the job changes nothing: a stopped, cancelled, or timed-out
     // job keeps the price of its request when it ended.
-    const outcome = (async () => await work(job.abort.signal, (state) => {
-      if (job.status === 'running') job.state = state
+    const outcome = (async () => await work(job.abort.signal, (state, options) => {
+      if (job.status !== 'running') return
+      job.state = state
+      this.setQueued(job, options?.queued === true)
     }, (usd) => {
       if (job.status === 'running') job.cost = usd
     }, (asset) => {
@@ -383,6 +405,27 @@ export class TabJobs implements ToolJobs {
       this.end(job, 'failed', error instanceof ToolError ? error.message : unexpectedToolErrorText(tool))
     })
     return { id: job.id, number: job.call.number }
+  }
+
+  // Starts the timer of what is left of the time limit of `job`.
+  private runLimit(job: Job): void {
+    job.timerStartedAt = Date.now()
+    job.timer = setTimeout(() => this.end(job, 'timed out', jobTimedOutText(job.timeoutMs, job.state)), job.limitLeftMs)
+  }
+
+  // The work of `job` waits for its turn at a provider, or its turn came.
+  // The time limit stops while it waits: a model that starts more media
+  // jobs than the provider takes at once must not lose the later ones to
+  // the wait.
+  private setQueued(job: Job, queued: boolean): void {
+    if (job.queued === queued) return
+    job.queued = queued
+    if (queued) {
+      clearTimeout(job.timer)
+      job.limitLeftMs -= Date.now() - job.timerStartedAt
+    } else {
+      this.runLimit(job)
+    }
   }
 
   // The jobs of the job `scope`, which the work of that job gets
@@ -418,6 +461,7 @@ export class TabJobs implements ToolJobs {
     job.assets = assets
     job.endedAt = Date.now()
     clearTimeout(job.timer)
+    job.queued = false
     if (status === 'timed out' || !hasJobResult(status)) {
       job.abort.abort()
       for (const inner of this.jobs.values()) {
@@ -526,6 +570,7 @@ export class TabJobs implements ToolJobs {
       call: job.call,
       inputs: job.inputs,
       ...(job.cost !== undefined && { cost: job.cost }),
+      ...(job.queued && { queued: true as const }),
     }))
   }
 

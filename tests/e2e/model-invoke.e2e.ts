@@ -3,7 +3,7 @@ import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { stoppedToolResult } from '../../src/model/streams/toolRound'
-import { jobCancelText, jobStartedText, jobsWaitText, startedJobId, type JobInfo } from '../../src/model/tools/jobs'
+import { jobCancelText, jobStartedText, jobsWaitResults, jobsWaitText, startedJobId, type JobInfo } from '../../src/model/tools/jobs'
 import { invocationAnswerText } from '../../src/model/tools/modelInvoke'
 import { click, consoleErrors, movePointer, pointerClick, pointerClickAt, promptMessage, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
 import { appFilePath, conversationFilePath, filesIn, mediaTempDir, newFileIn, readModelCache, storedFileName } from './harness/fixtures'
@@ -34,6 +34,9 @@ import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolC
 //   names its call (the number and the start of the prompt), and
 //   `jobs_wait` with `all` waits for every job and gives the results in
 //   the order of the job ends;
+// - a provider gets at most four media requests at one time: the fifth
+//   job is `queued` in `jobs_list`, and its request goes when one of the
+//   four ends;
 // - a call that cannot work is refused at once and starts no job, and a
 //   refusal of the provider is the result of its job;
 // - a `voice` parameter takes a voice id that the model's list does not
@@ -293,6 +296,45 @@ describe('model_invoke', () => {
     await sendChatReply(third.reply, CALLER.modelName)
 
     await endedReply(browser)
+    expect(await openToasts(browser, 'error')).toStrictEqual([])
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  // The studio has no `maxRequestsAtOnce`, so it gets the default cap of 4.
+  it('sends at most four requests of one provider at one time: the fifth job is queued in jobs_list, and its request goes when one of the four ends', async () => {
+    const prompts = ['Fox 1', 'Fox 2', 'Fox 3', 'Fox 4', 'Fox 5']
+    await submit(browser, 'Make five pictures.')
+    const first = await requestTo(CHAT_PATH)
+    sendToolCalls(first.reply, prompts.map((prompt, index) => paintCall(`call_paint_${index + 1}`, { prompt })))
+
+    const promptOf = (request: HeldRequest) => (JSON.parse(request.body) as { prompt: string }).prompt
+    const running = [await requestTo(GENERATE_PATH), await requestTo(GENERATE_PATH), await requestTo(GENERATE_PATH), await requestTo(GENERATE_PATH)]
+    const second = await requestTo(CHAT_PATH)
+    const jobIds = prompts.map((_prompt, index) => startedJob(second, `call_paint_${index + 1}`))
+    const waitingIndex = prompts.findIndex((prompt) => !running.map(promptOf).includes(prompt))
+    expect(waitingIndex).not.toBe(-1)
+
+    sendToolCalls(second.reply, [openAiToolCall('call_list', 'jobs_list', {})])
+    const third = await requestTo(CHAT_PATH)
+    const list = toolResult(third, 'call_list').split('\n')
+    expect(list[0]).toContain('status: `queued` means that the job waits for its turn')
+    expect(list.slice(1, 6).map((line) => line.split(' | ')[3])).toStrictEqual(prompts.map((_prompt, index) => (index === waitingIndex ? 'queued' : 'running')))
+    // The request of the queued job has not gone.
+    expect(setup.mock.hasWaitingRequest()).toBe(false)
+
+    const madeImage = JSON.stringify({ images: [MADE_PNG.toString('base64')] })
+    answerHeld(running[0].reply, 'application/json', madeImage)
+    const last = await requestTo(GENERATE_PATH, { ...PAINT_BODY, prompt: prompts[waitingIndex] })
+    for (const request of [...running.slice(1), last]) answerHeld(request.reply, 'application/json', madeImage)
+
+    sendToolCalls(third.reply, [waitCall('call_wait', true)])
+    const fourth = await requestTo(CHAT_PATH)
+    const results = jobsWaitResults(toolResult(fourth, 'call_wait'))
+    expect(results.map(({ id, status }) => [id, status]).sort()).toStrictEqual(jobIds.map((id) => [id, 'finished']).sort())
+    await sendChatReply(fourth.reply, CALLER.modelName)
+
+    await endedReply(browser)
+    expect(setup.mock.hasWaitingRequest()).toBe(false)
     expect(await openToasts(browser, 'error')).toStrictEqual([])
     expect(await consoleErrors(browser)).toStrictEqual([])
   })

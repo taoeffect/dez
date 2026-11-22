@@ -27,6 +27,7 @@ import { chatImageDrawing, imageFit, type ImageSizeRules } from './imageSize'
 import { knownLimitsOf, type KnownLimit } from './knownLimits'
 import { learnedImageLimitRow, learnedImagesProblem } from './learnedImageLimit'
 import type { InputClipPart, MediaWireRequest } from './mediaFormats'
+import { takeMediaTurn } from './mediaTurns'
 import { effectiveParameterValues, type ParameterValues } from './modelParameters'
 import { textLengthCost, type PriceQuote } from './modelPrices'
 import { modelToggles, type ToggleModel } from './modelToggles'
@@ -696,6 +697,12 @@ export default sbp('sbp/selectors/register', {
   // the result's `cost` is the price that the answer tells, else that one.
   // A text request has no quote.
   //
+  // At most `Provider.mediaRequestsAtOnce` calls of one provider run at one
+  // time, of all tabs together (mediaTurns.ts): a call after them waits
+  // for its turn, with a `waiting` step, and holds the turn until it ends
+  // (the waits for a clip job and its download too). A stop while it waits
+  // rejects.
+  //
   // A provider takes the money for a job when it starts. So after that
   // point, a failure and a stop log the job id, and the message of a
   // failure names it: with the id, the user can ask the provider for the
@@ -710,12 +717,13 @@ export default sbp('sbp/selectors/register', {
     }
     signal?.addEventListener('abort', cancelRequest)
     let jobId: string | null = null
-    const progress = (phase: MediaProgress['phase'], quote?: number) => input.onProgress?.({ phase, jobId, ...(quote !== undefined && { quote }) })
+    const progress = (phase: MediaProgress['phase'], extra: Pick<MediaProgress, 'quote' | 'limit'> = {}) => input.onProgress?.({ phase, jobId, ...extra })
     // The last check of the caller, then the `sent` step, in one tick.
     const send = (quote?: number) => {
       input.beforeSend?.(quote)
-      progress('sent', quote)
+      progress('sent', quote === undefined ? {} : { quote })
     }
+    let endTurn: (() => void) | null = null
     // The `cost` of a result: absent when no price is known.
     const priced = (cost: number | undefined) => (cost === undefined ? {} : { cost })
     try {
@@ -736,6 +744,12 @@ export default sbp('sbp/selectors/register', {
       const imageProblem = (clips.some((clip) => clip.kind === 'video') ? null : missingImageProblem(modelName, kind, paths.length, imageRules, reader))
         ?? learnedImagesProblem(modelName, cachedModel?.learnedImageLimit, paths.length, reader)
       if (imageProblem !== null) throw new ExplainedError(imageProblem)
+      // The turn of the provider comes before the reads of the inputs, so a
+      // request that waits holds no image or clip bytes, and before the
+      // caller's last check (`beforeSend`), which must see what the earlier
+      // requests spent. A clip's time limit (`run.deadline`) starts after it.
+      const limit = provider.mediaRequestsAtOnce
+      endTurn = await takeMediaTurn(provider.id, limit, signal, () => progress('waiting', { limit }))
       const appDir = paths.length > 0 ? await sbp('dez.native/getAppDir') as string : ''
       const sizeRules = provider.inputImageSize(kind, { ...(imageRules && { images: imageRules }) })
       const images = await Promise.all(paths.map(async (path): Promise<ChatImagePart> => {
@@ -846,6 +860,7 @@ export default sbp('sbp/selectors/register', {
         : `${provider.name} ran this request as its job ${jobId}: give the user this id, with which the user can ask ${provider.name} about the clip.`
       throw new ExplainedError(`${explanation} ${askWith}`, details, { cause: error })
     } finally {
+      endTurn?.()
       signal?.removeEventListener('abort', cancelRequest)
     }
   },

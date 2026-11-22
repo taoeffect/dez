@@ -10,6 +10,7 @@ import { FORBIDDEN_BODY_KEYS, type AudioOutputConfig, type MediaEntryPaths, type
 import { ProviderHttpError } from './errors'
 import type { ImageSizeRules, InputImageLimits } from './imageSize'
 import { MEDIA_FORMATS, type AnswerCost, type ClipEntryPrice, type ClipFormat, type ClipInput, type ClipJob, type ImageFormat, type ImageQuoteFormat, type MediaFormat, type MediaInput, type MediaWireRequest, type TextFormat } from './mediaFormats'
+import { DEFAULT_MEDIA_REQUESTS_AT_ONCE } from './mediaTurns'
 import { effectiveParameterValues, type ParameterValues } from './modelParameters'
 import { modelTokenPrice } from './modelPrices'
 import { isRecord, modelCapability, modelCount, modelData, modelOutputsAndRequest, modelReadableName, modelReleased, unsupportedSettings } from './modelParsing'
@@ -60,6 +61,12 @@ export class Provider {
   // request.
   get supportsThinking(): boolean {
     return this.config.thinking !== undefined
+  }
+
+  // The most media requests that Dez sends the provider at one time
+  // (`mediaApi.maxRequestsAtOnce`, mediaTurns.ts).
+  get mediaRequestsAtOnce(): number {
+    return this.config.mediaApi?.maxRequestsAtOnce ?? DEFAULT_MEDIA_REQUESTS_AT_ONCE
   }
 
   // `keyIds`: the providers with a stored key, as dez.native/getConfiguredProviderIds

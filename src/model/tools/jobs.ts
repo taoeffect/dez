@@ -450,6 +450,10 @@ export interface JobInfo {
    *  else its quote, and 0 for a request that the provider refused. Null
    *  when no price is known; absent for a job that sent no paid request. */
   cost?: number | null
+  /** Only while the job runs, and only while its work waits for its turn
+   *  at a provider, which takes only a few media requests at one time
+   *  (`mediaApi.maxRequestsAtOnce`): the time limit of the job waits too. */
+  queued?: true
 }
 
 /** The result of a `jobs_list` call for a reply with no job. */
@@ -503,6 +507,12 @@ function spendText(jobs: readonly JobInfo[]): string {
     + `(the provider's price, else its quote; a refused request costs nothing)${rest}.`
 }
 
+/** The status of `job` in a job list: `queued` for a job that runs but
+ *  waits for its turn at a provider (`JobInfo.queued`). */
+function listedStatus(job: JobInfo): string {
+  return job.queued ? 'queued' : job.status
+}
+
 /** The result of a `jobs_list` call: a first line with the count, the
  *  columns, and what their values mean, then one line for each job, in the
  *  order of their starts, and a last line with the spend of the reply on
@@ -512,13 +522,17 @@ function spendText(jobs: readonly JobInfo[]): string {
 export function jobsListText(jobs: readonly JobInfo[], money?: TabMoney): string {
   const moneyLines = money ? [moneyLimitText(money.limit, money.spent)] : []
   if (jobs.length === 0) return [NO_JOBS_TEXT, ...moneyLines].join('\n')
+  const queued = jobs.some((job) => job.queued)
+    ? 'status: `queued` means that the job waits for its turn: its provider gets only a few media requests at one time. Its time limit waits too. '
+    : ''
   const head = `${countOf(jobs.length, 'job')} of this reply (number | id | tool | status | result | seconds | call). `
     + 'number: the place of the job in the order of the starts. '
+    + queued
     + `${jobResultLegend()} `
     + 'seconds: how long the job ran, or runs so far. '
     + 'call: how the prompt or the arguments of its call begin.'
   const rows = jobs.map((job) => [
-    job.call.number, job.id, job.tool, job.status, jobResultState(job), Math.round(job.elapsedMs / 1000), job.call.label === '' ? '-' : job.call.label,
+    job.call.number, job.id, job.tool, listedStatus(job), jobResultState(job), Math.round(job.elapsedMs / 1000), job.call.label === '' ? '-' : job.call.label,
   ].join(' | '))
   return [head, ...rows, spendText(jobs), ...moneyLines].join('\n')
 }
@@ -532,7 +546,9 @@ export function jobInspectText(job: JobInfo): string {
   let status: string
   switch (job.status) {
     case 'running':
-      status = `${name} runs, for ${time} so far. Call jobs_wait to wait for its result.`
+      status = job.queued
+        ? `${name} waits for its turn at its provider, for ${time} so far: the provider gets only a few media requests at one time. Its time limit waits too. Call jobs_wait to wait for its result.`
+        : `${name} runs, for ${time} so far. Call jobs_wait to wait for its result.`
       break
     case 'cancelled':
       status = `${name} was cancelled after ${time}, with no result.`

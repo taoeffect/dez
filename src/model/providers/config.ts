@@ -403,6 +403,13 @@ export const providerConfigSchema = z.object({
   // request of a kind that the format does not serve fails the same way.
   mediaApi: z.object({
     format: z.enum(MEDIA_API_FORMAT_IDS),
+    // The most media requests (`dez.provider/generateMedia`) that Dez
+    // sends the provider at one time, of all tabs together: more wait for
+    // their turn, in the order of their calls (mediaTurns.ts). A provider
+    // limits the requests of one API key, and a script that starts many
+    // clip jobs must not hit that limit. `DEFAULT_MEDIA_REQUESTS_AT_ONCE`
+    // with none.
+    maxRequestsAtOnce: z.number().int().positive().optional(),
     // Fixed parts of the body of the request that asks for an image or a
     // clip, for a fact about a model that no model list tells. A part is
     // merged (as `requestBody` is) into a request of the kind `request` to a

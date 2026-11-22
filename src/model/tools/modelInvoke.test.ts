@@ -294,6 +294,10 @@ describe('the texts of a call', () => {
     expect(invocationStateText('Venice', { phase: 'downloading', jobId: 'q-17' })).toContain('q-17')
   })
 
+  it('names the cap of the provider in the state of a request that waits for its turn', () => {
+    expect(invocationStateText('Venice', { phase: 'waiting', jobId: null, limit: 4 })).toContain('Dez sends Venice at most 4 media requests at one time')
+  })
+
   it('gives the text of the model as it is, and says so when there is none', () => {
     expect(invocationTextResult('  Hello there.\nSecond line. \n')).toMatch(/\nHello there\.\nSecond line\.$/)
     expect(invocationTextResult(' \n')).toContain('no text')

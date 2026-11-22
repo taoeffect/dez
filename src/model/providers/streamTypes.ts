@@ -68,6 +68,9 @@ export interface ProviderStreamChatResult {
 }
 
 // How far a request of dez.provider/generateMedia is:
+// - `waiting`: the provider has as many media requests as it takes at one
+//   time (`mediaApi.maxRequestsAtOnce`, mediaTurns.ts), and this one waits
+//   for its turn. Only a request that must wait has this step.
 // - `sent`: the inputs are read, and the first request goes now.
 // - `queued`: the provider runs the request as a job, and Dez asks for
 //   its state.
@@ -76,12 +79,15 @@ export interface ProviderStreamChatResult {
 // provider took the money for that job, and the user can ask it for the
 // output with the id.
 export interface MediaProgress {
-  phase: 'sent' | 'queued' | 'downloading'
+  phase: 'waiting' | 'sent' | 'queued' | 'downloading'
   jobId: string | null
   // Only in the `sent` step, and only when Dez knows it: the price in USD
   // of the request (a quote of the provider, or a list price for the
   // request's text).
   quote?: number
+  // Only in the `waiting` step: the most media requests that the provider
+  // gets at one time.
+  limit?: number
 }
 
 // The input of dez.provider/generateMedia. `kind` is the model's request

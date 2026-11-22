@@ -300,9 +300,11 @@ export const INVOCATION_READS_INPUTS = 'Dez reads the inputs of the request.'
  *  the provider's own job id as soon as there is one: the provider took the
  *  money for that job, and the result of a job that timed out ends with
  *  its last state. */
-export function invocationStateText(providerName: string, { phase, jobId }: MediaProgress): string {
+export function invocationStateText(providerName: string, { phase, jobId, limit }: MediaProgress): string {
   const withId = jobId === null ? '' : ` With the id ${jobId}, the user can ask ${providerName} about the output.`
   switch (phase) {
+    case 'waiting':
+      return `The request waits for its turn: Dez sends ${providerName} at most ${limit ?? 'a few'} media requests at one time. The time limit of the job waits too.`
     case 'sent':
       return `${providerName} has the request, and has not answered yet.`
     case 'queued':

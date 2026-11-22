@@ -279,6 +279,15 @@ describe('jobsListText', () => {
     ])
   })
 
+  it('lists a job that waits for its turn at its provider as queued, and tells what that means only when a job is queued', () => {
+    const QUEUED_LEGEND = 'status: `queued` means that the job waits for its turn: its provider gets only a few media requests at one time. Its time limit waits too.'
+    const queued = jobsListText([jobInfo({ elapsedMs: 2000 }), jobInfo({ id: 'j-bbbb', elapsedMs: 1000, queued: true, call: { number: 2, label: 'Rain' } })]).split('\n')
+
+    expect(queued[0]).toContain(QUEUED_LEGEND)
+    expect(queued.slice(1, 3)).toStrictEqual(['1 | j-aaaa | model_invoke | running | - | 2 | -', '2 | j-bbbb | model_invoke | queued | - | 1 | Rain'])
+    expect(jobsListText([jobInfo({})])).not.toContain('`queued`')
+  })
+
   // The last line. A job with no `cost` sent no paid request; a null cost
   // is a paid request with no known price.
   it.each([
@@ -323,6 +332,8 @@ describe('jobInspectText', () => {
       .toBe('The job j-aaaa (job 1 of this reply, model_invoke) stopped after 5 seconds, with no result.\nThe job reported no state.')
     expect(jobInspectText(jobInfo({ status: 'cancelled', elapsedMs: 7000 })))
       .toBe('The job j-aaaa (job 1 of this reply, model_invoke) was cancelled after 7 seconds, with no result.\nThe job reported no state.')
+    expect(jobInspectText(jobInfo({ elapsedMs: 3000, queued: true })))
+      .toBe('The job j-aaaa (job 1 of this reply, model_invoke) waits for its turn at its provider, for 3 seconds so far: the provider gets only a few media requests at one time. Its time limit waits too. Call jobs_wait to wait for its result.\nThe job reported no state.')
   })
 })
 

@@ -26,7 +26,7 @@ import { TOOL_DEFINITIONS } from '../model/tools/registry'
 import { ToolError } from '../model/tools/types'
 import { ExplainedError } from '../utils/errorText'
 import { logRequest } from './diagnostics/requestLog'
-import { discardMadeAssets, generatedClipAsset, type JobOutcome, type MadeAsset } from './jobs'
+import { discardMadeAssets, generatedClipAsset, type JobOutcome, type JobReport, type MadeAsset } from './jobs'
 
 // The request of a `model_invoke` call (model/tools/modelInvoke.ts), as the
 // work of a job of the reply (jobs.ts). This module registers no selector:
@@ -86,7 +86,7 @@ export interface InvocationRights {
 //   answer that Dez cannot use, the time limit): the provider can have
 //   taken the money. A stopped or timed-out job keeps its quote too:
 //   `TabJobs` takes no report after the end of a job.
-async function invokeMediaModel(invocation: MediaInvocation, signal: AbortSignal, report: (state: string) => void, reportCost: (usd: number | null) => void, { checkMoney }: InvocationRights): Promise<JobOutcome> {
+async function invokeMediaModel(invocation: MediaInvocation, signal: AbortSignal, report: JobReport, reportCost: (usd: number | null) => void, { checkMoney }: InvocationRights): Promise<JobOutcome> {
   const { provider, model, kind, request, parameters, timeoutMs } = invocation
   report(INVOCATION_READS_INPUTS)
   let sent = false
@@ -114,7 +114,9 @@ async function invokeMediaModel(invocation: MediaInvocation, signal: AbortSignal
           reportCost(progress.quote ?? null)
         }
         if (progress.phase === 'queued') queued = true
-        report(invocationStateText(provider.name, progress))
+        // A request that waits for its turn at the provider is a queued job,
+        // whose time limit waits too; the next step ends the wait.
+        report(invocationStateText(provider.name, progress), { queued: progress.phase === 'waiting' })
       },
       reader: 'model',
     }) as ProviderGenerateMediaResult
@@ -282,7 +284,7 @@ export function invokeModel(
   invocation: ModelInvocation,
   tabId: string,
   signal: AbortSignal,
-  report: (state: string) => void,
+  report: JobReport,
   reportCost: (usd: number | null) => void,
   keepAsset: (asset: MadeAsset) => void,
   rights: InvocationRights,

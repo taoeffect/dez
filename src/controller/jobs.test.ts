@@ -190,6 +190,40 @@ describe('TabJobs', () => {
     expect(jobs.list()).toStrictEqual([jobInfo({ id, status: 'timed out', delivered: true, elapsedMs: 90_000, state: 'Queued at the provider as job q-7.' })])
   })
 
+  // A provider gets only a few media requests at one time (mediaTurns.ts),
+  // and the jobs after them wait for their turns.
+  it('stops the time limit of a job while its work waits for its turn, and lists the job as queued until the next report', async () => {
+    const held = heldWork()
+    const { id } = jobs.start('model_invoke', held.work, { timeoutMs: 10_000 })
+    await vi.advanceTimersByTimeAsync(4000)
+    held.report('Waits for its turn.', { queued: true })
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(jobs.list()).toStrictEqual([jobInfo({ id, elapsedMs: 64_000, state: 'Waits for its turn.', queued: true })])
+
+    held.report('Sent.')
+    await vi.advanceTimersByTimeAsync(5999)
+    expect(jobs.list()).toStrictEqual([jobInfo({ id, elapsedMs: 69_999, state: 'Sent.' })])
+    await vi.advanceTimersByTimeAsync(1)
+
+    expect(held.signal().aborted).toBe(true)
+    expect((await jobs.wait(running())).map((job) => [job.status, job.text])).toStrictEqual([[
+      'timed out',
+      'The job did not end within its time limit of 10 seconds, so Dez stopped it. It has no result. This is not a fault of the call. The last state of the job: Sent.',
+    ]])
+  })
+
+  it('lists a job that ended while it was queued as ended, not queued', async () => {
+    const held = heldWork()
+    const { id } = jobs.start('model_invoke', held.work, LONG)
+    held.report('Waits for its turn.', { queued: true })
+
+    expect(jobs.cancel([id])).toStrictEqual([id])
+    expect(jobs.list()).toStrictEqual([jobInfo({ id, status: 'cancelled', state: 'Waits for its turn.' })])
+    // A report after the end changes nothing.
+    held.report('Late.', { queued: true })
+    expect(jobs.list()).toStrictEqual([jobInfo({ id, status: 'cancelled', state: 'Waits for its turn.' })])
+  })
+
   it('throws away what a work gives after its job timed out, with its files', async () => {
     const held = heldWork()
     jobs.start('model_invoke', held.work, { timeoutMs: 1000 })

@@ -19,6 +19,7 @@ import { failedChatRequestCost } from './chatUsage'
 import type { ClipAttachment, InputClipRules } from './clipInputs'
 import { InputImageError } from './errors'
 import type { KnownLimit } from './knownLimits'
+import { takeMediaTurn } from './mediaTurns'
 import type { MediaProgress, ProviderGenerateMediaResult, ProviderMediaQuote } from './streamTypes'
 import type { GeneratedClip, GeneratedMedia, ModelDisplayNames, ProviderModelsResult, ProviderSettingsDescriptor } from './types'
 import { wavFile } from './pcmAudio'
@@ -1342,6 +1343,63 @@ describe('media requests', () => {
     await generate({ kind: 'image', beforeSend: (usd: number | undefined) => checks.push([usd, streamRequests.length]) })
 
     expect([checks, streamRequests.length]).toStrictEqual([[[undefined, 0]], 1])
+  })
+
+  describe('the cap of the requests of a provider at one time', () => {
+    beforeEach(() => {
+      sbp('dez.model/customProviders/save', {
+        id: 'capped',
+        name: 'Capped media server',
+        baseUrl: MEDIA_BASE_URL,
+        apiFormat: 'openai',
+        models: [],
+        fetchModels: true,
+        auth: 'apiKey',
+        mediaApi: { format: 'venice', maxRequestsAtOnce: 1 },
+      })
+    })
+
+    // A turn of the capped provider that the test holds, as a request that
+    // the provider still works on.
+    const holdTurn = () => takeMediaTurn('capped', 1, undefined, () => { throw new Error('The test must get the free turn.') })
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+    it('waits for the end of the requests that run, before it reads the inputs, asks the last check of the caller, or sends', async () => {
+      const steps: MediaProgress[] = []
+      const checks: Array<number | undefined> = []
+      const endHeld = await holdTurn()
+
+      const request = generate({
+        providerId: 'capped',
+        kind: 'imageEdit',
+        images: [`${APP_DIR}/assets/images/red.png`],
+        beforeSend: (usd: number | undefined) => checks.push(usd),
+        onProgress: (progress: MediaProgress) => steps.push(progress),
+      })
+      await settle()
+      expect([steps, checks, imageReads, streamRequests]).toStrictEqual([[{ phase: 'waiting', jobId: null, limit: 1 }], [], [], []])
+
+      endHeld()
+      await request
+      expect([steps.map(({ phase }) => phase), checks, imageReads, streamRequests.length]).toStrictEqual([['waiting', 'sent'], [undefined], ['assets/images/red.png'], 1])
+      // The request gave its turn back at its end.
+      ;(await holdTurn())()
+    })
+
+    it('rejects a request that stops while it waits, sends nothing, and keeps the place of the next request', async () => {
+      const endHeld = await holdTurn()
+      const stop = new AbortController()
+      const stopped = generate({ providerId: 'capped', kind: 'image', signal: stop.signal })
+      const next = generate({ providerId: 'capped', kind: 'image' })
+
+      stop.abort(new DOMException('The reply stopped.', 'AbortError'))
+      await expect(stopped).rejects.toThrow('The reply stopped.')
+      expect(streamRequests).toStrictEqual([])
+
+      endHeld()
+      expect(await next).toStrictEqual({ media: [{ bytes: WEBP_IMAGE, mediaType: 'image/webp' }], clips: [] })
+      expect(streamRequests.length).toBe(1)
+    })
   })
 
   it('edits stored images of both folders, sent as data URLs, and returns the whole image of a binary answer', async () => {

@@ -7,7 +7,7 @@ import type { JsEvalLine } from '../model/tools/jsEval'
 import { CONVERSATION_ID, protocolLine } from '../model/tools/testing'
 import { ToolError, type ToolRunResult } from '../model/tools/types'
 import type { NativeDownloadRule, NativeHttpDownload, NativeHttpRequest } from '../utils/protocol/nativeHttp'
-import { TabJobs, type JobOutcome, type JobWork, type MadeAsset, type ToolJobs } from './jobs'
+import { TabJobs, type JobOutcome, type JobReport, type JobWork, type MadeAsset, type ToolJobs } from './jobs'
 import type { AppFileEntry, AppFileRef, BundledToolEnd, BundledToolOutput, BundledToolRun, FileTree } from './nativeTypes'
 import type { ToolRunCall, ToolRunContext } from './tools'
 
@@ -430,7 +430,7 @@ export interface HeldWork {
   /** The signal and the writers of the state, of the price, and of a kept
    *  file that the job gave its work, and the jobs of the job. */
   signal (): AbortSignal
-  report (state: string): void
+  report: JobReport
   reportCost (usd: number | null): void
   keepAsset (asset: MadeAsset): void
   jobs (): ToolJobs
@@ -438,7 +438,7 @@ export interface HeldWork {
 
 export function heldWork(): HeldWork {
   let resolveWork!: (outcome: JobOutcome) => void
-  let seen!: { signal: AbortSignal, report: (state: string) => void, reportCost: (usd: number | null) => void, keepAsset: (asset: MadeAsset) => void, jobs: ToolJobs }
+  let seen!: { signal: AbortSignal, report: JobReport, reportCost: (usd: number | null) => void, keepAsset: (asset: MadeAsset) => void, jobs: ToolJobs }
   return {
     work: (signal, report, reportCost, keepAsset, jobs) => {
       seen = { signal, report, reportCost, keepAsset, jobs }
@@ -446,7 +446,7 @@ export function heldWork(): HeldWork {
     },
     finish: (outcome = {}) => resolveWork({ text: '', isError: false, assets: [], ...outcome }),
     signal: () => seen.signal,
-    report: (state) => seen.report(state),
+    report: (state, options) => seen.report(state, options),
     reportCost: (usd) => seen.reportCost(usd),
     keepAsset: (asset) => seen.keepAsset(asset),
     jobs: () => seen.jobs,

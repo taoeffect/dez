@@ -1146,6 +1146,7 @@ describe('dez.model/customProviders/save', () => {
       thinking: {},
       mediaApi: {
         format: 'openrouter',
+        maxRequestsAtOnce: 2,
         modelRequestBodies: [{ request: 'tts', modelIdPrefix: 'heygen/', body: { response_format: 'pcm' } }],
         modelEntryPaths: { speechFormats: 'own.speech.formats', transcriptionMaxBytes: 'own.max_bytes' },
       },
