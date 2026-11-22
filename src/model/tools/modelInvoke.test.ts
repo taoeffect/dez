@@ -4,7 +4,7 @@ import type { Section } from '../chat/types'
 import type { ModelCache } from '../persistence/types'
 import type { ParameterValues } from '../providers/modelParameters'
 import { providerInfo } from '../providers/testing'
-import type { ModelInfo } from '../providers/types'
+import type { ModelInfo, ProviderInfo } from '../providers/types'
 import { reply, user } from '../streams/testing'
 import { answerIsCut, DEFAULT_INVOKE_TIMEOUT_SECONDS, INVOCATION_TEXT_CAP, invocationAnswerStateText, invocationAnswerText, invocationFailedText, invocationInputsText, invocationStateText, invocationTextResult, MODEL_INVOKE_TOOL, modelInvocation, type ChatInvocation, type MediaInvocation, type ModelInvocation } from './modelInvoke'
 import { refusal } from './testing'
@@ -35,12 +35,24 @@ const CHATTER: ModelInfo = { id: 'chatter', name: 'Chatter', provider: VENICE.id
 const BLIND: ModelInfo = { id: 'blind', name: 'Blind', provider: VENICE.id, imageInput: false }
 const SKETCHER: ModelInfo = { id: 'sketcher', name: 'Sketcher', provider: VENICE.id, outputs: ['text', 'image'] }
 const SINGER: ModelInfo = { id: 'singer', name: 'Singer', provider: VENICE.id, outputs: ['text', 'audio'] }
+// A text model that takes audio clips, of a provider whose chat requests
+// carry none here.
+const HEARER: ModelInfo = { id: 'hearer', name: 'Hearer', provider: VENICE.id, audioInput: true }
+
+// A provider whose chat requests carry clips, one video clip at most, with
+// a text model that takes both kinds, and one whose audio input is unknown.
+const CLIPS: ProviderInfo = { ...providerInfo('clips', 'Clips'), chatClips: { audioFormats: ['mp3', 'wav'], videoTypes: ['video/mp4'], maxVideos: 1 } }
+const LISTENER: ModelInfo = { id: 'listener', name: 'Listener', provider: CLIPS.id, audioInput: true, videoInput: true }
+const WATCHER: ModelInfo = { id: 'watcher', name: 'Watcher', provider: CLIPS.id, videoInput: true }
 const OTHER_API: ModelInfo = { id: 'other-api', name: 'Other', provider: VENICE.id, outputs: ['image'], request: 'none' }
 const TIFF_ONLY: ModelInfo = { id: 'tiff-only', name: 'Tiffer', provider: VENICE.id, outputs: ['image'], request: 'image', unstoredOutput: 'TIFF' }
 
 const CACHE: ModelCache = {
   version: 1,
-  providers: { venice: { models: [PAINTER, SPEAKER, SCRIBE, FILMER, CHATTER, BLIND, SKETCHER, SINGER, OTHER_API, TIFF_ONLY], working: true, updatedAt: 0, lastCheckedAt: 0 } },
+  providers: {
+    venice: { models: [PAINTER, SPEAKER, SCRIBE, FILMER, CHATTER, BLIND, SKETCHER, SINGER, HEARER, OTHER_API, TIFF_ONLY], working: true, updatedAt: 0, lastCheckedAt: 0 },
+    clips: { models: [LISTENER, WATCHER], working: true, updatedAt: 0, lastCheckedAt: 0 },
+  },
 }
 
 const RED = '/home/u/.config/dez/assets/images/red.png'
@@ -54,6 +66,10 @@ const CONVERSATION = [
   reply('a1', `![id=a](${FOX})\n${mediaTagText(SONG)}`),
 ]
 
+// The conversation above, with the video clips `e` and `f`.
+const FILM: MediaTagData = { kind: 'video', id: 'e', type: 'video/mp4', src: '/home/u/.cache/dez/media/v1.mp4', url: null, expires: null, other: [] }
+const FILMS = [...CONVERSATION, reply('a2', `${mediaTagText(FILM)}\n${mediaTagText({ ...FILM, id: 'f', src: '/home/u/.cache/dez/media/v2.mp4' })}`)]
+
 // What a test knows besides the call; the rest is as in the conversation
 // above, with no choice of the user.
 interface CallFacts {
@@ -63,7 +79,7 @@ interface CallFacts {
 }
 
 function anyInvocation(args: ToolArguments, { sections = CONVERSATION, modelParameters = {}, providerSettings = {} }: CallFacts = {}): ModelInvocation {
-  return modelInvocation(args, { cache: CACHE, providers: [VENICE], modelParameters, providerSettings, sections })
+  return modelInvocation(args, { cache: CACHE, providers: [VENICE, CLIPS], modelParameters, providerSettings, sections })
 }
 
 // The request of a call to a media model.
@@ -252,11 +268,40 @@ describe('modelInvocation for a text model', () => {
     expect(chatInvocation({ model: 'venice/chatter', prompt: 'A fox.' }).providerSettings).toBeUndefined()
   })
 
-  it('refuses a clip, which no chat request carries', () => {
-    const text = refusal(() => anyInvocation({ model: 'venice/chatter', prompt: 'What does @c say about @a?' }))
+  it('puts each clip right after the text that names it, for a model and a provider that take its kind', () => {
+    const { content, inputs, imageIds } = chatInvocation({ model: 'clips/listener', prompt: 'Does @c fit @e? See @a too.' }, { sections: FILMS })
 
-    expect(text).toContain('Chatter takes no audio clip')
+    expect(content).toMatchObject([
+      { type: 'text', text: 'Does @c' },
+      { type: 'clip', clip: { id: 'c', kind: 'audio', src: SONG.src } },
+      { type: 'text', text: ' fit @e' },
+      { type: 'clip', clip: { id: 'e', kind: 'video', src: FILM.src } },
+      { type: 'text', text: '? See @a' },
+      { type: 'image', path: FOX },
+      { type: 'text', text: ' too.' },
+    ])
+    expect(inputs).toStrictEqual([{ id: 'c', kind: 'audio' }, { id: 'e', kind: 'video' }, { id: 'a', kind: 'image' }])
+    expect([...imageIds]).toStrictEqual([[FOX, 'a']])
+  })
+
+  // Dez sends a clip only when the model is known to take its kind, and
+  // the provider's chat requests carry it.
+  it.each([
+    ['venice/chatter', 'Chatter', 'its audio input is unknown'],
+    ['venice/hearer', 'Hearer', 'the provider carries no clip'],
+    ['clips/watcher', 'Watcher', 'it takes only video clips'],
+  ])('refuses an audio clip for %s (%s): %s', (model, name) => {
+    const text = refusal(() => anyInvocation({ model, prompt: 'What does @c say about @e?' }, { sections: FILMS }))
+
+    expect(text).toContain(`Dez sends ${name} no audio clip`)
     expect(text).toContain('`prompt`')
+  })
+
+  it('refuses more video clips than the provider takes in one request', () => {
+    const text = refusal(() => anyInvocation({ model: 'clips/watcher', prompt: 'Do @e and @f match?' }, { sections: FILMS }))
+
+    expect(text).toContain('Clips takes at most 1 video clip in one request, and the prompt names 2')
+    expect(chatInvocation({ model: 'clips/watcher', prompt: 'Does @e match? @e' }, { sections: FILMS }).inputs).toStrictEqual([{ id: 'e', kind: 'video' }])
   })
 
   // A user message sends such a model the reference as text; a calling

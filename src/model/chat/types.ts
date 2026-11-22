@@ -30,13 +30,24 @@ export interface PromptNode {
 export type ContentNode = TextNode | PromptNode
 
 /** One part of a user message to a model: text, an image by its absolute
- *  path (an image reference, `images.ts`), or a picture of an `asset_view`
- *  call by its saved copy (`shownPictures.ts`). `dez.provider/streamChat`
- *  reads the bytes of an image and of a picture. */
+ *  path (an image reference, `images.ts`), a picture of an `asset_view`
+ *  call by its saved copy (`shownPictures.ts`), or a clip that Dez already
+ *  read. `dez.provider/streamChat` reads the bytes of an image and of a
+ *  picture. */
 export type MessagePart =
   | { type: 'text'; text: string }
   | { type: 'image'; path: string }
   | { type: 'picture'; picture: ShownPicture }
+  | ChatClipPart
+
+/** A clip of a `model_invoke` request to a text model, as its job read it
+ *  (controller/chatClips.ts): the bytes of a copy with no metadata, in
+ *  base64. An audio clip has the name of its format in the request
+ *  (`input_audio.format`), a video clip the media type of its data URL.
+ *  No conversation message holds one. */
+export type ChatClipPart =
+  | { type: 'audio'; format: string; data: string }
+  | { type: 'video'; mediaType: string; data: string }
 
 /** One message of a chat request, in request order. `Part` is the part type
  *  of a user message: `MessagePart` until `dez.provider/streamChat` reads the

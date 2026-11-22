@@ -113,8 +113,15 @@ export interface PromptInput {
   kind: AssetKind
 }
 
+/** A part of a tool prompt as a chat request sends it: text, an image, or
+ *  a clip that the job of the call reads (controller/chatClips.ts). */
+export type PromptPart = Extract<MessagePart, { type: 'text' | 'image' }> | { type: 'clip'; clip: ClipAttachment }
+
 /** The source of a request whose text is a tool's `prompt` argument. */
 export interface PromptRequestSource extends MediaRequestSource {
+  /** The text with each image and each clip right after the text of its
+   *  first mention, for a chat request. `parts` holds only the images. */
+  promptParts: PromptPart[]
   /** The images and the clips that the prompt names, in text order and
    *  each one once. */
   inputs: PromptInput[]
@@ -136,12 +143,19 @@ export interface PromptRequestSource extends MediaRequestSource {
 export function promptRequestSource(prompt: string, assets: ConversationAssets): PromptRequestSource {
   const text = withoutStoredFilePaths(prompt)
   const parts: MessagePart[] = []
+  const promptParts: PromptPart[] = []
   const clips = new Map<string, ClipAttachment>()
   const sentImages = new Set<string>()
   const inputs: PromptInput[] = []
   const unknownIds = new Set<string>()
-  // The end of the text that the parts hold.
+  // The end of the text that `parts` holds, and the end of the text that
+  // `promptParts` holds.
   let start = 0
+  let promptStart = 0
+  const promptAttachment = (to: number, part: PromptPart) => {
+    promptParts.push({ type: 'text', text: text.slice(promptStart, to) }, part)
+    promptStart = to
+  }
   for (const mention of findAssetMentions(text)) {
     const path = assets.images.get(mention.id)
     const clip = assets.clips.get(mention.id)
@@ -151,15 +165,18 @@ export function promptRequestSource(prompt: string, assets: ConversationAssets):
       inputs.push({ id: mention.id, kind: 'image' })
       parts.push({ type: 'text', text: text.slice(start, mention.to) }, { type: 'image', path })
       start = mention.to
+      promptAttachment(mention.to, { type: 'image', path })
     } else if (clip === undefined) {
       unknownIds.add(mention.id)
     } else if (!clips.has(clip.id)) {
       clips.set(clip.id, clip)
       inputs.push({ id: clip.id, kind: clip.kind })
+      promptAttachment(mention.to, { type: 'clip', clip })
     }
   }
   if (start < text.length) parts.push({ type: 'text', text: text.slice(start) })
-  return { parts, clips: [...clips.values()], pathsById: assets.images, rule: 'user', inputs, unknownIds: [...unknownIds] }
+  if (promptStart < text.length) promptParts.push({ type: 'text', text: text.slice(promptStart) })
+  return { parts, promptParts, clips: [...clips.values()], pathsById: assets.images, rule: 'user', inputs, unknownIds: [...unknownIds] }
 }
 
 /** The input rules of a media request to `model` (the `rules` of

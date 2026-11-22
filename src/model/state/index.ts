@@ -200,9 +200,9 @@ function cloneRecords<Value>(records: Record<string, Record<string, Value>>): Re
 // app_state.json.
 function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
   const {
-    id, name, baseUrl, apiFormat, models, fetchModels, modelListQuery, modelImageInput, modelToolCalling,
+    id, name, baseUrl, apiFormat, models, fetchModels, modelListQuery, modelImageInput, modelAudioInput, modelVideoInput, modelToolCalling,
     modelThinking, modelOutputs, modelReadableName, modelReleased, modelTokenPrices, modelContextWindow, modelImageLimit, modelMessageImageLimit, auth, headers, imageRequestHeaders,
-    maxOutputTokens, cacheBreakpoints, toolMessageCacheMark, promptCacheKey, requestBody, providerSystemPrompt, imageOutputBody,
+    maxOutputTokens, cacheBreakpoints, toolMessageCacheMark, promptCacheKey, requestBody, providerSystemPrompt, chatClips, imageOutputBody,
     audioOutputs, mediaApi, settings, thinking,
     ...uncopied
   } = config
@@ -220,6 +220,8 @@ function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
   }
   if (modelListQuery) clone.modelListQuery = { ...modelListQuery }
   if (modelImageInput) clone.modelImageInput = { ...modelImageInput }
+  if (modelAudioInput) clone.modelAudioInput = { ...modelAudioInput }
+  if (modelVideoInput) clone.modelVideoInput = { ...modelVideoInput }
   if (modelToolCalling) clone.modelToolCalling = { ...modelToolCalling }
   if (modelThinking) clone.modelThinking = { ...modelThinking }
   if (modelOutputs) clone.modelOutputs = cloneModelOutputsConfig(modelOutputs)
@@ -237,6 +239,14 @@ function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
   if (promptCacheKey !== undefined) clone.promptCacheKey = promptCacheKey
   if (requestBody) clone.requestBody = cloneJsonObject(requestBody)
   if (providerSystemPrompt) clone.providerSystemPrompt = { ...providerSystemPrompt }
+  if (chatClips) {
+    const { audioFormats, videoTypes, ...rest } = chatClips
+    clone.chatClips = {
+      ...rest,
+      ...(audioFormats && { audioFormats: [...audioFormats] }),
+      ...(videoTypes && { videoTypes: [...videoTypes] }),
+    }
+  }
   if (imageOutputBody) clone.imageOutputBody = cloneJsonObject(imageOutputBody)
   if (audioOutputs) clone.audioOutputs = audioOutputs.map((entry) => ({ ...entry, body: cloneJsonObject(entry.body) }))
   if (mediaApi) {

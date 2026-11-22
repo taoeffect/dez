@@ -7,8 +7,10 @@ describe('modelInputs', () => {
     ['a chat model whose image input is unknown', {}, ['text', 'image']],
     ['a chat model that reads images', { request: 'chat', imageInput: true }, ['text', 'image']],
     ['a chat model that reads no images', { request: 'chat', imageInput: false }, ['text']],
-    // Dez sends a chat model only text and images.
+    // The media clip rules are not for a chat request.
     ['a chat model with clip rules', { request: 'chat', clips: { audio: { use: 'reference' } } }, ['text', 'image']],
+    // With no `chatClips`, the chat requests of the provider carry no clip.
+    ['a chat model that reads clips, of a provider that sends none', { request: 'chat', audioInput: true, videoInput: true }, ['text', 'image']],
     ['an image model with no image rules', { request: 'image' }, ['text']],
     ['an image model that takes references', { request: 'image', images: { maxImages: 4 } }, ['text', 'image']],
     ['an edit model with no image rules', { request: 'imageEdit' }, ['text', 'image']],
@@ -25,6 +27,17 @@ describe('modelInputs', () => {
     ['a transcription model', { request: 'transcription', clips: { audio: { use: 'source', maxClips: 1 } } }, ['audio']],
   ])('gives %s what Dez sends it', (_name, model, inputs) => {
     expect(modelInputs(model)).toStrictEqual(inputs)
+  })
+
+  // Only a flag that is true lets a clip go: an unknown one counts as no.
+  it('gives a chat model each kind of clip that it reads and that the provider\'s chat requests carry', () => {
+    const both = { audioFormats: ['mp3' as const], videoTypes: ['video/mp4' as const] }
+    expect(modelInputs({ request: 'chat', audioInput: true, videoInput: true }, both)).toStrictEqual(['text', 'image', 'audio', 'video'])
+    expect(modelInputs({ request: 'chat', audioInput: true, videoInput: false }, both)).toStrictEqual(['text', 'image', 'audio'])
+    expect(modelInputs({ request: 'chat', videoInput: true }, both)).toStrictEqual(['text', 'image', 'video'])
+    expect(modelInputs({ request: 'chat', audioInput: true, videoInput: true }, { audioFormats: ['wav'] })).toStrictEqual(['text', 'image', 'audio'])
+    expect(matchesInputFilter({ request: 'chat', audioInput: true }, ['audio'], both)).toBe(true)
+    expect(matchesInputFilter({ request: 'chat', audioInput: true }, ['audio'])).toBe(false)
   })
 
   // A message to a model that reads no images carries none; only a kind

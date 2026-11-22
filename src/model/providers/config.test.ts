@@ -270,6 +270,20 @@ describe('provider config schema', () => {
     }
   })
 
+  // Dez converts a clip that the provider does not take to MP3 or WAV, or
+  // to MP4 (tools/chatClips.ts), so each list must hold one of them.
+  it('keeps chatClips whose lists hold a type that Dez converts to, and rejects others', () => {
+    const parse = (chatClips: unknown) => providerConfigSchema.safeParse({ id: 'p', name: 'P', baseUrl: 'http://h', chatClips })
+    const rules = { audioFormats: ['wav', 'flac'], videoTypes: ['video/mp4', 'video/webm'], maxVideos: 3, maxBytes: 25_000_000 }
+
+    expect(parse(rules).data?.chatClips).toStrictEqual(rules)
+    expect(parse({ audioFormats: ['mp3'] }).success).toBe(true)
+    expect(parse({}).success).toBe(true)
+    for (const bad of [{ audioFormats: ['flac'] }, { audioFormats: [] }, { audioFormats: ['mp4'] }, { videoTypes: ['video/webm'] }, { videoTypes: ['video/mpeg', 'video/mp4'] }, { maxVideos: 0 }, { maxBytes: 1.5 }]) {
+      expect(parse(bad).success, JSON.stringify(bad)).toBe(false)
+    }
+  })
+
   it('takes a model request body only for a media kind, a model id prefix, and a JSON object', () => {
     const parse = (part: Record<string, unknown>) => providerConfigSchema.safeParse({
       id: 'p',

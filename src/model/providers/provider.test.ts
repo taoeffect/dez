@@ -214,6 +214,24 @@ describe('image parts', () => {
       Authorization: 'Bearer sk-test',
     })
   })
+
+  it('sends OpenAI input_audio parts and video_url parts with a base64 data URL', () => {
+    const clipMessages: ChatMessage[] = [{
+      role: 'user',
+      content: [{ type: 'text', text: 'Does it fit?' }, { type: 'audio', format: 'mp3', data: 'SUQz' }, { type: 'video', mediaType: 'video/webm', data: 'GkXf' }],
+    }]
+
+    expect(sentMessages(customProvider({}), clipMessages)).toEqual([{
+      role: 'user',
+      content: [
+        { type: 'text', text: 'Does it fit?' },
+        { type: 'input_audio', input_audio: { data: 'SUQz', format: 'mp3' } },
+        { type: 'video_url', video_url: { url: 'data:video/webm;base64,GkXf' } },
+      ],
+    }])
+    // No request to an Anthropic-format provider holds a clip (`sendsClips`).
+    expect(() => sentMessages(customProvider({ apiFormat: 'anthropic' }), clipMessages)).toThrow('The Anthropic format sends no audio clip')
+  })
 })
 
 describe('prompt cache', () => {
@@ -1125,10 +1143,12 @@ describe('provider models', () => {
     ])
   })
 
-  // The image, tool, and thinking flags share one reader; each has its own
-  // config path and list value.
+  // The image, audio, video, tool, and thinking flags share one reader;
+  // each has its own config path and list value.
   const capabilities = [
     { pathField: 'modelImageInput', flag: 'imageInput', listValue: 'image', otherListValue: 'tools' },
+    { pathField: 'modelAudioInput', flag: 'audioInput', listValue: 'audio', otherListValue: 'image' },
+    { pathField: 'modelVideoInput', flag: 'videoInput', listValue: 'video', otherListValue: 'audio' },
     { pathField: 'modelToolCalling', flag: 'toolCalling', listValue: 'tools', otherListValue: 'image' },
     { pathField: 'modelThinking', flag: 'thinking', listValue: 'reasoning', otherListValue: 'tools' },
   ] as const
@@ -1533,6 +1553,24 @@ describe('provider models', () => {
       { id: 'c1', capabilities: { supports: { vision: true, tool_calls: true, streaming: true } } },
       { id: 'c2', capabilities: { supports: { streaming: true } } },
     ])).toEqual([[true, true, undefined, undefined], [undefined, false, undefined, undefined]])
+  })
+
+  // Venice's capability names as its /models entries report them (see
+  // `gemini-3-8-flash`); OpenRouter's input modalities as its docs tell.
+  it('reads the audio and video input flags of Venice and OpenRouter from their /models entry shapes', () => {
+    const flags = (id: string, data: unknown[]) =>
+      builtInProvider(id).parseModels({ data }).map(({ audioInput, videoInput }) => [audioInput, videoInput])
+
+    expect(flags('venice', [
+      { id: 'gemini-3-8-flash', model_spec: { capabilities: { supportsVision: true, supportsAudioInput: true, supportsVideoInput: true } } },
+      { id: 'glm', model_spec: { capabilities: { supportsVision: true, supportsAudioInput: false, supportsVideoInput: false } } },
+      { id: 'wan-video', type: 'video', model_spec: {} },
+    ])).toEqual([[true, true], [false, false], [undefined, undefined]])
+    expect(flags('openrouter', [
+      { id: 'o1', architecture: { input_modalities: ['text', 'image', 'audio', 'video'] } },
+      { id: 'o2', architecture: { input_modalities: ['text', 'audio'] } },
+      { id: 'o3', architecture: { input_modalities: ['text', 'image'] } },
+    ])).toEqual([[true, true], [true, false], [false, false]])
   })
 
   // Type values as each API reports them: Venice and OpenRouter /models
@@ -2031,5 +2069,15 @@ describe('provider info', () => {
 
     expect(customProvider({}).info(noKeys).supportsThinking).toBe(false)
     expect(customProvider({ thinking: {} }).info(noKeys).supportsThinking).toBe(true)
+  })
+
+  it('gives the chat clip rules only to a provider of a format that sends clips', () => {
+    const noKeys = new Set<string>()
+    const chatClips = { audioFormats: ['mp3' as const], videoTypes: ['video/mp4' as const] }
+
+    expect(customProvider({ chatClips }).info(noKeys).chatClips).toStrictEqual(chatClips)
+    expect(customProvider({ apiFormat: 'anthropic', chatClips }).info(noKeys)).not.toHaveProperty('chatClips')
+    expect(customProvider({}).info(noKeys)).not.toHaveProperty('chatClips')
+    expect(builtInProvider('venice').info(noKeys).chatClips?.maxVideos).toBe(3)
   })
 })

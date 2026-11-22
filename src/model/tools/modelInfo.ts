@@ -266,13 +266,14 @@ function chatImageLimits(model: ModelInfo): Record<string, number> | undefined {
 // is the one of the model's family (`contextWindowOf`), and so are the
 // image limits of a chat model that reads images (`chatImageLimits`).
 // `model` holds the image rules of the parameter values that a request
-// sends (`modelInfoText`).
-function dezFacts(model: ModelInfo, facts: ModelInfoFacts, supportsThinking: boolean): Record<string, unknown> {
+// sends (`modelInfoText`). `inputs` lists the clips of a chat model only
+// when its provider sends them (`provider.chatClips`).
+function dezFacts(model: ModelInfo, facts: ModelInfoFacts, provider: Pick<ProviderInfo, 'supportsThinking' | 'chatClips'>): Record<string, unknown> {
   const kind = effectiveRequest(model)
   const chat = kind === 'chat'
   // With no `thinking` in its provider's config, Dez asks no model for
   // thinking and drops the reasoning of its replies (`supportsThinking`).
-  const thinking = supportsThinking ? model.thinking : false
+  const thinking = provider.supportsThinking ? model.thinking : false
   const told = {
     request: model.request,
     outputs: model.outputs,
@@ -291,7 +292,7 @@ function dezFacts(model: ModelInfo, facts: ModelInfoFacts, supportsThinking: boo
   return {
     request: kind,
     outputs: effectiveOutputs(model),
-    inputs: modelInputs(model),
+    inputs: modelInputs(model, provider.chatClips),
     ...(model.released !== undefined && { released: model.released }),
     ...((chat || model.imageInput !== undefined) && { imageInput: model.imageInput !== false }),
     ...((chat || model.toolCalling !== undefined) && { toolCalling: model.toolCalling !== false }),
@@ -410,8 +411,8 @@ export function modelInfoText(provider: ProviderInfo, model: ModelInfo, facts: M
   const ownImages = inputImageRulesFor(model.images, facts.values ?? {})
   const images = kind === 'chat' || kind === 'none' ? ownImages : imageRulesWithLearnedLimit(kind, ownImages, model.learnedImageLimit)
   const requestModel: ModelInfo = { ...model, ...(images && { images }) }
-  const dez = dezFacts(requestModel, facts, provider.supportsThinking)
-  const usage = modelUsage(requestModel, { toggles: facts.toggles ?? [], inputImages: facts.inputImages ?? {} })
+  const dez = dezFacts(requestModel, facts, provider)
+  const usage = modelUsage(requestModel, { toggles: facts.toggles ?? [], inputImages: facts.inputImages ?? {}, chatClips: provider.chatClips })
   if (selection) return onlyText(id, dez, usage, selection.only)
 
   const info = { id, name: model.name, provider: { id: provider.id, name: provider.name }, dez, usage }

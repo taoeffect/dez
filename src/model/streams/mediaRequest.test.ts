@@ -81,7 +81,7 @@ describe('conversationAssets', () => {
 })
 
 describe('promptRequestSource', () => {
-  it('takes each image and clip that the prompt names with @id, in text order and each one once', () => {
+  it('takes each image and clip that the prompt names with @id, in text order and each one once, at its first mention', () => {
     const source = promptRequestSource('Make @a dance like @d to @c. Keep @a sharp, @everyone and @z.', conversationAssets(CONVERSATION))
 
     expect(source).toStrictEqual({
@@ -89,6 +89,15 @@ describe('promptRequestSource', () => {
         { type: 'text', text: 'Make @a' },
         { type: 'image', path: GENERATED },
         { type: 'text', text: ' dance like @d to @c. Keep @a sharp, @everyone and @z.' },
+      ],
+      promptParts: [
+        { type: 'text', text: 'Make @a' },
+        { type: 'image', path: GENERATED },
+        { type: 'text', text: ' dance like @d' },
+        { type: 'clip', clip: attached(DANCE) },
+        { type: 'text', text: ' to @c' },
+        { type: 'clip', clip: attached(SONG) },
+        { type: 'text', text: '. Keep @a sharp, @everyone and @z.' },
       ],
       clips: [attached(DANCE), attached(SONG)],
       pathsById: conversationAssets(CONVERSATION).images,

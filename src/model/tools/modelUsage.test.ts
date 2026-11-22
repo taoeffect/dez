@@ -5,6 +5,7 @@ import type { ModelCache } from '../persistence/types'
 import { inputImageRulesFor, maxInputImages, type InputImageRules } from '../providers/clipImages'
 import { clipTagProblem, maxInputClips, missingClipProblem, needsWavCopy, type ClipAttachment, type InputClipRules } from '../providers/clipInputs'
 import { lyricsHowTo, type ClipTextRules } from '../providers/clipText'
+import type { ChatClipRules } from '../providers/config'
 import { MEDIA_FORMATS, type ClipFormat } from '../providers/mediaFormats'
 import type { ParameterValues } from '../providers/modelParameters'
 import { isToolsEnabled, modelToggles, toggleRows, toggleValue, toolsApply } from '../providers/modelToggles'
@@ -88,7 +89,7 @@ describe('modelUsage', () => {
         sections: [],
       },
     )
-    const invokeTexts: string[] = [USAGE_TEXTS.invokeSends, USAGE_TEXTS.invokeSendsChat]
+    const invokeTexts: string[] = [USAGE_TEXTS.invokeSends, USAGE_TEXTS.invokeSendsChat, USAGE_TEXTS.invokeSendsChatClips]
 
     // `model_invoke` checks the model of a call before its time limit. So
     // a call with a bad time limit tells whether the tool takes the model:
@@ -128,7 +129,7 @@ describe('modelUsage', () => {
       for (const request of MODEL_REQUESTS) {
         const model: ModelInfo = { id: 'm', name: 'M', provider: 'p', request }
 
-        expect(modelUsage(model, NO_FACTS)[0] === USAGE_TEXTS.invokeSendsChat, request).toBe(sendsChatRequest(model))
+        expect([USAGE_TEXTS.invokeSendsChat, USAGE_TEXTS.invokeSendsChatClips].includes(modelUsage(model, NO_FACTS)[0]), request).toBe(sendsChatRequest(model))
       }
     })
 
@@ -140,6 +141,39 @@ describe('modelUsage', () => {
         const usage = modelUsage(model, NO_FACTS)
 
         expect([usage.includes(USAGE_TEXTS.imageReply), usage.includes(USAGE_TEXTS.audioReply)], String(outputs)).toStrictEqual([call.imageOutput, call.audioOutput])
+      }
+    })
+
+    it('tells that clips can go exactly when a call that names a clip sends it', () => {
+      const song: MediaTagData = { kind: 'audio', id: 'a', type: 'audio/mpeg', src: '/home/u/.cache/dez/media/s.mp3', url: null, expires: null, other: [] }
+      const film: MediaTagData = { ...song, kind: 'video', id: 'b', type: 'video/mp4', src: '/home/u/.cache/dez/media/v.mp4' }
+      const sections = [reply('r', `${mediaTagText(song)}\n${mediaTagText(film)}`)]
+      const sendsClip = (model: ModelInfo, chatClips: ChatClipRules | undefined, id: string) => {
+        try {
+          modelInvocation({ model: 'p/m', prompt: `What is in @${id}?` }, {
+            cache: { version: 1, providers: { p: { models: [model], working: true, updatedAt: 0, lastCheckedAt: 0 } } },
+            providers: [{ ...providerInfo('p', 'P'), ...(chatClips && { chatClips }) }],
+            modelParameters: {},
+            providerSettings: {},
+            sections,
+          })
+          return true
+        } catch (error) {
+          if (error instanceof ToolError) return false
+          throw error
+        }
+      }
+      const rules: (ChatClipRules | undefined)[] = [undefined, { audioFormats: ['mp3'] }, { videoTypes: ['video/mp4'] }, { audioFormats: ['wav'], videoTypes: ['video/mp4'] }]
+
+      for (const audioInput of [undefined, true, false]) {
+        for (const videoInput of [undefined, true, false]) {
+          for (const chatClips of rules) {
+            const model: ModelInfo = { id: 'm', name: 'M', provider: 'p', request: 'chat', ...(audioInput !== undefined && { audioInput }), ...(videoInput !== undefined && { videoInput }) }
+            const takesClips = modelUsage(model, { ...NO_FACTS, chatClips })[0] === USAGE_TEXTS.invokeSendsChatClips
+
+            expect(takesClips, JSON.stringify([model, chatClips])).toBe(sendsClip(model, chatClips, 'a') || sendsClip(model, chatClips, 'b'))
+          }
+        }
       }
     })
   })

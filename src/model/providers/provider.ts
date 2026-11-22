@@ -84,6 +84,7 @@ export class Provider {
       hasKey,
       configured: hasKey || !this.requiresKey,
       supportsThinking: this.supportsThinking,
+      ...(this.format.sendsClips && this.config.chatClips && { chatClips: this.config.chatClips }),
     }
   }
 
@@ -101,10 +102,11 @@ export class Provider {
   // Reads the `{ data: [...] }` model list both formats return. The name
   // falls back from `name` (OpenAI-style servers) to `display_name`
   // (Anthropic-style) to the id (servers that report only ids). The readable
-  // name, the release date, the image, tool, and thinking flags, the
-  // toggles that the model does not take, the outputs, the request kind,
-  // the context window, and the image limits are read only where the
-  // config's `modelReadableName`, `modelReleased`, `modelImageInput`,
+  // name, the release date, the image, audio, video, tool, and thinking
+  // flags, the toggles that the model does not take, the outputs, the
+  // request kind, the context window, and the image limits are read only
+  // where the config's `modelReadableName`, `modelReleased`,
+  // `modelImageInput`, `modelAudioInput`, `modelVideoInput`,
   // `modelToolCalling`, `modelThinking`, `settings[].modelSupport`,
   // `modelOutputs`, `modelContextWindow`, `modelImageLimit`, and
   // `modelMessageImageLimit` point. A chat model makes `audio` only with
@@ -128,6 +130,8 @@ export class Provider {
         readableName: modelReadableName(model, this.config.modelReadableName),
         released: modelReleased(model, this.config.modelReleased),
         imageInput: modelCapability(model, this.config.modelImageInput, 'image'),
+        audioInput: modelCapability(model, this.config.modelAudioInput, 'audio'),
+        videoInput: modelCapability(model, this.config.modelVideoInput, 'video'),
         toolCalling: modelCapability(model, this.config.modelToolCalling, 'tools'),
         thinking: modelCapability(model, this.config.modelThinking, 'reasoning'),
         unsupportedSettings: unsupportedSettings(model, this.config.settings),
@@ -182,6 +186,8 @@ export class Provider {
       readableName: fetchedModel?.readableName,
       released: fetchedModel?.released,
       imageInput: model.imageInput ?? fetchedModel?.imageInput,
+      audioInput: model.audioInput ?? fetchedModel?.audioInput,
+      videoInput: model.videoInput ?? fetchedModel?.videoInput,
       toolCalling: model.toolCalling ?? fetchedModel?.toolCalling,
       thinking: model.thinking ?? fetchedModel?.thinking,
       unsupportedSettings: fetchedModel?.unsupportedSettings,

@@ -26,6 +26,7 @@ import { TOOL_DEFINITIONS } from '../model/tools/registry'
 import { ToolError } from '../model/tools/types'
 import { ExplainedError } from '../utils/errorText'
 import { logRequest } from './diagnostics/requestLog'
+import { chatClipParts } from './chatClips'
 import { discardMadeAssets, generatedClipAsset, type JobOutcome, type JobReport, type MadeAsset } from './jobs'
 
 // The request of a `model_invoke` call (model/tools/modelInvoke.ts), as the
@@ -153,7 +154,8 @@ async function invokeMediaModel(invocation: MediaInvocation, signal: AbortSignal
 //   reply of a chat model that makes images, and the audio of the answer
 //   stays in its temp copy, as the clip of a media request. `keepAsset`
 //   gets each one at once, as the answer can go on long after it.
-// - `report` gets the count of the characters of the answer so far.
+// - `report` gets the count of the characters of the answer so far, after
+//   a state while Dez makes the copies of the clips (chatClips.ts).
 // - `reportCost` gets null when the request goes, then its cost, when the
 //   provider or the model's list price tells it. A request that failed
 //   after it went costs what `failedChatRequestCost` tells (0 for a
@@ -169,7 +171,7 @@ async function invokeTextModel(
   keepAsset: (asset: MadeAsset) => void,
   { toolsAllowed, checkMoney }: InvocationRights,
 ): Promise<JobOutcome> {
-  const { provider, model, content, imageOutput, audioOutput, providerSettings } = invocation
+  const { provider, model, imageOutput, audioOutput, providerSettings } = invocation
   const requestId = crypto.randomUUID()
   const cancelRequest = () => {
     sbp('dez.http/cancelStream', requestId).catch((error: unknown) => console.error('Failed to cancel the request of an invoked model:', error))
@@ -182,6 +184,9 @@ async function invokeTextModel(
   let answer = ''
   let imageNotSaved = false
   let sent = false
+  if (typeof invocation.content !== 'string' && invocation.content.some((part) => part.type === 'clip')) report(INVOCATION_READS_INPUTS)
+  // Before the money check: no request went, so the job counts no cost.
+  const content = await chatClipParts(invocation.content, model.name, provider.chatClips, signal)
   const messages: StreamMessage[] = [{ role: 'user', content }]
   const startedAt = Date.now()
   // The end of the request, with the price that the job counts and the

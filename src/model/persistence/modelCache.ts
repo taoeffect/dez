@@ -146,6 +146,8 @@ const modelInfoSchema = z.object({
   // A bad value drops only the date: the next model check reads it again.
   released: z.string().regex(RELEASED_DATE).optional().catch(undefined),
   imageInput: z.boolean().optional(),
+  audioInput: z.boolean().optional(),
+  videoInput: z.boolean().optional(),
   toolCalling: z.boolean().optional(),
   thinking: z.boolean().optional(),
   unsupportedSettings: z.array(z.string()).min(1).optional(),

@@ -1,7 +1,7 @@
 import { ExplainedError } from '../../utils/errorText'
 import type { ImageMediaType } from '../chat/images'
 import type { MediaTagKind } from '../chat/mediaTags'
-import type { RequestMessage, ThinkingReplay } from '../chat/types'
+import type { ChatClipPart, RequestMessage, ThinkingReplay } from '../chat/types'
 import { normalizeOutputs, type ModelOutput } from '../modelOutputs'
 import type { StreamedToolCall, ToolDefinition } from '../tools/types'
 import type { ChatUsage } from './chatUsage'
@@ -10,7 +10,7 @@ import { cloneInputImageRules, type InputImageRules } from './clipImages'
 import { cloneClipTextRules, type ClipTextRules } from './clipText'
 import type { ImageSizeRules, InputImageLimits } from './imageSize'
 import type { LearnedImageLimit } from './learnedImageLimit'
-import type { ApiFormatId, ProviderAuth } from './config'
+import type { ApiFormatId, ChatClipRules, ProviderAuth } from './config'
 import { cloneModelParameter, type ModelParameter } from './modelParameters'
 import type { ModelPrice } from './modelPrices'
 import type { ModelToggles } from './modelToggles'
@@ -135,6 +135,12 @@ export interface ModelInfo {
   // true: the model reads images; false: it does not. Missing: unknown, and
   // the request sends the images.
   imageInput?: boolean
+  // true: the model reads audio clips, or video clips; false: it does not.
+  // Missing: unknown. Only a `model_invoke` request to a chat model sends a
+  // clip, and only to a model whose flag is true (`takesChatClip`,
+  // modelInputs.ts): an unknown flag counts as no.
+  audioInput?: boolean
+  videoInput?: boolean
   // true: the model calls tools; false: it does not, and the request sends
   // no tools. Missing: unknown, and the request sends the tools.
   toolCalling?: boolean
@@ -215,7 +221,7 @@ export interface ModelInfo {
   messageImageLimit?: number
 }
 
-export type ModelCapabilities = Pick<ModelInfo, 'readableName' | 'released' | 'imageInput' | 'toolCalling' | 'thinking' | 'unsupportedSettings' | 'outputs' | 'request' | 'parameters' | 'text' | 'images' | 'clips' | 'unstoredOutput' | 'learnedImageLimit' | 'price' | 'contextWindow' | 'imageLimit' | 'messageImageLimit'>
+export type ModelCapabilities = Pick<ModelInfo, 'readableName' | 'released' | 'imageInput' | 'audioInput' | 'videoInput' | 'toolCalling' | 'thinking' | 'unsupportedSettings' | 'outputs' | 'request' | 'parameters' | 'text' | 'images' | 'clips' | 'unstoredOutput' | 'learnedImageLimit' | 'price' | 'contextWindow' | 'imageLimit' | 'messageImageLimit'>
 
 // What a clip model takes as the input of a request, besides the values of
 // its parameters.
@@ -249,6 +255,10 @@ export interface ProviderInfo {
   configured: boolean
   // The config has `thinking`, so the provider gets the Thinking toggle.
   supportsThinking: boolean
+  // The audio and video clips that a chat request can carry
+  // (`ProviderConfig.chatClips`), for a format that sends clips. Missing:
+  // none.
+  chatClips?: ChatClipRules
 }
 
 // What the provider settings popup shows for one model: the provider's name
@@ -291,11 +301,13 @@ export interface ProviderModelsResult {
   error?: string
 }
 
-// One part of a user message, as both wire formats need it: text, or the
-// bytes of a stored image in base64 (apiFormats.ts writes the wire block).
+// One part of a user message, as the wire formats need it: text, the bytes
+// of a stored image in base64, or a clip that Dez read already (only the
+// OpenAI format sends one; apiFormats.ts writes the wire block).
 export type ChatPart =
   | { type: 'text', text: string }
   | { type: 'image', mediaType: ImageMediaType, data: string }
+  | ChatClipPart
 
 export type ChatImagePart = Extract<ChatPart, { type: 'image' }>
 
@@ -411,6 +423,8 @@ export function providerModel(provider: ProviderId, id: string, name: string, ca
   if (capabilities.readableName !== undefined) model.readableName = capabilities.readableName
   if (capabilities.released !== undefined) model.released = capabilities.released
   if (capabilities.imageInput !== undefined) model.imageInput = capabilities.imageInput
+  if (capabilities.audioInput !== undefined) model.audioInput = capabilities.audioInput
+  if (capabilities.videoInput !== undefined) model.videoInput = capabilities.videoInput
   if (capabilities.toolCalling !== undefined) model.toolCalling = capabilities.toolCalling
   if (capabilities.thinking !== undefined) model.thinking = capabilities.thinking
   if (capabilities.unsupportedSettings?.length) model.unsupportedSettings = [...capabilities.unsupportedSettings]

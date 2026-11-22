@@ -2,16 +2,16 @@ import { startOf } from '../../utils/textCut'
 import { sectionPlainText } from '../chat/content'
 import { newMediaIds } from '../chat/mediaIds'
 import { modelRefKey } from '../chat/modelRef'
-import type { MessagePart, Section } from '../chat/types'
+import type { Section } from '../chat/types'
 import { effectiveOutputs } from '../modelOutputs'
 import type { ModelCache } from '../persistence/types'
 import { unusedImagesProblem } from '../providers/clipImages'
-import { clipTagProblem } from '../providers/clipInputs'
 import type { ParameterValues } from '../providers/modelParameters'
 import type { MediaProgress } from '../providers/streamTypes'
 import { effectiveRequest, sendsPrompt, type MediaKind, type ModelInfo, type ProviderInfo } from '../providers/types'
 import { unstoredOutputMessage, unusableModelMessage } from '../providers/unusableModel'
-import { conversationAssets, mediaInputRules, preparedMediaRequest, promptRequestProblem, promptRequestSource, type MediaRequestInput, type PromptInput, type PromptRequestSource } from '../streams/mediaRequest'
+import { conversationAssets, mediaInputRules, preparedMediaRequest, promptRequestProblem, promptRequestSource, type MediaRequestInput, type PromptInput, type PromptPart, type PromptRequestSource } from '../streams/mediaRequest'
+import { chatClipsProblem } from './chatClips'
 import { INTERMEDIATE_PARAMETER, JOB_CALL_NOTE, jobCallLabel, jobTimeoutMs, jobTimeoutParameter } from './jobs'
 import { withoutLocalPaths } from './localPaths'
 import { FIND_MODELS, namedModelTarget, parameterValuesArgument } from './modelArguments'
@@ -31,10 +31,11 @@ import { ToolError, type ToolArguments, type ToolDefinition } from './types'
 //   (streams/mediaRequest.ts has the shared preparation and the
 //   differences), with `prompt` in place of the message.
 // - A text model (the request kind `chat`). The request is one chat
-//   request with one user message: `prompt`, and the images that it names.
-//   It holds no conversation, no system prompt, and no tools, so the
-//   invoked model cannot call a tool or invoke a model in its turn (the
-//   `toolsAllowed` rule, controller/modelInvoke.ts).
+//   request with one user message: `prompt`, and the images and the clips
+//   that it names (chatClips.ts). It holds no conversation, no system
+//   prompt, and no tools, so the invoked model cannot call a tool or
+//   invoke a model in its turn (the `toolsAllowed` rule,
+//   controller/modelInvoke.ts).
 //
 // Every text here is a tool result or the result of a job: it goes to the
 // chat provider. So it names an image or a clip by its id only, and it
@@ -61,8 +62,11 @@ export const MODEL_INVOKE_TOOL: ToolDefinition = {
     + 'Call `model_info` for the model first: `usage` tells what the model needs, `dez.parameters` what a request can set, and `dez.cost` the price. '
     + '`model_list` finds models. '
     + 'The model gets only `prompt` and the inputs that `prompt` names with @id, not the conversation. '
-    + 'A text model gets no tools and no system prompt: it can only answer `prompt`, and of the inputs it takes only images. '
+    + 'A text model gets no tools and no system prompt: it can only answer `prompt`. '
+    + 'It takes images, and audio and video clips when the `dez.inputs` of `model_info` lists them; each clip goes as a copy with no metadata. '
     + 'To learn what an image shows, ask a text model that reads images about it; that model can be your own model. '
+    + 'A text model that takes clips is good at what a clip holds (the words, the story, the look, the pace), and weak at exact times: '
+    + 'measure each time that must be exact with `audio beats` and `video cuts`. '
     + `${JOB_CALL_NOTE} `
     + 'Jobs run at the same time: start the calls that do not need the result of another call, within that limit, then wait. '
     + 'An image or a clip that the model made goes into your reply at `jobs_wait`, with a new id that a later call can name with @id. '
@@ -131,10 +135,11 @@ export interface MediaInvocation extends InvocationTarget {
 export interface ChatInvocation extends InvocationTarget {
   kind: 'chat'
   /** The content of the user message: the prompt, or, when it names
-   *  images, its text with an image part right after the text that names
-   *  each image (the shape of a user message of a conversation,
-   *  streams/messages.ts). */
-  content: string | MessagePart[]
+   *  images or clips, its text with an image part or a clip part right
+   *  after the text that names each one (the shape of a user message of a
+   *  conversation, streams/messages.ts). The job makes the copy of each
+   *  clip (controller/chatClips.ts). */
+  content: string | PromptPart[]
   /** The model makes images too: the request asks for them, as a request
    *  of the user does (`submitTab`). */
   imageOutput: boolean
@@ -179,26 +184,27 @@ function invokedKind(model: ModelInfo): MediaKind | 'chat' {
 const PROMPT_INPUTS: InputWording = { argument: '`prompt`', notDone: 'Dez sent no request.' }
 
 // The content of the one user message that a call sends to the text model
-// `model` (`ChatInvocation.content`), from the source of its prompt.
+// `model` of `provider` (`ChatInvocation.content`), from the source of its
+// prompt.
 //
-// Throws for an input that the request does not carry: a clip (a chat
-// request takes none, whatever the provider says that the model reads,
-// `modelInputs`), and an image for a model that is known not to read
-// images (a user message sends such a model the reference as text; the
-// calling model would get an answer about an image that the model never
-// got). Throws for a prompt with no text too.
-function chatContent(model: ModelInfo, source: PromptRequestSource): string | MessagePart[] {
+// Throws for an input that the request does not carry: a clip of a kind
+// that Dez does not send the model, or more video clips than the provider
+// takes (`chatClipsProblem`), and an image for a model that is known not
+// to read images (a user message sends such a model the reference as text;
+// the calling model would get an answer about an image that the model
+// never got). Throws for a prompt with no text too.
+function chatContent(provider: ProviderInfo, model: ModelInfo, source: PromptRequestSource): string | PromptPart[] {
   const imageCount = source.inputs.length - source.clips.length
-  const problem = clipTagProblem(model.name, undefined, source.clips, imageCount, undefined, 'model')
+  const problem = chatClipsProblem(model, provider, source.clips)
     ?? unusedImagesProblem(model.name, model.imageInput === false ? 0 : imageCount, imageCount)
   if (problem !== null) throw new ToolError(problem)
   // The text after the last image can be only white space, and the
   // Anthropic format refuses such a text part (as `userMessageContent`,
   // streams/messages.ts).
-  const parts = source.parts.filter((part) => part.type !== 'text' || part.text.trim() !== '')
+  const parts = source.promptParts.filter((part) => part.type !== 'text' || part.text.trim() !== '')
   const [first] = parts
   if (first === undefined) {
-    throw new ToolError(`\`prompt\` has no text, and ${model.name} answers nothing without one. Write in \`prompt\` what the model must answer or do, and name each image that it must get with @id.`)
+    throw new ToolError(`\`prompt\` has no text, and ${model.name} answers nothing without one. Write in \`prompt\` what the model must answer or do, and name each image or clip that it must get with @id.`)
   }
   return parts.length === 1 && first.type === 'text' ? first.text : parts
 }
@@ -218,8 +224,8 @@ function chatContent(model: ModelInfo, source: PromptRequestSource): string | Me
  *  - for a media model: an input that the model does not take, more
  *    inputs than it takes, or a text that it does not take
  *    (`promptRequestProblem`);
- *  - for a text model: a clip, or an image for a model that reads none
- *    (`chatContent`);
+ *  - for a text model: a clip that the model does not get, too many video
+ *    clips, or an image for a model that reads none (`chatContent`);
  *  - no text for a model that needs one. */
 export function modelInvocation(args: ToolArguments, { cache, providers, modelParameters, providerSettings, sections }: InvocationFacts): ModelInvocation {
   const { provider, model } = namedModelTarget(cache, providers, typeof args.model === 'string' ? args.model : '')
@@ -236,9 +242,9 @@ export function modelInvocation(args: ToolArguments, { cache, providers, modelPa
   const target = { provider, model, timeoutMs }
 
   if (kind === 'chat') {
-    const content = chatContent(model, source)
-    // Every input goes, and each one is an image: `chatContent` refused
-    // the clips.
+    const content = chatContent(provider, model, source)
+    // Every input goes (`chatContent` refused the others): an image goes
+    // as a part of the message, and a clip as its copy.
     const imageIds = new Map(source.inputs.flatMap(({ id }) => {
       const path = assets.images.get(id)
       return path === undefined ? [] : [[path, id] as const]

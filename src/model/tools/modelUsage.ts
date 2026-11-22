@@ -1,8 +1,10 @@
 import type { MediaTagKind } from '../chat/mediaTags'
 import { effectiveOutputs, type ModelOutput } from '../modelOutputs'
+import { takesChatClip } from '../modelInputs'
 import { imagesText, maxInputImages, minInputImages } from '../providers/clipImages'
 import { clipsText, maxInputClips, neededClipKind, type ClipUse, type InputClipRules } from '../providers/clipInputs'
 import { lyricsHowTo } from '../providers/clipText'
+import type { ChatClipRules } from '../providers/config'
 import { toolsApply } from '../providers/modelToggles'
 import { TOOLS_SETTING_KEY } from '../providers/toolsSetting'
 import { CLIP_KINDS, effectiveRequest, isClipKind, isTextKind, type MediaKind, type ModelInfo, type NoPromptKind, type ProviderInputImageRules } from '../providers/types'
@@ -22,16 +24,29 @@ const SETTINGS_POPUP = 'the provider settings popup (the gear button next to the
 const INVOKE_LEAD = 'You can send this model a request with `model_invoke`. The user can too: they choose it in the model picker of the bottom bar, write a message, and send it. '
   + 'The sentences after these tell of such a message. '
 
+// The parts of the first text of a text model that every one has.
+const INVOKE_CHAT_START = INVOKE_LEAD
+  + 'A `model_invoke` call sends another request: it holds only `prompt`, with no conversation and no system prompt, and the model gets no Dez tools. '
+const INVOKE_CHAT_END = 'The text of the answer comes only as the result of the job, not into the reply.'
+
 export const USAGE_TEXTS = {
   // A `model_invoke` call to a text model sends another request than a
   // message of the user (`chatContent`, modelInvoke.ts; `invokeTextModel`,
   // controller/modelInvoke.ts), and this text tells each difference. It
   // names no "other" model: a call can name the model that reads it.
-  invokeSendsChat: INVOKE_LEAD
-    + 'A `model_invoke` call sends another request: it holds only `prompt`, with no conversation and no system prompt, and the model gets no Dez tools. '
+  invokeSendsChat: INVOKE_CHAT_START
     + 'An image goes only when `prompt` names it with @id. '
     + 'Dez refuses a call whose `prompt` names a clip, and a call that names an image for a model that does not read images. '
-    + 'The text of the answer comes only as the result of the job, not into the reply.',
+    + INVOKE_CHAT_END,
+  // The same for a text model that Dez sends clips in a `model_invoke`
+  // call (`takesChatClip`; model/tools/chatClips.ts). A message of the
+  // user carries no clip.
+  invokeSendsChatClips: INVOKE_CHAT_START
+    + 'An image or a clip goes only when `prompt` names it with @id, right after the text that names it; a clip goes as a copy with no metadata. '
+    + 'Dez refuses a call that names a clip of a kind that `dez.inputs` does not list, or more video clips than the provider takes in one request, '
+    + 'and a call that names an image for a model that does not read images. '
+    + 'The job fails when the copies of the clips are larger than one request can carry. '
+    + INVOKE_CHAT_END,
   // A `model_invoke` call to a media model sends the same request as a
   // message of the user, but for the differences that
   // streams/mediaRequest.ts and controller/modelInvoke.ts have, which
@@ -209,6 +224,9 @@ export interface UsageFacts {
   /** The toggles that apply to the model, with their values. */
   toggles: readonly { key: string, on: boolean }[]
   inputImages: ProviderInputImageRules
+  /** How the provider's chat requests carry clips; none when they carry
+   *  no clip. */
+  chatClips?: ChatClipRules
 }
 
 // How many images of the message a request takes: from the fewest that it
@@ -301,7 +319,7 @@ function mediaUsage(kind: MediaKind, model: ModelInfo, facts: UsageFacts): strin
 export function modelUsage(model: ModelInfo, facts: UsageFacts): string[] {
   const kind = effectiveRequest(model)
   if (kind === 'none' || model.unstoredOutput !== undefined) return [USAGE_TEXTS.cannotUse]
-  return kind === 'chat'
-    ? [USAGE_TEXTS.invokeSendsChat, ...chatUsage(model, facts)]
-    : [USAGE_TEXTS.invokeSends, ...mediaUsage(kind, model, facts)]
+  if (kind !== 'chat') return [USAGE_TEXTS.invokeSends, ...mediaUsage(kind, model, facts)]
+  const takesClips = takesChatClip(model, facts.chatClips, 'audio') || takesChatClip(model, facts.chatClips, 'video')
+  return [takesClips ? USAGE_TEXTS.invokeSendsChatClips : USAGE_TEXTS.invokeSendsChat, ...chatUsage(model, facts)]
 }
