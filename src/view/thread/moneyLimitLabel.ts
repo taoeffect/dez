@@ -24,7 +24,7 @@ export function moneyLimitLabelTexts(limit: MoneyLimit | undefined, cost: Conver
     tooltip: [
       `Money limit of this tab: ${usdText(limit.usd)}, about ${usdText(left)} left.`,
       limit.unknownPrices
-        ? 'Requests with no known price can go, and the limit does not count them.'
+        ? 'Requests with no known price can go. The limit counts the cost of one only when its provider tells it.'
         : 'Dez sends no request whose price it does not know.',
       'Click to change the limit.',
     ].join('\n'),

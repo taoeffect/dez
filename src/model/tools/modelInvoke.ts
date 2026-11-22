@@ -61,7 +61,7 @@ export const MODEL_INVOKE_TOOL: ToolDefinition = {
   description: 'Send one request to a model that the user can use, and get what it makes: '
     + 'a model that makes images, audio clips, or video clips, a model that writes down speech, or a text model. '
     + 'A request costs the user money, as a request that the user sends does. '
-    + 'When the user set a money limit for this conversation, Dez refuses a request that would go over it: then stop, and ask the user. '
+    + 'When the user set a money limit for this conversation, Dez refuses a request once the cost reaches the limit, and a media request whose quote would go over it: then stop, and ask the user. '
     + '`conversation_info` tells what is left of the limit. '
     + 'Call `model_info` for the model first: `usage` tells what the model needs, `dez.parameters` what a request can set, and `dez.cost` the price. '
     + '`model_list` finds models. '

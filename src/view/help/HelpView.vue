@@ -261,8 +261,9 @@ function onOverlayClick(event: MouseEvent) {
               that requests that run at the same time cannot go over the limit together. The price
               of a chat request is known only after it: Dez sends one while the cost is under the
               limit, so the cost can end a little over it. Dez also sends no request whose price it
-              does not know, unless you check "Allow unknown prices": such a request is then not in
-              the count. No model can change the limit. A saved conversation keeps its limit.
+              does not know, unless you check "Allow unknown prices": such a request is then in the
+              count only when its provider tells its cost. No model can change the limit. A saved
+              conversation keeps its limit.
             </p>
             <p>
               A long conversation can get too large for one request to the model. Dez then compacts

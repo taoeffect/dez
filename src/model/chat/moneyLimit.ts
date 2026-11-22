@@ -127,14 +127,16 @@ export function chatRequestPrice(price: ModelPrice | undefined): RequestPrice {
 }
 
 /** The line of the money limit for a model (`conversation_info`,
- *  `jobs_list`): the limit, what is left of it, and whether requests with
- *  no known price may go. */
+ *  `jobs_list`): the limit, what is left of it, when Dez refuses a request
+ *  (`moneyProblem`), and what it counts of a request with no known price
+ *  (`chatRequestCost` takes the provider's own cost first). */
 export function moneyLimitText(limit: MoneyLimit | undefined, spent: MoneySpent): string {
   if (!limit) return 'Money limit: none. The user set no limit of the cost of this conversation.'
   const unknown = limit.unknownPrices
-    ? 'Requests with no known price may go, and Dez does not count them.'
+    ? 'Requests with no known price may go. Dez counts the cost of such a request only when the provider tells it in its answer.'
     : 'Dez refuses a request with no known price.'
   return `Money limit: ${usdText(limit.usd)}, which the user set; ${usdText(moneyLeft(limit, spent))} is left `
     + `(the cost so far, with the quotes of the paid requests that still run, is ${usdText(spent.counted + spent.held)}). `
-    + `Dez refuses a request that would go over it. ${unknown} No tool can change the limit: ask the user.`
+    + 'Dez refuses every request once the cost reaches the limit, and a request with a quote (a media request) that would go over it. '
+    + `A chat request that starts under the limit can end over it. ${unknown} No tool can change the limit: ask the user.`
 }
