@@ -4,13 +4,13 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { toolBlockText } from '../../src/model/chat/toolBlocks'
 import { ASSET_INFO_COLUMNS } from '../../src/model/tools/assetInfo'
 import { PICTURES_SHOWN_NOTE } from '../../src/model/tools/assetView'
-import { jobStartedText, jobsWaitResults, NO_JOBS_TEXT, startedJobId } from '../../src/model/tools/jobs'
+import { jobStartedText, jobsWaitResults, startedJobId } from '../../src/model/tools/jobs'
 import { byteSizeText } from '../../src/utils/byteSize'
 import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
 import { expectNoLinkedFile, linkedDropDir, openDroppedFiles } from './harness/drops'
 import { appFilePath, conversationFilePath, filesIn, workDir } from './harness/fixtures'
 import { generatedImagesDir, pngDataUrl, shownImages, STRIPES_PNG } from './harness/images'
-import { waitCall } from './harness/jobs'
+import { NO_JOBS_LIST_TEXT, waitCall } from './harness/jobs'
 import { evalCall, expectReplyEnd as expectEnd, expectRunsEnded } from './harness/jsEval'
 import { WEBM_VIDEO } from './harness/media'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
@@ -313,7 +313,7 @@ describe('js_eval tool', () => {
     expect(toolResult(second, 'call_view').split('\n').slice(0, 2)).toStrictEqual([`@b | image | PNG | 90x20 | ${pngSize}`, PICTURES_SHOWN_NOTE])
     // The error of a tool is the error text that a call of the model gets.
     const failure = 'No image of this conversation has the id @zz. Its images are @a, @b, @d, @e: call again with one of these ids.'
-    expect(toolResult(second, 'call_caught')).toBe(`Error: ${failure}\n${NO_JOBS_TEXT}`)
+    expect(toolResult(second, 'call_caught')).toBe(`Error: ${failure}\n${NO_JOBS_LIST_TEXT}`)
     // The stack names the line of the code that made the call.
     expect(toolResult(second, 'call_thrown')).toBe(`The code threw an error:\nError: ${failure}\n    at default (file:///run/code.ts:2:11)`)
 
@@ -441,7 +441,7 @@ describe('js_eval tool', () => {
     // the inputs of its run after the job.
     const calls = panel?.calls ?? []
     expect(calls).toMatchObject([
-      { name: 'jobs_list', status: 'success', stateWord: null, parameters: [], result: NO_JOBS_TEXT, failed: false },
+      { name: 'jobs_list', status: 'success', stateWord: null, parameters: [], result: NO_JOBS_LIST_TEXT, failed: false },
       { name: 'image', status: 'error', stateWord: 'failed', parameters: [['command', 'scale'], ['parameters', JSON.stringify(badImage)]], result: failure, failed: true },
       { name: 'video', status: 'success', stateWord: null, parameters: [['command', 'ffmpeg'], ['parameters', JSON.stringify(draw)]], failed: false },
       { name: 'jobs_wait', status: 'success', stateWord: null, parameters: [], failed: false },

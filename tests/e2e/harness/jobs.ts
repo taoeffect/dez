@@ -1,10 +1,15 @@
 import { expect } from 'vitest'
-import { jobsWaitResults, startedJobId, type JobResult } from '../../../src/model/tools/jobs'
+import { jobsListText, jobsWaitResults, startedJobId, type JobResult } from '../../../src/model/tools/jobs'
 import { openAiToolCall, sendToolCalls, toolResult, type HeldRequest } from './mockServer'
 
 // The parts that the specs of the tools with jobs share (`model_invoke`,
 // `video`, `apps`): a call starts a job of the reply, and a `jobs_wait`
 // call gives its result.
+
+/** The result of a `jobs_list` call in a reply that started no job: the
+ *  no-job line, then the money line of a tab with no money limit, as the
+ *  tabs of the specs have none. */
+export const NO_JOBS_LIST_TEXT = jobsListText([], { limit: undefined, spent: { counted: 0, held: 0 } })
 
 /** A `jobs_wait` call of a mock model: for the first job that ends, or
  *  with `all` for every job. */

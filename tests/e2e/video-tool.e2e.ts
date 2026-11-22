@@ -4,7 +4,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { MAX_REQUEST_IMAGE_BYTES } from '../../src/model/streams/pictureBudget'
 import { ASSET_INFO_COLUMNS } from '../../src/model/tools/assetInfo'
 import { pictureBudgetLeftText, PICTURES_SHOWN_NOTE } from '../../src/model/tools/assetView'
-import { jobStartedText, jobsWaitResults, NO_JOBS_TEXT, startedJobId } from '../../src/model/tools/jobs'
+import { jobStartedText, jobsWaitResults, startedJobId } from '../../src/model/tools/jobs'
 import { REFUSED_DEVICES, REFUSED_PROTOCOLS, workInputNotFileText, workPathUnreadableText } from '../../src/model/tools/videoTool'
 import { byteSizeText } from '../../src/utils/byteSize'
 import { sentImageUrls } from './harness/chatBody'
@@ -12,7 +12,7 @@ import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, w
 import { linkedDropDir } from './harness/drops'
 import { appFilePath, filesIn, mediaTempDir, newFileIn, savedTextCount, storedFileName, workDir, writeTestFile } from './harness/fixtures'
 import { generatedImagesDir, shownImages, solidPng } from './harness/images'
-import { runToolJob, startedJob, waitCall, type EndedJob } from './harness/jobs'
+import { NO_JOBS_LIST_TEXT, runToolJob, startedJob, waitCall, type EndedJob } from './harness/jobs'
 import { clipTag, MP4_VIDEO, shownPlayers, silentWav, startClipServer, WEBM_VIDEO, type ClipServer, type ShownPlayer } from './harness/media'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, openAiToolCall, replyText, sendChatReply, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
@@ -1311,8 +1311,7 @@ describe('video tool', () => {
 
     sendToolCalls(second.reply, [openAiToolCall('call_list', 'jobs_list', {})])
     const third = await chatRequest()
-    // The lines after the first tell the money limit of the tab.
-    expect(toolResult(third, 'call_list').split('\n')[0]).toBe(NO_JOBS_TEXT)
+    expect(toolResult(third, 'call_list')).toBe(NO_JOBS_LIST_TEXT)
     await sendChatReply(third.reply, CALLER.modelName)
 
     const reply = await endedReply(browser)

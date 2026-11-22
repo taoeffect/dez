@@ -2,12 +2,13 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { jobCallLabel, jobsWaitResults, NO_JOBS_TEXT } from '../../src/model/tools/jobs'
+import { jobCallLabel, jobsWaitResults } from '../../src/model/tools/jobs'
 import { withoutLocalPaths } from '../../src/model/tools/localPaths'
 import { invocationAnswerText } from '../../src/model/tools/modelInvoke'
 import { UNEXPECTED_BRIDGE_ERROR_TEXT } from '../../src/model/tools/toolBridge'
 import { consoleErrors, resetConsoleErrors, screenshotOnFailure } from './harness/dom'
 import { appFilePath, makeConversation, mediaTempDir, seedConversation, workDir, writeTestFile } from './harness/fixtures'
+import { NO_JOBS_LIST_TEXT } from './harness/jobs'
 import { evalCall, expectReplyEnd } from './harness/jsEval'
 import { startMockProviderApp, takeRequest, takeRequestTo, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, mockModelKey, replyText, sendChatReply, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
@@ -527,8 +528,8 @@ describe('js_eval sandbox', () => {
     expect(outcome.long.characters).toBeLessThan(1000)
     expect(outcome.deep).toStrictEqual({ id: 900, text: UNEXPECTED_BRIDGE_ERROR_TEXT, isError: true })
     expect(outcome.answered).toStrictEqual([...refused.map((_, index) => FIRST_ID + index), 800, 900, 950])
-    expect(outcome.last).toStrictEqual({ id: 950, text: NO_JOBS_TEXT, isError: false })
-    expect(outcome.own).toBe(NO_JOBS_TEXT)
+    expect(outcome.last).toStrictEqual({ id: 950, text: NO_JOBS_LIST_TEXT, isError: false })
+    expect(outcome.own).toBe(NO_JOBS_LIST_TEXT)
     // A text that is no call line is console output of the code.
     expect(log.split('\n')).toStrictEqual([
       '{"type":"call","id":901,',
@@ -574,7 +575,7 @@ describe('js_eval sandbox', () => {
     expect(unanswered).toBeGreaterThan(40_000)
     expect(unanswered).toBeLessThan(50_000)
     // No call after the limit started a job.
-    expect(toolResult(second, 'call_after')).toBe(NO_JOBS_TEXT)
+    expect(toolResult(second, 'call_after')).toBe(NO_JOBS_LIST_TEXT)
     await expectReplyEnd(setup, CALLER, second)
   })
 
