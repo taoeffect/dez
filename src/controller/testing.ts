@@ -1,12 +1,13 @@
 import sbp from '@sbp/sbp'
 import { expect, vi } from 'vitest'
+import type { Tab } from '../model/chat/types'
 import { NO_CALL_PICTURE_BUDGET } from '../model/streams/pictureBudget'
 import { appManifestText, type AppKind } from '../model/tools/appManifest'
 import type { JsEvalLine } from '../model/tools/jsEval'
 import { CONVERSATION_ID, protocolLine } from '../model/tools/testing'
 import { ToolError, type ToolRunResult } from '../model/tools/types'
 import type { NativeDownloadRule, NativeHttpDownload, NativeHttpRequest } from '../utils/protocol/nativeHttp'
-import { TabJobs, type JobOutcome, type JobWork, type MadeAsset } from './jobs'
+import { TabJobs, type JobOutcome, type JobWork, type MadeAsset, type ToolJobs } from './jobs'
 import type { AppFileEntry, AppFileRef, BundledToolEnd, BundledToolOutput, BundledToolRun, FileTree } from './nativeTypes'
 import type { ToolRunCall, ToolRunContext } from './tools'
 
@@ -347,12 +348,14 @@ export function running(): AbortSignal {
 
 /** The context of the first call of a round of a reply that takes no
  *  image, no clip, and no app, shows no picture, and has no job, with
- *  `more` in place of its parts. */
+ *  `more` in place of its parts. Its sections are those of the tab
+ *  `tabId` (of `more` too). */
 export function callContext(more: Partial<ToolRunContext> = {}): ToolRunContext {
-  return {
+  const context: ToolRunContext = {
     tabId: '',
     conversationId: CONVERSATION_ID,
     model: { providerId: 'venice', modelId: 'venice-glm-5' },
+    sections: () => (sbp('dez.model/tab', context.tabId) as Tab | null)?.sections ?? [],
     jobs: new TabJobs(),
     writeImage: () => null,
     writeClip: () => null,
@@ -362,6 +365,7 @@ export function callContext(more: Partial<ToolRunContext> = {}): ToolRunContext 
     isBridged: false,
     ...more,
   }
+  return context
 }
 
 /** What the stub of `dez.controller/tools/run` does for one call. */
@@ -422,19 +426,20 @@ export interface HeldWork {
   work: JobWork
   finish (outcome?: Partial<JobOutcome>): void
   /** The signal and the writers of the state, of the price, and of a kept
-   *  file that the job gave its work. */
+   *  file that the job gave its work, and the jobs of the job. */
   signal (): AbortSignal
   report (state: string): void
   reportCost (usd: number | null): void
   keepAsset (asset: MadeAsset): void
+  jobs (): ToolJobs
 }
 
 export function heldWork(): HeldWork {
   let resolveWork!: (outcome: JobOutcome) => void
-  let seen!: { signal: AbortSignal, report: (state: string) => void, reportCost: (usd: number | null) => void, keepAsset: (asset: MadeAsset) => void }
+  let seen!: { signal: AbortSignal, report: (state: string) => void, reportCost: (usd: number | null) => void, keepAsset: (asset: MadeAsset) => void, jobs: ToolJobs }
   return {
-    work: (signal, report, reportCost, keepAsset) => {
-      seen = { signal, report, reportCost, keepAsset }
+    work: (signal, report, reportCost, keepAsset, jobs) => {
+      seen = { signal, report, reportCost, keepAsset, jobs }
       return new Promise<JobOutcome>((resolve) => { resolveWork = resolve })
     },
     finish: (outcome = {}) => resolveWork({ text: '', isError: false, assets: [], ...outcome }),
@@ -442,6 +447,7 @@ export function heldWork(): HeldWork {
     report: (state) => seen.report(state),
     reportCost: (usd) => seen.reportCost(usd),
     keepAsset: (asset) => seen.keepAsset(asset),
+    jobs: () => seen.jobs,
   }
 }
 
@@ -474,13 +480,13 @@ export function writes(stream: BundledToolOutput['stream'], text: string, end: B
   }
 }
 
-/** A `js_eval` program whose code makes one tool call for each of
- *  `selectors`, each after the answer of the one before, and then ends
- *  with the line `last`. */
-export function callingProgram(selectors: readonly string[], last: JsEvalLine = { type: 'result', text: 'ok' }): StubProgram {
+/** A `js_eval` program whose code makes one tool call for each of `calls`
+ *  (a selector, or a selector with its arguments), each after the answer
+ *  of the one before, and then ends with the line `last`. */
+export function callingProgram(calls: readonly (string | { selector: string, arguments: unknown })[], last: JsEvalLine = { type: 'result', text: 'ok' }): StubProgram {
   return async (_run, onOutput) => {
-    for (const [index, selector] of selectors.entries()) {
-      onOutput({ stream: 'stdout', text: protocolLine({ type: 'call', id: index + 1, selector }) })
+    for (const [index, call] of calls.entries()) {
+      onOutput({ stream: 'stdout', text: protocolLine({ type: 'call', id: index + 1, ...(typeof call === 'string' ? { selector: call } : call) }) })
       await vi.waitFor(() => expect(native.inputWrites).toHaveLength(index + 1))
     }
     onOutput({ stream: 'stdout', text: protocolLine(last) })

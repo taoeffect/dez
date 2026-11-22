@@ -551,6 +551,93 @@ describe('TabJobs', () => {
       expect(jobs.list()).toStrictEqual([])
     })
   })
+
+  // The jobs that the tool calls of the code of a run of an app start: the
+  // work of the job of the run gets them (`JobWork`).
+  describe('the jobs of a job', () => {
+    it('are for the code of the job alone while it runs, and for the model after it', async () => {
+      const run = heldWork()
+      const { id: runId } = jobs.start('apps', run.work, LONG)
+      const open = heldWork()
+      const done = heldWork()
+      const { id: openId } = run.jobs().start('model_invoke', open.work, { ...LONG, label: 'A red fox' })
+      const { id: doneId } = run.jobs().start('image', done.work, LONG)
+      done.finish({ text: 'Flipped.' })
+      await settled()
+
+      expect(jobs.list().map((job) => job.id)).toStrictEqual([runId])
+      expect([jobs.running, jobs.ready]).toStrictEqual([1, 0])
+      expect(jobs.cancel([openId])).toStrictEqual([])
+      expect(await jobs.wait(running(), { ids: [doneId] })).toStrictEqual([])
+      const scoped = run.jobs()
+      expect(scoped.list().map((job) => job.id)).toStrictEqual([openId, doneId])
+      expect([scoped.running, scoped.ready]).toStrictEqual([1, 1])
+      expect(scoped.cancel([runId])).toStrictEqual([])
+      // A compaction keeps the inputs of every job.
+      expect(jobs.allJobs().map((job) => job.id)).toStrictEqual([runId, openId, doneId])
+
+      run.finish({ text: 'Ran.' })
+      await settled()
+
+      expect(jobs.list().map((job) => job.id)).toStrictEqual([runId, openId, doneId])
+      expect((await jobs.wait(running())).map((job) => job.text)).toStrictEqual(['Flipped.', 'Ran.'])
+      expect(jobs.cancel([openId])).toStrictEqual([openId])
+    })
+
+    it('gives the code of the job only the results of its own jobs', async () => {
+      const run = heldWork()
+      jobs.start('apps', run.work, LONG)
+      const own = heldWork()
+      const other = heldWork()
+      const { id: ownId } = run.jobs().start('image', own.work, LONG)
+      jobs.start('image', other.work, LONG)
+      other.finish({ text: 'Of the model.' })
+      await settled()
+
+      const wait = run.jobs().wait(running())
+      own.finish({ text: 'Of the code.' })
+
+      expect((await wait).map((job) => [job.id, job.text])).toStrictEqual([[ownId, 'Of the code.']])
+      expect((await jobs.wait(running())).map((job) => job.text)).toStrictEqual(['Of the model.'])
+    })
+
+    it.each([
+      ['times out', async () => { await vi.advanceTimersByTimeAsync(1000) }],
+      ['is cancelled', async () => { jobs.cancel(jobs.list().map((job) => job.id)) }],
+    ])('stops the jobs of a job that %s, as no code waits for them any more', async (_name, end) => {
+      const run = heldWork()
+      jobs.start('apps', run.work, { timeoutMs: 1000 })
+      const inner = heldWork()
+      const { id: innerId } = run.jobs().start('model_invoke', inner.work, LONG)
+
+      await end()
+
+      expect(inner.signal().aborted).toBe(true)
+      expect(jobs.allJobs().find((job) => job.id === innerId)?.status).toBe('stopped')
+    })
+
+    it('keeps the jobs of a job that ended on its own', async () => {
+      const run = heldWork()
+      jobs.start('apps', run.work, LONG)
+      const inner = heldWork()
+      run.jobs().start('model_invoke', inner.work, LONG)
+
+      run.finish({ text: 'Failed.', isError: true })
+      await settled()
+
+      expect(inner.signal().aborted).toBe(false)
+      expect(jobs.running).toBe(1)
+    })
+
+    it(`counts them in the limit of ${MAX_OPEN_JOBS} open jobs`, () => {
+      const run = heldWork()
+      jobs.start('apps', run.work, LONG)
+      for (let count = 1; count < MAX_OPEN_JOBS; count++) run.jobs().start('model_invoke', heldWork().work, LONG)
+
+      expect(() => jobs.start('model_invoke', heldWork().work, LONG)).toThrow(JOB_LIMIT_TEXT)
+      expect(() => run.jobs().start('model_invoke', heldWork().work, LONG)).toThrow(JOB_LIMIT_TEXT)
+    })
+  })
 })
 
 describe('writeJobAssets', () => {
@@ -596,6 +683,28 @@ describe('writeJobAssets', () => {
     expect(deletedClips).toStrictEqual([SAVED_CLIP])
     // A clip at a provider URL has no file.
     expect(native.deletedFiles).toStrictEqual([])
+  })
+
+  it('writes an asset that a tool call of the code made with its own tool, model, and hidden mark, and gives its handle', async () => {
+    const writes: unknown[] = []
+    const flux = { providerId: 'venice', modelId: 'flux' }
+    const made: MadeAsset[] = [
+      image,
+      { ...image, tool: 'image', handle: '&1' },
+      { ...clip(SAVED_CLIP), tool: 'model_invoke', model: flux, hidden: true, handle: '&2' },
+    ]
+    const ids = ['c', 'd', 'e']
+    const written = await writeJobAssets({ id: 'j-aaaa', tool: 'apps', status: 'finished', text: '', assets: made, hidesAssets: false, call: { number: 1, label: '' } }, {
+      writeImage: (_path, options) => { writes.push(options); return ids.shift() ?? null },
+      writeClip: (_made, options) => { writes.push(options); return ids.shift() ?? null },
+    })
+
+    expect(written).toStrictEqual([{ kind: 'image', id: 'c' }, { kind: 'image', id: 'd', handle: '&1' }, { kind: 'audio', id: 'e', handle: '&2' }])
+    expect(writes).toStrictEqual([
+      { tool: 'apps', madeBy: 'j-aaaa' },
+      { tool: 'image', madeBy: 'j-aaaa' },
+      { tool: 'model_invoke', madeBy: 'j-aaaa', model: flux, hidden: 'j-aaaa' },
+    ])
   })
 })
 

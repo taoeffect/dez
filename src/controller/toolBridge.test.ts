@@ -1,14 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { textNode } from '../model/chat/content'
+import { IMAGE_TOOL_KEY, imageMarkdown } from '../model/chat/images'
 import type { MediaTagData } from '../model/chat/mediaTags'
 import { SHOWN_PICTURE_FOLDER, type ShownPicture } from '../model/chat/shownPictures'
+import type { Section } from '../model/chat/types'
 import { NO_CALL_PICTURE_BUDGET, type CallPictureBudget } from '../model/streams/pictureBudget'
+import { APP_RUN_MAX_TOOL_CALLS } from '../model/tools/appsTool'
 import { jobStartedText } from '../model/tools/jobs'
 import { JS_EVAL_MAX_TOOL_CALLS, type JsEvalCallLine } from '../model/tools/jsEval'
-import { bridgedToolCall, UNEXPECTED_BRIDGE_ERROR_TEXT } from '../model/tools/toolBridge'
-import { TabJobs } from './jobs'
+import { bridgedToolCall, JS_EVAL_BRIDGE, UNEXPECTED_BRIDGE_ERROR_TEXT } from '../model/tools/toolBridge'
+import { TabJobs, type MadeAsset, type ToolJobs } from './jobs'
 import type { ProgramInputWriter } from './programRuns'
 import { callContext, heldStep, heldWork, LONG, native, resetNative, running, STOP, stubToolRuns, TOOL_DONE, toolRuns } from './testing'
-import { ToolBridge } from './toolBridge'
+import { AppRunBridge, ToolBridge } from './toolBridge'
 
 // The bridge on stub tools (`toolRuns`): the real runners have their own
 // tests (tools.test.ts).
@@ -83,7 +87,7 @@ describe('ToolBridge', () => {
     bridge.call(line, write)
 
     await vi.waitFor(() => expect(answers).toHaveLength(1))
-    const check = bridgedToolCall(line, 1, { run: [] })
+    const check = bridgedToolCall(line, 1, { run: [] }, JS_EVAL_BRIDGE)
     expect(answers).toStrictEqual([{ id: 1, text: check.ok ? '' : check.error, isError: true }])
     expect(toolRuns.calls).toStrictEqual([])
   })
@@ -374,5 +378,168 @@ describe('ToolBridge', () => {
     ])
     expect(toolRuns.calls).toHaveLength(1)
     expect((await bridge.end()).bridged.calls[0]).toStrictEqual({ name: 'dez.tools/jobs_list', arguments: {}, status: 'error', result: UNEXPECTED_BRIDGE_ERROR_TEXT })
+  })
+})
+
+describe('AppRunBridge', () => {
+  // The tab of the apps invoke call holds the image @a.
+  const TAB: Section[] = [{ id: 's1', role: 'user', content: [textNode(imageMarkdown('/x/a.png', [{ key: 'id', value: 'a' }]))] }]
+  const FLUX = { providerId: 'venice', modelId: 'flux' }
+
+  // The assets that the bridge gave the job (`keepAsset`), and the ones
+  // that it wrote into the reply, which must stay empty.
+  let kept: MadeAsset[]
+  let replyWrites: string[]
+
+  function newBridge(jobs: ToolJobs = new TabJobs(), callSignal = running()): AppRunBridge {
+    const context = callContext({
+      sections: () => TAB,
+      writeImage: (path) => { replyWrites.push(path); return 'z' },
+      writeClip: (clip) => { replyWrites.push(clip.src ?? ''); return 'z' },
+    })
+    return new AppRunBridge(context, jobs, { run: [] }, (asset) => kept.push(asset), callSignal)
+  }
+
+  beforeEach(() => {
+    kept = []
+    replyWrites = []
+  })
+
+  it('keeps each asset of a call as an asset of the job under its next handle, and a later call finds it by the handle', async () => {
+    const ids: (string | null)[] = []
+    const seenSections: (readonly Section[])[] = []
+    toolRuns.tool = async (call, _signal, toolContext) => {
+      seenSections.push(toolContext.sections())
+      if (call.arguments.command === 'flip') {
+        const id = toolContext.writeImage('/x/flipped.png')
+        ids.push(id)
+        return { content: `Made the image @${id}.`, isError: false }
+      }
+      // `jobs_wait` writes what the job of another tool made.
+      ids.push(toolContext.writeClip(CLIP, { tool: 'model_invoke', madeBy: 'j-1', model: FLUX, hidden: 'j-1' }))
+      return { content: `Scaled @${ids[0]} and @a.`, isError: false }
+    }
+    const bridge = newBridge()
+
+    bridge.call(callLine(1, 'dez.tools/image/flip', { image: 'a', direction: 'horizontal' }), write)
+    bridge.call(callLine(2, 'dez.tools/image/scale', { image: '&1', width: 64 }), write)
+    await vi.waitFor(() => expect(answers).toHaveLength(2))
+
+    // The ids that stand for the handles come after the ids of the tab, and
+    // after each other.
+    expect(ids).toStrictEqual(['b', 'c'])
+    expect(answers).toStrictEqual([
+      { id: 1, text: 'Made the image @&1.', isError: false },
+      { id: 2, text: 'Scaled @&1 and @a.', isError: false },
+    ])
+    expect(JSON.parse(String(toolRuns.calls[1].arguments.parameters))).toStrictEqual({ image: 'b', width: 64 })
+    expect(seenSections[0]).toStrictEqual([...TAB, expect.objectContaining({ role: 'agent', content: [textNode('')] })])
+    expect(seenSections[1].at(-1)?.content).toStrictEqual([textNode(imageMarkdown('/x/flipped.png', [{ key: 'id', value: 'b' }, { key: IMAGE_TOOL_KEY, value: 'image' }]))])
+
+    const made = [
+      { kind: 'image', path: '/x/flipped.png', tool: 'image', handle: '&1' },
+      { kind: 'clip', clip: CLIP, tool: 'model_invoke', model: FLUX, hidden: true, handle: '&2' },
+    ]
+    expect(kept).toStrictEqual(made)
+    expect(await bridge.end()).toStrictEqual({ made, jobs: [], unanswered: 0 })
+    expect(replyWrites).toStrictEqual([])
+  })
+
+  it('refuses a handle of no asset and an apps show call, and runs no tool for them', async () => {
+    const bridge = newBridge()
+
+    bridge.call(callLine(1, 'dez.tools/image/flip', { image: '&1', direction: 'horizontal' }), write)
+    bridge.call(callLine(2, 'dez.tools/apps/show', { name: 'notes' }), write)
+    await vi.waitFor(() => expect(answers).toHaveLength(2))
+
+    expect(answers.map(({ isError }) => isError)).toStrictEqual([true, true])
+    expect(answers[0].text).toMatch(/^The call names &1, but no tool call of this run made/)
+    expect(answers[1].text).toMatch(/^The code of an app cannot call apps show/)
+    expect(toolRuns.calls).toStrictEqual([])
+  })
+
+  it(`runs no call of a line after the limit of ${APP_RUN_MAX_TOOL_CALLS} of a run`, async () => {
+    const bridge = newBridge()
+
+    for (let id = 1; id <= APP_RUN_MAX_TOOL_CALLS + 2; id++) bridge.call(callLine(id), write)
+    await vi.waitFor(() => expect(answers).toHaveLength(APP_RUN_MAX_TOOL_CALLS + 2))
+
+    expect(toolRuns.calls).toHaveLength(APP_RUN_MAX_TOOL_CALLS)
+    expect(answers.slice(-2).map(({ isError }) => isError)).toStrictEqual([true, true])
+  })
+
+  it('starts the jobs of the calls as jobs of the job, with the handle in the label and no id of the run in the inputs, and gives the open ones', async () => {
+    const tabJobs = new TabJobs()
+    const run = heldWork()
+    tabJobs.start('apps', run.work, LONG)
+    const started: { id: string, number: number }[] = []
+    toolRuns.tool = async (call, _signal, toolContext) => {
+      if (call.arguments.command === 'flip') {
+        toolContext.writeImage('/x/flipped.png')
+        return TOOL_DONE
+      }
+      started.push(toolContext.jobs.start('model_invoke', heldWork().work, { ...LONG, label: 'Paint @b like @a', inputs: ['b', 'a'] }))
+      return TOOL_DONE
+    }
+    const bridge = newBridge(run.jobs())
+
+    bridge.call(callLine(1, 'dez.tools/image/flip', { image: 'a', direction: 'horizontal' }), write)
+    bridge.call(callLine(2), write)
+    bridge.call(callLine(3), write)
+    await vi.waitFor(() => expect(answers).toHaveLength(3))
+    run.jobs().cancel([started[0].id])
+
+    expect(run.jobs().list().map(({ call, inputs }) => [call.label, inputs])).toStrictEqual([['Paint @&1 like @a', ['a']], ['Paint @&1 like @a', ['a']]])
+    expect(tabJobs.list()).toHaveLength(1)
+    expect((await bridge.end()).jobs).toStrictEqual([started[1]])
+  })
+
+  it('keeps no asset of a call that ends after the end of the run, and counts the call as not answered', async () => {
+    const late = heldStep()
+    let got: string | null | undefined
+    toolRuns.tool = async (_call, _signal, toolContext) => {
+      await late.wait
+      got = toolContext.writeImage('/x/late.png')
+      return TOOL_DONE
+    }
+    const bridge = newBridge()
+
+    bridge.call(callLine(1, 'dez.tools/image/flip', { image: 'a', direction: 'horizontal' }), write)
+    await vi.waitFor(() => expect(toolRuns.calls).toHaveLength(1))
+    const ending = bridge.end()
+    late.finish()
+
+    expect(await ending).toStrictEqual({ made: [], jobs: [], unanswered: 1 })
+    expect(got).toBeNull()
+    expect(kept).toStrictEqual([])
+    expect(answers).toStrictEqual([])
+  })
+
+  it('deletes the copies of the pictures that a call shows, as a job shows no picture', async () => {
+    toolRuns.tool = async () => ({ ...TOOL_DONE, pictures: [PICTURE] })
+    const bridge = newBridge()
+
+    bridge.call(callLine(1), write)
+    await vi.waitFor(() => expect(answers).toHaveLength(1))
+
+    await vi.waitFor(() => expect(native.deletedFiles).toStrictEqual([{ root: 'app', path: `${SHOWN_PICTURE_FOLDER}/${PICTURE.file}`, folder: false }]))
+    expect(answers[0]).toStrictEqual({ id: 1, text: 'done', isError: false })
+  })
+
+  it('stops the call that runs at a stop of the job', async () => {
+    const stop = new AbortController()
+    let callSignal: AbortSignal | undefined
+    toolRuns.tool = (_call, signal) => {
+      callSignal = signal
+      return new Promise((resolve) => signal.addEventListener('abort', () => resolve({ content: 'stopped', isError: true })))
+    }
+    const bridge = newBridge(new TabJobs(), stop.signal)
+
+    bridge.call(callLine(1), write)
+    await vi.waitFor(() => expect(callSignal).toBeDefined())
+    stop.abort(STOP)
+
+    expect(callSignal?.reason).toBe(STOP)
+    expect((await bridge.end()).unanswered).toBe(1)
   })
 })

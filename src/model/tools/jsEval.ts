@@ -610,6 +610,22 @@ export interface JsEvalToolCalls {
   pictures: number
 }
 
+/** The lines that tell of the open jobs `jobs` that the tool calls of the
+ *  code of a run started (`jobStartedText`), except a line that the given
+ *  text `given` of the result holds: code often returns the text of its
+ *  last call. */
+export function openJobLines(jobs: readonly { id: string, number: number }[], given: string): string[] {
+  return jobs.map(({ id, number }) => jobStartedText(id, number)).filter((line) => !given.includes(line))
+}
+
+/** The paragraph of a result that tells of the `unanswered` tool calls of
+ *  the code that had not ended when the code ended; none for none. */
+export function cutCallsParagraphs(unanswered: number): string[] {
+  if (unanswered === 0) return []
+  return [`${countOf(unanswered, 'tool call')} of the code had not ended when the code ended, so Dez cut ${unanswered === 1 ? 'it' : 'them'} short. `
+    + '`await` each `dez.sbp` call, and give the code the time that its calls need.']
+}
+
 // What the tool calls `calls` left, as paragraphs of a result whose given
 // text is `given` (blank for none):
 // - A line for each made asset, each shown app, and each open job. A made
@@ -628,17 +644,13 @@ function toolCallParagraphs(calls: JsEvalToolCalls, given: string, isError: bool
   const lines = [
     ...calls.assets.flatMap(({ kind, id }) => (named.has(id) ? [] : [`${madeAssetText(kind, id)}.`])),
     ...calls.shownApps.flatMap((name) => (namedApps.has(name) ? [] : [`${shownAppText(name)}.`])),
-    ...calls.jobs.map(({ id, number }) => jobStartedText(id, number)).filter((line) => !given.includes(line)),
+    ...openJobLines(calls.jobs, given),
   ]
-  const them = (count: number) => (count === 1 ? 'it' : 'them')
   return [
     ...(lines.length === 0 ? [] : [`From the tool calls of the code:\n${lines.join('\n')}`]),
-    ...(calls.unanswered === 0
-      ? []
-      : [`${countOf(calls.unanswered, 'tool call')} of the code had not ended when the code ended, so Dez cut ${them(calls.unanswered)} short. `
-        + '`await` each `dez.sbp` call, and give the code the time that its calls need.']),
+    ...cutCallsParagraphs(calls.unanswered),
     ...(isError && calls.pictures > 0
-      ? [`The code failed, so Dez does not show you the ${countOf(calls.pictures, 'picture')} of its tool calls. Call asset_view yourself to see ${them(calls.pictures)}.`]
+      ? [`The code failed, so Dez does not show you the ${countOf(calls.pictures, 'picture')} of its tool calls. Call asset_view yourself to see ${calls.pictures === 1 ? 'it' : 'them'}.`]
       : []),
   ]
 }

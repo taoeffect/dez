@@ -18,11 +18,13 @@ import {
   frameInputs,
   listedOutputs,
   NO_APP_OUTPUTS,
+  NO_APP_RUN_CALLS,
   runNativeCanvas,
   SaveCount,
   type AppInput,
   type AppOutputs,
   type AppRunCaller,
+  type AppRunCalls,
   type CheckedInvokeCall,
   type InvokeCall,
   type KeptOutput,
@@ -32,17 +34,18 @@ import { FRAMES_ENCODE_STATE, sequenceClipType } from '../model/tools/frameSeque
 import { APP_DECODES_STATE, asksForDecode, runDecode, type DecodedClip } from '../model/tools/inputDecode'
 import { ASSET_NAMES, madeAssetText } from '../model/tools/jobs'
 import { endedRun, JsEvalOutput, textForModel } from '../model/tools/jsEval'
-import { PROGRAM_READS_INPUTS, programNotStartedText } from '../model/tools/programRuns'
+import { PROGRAM_READS_INPUTS, programNotStartedText, type ProgramEnd } from '../model/tools/programRuns'
 import { ToolError, type ToolArguments } from '../model/tools/types'
 import { FONT_FOLDER } from '../model/tools/videoFonts'
 import { assetBlob, storeCheckedFile, storeSave, type StoredSave } from './appBridge'
 import { factsOf, readableManifestBytes } from './appsTool'
 import { encodedSequence } from './frameSequences'
 import { decodeClips, type DecodeRun } from './inputDecode'
-import { discardMadeAssets, type JobOutcome, type MadeAsset } from './jobs'
+import { discardMadeAssets, type JobOutcome, type MadeAsset, type ToolJobs } from './jobs'
 import { moduleRun, writeRunFiles } from './jsEval'
 import type { BundledToolInput, FileTree } from './nativeTypes'
 import { clipInputFile, conversationWorkForms, folderPathForms, imageInputAsIs, inWorkFolder, newGeneratedFile, runProgram } from './programRuns'
+import { AppRunBridge } from './toolBridge'
 import type { ToolRunContext } from './tools'
 
 // The run of an `apps invoke` call (model/tools/appInvoke.ts), as a job of
@@ -64,8 +67,10 @@ import type { ToolRunContext } from './tools'
 // the work folder of the conversation of the call, and read the libraries
 // and the fonts that Dez ships, and nothing else; an app whose manifest
 // asks for it (`runNativeCanvas`) can also load the native file of
-// skia-canvas (src-tauri/src/bundled_tools.rs). The code gets no input of
-// the program and calls no Dez tool.
+// skia-canvas (src-tauri/src/bundled_tools.rs). The code of an `apps
+// invoke` job calls the Dez tools with `dez.sbp`, over the input of the
+// program (`AppRunBridge`, toolBridge.ts); the code of an alias calls
+// none.
 //
 // Dez trusts nothing that the code leaves. It reads each file of the
 // output folder, checks the type by the bytes that it read, and writes
@@ -217,6 +222,14 @@ async function keptOutputs(
   }
 }
 
+/** The tool calls of the code of a run of a script app (`dez.sbp`): the
+ *  context of the `apps invoke` call, and the jobs of its job
+ *  (`JobWork`). */
+export interface AppRunTools {
+  context: ToolRunContext
+  jobs: ToolJobs
+}
+
 /** The work of one run of the code of the script app of `call`, which
  *  `caller` started (`AppRunCaller`), in a new run folder that holds
  *  copies of the call's inputs, the decoded files of its clips when the
@@ -225,13 +238,20 @@ async function keptOutputs(
  *  `conversationId` (`dez.workFolder`). The files of the output folder
  *  that Dez keeps are the assets of the run; the text tells what the code
  *  returned or threw, what Dez did with the files, and the console output.
- *  A run that failed keeps no file. It is the work of the job of an `apps
- *  invoke` call (`JobWork`), and of a call of an alias (`runAliasCall`).
+ *  A run that failed keeps no file of its output folder. It is the work of
+ *  the job of an `apps invoke` call (`JobWork`), and of a call of an alias
+ *  (`runAliasCall`).
+ *
+ *  With `tools`, the code calls the Dez tools (`AppRunBridge`): the assets
+ *  that its calls made come after the files of the output folder, also
+ *  when the code failed. Without it (an alias), the program gets no input,
+ *  so a call of the code fails at once.
  *
  *  A stop of `signal` (Dez stopped the job or the call, or its time limit
- *  passed) stops the program and rejects, which the caller drops. The run
- *  folder goes at every end; the files that the code wrote into the
- *  folder of its app and into the work folder stay. */
+ *  passed) stops the program and its tool call, deletes the assets of its
+ *  calls, and rejects, which the caller drops. The run folder goes at
+ *  every end; the files that the code wrote into the folder of its app
+ *  and into the work folder stay. */
 export function runAppJob(
   call: CheckedInvokeCall,
   { toolName, texts }: AppRunCaller,
@@ -239,6 +259,7 @@ export function runAppJob(
   signal: AbortSignal,
   report: (state: string) => void,
   keepAsset: (asset: MadeAsset) => void,
+  tools?: AppRunTools,
 ): Promise<JobOutcome> {
   return inWorkFolder(async (folder) => {
     report(PROGRAM_READS_INPUTS)
@@ -261,7 +282,6 @@ export function runAppJob(
     const libs = await folderPathForms(LIBS_ROOT.file, LIBS_ROOT.root, toolName)
     const fonts = await folderPathForms(FONT_FOLDER, 'resource', toolName)
     const work = await conversationWorkForms(conversationId, toolName)
-    const forModel = (text: string): string => textForModel(text, { run: runFolder.forms, apps: apps.forms, libs: libs.forms, work: work.forms, fonts: fonts.forms })
 
     const [appName] = call.app.names
     const decodesClips = asksForDecode(call.decode)
@@ -283,23 +303,48 @@ export function runAppJob(
 
     report(APP_RUNS_STATE)
     const output = new JsEvalOutput()
-    // No `stdin`, and a `call` line of the code gets no answer: the code of
-    // an app calls no Dez tool.
+    const folders = { run: runFolder.forms, apps: apps.forms, libs: libs.forms, work: work.forms, fonts: fonts.forms }
+    const forModel = (text: string): string => textForModel(text, folders)
+    const bridge = tools && new AppRunBridge(tools.context, tools.jobs, folders, keepAsset, signal)
     const appFolder = builtIn ? { builtInApp: appName } : { appFolder: appName }
-    const run = { ...moduleRun(folder, call.timeoutMs), inputs, ...appFolder, conversationFolder: conversationId, nativeCanvas: call.nativeCanvas }
-    const end = await runProgram('deno', toolName, run, signal, ({ stream, text }) => {
-      output.add(stream, text)
-    })
+    // `stdin` only with tool calls: the answers of the calls go to the
+    // input of the program. Without it, the code finds the input closed at
+    // its first call (jsEvalRunner.js).
+    const run = { ...moduleRun(folder, call.timeoutMs), ...(bridge && { stdin: true }), inputs, ...appFolder, conversationFolder: conversationId, nativeCanvas: call.nativeCanvas }
+    let end: ProgramEnd
+    try {
+      end = await runProgram('deno', toolName, run, signal, ({ stream, text }, writeInput) => {
+        for (const line of output.add(stream, text)) bridge?.call(line, writeInput)
+      })
+    } catch (error) {
+      if (bridge) await discardMadeAssets((await bridge.end()).made)
+      throw error
+    }
+    const bridged = bridge ? await bridge.end() : null
+    const made = bridged?.made ?? []
+    const calls: AppRunCalls = bridged
+      ? { ...bridged, made: made.map((asset) => ({ kind: asset.kind === 'image' ? 'image' : asset.clip.kind, handle: asset.handle })) }
+      : NO_APP_RUN_CALLS
     // The caller has the same limit and its own clock, which started
     // before the input files were ready, so it ends the run first in most
-    // cases; this is the text for the other case.
-    if (end.kind === 'timedOut') return { text: texts.timedOut(call.timeoutMs, APP_RUNS_STATE), isError: true, assets: [] }
+    // cases; this is the text for the other case. The assets of the calls
+    // go as at a stop: the code did not end.
+    if (end.kind === 'timedOut') {
+      await discardMadeAssets(made)
+      return { text: texts.timedOut(call.timeoutMs, APP_RUNS_STATE), isError: true, assets: [] }
+    }
 
     const { line, log } = endedRun(end, output)
     const outcome = appRunOutcome(end, line, log.trim() !== '', call.nativeCanvas)
-    if (outcome.isError) return { ...appRunResult(outcome, log, forModel, NO_APP_OUTPUTS), assets: [] }
-    const { outputs, assets } = await keptOutputs(folder, ffmpegRun, signal, report, keepAsset)
-    return { ...appRunResult(outcome, log, forModel, outputs), assets }
+    if (outcome.isError) return { ...appRunResult(outcome, log, forModel, NO_APP_OUTPUTS, calls), assets: made }
+    let kept: { outputs: AppOutputs, assets: MadeAsset[] }
+    try {
+      kept = await keptOutputs(folder, ffmpegRun, signal, report, keepAsset)
+    } catch (error) {
+      await discardMadeAssets(made)
+      throw error
+    }
+    return { ...appRunResult(outcome, log, forModel, kept.outputs, calls), assets: [...kept.assets, ...made] }
   })
 }
 

@@ -86,6 +86,13 @@ export const APP_RUN_DEFAULT_SECONDS = 300
 export const APP_RUN_MAX_OUTPUT_FILES = 20
 export const APP_RUN_MAX_OUTPUT_BYTES = 256 * 1024 * 1024
 
+/** The most Dez tool calls (`dez.sbp`) of one run of the code of a script
+ *  app (controller/toolBridge.ts). More than a `js_eval` run gets: an app
+ *  does a planned work, such as one call for each frame of a clip, and
+ *  it runs as a job, not in the round of the model. The cap still stops
+ *  code that loops on a call that costs money. */
+export const APP_RUN_MAX_TOOL_CALLS = 200
+
 /** The limits of a frame sequence of a run (a folder `<name>.frames` in
  *  the output folder, which Dez encodes into one clip; frameSequences.ts):
  *  the most frames, the most pixels of a side of a frame, and the frames a
@@ -214,13 +221,13 @@ const INVOKE_HELP = `Runs the code of an app on the user's computer, with the pa
   + 'A script app runs in a sandbox (Deno). '
   + `The run calls the default export of ${SCRIPT_MAIN} with two arguments, \`(parameters, dez)\`, and waits for its promise. `
   + 'The value that the function returns is the result of the job: a string as it is, JSON data as JSON, and any other value as Deno shows it. '
-  + 'What the code writes with `console.log` comes after it. `parameters` is the object of the call. `dez` has five members:\n'
+  + 'What the code writes with `console.log` comes after it. `parameters` is the object of the call. `dez` has six members:\n'
   + '- `dez.inputs`: one `{ id, kind, type, path }` for each id of `inputs`, in their order. `kind` is "image", "audio", or "video", `type` is the media type, '
   + 'and `path` is the path of a copy of the file. A change of the copy changes nothing of the image or the clip. '
   + 'When the run decodes its clips (`decode`), each clip also has the facts of its decoded files, `audio` and `frames`.\n'
   + '- `dez.outputFolder`: the path of an empty folder. After a run that ends with no error, Dez keeps each file directly in it as a new image or clip of the conversation, '
   + `and the result gives their ids. Dez keeps only a file of a type that it stores, which it reads from the first bytes of the file and not from its name ${STORED_TYPES}, `
-  + `at most ${APP_RUN_MAX_OUTPUT_FILES} files of one run, and at most ${byteSizeText(APP_RUN_MAX_OUTPUT_BYTES)} for one file. A run that fails keeps no file. `
+  + `at most ${APP_RUN_MAX_OUTPUT_FILES} files of one run, and at most ${byteSizeText(APP_RUN_MAX_OUTPUT_BYTES)} for one file. A run that fails keeps no file of this folder. `
   + 'A folder `<name>.frames` directly in the output folder is a frame sequence: after the run, Dez encodes it into one clip, which counts as one file. '
   + 'It holds the frames from 0 with no gap, all PNG files (000000.png, 000001.png, and so on) or all raw RGBA (000000.rgba, and so on: 4 bytes for each pixel, row after row), '
   + `and frames.json, as in ${FRAMES_JSON_EXAMPLE}: "fps" from ${FRAMES_MIN_FPS} to ${FRAMES_MAX_FPS}, `
@@ -233,6 +240,15 @@ const INVOKE_HELP = `Runs the code of an app on the user's computer, with the pa
   + 'keep the state of an app in a file of this folder.\n'
   + `- \`dez.workFolder\`: the path of the work folder of this conversation, which the file subcommands name ${WORK_VIRTUAL_ROOT}/. Its files stay for the next run and for the other tools.\n`
   + '- `dez.fonts`: the fonts that Dez ships, one `{ file, family, weight, scripts, path }` for each font file.\n'
+  + '- `dez.sbp`: calls a Dez tool, as `await dez.sbp("dez.tools/<tool>", { …arguments })`, or `await dez.sbp("dez.tools/<tool>/<subcommand>", { …parameters })` for a subcommand, '
+  + 'as in `await dez.sbp("dez.tools/image/flip", { image: dez.inputs[0].id, direction: "horizontal" })`. '
+  + 'A call gives the result text of the tool, and it throws an error with that text when the tool gives an error. '
+  + `The calls run one at a time, at most ${APP_RUN_MAX_TOOL_CALLS} in one run. The code cannot call js_eval, apps invoke, or apps show. `
+  + 'An image or a clip that a call makes is an asset of the job, also when the code fails later: the result of the call names it by a handle, as in "Made the image @&1.", '
+  + 'and the result of the job gives the id of each handle. A later call of the run takes the handle in place of an id: as the whole value (`image: "&1"`), or as a mention in a text ("@&1"). '
+  + 'A job that a call starts is a job of the run: `jobs_wait` and `jobs_list` in the code see only these jobs, and you get the ones that are still open after the run. '
+  + 'Before a call that costs money, the code can ask `model_info` (with `only: "cost"` and the `parameters` of the request) for its price, '
+  + 'and `conversation_info` for what the conversation cost so far.\n'
   + 'The code can open only three places: the folder of its app, the run folder (the copies of the inputs and the output folder), which Dez deletes after the run, '
   + `and the work folder. It can also read the libraries of ${LIBS_VIRTUAL_ROOT}/ and the fonts of \`dez.fonts\`. `
   + 'Build each path from a path of `dez`, as in `${dez.outputFolder}/chart.png`: a relative path does not work. '
@@ -245,7 +261,8 @@ const INVOKE_HELP = `Runs the code of an app on the user's computer, with the pa
   + 'which draws each script that the fonts cover, as in ``ctx.font = `bold 48px ${families}` ``; a family of `dez.fonts` alone draws only its own scripts. '
   + 'Some file calls fail in the sandbox: a rename or a hard link from one folder to another (copy the file, then delete the old one), '
   + '`Deno.chmod`, `Deno.utime`, `Deno.symlink`, and `Deno.watchFs`. '
-  + 'The code calls no Dez tool (it has no `dez.sbp`): call the tools yourself, before or after the run. '
+  + 'In each text that the code gives a tool, Dez cuts a path of a file of the user\'s computer after its start, with the rest of its line: '
+  + 'name an image or a clip by its id or its handle, not by the path of its copy. '
   + 'The clock and the time zone are those of the user\'s computer. '
   + `An error names a line of the code by its path in the apps tool, as in ${APPS_VIRTUAL_ROOT}/${EXAMPLE_SCRIPT_APP}/${SCRIPT_MAIN_FILE}:12.\n\n`
   + INVOKE_UI_HELP

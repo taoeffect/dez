@@ -107,6 +107,13 @@ function scriptFiles(name: string): TemplateFile[] {
 /** What a run gives the code. Each path is absolute: build the path of a
  *  file from one of them. */
 interface Dez {
+  /** Calls a Dez tool: 'dez.tools/<tool>' with the arguments of the tool,
+   *  or 'dez.tools/<tool>/<subcommand>' with its parameters. Gives the
+   *  result text of the tool, or rejects with its error text. An image or
+   *  a clip that a call makes has a handle ('&1', '&2', …), which a later
+   *  call takes in place of an id. The help of apps invoke tells the
+   *  rules. */
+  sbp(selector: string, args?: object): Promise<string>
   /** A copy of each image and clip of the run, in the order of the call. */
   inputs: readonly { id: string, kind: 'image' | 'audio' | 'video', type: string, path: string }[]
   /** Dez keeps the images and the clips that the run writes into this

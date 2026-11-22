@@ -12,8 +12,10 @@
 // change.
 //
 // The code of an app (the default export of its `main.ts`) gets the
-// parameters of the run and its own `dez` object, with the input files and
-// the folders of the run (`appDez`).
+// parameters of the run and its own `dez` object, with the input files,
+// the folders of the run, and the same `dez.sbp` (`appDez`). The run of an
+// alias gets no input, so each of its calls ends with the error of a
+// closed input.
 //
 // The code of a model runs in this same program, so it can write any line
 // itself: the page (`JsEvalOutput`, `bridgedToolCall`) trusts no line, and
@@ -247,10 +249,11 @@ async function runCode() {
 // decoded files, `audio` and `frames`, when the run decodes its clips),
 // the folder for the files that the run gives back (`outputFolder`), the
 // folder of the app (`appFolder`), the work folder of the conversation
-// (`workFolder`), and the fonts that Dez ships (`fonts`, each with the path
-// of its file). It has no `sbp`: the code of an app calls no Dez tool.
+// (`workFolder`), the fonts that Dez ships (`fonts`, each with the path of
+// its file), and the calls of the Dez tools (`sbp`).
 function appDez({ inputs, outputFolder, appFolder, workFolder, fonts }) {
   return freeze({
+    sbp,
     inputs: freeze(inputs.map(frozenInput)),
     outputFolder,
     appFolder,

@@ -153,6 +153,11 @@ describe('jobResultText', () => {
     expect(jobResultText('', [{ kind: 'audio', id: null }]))
       .toBe('The reply stopped before Dez could add the audio clip of this job to it, so there is no new audio clip.')
   })
+
+  it('names the handle of an asset that a tool call of the code of a run made', () => {
+    expect(jobResultText('', [{ kind: 'image', id: 'c' }, { kind: 'image', id: 'd', handle: '&1' }, { kind: 'video', id: null, handle: '&2' }]))
+      .toBe('Made the image @c.\nMade the image @d (handle &1).\nThe reply stopped before Dez could add the video clip &2 of this job to it, so there is no new video clip.')
+  })
 })
 
 describe('jobOwnText', () => {
@@ -162,6 +167,13 @@ describe('jobOwnText', () => {
     expect(jobOwnText(jobResultText('Done.\nTwo lines.', assets))).toBe('Done.\nTwo lines.')
     expect(jobOwnText(jobResultText('', assets))).toBe('')
     expect(jobOwnText(jobResultText('A long answer.', []))).toBe('A long answer.')
+  })
+
+  it('takes off the lines of the assets with a handle too, and keeps a line of the text after them', () => {
+    const assets = [{ kind: 'image', id: 'd', handle: '&1' }, { kind: 'audio', id: null, handle: '&12' }] as const
+
+    expect(jobOwnText(jobResultText('Ran.', assets))).toBe('Ran.')
+    expect(jobOwnText('Made the image @d (handle &1).\nIt is blue.')).toBe('Made the image @d (handle &1).\nIt is blue.')
   })
 
   it('keeps a line of the text that only looks like the line of an asset', () => {

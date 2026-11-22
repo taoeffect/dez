@@ -273,27 +273,30 @@ export function madeAssetIds(resultText: string): string[] {
 }
 
 /** One asset of a job after Dez put it into the reply: `id` is its new id
- *  there, or null when the reply took no asset any more. */
+ *  there, or null when the reply took no asset any more. `handle` is the
+ *  name by which the code of the job's run of an app knew the asset, when
+ *  a tool call of that code made it (`&1`): the line maps it to the id. */
 export interface WrittenJobAsset {
   kind: JobAssetKind
   id: string | null
+  handle?: string
 }
 
-function assetLine({ kind, id }: WrittenJobAsset): string {
+function assetLine({ kind, id, handle }: WrittenJobAsset): string {
   return id === null
-    ? `The reply stopped before Dez could add the ${ASSET_NAMES[kind]} of this job to it, so there is no new ${ASSET_NAMES[kind]}.`
-    : `${madeAssetText(kind, id)}.`
+    ? `The reply stopped before Dez could add the ${ASSET_NAMES[kind]}${handle === undefined ? '' : ` ${handle}`} of this job to it, so there is no new ${ASSET_NAMES[kind]}.`
+    : `${madeAssetText(kind, id)}${handle === undefined ? '' : ` (handle ${handle})`}.`
 }
 
 /** The result text of a job for its reader: the job's own `text` as it is
  *  (an error text too), then one line for each asset. The lines name the
- *  assets by their ids only. */
+ *  assets by their ids only, and by their handles when they have one. */
 export function jobResultText(text: string, assets: readonly WrittenJobAsset[]): string {
   return [...(text.trim() === '' ? [] : [text]), ...assets.map(assetLine)].join('\n')
 }
 
-// One line of `assetLine`, of either form.
-const ASSET_LINE = new RegExp(`^(?:${MADE_ASSET_SOURCE}\\.|The reply stopped before Dez could add the (${ASSET_NAME_SOURCE}) of this job to it, so there is no new \\2\\.)$`)
+// One line of `assetLine`, of either form, with a handle or with none.
+const ASSET_LINE = new RegExp(`^(?:${MADE_ASSET_SOURCE}(?: \\(handle &\\d+\\))?\\.|The reply stopped before Dez could add the (${ASSET_NAME_SOURCE})(?: &\\d+)? of this job to it, so there is no new \\2\\.)$`)
 
 /** The job's own text of a `jobResultText`: the text without the lines of
  *  its assets. Blank when the job gave only assets. A last line of the

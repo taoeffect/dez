@@ -33,6 +33,9 @@ import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolC
 // - Dez keeps each image and clip that the code left in the output folder
 //   as a new asset of the conversation, in a stored file whose type follows
 //   its bytes and not its name, and keeps no other file;
+// - the code calls the Dez tools with `dez.sbp`: each image that a call
+//   makes has a handle (`&1`), which a later call of the code names, and
+//   the result of the job maps each handle to the id of its image;
 // - with `decode`, the real ffmpeg decodes each clip into the run folder
 //   first, and the code reads the samples and the pixels with dez-media;
 // - a built-in app runs from the bundle of the debug build, with the
@@ -136,6 +139,17 @@ const SHEET_MAIN = [
   '  await Deno.writeTextFile(`${dez.outputFolder}/notes.txt`, "no image and no clip")',
   '  for (const { path } of dez.inputs) await Deno.writeTextFile(path, "changed by the app")',
   '  return facts.join("\\n")',
+  '}',
+].join('\n')
+
+// The code of the `flipper` app: it flips its input image with the image
+// tool, then flips that new image by its handle, and returns the results
+// of the two calls.
+const FLIPPER_MAIN = [
+  'export default async function main(parameters, dez) {',
+  '  const first = await dez.sbp("dez.tools/image/flip", { image: dez.inputs[0].id, direction: "horizontal" })',
+  '  const second = await dez.sbp("dez.tools/image/flip", { image: "&1", direction: "vertical" })',
+  '  return `${first}\\n${second}`',
   '}',
 ].join('\n')
 
@@ -513,6 +527,38 @@ describe('apps invoke', () => {
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 
+  it('gives the code the Dez tools: an image that a call made has a handle, which a later call names, and the result of the job maps each handle to its id', async () => {
+    await seedApp(appsDir, { name: 'flipper', description: 'Flips an image twice.', kind: 'script' }, { 'main.ts': FLIPPER_MAIN })
+    await openDroppedFiles(setup, CALLER, linkedDir, 'apps-invoke-tools')
+    const before = await filesIn(imagesDir)
+    await submit(browser, ' Flip it twice.')
+
+    const run = await invoke(await chatRequest(), 'call_flip', { name: 'flipper', inputs: '@a' })
+    expect(run.result.status).toBe('finished')
+    // The code knows each new image only by its handle.
+    expect(run.result.text).toMatch(/^Made the image @&1 from @a\. The image @&1 is 90x20 pixels\.\nMade the image @&2 from @&1\. The image @&2 is 90x20 pixels\.\n\n/)
+    expect(run.result.text).toContain('Dez keeps the 2 assets that the tool calls of the code made: &1 (image), &2 (image).')
+    expect(run.result.text.endsWith('\nMade the image @d (handle &1).\nMade the image @e (handle &2).')).toBe(true)
+    await sendChatReply(run.next.reply, CALLER.modelName)
+
+    // Each image is in the reply under the image tool, with the mark of the
+    // job of the run.
+    const reply = await endedReply(browser)
+    const images = [...reply.slice(reply.lastIndexOf('</dez:tool>')).matchAll(/!\[id=(\w+)\|tool=image\|made-by=([^\]]+)\]\(([^)]+)\)/g)]
+      .map(([, id, madeBy, file]) => ({ id, madeBy, file }))
+    expect(images.map(({ id, madeBy }) => ({ id, madeBy }))).toStrictEqual([{ id: 'd', madeBy: run.jobId }, { id: 'e', madeBy: run.jobId }])
+    const made = (await filesIn(imagesDir)).filter((name) => !before.includes(name))
+    expect(images.map(({ file }) => file).sort()).toStrictEqual(made.map((name) => path.join(imagesDir, name)).sort())
+    // The second call flipped the image of the first one, not @a: a flip
+    // of the stripes from top to bottom keeps the blue stripe at the left.
+    for (const { file } of images) {
+      const { pixels } = await decodedImage(browser, pngDataUrl(fs.readFileSync(file)), [5])
+      expect(colorDistance(pixels[0], STRIPE_COLORS[2])).toBeLessThan(8)
+    }
+    await expectRunsEnded(setup)
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
   it('decodes each clip before the run, and the code reads the samples and the pixels with dez-media', async () => {
     await seedApp(appsDir, { name: 'decode', description: 'Reads decoded clips.', kind: 'script' }, { 'main.ts': DECODE_MAIN })
     const { home } = setup.app
@@ -734,7 +780,7 @@ describe('apps invoke', () => {
     const failed = await invoke(escapes.next, 'call_fail', { name: 'one', parameters: { fail: true } })
     expect(failed.result.status).toBe('failed')
     const [lead, error, where] = failed.result.text.split('\n')
-    expect(lead).toContain('The code of the app threw an error. Dez kept no file of the run.')
+    expect(lead).toContain('The code of the app threw an error. Dez kept no file of the output folder.')
     expect(error).toBe('Error: no luck in /apps/one')
     expect(where).toContain('file:///apps/one/main.ts:4:')
     expect(await filesIn(imagesDir)).toStrictEqual(before)

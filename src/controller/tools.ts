@@ -6,7 +6,7 @@ import { drawnMediaType, UnwritableImageTypeError, type DrawnImage, type ImageSi
 import { findAssetMentions } from '../model/chat/imageMentions'
 import type { MediaTagData } from '../model/chat/mediaTags'
 import { modelRefKey } from '../model/chat/modelRef'
-import type { ModelRef, Section, Tab } from '../model/chat/types'
+import type { ModelRef, Section } from '../model/chat/types'
 import type { ModelCache } from '../model/persistence/types'
 import type { KnownLimit } from '../model/providers/knownLimits'
 import { contextWindowOf } from '../model/providers/modelFamilies'
@@ -41,7 +41,7 @@ import { editAppFile, findAppFiles, grepAppFiles, initApp, listAppFolder, listAp
 import { assetInfoResult } from './assetInfo'
 import { assetViewResult } from './assetView'
 import { audioClipSeconds, cutAudioClip } from './audioTool'
-import { discardMadeAssets, writeJobAssets, type JobWork, type TabJobs } from './jobs'
+import { discardMadeAssets, writeJobAssets, type JobOptions, type JobWork, type ToolJobs } from './jobs'
 import { runJsEval } from './jsEval'
 import { invokeModel } from './modelInvoke'
 import { runFfmpegJob, runFfprobe, runJoinJob } from './videoTool'
@@ -63,10 +63,17 @@ export interface ToolRunContext {
    *  makes the call. Not the tab's active model, which the user can change
    *  while the reply runs. */
   model: ModelRef
-  /** The jobs of the tab (jobs.ts), which the reply holds while it runs.
-   *  A tool whose work can take long starts it as a job and returns
-   *  `jobStartedText` with the job's id. */
-  jobs: TabJobs
+  /** The sections where a tool finds the images and the clips that the
+   *  call names: those of the tab (none for a tab that is gone), and for a
+   *  call of the code of a run of an app, also the assets that the earlier
+   *  calls of that run made (controller/toolBridge.ts). */
+  sections(): readonly Section[]
+  /** The jobs that the caller sees (jobs.ts): for the model, the jobs of
+   *  the tab, which the reply holds while it runs; for the code of a run
+   *  of an app, the jobs that its own calls started. A tool whose work can
+   *  take long starts it as a job and returns `jobStartedText` with the
+   *  job's id. */
+  jobs: ToolJobs
   /** Writes the reference of a stored image that the tool made into the
    *  reply, with a new image id, and returns that id. The reference names
    *  the tool of the call, or `tool` (the `jobs_wait` runner writes what
@@ -118,8 +125,9 @@ export interface ToolRunContext {
    *  the section of the reply gets the blocks of a round only at the end
    *  of the round (`runToolRound`, stream.ts). */
   roundResults: readonly string[]
-  /** True for a call of the code of a `js_eval` run (toolBridge.ts): its
-   *  result goes to that code, and no request sends it to the model. */
+  /** True for a call of the code of a `js_eval` run or of a run of a
+   *  script app (toolBridge.ts): its result goes to that code, and no
+   *  request sends it to the model. */
   isBridged: boolean
 }
 
@@ -137,12 +145,6 @@ type ToolRunner<A = ToolArguments> = (args: A, signal: AbortSignal, context: Too
 // `isError`, is a result that is no error.
 function runnerResult(output: Awaited<ReturnType<ToolRunner>>): ToolRunResult {
   return typeof output === 'string' ? { content: output, isError: false } : { isError: false, ...output }
-}
-
-// The sections of the tab of a call, where a tool finds the images and
-// the clips that the call names; none for a tab that is gone.
-function callSections(context: ToolRunContext): Section[] {
-  return (sbp('dez.model/tab', context.tabId) as Tab | null)?.sections ?? []
 }
 
 // The model of a `model_info` call (the one that it names, else the reply's
@@ -177,7 +179,7 @@ function subcommandRunner<P extends SubcommandParameter>(tool: SubcommandTool<P>
 function aliasRunners(aliases: readonly AppAlias[]): Record<string, ToolRunner> {
   return Object.fromEntries(aliases.map((alias): [string, ToolRunner] => [
     alias.subcommand.name,
-    (args, signal, context) => runAliasCall(alias, args, callSections(context), context.conversationId, context, signal),
+    (args, signal, context) => runAliasCall(alias, args, context.sections(), context.conversationId, context, signal),
   ]))
 }
 
@@ -190,7 +192,7 @@ function aliasRunners(aliases: readonly AppAlias[]): Record<string, ToolRunner> 
 // call gets no hint: its result goes to code.
 function withEditHintWhenDue(runner: ToolRunner): ToolRunner {
   return async (args, signal, context) => {
-    const due = isEditCall(APPS_TOOL.name, args) && !context.isBridged && editHintIsDue(callSections(context), context.roundResults)
+    const due = isEditCall(APPS_TOOL.name, args) && !context.isBridged && editHintIsDue(context.sections(), context.roundResults)
     if (!due) return runner(args, signal, context)
     try {
       const result = runnerResult(await runner(args, signal, context))
@@ -203,13 +205,13 @@ function withEditHintWhenDue(runner: ToolRunner): ToolRunner {
 }
 
 // Starts `work` as a job of the reply for a call of `tool` (`options` as
-// for `TabJobs.start`), and gives the result of the call: the id and the
+// for `ToolJobs.start`), and gives the result of the call: the id and the
 // number of the job, then `inputsText`, which tells the inputs that go. The
 // job keeps the `@id` mentions of `inputsText` as its inputs, which a
 // compaction keeps while the job is open (`openJobInputs`). A call that a
 // stop or a new submit cut (`callSignal`, the signal of the call) starts
 // no job: the next reply takes the jobs, and this call has no reader.
-function startJob(context: ToolRunContext, callSignal: AbortSignal, tool: string, work: JobWork, options: Omit<Parameters<TabJobs['start']>[2], 'inputs' | 'signal'>, inputsText: string): string {
+function startJob(context: ToolRunContext, callSignal: AbortSignal, tool: string, work: JobWork, options: Omit<JobOptions, 'inputs' | 'signal'>, inputsText: string): string {
   const inputs = findAssetMentions(inputsText).map((mention) => mention.id)
   const job = context.jobs.start(tool, work, { ...options, inputs, signal: callSignal })
   return `${jobStartedText(job.id, job.number)}\n${inputsText}`
@@ -228,7 +230,7 @@ function startJob(context: ToolRunContext, callSignal: AbortSignal, tool: string
 function imageRunner(plan: ImagePlan): ToolRunner {
   return async (args, signal, context) => {
     const id = imageIdArgument(args)
-    const source = imageOf(callSections(context), id)
+    const source = imageOf(context.sections(), id)
 
     let file: File
     try {
@@ -385,7 +387,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   audio: subcommandRunner(AUDIO_TOOL, {
     async clip (args, signal, context) {
       const id = audioClipId(args)
-      const source = audioClipOf(callSections(context), id)
+      const source = audioClipOf(context.sections(), id)
       const request = audioCutRequest(args)
       if (!request) return audioLengthText(id, await audioClipSeconds(source, signal))
 
@@ -482,7 +484,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
       providers,
       modelParameters,
       providerSettings,
-      sections: callSections(context),
+      sections: context.sections(),
     })
     return startJob(context, callSignal, MODEL_INVOKE_TOOL.name, (signal, report, reportCost, keepAsset) => invokeModel(invocation, context.tabId, signal, report, reportCost, keepAsset, { toolsAllowed: false }), {
       timeoutMs: invocation.timeoutMs,
@@ -503,15 +505,15 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // measure clips; `title` makes a clip, which goes into the reply.
   video: subcommandRunner(VIDEO_TOOL, {
     async join_clips (args, callSignal, context) {
-      const call = joinClipsCall(args, callSections(context))
+      const call = joinClipsCall(args, context.sections())
       return startJob(context, callSignal, VIDEO_TOOL.name, (signal, report) => runJoinJob(call, signal, report), { timeoutMs: call.timeoutMs, hidesAssets: isIntermediate(args), label: videoCallLabel('join_clips', args) }, videoInputsText(call.inputs))
     },
     async ffmpeg (args, callSignal, context) {
-      const call = ffmpegCall(args, callSections(context))
+      const call = ffmpegCall(args, context.sections())
       return startJob(context, callSignal, VIDEO_TOOL.name, (signal, report) => runFfmpegJob(call, signal, report), { timeoutMs: call.timeoutMs, hidesAssets: isIntermediate(args), label: videoCallLabel('ffmpeg', args) }, videoInputsText(call.inputs, call.fonts, call.textFiles))
     },
     async ffprobe (args, signal, context) {
-      return runFfprobe(ffprobeCall(args, callSections(context)), signal)
+      return runFfprobe(ffprobeCall(args, context.sections()), signal)
     },
     ...aliasRunners(VIDEO_ALIASES),
   }),
@@ -522,14 +524,14 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // ffprobe run, and with checks, one ffmpeg run of at most the time limit
   // of a view, as asset_view has.
   async asset_info (args, signal, context) {
-    return assetInfoResult(args, callSections(context), signal)
+    return assetInfoResult(args, context.sections(), signal)
   },
   // The facts and the pictures of the images and the clips that the call
   // names (controller/assetView.ts). The call waits for them and starts no
   // job: the pictures must be there for the next request of the reply,
   // and a frame sheet or a wave is one short ffmpeg run.
   async asset_view (args, signal, context) {
-    return assetViewResult(args, callSections(context), signal, context)
+    return assetViewResult(args, context.sections(), signal, context)
   },
   // The numbers of the conversation of the call, for the model of the
   // reply (model/tools/conversationInfo.ts): the ones that the bottom bar
@@ -600,10 +602,12 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     mv: (args, signal, { conversationId }) => moveAppPaths(args, signal, conversationId),
     show: (args, _signal, context) => showApp(args, context),
     async invoke (args, callSignal, context) {
-      const call = await checkedAppRun(invokeCall(args, callSections(context)))
-      return startJob(context, callSignal, APPS_TOOL.name, (signal, report, _reportCost, keepAsset) => (call.kind === 'ui'
+      const call = await checkedAppRun(invokeCall(args, context.sections()))
+      // The code of a script app calls the Dez tools with the context of
+      // this call, and the jobs that its calls start are jobs of its job.
+      return startJob(context, callSignal, APPS_TOOL.name, (signal, report, _reportCost, keepAsset, jobs) => (call.kind === 'ui'
         ? runAppFrameJob(call, signal, report, keepAsset)
-        : runAppJob(call, { toolName: APPS_TOOL.name, texts: INVOKE_RUN_TEXTS }, context.conversationId, signal, report, keepAsset)), {
+        : runAppJob(call, { toolName: APPS_TOOL.name, texts: INVOKE_RUN_TEXTS }, context.conversationId, signal, report, keepAsset, { context, jobs })), {
         timeoutMs: call.timeoutMs,
         hidesAssets: isIntermediate(args),
         label: invokeLabel(args),

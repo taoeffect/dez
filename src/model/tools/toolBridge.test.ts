@@ -1,19 +1,39 @@
 import { describe, expect, it } from 'vitest'
+import { APP_RUN_MAX_TOOL_CALLS } from './appsTool'
 import { JS_EVAL_MAX_TOOL_CALLS } from './jsEval'
 import { TOOL_DEFINITIONS } from './registry'
 import { JOINED_RUN_FOLDER, JOINED_WORK_FOLDER, REAL_RUN_FOLDER, REAL_WORK_FOLDER, RUN_FOLDER_ID, RUN_FOLDERS } from './testing'
-import { bridgedToolCall, shownSelector, type BridgedCallCheck } from './toolBridge'
+import { APP_RUN_BRIDGE, bridgedToolCall, JS_EVAL_BRIDGE, shownSelector, withHandles, type BridgedCallCheck } from './toolBridge'
 
-// What the first call line of a run asks for.
+// What the first call line of a `js_eval` run asks for.
 function checked(selector: string, args?: unknown, number = 1): BridgedCallCheck {
-  return bridgedToolCall(args === undefined ? { selector } : { selector, arguments: args }, number, RUN_FOLDERS)
+  return bridgedToolCall(args === undefined ? { selector } : { selector, arguments: args }, number, RUN_FOLDERS, JS_EVAL_BRIDGE)
 }
 
 // The error text of a call line that Dez refuses.
 function refusal(selector: string, args?: unknown, number = 1): string {
-  const check = checked(selector, args, number)
+  return refusalOf(checked(selector, args, number), selector)
+}
+
+function refusalOf(check: BridgedCallCheck, selector: string): string {
   if (check.ok) throw new Error(`Dez did not refuse ${selector}`)
   return check.error
+}
+
+// What a call line of a run of an app asks for, after the earlier calls of
+// the run made the assets whose ids stand for the handles `handleIds`.
+function appChecked(selector: string, args: unknown, handleIds: readonly string[] = [], number = 1): BridgedCallCheck {
+  return bridgedToolCall({ selector, arguments: args }, number, RUN_FOLDERS, APP_RUN_BRIDGE, handleIds)
+}
+
+function appRefusal(selector: string, args: unknown, handleIds: readonly string[] = [], number = 1): string {
+  return refusalOf(appChecked(selector, args, handleIds, number), selector)
+}
+
+// The parameters of a call of a subcommand that Dez runs.
+function parametersOf(check: BridgedCallCheck): unknown {
+  if (!check.ok) throw new Error(`Dez refused the call: ${check.error}`)
+  return JSON.parse(String(check.call.arguments.parameters))
 }
 
 describe('bridgedToolCall', () => {
@@ -195,6 +215,62 @@ describe('bridgedToolCall', () => {
 
   it('tells back a name with line ends on one line', () => {
     expect(refusal('dez.tools/a\nb').split('\n')).toHaveLength(1)
+  })
+})
+
+describe('bridgedToolCall in a run of an app', () => {
+  it('refuses apps show, apps invoke, and js_eval, in both forms of a selector', () => {
+    for (const show of [appRefusal('dez.tools/apps/show', { name: 'notes' }), appRefusal('dez.tools/apps', { command: 'show', parameters: '{"name":"notes"}' })]) {
+      expect(show).toContain('cannot call apps show')
+    }
+    expect(appRefusal('dez.tools/apps/invoke', { name: 'notes' })).toContain('cannot call apps invoke')
+    expect(appRefusal('dez.tools/js_eval', { code: 'return 1' })).toContain('Code cannot call js_eval')
+    // The code of js_eval runs in a reply, so it can show an app.
+    expect(checked('dez.tools/apps/show', { name: 'notes' }).ok).toBe(true)
+  })
+
+  it(`runs the call ${APP_RUN_MAX_TOOL_CALLS} of a run, and refuses each one after it`, () => {
+    expect(appChecked('dez.tools/jobs_list', {}, [], APP_RUN_MAX_TOOL_CALLS).ok).toBe(true)
+    expect(appRefusal('dez.tools/jobs_list', {}, [], APP_RUN_MAX_TOOL_CALLS + 1)).toContain(`more than ${APP_RUN_MAX_TOOL_CALLS} tool calls`)
+  })
+
+  it('gives the tool the id of a handle that is a whole value, with or without its @', () => {
+    const ids = ['k', 'm']
+
+    expect(parametersOf(appChecked('dez.tools/image/flip', { image: '&2', direction: 'vertical' }, ids))).toStrictEqual({ image: 'm', direction: 'vertical' })
+    expect(parametersOf(appChecked('dez.tools/image/flip', { image: ' @&1 ', direction: 'vertical' }, ids))).toStrictEqual({ image: '@k', direction: 'vertical' })
+    // In the parameters text of the form of a call of the model too.
+    const call = appChecked('dez.tools/image', { command: 'flip', parameters: '{"image":"&1","direction":"vertical"}' }, ids)
+    expect(parametersOf(call)).toStrictEqual({ image: 'k', direction: 'vertical' })
+  })
+
+  it('gives the tool the id of each handle mention in a text, and keeps a & that is no handle mention', () => {
+    const check = appChecked('dez.tools/model_invoke', { model: 'p/m', prompt: 'Mix @&1 and @&2 with @a. Keep Tom&1, x@&1, @&1x, @&1-b, @&0, and &1.' }, ['k', 'm'])
+
+    expect(check).toStrictEqual({
+      ok: true,
+      call: { name: 'model_invoke', arguments: { model: 'p/m', prompt: 'Mix @k and @m with @a. Keep Tom&1, x@&1, @&1x, @&1-b, @&0, and &1.' } },
+    })
+  })
+
+  it('refuses a call that names a handle of no asset, and tells the handles of the run', () => {
+    const error = appRefusal('dez.tools/image/flip', { image: '&3', direction: 'vertical' }, ['k', 'm'])
+
+    expect(error).toContain('The call names &3')
+    expect(error).toContain('The handles of this run: &1 to &2.')
+    expect(appRefusal('dez.tools/model_invoke', { model: 'p/m', prompt: 'Look at @&1.' })).toContain('No tool call of this run made an image or a clip yet')
+  })
+
+  it('gives the code of js_eval a handle as it is: its calls make assets of the reply', () => {
+    expect(parametersOf(checked('dez.tools/image/flip', { image: '&1', direction: 'vertical' }))).toStrictEqual({ image: '&1', direction: 'vertical' })
+  })
+})
+
+describe('withHandles', () => {
+  it('names each asset of a handle by its handle, and keeps the other mentions', () => {
+    const handles = new Map([['k', '&1'], ['m', '&2']])
+
+    expect(withHandles('Made the image @k. The video clip @m goes over @a and @km.', handles)).toBe('Made the image @&1. The video clip @&2 goes over @a and @km.')
   })
 })
 

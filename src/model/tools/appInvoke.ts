@@ -30,7 +30,7 @@ import { assetIdWords } from './arguments'
 import { FRAMES_FOLDER_ENDING, isFramesFolderName, sequenceText, type FrameSequence } from './frameSequences'
 import { callDecode, DECODED_TOO_LARGE_TEXT, decodedInputFacts, decodeFailedText, type DecodedClip, type InputDecode } from './inputDecode'
 import { ASSET_NAMES, jobCallLabel, jobTimedOutText, jobTimeoutMs, type JobAssetKind } from './jobs'
-import { endedOutcome, failedOutcome, namesDenoFlag, returnedOutcome, runResultText, skiaCanvasRefused, textForModel, type JsEvalEndLine, type RunOutcome } from './jsEval'
+import { cutCallsParagraphs, endedOutcome, failedOutcome, namesDenoFlag, openJobLines, returnedOutcome, runResultText, skiaCanvasRefused, textForModel, type JsEvalEndLine, type RunOutcome } from './jsEval'
 import { clipInput, tellUserConsole, type ClipInput, type KeptFile, type ProgramEnd } from './programRuns'
 import { assetText, unknownAssetsText } from './toolInputs'
 import { ToolError, type SubcommandArguments, type ToolArguments } from './types'
@@ -48,8 +48,12 @@ import { SHIPPED_FONTS } from './videoFonts'
 // folder of the conversation of the call (conversationWork.ts). It reads
 // the libraries and the fonts that Dez ships (`dez.fonts`), and an app
 // whose manifest has `"native": ["skia-canvas"]` can also load the native
-// file of skia-canvas (`runNativeCanvas`). It has no network and no tool
-// bridge (`dez.sbp`).
+// file of skia-canvas (`runNativeCanvas`). It has no network. It calls the
+// Dez tools with `dez.sbp`, by the rules of `APP_RUN_BRIDGE`
+// (toolBridge.ts): the images and the clips that its calls make are
+// assets of the job, which the code knows by their handles (`&1`), and
+// the result of the job maps each handle to its id. A run of an alias
+// (appAliases.ts) gets no tool calls.
 //
 // A UI app: Dez loads the page of the app in a hidden frame, and calls the
 // handler that the page registered (`APP_INVOKE_HANDLER`) with the
@@ -457,6 +461,10 @@ const NATIVE_CANVAS_ADVICE = `${NATIVE_CANVAS_LIBRARY} loads a native file, whic
 
 const KEPT_NONE = 'Dez kept no file of the run.'
 
+// The same for a script app: the assets that the tool calls of its code
+// made stay (`AppRunCalls.made`).
+const KEPT_NO_OUTPUT = 'Dez kept no file of the output folder.'
+
 // The lead of a run whose code returned no value.
 const NO_VALUE = 'The app ended with no error and returned no value.'
 
@@ -471,12 +479,12 @@ export function appRunOutcome(end: Exclude<ProgramEnd, { kind: 'timedOut' }>, li
   if (line?.type === 'error') {
     return {
       isError: true,
-      lead: `The code of the app threw an error. ${KEPT_NONE} The error:`,
+      lead: `The code of the app threw an error. ${KEPT_NO_OUTPUT} The error:`,
       given: { text: line.text, name: 'text of the error' },
       advice: namesDenoFlag(line.text) ? [!nativeCanvas && skiaCanvasRefused(line.text) ? NATIVE_CANVAS_ADVICE : SANDBOX_ADVICE] : [],
     }
   }
-  return endedOutcome(end, 'app', hasConsole, KEPT_NONE)
+  return endedOutcome(end, 'app', hasConsole, KEPT_NO_OUTPUT)
 }
 
 /** One entry of the output folder that Dez checks: a file, or the folder
@@ -608,18 +616,49 @@ function outputParagraphs({ kept, notKept }: AppOutputs): string[] {
   return sentences.length === 0 ? [] : [sentences.join(' ')]
 }
 
+/** What the tool calls of the code of a run of a script app (`dez.sbp`)
+ *  left (controller/toolBridge.ts), for the result of the run. */
+export interface AppRunCalls {
+  /** The images and the clips that the calls made, which the job keeps
+   *  also when the run fails, each by its handle, in the order of the
+   *  handles. Their lines come after the ones of the output folder. */
+  made: readonly { kind: JobAssetKind, handle: string }[]
+  /** The jobs that the calls started and that are still open, each with
+   *  its number (`JobCall.number`). */
+  jobs: readonly { id: string, number: number }[]
+  /** How many calls had no answer when the run ended. */
+  unanswered: number
+}
+
+/** The calls of a run whose code made none. */
+export const NO_APP_RUN_CALLS: AppRunCalls = { made: [], jobs: [], unanswered: 0 }
+
+// What a result tells of the tool calls `calls` of the code, as its
+// paragraphs, for a result whose given text is `given`.
+function callParagraphs({ made, jobs, unanswered }: AppRunCalls, given: string): string[] {
+  const names = made.map(({ kind, handle }) => `${handle} (${ASSET_NAMES[kind]})`).join(', ')
+  const jobLines = openJobLines(jobs, given)
+  return [
+    ...(made.length === 0 ? [] : [made.length === 1
+      ? `Dez keeps the asset that a tool call of the code made: ${names}. Its line at the end gives its id, with its handle.`
+      : `Dez keeps the ${made.length} assets that the tool calls of the code made: ${names}. Their lines at the end give their ids, each with its handle.`]),
+    ...(jobLines.length === 0 ? [] : [`From the tool calls of the code:\n${jobLines.join('\n')}`]),
+    ...cutCallsParagraphs(unanswered),
+  ]
+}
+
 /** The result of a run of an app with the outcome `outcome`
  *  (`appRunOutcome`) and the console output `log`: what the code returned
- *  or threw, what Dez did with the files of the output folder, then the
- *  console output. A run whose outputs have a problem is an error result,
- *  which still gives the value. `forModel` takes the paths of this
- *  computer out of a text of the run (`textForModel`, jsEval.ts, with the
- *  folders of the run). */
-export function appRunResult(outcome: RunOutcome, log: string, forModel: (text: string) => string, outputs: AppOutputs): { text: string, isError: boolean } {
+ *  or threw, what Dez did with the files of the output folder, what the
+ *  tool calls of the code left (`calls`), then the console output. A run
+ *  whose outputs have a problem is an error result, which still gives the
+ *  value. `forModel` takes the paths of this computer out of a text of the
+ *  run (`textForModel`, jsEval.ts, with the folders of the run). */
+export function appRunResult(outcome: RunOutcome, log: string, forModel: (text: string) => string, outputs: AppOutputs, calls: AppRunCalls): { text: string, isError: boolean } {
   const told: RunOutcome = outputs.problem === null
     ? outcome
     : { ...outcome, isError: true, lead: `${outputs.problem} ${outcome.lead ?? 'The app returned:'}` }
-  return { text: runResultText(told, log, forModel, () => outputParagraphs(outputs)), isError: told.isError }
+  return { text: runResultText(told, log, forModel, (given) => [...outputParagraphs(outputs), ...callParagraphs(calls, given)]), isError: told.isError }
 }
 
 /** The error result of a run whose files Dez could not get out of the

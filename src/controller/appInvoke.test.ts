@@ -1,5 +1,6 @@
 import sbp from '@sbp/sbp'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
+import type { DrawnImage, DrawnMediaType, ImageDrawing, ImageSize } from '../model/chat/imageDrawing'
 import type { Section } from '../model/chat/types'
 import { user } from '../model/streams/testing'
 import { ALIAS_TIMEOUT_MS, aliasRunTexts, AUDIO_ALIASES, VIDEO_ALIASES, type AppAlias } from '../model/tools/appAliases'
@@ -27,6 +28,7 @@ import {
   builtInAppFiles,
   CACHE_DIR,
   callContext,
+  callingProgram,
   CONVERSATION_WORK_FOLDER,
   deletedWorkFolder,
   ENDED,
@@ -76,6 +78,14 @@ let frameRuns: AppFrameRun[] = []
 let page: (run: AppFrameRun) => Promise<AppFrameEnd>
 // The paths of the images that Dez read for a page.
 let readImages: string[] = []
+// How many images the image tool of a tool call of the code made.
+let drawnImages = 0
+
+// The path of the `n`th image that the image tool made.
+const drawnImage = (n: number) => `${APP_DIR}/assets/generated/images/drawn-${n}.png`
+
+// The tool call of the code that flips the image @a.
+const FLIP_A = { selector: 'dez.tools/image/flip', arguments: { image: 'a', direction: 'horizontal' } }
 
 sbp('sbp/selectors/register', {
   'dez.model/tab' (): { sections: Section[] } {
@@ -99,6 +109,16 @@ sbp('sbp/selectors/register', {
   'dez.ui/runAppFrame' (run: AppFrameRun): Promise<AppFrameEnd> {
     frameRuns.push(run)
     return page(run)
+  },
+  // The image tool of a tool call of the code: every image is 100 by 50
+  // pixels, and each image that it draws is a new file.
+  async 'dez.controller/images/redraw' (_file: Blob, plan: (size: ImageSize) => ImageDrawing | null, mediaType: DrawnMediaType): Promise<DrawnImage | null> {
+    const drawing = plan({ width: 100, height: 50 })
+    return drawing && { bytes: PNG_BYTES, mediaType: drawing.mediaType ?? mediaType, width: drawing.width, height: drawing.height }
+  },
+  async 'dez.controller/images/save' (): Promise<string> {
+    drawnImages += 1
+    return drawnImage(drawnImages)
   },
 })
 
@@ -219,6 +239,7 @@ beforeEach(() => {
   outputListings = 0
   frameRuns = []
   readImages = []
+  drawnImages = 0
   page = async () => returned()
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
   outputFolderHolds({})
@@ -746,6 +767,88 @@ describe('runAppJob', () => {
     expect(native.runs).toStrictEqual([])
   })
 
+  // The tool calls of the code (`AppRunBridge`), on the real runners of the
+  // tools: the image tool, on the stubs of the images.
+  describe('with the tool calls of the code', () => {
+    let jobs: TabJobs
+
+    beforeEach(() => {
+      jobs = new TabJobs()
+    })
+
+    afterEach(() => jobs.stopAll())
+
+    function runToolJob(signal: AbortSignal = running()) {
+      const tools = { context: callContext({ jobs, sections: () => CONVERSATION }), jobs }
+      return runAppJob(invoke(), { toolName: 'apps', texts: INVOKE_RUN_TEXTS }, CONVERSATION_ID, signal, (state) => states.push(state), (asset) => keptAssets.push(asset), tools)
+    }
+
+    // The answers to the calls of the code, as the program got them.
+    const answers = () => native.inputWrites.map(({ text }) => JSON.parse(text) as { id: number, text: string, isError: boolean })
+
+    it('keeps the assets of the calls after the files of the output folder, with their handles, and the program gets the answers on its input', async () => {
+      native.program = callingProgram([FLIP_A, { selector: 'dez.tools/image/flip', arguments: { image: '&1', direction: 'vertical' } }], { type: 'result', text: 'flipped' })
+      outputFolderHolds({ 'sheet.png': PNG_BYTES })
+
+      const outcome = await runToolJob()
+
+      expect(native.runs[0].run.stdin).toBe(true)
+      // The code knows each new image by its handle, not by an id.
+      expect(answers().map(({ text, isError }) => [[...new Set(text.match(/@&?\w+/g))].sort(), isError]))
+        .toStrictEqual([[['@&1', '@a'], false], [['@&1', '@&2'], false]])
+      expect(readImages).toStrictEqual([RED, drawnImage(1)])
+      const made = [
+        { kind: 'image', path: drawnImage(1), tool: 'image', handle: '&1' },
+        { kind: 'image', path: drawnImage(2), tool: 'image', handle: '&2' },
+      ]
+      expect(outcome.assets).toStrictEqual([{ kind: 'image', path: `${APP_DIR}/${stored()[0].path}` }, ...made])
+      expect(keptAssets).toStrictEqual(expect.arrayContaining(made))
+      expect(outcome.text).toContain('Dez keeps the 2 assets that the tool calls of the code made: &1 (image), &2 (image).')
+    })
+
+    it('keeps the assets of the calls of code that failed', async () => {
+      native.program = callingProgram([FLIP_A], { type: 'error', text: 'Error: no rows' })
+
+      const outcome = await runToolJob()
+
+      expect(outcome.isError).toBe(true)
+      expect(outcome.assets).toStrictEqual([{ kind: 'image', path: drawnImage(1), tool: 'image', handle: '&1' }])
+      expect(outcome.text).toContain('Dez keeps the asset that a tool call of the code made: &1 (image).')
+      expect(deletedImages).toStrictEqual([])
+    })
+
+    it('deletes the assets of the calls of a run that timed out', async () => {
+      const calls = callingProgram([FLIP_A])
+      native.program = async (run, onOutput) => {
+        await calls(run, onOutput)
+        return { kind: 'timedOut' }
+      }
+
+      const outcome = await runToolJob()
+
+      expect(outcome).toStrictEqual({ text: jobTimedOutText(invoke().timeoutMs, APP_RUNS_STATE), isError: true, assets: [] })
+      expect(deletedImages).toStrictEqual([drawnImage(1)])
+    })
+
+    it('deletes the assets of the calls at a stop of the job, and rejects with the stop', async () => {
+      const stop = new AbortController()
+      let end: ((end: BundledToolEnd) => void) | undefined
+      const calls = callingProgram([FLIP_A])
+      native.program = async (run, onOutput) => {
+        await calls(run, onOutput)
+        return await new Promise((resolve) => { end = resolve })
+      }
+
+      const work = failureOf(runToolJob(stop.signal))
+      await vi.waitFor(() => expect(end).toBeDefined())
+      stop.abort(STOP)
+      end?.({ kind: 'cancelled' })
+
+      expect(await work).toBe(STOP)
+      expect(deletedImages).toStrictEqual([drawnImage(1)])
+    })
+  })
+
   describe('with a decode', () => {
     const DECODE = { audio: { rate: 8000 }, frames: { width: 12, height: 9 } }
     // The probe output of each clip by the name of its copy: @b has only
@@ -1121,6 +1224,23 @@ describe('apps invoke', () => {
     await tool('jobs_wait', {})
 
     expect(written).toStrictEqual([{ path: `${APP_DIR}/${stored()[0].path}`, tool: 'apps', madeBy: id, hidden: id }])
+  })
+
+  it('runs the tool calls of the code with the jobs of its job, and jobs_wait puts their assets into the reply with their tools and handles', async () => {
+    native.program = callingProgram([FLIP_A, 'dez.tools/jobs_list'])
+    fakeAppFiles(appFiles('notes', { 'main.ts': MAIN }))
+    newIds = ['k']
+
+    await invokeTool({})
+    const [job] = jobs.list()
+    const result = (await tool('jobs_wait', {})).content
+
+    // The code sees no job that it did not start: not the job of its run.
+    const listed = JSON.parse(native.inputWrites[1].text) as { text: string }
+    expect(listed.text).not.toContain(job.id)
+    expect(result).toContain('Dez keeps the asset that a tool call of the code made: &1 (image).')
+    expect(result).toContain('Made the image @k (handle &1).')
+    expect(written).toStrictEqual([{ path: drawnImage(1), tool: 'image', madeBy: job.id }])
   })
 
   it('runs the page of a UI app in a frame with no program, and puts the files that it saved into the reply', async () => {

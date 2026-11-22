@@ -10,7 +10,7 @@ import { UNUSED_FILE_MIN_AGE_MS } from '../../model/chat/unusedFiles'
 import { CHAT_IMAGE_SIDE } from '../../model/providers/imageSize'
 import { APP_RUN_FRAME_SIZE } from '../../model/tools/appBridge'
 import { MANIFEST_FILE } from '../../model/tools/appManifest'
-import { APP_RUN_DEFAULT_SECONDS, APP_RUN_MAX_OUTPUT_BYTES, APP_RUN_MAX_OUTPUT_FILES, APPS_MAX_BYTES, APPS_MAX_ENTRIES, APPS_ROOT, APPS_VIRTUAL_ROOT } from '../../model/tools/appsTool'
+import { APP_RUN_DEFAULT_SECONDS, APP_RUN_MAX_OUTPUT_BYTES, APP_RUN_MAX_OUTPUT_FILES, APP_RUN_MAX_TOOL_CALLS, APPS_MAX_BYTES, APPS_MAX_ENTRIES, APPS_ROOT, APPS_VIRTUAL_ROOT } from '../../model/tools/appsTool'
 import { SCRIPT_MAIN_FILE, UI_INDEX_FILE } from '../../model/tools/appTemplates'
 import { JS_EVAL_DEFAULT_SECONDS, JS_EVAL_MAX_SECONDS, JS_EVAL_MAX_TOOL_CALLS, JS_EVAL_OUTPUT_BYTES } from '../../model/tools/jsEval'
 import { WORK_FOLDER_LIFETIME_MS, WORK_ROOT } from '../../model/tools/workFolders'
@@ -62,6 +62,7 @@ const APP_LIMITS = {
   savedFiles: APP_RUN_MAX_OUTPUT_FILES,
   savedFileSize: byteSizeText(APP_RUN_MAX_OUTPUT_BYTES),
   runMinutes: APP_RUN_DEFAULT_SECONDS / MINUTE_SECONDS,
+  toolCalls: APP_RUN_MAX_TOOL_CALLS,
   unusedMinutes: UNUSED_FILE_MIN_AGE_MS / (MINUTE_SECONDS * 1000),
 }
 const CODE_LIMITS = {
@@ -637,8 +638,15 @@ function onOverlayClick(event: MouseEvent) {
               files that the app made. Dez keeps at most {{ APP_LIMITS.savedFiles }} files of one
               run, each of at most {{ APP_LIMITS.savedFileSize }}. It reads the type of each file
               from its first bytes, and stores a copy of each image and clip as an asset of the
-              conversation. A run that fails keeps no file. Dez stops a run after
+              conversation. A run that fails keeps none of these files. Dez stops a run after
               {{ APP_LIMITS.runMinutes }} minutes, unless the model sets another time limit.
+            </p>
+            <p>
+              The code of a script app can also call the Dez tools, as the code of
+              <code>js_eval</code> does (but not <code>js_eval</code>, <code>apps invoke</code>, or
+              <code>apps show</code>), at most {{ APP_LIMITS.toolCalls }} times in one run. An image
+              or a clip that such a call makes is a part of the result of the job, also when the
+              code fails after the call. When Dez stops the run, it keeps none of them.
             </p>
 
             <h3>The sandbox</h3>
