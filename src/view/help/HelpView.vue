@@ -359,7 +359,7 @@ function onOverlayClick(event: MouseEvent) {
               When a chat model asks a transcription model for the text of a clip, Dez also asks for
               the time of each word. When the transcription model gives times, Dez writes them with
               the text into a file of the work folder of the conversation (see below), named after
-              the clip and the model.
+              the clip, the provider, and the model.
             </p>
             <p>
               A chat model can also look at any asset of the conversation itself, with the Dez tool

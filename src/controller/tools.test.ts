@@ -1352,7 +1352,7 @@ describe('dez.controller/tools/run', () => {
           words: [{ word: 'Hello', start: 0.12, end: 0.4 }, { word: 'there.', start: 0.5, end: 0.9 }],
           segments: [{ text: 'Hello there.', start: 0.12, end: 0.9 }],
         }
-        const FILE = `${CONVERSATION_WORK_FOLDER}/transcript-c-scribe.json`
+        const FILE = `${CONVERSATION_WORK_FOLDER}/transcript-c-venice-scribe.json`
 
         beforeEach(() => {
           generateMedia = async () => ({ media: [], clips: [], text: ' Hello there. ', times: TIMES })
@@ -1366,7 +1366,7 @@ describe('dez.controller/tools/run', () => {
           const result = await jobResult()
           expect(result).toContain('status="finished"')
           expect(result).toContain('the times of 2 words and 1 segment, from 0.12 s to 0.9 s of @c')
-          expect(result).toContain('/work/transcript-c-scribe.json')
+          expect(result).toContain('/work/transcript-c-venice-scribe.json')
           expect(result).toContain('Hello there.')
           expect(native.createdFolders).toStrictEqual([{ root: 'app', path: CONVERSATION_WORK_FOLDER }])
           expect(native.savedFiles.map(({ file }) => file)).toStrictEqual([{ root: 'app', path: FILE }])
@@ -1386,7 +1386,7 @@ describe('dez.controller/tools/run', () => {
           expect(result).toContain('status="finished"')
           expect(result).toContain('Dez could not write them into /work.')
           expect(result).toContain('Hello there.')
-          expect(result).not.toContain('transcript-c-scribe.json')
+          expect(result).not.toContain('transcript-c-venice-scribe.json')
           expect(consoleError).toHaveBeenCalledOnce()
         })
 

@@ -3,7 +3,7 @@ import { startOf } from '../../utils/textCut'
 import { sectionPlainText } from '../chat/content'
 import { newMediaIds } from '../chat/mediaIds'
 import { modelRefKey } from '../chat/modelRef'
-import type { Section } from '../chat/types'
+import type { ModelRef, Section } from '../chat/types'
 import { effectiveOutputs } from '../modelOutputs'
 import type { ModelCache } from '../persistence/types'
 import { unusedImagesProblem } from '../providers/clipImages'
@@ -340,15 +340,18 @@ export function invocationTextResult(text: string): string {
 }
 
 /** The name of the file in the work folder of the conversation that holds
- *  the times of a transcription of the clip `clipId` by the model
- *  `modelId`. Each model gets its own file, so two models that write down
- *  one clip at one time do not write over each other; a later call of the
- *  same model on the same clip does. The model part has only the
- *  characters of a file name of an app path (`is_app_file_segment`,
- *  src-tauri/src/persistence.rs). */
-export function transcriptTimesFileName(clipId: string, modelId: string): string {
-  const model = modelId.slice(modelId.lastIndexOf('/') + 1).toLowerCase().replace(/[^a-z0-9._-]/g, '-').slice(0, 64)
-  return `transcript-${clipId}-${model}.json`
+ *  the times of a transcription of the clip `clipId` by the model `modelId`
+ *  of the provider `providerId`. Each model of each provider gets its own
+ *  file, so two models that write down one clip at one time do not write
+ *  over each other; a later call of the same model on the same clip does.
+ *  The name holds the provider id and the whole model id: two providers can
+ *  serve one model id, and one provider can serve two models whose ids end
+ *  alike (`openai/whisper-large-v3`, `groq/whisper-large-v3`). Each part has
+ *  only the characters of a file name of an app path
+ *  (`is_app_file_segment`, src-tauri/src/persistence.rs). */
+export function transcriptTimesFileName(clipId: string, { providerId, modelId }: ModelRef): string {
+  const part = (text: string) => text.toLowerCase().replace(/[^a-z0-9._-]/g, '-')
+  return `transcript-${clipId}-${part(providerId)}-${part(modelId).slice(0, 64)}.json`
 }
 
 /** The text of the times file of a transcription: each field on its own

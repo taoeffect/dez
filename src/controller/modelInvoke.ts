@@ -89,12 +89,13 @@ async function timesResultText({ provider, model, request }: MediaInvocation, co
   if (clipId === undefined) return invocationTextResult(text)
   const folder = conversationWorkFolder(conversationId)
   if (folder === null) return invocationTimesResult(text, clipId, times, { problem: 'noWorkFolder' })
-  const name = transcriptTimesFileName(clipId, model.id)
+  const modelRef = { providerId: provider.id, modelId: model.id }
+  const name = transcriptTimesFileName(clipId, modelRef)
   try {
     // Only the user can open the folder; a save makes a missing folder with
     // the default mode.
     await sbp('dez.native/createFolder', folder, 'app')
-    await sbp('dez.native/saveAppFile', `${folder}/${name}`, transcriptTimesJson({ clipId, model: modelRefKey({ providerId: provider.id, modelId: model.id }), text, times }), 'app')
+    await sbp('dez.native/saveAppFile', `${folder}/${name}`, transcriptTimesJson({ clipId, model: modelRefKey(modelRef), text, times }), 'app')
   } catch (error) {
     console.error('Failed to write the times of a transcription into the work folder of its conversation:', error)
     return invocationTimesResult(text, clipId, times, { problem: 'notWritten' })

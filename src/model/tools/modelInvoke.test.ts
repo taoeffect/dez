@@ -348,11 +348,14 @@ describe('the texts of a call', () => {
     expect(invocationTextResult(' \n')).toContain('no text')
   })
 
-  // Two models can write down one clip at one time.
-  it('names the times file of a transcription by the clip and the model, with only the characters of a file name', () => {
-    expect(transcriptTimesFileName('c', 'elevenlabs/scribe-v2')).toBe('transcript-c-scribe-v2.json')
-    expect(transcriptTimesFileName('c', 'openai/whisper-large-v3')).toBe('transcript-c-whisper-large-v3.json')
-    expect(transcriptTimesFileName('ab', 'Whisper Large:v3+')).toBe('transcript-ab-whisper-large-v3-.json')
+  // Two models can write down one clip at one time, also two providers of
+  // one model id, and two models of one provider whose ids end alike.
+  it('names the times file of a transcription by the clip, the provider, and the whole model id, with only the characters of a file name', () => {
+    expect(transcriptTimesFileName('c', { providerId: 'venice', modelId: 'elevenlabs/scribe-v2' })).toBe('transcript-c-venice-elevenlabs-scribe-v2.json')
+    expect(transcriptTimesFileName('c', { providerId: 'venice', modelId: 'openai/whisper-large-v3' })).toBe('transcript-c-venice-openai-whisper-large-v3.json')
+    expect(transcriptTimesFileName('c', { providerId: 'my_groq', modelId: 'openai/whisper-large-v3' })).toBe('transcript-c-my_groq-openai-whisper-large-v3.json')
+    expect(transcriptTimesFileName('c', { providerId: 'venice', modelId: 'groq/whisper-large-v3' })).toBe('transcript-c-venice-groq-whisper-large-v3.json')
+    expect(transcriptTimesFileName('ab', { providerId: 'Local-1', modelId: 'Whisper Large:v3+' })).toBe('transcript-ab-local-1-whisper-large-v3-.json')
   })
 
   it('tells why the times are not in a file, and still gives the text', () => {
