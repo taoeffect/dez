@@ -23,6 +23,9 @@ export const ANCHOR_RATE = 8000
 
 const BEAT_NFFT = 2048
 const BEAT_HOP = 256
+// The tempos that `tempo` can find lie between these two, in BPM.
+const MIN_BPM = 70
+const MAX_BPM = 190
 // The kick drum is under this frequency: its strength finds the downbeat.
 const KICK_HZ = 150
 const LOUDNESS_STEP = 0.5
@@ -75,8 +78,8 @@ export function tempo(env, fps) {
   /** @param {number} lag */
   const bpmOf = (lag) => (60 * fps) / Math.max(lag, 1)
   /** @param {number} lag */
-  const valid = (lag) => bpmOf(lag) > 70 && bpmOf(lag) < 190
-  // Only the lags of 70 to 190 BPM can win, so only they get the
+  const valid = (lag) => bpmOf(lag) > MIN_BPM && bpmOf(lag) < MAX_BPM
+  // Only the lags from MIN_BPM to MAX_BPM can win, so only they get the
   // autocorrelation: each other lag has a score of 0.
   /** @param {number} lag */
   const score = (lag) => {
@@ -96,7 +99,7 @@ export function tempo(env, fps) {
       lag = l
     }
   }
-  if (lag < 0) throw new RangeError('tempo: no beat from 70 to 190 BPM. Is the clip music with a beat, and longer than a second?')
+  if (lag < 0) throw new RangeError(`tempo: no beat from ${MIN_BPM} to ${MAX_BPM} BPM. Is the clip music with a beat, and longer than a second?`)
   if (lag + 1 >= n) throw new RangeError('tempo: the envelope is too short for its tempo. Measure a longer part of the song.')
   const a = score(lag - 1)
   const c = score(lag + 1)
@@ -168,8 +171,18 @@ export function trackBeats(env, period, tightness = 100) {
  */
 export function beatGrid(samples, rate = BEAT_RATE) {
   const fps = rate / BEAT_HOP
+  // The shortest lag that tempo takes is the whole frames of one beat at
+  // MAX_BPM, plus one (its tempo must be under MAX_BPM). Its score needs two
+  // frames more: frame 0 of the envelope has no flux, and tempo needs
+  // `lag + 1 < n`. So a shorter song always fails in tempo.
+  const fewestFrames = Math.floor((60 * fps) / MAX_BPM) + 3
+  const fewestSamples = (fewestFrames - 1) * BEAT_HOP + BEAT_NFFT
+  if (samples.length < fewestSamples) {
+    // Rounded up, so that a song of the length in the text is long enough.
+    const seconds = Math.ceil((fewestSamples * 100) / rate) / 100
+    throw new RangeError(`beatGrid: the song is too short. It needs at least ${seconds.toFixed(2)} s.`)
+  }
   const spectrogram = stft(samples, { nfft: BEAT_NFFT, hop: BEAT_HOP })
-  if (spectrogram.frames < 2) throw new RangeError(`beatGrid: the song is too short. It needs at least ${(BEAT_NFFT + BEAT_HOP) / rate} s.`)
   const env = onsetEnvelope(spectrogram)
   const low = onsetEnvelope(spectrogram, 0, Math.trunc(KICK_HZ / (rate / BEAT_NFFT)))
   const { bpm, period } = tempo(env, fps)

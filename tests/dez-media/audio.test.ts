@@ -57,6 +57,15 @@ describe('dez-media beatGrid against beats.py with NumPy', () => {
   it('has no beat in silence, and says so', () => {
     expect(() => beatGrid(new Float32Array(BEAT_RATE * 5))).toThrow(/no beat/)
   })
+
+  // tempo needs the lag of one beat at 190 BPM (28 frames) and two frames
+  // more, so the shortest song is 30 frames: 9472 samples, 0.4296 s.
+  it('refuses a song that is too short for tempo, with its least length rounded up', () => {
+    expect(() => beatGrid(samples.subarray(0, 9471))).toThrow('beatGrid: the song is too short. It needs at least 0.43 s.')
+    const { bpm } = beatGrid(samples.subarray(0, 9472))
+    expect(bpm).toBeGreaterThan(70)
+    expect(bpm).toBeLessThan(190)
+  })
 })
 
 describe('dez-media onsets against sfx_anchor with NumPy', () => {
