@@ -23,7 +23,7 @@
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import { align, f32Samples, resultJson, roundTo, workFile } from 'dez-media'
+import { align, checkParameterNames, decodedSound, f32Samples, numberParameter, resultFile, resultJson, roundTo } from 'dez-media'
 
 const APP = 'dez-align'
 const PARAMETERS = ['max_lag', 'save_to']
@@ -45,33 +45,6 @@ interface Dez {
   workFolder: string
 }
 
-// Throws for a parameter that this app does not take: with a misspelled
-// name, the run would else go on with the default value.
-function checkParameterNames(parameters: Record<string, unknown>): void {
-  const unknown = Object.keys(parameters).filter((name) => !PARAMETERS.includes(name))
-  if (unknown.length === 0) return
-  const names = (list: readonly string[]) => list.map((name) => JSON.stringify(name)).join(', ')
-  throw new RangeError(`${APP} does not take the parameter ${names(unknown)}. It takes only ${names(PARAMETERS)}.`)
-}
-
-// The `max_lag` of the run, in seconds.
-function maxLagParameter(parameters: Record<string, unknown>): number {
-  const maxLag = parameters.max_lag
-  if (maxLag === undefined) return 6
-  if (typeof maxLag !== 'number' || !(maxLag >= 0) || !Number.isFinite(maxLag)) throw new RangeError(`max_lag must be a number of seconds, 0 or more, such as 6, not ${JSON.stringify(maxLag)}.`)
-  return maxLag
-}
-
-// The samples of the decoded sound of `input`.
-async function sound(input: Dez['inputs'][number]): Promise<{ samples: Float32Array, rate: number }> {
-  if (input.kind === 'image') throw new RangeError(`@${input.id} is an image, and ${APP} takes only clips with sound.`)
-  if (input.audio === undefined) {
-    throw new RangeError(`The run has no decoded sound of @${input.id}: the \`decode\` of the call asked for none. Call ${APP} without \`decode\`.`)
-  }
-  if (input.audio === null) throw new RangeError(`@${input.id} has no sound, and ${APP} takes only clips with sound.`)
-  return { samples: f32Samples(await readFile(input.audio.path)), rate: input.audio.rate }
-}
-
 // What the confidence of a match tells, for the text.
 function confidenceText(confidence: number, clip: string, within: string, maxLag: number): string {
   if (confidence >= MATCH) return 'a match'
@@ -80,20 +53,20 @@ function confidenceText(confidence: number, clip: string, within: string, maxLag
 }
 
 export default async function main(parameters: Record<string, unknown>, dez: Dez): Promise<string> {
-  checkParameterNames(parameters)
-  const maxLag = maxLagParameter(parameters)
+  checkParameterNames(APP, parameters, PARAMETERS)
+  const maxLag = numberParameter(parameters, 'max_lag', (value) => value >= 0, 'a number of seconds, 0 or more, such as 6') ?? 6
   if (dez.inputs.length !== 2) {
     throw new RangeError(`${APP} needs exactly two clips with sound, and the run has ${dez.inputs.length}: first the clip to find, then the clip to find it in, as in "@a @b".`)
   }
   const [clipInput, withinInput] = dez.inputs
-  const saveTo = parameters.save_to ?? `/work/align-${clipInput.id}-in-${withinInput.id}.json`
-  if (typeof saveTo !== 'string') throw new RangeError(`save_to must be a path in /work/, as in "/work/align.json", not ${JSON.stringify(saveTo)}.`)
-  const file = workFile(dez.workFolder, saveTo)
+  const file = resultFile('align', parameters, dez, `/work/align-${clipInput.id}-in-${withinInput.id}.json`)
 
-  const clip = await sound(clipInput)
-  const within = await sound(withinInput)
-  const { offset, confidence } = align(clip.samples, within.samples, clip.rate, { maxLag })
-  const halfWithin = within.samples.length / within.rate / 2
+  const clipSound = decodedSound(APP, clipInput)
+  const withinSound = decodedSound(APP, withinInput)
+  const clip = f32Samples(await readFile(clipSound.path))
+  const within = f32Samples(await readFile(withinSound.path))
+  const { offset, confidence } = align(clip, within, clipSound.rate, { maxLag })
+  const halfWithin = within.length / withinSound.rate / 2
   const searched = Math.min(maxLag, halfWithin)
   const result = {
     clip: clipInput.id,

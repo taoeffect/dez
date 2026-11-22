@@ -22,7 +22,7 @@
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import { cuts, resultJson, rgbFrames, roundTo, workFile } from 'dez-media'
+import { checkParameterNames, cuts, decodedFrames, numberParameter, resultFiles, resultJson, rgbFrames, roundTo } from 'dez-media'
 
 const APP = 'dez-cuts'
 const PARAMETERS = ['threshold', 'save_to']
@@ -44,55 +44,16 @@ interface Dez {
   workFolder: string
 }
 
-// Throws for a parameter that this app does not take: with a misspelled
-// name, the run would else go on with the default value.
-function checkParameterNames(parameters: Record<string, unknown>): void {
-  const unknown = Object.keys(parameters).filter((name) => !PARAMETERS.includes(name))
-  if (unknown.length === 0) return
-  const names = (list: readonly string[]) => list.map((name) => JSON.stringify(name)).join(', ')
-  throw new RangeError(`${APP} does not take the parameter ${names(unknown)}. It takes only ${names(PARAMETERS)}.`)
-}
-
-// The `threshold` of the run.
-function thresholdParameter(parameters: Record<string, unknown>): number {
-  const { threshold } = parameters
-  if (threshold === undefined) return 0.35
-  if (typeof threshold !== 'number' || !(threshold > 0) || !Number.isFinite(threshold)) {
-    throw new RangeError(`threshold must be a number more than 0, such as 0.35, not ${JSON.stringify(threshold)}.`)
-  }
-  return threshold
-}
-
-// The result files of the run: `save_to` for one input, else
-// /work/cuts-<id>.json for each.
-function resultFiles(parameters: Record<string, unknown>, dez: Dez) {
-  const saveTo = parameters.save_to
-  if (saveTo === undefined) return dez.inputs.map(({ id }) => workFile(dez.workFolder, `/work/cuts-${id}.json`))
-  if (typeof saveTo !== 'string') throw new RangeError(`save_to must be a path in /work/, as in "/work/cuts.json", not ${JSON.stringify(saveTo)}.`)
-  if (dez.inputs.length !== 1) throw new RangeError(`save_to names one file, and the run has ${dez.inputs.length} inputs. Leave it out: each input then gets /work/cuts-<id>.json.`)
-  return [workFile(dez.workFolder, saveTo)]
-}
-
-// The decoded frames of `input`.
-function decodedFrames(input: Dez['inputs'][number]) {
-  if (input.kind !== 'video') throw new RangeError(`@${input.id} is no video (it is an ${input.kind === 'image' ? 'image' : 'audio clip'}), and ${APP} takes only videos.`)
-  if (input.frames === undefined) {
-    throw new RangeError(`The run has no decoded frames of @${input.id}: the \`decode\` of the call asked for none. Call ${APP} without \`decode\`.`)
-  }
-  if (input.frames === null) throw new RangeError(`@${input.id} has no picture, and ${APP} takes only videos.`)
-  return input.frames
-}
-
 const seconds = (time: number) => `${time.toFixed(3)} s`
 
 export default async function main(parameters: Record<string, unknown>, dez: Dez): Promise<string> {
-  checkParameterNames(parameters)
-  const threshold = thresholdParameter(parameters)
+  checkParameterNames(APP, parameters, PARAMETERS)
+  const threshold = numberParameter(parameters, 'threshold', (value) => value > 0, 'a number more than 0, such as 0.35') ?? 0.35
   if (dez.inputs.length === 0) throw new RangeError(`${APP} needs one or more videos: give their ids in \`inputs\`, as in "@a".`)
-  const files = resultFiles(parameters, dez)
+  const files = resultFiles('cuts', parameters, dez)
   const results = []
   for (const input of dez.inputs) {
-    const decoded = decodedFrames(input)
+    const decoded = decodedFrames(APP, input)
     const fps = decoded.fps ?? DEFAULT_FPS
     const found = cuts(rgbFrames(await readFile(decoded.path), decoded.width, decoded.height), { fps, threshold })
     results.push({

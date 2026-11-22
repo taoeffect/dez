@@ -3,7 +3,7 @@
 // `video title` (src/model/tools/appAliases.ts) tells these parameters,
 // their defaults, and their limits: keep the two the same.
 
-import { TITLE_ENTRANCES, TITLE_EXITS, type TitleEntrance, type TitleExit } from 'dez-media'
+import { checkParameterNames, choiceParameter, numberParameter, TITLE_ENTRANCES, TITLE_EXITS, type TitleEntrance, type TitleExit } from 'dez-media'
 
 export const APP = 'dez-title'
 
@@ -81,13 +81,6 @@ function colorParameter(name: string, value: unknown, fallback: string, words: r
   throw new RangeError(`${name} must be a hex color, as in "#c80a1e", or ${listed(words)}, not ${quoted(value)}.`)
 }
 
-// A value of `name` from the list `values`.
-function choiceParameter<T extends string>(name: string, value: unknown, values: readonly T[]): T {
-  if (value === undefined) return values[0]
-  if (typeof value === 'string' && (values as readonly string[]).includes(value)) return value as T
-  throw new RangeError(`${name} must be one of ${listed(values)}, not ${quoted(value)}.`)
-}
-
 /**
  * The parameters of a run, checked: `fontFiles` are the file names of the
  * fonts that Dez ships (`dez.fonts`). Throws a RangeError that tells how to
@@ -95,9 +88,7 @@ function choiceParameter<T extends string>(name: string, value: unknown, values:
  * and for a clip with more pixels than `MAX_PIXEL_FRAMES`.
  */
 export function titleParameters(parameters: Record<string, unknown>, fontFiles: readonly string[]): TitleParameters {
-  // With a misspelled name, the run would else go on with the default value.
-  const unknown = Object.keys(parameters).filter((name) => !TITLE_PARAMETERS.includes(name))
-  if (unknown.length > 0) throw new RangeError(`${APP} does not take the parameter ${listed(unknown)}. It takes only ${listed(TITLE_PARAMETERS)}.`)
+  checkParameterNames(APP, parameters, TITLE_PARAMETERS)
 
   const text = lineParameter('text', parameters.text, null)
   const subtitle = parameters.subtitle === undefined ? '' : lineParameter('subtitle', parameters.subtitle, null)
@@ -108,10 +99,7 @@ export function titleParameters(parameters: Record<string, unknown>, fontFiles: 
   const width = wholeParameter('width', parameters.width, 1920, 16, MAX_SIDE)
   const height = wholeParameter('height', parameters.height, 1080, 16, MAX_SIDE)
   const fps = wholeParameter('fps', parameters.fps, 30, 1, MAX_FPS)
-  const { duration = 4 } = parameters
-  if (typeof duration !== 'number' || !(duration >= MIN_DURATION && duration <= MAX_DURATION)) {
-    throw new RangeError(`duration must be a number of seconds from ${MIN_DURATION} to ${MAX_DURATION}, not ${quoted(duration)}.`)
-  }
+  const duration = numberParameter(parameters, 'duration', (value) => value >= MIN_DURATION && value <= MAX_DURATION, `a number of seconds from ${MIN_DURATION} to ${MAX_DURATION}`) ?? 4
   const { glint = true } = parameters
   if (typeof glint !== 'boolean') throw new RangeError(`glint must be true or false, not ${quoted(glint)}.`)
 
@@ -133,9 +121,9 @@ export function titleParameters(parameters: Record<string, unknown>, fontFiles: 
     fill: colorParameter('fill', parameters.fill, 'chrome', ['chrome']),
     outline: colorParameter('outline', parameters.outline, '#c80a1e', ['none']),
     glow: colorParameter('glow', parameters.glow, '#ff2878', ['none']),
-    position: choiceParameter('position', parameters.position, POSITIONS),
-    entrance: choiceParameter('entrance', parameters.entrance, TITLE_ENTRANCES),
-    exit: choiceParameter('exit', parameters.exit, TITLE_EXITS),
+    position: choiceParameter(parameters, 'position', POSITIONS),
+    entrance: choiceParameter(parameters, 'entrance', TITLE_ENTRANCES),
+    exit: choiceParameter(parameters, 'exit', TITLE_EXITS),
     glint,
     frames,
   }

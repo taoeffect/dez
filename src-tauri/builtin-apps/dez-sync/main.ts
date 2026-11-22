@@ -37,7 +37,7 @@
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import { align, beatGrid, cuts, f32Samples, resultJson, rgbFrames, roundTo, syncCheck, workFile } from 'dez-media'
+import { align, beatGrid, checkParameterNames, cuts, decodedFrames, decodedSound, f32Samples, numberParameter, resultFile, resultJson, rgbFrames, roundTo, syncCheck } from 'dez-media'
 
 const APP = 'dez-sync'
 const PARAMETERS = ['offset', 'max_lag', 'threshold', 'tolerance', 'save_to']
@@ -50,8 +50,6 @@ const MATCH = 0.5
 const NO_MATCH = 0.3
 // The most off-beat cuts that the text lists.
 const LISTED_CUTS = 20
-
-type Input = Dez['inputs'][number]
 
 /** What a run gives the code (only the parts that this app reads). */
 interface Dez {
@@ -68,39 +66,11 @@ interface Dez {
   workFolder: string
 }
 
-// Throws for a parameter that this app does not take: with a misspelled
-// name, the run would else go on with the default value.
-function checkParameterNames(parameters: Record<string, unknown>): void {
-  const unknown = Object.keys(parameters).filter((name) => !PARAMETERS.includes(name))
-  if (unknown.length === 0) return
-  const names = (list: readonly string[]) => list.map((name) => JSON.stringify(name)).join(', ')
-  throw new RangeError(`${APP} does not take the parameter ${names(unknown)}. It takes only ${names(PARAMETERS)}.`)
-}
-
-// The number parameter `name`: undefined when the call does not give it.
-// `rule` tells the numbers that `isValid` takes.
-function numberParameter(parameters: Record<string, unknown>, name: string, isValid: (value: number) => boolean, rule: string): number | undefined {
-  const value = parameters[name]
-  if (value === undefined) return undefined
-  if (typeof value !== 'number' || !Number.isFinite(value) || !isValid(value)) throw new RangeError(`${name} must be ${rule}, not ${JSON.stringify(value)}.`)
-  return value
-}
-
-// The decoded sound of `input`, as samples; null for a clip with no
-// sound.
-async function sound(input: Input): Promise<{ samples: Float32Array, rate: number } | null> {
-  if (input.audio === undefined) {
-    throw new RangeError(`The run has no decoded sound of @${input.id}: the \`decode\` of the call asked for none. Call ${APP} without \`decode\`.`)
-  }
-  if (input.audio === null) return null
-  return { samples: f32Samples(await readFile(input.audio.path)), rate: input.audio.rate }
-}
-
 const milliseconds = (time: number) => `${Math.round(time * 1000)} ms`
 const signedMilliseconds = (time: number) => `${time > 0 ? '+' : ''}${milliseconds(time)}`
 
 export default async function main(parameters: Record<string, unknown>, dez: Dez): Promise<string> {
-  checkParameterNames(parameters)
+  checkParameterNames(APP, parameters, PARAMETERS)
   const givenOffset = numberParameter(parameters, 'offset', () => true, 'a number of seconds, such as 0 or 1.5')
   const maxLag = numberParameter(parameters, 'max_lag', (value) => value >= 0, 'a number of seconds, 0 or more, such as 6') ?? 6
   const threshold = numberParameter(parameters, 'threshold', (value) => value > 0, 'a number more than 0, such as 0.35') ?? 0.35
@@ -109,34 +79,31 @@ export default async function main(parameters: Record<string, unknown>, dez: Dez
     throw new RangeError(`${APP} needs exactly two inputs, and the run has ${dez.inputs.length}: first the edit (a video), then its song, as in "@a @b".`)
   }
   const [editInput, songInput] = dez.inputs
-  const saveTo = parameters.save_to ?? `/work/sync-${editInput.id}-to-${songInput.id}.json`
-  if (typeof saveTo !== 'string') throw new RangeError(`save_to must be a path in /work/, as in "/work/sync.json", not ${JSON.stringify(saveTo)}.`)
-  const file = workFile(dez.workFolder, saveTo)
+  const file = resultFile('sync', parameters, dez, `/work/sync-${editInput.id}-to-${songInput.id}.json`)
 
   if (editInput.kind !== 'video') throw new RangeError(`The first input, @${editInput.id}, must be the edit, a video. Give the edit first, then its song, as in "@a @b".`)
-  if (editInput.frames === undefined) {
-    throw new RangeError(`The run has no decoded frames of @${editInput.id}: the \`decode\` of the call asked for none. Call ${APP} without \`decode\`.`)
-  }
   if (editInput.frames === null) throw new RangeError(`@${editInput.id} has no picture, so it has no cut. The first input must be the edit, a video.`)
+  const editFrames = decodedFrames(APP, editInput)
   if (songInput.kind === 'image') throw new RangeError(`The second input, @${songInput.id}, is an image: it must be the song, a clip with sound.`)
-  const song = await sound(songInput)
-  if (song === null) throw new RangeError(`The second input, @${songInput.id}, has no sound: it must be the song, a clip with sound.`)
+  if (songInput.audio === null) throw new RangeError(`The second input, @${songInput.id}, has no sound: it must be the song, a clip with sound.`)
+  const songSound = decodedSound(APP, songInput)
+  const song = f32Samples(await readFile(songSound.path))
 
   let offset = givenOffset
   let confidence: number | null = null
   if (offset === undefined) {
-    const editSound = await sound(editInput)
-    if (editSound === null) {
+    if (editInput.audio === null) {
       throw new RangeError(`@${editInput.id} has no sound, so ${APP} cannot find where the song starts in it. `
         + 'Give that time with the parameter offset, in seconds: 0 when the song starts with the edit.')
     }
-    const found = align(song.samples, editSound.samples, song.rate, { maxLag })
+    const editSound = decodedSound(APP, editInput)
+    const found = align(song, f32Samples(await readFile(editSound.path)), songSound.rate, { maxLag })
     offset = found.offset
     confidence = found.confidence
   }
 
-  const grid = beatGrid(song.samples, song.rate)
-  const { path, width, height, fps: editFps, count } = editInput.frames
+  const grid = beatGrid(song, songSound.rate)
+  const { path, width, height, fps: editFps, count } = editFrames
   const fps = editFps ?? DEFAULT_FPS
   const tolerance = givenTolerance ?? 1 / fps
   const cutTimes = cuts(rgbFrames(await readFile(path), width, height), { fps, threshold }).cuts.map(({ time }) => time)

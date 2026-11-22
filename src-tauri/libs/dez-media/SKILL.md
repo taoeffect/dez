@@ -1,7 +1,8 @@
 # dez-media
 
 Dez's own library: the measurements of sound and video (beats, onsets, align, cuts, sync), signal functions with the
-names and the results of NumPy, tables of CSV and JSON data, result files, animated titles, and frame sequences.
+names and the results of NumPy, tables of CSV and JSON data, the checks of the parameters and the inputs of a script
+app, result files, animated titles, and frame sequences.
 The source is in this folder: read a file for the details of a function.
 
 ## Import
@@ -45,6 +46,10 @@ const frames = rgbFrames(await Deno.readFile(input.frames.path), input.frames.wi
 // frames: { width, height, count, data }
 ```
 
+`decodedSound("my-app", input)` gives `input.audio`, and `decodedFrames("my-app", input)` gives `input.frames`. Each
+throws a RangeError that tells why a clip has none: an image (or no video), a `decode` of the call that left it out,
+or a clip with no such stream.
+
 ## Measurements
 
 Times are seconds. Each throws a RangeError with a text that tells why.
@@ -68,12 +73,20 @@ Times are seconds. Each throws a RangeError with a text that tells why.
 `{ counts, edges }`). The steps of `beatGrid`: `onsetEnvelope(spectrogram, lo, hi)`, `tempo(env, fps)` (gives
 `{ bpm, period }`), `trackBeats(env, period)`.
 
-## Data and result files
+## Parameters, data, and result files
 
+- `checkParameterNames("my-app", parameters, ["level", "save_to"])` refuses a parameter that the app does not take:
+  with a misspelled name, the run would else go on with the default value.
+- `numberParameter(parameters, "level", (v) => v > 0 && v < 1, "a number more than 0 and less than 1") ?? 0.3` and
+  `choiceParameter(parameters, "theme", ["light", "dark"])` (the first is the default) check one parameter. Each
+  check throws a RangeError that tells how to fix the call.
 - `csvTable(text, { delimiter })` and `jsonTable(JSON.parse(text))` give `{ columns, rows }`: a field is a number,
   a text, or null. `numericColumns(table)` names the columns of numbers. `parseCsv` gives the raw records.
 - `workFile(dez.workFolder, "/work/beats/song.json")` gives `{ path, shown }`: the file to open, and the path that
   you read. It refuses a path out of `/work/`.
+- `resultFiles("beats", parameters, dez)` gives the `workFile` of each input: `/work/beats-<id>.json`, or the
+  `save_to` parameter of a call with one input. `resultFile("align", parameters, dez, "/work/align.json")` gives the
+  one file of a run: `save_to`, else the path that you give.
 - `resultJson(value)` writes JSON that code and a model both read well: one field on each line, and a list of
   numbers on one line. `roundTo(value, 3)` rounds a time to the millisecond.
 

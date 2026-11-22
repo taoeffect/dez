@@ -24,7 +24,7 @@
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import { f32Samples, onsets, resultJson, roundTo, workFile } from 'dez-media'
+import { checkParameterNames, decodedSound, f32Samples, numberParameter, onsets, resultFiles, resultJson, roundTo } from 'dez-media'
 
 const APP = 'dez-onsets'
 const PARAMETERS = ['level', 'save_to']
@@ -41,54 +41,18 @@ interface Dez {
   workFolder: string
 }
 
-// Throws for a parameter that this app does not take: with a misspelled
-// name, the run would else go on with the default value.
-function checkParameterNames(parameters: Record<string, unknown>): void {
-  const unknown = Object.keys(parameters).filter((name) => !PARAMETERS.includes(name))
-  if (unknown.length === 0) return
-  const names = (list: readonly string[]) => list.map((name) => JSON.stringify(name)).join(', ')
-  throw new RangeError(`${APP} does not take the parameter ${names(unknown)}. It takes only ${names(PARAMETERS)}.`)
-}
-
-// The `level` of the run.
-function levelParameter(parameters: Record<string, unknown>): number {
-  const { level } = parameters
-  if (level === undefined) return 0.3
-  if (typeof level !== 'number' || !(level > 0 && level < 1)) throw new RangeError(`level must be a number more than 0 and less than 1, such as 0.3, not ${JSON.stringify(level)}.`)
-  return level
-}
-
-// The result files of the run: `save_to` for one input, else
-// /work/onsets-<id>.json for each.
-function resultFiles(parameters: Record<string, unknown>, dez: Dez) {
-  const saveTo = parameters.save_to
-  if (saveTo === undefined) return dez.inputs.map(({ id }) => workFile(dez.workFolder, `/work/onsets-${id}.json`))
-  if (typeof saveTo !== 'string') throw new RangeError(`save_to must be a path in /work/, as in "/work/onsets.json", not ${JSON.stringify(saveTo)}.`)
-  if (dez.inputs.length !== 1) throw new RangeError(`save_to names one file, and the run has ${dez.inputs.length} inputs. Leave it out: each input then gets /work/onsets-<id>.json.`)
-  return [workFile(dez.workFolder, saveTo)]
-}
-
-// The samples of the decoded sound of `input`.
-async function sound(input: Dez['inputs'][number]): Promise<{ samples: Float32Array, rate: number }> {
-  if (input.kind === 'image') throw new RangeError(`@${input.id} is an image, and ${APP} takes only clips with sound.`)
-  if (input.audio === undefined) {
-    throw new RangeError(`The run has no decoded sound of @${input.id}: the \`decode\` of the call asked for none. Call ${APP} without \`decode\`.`)
-  }
-  if (input.audio === null) throw new RangeError(`@${input.id} has no sound, and ${APP} takes only clips with sound.`)
-  return { samples: f32Samples(await readFile(input.audio.path)), rate: input.audio.rate }
-}
-
 const seconds = (time: number) => `${time.toFixed(3)} s`
 const rounded = (time: number | null) => time === null ? null : roundTo(time, 3)
 
 export default async function main(parameters: Record<string, unknown>, dez: Dez): Promise<string> {
-  checkParameterNames(parameters)
-  const level = levelParameter(parameters)
+  checkParameterNames(APP, parameters, PARAMETERS)
+  const level = numberParameter(parameters, 'level', (value) => value > 0 && value < 1, 'a number more than 0 and less than 1, such as 0.3') ?? 0.3
   if (dez.inputs.length === 0) throw new RangeError(`${APP} needs one or more clips with sound: give their ids in \`inputs\`, as in "@a".`)
-  const files = resultFiles(parameters, dez)
+  const files = resultFiles('onsets', parameters, dez)
   const results = []
   for (const input of dez.inputs) {
-    const { samples, rate } = await sound(input)
+    const { path, rate } = decodedSound(APP, input)
+    const samples = f32Samples(await readFile(path))
     const found = onsets(samples, rate, { level })
     results.push({
       id: input.id,

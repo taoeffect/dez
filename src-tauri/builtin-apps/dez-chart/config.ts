@@ -2,7 +2,7 @@
 // from a table and the parameters. Apart from the drawing, so that a unit
 // test reads them with no Chart.js and no skia-canvas.
 
-import { csvTable, jsonTable, numericColumns, type Table, type TableValue } from 'dez-media'
+import { checkParameterNames, choiceParameter, csvTable, jsonTable, numericColumns, type Table, type TableValue } from 'dez-media'
 
 export const APP = 'dez-chart'
 
@@ -69,12 +69,6 @@ function sideParameter(name: string, value: unknown, fallback: number): number {
   return value
 }
 
-function choiceParameter<T extends string>(name: string, value: unknown, values: readonly T[]): T {
-  if (value === undefined) return values[0]
-  if (typeof value === 'string' && (values as readonly string[]).includes(value)) return value as T
-  throw new RangeError(`${name} must be one of ${listed(values)}, not ${quoted(value)}.`)
-}
-
 /**
  * The parameters of a run, checked. Throws a RangeError that tells how to
  * fix a parameter that the app does not take or whose value is not valid.
@@ -82,9 +76,7 @@ function choiceParameter<T extends string>(name: string, value: unknown, values:
  * (`chartConfig`).
  */
 export function chartParameters(parameters: Record<string, unknown>): ChartParameters {
-  // With a misspelled name, the run would else go on with the default value.
-  const unknown = Object.keys(parameters).filter((name) => !PARAMETERS.includes(name))
-  if (unknown.length > 0) throw new RangeError(`${APP} does not take the parameter ${listed(unknown)}. It takes only ${listed(PARAMETERS)}.`)
+  checkParameterNames(APP, parameters, PARAMETERS)
   const { data, x, y } = parameters
   if (typeof data !== 'string' || !DATA_ENDINGS.some((ending) => data.toLowerCase().endsWith(ending))) {
     throw new RangeError(`data must be the path of a CSV, TSV, or JSON file in /work/, as in "/work/sales.csv", not ${quoted(data)}.`)
@@ -96,7 +88,7 @@ export function chartParameters(parameters: Record<string, unknown>): ChartParam
   }
   return {
     data,
-    type: choiceParameter('type', parameters.type, CHART_TYPES),
+    type: choiceParameter(parameters, 'type', CHART_TYPES),
     x: x ?? null,
     y: columns ?? null,
     title: textParameter('title', parameters.title),
@@ -104,7 +96,7 @@ export function chartParameters(parameters: Record<string, unknown>): ChartParam
     yLabel: textParameter('y_label', parameters.y_label),
     width: sideParameter('width', parameters.width, 1280),
     height: sideParameter('height', parameters.height, 720),
-    theme: choiceParameter('theme', parameters.theme, THEMES),
+    theme: choiceParameter(parameters, 'theme', THEMES),
   }
 }
 
