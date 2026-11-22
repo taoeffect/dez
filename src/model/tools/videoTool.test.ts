@@ -421,6 +421,13 @@ describe('ffmpegCall', () => {
     expect(videoInputsText(call)).toBe('The inputs of the run: the audio clip @b as b.wav, /work/clips/a.mp4 as work/clips/a.mp4, /work/logo.png as work/logo.png.')
   })
 
+  it('copies a file of /work once when the arguments name it with and without a / at its end', () => {
+    const call = ffmpegCall({ arguments: '-i /work/a.mp4 -i /work/a.mp4/ out.mp4' }, videoContext(CONVERSATION))
+
+    expect(call.args.slice(FFMPEG_FIXED_ARGS.length)).toStrictEqual(['-i', 'work/a.mp4', '-i', 'work/a.mp4', 'out.mp4'])
+    expect(call.workInputs).toStrictEqual([{ virtual: '/work/a.mp4', name: 'work/a.mp4', file: `work/${CONVERSATION_ID}/a.mp4` }])
+  })
+
   it.each([
     ['-i /work out.mp4', 'the work folder itself'],
     ['-i /work/ out.mp4', 'the work folder itself'],

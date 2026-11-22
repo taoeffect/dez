@@ -777,9 +777,13 @@ function programCall(
         const input = inputs.get(id)
         return input ? [{ from, to, name: input.name }] : []
       }),
+      // Keyed by the name of the copy, not by the text: two forms of one
+      // path (`/work/a.mp4/`) give one name, and Rust refuses a second copy
+      // with a name that the run folder has.
       ...Array.from(word.matchAll(WORK_PATH), (match) => {
-        const input = workInputs.get(match[0]) ?? workInputOf(match[0], conversationId, program)
-        workInputs.set(match[0], input)
+        const found = workInputOf(match[0], conversationId, program)
+        const input = workInputs.get(found.name) ?? found
+        workInputs.set(found.name, input)
         return { from: match.index, to: match.index + match[0].length, name: input.name }
       }),
     ]
