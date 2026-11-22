@@ -8,17 +8,19 @@ import {
   PROGRAM_MODE,
   TARGETS,
   checkHostProgram,
+  downloadArchiveMember,
   downloadBytes,
   downloadPinned,
-  downloadZipMember,
   githubRelease,
   hostTriple,
   manifestFileText,
   manifestWith,
   releaseFile,
-  releaseFileUrl
+  releaseFileUrl,
+  zipMember
 } from './bundled-programs.js';
-import { denoLicenseSources, licenseTextsFile } from './deno-licenses.js';
+import { denoLicenseSources } from './deno-licenses.js';
+import { licenseTextsFile } from './license-texts.js';
 
 // Vendors the Deno program that Dez ships as `dez-deno`: downloads the zip
 // file of one Deno release for every platform of Dez, checks each zip file
@@ -229,8 +231,9 @@ export function reportedVersion(versionOutput) {
 }
 
 // How the program prints its version (`checkHostProgram`). The run must not
-// make Deno ask its servers for a newer version.
-const VERSION_CALL = { args: ['--version'], env: { DENO_NO_UPDATE_CHECK: '1' }, reportedVersion };
+// make Deno ask its servers for a newer version. scripts/update-libs.js
+// checks the program of this computer with it too.
+export const DENO_VERSION_CALL = { args: ['--version'], env: { DENO_NO_UPDATE_CHECK: '1' }, reportedVersion };
 
 // The SHA-256 that the release `tag` states for `fileName` in its
 // `.sha256sum` file `asset`. Throws when the file states none.
@@ -261,11 +264,12 @@ async function vendoredProgram(tag, file, downloadDir) {
     );
   }
   console.log(`Downloading ${file.asset} (${file.zip.size} bytes)`);
-  const program = await downloadZipMember(
+  const program = await downloadArchiveMember(
     releaseFileUrl(DENO_REPO, tag, file.asset),
     join(downloadDir, file.name),
     PROGRAM_MODE,
     file.zip,
+    zipMember,
     'GitHub'
   );
   const programSums = `deno-${file.triple}.sha256sum`;
@@ -313,7 +317,7 @@ async function main(args) {
     const triple = hostTriple(process.platform, process.arch);
     if (triple) {
       const name = vendoredName(triple);
-      checkHostProgram(join(downloadDir, name), name, version, VERSION_CALL);
+      checkHostProgram(join(downloadDir, name), name, version, DENO_VERSION_CALL);
       console.log(`The program of this computer (${triple}) runs and reports ${version}.`);
     } else {
       console.log('Dez ships no programs for this computer, so the script did not run one.');

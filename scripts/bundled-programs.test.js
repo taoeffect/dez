@@ -2,9 +2,10 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { gunzipSync } from 'node:zlib';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { downloadBytes, hostTriple, isPinnedFile, manifestWith, zipMember } from './bundled-programs.js';
-import { sha256, zipFile } from './testing.js';
+import { downloadBytes, hostTriple, isPinnedFile, manifestWith, tarFiles, tgzMember, zipMember } from './bundled-programs.js';
+import { sha256, tarGzFile, zipFile } from './testing.js';
 
 describe('hostTriple', () => {
   it('gives the target triple of each platform of Dez, and none for another computer', () => {
@@ -155,5 +156,71 @@ describe('zipMember', () => {
     const many = zipFile([{ name: 'deno', bytes: program }]);
     many.writeUInt16LE(0xffff, many.length - 12);
     expect(() => zipMember(many, 'deno')).toThrow(/Zip64 form/);
+  });
+});
+
+describe('tarFiles', () => {
+  const files = tar => Array.from(tarFiles(tar), file => [file.name, file.bytes.toString()]);
+  const longName = `a-1.0.0/${'folder/'.repeat(20)}LICENSE-APACHE`;
+
+  it('gives the name and the bytes of each regular file, and leaves the folders out', () => {
+    const tar = gunzipSync(
+      tarGzFile([
+        { name: 'a-1.0.0/', type: '5' },
+        { name: 'a-1.0.0/empty' },
+        { name: 'a-1.0.0/one-block', text: 'x'.repeat(512) },
+        { name: 'a-1.0.0/more', text: 'y'.repeat(513) },
+        { name: 'a-1.0.0/link', type: '2' },
+        { name: 'a-1.0.0/LICENSE', text: 'MIT' }
+      ])
+    );
+    expect(files(tar)).toEqual([
+      ['a-1.0.0/empty', ''],
+      ['a-1.0.0/one-block', 'x'.repeat(512)],
+      ['a-1.0.0/more', 'y'.repeat(513)],
+      ['a-1.0.0/LICENSE', 'MIT']
+    ]);
+  });
+
+  it('gives the whole name of a file with a long name, and the short name of the file after it', () => {
+    const tar = gunzipSync(tarGzFile([{ name: longName, text: 'Apache' }, { name: 'a-1.0.0/LICENSE-MIT', text: 'MIT' }]));
+    expect(files(tar)).toEqual([[longName, 'Apache'], ['a-1.0.0/LICENSE-MIT', 'MIT']]);
+  });
+
+  it('joins the prefix and the name of a POSIX header', () => {
+    const tar = gunzipSync(tarGzFile([{ name: 'LICENSE', text: 'MIT' }]));
+    // The POSIX magic and version in the place of the GNU magic, and the
+    // folders of the file in the prefix field.
+    tar.write('ustar\x0000', 257, 'latin1');
+    tar.write('a-1.0.0/vendor', 345);
+    expect(files(tar)).toEqual([['a-1.0.0/vendor/LICENSE', 'MIT']]);
+  });
+
+  it('refuses a tar file with a part missing', () => {
+    const tar = gunzipSync(tarGzFile([{ name: 'a-1.0.0/LICENSE', text: 'x'.repeat(2000) }]));
+    expect(() => files(tar.subarray(0, 1024))).toThrow('The tar file is damaged, or a part of it is missing.');
+  });
+
+  it('refuses pax headers, which can hold a name that this reader would not see', () => {
+    const tar = gunzipSync(
+      tarGzFile([{ name: 'PaxHeaders/LICENSE', text: `30 path=${longName}\n`, type: 'x' }, { name: 'a-1.0.0/LICENSE', text: 'MIT' }])
+    );
+    expect(() => files(tar)).toThrow('The tar file has pax headers, which this script does not read.');
+  });
+});
+
+describe('tgzMember', () => {
+  const tgz = tarGzFile([
+    { name: 'package/package.json', text: '{}' },
+    { name: 'package/skia.node', text: 'the native file' }
+  ]);
+
+  it('gives the bytes of the file with exactly that name', () => {
+    expect(tgzMember(tgz, 'package/skia.node').toString()).toBe('the native file');
+  });
+
+  it('refuses a name that the archive does not have, also a part of a name', () => {
+    expect(() => tgzMember(tgz, 'skia.node')).toThrow('The tar file has no file skia.node.');
+    expect(() => tgzMember(tgz, 'package/skia')).toThrow('The tar file has no file package/skia.');
   });
 });

@@ -1,0 +1,1168 @@
+{
+  "libraries": {
+    "three": {
+      "package": "three",
+      "version": "0.187.0",
+      "license": "MIT",
+      "licenseFile": "LICENSE",
+      "repository": "https://github.com/mrdoob/three.js",
+      "tarball": "https://registry.npmjs.org/three/-/three-0.187.0.tgz",
+      "integrity": "sha512-Qiu7R+Cmh8CstZsY1uJOSWnVlfo7ZtNLV7mF8Jltk3LB3AtDu9cRZlcnRKkAk8Y4z6KKw35z7Y7Urd7jWY8etA=="
+    },
+    "chart.js": {
+      "package": "chart.js",
+      "version": "4.6.1",
+      "license": "MIT",
+      "licenseFile": "LICENSE.md",
+      "repository": "https://github.com/chartjs/Chart.js",
+      "tarball": "https://registry.npmjs.org/chart.js/-/chart.js-4.6.1.tgz",
+      "integrity": "sha512-hJyniucsFmq//EvXYvJ6c6mahPoI3kaxdjVH8awTaJ/fDNWeSqqqArixMJWkWNN6fcYvPU3HneSANFNYtRi61g=="
+    },
+    "kurkle-color": {
+      "package": "@kurkle/color",
+      "version": "0.3.4",
+      "license": "MIT",
+      "licenseFile": "LICENSE.md",
+      "repository": "https://github.com/kurkle/color",
+      "tarball": "https://registry.npmjs.org/@kurkle/color/-/color-0.3.4.tgz",
+      "integrity": "sha512-M5UknZPHRu3DEDWoipU6sE8PdkZ6Z/S+v4dD+Ke8IaNlpdSQah50lz1KtcFBa2vsdOnwbbnxJwVM4wty6udA5w=="
+    },
+    "fft.js": {
+      "package": "fft.js",
+      "version": "4.0.4",
+      "license": "MIT",
+      "licenseFile": "LICENSE",
+      "repository": "https://github.com/indutny/fft.js",
+      "tarball": "https://registry.npmjs.org/fft.js/-/fft.js-4.0.4.tgz",
+      "integrity": "sha512-f9c00hphOgeQTlDyavwTtu6RiK8AIFjD6+jvXkNkpeQ7rirK3uFWVpalkoS4LAwbdX7mfZ8aoBfFVQX1Re/8aw=="
+    },
+    "skia-canvas": {
+      "package": "skia-canvas",
+      "version": "4.0.1",
+      "license": "MIT",
+      "licenseFile": "LICENSE",
+      "repository": "https://github.com/samizdatco/skia-canvas",
+      "tarball": "https://registry.npmjs.org/skia-canvas/-/skia-canvas-4.0.1.tgz",
+      "integrity": "sha512-EdHk0VDe/qe/FfwfW2C8y8/Rl0a28z1ZGQMkgPnoIehP6Gikv4cHiHCen6MWnY1e8zvliDnxGu70zaA9e7Mc7w==",
+      "native": {
+        "file": "lib/skia.node",
+        "targets": {
+          "aarch64-unknown-linux-gnu": {
+            "package": "@skia-canvas/linux-arm64-glibc",
+            "url": "https://registry.npmjs.org/@skia-canvas/linux-arm64-glibc/-/linux-arm64-glibc-4.0.1.tgz",
+            "integrity": "sha512-2lHGi1PEK1pAXzr/9Atim6IoZ7eTgIl5r9xt7jYVtnZS9E1QRJYiJKNiOLGaWr29AMY5McMYcwfiIO/mzTrdVQ==",
+            "tgz": {
+              "member": "package/skia.node",
+              "size": 15631312,
+              "sha256": "13ee2dda70443efd4bb7d93b33d0420b294183252b6bae8b8ac624740fad475d"
+            },
+            "size": 37090072,
+            "sha256": "d2cac252115d1e6ce90b1ac063e681da7d6bc502e9ecd844931331b7bf18758a"
+          },
+          "x86_64-unknown-linux-gnu": {
+            "package": "@skia-canvas/linux-x64-glibc",
+            "url": "https://registry.npmjs.org/@skia-canvas/linux-x64-glibc/-/linux-x64-glibc-4.0.1.tgz",
+            "integrity": "sha512-JZ3i8ohkEA88WDjbqcw260x+iFv64HtgmXHQLAsyMAClMPpxxrarNUTlQEUOV+noakvX0dyTXRd3JW66eaLgRA==",
+            "tgz": {
+              "member": "package/skia.node",
+              "size": 15637999,
+              "sha256": "48f7fd9ebf3186540b5bfaa8e3d8207c67794ae54a366350ca357ef214f8e35c"
+            },
+            "size": 37807360,
+            "sha256": "70c87838f810dfcf878e483e10a2d497440566875fb1d180e1fcf09da8f0adb0"
+          },
+          "aarch64-apple-darwin": {
+            "package": "@skia-canvas/darwin-arm64",
+            "url": "https://registry.npmjs.org/@skia-canvas/darwin-arm64/-/darwin-arm64-4.0.1.tgz",
+            "integrity": "sha512-agmys9AtQDf+T1ukYHOQrqssWV7qsw252rQlYdZitLaopkVzs3MQm9CTbqoWmnXkHLupXHfw1C5mVyou1XdoDQ==",
+            "tgz": {
+              "member": "package/skia.node",
+              "size": 12695210,
+              "sha256": "8434643a2eedcbae4798909d3c381f23ddd64d9417d4b04bc019a2007c1a5f17"
+            },
+            "size": 28479440,
+            "sha256": "ba490edc11fc1bb04192f0e47422814f60ce4382980c9f83568e31612944a192"
+          }
+        }
+      }
+    }
+  },
+  "files": {
+    "chart.js/LICENSE.md": {
+      "size": 1093,
+      "sha256": "41a84aa2caba645f966a18d9c2056b73e6d3a81d80bc0046bc0011a2634d4cce"
+    },
+    "chart.js/auto/auto.js": {
+      "size": 147,
+      "sha256": "7e194dbe536e333cb441e2d47734e5bff1d37ac815886b7cc6cb2d76323e17ca"
+    },
+    "chart.js/dist/chart.js": {
+      "size": 412702,
+      "sha256": "5a059a341daded15d6333d1bda10f5d990c9458c4ef7f222a5b11c45913cd0df"
+    },
+    "chart.js/dist/chunks/index.js": {
+      "size": 96628,
+      "sha256": "7f8e207fc91dada433bd757fba6c551bc347305f2fddc9e3fdb4232edb8890cd"
+    },
+    "chart.js/dist/helpers.js": {
+      "size": 2618,
+      "sha256": "2adc5d2ae63bf4f0dfba5cf433186d5fb7954d9726dea6ef6e3a1992fa412f8a"
+    },
+    "chart.js/helpers/helpers.js": {
+      "size": 36,
+      "sha256": "abb9a9d191e38ac57b959753e954bf6e8f60039021a30a813e24ba86b0925f9a"
+    },
+    "fft.js/LICENSE": {
+      "size": 1105,
+      "sha256": "2587ff6443c524b3427871376cbf7d755bbd0512b9e8142e601f9e447c599f75"
+    },
+    "fft.js/lib/fft.esm.js": {
+      "size": 13270,
+      "sha256": "88af4eef561ce669da60a8557421ff45b7f3f94378b3b188ee59073d5a51f94d"
+    },
+    "import_map.json": {
+      "size": 409,
+      "sha256": "cdf1c9a206d865a9adc1ca1410747de9faa84977718c893522ea3e9c71d64843"
+    },
+    "kurkle-color/LICENSE.md": {
+      "size": 1085,
+      "sha256": "89ba0032731489153d552db918b727feb05128cf9eca20092875a9ad14147671"
+    },
+    "kurkle-color/dist/color.esm.js": {
+      "size": 12609,
+      "sha256": "8c4c39a7d4d43a5db590cfdb45678d1de0f0dfe4c5c4393fa9f5bbd571be4d02"
+    },
+    "skia-canvas/LICENSE": {
+      "size": 1076,
+      "sha256": "a3a2b68ce8e3427393ddd66cdbaae510fcb19f9d8c29517c12771d2f15f020d1"
+    },
+    "skia-canvas/NATIVE-LICENSES.txt": {
+      "size": 612781,
+      "sha256": "9868dd4fdb00a00d3006986ed3c6f17398ce4d6ab137ac85512035e78fab06b4"
+    },
+    "skia-canvas/lib/classes/canvas.js": {
+      "size": 15037,
+      "sha256": "9e4d8ec623987fdf27ce426a9efb74ffb8401b506973032ece7eb1bb42a6d306"
+    },
+    "skia-canvas/lib/classes/context.js": {
+      "size": 13668,
+      "sha256": "7f73bad10c8adb063695cdd54ab4318ff5c5eff08e980e431ba12d433f443597"
+    },
+    "skia-canvas/lib/classes/css.js": {
+      "size": 20963,
+      "sha256": "ad509583905deb88a9973fdea5e5e28f78b614177863aa5a367d8648758ed3d2"
+    },
+    "skia-canvas/lib/classes/geometry.js": {
+      "size": 25147,
+      "sha256": "c6cc15e1e92a9f0bc179643fb47201964a1948faa3fc370c39e2113461e6649a"
+    },
+    "skia-canvas/lib/classes/gui.js": {
+      "size": 14069,
+      "sha256": "19005b84f0dace376bd263c19372121c296655c94818e85a7b68032e273f4678"
+    },
+    "skia-canvas/lib/classes/imagery.js": {
+      "size": 18476,
+      "sha256": "9d62bf87c7211ebb16873b1c935dcc6abbf2ccc94b64f16b842303cf43373e1e"
+    },
+    "skia-canvas/lib/classes/neon.js": {
+      "size": 7553,
+      "sha256": "897f258275953264f12ca4cf7942bae591c35e17d2781efc24e2ff316fe17cde"
+    },
+    "skia-canvas/lib/classes/path.js": {
+      "size": 14055,
+      "sha256": "1b2dda9a1f13a2fe2c283c285ef67f59d4e1d6412f0c5056dd0725b7555865a3"
+    },
+    "skia-canvas/lib/classes/typography.js": {
+      "size": 7793,
+      "sha256": "90d79f2307120c775e06aaf9ceb88c3ea577d5cb00ce621cedb1ca2860351129"
+    },
+    "skia-canvas/lib/fonts/fonts.conf": {
+      "size": 1208,
+      "sha256": "5985a7bcd5b65d0db7c6dc160b68ed012d9b13d306f46e7ca4ddf9a2210a4778"
+    },
+    "skia-canvas/lib/index.d.ts": {
+      "size": 55874,
+      "sha256": "4934ea4a5eb0c130147863bb2dd781b85fd39333c4361563aff1762ae31a9666"
+    },
+    "skia-canvas/lib/index.js": {
+      "size": 785,
+      "sha256": "9d0de4f4c7536384736f13247a77ed7edcc8158ddfd253442b7846547f50b8a3"
+    },
+    "skia-canvas/lib/mod.mjs": {
+      "size": 609,
+      "sha256": "4363b70c0f389869f4f2ae483df2de148639d9ae57fdff24c3919cd64c603cb6"
+    },
+    "skia-canvas/lib/package.json": {
+      "size": 23,
+      "sha256": "d18f120db5a99372058690f86a1332484253e3cdbdbddbc0f5effa6a392b26e0"
+    },
+    "skia-canvas/lib/urls.js": {
+      "size": 3139,
+      "sha256": "50da828aca35aa3243fb22a79799e473b8a2ad1a9d389c33dd36b651169a7917"
+    },
+    "three/LICENSE": {
+      "size": 1081,
+      "sha256": "8b378ebe60e2fe500158cb0ac71cb5e8b7d92953c2abcc63a0eb90499653b5bc"
+    },
+    "three/build/three.core.js": {
+      "size": 1474799,
+      "sha256": "613e370f76638fdef83926642bf256dc9615684922de1ce1f63a8583e5d78578"
+    },
+    "three/build/three.module.js": {
+      "size": 658900,
+      "sha256": "104f56145899722094556490d787aae0617cc2fc3382f31df02d724ea1aee341"
+    },
+    "three/examples/jsm/animation/AnimationClipCreator.js": {
+      "size": 4543,
+      "sha256": "0afb4c1b147420e7104a2c1d7f0e2ca19fef030572e95a10f53ebc09397c4dc5"
+    },
+    "three/examples/jsm/animation/CCDIKSolver.js": {
+      "size": 14297,
+      "sha256": "c744fbec7107e2adecab5b7410db484134e12a48379331f7db77767bf902100a"
+    },
+    "three/examples/jsm/controls/ArcballControls.js": {
+      "size": 87221,
+      "sha256": "5212985773f5d460c8e091d7ab6ff6ef886afd92536b3269686e364955af0ccd"
+    },
+    "three/examples/jsm/controls/DragControls.js": {
+      "size": 9510,
+      "sha256": "aa0af1effa5c4e628c461bbb3f51a535ee99289c7350e0fab6fc6812b7fb6d8f"
+    },
+    "three/examples/jsm/controls/FirstPersonControls.js": {
+      "size": 11895,
+      "sha256": "d0976c5616eafab2f0a981332596441d8a1ec9983c7415b406013fe0ac11ec7c"
+    },
+    "three/examples/jsm/controls/FlyControls.js": {
+      "size": 9025,
+      "sha256": "8063858389f2ccd5cd6f0968562752dbab4b21a03c7a6e1dcbb5cc746fc06373"
+    },
+    "three/examples/jsm/controls/MapControls.js": {
+      "size": 3070,
+      "sha256": "5a686152c498914389d1503b60121f484d06f15cb4f7405c15fb6b8ddcc1bdb6"
+    },
+    "three/examples/jsm/controls/OrbitControls.js": {
+      "size": 40918,
+      "sha256": "e7fca2fe9e7670a828af9b28084669a5909445b7f36f1f26cee9bf8f2961c32c"
+    },
+    "three/examples/jsm/controls/PointerLockControls.js": {
+      "size": 5890,
+      "sha256": "40d58db8018b85038939d4d8bff7112d4b8a0ad0367b37ae6f969eeee4310c25"
+    },
+    "three/examples/jsm/controls/TrackballControls.js": {
+      "size": 24048,
+      "sha256": "cce95baddf589c16fea901b70f2038eca4557357937e1b03f8c76fe7ffe7457f"
+    },
+    "three/examples/jsm/controls/TransformControls.js": {
+      "size": 51706,
+      "sha256": "151befe25bb0d68626f9a6b033625b7b0cf6848e39ba71623b7bed8e3df565d6"
+    },
+    "three/examples/jsm/curves/CurveExtras.js": {
+      "size": 15983,
+      "sha256": "bccfa0801fa6dcf6f31024d09ea9e12270491c83754bcda452783c663e6ada77"
+    },
+    "three/examples/jsm/curves/NURBSCurve.js": {
+      "size": 4157,
+      "sha256": "f5aaeff3ed9b659c3d9c599878ede3106d93665e3243e502a09375f2edaed7fa"
+    },
+    "three/examples/jsm/curves/NURBSSurface.js": {
+      "size": 2687,
+      "sha256": "a7ff303addd765da8c85ceabb2e3248a970144021cd52b2cb8f177e34aeaa244"
+    },
+    "three/examples/jsm/curves/NURBSUtils.js": {
+      "size": 10802,
+      "sha256": "c6bd7c4137d585098923f189687898ea3e8762ea3ecbe255d749a56353894379"
+    },
+    "three/examples/jsm/curves/NURBSVolume.js": {
+      "size": 2945,
+      "sha256": "c51db69b23db33911d4e9b666b33143a71f41554c56b7d4f6dd60974bee5cb4a"
+    },
+    "three/examples/jsm/environments/ColorEnvironment.js": {
+      "size": 1401,
+      "sha256": "f17a9824d3deadd199bbfc17672636ddc79bb9cc0940a8942ca77c8239576e0a"
+    },
+    "three/examples/jsm/environments/DebugEnvironment.js": {
+      "size": 2621,
+      "sha256": "e311ce2332fc924087beaedac01ba8e1f5b1ff7971f138fcdd5db96df0a15abd"
+    },
+    "three/examples/jsm/environments/RoomEnvironment.js": {
+      "size": 4960,
+      "sha256": "55f466192cc84298755a424c5e040345006b2ee1455589b3b54126c2ea4123f4"
+    },
+    "three/examples/jsm/exporters/DRACOExporter.js": {
+      "size": 9086,
+      "sha256": "f782bdd5a3e71a696b3c576d82a3f264fd7457d26a3e5e05ce524e44769e3dc9"
+    },
+    "three/examples/jsm/exporters/EXRExporter.js": {
+      "size": 26638,
+      "sha256": "c0b468db32bae352db7f9bc1938a5e9dab39dd2deab7cc5d128f382ee8c7d066"
+    },
+    "three/examples/jsm/exporters/GLTFExporter.js": {
+      "size": 93556,
+      "sha256": "569793baeba62baeb4ab0b3619b6b1495b45d4b2ba9690430497adb58307bdf2"
+    },
+    "three/examples/jsm/exporters/KTX2Exporter.js": {
+      "size": 8393,
+      "sha256": "5f1cf21f96202f044ebe808f178e21e81021b6e2a4c5a4f318e5170a3a2a02ae"
+    },
+    "three/examples/jsm/exporters/OBJExporter.js": {
+      "size": 6896,
+      "sha256": "07ff71681b4aaba69561a6a272f20fd3e16c49ded3329fa361d1c93aa9fcc769"
+    },
+    "three/examples/jsm/exporters/PLYExporter.js": {
+      "size": 20705,
+      "sha256": "3459f884884b21051e122ae25c7c7ba744825f9adc1449818ce42f565db14151"
+    },
+    "three/examples/jsm/exporters/STLExporter.js": {
+      "size": 4884,
+      "sha256": "6508e5f79d120c7fdb677430342179609b27f59942dd6a2e215eef3ff60a7e60"
+    },
+    "three/examples/jsm/exporters/USDZExporter.js": {
+      "size": 35574,
+      "sha256": "06e27fd44bab2172929717aa076a7c264dd24a9071357aea415028aaad2df794"
+    },
+    "three/examples/jsm/geometries/BoxLineGeometry.js": {
+      "size": 3082,
+      "sha256": "5f4bd99627f84e1fe81cf1927ca867ac2968c9354d5e54b11849d0887170ad51"
+    },
+    "three/examples/jsm/geometries/ConvexGeometry.js": {
+      "size": 1710,
+      "sha256": "f52f4c5f0cc42eaef25d7330e912693ae1d7a9b0df0a599cd35f5854e9ecb34e"
+    },
+    "three/examples/jsm/geometries/DecalGeometry.js": {
+      "size": 10100,
+      "sha256": "6b2da6ea840926dfb0278841f96067c02964c73644c7f189720e89fe9baa2b10"
+    },
+    "three/examples/jsm/geometries/LoftGeometry.js": {
+      "size": 8761,
+      "sha256": "e49b03dc9b057fe4ba1a12e3a5dabd99d28ede21ce7ea87394efedeb8b4a5e53"
+    },
+    "three/examples/jsm/geometries/ParametricFunctions.js": {
+      "size": 2938,
+      "sha256": "7d533863edda651735af91c613927b7681bbe5179fce1141fcfe6592ea3f88d9"
+    },
+    "three/examples/jsm/geometries/ParametricGeometry.js": {
+      "size": 3808,
+      "sha256": "f25b69d9f8a5a7f8e206bb151875609349dabaf9bd81830779033ed2521e8a7a"
+    },
+    "three/examples/jsm/geometries/RoundedBoxGeometry.js": {
+      "size": 6470,
+      "sha256": "c5feab96123858ed8823c889b238dc8734adab7e760e3cfd21e7f3f2f3e348e3"
+    },
+    "three/examples/jsm/geometries/TeapotGeometry.js": {
+      "size": 18843,
+      "sha256": "05dfda4e24db0b48a3cc9c10b54c37ca4017921bd123175b0e57d72403227cd1"
+    },
+    "three/examples/jsm/geometries/TextGeometry.js": {
+      "size": 3312,
+      "sha256": "edf69c1cd6087c84d020156d1adbb29b40b098e4cbe8da4c0c36bbadc58dceac"
+    },
+    "three/examples/jsm/helpers/AnimationPathHelper.js": {
+      "size": 6400,
+      "sha256": "c881341e6231e41f965b300536453cb02b4499a20a6f9f063726628b7e2701b7"
+    },
+    "three/examples/jsm/helpers/LightProbeGridHelperWebGL.js": {
+      "size": 5588,
+      "sha256": "7f7b74808b826e4152b32bbeb28bd4f2a40931180e48b072feea24a895145900"
+    },
+    "three/examples/jsm/helpers/LightProbeHelper.js": {
+      "size": 3663,
+      "sha256": "4b4731f9e5d350bb809353cd16cf6e4c993803cae08f6ac15baa91d2560b9657"
+    },
+    "three/examples/jsm/helpers/OctreeHelper.js": {
+      "size": 2804,
+      "sha256": "328f298a83ad77209ba4e18a52b3bbd8597da1a1e89b1443736ce2cb0581067f"
+    },
+    "three/examples/jsm/helpers/PositionalAudioHelper.js": {
+      "size": 4384,
+      "sha256": "027531f7208bea6c63281465cb95ca9a1246cd0b7ea3e1e9d605ae813abdf67b"
+    },
+    "three/examples/jsm/helpers/RapierHelper.js": {
+      "size": 1298,
+      "sha256": "dba49036b1b4019e545a41ebcfcd7b7c7f5ba1c0a5f3f32737b4960d093304a4"
+    },
+    "three/examples/jsm/helpers/RectAreaLightHelper.js": {
+      "size": 2971,
+      "sha256": "72b07967bcc24220fc5d5ed018f810c4a8c64a073d97c38f2160ce5ec389c1a4"
+    },
+    "three/examples/jsm/helpers/TextureHelper.js": {
+      "size": 5355,
+      "sha256": "2367537802cb353bb20d5233fdcf01c4cdefa3629bb5740bbf0767922ca0220f"
+    },
+    "three/examples/jsm/helpers/VertexNormalsHelper.js": {
+      "size": 3458,
+      "sha256": "666a1219d95010e4d5d290f08774af2c327b7bcd368ebdec29a111805c8b7ecc"
+    },
+    "three/examples/jsm/helpers/VertexTangentsHelper.js": {
+      "size": 2955,
+      "sha256": "d2cf9d277c91bb598ff9306d5f1c606357848b0818a9f4277d4fce61a2123d0f"
+    },
+    "three/examples/jsm/helpers/ViewHelper.js": {
+      "size": 12826,
+      "sha256": "3572685243e0e532c09bb7498d5802459ddabf2d8ef41450f4013e78faba1ddf"
+    },
+    "three/examples/jsm/libs/chevrotain.module.min.js": {
+      "size": 157440,
+      "sha256": "026047366a9bdd0961eb79857fd5d84db204589942193012aabe7e3bee381045"
+    },
+    "three/examples/jsm/libs/fflate.module.js": {
+      "size": 91108,
+      "sha256": "4ab9828cf361a8009b71094ea251e076168de20f72eaa1e745da8aba88c725ac"
+    },
+    "three/examples/jsm/libs/ktx-parse.module.js": {
+      "size": 19932,
+      "sha256": "f40c491f6c44dde511268121f778a0050e73b1a15fd844c1ae2c78c73213eafc"
+    },
+    "three/examples/jsm/libs/meshopt_simplifier.module.js": {
+      "size": 55177,
+      "sha256": "614402ffac05c8a40711f0d9a5d9a904dadc3ee2e7ed56d4568751dbd7fc8c35"
+    },
+    "three/examples/jsm/libs/potpack.module.js": {
+      "size": 3951,
+      "sha256": "f69a7f3173b088188a936ef203da9fc74175dee3443ca7804a060b3f19efc6c8"
+    },
+    "three/examples/jsm/libs/utif.module.js": {
+      "size": 100835,
+      "sha256": "728b196cb49f7349abc4055df9ad8e1e99f93fddeb22e1fb2334436c9997adeb"
+    },
+    "three/examples/jsm/libs/zstddec.module.js": {
+      "size": 39754,
+      "sha256": "5cbf818e842628a4464e748594a6deae18ceddda3c2f541e7b3a0ff5fc7611e2"
+    },
+    "three/examples/jsm/lines/Line2.js": {
+      "size": 1486,
+      "sha256": "69dd2120d4df14208796acf199f80a64d37e042cfa65dc2b98286694b2954194"
+    },
+    "three/examples/jsm/lines/LineGeometry.js": {
+      "size": 3479,
+      "sha256": "b7ec6b0011e3b09dc72e17cfd8e8945295cb2bc8c8aa9aa19e47119680bdad7e"
+    },
+    "three/examples/jsm/lines/LineMaterial.js": {
+      "size": 14529,
+      "sha256": "5f4ba22891c54d50a51e8bab6c648399e919e6832c0d03060fbe1ec7c771a93f"
+    },
+    "three/examples/jsm/lines/LineSegments2.js": {
+      "size": 11477,
+      "sha256": "fcbc20f576e88343cea12131f49b7003d7ab44ede422fcb694e567456022f7a0"
+    },
+    "three/examples/jsm/lines/LineSegmentsGeometry.js": {
+      "size": 6893,
+      "sha256": "471f0a954a0c9c59d3d151392f424142a9164a722802f63b371971378a84a1b1"
+    },
+    "three/examples/jsm/lines/Wireframe.js": {
+      "size": 2981,
+      "sha256": "0f8b84215e857f83e8ce0e106df0f605469d9b6acf4d72bdbb3ae887f71f8ea6"
+    },
+    "three/examples/jsm/lines/WireframeGeometry2.js": {
+      "size": 1081,
+      "sha256": "b540ca152b38de6197849e9cc51a669f93b3ae4822c6030c589e9914320ced50"
+    },
+    "three/examples/jsm/loaders/3DMLoader.js": {
+      "size": 44372,
+      "sha256": "5f7f245af49ae7f5377ea436d9b0993be6b227150aa73265a7497b1a0069ecf4"
+    },
+    "three/examples/jsm/loaders/3MFLoader.js": {
+      "size": 44457,
+      "sha256": "154d7cb43f9fd3f936350209c99e591f4dbe2f61f014862043f9e151b047e1c6"
+    },
+    "three/examples/jsm/loaders/AMFLoader.js": {
+      "size": 11509,
+      "sha256": "9af4ca0425222009b147c6d966960500268760d3be6417d52d59e725f3b88def"
+    },
+    "three/examples/jsm/loaders/BVHLoader.js": {
+      "size": 10723,
+      "sha256": "54b728d6b4ee4e791aa6d75737b0f3e9c9540268f681b5f57fa4b9b04b7e33b8"
+    },
+    "three/examples/jsm/loaders/ColladaLoader.js": {
+      "size": 4338,
+      "sha256": "539406f55a8b7aaafecb00672d0a76f9f393b81c1eacb6131b8ee9431f0d14ac"
+    },
+    "three/examples/jsm/loaders/DDSLoader.js": {
+      "size": 9084,
+      "sha256": "c0ebc0ccd6ab51852958f2fcd5b04d99c550b016c750b87c94e96e50460f9301"
+    },
+    "three/examples/jsm/loaders/DRACOLoader.js": {
+      "size": 19155,
+      "sha256": "344684542690b7381d86970bbc428a87c89293730f9e9ec8be592b9e5b3263a9"
+    },
+    "three/examples/jsm/loaders/EXRLoader.js": {
+      "size": 87651,
+      "sha256": "c841b55530890a8c20a8726870195c2ec1fbaff8577af2d84b7b651feaf4adb0"
+    },
+    "three/examples/jsm/loaders/FBXLoader.js": {
+      "size": 113530,
+      "sha256": "04daa9a7054f17838b78a114e7d400c05d08d72afa7b62f2fc1d508909a6df3c"
+    },
+    "three/examples/jsm/loaders/FontLoader.js": {
+      "size": 5364,
+      "sha256": "cf9ecc7c4615763cf6ca473736b2055291b663103c7790e745f917dd2bdcb1bc"
+    },
+    "three/examples/jsm/loaders/GCodeLoader.js": {
+      "size": 7169,
+      "sha256": "a2d9a7573d2d4ccfa1f1aefd30598482d45a1a44331fd6fd3e39f4c1609e1e09"
+    },
+    "three/examples/jsm/loaders/GLTFLoader.js": {
+      "size": 119861,
+      "sha256": "532ac726e120039acbcd6cf54328c57acbf7b438176afaa6951257126d11bff1"
+    },
+    "three/examples/jsm/loaders/GaussianSplatPLYLoader.js": {
+      "size": 11269,
+      "sha256": "0eba161b81d2f28897a7a08c613ce7780fa96bac6ca2bb3f051ee17e66404816"
+    },
+    "three/examples/jsm/loaders/HDRCubeTextureLoader.js": {
+      "size": 3840,
+      "sha256": "36e7b06e3bd7488b776def6386c1321537669ddedd49a2548cee1454362794e9"
+    },
+    "three/examples/jsm/loaders/HDRLoader.js": {
+      "size": 12079,
+      "sha256": "0986b578f9acd14cec74e5ee85e07f45e681b40bcd229a601a0391201f9b5ff1"
+    },
+    "three/examples/jsm/loaders/IESLoader.js": {
+      "size": 9512,
+      "sha256": "53238ccd54f20d4a3af09d1ee5d4a0fbb839d694e2bb4ac96715191f49d1908a"
+    },
+    "three/examples/jsm/loaders/JXLLoader.js": {
+      "size": 4240,
+      "sha256": "809543532c3c85aeef37825c5093480bb7fa8d446e052e304099d45361220dad"
+    },
+    "three/examples/jsm/loaders/KMZLoader.js": {
+      "size": 3526,
+      "sha256": "81abc97533bff5b17260787e7159520cc5e4af9b0bd8afd9b9805558a75da241"
+    },
+    "three/examples/jsm/loaders/KSPLATLoader.js": {
+      "size": 14381,
+      "sha256": "f6a50bf482ba3fa0142a913504de708bb4d30eb08389d30794d580e7bba10cbc"
+    },
+    "three/examples/jsm/loaders/KTX2Loader.js": {
+      "size": 37513,
+      "sha256": "468143c5e5e6a3103eb262963c80a19c0e1a6490df4b6cdf383420b59c450942"
+    },
+    "three/examples/jsm/loaders/KTXLoader.js": {
+      "size": 7267,
+      "sha256": "b8cfa3d20928fd05ed500d08481437c77d7dee22b1670b5272e88761e8c2b018"
+    },
+    "three/examples/jsm/loaders/LDrawLoader.js": {
+      "size": 61439,
+      "sha256": "cb90bd44e3593d3d0d38d0f172ce17ff0fa7ac22fbf2f666ee09e87bb59a4f68"
+    },
+    "three/examples/jsm/loaders/LUT3dlLoader.js": {
+      "size": 5266,
+      "sha256": "d67cb978cd9b23d5c95bd3ea30cfbbd4f6b132fa4df274428be61bdcee66af5b"
+    },
+    "three/examples/jsm/loaders/LUTCubeLoader.js": {
+      "size": 4827,
+      "sha256": "f09efc33aa83e13ebd8d727f5a8abcc170dd1e8035cfe888974a1af263b095dd"
+    },
+    "three/examples/jsm/loaders/LUTImageLoader.js": {
+      "size": 4256,
+      "sha256": "23d5d20072034beadc2706f2e345122b6c2a36ea6062d9731fd75e7d4db530ab"
+    },
+    "three/examples/jsm/loaders/LWOLoader.js": {
+      "size": 24416,
+      "sha256": "e6544e21389336b75f389eb02574400db1b675c6c85bd06f118f85b0249c8d3f"
+    },
+    "three/examples/jsm/loaders/MD2Loader.js": {
+      "size": 13699,
+      "sha256": "524ee33ce79d7633021d78133e13b1eb63a05ee432dc97617854f0a69b905b86"
+    },
+    "three/examples/jsm/loaders/MDDLoader.js": {
+      "size": 4110,
+      "sha256": "1dbf365efd75f06987a33cd1df0858d5575ac7ce9991108c1db6857909484c60"
+    },
+    "three/examples/jsm/loaders/MTLLoader.js": {
+      "size": 11636,
+      "sha256": "19ea5563d215d4b2bb4ac2f8d84a6f2cb208d0ef560c7c4946e09ac6c29a919e"
+    },
+    "three/examples/jsm/loaders/NRRDLoader.js": {
+      "size": 14678,
+      "sha256": "dd80517785a7bb50729f3c94ccbcebdcf8e949742132826172097c26d86e6914"
+    },
+    "three/examples/jsm/loaders/OBJLoader.js": {
+      "size": 23300,
+      "sha256": "355484026ac163fdeceececaa943b0473a2e169444015cd2209cc7d27b5b894d"
+    },
+    "three/examples/jsm/loaders/PCDLoader.js": {
+      "size": 16733,
+      "sha256": "5931640bfcba801effbf6d6c5e73fdb318488d310dff14bf46aea016e867bf79"
+    },
+    "three/examples/jsm/loaders/PDBLoader.js": {
+      "size": 8329,
+      "sha256": "5b7eb4e7cc48e456992a635ef0cce41271525416d8d911d69909f40f10445a1e"
+    },
+    "three/examples/jsm/loaders/PLYLoader.js": {
+      "size": 22704,
+      "sha256": "751ff866f793ba1fc9181425748d88b7f9234c6e9983386fdaf2e664221340f2"
+    },
+    "three/examples/jsm/loaders/PVRLoader.js": {
+      "size": 5441,
+      "sha256": "6295b3cb11bc3be58cbf6e4ac0035eabe7d04010e5e0dcb8b9f402429f97e4b9"
+    },
+    "three/examples/jsm/loaders/RGBELoader.js": {
+      "size": 268,
+      "sha256": "6c08f9c441040a61a188ad7711078da4df48f8c5ac3b3725dd6f10ac9ff81162"
+    },
+    "three/examples/jsm/loaders/SPLATLoader.js": {
+      "size": 3759,
+      "sha256": "8a576917fb06c9252493f05395adae920a78cd711587577b746d793ec588d2c5"
+    },
+    "three/examples/jsm/loaders/SPZLoader.js": {
+      "size": 14974,
+      "sha256": "4a806531d982c079d9f4cf13228ff9af54b646ec35337f1218cade9e3230568c"
+    },
+    "three/examples/jsm/loaders/STLLoader.js": {
+      "size": 10788,
+      "sha256": "a07441b8cd812faf8049741fe5e95373b19547e4038694753dfec26fe230a7eb"
+    },
+    "three/examples/jsm/loaders/SVGLoader.js": {
+      "size": 75966,
+      "sha256": "29e202f504123d6c12d3f98d23be140cedfa181ced63ba6b1279ede060c5c836"
+    },
+    "three/examples/jsm/loaders/TDSLoader.js": {
+      "size": 25312,
+      "sha256": "f895205fe4acc5f18d6d101a43b49894d41bb76eb47760050a2a513252914fcb"
+    },
+    "three/examples/jsm/loaders/TGALoader.js": {
+      "size": 11915,
+      "sha256": "034c95f0a27380ec2ce14aa0a5eb2a937444fd90ccc95f6be58c4cf3c283a2b4"
+    },
+    "three/examples/jsm/loaders/TIFFLoader.js": {
+      "size": 1221,
+      "sha256": "c166ff39d8ff1c4bf6c38d2d355f5d5e29516cde712eebee827a0a131cee57a0"
+    },
+    "three/examples/jsm/loaders/USDLoader.js": {
+      "size": 8089,
+      "sha256": "f19f955bd67c9d672f1e9f4f8fd8247f4d2530bc238a5c9362572771f80ae170"
+    },
+    "three/examples/jsm/loaders/USDZLoader.js": {
+      "size": 266,
+      "sha256": "15f6a71479324d99ac12bd9951ee718178c091985559c3c0563225fd911f764b"
+    },
+    "three/examples/jsm/loaders/UltraHDRLoader.js": {
+      "size": 19768,
+      "sha256": "9ea88387aba530b25391cf3a72c376dc3d18b82f1fd69def0ac3b200034f077c"
+    },
+    "three/examples/jsm/loaders/VOXLoader.js": {
+      "size": 21957,
+      "sha256": "7721a42e6c3e69a820c944e9b554a625bcc33f883c200d97261ee28b9a46060a"
+    },
+    "three/examples/jsm/loaders/VRMLLoader.js": {
+      "size": 76523,
+      "sha256": "784b7a87dab3f6c22b510babed90819b0531efe7f7cf49b4d622061acc0f1d45"
+    },
+    "three/examples/jsm/loaders/VTKLoader.js": {
+      "size": 30639,
+      "sha256": "b04a8c85f27ddfe0ba38b82a9a1d25362160b7393152127cf6f71c474bb991bc"
+    },
+    "three/examples/jsm/loaders/XYZLoader.js": {
+      "size": 3352,
+      "sha256": "7ac5b00a247578a07752bdabdae82b428f31b9178ff78e113ac3fef3d85e3c35"
+    },
+    "three/examples/jsm/loaders/collada/ColladaComposer.js": {
+      "size": 67088,
+      "sha256": "eb262d262790a59d3e3b3c50abc56d565f6d97a34a3979151321da73ab9846a1"
+    },
+    "three/examples/jsm/loaders/collada/ColladaParser.js": {
+      "size": 36839,
+      "sha256": "d9532ab17f1d9e2919deba8029d759d5dcaed2f21195ded9e29491f719b1a0c6"
+    },
+    "three/examples/jsm/loaders/lwo/IFFParser.js": {
+      "size": 26740,
+      "sha256": "0908627856138eb83f97e2453badc51c2dfade4034e06ab0db6ec8d6056163ba"
+    },
+    "three/examples/jsm/loaders/lwo/LWO2Parser.js": {
+      "size": 10137,
+      "sha256": "8fd8159c6a4c91a421a667660abbaa83244ead6581586b65abbbe2ab4af5dec6"
+    },
+    "three/examples/jsm/loaders/lwo/LWO3Parser.js": {
+      "size": 9269,
+      "sha256": "6b56d4b581d40a1525f687273231b67c8bc6a4dbdedf7d544e6c8925e63c17c0"
+    },
+    "three/examples/jsm/loaders/materialx/MaterialXArchive.js": {
+      "size": 2219,
+      "sha256": "0a64017cbcd445d16e9445fcbc397d28bca6bac90d84369fdf9d535379710d23"
+    },
+    "three/examples/jsm/loaders/materialx/MaterialXLog.js": {
+      "size": 1282,
+      "sha256": "d824a683ea3a3c6b11e5afa7a919ba58ed299ea7095395036fada9506d8f9537"
+    },
+    "three/examples/jsm/loaders/materialx/MaterialXNodeDefs.js": {
+      "size": 2981,
+      "sha256": "f7c71971f2c5a559aea909906563d26f2e8fac9c0992163cdf5e38c19934d4e1"
+    },
+    "three/examples/jsm/loaders/materialx/MaterialXNodeInterfaceRegistry.js": {
+      "size": 196105,
+      "sha256": "6e09243e41fd8875698b9d5a4a1a531333ae005a5599ad5df5839af14f94f0fc"
+    },
+    "three/examples/jsm/loaders/materialx/parse/MaterialXParser.js": {
+      "size": 707,
+      "sha256": "870232db7c2264d4ff23d7c5a46486833e1f3522e873e3cf33faff478b36dab9"
+    },
+    "three/examples/jsm/loaders/usd/USDAParser.js": {
+      "size": 19984,
+      "sha256": "3e5e8064b51b6ba46572dff547c167174bb18fcfa4530e3183239ec4f0a544ef"
+    },
+    "three/examples/jsm/loaders/usd/USDCParser.js": {
+      "size": 43367,
+      "sha256": "636747f63b4e118d67f0b6336cb0986cee616e87951e368b1c14948018d5df8e"
+    },
+    "three/examples/jsm/loaders/usd/USDComposer.js": {
+      "size": 112604,
+      "sha256": "0c8a742cd6f9d4152f7a0bdd1643d1b8f55e1a9feeb72c9c9ecd69222ff8865c"
+    },
+    "three/examples/jsm/math/Capsule.js": {
+      "size": 3543,
+      "sha256": "be54c3c58483a7f6b0184dbc6ffdcea58ac13515a7d9fd19ed675b9edfc5f319"
+    },
+    "three/examples/jsm/math/ColorConverter.js": {
+      "size": 1568,
+      "sha256": "b3f2ec9d1757e8fba0c5279e98f6cad40ca8d9c6f084d6bc6ad1e189b2aa960d"
+    },
+    "three/examples/jsm/math/ColorSpaces.js": {
+      "size": 4290,
+      "sha256": "cc35c01c793cd17ccded7bc8142abffd3ce0d60dd6de8d5d216983bd05aee262"
+    },
+    "three/examples/jsm/math/ConvexHull.js": {
+      "size": 32974,
+      "sha256": "7b7d53ed4533556f555440676d2cbc3680ffab32b1a910c79c9a522019bd3a06"
+    },
+    "three/examples/jsm/math/ImprovedNoise.js": {
+      "size": 3034,
+      "sha256": "d3821241e25bf0c8bfc13cec941924573bbaaf8f599a4fa07d60664b97832b39"
+    },
+    "three/examples/jsm/math/Lut.js": {
+      "size": 6750,
+      "sha256": "9d28da08dc4fb3abfbe03b893d6d3d81e2e87519ba2f3b88fbc50a4c5f296cd2"
+    },
+    "three/examples/jsm/math/MeshSurfaceSampler.js": {
+      "size": 8161,
+      "sha256": "a70ab7a8f28b96cd51f09b7c4d5987167bdc23b91b2a26134766a180751aee43"
+    },
+    "three/examples/jsm/math/OBB.js": {
+      "size": 13865,
+      "sha256": "6c0ec2e20fac26819dc3ece3b742ad115894c3a5ce3551ae9e371bd211e21696"
+    },
+    "three/examples/jsm/math/Octree.js": {
+      "size": 18415,
+      "sha256": "751f8fff630d2fbc1fa868d7b7f6a1a6ab14dc338011a0a61f6297ae8f5f41ad"
+    },
+    "three/examples/jsm/math/SimplexNoise.js": {
+      "size": 15148,
+      "sha256": "4b1455617135e6b477de76244de07547d95570643379b72f4758e50161b06072"
+    },
+    "three/examples/jsm/misc/Volume.js": {
+      "size": 13292,
+      "sha256": "6edcc5dfa6b2a377fde2345e65374ddbe92f365d91150ca27f578a0a35c217ea"
+    },
+    "three/examples/jsm/misc/VolumeSlice.js": {
+      "size": 6507,
+      "sha256": "2490d903e4c30cb84a0f7d769b6c6e4da5963bbb75495e3f41947769b65f9c30"
+    },
+    "three/examples/jsm/modifiers/CurveModifier.js": {
+      "size": 10538,
+      "sha256": "c8a773b9d7822e89152621ed41fb264049fd6f67c6c6b999e7348abbc5d32064"
+    },
+    "three/examples/jsm/modifiers/EdgeSplitModifier.js": {
+      "size": 6131,
+      "sha256": "d0a1fbdf5e3bb63e585d51a0867290ef4dc4a1118747b6790c5d2b16d48ff518"
+    },
+    "three/examples/jsm/modifiers/SimplifyModifier.js": {
+      "size": 4430,
+      "sha256": "d1e1482576667e0fe7a3e69779861b69ce52ed308eae68f2cdca78a52334ce64"
+    },
+    "three/examples/jsm/modifiers/TessellateModifier.js": {
+      "size": 7080,
+      "sha256": "a73eae3ff6562b3d25713a2bb1c56693f63abfc29b78add6bf3ac8831835525f"
+    },
+    "three/examples/jsm/postprocessing/AfterimagePass.js": {
+      "size": 4388,
+      "sha256": "8cc0c8724a674a649d438c932e0b5f287e7d02f9fc35f627b669180bf4d2cc01"
+    },
+    "three/examples/jsm/postprocessing/BloomPass.js": {
+      "size": 6445,
+      "sha256": "5dcc005e8782003124a3e1406bbc37ce9b014791e263692fb098a81fc9c45e2a"
+    },
+    "three/examples/jsm/postprocessing/BokehPass.js": {
+      "size": 5532,
+      "sha256": "3e1b0b0077a190fcea7f728c3929d1b33fb182bbac15549635e113193d868f45"
+    },
+    "three/examples/jsm/postprocessing/ClearPass.js": {
+      "size": 2167,
+      "sha256": "69c525e8e3be28999453177a9d0bd1771d27a4d04378307242802fec84301bcb"
+    },
+    "three/examples/jsm/postprocessing/CubeTexturePass.js": {
+      "size": 3519,
+      "sha256": "3cc339151ad8deb69cbe7fab5c9d70d3190afc1446554256f4149791f7ff438f"
+    },
+    "three/examples/jsm/postprocessing/DotScreenPass.js": {
+      "size": 2941,
+      "sha256": "ef8fc81f6697a76abf42fe8a5e16343c7254b8ece68f2f2eb7a20190c86e3fe1"
+    },
+    "three/examples/jsm/postprocessing/EffectComposer.js": {
+      "size": 8501,
+      "sha256": "4e079a5886152d7e529a59aef644e968ab4d32c6a33ce016b36bf29b2eac26f7"
+    },
+    "three/examples/jsm/postprocessing/FXAAPass.js": {
+      "size": 738,
+      "sha256": "aa4e87a28f57e5508405730ee6bc09775b33acd3e87b3b24ef0d722b71e9d33a"
+    },
+    "three/examples/jsm/postprocessing/FilmPass.js": {
+      "size": 2684,
+      "sha256": "709a6e640b5ced2449e458d57656173208e81af064e414b9c6f775cbf1287ed2"
+    },
+    "three/examples/jsm/postprocessing/GTAOPass.js": {
+      "size": 20157,
+      "sha256": "78f278563029f53a97c662bf9bcc5bf89b12b3e9ab2b80270dbb53c2d0a81162"
+    },
+    "three/examples/jsm/postprocessing/GlitchPass.js": {
+      "size": 4305,
+      "sha256": "8329d0656ce595dc70cf5d7c80c4ab0b7021bf906cea714f4aace77d56e67731"
+    },
+    "three/examples/jsm/postprocessing/HalftonePass.js": {
+      "size": 2882,
+      "sha256": "af7b1a9b82992c194d3a59ba15d74b4146231f7fbdc37345d4191ec974726aa9"
+    },
+    "three/examples/jsm/postprocessing/LUTPass.js": {
+      "size": 2230,
+      "sha256": "aef64d31e2528d25bccc00dd0c2d5aaf0a1d10f8ff9c7b66cfb48aeaba54987f"
+    },
+    "three/examples/jsm/postprocessing/MaskPass.js": {
+      "size": 4694,
+      "sha256": "7cd08eee9d5d6f5578beaddbdcbe9c384f6873810af27f22ab7db3ceeb127aa3"
+    },
+    "three/examples/jsm/postprocessing/OutlinePass.js": {
+      "size": 23272,
+      "sha256": "8eb486b1436432cf6f080c4a55b027f6d56b3ea66a9735c140a8be986107667b"
+    },
+    "three/examples/jsm/postprocessing/OutputPass.js": {
+      "size": 4184,
+      "sha256": "02e4a261af34de71338185e9e87f0cbe5cba9115608d984363e1269dec1d2272"
+    },
+    "three/examples/jsm/postprocessing/Pass.js": {
+      "size": 4218,
+      "sha256": "444b409c235ead986893c472e720da1b779a56985c7d10b279c7944b52bd61c5"
+    },
+    "three/examples/jsm/postprocessing/RenderPass.js": {
+      "size": 4280,
+      "sha256": "817f6c3cdcd0fd41515d112359ea0532568eefb5aabd3b33903957ebca1b8a6a"
+    },
+    "three/examples/jsm/postprocessing/RenderPixelatedPass.js": {
+      "size": 8151,
+      "sha256": "7da0c022251a23fecc717d9b9ae438ba53c31b2e579facae559e6f50ac979444"
+    },
+    "three/examples/jsm/postprocessing/RenderTransitionPass.js": {
+      "size": 5847,
+      "sha256": "215c71157f95965a82bfb4d8c70fb023e2b3102ab83e5c26bc1d3dd30bd26d4a"
+    },
+    "three/examples/jsm/postprocessing/SAOPass.js": {
+      "size": 13105,
+      "sha256": "fc66f83abeb26d6b6cf82680d9fe2e49158f7ed0bdf26ab2449267ccc1edfa79"
+    },
+    "three/examples/jsm/postprocessing/SMAAPass.js": {
+      "size": 50379,
+      "sha256": "1a96804b8cb33ba76a67f9a8e77f2d5e2bf47b1a5c9a8476901aa75e24acb85c"
+    },
+    "three/examples/jsm/postprocessing/SSAARenderPass.js": {
+      "size": 8150,
+      "sha256": "cd2b8e83b32e806091117dfbeff1f8f4e78df0175a4a3acd865b9989df1c420b"
+    },
+    "three/examples/jsm/postprocessing/SSAOPass.js": {
+      "size": 13463,
+      "sha256": "2f9c02a53e09917d039c07c5bd7a110f1ce39bc5ab2affa316ea94f5198ec586"
+    },
+    "three/examples/jsm/postprocessing/SSRPass.js": {
+      "size": 23300,
+      "sha256": "7d02386b7e54fd245ebb1f4329918e65cfe8c292a74e33edeb506b8a0935ee1f"
+    },
+    "three/examples/jsm/postprocessing/SavePass.js": {
+      "size": 2998,
+      "sha256": "408f2375ce09797499edcc73be2d57b68db4080937775e333497db1489138781"
+    },
+    "three/examples/jsm/postprocessing/ShaderPass.js": {
+      "size": 3228,
+      "sha256": "e2500a5913b26bbf5148ceaae644c6edcff06a18b01494ee37bf856353d2ab9d"
+    },
+    "three/examples/jsm/postprocessing/TAARenderPass.js": {
+      "size": 6487,
+      "sha256": "463dbda5d1f0f401b3575f60eddd2a84234ff5be44d29a3dc41129c34aba0f47"
+    },
+    "three/examples/jsm/postprocessing/TexturePass.js": {
+      "size": 2920,
+      "sha256": "402cfcdda8e69db5f0faa778c51b97fc2ec740846a088d169f555fc3403b7d7d"
+    },
+    "three/examples/jsm/postprocessing/UnrealBloomPass.js": {
+      "size": 15397,
+      "sha256": "ba8f2fcadfa6588384c9473498f974d81d120f02f0e63a0e59c265202a006b5a"
+    },
+    "three/examples/jsm/shaders/ACESFilmicToneMappingShader.js": {
+      "size": 2141,
+      "sha256": "47b2114c8b76e7e1b077ba1fbff949a092461072a07600cfea27c7c6b486f71e"
+    },
+    "three/examples/jsm/shaders/AfterimageShader.js": {
+      "size": 1048,
+      "sha256": "fb842ae657379a6ee3b431bd864b4e4956d36df14daf502bf6ffecdbf14de8bb"
+    },
+    "three/examples/jsm/shaders/BasicShader.js": {
+      "size": 523,
+      "sha256": "df365e491471e506d3665b58efbaf1e07618f18ade42cfae68843438ec72cc07"
+    },
+    "three/examples/jsm/shaders/BleachBypassShader.js": {
+      "size": 1356,
+      "sha256": "09309e11465b488fede34a85e1ee5e1610e3e9e5ec09cb7f91cdd0ee353c5a8c"
+    },
+    "three/examples/jsm/shaders/BlendShader.js": {
+      "size": 920,
+      "sha256": "6a437abf3ac314fef109209fc7c8809864d1ee18e52d2864a3f2309ec1b5d394"
+    },
+    "three/examples/jsm/shaders/BokehShader.js": {
+      "size": 5934,
+      "sha256": "bd8525158e3574a803f2e2ce5d5e263349a80ee41bf789e71446b9caa256aa9a"
+    },
+    "three/examples/jsm/shaders/BokehShader2.js": {
+      "size": 9865,
+      "sha256": "2aa29eebe47bff7fb5fe059df1be3e94430e3498ae14da947166979452145b65"
+    },
+    "three/examples/jsm/shaders/BrightnessContrastShader.js": {
+      "size": 1275,
+      "sha256": "9c72d86e39c9436d291b92210003073e6c1d8a791f05c723221d799eb4867ac0"
+    },
+    "three/examples/jsm/shaders/ColorCorrectionShader.js": {
+      "size": 1024,
+      "sha256": "f40ee720d3cbfd8526d1f85ce8c4a2832f926e36a34926c6b2fb04d96322c430"
+    },
+    "three/examples/jsm/shaders/ColorifyShader.js": {
+      "size": 834,
+      "sha256": "73993a34f2b5036c618d9bb0c7413cb7a15c3fc9bf2ca5f649a17e4cae4ed45b"
+    },
+    "three/examples/jsm/shaders/ConvolutionShader.js": {
+      "size": 1281,
+      "sha256": "bad71ed02351acb701e62e21a9d11f044c2c689d924d714061edb756fbea8ace"
+    },
+    "three/examples/jsm/shaders/CopyShader.js": {
+      "size": 729,
+      "sha256": "a33057d5ac91c43304c186ac0e8816e62bb2ed471d3a00ff3018dfd5c0389718"
+    },
+    "three/examples/jsm/shaders/DOFMipMapShader.js": {
+      "size": 1092,
+      "sha256": "835cae7d3c44ac9b32143d5e213df29a12571d96406d114ba1bc957e82f36856"
+    },
+    "three/examples/jsm/shaders/DepthLimitedBlurShader.js": {
+      "size": 4187,
+      "sha256": "c1594724212f6842fb4ccbbf72d686e2770a6213fe5ff4dbb13335897f6c7ade"
+    },
+    "three/examples/jsm/shaders/DigitalGlitch.js": {
+      "size": 2525,
+      "sha256": "873b9b39114ff174ca533be1e998a8c2db925e2fb9808e953c60167813432c63"
+    },
+    "three/examples/jsm/shaders/DotScreenShader.js": {
+      "size": 1378,
+      "sha256": "959a2e0ea3d4a89d67754e417c56bd67abd632427d51fab19361003cd0ca7cef"
+    },
+    "three/examples/jsm/shaders/ExposureShader.js": {
+      "size": 791,
+      "sha256": "82a611e3b59922f75db1e0aaa86a7113f92915e5e896315b47d6c59288510928"
+    },
+    "three/examples/jsm/shaders/FXAAShader.js": {
+      "size": 6815,
+      "sha256": "b8303d179f9d5d40a052483e8cfb49c29afb6e60396080e472a6950b51700dac"
+    },
+    "three/examples/jsm/shaders/FilmShader.js": {
+      "size": 1227,
+      "sha256": "744c619c70f949af5d3f0f9edb27573743ab9ad12869e7c306ffb3d0caff7bb5"
+    },
+    "three/examples/jsm/shaders/FocusShader.js": {
+      "size": 2467,
+      "sha256": "2171570ccc0ecf3977028bba803bd9eef0ea9a2715cbd610ed6dd0535a550bc9"
+    },
+    "three/examples/jsm/shaders/FreiChenShader.js": {
+      "size": 3153,
+      "sha256": "5b17d604dc9861f8a424ea07a89c225989e0c922bf2f7a083065fa19b3a8f355"
+    },
+    "three/examples/jsm/shaders/GTAOShader.js": {
+      "size": 12206,
+      "sha256": "f7663d7726e884cee748d9b86ddc7416a99f81a181342cfbaa0845d993ea09cc"
+    },
+    "three/examples/jsm/shaders/GammaCorrectionShader.js": {
+      "size": 818,
+      "sha256": "e73c9ab25b0262c97838355701154c272c792b71f03756a1f7d504c4fca3ab25"
+    },
+    "three/examples/jsm/shaders/HalftoneShader.js": {
+      "size": 9187,
+      "sha256": "c3c75173fb0b539c7dfaf296770da520816b8bcf6263e185da0fb1fb35a11032"
+    },
+    "three/examples/jsm/shaders/HorizontalBlurShader.js": {
+      "size": 1667,
+      "sha256": "a155715ca3bfe4fd1f9efc51f189fecd5c53160df47dd571a7d5936dc436ab0c"
+    },
+    "three/examples/jsm/shaders/HorizontalTiltShiftShader.js": {
+      "size": 1792,
+      "sha256": "772f0865e95c4ecd7e6b016191b5d544d23ea4f048ff0efdc33898ee52fb3fa2"
+    },
+    "three/examples/jsm/shaders/HueSaturationShader.js": {
+      "size": 1678,
+      "sha256": "5b2f1ee9cdb847c6f8b3196cf9912f12eb1361706e312aa54d0c61578c9886df"
+    },
+    "three/examples/jsm/shaders/KaleidoShader.js": {
+      "size": 1194,
+      "sha256": "dfc1431e2e6b328c724c614a997e3496e9db027c0685f8a228f5b9003e65a81a"
+    },
+    "three/examples/jsm/shaders/LuminosityHighPassShader.js": {
+      "size": 1291,
+      "sha256": "5044f780b6e6cf863947f64c36fe1587132f7fbe395ada863cd1e5f0388dcf1e"
+    },
+    "three/examples/jsm/shaders/LuminosityShader.js": {
+      "size": 768,
+      "sha256": "32f164b72b1590a9be95be1ecc768fc496de4337370401267d104b12934d9a84"
+    },
+    "three/examples/jsm/shaders/MirrorShader.js": {
+      "size": 1066,
+      "sha256": "4d8002c804b34d135a54e773bf1808d813b67fc8b1eb688d87907293b1e1404a"
+    },
+    "three/examples/jsm/shaders/NormalMapShader.js": {
+      "size": 1165,
+      "sha256": "66273de182be159471d74beefdc303494c3e3b1d247af390f0882214d4bb8f9a"
+    },
+    "three/examples/jsm/shaders/OutputShader.js": {
+      "size": 1876,
+      "sha256": "353479f77a8d7e2629d49ccac9fc2f5dbfdda5442e0adf867b00377a2fcb0cb2"
+    },
+    "three/examples/jsm/shaders/PoissonDenoiseShader.js": {
+      "size": 6868,
+      "sha256": "b07ccfcdcd74f83cffd6d48834b18873545806421204a4d75143bd09756bc92d"
+    },
+    "three/examples/jsm/shaders/RGBShiftShader.js": {
+      "size": 1288,
+      "sha256": "69e7872f4719533013da7ca2a0bbbf9f369bc85a6efb6db76361a75fd4816b8b"
+    },
+    "three/examples/jsm/shaders/SAOShader.js": {
+      "size": 5313,
+      "sha256": "ca43e4a87db2d856ff6ad0f5466e3c92b132b520fe50133c9b708911ae473a5f"
+    },
+    "three/examples/jsm/shaders/SMAAShader.js": {
+      "size": 15002,
+      "sha256": "48ce320a6bf5c33806c4fa13ade7e3ab199f7856838d36b05ae82204db8a1c15"
+    },
+    "three/examples/jsm/shaders/SSAOShader.js": {
+      "size": 6968,
+      "sha256": "034dad98927ed8f2677a19ce56d4da1212ce5070ed2666157106025dc260bb55"
+    },
+    "three/examples/jsm/shaders/SSRShader.js": {
+      "size": 9891,
+      "sha256": "59dcf87b90af519cdeb66088957b72c6b79c7b95ef574b4cdeda788bf3f80822"
+    },
+    "three/examples/jsm/shaders/SepiaShader.js": {
+      "size": 1098,
+      "sha256": "b7994fb98e6f37bf163ae3454b61a837170449f9ebc2fee515c7b39481bcd16e"
+    },
+    "three/examples/jsm/shaders/SobelOperatorShader.js": {
+      "size": 2546,
+      "sha256": "553abd07b89b64eeacd67d99be66bd873d63b0dcedd4d5db76dfa8e66b697af9"
+    },
+    "three/examples/jsm/shaders/SubsurfaceScatteringShader.js": {
+      "size": 3264,
+      "sha256": "60d14b64cb46dfd51c0818949bd44f7d2c48e3fc12e3b5c6a769f1816a4cd9cd"
+    },
+    "three/examples/jsm/shaders/TechnicolorShader.js": {
+      "size": 1043,
+      "sha256": "76069639082a38869d7eff6d7f86ac31304ace10e44161085ec8f4563c73b617"
+    },
+    "three/examples/jsm/shaders/ToonShader.js": {
+      "size": 7147,
+      "sha256": "650cf00e7309e8721218e1cb92c1f1a5870a6161151e1cb54865dfaaa5de5014"
+    },
+    "three/examples/jsm/shaders/TriangleBlurShader.js": {
+      "size": 1461,
+      "sha256": "c0ce699bf1d5a10a5ad7cea1439a6f8f491a4ad274d9578caf247f5eb2fb0726"
+    },
+    "three/examples/jsm/shaders/UnpackDepthRGBAShader.js": {
+      "size": 972,
+      "sha256": "9307301a3d5e8c4b3ae2653b07b0b332567f5fee45774c4723160fd0ea132837"
+    },
+    "three/examples/jsm/shaders/VelocityShader.js": {
+      "size": 3173,
+      "sha256": "9511c43bd858727f82e1316e5c6861427e6279c764b053ac3a1033dc075fbf92"
+    },
+    "three/examples/jsm/shaders/VerticalBlurShader.js": {
+      "size": 1639,
+      "sha256": "67792abdf08ba2305fc2a2f45ca151f55b66a82f5aebbe45230246cdb72181d7"
+    },
+    "three/examples/jsm/shaders/VerticalTiltShiftShader.js": {
+      "size": 1779,
+      "sha256": "96bed3fafdea8370d1330dc9854f9d604a6def8554db554368c917ee66403742"
+    },
+    "three/examples/jsm/shaders/VignetteShader.js": {
+      "size": 1049,
+      "sha256": "5b122990efab55aa39ac5c72a09bc840e572773f5037b9127acfc8e31ee08b83"
+    },
+    "three/examples/jsm/shaders/VolumeShader.js": {
+      "size": 9284,
+      "sha256": "b1bd15947ccf8b5c5f38e599779775a32213d77354d4377154ff74a5dccf0082"
+    },
+    "three/examples/jsm/shaders/WaterRefractionShader.js": {
+      "size": 2046,
+      "sha256": "cad67ed479d112d787281b1ab37561659a50d5fad6ad951a2d9f89a45f229cf5"
+    },
+    "three/examples/jsm/utils/BufferGeometryUtils.js": {
+      "size": 39153,
+      "sha256": "7bda2a8ba836b2bcf67cb938d4b9e1bb5d1b1bc616817103ed858c0b58296ce7"
+    },
+    "three/examples/jsm/utils/CameraUtils.js": {
+      "size": 3204,
+      "sha256": "9d3fd8e3dbc94f50a45acf41b18a8f1d14254af403e90a19573036d127567def"
+    },
+    "three/examples/jsm/utils/ColorUtils.js": {
+      "size": 1652,
+      "sha256": "016c9556fb486cb8dd0e7a3d7ccdc074f7ac3ce09624db75c2463ec82739a19a"
+    },
+    "three/examples/jsm/utils/GaussianSplatUtils.js": {
+      "size": 5586,
+      "sha256": "4b9b010149b3e1a7673de37638365e937e005a03ba706e4cd81301b717d30f54"
+    },
+    "three/examples/jsm/utils/GeometryCompressionUtils.js": {
+      "size": 13014,
+      "sha256": "0bb16305a0ed75a582e41361a17601fe460efa514af0fd470385f965cce10be6"
+    },
+    "three/examples/jsm/utils/GeometryUtils.js": {
+      "size": 5593,
+      "sha256": "649f315d948f16bf32f43b86b3d96f05c9ffe36304ca6c94cf45ea35084d9864"
+    },
+    "three/examples/jsm/utils/LDrawUtils.js": {
+      "size": 6055,
+      "sha256": "aaf8a11994c2e3a2e435d5e95842a5bb5501747ee4bcb59aa62fe4d2cea55dde"
+    },
+    "three/examples/jsm/utils/SceneOptimizer.js": {
+      "size": 10311,
+      "sha256": "eea31a14b3d02b53a1952945ef9d85aaecc13585ac9fc5cbc8c56286d507598d"
+    },
+    "three/examples/jsm/utils/SceneUtils.js": {
+      "size": 8656,
+      "sha256": "c617a3486d3f8d82f30bbed66aa8b0be6997e343f5531e20084ed432969fb21d"
+    },
+    "three/examples/jsm/utils/ShadowMapViewer.js": {
+      "size": 6249,
+      "sha256": "d80ad3d17ecdc7dd2ec4a9aed66cc4ca5765af049012e0ca2d628a5d91f512cd"
+    },
+    "three/examples/jsm/utils/SkeletonUtils.js": {
+      "size": 11535,
+      "sha256": "b1632a703206c3d830de9fcbe515696770d04b71a15ee6b50afa6d2c3298c86f"
+    },
+    "three/examples/jsm/utils/SortUtils.js": {
+      "size": 3354,
+      "sha256": "a69012ad02b7dbdfca8d5384453a3a17c4c8e7c3fbedfa3b1f948c1ef121bf99"
+    },
+    "three/examples/jsm/utils/UVsDebug.js": {
+      "size": 3427,
+      "sha256": "67869b5c32f8fc4729b5a2a56d00c5a5db60c1d10f8a169c9cba8e84c1865e92"
+    },
+    "three/examples/jsm/utils/WebGLTextureUtils.js": {
+      "size": 3075,
+      "sha256": "8434508ea5496e4958405d794241d371ef518ceb62b4f8a6a8a812878d82a1b1"
+    },
+    "three/examples/jsm/utils/WorkerPool.js": {
+      "size": 3110,
+      "sha256": "5ac7095fd566bc9ae48376055fd66edf27cb9ebbf9e1269dc206bfd4933ae9eb"
+    },
+    "three/examples/jsm/utils/unwrapUVs.js": {
+      "size": 27770,
+      "sha256": "af31b76b576e1ac99160625de7ff13f61130ae55c55df391e83e4a56df05576a"
+    }
+  }
+}

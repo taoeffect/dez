@@ -5,9 +5,8 @@ use std::{env, fs, io, path::Path, process};
 /// programs that Dez ships next to its own program.
 const CONFIG_PATH: &str = "tauri.conf.json";
 
-/// A folder of src-tauri/ that a script vendors: files that are not plain
-/// Git files, and a `manifest.json` that names the size and the SHA-256 of
-/// each one.
+/// A folder of src-tauri/ that a script vendors, with a `manifest.json` that
+/// names the size and the SHA-256 of each file that the script checked.
 struct VendoredFolder {
     folder: &'static str,
     source: FileSource,
@@ -17,6 +16,8 @@ struct VendoredFolder {
 
 /// Where a checkout gets the files of a vendored folder.
 enum FileSource {
+    /// Plain Git files.
+    PlainGit,
     /// Git LFS: a checkout without LFS has a small pointer file in the place
     /// of each file.
     GitLfs,
@@ -28,10 +29,14 @@ enum FileSource {
 }
 
 impl FileSource {
-    /// What gets a file of the folder as its manifest names it: the first
-    /// part of the advice of an error text.
-    fn get_step(&self) -> String {
+    /// What gets a file of the vendored folder `folder` as its manifest names
+    /// it: the first part of the advice of an error text.
+    fn get_step(&self, folder: &str) -> String {
         match self {
+            Self::PlainGit => format!(
+                "Run `git checkout -- src-tauri/{folder}` in the folder of the repository to get the files of the \
+                 repository"
+            ),
             Self::GitLfs => "Install Git LFS and run `git lfs pull` to get the file of the repository".to_string(),
             Self::FetchScript => format!(
                 "Run `node scripts/fetch-programs.js --target {}` in the folder of the repository to download it",
@@ -57,6 +62,28 @@ const FONTS: VendoredFolder = VendoredFolder {
     vendor_step: "run `node scripts/update-fonts.js` to vendor the fonts of its list",
 };
 
+/// The folder of the libraries that the code of a run imports (three.js,
+/// skia-canvas, and more), the same for every build target, which
+/// `bundle.resources` ships.
+const LIBS_FOLDER: &str = "libs";
+
+/// The files of the libraries, in Git.
+const LIBS: VendoredFolder = VendoredFolder {
+    folder: LIBS_FOLDER,
+    source: FileSource::PlainGit,
+    vendor_step: LIBS_VENDOR_STEP,
+};
+
+/// The native files of the libraries (lib/skia.node of skia-canvas): one for
+/// each build target, which Git ignores.
+const LIBS_NATIVE: VendoredFolder = VendoredFolder {
+    folder: LIBS_FOLDER,
+    source: FileSource::FetchScript,
+    vendor_step: LIBS_VENDOR_STEP,
+};
+
+const LIBS_VENDOR_STEP: &str = "run `node scripts/update-libs.js` to vendor the libraries of its list";
+
 impl VendoredFolder {
     /// The manifest of the folder, and a `rerun-if-changed` for it.
     fn manifest(&self) -> Result<serde_json::Value, String> {
@@ -77,7 +104,8 @@ fn main() {
             check_bundled_tools(&tools)?;
             write_bundled_tools(&tools)
         })
-        .and_then(|()| check_fonts());
+        .and_then(|()| check_fonts())
+        .and_then(|()| check_libs());
     if let Err(problem) = prepared {
         eprintln!("{problem}");
         process::exit(1);
@@ -189,6 +217,53 @@ fn check_fonts() -> Result<(), String> {
     Ok(())
 }
 
+/// Checks that the libraries are the files that libs/manifest.json names
+/// (`files`), and that the native file of each library (`libraries`) is the
+/// one for the build target, as `check_bundled_tools` checks the programs.
+///
+/// Why the files in Git too: scripts/update-libs.js checked that these files
+/// load and run in the bundled Deno, and `bundle.resources` ships the folder
+/// as it is. A changed file is code that no check ran.
+fn check_libs() -> Result<(), String> {
+    let manifest = LIBS.manifest()?;
+    let shown_manifest = LIBS.shown_manifest();
+    let (Some(files), Some(libraries)) = (manifest["files"].as_object(), manifest["libraries"].as_object()) else {
+        return Err(format!(
+            "{shown_manifest} has no `files` or `libraries` object: {LIBS_VENDOR_STEP}."
+        ));
+    };
+    for (name, entry) in files {
+        let Some((size, sha256)) = size_and_sha256(entry) else {
+            return Err(format!(
+                "{shown_manifest} names no size or SHA-256 for {name}: {LIBS_VENDOR_STEP}."
+            ));
+        };
+        check_file(&LIBS, name, size, sha256)?;
+    }
+
+    let target = build_target();
+    for (folder, library) in libraries {
+        let native = &library["native"];
+        if native.is_null() {
+            continue;
+        }
+        let Some(file) = native["file"].as_str() else {
+            return Err(format!(
+                "{shown_manifest} names no native file of {folder}: {LIBS_VENDOR_STEP}."
+            ));
+        };
+        let Some((size, sha256)) = size_and_sha256(&native["targets"][&target]) else {
+            return Err(format!(
+                "Dez has no native file of the library {folder} for the build target {target}: \
+                 {shown_manifest} does not name one. \
+                 scripts/bundled-programs.js has the platforms that Dez ships programs for."
+            ));
+        };
+        check_file(&LIBS_NATIVE, &format!("{folder}/{file}"), size, sha256)?;
+    }
+    Ok(())
+}
+
 /// Checks one file of a vendored folder against the size and the SHA-256 of
 /// its manifest. The size comes first: it needs no read of the file, and it
 /// finds a Git LFS pointer file.
@@ -202,7 +277,7 @@ fn check_file(
     println!("cargo:rerun-if-changed={}", path.display());
     let shown = format!("src-tauri/{}", path.display());
     let manifest = vendored.shown_manifest();
-    let advice = format!("{}, or {}.", vendored.source.get_step(), vendored.vendor_step);
+    let advice = format!("{}, or {}.", vendored.source.get_step(vendored.folder), vendored.vendor_step);
 
     let found_size = fs::metadata(&path)
         .map_err(|error| format!("{shown} is missing ({error}). {advice}"))?

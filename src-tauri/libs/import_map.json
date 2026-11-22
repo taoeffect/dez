@@ -1,0 +1,12 @@
+{
+  "imports": {
+    "three": "./three/build/three.module.js",
+    "three/addons/": "./three/examples/jsm/",
+    "chart.js": "./chart.js/dist/chart.js",
+    "chart.js/auto": "./chart.js/auto/auto.js",
+    "chart.js/helpers": "./chart.js/helpers/helpers.js",
+    "@kurkle/color": "./kurkle-color/dist/color.esm.js",
+    "fft.js": "./fft.js/lib/fft.esm.js",
+    "skia-canvas": "./skia-canvas/lib/mod.mjs"
+  }
+}

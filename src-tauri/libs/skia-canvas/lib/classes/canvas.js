@@ -1,0 +1,401 @@
+//
+// Canvas object & export options
+//
+
+"use strict"
+
+const {filePath} = require('../urls'),
+      {RustClass, core, inspect, argc, REPR, neon} = require('./neon'),
+      {Image, ImageData, validColorType, validImage, validColorSpace, getSharp, withDensity} = require('./imagery'),
+      {Path2D} = require('./path'),
+      {toSkMatrix} = require('./geometry')
+
+class Canvas extends RustClass{
+  #contexts
+
+  constructor(width, height, {textContrast=0, textGamma=1.4, gpu=true}={}){
+    super(Canvas).alloc({textContrast, textGamma, gpu:!!gpu})
+    this.#contexts = []
+    Object.assign(this, {width, height})
+  }
+
+  getContext(kind, settings){
+    if (kind!="2d") return null
+    return this.#contexts[0] || this.newPage(settings)
+  }
+
+  get gpu(){ return this.prop('engine')=='gpu' }
+  set gpu(mode){ this.prop('engine', !!mode ? 'gpu' : 'cpu') }
+
+  get engine(){ return JSON.parse(this.prop('engine_status')) }
+
+  get width(){ return this.prop('width') }
+  set width(w){
+    this.prop('width', !Number.isNaN(+w) && +w>=0 ? w : 300)
+    if (this.#contexts[0]) this.#contexts[0].ƒ('resetSize', core(this))
+  }
+
+  get height(){ return this.prop('height') }
+  set height(h){
+    this.prop('height', !Number.isNaN(+h) && +h>=0 ? h : 150)
+    if (this.#contexts[0]) this.#contexts[0].ƒ('resetSize', core(this))
+  }
+
+  newPage(...args){
+    const {CanvasRenderingContext2D} = require('./context')
+
+    // accept newPage(settings), newPage(width, height), or newPage(width, height, settings)
+    let isSettings = args[0]!==null && typeof args[0]=='object',
+        [width, height, settings] = isSettings ? [undefined, undefined, args[0]] : args,
+        resize = !isSettings && args.length>=2
+
+    // merge incuded options with canvas-wide defaults
+    let {colorSpace, willReadFrequently} = settings || {}
+    colorSpace = validColorSpace(colorSpace ?? this.ref('colorSpace') ?? 'srgb')
+    willReadFrequently = !!(willReadFrequently ?? this.ref('willReadFrequently') ?? false)
+
+    // preserve the first page's settings as the default for subsequent pages
+    if (this.ref('colorSpace') === undefined) this.ref('colorSpace', colorSpace)
+    if (this.ref('willReadFrequently') === undefined) this.ref('willReadFrequently', willReadFrequently)
+
+    let ctx = new CanvasRenderingContext2D(this, colorSpace)
+    ctx.ref('colorSpace', colorSpace)
+    ctx.ref('willReadFrequently', willReadFrequently)
+
+    this.#contexts.unshift(ctx)
+    if (resize) Object.assign(this, {width, height})
+    return ctx
+  }
+
+  get pages(){
+    return this.#contexts.slice().reverse()
+  }
+
+  // release native state synchronously rather than waiting for the GC's deferred finalizers.
+  // canvas may no longer be used after disposal. can also be triggered via `using`
+  dispose(){
+    if (this.ref('disposed')) return
+    for (const ctx of this.#contexts){
+      ctx.ƒ('dispose')
+      ctx.ref('disposed', true)
+    }
+    this.#contexts = []
+    this.ƒ('dispose')
+    this.ref('disposed', true)
+  }
+  [Symbol.dispose](){ this.dispose() }
+
+  // release state for this canvas then yield until the next event loop tick so other deferrred
+  // finalizers can be run. Can also be trggered via `await using`
+  async release(){
+    this.dispose()
+    await new Promise(resolve => setImmediate(resolve))
+  }
+  [Symbol.asyncDispose](){ return this.release() }
+
+  get raw(){ return this.toBuffer("raw") }
+  get png(){ return this.toBuffer("png") }
+  get jpg(){ return this.toBuffer("jpg") }
+  get pdf(){ return this.toBuffer("pdf") }
+  get svg(){ return this.toBuffer("svg") }
+  get webp(){ return this.toBuffer("webp") }
+
+  // Warn about renamed methods but map them to the new names (for now)
+  saveAs(){ _deprecated('Canvas.saveAs()'); return this.toFile(...arguments) }
+  saveAsSync(){ _deprecated('Canvas.saveAsSync()'); return this.toFileSync(...arguments) }
+  toDataURLSync(){ _deprecated('Canvas.toDataURLSync()'); return this.toURLSync(...arguments) }
+
+  toFile(filename, opts={}){
+    let {pages, padding, pattern, ...rest} = exportOptions(this, {filename}, opts),
+        args = [pages.map(core), pattern, padding, rest]
+    return this.ƒ("save", ...args)
+  }
+
+  toFileSync(filename, opts={}){
+    let {pages, padding, pattern, ...rest} = exportOptions(this, {filename}, opts)
+    this.ƒ("saveSync", pages.map(core), pattern, padding, rest)
+  }
+
+  toBuffer(extension="png", opts={}){
+    let {pages, ...rest} = exportOptions(this, {extension}, opts)
+    return this.ƒ("toBuffer", pages.map(core), rest)
+  }
+
+  toBufferSync(extension="png", opts={}){
+    let {pages, ...rest} = exportOptions(this, {extension}, opts)
+    return this.ƒ("toBufferSync", pages.map(core), rest)
+  }
+
+  toURL(extension="png", opts={}){
+    let {mime} = exportOptions(this, {extension}, opts),
+        buffer = this.toBuffer(extension, opts);
+    return buffer.then(data => `data:${mime};base64,${data.toString('base64')}`)
+  }
+
+  toURLSync(extension="png", opts={}){
+    let {mime} = exportOptions(this, {extension}, opts),
+        buffer = this.toBufferSync(extension, opts);
+    return `data:${mime};base64,${buffer.toString('base64')}`
+  }
+
+  // Match the browser API in only accepting a single optional quality argument
+  toDataURL(extension="png", quality){
+    if (quality!==undefined && typeof quality!=='number'){
+      throw TypeError("Expected a number in the range 0–1 for `quality` (use toURL() for additional rendering options)")
+    }
+    return this.toURLSync(extension, {quality})
+  }
+
+  toSharp({page, matte, msaa, density=1}={}){
+    const {Readable} = require('node:stream'),
+          sharp = getSharp(),
+          colorSpace = this.ref('colorSpace') || 'srgb',
+          [width, height] = [this.width*density, this.height*density]
+
+    if (!width || !height) throw new Error("Width and height must be non-zero")
+
+    // Sharp can only read wide-gamut colors when wrapped in a file container, so convert display-p3 to TIFF
+    let buffer = this.toBuffer("raw", {page, matte, density, msaa}),
+        config = {width, height, colorType:'rgba', colorSpace},
+        [contents, sharpImage] = colorSpace != 'srgb'
+          ? [buffer.then(data => neon.ImageData.toTiff({...config, data})), sharp()]
+          : [buffer, sharp({raw:{width, height, channels:4}})]
+
+    return Readable.from([contents]).pipe(
+      withDensity(sharpImage, density * 72)
+    )
+  }
+
+  [REPR](depth, options) {
+    if (this.ref('disposed')) return `Canvas (disposed)`
+    let {width, height, gpu, engine, pages} = this
+    return `Canvas ${inspect({width, height, gpu, engine, pages}, options)}`
+  }
+}
+
+class CanvasGradient extends RustClass{
+  constructor(style, ...coords){
+    super(CanvasGradient)
+    style = (style || "").toLowerCase()
+    if (['linear', 'radial', 'conic'].includes(style)) this.init(style, ...coords)
+    else throw new Error(`Function is not a constructor (use CanvasRenderingContext2D's "createConicGradient", "createLinearGradient", and "createRadialGradient" methods instead)`)
+  }
+
+  addColorStop(offset, color){
+    this.ƒ('addColorStop', ...arguments)
+  }
+
+  get colorInterpolationMethod(){ return this.prop('colorInterpolationMethod') }
+  set colorInterpolationMethod(space){ this.prop('colorInterpolationMethod', space) }
+  get hueInterpolationMethod(){ return this.prop('hueInterpolationMethod') }
+  set hueInterpolationMethod(method){ this.prop('hueInterpolationMethod', method) }
+  get premultipliedAlpha(){ return this.prop('premultipliedAlpha') }
+  set premultipliedAlpha(flag){ this.prop('premultipliedAlpha', !!flag) }
+  get dithering(){ return this.prop('dithering') }
+  set dithering(flag){ this.prop('dithering', !!flag) }
+
+  [REPR](depth, options) {
+    return `CanvasGradient (${this.ƒ("repr")})`
+  }
+}
+
+class CanvasPattern extends RustClass{
+  constructor(canvas, src, repeat){
+    repeat = [...arguments].slice(2)
+    if (repeat.length && repeat[0] !== null && !['', 'repeat', 'repeat-x', 'repeat-y', 'no-repeat'].includes(`${repeat[0]}`.toLowerCase())){
+      throw new DOMException('Expected `repetition` to be "repeat", "repeat-x", "repeat-y", or "no-repeat"', 'SyntaxError')
+    }
+    super(CanvasPattern)
+    const {CanvasRenderingContext2D} = require('./context') // deferred: context.js requires this module in turn
+    if (src instanceof Image){
+      let {width, height} = canvas
+      this.init('from_image', core(validImage(src)), width, height, ...repeat)
+    }else if (src instanceof ImageData){
+      this.init('from_image_data', src, ...repeat)
+    }else if (src instanceof Canvas){
+      let ctx = src.getContext('2d')
+      this.init('from_canvas', core(ctx), ...repeat)
+    }else if (src instanceof CanvasRenderingContext2D){
+      this.init('from_canvas', core(src), ...repeat)
+    }else{
+      throw new Error("CanvasPatterns require a source Image, Canvas, or CanvasRenderingContext2D")
+    }
+  }
+
+  setTransform(matrix) { this.ƒ('setTransform', toSkMatrix.apply(null, arguments)) }
+
+  [REPR](depth, options) {
+    return `CanvasPattern (${this.ƒ("repr")})`
+  }
+}
+
+class CanvasTexture extends RustClass{
+  constructor(spacing, {path, color, angle, line, cap="butt", outline=false, offset=0}={}){
+    super(CanvasTexture)
+    argc(arguments, 1)
+    let [x, y] = Array.isArray(offset) ? offset.concat(offset).slice(0, 2) : [offset, offset]
+    let [h, v] = Array.isArray(spacing) ? spacing.concat(spacing).slice(0, 2) : [spacing, spacing]
+    if (path!==undefined && !(path instanceof Path2D)){
+      throw TypeError("Expected a Path2D object for `path`")
+    }
+    path = core(path)
+    line = line != null ? line : (path ? 0 : 1)
+    angle = angle != null ? angle : (path ? 0 : -Math.PI / 4)
+    this.alloc(path, color, line, cap, angle, !!outline, h, v, x, y)
+  }
+
+  [REPR](depth, options) {
+    return `CanvasTexture (${this.ƒ("repr")})`
+  }
+}
+
+
+//
+// Mime type <-> File extension mappings
+//
+
+class Format{
+  constructor(){
+    let png = "image/png",
+        jpg = "image/jpeg",
+        jpeg = "image/jpeg",
+        webp = "image/webp",
+        pdf = "application/pdf",
+        svg = "image/svg+xml",
+        raw = "application/octet-stream"
+
+    Object.assign(this, {
+      toMime: this.toMime.bind(this),
+      fromMime: this.fromMime.bind(this),
+      expected: `"png", "jpg", "webp", "raw", "pdf", or "svg"`,
+      formats: {png, jpg, jpeg, webp, raw, pdf, svg},
+      mimes: {[png]: "png", [jpg]: "jpg", [webp]: "webp", [raw]: "raw", [pdf]: "pdf", [svg]: "svg"},
+    })
+  }
+
+  toMime(ext){
+    return this.formats[(ext||'').replace(/^\./, '').toLowerCase()]
+  }
+
+  fromMime(mime){
+    return this.mimes[mime]
+  }
+}
+
+//
+// Validation of the options dict shared by the `saveAs`, `toBuffer`, and `toDataURL` methods
+//
+
+const {basename, extname} = require('path')
+
+function exportOptions(canvas, {filename='', extension=''}, opts){
+  // a single number will be interpreted as a quality setting
+  if (typeof opts=='number') opts = {quality:opts}
+
+  // unpack common export options
+  let {page, quality, matte, density, msaa, outline, downsample, filters, colorType, premultiplied} = opts
+
+  filename = `${filePath(filename)}`
+
+  // only allow format overrides in toFile()
+  let imageFormat = !!filename && opts.format != null ? `${opts.format}` : undefined
+  extension = `${extension}`
+
+  // ensure the canvas has a context (so it can at least generate an empty image)
+  if (!canvas.pages.length) canvas.getContext("2d")
+
+  var {fromMime, toMime, expected} = new Format(),
+      ext = imageFormat || extension.replace(/@\d+x$/i,'') || extname(filename),
+      format = fromMime(toMime(ext) || ext),
+      mime = toMime(format),
+      pages = canvas.pages,
+      pp = pages.length
+
+  if (!ext) throw new Error(`Cannot determine image format (use a filename extension or 'format' argument)`)
+  if (!format) throw new Error(`Unsupported file format "${ext}" (expected ${expected})`)
+
+  let padding, isSequence, pattern = filename.replace(/{(\d*)}/g, (_, width) => {
+    isSequence = true
+    width = parseInt(width, 10)
+    padding = isFinite(width) ? width : isFinite(padding) ? padding : -1
+    return "{}"
+  })
+
+  // allow negative indexing if a specific page is specified
+  let idx = page > 0 ? page - 1
+          : page < 0 ? pp + page
+          : undefined;
+
+  if (isFinite(idx) && idx < 0 || idx >= pp) throw new RangeError(
+    pp == 1 ? `Canvas only has a ‘page 1’ (${idx} is out of bounds)`
+            : `Canvas has pages 1–${pp} (${idx} is out of bounds)`
+  )
+
+  pages = isFinite(idx) ? [pages[idx]]
+        : isSequence || format=='pdf' ? pages
+        : pages.slice(-1) // default to the 'current' context
+
+  // inherit text settings from the canvas (since they can't be changed on a per-render basis due to glyph caching)
+  const {textContrast, textGamma, renderer, msaa:validMsaa} = canvas.engine
+
+  if (quality===undefined){
+    quality = 0.92
+  }else{
+    if (typeof quality!='number' || !isFinite(quality) || quality<0 || quality>1){
+      throw new TypeError("Expected a number between 0.0–1.0 for `quality`")
+    }
+  }
+
+  if (density===undefined){
+    let m = (extension || basename(filename, ext)).match(/@(\d+)x$/i)
+    density = m ? parseInt(m[1], 10) : 1
+  }else if (typeof density!='number' || !Number.isInteger(density) || density<1){
+    throw new TypeError("Expected a non-negative integer for `density`")
+  }
+
+  if (msaa===undefined || msaa===true) {
+    msaa = undefined // use the default 4x msaa
+  }else{
+    msaa = msaa===false ? 0 : msaa
+    if (typeof msaa!='number' || !Number.isInteger(msaa) || msaa<0){
+      throw new TypeError("Expected a non-negative integer for `msaa`")
+    }
+    // only reject unsupported MSAA if it's actually headed to the GPU rasterizer
+    if (renderer=='GPU' && !['pdf', 'svg'].includes(format) && !validMsaa.includes(msaa)){
+      throw new TypeError(`${msaa}x MSAA not supported by this GPU (options: [${validMsaa.join(', ')}])`)
+    }
+  }
+
+  if (colorType!==undefined){
+    colorType = validColorType(colorType) // throw an error if invalid
+  }
+
+  filters = filters===undefined ? 'none' : `${filters}`
+  if (!['none', 'all', 'auto'].includes(filters)){
+    throw new TypeError('Expected "none", "all", or "auto" for `filters`')
+  }
+
+  // default to false, otherwise detect truthy
+  downsample = !!downsample
+  outline = !!outline
+  premultiplied = !!premultiplied
+
+  return {
+    filename, pattern, format, mime, pages, padding, quality, matte, density,
+    msaa, outline, textContrast, textGamma, downsample, filters, colorType, premultiplied
+  }
+}
+
+// emit a deprecation warning, once per API per process
+let _warnings = {
+  "Canvas.saveAs()": "Canvas.toFile()",
+  "Canvas.saveAsSync()": "Canvas.toFileSync()",
+  "Canvas.toDataURLSync()": "Canvas.toURLSync() (see also Canvas.toDataURL() which is now synchronous)",
+}
+function _deprecated(oldAPI){
+  let newAPI = _warnings[oldAPI]
+  if (newAPI) console.error(`Deprecation warning: ${oldAPI} has been renamed to ${newAPI} and will stop working in a future release.`)
+  delete _warnings[oldAPI]
+}
+
+module.exports = {Canvas, CanvasGradient, CanvasPattern, CanvasTexture, getSharp}
