@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { crateLicenses, isLicenseFile, licenseTextsFile, lockedCrates, submodulesOf } from './license-texts.js';
+import { crateLicenses, isLicenseFile, isRegularFile, licenseTextsFile, lockedCrates, submodulesOf } from './license-texts.js';
 import { tarGzFile } from './testing.js';
 
 describe('isLicenseFile', () => {
@@ -153,6 +153,22 @@ describe('submodulesOf', () => {
 
   it('gives no submodule for a repository that has none, and no .gitmodules file', () => {
     expect(submodulesOf('', tree.filter(entry => entry.type !== 'commit'))).toEqual([]);
+  });
+});
+
+describe('isRegularFile', () => {
+  // The entries as each host lists them: GitHub gives the mode as octal
+  // text, Gitiles as a number.
+  it('takes a file of a GitHub tree or a Gitiles listing, but not a link, whose text is the path of its target', () => {
+    expect(isRegularFile({ path: 'LICENSE', mode: '100644', type: 'blob' })).toBe(true);
+    expect(isRegularFile({ path: 'LICENSE', mode: '120000', type: 'blob' })).toBe(false);
+    expect(isRegularFile({ name: 'LICENSE', mode: 33188, type: 'blob' })).toBe(true);
+    expect(isRegularFile({ name: 'LICENSE', mode: 40960, type: 'blob' })).toBe(false);
+  });
+
+  it('takes no folder or submodule', () => {
+    expect(isRegularFile({ path: 'licenses', mode: '040000', type: 'tree' })).toBe(false);
+    expect(isRegularFile({ path: 'v8', mode: '160000', type: 'commit' })).toBe(false);
   });
 });
 

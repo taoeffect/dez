@@ -328,10 +328,25 @@ export function lockedPackages(lock, libraries) {
   );
 }
 
+// The npm registry of the packages: the manifest names their package files
+// there, and `deno add` gets them there (`npmrcText`).
+const NPM_REGISTRY = 'https://registry.npmjs.org/';
+
 // The URL of the package file of an npm package in the npm registry.
 export function npmTarballUrl(name, version) {
   const base = name.slice(name.lastIndexOf('/') + 1);
-  return `https://registry.npmjs.org/${name}/-/${base}-${version}.tgz`;
+  return `${NPM_REGISTRY}${name}/-/${base}-${version}.tgz`;
+}
+
+// The .npmrc of the project of `deno add`, so that Deno gets each package
+// from NPM_REGISTRY: Deno keeps the packages of a registry in a folder of
+// their own (`npm/<host>/` of its cache), and the script reads that folder.
+// A line of this file wins over the same line of the .npmrc of the user's
+// home, but Deno still takes a scope line (`@kurkle:registry=`) of that
+// file, so each scope of the libraries gets a line here too.
+function npmrcText(libraries) {
+  const scopes = new Set(libraries.filter(library => library.package.startsWith('@')).map(library => library.package.split('/')[0]));
+  return [`registry=${NPM_REGISTRY}`, ...[...scopes].map(scope => `${scope}:registry=${NPM_REGISTRY}`)].join('\n') + '\n';
 }
 
 // The native packages of a library (`library.native`) for each build
@@ -637,6 +652,14 @@ function moduleGraph(deno, dir, roots, work) {
   return importClosures(JSON.parse(runDeno(deno, args, { cwd: work, denoDir: join(work, 'deno-dir') })));
 }
 
+// The problem that stops the import of `root` in a `moduleGraph`, or
+// undefined when it loads. An import that deno info does not list did not
+// load.
+function importProblem(graph, root) {
+  const closure = graph.get(root.specifier);
+  return closure ? closure.problem : 'deno info gives no import of it';
+}
+
 // Runs the libraries in `dir` (with their native files of this computer)
 // in the bundled Deno with the flags of a run of Dez: static imports of
 // each entry of the import map and of one addon of each prefix, and a red
@@ -791,20 +814,24 @@ async function main(args) {
     const project = join(work, 'project');
     mkdirSync(project);
     writeFileSync(join(project, 'deno.json'), '{}\n');
+    writeFileSync(join(project, '.npmrc'), npmrcText(LIBRARIES));
+    // The network settings of the user (a proxy, a CA file) reach the
+    // registry, but not NPM_CONFIG_REGISTRY: Deno takes it over the .npmrc
+    // of the project.
+    const userEnv = { ...process.env };
+    delete userEnv.NPM_CONFIG_REGISTRY;
     console.log('Getting the npm packages with deno add');
     runDeno(deno, ['add', ...LIBRARIES.map(library => `npm:${library.package}@${library.version}`)], {
       cwd: project,
       denoDir,
-      // The network settings of the user (a proxy, a CA file) reach the
-      // registry.
-      userEnv: process.env
+      userEnv
     });
     const lock = readJson(join(project, 'deno.lock'));
     const integrities = lockedPackages(lock, LIBRARIES);
 
     const full = join(work, 'full');
     const generatedPaths = stagePackages(full, LIBRARIES, library =>
-      join(denoDir, 'npm', 'registry.npmjs.org', library.package, library.version)
+      join(denoDir, 'npm', new URL(NPM_REGISTRY).host, library.package, library.version)
     );
     writeFileSync(join(full, IMPORT_MAP), jsonText(importMap(LIBRARIES)));
 
@@ -812,7 +839,7 @@ async function main(args) {
     const graph = moduleGraph(deno, full, allRoots, work);
     const dropped = [];
     for (const root of allRoots) {
-      const { problem } = graph.get(root.specifier) ?? { problem: 'deno info gives no import of it' };
+      const problem = importProblem(graph, root);
       if (problem && root.required) throw new Error(`The import ${root.specifier} does not load: ${problem}`);
       if (problem) dropped.push(root.specifier);
     }
@@ -888,7 +915,7 @@ async function main(args) {
     const checkedRoots = [...roots, ...graphRoots(libs, OWN_LIBRARIES)];
     const check = moduleGraph(deno, libs, checkedRoots, work);
     for (const root of checkedRoots) {
-      const problem = check.get(root.specifier)?.problem;
+      const problem = importProblem(check, root);
       if (problem) throw new Error(`The import ${root.specifier} does not load from the vendored files: ${problem}`);
     }
     const smoked = smokeRun(deno, libs, checkedRoots, work);

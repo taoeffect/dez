@@ -43,16 +43,7 @@ export function denoSourceLicenses(sourceArchive) {
 // full: it holds parts of other projects below third_party/.
 async function rustyV8Sources(v8Version, log) {
   const commit = await githubTagCommit(RUSTY_V8_REPO, `v${v8Version}`);
-  const { sources, submodules } = await githubRepositorySources(
-    RUSTY_V8_REPO,
-    commit,
-    `rusty_v8 ${v8Version}`,
-    [V8_SUBMODULE],
-    log
-  );
-  if (!submodules.some(submodule => submodule.path === V8_SUBMODULE)) {
-    throw new Error(`rusty_v8 ${v8Version} has no submodule ${V8_SUBMODULE}, so the script cannot find the license files of V8.`);
-  }
+  const { sources } = await githubRepositorySources(RUSTY_V8_REPO, commit, `rusty_v8 ${v8Version}`, [V8_SUBMODULE], log);
   return sources;
 }
 

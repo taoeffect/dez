@@ -195,6 +195,19 @@ async function mapLimited(items, limit, work) {
   return results;
 }
 
+// Git keeps a link as a blob with the mode 120000, whose bytes are the path
+// of its target, not a text (the source archives, `archiveFiles`, give no
+// link either). GitHub gives the mode of a tree entry as octal text,
+// Gitiles as a number.
+const LINK_MODE = 0o120000;
+
+// Whether an entry of a Git file tree, as GitHub or Gitiles lists it, is a
+// regular file: not a folder, a submodule, or a link.
+export function isRegularFile(entry) {
+  const mode = typeof entry.mode === 'string' ? Number.parseInt(entry.mode, 8) : entry.mode;
+  return entry.type === 'blob' && mode !== LINK_MODE;
+}
+
 // The entries of the file tree of a commit of a GitHub repository: all of
 // them for `deep`, else those of the root folder.
 async function githubTree(repo, commit, deep) {
@@ -212,17 +225,20 @@ async function githubTree(repo, commit, deep) {
 // else those of the root folder.
 export async function repositoryLicenses(url, commit, deep) {
   const github = /^https:\/\/github\.com\/([^/]+\/[^/]+)$/.exec(url)?.[1];
+  const gitiles = /^https:\/\/[a-z0-9-]+\.googlesource\.com\//.test(url);
   let paths;
   let fileBytes;
   if (github) {
-    paths = (await githubTree(github, commit, deep)).filter(entry => entry.type === 'blob').map(entry => entry.path);
+    paths = (await githubTree(github, commit, deep)).filter(isRegularFile).map(entry => entry.path);
     fileBytes = path => githubFile(github, commit, path);
-  } else if (/^https:\/\/[a-z0-9-]+\.googlesource\.com\//.test(url) && !deep) {
+  } else if (gitiles && !deep) {
     // Gitiles puts the line `)]}'` before its JSON, and gives the text of a
     // file as base64.
     const listing = (await downloadBytes(`${url}/+/${commit}/?format=JSON`)).toString('utf8');
-    paths = JSON.parse(listing.slice(listing.indexOf('\n'))).entries.filter(entry => entry.type === 'blob').map(entry => entry.name);
+    paths = JSON.parse(listing.slice(listing.indexOf('\n'))).entries.filter(isRegularFile).map(entry => entry.name);
     fileBytes = async path => Buffer.from((await downloadBytes(`${url}/+/${commit}/${path}?format=TEXT`)).toString('ascii'), 'base64');
+  } else if (gitiles) {
+    throw new Error(`The script reads only the top folder of a Git repository on googlesource.com, so it cannot read all the license files of ${url}.`);
   } else {
     throw new Error(`The script cannot read the files of the Git repository ${url}: it knows only GitHub and googlesource.com.`);
   }
@@ -258,12 +274,13 @@ export async function githubTagCommit(repo, tag) {
 // A submodule of `deepSubmodules` (its path) is read in full: it holds
 // parts of other projects, each with its license next to it (the V8 source,
 // the Skia source). Each other submodule is one project, which has its
-// license files in its top folder.
+// license files in its top folder. Throws when the repository has no
+// submodule of `deepSubmodules`, before any download of a submodule.
 export async function githubRepositorySources(repo, commit, title, deepSubmodules, log) {
   log(`Reading the license files of ${title} and its submodules`);
   const tree = await githubTree(repo, commit, true);
   const ownFiles = await mapLimited(
-    tree.filter(entry => entry.type === 'blob' && isLicenseFile(entry.path)).map(entry => entry.path),
+    tree.filter(entry => isRegularFile(entry) && isLicenseFile(entry.path)).map(entry => entry.path),
     GIT_REQUESTS,
     async path => ({ path, text: normalText(await githubFile(repo, commit, path)) })
   );
@@ -271,6 +288,10 @@ export async function githubRepositorySources(repo, commit, title, deepSubmodule
   const hasSubmodules = tree.some(entry => entry.type === 'commit');
   const gitmodules = hasSubmodules ? (await githubFile(repo, commit, '.gitmodules')).toString('utf8') : '';
   const submodules = submodulesOf(gitmodules, tree);
+  const missing = deepSubmodules.filter(path => !submodules.some(submodule => submodule.path === path));
+  if (missing.length > 0) {
+    throw new Error(`${title} has no submodule ${missing.join(', ')}, so the script cannot find the license files that it holds.`);
+  }
 
   const sources = [{ title: `${title} (https://github.com/${repo} at ${commit})`, files: ownFiles }];
   // One host at a time gets requests: the submodules run one after another.
