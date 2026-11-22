@@ -112,7 +112,9 @@ function onTabPointerDown(e: PointerEvent, tabId: string) {
 // `selectstart` on that text, so a tab dragged down into the thread selected
 // its text. A canceled `selectstart` ends text selection for the rest of the
 // press. A `preventDefault` on the press would also stop it, but it would
-// keep the focus in the editor when a tab is clicked.
+// keep the focus in a text field, such as the find field, when a tab is
+// clicked: then the keys after the click (End, Page Down) would not reach
+// the editor that the click focuses (`dez.controller/goToTab`).
 // https://github.com/WebKit/WebKit/blob/main/Source/WebCore/page/EventHandler.cpp
 // (EventHandler::updateSelectionForMouseDrag)
 function preventSelectStart(e: Event) {
@@ -256,7 +258,7 @@ watch(
           'tab--dragging': tab.id === draggedTabId,
         }"
         :style="tab.id === draggedTabId ? { transform: `translateX(${dragOffsetX}px)` } : undefined"
-        @click="sbp('dez.model/tabs/switch', tab.id)"
+        @click="sbp('dez.controller/goToTab', { id: tab.id })"
         @mousedown="onMiddleClick($event, tab.id)"
         @pointerdown="onTabPointerDown($event, tab.id)"
       >
