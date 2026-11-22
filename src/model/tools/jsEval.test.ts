@@ -243,9 +243,9 @@ describe('jsEvalResult', () => {
   })
 
   it.each([
-    ['a refused permission', 'NotCapable: Requires net access to "example.com:443", run again with the --allow-net flag', 'No flag changes that'],
-    ['a refused package', 'TypeError: npm specifiers were requested; but --no-npm is specified', 'No flag changes that'],
-    ['a refused URL', 'TypeError: A remote specifier was requested: "https://example.com/a.ts", but --no-remote is specified.', 'No flag changes that'],
+    ['a refused permission', 'NotCapable: Requires net access to "example.com:443", run again with the --allow-net flag', 'No flag changes these limits'],
+    ['a refused package', 'TypeError: npm specifiers were requested; but --no-npm is specified', 'No flag changes these limits'],
+    ['a refused URL', 'TypeError: A remote specifier was requested: "https://example.com/a.ts", but --no-remote is specified.', 'No flag changes these limits'],
     ['a static import', "TypeError: SyntaxError: 'import', and 'export' cannot be used outside of module code", 'await import('],
   ])('adds advice to the error of %s', (_name, error, advice) => {
     const { text } = resultOf(written('log\n', protocolLine({ type: 'error', text: error })))
@@ -263,7 +263,7 @@ describe('jsEvalResult', () => {
 
     expect(text).toContain('cannot load skia-canvas')
     expect(text).toContain('Write a script app whose manifest.json has the field `"native": ["skia-canvas"]`, and run it with `apps invoke`.')
-    expect(text).not.toContain('No flag changes that')
+    expect(text).not.toContain('No flag changes these limits')
   })
 
   it('names the run folder /run in every text of the run', () => {

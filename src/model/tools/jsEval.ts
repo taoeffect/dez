@@ -503,10 +503,11 @@ function flagAdvice(error: string): string {
     return `The code of \`${JS_EVAL_TOOL.name}\` cannot load ${NATIVE_CANVAS_LIBRARY}: it loads a native file, which only the run of a script app may load. `
       + `Write a script app whose manifest.json has the field \`"native": ["${NATIVE_CANVAS_LIBRARY}"]\`, and run it with \`${APPS_TOOL.name} ${APPS_INVOKE}\`.`
   }
-  return 'Dez runs the code with no network, no environment variables, no start of programs, '
-    + `and no packages but the libraries of ${LIBS_VIRTUAL_ROOT}/, which it imports by a literal name (\`await import("fft.js")\`), not by a name that the code builds, `
-    + `and it opens no file but those of the work folder of this conversation (\`dez.workFolder\`, which Dez names \`${WORK_VIRTUAL_ROOT}\`). `
-    + 'No flag changes that, and you can set none: do the work without them. '
+  return 'Dez runs the code with no network, no environment variables, and no start of programs. '
+    + `The code loads no package but the libraries of \`${LIBS_VIRTUAL_ROOT}/\`. `
+    + 'The code imports each library by a literal name (`await import("fft.js")`), not by a name that the code builds. '
+    + `The code opens no file but those of the work folder of this conversation (\`dez.workFolder\`, which Dez names \`${WORK_VIRTUAL_ROOT}\`). `
+    + 'No flag changes these limits, and you can set no flag: do the work within the limits. '
     + `The code reads and changes the files of the apps in \`${APPS_VIRTUAL_ROOT}/\` only with \`dez.tools/${APPS_TOOL.name}/<subcommand>\` calls.`
 }
 
