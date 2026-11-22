@@ -57,8 +57,7 @@ const quoted = (value: unknown) => JSON.stringify(value) ?? String(value)
 const listed = (values: readonly string[]) => values.map((value) => `"${value}"`).join(', ')
 
 // A text parameter of one line.
-function lineParameter(name: string, value: unknown, fallback: string | null): string {
-  if (value === undefined && fallback !== null) return fallback
+function lineParameter(name: string, value: unknown): string {
   if (typeof value !== 'string' || value.trim() === '') throw new RangeError(`${name} must be a text, as in "NEON CITY", not ${quoted(value)}.`)
   if (/[\r\n]/.test(value)) throw new RangeError(`${name} must be one line: give the second line as subtitle, or make two titles.`)
   if (value.length > MAX_TEXT_LENGTH) throw new RangeError(`${name} has ${value.length} characters, and takes at most ${MAX_TEXT_LENGTH}.`)
@@ -90,8 +89,8 @@ function colorParameter(name: string, value: unknown, fallback: string, words: r
 export function titleParameters(parameters: Record<string, unknown>, fontFiles: readonly string[]): TitleParameters {
   checkParameterNames(APP, parameters, TITLE_PARAMETERS)
 
-  const text = lineParameter('text', parameters.text, null)
-  const subtitle = parameters.subtitle === undefined ? '' : lineParameter('subtitle', parameters.subtitle, null)
+  const text = lineParameter('text', parameters.text)
+  const subtitle = parameters.subtitle === undefined ? '' : lineParameter('subtitle', parameters.subtitle)
   const font = parameters.font ?? DEFAULT_FONT
   if (typeof font !== 'string' || !fontFiles.includes(font)) {
     throw new RangeError(`font must be the file name of a font that Dez ships, one of ${listed(fontFiles)}, not ${quoted(font)}.`)

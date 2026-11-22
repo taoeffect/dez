@@ -34,7 +34,7 @@ const CRATE_DOWNLOADS = 12;
 // The requests to one Git host that run at the same time.
 const GIT_REQUESTS = 4;
 
-const LICENSE_NAME = /licen[sc]e|^(?:copying|copyright|notice|unlicense|patents)/i;
+const LICENSE_NAME = /licen[sc]e|^(?:copying|copyright|notice|patents)/i;
 // Files with a license name that are code or data, not a license text
 // (`licenses.rs`, `copying-phase.cc`, `license-check.sh`, `license.html`).
 const NOT_A_TEXT = /\.(?:a|c|cc|cpp|h|hpp|html|js|pem|pl|pm|py|rs|sh|stderr|ts)$/i;

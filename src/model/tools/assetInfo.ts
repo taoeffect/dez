@@ -155,11 +155,11 @@ export function fittingChecks(checks: readonly ClipCheck[], streams: ClipStreams
  *  counted. */
 export const MAX_CHECK_ITEMS = 50
 
-// The items of a check line, each one with `unit` after the last one shown.
-function itemsText(items: readonly string[], unit = ''): string {
+// The items of a check line.
+function itemsText(items: readonly string[]): string {
   if (items.length === 0) return 'none'
   const more = items.length - MAX_CHECK_ITEMS
-  return `${items.slice(0, MAX_CHECK_ITEMS).join(', ')}${unit}${more > 0 ? `, and ${more} more` : ''}`
+  return `${items.slice(0, MAX_CHECK_ITEMS).join(', ')}${more > 0 ? `, and ${more} more` : ''}`
 }
 
 function intervalText({ start, end }: ClipInterval): string {
