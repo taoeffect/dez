@@ -81,7 +81,8 @@ Times are seconds. Each throws a RangeError with a text that tells why.
   `choiceParameter(parameters, "theme", ["light", "dark"])` (the first is the default) check one parameter. Each
   check throws a RangeError that tells how to fix the call.
 - `csvTable(text, { delimiter })` and `jsonTable(JSON.parse(text))` give `{ columns, rows }`: a field is a number,
-  a text, or null. `numericColumns(table)` names the columns of numbers. `parseCsv` gives the raw records.
+  a text, or null. `csvTable` throws a RangeError when two columns have one name. `numericColumns(table)` names the
+  columns of numbers. `parseCsv` gives the raw records.
 - `workFile(dez.workFolder, "/work/beats/song.json")` gives `{ path, shown }`: the file to open, and the path that
   you read. It refuses a path out of `/work/`.
 - `resultFiles("beats", parameters, dez)` gives the `workFile` of each input: `/work/beats-<id>.json`, or the

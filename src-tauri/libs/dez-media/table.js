@@ -117,8 +117,8 @@ function fieldValue(field) {
  * null; a row with fewer fields than the header gets null for the rest.
  * A column with no name gets the name "column N".
  *
- * Throws a RangeError for a text with no record, and for a row with more
- * fields than the header.
+ * Throws a RangeError for a text with no record, for two columns with one
+ * name, and for a row with more fields than the header.
  * @param {string} text
  * @param {{ delimiter?: string }} [options] as for `parseCsv`
  * @returns {Table}
@@ -127,6 +127,7 @@ export function csvTable(text, options) {
   const [header, ...records] = parseCsv(text, options)
   if (header === undefined) throw new RangeError('The CSV text has no line: its first line names the columns.')
   const columns = header.map((name, index) => (name.trim() === '' ? `column ${index + 1}` : name.trim()))
+  checkColumnNames(header, columns)
   const rows = records.map((record, index) => {
     if (record.length > columns.length) {
       throw new RangeError(`Row ${index + 2} has ${record.length} fields, and the header has ${columns.length} columns. `
@@ -135,6 +136,30 @@ export function csvTable(text, options) {
     return columns.map((_, column) => fieldValue(record[column] ?? ''))
   })
   return { columns, rows }
+}
+
+/**
+ * Throws a RangeError when two of `columns` have one name: a reader that
+ * finds a column by its name (dez-chart) would else read the first one
+ * twice. Only one of the two can have no name in `header`, as the names
+ * that `csvTable` gives such columns have their numbers.
+ * @param {string[]} header the names of the first record, as in the text
+ * @param {string[]} columns the names that `csvTable` gives the columns
+ */
+function checkColumnNames(header, columns) {
+  /** @type {Map<string, number>} */
+  const firstColumns = new Map()
+  columns.forEach((name, column) => {
+    const first = firstColumns.get(name)
+    if (first === undefined) {
+      firstColumns.set(name, column)
+      return
+    }
+    const nameless = [first, column].find((index) => header[index].trim() === '')
+    const why = nameless === undefined ? '' : ` Column ${nameless + 1} has no name, so it gets the name "column ${nameless + 1}".`
+    throw new RangeError(`Columns ${first + 1} and ${column + 1} of the CSV text have the same name, ${JSON.stringify(name)}.${why} `
+      + 'Give each column its own name in the first line.')
+  })
 }
 
 /**

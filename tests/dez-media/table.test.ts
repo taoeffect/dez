@@ -44,6 +44,14 @@ describe('dez-media csvTable', () => {
     expect(() => csvTable('\n')).toThrow('The CSV text has no line: its first line names the columns.')
     expect(() => csvTable('a,b\n1,2\n3,4,5\n')).toThrow(/^Row 3 has 3 fields, and the header has 2 columns\./)
   })
+
+  it('refuses two columns with one name, after the trim and the names of columns with none', () => {
+    const again = 'Give each column its own name in the first line.'
+    expect(() => csvTable('x,y,y\n1,2,3\n')).toThrow(`Columns 2 and 3 of the CSV text have the same name, "y". ${again}`)
+    expect(() => csvTable('y\t x\t y \n', { delimiter: '\t' })).toThrow(`Columns 1 and 3 of the CSV text have the same name, "y". ${again}`)
+    expect(() => csvTable('a,,column 2\n')).toThrow(
+      `Columns 2 and 3 of the CSV text have the same name, "column 2". Column 2 has no name, so it gets the name "column 2". ${again}`)
+  })
 })
 
 describe('dez-media jsonTable', () => {
