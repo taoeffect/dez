@@ -243,12 +243,23 @@ async function runCode() {
 }
 
 // The `dez` object of a run of an app: the copies of the input assets
-// (`inputs`, each with the path of its file), the folder for the files
-// that the run gives back (`outputFolder`), the folder of the app
-// (`appFolder`), and the work folder of the conversation (`workFolder`).
-// It has no `sbp`: the code of an app calls no Dez tool.
+// (`inputs`, each with the path of its file, and with the facts of its
+// decoded files, `audio` and `frames`, when the run decodes its clips),
+// the folder for the files that the run gives back (`outputFolder`), the
+// folder of the app (`appFolder`), and the work folder of the
+// conversation (`workFolder`). It has no `sbp`: the code of an app calls
+// no Dez tool.
 function appDez({ inputs, outputFolder, appFolder, workFolder }) {
-  return freeze({ inputs: freeze(inputs.map((input) => freeze({ ...input }))), outputFolder, appFolder, workFolder })
+  return freeze({ inputs: freeze(inputs.map(frozenInput)), outputFolder, appFolder, workFolder })
+}
+
+// A frozen copy of an input of a run, with the facts of its decoded files.
+function frozenInput({ audio, frames, ...input }) {
+  const decoded = {
+    ...(audio === undefined ? {} : { audio: audio && freeze({ ...audio }) }),
+    ...(frames === undefined ? {} : { frames: frames && freeze({ ...frames }) }),
+  }
+  return freeze({ ...input, ...decoded })
 }
 
 // Runs an app: the default export of its `main.ts`, with the parameters of

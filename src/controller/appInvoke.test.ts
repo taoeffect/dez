@@ -5,13 +5,16 @@ import { user } from '../model/streams/testing'
 import { APP_READ_ASSET, APP_SAVE_ASSET, APP_STOPPED_TEXT, AppCallError, notAnInputText, SaveNotStoredError, type AppFrameEnd, type AppFrameRun, type SavedAssetAnswer } from '../model/tools/appBridge'
 import { APP_PAGE_LOADS_STATE, APP_RUNS_STATE, appOutputNotStoredText, invokeCall, invokeInputsText, type CheckedInvokeCall } from '../model/tools/appInvoke'
 import { MANIFEST_MAX_BYTES } from '../model/tools/appManifest'
-import { APP_RUN_MAX_OUTPUT_FILES, APPS_MAX_ENTRIES } from '../model/tools/appsTool'
+import { APP_RUN_MAX_DECODED_BYTES, APP_RUN_MAX_OUTPUT_FILES, APPS_MAX_ENTRIES } from '../model/tools/appsTool'
+import { assetProbeArgs } from '../model/tools/assetFacts'
 import { unreadableImageText } from '../model/tools/imageTool'
+import { APP_DECODES_STATE, clipDecodeArgs, DECODE_NOT_PROBED_DETAILS, DECODED_TOO_LARGE_TEXT, decodeFailedText, NO_DECODE } from '../model/tools/inputDecode'
 import { jobStartedText, jobTimedOutText } from '../model/tools/jobs'
 import { JS_EVAL_OUTPUT_BYTES, JS_EVAL_RUNNER, JS_EVAL_RUNNER_FILE, RUN_DESCRIPTION_FILE } from '../model/tools/jsEval'
 import { PROGRAM_READS_INPUTS, programNotStartedText } from '../model/tools/programRuns'
-import { appsArgs, CONVERSATION, CONVERSATION_ID, FILM, PNG_BYTES, protocolLine, RED, SKY, textBytes, WAV_BYTES } from '../model/tools/testing'
+import { appsArgs, CONVERSATION, CONVERSATION_ID, FILM, OPUS, PNG_BYTES, probeOutput, protocolLine, RED, SKY, SONG, textBytes, VP9, WAV_BYTES } from '../model/tools/testing'
 import type { ToolRunResult } from '../model/tools/types'
+import { FFPROBE_TIMEOUT_MS } from '../model/tools/videoTool'
 import { checkedInvokeCall, runAppFrameJob, runAppJob } from './appInvoke'
 import { TabJobs, type MadeAsset } from './jobs'
 import type { AppFileRef, BundledToolEnd, FileTree } from './nativeTypes'
@@ -139,8 +142,11 @@ function runDescription(folder: string): Record<string, unknown> {
   return JSON.parse(saved?.content as string) as Record<string, unknown>
 }
 
-function invoke(parameters: Record<string, unknown> = {}, sections = CONVERSATION) {
-  return invokeCall(appsArgs('invoke', { name: 'notes', ...parameters }), sections)
+// The checked call of the script app `notes`: with the call's own decode,
+// as no manifest gives one.
+function invoke(parameters: Record<string, unknown> = {}, sections = CONVERSATION): CheckedInvokeCall {
+  const call = invokeCall(appsArgs('invoke', { name: 'notes', ...parameters }), sections)
+  return { ...call, kind: 'script', decode: call.decode ?? NO_DECODE }
 }
 
 function runJob(call = invoke(), signal: AbortSignal = running()) {
@@ -194,6 +200,14 @@ describe('checkedInvokeCall', () => {
 
     expect(call.kind).toBe('ui')
     expect(call.index.virtual).toBe('/apps/notes/index.html')
+  })
+
+  it('gives the decode of the manifest of a script app, or the decode of the call in its place', async () => {
+    const manifest = JSON.stringify({ name: 'notes', description: 'Keeps notes.', kind: 'script', decode: { audio: { rate: 22050 } } })
+    fakeAppFiles(appFiles('notes', { 'manifest.json': manifest, 'main.ts': MAIN }))
+
+    expect((await checked()).decode).toStrictEqual({ audio: { rate: 22050 }, frames: null })
+    expect((await checked({ decode: { frames: { width: 12, height: 9 } } })).decode).toStrictEqual({ audio: null, frames: { width: 12, height: 9, fps: null } })
   })
 
   it.each([
@@ -562,6 +576,120 @@ describe('runAppJob', () => {
 
     expect(refusal).toBe(programNotStartedText('deno', 'apps'))
     expect(native.runs).toStrictEqual([])
+  })
+
+  describe('with a decode', () => {
+    const DECODE = { audio: { rate: 8000 }, frames: { width: 12, height: 9 } }
+    // The probe output of each clip by the name of its copy: @b has only
+    // sound, @c only a picture (5 frames a second).
+    const PROBES: Record<string, string> = { 'b.wav': probeOutput([OPUS]), 'c.webm': probeOutput([VP9]) }
+    // The sizes of the files of the work folder after the decode runs.
+    let folderSizes: Record<string, number> = {}
+    // How each ffmpeg run ends, and what it writes as errors.
+    let decodeEnd: BundledToolEnd = ENDED
+    let decodeErrors = ''
+
+    const runTools = () => native.runs.map(({ run }) => run.tool)
+
+    beforeEach(() => {
+      folderSizes = { 'b.f32': 64_000, 'c.rgb': 3240 }
+      decodeEnd = ENDED
+      decodeErrors = ''
+      native.folderEntries = (file) => file.root === 'cache' ? Object.entries(folderSizes).map(([name, size]) => ({ name, updatedAt: 0, size })) : null
+      native.program = async (run, onOutput) => {
+        if (run.tool === 'dez-ffprobe') {
+          onOutput({ stream: 'stdout', text: PROBES[run.args.at(-1) ?? ''] ?? '' })
+          return ENDED
+        }
+        if (run.tool === 'dez-ffmpeg') {
+          onOutput({ stream: 'stderr', text: decodeErrors })
+          return decodeEnd
+        }
+        return returns('done')(run, onOutput)
+      }
+    })
+
+    it('decodes each clip into the run folder before the code runs, gives the code the facts of the files, and gives the run no clip again', async () => {
+      const outcome = await runJob(invoke({ inputs: '@a @c @b', decode: DECODE, timeout_seconds: 20 }))
+
+      const folder = deletedWorkFolder()
+      expect(outcome).toStrictEqual({ text: 'done', isError: false, assets: [] })
+      expect(states).toStrictEqual([PROGRAM_READS_INPUTS, APP_DECODES_STATE, APP_RUNS_STATE])
+      // Each later clip gets what is left of the most bytes of a run.
+      expect(native.runs.map(({ run }) => [run.tool, run.args, run.inputs, run.timeoutMs])).toStrictEqual([
+        ['dez-ffprobe', assetProbeArgs('c.webm'), [{ name: 'c.webm', source: FILM.src }], FFPROBE_TIMEOUT_MS],
+        ['dez-ffmpeg', clipDecodeArgs('c.webm', { audio: null, frames: { name: 'c.rgb', width: 12, height: 9, fps: null, fileFps: 5 } }, APP_RUN_MAX_DECODED_BYTES), [], 20_000],
+        ['dez-ffprobe', assetProbeArgs('b.wav'), [{ name: 'b.wav', source: SONG.src }], FFPROBE_TIMEOUT_MS],
+        ['dez-ffmpeg', clipDecodeArgs('b.wav', { audio: { name: 'b.f32', rate: 8000 }, frames: null }, APP_RUN_MAX_DECODED_BYTES - 3240), [], 20_000],
+        ['dez-deno', [JS_EVAL_RUNNER_FILE], [{ name: 'a.jpg', source: RED }], 20_000],
+      ])
+      expect(runDescription(folder).inputs).toStrictEqual([
+        { id: 'a', kind: 'image', type: 'image/jpeg', path: `${CACHE_DIR}/${folder}/a.jpg` },
+        {
+          id: 'c', kind: 'video', type: 'video/webm', path: `${CACHE_DIR}/${folder}/c.webm`,
+          audio: null, frames: { path: `${CACHE_DIR}/${folder}/c.rgb`, width: 12, height: 9, fps: 5, count: 10 },
+        },
+        {
+          id: 'b', kind: 'audio', type: 'audio/wav', path: `${CACHE_DIR}/${folder}/b.wav`,
+          audio: { path: `${CACHE_DIR}/${folder}/b.f32`, rate: 8000, count: 16_000 }, frames: null,
+        },
+      ])
+    })
+
+    it('runs no ffmpeg for a clip that has none of the streams that the decode asks for', async () => {
+      await runJob(invoke({ inputs: '@b', decode: { frames: { width: 12, height: 9 } } }))
+
+      const folder = deletedWorkFolder()
+      expect(runTools()).toStrictEqual(['dez-ffprobe', 'dez-deno'])
+      expect(runDescription(folder).inputs).toStrictEqual([{ id: 'b', kind: 'audio', type: 'audio/wav', path: `${CACHE_DIR}/${folder}/b.wav`, frames: null }])
+    })
+
+    it('does not run the code when the decoded files are larger than the most bytes of a run together', async () => {
+      folderSizes = { 'c.rgb': APP_RUN_MAX_DECODED_BYTES - 100, 'b.f32': 200 }
+
+      const refusal = await refusalOf(runJob(invoke({ inputs: '@c @b', decode: DECODE })))
+
+      expect(refusal).toBe(DECODED_TOO_LARGE_TEXT)
+      expect(runTools()).toStrictEqual(['dez-ffprobe', 'dez-ffmpeg', 'dez-ffprobe', 'dez-ffmpeg'])
+      expect(native.runs[3].run.args).toStrictEqual(expect.arrayContaining(['-fs', '101']))
+      deletedWorkFolder()
+    })
+
+    it('tells of a decode that failed with the whole lines of the end of the error output, with no path, and does not run the code', async () => {
+      decodeEnd = { kind: 'exited', code: 1 }
+      // ffmpeg names its input by the relative name that Dez gives it.
+      decodeErrors = `${'x'.repeat(1200)}\nc.webm: Invalid data found when processing input\nError opening input file ${CACHE_DIR}/work/w1/c.webm.\n`
+
+      const refusal = await refusalOf(runJob(invoke({ inputs: '@c', decode: DECODE })))
+
+      expect(refusal).toContain(decodeFailedText({ kind: 'video', id: 'c' }))
+      expect(refusal).toContain('ffmpeg ended with the error code 1. The end of its error output:\n')
+      expect(refusal).toContain('c.webm: Invalid data found when processing input')
+      expect(refusal).not.toContain('/home/u')
+      expect(refusal).not.toContain('xxx')
+      expect(runTools()).toStrictEqual(['dez-ffprobe', 'dez-ffmpeg'])
+      expect(consoleError).toHaveBeenCalled()
+      deletedWorkFolder()
+    })
+
+    it('tells of a clip that ffprobe could not read, and runs no decode', async () => {
+      const refusal = await refusalOf(runJob(invoke({ inputs: '@d', decode: DECODE })))
+
+      expect(refusal).toContain(decodeFailedText({ kind: 'video', id: 'd' }))
+      expect(refusal).toContain(DECODE_NOT_PROBED_DETAILS)
+      expect(runTools()).toStrictEqual(['dez-ffprobe'])
+      deletedWorkFolder()
+    })
+
+    it('gives the text of the time limit for a decode that the backend stopped at it', async () => {
+      decodeEnd = { kind: 'timedOut' }
+
+      const refusal = await refusalOf(runJob(invoke({ inputs: '@c', decode: DECODE, timeout_seconds: 20 })))
+
+      expect(refusal).toBe(jobTimedOutText(20_000, APP_DECODES_STATE))
+      expect(runTools()).toStrictEqual(['dez-ffprobe', 'dez-ffmpeg'])
+      deletedWorkFolder()
+    })
   })
 })
 

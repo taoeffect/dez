@@ -27,6 +27,7 @@ import {
 } from './appsTool'
 import { SCRIPT_MAIN_FILE, UI_CLIENT_SCRIPT_TAG, UI_INDEX_FILE } from './appTemplates'
 import { assetIdWords } from './arguments'
+import { callDecode, decodedInputFacts, type DecodedClip, type InputDecode } from './inputDecode'
 import { ASSET_NAMES, jobCallLabel, jobTimeoutMs, type JobAssetKind } from './jobs'
 import { endedOutcome, failedOutcome, namesDenoFlag, returnedOutcome, runResultText, textForModel, type JsEvalEndLine, type RunOutcome } from './jsEval'
 import { clipInput, tellUserConsole, type ClipInput, type KeptFile, type ProgramEnd } from './programRuns'
@@ -40,9 +41,10 @@ import { ToolError, type SubcommandArguments } from './types'
 // the default export of the `main.ts` of the app with the parameters of
 // the call. The code can open three folders: the folder of its app, where
 // its state stays from one run to the next, the run folder, which holds a
-// copy of each input and the output folder, and the work folder of the
-// conversation of the call (conversationWork.ts). It has no network and
-// no tool bridge (`dez.sbp`).
+// copy of each input, the decoded files of the input clips when the run
+// decodes them (inputDecode.ts), and the output folder, and the work
+// folder of the conversation of the call (conversationWork.ts). It has no
+// network and no tool bridge (`dez.sbp`).
 //
 // A UI app: Dez loads the page of the app in a hidden frame, and calls the
 // handler that the page registered (`APP_INVOKE_HANDLER`) with the
@@ -138,12 +140,17 @@ export interface InvokeCall {
    *  the call. */
   inputs: AppInput[]
   timeoutMs: number
+  /** The call's own `decode` (`callDecode`); null for a call with
+   *  none. */
+  decode: InputDecode | null
 }
 
 /** A call whose app can run (`checkInvokeTarget`), with the kind of the
- *  app, which picks what runs it. */
-export interface CheckedInvokeCall extends InvokeCall {
+ *  app, which picks what runs it, and the decode of the run
+ *  (`runDecode`). */
+export interface CheckedInvokeCall extends Omit<InvokeCall, 'decode'> {
   kind: AppKind
+  decode: InputDecode
 }
 
 function parametersOf(args: SubcommandArguments): JsonObject {
@@ -154,8 +161,9 @@ function parametersOf(args: SubcommandArguments): JsonObject {
 /** The run that an `apps invoke` call asks for, from its checked arguments
  *  and the sections of its tab. Throws a `ToolError`, whose text tells the
  *  model how to fix the call, for a text that is no name of an app, a bad
- *  time limit, and an input that names no image and no clip. It reads no
- *  file: `checkInvokeTarget` tells whether the app can run. */
+ *  time limit, an input that names no image and no clip, and a `decode`
+ *  that is not valid. It reads no file: `checkInvokeTarget` tells whether
+ *  the app can run. */
 export function invokeCall(args: SubcommandArguments, sections: readonly Section[]): InvokeCall {
   const app = appNamed((typeof args.name === 'string' ? args.name : '').trim())
   const timeoutMs = jobTimeoutMs(args, APP_RUN_DEFAULT_SECONDS)
@@ -177,6 +185,7 @@ export function invokeCall(args: SubcommandArguments, sections: readonly Section
     parameters: parametersOf(args),
     inputs,
     timeoutMs,
+    decode: callDecode(args),
   }
 }
 
@@ -253,20 +262,25 @@ export interface AppRunFolders {
 /** The text of the description of a run of `call` (`RUN_DESCRIPTION_FILE`,
  *  jsEval.ts), which the module of Dez reads: the main file of the app as
  *  a file URL, the parameters, and what the `dez` object of the code holds
- *  (`appDez`, jsEvalRunner.js): each input with the path of its copy, the
- *  output folder, the folder of the app, and the work folder of the
+ *  (`appDez`, jsEvalRunner.js): each input with the path of its copy and
+ *  the facts of its decoded files (`decoded`, by id; `decodedInputFacts`),
+ *  the output folder, the folder of the app, and the work folder of the
  *  conversation. */
-export function appRunDescription(call: Pick<InvokeCall, 'parameters' | 'inputs'>, folders: AppRunFolders): string {
+export function appRunDescription(call: Pick<InvokeCall, 'parameters' | 'inputs'>, folders: AppRunFolders, decoded: ReadonlyMap<string, DecodedClip> = new Map()): string {
   return JSON.stringify({
     kind: 'app',
     main: fileUrl(`${folders.app}/${SCRIPT_MAIN_FILE}`),
     parameters: call.parameters,
-    inputs: call.inputs.map((input) => ({
-      id: input.id,
-      kind: input.kind,
-      type: input.kind === 'image' ? input.type : input.clip.type,
-      path: `${folders.run}/${input.name}`,
-    })),
+    inputs: call.inputs.map((input) => {
+      const clip = decoded.get(input.id)
+      return {
+        id: input.id,
+        kind: input.kind,
+        type: input.kind === 'image' ? input.type : input.clip.type,
+        path: `${folders.run}/${input.name}`,
+        ...(clip && decodedInputFacts(clip, folders.run)),
+      }
+    }),
     outputFolder: `${folders.run}/${APP_OUTPUT_FOLDER}`,
     appFolder: folders.app,
     workFolder: folders.work,

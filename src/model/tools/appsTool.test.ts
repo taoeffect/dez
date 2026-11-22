@@ -77,7 +77,7 @@ describe('APPS_TOOL', () => {
       ['mkdir', ['path']],
       ['mv', ['moves']],
       ['show', ['name']],
-      ['invoke', ['name', 'parameters', 'inputs', 'is_intermediate', 'timeout_seconds']],
+      ['invoke', ['name', 'parameters', 'inputs', 'decode', 'is_intermediate', 'timeout_seconds']],
     ])
   })
 

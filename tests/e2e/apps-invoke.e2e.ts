@@ -6,15 +6,15 @@ import { jobStartedText, jobsWaitResults, jobTimedOutText, startedJobId } from '
 import { appsCall, movingAppFiles, pageFrameCount, pageFrameGuards, seedApp, uiAppFiles } from './harness/apps'
 import { consoleErrors, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
 import { expectNoLinkedFile, linkedDropDir, openDroppedFiles } from './harness/drops'
-import { appFilePath, filesIn, newFileIn, storedFileName } from './harness/fixtures'
+import { appFilePath, filesIn, newFileIn, storedFileName, writeTestFile } from './harness/fixtures'
 import { colorDistance, decodedImage, generatedImagesDir, pngDataUrl, shownImages, solidPng, STRIPE_COLORS, STRIPES_PNG } from './harness/images'
 import { runToolJob, startedJob, waitCall, type EndedJob } from './harness/jobs'
 import { expectReplyEnd, expectRunsEnded } from './harness/jsEval'
-import { shownPlayers, WEBM_VIDEO } from './harness/media'
+import { clipTag, monoWav, shownPlayers, WAV_SAMPLE_RATE, WEBM_VIDEO } from './harness/media'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendChatReply, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { endedReply, newTab, submit } from './harness/thread'
+import { endedReply, newTab, openSeededConversation, pickModel, submit } from './harness/thread'
 import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolChip, revealingPart } from './harness/toolChips'
 
 // The `invoke` subcommand of the `apps` tool, driven through the real app
@@ -32,6 +32,8 @@ import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolC
 // - Dez keeps each image and clip that the code left in the output folder
 //   as a new asset of the conversation, in a stored file whose type follows
 //   its bytes and not its name, and keeps no other file;
+// - with `decode`, the real ffmpeg decodes each clip into the run folder
+//   first, and the code reads the samples and the pixels with dez-media;
 // - a run with `is_intermediate` hides its asset under the chip of its
 //   call;
 // - a call that names no app, or an app without the file that a run
@@ -122,6 +124,41 @@ const SHEET_MAIN = [
   '  return facts.join("\\n")',
   '}',
 ].join('\n')
+
+// The code of the `decode` app: it reads the decoded files of each input
+// with dez-media, and gives their facts, the peak of the samples, and the
+// middle pixel of the first frame.
+const DECODE_MAIN = [
+  'import { f32Samples, rgbFrames } from "dez-media"',
+  '',
+  'export default async function main(parameters, dez) {',
+  '  const runs = []',
+  '  for (const { id, audio, frames } of dez.inputs) {',
+  '    const run = { id, audio, frames, frozen: Object.isFrozen(frames ?? audio) }',
+  '    if (audio) {',
+  '      const samples = f32Samples(await Deno.readFile(audio.path))',
+  '      run.samples = samples.length',
+  '      run.peak = samples.reduce((peak, value) => Math.max(peak, Math.abs(value)), 0)',
+  '    }',
+  '    if (frames) {',
+  '      const read = rgbFrames(await Deno.readFile(frames.path), frames.width, frames.height)',
+  '      const middle = (read.width * Math.floor(read.height / 2) + Math.floor(read.width / 2)) * 3',
+  '      run.count = read.count',
+  '      run.pixel = Array.from(read.data.slice(middle, middle + 3))',
+  '    }',
+  '    runs.push(run)',
+  '  }',
+  '  return runs',
+  '}',
+].join('\n')
+
+// 2 s of a 440 Hz tone at half of full scale: 16-bit mono PCM at 8 kHz.
+const TONE_WAV = monoWav(Buffer.from(Int16Array.from(
+  { length: 2 * WAV_SAMPLE_RATE },
+  (_, index) => Math.round(16384 * Math.sin(2 * Math.PI * 440 * index / WAV_SAMPLE_RATE)),
+).buffer), 2)
+// The color of `WEBM_VIDEO`.
+const VIDEO_COLOR = [0x2a, 0x7f, 0xd4]
 
 const DRAFT_MAIN = [
   'export default async function main(parameters, dez) {',
@@ -388,6 +425,41 @@ describe('apps invoke', () => {
     expect(fs.readFileSync(files.b).equals(STRIPES_PNG)).toBe(true)
     expect(fs.readFileSync(files.c).equals(WEBM_VIDEO)).toBe(true)
     expectNoLinkedFile(requests, linkedDir)
+    await expectRunsEnded(setup)
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('decodes each clip before the run, and the code reads the samples and the pixels with dez-media', async () => {
+    await seedApp(appsDir, { name: 'decode', description: 'Reads decoded clips.', kind: 'script' }, { 'main.ts': DECODE_MAIN })
+    const { home } = setup.app
+    const video = await writeTestFile(appFilePath(home, 'assets', 'generated', 'video', 'decode.webm'), WEBM_VIDEO)
+    const tone = await writeTestFile(appFilePath(home, 'assets', 'generated', 'audio', 'decode.wav'), TONE_WAV)
+    await openSeededConversation(browser, home, 'apps-invoke-decode', [{
+      role: 'user',
+      text: [clipTag('video', { id: 'a', type: 'video/webm', src: video }), clipTag('audio', { id: 'b', type: 'audio/wav', src: tone }), 'Read them.'].join('\n'),
+    }])
+    await pickModel(browser, CALLER.name, CALLER.modelName)
+    await submit(browser, '')
+
+    const decode = { audio: { rate: 8000 }, frames: { width: 12, height: 9 } }
+    const run = await invoke(await chatRequest(), 'call_decode', { name: 'decode', inputs: '@a @b', decode })
+    expect(run.result.status).toBe('finished')
+    // The video has no sound, and the audio clip no picture. With no fps,
+    // each frame of the clip comes once: 2 s at 5 frames a second.
+    const [ofVideo, ofTone] = JSON.parse(run.result.text.split('\n\n')[0]) as Array<Record<string, unknown>>
+    expect(ofVideo).toStrictEqual({
+      id: 'a',
+      audio: null,
+      frames: { path: '/run/a.rgb', width: 12, height: 9, fps: 5, count: 10 },
+      frozen: true,
+      count: 10,
+      pixel: expect.any(Array),
+    })
+    expect(colorDistance(ofVideo.pixel as number[], VIDEO_COLOR)).toBeLessThanOrEqual(8)
+    // The tone reaches half of full scale at sample 150.
+    expect(ofTone).toStrictEqual({ id: 'b', audio: { path: '/run/b.f32', rate: 8000, count: 16_000 }, frames: null, frozen: true, samples: 16_000, peak: 0.5 })
+
+    await expectReplyEnd(setup, CALLER, run.next)
     await expectRunsEnded(setup)
     expect(await consoleErrors(browser)).toStrictEqual([])
   })

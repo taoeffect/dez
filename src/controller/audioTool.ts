@@ -22,7 +22,7 @@ import { withoutLocalPaths } from '../model/tools/localPaths'
 import { clipInput } from '../model/tools/programRuns'
 import { ToolError } from '../model/tools/types'
 import type { AppFileEntry, BundledToolInput } from './nativeTypes'
-import { clipInputFile, inWorkFolder, runProgram, storeOutputs } from './programRuns'
+import { clipInputFile, inWorkFolder, runProgram, storeOutputs, wholeLinesEnd } from './programRuns'
 
 // The work of the `audio` tool (model/tools/audioTool.ts): the runs of
 // ffmpeg, a program that Dez ships, on a copy of an audio clip in a new
@@ -49,15 +49,6 @@ async function clipCopy(clip: ClipAttachment, folder: string, signal: AbortSigna
   const input = clipInput(clip)
   const copy = await clipInputFile(input, folder, signal, AUDIO_TOOL.name)
   return { name: input.name, inputs: copy ? [copy] : [] }
-}
-
-// The kept end `kept` of the error output of a run, whose start Dez `cut`:
-// after a cut, only its whole lines. The cut can fall inside a path, and
-// `withoutLocalPaths` does not see the rest of a path as a path.
-function wholeLinesEnd(kept: string, cut: boolean): string {
-  if (!cut) return kept
-  const lineEnd = kept.search(/[\r\n]/)
-  return lineEnd < 0 ? '' : kept.slice(lineEnd + 1)
 }
 
 // One ffmpeg run on the clip `id` in `folder`, to its end: the seconds of

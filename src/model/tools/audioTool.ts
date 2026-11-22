@@ -6,7 +6,7 @@ import { sectionClipSource, type MediaTag } from '../chat/mediaTags'
 import type { Section } from '../chat/types'
 import { assetIdArgument } from './arguments'
 import { madeAssetText } from './jobs'
-import type { KeptFile, ProgramEnd } from './programRuns'
+import { ffmpegRunDetails, type KeptFile, type ProgramEnd } from './programRuns'
 import { subcommandToolDefinition, type SubcommandTool } from './subcommands'
 import { ToolError, type ToolArguments } from './types'
 
@@ -228,15 +228,10 @@ export function audioDecodeFailedText(id: string): string {
  *  error and wrote no audio. */
 export const AUDIO_NOT_FOUND_DETAILS = 'ffmpeg found no audio in the file.'
 
-/** The details of `audioDecodeFailedText` for a run that failed: how it
- *  ended, and `errorEnd`, the end of its error output. The caller takes
- *  the local paths out of it (`withoutLocalPaths`). */
+/** The details of `audioDecodeFailedText` for a run that failed
+ *  (`ffmpegRunDetails`). */
 export function audioRunDetails(end: Exclude<ProgramEnd, { kind: 'timedOut' }>, errorEnd: string): string {
-  const how = end.kind === 'outputTooLarge'
-    ? `Dez stopped ffmpeg: it wrote more than ${byteSizeText(AUDIO_RUN_OUTPUT_BYTES)} of output.`
-    : end.code === null ? 'The system ended ffmpeg.' : `ffmpeg ended with the error code ${end.code}.`
-  const written = errorEnd.trim()
-  return written === '' ? how : `${how} The end of its error output:\n${written}`
+  return ffmpegRunDetails(end, errorEnd, AUDIO_RUN_OUTPUT_BYTES)
 }
 
 /** The error result of a call whose ffmpeg run on the clip `id` did not

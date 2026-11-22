@@ -251,6 +251,16 @@ export async function runFfmpegLog(
   return { end, log }
 }
 
+/** The kept end `kept` of the error output of a run, whose start Dez
+ *  `cut`: after a cut, only its whole lines. The cut can fall inside a
+ *  path, and `withoutLocalPaths` does not see the rest of a path as a
+ *  path. */
+export function wholeLinesEnd(kept: string, cut: boolean): string {
+  if (!cut) return kept
+  const lineEnd = kept.search(/[\r\n]/)
+  return lineEnd < 0 ? '' : kept.slice(lineEnd + 1)
+}
+
 /** A new file in the generated folder of its kind, under a new name, for
  *  a file that a run or an app gives back. Nothing is written yet. */
 export interface GeneratedFile {

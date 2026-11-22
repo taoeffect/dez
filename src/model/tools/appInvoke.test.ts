@@ -205,6 +205,16 @@ describe('appRunDescription', () => {
 
     expect(['red.jpg', 'sky.png', 'plan.svg', 's1.wav', 'v1.webm', 'assets/', 'clips.example'].filter((part) => text.includes(part))).toStrictEqual([])
   })
+
+  it('gives a decoded clip the facts of its decoded files, with their paths in the run folder', () => {
+    const decoded = new Map([['c', { audio: null, frames: { name: 'c.rgb', width: 12, height: 9, fps: 5, count: 10 } }]])
+    const { inputs } = JSON.parse(appRunDescription(invoke({ name: 'notes', inputs: '@c @a' }), folders, decoded)) as { inputs: unknown[] }
+
+    expect(inputs).toStrictEqual([
+      { id: 'c', kind: 'video', type: 'video/webm', path: '/home/u/.cache/dez/work/w1/c.webm', audio: null, frames: { path: '/home/u/.cache/dez/work/w1/c.rgb', width: 12, height: 9, fps: 5, count: 10 } },
+      { id: 'a', kind: 'image', type: 'image/jpeg', path: '/home/u/.cache/dez/work/w1/a.jpg' },
+    ])
+  })
 })
 
 describe('invokeInputsText', () => {

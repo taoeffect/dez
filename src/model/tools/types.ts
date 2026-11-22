@@ -33,9 +33,10 @@ export interface ToolListParameter {
 }
 
 /** A parameter of a subcommand whose value is one JSON object with any
- *  fields: data that Dez hands on as it is, and whose fields it does not
- *  check (the parameters of a run of an app). Only a subcommand can have
- *  one, as for a list. */
+ *  fields: the generic checks of the arguments check only that it is an
+ *  object. The runner of its subcommand hands it on as it is (the
+ *  parameters of a run of an app) or checks its fields itself (the
+ *  `decode` of a run). Only a subcommand can have one, as for a list. */
 export interface ToolObjectParameter {
   name: string
   type: 'object'

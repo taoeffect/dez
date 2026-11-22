@@ -86,6 +86,21 @@ export const APP_RUN_DEFAULT_SECONDS = 300
 export const APP_RUN_MAX_OUTPUT_FILES = 20
 export const APP_RUN_MAX_OUTPUT_BYTES = 256 * 1024 * 1024
 
+/** The limits of the decode of the input clips of a run of a script app
+ *  (`decode`; inputDecode.ts): the samples a second of the audio, the most
+ *  pixels of a side of a frame, the frames a second, and the most bytes of
+ *  all the decoded files of one run together. The code reads a decoded
+ *  file into memory as a whole. */
+export const DECODE_MIN_RATE = 1000
+export const DECODE_MAX_RATE = 192_000
+export const DECODE_MAX_SIDE = 4096
+export const DECODE_MIN_FPS = 0.01
+export const DECODE_MAX_FPS = 240
+export const APP_RUN_MAX_DECODED_BYTES = 2 * 1024 * 1024 * 1024
+
+/** A `decode` value as the texts show it. */
+export const DECODE_EXAMPLE = '{"audio": {"rate": 22050}, "frames": {"width": 96, "height": 54, "fps": 24}}'
+
 /** The subcommand that changes lines of a file. Its results get the hint
  *  of `edit` (`EDIT_HINT`, editHint.ts). */
 export const APPS_EDIT = 'edit'
@@ -189,7 +204,8 @@ const INVOKE_HELP = `Runs the code of an app on the user's computer, with the pa
   + 'The value that the function returns is the result of the job: a string as it is, JSON data as JSON, and any other value as Deno shows it. '
   + 'What the code writes with `console.log` comes after it. `parameters` is the object of the call. `dez` has three members:\n'
   + '- `dez.inputs`: one `{ id, kind, type, path }` for each id of `inputs`, in their order. `kind` is "image", "audio", or "video", `type` is the media type, '
-  + 'and `path` is the path of a copy of the file. A change of the copy changes nothing of the image or the clip.\n'
+  + 'and `path` is the path of a copy of the file. A change of the copy changes nothing of the image or the clip. '
+  + 'When the run decodes its clips (`decode`), each clip also has the facts of its decoded files, `audio` and `frames`.\n'
   + '- `dez.outputFolder`: the path of an empty folder. After a run that ends with no error, Dez keeps each file directly in it as a new image or clip of the conversation, '
   + `and the result gives their ids. Dez keeps only a file of a type that it stores, which it reads from the first bytes of the file and not from its name ${STORED_TYPES}, `
   + `at most ${APP_RUN_MAX_OUTPUT_FILES} files of one run, and at most ${byteSizeText(APP_RUN_MAX_OUTPUT_BYTES)} for one file. A run that fails keeps no file.\n`
@@ -226,6 +242,20 @@ export const EDIT_HINT = [
 export function withEditHint(result: string): string {
   return `${result}\n\n${EDIT_HINT}`
 }
+
+// The text of the `decode` parameter of `invoke`: all that the code of a
+// script app must know to read the decoded files (inputDecode.ts), with
+// the readers of the dez-media library.
+const DECODE_HELP = 'Script apps only. Dez decodes each clip of `inputs` before the run, so that the code gets its samples and its pixels, '
+  + `as in ${DECODE_EXAMPLE}. `
+  + `"audio" gives the first sound stream as one channel of float32 samples, little-endian, at "rate" samples a second (${DECODE_MIN_RATE} to ${DECODE_MAX_RATE}). `
+  + `"frames" gives the frames of the first video stream as RGB pixels (3 bytes for each pixel, row by row), each frame exactly "width" by "height" pixels (1 to ${DECODE_MAX_SIDE}), `
+  + `at "fps" frames a second (${DECODE_MIN_FPS} to ${DECODE_MAX_FPS}), or each frame of the clip once when "fps" is not there. `
+  + 'Each clip of `dez.inputs` then has `audio: { path, rate, count }` (count: the samples) and `frames: { path, width, height, fps, count }` (count: the frames), '
+  + 'or null for a clip with no such stream. Read them with `import { f32Samples, rgbFrames } from "dez-media"`: '
+  + '`f32Samples(await Deno.readFile(input.audio.path))` and `rgbFrames(await Deno.readFile(input.frames.path), input.frames.width, input.frames.height)`. '
+  + `The decoded files of one run are at most ${byteSizeText(APP_RUN_MAX_DECODED_BYTES)} together. `
+  + `The field "decode" of the ${MANIFEST_FILE} of the app, of the same form, is the default. The decode of the call takes its place as a whole, and {} decodes nothing.`
 
 export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
   name: 'apps',
@@ -483,6 +513,12 @@ export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
           description: 'The ids of the images and the clips that the run gets, as in "@a @c", in this order: '
             + 'the code of a script app finds a copy of each one in `dez.inputs`, and the handler of a UI app finds each one in `run.inputs`. '
             + 'Leave it out for a run with no input.',
+          required: false,
+        },
+        {
+          name: 'decode',
+          type: 'object',
+          description: DECODE_HELP,
           required: false,
         },
         INTERMEDIATE_PARAMETER,

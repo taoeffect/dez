@@ -84,6 +84,18 @@ export const PROGRAM_READS_INPUTS = 'Dez gets the input files ready.'
  *  file is too large. */
 export const INPUT_CLIP_TOO_LARGE = `The file of the clip is larger than ${byteSizeText(MAX_SAVED_CLIP_BYTES)}, the most that Dez gives to a tool.`
 
+/** The details of an error result for an ffmpeg run that failed: how it
+ *  ended, and `errorEnd`, the end of its error output. `outputBytes` is
+ *  the most output of the run. The caller takes the local paths out of it
+ *  (`withoutLocalPaths`). */
+export function ffmpegRunDetails(end: Exclude<ProgramEnd, { kind: 'timedOut' }>, errorEnd: string, outputBytes: number): string {
+  const how = end.kind === 'outputTooLarge'
+    ? `Dez stopped ffmpeg: it wrote more than ${byteSizeText(outputBytes)} of output.`
+    : end.code === null ? 'The system ended ffmpeg.' : `ffmpeg ended with the error code ${end.code}.`
+  const written = errorEnd.trim()
+  return written === '' ? how : `${how} The end of its error output:\n${written}`
+}
+
 /** The error result of a run for the tool `tool` whose new files Dez could
  *  not move into the Dez folder. */
 export function outputNotStoredText(tool: string): string {
