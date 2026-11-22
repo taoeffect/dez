@@ -81,4 +81,10 @@ describe('dez-media DSP against NumPy', () => {
     expect(stft(new Float32Array(100)).frames).toBe(0)
     expect(() => stft(new Float32Array(4096), { nfft: 2048, window: hann(1024) })).toThrow(RangeError)
   })
+
+  it('stft refuses an nfft that is not a power of two as stft, with no advice of rfft', () => {
+    const badNfft = () => stft(new Float32Array(4096), { nfft: 1000 })
+    expect(badNfft).toThrow(RangeError)
+    expect(badNfft).toThrow(/^stft: nfft must be a power of two.* not 1000\.$/)
+  })
 })

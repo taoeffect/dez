@@ -29,13 +29,20 @@ const FFT = /** @type {new (size: number) => FftPlan} */ (/** @type {unknown} */
 const plans = new Map()
 
 /**
- * The FFT plan of size `n` (a power of two of at least 2), made once.
+ * Whether fft.js takes `n` as a size: a power of two from 2 up to 2 ** 30
+ * (`&` works on 32-bit integers, so the bit test alone passes 2 ** 31).
+ * Each caller refuses a bad size with a text that names it and its fix.
+ * @param {number} n
+ */
+function isFftSize(n) {
+  return Number.isInteger(n) && n >= 2 && n <= 2 ** 30 && (n & (n - 1)) === 0
+}
+
+/**
+ * The FFT plan of size `n` (checked with `isFftSize`), made once.
  * @param {number} n
  */
 function fftPlan(n) {
-  if (!Number.isInteger(n) || n < 2 || n > 2 ** 30 || (n & (n - 1)) !== 0) {
-    throw new RangeError(`rfft: the size must be a power of two from 2 up, such as 2048, not ${n}. Pad the values with zeros: rfft(x, n).`)
-  }
   let plan = plans.get(n)
   if (!plan) {
     plan = new FFT(n)
@@ -65,6 +72,7 @@ export function hann(m) {
  * @param {number} [n]
  */
 export function rfft(x, n = x.length) {
+  if (!isFftSize(n)) throw new RangeError(`rfft: the size must be a power of two from 2 up, such as 2048, not ${n}. Pad the values with zeros: rfft(x, n).`)
   const plan = fftPlan(n)
   const input = new Float64Array(n)
   const count = Math.min(n, x.length)
@@ -97,10 +105,12 @@ export function rfft(x, n = x.length) {
  *   values from one frame to the next (256 by default); `window`: nfft
  *   values
  */
-export function stft(y, { nfft = 2048, hop = 256, window = hann(nfft) } = {}) {
-  const plan = fftPlan(nfft)
+export function stft(y, { nfft = 2048, hop = 256, window } = {}) {
+  if (!isFftSize(nfft)) throw new RangeError(`stft: nfft must be a power of two from 2 up, such as 2048, not ${nfft}.`)
   if (!Number.isInteger(hop) || hop < 1) throw new RangeError(`stft: hop must be a whole number from 1 up, not ${hop}.`)
+  window ??= hann(nfft)
   if (window.length !== nfft) throw new RangeError(`stft: the window has ${window.length} values, and nfft is ${nfft}.`)
+  const plan = fftPlan(nfft)
   const frames = y.length >= nfft ? 1 + Math.floor((y.length - nfft) / hop) : 0
   const bins = nfft / 2 + 1
   const magnitude = new Float32Array(frames * bins)
