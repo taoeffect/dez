@@ -2,6 +2,7 @@ import { Prec, type EditorState, type Extension } from '@codemirror/state'
 import { EditorView, ViewPlugin, keymap, type PluginValue, type Rect, type ViewUpdate } from '@codemirror/view'
 import type { AssetKind } from '../../model/chat/assetMentions'
 import { confirmRequest } from '../confirm/request'
+import { sameModelFacts } from '../modelLabel'
 import { editorSizePx, sectionsField } from '../thread/cmEditor'
 import { modelDisplayNames } from '../thread/modelChip'
 import { mentionTarget, type AssetTarget } from './assetJump'
@@ -10,7 +11,7 @@ import type { AssetPlace } from './drawnAssets'
 import { focusKeepingScroll } from './focus'
 import { isImageZoomOpen } from './imageZoom'
 import { createImage, shownImageAt, updateImageModel } from './images'
-import { createPlayer, destroyPlayer, isInSelectableTooltip, shownClipAt, updatePlayer } from './media'
+import { createPlayer, destroyPlayer, isInSelectableTooltip, samePlayerFacts, shownClipAt, updatePlayer } from './media'
 import { mentionAt, type ShownMention } from './mentions'
 import { renderedToolCalls, type PanelAsset } from './toolCalls'
 
@@ -497,7 +498,10 @@ class AssetPreview implements PluginValue {
 
   // The doc, the roles, or the model names changed: the box follows its
   // mention, and the asset in it changes in place. It closes when the
-  // mention is gone or names another asset now.
+  // mention is gone or names another asset now. Only a changed fact goes
+  // to the drawn asset, as the widgets do (`ImageWidget.eq`,
+  // `samePlayerFacts`): each stream token and each key comes here, and a
+  // new model label would end the tooltip that shows on the old one.
   private follow(shown: Shown, update: ViewUpdate): boolean {
     const mention = mentionAt(update.state, update.changes.mapPos(shown.mention.from, 1), 1)
     const found = mention && mention.id === shown.mention.id && mention.kind === shown.mention.kind ? mentionPreviewAsset(update.state, mention) : null
@@ -505,10 +509,15 @@ class AssetPreview implements PluginValue {
       this.hide()
       return false
     }
+    const before = shown.asset
+    const after = found.asset
     shown.mention = mention
-    shown.asset = found.asset
-    if (found.asset.kind === 'image') updateImageModel(shown.root, found.asset.model)
-    else updatePlayer(shown.root, found.asset.tag, found.asset.model)
+    shown.asset = after
+    if (after.kind === 'image') {
+      if (!sameModelFacts(before.model, after.model)) updateImageModel(shown.root, after.model)
+    } else if (before.kind !== 'clip' || !samePlayerFacts(before, after)) {
+      updatePlayer(shown.root, after.tag, after.model)
+    }
     return true
   }
 

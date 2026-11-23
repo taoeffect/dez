@@ -230,19 +230,32 @@ export function destroyPlayer(root: HTMLElement): void {
   mountedPlayers.delete(root)
 }
 
+/** What a player shows of its clip: the tag, whether a linked `src` counts
+ *  where the tag is (`clipSourceKind`), and the label of the model that
+ *  made the clip. */
+interface PlayerFacts {
+  tag: MediaTagData
+  linkedSrc: boolean
+  model: ModelFacts | null
+}
+
+/** Whether two players show the same clip in the same way: every field
+ *  that a player shows or that Save and Delete read. Doc offsets are left
+ *  out: a stream token before a player moves it. A drawn player gets
+ *  `updatePlayer` only when this is false, as a new tag object makes Vue
+ *  draw it again. */
+export function samePlayerFacts(a: PlayerFacts, b: PlayerFacts): boolean {
+  return a.linkedSrc === b.linkedSrc && a.tag.kind === b.tag.kind && a.tag.id === b.tag.id && a.tag.type === b.tag.type
+    && a.tag.src === b.tag.src && a.tag.url === b.tag.url && a.tag.expires === b.tag.expires && sameModelFacts(a.model, b.model)
+}
+
 /** The player of one clip, in place of its tag. */
 class MediaWidget extends WidgetType {
   constructor(readonly tag: MediaTagData, readonly linkedSrc: boolean, readonly model: ModelFacts | null) {
     super()
   }
-  // Every field that the player shows or that Save and Delete read. Doc
-  // offsets are left out: a stream token before a player moves it.
   eq(other: WidgetType): boolean {
-    if (!(other instanceof MediaWidget)) return false
-    const a = this.tag
-    const b = other.tag
-    return this.linkedSrc === other.linkedSrc && a.kind === b.kind && a.id === b.id && a.type === b.type && a.src === b.src && a.url === b.url && a.expires === b.expires
-      && sameModelFacts(this.model, other.model)
+    return other instanceof MediaWidget && samePlayerFacts(this, other)
   }
   toDOM(view: EditorView): HTMLElement {
     return createPlayer(view, this.tag, this.linkedSrc, this.model)

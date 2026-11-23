@@ -326,6 +326,53 @@ describe('mention chips', () => {
     await waitForValue(browser, 'the flash of the image', () => flashedAssets(browser), ['image a'])
   })
 
+  // The box draws its asset again only when a fact of it changed: a stream
+  // token or a typed key keeps the model label, so the tooltip that shows
+  // stays on it.
+  it('keeps the model label of the image in the box, and the tooltip of the label, while the user types', async () => {
+    const made = await writeTestFile(appFilePath(app.home, 'assets', 'generated', 'images', 'mention-model.png'), solidPng(480, 240, [40, 160, 90]))
+    await openSeededConversation(browser, app.home, 'mention-chips-model', [
+      { role: 'user', text: `![id=a|model=studio/paint](${made})\nSee @a here.` },
+    ])
+    await waitForValue(browser, 'the chip', chips, ['@a'])
+    await focusEditor(browser)
+    await setCaret(browser, (await editorDoc(browser)).length)
+    // After CM's next measure: whether the model label in the box is the
+    // element that the test marked, and the title of the tooltip that shows
+    // in the window, or null (CM puts a tooltip whose item left the
+    // document far off screen).
+    type LabelState = { marked: boolean, tooltip: string | null }
+    const modelLabel = async (): Promise<LabelState> => browser.execute(() => new Promise<LabelState>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        const label = document.querySelector('.dez-asset-preview .dez-image__model')
+        const tip = document.querySelector('.cm-tooltip.dez-image-tooltip')
+        const place = tip?.getBoundingClientRect()
+        const inWindow = place !== undefined && place.bottom > 0 && place.top < window.innerHeight
+        resolve({
+          marked: label !== null && label === Reflect.get(window, '__e2eModelLabel'),
+          tooltip: inWindow ? tip?.querySelector('.dez-image-tooltip__title')?.textContent ?? '' : null,
+        })
+      }))
+    }))
+
+    await hoverChip(0)
+    await waitForValue(browser, 'the box of the image', previewAsset, 'image mention-model.png')
+    await movePointer(browser, await elementCenter(browser, '.dez-asset-preview .dez-image__img'))
+    await waitForValue(browser, 'the info of the image in the box', () => browser.execute(() => {
+      const info = document.querySelector('.dez-asset-preview .dez-image__info')
+      return info !== null && getComputedStyle(info).opacity === '1'
+    }), true)
+    await movePointer(browser, await elementCenter(browser, '.dez-asset-preview .dez-image__model'))
+    const tooltip = 'Model that made this image'
+    await waitForValue(browser, 'the tooltip of the model label', async () => (await modelLabel()).tooltip, tooltip)
+    await browser.execute(() => { Reflect.set(window, '__e2eModelLabel', document.querySelector('.dez-asset-preview .dez-image__model')) })
+
+    await typeKeys(browser, ' Then more.')
+    await waitForValue(browser, 'the typed text', async () => (await editorDoc(browser)).endsWith('See @a here. Then more.'), true)
+    expect(await previewAsset()).toBe('image mention-model.png')
+    expect(await modelLabel()).toEqual({ marked: true, tooltip })
+  })
+
   it('changes no layout: the text keeps its place when a chip goes', async () => {
     const image = await storedImage('mention-layout.png')
     await openSeededConversation(browser, app.home, 'mention-chips-layout', [
