@@ -474,14 +474,17 @@ export function span(className: string, text?: string): HTMLSpanElement {
 const STATE_WORDS: Partial<Record<ToolCallState, string>> = { error: 'failed', interrupted: 'interrupted', notRun: 'not run' }
 
 /** The chip's accessible name. Its `aria-label` replaces the text of the
- *  chip's parts, so it holds the summary and the state word too, and
- *  "running" stands for the spinner, which screen readers skip. `note` is
- *  the label of an intermediate call (`intermediateLabel`), and
- *  `durationMs` the time that the call took (a live time would change the
- *  name each second). Empty parts are left out. A tool that Dez does not
- *  have is named as its chip names it. */
-export function toolCallLabel(name: string, summary: string, state: ToolCallState, note = '', durationMs?: number): string {
-  const word = state === 'running' ? 'running' : STATE_WORDS[state]
+ *  chip's parts, so it holds the summary and the state word too. For a
+ *  `running` block, the word tells what the chip's lead shows, which screen
+ *  readers skip: "running" for the spinner, or `phase`, where the call is
+ *  in its group (`callPhase`): "ended" for the triangle of a call that
+ *  ran, "waiting" for the still spinner. `note` is the label of an
+ *  intermediate call (`intermediateLabel`), and `durationMs` the time that
+ *  the call took (a live time would change the name each second). Empty
+ *  parts are left out. A tool that Dez does not have is named as its chip
+ *  names it. */
+export function toolCallLabel(name: string, summary: string, state: ToolCallState, note = '', durationMs?: number, phase: CallPhase | null = null): string {
+  const word = state === 'running' ? (phase ?? 'running') : STATE_WORDS[state]
   const tool = isUnrecognizedTool(name) ? `Tool call, ${UNRECOGNIZED_TOOL_TEXT} ${name}` : `Tool call ${name}`
   const took = durationMs === undefined ? '' : `took ${longDuration(durationMs)}`
   return [tool, summary, word, took, note].filter(Boolean).join(', ')
@@ -514,27 +517,32 @@ function renderCallTime(chip: HTMLElement, time: ShownTime | null): void {
  *  (`callPhase`), so that only the call that runs looks busy: an ended
  *  call gets the triangle of a call that ran, which its final chip keeps,
  *  and a waiting call a still spinner with no shimmer (`dezTheme`). An
- *  ended call never runs again, so no triangle turns back to a spinner. */
-function renderCallPhase(chip: HTMLElement, phase: CallPhase | null): void {
+ *  ended call never runs again, so no triangle turns back to a spinner.
+ *  Returns whether `data-phase` changed. */
+function renderCallPhase(chip: HTMLElement, phase: CallPhase | null): boolean {
+  if ((chip.dataset.phase ?? null) === phase) return false
   if (phase === null) chip.removeAttribute('data-phase')
-  else if (chip.dataset.phase !== phase) chip.dataset.phase = phase
+  else chip.dataset.phase = phase
   const spinner = chip.querySelector(`:scope > .${SPINNER_CLASS}`)
-  if (phase !== 'ended' || !spinner) return
-  const triangle = disclosureTriangle()
-  triangle.setAttribute('aria-hidden', 'true')
-  spinner.replaceWith(triangle)
+  if (phase === 'ended' && spinner) {
+    const triangle = disclosureTriangle()
+    triangle.setAttribute('aria-hidden', 'true')
+    spinner.replaceWith(triangle)
+  }
+  return true
 }
 
 // The time and the phase of each drawn chip of a call that runs, at each
-// tick of `liveTimes.ts`. A call whose group ends gets a new chip
-// (`sameCall`), so the chips of the other states keep their DOM.
+// tick of `liveTimes.ts`, and the chip's name when the phase changed, as
+// the name tells the phase (`toolCallLabel`). A call whose group ends gets
+// a new chip (`sameCall`), so the chips of the other states keep their DOM.
 function renderLiveCallTimes(view: EditorView, times: LiveTimes | null, now: number): void {
   const streamingSectionId = view.state.field(streamingSectionField, false) ?? null
   for (const root of view.contentDOM.querySelectorAll<HTMLElement>(`.${ROOT_CLASS}[data-state="running"]`)) {
     const call = drawnCalls.get(root)
     const chip = root.querySelector<HTMLElement>(`:scope > .${CHIP_CLASS}`)
     if (!call || !chip) continue
-    renderCallPhase(chip, callPhase(times, streamingSectionId, call.id))
+    if (renderCallPhase(chip, callPhase(times, streamingSectionId, call.id))) renderIntermediate(chip, call, chip.getAttribute('aria-expanded') === 'true')
     renderCallTime(chip, callTime(times, streamingSectionId, call.id, now))
   }
 }
@@ -576,15 +584,18 @@ function namedModelOutputs(call: RenderedToolCall): readonly ModelOutput[] | nul
 
 /** Draws the intermediate part of `chip`, at its end, for an open or a
  *  closed panel, and the chip's accessible name, which holds the part's
- *  label: an eye, the type symbols, and the label. The eye is closed while
- *  the chip hides something. It is open, and lit (`data-revealed`,
- *  `dezTheme`), while the open panel shows that. A call that is not
- *  intermediate has no such part. */
+ *  label and the phase of the call (`renderCallPhase`): an eye, the type
+ *  symbols, and the label. The eye is closed while the chip hides
+ *  something. It is open, and lit (`data-revealed`, `dezTheme`), while the
+ *  open panel shows that. A call that is not intermediate has no such
+ *  part. */
 function renderIntermediate(chip: HTMLElement, call: RenderedToolCall, open: boolean): void {
   chip.querySelector(`.${INTERMEDIATE_CLASS}`)?.remove()
   const { intermediate } = call
   const label = intermediate ? intermediateLabel(intermediate, open) : ''
-  chip.setAttribute('aria-label', toolCallLabel(call.name, call.summary, call.state, label, finalCallTime(call)?.ms))
+  // Only `renderCallPhase` writes `data-phase`, so it holds a `CallPhase`.
+  const phase = (chip.dataset.phase ?? null) as CallPhase | null
+  chip.setAttribute('aria-label', toolCallLabel(call.name, call.summary, call.state, label, finalCallTime(call)?.ms, phase))
   if (!intermediate) return
   const part = span(INTERMEDIATE_CLASS)
   const revealed = open && (intermediate.assets.length > 0 || intermediate.text !== '')

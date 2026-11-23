@@ -1037,6 +1037,9 @@ describe('tool calls', () => {
     const firstMs = (calls.call_first.endedAt ?? NaN) - calls.call_first.startedAt
     const [ended, , third] = await toolChipTimes(browser)
     expect([ended, third]).toEqual([{ ...ran(firstMs), phase: 'ended' }, waiting])
+    // The name of each chip tells what the chip shows: a call that ended,
+    // the call that runs, and a call that waits.
+    expect((await toolChips(browser)).map(({ label }) => /, (\w+)$/.exec(label ?? '')?.[1] ?? null)).toEqual(['ended', 'running', 'waiting'])
     await waitForValue(browser, 'second call at 2s', async () => (await toolChipTimes(browser))[1], running(2))
 
     // The blocks keep the times of the two slow calls, and the next request
