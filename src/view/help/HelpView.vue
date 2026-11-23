@@ -258,7 +258,9 @@ function onOverlayClick(event: MouseEvent) {
               A <code>+</code> after it means that Dez knows no price for some requests, so the cost
               is higher. <code>(?)</code> means that you changed or deleted a reply: its cost stays
               in the amount. Point at the amount to see the details. A model can read the size and
-              the cost too, with a Dez tool.
+              the cost too, with a Dez tool. To start again in the same tab, select all the text and
+              delete it. The amount then starts again from $0, as in a new tab, and the money limit
+              counts again from $0. Undo brings back the text and the amount.
             </p>
             <p>
               The coin after the amount is the money limit of the tab. Click it to set the most that

@@ -6,7 +6,7 @@ import { click, consoleErrors, resetConsoleErrors, screenshotOnFailure, typeKeys
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { LARGE_TOKENS, openAiToolCall, replyText, sendChatReply, sendChatText, sendToolCalls, toolResult, type MockProvider, type MockUsage } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeTabId, closeToasts, docPos, endedReply, focusEditor, newTab, openToasts, sbpCall, setCaret, submit, waitForThread } from './harness/thread'
+import { activeTabId, closeToasts, docPos, endedReply, focusEditor, newTab, openToasts, sbpCall, setCaret, submit, threadSections, waitForThread } from './harness/thread'
 
 // The usage label of the bottom bar (the token count, a dot, the cost),
 // through the real app against a mock server in this process:
@@ -15,6 +15,8 @@ import { activeTabId, closeToasts, docPos, endedReply, focusEditor, newTab, open
 //   known price;
 // - the busy look while a reply of the active tab runs;
 // - ` (?)` and italic once the user changed the text of a reply;
+// - Select All, then a delete or a cut, removes the cost, as in a new tab,
+//   and an undo puts it back, with its mark; a redo removes it again;
 // - the token count left of the cost: Dez's estimate with `~`, and the
 //   count of the provider with none;
 // - the label is the one of the active tab;
@@ -208,6 +210,55 @@ describe('usage label', () => {
     await waitForValue(browser, 'edited label after the next reply', labelLook, { text: '$0.75 (?)', look: 'idle', italic: true })
   })
 
+  it('removes the cost at Select All, then a delete, and an undo and a redo take the cost back and forth', async () => {
+    const emptyThread = [{ role: 'user', text: '' }]
+    const edited: LabelLook = { text: '$0.50 (?)', look: 'idle', italic: true }
+    const selectAll = async () => expect(await sbpCall(browser, 'dez.editor/runKeyBinding', 'selectAll', 'selectAll')).toBe(true)
+    await askAndAnswer('Question', 'the model', { usd: 0.5 })
+    await endedReply(browser)
+    await focusEditor(browser)
+    await setCaret(browser, await docPos(browser, replyText('the model'), replyText('the model').length))
+    await typeKeys(browser, ' Edited')
+    await waitForValue(browser, 'label after the edit', labelLook, edited)
+    const thread = await threadSections(browser)
+
+    await selectAll()
+    await browser.keys([Key.Backspace])
+    await waitForValue(browser, 'thread after the delete', () => threadSections(browser), emptyThread)
+    await waitForValue(browser, 'label after the delete', labelLook, NO_LABEL)
+    expect(await sbpCall(browser, 'dez.model/tabs/costNumbers', await activeTabId(browser))).toEqual({})
+    // The money limit counts from $0 again.
+    await click(browser, '.bottom-bar .money-limit-button')
+    await waitFor(browser, '.money-limit-popup')
+    expect(await browser.execute(() => document.querySelector('.money-limit-popup__spent')?.textContent)).toBe('This conversation cost nothing so far.')
+    await browser.keys([Key.Escape])
+    await waitForValue(browser, 'popup open after Escape', () => browser.execute(() => document.querySelector('.money-limit-popup') !== null), false)
+
+    await focusEditor(browser)
+    await browser.keys([Key.Control, 'z'])
+    await waitForValue(browser, 'thread after the undo', () => threadSections(browser), thread)
+    await waitForValue(browser, 'label after the undo', labelLook, edited)
+    await browser.keys([Key.Control, Key.Shift, 'z'])
+    await waitForValue(browser, 'thread after the redo', () => threadSections(browser), emptyThread)
+    await waitForValue(browser, 'label after the redo', labelLook, NO_LABEL)
+    await browser.keys([Key.Control, 'z'])
+    await waitForValue(browser, 'label after the second undo', labelLook, edited)
+    await browser.keys([Key.Control, Key.Shift, 'z'])
+    await waitForValue(browser, 'label after the second redo', labelLook, NO_LABEL)
+
+    // The next reply counts from $0, with no mark.
+    await askAndAnswer('A new start', 'the new start', { usd: 0.25 })
+    await endedReply(browser)
+    await waitForValue(browser, 'label after the next reply', labelLook, { text: '$0.25', look: 'idle', italic: false })
+
+    // A cut of all the text resets too.
+    await focusEditor(browser)
+    await selectAll()
+    await browser.keys([Key.Control, 'x'])
+    await waitForValue(browser, 'thread after the cut', () => threadSections(browser), emptyThread)
+    await waitForValue(browser, 'label after the cut', labelLook, NO_LABEL)
+  })
+
   it('shows the cost of the active tab, busy only while a reply of that tab runs', async () => {
     await askAndAnswer('Priced question', 'the priced tab', { usd: 0.12 })
     await waitForValue(browser, 'label of the priced tab', labelLook, { text: '$0.12', look: 'idle', italic: false })
@@ -319,6 +370,16 @@ describe('usage label', () => {
 
     // The two numbers of a part stay together: a part goes whole.
     expect(await textsWhileRoomGoes()).toEqual([withMarks, ['9 (141k)'], []])
+
+    // Select All, then a delete, removes the cost and both totals, and an
+    // undo puts them back. The empty doc has no size either, so the label
+    // shows nothing, as in a new tab.
+    await focusEditor(browser)
+    expect(await sbpCall(browser, 'dez.editor/runKeyBinding', 'selectAll', 'selectAll')).toBe(true)
+    await browser.keys([Key.Backspace])
+    await waitForValue(browser, 'label after the delete of all text', usageTexts, [])
+    await browser.keys([Key.Control, 'z'])
+    await waitForValue(browser, 'label after the undo of the delete', usageTexts, withMarks)
   })
 
   it('gives way to Submit in a bar with too little room: first the cost goes, then the token count', async () => {

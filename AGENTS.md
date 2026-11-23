@@ -101,6 +101,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `view/editor/hiddenAssets.ts`, `compactionChip.ts`, `AssetList.vue`: the hidden assets of a chip, the two compaction chips (assets, summary) with their panels, and the long list of kept assets.
 - `view/editor/lineBlocks.ts`, `compaction.ts`, `compactionBlock.ts`, `lineCommands.ts`: the edit rules of whole-line blocks (chips, players, app cards, the compaction block).
 - `view/editor/agentTextEdits.ts`: whether a user edit changed the text of a reply (the edited mark of a tab).
+- `view/editor/costReset.ts`: Select All, then a delete, sets the cost numbers of the tab back to those of a new tab, as one undo step.
 - `view/editor/assetSelection.ts`, `view/assetFacts.ts`, `view/assetIcons.ts`: the selected look, the facts text, and the symbol of an asset.
 - `view/assetModelLabel.ts`: the model label of an asset's overlay (name, tooltip, symbol).
 - `controller/images.ts`: `dez.controller/images/*`: store, delete, read, and redraw images; file drops.
@@ -272,7 +273,7 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 - **`model`, `thinking`, and `durationMs` are agent-only**: show, save, or send them only when `role === 'agent'`, and copy them only when set (`src/model/chat/types.ts`).
 - **Per-section fields flow through the editor**: the editor writes sections back to the store on every doc change; a new field must follow `SectionModel` in `cmEditor.ts`.
 - **Section models are not doc text**: undo and redo put back the role and data of the sections they re-insert (`sectionsField`, `cmEditor.ts`).
-- **Only a user edit has a `userEvent`**: a new user edit path must set one; a new program write must not (`view/editor/agentTextEdits.ts`).
+- **Only a user edit has a `userEvent`**: a new user edit path must set one; a new program write must not (`view/editor/agentTextEdits.ts`, `costReset.ts`).
 - **The editor holds the old tab for a tick after a switch**: write the view back only to `viewTabId`, and never give it another tab's section models (`ThreadEditor.vue`).
 - **A compaction swaps the sections under the editor**: `dez.model/tabs/compact` and `dez.editor/rebuildIfVisible` run in the same tick (`compactIfDue`), and it cannot be undone. No delete key next to the block deletes it or joins text to it (`src/view/editor/compaction.ts`).
 - **Each section is its own markdown text** (`sectionSeparatorMarkdown`, `cmEditor.ts`); code fences and HTML blocks still run into the next sections.

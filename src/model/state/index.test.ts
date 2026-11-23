@@ -349,6 +349,69 @@ describe('conversation cost and edited flag of a tab', () => {
     expect(loaded.sections[0].role).toBe('agent')
     expect(conversationData(tabWithText('plain').id)).not.toHaveProperty('compactions')
   })
+
+  describe('reset and restore', () => {
+    const removed = {
+      cost: { usd: 1.5, requests: 4, unpriced: 1 },
+      agentTextEdited: true,
+      compactions: { count: 1, tokens: 90000, cost: { usd: 1, requests: 3, unpriced: 0 }, left: 4000 },
+    } as const
+
+    // A tab that has every number of the tab entry and of the file.
+    async function fullTab (): Promise<Tab> {
+      diskConversations.set('conv-full', {
+        id: 'conv-full',
+        title: 'Full',
+        sections: [{ role: 'user', nodes: [{ kind: 'text', text: 'Ask' }] }, { role: 'agent', nodes: [{ kind: 'text', text: 'Answer' }] }],
+        activeModel: null,
+        created_at: 1000,
+        ...structuredClone(removed),
+        context: { tokens: 5000, estimate: 5200 },
+        incognito: true,
+        requestSent: true,
+        moneyLimit: { usd: 3, unknownPrices: true },
+      })
+      return await openConversation('conv-full') as Tab
+    }
+
+    it('removes the cost, the mark, and the compaction numbers, and keeps the rest of the tab', async () => {
+      const tab = await fullTab()
+      const before = structuredClone(tabs().find((candidate) => candidate.id === tab.id) as Tab)
+      expect(before).toMatchObject({ context: { tokens: 5000 }, incognito: true, requestSent: true, moneyLimit: { usd: 3 }, title: 'Full' })
+
+      expect(sbp('dez.model/tabs/costNumbers', tab.id)).toStrictEqual(removed)
+      sbp('dez.model/tabs/resetCost', tab.id)
+
+      const after = tabs().find((candidate) => candidate.id === tab.id) as Tab
+      expect(sbp('dez.model/tabs/costNumbers', tab.id)).toStrictEqual({})
+      expect(after).toStrictEqual(Object.fromEntries(Object.entries(before).filter(([key]) => !['cost', 'agentTextEdited', 'compactions'].includes(key))))
+    })
+
+    // A reply can count a request between the delete and its undo.
+    it('puts the removed numbers back, added to the cost that the tab counted since, and saves them', async () => {
+      const tab = await fullTab()
+      sbp('dez.model/tabs/resetCost', tab.id)
+      sbp('dez.model/tabs/countRequestCost', tab.id, 0.25)
+
+      sbp('dez.model/tabs/restoreCost', tab.id, structuredClone(removed))
+
+      const restored = { ...removed, cost: { usd: 1.75, requests: 5, unpriced: 1 } }
+      expect(sbp('dez.model/tabs/costNumbers', tab.id)).toStrictEqual(restored)
+      const saved = conversationData(tab.id)
+      expect({ cost: saved.cost, agentTextEdited: saved.agentTextEdited, compactions: saved.compactions }).toStrictEqual(restored)
+    })
+
+    it('changes nothing for a missing tab', () => {
+      const tab = tabWithText('other')
+      sbp('dez.model/tabs/countRequestCost', tab.id, 0.5)
+
+      sbp('dez.model/tabs/resetCost', 'missing')
+      sbp('dez.model/tabs/restoreCost', 'missing', structuredClone(removed))
+
+      expect(sbp('dez.model/tabs/costNumbers', 'missing')).toStrictEqual({})
+      expect(sbp('dez.model/tabs/costNumbers', tab.id)).toStrictEqual({ cost: { usd: 0.5, requests: 1, unpriced: 0 } })
+    })
+  })
 })
 
 describe('incognito and the sent mark of a tab', () => {

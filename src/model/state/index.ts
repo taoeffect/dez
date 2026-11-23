@@ -40,7 +40,7 @@ import {
 import { compactionsField, sectionCompactionBlock, type Compactions } from '../chat/compaction'
 import { notesMessages, withAssetLabels } from '../chat/compactionNotes'
 import { contextField, contextSize, type ContextSize } from '../chat/contextSize'
-import { agentTextEditedField, costField, withRequestCost, type ConversationCost } from '../chat/conversationCost'
+import { agentTextEditedField, costField, withRequestCost, withRestoredCost, type ConversationCost, type TabCostNumbers } from '../chat/conversationCost'
 import { canTurnOnIncognito, incognitoField, requestParts, requestSentField } from '../chat/incognito'
 import { moneyLimitField, type MoneyLimit } from '../chat/moneyLimit'
 import { durationField } from '../chat/duration'
@@ -749,7 +749,8 @@ export default sbp('sbp/selectors/register', {
   },
 
   // What the requests of the tab's conversation cost (a copy); undefined
-  // before its first counted request, and for a missing tab.
+  // before its first counted request, after a reset (`resetCost`), and for
+  // a missing tab.
   'dez.model/tabs/cost' (tabId: string): ConversationCost | undefined {
     return costField(useTabStore().tabs.find((candidate) => candidate.id === tabId)?.cost).cost
   },
@@ -829,7 +830,8 @@ export default sbp('sbp/selectors/register', {
   },
 
   // The user changed or removed the text of a reply in the tab, so its
-  // cost can belong to text that is gone. The mark is never cleared.
+  // cost can belong to text that is gone. Only a reset (`resetCost`) clears
+  // the mark.
   'dez.model/tabs/markAgentTextEdited' (tabId: string): void {
     const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
     if (tab) tab.agentTextEdited = true
@@ -837,6 +839,42 @@ export default sbp('sbp/selectors/register', {
 
   'dez.model/tabs/agentTextEdited' (tabId: string): boolean {
     return useTabStore().tabs.find((candidate) => candidate.id === tabId)?.agentTextEdited === true
+  },
+
+  // The cost numbers of the tab (a copy): its cost, its edited mark, and
+  // the numbers of its compactions; `{}` for a missing tab. The thread
+  // editor reads them to keep what a reset removes (view/editor/costReset.ts).
+  'dez.model/tabs/costNumbers' (tabId: string): TabCostNumbers {
+    const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
+    if (!tab) return {}
+    return { ...costField(tab.cost), ...agentTextEditedField(tab.agentTextEdited), ...compactionsField(tab.compactions) }
+  },
+
+  // Removes the cost numbers of the tab (`costNumbers`), so that its cost
+  // starts again from $0, as in a new tab: the user deleted all the text of
+  // the tab. Only the thread editor calls it, for that delete and for its
+  // redo; no tool and no write of the program resets the cost. The counted
+  // context, the money limit, and the incognito marks stay. No save: the
+  // editor saves the tab after it (an empty conversation has no file).
+  'dez.model/tabs/resetCost' (tabId: string): void {
+    const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
+    if (!tab) return
+    delete tab.cost
+    delete tab.agentTextEdited
+    delete tab.compactions
+  },
+
+  // Puts back the cost numbers that a reset removed (`removed`), added to
+  // what the tab counted since (`withRestoredCost`). Only the thread editor
+  // calls it, for an undo of the user's delete of all the text. No save:
+  // the editor saves the tab after it.
+  'dez.model/tabs/restoreCost' (tabId: string, removed: TabCostNumbers): void {
+    const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
+    if (!tab) return
+    const { cost, agentTextEdited, compactions } = withRestoredCost(tab, removed)
+    if (cost) tab.cost = cost
+    if (agentTextEdited) tab.agentTextEdited = agentTextEdited
+    if (compactions) tab.compactions = compactions
   },
 
   // Turns incognito on in the tab when `canTurnOnIncognito` allows it, and

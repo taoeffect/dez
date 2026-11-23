@@ -158,11 +158,12 @@ export interface Tab {
   activeModel: ActiveModel | null
   createdAt: number
   /** What the requests of the conversation's replies cost. Absent before
-   *  the first counted request; never set to `undefined`. */
+   *  the first counted request, and after the user deleted all the text of
+   *  the tab (`dez.model/tabs/resetCost`); never set to `undefined`. */
   cost?: ConversationCost
   /** The user changed or removed the text of a reply (an agent section),
    *  so the cost can belong to text that is gone. Absent when not; never
-   *  set to `undefined`. Never cleared. */
+   *  set to `undefined`. Only `dez.model/tabs/resetCost` clears it. */
   agentTextEdited?: true
   /** The tokens of the newest chat request of the conversation that told
    *  them, with Dez's estimate at that moment. The context size of the tab
@@ -170,7 +171,8 @@ export interface Tab {
    *  such request; never set to `undefined`. */
   context?: CountedContext
   /** The numbers of the compactions of the conversation (compaction.ts).
-   *  Absent before the first compaction; never set to `undefined`. */
+   *  Absent before the first compaction, and after
+   *  `dez.model/tabs/resetCost`; never set to `undefined`. */
   compactions?: Compactions
   /** The tab is incognito: its chat requests leave out what tells a
    *  provider that they come from Dez. Absent when off; never set to
