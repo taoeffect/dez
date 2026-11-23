@@ -20,7 +20,9 @@ import { EDITOR_FONT_SIZE_DEFAULT, EDITOR_FONT_SIZE_PROPERTY } from '../../model
 import { escapeMarkerAttribute, unescapeMarkerAttribute } from '../../utils/markerAttribute'
 import { ASSET_FLASH_MS } from '../editor/drawnAssets'
 import { addModelToPill, modelDisplayNamesField, sameModelChip, sectionModelChips, streamingSectionField, type ModelChip } from './modelChip'
-import { addDurationToPill } from './pillDuration'
+import { renderPillTime } from './pillDuration'
+import { liveTimes, readLiveTimes, replyTime, type ShownTime } from '../editor/liveTimes'
+import type { LiveTimes } from '../../model/streams/types'
 import {
   hasThinking,
   isThinkingPanelEvent,
@@ -730,14 +732,15 @@ class RoleSeparatorWidget extends WidgetType {
     readonly index: number,
     readonly role: Role,
     readonly chip: ModelChip | null,
-    /** The reply time of an agent section, or null for none. */
+    /** The reply time of an agent section, or null for none. A live time
+     *  is not part of the widget: see `liveTimes.ts`. */
     readonly durationMs: number | null,
   ) {
     super()
   }
-  // Thinking is left out on purpose: see `pillThinkingUpdater`. Every other
-  // part that `toDOM` draws must be compared here, or CodeMirror keeps
-  // stale pill DOM.
+  // Thinking and the live time are left out on purpose: see
+  // `pillThinkingUpdater` and `liveTimes.ts`. Every other part that `toDOM`
+  // draws must be compared here, or CodeMirror keeps stale pill DOM.
   eq(other: WidgetType): boolean {
     return (
       other instanceof RoleSeparatorWidget &&
@@ -757,7 +760,7 @@ class RoleSeparatorWidget extends WidgetType {
     label.textContent = this.role === 'user' ? 'User' : 'Agent'
     el.appendChild(label)
     if (this.chip) addModelToPill(label, this.chip)
-    if (this.durationMs !== null) addDurationToPill(label, this.durationMs)
+    if (this.role === 'agent') renderPillTime(label, pillTime(view.state, this.index, this.durationMs, () => readLiveTimes(view.state), Date.now()))
     renderPillThinking(el, label, pillThinkingAt(view.state, this.index), view)
     return el
   }
@@ -773,6 +776,29 @@ class RoleSeparatorWidget extends WidgetType {
 /** The thinking parts of the pill of section `index` in `state`. */
 function pillThinkingAt(state: EditorState, index: number): PillThinkingView | null {
   return sectionThinkingView(state.field(sectionsField)[index], state.field(thinkingExpandedField), state.field(streamingSectionField))
+}
+
+/** The time of the agent pill of section `index`: the time that its reply
+ *  took (`durationMs`), or the live time of the reply that streams into
+ *  it, from `readTimes` (called only for a pill with no final time). */
+function pillTime(state: EditorState, index: number, durationMs: number | null, readTimes: () => LiveTimes | null, now: number): ShownTime | null {
+  if (durationMs !== null) return { ms: durationMs, live: false }
+  const id = state.field(sectionsField)[index]?.id
+  return id === undefined ? null : replyTime(readTimes(), id, now)
+}
+
+// The live time of the drawn pill of the reply that runs, at each tick of
+// `liveTimes.ts`; and a pill that still shows a live time after its reply
+// ended loses it. The other pills keep their DOM.
+function renderLivePillTimes(view: EditorView, times: LiveTimes | null, now: number): void {
+  const models = view.state.field(sectionsField)
+  for (const separator of view.contentDOM.querySelectorAll<HTMLElement>('.dez-role-separator[data-role="agent"]')) {
+    const index = Number(separator.dataset.sectionIndex)
+    const label = separator.firstElementChild
+    if (!(label instanceof HTMLElement)) continue
+    if (models[index]?.id !== times?.sectionId && !label.querySelector(':scope > .dez-role-separator__duration--live')) continue
+    renderPillTime(label, pillTime(view.state, index, models[index]?.durationMs ?? null, () => times, now))
+  }
 }
 
 // Changes the thinking parts of the drawn pills in place (a thinking token,
@@ -875,6 +901,7 @@ export const roleSeparators: Extension = [
   EditorView.contentAttributes.compute(['doc'], (state): Record<string, string> =>
     (firstSectionRole(state.doc.line(1).text) === 'agent' ? { [FIRST_SECTION_ATTRIBUTE]: 'agent' } : {})),
   pillThinkingUpdater,
+  liveTimes(renderLivePillTimes),
 ]
 
 export const roleSeparatorAtomicRanges = EditorView.atomicRanges.of((view) =>
@@ -1721,11 +1748,12 @@ export const dezTheme = EditorView.theme({
     content: '"·"',
     marginRight: editorSize(6),
   },
-  // Reply time (`addDurationToPill` in pillDuration.ts) at the end of an
-  // agent pill: after the model part, or after the role word in a pill with
-  // no model. Muted, smaller than the model name, and set off by the same
-  // divider, so it reads as secondary. Tabular numerals keep times of the
-  // same form the same width. It keeps its own case and spacing in the
+  // Reply time (`renderPillTime` in pillDuration.ts) at the end of an agent
+  // pill: after the model part, or after the role word in a pill with no
+  // model. While the reply runs, it counts in place (`--live`,
+  // liveTimes.ts). Muted, smaller than the model name, and set off by the
+  // same divider, so it reads as secondary. Tabular numerals keep times of
+  // the same form the same width. It keeps its own case and spacing in the
   // uppercase row ("4.2s", not "4.2S"). A line height of 1 keeps it inside
   // the role word's line box, so the pill is as tall as one with no time.
   // `flex: none` makes a long model name shrink first.
@@ -1916,8 +1944,10 @@ export const dezTheme = EditorView.theme({
     // keep the widget (`eq`), and `pillThinkingUpdater` changes the thinking
     // parts in place, so the animations run without restarts until the
     // stream ends. The left-slot spinner turns here too, and so do the
-    // spinner and the name shimmer of a running tool call chip.
-    '.dez-role-separator__spinner, .dez-tool-call__spinner': {
+    // spinner and the name shimmer of the chip of a call that runs; the
+    // chip of an ended or a waiting call of its group (`data-phase`,
+    // toolCalls.ts) stays still.
+    '.dez-role-separator__spinner, .dez-tool-call__chip:not([data-phase]) > .dez-tool-call__spinner': {
       animation: 'dez-role-pill-spin 0.9s linear infinite',
     },
     '.dez-role-separator__label[data-streaming]::after': {
@@ -1933,7 +1963,7 @@ export const dezTheme = EditorView.theme({
       pointerEvents: 'none',
       animation: 'dez-role-pill-glow 1.8s ease-in-out infinite',
     },
-    '.dez-role-separator__label[data-streaming] .dez-role-separator__model-name, .dez-tool-call[data-state="running"] .dez-tool-call__name': {
+    '.dez-role-separator__label[data-streaming] .dez-role-separator__model-name, .dez-tool-call[data-state="running"] .dez-tool-call__chip:not([data-phase]) .dez-tool-call__name': {
       color: 'transparent',
       backgroundImage:
         'linear-gradient(90deg, var(--color-text) 40%, var(--color-link, #4a9eff) 50%, var(--color-text) 60%)',
@@ -2402,9 +2432,13 @@ export const dezTheme = EditorView.theme({
     cursor: 'default',
   },
   // The spinner shares the role pill spinner's rules (above); in the chip,
-  // the gap spaces it.
+  // the gap spaces it. The still spinner of a call that waits for its turn
+  // in its group is faint.
   '.dez-tool-call__spinner': {
     marginRight: '0',
+  },
+  '.dez-tool-call__chip[data-phase="waiting"] > .dez-tool-call__spinner': {
+    opacity: '0.4',
   },
   '.dez-tool-call__disclosure': {
     flex: 'none',
@@ -2461,6 +2495,20 @@ export const dezTheme = EditorView.theme({
   },
   '.dez-tool-call[data-state="error"] .dez-tool-call__icon, .dez-tool-call[data-state="error"] .dez-tool-call__name, .dez-tool-call[data-state="interrupted"] .dez-tool-call__icon, .dez-tool-call[data-state="interrupted"] .dez-tool-call__name': {
     color: 'var(--color-error, #d9534f)',
+  },
+  // The time of a call (`renderCallTime` in toolCalls.ts): after the rule
+  // of the intermediate part, in the chip's muted color, also on a failed
+  // call, so the red state word stands out. Tabular numerals keep a live
+  // time of one form at one width. `flex: none`: the summary gives way
+  // first in a narrow window. It has the font size and the line height of
+  // the label of the intermediate part, so the two rules are as tall.
+  '.dez-tool-call__time': {
+    flex: 'none',
+    marginLeft: editorSize(2),
+    paddingLeft: editorSize(8),
+    borderLeft: '1px solid color-mix(in srgb, var(--color-text) 16%, transparent)',
+    fontSize: editorSize(11.5),
+    fontVariantNumeric: 'tabular-nums',
   },
   // The intermediate part of a chip (`renderIntermediate` in toolCalls.ts):
   // after a thin rule, an eye, the type symbols, and a small label, all in

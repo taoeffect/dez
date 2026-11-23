@@ -132,6 +132,39 @@ describe('agentSectionMessages', () => {
     ])
   })
 
+  // The time is read from the stored block, so each later request sends the
+  // same bytes. A `running` block is a call that never ended.
+  it('ends the result of a timed call with its time, with and without tools, and leaves a quick or interrupted call as it was', () => {
+    const timed = (id: string, status: ToolBlockStatus, durationMs?: number, resultText = '1 model') =>
+      toolBlockText({ id, name: 'model_list', status, arguments: { filter: 'gemini' }, result: resultText, ...(durationMs === undefined ? {} : { durationMs }) })
+    const text = `Look.\n${timed('call_1', 'success', 4213)}\n${timed('call_2', 'error', 61_000, '')}\n${timed('call_3', 'success')}\n${timed('call_4', 'running', 2000, '')}\nDone.`
+
+    expect(agentSectionMessages(agent(text), model, true)).toStrictEqual([
+      { role: 'agent', content: 'Look.', toolCalls: ['call_1', 'call_2', 'call_3', 'call_4'].map((id) => call(id, 'gemini')) },
+      {
+        role: 'tool',
+        results: [
+          result('call_1', '1 model\n\n(This call took 4.2 seconds.)'),
+          result('call_2', 'No result.\n\n(This call took 1 minute 1 second.)', true),
+          result('call_3', '1 model'),
+          result('call_4', 'Interrupted.', true),
+        ],
+      },
+      { role: 'agent', content: 'Done.' },
+    ])
+    expect(agentSectionMessages(agent(text), model, false)).toStrictEqual([{
+      role: 'agent',
+      content: [
+        'Look.',
+        '[Tool call: model_list {"filter":"gemini"}]\n1 model\n\n(This call took 4.2 seconds.)\n[End of tool result]',
+        '[Tool call: model_list {"filter":"gemini"}]\nNo result.\n\n(This call took 1 minute 1 second.)\n[End of tool result]',
+        '[Tool call: model_list {"filter":"gemini"}]\n1 model\n[End of tool result]',
+        '[Tool call: model_list {"filter":"gemini"}]\nInterrupted.\n[End of tool result]',
+        'Done.',
+      ].join('\n'),
+    }])
+  })
+
   it('puts the pictures of a round in one user message right after its results, each after its label, in the order of the calls', () => {
     const sheet = { file: 's1.jpg', label: 'asset_view: the frame sheet of @f.', width: 1280, height: 320, bytes: 3000 }
     const wave = { file: 'w1.jpg', label: 'asset_view: the wave of @g.', width: 800, height: 200, bytes: 2000 }

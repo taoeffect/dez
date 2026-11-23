@@ -8,6 +8,7 @@ import { useModelState, type Prompt } from '../modelState'
 import { sameModelRef } from '../../model/chat/modelRef'
 import { sameThinking } from '../../model/chat/thinking'
 import type { ShortcutIdOfScope } from '../../model/shortcuts'
+import type { LiveTimes } from '../../model/streams/types'
 import { debounce, throttle } from 'turtledash'
 import PromptAutocomplete from './PromptAutocomplete.vue'
 import FindDropdown from './FindDropdown.vue'
@@ -51,6 +52,7 @@ import { findExtension, findMatchStatus, findNextMatch, findQueryField, selectMa
 import { markdownTables } from '../editor/tables'
 import { deleteImageBang, deleteImageParen, markdownImages } from '../editor/images'
 import { markdownToolCalls, openToolCalls } from '../editor/toolCalls'
+import { liveTimesSource } from '../editor/liveTimes'
 import { markdownMedia } from '../editor/media'
 import { carriedAppRuns, markdownApps, syncAppFrames, type CarriedAppRun } from '../editor/apps'
 import { removeAppFrames } from '../apps/appFrameHost'
@@ -668,6 +670,9 @@ function buildState(carried?: CarriedState): EditorState {
   const sections = activeSections.value
   const models = initialSectionModels(sections)
   const pillMeta = initialPillMetadata(sections)
+  // The tab that this state shows, for good: `viewTabId` can name another
+  // tab for a tick after a switch.
+  const stateTabId = activeTabId.value
   const autocompleteKeymap = Prec.highest(
     keymap.of([
       {
@@ -821,6 +826,7 @@ function buildState(carried?: CarriedState): EditorState {
       sectionsField.init(() => models),
       modelDisplayNamesField.init(() => modelDisplayNames.value),
       streamingSectionField.init(() => activeTabStreamingSectionId.value),
+      liveTimesSource.of(() => sbp('dez.model/streams/liveTimes', stateTabId) as LiveTimes | null),
       pillsField.init(() => pillMeta),
       thinkingExpandedField.init(() => carried?.thinking ?? new Set()),
       roleSeparators,

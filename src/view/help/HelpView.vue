@@ -236,6 +236,13 @@ function onOverlayClick(event: MouseEvent) {
               (<kbd>{{ keys.history }}</kbd>) opens it again.
             </p>
             <p>
+              The Agent pill of a reply counts the seconds while the reply comes in, then shows how
+              long the reply took. Each tool call of a reply shows as a chip: click it to see the
+              call and its result. The chip of a call that runs longer than a second counts its time
+              too, and then keeps the time that the call took. Dez tells the model how long such a
+              call took.
+            </p>
+            <p>
               The two numbers in the middle of the bottom bar are the size and the cost of the
               conversation. The first one is the size in tokens (<code>k</code>: thousand,
               <code>M</code>: million): about how much your next message sends to the model, which

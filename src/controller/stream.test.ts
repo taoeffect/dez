@@ -24,7 +24,7 @@ import { providerInfo } from '../model/providers/testing'
 import { CLIP_KINDS, isClipKind, isTextKind, ProviderNotConfiguredError, type MediaKind } from '../model/providers/types'
 import type { CompactionLeftFiles } from '../model/streams/compactionFiles'
 import { compactionInstruction } from '../model/streams/compactionRequest'
-import type { RequestMessages, StreamMessage } from '../model/streams/types'
+import type { LiveTimes, RequestMessages, StreamMessage } from '../model/streams/types'
 import { STOPPED_TOOL_RESULT, stoppedToolResult } from '../model/streams/toolRound'
 import { showResultText } from '../model/tools/appShow'
 import { EDIT_HINT } from '../model/tools/appsTool'
@@ -1179,6 +1179,72 @@ describe('dez.stream/start tool loop', () => {
     expect(savedConversations[0].sections[1].nodes).toStrictEqual(agentSection().content)
     expect(toasts).toStrictEqual([])
     expect(alerts).toStrictEqual([])
+  })
+
+  describe('call times', () => {
+    const start = Date.UTC(2026, 10, 6, 12)
+    const callTimes = () => findToolBlocks(sectionVisibleText(agentSection())).map((block) => [block.id, block.durationMs])
+    const liveTimes = () => sbp('dez.model/streams/liveTimes', activeTab().id) as LiveTimes | null
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(start)
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    // The blocks of a group stay `running` until the group ends, so the
+    // view learns which call runs, and when an ended call ended, only from
+    // the live times.
+    it('keeps the time of a call of a second or more on its block, and gives the view the times of the calls while the reply runs', async () => {
+      const seen: (LiveTimes | null)[] = []
+      providerInfos = async () => {
+        runs++
+        seen.push(liveTimes())
+        vi.setSystemTime(Date.now() + (runs === 1 ? 2500 : 300))
+        return []
+      }
+      replyRounds([
+        async (input) => ({ requestId: input.requestId as string, toolCalls: [geminiCall, { ...geminiCall, id: 'c2' }] }),
+        async (input) => ({ requestId: input.requestId as string }),
+      ])
+
+      await startStream({ sendTools: true })
+
+      expect(callTimes()).toStrictEqual([['c1', 2500], ['c2', undefined]])
+      expect(sent[1].at(-1)).toStrictEqual({
+        role: 'tool',
+        results: [
+          { callId: 'c1', content: `${NO_MODELS_TEXT}\n\n(This call took 2.5 seconds.)`, isError: false },
+          { callId: 'c2', content: NO_MODELS_TEXT, isError: false },
+        ],
+      })
+      expect(seen).toStrictEqual([
+        { sectionId: 'a1', startedAt: start, calls: { c1: { startedAt: start, endedAt: null } } },
+        { sectionId: 'a1', startedAt: start, calls: { c1: { startedAt: start, endedAt: start + 2500 }, c2: { startedAt: start + 2500, endedAt: null } } },
+      ])
+      expect(liveTimes()).toBeNull()
+    })
+
+    it('gives a call that a stop ended the time until the stop, and a call that did not start none', async () => {
+      providerInfos = async () => {
+        runs++
+        vi.setSystemTime(Date.now() + (runs === 1 ? 200 : 1500))
+        if (runs === 2) await sbp('dez.stream/stop', activeTab().id)
+        return []
+      }
+      replyRounds([
+        async (input) => ({ requestId: input.requestId as string, toolCalls: [geminiCall, { ...geminiCall, id: 'c2' }, { ...geminiCall, id: 'c3' }] }),
+      ])
+
+      await startStream({ sendTools: true })
+
+      expect(blocks().map((block) => block.status)).toStrictEqual(['success', 'error', 'error'])
+      expect(callTimes()).toStrictEqual([['c1', undefined], ['c2', 1500], ['c3', undefined]])
+      expect(savedConversations[0].sections[1].nodes).toStrictEqual(agentSection().content)
+    })
   })
 
   // The submit builds its messages while the running blocks are still in the

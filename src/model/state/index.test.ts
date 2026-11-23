@@ -377,7 +377,7 @@ describe('incognito and the sent mark of a tab', () => {
   it('refuses a tab whose reply started, also after the stop of the reply removed its agent section', () => {
     const tab = tabWithText('question')
     const agent = startReply(tab.id)
-    finalizeStreamSectionForTab({ tabId: tab.id, sectionId: agent.id, status: 'cancelled', model: { ...model, modelName: 'M' }, startedAt: 1000, finishedAt: 1500, compacting: false })
+    finalizeStreamSectionForTab({ tabId: tab.id, sectionId: agent.id, status: 'cancelled', model: { ...model, modelName: 'M' }, startedAt: 1000, finishedAt: 1500, compacting: false, callTimes: {} })
 
     expect(tabNow(tab.id).sections.map((section) => section.role)).toEqual(['user'])
     expect(turnOn(tab.id)).toBe(false)
@@ -953,7 +953,7 @@ describe('section models', () => {
     typeIntoLastSection('first question')
     const first = ensureAgentSection(alpha)
     appendTokenToTabSection(activeId(), first.id, 'first answer')
-    finalizeStreamSectionForTab({ tabId: activeId(), sectionId: first.id, status: 'finished', model: { ...alpha, modelName: 'Alpha' }, startedAt: 1000, finishedAt: 1500, compacting: false })
+    finalizeStreamSectionForTab({ tabId: activeId(), sectionId: first.id, status: 'finished', model: { ...alpha, modelName: 'Alpha' }, startedAt: 1000, finishedAt: 1500, compacting: false, callTimes: {} })
     typeIntoLastSection('second question')
     const second = ensureAgentSection(beta)
 

@@ -12,11 +12,13 @@ import { MODEL_OUTPUT_IDS, effectiveOutputs, type ModelOutput } from '../../mode
 import { isRecord } from '../../model/providers/modelParsing'
 import type { ModelDisplayNames, ModelInfo } from '../../model/providers/types'
 import { isRoundLimitResult } from '../../model/streams/toolRound'
+import type { LiveTimes } from '../../model/streams/types'
 import { blockJobStarts, INTERMEDIATE_PARAMETER, jobOwnText, type JobResult, type JobResultStatus } from '../../model/tools/jobs'
 import { JS_EVAL_CODE_PARAMETER, JS_EVAL_TOOL } from '../../model/tools/jsEval'
 import { isIntermediateCall, toolDefinition } from '../../model/tools/registry'
 import type { ToolArguments, ToolArgumentValue } from '../../model/tools/types'
 import { countOf } from '../../utils/countText'
+import { longDuration } from '../../utils/durationText'
 import { assetIcon } from '../assetIcons'
 import { assetModelLabel } from '../assetModelLabel'
 import type { ModelFacts } from '../modelLabel'
@@ -29,13 +31,15 @@ import type { AssetPlace } from './drawnAssets'
 import { eyeIcon, hiddenAssets, hiddenAssetsOfChips, hiddenLineStarts, type HiddenDocAsset } from './hiddenAssets'
 import { createImage, updateImageModel } from './images'
 import { agentSectionTexts, assetModelsChanged, chipBlocks, lineBlocks, sectionRolesChanged } from './lineBlocks'
+import { callPhase, callTime, drawTime, liveTimes, readLiveTimes, timeWords, type CallPhase, type ShownTime } from './liveTimes'
 import { createPlayer, destroyPlayer, isInSelectableTooltip, updatePlayer } from './media'
 import type { DocRange } from './pendingRanges'
 import { ROUND_STROKE, svgIcon } from './svgIcon'
 
 // The editor shows each `<dez:tool>` block of an agent section
 // (`src/model/chat/toolBlocks.ts`) as a quiet one-line chip: a disclosure
-// triangle, a wrench, the tool name, and a short form of its arguments. A
+// triangle, a wrench, the tool name, a short form of its arguments, and
+// the time of a call that runs or ran a second or more (`liveTimes.ts`). A
 // call to a tool that Dez does not have says so before the name, with no
 // short form (`UNRECOGNIZED_TOOL_TEXT`). A click on the chip, or Enter or
 // Space while it has the focus, opens a panel under it with the parameters,
@@ -438,6 +442,8 @@ const RESULT_TEXT_CLASS = 'dez-tool-call__result-text'
 const INTERMEDIATE_CLASS = 'dez-tool-call__intermediate'
 const HIDDEN_PART_CLASS = 'dez-tool-call__hidden'
 const ASSETS_CLASS = 'dez-tool-call__assets'
+const TIME_CLASS = 'dez-tool-call__time'
+const SPINNER_CLASS = 'dez-tool-call__spinner'
 
 /** An open-end wrench. */
 function wrenchIcon(): SVGSVGElement {
@@ -470,13 +476,67 @@ const STATE_WORDS: Partial<Record<ToolCallState, string>> = { error: 'failed', i
 /** The chip's accessible name. Its `aria-label` replaces the text of the
  *  chip's parts, so it holds the summary and the state word too, and
  *  "running" stands for the spinner, which screen readers skip. `note` is
- *  the label of an intermediate call (`intermediateLabel`). Empty parts are
- *  left out. A tool that Dez does not have is named as its chip names
- *  it. */
-export function toolCallLabel(name: string, summary: string, state: ToolCallState, note = ''): string {
+ *  the label of an intermediate call (`intermediateLabel`), and
+ *  `durationMs` the time that the call took (a live time would change the
+ *  name each second). Empty parts are left out. A tool that Dez does not
+ *  have is named as its chip names it. */
+export function toolCallLabel(name: string, summary: string, state: ToolCallState, note = '', durationMs?: number): string {
   const word = state === 'running' ? 'running' : STATE_WORDS[state]
   const tool = isUnrecognizedTool(name) ? `Tool call, ${UNRECOGNIZED_TOOL_TEXT} ${name}` : `Tool call ${name}`
-  return [tool, summary, word, note].filter(Boolean).join(', ')
+  const took = durationMs === undefined ? '' : `took ${longDuration(durationMs)}`
+  return [tool, summary, word, took, note].filter(Boolean).join(', ')
+}
+
+/** The time that a call took, as its block keeps it (`duration-ms`): only
+ *  for a call that ran a second or more. An interrupted call has none, as
+ *  in a request (`toolResult`, messages.ts). */
+function finalCallTime(call: RenderedToolCall): ShownTime | null {
+  return call.durationMs === undefined || call.state === 'interrupted' || call.state === 'running' ? null : { ms: call.durationMs, live: false }
+}
+
+/** Draws the time part of `chip`, or takes it away for `time` null. It
+ *  goes after the state word, and before the intermediate part, which
+ *  `renderIntermediate` keeps at the end. */
+function renderCallTime(chip: HTMLElement, time: ShownTime | null): void {
+  let part = chip.querySelector<HTMLElement>(`:scope > .${TIME_CLASS}`)
+  if (!time) {
+    part?.remove()
+    return
+  }
+  if (!part) {
+    part = span(TIME_CLASS)
+    chip.insertBefore(part, chip.querySelector(`:scope > .${INTERMEDIATE_CLASS}`))
+  }
+  drawTime(part, TIME_CLASS, time, time.live ? `Running for ${timeWords(time)}` : `Ran for ${timeWords(time)}`)
+}
+
+/** Shows on the chip of a `running` block where its call is in its group
+ *  (`callPhase`), so that only the call that runs looks busy: an ended
+ *  call gets the triangle of a call that ran, which its final chip keeps,
+ *  and a waiting call a still spinner with no shimmer (`dezTheme`). An
+ *  ended call never runs again, so no triangle turns back to a spinner. */
+function renderCallPhase(chip: HTMLElement, phase: CallPhase | null): void {
+  if (phase === null) chip.removeAttribute('data-phase')
+  else if (chip.dataset.phase !== phase) chip.dataset.phase = phase
+  const spinner = chip.querySelector(`:scope > .${SPINNER_CLASS}`)
+  if (phase !== 'ended' || !spinner) return
+  const triangle = disclosureTriangle()
+  triangle.setAttribute('aria-hidden', 'true')
+  spinner.replaceWith(triangle)
+}
+
+// The time and the phase of each drawn chip of a call that runs, at each
+// tick of `liveTimes.ts`. A call whose group ends gets a new chip
+// (`sameCall`), so the chips of the other states keep their DOM.
+function renderLiveCallTimes(view: EditorView, times: LiveTimes | null, now: number): void {
+  const streamingSectionId = view.state.field(streamingSectionField, false) ?? null
+  for (const root of view.contentDOM.querySelectorAll<HTMLElement>(`.${ROOT_CLASS}[data-state="running"]`)) {
+    const call = drawnCalls.get(root)
+    const chip = root.querySelector<HTMLElement>(`:scope > .${CHIP_CLASS}`)
+    if (!call || !chip) continue
+    renderCallPhase(chip, callPhase(times, streamingSectionId, call.id))
+    renderCallTime(chip, callTime(times, streamingSectionId, call.id, now))
+  }
 }
 
 /** The label of an intermediate chip: what the chip hides, and, while its
@@ -524,7 +584,7 @@ function renderIntermediate(chip: HTMLElement, call: RenderedToolCall, open: boo
   chip.querySelector(`.${INTERMEDIATE_CLASS}`)?.remove()
   const { intermediate } = call
   const label = intermediate ? intermediateLabel(intermediate, open) : ''
-  chip.setAttribute('aria-label', toolCallLabel(call.name, call.summary, call.state, label))
+  chip.setAttribute('aria-label', toolCallLabel(call.name, call.summary, call.state, label, finalCallTime(call)?.ms))
   if (!intermediate) return
   const part = span(INTERMEDIATE_CLASS)
   const revealed = open && (intermediate.assets.length > 0 || intermediate.text !== '')
@@ -588,7 +648,7 @@ export function createChip(lead: HTMLElement | null, icon: SVGSVGElement, parts:
 function createCallChip(view: EditorView, call: RenderedToolCall): HTMLElement {
   // The spinner element stays as long as the widget, so its animation runs
   // without restarts until the call ends.
-  const lead = call.state === 'running' ? span('dez-tool-call__spinner') : disclosureTriangle()
+  const lead = call.state === 'running' ? span(SPINNER_CLASS) : disclosureTriangle()
   // The words go in their own span, so the name keeps the name's look
   // (`dezTheme`) and the flex gap spaces the two.
   const words = isUnrecognizedTool(call.name) ? [span('dez-tool-call__unrecognized', UNRECOGNIZED_TOOL_TEXT)] : []
@@ -596,6 +656,14 @@ function createCallChip(view: EditorView, call: RenderedToolCall): HTMLElement {
   renderSummary(chip, call.summary)
   const word = STATE_WORDS[call.state]
   if (word) chip.appendChild(span('dez-tool-call__state', word))
+  if (call.state !== 'running') {
+    renderCallTime(chip, finalCallTime(call))
+    return chip
+  }
+  const times = readLiveTimes(view.state)
+  const streamingSectionId = view.state.field(streamingSectionField, false) ?? null
+  renderCallPhase(chip, callPhase(times, streamingSectionId, call.id))
+  renderCallTime(chip, callTime(times, streamingSectionId, call.id, Date.now()))
   return chip
 }
 
@@ -941,11 +1009,12 @@ function renderCallOpenState(view: EditorView, root: HTMLElement, call: Rendered
 }
 
 // Every part of a call that the chip draws, but its intermediate data and
-// its summary. Arguments keep their definition order, so equal ones give
-// equal JSON, and so do the pictures and the tool calls of the code of two
-// reads of one block.
+// its summary, and the live time of a call that runs (`liveTimes.ts`).
+// Arguments keep their definition order, so equal ones give equal JSON,
+// and so do the pictures and the tool calls of the code of two reads of
+// one block.
 function sameCall(a: RenderedToolCall, b: RenderedToolCall): boolean {
-  return a.id === b.id && a.name === b.name && a.state === b.state && a.result === b.result && JSON.stringify(a.arguments) === JSON.stringify(b.arguments)
+  return a.id === b.id && a.name === b.name && a.state === b.state && a.result === b.result && a.durationMs === b.durationMs && JSON.stringify(a.arguments) === JSON.stringify(b.arguments)
     && JSON.stringify(a.pictures) === JSON.stringify(b.pictures) && JSON.stringify(a.bridged) === JSON.stringify(b.bridged)
 }
 
@@ -1112,6 +1181,7 @@ export function markdownToolCalls(openCalls?: ReadonlySet<string>): Extension {
     toolCallDecorationsField,
     openCalls ? toolCallsOpenField.init(() => openCalls) : toolCallsOpenField,
     toolCallOpenUpdater,
+    liveTimes(renderLiveCallTimes),
     lineBlocks(renderedToolCalls),
   ]
 }

@@ -21,6 +21,7 @@ import { madeAssetIds } from '../tools/jobs'
 import type { ToolCall, ToolResult } from '../tools/types'
 import { conversationAssets, preparedMediaRequest, type MediaRequestInput } from './mediaRequest'
 import type { RequestMessages, StreamMessage } from './types'
+import { longDuration } from '../../utils/durationText'
 
 export interface RequestOptions {
   // False when the request model does not read images: the images of the
@@ -684,7 +685,15 @@ function toolCall(block: ToolBlock): ToolCall {
 function toolResult(block: ToolBlock): ToolResult {
   if (block.status === 'running') return { callId: block.id, content: INTERRUPTED_TOOL_RESULT, isError: true }
   const content = withoutStoredFilePaths(block.result)
-  return { callId: block.id, content: content.trim() === '' ? EMPTY_TOOL_RESULT : content, isError: block.status === 'error' }
+  return { callId: block.id, content: withCallTime(content.trim() === '' ? EMPTY_TOOL_RESULT : content, block.durationMs), isError: block.status === 'error' }
+}
+
+// The model learns how long a slow call took (`TIMED_CALL_MIN_MS`), so it
+// can plan its later calls. The time comes from the `duration-ms` of the
+// stored block, never from a clock, so each later request sends the same
+// bytes (the prompt cache). A block with no time keeps its old bytes.
+function withCallTime(content: string, durationMs: number | undefined): string {
+  return durationMs === undefined ? content : `${content}\n\n(This call took ${longDuration(durationMs)}.)`
 }
 
 // The section as one text, for a request with no tools: the text of each

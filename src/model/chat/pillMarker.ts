@@ -1,5 +1,6 @@
 import * as z from 'zod'
 import { MARKER_ATTRIBUTES, escapeMarkerAttribute, markerAttributes, parseJsonAttribute } from '../../utils/markerAttribute'
+import { parseDurationMs } from './duration'
 import { modelRefKey, parseModelRefKey } from './modelRef'
 import { tagEscape } from './tagEscape'
 import type { ModelRef, Role, Section, SectionThinking, ThinkingReplay, ThinkingRound } from './types'
@@ -57,14 +58,6 @@ const thinkingRoundsSchema = z.array(z.object({
   from: z.number().int().nonnegative(),
   replay: thinkingReplaySchema.optional(),
 })).refine((rounds) => rounds.every((round, index) => index === 0 || rounds[index - 1].from <= round.from))
-
-// `pillMarkerText` writes whole, non-negative milliseconds. Any other value
-// (a hand edit) reads as "unknown", as a bad `model` does.
-function parseDurationMs(value: string | undefined): number | null {
-  if (value === undefined || !/^\d+$/.test(value)) return null
-  const durationMs = Number(value)
-  return Number.isSafeInteger(durationMs) ? durationMs : null
-}
 
 // A marker in the thinking text would end the container early, so the text
 // holds none: `</dez:pill>` is written as `<\/dez:pill>`, and `<dez:pill` as

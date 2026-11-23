@@ -81,7 +81,8 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `main.ts`: registers all selectors; dev builds expose `window.__stores`.
 - `view/thread/ThreadEditor.vue`: the one CodeMirror `EditorView` (no contenteditable).
 - `view/thread/cmEditor.ts`: doc ⇄ sections, sentinels, state fields, role pill widgets, clipboard format, markdown parsing and styles, `dezTheme`.
-- `view/thread/modelChip.ts`, `thinkingPill.ts`, `pillDuration.ts`: the parts of an agent pill (model, thinking, reply time).
+- `view/thread/modelChip.ts`, `thinkingPill.ts`, `pillDuration.ts`: the parts of an agent pill (model, thinking, reply time: live, then final).
+- `view/editor/liveTimes.ts`: the times that count while a reply runs (its pill, its slow tool calls), drawn by one ticker.
 - `view/thread/editorMeasure.ts`: forced CodeMirror re-measures.
 - `view/editor/selectors.ts`: `dez.editor/*`, the active-editor bridge (stream patching, scroll follow, Copy Markdown, the rebuild after a compaction, the cards of a deleted app).
 - `view/editor/find.ts`, `findState.ts`, `findHistory.ts`, `view/thread/FindDropdown.vue`: find and replace.
@@ -157,7 +158,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `view/settings/`: Settings (`SettingsView.vue`, `ProviderManager.vue`, `ShortcutManager.vue`, `SystemPromptSettings.vue`, `unusedFiles.ts`).
 - `view/tabs/TabBar.vue`: tabs (activity colors, drag to reorder).
 - `view/modelLabel.ts`: model display names and tooltip text. `view/theme.ts`: theme and editor font size.
-- `utils/`: one place for each shared rule: `byteSize.ts`, `countText.ts`, `oneLineCut.ts`, `textCut.ts`, `formatName.ts`, `homePath.ts`, `errorText.ts`, `abort.ts`, `dezLinks.ts`, `regExpSource.ts`.
+- `utils/`: one place for each shared rule: `byteSize.ts`, `countText.ts`, `durationText.ts`, `oneLineCut.ts`, `textCut.ts`, `formatName.ts`, `homePath.ts`, `errorText.ts`, `abort.ts`, `dezLinks.ts`, `regExpSource.ts`.
 
 ### SBP
 
@@ -278,6 +279,7 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 - **Thinking has two copies during a stream** (store and visible editor); see `dez.editor/setSectionThinkingIfVisible`.
 - **Never change the stored thinking**: replays send it back, and the prompt cache needs the same bytes. The panel shows `readableThinking` (`src/model/chat/thinking.ts`).
 - **Agent pill DOM changes in place**: see `RoleSeparatorWidget.eq` and `pillThinkingUpdater` in `cmEditor.ts`.
+- **Live times tick in place** (`view/editor/liveTimes.ts`): no editor state and no widget `eq` holds a live time.
 - **Streams patch only the visible editor**: the store gets every token; the editor only when its tab is active (`dez.editor/appendTokenIfVisible`).
 - **Stream scroll follow**: never add code that scrolls an editor view up (`src/view/editor/selectors.ts`).
 - **Chip spacing is view only** (`ChipSpacing`, `view/editor/toolCalls.ts`): never change the text of a reply for its look, as the rounds of a reply are read from it.

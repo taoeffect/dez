@@ -62,12 +62,14 @@ import { TOOL_DEFINITIONS } from '../model/tools/registry'
 import { ToolError, type ToolDefinition, type ToolRunResult } from '../model/tools/types'
 import {
   cancelStreamSession,
+  endStreamCall,
   errorStreamSession,
   finishStreamSession,
   setStreamCompacting,
+  startStreamCall,
   startStreamSession,
   streamIsStreaming,
-  streamSession,
+  streamingSectionId,
 } from '../model/state/streams'
 import { compactConversation, type Compaction } from './compaction'
 import { logRequest } from './diagnostics/requestLog'
@@ -136,6 +138,10 @@ interface ToolRun {
   calls: CheckedToolCall[]
   // The result of each call that ended, by call index.
   results: (ToolRunResult | undefined)[]
+  // How long each call that ended ran, by call index, for the time on its
+  // block; and the call that runs now, with its start.
+  durations: (number | undefined)[]
+  current: { index: number; startedAt: number } | null
   runningText: string
   abort: AbortController
 }
@@ -384,8 +390,7 @@ function unreadJobsMessage(jobs: readonly EndedJob[]): string {
 
 // The tab's stream session still writes into `sectionId`.
 function streamWritesSection(tabId: string, sectionId: string): boolean {
-  const session = streamSession(tabId)
-  return !!session && session.sectionId === sectionId && session.status === 'streaming'
+  return streamingSectionId(tabId) === sectionId
 }
 
 // The reply's section in the tab, with the text of the reply. In the
@@ -474,7 +479,10 @@ function stopToolRun(tabId: string, reply: ReplyRuntime): boolean {
   if (!run) return false
   reply.toolRun = null
   run.abort.abort()
-  const blocks = run.calls.map((call, index) => toolCallBlock(call, run.results[index] ?? stoppedToolResult(call.name)))
+  // The call that runs now ran until the stop.
+  const { current } = run
+  if (current) run.durations[current.index] = endStreamCall(tabId, reply.sectionId, run.calls[current.index].id) - current.startedAt
+  const blocks = run.calls.map((call, index) => toolCallBlock(call, run.results[index] ?? stoppedToolResult(call.name), run.durations[index]))
   if (streamWritesSection(tabId, reply.sectionId) && replaceToolRun(tabId, reply.sectionId, run, toolGroupText(blocks))) return true
   discardRunPictures(run)
   return false
@@ -593,6 +601,8 @@ async function runToolRound(tabId: string, conversationId: string, reply: ReplyR
   const run: ToolRun = {
     calls,
     results: [],
+    durations: [],
+    current: null,
     runningText: toolGroupText(runningBlocks),
     abort: new AbortController(),
   }
@@ -628,17 +638,21 @@ async function runToolRound(tabId: string, conversationId: string, reply: ReplyR
         if (refusal !== null) throw new ToolError(refusal)
       },
     }
+    const startedAt = startStreamCall(tabId, reply.sectionId, call.id)
+    run.current = { index, startedAt }
     const result = await sbp('dez.controller/tools/run', toolCall, run.abort.signal, context) as ToolRunResult
     if (reply.toolRun !== run) {
       // `stopToolRun` wrote the block of this call as stopped.
       void discardShownPictures(result.pictures ?? [])
       return null
     }
+    run.current = null
+    run.durations[index] = endStreamCall(tabId, reply.sectionId, call.id) - startedAt
     run.results[index] = result
   }
 
   reply.toolRun = null
-  const blocks = calls.map((call, index) => toolCallBlock(call, run.results[index]))
+  const blocks = calls.map((call, index) => toolCallBlock(call, run.results[index], run.durations[index]))
   if (!replaceToolRun(tabId, reply.sectionId, run, toolGroupText(blocks))) {
     discardRunPictures(run)
     return null

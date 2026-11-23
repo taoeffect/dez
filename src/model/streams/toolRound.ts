@@ -1,4 +1,5 @@
 import { errorText } from '../../utils/errorText'
+import { TIMED_CALL_MIN_MS } from '../chat/duration'
 import { toolBlockText, type ToolBlockData } from '../chat/toolBlocks'
 import { parseToolArguments } from '../tools/arguments'
 import { JOBS_WAIT_TOOL } from '../tools/jobs'
@@ -79,14 +80,16 @@ export function checkToolCalls(calls: readonly StreamedToolCall[], takenIds: Ite
 }
 
 /** The block of a call: a refused call has its error at once; any other
- *  call runs until it has `result`. */
-export function toolCallBlock(call: CheckedToolCall, result?: ToolRunResult): ToolBlockData {
+ *  call runs until it has `result`. `durationMs` is how long the call ran;
+ *  the block keeps it only from `TIMED_CALL_MIN_MS` on. */
+export function toolCallBlock(call: CheckedToolCall, result?: ToolRunResult, durationMs?: number): ToolBlockData {
   const block = { id: call.id, name: call.name, arguments: call.arguments }
   if (call.refusal !== undefined) return { ...block, status: 'error', result: call.refusal }
   if (!result) return { ...block, status: 'running', result: '' }
   const pictures = result.pictures?.length ? { pictures: result.pictures } : {}
   const bridged = result.bridged ? { bridged: result.bridged } : {}
-  return { ...block, status: result.isError ? 'error' : 'success', result: result.content, ...pictures, ...bridged }
+  const timed = durationMs !== undefined && durationMs >= TIMED_CALL_MIN_MS ? { durationMs: Math.round(durationMs) } : {}
+  return { ...block, status: result.isError ? 'error' : 'success', result: result.content, ...timed, ...pictures, ...bridged }
 }
 
 /** The text of a group of blocks: each block and a `\n` after it, as

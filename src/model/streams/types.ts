@@ -38,6 +38,13 @@ export interface StreamStartInput {
   messages: StreamMessage[]
 }
 
+/** When one tool call of a reply started, and when it ended: null while it
+ *  runs. */
+export interface CallTime {
+  startedAt: number
+  endedAt: number | null
+}
+
 export interface StreamSessionState {
   tabId: string
   sectionId: string
@@ -48,12 +55,25 @@ export interface StreamSessionState {
   /** The reply waits for a compaction request (controller/compaction.ts):
    *  it writes no text until the compaction ends. */
   compacting: boolean
+  /** The tool calls of the reply that started, by call id, for the live
+   *  times of their chips. The blocks of a group stay `running` until the
+   *  whole group ends, so only these times tell the view which call of the
+   *  group runs now. */
+  callTimes: Record<string, CallTime>
 }
 
 /** A session after its stream ended (finished, failed, or stopped). */
 export interface EndedStreamSession extends StreamSessionState {
   status: StreamEndStatus
   finishedAt: number
+}
+
+/** What the view needs for the live times of a reply that runs: the
+ *  section that it writes, when it started, and its tool calls. */
+export interface LiveTimes {
+  sectionId: string
+  startedAt: number
+  calls: Readonly<Record<string, CallTime>>
 }
 
 export interface StreamTerminalInput {
