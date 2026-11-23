@@ -30,17 +30,18 @@ describe('asset facts', () => {
 
   // The items of the toolbar of each asset (`.dez-image` or
   // `.media-player`), in doc order, as `<class>` or `<class>: <text>` for
-  // the facts. The tooltip of a player's badge is no item: it takes no room.
+  // the facts: those of each pill of an image's toolbar (its info, then its
+  // actions). The tooltip of a player's badge is no item: it takes no room.
   async function toolbars (asset: string): Promise<string[][]> {
     return browser.execute((selector: string) => Array.from(
       document.querySelectorAll(`.cm-content ${selector}`),
       (element) => Array.from(
-        element.querySelector('.dez-image__overlay, .media-player__overlay')?.children ?? [],
-        (item) => {
+        element.querySelectorAll('.dez-image__overlay, .media-player__overlay'),
+        (toolbar) => Array.from(toolbar.children, (item) => {
           const name = item.classList[0] ?? item.localName
           return name.endsWith('__facts') ? `${name}: ${item.textContent ?? ''}` : name
-        },
-      ).filter((item) => !item.startsWith('media-player__tooltip')),
+        }),
+      ).flat().filter((item) => !item.startsWith('media-player__tooltip')),
     ), asset)
   }
 
@@ -123,18 +124,18 @@ describe('asset facts', () => {
       ['dez-image__id', 'dez-image__trash'],
     ])
 
-    // The image is narrower than its toolbar, which hangs out on the right;
-    // the facts are still in the toolbar.
+    // The image is narrower than its toolbar: the info goes under the
+    // actions and hangs out on the right; the facts are still in it.
     await movePointer(browser, await elementCenter(browser, '.cm-content .dez-image__img'))
     await waitForValue(browser, 'toolbar of the image in place', () => browser.execute(() => {
-      const toolbar = document.querySelector('.cm-content .dez-image__overlay')
-      return toolbar !== null && getComputedStyle(toolbar).opacity === '1' && getComputedStyle(toolbar).transform === 'none'
+      const info = document.querySelector('.cm-content .dez-image__info')
+      return info !== null && getComputedStyle(info).opacity === '1' && getComputedStyle(info).transform === 'none'
     }), true)
     expect(await browser.execute(() => {
       const facts = document.querySelector('.cm-content .dez-image__facts')?.getBoundingClientRect()
-      const toolbar = document.querySelector('.cm-content .dez-image__overlay')?.getBoundingClientRect()
-      return facts !== undefined && toolbar !== undefined && facts.width > 0
-        && facts.left >= toolbar.left && facts.right <= toolbar.right
+      const info = document.querySelector('.cm-content .dez-image__info')?.getBoundingClientRect()
+      return facts !== undefined && info !== undefined && facts.width > 0
+        && facts.left >= info.left && facts.right <= info.right
     })).toBe(true)
     expect(await consoleErrors(browser)).toStrictEqual([])
   })

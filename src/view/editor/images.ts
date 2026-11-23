@@ -166,8 +166,8 @@ function zoomButton(view: EditorView, img: HTMLImageElement, path: string, id: s
 
 /** The content of a tooltip with a title (`.dez-image-tooltip` in
  *  `dezTheme`): what the item is, then what it is for. The items of an
- *  image overlay and the mention chips (mentions.ts) use it. */
-export function tooltipContent(title: string, ...text: Array<string | Node>): HTMLElement {
+ *  image overlay use it. */
+function tooltipContent(title: string, ...text: Array<string | Node>): HTMLElement {
   const dom = document.createElement('div')
   dom.className = 'dez-image-tooltip'
   dom.setAttribute('role', 'tooltip')
@@ -282,7 +282,7 @@ const modelUpdaters = new WeakMap<HTMLElement, (label: ModelFacts | null) => voi
 
 /** What `createImage` draws: an image reference, with the label of the
  *  model that made it (null for none). */
-type ImageToDraw = Pick<ImageReference, 'path' | 'id' | 'linked'> & { model: ModelFacts | null }
+export type ImageToDraw = Pick<ImageReference, 'path' | 'id' | 'linked'> & { model: ModelFacts | null }
 
 /** Draws an image, with an overlay that shows while the pointer is over
  *  the image: a small toolbar in its top-right corner with its id (null for
@@ -298,7 +298,8 @@ type ImageToDraw = Pick<ImageReference, 'path' | 'id' | 'linked'> & { model: Mod
  *  trash and the tooltips. With none, the image is drawn in place of its
  *  reference, and its DOM tells (`ImageWidget`). A hidden image is drawn in
  *  the panel of its chip (toolCalls.ts), whose DOM is at the chip's place,
- *  so the chip gives the place. */
+ *  so the chip gives the place; the preview box of a mention
+ *  (assetPreview.ts) gives the place of the image that it shows. */
 export function createImage(view: EditorView, { path, id, linked, model }: ImageToDraw, place?: AssetPlace): HTMLElement {
   // The image is in a wrapper, so that the root element stays the same
   // when an image that fails to load becomes a box. The wrapper is as big
@@ -312,24 +313,28 @@ export function createImage(view: EditorView, { path, id, linked, model }: Image
   img.className = 'dez-image__img'
   img.alt = fileNameOf(path)
   img.draggable = false
-  const overlay = document.createElement('span')
-  overlay.className = 'dez-image__overlay'
+  // The toolbar is two pills (`.dez-image__overlay` in `dezTheme`): the
+  // info (the id badge, the facts, the model label) and the actions (the
+  // magnifier, the trash).
+  const info = document.createElement('span')
+  info.className = 'dez-image__overlay dez-image__info'
   if (id !== null) {
     const badge = idBadge(id)
     addTooltip(view, placeNow, badge, () => idTooltip(id))
-    overlay.appendChild(badge)
+    info.appendChild(badge)
   }
   // The pixels and the file size come in after the load.
   const facts = document.createElement('span')
   facts.className = 'dez-image__facts'
   facts.textContent = imageFactsText(path)
-  overlay.appendChild(facts)
-  let zoom: HTMLButtonElement | null = zoomButton(view, img, path, id)
+  info.appendChild(facts)
+  const actions = document.createElement('span')
+  actions.className = 'dez-image__overlay dez-image__actions'
+  const zoom = zoomButton(view, img, path, id)
   addTooltip(view, placeNow, zoom, zoomTooltip)
-  overlay.appendChild(zoom)
   const trash = trashButton(view, placeNow, path, linked)
   addTooltip(view, placeNow, trash, () => trashTooltip(trash.closest('.dez-image-missing') !== null, linked))
-  overlay.appendChild(trash)
+  actions.append(zoom, trash)
   // The names of the models can come in after the draw: the label changes
   // in place (`updateImageModel`), so the image does not load again.
   let modelElement: HTMLElement | null = null
@@ -341,7 +346,7 @@ export function createImage(view: EditorView, { path, id, linked, model }: Image
     }
     if (modelElement && next) modelElement.replaceWith(next)
     else if (modelElement) modelElement.remove()
-    else if (next) overlay.insertBefore(next, zoom ?? trash)
+    else if (next) info.appendChild(next)
     modelElement = next
   }
   showModel(model)
@@ -361,25 +366,27 @@ export function createImage(view: EditorView, { path, id, linked, model }: Image
   img.addEventListener('error', () => {
     naturalSizes.delete(path)
     facts.remove()
-    zoom?.remove()
-    zoom = null
+    zoom.remove()
     const box = document.createElement('span')
     box.className = 'dez-image-missing'
     box.textContent = `Image not found: ${img.alt}`
-    // The box is one short line of text, so an overlay over its corner
-    // would hide a part of it: the overlay goes after the text, in the
-    // box.
-    box.append(overlay)
+    // The box is one short line of text, so pills over its corner would
+    // hide a part of it: the pills go after the text, in the box.
+    box.append(info, actions)
     wrapper.replaceChildren(box)
     measureLineHeights(view)
   })
   img.src = sbp('dez.controller/images/displayUrl', path) as string
   hideIfZoomed(view, img, path, id)
-  // The row along the image's top edge in which the overlay sits, at the
-  // right end (`.dez-image__overlay-row` in `dezTheme`).
+  // The row along the image's top edge in which the pills sit, at its right
+  // end (`.dez-image__overlay-row` in `dezTheme`). The info pill is in a
+  // slot, which gets the room of the row that the actions leave.
+  const slot = document.createElement('span')
+  slot.className = 'dez-image__info-slot'
+  slot.appendChild(info)
   const row = document.createElement('span')
   row.className = 'dez-image__overlay-row'
-  row.appendChild(overlay)
+  row.append(slot, actions)
   wrapper.append(img, row)
   addAssetMenu(view, wrapper, path, id)
   return wrapper
@@ -514,6 +521,22 @@ const NO_IMAGES: readonly ImageReference[] = []
  *  doc changes, so callers can cache by it. */
 export function renderedImages(state: EditorState): readonly ImageReference[] {
   return state.field(imageDecorationsField, false)?.images ?? NO_IMAGES
+}
+
+/** The image that the editor draws in place of its reference at `from`
+ *  (`ImageWidget`), as `createImage` takes it, with the model label of
+ *  that place; null when it draws none there: a hidden image, an image of
+ *  the compaction block, or no image. The preview of a mention draws it
+ *  so (assetPreview.ts). */
+export function shownImageAt(state: EditorState, from: number): ImageToDraw | null {
+  let shown: ImageToDraw | null = null
+  state.field(imageDecorationsField, false)?.decorations.between(from, from, (start, _end, { spec }) => {
+    if (start !== from || !(spec.widget instanceof ImageWidget)) return
+    const { path, id, linked, model } = spec.widget
+    shown = { path, id, linked, model }
+    return false
+  })
+  return shown
 }
 
 /** Backspace with one caret right after an image deletes only the image's
@@ -693,15 +716,17 @@ const IMAGE_TOOLTIP_GAP_PX = 6
 const OFF_SCREEN: Rect = { left: -1e5, right: -1e5, top: -1e5, bottom: -1e5 }
 
 /** The rect that CM places the tooltip `dom` of `item` against (above, or
- *  below when there is no room above): the toolbar's top and bottom, so
- *  that the tooltip never covers the item, and the tooltip's width
- *  centered on the item. CM keeps it inside the window. An item that is no
- *  longer in the editor (its widget was drawn again, or scrolled out of
- *  the viewport) hides the tooltip. */
+ *  below when there is no room above): the top and the bottom of the row
+ *  of the toolbar's pills (in the "Image not found" box, of the item's
+ *  pill), so that the tooltip never covers an item, and the tooltip's
+ *  width centered on the item. CM keeps it inside the window. An item that
+ *  is no longer in the editor (its widget was drawn again, or scrolled out
+ *  of the viewport) hides the tooltip. */
 function tooltipAnchor(item: HTMLElement, dom: HTMLElement): Rect {
   if (!item.isConnected) return OFF_SCREEN
   const { left, right } = item.getBoundingClientRect()
-  const { top, bottom } = (item.closest('.dez-image__overlay') ?? item).getBoundingClientRect()
+  const toolbar = item.closest('.dez-image__overlay-row') ?? item.closest('.dez-image__overlay') ?? item
+  const { top, bottom } = toolbar.getBoundingClientRect()
   const halfWidth = dom.getBoundingClientRect().width / 2
   const center = (left + right) / 2
   return { left: center - halfWidth, right: center + halfWidth, top, bottom }

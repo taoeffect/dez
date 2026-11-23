@@ -64,13 +64,26 @@ describe('asset menu', () => {
   // Right-clicks the element `part` of each asset of `asset`, in doc order,
   // and checks that each click asked for the menu `menus[index]`, canceled
   // the webview's menu, and left the editor as `before` had it. The pointer
-  // comes from off the assets: the toolbar of a small image hangs over the
-  // line below while it shows, and then it takes the clicks there.
-  async function expectMenus (asset: string, part: (index: number) => string, menus: AssetMenu[], before: EditorState): Promise<void> {
+  // comes from off the assets, and the click waits until no image toolbar
+  // shows: the toolbar of a small image hangs over the line below, and it
+  // takes clicks for a moment after the pointer leaves its image. With
+  // `corner`, the click is near the top-left corner of the part, where no
+  // toolbar is: the toolbar of a small image covers its center, and
+  // `pointerRightClickAt` also gives a click there (its doc comment).
+  async function expectMenus (asset: string, part: (index: number) => string, menus: AssetMenu[], before: EditorState, corner = false): Promise<void> {
     for (const [index, menu] of menus.entries()) {
       await resetMenuRecord(browser)
       await movePointer(browser, await elementCenter(browser, 'header.tab-bar'))
-      await pointerRightClickAt(browser, await assetPartPoint(browser, asset, index, part(index)))
+      await waitForValue(browser, 'shown image toolbars', () => browser.execute(() => Array.from(
+        document.querySelectorAll('.cm-content .dez-image__overlay'),
+      ).filter((pill) => getComputedStyle(pill).visibility !== 'hidden').length), 0)
+      const center = await assetPartPoint(browser, asset, index, part(index))
+      const point = corner ? await browser.execute((wantedAsset: string, at: number, wantedPart: string) => {
+        const box = document.querySelectorAll(`.cm-content ${wantedAsset}`)[at]?.querySelector(wantedPart)?.getBoundingClientRect()
+        if (!box) throw new Error(`expectMenus: no ${wantedPart} in ${wantedAsset} ${at}`)
+        return { x: box.left + 3, y: box.top + 3 }
+      }, asset, index, part(index)) : center
+      await pointerRightClickAt(browser, point)
       await waitForValue(browser, `menu of ${asset} ${index}`, () => menuRecord(browser), { menus: [menu], canceled: [true] })
       expect(await editorState(), `editor after a right-click on ${asset} ${index}`).toStrictEqual(before)
     }
@@ -130,7 +143,7 @@ describe('asset menu', () => {
       { file: stored, export: { id: 'a', kind: 'image', source: { kind: 'file', path: stored, linked: false } } },
       { file: null, export: null },
       { file: linked, export: { id: 'c', kind: 'image', source: { kind: 'file', path: linked, linked: true } } },
-    ], before)
+    ], before, true)
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 
@@ -222,7 +235,7 @@ describe('asset menu', () => {
 
     await expectMenus('.dez-image', () => ':scope > *', [
       { file: stored, export: { id: 'a', kind: 'image', source: { kind: 'file', path: stored, linked: false } } },
-    ], before)
+    ], before, true)
     await expectMenus('.media-player', () => '.media-player__time', [
       { file: saved, export: { id: 'b', kind: 'audio', source: { kind: 'file', path: saved, linked: false } } },
     ], before)

@@ -100,7 +100,8 @@ const mountedPlayers = new WeakMap<HTMLElement, MountedPlayer>()
  *  Delete. With none, the player is drawn in place of its tag, and its DOM
  *  tells (`MediaWidget`). The player of a hidden clip is drawn in the panel
  *  of its chip (toolCalls.ts), whose DOM is at the chip's place, so the
- *  chip gives the place. */
+ *  chip gives the place; the preview box of a mention (assetPreview.ts)
+ *  gives the place of the clip that it shows. */
 export function createPlayer(view: EditorView, shownTag: MediaTagData, linkedSrc: boolean, shownModel: ModelFacts | null, place?: AssetPlace): HTMLElement {
   const root = document.createElement('span')
   root.className = ROOT_CLASS
@@ -134,8 +135,10 @@ export function createPlayer(view: EditorView, shownTag: MediaTagData, linkedSrc
   let drawnHeight = 0
   const observer = new ResizeObserver(() => {
     const height = root.offsetHeight
-    // 0: the player is not in the document.
-    if (height === 0 || height === drawnHeight) return
+    // 0: the player is not in the document. A player in the preview box of
+    // a mention (assetPreview.ts) is out of the text: its height is no
+    // line's, and it has the size of the box.
+    if (height === 0 || height === drawnHeight || !view.contentDOM.contains(root)) return
     drawnHeight = height
     playerHeights.set(heightKey(tag.value), height)
     measureLineHeights(view)
@@ -334,6 +337,30 @@ export function renderedMedia(state: EditorState): readonly RenderedMedia[] {
 
 function mediaBlocks(state: EditorState): readonly RenderedMedia[] {
   return state.field(mediaDecorationsField, false)?.blocks ?? NO_MEDIA
+}
+
+/** What `createPlayer` takes: the tag of a clip, whether a linked `src`
+ *  counts where it is, and the label of the model that made it. */
+export interface ClipToDraw {
+  tag: MediaTagData
+  linkedSrc: boolean
+  model: ModelFacts | null
+}
+
+/** The clip that the editor plays in place of its tag at `from`
+ *  (`MediaWidget`), as `createPlayer` takes it, with the model label of
+ *  that place; null when it plays none there: a hidden clip, a clip of the
+ *  compaction block, or no clip. The preview of a mention draws it so
+ *  (assetPreview.ts). The tag has no doc offsets. */
+export function shownClipAt(state: EditorState, from: number): ClipToDraw | null {
+  let shown: ClipToDraw | null = null
+  state.field(mediaDecorationsField, false)?.decorations.between(from, from, (start, _end, { spec }) => {
+    if (start !== from || !(spec.widget instanceof MediaWidget)) return
+    const { tag: { kind, id, type, src, url, expires, other }, linkedSrc, model } = spec.widget
+    shown = { tag: { kind, id, type, src, url, expires, other }, linkedSrc, model }
+    return false
+  })
+  return shown
 }
 
 /** Follows the tag of a player, which is at `place`, while async work on

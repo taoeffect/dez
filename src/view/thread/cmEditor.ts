@@ -1972,9 +1972,9 @@ export const dezTheme = EditorView.theme({
       backgroundClip: 'text',
       animation: 'dez-role-pill-shimmer 2.4s linear infinite',
     },
-    // The image toolbar (`.dez-image__overlay` below) drops into place from
-    // its top-right corner as it fades in, and its magnifier and its trash
-    // get a little smaller while pressed.
+    // The pills of the image toolbar (`.dez-image__overlay` below) drop
+    // into place from their top-right corners as they fade in, and the
+    // magnifier and the trash get a little smaller while pressed.
     '.dez-image__overlay': {
       transform: `translateY(${editorSize(-4)}) scale(0.97)`,
       transformOrigin: 'top right',
@@ -2088,21 +2088,29 @@ export const dezTheme = EditorView.theme({
     lineHeight: '1.4',
     userSelect: 'none',
   },
-  // The overlay of an image (`ImageWidget`): one small floating toolbar with
-  // the id badge, the facts of the image, the model label, the magnifier,
-  // and the trash button, shown only while the pointer is over the image,
-  // and never a part of the layout, so a hover changes no size. Its glass
-  // surface is dark in both themes, with white text, a hairline border, and
-  // a shadow, so it reads on light, dark, and busy images.
+  // The toolbar of an image (`createImage`, images.ts): two small floating
+  // pills, the info (the id badge, the facts of the image, the model label)
+  // and the actions (the magnifier and the trash), shown only while the
+  // pointer is over the image, and never a part of the layout, so a hover
+  // changes no size. Their glass surface is dark in both themes, with white
+  // text, a hairline border, and a shadow, so it reads on light, dark, and
+  // busy images.
   //
-  // Over an image, it sits at the right end of a row along the image's top
-  // edge, inset as far from the top as from the right, and draws over the
-  // lines below. Over an image narrower than the toolbar, its auto margin
-  // becomes 0: it starts at the image's left inset and hangs out on the
-  // right. Images are mostly at the start of their line, where a toolbar
-  // that hung out on the left would go out of the editor. Anything that
-  // hangs out of the scroller on the right (a small image at a line's end in
-  // a narrow window) adds a horizontal scrollbar, even while it is hidden.
+  // Over an image, the pills sit in a row along the image's top edge, inset
+  // as far from the top as from the sides, and draw over the lines below.
+  // The actions are at the right end, so the magnifier is at the image's
+  // top-right on any image that is wider than the actions, and the facts
+  // never move it. The info is in a slot to their left. When the two do not
+  // fit side by side, the row wraps in reverse: the actions stay on top,
+  // and the info goes on a line under them.
+  //
+  // A pill wider than its room (on a small image) starts at the left inset
+  // and hangs out on the right: its auto margin becomes 0 (WebKitGTK 2.42
+  // has no `safe` alignment keyword). Images are mostly at the start of
+  // their line, where a pill that hung out on the left would go out of the
+  // editor. Anything that hangs out of the scroller on the right (a small
+  // image at a line's end in a narrow window) adds a horizontal scrollbar,
+  // even while it is hidden.
   '.dez-image__overlay-row': {
     position: 'absolute',
     top: editorSize(8),
@@ -2110,13 +2118,23 @@ export const dezTheme = EditorView.theme({
     right: editorSize(8),
     zIndex: '2',
     display: 'flex',
+    flexWrap: 'wrap-reverse',
+    alignItems: 'center',
+    gap: editorSize(4),
     pointerEvents: 'none',
+  },
+  // The slot takes the room of its line that the actions leave, and never
+  // more than the row: the pill in it hangs out, not the slot.
+  '.dez-image__info-slot': {
+    display: 'flex',
+    flex: '1 1 auto',
+    minWidth: '0',
   },
   '.dez-image__overlay': {
     display: 'inline-flex',
+    flex: 'none',
     alignItems: 'center',
     gap: editorSize(3),
-    marginLeft: 'auto',
     padding: editorSize(3),
     borderRadius: editorSize(9),
     ...IMAGE_TOOLBAR_GLASS,
@@ -2126,11 +2144,15 @@ export const dezTheme = EditorView.theme({
     lineHeight: '1',
     whiteSpace: 'nowrap',
     userSelect: 'none',
-    // Hidden, the toolbar takes no pointer: over a small image it covers a
-    // part of the line below, whose text keeps its clicks and its menu. It
-    // takes the pointer once the pointer is on the image (the rule below),
-    // so the pointer can go on to the part that hangs out.
-    pointerEvents: 'none',
+    // Hidden, a pill takes no pointer (`visibility`): over a small image it
+    // covers a part of the line below, whose text keeps its clicks and its
+    // menu. The pointer can go from the image on to the part that hangs out
+    // (below the image, on a small one), as the pill hides only at the end
+    // of its fade: a pointer that crosses a gap on the way, or cuts across
+    // a corner, comes onto the pill while it can still be seen, and the
+    // image is under the pointer again.
+    pointerEvents: 'auto',
+    visibility: 'hidden',
     cursor: 'default',
     opacity: '0',
     // The entrance: a fade, and a slide in the
@@ -2138,24 +2160,40 @@ export const dezTheme = EditorView.theme({
     // first in the stylesheet, so a `transition` there would lose to this
     // one. This one names `transform` too, which moves nothing when no
     // transform is set.
-    transition: 'opacity 0.14s ease, transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1)',
+    transition: 'opacity 0.14s ease, transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), visibility 0s linear 0.14s',
+  },
+  '.dez-image__overlay-row .dez-image__overlay': {
+    marginLeft: 'auto',
+  },
+  // An image with no id and no model label has no info when its file is
+  // not found.
+  '.dez-image__info:empty': {
+    display: 'none',
   },
   '.dez-image:hover .dez-image__overlay': {
     opacity: '1',
-    pointerEvents: 'auto',
+    visibility: 'visible',
+    transitionDelay: '0s',
   },
-  // In the "Image not found" box, the toolbar follows the text and keeps
-  // its room while hidden. It is taller than the box's line; its negative
-  // margins keep it from making the box taller, so it overlaps the box's
-  // top and bottom edges.
+  // The info pill of a small image hangs over the line below, where the
+  // toolbar of a player is at the same z and later in the doc, so it would
+  // take the pointer from the pill. The toolbar of the image under the
+  // pointer is on top.
+  '.dez-image:hover .dez-image__overlay-row': {
+    zIndex: '3',
+  },
+  // In the "Image not found" box, the pills follow the text and keep their
+  // room while hidden. They are taller than the box's line; their negative
+  // margins keep them from making the box taller, so they overlap the
+  // box's top and bottom edges.
   '.dez-image-missing > .dez-image__overlay': {
     margin: editorSize(-9, 0, -9, 8),
     verticalAlign: 'middle',
   },
-  // The id reads as a label of the image: an image icon, then the id. The
-  // `::after` is the divider in the middle of the gap before the facts (or
-  // before the model label or the trash, in the "Image not found" box,
-  // which has no facts).
+  '.dez-image-missing > .dez-image__info:not(:empty) + .dez-image__actions': {
+    marginLeft: editorSize(4),
+  },
+  // The id reads as a label of the image: an image icon, then the id.
   '.dez-image__id': {
     position: 'relative',
     display: 'inline-flex',
@@ -2174,8 +2212,7 @@ export const dezTheme = EditorView.theme({
     opacity: '0.72',
   },
   // The facts (pixels, format, file size) are less strong than the id, with
-  // digits of one width. The `::after` is the divider before the model
-  // label or the magnifier.
+  // digits of one width.
   '.dez-image__facts': {
     position: 'relative',
     display: 'inline-flex',
@@ -2188,8 +2225,7 @@ export const dezTheme = EditorView.theme({
     fontVariantNumeric: 'tabular-nums',
   },
   // The model that made the image (assetModelLabel.ts): a sparkle, then the
-  // model name, as quiet as the facts. A long name ends in an ellipsis. The
-  // `::after` is the divider before the buttons.
+  // model name, as quiet as the facts. A long name ends in an ellipsis.
   '.dez-image__model': {
     position: 'relative',
     display: 'inline-flex',
@@ -2217,9 +2253,9 @@ export const dezTheme = EditorView.theme({
     lineHeight: '1.4',
     textOverflow: 'ellipsis',
   },
-  // The divider in the middle of the gap after the id, the facts, and the
-  // model label.
-  '.dez-image__id::after, .dez-image__facts::after, .dez-image__model::after': {
+  // The divider in the middle of the gap after each item of the info but
+  // its last.
+  '.dez-image__info > :not(:last-child)::after': {
     content: '""',
     position: 'absolute',
     top: '25%',
@@ -2229,8 +2265,7 @@ export const dezTheme = EditorView.theme({
     background: 'var(--color-image-toolbar-border, rgba(255, 255, 255, 0.18))',
   },
   // The buttons: the magnifier and the trash, with no divider between
-  // them. Their corners follow the toolbar's: toolbar radius minus its
-  // padding.
+  // them. Their corners follow the pill's: its radius minus its padding.
   '.dez-image__zoom, .dez-image__trash': {
     display: 'inline-flex',
     alignItems: 'center',
@@ -2352,6 +2387,71 @@ export const dezTheme = EditorView.theme({
   // The keyboard's ring (Tab keeps the keyboard on the X).
   '.dez-image-zoom__close:focus-visible': {
     boxShadow: '0 0 0 2px var(--color-link, #4a9eff), 0 6px 18px rgba(0, 0, 0, 0.24)',
+  },
+  // The preview box of a mention chip (src/view/editor/assetPreview.ts): a
+  // fixed layer in the editor's root, as the image zoom is, with the image
+  // or the player of the asset that the chip names. Its z-index puts it
+  // over the editor and its frame hosts, and under the image zoom (40),
+  // which can show the image of the box, the find dropdown and the model
+  // pickers (50), and the CM tooltips (500): the tooltips of the toolbar of
+  // its image draw over it. Its surface is that of the CM tooltips
+  // (`.cm-tooltip` below). It shows only once it has its place
+  // (`data-shown`); the module animates its entrance.
+  //
+  // An image and a player get their width from the line, as a percent,
+  // which a box as wide as its content cannot give. So the module gives the
+  // box the max sizes of its asset, from the room next to the chip
+  // (`--dez-preview-max-width`, `--dez-preview-max-height`), and the rules
+  // below size the asset by them alone.
+  '.dez-asset-preview': {
+    position: 'fixed',
+    zIndex: '30',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    boxSizing: 'border-box',
+    width: 'max-content',
+    padding: editorSize(6),
+    border: '1px solid var(--color-border, #333)',
+    borderRadius: editorSize(12),
+    backgroundColor: 'var(--color-bg, #1e1e1e)',
+    boxShadow: '0 4px 16px rgba(0, 0, 0, 0.2)',
+    visibility: 'hidden',
+  },
+  '.dez-asset-preview[data-shown]': {
+    visibility: 'visible',
+  },
+  '.dez-asset-preview .dez-image': {
+    maxWidth: 'none',
+  },
+  // An image at its own size, up to the max sizes. A small image is made
+  // larger, to a long side of 200 px: at its own size, a tiny image shows
+  // nothing. Before its size is known, the width is invalid (`auto`), and
+  // the max sizes fit the image.
+  '.dez-asset-preview .dez-image__img': {
+    maxWidth: 'var(--dez-preview-max-width)',
+    maxHeight: 'var(--dez-preview-max-height)',
+    width: `min(var(--dez-preview-max-width), calc(var(--dez-preview-max-height) * var(--dez-image-width) / var(--dez-image-height)), max(calc(var(--dez-image-width) * 1px), min(${editorSize(200)}, calc(${editorSize(200)} * var(--dez-image-width) / var(--dez-image-height)))))`,
+  },
+  // A video is as large as at its place, by the max sizes of the box; an
+  // audio card keeps its width, up to the max width.
+  '.dez-asset-preview .dez-media': {
+    '--dez-media-max-height': 'var(--dez-preview-max-height)',
+    width: 'auto',
+    padding: '0',
+  },
+  '.dez-asset-preview .media-player': {
+    maxWidth: 'var(--dez-preview-max-width)',
+  },
+  '.dez-asset-preview .media-player[data-kind="video"]:not([data-unavailable])': {
+    width: `min(var(--dez-preview-max-width), max(${editorSize(340)}, calc(var(--dez-preview-max-height) * var(--media-player-ratio))))`,
+  },
+  // An audio card has no picture to tell which clip it is, so in the box
+  // its toolbar (the id, the facts, the model label) shows at all times,
+  // in the room next to the card that it keeps while hidden.
+  '.dez-asset-preview .media-player[data-kind="audio"] > .media-player__overlay': {
+    opacity: '1',
+    transform: 'none',
   },
   // Tool call chips (src/view/editor/toolCalls.ts). The widget is the only
   // thing on its line: a column as wide as the line, with the chip, and

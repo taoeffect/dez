@@ -10,7 +10,7 @@ import { renderedImages } from './images'
 import { sectionTexts } from './lineBlocks'
 import { renderedMedia } from './media'
 import type { ShownMention } from './mentions'
-import { openToolCallEffects, renderedToolCalls } from './toolCalls'
+import { openToolCallEffects, renderedToolCalls, type RenderedToolCall } from './toolCalls'
 
 // A click on a mention chip (mentions.ts) shows the asset that the chip
 // names: the editor opens the chip that hides it (a tool call chip, or the
@@ -29,8 +29,9 @@ import { openToolCallEffects, renderedToolCalls } from './toolCalls'
 /** Where the asset of a mention is drawn: the chip whose panel shows it,
  *  or null for an asset at its own place. */
 export type AssetHolder =
-  /** The tool call chip of the call `id`, whose text starts at `from`. */
-  | { kind: 'call', id: string, from: number }
+  /** Row `row` of the assets of the tool call chip of the call `id`, whose
+   *  text starts at `from` (`IntermediateCall.assets`). */
+  | { kind: 'call', id: string, from: number, row: number }
   /** Row `row` of the kept assets of the compaction (`AssetList.vue`). */
   | { kind: 'compaction', row: number }
 
@@ -76,18 +77,22 @@ export function mentionTarget(state: EditorState, mention: Pick<ShownMention, 'f
 function hiddenTargets(state: EditorState, hidden: readonly HiddenAsset[], mention: Pick<ShownMention, 'id' | 'kind'>): AssetTarget[] {
   const calls = renderedToolCalls(state)
   // The rows of the kept assets are the hidden assets of the compaction,
-  // in doc order (`compactionChipData`).
+  // in doc order (`compactionChipData`), and the rows of a call chip are
+  // the hidden assets that it owns, in doc order (`intermediateCall`).
   let keptRow = 0
+  const callRows = new Map<RenderedToolCall, number>()
   return hidden.flatMap((asset): AssetTarget[] => {
-    const row = asset.owner.kind === 'compaction' ? keptRow++ : -1
+    const { owner } = asset
+    const row = owner.kind === 'compaction' ? keptRow++ : -1
+    const call = owner.kind === 'job' ? calls.find(({ id, intermediate }) => id === owner.callId && intermediate?.jobIds.includes(owner.jobId)) : undefined
+    const callRow = call ? callRows.get(call) ?? 0 : -1
+    if (call) callRows.set(call, callRow + 1)
     const named = asset.kind === 'image'
       ? mention.kind === 'image' && asset.image.id === mention.id
       : asset.tag.kind === mention.kind && asset.tag.id === mention.id
     if (!named) return []
-    const { owner } = asset
     if (owner.kind === 'compaction') return [{ from: asset.from, holder: { kind: 'compaction', row } }]
-    const call = calls.find(({ id, intermediate }) => id === owner.callId && intermediate?.jobIds.includes(owner.jobId))
-    return call ? [{ from: asset.from, holder: { kind: 'call', id: call.id, from: call.from } }] : []
+    return call ? [{ from: asset.from, holder: { kind: 'call', id: call.id, from: call.from, row: callRow } }] : []
   })
 }
 

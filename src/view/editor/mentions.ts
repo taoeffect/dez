@@ -1,11 +1,11 @@
 import { StateField, type EditorState, type Extension } from '@codemirror/state'
-import { Decoration, EditorView, hoverTooltip, type DecorationSet } from '@codemirror/view'
+import { Decoration, EditorView, type DecorationSet } from '@codemirror/view'
 import { namedMentions, type AssetKind } from '../../model/chat/assetMentions'
 import { plainLiveText } from '../../model/chat/content'
 import { sectionsField } from '../thread/cmEditor'
 import { assetJumps, jumpToAsset, mentionTarget } from './assetJump'
+import { assetPreview } from './assetPreview'
 import { compactionBlockEnd } from './compactionBlock'
-import { tooltipContent } from './images'
 import { sectionRolesChanged, sectionTexts } from './lineBlocks'
 import { pressClicks } from './pressClicks'
 
@@ -24,8 +24,10 @@ import { pressClicks } from './pressClicks'
 // test ties to the request builder. Sections of both roles get them: a
 // reply can name an asset too, and its id reads the same there.
 //
-// A chip is also a link to its asset: a click scrolls to the image or the
-// player that it names, and opens the chip that hides it (assetJump.ts).
+// A rest of the pointer on a chip shows the asset that it names in a box
+// next to the chip (assetPreview.ts), where the asset works as at its
+// place. A click on a chip goes to the asset: the editor scrolls to the
+// image or the player, and opens the chip that hides it (assetJump.ts).
 
 /** A mention that the editor shows as a chip: its doc range, its id, and
  *  what the id names. */
@@ -107,44 +109,6 @@ export function mentionAt(state: EditorState, pos: number, side: -1 | 1): ShownM
   return shownMentions(state).find(({ from, to }) => (from < pos && pos < to) || (pos === from && side > 0) || (pos === to && side < 0)) ?? null
 }
 
-/** The text of a chip's tooltip: what the id names (the title is the one
- *  of the id badge of that image or player, so the two read as the same
- *  id), then the rule that makes the mention useful. Help › Assets ("What a
- *  model sees", HelpView.vue) tells the same rules: keep the two true. */
-function mentionTooltip({ id, kind }: ShownMention): HTMLElement {
-  if (kind === 'image') {
-    return tooltipContent(
-      `Image id: ${id}`,
-      `This names the image ${id}. A chat model sees an image of a reply only when one of your messages names it. A model that makes images or clips gets an older image only when your newest message names it.`,
-    )
-  }
-  return tooltipContent(
-    `${kind === 'video' ? 'Video' : 'Audio'} id: ${id}`,
-    `This names the ${kind} clip ${id}. A model that takes ${kind} gets an older clip only when your newest message names it. A chat model gets only the id.`,
-  )
-}
-
-/** The gap between a chip's text and its tooltip. The fill of a chip hangs
- *  out of its text, so a tooltip with no gap touches the fill. */
-const MENTION_TOOLTIP_GAP_PX = 4
-
-/** Hovering a chip shows what it names, above it (below, the pointer would
- *  cover the start of the text). The tooltip goes when its chip does: an
- *  edit of the mention, or of the asset that it names. */
-const mentionHover = hoverTooltip(
-  (view, pos, side) => {
-    const mention = mentionAt(view.state, pos, side)
-    if (!mention) return null
-    return {
-      pos: mention.from,
-      end: mention.to,
-      above: true,
-      create: () => ({ dom: mentionTooltip(mention), offset: { x: 0, y: MENTION_TOOLTIP_GAP_PX } }),
-    }
-  },
-  { hideOn: (tr, tooltip) => mentionAt(tr.state, tr.changes.mapPos(tooltip.pos), 1) === null },
-)
-
 /** A press on a chip shows the asset that it names (`jumpToAsset`,
  *  `pressClicks`). A press on a chip whose asset the editor does not draw
  *  (`mentionTarget`) goes to CodeMirror. A link can be inside a chip: a
@@ -163,8 +127,8 @@ const mentionClicks = pressClicks(
 )
 
 /** The mention chips of the thread editor (`buildState()` in
- *  `ThreadEditor.vue`), with their tooltips and their clicks. The state
- *  needs `sectionsField`. The CSS is in `dezTheme`. */
+ *  `ThreadEditor.vue`), with their preview boxes and their clicks. The
+ *  state needs `sectionsField`. The CSS is in `dezTheme`. */
 export function mentionChips(): Extension {
-  return [mentionDecorationsField, mentionHover, mentionClicks, assetJumps()]
+  return [mentionDecorationsField, assetPreview(), mentionClicks, assetJumps()]
 }

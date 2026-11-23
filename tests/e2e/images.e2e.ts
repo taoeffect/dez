@@ -77,24 +77,28 @@ interface DocAndCaret {
   caret: number
 }
 
-/** The hover overlay of an image that the editor shows, or of its "Image
+/** The hover toolbar of an image that the editor shows, or of its "Image
  *  not found" box. */
 interface ImageOverlay {
   /** The id in its badge; null for an image with no id. */
   id: string | null
   /** Whether it has a trash button. */
   trash: boolean
-  /** Whether the overlay can be seen. */
+  /** Whether the toolbar can be seen. */
   shown: boolean
 }
 
-/** Where an image's overlay sits on the image, in px from each image edge
- *  (negative: out past that edge), and the heights of the image and its
- *  line. */
+/** Where the actions of an image's toolbar (the magnifier and the trash)
+ *  sit on the image, in px from each image edge (negative: out past that
+ *  edge), and whether the magnifier is across from the image (between its
+ *  left and right edges); where its info is from them; and the heights of
+ *  the image and its line. */
 interface OverlayLayout {
   top: number
   left: number
   right: number
+  magnifierOverImage: boolean
+  info: 'left' | 'below' | 'other'
   imageHeight: number
   lineHeight: number
 }
@@ -155,18 +159,18 @@ describe('images', () => {
     return { doc: await editorDoc(browser), caret: await editorCaret(browser) }
   }
 
-  // The overlay of each image that the editor shows (or of its "Image not
-  // found" box), in doc order. It is shown when it is fully opaque
-  // (`.dez-image__overlay` in dezTheme).
+  // The toolbar of each image that the editor shows (or of its "Image not
+  // found" box), in doc order. It is shown when its actions are fully
+  // opaque (`.dez-image__overlay` in dezTheme).
   async function imageOverlays (): Promise<ImageOverlay[]> {
     return browser.execute(() => Array.from(
       document.querySelectorAll('.cm-content .dez-image'),
       (image) => {
-        const overlay = image.querySelector('.dez-image__overlay')
+        const actions = image.querySelector('.dez-image__actions')
         return {
-          id: overlay?.querySelector('.dez-image__id')?.textContent ?? null,
-          trash: overlay?.querySelector('button.dez-image__trash') != null,
-          shown: overlay !== null && getComputedStyle(overlay).opacity === '1',
+          id: image.querySelector('.dez-image__info .dez-image__id')?.textContent ?? null,
+          trash: actions?.querySelector('button.dez-image__trash') != null,
+          shown: actions !== null && getComputedStyle(actions).opacity === '1',
         }
       },
     ))
@@ -210,26 +214,34 @@ describe('images', () => {
     await pointerClickAt(browser, await overlayItemCenter(index, '.dez-image__trash'))
   }
 
-  // Where the overlay of the image at `index` (doc order) sits, once the
-  // pointer is on the image and the overlay's entrance (a short fade and
+  // Where the toolbar of the image at `index` (doc order) sits, once the
+  // pointer is on the image and the entrance of its pills (a short fade and
   // slide, `.dez-image__overlay` in dezTheme) is over.
   async function overlayLayout (index: number): Promise<OverlayLayout> {
-    await waitForValue(browser, `overlay of image ${index} in place`, () => browser.execute((at: number) => {
-      const overlay = document.querySelectorAll('.cm-content .dez-image')[at]?.querySelector('.dez-image__overlay')
-      if (!overlay) return false
-      const style = getComputedStyle(overlay)
-      return style.opacity === '1' && style.transform === 'none'
+    await waitForValue(browser, `toolbar of image ${index} in place`, () => browser.execute((at: number) => {
+      const pills = document.querySelectorAll('.cm-content .dez-image')[at]?.querySelectorAll('.dez-image__overlay') ?? []
+      return pills.length === 2 && Array.from(pills).every((pill) => {
+        const style = getComputedStyle(pill)
+        return style.opacity === '1' && style.transform === 'none'
+      })
     }, index), true)
     return browser.execute((at: number) => {
       const wrapper = document.querySelectorAll('.cm-content .dez-image')[at]
       const image = wrapper?.querySelector('.dez-image__img')?.getBoundingClientRect()
-      const overlay = wrapper?.querySelector('.dez-image__overlay')?.getBoundingClientRect()
+      const actions = wrapper?.querySelector('.dez-image__actions')?.getBoundingClientRect()
+      const magnifier = wrapper?.querySelector('.dez-image__zoom')?.getBoundingClientRect()
+      const info = wrapper?.querySelector('.dez-image__info')?.getBoundingClientRect()
       const line = wrapper?.closest('.cm-line')?.getBoundingClientRect()
-      if (!image || !overlay || !line) throw new Error(`overlayLayout: image ${at}, its overlay, or its line not found`)
+      if (!image || !actions || !magnifier || !info || !line) throw new Error(`overlayLayout: image ${at}, its toolbar, or its line not found`)
+      const middle = (rect: DOMRect) => rect.top + rect.height / 2
       return {
-        top: overlay.top - image.top,
-        left: overlay.left - image.left,
-        right: image.right - overlay.right,
+        top: actions.top - image.top,
+        left: actions.left - image.left,
+        right: image.right - actions.right,
+        magnifierOverImage: magnifier.left >= image.left && magnifier.right <= image.right,
+        info: info.right <= actions.left && Math.abs(middle(info) - middle(actions)) < 1 ? 'left' as const
+          : info.top >= actions.bottom ? 'below' as const
+          : 'other' as const,
         imageHeight: image.height,
         lineHeight: line.height,
       }
@@ -249,17 +261,17 @@ describe('images', () => {
 
   // Whether the overlay item tooltip that shows is inside the editor's
   // visible area (its scroller; the tab bar above it would hide a part of
-  // the tooltip), and clear of the toolbar of the image at `index`, so that
-  // it never covers the item it explains.
+  // the tooltip), and clear of the toolbar of the image at `index` (both
+  // its pills), so that it never covers the item it explains.
   async function tooltipPlacement (index: number): Promise<{ inEditor: boolean, clearOfToolbar: boolean }> {
     return browser.execute((at: number) => {
       const tip = document.querySelector('.cm-tooltip.dez-image-tooltip')?.getBoundingClientRect()
       const editor = document.querySelector('.cm-scroller')?.getBoundingClientRect()
-      const toolbar = document.querySelectorAll('.cm-content .dez-image')[at]?.querySelector('.dez-image__overlay')?.getBoundingClientRect()
-      if (!tip || !editor || !toolbar) throw new Error(`tooltipPlacement: no tooltip, no editor, or no toolbar on image ${at}`)
+      const pills = Array.from(document.querySelectorAll('.cm-content .dez-image')[at]?.querySelectorAll('.dez-image__overlay') ?? [], (pill) => pill.getBoundingClientRect())
+      if (!tip || !editor || pills.length === 0) throw new Error(`tooltipPlacement: no tooltip, no editor, or no toolbar on image ${at}`)
       return {
         inEditor: tip.left >= editor.left && tip.top >= editor.top && tip.right <= editor.right && tip.bottom <= editor.bottom,
-        clearOfToolbar: tip.bottom <= toolbar.top || tip.top >= toolbar.bottom,
+        clearOfToolbar: pills.every((pill) => tip.bottom <= pill.top || tip.top >= pill.bottom),
       }
     }, index)
   }
@@ -480,23 +492,32 @@ describe('images', () => {
 
     await movePointer(browser, await imageCenter(1))
     await waitForValue(browser, 'overlays with the pointer on image b', imageOverlays, overlays(1))
-    // Image b is narrower than its overlay: the overlay starts as far from
-    // the image's left edge as from its top edge, and hangs out on the
-    // right. It adds no height to the line.
+    // Image b is narrower than the actions of its toolbar: they start as far
+    // from the image's left edge as from its top edge, and hang out on the
+    // right, so the magnifier is on the image. The info goes on a line
+    // under them. The toolbar adds no height to the line.
     const narrow = await overlayLayout(1)
     expect(narrow.top).toBeGreaterThan(0)
     expect(narrow.left).toBeCloseTo(narrow.top, 1)
     expect(narrow.right).toBeLessThan(0)
+    expect(narrow.magnifierOverImage).toBe(true)
+    expect(narrow.info).toBe('below')
     expect(narrow.lineHeight).toBe(narrow.imageHeight)
 
-    await movePointer(browser, await imageCenter(2))
+    // The info of image b hangs out over the top of the next line, the wide
+    // image (60 px tall), and keeps b's toolbar while the pointer is on it:
+    // the pointer goes onto the wide image below it.
+    const wideCenter = await imageCenter(2)
+    await movePointer(browser, { x: wideCenter.x, y: wideCenter.y + 20 })
     await waitForValue(browser, 'overlays with the pointer on the image with no id', imageOverlays, overlays(2))
-    // On a wide image, in its top-right corner, as far from its right edge
-    // as from its top edge.
+    // On a wide image, the actions are in its top-right corner, as far from
+    // its right edge as from its top edge, with the info to their left.
     const onWide = await overlayLayout(2)
     expect(onWide.top).toBeGreaterThan(0)
     expect(onWide.right).toBeCloseTo(onWide.top, 1)
     expect(onWide.left).toBeGreaterThan(onWide.right)
+    expect(onWide.magnifierOverImage).toBe(true)
+    expect(onWide.info).toBe('left')
     expect(onWide.lineHeight).toBe(onWide.imageHeight)
 
     await movePointer(browser, await imageCenter(3))

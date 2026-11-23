@@ -406,9 +406,12 @@ function onOverlayClick(event: MouseEvent) {
               Point at an image or a player to see its id. A model gets this id, and never the path
               of the file. Write <code>@</code> and the id in a message to name the asset. A message
               can name its own assets and the assets of the messages before it. Dez shows a name as
-              a small chip when an asset has that id; a name with no chip names no asset. Click a
-              chip to go to its asset, which flashes. When a chip of a tool call or of a compaction
-              hides the asset, Dez opens that chip first.
+              a small chip when an asset has that id; a name with no chip names no asset. Point at a
+              chip to see its asset in a box next to it: the image or the player there works as it
+              does in its place, and plays a clip. The box stays while you move from the chip onto
+              it, and closes when you move away or press Escape. Click a chip to go to its asset,
+              which flashes. When a chip of a tool call or of a compaction hides the asset, Dez
+              opens that chip first.
             </p>
             <p>
               When you point at an image or a player, Dez also shows the name of the model that made
@@ -418,9 +421,9 @@ function onOverlayClick(event: MouseEvent) {
               <code>video</code>), names no model.
             </p>
             <p>
-              To see an image large, point at it and click the magnifier: the image shows as large as
-              it fits in the conversation view. Press Escape, click the X at the top right, or click
-              next to the image to close it.
+              To see an image large, point at it and click the magnifier at its top right: the image
+              shows as large as it fits in the conversation view. Press Escape, click the X at the
+              top right, or click next to the image to close it.
             </p>
             <p>
               Copy text that names assets in one conversation and paste it into another, and Dez
