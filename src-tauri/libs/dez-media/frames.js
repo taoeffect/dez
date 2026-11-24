@@ -24,9 +24,9 @@ const FRAME_DIGITS = 6
 // src/model/tools/frameSequences.ts): `FRAMES_MIN_FPS`, `FRAMES_MAX_FPS`,
 // `FRAMES_MAX_SIDE`, and `APP_RUN_MAX_FRAMES` of src/model/tools/appsTool.ts.
 // A run cannot import the TypeScript of Dez, so these are copies, which
-// tests/dez-media/frames.test.ts checks against it. The writer checks them
-// before the first frame, so that a run does not draw a clip that Dez
-// refuses after it.
+// tests/dez-media/frames.test.ts checks against the originals. The writer
+// checks them before the first frame, so that a run does not draw a clip that
+// Dez refuses after it.
 const MIN_FPS = 0.01
 const MAX_FPS = 240
 const MAX_SIDE = 4096
