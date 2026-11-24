@@ -24,7 +24,7 @@ export const CONVERSATION_INFO_TOOL: ToolDefinition = {
   description: 'Tell the size and the cost of this conversation: its context size in tokens, the context window of your model, '
     + 'the size at which Dez compacts the conversation (your notes then take the place of the earlier messages), how many compactions it had, '
     + 'what its requests cost so far (an estimate, with the count of the requests that have no known price), '
-    + 'the money limit that the user set for the conversation and what is left of it (Dez refuses requests once the cost reaches it), '
+    + 'the money limit that the user set for the conversation and what is left of it (Dez refuses requests once the cost reaches it, and a media request whose quote would go over it), '
     + 'and the picture budget of asset_view that is left until the next compaction. '
     + 'Call it when the user gave you a budget of cost or of tokens: before a step that costs much, and again after it. '
     + 'It sends no request, and it does not wait.',
