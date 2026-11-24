@@ -1,8 +1,9 @@
 // @ts-check
 // Readers of the raw outputs of ffmpeg that the measurements of dez-media
 // take: mono float32 samples (`-ac 1 -f f32le`) and RGB frames
-// (`-pix_fmt rgb24 -f rawvideo`); and the checks of the decoded files of an
-// input of a run of a script app (`dez.inputs`).
+// (`-pix_fmt rgb24 -f rawvideo`); the checks of the decoded files of an
+// input of a run of a script app (`dez.inputs`); and the id of the input in
+// the error of a measurement.
 
 /**
  * The samples of raw float32 audio (ffmpeg `-f f32le`), as a Float32Array.
@@ -80,4 +81,23 @@ export function decodedFrames(app, input) {
   }
   if (input.frames === null) throw new RangeError(`@${input.id} has no picture, and ${app} takes only videos.`)
   return input.frames
+}
+
+/**
+ * Runs `measure` on the input `id` of a run, and puts "@<id>: " before the
+ * text of a RangeError that it throws: a measurement of dez-media names no
+ * clip, and a run can have more than one. Another error is a bug of the
+ * code, not a problem of the input, so it goes out as it is.
+ * @template T
+ * @param {string} id
+ * @param {() => T} measure
+ * @returns {T}
+ */
+export function namingInput(id, measure) {
+  try {
+    return measure()
+  } catch (error) {
+    if (error instanceof RangeError) throw new RangeError(`@${id}: ${error.message}`)
+    throw error
+  }
 }

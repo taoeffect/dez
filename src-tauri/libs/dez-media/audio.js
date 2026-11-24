@@ -31,6 +31,9 @@ const KICK_HZ = 150
 const LOUDNESS_STEP = 0.5
 const ACCENT_STRENGTH = 3
 const MAX_ACCENTS = 60
+// The step of align, in seconds: the length of a frame of the levels that
+// it matches.
+const ALIGN_STEP = 0.005
 
 /**
  * The spectral flux of each frame of a spectrogram (frame 0 gets 0): the
@@ -358,7 +361,7 @@ function bestLag(clipRises, withinRises, maxLags) {
 export function align(clip, within, rate = ALIGN_RATE, { maxLag = 6, phases = 4 } = {}) {
   if (!(maxLag >= 0)) throw new RangeError(`align: maxLag must be 0 s or more, not ${maxLag}.`)
   if (!(Number.isInteger(phases) && phases >= 1)) throw new RangeError(`align: phases must be a whole number from 1 up, such as 4, not ${phases}.`)
-  const hop = Math.max(1, Math.round(rate * 0.005))
+  const hop = Math.max(1, Math.round(rate * ALIGN_STEP))
   const clipRises = riseEnvelope(clip, hop)
   const firstRises = riseEnvelope(within, hop)
   if (clipRises.length === 0 || firstRises.length === 0) throw new RangeError('align: a clip is too short. Each needs at least 10 ms of sound.')
@@ -377,4 +380,17 @@ export function align(clip, within, rate = ALIGN_RATE, { maxLag = 6, phases = 4 
     if (confidence > found.confidence) found = { offset: (lag * hop + start) / rate, confidence }
   }
   return found
+}
+
+/**
+ * Whether an `offset` that `align` found is at the end of its search, which
+ * ends at `searchEnd` (s): the lower of its `maxLag` and half of the length
+ * of `within`. At the end, the clip can start later than the search went.
+ * align steps by 5 ms, and its last step can be up to 2 steps short of that
+ * end: so an offset less than 3 steps before it is at the end.
+ * @param {number} offset
+ * @param {number} searchEnd
+ */
+export function atAlignSearchEnd(offset, searchEnd) {
+  return searchEnd - offset < 3 * ALIGN_STEP
 }

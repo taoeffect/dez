@@ -53,13 +53,17 @@ or a clip with no such stream.
 ## Measurements
 
 Times are seconds. Each throws a RangeError with a text that tells why.
+`namingInput(input.id, () => beatGrid(samples, rate))` puts `@<id>: ` before that text, so that the error names its
+clip; it throws another error as it is.
 
 - `beatGrid(samples, rate = BEAT_RATE)` (22050): `{ duration, bpm, beats, downbeatPhase, downbeats, loudness,
   accents }`. `loudness` is dBFS for each 0.5 s; `accents` are up to 60 strong hits.
 - `onsets(samples, rate = ANCHOR_RATE, { level = 0.3 })` (8000): `{ first, peak, onsets }`; `first` and `peak` are
   null for a clip with no sound.
 - `align(clip, within, rate = ALIGN_RATE, { maxLag = 6, phases = 4 })` (8000): `{ offset, confidence }`, where
-  `clip` starts in `within`. A confidence under 0.3 is no match.
+  `clip` starts in `within`. A confidence under 0.3 is no match. It searches up to `maxLag`, and at most half of
+  `within`: `atAlignSearchEnd(offset, Math.min(maxLag, withinSeconds / 2))` is true for an offset at the end of the
+  search, and then the clip can start later.
 - `cuts(frames, { fps, threshold = 0.35 })`: `{ cuts: [{ frame, time, score }], scores }`. Small frames are enough
   (96 × 54).
 - `syncCheck(cutTimes, beatTimes, { offset = 0, tolerance = 0.042 })`: `{ cuts: [{ time, beat, error, offBeat }],

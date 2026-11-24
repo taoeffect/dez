@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { f32Samples, rgbFrames } from '../../src-tauri/libs/dez-media/decoded.js'
+import { f32Samples, namingInput, rgbFrames } from '../../src-tauri/libs/dez-media/decoded.js'
 import { cuts, syncCheck } from '../../src-tauri/libs/dez-media/video.js'
 import { closeValues, CUT_HEIGHT, CUT_WIDTH, cutFrames, inputHash, oracle } from './testing'
 
@@ -77,5 +77,22 @@ describe('dez-media readers of decoded inputs', () => {
   it('refuses RGB bytes that are not whole frames of the size', () => {
     expect(rgbFrames(new Uint8Array(4 * 3 * 3 * 2), 4, 3).count).toBe(2)
     expect(() => rgbFrames(new Uint8Array(4 * 3 * 3 + 1), 4, 3)).toThrow(/rgb24/)
+  })
+})
+
+describe('dez-media namingInput', () => {
+  it('names the input in a RangeError of a measurement, and throws another error as it is', () => {
+    const tooSmall = () => namingInput('b', () => cuts(rgbFrames(new Uint8Array(2 * 2 * 3), 2, 2), { fps: 24 }))
+    expect(tooSmall).toThrow(RangeError)
+    expect(tooSmall).toThrow(/^@b: cuts: the frames must be at least 3×3 pixels/)
+    // A bug of the code is no problem of the input: no id, and no RangeError.
+    const bug = new TypeError('samples.subarray is not a function')
+    let thrown: unknown
+    try {
+      namingInput('b', () => { throw bug })
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).toBe(bug)
   })
 })

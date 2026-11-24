@@ -25,7 +25,7 @@
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import { beatGrid, checkParameterNames, decodedSound, f32Samples, resultFiles, resultJson, roundTo } from 'dez-media'
+import { beatGrid, checkParameterNames, decodedSound, f32Samples, namingInput, resultFiles, resultJson, roundTo } from 'dez-media'
 
 const APP = 'dez-beats'
 const PARAMETERS = ['save_to']
@@ -54,12 +54,7 @@ export default async function main(parameters: Record<string, unknown>, dez: Dez
   for (const input of dez.inputs) {
     const { path, rate } = decodedSound(APP, input)
     const samples = f32Samples(await readFile(path))
-    let grid
-    try {
-      grid = beatGrid(samples, rate)
-    } catch (error) {
-      throw new RangeError(`@${input.id}: ${error instanceof Error ? error.message : String(error)}`)
-    }
+    const grid = namingInput(input.id, () => beatGrid(samples, rate))
     results.push({
       id: input.id,
       duration: roundTo(grid.duration, 3),

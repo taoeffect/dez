@@ -23,7 +23,7 @@
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import { align, checkParameterNames, decodedSound, f32Samples, numberParameter, resultFile, resultJson, roundTo } from 'dez-media'
+import { align, atAlignSearchEnd, checkParameterNames, decodedSound, f32Samples, numberParameter, resultFile, resultJson, roundTo } from 'dez-media'
 
 const APP = 'dez-align'
 const PARAMETERS = ['max_lag', 'save_to']
@@ -78,11 +78,7 @@ export default async function main(parameters: Record<string, unknown>, dez: Dez
   await mkdir(dirname(file.path), { recursive: true })
   await writeFile(file.path, resultJson(result))
 
-  // align steps by 5 ms, and its last step can be up to 2 steps short of
-  // half of the second clip: an offset that near the end of the search is
-  // at its end, and the clip can start later.
-  const atEnd = searched - offset < 0.015
-  const later = !atEnd ? '' : maxLag < halfWithin
+  const later = !atAlignSearchEnd(offset, searched) ? '' : maxLag < halfWithin
     ? ` The offset is at the end of the search: @${clipInput.id} can start later. Run again with a larger max_lag.`
     : ` The offset is at the end of the search, and ${APP} searches only the first half of @${withinInput.id}: @${clipInput.id} can start later.`
   return `@${clipInput.id} starts at ${result.offset.toFixed(3)} s in @${withinInput.id}, with the confidence ${result.confidence} (${confidenceText(confidence, clipInput.id, withinInput.id, searched)}).${later} `
