@@ -5,7 +5,7 @@ import { appTagText } from '../../src/model/chat/appTags'
 import { appManifestText, parseAppManifest } from '../../src/model/tools/appManifest'
 import { showResultText } from '../../src/model/tools/appShow'
 import { grepTimeoutError } from '../../src/model/tools/appsGrep'
-import { APPS_MAX_FILE_BYTES, EDIT_HINT, withEditHint } from '../../src/model/tools/appsTool'
+import { APPS_MAX_FILE_BYTES } from '../../src/model/tools/appsTool'
 import { GREP_TIME_LIMIT_SECONDS } from '../../src/model/tools/grepMatch'
 import { byteSizeText } from '../../src/utils/byteSize'
 import { appsCall, seedApp, shownAppCards, type ShownAppCard } from './harness/apps'
@@ -13,7 +13,7 @@ import { consoleErrors, resetConsoleErrors, screenshotOnFailure, waitForValue } 
 import { linkedDropDir } from './harness/drops'
 import { appFilePath, conversationFilePath, filesIn, writeTestFile } from './harness/fixtures'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
-import { mockChatPath, openAiToolCall, replyText, requestMessages, sendChatReply, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
+import { mockChatPath, replyText, requestMessages, sendChatReply, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
 import { activeConversationId, endedReply, newTab, openToasts, submit } from './harness/thread'
 
@@ -24,9 +24,9 @@ import { activeConversationId, endedReply, newTab, openToasts, submit } from './
 //   deletes its files; only the user can open what the tool made;
 // - the lists of /apps hold the built-in apps that the build ships, with
 //   their mark, also after the delete of the last app of the user;
-// - a model reads ranges of the lines of a file, and its first edit call
-//   in each tab gets the hint of edit, also when Dez refuses the call; a
-//   model that read the help of edit gets no hint;
+// - a model reads ranges of the lines of a file, and edits a file by find
+//   and replace: a list of edits that pass or fail each by itself, and
+//   calls of other forms that Dez refuses with the parameters of edit;
 // - a model finds files by their paths, and lines by a regular
 //   expression; the matching runs in a worker, so the window answers
 //   while a slow pattern runs, and Dez ends it at its time limit;
@@ -121,7 +121,7 @@ describe('apps tool', () => {
       appsCall('call_write', 'write', { path: '/apps/notes/src/lib/units.js', content: units }),
       appsCall('call_mkdir', 'mkdir', { path: '/apps/notes/data/cache' }),
       appsCall('call_read', 'read', { path: '/apps/notes/src/lib/units.js' }),
-      appsCall('call_edit', 'edit', { path: '/apps/notes/src/lib/units.js', edits: [{ after_line: 2, content: 'export const CM = 0.01' }] }),
+      appsCall('call_edit', 'edit', { path: '/apps/notes/src/lib/units.js', edits: [{ old_string: 'export const M = 1\n', new_string: 'export const M = 1\nexport const CM = 0.01\n' }] }),
     ])
 
     const second = await chatRequest()
@@ -129,17 +129,7 @@ describe('apps tool', () => {
     expect(toolResult(second, 'call_write')).toBe('Wrote the new file /apps/notes/src/lib/units.js (42 B, 2 lines).')
     expect(toolResult(second, 'call_mkdir')).toBe('Made the folder /apps/notes/data/cache, and above it /apps/notes/data.')
     expect(toolResult(second, 'call_read')).toBe('/apps/notes/src/lib/units.js: lines 1-2 of 2 (42 B)\n1: export const KM = 1000\n2: export const M = 1')
-    // The first edit call of the tab gets the hint of edit.
-    expect(toolResult(second, 'call_edit')).toBe(withEditHint([
-      'Edited /apps/notes/src/lib/units.js: 1 of 1 edit done. The file had 2 lines, and it has 3 now.',
-      '1. Done. Put 1 line in after line 2.',
-      'The lines have new numbers now: read the file again before the next edit of it.',
-      'The change:',
-      '@@ -1,2 +1,3 @@',
-      ' export const KM = 1000',
-      ' export const M = 1',
-      '+export const CM = 0.01',
-    ].join('\n')))
+    expect(toolResult(second, 'call_edit')).toBe('Edited /apps/notes/src/lib/units.js: 1 of 1 edit done.\n1. Done. Replaced the text at line 2.')
     expect(fs.readFileSync(path.join(appsDir, 'notes/src/lib/units.js'), 'utf8')).toBe(`${units}export const CM = 0.01\n`)
     expect(parseAppManifest(fs.readFileSync(path.join(appsDir, 'notes/manifest.json'), 'utf8'))).toStrictEqual({ name: 'notes', description: 'Keeps notes.', kind: 'script' })
     // Only the user can open the folders and the files that the tool made.
@@ -242,12 +232,11 @@ describe('apps tool', () => {
     await fs.promises.rm(appsDir, { recursive: true, force: true })
   })
 
-  it('reads ranges of lines, gives the hint of edit in the first edit call of each tab, and cuts a long hunk to its ends', async () => {
+  it('reads ranges of lines, and edits a file by find and replace', async () => {
     const items = Array.from({ length: 30 }, (_, index) => `item ${index + 1}`)
     const itemsText = `${items.join('\n')}\n`
     await seedApp(appsDir, { name: 'list', description: 'Keeps a list.', kind: 'script' }, { 'items.txt': itemsText })
     const file = '/apps/list/items.txt'
-    const upper = items.slice(4, 20).map((item) => item.toUpperCase())
 
     await submit(browser, 'Change the list.')
     const first = await chatRequest()
@@ -266,148 +255,45 @@ describe('apps tool', () => {
       '30: item 30',
       'Range 3 is left out. It names lines 3-5, and range 1 names lines 2-3 already. Make one range of the two, as in {"from_line": 2, "to_line": 5}.',
     ].join('\n'))
+    // The edits apply in the order of the call, and each one passes or
+    // fails by itself. The two other calls have the forms of the issue:
+    // items with other names, and the fields of one edit next to `path`.
     sendToolCalls(second.reply, [
-      appsCall('call_edit', 'edit', { path: file, edits: [{ from_line: 5, to_line: 20, content: upper.join('\n') }, { after_line: 30, content: 'item 31' }] }),
+      appsCall('call_edit', 'edit', { path: file, edits: [
+        { old_string: 'item 5\n', new_string: 'ITEM 5\n' },
+        { old_string: 'item 1', new_string: 'first' },
+        { old_string: 'item 2\n', new_string: 'item 2\nitem 2b\n' },
+        { old_string: 'item 31', new_string: 'last' },
+        { old_string: 'item ', new_string: 'entry ', replace_all: true },
+      ] }),
+      appsCall('call_wrong_items', 'edit', { path: file, edits: [{ from: 'item 1', to: 'first' }] }),
+      appsCall('call_flat', 'edit', { path: file, old: 'item 1', new: 'first' }),
     ])
 
-    // The first edit call of the tab gets the hint. A hunk of more than 20
-    // lines shows its first 8 and its last 8; a shorter one shows whole.
+    // Each line of the result is a line of the file after the call.
     const third = await chatRequest()
-    expect(toolResult(third, 'call_edit')).toBe(withEditHint([
-      `Edited ${file}: 2 of 2 edits done. The file had 30 lines, and it has 31 now.`,
-      '1. Done. Replaced lines 5-20 with 16 lines.',
-      '2. Done. Put 1 line in after line 30.',
-      'The lines have new numbers now: read the file again before the next edit of it.',
-      'The change:',
-      '@@ -2,22 +2,22 @@',
-      ' item 2',
-      ' item 3',
-      ' item 4',
-      '-item 5',
-      '-item 6',
-      '-item 7',
-      '-item 8',
-      '-item 9',
-      '… 22 lines of this hunk are not shown, to save context. read gives the file as it is now.',
-      '+ITEM 16',
-      '+ITEM 17',
-      '+ITEM 18',
-      '+ITEM 19',
-      '+ITEM 20',
-      ' item 21',
-      ' item 22',
-      ' item 23',
-      '@@ -28,3 +28,4 @@',
-      ' item 28',
-      ' item 29',
-      ' item 30',
-      '+item 31',
-    ].join('\n')))
-    sendToolCalls(third.reply, [appsCall('call_edit_again', 'edit', { path: file, edits: [{ from_line: 1, content: 'first item' }] })])
-
-    // The conversation of the tab holds the hint now: the next edit call
-    // gets none.
-    const fourth = await chatRequest()
-    expect(toolResult(fourth, 'call_edit_again')).toBe([
-      `Edited ${file}: 1 of 1 edit done. The file had 31 lines, and it has 31 now.`,
-      '1. Done. Replaced line 1 with 1 line.',
-      'The lines have new numbers now: read the file again before the next edit of it.',
-      'The change:',
-      '@@ -1,4 +1,4 @@',
-      '-item 1',
-      '+first item',
-      ' item 2',
-      ' item 3',
-      ' item 4',
+    expect(toolResult(third, 'call_edit')).toBe([
+      `Edited ${file}: 3 of 5 edits done.`,
+      '1. Done. Replaced the text at line 6.',
+      '2. Failed. `old_string` is in the file at 11 places, the first 5 on lines 1, 11, 12, 13, and 14. '
+        + 'Give more of the text around the place to change, so that `old_string` is in the file once, or set `replace_all` to true to change every place.',
+      '3. Done. Replaced the text at line 2.',
+      '4. Failed. `old_string` is not in the file. The edits before this one changed the file first, and this edit looked for its text in what they left. '
+        + 'Read the file again, and give the text as it is in the file, with its white space and its line ends, '
+        + 'but without the `12: ` before each line of a read result: that number is no part of the file.',
+      '5. Done. Replaced the text at 30 places, the first 5 on lines 1, 2, 3, 4, and 5.',
     ].join('\n'))
-    await expectReplyEnd(fourth)
-
-    // The conversation of a new tab does not hold the hint: its first edit
-    // call gets it again.
-    await newTab(browser)
-    await submit(browser, 'Take the last item out.')
-    const other = await chatRequest()
-    sendToolCalls(other.reply, [appsCall('call_edit_tab', 'edit', { path: file, edits: [{ from_line: 31, content: '' }] })])
-
-    const otherSecond = await chatRequest()
-    expect(toolResult(otherSecond, 'call_edit_tab')).toBe(withEditHint([
-      `Edited ${file}: 1 of 1 edit done. The file had 31 lines, and it has 30 now.`,
-      '1. Done. Deleted line 31.',
-      'The lines have new numbers now: read the file again before the next edit of it.',
-      'The change:',
-      '@@ -28,4 +28,3 @@',
-      ' item 28',
-      ' item 29',
-      ' item 30',
-      '-item 31',
-    ].join('\n')))
-    await expectReplyEnd(otherSecond)
-    expect(fs.readFileSync(path.join(appsDir, 'list/items.txt'), 'utf8')).toBe(`${['first item', ...items.slice(1, 4), ...upper, ...items.slice(20)].join('\n')}\n`)
-    expect(await consoleErrors(browser)).toStrictEqual([])
-
-    await fs.promises.rm(appsDir, { recursive: true, force: true })
-  })
-
-  it('gives the hint of edit with a first edit call that Dez refuses, and none after the help of edit', async () => {
-    await seedApp(appsDir, { name: 'memo', description: 'Keeps a memo.', kind: 'script' }, { 'memo.txt': 'a\nb\n' })
-    const file = '/apps/memo/memo.txt'
-    const hinted = (result: string): boolean => result.endsWith(`\n\n${EDIT_HINT}`)
-    const edited = (line: number, diff: string[]): string => [
-      `Edited ${file}: 1 of 1 edit done. The file had 2 lines, and it has 2 now.`,
-      `1. Done. Replaced line ${line} with 1 line.`,
-      'The lines have new numbers now: read the file again before the next edit of it.',
-      'The change:',
-      '@@ -1,2 +1,2 @@',
-      ...diff,
-    ].join('\n')
-
-    // A model that did not read the help of edit gives an item that edit
-    // does not take: the refusal tells the fix, then the hint.
-    await submit(browser, 'Change the memo.')
-    const first = await chatRequest()
-    sendToolCalls(first.reply, [appsCall('call_wrong', 'edit', { path: file, edits: [{ old_text: 'a', new_text: 'A' }] })])
-
-    const second = await chatRequest()
-    const refusal = toolResult(second, 'call_wrong')
-    expect(refusal.startsWith('Item 1 of the parameter "edits" is not valid: an item of "edits" has no parameter "old_text".')).toBe(true)
-    expect(hinted(refusal)).toBe(true)
-    sendToolCalls(second.reply, [appsCall('call_edit', 'edit', { path: file, edits: [{ from_line: 1, content: 'A' }] })])
-
-    // The refusal holds the hint: the good call after it gets none.
-    const third = await chatRequest()
-    expect(toolResult(third, 'call_edit')).toBe(edited(1, ['-a', '+A', ' b']))
+    expect(toolResult(third, 'call_wrong_items').startsWith('Item 1 of the parameter "edits" is not valid: an item of "edits" has no parameter "from". '
+      + 'The parameters of an item of "edits" are: old_string (string, required), new_string (string, required), replace_all (boolean).')).toBe(true)
+    expect(toolResult(third, 'call_flat').startsWith('apps edit has no parameter "old". '
+      + 'The parameters of apps edit are: path (string, required), edits (list of objects, required).')).toBe(true)
     await expectReplyEnd(third)
-
-    // A call whose `parameters` is an object, not its text: the definition
-    // of the tool refuses it before the round runs, with the hint.
-    await newTab(browser)
-    await submit(browser, 'Change the memo.')
-    const objectFirst = await chatRequest()
-    sendToolCalls(objectFirst.reply, [openAiToolCall('call_object', 'apps', { command: 'edit', parameters: { path: file, edits: [{ from_line: 1, content: 'x' }] } })])
-
-    const objectSecond = await chatRequest()
-    const objectRefusal = toolResult(objectSecond, 'call_object')
-    expect(objectRefusal.startsWith('Dez did not run this call. ')).toBe(true)
-    expect(hinted(objectRefusal)).toBe(true)
-    await expectReplyEnd(objectSecond)
-
-    // The help of edit holds the hint: the first edit after it gets none.
-    await newTab(browser)
-    await submit(browser, 'Change the memo again.')
-    const help = await chatRequest()
-    sendToolCalls(help.reply, [appsCall('call_help', 'help', { command: 'edit' })])
-
-    const afterHelp = await chatRequest()
-    expect(toolResult(afterHelp, 'call_help').split(EDIT_HINT)).toHaveLength(2)
-    sendToolCalls(afterHelp.reply, [appsCall('call_edit_after_help', 'edit', { path: file, edits: [{ from_line: 2, content: 'B' }] })])
-
-    const done = await chatRequest()
-    expect(toolResult(done, 'call_edit_after_help')).toBe(edited(2, [' A', '-b', '+B']))
-    await expectReplyEnd(done)
-    expect(fs.readFileSync(path.join(appsDir, 'memo/memo.txt'), 'utf8')).toBe('A\nB\n')
-    // Dez logs the call that the apps runner refused, and nothing else.
+    const entries = items.map((item) => item.replace('item ', 'entry '))
+    expect(fs.readFileSync(path.join(appsDir, 'list/items.txt'), 'utf8')).toBe(`${[...entries.slice(0, 2), 'entry 2b', ...entries.slice(2, 4), 'ITEM 5', ...entries.slice(5)].join('\n')}\n`)
+    // Dez logs the two calls that it refuses, and nothing else.
     expect((await consoleErrors(browser)).map((error) => error.split('\n')[0])).toStrictEqual([
-      expect.stringMatching(/^The tool apps failed: Item 1 of the parameter "edits" is not valid: /),
+      expect.stringMatching(/^The tool apps failed: ToolError: Item 1 of the parameter "edits" is not valid: /),
+      expect.stringMatching(/^The tool apps failed: ToolError: apps edit has no parameter "old"\. /),
     ])
 
     await fs.promises.rm(appsDir, { recursive: true, force: true })
@@ -566,7 +452,7 @@ describe('apps tool', () => {
       appsCall('call_read_below', 'read', { path: '/apps/safe/out/secret.txt' }),
       appsCall('call_write_link', 'write', { path: '/apps/safe/secret.txt', content: 'changed' }),
       appsCall('call_write_below', 'write', { path: '/apps/safe/out/new.txt', content: 'new' }),
-      appsCall('call_edit_link', 'edit', { path: '/apps/safe/secret.txt', edits: [{ from_line: 1, content: 'changed' }] }),
+      appsCall('call_edit_link', 'edit', { path: '/apps/safe/secret.txt', edits: [{ old_string: 'text', new_string: 'changed' }] }),
       appsCall('call_mkdir_below', 'mkdir', { path: '/apps/safe/out/sub' }),
       appsCall('call_ls_below', 'ls', { path: '/apps/safe/out' }),
       appsCall('call_mv_link', 'mv', { moves: [{ from: '/apps/safe/secret.txt', to: '/apps/safe/moved.txt' }] }),

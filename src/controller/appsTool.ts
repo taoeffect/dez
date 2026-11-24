@@ -202,9 +202,8 @@ export async function writeAppFile(args: SubcommandArguments, conversationId: st
   return writeText(call, plan.replaced)
 }
 
-/** `apps edit`. It writes only when an edit changed a line, and it lists
- *  the app only when the file grows. The `apps` runner adds the hint of
- *  `edit` to its results (`withEditHintWhenDue`, tools.ts). */
+/** `apps edit`. It writes only when an edit changed the text, and it lists
+ *  the app only when the file grows. */
 export async function editAppFile(args: SubcommandArguments, conversationId: string): Promise<AppsResult> {
   const call = editCall(args, conversationId)
   checkTextFile(call.path, await factsOf(call.path))

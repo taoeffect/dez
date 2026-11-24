@@ -1,13 +1,10 @@
 import { countOf } from '../../utils/countText'
 
-// The text and the lines of a text file, and edits of them by line number
-// (the `edit` subcommand of the `apps` tool, appsTool.ts): what each edit
-// of a call does, the new lines of the file, and a diff of the change.
+// The text and the lines of a text file, for the `apps` tool
+// (appsTool.ts).
 //
-// Every line number of a call is a number of the file before the call.
-// So a model never has to work out how an earlier edit of the same call
-// moved the lines: it takes the numbers that `read` gave. The edits apply
-// all at once, and each one passes or fails by itself.
+// The rest of the file, from `linesText` on, is kept code with no caller:
+// edits of a file by line number, and a diff of their change.
 
 /** The text of a file from its bytes, or null for a file that is no text:
  *  one with a zero byte, or with bytes that are no UTF-8. A byte order mark
@@ -34,6 +31,19 @@ export function textLines(text: string): string[] {
   if (text.endsWith('\n')) lines.pop()
   return lines
 }
+
+/** `line 4`, `lines 4-6`. */
+export function linesName(from: number, to: number): string {
+  return from === to ? `line ${from}` : `lines ${from}-${to}`
+}
+
+// Kept code with no caller, from here to the end of the file. `edit` took
+// line numbers before it took find and replace (textEdits.ts), and the
+// user wants this code kept, in case it takes them again. Every line
+// number of a call is a number of the file before the call, so a model
+// never has to work out how an earlier edit of the same call moved the
+// lines. The edits apply all at once, and each one passes or fails by
+// itself.
 
 /** The text of `lines` (`textLines` gives them back), with a `\n` after
  *  the last line when `finalLineEnd` is set. */
@@ -89,11 +99,6 @@ export interface LineEditPlan {
 // from 1.
 interface Replacement { number: number; from: number; to: number; lines: string[] }
 interface Insertion { number: number; after: number; lines: string[] }
-
-/** `line 4`, `lines 4-6`. */
-export function linesName(from: number, to: number): string {
-  return from === to ? `line ${from}` : `lines ${from}-${to}`
-}
 
 const failed = (text: string): LineEditOutcome => ({ done: false, text })
 const done = (text: string): LineEditOutcome => ({ done: true, text })
@@ -242,4 +247,55 @@ function diffHunks(ops: readonly LineOp[]): DiffHunk[] {
     next = end + 1
   }
   return hunks
+}
+
+// The most characters of a diff that `cutDiff` keeps.
+const DIFF_MAX_CHARACTERS = 20_000
+// The most lines that one hunk shows (the lines after its `@@` line). A
+// longer hunk shows only its first and its last `HUNK_END_LINES` lines:
+// the model gave the new lines and read the old ones, so all of them
+// again would only fill its context. A hunk is cut only when the cut
+// leaves out more than 4 lines: a note line in place of fewer saves
+// little.
+const HUNK_END_LINES = 8
+const HUNK_MAX_LINES = 2 * HUNK_END_LINES + 4
+
+/** One row of a diff for a model, and the number of lines of the diff
+ *  that it stands for: 1, or for the note of a long hunk the lines that
+ *  the note leaves out. */
+export interface DiffRow {
+  text: string
+  lines: number
+}
+
+/** The rows of one hunk: a long hunk shows its ends, and between them a
+ *  row with no diff mark that tells how many lines it leaves out. The `@@`
+ *  line keeps the counts of the whole hunk. */
+export function hunkRows({ header, lines }: DiffHunk): DiffRow[] {
+  const row = (text: string): DiffRow => ({ text, lines: 1 })
+  if (lines.length <= HUNK_MAX_LINES) return [header, ...lines].map(row)
+  const hidden = lines.length - 2 * HUNK_END_LINES
+  return [
+    row(header),
+    ...lines.slice(0, HUNK_END_LINES).map(row),
+    { text: `… ${countOf(hidden, 'line')} of this hunk are not shown, to save context. read gives the file as it is now.`, lines: hidden },
+    ...lines.slice(-HUNK_END_LINES).map(row),
+  ]
+}
+
+/** The first rows of a diff that fit a result, and a row that tells how
+ *  many lines of the diff the rows after them stand for. The lines that a
+ *  shown note of a long hunk leaves out are told already, so they do not
+ *  count. */
+export function cutDiff(rows: readonly DiffRow[]): string[] {
+  const shown: string[] = []
+  let characters = 0
+  let rest = rows.reduce((sum, row) => sum + row.lines, 0)
+  for (const { text, lines } of rows) {
+    if (characters + text.length + 1 > DIFF_MAX_CHARACTERS) break
+    shown.push(text)
+    characters += text.length + 1
+    rest -= lines
+  }
+  return rest === 0 ? shown : [...shown, `… ${countOf(rest, 'more line')} of the diff ${rest === 1 ? 'is' : 'are'} not shown. read gives the file as it is now.`]
 }

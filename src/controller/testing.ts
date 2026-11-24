@@ -361,8 +361,6 @@ export function callContext(more: Partial<ToolRunContext> = {}): ToolRunContext 
     writeClip: () => null,
     showApp: () => false,
     pictureBudget: async () => NO_CALL_PICTURE_BUDGET,
-    roundResults: [],
-    isBridged: false,
     money: () => ({ limit: undefined, spent: { counted: 0, held: 0 } }),
     checkMoney: () => {},
     ...more,

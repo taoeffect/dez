@@ -27,7 +27,6 @@ import { compactionInstruction } from '../model/streams/compactionRequest'
 import type { LiveTimes, RequestMessages, StreamMessage } from '../model/streams/types'
 import { STOPPED_TOOL_RESULT, stoppedToolResult } from '../model/streams/toolRound'
 import { showResultText } from '../model/tools/appShow'
-import { EDIT_HINT } from '../model/tools/appsTool'
 import { systemPromptErrorText } from '../model/systemPrompt'
 import { PICTURE_ROUND_FULL_NOTE, pictureBudgetLeftText } from '../model/tools/assetView'
 import { jobsWaitText, jobTimedOutText, startedJobId } from '../model/tools/jobs'
@@ -3135,107 +3134,6 @@ describe('dez.stream/start apps that a tool shows', () => {
 
     expect(findToolBlocks(sectionVisibleText(agentSection()))[0]).toMatchObject({ status: 'error' })
     expect(textAfterFirstBlock()).toBe('It has no page.')
-  })
-})
-
-describe('dez.stream/start the hint of apps edit', () => {
-  const editCall = (id: string, line: number) => ({
-    id,
-    name: 'apps',
-    argumentsText: JSON.stringify({ command: 'edit', parameters: JSON.stringify({ path: '/apps/sum/main.ts', edits: [{ from_line: line, content: `// ${id}` }] }) }),
-  })
-  // An edit call with an item that edit does not take, as a model that did
-  // not read the help of edit writes it.
-  const wrongItemCall = (id: string) => ({
-    id,
-    name: 'apps',
-    argumentsText: JSON.stringify({ command: 'edit', parameters: JSON.stringify({ path: '/apps/sum/main.ts', edits: [{ old_text: 'a', new_text: 'b' }] }) }),
-  })
-  // Whether the request `index` sends each result of the round before it
-  // with the hint at its end.
-  const hintedResults = (index: number) => {
-    const message = sent[index].at(-1) as { role: string, results: Array<{ content: string }> }
-    expect(message.role).toBe('tool')
-    return message.results.map((result) => result.content.endsWith(`\n\n${EDIT_HINT}`))
-  }
-
-  beforeEach(() => {
-    fakeAppFiles(appFiles('sum', { 'main.ts': 'a\nb\nc\n' }))
-    sbp('dez.model/tabs/replaceSections', activeTab().id, [
-      { id: 'u1', role: 'user', content: [{ kind: 'text', text: 'Hi' }] },
-      { id: 'a1', role: 'agent', content: [{ kind: 'text', text: '' }], model },
-    ])
-  })
-
-  it('gives the hint to the first edit call of a reply, and to no later call of its round or of a later round', async () => {
-    replyRounds([
-      async (input) => ({ requestId: input.requestId as string, toolCalls: [editCall('c1', 1), editCall('c2', 2)] }),
-      async (input) => ({ requestId: input.requestId as string, toolCalls: [editCall('c3', 3)] }),
-      async (input) => {
-        await input.onToken('Done.')
-        return { requestId: input.requestId as string }
-      },
-    ])
-
-    await startStream({ sendTools: true })
-
-    expect(hintedResults(1)).toStrictEqual([true, false])
-    expect(hintedResults(2)).toStrictEqual([false])
-  })
-
-  // A first edit call is often wrong: the hint goes with its refusal.
-  it('gives the hint to a first edit call whose parameters Dez refuses, and none to the good call after it', async () => {
-    replyRounds([
-      async (input) => ({ requestId: input.requestId as string, toolCalls: [wrongItemCall('c1')] }),
-      async (input) => ({ requestId: input.requestId as string, toolCalls: [editCall('c2', 1)] }),
-      async (input) => {
-        await input.onToken('Done.')
-        return { requestId: input.requestId as string }
-      },
-    ])
-
-    await startStream({ sendTools: true })
-
-    expect(hintedResults(1)).toStrictEqual([true])
-    expect(hintedResults(2)).toStrictEqual([false])
-  })
-
-  // Dez refuses such a call before any call of the round runs.
-  it('gives the hint to an edit call that the definition of apps refuses, and to no later call', async () => {
-    const objectParameters = {
-      id: 'c1',
-      name: 'apps',
-      argumentsText: JSON.stringify({ command: 'edit', parameters: { path: '/apps/sum/main.ts', edits: [{ from_line: 1, content: 'x' }] } }),
-    }
-    replyRounds([
-      async (input) => ({ requestId: input.requestId as string, toolCalls: [objectParameters, editCall('c2', 1)] }),
-      async (input) => ({ requestId: input.requestId as string, toolCalls: [editCall('c3', 2)] }),
-      async (input) => {
-        await input.onToken('Done.')
-        return { requestId: input.requestId as string }
-      },
-    ])
-
-    await startStream({ sendTools: true })
-
-    expect(hintedResults(1)).toStrictEqual([true, false])
-    expect(hintedResults(2)).toStrictEqual([false])
-  })
-
-  it('gives no hint to an edit call after the help of edit', async () => {
-    const helpCall = { id: 'c1', name: 'apps', argumentsText: JSON.stringify({ command: 'help', parameters: JSON.stringify({ command: 'edit' }) }) }
-    replyRounds([
-      async (input) => ({ requestId: input.requestId as string, toolCalls: [helpCall] }),
-      async (input) => ({ requestId: input.requestId as string, toolCalls: [editCall('c2', 1)] }),
-      async (input) => {
-        await input.onToken('Done.')
-        return { requestId: input.requestId as string }
-      },
-    ])
-
-    await startStream({ sendTools: true })
-
-    expect(hintedResults(2)).toStrictEqual([false])
   })
 })
 

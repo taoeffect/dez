@@ -11,9 +11,10 @@ import { unknownValuesText } from './arguments'
 import { conversationWorkFolder, WORK_VIRTUAL_ROOT } from './conversationWork'
 import { GREP_LINE_MAX_CHARACTERS, GREP_MAX_CHARACTERS, GREP_MAX_CONTEXT, GREP_MAX_MATCHES, GREP_TIME_LIMIT_SECONDS } from './grepMatch'
 import { INTERMEDIATE_PARAMETER, JOB_CALL_NOTE, jobTimeoutParameter } from './jobs'
-import { linesName, linesText, planLineEdits, textLines, textOfBytes, type DiffHunk, type LineEdit } from './lineEdits'
+import { linesName, textLines, textOfBytes } from './lineEdits'
 import { withoutLocalPaths } from './localPaths'
 import { subcommandToolDefinition, type SubcommandTool } from './subcommands'
+import { planTextEdits, type TextEdit } from './textEdits'
 import { ToolError, type SubcommandArguments, type SubcommandParameter, type ToolArguments } from './types'
 
 // The `apps` tool: the files of the apps, the small programs that a model
@@ -142,8 +143,7 @@ export const APP_RUN_MAX_DECODED_BYTES = 2 * 1024 * 1024 * 1024
 /** A `decode` value as the texts show it. */
 export const DECODE_EXAMPLE = '{"audio": {"rate": 22050}, "frames": {"width": 96, "height": 54, "fps": 24}}'
 
-/** The subcommand that changes lines of a file. Its results get the hint
- *  of `edit` (`EDIT_HINT`, editHint.ts). */
+/** The subcommand that replaces text in a file. */
 export const APPS_EDIT = 'edit'
 
 /** The subcommand that runs an app. The readers of a call that tell it
@@ -170,16 +170,6 @@ const MAX_PATH_NAMES = 12
 // reads well in one result.
 const READ_MAX_LINES = 900
 const READ_MAX_CHARACTERS = 50_000
-// The most characters of the diff of an `edit` result.
-const DIFF_MAX_CHARACTERS = 20_000
-// The most lines that one hunk of an `edit` result shows (the lines after
-// its `@@` line). A longer hunk shows only its first and its last
-// `HUNK_END_LINES` lines: the model gave the new lines and read the old
-// ones, so all of them again would only fill its context. A hunk is cut
-// only when the cut leaves out more than 4 lines: a note line in place of
-// fewer saves little.
-const HUNK_END_LINES = 8
-const HUNK_MAX_LINES = 2 * HUNK_END_LINES + 4
 // The most rows of an `ls` and of a `list_apps` result, and the most paths
 // that `rm` lists for one deleted folder.
 const LS_MAX_ROWS = 500
@@ -300,26 +290,6 @@ const INVOKE_HELP = `Runs the code of an app on the user's computer, with the pa
   + `An error names a line of the code by its path in the apps tool, as in ${APPS_VIRTUAL_ROOT}/${EXAMPLE_SCRIPT_APP}/${SCRIPT_MAIN_FILE}:12.\n\n`
   + INVOKE_UI_HELP
 
-/** The hint of `edit`: how to give the line numbers of a call. A model
- *  that did not know that the edits of one call do not move the lines of
- *  each other made one edit, read the file, made the next edit, and so on.
- *  The description of `edit` ends with it, so its help holds it, and the
- *  result of an `edit` call of the model ends with it while the
- *  conversation does not hold it (editHint.ts). */
-export const EDIT_HINT = [
-  'How to use edit:',
-  '- Give each line number as it was in the file when you read it, before this call. Dez does all the edits of one call at once and moves the lines itself: never add or subtract to make up for another edit of the call.',
-  '- Put all the changes of a file into one call, with no read between them.',
-  '- The edits of one call must not overlap: an edit that overlaps an earlier edit of the call fails, and the others are still done.',
-  '- After the call the lines have new numbers. Read the file again only before your next edit call of that file.',
-].join('\n')
-
-/** The result text `result` with the hint of `edit` after it, as a
- *  paragraph of its own. */
-export function withEditHint(result: string): string {
-  return `${result}\n\n${EDIT_HINT}`
-}
-
 // The text of the `decode` parameter of `invoke`: all that the code of a
 // script app must know to read the decoded files (inputDecode.ts), with
 // the readers of the dez-media library.
@@ -362,7 +332,8 @@ export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
       description: 'Gives the text of a file, each line after its number (`12: text`), and tells how many lines and bytes the file has. '
         + 'With `ranges` it gives only the lines of those ranges, in the order of the list. '
         + `One call gives at most ${READ_MAX_LINES} lines and ${countText(READ_MAX_CHARACTERS)} characters: the result tells when it left lines out, and which ranges to read next. `
-        + `edit takes the line numbers of this result. Dez refuses a file that is no text, and one of more than ${FILE_LIMIT}.`,
+        + 'The line numbers are for `ranges` and for you to find your way: the `12: ` before each line is no part of the file, so leave it out of the `old_string` of edit. '
+        + `Dez refuses a file that is no text, and one of more than ${FILE_LIMIT}.`,
       parameters: [
         { name: 'path', type: 'string', description: `The path of the file, ${PATH_PARAMETER}`, required: true },
         {
@@ -393,26 +364,26 @@ export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
     },
     {
       name: APPS_EDIT,
-      summary: `Change lines of a text file of an app or of ${WORK_VIRTUAL_ROOT}/ by their numbers: replace lines, delete lines, or put new lines in.`,
-      description: 'Applies a list of edits to one file, all at once. Each edit names lines by the numbers that read gave. '
-        + 'An edit with `from_line` replaces the lines `from_line` to `to_line` with the lines of `content`. An edit with `after_line` puts the lines of `content` in after that line. '
-        + 'Each edit passes or fails by itself: the result tells what each one did, or why it failed, and gives a diff of the change.\n\n'
-        + EDIT_HINT,
+      summary: `Change a text file of an app or of ${WORK_VIRTUAL_ROOT}/ by find and replace: each edit of a list puts new text in place of a piece of the file.`,
+      description: 'Applies a list of edits to one file. Each edit finds `old_string` in the file and puts `new_string` in its place. '
+        + '`old_string` is exact text of the file, with its white space and its line ends: give it as read showed it, but without the `12: ` before each line, which is no part of the file. '
+        + 'It must be in the file at one place only: give enough of the text around the change to make it so, or set `replace_all` to true to replace every place. '
+        + 'The edits apply in the order of the list, each to the text that the edits before it left. '
+        + 'Each edit passes or fails by itself: the result tells what each one did and at which line, or why it failed. '
+        + 'To make a new file, or to give a file all new text, use write.',
       parameters: [
         { name: 'path', type: 'string', description: `The path of the file, ${PATH_PARAMETER}`, required: true },
         {
           name: 'edits',
           type: 'list',
           items: [
-            { name: 'from_line', type: 'integer', description: 'The first line to replace. Give this or `after_line`, not both.', required: false },
-            { name: 'to_line', type: 'integer', description: 'The last line to replace. Leave it out to replace only the line `from_line`.', required: false },
-            { name: 'after_line', type: 'integer', description: 'The line after which the new lines go; no line is replaced. 0 puts them before the first line.', required: false },
+            { name: 'old_string', type: 'string', description: 'The text to replace, exactly as it is in the file. It must not be empty.', required: true },
+            { name: 'new_string', type: 'string', description: 'The text to put in its place; "" deletes `old_string`.', required: true },
             {
-              name: 'content',
-              type: 'string',
-              description: 'The new lines, with "\\n" between them; one "\\n" at the end adds no line, and "\\n" alone is one empty line. '
-                + 'With `from_line`, "" deletes the lines.',
-              required: true,
+              name: 'replace_all',
+              type: 'boolean',
+              description: 'true replaces every place of `old_string`. Left out or false, the edit fails when `old_string` is at more than one place.',
+              required: false,
             },
           ],
           description: 'The edits, at least one.',
@@ -421,7 +392,7 @@ export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
       ],
       example: {
         path: EXAMPLE_FILE,
-        edits: [{ from_line: 12, to_line: 14, content: 'const factor = 0.3048' }, { after_line: 30, content: '\nconsole.log(factor)' }],
+        edits: [{ old_string: 'const factor = 0.3', new_string: 'const factor = 0.3048' }, { old_string: 'feet', new_string: 'ft', replace_all: true }],
       },
     },
     {
@@ -485,7 +456,7 @@ export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
       description: 'Searches the text files below a folder, or one file, line by line, as `rg -n` does. It gives each matching line after its number (`12: text`), '
         + `the files sorted by path, and in a search of a folder each file under its path after the top folder (${APPS_VIRTUAL_ROOT}/, ${LIBS_VIRTUAL_ROOT}/, or ${WORK_VIRTUAL_ROOT}/). `
         + 'With `context` it gives the lines around each match too (`11- text`), and "--" between groups of lines that do not follow each other. '
-        + 'The numbers are those of read, so read and edit take them. '
+        + 'The numbers are those of read, so the `ranges` of read take them. '
         + '`pattern` is a regular expression of JavaScript, with no "/" around it, which each line matches by itself: no match runs over the end of a line. '
         + 'Put a "\\" before a character that is special in a regular expression to find it as it is, or set `literal` to true. '
         + `One result shows at most ${GREP_MAX_MATCHES} matching lines, ${countText(GREP_MAX_CHARACTERS)} characters, and ${GREP_LINE_MAX_CHARACTERS} characters of a line, `
@@ -1144,8 +1115,7 @@ function rangeJson(from: number, to: number | null): string {
 
 // The part of a file with `total` lines that `range` names, or the text
 // of why it gives none. `taken` are the parts of the earlier ranges of the
-// call that passed: a range shows no line twice, as an edit of `edit`
-// changes no line of an earlier edit of its call (lineEdits.ts).
+// call that passed: a range shows no line twice.
 function readPart({ fromLine, toLine }: ReadRange, total: number, path: AppsPath, taken: readonly (LinePart & { number: number })[]): LinePart | string {
   if (fromLine < 1) return `\`from_line\` is ${fromLine}. The first line of a file is line 1.`
   if (toLine !== null && toLine < fromLine) {
@@ -1266,19 +1236,18 @@ export function writeText({ path, bytes, lines }: WriteCall, replaced: number | 
 
 export interface EditCall {
   path: AppsPath
-  edits: LineEdit[]
+  edits: TextEdit[]
 }
 
 export function editCall(args: SubcommandArguments, conversationId: string): EditCall {
   const path = filePath(args, 'path', conversationId)
   checkChangeable(path)
-  const edits = objectItems(args, 'edits').map((edit): LineEdit => ({
-    fromLine: integerArgument(edit, 'from_line'),
-    toLine: integerArgument(edit, 'to_line'),
-    afterLine: integerArgument(edit, 'after_line'),
-    content: textArgument(edit, 'content'),
+  const edits = objectItems(args, 'edits').map((edit): TextEdit => ({
+    oldString: textArgument(edit, 'old_string'),
+    newString: textArgument(edit, 'new_string'),
+    replaceAll: edit.replace_all === true,
   }))
-  if (edits.length === 0) throw new ToolError('`edits` is an empty list. Give at least one edit, as in {"edits": [{"from_line": 3, "to_line": 4, "content": "..."}]}.')
+  if (edits.length === 0) throw new ToolError('`edits` is an empty list. Give at least one edit, as in {"edits": [{"old_string": "...", "new_string": "..."}]}.')
   return { path, edits }
 }
 
@@ -1294,76 +1263,27 @@ function outcomeLines(outcomes: readonly ItemOutcome[]): string[] {
   return outcomes.map((outcome, index) => `${index + 1}. ${outcome.done ? 'Done' : 'Failed'}. ${outcome.text}`)
 }
 
-// One row of the diff of an `edit` result, and the number of lines of the
-// diff that it stands for: 1, or for the note of a long hunk the lines
-// that the note leaves out.
-interface DiffRow {
-  text: string
-  lines: number
-}
-
-// The rows of one hunk of an `edit` result: a long hunk shows its ends,
-// and between them a row with no diff mark that tells how many lines it
-// leaves out. The `@@` line keeps the counts of the whole hunk.
-function hunkRows({ header, lines }: DiffHunk): DiffRow[] {
-  const row = (text: string): DiffRow => ({ text, lines: 1 })
-  if (lines.length <= HUNK_MAX_LINES) return [header, ...lines].map(row)
-  const hidden = lines.length - 2 * HUNK_END_LINES
-  return [
-    row(header),
-    ...lines.slice(0, HUNK_END_LINES).map(row),
-    { text: `… ${countOf(hidden, 'line')} of this hunk are not shown, to save context. read gives the file as it is now.`, lines: hidden },
-    ...lines.slice(-HUNK_END_LINES).map(row),
-  ]
-}
-
-// The first rows of a diff that fit a result, and a row that tells how
-// many lines of the diff the rows after them stand for. The lines that a
-// shown note of a long hunk leaves out are told already, so they do not
-// count.
-function cutDiff(rows: readonly DiffRow[]): string[] {
-  const shown: string[] = []
-  let characters = 0
-  let rest = rows.reduce((sum, row) => sum + row.lines, 0)
-  for (const { text, lines } of rows) {
-    if (characters + text.length + 1 > DIFF_MAX_CHARACTERS) break
-    shown.push(text)
-    characters += text.length + 1
-    rest -= lines
-  }
-  return rest === 0 ? shown : [...shown, `… ${countOf(rest, 'more line')} of the diff ${rest === 1 ? 'is' : 'are'} not shown. read gives the file as it is now.`]
-}
-
 /** The result of an `edit` call on the file with `text`, and the bytes to
  *  write: null when no edit passed (an error result) and when the edits
- *  change no line. The file keeps the line end, or none, after its last
- *  line. Throws when the edits make the file larger than
- *  `APPS_MAX_FILE_BYTES`. */
+ *  leave the text as it was. Throws when the edits make the file larger
+ *  than `APPS_MAX_FILE_BYTES`. */
 export function editResult({ path, edits }: EditCall, text: string): { content: string, isError: boolean, bytes: Uint8Array | null } {
-  const before = textLines(text)
-  const plan = planLineEdits(before, edits)
+  const plan = planTextEdits(text, edits)
   const outcomes = outcomeLines(plan.outcomes)
   const passed = plan.outcomes.filter((outcome) => outcome.done).length
   if (passed === 0) {
     return { content: [`No edit of ${path.virtual} was done, and the file did not change.`, ...outcomes].join('\n'), isError: true, bytes: null }
   }
   if (!plan.changed) {
-    return { content: [`${path.virtual} did not change: the lines had the new text already.`, ...outcomes].join('\n'), isError: false, bytes: null }
+    return { content: [`${path.virtual} did not change: after the edits that were done, its text is the same as before.`, ...outcomes].join('\n'), isError: false, bytes: null }
   }
 
-  const bytes = new TextEncoder().encode(linesText(plan.lines, text === '' || text.endsWith('\n')))
+  const bytes = new TextEncoder().encode(plan.text)
   if (bytes.length > APPS_MAX_FILE_BYTES) {
     const [size, limit] = overLimitSizes(bytes.length, APPS_MAX_FILE_BYTES)
     throw new ToolError(`With these edits ${path.virtual} would have ${size}, and a file is at most ${limit}. Dez did not change the file.`)
   }
-  const content = [
-    `Edited ${path.virtual}: ${passed} of ${countOf(edits.length, 'edit')} done. The file had ${countOf(before.length, 'line')}, and it has ${countText(plan.lines.length)} now.`,
-    ...outcomes,
-    'The lines have new numbers now: read the file again before the next edit of it.',
-    'The change:',
-    ...cutDiff(plan.hunks.flatMap(hunkRows)),
-  ].join('\n')
-  return { content, isError: false, bytes }
+  return { content: [`Edited ${path.virtual}: ${passed} of ${countOf(edits.length, 'edit')} done.`, ...outcomes].join('\n'), isError: false, bytes }
 }
 
 /** The text of the failure of one item, on one line. */

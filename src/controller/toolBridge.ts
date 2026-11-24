@@ -241,7 +241,7 @@ export class ToolBridge extends CallBridge {
   }
 
   // The context of a bridged call of the tool `tool`: the one of the
-  // `js_eval` call, with four differences.
+  // `js_eval` call, with three differences.
   // - An asset has the name of the tool that made it, not `js_eval` (a
   //   write that names its own tool keeps it: `jobs_wait` writes what the
   //   job of another tool made), and the bridge keeps its id for the
@@ -253,7 +253,6 @@ export class ToolBridge extends CallBridge {
   // - The picture budget is less the pictures of the earlier calls of the
   //   run. The budget of the `js_eval` call counts only the pictures of
   //   the calls of the round that ended, and this one has not.
-  // - The call is bridged: its result goes to the code, not to the model.
   private callContext(tool: string): ToolRunContext {
     const { context } = this
     const written = (kind: JobAssetKind, write: () => string | null): string | null => {
@@ -283,8 +282,6 @@ export class ToolBridge extends CallBridge {
           roundPictures: Math.max(0, budget.roundPictures - this.pictures.length),
         }
       },
-      roundResults: context.roundResults,
-      isBridged: true,
       money: context.money,
       checkMoney: context.checkMoney,
     }
@@ -468,8 +465,6 @@ export class AppRunBridge extends CallBridge {
       writeClip: (clip, options) => this.keep({ kind: 'clip', clip, ...(options?.jobId !== undefined && { jobId: options.jobId }) }, tool, options),
       showApp: () => false,
       pictureBudget: async () => NO_CALL_PICTURE_BUDGET,
-      roundResults: [],
-      isBridged: true,
       money: context.money,
       checkMoney: context.checkMoney,
     }

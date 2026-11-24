@@ -307,7 +307,7 @@ describe('built-in apps', () => {
   it('refuses every call that would make, change, move, or delete a file of one', () => {
     expect(refusal(() => initCall(args('init', { name: 'dez-notes', kind: 'script', description: 'x' })))).toBe(refused('/apps/dez-notes'))
     expect(refusal(() => writeCall(args('write', { path: '/apps/dez-media/main.ts', content: 'x' }), CONVERSATION_ID))).toBe(refused('/apps/dez-media/main.ts'))
-    expect(refusal(() => editCall(args('edit', { path: '/apps/dez-media/main.ts', edits: [{ after_line: 0, content: 'x' }] }), CONVERSATION_ID))).toBe(refused('/apps/dez-media/main.ts'))
+    expect(refusal(() => editCall(args('edit', { path: '/apps/dez-media/main.ts', edits: [{ old_string: 'a', new_string: 'b' }] }), CONVERSATION_ID))).toBe(refused('/apps/dez-media/main.ts'))
     expect(refusal(() => mkdirCall(args('mkdir', { path: '/apps/dez-media/data' }), CONVERSATION_ID))).toBe(refused('/apps/dez-media/data'))
     // One built-in path fails the whole call: rm deletes nothing then.
     expect(refusal(() => rmCall(args('rm', { paths: ['/apps/notes/old.js', '/apps/dez-media'] }), CONVERSATION_ID))).toBe(refused('/apps/dez-media'))
@@ -340,7 +340,7 @@ describe('/libs and /work', () => {
   it('reads /libs, and refuses every call that would change it', () => {
     expect(readCall(args('read', { path: '/libs/three/x.js' }), CONVERSATION_ID).path.file).toBe('libs/three/x.js')
     expect(refusal(() => write('/libs/three/x.js'))).toBe(libsRefusal('/libs/three/x.js'))
-    expect(refusal(() => editCall(args('edit', { path: '/libs/x.js', edits: [{ after_line: 0, content: 'x' }] }), CONVERSATION_ID))).toBe(libsRefusal('/libs/x.js'))
+    expect(refusal(() => editCall(args('edit', { path: '/libs/x.js', edits: [{ old_string: 'a', new_string: 'b' }] }), CONVERSATION_ID))).toBe(libsRefusal('/libs/x.js'))
     expect(refusal(() => mkdir('/libs/three'))).toBe(libsRefusal('/libs/three'))
     expect(refusal(() => rmCall(args('rm', { paths: ['/libs'] }), CONVERSATION_ID))).toBe(libsRefusal('/libs'))
     expect(refusal(() => mvCall(args('mv', { moves: [{ from: '/libs/three', to: '/work/three' }] }), CONVERSATION_ID))).toBe(libsRefusal('/libs/three'))
@@ -595,148 +595,76 @@ describe('write', () => {
 describe('edit', () => {
   const edit = (edits: unknown[]) => editCall(args('edit', { path: '/apps/notes/main.js', edits }), CONVERSATION_ID)
 
-  it('does the edits that pass, and tells what each one did with a diff', () => {
+  it('does the edits that pass, and tells what each one did', () => {
     const result = editResult(edit([
-      { from_line: 1, content: 'const a = 2' },
-      { from_line: 7, content: 'x' },
-      { after_line: 3, content: 'done()\n' },
+      { old_string: 'a = 1', new_string: 'a = 2' },
+      { old_string: 'b = 1', new_string: 'x' },
+      { old_string: '(a)', new_string: '(a, 0)', replace_all: true },
     ]), 'const a = 1\nrun(a)\nlog(a)\n')
 
-    expect(text(result.bytes)).toBe('const a = 2\nrun(a)\nlog(a)\ndone()\n')
+    expect(text(result.bytes)).toBe('const a = 2\nrun(a, 0)\nlog(a, 0)\n')
     expect(result.isError).toBe(false)
     expect(result.content).toBe([
-      'Edited /apps/notes/main.js: 2 of 3 edits done. The file had 3 lines, and it has 4 now.',
-      '1. Done. Replaced line 1 with 1 line.',
-      '2. Failed. It names line 7, and the file has 3 lines.',
-      '3. Done. Put 1 line in after line 3.',
-      'The lines have new numbers now: read the file again before the next edit of it.',
-      'The change:',
-      '@@ -1,3 +1,4 @@',
-      '-const a = 1',
-      '+const a = 2',
-      ' run(a)',
-      ' log(a)',
-      '+done()',
+      'Edited /apps/notes/main.js: 2 of 3 edits done.',
+      '1. Done. Replaced the text at line 1.',
+      '2. Failed. `old_string` is not in the file. The edits before this one changed the file first, and this edit looked for its text in what they left. '
+        + 'Read the file again, and give the text as it is in the file, with its white space and its line ends, '
+        + 'but without the `12: ` before each line of a read result: that number is no part of the file.',
+      '3. Done. Replaced the text at 2 places, on lines 2 and 3.',
     ].join('\n'))
   })
 
-  it('keeps the line end, or none, after the last line', () => {
-    const edits = edit([{ from_line: 2, content: 'B' }])
-
-    expect(text(editResult(edits, 'a\nb\n').bytes)).toBe('a\nB\n')
-    expect(text(editResult(edits, 'a\nb').bytes)).toBe('a\nB')
-    expect(text(editResult(edit([{ after_line: 0, content: 'first' }]), '').bytes)).toBe('first\n')
-    expect(text(editResult(edit([{ from_line: 1, to_line: 2, content: '' }]), 'a\nb\n').bytes)).toBe('')
-  })
-
   it('gives an error and writes nothing when no edit passed', () => {
-    expect(editResult(edit([{ from_line: 9, content: 'x' }, { after_line: 9, content: 'y' }]), 'a\n')).toStrictEqual({
+    expect(editResult(edit([{ old_string: '', new_string: 'x' }, { old_string: 'a', new_string: 'b' }]), 'a\na\n')).toStrictEqual({
       content: [
         'No edit of /apps/notes/main.js was done, and the file did not change.',
-        '1. Failed. It names line 9, and the file has 1 line.',
-        '2. Failed. `after_line` is 9, and the file has 1 line.',
+        '1. Failed. `old_string` is empty. Give the text to replace; to make a new file, or to give a file all new text, use write.',
+        '2. Failed. `old_string` is in the file at 2 places, on lines 1 and 2. '
+          + 'Give more of the text around the place to change, so that `old_string` is in the file once, or set `replace_all` to true to change every place.',
       ].join('\n'),
       isError: true,
       bytes: null,
     })
   })
 
-  it('writes nothing when the lines had the new text already', () => {
-    expect(editResult(edit([{ from_line: 1, content: 'a' }]), 'a\nb\n')).toStrictEqual({
-      content: '/apps/notes/main.js did not change: the lines had the new text already.\n1. Done. No change: line 1 had this text already.',
+  it('writes nothing when the edits leave the text as it was', () => {
+    expect(editResult(edit([{ old_string: 'a', new_string: 'a' }]), 'a\nb\n')).toStrictEqual({
+      content: '/apps/notes/main.js did not change: after the edits that were done, its text is the same as before.\n1. Done. No change: `new_string` is the same as `old_string`.',
       isError: false,
       bytes: null,
     })
   })
 
+  it('writes the line ends and the byte order mark of the file back', () => {
+    const result = editResult(edit([{ old_string: 'a\nb', new_string: 'A\nB' }]), '\uFEFFa\r\nb\r\n')
+
+    expect(result.bytes).toStrictEqual(textBytes('\uFEFFA\r\nB\r\n'))
+  })
+
   it('refuses edits that make the file larger than 2 MiB', () => {
     const long = 'a'.repeat(APPS_MAX_FILE_BYTES - 10)
 
-    expect(() => editResult(edit([{ from_line: 1, content: long }]), 'a\n')).not.toThrow()
-    expect(refusal(() => editResult(edit([{ after_line: 1, content: long }, { after_line: 1, content: 'b'.repeat(10) }]), 'a\n')))
-      .toBe('With these edits /apps/notes/main.js would have 2,097,156 bytes, and a file is at most 2,097,152 bytes. Dez did not change the file.')
-  })
-
-  // The lines of an `edit` result after its `The change:` line.
-  const change = (content: string) => content.split('\n').slice(content.split('\n').indexOf('The change:') + 1)
-  const numbered = (count: number) => Array.from({ length: count }, (_, index) => `l${index + 1}`)
-  const linesText = (lines: readonly string[]) => `${lines.join('\n')}\n`
-
-  it('shows a hunk of 20 lines whole', () => {
-    const result = editResult(edit([
-      { from_line: 2, to_line: 3, content: 'L2' },
-      { after_line: 8, content: 'new' },
-      { from_line: 14, to_line: 15, content: '' },
-    ]), linesText(numbered(20)))
-
-    expect(change(result.content)).toStrictEqual([
-      '@@ -1,18 +1,16 @@', ' l1', '-l2', '-l3', '+L2', ' l4', ' l5', ' l6', ' l7', ' l8', '+new',
-      ' l9', ' l10', ' l11', ' l12', ' l13', '-l14', '-l15', ' l16', ' l17', ' l18',
-    ])
-  })
-
-  it('shows only the first 8 and the last 8 lines of a longer hunk, each hunk by itself', () => {
-    const result = editResult(edit([
-      { from_line: 5, to_line: 11, content: 'A\nB\nC\nD\nE\nF\nG\nH' },
-      { from_line: 30, content: 'X' },
-      { from_line: 50, to_line: 60, content: Array.from({ length: 11 }, (_, index) => `N${index + 1}`).join('\n') },
-    ]), linesText(numbered(80)))
-
-    const note = (count: number) => `… ${count} lines of this hunk are not shown, to save context. read gives the file as it is now.`
-    expect(change(result.content)).toStrictEqual([
-      '@@ -2,13 +2,14 @@', ' l2', ' l3', ' l4', '-l5', '-l6', '-l7', '-l8', '-l9',
-      note(5),
-      '+D', '+E', '+F', '+G', '+H', ' l12', ' l13', ' l14',
-      '@@ -27,7 +28,7 @@', ' l27', ' l28', ' l29', '-l30', '+X', ' l31', ' l32', ' l33',
-      '@@ -47,17 +48,17 @@', ' l47', ' l48', ' l49', '-l50', '-l51', '-l52', '-l53', '-l54',
-      note(12),
-      '+N7', '+N8', '+N9', '+N10', '+N11', ' l61', ' l62', ' l63',
-    ])
-  })
-
-  it('gives a short result for an edit of a whole long file, and still writes the whole file', () => {
-    const lines = numbered(400)
-    const result = editResult(edit([{ from_line: 1, to_line: 400, content: lines.map((line) => `${line}!`).join('\n') }]), linesText(lines))
-
-    expect(change(result.content)).toStrictEqual([
-      '@@ -1,400 +1,400 @@', ...lines.slice(0, 8).map((line) => `-${line}`),
-      '… 784 lines of this hunk are not shown, to save context. read gives the file as it is now.',
-      ...lines.slice(-8).map((line) => `+${line}!`),
-    ])
-    expect(text(result.bytes)?.split('\n')).toHaveLength(401)
-  })
-
-  it('cuts a long diff of many hunks, and still writes the whole file', () => {
-    const lines = Array.from({ length: 400 }, (_, index) => `line ${index + 1} ${'-'.repeat(90)}`)
-    const edits = Array.from({ length: 40 }, (_, index) => ({ from_line: index * 10 + 1, content: `${lines[index * 10]}!` }))
-    const result = editResult(edit(edits), linesText(lines))
-
-    const shown = change(result.content)
-    expect(shown.at(-1)).toMatch(/^… [\d,]+ more lines of the diff are not shown\. read gives the file as it is now\.$/)
-    expect(shown.join('\n').length).toBeLessThan(20_200)
-    expect(text(result.bytes)?.split('\n')).toHaveLength(401)
-  })
-
-  it('counts the lines of the diff that a cut leaves out, with those that the note of a long hunk stands for', () => {
-    const cutNote = (count: number) => `… ${count} more lines of the diff are not shown. read gives the file as it is now.`
-    const long = numbered(20).map((line) => line.padEnd(5_000, '.'))
-    const cutBeforeNote = editResult(edit([{ from_line: 1, to_line: 20, content: long.map((line) => line.replaceAll('.', '!')).join('\n') }]), linesText(long))
-
-    expect(change(cutBeforeNote.content)).toStrictEqual(['@@ -1,20 +1,20 @@', ...long.slice(0, 3).map((line) => `-${line}`), cutNote(37)])
-
-    const longNew = numbered(20).map((line) => line.padEnd(7_000, '!'))
-    const cutAfterNote = editResult(edit([{ from_line: 1, to_line: 20, content: longNew.join('\n') }]), linesText(numbered(20)))
-
-    expect(change(cutAfterNote.content)).toStrictEqual([
-      '@@ -1,20 +1,20 @@', ...numbered(8).map((line) => `-${line}`),
-      '… 24 lines of this hunk are not shown, to save context. read gives the file as it is now.',
-      `+${longNew[12]}`, `+${longNew[13]}`, cutNote(6),
-    ])
+    expect(() => editResult(edit([{ old_string: 'a', new_string: long }]), 'a\n')).not.toThrow()
+    expect(refusal(() => editResult(edit([{ old_string: 'a', new_string: long }, { old_string: '\n', new_string: `${'b'.repeat(10)}\n` }]), 'a\n')))
+      .toBe('With these edits /apps/notes/main.js would have 2,097,153 bytes, and a file is at most 2,097,152 bytes. Dez did not change the file.')
   })
 
   it('needs an edit, and the path of a file', () => {
-    expect(refusal(() => edit([]))).toContain('`edits` is an empty list.')
-    expect(refusal(() => editCall(args('edit', { path: '/apps/notes', edits: [{ from_line: 1, content: '' }] }), CONVERSATION_ID))).toContain('is the folder of an app, not a file')
+    expect(refusal(() => edit([]))).toBe('`edits` is an empty list. Give at least one edit, as in {"edits": [{"old_string": "...", "new_string": "..."}]}.')
+    expect(refusal(() => editCall(args('edit', { path: '/apps/notes', edits: [{ old_string: 'a', new_string: 'b' }] }), CONVERSATION_ID))).toContain('is the folder of an app, not a file')
+  })
+
+  // The two wrong calls of the issue: line items of another name, and one
+  // edit with its fields next to `path`.
+  it('refuses calls of other forms with the names of its parameters', () => {
+    const refused = (parameters: Record<string, unknown>) => refusal(() => parseSubcommandCall(APPS_TOOL, { command: 'edit', parameters: JSON.stringify(parameters) }))
+    const form = ' The parameters go in "parameters" as the text of a JSON object, as in {"command":"edit","parameters":"{\\"path\\":\\"/apps/unit-converter/main.js\\",'
+      + '\\"edits\\":[{\\"old_string\\":\\"const factor = 0.3\\",\\"new_string\\":\\"const factor = 0.3048\\"},{\\"old_string\\":\\"feet\\",\\"new_string\\":\\"ft\\",\\"replace_all\\":true}]}"}.'
+
+    expect(refused({ path: '/apps/notes/main.js', edits: [{ from: 'a', to: 'b' }] })).toBe('Item 1 of the parameter "edits" is not valid: an item of "edits" has no parameter "from". '
+      + `The parameters of an item of "edits" are: old_string (string, required), new_string (string, required), replace_all (boolean).${form}`)
+    expect(refused({ new: 'b', old: 'a', path: '/apps/notes/main.js' })).toBe('apps edit has no parameter "new". '
+      + `The parameters of apps edit are: path (string, required), edits (list of objects, required).${form}`)
   })
 })
 

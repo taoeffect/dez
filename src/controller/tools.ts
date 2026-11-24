@@ -20,10 +20,9 @@ import type { SettingsSnapshot } from '../model/state'
 import type { CallPictureBudget } from '../model/streams/pictureBudget'
 import { AUDIO_ALIASES, VIDEO_ALIASES, type AppAlias } from '../model/tools/appAliases'
 import { invokeCall, invokeInputsText, invokeLabel, INVOKE_RUN_TEXTS } from '../model/tools/appInvoke'
-import { APPS_TOOL, EDIT_HINT, withEditHint } from '../model/tools/appsTool'
+import { APPS_TOOL } from '../model/tools/appsTool'
 import { AUDIO_TOOL, audioClipId, audioClipOf, audioCutPart, audioCutRequest, audioCutResultText, audioLengthText } from '../model/tools/audioTool'
 import { conversationInfoText } from '../model/tools/conversationInfo'
-import { editHintIsDue, isEditCall } from '../model/tools/editHint'
 import { brightnessPlan, contrastPlan, convertPlan, cropPlan, flipPlan, IMAGE_TOOL, imageIdArgument, imageOf, imageResultText, invertPlan, rotatePlan, saturationPlan, scalePlan, unreadableImageText, unwritableFormatError, type ImagePlan } from '../model/tools/imageTool'
 import { cancelledJobIds, isIntermediate, jobCancelText, jobInspectText, jobResultText, jobsListText, jobStartedText, jobsWaitText, unknownJobText, waitedJobIds, type JobResult } from '../model/tools/jobs'
 import { jsEvalCall } from '../model/tools/jsEval'
@@ -121,15 +120,6 @@ export interface ToolRunContext {
    *  after the results of the call's round, until a compaction takes the
    *  round out. */
   pictureBudget(): Promise<CallPictureBudget>
-  /** The result texts of the calls of the round that ran before this call,
-   *  in order. The model reads them with the rest of the conversation, but
-   *  the section of the reply gets the blocks of a round only at the end
-   *  of the round (`runToolRound`, stream.ts). */
-  roundResults: readonly string[]
-  /** True for a call of the code of a `js_eval` run or of a run of a
-   *  script app (toolBridge.ts): its result goes to that code, and no
-   *  request sends it to the model. */
-  isBridged: boolean
   /** The money limit of the tab (model/chat/moneyLimit.ts), read now: the
    *  limit (undefined with none), and what the tab spent, with the quotes
    *  of the paid requests that still run. */
@@ -191,27 +181,6 @@ function aliasRunners(aliases: readonly AppAlias[]): Record<string, ToolRunner> 
     alias.subcommand.name,
     (args, signal, context) => runAliasCall(alias, args, context.sections(), context.conversationId, context, signal),
   ]))
-}
-
-// The `apps` runner `runner` with the hint of `edit` (editHint.ts): while
-// the hint is due, each result of an `edit` call ends with it. That is
-// every outcome: edits done or failed, no change, and a call that Dez
-// refuses, also for its parameters (`parseSubcommandCall`), as a first
-// call often has wrong ones. The help of `edit` (a call with no
-// parameters) holds the hint already, and gets no second copy. A bridged
-// call gets no hint: its result goes to code.
-function withEditHintWhenDue(runner: ToolRunner): ToolRunner {
-  return async (args, signal, context) => {
-    const due = isEditCall(APPS_TOOL.name, args) && !context.isBridged && editHintIsDue(context.sections(), context.roundResults)
-    if (!due) return runner(args, signal, context)
-    try {
-      const result = runnerResult(await runner(args, signal, context))
-      return result.content.includes(EDIT_HINT) ? result : { ...result, content: withEditHint(result.content) }
-    } catch (error) {
-      if (!(error instanceof ToolError)) throw error
-      return { content: withEditHint(error.message), isError: true }
-    }
-  }
 }
 
 // Starts `work` as a job of the reply for a call of `tool` (`options` as
@@ -599,10 +568,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // starts no job. A stop of the reply stops `rm`, `mv`, and `wc` between
   // two paths, and `grep` between two reads or in its matching; any other
   // call is short and runs to its end. `grep` matches in a Web Worker,
-  // which Dez ends at a time limit (appsGrep.ts). Every result of an
-  // `edit` call can end with the hint of `edit` (`withEditHintWhenDue`):
-  // of the file subcommands, only `edit` reads the conversation, for
-  // whether its model reads the hint already.
+  // which Dez ends at a time limit (appsGrep.ts).
   //
   // `invoke` runs the code of an app (appInvoke.ts), as a job of the
   // reply: code that a model wrote can run for long. The kind of the app
@@ -613,7 +579,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // tells the inputs that go, as for `model_invoke`.
   //
   // `show` puts a UI app into the reply (appShow.ts): it runs no code.
-  apps: withEditHintWhenDue(subcommandRunner(APPS_TOOL, {
+  apps: subcommandRunner(APPS_TOOL, {
     init: initApp,
     read: (args, _signal, { conversationId }) => readAppFile(args, conversationId),
     write: (args, _signal, { conversationId }) => writeAppFile(args, conversationId),
@@ -639,7 +605,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
         label: invokeLabel(args),
       }, invokeInputsText(call.inputs, call.kind))
     },
-  })),
+  }),
 }
 
 export default sbp('sbp/selectors/register', {

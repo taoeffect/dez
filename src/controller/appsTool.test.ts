@@ -1,11 +1,9 @@
 import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
-import type { Section, Tab } from '../model/chat/types'
-import { toolGroupText } from '../model/streams/toolRound'
 import { MANIFEST_MAX_BYTES, parseAppManifest } from '../model/tools/appManifest'
 import { showResultText } from '../model/tools/appShow'
-import { APPS_MAX_BYTES, APPS_MAX_FILE_BYTES, EDIT_HINT, withEditHint } from '../model/tools/appsTool'
+import { APPS_MAX_BYTES, APPS_MAX_FILE_BYTES } from '../model/tools/appsTool'
 import { grepFiles, GREP_TIME_LIMIT_SECONDS, type GrepOutcome, type GrepRequest } from '../model/tools/grepMatch'
 import type { ToolRunResult } from '../model/tools/types'
 import { APP_DIR, appFiles, builtInAppFiles, callContext, CONVERSATION_WORK_FOLDER, fakeAppFiles, native, resetNative, running, STOP, type FakeAppFiles } from './testing'
@@ -172,7 +170,7 @@ describe('apps edit', () => {
   it('writes the file with the edits that passed', async () => {
     const files = fakeAppFiles(appFiles('notes', { 'main.js': 'const a = 1\nrun(a)\n' }))
 
-    const result = await apps('edit', { path: '/apps/notes/main.js', edits: [{ from_line: 1, content: 'const a = 2' }, { from_line: 9, content: 'x' }] })
+    const result = await apps('edit', { path: '/apps/notes/main.js', edits: [{ old_string: 'a = 1', new_string: 'a = 2' }, { old_string: 'b = 1', new_string: 'x' }] })
 
     expect(result.isError).toBe(false)
     expect(result.content).toContain('Edited /apps/notes/main.js: 1 of 2 edits done.')
@@ -182,8 +180,8 @@ describe('apps edit', () => {
   it('writes nothing when no edit changed the file', async () => {
     fakeAppFiles(appFiles('notes', { 'main.js': 'const a = 1\nrun(a)\n' }))
 
-    const failed = await apps('edit', { path: '/apps/notes/main.js', edits: [{ from_line: 9, content: 'x' }] })
-    const same = await apps('edit', { path: '/apps/notes/main.js', edits: [{ from_line: 2, content: 'run(a)' }] })
+    const failed = await apps('edit', { path: '/apps/notes/main.js', edits: [{ old_string: 'b = 1', new_string: 'x' }] })
+    const same = await apps('edit', { path: '/apps/notes/main.js', edits: [{ old_string: 'run(a)', new_string: 'run(a)' }] })
 
     expect(failed.isError).toBe(true)
     expect(failed.content).toContain('No edit of /apps/notes/main.js was done')
@@ -196,178 +194,16 @@ describe('apps edit', () => {
     const files = fakeAppFiles(appFiles('notes', { 'main.js': 'const a = 1\nrun(a)\n' }))
     files.set('apps/notes/data.bin', new Uint8Array(APPS_MAX_BYTES))
 
-    const longer = await apps('edit', { path: '/apps/notes/main.js', edits: [{ after_line: 2, content: 'done()' }] })
+    const longer = await apps('edit', { path: '/apps/notes/main.js', edits: [{ old_string: 'run(a)\n', new_string: 'run(a)\ndone()\n' }] })
 
     expect(longer.isError).toBe(true)
     expect(longer.content).toContain('and this call would add 7 B.')
     expect(textAt(files, 'apps/notes/main.js')).toBe('const a = 1\nrun(a)\n')
 
-    const shorter = await apps('edit', { path: '/apps/notes/main.js', edits: [{ from_line: 2, content: '' }] })
+    const shorter = await apps('edit', { path: '/apps/notes/main.js', edits: [{ old_string: 'run(a)\n', new_string: '' }] })
 
     expect(shorter.isError).toBe(false)
     expect(textAt(files, 'apps/notes/main.js')).toBe('const a = 1\n')
-  })
-
-  describe('the hint', () => {
-    const PATH = '/apps/notes/main.js'
-    const EDIT = { path: PATH, edits: [{ from_line: 1, content: 'const a = 2' }] }
-    const MODEL = { providerId: 'venice', modelId: 'venice-glm-5' }
-    // The tab of the calls.
-    let tabId: string
-
-    function edit(context: Partial<ToolRunContext> = {}, parameters: Record<string, unknown> = EDIT): Promise<ToolRunResult> {
-      return apps('edit', parameters, running(), { tabId, ...context })
-    }
-
-    // An edit call whose `parameters` text is `parameters`, as the model
-    // wrote it.
-    function rawEdit(parameters: string, context: Partial<ToolRunContext> = {}): Promise<ToolRunResult> {
-      const call: ToolRunCall = { name: 'apps', arguments: { command: 'edit', parameters } }
-      return sbp('dez.controller/tools/run', call, running(), callContext({ tabId, ...context })) as Promise<ToolRunResult>
-    }
-
-    // The result ends with the hint, in a paragraph of its own.
-    const hinted = (result: ToolRunResult): boolean => result.content.endsWith(`\n\n${EDIT_HINT}`)
-
-    const ask = (id: string): Section => ({ id, role: 'user', content: [{ kind: 'text', text: 'Fix the app.' }] })
-
-    const EDIT_ARGUMENTS = { command: 'edit', parameters: JSON.stringify(EDIT) }
-    const HELP_ARGUMENTS = { command: 'help', parameters: JSON.stringify({ command: 'edit' }) }
-
-    // A reply with the blocks of `results`, the results of calls with the
-    // arguments `args` (edit calls by default), as the end of their round
-    // writes them.
-    function reply(id: string, results: readonly ToolRunResult[], args: Record<string, string> = EDIT_ARGUMENTS): Section {
-      const blocks = results.map((result, index) => ({
-        id: `call_${index}`,
-        name: 'apps',
-        status: result.isError ? 'error' as const : 'success' as const,
-        arguments: args,
-        result: result.content,
-      }))
-      return { id, role: 'agent', model: MODEL, content: [{ kind: 'text', text: toolGroupText(blocks) }] }
-    }
-
-    const keep = (sections: readonly Section[]): void => {
-      sbp('dez.model/tabs/replaceSections', tabId, sections)
-    }
-
-    beforeEach(() => {
-      fakeAppFiles(appFiles('notes', { 'main.js': 'const a = 1\nrun(a)\n' }))
-      tabId = sbp('dez.model/tabs/activeId') as string
-    })
-
-    it('ends the result of the first edit of a tab with the hint, and of no edit while the tab holds it', async () => {
-      const first = await edit()
-      keep([ask('u1'), reply('a1', [first])])
-      const second = await edit({}, { path: PATH, edits: [{ from_line: 2, content: 'run(a, 2)' }] })
-
-      expect(first.isError).toBe(false)
-      expect(hinted(first)).toBe(true)
-      expect(second.content).toContain(`Edited ${PATH}: 1 of 1 edit done.`)
-      expect(second.content).not.toContain(EDIT_HINT)
-    })
-
-    it('gives the hint to the first edit of each tab, while another tab holds it', async () => {
-      keep([ask('u1'), reply('a1', [await edit()])])
-      tabId = (sbp('dez.model/tabs/create') as Tab).id
-
-      expect(hinted(await edit())).toBe(true)
-    })
-
-    it('gives the hint again after the user deleted the block that held it', async () => {
-      keep([ask('u1'), reply('a1', [await edit()])])
-      keep([ask('u1'), reply('a1', [])])
-
-      expect(hinted(await edit())).toBe(true)
-    })
-
-    it('gives the hint again after a compaction took out the block that held it', async () => {
-      keep([ask('u1'), reply('a1', [await edit()]), ask('u2'), reply('a2', [])])
-      sbp('dez.model/tabs/compact', tabId, {
-        sections: [
-          { id: 'notes', role: 'agent', model: MODEL, content: [{ kind: 'text', text: '<dez:compaction count="1"/>\nThe notes.' }] },
-          ask('u2'),
-          reply('a2', []),
-        ],
-        replySectionId: 'a2',
-        tokens: 1000,
-        model: MODEL,
-      })
-
-      expect(hinted(await edit())).toBe(true)
-    })
-
-    // The results of a round reach the section only at the end of the
-    // round.
-    it('gives no hint when an earlier call of the round got it', async () => {
-      const first = await edit()
-
-      expect(hinted(await edit({ roundResults: ['Wrote the new file /apps/notes/a.js (1 B, 1 line).', first.content] }))).toBe(false)
-      expect(hinted(await edit({ roundResults: ['Wrote the new file /apps/notes/a.js (1 B, 1 line).'] }))).toBe(true)
-    })
-
-    it('gives the hint with edits that all failed, and with a call that Dez refuses', async () => {
-      const failed = await edit({}, { path: PATH, edits: [{ from_line: 9, content: 'x' }] })
-      const refused = await edit({}, { ...EDIT, path: '/apps/notes/gone.js' })
-
-      expect(failed.isError).toBe(true)
-      expect(failed.content).toContain(`No edit of ${PATH} was done`)
-      expect(hinted(failed)).toBe(true)
-      expect(refused.isError).toBe(true)
-      expect(refused.content).toContain('There is no file /apps/notes/gone.js.')
-      expect(hinted(refused)).toBe(true)
-    })
-
-    // A first edit call is often wrong: its refusal tells the fix, and the
-    // hint tells how to use edit.
-    it('gives the hint with a call whose parameters Dez refuses, and none to such a call of js_eval code', async () => {
-      const wrongItem = { path: PATH, edits: [{ old_text: 'a', new_text: 'b' }] }
-      const noEdits = { path: PATH }
-      const noJson = 'path: /apps/notes/main.js'
-      const results = [await edit({}, wrongItem), await edit({}, noEdits), await rawEdit(noJson)]
-      const bridged = [await edit({ isBridged: true }, wrongItem), await edit({ isBridged: true }, noEdits), await rawEdit(noJson, { isBridged: true })]
-
-      expect(bridged[0].content).toMatch(/^Item 1 of the parameter "edits" is not valid: an item of "edits" has no parameter "old_text"\./)
-      expect(bridged[1].content).toMatch(/^The required parameter "edits" is missing\./)
-      expect(bridged[2].content).toMatch(/^"parameters" is not the text of a JSON object\./)
-      expect(bridged.some((result) => result.content.includes(EDIT_HINT))).toBe(false)
-      expect(results.map((result) => result.isError)).toStrictEqual([true, true, true])
-      expect(results.map((result) => result.content)).toStrictEqual(bridged.map((result) => withEditHint(result.content)))
-    })
-
-    it('gives no hint to the edit after a refused call that got it', async () => {
-      const refused = await edit({}, { path: PATH, edits: [{ old_text: 'a', new_text: 'b' }] })
-      keep([ask('u1'), reply('a1', [refused])])
-
-      expect(hinted(refused)).toBe(true)
-      expect((await edit()).content).not.toContain(EDIT_HINT)
-    })
-
-    // The help of edit tells what the hint tells.
-    it('holds the hint once in the help of edit, and gives none to an edit while the tab holds the help', async () => {
-      const helps = [await apps('edit', {}, running(), { tabId }), await apps('help', { command: 'edit' }, running(), { tabId })]
-      keep([ask('u1'), reply('a1', [helps[1]], HELP_ARGUMENTS)])
-      const afterHelp = await edit()
-      keep([ask('u1'), reply('a1', [])])
-      const afterDelete = await edit()
-
-      expect(helps.map((help) => help.content.split(EDIT_HINT).length - 1)).toStrictEqual([1, 1])
-      expect(afterHelp.content).toContain(`Edited ${PATH}: 1 of 1 edit done.`)
-      expect(afterHelp.content).not.toContain(EDIT_HINT)
-      expect(hinted(afterDelete)).toBe(true)
-    })
-
-    // Its result goes to the code that made the call, not to the model.
-    it('never gives the hint to a call of js_eval code', async () => {
-      const done = await edit({ isBridged: true })
-      const refused = await edit({ isBridged: true }, { ...EDIT, path: '/apps/notes/gone.js' })
-
-      expect(done.isError).toBe(false)
-      expect(done.content).not.toContain(EDIT_HINT)
-      expect(refused.isError).toBe(true)
-      expect(withEditHint(refused.content)).toBe((await edit({}, { ...EDIT, path: '/apps/notes/gone.js' })).content)
-    })
   })
 })
 
@@ -904,7 +740,7 @@ describe('the built-in apps', () => {
 
     for (const [command, parameters] of [
       ['write', { path: '/apps/dez-media/main.ts', content: 'x' }],
-      ['edit', { path: '/apps/dez-media/main.ts', edits: [{ from_line: 1, content: 'x' }] }],
+      ['edit', { path: '/apps/dez-media/main.ts', edits: [{ old_string: 'export', new_string: 'x' }] }],
       ['rm', { paths: ['/apps/notes/manifest.json', '/apps/dez-media'] }],
       ['mv', { moves: [{ from: '/apps/dez-media', to: '/apps/media' }] }],
       ['mkdir', { path: '/apps/dez-media/data' }],
