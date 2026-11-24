@@ -9,7 +9,7 @@ Most work needs no direct call: `dez-media` has `rfft(x, n)` (as `np.fft.rfft`: 
 
 ```js
 import FFT from "fft.js"                       // a script app, a UI page
-const { default: FFT } = await import("fft.js") // js_eval: a literal name
+const { default: FFT } = await import("fft.js") // js_eval: no static import
 ```
 
 ## Use

@@ -10,12 +10,12 @@ The source is in this folder: read a file for the details of a function.
 | Name | Has | Loads in |
 | --- | --- | --- |
 | `dez-media` | all but the two below | a script app, `js_eval`, a UI page |
-| `dez-media/canvas` | `useShippedFonts`, `titleLayer`, `drawTitleFrame` | a script app with `"native": ["skia-canvas"]` |
-| `dez-media/frames` | `FrameWriter` | a script app |
+| `dez-media/canvas` | `useShippedFonts`, `titleLayer`, `drawTitleFrame` | `js_eval`, a script app with `"native": ["skia-canvas"]` |
+| `dez-media/frames` | `FrameWriter` | a script app, `js_eval` |
 
 ```js
 import { beatGrid, f32Samples } from "dez-media"           // a script app, a UI page
-const { beatGrid } = await import("dez-media")              // js_eval: a literal name
+const { beatGrid } = await import("dez-media")              // js_eval: no static import
 ```
 
 ## The built-in apps

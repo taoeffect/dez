@@ -1,8 +1,9 @@
 // @ts-check
-// dez-media/canvas: the graphics helpers of a script app that draws with
-// skia-canvas: the shipped fonts, and an animated title in the look of a
-// 1980s anime title card. Only a Deno run of an app whose manifest has
-// `"native": ["skia-canvas"]` can load skia-canvas, which loads a native
+// dez-media/canvas: the graphics helpers of a Deno run (a script app or the
+// code of a `js_eval` call) that draws with skia-canvas: the shipped fonts,
+// and an animated title in the look of a 1980s anime title card. Only a
+// `js_eval` run, and a run of an app whose manifest has
+// `"native": ["skia-canvas"]`, can load skia-canvas, which loads a native
 // file. So this entry is apart from 'dez-media' (mod.js), which the pages
 // of UI apps import too, and the import map of a page does not have it
 // (`pageImportMap`, src/model/tools/appTemplates.ts).
@@ -10,7 +11,7 @@
 import { Canvas, FontLibrary } from 'skia-canvas'
 
 /**
- * A font that Dez ships, as `dez.fonts` of a run of an app lists it.
+ * A font that Dez ships, as `dez.fonts` of a Deno run lists it.
  * @typedef {{ file: string, family: string, weight: number, scripts: string, path: string }} ShippedFont
  */
 
@@ -21,8 +22,8 @@ const GENERIC_FAMILIES = { 'sans-serif': 'Noto Sans', monospace: 'JetBrains Mono
 
 /**
  * Gives skia-canvas the fonts that Dez ships, each under its family, and
- * `sans-serif` and `monospace` as shipped families. A run of an app sees
- * no font of the computer, so a canvas draws no text before this call.
+ * `sans-serif` and `monospace` as shipped families. A Deno run sees no
+ * font of the computer, so a canvas draws no text before this call.
  *
  * Returns every shipped family as one list for `ctx.font`, Noto Sans first:
  * skia-canvas takes each character from the first family of the list that

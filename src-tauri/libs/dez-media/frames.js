@@ -1,6 +1,7 @@
 // @ts-check
-// dez-media/frames: the writer of a frame sequence of a script app. The
-// folder `<name>.frames` of `dez.outputFolder` holds the frames of one clip
+// dez-media/frames: the writer of a frame sequence of a Deno run (a script
+// app or the code of a `js_eval` call). The folder `<name>.frames` of
+// `dez.outputFolder` holds the frames of one clip
 // (000000.png, 000001.png, and so on, or raw RGBA: 000000.rgba, and so on)
 // and frames.json, the facts of the clip. After the run, Dez encodes the
 // folder with its ffmpeg into one clip; src/model/tools/frameSequences.ts

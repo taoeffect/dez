@@ -1,17 +1,21 @@
 # skia-canvas
 
 The HTML canvas API (2D) in Deno, drawn by Skia (npm `skia-canvas` 4.0.1, MIT). It makes images and the frames of
-clips in a script app.
+clips in a script app and in `js_eval`.
 
 ## Where it works
 
-Only in a script app whose `manifest.json` has the field `"native": ["skia-canvas"]`: the library loads a native
-file. `js_eval` cannot load it, and a UI page has the canvas of the browser in its place. Its native code can write
-only the places of the run: the output folder, the folder of the app, and the work folder.
+In `js_eval`, and in a script app whose `manifest.json` has the field `"native": ["skia-canvas"]`: the library loads
+a native file. A UI page cannot load it: it has the canvas of the browser in its place. Its native code can write
+only the places of the run: the output folder, the work folder, and the folder of the app.
 
 ```json
 { "name": "poster", "description": "Draws a poster.", "kind": "script", "native": ["skia-canvas"] }
 ```
+
+`js_eval` needs no field. Its code is the body of a function, so it loads the library with
+`const { Canvas, loadImage } = await import("skia-canvas")`, and its `dez` has the same `inputs`, `outputFolder`,
+`workFolder`, and `fonts` as the `dez` of an app.
 
 ## Import and draw
 

@@ -564,8 +564,8 @@ export class TabJobs implements ToolJobs {
   }
 
   // The jobs of the job `scope`, which the work of that job gets
-  // (`JobWork`): the tool calls of the code of a run of an app start and
-  // see only these.
+  // (`JobWork`): the tool calls of the code of a script run (a script app
+  // or a `js_eval` call) start and see only these.
   private scoped(scope: string): ToolJobs {
     const view: JobView = (job) => job.scope === scope && isNumbered(job)
     const running = () => this.runningIn(view)

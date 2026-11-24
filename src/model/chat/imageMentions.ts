@@ -28,7 +28,7 @@ const WORD_CHARS = String.raw`\p{L}\p{M}\p{N}_`
  *  mention, for an id of the form of the regex source `idSource`, which
  *  has no group and ends with a word char. Group 1 is the char before the
  *  `@` (empty at the start of the text), and group 2 is the id. The
- *  handles of a run of an app (`@&1`, tools/toolBridge.ts) take the same
+ *  handles of a script run (`@&1`, tools/toolBridge.ts) take the same
  *  form as the mentions of the assets.
  *
  *  A mention is `@` and one whole id: no word char comes before the `@`

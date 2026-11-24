@@ -17,7 +17,8 @@ import {
 import { isWholeNumberIn, unknownFieldsProblem } from './inputDecode'
 import type { KeptFile } from './programRuns'
 
-// The frame sequences of a run of a script app (`apps invoke`): a folder
+// The frame sequences of a script run (`apps invoke` of a script app, or a
+// `js_eval` call): a folder
 // `<name>.frames` directly in the output folder holds the frames of one
 // clip and `frames.json`, the facts of the clip. After the run, Dez
 // encodes the frames with its ffmpeg into one clip, which it keeps as one
@@ -77,7 +78,7 @@ const FRAME_NAME = new RegExp(`^(\\d{${FRAME_DIGITS}})\\.(${FRAME_FORMATS.join('
 
 const FRAMES_FIELDS = ['fps', 'width', 'height', 'count', 'alpha']
 
-// The most characters of a name of an entry in a text: the code of an app
+// The most characters of a name of an entry in a text: the code of a run
 // can make a name of any length.
 const SHOWN_NAME_CHARS = 100
 

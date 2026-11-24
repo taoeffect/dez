@@ -20,10 +20,10 @@ import type { DecodeRun } from './inputDecode'
 import type { FileTree } from './nativeTypes'
 import { runProgram, wholeLinesEnd } from './programRuns'
 
-// The encode of a frame sequence of the output folder of a run of a script
-// app (model/tools/frameSequences.ts) into one clip, with the ffmpeg that
-// Dez ships. This module registers no selector: `keptOutputs`
-// (appInvoke.ts) calls it after the code of the app ended.
+// The encode of a frame sequence of the output folder of a script run (a
+// script app or the code of a `js_eval` call; model/tools/frameSequences.ts)
+// into one clip, with the ffmpeg that Dez ships. This module registers no
+// selector: `keptOutputs` (appInvoke.ts) calls it after the code ended.
 //
 // Dez trusts no frame that the code made. It checks the folder from its
 // listing, and ffmpeg runs under the OS rule of its program, so a frame
@@ -48,7 +48,7 @@ async function framesFileBytes(path: string): Promise<Uint8Array | null> {
   try {
     return await sbp('dez.native/loadAppFileBytes', path, 'cache') as Uint8Array
   } catch (error) {
-    console.error(`Failed to read the ${FRAMES_FILE} of a frame sequence of a run of an app:`, error)
+    console.error(`Failed to read the ${FRAMES_FILE} of a frame sequence of a script run:`, error)
     return null
   }
 }
@@ -86,7 +86,7 @@ export async function encodedSequence(folder: string, outputFolder: string, name
   })
   if (end.kind === 'timedOut') throw new ToolError(run.texts.timedOut(run.timeoutMs, FRAMES_ENCODE_STATE))
   if (end.kind !== 'exited' || end.code !== 0) {
-    console.error(`ffmpeg could not encode the frame sequence ${name} of a run of an app:`, end, errors)
+    console.error(`ffmpeg could not encode the frame sequence ${name} of a script run:`, end, errors)
     // The error output can name a path that the data of a frame holds.
     return { notKept: encodeFailedText(name, withoutLocalPaths(encodeErrorLine(wholeLinesEnd(errors, errorsCut)))) }
   }
@@ -94,7 +94,7 @@ export async function encodedSequence(folder: string, outputFolder: string, name
   const made = await sbp('dez.native/listFileTree', `${folder}/${clip}`, 0, 'cache') as FileTree
   const problem = encodedClipProblem(name, sequence, { size: made.kind === 'file' ? made.size : null, frames: encodedFrameCount(progress) })
   if (problem !== null) {
-    console.error(`Dez does not keep the clip of the frame sequence ${name} of a run of an app:`, problem, errors)
+    console.error(`Dez does not keep the clip of the frame sequence ${name} of a script run:`, problem, errors)
     return { notKept: problem }
   }
   return { clip, sequence }

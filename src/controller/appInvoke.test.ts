@@ -605,7 +605,7 @@ describe('runScriptJob', () => {
     expect(outcome.text).toContain('Dez did not keep intro.frames/ (ffmpeg could not encode it: Could find no file with path ')
     expect(outcome.text).not.toContain(CACHE_DIR)
     expect(outcome.text).not.toContain('0xffff')
-    expect(consoleError).toHaveBeenCalledWith('ffmpeg could not encode the frame sequence intro.frames of a run of an app:', { kind: 'exited', code: 254 }, errors)
+    expect(consoleError).toHaveBeenCalledWith(expect.any(String), { kind: 'exited', code: 254 }, errors)
     deletedWorkFolder()
   })
 

@@ -680,7 +680,7 @@ describe('apps invoke', () => {
     const bare = await invoke(await chatRequest(), 'call_bare', { name: 'bare' })
     expect(bare.result.status).toBe('failed')
     expect(bare.result.text).toContain('file:///libs/skia-canvas/')
-    expect(bare.result.text).toContain('skia-canvas loads a native file, which only the run of an app whose manifest.json has "native": ["skia-canvas"] may load. Add that field to the manifest.json of the app, and run the app again.')
+    expect(bare.result.text).toContain('skia-canvas loads a native file, which the run of an app may load only when its manifest.json has "native": ["skia-canvas"]. Add that field to the manifest.json of the app, and run the app again.')
 
     const title = await invoke(bare.next, 'call_title', { name: 'title' })
     expect(title.result.status).toBe('finished')

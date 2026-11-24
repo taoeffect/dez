@@ -24,10 +24,11 @@ Chart.register(...registerables)
 
 `import Chart from "chart.js/auto"` registers all the parts. `chart.js/helpers` and `@kurkle/color` are there too.
 
-## A chart in a script app
+## A chart in a script app or in js_eval
 
-Chart.js draws on a canvas of skia-canvas, so the `manifest.json` of the app needs `"native": ["skia-canvas"]`
-(read `/libs/skia-canvas/SKILL.md`). `js_eval` cannot draw a chart: it cannot load skia-canvas.
+Chart.js draws on a canvas of skia-canvas, so the `manifest.json` of a script app needs `"native": ["skia-canvas"]`
+(read `/libs/skia-canvas/SKILL.md`). `js_eval` needs no field: its code loads each module with `await import(…)`, as
+in `const { Chart, registerables } = await import("chart.js")`, and runs the body of `main` below.
 
 ```ts
 import { writeFile } from "node:fs/promises"

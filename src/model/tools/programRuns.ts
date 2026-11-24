@@ -69,11 +69,15 @@ export function programNotStartedText(program: ShippedProgram, tool: string): st
  *  program. No other run of it can go either. Rust refuses only a program
  *  that runs code of a model (Deno), so the text names the calls that run
  *  Deno, and tells that the other calls of their tools still work: a model
- *  that reads that a whole tool cannot run stops using all of it. */
+ *  that reads that a whole tool cannot run stops using all of it. The
+ *  subcommands of `audio` and `video` that run a built-in app are those of
+ *  appAliases.ts, which this module does not import: it imports this one
+ *  through videoFonts.ts. */
 export function programNotConfinedText(program: ShippedProgram): string {
   return `Dez did not start ${program}: the system of this computer cannot keep a program inside its own folders, and Dez does not run ${program} without that guard. `
-    + `This is not a fault of the call. No call that runs ${program} can run on this computer: ${JS_EVAL_TOOL.name}, and ${APPS_TOOL.name} ${APPS_INVOKE} of a script app. `
-    + `The other calls of the ${APPS_TOOL.name} tool still work, also ${APPS_TOOL.name} ${APPS_INVOKE} of a UI app. `
+    + `This is not a fault of the call. No call that runs ${program} can run on this computer: ${JS_EVAL_TOOL.name}, ${APPS_TOOL.name} ${APPS_INVOKE} of a script app, `
+    + 'and each subcommand of audio and video that runs a built-in app (audio beats, onsets, and align; video cuts, sync, and title). '
+    + `The other calls of these tools still work, also ${APPS_TOOL.name} ${APPS_INVOKE} of a UI app and the other subcommands of audio and video. `
     + `Tell the user that Dez cannot run ${program} here and that Help › Developer Console shows why, and do the work without the calls that run ${program}.`
 }
 

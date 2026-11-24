@@ -514,7 +514,7 @@ const SANDBOX_ADVICE = 'The code of an app can open only the folder of its app, 
 
 // The advice for an app that loads skia-canvas, and whose manifest does not
 // ask for it (`skiaCanvasRefused`).
-const NATIVE_CANVAS_ADVICE = `${NATIVE_CANVAS_LIBRARY} loads a native file, which only the run of an app whose ${MANIFEST_FILE} has ${NATIVE_FIELD_EXAMPLE} may load. `
+const NATIVE_CANVAS_ADVICE = `${NATIVE_CANVAS_LIBRARY} loads a native file, which the run of an app may load only when its ${MANIFEST_FILE} has ${NATIVE_FIELD_EXAMPLE}. `
   + `Add that field to the ${MANIFEST_FILE} of the app, and run the app again.`
 
 const KEPT_NONE = 'Dez kept no file of the run.'

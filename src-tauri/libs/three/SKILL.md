@@ -9,7 +9,7 @@ import * as THREE from "three"
 import { OBJExporter } from "three/addons/exporters/OBJExporter.js"
 ```
 
-`js_eval` imports it with a literal name: `const THREE = await import("three")`.
+`js_eval` has no static import: `const THREE = await import("three")`.
 
 `three/addons/` is the folder `examples/jsm/` of the package. Dez ships the addons of these folders: animation,
 controls, curves, environments, exporters, geometries, helpers, lines, loaders, math, modifiers, postprocessing,
@@ -31,7 +31,7 @@ There is no network. Load a file from its bytes, not from a URL:
 Dez keeps no 3D file as an image or a clip. Write an OBJ, STL, or GLB file into the work folder of the conversation
 (`${dez.workFolder}/model.glb`, which the `apps` tool names `/work/model.glb`).
 
-## A picture of a scene in a script app
+## A picture of a scene in a script app or js_eval
 
 Project each vertex, then fill the triangles with skia-canvas (read `/libs/skia-canvas/SKILL.md`):
 

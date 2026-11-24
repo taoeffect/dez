@@ -16,12 +16,12 @@ import { BUILT_IN_APP_PREFIX, MANIFEST_FILE } from '../../model/tools/appManifes
 import { APP_RUN_DEFAULT_SECONDS, APP_RUN_MAX_DECODED_BYTES, APP_RUN_MAX_FRAMES, APP_RUN_MAX_OUTPUT_BYTES, APP_RUN_MAX_OUTPUT_FILES, APP_RUN_MAX_TOOL_CALLS, APPS_MAX_BYTES, APPS_MAX_ENTRIES, APPS_ROOT, APPS_VIRTUAL_ROOT, FRAMES_MAX_FPS, FRAMES_MAX_SIDE, FRAMES_MIN_FPS, LIBS_VIRTUAL_ROOT, SHIPPED_LIBRARIES } from '../../model/tools/appsTool'
 import { SCRIPT_MAIN_FILE, UI_INDEX_FILE } from '../../model/tools/appTemplates'
 import { CONVERSATION_WORK_ROOT, WORK_VIRTUAL_ROOT } from '../../model/tools/conversationWork'
-import { JS_EVAL_DEFAULT_SECONDS, JS_EVAL_MAX_SECONDS, JS_EVAL_MAX_TOOL_CALLS, JS_EVAL_OUTPUT_BYTES } from '../../model/tools/jsEval'
+import { JS_EVAL_CALL_WAIT_MS, JS_EVAL_DEFAULT_SECONDS, JS_EVAL_MAX_SECONDS, JS_EVAL_MAX_TOOL_CALLS, JS_EVAL_OUTPUT_BYTES } from '../../model/tools/jsEval'
 import { MAX_SAVED_WORK_FILES } from '../../model/tools/videoTool'
 import { WORK_FOLDER_LIFETIME_MS, WORK_ROOT } from '../../model/tools/workFolders'
 import { shortcutKeyText } from '../../model/shortcuts'
 import { byteSizeText } from '../../utils/byteSize'
-import { countText } from '../../utils/countText'
+import { countOf, countText } from '../../utils/countText'
 import { DEZ_DISCUSSIONS_URL } from '../../utils/dezLinks'
 import bundledPrograms from '../../../src-tauri/binaries/manifest.json'
 import bundledFonts from '../../../src-tauri/fonts/manifest.json'
@@ -83,6 +83,7 @@ const APP_LIMITS = {
   frames: countText(APP_RUN_MAX_FRAMES),
 }
 const CODE_LIMITS = {
+  wait: countOf(JS_EVAL_CALL_WAIT_MS / 1000, 'second'),
   seconds: JS_EVAL_DEFAULT_SECONDS,
   mostMinutes: JS_EVAL_MAX_SECONDS / MINUTE_SECONDS,
   toolCalls: JS_EVAL_MAX_TOOL_CALLS,
@@ -656,9 +657,9 @@ function onOverlayClick(event: MouseEvent) {
                - the built-in apps: src-tauri/builtin-apps/ (help.e2e.ts
                  checks the list of the page against it), and their
                  subcommands, src/model/tools/appAliases.ts;
-               - the decode of the input clips and the frame sequences of a
-                 script app: src/model/tools/inputDecode.ts,
-                 frameSequences.ts. -->
+               - the decode of the input clips of a script app, and the frame
+                 sequences of a script app and of `js_eval`:
+                 src/model/tools/inputDecode.ts, frameSequences.ts. -->
           <section v-if="page === 'apps'" class="help-page help-page--apps">
             <h3>What an app is</h3>
             <p>
@@ -792,20 +793,24 @@ function onOverlayClick(event: MouseEvent) {
             </p>
             <p>
               With the Dez tool <code>js_eval</code>, a model runs a short piece of JavaScript or
-              TypeScript and gets its result: for example for exact arithmetic, a date, or a sort.
-              The code has no network and no environment variables, and it can start no program. It
-              can read and write the files of the work folder of the conversation, and import the
-              libraries that come with Dez (see Libraries below), and it opens no other file. It can
-              call the other Dez tools (also <code>apps invoke</code>, which runs an app as a job of
-              the code, but not <code>js_eval</code> or <code>apps show</code>), at most
-              {{ CODE_LIMITS.toolCalls }} times in one run, so one piece of code can do a chain of
-              tool calls. With the <code>apps</code> tool, the code can also read and change the
-              files of the apps. It works on your images and clips only through those tools, by
-              their ids: it gets no file of them. Dez stops code that
-              runs longer than {{ CODE_LIMITS.seconds }} seconds (a model can ask for up to
+              TypeScript and gets its result: for example for exact arithmetic, a date, a sort, or
+              a picture that the code draws. The code has no network and no environment variables,
+              and it can start no program. It gets a copy of each image and clip that the call
+              names, it can read and write the files of the work folder of the conversation, and it
+              can import the libraries that come with Dez (see Libraries below). Dez keeps the
+              images and the clips that the code writes, by the rules of a run of a script app
+              (below). The code can call the other Dez tools (also <code>apps invoke</code>, which
+              runs an app as a job of the code, but not <code>js_eval</code> or
+              <code>apps show</code>), at most {{ CODE_LIMITS.toolCalls }} times in one run, so one
+              piece of code can do a chain of tool calls. With the <code>apps</code> tool, the code
+              can also read and change the files of the apps. The call waits
+              {{ CODE_LIMITS.wait }} for the code: code that runs longer goes on as a job, and the
+              model gets its result later. Each result tells how long the code ran. Dez stops code
+              that runs longer than {{ CODE_LIMITS.seconds }} seconds (a model can ask for up to
               {{ CODE_LIMITS.mostMinutes }} minutes), and code that writes more than
-              {{ CODE_LIMITS.output }} of output. Click the chip of the call to see the code, its
-              result, and each tool call that the code made.
+              {{ CODE_LIMITS.output }} of output. Click the chip of the call to see the code and its
+              result. For code that ended within the wait, the chip also lists each tool call that
+              the code made.
             </p>
             <p>
               With <code>apps invoke</code>, a model runs an app as a job, with parameters and with
@@ -825,8 +830,9 @@ function onOverlayClick(event: MouseEvent) {
               The code of a script app also reads and writes the work folder of the conversation.
               Before the run, Dez can decode the clips of the call into the samples of their sound
               and the pixels of their frames, at most {{ APP_LIMITS.decodedSize }} in one run, so
-              that the code can measure them. The code can also write the frames of a video one by
-              one, and after the run Dez makes one clip of them, which counts as one file of the
+              that the code can measure them. Dez decodes no clip for <code>js_eval</code>. The code
+              of a script app and of <code>js_eval</code> can also write the frames of a video one
+              by one, and after the run Dez makes one clip of them, which counts as one file of the
               run: at most {{ APP_LIMITS.frames }} frames, of at most {{ FRAMES_MAX_SIDE }} by
               {{ FRAMES_MAX_SIDE }} pixels, at {{ FRAMES_MIN_FPS }} to {{ FRAMES_MAX_FPS }} frames
               each second. A clip of frames with a transparent background is a MOV file, which
@@ -836,8 +842,9 @@ function onOverlayClick(event: MouseEvent) {
               The code of a script app can also call the Dez tools, as the code of
               <code>js_eval</code> does (but not <code>js_eval</code>, <code>apps invoke</code>, or
               <code>apps show</code>), at most {{ APP_LIMITS.toolCalls }} times in one run. An image
-              or a clip that such a call makes is a part of the result of the job, also when the
-              code fails after the call. When Dez stops the run, it keeps none of them.
+              or a clip that a tool call of the code makes, in a script app or in
+              <code>js_eval</code>, is a part of the result of the run, also when the code fails
+              after the call. When Dez stops the run, it keeps none of them.
             </p>
 
             <!-- The libraries and their uses come from `SHIPPED_LIBRARIES`
@@ -855,10 +862,10 @@ function onOverlayClick(event: MouseEvent) {
             <p>
               The code of <code>js_eval</code> and of a script app, and the page of a UI app, import
               them by their names. A page cannot import skia-canvas, or the parts of dez-media that
-              draw with it or write files. Only a script app imports skia-canvas, and only when its
-              <code>{{ MANIFEST_FILE }}</code> asks for it. It draws text with the fonts that come
-              with Dez: the run sees no font of your computer. No code loads a library from the
-              internet. The
+              draw with it or write files. The code of <code>js_eval</code> can always import
+              skia-canvas, and a script app only when its <code>{{ MANIFEST_FILE }}</code> asks for
+              it. It draws text with the fonts that come with Dez: the run sees no font of your
+              computer. No code loads a library from the internet. The
               <button type="button" class="help-link" @click="page = 'thanks'">Thank You</button>
               page names the projects of the libraries.
             </p>
@@ -875,10 +882,10 @@ function onOverlayClick(event: MouseEvent) {
                 The rule of the system lets the code of <code>js_eval</code> open only the run
                 folder of its call, in
                 <code v-if="runFoldersDir">{{ runFoldersDir }}</code><template v-else>the cache folder of the system</template>,
-                and the work folder of its conversation, and read the libraries of Dez. The
-                permissions of Deno let it read and write only the work folder (only the rule of the
-                system stops an <code>import</code> of a file). Dez deletes the run folder at the
-                end of the run.
+                and the work folder of its conversation, and read the libraries and the fonts of
+                Dez. The permissions of Deno give it the same places (only the rule of the system
+                stops an <code>import</code> of a file). Dez deletes the run folder at the end of
+                the run.
               </li>
               <li>
                 The code of a script app can open only its run folder, the folder of its own app,
@@ -914,8 +921,8 @@ function onOverlayClick(event: MouseEvent) {
               </li>
               <li>
                 skia-canvas is native code, which Deno does not check: for its file opens, the rule
-                of the system is the only guard. Only a script app that asks for skia-canvas loads
-                it.
+                of the system is the only guard. Only the code of <code>js_eval</code>, and a script
+                app that asks for skia-canvas, load it.
               </li>
               <li>
                 Code that gets past Deno through a fault of Deno has only the rule of the system
