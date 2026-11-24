@@ -2,7 +2,7 @@ import { mediaTagText, type MediaTagData } from '../chat/mediaTags'
 import type { Section } from '../chat/types'
 import { reply, user } from '../streams/testing'
 import { AUDIO_ALIASES, VIDEO_ALIASES, type AppAlias } from './appAliases'
-import { appManifestText, type AppKind } from './appManifest'
+import { appManifestText, type AppKind, type AppManifest } from './appManifest'
 import { grepCall, grepPlan, grepRequest, grepText } from './appsGrep'
 import { APPS_TOOL, type AppsEntryKind, type AppsTree, type PathFacts } from './appsTool'
 import { grepFiles } from './grepMatch'
@@ -120,9 +120,14 @@ export function appsArgs(command: string, parameters: Record<string, unknown>): 
 export const MISSING_TREE: AppsTree = { kind: 'missing', size: 0, entries: [], more: false }
 export const FOLDER_FACTS: PathFacts = { kind: 'folder', size: 0 }
 
+/** The manifest of the app `notes` of `kind`. */
+export function notesAppManifest(kind: AppKind): AppManifest {
+  return { name: 'notes', description: 'Keeps notes.', kind }
+}
+
 /** The bytes of a valid manifest file of the app `notes` of `kind`. */
 export function notesManifest(kind: AppKind): Uint8Array {
-  return textBytes(appManifestText({ name: 'notes', description: 'Keeps notes.', kind }))
+  return textBytes(appManifestText(notesAppManifest(kind)))
 }
 
 /** The listing of a file of `size` bytes. */

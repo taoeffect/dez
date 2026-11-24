@@ -31,7 +31,7 @@ import {
 import { APP_RUN_MAX_OUTPUT_BYTES, APP_RUN_MAX_OUTPUT_FILES } from './appsTool'
 import { jobStartedText } from './jobs'
 import { JS_EVAL_OUTPUT_BYTES, textForModel, type RunOutcome } from './jsEval'
-import { aliasOf, appsArgs, CONVERSATION, fileTree, FOLDER_FACTS, folderTree, MISSING_TREE, notesManifest, PNG_BYTES, refusal, textBytes, WAV_BYTES } from './testing'
+import { aliasOf, appsArgs, CONVERSATION, fileTree, FOLDER_FACTS, folderTree, MISSING_TREE, notesAppManifest, notesManifest, PNG_BYTES, refusal, textBytes, WAV_BYTES } from './testing'
 import { SHIPPED_FONTS } from './videoFonts'
 
 const NOT_STARTED = 'Dez started no job.'
@@ -197,7 +197,7 @@ describe('checkInvokeTarget', () => {
   const check = (changes: Partial<InvokeTarget>) => refusal(() => checkInvokeTarget(call, target(changes)))
 
   it('takes a script app with a main file, and a UI app with a page, and gives the manifest with the kind', () => {
-    expect(checkInvokeTarget(call, target())).toStrictEqual({ name: 'notes', description: 'Keeps notes.', kind: 'script' })
+    expect(checkInvokeTarget(call, target())).toStrictEqual(notesAppManifest('script'))
     expect(checkInvokeTarget(call, uiTarget()).kind).toBe('ui')
   })
 
@@ -267,7 +267,7 @@ describe('runNativeCanvas', () => {
     expect(runNativeCanvas(call, manifestWith(['skia-canvas']))).toBe(true)
     expect(runNativeCanvas(call, manifestWith(['skia-canvas', 'skia-canvas']))).toBe(true)
     expect(runNativeCanvas(call, manifestWith([]))).toBe(false)
-    expect(runNativeCanvas(call, { name: 'notes', description: 'Keeps notes.', kind: 'script' })).toBe(false)
+    expect(runNativeCanvas(call, notesAppManifest('script'))).toBe(false)
   })
 
   it('refuses a field that is no list, and a name of another library, by the path of the manifest', () => {
