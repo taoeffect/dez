@@ -2,6 +2,7 @@ import { defaultKeymap, deleteCharForward, history, redo, undo, undoDepth } from
 import { ensureSyntaxTree } from '@codemirror/language'
 import { EditorSelection, EditorState, Transaction, type TransactionSpec } from '@codemirror/state'
 import { EditorView, keymap, runScopeHandlers } from '@codemirror/view'
+import type { Tree } from '@lezer/common'
 import { describe, expect, it, vi } from 'vitest'
 import {
   PILL_BODY,
@@ -48,6 +49,7 @@ import { SENTINEL_CHAR, sectionVisibleText } from '../../model/chat/content'
 import type { ContentNode, ModelRef, Role, Section, SectionThinking } from '../../model/chat/types'
 import { toolBlockText } from '../../model/chat/toolBlocks'
 import { serializeConversationAsMarkdown } from '../../model/persistence/conversationFormat'
+import TOOL_CHIP_REPLIES from './toolChipReplies.fixture.md?raw'
 
 // CodeMirror reads `navigator.platform` once, when it loads, to pick the
 // platform of its keymaps (Node gives `MacIntel` on macOS). The Linux keymap
@@ -1392,15 +1394,29 @@ describe('broken prompt pills', () => {
 })
 
 describe('markdown sections', () => {
+  function parsedDoc(sections: string[]): { state: EditorState; tree: Tree } {
+    const state = EditorState.create({ doc: sections.join(`\n${SECTION_SEP}\n`), extensions: [dezLanguageSupport()] })
+    return { state, tree: ensureSyntaxTree(state, state.doc.length, 5000)! }
+  }
+
   /** Each top-level block of the editor's markdown parse of `sections`:
    *  its node name and its text. */
   function topBlocks(...sections: string[]): string[] {
-    const state = EditorState.create({ doc: sections.join(`\n${SECTION_SEP}\n`), extensions: [dezLanguageSupport()] })
+    const { state, tree } = parsedDoc(sections)
     const blocks: string[] = []
-    for (let node = ensureSyntaxTree(state, state.doc.length, 5000)!.topNode.firstChild; node; node = node.nextSibling) {
+    for (let node = tree.topNode.firstChild; node; node = node.nextSibling) {
       blocks.push(`${node.name}: ${state.sliceDoc(node.from, node.to)}`)
     }
     return blocks
+  }
+
+  /** The text of each node named `name` in the editor's markdown parse of
+   *  `sections`. */
+  function nodeTexts(name: string, ...sections: string[]): string[] {
+    const { state, tree } = parsedDoc(sections)
+    const texts: string[] = []
+    tree.iterate({ enter: (node) => { if (node.name === name) texts.push(state.sliceDoc(node.from, node.to)) } })
+    return texts
   }
 
   it('ends a quote at the end of its section', () => {
@@ -1444,5 +1460,71 @@ describe('markdown sections', () => {
     expect(topBlocks(`${tag}\n---`)).toEqual([`SectionSeparator: ${tag}`, 'HorizontalRule: ---'])
     // On any other line, the tag is text.
     expect(topBlocks(`Notes\n${tag}`)).toEqual([`Paragraph: Notes\n${tag}`])
+  })
+
+  function appsBlock(id: string, result: string): string {
+    return toolBlockText({ id, name: 'apps', status: 'success', arguments: { command: 'read' }, result })
+  }
+
+  // A real reply: a backtick in the first `read` result
+  // (`fragmentShader: /* glsl */\``) paired with the backtick of the last
+  // reply line, so all text between them showed in the code color.
+  it('parses no markdown in a tool block, so no mark of a result pairs with a mark of the reply', () => {
+    const lines = TOOL_CHIP_REPLIES.split('\n')
+    const linesText = (first: number, last: number): string => lines.slice(first - 1, last).join('\n')
+
+    expect(topBlocks(TOOL_CHIP_REPLIES)).toEqual([
+      `ToolBlock: ${linesText(1, 83)}`,
+      `Paragraph: ${linesText(84, 84)}`,
+      `ToolBlock: ${linesText(85, 167)}`,
+      `ToolBlock: ${linesText(168, 192)}`,
+      `Paragraph: ${linesText(193, 193)}`,
+    ])
+    expect(nodeTexts('InlineCode', TOOL_CHIP_REPLIES)).toEqual(['`enemies.js`'])
+  })
+
+  // The `*` of `*=` opens an emphasis that the `*` of `/*` closes.
+  it('shows a reply line between two blocks with no emphasis from their results', () => {
+    const first = appsBlock('call_1', '12: col *= 1.0')
+    const second = appsBlock('call_2', '40: fragmentShader: /* glsl */')
+    const text = `${first}\nThe colors are too bright.\n${second}`
+
+    expect(topBlocks(text)).toEqual([`ToolBlock: ${first}`, 'Paragraph: The colors are too bright.', `ToolBlock: ${second}`])
+    expect(nodeTexts('Emphasis', text)).toEqual([])
+  })
+
+  it('ends a paragraph, a list, and a quote at a block', () => {
+    const block = appsBlock('call_1', 'one')
+
+    expect(topBlocks(`Let me read it.\n${block}`)).toEqual(['Paragraph: Let me read it.', `ToolBlock: ${block}`])
+    expect(topBlocks(`- item\n${block}`)).toEqual(['BulletList: - item', `ToolBlock: ${block}`])
+    expect(topBlocks(`> quote\n${block}`)).toEqual(['Blockquote: > quote', `ToolBlock: ${block}`])
+  })
+
+  it('parses blocks in a row as one block each, and the text after them as its own block', () => {
+    const first = appsBlock('call_1', 'one')
+    const second = appsBlock('call_2', 'two')
+
+    expect(topBlocks(`${first}\n${second}\nDone.`)).toEqual([`ToolBlock: ${first}`, `ToolBlock: ${second}`, 'Paragraph: Done.'])
+  })
+
+  it('keeps a code fence or an HTML block that a result starts inside its block', () => {
+    const fence = appsBlock('call_1', '```js\nconst a = 1')
+    const script = appsBlock('call_2', '<script>\nlet b = 2')
+
+    expect(topBlocks(`${fence}\nAfter the fence.`)).toEqual([`ToolBlock: ${fence}`, 'Paragraph: After the fence.'])
+    expect(topBlocks(`${script}\nAfter the script.`)).toEqual([`ToolBlock: ${script}`, 'Paragraph: After the script.'])
+  })
+
+  it('ends a block with no closing line at the end of its section', () => {
+    const opening = appsBlock('call_1', 'one').split('\n')[0]
+
+    expect(topBlocks(`${opening}\n*one`, 'two*')).toEqual([`ToolBlock: ${opening}\n*one`, `SectionSeparator: ${SECTION_SEP}`, 'Paragraph: two*'])
+  })
+
+  it('never makes a setext heading out of the closing line of a block', () => {
+    const block = appsBlock('call_1', 'one')
+
+    expect(topBlocks(`${block}\n---`)).toEqual([`ToolBlock: ${block}`, 'HorizontalRule: ---'])
   })
 })

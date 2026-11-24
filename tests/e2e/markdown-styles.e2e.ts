@@ -71,6 +71,25 @@ function relativeSizes (sizes: Record<string, number | string>): Record<string, 
   return Object.fromEntries(Object.entries(sizes).map(([line, size]) => [line, Math.round(Number(size) / Number(sizes[BODY]) * 100) / 100]))
 }
 
+// Two `read` results, as a real reply had them: the `*` of `*=` and the
+// first backtick paired with the backtick and the `*` of `/*` of the next
+// result, so the reply line between the two chips showed in italics and in
+// the code color.
+const BETWEEN_CHIPS = 'The finish shader is too bright.'
+const CHIPS_TEXT = [
+  '<dez:tool id="call_read_main" name="apps" command="read" parameters="{&quot;path&quot;: &quot;/apps/hop/main.js&quot;}">',
+  '/apps/hop/main.js: lines 1-2 of 2 (1 KB)',
+  '1: col *= 1.0',
+  '2: const finish = `',
+  '</dez:tool>',
+  BETWEEN_CHIPS,
+  '<dez:tool id="call_read_glow" name="apps" command="read" parameters="{&quot;path&quot;: &quot;/apps/hop/glow.js&quot;}">',
+  '/apps/hop/glow.js: lines 1-2 of 2 (1 KB)',
+  '1: `;',
+  '2: /* glsl */',
+  '</dez:tool>',
+].join('\n')
+
 interface ThemeColors {
   text: string
   muted: string
@@ -277,5 +296,18 @@ describe('markdown styles', () => {
     // Back to the default size, which the other tests expect.
     await browser.keys([Key.Control, '-'])
     await waitForValue(browser, 'body size after Ctrl+-', async () => (await lineFontSizes([BODY]))[BODY], 15)
+  })
+
+  it('styles a reply line between two tool chips as plain text', async () => {
+    await openFixture([
+      { role: 'user', text: 'Tone down the glow' },
+      { role: 'agent', text: CHIPS_TEXT },
+      { role: 'user', text: 'Thanks' },
+    ])
+    const colors = await themeColors()
+
+    await waitForValue(browser, 'style of the reply line', () => textStyles([BETWEEN_CHIPS]), {
+      [BETWEEN_CHIPS]: `${colors.text} normal`,
+    })
   })
 })

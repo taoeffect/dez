@@ -1,5 +1,6 @@
 import { EditorSelection, EditorState } from '@codemirror/state'
 import { describe, expect, it } from 'vitest'
+import { toolBlockText } from '../../model/chat/toolBlocks'
 import { SECTION_SEP, dezLanguageSupport, encodePrompt } from '../thread/cmEditor'
 import { markdownImages } from './images'
 import { renderedLinkAt, renderedLinks } from './links'
@@ -89,6 +90,14 @@ describe('renderedLinks', () => {
   it('leaves links in code as source', () => {
     const doc = lines('See `[a](https://a.example)`.', '```', '[b](https://b.example)', '```', '', '    [c](https://c.example)')
     expect(shown(createState(doc))).toEqual([])
+  })
+
+  // A chip hides its block, but a link whose text ran from a result into
+  // the reply showed the reply as a link.
+  it('renders no link of a tool result, also none that runs from a result into the reply', () => {
+    const block = toolBlockText({ id: 'call_1', name: 'apps', status: 'success', arguments: { command: 'read' }, result: 'See [a](https://a.example) and [b' })
+    const doc = lines(block, 'reply](https://b.example) and [c](https://c.example).')
+    expect(shownTexts(createState(doc))).toEqual(['c'])
   })
 
   it('shows the source of a link that a selection touches, also at its two ends', () => {

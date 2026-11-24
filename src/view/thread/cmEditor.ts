@@ -16,6 +16,7 @@ import { thinkingField } from '../../model/chat/thinking'
 import { messagesAsMarkdown, sectionTextAsMarkdown, type MarkdownMessage } from '../../model/chat/markdown'
 import { holdsLinkedFile } from '../../model/chat/linkedFiles'
 import { SENTINEL_CHAR, normalizeContent, stripLiveSentinels, textNode } from '../../model/chat/content'
+import { isToolBlockClosingLine, isToolBlockOpeningLine } from '../../model/chat/toolBlocks'
 import { EDITOR_FONT_SIZE_DEFAULT, EDITOR_FONT_SIZE_PROPERTY } from '../../model/editorFontSize'
 import { escapeMarkerAttribute, unescapeMarkerAttribute } from '../../utils/markerAttribute'
 import { ASSET_FLASH_MS } from '../editor/drawnAssets'
@@ -3381,6 +3382,42 @@ const sectionSeparatorMarkdown: MarkdownConfig = {
   }],
 }
 
+// A tool block (toolBlocks.ts) is one node with no markdown inside. lezer
+// takes `dez:tool` for no HTML tag (the `:`), and Dez writes no blank line
+// around a block (`ChipSpacing`, toolCalls.ts). So without this extension
+// the opening line, the result, the closing line, and the reply text after
+// it are one paragraph, and a `*` or a backtick of a result pairs with one
+// of the reply or of a later result: the reply shows in italics or in the
+// code color. The opening line ends an open paragraph (`endLeaf`), and the
+// line after the closing line starts a new block. The node stops before a
+// separator line, so an opening line with no closing line (a hand edit)
+// takes no other section.
+// A block inside an open code fence or HTML block of the reply stays a part
+// of it, and so does the text after it, for the reason that the comment of
+// `sectionSeparatorMarkdown` tells.
+const toolBlockMarkdown: MarkdownConfig = {
+  defineNodes: [{ name: 'ToolBlock', block: true }],
+  parseBlock: [{
+    name: 'ToolBlock',
+    before: 'LinkReference',
+    parse(cx, line) {
+      if (!isToolBlockOpeningLine(line.text)) return false
+      const from = cx.lineStart
+      let to = from + line.text.length
+      while (cx.nextLine() && line.text !== SECTION_SEP) {
+        to = cx.lineStart + line.text.length
+        if (isToolBlockClosingLine(line.text)) {
+          cx.nextLine()
+          break
+        }
+      }
+      cx.addElement(cx.elt('ToolBlock', from, to))
+      return true
+    },
+    endLeaf: (_cx, line) => isToolBlockOpeningLine(line.text),
+  }],
+}
+
 export function dezLanguageSupport(): Extension {
-  return [markdown({ extensions: sectionSeparatorMarkdown }), syntaxHighlighting(dezHighlightStyle)]
+  return [markdown({ extensions: [sectionSeparatorMarkdown, toolBlockMarkdown] }), syntaxHighlighting(dezHighlightStyle)]
 }

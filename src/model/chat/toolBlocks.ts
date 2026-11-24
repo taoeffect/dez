@@ -242,6 +242,18 @@ export function findToolBlocks(text: string): ToolBlock[] {
   return blocks
 }
 
+/** Whether `line`, one whole line, can open a block. The editor's
+ *  markdown parse reads each block as one node with this test and
+ *  `isToolBlockClosingLine` (`toolBlockMarkdown`, `cmEditor.ts`). */
+export function isToolBlockOpeningLine(line: string): boolean {
+  return OPENING_LINE.test(line)
+}
+
+/** Whether `line`, one whole line, is the closing line of a block. */
+export function isToolBlockClosingLine(line: string): boolean {
+  return line === CLOSE_TAG
+}
+
 /** A text as its plain-text and tool block pieces, in order. Empty text
  *  pieces are left out; whitespace is kept. */
 export function splitToolBlocks(text: string): ToolTextPiece[] {

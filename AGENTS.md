@@ -277,7 +277,7 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 - **Only a user edit has a `userEvent`**: a new user edit path must set one; a new program write must not (`view/editor/agentTextEdits.ts`, `costReset.ts`).
 - **The editor holds the old tab for a tick after a switch**: write the view back only to `viewTabId`, and never give it another tab's section models (`ThreadEditor.vue`).
 - **A compaction swaps the sections under the editor**: `dez.model/tabs/compact` and `dez.editor/rebuildIfVisible` run in the same tick (`compactIfDue`), and it cannot be undone. No delete key next to the block deletes it or joins text to it (`src/view/editor/compaction.ts`).
-- **Each section is its own markdown text** (`sectionSeparatorMarkdown`, `cmEditor.ts`); code fences and HTML blocks still run into the next sections.
+- **Each section is its own markdown text, and each tool block one block with no markdown** (`sectionSeparatorMarkdown`, `toolBlockMarkdown`, `cmEditor.ts`); code fences and HTML blocks still run into the next sections.
 - **Thinking has two copies during a stream** (store and visible editor); see `dez.editor/setSectionThinkingIfVisible`.
 - **Never change the stored thinking**: replays send it back, and the prompt cache needs the same bytes. The panel shows `readableThinking` (`src/model/chat/thinking.ts`).
 - **Agent pill DOM changes in place**: see `RoleSeparatorWidget.eq` and `pillThinkingUpdater` in `cmEditor.ts`.
