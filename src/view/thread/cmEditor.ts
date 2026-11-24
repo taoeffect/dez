@@ -1523,6 +1523,13 @@ const IMAGE_TOOLBAR_GLASS = {
   backdropFilter: 'blur(14px) saturate(130%)',
 }
 
+// The surface of the CM tooltips and of the preview box of a mention chip.
+const POPUP_SURFACE = {
+  border: '1px solid var(--color-border, #333)',
+  backgroundColor: 'var(--color-bg, #1e1e1e)',
+  boxShadow: '0 4px 16px rgba(0, 0, 0, 0.2)',
+}
+
 export const dezTheme = EditorView.theme({
   '&': {
     height: '100%',
@@ -2395,8 +2402,8 @@ export const dezTheme = EditorView.theme({
   // which can show the image of the box, the find dropdown and the model
   // pickers (50), and the CM tooltips (500): the tooltips of the toolbar of
   // its image draw over it. Its surface is that of the CM tooltips
-  // (`.cm-tooltip` below). It shows only once it has its place
-  // (`data-shown`); the module animates its entrance.
+  // (`POPUP_SURFACE`). It shows only once it has its place (`data-shown`);
+  // the module animates its entrance.
   //
   // An image and a player get their width from the line, as a percent,
   // which a box as wide as its content cannot give. So the module gives the
@@ -2412,10 +2419,8 @@ export const dezTheme = EditorView.theme({
     boxSizing: 'border-box',
     width: 'max-content',
     padding: editorSize(6),
-    border: '1px solid var(--color-border, #333)',
+    ...POPUP_SURFACE,
     borderRadius: editorSize(12),
-    backgroundColor: 'var(--color-bg, #1e1e1e)',
-    boxShadow: '0 4px 16px rgba(0, 0, 0, 0.2)',
     visibility: 'hidden',
   },
   '.dez-asset-preview[data-shown]': {
@@ -3199,11 +3204,9 @@ export const dezTheme = EditorView.theme({
   // base theme gives them light colors only, as Dez does not use CM's dark
   // theme flag.
   '.cm-tooltip': {
-    border: '1px solid var(--color-border, #333)',
+    ...POPUP_SURFACE,
     borderRadius: editorSize(6),
-    backgroundColor: 'var(--color-bg, #1e1e1e)',
     color: 'var(--color-text)',
-    boxShadow: '0 4px 16px rgba(0, 0, 0, 0.2)',
     fontFamily: UI_FONT_FAMILY,
     fontSize: editorSize(12),
     lineHeight: '1.4',
