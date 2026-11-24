@@ -500,6 +500,14 @@ describe('toolCallLabel', () => {
     expect(toolCallLabel('web_search', '', 'error')).toBe('Tool call, old/unrecognized tool: web_search, failed')
   })
 
+  // A running block keeps its state until its whole group ends; the name
+  // follows the chip's lead instead (the triangle, the still spinner).
+  it('tells where a running call is in its group, and leaves the phase out of an ended block', () => {
+    expect(toolCallLabel('model_list', '"gemini"', 'running', '', undefined, 'ended')).toBe('Tool call model_list, "gemini", ended')
+    expect(toolCallLabel('model_list', '"gemini"', 'running', 'intermediate', undefined, 'waiting')).toBe('Tool call model_list, "gemini", waiting, intermediate')
+    expect(toolCallLabel('model_list', '"gemini"', 'error', '', undefined, 'ended')).toBe('Tool call model_list, "gemini", failed')
+  })
+
   it('ends with the label of an intermediate call', () => {
     expect(toolCallLabel('model_invoke', '"studio/paint"', 'success', 'intermediate asset hidden')).toBe('Tool call model_invoke, "studio/paint", intermediate asset hidden')
     expect(toolCallLabel('model_invoke', '"studio/paint"', 'running', 'intermediate')).toBe('Tool call model_invoke, "studio/paint", running, intermediate')
