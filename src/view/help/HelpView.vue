@@ -796,7 +796,8 @@ function onOverlayClick(event: MouseEvent) {
               The code has no network and no environment variables, and it can start no program. It
               can read and write the files of the work folder of the conversation, and import the
               libraries that come with Dez (see Libraries below), and it opens no other file. It can
-              call the other Dez tools (but not <code>apps invoke</code>), at most
+              call the other Dez tools (also <code>apps invoke</code>, which runs an app as a job of
+              the code, but not <code>js_eval</code> or <code>apps show</code>), at most
               {{ CODE_LIMITS.toolCalls }} times in one run, so one piece of code can do a chain of
               tool calls. With the <code>apps</code> tool, the code can also read and change the
               files of the apps. It works on your images and clips only through those tools, by

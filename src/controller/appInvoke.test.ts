@@ -1205,6 +1205,31 @@ describe('apps invoke', () => {
     expect(written).toStrictEqual([{ path: drawnImage(1), tool: 'image', madeBy: job.id }])
   })
 
+  it('runs an app from the code of a js_eval call as a job of the run: the code gets its result and its files with jobs_wait, and the reply gets the files with the marks of the app', async () => {
+    const code = callingProgram([{ selector: 'dez.tools/apps/invoke', arguments: { name: 'notes' } }, 'dez.tools/jobs_wait'])
+    native.program = (run, onOutput) => (run.appFolder === 'notes' ? returns('2 rows') : code)(run, onOutput)
+    // Only the output folder of the run of the app holds a file.
+    const noFiles = native.fileTree
+    outputFolderHolds({ 'sheet.png': PNG_BYTES })
+    const sheet = native.fileTree
+    const appRunFolder = () => native.runs.find(({ run }) => run.appFolder)?.run.folder
+    native.fileTree = (file, maxEntries) => (file.path.startsWith(`${appRunFolder()}/`) ? sheet : noFiles)(file, maxEntries)
+    fakeAppFiles(appFiles('notes', { 'main.ts': MAIN }))
+
+    const result = await tool('js_eval', { code: 'return 1' })
+
+    const app = jobs.allJobs().find((job) => job.tool === 'apps')
+    expect(native.runs.map(({ run }) => run.appFolder)).toStrictEqual([undefined, 'notes'])
+    const waited = JSON.parse(native.inputWrites[1].text) as { text: string, isError: boolean }
+    expect(waited.isError).toBe(false)
+    expect(waited.text).toContain(`<job id="${app?.id}" number="1" tool="apps" status="finished" call="invoke notes`)
+    expect(waited.text).toContain('2 rows')
+    expect(waited.text).toContain('Made the image @&1.')
+    expect(result.isError).toBe(false)
+    expect(result.content).toContain('Made the image @g (handle &1).')
+    expect(written).toStrictEqual([{ path: `${APP_DIR}/${stored()[0].path}`, tool: 'apps', madeBy: app?.id }])
+  })
+
   it('runs the page of a UI app in a frame with no program, and puts the files that it saved into the reply', async () => {
     fakeAppFiles(appFiles('notes', { 'index.html': '<!doctype html>\n' }, 'ui'))
     page = async (run) => {

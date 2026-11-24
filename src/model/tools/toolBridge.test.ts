@@ -96,18 +96,12 @@ describe('bridgedToolCall', () => {
     expect(refusal('dez.tools/js_eval', { code: 'return 1' })).toContain('Code cannot call js_eval')
   })
 
-  // A run of code starts no other run of code, by either form of a call.
-  it('refuses apps invoke in both forms of a selector, and tells the model to make the call itself', () => {
-    const errors = [
-      refusal('dez.tools/apps/invoke', { name: 'notes' }),
-      refusal('dez.tools/apps', { command: 'invoke', parameters: '{"name": "notes"}' }),
-      refusal('dez.tools/apps', { command: ' invoke\n' }),
-    ]
+  // The code of a `js_eval` call runs an app as a job of its run.
+  it('runs apps invoke in both forms of a selector', () => {
+    const call = { name: 'apps', arguments: { command: 'invoke', parameters: '{"name":"notes"}' } }
 
-    for (const error of errors) {
-      expect(error).toContain('Code cannot call apps invoke')
-      expect(error).toContain('as a tool call of your own')
-    }
+    expect(checked('dez.tools/apps/invoke', { name: 'notes' })).toStrictEqual({ ok: true, call })
+    expect(checked('dez.tools/apps', call.arguments)).toStrictEqual({ ok: true, call })
   })
 
   it('runs the other subcommands of the apps tool', () => {
@@ -220,11 +214,20 @@ describe('bridgedToolCall', () => {
 })
 
 describe('bridgedToolCall in a run of an app', () => {
-  it('refuses apps show, apps invoke, and js_eval, in both forms of a selector', () => {
+  // A run of an app starts no other app, by either form of a call.
+  it('refuses apps show, apps invoke, and js_eval, in both forms of a selector, and tells the model to make the call itself', () => {
     for (const show of [appRefusal('dez.tools/apps/show', { name: 'notes' }), appRefusal('dez.tools/apps', { command: 'show', parameters: '{"name":"notes"}' })]) {
       expect(show).toContain('cannot call apps show')
     }
-    expect(appRefusal('dez.tools/apps/invoke', { name: 'notes' })).toContain('cannot call apps invoke')
+    const invokes = [
+      appRefusal('dez.tools/apps/invoke', { name: 'notes' }),
+      appRefusal('dez.tools/apps', { command: 'invoke', parameters: '{"name": "notes"}' }),
+      appRefusal('dez.tools/apps', { command: ' invoke\n' }),
+    ]
+    for (const invoke of invokes) {
+      expect(invoke).toContain('The code of an app cannot call apps invoke')
+      expect(invoke).toContain('as a tool call of your own or from the code of a js_eval call')
+    }
     expect(appRefusal('dez.tools/js_eval', { code: 'return 1' })).toContain('Code cannot call js_eval')
   })
 

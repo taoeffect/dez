@@ -239,7 +239,9 @@ const INVOKE_UI_HELP = `A UI app runs as its page (${UI_INDEX_FILE}), which Dez 
 // makes plain code fail (the OS rule of src-tauri/src/confinement.rs, and
 // the flags of bundled_tools.rs), so that a model does not learn them one
 // failed run at a time.
-const INVOKE_HELP = `Runs the code of an app on the user's computer, with the parameters of the call. ${JOB_CALL_NOTE} The kind of the app tells how it runs.\n\n`
+const INVOKE_HELP = `Runs the code of an app on the user's computer, with the parameters of the call. ${JOB_CALL_NOTE} `
+  + `The code of a js_eval call can call invoke too (\`dez.tools/apps/${APPS_INVOKE}\`): the run of the app is then a job of the run of that code. `
+  + 'The kind of the app tells how it runs.\n\n'
   + 'A script app runs in a sandbox (Deno). '
   + `The run calls the default export of ${SCRIPT_MAIN} with two arguments, \`(parameters, dez)\`, and waits for its promise. `
   + 'The value that the function returns is the result of the job: a string as it is, JSON data as JSON, and any other value as Deno shows it. '

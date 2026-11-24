@@ -65,7 +65,8 @@ import { codePanel, hiddenPart, hidingPart, intermediateParts, pressToolChip, re
 // - a job that the code started is a job of the job of the call: the code
 //   can wait for it, and its image is then an asset of the run; the result
 //   of the call names each job that is still open, and the model gets the
-//   result of such a job with `jobs_wait`;
+//   result of such a job with `jobs_wait`. The code can run an app (the
+//   built-in app dez-chart) with `apps invoke`, as such a job;
 // - the panel of the chip of a call shows its code, and each tool call
 //   that the code made with its arguments and what the code got from it;
 //   the chip hides the image of a job that the code started with
@@ -92,6 +93,10 @@ const APP_TIME_ZONE = 'Asia/Tokyo'
 // with half alpha.
 const GLOW = { width: 64, height: 36, fps: 12, count: 12 }
 const GLOW_COLOR = [255, 128, 0, 128]
+
+// The data file that the code of a call writes into the work folder, for
+// the chart of the built-in app dez-chart: a label column and two series.
+const SALES_CSV = 'month,sales,cost\nJan,3,1\nFeb,5,2\nMar,2,2\nApr,8,3\n'
 
 describe('js_eval tool', () => {
   let setup: MockProviderApp
@@ -522,6 +527,44 @@ describe('js_eval tool', () => {
     ])
     expect(reply.endsWith(`\n\n${replyText(CALLER.modelName)}`)).toBe(true)
     await expectRunsEnded(setup)
+  })
+
+  it('runs an app from the code of a call with apps invoke: the run of the app is a job of the run of the code, which waits for it and gets its image', async () => {
+    const before = await filesIn(imagesDir)
+    await submit(browser, 'Chart my sales.')
+    const first = await chatRequest()
+    const { jobId, started, result: ran, next } = await runToolJob(chatRequest, first, 'js_eval', 'call_chart', evalCall('call_chart', [
+      // More than the 1 second that the call waits for the run, so that
+      // the run is job 1 and the run of the app job 2.
+      'await new Promise((resolve) => setTimeout(resolve, 1500))',
+      `await Deno.writeTextFile(\`\${dez.workFolder}/sales.csv\`, ${JSON.stringify(SALES_CSV)})`,
+      'const started = await dez.sbp("dez.tools/apps/invoke", {',
+      '  name: "dez-chart",',
+      '  parameters: { data: "/work/sales.csv", type: "bar", title: "Sales", width: 320, height: 200 },',
+      '})',
+      'const [, id] = /Started the job (\\S+)\\./.exec(started)',
+      'return await dez.sbp("dez.tools/jobs_wait", { jobs: id })',
+    ].join('\n')))
+    expect(started).toBe(codeRunsAsJobText(jobId, 1))
+    expect({ status: ran.status, number: ran.call.number }).toStrictEqual({ status: 'finished', number: 1 })
+
+    // The code got the result of the app and its image by its handle.
+    const result = withoutRunTime(ran.text)
+    const [chart] = jobsWaitResults(result)
+    expect({ tool: chart.tool, status: chart.status, number: chart.call.number }).toStrictEqual({ tool: 'apps', status: 'finished', number: 2 })
+    expect(chart.text.startsWith('A bar chart of "sales", "cost" (4 rows) from /work/sales.csv: chart.png, 320×200, light theme.\n\n')).toBe(true)
+    expect(chart.text.endsWith('\nMade the image @&1.')).toBe(true)
+    expect(result.endsWith('\nMade the image @a (handle &1).')).toBe(true)
+    await sendChatReply(next.reply, CALLER.modelName)
+
+    // The image has the mark of the app. Its job mark is the job of the
+    // run: the reply has the call of that job, but no call of its code.
+    const reply = await endedReply(browser)
+    expect(madeImages(reply)).toStrictEqual([{ id: 'a', marks: `tool=apps|made-by=${jobId}`, stored: true }])
+    const picture = fs.readFileSync(path.join(imagesDir, await newFileIn(browser, imagesDir, before)))
+    expect([picture.readUInt32BE(16), picture.readUInt32BE(20)]).toStrictEqual([320, 200])
+    await expectRunsEnded(setup)
+    expect(await consoleErrors(browser)).toStrictEqual([])
   })
 
   it('shows in the panel of a call its code and the tool calls of the code, and hides the image of an intermediate job of the code under the chip', async () => {

@@ -146,11 +146,13 @@ export const JS_EVAL_TOOL: ToolDefinition = {
     + 'and `await dez.sbp("dez.tools/<tool>/<subcommand>", { …parameters })` for a subcommand, '
     + 'as in `await dez.sbp("dez.tools/image/scale", { image: dez.inputs[0].id, width: 1024 })`. '
     + 'A call gives the result text of the tool, the same text that a direct call gives you, and it throws an error with that text when the tool gives an error. '
-    + `One run can make at most ${JS_EVAL_MAX_TOOL_CALLS} tool calls, and none of \`js_eval\`, of \`${APPS_TOOL.name} ${APPS_INVOKE}\`, or of \`${APPS_TOOL.name} ${APPS_SHOW}\`. `
+    + `One run can make at most ${JS_EVAL_MAX_TOOL_CALLS} tool calls, and none of \`js_eval\` or of \`${APPS_TOOL.name} ${APPS_SHOW}\`. `
     + 'An image or a clip that a call makes is an asset of the run, also when the code fails later: the result of the call names it by a handle, as in "Made the image @&1.", '
     + 'and the result of the run gives the id of each handle. A later call of the code takes the handle in place of an id: as the whole value (`image: "&1"`), or as a mention in a text ("@&1"). '
     + 'A tool call of the code shows you no picture: call asset_view yourself after the run. '
-    + 'The result also names each job that the calls started and that is still open.\n'
+    + 'A job that a call starts is a job of the run: `jobs_wait` and `jobs_list` in the code see only these jobs, and the result names each one that is still open after the run. '
+    + `So the code can run an app with \`${APPS_TOOL.name} ${APPS_INVOKE}\` (a job with its own time limit), then get its result and its files with \`jobs_wait\`; `
+    + 'the code of that app can run no other app.\n'
     + 'The code can open only its run folder (the copies of the inputs and the output folder), which Dez deletes after the run, and the work folder. '
     + `It can also read the libraries of ${LIBS_VIRTUAL_ROOT}/ and the fonts of \`dez.fonts\`. Build each path from a path of \`dez\`, as in \`\${dez.outputFolder}/chart.png\`. `
     + 'The code has no network and no environment variables, and it can start no program; no flag changes that. '

@@ -30,9 +30,9 @@ import type { ToolArguments } from './types'
 // - `dez.tools/<tool>/<subcommand>`, with the parameters of the subcommand
 //   as an object: code has objects, and needs no JSON text in a JSON text.
 
-/** The tools that the code of a run cannot call. A run of code starts no
- *  other run of code: the limits of a run (its time, the count of its tool
- *  calls) would not hold for the work that it starts. */
+/** The tools that the code of a run cannot call. Code does the work of a
+ *  `js_eval` run itself, so a run of code in it would only make the chain
+ *  of runs deeper (`UNBRIDGED_INVOKE`). */
 const UNBRIDGED_TOOLS: readonly string[] = [JS_EVAL_TOOL.name]
 
 /** A subcommand of a tool that the code of a run cannot call, and the
@@ -56,8 +56,13 @@ export interface BridgeRules {
   unbridged: readonly UnbridgedSubcommand[]
 }
 
-// `apps invoke` runs the code of an app, so no code calls it, for the cause
-// of `UNBRIDGED_TOOLS`.
+// `apps invoke` from the code of an app. The code of a `js_eval` call can
+// run an app: the run of the app is a job of the run of the code
+// (`TabJobs.scoped`) with its own limits (its time, its tool calls), and an
+// end of the code run that its code did not make (a stop, a time-out, a
+// cancel) stops it (`TabJobs.end`). The code of that app cannot run one
+// more app, so a run of code is at most two runs deep (code, then an app),
+// and no chain of runs that start runs grows from one call of the model.
 //
 // The alias subcommands of `audio` and `video` (appAliases.ts) also run
 // the code of an app, but they go: each runs fixed code that Dez ships,
@@ -66,8 +71,8 @@ export interface BridgeRules {
 const UNBRIDGED_INVOKE: UnbridgedSubcommand = {
   tool: APPS_TOOL.name,
   subcommand: APPS_INVOKE,
-  text: `Code cannot call ${APPS_TOOL.name} ${APPS_INVOKE}: a run of code starts no other run of code. `
-    + `Call ${APPS_TOOL.name} ${APPS_INVOKE} yourself, as a tool call of your own, before or after this code.`,
+  text: `The code of an app cannot call ${APPS_TOOL.name} ${APPS_INVOKE}: a run of an app starts no other app. `
+    + `Call ${APPS_TOOL.name} ${APPS_INVOKE} yourself after the job, as a tool call of your own or from the code of a ${JS_EVAL_TOOL.name} call.`,
 }
 
 // A script run is a job, which has no reply to show an app in
@@ -87,7 +92,7 @@ export const JS_EVAL_BRIDGE: BridgeRules = {
   maxCalls: JS_EVAL_MAX_TOOL_CALLS,
   overLimitText: `The code made more than ${JS_EVAL_MAX_TOOL_CALLS} tool calls, the most of one ${JS_EVAL_TOOL.name} call, so Dez did not run this one. `
     + `Make fewer calls in one run: do the rest of the work in a new ${JS_EVAL_TOOL.name} call.`,
-  unbridged: [UNBRIDGED_INVOKE, unbridgedShow(JS_EVAL_TOOL.name, 'the call')],
+  unbridged: [unbridgedShow(JS_EVAL_TOOL.name, 'the call')],
 }
 
 /** The rules of the code of a run of a script app (`apps invoke`). */
@@ -285,7 +290,7 @@ export function bridgedToolCall(line: Pick<JsEvalCallLine, 'selector' | 'argumen
     return refused(`Dez has no tool named ${shown(toolName)}. The Dez tools that code can call, by their exact names: ${names}.`)
   }
   if (UNBRIDGED_TOOLS.includes(definition.name)) {
-    return refused(`Code cannot call ${definition.name}: a run of code starts no other run of code. Do that work in this code, or in a new ${JS_EVAL_TOOL.name} call.`)
+    return refused(`Code cannot call ${definition.name}: the code does that work itself. Do it in this code, or in a new ${JS_EVAL_TOOL.name} call.`)
   }
 
   // No arguments (`dez.sbp(selector)`) are a call with none, as a call of
