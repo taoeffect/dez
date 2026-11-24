@@ -6,13 +6,21 @@ import { pidsWithCwdIn } from './processes'
 import { endedReply, openToasts } from './thread'
 
 // The parts that the specs of the tools that run code in Deno share
-// (`js_eval`, and `apps invoke`): a `js_eval` call of the mock model, and
-// the checks at the end of the reply that made the calls.
+// (`js_eval`, and `apps invoke`): a `js_eval` call of the mock model, the
+// error of a result of code that threw, and the checks at the end of the
+// reply that made the calls.
 
 /** A `js_eval` call of a mock model: `code`, and with `more` the other
- *  arguments of the call (`timeout_seconds`). */
+ *  arguments of the call (`inputs`, `timeout_seconds`). */
 export function evalCall (id: string, code: string, more: Record<string, unknown> = {}): Record<string, unknown> {
   return openAiToolCall(id, 'js_eval', { code, ...more })
+}
+
+/** The error of the result `result` of code that threw, as Deno gave it:
+ *  the result without its first line, which tells what Dez did with the
+ *  run. */
+export function thrownError (result: string): string {
+  return result.slice(result.indexOf('\n') + 1)
 }
 
 /**

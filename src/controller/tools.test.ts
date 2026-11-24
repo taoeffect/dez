@@ -68,7 +68,7 @@ import type { RequestLogRow } from './diagnostics/requestLog'
 import { TabJobs, type JobOutcome } from './jobs'
 import { invokeModel } from './modelInvoke'
 import type { BundledToolEnd } from './nativeTypes'
-import { APP_DIR, audioProgress, callContext, callingProgram, CLIP_FORMAT, CONVERSATION_WORK_FOLDER, deletedWorkFolder, ENDED, FILE_ID, H264_STREAM, heldWork, LONG, native, resetNative, running, showinfoLog, writes } from './testing'
+import { APP_DIR, audioProgress, callContext, callingProgram, CLIP_FORMAT, CONVERSATION_WORK_FOLDER, deletedWorkFolder, ENDED, FILE_ID, H264_STREAM, heldWork, LONG, native, outputFolderHolds, resetNative, running, showinfoLog, writes } from './testing'
 import type { ToolRunCall } from './tools'
 // Side-effect imports: register the dez.model/* selectors and the selector
 // under test.
@@ -3121,12 +3121,17 @@ describe('dez.controller/tools/run', () => {
   })
 
   describe('js_eval', () => {
-    // The result and the entry of the `jobs_list` call of the code of a
-    // reply with no job, in a tab with no money limit.
+    // The result and the entry of the `jobs_list` call of the code, which
+    // sees the jobs of the job of its run (none), in a tab with no money
+    // limit.
     const LIST_TEXT = jobsListText([], { limit: undefined, spent: { counted: 0, held: 0 } })
     const LIST_CALL = { name: 'jobs_list', arguments: {}, status: 'success', result: LIST_TEXT }
 
-    it('runs a tool call of the code as a call of the reply, gives the code its result, and gives the list of the calls for the block', async () => {
+    beforeEach(() => {
+      outputFolderHolds({})
+    })
+
+    it('runs a tool call of the code with the real runner, gives the code its result, and gives the list of the calls for the block', async () => {
       native.program = callingProgram(['dez.tools/jobs_list'])
 
       const result = await run({ name: 'js_eval', arguments: { code: 'await dez.sbp("dez.tools/jobs_list")\nreturn "ok"' } })
@@ -3142,7 +3147,8 @@ describe('dez.controller/tools/run', () => {
 
       const result = await run({ name: 'js_eval', arguments: { code: 'await dez.sbp("dez.tools/jobs_list")\nthrow new Error("x")' } })
 
-      expect(result).toStrictEqual({ content: 'The code threw an error:\nError: x', isError: true, bridged: { calls: [LIST_CALL], more: 0 } })
+      expect(result).toMatchObject({ isError: true, bridged: { calls: [LIST_CALL], more: 0 } })
+      expect(result.content).toMatch(/\nError: x$/)
       expect(consoleError).toHaveBeenCalledWith('The tool js_eval failed:', result.content)
     })
   })

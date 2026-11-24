@@ -30,30 +30,34 @@ import { assetIdWords } from './arguments'
 import { FRAMES_FOLDER_ENDING, isFramesFolderName, sequenceText, type FrameSequence } from './frameSequences'
 import { callDecode, DECODED_TOO_LARGE_TEXT, decodedInputFacts, decodeFailedText, type DecodedClip, type InputDecode } from './inputDecode'
 import { ASSET_NAMES, jobCallLabel, jobTimedOutText, jobTimeoutMs, type JobAssetKind } from './jobs'
-import { cutCallsParagraphs, endedOutcome, failedOutcome, namesDenoFlag, openJobLines, returnedOutcome, runResultText, skiaCanvasRefused, textForModel, type JsEvalEndLine, type RunOutcome } from './jsEval'
+import { codeTimedOutText, cutCallsParagraphs, endedOutcome, errorAdvice, failedOutcome, jsEvalCall, namesDenoFlag, openJobLines, returnedOutcome, runResultText, skiaCanvasRefused, textForModel, type JsEvalCall, type JsEvalEndLine, type RunOutcome, type RunSubject } from './jsEval'
 import { clipInput, tellUserConsole, type ClipInput, type KeptFile, type ProgramEnd } from './programRuns'
 import { assetText, unknownAssetsText } from './toolInputs'
 import { ToolError, type SubcommandArguments, type ToolArguments } from './types'
 import { SHIPPED_FONTS } from './videoFonts'
 
-// `apps invoke`: one run of the code of an app, as a job. The kind of the
-// app (its manifest) picks what runs it.
+// One run of code in Deno, as a job: the code of a script app (`apps
+// invoke`, an alias of appAliases.ts), or the code of a `js_eval` call
+// (jsEval.ts). Both go one path (`ScriptRun`, controller/appInvoke.ts).
+// `apps invoke` also runs a UI app, which has its own path.
 //
-// A script app: Deno runs the module of Dez (jsEvalRunner.js), which calls
-// the default export of the `main.ts` of the app with the parameters of
-// the call. The code can open three folders: the folder of its app, where
-// its state stays from one run to the next, the run folder, which holds a
-// copy of each input, the decoded files of the input clips when the run
-// decodes them (inputDecode.ts), and the output folder, and the work
-// folder of the conversation of the call (conversationWork.ts). It reads
-// the libraries and the fonts that Dez ships (`dez.fonts`), and an app
-// whose manifest has `"native": ["skia-canvas"]` can also load the native
-// file of skia-canvas (`runNativeCanvas`). It has no network. It calls the
-// Dez tools with `dez.sbp`, by the rules of `APP_RUN_BRIDGE`
-// (toolBridge.ts): the images and the clips that its calls make are
-// assets of the job, which the code knows by their handles (`&1`), and
-// the result of the job maps each handle to its id. A run of an alias
-// (appAliases.ts) gets no tool calls.
+// A script run: Deno runs the module of Dez (jsEvalRunner.js), which
+// calls the default export of the `main.ts` of the app with the
+// parameters of the call, or the code of the `js_eval` call. The code can
+// open the run folder, which holds a copy of each input, the decoded files
+// of the input clips when the run of an app decodes them (inputDecode.ts),
+// and the output folder; the work folder of the conversation of the call
+// (conversationWork.ts); and the folder of its app, where the state of an
+// app stays from one run to the next. It reads the libraries and the
+// fonts that Dez ships (`dez.fonts`). It can load the native file of
+// skia-canvas when its call is a `js_eval` call or its app has
+// `"native": ["skia-canvas"]` in its manifest (`runNativeCanvas`). It has
+// no network. It calls the Dez tools with `dez.sbp`, by the rules of its
+// kind of run (`APP_RUN_BRIDGE`, `JS_EVAL_BRIDGE`, toolBridge.ts): the
+// images and the clips that its calls make are assets of the job, which
+// the code knows by their handles (`&1`), and the result of the job maps
+// each handle to its id. A run of an alias (appAliases.ts) gets no tool
+// calls.
 //
 // A UI app: Dez loads the page of the app in a hidden frame, and calls the
 // handler that the page registered (`APP_INVOKE_HANDLER`) with the
@@ -61,7 +65,7 @@ import { SHIPPED_FONTS } from './videoFonts'
 // over the frame bridge (appBridge.ts). It has no network, no file (also
 // no work folder), and no storage.
 //
-// controller/appInvoke.ts does both runs.
+// controller/appInvoke.ts does the runs.
 //
 // This module has the pure parts: the checks of a call, the description of
 // a run (`run.json`), the rules of the output folder and of a save of a
@@ -79,7 +83,7 @@ import { SHIPPED_FONTS } from './videoFonts'
 // Every text here is a tool result: it goes to the chat provider. A text of
 // a run (its value, its error, its console output) goes into a result only
 // through `textForModel` (jsEval.ts): with the folders of the run for a
-// script app, which `appRunResult` gets as `forModel`, and after
+// script run, which `scriptRunResult` gets as `forModel`, and after
 // `frameTextForModel` for a UI app.
 
 // What Dez did not do for a call that it refuses.
@@ -97,6 +101,9 @@ export const APP_OUTPUT_LISTED_ENTRIES = 200
 
 /** The state of a job while the code of its app runs. */
 export const APP_RUNS_STATE = 'The code of the app runs.'
+
+/** The state of the job of a `js_eval` call while its code runs. */
+export const CODE_RUNS_STATE = 'The code runs.'
 
 /** The state of a job of a UI app until its page is ready for the run. */
 export const APP_PAGE_LOADS_STATE = 'The page of the app loads.'
@@ -166,10 +173,11 @@ export interface CheckedInvokeCall extends Omit<InvokeCall, 'decode'> {
   nativeCanvas: boolean
 }
 
-/** The error texts of a run of a script app that depend on the call that
- *  started it: an `apps invoke` call (`INVOKE_RUN_TEXTS`), or a call of an
- *  alias subcommand (`aliasRunTexts`, appAliases.ts). Each tells the model
- *  what it can change in its own call. */
+/** The error texts of a script run that depend on the call that started
+ *  it: an `apps invoke` call (`INVOKE_RUN_TEXTS`), a call of an alias
+ *  subcommand (`aliasRunTexts`, appAliases.ts), or a `js_eval` call
+ *  (`CODE_RUN_TEXTS`). Each tells the model what it can change in its own
+ *  call. */
 export interface AppRunTexts {
   /** The error result of a run whose decode of the clip `input` failed:
    *  ffprobe or ffmpeg could not read it. */
@@ -189,8 +197,16 @@ export const INVOKE_RUN_TEXTS: AppRunTexts = {
   timedOut: jobTimedOutText,
 }
 
-/** What started a run of a script app: the Dez tool of the call, which
- *  the texts name, and the error texts of the run. */
+/** The texts of the run of a `js_eval` call. Its run decodes no clip, so
+ *  the texts of a decode never show. */
+export const CODE_RUN_TEXTS: AppRunTexts = {
+  decodeFailed: decodeFailedText,
+  decodedTooLarge: DECODED_TOO_LARGE_TEXT,
+  timedOut: codeTimedOutText,
+}
+
+/** What started a script run: the Dez tool of the call, which the texts
+ *  name, and the error texts of the run. */
 export interface AppRunCaller {
   toolName: string
   texts: AppRunTexts
@@ -241,6 +257,34 @@ export function invokeCall(args: SubcommandArguments, sections: readonly Section
     decode: callDecode(args),
   }
 }
+
+/** A `js_eval` call that Dez can run, with the images and the clips of
+ *  its `inputs`, each one once, in the order of the call. */
+export interface CodeRunCall extends JsEvalCall {
+  inputs: AppInput[]
+}
+
+// What Dez did not do for a `js_eval` call that it refuses.
+const CODE_NOT_DONE = 'Dez ran nothing.'
+
+/** The run that a `js_eval` call asks for, from its arguments and the
+ *  sections of its tab (`jsEvalCall`, with the inputs as `invokeCall`
+ *  checks them). Throws a `ToolError`, whose text tells the model how to
+ *  fix the call, for no code, a bad time limit, and an input that names
+ *  no image and no clip. */
+export function codeRunCall(args: ToolArguments, sections: readonly Section[]): CodeRunCall {
+  const call = jsEvalCall(args)
+  const ids = new Set(assetIdWords(args, 'inputs', 'an image or a clip', `Give the ids of the images and the clips, as in "@a @c". ${CODE_NOT_DONE}`))
+  return { ...call, inputs: knownInputs(ids, conversationAssets(sections), '`inputs`', CODE_NOT_DONE) }
+}
+
+/** One script run (controller/appInvoke.ts): the code of the script app
+ *  of an `apps invoke` call or of an alias, or the code of a `js_eval`
+ *  call. Its kind is also the subject that its texts name
+ *  (`RunSubject`). */
+export type ScriptRun =
+  | { kind: 'app', call: CheckedInvokeCall }
+  | { kind: 'code', call: CodeRunCall }
 
 /** The run that a call of the alias subcommand `alias` asks for
  *  (appAliases.ts), from its checked arguments `args` and the sections of
@@ -371,37 +415,36 @@ export function fileUrl(path: string): string {
   return url.href
 }
 
-/** The folders of a run on this computer, as absolute paths. Each is the
- *  path that Dez joined from its root folder, with no link resolved: Rust
- *  gives Deno the same texts as the folders that the code can open, and
- *  Deno checks a path against them as text (bundled_tools.rs). */
-export interface AppRunFolders {
+/** The folders of a script run on this computer, as absolute paths. Each
+ *  is the path that Dez joined from its root folder, with no link
+ *  resolved: Rust gives Deno the same texts as the folders that the code
+ *  can open, and Deno checks a path against them as text
+ *  (bundled_tools.rs). */
+export interface RunFolders {
   /** The run folder. */
   run: string
-  /** The folder of the app. */
-  app: string
   /** The work folder of the conversation of the call
    *  (conversationWork.ts). */
   work: string
-  /** The folder of the fonts that Dez ships, which every run of an app
+  /** The folder of the fonts that Dez ships, which every script run
    *  reads. */
   fonts: string
 }
 
-/** The text of the description of a run of `call` (`RUN_DESCRIPTION_FILE`,
- *  jsEval.ts), which the module of Dez reads: the main file of the app as
- *  a file URL, the parameters, and what the `dez` object of the code holds
- *  (`appDez`, jsEvalRunner.js): each input with the path of its copy and
- *  the facts of its decoded files (`decoded`, by id; `decodedInputFacts`),
- *  the output folder, the folder of the app, the work folder of the
- *  conversation, and each font that Dez ships with the path of its file,
- *  for `useShippedFonts` of `dez-media/canvas`. */
-export function appRunDescription(call: Pick<InvokeCall, 'parameters' | 'inputs'>, folders: AppRunFolders, decoded: ReadonlyMap<string, DecodedClip> = new Map()): string {
-  return JSON.stringify({
-    kind: 'app',
-    main: fileUrl(`${folders.app}/${SCRIPT_MAIN_FILE}`),
-    parameters: call.parameters,
-    inputs: call.inputs.map((input) => {
+/** The folders of the run of a script app: also the folder of the app. */
+export interface AppRunFolders extends RunFolders {
+  app: string
+}
+
+// What the `dez` object of every script run holds (`runDez`,
+// jsEvalRunner.js), as the description of the run has it: each input of
+// `inputs` with the path of its copy and the facts of its decoded files
+// (`decoded`, by id; `decodedInputFacts`), the output folder, the work
+// folder of the conversation, and each font that Dez ships with the path
+// of its file, for `useShippedFonts` of `dez-media/canvas`.
+function runDezFields(inputs: readonly AppInput[], folders: RunFolders, decoded: ReadonlyMap<string, DecodedClip>) {
+  return {
+    inputs: inputs.map((input) => {
       const clip = decoded.get(input.id)
       return {
         id: input.id,
@@ -412,10 +455,32 @@ export function appRunDescription(call: Pick<InvokeCall, 'parameters' | 'inputs'
       }
     }),
     outputFolder: `${folders.run}/${APP_OUTPUT_FOLDER}`,
-    appFolder: folders.app,
     workFolder: folders.work,
     fonts: SHIPPED_FONTS.map(({ file, family, weight, scripts }) => ({ file, family, weight, scripts, path: `${folders.fonts}/${file}` })),
+  }
+}
+
+/** The text of the description of a run of the app of `call`
+ *  (`RUN_DESCRIPTION_FILE`, jsEval.ts), which the module of Dez reads:
+ *  the main file of the app as a file URL, the parameters, the folder of
+ *  the app (`dez.appFolder`), and the fields of every script run
+ *  (`runDezFields`, with the decoded files `decoded` of the inputs). */
+export function appRunDescription(call: Pick<InvokeCall, 'parameters' | 'inputs'>, folders: AppRunFolders, decoded: ReadonlyMap<string, DecodedClip> = new Map()): string {
+  return JSON.stringify({
+    kind: 'app',
+    main: fileUrl(`${folders.app}/${SCRIPT_MAIN_FILE}`),
+    parameters: call.parameters,
+    appFolder: folders.app,
+    ...runDezFields(call.inputs, folders, decoded),
   })
+}
+
+/** The text of the description of the run of a `js_eval` call: the module
+ *  of Dez runs the code file (`JS_EVAL_CODE_FILE`, jsEval.ts) with the
+ *  fields of every script run (`runDezFields`). Its clips are not
+ *  decoded. */
+export function codeRunDescription(call: Pick<CodeRunCall, 'inputs'>, folders: RunFolders): string {
+  return JSON.stringify({ kind: 'code', ...runDezFields(call.inputs, folders, new Map()) })
 }
 
 /** What the result of a call that started a job adds after
@@ -453,11 +518,11 @@ const NATIVE_CANVAS_ADVICE = `${NATIVE_CANVAS_LIBRARY} loads a native file, whic
 
 const KEPT_NONE = 'Dez kept no file of the run.'
 
-// The same for a script app: the assets that the tool calls of its code
+// The same for a script run: the assets that the tool calls of its code
 // made stay (`AppRunCalls.made`).
 const KEPT_NO_OUTPUT = 'Dez kept no file of the output folder.'
 
-// The lead of a run whose code returned no value.
+// The lead of a run of an app whose code returned no value.
 const NO_VALUE = 'The app ended with no error and returned no value.'
 
 /** The outcome of a run of an app that ended with `end` and gave the
@@ -477,6 +542,27 @@ export function appRunOutcome(end: Exclude<ProgramEnd, { kind: 'timedOut' }>, li
     }
   }
   return endedOutcome(end, 'app', hasConsole, KEPT_NO_OUTPUT)
+}
+
+/** The outcome of the run of a `js_eval` call that ended with `end` and
+ *  gave the protocol line `line`, as `appRunOutcome` for an app. The
+ *  advice for an error is the one of code (`errorAdvice`, jsEval.ts): the
+ *  run can load skia-canvas, so no error asks for the field of a
+ *  manifest. */
+export function codeRunOutcome(end: Exclude<ProgramEnd, { kind: 'timedOut' }>, line: JsEvalEndLine | null, hasConsole: boolean): RunOutcome {
+  if (line?.type === 'result') {
+    const noValue = hasConsole ? 'The code returned no value.' : 'The code returned no value, and it wrote nothing to the console. Give the result with `return`.'
+    return returnedOutcome(line.text, 'code', noValue)
+  }
+  if (line?.type === 'error') {
+    return {
+      isError: true,
+      lead: `The code threw an error. ${KEPT_NO_OUTPUT} The error:`,
+      given: { text: line.text, name: 'text of the error' },
+      advice: errorAdvice(line.text),
+    }
+  }
+  return endedOutcome(end, 'code', hasConsole, KEPT_NO_OUTPUT)
 }
 
 /** One entry of the output folder that Dez checks: a file, or the folder
@@ -501,11 +587,15 @@ export interface ListedOutputs {
 }
 
 // The most characters of a name that the apps tool does not take, in a
-// result: the code of an app can make a name of any length.
+// result: the code of a run can make a name of any length.
 const SHOWN_NAME_CHARS = 100
 
-const WRITE_FEWER = `Dez keeps at most ${APP_RUN_MAX_OUTPUT_FILES} files of one run: make the app write only its results into \`dez.outputFolder\`, `
-  + 'and run it once for each part of a larger result.'
+// The advice for a run of `subject` that put too many files into its
+// output folder.
+function writeFewerText(subject: RunSubject): string {
+  return `Dez keeps at most ${APP_RUN_MAX_OUTPUT_FILES} files of one run: make the ${subject} write only its results into \`dez.outputFolder\`, `
+    + 'and run it once for each part of a larger result.'
+}
 
 /** The files of the output folder of a run that Dez reads, and its frame
  *  sequences, from the listing `tree` of the folder with
@@ -515,9 +605,10 @@ const WRITE_FEWER = `Dez keeps at most ${APP_RUN_MAX_OUTPUT_FILES} files of one 
  *  in it whose name ends with `.frames` (`isFramesFolderName`), which
  *  counts as one file. A run with more such entries than
  *  `APP_RUN_MAX_OUTPUT_FILES` keeps none, and neither does a run with more
- *  entries directly in the folder than the listing holds. */
-export function listedOutputs(tree: AppsTree): ListedOutputs {
-  if (tree.kind !== 'folder') return { outputs: [], notKept: ['the output folder (the app left no folder at its place)'], problem: null }
+ *  entries directly in the folder than the listing holds. The texts name
+ *  what ran as `subject`. */
+export function listedOutputs(tree: AppsTree, subject: RunSubject): ListedOutputs {
+  if (tree.kind !== 'folder') return { outputs: [], notKept: [`the output folder (the ${subject} left no folder at its place)`], problem: null }
   const direct = tree.entries.filter((entry) => !entry.path.includes('/'))
   // The entries of the folder itself come first in a listing
   // (`entries_below`, persistence.rs). So a cut listing holds them all when
@@ -526,7 +617,7 @@ export function listedOutputs(tree: AppsTree): ListedOutputs {
     return {
       outputs: [],
       notKept: [],
-      problem: `The app ended with no error, but it put more than ${APP_OUTPUT_LISTED_ENTRIES} files and folders into its output folder, so Dez kept none. ${WRITE_FEWER}`,
+      problem: `The ${subject} ended with no error, but it put more than ${APP_OUTPUT_LISTED_ENTRIES} files and folders into its output folder, so Dez kept none. ${writeFewerText(subject)}`,
     }
   }
 
@@ -548,7 +639,7 @@ export function listedOutputs(tree: AppsTree): ListedOutputs {
     return {
       outputs: [],
       notKept: [],
-      problem: `The app ended with no error, but it put ${outputs.length} files into its output folder, so Dez kept none. ${WRITE_FEWER}`,
+      problem: `The ${subject} ended with no error, but it put ${outputs.length} files into its output folder, so Dez kept none. ${writeFewerText(subject)}`,
     }
   }
   return { outputs, notKept, problem: null }
@@ -639,25 +730,27 @@ function callParagraphs({ made, jobs, unanswered }: AppRunCalls, given: string):
   ]
 }
 
-/** The result of a run of an app with the outcome `outcome`
- *  (`appRunOutcome`) and the console output `log`: what the code returned
- *  or threw, what Dez did with the files of the output folder, what the
- *  tool calls of the code left (`calls`), then the console output. A run
- *  whose outputs have a problem is an error result, which still gives the
- *  value. `forModel` takes the paths of this computer out of a text of the
- *  run (`textForModel`, jsEval.ts, with the folders of the run). */
-export function appRunResult(outcome: RunOutcome, log: string, forModel: (text: string) => string, outputs: AppOutputs, calls: AppRunCalls): { text: string, isError: boolean } {
+/** The result of a script run of `subject` with the outcome `outcome`
+ *  (`appRunOutcome`, `codeRunOutcome`) and the console output `log`: what
+ *  the code returned or threw, what Dez did with the files of the output
+ *  folder, what the tool calls of the code left (`calls`), then the
+ *  console output. A run whose outputs have a problem is an error result,
+ *  which still gives the value. `forModel` takes the paths of this
+ *  computer out of a text of the run (`textForModel`, jsEval.ts, with the
+ *  folders of the run). */
+export function scriptRunResult(outcome: RunOutcome, log: string, forModel: (text: string) => string, outputs: AppOutputs, calls: AppRunCalls, subject: RunSubject): { text: string, isError: boolean } {
   const told: RunOutcome = outputs.problem === null
     ? outcome
-    : { ...outcome, isError: true, lead: `${outputs.problem} ${outcome.lead ?? 'The app returned:'}` }
+    : { ...outcome, isError: true, lead: `${outputs.problem} ${outcome.lead ?? `The ${subject} returned:`}` }
   return { text: runResultText(told, log, forModel, (given) => [...outputParagraphs(outputs), ...callParagraphs(calls, given)]), isError: told.isError }
 }
 
-/** The error result of a run whose files Dez could not get out of the
- *  output folder: the list of the folder failed, or the write of a kept
- *  file into the Dez folder. `toolName` is the tool of the call. */
-export function appOutputNotStoredText(toolName: string): string {
-  return `The app ended with no error, but Dez could not get the files of its output folder into the Dez folder, so it kept none. ${tellUserConsole(toolName)}`
+/** The error result of a script run of `subject` whose files Dez could
+ *  not get out of the output folder: the list of the folder failed, or
+ *  the write of a kept file into the Dez folder. `toolName` is the tool of
+ *  the call. */
+export function scriptOutputNotStoredText(toolName: string, subject: RunSubject): string {
+  return `The ${subject} ended with no error, but Dez could not get the files of its output folder into the Dez folder, so it kept none. ${tellUserConsole(toolName)}`
 }
 
 /** A text of the page of a run (its value, its error, its console output)

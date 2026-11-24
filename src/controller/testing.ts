@@ -78,6 +78,7 @@ function newNative() {
     // What is at a path, and at most `maxEntries` of what is below it;
     // nothing is at a path that a test does not set.
     fileTree: ((): FileTree => ({ kind: 'missing', size: 0, updatedAt: null, entries: [], more: false })) as (file: AppFileRef, maxEntries: number) => FileTree,
+    listedTrees: [] as AppFileRef[],
     downloads: [] as StubDownload[],
     downloadAppFile: (async () => SAVED) as () => Promise<NativeHttpDownload>,
     cancelledDownloads: [] as string[],
@@ -314,7 +315,9 @@ sbp('sbp/selectors/register', {
     native.createdFolders.push(file)
   },
   async 'dez.native/listFileTree' (path: string, maxEntries: number, root = 'app'): Promise<FileTree> {
-    return native.fileTree({ root, path } as AppFileRef, maxEntries)
+    const file = { root, path } as AppFileRef
+    native.listedTrees.push(file)
+    return native.fileTree(file, maxEntries)
   },
   'dez.native/downloadAppFile' (request: NativeHttpRequest, requestId: string, file: AppFileRef, rule: NativeDownloadRule): Promise<NativeHttpDownload> {
     native.downloads.push({ request, requestId, file, rule })
@@ -384,8 +387,8 @@ function newToolRuns() {
 }
 
 /** The stub of the Dez tools, for the tests of the code that runs the tool
- *  calls of a `js_eval` run (toolBridge.ts, jsEval.ts): the calls that
- *  ran, and what a call does. */
+ *  calls of a script run (toolBridge.ts, jsEval.ts, appInvoke.ts): the
+ *  calls that ran, and what a call does. */
 export const toolRuns = newToolRuns()
 
 let toolRunsRegistered = false
@@ -472,6 +475,40 @@ export function deletedWorkFolder(): string {
   return last?.path ?? ''
 }
 
+/** Whether `file` is the output folder of a script run. */
+export function isOutputFolder(file: AppFileRef): boolean {
+  return file.root === 'cache' && file.path.endsWith('/output')
+}
+
+// The path of `file` in the output folder of a run; undefined for a file
+// outside it.
+function outputPath(file: AppFileRef): string | undefined {
+  return file.root === 'cache' ? /\/output\/(.+)$/.exec(file.path)?.[1] : undefined
+}
+
+/** Makes the output folder of a script run hold `files` after the run:
+ *  the bytes of each file by its path in the folder, and null for a
+ *  folder. `more` tells that the output folder holds more entries than its
+ *  listing. */
+export function outputFolderHolds(files: Record<string, Uint8Array | null>, more = false): void {
+  const entriesIn = (start: string) => Object.entries(files)
+    .filter(([path]) => path.startsWith(start))
+    .map(([path, bytes]) => ({ path: path.slice(start.length), kind: bytes === null ? 'folder' as const : 'file' as const, size: bytes?.length ?? 0, updatedAt: 0 }))
+  native.fileTree = (file): FileTree => {
+    if (isOutputFolder(file)) return { kind: 'folder', size: 0, updatedAt: 0, entries: entriesIn(''), more }
+    const path = outputPath(file)
+    const at = path === undefined ? undefined : files[path]
+    if (at === null) return { kind: 'folder', size: 0, updatedAt: 0, entries: entriesIn(`${path}/`), more: false }
+    if (at !== undefined) return { kind: 'file', size: at.length, updatedAt: 0, entries: [], more: false }
+    return { kind: 'missing', size: 0, updatedAt: null, entries: [], more: false }
+  }
+  native.fileBytes = (file) => {
+    const bytes = files[outputPath(file) ?? '']
+    if (!bytes) throw new Error(`Failed to read ${CACHE_DIR}/${file.path}: not a regular file`)
+    return bytes
+  }
+}
+
 /** A program that writes `text` to a stream, and then ends with `end`. */
 export function writes(stream: BundledToolOutput['stream'], text: string, end: BundledToolEnd = ENDED): StubProgram {
   return async (_run, onOutput) => {
@@ -480,9 +517,14 @@ export function writes(stream: BundledToolOutput['stream'], text: string, end: B
   }
 }
 
-/** A `js_eval` program whose code makes one tool call for each of `calls`
- *  (a selector, or a selector with its arguments), each after the answer
- *  of the one before, and then ends with the line `last`. */
+/** A program of a script run whose code returned `text`. */
+export function returns(text: string): StubProgram {
+  return writes('stdout', protocolLine({ type: 'result', text }))
+}
+
+/** A program of a script run whose code makes one tool call for each of
+ *  `calls` (a selector, or a selector with its arguments), each after the
+ *  answer of the one before, and then ends with the line `last`. */
 export function callingProgram(calls: readonly (string | { selector: string, arguments: unknown })[], last: JsEvalLine = { type: 'result', text: 'ok' }): StubProgram {
   return async (_run, onOutput) => {
     for (const [index, call] of calls.entries()) {

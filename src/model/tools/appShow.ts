@@ -106,9 +106,9 @@ export function appCardFacts(call: ShowCall, target: ShowTarget, tree: AppsTree)
  *  the app `name` into the reply, as in "Dez shows the app notes". Every
  *  result that tells of a shown app starts a line with it (the result of
  *  `apps show`, and the result of a `js_eval` call whose code made that
- *  call). A request reads it: the result tells the model of the app, so
- *  the tag of the app in the reply does not go (`shownAppNames`;
- *  `roundRequestText`, streams/messages.ts). */
+ *  call in an older Dez). A request reads it: the result tells the model
+ *  of the app, so the tag of the app in the reply does not go
+ *  (`shownAppNames`; `roundRequestText`, streams/messages.ts). */
 export function shownAppText(name: string): string {
   return `Dez shows the app ${name}`
 }

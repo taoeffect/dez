@@ -7,7 +7,7 @@ import { appManifestText, MANIFEST_FILE, type AppManifest } from './appManifest'
 // and a small app of its kind that works as it is, so that a model changes
 // a file that runs and does not start from nothing. The main file of a
 // script app also tells what a run gives its code (the `dez` object of
-// `appDez`, jsEvalRunner.js): keep the two the same.
+// `runDez`, jsEvalRunner.js): keep the two the same.
 //
 // The name of the app goes into the files as it is: `apps init` takes only
 // a name of lower-case letters, digits, `-`, and `_`, which is safe in

@@ -5,9 +5,10 @@ import { TOOL_DEFINITIONS } from './registry'
 import { JOINED_RUN_FOLDER, JOINED_WORK_FOLDER, REAL_RUN_FOLDER, REAL_WORK_FOLDER, RUN_FOLDER_ID, RUN_FOLDERS } from './testing'
 import { APP_RUN_BRIDGE, bridgedToolCall, JS_EVAL_BRIDGE, shownSelector, withHandles, type BridgedCallCheck } from './toolBridge'
 
-// What the first call line of a `js_eval` run asks for.
-function checked(selector: string, args?: unknown, number = 1): BridgedCallCheck {
-  return bridgedToolCall(args === undefined ? { selector } : { selector, arguments: args }, number, RUN_FOLDERS, JS_EVAL_BRIDGE)
+// What a call line of a `js_eval` run asks for, after the earlier calls of
+// the run made the assets whose ids stand for the handles `handleIds`.
+function checked(selector: string, args?: unknown, number = 1, handleIds: readonly string[] = []): BridgedCallCheck {
+  return bridgedToolCall(args === undefined ? { selector } : { selector, arguments: args }, number, RUN_FOLDERS, JS_EVAL_BRIDGE, handleIds)
 }
 
 // The error text of a call line that Dez refuses.
@@ -225,8 +226,6 @@ describe('bridgedToolCall in a run of an app', () => {
     }
     expect(appRefusal('dez.tools/apps/invoke', { name: 'notes' })).toContain('cannot call apps invoke')
     expect(appRefusal('dez.tools/js_eval', { code: 'return 1' })).toContain('Code cannot call js_eval')
-    // The code of js_eval runs in a reply, so it can show an app.
-    expect(checked('dez.tools/apps/show', { name: 'notes' }).ok).toBe(true)
   })
 
   it(`runs the call ${APP_RUN_MAX_TOOL_CALLS} of a run, and refuses each one after it`, () => {
@@ -261,8 +260,9 @@ describe('bridgedToolCall in a run of an app', () => {
     expect(appRefusal('dez.tools/model_invoke', { model: 'p/m', prompt: 'Look at @&1.' })).toContain('No tool call of this run made an image or a clip yet')
   })
 
-  it('gives the code of js_eval a handle as it is: its calls make assets of the reply', () => {
-    expect(parametersOf(checked('dez.tools/image/flip', { image: '&1', direction: 'vertical' }))).toStrictEqual({ image: '&1', direction: 'vertical' })
+  it('holds for the code of js_eval too, whose run is a job: no apps show, and the ids of its handles', () => {
+    expect(refusal('dez.tools/apps/show', { name: 'notes' })).toContain('cannot call apps show')
+    expect(parametersOf(checked('dez.tools/image/flip', { image: '&1', direction: 'vertical' }, 1, ['k']))).toStrictEqual({ image: 'k', direction: 'vertical' })
   })
 })
 

@@ -23,15 +23,17 @@ import type { ToolRunContext } from './tools'
  *  provider URL). `jobId` is the provider's id of the job that made the
  *  clip, when the provider made it as one: the clip's tag keeps it.
  *
- *  An asset that a tool call of the code of a run of an app made
+ *  An asset that a tool call of the code of a script run made
  *  (controller/toolBridge.ts) has its own marks, as the job of the run
  *  has other ones (`writeJobAssets`): `tool`, the tool that made it;
- *  `model`, the model that made it; `hidden`, its call made it as a part
- *  of its work; and `handle`, the name that the code knows it by (`&1`). */
+ *  `model`, the model that made it; `madeBy`, the id of the job that made
+ *  it for its call; `hidden`, the id of the job whose call made it as a
+ *  part of its work; and `handle`, the name that the code knows it by
+ *  (`&1`). */
 export type MadeAsset = (
   | { kind: 'image', path: string }
   | { kind: 'clip', clip: Omit<MediaTagData, 'id' | 'other'>, jobId?: string }
-) & { tool?: string, model?: ModelRef, hidden?: boolean, handle?: string }
+) & { tool?: string, model?: ModelRef, madeBy?: string, hidden?: string, handle?: string }
 
 /** A clip that a provider made (a clip of a media request, or the audio
  *  of a chat answer) as a made asset. */
@@ -79,9 +81,8 @@ export interface JobOutcome {
  *  throws fails its job, as a runner that throws fails its call: a
  *  `ToolError` gives its text as the result.
  *
- *  `jobs` are the jobs of the work's own tool calls (the code of a run of
- *  an app): a job that it starts is a job of this job
- *  (`TabJobs.scoped`). */
+ *  `jobs` are the jobs of the work's own tool calls (the code of a script
+ *  run): a job that it starts is a job of this job (`TabJobs.scoped`). */
 export type JobWork = (
   signal: AbortSignal,
   report: JobReport,
@@ -105,9 +106,9 @@ export interface JobOptions {
 
 /** The jobs that the caller of a tool sees (`ToolRunContext.jobs`): a
  *  call of the model sees the jobs of its tab (`TabJobs`), and a call of
- *  the code of a run of an app sees only the jobs that the calls of that
- *  run started (`TabJobs.scoped`). Each member is as in `TabJobs`, for
- *  the jobs of that view. */
+ *  the code of a script run sees only the jobs that the calls of that run
+ *  started (`TabJobs.scoped`). Each member is as in `TabJobs`, for the
+ *  jobs of that view. */
 export interface ToolJobs {
   start(tool: string, work: JobWork, options: JobOptions): { id: string, number: number }
   readonly running: number
@@ -233,7 +234,7 @@ export async function writeMadeAssets(
 export function writeJobAssets(job: EndedJob, writers: Pick<ToolRunContext, 'writeImage' | 'writeClip'>): Promise<WrittenJobAsset[]> {
   return writeMadeAssets(job.assets, writers, (asset) => {
     const model = asset.model ?? job.model
-    return { tool: asset.tool ?? job.tool, madeBy: job.id, ...(model && { model }), ...((job.hidesAssets || asset.hidden === true) && { hidden: job.id }) }
+    return { tool: asset.tool ?? job.tool, madeBy: job.id, ...(model && { model }), ...((job.hidesAssets || asset.hidden !== undefined) && { hidden: job.id }) }
   })
 }
 
@@ -254,7 +255,7 @@ const ALL_JOBS: JobView = () => true
  *  Only one reply reads the jobs at a time: the one that holds the lease
  *  of `take`.
  *
- *  A job that a tool call of the code of a run of an app started is a job
+ *  A job that a tool call of the code of a script run started is a job
  *  of the job of that run (`scoped`). While the run goes on, only its code
  *  sees the job, so the model takes no result that the code waits for,
  *  and the code takes no result of the model. When the run ends, the

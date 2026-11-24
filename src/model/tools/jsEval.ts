@@ -3,42 +3,44 @@ import { byteSizeText } from '../../utils/byteSize'
 import { countOf, countText } from '../../utils/countText'
 import { regExpSource } from '../../utils/regExpSource'
 import { endOf, startOf } from '../../utils/textCut'
-import { MANIFEST_FILE, NATIVE_CANVAS_LIBRARY, NATIVE_FIELD_EXAMPLE } from './appManifest'
-import { shownAppNames, shownAppText } from './appShow'
-import { APPS_INVOKE, APPS_TOOL, APPS_VIRTUAL_ROOT, LIBRARIES_TEXT, LIBS_VIRTUAL_ROOT } from './appsTool'
+import { NATIVE_CANVAS_LIBRARY } from './appManifest'
+import { APP_RUN_MAX_OUTPUT_BYTES, APP_RUN_MAX_OUTPUT_FILES, APPS_INVOKE, APPS_SHOW, APPS_TOOL, APPS_VIRTUAL_ROOT, LIBRARIES_TEXT, LIBS_VIRTUAL_ROOT, STORED_TYPES } from './appsTool'
 import { WORK_VIRTUAL_ROOT } from './conversationWork'
-import { jobStartedText, madeAssetIds, madeAssetText, type JobAssetKind } from './jobs'
+import { jobStartedText } from './jobs'
 import RUNNER from './jsEvalRunner.js?raw'
 import { withoutLocalPaths } from './localPaths'
 import type { ProgramEnd } from './programRuns'
 import { ToolError, type ToolArguments, type ToolDefinition } from './types'
 
 // `js_eval`: one run of code that a model wrote, in Deno, the JavaScript
-// runtime that Dez ships (`dez-deno`). Rust gives Deno no permission but
-// the work folder of the conversation (no network, no other file, no
-// environment variable, no program) and writes the whole command line, and
-// the OS holds the program to its run folder and that work folder
-// (src-tauri/src/bundled_tools.rs, confinement.rs).
-// controller/jsEval.ts does the run.
+// runtime that Dez ships (`dez-deno`). The run is a script run, as the run
+// of a script app is (appInvoke.ts): one path runs both, as a job
+// (`runScriptJob`, controller/appInvoke.ts), and controller/jsEval.ts
+// waits for the job of the call. Rust gives Deno no permission but the
+// places of the run (no network, no environment variable, no program) and
+// writes the whole command line, and the OS holds the program to those
+// places (src-tauri/src/bundled_tools.rs, confinement.rs).
 //
-// The code gets the path of the work folder of its conversation
-// (conversationWork.ts) as `dez.workFolder`, and its files stay from one
-// run to the next. Every text for a model names that folder
-// `WORK_VIRTUAL_ROOT`.
+// The code gets what the code of a script app gets, but the folder of an
+// app: copies of its inputs (`dez.inputs`), the output folder
+// (`dez.outputFolder`), whose files become images and clips, the work
+// folder of its conversation (conversationWork.ts) as `dez.workFolder`,
+// whose files stay from one run to the next, the fonts that Dez ships
+// (`dez.fonts`), and skia-canvas. Every text for a model names the work
+// folder `WORK_VIRTUAL_ROOT`.
 //
 // The run folder is a new work folder of the cache root
 // (model/tools/workFolders.ts); every text for a model names it
-// `RUN_FOLDER_NAME`. It has three files: Dez's own module
-// (jsEvalRunner.js), which Deno runs, the description of the run
-// (`RUN_DESCRIPTION_FILE`), which tells the module what to run, and the
-// code of the call, which the module imports. The module writes what the
-// code gave as one protocol line to its standard output. All other output
-// of the run is the console output of the code.
+// `RUN_FOLDER_NAME`. It holds Dez's own module (jsEvalRunner.js), which
+// Deno runs, the description of the run (`RUN_DESCRIPTION_FILE`), which
+// tells the module what to run, the code of the call, which the module
+// imports, the copies of the inputs, and the output folder. The module
+// writes what the code gave as one protocol line to its standard output.
+// All other output of the run is the console output of the code.
 //
-// The same module runs the code of a script app (appInvoke.ts): the
-// description of that run names the `main.ts` of the app. Such a run
-// shares the protocol lines (`JsEvalOutput`), the rule of the paths
-// (`textForModel`), and the layout of a result (`runResultText`).
+// The run of a script app shares the protocol lines (`JsEvalOutput`), the
+// rule of the paths (`textForModel`), and the layout of a result
+// (`runResultText`).
 //
 // The code can call the other Dez tools (`dez.sbp` of the module): the
 // module writes one `call` line for each call, and reads the answer of Dez
@@ -60,18 +62,11 @@ export const JS_EVAL_RUNNER_FILE = 'runner.js'
 export const JS_EVAL_CODE_FILE = 'code.ts'
 
 /** The name of the description of a run in its run folder: one JSON
- *  object that tells the kind of the run (`kind`), and for a run of an app
- *  what it runs (`appRunDescription`, appInvoke.ts). The module of Dez
- *  imports this name as a literal (jsEvalRunner.js): keep the two the
- *  same. */
+ *  object that tells the kind of the run (`kind`) and what the `dez`
+ *  object of the code holds (`appRunDescription`, `codeRunDescription`,
+ *  appInvoke.ts). The module of Dez imports this name as a literal
+ *  (jsEvalRunner.js): keep the two the same. */
 export const RUN_DESCRIPTION_FILE = 'run.json'
-
-/** The text of the description of a `js_eval` run: the module runs the
- *  code file, and gives the code the path `workFolder` of the work folder
- *  of its conversation (`dez.workFolder`). */
-export function codeRunDescription(workFolder: string): string {
-  return JSON.stringify({ kind: 'code', workFolder })
-}
 
 /** The text of Dez's module (jsEvalRunner.js). */
 export const JS_EVAL_RUNNER: string = RUNNER
@@ -123,27 +118,42 @@ export const JS_EVAL_CODE_PARAMETER = 'code'
 export const JS_EVAL_TOOL: ToolDefinition = {
   name: 'js_eval',
   description: 'Run JavaScript or TypeScript code in a sandbox on the user\'s computer (Deno), and get what it returns. '
-    + 'Use it when code does the work better than you: exact arithmetic, dates and times, sorting and counting, work on text and JSON. '
+    + 'Use it when code does the work better than you: exact arithmetic, dates and times, sorting and counting, work on text and JSON, '
+    + 'and work on the bytes, the samples, or the pixels of images and clips. '
     + '`code` is the body of an async function, so `await` works, and the value that it gives with `return` is the result: '
     + 'a string as it is, JSON data as JSON, and any other value as Deno shows it. What the code writes with `console.log` comes after the result. '
-    + 'The code has no network and no environment variables, and it can start no program; no flag changes that. '
-    + `It can read and write the files of the work folder of this conversation: \`dez.workFolder\` is its path, which the \`${APPS_TOOL.name}\` tool names \`${WORK_VIRTUAL_ROOT}/\`. `
-    + 'It opens no other file. '
-    + `With calls of the \`${APPS_TOOL.name}\` tool (\`dez.tools/${APPS_TOOL.name}/<subcommand>\`, as below), it can also read and change the files of the apps in \`${APPS_VIRTUAL_ROOT}/\`. `
-    + 'A static `import` does not work, as the code is the body of a function. '
-    + `The code loads the built-in modules with \`await import("node:crypto")\`, and the libraries of ${LIBS_VIRTUAL_ROOT}/ with \`await import("dez-media")\`: `
-    + 'give `import` the name as a literal string, as Dez refuses a name that the code builds. '
-    + `No package of npm, of JSR, or from a URL loads, and ${NATIVE_CANVAS_LIBRARY} loads only in a script app. `
-    + `The libraries: ${LIBRARIES_TEXT} `
-    + 'The code can call the other Dez tools: `await dez.sbp("dez.tools/<tool>", { …arguments })`, '
+    + '`dez` has five members:\n'
+    + '- `dez.inputs`: one `{ id, kind, type, path }` for each id of `inputs`, in their order. `kind` is "image", "audio", or "video", `type` is the media type, '
+    + 'and `path` is the path of a copy of the file. A change of the copy changes nothing of the image or the clip.\n'
+    + '- `dez.outputFolder`: the path of an empty folder. After code that ends with no error, Dez keeps each file directly in it as a new image or clip of the conversation, '
+    + `and the result gives their ids. Dez keeps only a file of a type that it stores, which it reads from the first bytes of the file and not from its name ${STORED_TYPES}, `
+    + `at most ${APP_RUN_MAX_OUTPUT_FILES} files of one run, and at most ${byteSizeText(APP_RUN_MAX_OUTPUT_BYTES)} for one file. `
+    + 'A folder `<name>.frames` directly in the output folder is a frame sequence, which Dez encodes into one clip after the run: '
+    + '`FrameWriter` of `dez-media/frames` writes one (its SKILL.md tells how).\n'
+    + `- \`dez.workFolder\`: the path of the work folder of this conversation, which the \`${APPS_TOOL.name}\` tool names \`${WORK_VIRTUAL_ROOT}/\`. `
+    + 'Its files stay from one call to the next.\n'
+    + '- `dez.fonts`: the fonts that Dez ships, one `{ file, family, weight, scripts, path }` for each font file.\n'
+    + '- `dez.sbp`: calls the other Dez tools: `await dez.sbp("dez.tools/<tool>", { …arguments })`, '
     + 'and `await dez.sbp("dez.tools/<tool>/<subcommand>", { …parameters })` for a subcommand, '
-    + 'as in `await dez.sbp("dez.tools/image/scale", { image: "a", width: 1024 })`. '
+    + 'as in `await dez.sbp("dez.tools/image/scale", { image: dez.inputs[0].id, width: 1024 })`. '
     + 'A call gives the result text of the tool, the same text that a direct call gives you, and it throws an error with that text when the tool gives an error. '
-    + 'The code names an image or a clip by its id, and gets no file of it. '
+    + `One run can make at most ${JS_EVAL_MAX_TOOL_CALLS} tool calls, and none of \`js_eval\`, of \`${APPS_TOOL.name} ${APPS_INVOKE}\`, or of \`${APPS_TOOL.name} ${APPS_SHOW}\`. `
+    + 'An image or a clip that a call makes is an asset of the run, also when the code fails later: the result of the call names it by a handle, as in "Made the image @&1.", '
+    + 'and the result of the run gives the id of each handle. A later call of the code takes the handle in place of an id: as the whole value (`image: "&1"`), or as a mention in a text ("@&1"). '
+    + 'A tool call of the code shows you no picture: call asset_view yourself after the run. '
+    + 'The result also names each job that the calls started and that is still open.\n'
+    + 'The code can open only its run folder (the copies of the inputs and the output folder), which Dez deletes after the run, and the work folder. '
+    + `It can also read the libraries of ${LIBS_VIRTUAL_ROOT}/ and the fonts of \`dez.fonts\`. Build each path from a path of \`dez\`, as in \`\${dez.outputFolder}/chart.png\`. `
+    + 'The code has no network and no environment variables, and it can start no program; no flag changes that. '
+    + `With calls of the \`${APPS_TOOL.name}\` tool (\`dez.tools/${APPS_TOOL.name}/<subcommand>\`, as above), it can also read and change the files of the apps in \`${APPS_VIRTUAL_ROOT}/\`. `
+    + 'A static `import` does not work, as the code is the body of a function. '
+    + `The code loads the built-in modules with \`await import("node:crypto")\`, and the libraries of ${LIBS_VIRTUAL_ROOT}/ by name, as in \`await import("dez-media")\`, `
+    + 'but no package of npm, of JSR, or from a URL. '
+    + `The libraries: ${LIBRARIES_TEXT} `
+    + `A canvas of ${NATIVE_CANVAS_LIBRARY} must draw with no GPU: \`new Canvas(1280, 720, { gpu: false })\`. The run sees no font of the computer, so a canvas draws text only after `
+    + '`const families = useShippedFonts(dez.fonts)` (`useShippedFonts` of `dez-media/canvas`), with `ctx.font` as in ``ctx.font = `bold 48px ${families}` ``. '
     + 'In each text that the code gives a tool, Dez cuts a path of a file of the user\'s computer after its start, with the rest of its line '
-    + '(`/home/…`, `/tmp/…`, `~/…`): give a tool a text that needs such a path in a call of your own. '
-    + `One run can make at most ${JS_EVAL_MAX_TOOL_CALLS} tool calls, and none of \`js_eval\` or of \`${APPS_TOOL.name} ${APPS_INVOKE}\`. `
-    + 'The result names each image and clip that the calls made, and each job that they started and that is still open. '
+    + '(`/home/…`, `/tmp/…`, `~/…`): name an image or a clip by its id or its handle, not by the path of its copy, and give a tool a text that needs such a path in a call of your own. '
     + 'The clock and the time zone are those of the user\'s computer. '
     + 'Each call is a new run: only the files of the work folder stay from one call to the next. '
     + `The call waits for the end of the code. A result holds at most the first ${JS_EVAL_TEXT_CAP} characters of the value. `
@@ -154,6 +164,13 @@ export const JS_EVAL_TOOL: ToolDefinition = {
       type: 'string',
       description: 'The code: the body of an async function, in JavaScript or TypeScript. For example: `return new Date().toISOString()`.',
       required: true,
+    },
+    {
+      name: 'inputs',
+      type: 'string',
+      description: 'The ids of the images and the clips that the code gets, as in "@a @c", in this order: the code finds a copy of each one in `dez.inputs`. '
+        + 'Leave it out for code with no input.',
+      required: false,
     },
     {
       name: 'timeout_seconds',
@@ -387,7 +404,7 @@ export interface RunFolderForms {
   /** The work folder of the conversation (conversationWork.ts); a run
    *  with no conversation has none. */
   work?: readonly string[]
-  /** The folder of the fonts that Dez ships; a run of an app reads them
+  /** The folder of the fonts that Dez ships; every script run reads them
    *  (`dez.fonts`). */
   fonts?: readonly string[]
 }
@@ -487,8 +504,8 @@ export function namesDenoFlag(error: string): boolean {
  *  load: Deno refused a permission (`namesDenoFlag`) in a file of the
  *  library, whose path holds `/libs/skia-canvas/` as the computer names
  *  it and as a model reads it. The library reads environment variables
- *  and loads its native file, which only a run of an app whose manifest
- *  asks for it may do (`runNativeCanvas`, appInvoke.ts). */
+ *  and loads its native file, which a `js_eval` run and the run of an app
+ *  whose manifest asks for it may do (`runNativeCanvas`, appInvoke.ts). */
 export function skiaCanvasRefused(error: string): boolean {
   return namesDenoFlag(error) && error.includes(`${LIBS_VIRTUAL_ROOT}/${NATIVE_CANVAS_LIBRARY}/`)
 }
@@ -497,25 +514,21 @@ export function skiaCanvasRefused(error: string): boolean {
 const STATIC_IMPORT = /'import', and 'export' cannot be used outside of module code/
 
 // What a `js_eval` result tells of a Deno flag that its error names: the
-// limits of the run, or that only a script app loads skia-canvas.
-function flagAdvice(error: string): string {
-  if (skiaCanvasRefused(error)) {
-    return `The code of \`${JS_EVAL_TOOL.name}\` cannot load ${NATIVE_CANVAS_LIBRARY}: it loads a native file, which only the run of a script app may load. `
-      + `Write a script app whose ${MANIFEST_FILE} has the field \`${NATIVE_FIELD_EXAMPLE}\`, and run it with \`${APPS_TOOL.name} ${APPS_INVOKE}\`.`
-  }
-  return 'Dez runs the code with no network, no environment variables, and no start of programs. '
-    + `The code loads no package but the libraries of \`${LIBS_VIRTUAL_ROOT}/\`. `
-    + 'The code imports each library by a literal name (`await import("fft.js")`), not by a name that the code builds. '
-    + `The code opens no file but those of the work folder of this conversation (\`dez.workFolder\`, which Dez names \`${WORK_VIRTUAL_ROOT}\`). `
-    + 'No flag changes these limits, and you can set no flag: do the work within the limits. '
-    + `The code reads and changes the files of the apps in \`${APPS_VIRTUAL_ROOT}/\` only with \`dez.tools/${APPS_TOOL.name}/<subcommand>\` calls.`
-}
+// limits of the run.
+const FLAG_ADVICE = 'Dez runs the code with no network, no environment variables, and no start of programs. '
+  + `The code loads no package but the libraries of \`${LIBS_VIRTUAL_ROOT}/\`. `
+  + 'The code opens only its run folder (the copies of its inputs and its output folder) and the work folder of this conversation, '
+  + 'and it reads the libraries and the fonts that Dez ships. For a file, use only the paths that `dez` gives: '
+  + '`dez.outputFolder`, `dez.workFolder`, the `path` of each of `dez.inputs`, and the `path` of each of `dez.fonts`. '
+  + 'No flag changes these limits, and you can set no flag: do the work within the limits. '
+  + `The code reads and changes the files of the apps in \`${APPS_VIRTUAL_ROOT}/\` only with \`dez.tools/${APPS_TOOL.name}/<subcommand>\` calls.`
 
-// The advice that goes with the text of an error that the code threw, for
-// the errors whose own text misleads a model.
-function errorAdvice(error: string): string[] {
+/** The advice that goes with the text of an error that the code of a
+ *  `js_eval` call threw, for the errors whose own text misleads a
+ *  model. */
+export function errorAdvice(error: string): string[] {
   return [
-    ...(namesDenoFlag(error) ? [flagAdvice(error)] : []),
+    ...(namesDenoFlag(error) ? [FLAG_ADVICE] : []),
     ...(STATIC_IMPORT.test(error)
       ? ['The code is the body of a function, so a static `import` does not work in it. '
         + `Load a built-in module with \`await import("node:…")\`, and a library of ${LIBS_VIRTUAL_ROOT}/ with \`await import("dez-media")\`.`]
@@ -578,43 +591,11 @@ export function endedOutcome(end: Exclude<ProgramEnd, { kind: 'timedOut' }>, sub
     + `an \`await\` of a promise that never settles, or a call of \`Deno.exit\`.${hasConsole ? ' The console output tells which.' : silent}`)
 }
 
-// The outcome of a run of `call` with the end `end` and the protocol line
-// `line`. `hasConsole` tells that the code wrote console output, which
-// goes after it.
-function runOutcome(call: JsEvalCall, end: ProgramEnd, line: JsEvalEndLine | null, hasConsole: boolean): RunOutcome {
-  if (line?.type === 'result') {
-    const noValue = hasConsole ? 'The code returned no value.' : 'The code returned no value, and it wrote nothing to the console. Give the result with `return`.'
-    return returnedOutcome(line.text, 'code', noValue)
-  }
-  if (line?.type === 'error') {
-    return { isError: true, lead: 'The code threw an error:', given: { text: line.text, name: 'text of the error' }, advice: errorAdvice(line.text) }
-  }
-  if (end.kind === 'timedOut') {
-    return failedOutcome(`Dez stopped the code: it did not end within ${countOf(call.timeoutMs / 1000, 'second')}. `
-      + `Make the code do less work, or give it more time with \`timeout_seconds\` (at most ${JS_EVAL_MAX_SECONDS}).`)
-  }
-  return endedOutcome(end, 'code', hasConsole, '')
-}
-
-/** What the tool calls of the code of a run (`dez.sbp`) left, for the
- *  result of the run (controller/toolBridge.ts). The code can leave out of
- *  its value what a call told it, so the result tells it. */
-export interface JsEvalToolCalls {
-  /** The images and the clips that the calls made and that Dez put into
-   *  the reply, in their order. */
-  assets: readonly { kind: JobAssetKind, id: string }[]
-  /** The apps that the calls showed (`apps show`): Dez put each into the
-   *  reply, in this order. */
-  shownApps: readonly string[]
-  /** The jobs that the calls started and that are still open: no call of
-   *  the code took their results. Each with its number
-   *  (`JobCall.number`). */
-  jobs: readonly { id: string, number: number }[]
-  /** How many calls had no answer when the run ended: Dez stopped the one
-   *  that ran, and ran none of the calls after it. */
-  unanswered: number
-  /** How many pictures the calls showed the model (`asset_view`). */
-  pictures: number
+/** The result of a `js_eval` call whose code did not end within its time
+ *  limit `timeoutMs`. */
+export function codeTimedOutText(timeoutMs: number): string {
+  return `Dez stopped the code: it did not end within ${countOf(timeoutMs / 1000, 'second')}. `
+    + `Make the code do less work, or give it more time with \`timeout_seconds\` (at most ${JS_EVAL_MAX_SECONDS}).`
 }
 
 /** The lines that tell of the open jobs `jobs` that the tool calls of the
@@ -631,35 +612,6 @@ export function cutCallsParagraphs(unanswered: number): string[] {
   if (unanswered === 0) return []
   return [`${countOf(unanswered, 'tool call')} of the code had not ended when the code ended, so Dez cut ${unanswered === 1 ? 'it' : 'them'} short. `
     + '`await` each `dez.sbp` call, and give the code the time that its calls need.']
-}
-
-// What the tool calls `calls` left, as paragraphs of a result whose given
-// text is `given` (blank for none):
-// - A line for each made asset, each shown app, and each open job. A made
-//   asset must be in the result as `madeAssetText` at the start of a line,
-//   and a shown app as `shownAppText`: the readers of a tool block find
-//   them there (`madeAssetIds`, `shownAppNames`), and a request sends no
-//   other text of the asset or of the app. A line that the given text
-//   holds does not come twice: code often returns the text of its last
-//   call.
-// - The calls that had no answer.
-// - With `isError`, the pictures that the model does not get: only a
-//   result that is no error has pictures (`ToolRunResult.pictures`).
-function toolCallParagraphs(calls: JsEvalToolCalls, given: string, isError: boolean): string[] {
-  const named = new Set(madeAssetIds(given))
-  const namedApps = new Set(shownAppNames(given))
-  const lines = [
-    ...calls.assets.flatMap(({ kind, id }) => (named.has(id) ? [] : [`${madeAssetText(kind, id)}.`])),
-    ...calls.shownApps.flatMap((name) => (namedApps.has(name) ? [] : [`${shownAppText(name)}.`])),
-    ...openJobLines(calls.jobs, given),
-  ]
-  return [
-    ...(lines.length === 0 ? [] : [`From the tool calls of the code:\n${lines.join('\n')}`]),
-    ...cutCallsParagraphs(calls.unanswered),
-    ...(isError && calls.pictures > 0
-      ? [`The code failed, so Dez does not show you the ${countOf(calls.pictures, 'picture')} of its tool calls. Call asset_view yourself to see ${calls.pictures === 1 ? 'it' : 'them'}.`]
-      : []),
-  ]
 }
 
 /** What a run that ended with `end` and wrote `output` gave: its protocol
@@ -689,18 +641,4 @@ export function runResultText({ lead, given, advice }: RunOutcome, log: string, 
   ]
   const notes = [main, written].flatMap((part) => part?.note ?? [])
   return [...notes, paragraphs.join('\n\n')].join('\n')
-}
-
-/** The result of a run of `call` that ended with `end` and wrote `output`:
- *  the returned value, what its tool calls left (`toolCalls`), then the
- *  console output of the code. Any other end is an error result
- *  (`isError`) that tells the model what happened and what to do: the code
- *  threw an error, Dez stopped it at a limit, or it ended with no value.
- *  `folders` are the paths of the folders of the run on this computer
- *  (`textForModel`). */
-export function jsEvalResult(call: JsEvalCall, end: ProgramEnd, output: JsEvalOutput, folders: RunFolderForms, toolCalls: JsEvalToolCalls): { text: string, isError: boolean } {
-  const { line, log } = endedRun(end, output)
-  const outcome = runOutcome(call, end, line, log.trim() !== '')
-  const text = runResultText(outcome, log, (part) => textForModel(part, folders), (given) => toolCallParagraphs(toolCalls, given, outcome.isError))
-  return { text, isError: outcome.isError }
 }

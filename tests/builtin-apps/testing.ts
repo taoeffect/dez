@@ -1,5 +1,5 @@
 // The run of a built-in app in a unit test: the `dez` object that a Deno
-// run gives the app (appDez, src/model/tools/jsEvalRunner.js), with the
+// run gives the app (runDez, src/model/tools/jsEvalRunner.js), with the
 // decoded files of its inputs in a temp folder, as Dez's decode writes
 // them (src/model/tools/inputDecode.ts).
 

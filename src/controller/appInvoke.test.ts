@@ -5,7 +5,7 @@ import type { Section } from '../model/chat/types'
 import { user } from '../model/streams/testing'
 import { ALIAS_TIMEOUT_MS, aliasRunTexts } from '../model/tools/appAliases'
 import { APP_READ_ASSET, APP_SAVE_ASSET, APP_STOPPED_TEXT, AppCallError, notAnInputText, SaveNotStoredError, type AppFrameEnd, type AppFrameRun, type SavedAssetAnswer } from '../model/tools/appBridge'
-import { APP_PAGE_LOADS_STATE, APP_RUNS_STATE, appOutputNotStoredText, invokeCall, invokeInputsText, INVOKE_RUN_TEXTS, type CheckedInvokeCall } from '../model/tools/appInvoke'
+import { APP_PAGE_LOADS_STATE, APP_RUNS_STATE, scriptOutputNotStoredText, invokeCall, invokeInputsText, INVOKE_RUN_TEXTS, type CheckedInvokeCall } from '../model/tools/appInvoke'
 import { MANIFEST_MAX_BYTES } from '../model/tools/appManifest'
 import { APP_RUN_MAX_DECODED_BYTES, APP_RUN_MAX_OUTPUT_FILES, APPS_MAX_ENTRIES } from '../model/tools/appsTool'
 import { assetProbeArgs } from '../model/tools/assetFacts'
@@ -19,9 +19,9 @@ import { aliasOf, appsArgs, CONVERSATION, CONVERSATION_ID, FILM, OPUS, PNG_BYTES
 import type { ToolRunResult } from '../model/tools/types'
 import { FFPROBE_TIMEOUT_MS } from '../model/tools/videoTool'
 import { FONT_FOLDER, SHIPPED_FONTS } from '../model/tools/videoFonts'
-import { checkedAppRun, runAliasCall, runAppFrameJob, runAppJob } from './appInvoke'
+import { checkedAppRun, runAliasCall, runAppFrameJob, runScriptJob } from './appInvoke'
 import { TabJobs, type MadeAsset } from './jobs'
-import type { AppFileRef, BundledToolEnd, FileTree } from './nativeTypes'
+import type { BundledToolEnd } from './nativeTypes'
 import {
   APP_DIR,
   appFiles,
@@ -36,14 +36,16 @@ import {
   fakeAppFiles,
   FILE_ID,
   heldStep,
+  isOutputFolder,
   native,
+  outputFolderHolds,
   refusalOf,
   RESOURCE_DIR,
   resetNative,
+  returns,
   running,
   STOP,
   writes,
-  type StubProgram,
 } from './testing'
 // Side-effect import: registers `dez.controller/tools/run`.
 import './tools'
@@ -56,8 +58,6 @@ import './tools'
 
 const MAIN = 'export default async function main() { return 1 }\n'
 const TEXT = textBytes('Just some notes.\n')
-// A program whose code returned `text`.
-const returns = (text: string): StubProgram => writes('stdout', protocolLine({ type: 'result', text }))
 
 let deletedImages: string[] = []
 let deletedClips: string[] = []
@@ -65,8 +65,6 @@ let deletedClips: string[] = []
 // the job to keep.
 let states: string[] = []
 let keptAssets: MadeAsset[] = []
-// How many times Dez listed the output folder of a run.
-let outputListings = 0
 let consoleError: MockInstance<typeof console.error>
 
 // The sections of the tab of a call through the tool.
@@ -134,41 +132,6 @@ function read(run: AppFrameRun, id: string): Promise<Blob> {
   return run.onCall({ selector: APP_READ_ASSET, id }) as Promise<Blob>
 }
 
-function isOutputFolder(file: AppFileRef): boolean {
-  return file.root === 'cache' && file.path.endsWith('/output')
-}
-
-// The path of `file` in the output folder of a run; undefined for a file
-// outside it.
-function outputPath(file: AppFileRef): string | undefined {
-  return file.root === 'cache' ? /\/output\/(.+)$/.exec(file.path)?.[1] : undefined
-}
-
-// Makes the output folder of a run hold `files` after the run: the bytes
-// of each file by its path in the folder, and null for a folder. `more`
-// tells that the output folder holds more entries than its listing.
-function outputFolderHolds(files: Record<string, Uint8Array | null>, more = false): void {
-  const entriesIn = (start: string) => Object.entries(files)
-    .filter(([path]) => path.startsWith(start))
-    .map(([path, bytes]) => ({ path: path.slice(start.length), kind: bytes === null ? 'folder' as const : 'file' as const, size: bytes?.length ?? 0, updatedAt: 0 }))
-  native.fileTree = (file): FileTree => {
-    if (isOutputFolder(file)) {
-      outputListings += 1
-      return { kind: 'folder', size: 0, updatedAt: 0, entries: entriesIn(''), more }
-    }
-    const path = outputPath(file)
-    const at = path === undefined ? undefined : files[path]
-    if (at === null) return { kind: 'folder', size: 0, updatedAt: 0, entries: entriesIn(`${path}/`), more: false }
-    if (at !== undefined) return { kind: 'file', size: at.length, updatedAt: 0, entries: [], more: false }
-    return { kind: 'missing', size: 0, updatedAt: null, entries: [], more: false }
-  }
-  native.fileBytes = (file) => {
-    const bytes = files[outputPath(file) ?? '']
-    if (!bytes) throw new Error(`Failed to read ${CACHE_DIR}/${file.path}: not a regular file`)
-    return bytes
-  }
-}
-
 // A frame sequence of the output folder, as `outputFolderHolds` takes it:
 // the folder `name`, its frames.json with `facts`, and `frames` PNG frames.
 function frameFolder(name: string, facts: Record<string, unknown>, frames: number): Record<string, Uint8Array | null> {
@@ -219,7 +182,7 @@ function invoke(parameters: Record<string, unknown> = {}, sections = CONVERSATIO
 }
 
 function runJob(call = invoke(), signal: AbortSignal = running()) {
-  return runAppJob(call, { toolName: 'apps', texts: INVOKE_RUN_TEXTS }, CONVERSATION_ID, signal, (state) => states.push(state), (asset) => keptAssets.push(asset))
+  return runScriptJob({ kind: 'app', call }, { toolName: 'apps', texts: INVOKE_RUN_TEXTS }, CONVERSATION_ID, signal, (state) => states.push(state), (asset) => keptAssets.push(asset))
 }
 
 function uiCall(parameters: Record<string, unknown> = {}, sections = CONVERSATION): CheckedInvokeCall {
@@ -236,7 +199,6 @@ beforeEach(() => {
   deletedClips = []
   states = []
   keptAssets = []
-  outputListings = 0
   frameRuns = []
   readImages = []
   drawnImages = 0
@@ -343,7 +305,7 @@ describe('checkedAppRun', () => {
   })
 })
 
-describe('runAppJob', () => {
+describe('runScriptJob', () => {
   it('runs the module of Dez in a new work folder with the description of the run, copies of the inputs, the output folder, the folder of the app, and the work folder of the conversation', async () => {
     const call = invoke({ parameters: { columns: 4, title: 'Trip' }, inputs: '@a @c', timeout_seconds: 20 })
     native.program = returns('done')
@@ -448,7 +410,7 @@ describe('runAppJob', () => {
 
     expect(outcome).toMatchObject({ isError: true, assets: [] })
     expect(outcome.text).toContain('Error: no rows\n    at main (file:///apps/notes/main.ts:2:9)')
-    expect(outputListings).toBe(0)
+    expect(native.listedTrees).toStrictEqual([])
     expect(stored()).toStrictEqual([])
     deletedWorkFolder()
   })
@@ -552,7 +514,7 @@ describe('runAppJob', () => {
       expect(outcome.text).toContain(fragment)
     }
     expect(outcome.text).not.toContain('/home/u')
-    expect(consoleError).toHaveBeenCalledWith('Failed to read the output file gone.png of a run of an app:', expect.any(Error))
+    expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('gone.png'), expect.any(Error))
   })
 
   it('keeps no file of a run that left more files than Dez keeps, and still gives the value', async () => {
@@ -671,11 +633,11 @@ describe('runAppJob', () => {
 
     const refusal = await refusalOf(runJob())
 
-    expect(refusal).toBe(appOutputNotStoredText('apps'))
+    expect(refusal).toBe(scriptOutputNotStoredText('apps', 'app'))
     expect(deletedImages).toStrictEqual(stored().map(({ path }) => `${APP_DIR}/${path}`))
     expect(deletedImages).toHaveLength(1)
     expect(deletedClips).toStrictEqual([])
-    expect(consoleError).toHaveBeenCalledWith('Failed to store the output files of a run of an app:', failure)
+    expect(consoleError).toHaveBeenCalledWith(expect.any(String), failure)
     deletedWorkFolder()
   })
 
@@ -688,7 +650,7 @@ describe('runAppJob', () => {
 
     const refusal = await refusalOf(runJob())
 
-    expect(refusal).toBe(appOutputNotStoredText('apps'))
+    expect(refusal).toBe(scriptOutputNotStoredText('apps', 'app'))
     expect(refusal).not.toContain('/home/u')
     deletedWorkFolder()
   })
@@ -737,7 +699,7 @@ describe('runAppJob', () => {
     const outcome = await runJob(invoke({ timeout_seconds: 20 }))
 
     expect(outcome).toStrictEqual({ text: jobTimedOutText(20_000, APP_RUNS_STATE), isError: true, assets: [] })
-    expect(outputListings).toBe(0)
+    expect(native.listedTrees).toStrictEqual([])
     deletedWorkFolder()
   })
 
@@ -780,7 +742,7 @@ describe('runAppJob', () => {
 
     function runToolJob(signal: AbortSignal = running()) {
       const tools = { context: callContext({ jobs, sections: () => CONVERSATION }), jobs }
-      return runAppJob(invoke(), { toolName: 'apps', texts: INVOKE_RUN_TEXTS }, CONVERSATION_ID, signal, (state) => states.push(state), (asset) => keptAssets.push(asset), tools)
+      return runScriptJob({ kind: 'app', call: invoke() }, { toolName: 'apps', texts: INVOKE_RUN_TEXTS }, CONVERSATION_ID, signal, (state) => states.push(state), (asset) => keptAssets.push(asset), tools)
     }
 
     // The answers to the calls of the code, as the program got them.

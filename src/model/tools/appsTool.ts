@@ -112,8 +112,9 @@ export const APP_RUN_MAX_OUTPUT_BYTES = 256 * 1024 * 1024
 /** The most Dez tool calls (`dez.sbp`) of one run of the code of a script
  *  app (controller/toolBridge.ts). More than a `js_eval` run gets: an app
  *  does a planned work, such as one call for each frame of a clip, and
- *  it runs as a job, not in the round of the model. The cap still stops
- *  code that loops on a call that costs money. */
+ *  its job runs while the model goes on, where the model waits for the
+ *  end of a `js_eval` run. The cap still stops code that loops on a call
+ *  that costs money. */
 export const APP_RUN_MAX_TOOL_CALLS = 200
 
 /** The limits of a frame sequence of a run (a folder `<name>.frames` in

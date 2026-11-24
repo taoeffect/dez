@@ -19,13 +19,12 @@ import { effectiveRequest, type ModelInfo, type ProviderInfo, type ProviderInput
 import type { SettingsSnapshot } from '../model/state'
 import type { CallPictureBudget } from '../model/streams/pictureBudget'
 import { AUDIO_ALIASES, VIDEO_ALIASES, type AppAlias } from '../model/tools/appAliases'
-import { invokeCall, invokeInputsText, invokeLabel, INVOKE_RUN_TEXTS } from '../model/tools/appInvoke'
+import { codeRunCall, invokeCall, invokeInputsText, invokeLabel, INVOKE_RUN_TEXTS } from '../model/tools/appInvoke'
 import { APPS_TOOL } from '../model/tools/appsTool'
 import { AUDIO_TOOL, audioClipId, audioClipOf, audioCutPart, audioCutRequest, audioCutResultText, audioLengthText } from '../model/tools/audioTool'
 import { conversationInfoText } from '../model/tools/conversationInfo'
 import { brightnessPlan, contrastPlan, convertPlan, cropPlan, flipPlan, IMAGE_TOOL, imageIdArgument, imageOf, imageResultText, invertPlan, rotatePlan, saturationPlan, scalePlan, unreadableImageText, unwritableFormatError, type ImagePlan } from '../model/tools/imageTool'
 import { cancelledJobIds, isIntermediate, jobCancelText, jobInspectText, jobResultText, jobsListText, jobStartedText, jobsWaitText, unknownJobText, waitedJobIds, type JobResult } from '../model/tools/jobs'
-import { jsEvalCall } from '../model/tools/jsEval'
 import { parameterValuesArgument, type ModelTarget } from '../model/tools/modelArguments'
 import { modelCost, modelInfoSelection, modelInfoText, modelInfoTarget, type ModelInfoFacts } from '../model/tools/modelInfo'
 import { invocationInputsText, invocationLabel, MODEL_INVOKE_TOOL, modelInvocation } from '../model/tools/modelInvoke'
@@ -36,7 +35,7 @@ import { ToolError, type ArgumentsOf, type SubcommandParameter, type ToolArgumen
 import { ffmpegCall, ffprobeCall, joinClipsCall, VIDEO_TOOL, videoCallLabel, videoInputsText } from '../model/tools/videoTool'
 import { untilAborted } from '../utils/abort'
 import { rawErrorText } from '../utils/errorText'
-import { checkedAppRun, runAliasCall, runAppFrameJob, runAppJob } from './appInvoke'
+import { checkedAppRun, runAliasCall, runAppFrameJob, runScriptJob } from './appInvoke'
 import { editAppFile, findAppFiles, grepAppFiles, initApp, listAppFolder, listApps, makeAppFolder, moveAppPaths, readAppFile, removeAppPaths, showApp, wcAppFiles, writeAppFile } from './appsTool'
 import { assetInfoResult } from './assetInfo'
 import { assetViewResult } from './assetView'
@@ -65,14 +64,15 @@ export interface ToolRunContext {
   model: ModelRef
   /** The sections where a tool finds the images and the clips that the
    *  call names: those of the tab (none for a tab that is gone), and for a
-   *  call of the code of a run of an app, also the assets that the earlier
-   *  calls of that run made (controller/toolBridge.ts). */
+   *  call of the code of a script run (`js_eval`, the run of an app), also
+   *  the assets that the earlier calls of that run made
+   *  (controller/toolBridge.ts). */
   sections(): readonly Section[]
   /** The jobs that the caller sees (jobs.ts): for the model, the jobs of
-   *  the tab, which the reply holds while it runs; for the code of a run
-   *  of an app, the jobs that its own calls started. A tool whose work can
-   *  take long starts it as a job and returns `jobStartedText` with the
-   *  job's id. */
+   *  the tab, which the reply holds while it runs; for the code of a
+   *  script run, the jobs that its own calls started. A tool whose work
+   *  can take long starts it as a job and returns `jobStartedText` with
+   *  the job's id. */
   jobs: ToolJobs
   /** Writes the reference of a stored image that the tool made into the
    *  reply, with a new image id, and returns that id. The reference names
@@ -552,14 +552,15 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     })
   },
   // One run of code that the model wrote, in Deno, the JavaScript runtime
-  // that Dez ships (jsEval.ts). The code gets no network, and no file but
-  // the work folder of the conversation; it calls the other Dez tools
-  // through Dez, with the context of this call (toolBridge.ts). The call
-  // waits for the end of the code and starts no job: the time limit of a
-  // run is short, and the model needs the value for its next step. A stop
-  // of the reply stops the code.
+  // that Dez ships (jsEval.ts): a script run, as the run of a script app
+  // (controller/appInvoke.ts), with copies of its inputs, the output
+  // folder, the work folder of the conversation, the fonts, and
+  // skia-canvas, and no network. The code calls the other Dez tools
+  // through Dez, with the context of this call (toolBridge.ts). The run is
+  // a job that the call waits for: the model needs the value for its next
+  // step. A stop of the reply stops the code.
   async js_eval (args, signal, context) {
-    return runJsEval(jsEvalCall(args), signal, context)
+    return runJsEval(codeRunCall(args, context.sections()), signal, context)
   },
   // The apps, the small programs that a model writes for the user
   // (appsTool.ts). Each file subcommand works on the apps (`/apps`), the
@@ -599,7 +600,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
       // this call, and the jobs that its calls start are jobs of its job.
       return startJob(context, callSignal, APPS_TOOL.name, (signal, report, _reportCost, keepAsset, jobs) => (call.kind === 'ui'
         ? runAppFrameJob(call, signal, report, keepAsset)
-        : runAppJob(call, { toolName: APPS_TOOL.name, texts: INVOKE_RUN_TEXTS }, context.conversationId, signal, report, keepAsset, { context, jobs })), {
+        : runScriptJob({ kind: 'app', call }, { toolName: APPS_TOOL.name, texts: INVOKE_RUN_TEXTS }, context.conversationId, signal, report, keepAsset, { context, jobs })), {
         timeoutMs: call.timeoutMs,
         hidesAssets: isIntermediate(args),
         label: invokeLabel(args),

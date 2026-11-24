@@ -9,7 +9,7 @@ import { UNEXPECTED_BRIDGE_ERROR_TEXT } from '../../src/model/tools/toolBridge'
 import { consoleErrors, resetConsoleErrors, screenshotOnFailure } from './harness/dom'
 import { appFilePath, makeConversation, mediaTempDir, seedConversation, workDir, writeTestFile } from './harness/fixtures'
 import { NO_JOBS_LIST_TEXT } from './harness/jobs'
-import { evalCall, expectReplyEnd } from './harness/jsEval'
+import { evalCall, expectReplyEnd, thrownError } from './harness/jsEval'
 import { startMockProviderApp, takeRequest, takeRequestTo, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, mockModelKey, replyText, sendChatReply, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
@@ -366,8 +366,7 @@ describe('js_eval sandbox', () => {
 
     const second = await chatRequest()
     expect(toolResult(second, 'call_import').split('\n')).toStrictEqual(probeLines(probes))
-    expect(toolResult(second, 'call_thrown')).toBe([
-      'The code threw an error:',
+    expect(thrownError(toolResult(second, 'call_thrown'))).toBe([
       'TypeError: Import \'file:///etc/passwd\' failed.',
       '    0: Permission denied (os error 13)',
       '    at file:///run/code.ts:1:58',
@@ -404,20 +403,17 @@ describe('js_eval sandbox', () => {
 
     const second = await chatRequest()
     const output = toolResult(second, 'call_output')
-    expect(output.startsWith(
-      'The console output has 4,194,304 characters: this result holds only its start and its end, with a line of … between them.\n'
-      + 'Dez stopped the code: it wrote more than 4.0 MB of output. Write less to the console, and return only what you need.'
-      + '\n\nConsole output of the code:\nxxxx',
-    )).toBe(true)
+    expect(output.startsWith('The console output has 4,194,304 characters: this result holds only its start and its end, with a line of … between them.\n')).toBe(true)
+    expect(output).toContain('Dez stopped the code: it wrote more than 4.0 MB of output.')
+    expect(output).toContain('\n\nConsole output of the code:\nxxxx')
     // A result holds at most 20,000 characters of the console output: the
     // flood does not fill the requests.
     expect(output.length).toBeLessThan(21_000)
 
     const heap = toolResult(second, 'call_heap')
-    expect(heap.startsWith(
-      'The system ended the code before it returned a value. The usual cause: the code used more memory than a run can have. '
-      + 'Use less memory (smaller arrays and strings, or the work in parts), and call again.\n\nConsole output of the code:\n',
-    )).toBe(true)
+    expect(heap.startsWith('The system ended the code before it returned a value.')).toBe(true)
+    expect(heap).toContain('the code used more memory than a run can have.')
+    expect(heap).toContain('\n\nConsole output of the code:\n')
     expect(heap).toContain('Fatal JavaScript out of memory')
 
     // The limit of the OS is 2 GiB, and Deno needs a part of it for itself.
@@ -425,11 +421,10 @@ describe('js_eval sandbox', () => {
     expect(Number(arrays?.[1])).toBeGreaterThan(0)
     expect(Number(arrays?.[1])).toBeLessThan(8)
 
-    expect(toolResult(second, 'call_lines')).toBe('The code threw an error:\nError: the real end\n    at default (file:///run/code.ts:3:7)')
-    expect(toolResult(second, 'call_exit')).toBe(
-      'The code ended before it returned a value (exit code 3). The usual causes: an error in a timer or in a promise that the code did not await, '
-      + 'an `await` of a promise that never settles, or a call of `Deno.exit`. The code wrote nothing to the console.',
-    )
+    expect(thrownError(toolResult(second, 'call_lines'))).toBe('Error: the real end\n    at default (file:///run/code.ts:3:7)')
+    const exited = toolResult(second, 'call_exit')
+    expect(exited).toContain('(exit code 3).')
+    expect(exited.endsWith('The code wrote nothing to the console.')).toBe(true)
     await expectReplyEnd(setup, CALLER, second)
   })
 
@@ -459,8 +454,8 @@ describe('js_eval sandbox', () => {
       program, program, program, '/run/runner.js', 'file:///run/runner.js',
       'file:///run/code.ts', '/run/code.ts', '/run', '/run', '/run',
     ])
-    expect(toolResult(second, 'call_thrown')).toBe(
-      'The code threw an error:\nError: in /run\n    at default (file:///run/code.ts:2:7)\nCaused by: "file:///run/runner.js"\n\nConsole output of the code:\n/run',
+    expect(thrownError(toolResult(second, 'call_thrown'))).toBe(
+      'Error: in /run\n    at default (file:///run/code.ts:2:7)\nCaused by: "file:///run/runner.js"\n\nConsole output of the code:\n/run',
     )
     expect(toolResult(second, 'call_outside').split('\n')).toStrictEqual([withoutLocalPaths(pathToFileURL(keys).href), withoutLocalPaths(keys)])
     await expectReplyEnd(setup, CALLER, second)

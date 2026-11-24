@@ -719,13 +719,13 @@ describe('writeJobAssets', () => {
     expect(native.deletedFiles).toStrictEqual([])
   })
 
-  it('writes an asset that a tool call of the code made with its own tool, model, and hidden mark, and gives its handle', async () => {
+  it('writes an asset that a tool call of the code made with its own tool, model, and hidden mark as marks of this job, and gives its handle', async () => {
     const writes: unknown[] = []
     const flux = { providerId: 'venice', modelId: 'flux' }
     const made: MadeAsset[] = [
       image,
       { ...image, tool: 'image', handle: '&1' },
-      { ...clip(SAVED_CLIP), tool: 'model_invoke', model: flux, hidden: true, handle: '&2' },
+      { ...clip(SAVED_CLIP), tool: 'model_invoke', model: flux, madeBy: 'j-inner', hidden: 'j-inner', handle: '&2' },
     ]
     const ids = ['c', 'd', 'e']
     const written = await writeJobAssets({ id: 'j-aaaa', tool: 'apps', status: 'finished', text: '', assets: made, hidesAssets: false, call: { number: 1, label: '' } }, {

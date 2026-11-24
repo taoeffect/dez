@@ -8,7 +8,7 @@ import { TOOL_DEFINITIONS, toolDefinition } from './registry'
 import type { ToolArguments } from './types'
 
 // The tool bridge: the Dez tools that code calls with `dez.sbp`: the code
-// of a `js_eval` run (jsEval.ts), and the code of a run of a script app
+// of a script run, of a `js_eval` call (jsEval.ts) or of a script app
 // (appInvoke.ts). The module of Dez in the run writes one call line for
 // each call (jsEvalRunner.js). This module tells which tool call a line
 // asks for, or why Dez refuses it; controller/toolBridge.ts runs the call
@@ -45,6 +45,8 @@ interface UnbridgedSubcommand {
 
 /** The rules of the tool calls of the code of one kind of run. */
 export interface BridgeRules {
+  /** The name of the kind of run in the log. */
+  runName: string
   /** The most call lines of one run: a line after it gets no call. */
   maxCalls: number
   /** The error of a line after `maxCalls`. */
@@ -68,30 +70,33 @@ const UNBRIDGED_INVOKE: UnbridgedSubcommand = {
     + `Call ${APPS_TOOL.name} ${APPS_INVOKE} yourself, as a tool call of your own, before or after this code.`,
 }
 
+// A script run is a job, which has no reply to show an app in
+// (`ToolRunContext.showApp`), so its code calls no `apps show`.
+function unbridgedShow(whose: string, after: string): UnbridgedSubcommand {
+  return {
+    tool: APPS_TOOL.name,
+    subcommand: APPS_SHOW,
+    text: `The code of ${whose} cannot call ${APPS_TOOL.name} ${APPS_SHOW}: the run is a job with no reply to show an app in. `
+      + `Call ${APPS_TOOL.name} ${APPS_SHOW} yourself, as a tool call of your own, after ${after}.`,
+  }
+}
+
 /** The rules of the code of a `js_eval` run. */
 export const JS_EVAL_BRIDGE: BridgeRules = {
+  runName: 'a js_eval run',
   maxCalls: JS_EVAL_MAX_TOOL_CALLS,
   overLimitText: `The code made more than ${JS_EVAL_MAX_TOOL_CALLS} tool calls, the most of one ${JS_EVAL_TOOL.name} call, so Dez did not run this one. `
     + `Make fewer calls in one run: do the rest of the work in a new ${JS_EVAL_TOOL.name} call.`,
-  unbridged: [UNBRIDGED_INVOKE],
+  unbridged: [UNBRIDGED_INVOKE, unbridgedShow(JS_EVAL_TOOL.name, 'the call')],
 }
 
-/** The rules of the code of a run of a script app (`apps invoke`). It also
- *  shows no app: the run is a job, which has no reply to show the app in
- *  (`ToolRunContext.showApp`). */
+/** The rules of the code of a run of a script app (`apps invoke`). */
 export const APP_RUN_BRIDGE: BridgeRules = {
+  runName: 'a run of an app',
   maxCalls: APP_RUN_MAX_TOOL_CALLS,
   overLimitText: `The code made more than ${APP_RUN_MAX_TOOL_CALLS} tool calls, the most of one run of an app, so Dez did not run this one. `
     + 'Make fewer calls in one run: run the app again for the rest of the work.',
-  unbridged: [
-    UNBRIDGED_INVOKE,
-    {
-      tool: APPS_TOOL.name,
-      subcommand: APPS_SHOW,
-      text: `The code of an app cannot call ${APPS_TOOL.name} ${APPS_SHOW}: a job has no reply to show an app in. `
-        + `Call ${APPS_TOOL.name} ${APPS_SHOW} yourself, as a tool call of your own, after the job.`,
-    },
-  ],
+  unbridged: [UNBRIDGED_INVOKE, unbridgedShow('an app', 'the job')],
 }
 
 // The rule of `rules` that refuses a call of the tool `tool` that names
@@ -103,9 +108,9 @@ function unbridgedSubcommand(rules: BridgeRules, tool: string, command: unknown)
 }
 
 /** The handle of the `number`th image or clip that the tool calls of the
- *  code of a run of an app made, from 1: `&1`, `&2`, …. The code knows the
+ *  code of a script run made, from 1: `&1`, `&2`, …. The code knows the
  *  asset by it, as the asset gets its id only when a reader of the result
- *  of the job writes it into a reply (`writeJobAssets`). */
+ *  of the job writes it into a reply (`writeJobAssets`, `runJsEval`). */
 export function assetHandle(number: number): string {
   return `&${number}`
 }
@@ -152,8 +157,8 @@ function unknownHandlesText(unknown: ReadonlySet<string>, made: number): string 
 
 /** `text` with each `@id` mention of an id of `handleById` (by provisional
  *  id, the handle of the asset) as the mention of the handle (`@&1`): a
- *  result of a tool call of the code of a run of an app names an asset of
- *  an earlier call by its handle, as the code knows it. */
+ *  result of a tool call of the code of a script run names an asset of an
+ *  earlier call by its handle, as the code knows it. */
 export function withHandles(text: string, handleById: ReadonlyMap<string, string>): string {
   let mapped = ''
   let end = 0
@@ -260,12 +265,12 @@ export type BridgedCallCheck =
  *  conversation (the label of a job). A path in the work folder goes as
  *  `/work/…`, as a model names it.
  *
- *  `handleIds` are given for the code of a run of an app: the ids that
- *  stand for the handles of the assets that the earlier calls of the run
- *  made (`assetHandle`), in the order of the handles. Each text of the
- *  arguments then gets the id of each handle in it (`withHandleIds`), and
- *  a call that names a handle of no asset is refused. */
-export function bridgedToolCall(line: Pick<JsEvalCallLine, 'selector' | 'arguments'>, number: number, folders: RunFolderForms, rules: BridgeRules, handleIds?: readonly string[]): BridgedCallCheck {
+ *  `handleIds` are the ids that stand for the handles of the assets that
+ *  the earlier calls of the run made (`assetHandle`), in the order of the
+ *  handles. Each text of the arguments then gets the id of each handle in
+ *  it (`withHandleIds`), and a call that names a handle of no asset is
+ *  refused. */
+export function bridgedToolCall(line: Pick<JsEvalCallLine, 'selector' | 'arguments'>, number: number, folders: RunFolderForms, rules: BridgeRules, handleIds: readonly string[]): BridgedCallCheck {
   const refused = (error: string): BridgedCallCheck => ({ ok: false, error })
   if (number > rules.maxCalls) return refused(rules.overLimitText)
   const forModel = (text: string) => textForModel(text, folders)
@@ -290,10 +295,10 @@ export function bridgedToolCall(line: Pick<JsEvalCallLine, 'selector' | 'argumen
     return refused(`The second argument of \`dez.sbp\` must be an object, as in ${toolCallForm(definition.name)}. Leave it out for a call with no arguments.`)
   }
   const unknownHandles = new Set<string>()
-  const forCall = handleIds === undefined ? forModel : (text: string) => withHandleIds(forModel(text), handleIds, unknownHandles)
+  const forCall = (text: string) => withHandleIds(forModel(text), handleIds, unknownHandles)
   const values = mapJsonStrings(given, forCall) as Record<string, unknown>
   const call = (checked: BridgedToolCall): BridgedCallCheck => (unknownHandles.size > 0
-    ? refused(unknownHandlesText(unknownHandles, handleIds?.length ?? 0))
+    ? refused(unknownHandlesText(unknownHandles, handleIds.length))
     : { ok: true, call: checked })
 
   if (subcommand === undefined) {

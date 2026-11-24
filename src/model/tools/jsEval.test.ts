@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { byteSizeText } from '../../utils/byteSize'
-import { shownAppNames, showResultText } from './appShow'
-import { jobStartedText, madeAssetIds } from './jobs'
-import { JS_EVAL_OUTPUT_BYTES, JS_EVAL_TEXT_CAP, JsEvalOutput, endedRun, jsEvalAnswerLine, jsEvalCall, jsEvalCodeFile, jsEvalResult, textForModel, type JsEvalToolCalls } from './jsEval'
+import { codeTimedOutText, errorAdvice, JS_EVAL_TEXT_CAP, JsEvalOutput, endedRun, jsEvalAnswerLine, jsEvalCall, jsEvalCodeFile, runResultText, textForModel, type RunOutcome } from './jsEval'
 import type { ProgramEnd } from './programRuns'
 import { CONVERSATION_ID, JOINED_RUN_FOLDER, JOINED_WORK_FOLDER, protocolLine, REAL_RUN_FOLDER, REAL_WORK_FOLDER, RUN_FOLDER_ID, RUN_FOLDERS } from './testing'
 import { ToolError, type ToolArguments } from './types'
@@ -11,7 +8,6 @@ import { ToolError, type ToolArguments } from './types'
 const RS = '\x1e'
 const EXITED: ProgramEnd = { kind: 'exited', code: 0 }
 const CONSOLE_TITLE = 'Console output of the code:'
-const NO_TOOL_CALLS: JsEvalToolCalls = { assets: [], shownApps: [], jobs: [], unanswered: 0, pictures: 0 }
 
 // The output of a run that wrote `pieces` to its standard output.
 function written(...pieces: string[]): JsEvalOutput {
@@ -20,10 +16,15 @@ function written(...pieces: string[]): JsEvalOutput {
   return output
 }
 
-// The result of a run with a time limit of 30 seconds, whose tool calls
-// left `toolCalls`.
-function resultOf(output: JsEvalOutput, end: ProgramEnd = EXITED, toolCalls: Partial<JsEvalToolCalls> = {}) {
-  return jsEvalResult({ code: 'return 1', timeoutMs: 30_000 }, end, output, RUN_FOLDERS, { ...NO_TOOL_CALLS, ...toolCalls })
+// The outcome of a run whose code returned `text`.
+function returned(text: string): RunOutcome {
+  return { isError: false, lead: null, given: { text, name: 'returned value' }, advice: [] }
+}
+
+// The result text of a run with `outcome` and the console output `log`,
+// with the paths of the folders of a run taken out.
+function resultText(outcome: RunOutcome, log = ''): string {
+  return runResultText(outcome, log, (text) => textForModel(text, RUN_FOLDERS), () => [])
 }
 
 describe('jsEvalCall', () => {
@@ -203,82 +204,26 @@ describe('jsEvalAnswerLine', () => {
   })
 })
 
-describe('jsEvalResult', () => {
-  it('gives a returned value as it is', () => {
-    expect(resultOf(written(protocolLine({ type: 'result', text: '  {\n  "a": 1\n}' })))).toStrictEqual({ text: '  {\n  "a": 1\n}', isError: false })
+describe('runResultText', () => {
+  it('gives the lead and the given text, the advice, the paragraphs of the caller, then the console output', () => {
+    const outcome: RunOutcome = { isError: true, lead: 'The code threw an error:', given: { text: 'Error: x', name: 'text of the error' }, advice: ['Fix x.'] }
+    const text = runResultText(outcome, 'step 1\n', (part) => part, (given) => [`After ${given}.`])
+
+    expect(text).toBe(`The code threw an error:\nError: x\n\nFix x.\n\nAfter Error: x.\n\n${CONSOLE_TITLE}\nstep 1`)
   })
 
-  it('gives the console output after the value', () => {
-    const output = written('step 1\n', protocolLine({ type: 'result', text: '42' }))
-    output.add('stderr', 'a warning\n')
-
-    expect(resultOf(output)).toStrictEqual({ text: `42\n\n${CONSOLE_TITLE}\nstep 1\na warning`, isError: false })
-  })
-
-  it('gives the console output of code that returned no value', () => {
-    const { text, isError } = resultOf(written('42\n', protocolLine({ type: 'result' })))
-
-    expect(isError).toBe(false)
-    expect(text.endsWith(`\n\n${CONSOLE_TITLE}\n42`)).toBe(true)
-  })
-
-  it.each([
-    ['no value and wrote nothing', undefined],
-    ['an empty string', ''],
-    ['only white space', ' \n\t'],
-  ])('tells in words that the code returned %s', (_name, value) => {
-    const { text, isError } = resultOf(written(protocolLine({ type: 'result', text: value })))
-
-    expect(isError).toBe(false)
-    expect(text).toMatch(/^The code returned /)
-  })
-
-  it('gives the text of a thrown error and the console output as an error result', () => {
-    const output = written('step 1\n', protocolLine({ type: 'error', text: 'RangeError: bad range\n    at f' }))
-
-    expect(resultOf(output)).toStrictEqual({
-      text: `The code threw an error:\nRangeError: bad range\n    at f\n\n${CONSOLE_TITLE}\nstep 1`,
-      isError: true,
-    })
-  })
-
-  it.each([
-    ['a refused permission', 'NotCapable: Requires net access to "example.com:443", run again with the --allow-net flag', 'No flag changes these limits'],
-    ['a refused package', 'TypeError: npm specifiers were requested; but --no-npm is specified', 'No flag changes these limits'],
-    ['a refused URL', 'TypeError: A remote specifier was requested: "https://example.com/a.ts", but --no-remote is specified.', 'No flag changes these limits'],
-    ['a static import', "TypeError: SyntaxError: 'import', and 'export' cannot be used outside of module code", 'await import('],
-  ])('adds advice to the error of %s', (_name, error, advice) => {
-    const { text } = resultOf(written('log\n', protocolLine({ type: 'error', text: error })))
-
-    expect(text.indexOf(error)).toBeLessThan(text.indexOf(advice))
-    expect(text.indexOf(advice)).toBeLessThan(text.indexOf(CONSOLE_TITLE))
-  })
-
-  // skia-canvas loads a native file, which Deno refuses to a `js_eval`
-  // run: the result points to a script app, and not to the limits of the
-  // run alone.
-  it('tells that only a script app loads skia-canvas, for a refused permission in a file of the library', () => {
-    const error = 'NotCapable: Requires read access to "/opt/dez/libs/skia-canvas/lib", run again with the --allow-read flag'
-    const { text } = resultOf(written(protocolLine({ type: 'error', text: error })))
-
-    expect(text).toContain('cannot load skia-canvas')
-    expect(text).toContain('Write a script app whose manifest.json has the field `"native": ["skia-canvas"]`, and run it with `apps invoke`.')
-    expect(text).not.toContain('No flag changes these limits')
+  it('gives a value as it is, with no console paragraph for no console output', () => {
+    expect(resultText(returned('  {\n  "a": 1\n}'))).toBe('  {\n  "a": 1\n}')
   })
 
   it('names the run folder /run in every text of the run', () => {
-    const output = written(
-      `${REAL_RUN_FOLDER}/deno-dir and ${JOINED_RUN_FOLDER}\n`,
-      protocolLine({ type: 'error', text: `Error: x\n    at default (file://${REAL_RUN_FOLDER}/code.ts:3:1)` }),
-    )
+    const thrown: RunOutcome = { isError: true, lead: 'The code threw an error:', given: { text: `Error: x\n    at default (file://${REAL_RUN_FOLDER}/code.ts:3:1)`, name: 'text of the error' }, advice: [] }
 
-    expect(resultOf(output).text).toBe(`The code threw an error:\nError: x\n    at default (file:///run/code.ts:3:1)\n\n${CONSOLE_TITLE}\n/run/deno-dir and /run`)
+    expect(resultText(thrown, `${REAL_RUN_FOLDER}/deno-dir and ${JOINED_RUN_FOLDER}\n`)).toBe(`The code threw an error:\nError: x\n    at default (file:///run/code.ts:3:1)\n\n${CONSOLE_TITLE}\n/run/deno-dir and /run`)
   })
 
   it('finds the run folder in a URL with escapes', () => {
-    const output = written(protocolLine({ type: 'result', text: `at file:///home/J%C3%BCrgen%20M/.cache/dez/work/${RUN_FOLDER_ID}/code.ts:1:40 and file:///etc/hosts` }))
-
-    expect(resultOf(output).text).toBe('at file:///run/code.ts:1:40 and file:///etc/hosts')
+    expect(resultText(returned(`at file:///home/J%C3%BCrgen%20M/.cache/dez/work/${RUN_FOLDER_ID}/code.ts:1:40 and file:///etc/hosts`))).toBe('at file:///run/code.ts:1:40 and file:///etc/hosts')
   })
 
   it('finds the run folder in a short time in a long list of URLs with no white space', () => {
@@ -293,39 +238,34 @@ describe('jsEvalResult', () => {
   })
 
   it('hides every other local path', () => {
-    const output = written('/home/u/apps/dez-deno(+0x27bc) [0xaaaa]\n', protocolLine({ type: 'result', text: 'The program is /Users/u/Applications/Dez.app/Contents/MacOS/dez-deno' }))
+    const text = resultText(returned('The program is /Users/u/Applications/Dez.app/Contents/MacOS/dez-deno'), '/home/u/apps/dez-deno(+0x27bc) [0xaaaa]\n')
 
-    expect(resultOf(output).text).toBe(`The program is /Users/…\n\n${CONSOLE_TITLE}\n/home/…`)
+    expect(text).toBe(`The program is /Users/…\n\n${CONSOLE_TITLE}\n/home/…`)
   })
 
   it('takes the paths out before it cuts a text', () => {
-    const value = `${'x'.repeat(JS_EVAL_TEXT_CAP - 10)}${JOINED_RUN_FOLDER}/code.ts`
-    const { text } = resultOf(written(protocolLine({ type: 'result', text: value })))
+    const text = resultText(returned(`${'x'.repeat(JS_EVAL_TEXT_CAP - 10)}${JOINED_RUN_FOLDER}/code.ts`))
 
     expect(text).not.toContain('/home')
     expect(text.endsWith('x/run/code.')).toBe(true)
   })
 
   it('cuts a long value at its limit and tells so first', () => {
-    const value = `${'x'.repeat(JS_EVAL_TEXT_CAP)}${'y'.repeat(500)}`
-    const { text, isError } = resultOf(written(protocolLine({ type: 'result', text: value })))
-    const [note, kept] = text.split('\n')
+    const [note, kept] = resultText(returned(`${'x'.repeat(JS_EVAL_TEXT_CAP)}${'y'.repeat(500)}`)).split('\n')
 
-    expect(isError).toBe(false)
     expect(note).toContain('20,500 characters')
     expect(kept).toBe('x'.repeat(JS_EVAL_TEXT_CAP))
   })
 
   it('leaves no half of a character at the cut of a value', () => {
-    const value = `${'x'.repeat(JS_EVAL_TEXT_CAP - 1)}😀y`
-    const { text } = resultOf(written(protocolLine({ type: 'result', text: value })))
+    const text = resultText(returned(`${'x'.repeat(JS_EVAL_TEXT_CAP - 1)}😀y`))
 
     expect(text.endsWith(`\n${'x'.repeat(JS_EVAL_TEXT_CAP - 1)}`)).toBe(true)
   })
 
   it('keeps the start and the end of a long console output', () => {
-    const log = `start${'-'.repeat(JS_EVAL_TEXT_CAP * 2)}end\n`
-    const { text } = resultOf(written(log, protocolLine({ type: 'result' })))
+    const noValue: RunOutcome = { isError: false, lead: 'The code returned no value.', given: null, advice: [] }
+    const text = resultText(noValue, `start${'-'.repeat(JS_EVAL_TEXT_CAP * 2)}end\n`)
     const kept = text.slice(text.indexOf(CONSOLE_TITLE) + CONSOLE_TITLE.length + 1)
     const half = JS_EVAL_TEXT_CAP / 2
 
@@ -334,150 +274,43 @@ describe('jsEvalResult', () => {
   })
 
   it('leaves room for console output next to a value at the limit', () => {
-    const log = `start${'-'.repeat(5000)}end\n`
-    const { text } = resultOf(written(log, protocolLine({ type: 'result', text: 'x'.repeat(JS_EVAL_TEXT_CAP) })))
+    const text = resultText(returned('x'.repeat(JS_EVAL_TEXT_CAP)), `start${'-'.repeat(5000)}end\n`)
     const kept = text.slice(text.indexOf(CONSOLE_TITLE) + CONSOLE_TITLE.length + 1)
 
     expect(kept).toBe(`start${'-'.repeat(995)}\n…\n${'-'.repeat(997)}end`)
   })
+})
 
-  it('tells of a time limit with the seconds of the call', () => {
-    const output = written('step 1\n')
-    const { text, isError } = jsEvalResult({ code: 'for (;;) {}', timeoutMs: 5000 }, { kind: 'timedOut' }, output, { run: [JOINED_RUN_FOLDER] }, NO_TOOL_CALLS)
+describe('errorAdvice', () => {
+  it.each([
+    ['a refused permission', 'NotCapable: Requires net access to "example.com:443", run again with the --allow-net flag'],
+    ['a refused package', 'TypeError: npm specifiers were requested; but --no-npm is specified'],
+    ['a refused URL', 'TypeError: A remote specifier was requested: "https://example.com/a.ts", but --no-remote is specified.'],
+  ])('tells the limits of the run for %s', (_name, error) => {
+    const advice = errorAdvice(error)
 
-    expect(isError).toBe(true)
+    expect(advice).toHaveLength(1)
+    expect(advice[0]).toContain('No flag changes these limits')
+  })
+
+  it('tells how code that is the body of a function imports a module, for a static import', () => {
+    const advice = errorAdvice("TypeError: SyntaxError: 'import', and 'export' cannot be used outside of module code")
+
+    expect(advice).toHaveLength(1)
+    expect(advice[0]).toContain('await import(')
+  })
+
+  it('gives no advice for an error of the code itself', () => {
+    expect(errorAdvice('RangeError: bad range\n    at f')).toStrictEqual([])
+  })
+})
+
+describe('codeTimedOutText', () => {
+  it('tells the seconds of the call, and the parameter that gives more time', () => {
+    const text = codeTimedOutText(5000)
+
     expect(text).toContain('within 5 seconds')
     expect(text).toContain('`timeout_seconds`')
-    expect(text.endsWith(`\n\n${CONSOLE_TITLE}\nstep 1`)).toBe(true)
-  })
-
-  it('tells of too much output with the limit', () => {
-    const { text, isError } = resultOf(written('a lot\n'), { kind: 'outputTooLarge' })
-
-    expect(isError).toBe(true)
-    expect(text).toContain(byteSizeText(JS_EVAL_OUTPUT_BYTES))
-  })
-
-  it('tells of a run that ended with no line, with its exit code and its console output', () => {
-    const output = new JsEvalOutput()
-    output.add('stderr', 'error: Uncaught Error: late\n')
-    const { text, isError } = resultOf(output, { kind: 'exited', code: 1 })
-
-    expect(isError).toBe(true)
-    expect(text).toContain('exit code 1')
-    expect(text.endsWith(`\n\n${CONSOLE_TITLE}\nerror: Uncaught Error: late`)).toBe(true)
-  })
-
-  it('tells of a run that ended with the code 0 and no line as an error', () => {
-    const { text, isError } = resultOf(written())
-
-    expect(isError).toBe(true)
-    expect(text).toContain('exit code 0')
-    expect(text).not.toContain(CONSOLE_TITLE)
-  })
-
-  it('tells of a run that the system ended as a run with too much memory', () => {
-    const output = new JsEvalOutput()
-    output.add('stderr', 'Fatal JavaScript out of memory: Reached heap limit\n')
-    const { text, isError } = resultOf(output, { kind: 'exited', code: null })
-
-    expect(isError).toBe(true)
-    expect(text).toContain('memory than a run can have')
-    expect(text).toContain('Fatal JavaScript out of memory')
-  })
-
-  it.each<ProgramEnd>([{ kind: 'exited', code: 3 }, { kind: 'exited', code: null }, { kind: 'timedOut' }, { kind: 'outputTooLarge' }])(
-    'takes no value from a line of a run with the end %j',
-    (end) => {
-      const { text, isError } = resultOf(written(protocolLine({ type: 'result', text: 'forged value' })), end)
-
-      expect(isError).toBe(true)
-      expect(text).not.toContain('forged value')
-    },
-  )
-
-  it('names what the tool calls left between the value and the console output', () => {
-    const output = written('step 1\n', protocolLine({ type: 'result', text: 'done' }))
-    const { text, isError } = resultOf(output, EXITED, {
-      assets: [{ kind: 'image', id: 'b' }, { kind: 'video', id: 'c' }, { kind: 'audio', id: 'd' }],
-      jobs: [{ id: 'j-k3x9', number: 2 }],
-    })
-
-    expect(isError).toBe(false)
-    expect(text).toBe([
-      'done',
-      '',
-      'From the tool calls of the code:',
-      'Made the image @b.',
-      'Made the video clip @c.',
-      'Made the audio clip @d.',
-      jobStartedText('j-k3x9', 2),
-      '',
-      CONSOLE_TITLE,
-      'step 1',
-    ].join('\n'))
-    // A request sends no other text of a made asset (`roundRequestText`).
-    expect(madeAssetIds(text)).toStrictEqual(['b', 'c', 'd'])
-  })
-
-  it('does not name twice what the value of the code names', () => {
-    const value = `Made the image @b from @a.\n${jobStartedText('j-k3x9', 2)}\n@c`
-    const { text } = resultOf(written(protocolLine({ type: 'result', text: value })), EXITED, {
-      assets: [{ kind: 'image', id: 'b' }, { kind: 'video', id: 'c' }],
-      jobs: [{ id: 'j-k3x9', number: 2 }, { id: 'j-ab12', number: 3 }],
-    })
-
-    expect(text).toBe(`${value}\n\nFrom the tool calls of the code:\nMade the video clip @c.\n${jobStartedText('j-ab12', 3)}`)
-  })
-
-  it('names an asset whose line the cut of a long value took', () => {
-    const value = `${'x'.repeat(JS_EVAL_TEXT_CAP)}\nMade the image @b.`
-    const { text } = resultOf(written(protocolLine({ type: 'result', text: value })), EXITED, { assets: [{ kind: 'image', id: 'b' }] })
-
-    expect(madeAssetIds(text)).toStrictEqual(['b'])
-  })
-
-  it('names each app that the calls showed, and not the app that the value of the code names', () => {
-    const value = `${showResultText('notes')}\ntimer`
-    const { text } = resultOf(written(protocolLine({ type: 'result', text: value })), EXITED, {
-      assets: [{ kind: 'image', id: 'b' }],
-      shownApps: ['notes', 'timer', 'a-'],
-      jobs: [{ id: 'j-k3x9', number: 2 }],
-    })
-
-    expect(text).toBe(`${value}\n\nFrom the tool calls of the code:\nMade the image @b.\nDez shows the app timer.\nDez shows the app a-.\n${jobStartedText('j-k3x9', 2)}`)
-    // A request sends no tag of a shown app (`roundRequestText`).
-    expect(shownAppNames(text)).toStrictEqual(['notes', 'timer', 'a-'])
-  })
-
-  it('names what the tool calls left in an error result too', () => {
-    const output = written(protocolLine({ type: 'error', text: 'Error: late' }))
-    const { text, isError } = resultOf(output, EXITED, { assets: [{ kind: 'image', id: 'b' }], jobs: [{ id: 'j-k3x9', number: 1 }] })
-
-    expect(isError).toBe(true)
-    expect(text).toBe(`The code threw an error:\nError: late\n\nFrom the tool calls of the code:\nMade the image @b.\n${jobStartedText('j-k3x9', 1)}`)
-  })
-
-  it.each([
-    [1, '1 tool call of the code had not ended when the code ended, so Dez cut it short.'],
-    [3, '3 tool calls of the code had not ended when the code ended, so Dez cut them short.'],
-  ])('tells of %i tool calls that had no answer, and how to keep them', (unanswered, sentence) => {
-    const { text } = resultOf(written('log\n', protocolLine({ type: 'result', text: 'done' })), EXITED, { unanswered })
-    const note = text.indexOf(sentence)
-
-    expect(note).toBeGreaterThan(0)
-    expect(text.indexOf('`await` each `dez.sbp` call')).toBeGreaterThan(note)
-    expect(note).toBeLessThan(text.indexOf(CONSOLE_TITLE))
-  })
-
-  it('tells in an error result that the model does not get the pictures of the tool calls', () => {
-    const { text } = resultOf(written(), { kind: 'timedOut' }, { pictures: 2 })
-
-    expect(text).toContain('does not show you the 2 pictures of its tool calls')
-  })
-
-  it('tells nothing of the pictures in a result that shows them', () => {
-    expect(resultOf(written(protocolLine({ type: 'result', text: 'done' })), EXITED, { pictures: 2 })).toStrictEqual({ text: 'done', isError: false })
   })
 })
 

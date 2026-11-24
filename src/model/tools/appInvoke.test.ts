@@ -9,7 +9,10 @@ import {
   appFrameResult,
   appRunDescription,
   appRunOutcome,
-  appRunResult,
+  codeRunCall,
+  codeRunDescription,
+  codeRunOutcome,
+  scriptRunResult,
   checkedOutput,
   checkInvokeTarget,
   checkSaveSize,
@@ -30,7 +33,7 @@ import {
 } from './appInvoke'
 import { APP_RUN_MAX_OUTPUT_BYTES, APP_RUN_MAX_OUTPUT_FILES } from './appsTool'
 import { jobStartedText } from './jobs'
-import { JS_EVAL_OUTPUT_BYTES, textForModel, type RunOutcome } from './jsEval'
+import { errorAdvice, JS_EVAL_OUTPUT_BYTES, textForModel, type RunOutcome } from './jsEval'
 import { aliasOf, appsArgs, CONVERSATION, fileTree, FOLDER_FACTS, folderTree, MISSING_TREE, notesAppManifest, notesManifest, PNG_BYTES, refusal, textBytes, WAV_BYTES } from './testing'
 import { SHIPPED_FONTS } from './videoFonts'
 
@@ -93,6 +96,30 @@ describe('invokeCall', () => {
 
   it('refuses a time limit outside the range of a job', () => {
     expect(refusal(() => invoke({ name: 'notes', timeout_seconds: 5 }))).toContain('timeout_seconds')
+  })
+})
+
+describe('codeRunCall', () => {
+  it('gives the code and its time limit, with each input once, in the order of the call', () => {
+    const call = codeRunCall({ code: 'return 1', inputs: '@c @a, @c', timeout_seconds: 20 }, CONVERSATION)
+
+    expect([call.code, call.timeoutMs]).toStrictEqual(['return 1', 20_000])
+    expect(call.inputs.map(({ id, name }) => [id, name])).toStrictEqual([['c', 'c.webm'], ['a', 'a.jpg']])
+    expect(codeRunCall({ code: 'return 1' }, CONVERSATION).inputs).toStrictEqual([])
+  })
+
+  it('refuses a word of `inputs` that is no id, and an id of no image and no clip, and runs nothing', () => {
+    const noId = refusal(() => codeRunCall({ code: 'return 1', inputs: '@a red.jpg' }, CONVERSATION))
+    expect(noId).toContain('"red.jpg"')
+    expect(noId).toContain('Dez ran nothing.')
+
+    const unknown = refusal(() => codeRunCall({ code: 'return 1', inputs: '@z' }, CONVERSATION))
+    expect(unknown).toContain('@z names no image and no clip')
+    expect(unknown).toContain('Dez ran nothing.')
+  })
+
+  it('refuses a call with no code', () => {
+    expect(refusal(() => codeRunCall({ inputs: '@a' }, CONVERSATION))).toContain('`code`')
   })
 })
 
@@ -355,6 +382,25 @@ describe('appRunDescription', () => {
   })
 })
 
+describe('codeRunDescription', () => {
+  const folders = { run: '/home/u/.cache/dez/work/w1', work: '/home/u/.config/dez/work/c1', fonts: '/usr/lib/dez/fonts' }
+
+  it('tells the copy of each input, the output folder, the work folder, and the fonts, with no app', () => {
+    const call = codeRunCall({ code: 'return 1', inputs: '@c @a' }, CONVERSATION)
+
+    expect(JSON.parse(codeRunDescription(call, folders))).toStrictEqual({
+      kind: 'code',
+      inputs: [
+        { id: 'c', kind: 'video', type: 'video/webm', path: '/home/u/.cache/dez/work/w1/c.webm' },
+        { id: 'a', kind: 'image', type: 'image/jpeg', path: '/home/u/.cache/dez/work/w1/a.jpg' },
+      ],
+      outputFolder: '/home/u/.cache/dez/work/w1/output',
+      workFolder: '/home/u/.config/dez/work/c1',
+      fonts: expect.any(Array),
+    })
+  })
+})
+
 describe('invokeInputsText', () => {
   it('names each input by its kind and its id, in the order of the call, and where the code of the kind of app finds them', () => {
     const { inputs } = invoke({ name: 'notes', inputs: '@c @a @b' })
@@ -398,7 +444,7 @@ describe('listedOutputs', () => {
   const files = (...names: string[]) => names.map((name) => ({ name, frames: false }))
 
   it('keeps the plain files directly in the folder, in the order of their names', () => {
-    expect(listedOutputs(folderTree({ 'frame_10.png': 5, 'frame_2.png': 5, 'Chart.png': 9, 'b.wav': 1 }))).toStrictEqual({
+    expect(listedOutputs(folderTree({ 'frame_10.png': 5, 'frame_2.png': 5, 'Chart.png': 9, 'b.wav': 1 }), 'app')).toStrictEqual({
       outputs: files('b.wav', 'Chart.png', 'frame_2.png', 'frame_10.png'),
       notKept: [],
       problem: null,
@@ -416,7 +462,7 @@ describe('listedOutputs', () => {
       'parts/deep.png': 10,
       'my chart.png': 10,
       'é.png': 10,
-    }))
+    }), 'app')
 
     expect(problem).toBeNull()
     expect(outputs).toStrictEqual(files('at-limit.mp4', 'ok.png'))
@@ -425,10 +471,10 @@ describe('listedOutputs', () => {
   })
 
   it('shows a name with a line break on one line, and only the start of a long name', () => {
-    const [lineBreak] = listedOutputs(folderTree({ 'a\nb.png': 4 })).notKept
+    const [lineBreak] = listedOutputs(folderTree({ 'a\nb.png': 4 }), 'app').notKept
     expect(lineBreak.startsWith('"a\\nb.png" (')).toBe(true)
 
-    const [long] = listedOutputs(folderTree({ [`${'x '.repeat(400)}.png`]: 4 })).notKept
+    const [long] = listedOutputs(folderTree({ [`${'x '.repeat(400)}.png`]: 4 }), 'app').notKept
     expect(long.length).toBeLessThan(400)
   })
 
@@ -442,7 +488,7 @@ describe('listedOutputs', () => {
       'a.frames': null,
       'notes.frames': 9,
       '.frames': null,
-    }, true))
+    }, true), 'app')
 
     expect(outputs).toStrictEqual([{ name: 'a.frames', frames: true }, { name: 'b.png', frames: false }, { name: 'intro.frames', frames: true }, { name: 'notes.frames', frames: false }])
     expect(notKept).toStrictEqual(['.frames/ (a folder: Dez keeps only the files directly in the output folder, and a frame sequence in a folder whose name ends with .frames)'])
@@ -451,19 +497,19 @@ describe('listedOutputs', () => {
   it('keeps as many files as the limit, and none of a run with one more; a frame sequence counts as one file', () => {
     const many = (count: number) => Object.fromEntries(Array.from({ length: count }, (_, index) => [`f${index}.png`, 4]))
 
-    expect(listedOutputs(folderTree(many(APP_RUN_MAX_OUTPUT_FILES))).outputs).toHaveLength(APP_RUN_MAX_OUTPUT_FILES)
+    expect(listedOutputs(folderTree(many(APP_RUN_MAX_OUTPUT_FILES)), 'app').outputs).toHaveLength(APP_RUN_MAX_OUTPUT_FILES)
 
-    const over = listedOutputs(folderTree({ ...many(APP_RUN_MAX_OUTPUT_FILES + 1), 'notes.txt': 0 }))
+    const over = listedOutputs(folderTree({ ...many(APP_RUN_MAX_OUTPUT_FILES + 1), 'notes.txt': 0 }), 'app')
     expect(over.outputs).toStrictEqual([])
     expect(over.problem).toContain(`it put ${APP_RUN_MAX_OUTPUT_FILES + 1} files into its output folder`)
 
-    const withSequence = listedOutputs(folderTree({ ...many(APP_RUN_MAX_OUTPUT_FILES), 'clip.frames': null }))
+    const withSequence = listedOutputs(folderTree({ ...many(APP_RUN_MAX_OUTPUT_FILES), 'clip.frames': null }), 'app')
     expect(withSequence.outputs).toStrictEqual([])
     expect(withSequence.problem).toContain(`it put ${APP_RUN_MAX_OUTPUT_FILES + 1} files into its output folder`)
   })
 
   it('keeps none of a folder with more entries than the listing holds', () => {
-    const cut = listedOutputs(folderTree({ 'a.png': 4, 'b.png': 4 }, true))
+    const cut = listedOutputs(folderTree({ 'a.png': 4, 'b.png': 4 }, true), 'app')
 
     expect(cut.outputs).toStrictEqual([])
     expect(cut.problem).toContain(`more than ${APP_OUTPUT_LISTED_ENTRIES} files and folders`)
@@ -472,7 +518,7 @@ describe('listedOutputs', () => {
   // A listing has the entries of the folder itself before those of a
   // folder below, so a cut one with a deeper entry has them all.
   it('keeps the files of a cut listing that reached a folder below', () => {
-    expect(listedOutputs(folderTree({ 'a.png': 4, scratch: null, 'scratch/t1.bin': 9 }, true))).toStrictEqual({
+    expect(listedOutputs(folderTree({ 'a.png': 4, scratch: null, 'scratch/t1.bin': 9 }, true), 'app')).toStrictEqual({
       outputs: files('a.png'),
       notKept: ['scratch/ (a folder: Dez keeps only the files directly in the output folder, and a frame sequence in a folder whose name ends with .frames)'],
       problem: null,
@@ -481,7 +527,7 @@ describe('listedOutputs', () => {
 
   it('tells of an output folder that the app deleted or replaced', () => {
     for (const tree of [MISSING_TREE, fileTree(12)]) {
-      const { outputs, notKept, problem } = listedOutputs(tree)
+      const { outputs, notKept, problem } = listedOutputs(tree, 'app')
 
       expect(outputs).toStrictEqual([])
       expect(problem).toBeNull()
@@ -564,19 +610,48 @@ describe('appRunOutcome', () => {
   })
 })
 
-describe('appRunResult', () => {
+describe('codeRunOutcome', () => {
+  it('gives the returned value as it is, and asks for a `return` only when the code wrote nothing', () => {
+    expect(codeRunOutcome(EXITED, { type: 'result', text: '42' }, false)).toStrictEqual({ isError: false, lead: null, given: { text: '42', name: 'returned value' }, advice: [] })
+
+    const silent = codeRunOutcome(EXITED, { type: 'result' }, false)
+    expect([silent.isError, silent.given]).toStrictEqual([false, null])
+    expect(silent.lead).toContain('`return`')
+    expect(codeRunOutcome(EXITED, { type: 'result' }, true).lead).not.toContain('`return`')
+  })
+
+  it('gives the error of the code, with the advice of code for an error that names a flag of Deno', () => {
+    const thrown = codeRunOutcome(EXITED, { type: 'error', text: 'RangeError: bad range' }, false)
+    expect(thrown.isError).toBe(true)
+    expect(thrown.given?.text).toBe('RangeError: bad range')
+    expect(thrown.lead).toContain('Dez kept no file of the output folder.')
+    expect(thrown.advice).toStrictEqual([])
+
+    const refused = 'NotCapable: Requires net access to "example.com:443", run again with the --allow-net flag'
+    expect(codeRunOutcome(EXITED, { type: 'error', text: refused }, false).advice).toStrictEqual(errorAdvice(refused))
+  })
+
+  it('tells why a run with no line ended, and names the code', () => {
+    const exited = codeRunOutcome({ kind: 'exited', code: 1 }, null, false)
+    expect([exited.isError, exited.given]).toStrictEqual([true, null])
+    expect(exited.lead).toContain('The code ended before it returned a value (exit code 1).')
+    expect(exited.lead).toContain('Dez kept no file of the output folder.')
+  })
+})
+
+describe('scriptRunResult', () => {
   const RETURNED: RunOutcome = { isError: false, lead: null, given: { text: 'Made the sheet.', name: 'returned value' }, advice: [] }
   const outputs = (more: Partial<AppOutputs>): AppOutputs => ({ ...NO_APP_OUTPUTS, ...more })
 
   it('gives the value, then the kept files in the order of their ids, with the clip of a frame sequence, then the console output', () => {
-    const { text, isError } = appRunResult(RETURNED, 'read 2 files\n', asIs, outputs({
+    const { text, isError } = scriptRunResult(RETURNED, 'read 2 files\n', asIs, outputs({
       kept: [
         { name: 'sheet.png', kind: 'image', type: 'image/png', extension: 'png' },
         { name: 'song.bin', kind: 'audio', type: 'audio/wav', extension: 'wav' },
         { name: 'intro.frames', kind: 'video', type: 'video/mp4', extension: 'mp4', frames: { fps: 24, width: 64, height: 36, count: 90, alpha: false, format: 'png' } },
         { name: 'glow.frames', kind: 'video', type: 'video/quicktime', extension: 'mov', frames: { fps: 24, width: 64, height: 36, count: 1, alpha: true, format: 'rgba' } },
       ],
-    }), NO_APP_RUN_CALLS)
+    }), NO_APP_RUN_CALLS, 'app')
 
     expect(isError).toBe(false)
     expect(text.split('\n\n')).toStrictEqual([
@@ -588,44 +663,44 @@ describe('appRunResult', () => {
   })
 
   it('tells of one kept file, and of the entries that Dez did not keep', () => {
-    const { text } = appRunResult(RETURNED, '', asIs, outputs({
+    const { text } = scriptRunResult(RETURNED, '', asIs, outputs({
       kept: [{ name: 'sheet.png', kind: 'image', type: 'image/png', extension: 'png' }],
       notKept: ['notes.txt (Dez stores no file of its type)', 'parts/ (a folder: Dez keeps only the files directly in the output folder)'],
-    }), NO_APP_RUN_CALLS)
+    }), NO_APP_RUN_CALLS, 'app')
 
     expect(text).toContain('Dez keeps 1 file of the output folder: sheet.png (image).')
     expect(text).toContain('Dez did not keep notes.txt (Dez stores no file of its type), parts/ (a folder: Dez keeps only the files directly in the output folder).')
   })
 
   it('names at most 20 entries that Dez did not keep, with the count of the rest', () => {
-    const { text } = appRunResult(RETURNED, '', asIs, outputs({ notKept: Array.from({ length: 23 }, (_, index) => `n${index}.txt (it is empty)`) }), NO_APP_RUN_CALLS)
+    const { text } = scriptRunResult(RETURNED, '', asIs, outputs({ notKept: Array.from({ length: 23 }, (_, index) => `n${index}.txt (it is empty)`) }), NO_APP_RUN_CALLS, 'app')
 
     expect(text).toContain('n19.txt (it is empty), and 3 more of the output folder.')
     expect(text).not.toContain('n20.txt')
   })
 
   it('tells nothing of the output folder of a run that left nothing in it', () => {
-    expect(appRunResult(RETURNED, '', asIs, NO_APP_OUTPUTS, NO_APP_RUN_CALLS)).toStrictEqual({ text: 'Made the sheet.', isError: false })
+    expect(scriptRunResult(RETURNED, '', asIs, NO_APP_OUTPUTS, NO_APP_RUN_CALLS, 'app')).toStrictEqual({ text: 'Made the sheet.', isError: false })
   })
 
   it('makes a run whose outputs have a problem an error that still gives the value', () => {
-    const { problem } = listedOutputs(folderTree({ 'a.png': 4 }, true))
-    const { text, isError } = appRunResult(RETURNED, '', asIs, outputs({ problem }), NO_APP_RUN_CALLS)
+    const { problem } = listedOutputs(folderTree({ 'a.png': 4 }, true), 'app')
+    const { text, isError } = scriptRunResult(RETURNED, '', asIs, outputs({ problem }), NO_APP_RUN_CALLS, 'app')
 
     expect(isError).toBe(true)
     expect(text.startsWith(`${problem} The app returned:\nMade the sheet.`)).toBe(true)
 
-    const noValue = appRunResult(appRunOutcome(EXITED, { type: 'result' }, false, false), '', asIs, outputs({ problem }), NO_APP_RUN_CALLS)
+    const noValue = scriptRunResult(appRunOutcome(EXITED, { type: 'result' }, false, false), '', asIs, outputs({ problem }), NO_APP_RUN_CALLS, 'app')
     expect(noValue.isError).toBe(true)
     expect(noValue.text).toBe(`${problem} The app ended with no error and returned no value.`)
   })
 
   it('tells, after the kept files, the assets of the tool calls of the code by their handles, their open jobs, and their cut calls', () => {
-    const { text, isError } = appRunResult(RETURNED, 'flipped\n', asIs, outputs({ kept: [{ name: 'sheet.png', kind: 'image', type: 'image/png', extension: 'png' }] }), {
+    const { text, isError } = scriptRunResult(RETURNED, 'flipped\n', asIs, outputs({ kept: [{ name: 'sheet.png', kind: 'image', type: 'image/png', extension: 'png' }] }), {
       made: [{ kind: 'image', handle: '&1' }, { kind: 'video', handle: '&2' }],
       jobs: [{ id: 'j-aaaa', number: 2 }],
       unanswered: 1,
-    })
+    }, 'app')
 
     expect(isError).toBe(false)
     expect(text.split('\n\n')).toStrictEqual([
@@ -640,7 +715,7 @@ describe('appRunResult', () => {
 
   it('tells the one asset of a call of a run that failed, and no job line that the value holds', () => {
     const thrown = appRunOutcome(EXITED, { type: 'error', text: `Error: ${jobStartedText('j-aaaa', 1)}` }, false, false)
-    const { text, isError } = appRunResult(thrown, '', asIs, NO_APP_OUTPUTS, { made: [{ kind: 'audio', handle: '&1' }], jobs: [{ id: 'j-aaaa', number: 1 }], unanswered: 0 })
+    const { text, isError } = scriptRunResult(thrown, '', asIs, NO_APP_OUTPUTS, { made: [{ kind: 'audio', handle: '&1' }], jobs: [{ id: 'j-aaaa', number: 1 }], unanswered: 0 }, 'app')
 
     expect(isError).toBe(true)
     expect(text).toContain('Dez kept no file of the output folder.')
@@ -653,7 +728,7 @@ describe('appRunResult', () => {
     const workFolder = '/home/ann/.config/dez/work/c1'
     const forModel = (text: string) => textForModel(text, { run: [runFolder], apps: ['/home/ann/.config/dez/apps'], work: [workFolder] })
     const thrown = appRunOutcome(EXITED, { type: 'error', text: 'Error: no file /home/ann/.config/dez/apps/notes/state.json\n    at main (file:///home/ann/.config/dez/apps/notes/main.ts:7:11)' }, true, false)
-    const { text, isError } = appRunResult(thrown, `wrote ${runFolder}/output/a.png and ${workFolder}/cache.json\n`, forModel, NO_APP_OUTPUTS, NO_APP_RUN_CALLS)
+    const { text, isError } = scriptRunResult(thrown, `wrote ${runFolder}/output/a.png and ${workFolder}/cache.json\n`, forModel, NO_APP_OUTPUTS, NO_APP_RUN_CALLS, 'app')
 
     expect(isError).toBe(true)
     expect(text).toContain('Error: no file /apps/notes/state.json')

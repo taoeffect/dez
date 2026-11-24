@@ -8,13 +8,13 @@ import { imageMediaType, type ImageMediaType } from './images'
 // asset of the conversation: no `@id` names one. Dez saves each picture as
 // a copy in the views folder, and the block of the call names the copies
 // in its `pictures` attribute (toolBlocks.ts); for an `asset_view` call
-// that the code of a `js_eval` call made, that is the block of the
-// `js_eval` call (controller/toolBridge.ts). The copies are what the
-// model and the user see: each request that holds the round of the call
-// reads them (`agentSectionMessages`, streams/messages.ts), so each one
-// sends the same bytes, and the panel of the call's chip shows them. No
-// request sends the name of a copy. Dez deletes the copies of a call whose
-// result no block takes, such as a stopped call
+// that the code of a `js_eval` call made in an older Dez, that is the
+// block of the `js_eval` call (code now shows no picture). The copies are
+// what the model and the user see: each request that holds the round of
+// the call reads them (`agentSectionMessages`, streams/messages.ts), so
+// each one sends the same bytes, and the panel of the call's chip shows
+// them. No request sends the name of a copy. Dez deletes the copies of a
+// call whose result no block takes, such as a stopped call
 // (controller/shownPictures.ts), and the copies of the calls that a
 // compaction takes out; else only Delete Unreferenced Files deletes a copy,
 // when no text names it (unusedFiles.ts).
