@@ -80,7 +80,10 @@ export const SHIPPED_LIBRARIES: readonly { name: string, use: string }[] = [
   { name: 'three', use: '3D math, scenes, and 3D files' },
   { name: 'chart.js', use: 'charts' },
   { name: 'fft.js', use: 'the FFT' },
-  { name: NATIVE_CANVAS_LIBRARY, use: 'a 2D canvas, in a script app only' },
+  // Every model reads this list before its first call. A model that knew
+  // skia-canvas only for images told a user that Dez cannot draw on a video,
+  // so the use names the clips and what they are for.
+  { name: NATIVE_CANVAS_LIBRARY, use: 'a 2D canvas that draws images, and frames that Dez encodes into a clip, such as a title, subtitles, or notes over a video; not in a page' },
   { name: 'dez-media', use: 'the media measurements of Dez, NumPy-style signal functions, data tables, and frame sequences' },
 ]
 
