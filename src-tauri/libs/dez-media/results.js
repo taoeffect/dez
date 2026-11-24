@@ -51,48 +51,48 @@ export function workFile(workFolder, path) {
 
 /**
  * The `save_to` parameter of a run: a path in /work/; undefined when the
- * call does not give it. `name` starts the name of the example file of the
- * error text: "beats" for "/work/beats.json".
- * @param {string} name
+ * call does not give it.
+ * @param {string} stem  the start of the name of the result file, for the
+ *   example of the error text: "beats" for /work/beats.json
  * @param {Record<string, unknown>} parameters
  * @returns {string | undefined}
  */
-function saveToParameter(name, parameters) {
+function saveToParameter(stem, parameters) {
   const saveTo = parameters.save_to
   if (saveTo === undefined || typeof saveTo === 'string') return saveTo
-  throw new RangeError(`save_to must be a path in ${WORK_ROOT}/, as in "${WORK_ROOT}/${name}.json", not ${JSON.stringify(saveTo)}.`)
+  throw new RangeError(`save_to must be a path in ${WORK_ROOT}/, as in "${WORK_ROOT}/${stem}.json", not ${JSON.stringify(saveTo)}.`)
 }
 
 /**
  * The result file of a run that writes one file, as `workFile` gives it:
  * the `save_to` path of the call, else `fallback`, a path in /work/.
  * Throws a RangeError for a `save_to` that is no path in /work/.
- * @param {string} name  starts the name of the example file of an error
- *   text: "align" for "/work/align.json"
+ * @param {string} stem  the start of the name of the file, for the example
+ *   of an error text: "align" for /work/align.json
  * @param {Record<string, unknown>} parameters
  * @param {{ workFolder: string }} dez  the `dez` of the run
  * @param {string} fallback
  */
-export function resultFile(name, parameters, dez, fallback) {
-  return workFile(dez.workFolder, saveToParameter(name, parameters) ?? fallback)
+export function resultFile(stem, parameters, dez, fallback) {
+  return workFile(dez.workFolder, saveToParameter(stem, parameters) ?? fallback)
 }
 
 /**
  * The result files of a run that writes one file for each input, in the
- * order of `dez.inputs`, as `workFile` gives them: /work/<name>-<id>.json,
+ * order of `dez.inputs`, as `workFile` gives them: /work/<stem>-<id>.json,
  * or the `save_to` path of the call for a run with one input. Throws a
  * RangeError for a `save_to` that is no path in /work/, and for a
  * `save_to` of a run with more than one input.
- * @param {string} name  starts the name of each file: "beats" for
+ * @param {string} stem  the start of the name of each file: "beats" for
  *   /work/beats-<id>.json
  * @param {Record<string, unknown>} parameters
  * @param {{ inputs: readonly { id: string }[], workFolder: string }} dez  the `dez` of the run
  */
-export function resultFiles(name, parameters, dez) {
-  const saveTo = saveToParameter(name, parameters)
-  if (saveTo === undefined) return dez.inputs.map(({ id }) => workFile(dez.workFolder, `${WORK_ROOT}/${name}-${id}.json`))
+export function resultFiles(stem, parameters, dez) {
+  const saveTo = saveToParameter(stem, parameters)
+  if (saveTo === undefined) return dez.inputs.map(({ id }) => workFile(dez.workFolder, `${WORK_ROOT}/${stem}-${id}.json`))
   if (dez.inputs.length !== 1) {
-    throw new RangeError(`save_to names one file, and the run has ${dez.inputs.length} inputs. Leave it out: each input then gets ${WORK_ROOT}/${name}-<id>.json.`)
+    throw new RangeError(`save_to names one file, and the run has ${dez.inputs.length} inputs. Leave it out: each input then gets ${WORK_ROOT}/${stem}-<id>.json.`)
   }
   return [workFile(dez.workFolder, saveTo)]
 }
