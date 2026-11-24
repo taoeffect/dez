@@ -147,6 +147,11 @@ describe('usage label', () => {
     await sendChatReply((await setup.mock.waitForRequest(browser)).reply, name, usage)
   }
 
+  // Selects all the text of the editor, as Edit › Select All does.
+  async function selectAll (): Promise<void> {
+    expect(await sbpCall(browser, 'dez.editor/runKeyBinding', 'selectAll', 'selectAll')).toBe(true)
+  }
+
   beforeAll(async () => {
     // The incognito mask makes the right end of the bar wider: the room
     // test checks Submit in the widest bar.
@@ -213,7 +218,6 @@ describe('usage label', () => {
   it('removes the cost at Select All, then a delete, and an undo and a redo take the cost back and forth', async () => {
     const emptyThread = [{ role: 'user', text: '' }]
     const edited: LabelLook = { text: '$0.50 (?)', look: 'idle', italic: true }
-    const selectAll = async () => expect(await sbpCall(browser, 'dez.editor/runKeyBinding', 'selectAll', 'selectAll')).toBe(true)
     await askAndAnswer('Question', 'the model', { usd: 0.5 })
     await endedReply(browser)
     await focusEditor(browser)
@@ -375,7 +379,7 @@ describe('usage label', () => {
     // undo puts them back. The empty doc has no size either, so the label
     // shows nothing, as in a new tab.
     await focusEditor(browser)
-    expect(await sbpCall(browser, 'dez.editor/runKeyBinding', 'selectAll', 'selectAll')).toBe(true)
+    await selectAll()
     await browser.keys([Key.Backspace])
     await waitForValue(browser, 'label after the delete of all text', usageTexts, [])
     await browser.keys([Key.Control, 'z'])
