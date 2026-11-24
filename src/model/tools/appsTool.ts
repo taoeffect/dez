@@ -1,6 +1,7 @@
 import { byteSizeText } from '../../utils/byteSize'
 import { countOf, countText } from '../../utils/countText'
 import { oneLineCut } from '../../utils/oneLineCut'
+import { seriesText } from '../../utils/seriesText'
 import { startOf } from '../../utils/textCut'
 import { searchTerms, textMatches } from '../textSearch'
 import { APP_HANDLER_EXAMPLE, APP_READ_ASSET, APP_RUN_FRAME_SIZE, APP_SAVE_ASSET } from './appBridge'
@@ -81,12 +82,6 @@ export const SHIPPED_LIBRARIES: readonly { name: string, use: string }[] = [
   { name: NATIVE_CANVAS_LIBRARY, use: 'a 2D canvas, in a script app only' },
   { name: 'dez-media', use: 'the media measurements of Dez, NumPy-style signal functions, data tables, and frame sequences' },
 ]
-
-// A list of names in a sentence: `a and b`, or `a, b, and c` (`or` the
-// same).
-function seriesText(items: readonly string[], conjunction: 'and' | 'or'): string {
-  return items.length < 3 ? items.join(` ${conjunction} `) : `${items.slice(0, -1).join(', ')}, ${conjunction} ${items.at(-1)}`
-}
 
 /** The libraries as the tool texts list them, with where each one tells
  *  its use: a model reads the details only when it needs them. */

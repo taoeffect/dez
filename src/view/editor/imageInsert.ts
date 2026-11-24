@@ -13,6 +13,7 @@ import type { SavedAppFile } from '../../model/tools/appBridge'
 import { byteSizeText } from '../../utils/byteSize'
 import { errorText, rawErrorText } from '../../utils/errorText'
 import { fileNameOf } from '../../utils/fileName'
+import { seriesText } from '../../utils/seriesText'
 import { SECTION_SEP, sectionsField } from '../thread/cmEditor'
 import { focusKeepingScroll } from './focus'
 import { addPendingRange, pendingRange, pendingRanges, removePendingRange, type DocRange } from './pendingRanges'
@@ -364,7 +365,7 @@ function kindsText(files: readonly AddedFile[]): string {
     const count = files.filter((file) => file.kind === kind).length
     return count === 0 ? [] : [count === 1 ? KIND_NAMES[kind] : `${KIND_NAMES[kind]}s`]
   })
-  return words.length < 3 ? words.join(' and ') : `${words.slice(0, -1).join(', ')}, and ${words.at(-1)}`
+  return seriesText(words, 'and')
 }
 
 /** The warning for added files that a paste or a drop did not insert,
@@ -485,10 +486,8 @@ export function pasteFiles(event: ClipboardEvent, view: EditorView): boolean {
   return true
 }
 
-// A list of file extensions in a sentence: `a, b, or c`.
-const listText = (items: readonly string[]) => `${items.slice(0, -1).join(', ')}, or ${items.at(-1)}`
-const CLIP_EXTENSIONS_TEXT = listText(CLIP_FILE_EXTENSIONS)
-const DATA_EXTENSIONS_TEXT = listText(DATA_FILE_EXTENSIONS)
+const CLIP_EXTENSIONS_TEXT = seriesText(CLIP_FILE_EXTENSIONS, 'or')
+const DATA_EXTENSIONS_TEXT = seriesText(DATA_FILE_EXTENSIONS, 'or')
 
 function showUnsupportedDropToast(): void {
   sbp('dez.ui/toast', 'app-global', {
