@@ -532,6 +532,15 @@ function renderCallPhase(chip: HTMLElement, phase: CallPhase | null): boolean {
   return true
 }
 
+// The phase and the time of the chip of the running call `callId` at
+// `now`, for its first draw and for each tick, so that the two agree.
+// Returns whether the phase changed (`renderCallPhase`).
+function renderRunningCall(chip: HTMLElement, callId: string, times: LiveTimes | null, sectionId: string | null, now: number): boolean {
+  const phaseChanged = renderCallPhase(chip, callPhase(times, sectionId, callId))
+  renderCallTime(chip, callTime(times, sectionId, callId, now))
+  return phaseChanged
+}
+
 // The time and the phase of each drawn chip of a call that runs, at each
 // tick of `liveTimes.ts`, and the chip's name when the phase changed, as
 // the name tells the phase (`toolCallLabel`). A call whose group ends gets
@@ -542,8 +551,7 @@ function renderLiveCallTimes(view: EditorView, times: LiveTimes | null, now: num
     const call = drawnCalls.get(root)
     const chip = root.querySelector<HTMLElement>(`:scope > .${CHIP_CLASS}`)
     if (!call || !chip) continue
-    if (renderCallPhase(chip, callPhase(times, streamingSectionId, call.id))) renderIntermediate(chip, call, chip.getAttribute('aria-expanded') === 'true')
-    renderCallTime(chip, callTime(times, streamingSectionId, call.id, now))
+    if (renderRunningCall(chip, call.id, times, streamingSectionId, now)) renderIntermediate(chip, call, chip.getAttribute('aria-expanded') === 'true')
   }
 }
 
@@ -671,10 +679,8 @@ function createCallChip(view: EditorView, call: RenderedToolCall): HTMLElement {
     renderCallTime(chip, finalCallTime(call))
     return chip
   }
-  const times = readLiveTimes(view.state)
   const streamingSectionId = view.state.field(streamingSectionField, false) ?? null
-  renderCallPhase(chip, callPhase(times, streamingSectionId, call.id))
-  renderCallTime(chip, callTime(times, streamingSectionId, call.id, Date.now()))
+  renderRunningCall(chip, call.id, readLiveTimes(view.state), streamingSectionId, Date.now())
   return chip
 }
 
