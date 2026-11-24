@@ -3,9 +3,12 @@
 //! - read and write only under one folder (Dez's cache folder for ffmpeg,
 //!   the work folder of the run for Deno);
 //! - read and write under a few more that it owns, with no move or link of a
-//!   file between two folders there (the folder of a script app);
+//!   file between two folders there (the folder of a script app, the work
+//!   folder of a conversation);
 //! - read, make, and change files (but not delete, move, or link them) under
 //!   others (the assets folder of the Dez folder);
+//! - read, but not change or start, the files of others (the libraries and
+//!   the fonts that Dez ships, the folder of a built-in app);
 //! - read its own file and, for a program that is not static, the library
 //!   folders of the system.
 //!
@@ -51,10 +54,11 @@
 //!   which it does not count.
 //! - macOS: the program can also read the files of the system that a
 //!   program needs to start, and the names in the root folder `/`; it can
-//!   move or link a file between two of its folders, and make a named pipe
-//!   there. The rules on system calls are Linux only: the profile allows
-//!   what it does not deny, so native code in a program can still reach
-//!   other programs of the user (their services, shared memory, signals).
+//!   move or link a file between two of its folders, make a named pipe
+//!   there, and start a file of a place that it can only read. The rules
+//!   on system calls are Linux only: the profile allows what it does not
+//!   deny, so native code in a program can still reach other programs of
+//!   the user (their services, shared memory, signals).
 //!   Dez marks its open files to close at the start of a program with a
 //!   loop there (`without_open_files_of_dez`), as macOS has no
 //!   `close_range`. No audit with native code ran on a Mac.
@@ -74,15 +78,19 @@ pub(crate) struct Confinement {
     pub(crate) folder: PathBuf,
     // Folders that the program has the same rights on, but with no move or
     // link of a file from or to another folder (Linux): the folder of a
-    // script app. So the program can leave no hard link there to a file of
-    // `folder` that Dez stores later.
+    // script app, and the work folder of a conversation. So the program can
+    // leave no hard link there to a file of `folder` that Dez stores later.
     pub(crate) also_owned: Vec<PathBuf>,
     // Folders whose files the program can read, make, and change, but
     // never delete, move, or link; it can make no folder there.
     pub(crate) also_writable: Vec<PathBuf>,
-    // Folders and files that the program can read (only the tests, whose
-    // system programs need the system's folders).
+    // Folders and files that the program can read, and start nothing of:
+    // the libraries and the fonts that Dez ships, the folder of a built-in
+    // app.
     pub(crate) also_readable: Vec<PathBuf>,
+    // Folders whose files the program can read and start (only the tests,
+    // whose system programs start other programs of the system).
+    pub(crate) also_startable: Vec<PathBuf>,
     // Whether the program loads the shared libraries of the system: one
     // that is not a static program (Deno). Linux only; the macOS profile
     // lets every program read them.
@@ -459,9 +467,16 @@ fn landlock_rules(program: &Path, confinement: &Confinement) -> Result<Option<st
     for path in &confinement.also_writable {
         ruleset = ruleset.add_rule(PathBeneath::new(PathFd::new(path)?, file_rights))?;
     }
+    // `from_read` holds `Execute`, which a read-only place does not need.
+    // A `dlopen` needs no `Execute`: Landlock checks it only at an exec,
+    // and not at the map of a library's code.
+    let read_rights = AccessFs::ReadFile | AccessFs::ReadDir;
+    // The crate drops the folder rights of a rule on a file.
     for path in &confinement.also_readable {
-        // The crate drops the folder rights of a rule on a file.
-        ruleset = ruleset.add_rule(PathBeneath::new(PathFd::new(path)?, AccessFs::from_read(ABI::V9)))?;
+        ruleset = ruleset.add_rule(PathBeneath::new(PathFd::new(path)?, read_rights))?;
+    }
+    for path in &confinement.also_startable {
+        ruleset = ruleset.add_rule(PathBeneath::new(PathFd::new(path)?, read_rights | AccessFs::Execute))?;
     }
     Ok(ruleset.into())
 }
@@ -591,8 +606,11 @@ fn seatbelt_command(program: &Path, args: &[String], confinement: &Confinement) 
         profile.push_str(&format!("(allow file-read-data file-write-data (subpath (param \"WRITE_{index}\")))\n"));
         profile.push_str(&format!("(allow file-write-create (require-all (subpath (param \"WRITE_{index}\")) (vnode-type REGULAR-FILE)))\n"));
     }
-    if !confinement.also_readable.is_empty() {
-        let paths: Vec<String> = (0..confinement.also_readable.len()).map(|index| format!("(subpath (param \"READ_{index}\"))")).collect();
+    // The profile refuses no start of a program (its `allow default`), so
+    // on macOS a place to read is also a place to start files of.
+    let readable: Vec<&PathBuf> = confinement.also_readable.iter().chain(&confinement.also_startable).collect();
+    if !readable.is_empty() {
+        let paths: Vec<String> = (0..readable.len()).map(|index| format!("(subpath (param \"READ_{index}\"))")).collect();
         profile.push_str(&format!("(allow file-read-data {})\n", paths.join(" ")));
     }
     profile.push_str(SEATBELT_PROFILE_END);
@@ -601,7 +619,9 @@ fn seatbelt_command(program: &Path, args: &[String], confinement: &Confinement) 
     command.arg("-p").arg(profile);
     command.arg("-D").arg(parameter("FOLDER", &canonical(&confinement.folder)?));
     command.arg("-D").arg(parameter("PROGRAM", &program));
-    let path_lists = [("OWN", &confinement.also_owned), ("WRITE", &confinement.also_writable), ("READ", &confinement.also_readable)];
+    let owned: Vec<&PathBuf> = confinement.also_owned.iter().collect();
+    let writable: Vec<&PathBuf> = confinement.also_writable.iter().collect();
+    let path_lists = [("OWN", &owned), ("WRITE", &writable), ("READ", &readable)];
     for (name, paths) in path_lists {
         for (index, path) in paths.iter().enumerate() {
             command.arg("-D").arg(parameter(&format!("{name}_{index}"), &canonical(path)?));

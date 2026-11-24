@@ -3,6 +3,7 @@ import sbp from '@sbp/sbp'
 import type { ActiveModel, Section } from '../model/chat/types'
 import type { Compactions } from '../model/chat/compaction'
 import type { ConversationCost } from '../model/chat/conversationCost'
+import type { MoneyLimit } from '../model/chat/moneyLimit'
 import type { Prompt } from '../model/state/prompts'
 import type { DefaultModel, SettingsSection, Theme } from '../model/state/settings'
 import type { SettingsSnapshot, TabActivity } from '../model/state'
@@ -41,6 +42,7 @@ export interface ViewModelState {
   tabActivity: ComputedRef<Record<string, TabActivity>>
   activeTabCost: ComputedRef<ActiveTabCost>
   activeTabIncognito: ComputedRef<boolean>
+  activeTabMoneyLimit: ComputedRef<MoneyLimit | undefined>
   shortcuts: ComputedRef<readonly Shortcut[]>
 }
 
@@ -104,6 +106,9 @@ export function useModelState(): ViewModelState {
     // The active tab is incognito (`Tab.incognito`): the mask of the bottom
     // bar, and the Tools row of the provider settings popup.
     activeTabIncognito: computed(() => sbp('dez.model/tabs/incognito', sbp('dez.model/tabs/activeId')) as boolean),
+    // The money limit of the active tab (`Tab.moneyLimit`), undefined with
+    // none: the money limit part of the bottom bar, and its popup.
+    activeTabMoneyLimit: computed(() => sbp('dez.model/tabs/moneyLimit', sbp('dez.model/tabs/activeId')) as MoneyLimit | undefined),
     // Every shortcut with its effective key; changes when the user sets a key.
     shortcuts: computed(() => sbp('dez.model/settings/shortcuts') as readonly Shortcut[]),
   }

@@ -1,6 +1,7 @@
 import type { EditorView } from '@codemirror/view'
 import sbp from '@sbp/sbp'
 import { keyName } from 'w3c-keyname'
+import { imageExport } from '../../model/chat/assetExport'
 import { coverBox, type Box } from './coverBox'
 import { focusKeepingScroll } from './focus'
 import { ROUND_STROKE, svgIcon } from './svgIcon'
@@ -220,7 +221,7 @@ function buildZoom(view: EditorView, request: ZoomRequest): OpenZoom {
   // menu; the backdrop has none.
   layer.addEventListener('contextmenu', (event) => {
     event.preventDefault()
-    if (event.target === image) void sbp('dez.controller/menu/popupAsset', zoom.path)
+    if (event.target === image) void sbp('dez.controller/menu/popupAsset', { file: zoom.path, export: imageExport(zoom.path, zoom.id) })
   })
   return zoom
 }

@@ -111,7 +111,7 @@ export function textFilesArgument(args: ToolArguments, notDone: string): TextFil
   }
   const playlist = files.find(({ text }) => HLS_PLAYLIST_START.test(text))
   if (playlist) {
-    throw new ToolError(`Dez refuses the text file ${playlist.name}: it starts as an HLS playlist (#EXTM3U). A playlist can name files outside the work folder, `
+    throw new ToolError(`Dez refuses the text file ${playlist.name}: it starts as an HLS playlist (#EXTM3U). A playlist can name files outside the run folder, `
       + `and ffmpeg reads those files, so Dez writes no playlist. ${notDone}`)
   }
   return files

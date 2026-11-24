@@ -1,6 +1,11 @@
 export type JsonValue = string | number | boolean | null | JsonValue[] | JsonObject
 export type JsonObject = { [key: string]: JsonValue }
 
+/** True when a JSON value is an object: not a list, and not null. */
+export function isJsonObject(value: unknown): value is JsonObject {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
 function cloneJsonValue(value: JsonValue): JsonValue {
   if (Array.isArray(value)) return value.map(cloneJsonValue)
   if (value !== null && typeof value === 'object') return cloneJsonObject(value)

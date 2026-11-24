@@ -27,6 +27,7 @@ import { chatImageDrawing, imageFit, type ImageSizeRules } from './imageSize'
 import { knownLimitsOf, type KnownLimit } from './knownLimits'
 import { learnedImageLimitRow, learnedImagesProblem } from './learnedImageLimit'
 import type { InputClipPart, MediaWireRequest } from './mediaFormats'
+import { takeMediaTurn } from './mediaTurns'
 import { effectiveParameterValues, type ParameterValues } from './modelParameters'
 import { textLengthCost, type PriceQuote } from './modelPrices'
 import { modelToggles, type ToggleModel } from './modelToggles'
@@ -191,11 +192,11 @@ function secretReadError(provider: Provider, copilot: boolean, error: unknown): 
 
 // The messages with the bytes of each image part and each picture part,
 // read once for the request and its Copilot retry. The app folder is read
-// only when a message has an image.
+// only when a message has an image. A clip part holds its bytes already.
 async function readMessageImages(messages: ProviderChatInputMessage[]): Promise<ChatMessage[]> {
   let appDir: Promise<string> | undefined
   const readPart = async (part: MessagePart): Promise<ChatPart> => {
-    if (part.type === 'text') return part
+    if (part.type === 'text' || part.type === 'audio' || part.type === 'video') return part
     if (part.type === 'picture') return shownPicturePart(part.picture)
     appDir ??= sbp('dez.native/getAppDir') as Promise<string>
     const { bytes, mediaType } = await chatImage(part.path, await appDir)
@@ -689,11 +690,20 @@ export default sbp('sbp/selectors/register', {
   //   a later call with more images rejects before any request
   //   (`learnedImagesProblem`).
   // - A text (a transcription of an audio clip): one request through
-  //   dez.http/stream, and the text of its answer in `text`.
+  //   dez.http/stream, and the text of its answer in `text`. With
+  //   `input.wordTimes`, a format that can ask for times does, and `times`
+  //   holds those that the answer gives.
   //
   // Before an image or a clip request goes, Dez gets its price at no cost
-  // (`mediaRequestQuote`): the `sent` step tells it, and the result's
-  // `cost` is the price that the answer tells, else that one.
+  // (`mediaRequestQuote`): `beforeSend` and the `sent` step tell it, and
+  // the result's `cost` is the price that the answer tells, else that one.
+  // A text request has no quote.
+  //
+  // At most `Provider.mediaRequestsAtOnce` calls of one provider run at one
+  // time, of all tabs together (mediaTurns.ts): a call after them waits
+  // for its turn, with a `waiting` step, and holds the turn until it ends
+  // (the waits for a clip job and its download too). A stop while it waits
+  // rejects.
   //
   // A provider takes the money for a job when it starts. So after that
   // point, a failure and a stop log the job id, and the message of a
@@ -709,7 +719,13 @@ export default sbp('sbp/selectors/register', {
     }
     signal?.addEventListener('abort', cancelRequest)
     let jobId: string | null = null
-    const progress = (phase: MediaProgress['phase'], quote?: number) => input.onProgress?.({ phase, jobId, ...(quote !== undefined && { quote }) })
+    const progress = (phase: MediaProgress['phase'], extra: Pick<MediaProgress, 'quote' | 'limit'> = {}) => input.onProgress?.({ phase, jobId, ...extra })
+    // The last check of the caller, then the `sent` step, in one tick.
+    const send = (quote?: number) => {
+      input.beforeSend?.(quote)
+      progress('sent', quote === undefined ? {} : { quote })
+    }
+    let endTurn: (() => void) | null = null
     // The `cost` of a result: absent when no price is known.
     const priced = (cost: number | undefined) => (cost === undefined ? {} : { cost })
     try {
@@ -730,6 +746,12 @@ export default sbp('sbp/selectors/register', {
       const imageProblem = (clips.some((clip) => clip.kind === 'video') ? null : missingImageProblem(modelName, kind, paths.length, imageRules, reader))
         ?? learnedImagesProblem(modelName, cachedModel?.learnedImageLimit, paths.length, reader)
       if (imageProblem !== null) throw new ExplainedError(imageProblem)
+      // The turn of the provider comes before the reads of the inputs, so a
+      // request that waits holds no image or clip bytes, and before the
+      // caller's last check (`beforeSend`), which must see what the earlier
+      // requests spent. A clip's time limit (`run.deadline`) starts after it.
+      const limit = provider.mediaRequestsAtOnce
+      endTurn = await takeMediaTurn(provider.id, limit, signal, () => progress('waiting', { limit }))
       const appDir = paths.length > 0 ? await sbp('dez.native/getAppDir') as string : ''
       const sizeRules = provider.inputImageSize(kind, { ...(imageRules && { images: imageRules }) })
       const images = await Promise.all(paths.map(async (path): Promise<ChatImagePart> => {
@@ -741,20 +763,20 @@ export default sbp('sbp/selectors/register', {
       const clipParts = await inputClipParts(modelName, cachedModel?.clips, clips, signal, reader)
 
       if (isTextKind(kind)) {
-        const request = provider.textRequest(kind, modelId, { prompt: input.prompt, images, clips: clipParts, values }, await requestSecret(provider))
+        const request = provider.textRequest(kind, modelId, { prompt: input.prompt, images, clips: clipParts, values, ...(input.wordTimes && { wordTimes: true }) }, await requestSecret(provider))
         signal?.throwIfAborted()
-        progress('sent')
+        send()
         const { response, chunks } = await sbp('dez.http/stream', request, requestId) as NativeHttpStreamResult
         await assertStreamResponseOk(provider, response, chunks)
-        const { text, cost } = provider.textResult(kind, await readNativeChunkBytes(chunks))
-        return { media: [], clips: [], text, ...priced(cost) }
+        const { text, times, cost } = provider.textResult(kind, await readNativeChunkBytes(chunks))
+        return { media: [], clips: [], text, ...(times && { times }), ...priced(cost) }
       }
 
       if (!isClipKind(kind)) {
         const request = provider.imageRequest(kind, modelId, { prompt: input.prompt, images, values }, await requestSecret(provider))
         const quote = await mediaRequestQuote(provider, input, values, cachedModel)
         signal?.throwIfAborted()
-        progress('sent', quote)
+        send(quote)
         const { response, chunks } = await sbp('dez.http/stream', request, requestId) as NativeHttpStreamResult
         await assertStreamResponseOk(provider, response, chunks)
         const { media, cost } = provider.imageResult(kind, response, await readNativeChunkBytes(chunks))
@@ -786,7 +808,7 @@ export default sbp('sbp/selectors/register', {
       const firstRequest = provider.clipRequest(kind, modelId, clipInput)
       const quote = await mediaRequestQuote(provider, input, values, cachedModel)
       signal?.throwIfAborted()
-      progress('sent', quote)
+      send(quote)
       const first = await sendClipRequest(run, apiRequest(firstRequest), null, cacheDir).catch(async (error: unknown) => {
         const refusal = provider.imageCountRefusal(kind, error, images.length)
         if (refusal) {
@@ -840,6 +862,7 @@ export default sbp('sbp/selectors/register', {
         : `${provider.name} ran this request as its job ${jobId}: give the user this id, with which the user can ask ${provider.name} about the clip.`
       throw new ExplainedError(`${explanation} ${askWith}`, details, { cause: error })
     } finally {
+      endTurn?.()
       signal?.removeEventListener('abort', cancelRequest)
     }
   },

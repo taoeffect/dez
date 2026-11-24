@@ -56,7 +56,8 @@ const CLAUDE: MockProvider = { id: 'claude', name: 'Claude Mock', modelId: 'clau
 const UNDO_STEP_MS = 600
 
 const QUESTION = ' What color?'
-const NOT_AN_IMAGE_OR_CLIP_MESSAGE = 'Only images and audio and video clips can be dropped into a conversation. Clips must be mp4, webm, mov, mp3, wav, ogg, flac, m4a, aac, or opus files.'
+const UNSUPPORTED_DROP_MESSAGE = 'Only images, audio and video clips, and data files can be dropped into a conversation. '
+  + 'Clips must be mp4, webm, mov, mp3, wav, ogg, flac, m4a, aac, or opus files, and data files csv, tsv, json, or txt files.'
 const PASTED_PNG = solidPng(48, 32, [220, 40, 40])
 const DROPPED_PNG = solidPng(40, 24, [40, 90, 220])
 // PASTED_PNG as an OpenAI-format image part.
@@ -76,24 +77,28 @@ interface DocAndCaret {
   caret: number
 }
 
-/** The hover overlay of an image that the editor shows, or of its "Image
+/** The hover toolbar of an image that the editor shows, or of its "Image
  *  not found" box. */
 interface ImageOverlay {
   /** The id in its badge; null for an image with no id. */
   id: string | null
   /** Whether it has a trash button. */
   trash: boolean
-  /** Whether the overlay can be seen. */
+  /** Whether the toolbar can be seen. */
   shown: boolean
 }
 
-/** Where an image's overlay sits on the image, in px from each image edge
- *  (negative: out past that edge), and the heights of the image and its
- *  line. */
+/** Where the actions of an image's toolbar (the magnifier and the trash)
+ *  sit on the image, in px from each image edge (negative: out past that
+ *  edge), and whether the magnifier is across from the image (between its
+ *  left and right edges); where its info is from them; and the heights of
+ *  the image and its line. */
 interface OverlayLayout {
   top: number
   left: number
   right: number
+  magnifierOverImage: boolean
+  info: 'left' | 'below' | 'other'
   imageHeight: number
   lineHeight: number
 }
@@ -154,18 +159,18 @@ describe('images', () => {
     return { doc: await editorDoc(browser), caret: await editorCaret(browser) }
   }
 
-  // The overlay of each image that the editor shows (or of its "Image not
-  // found" box), in doc order. It is shown when it is fully opaque
-  // (`.dez-image__overlay` in dezTheme).
+  // The toolbar of each image that the editor shows (or of its "Image not
+  // found" box), in doc order. It is shown when its actions are fully
+  // opaque (`.dez-image__overlay` in dezTheme).
   async function imageOverlays (): Promise<ImageOverlay[]> {
     return browser.execute(() => Array.from(
       document.querySelectorAll('.cm-content .dez-image'),
       (image) => {
-        const overlay = image.querySelector('.dez-image__overlay')
+        const actions = image.querySelector('.dez-image__actions')
         return {
-          id: overlay?.querySelector('.dez-image__id')?.textContent ?? null,
-          trash: overlay?.querySelector('button.dez-image__trash') != null,
-          shown: overlay !== null && getComputedStyle(overlay).opacity === '1',
+          id: image.querySelector('.dez-image__info .dez-image__id')?.textContent ?? null,
+          trash: actions?.querySelector('button.dez-image__trash') != null,
+          shown: actions !== null && getComputedStyle(actions).opacity === '1',
         }
       },
     ))
@@ -209,26 +214,34 @@ describe('images', () => {
     await pointerClickAt(browser, await overlayItemCenter(index, '.dez-image__trash'))
   }
 
-  // Where the overlay of the image at `index` (doc order) sits, once the
-  // pointer is on the image and the overlay's entrance (a short fade and
+  // Where the toolbar of the image at `index` (doc order) sits, once the
+  // pointer is on the image and the entrance of its pills (a short fade and
   // slide, `.dez-image__overlay` in dezTheme) is over.
   async function overlayLayout (index: number): Promise<OverlayLayout> {
-    await waitForValue(browser, `overlay of image ${index} in place`, () => browser.execute((at: number) => {
-      const overlay = document.querySelectorAll('.cm-content .dez-image')[at]?.querySelector('.dez-image__overlay')
-      if (!overlay) return false
-      const style = getComputedStyle(overlay)
-      return style.opacity === '1' && style.transform === 'none'
+    await waitForValue(browser, `toolbar of image ${index} in place`, () => browser.execute((at: number) => {
+      const pills = document.querySelectorAll('.cm-content .dez-image')[at]?.querySelectorAll('.dez-image__overlay') ?? []
+      return pills.length === 2 && Array.from(pills).every((pill) => {
+        const style = getComputedStyle(pill)
+        return style.opacity === '1' && style.transform === 'none'
+      })
     }, index), true)
     return browser.execute((at: number) => {
       const wrapper = document.querySelectorAll('.cm-content .dez-image')[at]
       const image = wrapper?.querySelector('.dez-image__img')?.getBoundingClientRect()
-      const overlay = wrapper?.querySelector('.dez-image__overlay')?.getBoundingClientRect()
+      const actions = wrapper?.querySelector('.dez-image__actions')?.getBoundingClientRect()
+      const magnifier = wrapper?.querySelector('.dez-image__zoom')?.getBoundingClientRect()
+      const info = wrapper?.querySelector('.dez-image__info')?.getBoundingClientRect()
       const line = wrapper?.closest('.cm-line')?.getBoundingClientRect()
-      if (!image || !overlay || !line) throw new Error(`overlayLayout: image ${at}, its overlay, or its line not found`)
+      if (!image || !actions || !magnifier || !info || !line) throw new Error(`overlayLayout: image ${at}, its toolbar, or its line not found`)
+      const middle = (rect: DOMRect) => rect.top + rect.height / 2
       return {
-        top: overlay.top - image.top,
-        left: overlay.left - image.left,
-        right: image.right - overlay.right,
+        top: actions.top - image.top,
+        left: actions.left - image.left,
+        right: image.right - actions.right,
+        magnifierOverImage: magnifier.left >= image.left && magnifier.right <= image.right,
+        info: info.right <= actions.left && Math.abs(middle(info) - middle(actions)) < 1 ? 'left' as const
+          : info.top >= actions.bottom ? 'below' as const
+          : 'other' as const,
         imageHeight: image.height,
         lineHeight: line.height,
       }
@@ -248,17 +261,17 @@ describe('images', () => {
 
   // Whether the overlay item tooltip that shows is inside the editor's
   // visible area (its scroller; the tab bar above it would hide a part of
-  // the tooltip), and clear of the toolbar of the image at `index`, so that
-  // it never covers the item it explains.
+  // the tooltip), and clear of the toolbar of the image at `index` (both
+  // its pills), so that it never covers the item it explains.
   async function tooltipPlacement (index: number): Promise<{ inEditor: boolean, clearOfToolbar: boolean }> {
     return browser.execute((at: number) => {
       const tip = document.querySelector('.cm-tooltip.dez-image-tooltip')?.getBoundingClientRect()
       const editor = document.querySelector('.cm-scroller')?.getBoundingClientRect()
-      const toolbar = document.querySelectorAll('.cm-content .dez-image')[at]?.querySelector('.dez-image__overlay')?.getBoundingClientRect()
-      if (!tip || !editor || !toolbar) throw new Error(`tooltipPlacement: no tooltip, no editor, or no toolbar on image ${at}`)
+      const pills = Array.from(document.querySelectorAll('.cm-content .dez-image')[at]?.querySelectorAll('.dez-image__overlay') ?? [], (pill) => pill.getBoundingClientRect())
+      if (!tip || !editor || pills.length === 0) throw new Error(`tooltipPlacement: no tooltip, no editor, or no toolbar on image ${at}`)
       return {
         inEditor: tip.left >= editor.left && tip.top >= editor.top && tip.right <= editor.right && tip.bottom <= editor.bottom,
-        clearOfToolbar: tip.bottom <= toolbar.top || tip.top >= toolbar.bottom,
+        clearOfToolbar: pills.every((pill) => tip.bottom <= pill.top || tip.top >= pill.bottom),
       }
     }, index)
   }
@@ -479,23 +492,32 @@ describe('images', () => {
 
     await movePointer(browser, await imageCenter(1))
     await waitForValue(browser, 'overlays with the pointer on image b', imageOverlays, overlays(1))
-    // Image b is narrower than its overlay: the overlay starts as far from
-    // the image's left edge as from its top edge, and hangs out on the
-    // right. It adds no height to the line.
+    // Image b is narrower than the actions of its toolbar: they start as far
+    // from the image's left edge as from its top edge, and hang out on the
+    // right, so the magnifier is on the image. The info goes on a line
+    // under them. The toolbar adds no height to the line.
     const narrow = await overlayLayout(1)
     expect(narrow.top).toBeGreaterThan(0)
     expect(narrow.left).toBeCloseTo(narrow.top, 1)
     expect(narrow.right).toBeLessThan(0)
+    expect(narrow.magnifierOverImage).toBe(true)
+    expect(narrow.info).toBe('below')
     expect(narrow.lineHeight).toBe(narrow.imageHeight)
 
-    await movePointer(browser, await imageCenter(2))
+    // The info of image b hangs out over the top of the next line, the wide
+    // image (60 px tall), and keeps b's toolbar while the pointer is on it:
+    // the pointer goes onto the wide image below it.
+    const wideCenter = await imageCenter(2)
+    await movePointer(browser, { x: wideCenter.x, y: wideCenter.y + 20 })
     await waitForValue(browser, 'overlays with the pointer on the image with no id', imageOverlays, overlays(2))
-    // On a wide image, in its top-right corner, as far from its right edge
-    // as from its top edge.
+    // On a wide image, the actions are in its top-right corner, as far from
+    // its right edge as from its top edge, with the info to their left.
     const onWide = await overlayLayout(2)
     expect(onWide.top).toBeGreaterThan(0)
     expect(onWide.right).toBeCloseTo(onWide.top, 1)
     expect(onWide.left).toBeGreaterThan(onWide.right)
+    expect(onWide.magnifierOverImage).toBe(true)
+    expect(onWide.info).toBe('left')
     expect(onWide.lineHeight).toBe(onWide.imageHeight)
 
     await movePointer(browser, await imageCenter(3))
@@ -811,7 +833,7 @@ describe('images', () => {
     await expectDroppedImage(before)
   })
 
-  it('stores and inserts no dropped file that is not an image, and says so', async () => {
+  it('stores and inserts no dropped file of a kind that Dez does not take, and says so', async () => {
     await newTab(browser)
     await focusEditor(browser)
     await typeKeys(browser, 'Some text')
@@ -819,10 +841,10 @@ describe('images', () => {
     const before = await storedImages()
 
     const accepted = await dropFiles(browser, await docPoint('Some '.length), [
-      { name: 'notes.txt', type: 'text/plain', base64: Buffer.from('notes').toString('base64') },
+      { name: 'report.pdf', type: 'application/pdf', base64: Buffer.from('%PDF-1.7').toString('base64') },
     ])
     expect(accepted).toEqual({ dragover: true, drop: true })
-    await waitForValue(browser, 'toast', async () => (await openToasts(browser)).some((toast) => toast.message === NOT_AN_IMAGE_OR_CLIP_MESSAGE), true)
+    await waitForValue(browser, 'toast', async () => (await openToasts(browser)).some((toast) => toast.message === UNSUPPORTED_DROP_MESSAGE), true)
     expect(await editorDoc(browser)).toBe('Some text')
     expect(await storedImages()).toEqual(before)
 
@@ -849,15 +871,15 @@ describe('images', () => {
     await expectDroppedImage(before)
   })
 
-  it('leaves out a native-dropped file that is not an image, and puts a dropped link in as text', async () => {
+  it('leaves out a native-dropped file of a kind that Dez does not take, and puts a dropped link in as text', async () => {
     await newTab(browser)
     await focusEditor(browser)
     await typeKeys(browser, 'Some text')
     await waitForValue(browser, 'typed text', () => editorDoc(browser), 'Some text')
     const before = await storedImages()
 
-    await nativeDrop(browser, await docPoint('Some '.length), [path.join(setup.app.home, 'notes.txt')])
-    await waitForValue(browser, 'toast', async () => (await openToasts(browser)).some((toast) => toast.message === NOT_AN_IMAGE_OR_CLIP_MESSAGE), true)
+    await nativeDrop(browser, await docPoint('Some '.length), [path.join(setup.app.home, 'report.pdf')])
+    await waitForValue(browser, 'toast', async () => (await openToasts(browser)).some((toast) => toast.message === UNSUPPORTED_DROP_MESSAGE), true)
     expect(await editorDoc(browser)).toBe('Some text')
     expect(await storedImages()).toEqual(before)
 
@@ -866,6 +888,36 @@ describe('images', () => {
     await nativeDrop(browser, await docPoint('Some '.length), [link])
     await waitForValue(browser, 'dropped link', docAndCaret, { doc: `Some ${link}text`, caret: 'Some '.length + link.length })
     expect(await storedImages()).toEqual(before)
+  })
+
+  // A data file is no asset: Dez copies it under a new name into the work
+  // folder of the conversation, where the tools of a model read it, and the
+  // message names only the copy. A drop never links it, not even from a
+  // folder where an image would be linked.
+  it('copies a data file of an HTML5 drop and of a native drop into the work folder, and puts in only the path of the copy', async () => {
+    const salesCsv = Buffer.from('quarter,sales\nQ1,120\nQ2,180\n')
+    const budgetJson = Buffer.from('{"rent":900}\n')
+    const source = await writeTestFile(path.join(linkedDir, 'budget-2026.json'), budgetJson)
+    await newTab(browser)
+    await focusEditor(browser)
+    await typeKeys(browser, 'Plot ')
+    await waitForValue(browser, 'typed text', () => editorDoc(browser), 'Plot ')
+
+    const accepted = await dropFiles(browser, await docPoint('Plot '.length), [
+      { name: 'quarterly-sales.csv', type: 'text/csv', base64: salesCsv.toString('base64') },
+    ])
+    expect(accepted).toEqual({ dragover: true, drop: true })
+    const firstDoc = 'Plot \n/work/data-1.csv'
+    await waitForValue(browser, 'dropped data file', docAndCaret, { doc: firstDoc, caret: firstDoc.length })
+    await nativeDrop(browser, await docPoint(firstDoc.length), [source])
+    const doc = `${firstDoc}\n/work/data-2.json`
+    await waitForValue(browser, 'native-dropped data file', docAndCaret, { doc, caret: doc.length })
+
+    const workDir = appFilePath(setup.app.home, 'work', await activeConversationId(browser))
+    expect(await filesIn(workDir)).toEqual(['data-1.csv', 'data-2.json'])
+    expect(await fs.promises.readFile(path.join(workDir, 'data-1.csv'))).toEqual(salesCsv)
+    expect(await fs.promises.readFile(path.join(workDir, 'data-2.json'))).toEqual(budgetJson)
+    expect(await openToasts(browser)).toEqual([])
   })
 
   // A file in a dot folder, with a space and parens in its name: the asset

@@ -23,16 +23,29 @@ import { IMAGE_ID_SOURCE } from './images'
 // The chars of a word, as the inside of a character class: the letters
 // (with their combining marks) and digits of any script, and `_`.
 const WORD_CHARS = String.raw`\p{L}\p{M}\p{N}_`
-// `@` and one whole id: no word char comes before the `@` (`bob@a.com` is an
-// address) or after the id (`@about` is the id `about`, never `a`, and `@a2`
-// is no id). A `-` that joins the id to a word char makes one hyphenated
-// word, which is no mention either: `@a-team` and `@a-1` are plain text.
-// Every other char around a mention is fine: `(@a)`, `[@a]`, `@a, …`,
-// `@a. …`, `@a: …`, and a `-` with no word char after it (`@a - b`). The
-// regex takes the char before the `@` into the match, in place of a
-// lookbehind, which older WebKit versions cannot parse. That char is never
-// part of the mention before it, as a mention ends with a letter.
-const MENTION = new RegExp(String.raw`(^|[^${WORD_CHARS}])@(${IMAGE_ID_SOURCE})(?![${WORD_CHARS}]|-[${WORD_CHARS}])`, 'gu')
+
+/** The global regex of the words of a text that have the form of a
+ *  mention, for an id of the form of the regex source `idSource`, which
+ *  has no group and ends with a word char. Group 1 is the char before the
+ *  `@` (empty at the start of the text), and group 2 is the id. The
+ *  handles of a run of an app (`@&1`, tools/toolBridge.ts) take the same
+ *  form as the mentions of the assets.
+ *
+ *  A mention is `@` and one whole id: no word char comes before the `@`
+ *  (`bob@a.com` is an address) or after the id (`@about` is the id
+ *  `about`, never `a`, and `@a2` is no id). A `-` that joins the id to a
+ *  word char makes one hyphenated word, which is no mention either:
+ *  `@a-team` and `@a-1` are plain text. Every other char around a mention
+ *  is fine: `(@a)`, `[@a]`, `@a, …`, `@a. …`, `@a: …`, and a `-` with no
+ *  word char after it (`@a - b`). The regex takes the char before the `@`
+ *  into the match, in place of a lookbehind, which older WebKit versions
+ *  cannot parse. That char is never part of the mention before it, as an
+ *  id ends with a word char. */
+export function mentionRegExp(idSource: string): RegExp {
+  return new RegExp(String.raw`(^|[^${WORD_CHARS}])@(${idSource})(?![${WORD_CHARS}]|-[${WORD_CHARS}])`, 'gu')
+}
+
+const MENTION = mentionRegExp(IMAGE_ID_SOURCE)
 
 /** One word of a text that has the form of a mention of an image or a
  *  clip. */

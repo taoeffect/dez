@@ -1,0 +1,6 @@
+{
+  "name": "dez-title",
+  "description": "Draws an animated title clip in the look of a 1980s anime title card, with an alpha channel (MOV, PNG codec) to put over a video. Takes no input.",
+  "kind": "script",
+  "native": ["skia-canvas"]
+}

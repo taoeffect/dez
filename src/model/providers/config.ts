@@ -63,6 +63,11 @@ export const providerModelConfigSchema = z.object({
   // Whether the model reads images. Wins over the flag the server reports
   // (`modelImageInput`); missing: the server's flag, or unknown.
   imageInput: z.boolean().optional(),
+  // Whether the model reads audio clips, and video clips. Each wins over
+  // the flag the server reports (`modelAudioInput`, `modelVideoInput`);
+  // missing: the server's flag, or unknown.
+  audioInput: z.boolean().optional(),
+  videoInput: z.boolean().optional(),
   // Whether the model calls tools. Wins over the flag the server reports
   // (`modelToolCalling`); missing: the server's flag, or unknown.
   toolCalling: z.boolean().optional(),
@@ -108,12 +113,13 @@ const MODEL_RELEASED_FORMATS = ['unixSeconds', 'rfc3339'] as const
 
 // Where a `/models` entry says whether the model has a capability. A boolean
 // there is the flag; a list means "has it" when it holds the capability's
-// list value ("image" for `modelImageInput`, "tools" for
-// `modelToolCalling`, "reasoning" for `modelThinking`, and the first name of
-// the toggle's `bodyPath` for `settings[].modelSupport`); anything else is
-// unknown (modelParsing.ts). `missing` is the flag of an entry with no value
-// at the path, for a server that leaves out a capability the model lacks;
-// without it, no value is unknown.
+// list value ("image" for `modelImageInput`, "audio" for `modelAudioInput`,
+// "video" for `modelVideoInput`, "tools" for `modelToolCalling`,
+// "reasoning" for `modelThinking`, and the first name of the toggle's
+// `bodyPath` for `settings[].modelSupport`); anything else is unknown
+// (modelParsing.ts). `missing` is the flag of an entry with no value at the
+// path, for a server that leaves out a capability the model lacks; without
+// it, no value is unknown.
 const modelCapabilityPathSchema = z.object({
   path: modelEntryPathSchema,
   missing: z.boolean().optional(),
@@ -241,6 +247,40 @@ const modelOutputsConfigSchema = z.object({
   })),
 })
 
+/** The names of the audio formats of an OpenAI-format `input_audio` part
+ *  that `chatClips.audioFormats` can list. Dez makes each of them from a
+ *  clip of its own type, or makes an MP3 or a WAV copy
+ *  (tools/chatClips.ts). */
+export const CHAT_AUDIO_FORMATS = ['wav', 'mp3', 'aiff', 'aac', 'ogg', 'flac', 'm4a'] as const
+
+/** The media types of the video data URLs that `chatClips.videoTypes` can
+ *  list: the video types of Dez's clips (chat/mediaFiles.ts). */
+export const CHAT_VIDEO_TYPES = ['video/mp4', 'video/webm', 'video/quicktime'] as const
+
+// What a chat request to the provider can carry of audio and video clips,
+// for a `model_invoke` call to a text model that reads them
+// (`ModelInfo.audioInput`, `videoInput`). Only the OpenAI format has the
+// parts of a clip (apiFormats.ts). A clip of a type that a list does not
+// hold goes as a copy that Dez makes: MP3 (else WAV) for audio, MP4 for
+// video, so each list must hold that type.
+const chatClipsSchema = z.object({
+  // The `input_audio.format` names that the server takes. Missing: no
+  // audio clip goes.
+  audioFormats: z.array(z.enum(CHAT_AUDIO_FORMATS))
+    .refine((formats) => formats.includes('mp3') || formats.includes('wav'), 'Audio formats must hold mp3 or wav')
+    .optional(),
+  // The media types of the `video_url` data URLs that the server takes.
+  // Missing: no video clip goes.
+  videoTypes: z.array(z.enum(CHAT_VIDEO_TYPES))
+    .refine((types) => types.includes('video/mp4'), 'Video types must hold video/mp4')
+    .optional(),
+  // The most video clips of one request. Missing: no known limit.
+  maxVideos: z.number().int().positive().optional(),
+  // The most bytes of the files of all clips of one request together.
+  // Missing: no known limit, and only Dez's own limit counts.
+  maxBytes: z.number().int().positive().optional(),
+})
+
 // The whole definition of a provider. Built-ins are literals of this type and
 // custom providers are the same JSON in app_state.json, so one Provider class
 // serves both. Put every difference between providers in this data (headers,
@@ -265,6 +305,10 @@ export const providerConfigSchema = z.object({
   // because `baseUrl` may not hold a query.
   modelListQuery: z.record(z.string(), z.string()).optional(),
   modelImageInput: modelCapabilityPathSchema.optional(),
+  // Which models read audio clips, and video clips. Only a chat request of
+  // `model_invoke` sends one, as `chatClips` lets it.
+  modelAudioInput: modelCapabilityPathSchema.optional(),
+  modelVideoInput: modelCapabilityPathSchema.optional(),
   modelToolCalling: modelCapabilityPathSchema.optional(),
   // Which models think, for a provider with `thinking`: a model that is known
   // not to think gets no Thinking toggle and no thinking fields.
@@ -370,6 +414,11 @@ export const providerConfigSchema = z.object({
     onValue: settingBodyValueSchema.optional(),
     offValue: settingBodyValueSchema.optional(),
   }).optional(),
+  // The audio and video clips that a chat request can carry (a
+  // `model_invoke` call to a text model). Missing: no chat request carries
+  // a clip. The Anthropic format has no clip parts, so it ignores this
+  // (`ApiFormat.sendsClips`).
+  chatClips: chatClipsSchema.optional(),
   // Merged into the body of a chat request to a model whose known outputs
   // hold `image` (ModelInfo.outputs), after `requestBody` and
   // `providerSystemPrompt`: the part asks the server for image output
@@ -403,6 +452,13 @@ export const providerConfigSchema = z.object({
   // request of a kind that the format does not serve fails the same way.
   mediaApi: z.object({
     format: z.enum(MEDIA_API_FORMAT_IDS),
+    // The most media requests (`dez.provider/generateMedia`) that Dez
+    // sends the provider at one time, of all tabs together: more wait for
+    // their turn, in the order of their calls (mediaTurns.ts). A provider
+    // limits the requests of one API key, and a script that starts many
+    // clip jobs must not hit that limit. `DEFAULT_MEDIA_REQUESTS_AT_ONCE`
+    // with none.
+    maxRequestsAtOnce: z.number().int().positive().optional(),
     // Fixed parts of the body of the request that asks for an image or a
     // clip, for a fact about a model that no model list tells. A part is
     // merged (as `requestBody` is) into a request of the kind `request` to a
@@ -504,3 +560,4 @@ export type AudioOutputConfig = NonNullable<ProviderConfig['audioOutputs']>[numb
 export type MediaApiFormatId = (typeof MEDIA_API_FORMAT_IDS)[number]
 export type MediaEntryPaths = NonNullable<NonNullable<ProviderConfig['mediaApi']>['modelEntryPaths']>
 export type ProviderAuth = ProviderConfig['auth']
+export type ChatClipRules = z.infer<typeof chatClipsSchema>

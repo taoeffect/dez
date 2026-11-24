@@ -389,8 +389,8 @@ describe('compactionAssets', () => {
 })
 
 describe('assetTableText', () => {
-  it('gives one row for each asset: its id, its kind, and whether it is from the user, intermediate, of this reply, an input of an open job, and named by a file of an app', () => {
-    const assets = assetsOf(COMPACTED, FACTS, { replySectionId: 'r', jobInputs: new Map([['j-bbbb', ['b']]]), appInputs: new Set(['c', 'z']) })
+  it('gives one row for each asset: its id, its kind, and whether it is from the user, intermediate, of this reply, an input of an open job, and named by a file', () => {
+    const assets = assetsOf(COMPACTED, FACTS, { replySectionId: 'r', jobInputs: new Map([['j-bbbb', ['b']]]), fileInputs: new Set(['c', 'z']) })
     const [, ...rows] = assetTableText(assets).split('\n')
     // The id, the kind, and the five columns after the facts and the origin.
     const marks = new Map(rows.map((row) => row.split(' | ')).map((cells) => [cells[0], [cells[1], ...cells.slice(4)]]))
@@ -399,7 +399,7 @@ describe('assetTableText', () => {
     expect(marks).toStrictEqual(new Map([
       ['@a', ['image', 'user', '-', '-', '-', '-']],
       ['@b', ['image', 'made', '-', 'earlier', 'open job', '-']],
-      ['@c', ['image', 'made', 'intermediate', 'this reply', '-', 'app file']],
+      ['@c', ['image', 'made', 'intermediate', 'this reply', '-', 'file']],
       ['@d', ['audio clip', 'made', 'intermediate', 'this reply', '-', '-']],
       ['@e', ['image', 'user', '-', '-', '-', '-']],
     ]))
@@ -606,7 +606,7 @@ describe('assetDecisions', () => {
   it.each<[string, CompactionAsset, Guards, Partial<CompactionAnswer>]>([
     ['an asset of the user', USER, NO_GUARDS, {}],
     ['an input of an open job', { ...EARLIER, jobInput: true }, NO_GUARDS, {}],
-    ['an asset that a file of an app names', { ...EARLIER, appInput: true }, NO_GUARDS, {}],
+    ['an asset that a file of an app or of the work folder names', { ...EARLIER, fileInput: true }, NO_GUARDS, {}],
     ['an asset that the requirements name', EARLIER, NO_GUARDS, { requirements: 'Keep the fur of @b.' }],
     ['an asset that a kept message of the user names', EARLIER, { keptTexts: ['Make it run like @b.'] }, {}],
   ])('keeps %s that the answer drops or has no line for, and shows it when the answer shows it', (_name, asset, guards, notes) => {

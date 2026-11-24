@@ -4,15 +4,17 @@ import { partsImageReferences, partsMediaTags, sectionLinkedRuleParts } from '..
 import { MAX_SAVED_CLIP_BYTES } from '../chat/mediaFiles'
 import { sectionClipSource, type MediaTag } from '../chat/mediaTags'
 import type { Section } from '../chat/types'
+import { AUDIO_ALIASES } from './appAliases'
 import { assetIdArgument } from './arguments'
 import { madeAssetText } from './jobs'
-import type { KeptFile, ProgramEnd } from './programRuns'
+import { ffmpegRunDetails, type KeptFile, type ProgramEnd } from './programRuns'
 import { subcommandToolDefinition, type SubcommandTool } from './subcommands'
 import { ToolError, type ToolArguments } from './types'
 
 // The `audio` tool: work on the audio clips of a conversation, one
 // subcommand each (subcommands.ts). `clip` makes a new clip from a part of
-// one, for example to fit the length that a model takes.
+// one, for example to fit the length that a model takes. The other
+// subcommands measure clips, each with a built-in app (appAliases.ts).
 //
 // ffmpeg, a program that Dez ships, decodes and cuts the clip, in place of
 // Web Audio (`dez.controller/media/decodeAudio`): it was 3 to 7 times faster
@@ -27,7 +29,9 @@ import { ToolError, type ToolArguments } from './types'
 
 export const AUDIO_TOOL: SubcommandTool = {
   name: 'audio',
-  summary: 'Work with the audio clips of this conversation.',
+  summary: 'Cut and measure the audio clips of this conversation, and the sound of its video clips: '
+    + 'a part of a clip as a new clip, the beat grid of a song, where a sound starts and each of its hits, and where one clip starts in another. '
+    + 'Measure each time that must be exact with these subcommands: you are weak at timing by ear.',
   subcommands: [
     {
       name: 'clip',
@@ -54,6 +58,7 @@ export const AUDIO_TOOL: SubcommandTool = {
       ],
       example: { clip: 'b', start: 0, end: 15 },
     },
+    ...AUDIO_ALIASES.map((alias) => alias.subcommand),
   ],
 }
 
@@ -228,15 +233,10 @@ export function audioDecodeFailedText(id: string): string {
  *  error and wrote no audio. */
 export const AUDIO_NOT_FOUND_DETAILS = 'ffmpeg found no audio in the file.'
 
-/** The details of `audioDecodeFailedText` for a run that failed: how it
- *  ended, and `errorEnd`, the end of its error output. The caller takes
- *  the local paths out of it (`withoutLocalPaths`). */
+/** The details of `audioDecodeFailedText` for a run that failed
+ *  (`ffmpegRunDetails`). */
 export function audioRunDetails(end: Exclude<ProgramEnd, { kind: 'timedOut' }>, errorEnd: string): string {
-  const how = end.kind === 'outputTooLarge'
-    ? `Dez stopped ffmpeg: it wrote more than ${byteSizeText(AUDIO_RUN_OUTPUT_BYTES)} of output.`
-    : end.code === null ? 'The system ended ffmpeg.' : `ffmpeg ended with the error code ${end.code}.`
-  const written = errorEnd.trim()
-  return written === '' ? how : `${how} The end of its error output:\n${written}`
+  return ffmpegRunDetails(end, errorEnd, AUDIO_RUN_OUTPUT_BYTES)
 }
 
 /** The error result of a call whose ffmpeg run on the clip `id` did not

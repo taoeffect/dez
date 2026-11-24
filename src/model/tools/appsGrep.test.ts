@@ -2,13 +2,13 @@ import { describe, expect, it } from 'vitest'
 import { grepCall, grepPlan, grepRequest, grepText, type GrepCall, type GrepSearch } from './appsGrep'
 import { APPS_MAX_FILE_BYTES, type AppsTree } from './appsTool'
 import { grepFiles } from './grepMatch'
-import { appsArgs as args, fileTree as file, folderTree as folder, grepResult, MISSING_TREE as MISSING, refusal, textBytes } from './testing'
+import { appsArgs as args, CONVERSATION_ID, fileTree as file, folderTree as folder, grepResult, MISSING_TREE as MISSING, refusal, textBytes } from './testing'
 
 // `apps grep`: the checks of a call, the files that it searches, and the
 // texts that the calling model reads. The matching itself has its own
 // tests (grepMatch.test.ts).
 
-const call = (parameters: Record<string, unknown>): GrepCall => grepCall(args('grep', parameters))
+const call = (parameters: Record<string, unknown>): GrepCall => grepCall(args('grep', parameters), CONVERSATION_ID)
 const rule = (parameters: Record<string, unknown>): RegExp => call(parameters).regExp
 
 // The plan of a call with `parameters` on a path with the listing `tree`,

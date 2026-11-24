@@ -21,13 +21,26 @@ export interface ShippedFont {
   file: string
   /** Its family (name ID 1), which a subtitle style names. */
   family: string
+  /** Its CSS weight, from the style of the manifest. */
+  weight: number
   /** The scripts that it draws. */
   scripts: string
 }
 
+// The CSS weight of each style of the manifest. A font of a new style
+// needs its weight here: this module throws at its load without it, so a
+// unit test that imports it fails.
+const STYLE_WEIGHTS: Readonly<Record<string, number>> = { Regular: 400, Bold: 700 }
+
+function weightOf(file: string, style: string): number {
+  const weight = Object.hasOwn(STYLE_WEIGHTS, style) ? STYLE_WEIGHTS[style] : undefined
+  if (weight === undefined) throw new Error(`The font ${file} has the style "${style}", which has no weight in STYLE_WEIGHTS.`)
+  return weight
+}
+
 /** The fonts that Dez ships, in the order of the manifest. */
 export const SHIPPED_FONTS: readonly ShippedFont[] = Object.entries(fontsManifest.fonts)
-  .map(([file, { family, scripts }]) => ({ file, family, scripts }))
+  .map(([file, { family, style, scripts }]) => ({ file, family, weight: weightOf(file, style), scripts }))
 
 /** The folder of the fonts: in the resource folder of the bundle, and in
  *  the work folder of a run. */

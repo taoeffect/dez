@@ -765,6 +765,19 @@ describe('conversation cost, marks, and counted context in the header', () => {
     expect(bad.some((data) => 'incognito' in data || 'requestSent' in data)).toBe(false)
   })
 
+  it('round-trips the money limit, with its unknown-prices flag, and reads a bad sum as no limit', () => {
+    const strict = conversation({ requestSent: true, moneyLimit: { usd: 0.1 + 0.2, unknownPrices: false }, context: { tokens: 5, estimate: 7 } })
+    const allowing = conversation({ moneyLimit: { usd: 0, unknownPrices: true } })
+    const bad = ['money-limit: -1', 'money-limit: abc', 'money-limit:', 'money-limit: Infinity', 'unknown-prices: yes'].map(parseWithHeaderPart)
+
+    expect(headerLine(serializeConversation(strict))).toBe('<!-- title: Chat | model:  | created: 1 | sent: yes | money-limit: 0.3 | context: 5 | context-estimate: 7 -->')
+    expect(headerLine(serializeConversation(allowing))).toBe('<!-- title: Chat | model:  | created: 1 | money-limit: 0 | unknown-prices: yes -->')
+    expect(parseConversation('conversation', serializeConversation(strict)).moneyLimit).toStrictEqual({ usd: 0.3, unknownPrices: false })
+    expect(parseConversation('conversation', serializeConversation(allowing))).toStrictEqual(allowing)
+    expect(parseWithHeaderPart('money-limit: 12.5 | unknown-prices: no').moneyLimit).toStrictEqual({ usd: 12.5, unknownPrices: false })
+    expect(bad.some((data) => 'moneyLimit' in data)).toBe(false)
+  })
+
   it('round-trips the counted context, after the other parts', () => {
     const counted = conversation({ context: { tokens: 81200, estimate: 90400 } })
     const all = conversation({ cost: { usd: 0.5, requests: 2, unpriced: 0 }, agentTextEdited: true, context: { tokens: 0, estimate: 0 } })

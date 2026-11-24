@@ -19,7 +19,7 @@ import type { MultipartField } from './multipart'
 import { isOptionValue, parameterTakes, type ModelParameter, type OptionsParameter, type OptionValue, type ParameterValues, type RangeParameter } from './modelParameters'
 import { priceNumber, roundedPrice, unitPrice, usdText, type ModelPrice } from './modelPrices'
 import { isRecord, valueAtPath } from './modelParsing'
-import { CLIP_KINDS, type ChatImagePart, type ClipKind, type GeneratedMedia, type ImageKind, type MediaKind, type TextKind } from './types'
+import { CLIP_KINDS, type ChatImagePart, type ClipKind, type GeneratedMedia, type ImageKind, type MediaKind, type TextKind, type TimedSegment, type TimedWord, type TranscriptTimes } from './types'
 import { VENICE_AUDIO_TYPES, VENICE_MAX_AUDIO_BYTES, VENICE_REFERENCE_FIELDS, VENICE_VIDEO_TYPES, veniceFamilyByIdPrefix, veniceReferenceBody, veniceReferenceClipRules, veniceReferenceFamily } from './veniceReferences'
 
 // What one media request sends: the user's prompt, the input images as
@@ -48,6 +48,10 @@ export interface MediaInput {
   // Missing: none.
   clips?: readonly InputClipPart[]
   values: ParameterValues
+  // A transcription asks for the time of each word and segment, for an API
+  // that can give them (`TextFormat.parseResponse` gives them as `times`).
+  // Missing: the text only.
+  wordTimes?: true
 }
 
 // One input clip of a request, with its use (`ClipKindRules.use`): the
@@ -256,10 +260,11 @@ export interface ClipFormat {
 export interface TextFormat {
   request(kind: TextKind, baseUrl: string, modelId: string, input: MediaInput): MediaWireRequest
   // The text of the JSON of a 2xx response to a request of `kind`, as the
-  // model wrote it (an empty text for a clip with no speech), and the
-  // price of the request when the answer tells it. Throws when it holds no
-  // text.
-  parseResponse(kind: TextKind, body: Uint8Array): { text: string } & AnswerCost
+  // model wrote it (an empty text for a clip with no speech), the times of
+  // its words and segments when the request asked for them and the answer
+  // holds some, and the price of the request when the answer tells it.
+  // Throws when it holds no text.
+  parseResponse(kind: TextKind, body: Uint8Array): { text: string, times?: TranscriptTimes } & AnswerCost
 }
 
 // Everything that differs between the media APIs that a provider can speak
@@ -314,6 +319,38 @@ function transcriptText(data: unknown): string {
   const text = isRecord(data) ? data.text : undefined
   if (typeof text !== 'string') throw new UnusableAnswerError('The answer holds no text.')
   return text
+}
+
+// A time of a transcription answer, rounded to the millisecond: the
+// answers hold float noise, such as 47.480000000000004.
+function answerSeconds(value: number): number {
+  return Math.round(value * 1000) / 1000
+}
+
+// The entries of a list of a transcription answer that hold a text at `key`
+// and a `start` and `end` in seconds (0 or more, `end` not before `start`).
+function timedEntries(list: unknown, key: 'word' | 'text'): TimedSegment[] {
+  if (!Array.isArray(list)) return []
+  return list.flatMap((entry) => {
+    if (!isRecord(entry)) return []
+    const { [key]: text, start, end } = entry
+    if (typeof text !== 'string' || typeof start !== 'number' || typeof end !== 'number') return []
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start) return []
+    return [{ text, start: answerSeconds(start), end: answerSeconds(end) }]
+  })
+}
+
+// The times of a Venice transcription answer that asked for them
+// (`timestamps=true`): `{ duration?, timestamps?: { word?, segment?, char? } }`,
+// each list of `{ word | text, start, end }`. Models differ: one gives only
+// words, another only segments. Dez drops `char`, and each entry that is
+// not of that form. Undefined when no entry is left.
+function transcriptTimes(data: unknown): TranscriptTimes | undefined {
+  const words: TimedWord[] = timedEntries(valueAtPath(data, 'timestamps.word'), 'word').map(({ text, start, end }) => ({ word: text, start, end }))
+  const segments = timedEntries(valueAtPath(data, 'timestamps.segment'), 'text')
+  if (words.length === 0 && segments.length === 0) return undefined
+  const duration = isRecord(data) ? data.duration : undefined
+  return { duration: typeof duration === 'number' && Number.isFinite(duration) && duration > 0 ? answerSeconds(duration) : null, words, segments }
 }
 
 // The price that OpenRouter gives in the JSON `data` of an answer of its
@@ -1227,14 +1264,24 @@ const veniceFormat: MediaFormat = {
   },
   // The transcription endpoint takes only a form (`file`, `model`,
   // `response_format`, `timestamps`, `language`; no other field), and
-  // answers `{ text, duration?, timestamps? }` for `json`.
+  // answers `{ text, duration?, timestamps? }` for `json`. `timestamps=true`
+  // asks for the times of the words and the segments (`wordTimes`).
   // https://docs.venice.ai/api-reference/endpoint/audio/transcriptions
   texts: {
-    request: (_kind, baseUrl, modelId, { clips = [] }) => ({
+    request: (_kind, baseUrl, modelId, { clips = [], wordTimes }) => ({
       url: `${trimTrailingSlashes(baseUrl)}/audio/transcriptions`,
-      form: [{ name: 'model', value: modelId }, { name: 'response_format', value: 'json' }, clipFormFile('file', sourceClip(clips))],
+      form: [
+        { name: 'model', value: modelId },
+        { name: 'response_format', value: 'json' },
+        ...(wordTimes ? [{ name: 'timestamps', value: 'true' }] : []),
+        clipFormFile('file', sourceClip(clips)),
+      ],
     }),
-    parseResponse: (_kind, body) => ({ text: transcriptText(jsonBody(body)) }),
+    parseResponse: (_kind, body) => {
+      const data = jsonBody(body)
+      const times = transcriptTimes(data)
+      return { text: transcriptText(data), ...(times && { times }) }
+    },
   },
   listPrice: (kind, values, entry) => {
     const pricing = valueAtPath(entry, 'model_spec.pricing')
@@ -2127,6 +2174,8 @@ const openRouterFormat: MediaFormat = {
   // The transcription endpoint takes a form (`model`, `file`), and answers
   // `{ text, usage }` (`response_format` `json`, its default). A form needs
   // no base64 copy of the clip, which the JSON body (`input_audio`) does.
+  // It gives no times (`wordTimes`): only `verbose_json` holds them, and
+  // only the "OpenAI-compatible providers" of a model give that.
   // https://openrouter.ai/docs/api/api-reference/stt/create-transcription
   texts: {
     request: (_kind, baseUrl, modelId, { clips = [] }) => ({

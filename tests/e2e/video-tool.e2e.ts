@@ -1,4 +1,3 @@
-import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
@@ -6,18 +5,19 @@ import { MAX_REQUEST_IMAGE_BYTES } from '../../src/model/streams/pictureBudget'
 import { ASSET_INFO_COLUMNS } from '../../src/model/tools/assetInfo'
 import { pictureBudgetLeftText, PICTURES_SHOWN_NOTE } from '../../src/model/tools/assetView'
 import { jobStartedText, jobsWaitResults, startedJobId } from '../../src/model/tools/jobs'
-import { REFUSED_DEVICES, REFUSED_PROTOCOLS } from '../../src/model/tools/videoTool'
+import { REFUSED_DEVICES, REFUSED_PROTOCOLS, workInputNotFileText, workPathUnreadableText } from '../../src/model/tools/videoTool'
 import { byteSizeText } from '../../src/utils/byteSize'
 import { sentImageUrls } from './harness/chatBody'
 import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
 import { linkedDropDir } from './harness/drops'
 import { appFilePath, filesIn, mediaTempDir, newFileIn, savedTextCount, storedFileName, workDir, writeTestFile } from './harness/fixtures'
 import { generatedImagesDir, shownImages, solidPng } from './harness/images'
-import { runToolJob, startedJob, waitCall, type EndedJob } from './harness/jobs'
+import { NO_JOBS_LIST_TEXT, runToolJob, startedJob, waitCall, type EndedJob } from './harness/jobs'
 import { clipTag, MP4_VIDEO, shownPlayers, silentWav, startClipServer, WEBM_VIDEO, type ClipServer, type ShownPlayer } from './harness/media'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, openAiToolCall, replyText, sendChatReply, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
 import { processExists, runningProgram } from './harness/processes'
+import { mediaFacts, pixelColors, programOutput, programRun } from './harness/programs'
 import type { E2EBrowser } from './harness/session'
 import { activeConversationId, endedReply, newTab, openSeededConversation, openToasts, pickModel, submit, waitForThread } from './harness/thread'
 import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolChip, revealingPart, toolChips, toolPanelPictures } from './harness/toolChips'
@@ -41,12 +41,24 @@ import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolC
 //   is hidden under the chip of its call;
 // - `ffprobe` gives its output as the result of its call, with the neutral
 //   names of the copies;
+// - `ffmpeg` with `save_to` moves the frames of a clip into a folder of
+//   `/work`, with no asset; later `ffmpeg` and `ffprobe` calls read those
+//   files of `/work` as copies; a path of `/work` that is no file is
+//   refused with no run, and so is a link there, which Dez does not follow;
+// - the examples of the help for an edit: lossless FFV1 segments of an
+//   exact count of frames in `/work`, a join of them that loses no frame, a
+//   clip with alpha that ffmpeg makes and puts over the edit, and the two
+//   passes of loudnorm;
+// - the examples of the help for the two filters of this build that use a
+//   library: rubberband slows a tone and raises its pitch, and the two
+//   passes of vid.stab, through a file of `/work`, make a shaky clip
+//   stable;
 // - a call whose arguments name a file of the computer (a font too), the
 //   network, a device, or a commands file of a filter is refused at once:
-//   no job, and no work folder;
+//   no job, and no run folder;
 // - Stop leaves the program of a job to the next reply; a close of the tab
 //   and the time limit of a call end it;
-// - every work folder is gone after its call, and no file of the
+// - every run folder is gone after its call, and no file of the
 //   conversation changes;
 // - the lists of refused protocols and devices hold every one of this
 //   ffmpeg build;
@@ -67,7 +79,14 @@ import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolC
 // - `layout` "grid" puts two images and the frame sheets of two video clips
 //   into one picture;
 // - the `checks` of `asset_info` find the black, frozen, and silent parts,
-//   the loudness curve, and the cuts of each clip.
+//   and the loudness curve of each clip;
+// - `video cuts` runs the built-in app dez-cuts in the real Deno, waits for
+//   it, and finds the cuts of the clip of 4 shots, with a JSON file of
+//   each clip in the work folder of the conversation;
+// - `video title` runs the built-in app dez-title in the real Deno, waits
+//   for it, and puts a clip of the title with alpha (PNG in MOV) into the
+//   reply as an asset of its call; the overlay example of the help puts it
+//   over a clip.
 // No request holds a path of the test HOME (`takeRequest` checks each one).
 // Each video clip with sound that the spec makes is VP9 and Opus in WebM:
 // the CI GStreamer (.github/workflows/e2e.yml) decodes both, so the players
@@ -140,6 +159,21 @@ const SUBTITLES_FONT = 'NotoSans-Regular.ttf'
 const SUBTITLES_FILES = { 'words.srt': '1\n00:00:00,000 --> 00:00:02,500\nNight: Drive\n' }
 const SUBTITLES_ARGS = '-i @a -vf "subtitles=words.srt:fontsdir=fonts:force_style=\'FontName=Noto Sans\'" -c:v libvpx-vp9 subtitled.webm'
 
+// A tone of 8 s whose level goes up and down: loudnorm does a linear pass 2
+// only when the measured loudness range is above 0, which a tone of one
+// level does not have.
+const SWELL_SOURCE = 'aevalsrc=0.3*sin(2*PI*440*t)*(0.55+0.45*sin(2*PI*0.25*t)):s=48000:d=8'
+// The targets of the loudnorm examples of the help.
+const LOUDNORM_TARGETS = 'loudnorm=I=-14:TP=-1.2:LRA=11'
+
+// The values of the JSON of loudnorm in the log of an ffmpeg call, by key
+// (`input_i`: "-17.57").
+function loudnormValues (text: string): Record<string, string> {
+  const values = Object.fromEntries(Array.from(text.matchAll(/^\s*"(\w+)" : "([^"]*)",?$/gm), ([, key, value]) => [key, value]))
+  expect(Object.keys(values)).toContain('input_i')
+  return values
+}
+
 // The ids of the files of the conversation that `openShots` opens.
 type ShotId = 'a' | 'b' | 'c' | 'd' | 'e'
 const SHOT_IDS: ShotId[] = ['a', 'b', 'c', 'd', 'e']
@@ -167,7 +201,7 @@ describe('video tool', () => {
   // The folder of the file that the conversation links, out of every temp
   // folder.
   let linkedDir: string
-  let workRoot: string
+  let runFoldersRoot: string
   let videoDir: string
   let audioDir: string
   let imagesDir: string
@@ -179,44 +213,50 @@ describe('video tool', () => {
 
   const chatRequest = (): Promise<HeldRequest> => takeRequest(setup, CHAT_PATH)
 
-  // The standard output of a run of `program` of the build under test.
-  function programRun (program: 'dez-ffmpeg' | 'dez-ffprobe', args: string[]): Buffer {
-    const run = spawnSync(path.join(path.dirname(setup.app.binary), program), args)
-    if (run.status !== 0) throw new Error(`${program} ${args.join(' ')} failed: ${run.stderr.toString()}`)
-    return run.stdout
-  }
-  const programOutput = (program: 'dez-ffmpeg' | 'dez-ffprobe', args: string[]): string => programRun(program, args).toString('utf8')
-
-  // Each color of the pixels of the picture `file` once, as its red, green,
-  // blue, and alpha (`32,128,255,127`), as ffmpeg decodes it.
-  function pixelColors (file: string): string[] {
-    const pixels = programRun('dez-ffmpeg', ['-v', 'error', '-i', file, '-f', 'rawvideo', '-pix_fmt', 'rgba', '-'])
-    const colors = new Set<string>()
-    for (let start = 0; start < pixels.length; start += 4) colors.add(pixels.subarray(start, start + 4).join(','))
-    return [...colors]
-  }
-
   // The number of light pixels (gray above the middle) of the frame at
   // `seconds` of the picture or clip `file`: the white text that a call
   // draws on a black picture.
   function lightPixels (file: string, seconds = 0): number {
-    const gray = programRun('dez-ffmpeg', ['-v', 'error', '-ss', String(seconds), '-i', file, '-frames:v', '1', '-vf', 'format=gray', '-f', 'rawvideo', '-'])
+    const gray = programRun(setup.app, 'dez-ffmpeg', ['-v', 'error', '-ss', String(seconds), '-i', file, '-frames:v', '1', '-vf', 'format=gray', '-f', 'rawvideo', '-'])
     return gray.filter((value) => value > 128).length
   }
 
-  // The facts of the media file `file`: each stream (`video vp9 48x36`,
-  // `audio opus`), and the length in s to 1 decimal place (null for an
-  // image).
-  function mediaFacts (file: string): { streams: string[], seconds: number | null } {
-    const output = programOutput('dez-ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type,codec_name,width,height:format=duration', '-of', 'json', file])
-    const { streams, format } = JSON.parse(output) as {
-      streams: Array<{ codec_type: string, codec_name: string, width?: number, height?: number }>
-      format: { duration?: string }
-    }
-    return {
-      streams: streams.map(({ codec_type: type, codec_name: codec, width, height }) => `${type} ${codec}${width === undefined ? '' : ` ${width}x${height}`}`),
-      seconds: format.duration === undefined ? null : Math.round(Number(format.duration) * 10) / 10,
-    }
+  // The number of frames of the video stream of `file`, as ffprobe counts
+  // them when it decodes the stream.
+  function frameCount (file: string): number {
+    return Number(programOutput(setup.app, 'dez-ffprobe', ['-v', 'error', '-count_frames', '-select_streams', 'v:0', '-show_entries', 'stream=nb_read_frames', '-of', 'csv=p=0', file]).trim())
+  }
+
+  // The path of the file of the clip `id` that the reply text `reply`
+  // shows.
+  function madeClipPath (reply: string, id: string): string {
+    const match = new RegExp(`<dez:(?:video|audio) id="${id}" type="[^"]+" src="([^"]+)"`).exec(reply)
+    expect(match, `the tag of @${id}`).not.toBeNull()
+    return match![1]
+  }
+
+  // The mean change of the video clip `file` from one frame to the next:
+  // the mean gray level (0 to 255) of the difference of each two frames.
+  function meanFrameChange (file: string): number {
+    const log = programOutput(setup.app, 'dez-ffmpeg', ['-v', 'error', '-i', file, '-vf', 'tblend=all_mode=difference,signalstats,metadata=mode=print:key=lavfi.signalstats.YAVG:file=-', '-f', 'null', '-'])
+    const values = Array.from(log.matchAll(/^lavfi\.signalstats\.YAVG=([\d.]+)$/gm), (match) => Number(match[1]))
+    expect(values.length).toBeGreaterThan(10)
+    return values.reduce((sum, value) => sum + value, 0) / values.length
+  }
+
+  // The frequency of the tone of the audio clip `file`, in Hz: the count of
+  // its rises through 0 in each second, with 0.25 s left out at each end.
+  // rubberband smears the hard stop of a tone over the end of its clip,
+  // which then has more rises (548 a second in the last 0.25 s of a tone of
+  // 524 Hz).
+  function toneFrequency (file: string): number {
+    const pcm = programRun(setup.app, 'dez-ffmpeg', ['-v', 'error', '-i', file, '-f', 's16le', '-ac', '1', '-ar', '44100', '-'])
+    const samples = new Int16Array(pcm.buffer, pcm.byteOffset, pcm.length / 2)
+    const edge = 0.25 * 44100
+    const end = samples.length - edge
+    let rises = 0
+    for (let index = edge + 1; index < end; index++) if (samples[index - 1] < 0 && samples[index] >= 0) rises++
+    return rises / ((end - edge) / 44100)
   }
 
   // The streams of the picture of the data URL `url`, which must be a
@@ -227,7 +267,7 @@ describe('video tool', () => {
     expect(type).toBe('data:image/jpeg;base64')
     const file = path.join(linkedDir, name)
     await writeTestFile(file, Buffer.from(data, 'base64'))
-    return mediaFacts(file).streams
+    return mediaFacts(setup.app, file).streams
   }
 
   // The bytes of the base64 text of an image of a user message that goes
@@ -345,11 +385,11 @@ describe('video tool', () => {
     return runToolJob(chatRequest, request, 'video', callId, videoCall(callId, command, parameters))
   }
 
-  // After the calls of a test: no work folder stays, no file of the
+  // After the calls of a test: no run folder stays, no file of the
   // conversation changed (`files`, from `openClips` or `openShots`, with
   // their bytes in `sources`), and nothing failed.
   async function expectCleanEnd (files: Record<string, string>, sources: Record<string, Buffer> = SOURCES): Promise<void> {
-    expect(await filesIn(workRoot)).toStrictEqual([])
+    expect(await filesIn(runFoldersRoot)).toStrictEqual([])
     for (const [id, file] of Object.entries(files)) expect((await fs.promises.readFile(file)).equals(sources[id]), `the file of @${id} is as it was`).toBe(true)
     expect(await openToasts(browser, 'error')).toStrictEqual([])
     expect(await consoleErrors(browser)).toStrictEqual([])
@@ -366,16 +406,16 @@ describe('video tool', () => {
     setup = await startMockProviderApp(CALLER)
     browser = setup.browser
     const { home } = setup.app
-    workRoot = workDir(home)
+    runFoldersRoot = workDir(home)
     videoDir = appFilePath(home, 'assets', 'generated', 'video')
     audioDir = appFilePath(home, 'assets', 'generated', 'audio')
     imagesDir = generatedImagesDir(home)
     const shotsFile = path.join(linkedDir, 'shots.webm')
     const toneFile = path.join(linkedDir, 'tone.wav')
     const alphaFile = path.join(linkedDir, 'alpha.png')
-    programOutput('dez-ffmpeg', [...SHOTS_ARGS, shotsFile])
-    programOutput('dez-ffmpeg', [...TONE_ARGS, toneFile])
-    programOutput('dez-ffmpeg', [...ALPHA_ARGS, alphaFile])
+    programOutput(setup.app, 'dez-ffmpeg', [...SHOTS_ARGS, shotsFile])
+    programOutput(setup.app, 'dez-ffmpeg', [...TONE_ARGS, toneFile])
+    programOutput(setup.app, 'dez-ffmpeg', [...ALPHA_ARGS, alphaFile])
     shotSources = {
       a: await fs.promises.readFile(shotsFile),
       b: await fs.promises.readFile(toneFile),
@@ -426,7 +466,7 @@ describe('video tool', () => {
     expect(madeName).toMatch(storedFileName('webm'))
     const madePath = path.join(videoDir, madeName)
     expect(reply.endsWith(`</dez:tool>\n\n<dez:video id="g" type="video/webm" src="${madePath}" tool="video" made-by="${job.jobId}"/>\n\n${replyText(CALLER.modelName)}`)).toBe(true)
-    expect(mediaFacts(madePath)).toStrictEqual({ streams: ['video vp9 48x36'], seconds: 6 })
+    expect(mediaFacts(setup.app, madePath)).toStrictEqual({ streams: ['video vp9 48x36'], seconds: 6 })
     await waitForValue(browser, 'player of the new clip', async () => (await shownPlayers(browser)).at(-1), madeVideoPlayer('g', 6))
     await expectCleanEnd(files)
   })
@@ -453,7 +493,7 @@ describe('video tool', () => {
     expect(madeName).toMatch(storedFileName('webm'))
     const madePath = path.join(videoDir, madeName)
     expect(reply.endsWith(`</dez:tool>\n\n<dez:video id="g" type="video/webm" src="${madePath}" tool="video" made-by="${job.jobId}"/>\n\n${replyText(CALLER.modelName)}`)).toBe(true)
-    expect(mediaFacts(madePath)).toStrictEqual({ streams: ['video vp9 48x36'], seconds: 4 })
+    expect(mediaFacts(setup.app, madePath)).toStrictEqual({ streams: ['video vp9 48x36'], seconds: 4 })
     await waitForValue(browser, 'player of the new clip', async () => (await shownPlayers(browser)).at(-1), madeVideoPlayer('g', 4))
     await expectCleanEnd(files)
   })
@@ -497,7 +537,7 @@ describe('video tool', () => {
     const underPath = path.join(videoDir, await newFileIn(browser, videoDir, [...before, madeName]))
     expect(reply).toContain(`</dez:tool>\n\n<dez:video id="g" type="video/webm" src="${madePath}" tool="video" made-by="${mix.jobId}"/>\n<dez:tool id="call_loudness"`)
     expect(reply.endsWith(`</dez:tool>\n\n<dez:video id="h" type="video/webm" src="${underPath}" tool="video" made-by="${under.jobId}"/>\n\n${replyText(CALLER.modelName)}`)).toBe(true)
-    for (const file of [madePath, underPath]) expect(mediaFacts(file)).toStrictEqual({ streams: ['video vp9 48x36', 'audio opus'], seconds: 1 })
+    for (const file of [madePath, underPath]) expect(mediaFacts(setup.app, file)).toStrictEqual({ streams: ['video vp9 48x36', 'audio opus'], seconds: 1 })
     await waitForValue(browser, 'player of the last new clip', async () => (await shownPlayers(browser)).at(-1), madeVideoPlayer('h', 1))
     await expectCleanEnd(files)
   })
@@ -792,11 +832,11 @@ describe('video tool', () => {
     await expectCleanEnd(files, shotSources)
   })
 
-  it('finds the black, frozen, and silent parts, the loudness curve, and the cuts of each clip that an asset_info call checks', async () => {
+  it('finds the black, frozen, and silent parts, and the loudness curve of each clip that an asset_info call checks', async () => {
     const files = await openShots('asset-checks')
     await submit(browser, 'Check my clips.')
     const first = await chatRequest()
-    sendToolCalls(first.reply, [openAiToolCall('call_checks', 'asset_info', { assets: '@a @b @c @d', checks: 'black frozen silence loudness_curve cuts' })])
+    sendToolCalls(first.reply, [openAiToolCall('call_checks', 'asset_info', { assets: '@a @b @c @d', checks: 'black frozen silence loudness_curve' })])
 
     const checked = await chatRequest()
     const noPicture = 'no check, the clip has no picture'
@@ -813,13 +853,11 @@ describe('video tool', () => {
       // ms: the decoder of another computer can give other ms.
       expect.stringMatching(/^ {2}silence: 1(\.0\d{0,2})? s to (2\.9\d{0,2}|3) s$/),
       expect.stringMatching(curveLine(4)),
-      '  cuts: 1, 2, 3 s',
       `@b | audio | WAV | 1 s | pcm_s16le | 44100 Hz | 1 channel | ${byteSizeText(shotSources.b.length)} | shown | from the user`,
       `  black: ${noPicture}`,
       `  frozen: ${noPicture}`,
       '  silence: none',
       expect.stringMatching(curveLine(1)),
-      `  cuts: ${noPicture}`,
       // An image gets no check.
       `@c | image | PNG | 48x36 | ${byteSizeText(PICTURE_PNG.length)} | shown | from the user`,
       // A clip of one color is frozen from its first frame to its end.
@@ -828,9 +866,28 @@ describe('video tool', () => {
       '  frozen: 0 s to the end',
       `  silence: ${noSound}`,
       `  loudness_curve: ${noSound}`,
-      '  cuts: none',
     ])
     await sendChatReply(checked.reply, CALLER.modelName)
+    await endedReply(browser, CLIPS_REPLY_INDEX)
+    await expectCleanEnd(files, shotSources)
+  })
+
+  it('finds the cuts of each video clip with video cuts, which runs the built-in app dez-cuts and waits for it', async () => {
+    const files = await openShots('alias-cuts')
+    await submit(browser, 'Find the cuts of my clips.')
+    const workFolder = appFilePath(setup.app.home, 'work', await activeConversationId(browser))
+    const first = await chatRequest()
+    sendToolCalls(first.reply, [videoCall('call_cuts', 'cuts', { clips: '@a @d' })])
+
+    const measured = await chatRequest()
+    expect(toolResult(measured, 'call_cuts').split('\n')).toStrictEqual([
+      '@a (20 frames, 4.000 s at 5 fps): 3 cuts, at 1.000, 2.000, 3.000 s. In /work/cuts-a.json.',
+      '@d (10 frames, 2.000 s at 5 fps): no cut. In /work/cuts-d.json.',
+      'Each file holds id, fps, frames, duration, threshold, and cuts: {frame, time, score} each, where frame is the first frame after the cut. Times are in seconds.',
+    ])
+    const shots = JSON.parse(await fs.promises.readFile(path.join(workFolder, 'cuts-a.json'), 'utf8')) as { cuts: Array<{ frame: number, time: number }> }
+    expect(shots.cuts.map(({ frame, time }) => [frame, time])).toStrictEqual([[5, 1], [10, 2], [15, 3]])
+    await sendChatReply(measured.reply, CALLER.modelName)
     await endedReply(browser, CLIPS_REPLY_INDEX)
     await expectCleanEnd(files, shotSources)
   })
@@ -867,8 +924,8 @@ describe('video tool', () => {
     const videoPath = path.join(videoDir, videoName)
     expect(reply).toContain(`</dez:tool>\n\n![id=g|tool=video|made-by=${frame.jobId}](${imagePath})\n<dez:tool id="call_still"`)
     expect(reply.endsWith(`</dez:tool>\n\n<dez:video id="h" type="video/webm" src="${videoPath}" tool="video" made-by="${still.jobId}"/>\n\n${replyText(CALLER.modelName)}`)).toBe(true)
-    expect(mediaFacts(imagePath)).toStrictEqual({ streams: ['video mjpeg 48x36'], seconds: null })
-    expect(mediaFacts(videoPath)).toStrictEqual({ streams: ['video vp9 48x36', 'audio opus'], seconds: 1 })
+    expect(mediaFacts(setup.app, imagePath)).toStrictEqual({ streams: ['video mjpeg 48x36'], seconds: null })
+    expect(mediaFacts(setup.app, videoPath)).toStrictEqual({ streams: ['video vp9 48x36', 'audio opus'], seconds: 1 })
     // The editor draws only the lines near its view, so the image of the
     // first message can have no DOM: find the new image by its file name.
     await waitForValue(browser, 'the new image in the editor', async () => (await shownImages(browser)).find(({ alt }) => alt === imageName), { alt: imageName, width: 48, height: 36 })
@@ -898,9 +955,9 @@ describe('video tool', () => {
     expect(imageName).toMatch(storedFileName('png'))
     const imagePath = path.join(imagesDir, imageName)
     expect(reply.endsWith(`</dez:tool>\n\n![id=b|tool=video|made-by=${small.jobId}](${imagePath})\n\n${replyText(CALLER.modelName)}`)).toBe(true)
-    expect(mediaFacts(imagePath)).toStrictEqual({ streams: ['video png 24x18'], seconds: null })
+    expect(mediaFacts(setup.app, imagePath)).toStrictEqual({ streams: ['video png 24x18'], seconds: null })
     // Each pixel has the color and the alpha of the source.
-    expect(pixelColors(imagePath)).toStrictEqual([ALPHA_COLOR])
+    expect(pixelColors(setup.app, imagePath)).toStrictEqual([ALPHA_COLOR])
     await waitForValue(browser, 'the new image in the editor', async () => (await shownImages(browser)).find(({ alt }) => alt === imageName), { alt: imageName, width: 24, height: 18 })
     await expectCleanEnd({ a: file }, { a: alphaPng })
   })
@@ -927,13 +984,13 @@ describe('video tool', () => {
     expect(imageName).toMatch(storedFileName('jpg'))
     const imagePath = path.join(imagesDir, imageName)
     expect(reply.endsWith(`</dez:tool>\n\n![id=h|tool=video|made-by=${last.jobId}](${imagePath})\n\n${replyText(CALLER.modelName)}`)).toBe(true)
-    expect(mediaFacts(countPath)).toStrictEqual({ streams: ['video vp9 48x36'], seconds: 2 })
+    expect(mediaFacts(setup.app, countPath)).toStrictEqual({ streams: ['video vp9 48x36'], seconds: 2 })
 
     // The image is the frame at 1.8 s, the last one, and not the one
     // before it: the same ffmpeg takes each of them with a seek.
     const frames = [1.8, 1.6].map((seconds) => {
       const file = path.join(linkedDir, `last-frame-${seconds}.jpg`)
-      programOutput('dez-ffmpeg', ['-v', 'error', '-y', '-ss', String(seconds), '-i', countPath, '-frames:v', '1', '-update', '1', '-q:v', '2', file])
+      programOutput(setup.app, 'dez-ffmpeg', ['-v', 'error', '-y', '-ss', String(seconds), '-i', countPath, '-frames:v', '1', '-update', '1', '-q:v', '2', file])
       return fs.readFileSync(file)
     })
     const image = await fs.promises.readFile(imagePath)
@@ -957,7 +1014,7 @@ describe('video tool', () => {
 
     const subtitles = await runJob(title.next, 'call_subtitles', 'ffmpeg', { arguments: SUBTITLES_ARGS, fonts: SUBTITLES_FONT, text_files: JSON.stringify(SUBTITLES_FILES) })
     expect(subtitles.started).toBe(`${jobStartedText(subtitles.jobId, 3)}\nThe inputs of the run: the video clip @a as a.webm. `
-      + `The fonts of the run, in its fonts folder: ${SUBTITLES_FONT}. The text files of the run, in its work folder: words.srt.`)
+      + `The fonts of the run, in its fonts folder: ${SUBTITLES_FONT}. The text files of the run, in its run folder: words.srt.`)
     expect(subtitles.result.text).toMatch(/^ffmpeg ended with no error and made 1 file that Dez keeps: subtitled\.webm \(video clip\)\. The line at the end gives its id\.\n[\s\S]+\nMade the video clip @c\.$/)
     // No request names the folder of the fonts that Dez ships.
     expect(subtitles.next.body).not.toContain(path.dirname(setup.app.binary))
@@ -969,8 +1026,8 @@ describe('video tool', () => {
     const subtitledPath = path.join(videoDir, await newFileIn(browser, videoDir, [...videosBefore, darkName]))
     expect(reply).toContain(`</dez:tool>\n\n![id=b|tool=video|made-by=${title.jobId}](${titlePath})\n<dez:tool id="call_subtitles"`)
     expect(reply.endsWith(`</dez:tool>\n\n<dez:video id="c" type="video/webm" src="${subtitledPath}" tool="video" made-by="${subtitles.jobId}"/>\n\n${replyText(CALLER.modelName)}`)).toBe(true)
-    expect(mediaFacts(titlePath)).toStrictEqual({ streams: ['video png 640x360'], seconds: null })
-    expect(mediaFacts(subtitledPath)).toStrictEqual({ streams: ['video vp9 640x360'], seconds: 3 })
+    expect(mediaFacts(setup.app, titlePath)).toStrictEqual({ streams: ['video png 640x360'], seconds: null })
+    expect(mediaFacts(setup.app, subtitledPath)).toStrictEqual({ streams: ['video vp9 640x360'], seconds: 3 })
     // White text on the black clip: the title, and the subtitle until its
     // end. drawtext fails with no font, and libass draws no text when the
     // fonts folder has no font of the family of the style.
@@ -979,6 +1036,165 @@ describe('video tool', () => {
     expect(lightPixels(subtitledPath, 1)).toBeGreaterThan(100)
     expect(lightPixels(subtitledPath, 2.8)).toBe(0)
     await expectCleanEnd({})
+  })
+
+  // The overlay example of the help, with VP9 in WebM in place of H.264 in
+  // MP4, as in `SUBTITLES_ARGS`. The title shows from 0.5 s to 1.5 s.
+  it('makes a title clip with alpha with video title, which runs the built-in app dez-title and waits for it, and puts it over a clip with the overlay example of the help', async () => {
+    const videosBefore = await filesIn(videoDir)
+    await submit(browser, 'Put a title over a dark clip.')
+    const dark = await runJob(await chatRequest(), 'call_dark', 'ffmpeg', { arguments: '-f lavfi -i color=c=black:size=160x90:rate=5:duration=3 -c:v libvpx-vp9 dark.webm' })
+    expect(dark.result.text.endsWith('\nMade the video clip @a.')).toBe(true)
+    const darkName = await newFileIn(browser, videoDir, videosBefore)
+
+    sendToolCalls(dark.next.reply, [videoCall('call_title', 'title', { text: 'NEON CITY', width: 160, height: 90, fps: 5, duration: 1 })])
+    const titled = await chatRequest()
+    expect(toolResult(titled, 'call_title')).toBe([
+      'The title "NEON CITY": 5 frames of 160×90 at 5 fps (1 s), with an alpha channel, in NotoSerifCJKjp-Black.otf.',
+      '',
+      'Dez keeps 1 file of the output folder: title.frames/ (video clip: 5 frames, PNG in MOV with alpha). The line at the end gives its id.',
+      'Made the video clip @b.',
+    ].join('\n'))
+    const titleName = await newFileIn(browser, videoDir, [...videosBefore, darkName])
+    expect(titleName).toMatch(storedFileName('mov'))
+
+    const overlay = await runJob(titled, 'call_overlay', 'ffmpeg', {
+      arguments: '-i @a -itsoffset 0.5 -i @b -filter_complex "[0:v][1:v]overlay=eof_action=pass,format=yuv420p[v]" -map "[v]" -map "0:a?" -c:v libvpx-vp9 -c:a copy titled.webm',
+    })
+    expect(overlay.result.text.endsWith('\nMade the video clip @c.')).toBe(true)
+    await sendChatReply(overlay.next.reply, CALLER.modelName)
+
+    const reply = await endedReply(browser)
+    const darkPath = path.join(videoDir, darkName)
+    const titlePath = path.join(videoDir, titleName)
+    const overlaidPath = path.join(videoDir, await newFileIn(browser, videoDir, [...videosBefore, darkName, titleName]))
+    // No job made the title: its clip has the tool of its call and no job.
+    expect(reply).toContain(`</dez:tool>\n\n<dez:video id="b" type="video/quicktime" src="${titlePath}" tool="video"/>`)
+    expect(reply.endsWith(`</dez:tool>\n\n<dez:video id="c" type="video/webm" src="${overlaidPath}" tool="video" made-by="${overlay.jobId}"/>\n\n${replyText(CALLER.modelName)}`)).toBe(true)
+    expect(mediaFacts(setup.app, titlePath)).toStrictEqual({ streams: ['video png 160x90'], seconds: 1 })
+    expect(mediaFacts(setup.app, overlaidPath)).toStrictEqual({ streams: ['video vp9 160x90'], seconds: 3 })
+    // Most pixels of a frame of the title are transparent; the letters are
+    // opaque.
+    const pixels = programRun(setup.app, 'dez-ffmpeg', ['-v', 'error', '-ss', '0.5', '-i', titlePath, '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgba', '-'])
+    const alphas = pixels.filter((_, index) => index % 4 === 3)
+    expect(alphas.filter((alpha) => alpha === 0).length).toBeGreaterThan(alphas.length / 2)
+    expect(alphas.filter((alpha) => alpha === 255).length).toBeGreaterThan(100)
+    expect(lightPixels(darkPath, 1)).toBe(0)
+    expect(lightPixels(overlaidPath, 0.2)).toBe(0)
+    expect(lightPixels(overlaidPath, 1)).toBeGreaterThan(100)
+    expect(lightPixels(overlaidPath, 2.5)).toBe(0)
+    await expectCleanEnd({})
+  })
+
+  // The examples of the help for an edit from lossless segments, a clip
+  // with alpha that ffmpeg makes over it, and two-pass loudnorm. The source
+  // is a black clip, so the white text of the clip with alpha is the only
+  // light part. As in `SUBTITLES_ARGS`, VP9 in WebM takes the place of H.264
+  // in MP4 in each clip that a player shows.
+  it('cuts lossless segments into /work, joins them with no lost frame, puts a clip with alpha that ffmpeg makes over the edit, and sets the loudness of a tone in two passes, with the examples of the help', async () => {
+    await submit(browser, 'Edit a dark clip from two segments, put a lower third over it, and set the loudness of a tone.')
+    const segFolder = appFilePath(setup.app.home, 'work', await activeConversationId(browser), 'seg')
+    const dark = await runJob(await chatRequest(), 'call_dark', 'ffmpeg', { arguments: '-f lavfi -i color=c=black:size=160x90:rate=24:duration=4 -c:v libvpx-vp9 dark.webm' })
+    expect(dark.result.text.endsWith('\nMade the video clip @a.')).toBe(true)
+
+    // 24 frames from second 2, and 12 frames from the start.
+    const first = await runJob(dark.next, 'call_s1', 'ffmpeg', { arguments: '-ss 2 -i @a -frames:v 24 -an -c:v ffv1 -r 24 s1.mov', save_to: '/work/seg' })
+    expect(first.result.text.startsWith('ffmpeg ended with no error, and Dez saved its 1 new file into /work/seg: /work/seg/s1.mov.')).toBe(true)
+    const second = await runJob(first.next, 'call_s2', 'ffmpeg', { arguments: '-i @a -frames:v 12 -an -c:v ffv1 -r 24 s2.mov', save_to: '/work/seg' })
+    expect(second.result.text.startsWith('ffmpeg ended with no error, and Dez saved its 1 new file into /work/seg: /work/seg/s2.mov.')).toBe(true)
+    expect(await filesIn(segFolder)).toStrictEqual(['s1.mov', 's2.mov'])
+    for (const [name, frames] of [['s1.mov', 24], ['s2.mov', 12]] as const) {
+      const file = path.join(segFolder, name)
+      expect(mediaFacts(setup.app, file).streams).toStrictEqual(['video ffv1 160x90'])
+      expect(frameCount(file), name).toBe(frames)
+    }
+
+    const edit = await runJob(second.next, 'call_edit', 'ffmpeg', {
+      arguments: '-i /work/seg/s1.mov -i /work/seg/s2.mov -filter_complex "[0:v][1:v]concat=n=2:v=1:a=0,setpts=N/(24*TB)[v]" -map "[v]" -r 24 -c:v libvpx-vp9 edit.webm',
+    })
+    expect(edit.result.text.endsWith('\nMade the video clip @b.')).toBe(true)
+
+    // The text shows from 0.5 s to 1 s of the edit of 1.5 s.
+    const lower = await runJob(edit.next, 'call_lower', 'ffmpeg', {
+      arguments: `-f lavfi -i color=c=black@0:size=160x90:rate=24:duration=0.5,format=rgba -vf "drawtext=fontfile=fonts/${TITLE_FONT}:text='Night Drive':fontsize=20:fontcolor=white:borderw=2:x=10:y=h-text_h-10" -c:v png lower.mov`,
+      fonts: TITLE_FONT,
+    })
+    expect(lower.result.text.endsWith('\nMade the video clip @c.')).toBe(true)
+    const over = await runJob(lower.next, 'call_over', 'ffmpeg', {
+      arguments: '-i @b -itsoffset 0.5 -i @c -filter_complex "[0:v][1:v]overlay=eof_action=pass,format=yuv420p[v]" -map "[v]" -map "0:a?" -c:v libvpx-vp9 -c:a copy over.webm',
+    })
+    expect(over.result.text.endsWith('\nMade the video clip @d.')).toBe(true)
+
+    const swell = await runJob(over.next, 'call_swell', 'ffmpeg', { arguments: `-f lavfi -i ${SWELL_SOURCE} swell.wav` })
+    expect(swell.result.text.endsWith('\nMade the audio clip @e.')).toBe(true)
+    const measure = await runJob(swell.next, 'call_measure', 'ffmpeg', { arguments: `-v info -i @e -af ${LOUDNORM_TARGETS}:print_format=json -f null -` })
+    expect(measure.result.text.startsWith('ffmpeg ended with no error. It made no file, as the call asked for with -f null.\n')).toBe(true)
+    const measured = loudnormValues(measure.result.text)
+    expect(Number(measured.input_i)).toBeLessThan(-16)
+    const loud = await runJob(measure.next, 'call_loud', 'ffmpeg', {
+      arguments: `-v info -i @e -af ${LOUDNORM_TARGETS}:measured_I=${measured.input_i}:measured_TP=${measured.input_tp}:measured_LRA=${measured.input_lra}`
+        + `:measured_thresh=${measured.input_thresh}:offset=${measured.target_offset}:linear=true:print_format=summary -ar 48000 loud.wav`,
+    })
+    expect(loud.result.text).toMatch(/\nNormalization Type: +Linear\n/)
+    expect(loud.result.text.endsWith('\nMade the audio clip @f.')).toBe(true)
+    // Pass 1 on the new clip: its loudness is the target.
+    const check = await runJob(loud.next, 'call_check', 'ffmpeg', { arguments: `-v info -i @f -af ${LOUDNORM_TARGETS}:print_format=json -f null -` })
+    expect(Math.abs(Number(loudnormValues(check.result.text).input_i) + 14)).toBeLessThanOrEqual(0.5)
+    await sendChatReply(check.next.reply, CALLER.modelName)
+
+    const reply = await endedReply(browser)
+    const clipPath = (id: string): string => madeClipPath(reply, id)
+    expect(mediaFacts(setup.app, clipPath('b'))).toStrictEqual({ streams: ['video vp9 160x90'], seconds: 1.5 })
+    expect(frameCount(clipPath('b'))).toBe(36)
+    expect(mediaFacts(setup.app, clipPath('c'))).toStrictEqual({ streams: ['video png 160x90'], seconds: 0.5 })
+    // Most pixels of a frame of the clip with alpha are transparent; the
+    // letters are opaque.
+    const pixels = programRun(setup.app, 'dez-ffmpeg', ['-v', 'error', '-i', clipPath('c'), '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgba', '-'])
+    const alphas = pixels.filter((_, index) => index % 4 === 3)
+    expect(alphas.filter((alpha) => alpha === 0).length).toBeGreaterThan(alphas.length / 2)
+    expect(alphas.filter((alpha) => alpha === 255).length).toBeGreaterThan(50)
+    expect(lightPixels(clipPath('d'), 0.25)).toBe(0)
+    expect(lightPixels(clipPath('d'), 0.75)).toBeGreaterThan(50)
+    expect(lightPixels(clipPath('d'), 1.25)).toBe(0)
+    expect(mediaFacts(setup.app, clipPath('f'))).toStrictEqual({ streams: ['audio pcm_s16le'], seconds: 8 })
+    expect(programOutput(setup.app, 'dez-ffprobe', ['-v', 'error', '-show_entries', 'stream=sample_rate', '-of', 'csv=p=0', clipPath('f')]).trim()).toBe('48000')
+    await expectCleanEnd({})
+  })
+
+  // The examples of the help for rubberband and for the two passes of
+  // vid.stab. The shaky clip is a color chart that does not move, under a
+  // crop that moves up to 12 px across and 9 px up or down from its center,
+  // so only the shake changes its frames. As in `SUBTITLES_ARGS`, VP9 in
+  // WebM takes the place of H.264 in MP4.
+  it('slows a tone and raises its pitch with rubberband, and makes a shaky clip stable in two passes through /work, with the examples of the help', async () => {
+    const files = await openShots('stabilize')
+    await submit(browser, 'Slow my tone and raise it, and make a shaky clip stable.')
+    const stabFolder = appFilePath(setup.app.home, 'work', await activeConversationId(browser), 'stab')
+    const voice = await runJob(await chatRequest(), 'call_voice', 'ffmpeg', { arguments: '-i @b -af rubberband=tempo=0.8:pitch=1.189:formant=preserved:pitchq=quality voice.wav' })
+    expect(voice.result.text.endsWith('\nMade the audio clip @f.')).toBe(true)
+
+    const shaky = await runJob(voice.next, 'call_shaky', 'ffmpeg', {
+      arguments: '-f lavfi -i "colorchart=rate=24:patch_size=48x48,trim=duration=3,crop=240:150:\'24+12*sin(n*1.7)\':\'21+9*cos(n*2.3)\'" -c:v libvpx-vp9 -pix_fmt yuv420p shaky.webm',
+    })
+    expect(shaky.result.text.endsWith('\nMade the video clip @g.')).toBe(true)
+    const detect = await runJob(shaky.next, 'call_detect', 'ffmpeg', { arguments: '-i @g -vf vidstabdetect=shakiness=8:result=transforms.trf -f null -', save_to: '/work/stab' })
+    expect(detect.result.text.startsWith('ffmpeg ended with no error, and Dez saved its 1 new file into /work/stab: /work/stab/transforms.trf.')).toBe(true)
+    expect(await filesIn(stabFolder)).toStrictEqual(['transforms.trf'])
+    const stable = await runJob(detect.next, 'call_stable', 'ffmpeg', {
+      arguments: '-i @g -vf "vidstabtransform=input=/work/stab/transforms.trf,unsharp=5:5:0.8:3:3:0.4" -c:v libvpx-vp9 -c:a copy stable.webm',
+    })
+    expect(stable.result.text.endsWith('\nMade the video clip @h.')).toBe(true)
+    await sendChatReply(stable.next.reply, CALLER.modelName)
+
+    const reply = await endedReply(browser, CLIPS_REPLY_INDEX)
+    // 1 s at 80% of its speed, and 440 Hz times 1.189.
+    const voicePath = madeClipPath(reply, 'f')
+    expect(Number(programOutput(setup.app, 'dez-ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', voicePath]))).toBeCloseTo(1.25, 2)
+    expect(Math.abs(toneFrequency(voicePath) - 523)).toBeLessThanOrEqual(5)
+    expect(mediaFacts(setup.app, madeClipPath(reply, 'h'))).toStrictEqual({ streams: ['video vp9 240x150'], seconds: 3 })
+    // The local build of the release changed the frames by 16.3 and 1.8.
+    expect(meanFrameChange(madeClipPath(reply, 'h'))).toBeLessThan(meanFrameChange(madeClipPath(reply, 'g')) / 4)
+    await expectCleanEnd(files, shotSources)
   })
 
   it('gives the output of ffprobe as the result of its call, with the names of the copies and no job', async () => {
@@ -1014,7 +1230,62 @@ describe('video tool', () => {
     await expectCleanEnd(files)
   })
 
-  it('refuses arguments that name a file of the computer, the network, a device, or a commands file at once, with no job and no work folder', async () => {
+  it('saves the frames of a clip into a folder of /work with save_to, and gives the files of /work to later ffmpeg and ffprobe calls as copies', async () => {
+    const files = await openShots('work-files')
+    const imagesBefore = await filesIn(imagesDir)
+    await submit(browser, 'Put two frames of my clip side by side.')
+    const workFolder = appFilePath(setup.app.home, 'work', await activeConversationId(browser))
+    const frames = await runJob(await chatRequest(), 'call_frames', 'ffmpeg', { arguments: '-i @a -vf fps=1 -frames:v 2 f%02d.png', save_to: '/work/frames' })
+    expect(frames.started).toBe(`${jobStartedText(frames.jobId, 1)}\nThe inputs of the run: the video clip @a as a.webm. Dez moves the new files of the run into /work/frames.`)
+    expect(frames.result.status).toBe('finished')
+    expect(frames.result.text).toMatch(/^ffmpeg ended with no error, and Dez saved its 2 new files into \/work\/frames: \/work\/frames\/f01\.png, \/work\/frames\/f02\.png\. They are not in your reply\. [^\n]+\nThe end of the log of ffmpeg:\n/)
+    expect(frames.result.text).not.toContain('Made the')
+    expect(await filesIn(path.join(workFolder, 'frames'))).toStrictEqual(['f01.png', 'f02.png'])
+    expect(mediaFacts(setup.app, path.join(workFolder, 'frames', 'f01.png'))).toStrictEqual({ streams: ['video png 48x36'], seconds: null })
+    // A link in the work folder to a file out of it: Dez follows no link
+    // there, so it cannot read what is at its path, and it logs why.
+    const outside = path.join(linkedDir, 'work-files-outside.png')
+    await writeTestFile(outside, PICTURE_PNG)
+    await fs.promises.symlink(outside, path.join(workFolder, 'link.png'))
+
+    const pair = await runJob(frames.next, 'call_pair', 'ffmpeg', { arguments: '-i /work/frames/f01.png -i /work/frames/f02.png -filter_complex hstack -update 1 pair.png' })
+    expect(pair.started).toBe(`${jobStartedText(pair.jobId, 2)}\nThe inputs of the run: /work/frames/f01.png as work/frames/f01.png, /work/frames/f02.png as work/frames/f02.png.`)
+    expect(pair.result.status).toBe('finished')
+    expect(pair.result.text).toMatch(/^ffmpeg ended with no error and made 1 file that Dez keeps: pair\.png \(image\)\. [\s\S]+\nMade the image @f\.$/)
+
+    const missing = { virtual: '/work/frames/f03.png', name: 'work/frames/f03.png', file: '' }
+    sendToolCalls(pair.next.reply, [
+      videoCall('call_probe', 'ffprobe', { arguments: '-v error -show_entries stream=codec_name,width,height -of csv=p=0 /work/frames/f02.png' }),
+      videoCall('call_missing', 'ffprobe', { arguments: '-v error -show_entries stream=codec_name -of csv=p=0 /work/frames/f03.png' }),
+      videoCall('call_link', 'ffprobe', { arguments: '-v error -show_entries stream=codec_name -of csv=p=0 /work/link.png' }),
+      // A path of /work in the arguments is an input, also after -frames:v.
+      videoCall('call_output', 'ffmpeg', { arguments: '-i @a -frames:v 1 /work/still.png' }),
+    ])
+    const probed = await chatRequest()
+    expect(toolResult(probed, 'call_probe')).toBe('png,48,36')
+    expect(toolResult(probed, 'call_missing')).toBe(workInputNotFileText(missing, 'missing', 'ffprobe'))
+    expect(toolResult(probed, 'call_link')).toBe(workPathUnreadableText('/work/link.png', 'ffprobe'))
+    // Each refused call logs its error too.
+    expect(await consoleErrors(browser)).toContainEqual(expect.stringContaining('goes through a link'))
+    await resetConsoleErrors(browser)
+    expect(toolResult(probed, 'call_output')).toBe(workInputNotFileText({ virtual: '/work/still.png', name: 'work/still.png', file: '' }, 'missing', 'ffmpeg'))
+    expect(startedJobId(toolResult(probed, 'call_output'))).toBeNull()
+    expect(probed.body).not.toContain(linkedDir)
+    await sendChatReply(probed.reply, CALLER.modelName)
+
+    // The reply holds the one image of the pair: the saved frames are no
+    // assets.
+    const reply = await endedReply(browser, CLIPS_REPLY_INDEX)
+    const imagePath = path.join(imagesDir, await newFileIn(browser, imagesDir, imagesBefore))
+    expect(reply.match(/!\[id=/g)).toHaveLength(1)
+    expect(reply).toContain(`![id=f|tool=video|made-by=${pair.jobId}](${imagePath})`)
+    expect(mediaFacts(setup.app, imagePath)).toStrictEqual({ streams: ['video png 96x36'], seconds: null })
+    expect(await filesIn(workFolder)).toStrictEqual(['frames', 'link.png'])
+    expect((await fs.promises.readFile(outside)).equals(PICTURE_PNG)).toBe(true)
+    await expectCleanEnd(files, shotSources)
+  })
+
+  it('refuses arguments that name a file of the computer, the network, a device, or a commands file at once, with no job and no run folder', async () => {
     await submit(browser, 'Read my files.')
     const first = await chatRequest()
     const blackFrame = '-f lavfi -i color=c=black:size=640x360 -frames:v 1'
@@ -1029,12 +1300,12 @@ describe('video tool', () => {
     ])
 
     const second = await chatRequest()
-    const workFolderOnly = 'The program works only in its own work folder: name an input as @id, and an output as a new file name with no folder.'
-    const absolutePath = (word: string) => `Dez refuses ${JSON.stringify(word)} in \`arguments\`: it holds an absolute path. ${workFolderOnly} `
+    const runFolderOnly = 'The program works only in its own run folder: name an input as @id or as a path of /work/, and an output as a new file name with no folder.'
+    const absolutePath = (word: string) => `Dez refuses ${JSON.stringify(word)} in \`arguments\`: it holds an absolute path. ${runFolderOnly} `
       + 'For a run with no output file, end the arguments with -f null - (not with a path of the system). '
       + 'In an expression, write a division with no space before the "/", as in iw/2. Dez started no job.'
     expect(toolResult(second, 'call_path')).toBe(absolutePath('/etc/hostname'))
-    expect(toolResult(second, 'call_url')).toBe(`Dez refuses "https://example.com/clip.mp4" in \`arguments\`: it holds a URL. ${workFolderOnly} Dez did not run ffprobe.`)
+    expect(toolResult(second, 'call_url')).toBe(`Dez refuses "https://example.com/clip.mp4" in \`arguments\`: it holds a URL. ${runFolderOnly} Dez did not run ffprobe.`)
     expect(toolResult(second, 'call_camera')).toBe(
       'Dez refuses "v4l2" in `arguments`: it names the device v4l2. '
       + 'Dez lets the program use no camera, no microphone, no screen, and no sound output of this computer. Dez started no job.',
@@ -1042,24 +1313,24 @@ describe('video tool', () => {
     expect(toolResult(second, 'call_font')).toBe(absolutePath('drawtext=fontfile=/usr/share/fonts/x.ttf:text=Hi'))
     expect(toolResult(second, 'call_commands')).toBe(
       'Dez refuses "sendcmd=f=cmds.txt,curves" in `arguments`: it gives sendcmd a commands file. '
-      + 'Dez does not check the text of a file, and a command can make a filter open a file outside of its work folder. '
+      + 'Dez does not check the text of a file, and a command can make a filter open a file outside of its run folder. '
       + 'Write the commands into the filter, as in "asendcmd=c=\'2 volume volume 0.5\',volume=1". Dez started no job.',
     )
     for (const callId of ['call_path', 'call_url', 'call_camera', 'call_font', 'call_commands']) expect(startedJobId(toolResult(second, callId))).toBeNull()
 
     sendToolCalls(second.reply, [openAiToolCall('call_list', 'jobs_list', {})])
     const third = await chatRequest()
-    expect(toolResult(third, 'call_list')).toBe('This reply has started no job.')
+    expect(toolResult(third, 'call_list')).toBe(NO_JOBS_LIST_TEXT)
     await sendChatReply(third.reply, CALLER.modelName)
 
     const reply = await endedReply(browser)
     expect(reply.endsWith(`</dez:tool>\n${replyText(CALLER.modelName)}`)).toBe(true)
-    // A run makes its work folder first.
-    expect(await filesIn(workRoot)).toStrictEqual([])
+    // A run makes its run folder first.
+    expect(await filesIn(runFoldersRoot)).toStrictEqual([])
     expect(await openToasts(browser, 'error')).toStrictEqual([])
   })
 
-  it('keeps the program of a job when the user stops the reply, and ends it and deletes its work folder when the user closes the tab', async () => {
+  it('keeps the program of a job when the user stops the reply, and ends it and deletes its run folder when the user closes the tab', async () => {
     const before = await filesIn(audioDir)
     await submit(browser, 'Make a long tone.')
     const first = await chatRequest()
@@ -1068,7 +1339,7 @@ describe('video tool', () => {
     const second = await chatRequest()
     const started = toolResult(second, 'call_tone')
     expect(started).toBe(`${jobStartedText(startedJob(second, 'call_tone'), 1)}\nThe run has no input image and no input clip.`)
-    const program = await runningProgram(browser, workRoot)
+    const program = await runningProgram(browser, runFoldersRoot)
 
     // While a reply runs, the Submit button stops it. The job goes on for
     // the next reply of the tab.
@@ -1081,12 +1352,12 @@ describe('video tool', () => {
       { role: 'user', text: '' },
     ])
     expect(processExists(program)).toBe(true)
-    expect(await filesIn(workRoot)).toHaveLength(1)
+    expect(await filesIn(runFoldersRoot)).toHaveLength(1)
 
     // No later reply can take the job of a tab that is gone.
     await pointerClick(browser, '.tab--active .tab-close')
     await waitForValue(browser, 'the program of the call runs', async () => processExists(program), false)
-    await waitForValue(browser, 'work folders', () => filesIn(workRoot), [])
+    await waitForValue(browser, 'run folders', () => filesIn(runFoldersRoot), [])
     expect(await filesIn(audioDir)).toStrictEqual(before)
     expect(setup.mock.hasWaitingRequest()).toBe(false)
     expect(await consoleErrors(browser)).toStrictEqual([])
@@ -1100,7 +1371,7 @@ describe('video tool', () => {
     sendToolCalls(first.reply, [videoCall('call_tone', 'ffmpeg', { arguments: ENDLESS_TONE, timeout_seconds: 10 })])
     const second = await chatRequest()
     const jobId = startedJob(second, 'call_tone')
-    const program = await runningProgram(browser, workRoot)
+    const program = await runningProgram(browser, runFoldersRoot)
     sendToolCalls(second.reply, [waitCall('call_wait')])
 
     // The wait is longer than `waitForValue` takes.
@@ -1114,7 +1385,7 @@ describe('video tool', () => {
     const reply = await endedReply(browser)
     expect(reply.endsWith(`</dez:tool>\n${replyText(CALLER.modelName)}`)).toBe(true)
     await waitForValue(browser, 'the program of the call runs', async () => processExists(program), false)
-    await waitForValue(browser, 'work folders', () => filesIn(workRoot), [])
+    await waitForValue(browser, 'run folders', () => filesIn(runFoldersRoot), [])
     expect(await filesIn(audioDir)).toStrictEqual(before)
     expect(await openToasts(browser, 'error')).toStrictEqual([])
   })
@@ -1123,13 +1394,13 @@ describe('video tool', () => {
   // name that the lists do not hold would pass.
   it('refuses every protocol and every device of the ffmpeg of this build, but the lavfi device', () => {
     // Each name is a line with two spaces before it.
-    const protocols = [...programOutput('dez-ffmpeg', ['-hide_banner', '-protocols']).matchAll(/^ {2}(\S+)$/gm)].map((match) => match[1])
+    const protocols = [...programOutput(setup.app, 'dez-ffmpeg', ['-hide_banner', '-protocols']).matchAll(/^ {2}(\S+)$/gm)].map((match) => match[1])
     expect(protocols).toContain('file')
     expect(protocols.filter((name) => !REFUSED_PROTOCOLS.includes(name))).toStrictEqual([])
 
     // ` DE video4linux2,v4l2 Video4Linux2 output device`: the names of a
     // device after its two flags.
-    const devices = [...programOutput('dez-ffmpeg', ['-hide_banner', '-devices']).matchAll(/^ [D ][E ] (\S+)/gm)].flatMap((match) => match[1].split(','))
+    const devices = [...programOutput(setup.app, 'dez-ffmpeg', ['-hide_banner', '-devices']).matchAll(/^ [D ][E ] (\S+)/gm)].flatMap((match) => match[1].split(','))
     expect(devices).toContain('lavfi')
     expect(devices.filter((name) => name !== 'lavfi' && !REFUSED_DEVICES.includes(name))).toStrictEqual([])
   })

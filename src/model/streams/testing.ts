@@ -19,19 +19,19 @@ export const reply = (id: string, text: string): Section => ({ id, role: 'agent'
  *  file facts of `facts`, by id, at a compaction in the reply whose
  *  section has the id `replySectionId` (none: no section is the reply's),
  *  with the inputs of the open jobs `jobInputs`, the ids that the files of
- *  the apps name `appInputs`, and the sections of the cut replies that
- *  handed their jobs on `replySections`. */
+ *  the apps and of the work folder name `fileInputs`, and the sections of
+ *  the cut replies that handed their jobs on `replySections`. */
 export function assetsOf(
   sections: readonly Section[],
   facts: ReadonlyMap<string, string> = new Map(),
-  { replySectionId = '', jobInputs = new Map(), appInputs = new Set(), replySections = [] }: {
+  { replySectionId = '', jobInputs = new Map(), fileInputs = new Set(), replySections = [] }: {
     replySectionId?: string
     jobInputs?: ReadonlyMap<string, readonly string[]>
-    appInputs?: ReadonlySet<string>
+    fileInputs?: ReadonlySet<string>
     replySections?: readonly string[]
   } = {},
 ): CompactionAsset[] {
   const found = [...conversationAssets(sections).found.values()]
   const scope = compactionScope(sections, replySectionId)
-  return compactionAssets({ sections, scope, found, places: assetPlaces(sections, found), facts, jobInputs, appInputs, replySections })
+  return compactionAssets({ sections, scope, found, places: assetPlaces(sections, found), facts, jobInputs, fileInputs, replySections })
 }

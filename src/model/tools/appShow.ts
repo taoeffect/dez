@@ -1,5 +1,5 @@
 import { APP_NAME_SOURCE, MANIFEST_FILE, parseAppManifest } from './appManifest'
-import { appNamed, appSize, checkAppIsThere, checkedAppKind, kindName, pathIn, type AppSize, type AppsPath, type AppsTree, type PathFacts } from './appsTool'
+import { appNamed, appSize, checkAppIsThere, checkBuiltInKind, checkedManifest, kindName, pathIn, type AppSize, type AppsPath, type AppsTree, type PathFacts } from './appsTool'
 import { UI_INDEX_FILE } from './appTemplates'
 import { ToolError, type SubcommandArguments } from './types'
 
@@ -53,7 +53,9 @@ export interface ShowTarget {
  *  show: its folder, a manifest that tells the kind `ui`, and its page. */
 export function checkShowTarget({ app, manifest, index }: ShowCall, target: ShowTarget): void {
   checkAppIsThere(app, target.app)
-  if (checkedAppKind(app, manifest, target.manifest, target.manifestBytes, NOT_DONE) !== 'ui') {
+  const { kind } = checkedManifest(app, manifest, target.manifest, target.manifestBytes, NOT_DONE)
+  checkBuiltInKind(app, kind, NOT_DONE)
+  if (kind !== 'ui') {
     throw new ToolError(`${app.virtual} is a script app, and show shows only a UI app: an app whose ${MANIFEST_FILE} has the kind "ui", with its page in ${UI_INDEX_FILE}. `
       + `A script app has no page: run it with invoke. ${NOT_DONE}`)
   }

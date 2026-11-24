@@ -1,16 +1,18 @@
 import { mapJsonStrings } from '../../utils/json'
 import { oneLineCut } from '../../utils/oneLineCut'
-import { APPS_INVOKE, APPS_TOOL } from './appsTool'
+import { findAssetMentions, mentionRegExp } from '../chat/imageMentions'
+import { APP_RUN_MAX_TOOL_CALLS, APPS_INVOKE, APPS_SHOW, APPS_TOOL } from './appsTool'
 import { checkArgumentValues } from './arguments'
-import { JS_EVAL_MAX_TOOL_CALLS, JS_EVAL_TOOL, textForModel, type JsEvalCallLine } from './jsEval'
+import { JS_EVAL_MAX_TOOL_CALLS, JS_EVAL_TOOL, textForModel, type JsEvalCallLine, type RunFolderForms } from './jsEval'
 import { TOOL_DEFINITIONS, toolDefinition } from './registry'
 import type { ToolArguments } from './types'
 
-// The tool bridge: the Dez tools that the code of a `js_eval` run calls
-// with `dez.sbp` (jsEval.ts). The module of Dez in the run writes one call
-// line for each call (jsEvalRunner.js). This module tells which tool call
-// a line asks for, or why Dez refuses it; controller/toolBridge.ts runs the
-// call and writes the answer.
+// The tool bridge: the Dez tools that code calls with `dez.sbp`: the code
+// of a `js_eval` run (jsEval.ts), and the code of a run of a script app
+// (appInvoke.ts). The module of Dez in the run writes one call line for
+// each call (jsEvalRunner.js). This module tells which tool call a line
+// asks for, or why Dez refuses it; controller/toolBridge.ts runs the call
+// and writes the answer.
 //
 // A call line is untrusted input: the code of a model runs in the same
 // program as the module that writes the lines, so it can write any line
@@ -33,20 +35,136 @@ import type { ToolArguments } from './types'
  *  calls) would not hold for the work that it starts. */
 const UNBRIDGED_TOOLS: readonly string[] = [JS_EVAL_TOOL.name]
 
-// The subcommand of a tool that the code of a run cannot call, for the
-// same cause: `apps invoke` runs the code of an app. The other subcommands
-// of the tool go.
-const UNBRIDGED_SUBCOMMAND = { tool: APPS_TOOL.name, subcommand: APPS_INVOKE }
-
-// Whether a call of the tool `tool` names the subcommand that code cannot
-// call. `command` is the subcommand as the call gave it: the runner of a
-// subcommand tool trims the text (`parseSubcommandCall`), so this does too.
-function isUnbridgedSubcommand(tool: string, command: unknown): boolean {
-  return tool === UNBRIDGED_SUBCOMMAND.tool && typeof command === 'string' && command.trim() === UNBRIDGED_SUBCOMMAND.subcommand
+/** A subcommand of a tool that the code of a run cannot call, and the
+ *  error text of a call of it. */
+interface UnbridgedSubcommand {
+  tool: string
+  subcommand: string
+  text: string
 }
 
-const UNBRIDGED_SUBCOMMAND_TEXT = `Code cannot call ${UNBRIDGED_SUBCOMMAND.tool} ${UNBRIDGED_SUBCOMMAND.subcommand}: a run of code starts no other run of code. `
-  + `Call ${UNBRIDGED_SUBCOMMAND.tool} ${UNBRIDGED_SUBCOMMAND.subcommand} yourself, as a tool call of your own, before or after this code.`
+/** The rules of the tool calls of the code of one kind of run. */
+export interface BridgeRules {
+  /** The most call lines of one run: a line after it gets no call. */
+  maxCalls: number
+  /** The error of a line after `maxCalls`. */
+  overLimitText: string
+  /** The subcommands that the code cannot call. The other subcommands of
+   *  their tools go. */
+  unbridged: readonly UnbridgedSubcommand[]
+}
+
+// `apps invoke` runs the code of an app, so no code calls it, for the cause
+// of `UNBRIDGED_TOOLS`.
+//
+// The alias subcommands of `audio` and `video` (appAliases.ts) also run
+// the code of an app, but they go: each runs fixed code that Dez ships,
+// not code of a model, with its own time limit, and the call waits for
+// it, so the time limit of the run that calls it still holds.
+const UNBRIDGED_INVOKE: UnbridgedSubcommand = {
+  tool: APPS_TOOL.name,
+  subcommand: APPS_INVOKE,
+  text: `Code cannot call ${APPS_TOOL.name} ${APPS_INVOKE}: a run of code starts no other run of code. `
+    + `Call ${APPS_TOOL.name} ${APPS_INVOKE} yourself, as a tool call of your own, before or after this code.`,
+}
+
+/** The rules of the code of a `js_eval` run. */
+export const JS_EVAL_BRIDGE: BridgeRules = {
+  maxCalls: JS_EVAL_MAX_TOOL_CALLS,
+  overLimitText: `The code made more than ${JS_EVAL_MAX_TOOL_CALLS} tool calls, the most of one ${JS_EVAL_TOOL.name} call, so Dez did not run this one. `
+    + `Make fewer calls in one run: do the rest of the work in a new ${JS_EVAL_TOOL.name} call.`,
+  unbridged: [UNBRIDGED_INVOKE],
+}
+
+/** The rules of the code of a run of a script app (`apps invoke`). It also
+ *  shows no app: the run is a job, which has no reply to show the app in
+ *  (`ToolRunContext.showApp`). */
+export const APP_RUN_BRIDGE: BridgeRules = {
+  maxCalls: APP_RUN_MAX_TOOL_CALLS,
+  overLimitText: `The code made more than ${APP_RUN_MAX_TOOL_CALLS} tool calls, the most of one run of an app, so Dez did not run this one. `
+    + 'Make fewer calls in one run: run the app again for the rest of the work.',
+  unbridged: [
+    UNBRIDGED_INVOKE,
+    {
+      tool: APPS_TOOL.name,
+      subcommand: APPS_SHOW,
+      text: `The code of an app cannot call ${APPS_TOOL.name} ${APPS_SHOW}: a job has no reply to show an app in. `
+        + `Call ${APPS_TOOL.name} ${APPS_SHOW} yourself, as a tool call of your own, after the job.`,
+    },
+  ],
+}
+
+// The rule of `rules` that refuses a call of the tool `tool` that names
+// the subcommand `command`, if one does. `command` is the subcommand as the
+// call gave it: the runner of a subcommand tool trims the text
+// (`parseSubcommandCall`), so this does too.
+function unbridgedSubcommand(rules: BridgeRules, tool: string, command: unknown): UnbridgedSubcommand | undefined {
+  return typeof command === 'string' ? rules.unbridged.find((rule) => rule.tool === tool && rule.subcommand === command.trim()) : undefined
+}
+
+/** The handle of the `number`th image or clip that the tool calls of the
+ *  code of a run of an app made, from 1: `&1`, `&2`, …. The code knows the
+ *  asset by it, as the asset gets its id only when a reader of the result
+ *  of the job writes it into a reply (`writeJobAssets`). */
+export function assetHandle(number: number): string {
+  return `&${number}`
+}
+
+// The form of a handle (`assetHandle`).
+const HANDLE_SOURCE = String.raw`&[1-9]\d*`
+// A handle as the whole of a text, with an `@` or with none (`&1`, `@&1`).
+const WHOLE_HANDLE = new RegExp(`^(@?)(${HANDLE_SOURCE})$`)
+// A handle as a mention in a text (`@&1`), by the rules of a mention.
+const HANDLE_MENTION = mentionRegExp(HANDLE_SOURCE)
+
+// `text` with the id of each handle in it: a whole text that is a handle
+// becomes the id (`&1` → `d`, `@&1` → `@d`), and each handle mention in a
+// longer text becomes the mention of the id (`@&1` → `@d`). `ids` are the
+// ids that stand for the handles, in the order of the handles. A handle
+// of no asset stays, and goes into `unknown`.
+function withHandleIds(text: string, ids: readonly string[], unknown: Set<string>): string {
+  const idOf = (handle: string): string | undefined => {
+    const id = ids[Number(handle.slice(1)) - 1]
+    if (id === undefined) unknown.add(handle)
+    return id
+  }
+  const whole = WHOLE_HANDLE.exec(text.trim())
+  if (whole) {
+    const id = idOf(whole[2])
+    return id === undefined ? text : `${whole[1]}${id}`
+  }
+  return text.replace(HANDLE_MENTION, (match, before: string, handle: string) => {
+    const id = idOf(handle)
+    return id === undefined ? match : `${before}@${id}`
+  })
+}
+
+// The error of a call that names handles of no asset (`unknown`) of a run
+// that made `made` assets.
+function unknownHandlesText(unknown: ReadonlySet<string>, made: number): string {
+  const named = [...unknown].join(', ')
+  const handles = made === 0
+    ? 'No tool call of this run made an image or a clip yet, so it has no handle.'
+    : `The handles of this run: ${made === 1 ? assetHandle(1) : `${assetHandle(1)} to ${assetHandle(made)}`}.`
+  return `The call names ${named}, but no tool call of this run made an image or a clip with that handle. ${handles} `
+    + 'A handle names an image or a clip that an earlier tool call of the run made: give it as the whole value ("&1") or as a mention in a text ("@&1").'
+}
+
+/** `text` with each `@id` mention of an id of `handleById` (by provisional
+ *  id, the handle of the asset) as the mention of the handle (`@&1`): a
+ *  result of a tool call of the code of a run of an app names an asset of
+ *  an earlier call by its handle, as the code knows it. */
+export function withHandles(text: string, handleById: ReadonlyMap<string, string>): string {
+  let mapped = ''
+  let end = 0
+  for (const { from, to, id } of findAssetMentions(text)) {
+    const handle = handleById.get(id)
+    if (handle === undefined) continue
+    mapped += `${text.slice(end, from)}@${handle}`
+    end = to
+  }
+  return mapped + text.slice(end)
+}
 
 const SELECTOR_START = 'dez.tools/'
 
@@ -72,10 +190,10 @@ function shown(name: string): string {
 
 /** The selector of a call line as the list of the tool calls of a run
  *  names a line that Dez refused (`BridgedCall.name`): with no path of
- *  this computer (`workFolders`, as for `bridgedToolCall`), on one line,
- *  and short. */
-export function shownSelector(selector: string, workFolders: readonly string[]): string {
-  return shortName(textForModel(selector, workFolders))
+ *  this computer (`folders`, as for `bridgedToolCall`), on one line, and
+ *  short. */
+export function shownSelector(selector: string, folders: RunFolderForms): string {
+  return shortName(textForModel(selector, folders))
 }
 
 /** The error that the code gets for a tool call that failed with an error
@@ -118,32 +236,39 @@ export type BridgedCallCheck =
   | { ok: true, call: BridgedToolCall }
   | { ok: false, error: string }
 
-/** The tool call that the call line `line` of a run asks for. `number` is
- *  the place of the line in the call lines of its run, from 1: a line
- *  after the limit of a run (`JS_EVAL_MAX_TOOL_CALLS`) gets no call.
+/** The tool call that the call line `line` of a run asks for, by the
+ *  rules `rules` of its kind of run. `number` is the place of the line in
+ *  the call lines of its run, from 1: a line after the limit of a run
+ *  (`BridgeRules.maxCalls`) gets no call.
  *
  *  Refused with a text for the model: a selector that names no Dez tool,
  *  a tool or a subcommand that code cannot call (`UNBRIDGED_TOOLS`,
- *  `UNBRIDGED_SUBCOMMAND`, in both forms of a selector), a subcommand that
- *  the tool does not have, arguments that are no object, and arguments that
- *  the definition of the tool does not take (`checkArgumentValues`). The
- *  parameters of a subcommand are not checked here: the runner of its tool
- *  checks them, as for a call of the model (`parseSubcommandCall`).
+ *  `BridgeRules.unbridged`, in both forms of a selector), a subcommand
+ *  that the tool does not have, arguments that are no object, and
+ *  arguments that the definition of the tool does not take
+ *  (`checkArgumentValues`). The parameters of a subcommand are not checked
+ *  here: the runner of its tool checks them, as for a call of the model
+ *  (`parseSubcommandCall`).
  *
  *  The selector and every text of the arguments first lose the paths of
- *  this computer (`textForModel`, with the paths `workFolders` of the work
- *  folder of the run); the `parameters` text of a tool with subcommands
- *  loses them in the strings of its JSON (`parametersForModel`). The code
- *  can read the path of its work folder and of the Deno program, and an
- *  argument can go on to another provider (the prompt of a `model_invoke`
- *  call) or into the conversation (the label of a job). */
-export function bridgedToolCall(line: Pick<JsEvalCallLine, 'selector' | 'arguments'>, number: number, workFolders: readonly string[]): BridgedCallCheck {
+ *  this computer (`textForModel`, with the paths `folders` of the folders
+ *  of the run); the `parameters` text of a tool with subcommands loses
+ *  them in the strings of its JSON (`parametersForModel`). The code can
+ *  read the path of its run folder, of the work folder of its
+ *  conversation, and of the Deno program, and an argument can go on to
+ *  another provider (the prompt of a `model_invoke` call) or into the
+ *  conversation (the label of a job). A path in the work folder goes as
+ *  `/work/…`, as a model names it.
+ *
+ *  `handleIds` are given for the code of a run of an app: the ids that
+ *  stand for the handles of the assets that the earlier calls of the run
+ *  made (`assetHandle`), in the order of the handles. Each text of the
+ *  arguments then gets the id of each handle in it (`withHandleIds`), and
+ *  a call that names a handle of no asset is refused. */
+export function bridgedToolCall(line: Pick<JsEvalCallLine, 'selector' | 'arguments'>, number: number, folders: RunFolderForms, rules: BridgeRules, handleIds?: readonly string[]): BridgedCallCheck {
   const refused = (error: string): BridgedCallCheck => ({ ok: false, error })
-  if (number > JS_EVAL_MAX_TOOL_CALLS) {
-    return refused(`The code made more than ${JS_EVAL_MAX_TOOL_CALLS} tool calls, the most of one ${JS_EVAL_TOOL.name} call, so Dez did not run this one. `
-      + `Make fewer calls in one run: do the rest of the work in a new ${JS_EVAL_TOOL.name} call.`)
-  }
-  const forModel = (text: string) => textForModel(text, workFolders)
+  if (number > rules.maxCalls) return refused(rules.overLimitText)
+  const forModel = (text: string) => textForModel(text, folders)
   const selector = forModel(line.selector)
   if (!selector.startsWith(SELECTOR_START)) return refused(`\`dez.sbp\` has no selector ${shown(selector)}. ${CALL_FORMS}`)
   const [toolName, subcommand, ...more] = selector.slice(SELECTOR_START.length).split('/')
@@ -164,15 +289,20 @@ export function bridgedToolCall(line: Pick<JsEvalCallLine, 'selector' | 'argumen
   if (typeof given !== 'object' || Array.isArray(given)) {
     return refused(`The second argument of \`dez.sbp\` must be an object, as in ${toolCallForm(definition.name)}. Leave it out for a call with no arguments.`)
   }
-  const values = mapJsonStrings(given, forModel) as Record<string, unknown>
+  const unknownHandles = new Set<string>()
+  const forCall = handleIds === undefined ? forModel : (text: string) => withHandleIds(forModel(text), handleIds, unknownHandles)
+  const values = mapJsonStrings(given, forCall) as Record<string, unknown>
+  const call = (checked: BridgedToolCall): BridgedCallCheck => (unknownHandles.size > 0
+    ? refused(unknownHandlesText(unknownHandles, handleIds?.length ?? 0))
+    : { ok: true, call: checked })
 
   if (subcommand === undefined) {
     const parameters: unknown = (given as Record<string, unknown>).parameters
-    if (definition.subcommands && typeof parameters === 'string') values.parameters = parametersForModel(parameters, forModel)
+    if (definition.subcommands && typeof parameters === 'string') values.parameters = parametersForModel(parameters, forCall)
     const checked = checkArgumentValues(definition, values)
     if (checked.ok) {
-      if (isUnbridgedSubcommand(definition.name, checked.arguments.command)) return refused(UNBRIDGED_SUBCOMMAND_TEXT)
-      return { ok: true, call: { name: definition.name, arguments: checked.arguments } }
+      const rule = unbridgedSubcommand(rules, definition.name, checked.arguments.command)
+      return rule ? refused(rule.text) : call({ name: definition.name, arguments: checked.arguments })
     }
     return refused(definition.subcommands
       ? `${checked.error} In code, you can also name the subcommand in the selector and give its parameters as an object: ${subcommandCallForm(definition.name)}.`
@@ -183,6 +313,6 @@ export function bridgedToolCall(line: Pick<JsEvalCallLine, 'selector' | 'argumen
     return refused(`The ${definition.name} tool has no subcommand ${shown(subcommand)}. Its subcommands: ${definition.subcommands.join(', ')}. `
       + `Call one with ${subcommandCallForm(definition.name)}.`)
   }
-  if (isUnbridgedSubcommand(definition.name, subcommand)) return refused(UNBRIDGED_SUBCOMMAND_TEXT)
-  return { ok: true, call: { name: definition.name, arguments: { command: subcommand, parameters: JSON.stringify(values) } } }
+  const rule = unbridgedSubcommand(rules, definition.name, subcommand)
+  return rule ? refused(rule.text) : call({ name: definition.name, arguments: { command: subcommand, parameters: JSON.stringify(values) } })
 }

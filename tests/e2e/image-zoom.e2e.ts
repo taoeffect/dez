@@ -167,7 +167,7 @@ describe('image zoom', () => {
   async function openZoom (index = 0): Promise<number> {
     await movePointer(browser, await assetPartPoint(browser, '.dez-image', index, '.dez-image__img'))
     await waitForValue(browser, `the toolbar of image ${index}`, () => browser.execute((at: number) => {
-      const toolbar = document.querySelectorAll('.cm-content .dez-image')[at]?.querySelector('.dez-image__overlay')
+      const toolbar = document.querySelectorAll('.cm-content .dez-image')[at]?.querySelector('.dez-image__actions')
       return toolbar != null && getComputedStyle(toolbar).opacity === '1' && getComputedStyle(toolbar).transform === 'none'
     }, index), true)
     const magnifier = await assetPartPoint(browser, '.dez-image', index, '.dez-image__zoom')

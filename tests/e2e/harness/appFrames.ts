@@ -140,10 +140,11 @@ const config = JSON.parse(decodeURIComponent(location.hash.slice(1)))
 ${PROBE_HELPERS}`
 
 /** The files of a probe page of an app: a page that loads `FRAME_LIBRARY`,
- *  then `script`. */
-export function probePageFiles (script: string): Record<string, string> {
+ *  then `script`. `head` goes before the first script of the page, as an
+ *  import map must. */
+export function probePageFiles (script: string, head = ''): Record<string, string> {
   return {
-    'index.html': '<!doctype html><meta charset="utf-8"><title>probe</title><p id="text">text</p><script src="lib.js"></script><script src="main.js"></script>\n',
+    'index.html': `<!doctype html><meta charset="utf-8"><title>probe</title>${head}<p id="text">text</p><script src="lib.js"></script><script src="main.js"></script>\n`,
     'lib.js': FRAME_LIBRARY,
     'main.js': script,
   }

@@ -3,6 +3,11 @@
 // in its folder and writes its new files there. Each one is a folder of the
 // cache root, so it is outside the Dez folder, and nothing in it is a
 // stored file. Its owner deletes it when the work ends.
+//
+// A model and the user know a work folder as the run folder of a call
+// (`/run` in the texts of a Deno run, jsEval.ts). No text for them says
+// "work folder" for it: that name is for the folder of a conversation
+// (`CONVERSATION_WORK_FOLDERS`, src-tauri/src/persistence.rs).
 
 /** The folder of the cache root that holds the work folders. */
 export const WORK_ROOT = 'work'

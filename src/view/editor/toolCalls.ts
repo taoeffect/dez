@@ -12,11 +12,13 @@ import { MODEL_OUTPUT_IDS, effectiveOutputs, type ModelOutput } from '../../mode
 import { isRecord } from '../../model/providers/modelParsing'
 import type { ModelDisplayNames, ModelInfo } from '../../model/providers/types'
 import { isRoundLimitResult } from '../../model/streams/toolRound'
+import type { LiveTimes } from '../../model/streams/types'
 import { blockJobStarts, INTERMEDIATE_PARAMETER, jobOwnText, type JobResult, type JobResultStatus } from '../../model/tools/jobs'
 import { JS_EVAL_CODE_PARAMETER, JS_EVAL_TOOL } from '../../model/tools/jsEval'
 import { isIntermediateCall, toolDefinition } from '../../model/tools/registry'
 import type { ToolArguments, ToolArgumentValue } from '../../model/tools/types'
 import { countOf } from '../../utils/countText'
+import { longDuration } from '../../utils/durationText'
 import { assetIcon } from '../assetIcons'
 import { assetModelLabel } from '../assetModelLabel'
 import type { ModelFacts } from '../modelLabel'
@@ -29,13 +31,15 @@ import type { AssetPlace } from './drawnAssets'
 import { eyeIcon, hiddenAssets, hiddenAssetsOfChips, hiddenLineStarts, type HiddenDocAsset } from './hiddenAssets'
 import { createImage, updateImageModel } from './images'
 import { agentSectionTexts, assetModelsChanged, chipBlocks, lineBlocks, sectionRolesChanged } from './lineBlocks'
+import { callPhase, callTime, drawTime, liveTimes, readLiveTimes, timeWords, type CallPhase, type ShownTime } from './liveTimes'
 import { createPlayer, destroyPlayer, isInSelectableTooltip, updatePlayer } from './media'
 import type { DocRange } from './pendingRanges'
 import { ROUND_STROKE, svgIcon } from './svgIcon'
 
 // The editor shows each `<dez:tool>` block of an agent section
 // (`src/model/chat/toolBlocks.ts`) as a quiet one-line chip: a disclosure
-// triangle, a wrench, the tool name, and a short form of its arguments. A
+// triangle, a wrench, the tool name, a short form of its arguments, and
+// the time of a call that runs or ran a second or more (`liveTimes.ts`). A
 // call to a tool that Dez does not have says so before the name, with no
 // short form (`UNRECOGNIZED_TOOL_TEXT`). A click on the chip, or Enter or
 // Space while it has the focus, opens a panel under it with the parameters,
@@ -438,6 +442,8 @@ const RESULT_TEXT_CLASS = 'dez-tool-call__result-text'
 const INTERMEDIATE_CLASS = 'dez-tool-call__intermediate'
 const HIDDEN_PART_CLASS = 'dez-tool-call__hidden'
 const ASSETS_CLASS = 'dez-tool-call__assets'
+const TIME_CLASS = 'dez-tool-call__time'
+const SPINNER_CLASS = 'dez-tool-call__spinner'
 
 /** An open-end wrench. */
 function wrenchIcon(): SVGSVGElement {
@@ -468,15 +474,85 @@ export function span(className: string, text?: string): HTMLSpanElement {
 const STATE_WORDS: Partial<Record<ToolCallState, string>> = { error: 'failed', interrupted: 'interrupted', notRun: 'not run' }
 
 /** The chip's accessible name. Its `aria-label` replaces the text of the
- *  chip's parts, so it holds the summary and the state word too, and
- *  "running" stands for the spinner, which screen readers skip. `note` is
- *  the label of an intermediate call (`intermediateLabel`). Empty parts are
- *  left out. A tool that Dez does not have is named as its chip names
- *  it. */
-export function toolCallLabel(name: string, summary: string, state: ToolCallState, note = ''): string {
-  const word = state === 'running' ? 'running' : STATE_WORDS[state]
+ *  chip's parts, so it holds the summary and the state word too. For a
+ *  `running` block, the word tells what the chip's lead shows, which screen
+ *  readers skip: "running" for the spinner, or `phase`, where the call is
+ *  in its group (`callPhase`): "ended" for the triangle of a call that
+ *  ran, "waiting" for the still spinner. `note` is the label of an
+ *  intermediate call (`intermediateLabel`), and `durationMs` the time that
+ *  the call took (a live time would change the name each second). Empty
+ *  parts are left out. A tool that Dez does not have is named as its chip
+ *  names it. */
+export function toolCallLabel(name: string, summary: string, state: ToolCallState, note = '', durationMs?: number, phase: CallPhase | null = null): string {
+  const word = state === 'running' ? (phase ?? 'running') : STATE_WORDS[state]
   const tool = isUnrecognizedTool(name) ? `Tool call, ${UNRECOGNIZED_TOOL_TEXT} ${name}` : `Tool call ${name}`
-  return [tool, summary, word, note].filter(Boolean).join(', ')
+  const took = durationMs === undefined ? '' : `took ${longDuration(durationMs)}`
+  return [tool, summary, word, took, note].filter(Boolean).join(', ')
+}
+
+/** The time that a call took, as its block keeps it (`duration-ms`): only
+ *  for a call that ran a second or more. An interrupted call has none, as
+ *  in a request (`toolResult`, messages.ts). */
+function finalCallTime(call: RenderedToolCall): ShownTime | null {
+  return call.durationMs === undefined || call.state === 'interrupted' || call.state === 'running' ? null : { ms: call.durationMs, live: false }
+}
+
+/** Draws the time part of `chip`, or takes it away for `time` null. It
+ *  goes after the state word, and before the intermediate part, which
+ *  `renderIntermediate` keeps at the end. */
+function renderCallTime(chip: HTMLElement, time: ShownTime | null): void {
+  let part = chip.querySelector<HTMLElement>(`:scope > .${TIME_CLASS}`)
+  if (!time) {
+    part?.remove()
+    return
+  }
+  if (!part) {
+    part = span(TIME_CLASS)
+    chip.insertBefore(part, chip.querySelector(`:scope > .${INTERMEDIATE_CLASS}`))
+  }
+  drawTime(part, TIME_CLASS, time, time.live ? `Running for ${timeWords(time)}` : `Ran for ${timeWords(time)}`)
+}
+
+/** Shows on the chip of a `running` block where its call is in its group
+ *  (`callPhase`), so that only the call that runs looks busy: an ended
+ *  call gets the triangle of a call that ran, which its final chip keeps,
+ *  and a waiting call a still spinner with no shimmer (`dezTheme`). An
+ *  ended call never runs again, so no triangle turns back to a spinner.
+ *  Returns whether `data-phase` changed. */
+function renderCallPhase(chip: HTMLElement, phase: CallPhase | null): boolean {
+  if ((chip.dataset.phase ?? null) === phase) return false
+  if (phase === null) chip.removeAttribute('data-phase')
+  else chip.dataset.phase = phase
+  const spinner = chip.querySelector(`:scope > .${SPINNER_CLASS}`)
+  if (phase === 'ended' && spinner) {
+    const triangle = disclosureTriangle()
+    triangle.setAttribute('aria-hidden', 'true')
+    spinner.replaceWith(triangle)
+  }
+  return true
+}
+
+// The phase and the time of the chip of the running call `callId` at
+// `now`, for its first draw and for each tick, so that the two agree.
+// Returns whether the phase changed (`renderCallPhase`).
+function renderRunningCall(chip: HTMLElement, callId: string, times: LiveTimes | null, sectionId: string | null, now: number): boolean {
+  const phaseChanged = renderCallPhase(chip, callPhase(times, sectionId, callId))
+  renderCallTime(chip, callTime(times, sectionId, callId, now))
+  return phaseChanged
+}
+
+// The time and the phase of each drawn chip of a call that runs, at each
+// tick of `liveTimes.ts`, and the chip's name when the phase changed, as
+// the name tells the phase (`toolCallLabel`). A call whose group ends gets
+// a new chip (`sameCall`), so the chips of the other states keep their DOM.
+function renderLiveCallTimes(view: EditorView, times: LiveTimes | null, now: number): void {
+  const streamingSectionId = view.state.field(streamingSectionField, false) ?? null
+  for (const root of view.contentDOM.querySelectorAll<HTMLElement>(`.${ROOT_CLASS}[data-state="running"]`)) {
+    const call = drawnCalls.get(root)
+    const chip = root.querySelector<HTMLElement>(`:scope > .${CHIP_CLASS}`)
+    if (!call || !chip) continue
+    if (renderRunningCall(chip, call.id, times, streamingSectionId, now)) renderIntermediate(chip, call, chip.getAttribute('aria-expanded') === 'true')
+  }
 }
 
 /** The label of an intermediate chip: what the chip hides, and, while its
@@ -516,15 +592,18 @@ function namedModelOutputs(call: RenderedToolCall): readonly ModelOutput[] | nul
 
 /** Draws the intermediate part of `chip`, at its end, for an open or a
  *  closed panel, and the chip's accessible name, which holds the part's
- *  label: an eye, the type symbols, and the label. The eye is closed while
- *  the chip hides something. It is open, and lit (`data-revealed`,
- *  `dezTheme`), while the open panel shows that. A call that is not
- *  intermediate has no such part. */
+ *  label and the phase of the call (`renderCallPhase`): an eye, the type
+ *  symbols, and the label. The eye is closed while the chip hides
+ *  something. It is open, and lit (`data-revealed`, `dezTheme`), while the
+ *  open panel shows that. A call that is not intermediate has no such
+ *  part. */
 function renderIntermediate(chip: HTMLElement, call: RenderedToolCall, open: boolean): void {
   chip.querySelector(`.${INTERMEDIATE_CLASS}`)?.remove()
   const { intermediate } = call
   const label = intermediate ? intermediateLabel(intermediate, open) : ''
-  chip.setAttribute('aria-label', toolCallLabel(call.name, call.summary, call.state, label))
+  // Only `renderCallPhase` writes `data-phase`, so it holds a `CallPhase`.
+  const phase = (chip.dataset.phase ?? null) as CallPhase | null
+  chip.setAttribute('aria-label', toolCallLabel(call.name, call.summary, call.state, label, finalCallTime(call)?.ms, phase))
   if (!intermediate) return
   const part = span(INTERMEDIATE_CLASS)
   const revealed = open && (intermediate.assets.length > 0 || intermediate.text !== '')
@@ -588,7 +667,7 @@ export function createChip(lead: HTMLElement | null, icon: SVGSVGElement, parts:
 function createCallChip(view: EditorView, call: RenderedToolCall): HTMLElement {
   // The spinner element stays as long as the widget, so its animation runs
   // without restarts until the call ends.
-  const lead = call.state === 'running' ? span('dez-tool-call__spinner') : disclosureTriangle()
+  const lead = call.state === 'running' ? span(SPINNER_CLASS) : disclosureTriangle()
   // The words go in their own span, so the name keeps the name's look
   // (`dezTheme`) and the flex gap spaces the two.
   const words = isUnrecognizedTool(call.name) ? [span('dez-tool-call__unrecognized', UNRECOGNIZED_TOOL_TEXT)] : []
@@ -596,6 +675,12 @@ function createCallChip(view: EditorView, call: RenderedToolCall): HTMLElement {
   renderSummary(chip, call.summary)
   const word = STATE_WORDS[call.state]
   if (word) chip.appendChild(span('dez-tool-call__state', word))
+  if (call.state !== 'running') {
+    renderCallTime(chip, finalCallTime(call))
+    return chip
+  }
+  const streamingSectionId = view.state.field(streamingSectionField, false) ?? null
+  renderRunningCall(chip, call.id, readLiveTimes(view.state), streamingSectionId, Date.now())
   return chip
 }
 
@@ -622,17 +707,23 @@ export function createField(text: string, label: string, placeholder: string): H
   return box
 }
 
-/** The key of a hidden asset among the assets of one chip. A drawn asset
- *  whose key stays keeps its element: an image's path and id tell its
- *  file, and a clip's kind and id never change (a Save or a Delete changes
- *  only its `src`). A drawn clip also needs the same `linkedSrc`
- *  (`renderAssets`), which is not part of this key. */
+/** The key of a hidden asset among the assets of one chip: an image's path
+ *  and id tell its file, and a clip's kind and id never change (a Save or
+ *  a Delete changes only its `src`). */
 function assetKey(asset: { kind: 'image', path: string, id: string | null, linked: boolean } | { kind: 'clip', tag: Pick<MediaTagData, 'kind' | 'id'> }): string {
   return JSON.stringify(asset.kind === 'image' ? ['image', asset.path, asset.id, asset.linked] : [asset.tag.kind, asset.tag.id])
 }
 
-/** The key (`PanelAssetRow.key`) of each asset that a panel draws. */
-const drawnAssetKeys = new WeakMap<Element, string>()
+/** The key of a drawn asset: `assetKey`, and `linkedSrc` for a clip (the
+ *  `linkedSrc` of a player is the one of its mount). A drawn element whose
+ *  key stays can stay: in a panel (`PanelAssetRow.key`) and in the preview
+ *  box of a mention (assetPreview.ts). */
+export function drawnAssetKey(asset: PanelAsset): string {
+  return asset.kind === 'clip' ? `${assetKey(asset)}:${asset.linkedSrc}` : assetKey(asset)
+}
+
+/** The key (`PanelAssetRow.key`) of each row that a panel draws. */
+const drawnRowKeys = new WeakMap<Element, string>()
 
 /** A chip whose panel shows hidden assets: the chip of the call `callId`,
  *  which started the jobs `jobIds` (`IntermediateCall.jobIds`), or the
@@ -652,9 +743,8 @@ function ownedBy(asset: HiddenAsset, chip: AssetsChip): boolean {
 /** One asset of a panel, as a row that a panel draws (`renderAssets`,
  *  `AssetList.vue`). */
 export interface PanelAssetRow {
-  /** `assetKey`, with a count before it, and `linkedSrc` after it for a
-   *  clip. Unique among the rows of a panel. A drawn row whose key stays
-   *  keeps its element. */
+  /** `drawnAssetKey`, with a count before it. Unique among the rows of a
+   *  panel. A drawn row whose key stays keeps its element. */
   key: string
   asset: PanelAsset
   /** Makes the element of the asset (`createImage`, `createPlayer`). */
@@ -680,7 +770,7 @@ function panelAssetRows(view: EditorView, chip: AssetsChip, assets: readonly Pan
     const place: AssetPlace = () => hiddenAssets(view.state)
       .filter((hidden) => ownedBy(hidden, chip) && assetKey(hidden.kind === 'image' ? { ...hidden.image, kind: 'image' } : hidden) === key)[count]?.from ?? null
     return {
-      key: `${count}:${key}${asset.kind === 'clip' ? `:${asset.linkedSrc}` : ''}`,
+      key: `${count}:${drawnAssetKey(asset)}`,
       asset,
       create: () => asset.kind === 'image' ? createImage(view, asset, place) : createPlayer(view, asset.tag, asset.linkedSrc, asset.model, place),
       update: (element) => {
@@ -704,7 +794,7 @@ function panelAssetRows(view: EditorView, chip: AssetsChip, assets: readonly Pan
  *  (`MediaWidget.updateDOM` does the same). */
 function renderAssets(view: EditorView, list: HTMLElement, chip: AssetsChip, assets: readonly PanelAsset[]): void {
   const drawn = new Map<string, HTMLElement>()
-  for (const element of list.children) drawn.set(drawnAssetKeys.get(element) ?? '', element as HTMLElement)
+  for (const element of list.children) drawn.set(drawnRowKeys.get(element) ?? '', element as HTMLElement)
   const next = panelAssetRows(view, chip, assets).map((row) => {
     const kept = drawn.get(row.key)
     if (kept) {
@@ -713,7 +803,7 @@ function renderAssets(view: EditorView, list: HTMLElement, chip: AssetsChip, ass
       return kept
     }
     const element = row.create()
-    drawnAssetKeys.set(element, row.key)
+    drawnRowKeys.set(element, row.key)
     return element
   })
   for (const gone of drawn.values()) {
@@ -941,11 +1031,12 @@ function renderCallOpenState(view: EditorView, root: HTMLElement, call: Rendered
 }
 
 // Every part of a call that the chip draws, but its intermediate data and
-// its summary. Arguments keep their definition order, so equal ones give
-// equal JSON, and so do the pictures and the tool calls of the code of two
-// reads of one block.
+// its summary, and the live time of a call that runs (`liveTimes.ts`).
+// Arguments keep their definition order, so equal ones give equal JSON,
+// and so do the pictures and the tool calls of the code of two reads of
+// one block.
 function sameCall(a: RenderedToolCall, b: RenderedToolCall): boolean {
-  return a.id === b.id && a.name === b.name && a.state === b.state && a.result === b.result && JSON.stringify(a.arguments) === JSON.stringify(b.arguments)
+  return a.id === b.id && a.name === b.name && a.state === b.state && a.result === b.result && a.durationMs === b.durationMs && JSON.stringify(a.arguments) === JSON.stringify(b.arguments)
     && JSON.stringify(a.pictures) === JSON.stringify(b.pictures) && JSON.stringify(a.bridged) === JSON.stringify(b.bridged)
 }
 
@@ -1112,6 +1203,7 @@ export function markdownToolCalls(openCalls?: ReadonlySet<string>): Extension {
     toolCallDecorationsField,
     openCalls ? toolCallsOpenField.init(() => openCalls) : toolCallsOpenField,
     toolCallOpenUpdater,
+    liveTimes(renderLiveCallTimes),
     lineBlocks(renderedToolCalls),
   ]
 }

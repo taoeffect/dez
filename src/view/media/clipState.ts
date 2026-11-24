@@ -1,3 +1,4 @@
+import type { AssetExportSource } from '../../model/chat/assetExport'
 import { knownMediaType } from '../../model/chat/mediaFiles'
 import { isLinkedMediaPath, isSavedMediaPath, isTempMediaPath } from '../../model/chat/mediaTags'
 
@@ -137,6 +138,21 @@ export function clipFile(src: string | null, linkedSrc: boolean, problem: ClipPr
   if (src === null || busy || problem === 'gone') return null
   const source = clipSourceKind(src, linkedSrc)
   return source === 'saved' || source === 'temp' || source === 'linked' ? src : null
+}
+
+/** What the Export of the context menu of a clip's player copies
+ *  (`dez.controller/exportAsset`): the clip's file (`clipFile`), else the
+ *  http or https URL that it plays from, with its media type `type`. Null
+ *  when it has neither, when its source gives no clip (`problem` is
+ *  `gone`), and while a Save or a Delete runs (`busy`). A clip that this
+ *  computer cannot play has its bytes, so it counts: another app can
+ *  play the copy. */
+export function clipExportSource(src: string | null, linkedSrc: boolean, type: string | null, problem: ClipProblem | null, busy: boolean): AssetExportSource | null {
+  const source = clipSourceKind(src, linkedSrc)
+  const file = clipFile(src, linkedSrc, problem, busy)
+  if (file !== null) return { kind: 'file', path: file, linked: source === 'linked' }
+  if (src === null || busy || problem === 'gone' || source !== 'remote') return null
+  return { kind: 'url', url: src, type }
 }
 
 /** What the clock of a clip that is not saved tells. */

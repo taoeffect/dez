@@ -20,7 +20,9 @@ import { EDITOR_FONT_SIZE_DEFAULT, EDITOR_FONT_SIZE_PROPERTY } from '../../model
 import { escapeMarkerAttribute, unescapeMarkerAttribute } from '../../utils/markerAttribute'
 import { ASSET_FLASH_MS } from '../editor/drawnAssets'
 import { addModelToPill, modelDisplayNamesField, sameModelChip, sectionModelChips, streamingSectionField, type ModelChip } from './modelChip'
-import { addDurationToPill } from './pillDuration'
+import { renderPillTime } from './pillDuration'
+import { liveTimes, readLiveTimes, replyTime, type ShownTime } from '../editor/liveTimes'
+import type { LiveTimes } from '../../model/streams/types'
 import {
   hasThinking,
   isThinkingPanelEvent,
@@ -730,14 +732,15 @@ class RoleSeparatorWidget extends WidgetType {
     readonly index: number,
     readonly role: Role,
     readonly chip: ModelChip | null,
-    /** The reply time of an agent section, or null for none. */
+    /** The reply time of an agent section, or null for none. A live time
+     *  is not part of the widget: see `liveTimes.ts`. */
     readonly durationMs: number | null,
   ) {
     super()
   }
-  // Thinking is left out on purpose: see `pillThinkingUpdater`. Every other
-  // part that `toDOM` draws must be compared here, or CodeMirror keeps
-  // stale pill DOM.
+  // Thinking and the live time are left out on purpose: see
+  // `pillThinkingUpdater` and `liveTimes.ts`. Every other part that `toDOM`
+  // draws must be compared here, or CodeMirror keeps stale pill DOM.
   eq(other: WidgetType): boolean {
     return (
       other instanceof RoleSeparatorWidget &&
@@ -757,7 +760,7 @@ class RoleSeparatorWidget extends WidgetType {
     label.textContent = this.role === 'user' ? 'User' : 'Agent'
     el.appendChild(label)
     if (this.chip) addModelToPill(label, this.chip)
-    if (this.durationMs !== null) addDurationToPill(label, this.durationMs)
+    if (this.role === 'agent') renderPillTime(label, pillTime(view.state, this.index, this.durationMs, () => readLiveTimes(view.state), Date.now()))
     renderPillThinking(el, label, pillThinkingAt(view.state, this.index), view)
     return el
   }
@@ -773,6 +776,29 @@ class RoleSeparatorWidget extends WidgetType {
 /** The thinking parts of the pill of section `index` in `state`. */
 function pillThinkingAt(state: EditorState, index: number): PillThinkingView | null {
   return sectionThinkingView(state.field(sectionsField)[index], state.field(thinkingExpandedField), state.field(streamingSectionField))
+}
+
+/** The time of the agent pill of section `index`: the time that its reply
+ *  took (`durationMs`), or the live time of the reply that streams into
+ *  it, from `readTimes` (called only for a pill with no final time). */
+function pillTime(state: EditorState, index: number, durationMs: number | null, readTimes: () => LiveTimes | null, now: number): ShownTime | null {
+  if (durationMs !== null) return { ms: durationMs, live: false }
+  const id = state.field(sectionsField)[index]?.id
+  return id === undefined ? null : replyTime(readTimes(), id, now)
+}
+
+// The live time of the drawn pill of the reply that runs, at each tick of
+// `liveTimes.ts`; and a pill that still shows a live time after its reply
+// ended loses it. The other pills keep their DOM.
+function renderLivePillTimes(view: EditorView, times: LiveTimes | null, now: number): void {
+  const models = view.state.field(sectionsField)
+  for (const separator of view.contentDOM.querySelectorAll<HTMLElement>('.dez-role-separator[data-role="agent"]')) {
+    const index = Number(separator.dataset.sectionIndex)
+    const label = separator.firstElementChild
+    if (!(label instanceof HTMLElement)) continue
+    if (models[index]?.id !== times?.sectionId && !label.querySelector(':scope > .dez-role-separator__duration--live')) continue
+    renderPillTime(label, pillTime(view.state, index, models[index]?.durationMs ?? null, () => times, now))
+  }
 }
 
 // Changes the thinking parts of the drawn pills in place (a thinking token,
@@ -875,6 +901,7 @@ export const roleSeparators: Extension = [
   EditorView.contentAttributes.compute(['doc'], (state): Record<string, string> =>
     (firstSectionRole(state.doc.line(1).text) === 'agent' ? { [FIRST_SECTION_ATTRIBUTE]: 'agent' } : {})),
   pillThinkingUpdater,
+  liveTimes(renderLivePillTimes),
 ]
 
 export const roleSeparatorAtomicRanges = EditorView.atomicRanges.of((view) =>
@@ -1496,6 +1523,13 @@ const IMAGE_TOOLBAR_GLASS = {
   backdropFilter: 'blur(14px) saturate(130%)',
 }
 
+// The surface of the CM tooltips and of the preview box of a mention chip.
+const POPUP_SURFACE = {
+  border: '1px solid var(--color-border, #333)',
+  backgroundColor: 'var(--color-bg, #1e1e1e)',
+  boxShadow: '0 4px 16px rgba(0, 0, 0, 0.2)',
+}
+
 export const dezTheme = EditorView.theme({
   '&': {
     height: '100%',
@@ -1721,11 +1755,12 @@ export const dezTheme = EditorView.theme({
     content: '"·"',
     marginRight: editorSize(6),
   },
-  // Reply time (`addDurationToPill` in pillDuration.ts) at the end of an
-  // agent pill: after the model part, or after the role word in a pill with
-  // no model. Muted, smaller than the model name, and set off by the same
-  // divider, so it reads as secondary. Tabular numerals keep times of the
-  // same form the same width. It keeps its own case and spacing in the
+  // Reply time (`renderPillTime` in pillDuration.ts) at the end of an agent
+  // pill: after the model part, or after the role word in a pill with no
+  // model. While the reply runs, it counts in place (`--live`,
+  // liveTimes.ts). Muted, smaller than the model name, and set off by the
+  // same divider, so it reads as secondary. Tabular numerals keep times of
+  // the same form the same width. It keeps its own case and spacing in the
   // uppercase row ("4.2s", not "4.2S"). A line height of 1 keeps it inside
   // the role word's line box, so the pill is as tall as one with no time.
   // `flex: none` makes a long model name shrink first.
@@ -1916,8 +1951,10 @@ export const dezTheme = EditorView.theme({
     // keep the widget (`eq`), and `pillThinkingUpdater` changes the thinking
     // parts in place, so the animations run without restarts until the
     // stream ends. The left-slot spinner turns here too, and so do the
-    // spinner and the name shimmer of a running tool call chip.
-    '.dez-role-separator__spinner, .dez-tool-call__spinner': {
+    // spinner and the name shimmer of the chip of a call that runs; the
+    // chip of an ended or a waiting call of its group (`data-phase`,
+    // toolCalls.ts) stays still.
+    '.dez-role-separator__spinner, .dez-tool-call__chip:not([data-phase]) > .dez-tool-call__spinner': {
       animation: 'dez-role-pill-spin 0.9s linear infinite',
     },
     '.dez-role-separator__label[data-streaming]::after': {
@@ -1933,7 +1970,7 @@ export const dezTheme = EditorView.theme({
       pointerEvents: 'none',
       animation: 'dez-role-pill-glow 1.8s ease-in-out infinite',
     },
-    '.dez-role-separator__label[data-streaming] .dez-role-separator__model-name, .dez-tool-call[data-state="running"] .dez-tool-call__name': {
+    '.dez-role-separator__label[data-streaming] .dez-role-separator__model-name, .dez-tool-call[data-state="running"] .dez-tool-call__chip:not([data-phase]) .dez-tool-call__name': {
       color: 'transparent',
       backgroundImage:
         'linear-gradient(90deg, var(--color-text) 40%, var(--color-link, #4a9eff) 50%, var(--color-text) 60%)',
@@ -1942,9 +1979,9 @@ export const dezTheme = EditorView.theme({
       backgroundClip: 'text',
       animation: 'dez-role-pill-shimmer 2.4s linear infinite',
     },
-    // The image toolbar (`.dez-image__overlay` below) drops into place from
-    // its top-right corner as it fades in, and its magnifier and its trash
-    // get a little smaller while pressed.
+    // The pills of the image toolbar (`.dez-image__overlay` below) drop
+    // into place from their top-right corners as they fade in, and the
+    // magnifier and the trash get a little smaller while pressed.
     '.dez-image__overlay': {
       transform: `translateY(${editorSize(-4)}) scale(0.97)`,
       transformOrigin: 'top right',
@@ -2058,21 +2095,29 @@ export const dezTheme = EditorView.theme({
     lineHeight: '1.4',
     userSelect: 'none',
   },
-  // The overlay of an image (`ImageWidget`): one small floating toolbar with
-  // the id badge, the facts of the image, the model label, the magnifier,
-  // and the trash button, shown only while the pointer is over the image,
-  // and never a part of the layout, so a hover changes no size. Its glass
-  // surface is dark in both themes, with white text, a hairline border, and
-  // a shadow, so it reads on light, dark, and busy images.
+  // The toolbar of an image (`createImage`, images.ts): two small floating
+  // pills, the info (the id badge, the facts of the image, the model label)
+  // and the actions (the magnifier and the trash), shown only while the
+  // pointer is over the image, and never a part of the layout, so a hover
+  // changes no size. Their glass surface is dark in both themes, with white
+  // text, a hairline border, and a shadow, so it reads on light, dark, and
+  // busy images.
   //
-  // Over an image, it sits at the right end of a row along the image's top
-  // edge, inset as far from the top as from the right, and draws over the
-  // lines below. Over an image narrower than the toolbar, its auto margin
-  // becomes 0: it starts at the image's left inset and hangs out on the
-  // right. Images are mostly at the start of their line, where a toolbar
-  // that hung out on the left would go out of the editor. Anything that
-  // hangs out of the scroller on the right (a small image at a line's end in
-  // a narrow window) adds a horizontal scrollbar, even while it is hidden.
+  // Over an image, the pills sit in a row along the image's top edge, inset
+  // as far from the top as from the sides, and draw over the lines below.
+  // The actions are at the right end, so the magnifier is at the image's
+  // top-right on any image that is wider than the actions, and the facts
+  // never move it. The info is in a slot to their left. When the two do not
+  // fit side by side, the row wraps in reverse: the actions stay on top,
+  // and the info goes on a line under them.
+  //
+  // A pill wider than its room (on a small image) starts at the left inset
+  // and hangs out on the right: its auto margin becomes 0 (WebKitGTK 2.42
+  // has no `safe` alignment keyword). Images are mostly at the start of
+  // their line, where a pill that hung out on the left would go out of the
+  // editor. Anything that hangs out of the scroller on the right (a small
+  // image at a line's end in a narrow window) adds a horizontal scrollbar,
+  // even while it is hidden.
   '.dez-image__overlay-row': {
     position: 'absolute',
     top: editorSize(8),
@@ -2080,13 +2125,23 @@ export const dezTheme = EditorView.theme({
     right: editorSize(8),
     zIndex: '2',
     display: 'flex',
+    flexWrap: 'wrap-reverse',
+    alignItems: 'center',
+    gap: editorSize(4),
     pointerEvents: 'none',
+  },
+  // The slot takes the room of its line that the actions leave, and never
+  // more than the row: the pill in it hangs out, not the slot.
+  '.dez-image__info-slot': {
+    display: 'flex',
+    flex: '1 1 auto',
+    minWidth: '0',
   },
   '.dez-image__overlay': {
     display: 'inline-flex',
+    flex: 'none',
     alignItems: 'center',
     gap: editorSize(3),
-    marginLeft: 'auto',
     padding: editorSize(3),
     borderRadius: editorSize(9),
     ...IMAGE_TOOLBAR_GLASS,
@@ -2096,11 +2151,15 @@ export const dezTheme = EditorView.theme({
     lineHeight: '1',
     whiteSpace: 'nowrap',
     userSelect: 'none',
-    // Hidden, the toolbar takes no pointer: over a small image it covers a
-    // part of the line below, whose text keeps its clicks and its menu. It
-    // takes the pointer once the pointer is on the image (the rule below),
-    // so the pointer can go on to the part that hangs out.
-    pointerEvents: 'none',
+    // Hidden, a pill takes no pointer (`visibility`): over a small image it
+    // covers a part of the line below, whose text keeps its clicks and its
+    // menu. The pointer can go from the image on to the part that hangs out
+    // (below the image, on a small one), as the pill hides only at the end
+    // of its fade: a pointer that crosses a gap on the way, or cuts across
+    // a corner, comes onto the pill while it can still be seen, and the
+    // image is under the pointer again.
+    pointerEvents: 'auto',
+    visibility: 'hidden',
     cursor: 'default',
     opacity: '0',
     // The entrance: a fade, and a slide in the
@@ -2108,24 +2167,40 @@ export const dezTheme = EditorView.theme({
     // first in the stylesheet, so a `transition` there would lose to this
     // one. This one names `transform` too, which moves nothing when no
     // transform is set.
-    transition: 'opacity 0.14s ease, transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1)',
+    transition: 'opacity 0.14s ease, transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), visibility 0s linear 0.14s',
+  },
+  '.dez-image__overlay-row .dez-image__overlay': {
+    marginLeft: 'auto',
+  },
+  // An image with no id and no model label has no info when its file is
+  // not found.
+  '.dez-image__info:empty': {
+    display: 'none',
   },
   '.dez-image:hover .dez-image__overlay': {
     opacity: '1',
-    pointerEvents: 'auto',
+    visibility: 'visible',
+    transitionDelay: '0s',
   },
-  // In the "Image not found" box, the toolbar follows the text and keeps
-  // its room while hidden. It is taller than the box's line; its negative
-  // margins keep it from making the box taller, so it overlaps the box's
-  // top and bottom edges.
+  // The info pill of a small image hangs over the line below, where the
+  // toolbar of a player is at the same z and later in the doc, so it would
+  // take the pointer from the pill. The toolbar of the image under the
+  // pointer is on top.
+  '.dez-image:hover .dez-image__overlay-row': {
+    zIndex: '3',
+  },
+  // In the "Image not found" box, the pills follow the text and keep their
+  // room while hidden. They are taller than the box's line; their negative
+  // margins keep them from making the box taller, so they overlap the
+  // box's top and bottom edges.
   '.dez-image-missing > .dez-image__overlay': {
     margin: editorSize(-9, 0, -9, 8),
     verticalAlign: 'middle',
   },
-  // The id reads as a label of the image: an image icon, then the id. The
-  // `::after` is the divider in the middle of the gap before the facts (or
-  // before the model label or the trash, in the "Image not found" box,
-  // which has no facts).
+  '.dez-image-missing > .dez-image__info:not(:empty) + .dez-image__actions': {
+    marginLeft: editorSize(4),
+  },
+  // The id reads as a label of the image: an image icon, then the id.
   '.dez-image__id': {
     position: 'relative',
     display: 'inline-flex',
@@ -2144,8 +2219,7 @@ export const dezTheme = EditorView.theme({
     opacity: '0.72',
   },
   // The facts (pixels, format, file size) are less strong than the id, with
-  // digits of one width. The `::after` is the divider before the model
-  // label or the magnifier.
+  // digits of one width.
   '.dez-image__facts': {
     position: 'relative',
     display: 'inline-flex',
@@ -2158,8 +2232,7 @@ export const dezTheme = EditorView.theme({
     fontVariantNumeric: 'tabular-nums',
   },
   // The model that made the image (assetModelLabel.ts): a sparkle, then the
-  // model name, as quiet as the facts. A long name ends in an ellipsis. The
-  // `::after` is the divider before the buttons.
+  // model name, as quiet as the facts. A long name ends in an ellipsis.
   '.dez-image__model': {
     position: 'relative',
     display: 'inline-flex',
@@ -2187,9 +2260,9 @@ export const dezTheme = EditorView.theme({
     lineHeight: '1.4',
     textOverflow: 'ellipsis',
   },
-  // The divider in the middle of the gap after the id, the facts, and the
-  // model label.
-  '.dez-image__id::after, .dez-image__facts::after, .dez-image__model::after': {
+  // The divider in the middle of the gap after each item of the info but
+  // its last.
+  '.dez-image__info > :not(:last-child)::after': {
     content: '""',
     position: 'absolute',
     top: '25%',
@@ -2199,8 +2272,7 @@ export const dezTheme = EditorView.theme({
     background: 'var(--color-image-toolbar-border, rgba(255, 255, 255, 0.18))',
   },
   // The buttons: the magnifier and the trash, with no divider between
-  // them. Their corners follow the toolbar's: toolbar radius minus its
-  // padding.
+  // them. Their corners follow the pill's: its radius minus its padding.
   '.dez-image__zoom, .dez-image__trash': {
     display: 'inline-flex',
     alignItems: 'center',
@@ -2323,6 +2395,69 @@ export const dezTheme = EditorView.theme({
   '.dez-image-zoom__close:focus-visible': {
     boxShadow: '0 0 0 2px var(--color-link, #4a9eff), 0 6px 18px rgba(0, 0, 0, 0.24)',
   },
+  // The preview box of a mention chip (src/view/editor/assetPreview.ts): a
+  // fixed layer in the editor's root, as the image zoom is, with the image
+  // or the player of the asset that the chip names. Its z-index puts it
+  // over the editor and its frame hosts, and under the image zoom (40),
+  // which can show the image of the box, the find dropdown and the model
+  // pickers (50), and the CM tooltips (500): the tooltips of the toolbar of
+  // its image draw over it. Its surface is that of the CM tooltips
+  // (`POPUP_SURFACE`). It shows only once it has its place (`data-shown`);
+  // the module animates its entrance.
+  //
+  // An image and a player get their width from the line, as a percent,
+  // which a box as wide as its content cannot give. So the module gives the
+  // box the max sizes of its asset, from the room next to the chip
+  // (`--dez-preview-max-width`, `--dez-preview-max-height`), and the rules
+  // below size the asset by them alone.
+  '.dez-asset-preview': {
+    position: 'fixed',
+    zIndex: '30',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    boxSizing: 'border-box',
+    width: 'max-content',
+    padding: editorSize(6),
+    ...POPUP_SURFACE,
+    borderRadius: editorSize(12),
+    visibility: 'hidden',
+  },
+  '.dez-asset-preview[data-shown]': {
+    visibility: 'visible',
+  },
+  '.dez-asset-preview .dez-image': {
+    maxWidth: 'none',
+  },
+  // An image at its own size, up to the max sizes. A small image is made
+  // larger, to a long side of 200 px: at its own size, a tiny image shows
+  // nothing. Before its size is known, the width is invalid (`auto`), and
+  // the max sizes fit the image.
+  '.dez-asset-preview .dez-image__img': {
+    maxWidth: 'var(--dez-preview-max-width)',
+    maxHeight: 'var(--dez-preview-max-height)',
+    width: `min(var(--dez-preview-max-width), calc(var(--dez-preview-max-height) * var(--dez-image-width) / var(--dez-image-height)), max(calc(var(--dez-image-width) * 1px), min(${editorSize(200)}, calc(${editorSize(200)} * var(--dez-image-width) / var(--dez-image-height)))))`,
+  },
+  // A video is as large as at its place, by the max sizes of the box; an
+  // audio card keeps its width, up to the max width.
+  '.dez-asset-preview .dez-media': {
+    '--dez-media-max-height': 'var(--dez-preview-max-height)',
+    width: 'auto',
+    padding: '0',
+  },
+  '.dez-asset-preview .media-player': {
+    maxWidth: 'var(--dez-preview-max-width)',
+  },
+  '.dez-asset-preview .media-player[data-kind="video"]:not([data-unavailable])': {
+    width: `min(var(--dez-preview-max-width), max(${editorSize(340)}, calc(var(--dez-preview-max-height) * var(--media-player-ratio))))`,
+  },
+  // An audio card has no picture to tell which clip it is, so in the box
+  // its toolbar (the id, the facts, the model label) shows at all times,
+  // in the room next to the card that it keeps while hidden.
+  '.dez-asset-preview .media-player[data-kind="audio"] > .media-player__overlay': {
+    opacity: '1',
+    transform: 'none',
+  },
   // Tool call chips (src/view/editor/toolCalls.ts). The widget is the only
   // thing on its line: a column as wide as the line, with the chip, and
   // under it the panel while open. The chip is quiet, as most calls are not
@@ -2402,9 +2537,13 @@ export const dezTheme = EditorView.theme({
     cursor: 'default',
   },
   // The spinner shares the role pill spinner's rules (above); in the chip,
-  // the gap spaces it.
+  // the gap spaces it. The still spinner of a call that waits for its turn
+  // in its group is faint.
   '.dez-tool-call__spinner': {
     marginRight: '0',
+  },
+  '.dez-tool-call__chip[data-phase="waiting"] > .dez-tool-call__spinner': {
+    opacity: '0.4',
   },
   '.dez-tool-call__disclosure': {
     flex: 'none',
@@ -2462,19 +2601,35 @@ export const dezTheme = EditorView.theme({
   '.dez-tool-call[data-state="error"] .dez-tool-call__icon, .dez-tool-call[data-state="error"] .dez-tool-call__name, .dez-tool-call[data-state="interrupted"] .dez-tool-call__icon, .dez-tool-call[data-state="interrupted"] .dez-tool-call__name': {
     color: 'var(--color-error, #d9534f)',
   },
-  // The intermediate part of a chip (`renderIntermediate` in toolCalls.ts):
-  // after a thin rule, an eye, the type symbols, and a small label, all in
-  // the chip's muted color. While the open panel shows what the chip
-  // hides (`data-revealed`), the eye is open and has the accent color. The
-  // symbols keep their size; only the label gives way in a narrow window.
+  // The time of a call (`renderCallTime` in toolCalls.ts) and the
+  // intermediate part (`renderIntermediate`) each start with the same thin
+  // rule, so the dividers of a chip match.
+  '.dez-tool-call__time, .dez-tool-call__intermediate': {
+    marginLeft: editorSize(2),
+    paddingLeft: editorSize(8),
+    borderLeft: '1px solid color-mix(in srgb, var(--color-text) 16%, transparent)',
+  },
+  // The time of a call: after the state word and before the intermediate
+  // part, in the chip's muted color, also on a failed call, so the red
+  // state word stands out. Tabular numerals keep a live time of one form at
+  // one width. `flex: none`: the summary gives way first in a narrow
+  // window. It has the font size and the line height of the label of the
+  // intermediate part, so the two rules are as tall.
+  '.dez-tool-call__time': {
+    flex: 'none',
+    fontSize: editorSize(11.5),
+    fontVariantNumeric: 'tabular-nums',
+  },
+  // The intermediate part of a chip: an eye, the type symbols, and a small
+  // label, all in the chip's muted color. While the open panel shows what
+  // the chip hides (`data-revealed`), the eye is open and has the accent
+  // color. The symbols keep their size; only the label gives way in a
+  // narrow window.
   '.dez-tool-call__intermediate': {
     display: 'inline-flex',
     alignItems: 'center',
     gap: editorSize(5),
     minWidth: '0',
-    marginLeft: editorSize(2),
-    paddingLeft: editorSize(8),
-    borderLeft: '1px solid color-mix(in srgb, var(--color-text) 16%, transparent)',
   },
   '.dez-tool-call__eye, .dez-tool-call__type': {
     display: 'inline-flex',
@@ -3049,11 +3204,9 @@ export const dezTheme = EditorView.theme({
   // base theme gives them light colors only, as Dez does not use CM's dark
   // theme flag.
   '.cm-tooltip': {
-    border: '1px solid var(--color-border, #333)',
+    ...POPUP_SURFACE,
     borderRadius: editorSize(6),
-    backgroundColor: 'var(--color-bg, #1e1e1e)',
     color: 'var(--color-text)',
-    boxShadow: '0 4px 16px rgba(0, 0, 0, 0.2)',
     fontFamily: UI_FONT_FAMILY,
     fontSize: editorSize(12),
     lineHeight: '1.4',

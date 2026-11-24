@@ -5,19 +5,22 @@ import { dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { fileURLToPath } from 'node:url';
-import { inflateRawSync } from 'node:zlib';
+import { gunzipSync, inflateRawSync } from 'node:zlib';
 
 // What the scripts of the programs that Dez ships share (fetch-programs.js,
-// update-ffmpeg.js, update-deno.js): the folder of the programs, the build
-// targets, a download that gives the size and the SHA-256 of what it wrote,
-// the check of a file against a pin, a reader of one file of a zip file,
-// and what the update scripts share: the rule of the manifest, the files of
-// a GitHub release, and the version check of a downloaded program.
+// update-ffmpeg.js, update-deno.js, update-libs.js): the folder of the
+// programs, the build targets, a download that gives the size and the
+// SHA-256 of what it wrote, the check of a file against a pin, readers of
+// one file of a zip file or of a `.tar.gz` file, and what the update
+// scripts share: the rule of the manifest, the files of a GitHub release,
+// and the version check of a downloaded program.
 //
 // The programs are not in Git (src-tauri/.gitignore). manifest.json of
 // their folder pins the URL, the size, and the SHA-256 of each one: a
 // script, and src-tauri/build.rs, takes only a file that has the size and
-// the SHA-256 of its pin.
+// the SHA-256 of its pin. The native files of the shipped libraries
+// (src-tauri/libs/, scripts/update-libs.js) follow the same rule, with
+// their own manifest.
 
 // The folder of the programs, and the name of its manifest in a text for a
 // reader.
@@ -27,6 +30,13 @@ export const MANIFEST_NAME = 'src-tauri/binaries/manifest.json';
 // The mode of a program file. Tauri copies the file next to the Dez program
 // with its mode.
 export const PROGRAM_MODE = 0o755;
+
+// The folder of the libraries that Dez ships for the code of its runs, the
+// name of its manifest in a text for a reader, and the mode of a native
+// file of a library (Deno loads it; nothing runs it as a program).
+export const LIBS_DIR = join(BINARIES_DIR, '..', 'libs');
+export const LIBS_MANIFEST_NAME = 'src-tauri/libs/manifest.json';
+export const NATIVE_MODE = 0o644;
 
 // The build targets that Dez ships programs for, as Rust target triples.
 export const TARGETS = ['aarch64-unknown-linux-gnu', 'x86_64-unknown-linux-gnu', 'aarch64-apple-darwin'];
@@ -286,21 +296,80 @@ function zipEntryBytes(zip, entry, name) {
   return bytes;
 }
 
-// Downloads the zip file `url`, and writes its file `zip.member` into a new
-// file `path` with the mode `mode`. Throws unless the zip file has
-// `zip.size` and `zip.sha256` (`downloadPinned`). Gives the size and the
-// SHA-256 of the file that it wrote, which the caller checks against a pin
-// of that file. The zip file is next to `path` during the call.
-export async function downloadZipMember(url, path, mode, zip, pinnedBy) {
-  const zipPath = `${path}.zip`;
-  await downloadPinned(url, zipPath, 0o600, zip, pinnedBy);
+// The text of a header field of a tar file: the bytes up to the first NUL.
+function tarField(header, start, length) {
+  const field = header.subarray(start, start + length);
+  const end = field.indexOf(0);
+  return field.toString('utf8', 0, end < 0 ? length : end);
+}
+
+// The files of a tar file (its bytes, not compressed): the name and the
+// bytes of each regular file. Folders and links are left out.
+//
+// Why Dez has its own reader: Node has none. The reader knows the forms of
+// a long name that the archives of the scripts use: the GNU long name (an
+// entry of the type `L` before the file; cargo and GNU tar write it), and
+// the prefix field of a POSIX header. It throws for a pax header, which
+// can also hold a name, so that no file gets a part of its name.
+//
+// https://www.gnu.org/software/tar/manual/html_node/Standard.html
+export function* tarFiles(tar) {
+  let longName;
+  let offset = 0;
+  // Empty blocks end the file.
+  while (offset + 512 <= tar.length && tar[offset] !== 0) {
+    const header = tar.subarray(offset, offset + 512);
+    const size = Number.parseInt(tarField(header, 124, 12), 8);
+    const type = String.fromCharCode(header[156]);
+    if (!Number.isSafeInteger(size) || offset + 512 + size > tar.length) {
+      throw new Error('The tar file is damaged, or a part of it is missing.');
+    }
+    if (type === 'x') {
+      throw new Error('The tar file has pax headers, which this script does not read.');
+    }
+    const bytes = tar.subarray(offset + 512, offset + 512 + size);
+    offset += 512 + Math.ceil(size / 512) * 512;
+
+    if (type === 'L') {
+      longName = tarField(bytes, 0, bytes.length);
+      continue;
+    }
+    // Only a POSIX header (the magic `ustar` and a NUL) has a prefix field.
+    // A GNU header has other data in its place.
+    const prefix = tarField(header, 257, 6) === 'ustar' && header[262] === 0 ? tarField(header, 345, 155) : '';
+    const name = longName ?? (prefix === '' ? '' : `${prefix}/`) + tarField(header, 0, 100);
+    longName = undefined;
+    // `0`, or a NUL in an old tar file, is a regular file.
+    if (type === '0' || type === '\0') yield { name, bytes };
+  }
+}
+
+// The bytes of the file `name` of a `.tar.gz` file (an npm package), from
+// the bytes of the `.tar.gz` file.
+export function tgzMember(tgz, name) {
+  for (const file of tarFiles(gunzipSync(tgz))) {
+    if (file.name === name) return file.bytes;
+  }
+  throw new Error(`The tar file has no file ${name}.`);
+}
+
+// Downloads the archive `url` (a zip or a `.tar.gz` file), and writes its
+// file `archive.member` into a new file `path` with the mode `mode`.
+// `readMember` is the reader of the archive form (`zipMember`,
+// `tgzMember`). Throws unless the archive has `archive.size` and
+// `archive.sha256` (`downloadPinned`). Gives the size and the SHA-256 of
+// the file that it wrote, which the caller checks against a pin of that
+// file. The archive is next to `path` during the call.
+export async function downloadArchiveMember(url, path, mode, archive, readMember, pinnedBy) {
+  const archivePath = `${path}.archive`;
+  await downloadPinned(url, archivePath, 0o600, archive, pinnedBy);
   let bytes;
   try {
-    bytes = zipMember(readFileSync(zipPath), zip.member);
+    bytes = readMember(readFileSync(archivePath), archive.member);
   } catch (error) {
     throw new Error(`${url}: ${error.message}`, { cause: error });
   }
-  rmSync(zipPath);
+  rmSync(archivePath);
   writeFileSync(path, bytes, { mode });
   return { size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
 }

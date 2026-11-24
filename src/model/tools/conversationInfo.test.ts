@@ -13,6 +13,7 @@ const text = (facts: Partial<ConversationInfoFacts> = {}) => conversationInfoTex
   cost: { usd: 0.42, requests: 5, unpriced: 1 },
   jobs: [],
   pictureBudget: BUDGET,
+  money: { limit: undefined, spent: { counted: 0.42, held: 0 } },
   ...facts,
 })
 

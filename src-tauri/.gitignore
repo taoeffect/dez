@@ -25,3 +25,13 @@
 # The download folder of scripts/update-fonts.js. A run that was killed
 # leaves it, with fonts that the Git LFS rule does not cover.
 /.fonts-update-*/
+
+# The native file of skia-canvas is not in Git: scripts/fetch-programs.js
+# downloads the file of a build target, as libs/manifest.json pins it. The
+# other files of libs/ are tracked, also those of a `dist` folder, which
+# the root .gitignore ignores.
+/libs/skia-canvas/lib/skia.node
+!/libs/*/dist/
+
+# The work folder of scripts/update-libs.js. A run that was killed leaves it.
+/.libs-update-*/

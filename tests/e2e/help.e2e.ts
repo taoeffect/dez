@@ -1,9 +1,11 @@
+import fs from 'node:fs'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { STORED_FILE_FOLDERS } from '../../src/model/chat/unusedFiles'
 import { DEZ_DISCUSSIONS_URL } from '../../src/utils/dezLinks'
 import bundledPrograms from '../../src-tauri/binaries/manifest.json'
 import bundledFonts from '../../src-tauri/fonts/manifest.json'
+import { libraries as shippedLibraries } from '../../src-tauri/libs/manifest.json'
 import { startApp, type RunningApp } from './harness/app'
 import { clearOpenedUrls, consoleErrors, openedUrls, pointerClick, pointerClickAt, pointerDrag, resetConsoleErrors, screenshotOnFailure, stopOpenUrl, waitFor, waitForValue } from './harness/dom'
 import { seedAppState } from './harness/fixtures'
@@ -197,7 +199,7 @@ describe('Help panel', () => {
     await openWithButton()
     await pointerClick(browser, NAV.Assets)
     await waitFor(browser, '.help-page--assets')
-    // The link is in the paragraph of the work folder, below the first view
+    // The link is in the paragraph of the run folders, below the first view
     // of the page.
     await clickPageLink('.help-page--assets', 'Thank You')
     await waitForValue(browser, 'Thank You page', shownPage, { nav: 'Thank You', page: 'help-page--thanks' })
@@ -213,13 +215,20 @@ describe('Help panel', () => {
     await clickInView('.help-page--thanks .help-link--ffmpeg')
     await clickInView('.help-page--thanks .help-link--deno')
     await waitForValue(browser, 'opened URLs', () => openedUrls(browser), programSources)
+    // The project of each library that the app holds, in the order of the
+    // manifest.
+    const librarySources = Object.values(shippedLibraries).map(({ repository }) => repository)
+    for (let i = 1; i <= librarySources.length; i++) {
+      await clickInView(`.help-page--thanks li:nth-child(${i}) .help-link--library`)
+    }
+    await waitForValue(browser, 'opened URLs', () => openedUrls(browser), [...programSources, ...librarySources])
     // The source of the fonts that the app holds: one link for each
     // repository, in the order of the manifest.
     const fontSources = [...new Set(Object.values(bundledFonts.fonts).map(({ repository }) => repository))]
     for (let i = 1; i <= fontSources.length; i++) {
       await clickInView(`.help-page--thanks li:nth-child(${i}) .help-link--font`)
     }
-    await waitForValue(browser, 'opened URLs', () => openedUrls(browser), [...programSources, ...fontSources])
+    await waitForValue(browser, 'opened URLs', () => openedUrls(browser), [...programSources, ...librarySources, ...fontSources])
     expect(await helpOpen()).toBe(true)
   })
 
@@ -232,9 +241,9 @@ describe('Help panel', () => {
     // The paths come from a native read after the panel opens.
     await waitForValue(
       browser,
-      'the Dez folder, the temp folder, the work folder, and the cache folder on Assets',
+      'the Dez folder, the temp folder, the folder of the run folders, the cache folder, and the folder of the work folders on Assets',
       () => shownFolders('.help-page--assets p code'),
-      ['~/.config/dez', '~/.cache/dez/media', '~/.cache/dez/work', '~/.cache/dez'],
+      ['~/.config/dez', '~/.cache/dez/media', '~/.cache/dez/work', '~/.cache/dez', '~/.config/dez/work'],
     )
     // The list has every folder of stored files.
     const listed = await browser.execute(() => [...document.querySelectorAll('.help-page--assets .help-folders code')].map((code) => code.textContent ?? ''))
@@ -253,13 +262,17 @@ describe('Help panel', () => {
     expect(end.lastBottom).toBeLessThanOrEqual(end.contentBottom)
   })
 
-  it('opens Apps from the link of General, with the folders of this computer', async () => {
+  it('opens Apps from the link of General, with the folders of this computer and every built-in app', async () => {
     await openWithButton()
     await clickPageLink('.help-page--general', 'Apps')
     await waitForValue(browser, 'Apps page', shownPage, { nav: 'Apps', page: 'help-page--apps' })
-    // The folder of the apps, and the folder of the work folders of the
-    // code that a model runs.
+    // The folder of the apps, and the folder of the run folders of the code
+    // that a model runs.
     await waitForValue(browser, 'the folders on Apps', () => shownFolders('.help-page--apps code'), ['~/.config/dez/apps', '~/.cache/dez/work'])
+    // The page writes its list of the built-in apps by hand: it must name
+    // each app of the folder that the build ships, and no other.
+    const listed = await browser.execute(() => [...document.querySelectorAll('.help-page--apps .help-builtin-name')].map((code) => code.textContent ?? ''))
+    expect(listed.sort()).toEqual(fs.readdirSync(new URL('../../src-tauri/builtin-apps/', import.meta.url)).sort())
   })
 
   // Help › Dez Help calls this selector.

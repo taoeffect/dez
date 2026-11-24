@@ -4,17 +4,18 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { APP_RUNS_STATE } from '../../src/model/tools/appInvoke'
 import { jobStartedText, jobsWaitResults, jobTimedOutText, startedJobId } from '../../src/model/tools/jobs'
 import { appsCall, movingAppFiles, pageFrameCount, pageFrameGuards, seedApp, uiAppFiles } from './harness/apps'
-import { consoleErrors, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
-import { expectNoLinkedFile, linkedDropDir, openDroppedFiles } from './harness/drops'
-import { appFilePath, filesIn, newFileIn, storedFileName } from './harness/fixtures'
+import { consoleErrors, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
+import { dropFiles, expectNoLinkedFile, linkedDropDir, openDroppedFiles } from './harness/drops'
+import { appFilePath, filesIn, newFileIn, storedFileName, writeTestFile } from './harness/fixtures'
 import { colorDistance, decodedImage, generatedImagesDir, pngDataUrl, shownImages, solidPng, STRIPE_COLORS, STRIPES_PNG } from './harness/images'
 import { runToolJob, startedJob, waitCall, type EndedJob } from './harness/jobs'
 import { expectReplyEnd, expectRunsEnded } from './harness/jsEval'
-import { shownPlayers, WEBM_VIDEO } from './harness/media'
+import { clipTag, monoWav, shownPlayers, WAV_SAMPLE_RATE, WEBM_VIDEO } from './harness/media'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendChatReply, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
+import { mediaFacts, pixelColors } from './harness/programs'
 import type { E2EBrowser } from './harness/session'
-import { endedReply, newTab, submit } from './harness/thread'
+import { activeConversationId, docPosPoint, editorDoc, endedReply, focusEditor, newTab, openSeededConversation, pickModel, submit } from './harness/thread'
 import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolChip, revealingPart } from './harness/toolChips'
 
 // The `invoke` subcommand of the `apps` tool, driven through the real app
@@ -32,20 +33,40 @@ import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolC
 // - Dez keeps each image and clip that the code left in the output folder
 //   as a new asset of the conversation, in a stored file whose type follows
 //   its bytes and not its name, and keeps no other file;
+// - the code calls the Dez tools with `dez.sbp`: each image that a call
+//   makes has a handle (`&1`), which a later call of the code names, and
+//   the result of the job maps each handle to the id of its image;
+// - with `decode`, the real ffmpeg decodes each clip into the run folder
+//   first, and the code reads the samples and the pixels with dez-media;
+// - a built-in app runs from the bundle of the debug build, with the
+//   decode of its manifest, and writes its result file into the work
+//   folder of the conversation;
+// - the built-in app dez-chart draws a chart of a CSV file that the user
+//   dropped into a new image: Dez copies the file into the work folder of
+//   the conversation, and the request names only the copy;
+// - an app whose manifest has `"native": ["skia-canvas"]` draws text with
+//   skia-canvas and the fonts that Dez ships (`useShippedFonts` of
+//   dez-media/canvas), and a text of the run names a font by the name of
+//   its file; the run of an app without the field cannot load skia-canvas,
+//   and its result tells the model to add the field;
+// - the code writes two frame sequences with dez-media/frames, and the
+//   real ffmpeg encodes each into one clip after the run: H.264 in MP4,
+//   and PNG in MOV, which keeps the alpha of each pixel;
 // - a run with `is_intermediate` hides its asset under the chip of its
 //   call;
 // - a call that names no app, or an app without the file that a run
 //   needs, starts no job; code that threw gives an error result that names
 //   the line by its path in the tool (`/apps/<name>/main.ts`), and Dez
 //   keeps no file of that run;
-// - the code opens no file outside the folder of its app and the work
-//   folder of its run: not a file of another app, not the list of the
-//   apps, and not a file of the Dez folder. Dez's module loads the main
-//   file of an app by a path that it makes, so Deno checks the read
-//   permission of each import of the code too (in a `js_eval` run only the
-//   OS rule stops an import of a literal path). The audit of all that Deno
-//   and the OS rule refuse is js-eval-sandbox.e2e.ts;
-// - every work folder is gone after its run.
+// - the code opens no file outside its places (the folder of its app, the
+//   run folder, and the work folder of the conversation; the libraries and
+//   the fonts only to read): not a file of another app, not the list of
+//   the apps, and not the state of Dez. Dez's module loads the main file
+//   of an app by a path that it makes, so Deno checks the read permission
+//   of each import of the code too (in a `js_eval` run only the OS rule
+//   stops an import of a literal path). The audit of all that Deno and the
+//   OS rule refuse is js-eval-sandbox.e2e.ts;
+// - every run folder is gone after its run.
 //
 // The app loads the page of a UI app in a frame that the user does not
 // see, from the real scheme of the app frames, and calls the handler that
@@ -68,8 +89,8 @@ import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolC
 // - the frame of every run is gone after it.
 //
 // No request holds a path of the test HOME (`takeRequest` checks each one):
-// a result names the folder of an app as `/apps/<name>` and the work folder
-// as `/work`. No request holds the path or the name of a linked file.
+// a result names the folder of an app as `/apps/<name>` and the run folder
+// as `/run`. No request holds the path or the name of a linked file.
 //
 // One app session serves the whole file; each test starts in a new tab and
 // works on apps of its own.
@@ -123,6 +144,122 @@ const SHEET_MAIN = [
   '}',
 ].join('\n')
 
+// The code of the `flipper` app: it flips its input image with the image
+// tool, then flips that new image by its handle, and returns the results
+// of the two calls.
+const FLIPPER_MAIN = [
+  'export default async function main(parameters, dez) {',
+  '  const first = await dez.sbp("dez.tools/image/flip", { image: dez.inputs[0].id, direction: "horizontal" })',
+  '  const second = await dez.sbp("dez.tools/image/flip", { image: "&1", direction: "vertical" })',
+  '  return `${first}\\n${second}`',
+  '}',
+].join('\n')
+
+// The code of the `decode` app: it reads the decoded files of each input
+// with dez-media, and gives their facts, the peak of the samples, and the
+// middle pixel of the first frame.
+const DECODE_MAIN = [
+  'import { f32Samples, rgbFrames } from "dez-media"',
+  '',
+  'export default async function main(parameters, dez) {',
+  '  const runs = []',
+  '  for (const { id, audio, frames } of dez.inputs) {',
+  '    const run = { id, audio, frames, frozen: Object.isFrozen(frames ?? audio) }',
+  '    if (audio) {',
+  '      const samples = f32Samples(await Deno.readFile(audio.path))',
+  '      run.samples = samples.length',
+  '      run.peak = samples.reduce((peak, value) => Math.max(peak, Math.abs(value)), 0)',
+  '    }',
+  '    if (frames) {',
+  '      const read = rgbFrames(await Deno.readFile(frames.path), frames.width, frames.height)',
+  '      const middle = (read.width * Math.floor(read.height / 2) + Math.floor(read.width / 2)) * 3',
+  '      run.count = read.count',
+  '      run.pixel = Array.from(read.data.slice(middle, middle + 3))',
+  '    }',
+  '    runs.push(run)',
+  '  }',
+  '  return runs',
+  '}',
+].join('\n')
+
+// 2 s of a 440 Hz tone at half of full scale: 16-bit mono PCM at 8 kHz.
+const TONE_WAV = monoWav(Buffer.from(Int16Array.from(
+  { length: 2 * WAV_SAMPLE_RATE },
+  (_, index) => Math.round(16384 * Math.sin(2 * Math.PI * 440 * index / WAV_SAMPLE_RATE)),
+).buffer), 2)
+// 2 s of silence with two bursts of a 500 Hz tone, each 0.2 s: a soft one
+// at 0.5 s and a loud one at 1.2 s. A cycle is 16 samples, so each 10 ms
+// frame of a burst has the same samples, and the loudest frame is the
+// first one of the loud burst.
+const BURSTS_WAV = monoWav(Buffer.from(Int16Array.from({ length: 2 * WAV_SAMPLE_RATE }, (_, index) => {
+  const at = (seconds: number) => seconds * WAV_SAMPLE_RATE
+  const amplitude = index >= at(0.5) && index < at(0.7) ? 8192 : index >= at(1.2) && index < at(1.4) ? 24576 : 0
+  return Math.round(amplitude * Math.sin(2 * Math.PI * 500 * index / WAV_SAMPLE_RATE))
+}).buffer), 2)
+// The color of `WEBM_VIDEO`.
+const VIDEO_COLOR = [0x2a, 0x7f, 0xd4]
+// The data of the dez-chart run: 4 months, with a column of text that the
+// chart leaves out (the quotes keep a comma in a value).
+const SALES_CSV = 'month,sales,cost,note\nJan,3,1,ok\nFeb,5,2,\nMar,2,2,"a, b"\nApr,8,3,x\n'
+// The colors of the bars of the two series on the white of the light
+// theme: the first two colors of the palette of Chart.js, at half alpha.
+const SALES_BAR = [154, 208, 245, 255]
+const COST_BAR = [255, 177, 193, 255]
+
+// The code of the `title` app: it draws a line of text in three scripts
+// with skia-canvas and the fonts that Dez ships, counts the dark pixels,
+// and leaves the picture in the output folder.
+const TITLE_MAIN = [
+  'import { Canvas } from "skia-canvas"',
+  'import { useShippedFonts } from "dez-media/canvas"',
+  '',
+  'export default async function main(parameters, dez) {',
+  '  const families = useShippedFonts(dez.fonts)',
+  '  const canvas = new Canvas(240, 64, { gpu: false })',
+  '  const ctx = canvas.getContext("2d")',
+  '  ctx.fillStyle = "white"',
+  '  ctx.fillRect(0, 0, canvas.width, canvas.height)',
+  '  ctx.fillStyle = "black"',
+  '  ctx.font = `bold 28px ${families}`',
+  '  ctx.fillText("Dez 日本 مرحبا", 8, 44)',
+  '  const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height)',
+  '  let ink = 0',
+  '  for (let index = 0; index < data.length; index += 4) if (data[index] < 128) ink += 1',
+  '  await canvas.toFile(`${dez.outputFolder}/title.png`)',
+  '  const bold = dez.fonts.find(({ family, weight }) => family === "Noto Sans" && weight === 700)',
+  '  console.log(`drew with ${bold.path}`)',
+  '  return { ink, first: families.split(", ")[0] }',
+  '}',
+].join('\n')
+
+// The size, the frames a second, and the count of the frames of the
+// sequences of the `reel` app.
+const REEL = { width: 64, height: 36, fps: 12, count: 12 }
+// The colors of the pixels of its two sequences: one with no alpha, and
+// one with half alpha.
+const REEL_COLOR = [0x2a, 0x7f, 0xd4]
+const GLOW_COLOR = [255, 128, 0, 128]
+
+// The code of the `reel` app: it writes two frame sequences of raw RGBA
+// pixels of one color with dez-media/frames, `reel` with no alpha and
+// `glow` with alpha, and returns the count of each.
+const REEL_MAIN = [
+  'import { FrameWriter } from "dez-media/frames"',
+  '',
+  'export default function main(parameters, dez) {',
+  `  const { width, height, fps, count } = ${JSON.stringify(REEL)}`,
+  '  const counts = {}',
+  `  for (const [name, color, alpha] of [["reel", ${JSON.stringify([...REEL_COLOR, 255])}, false], ["glow", ${JSON.stringify(GLOW_COLOR)}, true]]) {`,
+  '    const frames = new FrameWriter(dez.outputFolder, name, { fps, width, height, alpha })',
+  '    const pixels = new Uint8Array(width * height * 4)',
+  '    for (let index = 0; index < pixels.length; index += 4) pixels.set(color, index)',
+  '    for (let frame = 0; frame < count; frame += 1) frames.add(pixels)',
+  '    counts[name] = frames.end()',
+  '  }',
+  '  return counts',
+  '}',
+].join('\n')
+
 const DRAFT_MAIN = [
   'export default async function main(parameters, dez) {',
   `  await Deno.writeFile(\`\${dez.outputFolder}/draft.png\`, ${PNG_BYTES})`,
@@ -130,8 +267,8 @@ const DRAFT_MAIN = [
   '}',
 ].join('\n')
 
-// What the code of the `one` app tries outside its two folders, by the
-// name of each try, with the outcome that the run must give for it.
+// What the code of the `one` app tries outside its places, by the name of
+// each try, with the outcome that the run must give for it.
 const ESCAPES = [
   ['read a file of another app', 'Deno.readTextFile(`${dez.appFolder}/../two/manifest.json`)', 'NotCapable: Requires read access'],
   ['write into another app', 'Deno.writeTextFile(`${dez.appFolder}/../two/new.txt`, "x")', 'NotCapable: Requires write access'],
@@ -240,6 +377,16 @@ const STUCK_MAIN = [
   '})',
 ].join('\n')
 
+// The new script of the page of the `hello` app, which `init` made: a
+// module that imports three by its name in the import map of the page.
+const THREE_MAIN = [
+  'import { Vector3 } from "three"',
+  '',
+  'dez.sbp("sbp/selectors/register", {',
+  '  "app/invoke": () => String(new Vector3(1, 2, 2).length()),',
+  '})',
+].join('\n')
+
 describe('apps invoke', () => {
   let setup: MockProviderApp
   let browser: E2EBrowser
@@ -337,13 +484,13 @@ describe('apps invoke', () => {
     const run = await invoke(await chatRequest(), 'call_sheet', { name: 'sheet', inputs: '@c @b @a' })
     expect(run.started).toBe(`${jobStartedText(run.jobId, 1)}\nThe inputs of the run, in the order of dez.inputs: the video clip @c, the image @b, the image @a.`)
     expect(run.result.status).toBe('finished')
-    // The inputs are in the order of the call, each a copy in the work
-    // folder of the run.
+    // The inputs are in the order of the call, each a copy in the run
+    // folder.
     const [facts, outputs] = run.result.text.split('\n\n')
     expect(facts.split('\n')).toStrictEqual([
-      `c video video/webm /work/c.webm ${WEBM_VIDEO.length}`,
-      `b image image/png /work/b.png ${STRIPES_PNG.length}`,
-      `a image image/png /work/a.png ${STRIPES_PNG.length}`,
+      `c video video/webm /run/c.webm ${WEBM_VIDEO.length}`,
+      `b image image/png /run/b.png ${STRIPES_PNG.length}`,
+      `a image image/png /run/a.png ${STRIPES_PNG.length}`,
     ])
     expect(outputs).toContain('Dez keeps 2 files of the output folder: clip.webm (video clip), picture.dat (image).')
     expect(outputs).toContain('Dez did not keep notes.txt')
@@ -378,6 +525,222 @@ describe('apps invoke', () => {
     expect(fs.readFileSync(files.b).equals(STRIPES_PNG)).toBe(true)
     expect(fs.readFileSync(files.c).equals(WEBM_VIDEO)).toBe(true)
     expectNoLinkedFile(requests, linkedDir)
+    await expectRunsEnded(setup)
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('gives the code the Dez tools: an image that a call made has a handle, which a later call names, and the result of the job maps each handle to its id', async () => {
+    await seedApp(appsDir, { name: 'flipper', description: 'Flips an image twice.', kind: 'script' }, { 'main.ts': FLIPPER_MAIN })
+    await openDroppedFiles(setup, CALLER, linkedDir, 'apps-invoke-tools')
+    const before = await filesIn(imagesDir)
+    await submit(browser, ' Flip it twice.')
+
+    const run = await invoke(await chatRequest(), 'call_flip', { name: 'flipper', inputs: '@a' })
+    expect(run.result.status).toBe('finished')
+    // The code knows each new image only by its handle.
+    expect(run.result.text).toMatch(/^Made the image @&1 from @a\. The image @&1 is 90x20 pixels\.\nMade the image @&2 from @&1\. The image @&2 is 90x20 pixels\.\n\n/)
+    expect(run.result.text).toContain('Dez keeps the 2 assets that the tool calls of the code made: &1 (image), &2 (image).')
+    expect(run.result.text.endsWith('\nMade the image @d (handle &1).\nMade the image @e (handle &2).')).toBe(true)
+    await sendChatReply(run.next.reply, CALLER.modelName)
+
+    // Each image is in the reply under the image tool, with the mark of the
+    // job of the run.
+    const reply = await endedReply(browser)
+    const images = [...reply.slice(reply.lastIndexOf('</dez:tool>')).matchAll(/!\[id=(\w+)\|tool=image\|made-by=([^\]]+)\]\(([^)]+)\)/g)]
+      .map(([, id, madeBy, file]) => ({ id, madeBy, file }))
+    expect(images.map(({ id, madeBy }) => ({ id, madeBy }))).toStrictEqual([{ id: 'd', madeBy: run.jobId }, { id: 'e', madeBy: run.jobId }])
+    const made = (await filesIn(imagesDir)).filter((name) => !before.includes(name))
+    expect(images.map(({ file }) => file).sort()).toStrictEqual(made.map((name) => path.join(imagesDir, name)).sort())
+    // The second call flipped the image of the first one, not @a: a flip
+    // of the stripes from top to bottom keeps the blue stripe at the left.
+    for (const { file } of images) {
+      const { pixels } = await decodedImage(browser, pngDataUrl(fs.readFileSync(file)), [5])
+      expect(colorDistance(pixels[0], STRIPE_COLORS[2])).toBeLessThan(8)
+    }
+    await expectRunsEnded(setup)
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('decodes each clip before the run, and the code reads the samples and the pixels with dez-media', async () => {
+    await seedApp(appsDir, { name: 'decode', description: 'Reads decoded clips.', kind: 'script' }, { 'main.ts': DECODE_MAIN })
+    const { home } = setup.app
+    const video = await writeTestFile(appFilePath(home, 'assets', 'generated', 'video', 'decode.webm'), WEBM_VIDEO)
+    const tone = await writeTestFile(appFilePath(home, 'assets', 'generated', 'audio', 'decode.wav'), TONE_WAV)
+    await openSeededConversation(browser, home, 'apps-invoke-decode', [{
+      role: 'user',
+      text: [clipTag('video', { id: 'a', type: 'video/webm', src: video }), clipTag('audio', { id: 'b', type: 'audio/wav', src: tone }), 'Read them.'].join('\n'),
+    }])
+    await pickModel(browser, CALLER.name, CALLER.modelName)
+    await submit(browser, '')
+
+    const decode = { audio: { rate: 8000 }, frames: { width: 12, height: 9 } }
+    const run = await invoke(await chatRequest(), 'call_decode', { name: 'decode', inputs: '@a @b', decode })
+    expect(run.result.status).toBe('finished')
+    // The video has no sound, and the audio clip no picture. With no fps,
+    // each frame of the clip comes once: 2 s at 5 frames a second.
+    const [ofVideo, ofTone] = JSON.parse(run.result.text.split('\n\n')[0]) as Array<Record<string, unknown>>
+    expect(ofVideo).toStrictEqual({
+      id: 'a',
+      audio: null,
+      frames: { path: '/run/a.rgb', width: 12, height: 9, fps: 5, count: 10 },
+      frozen: true,
+      count: 10,
+      pixel: expect.any(Array),
+    })
+    expect(colorDistance(ofVideo.pixel as number[], VIDEO_COLOR)).toBeLessThanOrEqual(8)
+    // The tone reaches half of full scale at sample 150.
+    expect(ofTone).toStrictEqual({ id: 'b', audio: { path: '/run/b.f32', rate: 8000, count: 16_000 }, frames: null, frozen: true, samples: 16_000, peak: 0.5 })
+
+    await expectReplyEnd(setup, CALLER, run.next)
+    await expectRunsEnded(setup)
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('runs the built-in apps dez-onsets and dez-cuts from the bundle, with the decode of their manifests, and each writes its result into the work folder', async () => {
+    const { home } = setup.app
+    const video = await writeTestFile(appFilePath(home, 'assets', 'generated', 'video', 'built-in.webm'), WEBM_VIDEO)
+    const bursts = await writeTestFile(appFilePath(home, 'assets', 'generated', 'audio', 'built-in.wav'), BURSTS_WAV)
+    await openSeededConversation(browser, home, 'apps-invoke-built-in', [{
+      role: 'user',
+      text: [clipTag('video', { id: 'a', type: 'video/webm', src: video }), clipTag('audio', { id: 'b', type: 'audio/wav', src: bursts }), 'Measure them.'].join('\n'),
+    }])
+    await pickModel(browser, CALLER.name, CALLER.modelName)
+    await submit(browser, '')
+    const workFolder = appFilePath(home, 'work', await activeConversationId(browser))
+
+    const onsets = await invoke(await chatRequest(), 'call_onsets', { name: 'dez-onsets', inputs: '@b' })
+    expect(onsets.result.status).toBe('finished')
+    expect(onsets.result.text).toBe([
+      '@b (2.000 s): the sound starts at 0.500 s, the loudest moment is at 1.200 s, 2 onsets. In /work/onsets-b.json.',
+      'Each file holds id, duration, level, first (where the sound starts), peak, and onsets. Times are in seconds.',
+    ].join('\n'))
+    expect(JSON.parse(fs.readFileSync(path.join(workFolder, 'onsets-b.json'), 'utf8'))).toStrictEqual({ id: 'b', duration: 2, level: 0.3, first: 0.5, peak: 1.2, onsets: [0.5, 1.2] })
+
+    // The video has one color: no cut. Its file has 5 frames a second.
+    const cuts = await invoke(onsets.next, 'call_cuts', { name: 'dez-cuts', inputs: '@a', parameters: { save_to: '/work/video/cuts.json' } })
+    expect(cuts.result.status).toBe('finished')
+    expect(cuts.result.text.split('\n')[0]).toBe('@a (10 frames, 2.000 s at 5 fps): no cut. In /work/video/cuts.json.')
+    expect(JSON.parse(fs.readFileSync(path.join(workFolder, 'video', 'cuts.json'), 'utf8'))).toStrictEqual({ id: 'a', fps: 5, frames: 10, duration: 2, threshold: 0.35, cuts: [] })
+
+    await expectReplyEnd(setup, CALLER, cuts.next)
+    await expectRunsEnded(setup)
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('draws a chart of a CSV file that the user dropped with the built-in app dez-chart into a new image', async () => {
+    const before = await filesIn(imagesDir)
+    const message = 'Chart my sales.'
+    await focusEditor(browser)
+    await typeKeys(browser, message)
+    await waitForValue(browser, 'typed text', () => editorDoc(browser), message)
+    const end = await docPosPoint(browser, message.length, -1)
+    await dropFiles(browser, { x: end.x + 1, y: end.y }, [
+      { name: 'quarterly-sales.csv', type: 'text/csv', base64: Buffer.from(SALES_CSV).toString('base64') },
+    ])
+    await waitForValue(browser, 'dropped data file', () => editorDoc(browser), `${message}\n/work/data-1.csv`)
+    await submit(browser, '')
+    const request = await chatRequest()
+    // The name of the user's file goes to no provider.
+    expect(request.body).toContain(`${message}\\n/work/data-1.csv`)
+    expect(request.body).not.toContain('quarterly')
+    const workFolder = appFilePath(setup.app.home, 'work', await activeConversationId(browser))
+    expect(fs.readFileSync(path.join(workFolder, 'data-1.csv'), 'utf8')).toBe(SALES_CSV)
+
+    const run = await invoke(request, 'call_chart', { name: 'dez-chart', parameters: { data: '/work/data-1.csv', type: 'bar', title: 'Sales', width: 320, height: 200 } })
+    expect(run.result.status).toBe('finished')
+    expect(run.result.text).toBe([
+      'A bar chart of "sales", "cost" (4 rows) from /work/data-1.csv: chart.png, 320×200, light theme.',
+      '',
+      'Dez keeps 1 file of the output folder: chart.png (image). The line at the end gives its id.',
+      'Made the image @a.',
+    ].join('\n'))
+    await sendChatReply(run.next.reply, CALLER.modelName)
+
+    const reply = await endedReply(browser)
+    const imagePath = path.join(imagesDir, await newFileIn(browser, imagesDir, before))
+    expect(reply.endsWith(`</dez:tool>\n\n![id=a|tool=apps|made-by=${run.jobId}](${imagePath})\n\n${replyText(CALLER.modelName)}`)).toBe(true)
+    expect(mediaFacts(setup.app, imagePath)).toStrictEqual({ streams: ['video png 320x200'], seconds: null })
+    // The white of the light theme, and a bar of each series.
+    const colors = pixelColors(setup.app, imagePath).map((color) => color.split(',').map(Number))
+    for (const color of [[255, 255, 255, 255], SALES_BAR, COST_BAR]) expect(colors.some((pixel) => colorDistance(pixel, color) <= 2), `a pixel of ${color}`).toBe(true)
+    await waitForValue(browser, 'the new image', async () => (await shownImages(browser)).at(-1)?.width, 320)
+    await expectRunsEnded(setup)
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('draws text with skia-canvas and the shipped fonts in an app whose manifest asks for the library, and tells an app without the field to add it', async () => {
+    const manifest = { name: 'title', description: 'Draws a title.', kind: 'script' } as const
+    await seedApp(appsDir, manifest, { 'main.ts': TITLE_MAIN, 'manifest.json': JSON.stringify({ ...manifest, native: ['skia-canvas'] }) })
+    await seedApp(appsDir, { ...manifest, name: 'bare' }, { 'main.ts': TITLE_MAIN })
+    const before = await filesIn(imagesDir)
+    await submit(browser, 'Draw a title.')
+
+    // skia-canvas reads environment variables and a native file as it
+    // loads, which the run of an app without the field may not do.
+    const bare = await invoke(await chatRequest(), 'call_bare', { name: 'bare' })
+    expect(bare.result.status).toBe('failed')
+    expect(bare.result.text).toContain('file:///libs/skia-canvas/')
+    expect(bare.result.text).toContain('skia-canvas loads a native file, which only the run of an app whose manifest.json has "native": ["skia-canvas"] may load. Add that field to the manifest.json of the app, and run the app again.')
+
+    const title = await invoke(bare.next, 'call_title', { name: 'title' })
+    expect(title.result.status).toBe('finished')
+    const { ink, first } = JSON.parse(title.result.text.split('\n\n')[0]) as { ink: number, first: string }
+    expect(first).toBe('"Noto Sans"')
+    expect(ink).toBeGreaterThan(300)
+    expect(title.result.text).toContain('Dez keeps 1 file of the output folder: title.png (image).')
+    expect(title.result.text).toContain('Console output of the code:\ndrew with NotoSans-Bold.ttf')
+    expect(title.result.text.endsWith('\nMade the image @a.')).toBe(true)
+    await sendChatReply(title.next.reply, CALLER.modelName)
+
+    await endedReply(browser)
+    const picture = fs.readFileSync(path.join(imagesDir, await newFileIn(browser, imagesDir, before)))
+    expect([picture.readUInt32BE(16), picture.readUInt32BE(20)]).toStrictEqual([240, 64])
+    await expectRunsEnded(setup)
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('encodes each frame sequence that the code wrote with dez-media/frames into one clip: H.264 in MP4, or PNG in MOV with the alpha of each pixel', async () => {
+    await seedApp(appsDir, { name: 'reel', description: 'Writes frames.', kind: 'script' }, { 'main.ts': REEL_MAIN })
+    const before = await filesIn(videoDir)
+    await submit(browser, 'Make a reel.')
+
+    // The clips are intermediate, so that no player loads them: the
+    // GStreamer of CI has no H.264 decoder (harness/media.ts).
+    const run = await invoke(await chatRequest(), 'call_reel', { name: 'reel', is_intermediate: true })
+    expect(run.result.status).toBe('finished')
+    const [value, outputs] = run.result.text.split('\n\n')
+    expect(JSON.parse(value)).toStrictEqual({ reel: REEL.count, glow: REEL.count })
+    expect(outputs).toContain(`Dez keeps 2 files of the output folder: glow.frames/ (video clip: ${REEL.count} frames, PNG in MOV with alpha), reel.frames/ (video clip: ${REEL.count} frames, H.264 in MP4).`)
+    expect(run.result.text.endsWith('\nMade the video clip @a.\nMade the video clip @b.')).toBe(true)
+    await sendChatReply(run.next.reply, CALLER.modelName)
+
+    const reply = await endedReply(browser)
+    const made = (await filesIn(videoDir)).filter((name) => !before.includes(name))
+    expect(made).toHaveLength(2)
+    const madePath = (extension: string): string => path.join(videoDir, made.find((name) => storedFileName(extension).test(name)) ?? `no .${extension} file`)
+    const glowPath = madePath('mov')
+    const reelPath = madePath('mp4')
+    const marks = `tool="apps" made-by="${run.jobId}" hidden="${run.jobId}"`
+    expect(reply.slice(reply.lastIndexOf('</dez:tool>'))).toBe([
+      '</dez:tool>',
+      '',
+      `<dez:video id="a" type="video/quicktime" src="${glowPath}" ${marks}/>`,
+      '',
+      `<dez:video id="b" type="video/mp4" src="${reelPath}" ${marks}/>`,
+      '',
+      replyText(CALLER.modelName),
+    ].join('\n'))
+    expect(await shownPlayers(browser)).toStrictEqual([])
+
+    // Each clip has each frame of its sequence once.
+    const size = `${REEL.width}x${REEL.height}`
+    const seconds = REEL.count / REEL.fps
+    expect(mediaFacts(setup.app, reelPath)).toStrictEqual({ streams: [`video h264 ${size}`], seconds })
+    expect(mediaFacts(setup.app, glowPath)).toStrictEqual({ streams: [`video png ${size}`], seconds })
+    // The PNG codec keeps each pixel as it is, with its alpha; H.264 keeps
+    // each color near to its value.
+    expect(pixelColors(setup.app, glowPath)).toStrictEqual([GLOW_COLOR.join(',')])
+    for (const color of pixelColors(setup.app, reelPath)) expect(colorDistance(color.split(',').map(Number), REEL_COLOR)).toBeLessThanOrEqual(8)
     await expectRunsEnded(setup)
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
@@ -432,7 +795,7 @@ describe('apps invoke', () => {
     const failed = await invoke(escapes.next, 'call_fail', { name: 'one', parameters: { fail: true } })
     expect(failed.result.status).toBe('failed')
     const [lead, error, where] = failed.result.text.split('\n')
-    expect(lead).toContain('The code of the app threw an error. Dez kept no file of the run.')
+    expect(lead).toContain('The code of the app threw an error. Dez kept no file of the output folder.')
     expect(error).toBe('Error: no luck in /apps/one')
     expect(where).toContain('file:///apps/one/main.ts:4:')
     expect(await filesIn(imagesDir)).toStrictEqual(before)
@@ -445,7 +808,7 @@ describe('apps invoke', () => {
     ])
   })
 
-  it('runs a UI app as init made it, in a frame that is gone after the run', async () => {
+  it('runs a UI app as init made it, and then its new module, which imports a library that Dez ships, in a frame that is gone after each run', async () => {
     await submit(browser, 'Make a page app.')
     const first = await chatRequest()
     sendToolCalls(first.reply, [appsCall('call_init', 'init', { name: 'hello', kind: 'ui', description: 'Says hello.' })])
@@ -459,7 +822,17 @@ describe('apps invoke', () => {
     expect(hello.result.text).toBe('Hello from hello. The parameters of this run: {"rows":2}. The run has 0 input files.')
     expect(await pageFrameCount(browser)).toBe(0)
 
-    await expectReplyEnd(setup, CALLER, hello.next)
+    // The page of a new UI app loads its main.js as a module, after the
+    // import map of the shipped libraries.
+    sendToolCalls(hello.next.reply, [appsCall('call_main', 'write', { path: '/apps/hello/main.js', content: THREE_MAIN })])
+    const fourth = await chatRequest()
+    expect(toolResult(fourth, 'call_main')).toContain('Wrote /apps/hello/main.js')
+    const vector = await invoke(fourth, 'call_vector', { name: 'hello' })
+    expect(vector.result.status).toBe('finished')
+    expect(vector.result.text).toBe('3')
+    expect(await pageFrameCount(browser)).toBe(0)
+
+    await expectReplyEnd(setup, CALLER, vector.next)
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 

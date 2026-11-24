@@ -3,6 +3,7 @@ import type { Compactions } from '../chat/compaction'
 import { conversationCostText } from '../chat/compactionNotes'
 import { compactionDueSize, type ContextSize } from '../chat/contextSize'
 import { costSince, type ConversationCost } from '../chat/conversationCost'
+import { moneyLimitText, type TabMoney } from '../chat/moneyLimit'
 import { usdText } from '../providers/modelPrices'
 import type { CallPictureBudget } from '../streams/pictureBudget'
 import { pictureBudgetLeftText } from './assetView'
@@ -23,6 +24,7 @@ export const CONVERSATION_INFO_TOOL: ToolDefinition = {
   description: 'Tell the size and the cost of this conversation: its context size in tokens, the context window of your model, '
     + 'the size at which Dez compacts the conversation (your notes then take the place of the earlier messages), how many compactions it had, '
     + 'what its requests cost so far (an estimate, with the count of the requests that have no known price), '
+    + 'the money limit that the user set for the conversation and what is left of it (Dez refuses requests once the cost reaches it, and a media request whose quote would go over it), '
     + 'and the picture budget of asset_view that is left until the next compaction. '
     + 'Call it when the user gave you a budget of cost or of tokens: before a step that costs much, and again after it. '
     + 'It sends no request, and it does not wait.',
@@ -46,6 +48,9 @@ export interface ConversationInfoFacts {
   /** What is left of the picture budget of the conversation, for the next
    *  call of the round; null for a model that gets no pictures. */
   pictureBudget: CallPictureBudget | null
+  /** The money limit of the tab, and what the tab spent, with the quotes
+   *  of the paid requests that still run (`ToolRunContext.money`). */
+  money: TabMoney
 }
 
 // The line of the jobs that run with a paid request: the cost of a
@@ -68,8 +73,9 @@ function openJobsText(jobs: readonly JobInfo[]): string | null {
  *  context window, when Dez compacts the conversation, its compactions
  *  (with the size of the whole conversation), its cost (after a
  *  compaction, first the cost since the newest one), the paid requests of
- *  the jobs that the cost does not hold yet, and the picture budget. */
-export function conversationInfoText({ contextSize, contextWindow, compactions, cost, jobs, pictureBudget }: ConversationInfoFacts): string {
+ *  the jobs that the cost does not hold yet, the money limit of the tab,
+ *  and the picture budget. */
+export function conversationInfoText({ contextSize, contextWindow, compactions, cost, jobs, pictureBudget, money }: ConversationInfoFacts): string {
   const about = contextSize.estimated ? 'about ' : ''
   const lines = [
     `Context size: ${about}${countText(contextSize.tokens)} tokens (${contextSize.estimated ? 'an estimate of Dez' : 'the count of the provider'}). `
@@ -94,6 +100,9 @@ export function conversationInfoText({ contextSize, contextWindow, compactions, 
   )
   const openJobs = openJobsText(jobs)
   if (openJobs) lines.push(openJobs)
-  lines.push(pictureBudget ? pictureBudgetLeftText(pictureBudget) : 'Picture budget: none. Your model gets no pictures.')
+  lines.push(
+    moneyLimitText(money.limit, money.spent),
+    pictureBudget ? pictureBudgetLeftText(pictureBudget) : 'Picture budget: none. Your model gets no pictures.',
+  )
   return lines.join('\n')
 }

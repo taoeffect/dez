@@ -1,6 +1,7 @@
 import type { Compactions } from '../chat/compaction'
 import type { CountedContext } from '../chat/contextSize'
 import type { ConversationCost } from '../chat/conversationCost'
+import type { MoneyLimit } from '../chat/moneyLimit'
 import type { ActiveModel, ModelRef, SectionThinking } from '../chat/types'
 import type { ClipVolumes } from '../clipVolume'
 import type { ModelOutput } from '../modelOutputs'
@@ -74,6 +75,9 @@ export interface ConversationData {
   incognito?: true
   /** `Tab.requestSent`. */
   requestSent?: true
+  /** `Tab.moneyLimit`. A conversation that the user opens from History has
+   *  no tab entry in app_state.json, so the file keeps it too. */
+  moneyLimit?: MoneyLimit
 }
 
 export interface ConversationSummary {

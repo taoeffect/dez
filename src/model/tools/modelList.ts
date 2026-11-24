@@ -277,7 +277,7 @@ export function modelListText(cache: ModelCache, providers: readonly ProviderInf
   const criteria = narrowing.map((argument) => argument.text).join(' and ')
   const quotes = cache.quotes ?? []
   const rows: ListedModel[] = matchingModelsByProvider(providers, models, { terms, outputs, inputs }).flatMap(({ provider, models: matches }) =>
-    matches.map((model) => ({ provider, model, inputs: modelInputs(model), price: listedPrice(quotes, provider, model, now) })))
+    matches.map((model) => ({ provider, model, inputs: modelInputs(model, provider.chatClips), price: listedPrice(quotes, provider, model, now) })))
   const count = rows.length
   // A `filter` word matches only names and ids, so a word such as "video"
   // next to `type: video` leaves out every video model whose name does not

@@ -1,0 +1,10 @@
+{
+  "name": "dez-onsets",
+  "description": "Finds where the sound of clips starts, its loudest moment, and each hit, such as the time of a sound effect to put on a beat. Writes JSON into /work/.",
+  "kind": "script",
+  "decode": {
+    "audio": {
+      "rate": 8000
+    }
+  }
+}

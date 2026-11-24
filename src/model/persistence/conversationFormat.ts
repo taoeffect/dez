@@ -7,6 +7,7 @@ import { incognitoField, requestSentField } from '../chat/incognito'
 import { durationField } from '../chat/duration'
 import { messagesAsMarkdown, sectionTextAsMarkdown } from '../chat/markdown'
 import { modelRefKey, parseModelRefKey } from '../chat/modelRef'
+import { isMoneyLimitUsd, moneyLimitField, type MoneyLimit } from '../chat/moneyLimit'
 import { PILL_CLOSE_TAG, containerThinking, parsePillMarker, pillMarkerText, type PillMarker } from '../chat/pillMarker'
 import type { ActiveModel, SectionThinking } from '../chat/types'
 import type { ContentNodeData, ConversationData, SectionData } from './types'
@@ -15,7 +16,7 @@ import type { ContentNodeData, ConversationData, SectionData } from './types'
 // (persistence.rs keeps only the ASCII letters, digits, `-`, and `_` of the
 // id):
 //
-//   <!-- title: X | model: provider/model | created: N | cost: 0.42 | requests: 7 | unpriced: 1 | edited: yes | incognito: yes | sent: yes | context: 81200 | context-estimate: 90400 | compactions: 2 | compacted-tokens: 412000 | compacted-cost: 0.31 | compacted-requests: 5 | compacted-left: 24100 -->
+//   <!-- title: X | model: provider/model | created: N | cost: 0.42 | requests: 7 | unpriced: 1 | edited: yes | incognito: yes | sent: yes | money-limit: 5 | unknown-prices: yes | context: 81200 | context-estimate: 90400 | compactions: 2 | compacted-tokens: 412000 | compacted-cost: 0.31 | compacted-requests: 5 | compacted-left: 24100 -->
 //
 //   <dez:pill type="user"/>
 //   text
@@ -37,6 +38,10 @@ import type { ContentNodeData, ConversationData, SectionData } from './types'
 //   `Tab.requestSent`, each there only when set. A conversation that the
 //   user opens from History has no tab entry in app_state.json, so the file
 //   keeps them too. Any value other than `yes` is no mark.
+// - `money-limit:` (USD) and `unknown-prices: yes` are `Tab.moneyLimit`
+//   (its `usd` and its `unknownPrices`), there only when the tab has a
+//   limit (`unknown-prices:` only when set), for the same reason. A
+//   `money-limit:` with a bad value is no limit.
 // - `context:` and `context-estimate:` are `Tab.context` (its `tokens` and
 //   its `estimate`), there only when set. A context with a bad or a
 //   missing value is ignored as a whole.
@@ -114,12 +119,16 @@ function costParts(cost: ConversationCost, usd: string, requests: string, unpric
 }
 
 // The header parts that are only there when set, each with its ` | `.
-function optionalHeaderParts({ cost, agentTextEdited, incognito, requestSent, context, compactions }: ConversationData): string {
+function optionalHeaderParts({ cost, agentTextEdited, incognito, requestSent, moneyLimit, context, compactions }: ConversationData): string {
   const parts: string[] = []
   if (cost) parts.push(...costParts(cost, 'cost', 'requests', 'unpriced'))
   if (agentTextEdited) parts.push('edited: yes')
   if (incognito) parts.push('incognito: yes')
   if (requestSent) parts.push('sent: yes')
+  if (moneyLimit) {
+    parts.push(`money-limit: ${Number(moneyLimit.usd.toPrecision(12))}`)
+    if (moneyLimit.unknownPrices) parts.push('unknown-prices: yes')
+  }
   if (context) parts.push(`context: ${context.tokens}`, `context-estimate: ${context.estimate}`)
   if (compactions) {
     parts.push(
@@ -159,6 +168,7 @@ interface ConversationHeader {
   agentTextEdited?: true
   incognito?: true
   requestSent?: true
+  moneyLimit?: MoneyLimit
   context?: CountedContext
   compactions?: Compactions
 }
@@ -191,6 +201,13 @@ function headerContext(tokensText: string | undefined, estimateText: string | un
   if (!Number.isSafeInteger(tokens) || tokens < 0) return undefined
   if (!Number.isSafeInteger(estimate) || estimate < 0) return undefined
   return { tokens, estimate }
+}
+
+/** The money limit of the header's `money-limit:` and `unknown-prices:`
+ *  texts; undefined when `money-limit:` is missing or bad. */
+function headerMoneyLimit(usdText: string | undefined, unknownPricesText: string | undefined): MoneyLimit | undefined {
+  const usd = headerNumber(usdText)
+  return isMoneyLimitUsd(usd) ? { usd, unknownPrices: unknownPricesText === 'yes' } : undefined
 }
 
 /** The compactions of the header's `compactions:`, `compacted-tokens:`,
@@ -244,6 +261,7 @@ function parseHeader(line: string): ConversationHeader {
     ...agentTextEditedField(values.get('edited') === 'yes'),
     ...incognitoField(values.get('incognito') === 'yes'),
     ...requestSentField(values.get('sent') === 'yes'),
+    ...moneyLimitField(headerMoneyLimit(values.get('money-limit'), values.get('unknown-prices'))),
     ...contextField(headerContext(values.get('context'), values.get('context-estimate'))),
     ...compactionsField(headerCompactions(values)),
   }
@@ -431,6 +449,7 @@ export function parseConversation(id: string, content: string): ConversationData
     ...agentTextEditedField(header.agentTextEdited),
     ...incognitoField(header.incognito),
     ...requestSentField(header.requestSent),
+    ...moneyLimitField(header.moneyLimit),
     ...contextField(header.context),
     ...compactionsField(header.compactions),
   }

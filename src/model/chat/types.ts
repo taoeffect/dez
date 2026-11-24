@@ -1,6 +1,7 @@
 import type { Compactions } from './compaction'
 import type { CountedContext } from './contextSize'
 import type { ConversationCost } from './conversationCost'
+import type { MoneyLimit } from './moneyLimit'
 import type { ShownPicture } from './shownPictures'
 import type { ToolCall, ToolResult } from '../tools/types'
 import type { JsonObject } from '../../utils/json'
@@ -29,13 +30,24 @@ export interface PromptNode {
 export type ContentNode = TextNode | PromptNode
 
 /** One part of a user message to a model: text, an image by its absolute
- *  path (an image reference, `images.ts`), or a picture of an `asset_view`
- *  call by its saved copy (`shownPictures.ts`). `dez.provider/streamChat`
- *  reads the bytes of an image and of a picture. */
+ *  path (an image reference, `images.ts`), a picture of an `asset_view`
+ *  call by its saved copy (`shownPictures.ts`), or a clip that Dez already
+ *  read. `dez.provider/streamChat` reads the bytes of an image and of a
+ *  picture. */
 export type MessagePart =
   | { type: 'text'; text: string }
   | { type: 'image'; path: string }
   | { type: 'picture'; picture: ShownPicture }
+  | ChatClipPart
+
+/** A clip of a `model_invoke` request to a text model, as its job read it
+ *  (controller/chatClips.ts): the bytes of a copy with no metadata, in
+ *  base64. An audio clip has the name of its format in the request
+ *  (`input_audio.format`), a video clip the media type of its data URL.
+ *  No conversation message holds one. */
+export type ChatClipPart =
+  | { type: 'audio'; format: string; data: string }
+  | { type: 'video'; mediaType: string; data: string }
 
 /** One message of a chat request, in request order. `Part` is the part type
  *  of a user message: `MessagePart` until `dez.provider/streamChat` reads the
@@ -146,11 +158,12 @@ export interface Tab {
   activeModel: ActiveModel | null
   createdAt: number
   /** What the requests of the conversation's replies cost. Absent before
-   *  the first counted request; never set to `undefined`. */
+   *  the first counted request, and after the user deleted all the text of
+   *  the tab (`dez.model/tabs/resetCost`); never set to `undefined`. */
   cost?: ConversationCost
   /** The user changed or removed the text of a reply (an agent section),
    *  so the cost can belong to text that is gone. Absent when not; never
-   *  set to `undefined`. Never cleared. */
+   *  set to `undefined`. Only `dez.model/tabs/resetCost` clears it. */
   agentTextEdited?: true
   /** The tokens of the newest chat request of the conversation that told
    *  them, with Dez's estimate at that moment. The context size of the tab
@@ -158,7 +171,8 @@ export interface Tab {
    *  such request; never set to `undefined`. */
   context?: CountedContext
   /** The numbers of the compactions of the conversation (compaction.ts).
-   *  Absent before the first compaction; never set to `undefined`. */
+   *  Absent before the first compaction, and after
+   *  `dez.model/tabs/resetCost`; never set to `undefined`. */
   compactions?: Compactions
   /** The tab is incognito: its chat requests leave out what tells a
    *  provider that they come from Dez. Absent when off; never set to
@@ -169,6 +183,10 @@ export interface Tab {
    *  agent section is gone again. Absent before the first reply; never set
    *  to `undefined`. Never cleared. */
   requestSent?: true
+  /** The money limit of the tab (moneyLimit.ts), which the user set.
+   *  Absent with no limit; never set to `undefined`. Only
+   *  `dez.model/tabs/setMoneyLimit` changes it; a compaction keeps it. */
+  moneyLimit?: MoneyLimit
 }
 
 export type StreamEvent =

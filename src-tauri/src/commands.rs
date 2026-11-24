@@ -334,6 +334,25 @@ pub async fn get_app_dir(root: FileRoot) -> Result<String, String> {
     crate::persistence::app_dir(root)
 }
 
+// Copies the file at the absolute path `source` to `target`
+// (`persistence::export_file`). `target` must be in the fs scope of
+// plugin-fs, which starts empty (no static `fs:scope` in the capabilities)
+// and which plugin-dialog fills at run time with each path that the user
+// picks in a dialog (`save` and `open`); plugin-fs adds the paths of a
+// native file drop too. So, as the `writeTextFile` of Save As Markdown, the
+// page writes only where the user chose. The scope check follows a link,
+// and canonicalizes only a path that is there, as the dialog did when it
+// added the path, so a new file matches as it is.
+#[tauri::command]
+pub async fn export_file(app: tauri::AppHandle, source: String, target: String) -> Result<(), String> {
+    use tauri_plugin_fs::FsExt;
+    let target = std::path::PathBuf::from(target);
+    if !target.is_absolute() || !app.try_fs_scope().is_some_and(|scope| scope.is_allowed(&target)) {
+        return Err("Dez can export only to a file that the user picked in the save dialog".to_string());
+    }
+    crate::persistence::export_file(&source, &target)
+}
+
 // The OS temp folders that exist, each as its canonical path, with no
 // duplicate. The webview cannot read the environment (`$TMPDIR`,
 // `$XDG_RUNTIME_DIR`), and the frontend compares canonical paths: a file

@@ -1,12 +1,14 @@
 import { byteSizeText } from '../../utils/byteSize'
 import { countOf, countText } from '../../utils/countText'
 import { oneLineCut } from '../../utils/oneLineCut'
+import { seriesText } from '../../utils/seriesText'
 import { startOf } from '../../utils/textCut'
 import { searchTerms, textMatches } from '../textSearch'
 import { APP_HANDLER_EXAMPLE, APP_READ_ASSET, APP_RUN_FRAME_SIZE, APP_SAVE_ASSET } from './appBridge'
-import { APP_KINDS, isAppName, MANIFEST_FILE, MANIFEST_MAX_BYTES, MAX_DESCRIPTION_LENGTH, parseAppManifest, UNKNOWN_APP_KIND, type AppKind, type AppManifest, type ListedAppKind } from './appManifest'
-import { appTemplateFiles, SCRIPT_MAIN_FILE, UI_CLIENT_SCRIPT_TAG, UI_INDEX_FILE, UI_OWN_SCRIPT_TAG } from './appTemplates'
+import { APP_KINDS, BUILT_IN_APP_PREFIX, isAppName, isBuiltInApp, MANIFEST_FILE, MANIFEST_MAX_BYTES, MAX_DESCRIPTION_LENGTH, NATIVE_CANVAS_LIBRARY, NATIVE_FIELD_EXAMPLE, parseAppManifest, UNKNOWN_APP_KIND, type AppKind, type AppManifest, type ListedAppKind } from './appManifest'
+import { appTemplateFiles, DENO_ONLY_NAMES, SCRIPT_MAIN_FILE, UI_CLIENT_SCRIPT_TAG, UI_INDEX_FILE, UI_LIBS_ROUTE, UI_OWN_SCRIPT_TAG } from './appTemplates'
 import { unknownValuesText } from './arguments'
+import { conversationWorkFolder, WORK_VIRTUAL_ROOT } from './conversationWork'
 import { GREP_LINE_MAX_CHARACTERS, GREP_MAX_CHARACTERS, GREP_MAX_CONTEXT, GREP_MAX_MATCHES, GREP_TIME_LIMIT_SECONDS } from './grepMatch'
 import { INTERMEDIATE_PARAMETER, JOB_CALL_NOTE, jobTimeoutParameter } from './jobs'
 import { linesName, linesText, planLineEdits, textLines, textOfBytes, type DiffHunk, type LineEdit } from './lineEdits'
@@ -16,9 +18,18 @@ import { ToolError, type SubcommandArguments, type SubcommandParameter, type Too
 
 // The `apps` tool: the files of the apps, the small programs that a model
 // writes for the user. Each app is one folder of `apps/` in the app root,
-// and it stays from one conversation to the next. A model names a file by
-// a virtual path that starts with `/apps/` (`/apps/<app>/main.js`), so no
-// call and no result holds a path of the computer.
+// and it stays from one conversation to the next. The built-in apps of Dez
+// (`isBuiltInApp`, the `dez-` names) are in the files that Dez ships
+// (`BUILT_IN_APPS_FOLDER` of the resource root), and no call changes them
+// (`checkChangeable`). A model names a file by a virtual path that starts
+// with `/apps/` (`/apps/<app>/main.js`), so no call and no result holds a
+// path of the computer.
+//
+// The file subcommands work on two more places (`AppsTop`): `/libs/`, the
+// libraries that Dez ships, which they only read, and `/work/`, the work
+// folder of the conversation of the call (conversationWork.ts). The caps
+// of an app (`checkAppRoom`) do not hold in `/work/`: the runs of the
+// conversation fill it, and it goes with its conversation.
 //
 // This module has the pure parts: the definition, the checks of a call,
 // the rules of a path, the limits, and every text that the calling model
@@ -40,9 +51,42 @@ import { ToolError, type SubcommandArguments, type SubcommandParameter, type Too
 // The folder of the app root that holds the apps, one folder each.
 const APPS_FOLDER = 'apps'
 
+/** The folder of the resource root that holds the built-in apps, one
+ *  folder each. */
+export const BUILT_IN_APPS_FOLDER = 'builtin-apps'
+
 /** What a model reads and writes for the folder of the apps
  *  (`APPS_FOLDER`) in every path. */
 export const APPS_VIRTUAL_ROOT = '/apps'
+
+// The folder of the resource root that holds the libraries that Dez ships
+// (`LIBS_FOLDER`, src-tauri/src/bundled_tools.rs).
+const LIBS_FOLDER = 'libs'
+
+/** What a model reads for the folder of the libraries (`LIBS_FOLDER`) in
+ *  every path. */
+export const LIBS_VIRTUAL_ROOT = '/libs'
+
+/** The file of Dez's text for a model in the folder of a library of
+ *  `/libs/`: what the library is for, how a run imports it, and the rules
+ *  of Dez for it. scripts/update-libs.js carries it over. */
+export const LIBRARY_SKILL_FILE = 'SKILL.md'
+
+/** The libraries of `/libs/` that the code of a run imports by name, each
+ *  with what it is for: the name is also the name of its folder, which has
+ *  a `LIBRARY_SKILL_FILE`. @kurkle/color is a part of chart.js. */
+export const SHIPPED_LIBRARIES: readonly { name: string, use: string }[] = [
+  { name: 'three', use: '3D math, scenes, and 3D files' },
+  { name: 'chart.js', use: 'charts' },
+  { name: 'fft.js', use: 'the FFT' },
+  { name: NATIVE_CANVAS_LIBRARY, use: 'a 2D canvas, in a script app only' },
+  { name: 'dez-media', use: 'the media measurements of Dez, NumPy-style signal functions, data tables, and frame sequences' },
+]
+
+/** The libraries as the tool texts list them, with where each one tells
+ *  its use: a model reads the details only when it needs them. */
+export const LIBRARIES_TEXT = `${seriesText(SHIPPED_LIBRARIES.map(({ name, use }) => `${name} (${use})`), 'and')}. `
+  + `Read ${LIBS_VIRTUAL_ROOT}/<library>/${LIBRARY_SKILL_FILE} before you use a library: it tells how to import it, and its rules in Dez.`
 
 /** The largest text file that `read`, `write`, and `edit` take. Its text
  *  is in the webview as a whole, and a larger one is no source file. */
@@ -64,6 +108,40 @@ export const APP_RUN_DEFAULT_SECONDS = 300
 export const APP_RUN_MAX_OUTPUT_FILES = 20
 export const APP_RUN_MAX_OUTPUT_BYTES = 256 * 1024 * 1024
 
+/** The most Dez tool calls (`dez.sbp`) of one run of the code of a script
+ *  app (controller/toolBridge.ts). More than a `js_eval` run gets: an app
+ *  does a planned work, such as one call for each frame of a clip, and
+ *  it runs as a job, not in the round of the model. The cap still stops
+ *  code that loops on a call that costs money. */
+export const APP_RUN_MAX_TOOL_CALLS = 200
+
+/** The limits of a frame sequence of a run (a folder `<name>.frames` in
+ *  the output folder, which Dez encodes into one clip; frameSequences.ts):
+ *  the most frames, the most pixels of a side of a frame, and the frames a
+ *  second. 36,000 frames are 10 minutes at 60 frames a second. */
+export const APP_RUN_MAX_FRAMES = 36_000
+export const FRAMES_MAX_SIDE = 4096
+export const FRAMES_MIN_FPS = 0.01
+export const FRAMES_MAX_FPS = 240
+
+/** A frames.json of a frame sequence, as the texts show it. */
+export const FRAMES_JSON_EXAMPLE = '{"fps": 30, "width": 1280, "height": 720, "count": 90, "alpha": false}'
+
+/** The limits of the decode of the input clips of a run of a script app
+ *  (`decode`; inputDecode.ts): the samples a second of the audio, the most
+ *  pixels of a side of a frame, the frames a second, and the most bytes of
+ *  all the decoded files of one run together. The code reads a decoded
+ *  file into memory as a whole. */
+export const DECODE_MIN_RATE = 1000
+export const DECODE_MAX_RATE = 192_000
+export const DECODE_MAX_SIDE = 4096
+export const DECODE_MIN_FPS = 0.01
+export const DECODE_MAX_FPS = 240
+export const APP_RUN_MAX_DECODED_BYTES = 2 * 1024 * 1024 * 1024
+
+/** A `decode` value as the texts show it. */
+export const DECODE_EXAMPLE = '{"audio": {"rate": 22050}, "frames": {"width": 96, "height": 54, "fps": 24}}'
+
 /** The subcommand that changes lines of a file. Its results get the hint
  *  of `edit` (`EDIT_HINT`, editHint.ts). */
 export const APPS_EDIT = 'edit'
@@ -84,7 +162,8 @@ export const LS_MAX_ENTRIES = 5000
 // The most characters of one name of a path. The file system takes 255
 // bytes, and the temp file of a save adds an ending to the name.
 const MAX_NAME_LENGTH = 100
-// The most names of a path after `/apps/`.
+// The most names of a path after its top folder (`/apps/`, `/libs/`,
+// `/work/`).
 const MAX_PATH_NAMES = 12
 
 // The most lines and characters that one `read` gives: about what a model
@@ -118,7 +197,9 @@ const EXAMPLE_FILE = `${APPS_VIRTUAL_ROOT}/${EXAMPLE_APP}/main.js`
 const FILE_LIMIT = byteSizeText(APPS_MAX_FILE_BYTES)
 const APP_LIMITS = `An app holds at most ${countText(APPS_MAX_ENTRIES)} files and folders, and ${byteSizeText(APPS_MAX_BYTES)}.`
 const APP_NAME_RULE = 'The name of an app is 1 to 64 characters: lower-case letters, digits, "-", and "_", and the first one is a letter or a digit, '
-  + `as in "${EXAMPLE_APP}".`
+  + `as in "${EXAMPLE_APP}". A name that starts with "${BUILT_IN_APP_PREFIX}" is for the built-in apps of Dez.`
+// The mark of a built-in app in `list_apps` and in `ls` of `/apps`.
+const BUILT_IN_MARK = 'built-in'
 const PATH_PARAMETER = `as in "${EXAMPLE_FILE}".`
 
 const EXAMPLE_SCRIPT_APP = 'contact-sheet'
@@ -130,6 +211,14 @@ const SCRIPT_MAIN = `${APPS_VIRTUAL_ROOT}/<name>/${SCRIPT_MAIN_FILE}`
 export const STORED_TYPES = '(an image: PNG, JPEG, GIF, WebP, or SVG; a clip: MP4, MOV, WebM, WAV, MP3, M4A, AAC, FLAC, or Ogg)'
 
 const SAVE_BYTES = 'a Blob, an ArrayBuffer, or a typed array'
+
+// What the page of a UI app imports of the libraries: the import map that
+// `init` writes into its index.html (`UI_IMPORT_MAP_TAG`, appTemplates.ts)
+// names each one but those that only Deno loads (`DENO_ONLY_NAMES`).
+const PAGE_LIBRARY_NAMES = SHIPPED_LIBRARIES.map(({ name }) => name).filter((name) => !DENO_ONLY_NAMES.includes(name))
+const PAGE_LIBRARIES = `A module of the page imports the libraries of ${LIBS_VIRTUAL_ROOT}/ by name, as in \`import * as THREE from "three"\`, `
+  + `through the import map that init writes into ${UI_INDEX_FILE}, before the first module (each entry is a file of ./${UI_LIBS_ROUTE}/, as in "./${UI_LIBS_ROUTE}/three/build/three.module.js"): `
+  + `${seriesText(PAGE_LIBRARY_NAMES, 'and')}, but not ${seriesText(DENO_ONLY_NAMES, 'or')}.`
 
 // The help of `invoke` for a UI app: what the page of an app needs for a
 // run, and the limits of a page that make plain code fail (the frame
@@ -149,6 +238,7 @@ const INVOKE_UI_HELP = `A UI app runs as its page (${UI_INDEX_FILE}), which Dez 
   + 'In a run it gives `{ id: null, kind, type }`: the result of the job gives the ids, in the order of the saves. A run whose handler throws keeps no file.\n'
   + 'A call that Dez refuses rejects with an error whose message tells why. '
   + 'The page is new for each run and keeps no state. It has no network, no storage, and no file but those of its app, which it loads by a relative URL, and it calls no Dez tool. '
+  + `${PAGE_LIBRARIES} `
   + 'Use a UI app for work that needs a page (a canvas, the Web Audio API, a layout). '
   + 'A script of the page that never yields stops Dez\'s window, and no time limit can end it: heavy work belongs in a script app.'
 
@@ -162,22 +252,50 @@ const INVOKE_HELP = `Runs the code of an app on the user's computer, with the pa
   + 'A script app runs in a sandbox (Deno). '
   + `The run calls the default export of ${SCRIPT_MAIN} with two arguments, \`(parameters, dez)\`, and waits for its promise. `
   + 'The value that the function returns is the result of the job: a string as it is, JSON data as JSON, and any other value as Deno shows it. '
-  + 'What the code writes with `console.log` comes after it. `parameters` is the object of the call. `dez` has three members:\n'
+  + 'What the code writes with `console.log` comes after it. `parameters` is the object of the call. `dez` has six members:\n'
   + '- `dez.inputs`: one `{ id, kind, type, path }` for each id of `inputs`, in their order. `kind` is "image", "audio", or "video", `type` is the media type, '
-  + 'and `path` is the path of a copy of the file. A change of the copy changes nothing of the image or the clip.\n'
+  + 'and `path` is the path of a copy of the file. A change of the copy changes nothing of the image or the clip. '
+  + 'When the run decodes its clips (`decode`), each clip also has the facts of its decoded files, `audio` and `frames`.\n'
   + '- `dez.outputFolder`: the path of an empty folder. After a run that ends with no error, Dez keeps each file directly in it as a new image or clip of the conversation, '
   + `and the result gives their ids. Dez keeps only a file of a type that it stores, which it reads from the first bytes of the file and not from its name ${STORED_TYPES}, `
-  + `at most ${APP_RUN_MAX_OUTPUT_FILES} files of one run, and at most ${byteSizeText(APP_RUN_MAX_OUTPUT_BYTES)} for one file. A run that fails keeps no file.\n`
+  + `at most ${APP_RUN_MAX_OUTPUT_FILES} files of one run, and at most ${byteSizeText(APP_RUN_MAX_OUTPUT_BYTES)} for one file. A run that fails keeps no file of this folder. `
+  + 'A folder `<name>.frames` directly in the output folder is a frame sequence: after the run, Dez encodes it into one clip, which counts as one file. '
+  + 'It holds the frames from 0 with no gap, all PNG files (000000.png, 000001.png, and so on) or all raw RGBA (000000.rgba, and so on: 4 bytes for each pixel, row after row), '
+  + `and frames.json, as in ${FRAMES_JSON_EXAMPLE}: "fps" from ${FRAMES_MIN_FPS} to ${FRAMES_MAX_FPS}, `
+  + `"width" and "height" up to ${FRAMES_MAX_SIDE} pixels, and "count" up to ${countText(APP_RUN_MAX_FRAMES)}. `
+  + 'The clip is H.264 in MP4, whose width and height must be even; with `"alpha": true`, it is MOV with the PNG codec, which keeps the alpha of each pixel (for an overlay with `video ffmpeg`). '
+  + 'Dez scales a PNG frame of another size to width × height. '
+  + '`import { FrameWriter } from "dez-media/frames"` writes such a folder: `const frames = new FrameWriter(dez.outputFolder, "intro", { fps: 30, width: 1280, height: 720 })`, '
+  + 'then `frames.add(canvas)` or `frames.add(rgbaBytes)` for each frame, and `frames.end()` after the last one.\n'
   + '- `dez.appFolder`: the path of the folder of the app. The code reads and writes the files of its app there, and they stay for the next run: '
   + 'keep the state of an app in a file of this folder.\n'
-  + 'The code can open only two places: the folder of its app, and the work folder of the run (the copies of the inputs and the output folder), which Dez deletes after the run. '
+  + `- \`dez.workFolder\`: the path of the work folder of this conversation, which the file subcommands name ${WORK_VIRTUAL_ROOT}/. Its files stay for the next run and for the other tools.\n`
+  + '- `dez.fonts`: the fonts that Dez ships, one `{ file, family, weight, scripts, path }` for each font file.\n'
+  + '- `dez.sbp`: calls a Dez tool, as `await dez.sbp("dez.tools/<tool>", { …arguments })`, or `await dez.sbp("dez.tools/<tool>/<subcommand>", { …parameters })` for a subcommand, '
+  + 'as in `await dez.sbp("dez.tools/image/flip", { image: dez.inputs[0].id, direction: "horizontal" })`. '
+  + 'A call gives the result text of the tool, and it throws an error with that text when the tool gives an error. '
+  + `The calls run one at a time, at most ${APP_RUN_MAX_TOOL_CALLS} in one run. The code cannot call js_eval, apps invoke, or apps show. `
+  + 'An image or a clip that a call makes is an asset of the job, also when the code fails later: the result of the call names it by a handle, as in "Made the image @&1.", '
+  + 'and the result of the job gives the id of each handle. A later call of the run takes the handle in place of an id: as the whole value (`image: "&1"`), or as a mention in a text ("@&1"). '
+  + 'A job that a call starts is a job of the run: `jobs_wait` and `jobs_list` in the code see only these jobs, and you get the ones that are still open after the run. '
+  + 'Before a call that costs money, the code can ask `model_info` (with `only: "cost"` and the `parameters` of the request) for its price, '
+  + 'and `conversation_info` for what the conversation cost so far.\n'
+  + 'The code can open only three places: the folder of its app, the run folder (the copies of the inputs and the output folder), which Dez deletes after the run, '
+  + `and the work folder. It can also read the libraries of ${LIBS_VIRTUAL_ROOT}/ and the fonts of \`dez.fonts\`. `
   + 'Build each path from a path of `dez`, as in `${dez.outputFolder}/chart.png`: a relative path does not work. '
   + 'The code has no network and no environment variables, and it can start no program; no flag changes that. '
-  + 'It can import the other files of its app (`import { parse } from "./parse.ts"`) and the built-in modules (`node:fs`), '
-  + 'but no package of npm, of JSR, or from a URL. '
+  + 'It can import the other files of its app (`import { parse } from "./parse.ts"`), the built-in modules (`node:fs`), '
+  + `and the libraries of ${LIBS_VIRTUAL_ROOT}/ by name (\`import { beatGrid } from "dez-media"\`), but no package of npm, of JSR, or from a URL. `
+  + `The libraries: ${LIBRARIES_TEXT} `
+  + `The code of the built-in apps (${APPS_VIRTUAL_ROOT}/${BUILT_IN_APP_PREFIX}<name>/${SCRIPT_MAIN_FILE}) is a good start for an app of your own: read it, and write a copy into your app. `
+  + `To draw with ${NATIVE_CANVAS_LIBRARY} (\`import { Canvas } from "${NATIVE_CANVAS_LIBRARY}"\`), the ${MANIFEST_FILE} of the app must have the field \`${NATIVE_FIELD_EXAMPLE}\`, `
+  + 'and each canvas must draw with no GPU: `new Canvas(1280, 720, { gpu: false })`. The run sees no font of the computer, so a canvas draws text only after '
+  + '`const families = useShippedFonts(dez.fonts)` (`import { useShippedFonts } from "dez-media/canvas"`). It returns a list of every shipped family for `ctx.font`, '
+  + 'which draws each script that the fonts cover, as in ``ctx.font = `bold 48px ${families}` ``; a family of `dez.fonts` alone draws only its own scripts. '
   + 'Some file calls fail in the sandbox: a rename or a hard link from one folder to another (copy the file, then delete the old one), '
   + '`Deno.chmod`, `Deno.utime`, `Deno.symlink`, and `Deno.watchFs`. '
-  + 'The code calls no Dez tool (it has no `dez.sbp`): call the tools yourself, before or after the run. '
+  + 'In each text that the code gives a tool, Dez cuts a path of a file of the user\'s computer after its start, with the rest of its line: '
+  + 'name an image or a clip by its id or its handle, not by the path of its copy. '
   + 'The clock and the time zone are those of the user\'s computer. '
   + `An error names a line of the code by its path in the apps tool, as in ${APPS_VIRTUAL_ROOT}/${EXAMPLE_SCRIPT_APP}/${SCRIPT_MAIN_FILE}:12.\n\n`
   + INVOKE_UI_HELP
@@ -202,11 +320,28 @@ export function withEditHint(result: string): string {
   return `${result}\n\n${EDIT_HINT}`
 }
 
+// The text of the `decode` parameter of `invoke`: all that the code of a
+// script app must know to read the decoded files (inputDecode.ts), with
+// the readers of the dez-media library.
+const DECODE_HELP = 'Script apps only. Dez decodes each clip of `inputs` before the run, so that the code gets its samples and its pixels, '
+  + `as in ${DECODE_EXAMPLE}. `
+  + `"audio" gives the first sound stream as one channel of float32 samples, little-endian, at "rate" samples a second (${DECODE_MIN_RATE} to ${DECODE_MAX_RATE}). `
+  + `"frames" gives the frames of the first video stream as RGB pixels (3 bytes for each pixel, row by row), each frame exactly "width" by "height" pixels (1 to ${DECODE_MAX_SIDE}), `
+  + `at "fps" frames a second (${DECODE_MIN_FPS} to ${DECODE_MAX_FPS}), or each frame of the clip once when "fps" is not there. `
+  + 'Each clip of `dez.inputs` then has `audio: { path, rate, count }` (count: the samples) and `frames: { path, width, height, fps, count }` (count: the frames), '
+  + 'or null for a clip with no such stream. Read them with `import { f32Samples, rgbFrames } from "dez-media"`: '
+  + '`f32Samples(await Deno.readFile(input.audio.path))` and `rgbFrames(await Deno.readFile(input.frames.path), input.frames.width, input.frames.height)`. '
+  + `The decoded files of one run are at most ${byteSizeText(APP_RUN_MAX_DECODED_BYTES)} together. `
+  + `The field "decode" of the ${MANIFEST_FILE} of the app, of the same form, is the default. The decode of the call takes its place as a whole, and {} decodes nothing.`
+
 export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
   name: 'apps',
   summary: `Make, change, show, and run apps: small programs that you write for the user, each in its own folder ${APPS_VIRTUAL_ROOT}/<name>/. `
     + 'The apps stay from one conversation to the next, and a script app keeps its own files from one run to the next. '
-    + `Every path of a call starts with ${APPS_VIRTUAL_ROOT}/.`,
+    + `The file subcommands also work in two more folders: ${LIBS_VIRTUAL_ROOT}/ holds the libraries that Dez ships, which you can only read, `
+    + `and ${WORK_VIRTUAL_ROOT}/ is the work folder of this conversation, which Dez deletes with the conversation. `
+    + `Every path of a call starts with ${APPS_VIRTUAL_ROOT}/, ${LIBS_VIRTUAL_ROOT}/, or ${WORK_VIRTUAL_ROOT}/. `
+    + `The code of an app imports the libraries by name: ${LIBRARIES_TEXT}`,
   subcommands: [
     {
       name: 'init',
@@ -223,7 +358,7 @@ export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
     },
     {
       name: 'read',
-      summary: 'Read a text file of an app, with the number of each line.',
+      summary: `Read a text file of an app, of ${LIBS_VIRTUAL_ROOT}/, or of ${WORK_VIRTUAL_ROOT}/, with the number of each line.`,
       description: 'Gives the text of a file, each line after its number (`12: text`), and tells how many lines and bytes the file has. '
         + 'With `ranges` it gives only the lines of those ranges, in the order of the list. '
         + `One call gives at most ${READ_MAX_LINES} lines and ${countText(READ_MAX_CHARACTERS)} characters: the result tells when it left lines out, and which ranges to read next. `
@@ -246,10 +381,10 @@ export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
     },
     {
       name: 'write',
-      summary: 'Write a whole text file of an app: a new file, or all new text for a file that is there.',
+      summary: `Write a whole text file of an app or of ${WORK_VIRTUAL_ROOT}/: a new file, or all new text for a file that is there.`,
       description: 'Writes `content` as the whole text of a file, and makes the folders of the path that are missing. '
-        + 'It replaces a file that is there: to change a part of a file, use edit. The app must be there: make it with init first. '
-        + `A file is at most ${FILE_LIMIT}. ${APP_LIMITS}`,
+        + 'It replaces a file that is there: to change a part of a file, use edit. The app of a path in an app must be there: make it with init first. '
+        + `A file is at most ${FILE_LIMIT}. ${APP_LIMITS} The limits of an app do not hold in ${WORK_VIRTUAL_ROOT}/. Nothing writes in ${LIBS_VIRTUAL_ROOT}/.`,
       parameters: [
         { name: 'path', type: 'string', description: `The path of the file, ${PATH_PARAMETER}`, required: true },
         { name: 'content', type: 'string', description: 'The whole text of the file.', required: true },
@@ -258,7 +393,7 @@ export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
     },
     {
       name: APPS_EDIT,
-      summary: 'Change lines of a text file of an app by their numbers: replace lines, delete lines, or put new lines in.',
+      summary: `Change lines of a text file of an app or of ${WORK_VIRTUAL_ROOT}/ by their numbers: replace lines, delete lines, or put new lines in.`,
       description: 'Applies a list of edits to one file, all at once. Each edit names lines by the numbers that read gave. '
         + 'An edit with `from_line` replaces the lines `from_line` to `to_line` with the lines of `content`. An edit with `after_line` puts the lines of `content` in after that line. '
         + 'Each edit passes or fails by itself: the result tells what each one did, or why it failed, and gives a diff of the change.\n\n'
@@ -291,9 +426,10 @@ export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
     },
     {
       name: 'rm',
-      summary: 'Delete files and folders of apps, or whole apps. A folder goes with all that is in it.',
+      summary: `Delete files and folders of apps or of ${WORK_VIRTUAL_ROOT}/, or whole apps. A folder goes with all that is in it.`,
       description: 'Deletes each path of the list. It deletes a folder with every file and folder in it, at any depth, and asks nothing: '
         + `the path of an app (${APPS_VIRTUAL_ROOT}/<name>) deletes the whole app. Nothing brings a deleted file back. `
+        + `It does not delete ${APPS_VIRTUAL_ROOT} or ${WORK_VIRTUAL_ROOT} itself, or a file of ${LIBS_VIRTUAL_ROOT}/. `
         + 'Each path passes or fails by itself, and the result lists the paths that it deleted.',
       parameters: [
         { name: 'paths', type: 'list', items: 'string', description: `The paths to delete, as in ["${APPS_VIRTUAL_ROOT}/${EXAMPLE_APP}/old.js"].`, required: true },
@@ -304,7 +440,8 @@ export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
       name: 'list_apps',
       summary: 'List the apps: the name, the kind, the size, and the description of each.',
       description: `Lists the apps, one line each: the name (its folder is ${APPS_VIRTUAL_ROOT}/<name>/), the kind (${APP_KINDS.join(' or ')}), the size of all its files, and the description. `
-        + 'The kind and the description are those of its manifest.json. A call with no parameters lists every app by name.',
+        + 'The kind and the description are those of its manifest.json. A call with no parameters lists every app by name. '
+        + `A built-in app of Dez has "(${BUILT_IN_MARK})" after its kind: you can read and run it, but not change it.`,
       parameters: [
         { name: 'name', type: 'string', description: 'Only the apps whose name holds this text. Upper and lower case count as the same.', required: false },
         { name: 'min_bytes', type: 'integer', description: 'Only the apps of at least this size, in bytes.', required: false },
@@ -319,17 +456,23 @@ export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
       description: 'Lists what is in one folder: each file with its size, and each folder (its name ends with "/") with the number and the size of the files below it. '
         + `A call with no parameters lists ${APPS_VIRTUAL_ROOT}, which has one folder for each app.`,
       parameters: [
-        { name: 'path', type: 'string', description: `The folder, as in "${APPS_VIRTUAL_ROOT}/${EXAMPLE_APP}". Leave it out for ${APPS_VIRTUAL_ROOT}.`, required: false },
+        {
+          name: 'path',
+          type: 'string',
+          description: `The folder, as in "${APPS_VIRTUAL_ROOT}/${EXAMPLE_APP}", "${LIBS_VIRTUAL_ROOT}", or "${WORK_VIRTUAL_ROOT}". Leave it out for ${APPS_VIRTUAL_ROOT}.`,
+          required: false,
+        },
       ],
       example: { path: `${APPS_VIRTUAL_ROOT}/${EXAMPLE_APP}` },
     },
     {
       name: 'find',
-      summary: 'Find files of apps by words of their paths.',
+      summary: 'Find files by words of their paths.',
       description: 'Lists the files below a folder whose paths have every word of `query`, sorted by path; "*" lists every file. '
-        + `A word matches a part of the path after ${APPS_VIRTUAL_ROOT}/ ("conv" in ${EXAMPLE_APP}/src/units.js), or the starts of words that follow each other in it ("ucs" or "srcunits"). `
+        + `A word matches a part of the path after the top folder (${APPS_VIRTUAL_ROOT}/, ${LIBS_VIRTUAL_ROOT}/, or ${WORK_VIRTUAL_ROOT}/; "conv" in ${EXAMPLE_APP}/src/units.js), `
+        + 'or the starts of words that follow each other in it ("ucs" or "srcunits"). '
         + 'Upper and lower case are the same, and a character other than a letter or a digit only splits words: the query is no glob and no regular expression. '
-        + `Each row of the result is a path after ${APPS_VIRTUAL_ROOT}/: put ${APPS_VIRTUAL_ROOT}/ before it to read the file.`,
+        + 'Each row of the result is a path after the top folder of `path`: put that folder before it to read the file.',
       parameters: [
         { name: 'query', type: 'string', description: 'The words to find in the paths, as in "units js", or "*" for every file.', required: true },
         { name: 'path', type: 'string', description: `The folder to search, as in "${APPS_VIRTUAL_ROOT}/${EXAMPLE_APP}". Leave it out for ${APPS_VIRTUAL_ROOT}: all the apps.`, required: false },
@@ -338,9 +481,9 @@ export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
     },
     {
       name: 'grep',
-      summary: 'Find the lines of the text files of apps that a regular expression matches.',
+      summary: 'Find the lines of text files that a regular expression matches.',
       description: 'Searches the text files below a folder, or one file, line by line, as `rg -n` does. It gives each matching line after its number (`12: text`), '
-        + `the files sorted by path, and in a search of a folder each file under its path after ${APPS_VIRTUAL_ROOT}/. `
+        + `the files sorted by path, and in a search of a folder each file under its path after the top folder (${APPS_VIRTUAL_ROOT}/, ${LIBS_VIRTUAL_ROOT}/, or ${WORK_VIRTUAL_ROOT}/). `
         + 'With `context` it gives the lines around each match too (`11- text`), and "--" between groups of lines that do not follow each other. '
         + 'The numbers are those of read, so read and edit take them. '
         + '`pattern` is a regular expression of JavaScript, with no "/" around it, which each line matches by itself: no match runs over the end of a line. '
@@ -371,7 +514,7 @@ export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
     },
     {
       name: 'wc',
-      summary: 'Count the lines and the bytes of files of apps.',
+      summary: 'Count the lines and the bytes of files.',
       description: 'Gives the number of lines and the size of each file of the list, one row each, in the order of the list. '
         + 'The number of lines is the one that read gives: a "\\n" at the end of a file adds no line, and a last line with no "\\n" counts. '
         + `It counts no lines of a file that is no text, or of one of more than ${FILE_LIMIT} (read and edit do not take such a file): it gives only its size. `
@@ -383,8 +526,8 @@ export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
     },
     {
       name: 'mkdir',
-      summary: 'Make a folder in an app, with the folders above it that are missing.',
-      description: 'Makes a folder in an app, and the folders of the path that are missing. A folder that is there already is no error. '
+      summary: `Make a folder in an app or in ${WORK_VIRTUAL_ROOT}/, with the folders above it that are missing.`,
+      description: `Makes a folder in an app or in ${WORK_VIRTUAL_ROOT}/, and the folders of the path that are missing. A folder that is there already is no error. `
         + 'write makes the folders of its path too, so this is only for a folder that has no file yet. It makes no app: init does.',
       parameters: [
         { name: 'path', type: 'string', description: `The folder to make, as in "${APPS_VIRTUAL_ROOT}/${EXAMPLE_APP}/data/cache".`, required: true },
@@ -393,10 +536,11 @@ export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
     },
     {
       name: 'mv',
-      summary: 'Move or rename files and folders of apps, or rename an app.',
+      summary: `Move or rename files and folders of apps and of ${WORK_VIRTUAL_ROOT}/, or rename an app.`,
       description: 'Moves each `from` path to its `to` path, one after the other, in the order of the list. `to` is the full new path, not the folder to move into. '
         + 'A move replaces nothing: it fails when a file or a folder is at `to` already. It makes the folders of `to` that are missing. '
-        + `Each move passes or fails by itself, and the result tells which. A move of ${APPS_VIRTUAL_ROOT}/<name> to ${APPS_VIRTUAL_ROOT}/<other name> renames an app.`,
+        + `Each move passes or fails by itself, and the result tells which. A move of ${APPS_VIRTUAL_ROOT}/<name> to ${APPS_VIRTUAL_ROOT}/<other name> renames an app. `
+        + `A move from ${WORK_VIRTUAL_ROOT}/ into an app, or back, is fine.`,
       parameters: [
         {
           name: 'moves',
@@ -423,7 +567,8 @@ export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
         + `- \`await dez.sbp('${APP_SAVE_ASSET}', bytes)\` puts ${SAVE_BYTES} as a new image or clip into the message that the user writes, and gives \`{ id, kind, type }\`. `
         + `Dez takes only a file of a type that it stores ${STORED_TYPES}, at most ${byteSizeText(APP_RUN_MAX_OUTPUT_BYTES)}, and at most ${APP_RUN_MAX_OUTPUT_FILES} saves from one click on Run to Stop. `
         + 'It takes a save only while the user works in the app (save in the handler of a click or a key), and not while a reply runs.\n'
-        + 'A call that Dez refuses rejects with an error whose message tells why: show it to the user. The page calls no Dez tool, and it has no network and no storage.',
+        + 'A call that Dez refuses rejects with an error whose message tells why: show it to the user. The page calls no Dez tool, and it has no network and no storage.\n'
+        + PAGE_LIBRARIES,
       parameters: [
         { name: 'name', type: 'string', description: `The name of the app, as in "${EXAMPLE_APP}": the name of its folder in ${APPS_VIRTUAL_ROOT}/.`, required: true },
       ],
@@ -449,6 +594,12 @@ export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
             + 'Leave it out for a run with no input.',
           required: false,
         },
+        {
+          name: 'decode',
+          type: 'object',
+          description: DECODE_HELP,
+          required: false,
+        },
         INTERMEDIATE_PARAMETER,
         jobTimeoutParameter(APP_RUN_DEFAULT_SECONDS),
       ],
@@ -459,44 +610,115 @@ export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
 
 export const APPS_TOOL_DEFINITION = subcommandToolDefinition(APPS_TOOL)
 
-/** A path of a call: the folder of all apps, an app, or a file or a folder
- *  of an app. */
-export interface AppsPath {
-  /** The names after `/apps`: none for the folder of all apps, and the
-   *  name of the app first. */
-  names: readonly string[]
-  /** The path as a model writes and reads it: `/apps/notes/main.js`. */
+/** The places where the paths of the tool start: the folder of the apps,
+ *  the libraries that Dez ships (read only), and the work folder of the
+ *  conversation of the call (conversationWork.ts). */
+export type AppsPlace = 'apps' | 'libs' | 'work'
+
+/** The top folder of a path: its place, and the folder as `AppsPath` tells
+ *  it (`virtual`, `root`, `file`). */
+export interface AppsTop {
+  place: AppsPlace
   virtual: string
-  /** The path from the app root, as the native file selectors take it:
-   *  `apps/notes/main.js`. */
+  root: 'app' | 'resource'
   file: string
 }
 
-function pathOf(names: readonly string[]): AppsPath {
-  return { names, virtual: [APPS_VIRTUAL_ROOT, ...names].join('/'), file: [APPS_FOLDER, ...names].join('/') }
+const APPS_TOP: AppsTop = { place: 'apps', virtual: APPS_VIRTUAL_ROOT, root: 'app', file: APPS_FOLDER }
+const LIBS_TOP: AppsTop = { place: 'libs', virtual: LIBS_VIRTUAL_ROOT, root: 'resource', file: LIBS_FOLDER }
+
+// The top of the paths in the work folder of the conversation
+// `conversationId`; null when its id can name no folder.
+function workTop(conversationId: string): AppsTop | null {
+  const file = conversationWorkFolder(conversationId)
+  return file === null ? null : { place: 'work', virtual: WORK_VIRTUAL_ROOT, root: 'app', file }
+}
+
+/** A path of a call: a top folder (`/apps`, `/libs`, `/work`), or a file
+ *  or a folder in it. */
+export interface AppsPath {
+  top: AppsTop
+  /** The names after the top folder: none for the top folder itself, and
+   *  in `/apps` the name of the app first. */
+  names: readonly string[]
+  /** The path as a model writes and reads it: `/apps/notes/main.js`. */
+  virtual: string
+  /** The root of `file` (`AppFileRoot`, controller/nativeTypes.ts): the
+   *  resource root for a built-in app and for `/libs`, else the app root. */
+  root: 'app' | 'resource'
+  /** The path from `root`, as the native file selectors take it:
+   *  `apps/notes/main.js`, `builtin-apps/dez-x/main.ts`, `libs/three/x.js`,
+   *  `work/<conversation id>/data.json`. */
+  file: string
+}
+
+// In `/apps` the name of the app alone tells where its files are: a
+// built-in app is in the files that Dez ships, and its name is no name of
+// the user's apps.
+function pathOf(top: AppsTop, names: readonly string[]): AppsPath {
+  const virtual = [top.virtual, ...names].join('/')
+  if (top.place === 'apps' && names.length > 0 && isBuiltInApp(names[0])) {
+    return { top, names, virtual, root: 'resource', file: [BUILT_IN_APPS_FOLDER, ...names].join('/') }
+  }
+  return { top, names, virtual, root: top.root, file: [top.file, ...names].join('/') }
 }
 
 /** The folder of all apps. */
-export const APPS_ROOT = pathOf([])
+export const APPS_ROOT = pathOf(APPS_TOP, [])
+
+/** The folder of the libraries that Dez ships. */
+export const LIBS_ROOT = pathOf(LIBS_TOP, [])
 
 /** The path of the name `name` in the folder at `folder`. */
 export function pathIn(folder: AppsPath, name: string): AppsPath {
-  return pathOf([...folder.names, name])
+  return pathOf(folder.top, [...folder.names, name])
 }
 
-/** The folder of the app of a path that is in an app. */
-export function appOf(path: AppsPath): AppsPath {
-  return pathOf(path.names.slice(0, 1))
+// How many names of a path name its unit (`unitOf`).
+function unitDepth(top: AppsTop): number {
+  return top.place === 'apps' ? 1 : 0
+}
+
+/** The unit of a path below its top folder: in `/apps` the folder of its
+ *  app, and in `/libs` and `/work`, which hold files directly, the top
+ *  folder itself. A change in `/apps` needs its app, and the caps of an
+ *  app hold for it (`checkAppRoom`). */
+export function unitOf(path: AppsPath): AppsPath {
+  return pathOf(path.top, path.names.slice(0, unitDepth(path.top)))
+}
+
+/** Whether `path` is the folder of an app. */
+export function isAppFolder(path: AppsPath): boolean {
+  return path.top.place === 'apps' && path.names.length === 1
 }
 
 /** The folder that holds what is at `path`. */
 export function parentOf(path: AppsPath): AppsPath {
-  return pathOf(path.names.slice(0, -1))
+  return pathOf(path.top, path.names.slice(0, -1))
 }
 
 // Whether `path` is in the folder `folder`, at any depth.
 function isBelow(path: AppsPath, folder: AppsPath): boolean {
-  return path.names.length > folder.names.length && folder.names.every((name, index) => path.names[index] === name)
+  return path.top.place === folder.top.place && path.names.length > folder.names.length && folder.names.every((name, index) => path.names[index] === name)
+}
+
+// What the top folder of a path is, in a text: `the folder of all apps`.
+function topName(top: AppsTop): string {
+  return {
+    apps: 'the folder of all apps',
+    libs: 'the folder of the libraries that Dez ships',
+    work: 'the work folder of this conversation',
+  }[top.place]
+}
+
+// The path of a file in the top folder of a path, for a text that tells
+// how to write a path of that folder: `/apps/unit-converter/main.js`.
+function topExample(top: AppsTop): string {
+  return {
+    apps: EXAMPLE_FILE,
+    libs: `${LIBS_VIRTUAL_ROOT}/dez-media/${LIBRARY_SKILL_FILE}`,
+    work: `${WORK_VIRTUAL_ROOT}/clips/a.mp4`,
+  }[top.place]
 }
 
 // The names that the native file selectors take (`is_app_file_segment`,
@@ -508,26 +730,34 @@ export function isPathName(name: string): boolean {
   return NAME.test(name) && name !== '.' && name !== '..'
 }
 
-/** The path that the value of the parameter `parameter` names. One `/` at
- *  its end is fine. Throws a `ToolError` for a value that is no path below
- *  `/apps`, and for a name that the file selectors do not take. `.` and
- *  `..` are refused, not resolved: a model that writes them has a wrong
- *  idea of where it is. */
-export function appsPath(value: unknown, parameter: string): AppsPath {
+/** The path that the value of the parameter `parameter` names, in a call
+ *  of the conversation `conversationId`. One `/` at its end is fine.
+ *  Throws a `ToolError` for a value that is no path below `/apps`,
+ *  `/libs`, or `/work`, and for a name that the file selectors do not
+ *  take. `.` and `..` are refused, not resolved: a model that writes them
+ *  has a wrong idea of where it is. */
+export function appsPath(value: unknown, parameter: string, conversationId: string): AppsPath {
   const text = typeof value === 'string' ? value.trim() : ''
-  const form = `Every path starts with ${APPS_VIRTUAL_ROOT}/, ${PATH_PARAMETER}`
+  const form = `Every path starts with ${APPS_VIRTUAL_ROOT}/, ${LIBS_VIRTUAL_ROOT}/, or ${WORK_VIRTUAL_ROOT}/, ${PATH_PARAMETER}`
   if (text === '') throw new ToolError(`\`${parameter}\` is empty. ${form}`)
   const quoted = JSON.stringify(startOf(text, 300))
-  if (text !== APPS_VIRTUAL_ROOT && !text.startsWith(`${APPS_VIRTUAL_ROOT}/`)) throw new ToolError(`${quoted} is no path of the apps tool. ${form}`)
-  const rest = text.slice(APPS_VIRTUAL_ROOT.length + 1).replace(/\/$/, '')
-  if (rest === '') return pathOf([])
+  const place = ([APPS_VIRTUAL_ROOT, LIBS_VIRTUAL_ROOT, WORK_VIRTUAL_ROOT] as const).find((root) => text === root || text.startsWith(`${root}/`))
+  if (place === undefined) throw new ToolError(`${quoted} is no path of the apps tool. ${form}`)
+  const top = place === APPS_VIRTUAL_ROOT ? APPS_TOP : place === LIBS_VIRTUAL_ROOT ? LIBS_TOP : workTop(conversationId)
+  // Only a hand edit of app_state.json gives a conversation such an id.
+  if (top === null) {
+    throw new ToolError(`${quoted}: this conversation has no ${WORK_VIRTUAL_ROOT} folder, as its id can name no folder. `
+      + `This is a fault of Dez, not of your call: tell the user. Use ${APPS_VIRTUAL_ROOT}/ in its place.`)
+  }
+  const rest = text.slice(top.virtual.length + 1).replace(/\/$/, '')
+  if (rest === '') return pathOf(top, [])
 
   const names = rest.split('/')
-  if (names.length > MAX_PATH_NAMES) throw new ToolError(`The path ${quoted} has ${names.length} names after ${APPS_VIRTUAL_ROOT}/, and a path has at most ${MAX_PATH_NAMES}.`)
+  if (names.length > MAX_PATH_NAMES) throw new ToolError(`The path ${quoted} has ${names.length} names after ${top.virtual}/, and a path has at most ${MAX_PATH_NAMES}.`)
   for (const name of names) {
     if (name === '') throw new ToolError(`The path ${quoted} has an empty name: two "/" with nothing between them.`)
     if (name === '.' || name === '..') {
-      throw new ToolError(`The path ${quoted} holds "${name}", which the apps tool does not resolve. Give the whole path from ${APPS_VIRTUAL_ROOT}/, ${PATH_PARAMETER}`)
+      throw new ToolError(`The path ${quoted} holds "${name}", which the apps tool does not resolve. Give the whole path from ${top.virtual}/, as in "${topExample(top)}".`)
     }
     if (!isPathName(name)) {
       throw new ToolError(`The path ${quoted} holds the name ${JSON.stringify(name)}, which the apps tool does not take. `
@@ -535,12 +765,12 @@ export function appsPath(value: unknown, parameter: string): AppsPath {
     }
     if (name.length > MAX_NAME_LENGTH) throw new ToolError(`The path ${quoted} holds a name of ${name.length} characters, and a name has at most ${MAX_NAME_LENGTH}.`)
   }
-  return pathOf(names)
+  return pathOf(top, names)
 }
 
-// The folder names that `withoutLocalPaths` takes for the start of a path
-// of the computer (the top comment).
-const HIDDEN_NAMES = ['home', 'Users']
+/** The folder names that `withoutLocalPaths` takes for the start of a
+ *  path of the computer (the top comment): no call makes a path with one. */
+export const HIDDEN_NAMES = ['home', 'Users']
 
 // Throws for a path that a call would make and that a later result could
 // not show.
@@ -551,20 +781,50 @@ function checkNewNames(path: AppsPath): void {
     + 'Dez takes such a path for a path of the user\'s computer and hides it from you. Use another name.')
 }
 
+// Throws for a path that a call would make, change, move, or delete in
+// `/libs` or in a built-in app: Dez ships those files, and the native side
+// refuses to change them too, with a text that tells the model less.
+function checkChangeable(path: AppsPath): void {
+  if (path.top.place === 'libs') {
+    throw new ToolError(`${path.virtual}: ${LIBS_VIRTUAL_ROOT}/ holds the libraries that Dez ships, and no call makes, changes, moves, or deletes a file there. `
+      + `To change a file of it, copy it into ${WORK_VIRTUAL_ROOT}/ or into an app of your own with read and write.`)
+  }
+  if (path.root !== 'resource') return
+  throw new ToolError(`${path.virtual}: the names of apps that start with "${BUILT_IN_APP_PREFIX}" are for the built-in apps of Dez, `
+    + 'and no call makes, changes, moves, or deletes a file there. Give an app of your own another name. '
+    + 'To change a built-in app, copy its files into an app of your own with read and write.')
+}
+
 /** The folder of the app that a call names with `name`. Throws a
  *  `ToolError` for a text that is no name of an app. */
 export function appNamed(name: string): AppsPath {
   if (!isAppName(name)) throw new ToolError(`${JSON.stringify(startOf(name, 100))} is no name for an app. ${APP_NAME_RULE}`)
-  return pathOf([name])
+  return pathIn(APPS_ROOT, name)
 }
 
-// The path of a file of an app that the parameter `parameter` names.
-function filePath(args: SubcommandArguments, parameter: string): AppsPath {
-  const path = appsPath(args[parameter], parameter)
-  if (path.names.length >= 2) return path
-  throw new ToolError(path.names.length === 0
+// The path of a file that the parameter `parameter` names: in an app, or
+// directly in `/libs` or `/work`.
+function filePath(args: SubcommandArguments, parameter: string, conversationId: string): AppsPath {
+  const path = appsPath(args[parameter], parameter, conversationId)
+  if (path.names.length > unitDepth(path.top)) return path
+  if (isAppFolder(path)) throw new ToolError(`${path.virtual} is the folder of an app, not a file. Give the path of a file in it, as in "${path.virtual}/main.js".`)
+  throw new ToolError(path.top.place === 'apps'
     ? `${path.virtual} is the folder of all apps, not a file. Give the path of a file of an app, ${PATH_PARAMETER}`
-    : `${path.virtual} is the folder of an app, not a file. Give the path of a file in it, as in "${path.virtual}/main.js".`)
+    : `${path.virtual} is ${topName(path.top)}, not a file. Give the path of a file in it. Call ls with "${path.virtual}" to see what is there.`)
+}
+
+/** The text of a call on `/libs` while it is not there: Dez is not
+ *  installed in full. */
+const NO_LIBS = `${LIBS_VIRTUAL_ROOT} is not there: Dez is not installed in full. This is a fault of Dez, not of your call: tell the user to install Dez again.`
+
+/** The listing `tree` of `path` as `ls`, `find`, and `grep` read it: the
+ *  work folder of a conversation, which Dez makes at the first change in
+ *  it, is an empty folder before. Throws for a `/libs` that is not
+ *  there. */
+export function listingOf(path: AppsPath, tree: AppsTree): AppsTree {
+  if (tree.kind !== 'missing' || path.names.length > 0) return tree
+  if (path.top.place === 'libs') throw new ToolError(NO_LIBS)
+  return path.top.place === 'work' ? { kind: 'folder', size: 0, entries: [], more: false } : tree
 }
 
 /** The values of a call that `checkArgumentValues` checked: each one is of
@@ -617,6 +877,28 @@ export interface AppsTree {
 /** What is at a path, with nothing of what is below it. */
 export type PathFacts = Pick<AppsTree, 'kind' | 'size'>
 
+/** The listing of `/apps`, from the listings of the two places of the
+ *  apps, each with `maxEntries`: `own` of the apps folder of the app root,
+ *  and `builtIn` of the built-in apps of the resource root. Each place
+ *  gives only its own names (`pathOf`): a `dez-` folder of `own` is one of
+ *  an older Dez, which no path reaches, and so is a folder of `builtIn`
+ *  with another name. The entries stay in the order of a native listing:
+ *  those nearer to the folder first. */
+export function appsRootTree<T extends AppsTree>(own: T, builtIn: T, maxEntries: number): T {
+  const appName = (entry: AppsTreeEntry) => entry.path.split('/', 1)[0]
+  const depth = (entry: AppsTreeEntry) => entry.path.split('/').length
+  const entries = [
+    ...builtIn.entries.filter((entry) => isBuiltInApp(appName(entry))),
+    ...own.entries.filter((entry) => !isBuiltInApp(appName(entry))),
+  ].sort((a, b) => depth(a) - depth(b))
+  return {
+    ...own,
+    kind: own.kind === 'folder' || builtIn.kind === 'folder' ? 'folder' : own.kind,
+    entries: entries.slice(0, maxEntries),
+    more: own.more || builtIn.more || entries.length > maxEntries,
+  } as T
+}
+
 const OTHER_KIND = 'a link or a special file'
 
 /** What an entry is, in a text for a model: `a file`, `a folder`. */
@@ -660,26 +942,49 @@ export function checkAppIsThere(app: AppsPath, facts: PathFacts): void {
     : `${app.virtual} is ${kindName(facts.kind)} and no folder, so it is no app. list_apps shows the apps.`)
 }
 
-// The folders from the app of `folder` down to `folder` that the listing
-// of the app does not have, the top one first. Throws when one of them is
-// there and is no folder.
-function foldersToMake(folder: AppsPath, app: AppsTree): AppsPath[] {
-  const kinds = new Map(app.entries.map((entry) => [entry.path, entry.kind]))
+// The folders from the unit of `folder` (`unitOf`) down to `folder` that
+// `unit`, the listing of the unit, does not have, the top one first.
+// Throws when one of them is there and is no folder. The listing of the
+// work folder can hold only a part of it (it has no cap): a folder that is
+// there and not in the listing is made again, which changes nothing.
+function foldersToMake(folder: AppsPath, unit: AppsTree): AppsPath[] {
+  const kinds = new Map(unit.entries.map((entry) => [entry.path, entry.kind]))
+  const unitNames = unitDepth(folder.top)
   const missing: AppsPath[] = []
-  for (let depth = 2; depth <= folder.names.length; depth += 1) {
-    const step = pathOf(folder.names.slice(0, depth))
-    const kind = kinds.get(step.names.slice(1).join('/'))
+  for (let depth = unitNames + 1; depth <= folder.names.length; depth += 1) {
+    const step = pathOf(folder.top, folder.names.slice(0, depth))
+    const kind = kinds.get(step.names.slice(unitNames).join('/'))
     if (kind === undefined) missing.push(step)
     else if (kind !== 'folder') throw new ToolError(`${step.virtual} is ${kindName(kind)}, so nothing can be in it.`)
   }
   return missing
 }
 
+// The folder that a change makes before it writes in `folder`, with the
+// missing ones above it: the last of `missing` (`foldersToMake`), or the
+// work folder of the conversation while it is not there; null when every
+// folder is there. Dez makes the work folder only at a change in it.
+function folderToMake(folder: AppsPath, missing: readonly AppsPath[], unit: AppsTree): AppsPath | null {
+  return missing.at(-1) ?? (unit.kind === 'missing' ? unitOf(folder) : null)
+}
+
+/** Whether the caps of an app (`checkAppRoom`) hold for a change at
+ *  `path`: only in `/apps`. */
+export function capsHold(path: AppsPath): boolean {
+  return path.top.place === 'apps'
+}
+
+// Throws unless a change at `path` has the unit that it needs: in `/apps`
+// its app (`unit` is the listing of the unit).
+function checkUnitIsThere(path: AppsPath, unit: AppsTree): void {
+  if (path.top.place === 'apps') checkAppIsThere(unitOf(path), unit)
+}
+
 /** Throws when the app `app` has no room for what a call adds: `entries`
  *  new files and folders, and `bytes` more bytes. `tree` is the listing of
  *  the app with `APPS_MAX_ENTRIES`. A call that adds nothing passes, also
  *  in an app that is over a limit: a model must be able to make a file of
- *  such an app smaller. */
+ *  such an app smaller. Call it only where the caps hold (`capsHold`). */
 export function checkAppRoom(app: AppsPath, tree: AppsTree, added: { entries: number, bytes: number }): void {
   if (added.entries <= 0 && added.bytes <= 0) return
   const advice = `${APP_LIMITS} Delete files of the app with rm first.`
@@ -692,6 +997,11 @@ export function checkAppRoom(app: AppsPath, tree: AppsTree, added: { entries: nu
   if (added.bytes > 0 && bytes + added.bytes > APPS_MAX_BYTES) {
     throw new ToolError(`The app ${app.virtual} has ${byteSizeText(bytes)}, and this call would add ${byteSizeText(added.bytes)}. ${advice}`)
   }
+}
+
+// `checkAppRoom` for a change at `path` where the caps hold.
+function checkUnitRoom(path: AppsPath, unit: AppsTree, added: { entries: number, bytes: number }): void {
+  if (capsHold(path)) checkAppRoom(unitOf(path), unit, added)
 }
 
 /** The error of a file operation that failed for a cause that Dez did not
@@ -714,6 +1024,7 @@ export interface InitCall {
 export function initCall(args: SubcommandArguments): InitCall {
   const app = appNamed(textArgument(args, 'name').trim())
   const [name] = app.names
+  checkChangeable(app)
   checkNewNames(app)
 
   const kindText = textArgument(args, 'kind').trim()
@@ -728,7 +1039,7 @@ export function initCall(args: SubcommandArguments): InitCall {
   }
 
   const manifest: AppManifest = { name, description, kind }
-  return { app, manifest, files: appTemplateFiles(manifest).map((file) => ({ path: pathOf([name, file.name]), content: file.content })) }
+  return { app, manifest, files: appTemplateFiles(manifest).map((file) => ({ path: pathIn(app, file.name), content: file.content })) }
 }
 
 /** Throws when something is at the path of the new app already. */
@@ -761,8 +1072,8 @@ export interface ReadCall {
   ranges: ReadRange[]
 }
 
-export function readCall(args: SubcommandArguments): ReadCall {
-  const path = filePath(args, 'path')
+export function readCall(args: SubcommandArguments, conversationId: string): ReadCall {
+  const path = filePath(args, 'path', conversationId)
   const ranges = objectItems(args, 'ranges').map((range): ReadRange => ({
     // The argument check makes `from_line` required.
     fromLine: integerArgument(range, 'from_line') ?? 1,
@@ -914,8 +1225,9 @@ export interface WriteCall {
   lines: number
 }
 
-export function writeCall(args: SubcommandArguments): WriteCall {
-  const path = filePath(args, 'path')
+export function writeCall(args: SubcommandArguments, conversationId: string): WriteCall {
+  const path = filePath(args, 'path', conversationId)
+  checkChangeable(path)
   checkNewNames(path)
   const content = textArgument(args, 'content')
   const bytes = new TextEncoder().encode(content)
@@ -928,21 +1240,21 @@ export function writeCall(args: SubcommandArguments): WriteCall {
 
 /** What a `write` call does before it writes: the folder to make (it and
  *  the missing ones above it), and the size of the file that it replaces;
- *  null for none. `target` is what is at the path, and `app` the listing
- *  of its app with `APPS_MAX_ENTRIES`. Throws when the app is not there,
- *  when a folder or a link is at the path or a file is where a folder must
- *  be, and when the app has no room. */
-export function writePlan(call: WriteCall, target: PathFacts, app: AppsTree): { folder: AppsPath | null, replaced: number | null } {
+ *  null for none. `target` is what is at the path, and `unit` the listing
+ *  of its unit (`unitOf`) with `APPS_MAX_ENTRIES`. Throws when the app is
+ *  not there, when a folder or a link is at the path or a file is where a
+ *  folder must be, and when the app has no room. */
+export function writePlan(call: WriteCall, target: PathFacts, unit: AppsTree): { folder: AppsPath | null, replaced: number | null } {
   const { path } = call
-  checkAppIsThere(appOf(path), app)
+  checkUnitIsThere(path, unit)
   if (target.kind === 'folder') throw new ToolError(`${path.virtual} is a folder. Give the path of a file, as in "${path.virtual}/main.js".`)
   if (target.kind === 'other') throw new ToolError(`${path.virtual} is ${OTHER_KIND}, and the apps tool writes plain files only. Give another path.`)
   const replaced = target.kind === 'file' ? target.size : null
   // The folders of a file that is there are there too. The listing of an
   // app that is over its limit can lack them.
-  const missing = replaced === null ? foldersToMake(parentOf(path), app) : []
-  checkAppRoom(appOf(path), app, { entries: missing.length + (replaced === null ? 1 : 0), bytes: call.bytes.length - (replaced ?? 0) })
-  return { folder: missing.at(-1) ?? null, replaced }
+  const missing = replaced === null ? foldersToMake(parentOf(path), unit) : []
+  checkUnitRoom(path, unit, { entries: missing.length + (replaced === null ? 1 : 0), bytes: call.bytes.length - (replaced ?? 0) })
+  return { folder: replaced === null ? folderToMake(parentOf(path), missing, unit) : null, replaced }
 }
 
 export function writeText({ path, bytes, lines }: WriteCall, replaced: number | null): string {
@@ -957,8 +1269,9 @@ export interface EditCall {
   edits: LineEdit[]
 }
 
-export function editCall(args: SubcommandArguments): EditCall {
-  const path = filePath(args, 'path')
+export function editCall(args: SubcommandArguments, conversationId: string): EditCall {
+  const path = filePath(args, 'path', conversationId)
+  checkChangeable(path)
   const edits = objectItems(args, 'edits').map((edit): LineEdit => ({
     fromLine: integerArgument(edit, 'from_line'),
     toLine: integerArgument(edit, 'to_line'),
@@ -1070,12 +1383,18 @@ export const RM_LISTED_ENTRIES = APPS_MAX_ENTRIES
 
 /** The paths that an `rm` call deletes: each one once, and none that is in
  *  a folder of the call, as the delete of that folder deletes it. Throws
- *  for an empty list, and for the folder of all apps. */
-export function rmCall(args: SubcommandArguments): { paths: AppsPath[] } {
-  const all = textItems(args, 'paths').map((value) => appsPath(value, 'paths'))
+ *  for an empty list, for a top folder, and for a path that no call
+ *  changes. */
+export function rmCall(args: SubcommandArguments, conversationId: string): { paths: AppsPath[] } {
+  const all = textItems(args, 'paths').map((value) => appsPath(value, 'paths', conversationId))
   if (all.length === 0) throw new ToolError(`\`paths\` is an empty list. Give the paths to delete, as in {"paths": ["${APPS_VIRTUAL_ROOT}/${EXAMPLE_APP}/old.js"]}.`)
-  if (all.some((path) => path.names.length === 0)) {
-    throw new ToolError(`${APPS_VIRTUAL_ROOT} is the folder of all apps, and rm does not delete it. To delete an app, give its folder, as in "${APPS_VIRTUAL_ROOT}/${EXAMPLE_APP}".`)
+  for (const path of all) {
+    checkChangeable(path)
+    if (path.names.length > 0) continue
+    throw new ToolError(path.top.place === 'apps'
+      ? `${APPS_VIRTUAL_ROOT} is the folder of all apps, and rm does not delete it. To delete an app, give its folder, as in "${APPS_VIRTUAL_ROOT}/${EXAMPLE_APP}".`
+      : `${path.virtual} is ${topName(path.top)}, and rm does not delete it: it goes with the conversation. `
+        + `To delete what is in it, give the paths in it, as in "${path.virtual}/old.json".`)
   }
   const unique = all.filter((path, index) => all.findIndex((other) => other.file === path.file) === index)
   return { paths: unique.filter((path) => !unique.some((folder) => isBelow(path, folder))) }
@@ -1116,18 +1435,20 @@ export interface Move {
   to: AppsPath
 }
 
-/** The moves of an `mv` call. Throws for an empty list, for the folder of
- *  all apps on either side, and for a `to` that the tool does not make: a
- *  path directly in `/apps/` whose name is no name of an app, or a path
- *  with a name of `HIDDEN_NAMES`. */
-export function mvCall(args: SubcommandArguments): { moves: Move[] } {
-  const moves = objectItems(args, 'moves').map((move): Move => ({ from: appsPath(move.from, 'from'), to: appsPath(move.to, 'to') }))
+/** The moves of an `mv` call. Throws for an empty list, for a top folder
+ *  on either side, for a path that no call changes, and for a `to` that
+ *  the tool does not make: a path directly in `/apps/` whose name is no
+ *  name of an app, or a path with a name of `HIDDEN_NAMES`. */
+export function mvCall(args: SubcommandArguments, conversationId: string): { moves: Move[] } {
+  const moves = objectItems(args, 'moves').map((move): Move => ({ from: appsPath(move.from, 'from', conversationId), to: appsPath(move.to, 'to', conversationId) }))
   const example = `{"moves": [{"from": "${APPS_VIRTUAL_ROOT}/${EXAMPLE_APP}/units.js", "to": "${APPS_VIRTUAL_ROOT}/${EXAMPLE_APP}/lib/units.js"}]}`
   if (moves.length === 0) throw new ToolError(`\`moves\` is an empty list. Give the moves, as in ${example}.`)
   for (const { from, to } of moves) {
-    if (from.names.length === 0) throw new ToolError(`${APPS_VIRTUAL_ROOT} is the folder of all apps, and mv does not move it.`)
-    if (to.names.length === 0) throw new ToolError(`\`to\` is ${APPS_VIRTUAL_ROOT}, the folder of all apps. Give the full new path of what you move, as in ${example}.`)
-    if (to.names.length === 1 && !isAppName(to.names[0])) {
+    checkChangeable(from)
+    if (from.names.length === 0) throw new ToolError(`${from.virtual} is ${topName(from.top)}, and mv does not move it.`)
+    checkChangeable(to)
+    if (to.names.length === 0) throw new ToolError(`\`to\` is ${to.virtual}, ${topName(to.top)}. Give the full new path of what you move, as in ${example}.`)
+    if (isAppFolder(to) && !isAppName(to.names[0])) {
       throw new ToolError(`${to.virtual} is directly in ${APPS_VIRTUAL_ROOT}/, where only the folders of apps are, and "${to.names[0]}" is no name for an app. ${APP_NAME_RULE} `
         + `To move into an app, give the full new path, as in "${APPS_VIRTUAL_ROOT}/${EXAMPLE_APP}/${from.names.at(-1)}".`)
     }
@@ -1140,8 +1461,8 @@ export function mvCall(args: SubcommandArguments): { moves: Move[] } {
 export interface MoveFacts {
   source: PathFacts
   target: PathFacts
-  /** The listing of the app of `to`, with `APPS_MAX_ENTRIES`. */
-  app: AppsTree
+  /** The listing of the unit of `to` (`unitOf`), with `APPS_MAX_ENTRIES`. */
+  unit: AppsTree
 }
 
 /** What `mv` does for one move: the folder to make first (it and the
@@ -1160,20 +1481,20 @@ export function moveStep({ from, to }: Move, facts: MoveFacts): { folder: AppsPa
     throw new ToolError(`${to.virtual} is taken: ${kindName(target.kind)} is there already, and a move replaces nothing. Delete it with rm first, or give another \`to\`.`)
   }
 
-  if (to.names.length === 1) {
+  if (isAppFolder(to)) {
     if (source.kind === 'file') {
       throw new ToolError(`${to.virtual} would be a file directly in ${APPS_VIRTUAL_ROOT}/, where only the folders of apps are. Give a path in an app, as in "${APPS_VIRTUAL_ROOT}/${EXAMPLE_APP}/${from.names.at(-1)}".`)
     }
     return {
       folder: null,
-      text: from.names.length === 1
+      text: isAppFolder(from)
         ? `Renamed the app ${from.virtual} to ${to.virtual}. Its manifest.json still has the old name: change "name" in it with edit.`
         : `Moved the folder ${from.virtual} to ${to.virtual}, where it is an app now. An app needs a manifest.json: write one if it has none.`,
     }
   }
 
-  checkAppIsThere(appOf(to), facts.app)
-  return { folder: foldersToMake(parentOf(to), facts.app).at(-1) ?? null, text: `Moved ${from.virtual} to ${to.virtual}.` }
+  checkUnitIsThere(to, facts.unit)
+  return { folder: folderToMake(parentOf(to), foldersToMake(parentOf(to), facts.unit), facts.unit), text: `Moved ${from.virtual} to ${to.virtual}.` }
 }
 
 export function mvResult(outcomes: readonly ItemOutcome[]): { content: string, isError: boolean } {
@@ -1181,39 +1502,41 @@ export function mvResult(outcomes: readonly ItemOutcome[]): { content: string, i
   return itemsResult(`Did ${passed} of ${countOf(outcomes.length, 'move')}.`, outcomes)
 }
 
-export function mkdirCall(args: SubcommandArguments): { path: AppsPath } {
-  const path = appsPath(args.path, 'path')
-  if (path.names.length < 2) {
-    throw new ToolError(`mkdir makes folders in an app only, as in "${APPS_VIRTUAL_ROOT}/${EXAMPLE_APP}/data", and ${path.virtual} is ${path.names.length === 0 ? 'the folder of all apps' : 'the folder of an app'}. `
-      + 'init makes a new app.')
+export function mkdirCall(args: SubcommandArguments, conversationId: string): { path: AppsPath } {
+  const path = appsPath(args.path, 'path', conversationId)
+  if (path.top.place === 'apps' && path.names.length < 2) {
+    throw new ToolError(`mkdir makes folders in an app or in ${WORK_VIRTUAL_ROOT}, as in "${APPS_VIRTUAL_ROOT}/${EXAMPLE_APP}/data", `
+      + `and ${path.virtual} is ${path.names.length === 0 ? 'the folder of all apps' : 'the folder of an app'}. init makes a new app.`)
   }
+  checkChangeable(path)
   checkNewNames(path)
   return { path }
 }
 
 /** What an `mkdir` call does: whether it makes the folder, and the result
- *  text. `target` is what is at the path, and `app` the listing of its app
- *  with `APPS_MAX_ENTRIES`. Throws when the app is not there, when a file
- *  is at the path or where a folder must be, and when the app has no
- *  room. */
-export function mkdirStep(path: AppsPath, target: PathFacts, app: AppsTree): { make: boolean, text: string } {
+ *  text. `target` is what is at the path, and `unit` the listing of its
+ *  unit (`unitOf`) with `APPS_MAX_ENTRIES`. Throws when the app is not
+ *  there, when a file is at the path or where a folder must be, and when
+ *  the app has no room. */
+export function mkdirStep(path: AppsPath, target: PathFacts, unit: AppsTree): { make: boolean, text: string } {
   if (target.kind === 'folder') return { make: false, text: `The folder ${path.virtual} is there already.` }
   if (target.kind !== 'missing') throw new ToolError(`${path.virtual} is ${kindName(target.kind)}, so Dez makes no folder there. Give another path.`)
-  checkAppIsThere(appOf(path), app)
-  const missing = foldersToMake(path, app)
-  checkAppRoom(appOf(path), app, { entries: missing.length, bytes: 0 })
+  checkUnitIsThere(path, unit)
+  const missing = foldersToMake(path, unit)
+  checkUnitRoom(path, unit, { entries: missing.length, bytes: 0 })
   const above = missing.slice(0, -1).map((folder) => folder.virtual)
   return { make: true, text: `Made the folder ${path.virtual}${above.length === 0 ? '' : `, and above it ${above.join(' and ')}`}.` }
 }
 
-/** The folder that the `path` of a call names: the folder of all apps for
- *  a call with no `path`. */
-export function folderArgument(args: SubcommandArguments): AppsPath {
-  return args.path === undefined ? APPS_ROOT : appsPath(args.path, 'path')
+/** The folder that the `path` of a call of the conversation
+ *  `conversationId` names: the folder of all apps for a call with no
+ *  `path`. */
+export function folderArgument(args: SubcommandArguments, conversationId: string): AppsPath {
+  return args.path === undefined ? APPS_ROOT : appsPath(args.path, 'path', conversationId)
 }
 
-export function lsCall(args: SubcommandArguments): { path: AppsPath } {
-  return { path: folderArgument(args) }
+export function lsCall(args: SubcommandArguments, conversationId: string): { path: AppsPath } {
+  return { path: folderArgument(args, conversationId) }
 }
 
 /** The text of a call on the folder of all apps while there is none. */
@@ -1221,7 +1544,7 @@ export const NO_APPS = 'There are no apps yet. Make one with init.'
 
 /** The refusal of a call that names a folder where nothing is. */
 export function noFolderError(path: AppsPath): ToolError {
-  return new ToolError(path.names.length === 1
+  return new ToolError(isAppFolder(path)
     ? `There is no app ${path.virtual}. Call list_apps to see the apps that are there.`
     : `There is no folder ${path.virtual}. Call ls with "${parentOf(path).virtual}" to see what is there.`)
 }
@@ -1237,15 +1560,16 @@ export function cutListingNote(subcommand: 'find' | 'grep'): string {
  *  bytes of the files below it. `tree` is the listing of the path with
  *  `LS_MAX_ENTRIES`. A path that is a file gives the facts of the file.
  *  Throws when nothing is at the path. */
-export function lsText(path: AppsPath, tree: AppsTree): string {
-  const isRoot = path.names.length === 0
+export function lsText(path: AppsPath, listing: AppsTree): string {
+  const tree = listingOf(path, listing)
+  const isAppsRoot = path.top.place === 'apps' && path.names.length === 0
   if (tree.kind === 'missing') {
-    if (isRoot) return NO_APPS
+    if (isAppsRoot) return NO_APPS
     throw noFolderError(path)
   }
   if (tree.kind === 'file') return `${path.virtual} is a file (${byteSizeText(tree.size)}), not a folder. read gives its text.`
   if (tree.kind === 'other') return `${path.virtual} is ${OTHER_KIND}, not a folder.`
-  if (tree.entries.length === 0) return isRoot ? NO_APPS : `${path.virtual} is an empty folder.`
+  if (tree.entries.length === 0) return isAppsRoot ? NO_APPS : `${path.virtual} is an empty folder.`
 
   // One row for each name in the folder. The entries below a folder add
   // to its row, in whatever order the listing has them.
@@ -1271,7 +1595,8 @@ export function lsText(path: AppsPath, tree: AppsTree): string {
   const texts = sorted.slice(0, LS_MAX_ROWS).map((row) => {
     const name = shownEntryPath(row.name)
     const unusable = name === row.name ? '' : ' | a name that the apps tool does not take'
-    if (row.kind === 'folder') return `${name}/ | ${atLeast}${countOf(row.files, 'file')}, ${byteSizeText(row.bytes)}${unusable}`
+    const builtIn = isAppsRoot && row.kind === 'folder' && isBuiltInApp(row.name) ? ` | ${BUILT_IN_MARK}` : ''
+    if (row.kind === 'folder') return `${name}/ | ${atLeast}${countOf(row.files, 'file')}, ${byteSizeText(row.bytes)}${unusable}${builtIn}`
     return `${name} | ${row.kind === 'file' ? byteSizeText(row.bytes) : OTHER_KIND}${unusable}`
   })
   if (sorted.length > LS_MAX_ROWS) texts.push(`… and ${countText(sorted.length - LS_MAX_ROWS)} more.`)
@@ -1292,31 +1617,33 @@ export interface FindCall {
   path: AppsPath
 }
 
-export function findCall(args: SubcommandArguments): FindCall {
+export function findCall(args: SubcommandArguments, conversationId: string): FindCall {
   const query = textArgument(args, 'query').trim()
-  return { query, terms: searchTerms(query), path: folderArgument(args) }
+  return { query, terms: searchTerms(query), path: folderArgument(args, conversationId) }
 }
 
 /** The result of a `find` call: the files below the folder at `path` whose
- *  path after `/apps/` matches the terms of the call (`textMatches`, the
- *  rule of the model picker), sorted by path. `tree` is the listing of the
- *  path with `LS_MAX_ENTRIES`. Throws when no folder is at the path. */
-export function findText({ query, terms, path }: FindCall, tree: AppsTree): string {
-  const isRoot = path.names.length === 0
+ *  path after its top folder (`/apps/`, `/libs/`, `/work/`) matches the
+ *  terms of the call (`textMatches`, the rule of the model picker), sorted
+ *  by path. `listing` is the listing of the path with `LS_MAX_ENTRIES`.
+ *  Throws when no folder is at the path. */
+export function findText({ query, terms, path }: FindCall, listing: AppsTree): string {
+  const tree = listingOf(path, listing)
+  const isAppsRoot = path.top.place === 'apps' && path.names.length === 0
   if (tree.kind === 'missing') {
-    if (isRoot) return NO_APPS
+    if (isAppsRoot) return NO_APPS
     throw noFolderError(path)
   }
   if (tree.kind !== 'folder') {
     throw new ToolError(`${path.virtual} is ${kindName(tree.kind)}, not a folder: find searches the files below a folder. `
       + `Give a folder in \`path\`, as in "${parentOf(path).virtual}".`)
   }
-  if (isRoot && tree.entries.length === 0) return NO_APPS
+  if (isAppsRoot && tree.entries.length === 0) return NO_APPS
 
-  // A row is the path after `/apps/`, the one field that the terms match,
-  // so a term can run from a folder into a file name. A row names no app
-  // as `/apps/<name>` does (appNames.ts): a list of the files of every app
-  // must not keep every app from Delete Unreferenced Apps.
+  // A row is the path after the top folder, the one field that the terms
+  // match, so a term can run from a folder into a file name. A row names
+  // no app as `/apps/<name>` does (appNames.ts): a list of the files of
+  // every app must not keep every app from Delete Unreferenced Apps.
   const files = tree.entries.flatMap((entry) => (entry.kind === 'file' ? [[...path.names, entry.path].join('/')] : []))
   const cut = tree.more ? cutListingNote('find') : ''
   if (files.length === 0) return `${path.virtual} has no files.${cut}`
@@ -1337,20 +1664,20 @@ export function findText({ query, terms, path }: FindCall, tree: AppsTree): stri
   const count = terms.length === 0
     ? countOf(files.length, 'file')
     : `${matches.length} of ${countOf(files.length, 'file')} ${matches.length === 1 ? 'matches' : 'match'} ${quotedQuery}`
-  return [`${path.virtual}: ${count} (paths after ${APPS_VIRTUAL_ROOT}/), by path.${cut}`, ...rows].join('\n')
+  return [`${path.virtual}: ${count} (paths after ${path.top.virtual}/), by path.${cut}`, ...rows].join('\n')
 }
 
 /** The paths of a `wc` call, in its order. A path that the call gives
  *  twice gives two rows, as in `wc`. Throws for an empty list, for a list
  *  of more than `WC_MAX_PATHS`, and for a value that is no path of the
  *  tool. */
-export function wcCall(args: SubcommandArguments): { paths: AppsPath[] } {
+export function wcCall(args: SubcommandArguments, conversationId: string): { paths: AppsPath[] } {
   const values = textItems(args, 'paths')
   if (values.length === 0) throw new ToolError(`\`paths\` is an empty list. Give the files to count, as in {"paths": ["${EXAMPLE_FILE}"]}.`)
   if (values.length > WC_MAX_PATHS) {
     throw new ToolError(`\`paths\` has ${countText(values.length)} paths, and wc counts at most ${WC_MAX_PATHS} files in one call. Call wc again for the rest.`)
   }
-  return { paths: values.map((value) => appsPath(value, 'paths')) }
+  return { paths: values.map((value) => appsPath(value, 'paths', conversationId)) }
 }
 
 // The row of `wc` for a file of `size` bytes, more than `read` takes: it
@@ -1446,14 +1773,14 @@ export function hasReadableManifest(tree: AppsTree): boolean {
 
 const MANIFEST_NEEDS = `a JSON object with "name", "description", and "kind", which is ${APP_KINDS.map((kind) => `"${kind}"`).join(' or ')}`
 
-/** The kind of the app at `app`, as its manifest tells it: the first
+/** The manifest of the app at `app`, with the kind of the app: the first
  *  check of a subcommand that works only on one kind of app (`invoke`,
  *  `show`). `facts` is what is at `manifest`, the path of the manifest,
  *  and `bytes` are the bytes of that file, null when Dez did not read it
  *  (`isReadableManifest`). Throws a `ToolError` for a manifest that is
  *  missing, that Dez does not read, or that is not valid; `notDone` is its
  *  last sentence, which tells what Dez did not do. */
-export function checkedAppKind(app: AppsPath, manifest: AppsPath, facts: PathFacts, bytes: Uint8Array | null, notDone: string): AppKind {
+export function checkedManifest(app: AppsPath, manifest: AppsPath, facts: PathFacts, bytes: Uint8Array | null, notDone: string): AppManifest {
   if (facts.kind === 'missing') {
     throw new ToolError(`The app ${app.virtual} has no ${MANIFEST_FILE}, so Dez does not know its kind. Write ${manifest.virtual}: ${MANIFEST_NEEDS}. ${notDone}`)
   }
@@ -1465,7 +1792,17 @@ export function checkedAppKind(app: AppsPath, manifest: AppsPath, facts: PathFac
   if (!parsed) {
     throw new ToolError(`${manifest.virtual} is not valid, so Dez does not know the kind of the app. Write it again: ${MANIFEST_NEEDS}. ${notDone}`)
   }
-  return parsed.kind
+  return parsed
+}
+
+/** Throws a `ToolError` for a built-in app of the kind `ui`: Dez ships
+ *  only script apps, and no app frame serves the files of the resource
+ *  root (src-tauri/src/app_frames.rs). `notDone` is the last sentence of
+ *  the text, as in `checkedManifest`. */
+export function checkBuiltInKind(app: AppsPath, kind: AppKind, notDone: string): void {
+  if (app.root !== 'resource' || kind !== 'ui') return
+  throw new ToolError(`${app.virtual} is a built-in app of Dez with the kind "ui", and Dez shows and runs no built-in UI app. `
+    + `This is a fault of Dez, not of your call: tell the user. ${notDone}`)
 }
 
 /** The kind and the description of an app for a list, each with no column
@@ -1510,7 +1847,8 @@ export function listAppsText(call: ListAppsCall, apps: readonly ListedApp[]): st
   }
   const rows = sorted.slice(0, LIST_APPS_MAX_ROWS).map(({ app, size }) => {
     const [kind, description] = manifestColumns(app)
-    return [app.name, kind, appSizeText(size), description].join(' | ')
+    const shownKind = isBuiltInApp(app.name) ? `${kind} (${BUILT_IN_MARK})` : kind
+    return [app.name, shownKind, appSizeText(size), description].join(' | ')
   })
   if (sorted.length > LIST_APPS_MAX_ROWS) rows.push(`… and ${countText(sorted.length - LIST_APPS_MAX_ROWS)} more. Use \`name\` to get a shorter list.`)
 

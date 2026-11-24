@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { longDuration, shortDuration } from '../../src/view/thread/pillDuration'
+import { longDuration, longLiveDuration, shortDuration } from '../../src/utils/durationText'
 import { consoleErrors, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
 import { makeConversation, seedConversation } from './harness/fixtures'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
@@ -8,22 +8,23 @@ import type { E2EBrowser } from './harness/session'
 import { activeTabStreaming, newTab, pressRolePill, rolePillHeights, savedPillLines, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
 
 // The reply time at the end of agent role pills, through the real app
-// against a mock server in this process: no time while a reply streams, the
-// time after it ends, in the conversation file, and again after a relaunch.
+// against a mock server in this process: a time that counts while a reply
+// streams, the time that the reply took after it ends, in the conversation
+// file, and again after a relaunch.
 //
 // One app session serves the whole file. The relaunch test reopens the
 // conversation of the first test.
 
 const PROVIDER: MockProvider = { id: 'duration', name: 'Duration Mock', modelId: 'duration-model', modelName: 'Duration Model' }
 const MODEL_KEY = mockModelKey(PROVIDER)
-// The mock holds the reply open this long, so the time is over a second.
-const HOLD_MS = 1200
 
 /** The reply time part of a role pill, or null when the pill shows none. */
 interface PillTime {
   text: string
   title: string
   ariaLabel: string
+  /** Whether the time counts. */
+  live: boolean
 }
 
 interface PillView {
@@ -34,7 +35,13 @@ interface PillView {
 
 function expectedTime (durationMs: number): PillTime {
   const description = `Reply took ${longDuration(durationMs)}`
-  return { text: shortDuration(durationMs), title: description, ariaLabel: description }
+  return { text: shortDuration(durationMs), title: description, ariaLabel: description, live: false }
+}
+
+/** The time of a pill whose reply runs, at `seconds` whole seconds. */
+function liveTime (seconds: number): PillTime {
+  const description = `Reply running for ${longLiveDuration(seconds * 1000)}`
+  return { text: `${seconds}s`, title: description, ariaLabel: description, live: true }
 }
 
 describe('reply duration', () => {
@@ -51,7 +58,7 @@ describe('reply duration', () => {
         return {
           index: Number(separator.dataset.sectionIndex),
           role: separator.dataset.role ?? '',
-          time: time ? { text: time.textContent ?? '', title: time.title, ariaLabel: time.getAttribute('aria-label') ?? '' } : null,
+          time: time ? { text: time.textContent ?? '', title: time.title, ariaLabel: time.getAttribute('aria-label') ?? '', live: time.classList.contains('dez-role-separator__duration--live') } : null,
         }
       })
     )
@@ -89,7 +96,7 @@ describe('reply duration', () => {
     await setup?.stop()
   })
 
-  it('shows no time while the reply streams, then the time it took, and saves it', async () => {
+  it('counts the time while the reply streams, then shows the time it took, and saves it', async () => {
     await submit(browser, 'How long?')
     const request = await setup.mock.waitForRequest(browser)
     let release = (): void => {}
@@ -97,8 +104,9 @@ describe('reply duration', () => {
     try {
       await waitForValue(browser, 'held reply', async () => (await threadSections(browser))[1]?.text ?? null, replyText('the timer'))
       expect(await activeTabStreaming(browser)).toBe(true)
-      expect(await pills()).toEqual([{ index: 1, role: 'agent', time: null }])
-      await new Promise((resolve) => setTimeout(resolve, HOLD_MS))
+      // The time counts in whole seconds from the first second on.
+      await waitForValue(browser, 'pill at 1s', pills, [{ index: 1, role: 'agent', time: liveTime(1) }])
+      await waitForValue(browser, 'pill at 2s', pills, [{ index: 1, role: 'agent', time: liveTime(2) }])
     } finally {
       release()
     }
@@ -112,7 +120,7 @@ describe('reply duration', () => {
     const tab = await activeTab()
     const durationMs = tab.sections[1]?.durationMs
     if (durationMs === undefined) throw new Error('The reply has no duration')
-    expect(durationMs).toBeGreaterThanOrEqual(HOLD_MS)
+    expect(durationMs).toBeGreaterThanOrEqual(2000)
     await waitForValue(browser, 'pills after the reply', pills, [
       { index: 1, role: 'agent', time: expectedTime(durationMs) },
       { index: 2, role: 'user', time: null },

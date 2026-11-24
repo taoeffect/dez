@@ -6,8 +6,10 @@ import { copyLineDown, copyLineUp, deleteLine, history, historyKeymap, defaultKe
 import sbp from '@sbp/sbp'
 import { useModelState, type Prompt } from '../modelState'
 import { sameModelRef } from '../../model/chat/modelRef'
+import type { TabCostNumbers } from '../../model/chat/conversationCost'
 import { sameThinking } from '../../model/chat/thinking'
 import type { ShortcutIdOfScope } from '../../model/shortcuts'
+import type { LiveTimes } from '../../model/streams/types'
 import { debounce, throttle } from 'turtledash'
 import PromptAutocomplete from './PromptAutocomplete.vue'
 import FindDropdown from './FindDropdown.vue'
@@ -51,6 +53,7 @@ import { findExtension, findMatchStatus, findNextMatch, findQueryField, selectMa
 import { markdownTables } from '../editor/tables'
 import { deleteImageBang, deleteImageParen, markdownImages } from '../editor/images'
 import { markdownToolCalls, openToolCalls } from '../editor/toolCalls'
+import { liveTimesSource } from '../editor/liveTimes'
 import { markdownMedia } from '../editor/media'
 import { carriedAppRuns, markdownApps, syncAppFrames, type CarriedAppRun } from '../editor/apps'
 import { removeAppFrames } from '../apps/appFrameHost'
@@ -65,7 +68,7 @@ import { mentionChips } from '../editor/mentions'
 import { pasteMentions, recordCopy } from '../editor/mentionPaste'
 import { focusKeepingScrollOnMouseDown } from '../editor/focus'
 import { activeFindQuery, findState } from '../editor/findState'
-import { editsAgentText } from '../editor/agentTextEdits'
+import { applyCostChanges, costReset, tabCostSource } from '../editor/costReset'
 import { isModalOpen } from '../composables/useKeyboardShortcuts'
 
 const {
@@ -668,6 +671,9 @@ function buildState(carried?: CarriedState): EditorState {
   const sections = activeSections.value
   const models = initialSectionModels(sections)
   const pillMeta = initialPillMetadata(sections)
+  // The tab that this state shows, for good: `viewTabId` can name another
+  // tab for a tick after a switch.
+  const stateTabId = activeTabId.value
   const autocompleteKeymap = Prec.highest(
     keymap.of([
       {
@@ -821,6 +827,8 @@ function buildState(carried?: CarriedState): EditorState {
       sectionsField.init(() => models),
       modelDisplayNamesField.init(() => modelDisplayNames.value),
       streamingSectionField.init(() => activeTabStreamingSectionId.value),
+      liveTimesSource.of(() => sbp('dez.model/streams/liveTimes', stateTabId) as LiveTimes | null),
+      tabCostSource.of(() => sbp('dez.model/tabs/costNumbers', stateTabId) as TabCostNumbers),
       pillsField.init(() => pillMeta),
       thinkingExpandedField.init(() => carried?.thinking ?? new Set()),
       roleSeparators,
@@ -834,6 +842,7 @@ function buildState(carried?: CarriedState): EditorState {
       drawSelection(),
       EditorState.allowMultipleSelections.of(true),
       history(),
+      costReset(),
       autocompleteKeymap,
       findKeymap,
       editorShortcuts.of(editorShortcutKeymap()),
@@ -884,11 +893,10 @@ function buildState(carried?: CarriedState): EditorState {
           tr.state.field(sectionsField) !== tr.startState.field(sectionsField),
         )
         if ((update.docChanged || roleToggled) && !syncingViewStructure) {
-          // Before the sync, whose save then holds the mark. The view's own
-          // tab: the active tab can be another one for a tick after a switch.
-          if (viewTabId && !sbp('dez.model/tabs/agentTextEdited', viewTabId) && update.transactions.some(editsAgentText)) {
-            sbp('dez.model/tabs/markAgentTextEdited', viewTabId)
-          }
+          // Before the sync, whose save then holds the new numbers. The
+          // view's own tab: the active tab can be another one for a tick
+          // after a switch.
+          if (viewTabId) applyCostChanges(viewTabId, update.transactions)
           syncDocToStore(true)
         }
         if (update.docChanged || update.selectionSet || update.focusChanged) {

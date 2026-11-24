@@ -151,6 +151,24 @@ describe('toolBlockText and findToolBlocks', () => {
     expect(statusOf(' status=""')).toBe('error')
   })
 
+  // The time of a call goes to the model in each later request, so it must
+  // read back as written, and must never read as an argument, also for a
+  // tool that Dez does not know (whose other attributes are all arguments).
+  it('writes the time of a call after the status, reads it back, and never reads it as an argument', () => {
+    const slow: ToolBlockData = { ...MODEL_LIST_CALL, status: 'error', result: 'Failed.', durationMs: 4213 }
+    const durationOf = (value: string) => findToolBlocks(`<dez:tool id="a" name="web_search" duration-ms="${value}" q="x">\n</dez:tool>`)[0]
+
+    expect(toolBlockText(slow).split('\n')[0]).toBe('<dez:tool id="call_7Qx" name="model_list" status="error" duration-ms="4213" filter="gemini">')
+    expect(readBack(slow)).toStrictEqual([slow])
+    expect(durationOf('2500')).toMatchObject({ durationMs: 2500, arguments: { q: 'x' } })
+    // A hand edit: not whole, non-negative milliseconds.
+    for (const value of ['', '-5', '1.5', '1e3', 'soon', '99999999999999999999']) {
+      const block = durationOf(value)
+      expect(block, value).not.toHaveProperty('durationMs')
+      expect(block.arguments, value).toStrictEqual({ q: 'x' })
+    }
+  })
+
   it('writes the pictures of a call after the status and reads them back, and reads a value that is not the writer\'s form as no pictures', () => {
     const fox = { file: 'f-1.png', label: 'asset_view: the image @a.' }
     const block: ToolBlockData = {

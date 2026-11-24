@@ -7,8 +7,9 @@
 //! all in the one plugin of this module (`plugin`):
 //!
 //! - The scheme `dezapp://localhost/<name>/<path>` serves only a regular
-//!   file below `apps/<name>/` (`app_file`, `serve`). An app frame loads
-//!   from this scheme only, never from the asset protocol.
+//!   file below `apps/<name>/` (`scheme_file`, `serve`), and the libraries
+//!   that Dez ships (`LIBS_ROUTE`). An app frame loads from this scheme
+//!   only, never from the asset protocol.
 //! - Dez's client script (`CLIENT_SCRIPT`) is served as `~dez.js` in the
 //!   folder of each app, under the policy of that app. No file of an app
 //!   can have that name (`is_app_file_segment`), so the page of an app
@@ -60,6 +61,7 @@ use tauri::http::{Method, Request, Response, StatusCode, Uri, header, response};
 use tauri::plugin::{Builder, TauriPlugin};
 use tauri::{Manager, Runtime, Url, Webview};
 
+use crate::bundled_tools::LIBS_FOLDER;
 use crate::persistence::{APPS_FOLDER, FileRoot, is_app_file_segment, open_app_file};
 
 const SCHEME: &str = "dezapp";
@@ -82,6 +84,16 @@ const NO_SUCH_FILE: &str = "No such file in this app.";
 // name of a file of an app (`is_app_file_segment`).
 const CLIENT_SCRIPT: &str = include_str!("app_client.js");
 const CLIENT_SCRIPT_NAME: &str = "~dez.js";
+
+// The route of the libraries that Dez ships, in the folder of each app:
+// `dezapp://localhost/<name>/~libs/<path>` is `<path>` of `LIBS_FOLDER` of
+// Tauri's resource dir, read only. A page imports them by the names of
+// its import map (the `ui` template, src/model/tools/appTemplates.ts), as
+// a run of Deno does. The route is inside the URL prefix of each app, so
+// the policy of the app lets its page load them, and no new source. `~`
+// is in no name of a file of an app, so no file of an app can take the
+// place of a library.
+const LIBS_ROUTE: &str = "~libs";
 
 // The name of the rule list in the store of the OS.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -172,27 +184,35 @@ fn scheme_path(uri: &Uri) -> Option<&str> {
 
 // The file that a URL of the scheme names.
 #[derive(Debug, PartialEq)]
-struct AppFile<'a> {
-    // The folder name of the app.
+struct SchemeFile<'a> {
+    // The folder name of the app: the answer has the policy of this app.
     app: &'a str,
-    // The path of the file below the folder of the apps: `<app>/<path>`.
-    path: &'a str,
+    // The root of the file, and its path there: `apps/<app>/<path>` of the
+    // app root, or `libs/<path>` of the resource root.
+    root: FileRoot,
+    path: String,
 }
 
-// The file of an app that `uri` names; none for every URL that is not
+// The file that `uri` names; none for every URL that is not
 // `dezapp://localhost/<name>/<path>` with each part a plain file name
 // (`is_app_file_segment`). So a `..`, an empty part, and a `%` escape of
 // one are refused and never decoded, the folder of an app is no file (no
 // default page), and the name of the app is safe in a header value.
-fn app_file(uri: &Uri) -> Option<AppFile<'_>> {
+// `<path>` is a file of the folder of the app, or with the first part
+// `LIBS_ROUTE` (no file name of an app), a file of the shipped libraries.
+fn scheme_file(uri: &Uri) -> Option<SchemeFile<'_>> {
     let path = scheme_path(uri)?;
-    let (app, _) = path.split_once('/')?;
-    path.split('/').all(is_app_file_segment).then_some(AppFile { app, path })
+    let (app, in_app) = path.split_once('/')?;
+    let (root, path) = match in_app.split_once('/') {
+        Some((LIBS_ROUTE, in_libs)) => (FileRoot::Resource, format!("{LIBS_FOLDER}/{in_libs}")),
+        _ => (FileRoot::App, format!("{APPS_FOLDER}/{path}")),
+    };
+    (is_app_file_segment(app) && path.split('/').all(is_app_file_segment)).then_some(SchemeFile { app, root, path })
 }
 
 // The app in whose folder `uri` names Dez's client script
 // (`dezapp://localhost/<name>/~dez.js`); none for every other URL. The
-// name of the app is a plain file name, as in `app_file`.
+// name of the app is a plain file name, as in `scheme_file`.
 fn client_script_app(uri: &Uri) -> Option<&str> {
     let (app, file) = scheme_path(uri)?.split_once('/')?;
     (file == CLIENT_SCRIPT_NAME && is_app_file_segment(app)).then_some(app)
@@ -318,11 +338,11 @@ fn read_span(file: &mut (impl Read + Seek), range: Option<&str>) -> std::io::Res
 type WebviewGuards = Result<(), String>;
 
 // The answer to one request of the scheme. `guards` are those of the
-// webview of the request. `open` opens a file of the app root
-// (`open_app_file`: it refuses a path through a link and all that is no
-// regular file); it gets only a path that `app_file` passed. The client
-// script is read from no file.
-fn serve<F: Read + Seek>(request: &Request<Vec<u8>>, guards: &WebviewGuards, open: impl FnOnce(&str) -> Result<F, String>) -> Answer {
+// webview of the request. `open` opens a file of a root (`open_app_file`:
+// in the app root it refuses a path through a link and all that is no
+// regular file); it gets only a path that `scheme_file` passed. The
+// client script is read from no file.
+fn serve<F: Read + Seek>(request: &Request<Vec<u8>>, guards: &WebviewGuards, open: impl FnOnce(FileRoot, &str) -> Result<F, String>) -> Answer {
     if let Err(problem) = guards {
         // No code of an app can read this text: with a guard off, no page
         // of an app loads. The user sees it in the frame of a shown app.
@@ -347,17 +367,17 @@ fn serve<F: Read + Seek>(request: &Request<Vec<u8>>, guards: &WebviewGuards, ope
             .body(Cow::Borrowed(CLIENT_SCRIPT.as_bytes()))
             .expect("each header value is plain ASCII");
     }
-    let Some(file) = app_file(request.uri()) else {
+    let Some(file) = scheme_file(request.uri()) else {
         return refusal(StatusCode::NOT_FOUND, NO_SUCH_FILE);
     };
-    let Ok(mut opened) = open(&format!("{APPS_FOLDER}/{}", file.path)) else {
+    let Ok(mut opened) = open(file.root, &file.path) else {
         return refusal(StatusCode::NOT_FOUND, NO_SUCH_FILE);
     };
     let range = request.headers().get(header::RANGE).and_then(|value| value.to_str().ok());
     let Ok((bytes, span)) = read_span(&mut opened, range) else {
         return refusal(StatusCode::NOT_FOUND, NO_SUCH_FILE);
     };
-    let found = answer(StatusCode::OK, content_type(file.path), &app_policy(file.app)).header(header::ACCEPT_RANGES, "bytes");
+    let found = answer(StatusCode::OK, content_type(&file.path), &app_policy(file.app)).header(header::ACCEPT_RANGES, "bytes");
     let found = match span {
         Some((first, last, size)) => found
             .status(StatusCode::PARTIAL_CONTENT)
@@ -365,7 +385,7 @@ fn serve<F: Read + Seek>(request: &Request<Vec<u8>>, guards: &WebviewGuards, ope
         None => found,
     };
     // The name of the app is the one part of a header value that is no
-    // constant and no number, and `app_file` passed it.
+    // constant and no number, and `scheme_file` passed it.
     found.body(Cow::Owned(bytes)).expect("each header value is plain ASCII")
 }
 
@@ -770,7 +790,7 @@ pub fn plugin<R: Runtime>() -> TauriPlugin<R> {
                 // thread, so a large answer stops the UI for a while.
                 let guards = guards.clone();
                 tauri::async_runtime::spawn_blocking(move || {
-                    responder.respond(serve(&request, &guards, |path| open_app_file(FileRoot::App, path)));
+                    responder.respond(serve(&request, &guards, open_app_file));
                 });
             });
         })
@@ -813,9 +833,9 @@ mod tests {
         Request::builder().uri(uri).body(Vec::new()).expect("request")
     }
 
-    fn file_of(uri: &str) -> Option<(String, String)> {
+    fn file_of(uri: &str) -> Option<(String, FileRoot, String)> {
         let uri: Uri = uri.parse().ok()?;
-        app_file(&uri).map(|file| (file.app.to_string(), file.path.to_string()))
+        scheme_file(&uri).map(|file| (file.app.to_string(), file.root, file.path))
     }
 
     fn header_of<'a>(answer: &'a Answer, name: header::HeaderName) -> &'a str {
@@ -823,7 +843,7 @@ mod tests {
     }
 
     // An open that must not run: the request is refused before a file opens.
-    fn no_read(path: &str) -> Result<MemoryFile, String> {
+    fn no_read(_root: FileRoot, path: &str) -> Result<MemoryFile, String> {
         panic!("read of {path}")
     }
 
@@ -848,10 +868,15 @@ mod tests {
     }
 
     #[test]
-    fn a_url_names_a_file_only_below_the_folder_of_one_app() {
-        let named = |app: &str, path: &str| Some((app.to_string(), path.to_string()));
-        assert_eq!(file_of("dezapp://localhost/my-app/index.html"), named("my-app", "my-app/index.html"));
-        assert_eq!(file_of("dezapp://localhost/a/js/lib/x.js?v=1"), named("a", "a/js/lib/x.js"));
+    fn a_url_names_a_file_only_below_the_folder_of_one_app_or_of_the_libraries() {
+        let named = |app: &str, root: FileRoot, path: &str| Some((app.to_string(), root, path.to_string()));
+        assert_eq!(file_of("dezapp://localhost/my-app/index.html"), named("my-app", FileRoot::App, "apps/my-app/index.html"));
+        assert_eq!(file_of("dezapp://localhost/a/js/lib/x.js?v=1"), named("a", FileRoot::App, "apps/a/js/lib/x.js"));
+        assert_eq!(
+            file_of("dezapp://localhost/my-app/~libs/three/build/three.module.js"),
+            named("my-app", FileRoot::Resource, "libs/three/build/three.module.js")
+        );
+        assert_eq!(file_of("dezapp://localhost/a/~libs/fft.js/lib/fft.esm.js?v=1"), named("a", FileRoot::Resource, "libs/fft.js/lib/fft.esm.js"));
         for refused in [
             "dezapp://localhost/",
             "dezapp://localhost/my-app",
@@ -868,6 +893,22 @@ mod tests {
             "dezapp://localhost:8080/my-app/index.html",
             "dezapp://user@localhost/my-app/index.html",
             "dezapp://LOCALHOST.evil/my-app/index.html",
+            // The libraries: only below the route, in the folder of an app
+            // whose name is a plain file name, and never above `libs/`.
+            "dezapp://localhost/my-app/~libs",
+            "dezapp://localhost/my-app/~libs/",
+            "dezapp://localhost/my-app/~libs//three/build/three.module.js",
+            "dezapp://localhost/my-app/~libs/../fonts/manifest.json",
+            "dezapp://localhost/my-app/~libs/%2e%2e/fonts/manifest.json",
+            "dezapp://localhost/my-app/~libs/..%2Ffonts%2Fmanifest.json",
+            "dezapp://localhost/my-app/~libs%2Fthree/build/three.module.js",
+            "dezapp://localhost/my-app/js/~libs/fft.js/lib/fft.esm.js",
+            "dezapp://localhost/my-app/~LIBS/fft.js/lib/fft.esm.js",
+            "dezapp://localhost/my-app/%7Elibs/fft.js/lib/fft.esm.js",
+            "dezapp://localhost/~libs/fft.js/lib/fft.esm.js",
+            "dezapp://localhost/../~libs/fft.js/lib/fft.esm.js",
+            "dezapp://localhost/my%2Dapp/~libs/fft.js/lib/fft.esm.js",
+            "dezapp://other/my-app/~libs/fft.js/lib/fft.esm.js",
         ] {
             assert_eq!(file_of(refused), None, "{refused}");
         }
@@ -902,8 +943,8 @@ mod tests {
 
     #[test]
     fn a_file_is_served_under_the_policy_of_its_own_app() {
-        let answer = serve(&get("dezapp://localhost/my-app/js/main.js?v=2"), &Ok(()), |path| {
-            assert_eq!(path, "apps/my-app/js/main.js");
+        let answer = serve(&get("dezapp://localhost/my-app/js/main.js?v=2"), &Ok(()), |root, path| {
+            assert_eq!((root, path), (FileRoot::App, "apps/my-app/js/main.js"));
             Ok(MemoryFile::new(b"let a = 1"))
         });
 
@@ -921,6 +962,28 @@ mod tests {
         for source in sources {
             assert!(["dezapp://localhost/my-app/", "blob:", "data:"].contains(&source), "{source} in {policy}");
         }
+    }
+
+    // A page imports the libraries that Dez ships from the folder of its
+    // own app, so they load under its policy, which names no other source.
+    #[test]
+    fn a_shipped_library_is_served_in_the_folder_of_each_app_under_its_policy() {
+        assert!(!is_app_file_segment(LIBS_ROUTE));
+        let url = "dezapp://localhost/my-app/~libs/three/build/three.module.js";
+        let answer = serve(&get(url), &Ok(()), |root, path| {
+            assert_eq!((root, path), (FileRoot::Resource, "libs/three/build/three.module.js"));
+            Ok(MemoryFile::new(b"export const REVISION = '187'"))
+        });
+
+        assert_eq!(answer.status(), StatusCode::OK);
+        assert_eq!(answer.body().as_ref(), b"export const REVISION = '187'");
+        assert_eq!(header_of(&answer, header::CONTENT_TYPE), "text/javascript; charset=utf-8");
+        assert_eq!(header_of(&answer, header::ACCESS_CONTROL_ALLOW_ORIGIN), "*");
+        assert_eq!(header_of(&answer, header::CONTENT_SECURITY_POLICY), app_policy("my-app"));
+
+        let mut post = get(url);
+        *post.method_mut() = Method::POST;
+        assert_eq!(serve(&post, &Ok(()), no_read).status(), StatusCode::METHOD_NOT_ALLOWED);
     }
 
     // The script of Dez comes from no file, so no file of an app can take
@@ -971,7 +1034,7 @@ mod tests {
             request.headers_mut().insert(header::RANGE, header::HeaderValue::from_static(range));
             let mut file = CountedFile { file: MemoryFile::new(b"0123456789"), read: 0 };
             let opened = &mut file;
-            let answer = serve(&request, &Ok(()), move |_| Ok(opened));
+            let answer = serve(&request, &Ok(()), move |_, _| Ok(opened));
             (answer, file.read)
         };
 
@@ -993,7 +1056,7 @@ mod tests {
     // the code of an app no path and no reason.
     #[test]
     fn a_refusal_is_a_locked_page_that_tells_no_path() {
-        let missing = serve(&get("dezapp://localhost/my-app/gone.js"), &Ok(()), |path| {
+        let missing = serve(&get("dezapp://localhost/my-app/gone.js"), &Ok(()), |_, path| {
             Err::<MemoryFile, _>(format!("Failed to read /home/user/.config/dez/{path}"))
         });
         let outside = serve(&get("dezapp://localhost/my-app/../../provider_keys.json"), &Ok(()), no_read);

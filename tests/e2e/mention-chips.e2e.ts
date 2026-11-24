@@ -2,7 +2,7 @@ import type { EditorView } from '@codemirror/view'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { startApp, type RunningApp } from './harness/app'
-import { clearOpenedUrls, consoleErrors, elementCenter, movePointer, openedUrls, pointerShiftClickAt, resetConsoleErrors, screenshotOnFailure, stopOpenUrl, typeInto, typeKeys, waitFor, waitForValue } from './harness/dom'
+import { clearOpenedUrls, consoleErrors, elementCenter, movePointer, openedUrls, pointerClickAt, pointerShiftClickAt, resetConsoleErrors, screenshotOnFailure, stopOpenUrl, typeInto, typeKeys, waitFor, waitForValue } from './harness/dom'
 import { FIND_FIELD } from './harness/find'
 import { appFilePath, seedAppState, writeTestFile } from './harness/fixtures'
 import { pasteImageReference, shownImages, solidPng } from './harness/images'
@@ -18,8 +18,11 @@ import { hidingPart, intermediateInvokeBlock, intermediateParts, toolChips } fro
 // A mention that names an image or a clip of its own or an earlier section
 // shows as a chip (a fill behind the text, in the mention color), in user
 // and agent sections. A word that names no asset (`@zz`, `@a-team`) stays
-// plain text. Hovering a chip shows what it names in a tooltip. A chip
-// changes no layout: the text keeps its place when the chip comes or goes.
+// plain text. Resting the pointer on a chip shows the asset that it names
+// in a box next to the chip, where the asset works as at its place. The
+// box stays while the pointer goes from the chip onto it, and Escape
+// closes it. A chip changes no layout: the text keeps its place when the
+// chip comes or goes.
 // A find match shows in place of the part of a chip that it covers.
 //
 // A plain click on a chip goes to the asset that it names: the editor
@@ -32,18 +35,14 @@ import { hidingPart, intermediateInvokeBlock, intermediateParts, toolChips } fro
 // spec stops every `dez.controller/openUrl` call (`stopOpenUrl`).
 
 const PNG = solidPng(40, 24, [220, 60, 40])
-const IMAGE_TOOLTIP = {
-  title: 'Image id: a',
-  text: 'This names the image a. A chat model sees an image of a reply only when one of your messages names it. A model that makes images or clips gets an older image only when your newest message names it.',
-}
-const AUDIO_TOOLTIP = {
-  title: 'Audio id: b',
-  text: 'This names the audio clip b. A model that takes audio gets an older clip only when your newest message names it. A chat model gets only the id.',
-}
 
 // Lines enough that CM does not draw what is above them while the end of
 // the doc is in view.
 const FILLER = Array.from({ length: 150 }, (_, line) => `Line ${line + 1}.`).join('\n')
+
+// Longer than the grace time after which the box closes once the pointer
+// is off the chip, the box, and the gap between them (assetPreview.ts).
+const PAST_GRACE_MS = 400
 
 interface Box {
   left: number
@@ -99,24 +98,27 @@ describe('mention chips', () => {
     await movePointer(browser, { x: box.left + box.width / 2, y: box.top + box.height / 2 })
   }
 
-  // The open tooltip of a chip, with the place of its bottom edge, or null
-  // when none is open.
-  async function tooltip (): Promise<{ title: string, text: string, bottom: number } | null> {
+  // What the preview box of a chip shows, once it is in its place: `image
+  // <file name>`, or `<kind> player`; null when no box shows.
+  async function previewAsset (): Promise<string | null> {
     return browser.execute(() => {
-      const tip = document.querySelector('.cm-tooltip-hover .dez-image-tooltip')
-      if (!tip) return null
-      return {
-        title: tip.querySelector('.dez-image-tooltip__title')?.textContent ?? '',
-        text: tip.querySelector('.dez-image-tooltip__text')?.textContent ?? '',
-        bottom: tip.getBoundingClientRect().bottom,
-      }
+      const box = document.querySelector<HTMLElement>('.dez-asset-preview[data-shown]')
+      if (!box || box.getAnimations().length > 0) return null
+      const image = box.querySelector<HTMLImageElement>('.dez-image__img')
+      const player = box.querySelector<HTMLElement>('.media-player')
+      if (image) return `image ${image.alt}`
+      return player ? `${player.dataset.kind ?? ''} player` : 'nothing'
     })
   }
 
-  // The title and the text of the open tooltip.
-  async function tooltipText (): Promise<{ title: string, text: string } | null> {
-    const tip = await tooltip()
-    return tip && { title: tip.title, text: tip.text }
+  // The box of the preview, and whether it is in the text of the editor.
+  async function previewPlace (): Promise<Box & { inText: boolean }> {
+    return browser.execute(() => {
+      const box = document.querySelector('.dez-asset-preview[data-shown]')
+      if (!box) throw new Error('previewPlace: no preview box shows')
+      const { left, top, width, height } = box.getBoundingClientRect()
+      return { left, top, width, height, inText: box.closest('.cm-content') !== null }
+    })
   }
 
   // The box of the editor line whose text starts with `start`.
@@ -199,7 +201,7 @@ describe('mention chips', () => {
     expect((await threadSections(browser))[0].text.endsWith(' Then @')).toBe(true)
   })
 
-  it('shows chips in user and agent sections for the assets of earlier sections, with a tooltip that tells what each one names', async () => {
+  it('shows chips in user and agent sections for the assets of earlier sections, and a box with the asset that a chip names', async () => {
     const image = await storedImage('mention-roles.png')
     const clip = await tempClipTag(app.home, 'audio', 'b', 'mention-roles.wav', silentWav(1))
     await openSeededConversation(browser, app.home, 'mention-chips-roles', [
@@ -210,17 +212,165 @@ describe('mention chips', () => {
     ])
     await waitForValue(browser, 'chips', chips, ['@a', '@a', '@b', '@a'])
 
-    // The agent section's chip.
+    // The agent section's chip: the box shows the image next to the chip,
+    // not over it, and outside the text of the editor.
     await hoverChip(1)
-    await waitForValue(browser, 'the tooltip of an image mention', tooltipText, IMAGE_TOOLTIP)
-    // Above the chip, so the pointer does not cover it.
-    expect((await tooltip())?.bottom).toBeLessThanOrEqual((await chipBox(1)).top)
+    await waitForValue(browser, 'the box of an image mention', previewAsset, 'image mention-roles.png')
+    const box = await previewPlace()
+    const chip = await chipBox(1)
+    expect(box.top + box.height <= chip.top || box.top >= chip.top + chip.height).toBe(true)
+    expect(box.inText).toBe(false)
 
+    // While a box shows, another chip shows its own box, and its clip plays
+    // there.
     await hoverChip(2)
-    await waitForValue(browser, 'the tooltip of a clip mention', tooltipText, AUDIO_TOOLTIP)
+    await waitForValue(browser, 'the box of a clip mention', previewAsset, 'audio player')
+    await pointerClickAt(browser, await elementCenter(browser, '.dez-asset-preview .media-player__play'))
+    await waitForValue(browser, 'the clip played in the box', () => browser.execute(() => (document.querySelector<HTMLMediaElement>('.dez-asset-preview audio')?.played.length ?? 0) > 0), true)
 
     await movePointer(browser, await elementCenter(browser, 'header.tab-bar'))
-    await waitForValue(browser, 'no tooltip off the chips', tooltipText, null)
+    await waitForValue(browser, 'no box off the chips', previewAsset, null)
+  })
+
+  it('shows the box below a chip at the top and above a chip at the end, keeps it while the pointer goes onto it, and closes it on Escape or a press on its chip', async () => {
+    const image = `![id=a](${await writeTestFile(appFilePath(app.home, 'assets', 'images', 'mention-box.png'), solidPng(240, 120, [40, 90, 220]))})`
+    await openSeededConversation(browser, app.home, 'mention-chips-box', [
+      { role: 'user', text: `See @a here.\n${image}\n${FILLER}\nAnd @a at the end.` },
+    ])
+    await focusEditor(browser)
+    // The side of the box from the chip `index` that CM draws: 'above' or
+    // 'below'.
+    const side = async (index: number): Promise<string> => {
+      const box = await previewPlace()
+      const chip = await chipBox(index)
+      if (box.top + box.height <= chip.top) return 'above'
+      return box.top >= chip.top + chip.height ? 'below' : 'over'
+    }
+    // The text of the line of each chip that CM draws. A scroll draws the
+    // chip of the other end a frame later, and CM keeps the line of the
+    // caret (at the top) drawn.
+    const chipLines = (): Promise<string[]> => browser.execute(() => Array.from(
+      document.querySelectorAll('.cm-content .dez-mention'),
+      (chip) => chip.closest('.cm-line')?.textContent ?? '',
+    ))
+
+    await scrollEditorToTop(browser)
+    await waitForValue(browser, 'the chip at the top', chipLines, ['See @a here.'])
+    await hoverChip(0)
+    await waitForValue(browser, 'the box of the chip at the top', previewAsset, 'image mention-box.png')
+    expect(await side(0)).toBe('below')
+    await movePointer(browser, await elementCenter(browser, 'header.tab-bar'))
+    await waitForValue(browser, 'no box off the chip', previewAsset, null)
+
+    await scrollEditorToEnd(browser)
+    await waitForValue(browser, 'the chip at the end', async () => (await chipLines()).at(-1), 'And @a at the end.')
+    const end = (await chipLines()).length - 1
+    await hoverChip(end)
+    await waitForValue(browser, 'the box of the chip at the end', previewAsset, 'image mention-box.png')
+    expect(await side(end)).toBe('above')
+    const box = await previewPlace()
+    const chip = await chipBox(end)
+
+    // The pointer rests in the gap between the chip and the box, past the
+    // grace time, then goes on onto the image in the box.
+    const gapY = (box.top + box.height + chip.top) / 2
+    await movePointer(browser, { x: chip.left + chip.width / 2, y: gapY })
+    await browser.pause(PAST_GRACE_MS)
+    expect(await previewAsset()).toBe('image mention-box.png')
+    await movePointer(browser, await elementCenter(browser, '.dez-asset-preview .dez-image__img'))
+    await browser.pause(PAST_GRACE_MS)
+    expect(await previewAsset()).toBe('image mention-box.png')
+
+    // The actions of the image's toolbar are at its top right, as far in
+    // from the top as from the right, with the magnifier first.
+    await waitForValue(browser, 'the toolbar of the image in the box', () => browser.execute(() => {
+      const actions = document.querySelector('.dez-asset-preview .dez-image__actions')
+      return actions !== null && getComputedStyle(actions).opacity === '1' && getComputedStyle(actions).transform === 'none'
+    }), true)
+    const corner = await browser.execute(() => {
+      const image = document.querySelector('.dez-asset-preview .dez-image__img')?.getBoundingClientRect()
+      const actions = document.querySelector('.dez-asset-preview .dez-image__actions')
+      const place = actions?.getBoundingClientRect()
+      if (!image || !actions || !place) throw new Error('the box has no image, or no actions')
+      return { top: Math.round(place.top - image.top), right: Math.round(image.right - place.right), first: actions.firstElementChild?.classList.contains('dez-image__zoom') ?? false }
+    })
+    expect(corner.top).toBeGreaterThan(0)
+    expect(corner.right).toBe(corner.top)
+    expect(corner.first).toBe(true)
+
+    // The magnifier shows the image of the box in the zoom, over the box,
+    // which stays under it until the zoom closes.
+    await pointerClickAt(browser, await elementCenter(browser, '.dez-asset-preview .dez-image__zoom'))
+    await waitFor(browser, '.dez-image-zoom .dez-image-zoom__img')
+    await browser.pause(PAST_GRACE_MS)
+    expect(await previewAsset()).toBe('image mention-box.png')
+    await browser.keys(Key.Escape)
+    await waitForValue(browser, 'no zoom after Escape', () => browser.execute(() => document.querySelector('.dez-image-zoom') === null), true)
+    expect(await previewAsset()).toBe('image mention-box.png')
+
+    // Escape in the editor closes the box, and only the box.
+    expect(await focusedArea(browser)).toBe('editor')
+    const doc = await editorDoc(browser)
+    await browser.keys(Key.Escape)
+    await waitForValue(browser, 'no box after Escape', previewAsset, null)
+    expect(await editorDoc(browser)).toBe(doc)
+    expect(await focusedArea(browser)).toBe('editor')
+
+    // A press on the chip closes its box, and the jump still goes.
+    await hoverChip(end)
+    await waitForValue(browser, 'the box again', previewAsset, 'image mention-box.png')
+    await recordFlashes(browser)
+    await pressMention(browser, end)
+    await waitForValue(browser, 'no box after the press', previewAsset, null)
+    await waitForValue(browser, 'the image in view', () => assetInView(browser, 'a'), true)
+    await waitForValue(browser, 'the flash of the image', () => flashedAssets(browser), ['image a'])
+  })
+
+  // The box draws its asset again only when a fact of it changed: a stream
+  // token or a typed key keeps the model label, so the tooltip that shows
+  // stays on it.
+  it('keeps the model label of the image in the box, and the tooltip of the label, while the user types', async () => {
+    const made = await writeTestFile(appFilePath(app.home, 'assets', 'generated', 'images', 'mention-model.png'), solidPng(480, 240, [40, 160, 90]))
+    await openSeededConversation(browser, app.home, 'mention-chips-model', [
+      { role: 'user', text: `![id=a|model=studio/paint](${made})\nSee @a here.` },
+    ])
+    await waitForValue(browser, 'the chip', chips, ['@a'])
+    await focusEditor(browser)
+    await setCaret(browser, (await editorDoc(browser)).length)
+    // After CM's next measure: whether the model label in the box is the
+    // element that the test marked, and the title of the tooltip that shows
+    // in the window, or null (CM puts a tooltip whose item left the
+    // document far off screen).
+    type LabelState = { marked: boolean, tooltip: string | null }
+    const modelLabel = async (): Promise<LabelState> => browser.execute(() => new Promise<LabelState>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        const label = document.querySelector('.dez-asset-preview .dez-image__model')
+        const tip = document.querySelector('.cm-tooltip.dez-image-tooltip')
+        const place = tip?.getBoundingClientRect()
+        const inWindow = place !== undefined && place.bottom > 0 && place.top < window.innerHeight
+        resolve({
+          marked: label !== null && label === Reflect.get(window, '__e2eModelLabel'),
+          tooltip: inWindow ? tip?.querySelector('.dez-image-tooltip__title')?.textContent ?? '' : null,
+        })
+      }))
+    }))
+
+    await hoverChip(0)
+    await waitForValue(browser, 'the box of the image', previewAsset, 'image mention-model.png')
+    await movePointer(browser, await elementCenter(browser, '.dez-asset-preview .dez-image__img'))
+    await waitForValue(browser, 'the info of the image in the box', () => browser.execute(() => {
+      const info = document.querySelector('.dez-asset-preview .dez-image__info')
+      return info !== null && getComputedStyle(info).opacity === '1'
+    }), true)
+    await movePointer(browser, await elementCenter(browser, '.dez-asset-preview .dez-image__model'))
+    const tooltip = 'Model that made this image'
+    await waitForValue(browser, 'the tooltip of the model label', async () => (await modelLabel()).tooltip, tooltip)
+    await browser.execute(() => { Reflect.set(window, '__e2eModelLabel', document.querySelector('.dez-asset-preview .dez-image__model')) })
+
+    await typeKeys(browser, ' Then more.')
+    await waitForValue(browser, 'the typed text', async () => (await editorDoc(browser)).endsWith('See @a here. Then more.'), true)
+    expect(await previewAsset()).toBe('image mention-model.png')
+    expect(await modelLabel()).toEqual({ marked: true, tooltip })
   })
 
   it('changes no layout: the text keeps its place when a chip goes', async () => {

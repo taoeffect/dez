@@ -814,12 +814,12 @@ describe('apps in a conversation', () => {
     ])
     await waitForValue(browser, 'the posters', async () => (await shownAppCards(browser)).map((card) => card.state), ['run', 'note'])
     const folder = appFilePath(setup.app.home, 'apps', 'notes')
-    const record: MenuRecord = { files: [], canceled: [] }
+    const record: MenuRecord = { menus: [], canceled: [] }
     // A context click at `point` of Dez's page, which asks for the menu
-    // with `file`.
+    // with `file`. An app is no asset, so its menu has no Export.
     const expectMenu = async (label: string, point: Point, file: string | null): Promise<void> => {
       await pointerRightClickAt(browser, point)
-      record.files.push(file)
+      record.menus.push({ file })
       record.canceled.push(true)
       await waitForValue(browser, `the menu of ${label}`, () => menuRecord(browser), record)
     }
@@ -836,7 +836,7 @@ describe('apps in a conversation', () => {
     // In the page of an app, the script of Dez asks for the menu. The
     // click is an event of that page, not of Dez's page.
     await pointerRightClickAt(browser, await elementCenter(browser, FRAME))
-    record.files.push(folder)
+    record.menus.push({ file: folder })
     await waitForValue(browser, 'the menu of the page of an app', () => menuRecord(browser), record)
 
     // The webview keeps its own menu in a text field of the app. No real

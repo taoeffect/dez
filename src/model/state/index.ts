@@ -40,8 +40,9 @@ import {
 import { compactionsField, sectionCompactionBlock, type Compactions } from '../chat/compaction'
 import { notesMessages, withAssetLabels } from '../chat/compactionNotes'
 import { contextField, contextSize, type ContextSize } from '../chat/contextSize'
-import { agentTextEditedField, costField, withRequestCost, type ConversationCost } from '../chat/conversationCost'
+import { agentTextEditedField, costField, withRequestCost, withRestoredCost, type ConversationCost, type TabCostNumbers } from '../chat/conversationCost'
 import { canTurnOnIncognito, incognitoField, requestParts, requestSentField } from '../chat/incognito'
+import { moneyLimitField, type MoneyLimit } from '../chat/moneyLimit'
 import { durationField } from '../chat/duration'
 import { modelRefField, modelRefKey, parseModelRefKey } from '../chat/modelRef'
 import { thinkingField } from '../chat/thinking'
@@ -98,6 +99,7 @@ interface TabData {
   createdAt: number
   incognito?: true
   requestSent?: true
+  moneyLimit?: MoneyLimit
 }
 
 let settingsPersistenceReady = false
@@ -163,6 +165,7 @@ function cloneTab(tab: Tab): ModelSnapshot['tabs'][number] {
     ...compactionsField(tab.compactions),
     ...incognitoField(tab.incognito),
     ...requestSentField(tab.requestSent),
+    ...moneyLimitField(tab.moneyLimit),
   }
 }
 
@@ -197,9 +200,9 @@ function cloneRecords<Value>(records: Record<string, Record<string, Value>>): Re
 // app_state.json.
 function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
   const {
-    id, name, baseUrl, apiFormat, models, fetchModels, modelListQuery, modelImageInput, modelToolCalling,
+    id, name, baseUrl, apiFormat, models, fetchModels, modelListQuery, modelImageInput, modelAudioInput, modelVideoInput, modelToolCalling,
     modelThinking, modelOutputs, modelReadableName, modelReleased, modelTokenPrices, modelContextWindow, modelImageLimit, modelMessageImageLimit, auth, headers, imageRequestHeaders,
-    maxOutputTokens, cacheBreakpoints, toolMessageCacheMark, promptCacheKey, requestBody, providerSystemPrompt, imageOutputBody,
+    maxOutputTokens, cacheBreakpoints, toolMessageCacheMark, promptCacheKey, requestBody, providerSystemPrompt, chatClips, imageOutputBody,
     audioOutputs, mediaApi, settings, thinking,
     ...uncopied
   } = config
@@ -217,6 +220,8 @@ function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
   }
   if (modelListQuery) clone.modelListQuery = { ...modelListQuery }
   if (modelImageInput) clone.modelImageInput = { ...modelImageInput }
+  if (modelAudioInput) clone.modelAudioInput = { ...modelAudioInput }
+  if (modelVideoInput) clone.modelVideoInput = { ...modelVideoInput }
   if (modelToolCalling) clone.modelToolCalling = { ...modelToolCalling }
   if (modelThinking) clone.modelThinking = { ...modelThinking }
   if (modelOutputs) clone.modelOutputs = cloneModelOutputsConfig(modelOutputs)
@@ -234,14 +239,23 @@ function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
   if (promptCacheKey !== undefined) clone.promptCacheKey = promptCacheKey
   if (requestBody) clone.requestBody = cloneJsonObject(requestBody)
   if (providerSystemPrompt) clone.providerSystemPrompt = { ...providerSystemPrompt }
+  if (chatClips) {
+    const { audioFormats, videoTypes, ...rest } = chatClips
+    clone.chatClips = {
+      ...rest,
+      ...(audioFormats && { audioFormats: [...audioFormats] }),
+      ...(videoTypes && { videoTypes: [...videoTypes] }),
+    }
+  }
   if (imageOutputBody) clone.imageOutputBody = cloneJsonObject(imageOutputBody)
   if (audioOutputs) clone.audioOutputs = audioOutputs.map((entry) => ({ ...entry, body: cloneJsonObject(entry.body) }))
   if (mediaApi) {
-    const { format, modelRequestBodies, modelEntryPaths, ...uncopiedMediaApi } = mediaApi
+    const { format, maxRequestsAtOnce, modelRequestBodies, modelEntryPaths, ...uncopiedMediaApi } = mediaApi
     // The same compile guard as above.
     uncopiedMediaApi satisfies Record<string, never>
     clone.mediaApi = {
       format,
+      ...(maxRequestsAtOnce !== undefined && { maxRequestsAtOnce }),
       ...(modelRequestBodies && { modelRequestBodies: modelRequestBodies.map((part) => ({ ...part, body: cloneJsonObject(part.body) })) }),
       ...(modelEntryPaths && { modelEntryPaths: { ...modelEntryPaths } }),
     }
@@ -410,6 +424,9 @@ function tabFromConversation(conv: ConversationData, overrides: Partial<Tab> = {
     // either place that has a mark sets it, as nothing clears one.
     ...incognitoField(overrides.incognito || conv.incognito),
     ...requestSentField(overrides.requestSent || conv.requestSent),
+    // A restored tab has it in its tab entry too, which a set saves at
+    // the same time; a tab entry of an older Dez has none.
+    ...moneyLimitField(overrides.moneyLimit ?? conv.moneyLimit),
   }
 }
 
@@ -623,11 +640,15 @@ export default sbp('sbp/selectors/register', {
     return cloneTab(tab) as Tab
   },
 
-  'dez.model/tabs/close' (tabId: string): void {
+  // Closes the tab `tabId`; the last tab stays open. A tab with text goes
+  // to the closed tabs, and the file of an empty tab is deleted. Gives the
+  // id of the conversation whose file it deleted, else null, so that the
+  // controller deletes the work folder of that conversation too.
+  'dez.model/tabs/close' (tabId: string): string | null {
     const tabStore = useTabStore()
-    if (tabStore.tabs.length <= 1) return
+    if (tabStore.tabs.length <= 1) return null
     const index = tabStore.tabs.findIndex((tab) => tab.id === tabId)
-    if (index === -1) return
+    if (index === -1) return null
     const tab = tabStore.tabs[index]
     tabStore.tabs.splice(index, 1)
     tabStore.replyDoneTabIds.delete(tabId)
@@ -640,9 +661,10 @@ export default sbp('sbp/selectors/register', {
     if (tab.sections.some((section) => !sectionIsEmpty(section))) {
       tabStore.closedTabs.push({ tab: cloneTab(tab) as Tab, index })
       if (tabStore.closedTabs.length > MAX_CLOSED_TABS) tabStore.closedTabs.shift()
-    } else {
-      void sbp('dez.persistence/deleteConversation', tab.conversationId).catch(() => {})
+      return null
     }
+    void sbp('dez.persistence/deleteConversation', tab.conversationId).catch(() => {})
+    return tab.conversationId
   },
 
   // Brings back the newest closed tab at its old place and activates it.
@@ -727,7 +749,8 @@ export default sbp('sbp/selectors/register', {
   },
 
   // What the requests of the tab's conversation cost (a copy); undefined
-  // before its first counted request, and for a missing tab.
+  // before its first counted request, after a reset (`resetCost`), and for
+  // a missing tab.
   'dez.model/tabs/cost' (tabId: string): ConversationCost | undefined {
     return costField(useTabStore().tabs.find((candidate) => candidate.id === tabId)?.cost).cost
   },
@@ -807,7 +830,8 @@ export default sbp('sbp/selectors/register', {
   },
 
   // The user changed or removed the text of a reply in the tab, so its
-  // cost can belong to text that is gone. The mark is never cleared.
+  // cost can belong to text that is gone. Only a reset (`resetCost`) clears
+  // the mark.
   'dez.model/tabs/markAgentTextEdited' (tabId: string): void {
     const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
     if (tab) tab.agentTextEdited = true
@@ -815,6 +839,42 @@ export default sbp('sbp/selectors/register', {
 
   'dez.model/tabs/agentTextEdited' (tabId: string): boolean {
     return useTabStore().tabs.find((candidate) => candidate.id === tabId)?.agentTextEdited === true
+  },
+
+  // The cost numbers of the tab (a copy): its cost, its edited mark, and
+  // the numbers of its compactions; `{}` for a missing tab. The thread
+  // editor reads them to keep what a reset removes (view/editor/costReset.ts).
+  'dez.model/tabs/costNumbers' (tabId: string): TabCostNumbers {
+    const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
+    if (!tab) return {}
+    return { ...costField(tab.cost), ...agentTextEditedField(tab.agentTextEdited), ...compactionsField(tab.compactions) }
+  },
+
+  // Removes the cost numbers of the tab (`costNumbers`), so that its cost
+  // starts again from $0, as in a new tab: the user deleted all the text of
+  // the tab. Only the thread editor calls it, for that delete and for its
+  // redo; no tool and no write of the program resets the cost. The counted
+  // context, the money limit, and the incognito marks stay. No save: the
+  // editor saves the tab after it (an empty conversation has no file).
+  'dez.model/tabs/resetCost' (tabId: string): void {
+    const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
+    if (!tab) return
+    delete tab.cost
+    delete tab.agentTextEdited
+    delete tab.compactions
+  },
+
+  // Puts back the cost numbers that a reset removed (`removed`), added to
+  // what the tab counted since (`withRestoredCost`). Only the thread editor
+  // calls it, for an undo of the user's delete of all the text. No save:
+  // the editor saves the tab after it.
+  'dez.model/tabs/restoreCost' (tabId: string, removed: TabCostNumbers): void {
+    const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
+    if (!tab) return
+    const { cost, agentTextEdited, compactions } = withRestoredCost(tab, removed)
+    if (cost) tab.cost = cost
+    if (agentTextEdited) tab.agentTextEdited = agentTextEdited
+    if (compactions) tab.compactions = compactions
   },
 
   // Turns incognito on in the tab when `canTurnOnIncognito` allows it, and
@@ -832,6 +892,24 @@ export default sbp('sbp/selectors/register', {
 
   'dez.model/tabs/incognito' (tabId: string): boolean {
     return useTabStore().tabs.find((candidate) => candidate.id === tabId)?.incognito === true
+  },
+
+  // The money limit of the tab (a copy); undefined with no limit, and for
+  // a missing tab.
+  'dez.model/tabs/moneyLimit' (tabId: string): MoneyLimit | undefined {
+    return moneyLimitField(useTabStore().tabs.find((candidate) => candidate.id === tabId)?.moneyLimit).moneyLimit
+  },
+
+  // Sets the money limit of the tab, or removes it (null), and saves the
+  // conversation file and the tab entry, which both keep it (a tab with no
+  // text has no file). Only the user sets it: no tool calls this.
+  'dez.model/tabs/setMoneyLimit' (tabId: string, limit: MoneyLimit | null): void {
+    const tab = useTabStore().tabs.find((candidate) => candidate.id === tabId)
+    if (!tab) return
+    if (limit) tab.moneyLimit = { usd: limit.usd, unknownPrices: limit.unknownPrices }
+    else delete tab.moneyLimit
+    void sbp('dez.model/tabs/save', tabId)
+    void sbp('dez.model/appState/save')
   },
 
   // The persisted form of a tab. Null when the tab is missing or every
@@ -857,6 +935,7 @@ export default sbp('sbp/selectors/register', {
       ...compactionsField(tab.compactions),
       ...incognitoField(tab.incognito),
       ...requestSentField(tab.requestSent),
+      ...moneyLimitField(tab.moneyLimit),
     }
   },
 
@@ -903,13 +982,15 @@ export default sbp('sbp/selectors/register', {
     return cloneTab(tab) as Tab
   },
 
-  async 'dez.model/tabs/deleteConversation' (id: string): Promise<void> {
+  // Deletes the file of the conversation `id`, and closes its tabs. Gives
+  // false, and changes no tab, when the file could not go.
+  async 'dez.model/tabs/deleteConversation' (id: string): Promise<boolean> {
     const tabStore = useTabStore()
     try {
       await sbp('dez.persistence/deleteConversation', id)
     } catch (error) {
       console.error('Failed to delete conversation', error)
-      return
+      return false
     }
     forgetClosedConversation(id)
 
@@ -917,7 +998,7 @@ export default sbp('sbp/selectors/register', {
     for (const tab of matchingTabs) tabStore.replyDoneTabIds.delete(tab.id)
     if (!matchingTabs.length) {
       await sbp('dez.model/appState/save')
-      return
+      return true
     }
 
     if (matchingTabs.length === tabStore.tabs.length) {
@@ -927,13 +1008,14 @@ export default sbp('sbp/selectors/register', {
       tabStore.tabs = [replacement]
       tabStore.activeTabId = replacement.id
       await sbp('dez.model/appState/save')
-      return
+      return true
     }
 
     const deletedActive = matchingTabs.some((tab) => tab.id === tabStore.activeTabId)
     tabStore.tabs = tabStore.tabs.filter((tab) => tab.conversationId !== id)
     if (deletedActive) tabStore.activeTabId = tabStore.tabs[0].id
     await sbp('dez.model/appState/save')
+    return true
   },
 
   async 'dez.model/appState/save' (): Promise<void> {
@@ -947,6 +1029,7 @@ export default sbp('sbp/selectors/register', {
       createdAt: tab.createdAt,
       ...incognitoField(tab.incognito),
       ...requestSentField(tab.requestSent),
+      ...moneyLimitField(tab.moneyLimit),
     }))
     try {
       await sbp('dez.persistence/saveAppState', {
@@ -996,6 +1079,7 @@ export default sbp('sbp/selectors/register', {
           createdAt: tabData.createdAt || conversation.created_at || Date.now(),
           ...incognitoField(tabData.incognito),
           ...requestSentField(tabData.requestSent),
+          ...moneyLimitField(tabData.moneyLimit),
         }))
       } catch {
         restored.push({
@@ -1007,6 +1091,7 @@ export default sbp('sbp/selectors/register', {
           createdAt: tabData.createdAt || Date.now(),
           ...incognitoField(tabData.incognito),
           ...requestSentField(tabData.requestSent),
+          ...moneyLimitField(tabData.moneyLimit),
         })
       }
     }
@@ -1753,6 +1838,15 @@ export default sbp('sbp/selectors/register', {
       ...usePromptsStore().prompts.map((prompt) => prompt.content),
       ...(systemPrompt === null ? [] : [systemPrompt]),
     ]
+  },
+
+  // The ids of the conversations of the open tabs and of the closed tabs
+  // that can come back (`reopenClosed`): such a conversation can have no
+  // file yet. The cleanup of the files (src/controller/unusedFiles.ts)
+  // keeps the work folder of each one.
+  'dez.model/heldConversationIds' (): string[] {
+    const tabStore = useTabStore()
+    return [...tabStore.tabs, ...tabStore.closedTabs.map((closed) => closed.tab)].map((tab) => tab.conversationId)
   },
 
 })

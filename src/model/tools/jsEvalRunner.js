@@ -1,17 +1,21 @@
 // The main module of every run of code in Deno: a `js_eval` run (jsEval.ts)
 // and a run of a script app (appInvoke.ts). Dez writes this file into the
-// work folder of the run, next to the description of the run (`run.json`),
+// run folder, next to the description of the run (`run.json`),
 // and Deno runs it. It runs the code once and writes what the code gave as
 // one protocol line to its standard output.
 //
 // The code of a `js_eval` call (`code.ts`, next to this file) gets one
 // object, `dez`. With `dez.sbp` it calls the other Dez tools: this module
 // writes one `call` line for each call, and Dez writes the answer as one
-// line to the standard input (`jsEvalAnswerLine`).
+// line to the standard input (`jsEvalAnswerLine`). `dez.workFolder` is the
+// path of the work folder of its conversation, which it can read and
+// change.
 //
 // The code of an app (the default export of its `main.ts`) gets the
-// parameters of the run and its own `dez` object, with the input files and
-// the folders of the run (`appDez`).
+// parameters of the run and its own `dez` object, with the input files,
+// the folders of the run, and the same `dez.sbp` (`appDez`). The run of an
+// alias gets no input, so each of its calls ends with the error of a
+// closed input.
 //
 // The code of a model runs in this same program, so it can write any line
 // itself: the page (`JsEvalOutput`, `bridgedToolCall`) trusts no line, and
@@ -20,7 +24,7 @@
 // The page gets this file as a text (`?raw` in jsEval.ts). Nothing of the
 // app imports it as code, and no type check reads it.
 
-// The description of the run (`CODE_RUN_DESCRIPTION`, jsEval.ts;
+// The description of the run (`codeRunDescription`, jsEval.ts;
 // `appRunDescription`, appInvoke.ts). The name is a literal
 // (`RUN_DESCRIPTION_FILE`), and the import is static: Deno then needs no
 // permission to read the file.
@@ -237,15 +241,34 @@ async function runCode() {
   // The name of the code file is a literal: Deno then needs no permission
   // to import it. A syntax error of the code is thrown here.
   const { default: run } = await import('./code.ts')
-  return run(freeze({ sbp }))
+  return run(freeze({ sbp, workFolder: RUN.workFolder }))
 }
 
 // The `dez` object of a run of an app: the copies of the input assets
-// (`inputs`, each with the path of its file), the folder for the files
-// that the run gives back (`outputFolder`), and the folder of the app
-// (`appFolder`). It has no `sbp`: the code of an app calls no Dez tool.
-function appDez({ inputs, outputFolder, appFolder }) {
-  return freeze({ inputs: freeze(inputs.map((input) => freeze({ ...input }))), outputFolder, appFolder })
+// (`inputs`, each with the path of its file, and with the facts of its
+// decoded files, `audio` and `frames`, when the run decodes its clips),
+// the folder for the files that the run gives back (`outputFolder`), the
+// folder of the app (`appFolder`), the work folder of the conversation
+// (`workFolder`), the fonts that Dez ships (`fonts`, each with the path of
+// its file), and the calls of the Dez tools (`sbp`).
+function appDez({ inputs, outputFolder, appFolder, workFolder, fonts }) {
+  return freeze({
+    sbp,
+    inputs: freeze(inputs.map(frozenInput)),
+    outputFolder,
+    appFolder,
+    workFolder,
+    fonts: freeze(fonts.map((font) => freeze({ ...font }))),
+  })
+}
+
+// A frozen copy of an input of a run, with the facts of its decoded files.
+function frozenInput({ audio, frames, ...input }) {
+  const decoded = {
+    ...(audio === undefined ? {} : { audio: audio && freeze({ ...audio }) }),
+    ...(frames === undefined ? {} : { frames: frames && freeze({ ...frames }) }),
+  }
+  return freeze({ ...input, ...decoded })
 }
 
 // Runs an app: the default export of its `main.ts`, with the parameters of

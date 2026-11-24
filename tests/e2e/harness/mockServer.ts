@@ -280,13 +280,30 @@ export function sendChatText (res: http.ServerResponse, text: string, usage: Moc
   res.end('data: [DONE]\n\n')
 }
 
-/** The result of the tool call `callId`, as the OpenAI-format chat request
- *  `request` sends it back. */
-export function toolResult (request: HeldRequest, callId: string): string {
+// The line that ends the result of a call that ran a second or more
+// (`withCallTime`, src/model/streams/messages.ts). A spec cannot know the
+// time of a call in advance, and a call near a second gets the line on one
+// machine and not on another, so `toolResult` gives the result without it.
+const CALL_TIME_LINE = /\n\n\(This call took ([^)]+)\.\)$/
+
+function sentToolResult (request: HeldRequest, callId: string): string {
   const { messages } = JSON.parse(request.body) as { messages: Array<{ role: string, tool_call_id?: string, content?: unknown }> }
   const content = messages.find((message) => message.role === 'tool' && message.tool_call_id === callId)?.content
   if (typeof content !== 'string') throw new Error(`toolResult: the request has no result of ${callId}`)
   return content
+}
+
+/** The result of the tool call `callId`, as the OpenAI-format chat request
+ *  `request` sends it back, without the time line of a slow call
+ *  (`toolResultTime`). */
+export function toolResult (request: HeldRequest, callId: string): string {
+  return sentToolResult(request, callId).replace(CALL_TIME_LINE, '')
+}
+
+/** The time that the result of the call `callId` in `request` tells its
+ *  model, such as "2.3 seconds"; null for a result with no time line. */
+export function toolResultTime (request: HeldRequest, callId: string): string | null {
+  return CALL_TIME_LINE.exec(sentToolResult(request, callId))?.[1] ?? null
 }
 
 /** The messages of the OpenAI-format chat request `request` with no system

@@ -52,14 +52,14 @@ describe('mentionTarget', () => {
     expect(targets(createState(texts, ['user', 'user']))).toStrictEqual([null])
   })
 
-  it('gives a hidden image and a hidden clip in the panel of the call that started their job', () => {
-    const texts = ['ask', [INVOKE, '', IMAGE, '', CLIP, '', 'Done.'].join('\n'), 'Show @b and @c']
+  it('gives a hidden image and a hidden clip as their rows of the panel of the call that started their job', () => {
+    const texts = ['ask', [INVOKE, '', IMAGE, '', CLIP, '', 'Done.'].join('\n'), 'Show @c and @b']
     const doc = joinSections(texts)
-    const holder = { kind: 'call', id: 'call_1', from: doc.indexOf(INVOKE) }
+    const call = { kind: 'call', id: 'call_1', from: doc.indexOf(INVOKE) }
 
     expect(targets(createState(texts, ['user', 'agent', 'user']))).toStrictEqual([
-      { from: doc.indexOf(IMAGE), holder },
-      { from: doc.indexOf(CLIP), holder },
+      { from: doc.indexOf(CLIP), holder: { ...call, row: 1 } },
+      { from: doc.indexOf(IMAGE), holder: { ...call, row: 0 } },
     ])
   })
 
@@ -68,7 +68,7 @@ describe('mentionTarget', () => {
     const doc = joinSections(texts)
 
     expect(targets(createState(texts, ['user', 'agent', 'user', 'agent', 'user']))).toStrictEqual([
-      { from: doc.indexOf(IMAGE), holder: { kind: 'call', id: 'call_1', from: doc.indexOf(INVOKE) } },
+      { from: doc.indexOf(IMAGE), holder: { kind: 'call', id: 'call_1', from: doc.indexOf(INVOKE), row: 0 } },
     ])
   })
 

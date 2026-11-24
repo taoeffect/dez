@@ -3,6 +3,7 @@ import type { Section } from '../model/chat/types'
 import { conversationAssets } from '../model/streams/mediaRequest'
 import { AppCallError, SaveNotStoredError, unknownAssetText, type SavedAppFile, type SavedAssetAnswer } from '../model/tools/appBridge'
 import { inputOf, type SaveCount } from '../model/tools/appInvoke'
+import { isBuiltInApp } from '../model/tools/appManifest'
 import { appCardFacts, showCall, type AppCardFacts } from '../model/tools/appShow'
 import { appNamed } from '../model/tools/appsTool'
 import { ToolError } from '../model/tools/types'
@@ -37,8 +38,14 @@ export default sbp('sbp/selectors/register', {
   /** Deletes the app `name`: its folder with all that is in it. An app
    *  that is gone already is not an error. A failure is logged, shows an
    *  error toast, and rejects, so that the caller keeps the card of the
-   *  app. */
+   *  app. A built-in app is a part of Dez, which Dez never deletes. */
   async 'dez.controller/apps/delete' (name: string): Promise<void> {
+    if (isBuiltInApp(name)) {
+      const error = new ExplainedError('The app is a built-in app: a part of Dez itself, which Dez never deletes. To take its card out of the conversation, delete the card in the text.')
+      console.error(`Refused to delete the built-in app ${JSON.stringify(name)}`)
+      sbp('dez.ui/toast', 'app-global', { title: `Could not delete the app ${name}`, message: error.explanation, variant: 'error' })
+      throw error
+    }
     try {
       const app = appNamed(name)
       const { kind } = await factsOf(app)
@@ -64,17 +71,18 @@ export default sbp('sbp/selectors/register', {
   /** Shows the context menu of the app `name` at the pointer
    *  (`dez.controller/menu/popupAsset`): its "Reveal in File Manager" shows
    *  the folder of the app in the folder of the apps. The item is disabled
-   *  for an app that is gone, and when Dez cannot tell. It never rejects. */
+   *  for an app that is gone, and when Dez cannot tell. An app is no asset,
+   *  so the menu has no Export. It never rejects. */
   async 'dez.controller/apps/popupMenu' (name: string): Promise<void> {
     let folder: string | null = null
     try {
       const app = appNamed(name)
-      if ((await factsOf(app)).kind !== 'missing') folder = `${await sbp('dez.native/getAppDir') as string}/${app.file}`
+      if ((await factsOf(app)).kind !== 'missing') folder = `${await sbp('dez.native/getAppDir', app.root) as string}/${app.file}`
     } catch (error) {
       // A `ToolError` is a failed read, which appsTool.ts logged.
       if (!(error instanceof ToolError)) console.error(`Failed to find the folder of the app ${JSON.stringify(name)}:`, error)
     }
-    await sbp('dez.controller/menu/popupAsset', folder)
+    await sbp('dez.controller/menu/popupAsset', { file: folder })
   },
 
   /** The bytes of the image or the clip with the id `id` of a conversation

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clipFile, clipPlayType, clipProblem, clipSourceKind, expiryNotice, problemCard, type ClipSourceKind } from './clipState'
+import { clipExportSource, clipFile, clipPlayType, clipProblem, clipSourceKind, expiryNotice, problemCard, type ClipSourceKind } from './clipState'
 
 describe('clipSourceKind', () => {
   it('tells a saved file, a temp copy, and a URL apart, whether a linked file counts or not', () => {
@@ -174,6 +174,31 @@ describe('clipFile', () => {
       expect(clipFile(src, true, 'gone', false), src).toBeNull()
       expect(clipFile(src, true, null, true), src).toBeNull()
     }
+  })
+})
+
+describe('clipExportSource', () => {
+  const SAVED = '/home/u/.config/dez/assets/generated/video/9f3c.webm'
+  const LINKED = '/home/u/Videos/clip.mp4'
+  const URL = 'https://cdn.example/v.mp4?sig=1'
+
+  it('exports the file of the clip, and tells a linked file', () => {
+    expect(clipExportSource(SAVED, true, 'video/webm', null, false)).toStrictEqual({ kind: 'file', path: SAVED, linked: false })
+    expect(clipExportSource(LINKED, true, 'video/mp4', 'cannot-play', false)).toStrictEqual({ kind: 'file', path: LINKED, linked: true })
+  })
+
+  it('exports the URL of a clip that plays from it, also one that this computer cannot play', () => {
+    expect(clipExportSource(URL, true, 'video/mp4', null, false)).toStrictEqual({ kind: 'url', url: URL, type: 'video/mp4' })
+    expect(clipExportSource(URL, false, null, 'cannot-play', false)).toStrictEqual({ kind: 'url', url: URL, type: null })
+  })
+
+  it('exports nothing when the bytes are gone, while a Save or a Delete runs, or for a source that does not count', () => {
+    for (const src of [SAVED, URL]) {
+      expect(clipExportSource(src, true, null, 'gone', false), src).toBeNull()
+      expect(clipExportSource(src, true, null, null, true), src).toBeNull()
+    }
+    expect(clipExportSource(null, true, null, 'gone', false)).toBeNull()
+    expect(clipExportSource(LINKED, false, null, null, false)).toBeNull()
   })
 })
 

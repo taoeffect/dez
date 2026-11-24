@@ -1,43 +1,43 @@
 {
   "ffmpegVersion": "n9.0.2",
-  "releaseTag": "n9.0.2-4",
-  "source": "https://github.com/taoeffect/dez-ffmpeg/releases/tag/n9.0.2-4",
+  "releaseTag": "n9.0.2-6",
+  "source": "https://github.com/taoeffect/dez-ffmpeg/releases/tag/n9.0.2-6",
   "files": {
     "dez-ffmpeg-aarch64-unknown-linux-gnu": {
       "asset": "ffmpeg-linux-arm64",
-      "url": "https://github.com/taoeffect/dez-ffmpeg/releases/download/n9.0.2-4/ffmpeg-linux-arm64",
-      "size": 38490360,
-      "sha256": "79e8771b2d9ac9dd708ee589946cb98f0ab3d68a004ef46086560d6374e39f73"
+      "url": "https://github.com/taoeffect/dez-ffmpeg/releases/download/n9.0.2-6/ffmpeg-linux-arm64",
+      "size": 39080304,
+      "sha256": "584cab7416fe017cc61a786340caa74907ac9ae3ec419bb23a2f1578b9b624b5"
     },
     "dez-ffprobe-aarch64-unknown-linux-gnu": {
       "asset": "ffprobe-linux-arm64",
-      "url": "https://github.com/taoeffect/dez-ffmpeg/releases/download/n9.0.2-4/ffprobe-linux-arm64",
-      "size": 38359256,
-      "sha256": "7c896b84b18b41b0886f8cfa447258534f2b9c6f288d420d522ca9b934e6c550"
+      "url": "https://github.com/taoeffect/dez-ffmpeg/releases/download/n9.0.2-6/ffprobe-linux-arm64",
+      "size": 38883664,
+      "sha256": "7fef5229a119b6554c625f86b95ebd05f28910379ee4bca968844f8ff1f50ee1"
     },
     "dez-ffmpeg-x86_64-unknown-linux-gnu": {
       "asset": "ffmpeg-linux-x64",
-      "url": "https://github.com/taoeffect/dez-ffmpeg/releases/download/n9.0.2-4/ffmpeg-linux-x64",
-      "size": 50529112,
-      "sha256": "171ad68a90bb0502f7976fbc710c5d968016601fd325741c370455a191ff50a2"
+      "url": "https://github.com/taoeffect/dez-ffmpeg/releases/download/n9.0.2-6/ffmpeg-linux-x64",
+      "size": 51139576,
+      "sha256": "9b6bbbcda5e68a4af080c73b17b48128acdb6a20d213b8b56bbae13cace6e071"
     },
     "dez-ffprobe-x86_64-unknown-linux-gnu": {
       "asset": "ffprobe-linux-x64",
-      "url": "https://github.com/taoeffect/dez-ffmpeg/releases/download/n9.0.2-4/ffprobe-linux-x64",
-      "size": 50328344,
-      "sha256": "2d97591fa2867f7ff7e6c873233f0475574f2629a7cce6e09cb30796bd08f1b6"
+      "url": "https://github.com/taoeffect/dez-ffmpeg/releases/download/n9.0.2-6/ffprobe-linux-x64",
+      "size": 50934712,
+      "sha256": "09887e0640ea9e7295ca0c39d4aa7700d4b4c59952ca7f9e0bebadb7b9c2a048"
     },
     "dez-ffmpeg-aarch64-apple-darwin": {
       "asset": "ffmpeg-macos-arm64",
-      "url": "https://github.com/taoeffect/dez-ffmpeg/releases/download/n9.0.2-4/ffmpeg-macos-arm64",
-      "size": 36177352,
-      "sha256": "dfd54c268e91e87303731bc87e588fb1295e273d9aca29041f2dcd7418413691"
+      "url": "https://github.com/taoeffect/dez-ffmpeg/releases/download/n9.0.2-6/ffmpeg-macos-arm64",
+      "size": 36588840,
+      "sha256": "44d418c7179b06022bf89bfa0ddc83e26914f9e266a132ca8704aa77166ec3cc"
     },
     "dez-ffprobe-aarch64-apple-darwin": {
       "asset": "ffprobe-macos-arm64",
-      "url": "https://github.com/taoeffect/dez-ffmpeg/releases/download/n9.0.2-4/ffprobe-macos-arm64",
-      "size": 35985800,
-      "sha256": "ec3e73f09a2743eaedc06b1cee021ab7f5e2868aaa52d33b2962099b27d05441"
+      "url": "https://github.com/taoeffect/dez-ffmpeg/releases/download/n9.0.2-6/ffprobe-macos-arm64",
+      "size": 36413800,
+      "sha256": "0dbe097dd0bec61ef88adf0aaf4341318f274bb8c2ac2f27f2593ca47ef76cc9"
     },
     "dez-deno-aarch64-unknown-linux-gnu": {
       "asset": "deno-aarch64-unknown-linux-gnu.zip",
@@ -75,8 +75,8 @@
   },
   "licenseTexts": {
     "asset": "LICENSES.txt",
-    "size": 161962,
-    "sha256": "26882e523bbcc99a6d7363411e55fabe54f70089dc17c89433d301eeec536818"
+    "size": 196337,
+    "sha256": "2834fcde419ce79f307d7f13cd3eb2682d89acd40295268d4ab5ed49a5c7964f"
   },
   "deno": {
     "version": "2.9.8",

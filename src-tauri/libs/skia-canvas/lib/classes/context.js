@@ -1,0 +1,301 @@
+//
+// The Canvas drawing API
+//
+
+"use strict"
+
+const {RustClass, core, wrap, inspect, argc, REPR} = require('./neon'),
+      {Canvas, CanvasGradient, CanvasPattern, CanvasTexture} = require('./canvas'),
+      {fromSkMatrix} = require('./geometry'),
+      {Image, ImageData, validImage, validColorType, validColorSpace} = require('./imagery'),
+      {TextMetrics} = require('./typography'),
+      {Path2D, DrawList} = require('./path'),
+      css = require('./css')
+
+const toString = val => typeof val=='string' ? val : new String(val).toString()
+
+class CanvasRenderingContext2D extends RustClass{
+  #canvas
+
+  constructor(canvas, colorSpace='srgb'){
+    try{
+      super(CanvasRenderingContext2D).alloc(core(canvas), colorSpace)
+      this.#canvas = canvas
+    }catch(e){
+      throw new TypeError(`Function is not a constructor (use Canvas's "getContext" method instead)`, {cause:e})
+    }
+  }
+
+  get canvas(){ return this.#canvas }
+
+  getContextAttributes(){
+    // colorSpace & willReadFrequently are captured when the page is created & fixed for the life
+    // of the context (see Canvas.newPage); the size is the page's own, and only tracks the
+    // canvas's dimensions while it's the current page
+    let colorSpace = this.ref('colorSpace') ?? 'srgb',
+        willReadFrequently = this.ref('willReadFrequently') ?? false,
+        [width, height] = this.prop('size')
+    return {alpha:true, colorSpace, desynchronized:false, willReadFrequently, width, height}
+  }
+
+  // -- global state & content reset ------------------------------------------
+  reset(){ this.ƒ('reset') }
+
+  // -- grid state ------------------------------------------------------------
+  get currentTransform(){ return fromSkMatrix( this.prop('currentTransform') ) }
+  set currentTransform(matrix){ this.setTransform(matrix) }
+  getTransform(){ return this.currentTransform }
+
+  createProjection(quad, basis){
+    return fromSkMatrix(this.ƒ("createProjection", [quad].flat(), [basis].flat()))
+  }
+
+  // -- using paths -----------------------------------------------------------
+  clip(path, rule){
+    if (path instanceof Path2D) arguments[0] = core(path)
+    return this.ƒ('clip', ...arguments)
+  }
+
+  isPointInPath(path, x, y, rule){
+    if (path instanceof Path2D) arguments[0] = core(path)
+    return this.ƒ('isPointInPath', ...arguments)
+  }
+  isPointInStroke(path, x, y){
+    if (path instanceof Path2D) arguments[0] = core(path)
+    return this.ƒ('isPointInStroke', ...arguments)
+  }
+
+
+  // -- shaders ---------------------------------------------------------------
+  createPattern(image, repetition){ return new CanvasPattern(this.canvas, ...arguments) }
+  createLinearGradient(...args){
+    return new CanvasGradient("Linear", ...args)
+  }
+  createRadialGradient(...args){
+    return new CanvasGradient("Radial", ...args)
+  }
+  createConicGradient(...args){
+    return new CanvasGradient("Conic", ...args)
+  }
+
+  createTexture(spacing, options){
+    return new CanvasTexture(...arguments)
+  }
+
+  // -- fill & stroke ---------------------------------------------------------
+  set fillStyle(style){
+    let isShader = style instanceof CanvasPattern || style instanceof CanvasGradient || style instanceof CanvasTexture,
+        [ref, val] = isShader ? [style, core(style)] : [null, style]
+    this.ref('fill', ref)
+    this.prop('fillStyle', val)
+  }
+
+  get fillStyle(){
+    let style = this.prop('fillStyle')
+    return style===null ? this.ref('fill') : style
+  }
+
+  set strokeStyle(style){
+    let isShader = style instanceof CanvasPattern || style instanceof CanvasGradient || style instanceof CanvasTexture,
+        [ref, val] = isShader ? [style, core(style)] : [null, style]
+    this.ref('stroke', ref)
+    this.prop('strokeStyle', val)
+  }
+
+  get strokeStyle(){
+    let style = this.prop('strokeStyle')
+    return style===null ? this.ref('stroke') : style
+  }
+
+  // -- line style ------------------------------------------------------------
+  getLineDash(){        return this.ƒ("getLineDash") }
+  setLineDash(segments){       this.ƒ("setLineDash", ...arguments) }
+  get lineCap(){        return this.prop("lineCap") }
+  set lineCap(style){          this.prop("lineCap", `${style}`) }
+  get lineDashFit(){    return this.prop("lineDashFit") }
+  set lineDashFit(style){      this.prop("lineDashFit", `${style}`) }
+  get lineDashMarker(){ return wrap(Path2D, this.prop("lineDashMarker")) }
+  set lineDashMarker(path){    this.prop("lineDashMarker", path instanceof Path2D ? core(path) : path) }
+  get lineDashOffset(){ return this.prop("lineDashOffset") }
+  set lineDashOffset(offset){  this.prop("lineDashOffset", offset) }
+  get lineJoin(){       return this.prop("lineJoin") }
+  set lineJoin(style){         this.prop("lineJoin", `${style}`) }
+  get lineWidth(){      return this.prop("lineWidth") }
+  set lineWidth(width){        this.prop("lineWidth", width) }
+  get miterLimit(){     return this.prop("miterLimit") }
+  set miterLimit(limit){       this.prop("miterLimit", limit) }
+
+  // -- imagery ---------------------------------------------------------------
+  get imageSmoothingEnabled(){ return this.prop("imageSmoothingEnabled")}
+  set imageSmoothingEnabled(flag){    this.prop("imageSmoothingEnabled", !!flag)}
+  get imageSmoothingQuality(){ return this.prop("imageSmoothingQuality")}
+  set imageSmoothingQuality(level){   this.prop("imageSmoothingQuality", `${level}`)}
+
+  createImageData(width, height, settings){
+    argc(arguments, 2, 3)
+    let {colorSpace, ...opts} = settings || {}
+    if (colorSpace===undefined) ({colorSpace} = this.getContextAttributes())
+    return new ImageData(width, height, {colorSpace, ...opts})
+  }
+
+  getImageData(x, y, width, height, {colorType='rgba', colorSpace, density=1, matte, msaa}={}){
+    argc(arguments, 4, 5)
+
+    if (colorSpace===undefined) ({colorSpace} = this.getContextAttributes())
+    colorType = validColorType(colorType)
+    colorSpace = validColorSpace(colorSpace) // normalized before reading pixels, so they match the ImageData's label
+
+    if (typeof density!='number' || !Number.isInteger(density) || density<1){
+      throw new TypeError("Expected a non-negative integer for `density`")
+    }
+
+    if (msaa===undefined || msaa===true) {
+      msaa = undefined // use the default 4x msaa
+    }else{
+      msaa = msaa===false ? 0 : msaa
+      if (typeof msaa!='number' || !Number.isInteger(msaa) || msaa<0){
+        throw new TypeError("Expected a non-negative integer for `msaa`")
+      }
+      // only reject unsupported MSAA if it's actually headed to the GPU rasterizer
+      let {renderer, msaa:validMsaa} = this.canvas.engine
+      if (renderer=='GPU' && !validMsaa.includes(msaa)){
+        throw new TypeError(`${msaa}x MSAA not supported by this GPU (options: [${validMsaa.join(', ')}])`)
+      }
+    }
+
+    let opts = {colorType, colorSpace, density, matte, msaa},
+        pixels = this.ƒ('getImageData', x, y, width, height, opts, core(this.canvas), this.ref('willReadFrequently'));
+    return new ImageData(pixels.data, pixels.width, pixels.height, {colorType, colorSpace})
+  }
+
+  putImageData(imageData, ...coords){
+    argc(arguments, 3, 7)
+    if (!(imageData instanceof ImageData)) throw TypeError("Expected an ImageData as 1st arg")
+    this.ƒ('putImageData', imageData, ...coords)
+  }
+
+  drawImage(image, ...coords){
+    if (image instanceof Canvas){
+      this.ƒ('drawImage', core(image.getContext('2d')), ...coords)
+    }else if (image instanceof CanvasRenderingContext2D){
+      this.ƒ('drawImage', core(image), ...coords)
+    }else if (image instanceof Image){
+      this.ƒ('drawImage', core(validImage(image)), ...coords)
+    }else if (image instanceof ImageData){
+      this.ƒ('drawImage', image, ...coords)
+    }else if (image instanceof Promise) {
+      throw Error("Promise has not yet resolved: `await` image loading before drawing")
+    }else{
+      let nonimage = inspect(image, {depth:1})
+      throw Error(`Expected an Image, Canvas, or CanvasRenderingContext2D argument (got: ${nonimage})`)
+    }
+  }
+
+  drawCanvas(image, ...coords){
+    if (image instanceof Canvas){
+      this.ƒ('drawCanvas', core(image.getContext('2d')), ...coords)
+    }else if (image instanceof CanvasRenderingContext2D){
+      this.ƒ('drawCanvas', core(image), ...coords)
+    }else{
+      this.drawImage(image, ...coords)
+    }
+  }
+
+  // -- typography ------------------------------------------------------------
+  get font(){          return this.prop('font') }
+  set font(str){              this.prop('font', css.font(`${str}`)) }
+  get textAlign(){     return this.prop("textAlign") }
+  set textAlign(mode){        this.prop("textAlign", `${mode}`) }
+  get textBaseline(){  return this.prop("textBaseline") }
+  set textBaseline(mode ){    this.prop("textBaseline", `${mode}`) }
+  get textRendering(){ return this.prop("textRendering") }
+  set textRendering(mode){    this.prop("textRendering", `${mode}`) }
+  get direction(){     return this.prop("direction") }
+  set direction(mode){        this.prop("direction", `${mode}`) }
+  get fontStretch(){   return this.prop('fontStretch') }
+  set fontStretch(str){       this.prop('fontStretch', css.stretch(`${str}`)) }
+  get fontKerning(){   return this.prop('fontKerning') }
+  set fontKerning(str){       this.prop('fontKerning', css.kerning(`${str}`)) }
+  get letterSpacing(){ return this.prop('letterSpacing') }
+  set letterSpacing(str){     this.prop('letterSpacing', css.spacing(`${str}`)) }
+  get wordSpacing(){   return this.prop('wordSpacing') }
+  set wordSpacing(str){       this.prop('wordSpacing', css.spacing(`${str}`)) }
+
+  measureText(text, maxWidth){
+    return new TextMetrics(this.ƒ('measureText', toString(text), maxWidth))
+  }
+
+  fillText(text, ...geom){
+    this.ƒ('fillText', toString(text), ...geom)
+  }
+
+  strokeText(text, ...geom){
+    this.ƒ('strokeText', toString(text), ...geom)
+  }
+
+  outlineText(text, maxWidth){
+    let path = this.ƒ('outlineText', toString(text), maxWidth)
+    return path ? wrap(Path2D, path) : null
+  }
+
+  // -- non-standard typography extensions --------------------------------------------
+  get fontHinting(){    return this.prop("fontHinting") }
+  set fontHinting(flag){       this.prop("fontHinting", !!flag) }
+  get fontSmoothing(){  return this.prop("fontSmoothing") }
+  set fontSmoothing(flag){     this.prop("fontSmoothing", !!flag) }
+  get fontVariant(){    return this.prop('fontVariant') }
+  set fontVariant(str){        this.prop('fontVariant', css.variant(`${str}`)) }
+  get fontVariationSettings(){ return this.prop('fontVariationSettings') }
+  set fontVariationSettings(cfg){ this.prop('fontVariationSettings', css.variationSettings(cfg)) }
+  get fontFeatureSettings(){ return this.prop('fontFeatureSettings') }
+  set fontFeatureSettings(cfg){ this.prop('fontFeatureSettings', css.featureSettings(cfg)) }
+  get fontInstance(){ return this.prop('fontInstance') }
+  set fontInstance(name){ this.prop('fontInstance', `${name}`) }
+  get fontSynthesis(){  return this.prop("fontSynthesis") }
+  set fontSynthesis(flag){     this.prop("fontSynthesis", !!flag) }
+  get textWrap(){       return this.prop("textWrap") }
+  set textWrap(flag){          this.prop("textWrap", !!flag) }
+  get textDecoration(){ return this.prop("textDecoration") }
+  set textDecoration(str){     this.prop("textDecoration", css.decoration(`${str}`)) }
+  set textTracking(_){
+    process.emitWarning("The .textTracking property has been removed; use the .letterSpacing property instead", "PropertyRemoved")
+  }
+
+  // -- effects ---------------------------------------------------------------
+  get globalCompositeOperation(){ return this.prop("globalCompositeOperation") }
+  set globalCompositeOperation(blend){   this.prop("globalCompositeOperation", `${blend}`) }
+  get globalAlpha(){   return this.prop("globalAlpha") }
+  set globalAlpha(alpha){     this.prop("globalAlpha", alpha) }
+  get shadowBlur(){    return this.prop("shadowBlur") }
+  set shadowBlur(level){      this.prop("shadowBlur", level) }
+  get shadowColor(){   return this.prop("shadowColor") }
+  set shadowColor(color){     this.prop("shadowColor", color) }
+  get shadowOffsetX(){ return this.prop("shadowOffsetX") }
+  set shadowOffsetX(x){       this.prop("shadowOffsetX", x) }
+  get shadowOffsetY(){ return this.prop("shadowOffsetY") }
+  set shadowOffsetY(y){       this.prop("shadowOffsetY", y) }
+  get filter(){        return this.prop('filter') }
+  set filter(str){            this.prop('filter', css.filter(`${str}`, css.font(this.font).size)) }
+
+  [REPR](depth, options) {
+    if (this.ref('disposed')) return `CanvasRenderingContext2D (disposed)`
+    let props = [ "canvas", "currentTransform", "fillStyle", "strokeStyle", "font", "fontStretch", "fontKerning", "fontVariant", "fontVariationSettings", "fontFeatureSettings", "fontInstance",
+                  "direction", "textAlign", "textBaseline", "textRendering", "textWrap", "fontSynthesis", "fontHinting", "fontSmoothing", "letterSpacing", "wordSpacing", "globalAlpha",
+                  "globalCompositeOperation", "imageSmoothingEnabled", "imageSmoothingQuality", "filter",
+                  "shadowBlur", "shadowColor", "shadowOffsetX", "shadowOffsetY", "lineCap", "lineDashOffset",
+                  "lineJoin", "lineWidth", "miterLimit" ]
+    let info = {}
+    if (depth > 0 ){
+      for (var prop of props){
+        try{ info[prop] = this[prop] }
+        catch{ info[prop] = undefined }
+      }
+    }
+    return `CanvasRenderingContext2D ${inspect(info, options)}`
+  }
+}
+
+// install the path verbs + Context2D extras (transforms, state stack, draw verbs) onto the prototype
+DrawList.install(CanvasRenderingContext2D)
+
+module.exports = {CanvasRenderingContext2D}

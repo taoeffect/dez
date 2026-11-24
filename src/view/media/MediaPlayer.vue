@@ -31,7 +31,7 @@ import { assetFactsText } from '../assetFacts'
 import { ASSET_ICON_SHAPES } from '../assetIcons'
 import { MODEL_ICON_SHAPES, assetModelTexts } from '../assetModelLabel'
 import type { ModelFacts } from '../modelLabel'
-import { clipFile, clipPlayType, clipProblem, clipSourceKind, expiryNotice, problemCard, type ClipLoadFailure, type ClipProblem } from './clipState'
+import { clipExportSource, clipFile, clipPlayType, clipProblem, clipSourceKind, expiryNotice, problemCard, type ClipLoadFailure, type ClipProblem } from './clipState'
 import { followClipVolume } from './clipVolume'
 import { releaseRemovedMedia } from './releaseMedia'
 import { videoAspectRatios } from './videoSizes'
@@ -471,15 +471,20 @@ function onSaveClick(): void {
 }
 
 // A right-click on the player pops up the native menu with "Reveal in File
-// Manager" (`dez.controller/menu/popupAsset`), in place of the webview's
-// own menu. The item is disabled when the clip has no file here
-// (`clipFile`). The text of the clock's tooltip keeps the webview's menu,
-// which can copy the selected text. The press of the click keeps the
-// editor's caret and focus (`src/view/editor/media.ts`).
+// Manager" and "Export…" (`dez.controller/menu/popupAsset`), in place of
+// the webview's own menu. Reveal is disabled when the clip has no file here
+// (`clipFile`), and Export when it has no source to copy
+// (`clipExportSource`). The text of the clock's tooltip keeps the
+// webview's menu, which can copy the selected text. The press of the click
+// keeps the editor's caret and focus (`src/view/editor/media.ts`).
 function onContextMenu(event: MouseEvent): void {
   if (event.target instanceof Element && event.target.closest('.media-player__tooltip--selectable') !== null) return
   event.preventDefault()
-  void sbp('dez.controller/menu/popupAsset', clipFile(props.src, props.linkedSrc, unavailable.value, props.busy))
+  const source = clipExportSource(props.src, props.linkedSrc, props.type, unavailable.value, props.busy)
+  void sbp('dez.controller/menu/popupAsset', {
+    file: clipFile(props.src, props.linkedSrc, unavailable.value, props.busy),
+    export: source === null ? null : { id: props.id, kind: props.kind, source },
+  })
 }
 </script>
 

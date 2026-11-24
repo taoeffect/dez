@@ -294,11 +294,11 @@ export async function compactConversation(input: CompactionInput): Promise<Compa
   const scope = compactionScope(sections, replySectionId)
   const found = [...conversationAssets(sections).found.values()].filter((asset) => asset.section < scope.end)
   const { facts, imageBytes } = await readAssetFiles(sections, scope.end, found, signal)
-  const { apps, appInputs } = await readCompactionApps(sections.slice(0, scope.end), new Set(found.map((asset) => asset.id)), signal)
+  const { apps, fileInputs } = await readCompactionApps(sections.slice(0, scope.end), new Set(found.map((asset) => asset.id)), input.conversationId, signal)
   // No request after a stop while a file was read.
   signal.throwIfAborted()
   const jobInputs = openJobInputs(input.jobs)
-  const assets = compactionAssets({ sections, scope, found, places: assetPlaces(sections, found), facts, jobInputs, appInputs, replySections: input.replySections })
+  const assets = compactionAssets({ sections, scope, found, places: assetPlaces(sections, found), facts, jobInputs, fileInputs, replySections: input.replySections })
 
   const instruction = compactionInstruction({
     middleMessages: middleMessageStarts(scope),

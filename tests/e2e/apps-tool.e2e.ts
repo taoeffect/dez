@@ -22,6 +22,8 @@ import { activeConversationId, endedReply, newTab, openToasts, submit } from './
 // through the file commands of the backend:
 // - a model makes an app, and writes, reads, edits, moves, lists, and
 //   deletes its files; only the user can open what the tool made;
+// - the lists of /apps hold the built-in apps that the build ships, with
+//   their mark, also after the delete of the last app of the user;
 // - a model reads ranges of the lines of a file, and its first edit call
 //   in each tab gets the hint of edit, also when Dez refuses the call; a
 //   model that read the help of edit gets no hint;
@@ -42,6 +44,25 @@ import { activeConversationId, endedReply, newTab, openToasts, submit } from './
 
 const CALLER: MockProvider = { id: 'caller', name: 'Caller Mock', modelId: 'caller-model', modelName: 'Caller Model' }
 const CHAT_PATH = mockChatPath(CALLER)
+
+// The built-in apps that the debug build ships (src-tauri/builtin-apps/),
+// by name: each listing of /apps has them besides the apps of a test. An
+// app is a folder of files, with no folder in it.
+const BUILT_IN_DIR = new URL('../../src-tauri/builtin-apps/', import.meta.url)
+const BUILT_IN_APPS = fs.readdirSync(BUILT_IN_DIR).sort().map((name) => {
+  const folder = new URL(`${name}/`, BUILT_IN_DIR)
+  const files = fs.readdirSync(folder).sort()
+  const manifest = parseAppManifest(fs.readFileSync(new URL('manifest.json', folder), 'utf8'))
+  if (!manifest) throw new Error(`The manifest of the built-in app ${name} is not valid.`)
+  return {
+    name,
+    files: files.map((file) => `${name}/${file}`),
+    bytes: files.reduce((sum, file) => sum + fs.statSync(new URL(file, folder)).size, 0),
+    kind: manifest.kind,
+    description: manifest.description,
+  }
+})
+const BUILT_IN_FILES = BUILT_IN_APPS.flatMap((app) => app.files)
 
 describe('apps tool', () => {
   let setup: MockProviderApp
@@ -150,7 +171,11 @@ describe('apps tool', () => {
       `main.ts | ${byteSizeText(mainBytes)}`,
       'manifest.json | 75 B',
     ].join('\n'))
-    expect(toolResult(third, 'call_list')).toBe(`1 app (name | kind | size | description), by name.\nnotes | script | ${byteSizeText(mainBytes + 65 + 75)} | Keeps notes.`)
+    expect(toolResult(third, 'call_list')).toBe([
+      `${BUILT_IN_APPS.length + 1} apps (name | kind | size | description), by name.`,
+      ...BUILT_IN_APPS.map((app) => `${app.name} | ${app.kind} (built-in) | ${byteSizeText(app.bytes)} | ${app.description}`),
+      `notes | script | ${byteSizeText(mainBytes + 65 + 75)} | Keeps notes.`,
+    ].join('\n'))
     expect(['notes/lib', 'notes/data/old', 'notes/data/old/lib'].map(modeOf)).toStrictEqual([0o700, 0o700, 0o700])
 
     sendToolCalls(third.reply, [
@@ -175,10 +200,46 @@ describe('apps tool', () => {
       '/apps/notes/main.ts',
       '/apps/notes/manifest.json',
     ].join('\n'))
-    expect(toolResult(fourth, 'call_none')).toBe('There are no apps yet. Make one with init.')
+    // The built-in apps stay.
+    expect(toolResult(fourth, 'call_none')).toBe([
+      `/apps: ${BUILT_IN_APPS.length} folders and 0 files (name | size).`,
+      ...BUILT_IN_APPS.map((app) => `${app.name}/ | ${app.files.length} files, ${byteSizeText(app.bytes)} | built-in`),
+    ].join('\n'))
     expect(await filesIn(appsDir)).toStrictEqual([])
     await expectReplyEnd(fourth)
     expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('changes the files of /work, the work folder of the conversation, and only reads /libs, the libraries that Dez ships', async () => {
+    await seedApp(appsDir, { name: 'store', description: 'Keeps data.', kind: 'script' }, { 'main.ts': 'export default () => 1\n' })
+    await submit(browser, 'Keep some data.')
+    const first = await chatRequest()
+    const workDir = appFilePath(setup.app.home, 'work', await activeConversationId(browser))
+    sendToolCalls(first.reply, [
+      appsCall('call_write', 'write', { path: '/work/data/a.json', content: '{}\n' }),
+      appsCall('call_mv', 'mv', { moves: [{ from: '/work/data/a.json', to: '/apps/store/a.json' }, { from: '/apps/store/main.ts', to: '/work/main.ts' }] }),
+      appsCall('call_rm_work', 'rm', { paths: ['/work'] }),
+      appsCall('call_ls_libs', 'ls', { path: '/libs' }),
+      appsCall('call_read_libs', 'read', { path: '/libs/import_map.json', ranges: [{ from_line: 1, to_line: 1 }] }),
+      appsCall('call_write_libs', 'write', { path: '/libs/x.js', content: 'x' }),
+    ])
+
+    const second = await chatRequest()
+    expect(toolResult(second, 'call_write')).toBe('Wrote the new file /work/data/a.json (3 B, 1 line).')
+    expect(toolResult(second, 'call_mv')).toBe('Did 2 of 2 moves.\n1. Done. Moved /work/data/a.json to /apps/store/a.json.\n2. Done. Moved /apps/store/main.ts to /work/main.ts.')
+    expect(fs.readFileSync(path.join(appsDir, 'store/a.json'), 'utf8')).toBe('{}\n')
+    expect(await filesIn(workDir)).toStrictEqual(['data', 'main.ts'])
+    // Only the user can open the work folder and what the tool made in it.
+    expect([workDir, path.join(workDir, 'data')].map((folder) => fs.statSync(folder).mode & 0o777)).toStrictEqual([0o700, 0o700])
+    expect(toolResult(second, 'call_rm_work')).toContain('/work is the work folder of this conversation, and rm does not delete it')
+    expect(toolResult(second, 'call_ls_libs')).toMatch(/^\/libs: \d+ folders and \d+ files \(name \| size\)\.\n(.*\n)*three\/ \| \d/)
+    expect(toolResult(second, 'call_read_libs')).toMatch(/^\/libs\/import_map\.json: line 1 of \d+ \(/)
+    expect(toolResult(second, 'call_write_libs')).toContain('/libs/x.js: /libs/ holds the libraries that Dez ships')
+    await expectReplyEnd(second)
+    // Dez logs the two calls that it refuses, and nothing else.
+    expect((await consoleErrors(browser)).map((error) => error.split('\n')[0].replace(/^The tool apps failed: ToolError: (\S+ \S+).*$/, '$1'))).toStrictEqual(['/work is', '/libs/x.js: /libs/'])
+
+    await fs.promises.rm(appsDir, { recursive: true, force: true })
   })
 
   it('reads ranges of lines, gives the hint of edit in the first edit call of each tab, and cuts a long hunk to its ends', async () => {
@@ -381,7 +442,8 @@ describe('apps tool', () => {
 
     const second = await chatRequest()
     expect(toolResult(second, 'call_find_all')).toBe([
-      '/apps: 5 files (paths after /apps/), by path.',
+      `/apps: ${BUILT_IN_FILES.length + 5} files (paths after /apps/), by path.`,
+      ...BUILT_IN_FILES,
       'slow/manifest.json',
       'slow/slow.txt',
       'trip/main.ts',
@@ -389,7 +451,7 @@ describe('apps tool', () => {
       'trip/units.ts',
     ].join('\n'))
     expect(toolResult(second, 'call_find_words')).toBe([
-      '/apps: 2 of 5 files match "trip ts" (paths after /apps/), by path.',
+      `/apps: 2 of ${BUILT_IN_FILES.length + 5} files match "trip ts" (paths after /apps/), by path.`,
       'trip/main.ts',
       'trip/units.ts',
     ].join('\n'))

@@ -276,11 +276,15 @@ export async function pointerShiftClickAt (browser: E2EBrowser, point: Point): P
 }
 
 /**
- * Right-click at `point` with WebDriver pointer actions: a real press and
- * release of the right button, which the page gets as `mousedown`,
- * `contextmenu`, and `mouseup`. Use it only where the page cancels the
- * `contextmenu` event: elsewhere the webview opens its own menu, a native
- * popup that WebDriver cannot close.
+ * Right-click at `point` with WebDriver pointer actions: a real press of the
+ * right button, which the page gets as `mousedown` and `contextmenu`. Use
+ * it only where the page cancels the `contextmenu` event: elsewhere the
+ * webview opens its own menu, a native popup that WebDriver cannot close.
+ * WebKitWebDriver sends the release as one of the left button (`button` 0,
+ * `buttons` 2), so the page also gets a `click` where the release is, and
+ * every later event of the session has `buttons` 2, a left click too: a
+ * hover that waits for no button down (the preview box of a mention chip)
+ * never comes after it.
  */
 export async function pointerRightClickAt (browser: E2EBrowser, point: Point): Promise<void> {
   await browser.action('pointer', { parameters: { pointerType: 'mouse' } })

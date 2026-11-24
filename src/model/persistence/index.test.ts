@@ -261,3 +261,35 @@ describe('dez.persistence/eachConversationText', () => {
     }
   })
 })
+
+describe('dez.persistence/conversationIds', () => {
+  async function conversationIds(): Promise<string[]> {
+    return await sbp('dez.persistence/conversationIds') as string[]
+  }
+
+  it('gives the id of each conversation file, also of a link, once', async () => {
+    appFiles = new Map([['a.md', new Uint8Array()], ['a.md.4012.7.tmp', new Uint8Array()], ['notes.txt', new Uint8Array()]])
+    diskFiles = [
+      { id: 'a', content: null, updatedAt: 1 },
+      { id: 'linked_1-x', content: null, updatedAt: 2 },
+      { id: 'a.b', content: null, updatedAt: 3 },
+    ]
+
+    expect(await conversationIds()).toStrictEqual(['a', 'linked_1-x'])
+    expect(appFileReads).toEqual([])
+  })
+
+  // A part of the ids that passed for all of them would make the work
+  // folders of the others look unused.
+  it('rejects when the folder cannot be read, and does not take it for empty', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      appFiles = new Error('Failed to list conversations: Permission denied')
+
+      await expect(conversationIds()).rejects.toThrow('Permission denied')
+      expect(errorSpy).toHaveBeenCalled()
+    } finally {
+      errorSpy.mockRestore()
+    }
+  })
+})

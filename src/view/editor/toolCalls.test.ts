@@ -1,5 +1,5 @@
 import { EditorSelection, EditorState } from '@codemirror/state'
-import { EditorView } from '@codemirror/view'
+import { EditorView, type WidgetType } from '@codemirror/view'
 import { describe, expect, it } from 'vitest'
 import { compactionBlockText } from '../../model/chat/compaction'
 import { bridgedInvoke, evalBlock, HIDDEN_CLIP_PATH, HIDDEN_IMAGE_PATH, hiddenClip, hiddenImage, invokeBlock, waitBlock } from '../../model/chat/testing'
@@ -101,6 +101,29 @@ describe('renderedToolCalls', () => {
     const typed = thought.update({ changes: { from: 0, insert: 'x' } }).state
     expect(renderedToolCalls(typed)).not.toBe(calls)
     expect(renderedToolCalls(typed)[0].from).toBe(calls[0].from + 1)
+  })
+
+  // CodeMirror keeps the chip DOM while the widget's `eq` holds: the time
+  // that the final block of a slow call gets must draw a new chip.
+  it('keeps the time of a block on its call, and draws a new chip when it changes, but not on an edit before it', () => {
+    const timed = (durationMs?: number) => toolBlockText({ id: 'a', name: 'model_list', status: 'success', arguments: { filter: 'gemini' }, result: 'ok', ...(durationMs === undefined ? {} : { durationMs }) })
+    const chipWidgets = (state: EditorState) => state.facet(EditorView.decorations).flatMap((source) => {
+      const widgets: WidgetType[] = []
+      if (typeof source === 'function') return widgets
+      for (const cursor = source.iter(); cursor.value; cursor.next()) {
+        const widget = cursor.value.spec.widget as WidgetType | undefined
+        if (widget) widgets.push(widget)
+      }
+      return widgets
+    })
+    const state = createState(['ask', timed()], ['user', 'agent'])
+    const stamped = state.update({ changes: { from: state.doc.length - timed().length, to: state.doc.length, insert: timed(2500) } }).state
+    const typed = stamped.update({ changes: { from: 0, insert: 'x' } }).state
+
+    expect(renderedToolCalls(state)[0].durationMs).toBeUndefined()
+    expect(renderedToolCalls(stamped)[0].durationMs).toBe(2500)
+    expect(chipWidgets(stamped)[0].eq(chipWidgets(state)[0])).toBe(false)
+    expect(chipWidgets(typed)[0].eq(chipWidgets(stamped)[0])).toBe(true)
   })
 })
 
@@ -477,9 +500,25 @@ describe('toolCallLabel', () => {
     expect(toolCallLabel('web_search', '', 'error')).toBe('Tool call, old/unrecognized tool: web_search, failed')
   })
 
+  // A running block keeps its state until its whole group ends; the name
+  // follows the chip's lead instead (the triangle, the still spinner).
+  it('tells where a running call is in its group, and leaves the phase out of an ended block', () => {
+    expect(toolCallLabel('model_list', '"gemini"', 'running', '', undefined, 'ended')).toBe('Tool call model_list, "gemini", ended')
+    expect(toolCallLabel('model_list', '"gemini"', 'running', 'intermediate', undefined, 'waiting')).toBe('Tool call model_list, "gemini", waiting, intermediate')
+    expect(toolCallLabel('model_list', '"gemini"', 'error', '', undefined, 'ended')).toBe('Tool call model_list, "gemini", failed')
+  })
+
   it('ends with the label of an intermediate call', () => {
     expect(toolCallLabel('model_invoke', '"studio/paint"', 'success', 'intermediate asset hidden')).toBe('Tool call model_invoke, "studio/paint", intermediate asset hidden')
     expect(toolCallLabel('model_invoke', '"studio/paint"', 'running', 'intermediate')).toBe('Tool call model_invoke, "studio/paint", running, intermediate')
+  })
+
+  // A live time would change the name each second: only the time that a
+  // call took is in it.
+  it('tells the time that the call took, before the label of an intermediate call', () => {
+    expect(toolCallLabel('model_list', '"gemini"', 'success', '', 4213)).toBe('Tool call model_list, "gemini", took 4.2 seconds')
+    expect(toolCallLabel('model_list', '', 'error', '', 61_000)).toBe('Tool call model_list, failed, took 1 minute 1 second')
+    expect(toolCallLabel('model_invoke', '"studio/paint"', 'success', 'intermediate asset hidden', 2500)).toBe('Tool call model_invoke, "studio/paint", took 2.5 seconds, intermediate asset hidden')
   })
 })
 

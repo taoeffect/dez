@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { escapeMarkerAttribute } from '../../utils/markerAttribute'
 import { findCall, findText } from '../tools/appsTool'
-import { appsArgs, folderTree, grepResult } from '../tools/testing'
+import { appsArgs, CONVERSATION_ID, folderTree, grepResult } from '../tools/testing'
 import { appTagText } from './appTags'
 import { namedApps } from './appNames'
 import { toolBlockText } from './toolBlocks'
@@ -75,7 +75,7 @@ describe('namedApps', () => {
 
   it('takes no app of a find of the files of every app', () => {
     const tree = folderTree({ clock: null, 'clock/main.js': 5, notes: null, 'notes/src/main.js': 9 })
-    const result = findText(findCall(appsArgs('find', { query: '*' })), tree)
+    const result = findText(findCall(appsArgs('find', { query: '*' }), CONVERSATION_ID), tree)
     expect(result).toContain('notes/src/main.js')
     expect(names(result)).toStrictEqual([])
   })

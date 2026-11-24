@@ -34,7 +34,7 @@ export function modelMatches(provider: ProviderInfo, model: ModelInfo, terms: re
 /** True when the model makes one of the query's outputs, takes all its
  *  inputs, and matches all its terms (`modelMatches`). */
 export function modelMatchesQuery(provider: ProviderInfo, model: ModelInfo, query: ModelQuery): boolean {
-  return matchesOutputFilter(model, query.outputs) && matchesInputFilter(model, query.inputs ?? []) && modelMatches(provider, model, query.terms)
+  return matchesOutputFilter(model, query.outputs) && matchesInputFilter(model, query.inputs ?? [], provider.chatClips) && modelMatches(provider, model, query.terms)
 }
 
 /** The models that the user can pick, in model cache order: the cached

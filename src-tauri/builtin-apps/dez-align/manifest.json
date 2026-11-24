@@ -1,0 +1,10 @@
+{
+  "name": "dez-align",
+  "description": "Finds where one clip starts in another, such as a song in the sound of a video edit, with a confidence. Inputs: the clip, then the clip to find it in.",
+  "kind": "script",
+  "decode": {
+    "audio": {
+      "rate": 8000
+    }
+  }
+}

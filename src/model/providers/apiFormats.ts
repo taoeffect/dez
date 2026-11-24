@@ -38,6 +38,9 @@ export interface ApiFormat {
   // reasoning from the answer text. Without it, reasoning fields are ignored
   // and the answer text is passed on as it comes.
   createStreamParser(thinking: boolean): SseStreamParser
+  // The format has wire parts for audio and video clips, so a chat request
+  // can carry the clips that `ProviderConfig.chatClips` lets it.
+  sendsClips: boolean
 }
 
 // A message as the provider gets it.
@@ -55,8 +58,8 @@ type ReplayMessage = (message: WireMessage, text: string, replay: ThinkingReplay
 // The wire messages of the results of one group of tool calls.
 type ToolResultMessages = (results: readonly ToolResult[]) => WireMessage[]
 
-// The wire block of one image of a user message.
-type ImageBlock = (image: Extract<ChatPart, { type: 'image' }>) => Record<string, unknown>
+// The wire block of one image or clip of a user message.
+type AttachmentBlock = (part: Exclude<ChatPart, { type: 'text' }>) => Record<string, unknown>
 
 // The entry of one Dez tool in the request's `tools` array.
 type WireTool = (tool: ToolDefinition) => Record<string, unknown>
@@ -66,7 +69,7 @@ interface WireShapes {
   agentMessage: AgentMessage
   replayMessage: ReplayMessage
   toolResults: ToolResultMessages
-  imageBlock: ImageBlock
+  attachmentBlock: AttachmentBlock
   tool: WireTool
 }
 
@@ -81,10 +84,10 @@ interface WireChat {
 
 // The parts and the blocks that each one becomes, the same at every build:
 // the prefix hash of a signed replay covers the messages before it.
-function wireContent(content: string | ChatPart[], imageBlock: ImageBlock): unknown {
+function wireContent(content: string | ChatPart[], attachmentBlock: AttachmentBlock): unknown {
   return typeof content === 'string'
     ? content
-    : content.map((part) => part.type === 'text' ? { type: 'text', text: part.text } : imageBlock(part))
+    : content.map((part) => part.type === 'text' ? { type: 'text', text: part.text } : attachmentBlock(part))
 }
 
 // Both formats send the same message list; only the shapes above and the
@@ -115,7 +118,7 @@ function wireChat(messages: ChatMessage[], context: ChatRequestContext, shapes: 
 
   const wireMessages = messages.flatMap((message) => {
     const sent = message.role === 'user'
-      ? [{ role: 'user', content: wireContent(message.content, shapes.imageBlock) }]
+      ? [{ role: 'user', content: wireContent(message.content, shapes.attachmentBlock) }]
       : message.role === 'agent'
         ? [agentWireMessage(message, prefix, shapes)]
         : shapes.toolResults(message.results)
@@ -205,17 +208,28 @@ const anthropicToolResults: ToolResultMessages = (results) => [{
   })),
 }]
 
-// The image as a base64 data URL in an `image_url` part (checked live on
-// Venice).
-const openAiImageBlock: ImageBlock = (image) => ({
-  type: 'image_url',
-  image_url: { url: `data:${image.mediaType};base64,${image.data}` },
-})
+// An image as a base64 data URL in an `image_url` part (checked live on
+// Venice). An audio clip goes as base64 in an `input_audio` part with the
+// name of its format, and a video clip as a base64 data URL in a
+// `video_url` part, as the chat completions docs of Venice and OpenRouter
+// tell.
+const openAiAttachmentBlock: AttachmentBlock = (part) => {
+  switch (part.type) {
+    case 'image':
+      return { type: 'image_url', image_url: { url: `data:${part.mediaType};base64,${part.data}` } }
+    case 'audio':
+      return { type: 'input_audio', input_audio: { data: part.data, format: part.format } }
+    case 'video':
+      return { type: 'video_url', video_url: { url: `data:${part.mediaType};base64,${part.data}` } }
+  }
+}
 
-const anthropicImageBlock: ImageBlock = (image) => ({
-  type: 'image',
-  source: { type: 'base64', media_type: image.mediaType, data: image.data },
-})
+// The format has no clip part (`sendsClips`), so no request to it holds
+// one: `ProviderInfo.chatClips` is missing for its providers.
+const anthropicAttachmentBlock: AttachmentBlock = (part) => {
+  if (part.type !== 'image') throw new Error(`The Anthropic format sends no ${part.type} clip.`)
+  return { type: 'image', source: { type: 'base64', media_type: part.mediaType, data: part.data } }
+}
 
 // Both entries take the same JSON schema (toolJsonSchema), with a fixed key
 // order, so the tools array is the same bytes in every request.
@@ -234,14 +248,14 @@ const openAiShapes: WireShapes = {
   agentMessage: openAiAgentMessage,
   replayMessage: openAiReplayMessage,
   toolResults: openAiToolResults,
-  imageBlock: openAiImageBlock,
+  attachmentBlock: openAiAttachmentBlock,
   tool: openAiTool,
 }
 const anthropicShapes: WireShapes = {
   agentMessage: anthropicAgentMessage,
   replayMessage: anthropicReplayMessage,
   toolResults: anthropicToolResults,
-  imageBlock: anthropicImageBlock,
+  attachmentBlock: anthropicAttachmentBlock,
   tool: anthropicTool,
 }
 
@@ -339,6 +353,7 @@ const openAiFormat: ApiFormat = {
   // models that do think, think without one.
   thinkingBody: {},
   createStreamParser: (thinking) => new OpenAiStreamParser(thinking),
+  sendsClips: true,
 }
 
 // Anthropic SDK style base URLs have no version (https://api.anthropic.com),
@@ -375,6 +390,7 @@ const anthropicFormat: ApiFormat = {
   // refuse `adaptive`; a config can set its own `enabledBody` for them.
   thinkingBody: { thinking: { type: 'adaptive', display: 'summarized' } },
   createStreamParser: (thinking) => new AnthropicStreamParser(thinking),
+  sendsClips: false,
 }
 
 export const API_FORMATS: Record<ApiFormatId, ApiFormat> = {

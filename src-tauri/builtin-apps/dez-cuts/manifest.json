@@ -1,0 +1,11 @@
+{
+  "name": "dez-cuts",
+  "description": "Finds the cuts (shot changes) of videos: the frame, the time, and the score of each. Writes JSON into /work/.",
+  "kind": "script",
+  "decode": {
+    "frames": {
+      "width": 96,
+      "height": 54
+    }
+  }
+}

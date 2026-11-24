@@ -29,7 +29,7 @@ describe('model cache persistence format', () => {
 
   it('round-trips capability flags, the readable name, and the release date, and reads a model without one as unknown', () => {
     const models = [
-      { id: 'vision', name: 'Vision', provider: 'venice', imageInput: true, toolCalling: true, thinking: true },
+      { id: 'vision', name: 'Vision', provider: 'venice', imageInput: true, audioInput: true, videoInput: false, toolCalling: true, thinking: true },
       { id: 'text', name: 'Text', provider: 'venice', imageInput: false, toolCalling: false, thinking: false, unsupportedSettings: ['xSearch'] },
       { id: 'named-by-id', name: 'named-by-id', provider: 'venice', readableName: 'Named By Id', released: '2025-11-18' },
       // A cache written before the thinking flag and the unsupported toggles

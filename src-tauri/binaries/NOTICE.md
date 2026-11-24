@@ -6,7 +6,7 @@ Dez ships two programs of the [FFmpeg](https://ffmpeg.org/) project next to its 
 
 - FFmpeg version: n9.0.2
 - Builder: Dez, [taoeffect/dez-ffmpeg](https://github.com/taoeffect/dez-ffmpeg), from the build scripts of the Shaka Project, [shaka-project/static-ffmpeg-binaries](https://github.com/shaka-project/static-ffmpeg-binaries)
-- Release: [n9.0.2-4](https://github.com/taoeffect/dez-ffmpeg/releases/tag/n9.0.2-4)
+- Release: [n9.0.2-6](https://github.com/taoeffect/dez-ffmpeg/releases/tag/n9.0.2-6)
 
 The programs and `LICENSES.txt` are files of that release, not changed. `manifest.json` has the release file, the size, and the SHA-256 of each one. This file is for the Dez version of this branch or tag: for another Dez version, read it at the tag of that version.
 
@@ -16,7 +16,7 @@ The programs have the [GNU General Public License, version 3](https://www.gnu.or
 
 ## Libraries
 
-The programs hold these libraries. Their versions are in [`versions.txt`](https://github.com/taoeffect/dez-ffmpeg/blob/n9.0.2-4/versions.txt) of the release.
+The programs hold these libraries. Their versions are in [`versions.txt`](https://github.com/taoeffect/dez-ffmpeg/blob/n9.0.2-6/versions.txt) of the release.
 
 - [libvpx](https://chromium.googlesource.com/webm/libvpx): the BSD 3-Clause License
 - [SVT-AV1](https://gitlab.com/AOMediaCodec/SVT-AV1): the BSD 3-Clause Clear License
@@ -29,6 +29,8 @@ The programs hold these libraries. Their versions are in [`versions.txt`](https:
 - [HarfBuzz](https://github.com/harfbuzz/harfbuzz): the MIT License ("Old MIT")
 - [FriBidi](https://github.com/fribidi/fribidi): the GNU Lesser General Public License, version 2.1 or later
 - [libass](https://github.com/libass/libass): the ISC License
+- [Rubber Band Library](https://breakfastquay.com/rubberband/): the GNU General Public License, version 2 or later
+- [vid.stab](https://github.com/georgmartius/vid.stab): the GNU General Public License, version 2 or later; its sse2neon part (only in the macOS files): the MIT License
 - [musl (only in the Linux files)](https://musl.libc.org/): the MIT License
 
 FreeType: Portions of this software are copyright © The FreeType Project (https://freetype.org). All rights reserved.
@@ -40,7 +42,7 @@ FreeType: Portions of this software are copyright © The FreeType Project (https
 ## Source code
 
 - FFmpeg n9.0.2: <https://git.ffmpeg.org/gitweb/ffmpeg.git/tag/refs/tags/n9.0.2> (a copy: <https://github.com/FFmpeg/FFmpeg/tree/n9.0.2>)
-- The build scripts, which get the source of each library at the version of `versions.txt`: <https://github.com/taoeffect/dez-ffmpeg/tree/n9.0.2-4>
+- The build scripts, which get the source of each library at the version of `versions.txt`: <https://github.com/taoeffect/dez-ffmpeg/tree/n9.0.2-6>
 
 ## Another version
 

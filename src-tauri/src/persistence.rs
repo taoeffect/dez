@@ -1,8 +1,9 @@
-//! Raw private-file I/O under the two file roots (`FileRoot`: the app folder
-//! `~/.config/dez/`, and Dez's folder in the OS cache folder), plus id and
-//! app-file path sanitization. TypeScript owns every file format (app state,
-//! prompts, conversations, model cache); Rust never parses them. The generic
-//! app-file commands (`save_app_file`, `load_app_file`, `load_app_file_bytes`,
+//! Raw private-file I/O under the three file roots (`FileRoot`: the app
+//! folder `~/.config/dez/`, Dez's folder in the OS cache folder, and the
+//! files that Dez ships, read only), plus id and app-file path
+//! sanitization. TypeScript owns every file format (app state, prompts,
+//! conversations, model cache); Rust never parses them. The generic app-file
+//! commands (`save_app_file`, `load_app_file`, `load_app_file_bytes`,
 //! `delete_app_file`, `move_app_file`, `list_app_files`, `list_file_tree`,
 //! `create_folder`, and `download_app_file` in http_bridge.rs) take a path
 //! from TypeScript that is relative to a root folder (`FileRoot`), so a new
@@ -16,6 +17,7 @@
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,11 +39,16 @@ pub struct ConversationFile {
 //   ask to keep, such as the temp copies of clips and the work folders of
 //   the bundled tools (bundled_tools.rs). It is outside the app folder, so
 //   those files do not fill it.
+// - `resource`: Tauri's resource dir, with the files that Dez ships for its
+//   runs (the libraries, the fonts, the built-in apps). Only the read
+//   commands take it (`writable_file_path`): it is no Dez folder, and no
+//   user, model, or app changes what Dez ships.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FileRoot {
     App,
     Cache,
+    Resource,
 }
 
 // One file or folder of a folder listing (`list_app_files`).
@@ -107,17 +114,41 @@ pub struct FileTree {
 // (`ToolRun::app_folder` in bundled_tools.rs).
 pub(crate) const APPS_FOLDER: &str = "apps";
 
+// The folder of the app folder that holds the work folder of each
+// conversation, by its id (`ToolRun::conversation_folder` in
+// bundled_tools.rs). Not the `work` folder of the cache root, which holds
+// the work folders of the runs.
+pub(crate) const CONVERSATION_WORK_FOLDERS: &str = "work";
+
 // The folders of the app folder that programs own, as they own the cache
 // root: a bundled program makes, changes, and removes every file and folder
 // of its part of them (`Confinement::also_owned`: a Deno run in the folder
-// of its app), and a model writes any tree of files there with a Dez tool.
+// of its app and in the work folder of its conversation), and a model
+// writes any tree of files there with a Dez tool.
 // The rules of `is_program_owned` and `allows_folder_change` hold for them.
 // The rest of the app folder holds the user's data, where a link is the
 // user's own. A constant, so no page code can widen the list.
-const PROGRAM_OWNED_FOLDERS: &[&str] = &[APPS_FOLDER];
+const PROGRAM_OWNED_FOLDERS: &[&str] = &[APPS_FOLDER, CONVERSATION_WORK_FOLDERS];
 
 // Why a folder command refuses a path (`allows_folder_change`).
 const NO_FOLDER_CHANGE: &str = "a folder can be made, moved, or deleted only in the cache root, and in the app root only below a folder that programs own";
+
+// Why a command that changes a file refuses the resource root
+// (`writable_file_path`).
+const READ_ONLY_ROOT: &str = "the files that Dez ships cannot change";
+
+// Tauri's resource dir, which only the app handle gives
+// (`set_resource_dir`). The text is Tauri's, with no canonical form: the
+// page and Rust build the paths of a run from it (bundled_tools.rs), and
+// Deno compares the paths of its flags as text.
+static RESOURCE_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+// Keeps Tauri's resource dir for `FileRoot::Resource`. The setup of the app
+// calls it once, before any command can run (lib.rs). A later call changes
+// nothing.
+pub(crate) fn set_resource_dir(dir: PathBuf) {
+    let _ = RESOURCE_DIR.set(dir);
+}
 
 // All app data is under `$HOME/.config/dez/` on every OS. The path comes from
 // $HOME on purpose, not from Tauri's path API. `key_store_path` in
@@ -135,6 +166,7 @@ pub(crate) fn root_dir(root: FileRoot) -> Result<PathBuf, String> {
         FileRoot::Cache => dirs::cache_dir()
             .map(|dir| dir.join("dez"))
             .ok_or_else(|| "This system has no cache folder".to_string()),
+        FileRoot::Resource => RESOURCE_DIR.get().cloned().ok_or_else(|| "Dez could not find the folder of the files that it ships".to_string()),
     }
 }
 
@@ -173,6 +205,15 @@ fn path_in(dir: &Path, root: FileRoot, relative: &str) -> Result<PathBuf, String
     Ok(path)
 }
 
+// `app_file_path` for a command that writes, moves, or deletes: the
+// resource root is an error, whatever the path.
+pub(crate) fn writable_file_path(root: FileRoot, relative: &str) -> Result<PathBuf, String> {
+    if root == FileRoot::Resource {
+        return Err(format!("Failed to change {}: {}", relative, READ_ONLY_ROOT));
+    }
+    app_file_path(root, relative)
+}
+
 // Whether programs own the place of a path of a root: every path of the
 // cache root, and in the app root each of `PROGRAM_OWNED_FOLDERS` with all
 // that is below it. What is there is the work of a program, so Dez's own
@@ -183,7 +224,25 @@ fn is_program_owned(root: FileRoot, relative: &str) -> bool {
     match root {
         FileRoot::Cache => true,
         FileRoot::App => relative.split('/').next().is_some_and(|first| PROGRAM_OWNED_FOLDERS.contains(&first)),
+        FileRoot::Resource => false,
     }
+}
+
+// The folders of the app root `app_root` that programs own
+// (`PROGRAM_OWNED_FOLDERS`), below which Dez follows no link.
+fn program_owned_folders(app_root: &Path) -> impl Iterator<Item = PathBuf> + '_ {
+    PROGRAM_OWNED_FOLDERS.iter().map(move |name| app_root.join(name))
+}
+
+// The folders below which Dez follows no link (`through_link`): the cache
+// root `cache`, and the folders of the app root `app` that programs own.
+pub(crate) fn link_roots(cache: &Path, app: &Path) -> Vec<PathBuf> {
+    std::iter::once(cache.to_path_buf()).chain(program_owned_folders(app)).collect()
+}
+
+// Whether `path` goes through a link below one of `link_roots`.
+pub(crate) fn through_link<P: AsRef<Path>>(link_roots: &[P], path: &Path) -> bool {
+    link_roots.iter().any(|root| has_link_below(root.as_ref(), path))
 }
 
 // Whether a folder at a path of a root can be made, moved, and deleted
@@ -196,6 +255,7 @@ fn allows_folder_change(root: FileRoot, relative: &str) -> bool {
     match root {
         FileRoot::Cache => true,
         FileRoot::App => is_program_owned(root, relative) && relative.contains('/'),
+        FileRoot::Resource => false,
     }
 }
 
@@ -488,7 +548,7 @@ fn read_file(path: &Path, plain_only: bool) -> std::io::Result<Vec<u8>> {
 
 fn open_file(path: &Path, plain_only: bool) -> std::io::Result<std::fs::File> {
     if plain_only {
-        open_plain_file(path)
+        open_plain_file(path, false)
     } else {
         std::fs::File::open(path)
     }
@@ -501,15 +561,19 @@ fn open_file(path: &Path, plain_only: bool) -> std::io::Result<std::fs::File> {
 // return at once, and the check is on the open file, so no program can put
 // a pipe in place of a file between a check and the open. `O_NOFOLLOW`
 // refuses a link in place of the file: the path check (`has_link_below`)
-// was some time before the open.
-fn open_plain_file(path: &Path) -> std::io::Result<std::fs::File> {
+// was some time before the open. With `follow_link`, for a file outside
+// those places (a linked file of the user), a link is opened as the file
+// that it names.
+fn open_plain_file(path: &Path, follow_link: bool) -> std::io::Result<std::fs::File> {
     let mut options = std::fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW);
+        options.custom_flags(libc::O_NONBLOCK | if follow_link { 0 } else { libc::O_NOFOLLOW });
     }
+    #[cfg(not(unix))]
+    let _ = follow_link;
     let file = options.open(path)?;
     if !file.metadata()?.is_file() {
         return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "not a regular file"));
@@ -518,7 +582,7 @@ fn open_plain_file(path: &Path) -> std::io::Result<std::fs::File> {
 }
 
 pub fn save_app_file(root: FileRoot, relative: &str, content: &[u8]) -> Result<(), String> {
-    let path = app_file_path(root, relative)?;
+    let path = writable_file_path(root, relative)?;
     write_private_file(&path, content)
 }
 
@@ -528,7 +592,7 @@ pub fn save_app_file(root: FileRoot, relative: &str, content: &[u8]) -> Result<(
 // make the folder of an app with this, as `save_app_file` and
 // `move_app_file` make a missing folder on their way with the default mode.
 pub fn create_folder(root: FileRoot, relative: &str) -> Result<(), String> {
-    let path = app_file_path(root, relative)?;
+    let path = writable_file_path(root, relative)?;
     if !allows_folder_change(root, relative) {
         return Err(format!("Failed to make the folder {}: {}", relative, NO_FOLDER_CHANGE));
     }
@@ -539,7 +603,7 @@ pub fn create_folder(root: FileRoot, relative: &str) -> Result<(), String> {
 // missing one is not an error. A folder goes only where a folder can change
 // (`allows_folder_change`).
 pub fn delete_app_file(root: FileRoot, relative: &str, folder: bool) -> Result<(), String> {
-    let path = app_file_path(root, relative)?;
+    let path = writable_file_path(root, relative)?;
     let deleted = if !folder {
         remove_file_if_present(&path)
     } else if allows_folder_change(root, relative) {
@@ -601,8 +665,8 @@ fn unlock_folders(folder: &Path) {
 // A source that is a folder moves with all that it holds, when a folder can
 // change at both paths (`allows_folder_change`).
 pub fn move_app_file(from_root: FileRoot, from: &str, to_root: FileRoot, to: &str) -> Result<(), String> {
-    let source = app_file_path(from_root, from)?;
-    let target = app_file_path(to_root, to)?;
+    let source = writable_file_path(from_root, from)?;
+    let target = writable_file_path(to_root, to)?;
     let folders = allows_folder_change(from_root, from) && allows_folder_change(to_root, to);
     move_path(&source, &target, folders).map_err(|e| format!("Failed to move {} to {}: {}", from, to, e))
 }
@@ -680,6 +744,54 @@ fn copy_then_remove(source: &Path, target: &Path) -> Result<(), String> {
         let _ = std::fs::remove_file(target);
         error.to_string()
     })
+}
+
+// Copies the file at the absolute path `source` to `target`, a path that
+// the user picked in the save dialog: the Export of an image or a clip
+// (`export_file` in commands.rs checks the target). The copy is the user's
+// file, so it gets the default mode, not the 0600 of `PrivateFileWriter`;
+// `std::fs::copy` would copy the 0600 of a source in the Dez folders.
+pub fn export_file(source: &str, target: &Path) -> Result<(), String> {
+    let app = base_dir();
+    // A system with no cache folder has no file there to guard.
+    let roots = match root_dir(FileRoot::Cache) {
+        Ok(cache) => link_roots(&cache, &app),
+        Err(_) => program_owned_folders(&app).collect(),
+    };
+    export_copy(Path::new(source), target, &roots)
+}
+
+// `export_file` with the folders below which it follows no link. A source
+// there can be the work of a program (a temp copy of a clip, a file of a
+// work folder), and a link there can name any file of the user, the API
+// keys too, so it is refused, as the input of a bundled tool is
+// (`copy_input` in bundled_tools.rs). A link elsewhere is the user's own (a
+// linked file). Only a regular file is copied (`open_plain_file`). The copy
+// goes into a part file next to the target, which a rename puts in place:
+// a failed copy leaves the target as it was, and a target that is the
+// source itself loses no byte.
+fn export_copy<P: AsRef<Path>>(source: &Path, target: &Path, link_roots: &[P]) -> Result<(), String> {
+    // `through_link` compares the parts of the path as text.
+    if !source.is_absolute() || source.components().any(|part| part == std::path::Component::ParentDir) {
+        return Err("The path of the file to export is not absolute, or has `..` in it".to_string());
+    }
+    if through_link(link_roots, source) {
+        return Err("The file to export goes through a link in a folder that programs own".to_string());
+    }
+    let below_root = link_roots.iter().any(|root| source.starts_with(root));
+    let mut input = open_plain_file(source, !below_root).map_err(|error| format!("Failed to read the file to export: {}", error))?;
+    let mut part_name = target.as_os_str().to_owned();
+    part_name.push(format!(".{}.{}.part", std::process::id(), TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed)));
+    let part = PathBuf::from(part_name);
+    // `create_new` never opens a file or a link that is at the name already.
+    let mut output = std::fs::OpenOptions::new().write(true).create_new(true).open(&part).map_err(write_error)?;
+    std::io::copy(&mut input, &mut output)
+        .and_then(|_| output.sync_all())
+        .and_then(|()| std::fs::rename(&part, target))
+        .map_err(|error| {
+            let _ = std::fs::remove_file(&part);
+            write_error(error)
+        })
 }
 
 // Lists the files directly in a folder of a root, or with `folders` the
@@ -808,12 +920,16 @@ fn entries_below(folder: &Path, max_entries: usize) -> std::io::Result<(Vec<Tree
 
 // Returns a root folder for callers that need its full path: to hand it to
 // the OS (to open it in the file manager), or to build and check the
-// absolute paths that conversations hold. The folder is created first because
-// the opener plugin rejects a path that does not exist. A non-UTF-8 path is
-// an error, because a lossy string would name a different folder.
+// absolute paths that conversations hold. The folder of the app root or the
+// cache root is created first because the opener plugin rejects a path that
+// does not exist; the resource root is never made, as Dez writes nothing
+// there. A non-UTF-8 path is an error, because a lossy string would name a
+// different folder.
 pub fn app_dir(root: FileRoot) -> Result<String, String> {
     let dir = root_dir(root)?;
-    ensure_dir(&dir)?;
+    if root != FileRoot::Resource {
+        ensure_dir(&dir)?;
+    }
     dir.into_os_string()
         .into_string()
         .map_err(|path| format!("Folder path is not valid UTF-8: {:?}", path))
@@ -931,9 +1047,18 @@ pub(crate) mod tests {
         assert_eq!(dir.file_names(), ["clip.mp4"]);
     }
 
+    // The resource dir of the tests: one fixed path for the whole test run,
+    // as the root is set only once.
+    pub(crate) fn test_resource_dir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("dez-test-resources-{}", std::process::id()));
+        set_resource_dir(dir.clone());
+        dir
+    }
+
     #[test]
     fn app_file_paths_stay_inside_their_root() {
-        for root in [FileRoot::App, FileRoot::Cache] {
+        test_resource_dir();
+        for root in [FileRoot::App, FileRoot::Cache, FileRoot::Resource] {
             let dir = root_dir(root).expect("root folder");
             for valid in ["app_state.json", "assets/images/0b7e-4c1f_a.png", "media/0b7e.mp4", ".hidden"] {
                 assert_eq!(app_file_path(root, valid), Ok(dir.join(valid)), "{valid}");
@@ -1204,8 +1329,9 @@ pub(crate) mod tests {
     // no file, so even a broken path rule would change nothing.
     #[test]
     fn file_commands_reject_a_path_outside_their_root() {
+        test_resource_dir();
         let name = "dez-test-no-such-file";
-        for root in [FileRoot::App, FileRoot::Cache] {
+        for root in [FileRoot::App, FileRoot::Cache, FileRoot::Resource] {
             for folder in [false, true] {
                 assert!(delete_app_file(root, "../dez-test-no-such-file", folder).is_err());
                 assert!(delete_app_file(root, "/tmp/dez-test-no-such-file", folder).is_err());
@@ -1221,8 +1347,8 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn programs_own_the_cache_root_and_the_apps_folder_of_the_app_root() {
-        use FileRoot::{App, Cache};
+    fn programs_own_the_cache_root_and_the_apps_and_work_folders_of_the_app_root() {
+        use FileRoot::{App, Cache, Resource};
         // The root, the path, whether programs own it, and whether a folder
         // can be made, moved, and deleted there.
         let cases = [
@@ -1232,18 +1358,69 @@ pub(crate) mod tests {
             (App, "apps", true, false),
             (App, "apps/my-app", true, true),
             (App, "apps/my-app/src/lib", true, true),
+            (App, "work", true, false),
+            (App, "work/a-conversation", true, true),
+            (App, "work/a-conversation/data/old", true, true),
             (App, "app_state.json", false, false),
             (App, "apps.json", false, false),
             (App, "apps-old/my-app", false, false),
+            (App, "work.json", false, false),
             (App, "assets", false, false),
             (App, "assets/images", false, false),
             (App, "assets/apps/my-app", false, false),
+            (App, "assets/work/a", false, false),
             (App, "conversations", false, false),
+            (Resource, "builtin-apps", false, false),
+            (Resource, "builtin-apps/dez-x", false, false),
+            (Resource, "libs", false, false),
         ];
         for (root, path, owned, folder_change) in cases {
             assert_eq!(is_program_owned(root, path), owned, "{root:?} {path}");
             assert_eq!(allows_folder_change(root, path), folder_change, "{root:?} {path}");
         }
+    }
+
+    // No command changes a file of the resource root, which holds the files
+    // that Dez ships; the reads work as in the other roots. Only this test
+    // writes the folder of the test resource root.
+    #[test]
+    fn the_resource_root_can_be_read_and_never_changed() {
+        let dir = test_resource_dir();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(app_dir(FileRoot::Resource), Ok(dir.to_string_lossy().into_owned()));
+        assert!(!dir.exists(), "app_dir must not make the resource root");
+
+        let app = dir.join("builtin-apps/dez-x");
+        std::fs::create_dir_all(&app).expect("make the built-in");
+        std::fs::write(app.join("main.ts"), "old").expect("write main.ts");
+        let resource = FileRoot::Resource;
+
+        assert_eq!(load_app_file_bytes(resource, "builtin-apps/dez-x/main.ts"), Ok(b"old".to_vec()));
+        let folders = list_app_files(resource, "builtin-apps", true).expect("list folders");
+        assert_eq!(folders.iter().map(|entry| entry.name.as_str()).collect::<Vec<_>>(), ["dez-x"]);
+        let tree = list_file_tree(resource, "builtin-apps", 10).expect("list tree");
+        assert_eq!(tree.entries.iter().map(|entry| entry.path.as_str()).collect::<Vec<_>>(), ["dez-x", "dez-x/main.ts"]);
+
+        let main = "builtin-apps/dez-x/main.ts";
+        let refusals = [
+            save_app_file(resource, main, b"new"),
+            save_app_file(resource, "builtin-apps/dez-x/new.ts", b"new"),
+            create_folder(resource, "builtin-apps/dez-y"),
+            delete_app_file(resource, main, false),
+            delete_app_file(resource, "builtin-apps/dez-x", true),
+            move_app_file(resource, main, FileRoot::Cache, "dez-test-no-such-file"),
+            move_app_file(FileRoot::Cache, "dez-test-no-such-file", resource, main),
+            writable_file_path(resource, main).map(|_| ()),
+        ];
+        for (index, refusal) in refusals.into_iter().enumerate() {
+            let error = refusal.expect_err("a change of the resource root");
+            assert!(error.contains(READ_ONLY_ROOT), "{index}: {error}");
+        }
+        assert_eq!(std::fs::read_to_string(app.join("main.ts")).expect("read main.ts"), "old");
+        assert!(!dir.join("builtin-apps/dez-x/new.ts").exists());
+        assert!(!dir.join("builtin-apps/dez-y").exists());
+
+        std::fs::remove_dir_all(&dir).expect("remove the test resource root");
     }
 
     // A script of an app can change every file of the folder of its app,
@@ -1256,15 +1433,25 @@ pub(crate) mod tests {
         use std::os::unix::fs::symlink;
         let dir = TempDir::new("owned-links");
         let (app, cache, outside) = (dir.0.join("app"), dir.0.join("cache"), dir.0.join("outside"));
-        for folder in [app.join("apps").join("my-app"), cache.join("work"), outside.clone()] {
+        for folder in [app.join("apps").join("my-app"), app.join("work").join("a"), cache.join("work"), outside.clone()] {
             std::fs::create_dir_all(folder).expect("create");
         }
         symlink(&outside, app.join("apps").join("my-app").join("linked")).expect("link");
         symlink(&outside, app.join("apps").join("linked-app")).expect("link");
+        symlink(&outside, app.join("work").join("a").join("linked")).expect("link");
+        symlink(&outside, app.join("work").join("linked-conversation")).expect("link");
         symlink(&outside, app.join("conversations")).expect("link");
         symlink(&outside, cache.join("work").join("linked")).expect("link");
 
-        for refused in ["apps/my-app/linked", "apps/my-app/linked/keys.json", "apps/linked-app", "apps/linked-app/main.ts"] {
+        let refused = [
+            "apps/my-app/linked",
+            "apps/my-app/linked/keys.json",
+            "apps/linked-app",
+            "apps/linked-app/main.ts",
+            "work/a/linked/keys.json",
+            "work/linked-conversation/data.csv",
+        ];
+        for refused in refused {
             assert!(path_in(&app, FileRoot::App, refused).is_err(), "{refused}");
         }
         assert!(path_in(&cache, FileRoot::Cache, "work/linked/out.mp4").is_err());
@@ -1596,5 +1783,84 @@ pub(crate) mod tests {
                 "more": true,
             })
         );
+    }
+
+    // An export of a private file of the Dez folders gives the user a file
+    // with the default mode, as a new file of that folder has, and replaces
+    // a file that is at the target with no part file left over.
+    #[cfg(unix)]
+    #[test]
+    fn an_export_copies_the_bytes_into_a_file_of_the_user() {
+        let dir = TempDir::new("export-copy");
+        let (app, out) = (dir.0.join("app"), dir.0.join("out"));
+        std::fs::create_dir_all(app.join("assets")).expect("create");
+        std::fs::create_dir(&out).expect("create");
+        let source = app.join("assets").join("clip.webm");
+        write_private_file(&source, &[0, 1, 2, 255]).expect("write");
+        let (target, fresh) = (out.join("My clip.webm"), out.join("fresh"));
+        std::fs::write(&target, b"an older export").expect("write");
+        std::fs::File::create(&fresh).expect("create");
+
+        export_copy(&source, &target, &link_roots(&dir.0.join("cache"), &app)).expect("export");
+
+        assert_eq!(std::fs::read(&target).expect("read"), [0, 1, 2, 255]);
+        assert_eq!(mode_of(&target), mode_of(&fresh));
+        assert_eq!(mode_of(&source), 0o600);
+        let mut names = std::fs::read_dir(&out).expect("list").map(|entry| entry.expect("entry").file_name()).collect::<Vec<_>>();
+        names.sort();
+        assert_eq!(names, ["My clip.webm", "fresh"]);
+
+        // The source itself as the target.
+        export_copy(&source, &source, &link_roots(&dir.0.join("cache"), &app)).expect("export");
+        assert_eq!(std::fs::read(&source).expect("read"), [0, 1, 2, 255]);
+    }
+
+    // A link where programs own the files can name any file of the user
+    // (the API keys), and a named pipe there would never end its read; a
+    // link of the user (a linked clip) is exported as the file it names.
+    // No refused export leaves a file at the target.
+    #[cfg(unix)]
+    #[test]
+    fn an_export_takes_no_link_and_no_pipe_where_programs_own_the_files() {
+        use std::os::unix::fs::symlink;
+        let dir = TempDir::new("export-links");
+        let (cache, app, home) = (dir.0.join("cache"), dir.0.join("app"), dir.0.join("home"));
+        let media = cache.join("media");
+        let work = app.join(CONVERSATION_WORK_FOLDERS).join("c1");
+        for folder in [&media, &work, &home, &app.join("assets")] {
+            std::fs::create_dir_all(folder).expect("create");
+        }
+        let keys = home.join("provider_keys.json");
+        std::fs::write(&keys, b"keys").expect("write");
+        symlink(&keys, media.join("keys.webm")).expect("link");
+        symlink(&home, work.join("home")).expect("link");
+        make_pipe(&media.join("pipe.webm"));
+        std::fs::create_dir(media.join("folder.webm")).expect("create");
+        let roots = link_roots(&cache, &app);
+        let target = home.join("export.webm");
+
+        let refused = [
+            media.join("keys.webm"),
+            work.join("home").join("provider_keys.json"),
+            media.join("pipe.webm"),
+            media.join("folder.webm"),
+            media.join("missing.webm"),
+            PathBuf::from("media/keys.webm"),
+            media.join("..").join("..").join("home").join("provider_keys.json"),
+        ];
+        for source in refused {
+            let (sender, receiver) = std::sync::mpsc::channel();
+            let (roots, target) = (roots.clone(), target.clone());
+            std::thread::spawn(move || sender.send(export_copy(&source, &target, &roots).is_err()));
+            assert_eq!(receiver.recv_timeout(std::time::Duration::from_secs(10)), Ok(true));
+        }
+        let mut names = std::fs::read_dir(&home).expect("list").map(|entry| entry.expect("entry").file_name()).collect::<Vec<_>>();
+        names.sort();
+        assert_eq!(names, ["provider_keys.json"]);
+
+        let linked = app.join("assets").join("linked.webm");
+        symlink(&keys, &linked).expect("link");
+        export_copy(&linked, &target, &roots).expect("a link of the user");
+        assert_eq!(std::fs::read(&target).expect("read"), b"keys");
     }
 }

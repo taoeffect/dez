@@ -1,5 +1,6 @@
 import { countOf } from '../../utils/countText'
 import { oneLineCut } from '../../utils/oneLineCut'
+import { moneyLimitText, type TabMoney } from '../chat/moneyLimit'
 import { tagEscape } from '../chat/tagEscape'
 import type { ToolBlockData } from '../chat/toolBlocks'
 import { usdText } from '../providers/modelPrices'
@@ -273,27 +274,30 @@ export function madeAssetIds(resultText: string): string[] {
 }
 
 /** One asset of a job after Dez put it into the reply: `id` is its new id
- *  there, or null when the reply took no asset any more. */
+ *  there, or null when the reply took no asset any more. `handle` is the
+ *  name by which the code of the job's run of an app knew the asset, when
+ *  a tool call of that code made it (`&1`): the line maps it to the id. */
 export interface WrittenJobAsset {
   kind: JobAssetKind
   id: string | null
+  handle?: string
 }
 
-function assetLine({ kind, id }: WrittenJobAsset): string {
+function assetLine({ kind, id, handle }: WrittenJobAsset): string {
   return id === null
-    ? `The reply stopped before Dez could add the ${ASSET_NAMES[kind]} of this job to it, so there is no new ${ASSET_NAMES[kind]}.`
-    : `${madeAssetText(kind, id)}.`
+    ? `The reply stopped before Dez could add the ${ASSET_NAMES[kind]}${handle === undefined ? '' : ` ${handle}`} of this job to it, so there is no new ${ASSET_NAMES[kind]}.`
+    : `${madeAssetText(kind, id)}${handle === undefined ? '' : ` (handle ${handle})`}.`
 }
 
 /** The result text of a job for its reader: the job's own `text` as it is
  *  (an error text too), then one line for each asset. The lines name the
- *  assets by their ids only. */
+ *  assets by their ids only, and by their handles when they have one. */
 export function jobResultText(text: string, assets: readonly WrittenJobAsset[]): string {
   return [...(text.trim() === '' ? [] : [text]), ...assets.map(assetLine)].join('\n')
 }
 
-// One line of `assetLine`, of either form.
-const ASSET_LINE = new RegExp(`^(?:${MADE_ASSET_SOURCE}\\.|The reply stopped before Dez could add the (${ASSET_NAME_SOURCE}) of this job to it, so there is no new \\2\\.)$`)
+// One line of `assetLine`, of either form, with a handle or with none.
+const ASSET_LINE = new RegExp(`^(?:${MADE_ASSET_SOURCE}(?: \\(handle &\\d+\\))?\\.|The reply stopped before Dez could add the (${ASSET_NAME_SOURCE})(?: &\\d+)? of this job to it, so there is no new \\2\\.)$`)
 
 /** The job's own text of a `jobResultText`: the text without the lines of
  *  its assets. Blank when the job gave only assets. A last line of the
@@ -446,6 +450,10 @@ export interface JobInfo {
    *  else its quote, and 0 for a request that the provider refused. Null
    *  when no price is known; absent for a job that sent no paid request. */
   cost?: number | null
+  /** Only while the job runs, and only while its work waits for its turn
+   *  at a provider, which takes only a few media requests at one time
+   *  (`mediaApi.maxRequestsAtOnce`): the time limit of the job waits too. */
+  queued?: true
 }
 
 /** The result of a `jobs_list` call for a reply with no job. */
@@ -499,22 +507,34 @@ function spendText(jobs: readonly JobInfo[]): string {
     + `(the provider's price, else its quote; a refused request costs nothing)${rest}.`
 }
 
+/** The status of `job` in a job list: `queued` for a job that runs but
+ *  waits for its turn at a provider (`JobInfo.queued`). */
+function listedStatus(job: JobInfo): string {
+  return job.queued ? 'queued' : job.status
+}
+
 /** The result of a `jobs_list` call: a first line with the count, the
  *  columns, and what their values mean, then one line for each job, in the
  *  order of their starts, and a last line with the spend of the reply on
- *  paid requests. The label of the call is the last column of a job line:
- *  it is free text, which can hold the column mark. */
-export function jobsListText(jobs: readonly JobInfo[]): string {
-  if (jobs.length === 0) return NO_JOBS_TEXT
+ *  paid requests, then the line of the money limit of the tab when `money`
+ *  is given. The label of the call is the last column of a job line: it is
+ *  free text, which can hold the column mark. */
+export function jobsListText(jobs: readonly JobInfo[], money?: TabMoney): string {
+  const moneyLines = money ? [moneyLimitText(money.limit, money.spent)] : []
+  if (jobs.length === 0) return [NO_JOBS_TEXT, ...moneyLines].join('\n')
+  const queued = jobs.some((job) => job.queued)
+    ? 'status: `queued` means that the job waits for its turn: its provider gets only a few media requests at one time. Its time limit waits too. '
+    : ''
   const head = `${countOf(jobs.length, 'job')} of this reply (number | id | tool | status | result | seconds | call). `
     + 'number: the place of the job in the order of the starts. '
+    + queued
     + `${jobResultLegend()} `
     + 'seconds: how long the job ran, or runs so far. '
     + 'call: how the prompt or the arguments of its call begin.'
   const rows = jobs.map((job) => [
-    job.call.number, job.id, job.tool, job.status, jobResultState(job), Math.round(job.elapsedMs / 1000), job.call.label === '' ? '-' : job.call.label,
+    job.call.number, job.id, job.tool, listedStatus(job), jobResultState(job), Math.round(job.elapsedMs / 1000), job.call.label === '' ? '-' : job.call.label,
   ].join(' | '))
-  return [head, ...rows, spendText(jobs)].join('\n')
+  return [head, ...rows, spendText(jobs), ...moneyLines].join('\n')
 }
 
 /** The result of a `job_inspect` call: the status of the job, what to do
@@ -526,7 +546,9 @@ export function jobInspectText(job: JobInfo): string {
   let status: string
   switch (job.status) {
     case 'running':
-      status = `${name} runs, for ${time} so far. Call jobs_wait to wait for its result.`
+      status = job.queued
+        ? `${name} waits for its turn at its provider, for ${time} so far: the provider gets only a few media requests at one time. Its time limit waits too. Call jobs_wait to wait for its result.`
+        : `${name} runs, for ${time} so far. Call jobs_wait to wait for its result.`
       break
     case 'cancelled':
       status = `${name} was cancelled after ${time}, with no result.`
@@ -611,6 +633,7 @@ export const JOBS_WAIT_TOOL: ToolDefinition = {
     + 'An image or a clip that a job made goes into your reply then, and the result gives its id. '
     + 'These ids follow the order of the results too: before you use them in an order (the scenes of a video), read from `number` which call made each one. '
     + 'The first line tells how many jobs still run: call `jobs_wait` again until none runs. Get the result of every job before you end your reply. '
+    + 'A media request can wait for its turn at its provider, which takes only a few at one time: that wait does not count toward the time limit of its job. '
     + 'A stop of the user or a new message does not end the jobs: they count as jobs of the next reply, which gets their results with `jobs_wait`, and their numbers count on. '
     + 'Dez ends them when the user closes the tab or quits Dez, and `job_cancel` ends the jobs that you name.',
   parameters: [
@@ -638,7 +661,8 @@ export const JOBS_LIST_TOOL: ToolDefinition = {
   name: 'jobs_list',
   description: 'List the jobs of this reply, in the order of the starts: the number, the id, the tool, and the status of each job, '
     + 'whether `jobs_wait` gave its result, how long it ran, and how its call begins. '
-    + 'The last line is an estimate of what the paid requests of these jobs cost. '
+    + 'A job whose status is `queued` waits for its turn at its provider, which takes only a few media requests at one time; that wait does not count toward its time limit. '
+    + 'Then come an estimate of what the paid requests of these jobs cost, and the money limit of this conversation that the user set, with what is left of it. '
     + 'It does not wait, and it gives no result of a job.',
   parameters: [],
 }

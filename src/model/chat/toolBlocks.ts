@@ -6,6 +6,7 @@ import { APP_TAG_NAME, appTagText, splitAppTags } from './appTags'
 import { bridgedCallsText, hasBridgedCalls, readBridgedCalls, type BridgedCalls } from './bridgedCalls'
 import { AGENT_MESSAGE_TAG_NAME, COMPACTION_TAG_NAME, USER_MESSAGE_TAG_NAME } from './compaction'
 import { stripLiveSentinels } from './content'
+import { parseDurationMs } from './duration'
 import { MEDIA_TAG_NAMES, mediaTagRequestText, splitMediaTags } from './mediaTags'
 import { readShownPictures, shownPicturesText, type ShownPicture } from './shownPictures'
 import { tagEscape } from './tagEscape'
@@ -27,12 +28,13 @@ import { tagEscape } from './tagEscape'
 //   is a tag with no `id` or no `name`.
 // - Attributes, in this order: `id` (the provider's call id, sent back byte
 //   for byte), `name` (the tool name as the model gave it), `status` (absent
-//   for success), `pictures` (absent when the call showed none), `bridged`
-//   (absent when the code of the call made no tool call), then one per
-//   argument, in definition order. A string argument is written as it is,
-//   a number or boolean as its JSON text; on read, the tool's definition
-//   gives the type back. Values are escaped (`escapeMarkerAttribute`), so
-//   the tag stays on one line.
+//   for success), `duration-ms` (absent for a call that took less than
+//   `TIMED_CALL_MIN_MS`, or did not run), `pictures` (absent when the call
+//   showed none), `bridged` (absent when the code of the call made no tool
+//   call), then one per argument, in definition order. A string argument is
+//   written as it is, a number or boolean as its JSON text; on read, the
+//   tool's definition gives the type back. Values are escaped
+//   (`escapeMarkerAttribute`), so the tag stays on one line.
 // - The body is the result, escaped (`resultEscape`) so that no body line
 //   can end the block or read as a pill or prompt line in a conversation
 //   file.
@@ -79,6 +81,11 @@ export interface ToolBlockData {
    *  jobs (`blockJobStarts`, tools/jobs.ts). No request sends the
    *  attribute. Absent when the code made none. */
   bridged?: BridgedCalls
+  /** How long the call ran, in whole milliseconds; only for a call that ran
+   *  `TIMED_CALL_MIN_MS` or longer (a stopped one too). Requests tell it to
+   *  the model (`toolResult`, streams/messages.ts), and the chip shows it.
+   *  Absent for a quicker call, a refused one, and a `running` block. */
+  durationMs?: number
 }
 
 /** One block in a text. */
@@ -96,7 +103,7 @@ export type ToolTextPiece =
 
 /** The attributes that every block writes before the arguments. No tool
  *  parameter may use these names. */
-export const RESERVED_TOOL_ATTRIBUTES: readonly string[] = ['id', 'name', 'status', 'pictures', 'bridged']
+export const RESERVED_TOOL_ATTRIBUTES: readonly string[] = ['id', 'name', 'status', 'duration-ms', 'pictures', 'bridged']
 
 const OPEN_PREFIX = '<dez:tool'
 const CLOSE_TAG = '</dez:tool>'
@@ -138,6 +145,7 @@ function inDefinitionOrder<T>(name: string, entries: [string, T][]): [string, T]
 export function toolBlockText(block: ToolBlockData): string {
   let tag = `${OPEN_PREFIX} id="${attributeValue(block.id)}" name="${attributeValue(block.name)}"`
   if (block.status !== 'success') tag += ` status="${block.status}"`
+  if (block.durationMs !== undefined) tag += ` duration-ms="${block.durationMs}"`
   if (block.pictures !== undefined && block.pictures.length > 0) tag += ` pictures="${attributeValue(shownPicturesText(block.pictures))}"`
   if (block.bridged !== undefined && hasBridgedCalls(block.bridged)) tag += ` bridged="${attributeValue(bridgedCallsText(block.bridged))}"`
   for (const [name, value] of inDefinitionOrder(block.name, Object.entries(block.arguments))) {
@@ -208,6 +216,7 @@ function readBlock(text: string, from: number): ToolBlock | null {
   const pictures = picturesText === undefined ? [] : readShownPictures(picturesText)
   const bridgedText = attributes.get('bridged')
   const bridged = bridgedText === undefined ? null : readBridgedCalls(bridgedText)
+  const durationMs = parseDurationMs(attributes.get('duration-ms'))
   return {
     from,
     to,
@@ -218,6 +227,7 @@ function readBlock(text: string, from: number): ToolBlock | null {
     result: resultEscape.unescape(body.slice(0, -1)),
     ...(pictures.length > 0 ? { pictures } : {}),
     ...(bridged !== null && hasBridgedCalls(bridged) ? { bridged } : {}),
+    ...(durationMs === null ? {} : { durationMs }),
   }
 }
 

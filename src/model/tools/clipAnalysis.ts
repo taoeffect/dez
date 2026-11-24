@@ -14,7 +14,11 @@ export const SCENE_CUT_THRESHOLD = 10
 
 /** The video filter that writes a log line for each cut between two shots
  *  (a sudden change of the whole picture), with its time (`cutTimes`). It
- *  passes every frame on, and the first frame of a run is never a cut. */
+ *  passes every frame on, and the first frame of a run is never a cut.
+ *  Only `scenes` of asset_view uses it, to pick frames of a part of any
+ *  length, which ffmpeg reads as a stream. The cut times that a model works
+ *  with come from `video cuts` (appAliases.ts), the cut detector of
+ *  dez-media, which needs every frame of a clip in memory. */
 export const SCENE_CUT_FILTER = `scdet=threshold=${SCENE_CUT_THRESHOLD}`
 
 // The width in pixels under which a picture can have a plane narrower than
@@ -65,12 +69,13 @@ export function frameTimeText(seconds: number): string {
 }
 
 /** A check of a whole clip (`asset_info` `checks`): its black parts, its
- *  frozen parts, its silent parts, the loudness of each second, or its
- *  cuts. */
-export type ClipCheck = 'black' | 'frozen' | 'silence' | 'loudness_curve' | 'cuts'
+ *  frozen parts, its silent parts, or the loudness of each second. The
+ *  cuts of a clip are no check: `video cuts` finds them
+ *  (`SCENE_CUT_FILTER`). */
+export type ClipCheck = 'black' | 'frozen' | 'silence' | 'loudness_curve'
 
 /** Every check, in the order of a result. */
-export const CLIP_CHECKS: readonly ClipCheck[] = ['black', 'frozen', 'silence', 'loudness_curve', 'cuts']
+export const CLIP_CHECKS: readonly ClipCheck[] = ['black', 'frozen', 'silence', 'loudness_curve']
 
 /** Whether a check reads the picture of a clip or its sound. */
 export const CHECK_STREAMS: Readonly<Record<ClipCheck, 'picture' | 'sound'>> = {
@@ -78,7 +83,6 @@ export const CHECK_STREAMS: Readonly<Record<ClipCheck, 'picture' | 'sound'>> = {
   frozen: 'picture',
   silence: 'sound',
   loudness_curve: 'sound',
-  cuts: 'picture',
 }
 
 /** The shortest frozen part and the shortest silent part that the checks
@@ -100,12 +104,11 @@ const CHECK_FILTERS: Readonly<Record<ClipCheck, string>> = {
   frozen: `freezedetect=d=${FROZEN_MIN_SECONDS}`,
   silence: `silencedetect=n=${SILENCE_DBFS}dB:d=${SILENCE_MIN_SECONDS}`,
   loudness_curve: 'ebur128=framelog=info',
-  cuts: SCENE_CUT_FILTER,
 }
 
 // The checks whose filters compare each frame with an earlier one
 // (`frameCompareArgs`).
-const FRAME_COMPARE_CHECKS: readonly ClipCheck[] = ['frozen', 'cuts']
+const FRAME_COMPARE_CHECKS: readonly ClipCheck[] = ['frozen']
 
 /** The ffmpeg arguments of one run of `checks` over the whole clip file
  *  `input`, whose picture has the size `picture` (null: no picture): a

@@ -9,6 +9,7 @@ import {
 import { isParameterValue, type ParameterValues } from '../providers/modelParameters'
 import { parseModelRefKey } from '../chat/modelRef'
 import { MEDIA_TAG_KINDS } from '../chat/mediaTags'
+import { isMoneyLimitUsd } from '../chat/moneyLimit'
 import type { AppStatePayload } from './types'
 import type { DefaultModel, Theme, WindowGeometry } from '../state/settings'
 import { EDITOR_FONT_SIZE_DEFAULT, clampEditorFontSize } from '../editorFontSize'
@@ -38,6 +39,12 @@ const tabSchema = z.object({
   // mark, not the tab.
   incognito: z.literal(true).optional().catch(undefined),
   requestSent: z.literal(true).optional().catch(undefined),
+  // `Tab.moneyLimit`; a limit with a bad sum is dropped as a whole, and a
+  // bad flag of unknown prices is off, which refuses more.
+  moneyLimit: z.object({
+    usd: z.number().refine(isMoneyLimitUsd),
+    unknownPrices: z.boolean().catch(false),
+  }).optional().catch(undefined),
 })
 
 // A `window` value that is not a whole geometry is dropped as a whole; the

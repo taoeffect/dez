@@ -128,6 +128,17 @@ describe('toolCallBlock', () => {
     const expected = { id: 'c2', name: 'web_search', arguments: {}, status: 'error', result: unknownTool }
     expect(toolCallBlock(refused)).toStrictEqual(expected)
     expect(toolCallBlock(refused, STOPPED_TOOL_RESULT)).toStrictEqual(expected)
+    expect(toolCallBlock(refused, STOPPED_TOOL_RESULT, 5000)).toStrictEqual(expected)
+  })
+
+  // Only a call that ran keeps its time, and only a time that is news.
+  it('keeps the time of a call that ended from one second on, in whole milliseconds', () => {
+    const done = { content: '1 model', isError: false }
+
+    expect(toolCallBlock(call, done, 999.9)).toStrictEqual({ ...call, status: 'success', result: '1 model' })
+    expect(toolCallBlock(call, done, 1000)).toStrictEqual({ ...call, status: 'success', result: '1 model', durationMs: 1000 })
+    expect(toolCallBlock(call, STOPPED_TOOL_RESULT, 2500.4)).toStrictEqual({ ...call, status: 'error', result: 'Stopped.', durationMs: 2500 })
+    expect(toolCallBlock(call, undefined, 5000)).toStrictEqual({ ...call, status: 'running', result: '' })
   })
 })
 

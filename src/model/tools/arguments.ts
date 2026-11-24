@@ -1,4 +1,4 @@
-import type { JsonObject } from '../../utils/json'
+import { isJsonObject, type JsonObject } from '../../utils/json'
 import { IMAGE_ID_SOURCE } from '../chat/images'
 import {
   ToolError,
@@ -60,11 +60,6 @@ export function parameterTypeName(parameter: SubcommandParameter): string {
 // What the value of an object parameter is, and one as JSON, for the error
 // texts (`TYPE_RULES` has those of the scalars).
 const OBJECT_RULE = { text: 'an object', example: '{}' }
-
-/** True when a JSON value is an object: not a list, and not null. */
-function isJsonObject(value: unknown): value is JsonObject {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-}
 
 // Whether a JSON value is of the type of a parameter that is no list, with
 // no coercion.

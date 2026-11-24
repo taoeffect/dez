@@ -31,7 +31,9 @@ pub fn run() {
     // - dialog:allow-save and fs:allow-write-text-file, with no static fs
     //   scope: Save As Markdown, which has no Rust command. The save dialog
     //   adds the picked path to the fs scope at run time, so the webview can
-    //   write only files that the user picked.
+    //   write only files that the user picked. The app command
+    //   `export_file` (the Export of an asset) checks its target against the
+    //   same scope.
     // - store:default: the store plugin is installed but not used. App state,
     //   prompts, conversations, and keys use persistence.rs and key_store.rs.
     let builder = tauri::Builder::default()
@@ -78,6 +80,7 @@ pub fn run() {
             commands::list_app_files,
             commands::list_file_tree,
             commands::get_app_dir,
+            commands::export_file,
             commands::temp_folders,
             commands::canonical_path,
             commands::dragged_file_paths,
@@ -90,19 +93,28 @@ pub fn run() {
             bundled_tools::cancel_bundled_tool,
             bundled_tools::write_bundled_tool_input,
         ]);
-    // macOS brings the app to the front when it starts, and with it each
-    // window that is visible at that time. The main window starts hidden
-    // (`visible: false`), and the frontend shows it about a second later
-    // (`dez.controller/window/restore`). On macOS 14+ the system can refuse
-    // that later request to come to the front, so Dez stayed behind other
-    // apps. So on macOS the window shows here, at launch, at its default size
-    // and place, and the restore moves it to the saved geometry. tao's
-    // `window_activation_hack` (app_state.rs) says the same: show windows
-    // when the app starts (`StartCause::Init`, when `setup` runs).
-    // https://developer.apple.com/documentation/appkit/passing-control-from-one-app-to-another-with-cooperative-activation
-    #[cfg(target_os = "macos")]
+    // Only the app handle gives Tauri's resource dir, and the file commands
+    // of its root (`FileRoot::Resource`) run with no handle: keep it before
+    // any command can run. A Builder takes one setup closure, so the macOS
+    // part is here too.
     let builder = builder.setup(|app| {
         use tauri::Manager;
+        match app.path().resource_dir() {
+            Ok(dir) => persistence::set_resource_dir(dir),
+            Err(error) => eprintln!("Failed to find the folder of the files that Dez ships: {error}"),
+        }
+        // macOS brings the app to the front when it starts, and with it each
+        // window that is visible at that time. The main window starts hidden
+        // (`visible: false`), and the frontend shows it about a second later
+        // (`dez.controller/window/restore`). On macOS 14+ the system can
+        // refuse that later request to come to the front, so Dez stayed
+        // behind other apps. So on macOS the window shows here, at launch, at
+        // its default size and place, and the restore moves it to the saved
+        // geometry. tao's `window_activation_hack` (app_state.rs) says the
+        // same: show windows when the app starts (`StartCause::Init`, when
+        // `setup` runs).
+        // https://developer.apple.com/documentation/appkit/passing-control-from-one-app-to-another-with-cooperative-activation
+        #[cfg(target_os = "macos")]
         if let Some(window) = app.get_webview_window("main") {
             // The restore shows the window too, so a failure here is not fatal.
             if let Err(error) = window.show() {

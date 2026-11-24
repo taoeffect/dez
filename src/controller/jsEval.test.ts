@@ -13,12 +13,14 @@ import {
   type JsEvalCall,
 } from '../model/tools/jsEval'
 import { programNotConfinedText, programNotStartedText } from '../model/tools/programRuns'
-import { protocolLine } from '../model/tools/testing'
+import { CONVERSATION_ID, protocolLine } from '../model/tools/testing'
 import { runJsEval } from './jsEval'
 import type { BundledToolEnd } from './nativeTypes'
 import {
+  APP_DIR,
   CACHE_DIR,
   callContext,
+  CONVERSATION_WORK_FOLDER,
   callingProgram,
   deletedWorkFolder,
   ENDED,
@@ -26,6 +28,7 @@ import {
   native,
   refusalOf,
   resetNative,
+  RESOURCE_DIR,
   running,
   STOP,
   stubToolRuns,
@@ -58,16 +61,18 @@ afterEach(() => {
 })
 
 describe('runJsEval', () => {
-  it('writes the module of Dez, the description of the run, and the code into a new work folder, and runs the module with Deno, with an input', async () => {
+  it('writes the module of Dez, the description of the run, and the code into a new work folder, and runs the module with Deno, with an input and the work folder of the conversation', async () => {
     native.program = writes('stdout', protocolLine({ type: 'result', text: '2' }))
 
     const result = await runJsEval(CALL, running(), callContext())
 
     const folder = deletedWorkFolder()
     expect(result).toStrictEqual({ content: '2', isError: false })
+    // The real path of the work folder needs a folder that is there.
+    expect(native.createdFolders).toStrictEqual([{ root: 'app', path: CONVERSATION_WORK_FOLDER }])
     expect(native.savedFiles).toStrictEqual([
       { file: { root: 'cache', path: `${folder}/${JS_EVAL_RUNNER_FILE}` }, content: JS_EVAL_RUNNER },
-      { file: { root: 'cache', path: `${folder}/${RUN_DESCRIPTION_FILE}` }, content: '{"kind":"code"}' },
+      { file: { root: 'cache', path: `${folder}/${RUN_DESCRIPTION_FILE}` }, content: JSON.stringify({ kind: 'code', workFolder: `${APP_DIR}/${CONVERSATION_WORK_FOLDER}` }) },
       { file: { root: 'cache', path: `${folder}/${JS_EVAL_CODE_FILE}` }, content: jsEvalCodeFile(CALL.code) },
     ])
     expect(native.runs.map(({ run }) => run)).toStrictEqual([{
@@ -78,6 +83,7 @@ describe('runJsEval', () => {
       timeoutMs: CALL.timeoutMs,
       maxOutputBytes: JS_EVAL_OUTPUT_BYTES,
       stdin: true,
+      conversationFolder: CONVERSATION_ID,
       timeZone: 'Europe/Berlin',
     }])
   })
@@ -103,19 +109,21 @@ describe('runJsEval', () => {
     expect(await runJsEval(CALL, running(), callContext())).toStrictEqual({ content: '2\n\nConsole output of the code:\nstep 1\na warning', isError: false })
   })
 
-  it('gives the error result of code that threw, with /work for the real path of the work folder and for the path that Dez made', async () => {
-    native.canonicalPath = (path) => path.replace('/home/u/.cache', '/mnt/disk/cache')
+  it('gives the error result of code that threw, with /run, /work, and /libs for the real paths of the run folder, the work folder, and the libraries and for the paths that Dez made', async () => {
+    native.canonicalPath = (path) => path.replace(/^\/home\/u\/\.(cache|config)/, '/mnt/disk/$1')
+    const work = `${APP_DIR}/${CONVERSATION_WORK_FOLDER}`
     native.program = async ({ folder }, onOutput) => {
       const joined = `${CACHE_DIR}/${folder}`
       onOutput({ stream: 'stdout', text: `cwd ${native.canonicalPath(joined)}, made as ${joined}\n` })
-      onOutput({ stream: 'stdout', text: protocolLine({ type: 'error', text: `Error: x\n    at default (file://${native.canonicalPath(joined)}/code.ts:1:41)` }) })
+      onOutput({ stream: 'stdout', text: `kept ${native.canonicalPath(work)}/a.json and ${work}/b.json\n` })
+      onOutput({ stream: 'stdout', text: protocolLine({ type: 'error', text: `Error: x\n    at f (file://${RESOURCE_DIR}/libs/three/x.js:3:1)\n    at default (file://${native.canonicalPath(joined)}/code.ts:1:41)` }) })
       return ENDED
     }
 
     const result = await runJsEval(CALL, running(), callContext())
 
     expect(result).toStrictEqual({
-      content: 'The code threw an error:\nError: x\n    at default (file:///work/code.ts:1:41)\n\nConsole output of the code:\ncwd /work, made as /work',
+      content: 'The code threw an error:\nError: x\n    at f (file:///libs/three/x.js:3:1)\n    at default (file:///run/code.ts:1:41)\n\nConsole output of the code:\ncwd /run, made as /run\nkept /work/a.json and /work/b.json',
       isError: true,
     })
     deletedWorkFolder()
@@ -181,6 +189,23 @@ describe('runJsEval', () => {
 
     expect(refusal).toBe(programNotStartedText('deno', JS_EVAL_TOOL.name))
     expect(native.runs).toStrictEqual([])
+    deletedWorkFolder()
+  })
+
+  it.each([
+    ['Dez cannot make the work folder of the conversation', () => {
+      native.createFolder = async () => {
+        throw new Error('No space left on /home/u/.config')
+      }
+      return callContext()
+    }],
+    ['the id of the conversation can name no folder', () => callContext({ conversationId: '../conversations' })],
+  ])('starts no run when %s', async (_name, context) => {
+    const refusal = await refusalOf(runJsEval(CALL, running(), context()))
+
+    expect(refusal).toBe(programNotStartedText('deno', JS_EVAL_TOOL.name))
+    expect(native.runs).toStrictEqual([])
+    expect(native.savedFiles).toStrictEqual([])
     deletedWorkFolder()
   })
 

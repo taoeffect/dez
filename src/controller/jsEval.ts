@@ -1,7 +1,8 @@
 import sbp from '@sbp/sbp'
 import { hasBridgedCalls } from '../model/chat/bridgedCalls'
+import { LIBS_ROOT } from '../model/tools/appsTool'
 import {
-  CODE_RUN_DESCRIPTION,
+  codeRunDescription,
   JS_EVAL_CODE_FILE,
   JS_EVAL_OUTPUT_BYTES,
   JS_EVAL_RUNNER,
@@ -16,7 +17,7 @@ import {
 import { programNotStartedText, type ProgramEnd } from '../model/tools/programRuns'
 import { ToolError, type ToolRunResult } from '../model/tools/types'
 import type { BundledToolRun } from './nativeTypes'
-import { folderPathForms, inWorkFolder, runProgram } from './programRuns'
+import { conversationWorkForms, folderPathForms, inWorkFolder, runProgram } from './programRuns'
 import { discardShownPictures } from './shownPictures'
 import { ToolBridge } from './toolBridge'
 import type { ToolRunContext } from './tools'
@@ -24,11 +25,13 @@ import type { ToolRunContext } from './tools'
 // The run of a `js_eval` call (model/tools/jsEval.ts): the code of a model
 // in Deno, the program that Dez ships. This module registers no selector.
 //
-// The run has its own new work folder, with three files that Dez writes:
-// its own module, which Deno runs, the description of the run, which tells
-// the module what to run, and the code of the call. The page gives Rust
-// only the name of the module: Rust writes the Deno command line, with no
-// permission for the code (src-tauri/src/bundled_tools.rs).
+// The run has its own new run folder (a work folder of the cache root,
+// `inWorkFolder`), with three files that Dez writes: its own module,
+// which Deno runs, the description of the run, which tells the module
+// what to run, and the code of the call. The page gives Rust only the
+// name of the module: Rust writes the Deno command line, with no
+// permission for the code but the work folder of its conversation
+// (`conversationWorkForms`; src-tauri/src/bundled_tools.rs).
 //
 // The code calls the other Dez tools over the input and the output of the
 // program (toolBridge.ts).
@@ -36,7 +39,7 @@ import type { ToolRunContext } from './tools'
 // A run of an app (appInvoke.ts) runs the same module, with its own
 // description: `writeRunFiles` and `moduleRun` serve both.
 
-/** Writes the files of a run of Dez's module into the work folder
+/** Writes the files of a run of Dez's module into the run folder
  *  `folder`: the module, the description of the run (the text
  *  `description`), and `more`. Throws a `ToolError` for a write that
  *  fails (the run of the tool `toolName` does not start), and the stop of
@@ -60,7 +63,7 @@ export async function writeRunFiles(
   }
 }
 
-/** The run of Dez's module in the work folder `folder`, with no input
+/** The run of Dez's module in the run folder `folder`, with no input
  *  file. The code gets the time zone of the user, so that its local time
  *  is the user's: Rust gives a program no other fact of the computer. */
 export function moduleRun(folder: string, timeoutMs: number): Omit<BundledToolRun, 'tool'> {
@@ -72,7 +75,8 @@ export function moduleRun(folder: string, timeoutMs: number): Omit<BundledToolRu
  *  that the code returned, what its tool calls left, then its console
  *  output, and the pictures that its tool calls showed. `context` is the
  *  context of the call, which the tool calls of the code run with
- *  (`ToolBridge`).
+ *  (`ToolBridge`). The code can read and change the work folder of the
+ *  conversation of the call (`dez.workFolder`).
  *
  *  Any other end of the code gives its error result (`jsEvalResult`), and
  *  throws no `ToolError`: an error result also has the list of the tool
@@ -84,12 +88,17 @@ export function moduleRun(folder: string, timeoutMs: number): Omit<BundledToolRu
  *  no list, and deletes the copies too. */
 export function runJsEval(call: JsEvalCall, signal: AbortSignal, context: ToolRunContext): Promise<ToolRunResult> {
   return inWorkFolder(async (folder) => {
-    await writeRunFiles(folder, CODE_RUN_DESCRIPTION, [{ name: JS_EVAL_CODE_FILE, text: jsEvalCodeFile(call.code) }], signal, JS_EVAL_TOOL.name)
-    const { forms: folders } = await folderPathForms(folder, 'cache', JS_EVAL_TOOL.name)
+    const work = await conversationWorkForms(context.conversationId, JS_EVAL_TOOL.name)
+    await writeRunFiles(folder, codeRunDescription(work.joined), [{ name: JS_EVAL_CODE_FILE, text: jsEvalCodeFile(call.code) }], signal, JS_EVAL_TOOL.name)
+    const folders = {
+      run: (await folderPathForms(folder, 'cache', JS_EVAL_TOOL.name)).forms,
+      libs: (await folderPathForms(LIBS_ROOT.file, LIBS_ROOT.root, JS_EVAL_TOOL.name)).forms,
+      work: work.forms,
+    }
     const output = new JsEvalOutput()
     const bridge = new ToolBridge(context, folders, signal)
     // `stdin`: the answers of the tool calls go to the input of the program.
-    const run = { ...moduleRun(folder, call.timeoutMs), stdin: true }
+    const run = { ...moduleRun(folder, call.timeoutMs), stdin: true, conversationFolder: context.conversationId }
     let end: ProgramEnd
     try {
       end = await runProgram('deno', JS_EVAL_TOOL.name, run, signal, ({ stream, text }, writeInput) => {

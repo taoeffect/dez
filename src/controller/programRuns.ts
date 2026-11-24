@@ -3,6 +3,7 @@ import { IMAGE_FOLDERS } from '../model/chat/images'
 import { ClipReadError, MAX_SAVED_CLIP_BYTES } from '../model/chat/mediaFiles'
 import { MEDIA_FOLDERS } from '../model/chat/mediaTags'
 import { newStoredFilePath } from '../model/chat/storedFilePaths'
+import { conversationWorkFolder } from '../model/tools/conversationWork'
 import { unreadableImageText } from '../model/tools/imageTool'
 import {
   INPUT_CLIP_TOO_LARGE,
@@ -103,6 +104,27 @@ export async function folderPathForms(path: string, root: AppFileRoot, toolName:
     console.error('Failed to get the real path of a folder of a Deno run:', error)
     throw new ToolError(programNotStartedText('deno', toolName), '', { cause: error })
   }
+}
+
+/** The work folder of the conversation `conversationId` for a Deno run of
+ *  a call of the tool `toolName` (model/tools/conversationWork.ts), in the
+ *  forms of `folderPathForms`. Dez makes the folder when it is missing,
+ *  as the real path needs a folder that is there. `joined` is the path
+ *  that the code of the run gets (`dez.workFolder`): Deno compares the
+ *  paths of its flags as text, and Rust gives it this form.
+ *
+ *  Throws a `ToolError` when Dez cannot make the folder or get its real
+ *  path. */
+export async function conversationWorkForms(conversationId: string, toolName: string): Promise<{ joined: string, forms: string[] }> {
+  const folder = conversationWorkFolder(conversationId)
+  try {
+    if (folder === null) throw new Error(`The conversation id ${JSON.stringify(conversationId)} can name no folder.`)
+    await sbp('dez.native/createFolder', folder, 'app')
+  } catch (error) {
+    console.error('Failed to make the work folder of a conversation:', error)
+    throw new ToolError(programNotStartedText('deno', toolName), '', { cause: error })
+  }
+  return folderPathForms(folder, 'app', toolName)
 }
 
 /** The file of an input image that goes to the program as it is: the
@@ -227,6 +249,16 @@ export async function runFfmpegLog(
     log += text
   })
   return { end, log }
+}
+
+/** The kept end `kept` of the error output of a run, whose start Dez
+ *  `cut`: after a cut, only its whole lines. The cut can fall inside a
+ *  path, and `withoutLocalPaths` does not see the rest of a path as a
+ *  path. */
+export function wholeLinesEnd(kept: string, cut: boolean): string {
+  if (!cut) return kept
+  const lineEnd = kept.search(/[\r\n]/)
+  return lineEnd < 0 ? '' : kept.slice(lineEnd + 1)
 }
 
 /** A new file in the generated folder of its kind, under a new name, for

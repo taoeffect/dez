@@ -1,17 +1,19 @@
+import { countOf } from '../../utils/countText'
 import { startOf } from '../../utils/textCut'
 import { sectionPlainText } from '../chat/content'
 import { newMediaIds } from '../chat/mediaIds'
 import { modelRefKey } from '../chat/modelRef'
-import type { MessagePart, Section } from '../chat/types'
+import type { ModelRef, Section } from '../chat/types'
 import { effectiveOutputs } from '../modelOutputs'
 import type { ModelCache } from '../persistence/types'
 import { unusedImagesProblem } from '../providers/clipImages'
-import { clipTagProblem } from '../providers/clipInputs'
 import type { ParameterValues } from '../providers/modelParameters'
 import type { MediaProgress } from '../providers/streamTypes'
-import { effectiveRequest, sendsPrompt, type MediaKind, type ModelInfo, type ProviderInfo } from '../providers/types'
+import { effectiveRequest, sendsPrompt, type MediaKind, type ModelInfo, type ProviderInfo, type TranscriptTimes } from '../providers/types'
 import { unstoredOutputMessage, unusableModelMessage } from '../providers/unusableModel'
-import { conversationAssets, mediaInputRules, preparedMediaRequest, promptRequestProblem, promptRequestSource, type MediaRequestInput, type PromptInput, type PromptRequestSource } from '../streams/mediaRequest'
+import { conversationAssets, mediaInputRules, preparedMediaRequest, promptRequestProblem, promptRequestSource, type MediaRequestInput, type PromptInput, type PromptPart, type PromptRequestSource } from '../streams/mediaRequest'
+import { chatClipsProblem } from './chatClips'
+import { WORK_FILE_READ_TEXT, WORK_VIRTUAL_ROOT } from './conversationWork'
 import { INTERMEDIATE_PARAMETER, JOB_CALL_NOTE, jobCallLabel, jobTimeoutMs, jobTimeoutParameter } from './jobs'
 import { withoutLocalPaths } from './localPaths'
 import { FIND_MODELS, namedModelTarget, parameterValuesArgument } from './modelArguments'
@@ -31,10 +33,11 @@ import { ToolError, type ToolArguments, type ToolDefinition } from './types'
 //   (streams/mediaRequest.ts has the shared preparation and the
 //   differences), with `prompt` in place of the message.
 // - A text model (the request kind `chat`). The request is one chat
-//   request with one user message: `prompt`, and the images that it names.
-//   It holds no conversation, no system prompt, and no tools, so the
-//   invoked model cannot call a tool or invoke a model in its turn (the
-//   `toolsAllowed` rule, controller/modelInvoke.ts).
+//   request with one user message: `prompt`, and the images and the clips
+//   that it names (chatClips.ts). It holds no conversation, no system
+//   prompt, and no tools, so the invoked model cannot call a tool or
+//   invoke a model in its turn (the `toolsAllowed` rule,
+//   controller/modelInvoke.ts).
 //
 // Every text here is a tool result or the result of a job: it goes to the
 // chat provider. So it names an image or a clip by its id only, and it
@@ -58,13 +61,20 @@ export const MODEL_INVOKE_TOOL: ToolDefinition = {
   description: 'Send one request to a model that the user can use, and get what it makes: '
     + 'a model that makes images, audio clips, or video clips, a model that writes down speech, or a text model. '
     + 'A request costs the user money, as a request that the user sends does. '
+    + 'When the user set a money limit for this conversation, Dez refuses a request once the cost reaches the limit, and a media request whose quote would go over it: then stop, and ask the user. '
+    + '`conversation_info` tells what is left of the limit. '
     + 'Call `model_info` for the model first: `usage` tells what the model needs, `dez.parameters` what a request can set, and `dez.cost` the price. '
     + '`model_list` finds models. '
     + 'The model gets only `prompt` and the inputs that `prompt` names with @id, not the conversation. '
-    + 'A text model gets no tools and no system prompt: it can only answer `prompt`, and of the inputs it takes only images. '
+    + 'A text model gets no tools and no system prompt: it can only answer `prompt`. '
+    + 'It takes images, and audio and video clips when the `dez.inputs` of `model_info` lists them; each clip goes as a copy with no metadata. '
     + 'To learn what an image shows, ask a text model that reads images about it; that model can be your own model. '
+    + 'A text model that takes clips is good at what a clip holds (the words, the story, the look, the pace), and weak at exact times: '
+    + 'measure each time that must be exact with `audio beats` and `video cuts`. '
+    + `A model that writes down speech can also give the times of its words and its segments: Dez writes them into a JSON file of ${WORK_VIRTUAL_ROOT}/, and the result names the file. `
     + `${JOB_CALL_NOTE} `
     + 'Jobs run at the same time: start the calls that do not need the result of another call, within that limit, then wait. '
+    + 'A media request can wait for its turn at its provider, which takes only a few at one time: that wait does not count toward the time limit of its job. '
     + 'An image or a clip that the model made goes into your reply at `jobs_wait`, with a new id that a later call can name with @id. '
     + 'The new ids follow the order in which the jobs end, not the order of your calls: each result of `jobs_wait` names its call. '
     + 'The user sees each image and each clip of your reply: set `is_intermediate` for a call that makes only a part of the result. '
@@ -131,10 +141,11 @@ export interface MediaInvocation extends InvocationTarget {
 export interface ChatInvocation extends InvocationTarget {
   kind: 'chat'
   /** The content of the user message: the prompt, or, when it names
-   *  images, its text with an image part right after the text that names
-   *  each image (the shape of a user message of a conversation,
-   *  streams/messages.ts). */
-  content: string | MessagePart[]
+   *  images or clips, its text with an image part or a clip part right
+   *  after the text that names each one (the shape of a user message of a
+   *  conversation, streams/messages.ts). The job makes the copy of each
+   *  clip (controller/chatClips.ts). */
+  content: string | PromptPart[]
   /** The model makes images too: the request asks for them, as a request
    *  of the user does (`submitTab`). */
   imageOutput: boolean
@@ -179,26 +190,27 @@ function invokedKind(model: ModelInfo): MediaKind | 'chat' {
 const PROMPT_INPUTS: InputWording = { argument: '`prompt`', notDone: 'Dez sent no request.' }
 
 // The content of the one user message that a call sends to the text model
-// `model` (`ChatInvocation.content`), from the source of its prompt.
+// `model` of `provider` (`ChatInvocation.content`), from the source of its
+// prompt.
 //
-// Throws for an input that the request does not carry: a clip (a chat
-// request takes none, whatever the provider says that the model reads,
-// `modelInputs`), and an image for a model that is known not to read
-// images (a user message sends such a model the reference as text; the
-// calling model would get an answer about an image that the model never
-// got). Throws for a prompt with no text too.
-function chatContent(model: ModelInfo, source: PromptRequestSource): string | MessagePart[] {
+// Throws for an input that the request does not carry: a clip of a kind
+// that Dez does not send the model, or more video clips than the provider
+// takes (`chatClipsProblem`), and an image for a model that is known not
+// to read images (a user message sends such a model the reference as text;
+// the calling model would get an answer about an image that the model
+// never got). Throws for a prompt with no text too.
+function chatContent(provider: ProviderInfo, model: ModelInfo, source: PromptRequestSource): string | PromptPart[] {
   const imageCount = source.inputs.length - source.clips.length
-  const problem = clipTagProblem(model.name, undefined, source.clips, imageCount, undefined, 'model')
+  const problem = chatClipsProblem(model, provider, source.clips)
     ?? unusedImagesProblem(model.name, model.imageInput === false ? 0 : imageCount, imageCount)
   if (problem !== null) throw new ToolError(problem)
   // The text after the last image can be only white space, and the
   // Anthropic format refuses such a text part (as `userMessageContent`,
   // streams/messages.ts).
-  const parts = source.parts.filter((part) => part.type !== 'text' || part.text.trim() !== '')
+  const parts = source.promptParts.filter((part) => part.type !== 'text' || part.text.trim() !== '')
   const [first] = parts
   if (first === undefined) {
-    throw new ToolError(`\`prompt\` has no text, and ${model.name} answers nothing without one. Write in \`prompt\` what the model must answer or do, and name each image that it must get with @id.`)
+    throw new ToolError(`\`prompt\` has no text, and ${model.name} answers nothing without one. Write in \`prompt\` what the model must answer or do, and name each image or clip that it must get with @id.`)
   }
   return parts.length === 1 && first.type === 'text' ? first.text : parts
 }
@@ -218,8 +230,8 @@ function chatContent(model: ModelInfo, source: PromptRequestSource): string | Me
  *  - for a media model: an input that the model does not take, more
  *    inputs than it takes, or a text that it does not take
  *    (`promptRequestProblem`);
- *  - for a text model: a clip, or an image for a model that reads none
- *    (`chatContent`);
+ *  - for a text model: a clip that the model does not get, too many video
+ *    clips, or an image for a model that reads none (`chatContent`);
  *  - no text for a model that needs one. */
 export function modelInvocation(args: ToolArguments, { cache, providers, modelParameters, providerSettings, sections }: InvocationFacts): ModelInvocation {
   const { provider, model } = namedModelTarget(cache, providers, typeof args.model === 'string' ? args.model : '')
@@ -236,9 +248,9 @@ export function modelInvocation(args: ToolArguments, { cache, providers, modelPa
   const target = { provider, model, timeoutMs }
 
   if (kind === 'chat') {
-    const content = chatContent(model, source)
-    // Every input goes, and each one is an image: `chatContent` refused
-    // the clips.
+    const content = chatContent(provider, model, source)
+    // Every input goes (`chatContent` refused the others): an image goes
+    // as a part of the message, and a clip as its copy.
     const imageIds = new Map(source.inputs.flatMap(({ id }) => {
       const path = assets.images.get(id)
       return path === undefined ? [] : [[path, id] as const]
@@ -300,9 +312,11 @@ export const INVOCATION_READS_INPUTS = 'Dez reads the inputs of the request.'
  *  the provider's own job id as soon as there is one: the provider took the
  *  money for that job, and the result of a job that timed out ends with
  *  its last state. */
-export function invocationStateText(providerName: string, { phase, jobId }: MediaProgress): string {
+export function invocationStateText(providerName: string, { phase, jobId, limit }: MediaProgress): string {
   const withId = jobId === null ? '' : ` With the id ${jobId}, the user can ask ${providerName} about the output.`
   switch (phase) {
+    case 'waiting':
+      return `The request waits for its turn: Dez sends ${providerName} at most ${limit ?? 'a few'} media requests at one time. The time limit of the job waits too.`
     case 'sent':
       return `${providerName} has the request, and has not answered yet.`
     case 'queued':
@@ -323,6 +337,65 @@ export function invocationTextResult(text: string): string {
   return words === ''
     ? 'The model gave no text: it found no words in the input.'
     : `The text that ${GIVEN_TEXT}:\n${words}`
+}
+
+/** The name of the file in the work folder of the conversation that holds
+ *  the times of a transcription of the clip `clipId` by the model `modelId`
+ *  of the provider `providerId`. Each model of each provider gets its own
+ *  file, so two models that write down one clip at one time do not write
+ *  over each other; a later call of the same model on the same clip does.
+ *  The name holds the provider id and the whole model id: two providers can
+ *  serve one model id, and one provider can serve two models whose ids end
+ *  alike (`openai/whisper-large-v3`, `groq/whisper-large-v3`). Each part has
+ *  only the characters of a file name of an app path
+ *  (`is_app_file_segment`, src-tauri/src/persistence.rs). */
+export function transcriptTimesFileName(clipId: string, { providerId, modelId }: ModelRef): string {
+  const part = (text: string) => text.toLowerCase().replace(/[^a-z0-9._-]/g, '-')
+  return `transcript-${clipId}-${part(providerId)}-${part(modelId).slice(0, 64)}.json`
+}
+
+/** The text of the times file of a transcription: each field on its own
+ *  line, and each word and each segment on its own line, so that `apps
+ *  read` and `apps grep` show a word with its times. It is the form of the
+ *  result files of the built-in apps (`resultJson`,
+ *  src-tauri/libs/dez-media/results.js). */
+export function transcriptTimesJson({ clipId, model, text, times }: { clipId: string, model: string, text: string, times: TranscriptTimes }): string {
+  const list = (entries: readonly object[]) => (entries.length === 0 ? '[]' : `[\n${entries.map((entry) => `    ${JSON.stringify(entry)}`).join(',\n')}\n  ]`)
+  const fields: [string, string][] = [
+    ['id', JSON.stringify(clipId)],
+    ['model', JSON.stringify(model)],
+    ['duration', JSON.stringify(times.duration)],
+    ['text', JSON.stringify(text.trim())],
+    ['words', list(times.words)],
+    ['segments', list(times.segments)],
+  ]
+  return `{\n${fields.map(([key, value]) => `  "${key}": ${value}`).join(',\n')}\n}\n`
+}
+
+/** Where the times of a transcription went: the file `name` in the work
+ *  folder, or why Dez could not keep them (`noWorkFolder`: the
+ *  conversation has none; `notWritten`: the write failed). */
+export type TimesFile = { name: string } | { problem: 'noWorkFolder' | 'notWritten' }
+
+/** The result text of a job whose model wrote `text` of the clip `clipId`
+ *  with `times`: what the times cover and where they are, then the text
+ *  (`invocationTextResult`). The times go only into a file, as a long clip
+ *  has thousands of words. */
+export function invocationTimesResult(text: string, clipId: string, times: TranscriptTimes, file: TimesFile): string {
+  const { words, segments } = times
+  const counts = [...(words.length > 0 ? [countOf(words.length, 'word')] : []), ...(segments.length > 0 ? [countOf(segments.length, 'segment')] : [])].join(' and ')
+  // A loop, not Math.min(...list): a long clip has more words than a call
+  // can take as arguments.
+  const span = [...words, ...segments].reduce((range, { start, end }) => ({ start: Math.min(range.start, start), end: Math.max(range.end, end) }), { start: Infinity, end: 0 })
+  const gave = `The model gave the times of ${counts}, from ${span.start} s to ${span.end} s of @${clipId}.`
+  const where = 'name' in file
+    ? ` They are in ${WORK_VIRTUAL_ROOT}/${file.name}, a JSON object with id (the clip), model, duration (seconds, or null), text, `
+      + 'words ([{word, start, end}]), and segments ([{text, start, end}]). Each time is in seconds from the start of the clip. '
+      + WORK_FILE_READ_TEXT
+    : file.problem === 'noWorkFolder'
+      ? ` Dez could not keep them: this conversation has no ${WORK_VIRTUAL_ROOT} folder, as its id can name no folder. This is a fault of Dez, not of your call: tell the user.`
+      : ` Dez could not write them into ${WORK_VIRTUAL_ROOT}. This is not a fault of your call: tell the user.`
+  return `${gave}${where}\n${invocationTextResult(text)}`
 }
 
 /** The state of a job whose text model gave `characters` characters of

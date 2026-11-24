@@ -1,0 +1,10 @@
+{
+  "name": "dez-beats",
+  "description": "Measures the beat grid of songs: the tempo (BPM), the time of each beat, the downbeats, the loudness every 0.5 s, and the strong hits. Writes JSON into /work/.",
+  "kind": "script",
+  "decode": {
+    "audio": {
+      "rate": 22050
+    }
+  }
+}

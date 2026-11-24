@@ -8,7 +8,6 @@ import {
   blackIntervals,
   CHECK_STREAMS,
   CLIP_CHECKS,
-  cutTimes,
   frameTimeText,
   FROZEN_MIN_SECONDS,
   frozenIntervals,
@@ -32,9 +31,10 @@ import { ToolError, type ToolArguments, type ToolDefinition } from './types'
 // assets follow that order, so a model needs these lines to put the clips
 // of its calls in their order (the scenes of a video) before a join. With
 // `checks`, one ffmpeg run over each whole clip finds its black, frozen,
-// and silent parts, its loudness over time, and its cuts
-// (clipAnalysis.ts), and a line for each check follows the line of the
-// clip. controller/assetInfo.ts reads the files and runs the programs.
+// and silent parts, and its loudness over time (clipAnalysis.ts), and a
+// line for each check follows the line of the clip. The cuts of a clip are
+// no check: `video cuts` finds them (appAliases.ts). controller/assetInfo.ts
+// reads the files and runs the programs.
 //
 // This module must not import chat/toolBlocks.ts or registry.ts: the
 // registry imports it, and toolBlocks imports the registry.
@@ -56,8 +56,8 @@ export const ASSET_INFO_TOOL: ToolDefinition = {
     + 'before you use clips in an order (the scenes of a video), read which call made each one. '
     + 'For an image or a clip that Dez cannot read (its file is gone, or it expired), the line says so in place of its facts. '
     + 'With `checks`, Dez also reads each whole clip with ffmpeg, and a line for each check follows the line of the clip: '
-    + 'the parts that are black, frozen, or silent, the loudness over time, or the cuts, with their times, '
-    + 'which you can then view with asset_view (`times`, or `start` and `end`).',
+    + 'the parts that are black, frozen, or silent, or the loudness over time, with their times, '
+    + 'which you can then view with asset_view (`times`, or `start` and `end`). For the cuts of a video clip, call video cuts.',
   parameters: [
     {
       name: 'assets',
@@ -72,8 +72,7 @@ export const ASSET_INFO_TOOL: ToolDefinition = {
         + '"black", the parts where the picture is black, from one frame on; '
         + `"frozen", the parts of ${FROZEN_MIN_SECONDS} s or more where the picture does not change (a still picture or a solid color counts); `
         + `"silence", the parts of ${SILENCE_MIN_SECONDS} s or more where the sound stays under ${SILENCE_DBFS} dBFS; `
-        + `"loudness_curve", the loudness of each second in LUFS, at most ${MAX_CURVE_VALUES} values (a longer clip gets a longer step); `
-        + '"cuts", the time of each cut between two shots, as `scenes` of asset_view finds them. '
+        + `"loudness_curve", the loudness of each second in LUFS, at most ${MAX_CURVE_VALUES} values (a longer clip gets a longer step). `
         + `ffmpeg has ${ASSET_VIEW_TIMEOUT_MS / 1000} s for the checks of one clip; a check of the picture reads every frame, so it takes longer than a check of the sound. `
         + 'Default: no check. An image gets none.',
       required: false,
@@ -119,13 +118,21 @@ export function assetInfoLine(id: string, kind: 'image' | MediaTagKind, facts: s
   return `@${id} | ${kind} | ${facts} | ${place.hidden ? 'hidden' : 'shown'} | ${assetOriginText(place.origin)}`
 }
 
+// The advice for an unknown check that was a check before: the cuts of a
+// clip are now a subcommand of the `video` tool, and a model can still read
+// the old check in an earlier result.
+const MOVED_CHECKS: Readonly<Record<string, string>> = { cuts: 'For the cuts of a video clip, call video cuts.' }
+
 /** The checks of an `asset_info` call (`checks`), in the order of
  *  `CLIP_CHECKS`: none for a blank or absent one. Throws a `ToolError` for
  *  a name that is no check. */
 export function assetInfoChecks(args: ToolArguments): ClipCheck[] {
   const words = argumentWords(args, 'checks').map((word) => word.toLowerCase())
   const unknown = [...new Set(words.filter((word) => !CLIP_CHECKS.some((check) => check === word)))]
-  if (unknown.length > 0) throw new ToolError(`${unknownValuesText('checks', unknown, `any of: ${CLIP_CHECKS.join(', ')}`)} ${NOT_DONE}`)
+  if (unknown.length > 0) {
+    const moved = unknown.flatMap((word) => Object.hasOwn(MOVED_CHECKS, word) ? [MOVED_CHECKS[word]] : [])
+    throw new ToolError([unknownValuesText('checks', unknown, `any of: ${CLIP_CHECKS.join(', ')}`), ...moved, NOT_DONE].join(' '))
+  }
   return CLIP_CHECKS.filter((check) => words.includes(check))
 }
 
@@ -148,11 +155,11 @@ export function fittingChecks(checks: readonly ClipCheck[], streams: ClipStreams
  *  counted. */
 export const MAX_CHECK_ITEMS = 50
 
-// The items of a check line, each one with `unit` after the last one shown.
-function itemsText(items: readonly string[], unit = ''): string {
+// The items of a check line.
+function itemsText(items: readonly string[]): string {
   if (items.length === 0) return 'none'
   const more = items.length - MAX_CHECK_ITEMS
-  return `${items.slice(0, MAX_CHECK_ITEMS).join(', ')}${unit}${more > 0 ? `, and ${more} more` : ''}`
+  return `${items.slice(0, MAX_CHECK_ITEMS).join(', ')}${more > 0 ? `, and ${more} more` : ''}`
 }
 
 function intervalText({ start, end }: ClipInterval): string {
@@ -183,8 +190,6 @@ function findingText(check: ClipCheck, log: string): string {
       return itemsText(silenceIntervals(log).map(intervalText))
     case 'loudness_curve':
       return curveText(loudnessCurve(log))
-    case 'cuts':
-      return itemsText(cutTimes(log).map(frameTimeText), ' s')
   }
 }
 

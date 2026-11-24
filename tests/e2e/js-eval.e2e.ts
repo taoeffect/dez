@@ -4,20 +4,20 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { toolBlockText } from '../../src/model/chat/toolBlocks'
 import { ASSET_INFO_COLUMNS } from '../../src/model/tools/assetInfo'
 import { PICTURES_SHOWN_NOTE } from '../../src/model/tools/assetView'
-import { jobStartedText, jobsWaitResults, NO_JOBS_TEXT, startedJobId } from '../../src/model/tools/jobs'
+import { jobStartedText, jobsWaitResults, startedJobId } from '../../src/model/tools/jobs'
 import { byteSizeText } from '../../src/utils/byteSize'
 import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
 import { expectNoLinkedFile, linkedDropDir, openDroppedFiles } from './harness/drops'
-import { filesIn, workDir } from './harness/fixtures'
+import { appFilePath, conversationFilePath, filesIn, workDir } from './harness/fixtures'
 import { generatedImagesDir, pngDataUrl, shownImages, STRIPES_PNG } from './harness/images'
-import { waitCall } from './harness/jobs'
+import { NO_JOBS_LIST_TEXT, waitCall } from './harness/jobs'
 import { evalCall, expectReplyEnd as expectEnd, expectRunsEnded } from './harness/jsEval'
 import { WEBM_VIDEO } from './harness/media'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendChatReply, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
 import { processExists, runningProgram } from './harness/processes'
 import type { E2EBrowser } from './harness/session'
-import { endedReply, newTab, openSeededConversation, openToasts, submit } from './harness/thread'
+import { activeConversationId, endedReply, newTab, openSeededConversation, openToasts, sbpCall, submit } from './harness/thread'
 import { codePanel, hiddenPart, hidingPart, intermediateParts, pressToolChip, revealingPart, toolChips, toolPanel } from './harness/toolChips'
 
 // The `js_eval` tool, driven through the real app against a mock chat model
@@ -29,7 +29,7 @@ import { codePanel, hiddenPart, hidingPart, intermediateParts, pressToolChip, re
 //   code can be TypeScript, it can load a built-in module, it has the time
 //   zone of the app, and a timer that it leaves does not hold the call;
 // - code that threw gives an error result that names the lines of the code
-//   as lines of `/work/code.ts`, with the causes of the error; a syntax
+//   as lines of `/run/code.ts`, with the causes of the error; a syntax
 //   error, a static `import`, a refused permission, and a refused package
 //   each get the text that tells the model what to do;
 // - code that ended before it returned a value, and code that Dez stopped
@@ -37,7 +37,11 @@ import { codePanel, hiddenPart, hidingPart, intermediateParts, pressToolChip, re
 //   such a call shows that it failed; code that returned no value gives a
 //   result that tells so, and no error;
 // - Stop ends the code of a call that runs;
-// - every work folder is gone after its call;
+// - every run folder is gone after its call;
+// - the code of each call gets the work folder of its conversation as
+//   `dez.workFolder`, which the model reads as `/work`: a file that one call
+//   wrote there is there for the next call, and a delete of the
+//   conversation in History deletes the folder;
 // - the code of a call runs the other Dez tools with `dez.sbp`, in both
 //   forms of a call, on the files that the user dropped (a stored image, a
 //   linked image, a linked clip) by their ids: it gets the result text of
@@ -54,9 +58,9 @@ import { codePanel, hiddenPart, hidingPart, intermediateParts, pressToolChip, re
 //   `is_intermediate`, and its panel shows it. A saved call shows the same
 //   list, with a tool call that the end of the code cut.
 // No request holds a path of the test HOME (`takeRequest` checks each one):
-// the work folder of each run is in that HOME, and Deno names it in an error
-// stack, in `import.meta.url`, and in `Deno.cwd()`. No request holds the
-// path or the name of a linked file.
+// the run folder and the work folder of each run are in that HOME, and Deno
+// names the run folder in an error stack, in `import.meta.url`, and in
+// `Deno.cwd()`. No request holds the path or the name of a linked file.
 //
 // One app session serves the whole file; each test starts in a new tab.
 
@@ -147,7 +151,7 @@ describe('js_eval tool', () => {
     expect(toolResult(second, 'call_data')).toBe('{\n  "length": 5,\n  "hash": 64\n}\n\nConsole output of the code:\nthe point { x: 3, y: 4 }\na warning')
     expect(toolResult(second, 'call_lost')).toBe('{ counts: Map(1) { "a" => 3 }, unique: Set(1) { 1 }, list: [ 1, NaN ] }')
     expect(toolResult(second, 'call_date')).toBe('{\n  "when": "1970-01-01T00:00:00.000Z"\n}')
-    expect(toolResult(second, 'call_place')).toBe(`/work file:///work/code.ts ${APP_TIME_ZONE}`)
+    expect(toolResult(second, 'call_place')).toBe(`/run file:///run/code.ts ${APP_TIME_ZONE}`)
     expect(toolResult(second, 'call_timer')).toBe('done')
     expect(toolResult(second, 'call_none')).toBe('The code returned no value, and it wrote nothing to the console. Give the result with `return`.')
     await expectReplyEnd(second)
@@ -178,19 +182,19 @@ describe('js_eval tool', () => {
 
     const second = await chatRequest()
     const thrown = toolResult(second, 'call_throw')
-    expect(thrown.startsWith('The code threw an error:\nRangeError: too large\n    at check (file:///work/code.ts:2:')).toBe(true)
-    expect(thrown).toContain('\n    at default (file:///work/code.ts:4:')
-    expect(thrown).toContain('\nCaused by: Error: the cause\n    at check (file:///work/code.ts:2:')
+    expect(thrown.startsWith('The code threw an error:\nRangeError: too large\n    at check (file:///run/code.ts:2:')).toBe(true)
+    expect(thrown).toContain('\n    at default (file:///run/code.ts:4:')
+    expect(thrown).toContain('\nCaused by: Error: the cause\n    at check (file:///run/code.ts:2:')
     // No line of the module of Dez, which the model did not write.
     expect(thrown).not.toContain('runner.js')
 
     const syntax = toolResult(second, 'call_syntax')
     expect(syntax.startsWith('The code threw an error:\n')).toBe(true)
     expect(syntax).toContain('Expression expected')
-    expect(syntax).toContain('file:///work/code.ts:1:')
+    expect(syntax).toContain('file:///run/code.ts:1:')
 
-    const noFlag = 'No flag changes that, and you can set none: do the work without them.'
-    expect(toolResult(second, 'call_import')).toContain('a static `import` does not work in it. Load a built-in module with `await import("node:…")`.')
+    const noFlag = 'No flag changes these limits, and you can set no flag: do the work within the limits.'
+    expect(toolResult(second, 'call_import')).toContain('a static `import` does not work in it.')
     const fetched = toolResult(second, 'call_fetch')
     expect(fetched.startsWith(`The code threw an error:\nNotCapable: Requires net access to "${new URL(setup.mock.url).host}"`)).toBe(true)
     expect(fetched).toContain(noFlag)
@@ -202,7 +206,7 @@ describe('js_eval tool', () => {
     expect(late.startsWith('The code ended before it returned a value (exit code 1).')).toBe(true)
     expect(late).toContain('\n\nConsole output of the code:\n')
     expect(late).toContain('late failure')
-    expect(late).toContain('file:///work/code.ts:1:')
+    expect(late).toContain('file:///run/code.ts:1:')
     await expectReplyEnd(second)
     await waitForValue(browser, 'chip states', chipStates, Array(6).fill('error'))
   })
@@ -222,7 +226,7 @@ describe('js_eval tool', () => {
     await waitForValue(browser, 'chip states', chipStates, ['error'])
   })
 
-  it('ends the code of a call when the user stops the reply, and deletes its work folder', async () => {
+  it('ends the code of a call when the user stops the reply, and deletes its run folder', async () => {
     await submit(browser, 'Wait.')
     const first = await chatRequest()
     sendToolCalls(first.reply, [evalCall('call_wait', 'await new Promise((resolve) => setTimeout(resolve, 280_000))', { timeout_seconds: 300 })])
@@ -237,6 +241,30 @@ describe('js_eval tool', () => {
     expect(setup.mock.hasWaitingRequest()).toBe(false)
     expect(await openToasts(browser, 'error')).toStrictEqual([])
     // A stop is no failure of the tool.
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('keeps the files that the code writes to the work folder of the conversation for the next call, and deletes the folder with the conversation', async () => {
+    await submit(browser, 'Keep a note.')
+    const conversationId = await activeConversationId(browser)
+    const folder = appFilePath(setup.app.home, 'work', conversationId)
+    const first = await chatRequest()
+    sendToolCalls(first.reply, [evalCall('call_write', 'await Deno.writeTextFile(`${dez.workFolder}/note.txt`, "kept")\nreturn dez.workFolder')])
+
+    const second = await chatRequest()
+    expect(toolResult(second, 'call_write')).toBe('/work')
+    sendToolCalls(second.reply, [evalCall('call_read', 'return await Deno.readTextFile(`${dez.workFolder}/note.txt`)')])
+
+    const third = await chatRequest()
+    expect(toolResult(third, 'call_read')).toBe('kept')
+    await expectReplyEnd(third)
+    expect(await filesIn(folder)).toStrictEqual(['note.txt'])
+    await waitForValue(browser, 'saved conversation', async () => fs.existsSync(conversationFilePath(setup.app.home, conversationId)), true)
+
+    await sbpCall(browser, 'dez.controller/deleteConversation', conversationId)
+
+    await waitForValue(browser, 'work folder of the conversation', async () => fs.existsSync(folder), false)
+    expect(fs.existsSync(conversationFilePath(setup.app.home, conversationId))).toBe(false)
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 
@@ -285,9 +313,9 @@ describe('js_eval tool', () => {
     expect(toolResult(second, 'call_view').split('\n').slice(0, 2)).toStrictEqual([`@b | image | PNG | 90x20 | ${pngSize}`, PICTURES_SHOWN_NOTE])
     // The error of a tool is the error text that a call of the model gets.
     const failure = 'No image of this conversation has the id @zz. Its images are @a, @b, @d, @e: call again with one of these ids.'
-    expect(toolResult(second, 'call_caught')).toBe(`Error: ${failure}\n${NO_JOBS_TEXT}`)
+    expect(toolResult(second, 'call_caught')).toBe(`Error: ${failure}\n${NO_JOBS_LIST_TEXT}`)
     // The stack names the line of the code that made the call.
-    expect(toolResult(second, 'call_thrown')).toBe(`The code threw an error:\nError: ${failure}\n    at default (file:///work/code.ts:2:11)`)
+    expect(toolResult(second, 'call_thrown')).toBe(`The code threw an error:\nError: ${failure}\n    at default (file:///run/code.ts:2:11)`)
 
     // The model sees the picture of the `asset_view` call of the code as
     // after a call of its own: in one user message after the tool
@@ -413,7 +441,7 @@ describe('js_eval tool', () => {
     // the inputs of its run after the job.
     const calls = panel?.calls ?? []
     expect(calls).toMatchObject([
-      { name: 'jobs_list', status: 'success', stateWord: null, parameters: [], result: NO_JOBS_TEXT, failed: false },
+      { name: 'jobs_list', status: 'success', stateWord: null, parameters: [], result: NO_JOBS_LIST_TEXT, failed: false },
       { name: 'image', status: 'error', stateWord: 'failed', parameters: [['command', 'scale'], ['parameters', JSON.stringify(badImage)]], result: failure, failed: true },
       { name: 'video', status: 'success', stateWord: null, parameters: [['command', 'ffmpeg'], ['parameters', JSON.stringify(draw)]], failed: false },
       { name: 'jobs_wait', status: 'success', stateWord: null, parameters: [], failed: false },

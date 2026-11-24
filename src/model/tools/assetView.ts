@@ -156,7 +156,8 @@ export const ASSET_VIEW_TOOL: ToolDefinition = {
       type: 'boolean',
       description: 'For a video clip: true to show one frame for each shot of the part: its first frame, '
         + 'and the first frame after each cut (a sudden change of the whole picture) that Dez finds, with their times. '
-        + `\`frames\` is then the most frames, default ${MAX_SHEET_FRAMES}, and the result tells the cuts that the sheet leaves out.`,
+        + `\`frames\` is then the most frames, default ${MAX_SHEET_FRAMES}, and the result tells the cuts that the sheet leaves out. `
+        + 'For exact cut times to work with, call video cuts.',
       required: false,
     },
     {

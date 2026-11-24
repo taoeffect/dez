@@ -1,3 +1,5 @@
+import { compactionsField, type Compactions } from './compaction'
+
 /** What the requests of one conversation cost, as far as Dez knows: every
  *  chat round, media round, and `model_invoke` job of its replies. Saved
  *  in the conversation header (conversationFormat.ts). */
@@ -49,4 +51,37 @@ export function costField(cost: ConversationCost | undefined): { cost?: Conversa
  *  `agentTextEdited: undefined`. */
 export function agentTextEditedField(edited: boolean | undefined): { agentTextEdited?: true } {
   return edited ? { agentTextEdited: true } : {}
+}
+
+/** The cost numbers of a tab (`Tab`, types.ts): what its requests cost,
+ *  the mark of an edited reply, and the numbers of its compactions. A user's
+ *  delete of all the text of the tab removes them, and an undo of that
+ *  delete puts them back (view/editor/costReset.ts). */
+export interface TabCostNumbers {
+  cost?: ConversationCost
+  agentTextEdited?: true
+  compactions?: Compactions
+}
+
+/** The cost numbers of a tab when an undo puts back `removed`, the numbers
+ *  that a delete of all its text removed, and the tab counted `now` since
+ *  that delete. The two costs add up: a reply or a job can count a request
+ *  between the delete and the undo, and that request still cost money. The
+ *  mark is set when either side has it. The compactions are those of `now`
+ *  when it has any (they are newer), else those of `removed`. */
+export function withRestoredCost(now: TabCostNumbers, removed: TabCostNumbers): TabCostNumbers {
+  return {
+    ...costField(addedCost(now.cost, removed.cost)),
+    ...agentTextEditedField(now.agentTextEdited || removed.agentTextEdited),
+    ...compactionsField(now.compactions ?? removed.compactions),
+  }
+}
+
+function addedCost(one: ConversationCost | undefined, other: ConversationCost | undefined): ConversationCost | undefined {
+  if (!one || !other) return one ?? other
+  return {
+    usd: one.usd + other.usd,
+    requests: one.requests + other.requests,
+    unpriced: one.unpriced + other.unpriced,
+  }
 }

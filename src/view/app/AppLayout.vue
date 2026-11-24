@@ -166,7 +166,8 @@ onUnmounted(() => {
 }
 
 /* Three columns: the model picker, the usage label (`UsageLabel.vue`: the
-   token count and the cost), and Submit with the incognito mask and Help.
+   token count, the cost, and the money limit), and Submit with the
+   incognito mask and Help.
    The two side columns share the free space, so the label stays in the
    middle of the bar, also when Submit turns into the narrower Stop. A side
    column is never narrower than its content, so a long model name does not
@@ -187,7 +188,7 @@ onUnmounted(() => {
 }
 
 /* Submit, the incognito mask, and Help at the right end of the bar, in the
-   last column also while there is no usage label. */
+   last column whatever the middle column holds. */
 .bottom-bar-end {
   grid-column: 3;
   justify-self: end;

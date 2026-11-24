@@ -59,6 +59,7 @@ describe('callLabel', () => {
   it('gives the subcommand and its main argument of a video call', () => {
     expect(callLabel('video', { command: 'join_clips', parameters: '{"clips": "@a @b", "is_intermediate": true}' })).toBe('join_clips @a @b')
     expect(callLabel('video', { command: 'ffmpeg', parameters: '{"arguments": "-i @a out.mp4"}' })).toBe('ffmpeg -i @a out.mp4')
+    expect(callLabel('video', { command: 'title', parameters: '{"text": "NEON CITY", "duration": 3}' })).toBe('title NEON CITY')
   })
 
   it('gives the app and the parameters of the run of an apps invoke call', () => {

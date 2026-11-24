@@ -45,6 +45,31 @@ export async function toolChips (browser: E2EBrowser): Promise<ToolChipView[]> {
   }))
 }
 
+/** The time that one tool call chip shows (`renderCallTime`,
+ *  src/view/editor/toolCalls.ts), and where its call is while its group
+ *  runs. */
+export interface ToolChipTimeView {
+  /** `data-phase` of the chip: "ended" or "waiting" for a call of a group
+   *  that runs, which does not run now; else null. */
+  phase: string | null
+  /** The first part of the chip: "spinner" or "triangle". */
+  lead: string | null
+  time: { text: string, live: boolean, title: string } | null
+}
+
+/** The time of each chip of the active editor, in doc order. */
+export async function toolChipTimes (browser: E2EBrowser): Promise<ToolChipTimeView[]> {
+  return browser.execute(() => Array.from(document.querySelectorAll<HTMLElement>('.cm-content .dez-tool-call__chip'), (chip) => {
+    const time = chip.querySelector<HTMLElement>(':scope > .dez-tool-call__time')
+    const lead = chip.firstElementChild
+    return {
+      phase: chip.dataset.phase ?? null,
+      lead: lead?.matches('.dez-tool-call__spinner') ? 'spinner' : lead?.matches('.dez-tool-call__disclosure') ? 'triangle' : null,
+      time: time && { text: time.textContent ?? '', live: time.classList.contains('dez-tool-call__time--live'), title: time.title },
+    }
+  }))
+}
+
 /** What the panel of an open chip shows of the call. */
 export interface ToolPanelView {
   /** The parameter rows of the call. The code of a `js_eval` call is not

@@ -1,8 +1,10 @@
 import sbp from '@sbp/sbp'
 import {
-  appOf,
   APPS_MAX_ENTRIES,
   APPS_ROOT,
+  appsRootTree,
+  BUILT_IN_APPS_FOLDER,
+  capsHold,
   checkAppRoom,
   checkInitTarget,
   checkTextFile,
@@ -12,9 +14,10 @@ import {
   findCall,
   findText,
   hasReadableManifest,
-  isReadableManifest,
   initCall,
   initText,
+  isAppFolder,
+  isReadableManifest,
   itemFailureText,
   listAppsCall,
   listAppsText,
@@ -34,6 +37,7 @@ import {
   rmCall,
   rmResult,
   rmStep,
+  unitOf,
   wcCall,
   wcResult,
   wcRowOfBytes,
@@ -46,7 +50,7 @@ import {
   type ListedApp,
   type PathFacts,
 } from '../model/tools/appsTool'
-import { MANIFEST_FILE } from '../model/tools/appManifest'
+import { isBuiltInApp, MANIFEST_FILE } from '../model/tools/appManifest'
 import { grepCall, grepPlan, grepRequest, grepText, grepTimeoutError } from '../model/tools/appsGrep'
 import { appNotShownText, checkShowTarget, showCall, showResultText, type ShowCall, type ShowTarget } from '../model/tools/appShow'
 import { grepFiles, GREP_TIME_LIMIT_SECONDS, type GrepOutcome, type GrepRequest } from '../model/tools/grepMatch'
@@ -55,9 +59,12 @@ import { rawErrorText } from '../utils/errorText'
 import type { AppFileEntry, FileTree } from './nativeTypes'
 
 // The file work of the `apps` tool (model/tools/appsTool.ts): each function
-// runs one subcommand on the folder `apps/` of the app root, through the
-// native file selectors. The model module checks the call, decides what to
-// do from what is at the paths, and builds every text; the functions here
+// runs one subcommand through the native file selectors, on the three top
+// folders of a path (`AppsPath`): `/apps` (the folder `apps/` of the app
+// root, and the built-in apps in the files that Dez ships), `/libs` (the
+// libraries that Dez ships, only to read), and `/work` (the work folder of
+// the conversation). The model module checks the call, decides what to do
+// from what is at the paths, and builds every text; the functions here
 // only ask the native side and do what the model module decided. The run
 // of an app (`invoke`) is in appInvoke.ts. `show` changes no file: it
 // checks the files of the app, and the reply of its call writes the app
@@ -85,9 +92,14 @@ async function native<T>(what: string, call: () => Promise<T>): Promise<T> {
   }
 }
 
-// What is at `path`, and at most `maxEntries` of the entries below it.
-function treeOf(path: AppsPath, maxEntries: number): Promise<FileTree> {
-  return native(`list ${path.virtual}`, () => sbp('dez.native/listFileTree', path.file, maxEntries) as Promise<FileTree>)
+// What is at `path`, and at most `maxEntries` of the entries below it. The
+// folder of all apps is two folders: the apps of the user and the built-in
+// apps (`appsRootTree`).
+async function treeOf(path: AppsPath, maxEntries: number): Promise<FileTree> {
+  const listing = (file: string, root: AppsPath['root']) => native(`list ${path.virtual}`, () => sbp('dez.native/listFileTree', file, maxEntries, root) as Promise<FileTree>)
+  if (path.top.place !== 'apps' || path.names.length > 0) return listing(path.file, path.root)
+  const [own, builtIn] = await Promise.all([listing(path.file, path.root), listing(BUILT_IN_APPS_FOLDER, 'resource')])
+  return appsRootTree(own, builtIn, maxEntries)
 }
 
 /** What is at the path `path` of the apps, with nothing of what is below
@@ -103,11 +115,18 @@ export function appTreeOf(app: AppsPath): Promise<FileTree> {
   return treeOf(app, APPS_MAX_ENTRIES)
 }
 
+// The listing of the unit of `path` (`unitOf`: its app, or the top
+// folder), as a change at `path` reads it (`writePlan`, `mkdirStep`,
+// `moveStep`).
+function unitTreeOf(path: AppsPath): Promise<FileTree> {
+  return appTreeOf(unitOf(path))
+}
+
 // The bytes of the file at the path `path` of the apps. The native side
 // reads a file of any size: check its size first (`factsOf`). Throws a
 // `ToolError` for a read that fails.
 function readBytes(path: AppsPath): Promise<Uint8Array> {
-  return native(`read ${path.virtual}`, () => sbp('dez.native/loadAppFileBytes', path.file) as Promise<Uint8Array>)
+  return native(`read ${path.virtual}`, () => sbp('dez.native/loadAppFileBytes', path.file, path.root) as Promise<Uint8Array>)
 }
 
 /** The bytes of the manifest file at `path`, whose facts are `facts`; null
@@ -119,13 +138,13 @@ export async function readableManifestBytes(path: AppsPath, facts: PathFacts): P
 }
 
 function save(path: AppsPath, content: string | Uint8Array): Promise<void> {
-  return native(`write ${path.virtual}`, () => sbp('dez.native/saveAppFile', path.file, content) as Promise<void>)
+  return native(`write ${path.virtual}`, () => sbp('dez.native/saveAppFile', path.file, content, path.root) as Promise<void>)
 }
 
 // Makes a folder and the missing ones above it, for the user only. A save
 // or a move would make them too, but for everyone to read.
 function makeFolder(path: AppsPath): Promise<void> {
-  return native(`make the folder ${path.virtual}`, () => sbp('dez.native/createFolder', path.file) as Promise<void>)
+  return native(`make the folder ${path.virtual}`, () => sbp('dez.native/createFolder', path.file, path.root) as Promise<void>)
 }
 
 // Runs `work` for each item of a call, one after the other. An item whose
@@ -157,7 +176,7 @@ export async function initApp(args: SubcommandArguments): Promise<AppsResult> {
   try {
     for (const file of call.files) await save(file.path, file.content)
   } catch (error) {
-    await (sbp('dez.native/deleteAppFile', call.app.file, 'app', { folder: true }) as Promise<void>)
+    await (sbp('dez.native/deleteAppFile', call.app.file, call.app.root, { folder: true }) as Promise<void>)
       .catch((cleanupError: unknown) => console.error(`apps tool: Dez could not delete the half-made app ${call.app.virtual}:`, cleanupError))
     throw error
   }
@@ -166,18 +185,18 @@ export async function initApp(args: SubcommandArguments): Promise<AppsResult> {
 
 /** `apps read`. The size check comes before the read: the native side
  *  reads a file of any size. */
-export async function readAppFile(args: SubcommandArguments): Promise<AppsResult> {
-  const call = readCall(args)
+export async function readAppFile(args: SubcommandArguments, conversationId: string): Promise<AppsResult> {
+  const call = readCall(args, conversationId)
   checkTextFile(call.path, await factsOf(call.path))
   const bytes = await readBytes(call.path)
   return readText(call, fileText(call.path, bytes), bytes.length)
 }
 
 /** `apps write`. */
-export async function writeAppFile(args: SubcommandArguments): Promise<AppsResult> {
-  const call = writeCall(args)
-  const [target, app] = await Promise.all([factsOf(call.path), appTreeOf(appOf(call.path))])
-  const plan = writePlan(call, target, app)
+export async function writeAppFile(args: SubcommandArguments, conversationId: string): Promise<AppsResult> {
+  const call = writeCall(args, conversationId)
+  const [target, unit] = await Promise.all([factsOf(call.path), unitTreeOf(call.path)])
+  const plan = writePlan(call, target, unit)
   if (plan.folder) await makeFolder(plan.folder)
   await save(call.path, call.bytes)
   return writeText(call, plan.replaced)
@@ -186,14 +205,15 @@ export async function writeAppFile(args: SubcommandArguments): Promise<AppsResul
 /** `apps edit`. It writes only when an edit changed a line, and it lists
  *  the app only when the file grows. The `apps` runner adds the hint of
  *  `edit` to its results (`withEditHintWhenDue`, tools.ts). */
-export async function editAppFile(args: SubcommandArguments): Promise<AppsResult> {
-  const call = editCall(args)
+export async function editAppFile(args: SubcommandArguments, conversationId: string): Promise<AppsResult> {
+  const call = editCall(args, conversationId)
   checkTextFile(call.path, await factsOf(call.path))
   const before = await readBytes(call.path)
   const { content, isError, bytes } = editResult(call, fileText(call.path, before))
   if (bytes) {
-    const app = appOf(call.path)
-    if (bytes.length > before.length) checkAppRoom(app, await appTreeOf(app), { entries: 0, bytes: bytes.length - before.length })
+    if (bytes.length > before.length && capsHold(call.path)) {
+      checkAppRoom(unitOf(call.path), await unitTreeOf(call.path), { entries: 0, bytes: bytes.length - before.length })
+    }
     await save(call.path, bytes)
   }
   return { content, isError }
@@ -202,12 +222,12 @@ export async function editAppFile(args: SubcommandArguments): Promise<AppsResult
 /** `apps rm`. A delete of a whole app tells the editor
  *  (`dez.editor/appDeleted`), as the trash of its card does: the runs of
  *  the app end, and its cards tell that it is gone. */
-export async function removeAppPaths(args: SubcommandArguments, signal: AbortSignal): Promise<AppsResult> {
-  const { paths } = rmCall(args)
+export async function removeAppPaths(args: SubcommandArguments, signal: AbortSignal, conversationId: string): Promise<AppsResult> {
+  const { paths } = rmCall(args, conversationId)
   return rmResult(await eachByItself(paths, signal, async (path) => {
     const step = rmStep(path, await treeOf(path, RM_LISTED_ENTRIES))
-    await native(`delete ${path.virtual}`, () => sbp('dez.native/deleteAppFile', path.file, 'app', { folder: step.folder }) as Promise<void>)
-    if (path.names.length === 1) sbp('dez.editor/appDeleted', path.names[0])
+    await native(`delete ${path.virtual}`, () => sbp('dez.native/deleteAppFile', path.file, path.root, { folder: step.folder }) as Promise<void>)
+    if (isAppFolder(path)) sbp('dez.editor/appDeleted', path.names[0])
     return step.text
   }))
 }
@@ -215,37 +235,37 @@ export async function removeAppPaths(args: SubcommandArguments, signal: AbortSig
 /** `apps mv`. The moves run one after the other, so a later move of the
  *  call sees what an earlier one did. A move of a whole app tells the
  *  editor that the app of the old name is gone, as `rm` does. */
-export async function moveAppPaths(args: SubcommandArguments, signal: AbortSignal): Promise<AppsResult> {
-  const { moves } = mvCall(args)
+export async function moveAppPaths(args: SubcommandArguments, signal: AbortSignal, conversationId: string): Promise<AppsResult> {
+  const { moves } = mvCall(args, conversationId)
   return mvResult(await eachByItself(moves, signal, async (move) => {
     const { from, to } = move
-    const [source, target, app] = await Promise.all([factsOf(from), factsOf(to), appTreeOf(appOf(to))])
-    const step = moveStep(move, { source, target, app })
+    const [source, target, unit] = await Promise.all([factsOf(from), factsOf(to), unitTreeOf(to)])
+    const step = moveStep(move, { source, target, unit })
     if (step.folder) await makeFolder(step.folder)
-    await native(`move ${from.virtual} to ${to.virtual}`, () => sbp('dez.native/moveAppFile', { root: 'app', path: from.file }, { root: 'app', path: to.file }) as Promise<void>)
-    if (from.names.length === 1) sbp('dez.editor/appDeleted', from.names[0])
+    await native(`move ${from.virtual} to ${to.virtual}`, () => sbp('dez.native/moveAppFile', { root: from.root, path: from.file }, { root: to.root, path: to.file }) as Promise<void>)
+    if (isAppFolder(from)) sbp('dez.editor/appDeleted', from.names[0])
     return step.text
   }))
 }
 
 /** `apps mkdir`. */
-export async function makeAppFolder(args: SubcommandArguments): Promise<AppsResult> {
-  const { path } = mkdirCall(args)
-  const [target, app] = await Promise.all([factsOf(path), appTreeOf(appOf(path))])
-  const step = mkdirStep(path, target, app)
+export async function makeAppFolder(args: SubcommandArguments, conversationId: string): Promise<AppsResult> {
+  const { path } = mkdirCall(args, conversationId)
+  const [target, unit] = await Promise.all([factsOf(path), unitTreeOf(path)])
+  const step = mkdirStep(path, target, unit)
   if (step.make) await makeFolder(path)
   return step.text
 }
 
 /** `apps ls`. */
-export async function listAppFolder(args: SubcommandArguments): Promise<AppsResult> {
-  const { path } = lsCall(args)
+export async function listAppFolder(args: SubcommandArguments, conversationId: string): Promise<AppsResult> {
+  const { path } = lsCall(args, conversationId)
   return lsText(path, await treeOf(path, LS_MAX_ENTRIES))
 }
 
 /** `apps find`: one listing of the folder, as `ls` asks for. */
-export async function findAppFiles(args: SubcommandArguments): Promise<AppsResult> {
-  const call = findCall(args)
+export async function findAppFiles(args: SubcommandArguments, conversationId: string): Promise<AppsResult> {
+  const call = findCall(args, conversationId)
   return findText(call, await treeOf(call.path, LS_MAX_ENTRIES))
 }
 
@@ -317,8 +337,8 @@ function grepInWorker(request: GrepRequest, signal: AbortSignal): Promise<GrepOu
 /** `apps grep`: one listing of the path, as `ls` asks for, the reads of the
  *  files that `grepPlan` picks, and the matching in a worker. A stop of
  *  the reply ends the reads and the matching. */
-export async function grepAppFiles(args: SubcommandArguments, signal: AbortSignal): Promise<AppsResult> {
-  const call = grepCall(args)
+export async function grepAppFiles(args: SubcommandArguments, signal: AbortSignal, conversationId: string): Promise<AppsResult> {
+  const call = grepCall(args, conversationId)
   const plan = grepPlan(call, await treeOf(call.path, LS_MAX_ENTRIES))
   if (plan.kind === 'text') return plan.text
   const request = grepRequest(call, plan.files, await readEach(plan.files.map((file) => file.path), signal))
@@ -341,17 +361,22 @@ export async function grepAppFiles(args: SubcommandArguments, signal: AbortSigna
  *  `APPS_MAX_FILE_BYTES` (`wcRowOfFacts`), one file at a time, so that the
  *  webview holds at most one such file. A stop of the reply ends the call
  *  before the next path. */
-export async function wcAppFiles(args: SubcommandArguments, signal: AbortSignal): Promise<AppsResult> {
-  const { paths } = wcCall(args)
+export async function wcAppFiles(args: SubcommandArguments, signal: AbortSignal, conversationId: string): Promise<AppsResult> {
+  const { paths } = wcCall(args, conversationId)
   return wcResult(await eachByItself(paths, signal, async (path) => wcRowOfFacts(path, await factsOf(path)) ?? wcRowOfBytes(path, await readBytes(path))))
 }
 
-/** `apps list_apps`: one listing for each folder of `apps/`, for its size,
- *  and one read of its manifest. */
+/** `apps list_apps`: one listing for each app, for its size, and one read
+ *  of its manifest. The apps are the folders of `apps/` and the built-in
+ *  apps, each place with only its own names (`appsRootTree`). */
 export async function listApps(args: SubcommandArguments): Promise<AppsResult> {
   const call = listAppsCall(args)
-  const folders = await native('list the apps', () => sbp('dez.native/listAppFiles', APPS_ROOT.file, 'app', { folders: true }) as Promise<AppFileEntry[]>)
-  const apps = await Promise.all(folders.map(async ({ name }): Promise<ListedApp> => {
+  const [own, builtIn] = await Promise.all([
+    native('list the apps', () => sbp('dez.native/listAppFiles', APPS_ROOT.file, APPS_ROOT.root, { folders: true }) as Promise<AppFileEntry[]>),
+    native('list the apps', () => sbp('dez.native/listAppFiles', BUILT_IN_APPS_FOLDER, 'resource', { folders: true }) as Promise<AppFileEntry[]>),
+  ])
+  const names = [...builtIn.map(({ name }) => name).filter(isBuiltInApp), ...own.map(({ name }) => name).filter((name) => !isBuiltInApp(name))]
+  const apps = await Promise.all(names.map(async (name): Promise<ListedApp> => {
     const app = pathIn(APPS_ROOT, name)
     const tree = await appTreeOf(app)
     const manifest = hasReadableManifest(tree) ? await readBytes(pathIn(app, MANIFEST_FILE)) : null

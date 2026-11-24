@@ -1,6 +1,7 @@
 import sbp from '@sbp/sbp'
 import type { Tab } from '../model/chat/types'
 import type { ConversationData } from '../model/persistence/types'
+import { conversationWorkFolder } from '../model/tools/conversationWork'
 import { ExplainedError, errorText, rawErrorText } from '../utils/errorText'
 import { safeFileName } from '../utils/fileName'
 
@@ -12,6 +13,20 @@ let saveDialogOpen = false
 // so a change of their wording breaks no spec.
 export const INCOGNITO_STAYS_ON = 'Incognito stays on in this tab. If it went off, the next request would send the whole conversation, also the messages that went in incognito, with the system prompt and the tools of Dez, so the provider could tie all of it to Dez. To go on without incognito, copy the conversation and paste it into a new tab.'
 export const INCOGNITO_TOO_LATE = 'Incognito can go on only in a tab that has sent no message and has no reply, as the provider can already tie this conversation to Dez. To start an incognito conversation, open a new tab and turn incognito on before you send your first message.'
+
+// The work folder of a conversation goes with the conversation
+// (model/tools/conversationWork.ts). A delete that fails leaves the folder
+// to Delete Unreferenced Files, which deletes the folder of a conversation
+// that is gone.
+async function deleteWorkFolder(conversationId: string): Promise<void> {
+  const folder = conversationWorkFolder(conversationId)
+  if (!folder) return
+  try {
+    await sbp('dez.native/deleteAppFile', folder, 'app', { folder: true })
+  } catch (error) {
+    console.error('Failed to delete the work folder of a conversation:', error)
+  }
+}
 
 export default sbp('sbp/selectors/register', {
   // Every "new tab" path (the `+` button, the keys, the File menu) calls
@@ -53,24 +68,29 @@ export default sbp('sbp/selectors/register', {
 
   // A close ends the reply of the tab and its jobs (`endJobs`): no later
   // reply of the tab could take their results. The last tab does not
-  // close (`dez.model/tabs/close`), so it keeps its jobs.
+  // close (`dez.model/tabs/close`), so it keeps its jobs. The close of an
+  // empty tab deletes its conversation, and so its work folder too.
   async 'dez.controller/closeTab' (tabId: string): Promise<void> {
     const closes = (sbp('dez.model/tabs/list') as Tab[]).length > 1
     await sbp('dez.stream/stop', tabId, { endJobs: closes })
-    sbp('dez.model/tabs/close', tabId)
+    const deleted: string | null = sbp('dez.model/tabs/close', tabId)
+    if (deleted) await deleteWorkFolder(deleted)
   },
 
-  // Deletes a saved conversation (History), and closes its tabs. The reply
-  // and the jobs of each tab that goes end too. The stop comes after the
-  // delete: the save of a stopped reply could otherwise write the file
-  // again while the delete runs, and a stop of a tab that is gone saves
-  // nothing. A delete that failed keeps the tabs, and their jobs.
+  // Deletes a saved conversation (History), its work folder, and closes
+  // its tabs. The reply and the jobs of each tab that goes end too. The
+  // stop comes after the delete: the save of a stopped reply could
+  // otherwise write the file again while the delete runs, and a stop of a
+  // tab that is gone saves nothing. The work folder goes after the stop,
+  // so that no late write of a job makes it again. A delete that failed
+  // keeps the tabs, their jobs, and the work folder.
   async 'dez.controller/deleteConversation' (id: string): Promise<void> {
     const tabIds = (sbp('dez.model/tabs/list') as Tab[]).filter((tab) => tab.conversationId === id).map((tab) => tab.id)
-    await sbp('dez.model/tabs/deleteConversation', id)
+    if (!await sbp('dez.model/tabs/deleteConversation', id)) return
     for (const tabId of tabIds) {
       if (!sbp('dez.model/tab', tabId)) await sbp('dez.stream/stop', tabId, { endJobs: true })
     }
+    await deleteWorkFolder(id)
   },
 
   // Saves the conversation to a Markdown file that the user picks in the

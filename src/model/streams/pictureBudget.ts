@@ -161,11 +161,12 @@ export function pictureBudgetLeft(limits: PictureBudget, spent: PictureBudget): 
 /** The image and picture parts of the user messages of `messages`: the
  *  images of the user messages, the pictures of a compaction tag, and the
  *  pictures of the rounds of the replies (`sectionsToStreamMessages`,
- *  streams/messages.ts). */
-export function* attachmentParts(messages: readonly StreamMessage[]): Generator<Exclude<MessagePart, { type: 'text' }>> {
+ *  streams/messages.ts). A clip part (a `model_invoke` request) is no
+ *  picture. */
+export function* attachmentParts(messages: readonly StreamMessage[]): Generator<Extract<MessagePart, { type: 'image' | 'picture' }>> {
   for (const message of messages) {
     if (message.role !== 'user' || typeof message.content === 'string') continue
-    for (const part of message.content) if (part.type !== 'text') yield part
+    for (const part of message.content) if (part.type === 'image' || part.type === 'picture') yield part
   }
 }
 

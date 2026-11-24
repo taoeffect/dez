@@ -206,6 +206,7 @@ describe('provider config schema', () => {
       imageOutputBody: { modalities: ['image', 'text'] },
       mediaApi: {
         format: 'openrouter',
+        maxRequestsAtOnce: 2,
         modelRequestBodies: [{ request: 'tts', modelIdPrefix: 'heygen/', body: { response_format: 'pcm' } }],
         modelEntryPaths: { speechFormats: 'own.speech.formats', transcriptionFormats: 'own.stt.formats', transcriptionMaxBytes: 'own.stt.max_bytes' },
       },
@@ -252,6 +253,9 @@ describe('provider config schema', () => {
     expect(parse({ mediaApi: { format: 'openai' } }).success).toBe(false)
     expect(parse({ mediaApi: {} }).success).toBe(false)
     expect(parse({ mediaApi: { format: 'openrouter', modelEntryPaths: { speechFormats: 'own..formats' } } }).success).toBe(false)
+    // A cap of 0 would let no media request go.
+    expect(parse({ mediaApi: { format: 'venice', maxRequestsAtOnce: 0 } }).success).toBe(false)
+    expect(parse({ mediaApi: { format: 'venice', maxRequestsAtOnce: 1.5 } }).success).toBe(false)
   })
 
   it('keeps a providerSystemPrompt, and rejects a bad body path or a value that is no scalar', () => {
@@ -262,6 +266,20 @@ describe('provider config schema', () => {
     expect(parse(field).data?.providerSystemPrompt).toStrictEqual(field)
     expect(parse({ bodyPath: 'params.own_prompt' }).success).toBe(true)
     for (const bad of [{}, { bodyPath: 'params..own_prompt' }, { bodyPath: 'params.__proto__' }, { bodyPath: 'own', onValue: { on: true } }, 'params.own_prompt']) {
+      expect(parse(bad).success, JSON.stringify(bad)).toBe(false)
+    }
+  })
+
+  // Dez converts a clip that the provider does not take to MP3 or WAV, or
+  // to MP4 (tools/chatClips.ts), so each list must hold one of them.
+  it('keeps chatClips whose lists hold a type that Dez converts to, and rejects others', () => {
+    const parse = (chatClips: unknown) => providerConfigSchema.safeParse({ id: 'p', name: 'P', baseUrl: 'http://h', chatClips })
+    const rules = { audioFormats: ['wav', 'flac'], videoTypes: ['video/mp4', 'video/webm'], maxVideos: 3, maxBytes: 25_000_000 }
+
+    expect(parse(rules).data?.chatClips).toStrictEqual(rules)
+    expect(parse({ audioFormats: ['mp3'] }).success).toBe(true)
+    expect(parse({}).success).toBe(true)
+    for (const bad of [{ audioFormats: ['flac'] }, { audioFormats: [] }, { audioFormats: ['mp4'] }, { videoTypes: ['video/webm'] }, { videoTypes: ['video/mpeg', 'video/mp4'] }, { maxVideos: 0 }, { maxBytes: 1.5 }]) {
       expect(parse(bad).success, JSON.stringify(bad)).toBe(false)
     }
   })

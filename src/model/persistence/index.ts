@@ -19,6 +19,20 @@ const CONVERSATIONS_FOLDER = 'conversations'
 // one (a file that the user put into the folder).
 const CONVERSATION_FILE_STEM = /^[A-Za-z0-9_-]*$/
 
+// The names of the conversation files, from two listings, because each one
+// leaves something out. `listAppFiles` rejects when the folder cannot be
+// read, but it lists no link. `listConversationFiles` lists a link too (Dez
+// opens a conversation whose file is a link), but it gives an empty list
+// for a folder that it cannot read.
+async function conversationFileNames(): Promise<Set<string>> {
+  const files = await sbp('dez.native/listAppFiles', CONVERSATIONS_FOLDER) as Array<{ name: string }>
+  const conversations = await sbp('dez.native/listConversationFiles', false) as ConversationFile[]
+  return new Set([
+    ...files.map((file) => file.name).filter((name) => name.endsWith('.md')),
+    ...conversations.filter((file) => CONVERSATION_FILE_STEM.test(file.id)).map((file) => `${file.id}.md`),
+  ])
+}
+
 // App code reads and writes the files under ~/.config/dez/ only through
 // these selectors, which own the file formats. They reach the disk only
 // through `dez.native/*` (src/controller/native.ts), the one frontend layer
@@ -117,17 +131,7 @@ export default sbp('sbp/selectors/register', {
   // not parsed, so a file that the parser refuses is read too.
   async 'dez.persistence/eachConversationText' (visit: (text: string, index: number, count: number) => void): Promise<void> {
     try {
-      // Two listings, because each one leaves something out. `listAppFiles`
-      // rejects when the folder cannot be read, but it lists no link.
-      // `listConversationFiles` lists a link too (Dez opens a conversation
-      // whose file is a link), but it gives an empty list for a folder that
-      // it cannot read.
-      const files = await sbp('dez.native/listAppFiles', CONVERSATIONS_FOLDER) as Array<{ name: string }>
-      const conversations = await sbp('dez.native/listConversationFiles', false) as ConversationFile[]
-      const names = new Set([
-        ...files.map((file) => file.name).filter((name) => name.endsWith('.md')),
-        ...conversations.filter((file) => CONVERSATION_FILE_STEM.test(file.id)).map((file) => `${file.id}.md`),
-      ])
+      const names = await conversationFileNames()
       // Not `loadConversationFile`: it rejects for a file that is not UTF-8.
       // Here such bytes read as U+FFFD, and the rest of the text counts.
       const decoder = new TextDecoder()
@@ -138,6 +142,20 @@ export default sbp('sbp/selectors/register', {
       }
     } catch (error) {
       console.error('Failed to read the conversations:', error)
+      throw error
+    }
+  },
+
+  // The ids of the saved conversations: the stems of the conversation
+  // files. It is for a reader that must see every conversation (the cleanup
+  // of the work folders of the conversations, src/controller/
+  // unusedFiles.ts, deletes the folder of an id that is not here). So any
+  // failure rejects: a part of the ids must never pass for all of them.
+  async 'dez.persistence/conversationIds' (): Promise<string[]> {
+    try {
+      return [...await conversationFileNames()].map((name) => name.slice(0, -'.md'.length))
+    } catch (error) {
+      console.error('Failed to list the conversations:', error)
       throw error
     }
   },

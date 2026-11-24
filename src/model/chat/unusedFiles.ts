@@ -1,6 +1,7 @@
 import { fileNameOf } from '../../utils/fileName'
-import { isAppName } from '../tools/appManifest'
+import { isAppName, isBuiltInApp } from '../tools/appManifest'
 import { APPS_ROOT, appSize, pathIn, type AppsTree, type AppsTreeEntry } from '../tools/appsTool'
+import { CONVERSATION_WORK_ROOT, conversationWorkFolder } from '../tools/conversationWork'
 import { WORK_ROOT } from '../tools/workFolders'
 import { namedApps } from './appNames'
 import { IMAGE_FOLDERS, storedImageFile } from './images'
@@ -30,7 +31,11 @@ import { SHOWN_PICTURE_FOLDER, shownPictureFile } from './shownPictures'
 // names, and what work of Dez left there (a download or a work folder whose
 // app stopped before its end). The hourly cleanup (controller/media.ts)
 // deletes them too, but only at the end of their lifetime
-// (`MEDIA_TEMP_LIFETIME_MS`, `WORK_FOLDER_LIFETIME_MS`).
+// (`MEDIA_TEMP_LIFETIME_MS`, `WORK_FOLDER_LIFETIME_MS`). It also takes the
+// work folder of a conversation that is gone (`goneConversationWorkFolders`):
+// the folder goes with its conversation (controller/tabs.ts), and a delete
+// that failed, or a conversation file that the user deleted by hand, leaves
+// it.
 //
 // The cleanup of the apps takes the apps that no text names
 // (`oldAppFolder`): an app is a folder of `apps/` in the app folder, which
@@ -71,9 +76,10 @@ export type StoredFileRoot = 'app' | 'cache'
 
 export interface StoredFile {
   root: StoredFileRoot
-  /** Relative to the root: `assets/images/<name>` or `apps/<name>` (the
-   *  folder of an app) in the app folder; `media/<name>` or `work/<id>` (a
-   *  folder) in the cache folder. */
+  /** Relative to the root: `assets/images/<name>`, `apps/<name>` (the
+   *  folder of an app), or `work/<id>` (the work folder of a conversation)
+   *  in the app folder; `media/<name>` or `work/<id>` (a folder) in the
+   *  cache folder. */
   path: string
   /** In bytes; for a folder, the size of the files in it. */
   size: number
@@ -186,11 +192,13 @@ export function isHeldCacheEntry(path: string, held: ReadonlySet<string>): boole
 // Whether a text can name the file `file` of the cleanup by its file name,
 // and so keep it (`removeNamedFiles`): a stored file, or a temp copy of a
 // clip in the cache folder `cacheDir`. A download and a work folder have no
-// name that a text holds: only live work keeps them (`isHeldCacheEntry`).
-// An app is not for this rule: a text names it by the rule of appNames.ts
-// (`cleanupAppName`).
+// name that a text holds: only live work keeps a work folder of the cache
+// and a download (`isHeldCacheEntry`), and only its conversation keeps the
+// work folder of a conversation (`cleanupWorkFolderId`). An app is not for
+// this rule: a text names it by the rule of appNames.ts (`cleanupAppName`).
 function textCanName(file: FileRef, cacheDir: string): boolean {
-  return file.root === 'app' || cacheEntryKind(file.path, cacheDir) === 'copy'
+  if (file.root === 'app') return cleanupWorkFolderId(file) === null
+  return cacheEntryKind(file.path, cacheDir) === 'copy'
 }
 
 /** The entries of the listing `entries` of `folder` (relative to the cache
@@ -216,6 +224,27 @@ export function cleanupAppName(file: FileRef): string | null {
   return folder === APPS_ROOT.file && name !== undefined && below.length === 0 && isAppName(name) ? name : null
 }
 
+/** The id of the conversation whose work folder the file `file` of a
+ *  cleanup is (`work/<id>` in the app folder, conversationWork.ts); null
+ *  for any other file. */
+export function cleanupWorkFolderId(file: FileRef): string | null {
+  if (file.root !== 'app') return null
+  const [folder, id, ...below] = file.path.split('/')
+  return folder === CONVERSATION_WORK_ROOT && id !== undefined && below.length === 0 && conversationWorkFolder(id) === file.path ? id : null
+}
+
+/** The folders of the listing `folders` of the work folders of the
+ *  conversations whose conversation is gone: no id of `conversationIds`
+ *  (the saved conversations, and the open and closed tabs) is the name of
+ *  the folder. A name that can name no work folder is left out: Dez did not
+ *  make the folder. The size is 0: a listing of folders gives no size. */
+export function goneConversationWorkFolders(folders: readonly Pick<ListedFile, 'name'>[], conversationIds: ReadonlySet<string>): StoredFile[] {
+  return folders.flatMap(({ name }) => {
+    const path = conversationWorkFolder(name)
+    return path === null || conversationIds.has(name) ? [] : [{ root: 'app', path, size: 0 }]
+  })
+}
+
 /** A listing of the folder of an app with the time of each entry
  *  (`dez.native/listFileTree`), in milliseconds since the Unix epoch; null
  *  for a time that the system did not give. */
@@ -230,6 +259,8 @@ export interface TimedAppTree extends AppsTree {
  *  many entries as an app of the `apps` tool can have. Kept:
  *  - a name that is no name of an app, and a path that is no folder: the
  *    `apps` tool made neither;
+ *  - a name of a built-in app (`isBuiltInApp`): a folder of an older Dez,
+ *    which the `apps` tool hides, as `/apps/<name>` is the built-in;
  *  - an app that changed less than `UNUSED_FILE_MIN_AGE_MS` before the time
  *    `now`: `apps init` makes the folder first, and the text that names the
  *    app comes after that. A change of any file or folder of the app
@@ -237,7 +268,7 @@ export interface TimedAppTree extends AppsTree {
  *  - an app with more entries than the listing has: Dez did not see them
  *    all. */
 export function oldAppFolder(name: string, tree: TimedAppTree, now: number): StoredFile | null {
-  if (!isAppName(name) || tree.kind !== 'folder' || tree.more) return null
+  if (!isAppName(name) || isBuiltInApp(name) || tree.kind !== 'folder' || tree.more) return null
   const times = [tree.updatedAt, ...tree.entries.map((entry) => entry.updatedAt)]
   if (times.some((time) => time === null || time + UNUSED_FILE_MIN_AGE_MS > now)) return null
   return { root: 'app', path: pathIn(APPS_ROOT, name).file, size: appSize(tree).bytes }

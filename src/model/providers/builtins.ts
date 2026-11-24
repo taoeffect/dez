@@ -18,6 +18,8 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // Without it, /models lists only the text models.
     modelListQuery: { type: 'all' },
     modelImageInput: { path: 'model_spec.capabilities.supportsVision' },
+    modelAudioInput: { path: 'model_spec.capabilities.supportsAudioInput' },
+    modelVideoInput: { path: 'model_spec.capabilities.supportsVideoInput' },
     modelToolCalling: { path: 'model_spec.capabilities.supportsFunctionCalling' },
     modelThinking: { path: 'model_spec.capabilities.supportsReasoning' },
     modelReadableName: { path: 'model_spec.name' },
@@ -103,6 +105,19 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // The image, speech, music, and video models take Venice's own media
     // API.
     mediaApi: { format: 'venice' },
+    // The chat docs: `input_audio` takes base64 data in these formats (and
+    // raw PCM), `video_url` a URL or a data URL of MP4, MPEG, MOV, or WebM,
+    // with at most 3 videos in one request. They do not tell the media type
+    // of a MOV data URL, so a MOV clip goes as an MP4 copy. They give no
+    // limit of the body, so Dez takes the 35 MB body limit of the video
+    // queue (`venice-video-queue-body-size`, knownLimits.json): base64 makes
+    // the files about a third larger, so they stay under 25 MB together.
+    chatClips: {
+      audioFormats: ['wav', 'mp3', 'aiff', 'aac', 'ogg', 'flac', 'm4a'],
+      videoTypes: ['video/mp4', 'video/webm'],
+      maxVideos: 3,
+      maxBytes: 25_000_000,
+    },
     // A chat request sends these `venice_parameters` too, with these defaults
     // when the user has not changed a toggle in the provider settings popup.
     // Each text model's `model_spec.capabilities` tells which searches it
@@ -322,7 +337,10 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     fetchModels: true,
     // Without it, /models lists only the models that write text.
     modelListQuery: { output_modalities: 'all' },
+    // "image", "audio", and "video" in the list of the model's inputs.
     modelImageInput: { path: 'architecture.input_modalities' },
+    modelAudioInput: { path: 'architecture.input_modalities' },
+    modelVideoInput: { path: 'architecture.input_modalities' },
     // A list of request fields that the model takes; it holds "tools" for a
     // model that calls tools, and "reasoning" for one that takes the
     // `reasoning` field of `thinking` below.
@@ -431,6 +449,16 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
         { request: 'tts', modelIdPrefix: 'heygen/', body: { response_format: 'pcm' } },
         { request: 'tts', modelIdPrefix: 'google/gemini-', body: { response_format: 'pcm' } },
       ],
+    },
+    // The audio docs: chat completions take any `input_audio.format` that
+    // the routed provider takes, and the Responses API takes `wav` and
+    // `mp3`, so Dez sends only those two. The video docs list the data URL
+    // types `video/mp4`, `video/mpeg`, `video/mov`, and `video/webm`; a MOV
+    // clip of Dez has the type `video/quicktime`, so it goes as an MP4 copy.
+    // The docs give no limit of the count or of the size.
+    chatClips: {
+      audioFormats: ['wav', 'mp3'],
+      videoTypes: ['video/mp4', 'video/webm'],
     },
     // OpenRouter drops a field that the routed model does not take, so the
     // request is safe for every model. Some models must think, so there is no

@@ -121,25 +121,26 @@ export default sbp('sbp/selectors/register', {
   },
 
   // Rejects when the file is missing. In a place that programs own (the
-  // cache root, and `apps/` of the app root; `is_program_owned` in
-  // src-tauri/src/persistence.rs) it also rejects for all that is no regular
-  // file. It has no size limit: ask `dez.native/listFileTree` for the size
-  // of a file that a program can have made.
+  // cache root, and `apps/` and `work/` of the app root; `is_program_owned`
+  // in src-tauri/src/persistence.rs) it also rejects for all that is no
+  // regular file. It has no size limit: ask `dez.native/listFileTree` for
+  // the size of a file that a program can have made.
   async 'dez.native/loadAppFileBytes' (path: string, root: AppFileRoot = 'app'): Promise<Uint8Array> {
     return new Uint8Array(await invoke<ArrayBuffer>('load_app_file_bytes', { root, path }))
   },
 
   // A missing file is not an error. With `folder`, the path names a folder,
   // which goes with all that it holds; only a folder of the cache root, or
-  // one below `apps/` of the app root, can be deleted.
+  // one below `apps/` or `work/` of the app root, can be deleted.
   'dez.native/deleteAppFile' (path: string, root: AppFileRoot = 'app', { folder = false }: { folder?: boolean } = {}): Promise<void> {
     return invoke('delete_app_file', { root, path, folder })
   },
 
   // Makes a folder that only the user can open, with the missing folders
   // above it. A folder that is there already is not an error. Only in the
-  // cache root, and below `apps/` of the app root. Make the folder of an app
-  // with this: a save or a move makes a missing folder that others can open.
+  // cache root, and below `apps/` or `work/` of the app root. Make the
+  // folder of an app with this: a save or a move makes a missing folder
+  // that others can open.
   'dez.native/createFolder' (path: string, root: AppFileRoot = 'app'): Promise<void> {
     return invoke('create_folder', { root, path })
   },
@@ -309,5 +310,13 @@ export default sbp('sbp/selectors/register', {
 
   'dez.native/writeTextFile' (path: string, content: string): Promise<void> {
     return writeTextFile(path, content)
+  },
+
+  // Copies the file at the absolute path `source` to `target`, as a file
+  // of the user (src-tauri/src/commands.rs `export_file`). Rust refuses a
+  // `target` that is not in the fs scope: only a path that the user picked
+  // with `showSaveDialog` (or dropped) is.
+  'dez.native/exportFile' (source: string, target: string): Promise<void> {
+    return invoke('export_file', { source, target })
   },
 })

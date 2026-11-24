@@ -1,5 +1,6 @@
 import sbp from '@sbp/sbp'
 import { wholeImageDrawing, type DrawnImage, type ImageSize } from '../model/chat/imageDrawing'
+import type { AppsPath } from '../model/tools/appsTool'
 import { unreadableImageText } from '../model/tools/imageTool'
 import { jobTimedOutText } from '../model/tools/jobs'
 import { withoutLocalPaths } from '../model/tools/localPaths'
@@ -11,6 +12,7 @@ import {
   clipFacts,
   FFMPEG_OUTPUT_BYTES,
   ffmpegRunResult,
+  ffmpegSaveResult,
   ffmpegStateText,
   FFPROBE_OUTPUT_BYTES,
   FFPROBE_TIMEOUT_MS,
@@ -27,16 +29,23 @@ import {
   outputFiles,
   OutputStart,
   ProgramLog,
+  savedOutputFiles,
+  saveToNotFolderText,
   VIDEO_TOOL,
+  workFilesNotSavedText,
+  workInputNotFileText,
+  workPathUnreadableText,
   type ClipFacts,
   type FfmpegCall,
   type ImageInput,
   type JoinCall,
   type ProgramCall,
   type VideoInput,
+  type VideoProgram,
+  type WorkInput,
 } from '../model/tools/videoTool'
 import type { JobOutcome } from './jobs'
-import type { AppFileEntry, BundledToolInput, BundledToolOutput, BundledToolRun } from './nativeTypes'
+import type { AppFileEntry, BundledToolInput, BundledToolOutput, BundledToolRun, FileTree } from './nativeTypes'
 import { clipInputFile, imageInputAsIs, inWorkFolder, readableFileSize, runProgram, storeOutputs } from './programRuns'
 
 // The work of the `video` tool (model/tools/videoTool.ts): the runs of
@@ -103,6 +112,47 @@ async function prepareInputs(inputs: readonly VideoInput[], folder: string, sign
   }
   signal.throwIfAborted()
   return copies
+}
+
+// What is at the path `file` of the app root, which a call names as the
+// path `virtual` of `/work`. Throws a `ToolError` for a path that Dez
+// cannot read: the native side refuses one that goes through a link.
+async function kindAt(file: string, virtual: string, program: VideoProgram): Promise<FileTree['kind']> {
+  try {
+    return (await sbp('dez.native/listFileTree', file, 0, 'app') as FileTree).kind
+  } catch (error) {
+    console.error('Failed to read what is at a path of the work folder of a conversation:', error)
+    throw new ToolError(workPathUnreadableText(virtual, program), '', { cause: error })
+  }
+}
+
+/** Checks the paths of `/work` of a call before it starts a job or a run,
+ *  so that a model that names a wrong path learns it at once: each input
+ *  must be a regular file, and `saveTo` a folder or nothing (the save
+ *  makes it). Throws a `ToolError` that tells the model what is wrong. */
+export async function checkWorkPaths(call: Pick<ProgramCall, 'workInputs'> & { saveTo?: AppsPath | null }, program: VideoProgram): Promise<void> {
+  for (const input of call.workInputs) {
+    const kind = await kindAt(input.file, input.virtual, program)
+    if (kind !== 'file') throw new ToolError(workInputNotFileText(input, kind, program))
+  }
+  if (!call.saveTo) return
+  const kind = await kindAt(call.saveTo.file, call.saveTo.virtual, program)
+  if (kind === 'file' || kind === 'other') throw new ToolError(saveToNotFolderText(call.saveTo, kind))
+}
+
+// The copies of the inputs of `/work` of a call, each at its path in the
+// run folder (`WorkInput.name`). The run copies them from the work folder
+// of the conversation, and refuses a source that goes through a link there
+// (`link_roots`, src-tauri/src/persistence.rs).
+async function workInputCopies(inputs: readonly WorkInput[], program: VideoProgram): Promise<BundledToolInput[]> {
+  if (inputs.length === 0) return []
+  try {
+    const appDir = await sbp('dez.native/getAppDir') as string
+    return inputs.map(({ name, file }) => ({ name, source: `${appDir}/${file}` }))
+  } catch (error) {
+    console.error('Failed to find the app folder for the inputs of a program run:', error)
+    throw new ToolError(programNotStartedText(program, VIDEO_TOOL.name), '', { cause: error })
+  }
 }
 
 // The copies of the fonts of a call (videoFonts.ts): the files that Dez
@@ -187,6 +237,33 @@ async function keptOutcome(result: { text: string, isError: boolean }, folder: s
   return { text, isError: false, assets: await storeOutputs(folder, kept, VIDEO_TOOL.name) }
 }
 
+// The outcome of a job whose ffmpeg run with `save_to` ended in its time,
+// with the text of `result`: the files `names` move into the folder
+// `saveTo` of `/work`, each over a file of the same name there, and the
+// job has no asset. A run that failed saves no file, and a run that made
+// no file (one that only prints, or `-f null`) makes no folder. A move
+// that fails ends the save, and the files that moved stay: a file that one
+// replaced cannot come back.
+async function savedOutcome(result: { text: string, isError: boolean }, folder: string, saveTo: AppsPath, names: readonly string[]): Promise<JobOutcome> {
+  const text = withoutLocalPaths(result.text)
+  if (result.isError) return { text, isError: true, assets: [] }
+  if (names.length === 0) return { text, isError: false, assets: [] }
+  let moved = 0
+  try {
+    // A move makes a missing folder that others can open; this one is
+    // private.
+    await sbp('dez.native/createFolder', saveTo.file, saveTo.root)
+    for (const name of names) {
+      await sbp('dez.native/moveAppFile', { root: 'cache', path: `${folder}/${name}` }, { root: saveTo.root, path: `${saveTo.file}/${name}` })
+      moved++
+    }
+  } catch (error) {
+    console.error('Failed to move the new files of an ffmpeg run into the work folder of a conversation:', error)
+    throw new ToolError(workFilesNotSavedText(saveTo, moved, names.length), '', { cause: error })
+  }
+  return { text, isError: false, assets: [] }
+}
+
 // One ffprobe run, to its end, with the time limit and the output cap of
 // every ffprobe run of the tool.
 function runProbe(
@@ -199,10 +276,13 @@ function runProbe(
 
 /** The work of the job of a `video ffmpeg` call (`JobWork`): one run of
  *  ffmpeg with the arguments of `call`, in a new work folder that holds
- *  copies of the call's inputs, its text files, and copies of its fonts in
- *  the subfolder `fonts`. The new files of the run that Dez stores
- *  (`outputFiles`) are the assets of the job; the text tells what the run
- *  did, with the end of its log. A run that failed keeps no file.
+ *  copies of the call's inputs (those of `/work` in its subfolder `work`),
+ *  its text files, and copies of its fonts in the subfolder `fonts`. The
+ *  new files of the run that Dez stores (`outputFiles`) are the assets of
+ *  the job; with `save_to`, every new file (`savedOutputFiles`) moves into
+ *  that folder of `/work` instead, and the job has no asset. The text
+ *  tells what the run did, with the end of its log. A run that failed
+ *  keeps no file.
  *
  *  A stop of `signal` (Dez stopped the job, or its time limit passed)
  *  stops the program and rejects, which `TabJobs` drops. The work folder
@@ -210,15 +290,26 @@ function runProbe(
 export function runFfmpegJob(call: FfmpegCall, signal: AbortSignal, report: (state: string) => void): Promise<JobOutcome> {
   return inWorkFolder(async (folder) => {
     report(PROGRAM_READS_INPUTS)
-    const inputs = [...await prepareInputs(call.inputs, folder, signal), ...await fontInputs(call.fonts, signal)]
+    const inputs = [
+      ...await prepareInputs(call.inputs, folder, signal),
+      ...await workInputCopies(call.workInputs, 'ffmpeg'),
+      ...await fontInputs(call.fonts, signal),
+    ]
     await writeTextFiles(call.textFiles, folder, signal)
     const log = new ProgramLog()
     const output = new OutputStart()
     const end = await runFfmpeg({ args: call.args, folder, inputs }, call.timeoutMs, signal, report, log, output)
     if (end.kind === 'timedOut') return timedOutOutcome(call.timeoutMs, log)
 
+    // The list holds only the files directly in the folder: the copies of
+    // the inputs of `/work` are in its subfolder `work`.
     const listed = await sbp('dez.native/listAppFiles', folder, 'cache') as AppFileEntry[]
-    const files = outputFiles(listed, new Set([...call.inputs.map((input) => input.name), ...call.textFiles.map((file) => file.name)]))
+    const inputNames = new Set([...call.inputs.map((input) => input.name), ...call.textFiles.map((file) => file.name)])
+    if (call.saveTo !== null) {
+      const files = savedOutputFiles(listed, inputNames)
+      return savedOutcome(ffmpegSaveResult(call.saveTo, call, end, files, log, output), folder, call.saveTo, files.names)
+    }
+    const files = outputFiles(listed, inputNames)
     return keptOutcome(ffmpegRunResult(call, end, files, log, output), folder, files.kept)
   })
 }
@@ -284,12 +375,14 @@ export function runJoinJob(call: JoinCall, signal: AbortSignal, report: (state: 
 /** The result text of a `video ffprobe` call: one run of ffprobe with the
  *  arguments of `call`, in a new work folder that holds copies of the
  *  call's inputs. The call waits for it, as the run is short. Throws a
- *  `ToolError` for an input that Dez cannot read and for a run that
- *  failed, with what the program wrote. A stop of `signal` stops the
- *  program and rejects with the stop. */
-export function runFfprobe(call: ProgramCall, signal: AbortSignal): Promise<string> {
+ *  `ToolError` for a path of `/work` that names no file (`checkWorkPaths`),
+ *  an input that Dez cannot read, and a run that failed, with what the
+ *  program wrote. A stop of `signal` stops the program and rejects with
+ *  the stop. */
+export async function runFfprobe(call: ProgramCall, signal: AbortSignal): Promise<string> {
+  await checkWorkPaths(call, 'ffprobe')
   return inWorkFolder(async (folder) => {
-    const inputs = await prepareInputs(call.inputs, folder, signal)
+    const inputs = [...await prepareInputs(call.inputs, folder, signal), ...await workInputCopies(call.workInputs, 'ffprobe')]
     const output = new OutputStart()
     const errorOutput = new OutputStart()
     const end = await runProbe({ args: call.args, folder, inputs }, signal, ({ stream, text }) => (stream === 'stdout' ? output : errorOutput).add(text))

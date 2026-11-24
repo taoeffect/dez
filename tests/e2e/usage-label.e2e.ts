@@ -2,11 +2,11 @@ import { isDeepStrictEqual } from 'node:util'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import type { ActiveModel } from '../../src/model/chat/types'
-import { consoleErrors, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue, withSmallerWindow } from './harness/dom'
+import { click, consoleErrors, resetConsoleErrors, screenshotOnFailure, typeKeys, waitFor, waitForValue, withSmallerWindow } from './harness/dom'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { LARGE_TOKENS, openAiToolCall, replyText, sendChatReply, sendChatText, sendToolCalls, toolResult, type MockProvider, type MockUsage } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeTabId, docPos, endedReply, focusEditor, newTab, sbpCall, setCaret, submit, waitForThread } from './harness/thread'
+import { activeTabId, closeToasts, docPos, endedReply, focusEditor, newTab, openToasts, sbpCall, setCaret, submit, threadSections, waitForThread } from './harness/thread'
 
 // The usage label of the bottom bar (the token count, a dot, the cost),
 // through the real app against a mock server in this process:
@@ -15,6 +15,8 @@ import { activeTabId, docPos, endedReply, focusEditor, newTab, sbpCall, setCaret
 //   known price;
 // - the busy look while a reply of the active tab runs;
 // - ` (?)` and italic once the user changed the text of a reply;
+// - Select All, then a delete or a cut, removes the cost, as in a new tab,
+//   and an undo puts it back, with its mark; a redo removes it again;
 // - the token count left of the cost: Dez's estimate with `~`, and the
 //   count of the provider with none;
 // - the label is the one of the active tab;
@@ -23,7 +25,9 @@ import { activeTabId, docPos, endedReply, focusEditor, newTab, sbpCall, setCaret
 //   conversation in parentheses, each with its own tooltip and its own
 //   `+`; a model reads the same numbers with the `conversation_info` tool;
 // - in a bar with too little room, the label hides whole parts, and Submit
-//   stays in the window.
+//   stays in the window;
+// - the coin after the cost opens the popup of the money limit of the tab,
+//   and the limit refuses the requests that it does not allow.
 //
 // One app session serves the whole file; each test starts in a new tab.
 
@@ -143,6 +147,11 @@ describe('usage label', () => {
     await sendChatReply((await setup.mock.waitForRequest(browser)).reply, name, usage)
   }
 
+  // Selects all the text of the editor, as Edit › Select All does.
+  async function selectAll (): Promise<void> {
+    expect(await sbpCall(browser, 'dez.editor/runKeyBinding', 'selectAll', 'selectAll')).toBe(true)
+  }
+
   beforeAll(async () => {
     // The incognito mask makes the right end of the bar wider: the room
     // test checks Submit in the widest bar.
@@ -204,6 +213,54 @@ describe('usage label', () => {
     await waitForValue(browser, 'edited label while a reply runs', labelLook, { text: '$0.50 (?)', look: 'busy', italic: true })
     await sendChatReply(next.reply, 'the next', { usd: 0.25 })
     await waitForValue(browser, 'edited label after the next reply', labelLook, { text: '$0.75 (?)', look: 'idle', italic: true })
+  })
+
+  it('removes the cost at Select All, then a delete, and an undo and a redo take the cost back and forth', async () => {
+    const emptyThread = [{ role: 'user', text: '' }]
+    const edited: LabelLook = { text: '$0.50 (?)', look: 'idle', italic: true }
+    await askAndAnswer('Question', 'the model', { usd: 0.5 })
+    await endedReply(browser)
+    await focusEditor(browser)
+    await setCaret(browser, await docPos(browser, replyText('the model'), replyText('the model').length))
+    await typeKeys(browser, ' Edited')
+    await waitForValue(browser, 'label after the edit', labelLook, edited)
+    const thread = await threadSections(browser)
+
+    await selectAll()
+    await browser.keys([Key.Backspace])
+    await waitForValue(browser, 'thread after the delete', () => threadSections(browser), emptyThread)
+    await waitForValue(browser, 'label after the delete', labelLook, NO_LABEL)
+    expect(await sbpCall(browser, 'dez.model/tabs/costNumbers', await activeTabId(browser))).toEqual({})
+    // The money limit counts from $0 again.
+    await click(browser, '.bottom-bar .money-limit-button')
+    await waitFor(browser, '.money-limit-popup')
+    expect(await browser.execute(() => document.querySelector('.money-limit-popup__spent')?.textContent)).toBe('This conversation cost nothing so far.')
+    await browser.keys([Key.Escape])
+    await waitForValue(browser, 'popup open after Escape', () => browser.execute(() => document.querySelector('.money-limit-popup') !== null), false)
+
+    await focusEditor(browser)
+    await browser.keys([Key.Control, 'z'])
+    await waitForValue(browser, 'thread after the undo', () => threadSections(browser), thread)
+    await waitForValue(browser, 'label after the undo', labelLook, edited)
+    await browser.keys([Key.Control, Key.Shift, 'z'])
+    await waitForValue(browser, 'thread after the redo', () => threadSections(browser), emptyThread)
+    await waitForValue(browser, 'label after the redo', labelLook, NO_LABEL)
+    await browser.keys([Key.Control, 'z'])
+    await waitForValue(browser, 'label after the second undo', labelLook, edited)
+    await browser.keys([Key.Control, Key.Shift, 'z'])
+    await waitForValue(browser, 'label after the second redo', labelLook, NO_LABEL)
+
+    // The next reply counts from $0, with no mark.
+    await askAndAnswer('A new start', 'the new start', { usd: 0.25 })
+    await endedReply(browser)
+    await waitForValue(browser, 'label after the next reply', labelLook, { text: '$0.25', look: 'idle', italic: false })
+
+    // A cut of all the text resets too.
+    await focusEditor(browser)
+    await selectAll()
+    await browser.keys([Key.Control, 'x'])
+    await waitForValue(browser, 'thread after the cut', () => threadSections(browser), emptyThread)
+    await waitForValue(browser, 'label after the cut', labelLook, NO_LABEL)
   })
 
   it('shows the cost of the active tab, busy only while a reply of that tab runs', async () => {
@@ -317,11 +374,72 @@ describe('usage label', () => {
 
     // The two numbers of a part stay together: a part goes whole.
     expect(await textsWhileRoomGoes()).toEqual([withMarks, ['9 (141k)'], []])
+
+    // Select All, then a delete, removes the cost and both totals, and an
+    // undo puts them back. The empty doc has no size either, so the label
+    // shows nothing, as in a new tab.
+    await focusEditor(browser)
+    await selectAll()
+    await browser.keys([Key.Backspace])
+    await waitForValue(browser, 'label after the delete of all text', usageTexts, [])
+    await browser.keys([Key.Control, 'z'])
+    await waitForValue(browser, 'label after the undo of the delete', usageTexts, withMarks)
   })
 
   it('gives way to Submit in a bar with too little room: first the cost goes, then the token count', async () => {
     await askAndAnswer('Question', 'the model', { usd: 0.5 })
     await waitForValue(browser, 'label in a bar with room', usageTexts, ['9', DOT, '$0.50'])
     expect(await textsWhileRoomGoes()).toEqual([['9', DOT, '$0.50'], ['9'], []])
+  })
+
+  it('sets the money limit of the tab in the popup of its coin, and sends no request that the limit refuses', async () => {
+    const limitText = () => browser.execute(() => document.querySelector('.bottom-bar .money-limit-button')?.textContent?.trim() ?? null)
+    const popupOpen = () => browser.execute(() => document.querySelector('.money-limit-popup') !== null)
+    const savedLimit = async () => sbpCall(browser, 'dez.model/tabs/moneyLimit', await activeTabId(browser))
+    // Each refused submit shows one "Cannot send" toast, and logs it.
+    async function expectRefusal (label: string): Promise<void> {
+      await waitForValue(browser, label, async () => (await openToasts(browser, 'error')).map(({ title }) => title), ['Cannot send'])
+      expect(setup.mock.hasWaitingRequest()).toBe(false)
+      expect((await consoleErrors(browser)).map((text) => text.split(':')[0])).toEqual(['Cannot send'])
+      await closeToasts(browser)
+      await resetConsoleErrors(browser)
+    }
+    // A new tab has no limit: only the coin.
+    expect(await limitText()).toBe('')
+
+    // The field has the focus when the popup opens; Enter sets the limit.
+    await click(browser, '.bottom-bar .money-limit-button')
+    await waitFor(browser, '.money-limit-popup')
+    await typeKeys(browser, '0.3')
+    await browser.keys([Key.Enter])
+    await waitForValue(browser, 'popup open after Enter', popupOpen, false)
+    expect([await limitText(), await savedLimit()]).toEqual(['limit $0.30', { usd: 0.3, unknownPrices: false }])
+
+    // Escape closes the popup and sets nothing.
+    await click(browser, '.bottom-bar .money-limit-button')
+    await waitFor(browser, '.money-limit-popup')
+    await typeKeys(browser, '9')
+    await browser.keys([Key.Escape])
+    await waitForValue(browser, 'popup open after Escape', popupOpen, false)
+    expect(await savedLimit()).toEqual({ usd: 0.3, unknownPrices: false })
+
+    // The mock model has no list price, so Dez knows no price of its
+    // requests.
+    await submit(browser, 'Question')
+    await expectRefusal('toast of a request with no known price')
+
+    await click(browser, '.bottom-bar .money-limit-button')
+    await waitFor(browser, '.money-limit-popup')
+    await click(browser, '.money-limit-popup input[type="checkbox"]')
+    await browser.keys([Key.Escape])
+    await waitForValue(browser, 'limit after the check', savedLimit, { usd: 0.3, unknownPrices: true })
+
+    // The provider's price of the reply spends the whole limit.
+    await submit(browser, ' again')
+    await sendChatReply((await setup.mock.waitForRequest(browser)).reply, 'the model', { usd: 0.3 })
+    await endedReply(browser)
+    await waitForValue(browser, 'cost after the reply', labelLook, { text: '$0.30', look: 'idle', italic: false })
+    await submit(browser, 'Next question')
+    await expectRefusal('toast of a spent limit')
   })
 })

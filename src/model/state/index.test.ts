@@ -8,6 +8,7 @@ import { sectionPlainText } from '../chat/content'
 import { notesData } from '../chat/testing'
 import { toolBlockText } from '../chat/toolBlocks'
 import type { ActiveModel, ContentNode, ModelRef, Section, SectionThinking, Tab, ThinkingReplay } from '../chat/types'
+import type { MoneyLimit } from '../chat/moneyLimit'
 import type { MediaTagKind } from '../chat/mediaTags'
 import type { ClipVolume } from '../clipVolume'
 import { MODEL_PICKER_SIZE_DEFAULT } from '../modelPickerSize'
@@ -348,6 +349,69 @@ describe('conversation cost and edited flag of a tab', () => {
     expect(loaded.sections[0].role).toBe('agent')
     expect(conversationData(tabWithText('plain').id)).not.toHaveProperty('compactions')
   })
+
+  describe('reset and restore', () => {
+    const removed = {
+      cost: { usd: 1.5, requests: 4, unpriced: 1 },
+      agentTextEdited: true,
+      compactions: { count: 1, tokens: 90000, cost: { usd: 1, requests: 3, unpriced: 0 }, left: 4000 },
+    } as const
+
+    // A tab that has every number of the tab entry and of the file.
+    async function fullTab (): Promise<Tab> {
+      diskConversations.set('conv-full', {
+        id: 'conv-full',
+        title: 'Full',
+        sections: [{ role: 'user', nodes: [{ kind: 'text', text: 'Ask' }] }, { role: 'agent', nodes: [{ kind: 'text', text: 'Answer' }] }],
+        activeModel: null,
+        created_at: 1000,
+        ...structuredClone(removed),
+        context: { tokens: 5000, estimate: 5200 },
+        incognito: true,
+        requestSent: true,
+        moneyLimit: { usd: 3, unknownPrices: true },
+      })
+      return await openConversation('conv-full') as Tab
+    }
+
+    it('removes the cost, the mark, and the compaction numbers, and keeps the rest of the tab', async () => {
+      const tab = await fullTab()
+      const before = structuredClone(tabs().find((candidate) => candidate.id === tab.id) as Tab)
+      expect(before).toMatchObject({ context: { tokens: 5000 }, incognito: true, requestSent: true, moneyLimit: { usd: 3 }, title: 'Full' })
+
+      expect(sbp('dez.model/tabs/costNumbers', tab.id)).toStrictEqual(removed)
+      sbp('dez.model/tabs/resetCost', tab.id)
+
+      const after = tabs().find((candidate) => candidate.id === tab.id) as Tab
+      expect(sbp('dez.model/tabs/costNumbers', tab.id)).toStrictEqual({})
+      expect(after).toStrictEqual(Object.fromEntries(Object.entries(before).filter(([key]) => !['cost', 'agentTextEdited', 'compactions'].includes(key))))
+    })
+
+    // A reply can count a request between the delete and its undo.
+    it('puts the removed numbers back, added to the cost that the tab counted since, and saves them', async () => {
+      const tab = await fullTab()
+      sbp('dez.model/tabs/resetCost', tab.id)
+      sbp('dez.model/tabs/countRequestCost', tab.id, 0.25)
+
+      sbp('dez.model/tabs/restoreCost', tab.id, structuredClone(removed))
+
+      const restored = { ...removed, cost: { usd: 1.75, requests: 5, unpriced: 1 } }
+      expect(sbp('dez.model/tabs/costNumbers', tab.id)).toStrictEqual(restored)
+      const saved = conversationData(tab.id)
+      expect({ cost: saved.cost, agentTextEdited: saved.agentTextEdited, compactions: saved.compactions }).toStrictEqual(restored)
+    })
+
+    it('changes nothing for a missing tab', () => {
+      const tab = tabWithText('other')
+      sbp('dez.model/tabs/countRequestCost', tab.id, 0.5)
+
+      sbp('dez.model/tabs/resetCost', 'missing')
+      sbp('dez.model/tabs/restoreCost', 'missing', structuredClone(removed))
+
+      expect(sbp('dez.model/tabs/costNumbers', 'missing')).toStrictEqual({})
+      expect(sbp('dez.model/tabs/costNumbers', tab.id)).toStrictEqual({ cost: { usd: 0.5, requests: 1, unpriced: 0 } })
+    })
+  })
 })
 
 describe('incognito and the sent mark of a tab', () => {
@@ -376,7 +440,7 @@ describe('incognito and the sent mark of a tab', () => {
   it('refuses a tab whose reply started, also after the stop of the reply removed its agent section', () => {
     const tab = tabWithText('question')
     const agent = startReply(tab.id)
-    finalizeStreamSectionForTab({ tabId: tab.id, sectionId: agent.id, status: 'cancelled', model: { ...model, modelName: 'M' }, startedAt: 1000, finishedAt: 1500, compacting: false })
+    finalizeStreamSectionForTab({ tabId: tab.id, sectionId: agent.id, status: 'cancelled', model: { ...model, modelName: 'M' }, startedAt: 1000, finishedAt: 1500, compacting: false, callTimes: {} })
 
     expect(tabNow(tab.id).sections.map((section) => section.role)).toEqual(['user'])
     expect(turnOn(tab.id)).toBe(false)
@@ -430,6 +494,38 @@ describe('incognito and the sent mark of a tab', () => {
     const loaded = await openConversation(tab.conversationId) as Tab
 
     expect([reopened, loaded].map((copy) => [copy.incognito, copy.requestSent])).toEqual([[true, true], [true, true]])
+  })
+})
+
+describe('the money limit of a tab', () => {
+  const limitOf = (tabId: string) => sbp('dez.model/tabs/moneyLimit', tabId) as MoneyLimit | undefined
+  const tabNow = (tabId: string) => sbp('dez.model/tab', tabId) as Tab
+
+  // A tab with no text has no conversation file, so only its entry in
+  // app_state.json keeps the limit; a conversation that History opens has
+  // no entry.
+  it('saves a set limit at once, and keeps it through a restart, a reopen, and a load of the file', async () => {
+    const empty = (sbp('dez.model/tabs/create') as Tab).id
+    const typed = tabWithText('typed')
+    const removed = tabWithText('removed').id
+    sbp('dez.model/tabs/setMoneyLimit', empty, { usd: 2, unknownPrices: false })
+    sbp('dez.model/tabs/setMoneyLimit', typed.id, { usd: 0.5, unknownPrices: true })
+    sbp('dez.model/tabs/setMoneyLimit', removed, { usd: 9, unknownPrices: false })
+    sbp('dez.model/tabs/setMoneyLimit', removed, null)
+    await vi.waitFor(() => expect(diskConversations.get(typed.conversationId)?.moneyLimit).toStrictEqual({ usd: 0.5, unknownPrices: true }))
+
+    missingConversations.add(tabNow(empty).conversationId)
+    setActivePinia(createPinia())
+    await sbp('dez.model/appState/restore', savedAppStates.at(-1))
+    expect([empty, typed.id, removed].map(limitOf)).toStrictEqual([{ usd: 2, unknownPrices: false }, { usd: 0.5, unknownPrices: true }, undefined])
+    expect(tabNow(removed)).not.toHaveProperty('moneyLimit')
+
+    sbp('dez.model/tabs/close', typed.id)
+    sbp('dez.model/tabs/reopenClosed')
+    const reopened = activeTab()
+    sbp('dez.model/tabs/close', reopened.id)
+    const loaded = await openConversation(typed.conversationId) as Tab
+    expect([reopened, loaded].map((copy) => copy.moneyLimit)).toStrictEqual([{ usd: 0.5, unknownPrices: true }, { usd: 0.5, unknownPrices: true }])
   })
 })
 
@@ -649,6 +745,18 @@ describe('dez.model/tabs/compact', () => {
     // near 0.
     expect(now).not.toHaveProperty('context')
     expect(sbp('dez.model/tabs/contextSize', tab.id, model)).toMatchObject({ estimated: true })
+  })
+
+  // The work folder of the conversation is named by its id
+  // (model/tools/conversationWork.ts): a new id would leave the files of
+  // its runs behind, and a compaction keeps an asset that one of them names.
+  it('keeps the conversation id of the tab', () => {
+    const tab = conversation()
+    const conversationId = tabNow(tab.id).conversationId
+
+    expect(compact(tab.id, compacted(), 1000)).toBe(true)
+
+    expect(tabNow(tab.id).conversationId).toBe(conversationId)
   })
 
   // The user can type a next message while the compaction request runs.
@@ -908,7 +1016,7 @@ describe('section models', () => {
     typeIntoLastSection('first question')
     const first = ensureAgentSection(alpha)
     appendTokenToTabSection(activeId(), first.id, 'first answer')
-    finalizeStreamSectionForTab({ tabId: activeId(), sectionId: first.id, status: 'finished', model: { ...alpha, modelName: 'Alpha' }, startedAt: 1000, finishedAt: 1500, compacting: false })
+    finalizeStreamSectionForTab({ tabId: activeId(), sectionId: first.id, status: 'finished', model: { ...alpha, modelName: 'Alpha' }, startedAt: 1000, finishedAt: 1500, compacting: false, callTimes: {} })
     typeIntoLastSection('second question')
     const second = ensureAgentSection(beta)
 
@@ -1101,6 +1209,7 @@ describe('dez.model/customProviders/save', () => {
       thinking: {},
       mediaApi: {
         format: 'openrouter',
+        maxRequestsAtOnce: 2,
         modelRequestBodies: [{ request: 'tts', modelIdPrefix: 'heygen/', body: { response_format: 'pcm' } }],
         modelEntryPaths: { speechFormats: 'own.speech.formats', transcriptionMaxBytes: 'own.max_bytes' },
       },

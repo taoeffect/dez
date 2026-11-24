@@ -10,12 +10,13 @@ import { FORBIDDEN_BODY_KEYS, type AudioOutputConfig, type MediaEntryPaths, type
 import { ProviderHttpError } from './errors'
 import type { ImageSizeRules, InputImageLimits } from './imageSize'
 import { MEDIA_FORMATS, type AnswerCost, type ClipEntryPrice, type ClipFormat, type ClipInput, type ClipJob, type ImageFormat, type ImageQuoteFormat, type MediaFormat, type MediaInput, type MediaWireRequest, type TextFormat } from './mediaFormats'
+import { DEFAULT_MEDIA_REQUESTS_AT_ONCE } from './mediaTurns'
 import { effectiveParameterValues, type ParameterValues } from './modelParameters'
 import { modelTokenPrice } from './modelPrices'
 import { isRecord, modelCapability, modelCount, modelData, modelOutputsAndRequest, modelReadableName, modelReleased, unsupportedSettings } from './modelParsing'
 import { isThinkingEnabled, modelToggles, toggleValue, type ToggleModel } from './modelToggles'
 import { multipartBody, type MultipartField } from './multipart'
-import { ProviderError, effectiveRequest, isClipKind, isTextKind, providerModel, type ChatMessage, type ChatRequestContext, type ClipKind, type GeneratedMedia, type ImageKind, type MediaKind, type ModelInfo, type ProviderInfo, type TextKind } from './types'
+import { ProviderError, effectiveRequest, isClipKind, isTextKind, providerModel, type ChatMessage, type ChatRequestContext, type ClipKind, type GeneratedMedia, type ImageKind, type MediaKind, type ModelInfo, type ProviderInfo, type TextKind, type TranscriptTimes } from './types'
 
 export interface ProviderOptions {
   builtIn: boolean
@@ -62,6 +63,12 @@ export class Provider {
     return this.config.thinking !== undefined
   }
 
+  // The most media requests that Dez sends the provider at one time
+  // (`mediaApi.maxRequestsAtOnce`, mediaTurns.ts).
+  get mediaRequestsAtOnce(): number {
+    return this.config.mediaApi?.maxRequestsAtOnce ?? DEFAULT_MEDIA_REQUESTS_AT_ONCE
+  }
+
   // `keyIds`: the providers with a stored key, as dez.native/getConfiguredProviderIds
   // reports them (GitHub Copilot counts when the user is signed in).
   info(keyIds: ReadonlySet<string>): ProviderInfo {
@@ -77,6 +84,7 @@ export class Provider {
       hasKey,
       configured: hasKey || !this.requiresKey,
       supportsThinking: this.supportsThinking,
+      ...(this.format.sendsClips && this.config.chatClips && { chatClips: this.config.chatClips }),
     }
   }
 
@@ -94,10 +102,11 @@ export class Provider {
   // Reads the `{ data: [...] }` model list both formats return. The name
   // falls back from `name` (OpenAI-style servers) to `display_name`
   // (Anthropic-style) to the id (servers that report only ids). The readable
-  // name, the release date, the image, tool, and thinking flags, the
-  // toggles that the model does not take, the outputs, the request kind,
-  // the context window, and the image limits are read only where the
-  // config's `modelReadableName`, `modelReleased`, `modelImageInput`,
+  // name, the release date, the image, audio, video, tool, and thinking
+  // flags, the toggles that the model does not take, the outputs, the
+  // request kind, the context window, and the image limits are read only
+  // where the config's `modelReadableName`, `modelReleased`,
+  // `modelImageInput`, `modelAudioInput`, `modelVideoInput`,
   // `modelToolCalling`, `modelThinking`, `settings[].modelSupport`,
   // `modelOutputs`, `modelContextWindow`, `modelImageLimit`, and
   // `modelMessageImageLimit` point. A chat model makes `audio` only with
@@ -121,6 +130,8 @@ export class Provider {
         readableName: modelReadableName(model, this.config.modelReadableName),
         released: modelReleased(model, this.config.modelReleased),
         imageInput: modelCapability(model, this.config.modelImageInput, 'image'),
+        audioInput: modelCapability(model, this.config.modelAudioInput, 'audio'),
+        videoInput: modelCapability(model, this.config.modelVideoInput, 'video'),
         toolCalling: modelCapability(model, this.config.modelToolCalling, 'tools'),
         thinking: modelCapability(model, this.config.modelThinking, 'reasoning'),
         unsupportedSettings: unsupportedSettings(model, this.config.settings),
@@ -175,6 +186,8 @@ export class Provider {
       readableName: fetchedModel?.readableName,
       released: fetchedModel?.released,
       imageInput: model.imageInput ?? fetchedModel?.imageInput,
+      audioInput: model.audioInput ?? fetchedModel?.audioInput,
+      videoInput: model.videoInput ?? fetchedModel?.videoInput,
       toolCalling: model.toolCalling ?? fetchedModel?.toolCalling,
       thinking: model.thinking ?? fetchedModel?.thinking,
       unsupportedSettings: fetchedModel?.unsupportedSettings,
@@ -381,9 +394,11 @@ export class Provider {
     return this.mediaApiRequest(this.withModelBody(kind, modelId, this.textFormat().request(kind, this.config.baseUrl, modelId, input)), secret)
   }
 
-  // The text of the body of a 2xx response to `textRequest`, with the
-  // price of the request when the answer tells it.
-  textResult(kind: TextKind, body: Uint8Array): { text: string } & AnswerCost {
+  // The text of the body of a 2xx response to `textRequest`, with the times
+  // of its words and segments when the request asked for them
+  // (`MediaInput.wordTimes`) and the answer holds some, and the price of
+  // the request when the answer tells it.
+  textResult(kind: TextKind, body: Uint8Array): { text: string, times?: TranscriptTimes } & AnswerCost {
     return this.textFormat().parseResponse(kind, body)
   }
 

@@ -9,7 +9,7 @@ import { SaveCount } from '../model/tools/appInvoke'
 import type { AppCardFacts } from '../model/tools/appShow'
 import { APP_RUN_MAX_OUTPUT_FILES } from '../model/tools/appsTool'
 import { CONVERSATION, PNG_BYTES, SONG, textBytes, WAV_BYTES } from '../model/tools/testing'
-import { APP_DIR, appFiles, fakeAppFiles, failureOf, FILE_ID, native, resetNative } from './testing'
+import { APP_DIR, appFiles, builtInAppFiles, fakeAppFiles, failureOf, FILE_ID, native, resetNative, RESOURCE_DIR } from './testing'
 // Side-effect import: registers the selectors under test.
 import './apps'
 
@@ -20,9 +20,9 @@ interface Toast {
 }
 
 let toasts: Toast[] = []
-// The file of each context menu that the code showed; null for a menu whose
-// item is disabled.
-let menus: Array<string | null> = []
+// The request of each context menu that the code showed: its file, null for
+// a menu whose item is disabled.
+let menus: Array<{ file: string | null, export?: unknown }> = []
 let consoleError: MockInstance<typeof console.error>
 // The paths of the images that Dez read and deleted, and the sources of
 // the clips.
@@ -36,8 +36,8 @@ sbp('sbp/selectors/register', {
   'dez.ui/toast' (_area: string, toast: Toast): void {
     toasts.push(toast)
   },
-  async 'dez.controller/menu/popupAsset' (file: string | null): Promise<void> {
-    menus.push(file)
+  async 'dez.controller/menu/popupAsset' (menu: { file: string | null, export?: unknown }): Promise<void> {
+    menus.push(menu)
   },
   // The read gives a file with the name of the user's file, as the real
   // one does.
@@ -66,7 +66,7 @@ function deleteApp(name: string): Promise<void> {
   return sbp('dez.controller/apps/delete', name) as Promise<void>
 }
 
-async function menuOf(name: string): Promise<string | null> {
+async function menuOf(name: string): Promise<{ file: string | null, export?: unknown }> {
   menus = []
   await sbp('dez.controller/apps/popupMenu', name)
   expect(menus).toHaveLength(1)
@@ -173,21 +173,44 @@ describe('dez.controller/apps/delete', () => {
     expect(toasts[0].message).toMatch(/^The system did not let Dez delete the folder of the app\..*\n\nDetails: Failed to list apps\/notes: Permission denied \(os error 13\)$/s)
     expect(native.deletedFiles).toStrictEqual([])
   })
+
+  it('deletes no built-in app, and no app folder with the name of one, and tells the user how to take the card away', async () => {
+    const files = fakeAppFiles(appFiles('dez-media'), builtInAppFiles('dez-media'))
+
+    const error = await failureOf(deleteApp('dez-media'))
+
+    expect(error).toBeInstanceOf(Error)
+    expect(native.deletedFiles).toStrictEqual([])
+    expect(files.has('apps/dez-media/manifest.json')).toBe(true)
+    expect(consoleError).toHaveBeenCalled()
+    expect(toasts).toStrictEqual([{
+      title: 'Could not delete the app dez-media',
+      message: 'The app is a built-in app: a part of Dez itself, which Dez never deletes. To take its card out of the conversation, delete the card in the text.',
+      variant: 'error',
+    }])
+  })
 })
 
 describe('dez.controller/apps/popupMenu', () => {
+  // An app is no asset: its menu has no Export (no `export`).
   it('shows the menu with the folder of the app', async () => {
     fakeAppFiles(appFiles('notes', {}, 'ui'))
 
-    expect(await menuOf('notes')).toBe(`${APP_DIR}/apps/notes`)
+    expect(await menuOf('notes')).toStrictEqual({ file: `${APP_DIR}/apps/notes` })
+  })
+
+  it('shows a built-in app in the files that Dez ships', async () => {
+    fakeAppFiles({}, builtInAppFiles('dez-media'))
+
+    expect(await menuOf('dez-media')).toStrictEqual({ file: `${RESOURCE_DIR}/builtin-apps/dez-media` })
   })
 
   it('shows the menu with no file for an app that is gone, and when the read fails', async () => {
     fakeAppFiles(appFiles('notes', {}, 'ui'))
-    expect(await menuOf('gone')).toBeNull()
+    expect(await menuOf('gone')).toStrictEqual({ file: null })
 
     native.fileTree = () => { throw new Error('Failed to list apps/notes: Permission denied (os error 13)') }
-    expect(await menuOf('notes')).toBeNull()
+    expect(await menuOf('notes')).toStrictEqual({ file: null })
   })
 })
 

@@ -1,11 +1,13 @@
+import fs from 'node:fs'
 import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { startApp, type RunningApp } from './harness/app'
 import { consoleErrors, elementCenter, movePointer, pointerRightClickAt, resetConsoleErrors, screenshotOnFailure, waitFor, waitForValue } from './harness/dom'
+import { linkedDropDir } from './harness/drops'
 import { appFilePath, mediaTempDir, seedAppState, writeTestFile } from './harness/fixtures'
 import { shownImages, solidPng } from './harness/images'
 import { NOT_A_CLIP, WEBM_VIDEO, clipTag, problemCards, shownPlayers, silentWav, startClipServer, type ClipServer } from './harness/media'
-import { menuRecord, recordAssetMenus, resetMenuRecord } from './harness/menus'
+import { menuRecord, recordAssetMenus, resetMenuRecord, type AssetMenu } from './harness/menus'
 import { createSession, destroySession, type E2EBrowser } from './harness/session'
 import { assetPartPoint, editorDoc, editorSelection, focusEditor, focusedArea, openSeededConversation, setCaret } from './harness/thread'
 import { intermediateInvokeBlock, pressToolChip } from './harness/toolChips'
@@ -13,21 +15,27 @@ import { intermediateInvokeBlock, pressToolChip } from './harness/toolChips'
 // The asset menu, driven through the real app: a right-click on an image
 // (or on its "Image not found" box) or on a player asks
 // `dez.controller/menu/popupAsset` for the native menu with "Reveal in File
-// Manager", with the asset's file: the stored image, the saved clip, or the
-// clip's temp copy, also when this computer cannot play it. A missing
-// image, a clip that plays from its URL only, and a clip whose file is gone
-// give no file (the item is disabled). An image or a clip that the chip of
-// an intermediate call hides gives the same menu in the open panel of the
-// chip. The click cancels the webview's own menu, and it leaves the
-// editor's selection, focus, and doc alone. Text, and the text of a clock's
-// tooltip, keep the webview's own menu.
+// Manager", with the asset's file: the stored image, the linked image, the
+// saved clip, or the clip's temp copy, also when this computer cannot play
+// it. A missing image, a clip that plays from its URL only, and a clip
+// whose file is gone give no file (the item is disabled). The menu has
+// "Export…" too, with what it copies: the file, or the URL of a clip that
+// plays from its URL; an asset whose bytes are gone gives nothing (the item
+// is disabled). An image or a clip that the chip of an intermediate call
+// hides gives the same menu in the open panel of the chip. The click
+// cancels the webview's own menu, and it leaves the editor's selection,
+// focus, and doc alone. Text, and the text of a clock's tooltip, keep the
+// webview's own menu.
 //
-// WebDriver cannot drive a native menu, so an SBP filter stops each
-// `popupAsset` call and records its file (`src/controller/menu.test.ts`
-// covers the menu that the selector builds). A real right-click is sent
-// only where the page cancels the menu: elsewhere the webview opens its
-// own menu, which WebDriver cannot close, so the spec sends a `contextmenu`
-// event there.
+// WebDriver cannot drive a native menu or the save dialog, so an SBP filter
+// stops each `popupAsset` call and records its request
+// (`src/controller/menu.test.ts` covers the menu that the selector builds,
+// and `src/controller/exportAsset.test.ts` the Export). A real right-click
+// is sent only where the page cancels the menu: elsewhere the webview opens
+// its own menu, which WebDriver cannot close, so the spec sends a
+// `contextmenu` event there. The backend's copy of an Export writes only to
+// a file that the user picked in the save dialog: the spec checks that it
+// refuses any other file.
 //
 // One app session serves the whole file.
 
@@ -47,29 +55,43 @@ describe('asset menu', () => {
   let app: RunningApp
   let browser: E2EBrowser
   let clips: ClipServer
+  let linkedDir: string
 
   async function editorState (): Promise<EditorState> {
     return { ...await editorSelection(browser), focus: await focusedArea(browser), doc: await editorDoc(browser) }
   }
 
   // Right-clicks the element `part` of each asset of `asset`, in doc order,
-  // and checks that each click asked for the menu with the file of
-  // `files[index]`, canceled the webview's menu, and left the editor as
-  // `before` had it. The pointer comes from off the assets: the toolbar of
-  // a small image hangs over the line below while it shows, and then it
-  // takes the clicks there.
-  async function expectMenus (asset: string, part: (index: number) => string, files: Array<string | null>, before: EditorState): Promise<void> {
-    for (const [index, file] of files.entries()) {
+  // and checks that each click asked for the menu `menus[index]`, canceled
+  // the webview's menu, and left the editor as `before` had it. The pointer
+  // comes from off the assets, and the click waits until no image toolbar
+  // shows: the toolbar of a small image hangs over the line below, and it
+  // takes clicks for a moment after the pointer leaves its image. With
+  // `corner`, the click is near the top-left corner of the part, where no
+  // toolbar is: the toolbar of a small image covers its center, and
+  // `pointerRightClickAt` also gives a click there (its doc comment).
+  async function expectMenus (asset: string, part: (index: number) => string, menus: AssetMenu[], before: EditorState, corner = false): Promise<void> {
+    for (const [index, menu] of menus.entries()) {
       await resetMenuRecord(browser)
       await movePointer(browser, await elementCenter(browser, 'header.tab-bar'))
-      await pointerRightClickAt(browser, await assetPartPoint(browser, asset, index, part(index)))
-      await waitForValue(browser, `menu of ${asset} ${index}`, () => menuRecord(browser), { files: [file], canceled: [true] })
+      await waitForValue(browser, 'shown image toolbars', () => browser.execute(() => Array.from(
+        document.querySelectorAll('.cm-content .dez-image__overlay'),
+      ).filter((pill) => getComputedStyle(pill).visibility !== 'hidden').length), 0)
+      const center = await assetPartPoint(browser, asset, index, part(index))
+      const point = corner ? await browser.execute((wantedAsset: string, at: number, wantedPart: string) => {
+        const box = document.querySelectorAll(`.cm-content ${wantedAsset}`)[at]?.querySelector(wantedPart)?.getBoundingClientRect()
+        if (!box) throw new Error(`expectMenus: no ${wantedPart} in ${wantedAsset} ${at}`)
+        return { x: box.left + 3, y: box.top + 3 }
+      }, asset, index, part(index)) : center
+      await pointerRightClickAt(browser, point)
+      await waitForValue(browser, `menu of ${asset} ${index}`, () => menuRecord(browser), { menus: [menu], canceled: [true] })
       expect(await editorState(), `editor after a right-click on ${asset} ${index}`).toStrictEqual(before)
     }
   }
 
   beforeAll(async () => {
     clips = await startClipServer({ 'tone.wav': { type: 'audio/wav', bytes: TONE } })
+    linkedDir = await linkedDropDir('asset-menu')
     app = await startApp()
     try {
       await seedAppState(app.home)
@@ -95,14 +117,19 @@ describe('asset menu', () => {
     if (browser) await destroySession(browser)
     await app?.stop()
     await clips?.stop()
+    if (linkedDir) await fs.promises.rm(linkedDir, { recursive: true, force: true })
   })
 
-  it('pops up the menu with the file of a stored image, and with no file for a missing image', async () => {
+  it('pops up the menu with the file of a stored or a linked image, and with no file for a missing image', async () => {
     const stored = await writeTestFile(appFilePath(app.home, 'assets', 'images', 'stored.png'), PNG)
     const missing = appFilePath(app.home, 'assets', 'images', 'missing.png')
-    const text = `Images:\n![id=a](${stored})\n![id=b](${missing})\nEnd of the images.`
+    const linked = await writeTestFile(path.join(linkedDir, 'linked.png'), PNG)
+    const text = `Images:\n![id=a](${stored})\n![id=b](${missing})\n![id=c](${linked})\nEnd of the images.`
     await openSeededConversation(browser, app.home, 'asset-menu-images', [{ role: 'user', text }])
-    await waitForValue(browser, 'shown images', () => shownImages(browser), [{ alt: 'stored.png', width: 40, height: 24 }])
+    await waitForValue(browser, 'shown images', () => shownImages(browser), [
+      { alt: 'stored.png', width: 40, height: 24 },
+      { alt: 'linked.png', width: 40, height: 24 },
+    ])
     await waitFor(browser, '.cm-content .dez-image-missing')
 
     // A selection in the text: a right-click that moved the caret would end
@@ -112,7 +139,11 @@ describe('asset menu', () => {
     const before = await editorState()
     expect(before).toMatchObject({ anchor: 0, head: 6, focus: 'editor' })
 
-    await expectMenus('.dez-image', () => ':scope > *', [stored, null], before)
+    await expectMenus('.dez-image', () => ':scope > *', [
+      { file: stored, export: { id: 'a', kind: 'image', source: { kind: 'file', path: stored, linked: false } } },
+      { file: null, export: null },
+      { file: linked, export: { id: 'c', kind: 'image', source: { kind: 'file', path: linked, linked: true } } },
+    ], before, true)
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 
@@ -153,9 +184,17 @@ describe('asset menu', () => {
     expect(before.focus).toBe('editor')
 
     // The time of an audio clip, the picture of a video, and the card of a
-    // clip that does not play.
+    // clip that does not play. The clip that plays from its URL exports
+    // the URL; the clip that this computer cannot play exports its file.
     const parts = ['.media-player__time', '.media-player__time', '.media-player__video', '.media-player__unavailable', '.media-player__unavailable']
-    await expectMenus('.media-player', (index) => parts[index], [null, temp, saved, unplayable, null], before)
+    const fileExport = (id: string, kind: 'audio' | 'video', file: string): AssetMenu => ({ file, export: { id, kind, source: { kind: 'file', path: file, linked: false } } })
+    await expectMenus('.media-player', (index) => parts[index], [
+      { file: null, export: { id: 'a', kind: 'audio', source: { kind: 'url', url, type: 'audio/wav' } } },
+      fileExport('b', 'audio', temp),
+      fileExport('c', 'video', saved),
+      fileExport('d', 'video', unplayable),
+      { file: null, export: null },
+    ], before)
 
     // Only the two clips that do not play gave errors, in either order: the
     // media error of the file that cannot play, and the failed read of the
@@ -194,8 +233,12 @@ describe('asset menu', () => {
     const before = await editorState()
     expect(before.focus).toBe('editor')
 
-    await expectMenus('.dez-image', () => ':scope > *', [stored], before)
-    await expectMenus('.media-player', () => '.media-player__time', [saved], before)
+    await expectMenus('.dez-image', () => ':scope > *', [
+      { file: stored, export: { id: 'a', kind: 'image', source: { kind: 'file', path: stored, linked: false } } },
+    ], before, true)
+    await expectMenus('.media-player', () => '.media-player__time', [
+      { file: saved, export: { id: 'b', kind: 'audio', source: { kind: 'file', path: saved, linked: false } } },
+    ], before)
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 
@@ -221,8 +264,29 @@ describe('asset menu', () => {
       })
     })
     expect(notCanceled).toStrictEqual([true, true])
-    expect(await menuRecord(browser)).toStrictEqual({ files: [], canceled: [false, false] })
+    expect(await menuRecord(browser)).toStrictEqual({ menus: [], canceled: [false, false] })
     expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  // The webview can call the command of an Export with any path. Only the
+  // save dialog of the Export adds a path to the fs scope, and the
+  // command checks that scope.
+  it('copies no file to a place that the user did not pick in the save dialog', async () => {
+    const stored = await writeTestFile(appFilePath(app.home, 'assets', 'images', 'export-source.png'), PNG)
+    const targets = [path.join(app.home, 'exported.png'), path.join(linkedDir, 'exported.png')]
+    for (const target of targets) {
+      const error = await browser.execute(async (source: string, to: string) => {
+        const sbp = Reflect.get(window, 'sbp') as (selector: string, ...args: unknown[]) => Promise<unknown>
+        try {
+          await sbp('dez.native/exportFile', source, to)
+          return null
+        } catch (err) {
+          return String(err)
+        }
+      }, stored, target)
+      expect(error, target).toBe('Dez can export only to a file that the user picked in the save dialog')
+      expect(fs.existsSync(target), target).toBe(false)
+    }
   })
 
   // macOS selects the word next to the pointer at a context click, before

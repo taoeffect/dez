@@ -151,7 +151,7 @@ export default sbp('sbp/selectors/register', {
   /** A drop from Tauri's native file drop (Linux only,
    *  `dez.controller/images/watchFileDrops`) at `point`, in CSS pixels of
    *  the page. As with HTML5 drops, the editor takes only a drop on its
-   *  text, and puts the image and clip files at the drop point
+   *  text, and puts the image, clip, and data files at the drop point
    *  (`dropFilePaths`). Returns whether it took the drop. */
   'dez.editor/dropFiles' (paths: readonly string[], point: { x: number, y: number }): boolean {
     const view = activeView

@@ -1,3 +1,5 @@
+/// <reference types="vitest/config" />
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 import pkg from "./package.json";
@@ -43,6 +45,18 @@ export default defineConfig(async () => ({
   ],
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
+  },
+
+  // The unit tests run the built-in apps (src-tauri/builtin-apps/), which
+  // import dez-media by the names that the import map of a Deno run gives
+  // (src-tauri/libs/import_map.json). Each `find` is an exact regex: a string
+  // `find` also takes each `name/…` import and keeps its rest, so
+  // `dez-media/canvas` would become `…/mod.js/canvas`.
+  test: {
+    alias: [
+      { find: /^dez-media$/, replacement: fileURLToPath(new URL("./src-tauri/libs/dez-media/mod.js", import.meta.url)) },
+      { find: /^dez-media\/(canvas|frames)$/, replacement: fileURLToPath(new URL("./src-tauri/libs/dez-media/$1.js", import.meta.url)) },
+    ],
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`

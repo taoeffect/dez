@@ -2,17 +2,22 @@
 import { computed, onMounted, ref } from 'vue'
 import sbp from '@sbp/sbp'
 import { useModelState } from '../modelState'
+import { DATA_FILE_EXTENSIONS, MAX_DATA_FILE_BYTES, dataFileText, nextDataFileName } from '../../model/chat/dataFiles'
 import { IMAGE_FOLDERS } from '../../model/chat/images'
 import { MEDIA_TEMP_LIFETIME_MS } from '../../model/chat/mediaFiles'
 import { MEDIA_CACHE_FOLDER, MEDIA_FOLDERS } from '../../model/chat/mediaTags'
 import { SHOWN_PICTURE_FOLDER } from '../../model/chat/shownPictures'
 import { UNUSED_FILE_MIN_AGE_MS } from '../../model/chat/unusedFiles'
 import { CHAT_IMAGE_SIDE } from '../../model/providers/imageSize'
+import { DEFAULT_MEDIA_REQUESTS_AT_ONCE } from '../../model/providers/mediaTurns'
+import { AUDIO_ALIASES, VIDEO_ALIASES, aliasCallText } from '../../model/tools/appAliases'
 import { APP_RUN_FRAME_SIZE } from '../../model/tools/appBridge'
-import { MANIFEST_FILE } from '../../model/tools/appManifest'
-import { APP_RUN_DEFAULT_SECONDS, APP_RUN_MAX_OUTPUT_BYTES, APP_RUN_MAX_OUTPUT_FILES, APPS_MAX_BYTES, APPS_MAX_ENTRIES, APPS_ROOT, APPS_VIRTUAL_ROOT } from '../../model/tools/appsTool'
+import { BUILT_IN_APP_PREFIX, MANIFEST_FILE } from '../../model/tools/appManifest'
+import { APP_RUN_DEFAULT_SECONDS, APP_RUN_MAX_DECODED_BYTES, APP_RUN_MAX_FRAMES, APP_RUN_MAX_OUTPUT_BYTES, APP_RUN_MAX_OUTPUT_FILES, APP_RUN_MAX_TOOL_CALLS, APPS_MAX_BYTES, APPS_MAX_ENTRIES, APPS_ROOT, APPS_VIRTUAL_ROOT, FRAMES_MAX_FPS, FRAMES_MAX_SIDE, FRAMES_MIN_FPS, LIBS_VIRTUAL_ROOT, SHIPPED_LIBRARIES } from '../../model/tools/appsTool'
 import { SCRIPT_MAIN_FILE, UI_INDEX_FILE } from '../../model/tools/appTemplates'
+import { CONVERSATION_WORK_ROOT, WORK_VIRTUAL_ROOT } from '../../model/tools/conversationWork'
 import { JS_EVAL_DEFAULT_SECONDS, JS_EVAL_MAX_SECONDS, JS_EVAL_MAX_TOOL_CALLS, JS_EVAL_OUTPUT_BYTES } from '../../model/tools/jsEval'
+import { MAX_SAVED_WORK_FILES } from '../../model/tools/videoTool'
 import { WORK_FOLDER_LIFETIME_MS, WORK_ROOT } from '../../model/tools/workFolders'
 import { shortcutKeyText } from '../../model/shortcuts'
 import { byteSizeText } from '../../utils/byteSize'
@@ -20,6 +25,7 @@ import { countText } from '../../utils/countText'
 import { DEZ_DISCUSSIONS_URL } from '../../utils/dezLinks'
 import bundledPrograms from '../../../src-tauri/binaries/manifest.json'
 import bundledFonts from '../../../src-tauri/fonts/manifest.json'
+import { libraries as shippedLibraries } from '../../../src-tauri/libs/manifest.json'
 
 type HelpPage = 'general' | 'tips' | 'assets' | 'apps' | 'support' | 'thanks'
 
@@ -52,6 +58,15 @@ const WORK_FOLDER_HOURS = WORK_FOLDER_LIFETIME_MS / HOUR_MS
 // the text writes a number (`1,568`).
 const CHAT_IMAGE_SIDE_TEXT = countText(CHAT_IMAGE_SIDE)
 
+// The data files of the Assets page: the endings that a paste or a drop
+// copies (".csv, .tsv, .json, or .txt"), the largest size, and the name of
+// the first copy in a work folder.
+const DATA_FILE_DOT_ENDINGS = DATA_FILE_EXTENSIONS.map((extension) => `.${extension}`)
+const DATA_FILE_ENDINGS = `${DATA_FILE_DOT_ENDINGS.slice(0, -1).join(', ')}, or ${DATA_FILE_DOT_ENDINGS.at(-1)}`
+const MAX_DATA_FILE_SIZE = byteSizeText(MAX_DATA_FILE_BYTES)
+const FIRST_DATA_FILE = nextDataFileName(DATA_FILE_EXTENSIONS[0], [], [])
+const MAX_SAVED_WORK_FILES_TEXT = countText(MAX_SAVED_WORK_FILES)
+
 // The limits of the apps and of the code that a model runs, as the Apps
 // page writes them. They come from the constants of the code, so the page
 // tells no limit that Dez does not keep.
@@ -62,7 +77,10 @@ const APP_LIMITS = {
   savedFiles: APP_RUN_MAX_OUTPUT_FILES,
   savedFileSize: byteSizeText(APP_RUN_MAX_OUTPUT_BYTES),
   runMinutes: APP_RUN_DEFAULT_SECONDS / MINUTE_SECONDS,
+  toolCalls: APP_RUN_MAX_TOOL_CALLS,
   unusedMinutes: UNUSED_FILE_MIN_AGE_MS / (MINUTE_SECONDS * 1000),
+  decodedSize: byteSizeText(APP_RUN_MAX_DECODED_BYTES),
+  frames: countText(APP_RUN_MAX_FRAMES),
 }
 const CODE_LIMITS = {
   seconds: JS_EVAL_DEFAULT_SECONDS,
@@ -81,6 +99,27 @@ for (const { repository, family } of Object.values(bundledFonts.fonts)) {
   else if (!source.families.includes(family)) source.families.push(family)
 }
 
+// The libraries that Dez ships, for the Thank You page: each package with
+// its version, license, and project. Only the `libraries` part of the
+// manifest is imported, so its long list of files stays out of the bundle.
+const LIBRARY_SOURCES = Object.values(shippedLibraries)
+
+// The built-in apps (src-tauri/builtin-apps/), as the Apps page lists
+// them: the name, the call that runs it, and what it does. The list is
+// written here, as the frontend has no list of the folders of the bundle;
+// help.e2e.ts checks it against the folder. An app with no subcommand of
+// its own runs with `apps invoke`.
+const ALIAS_CALLS = new Map([...AUDIO_ALIASES, ...VIDEO_ALIASES].map((alias) => [alias.app, aliasCallText(alias)]))
+const BUILT_IN_APPS = [
+  { name: 'dez-beats', does: 'the tempo, the beats, the downbeats, the loudness, and the strong hits of a song.' },
+  { name: 'dez-onsets', does: 'the start of a sound, its loudest moment, and each hit.' },
+  { name: 'dez-align', does: 'where one clip starts in another, for example a recording in a song.' },
+  { name: 'dez-cuts', does: 'the cuts of a video, where one shot changes to the next.' },
+  { name: 'dez-sync', does: 'whether the cuts of an edit are on the beats of its music.' },
+  { name: 'dez-title', does: 'an animated title, as a clip with a transparent background.' },
+  { name: 'dez-chart', does: 'a chart (line, bar, scatter, pie, doughnut, or radar) of a data table of the work folder, as a PNG image.' },
+].map((app) => ({ ...app, call: ALIAS_CALLS.get(app.name) ?? 'apps invoke' }))
+
 const { shortcuts } = useModelState()
 
 // A local ref, not a store field: the panel opens on General each time.
@@ -97,8 +136,9 @@ const keys = computed(() => ({
 }))
 
 // The Dez folder, Dez's cache folder (which the bundled programs can open),
-// the folder of the temp copies of clips, the folder of the work folders,
-// and the folder of the apps, as the Assets page and the Apps page show
+// the folder of the temp copies of clips, the folder of the run folders of
+// the bundled programs, the folder of the apps, and the folder of the work
+// folders of the conversations, as the Assets page and the Apps page show
 // them (`~` for the home folder). The cache folder differs by system, so
 // the page reads the folders and spells none. Null until the read ends,
 // and for a folder that cannot be read: the page then names the folder
@@ -106,8 +146,9 @@ const keys = computed(() => ({
 const appDir = ref<string | null>(null)
 const cacheDir = ref<string | null>(null)
 const tempDir = ref<string | null>(null)
-const workDir = ref<string | null>(null)
+const runFoldersDir = ref<string | null>(null)
 const appsDir = ref<string | null>(null)
+const workFoldersDir = ref<string | null>(null)
 
 onMounted(async () => {
   const [app, cache] = await Promise.all([
@@ -117,8 +158,9 @@ onMounted(async () => {
   appDir.value = app
   cacheDir.value = cache
   tempDir.value = cache === null ? null : `${cache}/${MEDIA_CACHE_FOLDER}`
-  workDir.value = cache === null ? null : `${cache}/${WORK_ROOT}`
+  runFoldersDir.value = cache === null ? null : `${cache}/${WORK_ROOT}`
   appsDir.value = app === null ? null : `${app}/${APPS_ROOT.file}`
+  workFoldersDir.value = app === null ? null : `${app}/${CONVERSATION_WORK_ROOT}`
 })
 
 function onClose() {
@@ -183,11 +225,22 @@ function onOverlayClick(event: MouseEvent) {
               can use Dez tools, for example to
               find other models, to ask them for images and clips, to cut and join clips, to run
               code, and to write small apps. Slow
-              tool work, such as a request for an image, runs as a job. A stop or a new message does
+              tool work, such as a request for an image, runs as a job. Dez sends one provider at
+              most {{ DEFAULT_MEDIA_REQUESTS_AT_ONCE }} requests to its media models (images, clips,
+              speech, transcriptions) at one time, from all tabs together, unless the settings of a
+              custom provider set another number: the others wait for their turn. A stop or a new
+              message does
               not end the jobs of a reply: the next reply of the tab can wait for them and get their
               results. To end a job that you no longer need, ask the model to cancel it. A close of
               the tab ends all its jobs. Dez saves each conversation: History
               (<kbd>{{ keys.history }}</kbd>) opens it again.
+            </p>
+            <p>
+              The Agent pill of a reply counts the seconds while the reply comes in, then shows how
+              long the reply took. Each tool call of a reply shows as a chip: click it to see the
+              call and its result. The chip of a call that runs longer than a second counts its time
+              too, and then keeps the time that the call took. Dez tells the model how long such a
+              call took.
             </p>
             <p>
               The two numbers in the middle of the bottom bar are the size and the cost of the
@@ -205,8 +258,21 @@ function onOverlayClick(event: MouseEvent) {
               A <code>+</code> after it means that Dez knows no price for some requests, so the cost
               is higher. <code>(?)</code> means that you changed or deleted a reply: its cost stays
               in the amount. Point at the amount to see the details. A model can read the size and
-              the cost too, with a Dez tool. So you can give a model a budget, as in "spend at most
-              5 dollars".
+              the cost too, with a Dez tool. To start again in the same tab, select all the text and
+              delete it. The amount then starts again from $0, as in a new tab, and the money limit
+              counts again from $0. Undo brings back the text and the amount.
+            </p>
+            <p>
+              The coin after the amount is the money limit of the tab. Click it to set the most that
+              the requests of the tab can cost, in USD. Dez then sends no request that would go over
+              the limit, also none that a model sends with a Dez tool, and tells you why. A request
+              to a media model that runs counts with the price that Dez expects for it, so
+              that requests that run at the same time cannot go over the limit together. The price
+              of a chat request is known only after it: Dez sends one while the cost is under the
+              limit, so the cost can end a little over it. Dez also sends no request whose price it
+              does not know, unless you check "Allow unknown prices": such a request is then in the
+              count only when its provider tells its cost. No model can change the limit. A saved
+              conversation keeps its limit.
             </p>
             <p>
               A long conversation can get too large for one request to the model. Dez then compacts
@@ -229,8 +295,8 @@ function onOverlayClick(event: MouseEvent) {
               each of them, in parentheses, the one of the whole conversation.
             </p>
             <p>
-              Paste or drop images, audio, and video into a message. A model that makes images,
-              audio, or video puts them in its reply. The
+              Paste or drop images, audio, video, and data files such as a CSV table into a message.
+              A model that makes images, audio, or video puts them in its reply. The
               <button type="button" class="help-link" @click="page = 'assets'">Assets</button> page
               tells which of them a model sees, and where Dez keeps their files. The
               <button type="button" class="help-link" @click="page = 'apps'">Apps</button> page
@@ -283,14 +349,26 @@ function onOverlayClick(event: MouseEvent) {
             </p>
             <p>
               A clip goes only to a model that takes audio or video, for example a video model or
-              a transcription model. Dez sends a chat model only the id of a clip. A model that needs
-              an image and can work with one, for example an image editor, takes the newest image
-              of the conversation when your message has none.
+              a transcription model. In the conversation, Dez sends a chat model only the id of a
+              clip. A model that needs an image and can work with one, for example an image editor,
+              takes the newest image of the conversation when your message has none.
             </p>
             <p>
               A chat model can ask another model for an image, a clip, a transcription, or an
-              answer. It names by id the assets that the other model gets, so that model can also
-              get an asset of an older message or of a reply.
+              answer, with the Dez tool <code>model_invoke</code>. It names by id the assets that
+              the other model gets, so that model can also get an asset of an older message or of a
+              reply. A chat model that hears or sees clips, for example a Gemini model, gets the
+              clips that such a call names too, when its provider takes clips in a chat request.
+              Dez sends it a copy of each clip, with no metadata (such as the place or the device of
+              a recording), in a type that the provider takes. Such a model can tell what a clip
+              shows and how it sounds, but not its exact times: for those, a model uses the
+              measurements below.
+            </p>
+            <p>
+              When a chat model asks a transcription model for the text of a clip, Dez also asks for
+              the time of each word. When the transcription model gives times, Dez writes them with
+              the text into a file of the work folder of the conversation (see below), named after
+              the clip, the provider, and the model.
             </p>
             <p>
               A chat model can also look at any asset of the conversation itself, with the Dez tool
@@ -306,8 +384,20 @@ function onOverlayClick(event: MouseEvent) {
             </p>
             <p>
               With the Dez tool <code>asset_info</code>, a model reads the facts of an asset, and who
-              made it. It can also check a whole clip for black, frozen, or silent parts, for its
-              loudness over time, and for its cuts.
+              made it. It can also check a whole clip for black, frozen, or silent parts, and for its
+              loudness over time.
+            </p>
+            <p>
+              The Dez tools <code>audio</code> and <code>video</code> measure the times of clips, as a
+              model cannot hear or see them exactly: the beats of a song, where a sound starts and
+              each of its hits, where one clip starts in another, the cuts of a video clip, and
+              whether the cuts of an edit are on the beats of its song. Each measurement is a run of
+              a built-in app of Dez (see the
+              <button type="button" class="help-link" @click="page = 'apps'">Apps</button> page),
+              which writes all its numbers into a file of the work folder of the conversation. With
+              <code>video title</code>, a model makes an animated title as a clip with a transparent
+              background, which it then puts over a video clip. The built-in app
+              <code>dez-chart</code> draws a chart of a data table of the work folder as an image.
             </p>
 
             <h3>Ids</h3>
@@ -316,9 +406,12 @@ function onOverlayClick(event: MouseEvent) {
               Point at an image or a player to see its id. A model gets this id, and never the path
               of the file. Write <code>@</code> and the id in a message to name the asset. A message
               can name its own assets and the assets of the messages before it. Dez shows a name as
-              a small chip when an asset has that id; a name with no chip names no asset. Click a
-              chip to go to its asset, which flashes. When a chip of a tool call or of a compaction
-              hides the asset, Dez opens that chip first.
+              a small chip when an asset has that id; a name with no chip names no asset. Point at a
+              chip to see its asset in a box next to it: the image or the player there works as it
+              does in its place, and plays a clip. The box stays while you move from the chip onto
+              it, and closes when you move away or press Escape. Click a chip to go to its asset,
+              which flashes. When a chip of a tool call or of a compaction hides the asset, Dez
+              opens that chip first.
             </p>
             <p>
               When you point at an image or a player, Dez also shows the name of the model that made
@@ -328,9 +421,9 @@ function onOverlayClick(event: MouseEvent) {
               <code>video</code>), names no model.
             </p>
             <p>
-              To see an image large, point at it and click the magnifier: the image shows as large as
-              it fits in the conversation view. Press Escape, click the X at the top right, or click
-              next to the image to close it.
+              To see an image large, point at it and click the magnifier at its top right: the image
+              shows as large as it fits in the conversation view. Press Escape, click the X at the
+              top right, or click next to the image to close it.
             </p>
             <p>
               Copy text that names assets in one conversation and paste it into another, and Dez
@@ -378,7 +471,8 @@ function onOverlayClick(event: MouseEvent) {
               the versions that a newer one replaced, the versions that you rejected, and the assets
               of earlier replies that the work does not use. Dez never drops an asset of yours, an
               asset that a job still uses, an asset that the notes name, or an asset that a file of
-              an app of the conversation names with <code>@</code> and its id. An asset that a message
+              an app of the conversation or of its work folder names with <code>@</code> and its
+              id. An asset that a message
               of yours names stays too, when the notes keep that message. So to keep an asset
               of an earlier reply, name it in your message with <code>@</code> and its id. A dropped
               asset leaves the conversation. Dez deletes the file of a dropped intermediate asset at
@@ -406,17 +500,30 @@ function onOverlayClick(event: MouseEvent) {
               that time, Delete Unreferenced Files in Settings › General deletes a temporary copy
               that no conversation uses.
             </p>
+            <!-- The menu: `dez.controller/menu/popupAsset`
+                 (src/controller/menu.ts); the Export:
+                 `dez.controller/exportAsset`
+                 (src/controller/exportAsset.ts). -->
+            <p>
+              A context click on an image or a player shows Reveal in File Manager, which shows the
+              file of the asset in the file manager of the system, and Export…, which copies the
+              asset to a file that you pick. A clip that plays from its web address downloads
+              before the copy. The copy is your file: Dez does not track it, and a delete in Dez
+              leaves it. Reveal in File Manager is not available for a clip that has no file on
+              this computer, and neither item is available for an asset whose file is gone.
+            </p>
             <p>
               A Dez tool that cuts, joins, or converts clips stores its new clips and images at
-              once, in the folders above. It works on copies of the assets, in a work folder in
-              <code v-if="workDir">{{ workDir }}</code><template v-else>the cache folder of the system</template>,
-              so the assets that it reads stay as they are. When the tool draws text, the work
+              once, in the folders above. It works on copies of the assets and of the files of the
+              work folder that it reads, in a run folder in
+              <code v-if="runFoldersDir">{{ runFoldersDir }}</code><template v-else>the cache folder of the system</template>,
+              so the files that it reads stay as they are. When the tool draws text, the run
               folder also holds copies of the fonts that it uses (fonts that come with Dez, see
               <button type="button" class="help-link" @click="page = 'thanks'">Thank You</button>),
               and the text files that the model writes for it, for example subtitles or a title.
-              Dez does not store these files as assets. Dez deletes the work folder at the end
+              Dez does not store these files as assets. Dez deletes the run folder at the end
               of the work, or {{ WORK_FOLDER_HOURS }} hours later if Dez closed before that. Before
-              that time, Delete Unreferenced Files deletes such a work folder.
+              that time, Delete Unreferenced Files deletes such a run folder.
             </p>
             <!-- The rule is in src-tauri/src/confinement.rs (Landlock on
                  Linux, Seatbelt on macOS), its folders are in
@@ -434,9 +541,51 @@ function onOverlayClick(event: MouseEvent) {
               and in the <code>assets</code> folder of the Dez folder: not your conversations, your
               API keys, or any other file of yours. In the <code>assets</code> folder, they can
               read, add, and change files, but not delete or move them. Dez also refuses a command
-              line that names another file, a web address, or a device such as a camera. A Linux
+              line that names another file (but a file of the work folder, of which the program gets
+              a copy), a web address, or a device such as a camera. A Linux
               system without Landlock (a part of the kernel since Linux 5.13) cannot set this
               limit: there, the checks of Dez are the only guard of your files.
+            </p>
+
+            <!-- The work folder of a conversation:
+                 src/model/tools/conversationWork.ts; data files:
+                 src/model/chat/dataFiles.ts; the `/work` inputs and
+                 `save_to` of `video`: src/model/tools/videoTool.ts; its
+                 delete: `dez.controller/closeTab` and
+                 `dez.controller/deleteConversation`
+                 (src/controller/tabs.ts), and the cleanup:
+                 `goneConversationWorkFolders`
+                 (src/model/chat/unusedFiles.ts). -->
+            <h3>The work folder</h3>
+            <p>
+              Each conversation has a work folder, for the files of its work that are no assets: the
+              numbers of a measurement, the times of a transcription, the frames or the parts of a
+              long work, a data table. A model names it <code>{{ WORK_VIRTUAL_ROOT }}/</code>. It is
+              a folder in
+              <code v-if="workFoldersDir">{{ workFoldersDir }}</code><template v-else>the <code>{{ CONVERSATION_WORK_ROOT }}</code> folder of the Dez folder</template>,
+              with the id of the conversation as its name. A file of the work folder has no id, and
+              the conversation does not show it. The code that a model runs (see the
+              <button type="button" class="help-link" @click="page = 'apps'">Apps</button> page) and
+              the <code>apps</code> tool read and write it. The <code>video</code> tool reads a copy
+              of a file of it, and it can put the new files of a run there in place of the reply, at
+              most {{ MAX_SAVED_WORK_FILES_TEXT }} in one call.
+            </p>
+            <p>
+              Paste or drop a data file ({{ DATA_FILE_ENDINGS }}, at most
+              {{ MAX_DATA_FILE_SIZE }}) into a message, and Dez copies it into the work folder as
+              <code>{{ FIRST_DATA_FILE }}</code> (with a new number each time). The message gets the
+              path of the copy, as <code>{{ dataFileText(FIRST_DATA_FILE) }}</code>, on a line of its
+              own, so a model can read the table or draw a chart of it. The name and the path of
+              your file go to no model. Dez always copies a data file, from any folder, and leaves
+              out a larger file, with a message. An incognito tab takes no data file, as it has no
+              Dez tools.
+            </p>
+            <p>
+              The work folder goes with its conversation: the delete of the conversation in History
+              deletes it, and so does the close of a tab whose conversation has no text. A
+              compaction keeps it. Delete Unreferenced Files deletes the work folder of a
+              conversation that is gone, for example when you deleted the file of a conversation
+              yourself. Nothing limits how much a work folder holds.
             </p>
 
             <h3>Copy or link</h3>
@@ -450,6 +599,7 @@ function onOverlayClick(event: MouseEvent) {
               <li>The file is in a temp folder or in a folder of Dez.</li>
               <li>You drop it into an agent message.</li>
               <li>It is an image of a type that Dez converts to PNG, for example BMP.</li>
+              <li>It is a data file: its copy goes into the work folder.</li>
             </ul>
 
             <h3>How files are deleted</h3>
@@ -462,17 +612,19 @@ function onOverlayClick(event: MouseEvent) {
               </li>
               <li>
                 Click Delete Unreferenced Files in Settings › General. Dez finds the stored files
-                that no conversation uses, and deletes them after you say yes. In the cache folder,
-                it also deletes the temporary copies of clips that no conversation uses, and the
-                work folders and downloads that Dez did not finish. It never deletes an app: Delete
-                Unreferenced Apps does that (see the
+                that no conversation uses, and deletes them after you say yes. It also deletes the
+                work folders of the conversations that are gone, and in the cache folder, the
+                temporary copies of clips that no conversation uses, and the run folders and
+                downloads that Dez did not finish. It never deletes an app: Delete Unreferenced Apps
+                does that (see the
                 <button type="button" class="help-link" @click="page = 'apps'">Apps</button>
                 page).
               </li>
             </ul>
             <p>
-              An edit of the text and the delete of a conversation leave the files where they are.
-              Dez never deletes a linked file: its trash removes it only from the conversation.
+              An edit of the text leaves the files where they are, and the delete of a conversation
+              deletes only its work folder. Dez never deletes a linked file: its trash removes it
+              only from the conversation.
             </p>
             <p>
               A compaction is the one exception: it deletes the file of each intermediate asset that
@@ -498,7 +650,15 @@ function onOverlayClick(event: MouseEvent) {
                  the text are numbers of that file), and the header of
                  src-tauri/src/confinement.rs;
                - the deletes and a compaction: src/model/chat/unusedFiles.ts,
-                 appNames.ts, src/model/streams/compactionApps.ts. -->
+                 appNames.ts, src/model/streams/compactionApps.ts;
+               - the libraries: src-tauri/libs/, `SHIPPED_LIBRARIES` and
+                 `PAGE_LIBRARIES` in src/model/tools/appsTool.ts;
+               - the built-in apps: src-tauri/builtin-apps/ (help.e2e.ts
+                 checks the list of the page against it), and their
+                 subcommands, src/model/tools/appAliases.ts;
+               - the decode of the input clips and the frame sequences of a
+                 script app: src/model/tools/inputDecode.ts,
+                 frameSequences.ts. -->
           <section v-if="page === 'apps'" class="help-page help-page--apps">
             <h3>What an app is</h3>
             <p>
@@ -509,7 +669,12 @@ function onOverlayClick(event: MouseEvent) {
               <code v-if="appsDir">{{ appsDir }}</code><template v-else>the <code>{{ APPS_ROOT.file }}</code> folder of the Dez folder</template>.
               So an app stays from one conversation to the next, and each model can run and change
               the apps that are there. A model gets no path of your computer: it names the folder of
-              an app as <code>{{ APPS_VIRTUAL_ROOT }}/</code> and the name of the app.
+              an app as <code>{{ APPS_VIRTUAL_ROOT }}/</code> and the name of the app. With the same
+              tool, a model reads the libraries that come with Dez in
+              <code>{{ LIBS_VIRTUAL_ROOT }}/</code>, and reads and writes the files of the work folder
+              of the conversation (see the
+              <button type="button" class="help-link" @click="page = 'assets'">Assets</button> page)
+              in <code>{{ WORK_VIRTUAL_ROOT }}/</code>.
             </p>
             <p>
               There are two kinds of app. A UI app is a web page
@@ -520,6 +685,22 @@ function onOverlayClick(event: MouseEvent) {
               does. An app holds at most {{ APP_LIMITS.entries }} files and folders, and
               {{ APP_LIMITS.size }}: the tool writes nothing that takes an app over these limits.
             </p>
+
+            <h3>Built-in apps</h3>
+            <p>
+              Dez comes with these script apps, whose names start with
+              <code>{{ BUILT_IN_APP_PREFIX }}</code>. They are a part of Dez, in the folder of its
+              program and not in the folder of the apps: no one can change or delete them. A model
+              sees them in <code>{{ APPS_VIRTUAL_ROOT }}/</code> with the mark "built-in", and it can
+              read their code as a start for an app of its own. A model runs each one with the
+              subcommand after its name.
+            </p>
+            <ul class="help-builtins">
+              <li v-for="app in BUILT_IN_APPS" :key="app.name">
+                <code class="help-builtin-name">{{ app.name }}</code> (<code>{{ app.call }}</code>):
+                {{ app.does }}
+              </li>
+            </ul>
 
             <h3>Apps in a conversation</h3>
             <p>
@@ -571,6 +752,11 @@ function onOverlayClick(event: MouseEvent) {
             <ul>
               <li>Its own files. It can read them, and it cannot change them.</li>
               <li>
+                The libraries that come with Dez (see Libraries below), but not skia-canvas and the
+                parts of dez-media that need it or write files. It can read them, and it cannot
+                change them.
+              </li>
+              <li>
                 The images and the clips of the conversation that shows it, also a file that a
                 message links. The app gets their bytes, and never a path or a file name.
               </li>
@@ -607,13 +793,14 @@ function onOverlayClick(event: MouseEvent) {
             <p>
               With the Dez tool <code>js_eval</code>, a model runs a short piece of JavaScript or
               TypeScript and gets its result: for example for exact arithmetic, a date, or a sort.
-              The code has no files, no network, and no environment variables, and it can start no
-              program. It can call the other Dez tools (but not <code>apps invoke</code>), at most
+              The code has no network and no environment variables, and it can start no program. It
+              can read and write the files of the work folder of the conversation, and import the
+              libraries that come with Dez (see Libraries below), and it opens no other file. It can
+              call the other Dez tools (but not <code>apps invoke</code>), at most
               {{ CODE_LIMITS.toolCalls }} times in one run, so one piece of code can do a chain of
-              tool calls. The one exception to "no files" comes from those calls: with the
-              <code>apps</code> tool, the code can read and change the files of the apps, and no
-              other file. It works on your images and clips only through those tools, by their
-              ids: it gets no file of them. Dez stops code that
+              tool calls. With the <code>apps</code> tool, the code can also read and change the
+              files of the apps. It works on your images and clips only through those tools, by
+              their ids: it gets no file of them. Dez stops code that
               runs longer than {{ CODE_LIMITS.seconds }} seconds (a model can ask for up to
               {{ CODE_LIMITS.mostMinutes }} minutes), and code that writes more than
               {{ CODE_LIMITS.output }} of output. Click the chip of the call to see the code, its
@@ -630,8 +817,49 @@ function onOverlayClick(event: MouseEvent) {
               files that the app made. Dez keeps at most {{ APP_LIMITS.savedFiles }} files of one
               run, each of at most {{ APP_LIMITS.savedFileSize }}. It reads the type of each file
               from its first bytes, and stores a copy of each image and clip as an asset of the
-              conversation. A run that fails keeps no file. Dez stops a run after
+              conversation. A run that fails keeps none of these files. Dez stops a run after
               {{ APP_LIMITS.runMinutes }} minutes, unless the model sets another time limit.
+            </p>
+            <p>
+              The code of a script app also reads and writes the work folder of the conversation.
+              Before the run, Dez can decode the clips of the call into the samples of their sound
+              and the pixels of their frames, at most {{ APP_LIMITS.decodedSize }} in one run, so
+              that the code can measure them. The code can also write the frames of a video one by
+              one, and after the run Dez makes one clip of them, which counts as one file of the
+              run: at most {{ APP_LIMITS.frames }} frames, of at most {{ FRAMES_MAX_SIDE }} by
+              {{ FRAMES_MAX_SIDE }} pixels, at {{ FRAMES_MIN_FPS }} to {{ FRAMES_MAX_FPS }} frames
+              each second. A clip of frames with a transparent background is a MOV file, which
+              keeps the transparency.
+            </p>
+            <p>
+              The code of a script app can also call the Dez tools, as the code of
+              <code>js_eval</code> does (but not <code>js_eval</code>, <code>apps invoke</code>, or
+              <code>apps show</code>), at most {{ APP_LIMITS.toolCalls }} times in one run. An image
+              or a clip that such a call makes is a part of the result of the job, also when the
+              code fails after the call. When Dez stops the run, it keeps none of them.
+            </p>
+
+            <!-- The libraries and their uses come from `SHIPPED_LIBRARIES`
+                 (src/model/tools/appsTool.ts), the list of the tool texts. -->
+            <h3>Libraries</h3>
+            <p>
+              Dez comes with libraries for this code, which a model reads in
+              <code>{{ LIBS_VIRTUAL_ROOT }}/</code> and cannot change:
+            </p>
+            <ul>
+              <li v-for="library in SHIPPED_LIBRARIES" :key="library.name">
+                <code>{{ library.name }}</code>: {{ library.use }}
+              </li>
+            </ul>
+            <p>
+              The code of <code>js_eval</code> and of a script app, and the page of a UI app, import
+              them by their names. A page cannot import skia-canvas, or the parts of dez-media that
+              draw with it or write files. Only a script app imports skia-canvas, and only when its
+              <code>{{ MANIFEST_FILE }}</code> asks for it. It draws text with the fonts that come
+              with Dez: the run sees no font of your computer. No code loads a library from the
+              internet. The
+              <button type="button" class="help-link" @click="page = 'thanks'">Thank You</button>
+              page names the projects of the libraries.
             </p>
 
             <h3>The sandbox</h3>
@@ -643,21 +871,25 @@ function onOverlayClick(event: MouseEvent) {
             </p>
             <ul>
               <li>
-                The rule of the system lets the code of <code>js_eval</code> open only the work
-                folder of its run, in
-                <code v-if="workDir">{{ workDir }}</code><template v-else>the cache folder of the system</template>,
-                and the permissions of Deno let it read and write no file (only the rule of the
-                system stops an <code>import</code> of a file). Dez deletes that folder at the end
-                of the run.
+                The rule of the system lets the code of <code>js_eval</code> open only the run
+                folder of its call, in
+                <code v-if="runFoldersDir">{{ runFoldersDir }}</code><template v-else>the cache folder of the system</template>,
+                and the work folder of its conversation, and read the libraries of Dez. The
+                permissions of Deno let it read and write only the work folder (only the rule of the
+                system stops an <code>import</code> of a file). Dez deletes the run folder at the
+                end of the run.
               </li>
               <li>
-                The code of a script app can open only the work folder of its run and the folder of
-                its own app. So a script app can keep data in its folder from one run to the next.
-                Dez deletes the work folder at the end of the run.
+                The code of a script app can open only its run folder, the folder of its own app,
+                and the work folder of its conversation, and read the libraries and the fonts of
+                Dez. So a script app can keep data in its folder from one run to the next. A
+                built-in app cannot change its own folder. Dez deletes the run folder at the end of
+                the run.
               </li>
               <li>
                 No code can open your conversations, your API keys, the <code>assets</code> folder,
-                another app, another work folder, or any other file of yours.
+                another app, another run folder, the work folder of another conversation, or any
+                other file of yours.
               </li>
               <li>
                 No code can connect to the internet or to another program, and none can load a
@@ -677,7 +909,12 @@ function onOverlayClick(event: MouseEvent) {
               </li>
               <li>
                 Disk space: nothing limits how much a run writes into its folders, so a script app
-                can fill the folder of its app.
+                can fill the folder of its app, and code can fill the work folder.
+              </li>
+              <li>
+                skia-canvas is native code, which Deno does not check: for its file opens, the rule
+                of the system is the only guard. Only a script app that asks for skia-canvas loads
+                it.
               </li>
               <li>
                 Code that gets past Deno through a fault of Deno has only the rule of the system
@@ -754,8 +991,7 @@ function onOverlayClick(event: MouseEvent) {
             <!-- As for FFmpeg, from the same manifest: scripts/update-deno.js
                  writes its `deno` part. The notice and the license texts
                  (src-tauri/binaries/deno/) are in the deno folder of the
-                 resources. This part has no list: the font links below are
-                 found by their place in the one list of the page. -->
+                 resources. -->
             <h3>Deno</h3>
             <p>
               Dez comes with Deno (version {{ bundledPrograms.deno.version }}), a program of the
@@ -769,6 +1005,35 @@ function onOverlayClick(event: MouseEvent) {
               </button>
             </p>
 
+            <!-- The libraries come from the manifest of the libraries that
+                 this build holds (src-tauri/libs/manifest.json), which
+                 scripts/update-libs.js writes. The bundle holds the whole
+                 folder: the license file of each library is in its folder,
+                 and the license texts of the native file of skia-canvas are
+                 skia-canvas/NATIVE-LICENSES.txt. dez-media is code of Dez,
+                 so the manifest does not list it. -->
+            <h3>Libraries</h3>
+            <p>
+              Dez comes with these libraries for the code that a model runs and for the pages of
+              apps (see the
+              <button type="button" class="help-link" @click="page = 'apps'">Apps</button> page).
+              Each one is the code of its own project, with its own license, and Dez ships the
+              license text with it:
+            </p>
+            <ul>
+              <li v-for="library in LIBRARY_SOURCES" :key="library.package">
+                {{ library.package }} {{ library.version }} ({{ library.license }} License):
+                <button type="button" class="help-link help-link--library" @click="sbp('dez.controller/openUrl', library.repository)">
+                  {{ library.repository }}
+                </button>
+              </li>
+            </ul>
+            <p>
+              The native part of skia-canvas holds Skia, the 2D graphics library of the Skia project
+              (BSD 3-Clause License), with the libraries that Skia uses, and the Rust code of
+              skia-canvas. Dez ships their license texts with skia-canvas.
+            </p>
+
             <!-- The fonts and their sources come from the manifest of the
                  fonts that this build holds. scripts/update-fonts.js, its one
                  writer, takes only fonts of the SIL Open Font License 1.1, and
@@ -776,8 +1041,9 @@ function onOverlayClick(event: MouseEvent) {
                  source is next to its fonts. -->
             <h3>Fonts</h3>
             <p>
-              Dez comes with fonts for the text that the Dez tool <code>video</code> draws on
-              images and clips, as this ffmpeg can use no font of your system. The fonts have their
+              Dez comes with fonts for the text that the Dez tool <code>video</code> and the script
+              apps draw on images and clips, as these programs can use no font of your system. The
+              fonts have their
               own license, the SIL Open Font License, version 1.1, and Dez ships the license with
               them. They come from these projects:
             </p>

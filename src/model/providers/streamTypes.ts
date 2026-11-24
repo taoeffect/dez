@@ -4,7 +4,7 @@ import type { ChatUsage } from './chatUsage'
 import type { ClipAttachment } from './clipInputs'
 import type { ParameterValues } from './modelParameters'
 import type { RequestReader } from './requestReader'
-import type { ChatRequestContext, GeneratedClip, GeneratedMedia, MediaKind, ProviderId } from './types'
+import type { ChatRequestContext, GeneratedClip, GeneratedMedia, MediaKind, ProviderId, TranscriptTimes } from './types'
 
 // A message as dez.provider/streamChat takes it: an image part holds the
 // path of a stored image, and streamChat reads its bytes before it builds
@@ -68,6 +68,9 @@ export interface ProviderStreamChatResult {
 }
 
 // How far a request of dez.provider/generateMedia is:
+// - `waiting`: the provider has as many media requests as it takes at one
+//   time (`mediaApi.maxRequestsAtOnce`, mediaTurns.ts), and this one waits
+//   for its turn. Only a request that must wait has this step.
 // - `sent`: the inputs are read, and the first request goes now.
 // - `queued`: the provider runs the request as a job, and Dez asks for
 //   its state.
@@ -76,12 +79,15 @@ export interface ProviderStreamChatResult {
 // provider took the money for that job, and the user can ask it for the
 // output with the id.
 export interface MediaProgress {
-  phase: 'sent' | 'queued' | 'downloading'
+  phase: 'waiting' | 'sent' | 'queued' | 'downloading'
   jobId: string | null
   // Only in the `sent` step, and only when Dez knows it: the price in USD
   // of the request (a quote of the provider, or a list price for the
   // request's text).
   quote?: number
+  // Only in the `waiting` step: the most media requests that the provider
+  // gets at one time.
+  limit?: number
 }
 
 // The input of dez.provider/generateMedia. `kind` is the model's request
@@ -114,6 +120,9 @@ export interface ProviderGenerateMediaInput {
   // by parameter name. A parameter with no value here, or with one that
   // the model does not take, gets its default.
   parameters?: Readonly<ParameterValues>
+  // A transcription asks for the times of its words and segments, where
+  // the provider's media API can give them (`MediaInput.wordTimes`).
+  wordTimes?: true
   // dez.http/cancelStream with this id cancels the request that runs. A
   // clip can take many requests, one after the other, and a wait between
   // them; `signal` stops all of that.
@@ -125,6 +134,14 @@ export interface ProviderGenerateMediaInput {
   timeoutMs?: number
   // Called at each step of the request, in order.
   onProgress?: (progress: MediaProgress) => void
+  // Called right before the paid request goes, after the checks of the
+  // input and the quote, with the quote that the `sent` step gives (in
+  // USD; undefined when Dez knows no price). A throw stops the request:
+  // generateMedia then rejects with that error, and no request went. The
+  // call and the `sent` step come in the same tick, so a check here and a
+  // hold of the quote at `sent` have no wait between them (the money
+  // limit of a tab).
+  beforeSend?: (quote: number | undefined) => void
   // Who reads the text of an input that the model does not take or that
   // Dez cannot read, and of a request that failed (requestReader.ts); the
   // user with none.
@@ -139,6 +156,9 @@ export interface ProviderGenerateMediaResult {
   clips: GeneratedClip[]
   // The text that the model wrote (a transcription), which can be empty.
   text?: string
+  // With `wordTimes`: the times that the model gave with `text`. Absent
+  // when it gave none, or when the API cannot give them.
+  times?: TranscriptTimes
   // The price in USD of the request: the one that the provider's answer
   // tells, else the quote of the `sent` step. Absent when Dez knows none.
   cost?: number
