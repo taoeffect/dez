@@ -10,7 +10,7 @@ export function shortDuration(durationMs: number): string {
   return wholeUnits(Math.round(durationMs / 1000), Math.round(durationMs / 60_000))
 }
 
-/** A time that still runs, in the units of `shortDuration`: "1s" … "59s",
+/** A time that still runs, in the units of `shortDuration`: "0s" … "59s",
  *  "1m 00s", "1h 00m". It counts whole units and rounds down, so it never
  *  runs ahead of the clock and changes at most once a second. */
 export function liveDuration(elapsedMs: number): string {
@@ -25,14 +25,14 @@ export function longDuration(durationMs: number): string {
   const tenths = Math.round(durationMs / 100)
   if (tenths < 1) return 'less than 0.1 seconds'
   if (tenths < 100) return `${(tenths / 10).toFixed(1)} seconds`
-  return wholeSeconds(Math.round(durationMs / 1000))
+  return secondsInWords(Math.round(durationMs / 1000))
 }
 
 /** A time that still runs, in words: "12 seconds", "1 minute 5 seconds".
  *  It rounds down, as `liveDuration` does. */
 export function longLiveDuration(elapsedMs: number): string {
   const seconds = Math.floor(Math.max(0, elapsedMs) / 1000)
-  return seconds === 0 ? '0 seconds' : wholeSeconds(seconds)
+  return seconds === 0 ? '0 seconds' : secondsInWords(seconds)
 }
 
 // The short forms in whole units ("42s", "1m 05s", "1h 02m") of a time that
@@ -45,7 +45,7 @@ function wholeUnits(seconds: number, minutes: number): string {
   return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, '0')}m`
 }
 
-function wholeSeconds(total: number): string {
+function secondsInWords(total: number): string {
   return [
     count(Math.floor(total / 3600), 'hour'),
     count(Math.floor(total / 60) % 60, 'minute'),
