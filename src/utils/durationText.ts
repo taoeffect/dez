@@ -7,11 +7,7 @@ export function shortDuration(durationMs: number): string {
   const tenths = Math.round(durationMs / 100)
   if (tenths < 1) return '<0.1s'
   if (tenths < 100) return `${(tenths / 10).toFixed(1)}s`
-  const seconds = Math.round(durationMs / 1000)
-  if (seconds < 60) return `${seconds}s`
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`
-  const minutes = Math.round(durationMs / 60_000)
-  return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, '0')}m`
+  return wholeUnits(Math.round(durationMs / 1000), Math.round(durationMs / 60_000))
 }
 
 /** A time that still runs, in the units of `shortDuration`: "1s" … "59s",
@@ -19,10 +15,7 @@ export function shortDuration(durationMs: number): string {
  *  runs ahead of the clock and changes at most once a second. */
 export function liveDuration(elapsedMs: number): string {
   const seconds = Math.floor(Math.max(0, elapsedMs) / 1000)
-  if (seconds < 60) return `${seconds}s`
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`
-  const minutes = Math.floor(seconds / 60)
-  return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, '0')}m`
+  return wholeUnits(seconds, Math.floor(seconds / 60))
 }
 
 /** A time in words, for a tooltip, a screen reader, or a model: "4.2
@@ -40,6 +33,16 @@ export function longDuration(durationMs: number): string {
 export function longLiveDuration(elapsedMs: number): string {
   const seconds = Math.floor(Math.max(0, elapsedMs) / 1000)
   return seconds === 0 ? '0 seconds' : wholeSeconds(seconds)
+}
+
+// The short forms in whole units ("42s", "1m 05s", "1h 02m") of a time that
+// the caller already rounded to whole `seconds` and to whole `minutes`. The
+// final and the live time round in their own ways, but share these forms, so
+// a time keeps its look when it stops.
+function wholeUnits(seconds: number, minutes: number): string {
+  if (seconds < 60) return `${seconds}s`
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`
+  return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, '0')}m`
 }
 
 function wholeSeconds(total: number): string {
