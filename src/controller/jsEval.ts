@@ -30,8 +30,9 @@ import type { ToolRunContext } from './tools'
 // which Deno runs, the description of the run, which tells the module
 // what to run, and the code of the call. The page gives Rust only the
 // name of the module: Rust writes the Deno command line, with no
-// permission for the code but the work folder of its conversation
-// (`conversationWorkForms`; src-tauri/src/bundled_tools.rs).
+// permission for the code but its run folder, the work folder of its
+// conversation (`conversationWorkForms`), and a read of the libraries and
+// the fonts that Dez ships (src-tauri/src/bundled_tools.rs).
 //
 // The code calls the other Dez tools over the input and the output of the
 // program (toolBridge.ts).

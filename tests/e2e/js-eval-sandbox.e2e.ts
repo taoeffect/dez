@@ -23,11 +23,14 @@ import { newTab, submit } from './harness/thread'
 // - Deno refuses each thing of the computer that the code asks it for: a
 //   file, the network, a variable of the environment, a fact of the
 //   system, a program, a native library, and a new permission. The code
-//   imports a library that Dez ships by its name, but reads no file of it.
+//   reads and writes the files of its run folder, imports a library that
+//   Dez ships by its name, and reads the files of the libraries and the
+//   fonts that Dez ships, but changes none.
 // - Deno loads a file that the code imports with no check of a permission,
-//   so only the OS rule stops such an import: no file outside the work
-//   folder of the run loads. Not the keys of the user, not a conversation,
-//   and not a file of the other Dez folders.
+//   so only the OS rule stops such an import: no file outside the places of
+//   the run (its run folder, the work folder of its conversation, and the
+//   libraries and the fonts that Dez ships) loads. Not the keys of the
+//   user, not a conversation, and not a file of the other Dez folders.
 // - The limits of a run hold: code that writes without end or that fills
 //   the memory ends with an error result, the memory of typed arrays has
 //   an end that the code can catch, and a line that the code writes in the
@@ -228,9 +231,10 @@ describe('js_eval sandbox', () => {
   it('refuses each thing of the computer that the code asks Deno for', async () => {
     const file = literal(keys)
     const home = literal(setup.app.home)
-    // A file of a library that Dez ships, next to the program of the debug
-    // build (its resource dir).
+    // A file of a library and a font that Dez ships, next to the program of
+    // the debug build (its resource dir).
     const shippedLib = literal(path.join(path.dirname(setup.app.binary), 'libs', 'fft.js', 'lib', 'fft.esm.js'))
+    const shippedFont = literal(path.join(path.dirname(setup.app.binary), 'fonts', 'NotoSans-Regular.ttf'))
     // The mock server of the spec: a real server that would answer.
     const { port } = new URL(setup.mock.url)
     const refusedRead = 'NotCapable: Requires read access'
@@ -240,7 +244,7 @@ describe('js_eval sandbox', () => {
     const refusedSys = 'NotCapable: Requires sys access'
     const refusedRun = 'NotCapable: Requires run access'
     const probes: Probe[] = [
-      // Files, also the ones of the run folder.
+      // Files. The files of the run folder are the code's own.
       ['read a file', `() => Deno.readTextFile(${file})`, refusedRead],
       ['read a file with Node', `async () => (await import("node:fs")).readFileSync(${file}, "utf8")`, refusedRead],
       ['open a file', `() => Deno.open(${file})`, refusedRead],
@@ -250,11 +254,11 @@ describe('js_eval sandbox', () => {
       // the code, so it asks for this one.
       ['import a file by a path that the code makes', `() => import([${file}].join(""))`, 'TypeError: Requires read access'],
       ['list the home folder', `() => Array.fromAsync(Deno.readDir(${home}))`, refusedRead],
-      ['list the run folder', '() => Array.fromAsync(Deno.readDir("."))', refusedRead],
+      ['list the run folder', 'async () => (await Array.fromAsync(Deno.readDir("."))).some((entry) => entry.name === "code.ts")', 'ok: true'],
       ['go to another folder', `async () => Deno.chdir(${home})`, refusedRead],
       ['write a file', `() => Deno.writeTextFile(${file}, "changed")`, refusedWrite],
-      ['write a file of the run folder', '() => Deno.writeTextFile("note.txt", "text")', refusedWrite],
-      ['make a folder', '() => Deno.mkdir("made")', refusedWrite],
+      ['write a file of the run folder', '() => Deno.writeTextFile("note.txt", "text")', 'ok: undefined'],
+      ['make a folder', '() => Deno.mkdir("made")', 'ok: undefined'],
       ['make a temp file', '() => Deno.makeTempFile()', refusedWrite],
       ['delete a file', `() => Deno.remove(${file})`, refusedWrite],
       ['move a file', `() => Deno.rename(${file}, "keys.json")`, refusedRead],
@@ -299,7 +303,9 @@ describe('js_eval sandbox', () => {
       ['a library that Dez ships', '() => import("fft.js").then((module) => new module.default(8).size)', 'ok: 8'],
       // dez-media imports fft.js by a relative path, which rfft uses.
       ['Dez\'s own library', '() => import("dez-media").then((media) => Array.from(media.rfft([1, 1, 1, 1]).re).join(","))', 'ok: "4,0,0"'],
-      ['read a file of a library that Dez ships', `() => Deno.readTextFile(${shippedLib})`, refusedRead],
+      ['read a file of a library that Dez ships', `async () => (await Deno.readTextFile(${shippedLib})).includes("FFT")`, 'ok: true'],
+      ['read a font that Dez ships', `async () => (await Deno.readFile(${shippedFont})).length > 0`, 'ok: true'],
+      ['change a file of a library that Dez ships', `() => Deno.writeTextFile(${shippedLib}, "changed")`, refusedWrite],
       // `--no-prompt`: a question is a "no".
       ['ask for each permission', 'async () => (await Promise.all(["read", "write", "net", "env", "sys", "run", "ffi"].map((name) => Deno.permissions.request({ name })))).map((status) => status.state).join(" ")', 'ok: "denied denied denied denied denied denied denied"'],
     ]

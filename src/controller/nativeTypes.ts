@@ -118,8 +118,8 @@ export interface BundledToolRun {
   // backend makes when it is missing. Only a Deno run can have one.
   conversationFolder?: string
   // Whether the program can load the native library of skia-canvas, whose
-  // code opens files with no check of Deno. Only a Deno run with
-  // `appFolder` or `builtInApp` can have it: never the code of a model.
+  // code opens files with no check of Deno: only the OS rule of the run
+  // holds it. Only a Deno run can have it.
   nativeCanvas?: boolean
   // The time zone of the program (`Europe/Berlin`), so that its local time
   // is the one of the user: a program gets no other fact of the computer.

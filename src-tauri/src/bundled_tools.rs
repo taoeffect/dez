@@ -17,11 +17,11 @@
 //!     folder (`PROGRAM_APP_FOLDER`). They can read and write no file
 //!     outside the cache root, and in the assets folder they can read,
 //!     make, and change files, but not delete or move them.
-//!   - Deno: the work folder of its run; for a run of an app, that one
-//!     folder of `APPS_FOLDER` (or of `BUILT_IN_APPS_FOLDER`, only to read)
-//!     and the fonts that Dez ships; for a run with a conversation, its
-//!     folder of `CONVERSATION_WORK_FOLDERS`; and the libraries that Dez
-//!     ships, only to read (`RunPlaces`). Rust builds its command line, and
+//!   - Deno: the work folder of its run, and the libraries and the fonts
+//!     that Dez ships, only to read; for a run of an app, that one folder
+//!     of `APPS_FOLDER` (or of `BUILT_IN_APPS_FOLDER`, only to read); for a
+//!     run with a conversation, its folder of `CONVERSATION_WORK_FOLDERS`
+//!     (`RunPlaces`). Rust builds its command line, and
 //!     the page gives only the name of a script and the names of the places
 //!     (`DENO_RULES`). It does not run on a computer with no confinement,
 //!     and its memory has a limit.
@@ -91,7 +91,7 @@ const LIBS_IMPORT_MAP: &str = "import_map.json";
 // The folder of the script of skia-canvas in `LIBS_FOLDER`, and its native
 // library there (`ToolRun::native_canvas`). The script loads the library
 // with a `require`, which reads the files of its folder through Deno: the
-// read flag of the libraries of an app run covers them.
+// read flag of the libraries of every run covers them.
 const CANVAS_SCRIPT_FOLDER: &str = "skia-canvas/lib";
 const CANVAS_NATIVE_LIBRARY: &str = "skia.node";
 
@@ -164,9 +164,8 @@ pub struct ToolRun {
     #[serde(default)]
     pub conversation_folder: Option<String>,
     // Whether the program can load the native library of skia-canvas. Its
-    // code opens files with no check of Deno, so only a run of an app,
-    // whose manifest asks for it, gets it: never the code of a model
-    // (`js_eval`).
+    // code opens files with no check of Deno, so only the OS rule of the
+    // run holds it (`run_places`).
     #[serde(default)]
     pub native_canvas: bool,
     // The name of a time zone (`Europe/Berlin`), which the program gets as
@@ -300,13 +299,13 @@ const FFMPEG_RULES: ProgramRules = ProgramRules {
 //   `--no-npm`: no code from the network. `--no-config` and `--no-lock`: no
 //   file of the work folder changes how Deno runs.
 // - No `--allow-*` flag but those of the places of a run (`RunPlaces`): no
-//   network, no other program, no facts of the system. A run of the code
-//   of a model (no app) can read and change only the folder of its
-//   conversation, and loads no native library. Deno's file flags do not
-//   cover a static `import` or an `import()` of a literal name, which only
-//   the OS rule keeps in the folders. They cover each module that an
-//   `import()` of a name that the code makes loads, its static imports
-//   too.
+//   network, no other program, no facts of the system. A run reads and
+//   changes only its own folders, reads the files that Dez ships for it,
+//   and loads a native library only when its page asks for it. Deno's
+//   file flags do not cover a static `import` or an `import()` of a literal
+//   name, which only the OS rule keeps in the folders. They cover each
+//   module that an `import()` of a name that the code makes loads, its
+//   static imports too.
 // - The environment is empty but for these: Deno reads many variables, and
 //   one of them (`DENO_PERMISSION_BROKER_PATH`) turns its flags off.
 //   `DENO_DIR` is where Deno keeps its caches, and it must be a folder
@@ -539,21 +538,21 @@ struct RunPlaces {
 
 // The places of a run: those that the page names (an app or a built-in
 // app, a conversation, the native library of skia-canvas) and those that
-// Dez ships. Each kind of run gets only what it needs:
-// - Every run imports the libraries (the OS rule lets it read them) and
-//   changes nothing of them. A run of an app also gets the read flag of
-//   them: Dez's module imports the main file of the app by a name that it
-//   makes (jsEvalRunner.js), so Deno checks the flag for each library that
-//   the app imports. The code of a model gets no flag of them: it imports
-//   a library by a literal name.
-// - A run of an app reads and changes its work folder, which holds its
-//   inputs and outputs, and the folder of its app (a built-in app only
-//   reads it), and reads the fonts.
-// - A run with a conversation reads and changes the folder of it. The code
-//   of a model (`js_eval`, no app) gets no other file flag.
-// - The native code of skia-canvas opens files with no check of Deno, so
-//   only a run of an app gets it, when the page asks for it. Its fontconfig
-//   file is a place of the environment (`CANVAS_FONT_CONFIG`).
+// every run gets:
+// - Every run reads and changes its work folder, which holds its code,
+//   the copies of its inputs, and its outputs.
+// - Every run reads the libraries and the fonts that Dez ships, and
+//   changes nothing of them. The read flag of the libraries is for the
+//   modules that Deno loads by a name that the code makes (Dez's module
+//   imports the main file of an app so, jsEvalRunner.js), and for the
+//   script of skia-canvas, which reads its own files with a `require`.
+// - A run of an app also reads and changes the folder of its app (a
+//   built-in app only reads it).
+// - A run with a conversation also reads and changes the folder of it.
+// - The native code of skia-canvas opens files with no check of Deno: the
+//   OS rule of the run is its only guard, as for a run of an app. So the
+//   native library goes only to a run whose page asks for it. Its
+//   fontconfig file is a place of the environment (`CANVAS_FONT_CONFIG`).
 // Each path goes into a flag through `flag_path`, or through
 // `flag_value_path` for a flag of one path.
 fn run_places(run: &ToolRun, rules: &ProgramRules, roots: &Roots, folder: &Path) -> Result<RunPlaces, String> {
@@ -570,13 +569,10 @@ fn run_places(run: &ToolRun, rules: &ProgramRules, roots: &Roots, folder: &Path)
         (Some(_), Some(_)) => return Err("A run cannot have both an app folder and a built-in app".to_string()),
     };
     let built_in = run.built_in_app.is_some();
-    if run.native_canvas && app.is_none() {
-        return Err("Only a run of an app can load the native library of skia-canvas".to_string());
-    }
     let conversation = run.conversation_folder.as_deref().map(|id| conversation_folder(&roots.app, id)).transpose()?;
     let libs = shipped(&roots.resources, LIBS_FOLDER, Path::is_dir)?;
     let import_map = shipped(&libs, LIBS_IMPORT_MAP, Path::is_file)?;
-    let fonts = if app.is_some() { Some(shipped(&roots.resources, FONTS_FOLDER, Path::is_dir)?) } else { None };
+    let fonts = shipped(&roots.resources, FONTS_FOLDER, Path::is_dir)?;
     let canvas_library = if run.native_canvas {
         let script_folder = shipped(&libs, CANVAS_SCRIPT_FOLDER, Path::is_dir)?;
         Some((shipped(&script_folder, CANVAS_NATIVE_LIBRARY, Path::is_file)?, shipped(&libs, CANVAS_FONT_CONFIG, Path::is_file)?))
@@ -584,16 +580,12 @@ fn run_places(run: &ToolRun, rules: &ProgramRules, roots: &Roots, folder: &Path)
         None
     };
 
-    let run_folder = app.as_ref().map(|_| folder);
-    let app_libs = app.as_ref().map(|_| libs.as_path());
-    let read: Vec<&Path> = [run_folder, app.as_deref(), conversation.as_deref(), app_libs, fonts.as_deref()].into_iter().flatten().collect();
-    let write: Vec<&Path> = [run_folder, app.as_deref().filter(|_| !built_in), conversation.as_deref()].into_iter().flatten().collect();
+    let read: Vec<&Path> = [Some(folder), app.as_deref(), conversation.as_deref(), Some(libs.as_path()), Some(fonts.as_path())].into_iter().flatten().collect();
+    let write: Vec<&Path> = [Some(folder), app.as_deref().filter(|_| !built_in), conversation.as_deref()].into_iter().flatten().collect();
     let mut places = RunPlaces { flags: vec![format!("{}={}", flags.import_map, flag_value_path(&import_map)?)], ..RunPlaces::default() };
     for (flag, paths) in [(flags.read, &read), (flags.write, &write)] {
-        if !paths.is_empty() {
-            let list: Vec<&str> = paths.iter().map(|path| flag_path(path)).collect::<Result<_, _>>()?;
-            places.flags.push(format!("{flag}={}", list.join(",")));
-        }
+        let list: Vec<&str> = paths.iter().map(|path| flag_path(path)).collect::<Result<_, _>>()?;
+        places.flags.push(format!("{flag}={}", list.join(",")));
     }
     if let Some((library, font_config)) = canvas_library {
         places.flags.push(format!("{}={}", flags.native_library, flag_path(&library)?));
@@ -601,8 +593,7 @@ fn run_places(run: &ToolRun, rules: &ProgramRules, roots: &Roots, folder: &Path)
         places.env.push(("FONTCONFIG_FILE".to_string(), font_config.into_os_string()));
     }
 
-    places.readable.push(libs);
-    places.readable.extend(fonts);
+    places.readable.extend([libs, fonts]);
     match app {
         Some(app) if built_in => places.readable.push(app),
         Some(app) => places.owned.push(app),
@@ -1270,11 +1261,14 @@ mod tests {
         // `run`, and not `eval`, which has every permission.
         assert_eq!(args.first().map(String::as_str), Some("run"));
         assert_eq!(args.last().map(String::as_str), Some("./main.ts"));
-        // A run with no app and no conversation has no permission of Deno:
-        // only the import map of the libraries that Dez ships.
-        assert!(!args.iter().any(|arg| arg.starts_with("--allow") || arg == "-A"), "{args:?}");
-        let import_map = format!("--import-map={}", roots.resources.join(LIBS_FOLDER).join(LIBS_IMPORT_MAP).display());
-        assert_eq!(args[DENO_RULES.first_args.len()..], [import_map, "./main.ts".to_string()]);
+        // A run with no app and no conversation has only the permissions
+        // of every run: its work folder, and a read of the libraries and
+        // the fonts that Dez ships, by the import map of the libraries.
+        let (work, libs, fonts) = (roots.cache.join(WORK_ROOT).join("a"), roots.resources.join(LIBS_FOLDER), roots.resources.join(FONTS_FOLDER));
+        let import_map = format!("--import-map={}", libs.join(LIBS_IMPORT_MAP).display());
+        let read = format!("--allow-read={},{},{}", work.display(), libs.display(), fonts.display());
+        let write = format!("--allow-write={}", work.display());
+        assert_eq!(args[DENO_RULES.first_args.len()..], [import_map, read, write, "./main.ts".to_string()]);
         // A file can have the name of a flag.
         assert_eq!(args_of(&["--allow-all"]).expect("a file name").last().map(String::as_str), Some("./--allow-all"));
         let refused: [&[&str]; 8] = [&[], &["--allow-all", "main.ts"], &["main.ts", "extra"], &[""], &["../main.ts"], &["sub/main.ts"], &["/tmp/main.ts"], &["main.ts "]];
@@ -1297,7 +1291,7 @@ mod tests {
         assert_eq!(run.confinement.folder, run.folder);
         assert!(run.confinement.required);
         assert!(run.confinement.also_writable.is_empty() && run.confinement.also_owned.is_empty() && run.confinement.also_startable.is_empty());
-        assert_eq!(run.confinement.also_readable, [roots.resources.join(LIBS_FOLDER)]);
+        assert_eq!(run.confinement.also_readable, [roots.resources.join(LIBS_FOLDER), roots.resources.join(FONTS_FOLDER)]);
         for folder in ["work", "work/a/b", "media/a", "a", "", "work/", "work/..", "work/../media", "/work/a", "work//a"] {
             assert!(run_in("dez-deno", folder).is_err(), "the folder {folder:?}");
         }
@@ -1345,47 +1339,45 @@ mod tests {
     // Deno splits the path list of a flag at each comma, so a comma in a
     // path would make two other paths of it, and a flag is text, so it
     // cannot hold a path that is not UTF-8. The check is on each path of a
-    // list flag: here only one root has such a path. The import map is the
-    // one path of its flag, which Deno does not split. The error can go to
+    // list flag: here only one root has such a path. The error can go to
     // a model, so it names no path.
     #[test]
     fn a_deno_run_is_refused_when_a_path_of_its_flags_cannot_be_in_a_flag() {
         let dir = TempDir::new("tools-deno-flag-path");
-        let mut roots = vec![
-            Roots { cache: dir.0.join("private,cache"), ..fake_roots(&dir.0) },
-            Roots { app: dir.0.join("private,config"), ..fake_roots(&dir.0) },
-        ];
-        // No folder is made on this path, which macOS would refuse.
-        #[cfg(unix)]
-        roots.push(Roots { cache: dir.0.join(<std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(b"private\xffcache")), ..fake_roots(&dir.0) });
         let refused = |error: String| {
             assert!(error.contains("comma") && error.contains("UTF-8"), "{error}");
             assert!(!error.contains("private"), "{error}");
         };
+        let deno = || tool_run("dez-deno", &["main.ts"], "work/a");
+
+        // The work folder of the run, the libraries, and the fonts are in
+        // the flags of every run: such a path of the cache root or of the
+        // install stops every run of Deno.
+        let mut roots = vec![
+            Roots { cache: dir.0.join("private,cache"), ..fake_roots(&dir.0) },
+            Roots { resources: fake_roots(&dir.0.join("private,dez")).resources, ..fake_roots(&dir.0) },
+        ];
+        // No folder is made on this path, which macOS would refuse.
+        #[cfg(unix)]
+        roots.push(Roots { cache: dir.0.join(<std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(b"private\xffcache")), ..fake_roots(&dir.0) });
         for roots in roots {
-            std::fs::create_dir_all(roots.app.join(APPS_FOLDER).join("my-app")).expect("create");
-            let run = tool_run("dez-deno", &["main.ts"], "work/a");
-
-            // A run with no app folder has no flag that names these roots.
-            assert!(resolved_run(run.clone(), &roots).is_ok(), "{}", roots.cache.display());
-            refused(resolved_run(ToolRun { app_folder: Some("my-app".to_string()), ..run }, &roots).err().expect("refused"));
+            refused(resolved_run(deno(), &roots).err().expect("refused"));
         }
-
-        // The libraries that Dez ships are in the import map of every run,
-        // and in the read flag of a run of an app: a comma in the folder of
-        // the install stops only an app.
+        // ffmpeg gets no flag of its places.
         let roots = Roots { resources: fake_roots(&dir.0.join("private,dez")).resources, ..fake_roots(&dir.0) };
-        std::fs::create_dir_all(roots.app.join(APPS_FOLDER).join("my-app")).expect("create");
-        let run = ToolRun { conversation_folder: Some("c-1".to_string()), ..tool_run("dez-deno", &["main.ts"], "work/a") };
-        let code_of_a_model = resolved_run(run.clone(), &roots).expect("a run with no app");
-        let import_map = format!("--import-map={}", roots.resources.join(LIBS_FOLDER).join(LIBS_IMPORT_MAP).display());
-        assert_eq!(place_flags(&code_of_a_model)[0], import_map);
-        refused(resolved_run(ToolRun { app_folder: Some("my-app".to_string()), ..run }, &roots).err().expect("refused"));
         assert!(resolved_run(tool_run("dez-ffmpeg", &["-version"], "work/a"), &roots).is_ok());
+
+        // The folders of the app root are in the flags of a run of an app
+        // and of a run with a conversation only.
+        let roots = Roots { app: dir.0.join("private,config"), ..fake_roots(&dir.0) };
+        std::fs::create_dir_all(roots.app.join(APPS_FOLDER).join("my-app")).expect("create");
+        assert!(resolved_run(deno(), &roots).is_ok());
+        refused(resolved_run(ToolRun { app_folder: Some("my-app".to_string()), ..deno() }, &roots).err().expect("refused"));
+        refused(resolved_run(ToolRun { conversation_folder: Some("c-1".to_string()), ..deno() }, &roots).err().expect("refused"));
     }
 
     // The rights of each kind of Deno run: the code of a model, an app, a
-    // built-in app, and an app with the native library of skia-canvas. Each
+    // built-in app, and each with the native library of skia-canvas. Each
     // gets the flags of Deno and the places of the OS rule of its kind, and
     // no more.
     #[test]
@@ -1406,19 +1398,20 @@ mod tests {
         };
         let deno = || tool_run("dez-deno", &[], "");
 
-        // The code of a model reads and changes only the folder of its
-        // conversation, which Rust makes.
+        // The code of a model reads and changes its work folder and the
+        // folder of its conversation, which Rust makes, and reads the
+        // libraries and the fonts.
         assert!(!conversation.exists());
         let run = run_of(deno());
         assert!(conversation.is_dir());
         #[cfg(unix)]
         assert_eq!(std::os::unix::fs::PermissionsExt::mode(&std::fs::metadata(&conversation).expect("metadata").permissions()) & 0o777, 0o700);
-        let conversation_flags = [format!("--allow-read={}", conversation.display()), format!("--allow-write={}", conversation.display())];
-        assert_eq!(place_flags(&run), [import_map.as_str(), conversation_flags[0].as_str(), conversation_flags[1].as_str()]);
-        assert_eq!((run.confinement.also_owned, run.confinement.also_readable), (vec![conversation.clone()], vec![libs.clone()]));
+        let read = format!("--allow-read={}", list(&[&work, &conversation, &libs, &fonts]));
+        let write = format!("--allow-write={}", list(&[&work, &conversation]));
+        assert_eq!(place_flags(&run), [import_map.as_str(), read.as_str(), write.as_str()]);
+        assert_eq!((run.confinement.also_owned, run.confinement.also_readable), (vec![conversation.clone()], vec![libs.clone(), fonts.clone()]));
 
-        // An app imports the libraries by its main file, which Dez's module
-        // imports by a name that it makes: Deno checks the read flag.
+        // An app adds the folder of its app.
         let run = run_of(ToolRun { app_folder: Some("my-app".to_string()), ..deno() });
         let read = format!("--allow-read={}", list(&[&work, &app, &conversation, &libs, &fonts]));
         let write = format!("--allow-write={}", list(&[&work, &app, &conversation]));
@@ -1432,19 +1425,22 @@ mod tests {
         assert_eq!(place_flags(&run), [import_map.as_str(), read.as_str(), write.as_str()]);
         assert_eq!((run.confinement.also_owned, run.confinement.also_readable), (vec![conversation.clone()], vec![libs.clone(), fonts.clone(), built_in.clone()]));
 
-        // The native library: exactly its file, and the variables that the
-        // script of skia-canvas reads. Its folder is in the libraries, and
-        // so is the fontconfig file that the environment names.
-        let run = run_of(ToolRun { built_in_app: Some(FAKE_BUILT_IN_APP.to_string()), native_canvas: true, ..deno() });
-        let read = format!("--allow-read={}", list(&[&work, &built_in, &conversation, &libs, &fonts]));
+        // The native library, for an app and for the code of a model:
+        // exactly its file, and the variables that the script of
+        // skia-canvas reads. Its folder is in the libraries, and so is the
+        // fontconfig file that the environment names, so it adds no place
+        // to the OS rule.
         let ffi = format!("--allow-ffi={}", canvas.join(CANVAS_NATIVE_LIBRARY).display());
         let env = "--allow-env=https_proxy,HTTPS_PROXY,http_proxy,HTTP_PROXY,LC_ALL,LC_MESSAGES,LANG,LANGUAGE,SKIA_CANVAS_STRICT";
-        assert_eq!(place_flags(&run), [import_map.as_str(), read.as_str(), write.as_str(), ffi.as_str(), env]);
         let font_config = |run: &ProgramRun| run.env.iter().find(|(name, _)| name == "FONTCONFIG_FILE").map(|(_, value)| PathBuf::from(value));
-        assert_eq!(font_config(&run), Some(libs.join(CANVAS_FONT_CONFIG)));
-        assert_eq!(font_config(&run_of(ToolRun { built_in_app: Some(FAKE_BUILT_IN_APP.to_string()), ..deno() })), None);
-        assert_eq!(run.confinement.also_readable, [libs.clone(), fonts.clone(), built_in.clone()]);
-        assert_eq!(run.args.last().map(String::as_str), Some("./main.ts"));
+        for run in [ToolRun { built_in_app: Some(FAKE_BUILT_IN_APP.to_string()), ..deno() }, deno()] {
+            let (plain, native) = (run_of(run.clone()), run_of(ToolRun { native_canvas: true, ..run }));
+            let plain_flags = place_flags(&plain);
+            assert_eq!(place_flags(&native), [&plain_flags[..], &[ffi.as_str(), env][..]].concat());
+            assert_eq!((font_config(&plain), font_config(&native)), (None, Some(libs.join(CANVAS_FONT_CONFIG))));
+            assert_eq!((&native.confinement.also_owned, &native.confinement.also_readable), (&plain.confinement.also_owned, &plain.confinement.also_readable));
+            assert_eq!(native.args.last().map(String::as_str), Some("./main.ts"));
+        }
     }
 
     // A run can have only the places of its kind, by names that are one
@@ -1463,9 +1459,6 @@ mod tests {
         assert!(resolved_run(deno(), &roots).is_ok() && resolved_run(ffmpeg(), &roots).is_ok());
 
         let refused = [
-            // The native library is never for the code of a model.
-            ToolRun { native_canvas: true, ..deno() },
-            ToolRun { native_canvas: true, conversation_folder: conversation(), ..deno() },
             ToolRun { app_folder: app(), built_in_app: built_in(), ..deno() },
             ToolRun { app_folder: app(), ..ffmpeg() },
             ToolRun { built_in_app: built_in(), ..ffmpeg() },
@@ -1511,15 +1504,16 @@ mod tests {
         let missing = |error: String| assert!(error.contains("install Dez again") && !error.contains(&dir.0.display().to_string()), "{error}");
 
         std::fs::remove_file(roots.resources.join(LIBS_FOLDER).join(CANVAS_FONT_CONFIG)).expect("remove");
-        missing(resolve(ToolRun { native_canvas: true, ..app_run() }).err().expect("refused"));
-        assert!(resolve(app_run()).is_ok());
+        missing(resolve(ToolRun { native_canvas: true, ..deno() }).err().expect("refused"));
+        assert!(resolve(deno()).is_ok());
 
         std::fs::remove_file(roots.resources.join(LIBS_FOLDER).join(CANVAS_SCRIPT_FOLDER).join(CANVAS_NATIVE_LIBRARY)).expect("remove");
         missing(resolve(ToolRun { native_canvas: true, ..app_run() }).err().expect("refused"));
 
         std::fs::remove_dir(roots.resources.join(FONTS_FOLDER)).expect("remove");
         missing(resolve(app_run()).err().expect("refused"));
-        assert!(resolve(deno()).is_ok());
+        missing(resolve(deno()).err().expect("refused"));
+        std::fs::create_dir(roots.resources.join(FONTS_FOLDER)).expect("create");
 
         std::fs::remove_file(roots.resources.join(LIBS_FOLDER).join(LIBS_IMPORT_MAP)).expect("remove");
         missing(resolve(deno()).err().expect("refused"));
@@ -2623,15 +2617,14 @@ mod tests {
             assert_eq!((sent.ends, sent.stderr.as_str()), (exited(3), ""));
         }
 
-        // The two guards of a Deno run. Deno's own permissions: a script
-        // reads and writes its work folder, its app folder, and the folder
-        // of its conversation, reads a built-in app and the fonts, and
-        // opens no other file; the code of a model (no app) opens only the
-        // folder of its conversation. Every run imports the libraries by
-        // their import map; a run of an app reads their files too, the code
-        // of a model reads none. The OS rule: an `import`, which Deno's file
-        // permissions do not cover, loads no file from outside the places of
-        // the run.
+        // The two guards of a Deno run. Deno's own permissions: every run
+        // reads and writes its work folder, and reads the files of the
+        // libraries and the fonts; a run of an app also reads and writes
+        // its app folder (a built-in app only reads it), and a run with a
+        // conversation the folder of it; no run opens another file. Every
+        // run imports the libraries by their import map. The OS rule: an
+        // `import`, which Deno's file permissions do not cover, loads no
+        // file from outside the places of the run.
         #[tokio::test]
         async fn deno_opens_only_the_places_of_its_run() {
             let dir = TempDir::new("tools-run-deno-files");
@@ -2693,10 +2686,10 @@ mod tests {
 
             // The code of a model.
             let model_code = run(in_conversation(deno_run(&dir.0, "model-code", &opens("model-code", &app)))).await;
-            assert_eq!(model_code.stdout, format!("NotCapable, NotCapable, NotCapable, made, NotCapable, NotCapable{lib}"), "{}", model_code.stderr);
+            assert_eq!(model_code.stdout, format!("made, NotCapable, NotCapable, made, font bytes, library read{lib}"), "{}", model_code.stderr);
 
             let without_places = run(deno_run(&dir.0, "without-places", &opens("without-places", &app))).await;
-            assert_eq!(without_places.stdout, format!("NotCapable, NotCapable, NotCapable, NotCapable, NotCapable, NotCapable{lib}"), "{}", without_places.stderr);
+            assert_eq!(without_places.stdout, format!("made, NotCapable, NotCapable, NotCapable, font bytes, library read{lib}"), "{}", without_places.stderr);
 
             let imported = run(ToolRun { app_folder: Some("my-app".to_string()), ..deno_run(&dir.0, "import", import) }).await;
             assert_eq!(imported.stdout, "", "{NOT_CONFINED}");
@@ -2706,8 +2699,8 @@ mod tests {
         }
 
         // The libraries that Dez ships load in a run by the names of their
-        // import map, under the OS rule, with no permission of Deno: the
-        // code of a model with no conversation has none.
+        // import map, under the OS rule: here in the code of a model with
+        // no conversation, the run with the fewest places.
         #[tokio::test]
         async fn deno_imports_the_libraries_that_dez_ships() {
             let dir = TempDir::new("tools-run-deno-libs");
@@ -2749,14 +2742,14 @@ mod tests {
             assert_eq!(sent.stdout, format!("{FAKE_LIB_TEXT}\n"), "{}", sent.stderr);
         }
 
-        // The native library of skia-canvas loads in a run of an app that
-        // asks for it, from a folder that the run can only read, and draws.
-        // Its code opens files with no check of Deno, so the OS rule is the
-        // only guard of its file calls: it reads the fonts that Dez ships
-        // and writes into the work folder, but reads and writes no file
-        // outside the places of the run.
+        // The native library of skia-canvas loads in a run that asks for
+        // it, of an app or of the code of a model, from a folder that the
+        // run can only read, and draws. Its code opens files with no check
+        // of Deno, so the OS rule is the only guard of its file calls: it
+        // reads the fonts that Dez ships and writes into the work folder,
+        // but reads and writes no file outside the places of the run.
         #[tokio::test]
-        async fn the_native_canvas_of_an_app_reads_and_writes_only_the_places_of_its_run() {
+        async fn the_native_canvas_reads_and_writes_only_the_places_of_its_run() {
             let dir = TempDir::new("tools-run-deno-canvas");
             let roots = shipped_roots(&dir.0);
             let app = roots.app.join(APPS_FOLDER).join("my-app");
@@ -2785,23 +2778,29 @@ mod tests {
                 outside_font = path_text(&outside_font),
                 outside_image = path_text(&outside_image),
             );
-            let run = ToolRun { app_folder: Some("my-app".to_string()), native_canvas: true, ..deno_run(&dir.0, "a", &text) };
+            let runs = [
+                ("a run of an app", ToolRun { app_folder: Some("my-app".to_string()), ..deno_run(&dir.0, "app", &text) }),
+                ("the code of a model", ToolRun { conversation_folder: Some("c-1".to_string()), ..deno_run(&dir.0, "model-code", &text) }),
+            ];
 
-            let sent = finished(resolved_run(run, &roots).expect("a run that the rules allow")).await;
+            for (kind, run) in runs {
+                let sent = finished(resolved_run(ToolRun { native_canvas: true, ..run }, &roots).expect("a run that the rules allow")).await;
 
-            assert_eq!(sent.ends, exited(0), "{}\n{}", sent.stdout, sent.stderr);
-            let lines: Vec<&str> = sent.stdout.lines().collect();
-            let fixed = ["pixel: 255 0 0 255", "shipped font: ok Shipped", "own file: ok true", "variable of skia-canvas: ok undefined"];
-            assert_eq!(lines[..4], fixed, "{}", sent.stderr);
-            assert!(lines[4].starts_with("other variable: NotCapable"), "{}", sent.stdout);
-            // Native code gets the error of the OS (Linux: EACCES of
-            // Landlock; macOS: EPERM of Seatbelt), with no check of Deno.
-            let os_refused = |line: &str, name: &str| line.starts_with(&format!("{name}: Error:")) && (line.contains("Permission denied") || line.contains("Operation not permitted"));
-            assert!(lines.len() == 7 && os_refused(lines[5], "outside font") && os_refused(lines[6], "outside file"), "{NOT_CONFINED}\n{}", sent.stdout);
-            assert!(!outside_image.exists(), "{NOT_CONFINED}");
-            // fontconfig reads the file that Dez ships, and writes no error
-            // about the system's file, which the OS rule hides.
-            assert_eq!(sent.stderr, "");
+                assert_eq!(sent.ends, exited(0), "{kind}\n{}\n{}", sent.stdout, sent.stderr);
+                let lines: Vec<&str> = sent.stdout.lines().collect();
+                let fixed = ["pixel: 255 0 0 255", "shipped font: ok Shipped", "own file: ok true", "variable of skia-canvas: ok undefined"];
+                assert_eq!(lines[..4], fixed, "{kind}\n{}", sent.stderr);
+                assert!(lines[4].starts_with("other variable: NotCapable"), "{kind}\n{}", sent.stdout);
+                // Native code gets the error of the OS (Linux: EACCES of
+                // Landlock; macOS: EPERM of Seatbelt), with no check of
+                // Deno.
+                let os_refused = |line: &str, name: &str| line.starts_with(&format!("{name}: Error:")) && (line.contains("Permission denied") || line.contains("Operation not permitted"));
+                assert!(lines.len() == 7 && os_refused(lines[5], "outside font") && os_refused(lines[6], "outside file"), "{NOT_CONFINED}\n{kind}\n{}", sent.stdout);
+                assert!(!outside_image.exists(), "{NOT_CONFINED}\n{kind}");
+                // fontconfig reads the file that Dez ships, and writes no
+                // error about the system's file, which the OS rule hides.
+                assert_eq!(sent.stderr, "", "{kind}");
+            }
         }
 
         // Two flags of a Deno run, with the real Deno and the command line
@@ -3134,12 +3133,13 @@ mod tests {
         }
 
         // The lines of `DENO_AUDIT` for a run that the OS rule holds, whose
-        // app folder holds `app_data`, and which can read the files of
+        // app folder holds `app_data` (none: a run with no app, which cannot
+        // read the folder of `__APP__`), and which can read the files of
         // `FAKE_SHIPPED_FILES` that start with one of `readable`.
-        fn deno_audit_lines(app_data: &str, readable: &[&str]) -> String {
+        fn deno_audit_lines(app_data: Option<&str>, readable: &[&str]) -> String {
             let mut lines = vec![
                 "own folder: ok made".to_string(),
-                format!("app folder: ok {app_data}"),
+                format!("app folder: {}", app_data.map_or("refused".to_string(), |data| format!("ok {data}"))),
                 "conversation folder: ok made".to_string(),
                 format!("libraries: ok {FAKE_LIB_TEXT}"),
             ];
@@ -3194,7 +3194,30 @@ mod tests {
 
             let sent = audited(&dir.0, run).await;
 
-            assert_eq!(sent.stdout, deno_audit_lines("app data", &["libs/", "fonts/"]), "{NOT_CONFINED}\n{}", sent.stderr);
+            assert_eq!(sent.stdout, deno_audit_lines(Some("app data"), &["libs/", "fonts/"]), "{NOT_CONFINED}\n{}", sent.stderr);
+            assert_eq!(sent.ends, exited(0), "{}", sent.stderr);
+            assert_eq!(listener.accept().map(|_| ()).map_err(|error| error.kind()), Err(std::io::ErrorKind::WouldBlock));
+        }
+
+        // The code of a model, a run with no app: with every permission of
+        // Deno, it reads and changes its work folder and the folder of its
+        // conversation, reads the libraries and the fonts, and nothing
+        // else, no app either.
+        #[tokio::test]
+        async fn deno_with_every_permission_of_deno_and_no_app_stays_in_the_places_of_its_run() {
+            let dir = TempDir::new("tools-audit-deno-no-app");
+            let app = real_roots(&dir.0).app.join(APPS_FOLDER).join("my-app");
+            std::fs::create_dir_all(&app).expect("create");
+            std::fs::write(app.join("data.txt"), "app data").expect("write");
+            std::fs::write(dir.0.join("private.ts"), format!("export const text = '{PRIVATE}'\n")).expect("write");
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listen");
+            listener.set_nonblocking(true).expect("non-blocking");
+            let text = deno_audit("config/apps/my-app", listener.local_addr().expect("address").port());
+            let run = ToolRun { conversation_folder: Some("c-1".to_string()), ..deno_run(&dir.0, "a", &text) };
+
+            let sent = audited(&dir.0, run).await;
+
+            assert_eq!(sent.stdout, deno_audit_lines(None, &["libs/", "fonts/"]), "{NOT_CONFINED}\n{}", sent.stderr);
             assert_eq!(sent.ends, exited(0), "{}", sent.stderr);
             assert_eq!(listener.accept().map(|_| ()).map_err(|error| error.kind()), Err(std::io::ErrorKind::WouldBlock));
         }
@@ -3212,7 +3235,7 @@ mod tests {
 
             let sent = audited(&dir.0, run).await;
 
-            assert_eq!(sent.stdout, deno_audit_lines("built-in data", &["libs/", "fonts/", "builtin-apps/"]), "{NOT_CONFINED}\n{}", sent.stderr);
+            assert_eq!(sent.stdout, deno_audit_lines(Some("built-in data"), &["libs/", "fonts/", "builtin-apps/"]), "{NOT_CONFINED}\n{}", sent.stderr);
             assert_eq!(sent.ends, exited(0), "{}", sent.stderr);
         }
 
