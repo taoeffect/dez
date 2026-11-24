@@ -2596,33 +2596,35 @@ export const dezTheme = EditorView.theme({
   '.dez-tool-call[data-state="error"] .dez-tool-call__icon, .dez-tool-call[data-state="error"] .dez-tool-call__name, .dez-tool-call[data-state="interrupted"] .dez-tool-call__icon, .dez-tool-call[data-state="interrupted"] .dez-tool-call__name': {
     color: 'var(--color-error, #d9534f)',
   },
-  // The time of a call (`renderCallTime` in toolCalls.ts): after the rule
-  // of the intermediate part, in the chip's muted color, also on a failed
-  // call, so the red state word stands out. Tabular numerals keep a live
-  // time of one form at one width. `flex: none`: the summary gives way
-  // first in a narrow window. It has the font size and the line height of
-  // the label of the intermediate part, so the two rules are as tall.
-  '.dez-tool-call__time': {
-    flex: 'none',
+  // The time of a call (`renderCallTime` in toolCalls.ts) and the
+  // intermediate part (`renderIntermediate`) each start with the same thin
+  // rule, so the dividers of a chip match.
+  '.dez-tool-call__time, .dez-tool-call__intermediate': {
     marginLeft: editorSize(2),
     paddingLeft: editorSize(8),
     borderLeft: '1px solid color-mix(in srgb, var(--color-text) 16%, transparent)',
+  },
+  // The time of a call: after the state word and before the intermediate
+  // part, in the chip's muted color, also on a failed call, so the red
+  // state word stands out. Tabular numerals keep a live time of one form at
+  // one width. `flex: none`: the summary gives way first in a narrow
+  // window. It has the font size and the line height of the label of the
+  // intermediate part, so the two rules are as tall.
+  '.dez-tool-call__time': {
+    flex: 'none',
     fontSize: editorSize(11.5),
     fontVariantNumeric: 'tabular-nums',
   },
-  // The intermediate part of a chip (`renderIntermediate` in toolCalls.ts):
-  // after a thin rule, an eye, the type symbols, and a small label, all in
-  // the chip's muted color. While the open panel shows what the chip
-  // hides (`data-revealed`), the eye is open and has the accent color. The
-  // symbols keep their size; only the label gives way in a narrow window.
+  // The intermediate part of a chip: an eye, the type symbols, and a small
+  // label, all in the chip's muted color. While the open panel shows what
+  // the chip hides (`data-revealed`), the eye is open and has the accent
+  // color. The symbols keep their size; only the label gives way in a
+  // narrow window.
   '.dez-tool-call__intermediate': {
     display: 'inline-flex',
     alignItems: 'center',
     gap: editorSize(5),
     minWidth: '0',
-    marginLeft: editorSize(2),
-    paddingLeft: editorSize(8),
-    borderLeft: '1px solid color-mix(in srgb, var(--color-text) 16%, transparent)',
   },
   '.dez-tool-call__eye, .dez-tool-call__type': {
     display: 'inline-flex',
