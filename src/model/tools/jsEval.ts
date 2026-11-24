@@ -1,12 +1,13 @@
 import * as z from 'zod'
 import { byteSizeText } from '../../utils/byteSize'
 import { countOf, countText } from '../../utils/countText'
+import { longDuration } from '../../utils/durationText'
 import { regExpSource } from '../../utils/regExpSource'
 import { endOf, startOf } from '../../utils/textCut'
 import { NATIVE_CANVAS_LIBRARY } from './appManifest'
 import { APP_RUN_MAX_OUTPUT_BYTES, APP_RUN_MAX_OUTPUT_FILES, APPS_INVOKE, APPS_SHOW, APPS_TOOL, APPS_VIRTUAL_ROOT, LIBRARIES_TEXT, LIBS_VIRTUAL_ROOT, STORED_TYPES } from './appsTool'
 import { WORK_VIRTUAL_ROOT } from './conversationWork'
-import { jobStartedText } from './jobs'
+import { jobStartedText, MAX_JOB_TIMEOUT_SECONDS } from './jobs'
 import RUNNER from './jsEvalRunner.js?raw'
 import { withoutLocalPaths } from './localPaths'
 import type { ProgramEnd } from './programRuns'
@@ -15,11 +16,12 @@ import { ToolError, type ToolArguments, type ToolDefinition } from './types'
 // `js_eval`: one run of code that a model wrote, in Deno, the JavaScript
 // runtime that Dez ships (`dez-deno`). The run is a script run, as the run
 // of a script app is (appInvoke.ts): one path runs both, as a job
-// (`runScriptJob`, controller/appInvoke.ts), and controller/jsEval.ts
-// waits for the job of the call. Rust gives Deno no permission but the
-// places of the run (no network, no environment variable, no program) and
-// writes the whole command line, and the OS holds the program to those
-// places (src-tauri/src/bundled_tools.rs, confinement.rs).
+// (`runScriptJob`, controller/appInvoke.ts). The call waits for the job a
+// short time (`JS_EVAL_CALL_WAIT_MS`, controller/jsEval.ts): code that
+// runs longer goes on as a job of the reply. Rust gives Deno no permission
+// but the places of the run (no network, no environment variable, no
+// program) and writes the whole command line, and the OS holds the program
+// to those places (src-tauri/src/bundled_tools.rs, confinement.rs).
 //
 // The code gets what the code of a script app gets, but the folder of an
 // app: copies of its inputs (`dez.inputs`), the output folder
@@ -96,10 +98,17 @@ export const JS_EVAL_MAX_TOOL_CALLS = 40
 const LEAST_CONSOLE_ROOM = 2000
 
 /** The time limit of a run with no `timeout_seconds`, and the most that a
- *  call can ask for. */
+ *  call can ask for: the most of a job, as code that runs longer than the
+ *  wait of its call goes on as a job (`JS_EVAL_CALL_WAIT_MS`). */
 export const JS_EVAL_DEFAULT_SECONDS = 30
 const MIN_SECONDS = 1
-export const JS_EVAL_MAX_SECONDS = 300
+export const JS_EVAL_MAX_SECONDS = MAX_JOB_TIMEOUT_SECONDS
+
+/** How long a `js_eval` call waits for the end of its code. Code that
+ *  runs longer goes on as a job of the reply (`TabJobs.startWithWait`),
+ *  and `jobs_wait` gives its result. The wait counts from the start of
+ *  the job, so the start of Deno counts too. */
+export const JS_EVAL_CALL_WAIT_MS = 1000
 
 // The name of the run folder in every text for a model. `/run/media/` and
 // `/run/user/` are known starts of a local path (localPaths.ts), so a path
@@ -156,7 +165,10 @@ export const JS_EVAL_TOOL: ToolDefinition = {
     + '(`/home/…`, `/tmp/…`, `~/…`): name an image or a clip by its id or its handle, not by the path of its copy, and give a tool a text that needs such a path in a call of your own. '
     + 'The clock and the time zone are those of the user\'s computer. '
     + 'Each call is a new run: only the files of the work folder stay from one call to the next. '
-    + `The call waits for the end of the code. A result holds at most the first ${JS_EVAL_TEXT_CAP} characters of the value. `
+    + `The call waits at most ${countOf(JS_EVAL_CALL_WAIT_MS / 1000, 'second')} for the end of the code. Code that runs longer goes on as a job: `
+    + 'the result of the call gives the id of the job, and `jobs_wait` gives the result of the code. '
+    + 'Each result tells how long the code ran. '
+    + `A result holds at most the first ${JS_EVAL_TEXT_CAP} characters of the value. `
     + `An error names the lines of your code as lines of \`${RUN_FOLDER_NAME}/${JS_EVAL_CODE_FILE}\`.`,
   parameters: [
     {
@@ -596,6 +608,49 @@ export function endedOutcome(end: Exclude<ProgramEnd, { kind: 'timedOut' }>, sub
 export function codeTimedOutText(timeoutMs: number): string {
   return `Dez stopped the code: it did not end within ${countOf(timeoutMs / 1000, 'second')}. `
     + `Make the code do less work, or give it more time with \`timeout_seconds\` (at most ${JS_EVAL_MAX_SECONDS}).`
+}
+
+/** The result of a `js_eval` call whose code still ran at the end of the
+ *  wait of the call (`JS_EVAL_CALL_WAIT_MS`): the code goes on as the job
+ *  `jobId`, the job `number` of the reply. The start is the one of a call
+ *  that started a job, so the chip of the call finds the job
+ *  (`startedJob`). */
+export function codeRunsAsJobText(jobId: string, number: number): string {
+  return `${jobStartedText(jobId, number)}\nThe code did not end within ${countOf(JS_EVAL_CALL_WAIT_MS / 1000, 'second')}, so it runs on as this job. `
+    + 'jobs_wait gives its result.'
+}
+
+/** The clock of the program of one `js_eval` run. Dez starts it right
+ *  before the program, and stops it at the end of the program, so it
+ *  tells the time that the program ran, also for a program that Dez
+ *  stopped. The code has no part in it: a line of the code can lie, and a
+ *  program that Dez stops writes none. */
+export class RunClock {
+  private startedAt: number | null = null
+  private endedAt: number | null = null
+
+  start(): void {
+    this.startedAt = Date.now()
+  }
+
+  stop(): void {
+    this.endedAt ??= Date.now()
+  }
+
+  /** The milliseconds that the program ran, up to now while it runs; null
+   *  for a program that did not start. */
+  get ms(): number | null {
+    return this.startedAt === null ? null : (this.endedAt ?? Date.now()) - this.startedAt
+  }
+}
+
+/** `text`, a result of a `js_eval` run, with the time that its program ran
+ *  (`clock`) as its last paragraph. A run whose program did not start
+ *  keeps its text as it is. The line is a part of the stored result, so
+ *  each later request sends the same bytes. */
+export function withRunTime(text: string, clock: RunClock): string {
+  const { ms } = clock
+  return ms === null ? text : `${text}\n\nThe code ran for ${longDuration(ms)}.`
 }
 
 /** The lines that tell of the open jobs `jobs` that the tool calls of the

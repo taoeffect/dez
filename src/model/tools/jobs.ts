@@ -71,7 +71,9 @@ export function newJobId(taken: (id: string) => boolean, random: () => number = 
 export interface JobCall {
   /** The place of the job in the order of the reply's job starts: 1 for
    *  the first job. Two calls can begin with the same words, so only the
-   *  number always tells them apart. */
+   *  number always tells them apart. A job that its call waited for gets
+   *  its number at the end of that wait (`TabJobs.startWithWait`), and a
+   *  job that ended within the wait gets none. */
   number: number
   /** How the call begins (`jobCallLabel`); blank for none. */
   label: string
@@ -167,7 +169,8 @@ export const JOB_LIMIT_TEXT = `Dez did not start this job: ${MAX_OPEN_JOBS} jobs
 // request before a provider can answer. The longest one is also far below
 // the most that a timer takes.
 const MIN_JOB_TIMEOUT_SECONDS = 10
-const MAX_JOB_TIMEOUT_SECONDS = 3600
+/** The longest time limit of a job, in seconds; also of a `js_eval` run. */
+export const MAX_JOB_TIMEOUT_SECONDS = 3600
 
 // A default time limit in words, as in `30 minutes`. Each default is a
 // whole count of minutes.

@@ -3,13 +3,14 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { jobCallLabel, jobsWaitResults } from '../../src/model/tools/jobs'
+import { codeRunsAsJobText } from '../../src/model/tools/jsEval'
 import { withoutLocalPaths } from '../../src/model/tools/localPaths'
 import { invocationAnswerText } from '../../src/model/tools/modelInvoke'
 import { UNEXPECTED_BRIDGE_ERROR_TEXT } from '../../src/model/tools/toolBridge'
 import { consoleErrors, resetConsoleErrors, screenshotOnFailure } from './harness/dom'
 import { appFilePath, makeConversation, mediaTempDir, seedConversation, workDir, writeTestFile } from './harness/fixtures'
-import { NO_JOBS_LIST_TEXT } from './harness/jobs'
-import { evalCall, expectReplyEnd, thrownError } from './harness/jsEval'
+import { NO_JOBS_LIST_TEXT, startedJob, waitCall } from './harness/jobs'
+import { codeResult, evalCall, expectReplyEnd, thrownError, withoutRunTime } from './harness/jsEval'
 import { startMockProviderApp, takeRequest, takeRequestTo, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, mockModelKey, replyText, sendChatReply, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
@@ -324,9 +325,9 @@ describe('js_eval sandbox', () => {
     sendToolCalls(first.reply, [evalCall('call_ask', probeCode(probes)), evalCall('call_worker', workerCode)])
 
     const second = await chatRequest()
-    expect(toolResult(second, 'call_ask').split('\n')).toStrictEqual(probeLines(probes))
+    expect(codeResult(second, 'call_ask').split('\n')).toStrictEqual(probeLines(probes))
     const workerRefusal = 'Requires read access to "/etc/passwd", run again with the --allow-read flag'
-    expect(toolResult(second, 'call_worker')).toBe(`${workerRefusal}\n\nConsole output of the code:\nerror: Uncaught (in worker "") ${workerRefusal}`)
+    expect(codeResult(second, 'call_worker')).toBe(`${workerRefusal}\n\nConsole output of the code:\nerror: Uncaught (in worker "") ${workerRefusal}`)
     await expectReplyEnd(setup, CALLER, second)
     expectPrivateFilesUnchanged()
     // Each call gave a value: a refusal that the code caught is no failure
@@ -365,7 +366,7 @@ describe('js_eval sandbox', () => {
     ])
 
     const second = await chatRequest()
-    expect(toolResult(second, 'call_import').split('\n')).toStrictEqual(probeLines(probes))
+    expect(codeResult(second, 'call_import').split('\n')).toStrictEqual(probeLines(probes))
     expect(thrownError(toolResult(second, 'call_thrown'))).toBe([
       'TypeError: Import \'file:///etc/passwd\' failed.',
       '    0: Permission denied (os error 13)',
@@ -383,8 +384,10 @@ describe('js_eval sandbox', () => {
     const first = await chatRequest()
     sendToolCalls(first.reply, [
       evalCall('call_output', 'const line = "x".repeat(65536)\nfor (;;) console.log(line)'),
-      // The heap of JavaScript has a limit, at which Deno ends.
-      evalCall('call_heap', 'const all = []\nfor (;;) all.push(new Array(100_000).fill(all.length))'),
+      // The heap of JavaScript has a limit, at which Deno ends. The time to
+      // fill it differs from computer to computer, so the code first waits
+      // more than the wait of its call: the run is a job in each case.
+      evalCall('call_heap', 'await new Promise((resolve) => setTimeout(resolve, 1500))\nconst all = []\nfor (;;) all.push(new Array(100_000).fill(all.length))'),
       // Typed arrays are not in that heap: the limit of the OS on the
       // memory of the program is their end, and the code goes on after it.
       evalCall('call_arrays', [
@@ -402,7 +405,7 @@ describe('js_eval sandbox', () => {
     ])
 
     const second = await chatRequest()
-    const output = toolResult(second, 'call_output')
+    const output = codeResult(second, 'call_output')
     expect(output.startsWith('The console output has 4,194,304 characters: this result holds only its start and its end, with a line of … between them.\n')).toBe(true)
     expect(output).toContain('Dez stopped the code: it wrote more than 4.0 MB of output.')
     expect(output).toContain('\n\nConsole output of the code:\nxxxx')
@@ -410,22 +413,29 @@ describe('js_eval sandbox', () => {
     // flood does not fill the requests.
     expect(output.length).toBeLessThan(21_000)
 
-    const heap = toolResult(second, 'call_heap')
-    expect(heap.startsWith('The system ended the code before it returned a value.')).toBe(true)
-    expect(heap).toContain('the code used more memory than a run can have.')
-    expect(heap).toContain('\n\nConsole output of the code:\n')
-    expect(heap).toContain('Fatal JavaScript out of memory')
+    const heapJob = startedJob(second, 'call_heap')
+    expect(toolResult(second, 'call_heap')).toBe(codeRunsAsJobText(heapJob, 1))
 
     // The limit of the OS is 2 GiB, and Deno needs a part of it for itself.
-    const arrays = /^(\d+) arrays, then RangeError: Array buffer allocation failed$/.exec(toolResult(second, 'call_arrays'))
+    const arrays = /^(\d+) arrays, then RangeError: Array buffer allocation failed$/.exec(codeResult(second, 'call_arrays'))
     expect(Number(arrays?.[1])).toBeGreaterThan(0)
     expect(Number(arrays?.[1])).toBeLessThan(8)
 
     expect(thrownError(toolResult(second, 'call_lines'))).toBe('Error: the real end\n    at default (file:///run/code.ts:3:7)')
-    const exited = toolResult(second, 'call_exit')
+    const exited = codeResult(second, 'call_exit')
     expect(exited).toContain('(exit code 3).')
     expect(exited.endsWith('The code wrote nothing to the console.')).toBe(true)
-    await expectReplyEnd(setup, CALLER, second)
+
+    sendToolCalls(second.reply, [waitCall('call_wait')])
+    const third = await chatRequest()
+    const [heapEnd] = jobsWaitResults(toolResult(third, 'call_wait'))
+    expect({ id: heapEnd.id, status: heapEnd.status }).toStrictEqual({ id: heapJob, status: 'failed' })
+    const heap = withoutRunTime(heapEnd.text)
+    expect(heap.startsWith('The system ended the code before it returned a value.')).toBe(true)
+    expect(heap).toContain('the code used more memory than a run can have.')
+    expect(heap).toContain('\n\nConsole output of the code:\n')
+    expect(heap).toContain('Fatal JavaScript out of memory')
+    await expectReplyEnd(setup, CALLER, third)
   })
 
   it('names the run folder of a call as /run, and cuts each other path of the computer at its known start', async () => {
@@ -450,14 +460,14 @@ describe('js_eval sandbox', () => {
     ])
 
     const second = await chatRequest()
-    expect(toolResult(second, 'call_places').split('\n')).toStrictEqual([
+    expect(codeResult(second, 'call_places').split('\n')).toStrictEqual([
       program, program, program, '/run/runner.js', 'file:///run/runner.js',
       'file:///run/code.ts', '/run/code.ts', '/run', '/run', '/run',
     ])
     expect(thrownError(toolResult(second, 'call_thrown'))).toBe(
       'Error: in /run\n    at default (file:///run/code.ts:2:7)\nCaused by: "file:///run/runner.js"\n\nConsole output of the code:\n/run',
     )
-    expect(toolResult(second, 'call_outside').split('\n')).toStrictEqual([withoutLocalPaths(pathToFileURL(keys).href), withoutLocalPaths(keys)])
+    expect(codeResult(second, 'call_outside').split('\n')).toStrictEqual([withoutLocalPaths(pathToFileURL(keys).href), withoutLocalPaths(keys)])
     await expectReplyEnd(setup, CALLER, second)
   })
 
@@ -513,7 +523,7 @@ describe('js_eval sandbox', () => {
     ].join('\n'))])
 
     const second = await chatRequest()
-    const [value, log] = toolResult(second, 'call_forged').split('\n\nConsole output of the code:\n')
+    const [value, log] = codeResult(second, 'call_forged').split('\n\nConsole output of the code:\n')
     const outcome = JSON.parse(value) as {
       refused: LineAnswer[]
       long: { isError: boolean, characters: number }
@@ -556,7 +566,8 @@ describe('js_eval sandbox', () => {
         'return outcomes.join("\\n")',
       ].join('\n')),
       // The code reads no answer, so the answers fill the input of its
-      // program, and Dez must not wait for the program to read them.
+      // program, and Dez must not wait for the program to read them. The
+      // run goes on after the wait of its call, as a job.
       evalCall('call_flood', [
         LINE_WRITER,
         'for (let id = 1; id <= 50000; id++) writeLine(callLine(id, "dez.tools/jobs_list"))',
@@ -570,14 +581,21 @@ describe('js_eval sandbox', () => {
     const second = await chatRequest()
     const refusal = 'The code made more than 40 tool calls, the most of one js_eval call, so Dez did not run this one. '
       + 'Make fewer calls in one run: do the rest of the work in a new js_eval call.'
-    expect(toolResult(second, 'call_many').split('\n')).toStrictEqual([...Array.from({ length: 40 }, () => 'ran'), refusal, refusal])
-    const flood = /^the code went on\n\n([\d,]+) tool calls of the code had not ended when the code ended, so Dez cut them short\. /.exec(toolResult(second, 'call_flood'))
+    expect(codeResult(second, 'call_many').split('\n')).toStrictEqual([...Array.from({ length: 40 }, () => 'ran'), refusal, refusal])
+    // No call after the limit started a job.
+    expect(codeResult(second, 'call_after')).toBe(NO_JOBS_LIST_TEXT)
+    const floodJob = startedJob(second, 'call_flood')
+    expect(toolResult(second, 'call_flood')).toBe(codeRunsAsJobText(floodJob, 1))
+
+    sendToolCalls(second.reply, [waitCall('call_wait')])
+    const third = await chatRequest()
+    const [flooded] = jobsWaitResults(toolResult(third, 'call_wait'))
+    expect({ id: flooded.id, status: flooded.status }).toStrictEqual({ id: floodJob, status: 'finished' })
+    const flood = /^the code went on\n\n([\d,]+) tool calls of the code had not ended when the code ended, so Dez cut them short\. /.exec(withoutRunTime(flooded.text))
     const unanswered = Number(flood?.[1].replaceAll(',', ''))
     expect(unanswered).toBeGreaterThan(40_000)
     expect(unanswered).toBeLessThan(50_000)
-    // No call after the limit started a job.
-    expect(toolResult(second, 'call_after')).toBe(NO_JOBS_LIST_TEXT)
-    await expectReplyEnd(setup, CALLER, second)
+    await expectReplyEnd(setup, CALLER, third)
   })
 
   it('takes the paths of the computer out of the arguments of a tool call of the code', async () => {

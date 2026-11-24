@@ -672,6 +672,96 @@ describe('TabJobs', () => {
       expect(() => run.jobs().start('model_invoke', heldWork().work, LONG)).toThrow(JOB_LIMIT_TEXT)
     })
   })
+
+  // A `js_eval` call waits a short time for its run, and a run that ends
+  // within it was never a job of the model.
+  describe('startWithWait', () => {
+    it('gives the result of a job that ends within the wait to its call alone: the job takes no number, and no list or wait shows it', async () => {
+      const run = heldWork()
+      const waited = jobs.startWithWait('js_eval', run.work, { ...LONG, label: 'return 2', inputs: ['a'] }, 1000)
+      await vi.advanceTimersByTimeAsync(999)
+      run.finish({ text: '2', assets: [image] })
+
+      expect(await waited).toStrictEqual({ ended: { id: expect.stringMatching(/^j-/), tool: 'js_eval', status: 'finished', text: '2', assets: [image], hidesAssets: false } })
+      expect(jobs.list()).toStrictEqual([])
+      expect(jobs.allJobs()).toStrictEqual([])
+      expect([jobs.running, jobs.ready, jobs.hasOpen]).toStrictEqual([0, 0, false])
+      expect(await jobs.wait(running())).toStrictEqual([])
+      // Its files are kept until the reply writes them.
+      expect(jobs.madeAssetSources()).toStrictEqual([IMAGE])
+      expect(jobs.start('image', heldWork().work, LONG).number).toBe(1)
+    })
+
+    it('gives the id and the next number of a job that still runs at the end of the wait, and from then on it is a job as any other', async () => {
+      const { id: firstId, number: firstNumber } = jobs.start('image', heldWork().work, LONG)
+      const run = heldWork()
+      const stop = new AbortController()
+      const waited = jobs.startWithWait('js_eval', run.work, { ...LONG, label: 'slow', signal: stop.signal }, 1000)
+      // A job that the work starts during the wait takes its number first.
+      const { number: innerNumber } = run.jobs().start('model_invoke', heldWork().work, LONG)
+      expect(jobs.list().map((job) => job.id)).toStrictEqual([firstId])
+      expect(jobs.running).toBe(1)
+
+      await vi.advanceTimersByTimeAsync(1000)
+      const result = await waited
+      if (!('started' in result)) throw new Error('The job did not go on.')
+      const { id, number } = result.started
+
+      expect([firstNumber, innerNumber, number]).toStrictEqual([1, 2, 3])
+      expect(jobs.list().map((job) => job.id)).toStrictEqual([firstId, id])
+      // A stop of the call after its wait leaves the job to the reply.
+      stop.abort(new Error('stop'))
+      expect(run.signal().aborted).toBe(false)
+
+      run.finish({ text: 'Ran.' })
+      expect(await jobs.wait(running(), { ids: [id] })).toStrictEqual<EndedJob[]>([
+        { id, tool: 'js_eval', status: 'finished', text: 'Ran.', assets: [], hidesAssets: false, call: { number: 3, label: 'slow' } },
+      ])
+    })
+
+    it('cancels the job at a stop of the call during the wait, and rejects with the stop', async () => {
+      const run = heldWork()
+      const stop = new AbortController()
+      const waited = jobs.startWithWait('js_eval', run.work, { ...LONG, signal: stop.signal }, 1000)
+      const reason = new Error('stop')
+
+      stop.abort(reason)
+
+      await expect(waited).rejects.toBe(reason)
+      expect(run.signal().aborted).toBe(true)
+      expect([jobs.running, jobs.hasOpen]).toStrictEqual([0, false])
+      expect(jobs.list()).toStrictEqual([])
+    })
+
+    it('gives no result when a stop of the tab ends the job during the wait', async () => {
+      const waited = jobs.startWithWait('js_eval', heldWork().work, LONG, 1000)
+
+      jobs.stopAll()
+
+      expect(await waited).toStrictEqual({ ended: null })
+    })
+
+    // Also a limit as long as the wait: the shortest limit of `js_eval` is
+    // its wait.
+    it('ends the job at its time limit within the wait with the text of its call', async () => {
+      const run = heldWork()
+      const waited = jobs.startWithWait('js_eval', run.work, { timeoutMs: 1000, timedOutText: (timeoutMs, state) => `Stopped after ${timeoutMs} ms in the state "${state}".` }, 1000)
+      run.report('Runs.')
+      await vi.advanceTimersByTimeAsync(1000)
+
+      expect(await waited).toMatchObject({ ended: { tool: 'js_eval', status: 'timed out', text: 'Stopped after 1000 ms in the state "Runs.".', assets: [] } })
+      expect(run.signal().aborted).toBe(true)
+      expect(jobs.list()).toStrictEqual([])
+    })
+
+    it(`counts the job in the limit of ${MAX_OPEN_JOBS} open jobs during the wait`, async () => {
+      for (let count = 1; count < MAX_OPEN_JOBS; count++) jobs.start('model_invoke', heldWork().work, LONG)
+      void jobs.startWithWait('js_eval', heldWork().work, LONG, 1000)
+
+      expect(() => jobs.start('model_invoke', heldWork().work, LONG)).toThrow(JOB_LIMIT_TEXT)
+      await expect(jobs.startWithWait('js_eval', heldWork().work, LONG, 1000)).rejects.toThrow(JOB_LIMIT_TEXT)
+    })
+  })
 })
 
 describe('writeJobAssets', () => {

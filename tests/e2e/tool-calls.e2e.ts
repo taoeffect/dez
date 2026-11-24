@@ -3,6 +3,7 @@ import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import type { LiveTimes } from '../../src/model/streams/types'
+import { jobsWaitResults } from '../../src/model/tools/jobs'
 import { unknownToolText } from '../../src/model/tools/registry'
 import { longDuration, longLiveDuration, shortDuration } from '../../src/utils/durationText'
 import { anthropicChatBody, anthropicMarkedUser, openAiChatBody } from './harness/chatBody'
@@ -10,7 +11,8 @@ import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, t
 import { appFilePath, conversationFilePath, filesIn, makeConversation, seedConversation, workDir, writeTestFile } from './harness/fixtures'
 import { decodedImage, generatedImagesDir, pasteImageReference, pngDataUrl, referencePath, shownImages, STRIPE_COLORS, STRIPES_PNG, STRIPES_SVG, WEBKIT_SVG_SIZES } from './harness/images'
 import { WAV_SAMPLE_RATE, monoWav, shownPlayers } from './harness/media'
-import { evalCall } from './harness/jsEval'
+import { startedJob } from './harness/jobs'
+import { evalCall, withoutRunTime } from './harness/jsEval'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, mockModelKey, openAiToolCall, replyText, sendAnthropicReply, sendChatReply, sendToolCalls, startEventStream, toolResult, toolResultTime, writeAnthropicEvent, writeChatFrame, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
@@ -1012,35 +1014,59 @@ describe('tool calls', () => {
     await waitForValue(browser, 'after Delete at the first chip', view, { lineAfterFirstChip: chipHeight, doc: together, caret: firstEnd, chips: 2 })
   })
 
-  // Two `js_eval` calls whose code waits, then a quick `model_list` call,
-  // in one group.
+  // Two `jobs_wait` calls that wait for jobs that the test ends, then a
+  // quick `model_list` call, in one group. Each job is a `js_eval` run of
+  // the round before, whose code waits for a file of the test in the work
+  // folder of the conversation: a `js_eval` call itself takes at most a
+  // second, then its run goes on as a job.
   it('counts the time of a slow call on its chip, keeps it, and tells it to the model in each later request', async () => {
     await newTab(browser)
     await pickModel(browser, TOOLER.name, TOOLER.modelName)
     await submit(browser, 'Wait, then list.')
+    const workFolder = appFilePath(setup.app.home, 'work', await activeConversationId(browser))
+    const untilFile = (name: string): string => [
+      `const file = \`\${dez.workFolder}/${name}\``,
+      'for (;;) {',
+      '  try {',
+      '    await Deno.stat(file)',
+      '    break',
+      '  } catch {',
+      '    await new Promise((resolve) => setTimeout(resolve, 50))',
+      '  }',
+      '}',
+      `return "${name}"`,
+    ].join('\n')
+    const release = (name: string): Promise<void> => fs.promises.writeFile(path.join(workFolder, name), '')
+    const start = await setup.mock.waitForRequest(browser)
+    sendToolCalls(start.reply, [evalCall('call_first_job', untilFile('first')), evalCall('call_second_job', untilFile('second'))])
     const first = await setup.mock.waitForRequest(browser)
     sendToolCalls(first.reply, [
-      evalCall('call_first', 'await new Promise((resolve) => setTimeout(resolve, 1600))\nreturn "first"'),
-      evalCall('call_second', 'await new Promise((resolve) => setTimeout(resolve, 2600))\nreturn "second"'),
+      openAiToolCall('call_first', 'jobs_wait', { jobs: startedJob(first, 'call_first_job') }),
+      openAiToolCall('call_second', 'jobs_wait', { jobs: startedJob(first, 'call_second_job') }),
       openAiToolCall('call_quick', 'model_list', { filter: 'tool' }),
     ])
+    // The chips of the group, after the two chips of the `js_eval` calls.
+    const groupTimes = async (): Promise<ToolChipTimeView[]> => (await toolChipTimes(browser)).slice(2)
+    const groupChips = async (): Promise<ToolChipView[]> => (await toolChips(browser)).slice(2)
     const running = (seconds: number): ToolChipTimeView => ({ phase: null, lead: 'spinner', time: { text: `${seconds}s`, live: true, title: `Running for ${longLiveDuration(seconds * 1000)}` } })
     const waiting: ToolChipTimeView = { phase: 'waiting', lead: 'spinner', time: null }
     const ran = (ms: number): ToolChipTimeView => ({ phase: null, lead: 'triangle', time: { text: shortDuration(ms), live: false, title: `Ran for ${longDuration(ms)}` } })
     const quick: ToolChipTimeView = { phase: null, lead: 'triangle', time: null }
-    await waitForValue(browser, 'first call at 1s', () => toolChipTimes(browser), [running(1), waiting, waiting])
+    await waitForValue(browser, 'first call at 1s', groupTimes, [running(1), waiting, waiting])
+    await release('first')
 
     // The block of a call that ended stays `running` until its group ends:
     // its chip shows the time that the store keeps for the call.
-    await waitForValue(browser, 'second call at 1s', async () => (await toolChipTimes(browser))[1], running(1))
+    await waitForValue(browser, 'second call at 1s', async () => (await groupTimes())[1], running(1))
     const { calls } = await sbpCall(browser, 'dez.model/streams/liveTimes', await activeTabId(browser)) as LiveTimes
     const firstMs = (calls.call_first.endedAt ?? NaN) - calls.call_first.startedAt
-    const [ended, , third] = await toolChipTimes(browser)
+    const [ended, , third] = await groupTimes()
     expect([ended, third]).toEqual([{ ...ran(firstMs), phase: 'ended' }, waiting])
     // The name of each chip tells what the chip shows: a call that ended,
     // the call that runs, and a call that waits.
-    expect((await toolChips(browser)).map(({ label }) => /, (\w+)$/.exec(label ?? '')?.[1] ?? null)).toEqual(['ended', 'running', 'waiting'])
-    await waitForValue(browser, 'second call at 2s', async () => (await toolChipTimes(browser))[1], running(2))
+    expect((await groupChips()).map(({ label }) => /, (\w+)$/.exec(label ?? '')?.[1] ?? null)).toEqual(['ended', 'running', 'waiting'])
+    await waitForValue(browser, 'second call at 2s', async () => (await groupTimes())[1], running(2))
+    await release('second')
 
     // The blocks keep the times of the two slow calls, and the next request
     // tells them to the model.
@@ -1052,12 +1078,12 @@ describe('tool calls', () => {
     }
     const secondMs = blockMs('call_second') ?? NaN
     expect([blockMs('call_first'), blockMs('call_quick')]).toEqual([firstMs, null])
-    expect(secondMs).toBeGreaterThanOrEqual(2600)
-    expect([toolResult(second, 'call_first'), toolResult(second, 'call_second')]).toEqual(['first', 'second'])
+    expect(secondMs).toBeGreaterThanOrEqual(2000)
+    expect(['call_first', 'call_second'].map((id) => withoutRunTime(jobsWaitResults(toolResult(second, id))[0].text))).toEqual(['first', 'second'])
     expect(['call_first', 'call_second', 'call_quick'].map((id) => toolResultTime(second, id))).toEqual([longDuration(firstMs), longDuration(secondMs), null])
-    await waitForValue(browser, 'final chips', () => toolChipTimes(browser), [ran(firstMs), ran(secondMs), quick])
+    await waitForValue(browser, 'final chips', groupTimes, [ran(firstMs), ran(secondMs), quick])
     // The name of a chip tells the time that its call took.
-    expect((await toolChips(browser)).map(({ label }) => /, took (.+)$/.exec(label ?? '')?.[1] ?? null)).toEqual([longDuration(firstMs), longDuration(secondMs), null])
+    expect((await groupChips()).map(({ label }) => /, took (.+)$/.exec(label ?? '')?.[1] ?? null)).toEqual([longDuration(firstMs), longDuration(secondMs), null])
 
     await sendChatReply(second.reply, TOOLER.modelName)
     const endedText = await endedReply(browser)
@@ -1069,7 +1095,7 @@ describe('tool calls', () => {
     // A new page: the record that beforeEach started is gone.
     await resetConsoleErrors(browser)
     await waitForValue(browser, 'restored active tab', () => activeConversationId(browser), conversationId)
-    await waitForValue(browser, 'restored chips', () => toolChipTimes(browser), [ran(firstMs), ran(secondMs), quick])
+    await waitForValue(browser, 'restored chips', async () => (await toolChipTimes(browser)).slice(2), [ran(firstMs), ran(secondMs), quick])
     await submit(browser, 'And again?')
     const later = await setup.mock.waitForRequest(browser)
     expectSentPrefix(second.body, later.body)

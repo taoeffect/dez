@@ -1,10 +1,12 @@
 import sbp from '@sbp/sbp'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MediaTagData } from '../model/chat/mediaTags'
-import { codeRunCall, type CodeRunCall } from '../model/tools/appInvoke'
-import { JOB_LIMIT_TEXT, madeAssetText, MAX_OPEN_JOBS } from '../model/tools/jobs'
+import { codeRunCall, scriptOutputNotStoredText, type CodeRunCall } from '../model/tools/appInvoke'
+import { JOB_LIMIT_TEXT, jobStartedText, madeAssetText, MAX_OPEN_JOBS } from '../model/tools/jobs'
 import {
+  codeRunsAsJobText,
   codeTimedOutText,
+  JS_EVAL_CALL_WAIT_MS,
   JS_EVAL_CODE_FILE,
   JS_EVAL_OUTPUT_BYTES,
   JS_EVAL_RUNNER,
@@ -40,17 +42,23 @@ import {
   stubToolRuns,
   TOOL_DONE,
   toolRuns,
+  type StubProgram,
 } from './testing'
 
 // The run of a `js_eval` call: a job of the reply that runs the code with
-// `runScriptJob`, which the call waits for. The rules of a script run have
-// their own tests (appInvoke.test.ts); the tests here tell what the code of
-// a call gets, and what the call gives.
+// `runScriptJob`, which the call waits for a short time. The rules of a
+// script run have their own tests (appInvoke.test.ts); the tests here tell
+// what the code of a call gets, and what the call gives.
+//
+// The clock of the computer stands still unless a test moves it, so a run
+// takes no time.
 
 const CLIP: Omit<MediaTagData, 'id' | 'other'> = { kind: 'audio', type: 'audio/wav', src: '/x/voice.wav', url: null, expires: null }
 const FLUX = { providerId: 'venice', modelId: 'flux' }
 // The entry of a `jobs_list` call of the code that gave `TOOL_DONE`.
 const LIST_CALL = { name: 'jobs_list', arguments: {}, status: 'success', result: TOOL_DONE.content }
+// The last paragraph of the result of a run that took no time.
+const NO_TIME = '\n\nThe code ran for less than 0.1 seconds.'
 
 // The jobs of the tab of the call.
 let jobs: TabJobs
@@ -103,12 +111,21 @@ async function untilCancelled(): Promise<BundledToolEnd> {
   return { kind: 'cancelled' }
 }
 
+// `program`, after it ran for `ms` on the clock of the computer.
+function taking(ms: number, program: StubProgram): StubProgram {
+  return async (run, onOutput) => {
+    vi.advanceTimersByTime(ms)
+    return program(run, onOutput)
+  }
+}
+
 // Makes `timeZone` the time zone of this computer.
 function setTimeZone(timeZone: string): void {
   vi.spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions').mockReturnValue({ timeZone } as Intl.ResolvedDateTimeFormatOptions)
 }
 
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] })
   resetNative()
   stubToolRuns()
   outputFolderHolds({})
@@ -122,17 +139,18 @@ beforeEach(() => {
 
 afterEach(() => {
   jobs.stopAll()
+  vi.useRealTimers()
   vi.restoreAllMocks()
 })
 
 describe('runJsEval', () => {
-  it('runs the code as a job that the call waits for, with the module of Dez, the description of the run, the code, and copies of the inputs in a new run folder, and gives the value', async () => {
+  it('runs the code as a job that the call waits for, with the module of Dez, the description of the run, the code, and copies of the inputs in a new run folder, and gives the value and the run time', async () => {
     native.program = returns('2')
 
     const result = await runJsEval(codeCall({ inputs: '@a @c', timeout_seconds: 20 }), running(), context())
 
     const folder = deletedWorkFolder()
-    expect(result).toStrictEqual({ content: '2', isError: false })
+    expect(result).toStrictEqual({ content: `2${NO_TIME}`, isError: false })
     expect(native.savedFiles.map(({ file, content }) => [file, content])).toStrictEqual([
       [{ root: 'cache', path: `${folder}/${JS_EVAL_RUNNER_FILE}` }, JS_EVAL_RUNNER],
       [{ root: 'cache', path: `${folder}/${RUN_DESCRIPTION_FILE}` }, expect.any(String)],
@@ -162,8 +180,9 @@ describe('runJsEval', () => {
       nativeCanvas: true,
       timeZone: 'Europe/Berlin',
     }])
-    // The call took the result of its job.
-    expect(jobs.list()).toMatchObject([{ tool: 'js_eval', status: 'finished', delivered: true, inputs: ['a', 'c'] }])
+    // The call took the result of its job, which was never a job of the
+    // model.
+    expect(jobs.list()).toStrictEqual([])
     expect(jobs.ready).toBe(0)
   })
 
@@ -185,7 +204,18 @@ describe('runJsEval', () => {
       return ENDED
     }
 
-    expect(await runJsEval(codeCall(), running(), context())).toStrictEqual({ content: '2\n\nConsole output of the code:\nstep 1\na warning', isError: false })
+    expect(await runJsEval(codeCall(), running(), context())).toStrictEqual({ content: `2\n\nConsole output of the code:\nstep 1\na warning${NO_TIME}`, isError: false })
+  })
+
+  // The clock counts what the program did, not the files that Dez wrote
+  // before it or kept after it.
+  it('tells the time that the program ran as the last paragraph of the result, before the lines of its assets', async () => {
+    native.program = taking(2400, returns('drew'))
+    outputFolderHolds({ 'chart.png': PNG_BYTES })
+
+    const result = await runJsEval(codeCall(), running(), context())
+
+    expect(result.content.split('\n').slice(-3)).toStrictEqual(['', 'The code ran for 2.4 seconds.', `${madeAssetText('image', 'x')}.`])
   })
 
   it('puts the files of the output folder into the reply as assets of js_eval, and names each by its new id', async () => {
@@ -263,6 +293,7 @@ describe('runJsEval', () => {
     expect(result.content).toContain('Error: x\n    at f (file:///libs/three/x.js:3:1)\n    at default (file:///run/code.ts:1:41)')
     expect(result.content).toContain('Console output of the code:\ncwd /run, made as /run\nkept /work/a.json and /work/b.json')
     expect(result.content).not.toMatch(/\/home\/u|\/mnt\/disk/)
+    expect(result.content.endsWith(NO_TIME)).toBe(true)
     expect(native.listedTrees).toStrictEqual([])
     expect(written).toStrictEqual([])
     deletedWorkFolder()
@@ -276,7 +307,8 @@ describe('runJsEval', () => {
     expect(result).toMatchObject({ isError: true, bridged: { calls: [LIST_CALL], more: 0 } })
   })
 
-  it('gives the text of the time limit for code that ran too long, with no console output and no list of its tool calls', async () => {
+  it('gives the text of the time limit, with the time that the program ran, for code that ran too long, with no console output and no list of its tool calls', async () => {
+    vi.useFakeTimers()
     native.program = async (_run, onOutput) => {
       onOutput({ stream: 'stdout', text: 'step 1\n' })
       return untilCancelled()
@@ -284,8 +316,56 @@ describe('runJsEval', () => {
 
     const result = await runJsEval({ ...codeCall(), timeoutMs: 200 }, running(), context())
 
-    expect(result).toStrictEqual({ content: codeTimedOutText(200), isError: true })
+    expect(result).toStrictEqual({ content: `${codeTimedOutText(200)}\n\nThe code ran for 0.2 seconds.`, isError: true })
     await vi.waitFor(() => deletedWorkFolder())
+  })
+
+  // Dez's own clock of the job ends the run first in most cases.
+  it('gives the text of the time limit with the run time when the program tells that its limit passed', async () => {
+    native.program = taking(20_000, async () => ({ kind: 'timedOut' }))
+
+    expect(await runJsEval(codeCall({ timeout_seconds: 20 }), running(), context())).toStrictEqual({ content: `${codeTimedOutText(20_000)}\n\nThe code ran for 20 seconds.`, isError: true })
+  })
+
+  it('gives the error of output files that Dez could not keep with the run time', async () => {
+    native.program = taking(400, returns('drew'))
+    native.fileTree = () => {
+      throw new Error('The disk is gone.')
+    }
+
+    expect(await runJsEval(codeCall(), running(), context())).toStrictEqual({ content: `${scriptOutputNotStoredText('js_eval', 'code')}\n\nThe code ran for 0.4 seconds.`, isError: true })
+  })
+
+  it('gives the job of code that still runs at the end of the wait of its call, and the result of the job tells the whole time that the program ran', async () => {
+    vi.useFakeTimers()
+    native.program = async (run, onOutput) => {
+      await new Promise((resolve) => setTimeout(resolve, 2400))
+      return returns('2')(run, onOutput)
+    }
+
+    const call = runJsEval(codeCall(), running(), context())
+    await vi.advanceTimersByTimeAsync(JS_EVAL_CALL_WAIT_MS)
+    const [job] = jobs.list()
+
+    expect(await call).toStrictEqual({ content: codeRunsAsJobText(job.id, 1), isError: false })
+    expect(job).toMatchObject({ tool: 'js_eval', status: 'running', call: { number: 1, label: 'return 1 + 1' } })
+    await vi.advanceTimersByTimeAsync(1400)
+    expect(await jobs.wait(running())).toMatchObject([{ id: job.id, status: 'finished', text: '2\n\nThe code ran for 2.4 seconds.', call: { number: 1 } }])
+    await vi.waitFor(() => deletedWorkFolder())
+  })
+
+  it('gives the jobs that the tool calls of a quick run started the first numbers, with no gap for the run', async () => {
+    const invoke = { selector: 'dez.tools/model_invoke', arguments: { model: 'venice/flux', prompt: 'A fox.' } }
+    native.program = callingProgram([invoke, invoke])
+    toolRuns.tool = async (_call, _signal, toolContext) => {
+      const { id, number } = toolContext.jobs.start('model_invoke', heldWork().work, LONG)
+      return { content: jobStartedText(id, number), isError: false }
+    }
+
+    await runJsEval(codeCall(), running(), context())
+
+    expect(jobs.list().map(({ call }) => call.number)).toStrictEqual([1, 2])
+    expect(jobs.start('image', heldWork().work, LONG).number).toBe(3)
   })
 
   it('tells of a computer whose system cannot confine Deno as an error result, with no text of the native error', async () => {
@@ -303,7 +383,7 @@ describe('runJsEval', () => {
     expect(native.runs).toStrictEqual([])
   })
 
-  it('cancels the job at a stop of the call: its code and its tool call stop, and the call rejects with the stop', async () => {
+  it('cancels the job at a stop of the call during its wait: its code and its tool call stop, and the call rejects with the stop', async () => {
     const stop = new AbortController()
     native.program = async (_run, onOutput) => {
       onOutput({ stream: 'stdout', text: protocolLine({ type: 'call', id: 1, selector: 'dez.tools/jobs_wait' }) })
@@ -321,7 +401,9 @@ describe('runJsEval', () => {
 
     expect(await work).toBe(STOP)
     expect(toolSignal?.aborted).toBe(true)
-    expect(jobs.list()).toMatchObject([{ tool: 'js_eval', status: 'cancelled' }])
+    // The job was never a job of the model.
+    expect(jobs.list()).toStrictEqual([])
+    expect(jobs.running).toBe(0)
     await vi.waitFor(() => deletedWorkFolder())
     expect(native.cancelledRuns).toStrictEqual([native.runs[0].runId])
   })

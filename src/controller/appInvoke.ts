@@ -48,6 +48,7 @@ import {
   JsEvalOutput,
   RUN_DESCRIPTION_FILE,
   textForModel,
+  withRunTime,
   type RunSubject,
 } from '../model/tools/jsEval'
 import { PROGRAM_READS_INPUTS, programNotStartedText, type ProgramEnd } from '../model/tools/programRuns'
@@ -393,7 +394,17 @@ export function runScriptJob(
       conversationFolder: conversationId,
       nativeCanvas: app === null || app.call.nativeCanvas,
     }
+    // The clock of a run of code times only its program, and each end of
+    // the program tells that time as the last paragraph of its text. A run
+    // whose program did not start (`runProgram` throws) tells none. When
+    // the time limit of the job stops the run, the job reads the clock for
+    // its text (`JobOptions.timedOutText`, controller/jsEval.ts).
+    const clock = run.kind === 'code' ? run.clock : null
+    const told = ({ text, isError }: { text: string, isError: boolean }, assets: MadeAsset[]): JobOutcome => (
+      { text: clock === null ? text : withRunTime(text, clock), isError, assets }
+    )
     let end: ProgramEnd
+    clock?.start()
     try {
       end = await runProgram('deno', toolName, program, signal, ({ stream, text }, writeInput) => {
         for (const line of output.add(stream, text)) bridge?.call(line, writeInput)
@@ -401,6 +412,8 @@ export function runScriptJob(
     } catch (error) {
       if (bridge) await discardMadeAssets((await bridge.end()).made)
       throw error
+    } finally {
+      clock?.stop()
     }
     const bridged = bridge ? await bridge.end() : null
     if (bridged) tools?.onCalls?.(bridged.calls)
@@ -414,21 +427,25 @@ export function runScriptJob(
     // go as at a stop: the code did not end.
     if (end.kind === 'timedOut') {
       await discardMadeAssets(made)
-      return { text: texts.timedOut(call.timeoutMs, runsState), isError: true, assets: [] }
+      return told({ text: texts.timedOut(call.timeoutMs, runsState), isError: true }, [])
     }
 
     const { line, log } = endedRun(end, output)
     const hasConsole = log.trim() !== ''
     const outcome = app === null ? codeRunOutcome(end, line, hasConsole) : appRunOutcome(end, line, hasConsole, app.call.nativeCanvas)
-    if (outcome.isError) return { ...scriptRunResult(outcome, log, forModel, NO_APP_OUTPUTS, calls, run.kind), assets: made }
+    if (outcome.isError) return told(scriptRunResult(outcome, log, forModel, NO_APP_OUTPUTS, calls, run.kind), made)
     let kept: { outputs: AppOutputs, assets: MadeAsset[] }
     try {
       kept = await keptOutputs(folder, ffmpegRun, run.kind, signal, report, keepAsset)
     } catch (error) {
       await discardMadeAssets(made)
-      throw error
+      // The program of code ran, so the error result of its output files
+      // tells its run time too.
+      if (clock === null || signal.aborted || !(error instanceof ToolError)) throw error
+      console.error('Dez kept no output file of a js_eval run:', error)
+      return told({ text: error.message, isError: true }, [])
     }
-    return { ...scriptRunResult(outcome, log, forModel, kept.outputs, calls, run.kind), assets: [...kept.assets, ...made] }
+    return told(scriptRunResult(outcome, log, forModel, kept.outputs, calls, run.kind), [...kept.assets, ...made])
   })
 }
 

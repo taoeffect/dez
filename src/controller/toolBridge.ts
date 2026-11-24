@@ -11,7 +11,7 @@ import { isOpenJob } from '../model/tools/jobs'
 import { jsEvalAnswerLine, type JsEvalCallLine, type RunFolderForms } from '../model/tools/jsEval'
 import { assetHandle, bridgedToolCall, shownSelector, UNEXPECTED_BRIDGE_ERROR_TEXT, withHandles, type BridgeRules } from '../model/tools/toolBridge'
 import type { ToolRunResult } from '../model/tools/types'
-import type { MadeAsset, ToolJobs } from './jobs'
+import type { JobOptions, MadeAsset, ToolJobs } from './jobs'
 import type { ProgramInputWriter } from './programRuns'
 import { discardShownPictures } from './shownPictures'
 import type { ToolRunContext } from './tools'
@@ -220,12 +220,14 @@ export class AppRunBridge extends CallBridge {
     // stands for a handle. Its label names the handle, and its inputs (for
     // a compaction, `JobInfo.inputs`) leave the asset out, as no text of
     // the conversation holds it yet.
+    const callOptions = (options: JobOptions): JobOptions => ({
+      ...options,
+      ...(options.label !== undefined && { label: withHandles(options.label, handles) }),
+      inputs: (options.inputs ?? []).filter((id) => !handles.has(id)),
+    })
     this.callJobs = {
-      start: (tool, work, options) => jobs.start(tool, work, {
-        ...options,
-        ...(options.label !== undefined && { label: withHandles(options.label, handles) }),
-        inputs: (options.inputs ?? []).filter((id) => !handles.has(id)),
-      }),
+      start: (tool, work, options) => jobs.start(tool, work, callOptions(options)),
+      startWithWait: (tool, work, options, waitMs) => jobs.startWithWait(tool, work, callOptions(options), waitMs),
       get running() {
         return jobs.running
       },

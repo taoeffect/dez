@@ -32,7 +32,7 @@ describe('jsEvalCall', () => {
     expect(jsEvalCall({ code: 'return 1' })).toStrictEqual({ code: 'return 1', timeoutMs: 30_000 })
   })
 
-  it.each([1, 300])('takes a time limit of %i seconds', (seconds) => {
+  it.each([1, 3600])('takes a time limit of %i seconds', (seconds) => {
     expect(jsEvalCall({ code: 'return 1', timeout_seconds: seconds }).timeoutMs).toBe(seconds * 1000)
   })
 
@@ -41,7 +41,7 @@ describe('jsEvalCall', () => {
     expect(() => jsEvalCall(args)).toThrow('`code`')
   })
 
-  it.each([0, 301, 1.5, '30'])('refuses the time limit %j', (seconds) => {
+  it.each([0, 3601, 1.5, '30'])('refuses the time limit %j', (seconds) => {
     expect(() => jsEvalCall({ code: 'return 1', timeout_seconds: seconds })).toThrow(ToolError)
     expect(() => jsEvalCall({ code: 'return 1', timeout_seconds: seconds })).toThrow('`timeout_seconds`')
   })

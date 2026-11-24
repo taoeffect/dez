@@ -557,8 +557,10 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // folder, the work folder of the conversation, the fonts, and
   // skia-canvas, and no network. The code calls the other Dez tools
   // through Dez, with the context of this call (toolBridge.ts). The run is
-  // a job that the call waits for: the model needs the value for its next
-  // step. A stop of the reply stops the code.
+  // a job that the call waits for a short time (`JS_EVAL_CALL_WAIT_MS`):
+  // the model needs the value for its next step, and most code ends
+  // within it. Code that runs longer goes on as a job of the reply, which
+  // `jobs_wait` reads. A stop of the reply during the wait stops the code.
   async js_eval (args, signal, context) {
     return runJsEval(codeRunCall(args, context.sections()), signal, context)
   },

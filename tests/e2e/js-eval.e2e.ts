@@ -5,31 +5,33 @@ import { toolBlockText } from '../../src/model/chat/toolBlocks'
 import { ASSET_INFO_COLUMNS } from '../../src/model/tools/assetInfo'
 import { PICTURES_SHOWN_NOTE } from '../../src/model/tools/assetView'
 import { jobStartedText, jobsWaitResults, startedJobId } from '../../src/model/tools/jobs'
-import { codeTimedOutText } from '../../src/model/tools/jsEval'
+import { codeRunsAsJobText, codeTimedOutText } from '../../src/model/tools/jsEval'
 import { byteSizeText } from '../../src/utils/byteSize'
 import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
 import { expectNoLinkedFile, linkedDropDir, openDroppedFiles } from './harness/drops'
 import { appFilePath, conversationFilePath, filesIn, newFileIn, workDir } from './harness/fixtures'
 import { generatedImagesDir, shownImages, STRIPES_PNG } from './harness/images'
-import { NO_JOBS_LIST_TEXT, waitCall } from './harness/jobs'
-import { evalCall, expectReplyEnd as expectEnd, expectRunsEnded, thrownError } from './harness/jsEval'
+import { NO_JOBS_LIST_TEXT, runToolJob, waitCall } from './harness/jobs'
+import { codeResult, evalCall, expectReplyEnd as expectEnd, expectRunsEnded, runTime, thrownError, withoutRunTime } from './harness/jsEval'
 import { shownPlayers, WEBM_VIDEO } from './harness/media'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendChatReply, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
 import { processExists, runningProgram } from './harness/processes'
 import { mediaFacts, pixelColors } from './harness/programs'
 import type { E2EBrowser } from './harness/session'
-import { activeConversationId, endedReply, newTab, openSeededConversation, openToasts, sbpCall, submit } from './harness/thread'
+import { activeConversationId, activeTabId, endedReply, newTab, openSeededConversation, openToasts, sbpCall, submit } from './harness/thread'
 import { codePanel, hiddenPart, hidingPart, intermediateParts, pressToolChip, revealingPart, toolChips, toolPanel } from './harness/toolChips'
 
 // The `js_eval` tool, driven through the real app against a mock chat model
 // in this process. The app runs the code of each call in the real Deno of
-// the debug build, as a job of the reply that the call waits for:
+// the debug build, as a job of the reply that the call waits for, for at
+// most 1 second:
 // - the result of a call is the value that the code returned (a string as
 //   it is, data as JSON, any other value as Deno shows it, also data with a
-//   value in it that JSON loses), then the console output of the code; the
-//   code can be TypeScript, it can load a built-in module, it has the time
-//   zone of the app, and a timer that it leaves does not hold the call;
+//   value in it that JSON loses), then the console output of the code, then
+//   how long the code ran; the code can be TypeScript, it can load a
+//   built-in module, it has the time zone of the app, and a timer that it
+//   leaves does not hold the call;
 // - code that threw gives an error result that names the lines of the code
 //   as lines of `/run/code.ts`, with the causes of the error; a syntax
 //   error, a static `import`, a refused permission, and a refused package
@@ -38,7 +40,10 @@ import { codePanel, hiddenPart, hidingPart, intermediateParts, pressToolChip, re
 //   at the time limit of its call, give an error result, and the chip of
 //   such a call shows that it failed; code that returned no value gives a
 //   result that tells so, and no error;
-// - Stop ends the code of a call that runs;
+// - code that does not end within that wait goes on as a job of the reply,
+//   whose result and files the model gets with `jobs_wait`; a run that
+//   ended within the wait took no job number; Stop hands the job of such a
+//   run on, and the close of its tab ends its code;
 // - every run folder is gone after its call;
 // - the code gets a copy of each input of its call (`inputs`), also of a
 //   linked file, and Dez keeps each image and clip that the code leaves in
@@ -71,7 +76,9 @@ import { codePanel, hiddenPart, hidingPart, intermediateParts, pressToolChip, re
 // names the run folder in an error stack, in `import.meta.url`, and in
 // `Deno.cwd()`. No request holds the path or the name of a linked file.
 //
-// One app session serves the whole file; each test starts in a new tab.
+// One app session serves the whole file; each test starts in a new tab. A
+// test that needs a job makes its code wait more than 1 second; the code of
+// the others ends well within the wait.
 
 const CALLER: MockProvider = { id: 'caller', name: 'Caller Mock', modelId: 'caller-model', modelName: 'Caller Model' }
 const CHAT_PATH = mockChatPath(CALLER)
@@ -163,14 +170,14 @@ describe('js_eval tool', () => {
     ])
 
     const second = await chatRequest()
-    expect(toolResult(second, 'call_exact')).toBe('18446744073709551616n')
-    expect(toolResult(second, 'call_text')).toBe('one\ntwo')
-    expect(toolResult(second, 'call_data')).toBe('{\n  "length": 5,\n  "hash": 64\n}\n\nConsole output of the code:\nthe point { x: 3, y: 4 }\na warning')
-    expect(toolResult(second, 'call_lost')).toBe('{ counts: Map(1) { "a" => 3 }, unique: Set(1) { 1 }, list: [ 1, NaN ] }')
-    expect(toolResult(second, 'call_date')).toBe('{\n  "when": "1970-01-01T00:00:00.000Z"\n}')
-    expect(toolResult(second, 'call_place')).toBe(`/run file:///run/code.ts ${APP_TIME_ZONE}`)
-    expect(toolResult(second, 'call_timer')).toBe('done')
-    expect(toolResult(second, 'call_none')).toBe('The code returned no value, and it wrote nothing to the console. Give the result with `return`.')
+    expect(codeResult(second, 'call_exact')).toBe('18446744073709551616n')
+    expect(codeResult(second, 'call_text')).toBe('one\ntwo')
+    expect(codeResult(second, 'call_data')).toBe('{\n  "length": 5,\n  "hash": 64\n}\n\nConsole output of the code:\nthe point { x: 3, y: 4 }\na warning')
+    expect(codeResult(second, 'call_lost')).toBe('{ counts: Map(1) { "a" => 3 }, unique: Set(1) { 1 }, list: [ 1, NaN ] }')
+    expect(codeResult(second, 'call_date')).toBe('{\n  "when": "1970-01-01T00:00:00.000Z"\n}')
+    expect(codeResult(second, 'call_place')).toBe(`/run file:///run/code.ts ${APP_TIME_ZONE}`)
+    expect(codeResult(second, 'call_timer')).toBe('done')
+    expect(codeResult(second, 'call_none')).toBe('The code returned no value, and it wrote nothing to the console. Give the result with `return`.')
     await expectReplyEnd(second)
     await waitForValue(browser, 'chip states', chipStates, Array(8).fill('success'))
     expect(await consoleErrors(browser)).toStrictEqual([])
@@ -234,24 +241,34 @@ describe('js_eval tool', () => {
     sendToolCalls(first.reply, [evalCall('call_loop', 'console.log("started")\nfor (;;) {}', { timeout_seconds: 1 })])
 
     const second = await chatRequest()
-    // The stop ends the job of the run, which keeps no console output.
-    expect(toolResult(second, 'call_loop')).toBe(codeTimedOutText(1000))
+    // The stop ends the job of the run, which keeps no console output. The
+    // limit is as long as the wait of the call: the call gets the end of
+    // the run, not a job.
+    expect(codeResult(second, 'call_loop')).toBe(codeTimedOutText(1000))
     await expectReplyEnd(second)
     await waitForValue(browser, 'chip states', chipStates, ['error'])
   })
 
-  it('ends the code of a call when the user stops the reply, and deletes its run folder', async () => {
+  it('runs code that does not end within 1 second on as a job: Stop hands the job on, and the close of the tab ends the code and deletes its run folder', async () => {
     await submit(browser, 'Wait.')
+    const tabId = await activeTabId(browser)
     const first = await chatRequest()
     sendToolCalls(first.reply, [evalCall('call_wait', 'await new Promise((resolve) => setTimeout(resolve, 280_000))', { timeout_seconds: 300 })])
+    const second = await chatRequest()
+    const started = toolResult(second, 'call_wait')
+    expect(started).toBe(codeRunsAsJobText(String(startedJobId(started)), 1))
     const program = await runningProgram(browser, workRoot)
 
-    // While a reply runs, the Submit button stops it.
+    // While a reply runs, the Submit button stops it. Its job goes on for
+    // the next reply of the tab.
     await pointerClick(browser, '.submit-button')
+    await endedReply(browser)
+    expect(processExists(program)).toBe(true)
+
+    await sbpCall(browser, 'dez.controller/closeTab', tabId)
 
     await waitForValue(browser, 'the program of the call runs', async () => processExists(program), false)
     await waitForValue(browser, 'work folders', () => filesIn(workRoot), [])
-    await endedReply(browser)
     expect(setup.mock.hasWaitingRequest()).toBe(false)
     expect(await openToasts(browser, 'error')).toStrictEqual([])
     // A stop is no failure of the tool.
@@ -266,11 +283,11 @@ describe('js_eval tool', () => {
     sendToolCalls(first.reply, [evalCall('call_write', 'await Deno.writeTextFile(`${dez.workFolder}/note.txt`, "kept")\nreturn dez.workFolder')])
 
     const second = await chatRequest()
-    expect(toolResult(second, 'call_write')).toBe('/work')
+    expect(codeResult(second, 'call_write')).toBe('/work')
     sendToolCalls(second.reply, [evalCall('call_read', 'return await Deno.readTextFile(`${dez.workFolder}/note.txt`)')])
 
     const third = await chatRequest()
-    expect(toolResult(third, 'call_read')).toBe('kept')
+    expect(codeResult(third, 'call_read')).toBe('kept')
     await expectReplyEnd(third)
     expect(await filesIn(folder)).toStrictEqual(['note.txt'])
     await waitForValue(browser, 'saved conversation', async () => fs.existsSync(conversationFilePath(setup.app.home, conversationId)), true)
@@ -297,7 +314,7 @@ describe('js_eval tool', () => {
     ].join('\n'), { inputs: '@c @b' })])
 
     const second = await chatRequest()
-    const result = toolResult(second, 'call_inputs')
+    const result = codeResult(second, 'call_inputs')
     // The inputs are in the order of the call, each a copy in the run
     // folder.
     expect(result.split('\n\n')[0].split('\n')).toStrictEqual([
@@ -324,12 +341,14 @@ describe('js_eval tool', () => {
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 
-  it('draws text with skia-canvas and the fonts that Dez ships, and encodes a frame sequence of dez-media/frames into one clip with the alpha of each pixel', async () => {
+  it('draws text with skia-canvas and the fonts that Dez ships, and encodes a frame sequence of dez-media/frames into one clip with the alpha of each pixel, in a run that goes on as a job: jobs_wait gives its result, its run time, and its files', async () => {
     const imagesBefore = await filesIn(imagesDir)
     const videosBefore = await filesIn(videoDir)
     await submit(browser, 'Draw a title.')
     const first = await chatRequest()
-    sendToolCalls(first.reply, [evalCall('call_draw', [
+    const { jobId, started, result: drawn, next } = await runToolJob(chatRequest, first, 'js_eval', 'call_draw', evalCall('call_draw', [
+      // More than the 1 second that the call waits for the run.
+      'await new Promise((resolve) => setTimeout(resolve, 1500))',
       'const { Canvas } = await import("skia-canvas")',
       'const { useShippedFonts } = await import("dez-media/canvas")',
       'const { FrameWriter } = await import("dez-media/frames")',
@@ -351,18 +370,23 @@ describe('js_eval tool', () => {
       `for (let index = 0; index < pixels.length; index += 4) pixels.set(${JSON.stringify(GLOW_COLOR)}, index)`,
       'for (let frame = 0; frame < count; frame += 1) frames.add(pixels)',
       'return { ink, first: families.split(", ")[0], frames: frames.end() }',
-    ].join('\n'))])
+    ].join('\n')))
+    expect(started).toBe(codeRunsAsJobText(jobId, 1))
+    expect({ status: drawn.status, number: drawn.call.number }).toStrictEqual({ status: 'finished', number: 1 })
+    // The run time counts the wait of the code.
+    expect(Number.parseFloat(runTime(drawn.text))).toBeGreaterThanOrEqual(1.5)
 
-    const second = await chatRequest()
-    const result = toolResult(second, 'call_draw')
+    const result = withoutRunTime(drawn.text)
     const { ink, first: family, frames } = JSON.parse(result.split('\n\n')[0]) as { ink: number, first: string, frames: number }
     expect({ family, frames }).toStrictEqual({ family: '"Noto Sans"', frames: GLOW.count })
     expect(ink).toBeGreaterThan(300)
     expect(result).toContain(`Dez keeps 2 files of the output folder: glow.frames/ (video clip: ${GLOW.count} frames, PNG in MOV with alpha), title.png (image).`)
     expect(result.endsWith('\nMade the video clip @a.\nMade the image @b.')).toBe(true)
-    await sendChatReply(second.reply, CALLER.modelName)
+    await sendChatReply(next.reply, CALLER.modelName)
 
-    await endedReply(browser)
+    // The files of the run have the mark of its job.
+    const reply = await endedReply(browser)
+    expect(madeImages(reply)).toStrictEqual([{ id: 'b', marks: `tool=js_eval|made-by=${jobId}`, stored: true }])
     const picture = fs.readFileSync(path.join(imagesDir, await newFileIn(browser, imagesDir, imagesBefore)))
     expect([picture.readUInt32BE(16), picture.readUInt32BE(20)]).toStrictEqual([240, 64])
     // The clip has each frame of the sequence once, and each pixel as the
@@ -406,7 +430,7 @@ describe('js_eval tool', () => {
 
     const second = await chatRequest()
     const pngSize = byteSizeText(STRIPES_PNG.length)
-    expect(toolResult(second, 'call_facts').split('\n')).toStrictEqual([
+    expect(codeResult(second, 'call_facts').split('\n')).toStrictEqual([
       ASSET_INFO_COLUMNS,
       `@a | image | PNG | 90x20 | ${pngSize} | shown | from the user`,
       `@b | image | PNG | 90x20 | ${pngSize} | shown | from the user`,
@@ -414,15 +438,15 @@ describe('js_eval tool', () => {
     ])
     // The code knows each new image by its handle, and the last lines of
     // the result give the id of each handle.
-    const images = toolResult(second, 'call_images')
+    const images = codeResult(second, 'call_images')
     expect(images.startsWith('Made the image @&2 from @&1. The image @&2 is 45x10 pixels.\n\n')).toBe(true)
     expect(images.endsWith('\nMade the image @d (handle &1).\nMade the image @e (handle &2).')).toBe(true)
-    const viewed = toolResult(second, 'call_view')
+    const viewed = codeResult(second, 'call_view')
     expect(viewed.split('\n')[0]).toBe(`@b | image | PNG | 90x20 | ${pngSize}`)
     expect(viewed).not.toContain(PICTURES_SHOWN_NOTE)
     // The error of a tool is the error text that a call of the model gets.
     const failure = 'No image of this conversation has the id @zz. Its images are @a, @b, @d, @e: call again with one of these ids.'
-    expect(toolResult(second, 'call_caught')).toBe(`Error: ${failure}\n${NO_JOBS_LIST_TEXT}`)
+    expect(codeResult(second, 'call_caught')).toBe(`Error: ${failure}\n${NO_JOBS_LIST_TEXT}`)
     // The stack names the line of the code that made the call.
     expect(thrownError(toolResult(second, 'call_thrown'))).toBe(`Error: ${failure}\n    at default (file:///run/code.ts:2:11)`)
 
@@ -435,7 +459,7 @@ describe('js_eval tool', () => {
     // their ids, and the request after it sends the same messages again.
     sendToolCalls(second.reply, [evalCall('call_made', 'return await dez.sbp("dez.tools/asset_info", { assets: "@d @e" })')])
     const third = await chatRequest()
-    const [, flipped, scaled] = toolResult(third, 'call_made').split('\n')
+    const [, flipped, scaled] = codeResult(third, 'call_made').split('\n')
     expect(flipped.startsWith('@d | image | PNG | 90x20 | ')).toBe(true)
     expect(scaled.startsWith('@e | image | PNG | 45x10 | ')).toBe(true)
     const { messages: laterMessages } = JSON.parse(third.body) as { messages: unknown[] }
@@ -467,24 +491,24 @@ describe('js_eval tool', () => {
     ].join('\n'))])
 
     const second = await chatRequest()
-    const result = toolResult(second, 'call_jobs')
+    const result = codeResult(second, 'call_jobs')
     expect(result.startsWith('1 job ended. No job still runs.\n\n')).toBe(true)
-    // The job of the call is job 1 of the reply, so the jobs of the code
-    // are jobs 2 and 3. The code knows the image of its first job by its
-    // handle.
+    // The run ended within the wait of its call, so it took no job number:
+    // the jobs of the code are jobs 1 and 2 of the reply. The code knows
+    // the image of its first job by its handle.
     const [red] = jobsWaitResults(result)
-    expect({ tool: red.tool, status: red.status, number: red.call.number }).toStrictEqual({ tool: 'video', status: 'finished', number: 2 })
+    expect({ tool: red.tool, status: red.status, number: red.call.number }).toStrictEqual({ tool: 'video', status: 'finished', number: 1 })
     expect(red.text.endsWith('Made the image @&1.')).toBe(true)
     // The code took the result of the first job, so its image is an asset
     // of the run, and the result names only the second job.
     const [, left] = result.split('\n\nFrom the tool calls of the code:\n')
     const blueId = String(startedJobId(left))
-    expect(left).toBe(`${jobStartedText(blueId, 3)}\nMade the image @a (handle &1).`)
+    expect(left).toBe(`${jobStartedText(blueId, 2)}\nMade the image @a (handle &1).`)
 
     sendToolCalls(second.reply, [waitCall('call_wait')])
     const third = await chatRequest()
     const [blue] = jobsWaitResults(toolResult(third, 'call_wait'))
-    expect({ id: blue.id, tool: blue.tool, status: blue.status, number: blue.call.number }).toStrictEqual({ id: blueId, tool: 'video', status: 'finished', number: 3 })
+    expect({ id: blue.id, tool: blue.tool, status: blue.status, number: blue.call.number }).toStrictEqual({ id: blueId, tool: 'video', status: 'finished', number: 2 })
     expect(blue.text.endsWith('Made the image @b.')).toBe(true)
     await sendChatReply(third.reply, CALLER.modelName)
 
@@ -521,7 +545,7 @@ describe('js_eval tool', () => {
 
     const second = await chatRequest()
     const result = toolResult(second, 'call_panel')
-    const [failure] = result.split('\n\n')
+    const [failure] = codeResult(second, 'call_panel').split('\n\n')
     expect(failure).toBe('This conversation has no images, so it has no image @zz. Do not call the image tool until the user adds an image to the conversation.')
     await sendChatReply(second.reply, CALLER.modelName)
     // The image is in the reply with the mark of its job, which hides it.
@@ -554,8 +578,9 @@ describe('js_eval tool', () => {
       { name: 'video', status: 'success', stateWord: null, parameters: [['command', 'ffmpeg'], ['parameters', JSON.stringify(draw)]], failed: false },
       { name: 'jobs_wait', status: 'success', stateWord: null, parameters: [], failed: false },
     ])
-    // The job of the call is job 1 of the reply.
-    expect(calls[2].result.startsWith(jobStartedText(jobId, 2))).toBe(true)
+    // The run ended within the wait of its call, so it took no job number:
+    // the job of the code is job 1 of the reply.
+    expect(calls[2].result.startsWith(jobStartedText(jobId, 1))).toBe(true)
     expect(jobsWaitResults(calls[3].result).map(({ id, tool, status }) => ({ id, tool, status }))).toStrictEqual([{ id: jobId, tool: 'video', status: 'finished' }])
     await expectRunsEnded(setup)
   })

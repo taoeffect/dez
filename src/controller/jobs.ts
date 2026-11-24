@@ -94,7 +94,10 @@ export type JobWork = (
 /** The `report` of a `JobWork`. */
 export type JobReport = (state: string, options?: { queued?: boolean }) => void
 
-/** The options of a job start (`ToolJobs.start`). */
+/** The options of a job start (`ToolJobs.start`). `timedOutText` gives
+ *  the result of the job when its time limit passes, from the limit and
+ *  the last state of its work (`JobReport`); the default is
+ *  `jobTimedOutText`. */
 export interface JobOptions {
   timeoutMs: number
   hidesAssets?: boolean
@@ -102,7 +105,16 @@ export interface JobOptions {
   label?: string
   inputs?: readonly string[]
   signal?: AbortSignal
+  timedOutText?: (timeoutMs: number, state: string) => string
 }
+
+/** What `ToolJobs.startWithWait` gives: the result of a job that ended
+ *  within the wait (null for a job that a stop of the tab ended with no
+ *  result), or the id and the number of a job that still runs, which is
+ *  from then on a job of the view. */
+export type WaitedJob =
+  | { ended: Omit<EndedJob, 'call'> | null }
+  | { started: { id: string, number: number } }
 
 /** The jobs that the caller of a tool sees (`ToolRunContext.jobs`): a
  *  call of the model sees the jobs of its tab (`TabJobs`), and a call of
@@ -111,6 +123,7 @@ export interface JobOptions {
  *  jobs of that view. */
 export interface ToolJobs {
   start(tool: string, work: JobWork, options: JobOptions): { id: string, number: number }
+  startWithWait(tool: string, work: JobWork, options: JobOptions, waitMs: number): Promise<WaitedJob>
   readonly running: number
   readonly ready: number
   wait(signal: AbortSignal, options?: { all?: boolean, ids?: readonly string[] }): Promise<EndedJob[]>
@@ -137,7 +150,7 @@ export interface EndedJob {
   call: JobCall
 }
 
-interface Job extends Omit<EndedJob, 'status' | 'assets'> {
+interface Job extends Omit<EndedJob, 'status' | 'assets' | 'call'> {
   status: JobStatus
   // While the job runs, the files that its work kept so far (`keepAsset`);
   // from its end, the assets of its result.
@@ -160,6 +173,9 @@ interface Job extends Omit<EndedJob, 'status' | 'assets'> {
   timeoutMs: number
   limitLeftMs: number
   timerStartedAt: number
+  // The result of the job when its time limit passes
+  // (`JobOptions.timedOutText`).
+  timedOutText: (timeoutMs: number, state: string) => string
   // The work waits for its turn at a provider (`JobWork`).
   queued: boolean
   // The ids of the assets that its call names as inputs (`JobInfo.inputs`).
@@ -167,6 +183,26 @@ interface Job extends Omit<EndedJob, 'status' | 'assets'> {
   // The id of the job of the run of an app whose code started this job
   // with a tool call (`scoped`); null for a job of the model.
   scope: string | null
+  // The number of the job (`JobCall.number`): 1 for the first job that got
+  // one. A job gets it at its start, except a job whose call waits for it
+  // (`startWithWait`): that one has none during the wait, and is in no
+  // view, so no reader sees it. It gets its number only when the wait ends
+  // while it runs.
+  number: number | null
+  // The label of its call (`JobCall.label`).
+  label: string
+}
+
+// A job that has its number, so the views can hold it (`Job.number`).
+type NumberedJob = Job & { number: number }
+
+function isNumbered(job: Job): job is NumberedJob {
+  return job.number !== null
+}
+
+// The result of `job`, which ended with `status`, as its reader gets it.
+function resultOf(job: Job, status: JobResultStatus): Omit<EndedJob, 'call'> {
+  return { id: job.id, tool: job.tool, status, text: job.text, assets: job.assets, hidesAssets: job.hidesAssets, ...(job.model && { model: job.model }) }
 }
 
 // The source of a made asset: the path of a stored image, or the `src` of
@@ -242,7 +278,8 @@ export function writeJobAssets(job: EndedJob, writers: Pick<ToolRunContext, 'wri
 type JobView = (job: Job) => boolean
 
 // Every job of the tab, for the work of the reply itself (its end, a
-// compaction, the cleanup of the files).
+// compaction, the cleanup of the files). It also holds a job whose call
+// waits for it: it counts as open, but no list holds it (`Job.number`).
 const ALL_JOBS: JobView = () => true
 
 /** The jobs of a tab. A stop of the user or a new submit cuts the reply
@@ -261,13 +298,17 @@ const ALL_JOBS: JobView = () => true
  *  and the code takes no result of the model. When the run ends, the
  *  model sees the jobs that are still open, as jobs of its own. The
  *  members of this class with no other note are for the model: they see
- *  only the jobs of the model (`modelView`). */
+ *  only the jobs of the model (`modelView`).
+ *
+ *  A call can wait for its job a short time (`startWithWait`): a job that
+ *  ends within that wait was never a job of the model, and gives its
+ *  result only to its call. */
 export class TabJobs implements ToolJobs {
   // In the order of the starts.
   private readonly jobs = new Map<string, Job>()
   // The jobs that ended with a result that no reader took, in the order of
   // their ends.
-  private readonly unread: Job[] = []
+  private readonly unread: NumberedJob[] = []
   // Each wait for the next end of a job.
   private readonly waits = new Set<() => void>()
   private stopped = false
@@ -276,9 +317,11 @@ export class TabJobs implements ToolJobs {
   private readonly sections: string[] = []
   // The lease of the reply that took the jobs last (`take`).
   private lease: AbortController | null = null
+  // The last number that a job got (`Job.number`).
+  private lastNumber = 0
   // The jobs of the model: the ones that no tool call of the code of a run
   // started, and those of a run that ended.
-  private readonly modelView: JobView = (job) => job.scope === null || this.jobs.get(job.scope)?.status !== 'running'
+  private readonly modelView: JobView = (job) => isNumbered(job) && (job.scope === null || this.jobs.get(job.scope)?.status !== 'running')
 
   /** `onCost` gets the price of each job that sent a paid request
    *  (`JobInfo.cost`) once, at the end of the job: the last price that its
@@ -359,15 +402,94 @@ export class TabJobs implements ToolJobs {
   }
 
   // `start` for a job of the scope `scope` (`Job.scope`).
-  private startIn(scope: string | null, tool: string, work: JobWork, { timeoutMs, hidesAssets = false, model, label = '', inputs = [], signal }: JobOptions): { id: string, number: number } {
+  private startIn(scope: string | null, tool: string, work: JobWork, options: JobOptions): { id: string, number: number } {
+    this.checkStart(options.signal)
+    // Before the work starts: a job that its work starts gets the next
+    // number.
+    const number = this.nextNumber()
+    const job = this.launch(scope, tool, work, options, number)
+    return { id: job.id, number }
+  }
+
+  /** Starts `work` as `start` does, but the call waits for the job for at
+   *  most `waitMs`. During the wait the job has no number and is in no
+   *  view: no list names it, and no other reader takes its result. It
+   *  still counts as an open job (`MAX_OPEN_JOBS`, `hasOpen`). Gives the
+   *  result of the job when it ends within the wait, which only this call
+   *  gets. When it still runs at the end of the wait, it gets its number
+   *  then, and from then on it is a job as any other: this gives its id
+   *  and its number. So a job that its call took gives no gap in the
+   *  numbers. Throws what `start` throws; when `signal` aborts during the
+   *  wait, it cancels the job (its work and the jobs of its work stop),
+   *  and rejects with the reason of the signal. */
+  startWithWait(tool: string, work: JobWork, options: JobOptions, waitMs: number): Promise<WaitedJob> {
+    return this.startWithWaitIn(null, tool, work, options, waitMs)
+  }
+
+  // `startWithWait` for a job of the scope `scope` (`Job.scope`).
+  private async startWithWaitIn(scope: string | null, tool: string, work: JobWork, options: JobOptions, waitMs: number): Promise<WaitedJob> {
+    this.checkStart(options.signal)
+    const job = this.launch(scope, tool, work, options, null)
+    const { signal } = options
+    // True when the wait passed while the job runs; false at its end.
+    const passed = await new Promise<boolean>((resolve, reject) => {
+      const leave = () => {
+        clearTimeout(timer)
+        this.waits.delete(onEnd)
+        signal?.removeEventListener('abort', onAbort)
+      }
+      const onEnd = () => {
+        if (job.status === 'running') return
+        leave()
+        resolve(false)
+      }
+      const onAbort = () => {
+        leave()
+        if (job.status === 'running') this.end(job, 'cancelled')
+        reject(signal?.reason)
+      }
+      // The timer of the time limit started first (`launch`): a limit as
+      // long as the wait ends the job within the wait.
+      const timer = setTimeout(() => {
+        leave()
+        resolve(true)
+      }, waitMs)
+      this.waits.add(onEnd)
+      signal?.addEventListener('abort', onAbort, { once: true })
+    })
+    if (passed) {
+      const number = this.nextNumber()
+      job.number = number
+      return { started: { id: job.id, number } }
+    }
+    const { status } = job
+    if (!hasJobResult(status)) return { ended: null }
+    job.delivered = true
+    return { ended: resultOf(job, status) }
+  }
+
+  private nextNumber(): number {
+    this.lastNumber += 1
+    return this.lastNumber
+  }
+
+  // Throws the `ToolError` of a start that `start` refuses.
+  private checkStart(signal: AbortSignal | undefined): void {
     if (this.stopped || signal?.aborted) throw new ToolError('The reply stopped, so Dez started no job. This is not a fault of the call.')
     if (this.runningIn(ALL_JOBS) + this.unread.length >= MAX_OPEN_JOBS) throw new ToolError(JOB_LIMIT_TEXT)
+  }
+
+  // Starts a job with the number `number` (`Job.number`) of the scope
+  // `scope` (`Job.scope`), and gives it.
+  private launch(scope: string | null, tool: string, work: JobWork, options: JobOptions, number: number | null): Job {
+    const { timeoutMs, hidesAssets = false, model, label = '', inputs = [], timedOutText = jobTimedOutText } = options
     const job: Job = {
       id: newJobId((id) => this.jobs.has(id)),
       tool,
       hidesAssets,
       ...(model && { model }),
-      call: { number: this.jobs.size + 1, label },
+      number,
+      label,
       status: 'running',
       text: '',
       assets: [],
@@ -380,6 +502,7 @@ export class TabJobs implements ToolJobs {
       timeoutMs,
       limitLeftMs: timeoutMs,
       timerStartedAt: 0,
+      timedOutText,
       queued: false,
       inputs,
       scope,
@@ -416,13 +539,13 @@ export class TabJobs implements ToolJobs {
       console.error(`The ${tool} job ${job.id} failed:`, error)
       this.end(job, 'failed', error instanceof ToolError ? error.message : unexpectedToolErrorText(tool))
     })
-    return { id: job.id, number: job.call.number }
+    return job
   }
 
   // Starts the timer of what is left of the time limit of `job`.
   private runLimit(job: Job): void {
     job.timerStartedAt = Date.now()
-    job.timer = setTimeout(() => this.end(job, 'timed out', jobTimedOutText(job.timeoutMs, job.state)), job.limitLeftMs)
+    job.timer = setTimeout(() => this.end(job, 'timed out', job.timedOutText(job.timeoutMs, job.state)), job.limitLeftMs)
   }
 
   // The work of `job` waits for its turn at a provider, or its turn came.
@@ -444,11 +567,12 @@ export class TabJobs implements ToolJobs {
   // (`JobWork`): the tool calls of the code of a run of an app start and
   // see only these.
   private scoped(scope: string): ToolJobs {
-    const view: JobView = (job) => job.scope === scope
+    const view: JobView = (job) => job.scope === scope && isNumbered(job)
     const running = () => this.runningIn(view)
     const ready = () => this.unread.filter(view).length
     return {
       start: (tool, work, options) => this.startIn(scope, tool, work, options),
+      startWithWait: (tool, work, options, waitMs) => this.startWithWaitIn(scope, tool, work, options, waitMs),
       get running() {
         return running()
       },
@@ -466,7 +590,8 @@ export class TabJobs implements ToolJobs {
   // ends the requests of the work, and stops the jobs that the tool calls
   // of its code started and that still run: no code waits for them any
   // more. A job with no result (`hasJobResult`) leaves nothing for a
-  // reader.
+  // reader, and a job with no number gives its result only to the call
+  // that waits for it (`startWithWait`).
   private end(job: Job, status: Exclude<JobStatus, 'running'>, text = '', assets: MadeAsset[] = []): void {
     job.status = status
     job.text = text
@@ -480,7 +605,7 @@ export class TabJobs implements ToolJobs {
         if (inner.scope === job.id && inner.status === 'running') this.end(inner, 'stopped')
       }
     }
-    if (hasJobResult(status)) this.unread.push(job)
+    if (hasJobResult(status) && isNumbered(job)) this.unread.push(job)
     if (job.cost !== undefined) this.onCost(job.cost)
     for (const wake of [...this.waits]) wake()
   }
@@ -490,13 +615,13 @@ export class TabJobs implements ToolJobs {
   // other results stay unread.
   private takeUnread(view: JobView, ids?: readonly string[]): EndedJob[] {
     const wanted = ids && new Set(ids)
-    const taken: Job[] = []
-    const kept: Job[] = []
+    const taken: NumberedJob[] = []
+    const kept: NumberedJob[] = []
     for (const job of this.unread) (view(job) && (!wanted || wanted.has(job.id)) ? taken : kept).push(job)
     this.unread.splice(0, this.unread.length, ...kept)
     return taken.map((job) => {
       job.delivered = true
-      return { id: job.id, tool: job.tool, status: job.status as JobResultStatus, text: job.text, assets: job.assets, hidesAssets: job.hidesAssets, ...(job.model && { model: job.model }), call: job.call }
+      return { ...resultOf(job, job.status as JobResultStatus), call: { number: job.number, label: job.label } }
     })
   }
 
@@ -565,21 +690,21 @@ export class TabJobs implements ToolJobs {
 
   /** Every job of the tab, in the order of the starts: also the jobs that
    *  the code of a run that goes on started. A compaction keeps their
-   *  inputs. */
+   *  inputs. A job with no number (`startWithWait`) is in no list. */
   allJobs(): JobInfo[] {
     return this.listIn(ALL_JOBS)
   }
 
   private listIn(view: JobView): JobInfo[] {
     const now = Date.now()
-    return [...this.jobs.values()].filter(view).map((job) => ({
+    return [...this.jobs.values()].filter((job): job is NumberedJob => isNumbered(job) && view(job)).map((job) => ({
       id: job.id,
       tool: job.tool,
       status: job.status,
       delivered: job.delivered,
       elapsedMs: (job.endedAt ?? now) - job.startedAt,
       state: job.state,
-      call: job.call,
+      call: { number: job.number, label: job.label },
       inputs: job.inputs,
       ...(job.cost !== undefined && { cost: job.cost }),
       ...(job.queued && { queued: true as const }),

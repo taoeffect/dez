@@ -30,7 +30,7 @@ import { assetIdWords } from './arguments'
 import { FRAMES_FOLDER_ENDING, isFramesFolderName, sequenceText, type FrameSequence } from './frameSequences'
 import { callDecode, DECODED_TOO_LARGE_TEXT, decodedInputFacts, decodeFailedText, type DecodedClip, type InputDecode } from './inputDecode'
 import { ASSET_NAMES, jobCallLabel, jobTimedOutText, jobTimeoutMs, type JobAssetKind } from './jobs'
-import { codeTimedOutText, cutCallsParagraphs, endedOutcome, errorAdvice, failedOutcome, jsEvalCall, namesDenoFlag, openJobLines, returnedOutcome, runResultText, skiaCanvasRefused, textForModel, type JsEvalCall, type JsEvalEndLine, type RunOutcome, type RunSubject } from './jsEval'
+import { codeTimedOutText, cutCallsParagraphs, endedOutcome, errorAdvice, failedOutcome, jsEvalCall, namesDenoFlag, openJobLines, returnedOutcome, runResultText, skiaCanvasRefused, textForModel, type JsEvalCall, type JsEvalEndLine, type RunClock, type RunOutcome, type RunSubject } from './jsEval'
 import { clipInput, tellUserConsole, type ClipInput, type KeptFile, type ProgramEnd } from './programRuns'
 import { assetText, unknownAssetsText } from './toolInputs'
 import { ToolError, type SubcommandArguments, type ToolArguments } from './types'
@@ -281,10 +281,11 @@ export function codeRunCall(args: ToolArguments, sections: readonly Section[]): 
 /** One script run (controller/appInvoke.ts): the code of the script app
  *  of an `apps invoke` call or of an alias, or the code of a `js_eval`
  *  call. Its kind is also the subject that its texts name
- *  (`RunSubject`). */
+ *  (`RunSubject`). The clock of a run of code times its program, for the
+ *  run time line of each result (`withRunTime`). */
 export type ScriptRun =
   | { kind: 'app', call: CheckedInvokeCall }
-  | { kind: 'code', call: CodeRunCall }
+  | { kind: 'code', call: CodeRunCall, clock: RunClock }
 
 /** The run that a call of the alias subcommand `alias` asks for
  *  (appAliases.ts), from its checked arguments `args` and the sections of

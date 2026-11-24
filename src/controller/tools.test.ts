@@ -55,12 +55,12 @@ import {
 } from '../model/tools/assetView'
 import { conversationInfoText } from '../model/tools/conversationInfo'
 import { jobCancelText, jobsListText, jobStartedText, jobsWaitResults, jobsWaitText, NO_OPEN_JOBS_TEXT } from '../model/tools/jobs'
-import { jsEvalAnswerLine } from '../model/tools/jsEval'
+import { codeRunsAsJobText, jsEvalAnswerLine } from '../model/tools/jsEval'
 import { modelCost, modelInfoText, type ModelInfoFacts } from '../model/tools/modelInfo'
 import { IMAGE_NOT_SAVED_TEXT, INVOCATION_TEXT_CAP, invocationAnswerStateText, invocationAnswerText, modelInvocation } from '../model/tools/modelInvoke'
 import { modelListArguments, modelListText } from '../model/tools/modelList'
 import { TOOL_DEFINITIONS, unexpectedToolErrorText, unknownToolText } from '../model/tools/registry'
-import { CONVERSATION_ID, jobInfo, probeOutput } from '../model/tools/testing'
+import { CONVERSATION_ID, jobInfo, PNG_BYTES, probeOutput } from '../model/tools/testing'
 import type { ToolArguments, ToolRunResult } from '../model/tools/types'
 import { FFPROBE_TIMEOUT_MS } from '../model/tools/videoTool'
 import { ExplainedError } from '../utils/errorText'
@@ -68,7 +68,7 @@ import type { RequestLogRow } from './diagnostics/requestLog'
 import { TabJobs, type JobOutcome } from './jobs'
 import { invokeModel } from './modelInvoke'
 import type { BundledToolEnd } from './nativeTypes'
-import { APP_DIR, audioProgress, callContext, callingProgram, CLIP_FORMAT, CONVERSATION_WORK_FOLDER, deletedWorkFolder, ENDED, FILE_ID, H264_STREAM, heldWork, LONG, native, outputFolderHolds, resetNative, running, showinfoLog, writes } from './testing'
+import { APP_DIR, audioProgress, callContext, callingProgram, CLIP_FORMAT, CONVERSATION_WORK_FOLDER, deletedWorkFolder, ENDED, FILE_ID, H264_STREAM, heldWork, LONG, native, outputFolderHolds, resetNative, returns, running, showinfoLog, writes } from './testing'
 import type { ToolRunCall } from './tools'
 // Side-effect imports: register the dez.model/* selectors and the selector
 // under test.
@@ -3131,12 +3131,16 @@ describe('dez.controller/tools/run', () => {
       outputFolderHolds({})
     })
 
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
     it('runs a tool call of the code with the real runner, gives the code its result, and gives the list of the calls for the block', async () => {
       native.program = callingProgram(['dez.tools/jobs_list'])
 
       const result = await run({ name: 'js_eval', arguments: { code: 'await dez.sbp("dez.tools/jobs_list")\nreturn "ok"' } })
 
-      expect(result).toStrictEqual({ content: 'ok', isError: false, bridged: { calls: [LIST_CALL], more: 0 } })
+      expect(result).toStrictEqual({ content: expect.stringMatching(/^ok\n\nThe code ran for .+ seconds\.$/), isError: false, bridged: { calls: [LIST_CALL], more: 0 } })
       expect(native.inputWrites.map(({ text }) => text)).toStrictEqual([jsEvalAnswerLine(1, { text: LIST_TEXT, isError: false })])
     })
 
@@ -3148,8 +3152,43 @@ describe('dez.controller/tools/run', () => {
       const result = await run({ name: 'js_eval', arguments: { code: 'await dez.sbp("dez.tools/jobs_list")\nthrow new Error("x")' } })
 
       expect(result).toMatchObject({ isError: true, bridged: { calls: [LIST_CALL], more: 0 } })
-      expect(result.content).toMatch(/\nError: x$/)
+      expect(result.content).toMatch(/\nError: x\n\nThe code ran for .+ seconds\.$/)
       expect(consoleError).toHaveBeenCalledWith('The tool js_eval failed:', result.content)
+    })
+
+    it('gives the job of code that still runs at the end of the wait of its call, and jobs_wait gives its result and puts its files into the reply as assets of the job', async () => {
+      vi.useFakeTimers()
+      const jobs = new TabJobs()
+      const written: unknown[] = []
+      const context = callContext({
+        jobs,
+        writeImage: (path, options) => {
+          written.push({ path, ...options })
+          return 'c'
+        },
+      })
+      const call = (name: string, args: ToolArguments) => sbp('dez.controller/tools/run', { name, arguments: args }, running(), context) as Promise<ToolRunResult>
+      native.program = async (program, onOutput) => {
+        await new Promise((resolve) => setTimeout(resolve, 2400))
+        return returns('drew')(program, onOutput)
+      }
+      outputFolderHolds({ 'chart.png': PNG_BYTES })
+
+      const started = call('js_eval', { code: 'return 1' })
+      await vi.advanceTimersByTimeAsync(1000)
+      const [{ id }] = jobs.list()
+      expect(await started).toStrictEqual({ content: codeRunsAsJobText(id, 1), isError: false })
+      expect(written).toStrictEqual([])
+
+      const waited = call('jobs_wait', {})
+      await vi.advanceTimersByTimeAsync(1400)
+      const result = await waited
+
+      expect(result.isError).toBe(false)
+      expect(result.content).toContain(`<job id="${id}" number="1" tool="js_eval" status="finished" call="return 1">\ndrew\n\n`)
+      expect(result.content).toContain('\n\nThe code ran for 2.4 seconds.\nMade the image @c.')
+      expect(written).toStrictEqual([{ path: expect.stringMatching(new RegExp(`^${APP_DIR}/assets/generated/images/.+\\.png$`)), tool: 'js_eval', madeBy: id }])
+      jobs.stopAll()
     })
   })
 })
