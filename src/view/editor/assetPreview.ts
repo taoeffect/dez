@@ -13,7 +13,7 @@ import { isImageZoomOpen } from './imageZoom'
 import { createImage, shownImageAt, updateImageModel } from './images'
 import { createPlayer, destroyPlayer, isInSelectableTooltip, samePlayerFacts, shownClipAt, updatePlayer } from './media'
 import { mentionAt, type ShownMention } from './mentions'
-import { renderedToolCalls, type PanelAsset } from './toolCalls'
+import { drawnAssetKey, renderedToolCalls, type PanelAsset } from './toolCalls'
 
 // When the pointer rests on a mention chip (mentions.ts), a box shows the
 // asset that the chip names, next to the chip: the same image or player
@@ -149,15 +149,6 @@ function sameMention(a: MentionKey, b: MentionKey): boolean {
   return a.from === b.from && a.id === b.id && a.kind === b.kind
 }
 
-/** What tells that the box must draw its asset again: an image of another
- *  file, or another clip. A new model label, and a new source of the same
- *  clip (a Save), change the drawn asset in place. */
-function assetKey(asset: PanelAsset): string {
-  return asset.kind === 'image'
-    ? `image ${asset.id} ${asset.linked} ${asset.path}`
-    : `${asset.tag.kind} ${asset.tag.id} ${asset.linkedSrc}`
-}
-
 /** The bottom of the part of the scroller that the find dropdown covers,
  *  from the scroller's top (`EditorView.scrollMargins`). */
 function scrollMarginTop(view: EditorView): number {
@@ -181,6 +172,7 @@ interface Pending {
 /** The box that shows. */
 interface Shown {
   mention: ShownMention
+  /** `drawnAssetKey` of the asset: the box closes when it changes. */
   key: string
   asset: PanelAsset
   box: HTMLDivElement
@@ -337,7 +329,7 @@ class AssetPreview implements PluginValue {
     const caps = this.writeCaps(box, editorSizePx(ASSET_MAX_WIDTH_PX), editorSizePx(ASSET_MAX_HEIGHT_PX))
     const record: Shown = {
       mention,
-      key: assetKey(asset),
+      key: drawnAssetKey(asset),
       asset,
       box,
       root,
@@ -505,7 +497,7 @@ class AssetPreview implements PluginValue {
   private follow(shown: Shown, update: ViewUpdate): boolean {
     const mention = mentionAt(update.state, update.changes.mapPos(shown.mention.from, 1), 1)
     const found = mention && mention.id === shown.mention.id && mention.kind === shown.mention.kind ? mentionPreviewAsset(update.state, mention) : null
-    if (!mention || !found || assetKey(found.asset) !== shown.key) {
+    if (!mention || !found || drawnAssetKey(found.asset) !== shown.key) {
       this.hide()
       return false
     }

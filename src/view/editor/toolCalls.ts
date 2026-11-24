@@ -701,17 +701,23 @@ export function createField(text: string, label: string, placeholder: string): H
   return box
 }
 
-/** The key of a hidden asset among the assets of one chip. A drawn asset
- *  whose key stays keeps its element: an image's path and id tell its
- *  file, and a clip's kind and id never change (a Save or a Delete changes
- *  only its `src`). A drawn clip also needs the same `linkedSrc`
- *  (`renderAssets`), which is not part of this key. */
+/** The key of a hidden asset among the assets of one chip: an image's path
+ *  and id tell its file, and a clip's kind and id never change (a Save or
+ *  a Delete changes only its `src`). */
 function assetKey(asset: { kind: 'image', path: string, id: string | null, linked: boolean } | { kind: 'clip', tag: Pick<MediaTagData, 'kind' | 'id'> }): string {
   return JSON.stringify(asset.kind === 'image' ? ['image', asset.path, asset.id, asset.linked] : [asset.tag.kind, asset.tag.id])
 }
 
-/** The key (`PanelAssetRow.key`) of each asset that a panel draws. */
-const drawnAssetKeys = new WeakMap<Element, string>()
+/** The key of a drawn asset: `assetKey`, and `linkedSrc` for a clip (the
+ *  `linkedSrc` of a player is the one of its mount). A drawn element whose
+ *  key stays can stay: in a panel (`PanelAssetRow.key`) and in the preview
+ *  box of a mention (assetPreview.ts). */
+export function drawnAssetKey(asset: PanelAsset): string {
+  return asset.kind === 'clip' ? `${assetKey(asset)}:${asset.linkedSrc}` : assetKey(asset)
+}
+
+/** The key (`PanelAssetRow.key`) of each row that a panel draws. */
+const drawnRowKeys = new WeakMap<Element, string>()
 
 /** A chip whose panel shows hidden assets: the chip of the call `callId`,
  *  which started the jobs `jobIds` (`IntermediateCall.jobIds`), or the
@@ -731,9 +737,8 @@ function ownedBy(asset: HiddenAsset, chip: AssetsChip): boolean {
 /** One asset of a panel, as a row that a panel draws (`renderAssets`,
  *  `AssetList.vue`). */
 export interface PanelAssetRow {
-  /** `assetKey`, with a count before it, and `linkedSrc` after it for a
-   *  clip. Unique among the rows of a panel. A drawn row whose key stays
-   *  keeps its element. */
+  /** `drawnAssetKey`, with a count before it. Unique among the rows of a
+   *  panel. A drawn row whose key stays keeps its element. */
   key: string
   asset: PanelAsset
   /** Makes the element of the asset (`createImage`, `createPlayer`). */
@@ -759,7 +764,7 @@ function panelAssetRows(view: EditorView, chip: AssetsChip, assets: readonly Pan
     const place: AssetPlace = () => hiddenAssets(view.state)
       .filter((hidden) => ownedBy(hidden, chip) && assetKey(hidden.kind === 'image' ? { ...hidden.image, kind: 'image' } : hidden) === key)[count]?.from ?? null
     return {
-      key: `${count}:${key}${asset.kind === 'clip' ? `:${asset.linkedSrc}` : ''}`,
+      key: `${count}:${drawnAssetKey(asset)}`,
       asset,
       create: () => asset.kind === 'image' ? createImage(view, asset, place) : createPlayer(view, asset.tag, asset.linkedSrc, asset.model, place),
       update: (element) => {
@@ -783,7 +788,7 @@ function panelAssetRows(view: EditorView, chip: AssetsChip, assets: readonly Pan
  *  (`MediaWidget.updateDOM` does the same). */
 function renderAssets(view: EditorView, list: HTMLElement, chip: AssetsChip, assets: readonly PanelAsset[]): void {
   const drawn = new Map<string, HTMLElement>()
-  for (const element of list.children) drawn.set(drawnAssetKeys.get(element) ?? '', element as HTMLElement)
+  for (const element of list.children) drawn.set(drawnRowKeys.get(element) ?? '', element as HTMLElement)
   const next = panelAssetRows(view, chip, assets).map((row) => {
     const kept = drawn.get(row.key)
     if (kept) {
@@ -792,7 +797,7 @@ function renderAssets(view: EditorView, list: HTMLElement, chip: AssetsChip, ass
       return kept
     }
     const element = row.create()
-    drawnAssetKeys.set(element, row.key)
+    drawnRowKeys.set(element, row.key)
     return element
   })
   for (const gone of drawn.values()) {
