@@ -238,8 +238,8 @@ function onOverlayClick(event: MouseEvent) {
               the tab ends all its jobs. When you quit Dez while jobs run, the next start picks them
               up: a job at a provider (an image or a clip that the provider makes over time) goes
               on, and its result comes with your next message; the work of any other job is lost. A
-              reply of a clip model that waits for its clip goes on too. Dez saves each conversation:
-              History (<kbd>{{ keys.history }}</kbd>) opens it again.
+              reply of an image or clip model that waits for its result at the provider goes on too.
+              Dez saves each conversation: History (<kbd>{{ keys.history }}</kbd>) opens it again.
             </p>
             <p>
               The Agent pill of a reply counts the seconds while the reply comes in, then shows how
@@ -982,9 +982,13 @@ function onOverlayClick(event: MouseEvent) {
 
           <!-- The ways of a provider that change what you pay, or what
                leaves your computer. A change of one of those rules must
-               change this text too. APIMart: the `imageUpload` and the
-               image quote (`images.quote`) of
-               src/model/providers/apimartFormat.ts, and the upload gate
+               change this text too. Anthropic Console: the `tokenPrices`
+               and the `thinking` of its literal in
+               src/model/providers/builtins.ts. APIMart: the
+               `modelPriceRequest` and the cache marks of its literal
+               there; the `imageUpload`, the clip quote (`clips.quote`),
+               and the image quote (`images.quote`) of
+               src/model/providers/apimartFormat.ts; and the upload gate
                of dez.provider/generateMedia. -->
           <section v-if="page === 'providers'" class="help-page help-page--providers">
             <p>
@@ -992,7 +996,26 @@ function onOverlayClick(event: MouseEvent) {
               This page tells those ways.
             </p>
 
+            <h3>Anthropic Console</h3>
+            <p>
+              The model list of Anthropic tells no prices. Dez counts the prices of Anthropic's price
+              page as they were when this version of Dez was made, so a newer model has an unknown
+              price. A prompt of more than 100,000 tokens costs 5 times as much on Claude Haiku 5.5,
+              but Dez counts only its base price: for such a prompt, the cost of the tab and its
+              money limit count less than you pay.
+            </p>
+            <p>
+              The Claude 5 models think also when the Thinking toggle is off, as thinking is their
+              default, and you pay for that thinking.
+            </p>
+
             <h3>APIMart</h3>
+            <p>
+              Dez counts the public price of a chat model of APIMart, which your account can pay less
+              than. APIMart sends each chat request to one of several services, each with its own
+              prompt cache, so a request can pay the full price for a prompt that an earlier request
+              put in the cache.
+            </p>
             <p>
               The video and image models of APIMart take an input image only at a web address. So
               Dez first uploads each image of a video request or an image edit to APIMart, which
@@ -1009,10 +1032,11 @@ function onOverlayClick(event: MouseEvent) {
               when you check "Allow unknown prices".
             </p>
             <p>
-              The price that APIMart tells before an image request does not include the input
-              images, which some image models charge for, or the moderation check. So an image
-              edit can cost more than the price that the money limit checks. When the image is
-              done, the tab counts the cost that APIMart tells.
+              The price that APIMart tells before a video or image request does not include all of
+              it: not the moderation check, the input images that some image models charge for, or
+              the sound of some video models. So such a request can cost more than the price that
+              the money limit checks. When the task is done, the tab counts the cost that APIMart
+              tells.
             </p>
           </section>
 
