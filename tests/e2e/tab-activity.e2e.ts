@@ -3,13 +3,13 @@ import { click, consoleErrors, resetConsoleErrors, screenshotOnFailure, waitForV
 import { startMockProviderApp } from './harness/mockProviderApp'
 import { replyText, sendChatReply, type HoldingChatMock, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeTabId, sbpCall, submit, waitForThread } from './harness/thread'
+import { activeTabId, closeToasts, sbpCall, submit, waitForThread } from './harness/thread'
 
 // The tab bar colors of a reply, through the real app against a mock server
 // in this process:
 // - a tab is busy while its reply streams, also in the background;
-// - a reply that ends in the background makes its tab done until the user
-//   selects the tab;
+// - a reply that ends in the background makes its tab done, or error when
+//   it failed, until the user selects the tab;
 // - a reply that ends in the active tab leaves no color.
 //
 // One app session serves the whole file; each test starts in a new tab.
@@ -19,9 +19,10 @@ const PROVIDER: MockProvider = { id: 'activity', name: 'Activity Mock', modelId:
 interface TabLook {
   title: string
   active: boolean
-  /** The reply color that the tab shows: its background is the busy or the
-   *  done theme color, or neither. `changing` while a transition runs. */
-  color: 'busy' | 'done' | 'changing' | null
+  /** The reply color that the tab shows: its background is the busy, the
+   *  done, or the error theme color, or none. `changing` while a transition
+   *  runs. */
+  color: 'busy' | 'done' | 'error' | 'changing' | null
 }
 
 describe('tab activity colors', () => {
@@ -54,6 +55,7 @@ describe('tab activity colors', () => {
       if (!settled) color = 'changing'
       else if (background === themeColor('--color-tab-busy')) color = 'busy'
       else if (background === themeColor('--color-tab-done')) color = 'done'
+      else if (background === themeColor('--color-tab-error')) color = 'error'
       return {
         title: tab.querySelector('.tab-title')?.textContent ?? '',
         active: tab.classList.contains('tab--active'),
@@ -106,6 +108,25 @@ describe('tab activity colors', () => {
     // The color does not come back when the tab goes to the background again.
     await sbpCall(browser, 'dez.model/tabs/create')
     await waitForValue(browser, 'tab in the background again', () => tabLook(tabId), { title: 'Background question', active: false, color: null })
+  })
+
+  it('shows error when the request of a tab in the background fails, and no color once the user selects the tab', async () => {
+    await submit(browser, 'Failing question')
+    const request = await mock.waitForRequest(browser)
+    const tabId = await activeTabId(browser)
+    await sbpCall(browser, 'dez.model/tabs/create')
+    await waitForValue(browser, 'tab in the background while its reply streams', () => tabLook(tabId), { title: 'Failing question', active: false, color: 'busy' })
+
+    request.reply.writeHead(500, { 'Content-Type': 'application/json' })
+    request.reply.end('{"error":"Server error"}')
+    await waitForValue(browser, 'tab in the background after its failed request', () => tabLook(tabId), { title: 'Failing question', active: false, color: 'error' })
+
+    await click(browser, await tabSelector(tabId))
+    await waitForValue(browser, 'selected tab', () => tabLook(tabId), { title: 'Failing question', active: true, color: null })
+    await closeToasts(browser)
+    // The check after each test wants no error; this test makes one.
+    expect(await consoleErrors(browser)).toEqual([expect.stringMatching(/^Chat request failed:/)])
+    await resetConsoleErrors(browser)
   })
 
   it('shows busy in the active tab, and no color when the reply ends there', async () => {

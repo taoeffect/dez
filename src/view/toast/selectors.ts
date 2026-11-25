@@ -28,6 +28,10 @@ export interface ToastData {
   // A name that the toast shares with the toasts that go out of date with
   // it: `dez.ui/closeToasts` closes them by it.
   group?: string
+  // The tab that the toast tells of (a reply, a send): it shows only while
+  // that tab is active, and goes when the tab closes. A toast with no tab
+  // shows in every tab.
+  tabId?: string
 }
 
 export default sbp('sbp/selectors/register', {

@@ -335,7 +335,7 @@ describe('dez.stream/start errors', () => {
     expect(savedConversations.at(-1)?.sections).toHaveLength(1)
     expect(toasts).toStrictEqual([{
       area: 'app-global',
-      data: { variant: 'error', title: 'Request failed', message: 'Venice refused the API key.\n\nDetails: HTTP 401: Authentication failed', group: expect.any(String) },
+      data: { variant: 'error', title: 'Request failed', message: 'Venice refused the API key.\n\nDetails: HTTP 401: Authentication failed', group: expect.any(String), tabId: activeTab().id },
     }])
     expect(consoleError).toHaveBeenCalled()
   })
@@ -414,7 +414,8 @@ describe('dez.stream/start errors', () => {
     expect(agentSection().thinking).toStrictEqual({ text: 'Plan' })
   })
 
-  it('names the tab in the toast title when the tab is in the background', async () => {
+  it('gives the error toast the tab of its reply, so that the toast waits while the tab is in the background', async () => {
+    const tabId = activeTab().id
     streamChat = async () => {
       sbp('dez.model/tabs/create')
       throw failure
@@ -422,7 +423,7 @@ describe('dez.stream/start errors', () => {
 
     await startStream()
 
-    expect(toasts.map((toast) => toast.data.title)).toEqual(['Request failed in "Hi"'])
+    expect(toasts.map((toast) => toast.data.tabId)).toEqual([tabId])
   })
 
   it('shows no toast when the user stops the stream, and keeps the answer so far', async () => {
@@ -508,7 +509,7 @@ describe('tab activity', () => {
     expect(activity()).toEqual({})
   })
 
-  it('marks a tab done when its request fails in the background', async () => {
+  it('marks a tab error when its request fails in the background', async () => {
     const tabId = activeTab().id
     streamChat = async () => {
       sbp('dez.model/tabs/create')
@@ -517,7 +518,9 @@ describe('tab activity', () => {
 
     await startStream()
 
-    expect(activity()).toEqual({ [tabId]: 'done' })
+    expect(activity()).toEqual({ [tabId]: 'error' })
+    sbp('dez.model/tabs/switch', tabId)
+    expect(activity()).toEqual({})
   })
 
   it('adds no mark when the reply ends in the active tab', async () => {
@@ -1347,7 +1350,7 @@ describe('dez.stream/start tool loop', () => {
     ])
     expect(toasts).toStrictEqual([{
       area: 'app-global',
-      data: { variant: 'error', title: 'Request failed', message: 'Dez could not reach Venice.\n\nDetails: connection reset', group: expect.any(String) },
+      data: { variant: 'error', title: 'Request failed', message: 'Dez could not reach Venice.\n\nDetails: connection reset', group: expect.any(String), tabId: activeTab().id },
     }])
     expect(alerts).toStrictEqual([{ tabId: activeTab().id, status: 'error' }])
   })
@@ -1360,7 +1363,7 @@ describe('dez.controller/submitTab without a model', () => {
     await sbp('dez.controller/submitTab', activeTab().id)
 
     expect(sectionTexts()).toEqual([{ role: 'user', text: 'Hi' }])
-    expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message: 'No model is selected. Choose a model in the bottom bar, and send again.' } }])
+    expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message: 'No model is selected. Choose a model in the bottom bar, and send again.', tabId: activeTab().id } }])
   })
 })
 
@@ -1396,7 +1399,7 @@ describe('dez.controller/submitTab system prompt', () => {
 
     expect(requests).toStrictEqual([])
     expect(sectionTexts()).toStrictEqual([{ role: 'user', text: 'Hi' }])
-    expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message } }])
+    expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message, tabId: activeTab().id } }])
     expect(consoleError).toHaveBeenCalledWith(`Cannot send: ${message}`)
   })
 
@@ -1547,6 +1550,7 @@ describe('dez.controller/submitTab images', () => {
         title: 'Image not sent',
         message: expect.stringContaining('M takes at most 2 images in one request, so the newest image '),
         duration: 8000,
+        tabId: activeTab().id,
       },
     }])
   })
@@ -1595,6 +1599,7 @@ describe('dez.controller/submitTab images', () => {
         title: 'Images not sent',
         message: 'M does not read images, so 2 images were left out of the request.',
         duration: 8000,
+        tabId: activeTab().id,
       },
     }])
   })
@@ -1643,7 +1648,7 @@ describe('dez.stream/start media round', () => {
     { role: 'agent', text: `![id=b](${generated('old.png')})` },
     { role: 'user', text: lastUserText },
   ]
-  const leftOut = (title: string, message: string) => [{ area: 'app-global', data: { variant: 'warning', title, message, duration: 8000 } }]
+  const leftOut = (title: string, message: string) => [{ area: 'app-global', data: { variant: 'warning', title, message, duration: 8000, tabId: expect.any(String) } }]
   let mediaInputs: ProviderGenerateMediaInput[] = []
   // The options of each save; the saves give the files g1.png, g2.png, ….
   let saves: unknown[] = []
@@ -1769,7 +1774,7 @@ describe('dez.stream/start media round', () => {
 
     expect(mediaInputs).toStrictEqual([])
     expect(sectionTexts()).toStrictEqual([{ role: 'user', text: 'Make it red.' }])
-    expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message } }])
+    expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message, tabId: activeTab().id } }])
     expect(consoleError).toHaveBeenCalledWith(`Cannot send: ${message}`)
     expect(alerts).toStrictEqual([])
   })
@@ -1786,7 +1791,7 @@ describe('dez.stream/start media round', () => {
     await sbp('dez.controller/submitTab', activeTab().id)
 
     expect(mediaInputs).toStrictEqual([])
-    expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message } }])
+    expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message, tabId: activeTab().id } }])
   })
 
   it('removes the section and shows an error toast when the request fails', async () => {
@@ -1798,7 +1803,7 @@ describe('dez.stream/start media round', () => {
     await sbp('dez.controller/submitTab', activeTab().id)
 
     expect(sectionTexts()).toStrictEqual(conversation())
-    expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Request failed', message: failure.message, group: expect.any(String) } }])
+    expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Request failed', message: failure.message, group: expect.any(String), tabId: activeTab().id } }])
     expect(consoleError).toHaveBeenCalledWith('Media request failed:', failure)
     expect(saves).toStrictEqual([])
   })
@@ -1984,7 +1989,7 @@ describe('dez.stream/start media round', () => {
 
       expect(mediaInputs).toStrictEqual([])
       expect(sectionTexts()).toStrictEqual([{ role: 'user', text: 'Make it run.' }])
-      expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message } }])
+      expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message, tabId: activeTab().id } }])
       expect(consoleError).toHaveBeenCalledWith(`Cannot send: ${message}`)
     })
 
@@ -2005,6 +2010,7 @@ describe('dez.stream/start media round', () => {
           title: 'Request failed',
           message: 'M takes only 1 image, and this message has 2. Keep only 1 image in the message (pasted, or named with @id), and send it again.',
           group: expect.any(String),
+          tabId: activeTab().id,
         },
       }])
     })
@@ -2031,7 +2037,7 @@ describe('dez.stream/start media round', () => {
 
         expect(mediaInputs).toStrictEqual([])
         expect(sectionTexts()).toStrictEqual(conversation(`${twoImages} Not @b.`))
-        expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message } }])
+        expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message, tabId: activeTab().id } }])
         expect(consoleError).toHaveBeenCalledWith(`Cannot send: ${message}`)
       })
 
@@ -2205,7 +2211,7 @@ describe('dez.stream/start media round', () => {
 
       expect(mediaInputs).toStrictEqual([])
       expect(sectionTexts()).toStrictEqual(clipConversation('Dance to @c.'))
-      expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message } }])
+      expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message, tabId: activeTab().id } }])
     })
 
     // The video clip is the reference of a request with no image.
@@ -2227,7 +2233,7 @@ describe('dez.stream/start media round', () => {
       await sbp('dez.controller/submitTab', activeTab().id)
 
       expect(mediaInputs).toStrictEqual([])
-      expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message } }])
+      expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message, tabId: activeTab().id } }])
     })
 
     // Speech that spells a media tag stays text: the reply shows no
@@ -2358,7 +2364,7 @@ describe('dez.stream/start media round', () => {
 
     expect(mediaInputs).toStrictEqual([])
     expect(sectionTexts()).toStrictEqual(conversation(lastUserText))
-    expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message } }])
+    expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message, tabId: activeTab().id } }])
     expect(consoleError).toHaveBeenCalledWith(`Cannot send: ${message}`)
     expect(alerts).toStrictEqual([])
   })
@@ -3347,7 +3353,7 @@ describe('dez.stream/start jobs', () => {
 
     expect(toasts).toStrictEqual([{
       area: 'app-global',
-      data: { variant: 'error', title: '2 jobs failed', message: expect.any(String), group: expect.any(String) },
+      data: { variant: 'error', title: '2 jobs failed', message: expect.any(String), group: expect.any(String), tabId: activeTab().id },
     }])
     const { message } = toasts[0].data
     expect(message).toContain(`The model_invoke job ${jobId('c1')} failed.`)
@@ -3359,6 +3365,24 @@ describe('dez.stream/start jobs', () => {
     expect(consoleError).toHaveBeenCalledWith(expect.stringContaining(jobId('c1')), failedText)
     expect(consoleError).toHaveBeenCalledWith(expect.stringContaining(jobId('c2')), timedOutText)
     expect(alerts).toStrictEqual([{ tabId: activeTab().id, status: 'finished' }])
+  })
+
+  it('marks a tab in the background error when its reply ends with a job whose result the model did not get', async () => {
+    const tabId = activeTab().id
+    replyRounds([
+      async (input) => ({ requestId: input.requestId as string, toolCalls: [invokeCall('c1')] }),
+      async (input) => {
+        jobs[0].fail(new ExplainedError('The provider refused the prompt.'))
+        sbp('dez.model/tabs/create')
+        return { requestId: input.requestId as string }
+      },
+    ])
+
+    await startStream({ sendTools: true })
+
+    expect(sbp('dez.model/tabs/activity')).toStrictEqual({ [tabId]: 'error' })
+    expect(toasts.map((toast) => toast.data.tabId)).toStrictEqual([tabId])
+    expect(alerts).toStrictEqual([{ tabId, status: 'finished' }])
   })
 
   it('takes the image of a job that still runs when the request fails, then shows the error', async () => {
@@ -3377,7 +3401,7 @@ describe('dez.stream/start jobs', () => {
 
     expect(sectionVisibleText(agentSection())).toBe(`${invokeBlock('c1')}\n${foxReference('c1')}`)
     expect(toasts.map((toast) => toast.data)).toStrictEqual([
-      { variant: 'error', title: 'Request failed', message: 'Venice refused the API key.\n\nDetails: HTTP 401: Authentication failed', group: expect.any(String) },
+      { variant: 'error', title: 'Request failed', message: 'Venice refused the API key.\n\nDetails: HTTP 401: Authentication failed', group: expect.any(String), tabId: activeTab().id },
     ])
     expect(alerts).toStrictEqual([{ tabId: activeTab().id, status: 'error' }])
   })
@@ -4187,7 +4211,7 @@ describe('dez.controller/submitTab with a model that Dez cannot use', () => {
       { role: 'agent', text: 'Before. After.' },
       { role: 'user', text: '' },
     ])
-    expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message } }])
+    expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message, tabId: activeTab().id } }])
     expect(consoleError).toHaveBeenCalledWith(`Cannot send: ${message}`)
   })
 
@@ -4205,7 +4229,7 @@ describe('dez.controller/submitTab with a model that Dez cannot use', () => {
     await sbp('dez.controller/submitTab', activeTab().id)
 
     expect(sectionTexts()).toStrictEqual([{ role: 'user', text: 'Write this down.' }])
-    expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message } }])
+    expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message, tabId: activeTab().id } }])
     expect(consoleError).toHaveBeenCalledWith(`Cannot send: ${message}`)
   })
 
@@ -4222,7 +4246,7 @@ describe('dez.controller/submitTab with a model that Dez cannot use', () => {
     await sbp('dez.controller/submitTab', activeTab().id)
 
     expect(sectionTexts()).toStrictEqual([{ role: 'user', text: 'Draw a fox.' }])
-    expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message } }])
+    expect(toasts).toStrictEqual([{ area: 'app-global', data: { variant: 'error', title: 'Cannot send', message, tabId: activeTab().id } }])
     expect(consoleError).toHaveBeenCalledWith(`Cannot send: ${message}`)
   })
 })

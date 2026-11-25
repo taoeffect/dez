@@ -86,6 +86,7 @@ sbp('dez.ui/toast', 'app-global', {
 | `actionLabel` | No | `string` | Renders a text-button action inside the toast. |
 | `sbpInvocation` | No | `{ selector: string, args?: unknown[] }` or `[string, ...unknown[]]` | Invoked when the toast body or action is clicked: `[selector, ...args]` calls `sbp(selector, ...args)`. The selector may be async. A selector that throws or rejects is logged with `console.error`. |
 | `group` | No | `string` | A name that the toast shares with the toasts that go out of date together. `dez.ui/closeToasts` closes them by it. |
+| `tabId` | No | `string` | The tab that the toast tells of. The toast shows only while that tab is active, and goes when the tab closes. Omit it for a toast that shows in every tab. |
 
 Defaults applied by `dez.ui/toast`:
 
@@ -109,17 +110,18 @@ sbp('dez.ui/closeToasts', 'app-global', 'reply-error:tab-1')
 
 ## Behavior notes
 
-- Each `ToastContainer` displays a maximum of 4 toasts and closes the oldest toast when a fifth is added.
+- Each `ToastContainer` displays a maximum of 4 toasts and closes the oldest toast that shows when a fifth shows. A toast that waits for its tab does not count.
 - Desktop layouts support six pockets: top-left, top-center, top-right, bottom-left, bottom-center, and bottom-right.
 - On screens up to 768px wide, positions are grouped into top and bottom stacks.
 - A layout with a bar at the bottom sets the CSS variable `--toast-inset-bottom` to the bar's height, and the container keeps every toast above it. `AppLayout.vue` sets it, so the bottom toasts never cover the bottom bar and its Submit/Stop button.
-- `duration` adds a progress bar and auto-dismisses the toast when the timer completes.
+- `duration` adds a progress bar and auto-dismisses the toast when the timer completes. The timer is the animation of the card, so a toast of a tab starts its time again each time that its tab becomes active.
 - Hover pauses the progress animation and timer; leaving the toast resumes them.
 - A toast with `sbpInvocation` shows a pointer cursor. A click on it runs the invocation and does not close the toast; a click on the close button does not run it. An invocation that opens an external URL uses `['dez.controller/openUrl', url]`.
 - `closeable: false` hides the close button, but the toast can still close by timeout or max-count eviction.
 - `error` toasts have a red tint, a red stripe on the left, and a red icon and title, from the theme variables `--color-error`, `--color-error-bg`, and `--color-error-border` in `App.vue` (light and dark values). The card grows with its text from the normal 360 px up to 560 px (never wider than the window less 32 px). A message taller than 40% of the window scrolls inside the card. The message text is selectable, so the user can copy it.
 - Errors of a chat or media request (`dez.stream/start`), also an error event inside a chat stream, and a send with no model or with a model that Dez cannot use (`dez.controller/submitTab`), are `error` toasts with no `duration`, so they stay until the user closes them. The thread shows no error text. E2E specs read open error toasts with `openToasts(browser, 'error')` in `tests/e2e/harness/thread.ts`.
-- The error toasts of a reply (a failed request, failed jobs) have the group of their tab. The next reply of that tab closes them (`dez.stream/start`, `src/controller/stream.ts`): they tell of a reply that is not the newest one. The toasts of other tabs stay, and so does a "Cannot send" toast, which has no group.
+- The error toasts of a reply (a failed request, failed jobs) have the group of their tab. The next reply of that tab closes them (`dez.stream/start`, `src/controller/stream.ts`): they tell of a reply that is not the newest one. The toasts of other tabs stay, and so does a "Cannot send" toast, which has no group. `dez.ui/closeToasts` also removes the toasts of its group that wait for their tab.
+- The toasts of a reply and of a send (`dez.stream/start`, `dez.controller/submitTab`) have the `tabId` of their tab. A reply of a tab in the background that ends with an error toast makes the tab red (`--color-tab-error`, `TabBar.vue`), and its toast waits until the user goes to the tab. Other toasts (files, settings, updates) come from a user act in the active tab, or are of the whole app, so they have no `tabId`.
 - The jobs of a reply that failed, and whose results the model did not get before the reply ended, show in one such `error` toast for all of them (`Job failed`, `N jobs failed`; `endReply`, `src/controller/stream.ts`): a container shows only 4 toasts. The toast names each job by its tool, its id, and its status only: the result text of a job is for the model, so it goes to the console.
 - An error message is Dez's explanation first, then a blank line and `Details: <raw text>` (`errorText`, `src/utils/errorText.ts`). The message keeps its line breaks (`white-space: pre-wrap`), so the details are a paragraph of their own.
 - Toast title, message, and action text are rendered as Vue text bindings, not `v-html`, so HTML in toast content is not executed.

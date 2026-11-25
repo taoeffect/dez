@@ -218,7 +218,7 @@ Rules:
 
 ### Toasts
 
-`src/view/toast/`: emit with `dez.ui/toast`. Payloads and rules: `src/view/toast/README.md`. Chat request errors are sticky error toasts; the thread shows no error text.
+`src/view/toast/`: emit with `dez.ui/toast`. Payloads and rules: `src/view/toast/README.md`. Chat request errors are sticky error toasts; the thread shows no error text. A toast with a `tabId` shows only while its tab is active (`tabToasts.ts`).
 
 ### Backend (`src-tauri/src/`)
 

@@ -26,6 +26,10 @@ export interface ClosedTab {
 
 export const MAX_CLOSED_TABS = 20
 
+// How the reply of a tab in the background ended (`dez.model/tabs/markReplyEnded`):
+// `done`, or `error` when it ended with a reply error toast.
+export type ReplyEnd = 'done' | 'error'
+
 export const useTabStore = defineStore('tabs', () => {
   const tabs = ref<Tab[]>([createDefaultTab()])
   const activeTabId = ref<string>(tabs.value[0].id)
@@ -38,14 +42,14 @@ export const useTabStore = defineStore('tabs', () => {
     return tabs.value.findIndex((tab) => tab.id === activeTabId.value)
   })
 
-  // Tabs whose reply ended while they were in the background, for the tab
-  // bar. Session-only: never saved. The mark lasts until the tab is active
-  // again; every path that activates a tab sets `activeTabId`, so this one
-  // watch clears it. Sync, so a read right after the switch already sees no
-  // mark.
-  const replyDoneTabIds = ref(new Set<string>())
+  // The end mark of each tab whose reply ended while it was in the
+  // background, for the tab bar. Session-only: never saved. The mark lasts
+  // until the tab is active again; every path that activates a tab sets
+  // `activeTabId`, so this one watch clears it. Sync, so a read right after
+  // the switch already sees no mark.
+  const replyEnds = ref(new Map<string, ReplyEnd>())
   watch(activeTabId, (tabId) => {
-    replyDoneTabIds.value.delete(tabId)
+    replyEnds.value.delete(tabId)
   }, { flush: 'sync' })
 
   // Newest last. Session-only: never saved.
@@ -56,7 +60,7 @@ export const useTabStore = defineStore('tabs', () => {
     activeTabId,
     activeTab,
     activeTabIndex,
-    replyDoneTabIds,
+    replyEnds,
     closedTabs,
   }
 })

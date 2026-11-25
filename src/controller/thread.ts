@@ -15,17 +15,18 @@ import type { RequestMessages } from '../model/streams/types'
 import { systemPromptErrorText, systemPromptProblem, systemPromptTemplate } from '../model/systemPrompt'
 import { moneyRefusal, warnImagesNotSent } from './stream'
 
-// Tells the user that the request goes with `count` fewer images than the
-// message has, because the model `reason` (e.g. "does not read images").
-function warnImagesLeftOut(modelName: string, reason: string, count: number): void {
-  warnImagesNotSent(count, `${modelName} ${reason}, so ${imagesText(count)} ${count === 1 ? 'was' : 'were'} left out of the request.`)
+// Tells the user that the request of the tab goes with `count` fewer images
+// than the message has, because the model `reason` (e.g. "does not read
+// images").
+function warnImagesLeftOut(tabId: string, modelName: string, reason: string, count: number): void {
+  warnImagesNotSent(tabId, count, `${modelName} ${reason}, so ${imagesText(count)} ${count === 1 ? 'was' : 'were'} left out of the request.`)
 }
 
-// Tells the user that the request goes without the clips of `leftOut`, the
-// count of each kind that the message holds or names and the model
-// `modelName` does not take; `sent` is the count of each kind that goes. A
-// model with no clip rules takes no clip at all.
-function warnClipsLeftOut(modelName: string, takesClips: boolean, sent: Record<MediaTagKind, number>, leftOut: Record<MediaTagKind, number>): void {
+// Tells the user that the request of the tab goes without the clips of
+// `leftOut`, the count of each kind that the message holds or names and the
+// model `modelName` does not take; `sent` is the count of each kind that
+// goes. A model with no clip rules takes no clip at all.
+function warnClipsLeftOut(tabId: string, modelName: string, takesClips: boolean, sent: Record<MediaTagKind, number>, leftOut: Record<MediaTagKind, number>): void {
   const count = leftOut.audio + leftOut.video
   if (count === 0) return
   const kinds = (['audio', 'video'] as const).filter((kind) => leftOut[kind] > 0)
@@ -37,10 +38,12 @@ function warnClipsLeftOut(modelName: string, takesClips: boolean, sent: Record<M
     title: count === 1 ? 'Clip not sent' : 'Clips not sent',
     message: `${modelName} ${takes}, so ${count === 1 ? '1 clip was' : `${count} clips were`} left out of the request.`,
     duration: 8000,
+    tabId,
   })
 }
 
 export default sbp('sbp/selectors/register', {
+  // Each toast of a send belongs to its tab (`ToastData.tabId`).
   async 'dez.controller/submitTab' (tabId: string): Promise<void> {
     const tab = sbp('dez.model/tab', tabId)
     if (!tab) return
@@ -48,7 +51,7 @@ export default sbp('sbp/selectors/register', {
     const model = sbp('dez.model/activeModelForTab', tabId)
     if (!model) {
       console.error('Cannot send: no model selected')
-      sbp('dez.ui/toast', 'app-global', { variant: 'error', title: 'Cannot send', message: 'No model is selected. Choose a model in the bottom bar, and send again.' })
+      sbp('dez.ui/toast', 'app-global', { variant: 'error', title: 'Cannot send', message: 'No model is selected. Choose a model in the bottom bar, and send again.', tabId })
       return
     }
 
@@ -106,7 +109,7 @@ export default sbp('sbp/selectors/register', {
     message ??= moneyRefusal(tabId, kind === 'chat' ? chatRequestPrice(cachedModel.price) : { kind: 'quote', usd: 0 }, 'user')
     if (message !== null) {
       console.error(`Cannot send: ${message}`)
-      sbp('dez.ui/toast', 'app-global', { variant: 'error', title: 'Cannot send', message })
+      sbp('dez.ui/toast', 'app-global', { variant: 'error', title: 'Cannot send', message, tabId })
       return
     }
 
@@ -133,15 +136,16 @@ export default sbp('sbp/selectors/register', {
         title: 'Only the newest image sent',
         message: `${model.modelName} does not read images, so only the newest image of the conversation went with the request.`,
         duration: 8000,
+        tabId,
       })
     } else if (imagesLeftOut > 0) {
       // With only the text of each image reference.
-      warnImagesLeftOut(model.modelName, 'does not read images', imagesLeftOut)
+      warnImagesLeftOut(tabId, model.modelName, 'does not read images', imagesLeftOut)
     } else if (mediaImages.leftOut > 0) {
       const takes = mediaImages.sent === 0 ? 'takes no image' : `takes only ${imagesText(mediaImages.sent)}`
-      warnImagesLeftOut(model.modelName, takes, mediaImages.leftOut)
+      warnImagesLeftOut(tabId, model.modelName, takes, mediaImages.leftOut)
     }
-    warnClipsLeftOut(model.modelName, cachedModel.clips !== undefined, mediaClips.sent, mediaClips.leftOut)
+    warnClipsLeftOut(tabId, model.modelName, cachedModel.clips !== undefined, mediaClips.sent, mediaClips.leftOut)
 
     const outputs = effectiveOutputs(cachedModel)
     await sbp('dez.stream/start', {

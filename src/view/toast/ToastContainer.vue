@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import sbp from '@sbp/sbp'
+import { useModelState } from '../modelState'
 import { CLOSE_TOASTS, SHOW_TOAST } from './events'
 import ToastCard from './ToastCard.vue'
 import type { ToastItem } from './ToastCard.vue'
 import type { ToastData, ToastPosition } from './selectors'
+import { keptToasts, overflowToasts, toastShows } from './tabToasts'
 
 const props = defineProps<{
   area: string
@@ -21,17 +23,21 @@ const positions = [
   'bottom-right',
 ] as const satisfies readonly ToastPosition[]
 
+const { activeTabId, tabIds } = useModelState()
+// Every toast of the container, also those that wait for their tab
+// (`ToastData.tabId`, `tabToasts.ts`). Only the toasts that show have a card.
 const toasts = ref<ToastItem[]>([])
+const shownToasts = computed(() => toasts.value.filter((toast) => toastShows(toast, activeTabId.value)))
 const isSmallScreen = ref(false)
 const toastRefs = new Map<string, InstanceType<typeof ToastCard>>()
 let mediaQuery: MediaQueryList | null = null
 
 const smallGroupedToasts = computed<Record<'top' | 'bottom', ToastItem[]>>(() => ({
-  top: toasts.value.filter((toast) => toast.position?.startsWith('top')),
-  bottom: toasts.value.filter((toast) => toast.position?.startsWith('bottom')),
+  top: shownToasts.value.filter((toast) => toast.position?.startsWith('top')),
+  bottom: shownToasts.value.filter((toast) => toast.position?.startsWith('bottom')),
 }))
 const positionedGroupedToasts = computed<Record<ToastPosition, ToastItem[]>>(() => positions.reduce<Record<ToastPosition, ToastItem[]>>((groups, position) => {
-  groups[position] = toasts.value.filter((toast) => toast.position === position)
+  groups[position] = shownToasts.value.filter((toast) => toast.position === position)
   return groups
 }, {
   'top-left': [],
@@ -65,17 +71,18 @@ function onShowToast (toastArea: unknown, data: unknown): void {
     id: makeToastId(),
   } satisfies ToastItem
 
-  toasts.value.push(toast)
+  // A toast of a tab that is not open any more is dropped at once.
+  toasts.value = keptToasts([...toasts.value, toast], activeTabId.value, tabIds.value)
+  closeOverflow()
+}
 
-  while (toasts.value.filter((item) => !item.closing).length > MAX_TOAST_COUNT) {
-    const oldestToast = toasts.value.find((item) => !item.closing)
-    if (!oldestToast) return
-    startClose(oldestToast)
-  }
+// Closes the oldest toasts that show, over `MAX_TOAST_COUNT`.
+function closeOverflow (): void {
+  for (const toast of overflowToasts(toasts.value, activeTabId.value, MAX_TOAST_COUNT)) startClose(toast)
 }
 
 // Closes `toast` with the animation of its card, or at once while it has
-// no card yet (a toast of the same tick).
+// no card (a toast of the same tick, or one that waits for its tab).
 function startClose (toast: ToastItem): void {
   const card = toastRefs.get(toast.id)
   if (card) {
@@ -95,6 +102,13 @@ function closeToast (id: string): void {
   toasts.value = toasts.value.filter((toast) => toast.id !== id)
   toastRefs.delete(id)
 }
+
+// A switch of the tab draws the toasts of the new tab, and each starts its
+// timer again with its new card; a close of a tab drops its toasts.
+watch([activeTabId, tabIds], ([tabId, openTabIds]) => {
+  toasts.value = keptToasts(toasts.value, tabId, openTabIds)
+  closeOverflow()
+})
 
 function updateSmallScreenState (): void {
   isSmallScreen.value = mediaQuery?.matches ?? false

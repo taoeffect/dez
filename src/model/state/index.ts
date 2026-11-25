@@ -16,7 +16,7 @@ import type { ClipVolume, ClipVolumes } from '../clipVolume'
 import type { MediaTagKind } from '../chat/mediaTags'
 import { clampModelPickerSize, type ModelPickerSize } from '../modelPickerSize'
 import { currentShortcutPlatform, findShortcut, normalizeShortcutKey, validateShortcutKey, type Shortcut, type ShortcutId, type ShortcutOverrides } from '../shortcuts'
-import { MAX_CLOSED_TABS, NEW_TAB_TITLE, useTabStore } from './tabs'
+import { MAX_CLOSED_TABS, NEW_TAB_TITLE, useTabStore, type ReplyEnd } from './tabs'
 import type { AppStatePayload, CachedProvider, ContentNodeData, ConversationData, ConversationSearchOutcome, ModelCache } from '../persistence/types'
 import { emptyModelCache } from '../persistence/modelCache'
 import type { ModelOutputsConfig, ProviderConfig, ProviderThinkingConfig } from '../providers/config'
@@ -86,10 +86,11 @@ export interface SettingsSnapshot {
   helpOpen: boolean
 }
 
-// A tab's reply activity in the tab bar: `busy` while its reply streams,
-// `done` after a reply ended while the tab was in the background, until the
-// tab is active again.
-export type TabActivity = 'busy' | 'done'
+// A tab's reply activity in the tab bar: `busy` while its reply streams;
+// after a reply ended while the tab was in the background, until the tab is
+// active again, `error` when the reply ended with a reply error toast, else
+// `done`.
+export type TabActivity = 'busy' | ReplyEnd
 
 interface TabData {
   id: string
@@ -621,6 +622,12 @@ export default sbp('sbp/selectors/register', {
     return useTabStore().activeTabId
   },
 
+  // The ids of the open tabs, in tab bar order: a light reactive read for a
+  // view that needs no tab data (`tabs/list` copies every section).
+  'dez.model/tabs/ids' (): string[] {
+    return useTabStore().tabs.map((tab) => tab.id)
+  },
+
   'dez.model/tabs/activeConversationId' (): string {
     return useTabStore().activeTab.conversationId
   },
@@ -651,7 +658,7 @@ export default sbp('sbp/selectors/register', {
     if (index === -1) return null
     const tab = tabStore.tabs[index]
     tabStore.tabs.splice(index, 1)
-    tabStore.replyDoneTabIds.delete(tabId)
+    tabStore.replyEnds.delete(tabId)
     if (tabStore.activeTabId === tabId) {
       const newIndex = Math.min(index, tabStore.tabs.length - 1)
       tabStore.activeTabId = tabStore.tabs[newIndex].id
@@ -718,24 +725,27 @@ export default sbp('sbp/selectors/register', {
     tabStore.activeTabId = tabStore.tabs[nextIndex].id
   },
 
-  // A reply that ends while its tab is in the background marks the tab
-  // `done`. A reply that ends in the active tab needs no mark: the user sees
-  // it end. The tabs store clears the mark when the tab becomes active.
-  'dez.model/tabs/markReplyDone' (tabId: string): void {
+  // A reply that ends while its tab is in the background marks how it ended
+  // (`ReplyEnd`). A reply that ends in the active tab needs no mark: the user
+  // sees it end. An error mark stays until the tab is active: a later `done`
+  // does not hide the error, whose toast waits for the tab. The tabs store
+  // clears the mark when the tab becomes active.
+  'dez.model/tabs/markReplyEnded' (tabId: string, end: ReplyEnd): void {
     const tabStore = useTabStore()
     if (tabId === tabStore.activeTabId || !tabStore.tabs.some((tab) => tab.id === tabId)) return
-    tabStore.replyDoneTabIds.add(tabId)
+    if (tabStore.replyEnds.get(tabId) !== 'error') tabStore.replyEnds.set(tabId, end)
   },
 
-  // The activity of each tab that has one. Busy wins over done, though both
-  // never meet: a new reply starts only in the active tab, which has no
-  // mark.
+  // The activity of each tab that has one. Busy wins over an end mark,
+  // though both never meet: a new reply starts only in the active tab, which
+  // has no mark.
   'dez.model/tabs/activity' (): Record<string, TabActivity> {
     const tabStore = useTabStore()
     const activity: Record<string, TabActivity> = {}
     for (const tab of tabStore.tabs) {
+      const end = tabStore.replyEnds.get(tab.id)
       if (streamIsStreaming(tab.id)) activity[tab.id] = 'busy'
-      else if (tabStore.replyDoneTabIds.has(tab.id)) activity[tab.id] = 'done'
+      else if (end) activity[tab.id] = end
     }
     return activity
   },
@@ -995,7 +1005,7 @@ export default sbp('sbp/selectors/register', {
     forgetClosedConversation(id)
 
     const matchingTabs = tabStore.tabs.filter((tab) => tab.conversationId === id)
-    for (const tab of matchingTabs) tabStore.replyDoneTabIds.delete(tab.id)
+    for (const tab of matchingTabs) tabStore.replyEnds.delete(tab.id)
     if (!matchingTabs.length) {
       await sbp('dez.model/appState/save')
       return true

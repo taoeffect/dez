@@ -61,10 +61,12 @@ onUnmounted(() => {
   /* A thing that went well: the "Saved" state of a clip's Save control
      (MediaPlayer.vue). As text it is 4.5:1 or more on the background. */
   --color-success: #1a7f37;
-  /* Tab bar backgrounds (TabBar.vue): a tab whose reply streams (busy), and
-     a tab whose reply ended in the background (done). */
+  /* Tab bar backgrounds (TabBar.vue): a tab whose reply streams (busy), a
+     tab whose reply ended in the background (done), and one whose reply
+     ended in the background with an error toast (error). */
   --color-tab-busy: #f7dc9b;
   --color-tab-done: #c2e5c4;
+  --color-tab-error: #f5c6c3;
   /* The image overlay toolbar (dezTheme in cmEditor.ts): a dark glass
      surface with white text in both themes, so that it reads on any image,
      and its hairline border and divider. */
@@ -119,6 +121,7 @@ onUnmounted(() => {
     --color-success: #3fb950;
     --color-tab-busy: #5b4716;
     --color-tab-done: #234d2e;
+    --color-tab-error: #5e2a2d;
     --color-image-toolbar: rgba(40, 40, 46, 0.8);
     --color-image-toolbar-border: rgba(255, 255, 255, 0.14);
     --color-mention: #f0c75e;
@@ -148,6 +151,7 @@ onUnmounted(() => {
   --color-success: #3fb950;
   --color-tab-busy: #5b4716;
   --color-tab-done: #234d2e;
+  --color-tab-error: #5e2a2d;
   --color-image-toolbar: rgba(40, 40, 46, 0.8);
   --color-image-toolbar-border: rgba(255, 255, 255, 0.14);
   --color-mention: #f0c75e;

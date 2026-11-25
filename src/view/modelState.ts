@@ -25,6 +25,7 @@ export interface ActiveTabCost {
 export interface ViewModelState {
   tabs: ComputedRef<ModelSnapshot['tabs']>
   activeTabId: ComputedRef<string>
+  tabIds: ComputedRef<string[]>
   activeConversationId: ComputedRef<string>
   activeModel: ComputedRef<ActiveModel | null>
   activeSections: ComputedRef<Section[]>
@@ -53,6 +54,8 @@ export function useModelState(): ViewModelState {
   return {
     tabs: computed(() => sbp('dez.model/tabs/list') as ModelSnapshot['tabs']),
     activeTabId: computed(() => sbp('dez.model/tabs/activeId') as string),
+    // The open tabs, for the toasts that belong to a tab.
+    tabIds: computed(() => sbp('dez.model/tabs/ids') as string[]),
     activeConversationId: computed(() => sbp('dez.model/tabs/activeConversationId') as string),
     activeModel: computed(() => sbp('dez.model/activeModel') as ActiveModel | null),
     activeSections: computed(() => sbp('dez.model/thread/sections') as Section[]),
@@ -90,7 +93,7 @@ export function useModelState(): ViewModelState {
       const activeTabId = sbp('dez.model/tabs/activeId') as string
       return sbp('dez.model/streams/streamingSectionId', activeTabId) as string | null
     }),
-    // Tab id -> busy or done, for the tab bar colors.
+    // Tab id -> busy, error, or done, for the tab bar colors.
     tabActivity: computed(() => sbp('dez.model/tabs/activity') as Record<string, TabActivity>),
     // For the cost label of the bottom bar. Reads only the active tab's
     // cost, mark, and compaction numbers, so a streamed token does not

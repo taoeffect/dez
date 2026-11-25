@@ -255,6 +255,7 @@ watch(
           'tab--active': tab.id === activeTabId,
           'tab--busy': tabActivity[tab.id] === 'busy',
           'tab--done': tabActivity[tab.id] === 'done',
+          'tab--error': tabActivity[tab.id] === 'error',
           'tab--dragging': tab.id === draggedTabId,
         }"
         :style="tab.id === draggedTabId ? { transform: `translateX(${dragOffsetX}px)` } : undefined"
@@ -349,7 +350,9 @@ watch(
 .tab.tab--busy,
 .tab.tab--busy:hover,
 .tab.tab--done,
-.tab.tab--done:hover {
+.tab.tab--done:hover,
+.tab.tab--error,
+.tab.tab--error:hover {
   opacity: 1;
 }
 
@@ -363,8 +366,14 @@ watch(
   background: var(--color-tab-done);
 }
 
+.tab.tab--error,
+.tab.tab--error:hover {
+  background: var(--color-tab-error);
+}
+
 .tab--busy:not(.tab--active) .tab-title,
-.tab--done:not(.tab--active) .tab-title {
+.tab--done:not(.tab--active) .tab-title,
+.tab--error:not(.tab--active) .tab-title {
   opacity: 0.6;
 }
 

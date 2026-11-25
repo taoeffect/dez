@@ -226,12 +226,17 @@ function handOverJobs(tabId: string, reply: ReplyRuntime): void {
   heldJobsByTab.set(tabId, reply.jobs.tabJobs)
 }
 
-function finalizeStream(tabId: string, session: EndedStreamSession | null): void {
+// Ends the stream session of a reply. `failedJobs`: the session finished,
+// but the reply ends with the error toast of its failed jobs (`endReply`).
+function finalizeStream(tabId: string, session: EndedStreamSession | null, { failedJobs = false } = {}): void {
   if (!session) return
   finalizeStreamSectionForTab(session)
   // A stop is the user's own act, so it marks nothing and gives no alert.
+  // The mark of a tab in the background is `error` when the reply ends with
+  // a reply error toast (`showReplyError`), so the tab is red while the
+  // toast waits for it.
   if (session.status !== 'cancelled') {
-    sbp('dez.model/tabs/markReplyDone', tabId)
+    sbp('dez.model/tabs/markReplyEnded', tabId, session.status === 'error' || failedJobs ? 'error' : 'done')
     // Not awaited; it catches its own failures.
     sbp('dez.controller/alertReplyEnded', tabId, session.status)
   }
@@ -308,17 +313,16 @@ function replyErrorGroup(tabId: string): string {
 // The error shows only in this toast, never as thread text. Sticky (no
 // duration): the user closes it, or the next reply of the tab does
 // (`dez.stream/start`), as the toast then tells of a reply that the user
-// went on from. For a tab in the background the title names the tab, else
-// the user cannot tell where the error came from. Call it after the stream
-// end, which sets the title of a new tab.
+// went on from. The toast belongs to its tab (`ToastData.tabId`): for a tab
+// in the background it waits until the user goes to the tab, which is red
+// meanwhile (`finalizeStream`).
 function showReplyError(tabId: string, title: string, message: string): void {
-  const tab = sbp('dez.model/tab', tabId) as Tab | null
-  const inBackground = !!tab && tab.id !== sbp('dez.model/tabs/activeId')
   sbp('dez.ui/toast', 'app-global', {
     variant: 'error',
-    title: inBackground ? `${title} in "${tab.title}"` : title,
+    title,
     message,
     group: replyErrorGroup(tabId),
+    tabId,
   })
 }
 
@@ -329,14 +333,15 @@ function modelInfoOf(model: ModelRef): Partial<ModelInfo> & Pick<ModelInfo, 'id'
   return (sbp('dez.model/modelCache/model', model.providerId, model.modelId) as ModelInfo | null) ?? { id: model.modelId }
 }
 
-// Tells the user that `count` images of the conversation did not go with
-// the request; `message` tells why.
-export function warnImagesNotSent(count: number, message: string): void {
+// Tells the user that `count` images of the conversation of the tab did not
+// go with the request; `message` tells why.
+export function warnImagesNotSent(tabId: string, count: number, message: string): void {
   sbp('dez.ui/toast', 'app-global', {
     variant: 'warning',
     title: count === 1 ? 'Image not sent' : 'Images not sent',
     message,
     duration: 8000,
+    tabId,
   })
 }
 
@@ -347,7 +352,7 @@ export function warnImagesNotSent(count: number, message: string): void {
 // messages, so with only the limit of a request, the newest images are
 // the ones with no part; with a lower limit of one message, they are also
 // the last images of a message that holds more.
-function warnImagesOverLimit(model: ActiveModel, count: number): void {
+function warnImagesOverLimit(tabId: string, model: ActiveModel, count: number): void {
   const info = modelInfoOf(model)
   const limit = imageLimitOf(info)
   const messageLimit = messageImageLimitOf(info)
@@ -358,7 +363,7 @@ function warnImagesOverLimit(model: ActiveModel, count: number): void {
       + 'Put fewer images into one message, or delete the images that the model does not need from earlier messages.'
     : `${model.modelName} takes at most ${imagesText(limit)} in one request, so the newest ${count === 1 ? 'image' : imagesText(count)} of the conversation ${were} left out. `
       + 'Delete the images that the model does not need from earlier messages, or start a new conversation.'
-  warnImagesNotSent(count, message)
+  warnImagesNotSent(tabId, count, message)
 }
 
 // The error of a failed request to `model`, as the user reads it. A text
@@ -778,12 +783,12 @@ async function settleJobs(tabId: string, reply: ReplyRuntime, { tabJobs, lease }
 // open job there is no wait, so the end is in the tick of the reply's
 // last write. True when it ended the reply; false when a stop or a new
 // submit ended it during the wait for the jobs. A caller shows its own
-// toast only after a true: the end sets the title of a new tab.
+// toast only after a true: a reply that the user cut has no error to show.
 async function endReply(tabId: string, reply: ReplyRuntime, status: 'finished' | 'error'): Promise<boolean> {
   const jobs = reply.jobs
   const unread = jobs?.tabJobs.hasOpen ? await settleJobs(tabId, reply, jobs) : []
   if (unread === null) return false
-  finalizeStream(tabId, status === 'finished' ? finishStreamSession(tabId) : errorStreamSession(tabId))
+  finalizeStream(tabId, status === 'finished' ? finishStreamSession(tabId) : errorStreamSession(tabId), { failedJobs: unread.length > 0 })
   if (unread.length > 0) {
     for (const job of unread) console.error(`The ${job.tool} job ${job.id} ${job.status}, and the model did not get its result:`, job.text)
     showReplyError(tabId, unread.length === 1 ? 'Job failed' : `${unread.length} jobs failed`, unreadJobsMessage(unread))
@@ -1131,7 +1136,7 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
     // Each round: the jobs and the rounds before it spent money too.
     checkReplyMoney(args.tabId, chatRequestPrice(modelInfoOf(args.model).price))
     if (untoldImagesOverLimit > 0) {
-      warnImagesOverLimit(args.model, untoldImagesOverLimit)
+      warnImagesOverLimit(args.tabId, args.model, untoldImagesOverLimit)
       untoldImagesOverLimit = 0
     }
     const requestId = crypto.randomUUID()
