@@ -201,3 +201,10 @@ export const APIMART_MUSIC_MODELS: Readonly<Record<string, ApimartMusicModel>> =
 export function apimartMusicModel(modelId: unknown): ApimartMusicModel | undefined {
   return typeof modelId === 'string' && Object.hasOwn(APIMART_MUSIC_MODELS, modelId) ? APIMART_MUSIC_MODELS[modelId] : undefined
 }
+
+// The transcription models that give the times of the words and the
+// segments: only `whisper-1` takes `response_format=verbose_json`. The
+// `gpt-4o-transcribe` models refuse it with a 400 (a live check of
+// `gpt-4o-mini-transcribe`, 2026-11-24), so they get no times.
+// https://docs.apimart.ai/en/api-reference/audios/whisper-1
+export const APIMART_TIMED_TRANSCRIPTION_MODELS: ReadonlySet<string> = new Set(['whisper-1'])

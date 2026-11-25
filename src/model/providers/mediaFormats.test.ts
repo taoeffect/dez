@@ -2048,6 +2048,7 @@ describe('openrouter clip jobs', () => {
 
 // https://docs.venice.ai/api-reference/endpoint/audio/transcriptions
 // https://openrouter.ai/docs/api/api-reference/stt/create-transcription
+// https://docs.apimart.ai/en/api-reference/audios/whisper-1
 describe('transcriptions', () => {
   const FILE = { name: 'file', file: { bytes: base64ToBytes(AUDIOS[0]), mediaType: 'audio/mpeg', fileName: 'clip.mp3' } }
   const input = { prompt: 'Write it down', images: [], clips: [clip('audio', 'source', AUDIOS[0])], values: {} }
@@ -2116,7 +2117,7 @@ describe('transcriptions', () => {
     ]).toStrictEqual([{ text: 'Hi.' }, { text: 'Hi.' }])
   })
 
-  it.each(['venice', 'openrouter'] as const)('reads the text of a %s answer as it is, and an empty text as the transcript of a clip with no speech', (format) => {
+  it.each(['venice', 'openrouter', 'apimart'] as const)('reads the text of a %s answer as it is, and an empty text as the transcript of a clip with no speech', (format) => {
     const parse = (data: unknown) => MEDIA_FORMATS[format].texts?.parseResponse('transcription', json(data))
 
     expect([
@@ -2125,12 +2126,12 @@ describe('transcriptions', () => {
     ]).toStrictEqual([{ text: ' Hello there. ' }, { text: '' }])
   })
 
-  // Venice tells no price in its answer.
+  // Venice and APIMart tell no price in their answers.
   it('reads the price of an OpenRouter answer', () => {
     const data = { text: 'Hi.', usage: { seconds: 2, cost: 0.0004 } }
 
-    expect((['venice', 'openrouter'] as const).map((format) => MEDIA_FORMATS[format].texts?.parseResponse('transcription', json(data))))
-      .toStrictEqual([{ text: 'Hi.' }, { text: 'Hi.', cost: 0.0004 }])
+    expect((['venice', 'openrouter', 'apimart'] as const).map((format) => MEDIA_FORMATS[format].texts?.parseResponse('transcription', json(data))))
+      .toStrictEqual([{ text: 'Hi.' }, { text: 'Hi.', cost: 0.0004 }, { text: 'Hi.' }])
   })
 
   it.each([
@@ -2138,7 +2139,7 @@ describe('transcriptions', () => {
     ['a text that is no string', json({ text: ['Hello'] }), 'The answer holds no text.'],
     ['a body that is not JSON', new TextEncoder().encode('Hello'), 'The answer is not valid JSON.'],
   ])('refuses an answer with %s in each format', (_name, body, message) => {
-    expect((['venice', 'openrouter'] as const).map((format) => thrownError(() => MEDIA_FORMATS[format].texts?.parseResponse('transcription', body))))
-      .toStrictEqual([new UnusableAnswerError(message), new UnusableAnswerError(message)])
+    expect((['venice', 'openrouter', 'apimart'] as const).map((format) => thrownError(() => MEDIA_FORMATS[format].texts?.parseResponse('transcription', body))))
+      .toStrictEqual([new UnusableAnswerError(message), new UnusableAnswerError(message), new UnusableAnswerError(message)])
   })
 })

@@ -1,17 +1,17 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { click, consoleErrors, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
-import { MP4_VIDEO, shownPlayers, silentWav, startClipServer, type ClipServer } from './harness/media'
+import { MP4_VIDEO, shownPlayers, silentWav, startClipServer, tempClipTag, type ClipServer } from './harness/media'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
-import { answerHeld, mockModelKey, type MockProvider } from './harness/mockServer'
+import { answerHeld, mockModelKey, requestForm, type MockProvider } from './harness/mockServer'
 import { changeParameterField, closePopup, openPopup, popupOpen, popupView } from './harness/parameterPopup'
 import type { E2EBrowser } from './harness/session'
-import { activeTabId, closeToasts, editorDoc, newTab, openToasts, pasteText, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread } from './harness/thread'
+import { activeTabId, closeToasts, editorDoc, newTab, openSeededConversation, openToasts, pasteText, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread } from './harness/thread'
 
-// Video and music models of APIMart, driven through the real app against a
-// mock of its API (`mediaApi: { format: 'apimart' }`). The mock serves the
-// model list in the form of APIMart's list, with the schema of each video
-// model's request (`?expand=parameters`), the account price of a request,
-// and the state of each task.
+// Video, music, and transcription models of APIMart, driven through the
+// real app against a mock of its API (`mediaApi: { format: 'apimart' }`).
+// The mock serves the model list in the form of APIMart's list, with the
+// schema of each video model's request (`?expand=parameters`), the account
+// price of a request, and the state of each task.
 // - the popup shows the rows that the docs tell for a model that Dez knows
 //   (MiniMax-H3, Suno), and the rows of the schema for any other video
 //   model; the Suno popup tells how lyrics turn on its Custom mode;
@@ -25,7 +25,10 @@ import { activeTabId, closeToasts, editorDoc, newTab, openToasts, pasteText, pic
 //   its model (Suno: inspiration mode for a message with no lyrics; Flow
 //   Music: the style and the lyrics of the message); the app asks
 //   `/music/tasks/<id>` for the state, and shows one player for each song
-//   of the task (a Suno task makes two), at the cost of the task.
+//   of the task (a Suno task makes two), at the cost of the task;
+// - a transcription sends the audio clip that the message names as the
+//   file of a form to `/audio/transcriptions`, and the reply's text is the
+//   transcript; its price is unknown, as the answer tells no cost.
 //
 // One app session serves the whole file; each test starts in a new tab.
 
@@ -41,6 +44,10 @@ const musicTaskPath = (taskId: string) => `/${MART.id}/v1/music/tasks/${taskId}?
 // APIMart config) that show when the list holds them.
 const SUNO = { id: 'suno', name: 'Suno' }
 const FLOW_MUSIC = { id: 'flowmusic', name: 'Flow Music' }
+// A transcription model, a config model of the provider as in the built-in
+// APIMart config.
+const WHISPER = 'whisper-1'
+const TRANSCRIBE_PATH = `/${MART.id}/v1/audio/transcriptions`
 
 // The general schema of almost all video models (kling-v3 in the live
 // list, 2026-11-24, with the descriptions and some image fields cut).
@@ -74,7 +81,10 @@ const videoEntry = (id: string) => ({
 const musicEntry = (id: string) =>
   ({ id, object: 'model', created: 1626777600, owned_by: 'custom', supported_endpoint_types: ['openai'], category: 'audio', capability_tags: ['Text to Audio'], parameters: null })
 
-const MODEL_LIST = { object: 'list', success: true, data: [videoEntry(MART.modelId), videoEntry(GENERAL_MODEL), musicEntry(SUNO.id), musicEntry(FLOW_MUSIC.id)] }
+// The entry of whisper-1 (live list, 2026-11-24).
+const WHISPER_ENTRY = { id: WHISPER, object: 'model', created: 1626777600, owned_by: 'openai', supported_endpoint_types: ['openai'], category: 'audio', capability_tags: ['Audio'] }
+
+const MODEL_LIST = { object: 'list', success: true, data: [videoEntry(MART.modelId), videoEntry(GENERAL_MODEL), musicEntry(SUNO.id), musicEntry(FLOW_MUSIC.id), WHISPER_ENTRY] }
 
 // An answer of the account price request (live, 2026-11-24).
 const quote = (model: string, totalUsd: number) =>
@@ -118,11 +128,12 @@ describe('APIMart media models', () => {
       models: [
         { ...SUNO, fetchedOnly: true, outputs: ['audio'], request: 'music' },
         { ...FLOW_MUSIC, fetchedOnly: true, outputs: ['audio'], request: 'music' },
+        { id: WHISPER, fetchedOnly: true, outputs: ['text'], request: 'transcription' },
       ],
       modelListQuery: { expand: 'parameters' },
       modelOutputs: { path: 'category', values: { video: { outputs: ['video'], request: 'video' }, audio: { outputs: [] } } },
     }, {
-      heldPaths: [SUBMIT_PATH, MUSIC_PATH],
+      heldPaths: [SUBMIT_PATH, MUSIC_PATH, TRANSCRIBE_PATH],
       jsonAnswers: {
         [`/${MART.id}/v1/models?expand=parameters`]: MODEL_LIST,
         // The free price request that goes before each request.
@@ -322,6 +333,39 @@ describe('APIMart media models', () => {
     ])
     expect((await threadSections(browser))[1].text).toMatch(new RegExp(String.raw`^<dez:audio id="a" type="audio/wav" src="[^"]+\.wav" expires="[^"]+" model="${mockModelKey(MART, FLOW_MUSIC.id)}" job="task-flow"/>$`))
     expect(await sbpCall(browser, 'dez.model/tabs/costNumbers', await activeTabId(browser))).toEqual({ cost: { usd: 0.06, requests: 1, unpriced: 0 } })
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('sends the named audio clip to a transcription model as a form file, writes the transcript as the reply, and counts its price as unknown', async () => {
+    const speech = silentWav(3)
+    const tag = await tempClipTag(setup.app.home, 'audio', 'a', 'speech.wav', speech)
+    await openSeededConversation(browser, setup.app.home, 'apimart-transcribe', [
+      { role: 'user', text: 'Make a clip' },
+      { role: 'agent', text: tag },
+      { role: 'user', text: 'Write down @a' },
+    ])
+    await pickModel(browser, MART.name, WHISPER)
+    await submit(browser, '')
+
+    const request = await takeRequest(setup, TRANSCRIBE_PATH)
+    expect(request.headers['content-type']).toMatch(/^multipart\/form-data; boundary=/)
+    // No prompt, and no times: only a `model_invoke` call asks for them.
+    expect(await requestForm(request)).toStrictEqual([
+      { name: 'model', value: WHISPER },
+      { name: 'response_format', value: 'json' },
+      { name: 'file', fileName: 'clip.wav', type: 'audio/wav', bytes: speech },
+    ])
+    // The live answer of `json` (2026-11-24).
+    answerHeld(request.reply, 'application/json', JSON.stringify({ text: 'Hello from Ben. This is a short test.', usage: { type: 'duration', seconds: 4 } }))
+
+    await waitForThread(browser, [
+      { role: 'user', text: 'Make a clip' },
+      { role: 'agent', text: tag },
+      { role: 'user', text: 'Write down @a' },
+      { role: 'agent', text: 'Hello from Ben. This is a short test.' },
+      { role: 'user', text: '' },
+    ])
+    expect(await sbpCall(browser, 'dez.model/tabs/costNumbers', await activeTabId(browser))).toEqual({ cost: { usd: 0, requests: 1, unpriced: 1 } })
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 })

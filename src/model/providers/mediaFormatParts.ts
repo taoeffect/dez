@@ -1,4 +1,10 @@
+import { mediaFileExtension } from '../chat/mediaFiles'
+import { UnusableAnswerError } from './errors'
+import type { InputClipPart } from './mediaFormats'
 import { isOptionValue, type ModelParameter, type OptionsParameter, type OptionValue } from './modelParameters'
+import { isRecord, valueAtPath } from './modelParsing'
+import type { MultipartField } from './multipart'
+import type { TimedSegment, TimedWord, TranscriptTimes } from './types'
 
 // The small parts that more than one media format (`MediaFormat`) uses.
 // A leaf module: mediaFormats.ts imports each format module, so a format
@@ -64,4 +70,69 @@ export function lowestFirstParameter(name: string, label: string, list: unknown,
   const values = listedValues(list)
   const sized = values.filter((value) => !Number.isNaN(size(value))).sort((a, b) => size(a) - size(b))
   return optionsParameter(name, label, [...sized, ...values.filter((value) => Number.isNaN(size(value)))], sized[0])
+}
+
+// The one clip of a request to a model that changes or writes down a clip
+// (its `source` clip), with its bytes. The submit and `generateMedia` send
+// no such request without it (`missingClipProblem`), and no model of these
+// kinds takes a clip only by its web address.
+export function sourceClip(clips: readonly InputClipPart[]): { bytes: Uint8Array, mediaType: string } {
+  const clip = clips.find((part) => part.use === 'source')
+  if (!clip || 'url' in clip) throw new Error('The request has no source clip to send.')
+  return clip
+}
+
+// The form file `name` of a clip. The file name tells the type by its
+// extension (some servers read that) and names no local path.
+export function clipFormFile(name: string, { bytes, mediaType }: { bytes: Uint8Array, mediaType: string }): MultipartField {
+  return { name, file: { bytes, mediaType, fileName: `clip.${mediaFileExtension(mediaType, null) ?? 'bin'}` } }
+}
+
+export function jsonBody(body: Uint8Array): unknown {
+  try {
+    return JSON.parse(new TextDecoder().decode(body))
+  } catch {
+    throw new UnusableAnswerError('The answer is not valid JSON.')
+  }
+}
+
+// The text of a transcription answer (its JSON `data`): `{ text, … }` for
+// each API that Dez knows. An empty text is the transcript of a clip with
+// no speech.
+export function transcriptText(data: unknown): string {
+  const text = isRecord(data) ? data.text : undefined
+  if (typeof text !== 'string') throw new UnusableAnswerError('The answer holds no text.')
+  return text
+}
+
+// A time of a transcription answer, rounded to the millisecond: the
+// answers hold float noise, such as 47.480000000000004.
+function answerSeconds(value: number): number {
+  return Math.round(value * 1000) / 1000
+}
+
+// The entries of a list of a transcription answer that hold a text at `key`
+// and a `start` and `end` in seconds (0 or more, `end` not before `start`).
+function timedEntries(list: unknown, key: 'word' | 'text'): TimedSegment[] {
+  if (!Array.isArray(list)) return []
+  return list.flatMap((entry) => {
+    if (!isRecord(entry)) return []
+    const { [key]: text, start, end } = entry
+    if (typeof text !== 'string' || typeof start !== 'number' || typeof end !== 'number') return []
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start) return []
+    return [{ text, start: answerSeconds(start), end: answerSeconds(end) }]
+  })
+}
+
+// The times of a transcription answer that asked for them: the lists at
+// `paths.words` (`{ word, start, end }`) and `paths.segments` (`{ text,
+// start, end }`), and the length of the clip at `duration`. Models
+// differ: one gives only words, another only segments. Dez drops each
+// entry that is not of that form. Undefined when no entry is left.
+export function transcriptTimes(data: unknown, paths: { words: string, segments: string }): TranscriptTimes | undefined {
+  const words: TimedWord[] = timedEntries(valueAtPath(data, paths.words), 'word').map(({ text, start, end }) => ({ word: text, start, end }))
+  const segments = timedEntries(valueAtPath(data, paths.segments), 'text')
+  if (words.length === 0 && segments.length === 0) return undefined
+  const duration = isRecord(data) ? data.duration : undefined
+  return { duration: typeof duration === 'number' && Number.isFinite(duration) && duration > 0 ? answerSeconds(duration) : null, words, segments }
 }

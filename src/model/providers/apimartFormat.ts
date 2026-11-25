@@ -1,20 +1,21 @@
 import { ExplainedError } from '../../utils/errorText'
 import { sanitizeErrorText } from '../../utils/protocol/errors'
-import { APIMART_WHOLE_NUMBER_FIELDS, apimartMusicModel, apimartVideoModel } from './apimartModels'
+import { APIMART_TIMED_TRANSCRIPTION_MODELS, APIMART_WHOLE_NUMBER_FIELDS, apimartMusicModel, apimartVideoModel } from './apimartModels'
 import { usageNumber } from './chatUsage'
 import { cloneClipTextRules } from './clipText'
 import { trimTrailingSlashes } from './config'
 import { ClipNotMadeError, UnusableAnswerError } from './errors'
-import { isClipUrl, lengthSeconds, listedValues, lowestFirstParameter, optionsParameter, resolutionLines } from './mediaFormatParts'
+import { clipFormFile, isClipUrl, jsonBody, lengthSeconds, listedValues, lowestFirstParameter, optionsParameter, resolutionLines, sourceClip, transcriptText, transcriptTimes } from './mediaFormatParts'
 import type { MediaFormat } from './mediaFormats'
 import { parameterTakes, type ModelParameter, type ParameterValues, type RangeParameter } from './modelParameters'
 import { isRecord, valueAtPath } from './modelParsing'
 
 // The media format of APIMart (`mediaApi.format: 'apimart'`): video and
-// music requests as tasks. A request starts a task, and Dez asks for its
-// state until it ends. Only the `video` and `music` request kinds: Dez
-// sends APIMart no input image or clip (its API takes them only as web
-// addresses). The music models have no schema in the model list, so only
+// music requests as tasks, and transcriptions. A video or music request
+// starts a task, and Dez asks for its state until it ends. Dez sends
+// APIMart no input image, and a clip only to a transcription model, as the
+// file of a form: the other endpoints take images and clips only as web
+// addresses. The music models have no schema in the model list, so only
 // the music models of the doc facts (`APIMART_MUSIC_MODELS`) take a
 // request.
 // https://docs.apimart.ai/en/api-reference/tasks/status (checked 2026-11-24)
@@ -126,6 +127,9 @@ function wholeSeconds(value: unknown): number | undefined {
   if (typeof value === 'number') return Number.isInteger(value) ? value : undefined
   return typeof value === 'string' && WHOLE_NUMBER_TEXT.test(value.trim()) ? Number(value.trim()) : undefined
 }
+
+// The most bytes of the file of a transcription request (the docs).
+const MAX_TRANSCRIPTION_BYTES = 25 * 1024 ** 2
 
 function refusedKind(): never {
   throw new ExplainedError('This provider has no request of this kind that Dez can use. Choose another model.')
@@ -268,6 +272,44 @@ export const apimartFormat: MediaFormat = {
         if (usd === undefined) throw new UnusableAnswerError('The answer holds no price.')
         return values.max_mode === true ? usd * 2 : usd
       },
+    },
+  },
+  // A transcription model takes one audio clip, of the types of the docs
+  // that Dez stores (mp3, mp4, m4a, wav; the docs also tell mpeg, mpga,
+  // and webm). Another audio clip goes as a WAV copy (`needsWavCopy`).
+  // https://docs.apimart.ai/en/api-reference/audios/whisper-1
+  clipRules: (kind) => (kind === 'transcription'
+    ? { audio: { use: 'source', maxClips: 1, maxBytes: MAX_TRANSCRIPTION_BYTES, types: ['audio/mpeg', 'audio/mp4', 'audio/wav'] } }
+    : undefined),
+  // The transcription endpoint takes a form (`file`, `model`,
+  // `response_format`, `language`, `prompt`, `temperature`; Dez sends no
+  // `language`, `prompt`, or `temperature`) and answers `{ text, usage }`
+  // for `json`. The times of the words and the segments (`wordTimes`) need
+  // `verbose_json` with two `timestamp_granularities[]` fields, which only
+  // the models of `APIMART_TIMED_TRANSCRIPTION_MODELS` take; that answer
+  // adds `duration`, `words` (`{ word, start, end }`), and `segments`
+  // (`{ text, start, end, … }`). The answer tells no cost, only `usage`
+  // (seconds or tokens), so the price of a transcription is unknown.
+  // https://docs.apimart.ai/en/api-reference/audios/whisper-1 (and live
+  // checks of whisper-1 and gpt-4o-mini-transcribe, 2026-11-24)
+  texts: {
+    request: (kind, baseUrl, modelId, { clips = [], wordTimes }) => {
+      if (kind !== 'transcription') refusedKind()
+      const timed = wordTimes === true && APIMART_TIMED_TRANSCRIPTION_MODELS.has(modelId)
+      return {
+        url: `${trimTrailingSlashes(baseUrl)}/audio/transcriptions`,
+        form: [
+          { name: 'model', value: modelId },
+          { name: 'response_format', value: timed ? 'verbose_json' : 'json' },
+          ...(timed ? [{ name: 'timestamp_granularities[]', value: 'word' }, { name: 'timestamp_granularities[]', value: 'segment' }] : []),
+          clipFormFile('file', sourceClip(clips)),
+        ],
+      }
+    },
+    parseResponse: (_kind, body) => {
+      const data = jsonBody(body)
+      const times = transcriptTimes(data, { words: 'words', segments: 'segments' })
+      return { text: transcriptText(data), ...(times && { times }) }
     },
   },
 }

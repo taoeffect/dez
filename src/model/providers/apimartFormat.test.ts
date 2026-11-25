@@ -2,12 +2,13 @@ import { describe, expect, it } from 'vitest'
 import { ExplainedError } from '../../utils/errorText'
 import { apimartFormat } from './apimartFormat'
 import { ClipNotMadeError, UnusableAnswerError } from './errors'
-import type { ClipFormat, ClipQuoteFormat } from './mediaFormats'
+import type { ClipFormat, ClipQuoteFormat, MediaInput, TextFormat } from './mediaFormats'
 import type { ModelParameter, ParameterValues } from './modelParameters'
 import { thrownError } from './testing'
 
 const clips = apimartFormat.clips as ClipFormat
 const quote = clips.quote as ClipQuoteFormat
+const texts = apimartFormat.texts as TextFormat
 
 const BASE_URL = 'https://api.apimart.ai/v1'
 const VIDEO_URL = 'https://upload.apimart.ai/f/video/task_01_0.mp4'
@@ -341,5 +342,72 @@ describe('apimart music quotes', () => {
   it('doubles the price of a request with max mode on', () => {
     const answer = { billing_type: 'per_call', total_usd: 0.068, quantity: 1, spec: { key: 'music-v6' } }
     expect([quote.usd(answer, { version: 'v6' }), quote.usd(answer, { version: 'v6', max_mode: true })]).toStrictEqual([0.068, 0.136])
+  })
+})
+
+// https://docs.apimart.ai/en/api-reference/audios/whisper-1
+describe('apimart transcriptions', () => {
+  const BYTES = new Uint8Array([1, 2, 3])
+  const FILE = { name: 'file', file: { bytes: BYTES, mediaType: 'audio/mp4', fileName: 'clip.m4a' } }
+  const input: MediaInput = { prompt: 'Write it down', images: [], clips: [{ kind: 'audio', use: 'source', mediaType: 'audio/mp4', bytes: BYTES }], values: {} }
+  const form = (modelId: string, wordTimes?: true) => texts.request('transcription', `${BASE_URL}/`, modelId, { ...input, ...(wordTimes && { wordTimes }) })
+
+  it('takes one audio clip only for a transcription, of the types of the docs, and no clip for a video or a song', () => {
+    expect([
+      apimartFormat.clipRules?.('transcription', undefined, undefined, {}),
+      apimartFormat.clipRules?.('video', undefined, undefined, {}),
+      apimartFormat.clipRules?.('music', undefined, undefined, {}),
+    ]).toStrictEqual([
+      { audio: { use: 'source', maxClips: 1, maxBytes: 25 * 1024 ** 2, types: ['audio/mpeg', 'audio/mp4', 'audio/wav'] } },
+      undefined,
+      undefined,
+    ])
+  })
+
+  it('posts the clip to /audio/transcriptions as the file of a form, with the model and no prompt', () => {
+    expect(form('gpt-4o-mini-transcribe')).toStrictEqual({
+      url: `${BASE_URL}/audio/transcriptions`,
+      form: [{ name: 'model', value: 'gpt-4o-mini-transcribe' }, { name: 'response_format', value: 'json' }, FILE],
+    })
+  })
+
+  // A live check (2026-11-24): `gpt-4o-mini-transcribe` refuses
+  // `verbose_json` with a 400.
+  it('asks whisper-1 for the times of the words and the segments of a call that wants them, and the other models for no times', () => {
+    expect([form('whisper-1', true).form, form('whisper-1').form, form('gpt-4o-transcribe', true).form]).toStrictEqual([
+      [
+        { name: 'model', value: 'whisper-1' },
+        { name: 'response_format', value: 'verbose_json' },
+        { name: 'timestamp_granularities[]', value: 'word' },
+        { name: 'timestamp_granularities[]', value: 'segment' },
+        FILE,
+      ],
+      [{ name: 'model', value: 'whisper-1' }, { name: 'response_format', value: 'json' }, FILE],
+      [{ name: 'model', value: 'gpt-4o-transcribe' }, { name: 'response_format', value: 'json' }, FILE],
+    ])
+  })
+
+  // A live `verbose_json` answer of whisper-1 (2026-11-24, with the words
+  // and the fields of the segment cut).
+  it('reads the words and the segments of a verbose answer to the millisecond, and no times of a json answer', () => {
+    const parse = (data: unknown) => texts.parseResponse('transcription', new TextEncoder().encode(JSON.stringify(data)))
+
+    expect(parse({
+      task: 'transcribe',
+      language: 'english',
+      duration: 3.0299999713897705,
+      text: 'Hello from Ben. This is a short test.',
+      words: [{ word: 'Hello', start: 0, end: 0.3400000035762787 }, { word: 'test', start: 2.2799999713897705, end: 2.640000104904175 }],
+      segments: [{ id: 0, seek: 0, start: 0, end: 2.640000104904175, text: ' Hello from Ben. This is a short test.', tokens: [50364], temperature: 0, no_speech_prob: 0.002 }],
+      usage: { type: 'duration', seconds: 4 },
+    })).toStrictEqual({
+      text: 'Hello from Ben. This is a short test.',
+      times: {
+        duration: 3.03,
+        words: [{ word: 'Hello', start: 0, end: 0.34 }, { word: 'test', start: 2.28, end: 2.64 }],
+        segments: [{ text: ' Hello from Ben. This is a short test.', start: 0, end: 2.64 }],
+      },
+    })
+    expect(parse({ text: 'Hello from Ben. This is a short test.', usage: { type: 'duration', seconds: 4 } })).toStrictEqual({ text: 'Hello from Ben. This is a short test.' })
   })
 })

@@ -472,17 +472,20 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     baseUrl: 'https://api.apimart.ai/v1',
     apiFormat: 'openai',
     // Models of the `chat` category that take no chat request: the
-    // embedding, moderation, and speech-to-text models, and o3-pro, which
-    // takes only the Responses API (its `supported_endpoint_types`). The
-    // music models of the `audio` category, whose entries hold no schema:
-    // Dez knows their request fields from the docs (apimartModels.ts).
+    // embedding and moderation models, and o3-pro, which takes only the
+    // Responses API (its `supported_endpoint_types`). The speech-to-text
+    // models (`whisper-1` is in the `audio` category, the others in `chat`)
+    // take a transcription request. The music models of the `audio`
+    // category, whose entries hold no schema: Dez knows their request
+    // fields from the docs (apimartModels.ts).
     models: [
       { id: 'text-embedding-3-large', fetchedOnly: true, outputs: [] },
       { id: 'text-embedding-3-small', fetchedOnly: true, outputs: [] },
       { id: 'text-embedding-ada-002', fetchedOnly: true, outputs: [] },
       { id: 'omni-moderation-latest', fetchedOnly: true, outputs: [] },
-      { id: 'gpt-4o-transcribe', fetchedOnly: true, outputs: [] },
-      { id: 'gpt-4o-mini-transcribe', fetchedOnly: true, outputs: [] },
+      { id: 'whisper-1', fetchedOnly: true, outputs: ['text'], request: 'transcription' },
+      { id: 'gpt-4o-transcribe', fetchedOnly: true, outputs: ['text'], request: 'transcription' },
+      { id: 'gpt-4o-mini-transcribe', fetchedOnly: true, outputs: ['text'], request: 'transcription' },
       { id: 'o3-pro', fetchedOnly: true, outputs: [] },
       { id: 'suno', name: 'Suno', fetchedOnly: true, outputs: ['audio'], request: 'music' },
       { id: 'flowmusic', name: 'Flow Music', fetchedOnly: true, outputs: ['audio'], request: 'music' },
@@ -495,9 +498,9 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // (`capability_tags` give tools to the embedding models), so these flags
     // stay unknown. The image models take no chat request, and Dez has no
     // request of theirs yet; nor of the other audio models, but the music
-    // models of `models`. A video model makes a video from a prompt
-    // (`mediaApi`); Dez sends it no input image. An `unknown` model is one
-    // that APIMart has not cataloged; its price page answers
+    // and speech-to-text models of `models`. A video model makes a video
+    // from a prompt (`mediaApi`); Dez sends it no input image. An `unknown`
+    // model is one that APIMart has not cataloged; its price page answers
     // `model_not_found` or `no_valid_pricing` (checked live, 2026-11-24).
     modelOutputs: {
       path: 'category',
@@ -537,8 +540,9 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
       note: "APIMart's public price (an account can pay less)",
     },
     // Video and music requests are tasks, which Dez polls
-    // (apimartFormat.ts). The docs tell no limit of the tasks of one key at
-    // a time, so the default limit of Dez applies.
+    // (apimartFormat.ts); a transcription is one request. The docs tell no
+    // limit of the tasks of one key at a time, so the default limit of Dez
+    // applies.
     // https://docs.apimart.ai/en/api-reference/tasks/status
     mediaApi: { format: 'apimart' },
     auth: 'apiKey',

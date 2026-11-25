@@ -6,7 +6,7 @@ import { responseContentType, type NativeHttpResponseHead } from '../../utils/pr
 import type { ImageSize } from '../chat/imageDrawing'
 import { imageMediaType } from '../chat/images'
 import type { MediaTagKind } from '../chat/mediaTags'
-import { clipMediaTypeOfExtension, mediaFileExtension } from '../chat/mediaFiles'
+import { clipMediaTypeOfExtension } from '../chat/mediaFiles'
 import { apimartFormat } from './apimartFormat'
 import { trimTrailingSlashes, type MediaApiFormatId, type MediaEntryPaths } from './config'
 import type { ClipUse, InputClipRules } from './clipInputs'
@@ -17,11 +17,11 @@ import { ClipNotMadeError, UnusableAnswerError } from './errors'
 import { generatedBase64Image, generatedImage } from './generatedImages'
 import { imageSizeRules, positiveLimit, type ImageSizeRules, type InputImageLimits } from './imageSize'
 import type { MultipartField } from './multipart'
-import { isClipUrl, lengthSeconds, listedValues, lowestFirstParameter, optionsParameter, resolutionLines, switchParameter } from './mediaFormatParts'
+import { clipFormFile, isClipUrl, jsonBody, lengthSeconds, listedValues, lowestFirstParameter, optionsParameter, resolutionLines, sourceClip, switchParameter, transcriptText, transcriptTimes } from './mediaFormatParts'
 import { parameterTakes, type ModelParameter, type OptionValue, type ParameterValues, type RangeParameter } from './modelParameters'
 import { priceNumber, roundedPrice, unitPrice, usdText, type ModelPrice } from './modelPrices'
 import { isRecord, valueAtPath } from './modelParsing'
-import { CLIP_KINDS, type ChatImagePart, type ClipKind, type GeneratedMedia, type ImageKind, type MediaKind, type TextKind, type TimedSegment, type TimedWord, type TranscriptTimes } from './types'
+import { CLIP_KINDS, type ChatImagePart, type ClipKind, type GeneratedMedia, type ImageKind, type MediaKind, type TextKind, type TranscriptTimes } from './types'
 import { VENICE_AUDIO_TYPES, VENICE_MAX_AUDIO_BYTES, VENICE_REFERENCE_FIELDS, VENICE_VIDEO_TYPES, veniceFamilyByIdPrefix, veniceReferenceBody, veniceReferenceClipRules, veniceReferenceFamily } from './veniceReferences'
 
 // What one media request sends: the user's prompt, the input images as
@@ -68,22 +68,6 @@ export type InputClipPart =
 // file is never base64.
 function clipUrl(clip: InputClipPart): string {
   return 'url' in clip ? clip.url : `data:${clip.mediaType};base64,${bytesToBase64(clip.bytes)}`
-}
-
-// The one clip of a request to a model that changes or writes down a clip
-// (its `source` clip), with its bytes. The submit and `generateMedia` send
-// no such request without it (`missingClipProblem`), and no model of these
-// kinds takes a clip only by its web address.
-function sourceClip(clips: readonly InputClipPart[]): { bytes: Uint8Array, mediaType: string } {
-  const clip = clips.find((part) => part.use === 'source')
-  if (!clip || 'url' in clip) throw new Error('The request has no source clip to send.')
-  return clip
-}
-
-// The form file `name` of a clip. The file name tells the type by its
-// extension (some servers read that) and names no local path.
-function clipFormFile(name: string, { bytes, mediaType }: { bytes: Uint8Array, mediaType: string }): MultipartField {
-  return { name, file: { bytes, mediaType, fileName: `clip.${mediaFileExtension(mediaType, null) ?? 'bin'}` } }
 }
 
 // What one clip request sends: a media input (for speech, the prompt is
@@ -306,55 +290,6 @@ export interface MediaFormat {
   // (`values`). Undefined when the entries tell no price, or none that Dez
   // can read with no input of the request.
   listPrice?(kind: MediaKind, values: ParameterValues, entry: unknown, mediaEntry: unknown, paths: MediaEntryPaths): ModelPrice | undefined
-}
-
-function jsonBody(body: Uint8Array): unknown {
-  try {
-    return JSON.parse(new TextDecoder().decode(body))
-  } catch {
-    throw new UnusableAnswerError('The answer is not valid JSON.')
-  }
-}
-
-// The text of a transcription answer (its JSON `data`): `{ text, … }` for
-// Venice and OpenRouter. An empty text is the transcript of a clip with no
-// speech.
-function transcriptText(data: unknown): string {
-  const text = isRecord(data) ? data.text : undefined
-  if (typeof text !== 'string') throw new UnusableAnswerError('The answer holds no text.')
-  return text
-}
-
-// A time of a transcription answer, rounded to the millisecond: the
-// answers hold float noise, such as 47.480000000000004.
-function answerSeconds(value: number): number {
-  return Math.round(value * 1000) / 1000
-}
-
-// The entries of a list of a transcription answer that hold a text at `key`
-// and a `start` and `end` in seconds (0 or more, `end` not before `start`).
-function timedEntries(list: unknown, key: 'word' | 'text'): TimedSegment[] {
-  if (!Array.isArray(list)) return []
-  return list.flatMap((entry) => {
-    if (!isRecord(entry)) return []
-    const { [key]: text, start, end } = entry
-    if (typeof text !== 'string' || typeof start !== 'number' || typeof end !== 'number') return []
-    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start) return []
-    return [{ text, start: answerSeconds(start), end: answerSeconds(end) }]
-  })
-}
-
-// The times of a Venice transcription answer that asked for them
-// (`timestamps=true`): `{ duration?, timestamps?: { word?, segment?, char? } }`,
-// each list of `{ word | text, start, end }`. Models differ: one gives only
-// words, another only segments. Dez drops `char`, and each entry that is
-// not of that form. Undefined when no entry is left.
-function transcriptTimes(data: unknown): TranscriptTimes | undefined {
-  const words: TimedWord[] = timedEntries(valueAtPath(data, 'timestamps.word'), 'word').map(({ text, start, end }) => ({ word: text, start, end }))
-  const segments = timedEntries(valueAtPath(data, 'timestamps.segment'), 'text')
-  if (words.length === 0 && segments.length === 0) return undefined
-  const duration = isRecord(data) ? data.duration : undefined
-  return { duration: typeof duration === 'number' && Number.isFinite(duration) && duration > 0 ? answerSeconds(duration) : null, words, segments }
 }
 
 // The price that OpenRouter gives in the JSON `data` of an answer of its
@@ -1208,7 +1143,9 @@ const veniceFormat: MediaFormat = {
   // The transcription endpoint takes only a form (`file`, `model`,
   // `response_format`, `timestamps`, `language`; no other field), and
   // answers `{ text, duration?, timestamps? }` for `json`. `timestamps=true`
-  // asks for the times of the words and the segments (`wordTimes`).
+  // asks for the times of the words and the segments (`wordTimes`):
+  // `timestamps: { word?, segment?, char? }`, each list of `{ word | text,
+  // start, end }`. Dez drops `char`.
   // https://docs.venice.ai/api-reference/endpoint/audio/transcriptions
   texts: {
     request: (_kind, baseUrl, modelId, { clips = [], wordTimes }) => ({
@@ -1222,7 +1159,7 @@ const veniceFormat: MediaFormat = {
     }),
     parseResponse: (_kind, body) => {
       const data = jsonBody(body)
-      const times = transcriptTimes(data)
+      const times = transcriptTimes(data, { words: 'timestamps.word', segments: 'timestamps.segment' })
       return { text: transcriptText(data), ...(times && { times }) }
     },
   },
