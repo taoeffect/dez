@@ -58,6 +58,8 @@ describe('planTextEdits', () => {
   it('fails text that is at more than one place, with the lines of the first 5', () => {
     expect(outcomes('x = 1\ny = 2\nx = 3\n', [edit('x =', 'z =')])).toStrictEqual([`failed: \`old_string\` is in the file at 2 places, on lines 1 and 3. ${MANY_ADVICE}`])
     expect(outcomes('xx\nx\n', [edit('x', 'z')])).toStrictEqual([`failed: \`old_string\` is in the file at 3 places, on lines 1 and 2. ${MANY_ADVICE}`])
+    // Places that overlap count: `}\n}` is at offsets 0 and 2.
+    expect(outcomes('}\n}\n}\n', [edit('}\n}', '}')])).toStrictEqual([`failed: \`old_string\` is in the file at 2 places, on lines 1 and 2. ${MANY_ADVICE}`])
     expect(outcomes('x\n'.repeat(12), [edit('x', 'z')])).toStrictEqual([
       `failed: \`old_string\` is in the file at 12 places, the first 5 on lines 1, 2, 3, 4, and 5. ${MANY_ADVICE}`,
     ])
@@ -101,6 +103,14 @@ describe('planTextEdits', () => {
     // An exact match comes first, and a file with no \r\n gets none.
     expect(planTextEdits('a\nb\r\n', [edit('a\nb', 'A\nB')]).text).toBe('A\nB\r\n')
     expect(planTextEdits('a\nb\n', [edit('a\nb', 'A\nB')]).text).toBe('A\nB\n')
+  })
+
+  it('writes \\r\\n for each \\n of the new text in a file whose line ends are all \\r\\n', () => {
+    expect(planTextEdits('a\r\nb\r\n', [edit('a', 'A\n1')]).text).toBe('A\r\n1\r\nb\r\n')
+    expect(planTextEdits('a\r\nb\r\n', [edit('a', 'A\r\n1\n2')]).text).toBe('A\r\n1\r\n2\r\nb\r\n')
+    // A place that starts with \n comes after the \r of its line end, which
+    // stays: the \n at the start of the new text ends that line.
+    expect(planTextEdits('a\r\nb\r\n', [edit('\nb', '\nB\n2')]).text).toBe('a\r\nB\r\n2\r\n')
   })
 
   it('keeps a byte order mark', () => {

@@ -47,11 +47,14 @@ interface PlacedStep {
   text: (lines: readonly number[]) => string
 }
 
-// The start of each place of `search` in `text`, left to right, with no
-// overlap: the places that `String.replaceAll` replaces.
-function placesOf(text: string, search: string): number[] {
+// The start of each place of `search` in `text`, left to right. With
+// `overlap`, every start, for the check that `search` is at one place
+// only: `}\n}` is at two places of `}\n}\n}`. With no `overlap`, the places
+// that `String.replaceAll` replaces.
+function placesOf(text: string, search: string, overlap: boolean): number[] {
+  const step = overlap ? 1 : search.length
   const starts: number[] = []
-  for (let start = text.indexOf(search); start !== -1; start = text.indexOf(search, start + search.length)) {
+  for (let start = text.indexOf(search); start !== -1; start = text.indexOf(search, start + step)) {
     starts.push(start)
   }
   return starts
@@ -91,6 +94,20 @@ function withCrlf(text: string): string {
   return text.replace(/\r?\n/g, '\r\n')
 }
 
+// Whether `text` has `\r\n` line ends and no lone `\n`.
+function hasOnlyCrlf(text: string): boolean {
+  return text.includes('\r\n') && !/(?:^|[^\r])\n/.test(text)
+}
+
+// `newString` with each lone `\n` as `\r\n`, for a text whose line ends
+// are all `\r\n`. A place of an `oldString` that starts with `\n` comes
+// after the `\r` of its line end, which stays: there, a `\n` at the start
+// of `newString` ends that line as it is, with no second `\r`.
+function crlfNewString(oldString: string, newString: string): string {
+  if (oldString.startsWith('\n') && newString.startsWith('\n')) return `\n${withCrlf(newString.slice(1))}`
+  return withCrlf(newString)
+}
+
 // The line number of each of `offsets` in `text`; line 1 is the first.
 function lineNumbers(text: string, offsets: readonly number[]): number[] {
   const lineStarts = [0]
@@ -122,9 +139,11 @@ const MATCH_ADVICE = 'Read the file again, and give the text as it is in the fil
 
 /** The plan of the `edits` of `text`. An edit fails when its
  *  `oldString` is empty, when it is not in the text, and when it is at
- *  more than one place with no `replaceAll`; the other edits still pass.
- *  When an `oldString` with `\n` is not in a text with `\r\n` line ends,
- *  the edit takes each lone `\n` of `oldString` and `newString` as `\r\n`.
+ *  more than one place with no `replaceAll` (places that overlap count);
+ *  the other edits still pass. When an `oldString` with `\n` is not in a
+ *  text with `\r\n` line ends, the edit takes each lone `\n` of
+ *  `oldString` and `newString` as `\r\n`; in a text whose line ends are
+ *  all `\r\n`, it writes each lone `\n` of `newString` as `\r\n` too.
  *  Each line number of an outcome is a number of the text after all the
  *  edits. */
 export function planTextEdits(text: string, edits: readonly TextEdit[]): TextEditPlan {
@@ -136,11 +155,13 @@ export function planTextEdits(text: string, edits: readonly TextEdit[]): TextEdi
       return { done: false, text: '`old_string` is empty. Give the text to replace; to make a new file, or to give a file all new text, use write.' }
     }
     let { oldString, newString } = edit
-    let starts = placesOf(current, oldString)
+    let starts = placesOf(current, oldString, !edit.replaceAll)
     if (starts.length === 0 && current.includes('\r\n') && oldString.includes('\n')) {
       oldString = withCrlf(oldString)
       newString = withCrlf(newString)
-      starts = placesOf(current, oldString)
+      starts = placesOf(current, oldString, !edit.replaceAll)
+    } else if (newString.includes('\n') && hasOnlyCrlf(current)) {
+      newString = crlfNewString(oldString, newString)
     }
     if (starts.length === 0) {
       const earlier = replacedBefore ? ' The edits before this one changed the file first, and this edit looked for its text in what they left.' : ''
