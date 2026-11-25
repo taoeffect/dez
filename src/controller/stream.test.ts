@@ -787,6 +787,32 @@ describe('the money limit of a tab', () => {
     expect([requests.length, toastTexts(), activeTab().cost?.usd]).toStrictEqual([1, [], 0.25])
   })
 
+  // Nothing shows while a submit waits for the price of its model, so the
+  // user can press Submit again, also after a pick of another model.
+  it('sends nothing for a submit of the tab while an earlier submit waits for the price', async () => {
+    const other = { ...model, modelId: 'n', modelName: 'N' }
+    sbp('dez.model/modelCache/applyProviderResult', model.providerId, {
+      ok: true,
+      models: [model, other].map((ref) => ({ id: ref.modelId, name: ref.modelName, provider: ref.providerId })),
+    })
+    const priceLoaded = new Map<string, () => void>()
+    loadPrice = async (ref) => await new Promise<void>((resolve) => { priceLoaded.set(ref.modelId, resolve) })
+    let cancels = 0
+    cancelStream = async () => { cancels++ }
+    replyRounds([answer(0.25), answer(0.25)])
+    const tabId = activeTab().id
+
+    const first = sbp('dez.controller/submitTab', tabId) as Promise<void>
+    sbp('dez.model/setActiveModel', other.providerId, other.modelId, other.modelName)
+    const second = sbp('dez.controller/submitTab', tabId) as Promise<void>
+    priceLoaded.get(other.modelId)?.()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    priceLoaded.get(model.modelId)?.()
+    await Promise.all([first, second])
+
+    expect([requests.map((input) => input.modelId), cancels]).toStrictEqual([[model.modelId], 0])
+  })
+
   it('refuses a chat request at the submit when the tab spent its limit', async () => {
     priceModel()
     setLimit(0.25)

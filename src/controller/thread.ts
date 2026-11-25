@@ -42,6 +42,11 @@ function warnClipsLeftOut(tabId: string, modelName: string, takesClips: boolean,
   })
 }
 
+// The tabs whose submit waits for the price of its model
+// (`dez.controller/submitTab`). Nothing shows during the wait, so the user
+// can press Submit again: that second submit sends nothing.
+const tabsLoadingPrice = new Set<string>()
+
 export default sbp('sbp/selectors/register', {
   // Each toast of a send belongs to its tab (`ToastData.tabId`).
   async 'dez.controller/submitTab' (tabId: string): Promise<void> {
@@ -56,11 +61,18 @@ export default sbp('sbp/selectors/register', {
 
     // The price and the context window of a model whose provider tells
     // them in a price request (`dez.controller/modelCache/loadPrice`): the
-    // money checks and the compaction checks of the reply read them, and
-    // `dez.stream/start` runs only here, so this load is the reply's too.
-    // Before the reads of the tab, so that the request holds the text that
-    // the tab has after the wait.
-    await sbp('dez.controller/modelCache/loadPrice', model)
+    // money checks and the compaction checks of the reply read them, and a
+    // chat reply starts only here (a reply that Dez resumes after a quit is
+    // a media reply), so this load is the reply's too. Before the reads of
+    // the tab, so that the request holds the text that the tab has after
+    // the wait.
+    if (tabsLoadingPrice.has(tabId)) return
+    tabsLoadingPrice.add(tabId)
+    try {
+      await sbp('dez.controller/modelCache/loadPrice', model)
+    } finally {
+      tabsLoadingPrice.delete(tabId)
+    }
     const tab = sbp('dez.model/tab', tabId)
     if (!tab) return
 
