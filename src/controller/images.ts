@@ -95,10 +95,12 @@ export default sbp('sbp/selectors/register', {
   // image models make), and returns the absolute path for its reference
   // (`imageMarkdown` in src/model/chat/images.ts). A failure is logged,
   // shows an error toast, and rejects, so the caller inserts no reference.
+  // `tabId`: the tab of the reply that made the image; its toast waits for
+  // that tab, which can be in the background.
   async 'dez.controller/images/save' (
     bytes: Uint8Array,
     mediaType: ImageMediaType,
-    { folder = 'pasted' }: { folder?: ImageFolder } = {},
+    { folder = 'pasted', tabId }: { folder?: ImageFolder, tabId?: string } = {},
   ): Promise<string> {
     try {
       const file = `${IMAGE_FOLDERS[folder]}/${crypto.randomUUID()}.${imageExtension(mediaType)}`
@@ -113,6 +115,7 @@ export default sbp('sbp/selectors/register', {
           ? error.message
           : errorText('The system did not let Dez write the image file. The details tell why (for example, the disk is full). Fix that, and try again.', rawErrorText(error)),
         variant: 'error',
+        ...(tabId !== undefined && { tabId }),
       })
       throw error
     }

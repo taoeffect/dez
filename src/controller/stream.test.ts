@@ -1727,7 +1727,7 @@ describe('dez.stream/start media round', () => {
     setConversation(conversation())
   })
 
-  it('saves each image in the generated folder, writes its reference with a new id, and finishes the reply', async () => {
+  it('saves each image in the generated folder for its tab, writes its reference with a new id, and finishes the reply', async () => {
     await sbp('dez.controller/submitTab', activeTab().id)
 
     expect(mediaInputs).toStrictEqual([{
@@ -1741,7 +1741,8 @@ describe('dez.stream/start media round', () => {
       beforeSend: expect.any(Function),
       onProgress: expect.any(Function),
     }])
-    expect(saves).toStrictEqual([{ folder: 'generated' }, { folder: 'generated' }])
+    const save = { folder: 'generated', tabId: activeTab().id }
+    expect(saves).toStrictEqual([save, save])
     expect(sectionTexts()).toStrictEqual([
       ...conversation(),
       { role: 'agent', text: `![id=c|model=${MODEL_MARK}](${generated('g1.png')})\n\n![id=d|model=${MODEL_MARK}](${generated('g2.png')})` },
@@ -2615,7 +2616,7 @@ describe('dez.stream/start images of a chat reply', () => {
     ])
   })
 
-  it('saves each image in the generated folder and writes its reference, with a new id and the model of the reply, as a paragraph between the text around it', async () => {
+  it('saves each image in the generated folder for its tab and writes its reference, with a new id and the model of the reply, as a paragraph between the text around it', async () => {
     streamChat = async (input) => {
       await input.onToken('Two views.')
       await input.onImage(png)
@@ -2629,7 +2630,8 @@ describe('dez.stream/start images of a chat reply', () => {
     await startStream()
 
     const text = `Two views.\n\n![id=b|model=${MODEL_MARK}](${generated('g1.png')})\n\n![id=c|model=${MODEL_MARK}](${generated('g2.png')})\n\nThe last one:\n\n![id=d|model=${MODEL_MARK}](${generated('g3.png')})`
-    expect(saves).toStrictEqual([{ folder: 'generated' }, { folder: 'generated' }, { folder: 'generated' }])
+    const save = { folder: 'generated', tabId: activeTab().id }
+    expect(saves).toStrictEqual([save, save, save])
     expect(sectionVisibleText(agentSection())).toBe(text)
     expect(editorTokens.join('')).toBe(text)
     expect(savedConversations).toHaveLength(1)

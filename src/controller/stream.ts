@@ -256,8 +256,8 @@ function finalizeStream(tabId: string, session: EndedStreamSession | null, { fai
   finalizeStreamSectionForTab(session)
   // A stop is the user's own act, so it marks nothing and gives no alert.
   // The mark of a tab in the background is `error` when the reply ends with
-  // a reply error toast (`showReplyError`), so the tab is red while the
-  // toast waits for it.
+  // an error toast of the tab (`showReplyError`, the toast of a failed image
+  // save of a media round), so the tab is red while the toast waits for it.
   if (session.status !== 'cancelled') {
     sbp('dez.model/tabs/markReplyEnded', tabId, session.status === 'error' || failedJobs ? 'error' : 'done')
     // Not awaited; it catches its own failures.
@@ -745,9 +745,10 @@ function writeAsset(tabId: string, reply: ReplyRuntime, assetText: (id: string) 
 async function writeReplyImage(tabId: string, reply: ReplyRuntime, image: GeneratedMedia, model: ModelRef): Promise<void> {
   let path: string
   try {
-    path = await sbp('dez.controller/images/save', image.bytes, image.mediaType, { folder: 'generated' }) as string
+    path = await sbp('dez.controller/images/save', image.bytes, image.mediaType, { folder: 'generated', tabId }) as string
   } catch {
-    // images/save logged the failure and showed its error toast.
+    // images/save logged the failure and showed its error toast, which
+    // waits for the tab.
     return
   }
 
@@ -1437,10 +1438,12 @@ async function runMediaRound(args: StreamStartArgs, reply: ReplyRuntime, kind: M
   let saved = true
   try {
     for (const file of media) {
-      paths.push(await sbp('dez.controller/images/save', file.bytes, file.mediaType, { folder: 'generated' }) as string)
+      paths.push(await sbp('dez.controller/images/save', file.bytes, file.mediaType, { folder: 'generated', tabId: args.tabId }) as string)
     }
   } catch {
-    // images/save logged the failure and showed its error toast.
+    // images/save logged the failure and showed its error toast, which
+    // waits for the tab. The reply ends as an error, so a tab in the
+    // background turns red (`finalizeStream`).
     saved = false
   }
 
