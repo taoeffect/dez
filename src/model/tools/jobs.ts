@@ -617,7 +617,8 @@ export function jobCancelText(named: readonly JobInfo[], cancelled: readonly str
  *  the reply; `knownIds` are the ids of its jobs. */
 export function unknownJobText(unknownIds: readonly string[], knownIds: readonly string[]): string {
   const names = `${unknownIds.length === 1 ? 'the id' : 'the ids'} ${unknownIds.map((id) => JSON.stringify(id)).join(', ')}`
-  const earlier = 'The jobs of an earlier reply that ended on its own ended with that reply, and no job lives through a close of the tab.'
+  const earlier = 'The jobs of an earlier reply that ended on its own ended with that reply, no job lives through a close of the tab, '
+    + 'and after a restart of Dez only the jobs whose results you did not get are left.'
   return knownIds.length === 0
     ? `This reply has started no job, so no job has ${names}. ${earlier} Use only the id of a job that you started in this reply.`
     : `No job of this reply has ${names}. ${earlier} The jobs of this reply are ${knownIds.join(', ')}: use only these ids.`
