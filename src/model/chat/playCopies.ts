@@ -46,9 +46,10 @@ export const PLAY_COPY_MAX_BYTES = 256 * 1024 ** 2
  *  return makes no new run. */
 export const PLAY_COPY_KEEP_MS = 60 * 1000
 
-/** The most bytes of all the play copies that Dez keeps in memory. Past
- *  it, the copies that no player shows go first, the oldest first; a copy
- *  that a player shows stays, as its player holds its bytes anyway. */
+/** The bytes of the play copies in the memo past which Dez drops the
+ *  copies that no player shows, the oldest first, before their
+ *  `PLAY_COPY_KEEP_MS` ends. A copy that a player shows counts, but
+ *  stays: its player holds its bytes anyway. */
 export const PLAY_COPY_MEMO_MAX_BYTES = 512 * 1024 ** 2
 
 /** One ffmpeg run that makes a play copy in a run folder. */
