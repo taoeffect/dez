@@ -4,11 +4,9 @@
 
 <h1 align="center">Dez - Plain text AI multimedia studio!</h1>
 
-Talk with AI in a fully editable plaintext document. Inspired by Zed's text threads feature (no longer with us, RIP).
+Talk with AI in a fully editable plaintext document.
 
-https://github.com/user-attachments/assets/6980f983-bfcf-4146-9cfb-6658b37774d5
-
-# Features 🌟
+# Full Feature List 🌟
 
 - 📝 Saved prompts via `/prompt`
 - 🗂️ Tabbed conversations
@@ -35,10 +33,24 @@ https://github.com/user-attachments/assets/6980f983-bfcf-4146-9cfb-6658b37774d5
 - 🗑️ Finds and deletes unreferenced files
 - 💻 macOS and Linux
 
+# Examples
+
+Music video made with Dez in ~35 minutes:
+
+https://github.com/user-attachments/assets/36c4a447-6ab3-4dc0-b2cc-27190f65ba61
+
+Video game mini-apps:
+
+https://github.com/user-attachments/assets/55d4c8b8-88b0-4f10-914c-bb7c982c16e5
+
+And so much more!
+
 # Docs
 
 - [Custom providers](docs/CUSTOM_PROVIDERS.md): add any OpenAI- or Anthropic-compatible server, such as llama-server, LM Studio, or Ollama
 - [Packaging](docs/PACKAGING.md): build the Linux AppImage and the macOS DMG, make a tagged release, and open an unsigned macOS build
+
+https://github.com/user-attachments/assets/6980f983-bfcf-4146-9cfb-6658b37774d5
 
 # Tech Stack
 
