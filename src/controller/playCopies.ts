@@ -125,13 +125,15 @@ function makeCopy(entry: PlayCopy, target: PlayCopyTarget): Promise<Blob | null>
 }
 
 // Drops the oldest copies that were made while the memo holds more than
-// its cap. A player that plays a dropped copy keeps it.
+// its cap. A player that plays a dropped copy keeps it. A copy that failed
+// stays: it holds no bytes, and the memo keeps the next player of its clip
+// from a run that fails again.
 function trimCopies(): void {
   let total = 0
   for (const entry of copies.values()) total += entry.bytes
   for (const [src, entry] of copies) {
     if (total <= PLAY_COPIES_MAX_BYTES) return
-    if (!entry.done) continue
+    if (!entry.done || entry.bytes === 0) continue
     total -= entry.bytes
     copies.delete(src)
   }
