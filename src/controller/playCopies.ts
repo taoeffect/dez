@@ -9,7 +9,7 @@ import { byteSizeText } from '../utils/byteSize'
 import { longDuration } from '../utils/durationText'
 import { rawErrorText } from '../utils/errorText'
 import type { AppFileEntry } from './nativeTypes'
-import { copyInputClip, inWorkFolder, runProgram, wholeLinesEnd } from './programRuns'
+import { copyInputClip, errorOutputEnd, inWorkFolder, runProgram } from './programRuns'
 
 // The play copies of local video clips that this computer cannot play
 // (model/chat/playCopies.ts tells why they exist): `dez.controller/media/
@@ -73,19 +73,15 @@ async function copyRun(src: string, target: PlayCopyTarget, signal: AbortSignal)
   try {
     return await inWorkFolder(async (folder): Promise<RunResult> => {
       const input = await copyInputClip({ name: inputName, clip: { src, url: null, expires: null } }, folder, signal)
-      let errors = ''
-      let errorsCut = false
+      const errors = errorOutputEnd(ERROR_END_CHARS)
       const run = { args, folder, inputs: input ? [input] : [], timeoutMs: PLAY_COPY_RUN_TIMEOUT_MS, maxOutputBytes: FFMPEG_OUTPUT_BYTES }
       const end = await runProgram('ffmpeg', RUN_NAME, run, signal, ({ stream, text }) => {
-        if (stream !== 'stderr') return
-        errors += text
-        errorsCut ||= errors.length > ERROR_END_CHARS
-        errors = errors.slice(-ERROR_END_CHARS)
+        if (stream === 'stderr') errors.add(text)
       })
       if (end.kind === 'timedOut') return { kind: 'failed', log: `${LOG_START} ffmpeg took longer than ${longDuration(PLAY_COPY_RUN_TIMEOUT_MS)}.` }
       if (end.kind !== 'exited' || end.code !== 0) {
         // The error output can name a path that the data of the file holds.
-        return { kind: 'failed', log: `${LOG_START} ${withoutLocalPaths(ffmpegRunDetails(end, wholeLinesEnd(errors, errorsCut), FFMPEG_OUTPUT_BYTES))}` }
+        return { kind: 'failed', log: `${LOG_START} ${withoutLocalPaths(ffmpegRunDetails(end, errors.text(), FFMPEG_OUTPUT_BYTES))}` }
       }
       // `-fs` ends the run with no error at the size cap, so the size
       // tells a copy that is too large.

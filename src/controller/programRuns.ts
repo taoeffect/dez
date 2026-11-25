@@ -261,6 +261,22 @@ export function wholeLinesEnd(kept: string, cut: boolean): string {
   return lineEnd < 0 ? '' : kept.slice(lineEnd + 1)
 }
 
+/** Keeps the end of the error output of a run, piece by piece (`add`): at
+ *  most `maxChars` characters, and after a cut only whole lines
+ *  (`wholeLinesEnd`). */
+export function errorOutputEnd(maxChars: number): { add: (text: string) => void, text: () => string } {
+  let kept = ''
+  let cut = false
+  return {
+    add: (text) => {
+      kept += text
+      cut ||= kept.length > maxChars
+      kept = kept.slice(-maxChars)
+    },
+    text: () => wholeLinesEnd(kept, cut),
+  }
+}
+
 /** A new file in the generated folder of its kind, under a new name, for
  *  a file that a run or an app gives back. Nothing is written yet. */
 export interface GeneratedFile {

@@ -18,7 +18,7 @@ import { ToolError } from '../model/tools/types'
 import { FFMPEG_OUTPUT_BYTES } from '../model/tools/videoTool'
 import type { DecodeRun } from './inputDecode'
 import type { FileTree } from './nativeTypes'
-import { runProgram, wholeLinesEnd } from './programRuns'
+import { errorOutputEnd, runProgram } from './programRuns'
 
 // The encode of a frame sequence of the output folder of a script run (a
 // script app or the code of a `js_eval` call; model/tools/frameSequences.ts)
@@ -72,23 +72,21 @@ export async function encodedSequence(folder: string, outputFolder: string, name
   const { sequence } = checked
   const clip = `${crypto.randomUUID()}.${sequenceClipType(sequence).extension}`
   let progress = ''
-  let errors = ''
-  let errorsCut = false
+  const errors = errorOutputEnd(OUTPUT_END_CHARS)
   const args = frameEncodeArgs(path, sequence, clip)
   const end = await runProgram('ffmpeg', run.toolName, { args, folder, inputs: [], timeoutMs: run.timeoutMs, maxOutputBytes: FFMPEG_OUTPUT_BYTES }, signal, ({ stream, text }) => {
     if (stream === 'stdout') {
       progress = (progress + text).slice(-OUTPUT_END_CHARS)
       return
     }
-    errors += text
-    errorsCut ||= errors.length > OUTPUT_END_CHARS
-    errors = errors.slice(-OUTPUT_END_CHARS)
+    errors.add(text)
   })
   if (end.kind === 'timedOut') throw new ToolError(run.texts.timedOut(run.timeoutMs, FRAMES_ENCODE_STATE))
   if (end.kind !== 'exited' || end.code !== 0) {
-    console.error(`ffmpeg could not encode the frame sequence ${name} of a script run:`, end, errors)
+    const errorEnd = errors.text()
+    console.error(`ffmpeg could not encode the frame sequence ${name} of a script run:`, end, errorEnd)
     // The error output can name a path that the data of a frame holds.
-    return { notKept: encodeFailedText(name, withoutLocalPaths(encodeErrorLine(wholeLinesEnd(errors, errorsCut)))) }
+    return { notKept: encodeFailedText(name, withoutLocalPaths(encodeErrorLine(errorEnd))) }
   }
 
   const made = await sbp('dez.native/listFileTree', `${folder}/${clip}`, 0, 'cache') as FileTree

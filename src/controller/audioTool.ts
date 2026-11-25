@@ -22,7 +22,7 @@ import { withoutLocalPaths } from '../model/tools/localPaths'
 import { clipInput } from '../model/tools/programRuns'
 import { ToolError } from '../model/tools/types'
 import type { AppFileEntry, BundledToolInput } from './nativeTypes'
-import { clipInputFile, inWorkFolder, runProgram, storeOutputs, wholeLinesEnd } from './programRuns'
+import { clipInputFile, errorOutputEnd, inWorkFolder, runProgram, storeOutputs } from './programRuns'
 
 // The work of the `audio` tool (model/tools/audioTool.ts): the runs of
 // ffmpeg, a program that Dez ships, on a copy of an audio clip in a new
@@ -56,21 +56,18 @@ async function clipCopy(clip: ClipAttachment, folder: string, signal: AbortSigna
 // `ToolError` for a run that failed.
 async function writtenSeconds(id: string, args: string[], folder: string, inputs: BundledToolInput[], signal: AbortSignal): Promise<number | null> {
   let progress = ''
-  let errors = ''
-  let errorsCut = false
+  const errors = errorOutputEnd(OUTPUT_END_CHARS)
   const run = { args, folder, inputs, timeoutMs: AUDIO_RUN_TIMEOUT_MS, maxOutputBytes: AUDIO_RUN_OUTPUT_BYTES }
   const end = await runProgram('ffmpeg', AUDIO_TOOL.name, run, signal, ({ stream, text }) => {
     if (stream === 'stdout') {
       progress = (progress + text).slice(-OUTPUT_END_CHARS)
       return
     }
-    errors += text
-    errorsCut ||= errors.length > OUTPUT_END_CHARS
-    errors = errors.slice(-OUTPUT_END_CHARS)
+    errors.add(text)
   })
   if (end.kind === 'timedOut') throw new ToolError(audioTimedOutText(id))
   // The error output can name a path that the data of the file holds.
-  if (end.kind !== 'exited' || end.code !== 0) throw new ToolError(audioDecodeFailedText(id), withoutLocalPaths(audioRunDetails(end, wholeLinesEnd(errors, errorsCut))))
+  if (end.kind !== 'exited' || end.code !== 0) throw new ToolError(audioDecodeFailedText(id), withoutLocalPaths(audioRunDetails(end, errors.text())))
   return writtenAudioSeconds(progress)
 }
 

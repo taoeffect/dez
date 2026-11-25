@@ -19,7 +19,7 @@ import { ToolError } from '../model/tools/types'
 import { FFMPEG_OUTPUT_BYTES } from '../model/tools/videoTool'
 import { bytesToBase64 } from '../utils/base64'
 import type { AppFileEntry, BundledToolInput } from './nativeTypes'
-import { clipInputFile, inWorkFolder, runProgram, wholeLinesEnd } from './programRuns'
+import { clipInputFile, errorOutputEnd, inWorkFolder, runProgram } from './programRuns'
 
 // The clips of a `model_invoke` request to a text model
 // (model/tools/chatClips.ts): ffmpeg makes the copy of each clip in a work
@@ -43,17 +43,13 @@ type CopyRun =
 // One ffmpeg run of `copy` in `folder`, to its end. Throws a `ToolError`
 // for a run that took longer than its limit.
 async function copyRun(modelName: string, clip: ClipAttachment, copy: ChatClipCopy, folder: string, inputs: BundledToolInput[], signal: AbortSignal): Promise<CopyRun> {
-  let errors = ''
-  let errorsCut = false
+  const errors = errorOutputEnd(ERROR_END_CHARS)
   const run = { args: copy.args, folder, inputs, timeoutMs: CHAT_CLIP_RUN_TIMEOUT_MS, maxOutputBytes: FFMPEG_OUTPUT_BYTES }
   const end = await runProgram('ffmpeg', MODEL_INVOKE_TOOL.name, run, signal, ({ stream, text }) => {
-    if (stream !== 'stderr') return
-    errors += text
-    errorsCut ||= errors.length > ERROR_END_CHARS
-    errors = errors.slice(-ERROR_END_CHARS)
+    if (stream === 'stderr') errors.add(text)
   })
   if (end.kind === 'timedOut') throw new ToolError(chatClipTimedOutText(modelName, clip.kind, clip.id))
-  if (end.kind !== 'exited' || end.code !== 0) return { kind: 'failed', end, errors: wholeLinesEnd(errors, errorsCut) }
+  if (end.kind !== 'exited' || end.code !== 0) return { kind: 'failed', end, errors: errors.text() }
   const files = await sbp('dez.native/listAppFiles', folder, 'cache') as AppFileEntry[]
   return { kind: 'made', size: files.find((file) => file.name === copy.name)?.size ?? 0 }
 }

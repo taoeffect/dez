@@ -128,7 +128,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `controller/modelInvoke.ts`, `videoTool.ts`, `audioTool.ts`, `assetInfo.ts`, `assetView.ts`, `jsEval.ts`: the work of a tool; they register no selector.
 - `model/tools/modelInvoke.ts`, `model/tools/chatClips.ts`, `controller/chatClips.ts`: `model_invoke`; the clips that it sends to a text model that reads them (copies with no metadata), and the word times of a transcription, written to `/work/transcript-<clip id>-<provider>-<model>.json` (`transcriptTimesJson`).
 - `controller/jobs.ts`, `model/tools/jobs.ts`: `TabJobs`, the jobs of a tab, and the job tools.
-- `model/tools/programRuns.ts`, `controller/programRuns.ts`, `model/tools/workFolders.ts`: what the tools that run a bundled program (ffmpeg, ffprobe, Deno) share (`runFfmpegLog`, `ffmpegRunDetails`, `wholeLinesEnd`), and their run folders in the cache root (`/run` to a model).
+- `model/tools/programRuns.ts`, `controller/programRuns.ts`, `model/tools/workFolders.ts`: what the tools that run a bundled program (ffmpeg, ffprobe, Deno) share (`runFfmpegLog`, `ffmpegRunDetails`, `errorOutputEnd`), and their run folders in the cache root (`/run` to a model).
 - `model/tools/conversationWork.ts`: the work folder of a conversation (`/work` to a model), which `js_eval`, script apps, the `apps` tool, and `video ffmpeg` (`/work/` inputs, `save_to`) read and write.
 - `model/tools/videoFonts.ts`, `videoTextFiles.ts`: the fonts and the text files of an ffmpeg run (the `fonts` and `text_files` parameters).
 - `model/tools/jsEval.ts`, `jsEvalRunner.js`: the `js_eval` tool (code of a model in Deno), and Dez's module of every script run (a `js_eval` call or a script app): its line protocol, and the result texts.
