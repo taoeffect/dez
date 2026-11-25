@@ -646,7 +646,7 @@ export const JOBS_WAIT_TOOL: ToolDefinition = {
     + 'A media request can wait for its turn at its provider, which takes only a few at one time: that wait does not count toward the time limit of its job. '
     + 'A stop of the user or a new message does not end the jobs: they count as jobs of the next reply, which gets their results with `jobs_wait`, and their numbers count on. '
     + 'Dez ends them when the user closes the tab, and `job_cancel` ends the jobs that you name. '
-    + 'When Dez quits, the job of a provider (an image or a clip of `model_invoke`) goes on at the next start of Dez, and any other job ends as failed.',
+    + 'When Dez quits, a `model_invoke` request that its provider runs as a job of its own goes on at the next start of Dez, and any other job ends as failed.',
   parameters: [
     {
       name: 'all',
