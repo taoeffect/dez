@@ -3,16 +3,16 @@ import { ExplainedError } from '../../utils/errorText'
 import { base64ToBytes, bytesToBase64 } from '../../utils/base64'
 import type { NativeHttpResponseHead } from '../../utils/protocol/nativeHttp'
 import type { MediaEntryPaths } from './config'
-import { ClipNotMadeError, UnusableAnswerError } from './errors'
-import { MEDIA_FORMATS, NO_VIDEO_LENGTH_MESSAGE, type ClipFormat, type ClipQuoteFormat, type ImageFormat, type InputClipPart } from './mediaFormats'
+import { JobNotMadeError, UnusableAnswerError } from './errors'
+import { MEDIA_FORMATS, NO_VIDEO_LENGTH_MESSAGE, type ClipFormat, type ClipQuoteFormat, type ImageAnswerFormat, type InputClipPart } from './mediaFormats'
 import { effectiveParameterValues, type ModelParameter, type ParameterValues } from './modelParameters'
 import { thrownError } from './testing'
 import type { ChatImagePart, ClipKind, MediaKind } from './types'
 
-const venice = MEDIA_FORMATS.venice.images as ImageFormat
+const venice = MEDIA_FORMATS.venice.images as ImageAnswerFormat
 const veniceClips = MEDIA_FORMATS.venice.clips as ClipFormat
 const openRouterClips = MEDIA_FORMATS.openrouter.clips as ClipFormat
-const openRouterImages = MEDIA_FORMATS.openrouter.images as ImageFormat
+const openRouterImages = MEDIA_FORMATS.openrouter.images as ImageAnswerFormat
 
 const VENICE_URL = 'https://api.venice.ai/api/v1'
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1'
@@ -179,7 +179,7 @@ describe('venice image parameters', () => {
 
 describe('venice image quotes', () => {
   const usd = (kind: 'image' | 'imageEdit', pricing: Record<string, unknown>, values: ParameterValues = {}) =>
-    venice.quote?.usd(kind, values, { entry: { id: 'm', model_spec: { pricing } }, mediaEntry: undefined, records: undefined })
+    venice.quote?.usd(kind, values, { entry: { id: 'm', model_spec: { pricing } }, mediaEntry: undefined, records: undefined, answer: undefined })
   // The prices of `krea-3` (2026-11-11).
   const KREA_PRICES = {
     resolutions: { '1K': venicePrice(0.07), '2K': venicePrice(0.1), '4K': venicePrice(0.15) },
@@ -1182,7 +1182,7 @@ describe('venice clip jobs', () => {
     ['a state that it does not know', { status: 'FAILED' }, 'State: FAILED'],
     ['an answer with no state', [], 'State: none'],
   ])('tells that the provider did not make the clip, for %s', (_name, poll, message) => {
-    expect(thrownError(() => videoJob({ queue_id: 'q-1', download_url: DOWNLOAD_URL }).state(poll))).toStrictEqual(new ClipNotMadeError(message))
+    expect(thrownError(() => videoJob({ queue_id: 'q-1', download_url: DOWNLOAD_URL }).state(poll))).toStrictEqual(new JobNotMadeError(message))
   })
 
   it.each([
@@ -1771,6 +1771,7 @@ describe('openrouter images', () => {
       entry: { id: 'decart/lucy-image-2' },
       mediaEntry: entry({ resolution: { type: 'enum', values: ['480p', '720p'], ...(ownDefault !== undefined && { default: ownDefault }) } }),
       records,
+      answer: undefined,
     })
 
     expect([usd('720p'), usd('720p', { resolution: '480p' }), usd(undefined), usd('1080p')]).toStrictEqual([0.0211, 0.01055, undefined, undefined])
@@ -2027,7 +2028,7 @@ describe('openrouter clip jobs', () => {
     ['a job that expired', { status: 'expired' }, 'State: expired'],
     ['an answer with no state', { id: 'gen-1' }, 'State: none'],
   ])('tells that the provider did not make the clip, with the state of %s', (_name, poll, message) => {
-    expect(thrownError(() => job().state(poll))).toStrictEqual(new ClipNotMadeError(message))
+    expect(thrownError(() => job().state(poll))).toStrictEqual(new JobNotMadeError(message))
   })
 
   // The toast shows the message.

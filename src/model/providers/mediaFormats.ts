@@ -13,7 +13,7 @@ import type { ClipUse, InputClipRules } from './clipInputs'
 import type { InputImageRules } from './clipImages'
 import type { ClipTextRules } from './clipText'
 import { usageNumber } from './chatUsage'
-import { ClipNotMadeError, UnusableAnswerError } from './errors'
+import { JobNotMadeError, UnusableAnswerError } from './errors'
 import { generatedBase64Image, generatedImage } from './generatedImages'
 import { imageSizeRules, positiveLimit, type ImageSizeRules, type InputImageLimits } from './imageSize'
 import type { MultipartField } from './multipart'
@@ -54,6 +54,10 @@ export interface MediaInput {
   // that can give them (`TextFormat.parseResponse` gives them as `times`).
   // Missing: the text only.
   wordTimes?: true
+  // The web addresses of `images`, in their order, for an API that takes
+  // the input images of a request only at a web address
+  // (`MediaFormat.imageUpload`). Missing: the API takes them as data.
+  imageUrls?: readonly string[]
 }
 
 // One input clip of a request, with its use (`ClipKindRules.use`): the
@@ -75,10 +79,6 @@ function clipUrl(clip: InputClipPart): string {
 // (only for a model that takes lyrics, `ClipFormat.textRules`).
 export interface ClipInput extends MediaInput {
   lyrics?: string
-  // The web addresses of `images`, in their order, for an API that takes
-  // the images of a clip request only at a web address
-  // (`ClipFormat.imageUpload`). Missing: the API takes them as data.
-  imageUrls?: readonly string[]
 }
 
 // Why a provider refused the upload of an input image
@@ -90,14 +90,14 @@ export interface ClipInput extends MediaInput {
 //   the upload.
 export type UploadRefusal = 'freeUploadsUsed' | 'keySpendingLimit'
 
-// The upload of one input image of a clip request, for an API that takes
-// the images of a clip request only at a web address, never as data.
+// The upload of one input image of a request (an image or a clip), for an
+// API that takes input images only at a web address, never as data.
 // generateMedia uploads each image before the request, which then gets
-// their addresses (`ClipInput.imageUrls`).
+// their addresses (`MediaInput.imageUrls`).
 export interface ImageUploadFormat {
   // The request that uploads `image`, the image number `number` (1 for
-  // the first one) of the clip request. Its file has a neutral name: it
-  // names no file of the user.
+  // the first one) of the request. Its file has a neutral name: it names
+  // no file of the user.
   request(baseUrl: string, image: { bytes: Uint8Array, mediaType: ImageMediaType }, number: number): MediaWireRequest
   // The web address of the image in the JSON of a 2xx response to
   // `request`, and the price in USD of the upload (`AnswerCost`): 0 for a
@@ -155,8 +155,21 @@ export interface ClipJob {
   state(data: unknown): 'running' | ClipLocation
 }
 
-// The image requests of a media API.
-export interface ImageFormat {
+// Images that the provider makes after its first response (a task).
+export interface ImageJob {
+  // The provider's id of the job.
+  id: string
+  poll: MediaWireRequest
+  // What the JSON of a 2xx response to `poll` tells: when the job is done,
+  // the URLs that give its images with no header, one for each image, and
+  // the provider's own price of the job (`AnswerCost`). Throws for a job
+  // that failed, and for a state that the format does not know.
+  state(data: unknown): 'running' | ({ fileUrls: readonly [string, ...string[]] } & AnswerCost)
+}
+
+// The parts of the image requests of a media API that do not depend on
+// the form of its answer.
+interface ImageFormatParts {
   // What a request to a model of `kind` can set, as for
   // `ClipFormat.parameters`. Missing: no model of the API has parameters.
   parameters?(kind: ImageKind, entry: unknown, mediaEntry: unknown): ModelParameter[]
@@ -169,10 +182,6 @@ export interface ImageFormat {
   // type that Dez stores.
   unstoredOutput?(kind: ImageKind, entry: unknown, mediaEntry: unknown): string | undefined
   request(kind: ImageKind, baseUrl: string, modelId: string, input: MediaInput): MediaWireRequest
-  // The images of a 2xx response to a request of `kind`, and the price of
-  // the request when the answer tells it. Throws when the body holds no
-  // image.
-  parseResponse(kind: ImageKind, head: NativeHttpResponseHead, body: Uint8Array): { media: GeneratedMedia[] } & AnswerCost
   // The size rules of each input image of a request of a kind, for an API
   // whose docs tell them. They are rules of the request, not of a model.
   inputImageSize?: Readonly<Partial<Record<ImageKind, ImageSizeRules>>>
@@ -189,7 +198,28 @@ export interface ImageFormat {
   quote?: ImageQuoteFormat
 }
 
-// The price records of an image model, for the price of one request.
+// The image requests of an API whose 2xx response holds the images.
+export interface ImageAnswerFormat extends ImageFormatParts {
+  // The images of a 2xx response to a request of `kind`, and the price of
+  // the request when the answer tells it. Throws when the body holds no
+  // image.
+  parseResponse(kind: ImageKind, head: NativeHttpResponseHead, body: Uint8Array): { media: GeneratedMedia[] } & AnswerCost
+  job?: undefined
+}
+
+// The image requests of an API whose 2xx response is JSON that names a
+// job, whose state Dez asks for until the images are made.
+export interface ImageJobFormat extends ImageFormatParts {
+  // The job that the JSON of a 2xx response to a request of `kind` names.
+  // Throws when it names none.
+  job(kind: ImageKind, baseUrl: string, modelId: string, data: unknown): ImageJob
+  parseResponse?: undefined
+}
+
+// The image requests of a media API.
+export type ImageFormat = ImageAnswerFormat | ImageJobFormat
+
+// The price data of an image model, for the price of one request.
 export interface ImageQuoteInput {
   // The model's entry in the provider's model list, and in a list of the
   // media API (`MediaFormat.modelLists`); each one undefined when Dez has
@@ -199,6 +229,9 @@ export interface ImageQuoteInput {
   // The JSON of the 2xx response to `ImageQuoteFormat.recordsRequest`;
   // undefined with no such request.
   records: unknown
+  // The JSON of the 2xx response to `ImageQuoteFormat.priceRequest`;
+  // undefined with no such request.
+  answer: unknown
 }
 
 // What a media API tells about the price of one image request.
@@ -206,8 +239,14 @@ export interface ImageQuoteFormat {
   // The request for the price records of a model of `kind`, for an API
   // whose model lists hold no prices. Null: the entries hold them.
   recordsRequest?(kind: ImageKind, baseUrl: string, modelId: string): MediaWireRequest | null
+  // The request that asks for the price of the image request of `kind`
+  // with `values`, for an API that tells the price of one request. Its
+  // answer can hold facts of the account, so it is no price record of
+  // the model. Null: the API has no such request for the kind or the
+  // model.
+  priceRequest?(kind: ImageKind, baseUrl: string, modelId: string, values: ParameterValues): MediaWireRequest | null
   // The price in USD of one request of `kind` with `values`; undefined
-  // when the entries and the records tell no one price for it.
+  // when the entries, the records, and the answer tell no one price for it.
   usd(kind: ImageKind, values: ParameterValues, input: ImageQuoteInput): number | undefined
 }
 
@@ -248,9 +287,6 @@ export interface ClipFormat {
   // it.
   textRules?(kind: ClipKind, entry: unknown, mediaEntry: unknown, paths: MediaEntryPaths): ClipTextRules | undefined
   request(kind: ClipKind, baseUrl: string, modelId: string, input: ClipInput): MediaWireRequest
-  // For an API that takes the input images of a clip request only at a
-  // web address: the upload of each image before the request.
-  imageUpload?: ImageUploadFormat
   // The most input images that a model of `kind` takes, when `body` (the
   // JSON of the provider's refusal of a first request with the status
   // `status`, ProviderHttpError.bodyJson) tells that the request had too
@@ -304,6 +340,10 @@ export interface MediaFormat {
   images?: ImageFormat
   clips?: ClipFormat
   texts?: TextFormat
+  // For an API that takes the input images of a request (an image or a
+  // clip) only at a web address: the upload of each image before the
+  // request.
+  imageUpload?: ImageUploadFormat
   // The model lists that only the media API has, for an API whose model
   // data is not all in the provider's model list: requests whose responses
   // are `{ data: [...] }`, with an `id` in each entry. A model is in one
@@ -1017,7 +1057,7 @@ const veniceFormat: MediaFormat = {
           const status = isRecord(poll) ? poll.status : undefined
           if (status === 'QUEUED' || status === 'PROCESSING') return 'running'
           // A state that is new, or that ends the job with no clip.
-          if (status !== 'COMPLETED') throw new ClipNotMadeError(`State: ${typeof status === 'string' ? sanitizeErrorText(status, 40) : 'none'}`)
+          if (status !== 'COMPLETED') throw new JobNotMadeError(`State: ${typeof status === 'string' ? sanitizeErrorText(status, 40) : 'none'}`)
           if (downloadUrl === null) throw new UnusableAnswerError('The job is done, and its answer holds no clip and no download URL.')
           return { fileUrls: [downloadUrl] }
         },
@@ -2017,7 +2057,7 @@ const openRouterFormat: MediaFormat = {
             // texts come from the provider and show in the details of the
             // error toast.
             const reason = isRecord(poll) && typeof poll.error === 'string' && poll.error !== '' ? `: ${sanitizeErrorText(poll.error)}` : ''
-            throw new ClipNotMadeError(`State: ${typeof status === 'string' ? sanitizeErrorText(status, 40) : 'none'}${reason}`)
+            throw new JobNotMadeError(`State: ${typeof status === 'string' ? sanitizeErrorText(status, 40) : 'none'}${reason}`)
           }
           const url = Array.isArray(poll.urls) ? poll.urls[0] : undefined
           // A time that a Date cannot hold has no ISO text for the clip's

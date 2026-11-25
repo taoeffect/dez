@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { ExplainedError } from '../../utils/errorText'
 import { NativeHttpError } from '../../utils/protocol/errors'
 import { BUILT_IN_PROVIDER_CONFIGS } from './builtins'
-import { ClipNotMadeError, explainedProviderError, notMadeClipCost, providerConnectionError, providerStatusError, providerStreamError, UnusableAnswerError } from './errors'
+import { JobNotMadeError, explainedProviderError, notMadeJobCost, providerConnectionError, providerStatusError, providerStreamError, UnusableAnswerError } from './errors'
 import { Provider } from './provider'
 
 function builtInProvider(id: string): Provider {
@@ -169,15 +169,17 @@ describe('provider request errors', () => {
     ])
   })
 
-  it('names the provider of an answer that Dez cannot use and of a clip that it did not make, and passes any other error', () => {
+  it('names the provider of an answer that Dez cannot use and of a clip or an image that it did not make, and passes any other error', () => {
     const other = new TypeError('x is undefined')
 
     expect([
       (explainedProviderError(venice, new UnusableAnswerError('The answer holds no image.')) as Error).message,
-      (explainedProviderError(venice, new ClipNotMadeError('State: failed: Content policy')) as Error).message,
+      (explainedProviderError(venice, new JobNotMadeError('State: failed: Content policy')) as Error).message,
+      (explainedProviderError(venice, new JobNotMadeError('State: failed', 0, 'image')) as Error).message,
     ]).toStrictEqual([
       'Venice sent an answer that Dez cannot use. Send the request again. If the error stays, report it at Help › Dez on GitHub.\n\nDetails: The answer holds no image.',
       'Venice did not make the clip. The cause can be the prompt (Venice can refuse a prompt) or a problem at Venice: the details below tell what Venice said. Change the prompt, or send the request again later.\n\nDetails: State: failed: Content policy',
+      'Venice did not make the image. The cause can be the prompt (Venice can refuse a prompt) or a problem at Venice: the details below tell what Venice said. Change the prompt, or send the request again later.\n\nDetails: State: failed',
     ])
     expect(explainedProviderError(venice, other)).toBe(other)
   })
@@ -191,7 +193,7 @@ describe('provider request errors', () => {
     expect([
       forModel(native),
       forModel(new UnusableAnswerError('The answer holds no image.')),
-      forModel(new ClipNotMadeError('State: failed: Content policy')),
+      forModel(new JobNotMadeError('State: failed: Content policy')),
       forModel(statusError(402, '{"error":"No credit"}', custom)),
       forModel(providerStreamError(custom, { kind: 'error', status: 503, message: 'Overloaded' })),
     ].map((error) => (error as Error).message)).toStrictEqual([
@@ -214,17 +216,17 @@ describe('provider request errors', () => {
   // The cost counts in place of the quote (stream.ts, modelInvoke.ts): the
   // error that they get is the error for the reader, or the error of a job
   // (`dez.provider/generateMedia`), whose cause is the raw error.
-  it('finds the told cost of a clip that the provider did not make in the error for each reader, and none in other errors', () => {
-    const notMade = new ClipNotMadeError('State: failed: Content policy', 0)
+  it('finds the told cost of a job that the provider ended with nothing made in the error for each reader, and none in other errors', () => {
+    const notMade = new JobNotMadeError('State: failed: Content policy', 0)
 
     expect([
-      notMadeClipCost(explainedProviderError(custom, notMade, 'user')),
-      notMadeClipCost(explainedProviderError(custom, notMade, 'model')),
-      notMadeClipCost(new ExplainedError('My server did not make the clip.', '', { cause: notMade })),
-      notMadeClipCost(new ClipNotMadeError('State: failed', 0.4)),
-      notMadeClipCost(new ClipNotMadeError('State: failed')),
-      notMadeClipCost(new ExplainedError('My server sent an answer that Dez cannot use.', '', { cause: new UnusableAnswerError('No URL.') })),
-      notMadeClipCost('State: failed'),
+      notMadeJobCost(explainedProviderError(custom, notMade, 'user')),
+      notMadeJobCost(explainedProviderError(custom, notMade, 'model')),
+      notMadeJobCost(new ExplainedError('My server did not make the clip.', '', { cause: notMade })),
+      notMadeJobCost(new JobNotMadeError('State: failed', 0.4)),
+      notMadeJobCost(new JobNotMadeError('State: failed')),
+      notMadeJobCost(new ExplainedError('My server sent an answer that Dez cannot use.', '', { cause: new UnusableAnswerError('No URL.') })),
+      notMadeJobCost('State: failed'),
     ]).toStrictEqual([0, 0, 0, 0.4, undefined, undefined, undefined])
   })
 })

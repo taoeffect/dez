@@ -5,7 +5,7 @@ import { MEDIA_CACHE_FOLDER } from '../chat/mediaTags'
 import { byteSizeText } from '../../utils/byteSize'
 import { ExplainedError, rawErrorText } from '../../utils/errorText'
 import { responseOk, sanitizeErrorText } from '../../utils/protocol/errors'
-import { readNativeChunkBytes, responseContentType, textFromNativeBody, type NativeHttpDownload, type NativeHttpRequest, type NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
+import { readNativeChunkBytes, responseContentType, textFromNativeBody, type NativeHttpDownload, type NativeHttpRequest, type NativeHttpResponseHead, type NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
 import { imageUploadError, providerStatusError, UnusableAnswerError } from './errors'
 import { jsonBody } from './mediaFormatParts'
 import type { AnswerCost } from './mediaFormats'
@@ -14,30 +14,37 @@ import type { Provider } from './provider'
 import { assertStreamResponseOk } from './streaming'
 import { CLIP_KINDS, type ClipKind, type GeneratedClip } from './types'
 
-// The steps of dez.provider/generateMedia for a clip (speech, music, video):
-// one request of the job, and the wait between two requests. The selector
-// holds the order of the steps (the job loop).
+// The steps of dez.provider/generateMedia for a clip (speech, music, video)
+// and for the images of a job (`ImageFormat.job`): one request of the job,
+// the uploads of its input images, and the wait between two requests. The
+// selector holds the order of the steps (the job loop).
 
 // The time between two requests for the state of a job.
 export const CLIP_POLL_INTERVAL_MS = 5_000
-// The longest time from the first request of a clip to its last byte, for
-// a caller that names none (`ProviderGenerateMediaInput.timeoutMs`). A job
-// that the provider never ends would keep the reply busy with no end.
+// The longest time from the first request of a clip or a job to its last
+// byte, for a caller that names none
+// (`ProviderGenerateMediaInput.timeoutMs`). A job that the provider never
+// ends would keep the reply busy with no end.
 export const CLIP_JOB_TIMEOUT_MS = 30 * 60 * 1000
 
-// What all requests of one clip have in common.
-export interface ClipRun {
+// What all requests of one clip, or of the images of one job, have in
+// common.
+export interface JobRun {
   provider: Provider
-  kind: ClipKind
   // dez.http/cancelStream with this id cancels the request that runs. The
-  // requests of a clip go one after the other, so they share the id.
+  // requests of a job go one after the other, so they share the id.
   requestId: string
-  // The longest time (ms) from the first request of the clip to its last
+  // The longest time (ms) from the first request of the job to its last
   // byte, and the time at which that is over.
   limitMs: number
   deadline: number
-  // Aborts when the caller stops the clip.
+  // Aborts when the caller stops the job.
   signal: AbortSignal | undefined
+}
+
+// What all requests of one clip have in common.
+export interface ClipRun extends JobRun {
+  kind: ClipKind
 }
 
 // `30 minutes`, `90 seconds`: a time limit in whole minutes when it is
@@ -47,16 +54,17 @@ function limitText(limitMs: number): string {
   return `${count} ${unit}${count === 1 ? '' : 's'}`
 }
 
-// The error of a clip whose time (`ClipRun.limitMs`) is over. With no
-// `requestError`, the time was over before a request: the job did not end in
-// time. With one, Rust ended a request at the deadline (`timeoutMs`), and
-// that request can be the download of a clip that is made.
-function clipTimeoutError(run: ClipRun, requestError?: unknown): ExplainedError {
+// The error of a clip or of the images of a job (`made`) whose time
+// (`JobRun.limitMs`) is over. With no `requestError`, the time was over
+// before a request: the job did not end in time. With one, Rust ended a
+// request at the deadline (`timeoutMs`), and that request can be the
+// download of a file that is made.
+function jobTimeoutError(run: JobRun, made: 'clip' | 'image', requestError?: unknown): ExplainedError {
   const name = run.provider.name
   const limit = `in ${limitText(run.limitMs)}, the longest time that Dez waits`
-  if (requestError === undefined) return new ExplainedError(`${name} did not make the clip ${limit}. Send the request again later.`)
+  if (requestError === undefined) return new ExplainedError(`${name} did not make the ${made} ${limit}. Send the request again later.`)
   return new ExplainedError(
-    `Dez did not get the clip from ${name} ${limit}: ${name} did not make it in that time, or the download of the clip was too slow. Send the request again later.`,
+    `Dez did not get the ${made} from ${name} ${limit}: ${name} did not make it in that time, or the download of the ${made} was too slow. Send the request again later.`,
     sanitizeErrorText(rawErrorText(requestError)),
     { cause: requestError },
   )
@@ -90,7 +98,7 @@ export async function sendClipRequest(
   run.signal?.throwIfAborted()
   const startedAt = Date.now()
   const timeoutMs = run.deadline - startedAt
-  if (timeoutMs <= 0) throw clipTimeoutError(run)
+  if (timeoutMs <= 0) throw jobTimeoutError(run, 'clip')
 
   // The file has no type in its name until the response tells one. The
   // cleanup of the temp copies also deletes a part file that stays.
@@ -108,7 +116,7 @@ export async function sendClipRequest(
   } catch (error) {
     // A stop rejects too: the caller tells it by its signal.
     if (run.signal?.aborted) throw error
-    if (Date.now() >= run.deadline) throw clipTimeoutError(run, error)
+    if (Date.now() >= run.deadline) throw jobTimeoutError(run, 'clip', error)
     // The code cannot tell the other causes apart (the connection, the size
     // limit, the write of the file): the text names all three, and the native
     // text in the details tells which one it was.
@@ -164,16 +172,42 @@ export async function sendClipRequest(
   return { clip: tempCopyClip({ kind: CLIP_KINDS[run.kind], mediaType, jobId }, file, cacheDir, startedAt) }
 }
 
-// Uploads the input images of a clip request to a provider whose API takes
-// them only at a web address (`Provider.clipImageUpload`), one after the
+// Sends one request of the images of a job (a request for its state, or
+// the download of an image) through dez.http/stream, with the time that
+// the job has left as its time limit, and gives the body of its 2xx
+// response. Throws for any other status, and when the job's time is over.
+// `keyed`: the request has the provider's key (`providerStatusError`).
+export async function sendImageJobRequest(run: JobRun, request: NativeHttpRequest, keyed: boolean): Promise<Uint8Array> {
+  run.signal?.throwIfAborted()
+  const timeoutMs = run.deadline - Date.now()
+  if (timeoutMs <= 0) throw jobTimeoutError(run, 'image')
+  let head: NativeHttpResponseHead
+  let body: Uint8Array
+  try {
+    const { response, chunks } = await sbp('dez.http/stream', { ...request, timeoutMs }, run.requestId) as NativeHttpStreamResult
+    head = response
+    body = await readNativeChunkBytes(chunks)
+  } catch (error) {
+    // A stop rejects too: the caller tells it by its signal.
+    if (run.signal?.aborted) throw error
+    if (Date.now() >= run.deadline) throw jobTimeoutError(run, 'image', error)
+    throw error
+  }
+  if (!responseOk(head)) throw providerStatusError(run.provider, head, textFromNativeBody(body), keyed)
+  return body
+}
+
+// Uploads the input images of a request to a provider whose API takes
+// them only at a web address (`Provider.imageUpload`), one after the
 // other, each one in a request that `run.requestId` cancels, and gives
 // their web addresses, in the order of `images`. `onUploaded` gets the
 // price of each upload as soon as its answer comes: the provider took the
-// money then, so a later failure must still count it. Like the request of
-// an image, an upload has no time limit: `run.signal` ends it.
-export async function uploadClipImages(
-  run: ClipRun,
-  upload: NonNullable<ReturnType<Provider['clipImageUpload']>>,
+// money then, so a later failure must still count it. An upload has no
+// time limit, as the one request of an image that is no job:
+// `run.signal` ends it.
+export async function uploadInputImages(
+  run: JobRun,
+  upload: NonNullable<ReturnType<Provider['imageUpload']>>,
   images: readonly { bytes: Uint8Array, mediaType: ImageMediaType }[],
   onUploaded: (cost: AnswerCost) => void,
 ): Promise<string[]> {

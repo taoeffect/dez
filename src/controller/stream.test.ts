@@ -17,7 +17,7 @@ import { missingImageProblem, TooManyImagesError, type InputImageRules } from '.
 import { missingClipProblem, type ClipAttachment, type InputClipRules } from '../model/providers/clipInputs'
 import type { ClipTextRules } from '../model/providers/clipText'
 import { customProviderConfigSchema } from '../model/providers/config'
-import { ClipNotMadeError, ProviderHttpError } from '../model/providers/errors'
+import { JobNotMadeError, ProviderHttpError } from '../model/providers/errors'
 import { unstoredOutputMessage } from '../model/providers/unusableModel'
 import type { GeneratedClip, ProviderChatInputMessage, ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderInfo, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers'
 import { providerInfo } from '../model/providers/testing'
@@ -1873,7 +1873,7 @@ describe('dez.stream/start media round', () => {
       async (input: ProviderGenerateMediaInput) => {
         send(input, 0.5)
         input.onProgress?.({ phase: 'queued', jobId: 't-1' })
-        throw new ExplainedError('APIMart did not make the clip. To ask APIMart about this clip, give its job id: t-1.', '', { cause: new ClipNotMadeError('State: failed', 0) })
+        throw new ExplainedError('APIMart did not make the clip. To ask APIMart about this clip, give its job id: t-1.', '', { cause: new JobNotMadeError('State: failed', 0) })
       },
       async (input: ProviderGenerateMediaInput) => {
         send(input, 0.5)

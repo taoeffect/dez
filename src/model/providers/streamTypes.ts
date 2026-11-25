@@ -72,12 +72,13 @@ export interface ProviderStreamChatResult {
 //   time (`mediaApi.maxRequestsAtOnce`, mediaTurns.ts), and this one waits
 //   for its turn. Only a request that must wait has this step.
 // - `uploaded`: Dez uploaded one input image to the provider, whose API
-//   takes the images of a clip request only at a web address
-//   (`ClipFormat.imageUpload`). One step for each image, before `sent`.
+//   takes the images of an image or clip request only at a web address
+//   (`MediaFormat.imageUpload`). One step for each image, before `sent`.
 // - `sent`: the inputs are read, and the first request goes now.
 // - `queued`: the provider runs the request as a job, and Dez asks for
 //   its state.
-// - `downloading`: the provider made the clip, and Dez copies it.
+// - `downloading`: the provider made the image or the clip, and Dez
+//   copies it.
 // `jobId` is the provider's id of the job, as soon as there is one: the
 // provider took the money for that job, and the user can ask it for the
 // output with the id.

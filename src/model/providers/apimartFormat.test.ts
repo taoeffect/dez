@@ -1,14 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import { ExplainedError } from '../../utils/errorText'
 import { apimartFormat } from './apimartFormat'
-import { ClipNotMadeError, UnusableAnswerError } from './errors'
-import type { ClipFormat, ClipQuoteFormat, MediaInput, TextFormat } from './mediaFormats'
+import { JobNotMadeError, UnusableAnswerError } from './errors'
+import type { ClipFormat, ClipQuoteFormat, ImageJobFormat, ImageUploadFormat, MediaInput, TextFormat } from './mediaFormats'
 import type { ModelParameter, ParameterValues } from './modelParameters'
 import { thrownError } from './testing'
 
 const clips = apimartFormat.clips as ClipFormat
 const quote = clips.quote as ClipQuoteFormat
 const texts = apimartFormat.texts as TextFormat
+const images = apimartFormat.images as ImageJobFormat
+const imageQuote = images.quote as Required<NonNullable<ImageJobFormat['quote']>>
 
 const BASE_URL = 'https://api.apimart.ai/v1'
 const VIDEO_URL = 'https://upload.apimart.ai/f/video/task_01_0.mp4'
@@ -189,7 +191,7 @@ describe('apimart video images', () => {
 })
 
 describe('apimart image uploads', () => {
-  const upload = clips.imageUpload as NonNullable<ClipFormat['imageUpload']>
+  const upload = apimartFormat.imageUpload as ImageUploadFormat
   const URL_ = 'https://cdn.apimart.ai/uploads/x.png'
 
   // The 3-day tier is the one with free uploads; with no field, the
@@ -291,8 +293,8 @@ describe('apimart video tasks', () => {
   ])('tells that the provider did not make the clip of a task %s, with the cost that it told', (_name, data, message, cost) => {
     const error = thrownError(() => job().state(poll(data)))
 
-    expect(error).toStrictEqual(new ClipNotMadeError(message, cost))
-    expect((error as ClipNotMadeError).cost).toBe(cost)
+    expect(error).toStrictEqual(new JobNotMadeError(message, cost))
+    expect((error as JobNotMadeError).cost).toBe(cost)
   })
 })
 
@@ -322,6 +324,193 @@ describe('apimart video quotes', () => {
   it('reads the price in USD, and throws for an answer with none', () => {
     expect(quote.usd({ billing_type: 'per_second', total_usd: 0.22848, quantity: 4, spec: '768P', estimated: false }, { duration: 4 })).toBe(0.22848)
     expect(thrownError(() => quote.usd({ billing_type: 'per_second', unit_price_usd: 0.05712 }, { duration: 4 }))).toStrictEqual(new UnusableAnswerError('The answer holds no price.'))
+  })
+})
+
+// An image entry of the model list (live list, 2026-11-25, with the
+// descriptions cut).
+const imageEntry = (id: string, properties?: Record<string, unknown>) =>
+  ({ id, object: 'model', category: 'image', ...(properties && { parameters: { input_schema: { type: 'object', properties: { model: { type: 'string' }, prompt: { type: 'string' }, ...properties } } } }) })
+
+describe('apimart image parameters', () => {
+  const rows = (entry: unknown, kind: 'image' | 'imageEdit' = 'image') =>
+    images.parameters?.(kind, entry, undefined).map(({ label: _label, ...parameter }) => parameter)
+
+  // The doc facts of the model, not its entry: the entry holds the general
+  // schema with no lists.
+  it('gives a model that the docs tell its own rows, with the lowest resolution as the default', () => {
+    expect(rows(imageEntry('gpt-image-2', { size: { type: 'string' }, n: { type: 'integer', minimum: 1, maximum: 4 } }))).toStrictEqual([
+      { name: 'size', options: ['auto', '1:1', '3:2', '2:3', '4:3', '3:4', '5:4', '4:5', '16:9', '9:16', '2:1', '1:2', '3:1', '1:3', '21:9', '9:21'] },
+      { name: 'resolution', options: ['1k', '2k', '4k'], default: '1k' },
+      { name: 'nsfw_check' },
+    ])
+  })
+
+  // MiniMax-H3 Image (live, 2026-11-25): its lists hold each value in two
+  // cases, and null. The mask of an edit, the image fields, and a mode that
+  // needs an object get no row.
+  it('gives a model with no doc facts the rows of its schema, with one option for each value in two cases', () => {
+    expect(rows(imageEntry('minimax-h3-image', {
+      resolution: { type: ['string', 'null'], enum: ['1K', '2K', '4K', '1k', '2k', '4k', null], default: '4K' },
+      output_format: { type: ['string', 'null'], enum: ['jpeg', 'jpg', 'png', 'webp', 'JPEG', 'JPG', 'PNG', 'WEBP', null], default: 'jpeg' },
+      n: { type: 'integer', minimum: 1, maximum: 10, default: 1 },
+      image_urls: { type: 'array', items: { type: 'string' }, maxItems: 16 },
+      mask_url: { type: 'string' },
+      sequential_image_generation: { type: 'string', enum: ['auto', 'disabled'] },
+      sequential_image_generation_options: { type: 'object' },
+    }))).toStrictEqual([
+      { name: 'resolution', options: ['1K', '2K', '4K'], default: '1K' },
+      { name: 'output_format', options: ['jpeg', 'jpg', 'png', 'webp'], default: 'jpeg' },
+      { name: 'n', min: 1, max: 10, default: 1 },
+    ])
+  })
+
+  it('gives no rows to another kind, and each call its own copy of the rows', () => {
+    expect(rows(imageEntry('gpt-image-2'), 'imageEdit')).toStrictEqual([])
+    const first = images.parameters?.('image', imageEntry('gpt-image-2'), undefined)
+    if (first?.[1] && 'options' in first[1]) first[1].options.push('8k')
+    expect(rows(imageEntry('gpt-image-2'))?.[1]).toStrictEqual({ name: 'resolution', options: ['1k', '2k', '4k'], default: '1k' })
+  })
+})
+
+describe('apimart image requests', () => {
+  const UPLOADED = ['https://cdn.apimart.ai/u/a.png', 'https://cdn.apimart.ai/u/b.png']
+  const request = (imageUrls?: string[]) =>
+    images.request('image', `${BASE_URL}/`, 'gpt-image-2', { prompt: 'A red dot', images: [], values: { resolution: '1k', nsfw_check: true }, ...(imageUrls && { imageUrls }) })
+
+  // https://docs.apimart.ai/en/api-reference/images/gpt-image-2/generation
+  it('posts the prompt and the values to /images/generations, with the uploaded images of an edit as image_urls', () => {
+    expect([request(), request([]), request(UPLOADED)]).toStrictEqual([
+      { url: `${BASE_URL}/images/generations`, body: { resolution: '1k', nsfw_check: true, model: 'gpt-image-2', prompt: 'A red dot' } },
+      { url: `${BASE_URL}/images/generations`, body: { resolution: '1k', nsfw_check: true, model: 'gpt-image-2', prompt: 'A red dot' } },
+      { url: `${BASE_URL}/images/generations`, body: { resolution: '1k', nsfw_check: true, image_urls: UPLOADED, model: 'gpt-image-2', prompt: 'A red dot' } },
+    ])
+  })
+
+  it('refuses a request kind other than image', () => {
+    expect(thrownError(() => images.request('upscale', BASE_URL, 'gpt-image-2', { prompt: '', images: [], values: {} })))
+      .toStrictEqual(new ExplainedError('This provider has no request of this kind that Dez can use. Choose another model.'))
+  })
+
+  // Below the 40 million pixels of the upload: Seedream 5.5 takes 36.
+  it('fits each input image to 36 million pixels', () => {
+    expect(images.inputImageSize).toStrictEqual({ image: { maxPixels: 36_000_000 } })
+  })
+})
+
+describe('apimart image rules', () => {
+  const rules = (entry: unknown) => apimartFormat.imageRules?.('image', entry, undefined)
+
+  it('takes the most input images from the doc facts, else from the schema of the entry', () => {
+    expect([
+      rules(imageEntry('gpt-image-2', { image_urls: { type: 'array', maxItems: 3 } })),
+      rules(imageEntry('seedream-5-5')),
+      rules(imageEntry('kling-v4-image', { image_urls: { type: 'array', items: { type: 'string' }, maxItems: 10 } })),
+    ]).toStrictEqual([{ maxImages: 15 }, { maxImages: 10 }, { maxImages: 10 }])
+  })
+
+  it('gives no image rules to a model whose schema tells no usable count of images', () => {
+    expect([
+      rules(imageEntry('dall-e-3', { image_urls: { type: 'array', items: { type: 'string' } } })),
+      rules(imageEntry('new-image', { image_urls: { type: 'array', maxItems: 0 } })),
+      rules(imageEntry('new-image', { image_urls: { type: 'array', maxItems: 2.5 } })),
+      rules(imageEntry('new-image')),
+    ]).toStrictEqual([undefined, undefined, undefined, undefined])
+  })
+})
+
+describe('apimart image tasks', () => {
+  // The answer to the request (docs of gpt-image-2).
+  const job = (taskId: unknown = 'task_01IMG') => images.job('image', `${BASE_URL}/`, 'gpt-image-2', { code: 200, data: [{ status: 'submitted', task_id: taskId }] })
+  const poll = (data: Record<string, unknown>) => ({ code: 200, data: { id: 'task_01IMG', progress: 100, created: 1763088289, ...data } })
+  const IMAGE_URLS = ['https://upload.apimart.ai/f/image/1.png', 'https://upload.apimart.ai/f/image/2.png', 'https://upload.apimart.ai/f/image/3.png']
+
+  // The poll URL is Dez's own, with the id escaped: it gets the API key.
+  it('asks /tasks/<id> for the state of the task, in English', () => {
+    expect([job().id, job().poll, job('a/../b').poll]).toStrictEqual([
+      'task_01IMG',
+      { url: `${BASE_URL}/tasks/task_01IMG?language=en` },
+      { url: `${BASE_URL}/tasks/a%2F..%2Fb?language=en` },
+    ])
+  })
+
+  it.each([
+    ['no task', { code: 200, data: [] }],
+    ['an empty task id', { code: 200, data: [{ status: 'submitted', task_id: '' }] }],
+    ['an error', { error: { code: 400, message: 'Invalid model' } }],
+  ])('tells that an answer with %s names no task', (_name, answer) => {
+    expect(thrownError(() => images.job('image', BASE_URL, 'gpt-image-2', answer))).toStrictEqual(new UnusableAnswerError('The answer to the image request names no task.'))
+  })
+
+  it('waits while the task is submitted, pending, or in work, but not in the state unknown', () => {
+    expect(['submitted', 'pending', 'processing'].map((status) => job().state(poll({ status, progress: 30 })))).toStrictEqual(['running', 'running', 'running'])
+    expect(thrownError(() => job().state(poll({ status: 'unknown' })))).toStrictEqual(new JobNotMadeError('State: unknown', undefined, 'image'))
+  })
+
+  // The docs: a list of URLs for each image. The links end after about 24
+  // hours, so Dez copies the files.
+  it('copies the file of each image of a done task, at the cost of the task, and leaves out a URL that is not usable', () => {
+    expect([
+      job().state(poll({ status: 'completed', cost: 0.0085, result: { images: [{ url: [IMAGE_URLS[0]], expires_at: 1763174708 }, { url: IMAGE_URLS.slice(1) }] } })),
+      job().state(poll({ status: 'completed', cost: 0.0085, result: { images: [{ url: IMAGE_URLS[0] }, { url: ['file:///etc/passwd'] }, { url: 7 }, {}] } })),
+      job().state(poll({ status: 'completed', cost: 0, result: { images: [{ url: [IMAGE_URLS[0]] }] } })),
+    ]).toStrictEqual([
+      { fileUrls: IMAGE_URLS, cost: 0.0085 },
+      { fileUrls: [IMAGE_URLS[0]], cost: 0.0085 },
+      { fileUrls: [IMAGE_URLS[0]] },
+    ])
+  })
+
+  it('tells that a done task with no usable image URL holds no image', () => {
+    expect(thrownError(() => job().state(poll({ status: 'completed', result: { images: [{ url: ['https://upload.apimart.ai/a b.png'] }] } }))))
+      .toStrictEqual(new UnusableAnswerError('The task is done, and its answer holds no image URL.'))
+  })
+
+  // APIMart gives back the money of a task that failed: its cost is 0.
+  it('tells that the provider did not make the image of a task that failed, with the cost that it told', () => {
+    expect(thrownError(() => job().state(poll({ status: 'failed', cost: 0, error: { code: 400, message: 'Prompt breaks the content rules' } }))))
+      .toStrictEqual(new JobNotMadeError('State: failed: Prompt breaks the content rules', 0, 'image'))
+  })
+})
+
+// The account's own price (live, 2026-11-25): gpt-image-2 1k $0.0085,
+// gemini-3-pro-image-preview with no resolution $0.02 and 4K $0.03, and
+// a 400 for 1K and 2K.
+describe('apimart image quotes', () => {
+  it('asks /pricing/model for the price of the resolution, the size, the quality, and the count of images', () => {
+    expect([
+      imageQuote.priceRequest('image', `${BASE_URL}/`, 'gpt-image-2', { resolution: '2k', size: '16:9', nsfw_check: true }),
+      imageQuote.priceRequest('image', BASE_URL, 'kling-v4-image', { n: 3, quality: 'high', aspect_ratio: '1:1' }),
+      imageQuote.priceRequest('image', BASE_URL, 'gpt-image-2', {}),
+    ]).toStrictEqual([
+      { url: `${BASE_URL}/pricing/model?model=gpt-image-2&resolution=2k&size=16%3A9` },
+      { url: `${BASE_URL}/pricing/model?model=kling-v4-image&quality=high&n=3` },
+      { url: `${BASE_URL}/pricing/model?model=gpt-image-2` },
+    ])
+  })
+
+  it('sends no resolution that the price request of the model refuses, so that the default price counts', () => {
+    expect([
+      imageQuote.priceRequest('image', BASE_URL, 'gemini-3-pro-image-preview', { resolution: '1K' }),
+      imageQuote.priceRequest('image', BASE_URL, 'gemini-3-pro-image-preview', { resolution: '4K' }),
+    ]).toStrictEqual([
+      { url: `${BASE_URL}/pricing/model?model=gemini-3-pro-image-preview` },
+      { url: `${BASE_URL}/pricing/model?model=gemini-3-pro-image-preview&resolution=4K` },
+    ])
+  })
+
+  it('asks for no price of another kind', () => {
+    expect(imageQuote.priceRequest('imageEdit', BASE_URL, 'gpt-image-2', {})).toBeNull()
+  })
+
+  // MiniMax-H3 Image is billed by tokens: its answer has `total_usd: null`.
+  it('reads the price in USD, and gives no price for an answer with none', () => {
+    const usd = (answer: unknown) => imageQuote.usd('image', {}, { entry: undefined, mediaEntry: undefined, records: undefined, answer })
+    expect([
+      usd({ billing_type: 'per_call', total_usd: 0.0085, quantity: 1 }),
+      usd({ billing_type: 'per_token', total_usd: null }),
+      usd(undefined),
+    ]).toStrictEqual([0.0085, undefined, undefined])
   })
 })
 
@@ -424,7 +613,7 @@ describe('apimart music tasks', () => {
   // The docs of Suno: keep the task id of a task in the state `unknown`.
   it('waits while a music task is pending, in work, or in the state unknown, but not a video task in that state', () => {
     expect(['pending', 'processing', 'unknown'].map((status) => job().state({ code: 200, data: { status, progress: 10, cost: 0.05, billing_status: 'held' } }))).toStrictEqual(['running', 'running', 'running'])
-    expect(thrownError(() => job('video').state({ code: 200, data: { status: 'unknown' } }))).toStrictEqual(new ClipNotMadeError('State: unknown'))
+    expect(thrownError(() => job('video').state({ code: 200, data: { status: 'unknown' } }))).toStrictEqual(new JobNotMadeError('State: unknown'))
   })
 
   it('copies the file of each song of a done task, at the cost of the task, and leaves out a song with no usable URL', () => {

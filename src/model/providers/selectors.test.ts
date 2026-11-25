@@ -2113,8 +2113,8 @@ describe('the price of a clip', () => {
   })
 })
 
-// APIMart takes the input images of a video request only at a web
-// address: Dez uploads each one first (`ClipFormat.imageUpload`).
+// APIMart takes the input images of an image or video request only at a
+// web address: Dez uploads each one first (`MediaFormat.imageUpload`).
 describe('input images that the provider takes only at a web address', () => {
   const UPLOAD_URL = `${MEDIA_BASE_URL}/uploads/images?retention_days=3`
   const PRICE_URL = `${MEDIA_BASE_URL}/pricing/model?model=m&duration=4`
@@ -2210,6 +2210,34 @@ describe('input images that the provider takes only at a web address', () => {
     const error = await generate({}).catch((thrown: unknown) => thrown) as ExplainedError
     expect(error.message).toMatch(/^Dez could not upload an input image to Mart, which takes the images of this model only at a web address\. /)
     expect(error.details).toContain('Damaged file')
+  })
+
+  // An image request of APIMart is a task: Dez asks for its state, then
+  // copies its image from the file URL, with no header.
+  it('uploads the images of an image edit, then sends their web addresses in the request of its task', async () => {
+    vi.useFakeTimers()
+    try {
+      sbp('dez.model/modelCache/applyProviderResult', 'mart', {
+        ok: true,
+        models: [{ id: 'e', name: 'E', provider: 'mart', outputs: ['image'], request: 'image', images: { maxImages: 4 } }],
+      })
+      httpAnswers.set(`${MEDIA_BASE_URL}/pricing/model?model=e`, { status: 200, json: { total_usd: 0.01 } })
+      streamAnswers.set(`${MEDIA_BASE_URL}/images/generations`, () => ({ status: 200, json: { code: 200, data: [{ status: 'submitted', task_id: 'task-1' }] } }))
+      streamAnswers.set(`${MEDIA_BASE_URL}/tasks/task-1?language=en`, () => ({
+        status: 200,
+        json: { code: 200, data: { id: 'task-1', status: 'completed', cost: 0.012, result: { images: [{ url: [HOSTED_IMAGE_URL] }] } } },
+      }))
+
+      const result = sbp('dez.provider/generateMedia', { providerId: 'mart', modelId: 'e', kind: 'image', prompt: 'Make it blue', images: [path, path], requestId: 'reply-1' }) as Promise<ProviderGenerateMediaResult>
+      await vi.advanceTimersByTimeAsync(5000)
+
+      expect(await result).toStrictEqual({ media: [{ bytes: JPEG_IMAGE, mediaType: 'image/jpeg' }], clips: [], cost: 0.012 })
+      expect(streamRequests.map(({ url }) => url)).toStrictEqual([UPLOAD_URL, UPLOAD_URL, `${MEDIA_BASE_URL}/images/generations`, `${MEDIA_BASE_URL}/tasks/task-1?language=en`, HOSTED_IMAGE_URL])
+      expect(jsonBody(streamRequests[2])).toStrictEqual({ model: 'e', prompt: 'Make it blue', image_urls: UPLOADED })
+      expect(streamRequests[4].headers).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

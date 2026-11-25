@@ -1,6 +1,9 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { click, consoleErrors, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
-import { pasteImageReference, solidPng } from './harness/images'
+import { filesIn, newFileIn, storedFileName } from './harness/fixtures'
+import { generatedImagesDir, pasteImageReference, solidPng } from './harness/images'
 import { MP4_VIDEO, shownPlayers, silentWav, startClipServer, tempClipTag, type ClipServer } from './harness/media'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import { answerHeld, mockModelKey, requestForm, type MockProvider } from './harness/mockServer'
@@ -8,11 +11,12 @@ import { changeParameterField, closePopup, openPopup, popupOpen, popupView } fro
 import type { E2EBrowser } from './harness/session'
 import { activeTabId, closeToasts, editorDoc, focusEditor, newTab, openSeededConversation, openToasts, pasteText, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread } from './harness/thread'
 
-// Video, music, and transcription models of APIMart, driven through the
-// real app against a mock of its API (`mediaApi: { format: 'apimart' }`).
-// The mock serves the model list in the form of APIMart's list, with the
-// schema of each video model's request (`?expand=parameters`), the account
-// price of a request, and the state of each task.
+// Video, music, transcription, and image models of APIMart, driven
+// through the real app against a mock of its API
+// (`mediaApi: { format: 'apimart' }`). The mock serves the model list in
+// the form of APIMart's list, with the schema of each video model's
+// request (`?expand=parameters`), the account price of a request, and the
+// state of each task.
 // - the popup shows the rows that the docs tell for a model that Dez knows
 //   (MiniMax-H3, Suno), and the rows of the schema for any other video
 //   model; the Suno popup tells how lyrics turn on its Custom mode;
@@ -32,7 +36,12 @@ import { activeTabId, closeToasts, editorDoc, focusEditor, newTab, openSeededCon
 //   of the task (a Suno task makes two), at the cost of the task;
 // - a transcription sends the audio clip that the message names as the
 //   file of a form to `/audio/transcriptions`, and the reply's text is the
-//   transcript; its price is unknown, as the answer tells no cost.
+//   transcript; its price is unknown, as the answer tells no cost;
+// - an image request is a task too: one POST to `/images/generations`;
+//   the app asks for the state of its task, stores the image of the done
+//   task in the generated image folder, and the reply holds a reference to
+//   it; an edit uploads its input images first and sends their web
+//   addresses (`image_urls`).
 //
 // One app session serves the whole file; each test starts in a new tab.
 
@@ -56,6 +65,11 @@ const TRANSCRIBE_PATH = `/${MART.id}/v1/audio/transcriptions`
 const UPLOAD_PATH = `/${MART.id}/v1/uploads/images?retention_days=3`
 // MiniMax-H3 takes an image whose shorter side is 256 pixels or more.
 const FRAME_PNG = solidPng(320, 256, [220, 40, 40])
+// An image model that Dez knows from its docs.
+const IMAGE_MODEL = 'gpt-image-2'
+const IMAGE_PATH = `/${MART.id}/v1/images/generations`
+// The image of the done image task.
+const MADE_PNG = solidPng(24, 16, [40, 160, 60])
 
 // The general schema of almost all video models (kling-v3 in the live
 // list, 2026-11-24, with the descriptions and some image fields cut).
@@ -89,10 +103,27 @@ const videoEntry = (id: string) => ({
 const musicEntry = (id: string) =>
   ({ id, object: 'model', created: 1626777600, owned_by: 'custom', supported_endpoint_types: ['openai'], category: 'audio', capability_tags: ['Text to Audio'], parameters: null })
 
+// The entry of an image model, with a few fields of its schema (live
+// list, 2026-11-25, with the descriptions cut).
+const imageEntry = (id: string) => ({
+  id,
+  object: 'model',
+  created: 1626777600,
+  owned_by: 'custom',
+  supported_endpoint_types: ['openai'],
+  category: 'image',
+  capability_tags: ['Text to Image'],
+  parameters: {
+    endpoint: '/v1/images/generations',
+    method: 'POST',
+    input_schema: { type: 'object', properties: { image_urls: { items: { type: 'string' }, minItems: 1, type: 'array' }, n: { type: 'integer' }, prompt: { type: 'string' }, size: { type: 'string' } } },
+  },
+})
+
 // The entry of whisper-1 (live list, 2026-11-24).
 const WHISPER_ENTRY = { id: WHISPER, object: 'model', created: 1626777600, owned_by: 'openai', supported_endpoint_types: ['openai'], category: 'audio', capability_tags: ['Audio'] }
 
-const MODEL_LIST = { object: 'list', success: true, data: [videoEntry(MART.modelId), videoEntry(GENERAL_MODEL), musicEntry(SUNO.id), musicEntry(FLOW_MUSIC.id), WHISPER_ENTRY] }
+const MODEL_LIST = { object: 'list', success: true, data: [videoEntry(MART.modelId), videoEntry(GENERAL_MODEL), musicEntry(SUNO.id), musicEntry(FLOW_MUSIC.id), WHISPER_ENTRY, imageEntry(IMAGE_MODEL)] }
 
 // An answer of the account price request (live, 2026-11-24).
 const quote = (model: string, totalUsd: number) =>
@@ -101,6 +132,10 @@ const quote = (model: string, totalUsd: number) =>
 // 2026-11-24).
 const musicQuote = (model: string, totalUsd: number) =>
   ({ billing_type: 'fixed', canonical_model: model, currency: 'USD', estimated: false, model, quantity: 1, total_usd: totalUsd, unit: 'per_call', unit_price_usd: totalUsd })
+// An answer of the account price request of an image model (live,
+// 2026-11-25).
+const imageQuote = (model: string, resolution: string, totalUsd: number) =>
+  ({ billing_type: 'fixed', canonical_model: model, currency: 'USD', estimated: false, model, quantity: 1, spec: { resolution }, total_usd: totalUsd, unit: 'per_image', unit_price_usd: totalUsd })
 
 const submitted = (taskId: string) => JSON.stringify({ code: 200, data: [{ status: 'submitted', task_id: taskId }] })
 
@@ -128,6 +163,7 @@ describe('APIMart media models', () => {
       'fox.mp4': { type: 'video/mp4', bytes: MP4_VIDEO },
       'song-1.wav': { type: 'audio/wav', bytes: silentWav(2) },
       'song-2.wav': { type: 'audio/wav', bytes: silentWav(3) },
+      'made.png': { type: 'image/png', bytes: MADE_PNG },
     })
     setup = await startMockProviderApp(MART, {
       mediaApi: { format: 'apimart' },
@@ -139,9 +175,9 @@ describe('APIMart media models', () => {
         { id: WHISPER, fetchedOnly: true, outputs: ['text'], request: 'transcription' },
       ],
       modelListQuery: { expand: 'parameters' },
-      modelOutputs: { path: 'category', values: { video: { outputs: ['video'], request: 'video' }, audio: { outputs: [] } } },
+      modelOutputs: { path: 'category', values: { video: { outputs: ['video'], request: 'video' }, audio: { outputs: [] }, image: { outputs: ['image'], request: 'image' } } },
     }, {
-      heldPaths: [SUBMIT_PATH, MUSIC_PATH, TRANSCRIBE_PATH, UPLOAD_PATH],
+      heldPaths: [SUBMIT_PATH, MUSIC_PATH, TRANSCRIBE_PATH, UPLOAD_PATH, IMAGE_PATH],
       jsonAnswers: {
         [`/${MART.id}/v1/models?expand=parameters`]: MODEL_LIST,
         // The free price request that goes before each request.
@@ -149,6 +185,7 @@ describe('APIMart media models', () => {
         [quotePath('model=kling-v3&duration=5')]: quote(GENERAL_MODEL, 0.336),
         [quotePath('model=suno&version=v6')]: musicQuote(SUNO.id, 0.068),
         [quotePath('model=flowmusic')]: musicQuote(FLOW_MUSIC.id, 0.06),
+        [quotePath('model=gpt-image-2&resolution=1k')]: imageQuote(IMAGE_MODEL, '1k', 0.0085),
         // The state of each task, which the app asks for 5 seconds after
         // the request.
         [taskPath('task-done')]: {
@@ -161,6 +198,11 @@ describe('APIMart media models', () => {
         },
         [musicTaskPath('task-suno')]: doneMusic('task-suno', 0.05, [clips.clipUrl('song-1.wav'), clips.clipUrl('song-2.wav')]),
         [musicTaskPath('task-flow')]: doneMusic('task-flow', 0.06, [clips.clipUrl('song-1.wav')]),
+        // A done image task (the live form, 2026-11-25).
+        [taskPath('task-image')]: {
+          code: 200,
+          data: { id: 'task-image', status: 'completed', progress: 100, cost: 0.009, result: { images: [{ url: [clips.clipUrl('made.png')], expires_at: 1794182400 }] } },
+        },
       },
     })
     browser = setup.browser
@@ -404,6 +446,64 @@ describe('APIMart media models', () => {
       { role: 'user', text: '' },
     ])
     expect(await sbpCall(browser, 'dez.model/tabs/costNumbers', await activeTabId(browser))).toEqual({ cost: { usd: 0, requests: 1, unpriced: 1 } })
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('shows the rows that the docs tell for an image model, sends its request as a task, and stores the image of the done task at the cost of the task', async () => {
+    const prompt = 'Draw a green box'
+    const before = await filesIn(generatedImagesDir(setup.app.home))
+    await pickModel(browser, MART.name, IMAGE_MODEL)
+    await openPopup(browser)
+    await waitForValue(browser, 'popup of gpt-image-2', () => popupView(browser), {
+      headers: ['Model Parameters'],
+      rows: [
+        { name: 'size', label: 'Aspect ratio', options: ['Default', 'auto', '1:1', '3:2', '2:3', '4:3', '3:4', '5:4', '4:5', '16:9', '9:16', '2:1', '1:2', '3:1', '1:3', '21:9', '9:21'], picked: 'Default' },
+        { name: 'resolution', label: 'Resolution', options: ['1k', '2k', '4k'], picked: '1k' },
+        { name: 'nsfw_check', label: 'Moderation check', on: false },
+      ],
+      hint: null,
+      reset: true,
+    })
+    await closePopup(browser)
+    await submit(browser, prompt)
+
+    // The lowest resolution goes with no choice.
+    const request = await takeRequest(setup, IMAGE_PATH, { resolution: '1k', model: IMAGE_MODEL, prompt })
+    answerHeld(request.reply, 'application/json', submitted('task-image'))
+    const name = await newFileIn(browser, generatedImagesDir(setup.app.home), before)
+    expect(name).toMatch(storedFileName('png'))
+    const file = path.join(generatedImagesDir(setup.app.home), name)
+    expect(await fs.promises.readFile(file)).toEqual(MADE_PNG)
+    await waitForThread(browser, [
+      { role: 'user', text: prompt },
+      { role: 'agent', text: `![id=a|model=${mockModelKey(MART, IMAGE_MODEL)}](${file})` },
+      { role: 'user', text: '' },
+    ])
+    // The cost of the task, not the quote ($0.0085).
+    expect(await sbpCall(browser, 'dez.model/tabs/costNumbers', await activeTabId(browser))).toEqual({ cost: { usd: 0.009, requests: 1, unpriced: 0 } })
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('uploads the input image of an image edit, and sends its web address in the request of the task', async () => {
+    const uploadedUrl = 'https://cdn.example.com/uploads/box.png'
+    const before = await filesIn(generatedImagesDir(setup.app.home))
+    await pickModel(browser, MART.name, IMAGE_MODEL)
+    await focusEditor(browser)
+    await typeKeys(browser, 'Make it green: ')
+    await pasteImageReference(browser, FRAME_PNG, 'a')
+    await submit(browser, '')
+
+    const upload = await takeRequest(setup, UPLOAD_PATH)
+    expect(await requestForm(upload)).toStrictEqual([{ name: 'file', fileName: 'image-1.png', type: 'image/png', bytes: FRAME_PNG }])
+    answerHeld(upload.reply, 'application/json', JSON.stringify({ url: uploadedUrl, filename: 'image-1.png', content_type: 'image/png', size: FRAME_PNG.length, retention_days: 3, expires_at: 1794182400 }))
+
+    const request = await takeRequest(setup, IMAGE_PATH, { resolution: '1k', image_urls: [uploadedUrl], model: IMAGE_MODEL, prompt: 'Make it green: ![id=a](image)' })
+    answerHeld(request.reply, 'application/json', submitted('task-image'))
+    const name = await newFileIn(browser, generatedImagesDir(setup.app.home), before)
+    const file = path.join(generatedImagesDir(setup.app.home), name)
+    await waitForValue(browser, 'reply with the image of the task', async () => (await threadSections(browser))[1]?.text, `![id=b|model=${mockModelKey(MART, IMAGE_MODEL)}](${file})`)
+    // The cost of the task; the free upload counts nothing.
+    expect(await sbpCall(browser, 'dez.model/tabs/costNumbers', await activeTabId(browser))).toEqual({ cost: { usd: 0.009, requests: 1, unpriced: 0 } })
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 })

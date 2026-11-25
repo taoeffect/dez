@@ -477,7 +477,10 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     // models (`whisper-1` is in the `audio` category, the others in `chat`)
     // take a transcription request. The music models of the `audio`
     // category, whose entries hold no schema: Dez knows their request
-    // fields from the docs (apimartModels.ts).
+    // fields from the docs (apimartModels.ts). Image models that take no
+    // request of the image endpoint: Midjourney has endpoints of its own,
+    // and the Grok Imagine edit models have no docs and no image limit in
+    // their schema.
     models: [
       { id: 'text-embedding-3-large', fetchedOnly: true, outputs: [] },
       { id: 'text-embedding-3-small', fetchedOnly: true, outputs: [] },
@@ -489,6 +492,9 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
       { id: 'o3-pro', fetchedOnly: true, outputs: [] },
       { id: 'suno', name: 'Suno', fetchedOnly: true, outputs: ['audio'], request: 'music' },
       { id: 'flowmusic', name: 'Flow Music', fetchedOnly: true, outputs: ['audio'], request: 'music' },
+      { id: 'midjourney', fetchedOnly: true, outputs: [] },
+      { id: 'grok-imagine-1.0-edit-apimart', fetchedOnly: true, outputs: [] },
+      { id: 'grok-imagine-1.5-edit-apimart', fetchedOnly: true, outputs: [] },
     ],
     fetchModels: true,
     // Each entry then also has the request parameters of its model.
@@ -496,17 +502,17 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     modelListQuery: { expand: 'parameters' },
     // The list tells no image input, tools, or thinking that Dez can trust
     // (`capability_tags` give tools to the embedding models), so these flags
-    // stay unknown. The image models take no chat request, and Dez has no
-    // request of theirs yet; nor of the other audio models, but the music
-    // and speech-to-text models of `models`. A video model makes a video
-    // from a prompt (`mediaApi`); Dez sends it no input image. An `unknown`
-    // model is one that APIMart has not cataloged; its price page answers
+    // stay unknown. An image or a video model makes its file from a prompt
+    // and the input images of its rules (`mediaApi`; the image models take
+    // no chat request). Dez has no request of the other audio models, but
+    // the music and speech-to-text models of `models`. An `unknown` model is
+    // one that APIMart has not cataloged; its price page answers
     // `model_not_found` or `no_valid_pricing` (checked live, 2026-11-24).
     modelOutputs: {
       path: 'category',
       values: {
         chat: { outputs: ['text'], request: 'chat' },
-        image: { outputs: [] },
+        image: { outputs: ['image'], request: 'image' },
         video: { outputs: ['video'], request: 'video' },
         audio: { outputs: [] },
         unknown: { outputs: [] },
@@ -539,7 +545,7 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
       contextWindow: { paths: ['data.pricing.limits.max_input_tokens'] },
       note: "APIMart's public price (an account can pay less)",
     },
-    // Video and music requests are tasks, which Dez polls
+    // Image, video, and music requests are tasks, which Dez polls
     // (apimartFormat.ts); a transcription is one request. The docs tell no
     // limit of the tasks of one key at a time, so the default limit of Dez
     // applies.

@@ -127,6 +127,96 @@ export function apimartVideoModel(modelId: unknown): ApimartVideoModel | undefin
   return typeof modelId === 'string' && Object.hasOwn(APIMART_VIDEO_MODELS, modelId) ? APIMART_VIDEO_MODELS[modelId] : undefined
 }
 
+// What the doc page of an APIMart image model tells, and its entry in the
+// model list does not: the entries of most image models hold the same
+// general schema, with no option lists and no image count (checked
+// 2026-11-25). An image request with input images is an edit: Dez uploads
+// them first (`MediaFormat.imageUpload`), also for a model whose docs take
+// them as data. As for a video, a resolution has the cheapest value as its
+// default, and a row with no default sends no field.
+export interface ApimartImageModel {
+  parameters: readonly ModelParameter[]
+  // The most input images of one request.
+  maxImages: number
+  // The values of `resolution` that the price request of the account
+  // takes, for a model whose price request refuses the others: a request
+  // with another value gets the price of the default resolution. Missing:
+  // the price request takes every value.
+  pricedResolutions?: readonly string[]
+}
+
+// The aspect ratios of the Gemini 3 Pro image model, which the docs of
+// Gemini 3.1 Flash also list, with more.
+const GEMINI_PRO_RATIOS = ['auto', '1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9']
+
+export const APIMART_IMAGE_MODELS: Readonly<Record<string, ApimartImageModel>> = {
+  // `size` (the aspect ratio) has no default: an edit with no size keeps
+  // the size of its input image, and a new image gets 1:1. The docs tell
+  // that `n` takes only 1, so it has no row; `official_fallback` (another
+  // channel, at another price) has none either. Images: at most 15.
+  // https://docs.apimart.ai/en/api-reference/images/gpt-image-2/generation
+  // (checked 2026-11-25)
+  'gpt-image-2': {
+    parameters: [
+      { name: 'size', label: 'Aspect ratio', options: ['auto', '1:1', '3:2', '2:3', '4:3', '3:4', '5:4', '4:5', '16:9', '9:16', '2:1', '1:2', '3:1', '1:3', '21:9', '9:21'] },
+      { name: 'resolution', label: 'Resolution', options: ['1k', '2k', '4k'], default: '1k' },
+      MODERATION_CHECK,
+    ],
+    maxImages: 15,
+  },
+  // The default resolution is 1K, not 0.5K: the price of the account told
+  // $0.012 for 1K and $0.015 for 0.5K (2026-11-25). Images: at most 14.
+  // The Google search fields are left out: the docs tell no price of
+  // theirs.
+  // https://docs.apimart.ai/en/api-reference/images/gemini-3.1-flash/generation
+  // (checked 2026-11-25)
+  'gemini-3.1-flash-image-preview': {
+    parameters: [
+      { name: 'size', label: 'Aspect ratio', options: [...GEMINI_PRO_RATIOS, '1:4', '4:1', '1:8', '8:1'] },
+      { name: 'resolution', label: 'Resolution', options: ['0.5K', '1K', '2K', '4K'], default: '1K' },
+      MODERATION_CHECK,
+    ],
+    maxImages: 14,
+  },
+  // The price request takes only the resolution 4K: it refused 1K and 2K
+  // with a 400 ("supported: 4K") and told $0.02 with no resolution and
+  // $0.03 for 4K (2026-11-25). Images: at most 14.
+  // https://docs.apimart.ai/en/api-reference/images/gemini-3-pro/generation
+  // (checked 2026-11-25)
+  'gemini-3-pro-image-preview': {
+    parameters: [
+      { name: 'size', label: 'Aspect ratio', options: GEMINI_PRO_RATIOS },
+      { name: 'resolution', label: 'Resolution', options: ['1K', '2K', '4K'], default: '1K' },
+      MODERATION_CHECK,
+    ],
+    maxImages: 14,
+    pricedResolutions: ['4K'],
+  },
+  // The resolution counts only with an aspect ratio: with no `size`, the
+  // model makes a 2K image. So `size` has the default 1:1. `n` must be 1.
+  // The layer mode (`layer_decomposition`) is left out: it makes up to 30
+  // images from one, at a price that the docs do not tell. Images: at
+  // most 10, each one of at most 36 million pixels.
+  // https://docs.apimart.ai/en/api-reference/images/seedream-5-5/generation
+  // (checked 2026-11-25)
+  'seedream-5-5': {
+    parameters: [
+      { name: 'size', label: 'Aspect ratio', options: ['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3', '21:9', '2:1', '1:2'], default: '1:1' },
+      { name: 'resolution', label: 'Resolution', options: ['1K', '1.5K', '2K'], default: '1K' },
+      { name: 'background', label: 'Background', options: ['auto', 'transparent', 'opaque'] },
+      WATERMARK,
+      MODERATION_CHECK,
+    ],
+    maxImages: 10,
+  },
+}
+
+// The doc facts of the image model `modelId`; undefined for a model that
+// the table does not have.
+export function apimartImageModel(modelId: unknown): ApimartImageModel | undefined {
+  return typeof modelId === 'string' && Object.hasOwn(APIMART_IMAGE_MODELS, modelId) ? APIMART_IMAGE_MODELS[modelId] : undefined
+}
+
 // What the doc pages of an APIMart music model tell. The entries of the
 // music models in the model list hold no schema (checked 2026-11-24), so
 // every row is here. A music request has one price, whatever its length,

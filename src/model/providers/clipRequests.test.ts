@@ -1,10 +1,11 @@
 import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
-import type { NativeDownloadRule, NativeHttpDownload, NativeHttpRequest, NativeHttpResponse } from '../../utils/protocol/nativeHttp'
+import type { NativeDownloadRule, NativeHttpDownload, NativeHttpRequest, NativeHttpResponse, NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
 import { bytesToBase64 } from '../../utils/base64'
 import { ExplainedError } from '../../utils/errorText'
 import { TooManyImagesError } from './clipImages'
+import { notMadeJobCost } from './errors'
 import { NO_VIDEO_LENGTH_MESSAGE } from './mediaFormats'
 import type { ModelParameter } from './modelParameters'
 import { wavFile } from './pcmAudio'
@@ -16,8 +17,9 @@ import '../state/index'
 import './selectors'
 
 // The clip part of dez.provider/generateMedia: the job loop (selectors.ts)
-// and its steps (clipRequests.ts). The native layer is a stand-in, so no
-// request leaves the test: the URLs below name servers that do not exist.
+// and its steps (clipRequests.ts), and the job loop of images. The native
+// layer is a stand-in, so no request leaves the test: the URLs below name
+// servers that do not exist.
 
 interface FileRef {
   root: string
@@ -67,6 +69,13 @@ let quoteHeld: Promise<void> | null = null
 // The answers of the media server to the clip requests, in order. A
 // function answers when its promise settles.
 let answers: Array<NativeHttpDownload | (() => Promise<NativeHttpDownload>)> = []
+// The requests of the images of a job (dez.http/stream), in order, and the
+// answers of the server to them: a status, and bytes or the JSON of the
+// body.
+let streams: Array<{ request: NativeHttpRequest, requestId: string, at: number }> = []
+let streamAnswers: Array<{ status: number, body: unknown }> = []
+// The price that the APIMart-like provider tells for an image request.
+const IMAGE_QUOTE_USD = 0.0085
 
 const bytesOf = (text: string) => Array.from(new TextEncoder().encode(text))
 // A response that Rust saved in the file: the clip.
@@ -90,6 +99,7 @@ sbp('sbp/selectors/register', {
         ? { status: 500, headers: {}, body: bytesOf('Internal error') }
         : { status: 200, headers: { 'content-type': 'application/json' }, body: bytesOf(JSON.stringify({ quote: quoteUsd })) }
     }
+    if (request.url.includes('/pricing/model?')) return { status: 200, headers: { 'content-type': 'application/json' }, body: bytesOf(JSON.stringify({ total_usd: IMAGE_QUOTE_USD })) }
     return { status: 404, headers: {}, body: bytesOf('Not found') }
   },
   async 'dez.native/downloadAppFile' (request: NativeHttpRequest, requestId: string, file: FileRef, rule: NativeDownloadRule): Promise<NativeHttpDownload> {
@@ -115,6 +125,13 @@ sbp('sbp/selectors/register', {
   async 'dez.http/cancelStream' (requestId: string): Promise<void> {
     cancelled.push(requestId)
   },
+  async 'dez.http/stream' (request: NativeHttpRequest, requestId: string): Promise<NativeHttpStreamResult> {
+    streams.push({ request, requestId, at: Date.now() })
+    const answer = streamAnswers.shift()
+    if (answer === undefined) throw new Error(`The test has no answer for ${request.url}`)
+    const body = answer.body instanceof Uint8Array ? answer.body : new TextEncoder().encode(JSON.stringify(answer.body))
+    return { requestId, response: { status: answer.status, headers: {} }, chunks: (async function * () { yield body })() }
+  },
 })
 
 let consoleError: MockInstance<typeof console.error>
@@ -136,6 +153,8 @@ beforeEach(() => {
   quoteUsd = QUOTE_USD
   quoteHeld = null
   answers = []
+  streams = []
+  streamAnswers = []
   vi.useFakeTimers({ now: STARTED_AT })
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
   // Each request of a clip takes one id, for the name of its file.
@@ -850,5 +869,101 @@ describe('a stop of a clip', () => {
     abort.abort()
 
     expect(cancelled).toEqual([])
+  })
+})
+
+describe('an image job', () => {
+  const MART_URL = 'http://localhost:7070/v1'
+  const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 1])
+  const JPEG = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0, 1])
+  const IMAGE_URLS = ['https://cdn.example.com/image/1.png', 'https://cdn.example.com/image/2.jpg']
+  const SUBMITTED = { status: 200, body: { code: 200, data: [{ status: 'submitted', task_id: 'task-1' }] } }
+  const task = (data: Record<string, unknown>) => ({ status: 200, body: { code: 200, data: { id: 'task-1', ...data } } })
+  const generateImage = (input: Record<string, unknown> = {}) =>
+    generate({ providerId: 'mart-like', modelId: 'gpt-image-2', kind: 'image', prompt: 'A red dot', ...input })
+  const streamUrls = () => streams.map(({ request }) => `${request.method ?? 'POST'} ${request.url}`)
+
+  beforeEach(() => {
+    sbp('dez.model/customProviders/save', { id: 'mart-like', name: 'Mart', baseUrl: MART_URL, apiFormat: 'openai', models: [], fetchModels: true, auth: 'apiKey', mediaApi: { format: 'apimart' } })
+  })
+
+  // The provider took the money for the task, so its id is in each step
+  // from the answer that gave it. The cost of the task takes the place of
+  // the quote.
+  it('asks for the state of the task until it is done, then copies each image with a request that has no header', async () => {
+    streamAnswers = [
+      SUBMITTED,
+      task({ status: 'processing', progress: 40 }),
+      task({ status: 'completed', cost: 0.009, result: { images: [{ url: [IMAGE_URLS[0]] }, { url: [IMAGE_URLS[1]] }] } }),
+      { status: 200, body: PNG },
+      { status: 200, body: JPEG },
+    ]
+    const steps: Array<[MediaProgress, number]> = []
+
+    const result = generateImage({ onProgress: (progress: MediaProgress) => steps.push([progress, streams.length]) })
+    await vi.advanceTimersByTimeAsync(10 * SECOND_MS)
+
+    expect(await result).toStrictEqual({ media: [{ bytes: PNG, mediaType: 'image/png' }, { bytes: JPEG, mediaType: 'image/jpeg' }], clips: [], cost: 0.009 })
+    expect(steps).toStrictEqual([
+      [{ phase: 'sent', jobId: null, quote: IMAGE_QUOTE_USD }, 0],
+      [{ phase: 'queued', jobId: 'task-1' }, 1],
+      [{ phase: 'downloading', jobId: 'task-1' }, 3],
+    ])
+    expect(streamUrls()).toStrictEqual([
+      `POST ${MART_URL}/images/generations`,
+      `GET ${MART_URL}/tasks/task-1?language=en`,
+      `GET ${MART_URL}/tasks/task-1?language=en`,
+      `GET ${IMAGE_URLS[0]}`,
+      `GET ${IMAGE_URLS[1]}`,
+    ])
+    expect(JSON.parse(streams[0].request.body as string)).toStrictEqual({ model: 'gpt-image-2', prompt: 'A red dot' })
+    // The URLs of the images come from an answer: their requests carry no
+    // API key. Each request after the first has the time that is left.
+    expect(streams.map(({ request }) => request.headers?.Authorization)).toStrictEqual(['Bearer sk-test', 'Bearer sk-test', 'Bearer sk-test', undefined, undefined])
+    expect(streams.slice(1).map(({ request }) => request.timeoutMs)).toStrictEqual([JOB_TIMEOUT_MS - 5 * SECOND_MS, JOB_TIMEOUT_MS - 10 * SECOND_MS, JOB_TIMEOUT_MS - 10 * SECOND_MS, JOB_TIMEOUT_MS - 10 * SECOND_MS])
+    expect(new Set(streams.map(({ requestId }) => requestId))).toStrictEqual(new Set(['reply-1']))
+    expect(httpRequests.map(({ url }) => url)).toStrictEqual([`${MART_URL}/pricing/model?model=gpt-image-2`])
+  })
+
+  // A task that APIMart settles at 0 tells no price yet.
+  it('counts the quote for a done task that tells no cost', async () => {
+    streamAnswers = [SUBMITTED, task({ status: 'completed', cost: 0, result: { images: [{ url: [IMAGE_URLS[0]] }] } }), { status: 200, body: PNG }]
+
+    const result = generateImage()
+    await vi.advanceTimersByTimeAsync(5 * SECOND_MS)
+
+    expect((await result).cost).toBe(IMAGE_QUOTE_USD)
+  })
+
+  // APIMart gives back the money of a task that failed.
+  it('tells that the provider did not make the image of a task that failed, with its job id and the cost of 0', async () => {
+    streamAnswers = [SUBMITTED, task({ status: 'failed', cost: 0, error: { code: 400, message: 'Prompt breaks the content rules' } })]
+
+    const failure = generateImage().catch((error: unknown) => error)
+    await vi.advanceTimersByTimeAsync(5 * SECOND_MS)
+    const error = await failure as ExplainedError
+
+    expect(error.message).toBe('Mart did not make the image. The cause can be the prompt (Mart can refuse a prompt) or a problem at Mart: the details below tell what Mart said. Change the prompt, or send the request again later. '
+      + 'To ask Mart about this image, give its job id: task-1.\n\nDetails: State: failed: Prompt breaks the content rules')
+    expect(notMadeJobCost(error)).toBe(0)
+    expect(consoleError.mock.calls.map(([text]) => text)).toStrictEqual(['The image job task-1 of Mart (model gpt-image-2) failed:'])
+  })
+
+  it('gives up on an image task that does not end in its time', async () => {
+    streamAnswers = [SUBMITTED, ...Array.from({ length: 400 }, () => task({ status: 'processing' }))]
+
+    const failure = expect(generateImage()).rejects.toThrow('Mart did not make the image in 30 minutes, the longest time that Dez waits. Send the request again later. To ask Mart about this image, give its job id: task-1.')
+    await vi.advanceTimersByTimeAsync(JOB_TIMEOUT_MS)
+    await failure
+
+    expect(streams.at(-1)).toMatchObject({ at: STARTED_AT + JOB_TIMEOUT_MS - 5 * SECOND_MS, request: { timeoutMs: 5 * SECOND_MS } })
+  })
+
+  it('tells that a file URL of the task gave no image', async () => {
+    streamAnswers = [SUBMITTED, task({ status: 'completed', result: { images: [{ url: [IMAGE_URLS[0]] }] } }), { status: 200, body: bytesOf('<html>Gone</html>') }]
+
+    const failure = expect(generateImage()).rejects.toThrow('Mart sent an answer that Dez cannot use. Send the request again. If the error stays, report it at Help › Dez on GitHub. To ask Mart about this image, give its job id: task-1.\n\nDetails: The image is not a PNG, JPEG, GIF, WebP, or SVG image.')
+    await vi.advanceTimersByTimeAsync(5 * SECOND_MS)
+    await failure
   })
 })

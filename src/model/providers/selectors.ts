@@ -20,12 +20,13 @@ import { chatImageCopies, chatImageKey } from './chatImageCopies'
 import { chatRequestCost } from './chatUsage'
 import { clipFileProblem, clipTagProblem, hasLengthRules, missingClipProblem, needsWavCopy, type ClipAttachment, type ClipUse, type InputClipRules } from './clipInputs'
 import { inputImageRulesFor, missingImageProblem } from './clipImages'
-import { CLIP_JOB_TIMEOUT_MS, clipPollDelay, sendClipRequest, uploadClipImages, type ClipRun } from './clipRequests'
+import { CLIP_JOB_TIMEOUT_MS, clipPollDelay, sendClipRequest, sendImageJobRequest, uploadInputImages, type ClipRun, type JobRun } from './clipRequests'
 import { assertProviderResponseOk, explainedProviderError, InputImageError, providerConnectionError, UnusableAnswerError } from './errors'
-import { generatedImageFromUrl } from './generatedImages'
+import { generatedImage, generatedImageFromUrl } from './generatedImages'
 import { chatImageDrawing, imageFit, type ImageSizeRules } from './imageSize'
 import { knownLimitsOf, type KnownLimit } from './knownLimits'
 import { learnedImageLimitRow, learnedImagesProblem } from './learnedImageLimit'
+import { jsonBody } from './mediaFormatParts'
 import type { InputClipPart, MediaWireRequest } from './mediaFormats'
 import { takeMediaTurn } from './mediaTurns'
 import { effectiveParameterValues, type ParameterValues } from './modelParameters'
@@ -36,7 +37,7 @@ import { getProvider, listProviders, requireProvider } from './registry'
 import type { RequestReader } from './requestReader'
 import { assertStreamResponseOk, streamProviderTokens } from './streaming'
 import type { MediaProgress, ProviderChatInputMessage, ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderMediaQuote, ProviderMediaQuoteInput, ProviderStreamChatInput, ProviderStreamChatResult } from './streamTypes'
-import { CLIP_KINDS, ProviderNotConfiguredError, effectiveRequest, isClipKind, isTextKind, type ChatImagePart, type ChatMessage, type ChatPart, type GeneratedClip, type ModelDisplayNames, type ModelInfo, type ProviderId, type ProviderInfo, type ProviderInputImageRules, type ProviderModelsResult, type ProviderSettingsDescriptor } from './types'
+import { CLIP_KINDS, ProviderNotConfiguredError, effectiveRequest, isClipKind, isTextKind, type ChatImagePart, type ChatMessage, type ChatPart, type GeneratedClip, type GeneratedMedia, type ModelDisplayNames, type ModelInfo, type ProviderId, type ProviderInfo, type ProviderInputImageRules, type ProviderModelsResult, type ProviderSettingsDescriptor } from './types'
 import { unstoredOutputMessage } from './unusableModel'
 
 // The file of a stored image.
@@ -681,7 +682,10 @@ export default sbp('sbp/selectors/register', {
   // - An image, or an edit or an upscale of stored images: one request
   //   through dez.http/stream. A cancel before the response headers
   //   rejects; a cancel after them ends the body early, so a caller that
-  //   cancelled must drop the result.
+  //   cancelled must drop the result. For an API whose answer names a job
+  //   (`ImageJobFormat`), the provider is asked for its state as for a
+  //   clip, until its images are at URLs to download, with the same time
+  //   limit.
   // - A clip (speech, music, video): the answer to the first request is the
   //   clip, or a job. For a job, the provider is asked for its state each
   //   `CLIP_POLL_INTERVAL_MS` until the clip is there: in the answer to
@@ -710,22 +714,22 @@ export default sbp('sbp/selectors/register', {
   // the result's `cost` is the price that the answer tells, else that one.
   // A text request has no quote.
   //
-  // A provider whose API takes the input images of a clip request only at
-  // a web address (`Provider.clipImageUpload`) gets each image in an
-  // upload first, with an `uploaded` step that tells its price. An upload
-  // can cost money, at a price that Dez cannot know before it, so
-  // `beforeSend` comes before the uploads too, with no price.
+  // A provider whose API takes the input images of a request only at a
+  // web address (`Provider.imageUpload`) gets each image in an upload
+  // first, with an `uploaded` step that tells its price. An upload can
+  // cost money, at a price that Dez cannot know before it, so `beforeSend`
+  // comes before the uploads too, with no price.
   //
   // At most `Provider.mediaRequestsAtOnce` calls of one provider run at one
   // time, of all tabs together (mediaTurns.ts): a call after them waits
   // for its turn, with a `waiting` step, and holds the turn until it ends
-  // (the waits for a clip job and its download too). A stop while it waits
+  // (the waits for a job and its downloads too). A stop while it waits
   // rejects.
   //
   // A provider takes the money for a job when it starts. So after that
   // point, a failure and a stop log the job id, and the message of a
   // failure names it: with the id, the user can ask the provider for the
-  // clip.
+  // image or the clip.
   async 'dez.provider/generateMedia' (input: ProviderGenerateMediaInput): Promise<ProviderGenerateMediaResult> {
     const provider = requireProvider(input.providerId)
     const { kind, modelId, signal, reader = 'user' } = input
@@ -766,7 +770,8 @@ export default sbp('sbp/selectors/register', {
       // The turn of the provider comes before the reads of the inputs, so a
       // request that waits holds no image or clip bytes, and before the
       // caller's last check (`beforeSend`), which must see what the earlier
-      // requests spent. A clip's time limit (`run.deadline`) starts after it.
+      // requests spent. The time limit of a job (`run.deadline`) starts
+      // after it.
       const limit = provider.mediaRequestsAtOnce
       endTurn = await takeMediaTurn(provider.id, limit, signal, () => progress('waiting', { limit }))
       const appDir = paths.length > 0 ? await sbp('dez.native/getAppDir') as string : ''
@@ -790,34 +795,52 @@ export default sbp('sbp/selectors/register', {
         return { media: [], clips: [], text, ...(times && { times }), ...priced(cost) }
       }
 
+      const limitMs = input.timeoutMs ?? CLIP_JOB_TIMEOUT_MS
+      const run: JobRun = { provider, requestId, limitMs, deadline: Date.now() + limitMs, signal }
+      const secret = await requestSecret(provider)
+      // A request of the media API, which gets the API key.
+      const apiRequest = (wire: MediaWireRequest) => provider.mediaApiRequest(wire, secret)
+      // The uploads end before the quote and the last check (`send`), so
+      // that no wait comes between that check and the paid request. The
+      // check before them keeps the images on this computer when the money
+      // limit of the tab refuses a request with no known price.
+      const upload = readImages.length > 0 ? provider.imageUpload(secret) : null
+      let imageUrls: string[] | undefined
+      if (upload) {
+        signal?.throwIfAborted()
+        input.beforeSend?.(undefined)
+        imageUrls = await uploadInputImages(run, upload, readImages, ({ cost }) => progress('uploaded', cost === undefined ? {} : { cost }))
+      }
+
       if (!isClipKind(kind)) {
-        const request = provider.imageRequest(kind, modelId, { prompt: input.prompt, images, values }, await requestSecret(provider))
+        const request = provider.imageRequest(kind, modelId, { prompt: input.prompt, images, values, ...(imageUrls && { imageUrls }) }, secret)
         const quote = await mediaRequestQuote(provider, input, values, cachedModel)
         signal?.throwIfAborted()
         send(quote)
         const { response, chunks } = await sbp('dez.http/stream', request, requestId) as NativeHttpStreamResult
         await assertStreamResponseOk(provider, response, chunks)
-        const { media, cost } = provider.imageResult(kind, response, await readNativeChunkBytes(chunks))
-        return { media, clips: [], ...priced(cost ?? quote) }
+        const answer = provider.imageResult(kind, modelId, response, await readNativeChunkBytes(chunks))
+        if (!('job' in answer)) return { media: answer.media, clips: [], ...priced(answer.cost ?? quote) }
+
+        const { job } = answer
+        jobId = job.id
+        progress('queued')
+        for (;;) {
+          await clipPollDelay(signal)
+          const state = job.state(jsonBody(await sendImageJobRequest(run, apiRequest(job.poll), true)))
+          if (state === 'running') continue
+          // A file URL comes from a response and can name any host, so its
+          // request has no header: the API key goes only to the URLs that
+          // Dez builds. The images come one after the other.
+          progress('downloading')
+          const media: GeneratedMedia[] = []
+          for (const url of state.fileUrls) media.push(generatedImage(await sendImageJobRequest(run, { method: 'GET', url }, false)))
+          return { media, clips: [], ...priced(state.cost ?? quote) }
+        }
       }
 
-      const limitMs = input.timeoutMs ?? CLIP_JOB_TIMEOUT_MS
-      const run: ClipRun = { provider, kind, requestId, limitMs, deadline: Date.now() + limitMs, signal }
-      const secret = await requestSecret(provider)
-      // A request of the media API, which gets the API key.
-      const apiRequest = (wire: MediaWireRequest) => provider.mediaApiRequest(wire, secret)
+      const clipRun: ClipRun = { ...run, kind }
       const cacheDir = await sbp('dez.native/getAppDir', 'cache') as string
-      // The uploads end before the quote and the last check (`send`), so
-      // that no wait comes between that check and the paid request. The
-      // check before them keeps the images on this computer when the money
-      // limit of the tab refuses a request with no known price.
-      const upload = readImages.length > 0 ? provider.clipImageUpload(secret) : null
-      let imageUrls: string[] | undefined
-      if (upload) {
-        signal?.throwIfAborted()
-        input.beforeSend?.(undefined)
-        imageUrls = await uploadClipImages(run, upload, readImages, ({ cost }) => progress('uploaded', cost === undefined ? {} : { cost }))
-      }
       const clipInput = {
         prompt: input.prompt,
         images,
@@ -839,7 +862,7 @@ export default sbp('sbp/selectors/register', {
       const quote = await mediaRequestQuote(provider, input, values, cachedModel)
       signal?.throwIfAborted()
       send(quote)
-      const first = await sendClipRequest(run, apiRequest(firstRequest), null, cacheDir).catch(async (error: unknown) => {
+      const first = await sendClipRequest(clipRun, apiRequest(firstRequest), null, cacheDir).catch(async (error: unknown) => {
         const refusal = provider.imageCountRefusal(kind, error, images.length)
         if (refusal) {
           console.error(`${provider.name} refused the images of a request to ${modelId}:`, error)
@@ -849,7 +872,7 @@ export default sbp('sbp/selectors/register', {
         const fixed = provider.clipRequestAfterRefusal(kind, firstRequest, error)
         if (!fixed) throw error
         console.error(`${provider.name} refused a request to ${modelId}, which goes once more with the fields that the refusal names:`, error)
-        return sendClipRequest(run, apiRequest(fixed), null, cacheDir)
+        return sendClipRequest(clipRun, apiRequest(fixed), null, cacheDir)
       })
       if ('clip' in first) return { media: [], clips: [first.clip], ...priced(quote) }
 
@@ -858,7 +881,7 @@ export default sbp('sbp/selectors/register', {
       progress('queued')
       for (;;) {
         await clipPollDelay(signal)
-        const poll = await sendClipRequest(run, apiRequest(job.poll), jobId, cacheDir)
+        const poll = await sendClipRequest(clipRun, apiRequest(job.poll), jobId, cacheDir)
         if ('clip' in poll) return { media: [], clips: [poll.clip], ...priced(quote) }
 
         const state = job.state(poll.data)
@@ -878,7 +901,7 @@ export default sbp('sbp/selectors/register', {
           : state.fileUrls.map((url) => ({ request: { method: 'GET', url }, keyed: false }))
         const madeClips: GeneratedClip[] = []
         for (const { request, keyed } of downloads) {
-          const download = await sendClipRequest(run, request, jobId, cacheDir, keyed)
+          const download = await sendClipRequest(clipRun, request, jobId, cacheDir, keyed)
           if (!('clip' in download)) throw new UnusableAnswerError('The answer to the clip download holds no clip.')
           madeClips.push(download.clip)
         }
@@ -888,15 +911,16 @@ export default sbp('sbp/selectors/register', {
       const explained = explainedProviderError(provider, error, reader)
       if (jobId === null) throw explained
       const stopped = signal?.aborted === true
-      console.error(`The clip job ${jobId} of ${provider.name} (model ${modelId}) ${stopped ? 'was stopped' : 'failed'}:`, error)
+      const made = isClipKind(kind) ? 'clip' : 'image'
+      console.error(`The ${made} job ${jobId} of ${provider.name} (model ${modelId}) ${stopped ? 'was stopped' : 'failed'}:`, error)
       if (stopped) throw error
       // A provider takes the money for a job when it starts, so the text
       // gives the job id, before the details. Only the user can ask the
       // provider, so a model gets the id to pass on.
       const { explanation, details } = explainedError(explained)
       const askWith = reader === 'user'
-        ? `To ask ${provider.name} about this clip, give its job id: ${jobId}.`
-        : `${provider.name} ran this request as its job ${jobId}: give the user this id, with which the user can ask ${provider.name} about the clip.`
+        ? `To ask ${provider.name} about this ${made}, give its job id: ${jobId}.`
+        : `${provider.name} ran this request as its job ${jobId}: give the user this id, with which the user can ask ${provider.name} about the ${made}.`
       throw new ExplainedError(`${explanation} ${askWith}`, details, { cause: error })
     } finally {
       endTurn?.()
@@ -932,11 +956,14 @@ export default sbp('sbp/selectors/register', {
         quote = provider.clipEntryPrice(kind, values, entry, mediaEntry) ?? null
       }
     } else {
-      const priceRequest = provider.imageQuote(kind, modelId, await requestSecret(provider))
-      if (!priceRequest) return null
-      const records = priceRequest.request ? await jsonResponse(provider, priceRequest.request) : undefined
+      const priceRequests = provider.imageQuote(kind, modelId, values, await requestSecret(provider))
+      if (!priceRequests) return null
+      const [records, answer] = await Promise.all([priceRequests.records, priceRequests.price]
+        .map((request) => (request ? jsonResponse(provider, request) : undefined)))
       const mediaEntry = sbp('dez.model/modelCache/rawModel', provider.id, modelId, 'media') as unknown
-      const usd = priceRequest.usd(kind, values, { entry, mediaEntry, records })
+      const usd = priceRequests.usd(kind, values, { entry, mediaEntry, records, answer })
+      // The answer to the price request holds facts of the account, so it
+      // is no price record: only the records go back to the caller.
       if (usd === undefined && records === undefined) return null
       quote = { ...(usd !== undefined && { usd }), ...(records !== undefined && { records }) }
     }

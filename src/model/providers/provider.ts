@@ -10,7 +10,8 @@ import { TooManyImagesError } from './clipImages'
 import { FORBIDDEN_BODY_KEYS, type AudioOutputConfig, type MediaEntryPaths, type ProviderConfig, type ProviderModelConfig } from './config'
 import { ProviderHttpError } from './errors'
 import type { ImageSizeRules, InputImageLimits } from './imageSize'
-import { MEDIA_FORMATS, type AnswerCost, type ClipEntryPrice, type ClipFormat, type ClipInput, type ClipJob, type ImageFormat, type ImageQuoteFormat, type MediaFormat, type MediaInput, type MediaWireRequest, type TextFormat, type UploadRefusal } from './mediaFormats'
+import { jsonBody } from './mediaFormatParts'
+import { MEDIA_FORMATS, type AnswerCost, type ClipEntryPrice, type ClipFormat, type ClipInput, type ClipJob, type ImageFormat, type ImageJob, type ImageQuoteFormat, type MediaFormat, type MediaInput, type MediaWireRequest, type TextFormat, type UploadRefusal } from './mediaFormats'
 import { DEFAULT_MEDIA_REQUESTS_AT_ONCE } from './mediaTurns'
 import { effectiveParameterValues, type ParameterValues } from './modelParameters'
 import { modelTokenPrice, tokenTablePrice, type LoadedModelPrice } from './modelPrices'
@@ -419,10 +420,13 @@ export class Provider {
     return this.mediaApiRequest(this.withModelBody(kind, modelId, this.imageFormat().request(kind, this.config.baseUrl, modelId, input)), secret)
   }
 
-  // The images of a 2xx response to `imageRequest`, with the price of the
-  // request when the answer tells it.
-  imageResult(kind: ImageKind, head: NativeHttpResponseHead, body: Uint8Array): { media: GeneratedMedia[] } & AnswerCost {
-    return this.imageFormat().parseResponse(kind, head, body)
+  // What a 2xx response to `imageRequest` holds: the images, with the
+  // price of the request when the answer tells it, or the job that makes
+  // them, for an API whose answer names a job (`ImageJobFormat`).
+  imageResult(kind: ImageKind, modelId: string, head: NativeHttpResponseHead, body: Uint8Array): ({ media: GeneratedMedia[] } & AnswerCost) | { job: ImageJob } {
+    const format = this.imageFormat()
+    if (format.job) return { job: format.job(kind, this.config.baseUrl, modelId, jsonBody(body)) }
+    return format.parseResponse(kind, head, body)
   }
 
   // The request for a model of a text request kind (a transcription).
@@ -473,18 +477,18 @@ export class Provider {
     return this.withModelBody(kind, modelId, this.clipFormat().request(kind, this.config.baseUrl, modelId, input))
   }
 
-  // The upload of the input images of a clip request, for an API that
-  // takes them only at a web address (`ClipFormat.imageUpload`): the
-  // request of the image number `number` (1 for the first one), with the
-  // key, as Dez builds its URL; the reader of the JSON of its 2xx
+  // The upload of the input images of an image or a clip request, for an
+  // API that takes them only at a web address (`MediaFormat.imageUpload`):
+  // the request of the image number `number` (1 for the first one), with
+  // the key, as Dez builds its URL; the reader of the JSON of its 2xx
   // response; and the cause of a refusal, when the answer tells one
   // (`UploadRefusal`). Null when the API takes the images as data.
-  clipImageUpload(secret: Secret<string> | null): {
+  imageUpload(secret: Secret<string> | null): {
     request(image: { bytes: Uint8Array, mediaType: ImageMediaType }, number: number): NativeHttpRequest
     result(data: unknown): { url: string } & AnswerCost
     refusal(error: unknown): UploadRefusal | undefined
   } | null {
-    const upload = this.mediaFormatOrNone()?.clips?.imageUpload
+    const upload = this.mediaFormatOrNone()?.imageUpload
     if (!upload) return null
     return {
       request: (image, number) => this.mediaApiRequest(upload.request(this.config.baseUrl, image, number), secret),
@@ -554,20 +558,25 @@ export class Provider {
     return this.mediaFormatOrNone()?.clips?.entryPrice?.(kind, values, entry, mediaEntry, this.mediaEntryPaths)
   }
 
-  // How to tell the price of one image request of `kind`
-  // (`ImageQuoteFormat`): the request for the model's price records (it
-  // ends like a model list request), null when the entries hold the
-  // prices; and the reader of the price. Null when the provider tells no
-  // price of an image request.
+  // How to tell the price of one image request of `kind` with `values`
+  // (`ImageQuoteFormat`): the request for the model's price records, and
+  // the request for the price of the one request (each one ends like a
+  // model list request; null when the format has none), and the reader of
+  // the price. Null when the provider tells no price of an image request.
   imageQuote(
     kind: ImageKind,
     modelId: string,
+    values: ParameterValues,
     secret: Secret<string> | null,
-  ): { request: NativeHttpRequest | null, usd: ImageQuoteFormat['usd'] } | null {
+  ): { records: NativeHttpRequest | null, price: NativeHttpRequest | null, usd: ImageQuoteFormat['usd'] } | null {
     const quote = this.mediaFormatOrNone()?.images?.quote
     if (!quote) return null
-    const wire = quote.recordsRequest?.(kind, this.config.baseUrl, modelId) ?? null
-    return { request: wire && { ...this.mediaApiRequest(wire, secret), timeoutMs: MODEL_LIST_TIMEOUT_MS }, usd: quote.usd }
+    const keyed = (wire: MediaWireRequest | null | undefined) => (wire ? { ...this.mediaApiRequest(wire, secret), timeoutMs: MODEL_LIST_TIMEOUT_MS } : null)
+    return {
+      records: keyed(quote.recordsRequest?.(kind, this.config.baseUrl, modelId)),
+      price: keyed(quote.priceRequest?.(kind, this.config.baseUrl, modelId, values)),
+      usd: quote.usd,
+    }
   }
 
   // `wire`, the request of a media format for an image or a clip of `kind`,

@@ -1752,12 +1752,13 @@ describe('provider models', () => {
       ['new-type', undefined, undefined],
     ])
     // APIMart (checked live 2026-11-24, abridged): only the chat models of
-    // the `chat` category take a chat request, the `video` models make a
-    // video from a prompt, and the music and speech-to-text models that Dez
-    // knows (of the `audio` and the `chat` category) make music and write
-    // down a clip; the embedding, moderation, and Responses-only models of
-    // the chat category are hidden, and so are the image models, the other
-    // audio models, and the `unknown` models.
+    // the `chat` category take a chat request, the `image` and `video`
+    // models make an image or a video from a prompt, and the music and
+    // speech-to-text models that Dez knows (of the `audio` and the `chat`
+    // category) make music and write down a clip; the embedding,
+    // moderation, and Responses-only models of the chat category are
+    // hidden, and so are the image models with endpoints of their own
+    // (Midjourney), the other audio models, and the `unknown` models.
     const apimart = (id: string, category: string, supported_endpoint_types: string[], capability_tags?: string[]) =>
       ({ id, object: 'model', created: 1626777600, owned_by: 'custom', supported_endpoint_types, category, capability_tags })
     expect(kinds('apimart', [
@@ -1768,6 +1769,7 @@ describe('provider models', () => {
       apimart('gpt-4o-transcribe', 'chat', ['openai'], ['Text', 'Vision', 'Audio', 'Omni']),
       apimart('o3-pro', 'chat', ['openai-response'], ['推理', '工具', '文件', '多模态', '200K']),
       apimart('dall-e-3', 'image', ['image-generation', 'openai'], ['工具', '文件', '多模态', '2K']),
+      apimart('midjourney', 'image', ['image-generation'], ['Text to Image']),
       apimart('apimart-zoe', 'video', ['openai'], ['Text to Video', 'Image to Video', 'Video to Video']),
       apimart('suno', 'audio', ['openai'], ['Text to Audio', 'Audio to Audio']),
       apimart('tts-1', 'audio', ['openai'], ['Text to Audio']),
@@ -1777,6 +1779,7 @@ describe('provider models', () => {
       ['claude-haiku-5-5', ['text'], 'chat'],
       ['gpt-5-nano', ['text'], 'chat'],
       ['gpt-4o-transcribe', ['text'], 'transcription'],
+      ['dall-e-3', ['image'], 'image'],
       ['apimart-zoe', ['video'], 'video'],
       ['suno', ['audio'], 'music'],
       ['whisper-1', ['text'], 'transcription'],

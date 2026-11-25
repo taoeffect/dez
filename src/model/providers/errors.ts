@@ -283,24 +283,25 @@ export class UnusableAnswerError extends Error {
   }
 }
 
-// A clip job that the provider ended with no clip (a failed, cancelled, or
-// expired job). The message holds the provider's state and reason. `cost`
-// is the provider's own price of the job in USD, when its answer tells it
-// (APIMart gives the money of a failed task back: 0).
-export class ClipNotMadeError extends Error {
-  constructor(message: string, readonly cost?: number) {
+// A job that the provider ended with nothing made (a failed, cancelled, or
+// expired job): `made` tells what the job was to make. The message holds
+// the provider's state and reason. `cost` is the provider's own price of
+// the job in USD, when its answer tells it (APIMart gives the money of a
+// failed task back: 0).
+export class JobNotMadeError extends Error {
+  constructor(message: string, readonly cost?: number, readonly made: 'clip' | 'image' = 'clip') {
     super(message)
-    this.name = 'ClipNotMadeError'
+    this.name = 'JobNotMadeError'
   }
 }
 
-/** The provider's own price of a clip job that `error` tells ended with no
- *  clip (`ClipNotMadeError.cost`), when its answer told one; undefined
- *  else. The error can be the cause of the error for the reader
+/** The provider's own price of a job that `error` tells ended with
+ *  nothing made (`JobNotMadeError.cost`), when its answer told one;
+ *  undefined else. The error can be the cause of the error for the reader
  *  (`explainedProviderError`), or the cause of that cause. */
-export function notMadeClipCost(error: unknown): number | undefined {
+export function notMadeJobCost(error: unknown): number | undefined {
   for (let cause = error; cause instanceof Error; cause = cause.cause) {
-    if (cause instanceof ClipNotMadeError) return cause.cost
+    if (cause instanceof JobNotMadeError) return cause.cost
   }
   return undefined
 }
@@ -330,8 +331,9 @@ export class InputImageError extends ExplainedError {
 }
 
 // The error of a failed provider request, without the choice of the
-// reader: an answer that Dez cannot use, a clip job that the provider
-// ended, or no answer (`NativeHttpError`). Any other error as it is.
+// reader: an answer that Dez cannot use, a job that the provider ended
+// with nothing made, or no answer (`NativeHttpError`). Any other error as
+// it is.
 function providerRequestError(provider: ProviderIdentity, error: unknown): unknown {
   const name = provider.name
   if (error instanceof NativeHttpError) return providerConnectionError(provider, error)
@@ -344,8 +346,8 @@ function providerRequestError(provider: ProviderIdentity, error: unknown): unkno
       { cause: error },
     )
   }
-  if (error instanceof ClipNotMadeError) {
-    const notMade = `${name} did not make the clip. The cause can be the prompt (${name} can refuse a prompt) or a problem at ${name}: the details below tell what ${name} said.`
+  if (error instanceof JobNotMadeError) {
+    const notMade = `${name} did not make the ${error.made}. The cause can be the prompt (${name} can refuse a prompt) or a problem at ${name}: the details below tell what ${name} said.`
     return new ProviderRequestError(
       `${notMade} Change the prompt, or send the request again later.`,
       `${notMade} Change the prompt, or call again once.`,

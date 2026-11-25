@@ -1,34 +1,36 @@
 import { ExplainedError } from '../../utils/errorText'
 import { sanitizeErrorText } from '../../utils/protocol/errors'
 import { imageExtension } from '../chat/images'
-import { APIMART_AS_REFERENCES, APIMART_IMAGES_AS, APIMART_TIMED_TRANSCRIPTION_MODELS, APIMART_WHOLE_NUMBER_FIELDS, apimartMusicModel, apimartVideoModel, type ApimartVideoImages } from './apimartModels'
+import { APIMART_AS_REFERENCES, APIMART_IMAGES_AS, APIMART_TIMED_TRANSCRIPTION_MODELS, APIMART_WHOLE_NUMBER_FIELDS, apimartImageModel, apimartMusicModel, apimartVideoModel, type ApimartVideoImages } from './apimartModels'
 import { usageNumber } from './chatUsage'
 import type { InputImageRules } from './clipImages'
 import { cloneClipTextRules } from './clipText'
 import { trimTrailingSlashes } from './config'
-import { ClipNotMadeError, UnusableAnswerError } from './errors'
+import { JobNotMadeError, UnusableAnswerError } from './errors'
 import { clipFormFile, isClipUrl, jsonBody, lengthSeconds, listedValues, lowestFirstParameter, optionsParameter, resolutionLines, sourceClip, transcriptText, transcriptTimes } from './mediaFormatParts'
-import type { ClipInput, MediaFormat } from './mediaFormats'
+import type { AnswerCost, ClipInput, ImageJobFormat, ImageUploadFormat, MediaFormat } from './mediaFormats'
 import { parameterTakes, type ModelParameter, type ParameterValues, type RangeParameter } from './modelParameters'
 import { isRecord, valueAtPath } from './modelParsing'
 
-// The media format of APIMart (`mediaApi.format: 'apimart'`): video and
-// music requests as tasks, and transcriptions. A video or music request
-// starts a task, and Dez asks for its state until it ends. The video and
-// music endpoints take images and clips only at web addresses, never as
-// data: so Dez uploads each input image of a video request first
-// (`imageUpload`), and sends no clip to them. A transcription model gets
-// its clip as the file of a form. The music models have no schema in the
-// model list, so only the music models of the doc facts
-// (`APIMART_MUSIC_MODELS`) take a request.
+// The media format of APIMart (`mediaApi.format: 'apimart'`): image,
+// video, and music requests as tasks, and transcriptions. An image, video,
+// or music request starts a task, and Dez asks for its state until it
+// ends. These endpoints take images and clips at web addresses (some image
+// models also take images as data, but Dez sends none so): so Dez uploads
+// each input image of a request first (`imageUpload`), and sends no clip
+// to them. A transcription model gets its clip as the file of a form. The
+// music models have no schema in the model list, so only the music models
+// of the doc facts (`APIMART_MUSIC_MODELS`) take a request.
 // https://docs.apimart.ai/en/api-reference/tasks/status (checked 2026-11-24)
 
 // The fields of the general schema of the model list that get no row:
 // those that Dez fills (`model`, `prompt`; the image fields of a model of
 // the doc facts), those that Dez never sends (`webhook`: Dez asks for the
 // state; `metadata`, `messages`, `url`, `from_task`; the image fields of
-// another model, and the clip fields), and `multi_shot`, which needs
-// `multi_prompt` (a list that the panel cannot hold).
+// another model, the mask of an edit, and the clip fields), and
+// `multi_shot` and `sequential_image_generation`, which need a list or an
+// object (`multi_prompt`, `sequential_image_generation_options`) that the
+// panel cannot hold.
 const UNSHOWN_SCHEMA_FIELDS: ReadonlySet<string> = new Set([
   'model',
   'prompt',
@@ -42,10 +44,13 @@ const UNSHOWN_SCHEMA_FIELDS: ReadonlySet<string> = new Set([
   'last_frame_image',
   'image_urls',
   'image_with_roles',
+  'mask_url',
   'video_urls',
   'audio_urls',
   'multi_prompt',
   'multi_shot',
+  'sequential_image_generation',
+  'sequential_image_generation_options',
 ])
 
 // The names of the rows of the schema fields whose request names do not
@@ -65,6 +70,19 @@ function textParameter(name: string): ModelParameter[] {
   return optionsParameter(name, schemaLabel(name), [], undefined, true)
 }
 
+// A list of a schema that holds a value in two cases (`2K`, `2k`) gives
+// one option, the first one.
+function withoutCaseCopies(list: readonly unknown[]): unknown[] {
+  const seen = new Set<string>()
+  return list.filter((value) => {
+    if (typeof value !== 'string') return true
+    const key = value.toLowerCase()
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
 // The row of one field of a model's schema (JSON Schema), only when the
 // schema states it safely: a list (`enum`) gives its options, a boolean a
 // switch, a number with both limits a range, and a text a text field. A
@@ -76,9 +94,10 @@ function textParameter(name: string): ModelParameter[] {
 function schemaParameter(name: string, schema: Record<string, unknown>): ModelParameter[] {
   const label = schemaLabel(name)
   if (Array.isArray(schema.enum)) {
-    if (name === 'duration') return lowestFirstParameter(name, label, schema.enum, lengthSeconds)
-    if (name === 'resolution') return lowestFirstParameter(name, label, schema.enum, resolutionLines)
-    return optionsParameter(name, label, listedValues(schema.enum), schema.default)
+    const options = withoutCaseCopies(schema.enum)
+    if (name === 'duration') return lowestFirstParameter(name, label, options, lengthSeconds)
+    if (name === 'resolution') return lowestFirstParameter(name, label, options, resolutionLines)
+    return optionsParameter(name, label, listedValues(options), schema.default)
   }
   switch (schema.type) {
     case 'boolean':
@@ -101,8 +120,9 @@ function schemaParameter(name: string, schema: Record<string, unknown>): ModelPa
   }
 }
 
-// The rows of a video model with no doc facts (`APIMART_VIDEO_MODELS`),
-// from the schema of its entry (`parameters.input_schema.properties`).
+// The rows of an image or a video model with no doc facts
+// (`APIMART_IMAGE_MODELS`, `APIMART_VIDEO_MODELS`), from the schema of its
+// entry (`parameters.input_schema.properties`).
 function schemaParameters(entry: unknown): ModelParameter[] {
   const properties = valueAtPath(entry, 'parameters.input_schema.properties')
   if (!isRecord(properties)) return []
@@ -143,9 +163,48 @@ function refusedKind(): never {
 // their own endpoint. The URL is built from the id, never taken from a
 // response: it gets the API key. `language=en` gives the reason of a
 // failure in English.
-function taskUrl(kind: 'video' | 'music', baseUrl: string, taskId: string): string {
+function taskUrl(kind: 'image' | 'video' | 'music', baseUrl: string, taskId: string): string {
   const tasks = kind === 'music' ? 'music/tasks' : 'tasks'
   return `${trimTrailingSlashes(baseUrl)}/${tasks}/${encodeURIComponent(taskId)}?language=en`
+}
+
+// The id of the task that the answer to an image, video, or music request
+// names: `{ code, data: [{ status: 'submitted', task_id }] }`. Undefined
+// when it names none.
+function submittedTaskId(data: unknown): string | undefined {
+  const first = isRecord(data) && Array.isArray(data.data) ? data.data[0] : undefined
+  const taskId = isRecord(first) ? first.task_id : undefined
+  return typeof taskId === 'string' && taskId !== '' ? taskId : undefined
+}
+
+// What the answer to a poll of a task tells:
+// `{ code, data: { status, cost, result, error } }`. `running` for a task
+// that runs (with `unknownRuns`, also for the state `unknown`: a music task
+// can tell it for a time, and the docs tell to keep its id and ask again),
+// else the task when it is done. Throws a `JobNotMadeError` (of `made`)
+// for a task that ended with nothing made, with the cost that the answer
+// tells: a task that failed costs nothing (`cost` 0: APIMart gives the
+// money back).
+// https://docs.apimart.ai/en/api-reference/tasks/status
+// https://docs.apimart.ai/en/api-reference/audios/suno/overview
+function doneTask(answer: unknown, made: 'clip' | 'image', unknownRuns: boolean): 'running' | Record<string, unknown> {
+  const task = isRecord(answer) ? answer.data : undefined
+  const status = isRecord(task) ? task.status : undefined
+  if (status === 'submitted' || status === 'pending' || status === 'processing' || (unknownRuns && status === 'unknown')) return 'running'
+  if (isRecord(task) && status === 'completed') return task
+  // `failed`, `cancelled`, or a state that is new. The texts come from the
+  // provider and show in the details of the error toast.
+  const message = valueAtPath(task, 'error.message')
+  const reason = typeof message === 'string' && message !== '' ? `: ${sanitizeErrorText(message)}` : ''
+  throw new JobNotMadeError(`State: ${typeof status === 'string' ? sanitizeErrorText(status, 40) : 'none'}${reason}`, usageNumber(valueAtPath(task, 'cost')), made)
+}
+
+// The price of a done task: `cost`, what APIMart took in USD for the whole
+// task. Seedance settles its price by tokens a few seconds after the end,
+// so a cost of 0 then is no price yet: the quote counts.
+function taskCost(task: Record<string, unknown>): AnswerCost {
+  const cost = usageNumber(task.cost)
+  return cost !== undefined && cost > 0 ? { cost } : {}
 }
 
 // The URL of the video of a done task: `result.videos[0].url`, a list of
@@ -174,6 +233,22 @@ function musicFiles(task: Record<string, unknown>): readonly [string, ...string[
   return [first, ...rest]
 }
 
+// The URLs of the images of a done image task: each `url` list of
+// `result.images` (`{ url: [..], expires_at }` for each image, in the docs
+// and in a live answer of gpt-image-2). A URL that is not usable is left
+// out.
+// https://docs.apimart.ai/en/api-reference/images/gpt-image-2/generation
+function imageFiles(task: Record<string, unknown>): readonly [string, ...string[]] {
+  const images = valueAtPath(task, 'result.images')
+  const urls = (Array.isArray(images) ? images : []).flatMap((image): unknown[] => {
+    const url = isRecord(image) ? image.url : undefined
+    return Array.isArray(url) ? url : [url]
+  }).filter(isClipUrl)
+  const [first, ...rest] = urls
+  if (first === undefined) throw new UnusableAnswerError('The task is done, and its answer holds no image URL.')
+  return [first, ...rest]
+}
+
 // The image rules of a video model that takes images: a first and a last
 // frame, or, when the user chooses references (`APIMART_IMAGES_AS`), as
 // many references as the model takes. Copies, which share no object with
@@ -193,7 +268,7 @@ function videoImageRules(images: ApimartVideoImages): InputImageRules {
 const FRAME_ROLES = ['first_frame', 'last_frame'] as const
 
 // The image fields of a video request, with the web addresses of its
-// uploaded images (`ClipInput.imageUrls`): the references, or the first
+// uploaded images (`MediaInput.imageUrls`): the references, or the first
 // and the last frame. The fields that a request with frames needs
 // (`frameFields`) take the place of the values of the panel.
 function videoImageFields(images: ApimartVideoImages | undefined, { imageUrls = [], imagesAsReferences }: ClipInput): Record<string, unknown> {
@@ -205,10 +280,10 @@ function videoImageFields(images: ApimartVideoImages | undefined, { imageUrls = 
   }
 }
 
-// The upload of an input image of a video request (`imageUpload`). The
-// field `retention_days` is a field of the query only, and 3 days is the
-// one tier with free uploads: with no field, the default tier of the
-// account goes, which can be a paid one. The Help panel tells the days.
+// The upload of an input image of a request (`imageUpload`). The field
+// `retention_days` is a field of the query only, and 3 days is the one
+// tier with free uploads: with no field, the default tier of the account
+// goes, which can be a paid one. The Help panel tells the days.
 // https://docs.apimart.ai/en/api-reference/uploads/images (checked
 // 2026-11-25)
 export const APIMART_UPLOAD_DAYS = 3
@@ -217,7 +292,102 @@ export const APIMART_UPLOAD_DAYS = 3
 const TOO_MANY_UPLOADS = 429
 const PAYMENT_REQUIRED = 402
 
+// The upload answers `{ url, …, overage? }`: `overage` comes only for a
+// charged upload (`charged`, `cost_usd`), so an answer with none was free.
+// A refusal has a root `error` and can have a root `overage` that tells
+// its cause: a 429 with `overage`, or with the type `rate_limit_exceeded`,
+// tells that the free uploads are used up and that the account takes no
+// paid one now; a 402 with the reason `insufficient_key_quota` tells the
+// spending limit of the key. A 429 with the type `rate_limit_error` is the
+// limit of requests in time.
+// https://docs.apimart.ai/en/api-reference/uploads/images (checked
+// 2026-11-25)
+const imageUpload: ImageUploadFormat = {
+  request: (baseUrl, { bytes, mediaType }, number) => ({
+    url: `${trimTrailingSlashes(baseUrl)}/uploads/images?retention_days=${APIMART_UPLOAD_DAYS}`,
+    form: [{ name: 'file', file: { bytes, mediaType, fileName: `image-${number}.${imageExtension(mediaType)}` } }],
+  }),
+  result: (data) => {
+    const url = isRecord(data) ? data.url : undefined
+    if (!isClipUrl(url)) throw new UnusableAnswerError('The answer to the image upload holds no web address.')
+    const overage = isRecord(data) ? data.overage : undefined
+    if (!isRecord(overage) || overage.charged === false) return { url, cost: 0 }
+    const cost = usageNumber(overage.cost_usd)
+    return { url, ...(cost !== undefined && { cost }) }
+  },
+  refusal: (status, body) => {
+    const overage = isRecord(body) ? body.overage : undefined
+    if (status === TOO_MANY_UPLOADS && (isRecord(overage) || valueAtPath(body, 'error.type') === 'rate_limit_exceeded')) return 'freeUploadsUsed'
+    if (status === PAYMENT_REQUIRED && isRecord(overage) && overage.reason === 'insufficient_key_quota') return 'keySpendingLimit'
+    return undefined
+  },
+}
+
+// The most pixels of an input image: the upload takes at most 40 million,
+// and Seedream 5.5 at most 36 million. The rule is of the request, not of
+// a model, so the lower one counts for each model.
+// https://docs.apimart.ai/en/api-reference/images/seedream-5-5/generation
+const MAX_INPUT_IMAGE_PIXELS = 36_000_000
+
+// The image requests (kind `image`; an edit is an image request with input
+// images). The answer names a task, and a done task gives the URLs of its
+// images, which end after about 24 hours, so Dez copies the files.
+// https://docs.apimart.ai/en/api-reference/images/gpt-image-2/generation
+// (checked 2026-11-25)
+const images: ImageJobFormat = {
+  parameters: (kind, entry) => {
+    if (kind !== 'image') return []
+    const known = apimartImageModel(valueAtPath(entry, 'id'))
+    return known ? [...structuredClone(known.parameters)] : schemaParameters(entry)
+  },
+  request: (kind, baseUrl, modelId, { prompt, values, imageUrls = [] }) => {
+    if (kind !== 'image') refusedKind()
+    return {
+      url: `${trimTrailingSlashes(baseUrl)}/images/generations`,
+      body: { ...sentValues(values), ...(imageUrls.length > 0 && { image_urls: [...imageUrls] }), model: modelId, prompt },
+    }
+  },
+  job: (_kind, baseUrl, _modelId, data) => {
+    const taskId = submittedTaskId(data)
+    if (taskId === undefined) throw new UnusableAnswerError('The answer to the image request names no task.')
+    return {
+      id: taskId,
+      poll: { url: taskUrl('image', baseUrl, taskId) },
+      state: (answer) => {
+        const task = doneTask(answer, 'image', false)
+        return task === 'running' ? task : { fileUrls: imageFiles(task), ...taskCost(task) }
+      },
+    }
+  },
+  inputImageSize: { image: { maxPixels: MAX_INPUT_IMAGE_PIXELS } },
+  // The account's own price of the request, as `total_usd`, as for a clip
+  // (`clips.quote`): the price of the resolution, the size, the quality,
+  // and the count of images. It does not count the price of the input
+  // images of a few models (Seedream 5.5, Kling) or of the moderation
+  // check: the task's `cost` gives the real price. A model that APIMart
+  // bills by tokens (MiniMax-H3 Image) has no price in the answer
+  // (`total_usd` null), and a model with no price at all gets a refusal
+  // (`no_valid_pricing`).
+  quote: {
+    priceRequest: (kind, baseUrl, modelId, values) => {
+      if (kind !== 'image') return null
+      const query = new URLSearchParams({ model: modelId })
+      const priced = apimartImageModel(modelId)?.pricedResolutions
+      for (const name of ['resolution', 'size', 'quality', 'n']) {
+        const value = values[name]
+        if (typeof value !== 'string' && typeof value !== 'number') continue
+        if (name === 'resolution' && priced && !priced.includes(String(value))) continue
+        query.set(name, String(value))
+      }
+      return { url: `${trimTrailingSlashes(baseUrl)}/pricing/model?${query.toString()}` }
+    },
+    usd: (_kind, _values, { answer }) => (isRecord(answer) ? usageNumber(answer.total_usd) : undefined),
+  },
+}
+
 export const apimartFormat: MediaFormat = {
+  images,
+  imageUpload,
   clips: {
     parameters: (kind, entry) => {
       const modelId = valueAtPath(entry, 'id')
@@ -252,69 +422,18 @@ export const apimartFormat: MediaFormat = {
         body: { ...sentValues(values), ...videoImageFields(apimartVideoModel(modelId)?.images, input), model: modelId, prompt: input.prompt },
       }
     },
-    // The upload answers `{ url, …, overage? }`: `overage` comes only for
-    // a charged upload (`charged`, `cost_usd`), so an answer with none was
-    // free. A refusal has a root `error` and can have a root `overage`
-    // that tells its cause: a 429 with `overage`, or with the type
-    // `rate_limit_exceeded`, tells that the free uploads are used up and
-    // that the account takes no paid one now; a 402 with the reason
-    // `insufficient_key_quota` tells the spending limit of the key. A 429
-    // with the type `rate_limit_error` is the limit of requests in time.
-    // https://docs.apimart.ai/en/api-reference/uploads/images (checked
-    // 2026-11-25)
-    imageUpload: {
-      request: (baseUrl, { bytes, mediaType }, number) => ({
-        url: `${trimTrailingSlashes(baseUrl)}/uploads/images?retention_days=${APIMART_UPLOAD_DAYS}`,
-        form: [{ name: 'file', file: { bytes, mediaType, fileName: `image-${number}.${imageExtension(mediaType)}` } }],
-      }),
-      result: (data) => {
-        const url = isRecord(data) ? data.url : undefined
-        if (!isClipUrl(url)) throw new UnusableAnswerError('The answer to the image upload holds no web address.')
-        const overage = isRecord(data) ? data.overage : undefined
-        if (!isRecord(overage) || overage.charged === false) return { url, cost: 0 }
-        const cost = usageNumber(overage.cost_usd)
-        return { url, ...(cost !== undefined && { cost }) }
-      },
-      refusal: (status, body) => {
-        const overage = isRecord(body) ? body.overage : undefined
-        if (status === TOO_MANY_UPLOADS && (isRecord(overage) || valueAtPath(body, 'error.type') === 'rate_limit_exceeded')) return 'freeUploadsUsed'
-        if (status === PAYMENT_REQUIRED && isRecord(overage) && overage.reason === 'insufficient_key_quota') return 'keySpendingLimit'
-        return undefined
-      },
-    },
-    // The answer is `{ code, data: [{ status: 'submitted', task_id }] }`.
-    // The poll answers `{ code, data: { status, cost, result, error } }`.
-    // The URLs of the files end after about 24 hours, so Dez copies the
-    // files. `cost` is what APIMart took in USD, for the whole task. A task
-    // that failed costs nothing (`cost` 0: APIMart gives the money back),
-    // and its error tells that cost (`ClipNotMadeError.cost`). A music task
-    // can tell the state `unknown` for a time: the docs tell to keep its id
-    // and ask again.
-    // https://docs.apimart.ai/en/api-reference/tasks/status
-    // https://docs.apimart.ai/en/api-reference/audios/suno/overview
+    // A done task gives the URLs of its files, which end after about 24
+    // hours, so Dez copies the files.
     job: (kind, baseUrl, _modelId, data) => {
-      const first = isRecord(data) && Array.isArray(data.data) ? data.data[0] : undefined
-      const taskId = isRecord(first) ? first.task_id : undefined
-      if ((kind !== 'video' && kind !== 'music') || typeof taskId !== 'string' || taskId === '') throw new UnusableAnswerError('The answer to the clip request is neither a clip nor a job.')
+      const taskId = submittedTaskId(data)
+      if ((kind !== 'video' && kind !== 'music') || taskId === undefined) throw new UnusableAnswerError('The answer to the clip request is neither a clip nor a job.')
       return {
         id: taskId,
         poll: { url: taskUrl(kind, baseUrl, taskId) },
         state: (answer) => {
-          const task = isRecord(answer) ? answer.data : undefined
-          const status = isRecord(task) ? task.status : undefined
-          if (status === 'submitted' || status === 'pending' || status === 'processing' || (kind === 'music' && status === 'unknown')) return 'running'
-          if (!isRecord(task) || status !== 'completed') {
-            // `failed`, `cancelled`, or a state that is new. The texts come
-            // from the provider and show in the details of the error toast.
-            const message = valueAtPath(task, 'error.message')
-            const reason = typeof message === 'string' && message !== '' ? `: ${sanitizeErrorText(message)}` : ''
-            throw new ClipNotMadeError(`State: ${typeof status === 'string' ? sanitizeErrorText(status, 40) : 'none'}${reason}`, usageNumber(valueAtPath(task, 'cost')))
-          }
-          const fileUrls = kind === 'music' ? musicFiles(task) : videoFiles(task)
-          // Seedance settles its price by tokens a few seconds after the
-          // end, so a cost of 0 then is no price yet: the quote counts.
-          const cost = usageNumber(task.cost)
-          return { fileUrls, ...(cost !== undefined && cost > 0 && { cost }) }
+          const task = doneTask(answer, 'clip', kind === 'music')
+          if (task === 'running') return task
+          return { fileUrls: kind === 'music' ? musicFiles(task) : videoFiles(task), ...taskCost(task) }
         },
       }
     },
@@ -356,10 +475,18 @@ export const apimartFormat: MediaFormat = {
       },
     },
   },
-  // Only the video models of the doc facts (`APIMART_VIDEO_MODELS`) take
-  // images: the schema of the model list tells no image rules.
+  // The video models of the doc facts (`APIMART_VIDEO_MODELS`) take
+  // images, and so do the image models of the doc facts
+  // (`APIMART_IMAGE_MODELS`) and those whose schema tells the most images
+  // (`image_urls.maxItems`). The schema of another model tells no image
+  // rules.
   imageRules: (kind, entry) => {
-    const images = kind === 'video' ? apimartVideoModel(valueAtPath(entry, 'id'))?.images : undefined
+    const modelId = valueAtPath(entry, 'id')
+    if (kind === 'image') {
+      const maxImages = apimartImageModel(modelId)?.maxImages ?? valueAtPath(entry, 'parameters.input_schema.properties.image_urls.maxItems')
+      return typeof maxImages === 'number' && Number.isInteger(maxImages) && maxImages > 0 ? { maxImages } : undefined
+    }
+    const images = kind === 'video' ? apimartVideoModel(modelId)?.images : undefined
     return images && videoImageRules(images)
   },
   // A transcription model takes one audio clip, of the types of the docs

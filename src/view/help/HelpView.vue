@@ -979,7 +979,8 @@ function onOverlayClick(event: MouseEvent) {
 
           <!-- The ways of a provider that change what you pay, or what
                leaves your computer. A change of one of those rules must
-               change this text too. APIMart: the `imageUpload` of
+               change this text too. APIMart: the `imageUpload` and the
+               image quote (`images.quote`) of
                src/model/providers/apimartFormat.ts, and the upload gate
                of dez.provider/generateMedia. -->
           <section v-if="page === 'providers'" class="help-page help-page--providers">
@@ -990,10 +991,10 @@ function onOverlayClick(event: MouseEvent) {
 
             <h3>APIMart</h3>
             <p>
-              The video models of APIMart take an input image only at a web address. So Dez first
-              uploads each image of a video request to APIMart, which gives the image a web address.
-              APIMart keeps the image {{ APIMART_UPLOAD_DAYS }} days, and in that time anyone who has
-              the address can open the image.
+              The video and image models of APIMart take an input image only at a web address. So
+              Dez first uploads each image of a video request or an image edit to APIMart, which
+              gives the image a web address. APIMart keeps the image {{ APIMART_UPLOAD_DAYS }} days,
+              and in that time anyone who has the address can open the image.
             </p>
             <p>
               Your APIMart account has a number of free uploads. After them, an upload costs money
@@ -1001,8 +1002,14 @@ function onOverlayClick(event: MouseEvent) {
               not. Dez cannot know the price of an upload before it. So in a tab with a money limit
               (see the
               <button type="button" class="help-link" @click="page = 'general'">General</button>
-              page), Dez sends a request with input images to an APIMart video model only when you
-              check "Allow unknown prices".
+              page), Dez sends a request with input images to an APIMart video or image model only
+              when you check "Allow unknown prices".
+            </p>
+            <p>
+              The price that APIMart tells before an image request does not include the input
+              images, which some image models charge for, or the moderation check. So an image
+              edit can cost more than the price that the money limit checks. When the image is
+              done, the tab counts the cost that APIMart tells.
             </p>
           </section>
 

@@ -13,7 +13,7 @@ import type { RequestPrice } from '../model/chat/moneyLimit'
 import type { ModelRef, Tab } from '../model/chat/types'
 import type { ModelCache } from '../model/persistence/types'
 import { TooManyImagesError } from '../model/providers/clipImages'
-import { ClipNotMadeError, InputImageError, ProviderHttpError } from '../model/providers/errors'
+import { JobNotMadeError, InputImageError, ProviderHttpError } from '../model/providers/errors'
 import type { KnownLimit } from '../model/providers/knownLimits'
 import { contextWindowOf } from '../model/providers/modelFamilies'
 import { PRICE_LIFETIME_MS } from '../model/providers/modelPrices'
@@ -1602,7 +1602,7 @@ describe('dez.controller/tools/run', () => {
         await jobTool('model_invoke', PAINT)
         // A job that the provider ended with no clip, and whose answer told
         // its cost (APIMart gives the money of a failed task back).
-        failure = { sends: true, queued: true, error: new ExplainedError('APIMart did not make the clip.', '', { cause: new ClipNotMadeError('State: failed', 0) }) }
+        failure = { sends: true, queued: true, error: new ExplainedError('APIMart did not make the clip.', '', { cause: new JobNotMadeError('State: failed', 0) }) }
         await jobTool('model_invoke', PAINT)
         failure = { sends: true, error: new ExplainedError('Venice sent an answer that Dez cannot use.') }
         await jobTool('model_invoke', PAINT)
