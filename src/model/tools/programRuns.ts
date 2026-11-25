@@ -72,7 +72,7 @@ export function programNotStartedText(program: ShippedProgram, tool: string): st
  *  that reads that a whole tool cannot run stops using all of it. The
  *  subcommands of `audio` and `video` that run a built-in app are those of
  *  appAliases.ts, which this module does not import: it imports this one
- *  through videoFonts.ts. */
+ *  through videoFonts.ts. programRuns.test.ts checks the list. */
 export function programNotConfinedText(program: ShippedProgram): string {
   return `Dez did not start ${program}: the system of this computer cannot keep a program inside its own folders, and Dez does not run ${program} without that guard. `
     + `This is not a fault of the call. No call that runs ${program} can run on this computer: ${JS_EVAL_TOOL.name}, ${APPS_TOOL.name} ${APPS_INVOKE} of a script app, `

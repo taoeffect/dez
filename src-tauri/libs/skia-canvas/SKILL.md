@@ -7,7 +7,8 @@ clips in a script app and in `js_eval`.
 
 In `js_eval`, and in a script app whose `manifest.json` has the field `"native": ["skia-canvas"]`: the library loads
 a native file. A UI page cannot load it: it has the canvas of the browser in its place. Its native code can write
-only the places of the run: the output folder, the work folder, and the folder of the app.
+only the places of its run. In `js_eval`: the copies of the inputs, the output folder, and the work folder. In a
+script app: the same places, and the folder of the app.
 
 ```json
 { "name": "poster", "description": "Draws a poster.", "kind": "script", "native": ["skia-canvas"] }

@@ -169,7 +169,7 @@ export const JS_EVAL_TOOL: ToolDefinition = {
     + 'Each call is a new run: only the files of the work folder stay from one call to the next. '
     + `The call waits at most ${countOf(JS_EVAL_CALL_WAIT_MS / 1000, 'second')} for the end of the code. Code that runs longer goes on as a job: `
     + 'the result of the call gives the id of the job, and `jobs_wait` gives the result of the code. '
-    + 'Each result tells how long the code ran. '
+    + 'Each result of the code tells how long it ran. '
     + `A result holds at most the first ${JS_EVAL_TEXT_CAP} characters of the value. `
     + `An error names the lines of your code as lines of \`${RUN_FOLDER_NAME}/${JS_EVAL_CODE_FILE}\`.`,
   parameters: [
@@ -628,8 +628,7 @@ export function codeTimedOutText(timeoutMs: number, state: string): string {
  *  that started a job, so the chip of the call finds the job
  *  (`startedJob`). */
 export function codeRunsAsJobText(jobId: string, number: number): string {
-  return `${jobStartedText(jobId, number)}\nThe code did not end within ${countOf(JS_EVAL_CALL_WAIT_MS / 1000, 'second')}, so it runs on as this job. `
-    + 'jobs_wait gives its result.'
+  return `${jobStartedText(jobId, number)}\nThe code did not end within ${countOf(JS_EVAL_CALL_WAIT_MS / 1000, 'second')}, so it runs on as this job.`
 }
 
 /** The clock of the program of one `js_eval` run. Dez starts it right

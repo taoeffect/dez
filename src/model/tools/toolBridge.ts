@@ -92,7 +92,7 @@ export const JS_EVAL_BRIDGE: BridgeRules = {
   maxCalls: JS_EVAL_MAX_TOOL_CALLS,
   overLimitText: `The code made more than ${JS_EVAL_MAX_TOOL_CALLS} tool calls, the most of one ${JS_EVAL_TOOL.name} call, so Dez did not run this one. `
     + `Make fewer calls in one run: do the rest of the work in a new ${JS_EVAL_TOOL.name} call.`,
-  unbridged: [unbridgedShow(JS_EVAL_TOOL.name, 'the call')],
+  unbridged: [unbridgedShow(`a ${JS_EVAL_TOOL.name} call`, 'its result')],
 }
 
 /** The rules of the code of a run of a script app (`apps invoke`). */
