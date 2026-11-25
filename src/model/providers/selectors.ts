@@ -807,30 +807,43 @@ export default sbp('sbp/selectors/register', {
     let endTurn: (() => void) | null = null
     // The `cost` of a result: absent when no price is known.
     const priced = (cost: number | undefined) => (cost === undefined ? {} : { cost })
+    // The run of the requests of one call, with its time limit from now,
+    // and the requests of the media API, which get the API key.
+    const startJobRun = async () => {
+      const limitMs = input.timeoutMs ?? CLIP_JOB_TIMEOUT_MS
+      const run: JobRun = { provider, requestId, limitMs, deadline: Date.now() + limitMs, signal }
+      const secret = await requestSecret(provider)
+      const apiRequest: ApiRequest = (wire) => provider.mediaApiRequest(wire, secret)
+      return { run, secret, apiRequest }
+    }
+    // The steps of a job that the provider runs, the same for a new job
+    // and for one of an earlier start of Dez (`pollNow`): its `queued`
+    // step, the polls, the files, and the cost (`quote` when the answer
+    // tells none). A caller returns `await` of it inside the `try`: the
+    // `catch` adds the job id to a failure, and the `finally` ends the turn
+    // only after the job.
+    const followImageJob = async (run: JobRun, job: ImageJob, apiRequest: ApiRequest, quote: number | undefined, pollNow: boolean): Promise<ProviderGenerateMediaResult> => {
+      jobId = job.id
+      progress('queued', { resume: job.resume })
+      const { media, cost } = await imageJobResult(run, job, apiRequest, () => progress('downloading'), pollNow)
+      return { media, clips: [], ...priced(cost ?? quote) }
+    }
+    const followClipJob = async (run: ClipRun, job: ClipJob, apiRequest: ApiRequest, cacheDir: string, quote: number | undefined, pollNow: boolean): Promise<ProviderGenerateMediaResult> => {
+      jobId = job.id
+      progress('queued', { resume: job.resume })
+      const { clips, cost } = await clipJobResult(run, job, apiRequest, cacheDir, () => progress('downloading'), pollNow)
+      return { media: [], clips, ...priced(cost ?? quote) }
+    }
     try {
       if (input.resume) {
         if (isTextKind(kind)) throw new Error(`A ${kind} request has no job to ask for again.`)
         // The provider runs the job already, so its turn comes at once; the
         // turn still counts, so that new requests wait as they must.
         endTurn = takeMediaTurnNow(provider.id, provider.mediaRequestsAtOnce)
-        const limitMs = input.timeoutMs ?? CLIP_JOB_TIMEOUT_MS
-        const run: JobRun = { provider, requestId, limitMs, deadline: Date.now() + limitMs, signal }
-        const secret = await requestSecret(provider)
-        const apiRequest: ApiRequest = (wire) => provider.mediaApiRequest(wire, secret)
+        const { run, apiRequest } = await startJobRun()
         const { data, quote } = input.resume
-        if (isClipKind(kind)) {
-          const job = provider.clipJob(kind, modelId, data)
-          jobId = job.id
-          progress('queued', { resume: job.resume })
-          const cacheDir = await sbp('dez.native/getAppDir', 'cache') as string
-          const { clips, cost } = await clipJobResult({ ...run, kind }, job, apiRequest, cacheDir, () => progress('downloading'), true)
-          return { media: [], clips, ...priced(cost ?? quote) }
-        }
-        const job = provider.imageJob(kind, modelId, data)
-        jobId = job.id
-        progress('queued', { resume: job.resume })
-        const { media, cost } = await imageJobResult(run, job, apiRequest, () => progress('downloading'), true)
-        return { media, clips: [], ...priced(cost ?? quote) }
+        if (!isClipKind(kind)) return await followImageJob(run, provider.imageJob(kind, modelId, data), apiRequest, quote, true)
+        return await followClipJob({ ...run, kind }, provider.clipJob(kind, modelId, data), apiRequest, await sbp('dez.native/getAppDir', 'cache') as string, quote, true)
       }
 
       const paths = input.images ?? []
@@ -878,11 +891,7 @@ export default sbp('sbp/selectors/register', {
         return { media: [], clips: [], text, ...(times && { times }), ...priced(cost) }
       }
 
-      const limitMs = input.timeoutMs ?? CLIP_JOB_TIMEOUT_MS
-      const run: JobRun = { provider, requestId, limitMs, deadline: Date.now() + limitMs, signal }
-      const secret = await requestSecret(provider)
-      // A request of the media API, which gets the API key.
-      const apiRequest: ApiRequest = (wire) => provider.mediaApiRequest(wire, secret)
+      const { run, secret, apiRequest } = await startJobRun()
       // The uploads end before the quote and the last check (`send`), so
       // that no wait comes between that check and the paid request. The
       // check before them keeps the images on this computer when the money
@@ -905,11 +914,7 @@ export default sbp('sbp/selectors/register', {
         const answer = provider.imageResult(kind, modelId, response, await readNativeChunkBytes(chunks))
         if (!('job' in answer)) return { media: answer.media, clips: [], ...priced(answer.cost ?? quote) }
 
-        const { job } = answer
-        jobId = job.id
-        progress('queued', { resume: job.resume })
-        const { media, cost } = await imageJobResult(run, job, apiRequest, () => progress('downloading'), false)
-        return { media, clips: [], ...priced(cost ?? quote) }
+        return await followImageJob(run, answer.job, apiRequest, quote, false)
       }
 
       const clipRun: ClipRun = { ...run, kind }
@@ -949,11 +954,7 @@ export default sbp('sbp/selectors/register', {
       })
       if ('clip' in first) return { media: [], clips: [first.clip], ...priced(quote) }
 
-      const job = provider.clipJob(kind, modelId, first.data)
-      jobId = job.id
-      progress('queued', { resume: job.resume })
-      const { clips: madeClips, cost } = await clipJobResult(clipRun, job, apiRequest, cacheDir, () => progress('downloading'), false)
-      return { media: [], clips: madeClips, ...priced(cost ?? quote) }
+      return await followClipJob(clipRun, provider.clipJob(kind, modelId, first.data), apiRequest, cacheDir, quote, false)
     } catch (error) {
       const explained = explainedProviderError(provider, error, reader)
       if (jobId === null) throw explained
