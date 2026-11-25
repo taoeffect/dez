@@ -63,7 +63,7 @@ import { decodeClips, type DecodeRun } from './inputDecode'
 import { discardMadeAssets, writeMadeAssets, type JobOutcome, type MadeAsset, type ToolJobs } from './jobs'
 import type { BundledToolInput, BundledToolRun, FileTree } from './nativeTypes'
 import { clipInputFile, conversationWorkForms, folderPathForms, imageInputAsIs, inWorkFolder, newGeneratedFile, runProgram } from './programRuns'
-import { AppRunBridge } from './toolBridge'
+import { ScriptRunBridge } from './toolBridge'
 import type { ToolRunContext } from './tools'
 
 // The script runs (model/tools/appInvoke.ts): the run of an `apps invoke`
@@ -92,7 +92,7 @@ import type { ToolRunContext } from './tools'
 // whose manifest asks for it (`runNativeCanvas`) can also load the native
 // file of skia-canvas (src-tauri/src/bundled_tools.rs). The code of a job
 // calls the Dez tools with `dez.sbp`, over the input of the program
-// (`AppRunBridge`, toolBridge.ts); the code of an alias calls none.
+// (`ScriptRunBridge`, toolBridge.ts); the code of an alias calls none.
 //
 // Dez trusts nothing that the code leaves. It reads each file of the
 // output folder, checks the type by the bytes that it read, and writes
@@ -320,7 +320,7 @@ export interface AppRunTools {
  *  of a `js_eval` call (`JobWork`), and of a call of an alias
  *  (`runAliasCall`).
  *
- *  With `tools`, the code calls the Dez tools (`AppRunBridge`, by the
+ *  With `tools`, the code calls the Dez tools (`ScriptRunBridge`, by the
  *  rules of its kind of run): the assets that its calls made come after
  *  the files of the output folder, also when the code failed. Without it
  *  (an alias), the program gets no input, so a call of the code fails at
@@ -384,7 +384,7 @@ export function runScriptJob(
     const folders = { run: runFolder.forms, ...(app && { apps: app.apps.forms }), libs: libs.forms, work: work.forms, fonts: fonts.forms }
     const forModel = (text: string): string => textForModel(text, folders)
     const rules = app === null ? JS_EVAL_BRIDGE : APP_RUN_BRIDGE
-    const bridge = tools && new AppRunBridge(tools.context, tools.jobs, folders, keepAsset, signal, rules)
+    const bridge = tools && new ScriptRunBridge(tools.context, tools.jobs, folders, keepAsset, signal, rules)
     // `stdin` only with tool calls: the answers of the calls go to the
     // input of the program. Without it, the code finds the input closed at
     // its first call (jsEvalRunner.js). The code of a `js_eval` call can

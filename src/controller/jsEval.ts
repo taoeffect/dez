@@ -37,7 +37,7 @@ const NO_RESULT_TEXT = 'Dez stopped the run of the code before its end, so it ha
  *  output, and how long it ran (`withRunTime`), then a line for each image
  *  and clip of the run, which go into the reply. `context` is the context
  *  of the call, which the tool calls of the code run with
- *  (`AppRunBridge`).
+ *  (`ScriptRunBridge`).
  *
  *  A result of a run whose program ended also has the list of the tool
  *  calls of the code (`ToolRunResult.bridged`), also an error result. A

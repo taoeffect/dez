@@ -729,8 +729,8 @@ describe('runScriptJob', () => {
     expect(native.runs).toStrictEqual([])
   })
 
-  // The tool calls of the code (`AppRunBridge`), on the real runners of the
-  // tools: the image tool, on the stubs of the images.
+  // The tool calls of the code (`ScriptRunBridge`), on the real runners of
+  // the tools: the image tool, on the stubs of the images.
   describe('with the tool calls of the code', () => {
     let jobs: TabJobs
 

@@ -10,7 +10,7 @@ import { APP_RUN_BRIDGE, bridgedToolCall, JS_EVAL_BRIDGE, UNEXPECTED_BRIDGE_ERRO
 import { TabJobs, type MadeAsset, type ToolJobs } from './jobs'
 import type { ProgramInputWriter } from './programRuns'
 import { callContext, heldStep, heldWork, LONG, native, resetNative, running, STOP, stubToolRuns, TOOL_DONE, toolRuns } from './testing'
-import { AppRunBridge } from './toolBridge'
+import { ScriptRunBridge } from './toolBridge'
 
 // The bridge on stub tools (`toolRuns`): the real runners have their own
 // tests (tools.test.ts).
@@ -47,13 +47,13 @@ let replyWrites: string[]
 
 // A bridge of a run of an app, or of a run of the kind of `rules`, in the
 // tab `TAB`, whose run folder has the paths `folders`.
-function newBridge(jobs: ToolJobs = new TabJobs(), callSignal = running(), rules: BridgeRules = APP_RUN_BRIDGE, folders: RunFolderForms = { run: [] }): AppRunBridge {
+function newBridge(jobs: ToolJobs = new TabJobs(), callSignal = running(), rules: BridgeRules = APP_RUN_BRIDGE, folders: RunFolderForms = { run: [] }): ScriptRunBridge {
   const context = callContext({
     sections: () => TAB,
     writeImage: (path) => { replyWrites.push(path); return 'z' },
     writeClip: (clip) => { replyWrites.push(clip.src ?? ''); return 'z' },
   })
-  return new AppRunBridge(context, jobs, folders, (asset) => kept.push(asset), callSignal, rules)
+  return new ScriptRunBridge(context, jobs, folders, (asset) => kept.push(asset), callSignal, rules)
 }
 
 beforeEach(() => {
@@ -69,7 +69,7 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('AppRunBridge', () => {
+describe('ScriptRunBridge', () => {
   it('runs the calls one at a time, in the order of their lines, and answers each with the id of its line', async () => {
     const first = heldStep()
     toolRuns.tool = async (call) => {
