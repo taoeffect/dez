@@ -1,5 +1,5 @@
 import { hasBridgedCalls, type BridgedCalls } from '../model/chat/bridgedCalls'
-import { CODE_RUN_TEXTS, type AppRunCaller, type CodeRunCall } from '../model/tools/appInvoke'
+import { CODE_RUN_TEXTS, type CodeRunCall, type ScriptRunCaller } from '../model/tools/appInvoke'
 import { jobCallLabel, jobResultText } from '../model/tools/jobs'
 import { codeRunsAsJobText, codeTimedOutText, JS_EVAL_CALL_WAIT_MS, JS_EVAL_TOOL, RunClock, withRunTime } from '../model/tools/jsEval'
 import { ToolError, type ToolRunResult } from '../model/tools/types'
@@ -24,7 +24,7 @@ import type { ToolRunContext } from './tools'
 // the reply, as the job of an `apps invoke` call: `jobs_wait` gives its
 // result, a cut of the reply hands it on, and `job_cancel` ends it.
 
-const JS_EVAL_CALLER: AppRunCaller = { toolName: JS_EVAL_TOOL.name, texts: CODE_RUN_TEXTS }
+const JS_EVAL_CALLER: ScriptRunCaller = { toolName: JS_EVAL_TOOL.name, texts: CODE_RUN_TEXTS }
 
 // The result of a job of a `js_eval` run that ended with no result for its
 // call: a stop of the tab ended it before its work.

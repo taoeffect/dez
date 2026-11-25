@@ -1,6 +1,6 @@
 import { byteSizeText } from '../../utils/byteSize'
 import type { MediaTagKind } from '../chat/mediaTags'
-import type { AppRunTexts } from './appInvoke'
+import type { ScriptRunTexts } from './appInvoke'
 import { APP_RUN_MAX_DECODED_BYTES } from './appsTool'
 import { WORK_FILE_READ_TEXT, WORK_VIRTUAL_ROOT } from './conversationWork'
 import { ASSET_NAMES } from './jobs'
@@ -298,9 +298,9 @@ export function aliasNotDoneText(alias: AppAlias): string {
   return `Dez did not run ${alias.app}.`
 }
 
-/** The error texts of a run of `alias` (`AppRunTexts`): a call gives no
+/** The error texts of a run of `alias` (`ScriptRunTexts`): a call gives no
  *  `decode` and no time limit, so they do not tell it to change them. */
-export function aliasRunTexts(alias: AppAlias): AppRunTexts {
+export function aliasRunTexts(alias: AppAlias): ScriptRunTexts {
   const call = aliasCallText(alias)
   return {
     decodeFailed: ({ kind, id }) => `Dez could not decode the ${ASSET_NAMES[kind]} @${id} for ${call}: its file is broken, or it has a type that the ffmpeg of Dez does not read. `

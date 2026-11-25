@@ -1,5 +1,4 @@
 import sbp from '@sbp/sbp'
-import type { BridgedCalls } from '../model/chat/bridgedCalls'
 import type { Section } from '../model/chat/types'
 import { aliasRunTexts, type AppAlias } from '../model/tools/appAliases'
 import { APP_READ_ASSET, APP_STOPPED_TEXT, AppCallError, notAnInputText, type AppCall, type AppFrameEnd, type AppFrameRun, type SavedAssetAnswer } from '../model/tools/appBridge'
@@ -18,21 +17,21 @@ import {
   codeRunOutcome,
   frameInputs,
   listedOutputs,
-  NO_APP_OUTPUTS,
-  NO_APP_RUN_CALLS,
+  NO_SCRIPT_RUN_CALLS,
+  NO_SCRIPT_RUN_OUTPUTS,
   OUTPUTS_STORE_STATE,
   runNativeCanvas,
   SaveCount,
   scriptOutputNotStoredText,
   scriptRunResult,
   type AppInput,
-  type AppOutputs,
-  type AppRunCaller,
-  type AppRunCalls,
   type CheckedInvokeCall,
   type InvokeCall,
   type KeptOutput,
   type ScriptRun,
+  type ScriptRunCaller,
+  type ScriptRunCalls,
+  type ScriptRunOutputs,
 } from '../model/tools/appInvoke'
 import { APPS_ROOT, BUILT_IN_APPS_FOLDER, LIBS_ROOT } from '../model/tools/appsTool'
 import { FRAMES_ENCODE_STATE, sequenceClipType } from '../model/tools/frameSequences'
@@ -60,10 +59,10 @@ import { assetBlob, storeCheckedFile, storeSave, type StoredSave } from './appBr
 import { factsOf, readableManifestBytes } from './appsTool'
 import { encodedSequence } from './frameSequences'
 import { decodeClips, type DecodeRun } from './inputDecode'
-import { discardMadeAssets, writeMadeAssets, type JobOutcome, type MadeAsset, type ToolJobs } from './jobs'
+import { discardMadeAssets, writeMadeAssets, type JobOutcome, type MadeAsset } from './jobs'
 import type { BundledToolInput, BundledToolRun, FileTree } from './nativeTypes'
 import { clipInputFile, conversationWorkForms, folderPathForms, imageInputAsIs, inWorkFolder, newGeneratedFile, runProgram } from './programRuns'
-import { ScriptRunBridge } from './toolBridge'
+import { ScriptRunBridge, type ScriptRunTools } from './toolBridge'
 import type { ToolRunContext } from './tools'
 
 // The script runs (model/tools/appInvoke.ts): the run of an `apps invoke`
@@ -199,7 +198,7 @@ async function keptOutputs(
   signal: AbortSignal,
   report: (state: string) => void,
   keepAsset: (asset: MadeAsset) => void,
-): Promise<{ outputs: AppOutputs, assets: MadeAsset[] }> {
+): Promise<{ outputs: ScriptRunOutputs, assets: MadeAsset[] }> {
   const assets: MadeAsset[] = []
   try {
     const tree = await sbp('dez.native/listFileTree', `${folder}/${APP_OUTPUT_FOLDER}`, APP_OUTPUT_LISTED_ENTRIES, 'cache') as FileTree
@@ -286,7 +285,7 @@ function moduleRun(folder: string, timeoutMs: number): Omit<BundledToolRun, 'too
 // folder. A built-in app is in the files that Dez ships, and Rust finds its
 // folder there by its name (`builtInApp`); its texts show the folder of the
 // built-in apps as /apps too.
-async function runApp(call: CheckedInvokeCall, toolName: string) {
+async function appOfRun(call: CheckedInvokeCall, toolName: string) {
   const [name] = call.app.names
   const builtIn = call.app.root === 'resource'
   const apps = builtIn
@@ -295,18 +294,8 @@ async function runApp(call: CheckedInvokeCall, toolName: string) {
   return { call, apps, name, field: builtIn ? { builtInApp: name } : { appFolder: name } }
 }
 
-/** The tool calls of the code of a script run (`dez.sbp`): the context of
- *  the call, the jobs of its job (`JobWork`), and `onCalls`, which gets
- *  the list of the calls (`ToolRunResult.bridged`) of a run whose program
- *  ended. */
-export interface AppRunTools {
-  context: ToolRunContext
-  jobs: ToolJobs
-  onCalls?: (calls: BridgedCalls) => void
-}
-
 /** The work of one script run (`ScriptRun`), which `caller` started
- *  (`AppRunCaller`): the code of a script app, or the code of a `js_eval`
+ *  (`ScriptRunCaller`): the code of a script app, or the code of a `js_eval`
  *  call. It runs in a new run folder that holds copies of the call's
  *  inputs, the decoded files of its clips when the run of an app decodes
  *  them (`call.decode`, `decodeClips`), and the output folder. The code
@@ -333,12 +322,12 @@ export interface AppRunTools {
  *  and into the work folder stay. */
 export function runScriptJob(
   run: ScriptRun,
-  { toolName, texts }: AppRunCaller,
+  { toolName, texts }: ScriptRunCaller,
   conversationId: string,
   signal: AbortSignal,
   report: (state: string) => void,
   keepAsset: (asset: MadeAsset) => void,
-  tools?: AppRunTools,
+  tools?: ScriptRunTools,
 ): Promise<JobOutcome> {
   const { call } = run
   return inWorkFolder(async (folder) => {
@@ -352,7 +341,7 @@ export function runScriptJob(
       throw new ToolError(programNotStartedText('deno', toolName), '', { cause: error })
     }
     const runFolder = await folderPathForms(folder, 'cache', toolName)
-    const app = run.kind === 'app' ? await runApp(run.call, toolName) : null
+    const app = run.kind === 'app' ? await appOfRun(run.call, toolName) : null
     const libs = await folderPathForms(LIBS_ROOT.file, LIBS_ROOT.root, toolName)
     const fonts = await folderPathForms(FONT_FOLDER, 'resource', toolName)
     const work = await conversationWorkForms(conversationId, toolName)
@@ -363,7 +352,7 @@ export function runScriptJob(
     // time limit of the call.
     const ffmpegRun: DecodeRun = { toolName, texts, timeoutMs: call.timeoutMs }
     let decoded = new Map<string, DecodedClip>()
-    if (app !== null && decodesClips) {
+    if (decodesClips) {
       report(APP_DECODES_STATE)
       const clips = call.inputs.filter((input) => input.kind !== 'image')
       decoded = await decodeClips(clips, app.call.decode, folder, ffmpegRun, signal)
@@ -384,7 +373,7 @@ export function runScriptJob(
     const folders = { run: runFolder.forms, ...(app && { apps: app.apps.forms }), libs: libs.forms, work: work.forms, fonts: fonts.forms }
     const forModel = (text: string): string => textForModel(text, folders)
     const rules = app === null ? JS_EVAL_BRIDGE : APP_RUN_BRIDGE
-    const bridge = tools && new ScriptRunBridge(tools.context, tools.jobs, folders, keepAsset, signal, rules)
+    const bridge = tools && new ScriptRunBridge(tools, folders, keepAsset, signal, rules)
     // `stdin` only with tool calls: the answers of the calls go to the
     // input of the program. Without it, the code finds the input closed at
     // its first call (jsEvalRunner.js). The code of a `js_eval` call can
@@ -419,11 +408,10 @@ export function runScriptJob(
       clock?.stop()
     }
     const bridged = bridge ? await bridge.end() : null
-    if (bridged) tools?.onCalls?.(bridged.calls)
     const made = bridged?.made ?? []
-    const calls: AppRunCalls = bridged
+    const calls: ScriptRunCalls = bridged
       ? { ...bridged, made: made.map((asset) => ({ kind: asset.kind === 'image' ? 'image' : asset.clip.kind, handle: asset.handle })) }
-      : NO_APP_RUN_CALLS
+      : NO_SCRIPT_RUN_CALLS
     // The caller has the same limit and its own clock, which started
     // before the input files were ready, so it ends the run first in most
     // cases; this is the text for the other case. The assets of the calls
@@ -444,8 +432,8 @@ export function runScriptJob(
       ? codeRunOutcome(end, line, hasConsole, keptFiles || calledWork)
       : appRunOutcome(end, line, hasConsole, app.call.nativeCanvas))
     const ended = outcomeOf(false)
-    if (ended.isError) return told(scriptRunResult(ended, log, forModel, NO_APP_OUTPUTS, calls, run.kind), made)
-    let kept: { outputs: AppOutputs, assets: MadeAsset[] }
+    if (ended.isError) return told(scriptRunResult(ended, log, forModel, NO_SCRIPT_RUN_OUTPUTS, calls, run.kind), made)
+    let kept: { outputs: ScriptRunOutputs, assets: MadeAsset[] }
     try {
       kept = await keptOutputs(folder, ffmpegRun, run.kind, signal, report, keepAsset)
     } catch (error) {
@@ -480,7 +468,7 @@ export async function runAliasCall(
   signal: AbortSignal,
 ): Promise<{ content: string, isError: boolean }> {
   const call = await checkedAppRun(aliasInvokeCall(alias, args, sections))
-  const caller: AppRunCaller = { toolName: alias.tool, texts: aliasRunTexts(alias) }
+  const caller: ScriptRunCaller = { toolName: alias.tool, texts: aliasRunTexts(alias) }
   signal.throwIfAborted()
   // The clock of the call, as `TabJobs` has one for each job: the time
   // limit of each program of the run holds for that program alone.

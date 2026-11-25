@@ -147,9 +147,6 @@ export const APP_RUN_MAX_DECODED_BYTES = 2 * 1024 * 1024 * 1024
 /** A `decode` value as the texts show it. */
 export const DECODE_EXAMPLE = '{"audio": {"rate": 22050}, "frames": {"width": 96, "height": 54, "fps": 24}}'
 
-/** The subcommand that replaces text in a file. */
-export const APPS_EDIT = 'edit'
-
 /** The subcommand that runs an app. The readers of a call that tell it
  *  from the file subcommands name it by this (registry.ts,
  *  toolBridge.ts). */
@@ -369,7 +366,7 @@ export const APPS_TOOL: SubcommandTool<SubcommandParameter> = {
       example: { path: `${APPS_VIRTUAL_ROOT}/${EXAMPLE_APP}/units.js`, content: 'export const METERS_PER_FOOT = 0.3048\n' },
     },
     {
-      name: APPS_EDIT,
+      name: 'edit',
       summary: `Change a text file of an app or of ${WORK_VIRTUAL_ROOT}/ by find and replace: each edit of a list puts new text in place of a piece of the file.`,
       description: 'Applies a list of edits to one file. Each edit finds `old_string` in the file and puts `new_string` in its place. '
         + '`old_string` is exact text of the file, with its white space and its line ends: give it as read showed it, but without the `12: ` before each line, which is no part of the file. '

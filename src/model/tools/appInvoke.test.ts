@@ -12,7 +12,6 @@ import {
   codeRunCall,
   codeRunDescription,
   codeRunOutcome,
-  scriptRunResult,
   checkedOutput,
   checkInvokeTarget,
   checkSaveSize,
@@ -22,14 +21,15 @@ import {
   invokeInputsText,
   invokeLabel,
   listedOutputs,
-  NO_APP_OUTPUTS,
-  NO_APP_RUN_CALLS,
+  NO_SCRIPT_RUN_CALLS,
+  NO_SCRIPT_RUN_OUTPUTS,
   runNativeCanvas,
   SaveCount,
   savedFileType,
-  type AppOutputs,
+  scriptRunResult,
   type InvokeCall,
   type InvokeTarget,
+  type ScriptRunOutputs,
 } from './appInvoke'
 import { APP_RUN_MAX_OUTPUT_BYTES, APP_RUN_MAX_OUTPUT_FILES } from './appsTool'
 import { jobStartedText } from './jobs'
@@ -643,7 +643,7 @@ describe('codeRunOutcome', () => {
 
 describe('scriptRunResult', () => {
   const RETURNED: RunOutcome = { isError: false, lead: null, given: { text: 'Made the sheet.', name: 'returned value' }, advice: [] }
-  const outputs = (more: Partial<AppOutputs>): AppOutputs => ({ ...NO_APP_OUTPUTS, ...more })
+  const outputs = (more: Partial<ScriptRunOutputs>): ScriptRunOutputs => ({ ...NO_SCRIPT_RUN_OUTPUTS, ...more })
 
   it('gives the value, then the kept files in the order of their ids, with the clip of a frame sequence, then the console output', () => {
     const { text, isError } = scriptRunResult(RETURNED, 'read 2 files\n', asIs, outputs({
@@ -653,7 +653,7 @@ describe('scriptRunResult', () => {
         { name: 'intro.frames', kind: 'video', type: 'video/mp4', extension: 'mp4', frames: { fps: 24, width: 64, height: 36, count: 90, alpha: false, format: 'png' } },
         { name: 'glow.frames', kind: 'video', type: 'video/quicktime', extension: 'mov', frames: { fps: 24, width: 64, height: 36, count: 1, alpha: true, format: 'rgba' } },
       ],
-    }), NO_APP_RUN_CALLS, 'app')
+    }), NO_SCRIPT_RUN_CALLS, 'app')
 
     expect(isError).toBe(false)
     expect(text.split('\n\n')).toStrictEqual([
@@ -668,31 +668,31 @@ describe('scriptRunResult', () => {
     const { text } = scriptRunResult(RETURNED, '', asIs, outputs({
       kept: [{ name: 'sheet.png', kind: 'image', type: 'image/png', extension: 'png' }],
       notKept: ['notes.txt (Dez stores no file of its type)', 'parts/ (a folder: Dez keeps only the files directly in the output folder)'],
-    }), NO_APP_RUN_CALLS, 'app')
+    }), NO_SCRIPT_RUN_CALLS, 'app')
 
     expect(text).toContain('Dez keeps 1 file of the output folder: sheet.png (image).')
     expect(text).toContain('Dez did not keep notes.txt (Dez stores no file of its type), parts/ (a folder: Dez keeps only the files directly in the output folder).')
   })
 
   it('names at most 20 entries that Dez did not keep, with the count of the rest', () => {
-    const { text } = scriptRunResult(RETURNED, '', asIs, outputs({ notKept: Array.from({ length: 23 }, (_, index) => `n${index}.txt (it is empty)`) }), NO_APP_RUN_CALLS, 'app')
+    const { text } = scriptRunResult(RETURNED, '', asIs, outputs({ notKept: Array.from({ length: 23 }, (_, index) => `n${index}.txt (it is empty)`) }), NO_SCRIPT_RUN_CALLS, 'app')
 
     expect(text).toContain('n19.txt (it is empty), and 3 more of the output folder.')
     expect(text).not.toContain('n20.txt')
   })
 
   it('tells nothing of the output folder of a run that left nothing in it', () => {
-    expect(scriptRunResult(RETURNED, '', asIs, NO_APP_OUTPUTS, NO_APP_RUN_CALLS, 'app')).toStrictEqual({ text: 'Made the sheet.', isError: false })
+    expect(scriptRunResult(RETURNED, '', asIs, NO_SCRIPT_RUN_OUTPUTS, NO_SCRIPT_RUN_CALLS, 'app')).toStrictEqual({ text: 'Made the sheet.', isError: false })
   })
 
   it('makes a run whose outputs have a problem an error that still gives the value', () => {
     const { problem } = listedOutputs(folderTree({ 'a.png': 4 }, true), 'app')
-    const { text, isError } = scriptRunResult(RETURNED, '', asIs, outputs({ problem }), NO_APP_RUN_CALLS, 'app')
+    const { text, isError } = scriptRunResult(RETURNED, '', asIs, outputs({ problem }), NO_SCRIPT_RUN_CALLS, 'app')
 
     expect(isError).toBe(true)
     expect(text.startsWith(`${problem} The app returned:\nMade the sheet.`)).toBe(true)
 
-    const noValue = scriptRunResult(appRunOutcome(EXITED, { type: 'result' }, false, false), '', asIs, outputs({ problem }), NO_APP_RUN_CALLS, 'app')
+    const noValue = scriptRunResult(appRunOutcome(EXITED, { type: 'result' }, false, false), '', asIs, outputs({ problem }), NO_SCRIPT_RUN_CALLS, 'app')
     expect(noValue.isError).toBe(true)
     expect(noValue.text).toBe(`${problem} The app ended with no error and returned no value.`)
   })
@@ -717,7 +717,7 @@ describe('scriptRunResult', () => {
 
   it('tells the one asset of a call of a run that failed, and no job line that the value holds', () => {
     const thrown = appRunOutcome(EXITED, { type: 'error', text: `Error: ${jobStartedText('j-aaaa', 1)}` }, false, false)
-    const { text, isError } = scriptRunResult(thrown, '', asIs, NO_APP_OUTPUTS, { made: [{ kind: 'audio', handle: '&1' }], jobs: [{ id: 'j-aaaa', number: 1 }], unanswered: 0 }, 'app')
+    const { text, isError } = scriptRunResult(thrown, '', asIs, NO_SCRIPT_RUN_OUTPUTS, { made: [{ kind: 'audio', handle: '&1' }], jobs: [{ id: 'j-aaaa', number: 1 }], unanswered: 0 }, 'app')
 
     expect(isError).toBe(true)
     expect(text).toContain('Dez kept no file of the output folder.')
@@ -730,7 +730,7 @@ describe('scriptRunResult', () => {
     const workFolder = '/home/ann/.config/dez/work/c1'
     const forModel = (text: string) => textForModel(text, { run: [runFolder], apps: ['/home/ann/.config/dez/apps'], work: [workFolder] })
     const thrown = appRunOutcome(EXITED, { type: 'error', text: 'Error: no file /home/ann/.config/dez/apps/notes/state.json\n    at main (file:///home/ann/.config/dez/apps/notes/main.ts:7:11)' }, true, false)
-    const { text, isError } = scriptRunResult(thrown, `wrote ${runFolder}/output/a.png and ${workFolder}/cache.json\n`, forModel, NO_APP_OUTPUTS, NO_APP_RUN_CALLS, 'app')
+    const { text, isError } = scriptRunResult(thrown, `wrote ${runFolder}/output/a.png and ${workFolder}/cache.json\n`, forModel, NO_SCRIPT_RUN_OUTPUTS, NO_SCRIPT_RUN_CALLS, 'app')
 
     expect(isError).toBe(true)
     expect(text).toContain('Error: no file /apps/notes/state.json')

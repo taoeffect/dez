@@ -26,13 +26,25 @@ import type { ToolRunContext } from './tools'
 // of the job, and the code knows each by a handle (`&1`), which the result
 // of the job maps to its id. The jobs that they start are jobs of the job
 // (`TabJobs.scoped`). The block of a `js_eval` call keeps a list of the
-// calls of its code for the user (`BridgedCalls`).
+// calls of its code for the user (`BridgedCalls`); a run of an app keeps
+// none.
 
 /** The answer to one call line: the result of its tool, or the error of a
  *  line that Dez refuses. */
 interface CallAnswer {
   text: string
   isError: boolean
+}
+
+/** The tool calls of the code of a script run (`dez.sbp`): the context of
+ *  the call, the jobs of its job (`JobWork`), and `onCalls`, which gets
+ *  the list of the calls (`ToolRunResult.bridged`) at the end of the run.
+ *  Only the block of a `js_eval` call shows the list, so a run with no
+ *  `onCalls` (an app) keeps none. */
+export interface ScriptRunTools {
+  context: ToolRunContext
+  jobs: ToolJobs
+  onCalls?: (calls: BridgedCalls) => void
 }
 
 /** What the tool calls of the code of a script run left, at the end of the
@@ -49,9 +61,6 @@ export interface ScriptRunBridgeEnd {
   jobs: { id: string, number: number }[]
   /** How many calls had no answer when the run ended. */
   unanswered: number
-  /** The calls of the code, for the block of a `js_eval` call
-   *  (`ToolBlockData.bridged`). */
-  calls: BridgedCalls
 }
 
 /** A made asset with its handle. */
@@ -82,12 +91,13 @@ function madeAssetMarkup(asset: MadeAsset, id: string): string {
 /** The bridged tool calls of one script run (the code of a `js_eval` call,
  *  or of a script app), the work of its job: it runs the calls of the
  *  lines of the run one at a time, and writes the answer of each to the
- *  input of the program. `context` is the context of the call that
- *  started the job, `jobs` the jobs of the job (`JobWork`), `folders` the
- *  paths of the folders of the run on this computer (`textForModel`),
- *  `keepAsset` the one of the job (`JobWork`), `callSignal` the signal of
- *  the job, and `rules` the rules of the kind of run (`JS_EVAL_BRIDGE`,
- *  `APP_RUN_BRIDGE`), whose `runName` names the run in the log.
+ *  input of the program. `tools` are the context of the call that started
+ *  the job, the jobs of the job (`JobWork`), and the reader of the list of
+ *  the calls; `folders` the paths of the folders of the run on this
+ *  computer (`textForModel`), `keepAsset` the one of the job (`JobWork`),
+ *  `callSignal` the signal of the job, and `rules` the rules of the kind
+ *  of run (`JS_EVAL_BRIDGE`, `APP_RUN_BRIDGE`), whose `runName` names the
+ *  run in the log.
  *
  *  Each asset that a call makes gets a handle (`&1`, `&2`, …) and an id
  *  that stands for it while the run goes on: the next id of the
@@ -127,18 +137,19 @@ export class ScriptRunBridge {
   // The jobs that a call sees (`ToolRunContext.jobs`).
   private readonly callJobs: ToolJobs
   // One entry for each call line up to the limit of a run, in the order of
-  // the lines. An entry starts as a call that the end of the run cut, and
-  // its call fills it.
+  // the lines, when the run keeps a list (`ScriptRunTools.onCalls`). An
+  // entry starts as a call that the end of the run cut, and its call fills
+  // it.
   private readonly records: BridgedCall[] = []
 
   constructor(
-    private readonly context: ToolRunContext,
-    private readonly jobs: ToolJobs,
+    private readonly tools: ScriptRunTools,
     private readonly folders: RunFolderForms,
     private readonly keepAsset: (asset: MadeAsset) => void,
     callSignal: AbortSignal,
     private readonly rules: BridgeRules,
   ) {
+    const { jobs } = tools
     const stop = () => this.stop.abort(callSignal.reason)
     if (callSignal.aborted) stop()
     else callSignal.addEventListener('abort', stop, { once: true })
@@ -177,24 +188,25 @@ export class ScriptRunBridge {
     this.tail = this.tail.then(() => this.answer(line, number, write))
   }
 
-  /** Ends the bridge at the end of the run, and gives what its calls left.
-   *  It stops the call that runs and waits for its end; the calls after it
-   *  do not run. From here on a call writes no asset, and no answer goes
-   *  to the program, which is gone. */
+  /** Ends the bridge at the end of the run, gives the list of the calls to
+   *  `onCalls`, and gives what the calls left. It stops the call that runs
+   *  and waits for its end; the calls after it do not run. From here on a
+   *  call writes no asset, and no answer goes to the program, which is
+   *  gone. */
   async end(): Promise<ScriptRunBridgeEnd> {
     this.ended = true
     this.unlinkCallSignal()
     this.stop.abort(new Error('The run of the code ended.'))
     await this.tail
+    this.tools.onCalls?.(cappedBridgedCalls(this.records, this.callLines - this.records.length))
     return {
       made: this.made,
       // Only the open ones: for a job whose result a later call of the
       // code took (`jobs_wait`), or that one cancelled, the model has
       // nothing to do.
-      jobs: this.jobs.list().filter(isOpenJob).map((job) => ({ id: job.id, number: job.call.number })),
+      jobs: this.tools.jobs.list().filter(isOpenJob).map((job) => ({ id: job.id, number: job.call.number })),
       // Dez stopped the call that ran, and ran none of the calls after it.
       unanswered: this.callLines - this.answers,
-      calls: cappedBridgedCalls(this.records, this.callLines - this.records.length),
     }
   }
 
@@ -237,7 +249,7 @@ export class ScriptRunBridge {
   private async run(line: JsEvalCallLine, number: number): Promise<CallAnswer | null> {
     // A line after the limit of a run has no entry: code can write lines
     // without end, and the list counts them (`BridgedCalls.more`).
-    const record: BridgedCall | null = number > this.rules.maxCalls
+    const record: BridgedCall | null = this.tools.onCalls === undefined || number > this.rules.maxCalls
       ? null
       : { name: shownSelector(line.selector, this.folders), arguments: {}, status: 'cut', result: '' }
     if (record) this.records.push(record)
@@ -285,7 +297,7 @@ export class ScriptRunBridge {
       ...(options?.hidden !== undefined && { hidden: options.hidden }),
       handle,
     }
-    const [id] = newMediaIds([...this.context.sections().map(sectionPlainText), ...this.madeTexts], 1)
+    const [id] = newMediaIds([...this.tools.context.sections().map(sectionPlainText), ...this.madeTexts], 1)
     this.made.push(marked)
     this.handleIds.push(id)
     this.handleById.set(id, handle)
@@ -298,7 +310,7 @@ export class ScriptRunBridge {
   // that the earlier calls of the run made.
   private sections(): Section[] {
     const made: Section = { id: MADE_ASSETS_SECTION_ID, role: 'agent', content: [textNode(this.madeTexts.join('\n\n'))] }
-    return [...this.context.sections(), made]
+    return [...this.tools.context.sections(), made]
   }
 
   // The context of a bridged call of the tool `tool`: the tab, the
@@ -307,7 +319,7 @@ export class ScriptRunBridge {
   // writers of the job (`keep`). It shows no app and no picture: the job
   // has no reply to show them in, and the result of a job has no picture.
   private callContext(tool: string): ToolRunContext {
-    const { context } = this
+    const { context } = this.tools
     return {
       tabId: context.tabId,
       conversationId: context.conversationId,

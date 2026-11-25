@@ -1,5 +1,5 @@
 import sbp from '@sbp/sbp'
-import type { AppRunCaller } from '../model/tools/appInvoke'
+import type { ScriptRunCaller } from '../model/tools/appInvoke'
 import { APP_RUN_MAX_DECODED_BYTES } from '../model/tools/appsTool'
 import {
   APP_DECODES_STATE,
@@ -61,7 +61,7 @@ async function decodeClip(input: ClipInput, plan: ClipDecodePlan, maxBytes: numb
 /** The run whose decode this is, or whose frame sequences Dez encodes
  *  (frameSequences.ts): its caller (the tool of the call, which the texts
  *  name, and the error texts), and its time limit. */
-export interface DecodeRun extends AppRunCaller {
+export interface DecodeRun extends ScriptRunCaller {
   timeoutMs: number
 }
 

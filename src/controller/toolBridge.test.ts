@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { BridgedCalls } from '../model/chat/bridgedCalls'
 import { textNode } from '../model/chat/content'
 import { IMAGE_TOOL_KEY, imageMarkdown } from '../model/chat/images'
 import type { MediaTagData } from '../model/chat/mediaTags'
@@ -40,10 +41,12 @@ const write: ProgramInputWriter = async (text) => {
 // Time for a call that must not run.
 const moment = () => new Promise((resolve) => setTimeout(resolve, 5))
 
-// The assets that the bridge gave the job (`keepAsset`), and the ones that
-// it wrote into the reply, which must stay empty.
+// The assets that the bridge gave the job (`keepAsset`), the ones that it
+// wrote into the reply, which must stay empty, and the lists of the calls
+// that it gave at its end (`onCalls`).
 let kept: MadeAsset[]
 let replyWrites: string[]
+let listed: BridgedCalls[]
 
 // A bridge of a run of an app, or of a run of the kind of `rules`, in the
 // tab `TAB`, whose run folder has the paths `folders`.
@@ -53,7 +56,7 @@ function newBridge(jobs: ToolJobs = new TabJobs(), callSignal = running(), rules
     writeImage: (path) => { replyWrites.push(path); return 'z' },
     writeClip: (clip) => { replyWrites.push(clip.src ?? ''); return 'z' },
   })
-  return new ScriptRunBridge(context, jobs, folders, (asset) => kept.push(asset), callSignal, rules)
+  return new ScriptRunBridge({ context, jobs, onCalls: (calls) => listed.push(calls) }, folders, (asset) => kept.push(asset), callSignal, rules)
 }
 
 beforeEach(() => {
@@ -63,6 +66,7 @@ beforeEach(() => {
   answers = []
   kept = []
   replyWrites = []
+  listed = []
 })
 
 afterEach(() => {
@@ -136,7 +140,8 @@ describe('ScriptRunBridge', () => {
     expect(toolRuns.calls).toHaveLength(limit)
     expect(answers.slice(-3).map(({ isError }) => isError)).toStrictEqual([false, true, true])
     // The list of the calls has no entry for such a line, only a count.
-    const { calls } = await bridge.end()
+    await bridge.end()
+    const [calls] = listed
     expect(calls.calls).toHaveLength(limit)
     expect(calls.more).toBe(2)
   })
@@ -163,7 +168,8 @@ describe('ScriptRunBridge', () => {
     bridge.call(refused, write)
     await vi.waitFor(() => expect(answers).toHaveLength(3))
 
-    expect((await bridge.end()).calls).toStrictEqual({
+    await bridge.end()
+    expect(listed).toStrictEqual([{
       calls: [
         { name: 'image', arguments: { command: 'scale', parameters: '{"image":"a","width":8}' }, status: 'success', result: 'result of scale' },
         { name: 'asset_info', arguments: { assets: '@z' }, status: 'error', result: 'The image @z is not in this conversation.' },
@@ -172,7 +178,7 @@ describe('ScriptRunBridge', () => {
         { name: '/run/no tool', arguments: {}, status: 'error', result: answers[2].text },
       ],
       more: 0,
-    })
+    }])
     expect(answers[2].isError).toBe(true)
   })
 
@@ -216,7 +222,7 @@ describe('ScriptRunBridge', () => {
     const end = await bridge.end()
     expect([end.made, end.jobs, end.unanswered]).toStrictEqual([made, [], 0])
     // The list of the calls keeps the results as the code got them.
-    expect(end.calls.calls.map(({ result }) => result)).toStrictEqual(['Made the image @&1.', 'Scaled @&1 and @a.'])
+    expect(listed[0].calls.map(({ result }) => result)).toStrictEqual(['Made the image @&1.', 'Scaled @&1 and @a.'])
     expect(replyWrites).toStrictEqual([])
   })
 
@@ -278,14 +284,14 @@ describe('ScriptRunBridge', () => {
     expect(toolRuns.calls).toHaveLength(1)
     expect(answers).toStrictEqual([])
     expect(end.unanswered).toBe(3)
-    expect(end.calls).toStrictEqual({
+    expect(listed).toStrictEqual([{
       calls: [
         { name: 'jobs_list', arguments: {}, status: 'cut', result: '' },
         { name: 'image', arguments: { command: 'flip', parameters: '{"image":"a"}' }, status: 'cut', result: '' },
         { name: 'dez.tools/no_tool', arguments: {}, status: 'cut', result: '' },
       ],
       more: 0,
-    })
+    }])
   })
 
   it('keeps no asset of a call that ends after the end of the run, counts the call as not answered, and keeps its result in the list of the calls', async () => {
@@ -303,12 +309,8 @@ describe('ScriptRunBridge', () => {
     const ending = bridge.end()
     late.finish()
 
-    expect(await ending).toStrictEqual({
-      made: [],
-      jobs: [],
-      unanswered: 1,
-      calls: { calls: [{ name: 'jobs_list', arguments: {}, status: 'success', result: TOOL_DONE.content }], more: 0 },
-    })
+    expect(await ending).toStrictEqual({ made: [], jobs: [], unanswered: 1 })
+    expect(listed).toStrictEqual([{ calls: [{ name: 'jobs_list', arguments: {}, status: 'success', result: TOOL_DONE.content }], more: 0 }])
     expect(got).toBeNull()
     expect(kept).toStrictEqual([])
     expect(answers).toStrictEqual([])
@@ -376,6 +378,7 @@ describe('ScriptRunBridge', () => {
       { id: 2, text: 'done', isError: false },
     ])
     expect(toolRuns.calls).toHaveLength(1)
-    expect((await bridge.end()).calls.calls[0]).toStrictEqual({ name: 'dez.tools/jobs_list', arguments: {}, status: 'error', result: UNEXPECTED_BRIDGE_ERROR_TEXT })
+    await bridge.end()
+    expect(listed[0].calls[0]).toStrictEqual({ name: 'dez.tools/jobs_list', arguments: {}, status: 'error', result: UNEXPECTED_BRIDGE_ERROR_TEXT })
   })
 })

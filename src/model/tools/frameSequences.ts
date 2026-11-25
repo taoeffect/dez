@@ -35,7 +35,7 @@ import type { KeptFile } from './programRuns'
 // frames.json, the arguments of the ffmpeg run, the read of its progress,
 // and the texts. controller/frameSequences.ts does the run. Each text of
 // a sequence that Dez does not keep is a part of a sentence of a tool
-// result (`AppOutputs.notKept`, appInvoke.ts).
+// result (`ScriptRunOutputs.notKept`, appInvoke.ts).
 
 /** The ending of the name of a folder of the output folder that holds a
  *  frame sequence. */

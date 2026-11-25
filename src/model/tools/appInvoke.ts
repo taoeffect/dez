@@ -182,7 +182,7 @@ export interface CheckedInvokeCall extends Omit<InvokeCall, 'decode'> {
  *  subcommand (`aliasRunTexts`, appAliases.ts), or a `js_eval` call
  *  (`CODE_RUN_TEXTS`). Each tells the model what it can change in its own
  *  call. */
-export interface AppRunTexts {
+export interface ScriptRunTexts {
   /** The error result of a run whose decode of the clip `input` failed:
    *  ffprobe or ffmpeg could not read it. */
   decodeFailed: (input: Pick<ClipInput, 'kind' | 'id'>) => string
@@ -195,25 +195,21 @@ export interface AppRunTexts {
 }
 
 /** The texts of a run of an `apps invoke` call: a job. */
-export const INVOKE_RUN_TEXTS: AppRunTexts = {
+export const INVOKE_RUN_TEXTS: ScriptRunTexts = {
   decodeFailed: decodeFailedText,
   decodedTooLarge: DECODED_TOO_LARGE_TEXT,
   timedOut: jobTimedOutText,
 }
 
 /** The texts of the run of a `js_eval` call. Its run decodes no clip, so
- *  the texts of a decode never show. */
-export const CODE_RUN_TEXTS: AppRunTexts = {
-  decodeFailed: decodeFailedText,
-  decodedTooLarge: DECODED_TOO_LARGE_TEXT,
-  timedOut: codeTimedOutText,
-}
+ *  only its time-out text is its own. */
+export const CODE_RUN_TEXTS: ScriptRunTexts = { ...INVOKE_RUN_TEXTS, timedOut: codeTimedOutText }
 
 /** What started a script run: the Dez tool of the call, which the texts
  *  name, and the error texts of the run. */
-export interface AppRunCaller {
+export interface ScriptRunCaller {
   toolName: string
-  texts: AppRunTexts
+  texts: ScriptRunTexts
 }
 
 function parametersOf(args: SubcommandArguments): JsonObject {
@@ -242,6 +238,15 @@ function knownInputs(ids: Iterable<string>, assets: ConversationAssets, argument
   return inputs
 }
 
+// The images and the clips that the `inputs` of a call name, each one
+// once, in the order of the call, from the sections `sections` of its tab.
+// Throws a `ToolError` for a word that is no id and for an id that names
+// no image and no clip, whose text ends with `notDone`.
+function callInputs(args: SubcommandArguments, sections: readonly Section[], notDone: string): AppInput[] {
+  const ids = new Set(assetIdWords(args, 'inputs', 'an image or a clip', `Give the ids of the images and the clips, as in "@a @c". ${notDone}`))
+  return knownInputs(ids, conversationAssets(sections), '`inputs`', notDone)
+}
+
 /** The run that an `apps invoke` call asks for, from its checked arguments
  *  and the sections of its tab. Throws a `ToolError`, whose text tells the
  *  model how to fix the call, for a text that is no name of an app, a bad
@@ -251,12 +256,10 @@ function knownInputs(ids: Iterable<string>, assets: ConversationAssets, argument
 export function invokeCall(args: SubcommandArguments, sections: readonly Section[]): InvokeCall {
   const app = appNamed((typeof args.name === 'string' ? args.name : '').trim())
   const timeoutMs = jobTimeoutMs(args, APP_RUN_DEFAULT_SECONDS)
-  const ids = new Set(assetIdWords(args, 'inputs', 'an image or a clip', `Give the ids of the images and the clips, as in "@a @c". ${NOT_DONE}`))
-  const inputs = knownInputs(ids, conversationAssets(sections), '`inputs`', NOT_DONE)
   return {
     ...appRunPaths(app),
     parameters: parametersOf(args),
-    inputs,
+    inputs: callInputs(args, sections, NOT_DONE),
     timeoutMs,
     decode: callDecode(args),
   }
@@ -277,9 +280,7 @@ const CODE_NOT_DONE = 'Dez ran nothing.'
  *  fix the call, for no code, a bad time limit, and an input that names
  *  no image and no clip. */
 export function codeRunCall(args: ToolArguments, sections: readonly Section[]): CodeRunCall {
-  const call = jsEvalCall(args)
-  const ids = new Set(assetIdWords(args, 'inputs', 'an image or a clip', `Give the ids of the images and the clips, as in "@a @c". ${CODE_NOT_DONE}`))
-  return { ...call, inputs: knownInputs(ids, conversationAssets(sections), '`inputs`', CODE_NOT_DONE) }
+  return { ...jsEvalCall(args), inputs: callInputs(args, sections, CODE_NOT_DONE) }
 }
 
 /** One script run (controller/appInvoke.ts): the code of the script app
@@ -524,7 +525,7 @@ const NATIVE_CANVAS_ADVICE = `${NATIVE_CANVAS_LIBRARY} loads a native file, whic
 const KEPT_NONE = 'Dez kept no file of the run.'
 
 // The same for a script run: the assets that the tool calls of its code
-// made stay (`AppRunCalls.made`).
+// made stay (`ScriptRunCalls.made`).
 const KEPT_NO_OUTPUT = 'Dez kept no file of the output folder.'
 
 // The lead of a run of an app whose code returned no value.
@@ -535,7 +536,7 @@ const NO_VALUE = 'The app ended with no error and returned no value.'
  *  the code wrote console output, which goes after it, and `nativeCanvas`
  *  that the run could load skia-canvas (`runNativeCanvas`). A run that Dez
  *  stopped at its time limit is not here: its caller has the text of its
- *  own time limit (`AppRunTexts.timedOut`). */
+ *  own time limit (`ScriptRunTexts.timedOut`). */
 export function appRunOutcome(end: Exclude<ProgramEnd, { kind: 'timedOut' }>, line: JsEvalEndLine | null, hasConsole: boolean, nativeCanvas: boolean): RunOutcome {
   if (line?.type === 'result') return returnedOutcome(line.text, 'app', NO_VALUE)
   if (line?.type === 'error') {
@@ -676,7 +677,7 @@ export function checkedOutput(name: string, bytes: Uint8Array | null): CheckedOu
 export type KeptOutput = KeptFile & { frames?: FrameSequence }
 
 /** The files of the output folder of a run, for its result. */
-export interface AppOutputs {
+export interface ScriptRunOutputs {
   /** The files that Dez keeps, in the order of the assets of the job. */
   kept: readonly KeptOutput[]
   notKept: readonly string[]
@@ -686,13 +687,13 @@ export interface AppOutputs {
 
 /** The outputs of a run that keeps no file and tells of none: a run that
  *  failed. */
-export const NO_APP_OUTPUTS: AppOutputs = { kept: [], notKept: [], problem: null }
+export const NO_SCRIPT_RUN_OUTPUTS: ScriptRunOutputs = { kept: [], notKept: [], problem: null }
 
 // The most entries that a result names as not kept.
 const SHOWN_NOT_KEPT = 20
 
 // What a result tells of the output folder, as its paragraphs.
-function outputParagraphs({ kept, notKept }: AppOutputs): string[] {
+function outputParagraphs({ kept, notKept }: ScriptRunOutputs): string[] {
   const sentences: string[] = []
   if (kept.length > 0) {
     const names = kept.map(({ name, kind, frames }) => (frames ? `${name}/ (${ASSET_NAMES[kind]}: ${sequenceText(frames)})` : `${name} (${ASSET_NAMES[kind]})`)).join(', ')
@@ -710,7 +711,7 @@ function outputParagraphs({ kept, notKept }: AppOutputs): string[] {
 /** What the tool calls of the code of a script run (`dez.sbp`: the code
  *  of a script app or of a `js_eval` call) left (controller/toolBridge.ts),
  *  for the result of the run. */
-export interface AppRunCalls {
+export interface ScriptRunCalls {
   /** The images and the clips that the calls made, which the job keeps
    *  also when the run fails, each by its handle, in the order of the
    *  handles. Their lines come after the ones of the output folder. */
@@ -723,11 +724,11 @@ export interface AppRunCalls {
 }
 
 /** The calls of a run whose code made none. */
-export const NO_APP_RUN_CALLS: AppRunCalls = { made: [], jobs: [], unanswered: 0 }
+export const NO_SCRIPT_RUN_CALLS: ScriptRunCalls = { made: [], jobs: [], unanswered: 0 }
 
 // What a result tells of the tool calls `calls` of the code, as its
 // paragraphs, for a result whose given text is `given`.
-function callParagraphs({ made, jobs, unanswered }: AppRunCalls, given: string): string[] {
+function callParagraphs({ made, jobs, unanswered }: ScriptRunCalls, given: string): string[] {
   const names = made.map(({ kind, handle }) => `${handle} (${ASSET_NAMES[kind]})`).join(', ')
   const jobLines = openJobLines(jobs, given)
   return [
@@ -747,7 +748,7 @@ function callParagraphs({ made, jobs, unanswered }: AppRunCalls, given: string):
  *  which still gives the value. `forModel` takes the paths of this
  *  computer out of a text of the run (`textForModel`, jsEval.ts, with the
  *  folders of the run). */
-export function scriptRunResult(outcome: RunOutcome, log: string, forModel: (text: string) => string, outputs: AppOutputs, calls: AppRunCalls, subject: RunSubject): { text: string, isError: boolean } {
+export function scriptRunResult(outcome: RunOutcome, log: string, forModel: (text: string) => string, outputs: ScriptRunOutputs, calls: ScriptRunCalls, subject: RunSubject): { text: string, isError: boolean } {
   const told: RunOutcome = outputs.problem === null
     ? outcome
     : { ...outcome, isError: true, lead: `${outputs.problem} ${outcome.lead ?? `The ${subject} returned:`}` }
