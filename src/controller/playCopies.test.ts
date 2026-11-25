@@ -2,7 +2,7 @@ import '@sbp/okturtles.eventqueue'
 import sbp from '@sbp/sbp'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as PlayCopyRules from '../model/chat/playCopies'
-import { PLAY_COPIES_MAX_BYTES, PLAY_COPY_MAX_BYTES, type PlayCopyTarget } from '../model/chat/playCopies'
+import { PLAY_COPY_MAX_BYTES, PLAY_COPY_MEMO_MAX_BYTES, type PlayCopyTarget } from '../model/chat/playCopies'
 import type { BundledToolEnd } from './nativeTypes'
 import { movePlayCopy } from './playCopies'
 import { APP_DIR, CACHE_DIR, ENDED, failureOf, native, resetNative, running, STOP, writes } from './testing'
@@ -11,7 +11,7 @@ import { APP_DIR, CACHE_DIR, ENDED, failureOf, native, resetNative, running, STO
 // the other tests have 3 bytes each, far under it.
 vi.mock('../model/chat/playCopies', async (importOriginal) => ({
   ...await importOriginal<typeof PlayCopyRules>(),
-  PLAY_COPIES_MAX_BYTES: 1000,
+  PLAY_COPY_MEMO_MAX_BYTES: 1000,
 }))
 
 // The memo of the module lives for the whole file, so each test takes
@@ -136,7 +136,7 @@ describe('dez.controller/media/playCopy', () => {
     native.program = async () => ENDED
     // Two copies of more than half the cap each: the trim after the second
     // passes every older entry.
-    native.fileBytes = () => new Uint8Array(PLAY_COPIES_MAX_BYTES / 2 + 1)
+    native.fileBytes = () => new Uint8Array(PLAY_COPY_MEMO_MAX_BYTES / 2 + 1)
     const oldest = savedClip('trimmed')
     await playCopy(oldest)
     await playCopy(savedClip('kept'))

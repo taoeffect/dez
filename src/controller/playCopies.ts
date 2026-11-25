@@ -1,6 +1,6 @@
 import sbp from '@sbp/sbp'
 import { ClipReadError } from '../model/chat/mediaFiles'
-import { PLAY_COPIES_MAX_BYTES, PLAY_COPY_MAX_BYTES, PLAY_COPY_RUN_TIMEOUT_MS, playCopyRun, type PlayCopyTarget } from '../model/chat/playCopies'
+import { PLAY_COPY_MAX_BYTES, PLAY_COPY_MEMO_MAX_BYTES, PLAY_COPY_RUN_TIMEOUT_MS, playCopyRun, type PlayCopyTarget } from '../model/chat/playCopies'
 import { withoutLocalPaths } from '../model/tools/localPaths'
 import { ffmpegRunDetails } from '../model/tools/programRuns'
 import { ToolError } from '../model/tools/types'
@@ -128,7 +128,7 @@ function trimCopies(): void {
   let total = 0
   for (const entry of copies.values()) total += entry.bytes
   for (const [src, entry] of copies) {
-    if (total <= PLAY_COPIES_MAX_BYTES) return
+    if (total <= PLAY_COPY_MEMO_MAX_BYTES) return
     if (!entry.done || entry.bytes === 0) continue
     total -= entry.bytes
     copies.delete(src)

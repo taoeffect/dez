@@ -42,7 +42,7 @@ export const PLAY_COPY_MAX_BYTES = 256 * 1024 ** 2
 
 /** The most bytes of all the play copies that Dez keeps in memory for the
  *  session, so that the next player of a clip gets its copy with no run. */
-export const PLAY_COPIES_MAX_BYTES = 512 * 1024 ** 2
+export const PLAY_COPY_MEMO_MAX_BYTES = 512 * 1024 ** 2
 
 /** One ffmpeg run that makes a play copy in a run folder. */
 export interface PlayCopyRun {
