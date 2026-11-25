@@ -698,7 +698,7 @@ describe('a clip job', () => {
     // Each step, and how many requests went before it.
     expect(steps).toStrictEqual([
       [{ phase: 'sent', jobId: null }, 0],
-      [{ phase: 'queued', jobId: 'gen-1' }, 1],
+      [{ phase: 'queued', jobId: 'gen-1', resume: { id: 'gen-1' } }, 1],
       [{ phase: 'downloading', jobId: 'gen-1' }, 3],
     ])
   })
@@ -742,7 +742,7 @@ describe('the price of a clip', () => {
     await vi.advanceTimersByTimeAsync(5 * SECOND_MS)
 
     expect((await result).cost).toBe(QUOTE_USD)
-    expect(steps).toStrictEqual([[{ phase: 'sent', jobId: null, quote: QUOTE_USD }, 0], [{ phase: 'queued', jobId: 'q-1' }, 1]])
+    expect(steps).toStrictEqual([[{ phase: 'sent', jobId: null, quote: QUOTE_USD }, 0], [{ phase: 'queued', jobId: 'q-1', resume: { queue_id: 'q-1' } }, 1]])
     expect(JSON.parse(httpRequests[0].body as string)).toStrictEqual({ model: 'm', duration: '4s', resolution: '480p', aspect_ratio: '16:9' })
   })
 
@@ -906,7 +906,7 @@ describe('an image job', () => {
     expect(await result).toStrictEqual({ media: [{ bytes: PNG, mediaType: 'image/png' }, { bytes: JPEG, mediaType: 'image/jpeg' }], clips: [], cost: 0.009 })
     expect(steps).toStrictEqual([
       [{ phase: 'sent', jobId: null, quote: IMAGE_QUOTE_USD }, 0],
-      [{ phase: 'queued', jobId: 'task-1' }, 1],
+      [{ phase: 'queued', jobId: 'task-1', resume: { data: [{ task_id: 'task-1' }] } }, 1],
       [{ phase: 'downloading', jobId: 'task-1' }, 3],
     ])
     expect(streamUrls()).toStrictEqual([
@@ -965,5 +965,68 @@ describe('an image job', () => {
     const failure = expect(generateImage()).rejects.toThrow('Mart sent an answer that Dez cannot use. Send the request again. If the error stays, report it at Help › Dez on GitHub. To ask Mart about this image, give its job id: task-1.\n\nDetails: The image is not a PNG, JPEG, GIF, WebP, or SVG image.')
     await vi.advanceTimersByTimeAsync(5 * SECOND_MS)
     await failure
+  })
+
+  // A task that ran while Dez was closed: no image request, no price
+  // request, and the first poll goes at once.
+  it('asks again for a task of an earlier start at once, with no request that costs money, and counts its quote', async () => {
+    streamAnswers = [task({ status: 'completed', cost: 0, result: { images: [{ url: [IMAGE_URLS[0]] }] } }), { status: 200, body: PNG }]
+    const steps: MediaProgress[] = []
+    const beforeSend = vi.fn()
+
+    const result = await generateImage({ resume: { data: { data: [{ task_id: 'task-1' }] }, quote: 0.02 }, beforeSend, onProgress: (progress: MediaProgress) => steps.push(progress) })
+
+    expect(result).toStrictEqual({ media: [{ bytes: PNG, mediaType: 'image/png' }], clips: [], cost: 0.02 })
+    expect(streamUrls()).toStrictEqual([`GET ${MART_URL}/tasks/task-1?language=en`, `GET ${IMAGE_URLS[0]}`])
+    expect(steps.map(({ phase }) => phase)).toStrictEqual(['queued', 'downloading'])
+    expect([httpRequests, beforeSend.mock.calls]).toStrictEqual([[], []])
+  })
+})
+
+describe('a clip job of an earlier start', () => {
+  const resumeVideo = (input: Record<string, unknown> = {}) =>
+    generate({ kind: 'video', resume: { data: { queue_id: 'q-1', download_url: 'https://share.example.com/v1/share/token-1' }, quote: 0.4 }, ...input })
+
+  it('asks for the state at once, gets the clip, and counts the stored quote, with no request that costs money', async () => {
+    answers = [json({ status: 'COMPLETED' }), clip('video/mp4')]
+    const steps: MediaProgress[] = []
+    const beforeSend = vi.fn()
+
+    const result = await resumeVideo({ beforeSend, onProgress: (progress: MediaProgress) => steps.push(progress) })
+
+    expect(result).toStrictEqual({ media: [], clips: [{ kind: 'video', mediaType: 'video/mp4', jobId: 'q-1', src: tempPath(2, 'mp4'), url: null, expires: isoAfter(DAY_MS) }], cost: 0.4 })
+    expect(requestUrls()).toStrictEqual([`POST ${VENICE_URL}/video/retrieve`, 'GET https://share.example.com/v1/share/token-1'])
+    expect(steps).toStrictEqual([
+      { phase: 'queued', jobId: 'q-1', resume: { queue_id: 'q-1', download_url: 'https://share.example.com/v1/share/token-1' } },
+      { phase: 'downloading', jobId: 'q-1' },
+    ])
+    expect([httpRequests, beforeSend.mock.calls]).toStrictEqual([[], []])
+  })
+
+  // The provider runs the job already: the resume never waits for a turn,
+  // and its time limit starts now.
+  it('takes a turn over the cap of the provider, and gets a new time limit', async () => {
+    sbp('dez.model/customProviders/save', { id: 'venice-like', name: 'Media server', baseUrl: VENICE_URL, apiFormat: 'openai', models: [], fetchModels: true, auth: 'apiKey', mediaApi: { format: 'venice', maxRequestsAtOnce: 1 } })
+    let finish = (_answer: NativeHttpDownload) => {}
+    answers = [() => new Promise((resolve) => { finish = resolve })]
+    const first = resumeVideo({ requestId: 'first' })
+    answers.push(json({ status: 'PROCESSING' }))
+    const waiting: MediaProgress[] = []
+    const second = resumeVideo({ requestId: 'second', timeoutMs: 60 * SECOND_MS, onProgress: (progress: MediaProgress) => waiting.push(progress) })
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(waiting.map(({ phase }) => phase)).toStrictEqual(['queued'])
+    expect(downloads.map(({ requestId, request }) => [requestId, request.timeoutMs])).toStrictEqual([['first', JOB_TIMEOUT_MS], ['second', 60 * SECOND_MS]])
+    finish(clip('video/mp4'))
+    await first
+    answers.push(json({ status: 'FAILED' }))
+    const failure = expect(second).rejects.toThrow(JOB_ADVICE)
+    await vi.advanceTimersByTimeAsync(5 * SECOND_MS)
+    await failure
+  })
+
+  it('names no job for a resume value that its format refuses', async () => {
+    await expect(generate({ kind: 'video', resume: { data: { status: 'QUEUED' } } })).rejects.toThrow(UNUSABLE_ANSWER)
+    expect(downloads).toStrictEqual([])
   })
 })

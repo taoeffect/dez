@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { takeMediaTurn } from './mediaTurns'
+import { takeMediaTurn, takeMediaTurnNow } from './mediaTurns'
 
 // Takes turns of `provider` and records which calls have one, and which
 // were told to wait.
@@ -93,5 +93,27 @@ describe('takeMediaTurn', () => {
     end('c')
     await settle()
     expect(started).toStrictEqual(['a', 'b', 'c', 'd'])
+  })
+})
+
+describe('takeMediaTurnNow', () => {
+  // A resumed job runs at the provider already: it never waits, but new
+  // calls wait for it.
+  it('gives a turn at once over the cap, which counts until it ends', async () => {
+    const { take, end, started, waited } = turnTaker('now')
+    void take('a', 1)
+    await settle()
+    const endNow = takeMediaTurnNow('now', 1)
+    void take('b', 1)
+    await settle()
+    expect([started, waited]).toStrictEqual([['a'], ['b']])
+
+    end('a')
+    await settle()
+    expect(started).toStrictEqual(['a'])
+    endNow()
+    endNow()
+    await settle()
+    expect(started).toStrictEqual(['a', 'b'])
   })
 })

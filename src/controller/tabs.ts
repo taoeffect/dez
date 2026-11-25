@@ -67,29 +67,33 @@ export default sbp('sbp/selectors/register', {
   },
 
   // A close ends the reply of the tab and its jobs (`endJobs`): no later
-  // reply of the tab could take their results. The last tab does not
-  // close (`dez.model/tabs/close`), so it keeps its jobs. The close of an
-  // empty tab deletes its conversation, and so its work folder too.
+  // reply of the tab could take their results, so the record of its open
+  // jobs goes too. The last tab does not close (`dez.model/tabs/close`), so
+  // it keeps its jobs. The close of an empty tab deletes its conversation,
+  // and so its work folder too.
   async 'dez.controller/closeTab' (tabId: string): Promise<void> {
     const closes = (sbp('dez.model/tabs/list') as Tab[]).length > 1
     await sbp('dez.stream/stop', tabId, { endJobs: closes })
+    const conversationId = (sbp('dez.model/tab', tabId) as Tab | null)?.conversationId
+    if (closes && conversationId !== undefined) sbp('dez.model/openJobs/set', conversationId, { jobs: [], mediaReply: null })
     const deleted: string | null = sbp('dez.model/tabs/close', tabId)
     if (deleted) await deleteWorkFolder(deleted)
   },
 
-  // Deletes a saved conversation (History), its work folder, and closes
-  // its tabs. The reply and the jobs of each tab that goes end too. The
-  // stop comes after the delete: the save of a stopped reply could
-  // otherwise write the file again while the delete runs, and a stop of a
-  // tab that is gone saves nothing. The work folder goes after the stop,
-  // so that no late write of a job makes it again. A delete that failed
-  // keeps the tabs, their jobs, and the work folder.
+  // Deletes a saved conversation (History), its work folder, the record of
+  // its open jobs, and closes its tabs. The reply and the jobs of each tab
+  // that goes end too. The stop comes after the delete: the save of a
+  // stopped reply could otherwise write the file again while the delete
+  // runs, and a stop of a tab that is gone saves nothing. The work folder
+  // goes after the stop, so that no late write of a job makes it again. A
+  // delete that failed keeps the tabs, their jobs, and the work folder.
   async 'dez.controller/deleteConversation' (id: string): Promise<void> {
     const tabIds = (sbp('dez.model/tabs/list') as Tab[]).filter((tab) => tab.conversationId === id).map((tab) => tab.id)
     if (!await sbp('dez.model/tabs/deleteConversation', id)) return
     for (const tabId of tabIds) {
       if (!sbp('dez.model/tab', tabId)) await sbp('dez.stream/stop', tabId, { endJobs: true })
     }
+    sbp('dez.model/openJobs/set', id, { jobs: [], mediaReply: null })
     await deleteWorkFolder(id)
   },
 

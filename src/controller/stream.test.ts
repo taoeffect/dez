@@ -12,7 +12,7 @@ import { findMediaTags } from '../model/chat/mediaTags'
 import { moneyProblem } from '../model/chat/moneyLimit'
 import { HIDDEN_IMAGE_PATH, hiddenImage, notesData } from '../model/chat/testing'
 import { agentTextForRequest, findToolBlocks } from '../model/chat/toolBlocks'
-import type { ConversationData } from '../model/persistence/types'
+import type { ConversationData, ConversationJobs, StoredJob } from '../model/persistence/types'
 import { missingImageProblem, TooManyImagesError, type InputImageRules } from '../model/providers/clipImages'
 import { missingClipProblem, type ClipAttachment, type InputClipRules } from '../model/providers/clipInputs'
 import type { ClipTextRules } from '../model/providers/clipText'
@@ -29,7 +29,7 @@ import { STOPPED_TOOL_RESULT, stoppedToolResult } from '../model/streams/toolRou
 import { showResultText } from '../model/tools/appShow'
 import { systemPromptErrorText } from '../model/systemPrompt'
 import { PICTURE_ROUND_FULL_NOTE, pictureBudgetLeftText } from '../model/tools/assetView'
-import { jobsWaitText, jobTimedOutText, startedJobId } from '../model/tools/jobs'
+import { JOB_LOST_AT_QUIT_TEXT, jobsWaitText, jobTimedOutText, startedJobId } from '../model/tools/jobs'
 import { INVOCATION_READS_INPUTS, invocationFailedText } from '../model/tools/modelInvoke'
 import { NO_MODELS_TEXT } from '../model/tools/modelList'
 import { TOOL_DEFINITIONS, unknownToolText } from '../model/tools/registry'
@@ -1995,6 +1995,111 @@ describe('dez.stream/start media round', () => {
     expect(native.deletedFiles).toStrictEqual([])
   })
 
+  // A quit of Dez while the provider makes the clip must not lose it: the
+  // next start asks the provider for the job again (`dez.stream/restoreJobs`).
+  describe('a job of the provider', () => {
+    const conversationId = () => activeTab().conversationId
+    const openJobs = () => sbp('dez.model/openJobs/get', conversationId()) as ConversationJobs | null
+    const PROVIDER_JOB = { providerId: model.providerId, modelId: model.modelId, kind: 'video', jobId: 'q-1', resume: { queue_id: 'q-1' }, quote: 0.4 } as const
+    const filmTag = `<dez:video id="c" type="video/mp4" src="${FILM_URL}" url="${FILM_URL}" expires="${EXPIRES}" model="${MODEL_MARK}" job="q-1"/>`
+    // Ends the job that the provider runs.
+    let endJob: (result: ProviderGenerateMediaResult) => void
+    let failJob: (error: Error) => void
+
+    beforeEach(() => {
+      vi.useFakeTimers()
+      useRequest('video')
+      generateMedia = (input) => {
+        mediaInputs.push(input)
+        if (!input.resume) input.onProgress?.({ phase: 'sent', jobId: null, quote: 0.4 })
+        input.onProgress?.({ phase: 'queued', jobId: 'q-1', resume: { queue_id: 'q-1' } })
+        return new Promise((resolve, reject) => {
+          endJob = resolve
+          failJob = reject
+          input.signal?.addEventListener('abort', () => reject(new Error('cancelled')))
+        })
+      }
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('keeps the job in the record of the conversation while it runs, with the reply\'s section saved, and deletes the record at the end of the reply', async () => {
+      const reply = sbp('dez.controller/submitTab', activeTab().id) as Promise<void>
+      await settled()
+
+      expect(openJobs()).toStrictEqual({ mediaReply: { sectionIndex: 3, model, providerJob: PROVIDER_JOB } })
+      expect(savedConversations.at(-1)?.sections.map((section) => section.role)).toStrictEqual(['user', 'agent', 'user', 'agent'])
+      endJob({ media: [], clips: [film], cost: 0.4 })
+      await reply
+
+      expect(sectionTexts()).toStrictEqual([...conversation(), { role: 'agent', text: filmTag }, { role: 'user', text: '' }])
+      expect(openJobs()).toBeNull()
+    })
+
+    it.each([
+      ['a stop', async () => { await sbp('dez.stream/stop', activeTab().id) }],
+      ['a failure', async () => { failJob(new Error('The poll failed.')) }],
+    ])('deletes the record at %s of the reply', async (_case, end) => {
+      const reply = sbp('dez.controller/submitTab', activeTab().id) as Promise<void>
+      await settled()
+      expect(openJobs()).not.toBeNull()
+
+      await end()
+      await reply
+
+      expect(openJobs()).toBeNull()
+    })
+
+    it('runs the reply again at the next start: it asks the provider for the job with no new request, writes its clip into the reply\'s section, and counts its cost', async () => {
+      sbp('dez.model/tabs/replaceSections', activeTab().id, [
+        ...activeTab().sections,
+        { id: 'a2', role: 'agent', content: [{ kind: 'text', text: '' }], model },
+      ])
+      sbp('dez.model/openJobs/set', conversationId(), { mediaReply: { sectionIndex: 3, model, providerJob: PROVIDER_JOB } })
+
+      sbp('dez.stream/restoreJobs')
+      await settled()
+      expect(sbp('dez.model/streams/isStreaming', activeTab().id)).toBe(true)
+      endJob({ media: [], clips: [film], cost: 0.4 })
+      await settled()
+
+      expect(mediaInputs).toStrictEqual([{
+        providerId: model.providerId,
+        modelId: model.modelId,
+        kind: 'video',
+        prompt: '',
+        resume: { data: { queue_id: 'q-1' }, quote: 0.4 },
+        requestId: expect.any(String),
+        signal: expect.any(AbortSignal),
+        onProgress: expect.any(Function),
+      }])
+      expect(sectionTexts()).toStrictEqual([...conversation(), { role: 'agent', text: filmTag }, { role: 'user', text: '' }])
+      expect(activeTab().cost).toStrictEqual({ usd: 0.4, requests: 1, unpriced: 0 })
+      expect(openJobs()).toBeNull()
+      expect(toasts).toStrictEqual([])
+    })
+
+    it('drops the record, and names the job in an error toast of the tab, when the conversation no longer ends with the reply', async () => {
+      // The section at the index is the last user message.
+      sbp('dez.model/openJobs/set', conversationId(), { mediaReply: { sectionIndex: 2, model, providerJob: PROVIDER_JOB } })
+
+      sbp('dez.stream/restoreJobs')
+      await settled()
+
+      expect(mediaInputs).toStrictEqual([])
+      expect(openJobs()).toBeNull()
+      expect(toasts).toStrictEqual([{ area: 'app-global', data: {
+        variant: 'error',
+        title: 'Reply not picked up',
+        message: 'Dez quit while M made a reply in this conversation, and the conversation does not end with that reply any more, so Dez cannot put the result in it. The job id at the provider is q-1.',
+        group: expect.any(String),
+        tabId: activeTab().id,
+      } }])
+    })
+  })
+
   it('sends the values that the user chose for the model, and no value of another model', async () => {
     useRequest('video')
     sbp('dez.model/settings/setModelParameter', { providerId: model.providerId, modelId: model.modelId }, 'duration', '8s')
@@ -3346,7 +3451,9 @@ describe('dez.stream/start jobs', () => {
     // The model ended its reply, and the job still runs.
     expect(requests).toHaveLength(2)
     expect(sbp('dez.model/streams/isStreaming', activeTab().id)).toBe(true)
-    expect(savedConversations).toHaveLength(0)
+    // Only the save after the round that started the job: the reply did
+    // not end.
+    expect(savedConversations).toHaveLength(1)
     jobs[0].end({ media: [], clips: [run] })
     await stream
 
@@ -3529,7 +3636,9 @@ describe('dez.stream/start jobs', () => {
     expect(jobs[0].signal.aborted).toBe(false)
     expect(sbp('dez.model/streams/isStreaming', activeTab().id)).toBe(false)
     expect(sectionVisibleText(agentSection('a1'))).toBe(`${invokeBlock('c1')}I started it.`)
-    expect(savedConversations).toHaveLength(1)
+    // The save after the round that started the job, and the save of the
+    // stop.
+    expect(savedConversations).toHaveLength(2)
     expect(toasts).toStrictEqual([])
     expect(alerts).toStrictEqual([])
 
@@ -3749,6 +3858,111 @@ describe('dez.stream/start jobs', () => {
     // The notes tell the model of the job that still ran.
     expect(sectionVisibleText(activeTab().sections[0])).toContain(startedId)
     expect(toasts).toStrictEqual([])
+  })
+
+  // A quit of Dez loses no paid job of a provider: the record of the open
+  // jobs is in the app state, and the next start picks it up.
+  describe('after a quit of Dez', () => {
+    const openJobs = () => sbp('dez.model/openJobs/get', activeTab().conversationId) as ConversationJobs | null
+    const PROVIDER_JOB = { providerId: model.providerId, modelId: 'filmer', kind: 'video', jobId: 'q-17', resume: { queue_id: 'q-17' }, quote: 0.5 } as const
+    let mediaInputs: ProviderGenerateMediaInput[] = []
+
+    beforeEach(() => {
+      mediaInputs = []
+      const heldRequest = generateMedia
+      generateMedia = (input) => {
+        mediaInputs.push(input)
+        if (!input.resume) {
+          input.onProgress?.({ phase: 'sent', jobId: null, quote: 0.5 })
+          input.onProgress?.({ phase: 'queued', jobId: 'q-17', resume: { queue_id: 'q-17' } })
+        }
+        return heldRequest(input)
+      }
+    })
+
+    it('keeps each open job in the record of the conversation, with the job of the provider, saves the tab after the round that started it, and deletes the record when the model took the result', async () => {
+      let savedAtStop = ''
+      replyRounds([
+        async (input) => ({ requestId: input.requestId as string, toolCalls: [invokeCall('c1', FILMER)] }),
+        async () => {
+          savedAtStop = JSON.stringify(savedConversations.at(-1)?.sections ?? [])
+          await sbp('dez.stream/stop', activeTab().id)
+          throw new Error('cancelled')
+        },
+        async (input) => ({ requestId: input.requestId as string, toolCalls: [{ id: 'c2', name: 'jobs_wait', argumentsText: '{}' }] }),
+        async (input) => {
+          await input.onToken('Here it is.')
+          return { requestId: input.requestId as string }
+        },
+      ])
+
+      await startStream({ sendTools: true })
+
+      expect(savedAtStop).toContain(`Started the job ${jobId('c1')}.`)
+      expect(openJobs()).toStrictEqual({ jobs: [{
+        id: jobId('c1'),
+        number: 1,
+        tool: 'model_invoke',
+        label: PROMPT,
+        inputs: [],
+        hidesAssets: false,
+        model: { providerId: model.providerId, modelId: 'filmer' },
+        timeoutMs: expect.any(Number),
+        cost: 0.5,
+        providerJob: PROVIDER_JOB,
+      }] })
+
+      const next = nextReply('a2')
+      await settled()
+      jobs[0].end({ media: [], clips: [run], cost: 0.5 })
+      await next
+
+      expect(callResult('c2', 'a2')).toContain('Made the video clip @a.')
+      expect(openJobs()).toBeNull()
+    })
+
+    it('picks up the open jobs at the next start: a job of a provider asks the provider again, any other job fails, and the next reply gets both results and counts the cost once', async () => {
+      const records: StoredJob[] = [
+        { id: 'j-aaaa', number: 1, tool: 'model_invoke', label: PROMPT, inputs: [], hidesAssets: false, timeoutMs: 600_000, cost: 0.5, providerJob: PROVIDER_JOB },
+        { id: 'j-bbbb', number: 2, tool: 'js_eval', label: 'count', inputs: [], hidesAssets: false, timeoutMs: 60_000 },
+      ]
+      sbp('dez.model/tabs/replaceSections', activeTab().id, [
+        { id: 'u1', role: 'user', content: [{ kind: 'text', text: 'Hi' }] },
+        { id: 'a1', role: 'agent', content: [{ kind: 'text', text: 'I started them.' }], model },
+      ])
+      sbp('dez.model/openJobs/set', activeTab().conversationId, { jobs: records })
+      replyRounds([
+        async (input) => ({ requestId: input.requestId as string, toolCalls: [{ id: 'c1', name: 'jobs_wait', argumentsText: '{"all":true}' }] }),
+        async (input) => {
+          await input.onToken('Here it is.')
+          return { requestId: input.requestId as string }
+        },
+      ])
+
+      sbp('dez.stream/restoreJobs')
+
+      expect(toasts).toStrictEqual([{ area: 'app-global', data: {
+        tabId: activeTab().id,
+        title: 'Jobs picked up',
+        message: 'Dez quit while 2 jobs of this conversation ran. 1 goes on at its provider, and the work of the other is lost. Send a message to get the results.',
+        duration: 8000,
+      } }])
+      const next = nextReply('a2')
+      await settled()
+      jobs[0].end({ media: [], clips: [run], cost: 0.3 })
+      await next
+
+      expect(mediaInputs).toMatchObject([{ resume: { data: { queue_id: 'q-17' }, quote: 0.5 }, timeoutMs: 600_000 }])
+      expect(mediaInputs[0]).not.toHaveProperty('beforeSend')
+      // In the order of their ends: the job that could not go on ended at
+      // once.
+      expect(callResult('c1', 'a2')).toBe(jobsWaitText([
+        { id: 'j-bbbb', tool: 'js_eval', status: 'failed', text: JOB_LOST_AT_QUIT_TEXT, call: { number: 2, label: 'count' } },
+        { id: 'j-aaaa', tool: 'model_invoke', status: 'finished', text: 'Made the video clip @a.', call: { number: 1, label: PROMPT } },
+      ], 0))
+      expect(activeTab().cost?.usd).toBe(0.3)
+      expect(openJobs()).toBeNull()
+    })
   })
 })
 

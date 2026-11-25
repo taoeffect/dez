@@ -1,4 +1,5 @@
 import { ExplainedError } from '../../utils/errorText'
+import type { JsonObject } from '../../utils/json'
 import { sanitizeErrorText } from '../../utils/protocol/errors'
 import { imageExtension } from '../chat/images'
 import { APIMART_AS_REFERENCES, APIMART_IMAGES_AS, APIMART_TIMED_TRANSCRIPTION_MODELS, APIMART_WHOLE_NUMBER_FIELDS, apimartImageModel, apimartMusicModel, apimartVideoModel, type ApimartVideoImages } from './apimartModels'
@@ -177,6 +178,12 @@ function submittedTaskId(data: unknown): string | undefined {
   return typeof taskId === 'string' && taskId !== '' ? taskId : undefined
 }
 
+// The answer to a request cut down to the id of its task, which
+// `submittedTaskId` reads (`ClipJob.resume`).
+function taskResume(taskId: string): JsonObject {
+  return { data: [{ task_id: taskId }] }
+}
+
 // What the answer to a poll of a task tells:
 // `{ code, data: { status, cost, result, error } }`. `running` for a task
 // that runs (with `unknownRuns`, also for the state `unknown`: a music task
@@ -352,6 +359,7 @@ const images: ImageJobFormat = {
     if (taskId === undefined) throw new UnusableAnswerError('The answer to the image request names no task.')
     return {
       id: taskId,
+      resume: taskResume(taskId),
       poll: { url: taskUrl('image', baseUrl, taskId) },
       state: (answer) => {
         const task = doneTask(answer, 'image', false)
@@ -429,6 +437,7 @@ export const apimartFormat: MediaFormat = {
       if ((kind !== 'video' && kind !== 'music') || taskId === undefined) throw new UnusableAnswerError('The answer to the clip request is neither a clip nor a job.')
       return {
         id: taskId,
+        resume: taskResume(taskId),
         poll: { url: taskUrl(kind, baseUrl, taskId) },
         state: (answer) => {
           const task = doneTask(answer, 'clip', kind === 'music')

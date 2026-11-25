@@ -248,7 +248,7 @@ All app data is under `~/.config/dez/`, except the temp copies of clips and the 
 
 The JSON and conversation files go through `dez.persistence/*` only; the asset files go through `dez.native/*` from their controllers.
 
-- `app_state.json`: tabs, settings, window geometry, provider toggles, custom providers (`src/model/persistence/appState.ts`).
+- `app_state.json`: tabs, settings, window geometry, provider toggles, custom providers, and the open jobs of each conversation (`src/model/persistence/appState.ts`).
 - `conversations/<sanitized-id>.md`: conversations (`src/model/persistence/conversationFormat.ts`).
 - `prompts.json`: saved prompt templates (`src/model/persistence/prompts.ts`).
 - `model_cache.json`: last-known model lists and fresh price quotes; no secrets and no raw provider entries (`src/model/persistence/modelCache.ts`).
@@ -331,6 +331,7 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 - **A request names a shown app only in the tool result** (`shownAppText`, `src/model/tools/appShow.ts`; `roundRequestText`): the tag of the app does not go in the round after its call.
 - **Slow tool work is a job** (`TabJobs`, `controller/jobs.ts`): the tool returns the job's id at once, and the work writes nothing into the reply. Exception: a `js_eval` call first waits a short time for its job, and gives the result itself when the job ends in that time (`startWithWait`).
 - **A reply that the user cuts hands its jobs to the next reply of the tab**; a reply that ends on its own ends them, and so does a tab close (`handOverJobs`, `controller/stream.ts`). A model ends the jobs that it names with `job_cancel`.
+- **A quit of Dez loses no job of a provider**: the open jobs and the waiting media reply of each conversation are in `app_state.json` while they run, and the next start picks them up (`dez.stream/restoreJobs`, `controller/stream.ts`; `TabJobs.restore`). A new end of a job or of a reply must clear its record.
 - **Reply images and clips are written only while the reply is current** (`replyIsCurrent`, `controller/stream.ts`): a cancelled request can still give a response.
 - **Raw model entries are in memory only** (`dez.model/modelCache/rawModel`): a fact of a model that a request or the UI needs must be a field of `ModelInfo`.
 - **Provider data in a tool result** goes through `jsonWithoutLocalPaths` (`src/model/tools/localPaths.ts`): a tool result is stored as it was sent.

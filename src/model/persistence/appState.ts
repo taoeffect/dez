@@ -10,7 +10,7 @@ import { isParameterValue, type ParameterValues } from '../providers/modelParame
 import { parseModelRefKey } from '../chat/modelRef'
 import { MEDIA_TAG_KINDS } from '../chat/mediaTags'
 import { isMoneyLimitUsd } from '../chat/moneyLimit'
-import type { AppStatePayload } from './types'
+import type { AppStatePayload, ConversationJobs, StoredJob, StoredMediaReply } from './types'
 import type { DefaultModel, Theme, WindowGeometry } from '../state/settings'
 import { EDITOR_FONT_SIZE_DEFAULT, clampEditorFontSize } from '../editorFontSize'
 import { DONE_SOUND_VOLUME_DEFAULT } from '../doneSoundVolume'
@@ -19,6 +19,9 @@ import { clampVolumePercent } from '../volumePercent'
 import { MODEL_PICKER_SIZE_DEFAULT, clampModelPickerSize, type ModelPickerSize } from '../modelPickerSize'
 import { currentShortcutPlatform, parseShortcutOverrides } from '../shortcuts'
 import { normalizeOutputs } from '../modelOutputs'
+import { isTextKind, MEDIA_KINDS, type ClipKind, type ImageKind, type MediaKind } from '../providers/types'
+import { MAX_OPEN_JOBS } from '../tools/jobs'
+import { cloneJsonObject, isJsonObject, type JsonObject } from '../../utils/json'
 
 const themeSchema = z.enum(['light', 'dark', 'system'])
 const defaultModelSchema = z.object({
@@ -61,6 +64,47 @@ const windowGeometrySchema = z.object({
 const modelPickerSizeSchema = z.object({
   width: z.number(),
   maxHeight: z.number(),
+})
+
+const modelRefSchema = z.object({ providerId: z.string(), modelId: z.string() })
+
+// The media kinds of a provider job that Dez can ask for again: a text
+// kind (a transcription) is one request, with no job.
+function isResumableKind(value: unknown): value is ClipKind | ImageKind {
+  return typeof value === 'string' && (MEDIA_KINDS as readonly string[]).includes(value) && !isTextKind(value as MediaKind)
+}
+
+// `StoredProviderJob`. The resume value is copied, so that a `__proto__`
+// key of a hand edit stays a plain key.
+const providerJobSchema = z.object({
+  providerId: z.string(),
+  modelId: z.string(),
+  kind: z.custom<ClipKind | ImageKind>(isResumableKind),
+  jobId: z.string().min(1),
+  resume: z.custom<JsonObject>(isJsonObject).transform(cloneJsonObject),
+  quote: z.number().nonnegative().optional(),
+  uploadCost: z.number().nonnegative().nullable().optional(),
+})
+
+// `StoredJob`. A bad provider job or cost drops only that field: the job
+// then comes back as a job whose work is lost, and its number stays taken.
+const storedJobSchema = z.object({
+  id: z.string().min(1),
+  number: z.number().int().positive(),
+  tool: z.string(),
+  label: z.string(),
+  inputs: z.array(z.string()),
+  hidesAssets: z.boolean(),
+  model: modelRefSchema.optional().catch(undefined),
+  timeoutMs: z.number().positive(),
+  cost: z.number().nonnegative().nullable().optional().catch(undefined),
+  providerJob: providerJobSchema.optional().catch(undefined),
+})
+
+const mediaReplySchema = z.object({
+  sectionIndex: z.number().int().nonnegative(),
+  model: modelRefSchema.extend({ modelName: z.string() }),
+  providerJob: providerJobSchema,
 })
 
 type TabData = z.infer<typeof tabSchema>
@@ -127,6 +171,57 @@ function modelParameters(value: unknown): Record<string, ParameterValues> {
     if (values.length > 0) output[modelKey] = Object.fromEntries(values)
   }
   return output
+}
+
+// The jobs of one conversation, one at a time: a bad job, a job with the id
+// or the number of an earlier one, and the jobs over `MAX_OPEN_JOBS` are
+// dropped with a log line. The log names no field value: a value can hold
+// a URL of the provider.
+function storedJobs(value: unknown, conversationId: string): StoredJob[] {
+  if (!Array.isArray(value)) return []
+  const jobs: StoredJob[] = []
+  value.forEach((item, index) => {
+    const result = storedJobSchema.safeParse(item)
+    if (!result.success) {
+      console.error(`Dropped job ${index} of conversation ${conversationId} in app_state.json: ${configIssueText(result.error)}`)
+      return
+    }
+    const job = result.data
+    if (jobs.some(({ id, number }) => id === job.id || number === job.number)) {
+      console.error(`Dropped job ${index} of conversation ${conversationId} in app_state.json: an earlier job has its id or number`)
+      return
+    }
+    if (jobs.length === MAX_OPEN_JOBS) {
+      console.error(`Dropped job ${index} of conversation ${conversationId} in app_state.json: more than ${MAX_OPEN_JOBS} open jobs`)
+      return
+    }
+    jobs.push(job)
+  })
+  return jobs
+}
+
+function storedMediaReply(value: unknown, conversationId: string): StoredMediaReply | undefined {
+  if (value === undefined) return undefined
+  const result = mediaReplySchema.safeParse(value)
+  if (result.success) return result.data
+  console.error(`Dropped the media reply of conversation ${conversationId} in app_state.json: ${configIssueText(result.error)}`)
+  return undefined
+}
+
+// The open jobs of each conversation (`AppStatePayload.openJobs`). Each
+// conversation and each job on its own; a conversation with nothing left
+// gets no key.
+function openJobs(value: unknown): Record<string, ConversationJobs> {
+  if (!isRecord(value)) return {}
+  const entries: Array<[string, ConversationJobs]> = []
+  for (const [conversationId, record] of Object.entries(value)) {
+    if (!isRecord(record)) continue
+    const jobs = storedJobs(record.jobs, conversationId)
+    const mediaReply = storedMediaReply(record.mediaReply, conversationId)
+    if (jobs.length > 0 || mediaReply) entries.push([conversationId, { ...(jobs.length > 0 && { jobs }), ...(mediaReply && { mediaReply }) }])
+  }
+  // `fromEntries`, so that a `__proto__` key is a plain key.
+  return Object.fromEntries(entries)
 }
 
 // Each kind and each field on its own. Like doneSoundVolume, a hand-edited
@@ -224,6 +319,7 @@ export function defaultAppState(): AppStatePayload {
     shortcuts: {},
     systemPrompt: null,
     incognitoOption: false,
+    openJobs: {},
   }
 }
 
@@ -287,6 +383,7 @@ export function parseAppStateJson(content: string): AppStatePayload {
       incognitoOption: typeof parsed.incognitoOption === 'boolean'
         ? parsed.incognitoOption
         : fallback.incognitoOption,
+      openJobs: openJobs(parsed.openJobs),
     }
   } catch {
     return defaultAppState()
@@ -295,7 +392,9 @@ export function parseAppStateJson(content: string): AppStatePayload {
 
 // `customProviderApiKeys` is parse-only: plain-text keys must never be
 // written back to app_state.json, so it is dropped here (JSON.stringify
-// omits undefined values).
+// omits undefined values). An empty `openJobs` map is dropped too, so that
+// a file with no open job has no trace of the feature.
 export function serializeAppStateJson(state: AppStatePayload): string {
-  return JSON.stringify({ ...state, customProviderApiKeys: undefined }, null, 2)
+  const openJobs = state.openJobs && Object.keys(state.openJobs).length > 0 ? state.openJobs : undefined
+  return JSON.stringify({ ...state, customProviderApiKeys: undefined, openJobs }, null, 2)
 }

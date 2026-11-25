@@ -1193,6 +1193,21 @@ describe('venice clip jobs', () => {
     expect(thrownError(() => veniceClips.job(kind, VENICE_URL, 'm', queued)))
       .toStrictEqual(new UnusableAnswerError('The answer to the clip request is neither a clip nor a job.'))
   })
+
+  // A restart of Dez asks for the job again from its resume value
+  // (`ClipJob.resume`), which holds only the queue id and the URL.
+  it.each([
+    ['with', { model: 'wan', queue_id: 'q-1', status: 'QUEUED', download_url: DOWNLOAD_URL }],
+    ['without', { model: 'wan', queue_id: 'q-1', status: 'QUEUED' }],
+  ])('gives the same job again from its resume value, %s a download URL', (_name, queued) => {
+    const first = videoJob(queued)
+    const again = veniceClips.job('video', `${VENICE_URL}/`, 'wan', JSON.parse(JSON.stringify(first.resume)))
+
+    expect(first.resume).toStrictEqual({ queue_id: 'q-1', ...('download_url' in queued && { download_url: DOWNLOAD_URL }) })
+    expect([again.id, again.poll, again.resume]).toStrictEqual([first.id, first.poll, first.resume])
+    const done = (job: typeof first) => (job.resume.download_url === undefined ? thrownError(() => job.state({ status: 'COMPLETED' })) : job.state({ status: 'COMPLETED' }))
+    expect([again.state({ status: 'QUEUED' }), done(again)]).toStrictEqual([first.state({ status: 'QUEUED' }), done(first)])
+  })
 })
 
 describe('openrouter clip parameters', () => {
@@ -2044,6 +2059,18 @@ describe('openrouter clip jobs', () => {
   ] as const)('finds no job in %s', (_name, kind, data) => {
     expect(thrownError(() => openRouterClips.job(kind, OPENROUTER_URL, 'm', data)))
       .toStrictEqual(new UnusableAnswerError('The answer to the clip request is neither a clip nor a job.'))
+  })
+
+  // The resume value holds only the id: the polling URL of the answer is
+  // never kept.
+  it('gives the same job again from its resume value', () => {
+    const first = job('gen/1 a')
+    const again = openRouterClips.job('video', `${OPENROUTER_URL}/`, 'm', JSON.parse(JSON.stringify(first.resume)))
+    const done = { status: 'completed', urls: [SIGNED_URL], expires_at: 1_794_000_000, usage: { cost: 0.5 } }
+
+    expect(first.resume).toStrictEqual({ id: 'gen/1 a' })
+    expect([again.id, again.poll, again.resume]).toStrictEqual([first.id, first.poll, first.resume])
+    expect([again.state({ status: 'pending' }), again.state(done)]).toStrictEqual([first.state({ status: 'pending' }), first.state(done)])
   })
 })
 

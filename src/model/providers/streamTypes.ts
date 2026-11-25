@@ -1,3 +1,4 @@
+import type { JsonObject } from '../../utils/json'
 import type { MessagePart, RequestMessage, ThinkingReplay } from '../chat/types'
 import type { StreamedToolCall } from '../tools/types'
 import type { ChatUsage } from './chatUsage'
@@ -96,6 +97,9 @@ export interface MediaProgress {
   // provider took at once. 0 for a free upload; absent for a paid upload
   // whose answer told no price.
   cost?: number
+  // Only in the `queued` step: what Dez needs to ask for the job again
+  // after a restart (`ClipJob.resume`; `ProviderGenerateMediaInput.resume`).
+  resume?: JsonObject
 }
 
 // The input of dez.provider/generateMedia. `kind` is the model's request
@@ -159,6 +163,17 @@ export interface ProviderGenerateMediaInput {
   // Dez cannot read, and of a request that failed (requestReader.ts); the
   // user with none.
   reader?: RequestReader
+  // A job that the provider runs already, from an earlier start of Dez:
+  // `data` is the `resume` of its `queued` step, and `quote` the quote of
+  // its `sent` step. The call sends no request that costs money: it
+  // checks no input, reads no image or clip, gets no quote, calls no
+  // `beforeSend`, and sends no first request. It takes a turn of the
+  // provider with no wait (the provider runs the job already), gets a new
+  // time limit (`timeoutMs`), and asks for the state of the job at once.
+  // Its steps are `queued`, then `downloading`. The result's `cost` is the
+  // price that the answer tells, else `quote`. Only for an image or a clip
+  // kind. `prompt` and the inputs are not read.
+  resume?: { data: JsonObject, quote?: number }
 }
 
 // An image kind gives `media`, a clip kind (CLIP_KINDS) gives `clips`, and

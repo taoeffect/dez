@@ -628,6 +628,27 @@ describe('apimart music tasks', () => {
   })
 })
 
+// A restart of Dez asks for a task again from its resume value
+// (`ClipJob.resume`), which holds only the task id.
+describe('apimart task resume', () => {
+  const answer = { code: 200, data: [{ status: 'submitted', task_id: 'task/01 R' }] }
+  const done = { code: 200, data: { status: 'completed', cost: 0.05, result: { videos: [{ url: VIDEO_URL }], images: [{ url: [VIDEO_URL] }], music: [{ audio_url: VIDEO_URL }] } } }
+  const running = { code: 200, data: { status: 'processing' } }
+
+  it.each([
+    ['video', (data: unknown) => clips.job('video', `${BASE_URL}/`, 'MiniMax-H3', data)],
+    ['music', (data: unknown) => clips.job('music', `${BASE_URL}/`, 'suno', data)],
+    ['image', (data: unknown) => images.job('image', `${BASE_URL}/`, 'gpt-image-2', data)],
+  ])('gives the same %s task again from its resume value', (_kind, job) => {
+    const first = job(answer)
+    const again = job(JSON.parse(JSON.stringify(first.resume)))
+
+    expect(first.resume).toStrictEqual({ data: [{ task_id: 'task/01 R' }] })
+    expect([again.id, again.poll, again.resume]).toStrictEqual([first.id, first.poll, first.resume])
+    expect([again.state(running), again.state(done)]).toStrictEqual([first.state(running), first.state(done)])
+  })
+})
+
 // The account's own price of one task (live, 2026-11-24: suno $0.068, also
 // with `version=v6-mini` or `custom`; flowmusic $0.06). It ignores
 // `max_mode` and `custom_model_id`.

@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import type { Tab } from '../chat/types'
+import type { ConversationJobs } from '../persistence/types'
 import { emptyContent } from '../chat/content'
 
 export const NEW_TAB_TITLE = 'New Tab'
@@ -55,6 +56,11 @@ export const useTabStore = defineStore('tabs', () => {
   // Newest last. Session-only: never saved.
   const closedTabs = ref<ClosedTab[]>([])
 
+  // The open jobs of each conversation, by conversation id
+  // (`dez.model/openJobs/*`), which app_state.json keeps so that a restart
+  // picks them up. A Map, so that no id can be a key of the prototype.
+  const openJobs = ref(new Map<string, ConversationJobs>())
+
   return {
     tabs,
     activeTabId,
@@ -62,5 +68,6 @@ export const useTabStore = defineStore('tabs', () => {
     activeTabIndex,
     replyEnds,
     closedTabs,
+    openJobs,
   }
 })

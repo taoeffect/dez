@@ -9,10 +9,11 @@ import type { ModelPickerSize } from '../modelPickerSize'
 import type { ProviderConfig } from '../providers/config'
 import type { ParameterValues } from '../providers/modelParameters'
 import type { PriceQuote } from '../providers/modelPrices'
-import type { ModelInfo, ProviderId } from '../providers/types'
+import type { ClipKind, ImageKind, ModelInfo, ProviderId } from '../providers/types'
 import type { Prompt } from '../state/prompts'
 import type { DefaultModel, Theme, WindowGeometry } from '../state/settings'
 import type { ShortcutOverrides } from '../shortcuts'
+import type { JsonObject } from '../../utils/json'
 
 export type PromptData = Prompt
 
@@ -123,6 +124,64 @@ export interface ConversationSearchOutcome {
   results: ConversationSearchResult[]
 }
 
+/** A job of a provider (an image or a clip that the provider makes after
+ *  its first answer) that Dez waits for, with what Dez needs to ask the
+ *  provider for its result again after a restart
+ *  (`ProviderGenerateMediaInput.resume`). `resume` is the first answer cut
+ *  down to what the format's `job` reads (`ClipJob.resume`); it holds no
+ *  API key and no text of the user. */
+export interface StoredProviderJob {
+  providerId: string
+  modelId: string
+  kind: ClipKind | ImageKind
+  jobId: string
+  resume: JsonObject
+  /** The price in USD that Dez got before the request: the cost of the
+   *  result when the provider tells none. Absent when it is unknown. */
+  quote?: number
+  /** The price of the paid uploads of the input images, which the cost
+   *  of a `model_invoke` job holds too; null when unknown, absent for
+   *  none. */
+  uploadCost?: number | null
+}
+
+/** An open job of a conversation (controller/jobs.ts): it runs, or it
+ *  ended with a result that no reader took. The fields are those of the
+ *  job and its call. */
+export interface StoredJob {
+  id: string
+  number: number
+  tool: string
+  label: string
+  inputs: string[]
+  hidesAssets: boolean
+  model?: ModelRef
+  timeoutMs: number
+  /** The price that the job holds and counts at its end (`TabJobs`;
+   *  null: no price is known). Absent when the job counted it already (it
+   *  ended), or sent no paid request. */
+  cost?: number | null
+  /** The provider's job that the work waits for. Absent: the work cannot
+   *  go on after a quit. */
+  providerJob?: StoredProviderJob
+}
+
+/** The provider's job of the reply of a media model that runs
+ *  (`runMediaRound`). Section ids are not saved, so the record names the
+ *  reply's section by its index in the tab. */
+export interface StoredMediaReply {
+  sectionIndex: number
+  model: ActiveModel
+  providerJob: StoredProviderJob
+}
+
+/** What runs for one conversation and can go on after a restart of Dez:
+ *  its open jobs, and the job of its media reply. */
+export interface ConversationJobs {
+  jobs?: StoredJob[]
+  mediaReply?: StoredMediaReply
+}
+
 export interface AppStatePayload {
   tabs?: unknown[]
   activeTabId?: string | null
@@ -164,4 +223,8 @@ export interface AppStatePayload {
   // Shows the incognito mask in the bottom bar. Only a hand edit of
   // app_state.json sets it; it does not change what a request sends.
   incognitoOption?: boolean
+  // The open jobs of each conversation, by conversation id, so that a
+  // restart picks them up (`dez.stream/restoreJobs`). A conversation with
+  // none has no key, and the serializer writes no empty map.
+  openJobs?: Record<string, ConversationJobs>
 }

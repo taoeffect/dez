@@ -514,6 +514,14 @@ export class Provider {
     return this.clipFormat().job(kind, this.config.baseUrl, modelId, data)
   }
 
+  // The job of an image request that a resume names (`ImageJob.resume`),
+  // for an API whose answer names a job (`ImageJobFormat`).
+  imageJob(kind: ImageKind, modelId: string, data: unknown): ImageJob {
+    const format = this.imageFormat()
+    if (!format.job) throw new ProviderError(`${this.name} makes its images with no job, so Dez cannot ask it for the images of a job.`, this.id)
+    return format.job(kind, this.config.baseUrl, modelId, data)
+  }
+
   // The refusal `error` of a first clip request with `imageCount` input
   // images, as the error that tells that the model takes fewer images
   // (`ClipFormat.refusedImages`). Null for any other error.

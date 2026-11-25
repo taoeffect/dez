@@ -12,7 +12,7 @@ import type { MoneyLimit } from '../chat/moneyLimit'
 import type { MediaTagKind } from '../chat/mediaTags'
 import type { ClipVolume } from '../clipVolume'
 import { MODEL_PICKER_SIZE_DEFAULT } from '../modelPickerSize'
-import type { AppStatePayload, ConversationData, ModelCache } from '../persistence/types'
+import type { AppStatePayload, ConversationData, ConversationJobs, ModelCache, StoredJob, StoredMediaReply } from '../persistence/types'
 import { PRICE_LIFETIME_MS, type PriceQuote } from '../providers/modelPrices'
 import type { ProviderConfig } from '../providers/config'
 import type { ModelInfo, ModelRequest } from '../providers/types'
@@ -526,6 +526,82 @@ describe('the money limit of a tab', () => {
     sbp('dez.model/tabs/close', reopened.id)
     const loaded = await openConversation(typed.conversationId) as Tab
     expect([reopened, loaded].map((copy) => copy.moneyLimit)).toStrictEqual([{ usd: 0.5, unknownPrices: true }, { usd: 0.5, unknownPrices: true }])
+  })
+})
+
+describe('the open jobs of a conversation', () => {
+  const job: StoredJob = { id: 'j-abcd', number: 1, tool: 'model_invoke', label: 'make a video', inputs: [], hidesAssets: false, timeoutMs: 600000 }
+  const mediaReply: StoredMediaReply = {
+    sectionIndex: 1,
+    model: { providerId: 'venice', modelId: 'film', modelName: 'Film' },
+    providerJob: { providerId: 'venice', modelId: 'film', kind: 'video', jobId: 'q-1', resume: { queue_id: 'q-1' } },
+  }
+  const get = (conversationId: string) => sbp('dez.model/openJobs/get', conversationId) as ConversationJobs | null
+  const set = (conversationId: string, change: { jobs?: StoredJob[], mediaReply?: StoredMediaReply | null }) => sbp('dez.model/openJobs/set', conversationId, change)
+
+  it('sets each part on its own, deletes the record with its last part, and saves only a change', async () => {
+    set('c', { jobs: [job] })
+    set('c', { mediaReply })
+    expect(get('c')).toStrictEqual({ jobs: [job], mediaReply })
+    await vi.waitFor(() => expect(savedAppStates.at(-1)?.openJobs).toStrictEqual({ c: { jobs: [job], mediaReply } }))
+
+    const saves = savedAppStates.length
+    set('c', { jobs: [{ ...job }] })
+    expect(savedAppStates).toHaveLength(saves)
+
+    set('c', { jobs: [] })
+    expect(get('c')).toStrictEqual({ mediaReply })
+    set('c', { mediaReply: null })
+    expect(get('c')).toBeNull()
+    await vi.waitFor(() => expect(savedAppStates.at(-1)?.openJobs).toStrictEqual({}))
+  })
+
+  it('gives a copy that the caller can change', () => {
+    set('c', { jobs: [job] })
+    get('c')?.jobs?.push({ ...job, id: 'j-other' })
+    expect(get('c')).toStrictEqual({ jobs: [job] })
+  })
+
+  it('keeps through a restart only the records of the conversations of the tabs', async () => {
+    const tab = tabWithText('typed')
+    set(tab.conversationId, { jobs: [job] })
+    set('closed', { jobs: [job] })
+    await vi.waitFor(() => expect(Object.keys(savedAppStates.at(-1)?.openJobs ?? {})).toHaveLength(2))
+
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    setActivePinia(createPinia())
+    await sbp('dez.model/appState/restore', savedAppStates.at(-1))
+    expect([get(tab.conversationId), get('closed')]).toStrictEqual([{ jobs: [job] }, null])
+    expect(consoleError).toHaveBeenCalledOnce()
+
+    setActivePinia(createPinia())
+    await sbp('dez.model/appState/restore', { tabs: [], openJobs: { [tab.conversationId]: { jobs: [job] } } })
+    expect(get(tab.conversationId)).toBeNull()
+    consoleError.mockRestore()
+  })
+
+  // The save after a tool round that started a job leaves a file that ends
+  // with the agent section when Dez quits.
+  it('gives a restored tab whose reply a quit cut a user section for the next message, except the reply that Dez picks up', async () => {
+    const cut: ConversationData = {
+      id: 'cut',
+      title: 'Cut',
+      sections: [{ role: 'user', nodes: [{ kind: 'text', text: 'Hi' }] }, { role: 'agent', nodes: [{ kind: 'text', text: 'Working.' }] }],
+      activeModel: null,
+      created_at: 1000,
+    }
+    for (const id of ['cut', 'resumed', 'plain', 'later']) diskConversations.set(id, { ...cut, id })
+    const roles = () => (sbp('dez.model/tabs/list') as Tab[]).map((tab) => tab.sections.map((section) => section.role))
+
+    await sbp('dez.model/appState/restore', {
+      tabs: [{ id: 't1', title: 'Cut', conversationId: 'cut' }, { id: 't2', title: 'Resumed', conversationId: 'resumed' }, { id: 't3', title: 'Plain', conversationId: 'plain' }],
+      openJobs: { cut: { jobs: [job] }, resumed: { mediaReply } },
+    })
+    expect(roles()).toStrictEqual([['user', 'agent', 'user'], ['user', 'agent'], ['user', 'agent']])
+
+    // History shows a file as it is.
+    await sbp('dez.model/tabs/openConversation', 'later')
+    expect(roles().at(-1)).toStrictEqual(['user', 'agent'])
   })
 })
 

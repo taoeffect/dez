@@ -349,3 +349,69 @@ describe('custom providers in app state', () => {
     expect(JSON.stringify(consoleError.mock.calls)).not.toMatch(/sk-secret/)
   })
 })
+
+describe('open jobs in app state', () => {
+  const providerJob = { providerId: 'venice', modelId: 'video-model', kind: 'video', jobId: 'queue-1', resume: { queue_id: 'queue-1' }, quote: 0.4 }
+  const job = { id: 'j-abcd', number: 1, tool: 'model_invoke', label: 'make a video', inputs: ['3'], hidesAssets: false, model: { providerId: 'venice', modelId: 'video-model' }, timeoutMs: 600000, cost: 0.4, providerJob }
+  const mediaReply = { sectionIndex: 1, model: { providerId: 'venice', modelId: 'video-model', modelName: 'Video' }, providerJob }
+  const parseOpenJobs = (value: unknown) => parseAppStateJson(JSON.stringify({ openJobs: value })).openJobs
+  let consoleError: MockInstance<typeof console.error>
+
+  beforeEach(() => {
+    consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    consoleError.mockRestore()
+  })
+
+  it('keeps the jobs and the media reply of each conversation, and writes them back', () => {
+    const openJobs = { first: { jobs: [job, { ...job, id: 'j-efgh', number: 2, cost: undefined, providerJob: undefined }] }, second: { mediaReply } }
+    const state = parseAppStateJson(JSON.stringify({ openJobs }))
+
+    expect(state.openJobs).toStrictEqual({
+      first: { jobs: [job, { id: 'j-efgh', number: 2, tool: 'model_invoke', label: 'make a video', inputs: ['3'], hidesAssets: false, model: job.model, timeoutMs: 600000 }] },
+      second: { mediaReply },
+    })
+    expect(parseAppStateJson(serializeAppStateJson(state))).toStrictEqual(state)
+    expect(consoleError).not.toHaveBeenCalled()
+  })
+
+  it('writes no key for a map with no conversation, and reads a missing or bad map as empty', () => {
+    expect(serializeAppStateJson({ ...defaultAppState(), openJobs: {} })).not.toContain('openJobs')
+    expect(parseAppStateJson('{}').openJobs).toStrictEqual({})
+    expect(parseOpenJobs([job])).toStrictEqual({})
+  })
+
+  it('drops a bad job, a repeated id or number, and the jobs over the limit, one at a time', () => {
+    const many = Array.from({ length: 45 }, (_, index) => ({ ...job, id: `j-${index}`, number: index + 1 }))
+    const jobs = [{ ...job, number: 0 }, job, { ...job, number: 2 }, { ...job, id: 'j-other' }, 'not a job', ...many.slice(1)]
+    const parsed = parseOpenJobs({ conversation: { jobs } })?.conversation?.jobs
+
+    expect(parsed?.map(({ id }) => id)).toEqual([job.id, ...many.slice(1, 40).map(({ id }) => id)])
+    // A bad number, a repeated id, a repeated number, no object, and the
+    // five jobs over the limit.
+    expect(consoleError).toHaveBeenCalledTimes(9)
+  })
+
+  // The job keeps its number, and comes back as a job whose work is lost.
+  it('drops only the provider job or the cost of a job when that field is bad', () => {
+    const parsed = parseOpenJobs({ conversation: { jobs: [{ ...job, cost: 'free', providerJob: { ...providerJob, kind: 'transcription' } }] } })
+    expect(parsed).toStrictEqual({ conversation: { jobs: [{ ...job, cost: undefined, providerJob: undefined }] } })
+  })
+
+  it('gives no key to a conversation with nothing left, and keeps the jobs when only the media reply is bad', () => {
+    expect(parseOpenJobs({ empty: { jobs: [] }, bad: { jobs: [{ id: 'j-1' }] }, none: null })).toStrictEqual({})
+    expect(parseOpenJobs({ conversation: { jobs: [job], mediaReply: { ...mediaReply, sectionIndex: -1 } } })).toStrictEqual({ conversation: { jobs: [job] } })
+  })
+
+  it('keeps a __proto__ key of a conversation or of a resume value as a plain key', () => {
+    const parsed = parseAppStateJson(`{ "openJobs": { "__proto__": { "jobs": [${JSON.stringify({ ...job, providerJob: undefined })}] }, "c": { "mediaReply": ${JSON.stringify(mediaReply).replace('"queue_id"', '"__proto__"')} } } }`).openJobs ?? {}
+
+    expect(Object.getPrototypeOf(parsed)).toBe(Object.prototype)
+    expect(Object.keys(parsed)).toEqual(['__proto__', 'c'])
+    const resume = parsed.c?.mediaReply?.providerJob.resume ?? {}
+    expect(Object.getPrototypeOf(resume)).toBe(Object.prototype)
+    expect(Object.keys(resume)).toEqual(['__proto__'])
+  })
+})

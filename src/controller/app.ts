@@ -93,6 +93,9 @@ export default sbp('sbp/selectors/register', {
       initialized = true
       void sbp('dez.controller/menu/install')
       void sbp('dez.controller/images/watchFileDrops')
+      // After the keys (the polls of the jobs need them), and before the
+      // cleanup, which keeps the files of the jobs.
+      sbp('dez.stream/restoreJobs')
       sbp('dez.controller/media/startCleanup')
       // Warm the cache against real availability in the background so the model
       // selector reconciles after startup without blocking init.

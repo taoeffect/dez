@@ -14,13 +14,15 @@ import { MEDIA_HIDDEN_ATTRIBUTE, MEDIA_JOB_ATTRIBUTE, MEDIA_MADE_BY_ATTRIBUTE, M
 import { chatRequestPrice, moneyProblem, MoneyLimitError, type MoneyLimit, type MoneyReader, type MoneySpent, type RequestPrice, type TabMoney } from '../model/chat/moneyLimit'
 import { findToolBlocks, ModelTextEscaper } from '../model/chat/toolBlocks'
 import { effectiveOutputs } from '../model/modelOutputs'
+import type { ConversationJobs, StoredJob, StoredMediaReply, StoredProviderJob } from '../model/persistence/types'
 import { failedChatRequestCost, type ChatUsage } from '../model/providers/chatUsage'
 import { imagesText, TooManyImagesError, tooManyImagesMessage } from '../model/providers/clipImages'
 import { isProviderRefusal, notMadeJobCost } from '../model/providers/errors'
 import { contextWindowOf, imageLimitOf, messageImageLimitOf, modelFamily } from '../model/providers/modelFamilies'
-import { effectiveRequest } from '../model/providers/types'
+import { effectiveRequest, isTextKind } from '../model/providers/types'
+import { countOf, countText } from '../utils/countText'
 import { ExplainedError, errorText, explainedError } from '../utils/errorText'
-import type { ClipInputRules, GeneratedClip, GeneratedMedia, MediaKind, MediaProgress, ModelInfo, ModelRequest, ProviderGenerateMediaResult, ProviderStreamChatResult } from '../model/providers'
+import type { ClipInputRules, GeneratedClip, GeneratedMedia, MediaKind, MediaProgress, ModelInfo, ModelRequest, ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderStreamChatResult } from '../model/providers'
 import { getProvider, requireProvider } from '../model/providers/registry'
 import { compactionLeftFiles } from '../model/streams/compactionFiles'
 import { compactionReason, newestReplyModel, repliedSinceCompaction } from '../model/streams/compactionRequest'
@@ -73,6 +75,7 @@ import {
 import { compactConversation, type Compaction } from './compaction'
 import { logRequest } from './diagnostics/requestLog'
 import { discardMadeAssets, generatedClipAsset, TabJobs, writeJobAssets, type EndedJob, type MadeAsset } from './jobs'
+import { resumeModelInvocation } from './modelInvoke'
 import { discardShownPictures } from './shownPictures'
 import type { ToolRunCall, ToolRunContext } from './tools'
 
@@ -128,6 +131,11 @@ interface StreamStartArgs {
   // or names (`mediaRequestInput`). It is the submit's read of the model,
   // so the request sends the input that the submit checked.
   inputRules?: ClipInputRules
+  // The provider's job of a media reply of an earlier start of Dez
+  // (`StoredMediaReply`, `resumeMediaReply`): the media round asks the
+  // provider for its result again, with no new request, and writes it into
+  // the reply's section.
+  resume?: StoredProviderJob
 }
 
 // The calls of one tool round while they run. Their blocks stay in the
@@ -191,6 +199,10 @@ interface ReplyRuntime {
   // call of the reply; null before it. A compaction in the reply reads the
   // sizes again, for its new messages.
   imageBytes: Promise<ReadonlyMap<string, number>> | null
+  // The provider's job of a media reply, from the moment that the record
+  // of its conversation holds it (`recordMediaReply`). The end of the
+  // reply deletes that record. Null for a chat reply, and before then.
+  mediaJobId: string | null
 }
 
 // The reply of each tab, so tabs stream at the same time and a new start or
@@ -207,10 +219,21 @@ const repliesByTab = new Map<string, ReplyRuntime>()
 // (`dez.stream/stop` with `endJobs`).
 const heldJobsByTab = new Map<string, TabJobs>()
 
+// New jobs of the tab `tabId`. Each change of their open jobs goes into the
+// record of the conversation of the tab (`dez.model/openJobs/set`), so
+// that the next start of Dez finds them (`dez.stream/restoreJobs`); a tab
+// keeps its conversation id.
+function newTabJobs(tabId: string): TabJobs {
+  const conversationId = (sbp('dez.model/tab', tabId) as Tab | null)?.conversationId
+  return new TabJobs((usd) => countRequestCost(tabId, usd), (jobs) => {
+    if (conversationId !== undefined) sbp('dez.model/openJobs/set', conversationId, { jobs })
+  })
+}
+
 // A chat reply takes the jobs of its tab: the ones that a cut reply left,
 // else new ones. Returns them.
 function takeJobs(tabId: string, reply: ReplyRuntime): TabJobs {
-  const tabJobs = heldJobsByTab.get(tabId) ?? new TabJobs((usd) => countRequestCost(tabId, usd))
+  const tabJobs = heldJobsByTab.get(tabId) ?? newTabJobs(tabId)
   heldJobsByTab.delete(tabId)
   reply.jobs = { tabJobs, lease: tabJobs.take(reply.sectionId) }
   return tabJobs
@@ -614,6 +637,7 @@ async function runToolRound(tabId: string, conversationId: string, reply: ReplyR
   // The next round's text comes after the blocks, not after an asset.
   reply.afterAsset = false
   reply.toolRun = run
+  const jobsBefore = jobs.allJobs().length
 
   for (const [index, call] of calls.entries()) {
     if (call.refusal !== undefined) continue
@@ -659,6 +683,11 @@ async function runToolRound(tabId: string, conversationId: string, reply: ReplyR
     discardRunPictures(run)
     return null
   }
+  // A job that a call started is in the record of the open jobs at once
+  // (`newTabJobs`). The conversation file must hold the block of its call
+  // too before a quit, and a tab in the background saves only at the end
+  // of its reply.
+  if (jobs.allJobs().length > jobsBefore) sbp('dez.model/tabs/save', tabId).catch(() => {})
   return streamingReply(tabId, reply.sectionId)
 }
 
@@ -1264,6 +1293,55 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
   }
 }
 
+// The input of the media request of a new reply (`runMediaRound`): the
+// prompt and the inputs of the newest user message, the model parameters
+// that the user chose, and the money gate, right before each paid request
+// goes: once before the uploads of the input images, with no price, and
+// then before the request, with its quote.
+function mediaRoundRequest(args: StreamStartArgs, reply: ReplyRuntime, kind: MediaKind, requestId: string, onProgress: (progress: MediaProgress) => void): ProviderGenerateMediaInput {
+  const tab = sbp('dez.model/tab', args.tabId) as Tab | null
+  const input = mediaRequestInput(kind, args.newestUserMessage, tab?.sections ?? [], args.inputRules)
+  const parameters = (sbp('dez.model/settings/snapshot') as SettingsSnapshot).modelParameters[modelRefKey(args.model)]
+  return {
+    providerId: args.model.providerId,
+    modelId: args.model.modelId,
+    kind,
+    prompt: input.prompt,
+    ...(input.lyrics !== undefined && { lyrics: input.lyrics }),
+    images: input.images,
+    ...(input.clips.length > 0 && { clips: input.clips }),
+    ...(parameters && { parameters }),
+    requestId,
+    signal: reply.abort.signal,
+    beforeSend: (usd: number | undefined) => checkReplyMoney(args.tabId, { kind: 'quote', usd: usd ?? null }),
+    onProgress,
+  }
+}
+
+// Puts the provider's job of a media reply into the record of its
+// conversation (`StoredMediaReply`), so that a later start of Dez asks the
+// provider for it again (`resumeMediaReply`). Section ids are not saved, so
+// the record names the reply's section by its index, and the tab saves at
+// once: a tab in the background saves only at the end of its reply, and
+// the conversation file must hold that section. The end of the reply
+// deletes the record (`clearMediaReply`).
+function recordMediaReply(args: StreamStartArgs, reply: ReplyRuntime, providerJob: StoredProviderJob): void {
+  const sections = (sbp('dez.model/tab', args.tabId) as Tab | null)?.sections ?? []
+  const sectionIndex = sections.findIndex((section) => section.id === reply.sectionId)
+  if (sectionIndex < 0) return
+  reply.mediaJobId = providerJob.jobId
+  sbp('dez.model/openJobs/set', args.conversationId, { mediaReply: { sectionIndex, model: args.model, providerJob } })
+  sbp('dez.model/tabs/save', args.tabId).catch(() => {})
+}
+
+// Deletes the record of the media reply of the conversation, if it is
+// still the one of the job `jobId`: a new reply of the tab can hold its own
+// job already when a cut reply ends.
+function clearMediaReply(conversationId: string, jobId: string): void {
+  const record = sbp('dez.model/openJobs/get', conversationId) as ConversationJobs | null
+  if (record?.mediaReply?.providerJob.jobId === jobId) sbp('dez.model/openJobs/set', conversationId, { mediaReply: null })
+}
+
 // The one media request of a reply to a media model (a ModelInfo.request
 // of MEDIA_KINDS), in place of the chat rounds: no system prompt, tools, or
 // thinking. The files of an image model (an image, an edit, an upscale)
@@ -1277,11 +1355,10 @@ async function runChatRounds(args: StreamStartArgs, reply: ReplyRuntime): Promis
 // that takes lyrics; an edit, an upscale, and a video request send the
 // images of the message, and a request of a model that takes clips the
 // clips that it holds or names (`mediaRequestInput`). Images and clips get
-// new ids of the one id sequence. Ends the reply, except when it throws.
+// new ids of the one id sequence. A reply of an earlier start of Dez
+// (`args.resume`) sends no request: it asks the provider for its job again,
+// with its stored quote. Ends the reply, except when it throws.
 async function runMediaRound(args: StreamStartArgs, reply: ReplyRuntime, kind: MediaKind): Promise<void> {
-  const tab = sbp('dez.model/tab', args.tabId) as Tab | null
-  const input = mediaRequestInput(kind, args.newestUserMessage, tab?.sections ?? [], args.inputRules)
-  const parameters = (sbp('dez.model/settings/snapshot') as SettingsSnapshot).modelParameters[modelRefKey(args.model)]
   const requestId = crypto.randomUUID()
   reply.requestId = requestId
   // From the moment that the request went: its quote, or null when no
@@ -1292,36 +1369,45 @@ async function runMediaRound(args: StreamStartArgs, reply: ReplyRuntime, kind: M
   // The quote of the request, which the tab holds from the moment that the
   // request went until the tab counts its cost (the money limit).
   const hold = { usd: 0 }
+  const { resume } = args
+  if (resume) {
+    // The request went before the quit, and the record holds the job, so
+    // the end of the reply deletes the record also when no poll goes.
+    sentCost = resume.quote ?? null
+    hold.usd = resume.quote ?? 0
+    holdQuote(args.tabId, hold)
+    queued = true
+    reply.mediaJobId = resume.jobId
+  }
+  const onProgress = (progress: MediaProgress) => {
+    // The provider took the money of an upload at once, so it counts
+    // now, also when the request fails later. A free upload is no paid
+    // request, so it counts nothing.
+    if (progress.phase === 'uploaded' && progress.cost !== 0) countRequestCost(args.tabId, progress.cost ?? null)
+    if (progress.phase === 'sent') {
+      sentCost = progress.quote ?? null
+      hold.usd = progress.quote ?? 0
+      holdQuote(args.tabId, hold)
+    }
+    if (progress.phase === 'queued') {
+      queued = true
+      if (progress.jobId !== null && progress.resume && !isTextKind(kind)) {
+        recordMediaReply(args, reply, { providerId: args.model.providerId, modelId: args.model.modelId, kind, jobId: progress.jobId, resume: progress.resume, ...(typeof sentCost === 'number' && { quote: sentCost }) })
+      }
+    }
+  }
   let result: ProviderGenerateMediaResult
   try {
-    result = await sbp('dez.provider/generateMedia', {
+    result = await sbp('dez.provider/generateMedia', resume ? {
       providerId: args.model.providerId,
       modelId: args.model.modelId,
       kind,
-      prompt: input.prompt,
-      ...(input.lyrics !== undefined && { lyrics: input.lyrics }),
-      images: input.images,
-      ...(input.clips.length > 0 && { clips: input.clips }),
-      ...(parameters && { parameters }),
+      prompt: '',
+      resume: { data: resume.resume, ...(resume.quote !== undefined && { quote: resume.quote }) },
       requestId,
       signal: reply.abort.signal,
-      // The money gate, right before each paid request goes: once before
-      // the uploads of the input images, with no price, and then before
-      // the request, with its quote.
-      beforeSend: (usd: number | undefined) => checkReplyMoney(args.tabId, { kind: 'quote', usd: usd ?? null }),
-      onProgress: (progress: MediaProgress) => {
-        // The provider took the money of an upload at once, so it counts
-        // now, also when the request fails later. A free upload is no paid
-        // request, so it counts nothing.
-        if (progress.phase === 'uploaded' && progress.cost !== 0) countRequestCost(args.tabId, progress.cost ?? null)
-        if (progress.phase === 'sent') {
-          sentCost = progress.quote ?? null
-          hold.usd = progress.quote ?? 0
-          holdQuote(args.tabId, hold)
-        }
-        if (progress.phase === 'queued') queued = true
-      },
-    }) as ProviderGenerateMediaResult
+      onProgress,
+    } : mediaRoundRequest(args, reply, kind, requestId, onProgress)) as ProviderGenerateMediaResult
   } catch (error) {
     // A request that went counts 0 only when the provider refused it, as a
     // refused request costs nothing (the rule of `model_invoke`), and a job
@@ -1394,6 +1480,64 @@ async function runMediaRound(args: StreamStartArgs, reply: ReplyRuntime, kind: M
   finalizeStream(args.tabId, finishStreamSession(args.tabId))
 }
 
+// The toast text of the open jobs of a tab that Dez picked up at its start
+// (`restoreTabJobs`): `resumed` of the `count` jobs go on.
+function pickedUpJobsText(count: number, resumed: number): string {
+  const ran = `Dez quit while ${countOf(count, 'job')} of this conversation ran.`
+  if (resumed === 0) return `${ran} ${count === 1 ? 'Its' : 'Their'} work is lost.`
+  const others = count - resumed
+  const goOn = count === 1
+    ? 'It goes on at its provider.'
+    : others === 0
+      ? 'They go on at their providers.'
+      : `${countText(resumed)} ${resumed === 1 ? 'goes on at its provider' : 'go on at their providers'}, and the work of the ${others === 1 ? 'other' : 'others'} is lost.`
+  return `${ran} ${goOn} Send a message to get ${count === 1 ? 'its result' : 'the results'}.`
+}
+
+// The open jobs of `tab` when Dez quit, as jobs that the tab holds, as the
+// jobs of a cut reply: the next chat reply of the tab takes them
+// (`takeJobs`). A job of a provider asks the provider for its result again
+// (`resumeModelInvocation`), and any other job ends as failed
+// (`TabJobs.restore`). A toast of the tab tells the user.
+function restoreTabJobs(tab: Tab, records: readonly StoredJob[]): void {
+  const tabJobs = newTabJobs(tab.id)
+  const resumed = tabJobs.restore(records, ({ providerJob, timeoutMs }) => resumeModelInvocation(providerJob, timeoutMs))
+  heldJobsByTab.set(tab.id, tabJobs)
+  sbp('dez.ui/toast', 'app-global', { tabId: tab.id, title: 'Jobs picked up', message: pickedUpJobsText(records.length, resumed), duration: 8000 })
+}
+
+// Runs the media reply of `tab` that ran when Dez quit again, as a reply of
+// the tab that asks the provider for its job (`runMediaRound`). Its section
+// must still be the last reply of the tab. Else the record goes, and an
+// error toast of the tab names the provider's job id: the user can still
+// get the result from the provider.
+function resumeMediaReply(tab: Tab, { sectionIndex, model, providerJob }: StoredMediaReply): void {
+  const section = tab.sections[sectionIndex]
+  if (section?.role !== 'agent' || tab.sections.findLastIndex((candidate) => candidate.role === 'agent') !== sectionIndex) {
+    console.error(`Dropped the media reply of conversation ${tab.conversationId}: section ${sectionIndex} is not its last reply`)
+    sbp('dez.model/openJobs/set', tab.conversationId, { mediaReply: null })
+    showReplyError(tab.id, 'Reply not picked up', `Dez quit while ${model.modelName} made a reply in this conversation, and the conversation does not end with that reply any more, so Dez cannot put the result in it. The job id at the provider is ${providerJob.jobId}.`)
+    return
+  }
+  const args: StreamStartArgs = {
+    tabId: tab.id,
+    conversationId: tab.conversationId,
+    sectionId: section.id,
+    model,
+    request: providerJob.kind,
+    messages: [],
+    imagesOverLimit: 0,
+    newestUserMessage: '',
+    sendTools: false,
+    incognito: tab.incognito === true,
+    imageOutput: false,
+    audioOutput: false,
+    resume: providerJob,
+  }
+  // It catches its own failures.
+  void sbp('dez.stream/start', args)
+}
+
 export default sbp('sbp/selectors/register', {
   // One reply: chat rounds (`runChatRounds`), or one media round
   // (`runMediaRound`) for a model that makes images or clips. The stream
@@ -1427,6 +1571,7 @@ export default sbp('sbp/selectors/register', {
       // `runChatRounds` takes the jobs of the tab.
       jobs: null,
       imageBytes: null,
+      mediaJobId: null,
     }
     repliesByTab.set(args.tabId, reply)
 
@@ -1449,6 +1594,10 @@ export default sbp('sbp/selectors/register', {
         if (await endReply(args.tabId, reply, 'error')) showReplyError(args.tabId, title, replyError(error, args.model).message)
       }
     } finally {
+      // Only after the end of the reply, which wrote the result into the
+      // section and started the save of the tab: a quit before the end must
+      // find the record, or the paid result is lost.
+      if (reply.mediaJobId !== null) clearMediaReply(args.conversationId, reply.mediaJobId)
       // A reply that ended on its own ends its jobs: nothing could take
       // their results. A reply that the user cut (a stop, a new submit, a
       // delete of its running blocks) handed them on (its lease aborted).
@@ -1510,6 +1659,20 @@ export default sbp('sbp/selectors/register', {
       // After the cancel: a token can still come while it runs.
       if (reply) flushModelText(tabId, reply)
       finalizeStream(tabId, cancelStreamSession(tabId))
+    }
+  },
+
+  // Picks up what ran in each tab when Dez quit (`dez.model/openJobs/*`):
+  // its open jobs (`restoreTabJobs`) and its media reply
+  // (`resumeMediaReply`). `dez.controller/app/init` calls it after the
+  // restore of the tabs and the keys of the custom providers (the polls
+  // need them), and before the cleanup of the temp copies, which keeps the
+  // files of the jobs (`dez.stream/unnamedMadeFiles`). It waits for no job.
+  'dez.stream/restoreJobs' (): void {
+    for (const tab of sbp('dez.model/tabs/list') as Tab[]) {
+      const record = sbp('dez.model/openJobs/get', tab.conversationId) as ConversationJobs | null
+      if (record?.jobs) restoreTabJobs(tab, record.jobs)
+      if (record?.mediaReply) resumeMediaReply(tab, record.mediaReply)
     }
   },
 

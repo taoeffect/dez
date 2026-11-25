@@ -17,7 +17,7 @@ import type { MediaTagKind } from '../chat/mediaTags'
 import { clampModelPickerSize, type ModelPickerSize } from '../modelPickerSize'
 import { currentShortcutPlatform, findShortcut, normalizeShortcutKey, validateShortcutKey, type Shortcut, type ShortcutId, type ShortcutOverrides } from '../shortcuts'
 import { MAX_CLOSED_TABS, NEW_TAB_TITLE, useTabStore, type ReplyEnd } from './tabs'
-import type { AppStatePayload, CachedProvider, ContentNodeData, ConversationData, ConversationSearchOutcome, ModelCache } from '../persistence/types'
+import type { AppStatePayload, CachedProvider, ContentNodeData, ConversationData, ConversationJobs, ConversationSearchOutcome, ModelCache, StoredJob, StoredMediaReply } from '../persistence/types'
 import { emptyModelCache } from '../persistence/modelCache'
 import type { ModelOutputsConfig, ProviderConfig, ProviderThinkingConfig, TokenPricePaths } from '../providers/config'
 import { withKeptClipData } from '../providers/keptClipData'
@@ -1086,6 +1086,7 @@ export default sbp('sbp/selectors/register', {
         // Not in the watch list of startPersistence (only a hand edit sets
         // it), but written back, or the first save would drop it.
         incognitoOption: settings.incognitoOption,
+        openJobs: Object.fromEntries(tabStore.openJobs),
       })
     } catch (error) {
       console.error('Failed to save app state', error)
@@ -1093,14 +1094,25 @@ export default sbp('sbp/selectors/register', {
   },
 
   async 'dez.model/appState/restore' (appState: unknown): Promise<void> {
-    const state = appState as { tabs?: TabData[]; activeTabId?: string | null }
-    if (!Array.isArray(state.tabs) || state.tabs.length === 0) return
+    const state = appState as { tabs?: TabData[]; activeTabId?: string | null; openJobs?: Record<string, ConversationJobs> }
+    const tabsData = Array.isArray(state.tabs) ? state.tabs : []
+    // Only a tab can pick up the jobs of its conversation (`dez.stream/
+    // restoreJobs`): the records of the others go, so that the file does not
+    // keep them.
+    const openJobs = new Map<string, ConversationJobs>()
+    for (const [conversationId, record] of Object.entries(state.openJobs ?? {})) {
+      if (tabsData.some((tab) => tab.conversationId === conversationId)) openJobs.set(conversationId, record)
+      else console.error(`Dropped the open jobs of conversation ${conversationId}: no tab has it`)
+    }
+    useTabStore().openJobs = openJobs
+    if (tabsData.length === 0) return
 
     const restored: Tab[] = []
-    for (const tabData of state.tabs) {
+    for (const tabData of tabsData) {
       try {
         const conversation = await sbp('dez.persistence/loadConversation', tabData.conversationId) as ConversationData
-        restored.push(tabFromConversation(conversation, {
+        const record = openJobs.get(tabData.conversationId)
+        const tab = tabFromConversation(conversation, {
           id: tabData.id,
           title: tabData.title || conversation.title || NEW_TAB_TITLE,
           conversationId: tabData.conversationId,
@@ -1109,7 +1121,18 @@ export default sbp('sbp/selectors/register', {
           ...incognitoField(tabData.incognito),
           ...requestSentField(tabData.requestSent),
           ...moneyLimitField(tabData.moneyLimit),
-        }))
+        })
+        // A tab with open jobs whose conversation ends with an agent section
+        // had a reply that a quit of Dez cut: the save after a tool round that
+        // started a job wrote it. It gets the user section that the end of
+        // the reply would add, for the message that gets the results of the
+        // jobs. Not the reply of a media model that Dez picks up
+        // (`dez.stream/restoreJobs`): that reply adds it at its own end.
+        const lastIndex = tab.sections.length - 1
+        if (record && tab.sections[lastIndex].role === 'agent' && record.mediaReply?.sectionIndex !== lastIndex) {
+          tab.sections.push({ id: crypto.randomUUID(), role: 'user', content: emptyContent() })
+        }
+        restored.push(tab)
       } catch {
         restored.push({
           id: tabData.id,
@@ -1131,6 +1154,33 @@ export default sbp('sbp/selectors/register', {
       const target = state.activeTabId && restored.find((tab) => tab.id === state.activeTabId)
       tabStore.activeTabId = target ? target.id : restored[0].id
     }
+  },
+
+  // The open jobs of a conversation (`ConversationJobs`,
+  // persistence/types.ts): a copy, or null when it has none.
+  'dez.model/openJobs/get' (conversationId: string): ConversationJobs | null {
+    const record = useTabStore().openJobs.get(conversationId)
+    return record ? JSON.parse(JSON.stringify(record)) as ConversationJobs : null
+  },
+
+  // Sets the jobs or the media reply of a conversation (each part that
+  // `change` has); an empty list or null deletes the part, and a
+  // conversation with no part left has no record. The app state saves at
+  // once, as no code runs at a quit, but only when the record changed: a
+  // job that reports its state often changes no record.
+  'dez.model/openJobs/set' (conversationId: string, change: { jobs?: StoredJob[]; mediaReply?: StoredMediaReply | null }): void {
+    const openJobs = useTabStore().openJobs
+    const current = openJobs.get(conversationId)
+    const next: ConversationJobs = { ...current }
+    if (change.jobs?.length === 0) delete next.jobs
+    else if (change.jobs) next.jobs = change.jobs
+    if (change.mediaReply === null) delete next.mediaReply
+    else if (change.mediaReply) next.mediaReply = change.mediaReply
+    const json = JSON.stringify(next)
+    if (json === JSON.stringify(current ?? {})) return
+    if (next.jobs || next.mediaReply) openJobs.set(conversationId, JSON.parse(json) as ConversationJobs)
+    else openJobs.delete(conversationId)
+    void sbp('dez.model/appState/save')
   },
 
   'dez.model/activeModel' (): ActiveModel | null {

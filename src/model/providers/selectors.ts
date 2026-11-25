@@ -27,8 +27,8 @@ import { chatImageDrawing, imageFit, type ImageSizeRules } from './imageSize'
 import { knownLimitsOf, type KnownLimit } from './knownLimits'
 import { learnedImageLimitRow, learnedImagesProblem } from './learnedImageLimit'
 import { jsonBody } from './mediaFormatParts'
-import type { InputClipPart, MediaWireRequest } from './mediaFormats'
-import { takeMediaTurn } from './mediaTurns'
+import type { AnswerCost, ClipJob, ImageJob, InputClipPart, MediaWireRequest } from './mediaFormats'
+import { takeMediaTurn, takeMediaTurnNow } from './mediaTurns'
 import { effectiveParameterValues, type ParameterValues } from './modelParameters'
 import { textLengthCost, type LoadedModelPrice, type PriceQuote } from './modelPrices'
 import { modelToggles, type ToggleModel } from './modelToggles'
@@ -460,6 +460,61 @@ async function mediaRequestQuote(provider: Provider, input: ProviderGenerateMedi
   return kind === 'tts' ? textLengthCost(model?.price, input.prompt) : undefined
 }
 
+// A request of the media API of `run`, which gets the API key.
+type ApiRequest = (wire: MediaWireRequest) => NativeHttpRequest
+
+// Asks for the state of the image job `job` until it ends, then gets its
+// images. The first poll waits the poll time, or with `pollNow` goes at
+// once: a job that ran while Dez was closed can be done already.
+async function imageJobResult(run: JobRun, job: ImageJob, apiRequest: ApiRequest, onDownload: () => void, pollNow: boolean): Promise<{ media: GeneratedMedia[] } & AnswerCost> {
+  for (let first = true; ; first = false) {
+    if (!(pollNow && first)) await clipPollDelay(run.signal)
+    const state = job.state(jsonBody(await sendImageJobRequest(run, apiRequest(job.poll), true)))
+    if (state === 'running') continue
+    // A file URL comes from a response and can name any host, so its
+    // request has no header: the API key goes only to the URLs that Dez
+    // builds. The images come one after the other.
+    onDownload()
+    const media: GeneratedMedia[] = []
+    for (const url of state.fileUrls) media.push(generatedImage(await sendImageJobRequest(run, { method: 'GET', url }, false)))
+    return { media, ...(state.cost !== undefined && { cost: state.cost }) }
+  }
+}
+
+// Asks for the state of the clip job `job` until it ends, then gets its
+// clips; `pollNow` as for `imageJobResult`. `cost`: the price that the
+// answer tells.
+async function clipJobResult(run: ClipRun, job: ClipJob, apiRequest: ApiRequest, cacheDir: string, onDownload: () => void, pollNow: boolean): Promise<{ clips: GeneratedClip[] } & AnswerCost> {
+  for (let first = true; ; first = false) {
+    if (!(pollNow && first)) await clipPollDelay(run.signal)
+    const poll = await sendClipRequest(run, apiRequest(job.poll), job.id, cacheDir)
+    if ('clip' in poll) return { clips: [poll.clip] }
+
+    const state = job.state(poll.data)
+    if (state === 'running') continue
+    const cost = state.cost === undefined ? {} : { cost: state.cost }
+    if ('url' in state) {
+      return { clips: [{ kind: CLIP_KINDS[run.kind], mediaType: state.mediaType, src: state.url, url: state.url, expires: new Date(state.expires).toISOString(), jobId: job.id }], ...cost }
+    }
+    // A file URL comes from a response and can name any host, so its
+    // request has no header: the API key goes only to the URLs that Dez
+    // builds. The files come one after the other. A download that fails
+    // ends the call with no clip: the temp copies of the files before it
+    // stay until the cleanup of the temp copies.
+    onDownload()
+    const downloads: { request: NativeHttpRequest, keyed: boolean }[] = 'download' in state
+      ? [{ request: apiRequest(state.download), keyed: true }]
+      : state.fileUrls.map((url) => ({ request: { method: 'GET', url }, keyed: false }))
+    const madeClips: GeneratedClip[] = []
+    for (const { request, keyed } of downloads) {
+      const download = await sendClipRequest(run, request, job.id, cacheDir, keyed)
+      if (!('clip' in download)) throw new UnusableAnswerError('The answer to the clip download holds no clip.')
+      madeClips.push(download.clip)
+    }
+    return { clips: madeClips, ...cost }
+  }
+}
+
 export default sbp('sbp/selectors/register', {
   async 'dez.provider/infos' (): Promise<ProviderInfo[]> {
     let keyIds: string[] = []
@@ -730,6 +785,9 @@ export default sbp('sbp/selectors/register', {
   // point, a failure and a stop log the job id, and the message of a
   // failure names it: with the id, the user can ask the provider for the
   // image or the clip.
+  //
+  // A call with `input.resume` asks again for a job of an earlier start of
+  // Dez, with no new paid request (`ProviderGenerateMediaInput.resume`).
   async 'dez.provider/generateMedia' (input: ProviderGenerateMediaInput): Promise<ProviderGenerateMediaResult> {
     const provider = requireProvider(input.providerId)
     const { kind, modelId, signal, reader = 'user' } = input
@@ -740,7 +798,7 @@ export default sbp('sbp/selectors/register', {
     }
     signal?.addEventListener('abort', cancelRequest)
     let jobId: string | null = null
-    const progress = (phase: MediaProgress['phase'], extra: Pick<MediaProgress, 'quote' | 'limit' | 'cost'> = {}) => input.onProgress?.({ phase, jobId, ...extra })
+    const progress = (phase: MediaProgress['phase'], extra: Pick<MediaProgress, 'quote' | 'limit' | 'cost' | 'resume'> = {}) => input.onProgress?.({ phase, jobId, ...extra })
     // The last check of the caller, then the `sent` step, in one tick.
     const send = (quote?: number) => {
       input.beforeSend?.(quote)
@@ -750,6 +808,31 @@ export default sbp('sbp/selectors/register', {
     // The `cost` of a result: absent when no price is known.
     const priced = (cost: number | undefined) => (cost === undefined ? {} : { cost })
     try {
+      if (input.resume) {
+        if (isTextKind(kind)) throw new Error(`A ${kind} request has no job to ask for again.`)
+        // The provider runs the job already, so its turn comes at once; the
+        // turn still counts, so that new requests wait as they must.
+        endTurn = takeMediaTurnNow(provider.id, provider.mediaRequestsAtOnce)
+        const limitMs = input.timeoutMs ?? CLIP_JOB_TIMEOUT_MS
+        const run: JobRun = { provider, requestId, limitMs, deadline: Date.now() + limitMs, signal }
+        const secret = await requestSecret(provider)
+        const apiRequest: ApiRequest = (wire) => provider.mediaApiRequest(wire, secret)
+        const { data, quote } = input.resume
+        if (isClipKind(kind)) {
+          const job = provider.clipJob(kind, modelId, data)
+          jobId = job.id
+          progress('queued', { resume: job.resume })
+          const cacheDir = await sbp('dez.native/getAppDir', 'cache') as string
+          const { clips, cost } = await clipJobResult({ ...run, kind }, job, apiRequest, cacheDir, () => progress('downloading'), true)
+          return { media: [], clips, ...priced(cost ?? quote) }
+        }
+        const job = provider.imageJob(kind, modelId, data)
+        jobId = job.id
+        progress('queued', { resume: job.resume })
+        const { media, cost } = await imageJobResult(run, job, apiRequest, () => progress('downloading'), true)
+        return { media, clips: [], ...priced(cost ?? quote) }
+      }
+
       const paths = input.images ?? []
       const clips = input.clips ?? []
       const cachedModel = sbp('dez.model/modelCache/model', provider.id, modelId) as ModelInfo | null
@@ -799,7 +882,7 @@ export default sbp('sbp/selectors/register', {
       const run: JobRun = { provider, requestId, limitMs, deadline: Date.now() + limitMs, signal }
       const secret = await requestSecret(provider)
       // A request of the media API, which gets the API key.
-      const apiRequest = (wire: MediaWireRequest) => provider.mediaApiRequest(wire, secret)
+      const apiRequest: ApiRequest = (wire) => provider.mediaApiRequest(wire, secret)
       // The uploads end before the quote and the last check (`send`), so
       // that no wait comes between that check and the paid request. The
       // check before them keeps the images on this computer when the money
@@ -824,19 +907,9 @@ export default sbp('sbp/selectors/register', {
 
         const { job } = answer
         jobId = job.id
-        progress('queued')
-        for (;;) {
-          await clipPollDelay(signal)
-          const state = job.state(jsonBody(await sendImageJobRequest(run, apiRequest(job.poll), true)))
-          if (state === 'running') continue
-          // A file URL comes from a response and can name any host, so its
-          // request has no header: the API key goes only to the URLs that
-          // Dez builds. The images come one after the other.
-          progress('downloading')
-          const media: GeneratedMedia[] = []
-          for (const url of state.fileUrls) media.push(generatedImage(await sendImageJobRequest(run, { method: 'GET', url }, false)))
-          return { media, clips: [], ...priced(state.cost ?? quote) }
-        }
+        progress('queued', { resume: job.resume })
+        const { media, cost } = await imageJobResult(run, job, apiRequest, () => progress('downloading'), false)
+        return { media, clips: [], ...priced(cost ?? quote) }
       }
 
       const clipRun: ClipRun = { ...run, kind }
@@ -878,35 +951,9 @@ export default sbp('sbp/selectors/register', {
 
       const job = provider.clipJob(kind, modelId, first.data)
       jobId = job.id
-      progress('queued')
-      for (;;) {
-        await clipPollDelay(signal)
-        const poll = await sendClipRequest(clipRun, apiRequest(job.poll), jobId, cacheDir)
-        if ('clip' in poll) return { media: [], clips: [poll.clip], ...priced(quote) }
-
-        const state = job.state(poll.data)
-        if (state === 'running') continue
-        if ('url' in state) {
-          const clip = { kind: CLIP_KINDS[kind], mediaType: state.mediaType, src: state.url, url: state.url, expires: new Date(state.expires).toISOString(), jobId }
-          return { media: [], clips: [clip], ...priced(state.cost ?? quote) }
-        }
-        // A file URL comes from a response and can name any host, so its
-        // request has no header: the API key goes only to the URLs that
-        // Dez builds. The files come one after the other. A download that
-        // fails ends the call with no clip: the temp copies of the files
-        // before it stay until the cleanup of the temp copies.
-        progress('downloading')
-        const downloads: { request: NativeHttpRequest, keyed: boolean }[] = 'download' in state
-          ? [{ request: apiRequest(state.download), keyed: true }]
-          : state.fileUrls.map((url) => ({ request: { method: 'GET', url }, keyed: false }))
-        const madeClips: GeneratedClip[] = []
-        for (const { request, keyed } of downloads) {
-          const download = await sendClipRequest(clipRun, request, jobId, cacheDir, keyed)
-          if (!('clip' in download)) throw new UnusableAnswerError('The answer to the clip download holds no clip.')
-          madeClips.push(download.clip)
-        }
-        return { media: [], clips: madeClips, ...priced(state.cost ?? quote) }
-      }
+      progress('queued', { resume: job.resume })
+      const { clips: madeClips, cost } = await clipJobResult(clipRun, job, apiRequest, cacheDir, () => progress('downloading'), false)
+      return { media: [], clips: madeClips, ...priced(cost ?? quote) }
     } catch (error) {
       const explained = explainedProviderError(provider, error, reader)
       if (jobId === null) throw explained

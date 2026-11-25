@@ -1,6 +1,7 @@
 import sbp from '@sbp/sbp'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
-import { JOB_LIMIT_TEXT, MAX_OPEN_JOBS } from '../model/tools/jobs'
+import type { StoredJob, StoredProviderJob } from '../model/persistence/types'
+import { JOB_LIMIT_TEXT, JOB_LOST_AT_QUIT_TEXT, MAX_OPEN_JOBS } from '../model/tools/jobs'
 import { jobInfo } from '../model/tools/testing'
 import { ToolError } from '../model/tools/types'
 import { discardMadeAssets, TabJobs, writeJobAssets, type EndedJob, type MadeAsset } from './jobs'
@@ -760,6 +761,92 @@ describe('TabJobs', () => {
 
       expect(() => jobs.start('model_invoke', heldWork().work, LONG)).toThrow(JOB_LIMIT_TEXT)
       await expect(jobs.startWithWait('js_eval', heldWork().work, LONG, 1000)).rejects.toThrow(JOB_LIMIT_TEXT)
+    })
+  })
+
+  // The caller stores the records, so that the next start of Dez finds
+  // the jobs (`restore`).
+  describe('the records of the open jobs', () => {
+    const MODEL = { providerId: 'media', modelId: 'video-1' }
+    const PROVIDER_JOB: StoredProviderJob = { providerId: 'media', modelId: 'video-1', kind: 'video', jobId: 'q-1', resume: { queue_id: 'q-1' }, quote: 0.4 }
+    let records: StoredJob[][]
+
+    beforeEach(() => {
+      records = []
+      jobs = new TabJobs(() => {}, (open) => records.push(open))
+    })
+
+    it('gives the open numbered jobs at each change, with the price only of a job of a provider that runs', async () => {
+      const media = heldWork()
+      const local = heldWork()
+      const { id: mediaId } = jobs.start('model_invoke', media.work, { ...LONG, label: 'A fox', inputs: ['1'], model: MODEL, hidesAssets: true })
+      const { id: localId } = jobs.start('video', local.work, LONG)
+      media.reportCost(0.4)
+      local.reportCost(0.1)
+      media.report('Queued at the provider.', { providerJob: PROVIDER_JOB })
+      const mediaRecord: StoredJob = { id: mediaId, number: 1, tool: 'model_invoke', label: 'A fox', inputs: ['1'], hidesAssets: true, model: MODEL, timeoutMs: LONG.timeoutMs, providerJob: PROVIDER_JOB }
+      const localRecord: StoredJob = { id: localId, number: 2, tool: 'video', label: '', inputs: [], hidesAssets: false, timeoutMs: LONG.timeoutMs }
+      const { providerJob: _, ...mediaStart } = mediaRecord
+      expect(records).toStrictEqual([[mediaStart], [mediaStart, localRecord], [{ ...mediaRecord, cost: 0.4 }, localRecord]])
+
+      // An ended job counted its price, and stays open until a reader
+      // takes its result.
+      media.finish()
+      local.finish()
+      await settled()
+      expect(records.slice(3)).toStrictEqual([[mediaRecord, localRecord], [mediaRecord, localRecord]])
+      await jobs.wait(running(), { ids: [localId] })
+      expect(records.at(-1)).toStrictEqual([mediaRecord])
+
+      // A stop of all the jobs tells its end once.
+      const before = records.length
+      jobs.start('video', heldWork().work, LONG)
+      jobs.start('video', heldWork().work, LONG)
+      jobs.stopAll()
+      expect(records.slice(before + 2)).toStrictEqual([[]])
+    })
+
+    it('gives a job of a call that waits for it only when the wait passes', async () => {
+      const run = heldWork()
+      const waited = jobs.startWithWait('js_eval', run.work, LONG, 1000)
+      expect(records).toStrictEqual([])
+
+      await vi.advanceTimersByTimeAsync(1000)
+      const { started } = await waited as { started: { id: string } }
+      expect(records).toStrictEqual([[{ id: started.id, number: 1, tool: 'js_eval', label: '', inputs: [], hidesAssets: false, timeoutMs: LONG.timeoutMs }]])
+    })
+
+    it('makes the jobs of the records again: a job of a provider resumes, any other one fails as lost, and the numbers count on', async () => {
+      const counted: (number | null)[] = []
+      jobs = new TabJobs((usd) => counted.push(usd))
+      const held = heldWork()
+      const done = heldWork()
+      const resumed: string[] = []
+      const count = jobs.restore([
+        { id: 'j-aaaa', number: 2, tool: 'model_invoke', label: 'A fox', inputs: ['1'], hidesAssets: false, model: MODEL, timeoutMs: 1000, cost: 0.4, providerJob: PROVIDER_JOB },
+        // This job ended before the quit, and counted its price then.
+        { id: 'j-bbbb', number: 3, tool: 'model_invoke', label: 'A cat', inputs: [], hidesAssets: true, timeoutMs: LONG.timeoutMs, providerJob: { ...PROVIDER_JOB, jobId: 'q-2' } },
+        { id: 'j-cccc', number: 5, tool: 'video', label: 'join', inputs: ['2'], hidesAssets: false, timeoutMs: LONG.timeoutMs },
+      ], ({ id, providerJob }) => {
+        resumed.push(`${id} ${providerJob.jobId}`)
+        return providerJob.jobId === 'q-1' ? held.work : done.work
+      })
+
+      expect([count, resumed, jobs.heldCost]).toStrictEqual([2, ['j-aaaa q-1', 'j-bbbb q-2'], 0.4])
+      done.reportCost(0.9)
+      done.finish({ assets: [clip(URL_CLIP, URL_CLIP, 'q-2')] })
+      await settled()
+      const results = await jobs.wait(running(), { ids: ['j-bbbb', 'j-cccc'] })
+      expect(results).toStrictEqual([
+        { id: 'j-cccc', tool: 'video', status: 'failed', text: JOB_LOST_AT_QUIT_TEXT, assets: [], hidesAssets: false, call: { number: 5, label: 'join' } },
+        { id: 'j-bbbb', tool: 'model_invoke', status: 'finished', text: '', assets: [clip(URL_CLIP, URL_CLIP, 'q-2')], hidesAssets: true, call: { number: 3, label: 'A cat' } },
+      ])
+      expect(jobs.start('video', heldWork().work, LONG).number).toBe(6)
+
+      // All of the time limit again, and the held price counts at the end.
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(jobs.list()[0]).toMatchObject({ id: 'j-aaaa', status: 'timed out', cost: 0.4, call: { number: 2, label: 'A fox' }, inputs: ['1'] })
+      expect([counted, jobs.heldCost]).toStrictEqual([[0.4], 0])
     })
   })
 })

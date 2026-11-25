@@ -165,6 +165,13 @@ export const JOB_LIMIT_TEXT = `Dez did not start this job: ${MAX_OPEN_JOBS} jobs
   + 'Call jobs_wait: each result that it gives makes room for one new job. A job that you no longer need makes room too when you cancel it with job_cancel. '
   + 'Then make this call again.'
 
+/** The failed result of a job whose work Dez cannot go on with after a
+ *  restart (controller/jobs.ts, `TabJobs.restore`): Dez quit while the job
+ *  ran, or before a reader took its result. Only the job of a provider
+ *  goes on after a quit. */
+export const JOB_LOST_AT_QUIT_TEXT = 'Dez quit before you got the result of this job, and the result is lost. This is not a fault of the call. '
+  + 'Make the call again if the result is still needed.'
+
 // The time limits that a call can give its job. A shorter limit ends a
 // request before a provider can answer. The longest one is also far below
 // the most that a timer takes.
@@ -610,7 +617,7 @@ export function jobCancelText(named: readonly JobInfo[], cancelled: readonly str
  *  the reply; `knownIds` are the ids of its jobs. */
 export function unknownJobText(unknownIds: readonly string[], knownIds: readonly string[]): string {
   const names = `${unknownIds.length === 1 ? 'the id' : 'the ids'} ${unknownIds.map((id) => JSON.stringify(id)).join(', ')}`
-  const earlier = 'The jobs of an earlier reply that ended on its own ended with that reply, and no job lives through a close of the tab or a restart of Dez.'
+  const earlier = 'The jobs of an earlier reply that ended on its own ended with that reply, and no job lives through a close of the tab.'
   return knownIds.length === 0
     ? `This reply has started no job, so no job has ${names}. ${earlier} Use only the id of a job that you started in this reply.`
     : `No job of this reply has ${names}. ${earlier} The jobs of this reply are ${knownIds.join(', ')}: use only these ids.`
@@ -638,7 +645,8 @@ export const JOBS_WAIT_TOOL: ToolDefinition = {
     + 'The first line tells how many jobs still run: call `jobs_wait` again until none runs. Get the result of every job before you end your reply. '
     + 'A media request can wait for its turn at its provider, which takes only a few at one time: that wait does not count toward the time limit of its job. '
     + 'A stop of the user or a new message does not end the jobs: they count as jobs of the next reply, which gets their results with `jobs_wait`, and their numbers count on. '
-    + 'Dez ends them when the user closes the tab or quits Dez, and `job_cancel` ends the jobs that you name.',
+    + 'Dez ends them when the user closes the tab, and `job_cancel` ends the jobs that you name. '
+    + 'When Dez quits, the job of a provider (an image or a clip of `model_invoke`) goes on at the next start of Dez, and any other job ends as failed.',
   parameters: [
     {
       name: 'all',

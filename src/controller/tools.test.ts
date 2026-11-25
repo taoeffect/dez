@@ -11,7 +11,7 @@ import { jpegHeader } from '../model/chat/testing'
 import { toolBlockText } from '../model/chat/toolBlocks'
 import type { RequestPrice } from '../model/chat/moneyLimit'
 import type { ModelRef, Tab } from '../model/chat/types'
-import type { ModelCache } from '../model/persistence/types'
+import type { ModelCache, StoredProviderJob } from '../model/persistence/types'
 import { TooManyImagesError } from '../model/providers/clipImages'
 import { JobNotMadeError, InputImageError, ProviderHttpError } from '../model/providers/errors'
 import type { KnownLimit } from '../model/providers/knownLimits'
@@ -66,8 +66,8 @@ import type { ToolArguments, ToolRunResult } from '../model/tools/types'
 import { FFPROBE_TIMEOUT_MS } from '../model/tools/videoTool'
 import { ExplainedError } from '../utils/errorText'
 import type { RequestLogRow } from './diagnostics/requestLog'
-import { TabJobs, type JobOutcome } from './jobs'
-import { invokeModel } from './modelInvoke'
+import { TabJobs, type JobOutcome, type JobReport } from './jobs'
+import { invokeModel, resumeModelInvocation } from './modelInvoke'
 import type { BundledToolEnd } from './nativeTypes'
 import { APP_DIR, audioProgress, callContext, callingProgram, CLIP_FORMAT, CONVERSATION_WORK_FOLDER, deletedWorkFolder, ENDED, FILE_ID, H264_STREAM, heldWork, LONG, native, outputFolderHolds, resetNative, returns, running, showinfoLog, writes } from './testing'
 import type { ToolRunCall } from './tools'
@@ -1648,6 +1648,56 @@ describe('dez.controller/tools/run', () => {
         await jobTool('model_invoke', FILM)
         await jobTool('jobs_wait', { all: true })
         expect([costs, jobs.list().at(-1)?.cost]).toStrictEqual([[0.01, null, null], null])
+      })
+
+      // A restart of Dez asks the provider for the job again from what the
+      // report holds (`resumeModelInvocation`).
+      it('reports the provider\'s job when the provider runs the request as a job, with the quote and the price of the paid uploads', async () => {
+        generateMedia = async (input) => {
+          input.onProgress?.({ phase: 'uploaded', jobId: null, cost: 0.01 })
+          input.onProgress?.({ phase: 'sent', jobId: null, quote: 0.3 })
+          input.onProgress?.({ phase: 'queued', jobId: 'q-17', resume: { queue_id: 'q-17' } })
+          return { media: [], clips: [MADE_VIDEO] }
+        }
+        const reports: Array<Parameters<JobReport>[1]> = []
+        await invokeModel(invocationOf(FILM), { tabId, conversationId: CONVERSATION_ID }, new AbortController().signal, (_state, options) => reports.push(options), () => {}, () => {}, { toolsAllowed: false, checkMoney: () => {} })
+
+        expect(reports.flatMap((options) => options?.providerJob ?? [])).toStrictEqual([{ providerId: 'venice', modelId: 'filmer', kind: 'video', jobId: 'q-17', resume: { queue_id: 'q-17' }, quote: 0.3, uploadCost: 0.01 }])
+      })
+
+      describe('a job of an earlier start of Dez', () => {
+        const PROVIDER_JOB: StoredProviderJob = { providerId: 'venice', modelId: 'filmer', kind: 'video', jobId: 'q-17', resume: { queue_id: 'q-17' }, quote: 0.3, uploadCost: 0.01 }
+        const resume = (providerJob: StoredProviderJob, reportCost: (usd: number | null) => void = () => {}) =>
+          resumeModelInvocation(providerJob, 60_000)(new AbortController().signal, () => {}, reportCost, () => {}, jobs)
+
+        it('asks the provider for the job again with no new paid request, and gives its clip, with the cost of the uploads', async () => {
+          generateMedia = async () => ({ media: [], clips: [MADE_VIDEO], cost: 0.25 })
+          const costs: Array<number | null> = []
+
+          expect(await resume(PROVIDER_JOB, (usd) => costs.push(usd))).toStrictEqual({
+            text: '',
+            isError: false,
+            assets: [{ kind: 'clip', clip: { kind: 'video', type: 'video/mp4', src: TEMP_COPY, url: null, expires: MADE_VIDEO.expires }, jobId: 'q-17' }],
+          })
+          expect(mediaRequests).toMatchObject([{ providerId: 'venice', modelId: 'filmer', kind: 'video', resume: { data: { queue_id: 'q-17' }, quote: 0.3 }, timeoutMs: 60_000, reader: 'model' }])
+          expect(mediaRequests[0]).not.toHaveProperty('beforeSend')
+          expect(costs).toStrictEqual([0.26])
+        })
+
+        it('fails with the text of the failure and counts the cost that a job with nothing made tells', async () => {
+          generateMedia = async () => {
+            throw new ExplainedError('APIMart did not make the clip.', '', { cause: new JobNotMadeError('State: failed', 0) })
+          }
+          const costs: Array<number | null> = []
+
+          await expect(resume(PROVIDER_JOB, (usd) => costs.push(usd))).rejects.toThrow('The request to Filmer failed, and it made nothing. APIMart did not make the clip.')
+          expect(costs).toStrictEqual([0.01])
+        })
+
+        it('fails with a text for the model when the provider is gone, with no request', async () => {
+          await expect(resume({ ...PROVIDER_JOB, providerId: 'gone' })).rejects.toThrow('The provider of filmer is gone (the user deleted it, or Dez does not have it any more), so Dez cannot ask it for the output of this job. Its job id at the provider was q-17.')
+          expect(mediaRequests).toStrictEqual([])
+        })
       })
 
       describe('to a text model', () => {

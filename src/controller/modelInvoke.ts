@@ -1,11 +1,13 @@
 import sbp from '@sbp/sbp'
+import type { StoredProviderJob } from '../model/persistence/types'
 import { modelRefKey } from '../model/chat/modelRef'
 import { chatRequestPrice, type RequestPrice } from '../model/chat/moneyLimit'
 import { failedChatRequestCost, type ChatUsage } from '../model/providers/chatUsage'
 import { TooManyImagesError, tooManyImagesMessage } from '../model/providers/clipImages'
 import { InputImageError, isProviderRefusal, notMadeJobCost } from '../model/providers/errors'
+import { getProvider } from '../model/providers/registry'
 import type { MediaProgress, ProviderGenerateMediaResult, ProviderStreamChatResult } from '../model/providers/streamTypes'
-import type { GeneratedClip, GeneratedMedia, TranscriptTimes } from '../model/providers/types'
+import { isTextKind, type GeneratedClip, type GeneratedMedia, type ModelInfo, type TranscriptTimes } from '../model/providers/types'
 import { requestImageCount } from '../model/streams/pictureBudget'
 import type { StreamMessage } from '../model/streams/types'
 import { conversationWorkFolder } from '../model/tools/conversationWork'
@@ -32,7 +34,7 @@ import { ToolError } from '../model/tools/types'
 import { ExplainedError } from '../utils/errorText'
 import { logRequest } from './diagnostics/requestLog'
 import { chatClipParts } from './chatClips'
-import { discardMadeAssets, generatedClipAsset, type JobOutcome, type JobReport, type MadeAsset } from './jobs'
+import { discardMadeAssets, generatedClipAsset, type JobOutcome, type JobReport, type JobWork, type MadeAsset } from './jobs'
 
 // The request of a `model_invoke` call (model/tools/modelInvoke.ts), as the
 // work of a job of the reply (jobs.ts). This module registers no selector:
@@ -43,8 +45,9 @@ import { discardMadeAssets, generatedClipAsset, type JobOutcome, type JobReport,
 // text the calling model reads, for a failure that Dez knows (a refusal of
 // the money limit is one already). Any other error stays as it is, and the
 // job then tells only that Dez did not expect it (its text can hold a
-// local path).
-function invocationError({ model, imageIds }: ModelInvocation, error: unknown): unknown {
+// local path). `model` is the invoked model, and `imageIds` the id of each
+// input image by its path.
+function invocationError({ model, imageIds }: { model: Pick<ModelInfo, 'name'>, imageIds: ReadonlyMap<string, string> }, error: unknown): unknown {
   if (error instanceof ToolError) return error
   if (error instanceof InputImageError) {
     // Never the error's own text: it names the file, and the name of a
@@ -110,7 +113,9 @@ async function timesResultText({ provider, model, request }: MediaInvocation, co
 //   transcription asks for the times of its words, which go into a file in
 //   the work folder of `conversationId` (`timesResultText`).
 // - `report` gets each step of the request, with the provider's own job id
-//   as soon as there is one.
+//   as soon as there is one, and the provider's job (`JobReport`) when the
+//   provider runs the request as a job: a restart of Dez asks for it again
+//   (`resumeModelInvocation`).
 // - `reportCost` gets the quote when the request goes, then the cost of
 //   the result. A request that the provider refused counts 0, as a refused
 //   request costs nothing, and a job that the provider ended with nothing
@@ -128,6 +133,7 @@ async function invokeMediaModel(invocation: MediaInvocation, conversationId: str
   const { provider, model, kind, request, parameters, timeoutMs } = invocation
   report(INVOCATION_READS_INPUTS)
   let sent = false
+  let quote: number | undefined
   // The provider runs the request as a job of its own, which it bills.
   let queued = false
   // The price of the paid uploads; null when the price of one is unknown.
@@ -158,12 +164,27 @@ async function invokeMediaModel(invocation: MediaInvocation, conversationId: str
         }
         if (progress.phase === 'sent') {
           sent = true
+          quote = progress.quote
           reportWithUploads(progress.quote ?? null)
         }
-        if (progress.phase === 'queued') queued = true
+        let providerJob: StoredProviderJob | undefined
+        if (progress.phase === 'queued') {
+          queued = true
+          if (progress.jobId !== null && progress.resume && !isTextKind(kind)) {
+            providerJob = {
+              providerId: provider.id,
+              modelId: model.id,
+              kind,
+              jobId: progress.jobId,
+              resume: progress.resume,
+              ...(quote !== undefined && { quote }),
+              ...(uploadCost !== 0 && { uploadCost }),
+            }
+          }
+        }
         // A request that waits for its turn at the provider is a queued job,
         // whose time limit waits too; the next step ends the wait.
-        report(invocationStateText(provider.name, progress), { queued: progress.phase === 'waiting' })
+        report(invocationStateText(provider.name, progress), { queued: progress.phase === 'waiting', ...(providerJob && { providerJob }) })
       },
       reader: 'model',
     }) as ProviderGenerateMediaResult
@@ -174,12 +195,20 @@ async function invokeMediaModel(invocation: MediaInvocation, conversationId: str
     throw invocationError(invocation, error)
   }
   reportWithUploads(result.cost ?? null)
-  const assets = result.clips.map(generatedClipAsset)
-  // An abort cancelled the request, which can end the body of an image
-  // early: a cut image is never saved. A clip that still came is whole,
-  // and `TabJobs` deletes its temp copy.
-  if (signal.aborted) return { text: '', isError: false, assets }
+  const assets = await resultAssets(result, signal)
+  if (signal.aborted || result.text === undefined) return { text: '', isError: false, assets }
+  return { text: result.times ? await timesResultText(invocation, conversationId, result.text, result.times) : invocationTextResult(result.text), isError: false, assets }
+}
 
+// The images and the clips of a media request as the assets of its job: an
+// image is saved in the generated image folder, and a clip stays at the
+// provider's URL or in a temp copy, as in a reply of a media model. An
+// abort cancelled the request, which can end the body of an image early:
+// a cut image is never saved. A clip that still came is whole, and
+// `TabJobs` deletes its temp copy.
+async function resultAssets(result: ProviderGenerateMediaResult, signal: AbortSignal): Promise<MadeAsset[]> {
+  const assets = result.clips.map(generatedClipAsset)
+  if (signal.aborted) return assets
   try {
     for (const image of result.media) {
       assets.push({ kind: 'image', path: await sbp('dez.controller/images/save', image.bytes, image.mediaType, { folder: 'generated' }) as string })
@@ -189,8 +218,50 @@ async function invokeMediaModel(invocation: MediaInvocation, conversationId: str
     await discardMadeAssets(assets)
     throw new ToolError(IMAGE_NOT_SAVED_TEXT, '', { cause: error })
   }
-  if (result.text === undefined) return { text: '', isError: false, assets }
-  return { text: result.times ? await timesResultText(invocation, conversationId, result.text, result.times) : invocationTextResult(result.text), isError: false, assets }
+  return assets
+}
+
+/** The work of a `model_invoke` job of an earlier start of Dez, whose
+ *  provider ran its job while Dez was closed (`TabJobs.restore`): asks the
+ *  provider for the job `providerJob` again, with no new paid request
+ *  (`ProviderGenerateMediaInput.resume`), and gives what the job made as
+ *  the work of the first start does (`invokeModel`). `timeoutMs` is the
+ *  time limit of the job, which starts again. The job holds the price of
+ *  the first start (`StoredJob.cost`); `reportCost` gets the cost of the
+ *  result with the price of the uploads, as at the first start. A provider
+ *  that is gone (a deleted custom provider) fails the job with a text for
+ *  the model. */
+export function resumeModelInvocation(providerJob: StoredProviderJob, timeoutMs: number): JobWork {
+  return async (signal, report, reportCost) => {
+    const { providerId, modelId, kind, resume, quote, uploadCost = 0 } = providerJob
+    const provider = getProvider(providerId)
+    const model = { name: (sbp('dez.model/modelCache/model', providerId, modelId) as ModelInfo | null)?.name ?? modelId }
+    if (provider === null) {
+      throw new ToolError(`The provider of ${model.name} is gone (the user deleted it, or Dez does not have it any more), so Dez cannot ask it for the output of this job. `
+        + `Its job id at the provider was ${providerJob.jobId}. Tell the user, or call another model.`)
+    }
+    const reportWithUploads = (usd: number | null) => reportCost(uploadCost === null || usd === null ? null : uploadCost + usd)
+    let result: ProviderGenerateMediaResult
+    try {
+      result = await sbp('dez.provider/generateMedia', {
+        providerId,
+        modelId,
+        kind,
+        prompt: '',
+        resume: { data: resume, ...(quote !== undefined && { quote }) },
+        signal,
+        timeoutMs,
+        onProgress: (progress: MediaProgress) => report(invocationStateText(provider.name, progress)),
+        reader: 'model',
+      }) as ProviderGenerateMediaResult
+    } catch (error) {
+      const notMadeCost = notMadeJobCost(error)
+      if (notMadeCost !== undefined) reportWithUploads(notMadeCost)
+      throw invocationError({ model, imageIds: new Map() }, error)
+    }
+    reportWithUploads(result.cost ?? null)
+    return { text: '', isError: false, assets: await resultAssets(result, signal) }
+  }
 }
 
 // The one chat request of `invocation`, as the work of its job: the one

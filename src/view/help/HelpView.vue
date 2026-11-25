@@ -235,8 +235,11 @@ function onOverlayClick(event: MouseEvent) {
               message does
               not end the jobs of a reply: the next reply of the tab can wait for them and get their
               results. To end a job that you no longer need, ask the model to cancel it. A close of
-              the tab ends all its jobs. Dez saves each conversation: History
-              (<kbd>{{ keys.history }}</kbd>) opens it again.
+              the tab ends all its jobs. When you quit Dez while jobs run, the next start picks them
+              up: a job at a provider (an image or a clip that the provider makes over time) goes
+              on, and its result comes with your next message; the work of any other job is lost. A
+              reply of a clip model that waits for its clip goes on too. Dez saves each conversation:
+              History (<kbd>{{ keys.history }}</kbd>) opens it again.
             </p>
             <p>
               The Agent pill of a reply counts the seconds while the reply comes in, then shows how

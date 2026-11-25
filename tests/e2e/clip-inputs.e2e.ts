@@ -4,13 +4,13 @@ import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
 import { dropFiles, nativeDrop } from './harness/drops'
-import { appFilePath, filesIn, mediaTempDir, writeTestFile } from './harness/fixtures'
+import { appFilePath, conversationFilePath, filesIn, mediaTempDir, readAppState, writeTestFile } from './harness/fixtures'
 import { pasteImageReference, pngDataUrl, solidPng } from './harness/images'
 import { MP4_VIDEO, WEBM_VIDEO, answerVeniceJob, clipTag, shownPlayers, silentWav, startClipServer, tempClipTag, type ClipServer } from './harness/media'
 import { expectSendRefused, startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
-import { mockModelKey, startMockServer, type HeldRequest, type MockProvider, type MockServer } from './harness/mockServer'
+import { answerHeld, mockModelKey, startMockServer, type HeldRequest, type MockProvider, type MockServer } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { docPosPoint, editorDoc, focusEditor, newTab, openSeededConversation, openToasts, pasteText, pickModel, setCaret, submit, threadSections, waitForThread } from './harness/thread'
+import { activeConversationId, activeTabId, docPosPoint, editorDoc, focusEditor, newTab, openSeededConversation, openToasts, pasteText, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread } from './harness/thread'
 
 // Clips that a message holds or names with @id, driven through the real
 // app against a mock of Venice's media API
@@ -28,13 +28,17 @@ import { docPosPoint, editorDoc, focusEditor, newTab, openSeededConversation, op
 // - a model that takes no clip gets the request without the clips, and a
 //   warning toast tells that they were left out;
 // - an audio clip with no image and no video clip gets an error toast for
-//   a model whose audio clips need one, and no request goes.
+//   a model whose audio clips need one, and no request goes;
+// - a quit of Dez while a media reply waits for its job loses no paid
+//   clip: the next start asks the provider for the same job, writes the
+//   clip into the reply, and counts its price once.
 //
 // The clips of replies are temp copies. The video is an MP4 file (Venice
 // takes no WebM) that the computer can play, as each clip shows as a
 // player.
 //
 // One app session serves the whole file; each test starts in a new tab.
+// The last test starts the app again.
 
 const FILMS: MockProvider = { id: 'clipfilms', name: 'Clip Films Mock', modelId: 'frames-model', modelName: 'Frames Model' }
 const QUEUE_PATH = `/${FILMS.id}/v1/video/queue`
@@ -383,5 +387,47 @@ describe('clips that a message names', () => {
       { role: 'agent', text: beat },
       { role: 'user', text: 'Dance to @a' },
     ])
+  })
+
+  // A quit of Dez loses no paid clip: the record of the media reply is in
+  // app_state.json, and the next start asks the provider for its job again.
+  it('picks up a media reply after a quit: it asks the provider for the same job, writes the clip into the reply, and counts its price once', async () => {
+    await pickModel(browser, FILMS.name, FILMS.modelName)
+    const message = await pasteAtEnd(PNG, 'a')
+    await submit(browser, '')
+    const queue = await takeRequest(setup, QUEUE_PATH)
+    expect(JSON.parse(queue.body)).toMatchObject({ model: FILMS.modelId, image_url: pngDataUrl(PNG) })
+    answerHeld(queue.reply, 'application/json', JSON.stringify({ model: FILMS.modelId, queue_id: 'queue-9', status: 'QUEUED' }))
+    // The ask of this app for the state of the job: after the relaunch,
+    // only the asks of the new app wait.
+    await takeRequest(setup, RETRIEVE_PATH, { model: FILMS.modelId, queue_id: 'queue-9' })
+
+    // The record names the section of the reply, which the conversation
+    // file holds.
+    const conversationId = await activeConversationId(browser)
+    const record = async () => {
+      const reply = (await readAppState(setup.app.home))?.openJobs?.[conversationId]?.mediaReply
+      return reply && { sectionIndex: reply.sectionIndex, jobId: reply.providerJob.jobId, quote: reply.providerJob.quote }
+    }
+    await waitForValue(browser, 'record of the media reply', record, { sectionIndex: 1, jobId: 'queue-9', quote: 0.35 })
+    const file = conversationFilePath(setup.app.home, conversationId)
+    await waitForValue(browser, 'saved reply section', async () => (await fs.promises.readFile(file, 'utf8').catch(() => '')).includes('<dez:pill type="agent"'), true)
+
+    browser = await setup.relaunch()
+    await resetConsoleErrors(browser)
+    await waitForValue(browser, 'restored active tab', () => activeConversationId(browser), conversationId)
+    // The same job: no second request of the clip.
+    const retrieve = await takeRequest(setup, RETRIEVE_PATH, { model: FILMS.modelId, queue_id: 'queue-9' })
+    expect(setup.mock.hasWaitingRequest()).toBe(false)
+    answerHeld(retrieve.reply, 'video/webm', WEBM_VIDEO)
+
+    await waitForValue(browser, 'sections after the reply', async () => (await threadSections(browser)).length, 3)
+    const [user, reply, next] = await threadSections(browser)
+    expect([user, next]).toStrictEqual([{ role: 'user', text: message }, { role: 'user', text: '' }])
+    expect(reply.text).toMatch(new RegExp(String.raw`^<dez:video id="b" type="video/webm" src="[^"]+\.webm" expires="[^"]+" model="${mockModelKey(FILMS)}" job="queue-9"/>$`))
+    expect(await sbpCall(browser, 'dez.model/tabs/costNumbers', await activeTabId(browser))).toMatchObject({ cost: { usd: 0.35, requests: 1 } })
+    await waitForValue(browser, 'no record left', async () => (await readAppState(setup.app.home))?.openJobs?.[conversationId], undefined)
+    expect(await openToasts(browser, 'error')).toStrictEqual([])
+    expect(await consoleErrors(browser)).toStrictEqual([])
   })
 })

@@ -19,6 +19,26 @@ interface ProviderTurns {
 
 const turns = new Map<string, ProviderTurns>()
 
+// The turns of `providerId`, with `limit` as its cap now.
+function providerTurns(providerId: string, limit: number): ProviderTurns {
+  const entry = turns.get(providerId) ?? { running: 0, limit, waiting: [] }
+  turns.set(providerId, entry)
+  entry.limit = limit
+  return entry
+}
+
+// The end of one turn of `entry`, which runs once, however many times it is
+// called.
+function turnEnd(providerId: string, entry: ProviderTurns): () => void {
+  let ended = false
+  return () => {
+    if (ended) return
+    ended = true
+    entry.running--
+    admit(providerId, entry)
+  }
+}
+
 // Gives the next calls that wait their turns, while the provider has room.
 function admit(providerId: string, entry: ProviderTurns): void {
   while (entry.waiting.length > 0 && entry.running < entry.limit) {
@@ -37,18 +57,10 @@ function admit(providerId: string, entry: ProviderTurns): void {
  *  place in the tick of its call. */
 export async function takeMediaTurn(providerId: string, limit: number, signal: AbortSignal | undefined, onWait: () => void): Promise<() => void> {
   signal?.throwIfAborted()
-  const entry = turns.get(providerId) ?? { running: 0, limit, waiting: [] }
-  turns.set(providerId, entry)
-  entry.limit = limit
+  const entry = providerTurns(providerId, limit)
   // A larger cap of a changed config gives turns to the calls that wait.
   if (entry.waiting.length > 0) admit(providerId, entry)
-  let ended = false
-  const end = () => {
-    if (ended) return
-    ended = true
-    entry.running--
-    admit(providerId, entry)
-  }
+  const end = turnEnd(providerId, entry)
   if (entry.waiting.length === 0 && entry.running < limit) {
     entry.running++
     return end
@@ -70,4 +82,15 @@ export async function takeMediaTurn(providerId: string, limit: number, signal: A
     entry.waiting.push(waiter)
     signal?.addEventListener('abort', onAbort, { once: true })
   })
+}
+
+/** A turn of the provider `providerId` at once, also over its cap `limit`:
+ *  for a job that the provider runs already (a resume after a restart of
+ *  Dez), which sends no new paid request. The turn still counts, so new
+ *  calls wait while it runs. Gives the end of the turn, as `takeMediaTurn`
+ *  does. */
+export function takeMediaTurnNow(providerId: string, limit: number): () => void {
+  const entry = providerTurns(providerId, limit)
+  entry.running++
+  return turnEnd(providerId, entry)
 }

@@ -1,9 +1,10 @@
 import sbp from '@sbp/sbp'
 import { tempMediaFile } from '../model/chat/mediaFiles'
 import { isSavedMediaPath, type MediaTagData } from '../model/chat/mediaTags'
+import type { StoredJob, StoredProviderJob } from '../model/persistence/types'
 import type { ModelRef } from '../model/chat/types'
 import type { GeneratedClip } from '../model/providers/types'
-import { hasJobResult, JOB_LIMIT_TEXT, jobTimedOutText, MAX_OPEN_JOBS, newJobId, type JobCall, type JobInfo, type JobResultStatus, type JobStatus, type WrittenJobAsset } from '../model/tools/jobs'
+import { hasJobResult, JOB_LIMIT_TEXT, JOB_LOST_AT_QUIT_TEXT, jobTimedOutText, MAX_OPEN_JOBS, newJobId, type JobCall, type JobInfo, type JobResultStatus, type JobStatus, type WrittenJobAsset } from '../model/tools/jobs'
 import { unexpectedToolErrorText } from '../model/tools/registry'
 import { ToolError } from '../model/tools/types'
 import type { ToolRunContext } from './tools'
@@ -65,11 +66,15 @@ export interface JobOutcome {
  *  a job that timed out ends with it. A report with `queued` tells that
  *  the work waits for its turn at a provider (mediaTurns.ts): the job is
  *  `queued` in `jobs_list` (`JobInfo.queued`), and its time limit stops
- *  until the next report, which has no `queued`. `reportCost` keeps the
- *  price in USD of the paid request of the work (`JobInfo.cost`; null: no
- *  price is known), for the spend line of `jobs_list`: a work that sends a
- *  paid request calls it when the request goes, and again when its price
- *  is final. A work that sends none never calls it.
+ *  until the next report, which has no `queued`. A report with
+ *  `providerJob` tells the job of a provider that the work waits for: the
+ *  record of the open jobs holds it (`TabJobs`, `onChange`), so that the
+ *  next start of Dez can ask the provider for it again (`restore`).
+ *  `reportCost` keeps the price in USD of the paid request of the work
+ *  (`JobInfo.cost`; null: no price is known), for the spend line of
+ *  `jobs_list`: a work that sends a paid request calls it when the request
+ *  goes, and again when its price is final. A work that sends none never
+ *  calls it.
  *
  *  The work makes its files, but writes nothing into the reply: a job can
  *  end while the model writes text, and the asset of a tool goes after the
@@ -94,7 +99,7 @@ export type JobWork = (
 ) => Promise<JobOutcome>
 
 /** The `report` of a `JobWork`. */
-export type JobReport = (state: string, options?: { queued?: boolean }) => void
+export type JobReport = (state: string, options?: { queued?: boolean, providerJob?: StoredProviderJob }) => void
 
 /** The options of a job start (`ToolJobs.start`). `timedOutText` gives
  *  the result of the job when its time limit passes, from the limit and
@@ -194,6 +199,8 @@ interface Job extends Omit<EndedJob, 'status' | 'assets' | 'call'> {
   number: number | null
   // The label of its call (`JobCall.label`).
   label: string
+  // The job of a provider that the work waits for (`JobReport`).
+  providerJob?: StoredProviderJob
 }
 
 // A job that has its number, so the views can hold it (`Job.number`).
@@ -327,10 +334,72 @@ export class TabJobs implements ToolJobs {
   // view (`Job.number`).
   private readonly modelView: JobView = (job) => isNumbered(job) && (job.scope === null || this.jobs.get(job.scope)?.status !== 'running')
 
+  // While above 0, `changed` tells nothing: a change of many jobs at once
+  // (`stopAll`) tells its end once.
+  private changesHeld = 0
+
   /** `onCost` gets the price of each job that sent a paid request
    *  (`JobInfo.cost`) once, at the end of the job: the last price that its
-   *  work reported before that end. */
-  constructor(private readonly onCost: (usd: number | null) => void = () => {}) {}
+   *  work reported before that end. `onChange` gets the open jobs as
+   *  records (`StoredJob`) at each change of them: the caller stores them,
+   *  so that the next start of Dez finds them (`restore`). */
+  constructor(
+    private readonly onCost: (usd: number | null) => void = () => {},
+    private readonly onChange: (jobs: StoredJob[]) => void = () => {},
+  ) {}
+
+  // Gives `onChange` the open numbered jobs, in the order of the starts:
+  // the jobs that run, and those whose result waits for a reader. A job
+  // with no number is in no view, so in no record (`Job.number`). The
+  // record holds the price only of a job that runs and waits for a
+  // provider: an ended job counted its price (`end`), and the work of any
+  // other job is lost at a quit.
+  private changed(): void {
+    if (this.changesHeld > 0) return
+    const open = [...this.jobs.values()].filter((job): job is NumberedJob => isNumbered(job) && (job.status === 'running' || this.unread.includes(job)))
+    this.onChange(open.map((job) => ({
+      id: job.id,
+      number: job.number,
+      tool: job.tool,
+      label: job.label,
+      inputs: [...job.inputs],
+      hidesAssets: job.hidesAssets,
+      ...(job.model && { model: job.model }),
+      timeoutMs: job.timeoutMs,
+      ...(job.status === 'running' && job.providerJob && job.cost !== undefined && { cost: job.cost }),
+      ...(job.providerJob && { providerJob: job.providerJob }),
+    })))
+  }
+
+  /** Makes the open jobs of the tab at an earlier start of Dez again, from
+   *  their records (`onChange`), as jobs of the model, with their ids,
+   *  their numbers, their calls, their inputs, and their models: so the
+   *  model of the next reply reads them as before. Call it on a new
+   *  `TabJobs`, before any start: the next job gets the number after the
+   *  largest one. A job of a provider runs `resume(record)` as its work,
+   *  with all of its time limit again. It holds its stored price
+   *  (`heldCost`) and counts it at its end, except a job that counted it
+   *  before the quit (its record has no `cost`): it counts nothing. Any
+   *  other job ends as failed, with `JOB_LOST_AT_QUIT_TEXT`, and counts
+   *  nothing. Gives how many jobs of a provider resumed. */
+  restore(records: readonly StoredJob[], resume: (record: StoredJob & Required<Pick<StoredJob, 'providerJob'>>) => JobWork): number {
+    let resumed = 0
+    for (const record of records) {
+      this.lastNumber = Math.max(this.lastNumber, record.number)
+      const { providerJob, cost } = record
+      const options: JobOptions = { timeoutMs: record.timeoutMs, hidesAssets: record.hidesAssets, label: record.label, inputs: record.inputs, ...(record.model && { model: record.model }) }
+      if (providerJob === undefined) {
+        this.launch(null, record.tool, async () => ({ text: JOB_LOST_AT_QUIT_TEXT, isError: true, assets: [] }), options, record.number, { id: record.id })
+        continue
+      }
+      resumed++
+      const work = resume({ ...record, providerJob })
+      // A job whose price counted before the quit must not count it again.
+      const counted: JobWork = (signal, report, _reportCost, keepAsset, jobs) => work(signal, report, () => {}, keepAsset, jobs)
+      this.launch(null, record.tool, cost === undefined ? counted : work, options, record.number, { id: record.id, providerJob, ...(cost !== undefined && { cost }) })
+    }
+    return resumed
+  }
 
   /** The ids of the agent sections of the replies that took these jobs:
    *  the replies that the user cut (a stop, a new submit, a delete of
@@ -412,6 +481,7 @@ export class TabJobs implements ToolJobs {
     // number.
     const number = this.nextNumber()
     const job = this.launch(scope, tool, work, options, number)
+    this.changed()
     return { id: job.id, number }
   }
 
@@ -464,6 +534,7 @@ export class TabJobs implements ToolJobs {
     if (passed) {
       const number = this.nextNumber()
       job.number = number
+      this.changed()
       return { started: { id: job.id, number } }
     }
     const { status } = job
@@ -484,11 +555,19 @@ export class TabJobs implements ToolJobs {
   }
 
   // Starts a job with the number `number` (`Job.number`) of the scope
-  // `scope` (`Job.scope`), and gives it.
-  private launch(scope: string | null, tool: string, work: JobWork, options: JobOptions, number: number | null): Job {
+  // `scope` (`Job.scope`), and gives it. `restored`: the id, the held price,
+  // and the provider job of a job of an earlier start of Dez (`restore`).
+  private launch(
+    scope: string | null,
+    tool: string,
+    work: JobWork,
+    options: JobOptions,
+    number: number | null,
+    restored?: Pick<Job, 'id' | 'cost' | 'providerJob'>,
+  ): Job {
     const { timeoutMs, hidesAssets = false, model, label = '', inputs = [], timedOutText = jobTimedOutText } = options
     const job: Job = {
-      id: newJobId((id) => this.jobs.has(id)),
+      id: restored?.id ?? newJobId((id) => this.jobs.has(id)),
       tool,
       hidesAssets,
       ...(model && { model }),
@@ -510,6 +589,8 @@ export class TabJobs implements ToolJobs {
       queued: false,
       inputs,
       scope,
+      ...(restored?.cost !== undefined && { cost: restored.cost }),
+      ...(restored?.providerJob && { providerJob: restored.providerJob }),
     }
     this.jobs.set(job.id, job)
     this.runLimit(job)
@@ -525,6 +606,10 @@ export class TabJobs implements ToolJobs {
       if (job.status !== 'running') return
       job.state = state
       this.setQueued(job, options?.queued === true)
+      if (options?.providerJob) {
+        job.providerJob = options.providerJob
+        this.changed()
+      }
     }, (usd) => {
       if (job.status === 'running') job.cost = usd
     }, (asset) => {
@@ -611,6 +696,7 @@ export class TabJobs implements ToolJobs {
     }
     if (hasJobResult(status) && isNumbered(job)) this.unread.push(job)
     if (job.cost !== undefined) this.onCost(job.cost)
+    if (isNumbered(job)) this.changed()
     for (const wake of [...this.waits]) wake()
   }
 
@@ -623,6 +709,7 @@ export class TabJobs implements ToolJobs {
     const kept: NumberedJob[] = []
     for (const job of this.unread) (view(job) && (!wanted || wanted.has(job.id)) ? taken : kept).push(job)
     this.unread.splice(0, this.unread.length, ...kept)
+    if (taken.length > 0) this.changed()
     return taken.map((job) => {
       job.delivered = true
       return { ...resultOf(job, job.status as JobResultStatus), call: { number: job.number, label: job.label } }
@@ -754,9 +841,15 @@ export class TabJobs implements ToolJobs {
    *  stopped, and no job starts after this. */
   stopAll(): void {
     this.stopped = true
-    for (const job of this.jobs.values()) {
-      if (job.status === 'running') this.end(job, 'stopped')
+    this.changesHeld++
+    try {
+      for (const job of this.jobs.values()) {
+        if (job.status === 'running') this.end(job, 'stopped')
+      }
+    } finally {
+      this.changesHeld--
     }
     for (const job of this.unread.splice(0)) void discardMadeAssets(job.assets)
+    this.changed()
   }
 }

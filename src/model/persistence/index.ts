@@ -160,9 +160,13 @@ export default sbp('sbp/selectors/register', {
     }
   },
 
+  // The writes go one after another (as the prompts do): two Tauri calls
+  // can end out of order, and an old state must never land last. The open
+  // jobs (`openJobs`) save at each change, so writes come close together.
   async 'dez.persistence/saveAppState' (state: AppStatePayload): Promise<void> {
     try {
-      await sbp('dez.native/saveAppFile', APP_STATE_FILE, serializeAppStateJson(state))
+      const snapshot = serializeAppStateJson(state)
+      await sbp('okTurtles.eventQueue/queueEvent', 'dez.persistence/appState', ['dez.native/saveAppFile', APP_STATE_FILE, snapshot])
     } catch (error) {
       console.error('Failed to save app state:', error)
       throw error

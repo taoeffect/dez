@@ -1,6 +1,7 @@
 import { bytesToBase64 } from '../../utils/base64'
 import { byteSizeText } from '../../utils/byteSize'
 import { ExplainedError } from '../../utils/errorText'
+import type { JsonObject } from '../../utils/json'
 import { sanitizeErrorText } from '../../utils/protocol/errors'
 import { responseContentType, type NativeHttpResponseHead } from '../../utils/protocol/nativeHttp'
 import type { ImageSize } from '../chat/imageDrawing'
@@ -153,6 +154,11 @@ export interface ClipJob {
   // What the JSON of a 2xx response to `poll` tells. Throws for a job that
   // failed, and for a state that the format does not know.
   state(data: unknown): 'running' | ClipLocation
+  // The first response, cut down to what the format's `job` reads: `job`
+  // with it gives this job again, after a restart of Dez
+  // (`ProviderGenerateMediaInput.resume`). It is saved in app_state.json,
+  // so it holds no text of the request.
+  resume: JsonObject
 }
 
 // Images that the provider makes after its first response (a task).
@@ -165,6 +171,8 @@ export interface ImageJob {
   // the provider's own price of the job (`AnswerCost`). Throws for a job
   // that failed, and for a state that the format does not know.
   state(data: unknown): 'running' | ({ fileUrls: readonly [string, ...string[]] } & AnswerCost)
+  // As `ClipJob.resume`.
+  resume: JsonObject
 }
 
 // The parts of the image requests of a media API that do not depend on
@@ -1049,6 +1057,7 @@ const veniceFormat: MediaFormat = {
       const retrievePath = kind === 'voiceChange' ? 'audio/voice-changer/retrieve' : `${CLIP_KINDS[kind]}/retrieve`
       return {
         id: queueId,
+        resume: { queue_id: queueId, ...(downloadUrl !== null && { download_url: downloadUrl }) },
         poll: {
           url: `${trimTrailingSlashes(baseUrl)}/${retrievePath}`,
           body: { model: modelId, queue_id: queueId },
@@ -2048,6 +2057,7 @@ const openRouterFormat: MediaFormat = {
       const jobUrl = `${trimTrailingSlashes(baseUrl)}/videos/${encodeURIComponent(id)}`
       return {
         id,
+        resume: { id },
         poll: { url: jobUrl },
         state: (poll) => {
           const status = isRecord(poll) ? poll.status : undefined

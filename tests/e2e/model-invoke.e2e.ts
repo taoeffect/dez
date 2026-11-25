@@ -3,17 +3,17 @@ import path from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import { stoppedToolResult } from '../../src/model/streams/toolRound'
-import { jobCancelText, jobStartedText, jobsWaitResults, jobsWaitText, startedJobId, type JobInfo } from '../../src/model/tools/jobs'
+import { JOB_LOST_AT_QUIT_TEXT, jobCancelText, jobStartedText, jobsWaitResults, jobsWaitText, startedJobId, type JobInfo } from '../../src/model/tools/jobs'
 import { invocationAnswerText } from '../../src/model/tools/modelInvoke'
 import { click, consoleErrors, movePointer, pointerClick, pointerClickAt, promptMessage, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
-import { appFilePath, conversationFilePath, filesIn, mediaTempDir, newFileIn, readModelCache, storedFileName } from './harness/fixtures'
+import { appFilePath, conversationFilePath, filesIn, mediaTempDir, newFileIn, readAppState, readModelCache, storedFileName } from './harness/fixtures'
 import { generatedImagesDir, pasteImageReference, pngDataUrl, shownImages, solidPng } from './harness/images'
 import { startedJob, waitCall } from './harness/jobs'
 import { finishVeniceJob, shownPlayers, silentWav, type ShownPlayer } from './harness/media'
 import { startMockProviderApp, takeRequestTo, type MockProviderApp } from './harness/mockProviderApp'
 import { answerHeld, mockChatPath, mockModelKey, openAiToolCall, replyText, sendChatReply, sendToolCalls, startEventStream, toolResult, writeChatFrame, type HeldRequest, type MockProvider } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeConversationId, activeTabStreaming, assetModelLabels, assetPartPoint, busyDotsShown, docPos, editorDoc, endedReply, focusEditor, newTab, openToasts, setCaret, submit, threadSections, waitForThread } from './harness/thread'
+import { activeConversationId, activeTabId, activeTabStreaming, assetModelLabels, assetPartPoint, busyDotsShown, docPos, editorDoc, endedReply, focusEditor, newTab, openToasts, sbpCall, setCaret, submit, threadSections, waitForThread } from './harness/thread'
 import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolChip, revealingPart, toolChips, toolPanel } from './harness/toolChips'
 
 // The `model_invoke` tool, driven through the real app against a mock chat
@@ -66,11 +66,16 @@ import { hiddenAssetNotes, hiddenPart, hidingPart, intermediateParts, pressToolC
 //   hidden after a relaunch, and under the chip of a stopped reply when the
 //   next reply takes its job. A new call of the same tool that changes the
 //   summary of the chip keeps the chip and its player;
-// - the answer of a text model to such a call shows in the panel too.
+// - the answer of a text model to such a call shows in the panel too;
+// - a quit of Dez loses no paid job: after a relaunch, the job of a
+//   provider asks the provider for the same job again, any other job
+//   fails with a text that tells of the quit, a toast tells the user, and
+//   the next reply takes the results. The price counts once, and no record
+//   is left.
 // No request holds a path of the test HOME.
 //
 // One app session serves the whole file; each test starts in a new tab.
-// The last test starts the app again.
+// The last two tests start the app again.
 
 const CALLER: MockProvider = { id: 'caller', name: 'Caller Mock', modelId: 'caller-model', modelName: 'Caller Model' }
 const STUDIO: MockProvider = { id: 'studio', name: 'Studio Mock', modelId: 'paint-model', modelName: 'Paint Model' }
@@ -953,6 +958,68 @@ describe('model_invoke', () => {
     expect(await hiddenPart(browser, 0)).toBeNull()
     expect((await toolPanel(browser, 0))?.result).toBe(started)
     expect(await shownImages(browser)).toStrictEqual([])
+    expect(await openToasts(browser, 'error')).toStrictEqual([])
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  // A quit of Dez loses no paid job: the open jobs of a conversation are
+  // in app_state.json, and the next start picks them up.
+  it('picks up the jobs of a conversation after a quit: the song job asks the provider again for its queue id, the job of the text model fails, and the next reply takes both results', async () => {
+    await submit(browser, 'Make a song, and ask the helper.')
+    const first = await requestTo(CHAT_PATH)
+    sendToolCalls(first.reply, [
+      openAiToolCall('call_song', 'model_invoke', { model: mockModelKey(STUDIO, SONG_MODEL.id), prompt: 'A slow song' }),
+      askCall('call_ask', 'Tell a story.'),
+    ])
+    const queue = await requestTo(QUEUE_PATH, { model: SONG_MODEL.id, prompt: 'A slow song' })
+    await requestTo(HELPER_PATH)
+    const second = await requestTo(CHAT_PATH)
+    const songJob = startedJob(second, 'call_song')
+    const askJob = startedJob(second, 'call_ask')
+    answerHeld(queue.reply, 'application/json', JSON.stringify({ model: SONG_MODEL.id, queue_id: 'queue-1', status: 'QUEUED' }))
+    // The ask of this app for the state of the job: after the relaunch,
+    // only the asks of the new app wait.
+    await requestTo(RETRIEVE_PATH, { model: SONG_MODEL.id, queue_id: 'queue-1' })
+
+    // The record of each open job, with the job of the provider and its
+    // price, and the conversation file with the blocks of the calls.
+    const conversationId = await activeConversationId(browser)
+    const records = async () => (await readAppState(setup.app.home))?.openJobs?.[conversationId]?.jobs?.map((job) => ({ id: job.id, cost: job.cost, queueId: job.providerJob?.jobId }))
+    await waitForValue(browser, 'records of the open jobs', records, [{ id: songJob, cost: 0.05, queueId: 'queue-1' }, { id: askJob, cost: undefined, queueId: undefined }])
+    const file = conversationFilePath(setup.app.home, conversationId)
+    await waitForValue(browser, 'saved calls', async () => (await fs.promises.readFile(file, 'utf8').catch(() => '')).includes('id="call_ask"'), true)
+
+    browser = await setup.relaunch()
+    await resetConsoleErrors(browser)
+    await waitForValue(browser, 'restored active tab', () => activeConversationId(browser), conversationId)
+    await waitForValue(browser, 'toast of the jobs', () => openToasts(browser), [{
+      title: 'Jobs picked up',
+      message: 'Dez quit while 2 jobs of this conversation ran. 1 goes on at its provider, and the work of the other is lost. Send a message to get the results.',
+    }])
+    // The cut reply ends as a stopped one: the user writes after it.
+    expect((await threadSections(browser)).map((section) => section.role)).toStrictEqual(['user', 'agent', 'user'])
+
+    await submit(browser, 'Go on.')
+    const third = await requestTo(CHAT_PATH)
+    sendToolCalls(third.reply, [waitCall('call_wait', true)])
+    // The same job: no second request of the song.
+    const retrieve = await requestTo(RETRIEVE_PATH, { model: SONG_MODEL.id, queue_id: 'queue-1' })
+    expect(setup.mock.hasWaitingRequest()).toBe(false)
+    answerHeld(retrieve.reply, 'audio/wav', SONG_WAV)
+
+    const fourth = await requestTo(CHAT_PATH)
+    expect(toolResult(fourth, 'call_wait')).toBe(jobsWaitText([
+      { id: askJob, tool: 'model_invoke', status: 'failed', text: JOB_LOST_AT_QUIT_TEXT, call: { number: 2, label: 'Tell a story.' } },
+      { id: songJob, tool: 'model_invoke', status: 'finished', text: 'Made the audio clip @a.', call: { number: 1, label: 'A slow song' } },
+    ], 0))
+    await sendChatReply(fourth.reply, CALLER.modelName)
+
+    // The reply after the cut one and the message "Go on.".
+    const reply = await endedReply(browser, 3)
+    expect(reply).toMatch(new RegExp(String.raw`<dez:audio id="a" type="audio\/wav" src="[^"]+\.wav" expires="[^"]+" tool="model_invoke" ${SONG_MARK} job="queue-1" made-by="${songJob}"\/>`))
+    // The price of the song counts once, at the end of its job.
+    expect(await sbpCall(browser, 'dez.model/tabs/costNumbers', await activeTabId(browser))).toMatchObject({ cost: { usd: 0.05 } })
+    await waitForValue(browser, 'no record left', async () => (await readAppState(setup.app.home))?.openJobs?.[conversationId], undefined)
     expect(await openToasts(browser, 'error')).toStrictEqual([])
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
