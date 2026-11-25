@@ -8,15 +8,15 @@ const whole = (width: number, height: number) => ({ x: 0, y: 0, width, height })
 
 describe('imageSizeRules', () => {
   it('keeps each value that can be a limit', () => {
-    const rules = { minShortSide: 300, minAspectRatio: 0.4, maxAspectRatio: 2.5, maxPixels: 33_177_600 }
+    const rules = { minShortSide: 300, maxLongSide: 6000, minAspectRatio: 0.4, maxAspectRatio: 2.5, maxPixels: 33_177_600 }
 
     expect(imageSizeRules(rules)).toStrictEqual(rules)
   })
 
   it('drops a value that cannot be a limit, and keeps the others', () => {
     expect([
-      imageSizeRules({ minShortSide: 299.5, minAspectRatio: '0.4', maxAspectRatio: 2.5, maxPixels: -1 }),
-      imageSizeRules({ minShortSide: 240, minAspectRatio: 0, maxAspectRatio: null, maxPixels: Infinity }),
+      imageSizeRules({ minShortSide: 299.5, maxLongSide: 5760.5, minAspectRatio: '0.4', maxAspectRatio: 2.5, maxPixels: -1 }),
+      imageSizeRules({ minShortSide: 240, maxLongSide: 0, minAspectRatio: 0, maxAspectRatio: null, maxPixels: Infinity }),
     ]).toStrictEqual([{ maxAspectRatio: 2.5 }, { minShortSide: 240 }])
   })
 
@@ -60,6 +60,7 @@ describe('imageFit', () => {
     ['inside every rule', { width: 800, height: 600 }, { ...VIDEO_RULES, maxPixels: 1_000_000 }],
     ['with exactly the least short side', { width: 300, height: 700 }, VIDEO_RULES],
     ['with exactly the most pixels', { width: 7680, height: 4320 }, { maxPixels: 33_177_600 }],
+    ['with exactly the longest side', { width: 3000, height: 5760 }, { maxLongSide: 5760 }],
     ['one pixel inside the lower ratio limit', { width: 400, height: 999 }, VIDEO_RULES],
     ['one pixel inside the upper ratio limit', { width: 999, height: 400 }, VIDEO_RULES],
     ['under no rule', { width: 1, height: 5000 }, {}],
@@ -81,6 +82,30 @@ describe('imageFit', () => {
     // The scale is √(33,177,600 / 48,000,000) = 0.8313…: 6651.07 × 4988.30.
     expect(imageFit({ width: 8000, height: 6000 }, { maxPixels: 33_177_600 }))
       .toStrictEqual({ crop: whole(8000, 6000), width: 6651, height: 4988 })
+  })
+
+  // A side limit with no pixel limit: a wide image under 5760² pixels can
+  // still have a side over 5760.
+  it.each([
+    ['a wide image', { width: 8000, height: 4000 }, { width: 5760, height: 2880 }],
+    ['a tall image', { width: 4000, height: 8000 }, { width: 2880, height: 5760 }],
+    ['a square image, at its full size', { width: 6000, height: 6000 }, { width: 5760, height: 5760 }],
+    // 8437 × (5760 / 8437) is just under 5760.
+    ['an image whose scale is not exact', { width: 8437, height: 4000 }, { width: 5760, height: 2730 }],
+  ])('scales %s with a side over the limit down until its longer side has the most length', (_name, size, drawn) => {
+    expect(imageFit(size, { minShortSide: 256, maxLongSide: 5760, minAspectRatio: 0.4, maxAspectRatio: 2.5 }))
+      .toStrictEqual({ crop: whole(size.width, size.height), ...drawn })
+  })
+
+  it('scales an image down by the side limit or the pixel limit, whichever needs the smaller size', () => {
+    expect([
+      imageFit({ width: 8000, height: 4000 }, { maxLongSide: 5760, maxPixels: 30_000_000 }),
+      // The scale is √(10,000,000 / 32,000,000) = 0.5590…: 4472.14 × 2236.07.
+      imageFit({ width: 8000, height: 4000 }, { maxLongSide: 5760, maxPixels: 10_000_000 }),
+    ]).toStrictEqual([
+      { crop: whole(8000, 4000), width: 5760, height: 2880 },
+      { crop: whole(8000, 4000), width: 4472, height: 2236 },
+    ])
   })
 
   // The limits are not allowed themselves, so the crop goes one pixel past

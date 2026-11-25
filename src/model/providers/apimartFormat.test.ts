@@ -128,16 +128,16 @@ describe('apimart video images', () => {
   it('gives a model of the doc facts two frames, or its references when the user chooses them', () => {
     expect(apimartFormat.imageRules?.('video', videoEntry('MiniMax-H3'), undefined)).toStrictEqual({
       maxImages: 2,
-      size: { minShortSide: 256, minAspectRatio: 0.4, maxAspectRatio: 2.5, maxPixels: 5760 ** 2 },
+      size: { minShortSide: 256, maxLongSide: 5760, minAspectRatio: 0.4, maxAspectRatio: 2.5 },
       whenParameter: {
         name: 'images_as',
         value: 'references',
-        rules: { maxImages: 5, size: { minShortSide: 256, minAspectRatio: 0.4, maxAspectRatio: 2.5, maxPixels: 5760 ** 2 }, references: {} },
+        rules: { maxImages: 5, size: { minShortSide: 256, maxLongSide: 5760, minAspectRatio: 0.4, maxAspectRatio: 2.5 }, references: {} },
       },
     })
     expect(apimartFormat.imageRules?.('video', videoEntry('seedance-2-5-flash'), undefined)?.whenParameter?.rules).toStrictEqual({
       maxImages: 10,
-      size: { minShortSide: 300, minAspectRatio: 0.4, maxAspectRatio: 2.5, maxPixels: 36_000_000 },
+      size: { minShortSide: 300, maxLongSide: 6000, minAspectRatio: 0.4, maxAspectRatio: 2.5 },
       references: { promptName: '@图片{n}' },
     })
   })

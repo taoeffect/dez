@@ -44,6 +44,8 @@ export function chatImageDrawing(size: ImageSize, mediaType: ImageMediaType): Im
 export interface ImageSizeRules {
   // The least length in pixels of the shorter side.
   minShortSide?: number
+  // The most length in pixels of the longer side.
+  maxLongSide?: number
   // The limits of width / height. The ratio must be between them: an image
   // with exactly `minAspectRatio` or `maxAspectRatio` breaks the rule
   // (Venice: "exclusive (0.4, 2.5)").
@@ -71,17 +73,19 @@ export function positiveLimit(value: unknown, whole: boolean): number | undefine
 
 /** The rules that the values of a provider's model data give, each under
  *  the name of its rule. A value that cannot be a limit (not a number above
- *  zero; pixels that are not whole) gives no rule, and neither do two
- *  ratio limits with no ratio between them. Undefined when no rule is
+ *  zero; sides or pixels that are not whole) gives no rule, and neither do
+ *  two ratio limits with no ratio between them. Undefined when no rule is
  *  left. */
 export function imageSizeRules(values: { readonly [Rule in keyof ImageSizeRules]?: unknown }): ImageSizeRules | undefined {
   const rules: ImageSizeRules = {}
   const minShortSide = positiveLimit(values.minShortSide, true)
+  const maxLongSide = positiveLimit(values.maxLongSide, true)
   const minAspectRatio = positiveLimit(values.minAspectRatio, false)
   const maxAspectRatio = positiveLimit(values.maxAspectRatio, false)
   const maxPixels = positiveLimit(values.maxPixels, true)
   const ratiosAgree = minAspectRatio === undefined || maxAspectRatio === undefined || minAspectRatio < maxAspectRatio
   if (minShortSide !== undefined) rules.minShortSide = minShortSide
+  if (maxLongSide !== undefined) rules.maxLongSide = maxLongSide
   if (minAspectRatio !== undefined && ratiosAgree) rules.minAspectRatio = minAspectRatio
   if (maxAspectRatio !== undefined && ratiosAgree) rules.maxAspectRatio = maxAspectRatio
   if (maxPixels !== undefined) rules.maxPixels = maxPixels
@@ -91,6 +95,7 @@ export function imageSizeRules(values: { readonly [Rule in keyof ImageSizeRules]
 function passesRules({ width, height }: ImageSize, rules: ImageSizeRules): boolean {
   const ratio = width / height
   return (rules.minShortSide === undefined || Math.min(width, height) >= rules.minShortSide)
+    && (rules.maxLongSide === undefined || Math.max(width, height) <= rules.maxLongSide)
     && (rules.minAspectRatio === undefined || ratio > rules.minAspectRatio)
     && (rules.maxAspectRatio === undefined || ratio < rules.maxAspectRatio)
     && (rules.maxPixels === undefined || width * height <= rules.maxPixels)
@@ -114,28 +119,35 @@ function withRatioInside({ width, height }: ImageSize, { minAspectRatio, maxAspe
 }
 
 // `size` at the scale that the rules need: up until the shorter side has
-// `minShortSide`, or down until it has no more than `maxPixels`; else as it
-// is. The other side is rounded to a whole pixel, which can put a ratio that
-// was just inside a limit onto it, so the ratio is checked again.
+// `minShortSide`, or down until it has no more than `maxPixels` and its
+// longer side no more than `maxLongSide`; else as it is. The other side is
+// rounded to a whole pixel, which can put a ratio that was just inside a
+// limit onto it, so the ratio is checked again.
 function scaledSize(size: ImageSize, rules: ImageSizeRules): ImageSize {
   const { width, height } = size
-  const { minShortSide, maxPixels } = rules
+  const { minShortSide, maxLongSide, maxPixels } = rules
   const short = Math.min(width, height)
+  const long = Math.max(width, height)
   if (minShortSide !== undefined && short < minShortSide) {
-    const long = Math.round(Math.max(width, height) * minShortSide / short)
-    return withRatioInside(width <= height ? { width: minShortSide, height: long } : { width: long, height: minShortSide }, rules)
+    const scaledLong = Math.round(long * minShortSide / short)
+    return withRatioInside(width <= height ? { width: minShortSide, height: scaledLong } : { width: scaledLong, height: minShortSide }, rules)
   }
-  if (maxPixels !== undefined && width * height > maxPixels) {
-    const factor = Math.sqrt(maxPixels / (width * height))
-    const scaled = { width: Math.max(1, Math.floor(width * factor)), height: Math.max(1, Math.floor(height * factor)) }
-    // A rounding error of the root can leave one pixel row too many.
-    while (scaled.width * scaled.height > maxPixels) {
-      if (scaled.width >= scaled.height) scaled.width--
-      else scaled.height--
-    }
-    return withRatioInside(scaled, rules)
+  // The longer side that the side rule allows: `long` when it allows the
+  // size as it is.
+  const sideLimit = maxLongSide !== undefined && long > maxLongSide ? maxLongSide : long
+  const pixelScale = maxPixels !== undefined && width * height > maxPixels ? Math.sqrt(maxPixels / (width * height)) : 1
+  if (sideLimit === long && pixelScale === 1) return size
+  // Each side gets the smaller scale of the two rules. The side rule
+  // multiplies first, so that the longer side gets exactly `sideLimit`:
+  // `side * (sideLimit / long)` can fall just under it, and lose a pixel.
+  const scaledSide = (side: number) => Math.max(1, Math.floor(Math.min(side * sideLimit / long, side * pixelScale)))
+  const scaled = { width: scaledSide(width), height: scaledSide(height) }
+  // A rounding error of the root can leave one pixel row too many.
+  while (maxPixels !== undefined && scaled.width * scaled.height > maxPixels) {
+    if (scaled.width >= scaled.height) scaled.width--
+    else scaled.height--
   }
-  return size
+  return withRatioInside(scaled, rules)
 }
 
 /** How to draw an image of `size` again so that it passes `rules`: the part

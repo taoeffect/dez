@@ -66,8 +66,8 @@ export const APIMART_VIDEO_MODELS: Readonly<Record<string, ApimartVideoModel>> =
   // (`input_image_free_count`), and the quote of a request does not count
   // the others, so Dez sends at most 5: a quote under the price would let
   // a request go over the money limit of a tab.
-  // Each side of an image is 256 to 5760 pixels, so no image has more than
-  // 5760² pixels (`maxPixels`), and the upload takes at most 40 million.
+  // Each side of an image is 256 to 5760 pixels (`maxLongSide`). So no
+  // image has more than 5760² pixels, under the 40 million of the upload.
   // https://docs.apimart.ai/en/api-reference/videos/minimax-h3/generation
   // (checked 2026-11-25)
   'MiniMax-H3': {
@@ -83,7 +83,7 @@ export const APIMART_VIDEO_MODELS: Readonly<Record<string, ApimartVideoModel>> =
     images: {
       maxReferences: 5,
       references: {},
-      size: { minShortSide: 256, minAspectRatio: 0.4, maxAspectRatio: 2.5, maxPixels: 5760 ** 2 },
+      size: { minShortSide: 256, maxLongSide: 5760, minAspectRatio: 0.4, maxAspectRatio: 2.5 },
     },
   },
   // `size` is the aspect ratio (the docs' default is `adaptive`). The
@@ -94,9 +94,9 @@ export const APIMART_VIDEO_MODELS: Readonly<Record<string, ApimartVideoModel>> =
   // `web_search` does the work of.
   // Images: at most 10 references, which the prompt names `@图片1`,
   // `@图片2` (the docs' names). A request with frames needs the size
-  // `adaptive`. Each side of an image is 300 to 6000 pixels, so no image
-  // has more than 6000² pixels (`maxPixels`), and the upload takes at most
-  // 40 million.
+  // `adaptive`. Each side of an image is 300 to 6000 pixels
+  // (`maxLongSide`). So no image has more than 6000² pixels, under the 40
+  // million of the upload.
   // https://docs.apimart.ai/en/api-reference/videos/seedance-2-5-flash/generation
   // (checked 2026-11-25)
   'seedance-2-5-flash': {
@@ -115,7 +115,7 @@ export const APIMART_VIDEO_MODELS: Readonly<Record<string, ApimartVideoModel>> =
     images: {
       maxReferences: 10,
       references: { promptName: '@图片{n}' },
-      size: { minShortSide: 300, minAspectRatio: 0.4, maxAspectRatio: 2.5, maxPixels: 36_000_000 },
+      size: { minShortSide: 300, maxLongSide: 6000, minAspectRatio: 0.4, maxAspectRatio: 2.5 },
       frameFields: { size: 'adaptive' },
     },
   },
