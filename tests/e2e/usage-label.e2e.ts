@@ -14,6 +14,7 @@ import { activeTabId, closeToasts, docPos, endedReply, focusEditor, newTab, open
 // - no cost before the first counted request of the conversation;
 // - the sum of the provider's prices, with `+` after a request that has no
 //   known price;
+// - the busy look while a reply of the active tab runs;
 // - an Anthropic-format config with a price table and `prefixCacheMark`
 //   marks the system prompt, and the cache counts of its answer cost the
 //   cached and the cache write rates of the table;

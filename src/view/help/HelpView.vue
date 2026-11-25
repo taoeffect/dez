@@ -1011,10 +1011,10 @@ function onOverlayClick(event: MouseEvent) {
 
             <h3>APIMart</h3>
             <p>
-              Dez counts the public price of a chat model of APIMart, which your account can pay less
-              than. APIMart sends each chat request to one of several services, each with its own
-              prompt cache, so a request can pay the full price for a prompt that an earlier request
-              put in the cache.
+              Dez counts the public price of a chat model of APIMart. Your account can pay less
+              than this price. APIMart sends each chat request to one of several services, each
+              with its own prompt cache, so a request can pay the full price for a prompt that an
+              earlier request put in the cache.
             </p>
             <p>
               The video and image models of APIMart take an input image only at a web address. So
