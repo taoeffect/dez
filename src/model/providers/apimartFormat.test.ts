@@ -269,17 +269,8 @@ describe('apimart image uploads', () => {
 
 describe('apimart video tasks', () => {
   // The answer to the request (live, 2026-11-24).
-  const job = (taskId: unknown = 'task_01KX') => clips.job('video', `${BASE_URL}/`, 'MiniMax-H3', { code: 200, data: [{ status: 'submitted', task_id: taskId }] })
+  const job = () => clips.job('video', `${BASE_URL}/`, 'MiniMax-H3', { code: 200, data: [{ status: 'submitted', task_id: 'task_01KX' }] })
   const poll = (data: Record<string, unknown>) => ({ code: 200, data: { id: 'task_01KX', progress: 100, created: 1763088289, ...data } })
-
-  // The poll URL is Dez's own, with the id escaped: it gets the API key.
-  it('asks /tasks/<id> for the state of the task, in English', () => {
-    expect([job().id, job().poll, job('a/../b').poll]).toStrictEqual([
-      'task_01KX',
-      { url: `${BASE_URL}/tasks/task_01KX?language=en` },
-      { url: `${BASE_URL}/tasks/a%2F..%2Fb?language=en` },
-    ])
-  })
 
   it.each([
     ['no task', { code: 200, data: [] }],
@@ -452,18 +443,9 @@ describe('apimart image rules', () => {
 
 describe('apimart image tasks', () => {
   // The answer to the request (docs of gpt-image-2).
-  const job = (taskId: unknown = 'task_01IMG') => images.job('image', `${BASE_URL}/`, 'gpt-image-2', { code: 200, data: [{ status: 'submitted', task_id: taskId }] })
+  const job = () => images.job('image', `${BASE_URL}/`, 'gpt-image-2', { code: 200, data: [{ status: 'submitted', task_id: 'task_01IMG' }] })
   const poll = (data: Record<string, unknown>) => ({ code: 200, data: { id: 'task_01IMG', progress: 100, created: 1763088289, ...data } })
   const IMAGE_URLS = ['https://upload.apimart.ai/f/image/1.png', 'https://upload.apimart.ai/f/image/2.png', 'https://upload.apimart.ai/f/image/3.png']
-
-  // The poll URL is Dez's own, with the id escaped: it gets the API key.
-  it('asks /tasks/<id> for the state of the task, in English', () => {
-    expect([job().id, job().poll, job('a/../b').poll]).toStrictEqual([
-      'task_01IMG',
-      { url: `${BASE_URL}/tasks/task_01IMG?language=en` },
-      { url: `${BASE_URL}/tasks/a%2F..%2Fb?language=en` },
-    ])
-  })
 
   it.each([
     ['no task', { code: 200, data: [] }],
@@ -637,10 +619,6 @@ describe('apimart music tasks', () => {
   })
   const song = (audio_url: unknown) => ({ audio_id: 'f49bbfd9', title: 'Good Morning', duration: 38.8, audio_url, image_url: 'https://cdn2.suno.ai/image.jpeg' })
 
-  it('asks /music/tasks/<id> for the state of a music task, in English', () => {
-    expect(job().poll).toStrictEqual({ url: `${BASE_URL}/music/tasks/task_01M8?language=en` })
-  })
-
   // The docs of Suno: keep the task id of a task in the state `unknown`.
   it('waits while a music task is pending, in work, or in the state unknown, but not a video task in that state', () => {
     expect(['pending', 'processing', 'unknown'].map((status) => job().state({ code: 200, data: { status, progress: 10, cost: 0.05, billing_status: 'held' } }))).toStrictEqual(['running', 'running', 'running'])
@@ -659,19 +637,30 @@ describe('apimart music tasks', () => {
   })
 })
 
-// A restart of Dez asks for a task again from its resume value
+// The three kinds of task share their first answer and their poll. A
+// restart of Dez asks for a task again from its resume value
 // (`MediaJob.resume`), which holds only the task id.
-describe('apimart task resume', () => {
-  const answer = { code: 200, data: [{ status: 'submitted', task_id: 'task/01 R' }] }
+describe('apimart tasks of each kind', () => {
+  const KINDS = [
+    ['video', 'tasks', (data: unknown) => clips.job('video', `${BASE_URL}/`, 'MiniMax-H3', data)],
+    ['music', 'music/tasks', (data: unknown) => clips.job('music', `${BASE_URL}/`, 'suno', data)],
+    ['image', 'tasks', (data: unknown) => images.job('image', `${BASE_URL}/`, 'gpt-image-2', data)],
+  ] as const
+  const submitted = (taskId: string) => ({ code: 200, data: [{ status: 'submitted', task_id: taskId }] })
   const done = { code: 200, data: { status: 'completed', cost: 0.05, result: { videos: [{ url: VIDEO_URL }], images: [{ url: [VIDEO_URL] }], music: [{ audio_url: VIDEO_URL }] } } }
   const running = { code: 200, data: { status: 'processing' } }
 
-  it.each([
-    ['video', (data: unknown) => clips.job('video', `${BASE_URL}/`, 'MiniMax-H3', data)],
-    ['music', (data: unknown) => clips.job('music', `${BASE_URL}/`, 'suno', data)],
-    ['image', (data: unknown) => images.job('image', `${BASE_URL}/`, 'gpt-image-2', data)],
-  ])('gives the same %s task again from its resume value', (_kind, job) => {
-    const first = job(answer)
+  // The poll URL is Dez's own, with the id escaped: it gets the API key.
+  it.each(KINDS)('asks for the state of the %s task at /%s/<id>, in English', (_kind, tasks, job) => {
+    expect([job(submitted('task_01')).id, job(submitted('task_01')).poll, job(submitted('a/../b')).poll]).toStrictEqual([
+      'task_01',
+      { url: `${BASE_URL}/${tasks}/task_01?language=en` },
+      { url: `${BASE_URL}/${tasks}/a%2F..%2Fb?language=en` },
+    ])
+  })
+
+  it.each(KINDS)('gives the same %s task again from its resume value', (_kind, _tasks, job) => {
+    const first = job(submitted('task/01 R'))
     const again = job(JSON.parse(JSON.stringify(first.resume)))
 
     expect(first.resume).toStrictEqual({ data: [{ task_id: 'task/01 R' }] })

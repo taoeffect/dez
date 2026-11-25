@@ -138,6 +138,9 @@ const imageQuote = (model: string, resolution: string, totalUsd: number) =>
   ({ billing_type: 'fixed', canonical_model: model, currency: 'USD', estimated: false, model, quantity: 1, spec: { resolution }, total_usd: totalUsd, unit: 'per_image', unit_price_usd: totalUsd })
 
 const submitted = (taskId: string) => JSON.stringify({ code: 200, data: [{ status: 'submitted', task_id: taskId }] })
+// The answer to a free upload of FRAME_PNG: it has no `overage` (the docs,
+// 2026-11-25).
+const uploaded = (url: string) => JSON.stringify({ url, filename: 'image-1.png', content_type: 'image/png', size: FRAME_PNG.length, retention_days: 3, expires_at: 1794182400 })
 
 // A done music task (the live form, 2026-11-24, with most fields of a
 // song cut).
@@ -157,6 +160,7 @@ describe('APIMart media models', () => {
   let setup: MockProviderApp
   let browser: E2EBrowser
   let clips: ClipServer
+  const tabCost = async () => sbpCall(browser, 'dez.model/tabs/costNumbers', await activeTabId(browser))
 
   beforeAll(async () => {
     clips = await startClipServer({
@@ -296,7 +300,7 @@ describe('APIMart media models', () => {
       { kind: 'video', id: 'a', available: true, source: 'blob', seconds: 2, picture: { width: 48, height: 36 }, clock: 'Not saved', save: 'save' },
     ])
     // The cost of the task, not the quote ($0.336).
-    expect(await sbpCall(browser, 'dez.model/tabs/costNumbers', await activeTabId(browser))).toEqual({ cost: { usd: 0.3, requests: 1, unpriced: 0 } })
+    expect(await tabCost()).toEqual({ cost: { usd: 0.3, requests: 1, unpriced: 0 } })
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 
@@ -313,7 +317,7 @@ describe('APIMart media models', () => {
       return toast !== undefined && toast.message.includes('Mart Mock did not make the clip.') && toast.message.includes('task-failed') && toast.message.includes('State: failed: The prompt breaks the content rules')
     }, true)
     // APIMart gave the money back: the quote ($0.22848) does not count.
-    expect(await sbpCall(browser, 'dez.model/tabs/costNumbers', await activeTabId(browser))).toEqual({ cost: { usd: 0, requests: 1, unpriced: 0 } })
+    expect(await tabCost()).toEqual({ cost: { usd: 0, requests: 1, unpriced: 0 } })
     await closeToasts(browser)
   })
 
@@ -329,8 +333,7 @@ describe('APIMart media models', () => {
     const upload = await takeRequest(setup, UPLOAD_PATH)
     expect(upload.headers['content-type']).toMatch(/^multipart\/form-data; boundary=/)
     expect(await requestForm(upload)).toStrictEqual([{ name: 'file', fileName: 'image-1.png', type: 'image/png', bytes: FRAME_PNG }])
-    // A free upload has no `overage` (the docs, 2026-11-25).
-    answerHeld(upload.reply, 'application/json', JSON.stringify({ url: uploadedUrl, filename: 'image-1.png', content_type: 'image/png', size: FRAME_PNG.length, retention_days: 3, expires_at: 1794182400 }))
+    answerHeld(upload.reply, 'application/json', uploaded(uploadedUrl))
 
     const request = await takeRequest(setup, SUBMIT_PATH, {
       duration: 4,
@@ -342,7 +345,7 @@ describe('APIMart media models', () => {
     answerHeld(request.reply, 'application/json', submitted('task-done'))
     await waitForValue(browser, 'player of the video', async () => (await shownPlayers(browser)).length, 1)
     // The cost of the task; the free upload counts nothing.
-    expect(await sbpCall(browser, 'dez.model/tabs/costNumbers', await activeTabId(browser))).toEqual({ cost: { usd: 0.3, requests: 1, unpriced: 0 } })
+    expect(await tabCost()).toEqual({ cost: { usd: 0.3, requests: 1, unpriced: 0 } })
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 
@@ -394,7 +397,7 @@ describe('APIMart media models', () => {
       { kind: 'audio', id: 'b', available: true, source: 'blob', seconds: 3, picture: null, clock: 'Not saved', save: 'save' },
     ])
     // The cost of the task counts one time, and the quote ($0.068) does not.
-    expect(await sbpCall(browser, 'dez.model/tabs/costNumbers', await activeTabId(browser))).toEqual({ cost: { usd: 0.05, requests: 1, unpriced: 0 } })
+    expect(await tabCost()).toEqual({ cost: { usd: 0.05, requests: 1, unpriced: 0 } })
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 
@@ -412,7 +415,7 @@ describe('APIMart media models', () => {
       { kind: 'audio', id: 'a', available: true, source: 'blob', seconds: 2, picture: null, clock: 'Not saved', save: 'save' },
     ])
     expect((await threadSections(browser))[1].text).toMatch(new RegExp(String.raw`^<dez:audio id="a" type="audio/wav" src="[^"]+\.wav" expires="[^"]+" model="${mockModelKey(MART, FLOW_MUSIC.id)}" job="task-flow"/>$`))
-    expect(await sbpCall(browser, 'dez.model/tabs/costNumbers', await activeTabId(browser))).toEqual({ cost: { usd: 0.06, requests: 1, unpriced: 0 } })
+    expect(await tabCost()).toEqual({ cost: { usd: 0.06, requests: 1, unpriced: 0 } })
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 
@@ -445,7 +448,7 @@ describe('APIMart media models', () => {
       { role: 'agent', text: 'Hello from Ben. This is a short test.' },
       { role: 'user', text: '' },
     ])
-    expect(await sbpCall(browser, 'dez.model/tabs/costNumbers', await activeTabId(browser))).toEqual({ cost: { usd: 0, requests: 1, unpriced: 1 } })
+    expect(await tabCost()).toEqual({ cost: { usd: 0, requests: 1, unpriced: 1 } })
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 
@@ -480,7 +483,7 @@ describe('APIMart media models', () => {
       { role: 'user', text: '' },
     ])
     // The cost of the task, not the quote ($0.0085).
-    expect(await sbpCall(browser, 'dez.model/tabs/costNumbers', await activeTabId(browser))).toEqual({ cost: { usd: 0.009, requests: 1, unpriced: 0 } })
+    expect(await tabCost()).toEqual({ cost: { usd: 0.009, requests: 1, unpriced: 0 } })
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 
@@ -495,7 +498,7 @@ describe('APIMart media models', () => {
 
     const upload = await takeRequest(setup, UPLOAD_PATH)
     expect(await requestForm(upload)).toStrictEqual([{ name: 'file', fileName: 'image-1.png', type: 'image/png', bytes: FRAME_PNG }])
-    answerHeld(upload.reply, 'application/json', JSON.stringify({ url: uploadedUrl, filename: 'image-1.png', content_type: 'image/png', size: FRAME_PNG.length, retention_days: 3, expires_at: 1794182400 }))
+    answerHeld(upload.reply, 'application/json', uploaded(uploadedUrl))
 
     const request = await takeRequest(setup, IMAGE_PATH, { resolution: '1k', image_urls: [uploadedUrl], model: IMAGE_MODEL, prompt: 'Make it green: ![id=a](image)' })
     answerHeld(request.reply, 'application/json', submitted('task-image'))
@@ -503,7 +506,7 @@ describe('APIMart media models', () => {
     const file = path.join(generatedImagesDir(setup.app.home), name)
     await waitForValue(browser, 'reply with the image of the task', async () => (await threadSections(browser))[1]?.text, `![id=b|model=${mockModelKey(MART, IMAGE_MODEL)}](${file})`)
     // The cost of the task; the free upload counts nothing.
-    expect(await sbpCall(browser, 'dez.model/tabs/costNumbers', await activeTabId(browser))).toEqual({ cost: { usd: 0.009, requests: 1, unpriced: 0 } })
+    expect(await tabCost()).toEqual({ cost: { usd: 0.009, requests: 1, unpriced: 0 } })
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 })

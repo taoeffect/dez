@@ -38,6 +38,7 @@ interface Download {
 const CACHE_DIR = '/home/u/.cache/dez'
 const VENICE_URL = 'http://localhost:5050/api/v1'
 const OPENROUTER_URL = 'http://localhost:6060/api/v1'
+const MART_URL = 'http://localhost:7070/v1'
 const STARTED_AT = Date.parse('2026-11-10T09:30:00.000Z')
 const SECOND_MS = 1000
 const DAY_MS = 24 * 60 * 60 * SECOND_MS
@@ -161,7 +162,7 @@ beforeEach(() => {
   // Each request of a clip takes one id, for the name of its file.
   let uuids = 0
   vi.spyOn(crypto, 'randomUUID').mockImplementation(() => fileId(++uuids))
-  for (const [id, name, baseUrl, format] of [['venice-like', 'Media server', VENICE_URL, 'venice'], ['router-like', 'Router', OPENROUTER_URL, 'openrouter']]) {
+  for (const [id, name, baseUrl, format] of [['venice-like', 'Media server', VENICE_URL, 'venice'], ['router-like', 'Router', OPENROUTER_URL, 'openrouter'], ['mart-like', 'Mart', MART_URL, 'apimart']]) {
     sbp('dez.model/customProviders/save', { id, name, baseUrl, apiFormat: 'openai', models: [], fetchModels: true, auth: 'apiKey', mediaApi: { format } })
   }
 })
@@ -436,9 +437,7 @@ describe('a clip job', () => {
 
   // A Suno task of APIMart makes two songs, and tells one cost for both.
   it('copies each file of a job that made more than one clip, and counts the cost of the job once', async () => {
-    const martUrl = 'http://localhost:7070/v1'
     const songUrls = ['https://cdn.example.com/audio/song-1.mp3', 'https://cdn.example.com/audio/song-2.m4a']
-    sbp('dez.model/customProviders/save', { id: 'mart-like', name: 'Mart', baseUrl: martUrl, apiFormat: 'openai', models: [], fetchModels: true, auth: 'apiKey', mediaApi: { format: 'apimart' } })
     answers = [
       json({ code: 200, data: [{ status: 'submitted', task_id: 'task-1' }] }),
       json({ code: 200, data: { id: 'task-1', status: 'completed', cost: 0.05, result: { music: songUrls.map((audio_url) => ({ audio_url })) } } }),
@@ -458,7 +457,7 @@ describe('a clip job', () => {
       ],
       cost: 0.05,
     })
-    expect(requestUrls()).toStrictEqual([`POST ${martUrl}/music/generations`, `GET ${martUrl}/music/tasks/task-1?language=en`, `GET ${songUrls[0]}`, `GET ${songUrls[1]}`])
+    expect(requestUrls()).toStrictEqual([`POST ${MART_URL}/music/generations`, `GET ${MART_URL}/music/tasks/task-1?language=en`, `GET ${songUrls[0]}`, `GET ${songUrls[1]}`])
     // The URLs come from an answer: their requests carry no API key.
     expect(downloads.slice(2).map(({ request }) => request.headers)).toStrictEqual([undefined, undefined])
   })
@@ -466,8 +465,6 @@ describe('a clip job', () => {
   // The clips are paid for; the cleanup of the temp copies deletes the
   // copy of the first clip later.
   it('fails a job whose second file does not come, and leaves the copy of the first file', async () => {
-    const martUrl = 'http://localhost:7070/v1'
-    sbp('dez.model/customProviders/save', { id: 'mart-like', name: 'Mart', baseUrl: martUrl, apiFormat: 'openai', models: [], fetchModels: true, auth: 'apiKey', mediaApi: { format: 'apimart' } })
     answers = [
       json({ code: 200, data: [{ status: 'submitted', task_id: 'task-1' }] }),
       json({ code: 200, data: { id: 'task-1', status: 'completed', cost: 0.05, result: { music: [{ audio_url: 'https://cdn.example.com/1.mp3' }, { audio_url: 'https://cdn.example.com/2.mp3' }] } } }),
@@ -874,7 +871,6 @@ describe('a stop of a clip', () => {
 })
 
 describe('an image job', () => {
-  const MART_URL = 'http://localhost:7070/v1'
   const PNG = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 1])
   const JPEG = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0, 1])
   const IMAGE_URLS = ['https://cdn.example.com/image/1.png', 'https://cdn.example.com/image/2.jpg']
@@ -883,10 +879,6 @@ describe('an image job', () => {
   const generateImage = (input: Record<string, unknown> = {}) =>
     generate({ providerId: 'mart-like', modelId: 'gpt-image-2', kind: 'image', prompt: 'A red dot', ...input })
   const streamUrls = () => streams.map(({ request }) => `${request.method ?? 'POST'} ${request.url}`)
-
-  beforeEach(() => {
-    sbp('dez.model/customProviders/save', { id: 'mart-like', name: 'Mart', baseUrl: MART_URL, apiFormat: 'openai', models: [], fetchModels: true, auth: 'apiKey', mediaApi: { format: 'apimart' } })
-  })
 
   // The provider took the money for the task, so its id is in each step
   // from the answer that gave it. The cost of the task takes the place of
