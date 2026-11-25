@@ -1673,7 +1673,13 @@ export default sbp('sbp/selectors/register', {
   // need them), and before the cleanup of the temp copies, which keeps the
   // files of the jobs (`dez.stream/unnamedMadeFiles`). It waits for no job.
   'dez.stream/restoreJobs' (): void {
+    // App state of an older Dez can hold two tabs of one conversation
+    // (`dez.model/tabs/openConversation`). They share its record, so only
+    // the first takes it: else each job would run, and be counted, twice.
+    const restored = new Set<string>()
     for (const tab of sbp('dez.model/tabs/list') as Tab[]) {
+      if (restored.has(tab.conversationId)) continue
+      restored.add(tab.conversationId)
       const record = sbp('dez.model/openJobs/get', tab.conversationId) as ConversationJobs | null
       if (record?.jobs) restoreTabJobs(tab, record.jobs)
       if (record?.mediaReply) resumeMediaReply(tab, record.mediaReply)

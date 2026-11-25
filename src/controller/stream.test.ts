@@ -151,6 +151,12 @@ sbp('sbp/selectors/register', {
   async 'dez.persistence/saveConversation' (data: ConversationData): Promise<void> {
     savedConversations.push(structuredClone(data))
   },
+  // The last saved file of each conversation.
+  async 'dez.persistence/loadConversation' (id: string): Promise<ConversationData> {
+    const saved = savedConversations.findLast((data) => data.id === id)
+    if (!saved) throw new Error(`No file for ${id}`)
+    return structuredClone(saved)
+  },
   async 'dez.persistence/saveAppState' (): Promise<void> {},
   async 'dez.persistence/deleteConversation' (): Promise<void> {},
   'dez.ui/toast' (area: string, data: ToastData): void {
@@ -3966,6 +3972,29 @@ describe('dez.stream/start jobs', () => {
       ], 0))
       expect(activeTab().cost?.usd).toBe(0.3)
       expect(openJobs()).toBeNull()
+    })
+
+    // App state of an older Dez can hold two tabs of one conversation
+    // (`dez.model/tabs/openConversation`), which share its record.
+    it('picks up the record of a conversation in the first of its tabs only', async () => {
+      const { conversationId } = activeTab()
+      await sbp('dez.model/tabs/save', activeTab().id)
+      const replyJob = { ...PROVIDER_JOB, jobId: 'q-18', resume: { queue_id: 'q-18' } }
+      await sbp('dez.model/appState/restore', {
+        tabs: [{ id: 't1', title: 'Fox', conversationId }, { id: 't2', title: 'Fox', conversationId }],
+        activeTabId: 't2',
+        openJobs: { [conversationId]: {
+          jobs: [{ id: 'j-aaaa', number: 1, tool: 'model_invoke', label: PROMPT, inputs: [], hidesAssets: false, timeoutMs: 600_000, cost: 0.5, providerJob: PROVIDER_JOB }],
+          mediaReply: { sectionIndex: 1, model: { providerId: model.providerId, modelId: 'filmer', modelName: 'Filmer' }, providerJob: replyJob },
+        } },
+      })
+
+      sbp('dez.stream/restoreJobs')
+      await settled()
+
+      expect(mediaInputs.map((input) => input.resume?.data.queue_id).sort()).toStrictEqual(['q-17', 'q-18'])
+      expect(toasts.map(({ data }) => [data.tabId, data.title])).toStrictEqual([['t1', 'Jobs picked up']])
+      expect(['t1', 't2'].map((id) => sbp('dez.model/streams/isStreaming', id))).toStrictEqual([true, false])
     })
   })
 })
