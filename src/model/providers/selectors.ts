@@ -1008,12 +1008,12 @@ export default sbp('sbp/selectors/register', {
         quote = provider.clipEntryPrice(kind, values, entry, mediaEntry) ?? null
       }
     } else {
-      const priceRequests = provider.imageQuote(kind, modelId, values, await requestSecret(provider))
-      if (!priceRequests) return null
-      const [records, answer] = await Promise.all([priceRequests.records, priceRequests.price]
+      const imageQuote = provider.imageQuote(kind, modelId, values, await requestSecret(provider))
+      if (!imageQuote) return null
+      const [records, priceAnswer] = await Promise.all([imageQuote.recordsRequest, imageQuote.priceRequest]
         .map((request) => (request ? jsonResponse(provider, request) : undefined)))
       const mediaEntry = sbp('dez.model/modelCache/rawModel', provider.id, modelId, 'media') as unknown
-      const usd = priceRequests.usd(kind, values, { entry, mediaEntry, records, answer })
+      const usd = imageQuote.usd(kind, values, { entry, mediaEntry, records, priceAnswer })
       // The answer to the price request holds facts of the account, so it
       // is no price record: only the records go back to the caller.
       if (usd === undefined && records === undefined) return null

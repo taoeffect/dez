@@ -570,22 +570,23 @@ export class Provider {
   }
 
   // How to tell the price of one image request of `kind` with `values`
-  // (`ImageQuoteFormat`): the request for the model's price records, and
-  // the request for the price of the one request (each one ends like a
-  // model list request; null when the format has none), and the reader of
-  // the price. Null when the provider tells no price of an image request.
+  // (`ImageQuoteFormat`): the request for the model's price records
+  // (`recordsRequest`), the request for the price of the one request
+  // (`priceRequest`; each one ends like a model list request; null when
+  // the format has none), and the reader of the price. Null when the
+  // provider tells no price of an image request.
   imageQuote(
     kind: ImageKind,
     modelId: string,
     values: ParameterValues,
     secret: Secret<string> | null,
-  ): { records: NativeHttpRequest | null, price: NativeHttpRequest | null, usd: ImageQuoteFormat['usd'] } | null {
+  ): { recordsRequest: NativeHttpRequest | null, priceRequest: NativeHttpRequest | null, usd: ImageQuoteFormat['usd'] } | null {
     const quote = this.mediaFormatOrNone()?.images?.quote
     if (!quote) return null
     const keyed = (wire: MediaWireRequest | null | undefined) => (wire ? { ...this.mediaApiRequest(wire, secret), timeoutMs: MODEL_LIST_TIMEOUT_MS } : null)
     return {
-      records: keyed(quote.recordsRequest?.(kind, this.config.baseUrl, modelId)),
-      price: keyed(quote.priceRequest?.(kind, this.config.baseUrl, modelId, values)),
+      recordsRequest: keyed(quote.recordsRequest?.(kind, this.config.baseUrl, modelId)),
+      priceRequest: keyed(quote.priceRequest?.(kind, this.config.baseUrl, modelId, values)),
       usd: quote.usd,
     }
   }

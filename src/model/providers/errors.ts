@@ -289,9 +289,14 @@ export class UnusableAnswerError extends Error {
 // the job in USD, when its answer tells it (APIMart gives the money of a
 // failed task back: 0).
 export class JobNotMadeError extends Error {
-  constructor(message: string, readonly cost?: number, readonly made: 'clip' | 'image' = 'clip') {
+  readonly cost: number | undefined
+  readonly made: 'clip' | 'image'
+
+  constructor(message: string, { cost, made = 'clip' }: { cost?: number, made?: 'clip' | 'image' } = {}) {
     super(message)
     this.name = 'JobNotMadeError'
+    this.cost = cost
+    this.made = made
   }
 }
 

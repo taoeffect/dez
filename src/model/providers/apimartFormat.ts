@@ -217,7 +217,7 @@ function doneTask(answer: unknown, made: 'clip' | 'image', unknownRuns: boolean)
   if (status === 'submitted' || status === 'pending' || status === 'processing' || (unknownRuns && status === 'unknown')) return 'running'
   if (isRecord(task) && status === 'completed') return task
   // `failed`, `cancelled`, or a state that is new.
-  throw new JobNotMadeError(jobStateText(status, valueAtPath(task, 'error.message')), usageNumber(valueAtPath(task, 'cost')), made)
+  throw new JobNotMadeError(jobStateText(status, valueAtPath(task, 'error.message')), { cost: usageNumber(valueAtPath(task, 'cost')), made })
 }
 
 // The price of a done task: `cost`, what APIMart took in USD for the whole
@@ -406,7 +406,7 @@ const images: ImageJobFormat = {
       }
       return { url: priceUrl(baseUrl, query) }
     },
-    usd: (_kind, _values, { answer }) => (isRecord(answer) ? usageNumber(answer.total_usd) : undefined),
+    usd: (_kind, _values, { priceAnswer }) => (isRecord(priceAnswer) ? usageNumber(priceAnswer.total_usd) : undefined),
   },
 }
 

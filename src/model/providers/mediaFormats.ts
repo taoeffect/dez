@@ -245,7 +245,7 @@ export interface ImageQuoteInput {
   records: unknown
   // The JSON of the 2xx response to `ImageQuoteFormat.priceRequest`;
   // undefined with no such request.
-  answer: unknown
+  priceAnswer: unknown
 }
 
 // What a media API tells about the price of one image request.
@@ -260,7 +260,8 @@ export interface ImageQuoteFormat {
   // model.
   priceRequest?(kind: ImageKind, baseUrl: string, modelId: string, values: ParameterValues): MediaWireRequest | null
   // The price in USD of one request of `kind` with `values`; undefined
-  // when the entries, the records, and the answer tell no one price for it.
+  // when the entries, the records, and the price answer tell no one price
+  // for it.
   usd(kind: ImageKind, values: ParameterValues, input: ImageQuoteInput): number | undefined
 }
 

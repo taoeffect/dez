@@ -175,7 +175,7 @@ describe('provider request errors', () => {
     expect([
       (explainedProviderError(venice, new UnusableAnswerError('The answer holds no image.')) as Error).message,
       (explainedProviderError(venice, new JobNotMadeError('State: failed: Content policy')) as Error).message,
-      (explainedProviderError(venice, new JobNotMadeError('State: failed', 0, 'image')) as Error).message,
+      (explainedProviderError(venice, new JobNotMadeError('State: failed', { cost: 0, made: 'image' })) as Error).message,
     ]).toStrictEqual([
       'Venice sent an answer that Dez cannot use. Send the request again. If the error stays, report it at Help › Dez on GitHub.\n\nDetails: The answer holds no image.',
       'Venice did not make the clip. The cause can be the prompt (Venice can refuse a prompt) or a problem at Venice: the details below tell what Venice said. Change the prompt, or send the request again later.\n\nDetails: State: failed: Content policy',
@@ -217,13 +217,13 @@ describe('provider request errors', () => {
   // error that they get is the error for the reader, or the error of a job
   // (`dez.provider/generateMedia`), whose cause is the raw error.
   it('finds the told cost of a job that the provider ended with nothing made in the error for each reader, and none in other errors', () => {
-    const notMade = new JobNotMadeError('State: failed: Content policy', 0)
+    const notMade = new JobNotMadeError('State: failed: Content policy', { cost: 0 })
 
     expect([
       notMadeJobCost(explainedProviderError(custom, notMade, 'user')),
       notMadeJobCost(explainedProviderError(custom, notMade, 'model')),
       notMadeJobCost(new ExplainedError('My server did not make the clip.', '', { cause: notMade })),
-      notMadeJobCost(new JobNotMadeError('State: failed', 0.4)),
+      notMadeJobCost(new JobNotMadeError('State: failed', { cost: 0.4 })),
       notMadeJobCost(new JobNotMadeError('State: failed')),
       notMadeJobCost(new ExplainedError('My server sent an answer that Dez cannot use.', '', { cause: new UnusableAnswerError('No URL.') })),
       notMadeJobCost('State: failed'),

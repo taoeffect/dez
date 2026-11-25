@@ -1906,7 +1906,7 @@ describe('dez.stream/start media round', () => {
       async (input: ProviderGenerateMediaInput) => {
         send(input, 0.5)
         input.onProgress?.({ phase: 'queued', jobId: 't-1' })
-        throw new ExplainedError('APIMart did not make the clip. To ask APIMart about this clip, give its job id: t-1.', '', { cause: new JobNotMadeError('State: failed', 0) })
+        throw new ExplainedError('APIMart did not make the clip. To ask APIMart about this clip, give its job id: t-1.', '', { cause: new JobNotMadeError('State: failed', { cost: 0 }) })
       },
       async (input: ProviderGenerateMediaInput) => {
         send(input, 0.5)

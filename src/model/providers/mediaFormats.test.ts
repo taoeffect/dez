@@ -179,7 +179,7 @@ describe('venice image parameters', () => {
 
 describe('venice image quotes', () => {
   const usd = (kind: 'image' | 'imageEdit', pricing: Record<string, unknown>, values: ParameterValues = {}) =>
-    venice.quote?.usd(kind, values, { entry: { id: 'm', model_spec: { pricing } }, mediaEntry: undefined, records: undefined, answer: undefined })
+    venice.quote?.usd(kind, values, { entry: { id: 'm', model_spec: { pricing } }, mediaEntry: undefined, records: undefined, priceAnswer: undefined })
   // The prices of `krea-3` (2026-11-11).
   const KREA_PRICES = {
     resolutions: { '1K': venicePrice(0.07), '2K': venicePrice(0.1), '4K': venicePrice(0.15) },
@@ -1786,7 +1786,7 @@ describe('openrouter images', () => {
       entry: { id: 'decart/lucy-image-2' },
       mediaEntry: entry({ resolution: { type: 'enum', values: ['480p', '720p'], ...(ownDefault !== undefined && { default: ownDefault }) } }),
       records,
-      answer: undefined,
+      priceAnswer: undefined,
     })
 
     expect([usd('720p'), usd('720p', { resolution: '480p' }), usd(undefined), usd('1080p')]).toStrictEqual([0.0211, 0.01055, undefined, undefined])

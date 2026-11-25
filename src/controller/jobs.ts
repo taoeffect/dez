@@ -395,8 +395,8 @@ export class TabJobs implements ToolJobs {
       resumed++
       const work = resume({ ...record, providerJob })
       // A job whose price counted before the quit must not count it again.
-      const counted: JobWork = (signal, report, _reportCost, keepAsset, jobs) => work(signal, report, () => {}, keepAsset, jobs)
-      this.launch(null, record.tool, cost === undefined ? counted : work, options, record.number, { id: record.id, providerJob, ...(cost !== undefined && { cost }) })
+      const withNoCost: JobWork = (signal, report, _reportCost, keepAsset, jobs) => work(signal, report, () => {}, keepAsset, jobs)
+      this.launch(null, record.tool, cost === undefined ? withNoCost : work, options, record.number, { id: record.id, providerJob, ...(cost !== undefined && { cost }) })
     }
     return resumed
   }

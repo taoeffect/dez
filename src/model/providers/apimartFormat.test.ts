@@ -322,7 +322,7 @@ describe('apimart video tasks', () => {
   ])('tells that the provider did not make the clip of a task %s, with the cost that it told', (_name, data, message, cost) => {
     const error = thrownError(() => job().state(poll(data)))
 
-    expect(error).toStrictEqual(new JobNotMadeError(message, cost))
+    expect(error).toStrictEqual(new JobNotMadeError(message, { cost }))
     expect((error as JobNotMadeError).cost).toBe(cost)
   })
 })
@@ -473,7 +473,7 @@ describe('apimart image tasks', () => {
 
   it('waits while the task is submitted, pending, or in work, but not in the state unknown', () => {
     expect(['submitted', 'pending', 'processing'].map((status) => job().state(poll({ status, progress: 30 })))).toStrictEqual(['running', 'running', 'running'])
-    expect(thrownError(() => job().state(poll({ status: 'unknown' })))).toStrictEqual(new JobNotMadeError('State: unknown', undefined, 'image'))
+    expect(thrownError(() => job().state(poll({ status: 'unknown' })))).toStrictEqual(new JobNotMadeError('State: unknown', { made: 'image' }))
   })
 
   // The docs: a list of URLs for each image. The links end after about 24
@@ -498,7 +498,7 @@ describe('apimart image tasks', () => {
   // APIMart gives back the money of a task that failed: its cost is 0.
   it('tells that the provider did not make the image of a task that failed, with the cost that it told', () => {
     expect(thrownError(() => job().state(poll({ status: 'failed', cost: 0, error: { code: 400, message: 'Prompt breaks the content rules' } }))))
-      .toStrictEqual(new JobNotMadeError('State: failed: Prompt breaks the content rules', 0, 'image'))
+      .toStrictEqual(new JobNotMadeError('State: failed: Prompt breaks the content rules', { cost: 0, made: 'image' }))
   })
 })
 
@@ -534,7 +534,7 @@ describe('apimart image quotes', () => {
 
   // MiniMax-H3 Image is billed by tokens: its answer has `total_usd: null`.
   it('reads the price in USD, and gives no price for an answer with none', () => {
-    const usd = (answer: unknown) => imageQuote.usd('image', {}, { entry: undefined, mediaEntry: undefined, records: undefined, answer })
+    const usd = (priceAnswer: unknown) => imageQuote.usd('image', {}, { entry: undefined, mediaEntry: undefined, records: undefined, priceAnswer })
     expect([
       usd({ billing_type: 'per_call', total_usd: 0.0085, quantity: 1 }),
       usd({ billing_type: 'per_token', total_usd: null }),
