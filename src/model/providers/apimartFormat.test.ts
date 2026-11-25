@@ -205,18 +205,23 @@ describe('apimart image uploads', () => {
     }])
   })
 
-  // The docs: `overage` comes only for a charged upload.
+  // The docs: `overage` comes only for a charged upload. The price needs
+  // no web address in the answer.
   it.each([
     ['a free upload', {}, { cost: 0 }],
     ['an upload that was not charged', { overage: { charged: false, cost_usd: 0.01 } }, { cost: 0 }],
     ['a charged upload', { overage: { charged: true, cost_usd: 0.0004 } }, { cost: 0.0004 }],
     ['a charged upload with no price', { overage: { charged: true } }, {}],
-  ])('reads the web address and the price of %s', (_name, fields, cost) => {
-    expect(upload.result({ url: URL_, retention_days: 3, ...fields })).toStrictEqual({ url: URL_, ...cost })
+  ])('reads the price of %s', (_name, fields, cost) => {
+    expect(upload.cost({ retention_days: 3, ...fields })).toStrictEqual(cost)
+  })
+
+  it('reads the web address of the image', () => {
+    expect(upload.url({ url: URL_, retention_days: 3 })).toBe(URL_)
   })
 
   it.each([{}, { url: '' }, { url: 'file:///etc/passwd' }, null])('tells that an answer with no web address is unusable', (answer) => {
-    expect(thrownError(() => upload.result(answer))).toStrictEqual(new UnusableAnswerError('The answer to the image upload holds no web address.'))
+    expect(thrownError(() => upload.url(answer))).toStrictEqual(new UnusableAnswerError('The answer to the image upload holds no web address.'))
   })
 
   it.each([

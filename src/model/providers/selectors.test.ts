@@ -169,9 +169,10 @@ let singerPayloads: string[] = []
 // the stand-in below.
 let httpAnswers = new Map<string, { status: number, json: unknown }>()
 // The answer of a server to a stream request, by URL: a status and the
-// JSON of the body, made anew for each request. A URL with no entry here
-// gets the default answers of the stand-in below.
-let streamAnswers = new Map<string, () => { status: number, json: unknown }>()
+// JSON of the body (or `text`, a body that need not be JSON), made anew
+// for each request. A URL with no entry here gets the default answers of
+// the stand-in below.
+let streamAnswers = new Map<string, () => { status: number, json?: unknown, text?: string }>()
 // The files that dez.native/saveAppFile wrote, with their roots.
 let savedFiles: Array<{ path: string, bytes: Uint8Array, root: string }> = []
 let consoleError: MockInstance<typeof console.error>
@@ -246,7 +247,7 @@ sbp('sbp/selectors/register', {
         requestId,
         response: { status: answer.status, headers: { 'content-type': 'application/json' } },
         chunks: (async function * () {
-          yield new TextEncoder().encode(JSON.stringify(answer.json))
+          yield new TextEncoder().encode(answer.text ?? JSON.stringify(answer.json))
         })(),
       }
     }
@@ -2210,6 +2211,21 @@ describe('input images that the provider takes only at a web address', () => {
     const error = await generate({}).catch((thrown: unknown) => thrown) as ExplainedError
     expect(error.message).toMatch(/^Dez could not upload an input image to Mart, which takes the images of this model only at a web address\. /)
     expect(error.details).toContain('Damaged file')
+  })
+
+  // The provider holds the image from its 2xx answer on, and took the
+  // money of a paid upload then: an answer that Dez cannot use still
+  // counts, at the price that it tells, or at an unknown price when Dez
+  // cannot read it.
+  it.each([
+    ['a charge and no web address', { json: { overage: { charged: true, cost_usd: 0.001 } } }, { cost: 0.001 }],
+    ['a body that is not JSON', { text: '<html>Uploaded</html>' }, {}],
+  ])('counts an upload whose 2xx answer holds %s, and sends no request', async (_name, body, cost) => {
+    streamAnswers.set(UPLOAD_URL, () => ({ status: 200, ...body }))
+    const steps: MediaProgress[] = []
+
+    await expect(generate({ onProgress: (progress: MediaProgress) => steps.push(progress) })).rejects.toThrow('Dez could not upload an input image to Mart')
+    expect([steps, uploads().length, downloadRequests]).toStrictEqual([[{ phase: 'uploaded', jobId: null, ...cost }], 1, []])
   })
 
   // An image request of APIMart is a task: Dez asks for its state, then

@@ -100,11 +100,14 @@ export interface ImageUploadFormat {
   // the first one) of the request. Its file has a neutral name: it names
   // no file of the user.
   request(baseUrl: string, image: { bytes: Uint8Array, mediaType: ImageMediaType }, number: number): MediaWireRequest
+  // The price in USD of the upload that the JSON of a 2xx response to
+  // `request` tells (`AnswerCost`): 0 for a free upload, absent for a paid
+  // one whose answer tells no price. Never throws: Dez reads it before the
+  // address, so an answer with no address still counts its price.
+  cost(data: unknown): AnswerCost
   // The web address of the image in the JSON of a 2xx response to
-  // `request`, and the price in USD of the upload (`AnswerCost`): 0 for a
-  // free upload, absent for a paid one whose answer tells no price.
-  // Throws an `UnusableAnswerError` when the answer holds no address.
-  result(data: unknown): { url: string } & AnswerCost
+  // `request`. Throws an `UnusableAnswerError` when the answer holds none.
+  url(data: unknown): string
   // Why the provider refused an upload with the status `status` and the
   // JSON `body` (ProviderHttpError.bodyJson), when the body tells a cause
   // of `UploadRefusal`; undefined else.

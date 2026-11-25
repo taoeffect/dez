@@ -314,13 +314,16 @@ const imageUpload: ImageUploadFormat = {
     url: `${trimTrailingSlashes(baseUrl)}/uploads/images?retention_days=${APIMART_UPLOAD_DAYS}`,
     form: [{ name: 'file', file: { bytes, mediaType, fileName: `image-${number}.${imageExtension(mediaType)}` } }],
   }),
-  result: (data) => {
+  cost: (data) => {
+    const overage = isRecord(data) ? data.overage : undefined
+    if (!isRecord(overage) || overage.charged === false) return { cost: 0 }
+    const cost = usageNumber(overage.cost_usd)
+    return cost === undefined ? {} : { cost }
+  },
+  url: (data) => {
     const url = isRecord(data) ? data.url : undefined
     if (!isClipUrl(url)) throw new UnusableAnswerError('The answer to the image upload holds no web address.')
-    const overage = isRecord(data) ? data.overage : undefined
-    if (!isRecord(overage) || overage.charged === false) return { url, cost: 0 }
-    const cost = usageNumber(overage.cost_usd)
-    return { url, ...(cost !== undefined && { cost }) }
+    return url
   },
   refusal: (status, body) => {
     const overage = isRecord(body) ? body.overage : undefined

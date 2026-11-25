@@ -480,19 +480,22 @@ export class Provider {
   // The upload of the input images of an image or a clip request, for an
   // API that takes them only at a web address (`MediaFormat.imageUpload`):
   // the request of the image number `number` (1 for the first one), with
-  // the key, as Dez builds its URL; the reader of the JSON of its 2xx
-  // response; and the cause of a refusal, when the answer tells one
-  // (`UploadRefusal`). Null when the API takes the images as data.
+  // the key, as Dez builds its URL; the readers of the price and of the
+  // web address in the JSON of its 2xx response; and the cause of a
+  // refusal, when the answer tells one (`UploadRefusal`). Null when the API
+  // takes the images as data.
   imageUpload(secret: Secret<string> | null): {
     request(image: { bytes: Uint8Array, mediaType: ImageMediaType }, number: number): NativeHttpRequest
-    result(data: unknown): { url: string } & AnswerCost
+    cost(data: unknown): AnswerCost
+    url(data: unknown): string
     refusal(error: unknown): UploadRefusal | undefined
   } | null {
     const upload = this.mediaFormatOrNone()?.imageUpload
     if (!upload) return null
     return {
       request: (image, number) => this.mediaApiRequest(upload.request(this.config.baseUrl, image, number), secret),
-      result: (data) => upload.result(data),
+      cost: (data) => upload.cost(data),
+      url: (data) => upload.url(data),
       refusal: (error) => (error instanceof ProviderHttpError && error.keyed ? upload.refusal?.(error.status, error.bodyJson) : undefined),
     }
   }

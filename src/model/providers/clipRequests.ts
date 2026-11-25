@@ -203,11 +203,12 @@ export async function sendImageJobRequest(run: JobRun, request: NativeHttpReques
 // them only at a web address (`Provider.imageUpload`), one after the
 // other, each one in a request that `run.requestId` cancels, and gives
 // their web addresses, in the order of `images`. `onUploaded` gets the
-// price of each upload as soon as its answer comes: the provider took the
-// money then, so a later failure must still count it. An upload request
-// has no time limit of its own, as the one request of an image that is no
-// job: `run.signal` ends it. Its time still counts in the time limit of
-// the job: the requests after it get only the time that is left
+// price of each upload as soon as its 2xx answer comes: the provider holds
+// the image and took the money then, so a later failure must still count
+// it, also a failure to read or use that answer. An upload request has no
+// time limit of its own, as the one request of an image that is no job:
+// `run.signal` ends it. Its time still counts in the time limit of the
+// job: the requests after it get only the time that is left
 // (`run.deadline`).
 export async function uploadInputImages(
   run: JobRun,
@@ -218,19 +219,24 @@ export async function uploadInputImages(
   const urls: string[] = []
   for (const [index, image] of images.entries()) {
     run.signal?.throwIfAborted()
-    let uploaded: { url: string } & AnswerCost
+    // Set from the 2xx answer on: an unknown price (`{}`) until Dez reads
+    // the price of the answer. The `finally` counts it once, on success
+    // and on failure.
+    let uploaded: AnswerCost | undefined
     try {
       const { response, chunks } = await sbp('dez.http/stream', upload.request(image, index + 1), run.requestId) as NativeHttpStreamResult
       await assertStreamResponseOk(run.provider, response, chunks)
-      uploaded = upload.result(jsonBody(await readNativeChunkBytes(chunks)))
+      uploaded = {}
+      const data = jsonBody(await readNativeChunkBytes(chunks))
+      uploaded = upload.cost(data)
+      urls.push(upload.url(data))
     } catch (error) {
       // A stop rejects too: the caller tells it by its signal.
       if (run.signal?.aborted) throw error
       throw imageUploadError(run.provider, error, upload.refusal(error))
+    } finally {
+      if (uploaded) onUploaded(uploaded)
     }
-    const { url, ...cost } = uploaded
-    onUploaded(cost)
-    urls.push(url)
   }
   return urls
 }
