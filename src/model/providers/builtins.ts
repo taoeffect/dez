@@ -489,16 +489,17 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     modelListQuery: { expand: 'parameters' },
     // The list tells no image input, tools, or thinking that Dez can trust
     // (`capability_tags` give tools to the embedding models), so these flags
-    // stay unknown. The image, video, and audio models take no chat request.
-    // An `unknown` model is one that APIMart has not cataloged; its price
-    // page answers `model_not_found` or `no_valid_pricing` (checked live,
-    // 2026-11-24).
+    // stay unknown. The image and audio models take no chat request, and
+    // Dez has no request of theirs yet. A video model makes a video from a
+    // prompt (`mediaApi`); Dez sends it no input image. An `unknown` model
+    // is one that APIMart has not cataloged; its price page answers
+    // `model_not_found` or `no_valid_pricing` (checked live, 2026-11-24).
     modelOutputs: {
       path: 'category',
       values: {
         chat: { outputs: ['text'], request: 'chat' },
         image: { outputs: [] },
-        video: { outputs: [] },
+        video: { outputs: ['video'], request: 'video' },
         audio: { outputs: [] },
         unknown: { outputs: [] },
       },
@@ -530,6 +531,11 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
       contextWindow: { paths: ['data.pricing.limits.max_input_tokens'] },
       note: "APIMart's public price (an account can pay less)",
     },
+    // Video requests are tasks, which Dez polls (apimartFormat.ts). The
+    // docs tell no limit of the tasks of one key at a time, so the
+    // default limit of Dez applies.
+    // https://docs.apimart.ai/en/api-reference/tasks/status
+    mediaApi: { format: 'apimart' },
     auth: 'apiKey',
     // Claude caches only a marked prompt. A live check (2026-11-24, Claude
     // Haiku 5.5): the marks on the last user messages stored the prompt, and

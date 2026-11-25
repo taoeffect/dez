@@ -13,7 +13,7 @@ import type { RequestPrice } from '../model/chat/moneyLimit'
 import type { ModelRef, Tab } from '../model/chat/types'
 import type { ModelCache } from '../model/persistence/types'
 import { TooManyImagesError } from '../model/providers/clipImages'
-import { InputImageError, ProviderHttpError } from '../model/providers/errors'
+import { ClipNotMadeError, InputImageError, ProviderHttpError } from '../model/providers/errors'
 import type { KnownLimit } from '../model/providers/knownLimits'
 import { contextWindowOf } from '../model/providers/modelFamilies'
 import { PRICE_LIFETIME_MS } from '../model/providers/modelPrices'
@@ -1587,7 +1587,8 @@ describe('dez.controller/tools/run', () => {
 
       // A provider gives back the money of a request that it refused, and
       // bills one that it took: its job, or an answer that Dez cannot use.
-      it('counts a refused request as free, keeps the quote of a request that failed after the provider took it, and counts a job whose request did not go as one with no paid request', async () => {
+      // A job that ended with no clip costs what its answer told.
+      it('counts a refused request as free, keeps the quote of a request that failed after the provider took it, counts the told cost of a job that made no clip, and counts a job whose request did not go as one with no paid request', async () => {
         const refusal = new ProviderHttpError('venice', 400, true, '', undefined, 'Venice refused the request.', 'Venice refused the request.')
         let failure: { sends: boolean, queued?: boolean, error: Error } = { sends: true, error: new ExplainedError('Venice refused the request: the prompt breaks its rules.', '', { cause: refusal }) }
         generateMedia = async (input) => {
@@ -1599,6 +1600,10 @@ describe('dez.controller/tools/run', () => {
         // A poll of the provider's job that it refused.
         failure = { sends: true, queued: true, error: new ExplainedError('Venice refused the request. Venice ran this request as its job q-17.', '', { cause: refusal }) }
         await jobTool('model_invoke', PAINT)
+        // A job that the provider ended with no clip, and whose answer told
+        // its cost (APIMart gives the money of a failed task back).
+        failure = { sends: true, queued: true, error: new ExplainedError('APIMart did not make the clip.', '', { cause: new ClipNotMadeError('State: failed', 0) }) }
+        await jobTool('model_invoke', PAINT)
         failure = { sends: true, error: new ExplainedError('Venice sent an answer that Dez cannot use.') }
         await jobTool('model_invoke', PAINT)
         failure = { sends: false, error: refusal }
@@ -1606,7 +1611,7 @@ describe('dez.controller/tools/run', () => {
         await jobTool('jobs_wait', { all: true })
 
         expect(jobs.list().map((job) => [job.status, Object.hasOwn(job, 'cost') ? job.cost : 'none']))
-          .toStrictEqual([['failed', 0], ['failed', 0.3], ['failed', 0.3], ['failed', 'none']])
+          .toStrictEqual([['failed', 0], ['failed', 0.3], ['failed', 0], ['failed', 0.3], ['failed', 'none']])
       })
 
       describe('to a text model', () => {

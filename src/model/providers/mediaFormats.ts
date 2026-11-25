@@ -7,6 +7,7 @@ import type { ImageSize } from '../chat/imageDrawing'
 import { imageMediaType } from '../chat/images'
 import type { MediaTagKind } from '../chat/mediaTags'
 import { clipMediaTypeOfExtension, mediaFileExtension } from '../chat/mediaFiles'
+import { apimartFormat } from './apimartFormat'
 import { trimTrailingSlashes, type MediaApiFormatId, type MediaEntryPaths } from './config'
 import type { ClipUse, InputClipRules } from './clipInputs'
 import type { InputImageRules } from './clipImages'
@@ -16,7 +17,8 @@ import { ClipNotMadeError, UnusableAnswerError } from './errors'
 import { generatedBase64Image, generatedImage } from './generatedImages'
 import { imageSizeRules, positiveLimit, type ImageSizeRules, type InputImageLimits } from './imageSize'
 import type { MultipartField } from './multipart'
-import { isOptionValue, parameterTakes, type ModelParameter, type OptionsParameter, type OptionValue, type ParameterValues, type RangeParameter } from './modelParameters'
+import { isClipUrl, lengthSeconds, listedValues, lowestFirstParameter, optionsParameter, resolutionLines, switchParameter } from './mediaFormatParts'
+import { parameterTakes, type ModelParameter, type OptionValue, type ParameterValues, type RangeParameter } from './modelParameters'
 import { priceNumber, roundedPrice, unitPrice, usdText, type ModelPrice } from './modelPrices'
 import { isRecord, valueAtPath } from './modelParsing'
 import { CLIP_KINDS, type ChatImagePart, type ClipKind, type GeneratedMedia, type ImageKind, type MediaKind, type TextKind, type TimedSegment, type TimedWord, type TranscriptTimes } from './types'
@@ -364,30 +366,6 @@ function openRouterAnswerCost(data: unknown): AnswerCost {
   return cost === undefined ? {} : { cost }
 }
 
-// A URL that a player can load: http or https, with no space or line break
-// (a media tag is one line).
-function isClipUrl(value: unknown): value is string {
-  return typeof value === 'string' && /^https?:\/\/\S+$/i.test(value)
-}
-
-// The texts and numbers of a list in a model entry, each once, in the
-// list's order.
-function listedValues(list: unknown): OptionValue[] {
-  return [...new Set((Array.isArray(list) ? list : []).filter(isOptionValue))]
-}
-
-// The parameter of a request field that takes one of `options`, and, with
-// `custom`, also a text that the list does not hold; none when it has no
-// option and takes no such text. `defaultValue` is its default when it is
-// an option.
-function optionsParameter(name: string, label: string, options: OptionValue[], defaultValue?: unknown, custom = false): ModelParameter[] {
-  if (options.length === 0 && !custom) return []
-  const parameter: OptionsParameter = { name, label, options }
-  if (isOptionValue(defaultValue) && options.includes(defaultValue)) parameter.default = defaultValue
-  if (custom) parameter.custom = true
-  return [parameter]
-}
-
 // The step of a speed field. The APIs take any number of the range (the
 // speech schema of Venice: "minimum: 0.25, maximum: 4", with no step), so
 // the range has `anyNumber`: a step rule in Dez would refuse a speed that
@@ -407,47 +385,10 @@ function speedParameter(min: unknown, max: unknown, defaultValue?: unknown): Mod
   return [range]
 }
 
-// The switch of a request field that a model takes only when its entry
-// says so (`supported` is true). With no `defaultValue`, a switch that the
-// user did not turn on puts no field into the request.
-function switchParameter(name: string, label: string, supported: unknown, defaultValue?: boolean): ModelParameter[] {
-  if (supported !== true) return []
-  return [{ name, label, ...(defaultValue !== undefined && { default: defaultValue }) }]
-}
-
 // An input image as a data URL: Dez has no URL that a provider could
 // fetch.
 function imageDataUrl(image: ChatImagePart): string {
   return `data:${image.mediaType};base64,${image.data}`
-}
-
-// The seconds of a length, as a model list writes it: a number (OpenRouter)
-// or a text such as `5s` (Venice). NaN for any other entry, such as `auto`.
-function lengthSeconds(length: OptionValue): number {
-  if (typeof length === 'number') return length > 0 ? length : Number.NaN
-  const match = /^(\d+(?:\.\d+)?)s?$/i.exec(length)
-  return match ? Number(match[1]) : Number.NaN
-}
-
-// The lines of a resolution: names of lines (`480p`, `768P`) and of
-// thousands (`2k`, `4K`) count. NaN for a name such as `2x` or
-// `true_1080p`, which has no place in the order.
-function resolutionLines(resolution: OptionValue): number {
-  const match = typeof resolution === 'string' ? /^(\d+)([pk])$/i.exec(resolution) : null
-  return match ? Number(match[1]) * (match[2].toLowerCase() === 'k' ? 1000 : 1) : Number.NaN
-}
-
-// The parameter of a length or a resolution, from the list of a model
-// entry. Its default is the lowest value: Dez shows no price before a
-// request, so with no choice a request asks for the cheapest clip that the
-// model makes. For one model, the default length and size of a provider
-// can cost 5 to 20 times more. The options go from low to high; the values
-// that `size` gives no number come last, in the list's order, and are never
-// the default.
-function lowestFirstParameter(name: string, label: string, list: unknown, size: (value: OptionValue) => number): ModelParameter[] {
-  const values = listedValues(list)
-  const sized = values.filter((value) => !Number.isNaN(size(value))).sort((a, b) => size(a) - size(b))
-  return optionsParameter(name, label, [...sized, ...values.filter((value) => Number.isNaN(size(value)))], sized[0])
 }
 
 // The refusal of a video request with no length. A model has no length
@@ -2190,7 +2131,10 @@ const openRouterFormat: MediaFormat = {
   listPrice: openRouterListPrice,
 }
 
+// The APIMart format is a module of its own (apimartFormat.ts), which
+// imports only types of this one.
 export const MEDIA_FORMATS: Record<MediaApiFormatId, MediaFormat> = {
   venice: veniceFormat,
   openrouter: openRouterFormat,
+  apimart: apimartFormat,
 }

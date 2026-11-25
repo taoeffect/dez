@@ -283,12 +283,25 @@ export class UnusableAnswerError extends Error {
 }
 
 // A clip job that the provider ended with no clip (a failed, cancelled, or
-// expired job). The message holds the provider's state and reason.
+// expired job). The message holds the provider's state and reason. `cost`
+// is the provider's own price of the job in USD, when its answer tells it
+// (APIMart gives the money of a failed task back: 0).
 export class ClipNotMadeError extends Error {
-  constructor(message: string) {
+  constructor(message: string, readonly cost?: number) {
     super(message)
     this.name = 'ClipNotMadeError'
   }
+}
+
+/** The provider's own price of a clip job that `error` tells ended with no
+ *  clip (`ClipNotMadeError.cost`), when its answer told one; undefined
+ *  else. The error can be the cause of the error for the reader
+ *  (`explainedProviderError`), or the cause of that cause. */
+export function notMadeClipCost(error: unknown): number | undefined {
+  for (let cause = error; cause instanceof Error; cause = cause.cause) {
+    if (cause instanceof ClipNotMadeError) return cause.cost
+  }
+  return undefined
 }
 
 /** Why Dez sends no input image of a request:

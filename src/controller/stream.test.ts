@@ -17,7 +17,7 @@ import { missingImageProblem, TooManyImagesError, type InputImageRules } from '.
 import { missingClipProblem, type ClipAttachment, type InputClipRules } from '../model/providers/clipInputs'
 import type { ClipTextRules } from '../model/providers/clipText'
 import { customProviderConfigSchema } from '../model/providers/config'
-import { ProviderHttpError } from '../model/providers/errors'
+import { ClipNotMadeError, ProviderHttpError } from '../model/providers/errors'
 import { unstoredOutputMessage } from '../model/providers/unusableModel'
 import type { GeneratedClip, ProviderChatInputMessage, ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderInfo, ProviderStreamChatInput, ProviderStreamChatResult } from '../model/providers'
 import { providerInfo } from '../model/providers/testing'
@@ -1849,7 +1849,8 @@ describe('dez.stream/start media round', () => {
   // A provider takes no money for a request that it refused. A stop does
   // not end the provider's work, and a provider bills a request that it
   // took (its job, an answer that Dez cannot use), so they keep the quote.
-  it('adds the price of each request that went to the cost of the conversation: 0 for one that the provider refused, the quote for one that failed after the provider took it or that the user stopped', async () => {
+  // A job that the provider ended with no clip costs what its answer told.
+  it('adds the price of each request that went to the cost of the conversation: 0 for one that the provider refused, the told cost of a job that made no clip, the quote for one that failed after the provider took it or that the user stopped', async () => {
     const send = (input: ProviderGenerateMediaInput, quote?: number) => input.onProgress?.({ phase: 'sent', jobId: null, ...(quote !== undefined && { quote }) })
     const refusal = new ProviderHttpError(model.providerId, 400, true, '', undefined, 'Venice refused the request.', 'Venice refused the request.')
     for (const answer of [
@@ -1866,6 +1867,13 @@ describe('dez.stream/start media round', () => {
         send(input, 0.5)
         input.onProgress?.({ phase: 'queued', jobId: 'q-17' })
         throw new ExplainedError('Venice refused the request. To ask Venice about this clip, give its job id: q-17.', '', { cause: refusal })
+      },
+      // A job that ended with no clip, whose answer told its cost (APIMart
+      // gives the money of a failed task back).
+      async (input: ProviderGenerateMediaInput) => {
+        send(input, 0.5)
+        input.onProgress?.({ phase: 'queued', jobId: 't-1' })
+        throw new ExplainedError('APIMart did not make the clip. To ask APIMart about this clip, give its job id: t-1.', '', { cause: new ClipNotMadeError('State: failed', 0) })
       },
       async (input: ProviderGenerateMediaInput) => {
         send(input, 0.5)
@@ -1887,7 +1895,7 @@ describe('dez.stream/start media round', () => {
       await sbp('dez.controller/submitTab', activeTab().id)
     }
 
-    const cost = { usd: 1.75, requests: 6, unpriced: 1 }
+    const cost = { usd: 1.75, requests: 7, unpriced: 1 }
     expect(activeTab().cost).toStrictEqual(cost)
     expect(savedConversations.at(-1)?.cost).toStrictEqual(cost)
   })

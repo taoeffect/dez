@@ -1752,9 +1752,10 @@ describe('provider models', () => {
       ['new-type', undefined, undefined],
     ])
     // APIMart (checked live 2026-11-24, abridged): only the chat models of
-    // the `chat` category take a chat request; the embedding, moderation,
-    // speech-to-text, and Responses-only models of that category are
-    // hidden, and so are the image, video, audio, and `unknown` models.
+    // the `chat` category take a chat request, and the `video` models make
+    // a video from a prompt; the embedding, moderation, speech-to-text, and
+    // Responses-only models of the chat category are hidden, and so are the
+    // image, audio, and `unknown` models.
     const apimart = (id: string, category: string, supported_endpoint_types: string[], capability_tags?: string[]) =>
       ({ id, object: 'model', created: 1626777600, owned_by: 'custom', supported_endpoint_types, category, capability_tags })
     expect(kinds('apimart', [
@@ -1771,6 +1772,7 @@ describe('provider models', () => {
     ])).toEqual([
       ['claude-haiku-5-5', ['text'], 'chat'],
       ['gpt-5-nano', ['text'], 'chat'],
+      ['apimart-zoe', ['video'], 'video'],
     ])
   })
 

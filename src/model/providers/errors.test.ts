@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { ExplainedError } from '../../utils/errorText'
 import { NativeHttpError } from '../../utils/protocol/errors'
 import { BUILT_IN_PROVIDER_CONFIGS } from './builtins'
-import { ClipNotMadeError, explainedProviderError, providerConnectionError, providerStatusError, providerStreamError, UnusableAnswerError } from './errors'
+import { ClipNotMadeError, explainedProviderError, notMadeClipCost, providerConnectionError, providerStatusError, providerStreamError, UnusableAnswerError } from './errors'
 import { Provider } from './provider'
 
 function builtInProvider(id: string): Provider {
@@ -209,5 +209,22 @@ describe('provider request errors', () => {
 
     expect([explainedProviderError(venice, written, 'model'), explainedProviderError(venice, other, 'model')]).toStrictEqual([written, other])
     expect(explainedProviderError(venice, written, 'model')).toBe(written)
+  })
+
+  // The cost counts in place of the quote (stream.ts, modelInvoke.ts): the
+  // error that they get is the error for the reader, or the error of a job
+  // (`dez.provider/generateMedia`), whose cause is the raw error.
+  it('finds the told cost of a clip that the provider did not make in the error for each reader, and none in other errors', () => {
+    const notMade = new ClipNotMadeError('State: failed: Content policy', 0)
+
+    expect([
+      notMadeClipCost(explainedProviderError(custom, notMade, 'user')),
+      notMadeClipCost(explainedProviderError(custom, notMade, 'model')),
+      notMadeClipCost(new ExplainedError('My server did not make the clip.', '', { cause: notMade })),
+      notMadeClipCost(new ClipNotMadeError('State: failed', 0.4)),
+      notMadeClipCost(new ClipNotMadeError('State: failed')),
+      notMadeClipCost(new ExplainedError('My server sent an answer that Dez cannot use.', '', { cause: new UnusableAnswerError('No URL.') })),
+      notMadeClipCost('State: failed'),
+    ]).toStrictEqual([0, 0, 0, 0.4, undefined, undefined, undefined])
   })
 })

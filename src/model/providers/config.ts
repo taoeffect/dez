@@ -49,7 +49,7 @@ export const API_FORMAT_IDS = ['openai', 'anthropic'] as const
 
 // Wire formats of a provider's own image, audio, and video API (`mediaApi`;
 // mediaFormats.ts tells which request kinds each one serves).
-export const MEDIA_API_FORMAT_IDS = ['venice', 'openrouter'] as const
+export const MEDIA_API_FORMAT_IDS = ['venice', 'openrouter', 'apimart'] as const
 
 const providerIdSchema = z.string().refine(
   isValidProviderId,

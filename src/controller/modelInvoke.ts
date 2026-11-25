@@ -3,7 +3,7 @@ import { modelRefKey } from '../model/chat/modelRef'
 import { chatRequestPrice, type RequestPrice } from '../model/chat/moneyLimit'
 import { failedChatRequestCost, type ChatUsage } from '../model/providers/chatUsage'
 import { TooManyImagesError, tooManyImagesMessage } from '../model/providers/clipImages'
-import { InputImageError, isProviderRefusal } from '../model/providers/errors'
+import { InputImageError, isProviderRefusal, notMadeClipCost } from '../model/providers/errors'
 import type { MediaProgress, ProviderGenerateMediaResult, ProviderStreamChatResult } from '../model/providers/streamTypes'
 import type { GeneratedClip, GeneratedMedia, TranscriptTimes } from '../model/providers/types'
 import { requestImageCount } from '../model/streams/pictureBudget'
@@ -113,11 +113,13 @@ async function timesResultText({ provider, model, request }: MediaInvocation, co
 //   as soon as there is one.
 // - `reportCost` gets the quote when the request goes, then the cost of
 //   the result. A request that the provider refused counts 0, as a refused
-//   request costs nothing. Any other failure keeps the quote, and so does a
-//   failure after the provider started its job (a poll, the download, an
-//   answer that Dez cannot use, the time limit): the provider can have
-//   taken the money. A stopped or timed-out job keeps its quote too:
-//   `TabJobs` takes no report after the end of a job.
+//   request costs nothing, and a job that the provider ended with no clip
+//   counts the price that its answer told (`notMadeClipCost`). Any other
+//   failure keeps the quote, and so does a failure after the provider
+//   started its job (a poll, the download, an answer that Dez cannot use,
+//   the time limit): the provider can have taken the money. A stopped or
+//   timed-out job keeps its quote too: `TabJobs` takes no report after the
+//   end of a job.
 async function invokeMediaModel(invocation: MediaInvocation, conversationId: string, signal: AbortSignal, report: JobReport, reportCost: (usd: number | null) => void, { checkMoney }: InvocationRights): Promise<JobOutcome> {
   const { provider, model, kind, request, parameters, timeoutMs } = invocation
   report(INVOCATION_READS_INPUTS)
@@ -154,7 +156,9 @@ async function invokeMediaModel(invocation: MediaInvocation, conversationId: str
       reader: 'model',
     }) as ProviderGenerateMediaResult
   } catch (error) {
+    const notMadeCost = notMadeClipCost(error)
     if (sent && !queued && isProviderRefusal(error)) reportCost(0)
+    else if (sent && notMadeCost !== undefined) reportCost(notMadeCost)
     throw invocationError(invocation, error)
   }
   reportCost(result.cost ?? null)

@@ -6,6 +6,7 @@ import type { MediaEntryPaths } from './config'
 import { ClipNotMadeError, UnusableAnswerError } from './errors'
 import { MEDIA_FORMATS, NO_VIDEO_LENGTH_MESSAGE, type ClipFormat, type ClipQuoteFormat, type ImageFormat, type InputClipPart } from './mediaFormats'
 import { effectiveParameterValues, type ModelParameter, type ParameterValues } from './modelParameters'
+import { thrownError } from './testing'
 import type { ChatImagePart, ClipKind, MediaKind } from './types'
 
 const venice = MEDIA_FORMATS.venice.images as ImageFormat
@@ -26,17 +27,6 @@ const WAV = new TextEncoder().encode('RIFF\x0c\x00\x00\x00WAVEfmt ')
 
 const head = (contentType: string): NativeHttpResponseHead => ({ status: 200, headers: { 'content-type': contentType } })
 const json = (value: unknown) => new TextEncoder().encode(JSON.stringify(value))
-
-// The error that `call` throws. Its class tells which text the user gets
-// (`explainedProviderError`), so a test compares the whole error.
-function thrownError(call: () => unknown): unknown {
-  try {
-    call()
-  } catch (error) {
-    return error
-  }
-  return undefined
-}
 
 // The parameters with no labels: a label is UI text.
 function withoutLabels(parameters: ModelParameter[]): Omit<ModelParameter, 'label'>[] {

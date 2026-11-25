@@ -16,7 +16,7 @@ import { findToolBlocks, ModelTextEscaper } from '../model/chat/toolBlocks'
 import { effectiveOutputs } from '../model/modelOutputs'
 import { failedChatRequestCost, type ChatUsage } from '../model/providers/chatUsage'
 import { imagesText, TooManyImagesError, tooManyImagesMessage } from '../model/providers/clipImages'
-import { isProviderRefusal } from '../model/providers/errors'
+import { isProviderRefusal, notMadeClipCost } from '../model/providers/errors'
 import { contextWindowOf, imageLimitOf, messageImageLimitOf, modelFamily } from '../model/providers/modelFamilies'
 import { effectiveRequest } from '../model/providers/types'
 import { ExplainedError, errorText, explainedError } from '../utils/errorText'
@@ -1318,11 +1318,13 @@ async function runMediaRound(args: StreamStartArgs, reply: ReplyRuntime, kind: M
     }) as ProviderGenerateMediaResult
   } catch (error) {
     // A request that went counts 0 only when the provider refused it, as a
-    // refused request costs nothing (the rule of `model_invoke`). Any other
-    // failure, a stop, and a failure after the provider started its job
-    // (a poll, the download, an answer that Dez cannot use, the time limit)
-    // keep the quote: the provider can have taken the money.
-    if (sentCost !== undefined) countRequestCost(args.tabId, !queued && isProviderRefusal(error) ? 0 : sentCost)
+    // refused request costs nothing (the rule of `model_invoke`), and a job
+    // that the provider ended with no clip counts the price that its answer
+    // told (`notMadeClipCost`). Any other failure, a stop, and a failure
+    // after the provider started its job (a poll, the download, an answer
+    // that Dez cannot use, the time limit) keep the quote: the provider can
+    // have taken the money.
+    if (sentCost !== undefined) countRequestCost(args.tabId, !queued && isProviderRefusal(error) ? 0 : notMadeClipCost(error) ?? sentCost)
     throw error
   } finally {
     // Next to the count of the cost, with no wait between the two.
