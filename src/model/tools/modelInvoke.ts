@@ -318,13 +318,13 @@ export function invocationStateText(providerName: string, { phase, jobId, limit 
     case 'waiting':
       return `The request waits for its turn: Dez sends ${providerName} at most ${limit ?? 'a few'} media requests at one time. The time limit of the job waits too.`
     case 'uploaded':
-      return `Dez uploads the input images of the request to ${providerName}, which takes them only at a web address.`
+      return `Dez uploads the input images of the request to ${providerName}, which takes them only at a web address, and then sends the request.`
     case 'sent':
       return `${providerName} has the request, and has not answered yet.`
     case 'queued':
       return `${providerName} runs the request as a job of its own.${withId}`
     case 'downloading':
-      return `${providerName} made the clip, and Dez downloads it.${withId}`
+      return `${providerName} made the output, and Dez downloads it.${withId}`
   }
 }
 
