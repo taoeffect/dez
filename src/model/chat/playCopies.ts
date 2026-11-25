@@ -40,8 +40,15 @@ export const PLAY_COPY_RUN_TIMEOUT_MS = 10 * 60 * 1000
  *  memory while it plays. */
 export const PLAY_COPY_MAX_BYTES = 256 * 1024 ** 2
 
-/** The most bytes of all the play copies that Dez keeps in memory for the
- *  session, so that the next player of a clip gets its copy with no run. */
+/** How long Dez keeps a play copy in memory after the last player that
+ *  shows it went (a tab switch, a scroll that takes the player out of the
+ *  drawn part of the editor, a closed preview box), so that a quick
+ *  return makes no new run. */
+export const PLAY_COPY_KEEP_MS = 60 * 1000
+
+/** The most bytes of all the play copies that Dez keeps in memory. Past
+ *  it, the copies that no player shows go first, the oldest first; a copy
+ *  that a player shows stays, as its player holds its bytes anyway. */
 export const PLAY_COPY_MEMO_MAX_BYTES = 512 * 1024 ** 2
 
 /** One ffmpeg run that makes a play copy in a run folder. */

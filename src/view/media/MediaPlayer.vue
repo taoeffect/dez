@@ -93,8 +93,10 @@ interface LoadedSource {
   src: string
   url: string
   /** The URL is of the play copy of the clip (`playCopy`), not of the
-   *  clip's own file. */
-  copy: boolean
+   *  clip's own file: the hold of the copy in the memo of the controller
+   *  (`dez.controller/media/playCopy`), which `release` ends. Null for the
+   *  clip's own file or URL. */
+  copyHold: AbortController | null
 }
 
 const loaded = shallowRef<LoadedSource | null>(null)
@@ -160,7 +162,7 @@ function onMediaError(event: Event): void {
   console.error('[MediaPlayer] The clip did not load; media error code:', code)
   const source = loaded.value
   if (!source) return
-  fail(source.src, { step: 'play', code, copy: source.copy })
+  fail(source.src, { step: 'play', code, copy: source.copyHold !== null })
   // The card, or the status of a play copy, takes the place of the media
   // element, so the player needs no source any more: this gives up the blob
   // URL of a local file (the `loaded` watcher revokes it), which holds the
@@ -170,7 +172,8 @@ function onMediaError(event: Event): void {
 }
 
 // The wait of the player for the play copy of its clip; null when it waits
-// for none.
+// for none. When the copy came, the same controller goes on as its hold
+// (`LoadedSource.copyHold`).
 let copyWait: AbortController | null = null
 
 // Stops the wait for the play copy: the controller stops the run when no
@@ -208,16 +211,21 @@ async function playCopy(entry: FailedLoad): Promise<void> {
     if (wait.signal.aborted) return
     console.error('[MediaPlayer] The play copy failed:', error)
   }
+  if (wait.signal.aborted) return
   // The clip got another source, or failed again, or the player went,
-  // while the copy was made.
-  if (wait.signal.aborted || unmounted || props.src !== entry.src || failed.value !== entry) return
+  // while the copy was made: no source holds the copy.
+  if (unmounted || props.src !== entry.src || failed.value !== entry) {
+    wait.abort()
+    return
+  }
   copyWait = null
   if (made === null) {
     failed.value = { src: entry.src, failure: { step: 'copy' } }
     return
   }
   failed.value = null
-  load({ src: entry.src, url: URL.createObjectURL(made), copy: true })
+  // The wait goes on as the hold of the copy, while the player shows it.
+  load({ src: entry.src, url: URL.createObjectURL(made), copyHold: wait })
 }
 
 // A video is 16:9 until it tells its size.
@@ -283,7 +291,7 @@ watch(() => props.src, async (src, previous) => {
       if (problem === 'copy') void playCopy(entry)
       return
     }
-    if (current !== null && current.copy && current.src === previous) {
+    if (current !== null && current.copyHold !== null && current.src === previous) {
       const ratio = videoAspectRatios.get(previous)
       if (ratio !== undefined) videoAspectRatios.set(src, ratio)
       loaded.value = { ...current, src }
@@ -298,7 +306,7 @@ watch(() => props.src, async (src, previous) => {
   }
   if (kind === 'remote') {
     fileBytes.value = null
-    load({ src, url: src, copy: false })
+    load({ src, url: src, copyHold: null })
     return
   }
   if (media.value === null) load(null)
@@ -320,25 +328,29 @@ watch(() => props.src, async (src, previous) => {
   }
   fileBytes.value = file.size
   const type = clipPlayType(file.type, props.type)
-  load({ src, url: URL.createObjectURL(type === file.type ? file : file.slice(0, file.size, type)), copy: false })
+  load({ src, url: URL.createObjectURL(type === file.type ? file : file.slice(0, file.size, type)), copyHold: null })
 }, { immediate: true })
 
 // A blob URL keeps its bytes in memory until it is revoked. After that, the
 // bytes go only when the page collects the `File`, so keep no other
 // reference to it (`LoadedSource` holds only the URLs). The blob of a play
-// copy stays in the memo of the controller, under its cap.
+// copy is in the memo of the controller: the end of its hold lets the memo
+// drop it (`PLAY_COPY_KEEP_MS` later, or at once over its cap).
 function release(source: LoadedSource | null | undefined): void {
-  if (source && source.url !== source.src) URL.revokeObjectURL(source.url)
+  if (!source) return
+  if (source.url !== source.src) URL.revokeObjectURL(source.url)
+  source.copyHold?.abort()
 }
 
 // The `post` flush: the media element has the next URL by then. A Save
-// keeps the URL of a play copy for the saved file: it stays.
+// keeps the URL of a play copy for the saved file: it stays, with its hold.
 watch(loaded, (next, previous) => {
   if (next?.url !== previous?.url) release(previous)
 }, { flush: 'post' })
 
-// Only the blob URL is released here. The media element gives up its
-// player when Vue removes it (`vReleaseOnRemove`).
+// Only the blob URL, and the hold of a play copy, are released here. The
+// media element gives up its player when Vue removes it
+// (`vReleaseOnRemove`).
 onBeforeUnmount(() => {
   unmounted = true
   stopCopyWait()
@@ -713,7 +725,7 @@ function onContextMenu(event: MouseEvent): void {
 
           <!-- The mark of a play copy: the clip plays, but not from its own
                file. -->
-          <template v-if="loaded?.copy">
+          <template v-if="loaded?.copyHold">
             <span class="media-player__copy-mark" role="img" tabindex="0" :aria-label="`${COPY_NOTICE.title}. ${COPY_NOTICE.text}`">
               <svg class="media-player__icon media-player__icon--line" viewBox="0 0 16 16" aria-hidden="true">
                 <rect x="5.6" y="5.6" width="7.8" height="7.8" rx="1.6" />

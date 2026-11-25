@@ -1,6 +1,6 @@
 import sbp from '@sbp/sbp'
 import { ClipReadError } from '../model/chat/mediaFiles'
-import { PLAY_COPY_MAX_BYTES, PLAY_COPY_MEMO_MAX_BYTES, PLAY_COPY_RUN_TIMEOUT_MS, playCopyRun, type PlayCopyTarget } from '../model/chat/playCopies'
+import { PLAY_COPY_KEEP_MS, PLAY_COPY_MAX_BYTES, PLAY_COPY_MEMO_MAX_BYTES, PLAY_COPY_RUN_TIMEOUT_MS, playCopyRun, type PlayCopyTarget } from '../model/chat/playCopies'
 import { withoutLocalPaths } from '../model/tools/localPaths'
 import { ffmpegRunDetails } from '../model/tools/programRuns'
 import { ToolError } from '../model/tools/types'
@@ -17,10 +17,12 @@ import { copyInputClip, errorOutputEnd, inWorkFolder, runProgram } from './progr
 //
 // A copy is in memory only, as a Blob: no new file and no new kind of
 // cache entry, so the cleanups (unusedFiles.ts) know nothing of it. The
-// memo of this module keeps the copies of the session, so that a second
-// player of the same clip (the preview box of a mention, the kept assets
-// list) makes no second run. Its key is the `src` of the clip, and the
-// size of the file tells a changed linked file.
+// memo of this module keeps a copy while a player shows it, so that a
+// second player of the same clip (the preview box of a mention, the kept
+// assets list) makes no second run, and `PLAY_COPY_KEEP_MS` after the last
+// player went, so that a quick return (a tab switch, a scroll back) makes
+// no second run either. Its key is the `src` of the clip, and the size of
+// the file tells a changed linked file.
 //
 // Nothing of a run goes to a model or to the user: an error goes only to
 // `console.error`, with no path, and the player shows its card.
@@ -50,14 +52,18 @@ interface PlayCopy {
   done: boolean
   // The bytes of a copy that was made, for the cap of the memo.
   bytes: number
-  // How many calls wait for the copy. The run stops when the last one
-  // stops waiting.
-  waiters: number
+  // How many calls hold the copy: the calls whose signal did not stop. They
+  // wait for the copy, or they show the copy that was made. The run stops
+  // when the last one stops waiting (`lastPlayerWent`).
+  players: number
+  // The timer that takes a copy that was made out of the memo, from the
+  // moment its last player went; null while a player shows it.
+  freeTimer: ReturnType<typeof setTimeout> | null
   stop: AbortController
 }
 
-// The copies of the session by `src`, the one that was used last at the
-// end (a use deletes the key, and sets it again).
+// The copies by `src`, the one that was used last at the end (a use
+// deletes the key, and sets it again).
 const copies = new Map<string, PlayCopy>()
 
 // How one run ended: the copy, or the lines of the log of a run that made
@@ -120,55 +126,95 @@ function makeCopy(entry: PlayCopy, target: PlayCopyTarget): Promise<Blob | null>
   }) as Promise<Blob | null>
 }
 
-// Drops the oldest copies that were made while the memo holds more than
-// its cap. A player that plays a dropped copy keeps it. A copy that failed
-// stays: it holds no bytes, and the memo keeps the next player of its clip
-// from a run that fails again.
+// Stops the timer that takes `entry` out of the memo.
+function stopFreeTimer(entry: PlayCopy): void {
+  if (entry.freeTimer === null) return
+  clearTimeout(entry.freeTimer)
+  entry.freeTimer = null
+}
+
+// Takes `entry` out of the memo, if it is still the entry of its `src`: a
+// Save moves an entry (`movePlayCopy`), and a changed size replaces it.
+function dropCopy(entry: PlayCopy): void {
+  stopFreeTimer(entry)
+  if (copies.get(entry.src) === entry) copies.delete(entry.src)
+}
+
+// Drops the oldest copies that no player shows while the memo holds more
+// than its cap. A copy that a player shows counts, but stays: its player
+// holds its bytes anyway, and the next player of its clip gets it with no
+// run. A copy that failed stays: it holds no bytes, and the memo keeps the
+// next player of its clip from a run that fails again.
 function trimCopies(): void {
   let total = 0
   for (const entry of copies.values()) total += entry.bytes
-  for (const [src, entry] of copies) {
+  for (const entry of copies.values()) {
     if (total <= PLAY_COPY_MEMO_MAX_BYTES) return
-    if (!entry.done || entry.bytes === 0) continue
+    if (!entry.done || entry.bytes === 0 || entry.players > 0) continue
     total -= entry.bytes
-    copies.delete(src)
+    dropCopy(entry)
   }
+}
+
+// No call holds `entry` any more. A run stops at once, and its entry
+// leaves the memo: a later call makes a new run, and never joins the one
+// that stops. A copy that was made goes `PLAY_COPY_KEEP_MS` later, or
+// before that when the memo is over its cap. A copy that failed stays.
+function lastPlayerWent(entry: PlayCopy): void {
+  if (!entry.done) {
+    dropCopy(entry)
+    entry.stop.abort()
+    return
+  }
+  if (entry.bytes === 0 || copies.get(entry.src) !== entry) return
+  entry.freeTimer = setTimeout(() => { dropCopy(entry) }, PLAY_COPY_KEEP_MS)
+  trimCopies()
 }
 
 // A new copy of the clip whose file is `src`, in the memo.
 function startCopy(src: string, size: number, target: PlayCopyTarget): PlayCopy {
-  const entry: PlayCopy = { src, size, copy: Promise.resolve(null), done: false, bytes: 0, waiters: 0, stop: new AbortController() }
+  const entry: PlayCopy = { src, size, copy: Promise.resolve(null), done: false, bytes: 0, players: 0, freeTimer: null, stop: new AbortController() }
   entry.copy = makeCopy(entry, target)
   entry.copy.then((blob) => {
     entry.done = true
     entry.bytes = blob?.size ?? 0
     trimCopies()
   }, () => {
-    // A stop: the last waiter took the copy out of the memo.
+    // A stop: the last player took the copy out of the memo.
   })
   copies.set(src, entry)
   return entry
 }
 
-// The copy of `entry`, or the stop of `signal`.
+// The copy of `entry`, or the stop of `signal`. The signal is the hold of
+// one player, from the call until the player no longer shows the copy: a
+// stop before the copy came stops the wait, and a stop after it ends the
+// hold. So its listener stays after the call ended, as the `signal` option
+// of `addEventListener` removes a listener long after its call. A call
+// that gets no copy holds nothing.
 function waitForCopy(entry: PlayCopy, signal: AbortSignal): Promise<Blob | null> {
-  entry.waiters += 1
+  entry.players += 1
+  let holds = true
   return new Promise((resolve, reject) => {
+    // A stop before a copy that failed leaves before the end of `copy`, and
+    // the end must not leave again.
     const leave = () => {
-      entry.waiters -= 1
-      reject(signal.reason)
-      if (entry.waiters > 0 || entry.done) return
-      // Out of the memo at once: a later call makes a new run, and never
-      // joins the one that stops.
-      if (copies.get(entry.src) === entry) copies.delete(entry.src)
-      entry.stop.abort()
+      if (!holds) return
+      holds = false
+      signal.removeEventListener('abort', onStop)
+      entry.players -= 1
+      if (entry.players === 0) lastPlayerWent(entry)
     }
-    signal.addEventListener('abort', leave, { once: true })
+    const onStop = () => {
+      reject(signal.reason)
+      leave()
+    }
+    signal.addEventListener('abort', onStop, { once: true })
     entry.copy.then((blob) => {
-      signal.removeEventListener('abort', leave)
       resolve(blob)
+      if (blob === null) leave()
     }, (error: unknown) => {
-      signal.removeEventListener('abort', leave)
+      signal.removeEventListener('abort', onStop)
       reject(error)
     })
   })
@@ -187,21 +233,28 @@ export function movePlayCopy(from: string, to: string): void {
 /** Takes the copy of the clip whose file was at `path` out of the memo:
  *  the file is gone (`dez.controller/media/delete`). */
 export function forgetPlayCopy(path: string): void {
-  copies.delete(path)
+  const entry = copies.get(path)
+  if (entry !== undefined) dropCopy(entry)
 }
 
 export default sbp('sbp/selectors/register', {
   // The play copy of the local video clip whose file is `src`, of `size`
   // bytes, in the format `target` (`playCopyTarget`); null when Dez made
-  // none (the log tells why). A copy that a call of this session made, or
-  // could not make, comes from the memo. A stop of `signal` rejects with
-  // the stop, and stops the run when no other call waits for it.
+  // none (the log tells why). A copy that the memo holds comes from it, and
+  // so does the null of a copy that failed in this session. `signal` is
+  // the hold of the player (`waitForCopy`): stop it when the player no
+  // longer shows the copy, or no longer waits for it. A stop before the
+  // copy came rejects with the stop, and stops the run when no other call
+  // waits for it.
   async 'dez.controller/media/playCopy' (
     { src, size, target }: { src: string, size: number, target: PlayCopyTarget },
     { signal }: { signal: AbortSignal },
   ): Promise<Blob | null> {
     signal.throwIfAborted()
     let entry = copies.get(src)
+    // A player that came back within the keep time keeps the copy; a
+    // changed file replaces it at once.
+    if (entry !== undefined) stopFreeTimer(entry)
     if (entry === undefined || entry.size !== size) {
       entry = startCopy(src, size, target)
     } else {

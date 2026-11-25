@@ -2,10 +2,10 @@ import '@sbp/okturtles.eventqueue'
 import sbp from '@sbp/sbp'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type * as PlayCopyRules from '../model/chat/playCopies'
-import { PLAY_COPY_MAX_BYTES, PLAY_COPY_MEMO_MAX_BYTES, type PlayCopyTarget } from '../model/chat/playCopies'
+import { PLAY_COPY_KEEP_MS, PLAY_COPY_MAX_BYTES, PLAY_COPY_MEMO_MAX_BYTES, type PlayCopyTarget } from '../model/chat/playCopies'
 import type { BundledToolEnd } from './nativeTypes'
 import { movePlayCopy } from './playCopies'
-import { APP_DIR, CACHE_DIR, ENDED, failureOf, native, resetNative, running, STOP, writes } from './testing'
+import { APP_DIR, CACHE_DIR, ENDED, failureOf, native, resetNative, STOP, writes } from './testing'
 
 // A cap of the memo that a test reaches with small copies. The copies of
 // the other tests have 3 bytes each, far under it.
@@ -15,11 +15,22 @@ vi.mock('../model/chat/playCopies', async (importOriginal) => ({
 }))
 
 // The memo of the module lives for the whole file, so each test takes
-// clips of its own.
+// clips of its own. Its copies go at the end of each test: every player
+// goes, and the time of the memo passes.
 const NAME = '0c4e7a51-9b2d-4f6a-8e13-5d7c9a2b4f60'
 const savedClip = (name: string) => ({ src: `${APP_DIR}/assets/generated/video/${name}.mov`, size: 100, target: 'mp4' as PlayCopyTarget })
 
-function playCopy(clip: { src: string, size: number, target: PlayCopyTarget }, signal = running()): Promise<Blob | null> {
+// The players of a test. The `abort()` of one is the player going: its
+// wait stops, or it no longer shows the copy.
+const players: AbortController[] = []
+
+function player(): AbortController {
+  const made = new AbortController()
+  players.push(made)
+  return made
+}
+
+function playCopy(clip: { src: string, size: number, target: PlayCopyTarget }, signal = player().signal): Promise<Blob | null> {
   return sbp('dez.controller/media/playCopy', clip, { signal }) as Promise<Blob | null>
 }
 
@@ -36,9 +47,14 @@ beforeEach(() => {
   native.folderFiles = ['play_copy.mp4', 'play_copy.webm']
   native.fileBytes = () => new Uint8Array([1, 2, 3])
   vi.spyOn(console, 'error').mockImplementation(() => {})
+  // Only the timers of the memo: `vi.waitFor` keeps the real ones.
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
 })
 
-afterEach(() => {
+afterEach(async () => {
+  for (const made of players.splice(0)) made.abort(STOP)
+  await vi.runAllTimersAsync()
+  vi.useRealTimers()
   vi.restoreAllMocks()
 })
 
@@ -87,7 +103,7 @@ describe('dez.controller/media/playCopy', () => {
   it('stops the run when the last player stops waiting, and runs again for a later player', async () => {
     const clip = savedClip('stopped')
     const ends = heldRuns()
-    const [one, two] = [new AbortController(), new AbortController()]
+    const [one, two] = [player(), player()]
     const first = failureOf(playCopy(clip, one.signal))
     const second = failureOf(playCopy(clip, two.signal))
     await vi.waitFor(() => expect(native.runs).toHaveLength(1))
@@ -138,7 +154,9 @@ describe('dez.controller/media/playCopy', () => {
     // passes every older entry.
     native.fileBytes = () => new Uint8Array(PLAY_COPY_MEMO_MAX_BYTES / 2 + 1)
     const oldest = savedClip('trimmed')
-    await playCopy(oldest)
+    const oldestPlayer = player()
+    await playCopy(oldest, oldestPlayer.signal)
+    oldestPlayer.abort(STOP)
     await playCopy(savedClip('kept'))
     const runs = native.runs.length
 
@@ -146,5 +164,53 @@ describe('dez.controller/media/playCopy', () => {
     expect(native.runs).toHaveLength(runs)
     expect(await playCopy(oldest)).toBeInstanceOf(Blob)
     expect(native.runs).toHaveLength(runs + 1)
+  })
+
+  it('keeps a copy for a while after its last player went, and drops it after that', async () => {
+    const clip = savedClip('left')
+    const shown = player()
+    const made = await playCopy(clip, shown.signal)
+
+    shown.abort(STOP)
+    await vi.advanceTimersByTimeAsync(PLAY_COPY_KEEP_MS - 1)
+    const returned = player()
+    expect(await playCopy(clip, returned.signal)).toBe(made)
+    expect(native.runs).toHaveLength(1)
+
+    returned.abort(STOP)
+    await vi.advanceTimersByTimeAsync(PLAY_COPY_KEEP_MS)
+    expect(await playCopy(clip)).not.toBe(made)
+    expect(native.runs).toHaveLength(2)
+  })
+
+  it('keeps a copy that another player still shows', async () => {
+    const clip = savedClip('shown-twice')
+    const [one, two] = [player(), player()]
+    const [made] = await Promise.all([playCopy(clip, one.signal), playCopy(clip, two.signal)])
+
+    one.abort(STOP)
+    await vi.advanceTimersByTimeAsync(PLAY_COPY_KEEP_MS)
+
+    expect(await playCopy(clip)).toBe(made)
+    expect(native.runs).toHaveLength(1)
+  })
+
+  it('drops over the cap of the memo only the copies that no player shows, and drops one at once when its player goes', async () => {
+    native.fileBytes = () => new Uint8Array(PLAY_COPY_MEMO_MAX_BYTES / 2 + 1)
+    const first = savedClip('shown-over-cap')
+    const second = savedClip('shown-over-cap-too')
+    const firstPlayer = player()
+    const firstCopy = await playCopy(first, firstPlayer.signal)
+    const secondCopy = await playCopy(second)
+
+    const again = player()
+    expect(await playCopy(first, again.signal)).toBe(firstCopy)
+    again.abort(STOP)
+    expect(await playCopy(second)).toBe(secondCopy)
+    expect(native.runs).toHaveLength(2)
+
+    firstPlayer.abort(STOP)
+    expect(await playCopy(first)).not.toBe(firstCopy)
+    expect(native.runs).toHaveLength(3)
   })
 })
