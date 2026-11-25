@@ -45,8 +45,9 @@ export const APIMART_IMAGES_AS = 'images_as'
 export const APIMART_AS_REFERENCES = 'references'
 const IMAGES_AS: ModelParameter = { name: APIMART_IMAGES_AS, label: 'Images as', options: ['frames', APIMART_AS_REFERENCES], default: 'frames' }
 
-// An integer field of the request with no list and no upper limit: a text
-// row, which the request sends as a number (`apimartFormat`).
+// The integer fields of the request: one with no list and no upper limit
+// gets a text row, whose text the request sends as a number
+// (`apimartFormat`). A listed option of such a field goes as it is.
 export const APIMART_WHOLE_NUMBER_FIELDS: ReadonlySet<string> = new Set(['duration', 'seed'])
 
 const WATERMARK: ModelParameter = { name: 'watermark', label: 'Watermark' }

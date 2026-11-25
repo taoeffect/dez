@@ -93,6 +93,15 @@ describe('apimart video parameters', () => {
     ])
   })
 
+  // No live schema has these forms (2026-11-25): the request sends the
+  // text of a text row of such a field as a number.
+  it('gives a whole-number field with a list of texts its options, and one with a text and no list no row', () => {
+    expect(parameters(videoEntry('kling-v3', {
+      duration: { type: 'string', enum: ['10s', '5s'] },
+      seed: { type: 'string' },
+    }))).toStrictEqual([{ name: 'duration', options: ['5s', '10s'], default: '5s' }])
+  })
+
   it('gives no rows to an entry with no schema, and to a request kind other than video', () => {
     expect([parameters(videoEntry('new-model')), clips.parameters('tts', videoEntry('MiniMax-H3'), undefined, {})]).toStrictEqual([[], []])
   })
@@ -111,6 +120,21 @@ describe('apimart video requests', () => {
 
   it('tells the user to fix a whole-number field that holds another text, before the request goes', () => {
     expect(thrownError(() => request({ duration: '5.5' }))).toStrictEqual(new ExplainedError('The parameter "duration" of this model takes a whole number, not "5.5". Change its value.'))
+  })
+
+  it('sends a text that the row of a whole-number field lists as it is, and the text of a text row as a number', () => {
+    const body = (duration: Record<string, unknown>, values: ParameterValues) => {
+      const rows = clips.parameters('video', videoEntry('kling-v3', { duration, seed: { type: 'integer' } }), undefined, {})
+      return clips.request('video', BASE_URL, 'kling-v3', { prompt: 'A fox', images: [], values, parameters: rows }).body
+    }
+
+    expect([
+      body({ type: 'string', enum: ['5s', '10s'] }, { duration: '5s', seed: '42' }),
+      body({ type: 'string', enum: ['5', '10'] }, { duration: '10' }),
+    ]).toStrictEqual([
+      { duration: '5s', seed: 42, model: 'kling-v3', prompt: 'A fox' },
+      { duration: '10', model: 'kling-v3', prompt: 'A fox' },
+    ])
   })
 
   it('refuses a request kind other than video', () => {

@@ -51,6 +51,10 @@ export interface MediaInput {
   // Missing: none.
   clips?: readonly InputClipPart[]
   values: ParameterValues
+  // The rows of the model that gave `values` (`ModelInfo.parameters`), for
+  // a request that sends a value by the kind of its row. Missing: the
+  // request reads the values alone.
+  parameters?: readonly ModelParameter[]
   // A transcription asks for the time of each word and segment, for an API
   // that can give them (`TextFormat.parseResponse` gives them as `times`).
   // Missing: the text only.

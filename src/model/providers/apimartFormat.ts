@@ -88,10 +88,11 @@ function withoutCaseCopies(list: readonly unknown[]): unknown[] {
 // schema states it safely: a list (`enum`) gives its options, a boolean a
 // switch, a number with both limits a range, and a text a text field. A
 // whole number with no upper limit is a text field only for the fields of
-// `APIMART_WHOLE_NUMBER_FIELDS`, which the request sends as numbers. As in
-// the other formats, a length or a resolution has its lowest value as
-// its default (`lowestFirstParameter`); another field has the default of
-// its schema, when the row takes it.
+// `APIMART_WHOLE_NUMBER_FIELDS`, which the request sends as numbers; so a
+// text with no list in such a field gets no row. As in the other formats,
+// a length or a resolution has its lowest value as its default
+// (`lowestFirstParameter`); another field has the default of its schema,
+// when the row takes it.
 function schemaParameter(name: string, schema: Record<string, unknown>): ModelParameter[] {
   const label = schemaLabel(name)
   if (Array.isArray(schema.enum)) {
@@ -104,7 +105,7 @@ function schemaParameter(name: string, schema: Record<string, unknown>): ModelPa
     case 'boolean':
       return [{ name, label, ...(typeof schema.default === 'boolean' && { default: schema.default }) }]
     case 'string':
-      return textParameter(name)
+      return APIMART_WHOLE_NUMBER_FIELDS.has(name) ? [] : textParameter(name)
     case 'integer':
     case 'number': {
       const { minimum: min, maximum: max } = schema
@@ -132,12 +133,16 @@ function schemaParameters(entry: unknown): ModelParameter[] {
 
 const WHOLE_NUMBER_TEXT = /^-?\d+$/
 
-// `values` as the request sends them: the text of a whole number in a
-// field of `APIMART_WHOLE_NUMBER_FIELDS` (a text row) as the number. Throws
-// for any other text in such a field: the request would fail.
-function sentValues(values: ParameterValues): Record<string, unknown> {
+// `values` as the request sends them, with the rows that gave them
+// (`MediaInput.parameters`). A text in a field of
+// `APIMART_WHOLE_NUMBER_FIELDS` that its row does not list is the text of
+// a text row: it goes as the number. Throws for a text that is no whole
+// number: the request would fail. A listed option goes as it is.
+function sentValues(values: ParameterValues, parameters: readonly ModelParameter[] = []): Record<string, unknown> {
   return Object.fromEntries(Object.entries(values).map(([name, value]) => {
     if (!APIMART_WHOLE_NUMBER_FIELDS.has(name) || typeof value !== 'string') return [name, value]
+    const row = parameters.find((parameter) => parameter.name === name)
+    if (row && 'options' in row && row.options.includes(value)) return [name, value]
     const text = value.trim()
     if (!WHOLE_NUMBER_TEXT.test(text)) {
       throw new ExplainedError(`The parameter ${JSON.stringify(name)} of this model takes a whole number, not ${JSON.stringify(sanitizeErrorText(value, 40))}. Change its value.`)
@@ -146,8 +151,8 @@ function sentValues(values: ParameterValues): Record<string, unknown> {
   }))
 }
 
-// The whole number of the length of a request, as `sentValues` sends it;
-// undefined for none.
+// The whole number of seconds of the length of a request: a number, or the
+// text of one; undefined for none.
 function wholeSeconds(value: unknown): number | undefined {
   if (typeof value === 'number') return Number.isInteger(value) ? value : undefined
   return typeof value === 'string' && WHOLE_NUMBER_TEXT.test(value.trim()) ? Number(value.trim()) : undefined
@@ -350,11 +355,11 @@ const images: ImageJobFormat = {
     const known = apimartImageModel(valueAtPath(entry, 'id'))
     return known ? [...structuredClone(known.parameters)] : schemaParameters(entry)
   },
-  request: (kind, baseUrl, modelId, { prompt, values, imageUrls = [] }) => {
+  request: (kind, baseUrl, modelId, { prompt, values, parameters, imageUrls = [] }) => {
     if (kind !== 'image') refusedKind()
     return {
       url: `${trimTrailingSlashes(baseUrl)}/images/generations`,
-      body: { ...sentValues(values), ...(imageUrls.length > 0 && { image_urls: [...imageUrls] }), model: modelId, prompt },
+      body: { ...sentValues(values, parameters), ...(imageUrls.length > 0 && { image_urls: [...imageUrls] }), model: modelId, prompt },
     }
   },
   job: (_kind, baseUrl, _modelId, data) => {
@@ -430,7 +435,7 @@ export const apimartFormat: MediaFormat = {
       delete values[APIMART_IMAGES_AS]
       return {
         url: `${trimTrailingSlashes(baseUrl)}/videos/generations`,
-        body: { ...sentValues(values), ...videoImageFields(apimartVideoModel(modelId)?.images, input), model: modelId, prompt: input.prompt },
+        body: { ...sentValues(values, input.parameters), ...videoImageFields(apimartVideoModel(modelId)?.images, input), model: modelId, prompt: input.prompt },
       }
     },
     // A done task gives the URLs of its files, which end after about 24

@@ -908,7 +908,7 @@ export default sbp('sbp/selectors/register', {
       }
 
       if (!isClipKind(kind)) {
-        const request = provider.imageRequest(kind, modelId, { prompt: input.prompt, images, values, ...(imageUrls && { imageUrls }) }, secret)
+        const request = provider.imageRequest(kind, modelId, { prompt: input.prompt, images, values, ...(cachedModel?.parameters && { parameters: cachedModel.parameters }), ...(imageUrls && { imageUrls }) }, secret)
         const quote = await mediaRequestQuote(provider, input, values, cachedModel)
         signal?.throwIfAborted()
         send(quote)
@@ -927,6 +927,7 @@ export default sbp('sbp/selectors/register', {
         images,
         clips: clipParts,
         values,
+        ...(cachedModel?.parameters && { parameters: cachedModel.parameters }),
         ...(input.lyrics !== undefined && { lyrics: input.lyrics }),
         ...(imageRules?.references && { imagesAsReferences: true as const }),
         ...(imageUrls && { imageUrls }),
