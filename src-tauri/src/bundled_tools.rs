@@ -496,19 +496,14 @@ fn shipped(folder: &Path, name: &str, is_there: fn(&Path) -> bool) -> Result<Pat
 // A path as one entry of the path list of a flag
 // (`--allow-read=<a>,<b>`). Deno splits the list at each comma and has no
 // way to write a comma of a path, so such a path is refused, and one that
-// is not UTF-8 too. The error names no path: the page can pass it on to a
-// model.
+// is not UTF-8 too. A flag of one path (`--import-map=<a>`) takes the same
+// rule: each such path is a file of the libraries, whose folder is in the
+// read list of every run anyway. The error names no path: the page can
+// pass it on to a model.
 fn flag_path(path: &Path) -> Result<&str, String> {
     path.to_str()
         .filter(|text| !text.contains(','))
         .ok_or_else(|| "A folder or file of the run has a comma in its path, or a path that is not UTF-8 text, which the program cannot take".to_string())
-}
-
-// A path that is the whole value of a flag (`--import-map=<a>`). Deno does
-// not split such a value, so a comma is fine; a flag is text, so a path
-// that is not UTF-8 is refused. The error names no path.
-fn flag_value_path(path: &Path) -> Result<&str, String> {
-    path.to_str().ok_or_else(|| "A file of the run has a path that is not UTF-8 text, which the program cannot take".to_string())
 }
 
 // Whether `text` can be the `TZ` of a program: the form of the name of a
@@ -554,8 +549,7 @@ struct RunPlaces {
 //   OS rule of the run is its only guard. So the native library goes only
 //   to a run whose page asks for it (`native_canvas`). Its fontconfig file
 //   is a place of the environment (`CANVAS_FONT_CONFIG`).
-// Each path goes into a flag through `flag_path`, or through
-// `flag_value_path` for a flag of one path.
+// Each path goes into a flag through `flag_path`.
 fn run_places(run: &ToolRun, rules: &ProgramRules, roots: &Roots, folder: &Path) -> Result<RunPlaces, String> {
     let Some(flags) = &rules.place_flags else {
         if run.app_folder.is_some() || run.built_in_app.is_some() || run.conversation_folder.is_some() || run.native_canvas {
@@ -583,7 +577,7 @@ fn run_places(run: &ToolRun, rules: &ProgramRules, roots: &Roots, folder: &Path)
 
     let read: Vec<&Path> = [Some(folder), app.as_deref(), conversation.as_deref(), Some(libs.as_path()), Some(fonts.as_path())].into_iter().flatten().collect();
     let write: Vec<&Path> = [Some(folder), app.as_deref().filter(|_| !built_in), conversation.as_deref()].into_iter().flatten().collect();
-    let mut places = RunPlaces { flags: vec![format!("{}={}", flags.import_map, flag_value_path(&import_map)?)], ..RunPlaces::default() };
+    let mut places = RunPlaces { flags: vec![format!("{}={}", flags.import_map, flag_path(&import_map)?)], ..RunPlaces::default() };
     for (flag, paths) in [(flags.read, &read), (flags.write, &write)] {
         let list: Vec<&str> = paths.iter().map(|path| flag_path(path)).collect::<Result<_, _>>()?;
         places.flags.push(format!("{flag}={}", list.join(",")));
@@ -1340,8 +1334,8 @@ mod tests {
     // Deno splits the path list of a flag at each comma, so a comma in a
     // path would make two other paths of it, and a flag is text, so it
     // cannot hold a path that is not UTF-8. The check is on each path of a
-    // list flag: here only one root has such a path. The error can go to
-    // a model, so it names no path.
+    // flag: here only one root has such a path. The error can go to a
+    // model, so it names no path.
     #[test]
     fn a_deno_run_is_refused_when_a_path_of_its_flags_cannot_be_in_a_flag() {
         let dir = TempDir::new("tools-deno-flag-path");
