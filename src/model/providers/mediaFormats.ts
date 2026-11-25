@@ -61,7 +61,8 @@ export interface MediaInput {
   wordTimes?: true
   // The web addresses of `images`, in their order, for an API that takes
   // the input images of a request only at a web address
-  // (`MediaFormat.imageUpload`). Missing: the API takes them as data.
+  // (`MediaFormat.imageUpload`). Missing: the API takes them as data, or
+  // the request has no input image.
   imageUrls?: readonly string[]
 }
 
@@ -1047,11 +1048,11 @@ const veniceFormat: MediaFormat = {
     // job runs, and then the clip's bytes. A video model that stores its
     // clips at Venice also gives a `download_url` here (good for 24 hours,
     // with no header); its retrieve then always answers JSON, and
-    // `COMPLETED` means that the URL has the clip. That URL is a file URL
-    // and not a `url`: its server answers a range request with the whole
-    // file (seen 2026-11-10), and a seek in the player then fails with a
-    // network error. The voice changer has its own retrieve endpoint, which
-    // answers the same way (its clip is `audio/mpeg`).
+    // `COMPLETED` means that the URL has the clip. That URL goes in
+    // `fileUrls`, not in `url`: its server answers a range request with the
+    // whole file (seen 2026-11-10), and a seek in the player then fails
+    // with a network error. The voice changer has its own retrieve
+    // endpoint, which answers the same way (its clip is `audio/mpeg`).
     // `delete_media_on_completion` is never sent: a download that breaks
     // would lose a paid clip.
     // https://docs.venice.ai/api-reference/endpoint/audio/retrieve

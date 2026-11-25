@@ -7,9 +7,9 @@ import type { MultipartField } from './multipart'
 import type { TimedSegment, TimedWord, TranscriptTimes } from './types'
 
 // The small parts that more than one media format (`MediaFormat`) uses.
-// A leaf module: mediaFormats.ts imports each format module, so a format
-// module that imported these from mediaFormats.ts would make an import
-// cycle.
+// mediaFormats.ts imports each format module, so a format module that
+// imported these from mediaFormats.ts would make an import cycle at run
+// time. This module imports only types from mediaFormats.ts: keep it so.
 
 // A URL that a player can load: http or https, with no space or line break
 // (a media tag is one line).

@@ -215,15 +215,17 @@ export interface ModelInfo {
   // `images`, which each model check writes from the provider's data.
   // Missing: no refusal told one.
   learnedImageLimit?: LearnedImageLimit
-  // The price of the model's requests that the provider's model list gives
-  // (modelPrices.ts): token prices for a chat model, else the price of one
-  // unit of a media request for the default values of its parameters. A
-  // chat model of a provider with `modelPriceRequest` (config.ts) gets it
-  // from that request instead (`priceLoadedAt`).
+  // The price of the model's requests (modelPrices.ts): token prices for a
+  // chat model, else the price of one unit of a media request for the
+  // default values of its parameters. The provider's model list gives it,
+  // or, for a chat model whose list entry tells none, the config's price
+  // table (`tokenPrices` in config.ts; Anthropic's prices). A chat model of
+  // a provider with `modelPriceRequest` (config.ts) gets it from that
+  // request instead (`priceLoadedAt`).
   // `model_list` and `model_info` show it, and the cost of a request whose
   // provider tells no price comes from it: the tokens of a chat request
   // (`chatRequestCost`, chatUsage.ts), the characters of a speech request
-  // with no quote (`textLengthCost`). Missing: the list gives none.
+  // with no quote (`textLengthCost`). Missing: no source gives one.
   price?: ModelPrice
   // The time of the answer of the price request of the model
   // (`modelPriceRequest`, `dez.controller/modelCache/loadPrice`), which
