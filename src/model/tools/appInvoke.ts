@@ -36,10 +36,12 @@ import { assetText, unknownAssetsText } from './toolInputs'
 import { ToolError, type SubcommandArguments, type ToolArguments } from './types'
 import { SHIPPED_FONTS } from './videoFonts'
 
-// One run of code in Deno, as a job: the code of a script app (`apps
-// invoke`, an alias of appAliases.ts), or the code of a `js_eval` call
-// (jsEval.ts). Both go one path (`ScriptRun`, controller/appInvoke.ts).
-// `apps invoke` also runs a UI app, which has its own path.
+// One run of code in Deno: the code of a script app, as a job (`apps
+// invoke`) or as a run that its call waits for (an alias of
+// appAliases.ts), or the code of a `js_eval` call (jsEval.ts), as a job
+// that its call waits for a short time. All go one path (`ScriptRun`,
+// controller/appInvoke.ts). `apps invoke` also runs a UI app, which has
+// its own path.
 //
 // A script run: Deno runs the module of Dez (jsEvalRunner.js), which
 // calls the default export of the `main.ts` of the app with the
@@ -705,8 +707,9 @@ function outputParagraphs({ kept, notKept }: AppOutputs): string[] {
   return sentences.length === 0 ? [] : [sentences.join(' ')]
 }
 
-/** What the tool calls of the code of a run of a script app (`dez.sbp`)
- *  left (controller/toolBridge.ts), for the result of the run. */
+/** What the tool calls of the code of a script run (`dez.sbp`: the code
+ *  of a script app or of a `js_eval` call) left (controller/toolBridge.ts),
+ *  for the result of the run. */
 export interface AppRunCalls {
   /** The images and the clips that the calls made, which the job keeps
    *  also when the run fails, each by its handle, in the order of the

@@ -106,12 +106,12 @@ export class ScriptRunBridge {
   private readonly stop = new AbortController()
   private readonly unlinkCallSignal: () => void
   // The end of the last call that the bridge took. The calls run one at a
-  // time, in the order of their lines: the tools read the conversation and
-  // write into the reply (the next asset id, the picture budget), and code
-  // that makes two calls at one time (`Promise.all`) must get the same
-  // ids and the same budget in each run. A plain promise chain, not the
-  // event queue (`okTurtles.eventQueue`): that one keeps an entry for each
-  // queue name, and each run would need its own name.
+  // time, in the order of their lines: a call takes the next handle, the
+  // next id that stands for one, and the next job number, and code that
+  // makes two calls at one time (`Promise.all`) must get the same handles,
+  // ids, and job numbers in each run. A plain promise chain, not the event
+  // queue (`okTurtles.eventQueue`): that one keeps an entry for each queue
+  // name, and each run would need its own name.
   private tail: Promise<void> = Promise.resolve()
   private ended = false
   // How many call lines the bridge took.

@@ -18,12 +18,12 @@ import { isWholeNumberIn, unknownFieldsProblem } from './inputDecode'
 import type { KeptFile } from './programRuns'
 
 // The frame sequences of a script run (`apps invoke` of a script app, or a
-// `js_eval` call): a folder
-// `<name>.frames` directly in the output folder holds the frames of one
-// clip and `frames.json`, the facts of the clip. After the run, Dez
-// encodes the frames with its ffmpeg into one clip, which it keeps as one
-// output file of the run. So code that draws one frame at a time (with a
-// canvas of skia-canvas, or as raw pixels) makes a clip with no encoder:
+// `js_eval` call): a folder `<name>.frames` directly in the output folder
+// holds the frames of one clip and `frames.json`, the facts of the clip.
+// After the run, Dez encodes the frames with its ffmpeg into one clip,
+// which it keeps as one output file of the run. So code that draws one
+// frame at a time (with a canvas of skia-canvas, or as raw pixels) makes a
+// clip with no encoder:
 // - with `"alpha": true`, the clip is MOV with the PNG codec, which keeps
 //   the alpha of each pixel, for an overlay with `video ffmpeg`;
 // - with no alpha, it is H.264 in MP4 (yuv420p, BT.709), which every

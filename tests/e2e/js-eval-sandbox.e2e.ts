@@ -335,7 +335,7 @@ describe('js_eval sandbox', () => {
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 
-  it('loads no file outside the run folder of a call, where only the OS stops Deno', async () => {
+  it('loads no file outside the places of its run, where only the OS stops Deno', async () => {
     const refused = 'TypeError: Permission denied (os error 13)'
     const text = '{ with: { type: "text" } }'
     const json = '{ with: { type: "json" } }'

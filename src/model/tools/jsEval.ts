@@ -196,7 +196,9 @@ export const JS_EVAL_TOOL: ToolDefinition = {
   ],
 }
 
-/** A `js_eval` call that Dez can run. */
+/** The code and the time limit of a `js_eval` call, as `jsEvalCall`
+ *  checks them; the run that Dez can start also needs the inputs of the
+ *  call (`CodeRunCall`, appInvoke.ts). */
 export interface JsEvalCall {
   code: string
   timeoutMs: number

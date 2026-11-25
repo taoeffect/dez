@@ -11,8 +11,10 @@ import type { ToolRunContext } from './tools'
 // The jobs of a tab: the slow work of the tool calls of its replies, which
 // runs in the background while a reply goes on (the rules and the texts for
 // the model are in model/tools/jobs.ts). A runner starts a job with
-// `context.jobs.start` and returns `jobStartedText` at once; the `jobs_wait`
-// runner, or the end of the reply, takes the results. This module registers
+// `context.jobs.start` and returns `jobStartedText` at once; a `js_eval`
+// call waits a short time for its job (`startWithWait`), and returns its
+// result when it ends within the wait, else its id. The `jobs_wait` runner,
+// or the end of the reply, takes the other results. This module registers
 // no selector: the reply that runs owns the `TabJobs` of its tab
 // (`ReplyRuntime.jobs`), and the tab holds it between two replies
 // (controller/stream.ts). A runner gets it in its `ToolRunContext`.
@@ -180,8 +182,9 @@ interface Job extends Omit<EndedJob, 'status' | 'assets' | 'call'> {
   queued: boolean
   // The ids of the assets that its call names as inputs (`JobInfo.inputs`).
   inputs: readonly string[]
-  // The id of the job of the run of an app whose code started this job
-  // with a tool call (`scoped`); null for a job of the model.
+  // The id of the job of the script run (a `js_eval` call or a script app)
+  // whose code started this job with a tool call (`scoped`); null for a job
+  // of the model.
   scope: string | null
   // The number of the job (`JobCall.number`): 1 for the first job that got
   // one. A job gets it at its start, except a job whose call waits for it
@@ -320,7 +323,8 @@ export class TabJobs implements ToolJobs {
   // The last number that a job got (`Job.number`).
   private lastNumber = 0
   // The jobs of the model: the ones that no tool call of the code of a run
-  // started, and those of a run that ended.
+  // started, and those of a run that ended. A job with no number is in no
+  // view (`Job.number`).
   private readonly modelView: JobView = (job) => isNumbered(job) && (job.scope === null || this.jobs.get(job.scope)?.status !== 'running')
 
   /** `onCost` gets the price of each job that sent a paid request

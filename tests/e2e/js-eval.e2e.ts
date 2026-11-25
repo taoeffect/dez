@@ -44,7 +44,8 @@ import { codePanel, hiddenPart, hidingPart, intermediateParts, pressToolChip, re
 //   whose result and files the model gets with `jobs_wait`; a run that
 //   ended within the wait took no job number; Stop hands the job of such a
 //   run on, and the close of its tab ends its code;
-// - every run folder is gone after its call;
+// - every run folder is gone after its run: after its call, or after the
+//   job of a run that went on as one;
 // - the code gets a copy of each input of its call (`inputs`), also of a
 //   linked file, and Dez keeps each image and clip that the code leaves in
 //   the output folder, under the name of the tool; the code draws text with

@@ -233,7 +233,7 @@ Rules:
 - `lib.rs`: plugins, permission reasons, app bootstrap, and the quit hook that stops the bundled tools.
 - `../tauri.linux.conf.json`: the Linux copy of the main window, with Tauri's native file drop on.
 - `../binaries/`: the ffmpeg (a build of taoeffect/dez-ffmpeg), ffprobe, and Deno programs that Dez ships, with `manifest.json` and their license texts. Only `scripts/update-ffmpeg.js` and `scripts/update-deno.js` write the tracked files; `scripts/fetch-programs.js` downloads the programs, and `../build.rs` checks them.
-- `../fonts/`: the OFL fonts that Dez ships for ffmpeg's text filters and the canvas of a script app (Git LFS), with their licenses and `manifest.json`; only `scripts/update-fonts.js` writes it, `../build.rs` checks it, and `bundle.resources` ships it.
+- `../fonts/`: the OFL fonts that Dez ships for ffmpeg's text filters and the canvas of a script run (Git LFS), with their licenses and `manifest.json`; only `scripts/update-fonts.js` writes it, `../build.rs` checks it, and `bundle.resources` ships it.
 - `../libs/`: the libraries that Dez ships for the code of runs and the pages of UI apps, with Dez's own `dez-media`, `import_map.json`, and `manifest.json`. Each library has a `SKILL.md` for a model. Only `scripts/update-libs.js` writes the vendored folders, `../build.rs` checks them (`check_libs`), and `bundle.resources` ships the folder.
 - `../builtin-apps/`: the built-in script apps (`dez-align`, `dez-beats`, `dez-chart`, `dez-cuts`, `dez-onsets`, `dez-sync`, `dez-title`), which run from the bundle, read only. The `dez-` prefix is theirs (`BUILT_IN_APP_PREFIX`, `src/model/tools/appManifest.ts`): no app of the user can have it, and the `apps` tool marks them `built-in`. `bundle.resources` ships it.
 

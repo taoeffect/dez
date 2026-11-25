@@ -160,7 +160,7 @@ async function outputBytes(folder: string, name: string): Promise<Uint8Array | n
 // The clip of the frame sequence `name` of the output folder of a run
 // (frameSequences.ts), encoded and moved into a generated folder of the
 // Dez folder; or why Dez does not keep it. Unlike an output file, the clip
-// is not read and written again: the code of the app ended before the
+// is not read and written again: the code of the run ended before the
 // encode started, so the clip at its place is the one that the trusted
 // ffmpeg made.
 async function keptSequence(folder: string, name: string, appDir: string, run: DecodeRun, signal: AbortSignal): Promise<{ kept: KeptOutput, asset: MadeAsset } | { notKept: string }> {

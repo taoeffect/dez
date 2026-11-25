@@ -17,14 +17,14 @@
 //!     folder (`PROGRAM_APP_FOLDER`). They can read and write no file
 //!     outside the cache root, and in the assets folder they can read,
 //!     make, and change files, but not delete or move them.
-//!   - Deno: the work folder of its run, and the libraries and the fonts
-//!     that Dez ships, only to read; for a run of an app, that one folder
-//!     of `APPS_FOLDER` (or of `BUILT_IN_APPS_FOLDER`, only to read); for a
-//!     run with a conversation, its folder of `CONVERSATION_WORK_FOLDERS`
-//!     (`RunPlaces`). Rust builds its command line, and
-//!     the page gives only the name of a script and the names of the places
-//!     (`DENO_RULES`). It does not run on a computer with no confinement,
-//!     and its memory has a limit.
+//!   - Deno: the work folder of its run, to read and change; the libraries
+//!     and the fonts that Dez ships, only to read; for a run of an app,
+//!     that one folder of `APPS_FOLDER` (or of `BUILT_IN_APPS_FOLDER`, only
+//!     to read); for a run with a conversation, its folder of
+//!     `CONVERSATION_WORK_FOLDERS` (`RunPlaces`). Rust builds its command
+//!     line, and the page gives only the name of a script and the names of
+//!     the places (`DENO_RULES`). It does not run on a computer with no
+//!     confinement, and its memory has a limit.
 //!
 //!   No program can make a symlink, and Dez follows no link of the cache
 //!   root or of the folders of `APPS_FOLDER` and `CONVERSATION_WORK_FOLDERS`
@@ -520,8 +520,9 @@ fn is_time_zone(text: &str) -> bool {
         && text.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '+' | '-' | '/'))
 }
 
-// The places of a run beyond its work folder, in the OS rule, in the flags
-// of its program, and in its environment.
+// The places of a run beyond its run folder (its work folder of
+// `WORK_ROOT`), in the OS rule, in the flags of its program, and in its
+// environment.
 #[derive(Default)]
 struct RunPlaces {
     // The flags that name the places.
@@ -550,9 +551,9 @@ struct RunPlaces {
 //   built-in app only reads it).
 // - A run with a conversation also reads and changes the folder of it.
 // - The native code of skia-canvas opens files with no check of Deno: the
-//   OS rule of the run is its only guard, as for a run of an app. So the
-//   native library goes only to a run whose page asks for it. Its
-//   fontconfig file is a place of the environment (`CANVAS_FONT_CONFIG`).
+//   OS rule of the run is its only guard. So the native library goes only
+//   to a run whose page asks for it (`native_canvas`). Its fontconfig file
+//   is a place of the environment (`CANVAS_FONT_CONFIG`).
 // Each path goes into a flag through `flag_path`, or through
 // `flag_value_path` for a flag of one path.
 fn run_places(run: &ToolRun, rules: &ProgramRules, roots: &Roots, folder: &Path) -> Result<RunPlaces, String> {

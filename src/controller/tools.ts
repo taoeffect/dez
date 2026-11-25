@@ -183,13 +183,15 @@ function aliasRunners(aliases: readonly AppAlias[]): Record<string, ToolRunner> 
   ]))
 }
 
-// Starts `work` as a job of the reply for a call of `tool` (`options` as
-// for `ToolJobs.start`), and gives the result of the call: the id and the
-// number of the job, then `inputsText`, which tells the inputs that go. The
-// job keeps the `@id` mentions of `inputsText` as its inputs, which a
-// compaction keeps while the job is open (`openJobInputs`). A call that a
-// stop or a new submit cut (`callSignal`, the signal of the call) starts
-// no job: the next reply takes the jobs, and this call has no reader.
+// Starts `work` as a job of the caller for a call of `tool` (`options` as
+// for `ToolJobs.start`): a job of the reply, or, for a call of the code of
+// a script run, a job of the job of that run (`ToolRunContext.jobs`). Gives
+// the result of the call: the id and the number of the job, then
+// `inputsText`, which tells the inputs that go. The job keeps the `@id`
+// mentions of `inputsText` as its inputs, which a compaction keeps while
+// the job is open (`openJobInputs`). A call that a stop or a new submit cut
+// (`callSignal`, the signal of the call) starts no job: the next reply
+// takes the jobs, and this call has no reader.
 function startJob(context: ToolRunContext, callSignal: AbortSignal, tool: string, work: JobWork, options: Omit<JobOptions, 'inputs' | 'signal'>, inputsText: string): string {
   const inputs = findAssetMentions(inputsText).map((mention) => mention.id)
   const job = context.jobs.start(tool, work, { ...options, inputs, signal: callSignal })
@@ -398,9 +400,9 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // The job tools (model/tools/jobs.ts) read the jobs that the caller sees
   // (`ToolRunContext.jobs`): for the model, the jobs of the tab (`TabJobs`,
   // jobs.ts), which the reply took at its start: its own, and the ones of
-  // the replies that the user cut before it; for the code of a run of an
-  // app, only the jobs that the calls of that run started
-  // (`TabJobs.scoped`).
+  // the replies that the user cut before it; for the code of a script run
+  // (a `js_eval` call or a script app), only the jobs that the calls of
+  // that run started (`TabJobs.scoped`).
   // `jobs_wait` gives the results of the jobs that ended since the last
   // one, and waits for the next end when there is none (with `all`: until
   // no job runs; with `jobs`: until none of the named jobs runs, and only
@@ -442,7 +444,7 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     return jobCancelText(named, cancelled, context.jobs.running)
   },
   // The `model_invoke` tool (model/tools/modelInvoke.ts): one request to
-  // a model, as a job of the reply (`invokeModel`, modelInvoke.ts).
+  // a model, as a job (`startJob`; `invokeModel`, modelInvoke.ts).
   // Every check that needs no request runs first (`modelInvocation`): a
   // call that cannot work starts no job, costs nothing, and gets its
   // answer at once. A refusal of the provider comes as the result of the
@@ -573,11 +575,12 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // call is short and runs to its end. `grep` matches in a Web Worker,
   // which Dez ends at a time limit (appsGrep.ts).
   //
-  // `invoke` runs the code of an app (appInvoke.ts), as a job of the
-  // reply: code that a model wrote can run for long. The kind of the app
-  // picks the work: a script app runs in Deno, and the page of a UI app
-  // in a frame that the user does not see. The checks of the call and of
-  // the files of the app run first (`invokeCall`, `checkedAppRun`): a call
+  // `invoke` runs the code of an app (appInvoke.ts), as a job (`startJob`;
+  // from the code of a `js_eval` call, a job of the job of that code):
+  // code that a model wrote can run for long. The kind of the app picks
+  // the work: a script app runs in Deno, and the page of a UI app in a
+  // frame that the user does not see. The checks of the call and of the
+  // files of the app run first (`invokeCall`, `checkedAppRun`): a call
   // that Dez refuses starts no job, no program, and no frame. The result
   // tells the inputs that go, as for `model_invoke`.
   //

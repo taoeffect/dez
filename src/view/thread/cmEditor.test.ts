@@ -1466,7 +1466,7 @@ describe('markdown sections', () => {
     return toolBlockText({ id, name: 'apps', status: 'success', arguments: { command: 'read' }, result })
   }
 
-  // A real reply: a backtick in the first `read` result
+  // A real reply: a backtick in the second `read` result
   // (`fragmentShader: /* glsl */\``) paired with the backtick of the last
   // reply line, so all text between them showed in the code color.
   it('parses no markdown in a tool block, so no mark of a result pairs with a mark of the reply', () => {
