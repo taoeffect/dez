@@ -55,7 +55,7 @@ import {
 } from '../model/tools/assetView'
 import { conversationInfoText } from '../model/tools/conversationInfo'
 import { jobCancelText, jobsListText, jobStartedText, jobsWaitResults, jobsWaitText, NO_OPEN_JOBS_TEXT } from '../model/tools/jobs'
-import { codeRunsAsJobText, jsEvalAnswerLine } from '../model/tools/jsEval'
+import { codeRunsAsJobText, JS_EVAL_CALL_WAIT_MS, jsEvalAnswerLine } from '../model/tools/jsEval'
 import { modelCost, modelInfoText, type ModelInfoFacts } from '../model/tools/modelInfo'
 import { IMAGE_NOT_SAVED_TEXT, INVOCATION_TEXT_CAP, invocationAnswerStateText, invocationAnswerText, modelInvocation } from '../model/tools/modelInvoke'
 import { modelListArguments, modelListText } from '../model/tools/modelList'
@@ -3126,12 +3126,16 @@ describe('dez.controller/tools/run', () => {
     // limit.
     const LIST_TEXT = jobsListText([], { limit: undefined, spent: { counted: 0, held: 0 } })
     const LIST_CALL = { name: 'jobs_list', arguments: {}, status: 'success', result: LIST_TEXT }
+    let jobs: TabJobs
 
     beforeEach(() => {
+      jobs = new TabJobs()
       outputFolderHolds({})
     })
 
+    // Ends the time limits of the jobs that a test left.
     afterEach(() => {
+      jobs.stopAll()
       vi.useRealTimers()
     })
 
@@ -3158,7 +3162,6 @@ describe('dez.controller/tools/run', () => {
 
     it('gives the job of code that still runs at the end of the wait of its call, and jobs_wait gives its result and puts its files into the reply as assets of the job', async () => {
       vi.useFakeTimers()
-      const jobs = new TabJobs()
       const written: unknown[] = []
       const context = callContext({
         jobs,
@@ -3175,20 +3178,19 @@ describe('dez.controller/tools/run', () => {
       outputFolderHolds({ 'chart.png': PNG_BYTES })
 
       const started = call('js_eval', { code: 'return 1' })
-      await vi.advanceTimersByTimeAsync(1000)
+      await vi.advanceTimersByTimeAsync(JS_EVAL_CALL_WAIT_MS)
       const [{ id }] = jobs.list()
       expect(await started).toStrictEqual({ content: codeRunsAsJobText(id, 1), isError: false })
       expect(written).toStrictEqual([])
 
       const waited = call('jobs_wait', {})
-      await vi.advanceTimersByTimeAsync(1400)
+      await vi.advanceTimersByTimeAsync(2400 - JS_EVAL_CALL_WAIT_MS)
       const result = await waited
 
       expect(result.isError).toBe(false)
       expect(result.content).toContain(`<job id="${id}" number="1" tool="js_eval" status="finished" call="return 1">\ndrew\n\n`)
       expect(result.content).toContain('\n\nThe code ran for 2.4 seconds.\nMade the image @c.')
       expect(written).toStrictEqual([{ path: expect.stringMatching(new RegExp(`^${APP_DIR}/assets/generated/images/.+\\.png$`)), tool: 'js_eval', madeBy: id }])
-      jobs.stopAll()
     })
   })
 })

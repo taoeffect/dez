@@ -210,10 +210,15 @@ describe('runJsEval', () => {
   })
 
   // The clock counts what the program did, not the files that Dez wrote
-  // before it or kept after it.
+  // before it or kept after it: each write of a file takes 1 second here.
   it('tells the time that the program ran as the last paragraph of the result, before the lines of its assets', async () => {
     native.program = taking(2400, returns('drew'))
     outputFolderHolds({ 'chart.png': PNG_BYTES })
+    const save = native.saveAppFile
+    native.saveAppFile = async (file, content) => {
+      vi.advanceTimersByTime(1000)
+      return save(file, content)
+    }
 
     const result = await runJsEval(codeCall(), running(), context())
 
@@ -386,7 +391,7 @@ describe('runJsEval', () => {
 
     expect(await call).toStrictEqual({ content: codeRunsAsJobText(job.id, 1), isError: false })
     expect(job).toMatchObject({ tool: 'js_eval', status: 'running', call: { number: 1, label: 'return 1 + 1' } })
-    await vi.advanceTimersByTimeAsync(1400)
+    await vi.advanceTimersByTimeAsync(2400 - JS_EVAL_CALL_WAIT_MS)
     expect(await jobs.wait(running())).toMatchObject([{ id: job.id, status: 'finished', text: '2\n\nThe code ran for 2.4 seconds.', call: { number: 1 } }])
     await vi.waitFor(() => deletedWorkFolder())
   })
@@ -438,9 +443,9 @@ describe('runJsEval', () => {
 
     expect(await work).toBe(STOP)
     expect(toolSignal?.aborted).toBe(true)
-    // The job was never a job of the model.
+    // The job was never a job of the model, and it is not open any more.
     expect(jobs.list()).toStrictEqual([])
-    expect(jobs.running).toBe(0)
+    expect(jobs.hasOpen).toBe(false)
     await vi.waitFor(() => deletedWorkFolder())
     expect(native.cancelledRuns).toStrictEqual([native.runs[0].runId])
   })
