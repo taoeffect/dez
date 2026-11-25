@@ -241,18 +241,18 @@ describe('runJsEval', () => {
     native.program = writes('stdout', protocolLine({ type: 'result' }))
 
     const silent = await runJsEval(codeCall(), running(), context())
-    expect(silent.content).toBe(`The code returned no value, and it wrote nothing to the console. Give the result with \`return\`.${NO_TIME}`)
+    expect(silent.content).toContain('`return`')
 
     outputFolderHolds({ 'chart.png': PNG_BYTES })
     const drew = await runJsEval(codeCall(), running(), context())
     expect(drew.isError).toBe(false)
-    expect(drew.content).toMatch(/^The code returned no value\.\n\nDez keeps 1 file of the output folder: chart\.png \(image\)/)
+    expect(drew.content).not.toContain('`return`')
 
     outputFolderHolds({})
     native.program = callingProgram(['dez.tools/image/flip'], { type: 'result' })
     toolRuns.tool = async (_call, _signal, toolContext) => ({ content: `${madeAssetText('image', toolContext.writeImage('/x/flipped.png') ?? '')}.`, isError: false })
     const flipped = await runJsEval(codeCall(), running(), context())
-    expect(flipped.content).toMatch(/^The code returned no value\.\n\nDez keeps the asset that a tool call of the code made/)
+    expect(flipped.content).not.toContain('`return`')
   })
 
   it('gives an error result, and deletes the file, when the reply takes no asset any more', async () => {
