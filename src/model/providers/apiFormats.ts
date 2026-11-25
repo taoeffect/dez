@@ -294,7 +294,13 @@ function withMarkedBlock(message: WireMessage, pick: (blocks: WireMessage[]) => 
   const blocks = contentBlocks(message)
   const marked = pick(blocks)
   if (marked < 0) return null
-  return { ...message, content: blocks.map((block, index) => index === marked ? { ...block, cache_control: CACHE_MARK } : block) }
+  return { ...message, content: withMarkAt(blocks, marked) }
+}
+
+// `items` with the cache mark on the item at `index`; with no mark for an
+// index out of the list.
+function withMarkAt(items: readonly WireMessage[], index: number): WireMessage[] {
+  return items.map((item, at) => at === index ? { ...item, cache_control: CACHE_MARK } : item)
 }
 
 function contentBlocks(message: WireMessage): WireMessage[] {
@@ -373,8 +379,7 @@ function anthropicApiRoot(baseUrl: string): string {
 // https://platform.claude.com/docs/en/build-with-claude/prompt-caching
 function withPrefixCacheMark(system: string | undefined, tools: Record<string, unknown>[] | undefined): { system: string | WireMessage[] | undefined, tools: Record<string, unknown>[] | undefined } {
   if (system) return { system: [{ type: 'text', text: system, cache_control: CACHE_MARK }], tools }
-  const lastTool = tools ? tools.length - 1 : -1
-  return { system, tools: tools?.map((tool, index) => index === lastTool ? { ...tool, cache_control: CACHE_MARK } : tool) }
+  return { system, tools: tools && withMarkAt(tools, tools.length - 1) }
 }
 
 const anthropicFormat: ApiFormat = {

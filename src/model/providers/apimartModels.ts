@@ -57,6 +57,11 @@ const WATERMARK: ModelParameter = { name: 'watermark', label: 'Watermark' }
 // request does not count.
 const MODERATION_CHECK: ModelParameter = { name: 'nsfw_check', label: 'Moderation check' }
 
+// A row with no list that takes one line of text.
+function textRow(name: string, label: string): ModelParameter {
+  return { name, label, options: [], custom: true }
+}
+
 export const APIMART_VIDEO_MODELS: Readonly<Record<string, ApimartVideoModel>> = {
   // `aspect_ratio` has no default: a video from a prompt then gets 16:9,
   // and the docs list no `adaptive` for it. With frames, the model takes
@@ -108,7 +113,7 @@ export const APIMART_VIDEO_MODELS: Readonly<Record<string, ApimartVideoModel>> =
       { name: 'generate_audio', label: 'Audio', default: true },
       IMAGES_AS,
       WATERMARK,
-      { name: 'seed', label: 'Seed', options: [], custom: true },
+      textRow('seed', 'Seed'),
       { name: 'output_format', label: 'File type', options: ['mp4', 'mov'] },
       { name: 'web_search', label: 'Web search' },
       MODERATION_CHECK,
@@ -120,12 +125,6 @@ export const APIMART_VIDEO_MODELS: Readonly<Record<string, ApimartVideoModel>> =
       frameFields: { size: 'adaptive' },
     },
   },
-}
-
-// The doc facts of the model `modelId`; undefined for a model that the
-// table does not have.
-export function apimartVideoModel(modelId: unknown): ApimartVideoModel | undefined {
-  return typeof modelId === 'string' && Object.hasOwn(APIMART_VIDEO_MODELS, modelId) ? APIMART_VIDEO_MODELS[modelId] : undefined
 }
 
 // What the doc page of an APIMart image model tells, and its entry in the
@@ -212,12 +211,6 @@ export const APIMART_IMAGE_MODELS: Readonly<Record<string, ApimartImageModel>> =
   },
 }
 
-// The doc facts of the image model `modelId`; undefined for a model that
-// the table does not have.
-export function apimartImageModel(modelId: unknown): ApimartImageModel | undefined {
-  return typeof modelId === 'string' && Object.hasOwn(APIMART_IMAGE_MODELS, modelId) ? APIMART_IMAGE_MODELS[modelId] : undefined
-}
-
 // What the doc pages of an APIMart music model tell. The entries of the
 // music models in the model list hold no schema (checked 2026-11-24), so
 // every row is here. A music request has one price, whatever its length,
@@ -230,11 +223,6 @@ export interface ApimartMusicModel {
   // Throws an `ExplainedError` for a text that the model does not take
   // with these values.
   body(input: ClipInput): Record<string, unknown>
-}
-
-// A row with no list that takes one line of text.
-function textRow(name: string, label: string): ModelParameter {
-  return { name, label, options: [], custom: true }
 }
 
 // A weight of a Suno request, from 0 to 1 in both modes.
@@ -335,12 +323,6 @@ export const APIMART_MUSIC_MODELS: Readonly<Record<string, ApimartMusicModel>> =
     textRules: { lyrics: { required: false } },
     body: ({ prompt, lyrics, values }) => ({ ...values, ...(prompt !== '' && { sound_prompt: prompt }), ...(lyrics !== undefined && { lyrics }) }),
   },
-}
-
-// The doc facts of the music model `modelId`; undefined for a model that
-// the table does not have.
-export function apimartMusicModel(modelId: unknown): ApimartMusicModel | undefined {
-  return typeof modelId === 'string' && Object.hasOwn(APIMART_MUSIC_MODELS, modelId) ? APIMART_MUSIC_MODELS[modelId] : undefined
 }
 
 // The transcription models that give the times of the words and the

@@ -27,6 +27,12 @@ export function valueAtPath(model: unknown, path: string): unknown {
   return value
 }
 
+// The entry of `key` in `table`; undefined for a key that the table does
+// not have, also for a key of Object.prototype, such as 'constructor'.
+export function ownEntry<Entry>(table: Readonly<Record<string, Entry>>, key: unknown): Entry | undefined {
+  return typeof key === 'string' && Object.hasOwn(table, key) ? table[key] : undefined
+}
+
 // Reads a model capability from a `/models` entry, at a config dot path
 // (`modelImageInput`, `modelToolCalling`, `modelThinking`, and
 // `settings[].modelSupport` in config.ts): a boolean is the flag, and a list

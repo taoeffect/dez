@@ -98,7 +98,7 @@ export interface MediaProgress {
   // whose answer told no price.
   cost?: number
   // Only in the `queued` step: what Dez needs to ask for the job again
-  // after a restart (`ClipJob.resume`; `ProviderGenerateMediaInput.resume`).
+  // after a restart (`MediaJob.resume`; `ProviderGenerateMediaInput.resume`).
   resume?: JsonObject
 }
 

@@ -2,7 +2,6 @@ import { bytesToBase64 } from '../../utils/base64'
 import { byteSizeText } from '../../utils/byteSize'
 import { ExplainedError } from '../../utils/errorText'
 import type { JsonObject } from '../../utils/json'
-import { sanitizeErrorText } from '../../utils/protocol/errors'
 import { responseContentType, type NativeHttpResponseHead } from '../../utils/protocol/nativeHttp'
 import type { ImageSize } from '../chat/imageDrawing'
 import { imageMediaType, type ImageMediaType } from '../chat/images'
@@ -18,7 +17,7 @@ import { JobNotMadeError, UnusableAnswerError } from './errors'
 import { generatedBase64Image, generatedImage } from './generatedImages'
 import { imageSizeRules, positiveLimit, type ImageSizeRules, type InputImageLimits } from './imageSize'
 import type { MultipartField } from './multipart'
-import { clipFormFile, isClipUrl, jsonBody, lengthSeconds, listedValues, lowestFirstParameter, optionsParameter, resolutionLines, sourceClip, switchParameter, transcriptText, transcriptTimes } from './mediaFormatParts'
+import { clipFormFile, isClipUrl, jobStateText, jsonBody, lengthSeconds, listedValues, lowestFirstParameter, optionsParameter, resolutionLines, sourceClip, switchParameter, transcriptText, transcriptTimes } from './mediaFormatParts'
 import { parameterTakes, type ModelParameter, type OptionValue, type ParameterValues, type RangeParameter } from './modelParameters'
 import { priceNumber, roundedPrice, unitPrice, usdText, type ModelPrice } from './modelPrices'
 import { isRecord, valueAtPath } from './modelParsing'
@@ -142,8 +141,11 @@ export interface MediaWireRequest {
 export type ClipLocation = (
   | { url: string, mediaType: string, expires: number }
   | { download: MediaWireRequest }
-  | { fileUrls: readonly [string, ...string[]] }
+  | { fileUrls: FileUrls }
 ) & AnswerCost
+
+// One URL for each file that a finished job made: at least one.
+export type FileUrls = readonly [string, ...string[]]
 
 // The provider's own price in USD of the request that an answer answers,
 // when the answer tells it. Absent when it does not, so that a result with
@@ -152,16 +154,18 @@ export interface AnswerCost {
   cost?: number
 }
 
-// A clip that the provider makes after its first response.
-export interface ClipJob {
+// A request that the provider runs after its first response (a job), and
+// that makes `Done` when it ends.
+export interface MediaJob<Done> {
   // The provider's id of the job.
   id: string
   // Asks for the job's state. Some providers answer it with the clip's
   // bytes when the job is done.
   poll: MediaWireRequest
-  // What the JSON of a 2xx response to `poll` tells. Throws for a job that
-  // failed, and for a state that the format does not know.
-  state(data: unknown): 'running' | ClipLocation
+  // What the JSON of a 2xx response to `poll` tells: `running`, or what the
+  // job made. Throws for a job that failed, and for a state that the format
+  // does not know.
+  state(data: unknown): 'running' | Done
   // The first response, cut down to what the format's `job` reads: `job`
   // with it gives this job again, after a restart of Dez
   // (`ProviderGenerateMediaInput.resume`). It is saved in app_state.json,
@@ -169,19 +173,13 @@ export interface ClipJob {
   resume: JsonObject
 }
 
-// Images that the provider makes after its first response (a task).
-export interface ImageJob {
-  // The provider's id of the job.
-  id: string
-  poll: MediaWireRequest
-  // What the JSON of a 2xx response to `poll` tells: when the job is done,
-  // the URLs that give its images with no header, one for each image, and
-  // the provider's own price of the job (`AnswerCost`). Throws for a job
-  // that failed, and for a state that the format does not know.
-  state(data: unknown): 'running' | ({ fileUrls: readonly [string, ...string[]] } & AnswerCost)
-  // As `ClipJob.resume`.
-  resume: JsonObject
-}
+// A clip that the provider makes after its first response.
+export type ClipJob = MediaJob<ClipLocation>
+
+// Images that the provider makes after its first response (a task): when
+// the job is done, the URLs that give its images with no header, one for
+// each image, and the provider's own price of the job (`AnswerCost`).
+export type ImageJob = MediaJob<{ fileUrls: FileUrls } & AnswerCost>
 
 // The parts of the image requests of a media API that do not depend on
 // the form of its answer.
@@ -1074,7 +1072,7 @@ const veniceFormat: MediaFormat = {
           const status = isRecord(poll) ? poll.status : undefined
           if (status === 'QUEUED' || status === 'PROCESSING') return 'running'
           // A state that is new, or that ends the job with no clip.
-          if (status !== 'COMPLETED') throw new JobNotMadeError(`State: ${typeof status === 'string' ? sanitizeErrorText(status, 40) : 'none'}`)
+          if (status !== 'COMPLETED') throw new JobNotMadeError(jobStateText(status))
           if (downloadUrl === null) throw new UnusableAnswerError('The job is done, and its answer holds no clip and no download URL.')
           return { fileUrls: [downloadUrl] }
         },
@@ -2071,11 +2069,8 @@ const openRouterFormat: MediaFormat = {
           const status = isRecord(poll) ? poll.status : undefined
           if (status === 'pending' || status === 'in_progress') return 'running'
           if (!isRecord(poll) || status !== 'completed') {
-            // `failed`, `cancelled`, `expired`, or a state that is new. The
-            // texts come from the provider and show in the details of the
-            // error toast.
-            const reason = isRecord(poll) && typeof poll.error === 'string' && poll.error !== '' ? `: ${sanitizeErrorText(poll.error)}` : ''
-            throw new JobNotMadeError(`State: ${typeof status === 'string' ? sanitizeErrorText(status, 40) : 'none'}${reason}`)
+            // `failed`, `cancelled`, `expired`, or a state that is new.
+            throw new JobNotMadeError(jobStateText(status, isRecord(poll) ? poll.error : undefined))
           }
           const url = Array.isArray(poll.urls) ? poll.urls[0] : undefined
           // A time that a Date cannot hold has no ISO text for the clip's

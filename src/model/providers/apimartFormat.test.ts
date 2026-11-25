@@ -658,7 +658,7 @@ describe('apimart music tasks', () => {
 })
 
 // A restart of Dez asks for a task again from its resume value
-// (`ClipJob.resume`), which holds only the task id.
+// (`MediaJob.resume`), which holds only the task id.
 describe('apimart task resume', () => {
   const answer = { code: 200, data: [{ status: 'submitted', task_id: 'task/01 R' }] }
   const done = { code: 200, data: { status: 'completed', cost: 0.05, result: { videos: [{ url: VIDEO_URL }], images: [{ url: [VIDEO_URL] }], music: [{ audio_url: VIDEO_URL }] } } }

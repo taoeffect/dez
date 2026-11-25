@@ -1,4 +1,5 @@
 import * as z from 'zod'
+import { isRegExpSource } from '../../utils/regExpSource'
 import type { ImageSize } from '../chat/imageDrawing'
 import { configIssueText } from './config'
 import { LARGEST_PICTURE_SIDE } from './imageSize'
@@ -55,14 +56,9 @@ const imageTokenRuleSchema = z.discriminatedUnion('rule', [
 ])
 
 // The entry's `match` as the expression that finds a model id.
-const matchSchema = z.string().min(1).transform((source, context) => {
-  try {
-    return new RegExp(source, 'i')
-  } catch {
-    context.issues.push({ code: 'custom', message: 'The match is no regular expression.', input: source })
-    return z.NEVER
-  }
-})
+const matchSchema = z.string().min(1)
+  .refine(isRegExpSource, 'The match is no regular expression.')
+  .transform((source) => new RegExp(source, 'i'))
 
 const modelFamilyEntrySchema = z.strictObject({
   // Unique in the file, and stable.

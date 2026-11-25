@@ -31,7 +31,7 @@ const textLengthSchema = z.number().int().nonnegative()
 const clipTextRulesSchema = z.object({
   minPromptLength: textLengthSchema.optional(),
   maxPromptLength: textLengthSchema.optional(),
-  lyrics: z.object({ required: z.boolean(), maxLength: textLengthSchema.optional(), note: z.string().optional() }).optional(),
+  lyrics: z.object({ required: z.boolean(), maxLength: textLengthSchema.optional(), note: z.string().min(1).optional() }).optional(),
 })
 
 // A prompt name of the n-th image or clip: a text with `{n}` for the

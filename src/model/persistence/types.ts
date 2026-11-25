@@ -128,7 +128,7 @@ export interface ConversationSearchOutcome {
  *  its first answer) that Dez waits for, with what Dez needs to ask the
  *  provider for its result again after a restart
  *  (`ProviderGenerateMediaInput.resume`). `resume` is the first answer cut
- *  down to what the format's `job` reads (`ClipJob.resume`); it holds no
+ *  down to what the format's `job` reads (`MediaJob.resume`); it holds no
  *  API key and no text of the user. */
 export interface StoredProviderJob {
   providerId: string

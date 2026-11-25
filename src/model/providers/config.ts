@@ -1,4 +1,5 @@
 import * as z from 'zod'
+import { isRegExpSource } from '../../utils/regExpSource'
 import { MODEL_OUTPUT_IDS } from '../modelOutputs'
 import { BUILT_IN_PROVIDER_IDS } from './builtins'
 import { clipFileType } from './pcmAudio'
@@ -108,14 +109,7 @@ const modelEntryPathSchema = z.string().refine(
 // The source of a regular expression, such as '^claude-opus-5(-\d{8})?$'.
 // A config is plain JSON (custom providers are in app_state.json), so it
 // keeps the text, and its reader makes the expression (`tokenPrices`).
-const regExpSourceSchema = z.string().min(1).refine((source) => {
-  try {
-    new RegExp(source)
-    return true
-  } catch {
-    return false
-  }
-}, 'Match must be a regular expression')
+const regExpSourceSchema = z.string().min(1).refine(isRegExpSource, 'Match must be a regular expression')
 
 // A price in USD per 1M tokens (`tokenPrices`).
 const tokenRateSchema = z.number().nonnegative()

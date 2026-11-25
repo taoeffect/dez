@@ -2,16 +2,16 @@ import { ExplainedError } from '../../utils/errorText'
 import type { JsonObject } from '../../utils/json'
 import { sanitizeErrorText } from '../../utils/protocol/errors'
 import { imageExtension } from '../chat/images'
-import { APIMART_AS_REFERENCES, APIMART_IMAGES_AS, APIMART_TIMED_TRANSCRIPTION_MODELS, APIMART_WHOLE_NUMBER_FIELDS, apimartImageModel, apimartMusicModel, apimartVideoModel, type ApimartVideoImages } from './apimartModels'
+import { APIMART_AS_REFERENCES, APIMART_IMAGE_MODELS, APIMART_IMAGES_AS, APIMART_MUSIC_MODELS, APIMART_TIMED_TRANSCRIPTION_MODELS, APIMART_VIDEO_MODELS, APIMART_WHOLE_NUMBER_FIELDS, type ApimartVideoImages } from './apimartModels'
 import { usageNumber } from './chatUsage'
 import type { InputImageRules } from './clipImages'
 import { cloneClipTextRules } from './clipText'
 import { trimTrailingSlashes } from './config'
 import { JobNotMadeError, UnusableAnswerError } from './errors'
-import { clipFormFile, isClipUrl, jsonBody, lengthSeconds, listedValues, lowestFirstParameter, optionsParameter, resolutionLines, sourceClip, transcriptText, transcriptTimes } from './mediaFormatParts'
-import type { AnswerCost, ClipInput, ImageJobFormat, ImageUploadFormat, MediaFormat } from './mediaFormats'
+import { clipFormFile, isClipUrl, jobStateText, jsonBody, lengthSeconds, listedValues, lowestFirstParameter, optionsParameter, resolutionLines, sourceClip, transcriptText, transcriptTimes } from './mediaFormatParts'
+import type { AnswerCost, ClipInput, FileUrls, ImageJobFormat, ImageUploadFormat, MediaFormat } from './mediaFormats'
 import { parameterTakes, type ModelParameter, type ParameterValues, type RangeParameter } from './modelParameters'
-import { isRecord, valueAtPath } from './modelParsing'
+import { isRecord, ownEntry, valueAtPath } from './modelParsing'
 
 // The media format of APIMart (`mediaApi.format: 'apimart'`): image,
 // video, and music requests as tasks, and transcriptions. An image, video,
@@ -131,7 +131,13 @@ function schemaParameters(entry: unknown): ModelParameter[] {
   return Object.entries(properties).flatMap(([name, schema]) => (UNSHOWN_SCHEMA_FIELDS.has(name) || !isRecord(schema) ? [] : schemaParameter(name, schema)))
 }
 
-const WHOLE_NUMBER_TEXT = /^-?\d+$/
+// The whole number of `text`, with spaces around it or none; undefined for
+// a text that is no whole number. The request (`sentValues`) and the quote
+// (`wholeSeconds`) read a length with it, so both read the same length.
+function wholeNumber(text: string): number | undefined {
+  const trimmed = text.trim()
+  return /^-?\d+$/.test(trimmed) ? Number(trimmed) : undefined
+}
 
 // `values` as the request sends them, with the rows that gave them
 // (`MediaInput.parameters`). A text in a field of
@@ -143,11 +149,11 @@ function sentValues(values: ParameterValues, parameters: readonly ModelParameter
     if (!APIMART_WHOLE_NUMBER_FIELDS.has(name) || typeof value !== 'string') return [name, value]
     const row = parameters.find((parameter) => parameter.name === name)
     if (row && 'options' in row && row.options.includes(value)) return [name, value]
-    const text = value.trim()
-    if (!WHOLE_NUMBER_TEXT.test(text)) {
+    const number = wholeNumber(value)
+    if (number === undefined) {
       throw new ExplainedError(`The parameter ${JSON.stringify(name)} of this model takes a whole number, not ${JSON.stringify(sanitizeErrorText(value, 40))}. Change its value.`)
     }
-    return [name, Number(text)]
+    return [name, number]
   }))
 }
 
@@ -155,7 +161,13 @@ function sentValues(values: ParameterValues, parameters: readonly ModelParameter
 // text of one; undefined for none.
 function wholeSeconds(value: unknown): number | undefined {
   if (typeof value === 'number') return Number.isInteger(value) ? value : undefined
-  return typeof value === 'string' && WHOLE_NUMBER_TEXT.test(value.trim()) ? Number(value.trim()) : undefined
+  return typeof value === 'string' ? wholeNumber(value) : undefined
+}
+
+// The URL of the account's own price of a request with the fields of
+// `query` (`quote`).
+function priceUrl(baseUrl: string, query: URLSearchParams): string {
+  return `${trimTrailingSlashes(baseUrl)}/pricing/model?${query.toString()}`
 }
 
 // The most bytes of the file of a transcription request (the docs).
@@ -184,7 +196,7 @@ function submittedTaskId(data: unknown): string | undefined {
 }
 
 // The answer to a request cut down to the id of its task, which
-// `submittedTaskId` reads (`ClipJob.resume`).
+// `submittedTaskId` reads (`MediaJob.resume`).
 function taskResume(taskId: string): JsonObject {
   return { data: [{ task_id: taskId }] }
 }
@@ -204,11 +216,8 @@ function doneTask(answer: unknown, made: 'clip' | 'image', unknownRuns: boolean)
   const status = isRecord(task) ? task.status : undefined
   if (status === 'submitted' || status === 'pending' || status === 'processing' || (unknownRuns && status === 'unknown')) return 'running'
   if (isRecord(task) && status === 'completed') return task
-  // `failed`, `cancelled`, or a state that is new. The texts come from the
-  // provider and show in the details of the error toast.
-  const message = valueAtPath(task, 'error.message')
-  const reason = typeof message === 'string' && message !== '' ? `: ${sanitizeErrorText(message)}` : ''
-  throw new JobNotMadeError(`State: ${typeof status === 'string' ? sanitizeErrorText(status, 40) : 'none'}${reason}`, usageNumber(valueAtPath(task, 'cost')), made)
+  // `failed`, `cancelled`, or a state that is new.
+  throw new JobNotMadeError(jobStateText(status, valueAtPath(task, 'error.message')), usageNumber(valueAtPath(task, 'cost')), made)
 }
 
 // The price of a done task: `cost`, what APIMart took in USD for the whole
@@ -237,7 +246,7 @@ function videoFiles(task: Record<string, unknown>): [string] {
 // copy. An entry with no usable URL is left out.
 // https://docs.apimart.ai/en/api-reference/audios/suno/overview
 // https://docs.apimart.ai/en/api-reference/audios/flow-music/query
-function musicFiles(task: Record<string, unknown>): readonly [string, ...string[]] {
+function musicFiles(task: Record<string, unknown>): FileUrls {
   const songs = valueAtPath(task, 'result.music')
   const urls = (Array.isArray(songs) ? songs : []).map((song) => valueAtPath(song, 'audio_url')).filter(isClipUrl)
   const [first, ...rest] = urls
@@ -250,7 +259,7 @@ function musicFiles(task: Record<string, unknown>): readonly [string, ...string[
 // and in a live answer of gpt-image-2). A URL that is not usable is left
 // out.
 // https://docs.apimart.ai/en/api-reference/images/gpt-image-2/generation
-function imageFiles(task: Record<string, unknown>): readonly [string, ...string[]] {
+function imageFiles(task: Record<string, unknown>): FileUrls {
   const images = valueAtPath(task, 'result.images')
   const urls = (Array.isArray(images) ? images : []).flatMap((image): unknown[] => {
     const url = isRecord(image) ? image.url : undefined
@@ -352,8 +361,8 @@ const MAX_INPUT_IMAGE_PIXELS = 36_000_000
 const images: ImageJobFormat = {
   parameters: (kind, entry) => {
     if (kind !== 'image') return []
-    const known = apimartImageModel(valueAtPath(entry, 'id'))
-    return known ? [...structuredClone(known.parameters)] : schemaParameters(entry)
+    const known = ownEntry(APIMART_IMAGE_MODELS, valueAtPath(entry, 'id'))
+    return known ? structuredClone(known.parameters) as ModelParameter[] : schemaParameters(entry)
   },
   request: (kind, baseUrl, modelId, { prompt, values, parameters, imageUrls = [] }) => {
     if (kind !== 'image') refusedKind()
@@ -388,14 +397,14 @@ const images: ImageJobFormat = {
     priceRequest: (kind, baseUrl, modelId, values) => {
       if (kind !== 'image') return null
       const query = new URLSearchParams({ model: modelId })
-      const priced = apimartImageModel(modelId)?.pricedResolutions
+      const priced = ownEntry(APIMART_IMAGE_MODELS, modelId)?.pricedResolutions
       for (const name of ['resolution', 'size', 'quality', 'n']) {
         const value = values[name]
         if (typeof value !== 'string' && typeof value !== 'number') continue
         if (name === 'resolution' && priced && !priced.includes(String(value))) continue
         query.set(name, String(value))
       }
-      return { url: `${trimTrailingSlashes(baseUrl)}/pricing/model?${query.toString()}` }
+      return { url: priceUrl(baseUrl, query) }
     },
     usd: (_kind, _values, { answer }) => (isRecord(answer) ? usageNumber(answer.total_usd) : undefined),
   },
@@ -407,18 +416,18 @@ export const apimartFormat: MediaFormat = {
   clips: {
     parameters: (kind, entry) => {
       const modelId = valueAtPath(entry, 'id')
-      if (kind === 'music') return [...structuredClone(apimartMusicModel(modelId)?.parameters ?? [])]
+      if (kind === 'music') return structuredClone(ownEntry(APIMART_MUSIC_MODELS, modelId)?.parameters ?? []) as ModelParameter[]
       if (kind !== 'video') return []
-      const known = apimartVideoModel(modelId)
-      return known ? [...structuredClone(known.parameters)] : schemaParameters(entry)
+      const known = ownEntry(APIMART_VIDEO_MODELS, modelId)
+      return known ? structuredClone(known.parameters) as ModelParameter[] : schemaParameters(entry)
     },
     textRules: (kind, entry) => {
       const modelId = valueAtPath(entry, 'id')
       if (kind === 'music') {
-        const music = apimartMusicModel(modelId)
+        const music = ownEntry(APIMART_MUSIC_MODELS, modelId)
         return music && cloneClipTextRules(music.textRules)
       }
-      const maxPromptLength = kind === 'video' ? apimartVideoModel(modelId)?.maxPromptLength : undefined
+      const maxPromptLength = kind === 'video' ? ownEntry(APIMART_VIDEO_MODELS, modelId)?.maxPromptLength : undefined
       return maxPromptLength === undefined ? undefined : { maxPromptLength }
     },
     // A video request with no length gets the model's default length, and
@@ -426,7 +435,7 @@ export const apimartFormat: MediaFormat = {
     // state. `images_as` is a choice of Dez, not a field of the request.
     request: (kind, baseUrl, modelId, input) => {
       if (kind === 'music') {
-        const music = apimartMusicModel(modelId)
+        const music = ownEntry(APIMART_MUSIC_MODELS, modelId)
         if (!music) throw new ExplainedError('Dez does not know the request fields of this music model. Choose another model.')
         return { url: `${trimTrailingSlashes(baseUrl)}/music/generations`, body: { ...music.body(input), model: modelId } }
       }
@@ -435,7 +444,7 @@ export const apimartFormat: MediaFormat = {
       delete values[APIMART_IMAGES_AS]
       return {
         url: `${trimTrailingSlashes(baseUrl)}/videos/generations`,
-        body: { ...sentValues(values, input.parameters), ...videoImageFields(apimartVideoModel(modelId)?.images, input), model: modelId, prompt: input.prompt },
+        body: { ...sentValues(values, input.parameters), ...videoImageFields(ownEntry(APIMART_VIDEO_MODELS, modelId)?.images, input), model: modelId, prompt: input.prompt },
       }
     },
     // A done task gives the URLs of its files, which end after about 24
@@ -483,7 +492,7 @@ export const apimartFormat: MediaFormat = {
           query.set('duration', String(seconds))
           if (typeof values.resolution === 'string') query.set('resolution', values.resolution)
         }
-        return { url: `${trimTrailingSlashes(baseUrl)}/pricing/model?${query.toString()}` }
+        return { url: priceUrl(baseUrl, query) }
       },
       usd: (data, values) => {
         const usd = isRecord(data) ? usageNumber(data.total_usd) : undefined
@@ -500,10 +509,10 @@ export const apimartFormat: MediaFormat = {
   imageRules: (kind, entry) => {
     const modelId = valueAtPath(entry, 'id')
     if (kind === 'image') {
-      const maxImages = apimartImageModel(modelId)?.maxImages ?? valueAtPath(entry, 'parameters.input_schema.properties.image_urls.maxItems')
+      const maxImages = ownEntry(APIMART_IMAGE_MODELS, modelId)?.maxImages ?? valueAtPath(entry, 'parameters.input_schema.properties.image_urls.maxItems')
       return typeof maxImages === 'number' && Number.isInteger(maxImages) && maxImages > 0 ? { maxImages } : undefined
     }
-    const images = kind === 'video' ? apimartVideoModel(modelId)?.images : undefined
+    const images = kind === 'video' ? ownEntry(APIMART_VIDEO_MODELS, modelId)?.images : undefined
     return images && videoImageRules(images)
   },
   // A transcription model takes one audio clip, of the types of the docs

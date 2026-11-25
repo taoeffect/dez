@@ -1,3 +1,4 @@
+import { sanitizeErrorText } from '../../utils/protocol/errors'
 import { mediaFileExtension } from '../chat/mediaFiles'
 import { UnusableAnswerError } from './errors'
 import type { InputClipPart } from './mediaFormats'
@@ -94,6 +95,15 @@ export function jsonBody(body: Uint8Array): unknown {
   } catch {
     throw new UnusableAnswerError('The answer is not valid JSON.')
   }
+}
+
+// The details of a `JobNotMadeError`: the state of a job that ended with
+// nothing made (`none` for no state), and the reason that the provider
+// gave, when it gave one. Both are texts of the provider, which show in
+// the details of the error toast.
+export function jobStateText(status: unknown, reason?: unknown): string {
+  const state = `State: ${typeof status === 'string' ? sanitizeErrorText(status, 40) : 'none'}`
+  return typeof reason === 'string' && reason !== '' ? `${state}: ${sanitizeErrorText(reason)}` : state
 }
 
 // The text of a transcription answer (its JSON `data`): `{ text, … }` for
