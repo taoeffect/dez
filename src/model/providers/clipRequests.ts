@@ -204,9 +204,11 @@ export async function sendImageJobRequest(run: JobRun, request: NativeHttpReques
 // other, each one in a request that `run.requestId` cancels, and gives
 // their web addresses, in the order of `images`. `onUploaded` gets the
 // price of each upload as soon as its answer comes: the provider took the
-// money then, so a later failure must still count it. An upload has no
-// time limit, as the one request of an image that is no job:
-// `run.signal` ends it.
+// money then, so a later failure must still count it. An upload request
+// has no time limit of its own, as the one request of an image that is no
+// job: `run.signal` ends it. Its time still counts in the time limit of
+// the job: the requests after it get only the time that is left
+// (`run.deadline`).
 export async function uploadInputImages(
   run: JobRun,
   upload: NonNullable<ReturnType<Provider['imageUpload']>>,
