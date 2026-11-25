@@ -338,7 +338,8 @@ function replyErrorGroup(tabId: string): string {
 // (`dez.stream/start`), as the toast then tells of a reply that the user
 // went on from. The toast belongs to its tab (`ToastData.tabId`): for a tab
 // in the background it waits until the user goes to the tab, which is red
-// meanwhile (`finalizeStream`).
+// meanwhile. Each caller marks the tab (`dez.model/tabs/markReplyEnded`):
+// through `finalizeStream`, or itself (`resumeMediaReply`).
 function showReplyError(tabId: string, title: string, message: string): void {
   sbp('dez.ui/toast', 'app-global', {
     variant: 'error',
@@ -1510,12 +1511,15 @@ function restoreTabJobs(tab: Tab, records: readonly StoredJob[]): void {
 // the tab that asks the provider for its job (`runMediaRound`). Its section
 // must still be the last reply of the tab. Else the record goes, and an
 // error toast of the tab names the provider's job id: the user can still
-// get the result from the provider.
+// get the result from the provider. This path never reaches
+// `finalizeStream`, so it marks the tab itself: at a start, every tab but
+// the active one is in the background.
 function resumeMediaReply(tab: Tab, { sectionIndex, model, providerJob }: StoredMediaReply): void {
   const section = tab.sections[sectionIndex]
   if (section?.role !== 'agent' || tab.sections.findLastIndex((candidate) => candidate.role === 'agent') !== sectionIndex) {
     console.error(`Dropped the media reply of conversation ${tab.conversationId}: section ${sectionIndex} is not its last reply`)
     sbp('dez.model/openJobs/set', tab.conversationId, { mediaReply: null })
+    sbp('dez.model/tabs/markReplyEnded', tab.id, 'error')
     showReplyError(tab.id, 'Reply not picked up', `Dez quit while ${model.modelName} made a reply in this conversation, and the conversation does not end with that reply any more, so Dez cannot put the result in it. The job id at the provider is ${providerJob.jobId}.`)
     return
   }

@@ -2081,21 +2081,25 @@ describe('dez.stream/start media round', () => {
       expect(toasts).toStrictEqual([])
     })
 
-    it('drops the record, and names the job in an error toast of the tab, when the conversation no longer ends with the reply', async () => {
+    it('drops the record, names the job in an error toast of the tab, and marks the tab in the background error, when the conversation no longer ends with the reply', async () => {
+      const tab = activeTab()
       // The section at the index is the last user message.
-      sbp('dez.model/openJobs/set', conversationId(), { mediaReply: { sectionIndex: 2, model, providerJob: PROVIDER_JOB } })
+      sbp('dez.model/openJobs/set', tab.conversationId, { mediaReply: { sectionIndex: 2, model, providerJob: PROVIDER_JOB } })
+      // At a start, every tab but the active one is in the background.
+      sbp('dez.model/tabs/create')
 
       sbp('dez.stream/restoreJobs')
       await settled()
 
       expect(mediaInputs).toStrictEqual([])
-      expect(openJobs()).toBeNull()
+      expect(sbp('dez.model/openJobs/get', tab.conversationId)).toBeNull()
+      expect(sbp('dez.model/tabs/activity')).toStrictEqual({ [tab.id]: 'error' })
       expect(toasts).toStrictEqual([{ area: 'app-global', data: {
         variant: 'error',
         title: 'Reply not picked up',
         message: 'Dez quit while M made a reply in this conversation, and the conversation does not end with that reply any more, so Dez cannot put the result in it. The job id at the provider is q-1.',
         group: expect.any(String),
-        tabId: activeTab().id,
+        tabId: tab.id,
       } }])
     })
   })
