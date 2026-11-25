@@ -57,6 +57,7 @@ const BUILT_INS: ProviderRow[] = [
   { id: 'openrouter', name: 'OpenRouter' },
   { id: 'charm_hyper', name: 'Charm Hyper' },
   { id: 'zai', name: 'Z.ai' },
+  { id: 'anthropic', name: 'Anthropic Console' },
   { id: 'minimax', name: 'MiniMax' },
   { id: 'kimi', name: 'Kimi' },
   { id: 'copilot', name: 'GitHub Copilot' },

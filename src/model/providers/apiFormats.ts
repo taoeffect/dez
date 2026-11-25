@@ -363,6 +363,20 @@ function anthropicApiRoot(baseUrl: string): string {
   return trimTrailingSlashes(baseUrl).replace(/\/v1$/, '')
 }
 
+// The system prompt and the tools of a request with a mark at the end of
+// their fixed start (`ProviderConfig.prefixCacheMark`): the system prompt
+// becomes one text block with the mark, or, with no system text, the last
+// tool gets it. An empty text block cannot hold a mark, so an empty system
+// prompt stays a string. As the marks of the messages, the mark comes after
+// the prefix hash, and it is in the same place in every request, so the
+// start stays the same bytes.
+// https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+function withPrefixCacheMark(system: string | undefined, tools: Record<string, unknown>[] | undefined): { system: string | WireMessage[] | undefined, tools: Record<string, unknown>[] | undefined } {
+  if (system) return { system: [{ type: 'text', text: system, cache_control: CACHE_MARK }], tools }
+  const lastTool = tools ? tools.length - 1 : -1
+  return { system, tools: tools?.map((tool, index) => index === lastTool ? { ...tool, cache_control: CACHE_MARK } : tool) }
+}
+
 const anthropicFormat: ApiFormat = {
   chatUrl: (baseUrl) => `${anthropicApiRoot(baseUrl)}/v1/messages`,
   // The model list is paged, 20 models by default; 1000 is Anthropic's
@@ -375,13 +389,16 @@ const anthropicFormat: ApiFormat = {
   // system role.
   chatBody: (messages, modelId, config, context) => {
     const chat = wireChat(messages, context, anthropicShapes)
+    const { system, tools } = config.prefixCacheMark
+      ? withPrefixCacheMark(context.system, chat.tools)
+      : { system: context.system, tools: chat.tools }
     const body: Record<string, unknown> = {
       model: modelId,
-      ...(context.system !== undefined && { system: context.system }),
+      ...(system !== undefined && { system }),
       messages: withCacheBreakpoints(withResultsJoined(chat.messages), (message) => withMarkedBlock(message, (blocks) => blocks.length - 1)),
       stream: true,
     }
-    if (chat.tools) body.tools = chat.tools
+    if (tools) body.tools = tools
     body.max_tokens = config.maxOutputTokens ?? DEFAULT_ANTHROPIC_MAX_TOKENS
     return { body, prefixHash: chat.prefixHash }
   },

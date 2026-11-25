@@ -392,6 +392,36 @@ describe('system prompt and tools', () => {
     expect(sent).toEqual([{ role: 'system', content: 'You are m.' }, ...markedApiMessages])
   })
 
+  it('marks the Anthropic-format system prompt, else the last tool, only for a config with prefixCacheMark', () => {
+    const marked = customProvider({ apiFormat: 'anthropic', prefixCacheMark: true })
+    const body = (provider: Provider, made: ChatRequestContext) => requestBody(provider.chatRequest(messages, { id: 'm' }, key, {}, made).request)
+    const searchTool = { name: 'search', description: 'Search the notes.', input_schema: searchSchema }
+    const listTool = { name: 'list', description: 'List the notes.', input_schema: { type: 'object', properties: {} } }
+    const LIST: ToolDefinition = { name: 'list', description: 'List the notes.', parameters: [] }
+
+    expect(body(marked, context)).toEqual({
+      model: 'm',
+      system: [{ type: 'text', text: 'You are m.', cache_control: CACHE }],
+      messages: markedApiMessages,
+      stream: true,
+      tools: [searchTool],
+      max_tokens: 32000,
+    })
+    expect(body(marked, { tools: [SEARCH, LIST] }).tools).toEqual([searchTool, { ...listTool, cache_control: CACHE }])
+    // An empty text block cannot hold a mark.
+    expect(body(marked, { system: '', tools: [SEARCH] })).toMatchObject({ system: '', tools: [{ ...searchTool, cache_control: CACHE }] })
+    expect(body(marked, {})).toEqual({ model: 'm', messages: markedApiMessages, stream: true, max_tokens: 32000 })
+    // The other Anthropic-format built-ins keep the plain prefix, so the
+    // bytes of their cached prefix do not change.
+    for (const id of ['minimax', 'kimi']) {
+      const plain = body(builtInProvider(id), context)
+
+      expect(plain.system, id).toBe('You are m.')
+      expect(JSON.stringify(plain.tools), id).not.toContain('cache_control')
+    }
+    expect(body(builtInProvider('anthropic'), context).system).toEqual([{ type: 'text', text: 'You are m.', cache_control: CACHE }])
+  })
+
   it('sends no tools field for an empty tool list', () => {
     for (const apiFormat of ['openai', 'anthropic']) {
       const body = requestBody(customProvider({ apiFormat }).chatRequest(messages, { id: 'm' }, key, {}, { system: 'S', tools: [] }).request)
@@ -1084,6 +1114,46 @@ describe('provider models', () => {
     expect(models.map((model) => model.released)).toStrictEqual([
       '2025-02-19', '2025-02-20', '2025-02-19', '2025-02-18', '2025-02-19', undefined, undefined, undefined, undefined, undefined,
     ])
+  })
+
+  it('reads the facts and the table price of each model of the Anthropic Models API', () => {
+    const anthropic = builtInProvider('anthropic')
+    // The shape of the List Models example, cut to the fields that Dez reads.
+    // https://platform.claude.com/docs/en/api/models/list
+    const entry = (id: string, displayName: string, adaptive: boolean, maxInputTokens: number, createdAt: string) => ({
+      id,
+      type: 'model',
+      display_name: displayName,
+      created_at: createdAt,
+      max_input_tokens: maxInputTokens,
+      max_tokens: 64_000,
+      capabilities: {
+        image_input: { supported: true },
+        thinking: { supported: true, types: { adaptive: { supported: adaptive }, enabled: { supported: true }, disabled: { supported: !adaptive } } },
+      },
+    })
+    const data = [
+      entry('claude-opus-5-5', 'Claude Opus 5.5', true, 1_000_000, '2026-09-21T00:00:00Z'),
+      entry('claude-haiku-4-5-20251001', 'Claude Haiku 4.5', false, 200_000, '2025-10-15T00:00:00Z'),
+      entry('claude-opus-6', 'Claude Opus 6', true, 1_000_000, '2027-01-01T00:00:00Z'),
+    ]
+    const models = anthropic.parseModels({ data, has_more: false })
+    const priced = anthropic.withPrices(models, new Map(data.map((model) => [model.id, model])), new Map())
+
+    expect(priced).toStrictEqual([
+      {
+        id: 'claude-opus-5-5', name: 'Claude Opus 5.5', provider: 'anthropic', released: '2026-09-21', imageInput: true, thinking: true, contextWindow: 1_000_000,
+        price: { unit: 'token', input: 4, output: 20, cachedInput: 0.2, cacheWrite: 5 },
+      },
+      {
+        id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5', provider: 'anthropic', released: '2025-10-15', imageInput: true, thinking: false, contextWindow: 200_000,
+        price: { unit: 'token', input: 1, output: 5, cachedInput: 0.1, cacheWrite: 1.25 },
+      },
+      // A model that is newer than the table has an unknown price.
+      { id: 'claude-opus-6', name: 'Claude Opus 6', provider: 'anthropic', released: '2027-01-01', imageInput: true, thinking: true, contextWindow: 1_000_000 },
+    ])
+    expect(modelToggles(anthropic.config, priced[1]).thinking).toBe(false)
+    expect(modelToggles(anthropic.config, priced[0]).thinking).toBe(true)
   })
 
   it('keeps the fetched release date for a config model, and has none with no config path', () => {
@@ -1877,6 +1947,30 @@ describe('media model data', () => {
     const entries = new Map<string, unknown>([['chat', { id: 'chat', pricing }], ['speech', { id: 'speech', pricing }]])
 
     expect(customProvider({}).withPrices([chat, speech], entries, new Map())).toStrictEqual([chat, speech])
+  })
+
+  it('gives a chat model the price of the first row of the price table that finds its id, when its entry tells none', () => {
+    const provider = customProvider({
+      modelTokenPrices: { input: 'pricing.prompt', output: 'pricing.completion', perTokens: 1 },
+      tokenPrices: [
+        { match: '^m-5(-\\d{8})?$', input: 5, output: 25, cachedInput: 0.5, cacheWrite: 6.25 },
+        { match: '^M-', input: 1, output: 2, note: 'old rate' },
+      ],
+    })
+    const models = ['m-5', 'm-5-20250101', 'm-5-5', 'listed-m-5'].map((id) => providerModel('local', id, id, { request: 'chat' }))
+    const speech = providerModel('local', 'm-5-tts', 'Speech', { request: 'tts' })
+    const entries = new Map<string, unknown>([['listed-m-5', { id: 'listed-m-5', pricing: { prompt: '0.000003', completion: '0.000004' } }]])
+
+    expect(provider.withPrices([...models, speech], entries, new Map()).map((model) => [model.id, model.price])).toStrictEqual([
+      ['m-5', { unit: 'token', input: 5, output: 25, cachedInput: 0.5, cacheWrite: 6.25 }],
+      ['m-5-20250101', { unit: 'token', input: 5, output: 25, cachedInput: 0.5, cacheWrite: 6.25 }],
+      // No row ends the version `-5` with `-5`, so only the later row with
+      // no end finds it, read with no case.
+      ['m-5-5', { unit: 'token', input: 1, output: 2, note: 'old rate' }],
+      // The price of the entry wins over the table.
+      ['listed-m-5', { unit: 'token', input: 3, output: 4 }],
+      ['m-5-tts', undefined],
+    ])
   })
 
   describe('a refusal of the count of the images', () => {

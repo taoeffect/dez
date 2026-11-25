@@ -12,7 +12,7 @@ import type { ImageSizeRules, InputImageLimits } from './imageSize'
 import { MEDIA_FORMATS, type AnswerCost, type ClipEntryPrice, type ClipFormat, type ClipInput, type ClipJob, type ImageFormat, type ImageQuoteFormat, type MediaFormat, type MediaInput, type MediaWireRequest, type TextFormat } from './mediaFormats'
 import { DEFAULT_MEDIA_REQUESTS_AT_ONCE } from './mediaTurns'
 import { effectiveParameterValues, type ParameterValues } from './modelParameters'
-import { modelTokenPrice } from './modelPrices'
+import { modelTokenPrice, tokenTablePrice } from './modelPrices'
 import { isRecord, modelCapability, modelCount, modelData, modelOutputsAndRequest, modelReadableName, modelReleased, unsupportedSettings } from './modelParsing'
 import { isThinkingEnabled, modelToggles, toggleValue, type ToggleModel } from './modelToggles'
 import { multipartBody, type MultipartField } from './multipart'
@@ -283,8 +283,9 @@ export class Provider {
 
   // `models` (a `withClipData` list), each one with the price that its raw
   // entries tell (`ModelInfo.price`): the token prices of a chat model
-  // (`modelTokenPrices` in config.ts), the list price of a model of a media
-  // request kind for the default values of its parameters
+  // (`modelTokenPrices` in config.ts), else those of the config's price
+  // table (`tokenPrices`), the list price of a model of a media request
+  // kind for the default values of its parameters
   // (`MediaFormat.listPrice`). This comes after `withClipData`, which gives
   // those parameters.
   withPrices(models: readonly ModelInfo[], entries: ReadonlyMap<string, unknown>, mediaEntries: ReadonlyMap<string, unknown>): ModelInfo[] {
@@ -294,7 +295,7 @@ export class Provider {
       const kind = effectiveRequest(model)
       const entry = entries.get(model.id)
       const price = kind === 'chat'
-        ? isRecord(entry) ? modelTokenPrice(entry, this.config.modelTokenPrices, effectiveOutputs(model)) : undefined
+        ? (isRecord(entry) ? modelTokenPrice(entry, this.config.modelTokenPrices, effectiveOutputs(model)) : undefined) ?? tokenTablePrice(model.id, this.config.tokenPrices)
         : kind === 'none' ? undefined : listPrice?.(kind, effectiveParameterValues(model.parameters ?? []), entry, mediaEntries.get(model.id), paths)
       return price ? { ...model, price } : model
     })

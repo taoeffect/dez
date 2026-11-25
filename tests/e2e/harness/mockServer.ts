@@ -355,12 +355,14 @@ export async function sendChatReply (res: http.ServerResponse, name: string, { h
 }
 
 /** Streams the reply that `sendChatReply(res, name)` streams, as Anthropic
- *  Messages SSE events: one text block in several deltas. */
-export function sendAnthropicReply (res: http.ServerResponse, name: string): void {
+ *  Messages SSE events: one text block in several deltas. `startUsage`
+ *  adds to or replaces the counts of its `message_start` event, such as
+ *  `cache_read_input_tokens`; the end event tells 4 output tokens. */
+export function sendAnthropicReply (res: http.ServerResponse, name: string, startUsage: Readonly<Record<string, number>> = {}): void {
   startEventStream(res)
   writeAnthropicEvent(res, {
     type: 'message_start',
-    message: { id: 'msg_mock', type: 'message', role: 'assistant', content: [], stop_reason: null, usage: { input_tokens: 1, output_tokens: 1 } },
+    message: { id: 'msg_mock', type: 'message', role: 'assistant', content: [], stop_reason: null, usage: { input_tokens: 1, output_tokens: 1, ...startUsage } },
   })
   writeAnthropicEvent(res, { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } })
   for (const token of replyTokens(name)) writeAnthropicEvent(res, { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: token } })

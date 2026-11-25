@@ -202,8 +202,8 @@ function cloneRecords<Value>(records: Record<string, Record<string, Value>>): Re
 function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
   const {
     id, name, baseUrl, apiFormat, models, fetchModels, modelListQuery, modelImageInput, modelAudioInput, modelVideoInput, modelToolCalling,
-    modelThinking, modelOutputs, modelReadableName, modelReleased, modelTokenPrices, modelContextWindow, modelImageLimit, modelMessageImageLimit, auth, headers, imageRequestHeaders,
-    maxOutputTokens, cacheBreakpoints, toolMessageCacheMark, promptCacheKey, requestBody, providerSystemPrompt, chatClips, imageOutputBody,
+    modelThinking, modelOutputs, modelReadableName, modelReleased, modelTokenPrices, tokenPrices, modelContextWindow, modelImageLimit, modelMessageImageLimit, auth, headers, imageRequestHeaders,
+    maxOutputTokens, cacheBreakpoints, toolMessageCacheMark, promptCacheKey, prefixCacheMark, requestBody, providerSystemPrompt, chatClips, imageOutputBody,
     audioOutputs, mediaApi, settings, thinking,
     ...uncopied
   } = config
@@ -229,6 +229,7 @@ function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
   if (modelReadableName) clone.modelReadableName = { ...modelReadableName }
   if (modelReleased) clone.modelReleased = { ...modelReleased }
   if (modelTokenPrices) clone.modelTokenPrices = { ...modelTokenPrices }
+  if (tokenPrices) clone.tokenPrices = tokenPrices.map((row) => ({ ...row }))
   if (modelContextWindow) clone.modelContextWindow = { paths: [...modelContextWindow.paths] }
   if (modelImageLimit) clone.modelImageLimit = { paths: [...modelImageLimit.paths] }
   if (modelMessageImageLimit) clone.modelMessageImageLimit = { paths: [...modelMessageImageLimit.paths] }
@@ -238,6 +239,7 @@ function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
   if (cacheBreakpoints !== undefined) clone.cacheBreakpoints = cacheBreakpoints
   if (toolMessageCacheMark) clone.toolMessageCacheMark = toolMessageCacheMark
   if (promptCacheKey !== undefined) clone.promptCacheKey = promptCacheKey
+  if (prefixCacheMark !== undefined) clone.prefixCacheMark = prefixCacheMark
   if (requestBody) clone.requestBody = cloneJsonObject(requestBody)
   if (providerSystemPrompt) clone.providerSystemPrompt = { ...providerSystemPrompt }
   if (chatClips) {

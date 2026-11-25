@@ -1101,8 +1101,10 @@ describe('chat streams with image paths', () => {
     ['anthropic', true, false],
     ['anthropic', false, true],
   ] as const)('sends no path in the %s format (images sent: %s, tools sent: %s), and sends the ids', async (apiFormat, sendImages, sendTools) => {
+    // `anthropic` is the id of a built-in provider.
+    const providerId = `local-${apiFormat}`
     sbp('dez.model/customProviders/save', {
-      id: apiFormat,
+      id: providerId,
       name: apiFormat,
       baseUrl: `http://localhost:6060/${apiFormat}`,
       apiFormat,
@@ -1111,10 +1113,10 @@ describe('chat streams with image paths', () => {
       auth: 'apiKey',
       thinking: {},
     })
-    const model = { providerId: apiFormat, modelId: 'm' }
+    const model = { providerId, modelId: 'm' }
     const { messages } = sectionsToStreamMessages(sections(model), model, { sendImages, sendTools })
 
-    await sbp('dez.provider/streamChat', { providerId: apiFormat, modelId: 'm', messages, onToken: () => {} })
+    await sbp('dez.provider/streamChat', { providerId, modelId: 'm', messages, onToken: () => {} })
 
     const body = streamRequests[0].body as string
     expect(body).not.toContain('assets/images')

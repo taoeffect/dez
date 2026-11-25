@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { BUILT_IN_PROVIDER_CONFIGS } from './builtins'
-import { freshQuote, isFreshPrice, modelTokenPrice, PRICE_LIFETIME_MS, priceText, usdText, withQuote, type PriceQuote } from './modelPrices'
+import { freshQuote, isFreshPrice, modelTokenPrice, PRICE_LIFETIME_MS, priceText, tokenTablePrice, usdText, withQuote, type PriceQuote } from './modelPrices'
 
 const tokenPrices = (id: string) => BUILT_IN_PROVIDER_CONFIGS.find((config) => config.id === id)?.modelTokenPrices
 
@@ -99,6 +99,52 @@ describe('chat token prices', () => {
 
   it('gives no price for a provider whose config has no token price paths', () => {
     expect(modelTokenPrice({ id: 'm', pricing: { prompt: '0.000001', completion: '0.000002' } }, undefined, TEXT)).toBeUndefined()
+  })
+})
+
+// The ids of the model ID page and the rates of the pricing page
+// (2026-11-24).
+// https://platform.claude.com/docs/en/about-claude/models/model-ids-and-versions
+// https://platform.claude.com/docs/en/about-claude/pricing
+describe('the price table of Anthropic Console', () => {
+  const table = BUILT_IN_PROVIDER_CONFIGS.find((config) => config.id === 'anthropic')?.tokenPrices
+  const rates = (input: number, output: number, cachedInput: number, cacheWrite: number) => ({ unit: 'token', input, output, cachedInput, cacheWrite })
+
+  it.each([
+    ['claude-fable-5-2', rates(8, 40, 0.2, 10)],
+    ['claude-mythos-5-2', rates(8, 40, 0.2, 10)],
+    ['claude-fable-5-1', rates(10, 50, 0.25, 12.5)],
+    ['claude-fable-5', rates(10, 50, 1, 12.5)],
+    ['claude-opus-5-5', rates(4, 20, 0.2, 5)],
+    ['claude-opus-5', rates(5, 25, 0.5, 6.25)],
+    ['claude-opus-4-8', rates(5, 25, 0.5, 6.25)],
+    ['claude-opus-4-7', rates(5, 25, 0.5, 6.25)],
+    ['claude-opus-4-6', rates(5, 25, 0.5, 6.25)],
+    ['claude-opus-4-5-20251101', rates(5, 25, 0.5, 6.25)],
+    ['claude-opus-4-1-20250805', rates(15, 75, 1.5, 18.75)],
+    // Opus 4, not a later Opus 4 model whose version starts with `2`.
+    ['claude-opus-4-20250514', rates(15, 75, 1.5, 18.75)],
+    ['claude-sonnet-5-5', rates(2, 10, 0.1, 2.5)],
+    ['claude-sonnet-5', rates(2, 10, 0.2, 2.5)],
+    ['claude-sonnet-4-6', rates(3, 15, 0.3, 3.75)],
+    ['claude-sonnet-4-5-20250929', rates(3, 15, 0.3, 3.75)],
+    ['claude-sonnet-4-20250514', rates(3, 15, 0.3, 3.75)],
+    ['claude-haiku-5-5', { ...rates(0.1, 0.5, 0.01, 0.125), note: 'base rate, a prompt of over 100,000 tokens costs 5 times as much' }],
+    ['claude-haiku-4-5-20251001', rates(1, 5, 0.1, 1.25)],
+    ['CLAUDE-Opus-4-1', rates(15, 75, 1.5, 18.75)],
+  ])('gives %s its rates', (id, price) => {
+    expect(tokenTablePrice(id, table)).toStrictEqual(price)
+  })
+
+  it.each(['claude-opus-6', 'claude-opus-5-6', 'claude-mythos-preview', 'claude-sonnet-4-7', 'claude-haiku-5', 'claude-3-7-sonnet-20250219', 'claude-opus-4-5-latest'])(
+    'gives %s, which the table does not know, no price',
+    (id) => {
+      expect(tokenTablePrice(id, table)).toBeUndefined()
+    },
+  )
+
+  it('gives no price with no table', () => {
+    expect(tokenTablePrice('claude-opus-5', undefined)).toBeUndefined()
   })
 })
 

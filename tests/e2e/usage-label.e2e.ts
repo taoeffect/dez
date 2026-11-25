@@ -2,18 +2,21 @@ import { isDeepStrictEqual } from 'node:util'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { Key } from 'webdriverio'
 import type { ActiveModel } from '../../src/model/chat/types'
+import { anthropicChatBody, anthropicMarkedUser, systemPrompt } from './harness/chatBody'
 import { click, consoleErrors, resetConsoleErrors, screenshotOnFailure, typeKeys, waitFor, waitForValue, withSmallerWindow } from './harness/dom'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
-import { LARGE_TOKENS, openAiToolCall, replyText, sendChatReply, sendChatText, sendToolCalls, toolResult, type MockProvider, type MockUsage } from './harness/mockServer'
+import { LARGE_TOKENS, mockChatPath, openAiToolCall, replyText, sendAnthropicReply, sendChatReply, sendChatText, sendToolCalls, toolResult, type MockProvider, type MockUsage } from './harness/mockServer'
 import type { E2EBrowser } from './harness/session'
-import { activeTabId, closeToasts, docPos, endedReply, focusEditor, newTab, openToasts, sbpCall, setCaret, submit, threadSections, waitForThread } from './harness/thread'
+import { activeTabId, closeToasts, docPos, endedReply, focusEditor, newTab, openToasts, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread } from './harness/thread'
 
 // The usage label of the bottom bar (the token count, a dot, the cost),
 // through the real app against a mock server in this process:
 // - no cost before the first counted request of the conversation;
 // - the sum of the provider's prices, with `+` after a request that has no
 //   known price;
-// - the busy look while a reply of the active tab runs;
+// - an Anthropic-format config with a price table and `prefixCacheMark`
+//   marks the system prompt, and the cache counts of its answer cost the
+//   cached and the cache write rates of the table;
 // - ` (?)` and italic once the user changed the text of a reply;
 // - Select All, then a delete or a cut, removes the cost, as in a new tab,
 //   and an undo puts it back, with its mark; a redo removes it again;
@@ -32,6 +35,10 @@ import { activeTabId, closeToasts, docPos, endedReply, focusEditor, newTab, open
 // One app session serves the whole file; each test starts in a new tab.
 
 const PROVIDER: MockProvider = { id: 'costs', name: 'Cost Mock', modelId: 'cost-model', modelName: 'Cost Model' }
+// The rates of Anthropic Console's table for Sonnet 4.6, in USD per 1M
+// tokens (builtins.ts).
+const CLAUDE: MockProvider = { id: 'claude', name: 'Claude Mock', modelId: 'claude-model', modelName: 'Claude Model', apiFormat: 'anthropic' }
+const CLAUDE_CONFIG = { prefixCacheMark: true, tokenPrices: [{ match: '^claude-model$', input: 3, output: 15, cachedInput: 0.3, cacheWrite: 3.75 }] }
 
 interface LabelLook {
   /** The text of the part; null when the label does not have it. */
@@ -155,7 +162,7 @@ describe('usage label', () => {
   beforeAll(async () => {
     // The incognito mask makes the right end of the bar wider: the room
     // test checks Submit in the widest bar.
-    setup = await startMockProviderApp(PROVIDER, {}, { appState: { incognitoOption: true } })
+    setup = await startMockProviderApp(PROVIDER, {}, { appState: { incognitoOption: true }, moreProviders: [{ provider: CLAUDE, config: CLAUDE_CONFIG }] })
     browser = setup.browser
   })
 
@@ -196,6 +203,33 @@ describe('usage label', () => {
     // The mock model has no list price, so this request has no known price.
     await sendChatReply(second.reply, 'the second')
     await waitForValue(browser, 'label after a reply with no price', labelLook, { text: '$0.0031+', look: 'idle', italic: false })
+  })
+
+  it('marks the system prompt for a config with prefixCacheMark, and prices the cache counts of the answer at the rates of the price table', async () => {
+    await pickModel(browser, CLAUDE.name, CLAUDE.modelName)
+    try {
+      await submit(browser, 'Cached question')
+      const request = await setup.mock.waitForRequest(browser, mockChatPath(CLAUDE))
+      expect(JSON.parse(request.body)).toStrictEqual({
+        ...anthropicChatBody(CLAUDE, [anthropicMarkedUser('Cached question')]),
+        system: [{ type: 'text', text: systemPrompt(CLAUDE), cache_control: { type: 'ephemeral' } }],
+      })
+      // 100 new input tokens at $3, 10,000 read from the cache at $0.30,
+      // 2,000 written into it at $3.75, and 4 output tokens at $15: $0.01086.
+      // With every input token at $3, it would be $0.03636.
+      sendAnthropicReply(request.reply, CLAUDE.modelName, { input_tokens: 100, cache_read_input_tokens: 10_000, cache_creation_input_tokens: 2_000 })
+      await waitForThread(browser, [
+        { role: 'user', text: 'Cached question' },
+        { role: 'agent', text: replyText(CLAUDE.modelName) },
+        { role: 'user', text: '' },
+      ])
+      // A known price, so no `+`; the label rounds it.
+      await waitForValue(browser, 'label after a reply from the cache', labelLook, { text: '$0.01', look: 'idle', italic: false })
+      expect(await sbpCall(browser, 'dez.model/tabs/costNumbers', await activeTabId(browser))).toEqual({ cost: { usd: 0.01086, requests: 1, unpriced: 0 } })
+    } finally {
+      // A new tab gets the last used model: the next tests use PROVIDER.
+      await pickModel(browser, PROVIDER.name, PROVIDER.modelName)
+    }
   })
 
   it('marks the sum once the user changed the text of a reply', async () => {

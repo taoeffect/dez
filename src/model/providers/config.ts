@@ -100,6 +100,21 @@ const modelEntryPathSchema = z.string().refine(
   'Model entry path must be dot-separated names, none empty',
 )
 
+// The source of a regular expression, such as '^claude-opus-5(-\d{8})?$'.
+// A config is plain JSON (custom providers are in app_state.json), so it
+// keeps the text, and its reader makes the expression (`tokenPrices`).
+const regExpSourceSchema = z.string().min(1).refine((source) => {
+  try {
+    new RegExp(source)
+    return true
+  } catch {
+    return false
+  }
+}, 'Match must be a regular expression')
+
+// A price in USD per 1M tokens (`tokenPrices`).
+const tokenRateSchema = z.number().nonnegative()
+
 // Where a `/models` entry holds a count of its model (`modelContextWindow`,
 // `modelImageLimit`, `modelMessageImageLimit`). A server can give the same
 // limit in more than one place with different numbers (OpenRouter: the
@@ -356,6 +371,23 @@ export const providerConfigSchema = z.object({
     imageOutput: modelEntryPathSchema.optional(),
     audioOutput: modelEntryPathSchema.optional(),
   }).optional(),
+  // The token prices of the chat models, for a provider whose model list
+  // tells none (Anthropic's), in USD per 1M tokens, with the fields of a
+  // price of `modelTokenPrices`, and a `note` that tells what the price
+  // does not hold (a rate for a long prompt). The first row whose `match`,
+  // a regular expression read with no case, finds the model id gives the
+  // price (modelPrices.ts). A model that no row finds has an unknown price,
+  // never the price of an older model, so an expression ends the version
+  // of the model id (`-5` must not find `-5-5`). A price that the model
+  // list tells wins.
+  tokenPrices: z.array(z.object({
+    match: regExpSourceSchema,
+    input: tokenRateSchema,
+    output: tokenRateSchema,
+    cachedInput: tokenRateSchema.optional(),
+    cacheWrite: tokenRateSchema.optional(),
+    note: z.string().trim().min(1).optional(),
+  })).optional(),
   // Where a `/models` entry holds the context window of its model, in
   // tokens: the most tokens of the prompt and the answer of one request
   // (OpenRouter's `context_length`, a vLLM server's `max_model_len`). A
@@ -395,6 +427,15 @@ export const providerConfigSchema = z.object({
   // server sends all the requests of a conversation to the machine that
   // holds its prompt cache. The Anthropic format ignores it.
   promptCacheKey: z.boolean().optional(),
+  // Anthropic format: mark the end of the fixed start of every chat request
+  // (the tools, then the system prompt) with `cache_control`: the system
+  // prompt, sent as one text block, or the last tool when the request has
+  // no system prompt. Anthropic reads only a cache entry that an earlier
+  // request wrote at a mark, and the marks of the last messages
+  // (`cacheBreakpoints`) are new in each conversation, so without this mark
+  // a new conversation pays the full price for its tools and system
+  // prompt. The OpenAI format ignores it.
+  prefixCacheMark: z.boolean().optional(),
   // A fixed part of every chat request body, merged right after the API
   // format's body and before the settings and the thinking body, so those can
   // add keys to the same objects. A server that tells the token counts of a

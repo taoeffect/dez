@@ -182,6 +182,24 @@ export function modelTokenPrice(entry: Record<string, unknown>, config: Provider
   }
 }
 
+// The token price of a chat model from the config's price table
+// (`tokenPrices` in config.ts): the first row whose expression finds the
+// model id, read with no case, as modelFamilies.json is; none when no row
+// finds it.
+export function tokenTablePrice(modelId: string, rows: ProviderConfig['tokenPrices']): ModelPrice | undefined {
+  const row = rows?.find(({ match }) => new RegExp(match, 'i').test(modelId))
+  if (!row) return undefined
+  const { input, output, cachedInput, cacheWrite, note } = row
+  return {
+    unit: 'token',
+    input,
+    output,
+    ...(cachedInput !== undefined && { cachedInput }),
+    ...(cacheWrite !== undefined && { cacheWrite }),
+    ...(note && { note }),
+  }
+}
+
 // A list or an object with at least one item: a list gives `null` or `[]`
 // for "no other rates".
 function hasData(value: unknown): boolean {

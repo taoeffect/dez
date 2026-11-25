@@ -178,6 +178,20 @@ describe('provider config schema', () => {
     for (const bad of [0, -1, 1.5, '200000', null]) expect(parseModel(bad).success).toBe(false)
   })
 
+  it('keeps a price table, and rejects a row whose match is no regular expression or whose rate is under 0', () => {
+    const parseRow = (row: Record<string, unknown>) =>
+      providerConfigSchema.safeParse({ id: 'p', name: 'P', baseUrl: 'http://h', tokenPrices: [{ match: '^m(-\\d{8})?$', input: 1, output: 5, ...row }] })
+
+    expect(parseRow({ cachedInput: 0.1, cacheWrite: 1.25, note: ' base rate ' }).data?.tokenPrices)
+      .toStrictEqual([{ match: '^m(-\\d{8})?$', input: 1, output: 5, cachedInput: 0.1, cacheWrite: 1.25, note: 'base rate' }])
+    expect(parseRow({ input: 0, output: 0 }).success).toBe(true)
+    expect(parseRow({ match: '^m(' }).success).toBe(false)
+    expect(parseRow({ match: '' }).success).toBe(false)
+    expect(parseRow({ input: -1 }).success).toBe(false)
+    expect(parseRow({ cacheWrite: '1.25' }).success).toBe(false)
+    expect(parseRow({ output: undefined }).success).toBe(false)
+  })
+
   it('keeps the model list query, the output type mapping, the readable name path, the release date path, the token price paths, the count paths, and the media API, and rejects bad ones', () => {
     const parse = (fields: Record<string, unknown>) =>
       providerConfigSchema.safeParse({ id: 'p', name: 'P', baseUrl: 'http://h', ...fields })

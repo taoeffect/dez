@@ -505,6 +505,63 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     thinking: { enabledBody: { thinking: { type: 'enabled' } } },
   },
   {
+    id: 'anthropic',
+    name: 'Anthropic Console',
+    baseUrl: 'https://api.anthropic.com',
+    apiFormat: 'anthropic',
+    models: [],
+    fetchModels: true,
+    // The Models API tells the image input, the thinking types, the window,
+    // and the release date of each model. It tells no price, and no tool
+    // flag: every Claude model calls tools, and an unknown flag sends them.
+    // https://platform.claude.com/docs/en/api/models/list
+    modelImageInput: { path: 'capabilities.image_input.supported' },
+    // The thinking body of the format is `adaptive`, which the 4.5 models
+    // and older refuse with a 400 (they think only with `enabled` and a
+    // token budget), so they get no Thinking toggle.
+    // https://platform.claude.com/docs/en/build-with-claude/extended-thinking
+    modelThinking: { path: 'capabilities.thinking.types.adaptive.supported' },
+    modelContextWindow: { paths: ['max_input_tokens'] },
+    modelReleased: { path: 'created_at', format: 'rfc3339' },
+    // The prices of the pricing page, in USD per 1M tokens (checked
+    // 2026-11-24). The cache write is the 5-minute one, the lifetime of
+    // Dez's marks. Model ids are `claude-<name>-<major>[-<minor>]`, with a
+    // `-<YYYYMMDD>` date before the 4.6 models, so each expression ends the
+    // version: `claude-opus-4-20250514` is Opus 4, and a new model has an
+    // unknown price, never that of an older one. Haiku 5.5 costs 5 times
+    // as much for a prompt of over 100,000 tokens; Dez has one rate.
+    // https://platform.claude.com/docs/en/about-claude/pricing
+    // https://platform.claude.com/docs/en/about-claude/models/model-ids-and-versions
+    tokenPrices: [
+      { match: '^claude-(fable|mythos)-5-2(-\\d{8})?$', input: 8, output: 40, cachedInput: 0.2, cacheWrite: 10 },
+      { match: '^claude-(fable|mythos)-5-1(-\\d{8})?$', input: 10, output: 50, cachedInput: 0.25, cacheWrite: 12.5 },
+      { match: '^claude-(fable|mythos)-5(-\\d{8})?$', input: 10, output: 50, cachedInput: 1, cacheWrite: 12.5 },
+      { match: '^claude-opus-5-5(-\\d{8})?$', input: 4, output: 20, cachedInput: 0.2, cacheWrite: 5 },
+      { match: '^claude-opus-(5|4-[5-8])(-\\d{8})?$', input: 5, output: 25, cachedInput: 0.5, cacheWrite: 6.25 },
+      { match: '^claude-opus-4(-1)?(-\\d{8})?$', input: 15, output: 75, cachedInput: 1.5, cacheWrite: 18.75 },
+      { match: '^claude-sonnet-5-5(-\\d{8})?$', input: 2, output: 10, cachedInput: 0.1, cacheWrite: 2.5 },
+      { match: '^claude-sonnet-5(-\\d{8})?$', input: 2, output: 10, cachedInput: 0.2, cacheWrite: 2.5 },
+      { match: '^claude-sonnet-4(-[56])?(-\\d{8})?$', input: 3, output: 15, cachedInput: 0.3, cacheWrite: 3.75 },
+      { match: '^claude-haiku-5-5(-\\d{8})?$', input: 0.1, output: 0.5, cachedInput: 0.01, cacheWrite: 0.125, note: 'base rate, a prompt of over 100,000 tokens costs 5 times as much' },
+      { match: '^claude-haiku-4-5(-\\d{8})?$', input: 1, output: 5, cachedInput: 0.1, cacheWrite: 1.25 },
+    ],
+    auth: 'apiKey',
+    // The marks of the last messages cache a conversation for its next
+    // request; this mark also lets a new conversation read the tools and
+    // the system prompt that an earlier one wrote. 3 of the 4 marks that
+    // Anthropic allows.
+    // https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+    prefixCacheMark: true,
+    // The format's default body (adaptive, summarized). The Claude 5 models
+    // think by default, and Fable 5.2 and Opus 5.5 always think: a
+    // `disabled` body can give them a 400 (the Models API's
+    // `capabilities.thinking.types.disabled`), and the config cannot tell
+    // the models apart, so there is no off field. With the toggle off they
+    // still think, and Dez hides it.
+    // https://platform.claude.com/docs/en/build-with-claude/thinking
+    thinking: {},
+  },
+  {
     id: 'minimax',
     name: 'MiniMax',
     baseUrl: 'https://api.minimax.io/anthropic',
