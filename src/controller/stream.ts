@@ -1499,12 +1499,20 @@ function pickedUpJobsText(count: number, resumed: number): string {
 // jobs of a cut reply: the next chat reply of the tab takes them
 // (`takeJobs`). A job of a provider asks the provider for its result again
 // (`resumeModelInvocation`), and any other job ends as failed
-// (`TabJobs.restore`). A toast of the tab tells the user.
+// (`TabJobs.restore`). A toast of the tab tells the user, as a warning when
+// no job goes on.
 function restoreTabJobs(tab: Tab, records: readonly StoredJob[]): void {
   const tabJobs = newTabJobs(tab.id)
   const resumed = tabJobs.restore(records, ({ providerJob, timeoutMs }) => resumeModelInvocation(providerJob, timeoutMs))
   heldJobsByTab.set(tab.id, tabJobs)
-  sbp('dez.ui/toast', 'app-global', { tabId: tab.id, title: 'Jobs picked up', message: pickedUpJobsText(records.length, resumed), duration: 8000 })
+  const lost = resumed === 0
+  sbp('dez.ui/toast', 'app-global', {
+    tabId: tab.id,
+    title: lost ? (records.length === 1 ? 'Job lost' : 'Jobs lost') : 'Jobs picked up',
+    message: pickedUpJobsText(records.length, resumed),
+    ...(lost && { variant: 'warning' as const }),
+    duration: 8000,
+  })
 }
 
 // Runs the media reply of `tab` that ran when Dez quit again, as a reply of

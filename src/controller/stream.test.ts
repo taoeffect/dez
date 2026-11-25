@@ -3974,6 +3974,19 @@ describe('dez.stream/start jobs', () => {
       expect(openJobs()).toBeNull()
     })
 
+    // A job that is not a job of a provider cannot go on after a quit.
+    it.each([
+      [['j-aaaa'], 'Job lost', 'Dez quit while 1 job of this conversation ran. Its work is lost.'],
+      [['j-aaaa', 'j-bbbb'], 'Jobs lost', 'Dez quit while 2 jobs of this conversation ran. Their work is lost.'],
+    ])('warns that the work is lost when none of the open jobs %j goes on', (ids, title, message) => {
+      const records: StoredJob[] = ids.map((id, index) => ({ id, number: index + 1, tool: 'js_eval', label: 'count', inputs: [], hidesAssets: false, timeoutMs: 60_000 }))
+      sbp('dez.model/openJobs/set', activeTab().conversationId, { jobs: records })
+
+      sbp('dez.stream/restoreJobs')
+
+      expect(toasts).toStrictEqual([{ area: 'app-global', data: { tabId: activeTab().id, title, message, variant: 'warning', duration: 8000 } }])
+    })
+
     // App state of an older Dez can hold two tabs of one conversation
     // (`dez.model/tabs/openConversation`), which share its record.
     it('picks up the record of a conversation in the first of its tabs only', async () => {
