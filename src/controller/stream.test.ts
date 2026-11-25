@@ -4501,14 +4501,15 @@ describe('dez.stream/start compaction', () => {
       sbp('dez.model/settings/setSystemPrompt', 'You are {{model_id}}.')
       setLargeConversation(small)
       replyRounds([notesAnswer, lastRound])
-      const loads: string[] = []
+      // Each load with the count of the requests that went before it.
+      const loads: [string, number][] = []
       loadPrice = async (ref) => {
-        loads.push(ref.modelId)
+        loads.push([ref.modelId, requests.length])
       }
 
       await sbp('dez.controller/submitTab', activeTab().id)
 
-      expect(loads).toStrictEqual([small.modelId, model.modelId])
+      expect(loads).toStrictEqual([[small.modelId, 0], [model.modelId, 0]])
       expect(requests.map((input) => ({ modelId: input.modelId, system: input.system, compaction: isCompactionRequest(input) }))).toStrictEqual([
         { modelId: model.modelId, system: 'You are m.', compaction: true },
         { modelId: small.modelId, system: 'You are small.', compaction: false },

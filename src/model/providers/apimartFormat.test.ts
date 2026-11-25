@@ -37,20 +37,25 @@ describe('apimart video parameters', () => {
       { name: 'watermark' },
       { name: 'nsfw_check' },
     ])
-    expect(clips.textRules?.('video', videoEntry('MiniMax-H3'), undefined, {})).toStrictEqual({ maxPromptLength: 7000 })
+  })
+
+  it('gives a video model the prompt limit that its docs tell, and none to a model whose docs tell none', () => {
+    expect([videoEntry('MiniMax-H3'), videoEntry('seedance-2-5-flash')].map((entry) => clips.textRules?.('video', entry, undefined, {})))
+      .toStrictEqual([{ maxPromptLength: 7000 }, undefined])
   })
 
   it('gives each request its own copy of the rows of a model that the docs tell', () => {
-    const rows = clips.parameters('video', videoEntry('seedance-2-5-flash'), undefined, {})
-    rows.length = 0
+    const [first] = clips.parameters('video', videoEntry('seedance-2-5-flash'), undefined, {})
+    if ('options' in first) first.options.push('1080p')
 
-    expect(parameters(videoEntry('seedance-2-5-flash')).map((row) => row.name)).toStrictEqual(['resolution', 'size', 'duration', 'generate_audio', 'images_as', 'watermark', 'seed', 'output_format', 'web_search', 'nsfw_check'])
-    expect(clips.textRules?.('video', videoEntry('seedance-2-5-flash'), undefined, {})).toBeUndefined()
+    expect(parameters(videoEntry('seedance-2-5-flash'))[0]).toStrictEqual({ name: 'resolution', options: ['480p', '720p'], default: '480p' })
   })
 
   // The general schema of 60 of the 62 video models (kling-v3): no lists
-  // and no upper limits. A text field takes what the docs tell.
-  it('gives a model with the general schema a text row for each text and whole-number field, and a switch for each boolean', () => {
+  // and no upper limits. A text field takes what the docs tell. A field
+  // that Dez never sends (`webhook`) and a whole number other than a
+  // length or a seed (`count`) get no row.
+  it('gives a model with the general schema a text row for each text field that Dez sends and for its length and seed, and a switch for each boolean', () => {
     expect(parameters(videoEntry('kling-v3', {
       aspect_ratio: { type: 'string' },
       duration: { type: 'integer', minimum: 1 },
@@ -244,7 +249,7 @@ describe('apimart image uploads', () => {
     expect(upload.url({ url: URL_, retention_days: 3 })).toBe(URL_)
   })
 
-  it.each([{}, { url: '' }, { url: 'file:///etc/passwd' }, null])('tells that an answer with no web address is unusable', (answer) => {
+  it.each([{}, { url: '' }, { url: 'file:///etc/passwd' }, null])('tells that the answer %j, which has no web address, is unusable', (answer) => {
     expect(thrownError(() => upload.url(answer))).toStrictEqual(new UnusableAnswerError('The answer to the image upload holds no web address.'))
   })
 
@@ -320,10 +325,7 @@ describe('apimart video tasks', () => {
     ['in a new state', { status: 'archived', cost: 0.3 }, 'State: archived', 0.3],
     ['with no state', {}, 'State: none', undefined],
   ])('tells that the provider did not make the clip of a task %s, with the cost that it told', (_name, data, message, cost) => {
-    const error = thrownError(() => job().state(poll(data)))
-
-    expect(error).toStrictEqual(new JobNotMadeError(message, { cost }))
-    expect((error as JobNotMadeError).cost).toBe(cost)
+    expect(thrownError(() => job().state(poll(data)))).toStrictEqual(new JobNotMadeError(message, { cost }))
   })
 })
 

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
+import { MAX_OPEN_JOBS } from '../tools/jobs'
 import { defaultAppState, parseAppStateJson, serializeAppStateJson } from './appState'
 
 describe('app state persistence format', () => {
@@ -384,14 +385,15 @@ describe('open jobs in app state', () => {
   })
 
   it('drops a bad job, a repeated id or number, and the jobs over the limit, one at a time', () => {
-    const many = Array.from({ length: 45 }, (_, index) => ({ ...job, id: `j-${index}`, number: index + 1 }))
+    const overLimit = 5
+    const many = Array.from({ length: MAX_OPEN_JOBS + overLimit }, (_, index) => ({ ...job, id: `j-${index}`, number: index + 1 }))
     const jobs = [{ ...job, number: 0 }, job, { ...job, number: 2 }, { ...job, id: 'j-other' }, 'not a job', ...many.slice(1)]
     const parsed = parseOpenJobs({ conversation: { jobs } })?.conversation?.jobs
 
-    expect(parsed?.map(({ id }) => id)).toEqual([job.id, ...many.slice(1, 40).map(({ id }) => id)])
+    expect(parsed?.map(({ id }) => id)).toEqual([job.id, ...many.slice(1, MAX_OPEN_JOBS).map(({ id }) => id)])
     // A bad number, a repeated id, a repeated number, no object, and the
-    // five jobs over the limit.
-    expect(consoleError).toHaveBeenCalledTimes(9)
+    // jobs over the limit.
+    expect(consoleError).toHaveBeenCalledTimes(4 + overLimit)
   })
 
   // The job keeps its number, and comes back as a job whose work is lost.

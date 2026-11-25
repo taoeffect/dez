@@ -979,7 +979,7 @@ describe('an image job', () => {
   })
 
   it('tells that a file URL of the task gave no image', async () => {
-    streamAnswers = [SUBMITTED, task({ status: 'completed', result: { images: [{ url: [IMAGE_URLS[0]] }] } }), { status: 200, body: bytesOf('<html>Gone</html>') }]
+    streamAnswers = [SUBMITTED, task({ status: 'completed', result: { images: [{ url: [IMAGE_URLS[0]] }] } }), { status: 200, body: new TextEncoder().encode('<html>Gone</html>') }]
 
     const failure = expect(generateImage()).rejects.toThrow('Mart sent an answer that Dez cannot use. Send the request again. If the error stays, report it at Help › Dez on GitHub. To ask Mart about this image, give its job id: task-1.\n\nDetails: The image is not a PNG, JPEG, GIF, WebP, or SVG image.')
     await vi.advanceTimersByTimeAsync(5 * SECOND_MS)
