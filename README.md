@@ -16,6 +16,7 @@ https://github.com/user-attachments/assets/6980f983-bfcf-4146-9cfb-6658b37774d5
 - 🏠 Local models: add any OpenAI- or Anthropic-compatible server as a [custom provider](docs/CUSTOM_PROVIDERS.md)
 - 🎨 Create and edit images, video, music, and voice overs with hundreds of models
 - 🛠️ Scripts and mini-apps, like games and video effects
+- 🧩 Everything AI needs to create beat-matched music videos with fancy font overlays built-in
 - 🔒 Sandboxed: Dez won't harm your computer. (Seatbelt on macOS, Landlock on Linux)
 - 🤫 Private: Dez hides your system file paths from providers
 - 🔎 Web search and URL reading with Venice models (X search with Grok)
