@@ -156,15 +156,17 @@ describe('provider config schema', () => {
     expect(parse('caps.flag').success).toBe(false)
   })
 
-  it('keeps a model\'s outputs and request kind, and rejects unknown values or an empty outputs list', () => {
+  it('keeps a model\'s outputs and request kind, and rejects unknown values or an empty outputs list of a listed model', () => {
     const parseModel = (model: Record<string, unknown>) =>
       providerConfigSchema.safeParse({ id: 'p', name: 'P', baseUrl: 'http://h', models: [{ id: 'm', ...model }] })
     const fields = { outputs: ['image', 'text'], request: 'imageEdit' }
 
     expect(parseModel(fields).data?.models).toStrictEqual([{ id: 'm', ...fields }])
-    // A config model is listed (a `fetchedOnly` one while the server lists
-    // it), so it must make something.
+    // A listed config model must make something; an empty list only hides
+    // the server's model of a `fetchedOnly` entry.
     expect(parseModel({ outputs: [] }).success).toBe(false)
+    expect(parseModel({ outputs: [], fetchedOnly: false }).success).toBe(false)
+    expect(parseModel({ outputs: [], fetchedOnly: true }).data?.models).toStrictEqual([{ id: 'm', outputs: [], fetchedOnly: true }])
     expect(parseModel({ outputs: ['speech'] }).success).toBe(false)
     expect(parseModel({ outputs: 'image' }).success).toBe(false)
     expect(parseModel({ request: 'speech' }).success).toBe(false)

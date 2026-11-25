@@ -467,6 +467,65 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     thinking: { enabledBody: { reasoning: { enabled: true } } },
   },
   {
+    id: 'apimart',
+    name: 'APIMart',
+    baseUrl: 'https://api.apimart.ai/v1',
+    apiFormat: 'openai',
+    // Models of the `chat` category that take no chat request: the
+    // embedding, moderation, and speech-to-text models, and o3-pro, which
+    // takes only the Responses API (its `supported_endpoint_types`).
+    models: [
+      { id: 'text-embedding-3-large', fetchedOnly: true, outputs: [] },
+      { id: 'text-embedding-3-small', fetchedOnly: true, outputs: [] },
+      { id: 'text-embedding-ada-002', fetchedOnly: true, outputs: [] },
+      { id: 'omni-moderation-latest', fetchedOnly: true, outputs: [] },
+      { id: 'gpt-4o-transcribe', fetchedOnly: true, outputs: [] },
+      { id: 'gpt-4o-mini-transcribe', fetchedOnly: true, outputs: [] },
+      { id: 'o3-pro', fetchedOnly: true, outputs: [] },
+    ],
+    fetchModels: true,
+    // Each entry then also has the request parameters of its model.
+    // https://docs.apimart.ai/en/api-reference/texts/models/list
+    modelListQuery: { expand: 'parameters' },
+    // The list tells no image input, tools, or thinking that Dez can trust
+    // (`capability_tags` give tools to the embedding models), so these flags
+    // stay unknown. The image, video, and audio models take no chat request.
+    // An `unknown` model is one that APIMart has not cataloged; its price
+    // page answers `model_not_found` or `no_valid_pricing` (checked live,
+    // 2026-11-24).
+    modelOutputs: {
+      path: 'category',
+      values: {
+        chat: { outputs: ['text'], request: 'chat' },
+        image: { outputs: [] },
+        video: { outputs: [] },
+        audio: { outputs: [] },
+        unknown: { outputs: [] },
+      },
+    },
+    auth: 'apiKey',
+    // Claude caches only a marked prompt. A live check (2026-11-24, Claude
+    // Haiku 5.5): the marks on the last user messages stored the prompt, and
+    // the next request read it. A mark on the text part of a tool message
+    // stored it too; a mark on the tool message itself stored nothing.
+    // APIMart sends requests to more than one upstream channel, each with
+    // its own cache, so a request can miss a stored prompt. The other models
+    // took the marks with no error: GPT models cache without them, and
+    // Gemini 3.5 Flash Lite read no cache with any form of the mark.
+    // https://docs.apimart.ai/en/api-reference/texts/general/claude-context-cache
+    // https://docs.apimart.ai/en/api-reference/texts/gemini/context-cache
+    cacheBreakpoints: true,
+    // OpenAI sends the requests of one key to the same cache. Claude,
+    // DeepSeek, Gemini, GPT, and Qwen models took it with no error (checked
+    // live, 2026-11-24).
+    promptCacheKey: true,
+    // No `thinking`: with it, a tool round sends the reasoning back in
+    // `reasoning_content`, with no signature, and a Claude model then
+    // answered with no text and `finish_reason: "refusal"` (checked live,
+    // 2026-11-24, Claude Haiku 5.5, three tries). Without it, Dez drops the
+    // reasoning of the stream and sends none back; the models still think.
+  },
+  {
     id: 'charm_hyper',
     name: 'Charm Hyper',
     baseUrl: 'https://hyper.charm.land/v1',

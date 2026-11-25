@@ -55,6 +55,7 @@ const BUILT_INS: ProviderRow[] = [
   { id: 'venice', name: 'Venice' },
   { id: 'trustedrouter', name: 'TrustedRouter' },
   { id: 'openrouter', name: 'OpenRouter' },
+  { id: 'apimart', name: 'APIMart' },
   { id: 'charm_hyper', name: 'Charm Hyper' },
   { id: 'zai', name: 'Z.ai' },
   { id: 'anthropic', name: 'Anthropic Console' },

@@ -76,9 +76,11 @@ export const providerModelConfigSchema = z.object({
   // or unknown.
   thinking: z.boolean().optional(),
   // What the model makes. Wins over what the server reports; missing: the
-  // server's outputs, or unknown. A config model is listed (a `fetchedOnly`
-  // one while the server lists it), so it must make at least one type.
-  outputs: z.array(z.enum(MODEL_OUTPUT_IDS)).min(1, 'Model outputs must not be empty').optional(),
+  // server's outputs, or unknown. A listed config model must make at least
+  // one type. An empty list is allowed only with `fetchedOnly`: it hides the
+  // server's model of its id (`Provider.mergeModels`), for a server that
+  // lists a model that Dez cannot use (an embedding) with its chat models.
+  outputs: z.array(z.enum(MODEL_OUTPUT_IDS)).optional(),
   // How Dez sends the model a request. Wins over the server's kind; missing:
   // the server's kind, or `chat`.
   request: z.enum(MODEL_REQUESTS).optional(),
@@ -91,7 +93,10 @@ export const providerModelConfigSchema = z.object({
   // server's place, not first (`Provider.mergeModels`); a model that the
   // server drops does not stay listed with requests that fail.
   fetchedOnly: z.boolean().optional(),
-})
+}).refine(
+  (model) => model.fetchedOnly === true || model.outputs?.length !== 0,
+  { message: 'Model outputs must not be empty', path: ['outputs'] },
+)
 
 // A dot path into one `/models` entry, such as
 // 'architecture.input_modalities' (modelParsing.ts).

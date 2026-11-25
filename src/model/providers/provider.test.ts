@@ -1312,19 +1312,20 @@ describe('provider models', () => {
     ])
   })
 
-  it('lists a fetchedOnly config model only while the server lists it, in the server\'s place, with the config facts winning', () => {
+  it('lists a fetchedOnly config model only while the server lists it, in the server\'s place, with the config facts winning, and none with no outputs', () => {
     const provider = customProvider({
       modelToolCalling: { path: 'tools' },
       models: [
         { id: 'always' },
         { id: 'fixed', name: 'Fixed', fetchedOnly: true, toolCalling: true },
         { id: 'gone', fetchedOnly: true, toolCalling: true },
+        { id: 'hidden', fetchedOnly: true, outputs: [] },
         // The first entry of an id counts, as for the other config models.
         { id: 'fixed', toolCalling: false },
       ],
     })
     const fetched = provider.parseModels({
-      data: [{ id: 'first', tools: true }, { id: 'fixed', name: 'Server Fixed', tools: false }, { id: 'last' }],
+      data: [{ id: 'first', tools: true }, { id: 'fixed', name: 'Server Fixed', tools: false }, { id: 'hidden', tools: true }, { id: 'last' }],
     })
 
     expect(provider.mergeModels(fetched)).toStrictEqual([
@@ -1749,6 +1750,27 @@ describe('provider models', () => {
       ['chat', ['text'], 'chat'],
       ['image', ['image'], 'none'],
       ['new-type', undefined, undefined],
+    ])
+    // APIMart (checked live 2026-11-24, abridged): only the chat models of
+    // the `chat` category take a chat request; the embedding, moderation,
+    // speech-to-text, and Responses-only models of that category are
+    // hidden, and so are the image, video, audio, and `unknown` models.
+    const apimart = (id: string, category: string, supported_endpoint_types: string[], capability_tags?: string[]) =>
+      ({ id, object: 'model', created: 1626777600, owned_by: 'custom', supported_endpoint_types, category, capability_tags })
+    expect(kinds('apimart', [
+      apimart('claude-haiku-5-5', 'chat', ['anthropic', 'openai'], ['Text', 'File']),
+      apimart('gpt-5-nano', 'chat', ['openai'], ['推理', '工具', '文件', '多模态', '400K', 'File']),
+      apimart('text-embedding-3-small', 'chat', ['openai'], ['推理', '工具', '文件', '32K', 'Embedding']),
+      apimart('omni-moderation-latest', 'chat', ['openai'], ['Text', 'Omni']),
+      apimart('gpt-4o-transcribe', 'chat', ['openai'], ['Text', 'Vision', 'Audio', 'Omni']),
+      apimart('o3-pro', 'chat', ['openai-response'], ['推理', '工具', '文件', '多模态', '200K']),
+      apimart('dall-e-3', 'image', ['image-generation', 'openai'], ['工具', '文件', '多模态', '2K']),
+      apimart('apimart-zoe', 'video', ['openai'], ['Text to Video', 'Image to Video', 'Video to Video']),
+      apimart('suno', 'audio', ['openai'], ['Text to Audio', 'Audio to Audio']),
+      apimart('deepseek-v3.1', 'unknown', ['openai']),
+    ])).toEqual([
+      ['claude-haiku-5-5', ['text'], 'chat'],
+      ['gpt-5-nano', ['text'], 'chat'],
     ])
   })
 

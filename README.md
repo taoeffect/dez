@@ -10,7 +10,7 @@ Talk with AI in a fully editable plaintext document.
 
 - 📝 Saved prompts via `/prompt`
 - 🗂️ Tabbed conversations
-- 🤖 Supports Venice, TrustedRouter, OpenRouter, Charm Hyper, Z.ai, Anthropic Console, MiniMax, Kimi, and GitHub Copilot
+- 🤖 Supports Venice, TrustedRouter, OpenRouter, APIMart, Charm Hyper, Z.ai, Anthropic Console, MiniMax, Kimi, and GitHub Copilot
 - 🏠 Local models: add any OpenAI- or Anthropic-compatible server as a [custom provider](docs/CUSTOM_PROVIDERS.md)
 - 🎨 Create and edit images, video, music, and voice overs with hundreds of models
 - 🛠️ Scripts and mini-apps, like games and video effects
