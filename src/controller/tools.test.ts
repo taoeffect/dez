@@ -1614,6 +1614,42 @@ describe('dez.controller/tools/run', () => {
           .toStrictEqual([['failed', 0], ['failed', 0.3], ['failed', 0], ['failed', 0.3], ['failed', 'none']])
       })
 
+      // The provider takes the money of an upload of an input image at
+      // once, so the cost of a job adds it, also to a refused request. A
+      // free upload is no paid request.
+      it('adds the price of the paid uploads of the input images to the cost of the job', async () => {
+        const refusal = new ProviderHttpError('venice', 400, true, '', undefined, 'Venice refused the request.', 'Venice refused the request.')
+        let uploadCosts: Array<number | undefined> = [0, 0.01]
+        let fail = false
+        const costs: Array<number | null | undefined> = []
+        generateMedia = async (input) => {
+          for (const cost of uploadCosts) {
+            input.onProgress?.({ phase: 'uploaded', jobId: null, ...(cost !== undefined && { cost }) })
+            costs.push(jobs.list().at(-1)?.cost)
+          }
+          input.onProgress?.({ phase: 'sent', jobId: null, quote: 0.3 })
+          costs.push(jobs.list().at(-1)?.cost)
+          if (fail) throw new ExplainedError('Venice refused the request.', '', { cause: refusal })
+          return { media: [], clips: [MADE_VIDEO], cost: 0.25 }
+        }
+        await jobTool('model_invoke', FILM)
+        await jobTool('jobs_wait', { all: true })
+        expect([costs, jobs.list().at(-1)?.cost]).toStrictEqual([[undefined, 0.01, 0.31], 0.26])
+
+        fail = true
+        costs.length = 0
+        await jobTool('model_invoke', FILM)
+        await jobTool('jobs_wait', { all: true })
+        expect([costs, jobs.list().at(-1)?.cost]).toStrictEqual([[undefined, 0.01, 0.31], 0.01])
+
+        uploadCosts = [0.01, undefined]
+        fail = false
+        costs.length = 0
+        await jobTool('model_invoke', FILM)
+        await jobTool('jobs_wait', { all: true })
+        expect([costs, jobs.list().at(-1)?.cost]).toStrictEqual([[0.01, null, null], null])
+      })
+
       describe('to a text model', () => {
         // A chat request whose answer stays open after `start` until its
         // test calls `end`, which gives the result of the request.

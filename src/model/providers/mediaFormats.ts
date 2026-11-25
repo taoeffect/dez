@@ -4,7 +4,7 @@ import { ExplainedError } from '../../utils/errorText'
 import { sanitizeErrorText } from '../../utils/protocol/errors'
 import { responseContentType, type NativeHttpResponseHead } from '../../utils/protocol/nativeHttp'
 import type { ImageSize } from '../chat/imageDrawing'
-import { imageMediaType } from '../chat/images'
+import { imageMediaType, type ImageMediaType } from '../chat/images'
 import type { MediaTagKind } from '../chat/mediaTags'
 import { clipMediaTypeOfExtension } from '../chat/mediaFiles'
 import { apimartFormat } from './apimartFormat'
@@ -75,6 +75,39 @@ function clipUrl(clip: InputClipPart): string {
 // (only for a model that takes lyrics, `ClipFormat.textRules`).
 export interface ClipInput extends MediaInput {
   lyrics?: string
+  // The web addresses of `images`, in their order, for an API that takes
+  // the images of a clip request only at a web address
+  // (`ClipFormat.imageUpload`). Missing: the API takes them as data.
+  imageUrls?: readonly string[]
+}
+
+// Why a provider refused the upload of an input image
+// (`ImageUploadFormat.refusal`), when its answer tells a cause that the
+// status alone does not tell:
+// - `freeUploadsUsed`: the free uploads of the account are used up for
+//   now, and the account takes no paid upload.
+// - `keySpendingLimit`: the spending limit of the API key is too low for
+//   the upload.
+export type UploadRefusal = 'freeUploadsUsed' | 'keySpendingLimit'
+
+// The upload of one input image of a clip request, for an API that takes
+// the images of a clip request only at a web address, never as data.
+// generateMedia uploads each image before the request, which then gets
+// their addresses (`ClipInput.imageUrls`).
+export interface ImageUploadFormat {
+  // The request that uploads `image`, the image number `number` (1 for
+  // the first one) of the clip request. Its file has a neutral name: it
+  // names no file of the user.
+  request(baseUrl: string, image: { bytes: Uint8Array, mediaType: ImageMediaType }, number: number): MediaWireRequest
+  // The web address of the image in the JSON of a 2xx response to
+  // `request`, and the price in USD of the upload (`AnswerCost`): 0 for a
+  // free upload, absent for a paid one whose answer tells no price.
+  // Throws an `UnusableAnswerError` when the answer holds no address.
+  result(data: unknown): { url: string } & AnswerCost
+  // Why the provider refused an upload with the status `status` and the
+  // JSON `body` (ProviderHttpError.bodyJson), when the body tells a cause
+  // of `UploadRefusal`; undefined else.
+  refusal?(status: number, body: unknown): UploadRefusal | undefined
 }
 
 // The URL and the body of one media request: a POST of a JSON body or of a
@@ -207,13 +240,17 @@ export interface ClipFormat {
   // its list does not have the model. `paths` are where `entry` tells
   // more (`mediaApi.modelEntryPaths` of the provider's config; `{}` with
   // none). The name of a parameter is the name of its request field, but
-  // for one that `request` reads itself (OpenRouter's `images_as`).
+  // for one that `request` reads itself (`images_as` of OpenRouter and
+  // APIMart).
   parameters(kind: ClipKind, entry: unknown, mediaEntry: unknown, paths: MediaEntryPaths): ModelParameter[]
   // What a model of `kind` takes as the text of a request, from the same
   // two entries and `paths`; undefined when the API tells nothing about
   // it.
   textRules?(kind: ClipKind, entry: unknown, mediaEntry: unknown, paths: MediaEntryPaths): ClipTextRules | undefined
   request(kind: ClipKind, baseUrl: string, modelId: string, input: ClipInput): MediaWireRequest
+  // For an API that takes the input images of a clip request only at a
+  // web address: the upload of each image before the request.
+  imageUpload?: ImageUploadFormat
   // The most input images that a model of `kind` takes, when `body` (the
   // JSON of the provider's refusal of a first request with the status
   // `status`, ProviderHttpError.bodyJson) tells that the request had too

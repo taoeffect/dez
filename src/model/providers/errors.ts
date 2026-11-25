@@ -1,6 +1,7 @@
 import { ExplainedError, rawErrorText, REPORT_ADVICE } from '../../utils/errorText'
 import type { NativeHttpResponse, NativeHttpResponseHead } from '../../utils/protocol/nativeHttp'
 import { NativeHttpError, responseOk, sanitizeErrorText } from '../../utils/protocol/errors'
+import type { UploadRefusal } from './mediaFormats'
 import { isRecord } from './modelParsing'
 import type { Provider } from './provider'
 import type { RequestReader } from './requestReader'
@@ -353,6 +354,41 @@ function providerRequestError(provider: ProviderIdentity, error: unknown): unkno
     )
   }
   return error
+}
+
+// The texts of an upload that the provider refused for a cause of
+// `UploadRefusal`, which its answer told: for the user, and for a model.
+function uploadRefusalTexts(name: string, refusal: UploadRefusal): { user: string, model: string } {
+  switch (refusal) {
+    case 'freeUploadsUsed':
+      return {
+        user: `The free uploads of your ${name} account are used up for now, and the account takes no paid upload: paid uploads are off, or their price waits for your confirmation. Turn on paid uploads in your ${name} account and confirm their price, or send the request again later, when ${name} gives free uploads back.`,
+        model: `The free uploads of the ${name} account of the user are used up for now, and the account takes no paid upload. This is not a fault of the call: no call with an input image to this model works until the user turns on paid uploads at ${name} and confirms their price, or until ${name} gives free uploads back.`,
+      }
+    case 'keySpendingLimit':
+      return {
+        user: `The spending limit of your ${name} API key is too low for the upload. Raise the limit of the key at ${name}, then try again.`,
+        model: `The spending limit of the ${name} API key of the user is too low for the upload. This is not a fault of the call: no paid upload to ${name} works until the user raises the limit of the key at ${name}.`,
+      }
+  }
+}
+
+/** The error of a failed upload of an input image of a clip request
+ *  (`ImageUploadFormat`): what failed, then the text of the failure
+ *  (`providerRequestError`), or that of `refusal` when the answer told
+ *  its cause. The user never asked for an upload, so the text tells why
+ *  Dez made one. Any error that has no text for a model stays as it is. */
+export function imageUploadError(provider: ProviderIdentity, error: unknown, refusal: UploadRefusal | undefined): unknown {
+  const failed = providerRequestError(provider, error)
+  if (!(failed instanceof ProviderRequestError)) return failed
+  const lead = `Dez could not upload an input image to ${provider.name}, which takes the images of this model only at a web address.`
+  const texts = refusal && uploadRefusalTexts(provider.name, refusal)
+  return new ProviderRequestError(
+    `${lead} ${texts?.user ?? failed.explanation}`,
+    `${lead} ${texts?.model ?? failed.modelExplanation}`,
+    failed.details,
+    { cause: failed },
+  )
 }
 
 /** The error for `reader` of a failed provider request

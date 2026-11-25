@@ -25,8 +25,9 @@ const NAV = {
   Tips: '.help-nav-btn:nth-child(2)',
   Assets: '.help-nav-btn:nth-child(3)',
   Apps: '.help-nav-btn:nth-child(4)',
-  Support: '.help-nav-btn:nth-child(5)',
-  ThankYou: '.help-nav-btn:nth-child(6)',
+  Providers: '.help-nav-btn:nth-child(5)',
+  Support: '.help-nav-btn:nth-child(6)',
+  ThankYou: '.help-nav-btn:nth-child(7)',
 }
 
 describe('Help panel', () => {
@@ -129,6 +130,8 @@ describe('Help panel', () => {
     await waitForValue(browser, 'Assets page', shownPage, { nav: 'Assets', page: 'help-page--assets' })
     await pointerClick(browser, NAV.Apps)
     await waitForValue(browser, 'Apps page', shownPage, { nav: 'Apps', page: 'help-page--apps' })
+    await pointerClick(browser, NAV.Providers)
+    await waitForValue(browser, 'Providers page', shownPage, { nav: 'Providers', page: 'help-page--providers' })
     await pointerClick(browser, NAV.Support)
     await waitForValue(browser, 'Support page', shownPage, { nav: 'Support', page: 'help-page--support' })
     await pointerClick(browser, NAV.ThankYou)

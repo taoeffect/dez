@@ -8,6 +8,7 @@ import { MEDIA_TEMP_LIFETIME_MS } from '../../model/chat/mediaFiles'
 import { MEDIA_CACHE_FOLDER, MEDIA_FOLDERS } from '../../model/chat/mediaTags'
 import { SHOWN_PICTURE_FOLDER } from '../../model/chat/shownPictures'
 import { UNUSED_FILE_MIN_AGE_MS } from '../../model/chat/unusedFiles'
+import { APIMART_UPLOAD_DAYS } from '../../model/providers/apimartFormat'
 import { CHAT_IMAGE_SIDE } from '../../model/providers/imageSize'
 import { DEFAULT_MEDIA_REQUESTS_AT_ONCE } from '../../model/providers/mediaTurns'
 import { AUDIO_ALIASES, VIDEO_ALIASES, aliasCallText } from '../../model/tools/appAliases'
@@ -27,13 +28,14 @@ import bundledPrograms from '../../../src-tauri/binaries/manifest.json'
 import bundledFonts from '../../../src-tauri/fonts/manifest.json'
 import { libraries as shippedLibraries } from '../../../src-tauri/libs/manifest.json'
 
-type HelpPage = 'general' | 'tips' | 'assets' | 'apps' | 'support' | 'thanks'
+type HelpPage = 'general' | 'tips' | 'assets' | 'apps' | 'providers' | 'support' | 'thanks'
 
 const PAGES: { id: HelpPage; label: string }[] = [
   { id: 'general', label: 'General' },
   { id: 'tips', label: 'Tips' },
   { id: 'assets', label: 'Assets' },
   { id: 'apps', label: 'Apps' },
+  { id: 'providers', label: 'Providers' },
   { id: 'support', label: 'Support' },
   { id: 'thanks', label: 'Thank You' },
 ]
@@ -972,6 +974,35 @@ function onOverlayClick(event: MouseEvent) {
               The delete of a conversation leaves its apps. A compaction keeps them too: its notes
               list each app of the conversation with its kind and its description. But the card of
               a shown app goes with the reply that held it: ask the model to show the app again.
+            </p>
+          </section>
+
+          <!-- The ways of a provider that change what you pay, or what
+               leaves your computer. A change of one of those rules must
+               change this text too. APIMart: the `imageUpload` of
+               src/model/providers/apimartFormat.ts, and the upload gate
+               of dez.provider/generateMedia. -->
+          <section v-if="page === 'providers'" class="help-page help-page--providers">
+            <p>
+              Some providers work in a way that changes what you pay, or what leaves your computer.
+              This page tells those ways.
+            </p>
+
+            <h3>APIMart</h3>
+            <p>
+              The video models of APIMart take an input image only at a web address. So Dez first
+              uploads each image of a video request to APIMart, which gives the image a web address.
+              APIMart keeps the image {{ APIMART_UPLOAD_DAYS }} days, and in that time anyone who has
+              the address can open the image.
+            </p>
+            <p>
+              Your APIMart account has a number of free uploads. After them, an upload costs money
+              when you turned on paid uploads in your account, and APIMart refuses it when you did
+              not. Dez cannot know the price of an upload before it. So in a tab with a money limit
+              (see the
+              <button type="button" class="help-link" @click="page = 'general'">General</button>
+              page), Dez sends a request with input images to an APIMart video model only when you
+              check "Allow unknown prices".
             </p>
           </section>
 

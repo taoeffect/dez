@@ -1,13 +1,17 @@
 import sbp from '@sbp/sbp'
+import type { ImageMediaType } from '../chat/images'
 import { MAX_SAVED_CLIP_BYTES, MEDIA_TEMP_LIFETIME_MS } from '../chat/mediaFiles'
 import { MEDIA_CACHE_FOLDER } from '../chat/mediaTags'
 import { byteSizeText } from '../../utils/byteSize'
 import { ExplainedError, rawErrorText } from '../../utils/errorText'
 import { responseOk, sanitizeErrorText } from '../../utils/protocol/errors'
-import { responseContentType, textFromNativeBody, type NativeHttpDownload, type NativeHttpRequest } from '../../utils/protocol/nativeHttp'
-import { providerStatusError, UnusableAnswerError } from './errors'
+import { readNativeChunkBytes, responseContentType, textFromNativeBody, type NativeHttpDownload, type NativeHttpRequest, type NativeHttpStreamResult } from '../../utils/protocol/nativeHttp'
+import { imageUploadError, providerStatusError, UnusableAnswerError } from './errors'
+import { jsonBody } from './mediaFormatParts'
+import type { AnswerCost } from './mediaFormats'
 import { clipFileType, wavFile } from './pcmAudio'
 import type { Provider } from './provider'
+import { assertStreamResponseOk } from './streaming'
 import { CLIP_KINDS, type ClipKind, type GeneratedClip } from './types'
 
 // The steps of dez.provider/generateMedia for a clip (speech, music, video):
@@ -158,6 +162,39 @@ export async function sendClipRequest(
     await sbp('dez.native/moveAppFile', { root: 'cache', path: part }, { root: 'cache', path: file })
   }
   return { clip: tempCopyClip({ kind: CLIP_KINDS[run.kind], mediaType, jobId }, file, cacheDir, startedAt) }
+}
+
+// Uploads the input images of a clip request to a provider whose API takes
+// them only at a web address (`Provider.clipImageUpload`), one after the
+// other, each one in a request that `run.requestId` cancels, and gives
+// their web addresses, in the order of `images`. `onUploaded` gets the
+// price of each upload as soon as its answer comes: the provider took the
+// money then, so a later failure must still count it. Like the request of
+// an image, an upload has no time limit: `run.signal` ends it.
+export async function uploadClipImages(
+  run: ClipRun,
+  upload: NonNullable<ReturnType<Provider['clipImageUpload']>>,
+  images: readonly { bytes: Uint8Array, mediaType: ImageMediaType }[],
+  onUploaded: (cost: AnswerCost) => void,
+): Promise<string[]> {
+  const urls: string[] = []
+  for (const [index, image] of images.entries()) {
+    run.signal?.throwIfAborted()
+    let uploaded: { url: string } & AnswerCost
+    try {
+      const { response, chunks } = await sbp('dez.http/stream', upload.request(image, index + 1), run.requestId) as NativeHttpStreamResult
+      await assertStreamResponseOk(run.provider, response, chunks)
+      uploaded = upload.result(jsonBody(await readNativeChunkBytes(chunks)))
+    } catch (error) {
+      // A stop rejects too: the caller tells it by its signal.
+      if (run.signal?.aborted) throw error
+      throw imageUploadError(run.provider, error, upload.refusal(error))
+    }
+    const { url, ...cost } = uploaded
+    onUploaded(cost)
+    urls.push(url)
+  }
+  return urls
 }
 
 // Waits before the next request for a job's state. Rejects at once when

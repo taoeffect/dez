@@ -71,6 +71,9 @@ export interface ProviderStreamChatResult {
 // - `waiting`: the provider has as many media requests as it takes at one
 //   time (`mediaApi.maxRequestsAtOnce`, mediaTurns.ts), and this one waits
 //   for its turn. Only a request that must wait has this step.
+// - `uploaded`: Dez uploaded one input image to the provider, whose API
+//   takes the images of a clip request only at a web address
+//   (`ClipFormat.imageUpload`). One step for each image, before `sent`.
 // - `sent`: the inputs are read, and the first request goes now.
 // - `queued`: the provider runs the request as a job, and Dez asks for
 //   its state.
@@ -79,7 +82,7 @@ export interface ProviderStreamChatResult {
 // provider took the money for that job, and the user can ask it for the
 // output with the id.
 export interface MediaProgress {
-  phase: 'waiting' | 'sent' | 'queued' | 'downloading'
+  phase: 'waiting' | 'uploaded' | 'sent' | 'queued' | 'downloading'
   jobId: string | null
   // Only in the `sent` step, and only when Dez knows it: the price in USD
   // of the request (a quote of the provider, or a list price for the
@@ -88,6 +91,10 @@ export interface MediaProgress {
   // Only in the `waiting` step: the most media requests that the provider
   // gets at one time.
   limit?: number
+  // Only in the `uploaded` step: the price in USD of the upload, which the
+  // provider took at once. 0 for a free upload; absent for a paid upload
+  // whose answer told no price.
+  cost?: number
 }
 
 // The input of dez.provider/generateMedia. `kind` is the model's request
@@ -134,13 +141,18 @@ export interface ProviderGenerateMediaInput {
   timeoutMs?: number
   // Called at each step of the request, in order.
   onProgress?: (progress: MediaProgress) => void
-  // Called right before the paid request goes, after the checks of the
-  // input and the quote, with the quote that the `sent` step gives (in
-  // USD; undefined when Dez knows no price). A throw stops the request:
-  // generateMedia then rejects with that error, and no request went. The
-  // call and the `sent` step come in the same tick, so a check here and a
-  // hold of the quote at `sent` have no wait between them (the money
-  // limit of a tab).
+  // Called right before each paid request goes, after the checks of the
+  // input, with the price that Dez knows of it (in USD; undefined when Dez
+  // knows none). A throw stops the request: generateMedia then rejects
+  // with that error, and that request did not go.
+  // - Before the uploads of the input images (`uploaded`), once, with no
+  //   price: an upload can cost money, and Dez cannot know its price
+  //   before it.
+  // - Before the request of the image, the clip, or the text, after the
+  //   quote, with the quote that the `sent` step gives. The call and the
+  //   `sent` step come in the same tick, so a check here and a hold of the
+  //   quote at `sent` have no wait between them (the money limit of a
+  //   tab).
   beforeSend?: (quote: number | undefined) => void
   // Who reads the text of an input that the model does not take or that
   // Dez cannot read, and of a request that failed (requestReader.ts); the

@@ -1,11 +1,12 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { click, consoleErrors, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
+import { click, consoleErrors, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue } from './harness/dom'
+import { pasteImageReference, solidPng } from './harness/images'
 import { MP4_VIDEO, shownPlayers, silentWav, startClipServer, tempClipTag, type ClipServer } from './harness/media'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import { answerHeld, mockModelKey, requestForm, type MockProvider } from './harness/mockServer'
 import { changeParameterField, closePopup, openPopup, popupOpen, popupView } from './harness/parameterPopup'
 import type { E2EBrowser } from './harness/session'
-import { activeTabId, closeToasts, editorDoc, newTab, openSeededConversation, openToasts, pasteText, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread } from './harness/thread'
+import { activeTabId, closeToasts, editorDoc, focusEditor, newTab, openSeededConversation, openToasts, pasteText, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread } from './harness/thread'
 
 // Video, music, and transcription models of APIMart, driven through the
 // real app against a mock of its API (`mediaApi: { format: 'apimart' }`).
@@ -19,6 +20,9 @@ import { activeTabId, closeToasts, editorDoc, newTab, openSeededConversation, op
 //   of the rows (a whole-number text as a number); the app asks for the
 //   state of its task, copies the file of the done task, and shows a
 //   player; the cost of the tab is the cost of the task, not the quote;
+// - the input image of a video request goes first to `/uploads/images`
+//   (3 days, a neutral file name), and the request sends its web address
+//   as the first frame;
 // - a task that failed shows an error toast with the task id, and costs
 //   what the task tells (APIMart gives the money back);
 // - a music request is one POST to `/music/generations` with the fields of
@@ -48,6 +52,10 @@ const FLOW_MUSIC = { id: 'flowmusic', name: 'Flow Music' }
 // APIMart config.
 const WHISPER = 'whisper-1'
 const TRANSCRIBE_PATH = `/${MART.id}/v1/audio/transcriptions`
+// The upload of an input image, for 3 days: the free tier.
+const UPLOAD_PATH = `/${MART.id}/v1/uploads/images?retention_days=3`
+// MiniMax-H3 takes an image whose shorter side is 256 pixels or more.
+const FRAME_PNG = solidPng(320, 256, [220, 40, 40])
 
 // The general schema of almost all video models (kling-v3 in the live
 // list, 2026-11-24, with the descriptions and some image fields cut).
@@ -133,7 +141,7 @@ describe('APIMart media models', () => {
       modelListQuery: { expand: 'parameters' },
       modelOutputs: { path: 'category', values: { video: { outputs: ['video'], request: 'video' }, audio: { outputs: [] } } },
     }, {
-      heldPaths: [SUBMIT_PATH, MUSIC_PATH, TRANSCRIBE_PATH],
+      heldPaths: [SUBMIT_PATH, MUSIC_PATH, TRANSCRIBE_PATH, UPLOAD_PATH],
       jsonAnswers: {
         [`/${MART.id}/v1/models?expand=parameters`]: MODEL_LIST,
         // The free price request that goes before each request.
@@ -185,6 +193,7 @@ describe('APIMart media models', () => {
         { name: 'duration', label: 'Length (seconds)', number: '4', min: '4', max: '15', step: '1' },
         { name: 'resolution', label: 'Resolution', options: ['768P', '2K'], picked: '768P' },
         { name: 'aspect_ratio', label: 'Aspect ratio', options: ['Default', '21:9', '16:9', '4:3', '1:1', '3:4', '9:16'], picked: 'Default' },
+        { name: 'images_as', label: 'Images as', options: ['frames', 'references'], picked: 'frames' },
         { name: 'watermark', label: 'Watermark', on: false },
         { name: 'nsfw_check', label: 'Moderation check', on: false },
       ],
@@ -264,6 +273,35 @@ describe('APIMart media models', () => {
     // APIMart gave the money back: the quote ($0.22848) does not count.
     expect(await sbpCall(browser, 'dez.model/tabs/costNumbers', await activeTabId(browser))).toEqual({ cost: { usd: 0, requests: 1, unpriced: 0 } })
     await closeToasts(browser)
+  })
+
+  it('uploads the input image of a video request, and sends its web address as the first frame', async () => {
+    const uploadedUrl = 'https://cdn.example.com/uploads/frame.png'
+    await pickModel(browser, MART.name, MART.modelName)
+    await focusEditor(browser)
+    await typeKeys(browser, 'The fox runs from ')
+    await pasteImageReference(browser, FRAME_PNG, 'a')
+    await submit(browser, '')
+
+    // The file has a neutral name: it names no file of the user.
+    const upload = await takeRequest(setup, UPLOAD_PATH)
+    expect(upload.headers['content-type']).toMatch(/^multipart\/form-data; boundary=/)
+    expect(await requestForm(upload)).toStrictEqual([{ name: 'file', fileName: 'image-1.png', type: 'image/png', bytes: FRAME_PNG }])
+    // A free upload has no `overage` (the docs, 2026-11-25).
+    answerHeld(upload.reply, 'application/json', JSON.stringify({ url: uploadedUrl, filename: 'image-1.png', content_type: 'image/png', size: FRAME_PNG.length, retention_days: 3, expires_at: 1794182400 }))
+
+    const request = await takeRequest(setup, SUBMIT_PATH, {
+      duration: 4,
+      resolution: '768P',
+      image_with_roles: [{ url: uploadedUrl, role: 'first_frame' }],
+      model: MART.modelId,
+      prompt: 'The fox runs from ![id=a](image)',
+    })
+    answerHeld(request.reply, 'application/json', submitted('task-done'))
+    await waitForValue(browser, 'player of the video', async () => (await shownPlayers(browser)).length, 1)
+    // The cost of the task; the free upload counts nothing.
+    expect(await sbpCall(browser, 'dez.model/tabs/costNumbers', await activeTabId(browser))).toEqual({ cost: { usd: 0.3, requests: 1, unpriced: 0 } })
+    expect(await consoleErrors(browser)).toStrictEqual([])
   })
 
   it('shows the rows of Suno and how lyrics turn on its Custom mode, sends a message with no lyrics in inspiration mode, and shows each song of the task at the cost of the task', async () => {

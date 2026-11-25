@@ -168,6 +168,10 @@ let singerPayloads: string[] = []
 // JSON of the body. A URL with no entry here gets the default answers of
 // the stand-in below.
 let httpAnswers = new Map<string, { status: number, json: unknown }>()
+// The answer of a server to a stream request, by URL: a status and the
+// JSON of the body, made anew for each request. A URL with no entry here
+// gets the default answers of the stand-in below.
+let streamAnswers = new Map<string, () => { status: number, json: unknown }>()
 // The files that dez.native/saveAppFile wrote, with their roots.
 let savedFiles: Array<{ path: string, bytes: Uint8Array, root: string }> = []
 let consoleError: MockInstance<typeof console.error>
@@ -236,6 +240,16 @@ sbp('sbp/selectors/register', {
     streamRequests.push(request)
     streamRequestIds.push(requestId)
     if (request.url.startsWith(CLOSED_BASE_URL)) throw new NativeHttpError(`error sending request for url (${request.url})`)
+    const answer = streamAnswers.get(request.url)?.()
+    if (answer) {
+      return {
+        requestId,
+        response: { status: answer.status, headers: { 'content-type': 'application/json' } },
+        chunks: (async function * () {
+          yield new TextEncoder().encode(JSON.stringify(answer.json))
+        })(),
+      }
+    }
     const timed = request.url === `${MEDIA_BASE_URL}/audio/transcriptions` && (await requestForm(request)).get('timestamps') === 'true'
     const media = MEDIA_ANSWERS.get(timed ? `${request.url}#timestamps` : request.url)
     if (media) {
@@ -280,6 +294,7 @@ beforeEach(() => {
   chatImageCopies.clear()
   httpRequests = []
   httpAnswers = new Map()
+  streamAnswers = new Map()
   streamRequests = []
   streamRequestIds = []
   cancelledStreams = []
@@ -2095,6 +2110,106 @@ describe('the price of a clip', () => {
 
     await expect(request).rejects.toBe(refusal)
     expect([checks, steps, downloadRequests]).toStrictEqual([[0.07], [], []])
+  })
+})
+
+// APIMart takes the input images of a video request only at a web
+// address: Dez uploads each one first (`ClipFormat.imageUpload`).
+describe('input images that the provider takes only at a web address', () => {
+  const UPLOAD_URL = `${MEDIA_BASE_URL}/uploads/images?retention_days=3`
+  const PRICE_URL = `${MEDIA_BASE_URL}/pricing/model?model=m&duration=4`
+  const UPLOADED = ['https://cdn.example.com/u/1.png', 'https://cdn.example.com/u/2.png']
+  const path = `${APP_DIR}/assets/images/red.png`
+  const generate = (input: Record<string, unknown>) =>
+    sbp('dez.provider/generateMedia', { providerId: 'mart', modelId: 'm', kind: 'video', prompt: 'A red fox', images: [path, path], requestId: 'reply-1', ...input }) as Promise<ProviderGenerateMediaResult>
+  const uploads = () => streamRequests.filter((request) => request.url === UPLOAD_URL)
+
+  beforeEach(() => {
+    sbp('dez.model/customProviders/save', {
+      id: 'mart', name: 'Mart', baseUrl: MEDIA_BASE_URL, apiFormat: 'openai', models: [], fetchModels: true, auth: 'apiKey', mediaApi: { format: 'apimart' },
+    })
+    sbp('dez.model/modelCache/applyProviderResult', 'mart', {
+      ok: true,
+      models: [{
+        id: 'm',
+        name: 'M',
+        provider: 'mart',
+        outputs: ['video'],
+        request: 'video',
+        parameters: [
+          { name: 'duration', label: 'Length', min: 4, max: 10, default: 4 },
+          { name: 'images_as', label: 'Images as', options: ['frames', 'references'], default: 'frames' },
+        ],
+        images: { maxImages: 2, whenParameter: { name: 'images_as', value: 'references', rules: { maxImages: 5, references: {} } } },
+      }],
+    })
+    httpAnswers.set(PRICE_URL, { status: 200, json: { total_usd: 0.2 } })
+    // The first upload is free, and the second one is paid.
+    let count = 0
+    streamAnswers.set(UPLOAD_URL, () => {
+      count += 1
+      return { status: 200, json: { url: UPLOADED[count - 1], ...(count === 2 && { overage: { charged: true, cost_usd: 0.001 } }) } }
+    })
+  })
+
+  // The check before the uploads has no price: Dez cannot know the price
+  // of an upload before it. The check before the request has the quote,
+  // in the same tick as the `sent` step.
+  it('checks, then uploads each image with a neutral name, then checks the quote and sends the web addresses as frames', async () => {
+    const steps: unknown[] = []
+    const result = await generate({
+      beforeSend: (usd: number | undefined) => steps.push(['check', usd, uploads().length]),
+      onProgress: ({ phase, cost, quote }: MediaProgress) => steps.push([phase, cost ?? quote, uploads().length, downloadRequests.length]),
+    })
+
+    expect(steps).toStrictEqual([
+      ['check', undefined, 0],
+      ['uploaded', 0, 1, 0],
+      ['uploaded', 0.001, 2, 0],
+      ['check', 0.2, 2],
+      ['sent', 0.2, 2, 0],
+    ])
+    const files = await Promise.all(uploads().map(async (request) => (await requestForm(request)).get('file') as File))
+    expect(files.map((file) => [file.name, file.type, file.size])).toStrictEqual([['image-1.png', 'image/png', STORED_IMAGE.length], ['image-2.png', 'image/png', STORED_IMAGE.length]])
+    expect(streamRequestIds).toStrictEqual(['reply-1', 'reply-1'])
+    expect(downloadRequests.map((request) => jsonBody(request))).toStrictEqual([{
+      duration: 4,
+      image_with_roles: [{ url: UPLOADED[0], role: 'first_frame' }, { url: UPLOADED[1], role: 'last_frame' }],
+      model: 'm',
+      prompt: 'A red fox',
+    }])
+    expect(result.cost).toBe(0.2)
+  })
+
+  it('sends the web addresses as references when the user chose references', async () => {
+    await generate({ parameters: { images_as: 'references' } })
+
+    expect(jsonBody(downloadRequests[0])).toStrictEqual({ duration: 4, image_urls: UPLOADED, model: 'm', prompt: 'A red fox' })
+  })
+
+  it('uploads nothing and sends nothing when the check before the uploads refuses', async () => {
+    const refusal = new ExplainedError('Over the money limit.')
+
+    await expect(generate({ beforeSend: () => { throw refusal } })).rejects.toBe(refusal)
+    expect([streamRequests, downloadRequests, httpRequests]).toStrictEqual([[], [], []])
+  })
+
+  it('tells why Dez uploaded an image, and the cause of the refusal, and sends no request', async () => {
+    streamAnswers.set(UPLOAD_URL, () => ({ status: 429, json: { error: { type: 'rate_limit_exceeded', message: 'Free quota used' } } }))
+    const steps: string[] = []
+    const lead = 'Dez could not upload an input image to Mart, which takes the images of this model only at a web address.'
+
+    await expect(generate({ onProgress: ({ phase }: MediaProgress) => steps.push(phase) })).rejects.toThrow(`${lead} The free uploads of your Mart account are used up for now`)
+    await expect(generate({ reader: 'model' })).rejects.toThrow(`${lead} The free uploads of the Mart account of the user are used up for now`)
+    expect([steps, uploads().length, downloadRequests]).toStrictEqual([[], 2, []])
+  })
+
+  it('gives the provider\'s own text for a refusal whose cause Dez does not know', async () => {
+    streamAnswers.set(UPLOAD_URL, () => ({ status: 400, json: { error: { type: 'invalid_request_error', message: 'Damaged file' } } }))
+
+    const error = await generate({}).catch((thrown: unknown) => thrown) as ExplainedError
+    expect(error.message).toMatch(/^Dez could not upload an input image to Mart, which takes the images of this model only at a web address\. /)
+    expect(error.details).toContain('Damaged file')
   })
 })
 

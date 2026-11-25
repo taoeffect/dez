@@ -55,9 +55,9 @@ export interface InputImageRules {
   // Set for a video model that takes its images as references.
   references?: ReferenceImages
   // The rules that apply in place of these when the model parameter
-  // `name` has `value` (`inputImageRulesFor`): an OpenRouter video model
-  // takes its images as frames, or as references when the user chooses
-  // so (mediaFormats.ts).
+  // `name` has `value` (`inputImageRulesFor`): an OpenRouter or an APIMart
+  // video model takes its images as frames, or as references when the
+  // user chooses so (mediaFormats.ts, apimartFormat.ts).
   whenParameter?: { name: string, value: OptionValue, rules: Omit<InputImageRules, 'whenParameter'> }
 }
 

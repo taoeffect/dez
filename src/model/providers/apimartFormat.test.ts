@@ -31,6 +31,7 @@ describe('apimart video parameters', () => {
       { name: 'duration', min: 4, max: 15, default: 4 },
       { name: 'resolution', options: ['768P', '2K'], default: '768P' },
       { name: 'aspect_ratio', options: ['21:9', '16:9', '4:3', '1:1', '3:4', '9:16'] },
+      { name: 'images_as', options: ['frames', 'references'], default: 'frames' },
       { name: 'watermark' },
       { name: 'nsfw_check' },
     ])
@@ -41,7 +42,7 @@ describe('apimart video parameters', () => {
     const rows = clips.parameters('video', videoEntry('seedance-2-5-flash'), undefined, {})
     rows.length = 0
 
-    expect(parameters(videoEntry('seedance-2-5-flash')).map((row) => row.name)).toStrictEqual(['resolution', 'size', 'duration', 'generate_audio', 'watermark', 'seed', 'output_format', 'web_search', 'nsfw_check'])
+    expect(parameters(videoEntry('seedance-2-5-flash')).map((row) => row.name)).toStrictEqual(['resolution', 'size', 'duration', 'generate_audio', 'images_as', 'watermark', 'seed', 'output_format', 'web_search', 'nsfw_check'])
     expect(clips.textRules?.('video', videoEntry('seedance-2-5-flash'), undefined, {})).toBeUndefined()
   })
 
@@ -112,6 +113,121 @@ describe('apimart video requests', () => {
 
   it('refuses a request kind other than video', () => {
     expect(thrownError(() => clips.request('tts', BASE_URL, 'suno', { prompt: 'Hi', images: [], values: {} }))).toStrictEqual(new ExplainedError('This provider has no request of this kind that Dez can use. Choose another model.'))
+  })
+})
+
+describe('apimart video images', () => {
+  const URLS = ['https://cdn.apimart.ai/u/a.png', 'https://cdn.apimart.ai/u/b.png', 'https://cdn.apimart.ai/u/c.png']
+  const request = (modelId: string, values: ParameterValues, imageUrls: string[], imagesAsReferences?: true) =>
+    clips.request('video', BASE_URL, modelId, { prompt: 'A fox', images: [], values, imageUrls, ...(imagesAsReferences && { imagesAsReferences }) }).body
+
+  // The docs of both models (checked 2026-11-25): the sides and the ratio
+  // of an image. MiniMax-H3 takes 9 references, but only 5 are free.
+  it('gives a model of the doc facts two frames, or its references when the user chooses them', () => {
+    expect(apimartFormat.imageRules?.('video', videoEntry('MiniMax-H3'), undefined)).toStrictEqual({
+      maxImages: 2,
+      size: { minShortSide: 256, minAspectRatio: 0.4, maxAspectRatio: 2.5, maxPixels: 5760 ** 2 },
+      whenParameter: {
+        name: 'images_as',
+        value: 'references',
+        rules: { maxImages: 5, size: { minShortSide: 256, minAspectRatio: 0.4, maxAspectRatio: 2.5, maxPixels: 5760 ** 2 }, references: {} },
+      },
+    })
+    expect(apimartFormat.imageRules?.('video', videoEntry('seedance-2-5-flash'), undefined)?.whenParameter?.rules).toStrictEqual({
+      maxImages: 10,
+      size: { minShortSide: 300, minAspectRatio: 0.4, maxAspectRatio: 2.5, maxPixels: 36_000_000 },
+      references: { promptName: '@图片{n}' },
+    })
+  })
+
+  it('gives no image rules to a model with only the general schema, or to another kind', () => {
+    expect([
+      apimartFormat.imageRules?.('video', videoEntry('kling-v3', { duration: { type: 'integer' } }), undefined),
+      apimartFormat.imageRules?.('music', videoEntry('MiniMax-H3'), undefined),
+    ]).toStrictEqual([undefined, undefined])
+  })
+
+  it('gives each call its own copy of the rules', () => {
+    const rules = apimartFormat.imageRules?.('video', videoEntry('MiniMax-H3'), undefined)
+    if (rules?.size) rules.size.minShortSide = 1
+    if (rules?.whenParameter?.rules.size) rules.whenParameter.rules.size.minShortSide = 1
+
+    const fresh = apimartFormat.imageRules?.('video', videoEntry('MiniMax-H3'), undefined)
+    expect([fresh?.size?.minShortSide, fresh?.whenParameter?.rules.size?.minShortSide]).toStrictEqual([256, 256])
+  })
+
+  // A request with frames needs `size: adaptive` (the seedance docs): it
+  // takes the place of the aspect ratio of the panel.
+  it('sends uploaded frames with their roles, and the fields that frames need, with no images_as field', () => {
+    expect(request('seedance-2-5-flash', { size: '16:9', images_as: 'frames', duration: 4 }, URLS.slice(0, 2))).toStrictEqual({
+      size: 'adaptive',
+      duration: 4,
+      image_with_roles: [{ url: URLS[0], role: 'first_frame' }, { url: URLS[1], role: 'last_frame' }],
+      model: 'seedance-2-5-flash',
+      prompt: 'A fox',
+    })
+    expect(request('MiniMax-H3', { aspect_ratio: '16:9' }, URLS.slice(0, 1))).toStrictEqual({
+      aspect_ratio: '16:9',
+      image_with_roles: [{ url: URLS[0], role: 'first_frame' }],
+      model: 'MiniMax-H3',
+      prompt: 'A fox',
+    })
+  })
+
+  it('sends uploaded references as image_urls, with the values of the panel', () => {
+    expect(request('seedance-2-5-flash', { size: '16:9', images_as: 'references' }, URLS, true)).toStrictEqual({
+      size: '16:9',
+      image_urls: URLS,
+      model: 'seedance-2-5-flash',
+      prompt: 'A fox',
+    })
+  })
+
+  it('sends no image field and no images_as field in a request with no image', () => {
+    expect(request('seedance-2-5-flash', { size: '16:9', images_as: 'frames' }, [])).toStrictEqual({ size: '16:9', model: 'seedance-2-5-flash', prompt: 'A fox' })
+  })
+})
+
+describe('apimart image uploads', () => {
+  const upload = clips.imageUpload as NonNullable<ClipFormat['imageUpload']>
+  const URL_ = 'https://cdn.apimart.ai/uploads/x.png'
+
+  // The 3-day tier is the one with free uploads; with no field, the
+  // account's default tier goes, which can be a paid one. The file name
+  // names no file of the user.
+  it('posts the image as the file of a form to /uploads/images, for 3 days, with a neutral name', () => {
+    const bytes = new Uint8Array([1, 2, 3])
+    expect([upload.request(`${BASE_URL}/`, { bytes, mediaType: 'image/jpeg' }, 2)]).toStrictEqual([{
+      url: `${BASE_URL}/uploads/images?retention_days=3`,
+      form: [{ name: 'file', file: { bytes, mediaType: 'image/jpeg', fileName: 'image-2.jpg' } }],
+    }])
+  })
+
+  // The docs: `overage` comes only for a charged upload.
+  it.each([
+    ['a free upload', {}, { cost: 0 }],
+    ['an upload that was not charged', { overage: { charged: false, cost_usd: 0.01 } }, { cost: 0 }],
+    ['a charged upload', { overage: { charged: true, cost_usd: 0.0004 } }, { cost: 0.0004 }],
+    ['a charged upload with no price', { overage: { charged: true } }, {}],
+  ])('reads the web address and the price of %s', (_name, fields, cost) => {
+    expect(upload.result({ url: URL_, retention_days: 3, ...fields })).toStrictEqual({ url: URL_, ...cost })
+  })
+
+  it.each([{}, { url: '' }, { url: 'file:///etc/passwd' }, null])('tells that an answer with no web address is unusable', (answer) => {
+    expect(thrownError(() => upload.result(answer))).toStrictEqual(new UnusableAnswerError('The answer to the image upload holds no web address.'))
+  })
+
+  it.each([
+    ['free uploads used, paid uploads off', 429, { error: { type: 'rate_limit_exceeded' }, overage: { enabled: false } }, 'freeUploadsUsed'],
+    ['free uploads used, with no overage', 429, { error: { type: 'rate_limit_exceeded' } }, 'freeUploadsUsed'],
+    ['an unconfirmed price', 429, { error: { type: 'x' }, overage: { needs_reconfirm: true } }, 'freeUploadsUsed'],
+    ['the spending limit of the key', 402, { error: { type: 'x' }, overage: { reason: 'insufficient_key_quota' } }, 'keySpendingLimit'],
+    ['too many requests', 429, { error: { type: 'rate_limit_error' } }, undefined],
+    ['no balance', 402, { error: { type: 'insufficient_user_quota' } }, undefined],
+    ['too little balance', 402, { error: { type: 'x' }, overage: { reason: 'insufficient_balance' } }, undefined],
+    ['a file that is too large', 413, { error: { type: 'invalid_request_error' } }, undefined],
+  ])('tells the cause of a refusal for %s', (_name, status, body, refusal) => {
+    expect(upload.refusal?.(status, body)).toBe(refusal)
   })
 })
 

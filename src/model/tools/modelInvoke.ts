@@ -317,6 +317,8 @@ export function invocationStateText(providerName: string, { phase, jobId, limit 
   switch (phase) {
     case 'waiting':
       return `The request waits for its turn: Dez sends ${providerName} at most ${limit ?? 'a few'} media requests at one time. The time limit of the job waits too.`
+    case 'uploaded':
+      return `Dez uploads the input images of the request to ${providerName}, which takes them only at a web address.`
     case 'sent':
       return `${providerName} has the request, and has not answered yet.`
     case 'queued':

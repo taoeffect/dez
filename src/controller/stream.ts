@@ -1305,9 +1305,15 @@ async function runMediaRound(args: StreamStartArgs, reply: ReplyRuntime, kind: M
       ...(parameters && { parameters }),
       requestId,
       signal: reply.abort.signal,
-      // The money gate, right before the request goes, with its quote.
+      // The money gate, right before each paid request goes: once before
+      // the uploads of the input images, with no price, and then before
+      // the request, with its quote.
       beforeSend: (usd: number | undefined) => checkReplyMoney(args.tabId, { kind: 'quote', usd: usd ?? null }),
       onProgress: (progress: MediaProgress) => {
+        // The provider took the money of an upload at once, so it counts
+        // now, also when the request fails later. A free upload is no paid
+        // request, so it counts nothing.
+        if (progress.phase === 'uploaded' && progress.cost !== 0) countRequestCost(args.tabId, progress.cost ?? null)
         if (progress.phase === 'sent') {
           sentCost = progress.quote ?? null
           hold.usd = progress.quote ?? 0

@@ -20,7 +20,7 @@ import { chatImageCopies, chatImageKey } from './chatImageCopies'
 import { chatRequestCost } from './chatUsage'
 import { clipFileProblem, clipTagProblem, hasLengthRules, missingClipProblem, needsWavCopy, type ClipAttachment, type ClipUse, type InputClipRules } from './clipInputs'
 import { inputImageRulesFor, missingImageProblem } from './clipImages'
-import { CLIP_JOB_TIMEOUT_MS, clipPollDelay, sendClipRequest, type ClipRun } from './clipRequests'
+import { CLIP_JOB_TIMEOUT_MS, clipPollDelay, sendClipRequest, uploadClipImages, type ClipRun } from './clipRequests'
 import { assertProviderResponseOk, explainedProviderError, InputImageError, providerConnectionError, UnusableAnswerError } from './errors'
 import { generatedImageFromUrl } from './generatedImages'
 import { chatImageDrawing, imageFit, type ImageSizeRules } from './imageSize'
@@ -710,6 +710,12 @@ export default sbp('sbp/selectors/register', {
   // the result's `cost` is the price that the answer tells, else that one.
   // A text request has no quote.
   //
+  // A provider whose API takes the input images of a clip request only at
+  // a web address (`Provider.clipImageUpload`) gets each image in an
+  // upload first, with an `uploaded` step that tells its price. An upload
+  // can cost money, at a price that Dez cannot know before it, so
+  // `beforeSend` comes before the uploads too, with no price.
+  //
   // At most `Provider.mediaRequestsAtOnce` calls of one provider run at one
   // time, of all tabs together (mediaTurns.ts): a call after them waits
   // for its turn, with a `waiting` step, and holds the turn until it ends
@@ -730,7 +736,7 @@ export default sbp('sbp/selectors/register', {
     }
     signal?.addEventListener('abort', cancelRequest)
     let jobId: string | null = null
-    const progress = (phase: MediaProgress['phase'], extra: Pick<MediaProgress, 'quote' | 'limit'> = {}) => input.onProgress?.({ phase, jobId, ...extra })
+    const progress = (phase: MediaProgress['phase'], extra: Pick<MediaProgress, 'quote' | 'limit' | 'cost'> = {}) => input.onProgress?.({ phase, jobId, ...extra })
     // The last check of the caller, then the `sent` step, in one tick.
     const send = (quote?: number) => {
       input.beforeSend?.(quote)
@@ -765,12 +771,13 @@ export default sbp('sbp/selectors/register', {
       endTurn = await takeMediaTurn(provider.id, limit, signal, () => progress('waiting', { limit }))
       const appDir = paths.length > 0 ? await sbp('dez.native/getAppDir') as string : ''
       const sizeRules = provider.inputImageSize(kind, { ...(imageRules && { images: imageRules }) })
-      const images = await Promise.all(paths.map(async (path): Promise<ChatImagePart> => {
+      const readImages = await Promise.all(paths.map(async (path): Promise<StoredImage> => {
         const { bytes, mediaType, size } = await requestImage(path, appDir, sizeRules)
         const problem = provider.inputImageProblem(kind, size, bytes.length)
         if (problem !== undefined) throw new ExplainedError(problem)
-        return { type: 'image', mediaType, data: bytesToBase64(bytes) }
+        return { bytes, mediaType }
       }))
+      const images = readImages.map(({ bytes, mediaType }): ChatImagePart => ({ type: 'image', mediaType, data: bytesToBase64(bytes) }))
       const clipParts = await inputClipParts(modelName, cachedModel?.clips, clips, signal, reader)
 
       if (isTextKind(kind)) {
@@ -800,6 +807,17 @@ export default sbp('sbp/selectors/register', {
       // A request of the media API, which gets the API key.
       const apiRequest = (wire: MediaWireRequest) => provider.mediaApiRequest(wire, secret)
       const cacheDir = await sbp('dez.native/getAppDir', 'cache') as string
+      // The uploads end before the quote and the last check (`send`), so
+      // that no wait comes between that check and the paid request. The
+      // check before them keeps the images on this computer when the money
+      // limit of the tab refuses a request with no known price.
+      const upload = readImages.length > 0 ? provider.clipImageUpload(secret) : null
+      let imageUrls: string[] | undefined
+      if (upload) {
+        signal?.throwIfAborted()
+        input.beforeSend?.(undefined)
+        imageUrls = await uploadClipImages(run, upload, readImages, ({ cost }) => progress('uploaded', cost === undefined ? {} : { cost }))
+      }
       const clipInput = {
         prompt: input.prompt,
         images,
@@ -807,6 +825,7 @@ export default sbp('sbp/selectors/register', {
         values,
         ...(input.lyrics !== undefined && { lyrics: input.lyrics }),
         ...(imageRules?.references && { imagesAsReferences: true as const }),
+        ...(imageUrls && { imageUrls }),
       }
       // A refusal that tells that the model takes fewer images: the user
       // gets Dez's text, with the count, and the console the provider's;

@@ -1,5 +1,7 @@
 import { ExplainedError } from '../../utils/errorText'
+import type { ReferenceImages } from './clipImages'
 import type { ClipTextRules } from './clipText'
+import type { ImageSizeRules } from './imageSize'
 import type { ClipInput } from './mediaFormats'
 import type { ModelParameter, ParameterValues } from './modelParameters'
 
@@ -19,7 +21,29 @@ export interface ApimartVideoModel {
   parameters: readonly ModelParameter[]
   // The most characters of the prompt, when the docs tell it.
   maxPromptLength?: number
+  // How the model takes input images, for a model that takes them
+  // (`apimartFormat`): as the first and the last frame of the video, or,
+  // when the user chooses so (`APIMART_IMAGES_AS`), as references.
+  images?: ApimartVideoImages
 }
+
+export interface ApimartVideoImages {
+  // The most reference images of one request.
+  maxReferences: number
+  references: ReferenceImages
+  // The size rules of each image, frame or reference.
+  size: ImageSizeRules
+  // The body fields that a request with frames needs, in place of the
+  // values of the panel.
+  frameFields?: Readonly<Record<string, string>>
+}
+
+// The parameter that tells how the images of a request go: as the frames
+// of the video, or as references. The request reads it and sends it as no
+// field.
+export const APIMART_IMAGES_AS = 'images_as'
+export const APIMART_AS_REFERENCES = 'references'
+const IMAGES_AS: ModelParameter = { name: APIMART_IMAGES_AS, label: 'Images as', options: ['frames', APIMART_AS_REFERENCES], default: 'frames' }
 
 // An integer field of the request with no list and no upper limit: a text
 // row, which the request sends as a number (`apimartFormat`).
@@ -34,40 +58,66 @@ const MODERATION_CHECK: ModelParameter = { name: 'nsfw_check', label: 'Moderatio
 
 export const APIMART_VIDEO_MODELS: Readonly<Record<string, ApimartVideoModel>> = {
   // `aspect_ratio` has no default: a video from a prompt then gets 16:9,
-  // and the docs list no `adaptive` for it. The image and clip fields are
-  // left out: Dez sends APIMart no input image or clip.
+  // and the docs list no `adaptive` for it. With frames, the model takes
+  // the aspect ratio of the image. The clip fields are left out: Dez
+  // sends APIMart no input clip.
+  // Images: at most 9 references. The price of the account tells that
+  // only the first 5 images of a request are free
+  // (`input_image_free_count`), and the quote of a request does not count
+  // the others, so Dez sends at most 5: a quote under the price would let
+  // a request go over the money limit of a tab.
+  // Each side of an image is 256 to 5760 pixels, so no image has more than
+  // 5760² pixels (`maxPixels`), and the upload takes at most 40 million.
   // https://docs.apimart.ai/en/api-reference/videos/minimax-h3/generation
-  // (checked 2026-11-24)
+  // (checked 2026-11-25)
   'MiniMax-H3': {
     parameters: [
       { name: 'duration', label: 'Length (seconds)', min: 4, max: 15, default: 4 },
       { name: 'resolution', label: 'Resolution', options: ['768P', '2K'], default: '768P' },
       { name: 'aspect_ratio', label: 'Aspect ratio', options: ['21:9', '16:9', '4:3', '1:1', '3:4', '9:16'] },
+      IMAGES_AS,
       WATERMARK,
       MODERATION_CHECK,
     ],
     maxPromptLength: 7000,
+    images: {
+      maxReferences: 5,
+      references: {},
+      size: { minShortSide: 256, minAspectRatio: 0.4, maxAspectRatio: 2.5, maxPixels: 5760 ** 2 },
+    },
   },
   // `size` is the aspect ratio (the docs' default is `adaptive`). The
   // length `-1` (the model chooses it) is left out: its price is not
   // known before the task ends, and APIMart holds the price of 30 seconds.
   // `return_last_frame` is left out (Dez does not get the image of the
-  // last frame), and so are the media fields and `tools`, which
+  // last frame), and so are the clip fields and `tools`, which
   // `web_search` does the work of.
+  // Images: at most 10 references, which the prompt names `@图片1`,
+  // `@图片2` (the docs' names). A request with frames needs the size
+  // `adaptive`. Each side of an image is 300 to 6000 pixels, so no image
+  // has more than 6000² pixels (`maxPixels`), and the upload takes at most
+  // 40 million.
   // https://docs.apimart.ai/en/api-reference/videos/seedance-2-5-flash/generation
-  // (checked 2026-11-24)
+  // (checked 2026-11-25)
   'seedance-2-5-flash': {
     parameters: [
       { name: 'resolution', label: 'Resolution', options: ['480p', '720p'], default: '480p' },
       { name: 'size', label: 'Aspect ratio', options: ['16:9', '4:3', '1:1', '3:4', '9:16', '21:9', 'adaptive'] },
       { name: 'duration', label: 'Length (seconds)', min: 4, max: 30, default: 4 },
       { name: 'generate_audio', label: 'Audio', default: true },
+      IMAGES_AS,
       WATERMARK,
       { name: 'seed', label: 'Seed', options: [], custom: true },
       { name: 'output_format', label: 'File type', options: ['mp4', 'mov'] },
       { name: 'web_search', label: 'Web search' },
       MODERATION_CHECK,
     ],
+    images: {
+      maxReferences: 10,
+      references: { promptName: '@图片{n}' },
+      size: { minShortSide: 300, minAspectRatio: 0.4, maxAspectRatio: 2.5, maxPixels: 36_000_000 },
+      frameFields: { size: 'adaptive' },
+    },
   },
 }
 

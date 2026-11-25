@@ -1,29 +1,33 @@
 import { ExplainedError } from '../../utils/errorText'
 import { sanitizeErrorText } from '../../utils/protocol/errors'
-import { APIMART_TIMED_TRANSCRIPTION_MODELS, APIMART_WHOLE_NUMBER_FIELDS, apimartMusicModel, apimartVideoModel } from './apimartModels'
+import { imageExtension } from '../chat/images'
+import { APIMART_AS_REFERENCES, APIMART_IMAGES_AS, APIMART_TIMED_TRANSCRIPTION_MODELS, APIMART_WHOLE_NUMBER_FIELDS, apimartMusicModel, apimartVideoModel, type ApimartVideoImages } from './apimartModels'
 import { usageNumber } from './chatUsage'
+import type { InputImageRules } from './clipImages'
 import { cloneClipTextRules } from './clipText'
 import { trimTrailingSlashes } from './config'
 import { ClipNotMadeError, UnusableAnswerError } from './errors'
 import { clipFormFile, isClipUrl, jsonBody, lengthSeconds, listedValues, lowestFirstParameter, optionsParameter, resolutionLines, sourceClip, transcriptText, transcriptTimes } from './mediaFormatParts'
-import type { MediaFormat } from './mediaFormats'
+import type { ClipInput, MediaFormat } from './mediaFormats'
 import { parameterTakes, type ModelParameter, type ParameterValues, type RangeParameter } from './modelParameters'
 import { isRecord, valueAtPath } from './modelParsing'
 
 // The media format of APIMart (`mediaApi.format: 'apimart'`): video and
 // music requests as tasks, and transcriptions. A video or music request
-// starts a task, and Dez asks for its state until it ends. Dez sends
-// APIMart no input image, and a clip only to a transcription model, as the
-// file of a form: the other endpoints take images and clips only as web
-// addresses. The music models have no schema in the model list, so only
-// the music models of the doc facts (`APIMART_MUSIC_MODELS`) take a
-// request.
+// starts a task, and Dez asks for its state until it ends. The video and
+// music endpoints take images and clips only at web addresses, never as
+// data: so Dez uploads each input image of a video request first
+// (`imageUpload`), and sends no clip to them. A transcription model gets
+// its clip as the file of a form. The music models have no schema in the
+// model list, so only the music models of the doc facts
+// (`APIMART_MUSIC_MODELS`) take a request.
 // https://docs.apimart.ai/en/api-reference/tasks/status (checked 2026-11-24)
 
 // The fields of the general schema of the model list that get no row:
-// those that Dez fills (`model`, `prompt`), those that Dez never sends
-// (`webhook`: Dez asks for the state; `metadata`, `messages`, `url`,
-// `from_task`), the image and clip fields, and `multi_shot`, which needs
+// those that Dez fills (`model`, `prompt`; the image fields of a model of
+// the doc facts), those that Dez never sends (`webhook`: Dez asks for the
+// state; `metadata`, `messages`, `url`, `from_task`; the image fields of
+// another model, and the clip fields), and `multi_shot`, which needs
 // `multi_prompt` (a list that the panel cannot hold).
 const UNSHOWN_SCHEMA_FIELDS: ReadonlySet<string> = new Set([
   'model',
@@ -170,6 +174,49 @@ function musicFiles(task: Record<string, unknown>): readonly [string, ...string[
   return [first, ...rest]
 }
 
+// The image rules of a video model that takes images: a first and a last
+// frame, or, when the user chooses references (`APIMART_IMAGES_AS`), as
+// many references as the model takes. Copies, which share no object with
+// the doc facts.
+function videoImageRules(images: ApimartVideoImages): InputImageRules {
+  return {
+    maxImages: 2,
+    size: { ...images.size },
+    whenParameter: {
+      name: APIMART_IMAGES_AS,
+      value: APIMART_AS_REFERENCES,
+      rules: { maxImages: images.maxReferences, size: { ...images.size }, references: { ...images.references } },
+    },
+  }
+}
+
+const FRAME_ROLES = ['first_frame', 'last_frame'] as const
+
+// The image fields of a video request, with the web addresses of its
+// uploaded images (`ClipInput.imageUrls`): the references, or the first
+// and the last frame. The fields that a request with frames needs
+// (`frameFields`) take the place of the values of the panel.
+function videoImageFields(images: ApimartVideoImages | undefined, { imageUrls = [], imagesAsReferences }: ClipInput): Record<string, unknown> {
+  if (imageUrls.length === 0) return {}
+  if (imagesAsReferences) return { image_urls: [...imageUrls] }
+  return {
+    ...images?.frameFields,
+    image_with_roles: imageUrls.slice(0, FRAME_ROLES.length).map((url, index) => ({ url, role: FRAME_ROLES[index] })),
+  }
+}
+
+// The upload of an input image of a video request (`imageUpload`). The
+// field `retention_days` is a field of the query only, and 3 days is the
+// one tier with free uploads: with no field, the default tier of the
+// account goes, which can be a paid one. The Help panel tells the days.
+// https://docs.apimart.ai/en/api-reference/uploads/images (checked
+// 2026-11-25)
+export const APIMART_UPLOAD_DAYS = 3
+
+// Statuses of a refused upload whose body can tell its cause.
+const TOO_MANY_UPLOADS = 429
+const PAYMENT_REQUIRED = 402
+
 export const apimartFormat: MediaFormat = {
   clips: {
     parameters: (kind, entry) => {
@@ -190,7 +237,7 @@ export const apimartFormat: MediaFormat = {
     },
     // A video request with no length gets the model's default length, and
     // its price is then unknown (`quote`). No `webhook`: Dez asks for the
-    // state.
+    // state. `images_as` is a choice of Dez, not a field of the request.
     request: (kind, baseUrl, modelId, input) => {
       if (kind === 'music') {
         const music = apimartMusicModel(modelId)
@@ -198,7 +245,42 @@ export const apimartFormat: MediaFormat = {
         return { url: `${trimTrailingSlashes(baseUrl)}/music/generations`, body: { ...music.body(input), model: modelId } }
       }
       if (kind !== 'video') refusedKind()
-      return { url: `${trimTrailingSlashes(baseUrl)}/videos/generations`, body: { ...sentValues(input.values), model: modelId, prompt: input.prompt } }
+      const values = { ...input.values }
+      delete values[APIMART_IMAGES_AS]
+      return {
+        url: `${trimTrailingSlashes(baseUrl)}/videos/generations`,
+        body: { ...sentValues(values), ...videoImageFields(apimartVideoModel(modelId)?.images, input), model: modelId, prompt: input.prompt },
+      }
+    },
+    // The upload answers `{ url, …, overage? }`: `overage` comes only for
+    // a charged upload (`charged`, `cost_usd`), so an answer with none was
+    // free. A refusal has a root `error` and can have a root `overage`
+    // that tells its cause: a 429 with `overage`, or with the type
+    // `rate_limit_exceeded`, tells that the free uploads are used up and
+    // that the account takes no paid one now; a 402 with the reason
+    // `insufficient_key_quota` tells the spending limit of the key. A 429
+    // with the type `rate_limit_error` is the limit of requests in time.
+    // https://docs.apimart.ai/en/api-reference/uploads/images (checked
+    // 2026-11-25)
+    imageUpload: {
+      request: (baseUrl, { bytes, mediaType }, number) => ({
+        url: `${trimTrailingSlashes(baseUrl)}/uploads/images?retention_days=${APIMART_UPLOAD_DAYS}`,
+        form: [{ name: 'file', file: { bytes, mediaType, fileName: `image-${number}.${imageExtension(mediaType)}` } }],
+      }),
+      result: (data) => {
+        const url = isRecord(data) ? data.url : undefined
+        if (!isClipUrl(url)) throw new UnusableAnswerError('The answer to the image upload holds no web address.')
+        const overage = isRecord(data) ? data.overage : undefined
+        if (!isRecord(overage) || overage.charged === false) return { url, cost: 0 }
+        const cost = usageNumber(overage.cost_usd)
+        return { url, ...(cost !== undefined && { cost }) }
+      },
+      refusal: (status, body) => {
+        const overage = isRecord(body) ? body.overage : undefined
+        if (status === TOO_MANY_UPLOADS && (isRecord(overage) || valueAtPath(body, 'error.type') === 'rate_limit_exceeded')) return 'freeUploadsUsed'
+        if (status === PAYMENT_REQUIRED && isRecord(overage) && overage.reason === 'insufficient_key_quota') return 'keySpendingLimit'
+        return undefined
+      },
     },
     // The answer is `{ code, data: [{ status: 'submitted', task_id }] }`.
     // The poll answers `{ code, data: { status, cost, result, error } }`.
@@ -273,6 +355,12 @@ export const apimartFormat: MediaFormat = {
         return values.max_mode === true ? usd * 2 : usd
       },
     },
+  },
+  // Only the video models of the doc facts (`APIMART_VIDEO_MODELS`) take
+  // images: the schema of the model list tells no image rules.
+  imageRules: (kind, entry) => {
+    const images = kind === 'video' ? apimartVideoModel(valueAtPath(entry, 'id'))?.images : undefined
+    return images && videoImageRules(images)
   },
   // A transcription model takes one audio clip, of the types of the docs
   // that Dez stores (mp3, mp4, m4a, wav; the docs also tell mpeg, mpga,

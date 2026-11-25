@@ -1900,6 +1900,32 @@ describe('dez.stream/start media round', () => {
     expect(savedConversations.at(-1)?.cost).toStrictEqual(cost)
   })
 
+  // The provider takes the money of an upload of an input image at once,
+  // so it counts also when the request fails later. A free upload counts
+  // nothing.
+  it('adds the price of each paid upload of an input image as a request of its own, also when the request fails', async () => {
+    const upload = (input: ProviderGenerateMediaInput, cost?: number) => input.onProgress?.({ phase: 'uploaded', jobId: null, ...(cost !== undefined && { cost }) })
+    for (const answer of [
+      async (input: ProviderGenerateMediaInput) => {
+        upload(input, 0)
+        upload(input, 0.01)
+        input.onProgress?.({ phase: 'sent', jobId: null, quote: 0.5 })
+        return { media: [png], clips: [], cost: 0.25 }
+      },
+      async (input: ProviderGenerateMediaInput) => {
+        upload(input, 0.02)
+        upload(input)
+        throw new ExplainedError('Dez could not upload an input image to APIMart.')
+      },
+    ]) {
+      generateMedia = answer
+      setConversation(conversation())
+      await sbp('dez.controller/submitTab', activeTab().id)
+    }
+
+    expect(activeTab().cost).toStrictEqual({ usd: 0.28, requests: 4, unpriced: 1 })
+  })
+
   it('drops the images of a request that a new submit in the tab ended', async () => {
     const tabId = activeTab().id
     generateMedia = async (input) => {

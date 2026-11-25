@@ -3,13 +3,14 @@ import type { JsonObject } from '../../utils/json'
 import type { NativeHttpHeaders, NativeHttpRequest, NativeHttpResponseHead } from '../../utils/protocol/nativeHttp'
 import type { Secret } from '../../utils/secret'
 import type { ImageSize } from '../chat/imageDrawing'
+import type { ImageMediaType } from '../chat/images'
 import { effectiveOutputs } from '../modelOutputs'
 import { API_FORMATS, type ApiFormat } from './apiFormats'
 import { TooManyImagesError } from './clipImages'
 import { FORBIDDEN_BODY_KEYS, type AudioOutputConfig, type MediaEntryPaths, type ProviderConfig, type ProviderModelConfig } from './config'
 import { ProviderHttpError } from './errors'
 import type { ImageSizeRules, InputImageLimits } from './imageSize'
-import { MEDIA_FORMATS, type AnswerCost, type ClipEntryPrice, type ClipFormat, type ClipInput, type ClipJob, type ImageFormat, type ImageQuoteFormat, type MediaFormat, type MediaInput, type MediaWireRequest, type TextFormat } from './mediaFormats'
+import { MEDIA_FORMATS, type AnswerCost, type ClipEntryPrice, type ClipFormat, type ClipInput, type ClipJob, type ImageFormat, type ImageQuoteFormat, type MediaFormat, type MediaInput, type MediaWireRequest, type TextFormat, type UploadRefusal } from './mediaFormats'
 import { DEFAULT_MEDIA_REQUESTS_AT_ONCE } from './mediaTurns'
 import { effectiveParameterValues, type ParameterValues } from './modelParameters'
 import { modelTokenPrice, tokenTablePrice, type LoadedModelPrice } from './modelPrices'
@@ -470,6 +471,26 @@ export class Provider {
 
   clipRequest(kind: ClipKind, modelId: string, input: ClipInput): MediaWireRequest {
     return this.withModelBody(kind, modelId, this.clipFormat().request(kind, this.config.baseUrl, modelId, input))
+  }
+
+  // The upload of the input images of a clip request, for an API that
+  // takes them only at a web address (`ClipFormat.imageUpload`): the
+  // request of the image number `number` (1 for the first one), with the
+  // key, as Dez builds its URL; the reader of the JSON of its 2xx
+  // response; and the cause of a refusal, when the answer tells one
+  // (`UploadRefusal`). Null when the API takes the images as data.
+  clipImageUpload(secret: Secret<string> | null): {
+    request(image: { bytes: Uint8Array, mediaType: ImageMediaType }, number: number): NativeHttpRequest
+    result(data: unknown): { url: string } & AnswerCost
+    refusal(error: unknown): UploadRefusal | undefined
+  } | null {
+    const upload = this.mediaFormatOrNone()?.clips?.imageUpload
+    if (!upload) return null
+    return {
+      request: (image, number) => this.mediaApiRequest(upload.request(this.config.baseUrl, image, number), secret),
+      result: (data) => upload.result(data),
+      refusal: (error) => (error instanceof ProviderHttpError && error.keyed ? upload.refusal?.(error.status, error.bodyJson) : undefined),
+    }
   }
 
   // The size of a sample of the raw PCM audio that the media API can

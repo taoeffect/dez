@@ -120,12 +120,19 @@ async function timesResultText({ provider, model, request }: MediaInvocation, co
 //   the time limit): the provider can have taken the money. A stopped or
 //   timed-out job keeps its quote too: `TabJobs` takes no report after the
 //   end of a job.
+// - The paid uploads of the input images (`uploaded`) come before the
+//   request, and the provider took their money at once: each report adds
+//   their price, also that of a refused request. `TabJobs` keeps one cost
+//   for each job, so the sum is that one cost.
 async function invokeMediaModel(invocation: MediaInvocation, conversationId: string, signal: AbortSignal, report: JobReport, reportCost: (usd: number | null) => void, { checkMoney }: InvocationRights): Promise<JobOutcome> {
   const { provider, model, kind, request, parameters, timeoutMs } = invocation
   report(INVOCATION_READS_INPUTS)
   let sent = false
   // The provider runs the request as a job of its own, which it bills.
   let queued = false
+  // The price of the paid uploads; null when the price of one is unknown.
+  let uploadCost: number | null = 0
+  const reportWithUploads = (usd: number | null) => reportCost(uploadCost === null || usd === null ? null : uploadCost + usd)
   let result: ProviderGenerateMediaResult
   try {
     result = await sbp('dez.provider/generateMedia', {
@@ -144,9 +151,14 @@ async function invokeMediaModel(invocation: MediaInvocation, conversationId: str
       // (`reportCost` at `sent`) comes in the same tick.
       beforeSend: (usd: number | undefined) => checkMoney({ kind: 'quote', usd: usd ?? null }),
       onProgress: (progress: MediaProgress) => {
+        // A free upload is no paid request: it gives no report.
+        if (progress.phase === 'uploaded' && progress.cost !== 0) {
+          uploadCost = uploadCost === null || progress.cost === undefined ? null : uploadCost + progress.cost
+          reportCost(uploadCost)
+        }
         if (progress.phase === 'sent') {
           sent = true
-          reportCost(progress.quote ?? null)
+          reportWithUploads(progress.quote ?? null)
         }
         if (progress.phase === 'queued') queued = true
         // A request that waits for its turn at the provider is a queued job,
@@ -157,11 +169,11 @@ async function invokeMediaModel(invocation: MediaInvocation, conversationId: str
     }) as ProviderGenerateMediaResult
   } catch (error) {
     const notMadeCost = notMadeClipCost(error)
-    if (sent && !queued && isProviderRefusal(error)) reportCost(0)
-    else if (sent && notMadeCost !== undefined) reportCost(notMadeCost)
+    if (sent && !queued && isProviderRefusal(error)) reportWithUploads(0)
+    else if (sent && notMadeCost !== undefined) reportWithUploads(notMadeCost)
     throw invocationError(invocation, error)
   }
-  reportCost(result.cost ?? null)
+  reportWithUploads(result.cost ?? null)
   const assets = result.clips.map(generatedClipAsset)
   // An abort cancelled the request, which can end the body of an image
   // early: a cut image is never saved. A clip that still came is whole,
