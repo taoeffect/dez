@@ -14,7 +14,10 @@ import { threadSections } from './thread'
 // players that the editor shows. The clips are in the formats that the
 // GStreamer of the CI image plays: its `gstreamer1.0-plugins-good` package
 // has the WAV parser, the WebM and MP4 demuxers, and the VP9 decoder. It
-// has no H.264 decoder, so the MP4 clip holds VP9 too.
+// has no H.264 decoder, so the MP4 clip holds VP9 too. The exceptions are
+// the clips of the tests of a clip that the computer cannot play
+// (`NOT_A_CLIP`, `magicYuvClip`): no GStreamer of the tests decodes them,
+// on purpose.
 
 /** The sample rate of the test audio, in samples a second. */
 export const WAV_SAMPLE_RATE = 8000
