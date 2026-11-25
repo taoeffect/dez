@@ -15,6 +15,10 @@ export interface ClipTextRules {
     required: boolean
     // The most characters of the lyrics.
     maxLength?: number
+    // More of how the model takes the text, as a sentence for the user
+    // and for a model, when the provider's rules need it (such as a mode
+    // that the lyrics turn on).
+    note?: string
   }
 }
 
@@ -51,9 +55,11 @@ export function clipText(rules: ClipTextRules | undefined, text: string): ClipTe
 const LYRICS_PARTS = 'the style, then a line "Lyrics:", then the lyrics'
 
 /** How to give lyrics to a model whose rules take them, as a sentence for
- *  the user (the provider settings popup) and for a model (`model_info`). */
+ *  the user (the provider settings popup) and for a model (`model_info`),
+ *  with the note of the rules after it. */
 export function lyricsHowTo(lyrics: NonNullable<ClipTextRules['lyrics']>): string {
-  return lyrics.required ? `This model needs lyrics. Write ${LYRICS_PARTS}.` : `To give lyrics, write ${LYRICS_PARTS}.`
+  const howTo = lyrics.required ? `This model needs lyrics. Write ${LYRICS_PARTS}.` : `To give lyrics, write ${LYRICS_PARTS}.`
+  return lyrics.note === undefined ? howTo : `${howTo} ${lyrics.note}`
 }
 
 function characters(count: number): string {

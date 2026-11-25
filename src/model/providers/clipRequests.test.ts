@@ -414,6 +414,55 @@ describe('a clip job', () => {
     expect(moves).toStrictEqual([{ from: tempFile(4, 'part'), to: tempFile(4, 'mp4') }])
   })
 
+  // A Suno task of APIMart makes two songs, and tells one cost for both.
+  it('copies each file of a job that made more than one clip, and counts the cost of the job once', async () => {
+    const martUrl = 'http://localhost:7070/v1'
+    const songUrls = ['https://cdn.example.com/audio/song-1.mp3', 'https://cdn.example.com/audio/song-2.m4a']
+    sbp('dez.model/customProviders/save', { id: 'mart-like', name: 'Mart', baseUrl: martUrl, apiFormat: 'openai', models: [], fetchModels: true, auth: 'apiKey', mediaApi: { format: 'apimart' } })
+    answers = [
+      json({ code: 200, data: [{ status: 'submitted', task_id: 'task-1' }] }),
+      json({ code: 200, data: { id: 'task-1', status: 'completed', cost: 0.05, result: { music: songUrls.map((audio_url) => ({ audio_url })) } } }),
+      clip('audio/mpeg'),
+      clip('audio/mp4'),
+    ]
+
+    const result = generate({ providerId: 'mart-like', modelId: 'suno', kind: 'music', prompt: 'A ukulele jingle' })
+    await vi.advanceTimersByTimeAsync(5 * SECOND_MS)
+
+    const expires = isoAfter(5 * SECOND_MS + DAY_MS)
+    expect(await result).toStrictEqual({
+      media: [],
+      clips: [
+        { kind: 'audio', mediaType: 'audio/mpeg', src: tempPath(3, 'mp3'), url: null, expires, jobId: 'task-1' },
+        { kind: 'audio', mediaType: 'audio/mp4', src: tempPath(4, 'm4a'), url: null, expires, jobId: 'task-1' },
+      ],
+      cost: 0.05,
+    })
+    expect(requestUrls()).toStrictEqual([`POST ${martUrl}/music/generations`, `GET ${martUrl}/music/tasks/task-1?language=en`, `GET ${songUrls[0]}`, `GET ${songUrls[1]}`])
+    // The URLs come from an answer: their requests carry no API key.
+    expect(downloads.slice(2).map(({ request }) => request.headers)).toStrictEqual([undefined, undefined])
+  })
+
+  // The clips are paid for; the cleanup of the temp copies deletes the
+  // copy of the first clip later.
+  it('fails a job whose second file does not come, and leaves the copy of the first file', async () => {
+    const martUrl = 'http://localhost:7070/v1'
+    sbp('dez.model/customProviders/save', { id: 'mart-like', name: 'Mart', baseUrl: martUrl, apiFormat: 'openai', models: [], fetchModels: true, auth: 'apiKey', mediaApi: { format: 'apimart' } })
+    answers = [
+      json({ code: 200, data: [{ status: 'submitted', task_id: 'task-1' }] }),
+      json({ code: 200, data: { id: 'task-1', status: 'completed', cost: 0.05, result: { music: [{ audio_url: 'https://cdn.example.com/1.mp3' }, { audio_url: 'https://cdn.example.com/2.mp3' }] } } }),
+      clip('audio/mpeg'),
+      { status: 404, headers: { 'content-type': 'text/plain' }, saved: false, body: bytesOf('Not found') },
+    ]
+
+    const failure = expect(generate({ providerId: 'mart-like', modelId: 'suno', kind: 'music', prompt: 'A ukulele jingle' })).rejects.toThrow('task-1')
+    await vi.advanceTimersByTimeAsync(5 * SECOND_MS)
+    await failure
+
+    expect(moves).toStrictEqual([{ from: tempFile(3, 'part'), to: tempFile(3, 'mp3') }])
+    expect(deleted).toStrictEqual([])
+  })
+
   it('gives the URL of a video that the provider stores at a URL that plays, with no temp copy', async () => {
     const url = 'https://storage.example.com/v/clip.mp4?sig=1'
     const expiresAt = (STARTED_AT + DAY_MS) / SECOND_MS

@@ -36,7 +36,7 @@ import { getProvider, listProviders, requireProvider } from './registry'
 import type { RequestReader } from './requestReader'
 import { assertStreamResponseOk, streamProviderTokens } from './streaming'
 import type { MediaProgress, ProviderChatInputMessage, ProviderGenerateMediaInput, ProviderGenerateMediaResult, ProviderMediaQuote, ProviderMediaQuoteInput, ProviderStreamChatInput, ProviderStreamChatResult } from './streamTypes'
-import { CLIP_KINDS, ProviderNotConfiguredError, effectiveRequest, isClipKind, isTextKind, type ChatImagePart, type ChatMessage, type ChatPart, type ModelDisplayNames, type ModelInfo, type ProviderId, type ProviderInfo, type ProviderInputImageRules, type ProviderModelsResult, type ProviderSettingsDescriptor } from './types'
+import { CLIP_KINDS, ProviderNotConfiguredError, effectiveRequest, isClipKind, isTextKind, type ChatImagePart, type ChatMessage, type ChatPart, type GeneratedClip, type ModelDisplayNames, type ModelInfo, type ProviderId, type ProviderInfo, type ProviderInputImageRules, type ProviderModelsResult, type ProviderSettingsDescriptor } from './types'
 import { unstoredOutputMessage } from './unusableModel'
 
 // The file of a stored image.
@@ -685,11 +685,13 @@ export default sbp('sbp/selectors/register', {
   // - A clip (speech, music, video): the answer to the first request is the
   //   clip, or a job. For a job, the provider is asked for its state each
   //   `CLIP_POLL_INTERVAL_MS` until the clip is there: in the answer to
-  //   that request, at a URL that plays, at a URL to copy, or behind one
-  //   more request. A clip that is not there after `input.timeoutMs`
-  //   (`CLIP_JOB_TIMEOUT_MS` with none) rejects. A clip that came as bytes
-  //   is a temp copy in the cache root (`sendClipRequest`), which the
-  //   caller must delete when it does not keep the clip. A stop rejects. A
+  //   that request, at a URL that plays, at URLs to copy (a job of some
+  //   music models makes more than one song: the result has each one), or
+  //   behind one more request. A clip that is not there after
+  //   `input.timeoutMs` (`CLIP_JOB_TIMEOUT_MS` with none) rejects. A clip
+  //   that came as bytes is a temp copy in the cache root
+  //   (`sendClipRequest`), which the caller must delete when it does not
+  //   keep the clip. A stop rejects. A
   //   video request sends the stored images of `input.images` as frames of
   //   the video, or as references (a reference-to-video model, OpenRouter's
   //   "Images as"), and the clips of `input.clips` as the model uses them
@@ -848,13 +850,20 @@ export default sbp('sbp/selectors/register', {
         }
         // A file URL comes from a response and can name any host, so its
         // request has no header: the API key goes only to the URLs that
-        // Dez builds.
+        // Dez builds. The files come one after the other. A download that
+        // fails ends the call with no clip: the temp copies of the files
+        // before it stay until the cleanup of the temp copies.
         progress('downloading')
-        const keyed = 'download' in state
-        const request: NativeHttpRequest = keyed ? apiRequest(state.download) : { method: 'GET', url: state.fileUrl }
-        const download = await sendClipRequest(run, request, jobId, cacheDir, keyed)
-        if (!('clip' in download)) throw new UnusableAnswerError('The answer to the clip download holds no clip.')
-        return { media: [], clips: [download.clip], ...priced(state.cost ?? quote) }
+        const downloads: { request: NativeHttpRequest, keyed: boolean }[] = 'download' in state
+          ? [{ request: apiRequest(state.download), keyed: true }]
+          : state.fileUrls.map((url) => ({ request: { method: 'GET', url }, keyed: false }))
+        const madeClips: GeneratedClip[] = []
+        for (const { request, keyed } of downloads) {
+          const download = await sendClipRequest(run, request, jobId, cacheDir, keyed)
+          if (!('clip' in download)) throw new UnusableAnswerError('The answer to the clip download holds no clip.')
+          madeClips.push(download.clip)
+        }
+        return { media: [], clips: madeClips, ...priced(state.cost ?? quote) }
       }
     } catch (error) {
       const explained = explainedProviderError(provider, error, reader)

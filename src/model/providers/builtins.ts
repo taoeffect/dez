@@ -473,7 +473,9 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     apiFormat: 'openai',
     // Models of the `chat` category that take no chat request: the
     // embedding, moderation, and speech-to-text models, and o3-pro, which
-    // takes only the Responses API (its `supported_endpoint_types`).
+    // takes only the Responses API (its `supported_endpoint_types`). The
+    // music models of the `audio` category, whose entries hold no schema:
+    // Dez knows their request fields from the docs (apimartModels.ts).
     models: [
       { id: 'text-embedding-3-large', fetchedOnly: true, outputs: [] },
       { id: 'text-embedding-3-small', fetchedOnly: true, outputs: [] },
@@ -482,6 +484,8 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
       { id: 'gpt-4o-transcribe', fetchedOnly: true, outputs: [] },
       { id: 'gpt-4o-mini-transcribe', fetchedOnly: true, outputs: [] },
       { id: 'o3-pro', fetchedOnly: true, outputs: [] },
+      { id: 'suno', name: 'Suno', fetchedOnly: true, outputs: ['audio'], request: 'music' },
+      { id: 'flowmusic', name: 'Flow Music', fetchedOnly: true, outputs: ['audio'], request: 'music' },
     ],
     fetchModels: true,
     // Each entry then also has the request parameters of its model.
@@ -489,10 +493,11 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
     modelListQuery: { expand: 'parameters' },
     // The list tells no image input, tools, or thinking that Dez can trust
     // (`capability_tags` give tools to the embedding models), so these flags
-    // stay unknown. The image and audio models take no chat request, and
-    // Dez has no request of theirs yet. A video model makes a video from a
-    // prompt (`mediaApi`); Dez sends it no input image. An `unknown` model
-    // is one that APIMart has not cataloged; its price page answers
+    // stay unknown. The image models take no chat request, and Dez has no
+    // request of theirs yet; nor of the other audio models, but the music
+    // models of `models`. A video model makes a video from a prompt
+    // (`mediaApi`); Dez sends it no input image. An `unknown` model is one
+    // that APIMart has not cataloged; its price page answers
     // `model_not_found` or `no_valid_pricing` (checked live, 2026-11-24).
     modelOutputs: {
       path: 'category',
@@ -531,9 +536,9 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
       contextWindow: { paths: ['data.pricing.limits.max_input_tokens'] },
       note: "APIMart's public price (an account can pay less)",
     },
-    // Video requests are tasks, which Dez polls (apimartFormat.ts). The
-    // docs tell no limit of the tasks of one key at a time, so the
-    // default limit of Dez applies.
+    // Video and music requests are tasks, which Dez polls
+    // (apimartFormat.ts). The docs tell no limit of the tasks of one key at
+    // a time, so the default limit of Dez applies.
     // https://docs.apimart.ai/en/api-reference/tasks/status
     mediaApi: { format: 'apimart' },
     auth: 'apiKey',

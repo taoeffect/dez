@@ -218,7 +218,7 @@ describe('model cache persistence format', () => {
         request: 'music',
         text: { minPromptLength: 10, maxPromptLength: 300, lyrics: { required: true, maxLength: 3000 } },
       },
-      { id: 'sound', name: 'Sound', provider: 'venice', request: 'music', text: { lyrics: { required: false } } },
+      { id: 'sound', name: 'Sound', provider: 'venice', request: 'music', text: { lyrics: { required: false, note: 'Lyrics turn on Custom mode.' } } },
       { id: 'frames', name: 'Frames', provider: 'venice', request: 'imageToVideo', images: { maxImages: 2 } },
       { id: 'first-frame', name: 'First frame', provider: 'venice', request: 'imageToVideo', images: { maxImages: 2 }, learnedImageLimit: { maxImages: 1, entry: '0badf00d' } },
       {

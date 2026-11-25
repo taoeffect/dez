@@ -146,7 +146,7 @@ describe('apimart video tasks', () => {
     ['a text', VIDEO_URL],
     ['a list', [VIDEO_URL, 'https://upload.apimart.ai/f/video/other.mp4']],
   ])('copies the file of the video whose URL is %s, at the cost of the task', (_name, url) => {
-    expect(job().state(poll({ status: 'completed', cost: 0.22848, result: { videos: [{ url, expires_at: 1763174708 }] } }))).toStrictEqual({ fileUrl: VIDEO_URL, cost: 0.22848 })
+    expect(job().state(poll({ status: 'completed', cost: 0.22848, result: { videos: [{ url, expires_at: 1763174708 }] } }))).toStrictEqual({ fileUrls: [VIDEO_URL], cost: 0.22848 })
   })
 
   // Seedance settles its price by tokens a few seconds after the end.
@@ -154,7 +154,7 @@ describe('apimart video tasks', () => {
     expect([
       job().state(poll({ status: 'completed', cost: 0, result: { videos: [{ url: VIDEO_URL }] } })),
       job().state(poll({ status: 'completed', result: { videos: [{ url: VIDEO_URL }] } })),
-    ]).toStrictEqual([{ fileUrl: VIDEO_URL }, { fileUrl: VIDEO_URL }])
+    ]).toStrictEqual([{ fileUrls: [VIDEO_URL] }, { fileUrls: [VIDEO_URL] }])
   })
 
   it.each([
@@ -203,7 +203,143 @@ describe('apimart video quotes', () => {
   })
 
   it('reads the price in USD, and throws for an answer with none', () => {
-    expect(quote.usd({ billing_type: 'per_second', total_usd: 0.22848, quantity: 4, spec: '768P', estimated: false })).toBe(0.22848)
-    expect(thrownError(() => quote.usd({ billing_type: 'per_second', unit_price_usd: 0.05712 }))).toStrictEqual(new UnusableAnswerError('The answer holds no price.'))
+    expect(quote.usd({ billing_type: 'per_second', total_usd: 0.22848, quantity: 4, spec: '768P', estimated: false }, { duration: 4 })).toBe(0.22848)
+    expect(thrownError(() => quote.usd({ billing_type: 'per_second', unit_price_usd: 0.05712 }, { duration: 4 }))).toStrictEqual(new UnusableAnswerError('The answer holds no price.'))
+  })
+})
+
+describe('apimart music models', () => {
+  const entry = (id: string) => ({ id, object: 'model', category: 'audio', parameters: null })
+
+  // The entries of the music models hold no schema (live list, 2026-11-24).
+  it('gives a music model of the doc facts its rows and its text rules, and an unknown music model neither', () => {
+    expect(clips.parameters('music', entry('suno'), undefined, {}).map(({ name }) => name)).toContain('negative_tags')
+    expect(clips.textRules?.('music', entry('suno'), undefined, {})?.lyrics).toMatchObject({ required: false, maxLength: 5000 })
+    expect([clips.parameters('music', entry('new-music'), undefined, {}), clips.textRules?.('music', entry('new-music'), undefined, {})]).toStrictEqual([[], undefined])
+  })
+
+  it('refuses a request to a music model whose fields Dez does not know, before the request goes', () => {
+    expect(thrownError(() => clips.request('music', BASE_URL, 'new-music', { prompt: 'A song', images: [], values: {} })))
+      .toStrictEqual(new ExplainedError('Dez does not know the request fields of this music model. Choose another model.'))
+  })
+})
+
+// https://docs.apimart.ai/en/api-reference/audios/suno/generation
+describe('apimart Suno requests', () => {
+  const request = (input: { prompt: string, lyrics?: string, values?: ParameterValues }) =>
+    clips.request('music', `${BASE_URL}/`, 'suno', { images: [], values: {}, ...input })
+  // A value for each field that only custom mode takes, and for each field
+  // that both modes take.
+  const CUSTOM_ONLY = { title: 'Morning', negative_tags: 'metal', auto_lyrics: true, persona_id: 'p-1', max_mode: true, duration: 120 }
+  const BOTH_MODES = { version: 'v6', instrumental: true, vocal_gender: 'Female', style_weight: 0.6, weirdness_constraint: 0.3, audio_weight: 0.5, variety: 'high', audio_format: 'm4a' }
+
+  it('sends a message with no lyrics in inspiration mode, as the description, with only the fields that both modes take', () => {
+    expect(request({ prompt: 'A cheerful ukulele jingle', values: { ...CUSTOM_ONLY, ...BOTH_MODES } })).toStrictEqual({
+      url: `${BASE_URL}/music/generations`,
+      body: { ...BOTH_MODES, custom: false, prompt: 'A cheerful ukulele jingle', model: 'suno' },
+    })
+  })
+
+  it('sends lyrics in custom mode, with the text before them as the style, whatever the Custom mode row', () => {
+    expect([
+      request({ prompt: 'synthwave, female vocal', lyrics: '[Verse]\nNeon streets', values: { ...CUSTOM_ONLY, version: 'v6' } }).body,
+      request({ prompt: '', lyrics: 'La la la', values: { custom: true } }).body,
+    ]).toStrictEqual([
+      { ...CUSTOM_ONLY, version: 'v6', custom: true, prompt: '[Verse]\nNeon streets', style: 'synthwave, female vocal', model: 'suno' },
+      { custom: true, prompt: 'La la la', model: 'suno' },
+    ])
+  })
+
+  // The docs: custom mode takes no prompt only for an instrumental.
+  it('sends a message with no lyrics in Custom mode as the style of an instrumental, and refuses it without Instrumental', () => {
+    expect(request({ prompt: 'lo-fi piano, rain', values: { custom: true, instrumental: true, title: 'Rain' } }).body)
+      .toStrictEqual({ instrumental: true, title: 'Rain', custom: true, style: 'lo-fi piano, rain', model: 'suno' })
+    expect(thrownError(() => request({ prompt: 'lo-fi piano, rain', values: { custom: true } }))).toStrictEqual(new ExplainedError(
+      'In Custom mode, this model makes a song only from lyrics, or an instrumental. Write the style, then a line "Lyrics:", then the lyrics; or turn on Instrumental, or turn off Custom mode, in the model parameters.',
+    ))
+  })
+
+  // The docs: `custom_model_id` excludes `version` and `persona_id`.
+  it('leaves out the version and the persona of a request with a custom model id', () => {
+    expect(request({ prompt: 'pop', lyrics: 'Hey', values: { version: 'v6', persona_id: 'p-1', custom_model_id: 'm-1' } }).body)
+      .toStrictEqual({ custom_model_id: 'm-1', custom: true, prompt: 'Hey', style: 'pop', model: 'suno' })
+  })
+
+  it('takes a style of 1,000 characters and a title of 80, and tells the user to make a longer one shorter', () => {
+    expect(request({ prompt: 's'.repeat(1000), lyrics: 'Hey', values: { title: 't'.repeat(80) } }).body).toMatchObject({ title: 't'.repeat(80) })
+    expect(thrownError(() => request({ prompt: 's'.repeat(1001), lyrics: 'Hey' }))).toStrictEqual(new ExplainedError(
+      'In Custom mode, this model takes a style (the text before the "Lyrics:" line, or the message of an instrumental) of at most 1000 characters. This one has 1001. Make it shorter.',
+    ))
+    expect(thrownError(() => request({ prompt: 'pop', lyrics: 'Hey', values: { title: 't'.repeat(81) } })))
+      .toStrictEqual(new ExplainedError('This model takes a title of at most 80 characters. This one has 81. Change the Title parameter.'))
+    // Inspiration mode sends no style and no title.
+    expect(request({ prompt: 's'.repeat(1001), values: { title: 't'.repeat(81) } }).body).toStrictEqual({ custom: false, prompt: 's'.repeat(1001), model: 'suno' })
+  })
+})
+
+// https://docs.apimart.ai/en/api-reference/audios/flow-music/music
+describe('apimart Flow Music requests', () => {
+  it('sends the prompt as the sound prompt and the lyrics as they are, each only when there is one, with the values', () => {
+    const request = (prompt: string, lyrics?: string) =>
+      clips.request('music', BASE_URL, 'flowmusic', { prompt, ...(lyrics !== undefined && { lyrics }), images: [], values: { version: 'lyria-3.5', bpm: '120', length: 30 } })
+    expect([request('upbeat pop', 'La la'), request('', 'La la'), request('calm piano')]).toStrictEqual([
+      { url: `${BASE_URL}/music/generations`, body: { version: 'lyria-3.5', bpm: '120', length: 30, sound_prompt: 'upbeat pop', lyrics: 'La la', model: 'flowmusic' } },
+      { url: `${BASE_URL}/music/generations`, body: { version: 'lyria-3.5', bpm: '120', length: 30, lyrics: 'La la', model: 'flowmusic' } },
+      { url: `${BASE_URL}/music/generations`, body: { version: 'lyria-3.5', bpm: '120', length: 30, sound_prompt: 'calm piano', model: 'flowmusic' } },
+    ])
+  })
+})
+
+describe('apimart music tasks', () => {
+  const job = (kind: 'music' | 'video' = 'music') => clips.job(kind, `${BASE_URL}/`, 'suno', { code: 200, data: [{ status: 'submitted', task_id: 'task_01M8' }] })
+  // A done Suno task (live, 2026-11-24, with the URLs and fields cut).
+  const SONG_URLS = ['https://getapib.org/audio/1-f49bbfd9.mp3', 'https://getapib.org/audio/2-677929c1.mp3']
+  const doneSuno = (music: unknown[]) => ({
+    code: 200,
+    data: { id: 'task_01M8', status: 'completed', progress: 100, cost: 0.05, credits_cost: 0.5, billing_status: 'settled', result: { music } },
+  })
+  const song = (audio_url: unknown) => ({ audio_id: 'f49bbfd9', title: 'Good Morning', duration: 38.8, audio_url, image_url: 'https://cdn2.suno.ai/image.jpeg' })
+
+  it('asks /music/tasks/<id> for the state of a music task, in English', () => {
+    expect(job().poll).toStrictEqual({ url: `${BASE_URL}/music/tasks/task_01M8?language=en` })
+  })
+
+  // The docs of Suno: keep the task id of a task in the state `unknown`.
+  it('waits while a music task is pending, in work, or in the state unknown, but not a video task in that state', () => {
+    expect(['pending', 'processing', 'unknown'].map((status) => job().state({ code: 200, data: { status, progress: 10, cost: 0.05, billing_status: 'held' } }))).toStrictEqual(['running', 'running', 'running'])
+    expect(thrownError(() => job('video').state({ code: 200, data: { status: 'unknown' } }))).toStrictEqual(new ClipNotMadeError('State: unknown'))
+  })
+
+  it('copies the file of each song of a done task, at the cost of the task, and leaves out a song with no usable URL', () => {
+    expect([
+      job().state(doneSuno(SONG_URLS.map(song))),
+      job().state(doneSuno([song(SONG_URLS[0]), song('file:///etc/passwd'), { title: 'No file' }, song(SONG_URLS[1])])),
+    ]).toStrictEqual([{ fileUrls: SONG_URLS, cost: 0.05 }, { fileUrls: SONG_URLS, cost: 0.05 }])
+  })
+
+  it('tells that a done task with no usable song URL holds no song', () => {
+    expect(thrownError(() => job().state(doneSuno([song('file:///etc/passwd')])))).toStrictEqual(new UnusableAnswerError('The task is done, and its answer holds no song URL.'))
+  })
+})
+
+// The account's own price of one task (live, 2026-11-24: suno $0.068, also
+// with `version=v6-mini` or `custom`; flowmusic $0.06). It ignores
+// `max_mode` and `custom_model_id`.
+describe('apimart music quotes', () => {
+  it('asks /pricing/model for the price of the version, with the tier custom for a custom model', () => {
+    expect([
+      quote.request('music', BASE_URL, 'suno', { version: 'v6-mini', duration: 120 }, undefined),
+      quote.request('music', BASE_URL, 'suno', { version: 'v6', custom_model_id: 'm-1' }, undefined),
+      quote.request('music', BASE_URL, 'flowmusic', { length: 30 }, undefined),
+    ]).toStrictEqual([
+      { url: `${BASE_URL}/pricing/model?model=suno&version=v6-mini` },
+      { url: `${BASE_URL}/pricing/model?model=suno&version=custom` },
+      { url: `${BASE_URL}/pricing/model?model=flowmusic` },
+    ])
+  })
+
+  it('doubles the price of a request with max mode on', () => {
+    const answer = { billing_type: 'per_call', total_usd: 0.068, quantity: 1, spec: { key: 'music-v6' } }
+    expect([quote.usd(answer, { version: 'v6' }), quote.usd(answer, { version: 'v6', max_mode: true })]).toStrictEqual([0.068, 0.136])
   })
 })

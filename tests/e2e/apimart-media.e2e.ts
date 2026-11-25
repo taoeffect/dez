@@ -1,25 +1,31 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { click, consoleErrors, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
-import { MP4_VIDEO, shownPlayers, startClipServer, type ClipServer } from './harness/media'
+import { MP4_VIDEO, shownPlayers, silentWav, startClipServer, type ClipServer } from './harness/media'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import { answerHeld, mockModelKey, type MockProvider } from './harness/mockServer'
 import { changeParameterField, closePopup, openPopup, popupOpen, popupView } from './harness/parameterPopup'
 import type { E2EBrowser } from './harness/session'
-import { activeTabId, closeToasts, newTab, openToasts, pickModel, sbpCall, submit, threadSections, waitForThread } from './harness/thread'
+import { activeTabId, closeToasts, editorDoc, newTab, openToasts, pasteText, pickModel, sbpCall, setCaret, submit, threadSections, waitForThread } from './harness/thread'
 
-// Video models of APIMart, driven through the real app against a mock of
-// its API (`mediaApi: { format: 'apimart' }`). The mock serves the model
-// list in the form of APIMart's list, with the schema of each model's
-// request (`?expand=parameters`), the account price of a request, and the
-// state of each task.
+// Video and music models of APIMart, driven through the real app against a
+// mock of its API (`mediaApi: { format: 'apimart' }`). The mock serves the
+// model list in the form of APIMart's list, with the schema of each video
+// model's request (`?expand=parameters`), the account price of a request,
+// and the state of each task.
 // - the popup shows the rows that the docs tell for a model that Dez knows
-//   (MiniMax-H3), and the rows of the schema for any other model;
-// - a request is one POST to `/videos/generations` with the values of the
-//   rows (a whole-number text as a number); the app asks for the state of
-//   its task, copies the file of the done task, and shows a player; the
-//   cost of the tab is the cost of the task, not the quote;
+//   (MiniMax-H3, Suno), and the rows of the schema for any other video
+//   model; the Suno popup tells how lyrics turn on its Custom mode;
+// - a video request is one POST to `/videos/generations` with the values
+//   of the rows (a whole-number text as a number); the app asks for the
+//   state of its task, copies the file of the done task, and shows a
+//   player; the cost of the tab is the cost of the task, not the quote;
 // - a task that failed shows an error toast with the task id, and costs
-//   what the task tells (APIMart gives the money back).
+//   what the task tells (APIMart gives the money back);
+// - a music request is one POST to `/music/generations` with the fields of
+//   its model (Suno: inspiration mode for a message with no lyrics; Flow
+//   Music: the style and the lyrics of the message); the app asks
+//   `/music/tasks/<id>` for the state, and shows one player for each song
+//   of the task (a Suno task makes two), at the cost of the task.
 //
 // One app session serves the whole file; each test starts in a new tab.
 
@@ -29,6 +35,12 @@ const GENERAL_MODEL = 'kling-v3'
 const SUBMIT_PATH = `/${MART.id}/v1/videos/generations`
 const taskPath = (taskId: string) => `/${MART.id}/v1/tasks/${taskId}?language=en`
 const quotePath = (query: string) => `/${MART.id}/v1/pricing/model?${query}`
+const MUSIC_PATH = `/${MART.id}/v1/music/generations`
+const musicTaskPath = (taskId: string) => `/${MART.id}/v1/music/tasks/${taskId}?language=en`
+// The music models are config models of the provider (as in the built-in
+// APIMart config) that show when the list holds them.
+const SUNO = { id: 'suno', name: 'Suno' }
+const FLOW_MUSIC = { id: 'flowmusic', name: 'Flow Music' }
 
 // The general schema of almost all video models (kling-v3 in the live
 // list, 2026-11-24, with the descriptions and some image fields cut).
@@ -58,35 +70,66 @@ const videoEntry = (id: string) => ({
   parameters: { endpoint: '/v1/videos/generations', method: 'POST', input_schema: { type: 'object', properties: GENERAL_SCHEMA } },
 })
 
-const MODEL_LIST = { object: 'list', success: true, data: [videoEntry(MART.modelId), videoEntry(GENERAL_MODEL)] }
+// The entries of the music models hold no schema (live list, 2026-11-24).
+const musicEntry = (id: string) =>
+  ({ id, object: 'model', created: 1626777600, owned_by: 'custom', supported_endpoint_types: ['openai'], category: 'audio', capability_tags: ['Text to Audio'], parameters: null })
+
+const MODEL_LIST = { object: 'list', success: true, data: [videoEntry(MART.modelId), videoEntry(GENERAL_MODEL), musicEntry(SUNO.id), musicEntry(FLOW_MUSIC.id)] }
 
 // An answer of the account price request (live, 2026-11-24).
 const quote = (model: string, totalUsd: number) =>
   ({ billing_type: 'per_second', canonical_model: model, currency: 'USD', estimated: false, model, total_usd: totalUsd, unit: 'per_second' })
+// An answer of the account price request of a music model (live,
+// 2026-11-24).
+const musicQuote = (model: string, totalUsd: number) =>
+  ({ billing_type: 'fixed', canonical_model: model, currency: 'USD', estimated: false, model, quantity: 1, total_usd: totalUsd, unit: 'per_call', unit_price_usd: totalUsd })
 
 const submitted = (taskId: string) => JSON.stringify({ code: 200, data: [{ status: 'submitted', task_id: taskId }] })
 
-describe('APIMart video models', () => {
+// A done music task (the live form, 2026-11-24, with most fields of a
+// song cut).
+const doneMusic = (taskId: string, cost: number, songUrls: string[]) => ({
+  code: 200,
+  data: {
+    id: taskId,
+    status: 'completed',
+    progress: 100,
+    cost,
+    billing_status: 'settled',
+    result: { music: songUrls.map((audio_url, index) => ({ audio_id: `song-${index + 1}`, title: 'Good Morning', duration: 2, audio_url })) },
+  },
+})
+
+describe('APIMart media models', () => {
   let setup: MockProviderApp
   let browser: E2EBrowser
   let clips: ClipServer
 
   beforeAll(async () => {
-    clips = await startClipServer({ 'fox.mp4': { type: 'video/mp4', bytes: MP4_VIDEO } })
+    clips = await startClipServer({
+      'fox.mp4': { type: 'video/mp4', bytes: MP4_VIDEO },
+      'song-1.wav': { type: 'audio/wav', bytes: silentWav(2) },
+      'song-2.wav': { type: 'audio/wav', bytes: silentWav(3) },
+    })
     setup = await startMockProviderApp(MART, {
       mediaApi: { format: 'apimart' },
-      // Every model comes from the list of the mock.
+      // Every video model comes from the list of the mock.
       fetchModels: true,
-      models: [],
+      models: [
+        { ...SUNO, fetchedOnly: true, outputs: ['audio'], request: 'music' },
+        { ...FLOW_MUSIC, fetchedOnly: true, outputs: ['audio'], request: 'music' },
+      ],
       modelListQuery: { expand: 'parameters' },
-      modelOutputs: { path: 'category', values: { video: { outputs: ['video'], request: 'video' } } },
+      modelOutputs: { path: 'category', values: { video: { outputs: ['video'], request: 'video' }, audio: { outputs: [] } } },
     }, {
-      heldPaths: [SUBMIT_PATH],
+      heldPaths: [SUBMIT_PATH, MUSIC_PATH],
       jsonAnswers: {
         [`/${MART.id}/v1/models?expand=parameters`]: MODEL_LIST,
         // The free price request that goes before each request.
         [quotePath('model=MiniMax-H3&duration=4&resolution=768P')]: quote(MART.modelId, 0.22848),
         [quotePath('model=kling-v3&duration=5')]: quote(GENERAL_MODEL, 0.336),
+        [quotePath('model=suno&version=v6')]: musicQuote(SUNO.id, 0.068),
+        [quotePath('model=flowmusic')]: musicQuote(FLOW_MUSIC.id, 0.06),
         // The state of each task, which the app asks for 5 seconds after
         // the request.
         [taskPath('task-done')]: {
@@ -97,6 +140,8 @@ describe('APIMart video models', () => {
           code: 200,
           data: { id: 'task-failed', status: 'failed', progress: 0, cost: 0, error: { code: 400, message: 'The prompt breaks the content rules' } },
         },
+        [musicTaskPath('task-suno')]: doneMusic('task-suno', 0.05, [clips.clipUrl('song-1.wav'), clips.clipUrl('song-2.wav')]),
+        [musicTaskPath('task-flow')]: doneMusic('task-flow', 0.06, [clips.clipUrl('song-1.wav')]),
       },
     })
     browser = setup.browser
@@ -208,5 +253,75 @@ describe('APIMart video models', () => {
     // APIMart gave the money back: the quote ($0.22848) does not count.
     expect(await sbpCall(browser, 'dez.model/tabs/costNumbers', await activeTabId(browser))).toEqual({ cost: { usd: 0, requests: 1, unpriced: 0 } })
     await closeToasts(browser)
+  })
+
+  it('shows the rows of Suno and how lyrics turn on its Custom mode, sends a message with no lyrics in inspiration mode, and shows each song of the task at the cost of the task', async () => {
+    const prompt = 'A cheerful ukulele jingle about the morning'
+    await pickModel(browser, MART.name, SUNO.name)
+    await openPopup(browser)
+    await waitForValue(browser, 'popup of Suno', () => popupView(browser), {
+      headers: ['Model Parameters', 'Lyrics'],
+      rows: [
+        { name: 'version', label: 'Version', options: ['v6', 'v6-wild', 'v6-mini'], picked: 'v6' },
+        { name: 'custom', label: 'Custom mode', on: false },
+        { name: 'instrumental', label: 'Instrumental', on: false },
+        { name: 'title', label: 'Title (Custom mode)', text: '' },
+        { name: 'negative_tags', label: 'Styles to avoid (Custom mode)', text: '' },
+        { name: 'auto_lyrics', label: 'Rewrite the lyrics', on: false },
+        { name: 'vocal_gender', label: 'Voice', options: ['Default', 'Male', 'Female'], picked: 'Default' },
+        { name: 'duration', label: 'Length (seconds, Custom mode)', number: '', min: '10', max: '360', step: '1' },
+        { name: 'persona_id', label: 'Persona id (Custom mode)', text: '' },
+        { name: 'custom_model_id', label: 'Custom model id', text: '' },
+        { name: 'variety', label: 'Variety', options: ['Default', 'off', 'normal', 'high', 'extra', 'max'], picked: 'Default' },
+        { name: 'max_mode', label: 'Max mode (Custom mode, 2× price)', on: false },
+        { name: 'style_weight', label: 'Style weight', number: '', min: '0', max: '1', step: '0.1' },
+        { name: 'weirdness_constraint', label: 'Weirdness', number: '', min: '0', max: '1', step: '0.1' },
+        { name: 'audio_weight', label: 'Audio weight', number: '', min: '0', max: '1', step: '0.1' },
+        { name: 'audio_format', label: 'File type', options: ['Default', 'mp3', 'm4a', 'wav'], picked: 'Default' },
+      ],
+      hint: 'To give lyrics, write the style, then a line "Lyrics:", then the lyrics. Lyrics turn on Custom mode: the text before the "Lyrics:" line is then the style (at most 1000 characters). With no lyrics, the message tells what song to make; with Custom mode and Instrumental on, it is the style of the instrumental.',
+      reset: true,
+    })
+    await closePopup(browser)
+    await submit(browser, prompt)
+
+    // The version has a default: a request needs a version or a custom
+    // model id.
+    const request = await takeRequest(setup, MUSIC_PATH, { version: 'v6', custom: false, prompt, model: SUNO.id })
+    answerHeld(request.reply, 'application/json', submitted('task-suno'))
+    await waitForValue(browser, 'sections after the reply', async () => (await threadSections(browser)).length, 3)
+    const reply = (await threadSections(browser))[1].text
+    const songTag = (id: string) => String.raw`<dez:audio id="${id}" type="audio/wav" src="[^"]+\.wav" expires="[^"]+" model="${mockModelKey(MART, SUNO.id)}" job="task-suno"/>`
+    expect(reply).toMatch(new RegExp(`^${songTag('a')}\n\n${songTag('b')}$`))
+    await waitForThread(browser, [
+      { role: 'user', text: prompt },
+      { role: 'agent', text: reply },
+      { role: 'user', text: '' },
+    ])
+    await waitForValue(browser, 'players of the two songs', () => shownPlayers(browser), [
+      { kind: 'audio', id: 'a', available: true, source: 'blob', seconds: 2, picture: null, clock: 'Not saved', save: 'save' },
+      { kind: 'audio', id: 'b', available: true, source: 'blob', seconds: 3, picture: null, clock: 'Not saved', save: 'save' },
+    ])
+    // The cost of the task counts one time, and the quote ($0.068) does not.
+    expect(await sbpCall(browser, 'dez.model/tabs/costNumbers', await activeTabId(browser))).toEqual({ cost: { usd: 0.05, requests: 1, unpriced: 0 } })
+    expect(await consoleErrors(browser)).toStrictEqual([])
+  })
+
+  it('sends the style and the lyrics of a message to Flow Music', async () => {
+    const message = 'Upbeat synth pop\nLyrics:\nLa la la, the city lights'
+    await pickModel(browser, MART.name, FLOW_MUSIC.name)
+    await setCaret(browser, (await editorDoc(browser)).length)
+    await pasteText(browser, message)
+    await waitForValue(browser, 'message with the lyrics', () => threadSections(browser), [{ role: 'user', text: message }])
+    await submit(browser, '')
+
+    const request = await takeRequest(setup, MUSIC_PATH, { sound_prompt: 'Upbeat synth pop', lyrics: 'La la la, the city lights', model: FLOW_MUSIC.id })
+    answerHeld(request.reply, 'application/json', submitted('task-flow'))
+    await waitForValue(browser, 'player of the song', () => shownPlayers(browser), [
+      { kind: 'audio', id: 'a', available: true, source: 'blob', seconds: 2, picture: null, clock: 'Not saved', save: 'save' },
+    ])
+    expect((await threadSections(browser))[1].text).toMatch(new RegExp(String.raw`^<dez:audio id="a" type="audio/wav" src="[^"]+\.wav" expires="[^"]+" model="${mockModelKey(MART, FLOW_MUSIC.id)}" job="task-flow"/>$`))
+    expect(await sbpCall(browser, 'dez.model/tabs/costNumbers', await activeTabId(browser))).toEqual({ cost: { usd: 0.06, requests: 1, unpriced: 0 } })
+    expect(await consoleErrors(browser)).toStrictEqual([])
   })
 })

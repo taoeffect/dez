@@ -1020,7 +1020,7 @@ describe('venice clip quotes', () => {
   })
 
   it('reads the price in USD', () => {
-    expect(quote.usd({ quote: 0.02 })).toBe(0.02)
+    expect(quote.usd({ quote: 0.02 }, {})).toBe(0.02)
   })
 
   it.each([
@@ -1028,7 +1028,7 @@ describe('venice clip quotes', () => {
     ['a price that is no number', { quote: '0.02' }],
     ['no object', null],
   ])('refuses an answer with %s', (_name, data) => {
-    expect(thrownError(() => quote.usd(data))).toStrictEqual(new UnusableAnswerError('The answer holds no price.'))
+    expect(thrownError(() => quote.usd(data, {}))).toStrictEqual(new UnusableAnswerError('The answer holds no price.'))
   })
 })
 
@@ -1166,7 +1166,7 @@ describe('venice clip jobs', () => {
   // The server of the URL answers no range request, so no player can seek
   // in a clip that plays from it.
   it('gives the download URL of the queue answer as a file to copy when the job is done', () => {
-    expect(videoJob({ queue_id: 'q-1', download_url: DOWNLOAD_URL }).state({ status: 'COMPLETED' })).toStrictEqual({ fileUrl: DOWNLOAD_URL })
+    expect(videoJob({ queue_id: 'q-1', download_url: DOWNLOAD_URL }).state({ status: 'COMPLETED' })).toStrictEqual({ fileUrls: [DOWNLOAD_URL] })
   })
 
   it.each([

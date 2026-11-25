@@ -108,14 +108,15 @@ export interface MediaWireRequest {
 //   time in ms). The clip plays from the URL, so its server must answer
 //   range requests: a player seeks with them.
 // - `download`: in the response to a request of the media API.
-// - `fileUrl`: at a URL that gives the clip with no header, and that no
-//   player can play from. Dez makes a temp copy of it.
+// - `fileUrls`: at URLs that give the clips with no header, and that no
+//   player can play from: one URL for each clip of the job (a job of some
+//   music models makes more than one song). Dez makes a temp copy of each.
 // `cost` is the provider's own price of the job in USD, when the answer
-// tells it (`AnswerCost`).
+// tells it (`AnswerCost`): one price for all clips of the job.
 export type ClipLocation = (
   | { url: string, mediaType: string, expires: number }
   | { download: MediaWireRequest }
-  | { fileUrl: string }
+  | { fileUrls: readonly [string, ...string[]] }
 ) & AnswerCost
 
 // The provider's own price in USD of the request that an answer answers,
@@ -200,9 +201,10 @@ export interface ClipQuoteFormat {
   // model's entry in the provider's model list. Null: the API has no such
   // request for the kind or the model; its prices are in its entries then.
   request(kind: ClipKind, baseUrl: string, modelId: string, values: ParameterValues, entry: unknown): MediaWireRequest | null
-  // The price in USD in the JSON of a 2xx response to `request`. Throws
+  // The price in USD in the JSON of a 2xx response to `request` with
+  // `values`, for a price that the answer does not count in full. Throws
   // when it holds none.
-  usd(data: unknown): number
+  usd(data: unknown, values: ParameterValues): number
 }
 
 // The price of one clip request that the entries of a model tell
@@ -1018,7 +1020,7 @@ const veniceFormat: MediaFormat = {
     // job runs, and then the clip's bytes. A video model that stores its
     // clips at Venice also gives a `download_url` here (good for 24 hours,
     // with no header); its retrieve then always answers JSON, and
-    // `COMPLETED` means that the URL has the clip. That URL is a `fileUrl`
+    // `COMPLETED` means that the URL has the clip. That URL is a file URL
     // and not a `url`: its server answers a range request with the whole
     // file (seen 2026-11-10), and a seek in the player then fails with a
     // network error. The voice changer has its own retrieve endpoint, which
@@ -1045,7 +1047,7 @@ const veniceFormat: MediaFormat = {
           // A state that is new, or that ends the job with no clip.
           if (status !== 'COMPLETED') throw new ClipNotMadeError(`State: ${typeof status === 'string' ? sanitizeErrorText(status, 40) : 'none'}`)
           if (downloadUrl === null) throw new UnusableAnswerError('The job is done, and its answer holds no clip and no download URL.')
-          return { fileUrl: downloadUrl }
+          return { fileUrls: [downloadUrl] }
         },
       }
     },

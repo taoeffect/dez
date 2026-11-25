@@ -523,7 +523,7 @@ export class Provider {
   ): { request: NativeHttpRequest, usd(data: unknown): number } | null {
     const quote = this.mediaFormatOrNone()?.clips?.quote
     const wire = quote?.request(kind, this.config.baseUrl, modelId, values, entry)
-    return quote && wire ? { request: { ...this.mediaApiRequest(wire, secret), timeoutMs: MODEL_LIST_TIMEOUT_MS }, usd: quote.usd } : null
+    return quote && wire ? { request: { ...this.mediaApiRequest(wire, secret), timeoutMs: MODEL_LIST_TIMEOUT_MS }, usd: (data) => quote.usd(data, values) } : null
   }
 
   // The price of the clip that `clipRequest` with the same values asks
