@@ -92,5 +92,8 @@ export async function takeMediaTurn(providerId: string, limit: number, signal: A
 export function takeMediaTurnNow(providerId: string, limit: number): () => void {
   const entry = providerTurns(providerId, limit)
   entry.running++
+  // A larger cap of a changed config gives turns to the calls that wait,
+  // after this turn counts: the job runs at the provider too.
+  admit(providerId, entry)
   return turnEnd(providerId, entry)
 }

@@ -116,4 +116,18 @@ describe('takeMediaTurnNow', () => {
     await settle()
     expect(started).toStrictEqual(['a', 'b'])
   })
+
+  it('gives the calls that wait the turns of a larger cap, with its own turn counted', async () => {
+    const { take, started, waited } = turnTaker('grown')
+    for (const name of ['a', 'b', 'c']) void take(name, 1)
+    await settle()
+    expect([started, waited]).toStrictEqual([['a'], ['b', 'c']])
+
+    const endNow = takeMediaTurnNow('grown', 3)
+    await settle()
+    expect(started).toStrictEqual(['a', 'b'])
+    endNow()
+    await settle()
+    expect(started).toStrictEqual(['a', 'b', 'c'])
+  })
 })
