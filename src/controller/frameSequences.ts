@@ -92,7 +92,7 @@ export async function encodedSequence(folder: string, outputFolder: string, name
   const made = await sbp('dez.native/listFileTree', `${folder}/${clip}`, 0, 'cache') as FileTree
   const problem = encodedClipProblem(name, sequence, { size: made.kind === 'file' ? made.size : null, frames: encodedFrameCount(progress) })
   if (problem !== null) {
-    console.error(`Dez does not keep the clip of the frame sequence ${name} of a script run:`, problem, errors)
+    console.error(`Dez does not keep the clip of the frame sequence ${name} of a script run:`, problem, errors.text())
     return { notKept: problem }
   }
   return { clip, sequence }

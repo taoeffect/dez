@@ -581,7 +581,8 @@ describe('runScriptJob', () => {
   it('keeps no clip of an encode that left out a frame', async () => {
     native.program = returns('done')
     outputFolderHolds(frameFolder('glow.frames', { fps: 24, width: 64, height: 36, count: 3, alpha: true }, 3))
-    encodesClip({ frames: 2 })
+    const errors = '[png @ 0xffff8a444870] Invalid PNG signature 0x4A46494600000000.\n'
+    encodesClip({ frames: 2, errors })
 
     const outcome = await runJob()
 
@@ -589,6 +590,7 @@ describe('runScriptJob', () => {
     expect(native.moves).toStrictEqual([])
     expect(outcome).toMatchObject({ isError: false, assets: [] })
     expect(outcome.text).toContain('Dez did not keep glow.frames/ (ffmpeg encoded 2 of its 3 frames: a frame is no PNG file that ffmpeg can read).')
+    expect(consoleError).toHaveBeenCalledWith(expect.any(String), expect.any(String), errors)
     deletedWorkFolder()
   })
 
