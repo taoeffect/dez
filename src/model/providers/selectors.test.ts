@@ -704,6 +704,46 @@ describe('the price of a chat request', () => {
   })
 })
 
+describe('the price request of a chat model', () => {
+  const PRICE_URL = 'http://localhost:6262/api/pricing/model'
+  const modelPrice = (modelId: string) => sbp('dez.provider/modelPrice', 'priced', modelId) as Promise<unknown>
+
+  beforeEach(() => {
+    sbp('dez.model/customProviders/save', {
+      id: 'priced',
+      name: 'Priced',
+      baseUrl: 'http://localhost:6262/v1',
+      apiFormat: 'openai',
+      models: [],
+      fetchModels: true,
+      auth: 'apiKey',
+      modelPriceRequest: { url: PRICE_URL, query: 'model', prices: { input: 'data.in', output: 'data.out', perTokens: 1_000_000 }, contextWindow: { paths: ['data.window'] } },
+    })
+  })
+
+  it('gives the price and the window of the answer, from a request with no key', async () => {
+    httpAnswers.set(`${PRICE_URL}?model=m`, { status: 200, json: { data: { in: 2, out: 10, window: 200_000 } } })
+
+    expect(await modelPrice('m')).toStrictEqual({ price: { unit: 'token', input: 2, output: 10 }, contextWindow: 200_000 })
+    expect(httpRequests).toStrictEqual([expect.objectContaining({ method: 'GET', url: `${PRICE_URL}?model=m`, headers: { Accept: 'application/json' } })])
+  })
+
+  it('gives nothing for a model that the provider has no price of, and rejects when the request fails', async () => {
+    httpAnswers.set(`${PRICE_URL}?model=unpriced`, { status: 404, json: { success: false, error: { code: 'no_valid_pricing' } } })
+    httpAnswers.set(`${PRICE_URL}?model=busy`, { status: 503, json: { error: 'Busy' } })
+
+    expect(await modelPrice('unpriced')).toStrictEqual({})
+    await expect(modelPrice('busy')).rejects.toThrow(ExplainedError)
+  })
+
+  it('is null for a provider with no price request', async () => {
+    sbp('dez.model/customProviders/save', { id: 'unpriced', name: 'Unpriced', baseUrl: 'http://localhost:6262/v1', apiFormat: 'openai', models: [], fetchModels: true, auth: 'apiKey' })
+
+    expect(await sbp('dez.provider/modelPrice', 'unpriced', 'm')).toBeNull()
+    expect(httpRequests).toStrictEqual([])
+  })
+})
+
 // The popup's rows and the chat request read one rule (modelToggles.ts) with
 // the model of the model cache, so they agree for every model.
 describe('the toggles of the request model', () => {

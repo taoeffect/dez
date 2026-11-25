@@ -217,14 +217,23 @@ export interface ModelInfo {
   learnedImageLimit?: LearnedImageLimit
   // The price of the model's requests that the provider's model list gives
   // (modelPrices.ts): token prices for a chat model, else the price of one
-  // unit of a media request for the default values of its parameters.
+  // unit of a media request for the default values of its parameters. A
+  // chat model of a provider with `modelPriceRequest` (config.ts) gets it
+  // from that request instead (`priceLoadedAt`).
   // `model_list` and `model_info` show it, and the cost of a request whose
   // provider tells no price comes from it: the tokens of a chat request
   // (`chatRequestCost`, chatUsage.ts), the characters of a speech request
   // with no quote (`textLengthCost`). Missing: the list gives none.
   price?: ModelPrice
-  // The model's context window, in tokens, that the provider's model list
-  // or the config gives (`modelContextWindow`, `models[].contextWindow` in
+  // The time of the answer of the price request of the model
+  // (`modelPriceRequest`, `dez.controller/modelCache/loadPrice`), which
+  // gave `price` and `contextWindow`, or told that the provider has none.
+  // Dez asks again when it is not fresh (`isFreshPrice`). Missing: no
+  // price request answered.
+  priceLoadedAt?: number
+  // The model's context window, in tokens, that the provider's model list,
+  // the price request, or the config gives (`modelContextWindow`,
+  // `modelPriceRequest.contextWindow`, `models[].contextWindow` in
   // config.ts): the most tokens of the prompt and the answer of one
   // request, or the provider's smaller limit of the prompt. A positive
   // whole number. Missing: the list gives none, and the model's family
@@ -243,7 +252,7 @@ export interface ModelInfo {
   messageImageLimit?: number
 }
 
-export type ModelCapabilities = Pick<ModelInfo, 'readableName' | 'released' | 'imageInput' | 'audioInput' | 'videoInput' | 'toolCalling' | 'thinking' | 'unsupportedSettings' | 'outputs' | 'request' | 'parameters' | 'text' | 'images' | 'clips' | 'unstoredOutput' | 'learnedImageLimit' | 'price' | 'contextWindow' | 'imageLimit' | 'messageImageLimit'>
+export type ModelCapabilities = Pick<ModelInfo, 'readableName' | 'released' | 'imageInput' | 'audioInput' | 'videoInput' | 'toolCalling' | 'thinking' | 'unsupportedSettings' | 'outputs' | 'request' | 'parameters' | 'text' | 'images' | 'clips' | 'unstoredOutput' | 'learnedImageLimit' | 'price' | 'priceLoadedAt' | 'contextWindow' | 'imageLimit' | 'messageImageLimit'>
 
 // What a clip model takes as the input of a request, besides the values of
 // its parameters.
@@ -459,6 +468,7 @@ export function providerModel(provider: ProviderId, id: string, name: string, ca
   if (capabilities.unstoredOutput !== undefined) model.unstoredOutput = capabilities.unstoredOutput
   if (capabilities.learnedImageLimit !== undefined) model.learnedImageLimit = { ...capabilities.learnedImageLimit }
   if (capabilities.price !== undefined) model.price = { ...capabilities.price }
+  if (capabilities.priceLoadedAt !== undefined) model.priceLoadedAt = capabilities.priceLoadedAt
   if (capabilities.contextWindow !== undefined) model.contextWindow = capabilities.contextWindow
   if (capabilities.imageLimit !== undefined) model.imageLimit = capabilities.imageLimit
   if (capabilities.messageImageLimit !== undefined) model.messageImageLimit = capabilities.messageImageLimit

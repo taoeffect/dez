@@ -29,7 +29,7 @@ import { learnedImageLimitRow, learnedImagesProblem } from './learnedImageLimit'
 import type { InputClipPart, MediaWireRequest } from './mediaFormats'
 import { takeMediaTurn } from './mediaTurns'
 import { effectiveParameterValues, type ParameterValues } from './modelParameters'
-import { textLengthCost, type PriceQuote } from './modelPrices'
+import { textLengthCost, type LoadedModelPrice, type PriceQuote } from './modelPrices'
 import { modelToggles, type ToggleModel } from './modelToggles'
 import type { Provider, ProviderChatRequest } from './provider'
 import { getProvider, listProviders, requireProvider } from './registry'
@@ -398,17 +398,20 @@ async function fetchReplyImage(provider: Provider, url: string): Promise<Uint8Ar
   return readNativeChunkBytes(chunks)
 }
 
-// The JSON of the 2xx response to a request that is not a stream (a model
-// list, a price). Throws for any other status, for no answer, and for an
-// answer that is not JSON (a custom provider's base URL can name a web page
-// that answers 2xx with HTML).
-async function jsonResponse(provider: Provider, request: NativeHttpRequest): Promise<unknown> {
-  let response: NativeHttpResponse
+// The response to a request that is not a stream (a model list, a price),
+// whatever its status. Throws when no answer came.
+async function providerResponse(provider: Provider, request: NativeHttpRequest): Promise<NativeHttpResponse> {
   try {
-    response = await sbp('dez.native/httpRequest', request) as NativeHttpResponse
+    return await sbp('dez.native/httpRequest', request) as NativeHttpResponse
   } catch (error) {
     throw providerConnectionError(provider, error)
   }
+}
+
+// The JSON of `response`, a 2xx response of `providerResponse`. Throws for
+// any other status, and for an answer that is not JSON (a custom
+// provider's base URL can name a web page that answers 2xx with HTML).
+function responseJson(provider: Provider, response: NativeHttpResponse): unknown {
   assertProviderResponseOk(response, provider, nativeResponseText(response))
   try {
     return nativeResponseJson<unknown>(response)
@@ -418,6 +421,12 @@ async function jsonResponse(provider: Provider, request: NativeHttpRequest): Pro
       : ` Check the base URL of ${provider.name} in Settings › Providers.`
     throw new ExplainedError(`${provider.name} sent an answer that is not JSON, so Dez cannot read it.${fix}`, rawErrorText(error), { cause: error })
   }
+}
+
+// The JSON of the 2xx response to a request that is not a stream. Throws
+// for any other status, for no answer, and for an answer that is not JSON.
+async function jsonResponse(provider: Provider, request: NativeHttpRequest): Promise<unknown> {
+  return responseJson(provider, await providerResponse(provider, request))
 }
 
 // The value that a media request sends for each parameter of a model: the
@@ -915,5 +924,22 @@ export default sbp('sbp/selectors/register', {
       } satisfies PriceQuote)
     }
     return quote
+  },
+
+  // What the price request of the provider (`modelPriceRequest` in
+  // config.ts) tells of its chat model `modelId`: the token price and the
+  // context window, each missing when the answer tells none. A 404 answer
+  // tells that the provider has no price of the model (APIMart's
+  // `model_not_found` and `no_valid_pricing`), so it gives neither. Null
+  // for a provider with no price request. The request costs nothing.
+  // Rejects when it fails.
+  async 'dez.provider/modelPrice' (providerId: ProviderId, modelId: string): Promise<LoadedModelPrice | null> {
+    const provider = requireProvider(providerId)
+    const request = provider.modelPriceRequest(modelId)
+    if (!request) return null
+    const response = await providerResponse(provider, request)
+    if (response.status === 404) return {}
+    const model = sbp('dez.model/modelCache/model', provider.id, modelId) as ModelInfo | null
+    return provider.loadedPrice(responseJson(provider, response), model ?? { id: modelId })
   },
 })

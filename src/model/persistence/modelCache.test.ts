@@ -116,6 +116,23 @@ describe('model cache persistence format', () => {
     expect(parseModelCacheJson(serializeModelCacheJson(parsed))).toStrictEqual(parsed)
   })
 
+  // The time of a price load keeps a fresh loaded price (or the fact that
+  // the provider has none) over a restart, so no send waits for a load.
+  it('round-trips the time of a price load, with or without a price, and drops only a time that is not valid', () => {
+    const model = { id: 'm', name: 'M', provider: 'apimart' }
+    const loaded = [
+      { ...model, price: { unit: 'token', input: 1.6, output: 8, note: 'list price' }, contextWindow: 1_000_000, priceLoadedAt: 1000 },
+      { ...model, priceLoadedAt: 1000 },
+    ]
+    const parsed = parseModelCacheJson(JSON.stringify({
+      version: MODEL_CACHE_VERSION,
+      providers: { apimart: { models: [...loaded, { ...model, priceLoadedAt: -1 }, { ...model, priceLoadedAt: '1000' }], working: true, updatedAt: 1, lastCheckedAt: 2 } },
+    }))
+
+    expect(parsed.providers.apimart?.models).toStrictEqual([...loaded, model, model])
+    expect(parseModelCacheJson(serializeModelCacheJson(parsed))).toStrictEqual(parsed)
+  })
+
   it('round-trips the price quotes, drops only a quote that is not valid, and writes no quote list with no quote', () => {
     const quotes = [
       { providerId: 'venice', modelId: 'wan', kind: 'video', values: { duration: '5s', duration_seconds: 5, audio: true }, usd: 0.5, at: 10 },

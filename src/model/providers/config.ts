@@ -128,6 +128,42 @@ const tokenRateSchema = z.number().nonnegative()
 // request that fits it fits them all.
 const modelCountPathsSchema = z.object({ paths: z.array(modelEntryPathSchema).min(1, 'Paths must not be empty') })
 
+// Where a JSON object holds the token prices of a chat model
+// (modelPrices.ts): the input, output, cached input, and cache write
+// price, each a number or a text of a number, in USD per `perTokens`
+// tokens (1 for a price per token, 1000000 for a price per 1M tokens).
+// `cacheWrite` is the price of the input tokens that a request puts into
+// the prompt cache for 5 minutes, the lifetime of Dez's cache marks
+// (apiFormats.ts). It can be a list of paths, and the first path that
+// holds a price counts: a provider can name that price differently for
+// each model (APIMart's `cache_write_5m` and `cache_write`). `otherRates`:
+// where the object tells other rates of some requests (a long prompt, a
+// time of day), so that the price is only the base rate. `imageOutput` and
+// `audioOutput`: where it holds the price of the image and the audio
+// tokens that a chat model makes.
+const tokenPricePathsSchema = z.object({
+  input: modelEntryPathSchema,
+  output: modelEntryPathSchema,
+  cachedInput: modelEntryPathSchema.optional(),
+  cacheWrite: z.union([modelEntryPathSchema, z.array(modelEntryPathSchema).min(1, 'Paths must not be empty')]).optional(),
+  perTokens: z.number().positive(),
+  otherRates: modelEntryPathSchema.optional(),
+  // Where an entry tells a second, higher rate of the same tokens (the
+  // dearest model that a router can pick). Such a price is not one
+  // number, so with a price at this path Dez knows none, as with
+  // OpenRouter's `-1`.
+  variableRate: modelEntryPathSchema.optional(),
+  // For the entries whose price is not one number but that tell no
+  // `variableRate` (a panel of models whose list price is 0): a value at
+  // `path` that `values` holds makes the price unknown too.
+  variableRateBy: z.object({
+    path: modelEntryPathSchema,
+    values: z.array(z.string()).min(1, 'Values must not be empty'),
+  }).optional(),
+  imageOutput: modelEntryPathSchema.optional(),
+  audioOutput: modelEntryPathSchema.optional(),
+})
+
 // The formats of a release date in a `/models` entry (`modelReleased`).
 const MODEL_RELEASED_FORMATS = ['unixSeconds', 'rfc3339'] as const
 
@@ -343,39 +379,10 @@ export const providerConfigSchema = z.object({
   // number) or `rfc3339` (a text, such as Anthropic's `created_at`).
   // `model_list` and `model_info` show it as the model's release date.
   modelReleased: z.object({ path: modelEntryPathSchema, format: z.enum(MODEL_RELEASED_FORMATS) }).optional(),
-  // Where a `/models` entry holds the token prices of a chat model
-  // (modelPrices.ts): the input, output, cached input, and cache write
-  // price, each a number or a text of a number, in USD per `perTokens`
-  // tokens (1 for a price per token, 1000000 for a price per 1M tokens).
-  // `cacheWrite` is the price of the input tokens that a request puts into
-  // the prompt cache for 5 minutes, the lifetime of Dez's cache marks
-  // (apiFormats.ts). `otherRates`: where the entry tells other rates of
-  // some requests (a long prompt, a time of day), so that the price is only
-  // the base rate. `imageOutput` and `audioOutput`: where it holds the
-  // price of the image and the audio tokens that a chat model makes.
-  // `model_list` and `model_info` show the price.
-  modelTokenPrices: z.object({
-    input: modelEntryPathSchema,
-    output: modelEntryPathSchema,
-    cachedInput: modelEntryPathSchema.optional(),
-    cacheWrite: modelEntryPathSchema.optional(),
-    perTokens: z.number().positive(),
-    otherRates: modelEntryPathSchema.optional(),
-    // Where an entry tells a second, higher rate of the same tokens (the
-    // dearest model that a router can pick). Such a price is not one
-    // number, so with a price at this path Dez knows none, as with
-    // OpenRouter's `-1`.
-    variableRate: modelEntryPathSchema.optional(),
-    // For the entries whose price is not one number but that tell no
-    // `variableRate` (a panel of models whose list price is 0): a value at
-    // `path` that `values` holds makes the price unknown too.
-    variableRateBy: z.object({
-      path: modelEntryPathSchema,
-      values: z.array(z.string()).min(1, 'Values must not be empty'),
-    }).optional(),
-    imageOutput: modelEntryPathSchema.optional(),
-    audioOutput: modelEntryPathSchema.optional(),
-  }).optional(),
+  // Where a `/models` entry holds the token prices of a chat model, at the
+  // paths of `tokenPricePathsSchema`. `model_list` and `model_info` show
+  // the price.
+  modelTokenPrices: tokenPricePathsSchema.optional(),
   // The token prices of the chat models, for a provider whose model list
   // tells none (Anthropic's), in USD per 1M tokens, with the fields of a
   // price of `modelTokenPrices`, and a `note` that tells what the price
@@ -393,6 +400,28 @@ export const providerConfigSchema = z.object({
     cacheWrite: tokenRateSchema.optional(),
     note: z.string().trim().min(1).optional(),
   })).optional(),
+  // A request that tells the price of one chat model, for a provider whose
+  // model list tells no price (APIMart). Dez sends `GET <url>?<query>=<model
+  // id>` when the price of a model is older than PRICE_LIFETIME_MS
+  // (modelPrices.ts) and Dez needs it: before a chat request to the model,
+  // and when the user picks the model. The request goes with no API key and
+  // no `headers`: a price is no secret, and the key goes only to the URLs
+  // of `baseUrl`. `prices` are the paths of the token prices in the JSON of
+  // the answer (`tokenPricePathsSchema`), and `contextWindow` the paths of
+  // the context window of the model (as `modelContextWindow`). `note` is
+  // added to the note of each price (a list price, which some accounts pay
+  // less than). A 404 answer tells that the provider has no price of the
+  // model. With this field, the model list gives no price and no context
+  // window, so that each has one source.
+  modelPriceRequest: z.object({
+    url: z.string()
+      .trim()
+      .refine(isValidBaseUrl, 'Price URL must be an http:// or https:// URL with no query, fragment, user name, or password'),
+    query: z.string().trim().min(1, 'Query must not be empty'),
+    prices: tokenPricePathsSchema,
+    contextWindow: modelCountPathsSchema.optional(),
+    note: z.string().trim().min(1).optional(),
+  }).optional(),
   // Where a `/models` entry holds the context window of its model, in
   // tokens: the most tokens of the prompt and the answer of one request
   // (OpenRouter's `context_length`, a vLLM server's `max_model_len`). A
@@ -573,11 +602,19 @@ export const providerConfigSchema = z.object({
   }).optional(),
   settings: z.array(providerSettingDefSchema).optional(),
   thinking: thinkingConfigSchema.optional(),
-})
+}).refine(
+  (config) => config.modelPriceRequest === undefined || (config.modelTokenPrices === undefined && config.tokenPrices === undefined),
+  { message: 'A provider with modelPriceRequest takes no modelTokenPrices and no tokenPrices: a price has one source', path: ['modelPriceRequest'] },
+).refine(
+  (config) => config.modelPriceRequest?.contextWindow === undefined || config.modelContextWindow === undefined,
+  { message: 'A provider with modelPriceRequest.contextWindow takes no modelContextWindow: a context window has one source', path: ['modelPriceRequest', 'contextWindow'] },
+)
 
 // Custom providers come from app_state.json or Settings. They cannot take a
 // built-in id, and GitHub Copilot sign-in exists only for the built-in.
-export const customProviderConfigSchema = providerConfigSchema.extend({
+// `safeExtend` keeps the refinements of the built-in schema (`extend`
+// refuses to change the keys of a schema that has them).
+export const customProviderConfigSchema = providerConfigSchema.safeExtend({
   id: providerIdSchema.refine(
     (id) => !BUILT_IN_PROVIDER_IDS.includes(id),
     'Provider id belongs to a built-in provider',
@@ -596,6 +633,7 @@ export function configIssueText(error: z.ZodError): string {
 
 export type ApiFormatId = (typeof API_FORMAT_IDS)[number]
 export type ProviderSettingDef = z.infer<typeof providerSettingDefSchema>
+export type TokenPricePaths = z.infer<typeof tokenPricePathsSchema>
 export type ProviderConfig = z.infer<typeof providerConfigSchema>
 export type ProviderModelConfig = ProviderConfig['models'][number]
 export type ProviderThinkingConfig = z.infer<typeof thinkingConfigSchema>

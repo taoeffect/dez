@@ -19,11 +19,11 @@ import { currentShortcutPlatform, findShortcut, normalizeShortcutKey, validateSh
 import { MAX_CLOSED_TABS, NEW_TAB_TITLE, useTabStore, type ReplyEnd } from './tabs'
 import type { AppStatePayload, CachedProvider, ContentNodeData, ConversationData, ConversationSearchOutcome, ModelCache } from '../persistence/types'
 import { emptyModelCache } from '../persistence/modelCache'
-import type { ModelOutputsConfig, ProviderConfig, ProviderThinkingConfig } from '../providers/config'
+import type { ModelOutputsConfig, ProviderConfig, ProviderThinkingConfig, TokenPricePaths } from '../providers/config'
 import { withKeptClipData } from '../providers/keptClipData'
 import { modelEntriesFingerprint, withKeptImageLimits } from '../providers/learnedImageLimit'
 import type { ParameterValue, ParameterValues } from '../providers/modelParameters'
-import { freshQuote, freshQuotes, withQuote, type PriceQuote, type QuoteRequest } from '../providers/modelPrices'
+import { freshQuote, freshQuotes, withKeptLoadedPrices, withQuote, type LoadedModelPrice, type PriceQuote, type QuoteRequest } from '../providers/modelPrices'
 import { DEFAULT_FAMILY, modelFamily } from '../providers/modelFamilies'
 import { isToolsEnabled, toolsApply } from '../providers/modelToggles'
 import { getProvider } from '../providers/registry'
@@ -196,13 +196,22 @@ function cloneRecords<Value>(records: Record<string, Record<string, Value>>): Re
   return output
 }
 
+function cloneTokenPricePaths(paths: TokenPricePaths): TokenPricePaths {
+  const { cacheWrite, variableRateBy, ...rest } = paths
+  return {
+    ...rest,
+    ...(cacheWrite !== undefined && { cacheWrite: typeof cacheWrite === 'string' ? cacheWrite : [...cacheWrite] }),
+    ...(variableRateBy && { variableRateBy: { path: variableRateBy.path, values: [...variableRateBy.values] } }),
+  }
+}
+
 // Copies only the known ProviderConfig fields, so a stray field of a caller's
 // object (such as a hand-added `apiKey`) never enters the store or
 // app_state.json.
 function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
   const {
     id, name, baseUrl, apiFormat, models, fetchModels, modelListQuery, modelImageInput, modelAudioInput, modelVideoInput, modelToolCalling,
-    modelThinking, modelOutputs, modelReadableName, modelReleased, modelTokenPrices, tokenPrices, modelContextWindow, modelImageLimit, modelMessageImageLimit, auth, headers, imageRequestHeaders,
+    modelThinking, modelOutputs, modelReadableName, modelReleased, modelTokenPrices, tokenPrices, modelPriceRequest, modelContextWindow, modelImageLimit, modelMessageImageLimit, auth, headers, imageRequestHeaders,
     maxOutputTokens, cacheBreakpoints, toolMessageCacheMark, promptCacheKey, prefixCacheMark, requestBody, providerSystemPrompt, chatClips, imageOutputBody,
     audioOutputs, mediaApi, settings, thinking,
     ...uncopied
@@ -228,8 +237,16 @@ function cloneProviderConfig(config: ProviderConfig): ProviderConfig {
   if (modelOutputs) clone.modelOutputs = cloneModelOutputsConfig(modelOutputs)
   if (modelReadableName) clone.modelReadableName = { ...modelReadableName }
   if (modelReleased) clone.modelReleased = { ...modelReleased }
-  if (modelTokenPrices) clone.modelTokenPrices = { ...modelTokenPrices }
+  if (modelTokenPrices) clone.modelTokenPrices = cloneTokenPricePaths(modelTokenPrices)
   if (tokenPrices) clone.tokenPrices = tokenPrices.map((row) => ({ ...row }))
+  if (modelPriceRequest) {
+    const { prices, contextWindow, ...rest } = modelPriceRequest
+    clone.modelPriceRequest = {
+      ...rest,
+      prices: cloneTokenPricePaths(prices),
+      ...(contextWindow && { contextWindow: { paths: [...contextWindow.paths] } }),
+    }
+  }
   if (modelContextWindow) clone.modelContextWindow = { paths: [...modelContextWindow.paths] }
   if (modelImageLimit) clone.modelImageLimit = { paths: [...modelImageLimit.paths] }
   if (modelMessageImageLimit) clone.modelMessageImageLimit = { paths: [...modelMessageImageLimit.paths] }
@@ -1773,6 +1790,20 @@ export default sbp('sbp/selectors/register', {
     if (model && entry !== undefined) model.learnedImageLimit = { maxImages, entry }
   },
 
+  // Keeps what the price request of the provider told of its chat model
+  // `modelId` at the time `at` (`dez.controller/modelCache/loadPrice`): the
+  // price, or that the provider has none, and the context window when the
+  // answer tells one. Nothing for a model that the cache does not have
+  // (now). The model cache watch saves it.
+  'dez.model/modelCache/keepLoadedPrice' (providerId: ProviderId, modelId: string, { price, contextWindow }: LoadedModelPrice, at: number): void {
+    const model = cachedModel({ providerId, modelId })
+    if (!model) return
+    if (price) model.price = { ...price }
+    else delete model.price
+    if (contextWindow !== undefined) model.contextWindow = contextWindow
+    model.priceLoadedAt = at
+  },
+
   // Reconciliation primitive: on success replace models and raw entries,
   // mark working, bump both timestamps, and clear the error; on failure keep
   // the last-known models and raw entries but mark the provider not-working,
@@ -1784,13 +1815,16 @@ export default sbp('sbp/selectors/register', {
   // The raw media entries are only those of the lists that loaded: they
   // hold prices, and `model_info` must not show old ones as the provider's
   // answer. On every success, a model keeps its learned image limit only
-  // while its new raw entries are the same (`withKeptImageLimits`).
+  // while its new raw entries are the same (`withKeptImageLimits`), and a
+  // chat model of a provider with a price request keeps what that request
+  // told (`withKeptLoadedPrices`).
   'dez.model/modelCache/applyProviderResult' (providerId: ProviderId, result: ProviderModelsResult): void {
     const store = useModelCacheStore()
     const now = Date.now()
     const existing = store.cache.providers[providerId]
     if (result.ok) {
-      const listed = result.mediaListFailed && existing ? withKeptClipData(result.models, existing.models) : result.models
+      const withClipData = result.mediaListFailed && existing ? withKeptClipData(result.models, existing.models) : result.models
+      const listed = existing && getProvider(providerId)?.config.modelPriceRequest ? withKeptLoadedPrices(withClipData, existing.models) : withClipData
       const models = withKeptImageLimits(listed, existing?.models ?? [], result.entries, result.mediaEntries)
       store.cache.providers[providerId] = {
         models: models.map(cloneModelInfo),

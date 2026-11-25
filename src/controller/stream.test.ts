@@ -1,7 +1,7 @@
 import sbp from '@sbp/sbp'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
-import type { ActiveModel, Section, SectionThinking, Tab, ThinkingReplay } from '../model/chat/types'
+import type { ActiveModel, ModelRef, Section, SectionThinking, Tab, ThinkingReplay } from '../model/chat/types'
 import { appTagText } from '../model/chat/appTags'
 import { compactionTagText, sectionCompactionBlock, sectionTextParts } from '../model/chat/compaction'
 import { compactionNotesText, notesLeftOutMessages, notesMessages } from '../model/chat/compactionNotes'
@@ -86,6 +86,9 @@ let editorRebuilds: string[] = []
 // delete.
 let leftFiles: CompactionLeftFiles[] = []
 let consoleError: MockInstance<typeof console.error>
+// What the price load of a model does (`dez.controller/modelCache/loadPrice`).
+// Set by a test; else nothing.
+let loadPrice: (model: ModelRef) => Promise<void>
 
 // Stand-ins for the provider, the editor and the disk. The editor stub
 // returns false, as for a tab in the background: the store must keep the
@@ -158,6 +161,9 @@ sbp('sbp/selectors/register', {
   },
   async 'dez.controller/alertReplyEnded' (tabId: string, status: string): Promise<void> {
     alerts.push({ tabId, status })
+  },
+  async 'dez.controller/modelCache/loadPrice' (model: ModelRef): Promise<void> {
+    await loadPrice(model)
   },
 })
 
@@ -264,6 +270,7 @@ beforeEach(() => {
   leftFiles = []
   providerInfos = async () => []
   cancelStream = async () => {}
+  loadPrice = async () => {}
   deletedImages = []
   readImages = []
   resetNative()
@@ -754,6 +761,24 @@ describe('the money limit of a tab', () => {
     setLimit(5, true)
     await sbp('dez.controller/submitTab', activeTab().id)
     expect([requests.length, toastTexts().length, activeTab().cost?.usd]).toStrictEqual([1, 1, 0.25])
+  })
+
+  // The price of a model whose provider tells it in a price request
+  // (`dez.controller/modelCache/loadPrice`).
+  it('loads the price of the model before the money check of the submit', async () => {
+    sbp('dez.model/modelCache/applyProviderResult', model.providerId, { ok: true, models: [{ id: model.modelId, name: model.modelName, provider: model.providerId }] })
+    const loads: ModelRef[] = []
+    loadPrice = async (ref) => {
+      loads.push(ref)
+      sbp('dez.model/modelCache/keepLoadedPrice', ref.providerId, ref.modelId, { price: { unit: 'token', input: 1, output: 2 } }, Date.now())
+    }
+    setLimit(5)
+    replyRounds([answer(0.25)])
+
+    await sbp('dez.controller/submitTab', activeTab().id)
+
+    expect(loads).toStrictEqual([{ providerId: model.providerId, modelId: model.modelId, modelName: model.modelName }])
+    expect([requests.length, toastTexts(), activeTab().cost?.usd]).toStrictEqual([1, [], 0.25])
   })
 
   it('refuses a chat request at the submit when the tab spent its limit', async () => {
@@ -4150,13 +4175,18 @@ describe('dez.stream/start compaction', () => {
       })
     })
 
-    it('asks the model of the newest reply for the notes, with the system prompt of that model', async () => {
+    it('asks the model of the newest reply for the notes, with the system prompt of that model, after a load of its price', async () => {
       sbp('dez.model/settings/setSystemPrompt', 'You are {{model_id}}.')
       setLargeConversation(small)
       replyRounds([notesAnswer, lastRound])
+      const loads: string[] = []
+      loadPrice = async (ref) => {
+        loads.push(ref.modelId)
+      }
 
       await sbp('dez.controller/submitTab', activeTab().id)
 
+      expect(loads).toStrictEqual([small.modelId, model.modelId])
       expect(requests.map((input) => ({ modelId: input.modelId, system: input.system, compaction: isCompactionRequest(input) }))).toStrictEqual([
         { modelId: model.modelId, system: 'You are m.', compaction: true },
         { modelId: small.modelId, system: 'You are small.', compaction: false },

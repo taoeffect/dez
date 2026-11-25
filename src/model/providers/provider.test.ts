@@ -1995,6 +1995,81 @@ describe('media model data', () => {
     ])
   })
 
+  describe('the price request of a model', () => {
+    const apimart = builtInProvider('apimart')
+    const NOTE = "APIMart's public price (an account can pay less)"
+    // Cut from APIMart's answers (2026-11-24).
+    const answer = (pricing: Record<string, unknown>) => ({ success: true, data: { model_name: 'm', pricing: { tier_count: 1, group: 'default', price_factor: 0.8, ...pricing } } })
+    const limits = (maxInputTokens: number) => ({ max_input_tokens: maxInputTokens, max_output_tokens: 128_000, supports_cache_read: true, supports_cache_write: true })
+
+    it('is a GET of the price URL with the model id as its query, with no key and no config header', () => {
+      const provider = customProvider({
+        headers: { 'x-secret': 'static' },
+        modelPriceRequest: { url: 'https://h/api/pricing/model', query: 'model', prices: { input: 'in', output: 'out', perTokens: 1 } },
+      })
+
+      expect(provider.modelPriceRequest('org/m 1')).toStrictEqual({
+        method: 'GET',
+        url: 'https://h/api/pricing/model?model=org%2Fm+1',
+        headers: { Accept: 'application/json' },
+        timeoutMs: expect.any(Number) as number,
+      })
+      expect(customProvider({}).modelPriceRequest('m')).toBeNull()
+    })
+
+    it('reads the effective rates of APIMart\'s answer, the cache write rate under either name, the note of other rates, and the window', () => {
+      const sonnet = answer({
+        rates: { input: 2, cached_input: 0.2, cache_write_5m: 2.5, cache_write_1h: 4, output: 10 },
+        effective_rates: { input: 1.6, cached_input: 0.16, cache_write_5m: 2, cache_write_1h: 3.2, output: 8 },
+        limits: limits(1_000_000),
+      })
+      const haiku = answer({
+        tier_count: 2,
+        effective_rates: { input: 0.08, cached_input: 0.008, cache_write_5m: 0.1, cache_write_1h: 0.16, output: 0.4 },
+        tiers: [
+          { up_to_input_tokens: 100_000, input: 0.1, cached_input: 0.01, cache_write_5m: 0.125, cache_write_1h: 0.2, output: 0.5 },
+          { input: 0.5, cached_input: 0.05, cache_write_5m: 0.625, cache_write_1h: 1, output: 2.5 },
+        ],
+        limits: limits(1_000_000),
+      })
+      const gemini = answer({ effective_rates: { input: 0.4, output: 2.4 }, limits: limits(1_048_576) })
+      // `cache_write` with no 1 hour rate; the explicit cached rate is
+      // lower than `cached_input`, which the price takes.
+      const qwen = answer({
+        effective_rates: { input: 1.3714288, cached_input: 0.1714288, explicit_cached_input: 0.1142856, cache_write: 1.7142856, output: 4.1142856 },
+        limits: limits(983_616),
+      })
+      const chat = { id: 'm', outputs: ['text' as const] }
+
+      expect(apimart.loadedPrice(sonnet, chat)).toStrictEqual({
+        price: { unit: 'token', input: 1.6, output: 8, cachedInput: 0.16, cacheWrite: 2, note: NOTE },
+        contextWindow: 1_000_000,
+      })
+      expect(apimart.loadedPrice(haiku, chat)).toStrictEqual({
+        price: { unit: 'token', input: 0.08, output: 0.4, cachedInput: 0.008, cacheWrite: 0.1, note: `base rate, some requests have other rates; ${NOTE}` },
+        contextWindow: 1_000_000,
+      })
+      expect(apimart.loadedPrice(gemini, chat)).toStrictEqual({ price: { unit: 'token', input: 0.4, output: 2.4, note: NOTE }, contextWindow: 1_048_576 })
+      expect(apimart.loadedPrice(qwen, chat)).toStrictEqual({
+        price: { unit: 'token', input: 1.3714288, output: 4.1142856, cachedInput: 0.1714288, cacheWrite: 1.7142856, note: NOTE },
+        contextWindow: 983_616,
+      })
+      expect(apimart.loadedPrice({ success: false, error: { code: 'model_not_found' } }, chat)).toStrictEqual({})
+      expect(apimart.loadedPrice('not JSON of an object', chat)).toStrictEqual({})
+    })
+
+    it('gives no window for a model whose config tells one', () => {
+      const provider = customProvider({
+        models: [{ id: 'm', contextWindow: 8000 }],
+        modelPriceRequest: { url: 'https://h/price', query: 'id', prices: { input: 'in', output: 'out', perTokens: 1 }, contextWindow: { paths: ['window'] } },
+      })
+      const data = { in: 0.000001, out: 0.000002, window: 200_000 }
+
+      expect(provider.loadedPrice(data, { id: 'm' })).toStrictEqual({ price: { unit: 'token', input: 1, output: 2 } })
+      expect(provider.loadedPrice(data, { id: 'other' })).toStrictEqual({ price: { unit: 'token', input: 1, output: 2 }, contextWindow: 200_000 })
+    })
+  })
+
   describe('a refusal of the count of the images', () => {
     const refusal = JSON.stringify({
       details: { _errors: [], end_image_url: { _errors: ['This model does not support end_image_url'] } },

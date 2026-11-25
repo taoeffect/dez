@@ -9,6 +9,7 @@ import { mediaTagText, type MediaTagData } from '../model/chat/mediaTags'
 import { SHOWN_PICTURE_FOLDER, shownPictureSize, type ShownPicture } from '../model/chat/shownPictures'
 import { jpegHeader } from '../model/chat/testing'
 import { toolBlockText } from '../model/chat/toolBlocks'
+import type { RequestPrice } from '../model/chat/moneyLimit'
 import type { ModelRef, Tab } from '../model/chat/types'
 import type { ModelCache } from '../model/persistence/types'
 import { TooManyImagesError } from '../model/providers/clipImages'
@@ -85,6 +86,10 @@ const MODELS = (id: string) => [
 // beforeEach and by the tests.
 let refreshes: unknown[] = []
 let refreshCheck: () => Promise<void>
+// The model of each price load (`dez.controller/modelCache/loadPrice`), and
+// what the load does. Set in beforeEach and by the tests.
+let priceLoads: ModelRef[] = []
+let loadPrice: (model: ModelRef) => Promise<void>
 // The price requests, and what the provider answers to one.
 let quotes: ProviderMediaQuoteInput[] = []
 let quoteAnswer: () => Promise<ProviderMediaQuote | null>
@@ -152,6 +157,10 @@ sbp('sbp/selectors/register', {
   async 'dez.controller/modelCache/refresh' (options: unknown): Promise<void> {
     refreshes.push(options)
     await refreshCheck()
+  },
+  async 'dez.controller/modelCache/loadPrice' (model: ModelRef): Promise<void> {
+    priceLoads.push(model)
+    await loadPrice(model)
   },
   async 'dez.controller/images/readFile' (path: string): Promise<Blob> {
     readImages.push(path)
@@ -226,6 +235,8 @@ beforeEach(() => {
     sbp('dez.model/modelCache/applyProviderResult', id, { ok: true, models: MODELS(id) })
   }
   refreshes = []
+  priceLoads = []
+  loadPrice = async () => {}
   quotes = []
   quoteAnswer = async () => ({ usd: 0.07 })
   descriptor = { name: 'Venice', thinking: true, tools: true, settings: [{ key: 'webSearch', label: 'Web search', type: 'boolean', default: true, bodyPath: 'venice_parameters.enable_web_search' }] }
@@ -445,7 +456,8 @@ describe('dez.controller/tools/run', () => {
       }
     })
 
-    // A chat model has no price request: the price is the list price.
+    // A chat model gets no media price request: its price is the list
+    // price.
     it('gives the list price of a chat model, with no price request', async () => {
       refreshCheck = async () => {
         sbp('dez.model/modelCache/applyProviderResult', 'venice', {
@@ -460,6 +472,22 @@ describe('dez.controller/tools/run', () => {
         dez: { cost: { usdPer1MInputTokens: 2, usdPer1MOutputTokens: 12, usdPer1MCachedInputTokens: 0.2 } },
       })
       expect(quotes).toStrictEqual([])
+    })
+
+    // The price request of a provider whose model list tells no chat price
+    // (`modelPriceRequest`): each call loads it, whatever `only` names.
+    it('gives the price and the window that the price load of a chat model gives', async () => {
+      loadPrice = async (ref) => {
+        sbp('dez.model/modelCache/keepLoadedPrice', ref.providerId, ref.modelId, { price: { unit: 'token', input: 1.6, output: 8 }, contextWindow: 1_000_000 }, Date.now())
+      }
+
+      const result = JSON.parse((await run({ name: 'model_info', arguments: { model: 'venice/venice-gemini-3-pro' } })).content) as { dez: Record<string, unknown> }
+      expect(result.dez).toMatchObject({ contextWindow: 1_000_000, cost: { usdPer1MInputTokens: 1.6, usdPer1MOutputTokens: 8 } })
+      await run({ name: 'model_info', arguments: { model: 'venice/venice-gemini-3-pro', only: 'usage' } })
+      expect(priceLoads).toStrictEqual([
+        { providerId: 'venice', modelId: 'venice-gemini-3-pro' },
+        { providerId: 'venice', modelId: 'venice-gemini-3-pro' },
+      ])
     })
 
     it('gives an error result that points to model_list when the model is gone after the check', async () => {
@@ -1275,6 +1303,26 @@ describe('dez.controller/tools/run', () => {
         expect(mediaRequests).toMatchObject([{ providerId: 'venice', modelId: 'painter', kind: 'image', images: [FOX], clips: [], reader: 'model', timeoutMs: 60_000 }])
         expect(savedImages).toStrictEqual([{ mediaType: 'image/png', options: { folder: 'generated' } }])
         expect(written).toStrictEqual([{ path: MADE_IMAGE, tool: 'model_invoke', madeBy: job.id, model: { providerId: 'venice', modelId: 'painter' } }])
+      })
+
+      // The price of a chat model whose provider tells it in a price request
+      // (`dez.controller/modelCache/loadPrice`): the money checks of the
+      // call and of its job read the loaded price.
+      it('loads the price of an invoked chat model before its money check, and no price of a media model', async () => {
+        loadPrice = async (ref) => {
+          sbp('dez.model/modelCache/keepLoadedPrice', ref.providerId, ref.modelId, { price: { unit: 'token', input: 1, output: 2 } }, Date.now())
+        }
+        generateMedia = async () => ({ media: [PNG], clips: [] })
+        const checked: RequestPrice[] = []
+        const context = callContext({ tabId, model: REPLY_MODEL, jobs, checkMoney: (price) => { checked.push(price) } })
+        const invoke = (args: ToolArguments) => sbp('dez.controller/tools/run', { name: 'model_invoke', arguments: args }, new AbortController().signal, context) as Promise<ToolRunResult>
+
+        await invoke(SKETCH)
+        await invoke(PAINT)
+        await jobTool('jobs_wait')
+
+        expect(priceLoads).toStrictEqual([{ providerId: 'venice', modelId: 'sketcher' }])
+        expect(checked.filter((price) => price.kind === 'tokens')).toStrictEqual([{ kind: 'tokens', known: true }, { kind: 'tokens', known: true }])
       })
 
       // Calls that begin with the same words: only the number tells which

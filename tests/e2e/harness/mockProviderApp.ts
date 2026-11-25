@@ -20,8 +20,10 @@ export interface MockProviderApp {
 
 export interface MockProviderAppOptions extends AppOptions {
   /** More custom providers on the same mock, after the main one. `config`
-   *  adds to or replaces fields of the provider's config. */
-  moreProviders?: ReadonlyArray<{ provider: MockProvider, config?: Record<string, unknown> }>
+   *  adds to or replaces fields of the provider's config; a function gets
+   *  the URL of the mock, for a field that holds a whole URL (such as
+   *  `modelPriceRequest.url`). */
+  moreProviders?: ReadonlyArray<{ provider: MockProvider, config?: Record<string, unknown> | ((serverUrl: string) => Record<string, unknown>) }>
   /** More POST paths that the mock holds for the test as it holds chat
    *  requests, such as a media API path. */
   heldPaths?: readonly string[]
@@ -67,7 +69,10 @@ export async function startMockProviderApp (
     app = await startApp(appOptions)
     await seedRawAppState(app.home, {
       ...appState,
-      customProviders: providers.map((entry) => ({ ...mockProviderConfig(entry.provider, mock.url), ...entry.config })),
+      customProviders: providers.map((entry) => ({
+        ...mockProviderConfig(entry.provider, mock.url),
+        ...(typeof entry.config === 'function' ? entry.config(mock.url) : entry.config),
+      })),
     })
     browser = await createSession(app.binary, app.port)
     await waitFor(browser, 'header.tab-bar', 60_000)

@@ -286,6 +286,41 @@ describe('provider config schema', () => {
     }
   })
 
+  // Each price and each context window has one source, also for a custom
+  // provider (whose schema extends the built-in one).
+  it('keeps a modelPriceRequest, and refuses one with a bad URL or path, or with a second source of the price or the window', () => {
+    const request = {
+      url: 'https://h/api/pricing/model',
+      query: 'model',
+      prices: { input: 'data.in', output: 'data.out', cacheWrite: ['data.write_5m', 'data.write'], perTokens: 1_000_000, otherRates: 'data.tiers' },
+      contextWindow: { paths: ['data.limits.max_input_tokens'] },
+      note: 'list price',
+    }
+    for (const schema of [providerConfigSchema, customProviderConfigSchema]) {
+      const parse = (fields: Record<string, unknown>) => schema.safeParse({ id: 'p', name: 'P', baseUrl: 'http://h', ...fields }).success
+      const withRequest = (fields: Record<string, unknown>) => parse({ modelPriceRequest: { ...request, ...fields } })
+
+      expect(schema.parse({ id: 'p', name: 'P', baseUrl: 'http://h', modelPriceRequest: request }).modelPriceRequest).toStrictEqual(request)
+      expect(withRequest({ prices: { ...request.prices, cacheWrite: 'data.write' } })).toBe(true)
+      expect(withRequest({ contextWindow: undefined, note: undefined })).toBe(true)
+      for (const bad of [
+        { url: 'https://h/api/pricing/model?model=' },
+        { url: 'ftp://h/pricing' },
+        { query: ' ' },
+        { prices: { ...request.prices, cacheWrite: [] } },
+        { prices: { ...request.prices, cacheWrite: ['data..write'] } },
+        { prices: { ...request.prices, perTokens: 0 } },
+        { contextWindow: { paths: [] } },
+      ]) {
+        expect(withRequest(bad), JSON.stringify(bad)).toBe(false)
+      }
+      expect(parse({ modelPriceRequest: request, modelTokenPrices: { input: 'p.in', output: 'p.out', perTokens: 1 } })).toBe(false)
+      expect(parse({ modelPriceRequest: request, tokenPrices: [{ match: '^m$', input: 1, output: 5 }] })).toBe(false)
+      expect(parse({ modelPriceRequest: request, modelContextWindow: { paths: ['context_length'] } })).toBe(false)
+      expect(parse({ modelPriceRequest: { ...request, contextWindow: undefined }, modelContextWindow: { paths: ['context_length'] } })).toBe(true)
+    }
+  })
+
   // Dez converts a clip that the provider does not take to MP3 or WAV, or
   // to MP4 (tools/chatClips.ts), so each list must hold one of them.
   it('keeps chatClips whose lists hold a type that Dez converts to, and rejects others', () => {

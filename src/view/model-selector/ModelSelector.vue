@@ -60,8 +60,12 @@ function close() {
   isOpen.value = false
 }
 
+// A pick also loads the price and the context window of the model when its
+// provider tells them in a price request, so that the bottom bar and the
+// money limit show them before the first send.
 function selectModel(model: ModelInfo) {
   sbp('dez.model/setActiveModel', model.provider, model.id, model.name)
+  void sbp('dez.controller/modelCache/loadPrice', { providerId: model.provider, modelId: model.id })
   close()
 }
 

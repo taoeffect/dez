@@ -22,8 +22,9 @@ import { effectiveRequest, type ModelInfo } from './types'
  *  data has none of it. Only a model that has the same request kind as
  *  before keeps data, because the parameters of another kind are not its
  *  request fields. A model that the cache does not have keeps nothing. A
- *  chat model keeps no price: its price comes from the provider's own list,
- *  which loaded.
+ *  chat model keeps no price here: its price comes from the provider's own
+ *  list, which loaded, or from a price request (`withKeptLoadedPrices`,
+ *  modelPrices.ts).
  *
  *  The result shares the kept data with `cached`: the caller copies the
  *  models before it stores them. */

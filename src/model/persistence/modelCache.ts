@@ -134,8 +134,8 @@ const modelCountSchema = z.number().int().positive().optional().catch(undefined)
 
 // The transform drops the `clips` key of a model whose clip rules have no
 // kind left, and a `released`, `learnedImageLimit`, `price`,
-// `contextWindow`, `imageLimit`, or `messageImageLimit` key whose value was
-// bad, which Zod would keep with an undefined value.
+// `priceLoadedAt`, `contextWindow`, `imageLimit`, or `messageImageLimit`
+// key whose value was bad, which Zod would keep with an undefined value.
 const modelInfoSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -163,16 +163,19 @@ const modelInfoSchema = z.object({
   learnedImageLimit: z.object({ maxImages: z.number().int().positive(), entry: z.string().min(1) }).optional().catch(undefined),
   // A bad value drops only the price: the next model check reads it again.
   price: modelPriceSchema.optional().catch(undefined),
+  // A bad value drops only the time: Dez asks for the price again.
+  priceLoadedAt: z.number().nonnegative().optional().catch(undefined),
   // A bad value drops only the number: the next model check reads it again.
   contextWindow: modelCountSchema,
   imageLimit: modelCountSchema,
   messageImageLimit: modelCountSchema,
-}).transform(({ released, clips, learnedImageLimit, price, contextWindow, imageLimit, messageImageLimit, ...model }) => ({
+}).transform(({ released, clips, learnedImageLimit, price, priceLoadedAt, contextWindow, imageLimit, messageImageLimit, ...model }) => ({
   ...model,
   ...(released && { released }),
   ...(clips && { clips }),
   ...(learnedImageLimit && { learnedImageLimit }),
   ...(price && { price }),
+  ...(priceLoadedAt !== undefined && { priceLoadedAt }),
   ...(contextWindow && { contextWindow }),
   ...(imageLimit && { imageLimit }),
   ...(messageImageLimit && { messageImageLimit }),

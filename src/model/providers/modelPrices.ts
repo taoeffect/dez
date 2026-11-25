@@ -1,8 +1,8 @@
 import type { ModelOutput } from '../modelOutputs'
-import type { ProviderConfig } from './config'
+import type { ProviderConfig, TokenPricePaths } from './config'
 import type { ParameterValues } from './modelParameters'
 import { isRecord, valueAtPath } from './modelParsing'
-import type { MediaKind } from './types'
+import { effectiveRequest, type MediaKind, type ModelInfo } from './types'
 
 // The units of a price with one number (`usd`), in the order of
 // `PRICE_UNITS`.
@@ -29,6 +29,13 @@ export const PRICE_UNITS = ['token', ...SINGLE_PRICE_UNITS] as const
 export type ModelPrice =
   | { unit: 'token', input: number, output: number, cachedInput?: number, cacheWrite?: number, note?: string }
   | { unit: typeof SINGLE_PRICE_UNITS[number], usd: number, note?: string }
+
+/** What the price request of a provider (`modelPriceRequest` in config.ts)
+ *  tells of one chat model; each is missing when the answer tells none. */
+export interface LoadedModelPrice {
+  price?: ModelPrice
+  contextWindow?: number
+}
 
 // A price of a list: a number, or a text of a number (OpenRouter gives its
 // prices as texts). A value under 0 is no price: OpenRouter gives `-1` to a
@@ -139,16 +146,17 @@ export function priceText(price: ModelPrice): string {
   return price.note === undefined ? text : `${text} (${price.note})`
 }
 
-// The token price of a chat model's list entry, at the config's paths
-// (`modelTokenPrices` in config.ts). Both the input and the output price
-// are needed; with one missing or under 0 the price is unknown. A list
-// that has other rates for some requests (a long prompt, a time of day)
-// gives its base rate, and the note says so. `outputs`: what the model
-// makes (`effectiveOutputs`). A model whose tokens are free but that makes
+// The token price of a JSON object at the config's paths: a chat model's
+// list entry (`modelTokenPrices` in config.ts), or the answer of a price
+// request (`modelPriceRequest`). Both the input and the output price are
+// needed; with one missing or under 0 the price is unknown. A list that
+// has other rates for some requests (a long prompt, a time of day) gives
+// its base rate, and the note says so. `outputs`: what the model makes
+// (`effectiveOutputs`). A model whose tokens are free but that makes
 // images or audio with no price of its own for them has an unknown price,
 // not 0: OpenRouter's music models (Lyria) list "0" for their tokens and
 // tell their price per clip only in their description.
-export function modelTokenPrice(entry: Record<string, unknown>, config: ProviderConfig['modelTokenPrices'], outputs: readonly ModelOutput[]): ModelPrice | undefined {
+export function modelTokenPrice(entry: Record<string, unknown>, config: TokenPricePaths | undefined, outputs: readonly ModelOutput[]): ModelPrice | undefined {
   if (config === undefined) return undefined
   const input = priceNumber(valueAtPath(entry, config.input))
   const output = priceNumber(valueAtPath(entry, config.output))
@@ -163,7 +171,7 @@ export function modelTokenPrice(entry: Record<string, unknown>, config: Provider
   const perMillion = (usd: number): number => roundedPrice(usd * 1_000_000 / config.perTokens)
   const pathPrice = (path: string | undefined) => path === undefined ? undefined : priceNumber(valueAtPath(entry, path))
   const cachedInput = pathPrice(config.cachedInput)
-  const cacheWrite = pathPrice(config.cacheWrite)
+  const cacheWrite = [config.cacheWrite ?? []].flat().map(pathPrice).find((price) => price !== undefined)
   const mediaPrices = { image: pathPrice(config.imageOutput), audio: pathPrice(config.audioOutput) }
   const unpricedMedia = (['image', 'audio'] as const).some((media) => outputs.includes(media) && mediaPrices[media] === undefined)
   if (input === 0 && output === 0 && unpricedMedia) return undefined
@@ -198,6 +206,31 @@ export function tokenTablePrice(modelId: string, rows: ProviderConfig['tokenPric
     ...(cacheWrite !== undefined && { cacheWrite }),
     ...(note && { note }),
   }
+}
+
+/** `models`, the list of a model check of a provider with a price request
+ *  (`modelPriceRequest` in config.ts), each chat model with what the last
+ *  answer of that request told of it in `cached` (the models that the
+ *  model cache has of the provider): `priceLoadedAt`, the price, and the
+ *  context window. A model list tells none of it, so without this each
+ *  check would drop the prices that Dez loaded. An old price stays: it is
+ *  the best price that Dez knows, and the next need of it loads it again
+ *  (`isFreshPrice`). A window that the new model has (its config's) wins.
+ *
+ *  The result shares the kept prices with `cached`: the caller copies the
+ *  models before it stores them. */
+export function withKeptLoadedPrices(models: readonly ModelInfo[], cached: readonly ModelInfo[]): ModelInfo[] {
+  const cachedById = new Map(cached.map((model) => [model.id, model]))
+  return models.map((model) => {
+    const known = cachedById.get(model.id)
+    if (known?.priceLoadedAt === undefined || effectiveRequest(model) !== 'chat' || model.price !== undefined) return model
+    return {
+      ...model,
+      priceLoadedAt: known.priceLoadedAt,
+      ...(known.price && { price: known.price }),
+      ...(model.contextWindow === undefined && known.contextWindow !== undefined && { contextWindow: known.contextWindow }),
+    }
+  })
 }
 
 // A list or an object with at least one item: a list gives `null` or `[]`

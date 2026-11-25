@@ -1,5 +1,8 @@
 import sbp from '@sbp/sbp'
-import { getProvider, type ProviderId, type ProviderInfo, type ProviderModelsResult } from '../model/providers'
+import { modelRefKey } from '../model/chat/modelRef'
+import type { ModelRef } from '../model/chat/types'
+import { effectiveRequest, getProvider, type ModelInfo, type ProviderId, type ProviderInfo, type ProviderModelsResult } from '../model/providers'
+import { isFreshPrice, type LoadedModelPrice } from '../model/providers/modelPrices'
 import type { ModelCache } from '../model/persistence/types'
 import { explainedError } from '../utils/errorText'
 
@@ -30,6 +33,17 @@ const newestChecks = new Map<ProviderId, number>()
 // persisted lastCheckedAt timestamp is actually consumed. A forced refresh
 // (key save, Copilot sign-in, "Check again", `model_info`) skips the gate.
 const MODEL_CACHE_TTL_MS = 60_000
+
+// The price loads that run (`loadPrice`), by model (`modelRefKey`): the
+// callers of one model share one request.
+const priceLoads = new Map<string, Promise<void>>()
+
+// The time of the newest failed price load of each model. A price request
+// that fails is not sent again for this long, so that each send to the
+// model does not wait for one more failure (each can take up to the time
+// limit of the request).
+const failedPriceLoads = new Map<string, number>()
+const PRICE_LOAD_RETRY_MS = 60_000
 
 export default sbp('sbp/selectors/register', {
   // Reconcile the model cache to real availability: fetch every configured
@@ -103,5 +117,44 @@ export default sbp('sbp/selectors/register', {
       activeRuns -= 1
       if (activeRuns === 0) sbp('dez.model/modelCache/setRefreshing', false)
     }
+  },
+
+  // Loads the price of the chat model `model` from the price request of its
+  // provider (`modelPriceRequest` in config.ts, `dez.provider/modelPrice`)
+  // into the model cache (`ModelInfo.priceLoadedAt`), when Dez needs it:
+  // before a chat request to the model and its money check, and when the
+  // user picks the model. Nothing for a provider with no price request, a
+  // model that the cache does not have or that is no chat model, a fresh
+  // price (`isFreshPrice`), and a load that failed within
+  // PRICE_LOAD_RETRY_MS. Calls for the same model share one request. Never
+  // rejects: a failure is logged, and the model keeps the price that it
+  // had, or none, so the rule of an unknown price applies to it
+  // (moneyLimit.ts).
+  async 'dez.controller/modelCache/loadPrice' (model: ModelRef): Promise<void> {
+    if (!getProvider(model.providerId)?.config.modelPriceRequest) return
+    const key = modelRefKey(model)
+    const running = priceLoads.get(key)
+    if (running) return running
+    const cached = sbp('dez.model/modelCache/model', model.providerId, model.modelId) as ModelInfo | null
+    const now = Date.now()
+    if (!cached || effectiveRequest(cached) !== 'chat') return
+    if (cached.priceLoadedAt !== undefined && isFreshPrice(cached.priceLoadedAt, now)) return
+    const failedAt = failedPriceLoads.get(key)
+    if (failedAt !== undefined && now >= failedAt && now - failedAt < PRICE_LOAD_RETRY_MS) return
+
+    const load = (async () => {
+      try {
+        const loaded = await sbp('dez.provider/modelPrice', model.providerId, model.modelId) as LoadedModelPrice | null
+        failedPriceLoads.delete(key)
+        if (loaded) sbp('dez.model/modelCache/keepLoadedPrice', model.providerId, model.modelId, loaded, Date.now())
+      } catch (error) {
+        failedPriceLoads.set(key, Date.now())
+        console.error(`Failed to load the price of model ${model.modelId} of provider ${model.providerId}:`, error)
+      } finally {
+        priceLoads.delete(key)
+      }
+    })()
+    priceLoads.set(key, load)
+    return load
   },
 })

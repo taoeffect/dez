@@ -45,8 +45,7 @@ function warnClipsLeftOut(tabId: string, modelName: string, takesClips: boolean,
 export default sbp('sbp/selectors/register', {
   // Each toast of a send belongs to its tab (`ToastData.tabId`).
   async 'dez.controller/submitTab' (tabId: string): Promise<void> {
-    const tab = sbp('dez.model/tab', tabId)
-    if (!tab) return
+    if (!sbp('dez.model/tab', tabId)) return
 
     const model = sbp('dez.model/activeModelForTab', tabId)
     if (!model) {
@@ -54,6 +53,16 @@ export default sbp('sbp/selectors/register', {
       sbp('dez.ui/toast', 'app-global', { variant: 'error', title: 'Cannot send', message: 'No model is selected. Choose a model in the bottom bar, and send again.', tabId })
       return
     }
+
+    // The price and the context window of a model whose provider tells
+    // them in a price request (`dez.controller/modelCache/loadPrice`): the
+    // money checks and the compaction checks of the reply read them, and
+    // `dez.stream/start` runs only here, so this load is the reply's too.
+    // Before the reads of the tab, so that the request holds the text that
+    // the tab has after the wait.
+    await sbp('dez.controller/modelCache/loadPrice', model)
+    const tab = sbp('dez.model/tab', tabId)
+    if (!tab) return
 
     // The messages, the stamp and the request use the same model read.
     let request = sbp('dez.model/streamMessagesForTab', tabId, model) as RequestMessages

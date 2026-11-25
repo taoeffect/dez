@@ -503,6 +503,33 @@ export const BUILT_IN_PROVIDER_CONFIGS: readonly ProviderConfig[] = [
         unknown: { outputs: [] },
       },
     },
+    // The model list tells no price and no context window; this public
+    // request tells both, with no key, for each chat model (TokenPricingV2:
+    // the same answer for all of them). `effective_rates` are the rates
+    // after APIMart's discount of the default group, in USD per 1M tokens;
+    // `tiers` lists the rates of long prompts for some models. Of the two
+    // cached input rates, the usage cannot tell which one a request paid,
+    // so the price is `cached_input`, the higher one: a cost that is too
+    // high is the safe side of a money limit. The 5 minute cache write rate
+    // is `cache_write_5m` for some models and `cache_write` (no 1 hour rate)
+    // for others. An account endpoint (`/v1/pricing/model`, with the key)
+    // tells the account's own price, but no context window and no tiers;
+    // it gave the same numbers (checked live, 2026-11-24).
+    // https://docs.apimart.ai/en/api-reference/texts/qwen3.8-max/pricing.md
+    modelPriceRequest: {
+      url: 'https://api.apimart.ai/api/pricing/model',
+      query: 'model',
+      prices: {
+        input: 'data.pricing.effective_rates.input',
+        output: 'data.pricing.effective_rates.output',
+        cachedInput: 'data.pricing.effective_rates.cached_input',
+        cacheWrite: ['data.pricing.effective_rates.cache_write_5m', 'data.pricing.effective_rates.cache_write'],
+        perTokens: 1_000_000,
+        otherRates: 'data.pricing.tiers',
+      },
+      contextWindow: { paths: ['data.pricing.limits.max_input_tokens'] },
+      note: "APIMart's public price (an account can pay less)",
+    },
     auth: 'apiKey',
     // Claude caches only a marked prompt. A live check (2026-11-24, Claude
     // Haiku 5.5): the marks on the last user messages stored the prompt, and

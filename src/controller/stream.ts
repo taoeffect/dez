@@ -909,6 +909,10 @@ async function requestCompaction(args: StreamStartArgs, reply: ReplyRuntime, job
   const { tabId } = args
   setStreamCompacting(tabId, true)
   try {
+    // The writer can be the model of an earlier reply, whose price the
+    // submit did not load. A stop can come during the load.
+    await sbp('dez.controller/modelCache/loadPrice', writer.model)
+    if (reply.abort.signal.aborted || !replyIsCurrent(tabId, reply)) return null
     for (let tries = 1; ; tries++) {
       checkReplyMoney(tabId, chatRequestPrice(modelInfoOf(writer.model).price))
       const requestId = crypto.randomUUID()

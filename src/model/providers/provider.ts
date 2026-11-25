@@ -12,7 +12,7 @@ import type { ImageSizeRules, InputImageLimits } from './imageSize'
 import { MEDIA_FORMATS, type AnswerCost, type ClipEntryPrice, type ClipFormat, type ClipInput, type ClipJob, type ImageFormat, type ImageQuoteFormat, type MediaFormat, type MediaInput, type MediaWireRequest, type TextFormat } from './mediaFormats'
 import { DEFAULT_MEDIA_REQUESTS_AT_ONCE } from './mediaTurns'
 import { effectiveParameterValues, type ParameterValues } from './modelParameters'
-import { modelTokenPrice, tokenTablePrice } from './modelPrices'
+import { modelTokenPrice, tokenTablePrice, type LoadedModelPrice } from './modelPrices'
 import { isRecord, modelCapability, modelCount, modelData, modelOutputsAndRequest, modelReadableName, modelReleased, unsupportedSettings } from './modelParsing'
 import { isThinkingEnabled, modelToggles, toggleValue, type ToggleModel } from './modelToggles'
 import { multipartBody, type MultipartField } from './multipart'
@@ -299,6 +299,40 @@ export class Provider {
         : kind === 'none' ? undefined : listPrice?.(kind, effectiveParameterValues(model.parameters ?? []), entry, mediaEntries.get(model.id), paths)
       return price ? { ...model, price } : model
     })
+  }
+
+  // The request for the price of the chat model `modelId`
+  // (`modelPriceRequest` in config.ts); null when the provider has none.
+  // It holds no key and no config header: a price is no secret, and the
+  // key goes only to the URLs of `baseUrl`. It ends like a model list
+  // request (`MODEL_LIST_TIMEOUT_MS`).
+  modelPriceRequest(modelId: string): NativeHttpRequest | null {
+    const config = this.config.modelPriceRequest
+    if (!config) return null
+    return {
+      method: 'GET',
+      url: withQuery(config.url, { [config.query]: modelId }),
+      headers: { Accept: 'application/json' },
+      timeoutMs: MODEL_LIST_TIMEOUT_MS,
+    }
+  }
+
+  // What the JSON `data` of a 2xx answer of `modelPriceRequest` tells of
+  // `model`: its token price, with the note of the config after the note of
+  // the price, and its context window. Each is missing when the answer
+  // tells none. A context window of the config's model wins, as over the
+  // model list's (`configModel`), so the answer gives none then.
+  loadedPrice(data: unknown, model: Pick<ModelInfo, 'id' | 'outputs'>): LoadedModelPrice {
+    const config = this.config.modelPriceRequest
+    if (!config || !isRecord(data)) return {}
+    const price = modelTokenPrice(data, config.prices, effectiveOutputs(model))
+    const note = [price?.note, config.note].filter((text) => text !== undefined).join('; ')
+    const configWindow = this.config.models.some((entry) => entry.id === model.id && entry.contextWindow !== undefined)
+    const contextWindow = configWindow ? undefined : modelCount(data, config.contextWindow)
+    return {
+      ...(price && { price: { ...price, ...(note && { note }) } }),
+      ...(contextWindow !== undefined && { contextWindow }),
+    }
   }
 
   // `model`: the model of the request, with what the model cache knows of
@@ -677,8 +711,9 @@ function withFormParts(form: readonly MultipartField[], parts: readonly JsonObje
   return [...kept.slice(0, at), ...added, ...kept.slice(at)]
 }
 
-// Adds query parameters to a model-list URL, after the format's own query if
-// it has one (the Anthropic `?limit=1000`). No parameters: the URL as it is.
+// Adds query parameters to a URL of the config (a model list, a price
+// request), after the URL's own query if it has one (the Anthropic
+// `?limit=1000`). No parameters: the URL as it is.
 function withQuery(url: string, query: Record<string, string> | undefined): string {
   const search = new URLSearchParams(query).toString()
   if (!search) return url

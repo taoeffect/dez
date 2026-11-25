@@ -310,7 +310,10 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // provider for the price of one request with those values, or for the
   // model's price records, which costs nothing. It always asks, never the
   // quote cache, so that a new price of the provider shows at once. A
-  // failed price request does not fail the call.
+  // failed price request does not fail the call. A chat model whose
+  // provider tells its price and context window in a price request gets
+  // them first (`dez.controller/modelCache/loadPrice`), which costs
+  // nothing, for every call.
   async model_info (args, signal, context) {
     const selection = modelInfoSelection(args)
     const only = selection && 'only' in selection ? selection.only : undefined
@@ -319,6 +322,11 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
     if (wantsCost && (found.entry === undefined || !isFreshPrice(found.lastCheckedAt, Date.now()))) {
       await untilAborted(() => sbp('dez.controller/modelCache/refresh', { providerIds: [found.provider.id], force: true }) as Promise<void>, signal)
       found = await modelInfoLookup(args, context.model)
+    }
+    if (effectiveRequest(found.model) === 'chat') {
+      const target = { providerId: found.provider.id, modelId: found.model.id }
+      await untilAborted(() => sbp('dez.controller/modelCache/loadPrice', target) as Promise<void>, signal)
+      found = { ...found, model: (sbp('dez.model/modelCache/model', target.providerId, target.modelId) as ModelInfo | null) ?? found.model }
     }
     const { provider, model, entry } = found
     const ref = { providerId: provider.id, modelId: model.id }
@@ -468,14 +476,24 @@ const TOOL_RUNNERS: Record<string, ToolRunner> = {
   // the invoked model as their model mark (chat/assetModels.ts).
   async model_invoke (args, callSignal, context) {
     const providers = await sbp('dez.provider/infos') as ProviderInfo[]
-    const { modelParameters, providerSettings } = sbp('dez.model/settings/snapshot') as SettingsSnapshot
-    const invocation = modelInvocation(args, {
-      cache: sbp('dez.model/modelCache/snapshot') as ModelCache,
-      providers,
-      modelParameters,
-      providerSettings,
-      sections: context.sections(),
-    })
+    const invocationOf = () => {
+      const { modelParameters, providerSettings } = sbp('dez.model/settings/snapshot') as SettingsSnapshot
+      return modelInvocation(args, {
+        cache: sbp('dez.model/modelCache/snapshot') as ModelCache,
+        providers,
+        modelParameters,
+        providerSettings,
+        sections: context.sections(),
+      })
+    }
+    let invocation = invocationOf()
+    if (invocation.kind === 'chat') {
+      // The price of a model whose provider tells it in a price request;
+      // the call reads the invocation again for it.
+      const invoked = { providerId: invocation.provider.id, modelId: invocation.model.id }
+      await untilAborted(() => sbp('dez.controller/modelCache/loadPrice', invoked) as Promise<void>, callSignal)
+      invocation = invocationOf()
+    }
     context.checkMoney(invocation.kind === 'chat' ? chatRequestPrice(invocation.model.price) : { kind: 'quote', usd: 0 })
     const rights = { toolsAllowed: false, checkMoney: context.checkMoney } as const
     return startJob(context, callSignal, MODEL_INVOKE_TOOL.name, (signal, report, reportCost, keepAsset) => invokeModel(invocation, context, signal, report, reportCost, keepAsset, rights), {

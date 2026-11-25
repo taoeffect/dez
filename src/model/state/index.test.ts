@@ -1201,6 +1201,12 @@ describe('dez.model/customProviders/save', () => {
       modelContextWindow: { paths: ['limits.window'] },
       modelImageLimit: { paths: ['limits.images'] },
       modelMessageImageLimit: { paths: ['limits.imagesPerMessage'] },
+      modelPriceRequest: {
+        url: 'http://localhost:8080/api/price',
+        query: 'model',
+        prices: { input: 'data.in', output: 'data.out', cacheWrite: ['data.write_5m', 'data.write'], perTokens: 1_000_000 },
+        note: 'list price',
+      },
       auth: 'apiKey',
       settings: [
         { key: 'search', label: 'Search', type: 'boolean', default: true, bodyPath: 'search', modelSupport: { path: 'caps.search' } },
@@ -1225,6 +1231,9 @@ describe('dez.model/customProviders/save', () => {
     config.modelContextWindow?.paths.push('changed')
     config.modelImageLimit?.paths.push('changed')
     config.modelMessageImageLimit?.paths.push('changed')
+    Object.assign(config.modelPriceRequest?.prices ?? {}, { input: 'changed' })
+    const cacheWrite = config.modelPriceRequest?.prices.cacheWrite
+    if (Array.isArray(cacheWrite)) cacheWrite.push('changed')
 
     // toStrictEqual: a setting with no `modelSupport` gets no such key.
     expect(sbp('dez.model/customProviders/list')).toStrictEqual([saved])
@@ -1740,6 +1749,56 @@ describe('dez.model/modelCache clip data', () => {
     // A list that loaded and tells no lengths is the newer fact.
     apply({ models: [film] })
     expect(cachedModels()).toStrictEqual([film])
+  })
+})
+
+// A model list of a provider with a price request tells no price and no
+// window (config.ts refuses a second source), so a model check must not drop
+// what the price request told.
+describe('dez.model/modelCache loaded prices', () => {
+  const PRICE = { unit: 'token', input: 2, output: 10 } as const
+  const chat: ModelInfo = { id: 'chat', name: 'Chat', provider: 'priced' }
+  const configured: ModelInfo = { id: 'configured', name: 'Configured', provider: 'priced', contextWindow: 8000 }
+  const painter: ModelInfo = { id: 'painter', name: 'Painter', provider: 'priced', request: 'image' }
+  const cachedModels = () => (sbp('dez.model/modelCache/snapshot') as ModelCache).providers.priced?.models
+  const check = (models: ModelInfo[]) => sbp('dez.model/modelCache/applyProviderResult', 'priced', { ok: true, models })
+  const keep = (modelId: string, loaded: Record<string, unknown>, at: number) => sbp('dez.model/modelCache/keepLoadedPrice', 'priced', modelId, loaded, at)
+  const saveProvider = (fields: Partial<ProviderConfig>) => sbp('dez.model/customProviders/save', {
+    id: 'priced', name: 'Priced', baseUrl: 'http://localhost:8080/v1', apiFormat: 'openai', models: [], fetchModels: true, auth: 'apiKey', ...fields,
+  } satisfies ProviderConfig)
+
+  it('keeps the price, the window, and the time of each load over the next checks of the provider', () => {
+    saveProvider({ modelPriceRequest: { url: 'http://localhost:8080/api/price', query: 'model', prices: { input: 'in', output: 'out', perTokens: 1 } } })
+    check([chat, configured])
+    keep('chat', { price: PRICE, contextWindow: 200_000 }, 1000)
+    keep('configured', { price: PRICE }, 1000)
+    // Nothing for a model that the cache does not have.
+    keep('gone', { price: PRICE }, 1000)
+
+    check([chat, configured, painter])
+    expect(cachedModels()).toStrictEqual([
+      { ...chat, price: PRICE, contextWindow: 200_000, priceLoadedAt: 1000 },
+      { ...configured, price: PRICE, priceLoadedAt: 1000 },
+      painter,
+    ])
+
+    // A load that tells no price makes the price unknown; the window stays.
+    keep('chat', {}, 2000)
+    check([chat, configured, painter])
+    expect(cachedModels()?.[0]).toStrictEqual({ ...chat, contextWindow: 200_000, priceLoadedAt: 2000 })
+
+    // A model that is no chat model now keeps nothing.
+    check([{ ...configured, request: 'image' }])
+    expect(cachedModels()).toStrictEqual([{ ...configured, request: 'image' }])
+  })
+
+  it('keeps no loaded price over a check of a provider with no price request', () => {
+    saveProvider({})
+    check([chat])
+    keep('chat', { price: PRICE }, 1000)
+
+    check([chat])
+    expect(cachedModels()).toStrictEqual([chat])
   })
 })
 

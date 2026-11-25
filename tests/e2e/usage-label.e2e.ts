@@ -30,7 +30,10 @@ import { activeTabId, closeToasts, docPos, endedReply, focusEditor, newTab, open
 // - in a bar with too little room, the label hides whole parts, and Submit
 //   stays in the window;
 // - the coin after the cost opens the popup of the money limit of the tab,
-//   and the limit refuses the requests that it does not allow.
+//   and the limit refuses the requests that it does not allow;
+// - a model whose provider tells its price in a price request
+//   (`modelPriceRequest`, as APIMart) has a known price: a tab with a money
+//   limit sends to it, and the cost is that price.
 //
 // One app session serves the whole file; each test starts in a new tab.
 
@@ -39,6 +42,19 @@ const PROVIDER: MockProvider = { id: 'costs', name: 'Cost Mock', modelId: 'cost-
 // tokens (builtins.ts).
 const CLAUDE: MockProvider = { id: 'claude', name: 'Claude Mock', modelId: 'claude-model', modelName: 'Claude Model', apiFormat: 'anthropic' }
 const CLAUDE_CONFIG = { prefixCacheMark: true, tokenPrices: [{ match: '^claude-model$', input: 3, output: 15, cachedInput: 0.3, cacheWrite: 3.75 }] }
+// A provider whose model list tells no price: its price request does, and
+// the context window too, at the paths of APIMart's answer (builtins.ts).
+const PRICED: MockProvider = { id: 'priced', name: 'Priced Mock', modelId: 'priced-model', modelName: 'Priced Model' }
+const PRICE_PATH = `/${PRICED.id}/api/pricing/model`
+const pricedConfig = (serverUrl: string) => ({
+  modelPriceRequest: {
+    url: `${serverUrl}${PRICE_PATH}`,
+    query: 'model',
+    prices: { input: 'data.pricing.effective_rates.input', output: 'data.pricing.effective_rates.output', perTokens: 1_000_000 },
+    contextWindow: { paths: ['data.pricing.limits.max_input_tokens'] },
+  },
+})
+const PRICE_ANSWER = { success: true, data: { pricing: { effective_rates: { input: 1000, output: 2000 }, limits: { max_input_tokens: 500_000 } } } }
 
 interface LabelLook {
   /** The text of the part; null when the label does not have it. */
@@ -162,7 +178,11 @@ describe('usage label', () => {
   beforeAll(async () => {
     // The incognito mask makes the right end of the bar wider: the room
     // test checks Submit in the widest bar.
-    setup = await startMockProviderApp(PROVIDER, {}, { appState: { incognitoOption: true }, moreProviders: [{ provider: CLAUDE, config: CLAUDE_CONFIG }] })
+    setup = await startMockProviderApp(PROVIDER, {}, {
+      appState: { incognitoOption: true },
+      moreProviders: [{ provider: CLAUDE, config: CLAUDE_CONFIG }, { provider: PRICED, config: pricedConfig }],
+      jsonAnswers: { [`${PRICE_PATH}?model=${PRICED.modelId}`]: PRICE_ANSWER },
+    })
     browser = setup.browser
   })
 
@@ -475,5 +495,26 @@ describe('usage label', () => {
     await waitForValue(browser, 'cost after the reply', labelLook, { text: '$0.30', look: 'idle', italic: false })
     await submit(browser, 'Next question')
     await expectRefusal('toast of a spent limit')
+  })
+
+  it('prices a model by the price request of its provider, so that a tab with a money limit sends to it', async () => {
+    // The pick loads the price.
+    await pickModel(browser, PRICED.name, PRICED.modelName)
+    try {
+      await sbpCall(browser, 'dez.model/tabs/setMoneyLimit', await activeTabId(browser), { usd: 5, unknownPrices: false })
+      await askAndAnswer('Priced question', 'the priced model', { promptTokens: 1000 })
+      await endedReply(browser)
+      // 1,000 input tokens at $1,000 per 1M, and 4 output tokens at $2,000
+      // per 1M: $1.008. A known price, so no `+`; the label rounds it.
+      await waitForValue(browser, 'label after the priced reply', labelLook, { text: '$1.01', look: 'idle', italic: false })
+      expect(await sbpCall(browser, 'dez.model/tabs/costNumbers', await activeTabId(browser))).toEqual({ cost: { usd: 1.008, requests: 1, unpriced: 0 } })
+      expect(await sbpCall(browser, 'dez.model/modelCache/model', PRICED.id, PRICED.modelId)).toMatchObject({
+        price: { unit: 'token', input: 1000, output: 2000 },
+        contextWindow: 500_000,
+      })
+    } finally {
+      // A new tab gets the last used model: the next tests use PROVIDER.
+      await pickModel(browser, PROVIDER.name, PROVIDER.modelName)
+    }
   })
 })
