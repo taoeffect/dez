@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { codeTimedOutText, errorAdvice, JS_EVAL_TEXT_CAP, JsEvalOutput, endedRun, jsEvalAnswerLine, jsEvalCall, jsEvalCodeFile, runResultText, textForModel, type RunOutcome } from './jsEval'
+import { FRAMES_ENCODE_STATE } from './frameSequences'
+import { CODE_RUNS_STATE, codeTimedOutText, errorAdvice, JS_EVAL_TEXT_CAP, JsEvalOutput, endedRun, jsEvalAnswerLine, jsEvalCall, jsEvalCodeFile, runResultText, textForModel, type RunOutcome } from './jsEval'
 import type { ProgramEnd } from './programRuns'
 import { CONVERSATION_ID, JOINED_RUN_FOLDER, JOINED_WORK_FOLDER, protocolLine, REAL_RUN_FOLDER, REAL_WORK_FOLDER, RUN_FOLDER_ID, RUN_FOLDERS } from './testing'
 import { ToolError, type ToolArguments } from './types'
@@ -307,10 +308,22 @@ describe('errorAdvice', () => {
 
 describe('codeTimedOutText', () => {
   it('tells the seconds of the call, and the parameter that gives more time', () => {
-    const text = codeTimedOutText(5000)
+    const text = codeTimedOutText(5000, CODE_RUNS_STATE)
 
     expect(text).toContain('within 5 seconds')
     expect(text).toContain('`timeout_seconds`')
+    expect(text).toContain('Make the code do less work')
+  })
+
+  // The run time of the result counts only the program, so the advice
+  // about the code would disagree with it.
+  it('names a step of Dez that held the run, and gives no advice about the code', () => {
+    const text = codeTimedOutText(30_000, FRAMES_ENCODE_STATE)
+
+    expect(text).toContain('within 30 seconds')
+    expect(text).toContain(`The last state of the run: ${FRAMES_ENCODE_STATE}`)
+    expect(text).toContain('`timeout_seconds`')
+    expect(text).not.toContain('less work')
   })
 })
 

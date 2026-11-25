@@ -5,7 +5,7 @@ import { toolBlockText } from '../../src/model/chat/toolBlocks'
 import { ASSET_INFO_COLUMNS } from '../../src/model/tools/assetInfo'
 import { PICTURES_SHOWN_NOTE } from '../../src/model/tools/assetView'
 import { jobStartedText, jobsWaitResults, startedJobId } from '../../src/model/tools/jobs'
-import { codeRunsAsJobText, codeTimedOutText } from '../../src/model/tools/jsEval'
+import { CODE_RUNS_STATE, codeRunsAsJobText, codeTimedOutText } from '../../src/model/tools/jsEval'
 import { byteSizeText } from '../../src/utils/byteSize'
 import { consoleErrors, pointerClick, resetConsoleErrors, screenshotOnFailure, waitForValue } from './harness/dom'
 import { expectNoLinkedFile, linkedDropDir, openDroppedFiles } from './harness/drops'
@@ -249,7 +249,7 @@ describe('js_eval tool', () => {
     // The stop ends the job of the run, which keeps no console output. The
     // limit is as long as the wait of the call: the call gets the end of
     // the run, not a job.
-    expect(codeResult(second, 'call_loop')).toBe(codeTimedOutText(1000))
+    expect(codeResult(second, 'call_loop')).toBe(codeTimedOutText(1000, CODE_RUNS_STATE))
     await expectReplyEnd(second)
     await waitForValue(browser, 'chip states', chipStates, ['error'])
   })

@@ -605,11 +605,21 @@ export function endedOutcome(end: Exclude<ProgramEnd, { kind: 'timedOut' }>, sub
     + `an \`await\` of a promise that never settles, or a call of \`Deno.exit\`.${hasConsole ? ' The console output tells which.' : silent}`)
 }
 
-/** The result of a `js_eval` call whose code did not end within its time
- *  limit `timeoutMs`. */
-export function codeTimedOutText(timeoutMs: number): string {
-  return `Dez stopped the code: it did not end within ${countOf(timeoutMs / 1000, 'second')}. `
-    + `Make the code do less work, or give it more time with \`timeout_seconds\` (at most ${JS_EVAL_MAX_SECONDS}).`
+/** The state of the job of a `js_eval` call while its code runs. */
+export const CODE_RUNS_STATE = 'The code runs.'
+
+/** The result of a `js_eval` call whose run did not end within its time
+ *  limit `timeoutMs`, in the state `state` of its job. The limit also
+ *  counts the steps of Dez before and after the program (the inputs, the
+ *  files and the frame sequences of the output folder), and the run time
+ *  of the result counts only the program: so a state other than
+ *  `CODE_RUNS_STATE` is named, as the advice to make the code do less
+ *  work would be wrong for it. A blank state tells no step. */
+export function codeTimedOutText(timeoutMs: number, state: string): string {
+  const limit = countOf(timeoutMs / 1000, 'second')
+  const moreTime = `more time with \`timeout_seconds\` (at most ${JS_EVAL_MAX_SECONDS})`
+  if (state === CODE_RUNS_STATE || state.trim() === '') return `Dez stopped the code: it did not end within ${limit}. Make the code do less work, or give it ${moreTime}.`
+  return `Dez stopped the run of the code: it did not end within ${limit}. The last state of the run: ${state} Give the run ${moreTime}.`
 }
 
 /** The result of a `js_eval` call whose code still ran at the end of the

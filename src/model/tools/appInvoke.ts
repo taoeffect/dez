@@ -102,8 +102,10 @@ export const APP_OUTPUT_LISTED_ENTRIES = 200
 /** The state of a job while the code of its app runs. */
 export const APP_RUNS_STATE = 'The code of the app runs.'
 
-/** The state of the job of a `js_eval` call while its code runs. */
-export const CODE_RUNS_STATE = 'The code runs.'
+/** The state of a job while Dez stores the files of the output folder of
+ *  its run, when the folder holds no frame sequence
+ *  (`FRAMES_ENCODE_STATE`). */
+export const OUTPUTS_STORE_STATE = 'Dez stores the files of the output folder.'
 
 /** The state of a job of a UI app until its page is ready for the run. */
 export const APP_PAGE_LOADS_STATE = 'The page of the app loads.'

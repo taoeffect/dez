@@ -1,9 +1,10 @@
 import sbp from '@sbp/sbp'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MediaTagData } from '../model/chat/mediaTags'
-import { codeRunCall, scriptOutputNotStoredText, type CodeRunCall } from '../model/tools/appInvoke'
+import { codeRunCall, OUTPUTS_STORE_STATE, scriptOutputNotStoredText, type CodeRunCall } from '../model/tools/appInvoke'
 import { JOB_LIMIT_TEXT, jobStartedText, madeAssetText, MAX_OPEN_JOBS } from '../model/tools/jobs'
 import {
+  CODE_RUNS_STATE,
   codeRunsAsJobText,
   codeTimedOutText,
   JS_EVAL_CALL_WAIT_MS,
@@ -335,7 +336,7 @@ describe('runJsEval', () => {
 
     const result = await runJsEval({ ...codeCall(), timeoutMs: 200 }, running(), context())
 
-    expect(result).toStrictEqual({ content: `${codeTimedOutText(200)}\n\nThe code ran for 0.2 seconds.`, isError: true })
+    expect(result).toStrictEqual({ content: `${codeTimedOutText(200, CODE_RUNS_STATE)}\n\nThe code ran for 0.2 seconds.`, isError: true })
     await vi.waitFor(() => deletedWorkFolder())
   })
 
@@ -343,7 +344,24 @@ describe('runJsEval', () => {
   it('gives the text of the time limit with the run time when the program tells that its limit passed', async () => {
     native.program = taking(20_000, async () => ({ kind: 'timedOut' }))
 
-    expect(await runJsEval(codeCall({ timeout_seconds: 20 }), running(), context())).toStrictEqual({ content: `${codeTimedOutText(20_000)}\n\nThe code ran for 20 seconds.`, isError: true })
+    expect(await runJsEval(codeCall({ timeout_seconds: 20 }), running(), context())).toStrictEqual({ content: `${codeTimedOutText(20_000, CODE_RUNS_STATE)}\n\nThe code ran for 20 seconds.`, isError: true })
+  })
+
+  // The time limit also counts what Dez does after the program, which the
+  // run time does not: the text names that step.
+  it('names the step of Dez that its time limit stopped, with the time that the program ran', async () => {
+    vi.useFakeTimers()
+    native.program = taking(300, returns('drew'))
+    outputFolderHolds({ 'chart.png': PNG_BYTES })
+    let storeEnds = () => {}
+    native.saveAppFile = (file) => (file.root === 'app' ? new Promise((resolve) => { storeEnds = () => resolve() }) : Promise.resolve())
+
+    const call = runJsEval({ ...codeCall(), timeoutMs: 500 }, running(), context())
+    await vi.advanceTimersByTimeAsync(500)
+
+    expect(await call).toStrictEqual({ content: `${codeTimedOutText(500, OUTPUTS_STORE_STATE)}\n\nThe code ran for 0.3 seconds.`, isError: true })
+    storeEnds()
+    await vi.waitFor(() => deletedWorkFolder())
   })
 
   it('gives the error of output files that Dez could not keep with the run time', async () => {

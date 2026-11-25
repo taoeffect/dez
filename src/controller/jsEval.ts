@@ -41,12 +41,13 @@ const NO_RESULT_TEXT = 'Dez stopped the run of the code before its end, so it ha
  *
  *  A result of a run whose program ended also has the list of the tool
  *  calls of the code (`ToolRunResult.bridged`), also an error result. A
- *  run that its time limit stopped gives `codeTimedOutText` with its run
- *  time, also as the result of its job. A run that goes on after the wait
- *  gives `codeRunsAsJobText`, and the result of its job has no list of the
- *  tool calls. Throws the `ToolError` of a job that cannot start
- *  (`JOB_LIMIT_TEXT`), and the stop of `signal` during the wait, which
- *  also cancels the job: its code and its tool call stop. */
+ *  run that its time limit stopped gives `codeTimedOutText` for the last
+ *  state of its job, with its run time, also as the result of its job. A
+ *  run that goes on after the wait gives `codeRunsAsJobText`, and the
+ *  result of its job has no list of the tool calls. Throws the
+ *  `ToolError` of a job that cannot start (`JOB_LIMIT_TEXT`), and the
+ *  stop of `signal` during the wait, which also cancels the job: its code
+ *  and its tool call stop. */
 export async function runJsEval(call: CodeRunCall, signal: AbortSignal, context: ToolRunContext): Promise<ToolRunResult> {
   let calls: BridgedCalls | null = null
   const clock = new RunClock()
@@ -66,7 +67,7 @@ export async function runJsEval(call: CodeRunCall, signal: AbortSignal, context:
       label: jobCallLabel(call.code),
       inputs: call.inputs.map(({ id }) => id),
       signal,
-      timedOutText: (timeoutMs) => withRunTime(codeTimedOutText(timeoutMs), clock),
+      timedOutText: (timeoutMs, state) => withRunTime(codeTimedOutText(timeoutMs, state), clock),
     },
     JS_EVAL_CALL_WAIT_MS,
   )

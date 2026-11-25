@@ -14,13 +14,13 @@ import {
   appRunOutcome,
   checkedOutput,
   checkInvokeTarget,
-  CODE_RUNS_STATE,
   codeRunDescription,
   codeRunOutcome,
   frameInputs,
   listedOutputs,
   NO_APP_OUTPUTS,
   NO_APP_RUN_CALLS,
+  OUTPUTS_STORE_STATE,
   runNativeCanvas,
   SaveCount,
   scriptOutputNotStoredText,
@@ -39,6 +39,7 @@ import { FRAMES_ENCODE_STATE, sequenceClipType } from '../model/tools/frameSeque
 import { APP_DECODES_STATE, asksForDecode, runDecode, type DecodedClip } from '../model/tools/inputDecode'
 import { ASSET_NAMES, madeAssetText } from '../model/tools/jobs'
 import {
+  CODE_RUNS_STATE,
   endedRun,
   JS_EVAL_CODE_FILE,
   JS_EVAL_OUTPUT_BYTES,
@@ -177,7 +178,8 @@ async function keptSequence(folder: string, name: string, appDir: string, run: D
 // (`keptSequence`), as the assets of the job in the order of
 // `outputs.kept`. One file is read, checked, and written before the next,
 // so that the webview holds the bytes of one file at a time.
-// `report` tells the state of the job before the first encode.
+// `report` tells the state of the job when there is a file to keep: the
+// encode, or the store when no frame sequence is there.
 //
 // `keepAsset` gets each file when it is stored: the files of a run can be
 // large, so the last write can come long after the first, and until the
@@ -208,6 +210,7 @@ async function keptOutputs(
     const kept: KeptOutput[] = []
     const notKept = [...listed.notKept]
     if (listed.outputs.some(({ frames }) => frames)) report(FRAMES_ENCODE_STATE)
+    else if (listed.outputs.length > 0) report(OUTPUTS_STORE_STATE)
     for (const { name, frames } of listed.outputs) {
       signal.throwIfAborted()
       if (frames) {
