@@ -9,6 +9,7 @@ import { fileNameOf } from '../utils/fileName'
 import type { NativeHttpStreamResult } from '../utils/protocol/nativeHttp'
 import { clipFromSources, downloadClip, explainedDownloadError } from './clipSources'
 import type { AppFileEntry } from './nativeTypes'
+import { forgetPlayCopy, movePlayCopy } from './playCopies'
 import { deleteOldWorkFolders } from './workFolders'
 
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000
@@ -120,6 +121,7 @@ export default sbp('sbp/selectors/register', {
             { cause: error },
           )
         })
+        movePlayCopy(clip.src as string, path)
         return path
       }
       // `downloadFileName` refused a clip with no http or https URL.
@@ -148,6 +150,7 @@ export default sbp('sbp/selectors/register', {
     try {
       const file = savedMediaFile(path, await sbp('dez.native/getAppDir') as string)
       if (file) await sbp('dez.native/deleteAppFile', file)
+      forgetPlayCopy(path)
     } catch (error) {
       console.error(`Failed to delete the clip ${path}:`, error)
       sbp('dez.ui/toast', 'app-global', {

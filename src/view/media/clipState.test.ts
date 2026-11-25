@@ -64,41 +64,69 @@ describe('clipPlayType', () => {
 describe('clipProblem', () => {
   const LOCAL: ClipSourceKind[] = ['saved', 'temp', 'linked']
   const USABLE: ClipSourceKind[] = [...LOCAL, 'remote']
+  const KINDS = ['audio', 'video'] as const
 
   it('tells that a clip with no usable source is gone, whatever failed', () => {
-    expect(clipProblem('none', null)).toBe('gone')
-    expect(clipProblem('none', { step: 'play', code: 3 })).toBe('gone')
-    expect(clipProblem('none', { step: 'ask', answers: true })).toBe('gone')
+    for (const kind of KINDS) {
+      expect(clipProblem(kind, 'none', null)).toBe('gone')
+      expect(clipProblem(kind, 'none', { step: 'play', code: 3, copy: false })).toBe('gone')
+      expect(clipProblem(kind, 'none', { step: 'ask', answers: true })).toBe('gone')
+    }
   })
 
   it('gives no problem while nothing failed', () => {
-    for (const source of USABLE) expect(clipProblem(source, null), source).toBeNull()
+    for (const kind of KINDS) {
+      for (const source of USABLE) expect(clipProblem(kind, source, null), `${kind} ${source}`).toBeNull()
+    }
   })
 
-  it('tells that a local clip whose file cannot be read is gone', () => {
-    for (const source of LOCAL) expect(clipProblem(source, { step: 'read' }), source).toBe('gone')
+  it('tells that a local clip whose file cannot be read is gone, with no copy', () => {
+    for (const kind of KINDS) {
+      for (const source of LOCAL) expect(clipProblem(kind, source, { step: 'read' }), `${kind} ${source}`).toBe('gone')
+    }
   })
 
-  it('tells that this computer cannot play a local file that was read, for any media error', () => {
+  it('makes a copy of a local video whose file was read and did not play, for any media error', () => {
     for (const source of LOCAL) {
       for (const code of [1, 2, 3, 4, undefined]) {
-        expect(clipProblem(source, { step: 'play', code }), `${source} ${code}`).toBe('cannot-play')
+        expect(clipProblem('video', source, { step: 'play', code, copy: false }), `${source} ${code}`).toBe('copy')
+      }
+    }
+  })
+
+  it('tells that this computer cannot play a local video when Dez made no copy, or when the copy did not play either', () => {
+    for (const source of LOCAL) {
+      expect(clipProblem('video', source, { step: 'copy' }), source).toBe('cannot-play')
+      for (const code of [1, 2, 3, 4, undefined]) {
+        expect(clipProblem('video', source, { step: 'play', code, copy: true }), `${source} ${code}`).toBe('cannot-play')
+      }
+    }
+  })
+
+  it('tells that this computer cannot play a local audio file that was read, for any media error, with no copy', () => {
+    for (const source of LOCAL) {
+      for (const code of [1, 2, 3, 4, undefined]) {
+        expect(clipProblem('audio', source, { step: 'play', code, copy: false }), `${source} ${code}`).toBe('cannot-play')
       }
     }
   })
 
   it('tells that this computer cannot play a URL that gave a decode error', () => {
-    expect(clipProblem('remote', { step: 'play', code: 3 })).toBe('cannot-play')
+    for (const kind of KINDS) expect(clipProblem(kind, 'remote', { step: 'play', code: 3, copy: false }), kind).toBe('cannot-play')
   })
 
   it('tells that a URL that gave a network error, or an error with no known code, is gone', () => {
-    for (const code of [1, 2, undefined]) expect(clipProblem('remote', { step: 'play', code }), String(code)).toBe('gone')
+    for (const kind of KINDS) {
+      for (const code of [1, 2, undefined]) expect(clipProblem(kind, 'remote', { step: 'play', code, copy: false }), `${kind} ${code}`).toBe('gone')
+    }
   })
 
-  it('asks the URL when it was "not supported", and decides by its answer', () => {
-    expect(clipProblem('remote', { step: 'play', code: 4 })).toBe('ask')
-    expect(clipProblem('remote', { step: 'ask', answers: true })).toBe('cannot-play')
-    expect(clipProblem('remote', { step: 'ask', answers: false })).toBe('gone')
+  it('asks the URL when it was "not supported", and decides by its answer, with no copy', () => {
+    for (const kind of KINDS) {
+      expect(clipProblem(kind, 'remote', { step: 'play', code: 4, copy: false }), kind).toBe('ask')
+      expect(clipProblem(kind, 'remote', { step: 'ask', answers: true }), kind).toBe('cannot-play')
+      expect(clipProblem(kind, 'remote', { step: 'ask', answers: false }), kind).toBe('gone')
+    }
   })
 })
 

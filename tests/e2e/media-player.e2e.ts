@@ -6,7 +6,7 @@ import { openAiChatBody } from './harness/chatBody'
 import { click, consoleErrors, elementCenter, isOnTop, movePointer, pointerClick, pointerClickAt, pointerDrag, promptMessage, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue, type Point } from './harness/dom'
 import { linkedDropDir, nativeDrop } from './harness/drops'
 import { appFilePath, conversationFilePath, filesIn, mediaTempDir, newFileIn, readAppState, storedFileName, writeTestFile } from './harness/fixtures'
-import { NOT_A_CLIP, WAV_SAMPLE_RATE, WEBM_VIDEO, clipTag, monoWav, openPlayerTooltips, problemCards, shownPlayers, silentWav, startClipServer, waitForPlayerFullscreen, type ClipKind, type ClipServer, type ProblemCard, type ShownPlayer } from './harness/media'
+import { NOT_A_CLIP, WAV_SAMPLE_RATE, WEBM_VIDEO, clipTag, magicYuvClip, monoWav, openPlayerTooltips, problemCards, shownPlayers, silentWav, startClipServer, waitForPlayerFullscreen, type ClipKind, type ClipServer, type ProblemCard, type ShownPlayer } from './harness/media'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, mockModelKey, replyText, sendChatReply, type MockProvider } from './harness/mockServer'
 import { threadCount, webProcessPid } from './harness/processes'
@@ -34,6 +34,9 @@ import { copySelection, docPosPoint, editorCaret, editorDoc, focusEditor, focuse
 //   over a Save and then names the saved file, and after the Delete of a
 //   saved file that has no URL the clip is gone; a clip whose URL gives no
 //   clip (a 404) is gone;
+// - a saved video in a format that WebKit does not decode and ffmpeg does
+//   (MagicYUV) plays from a copy that the bundled ffmpeg makes, with a mark
+//   in the bar; its facts are those of its own file;
 // - the clock's tooltip stays open while the pointer moves into it and
 //   rests there, also in fullscreen over the picture; a drag or a triple
 //   click in it selects its text and leaves the editor's caret and doc
@@ -658,9 +661,13 @@ describe('media player', () => {
     await waitForValue(browser, 'player after the delete', () => shownPlayers(browser), [{ ...cannotPlay, clock: null, save: null }])
     expect(await problemCards(browser)).toStrictEqual([GONE_CARD])
 
-    // One error: the media element's, at the first load. The Save tried
-    // the bytes no second time.
-    expect(await consoleErrors(browser)).toStrictEqual([expect.stringMatching(/^\[MediaPlayer\] The clip did not load; media error code: [34]$/)])
+    // Two errors, at the first load: the media element's, and the failed
+    // play copy's (ffmpeg reads no clip in the text either). The Save tried
+    // the bytes and the copy no second time.
+    expect(await consoleErrors(browser)).toStrictEqual([
+      expect.stringMatching(/^\[MediaPlayer\] The clip did not load; media error code: [34]$/),
+      expect.stringMatching(/^Failed to make the play copy of a clip: ffmpeg ended with the error code -?\d+\./),
+    ])
   })
 
   it('tells that this computer cannot play the format of a clip whose URL answers', async () => {
@@ -672,6 +679,33 @@ describe('media player', () => {
       { kind: 'video', id: 'a', available: false, source: null, seconds: null, picture: null, clock: 'Not saved', save: 'save' },
     ])
     expect(await problemCards(browser)).toStrictEqual([{ cause: 'cannot-play', lines: [CANNOT_PLAY_WEBM, SAVE_HINT] }])
+    expect(await consoleErrors(browser)).toStrictEqual([expect.stringMatching(/^\[MediaPlayer\] The clip did not load; media error code: [34]$/)])
+  })
+
+  it('plays a saved video that this computer cannot decode from a copy that the bundled ffmpeg makes, with a mark, and keeps the facts of its file', async () => {
+    const file = magicYuvClip(setup.app, path.join(savedDir('video'), 'magic-copy.mov'))
+    await recordBlobUrls()
+    await openReply('magic-copy', clipTag('video', { id: 'a', type: 'video/quicktime', src: file }))
+
+    // The copy has the picture and the length of the clip.
+    await waitForValue(browser, 'player of the copy', () => shownPlayers(browser), [
+      { kind: 'video', id: 'a', available: true, source: 'copy', seconds: 1, picture: { width: 320, height: 240 }, clock: null, save: 'saved' },
+    ])
+    expect(await problemCards(browser)).toStrictEqual([])
+    // The player gave up the blob URL of the file, and plays the one of the
+    // copy.
+    await waitForValue(browser, 'blob URLs of the file and the copy', blobUrls, { made: 2, live: 1 })
+    // The facts are those of the clip's own file (its format, and the size
+    // of its file), not of the MP4 or WebM copy.
+    const facts = await browser.execute(() => document.querySelector('.cm-content .media-player__facts')?.textContent ?? null)
+    expect(facts).toMatch(/^0:01 · MOV · [\d.]+ [KM]B$/)
+
+    // The mark tells why the clip plays from a copy.
+    await movePointer(browser, await elementCenter(browser, '.media-player__copy-mark'))
+    await waitForValue(browser, 'tooltip of the copy mark', async () => (await openPlayerTooltips(browser)).map((text) => text.startsWith('Plays a copy This computer cannot play the format of this clip')), [true])
+    await movePointer(browser, OFF_PLAYERS)
+
+    // One error: the media element's, at the load of the file.
     expect(await consoleErrors(browser)).toStrictEqual([expect.stringMatching(/^\[MediaPlayer\] The clip did not load; media error code: [34]$/)])
   })
 

@@ -107,6 +107,7 @@ ThreadEditor (CodeMirror doc) syncs to the active tab's sections
 - `view/assetModelLabel.ts`: the model label of an asset's overlay (name, tooltip, symbol).
 - `controller/images.ts`: `dez.controller/images/*`: store, delete, read, and redraw images; file drops.
 - `controller/media.ts`, `clipSources.ts`: `dez.controller/media/*`: save, delete, read, and decode clips; the cleanup of old temp copies.
+- `controller/playCopies.ts`, `model/chat/playCopies.ts`: `dez.controller/media/playCopy`, the copy that a local video plays from when this computer cannot play its file, and its memo.
 - `model/chat/dataFiles.ts`, `controller/dataFiles.ts`: a pasted or dropped data file (`.csv`, `.tsv`, `.json`, `.txt`) is copied into the work folder of the conversation as `/work/data-<n>.<ext>`, with no id: it is no asset.
 - `controller/exportAsset.ts`, `model/chat/assetExport.ts`: `dez.controller/exportAsset`, the Export of the asset menu (the save dialog, then a copy of the file or a download of a URL clip).
 - `controller/unusedFiles.ts`, `cacheHolds.ts`: the two cleanups of Settings: the files and the cache entries that nothing uses (with the work folders of the conversations that are gone), and the apps that no text names. `controller/workFolders.ts`: the start cleanup of the old run folders of the cache root.
@@ -340,6 +341,7 @@ Each line names a trap and the code whose comments tell it in full. Read those c
 
 - **Clips come through Rust**: a clip response goes to a file with `dez.native/downloadAppFile`, not through `dez.http/stream` (the exception: the audio of a chat answer, `chatAudio.ts`).
 - **Local clips play from a blob URL with a type that WebKit knows**: WebKitGTK loads no media from the asset protocol; macOS reads the blob's type (`MediaPlayer.vue`, `clipPlayType`).
+- **A local video that WebKit cannot play plays from a copy of the bundled ffmpeg** (Dez's PNG-in-MOV clips on macOS), in memory only; the facts, the menu, and the trash keep the clip's own file (`dez.controller/media/playCopy`, `MediaPlayer.vue`).
 - **A new editor state makes new players**: a stream end or a tab switch stops a clip that plays (`view/editor/media.ts`).
 - **A removed media element frees nothing by itself**: a media element that Vue can remove needs `v-release-on-remove` (`view/media/releaseMedia.ts`).
 - **A clip's volume is what its controls set, not what its element reads back**: WebKitGTK reads back the sound server's late reports (`followClipVolume`, `view/media/clipVolume.ts`).

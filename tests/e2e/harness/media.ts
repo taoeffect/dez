@@ -1,9 +1,11 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import type { RunningApp } from './app'
 import { waitForValue } from './dom'
 import { mediaTempDir, writeTestFile } from './fixtures'
 import { takeRequest, type MockProviderApp } from './mockProviderApp'
 import { answerHeld, startMockServer, type HeldRequest, type MockServer } from './mockServer'
+import { programRun } from './programs'
 import type { E2EBrowser } from './session'
 import { threadSections } from './thread'
 
@@ -62,6 +64,17 @@ export const MP4_VIDEO = fs.readFileSync(new URL('../fixtures/video.mp4', import
  *  only some computers decode, so that it gives the same result on each
  *  host. */
 export const NOT_A_CLIP = Buffer.from('This text is no clip.\n')
+
+/** Writes a 1 s MagicYUV video in a MOV file to `file`, with the ffmpeg of
+ *  the build of `app`, and gives `file`. No WebKit of the tests (the
+ *  GStreamer of this computer or of CI) decodes MagicYUV, and Dez's ffmpeg
+ *  does: so the player of such a clip plays from a play copy on each host,
+ *  as a PNG MOV with transparency does on macOS. */
+export function magicYuvClip (app: RunningApp, file: string): string {
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  programRun(app, 'dez-ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=320x240:rate=24:duration=1', '-c:v', 'magicyuv', '-y', file])
+  return file
+}
 
 /** One file of a clip server. */
 export interface ServedClip {
@@ -168,7 +181,10 @@ export interface ShownPlayer {
    *  gone, or this computer cannot play it; `problemCards` reads it). */
   available: boolean
   /** What the media element loads: the URL of a remote clip; 'blob' for a
-   *  local file, which the player reads into a blob URL; null for none. */
+   *  local file, which the player reads into a blob URL; 'copy' for the
+   *  blob URL of a play copy (a local video that this computer cannot play
+   *  plays from a copy that the bundled ffmpeg makes, with a mark in the
+   *  bar); null for none. */
   source: string | null
   /** The length of the clip in s, to 1 decimal place; null until the media
    *  element has the clip's metadata. */
@@ -194,7 +210,7 @@ export async function shownPlayers (browser: E2EBrowser): Promise<ShownPlayer[]>
       kind: player.getAttribute('data-kind'),
       id: player.querySelector('.media-player__id')?.textContent?.trim() ?? '',
       available: !player.hasAttribute('data-unavailable'),
-      source: src?.startsWith('blob:') ? 'blob' : src,
+      source: src?.startsWith('blob:') ? (player.querySelector('.media-player__copy-mark') === null ? 'blob' : 'copy') : src,
       seconds: loaded ? Math.round(media.duration * 10) / 10 : null,
       picture: loaded && media instanceof HTMLVideoElement ? { width: media.videoWidth, height: media.videoHeight } : null,
       clock: clock === null ? null : clock.hasAttribute('data-expired') ? 'Expired' : 'Not saved',

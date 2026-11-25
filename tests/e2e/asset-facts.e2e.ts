@@ -186,9 +186,10 @@ describe('asset facts', () => {
     }
 
     // Only the two clips that do not play gave errors, in either order: the
-    // media error of the file that cannot play, and the failed read of the
-    // file that is gone.
+    // media error of the file that cannot play and the failed play copy of
+    // it, and the failed read of the file that is gone.
     expect([...await consoleErrors(browser)].sort()).toStrictEqual([
+      expect.stringMatching(/^Failed to make the play copy of a clip: ffmpeg ended with the error code -?\d+\./),
       expect.stringMatching(/^\[MediaPlayer\] The clip did not load; media error code: [34]$/),
       '[MediaPlayer] The file of the clip could not be read',
     ])

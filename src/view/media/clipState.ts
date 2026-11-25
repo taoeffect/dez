@@ -1,6 +1,6 @@
 import type { AssetExportSource } from '../../model/chat/assetExport'
 import { knownMediaType } from '../../model/chat/mediaFiles'
-import { isLinkedMediaPath, isSavedMediaPath, isTempMediaPath } from '../../model/chat/mediaTags'
+import { isLinkedMediaPath, isSavedMediaPath, isTempMediaPath, type MediaTagKind } from '../../model/chat/mediaTags'
 
 // What the player (MediaPlayer.vue, src/view/editor/media.ts) shows for a
 // clip, from the fields of its tag (src/model/chat/mediaTags.ts).
@@ -56,41 +56,55 @@ export type ClipLoadFailure =
   /** The file of a saved clip, of a temp copy, or of a linked clip could not
    *  be read. */
   | { step: 'read' }
-  /** The media element gave an error, with the code of its `MediaError`. */
-  | { step: 'play', code: number | undefined }
+  /** The media element gave an error, with the code of its `MediaError`.
+   *  `copy` tells that the element had the play copy of the clip
+   *  (`dez.controller/media/playCopy`), not its own file or URL. */
+  | { step: 'play', code: number | undefined, copy: boolean }
   /** After a "source not supported" error of a URL, the URL was asked
    *  whether it answers (`dez.controller/media/urlAnswers`): `answers` is
    *  true for a 2xx status. */
   | { step: 'ask', answers: boolean }
+  /** Dez made no play copy of a local video whose file did not play:
+   *  ffmpeg failed, the copy was too large or took too long, or this
+   *  computer plays no format that a copy can have. */
+  | { step: 'copy' }
 
 // The codes of `MediaError` (the unit tests run with no DOM, so the
 // constants of the class are not there).
 const MEDIA_ERR_DECODE = 3
 const MEDIA_ERR_SRC_NOT_SUPPORTED = 4
 
-/** The problem of a clip whose source is of the kind `source`, after its
- *  load failed as `failure` (null: nothing failed). Null while the clip has
- *  no problem. `ask`: the URL must be asked first. A media element gives
- *  "source not supported" both for bytes that it cannot decode and for a
- *  URL that it could not fetch (an HTTP error), when the error comes
- *  before the clip's metadata (the resource fetch algorithm of the HTML
- *  standard). So only an answer of the URL tells the two apart.
+/** The problem of a `kind` clip whose source is of the kind `source`,
+ *  after its load failed as `failure` (null: nothing failed). Null while
+ *  the clip has no problem. Two answers are steps, not problems:
+ *  - `ask`: the URL must be asked first. A media element gives "source not
+ *    supported" both for bytes that it cannot decode and for a URL that it
+ *    could not fetch (an HTTP error), when the error comes before the
+ *    clip's metadata (the resource fetch algorithm of the HTML standard).
+ *    So only an answer of the URL tells the two apart.
+ *  - `copy`: Dez must first make a play copy of a local video whose file
+ *    did not play. A copy that was not made, or that did not play either,
+ *    is `cannot-play`: there is never a second copy. Only a video gets a
+ *    copy: the clips of Dez that a computer cannot play are videos (PNG in
+ *    MOV, which macOS does not decode).
  *  https://html.spec.whatwg.org/multipage/media.html#concept-media-load-resource */
-export function clipProblem(source: ClipSourceKind, failure: ClipLoadFailure | null): ClipProblem | 'ask' | null {
+export function clipProblem(kind: MediaTagKind, source: ClipSourceKind, failure: ClipLoadFailure | null): ClipProblem | 'ask' | 'copy' | null {
   if (source === 'none') return 'gone'
   if (failure === null) return null
   if (failure.step === 'read') return 'gone'
   if (failure.step === 'ask') return failure.answers ? 'cannot-play' : 'gone'
+  if (failure.step === 'copy') return 'cannot-play'
   // A local file was read, so its bytes are there. Two other causes give
   // the same "source not supported" error, with no field that tells them
   // apart from bytes that this computer cannot decode:
   // - WebKitGTK, when the sound server refuses the connection of the
   //   player's pipeline (too many players at once). Views keep the count of
-  //   live players low (`AssetList.vue`), and a new player is a new try.
+  //   live players low (`AssetList.vue`), and a new player is a new try. A
+  //   video then costs one copy, whose play is refused too.
   // - WebKit on macOS, for a blob whose type it does not know, whatever the
   //   bytes. The player gives the blob a type that it knows
   //   (`clipPlayType`).
-  if (source !== 'remote') return 'cannot-play'
+  if (source !== 'remote') return kind === 'video' && !failure.copy ? 'copy' : 'cannot-play'
   if (failure.code === MEDIA_ERR_DECODE) return 'cannot-play'
   // A network error, and any other code: the URL gave no clip.
   return failure.code === MEDIA_ERR_SRC_NOT_SUPPORTED ? 'ask' : 'gone'

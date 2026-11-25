@@ -547,6 +547,17 @@ function onOverlayClick(event: MouseEvent) {
               system without Landlock (a part of the kernel since Linux 5.13) cannot set this
               limit: there, the checks of Dez are the only guard of your files.
             </p>
+            <!-- The play copy: `dez.controller/media/playCopy`
+                 (src/controller/playCopies.ts, src/model/chat/playCopies.ts)
+                 and `playCopy` (src/view/media/MediaPlayer.vue). -->
+            <p>
+              A video clip on this computer that the system cannot play (for example a clip with a
+              transparent background on macOS) plays from a copy that ffmpeg makes in a run folder,
+              in a format that the system plays. A mark in the bar of the player shows it. Where the
+              clip is transparent, the copy shows black, and its quality can be lower. Dez keeps the
+              copy only in memory: the file of the clip stays as it is, and Export and Reveal in File
+              Manager use that file.
+            </p>
 
             <!-- The work folder of a conversation:
                  src/model/tools/conversationWork.ts; data files:

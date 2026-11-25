@@ -27,6 +27,7 @@ import '@videojs/html/ui/tooltip-label'
 import '@videojs/html/ui/tooltip-shortcut'
 import { MAX_SAVED_CLIP_BYTES, mediaFileExtension } from '../../model/chat/mediaFiles'
 import { isPastedMediaPath, type MediaTagKind } from '../../model/chat/mediaTags'
+import { playCopyTarget } from '../../model/chat/playCopies'
 import { assetFactsText } from '../assetFacts'
 import { ASSET_ICON_SHAPES } from '../assetIcons'
 import { MODEL_ICON_SHAPES, assetModelTexts } from '../assetModelLabel'
@@ -40,11 +41,12 @@ import { videoAspectRatios } from './videoSizes'
 // parts (a packaged video.js skin cannot get new controls), plus the Save
 // control and the clock of a clip that is not saved. video.js keeps the
 // playback state: `<video-player>` finds the plain media element inside it,
-// and each part shows or changes that state. A clip that does not play gets
-// a card in place of its media element, which tells why: the clip is gone,
-// or this computer cannot play its format. The component knows no tag: its
-// owner gives the clip's source, and does the Save and the Delete
-// (`src/view/editor/media.ts`).
+// and each part shows or changes that state. A local video that this
+// computer cannot play plays from a copy that Dez's ffmpeg makes
+// (`playCopy`). A clip that does not play gets a card in place of its
+// media element, which tells why: the clip is gone, or this computer cannot
+// play its format. The component knows no tag: its owner gives the clip's
+// source, and does the Save and the Delete (`src/view/editor/media.ts`).
 
 const props = defineProps<{
   kind: MediaTagKind
@@ -90,6 +92,9 @@ const linked = computed(() => sourceKind.value === 'linked')
 interface LoadedSource {
   src: string
   url: string
+  /** The URL is of the play copy of the clip (`playCopy`), not of the
+   *  clip's own file. */
+  copy: boolean
 }
 
 const loaded = shallowRef<LoadedSource | null>(null)
@@ -107,24 +112,31 @@ interface FailedLoad {
 const failed = shallowRef<FailedLoad | null>(null)
 
 /** The problem of the clip while its source is `src` (`clipProblem`). */
-function problemOf(src: string | null): ClipProblem | 'ask' | null {
+function problemOf(src: string | null): ClipProblem | 'ask' | 'copy' | null {
   const entry = failed.value
-  return clipProblem(clipSourceKind(src, props.linkedSrc), entry !== null && entry.src === src ? entry.failure : null)
+  return clipProblem(props.kind, clipSourceKind(src, props.linkedSrc), entry !== null && entry.src === src ? entry.failure : null)
 }
 
-/** Why the clip does not play: null while it plays, and while its URL is
- *  asked (the player keeps its look until the answer). */
+/** Why the clip does not play: null while it plays, while its URL is
+ *  asked (the player keeps its look until the answer), and while its play
+ *  copy is made. */
 const unavailable = computed(() => {
   const problem = problemOf(props.src)
-  return problem === 'ask' ? null : problem
+  return problem === 'ask' || problem === 'copy' ? null : problem
 })
+
+/** The play copy of the clip is made: a status shows in place of the
+ *  picture. */
+const copying = computed(() => problemOf(props.src) === 'copy')
 
 function fail(src: string, failure: ClipLoadFailure): void {
   const entry = { src, failure }
   failed.value = entry
-  // The URL is asked only when it is the source that the clip has now: the
-  // failure of a source of before shows nothing.
-  if (problemOf(props.src) === 'ask') void askUrl(entry)
+  // The URL is asked, or the copy is made, only when it is the source that
+  // the clip has now: the failure of a source of before shows nothing.
+  const problem = problemOf(props.src)
+  if (problem === 'ask') void askUrl(entry)
+  else if (problem === 'copy') void playCopy(entry)
 }
 
 // A URL that gave "source not supported": its answer tells whether the clip
@@ -148,12 +160,64 @@ function onMediaError(event: Event): void {
   console.error('[MediaPlayer] The clip did not load; media error code:', code)
   const source = loaded.value
   if (!source) return
-  fail(source.src, { step: 'play', code })
-  // The card takes the place of the media element, so the player needs no
-  // source any more: this gives up the blob URL of a local file (the
-  // `loaded` watcher revokes it), which holds the whole file in memory. A
-  // URL that is asked first (`unavailable` stays null) keeps its element.
-  if (unavailable.value !== null) load(null)
+  fail(source.src, { step: 'play', code, copy: source.copy })
+  // The card, or the status of a play copy, takes the place of the media
+  // element, so the player needs no source any more: this gives up the blob
+  // URL of a local file (the `loaded` watcher revokes it), which holds the
+  // whole file in memory. A URL that is asked first (`unavailable` stays
+  // null) keeps its element.
+  if (unavailable.value !== null || copying.value) load(null)
+}
+
+// The wait of the player for the play copy of its clip; null when it waits
+// for none.
+let copyWait: AbortController | null = null
+
+// Stops the wait for the play copy: the controller stops the run when no
+// other player waits for it.
+function stopCopyWait(): void {
+  copyWait?.abort()
+  copyWait = null
+}
+
+// A local video whose file did not play: the bundled ffmpeg makes a copy in
+// a format that this computer plays (`dez.controller/media/playCopy`), and
+// the player plays the copy. The facts, Reveal, Export, and the trash stay
+// on the clip's own file (`fileBytes`, `clipFile`, `clipExportSource`). A
+// copy that Dez does not make, or that does not play either, shows the
+// card (`clipProblem`): there is no second copy.
+async function playCopy(entry: FailedLoad): Promise<void> {
+  const target = playCopyTarget((type) => document.createElement('video').canPlayType(type))
+  // The read of the file gave its size before the media element had it.
+  const size = fileBytes.value
+  const before = copyWait
+  const wait = new AbortController()
+  copyWait = wait
+  let copy: Promise<Blob | null> = Promise.resolve(null)
+  if (target === null) console.error('[MediaPlayer] This computer plays no format that a play copy can have')
+  else if (size === null) console.error('[MediaPlayer] The play copy needs the size of the file, which is not known')
+  else copy = sbp('dez.controller/media/playCopy', { src: entry.src, size, target }, { signal: wait.signal }) as Promise<Blob | null>
+  // The wait of before stops only now: after a Save, the controller moved
+  // the copy to the saved file, and this call waits for the same run. A
+  // stop before the call would stop the run, as no player waited for it.
+  before?.abort()
+  let made: Blob | null = null
+  try {
+    made = await copy
+  } catch (error) {
+    if (wait.signal.aborted) return
+    console.error('[MediaPlayer] The play copy failed:', error)
+  }
+  // The clip got another source, or failed again, or the player went,
+  // while the copy was made.
+  if (wait.signal.aborted || unmounted || props.src !== entry.src || failed.value !== entry) return
+  copyWait = null
+  if (made === null) {
+    failed.value = { src: entry.src, failure: { step: 'copy' } }
+    return
+  }
+  failed.value = null
+  load({ src: entry.src, url: URL.createObjectURL(made), copy: true })
 }
 
 // A video is 16:9 until it tells its size.
@@ -200,6 +264,33 @@ const fileBytes = ref<number | null>(null)
 // https://github.com/tauri-apps/tauri/issues/3725
 watch(() => props.src, async (src, previous) => {
   const kind = sourceKind.value
+  // A Save moves the file of a temp copy: the bytes stay the same, and the
+  // saved file is not read and tried again.
+  // - A clip that this computer cannot play keeps its card. (A hand edit of
+  //   the tag that gives other bytes the path of a saved file shows this
+  //   card too, until the next editor state makes a new player.)
+  // - A clip whose play copy is made waits on for it: the Save moved the
+  //   copy with the file (`movePlayCopy`, controller/playCopies.ts).
+  // - A clip that plays from its play copy plays on, with no new load.
+  const before = failed.value
+  const current = loaded.value
+  if (src !== null && kind === 'saved' && typeof previous === 'string' && clipSourceKind(previous, props.linkedSrc) !== 'saved') {
+    const problem = before !== null && before.src === previous ? problemOf(previous) : null
+    if (before !== null && (problem === 'cannot-play' || problem === 'copy')) {
+      const entry = { src, failure: before.failure }
+      failed.value = entry
+      load(null)
+      if (problem === 'copy') void playCopy(entry)
+      return
+    }
+    if (current !== null && current.copy && current.src === previous) {
+      const ratio = videoAspectRatios.get(previous)
+      if (ratio !== undefined) videoAspectRatios.set(src, ratio)
+      loaded.value = { ...current, src }
+      return
+    }
+  }
+  stopCopyWait()
   if (src === null || kind === 'none') {
     fileBytes.value = null
     load(null)
@@ -207,18 +298,7 @@ watch(() => props.src, async (src, previous) => {
   }
   if (kind === 'remote') {
     fileBytes.value = null
-    load({ src, url: src })
-    return
-  }
-  // A Save keeps the bytes of a clip that this computer cannot play: the
-  // card stays, and the saved file is not read and tried again. (A hand
-  // edit of the tag that gives other bytes the path of a saved file shows
-  // this card too, until the next editor state makes a new player.)
-  const before = failed.value
-  if (kind === 'saved' && before !== null && before.src === previous
-    && clipSourceKind(previous, props.linkedSrc) !== 'saved' && problemOf(previous) === 'cannot-play') {
-    failed.value = { src, failure: before.failure }
-    load(null)
+    load({ src, url: src, copy: false })
     return
   }
   if (media.value === null) load(null)
@@ -240,23 +320,28 @@ watch(() => props.src, async (src, previous) => {
   }
   fileBytes.value = file.size
   const type = clipPlayType(file.type, props.type)
-  load({ src, url: URL.createObjectURL(type === file.type ? file : file.slice(0, file.size, type)) })
+  load({ src, url: URL.createObjectURL(type === file.type ? file : file.slice(0, file.size, type)), copy: false })
 }, { immediate: true })
 
 // A blob URL keeps its bytes in memory until it is revoked. After that, the
 // bytes go only when the page collects the `File`, so keep no other
-// reference to it (`LoadedSource` holds only the URLs).
+// reference to it (`LoadedSource` holds only the URLs). The blob of a play
+// copy stays in the memo of the controller, under its cap.
 function release(source: LoadedSource | null | undefined): void {
   if (source && source.url !== source.src) URL.revokeObjectURL(source.url)
 }
 
-// The `post` flush: the media element has the next URL by then.
-watch(loaded, (_next, previous) => release(previous), { flush: 'post' })
+// The `post` flush: the media element has the next URL by then. A Save
+// keeps the URL of a play copy for the saved file: it stays.
+watch(loaded, (next, previous) => {
+  if (next?.url !== previous?.url) release(previous)
+}, { flush: 'post' })
 
 // Only the blob URL is released here. The media element gives up its
 // player when Vue removes it (`vReleaseOnRemove`).
 onBeforeUnmount(() => {
   unmounted = true
+  stopCopyWait()
   release(loaded.value)
 })
 
@@ -357,6 +442,12 @@ const noticeLabel = computed(() => {
   if (!value) return undefined
   return value.file === null ? `${value.title}. ${value.text}` : `${value.title}. ${value.text} ${value.file}`
 })
+
+// The tooltip of the mark of a play copy, in the bar while the copy plays.
+const COPY_NOTICE = {
+  title: 'Plays a copy',
+  text: 'This computer cannot play the format of this clip, so Dez made a copy that it can play. Where the clip is transparent, the copy shows black, and its quality can be lower. The file of the clip stays as it is.',
+}
 
 // The facts beside the id badge: the length, the format, and the size of
 // the file, each when known (`assetFactsText`). None for a clip that is
@@ -494,6 +585,7 @@ function onContextMenu(event: MouseEvent): void {
     class="media-player"
     :data-kind="kind"
     :data-unavailable="unavailable ?? undefined"
+    :data-copying="copying ? '' : undefined"
     :style="{ '--media-player-ratio': aspectRatio }"
     @contextmenu="onContextMenu"
   >
@@ -505,7 +597,13 @@ function onContextMenu(event: MouseEvent): void {
            on a click on Play. The parts get their own pointer events first,
            so they still work. The div has no box (`display: contents`). -->
       <div class="media-player__parts" @pointerup.stop>
-        <template v-if="!card">
+        <!-- While the play copy is made, a status takes the place of the
+             picture, in a box of the same size. -->
+        <div v-if="copying" class="media-player__copying" role="status">
+          <span class="media-player__spinner" aria-hidden="true" />
+          <span>Making a copy that this computer can play…</span>
+        </div>
+        <template v-else-if="!card">
           <video
             v-if="kind === 'video'"
             ref="media"
@@ -543,11 +641,11 @@ function onContextMenu(event: MouseEvent): void {
         </div>
         <!-- One tooltip group: after the first tooltip, the next ones show
              with no delay. A tooltip belongs to the element before it. Under
-             the card of a clip that this computer cannot play, the bar keeps
-             the clock and the Save control: the file of the clip is still
-             there, and the user can keep it. -->
+             the card of a clip that this computer cannot play, and while its
+             play copy is made, the bar keeps the clock and the Save control:
+             the file of the clip is still there, and the user can keep it. -->
         <media-tooltip-group v-if="unavailable !== 'gone'" class="media-player__bar">
-          <template v-if="!card">
+          <template v-if="!card && !copying">
             <media-play-button class="media-player__button media-player__play">
               <svg class="media-player__icon media-player__icon--play" viewBox="0 0 16 16" aria-hidden="true">
                 <path d="M5.2 3.1c0-.6.66-.96 1.16-.63l7.2 4.9c.44.3.44.96 0 1.26l-7.2 4.9c-.5.33-1.16-.03-1.16-.63z" />
@@ -611,6 +709,21 @@ function onContextMenu(event: MouseEvent): void {
               </media-fullscreen-button>
               <media-tooltip class="media-player__tooltip" boundary="viewport" />
             </template>
+          </template>
+
+          <!-- The mark of a play copy: the clip plays, but not from its own
+               file. -->
+          <template v-if="loaded?.copy">
+            <span class="media-player__copy-mark" role="img" tabindex="0" :aria-label="`${COPY_NOTICE.title}. ${COPY_NOTICE.text}`">
+              <svg class="media-player__icon media-player__icon--line" viewBox="0 0 16 16" aria-hidden="true">
+                <rect x="5.6" y="5.6" width="7.8" height="7.8" rx="1.6" />
+                <path d="M10.4 2.9a1.3 1.3 0 0 0-1.3-1.1H4.1a1.6 1.6 0 0 0-1.6 1.6v5a1.3 1.3 0 0 0 1.1 1.3" />
+              </svg>
+            </span>
+            <media-tooltip class="media-player__tooltip media-player__tooltip--notice" boundary="viewport">
+              <span class="media-player__tooltip-title">{{ COPY_NOTICE.title }}</span>
+              <span class="media-player__tooltip-text">{{ COPY_NOTICE.text }}</span>
+            </media-tooltip>
           </template>
 
           <template v-if="notice">
@@ -899,6 +1012,7 @@ function onContextMenu(event: MouseEvent): void {
 .media-player__button:focus-visible,
 .media-player__thumb:focus-visible,
 .media-player__clock:focus-visible,
+.media-player__copy-mark:focus-visible,
 .media-player__save:focus-visible {
   box-shadow: 0 0 0 2px var(--color-link, #4a9eff);
 }
@@ -1026,7 +1140,9 @@ function onContextMenu(event: MouseEvent): void {
   left: var(--media-slider-pointer, 0%);
 }
 
-.media-player__clock {
+/* The mark of a play copy has the look of the clock. */
+.media-player__clock,
+.media-player__copy-mark {
   display: grid;
   flex: none;
   place-items: center;
@@ -1042,9 +1158,29 @@ function onContextMenu(event: MouseEvent): void {
   color: var(--color-error);
 }
 
-.media-player__clock > .media-player__icon {
+.media-player__clock > .media-player__icon,
+.media-player__copy-mark > .media-player__icon {
   width: calc(var(--u) * 14);
   height: calc(var(--u) * 14);
+}
+
+/* The status while the play copy is made has the box of the video, so the
+   player keeps its size when the copy comes. */
+.media-player__copying {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--u) * 8);
+  box-sizing: border-box;
+  width: 100%;
+  max-height: var(--max-height);
+  aspect-ratio: var(--media-player-ratio);
+  padding: calc(var(--u) * 12);
+  color: var(--color-muted);
+  font-size: calc(var(--u) * 13);
+  line-height: 1.3;
+  text-align: center;
 }
 
 /* The Save control is a pill; with no label it is as wide as it is high: a
@@ -1448,9 +1584,10 @@ function onContextMenu(event: MouseEvent): void {
   overflow-wrap: anywhere;
 }
 
-/* Under the card, the bar holds only the clock and the Save control, at
-   its end. */
-.media-player[data-unavailable] .media-player__bar {
+/* Under the card, and while the play copy is made, the bar holds only the
+   clock and the Save control, at its end. */
+.media-player[data-unavailable] .media-player__bar,
+.media-player[data-copying] .media-player__bar {
   justify-content: flex-end;
 }
 

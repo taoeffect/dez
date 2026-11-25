@@ -1,7 +1,7 @@
 import sbp from '@sbp/sbp'
 import { IMAGE_FOLDERS } from '../model/chat/images'
 import { ClipReadError, MAX_SAVED_CLIP_BYTES } from '../model/chat/mediaFiles'
-import { MEDIA_FOLDERS } from '../model/chat/mediaTags'
+import { MEDIA_FOLDERS, type MediaTagData } from '../model/chat/mediaTags'
 import { newStoredFilePath } from '../model/chat/storedFilePaths'
 import { conversationWorkFolder } from '../model/tools/conversationWork'
 import { unreadableImageText } from '../model/tools/imageTool'
@@ -143,7 +143,7 @@ export async function imageInputAsIs({ id, name, path }: { id: string, name: str
  *  linked file larger than `MAX_SAVED_CLIP_BYTES` is refused, as a dropped
  *  clip that Dez copies has that cap. Throws a `ClipReadError` for a clip
  *  that no source gives, and the stop of `signal`. */
-export async function copyInputClip({ name, clip }: Pick<ClipInput, 'name' | 'clip'>, folder: string, signal: AbortSignal): Promise<BundledToolInput | null> {
+export async function copyInputClip({ name, clip }: { name: string, clip: Pick<MediaTagData, 'src' | 'url' | 'expires'> }, folder: string, signal: AbortSignal): Promise<BundledToolInput | null> {
   const copy = { root: 'cache', path: `${folder}/${name}` } as const
   return await clipFromSources(clip, signal, async (source: ClipSource) => {
     if (source.kind === 'url') {
