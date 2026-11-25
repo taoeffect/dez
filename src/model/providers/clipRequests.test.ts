@@ -71,9 +71,9 @@ let quoteHeld: Promise<void> | null = null
 let answers: Array<NativeHttpDownload | (() => Promise<NativeHttpDownload>)> = []
 // The requests of the images of a job (dez.http/stream), in order, and the
 // answers of the server to them: a status, and bytes or the JSON of the
-// body.
+// body. A function answers when its promise settles.
 let streams: Array<{ request: NativeHttpRequest, requestId: string, at: number }> = []
-let streamAnswers: Array<{ status: number, body: unknown }> = []
+let streamAnswers: Array<{ status: number, body: unknown } | (() => Promise<never>)> = []
 // The price that the APIMart-like provider tells for an image request.
 const IMAGE_QUOTE_USD = 0.0085
 
@@ -129,6 +129,7 @@ sbp('sbp/selectors/register', {
     streams.push({ request, requestId, at: Date.now() })
     const answer = streamAnswers.shift()
     if (answer === undefined) throw new Error(`The test has no answer for ${request.url}`)
+    if (typeof answer === 'function') return answer()
     const body = answer.body instanceof Uint8Array ? answer.body : new TextEncoder().encode(JSON.stringify(answer.body))
     return { requestId, response: { status: answer.status, headers: {} }, chunks: (async function * () { yield body })() }
   },
@@ -952,11 +953,29 @@ describe('an image job', () => {
   it('gives up on an image task that does not end in its time', async () => {
     streamAnswers = [SUBMITTED, ...Array.from({ length: 400 }, () => task({ status: 'processing' }))]
 
-    const failure = expect(generateImage()).rejects.toThrow('Mart did not make the image in 30 minutes, the longest time that Dez waits. Send the request again later. To ask Mart about this image, give its job id: task-1.')
+    const failure = expect(generateImage()).rejects.toThrow('Mart did not make the images in 30 minutes, the longest time that Dez waits. Send the request again later. To ask Mart about this image, give its job id: task-1.')
     await vi.advanceTimersByTimeAsync(JOB_TIMEOUT_MS)
     await failure
 
     expect(streams.at(-1)).toMatchObject({ at: STARTED_AT + JOB_TIMEOUT_MS - 5 * SECOND_MS, request: { timeoutMs: 5 * SECOND_MS } })
+  })
+
+  // Rust ends a request at the job's deadline, with a native text that does
+  // not tell the time limit. Here the task made two images, and the
+  // download of the second one takes the rest of the time.
+  it('tells of the time limit when it ends the download of the second image of a task', async () => {
+    const cutDownload = () => {
+      vi.setSystemTime(STARTED_AT + JOB_TIMEOUT_MS)
+      return Promise.reject('error decoding response body')
+    }
+    streamAnswers = [SUBMITTED, task({ status: 'completed', result: { images: [{ url: [IMAGE_URLS[0]] }, { url: [IMAGE_URLS[1]] }] } }), { status: 200, body: PNG }, cutDownload]
+
+    const failure = expect(generateImage()).rejects.toThrow('Dez did not get the images from Mart in 30 minutes, the longest time that Dez waits: Mart did not make them in that time, or the download of the images was too slow. '
+      + 'Send the request again later. To ask Mart about this image, give its job id: task-1.\n\nDetails: error decoding response body')
+    await vi.advanceTimersByTimeAsync(5 * SECOND_MS)
+    await failure
+
+    expect(streamUrls().slice(2)).toStrictEqual([`GET ${IMAGE_URLS[0]}`, `GET ${IMAGE_URLS[1]}`])
   })
 
   it('tells that a file URL of the task gave no image', async () => {

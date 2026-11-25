@@ -20,7 +20,7 @@ import { chatImageCopies, chatImageKey } from './chatImageCopies'
 import { chatRequestCost } from './chatUsage'
 import { clipFileProblem, clipTagProblem, hasLengthRules, missingClipProblem, needsWavCopy, type ClipAttachment, type ClipUse, type InputClipRules } from './clipInputs'
 import { inputImageRulesFor, missingImageProblem } from './clipImages'
-import { CLIP_JOB_TIMEOUT_MS, clipPollDelay, sendClipRequest, sendImageJobRequest, uploadInputImages, type ClipRun, type JobRun } from './clipRequests'
+import { JOB_TIMEOUT_MS, jobPollDelay, sendClipRequest, sendImageJobRequest, uploadInputImages, type ClipRun, type JobRun } from './clipRequests'
 import { assertProviderResponseOk, explainedProviderError, InputImageError, providerConnectionError, UnusableAnswerError } from './errors'
 import { generatedImage, generatedImageFromUrl } from './generatedImages'
 import { chatImageDrawing, imageFit, type ImageSizeRules } from './imageSize'
@@ -468,7 +468,7 @@ type ApiRequest = (wire: MediaWireRequest) => NativeHttpRequest
 // once: a job that ran while Dez was closed can be done already.
 async function imageJobResult(run: JobRun, job: ImageJob, apiRequest: ApiRequest, onDownload: () => void, pollNow: boolean): Promise<{ media: GeneratedMedia[] } & AnswerCost> {
   for (let first = true; ; first = false) {
-    if (!(pollNow && first)) await clipPollDelay(run.signal)
+    if (!(pollNow && first)) await jobPollDelay(run.signal)
     const state = job.state(jsonBody(await sendImageJobRequest(run, apiRequest(job.poll), true)))
     if (state === 'running') continue
     // A file URL comes from a response and can name any host, so its
@@ -486,7 +486,7 @@ async function imageJobResult(run: JobRun, job: ImageJob, apiRequest: ApiRequest
 // answer tells.
 async function clipJobResult(run: ClipRun, job: ClipJob, apiRequest: ApiRequest, cacheDir: string, onDownload: () => void, pollNow: boolean): Promise<{ clips: GeneratedClip[] } & AnswerCost> {
   for (let first = true; ; first = false) {
-    if (!(pollNow && first)) await clipPollDelay(run.signal)
+    if (!(pollNow && first)) await jobPollDelay(run.signal)
     const poll = await sendClipRequest(run, apiRequest(job.poll), job.id, cacheDir)
     if ('clip' in poll) return { clips: [poll.clip] }
 
@@ -743,11 +743,11 @@ export default sbp('sbp/selectors/register', {
   //   limit.
   // - A clip (speech, music, video): the answer to the first request is the
   //   clip, or a job. For a job, the provider is asked for its state each
-  //   `CLIP_POLL_INTERVAL_MS` until the clip is there: in the answer to
+  //   `JOB_POLL_INTERVAL_MS` until the clip is there: in the answer to
   //   that request, at a URL that plays, at URLs to copy (a job of some
   //   music models makes more than one song: the result has each one), or
   //   behind one more request. A clip that is not there after
-  //   `input.timeoutMs` (`CLIP_JOB_TIMEOUT_MS` with none) rejects. A clip
+  //   `input.timeoutMs` (`JOB_TIMEOUT_MS` with none) rejects. A clip
   //   that came as bytes is a temp copy in the cache root
   //   (`sendClipRequest`), which the caller must delete when it does not
   //   keep the clip. A stop rejects. A
@@ -810,7 +810,7 @@ export default sbp('sbp/selectors/register', {
     // The run of the requests of one call, with its time limit from now,
     // and the requests of the media API, which get the API key.
     const startJobRun = async () => {
-      const limitMs = input.timeoutMs ?? CLIP_JOB_TIMEOUT_MS
+      const limitMs = input.timeoutMs ?? JOB_TIMEOUT_MS
       const run: JobRun = { provider, requestId, limitMs, deadline: Date.now() + limitMs, signal }
       const secret = await requestSecret(provider)
       const apiRequest: ApiRequest = (wire) => provider.mediaApiRequest(wire, secret)

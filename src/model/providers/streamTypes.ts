@@ -140,9 +140,9 @@ export interface ProviderGenerateMediaInput {
   // them; `signal` stops all of that.
   requestId?: string
   signal?: AbortSignal
-  // The longest time (ms) from the first request of a clip to its last
-  // byte; `CLIP_JOB_TIMEOUT_MS` with none. An image and a text have no
-  // time limit here: `signal` ends them.
+  // The longest time (ms) from the first request of a clip or of an image
+  // job to its last byte; `JOB_TIMEOUT_MS` with none. A text, and an
+  // image that is no job, have no time limit here: `signal` ends them.
   timeoutMs?: number
   // Called at each step of the request, in order.
   onProgress?: (progress: MediaProgress) => void

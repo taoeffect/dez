@@ -20,12 +20,12 @@ import { CLIP_KINDS, type ClipKind, type GeneratedClip } from './types'
 // selector holds the order of the steps (the job loop).
 
 // The time between two requests for the state of a job.
-export const CLIP_POLL_INTERVAL_MS = 5_000
+export const JOB_POLL_INTERVAL_MS = 5_000
 // The longest time from the first request of a clip or a job to its last
 // byte, for a caller that names none
 // (`ProviderGenerateMediaInput.timeoutMs`). A job that the provider never
 // ends would keep the reply busy with no end.
-export const CLIP_JOB_TIMEOUT_MS = 30 * 60 * 1000
+export const JOB_TIMEOUT_MS = 30 * 60 * 1000
 
 // What all requests of one clip, or of the images of one job, have in
 // common.
@@ -58,13 +58,15 @@ function limitText(limitMs: number): string {
 // (`JobRun.limitMs`) is over. With no `requestError`, the time was over
 // before a request: the job did not end in time. With one, Rust ended a
 // request at the deadline (`timeoutMs`), and that request can be the
-// download of a file that is made.
-function jobTimeoutError(run: JobRun, made: 'clip' | 'image', requestError?: unknown): ExplainedError {
+// download of a file that is made. An image job can make more than one
+// image, so its `made` is `images`.
+function jobTimeoutError(run: JobRun, made: 'clip' | 'images', requestError?: unknown): ExplainedError {
   const name = run.provider.name
   const limit = `in ${limitText(run.limitMs)}, the longest time that Dez waits`
+  const it = made === 'images' ? 'them' : 'it'
   if (requestError === undefined) return new ExplainedError(`${name} did not make the ${made} ${limit}. Send the request again later.`)
   return new ExplainedError(
-    `Dez did not get the ${made} from ${name} ${limit}: ${name} did not make it in that time, or the download of the ${made} was too slow. Send the request again later.`,
+    `Dez did not get the ${made} from ${name} ${limit}: ${name} did not make ${it} in that time, or the download of the ${made} was too slow. Send the request again later.`,
     sanitizeErrorText(rawErrorText(requestError)),
     { cause: requestError },
   )
@@ -180,7 +182,7 @@ export async function sendClipRequest(
 export async function sendImageJobRequest(run: JobRun, request: NativeHttpRequest, keyed: boolean): Promise<Uint8Array> {
   run.signal?.throwIfAborted()
   const timeoutMs = run.deadline - Date.now()
-  if (timeoutMs <= 0) throw jobTimeoutError(run, 'image')
+  if (timeoutMs <= 0) throw jobTimeoutError(run, 'images')
   let head: NativeHttpResponseHead
   let body: Uint8Array
   try {
@@ -190,7 +192,7 @@ export async function sendImageJobRequest(run: JobRun, request: NativeHttpReques
   } catch (error) {
     // A stop rejects too: the caller tells it by its signal.
     if (run.signal?.aborted) throw error
-    if (Date.now() >= run.deadline) throw jobTimeoutError(run, 'image', error)
+    if (Date.now() >= run.deadline) throw jobTimeoutError(run, 'images', error)
     throw error
   }
   if (!responseOk(head)) throw providerStatusError(run.provider, head, textFromNativeBody(body), keyed)
@@ -232,8 +234,8 @@ export async function uploadInputImages(
 }
 
 // Waits before the next request for a job's state. Rejects at once when
-// the caller stops the clip.
-export function clipPollDelay(signal: AbortSignal | undefined): Promise<void> {
+// the caller stops the job.
+export function jobPollDelay(signal: AbortSignal | undefined): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     signal?.throwIfAborted()
     const onAbort = () => {
@@ -243,7 +245,7 @@ export function clipPollDelay(signal: AbortSignal | undefined): Promise<void> {
     const timer = setTimeout(() => {
       signal?.removeEventListener('abort', onAbort)
       resolve()
-    }, CLIP_POLL_INTERVAL_MS)
+    }, JOB_POLL_INTERVAL_MS)
     signal?.addEventListener('abort', onAbort, { once: true })
   })
 }
