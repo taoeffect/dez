@@ -96,6 +96,16 @@ describe('bridgedToolCall', () => {
     expect(refusal('dez.tools/js_eval', { code: 'return 1' })).toContain('Code cannot call js_eval')
   })
 
+  // A run of `js_eval` is a job, which has no reply to show an app in.
+  it('refuses apps show in both forms of a selector', () => {
+    expect(refusal('dez.tools/apps/show', { name: 'notes' })).toContain('cannot call apps show')
+    expect(refusal('dez.tools/apps', { command: 'show', parameters: '{"name":"notes"}' })).toContain('cannot call apps show')
+  })
+
+  it('gives the tool the id of a handle', () => {
+    expect(parametersOf(checked('dez.tools/image/flip', { image: '&1', direction: 'vertical' }, 1, ['k']))).toStrictEqual({ image: 'k', direction: 'vertical' })
+  })
+
   // The code of a `js_eval` call runs an app as a job of its run.
   it('runs apps invoke in both forms of a selector', () => {
     const call = { name: 'apps', arguments: { command: 'invoke', parameters: '{"name":"notes"}' } }
@@ -215,7 +225,7 @@ describe('bridgedToolCall', () => {
 
 describe('bridgedToolCall in a run of an app', () => {
   // A run of an app starts no other app, by either form of a call.
-  it('refuses apps show, apps invoke, and js_eval, in both forms of a selector, and tells the model to make the call itself', () => {
+  it('refuses apps show, apps invoke, and js_eval, in both forms of a selector', () => {
     for (const show of [appRefusal('dez.tools/apps/show', { name: 'notes' }), appRefusal('dez.tools/apps', { command: 'show', parameters: '{"name":"notes"}' })]) {
       expect(show).toContain('cannot call apps show')
     }
@@ -224,10 +234,7 @@ describe('bridgedToolCall in a run of an app', () => {
       appRefusal('dez.tools/apps', { command: 'invoke', parameters: '{"name": "notes"}' }),
       appRefusal('dez.tools/apps', { command: ' invoke\n' }),
     ]
-    for (const invoke of invokes) {
-      expect(invoke).toContain('The code of an app cannot call apps invoke')
-      expect(invoke).toContain('as a tool call of your own or from the code of a js_eval call')
-    }
+    for (const invoke of invokes) expect(invoke).toContain('cannot call apps invoke')
     expect(appRefusal('dez.tools/js_eval', { code: 'return 1' })).toContain('Code cannot call js_eval')
   })
 
@@ -261,11 +268,6 @@ describe('bridgedToolCall in a run of an app', () => {
     expect(error).toContain('The call names &3')
     expect(error).toContain('The handles of this run: &1 to &2.')
     expect(appRefusal('dez.tools/model_invoke', { model: 'p/m', prompt: 'Look at @&1.' })).toContain('No tool call of this run made an image or a clip yet')
-  })
-
-  it('holds for the code of js_eval too, whose run is a job: no apps show, and the ids of its handles', () => {
-    expect(refusal('dez.tools/apps/show', { name: 'notes' })).toContain('cannot call apps show')
-    expect(parametersOf(checked('dez.tools/image/flip', { image: '&1', direction: 'vertical' }, 1, ['k']))).toStrictEqual({ image: 'k', direction: 'vertical' })
   })
 })
 

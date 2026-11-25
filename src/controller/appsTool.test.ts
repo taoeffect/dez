@@ -1,5 +1,4 @@
 import sbp from '@sbp/sbp'
-import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { MANIFEST_MAX_BYTES, parseAppManifest } from '../model/tools/appManifest'
 import { showResultText } from '../model/tools/appShow'
@@ -8,9 +7,7 @@ import { grepFiles, GREP_TIME_LIMIT_SECONDS, type GrepOutcome, type GrepRequest 
 import type { ToolRunResult } from '../model/tools/types'
 import { APP_DIR, appFiles, builtInAppFiles, callContext, CONVERSATION_WORK_FOLDER, fakeAppFiles, native, resetNative, running, STOP, type FakeAppFiles } from './testing'
 import type { ToolRunCall, ToolRunContext } from './tools'
-// Side-effect imports: register the dez.model/* selectors, which give the
-// sections of a tab, and the selector under test.
-import '../model/state/index'
+// Side-effect import: registers the selector under test.
 import './tools'
 
 // The `apps` tool, from a call of a model to the files of the app root:
@@ -55,7 +52,6 @@ sbp('sbp/selectors/register', {
 let consoleError: MockInstance<typeof console.error>
 
 beforeEach(() => {
-  setActivePinia(createPinia())
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
   resetNative()
   goneApps = []

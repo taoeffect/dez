@@ -3170,6 +3170,28 @@ mod tests {
             sent
         }
 
+        // `DENO_AUDIT` in `audited`, for the run that `places` makes of a
+        // run in the conversation `c-1`, with `app` as the folder of
+        // `__APP__`. Next to the private files it writes a module with the
+        // private text, and the app `my-app` with a data file. It fails when
+        // the run reached the port of the test.
+        async fn deno_audit_run(test: &str, app: &str, places: impl FnOnce(ToolRun) -> ToolRun) -> Sent {
+            let dir = TempDir::new(test);
+            let my_app = real_roots(&dir.0).app.join(APPS_FOLDER).join("my-app");
+            std::fs::create_dir_all(&my_app).expect("create");
+            std::fs::write(my_app.join("data.txt"), "app data").expect("write");
+            std::fs::write(dir.0.join("private.ts"), format!("export const text = '{PRIVATE}'\n")).expect("write");
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listen");
+            listener.set_nonblocking(true).expect("non-blocking");
+            let text = deno_audit(app, listener.local_addr().expect("address").port());
+            let run = places(ToolRun { conversation_folder: Some("c-1".to_string()), ..deno_run(&dir.0, "a", &text) });
+
+            let sent = audited(&dir.0, run).await;
+
+            assert_eq!(listener.accept().map(|_| ()).map_err(|error| error.kind()), Err(std::io::ErrorKind::WouldBlock));
+            sent
+        }
+
         // A script with every permission of Deno reads and changes its work
         // folder, its app folder, and the folder of its conversation, reads
         // the libraries and the fonts, and nothing else: no file of the
@@ -3177,21 +3199,10 @@ mod tests {
         // built-in app, and no server. It changes no file that Dez ships.
         #[tokio::test]
         async fn deno_with_every_permission_of_deno_stays_in_the_places_of_its_run() {
-            let dir = TempDir::new("tools-audit-deno");
-            let app = real_roots(&dir.0).app.join(APPS_FOLDER).join("my-app");
-            std::fs::create_dir_all(&app).expect("create");
-            std::fs::write(app.join("data.txt"), "app data").expect("write");
-            std::fs::write(dir.0.join("private.ts"), format!("export const text = '{PRIVATE}'\n")).expect("write");
-            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listen");
-            listener.set_nonblocking(true).expect("non-blocking");
-            let text = deno_audit("config/apps/my-app", listener.local_addr().expect("address").port());
-            let run = ToolRun { app_folder: Some("my-app".to_string()), conversation_folder: Some("c-1".to_string()), ..deno_run(&dir.0, "a", &text) };
-
-            let sent = audited(&dir.0, run).await;
+            let sent = deno_audit_run("tools-audit-deno", "config/apps/my-app", |run| ToolRun { app_folder: Some("my-app".to_string()), ..run }).await;
 
             assert_eq!(sent.stdout, deno_audit_lines(Some("app data"), &["libs/", "fonts/"]), "{NOT_CONFINED}\n{}", sent.stderr);
             assert_eq!(sent.ends, exited(0), "{}", sent.stderr);
-            assert_eq!(listener.accept().map(|_| ()).map_err(|error| error.kind()), Err(std::io::ErrorKind::WouldBlock));
         }
 
         // The code of a model, a run with no app: with every permission of
@@ -3200,35 +3211,17 @@ mod tests {
         // else, no app either.
         #[tokio::test]
         async fn deno_with_every_permission_of_deno_and_no_app_stays_in_the_places_of_its_run() {
-            let dir = TempDir::new("tools-audit-deno-no-app");
-            let app = real_roots(&dir.0).app.join(APPS_FOLDER).join("my-app");
-            std::fs::create_dir_all(&app).expect("create");
-            std::fs::write(app.join("data.txt"), "app data").expect("write");
-            std::fs::write(dir.0.join("private.ts"), format!("export const text = '{PRIVATE}'\n")).expect("write");
-            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listen");
-            listener.set_nonblocking(true).expect("non-blocking");
-            let text = deno_audit("config/apps/my-app", listener.local_addr().expect("address").port());
-            let run = ToolRun { conversation_folder: Some("c-1".to_string()), ..deno_run(&dir.0, "a", &text) };
-
-            let sent = audited(&dir.0, run).await;
+            let sent = deno_audit_run("tools-audit-deno-no-app", "config/apps/my-app", |run| run).await;
 
             assert_eq!(sent.stdout, deno_audit_lines(None, &["libs/", "fonts/"]), "{NOT_CONFINED}\n{}", sent.stderr);
             assert_eq!(sent.ends, exited(0), "{}", sent.stderr);
-            assert_eq!(listener.accept().map(|_| ()).map_err(|error| error.kind()), Err(std::io::ErrorKind::WouldBlock));
         }
 
         // A built-in app is a place that a run with every permission of
         // Deno only reads.
         #[tokio::test]
         async fn deno_with_every_permission_of_deno_changes_nothing_of_a_built_in_app() {
-            let dir = TempDir::new("tools-audit-deno-built-in");
-            std::fs::write(dir.0.join("private.ts"), format!("export const text = '{PRIVATE}'\n")).expect("write");
-            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listen");
-            listener.set_nonblocking(true).expect("non-blocking");
-            let text = deno_audit("resources/builtin-apps/dez-built-in", listener.local_addr().expect("address").port());
-            let run = ToolRun { built_in_app: Some("dez-built-in".to_string()), conversation_folder: Some("c-1".to_string()), ..deno_run(&dir.0, "a", &text) };
-
-            let sent = audited(&dir.0, run).await;
+            let sent = deno_audit_run("tools-audit-deno-built-in", "resources/builtin-apps/dez-built-in", |run| ToolRun { built_in_app: Some("dez-built-in".to_string()), ..run }).await;
 
             assert_eq!(sent.stdout, deno_audit_lines(Some("built-in data"), &["libs/", "fonts/", "builtin-apps/"]), "{NOT_CONFINED}\n{}", sent.stderr);
             assert_eq!(sent.ends, exited(0), "{}", sent.stderr);

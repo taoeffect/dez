@@ -1095,7 +1095,7 @@ describe('tool calls', () => {
     // A new page: the record that beforeEach started is gone.
     await resetConsoleErrors(browser)
     await waitForValue(browser, 'restored active tab', () => activeConversationId(browser), conversationId)
-    await waitForValue(browser, 'restored chips', async () => (await toolChipTimes(browser)).slice(2), [ran(firstMs), ran(secondMs), quick])
+    await waitForValue(browser, 'restored chips', groupTimes, [ran(firstMs), ran(secondMs), quick])
     await submit(browser, 'And again?')
     const later = await setup.mock.waitForRequest(browser)
     expectSentPrefix(second.body, later.body)

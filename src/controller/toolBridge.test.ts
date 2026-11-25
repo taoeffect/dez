@@ -48,9 +48,19 @@ let kept: MadeAsset[]
 let replyWrites: string[]
 let listed: BridgedCalls[]
 
-// A bridge of a run of an app, or of a run of the kind of `rules`, in the
-// tab `TAB`, whose run folder has the paths `folders`.
-function newBridge(jobs: ToolJobs = new TabJobs(), callSignal = running(), rules: BridgeRules = APP_RUN_BRIDGE, folders: RunFolderForms = { run: [] }): ScriptRunBridge {
+// What a test bridge differs in: the jobs of its run, the signal of the
+// call that started the run, the rules of its kind of run, and the paths
+// of its run folder.
+interface BridgeSetup {
+  jobs?: ToolJobs
+  callSignal?: AbortSignal
+  rules?: BridgeRules
+  folders?: RunFolderForms
+}
+
+// A bridge in the tab `TAB`: of a run of an app with no run folder path,
+// unless `setup` tells otherwise.
+function newBridge({ jobs = new TabJobs(), callSignal = running(), rules = APP_RUN_BRIDGE, folders = { run: [] } }: BridgeSetup = {}): ScriptRunBridge {
   const context = callContext({
     sections: () => TAB,
     writeImage: (path) => { replyWrites.push(path); return 'z' },
@@ -108,7 +118,7 @@ describe('ScriptRunBridge', () => {
 
   it('answers a line that the rules of its run refuse with their error, and runs no tool', async () => {
     const line = callLine(1, 'dez.tools/apps/show', { name: 'notes' })
-    const bridge = newBridge(new TabJobs(), running(), JS_EVAL_BRIDGE)
+    const bridge = newBridge({ rules: JS_EVAL_BRIDGE })
 
     bridge.call(line, write)
 
@@ -120,7 +130,7 @@ describe('ScriptRunBridge', () => {
   })
 
   it('takes the paths of the run folder out of the arguments of a call', async () => {
-    const bridge = newBridge(new TabJobs(), running(), APP_RUN_BRIDGE, { run: [RUN_FOLDER] })
+    const bridge = newBridge({ folders: { run: [RUN_FOLDER] } })
 
     bridge.call(callLine(1, 'dez.tools/jobs_wait', { jobs: `j-1 ${RUN_FOLDER}/code.ts` }), write)
 
@@ -132,7 +142,7 @@ describe('ScriptRunBridge', () => {
     ['a run of an app', APP_RUN_BRIDGE, APP_RUN_MAX_TOOL_CALLS],
     ['a js_eval run', JS_EVAL_BRIDGE, JS_EVAL_MAX_TOOL_CALLS],
   ])('runs no call of a line after the limit of %s, and counts those lines in the list of the calls', async (_name, rules, limit) => {
-    const bridge = newBridge(new TabJobs(), running(), rules)
+    const bridge = newBridge({ rules })
 
     for (let id = 1; id <= limit + 2; id++) bridge.call(callLine(id), write)
     await vi.waitFor(() => expect(answers).toHaveLength(limit + 2))
@@ -147,7 +157,7 @@ describe('ScriptRunBridge', () => {
   })
 
   it('counts a line that Dez refuses in the limit of a run', async () => {
-    const bridge = newBridge(new TabJobs(), running(), JS_EVAL_BRIDGE)
+    const bridge = newBridge({ rules: JS_EVAL_BRIDGE })
 
     for (let id = 1; id <= JS_EVAL_MAX_TOOL_CALLS; id++) bridge.call(callLine(id, 'dez.tools/no_tool'), write)
     bridge.call(callLine(JS_EVAL_MAX_TOOL_CALLS + 1), write)
@@ -161,7 +171,7 @@ describe('ScriptRunBridge', () => {
       ? { content: 'The image @z is not in this conversation.', isError: true }
       : { content: `result of ${String(call.arguments.command)}`, isError: false })
     const refused = callLine(3, `${RUN_FOLDER}/no\ntool`, { a: 1 })
-    const bridge = newBridge(new TabJobs(), running(), JS_EVAL_BRIDGE, { run: [RUN_FOLDER] })
+    const bridge = newBridge({ rules: JS_EVAL_BRIDGE, folders: { run: [RUN_FOLDER] } })
 
     bridge.call(callLine(1, 'dez.tools/image/scale', { image: 'a', width: 8 }), write)
     bridge.call(callLine(2, 'dez.tools/asset_info', { assets: '@z' }), write)
@@ -252,7 +262,7 @@ describe('ScriptRunBridge', () => {
       started.push(toolContext.jobs.start('model_invoke', heldWork().work, { ...LONG, label: 'Paint @b like @a', inputs: ['b', 'a'] }))
       return TOOL_DONE
     }
-    const bridge = newBridge(run.jobs())
+    const bridge = newBridge({ jobs: run.jobs() })
 
     bridge.call(callLine(1, 'dez.tools/image/flip', { image: 'a', direction: 'horizontal' }), write)
     bridge.call(callLine(2), write)
@@ -334,7 +344,7 @@ describe('ScriptRunBridge', () => {
       callSignal = signal
       return new Promise((resolve) => signal.addEventListener('abort', () => resolve({ content: 'stopped', isError: true })))
     }
-    const bridge = newBridge(new TabJobs(), stop.signal)
+    const bridge = newBridge({ callSignal: stop.signal })
 
     bridge.call(callLine(1), write)
     await vi.waitFor(() => expect(callSignal).toBeDefined())

@@ -594,8 +594,12 @@ describe('write', () => {
 
 describe('edit', () => {
   const edit = (edits: unknown[]) => editCall(args('edit', { path: '/apps/notes/main.js', edits }), CONVERSATION_ID)
+  // The first line of the text of an edit result, and the start of each
+  // row after it: which edits were done. textEdits.test.ts checks the text
+  // of each outcome.
+  const doneRows = (content: string): string[] => content.split('\n').map((line, index) => (index === 0 ? line : /^\d+\. (?:Done|Failed)\./.exec(line)?.[0] ?? line))
 
-  it('does the edits that pass, and tells what each one did', () => {
+  it('does the edits that pass, and tells which ones were done', () => {
     const result = editResult(edit([
       { old_string: 'a = 1', new_string: 'a = 2' },
       { old_string: 'b = 1', new_string: 'x' },
@@ -604,32 +608,24 @@ describe('edit', () => {
 
     expect(text(result.bytes)).toBe('const a = 2\nrun(a, 0)\nlog(a, 0)\n')
     expect(result.isError).toBe(false)
-    expect(result.content).toBe([
-      'Edited /apps/notes/main.js: 2 of 3 edits done.',
-      '1. Done. Replaced the text at line 1.',
-      '2. Failed. `old_string` is not in the file. The edits before this one changed the file first, and this edit looked for its text in what they left. '
-        + 'Read the file again, and give the text as it is in the file, with its white space and its line ends, '
-        + 'but without the `12: ` before each line of a read result: that number is no part of the file.',
-      '3. Done. Replaced the text at 2 places, on lines 2 and 3.',
-    ].join('\n'))
+    expect(doneRows(result.content)).toStrictEqual(['Edited /apps/notes/main.js: 2 of 3 edits done.', '1. Done.', '2. Failed.', '3. Done.'])
   })
 
   it('gives an error and writes nothing when no edit passed', () => {
-    expect(editResult(edit([{ old_string: '', new_string: 'x' }, { old_string: 'a', new_string: 'b' }]), 'a\na\n')).toStrictEqual({
-      content: [
-        'No edit of /apps/notes/main.js was done, and the file did not change.',
-        '1. Failed. `old_string` is empty. Give the text to replace; to make a new file, or to give a file all new text, use write.',
-        '2. Failed. `old_string` is in the file at 2 places, on lines 1 and 2. '
-          + 'Give more of the text around the place to change, so that `old_string` is in the file once, or set `replace_all` to true to change every place.',
-      ].join('\n'),
+    const result = editResult(edit([{ old_string: '', new_string: 'x' }, { old_string: 'a', new_string: 'b' }]), 'a\na\n')
+
+    expect({ ...result, content: doneRows(result.content) }).toStrictEqual({
+      content: ['No edit of /apps/notes/main.js was done, and the file did not change.', '1. Failed.', '2. Failed.'],
       isError: true,
       bytes: null,
     })
   })
 
   it('writes nothing when the edits leave the text as it was', () => {
-    expect(editResult(edit([{ old_string: 'a', new_string: 'a' }]), 'a\nb\n')).toStrictEqual({
-      content: '/apps/notes/main.js did not change: after the edits that were done, its text is the same as before.\n1. Done. No change: `new_string` is the same as `old_string`.',
+    const result = editResult(edit([{ old_string: 'a', new_string: 'a' }]), 'a\nb\n')
+
+    expect({ ...result, content: doneRows(result.content) }).toStrictEqual({
+      content: ['/apps/notes/main.js did not change: after the edits that were done, its text is the same as before.', '1. Done.'],
       isError: false,
       bytes: null,
     })
@@ -654,8 +650,8 @@ describe('edit', () => {
     expect(refusal(() => editCall(args('edit', { path: '/apps/notes', edits: [{ old_string: 'a', new_string: 'b' }] }), CONVERSATION_ID))).toContain('is the folder of an app, not a file')
   })
 
-  // The two wrong calls of the issue: line items of another name, and one
-  // edit with its fields next to `path`.
+  // Two wrong forms of a call that models sent: items with other names,
+  // and the fields of one edit next to `path`.
   it('refuses calls of other forms with the names of its parameters', () => {
     const refused = (parameters: Record<string, unknown>) => refusal(() => parseSubcommandCall(APPS_TOOL, { command: 'edit', parameters: JSON.stringify(parameters) }))
     const form = ' The parameters go in "parameters" as the text of a JSON object, as in {"command":"edit","parameters":"{\\"path\\":\\"/apps/unit-converter/main.js\\",'

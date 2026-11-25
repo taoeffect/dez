@@ -12,7 +12,7 @@ import { expectNoLinkedFile, linkedDropDir, openDroppedFiles } from './harness/d
 import { appFilePath, conversationFilePath, filesIn, newFileIn, workDir } from './harness/fixtures'
 import { generatedImagesDir, shownImages, STRIPES_PNG } from './harness/images'
 import { NO_JOBS_LIST_TEXT, runToolJob, startedJob, waitCall } from './harness/jobs'
-import { codeResult, evalCall, expectReplyEnd as expectEnd, expectRunsEnded, runTime, thrownError, withoutRunTime } from './harness/jsEval'
+import { codeResult, DRAW_TITLE, evalCall, expectReplyEnd as expectEnd, expectRunsEnded, FRAMES, GLOW_COLOR, runTime, thrownError, withoutRunTime, WRITE_FRAMES } from './harness/jsEval'
 import { shownPlayers, WEBM_VIDEO } from './harness/media'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, openAiToolCall, replyText, sendChatReply, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
@@ -92,12 +92,6 @@ const CHAT_PATH = mockChatPath(CALLER)
 // The time zone of the app under test: one that no CI machine has, so the
 // code of a call can only have it from the app.
 const APP_TIME_ZONE = 'Asia/Tokyo'
-
-// The size, the frames a second, and the count of the frames of the frame
-// sequence that the code of a call writes, and the color of its pixels,
-// with half alpha.
-const GLOW = { width: 64, height: 36, fps: 12, count: 12 }
-const GLOW_COLOR = [255, 128, 0, 128]
 
 // The data file that the code of a call writes into the work folder, for
 // the chart of the built-in app dez-chart: a label column and two series.
@@ -362,24 +356,9 @@ describe('js_eval tool', () => {
       'const { Canvas } = await import("skia-canvas")',
       'const { useShippedFonts } = await import("dez-media/canvas")',
       'const { FrameWriter } = await import("dez-media/frames")',
-      'const families = useShippedFonts(dez.fonts)',
-      'const canvas = new Canvas(240, 64, { gpu: false })',
-      'const ctx = canvas.getContext("2d")',
-      'ctx.fillStyle = "white"',
-      'ctx.fillRect(0, 0, canvas.width, canvas.height)',
-      'ctx.fillStyle = "black"',
-      'ctx.font = `bold 28px ${families}`',
-      'ctx.fillText("Dez 日本 مرحبا", 8, 44)',
-      'const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height)',
-      'let ink = 0',
-      'for (let index = 0; index < data.length; index += 4) if (data[index] < 128) ink += 1',
-      'await canvas.toFile(`${dez.outputFolder}/title.png`)',
-      `const { width, height, fps, count } = ${JSON.stringify(GLOW)}`,
-      'const frames = new FrameWriter(dez.outputFolder, "glow", { fps, width, height, alpha: true })',
-      'const pixels = new Uint8Array(width * height * 4)',
-      `for (let index = 0; index < pixels.length; index += 4) pixels.set(${JSON.stringify(GLOW_COLOR)}, index)`,
-      'for (let frame = 0; frame < count; frame += 1) frames.add(pixels)',
-      'return { ink, first: families.split(", ")[0], frames: frames.end() }',
+      DRAW_TITLE,
+      WRITE_FRAMES,
+      `return { ...await drawTitle(), frames: writeFrames("glow", ${JSON.stringify(GLOW_COLOR)}, true) }`,
     ].join('\n')))
     expect(started).toBe(codeRunsAsJobText(jobId, 1))
     expect({ status: drawn.status, number: drawn.call.number }).toStrictEqual({ status: 'finished', number: 1 })
@@ -388,9 +367,9 @@ describe('js_eval tool', () => {
 
     const result = withoutRunTime(drawn.text)
     const { ink, first: family, frames } = JSON.parse(result.split('\n\n')[0]) as { ink: number, first: string, frames: number }
-    expect({ family, frames }).toStrictEqual({ family: '"Noto Sans"', frames: GLOW.count })
+    expect({ family, frames }).toStrictEqual({ family: '"Noto Sans"', frames: FRAMES.count })
     expect(ink).toBeGreaterThan(300)
-    expect(result).toContain(`Dez keeps 2 files of the output folder: glow.frames/ (video clip: ${GLOW.count} frames, PNG in MOV with alpha), title.png (image).`)
+    expect(result).toContain(`Dez keeps 2 files of the output folder: glow.frames/ (video clip: ${FRAMES.count} frames, PNG in MOV with alpha), title.png (image).`)
     expect(result.endsWith('\nMade the video clip @a.\nMade the image @b.')).toBe(true)
     await sendChatReply(next.reply, CALLER.modelName)
 
@@ -402,7 +381,7 @@ describe('js_eval tool', () => {
     // The clip has each frame of the sequence once, and each pixel as the
     // code wrote it, with its alpha.
     const clip = path.join(videoDir, await newFileIn(browser, videoDir, videosBefore))
-    expect(mediaFacts(setup.app, clip)).toStrictEqual({ streams: [`video png ${GLOW.width}x${GLOW.height}`], seconds: GLOW.count / GLOW.fps })
+    expect(mediaFacts(setup.app, clip)).toStrictEqual({ streams: [`video png ${FRAMES.width}x${FRAMES.height}`], seconds: FRAMES.count / FRAMES.fps })
     expect(pixelColors(setup.app, clip)).toStrictEqual([GLOW_COLOR.join(',')])
     await waitForValue(browser, 'player of the clip', async () => (await shownPlayers(browser)).at(-1)?.id, 'a')
     await expectRunsEnded(setup)

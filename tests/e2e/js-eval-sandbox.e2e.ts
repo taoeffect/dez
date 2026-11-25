@@ -24,14 +24,17 @@ import { newTab, submit } from './harness/thread'
 // - Deno refuses each thing of the computer that the code asks it for: a
 //   file, the network, a variable of the environment, a fact of the
 //   system, a program, a native library, and a new permission. The code
-//   reads and writes the files of its run folder, imports a library that
-//   Dez ships by its name, and reads the files of the libraries and the
-//   fonts that Dez ships, but changes none.
+//   reads and writes the files of its run folder and of the work folder of
+//   its conversation, but no file by a path that goes up out of the work
+//   folder with `..`. It imports a library that Dez ships by its name, and
+//   reads the files of the libraries and the fonts that Dez ships, but
+//   changes none.
 // - Deno loads a file that the code imports with no check of a permission,
 //   so only the OS rule stops such an import: no file outside the places of
 //   the run (its run folder, the work folder of its conversation, and the
-//   libraries and the fonts that Dez ships) loads. Not the keys of the
-//   user, not a conversation, and not a file of the other Dez folders.
+//   libraries and the fonts that Dez ships) loads, also by a path that goes
+//   up out of the work folder. Not the keys of the user, not a
+//   conversation, and not a file of the other Dez folders.
 // - The limits of a run hold: code that writes without end or that fills
 //   the memory ends with an error result, the memory of typed arrays has
 //   an end that the code can catch, and a line that the code writes in the
@@ -236,6 +239,9 @@ describe('js_eval sandbox', () => {
     // the debug build (its resource dir).
     const shippedLib = literal(path.join(path.dirname(setup.app.binary), 'libs', 'fft.js', 'lib', 'fft.esm.js'))
     const shippedFont = literal(path.join(path.dirname(setup.app.binary), 'fonts', 'NotoSans-Regular.ttf'))
+    // A path that starts in the work folder of the conversation, which the
+    // code can change, and goes up out of it to the keys.
+    const keysFromWork = 'dez.workFolder + "/../../provider_keys.json"'
     // The mock server of the spec: a real server that would answer.
     const { port } = new URL(setup.mock.url)
     const refusedRead = 'NotCapable: Requires read access'
@@ -264,6 +270,9 @@ describe('js_eval sandbox', () => {
       ['delete a file', `() => Deno.remove(${file})`, refusedWrite],
       ['move a file', `() => Deno.rename(${file}, "keys.json")`, refusedRead],
       ['link to a file', `() => Deno.link(${file}, "keys.json")`, refusedRead],
+      ['write a file of the work folder', '() => Deno.writeTextFile(dez.workFolder + "/note.txt", "text")', 'ok: undefined'],
+      ['read a file by a path out of the work folder', `() => Deno.readTextFile(${keysFromWork})`, refusedRead],
+      ['write a file by a path out of the work folder', `() => Deno.writeTextFile(${keysFromWork}, "changed")`, refusedWrite],
       ['make a symbolic link', `() => Deno.symlink(${file}, "keys.json")`, 'NotCapable: Deno.symlink() requires unscoped --allow-read and --allow-write permissions'],
       // The network.
       ['fetch', `() => fetch("http://127.0.0.1:${port}/")`, refusedNet],
@@ -307,6 +316,7 @@ describe('js_eval sandbox', () => {
       ['read a file of a library that Dez ships', `async () => (await Deno.readTextFile(${shippedLib})).includes("FFT")`, 'ok: true'],
       ['read a font that Dez ships', `async () => (await Deno.readFile(${shippedFont})).length > 0`, 'ok: true'],
       ['change a file of a library that Dez ships', `() => Deno.writeTextFile(${shippedLib}, "changed")`, refusedWrite],
+      ['change a font that Dez ships', `() => Deno.writeFile(${shippedFont}, new Uint8Array(1))`, refusedWrite],
       // `--no-prompt`: a question is a "no".
       ['ask for each permission', 'async () => (await Promise.all(["read", "write", "net", "env", "sys", "run", "ffi"].map((name) => Deno.permissions.request({ name })))).map((status) => status.state).join(" ")', 'ok: "denied denied denied denied denied denied denied"'],
     ]
@@ -345,6 +355,7 @@ describe('js_eval sandbox', () => {
       ['the keys as code', `() => import(${literal(keys)})`, refused],
       // Deno loads a JSON file also by a path that the code makes.
       ['the keys by a path that the code makes', `() => import([${literal(keys)}].join(""), ${json})`, refused],
+      ['the keys by a path out of the work folder', `() => import(dez.workFolder + "/../../provider_keys.json", ${json})`, refused],
       ['the app state', `() => import(${literal(appState)}, ${json})`, refused],
       ['a conversation', `() => import(${literal(conversation)}, ${text})`, refused],
       ['a text of the home folder', `() => import(${literal(homeText)}, ${text})`, refused],

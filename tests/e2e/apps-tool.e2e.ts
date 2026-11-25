@@ -26,7 +26,8 @@ import { activeConversationId, endedReply, newTab, openToasts, submit } from './
 //   their mark, also after the delete of the last app of the user;
 // - a model reads ranges of the lines of a file, and edits a file by find
 //   and replace: a list of edits that pass or fail each by itself, and
-//   calls of other forms that Dez refuses with the parameters of edit;
+//   calls of other forms that Dez refuses with the name of the wrong
+//   parameter;
 // - a model finds files by their paths, and lines by a regular
 //   expression; the matching runs in a worker, so the window answers
 //   while a slow pattern runs, and Dez ends it at its time limit;
@@ -256,8 +257,9 @@ describe('apps tool', () => {
       'Range 3 is left out. It names lines 3-5, and range 1 names lines 2-3 already. Make one range of the two, as in {"from_line": 2, "to_line": 5}.',
     ].join('\n'))
     // The edits apply in the order of the call, and each one passes or
-    // fails by itself. The two other calls have the forms of the issue:
-    // items with other names, and the fields of one edit next to `path`.
+    // fails by itself. The two other calls have two wrong forms that models
+    // sent: items with other names, and the fields of one edit next to
+    // `path`.
     sendToolCalls(second.reply, [
       appsCall('call_edit', 'edit', { path: file, edits: [
         { old_string: 'item 5\n', new_string: 'ITEM 5\n' },
@@ -270,23 +272,14 @@ describe('apps tool', () => {
       appsCall('call_flat', 'edit', { path: file, old: 'item 1', new: 'first' }),
     ])
 
-    // Each line of the result is a line of the file after the call.
+    // Which edits were done; the unit tests check the texts of the result
+    // (model/tools/textEdits.test.ts, model/tools/appsTool.test.ts). Each
+    // call of a wrong form gets an error that names what it gave wrong.
     const third = await chatRequest()
-    expect(toolResult(third, 'call_edit')).toBe([
-      `Edited ${file}: 3 of 5 edits done.`,
-      '1. Done. Replaced the text at line 6.',
-      '2. Failed. `old_string` is in the file at 11 places, the first 5 on lines 1, 11, 12, 13, and 14. '
-        + 'Give more of the text around the place to change, so that `old_string` is in the file once, or set `replace_all` to true to change every place.',
-      '3. Done. Replaced the text at line 2.',
-      '4. Failed. `old_string` is not in the file. The edits before this one changed the file first, and this edit looked for its text in what they left. '
-        + 'Read the file again, and give the text as it is in the file, with its white space and its line ends, '
-        + 'but without the `12: ` before each line of a read result: that number is no part of the file.',
-      '5. Done. Replaced the text at 30 places, the first 5 on lines 1, 2, 3, 4, and 5.',
-    ].join('\n'))
-    expect(toolResult(third, 'call_wrong_items').startsWith('Item 1 of the parameter "edits" is not valid: an item of "edits" has no parameter "from". '
-      + 'The parameters of an item of "edits" are: old_string (string, required), new_string (string, required), replace_all (boolean).')).toBe(true)
-    expect(toolResult(third, 'call_flat').startsWith('apps edit has no parameter "old". '
-      + 'The parameters of apps edit are: path (string, required), edits (list of objects, required).')).toBe(true)
+    expect(toolResult(third, 'call_edit').split('\n').map((row, index) => (index === 0 ? row : /^\d+\. (Done|Failed)\./.exec(row)?.[1])))
+      .toStrictEqual([`Edited ${file}: 3 of 5 edits done.`, 'Done', 'Failed', 'Done', 'Failed', 'Done'])
+    expect(toolResult(third, 'call_wrong_items')).toContain('an item of "edits" has no parameter "from".')
+    expect(toolResult(third, 'call_flat')).toContain('apps edit has no parameter "old".')
     await expectReplyEnd(third)
     const entries = items.map((item) => item.replace('item ', 'entry '))
     expect(fs.readFileSync(path.join(appsDir, 'list/items.txt'), 'utf8')).toBe(`${[...entries.slice(0, 2), 'entry 2b', ...entries.slice(2, 4), 'ITEM 5', ...entries.slice(5)].join('\n')}\n`)

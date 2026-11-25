@@ -9,7 +9,7 @@ import { dropFiles, expectNoLinkedFile, linkedDropDir, openDroppedFiles } from '
 import { appFilePath, filesIn, newFileIn, storedFileName, writeTestFile } from './harness/fixtures'
 import { colorDistance, decodedImage, generatedImagesDir, pngDataUrl, shownImages, solidPng, STRIPE_COLORS, STRIPES_PNG } from './harness/images'
 import { runToolJob, startedJob, waitCall, type EndedJob } from './harness/jobs'
-import { expectReplyEnd, expectRunsEnded } from './harness/jsEval'
+import { DRAW_TITLE, expectReplyEnd, expectRunsEnded, FRAMES, GLOW_COLOR, WRITE_FRAMES } from './harness/jsEval'
 import { clipTag, monoWav, shownPlayers, WAV_SAMPLE_RATE, WEBM_VIDEO } from './harness/media'
 import { startMockProviderApp, takeRequest, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, replyText, sendChatReply, sendToolCalls, toolResult, type HeldRequest, type MockProvider } from './harness/mockServer'
@@ -206,57 +206,33 @@ const SALES_CSV = 'month,sales,cost,note\nJan,3,1,ok\nFeb,5,2,\nMar,2,2,"a, b"\n
 const SALES_BAR = [154, 208, 245, 255]
 const COST_BAR = [255, 177, 193, 255]
 
-// The code of the `title` app: it draws a line of text in three scripts
-// with skia-canvas and the fonts that Dez ships, counts the dark pixels,
-// and leaves the picture in the output folder.
+// The code of the `title` app: it draws a title (`DRAW_TITLE`), tells the
+// font file of its bold font, and gives what `drawTitle` gave.
 const TITLE_MAIN = [
   'import { Canvas } from "skia-canvas"',
   'import { useShippedFonts } from "dez-media/canvas"',
   '',
   'export default async function main(parameters, dez) {',
-  '  const families = useShippedFonts(dez.fonts)',
-  '  const canvas = new Canvas(240, 64, { gpu: false })',
-  '  const ctx = canvas.getContext("2d")',
-  '  ctx.fillStyle = "white"',
-  '  ctx.fillRect(0, 0, canvas.width, canvas.height)',
-  '  ctx.fillStyle = "black"',
-  '  ctx.font = `bold 28px ${families}`',
-  '  ctx.fillText("Dez 日本 مرحبا", 8, 44)',
-  '  const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height)',
-  '  let ink = 0',
-  '  for (let index = 0; index < data.length; index += 4) if (data[index] < 128) ink += 1',
-  '  await canvas.toFile(`${dez.outputFolder}/title.png`)',
+  DRAW_TITLE,
+  '  const title = await drawTitle()',
   '  const bold = dez.fonts.find(({ family, weight }) => family === "Noto Sans" && weight === 700)',
   '  console.log(`drew with ${bold.path}`)',
-  '  return { ink, first: families.split(", ")[0] }',
+  '  return title',
   '}',
 ].join('\n')
 
-// The size, the frames a second, and the count of the frames of the
-// sequences of the `reel` app.
-const REEL = { width: 64, height: 36, fps: 12, count: 12 }
-// The colors of the pixels of its two sequences: one with no alpha, and
-// one with half alpha.
+// The color of the pixels of the sequence of the `reel` app with no alpha.
 const REEL_COLOR = [0x2a, 0x7f, 0xd4]
-const GLOW_COLOR = [255, 128, 0, 128]
 
-// The code of the `reel` app: it writes two frame sequences of raw RGBA
-// pixels of one color with dez-media/frames, `reel` with no alpha and
-// `glow` with alpha, and returns the count of each.
+// The code of the `reel` app: it writes two frame sequences of one color
+// (`WRITE_FRAMES`), `reel` with no alpha and `glow` with alpha, and
+// returns the count of the frames of each.
 const REEL_MAIN = [
   'import { FrameWriter } from "dez-media/frames"',
   '',
   'export default function main(parameters, dez) {',
-  `  const { width, height, fps, count } = ${JSON.stringify(REEL)}`,
-  '  const counts = {}',
-  `  for (const [name, color, alpha] of [["reel", ${JSON.stringify([...REEL_COLOR, 255])}, false], ["glow", ${JSON.stringify(GLOW_COLOR)}, true]]) {`,
-  '    const frames = new FrameWriter(dez.outputFolder, name, { fps, width, height, alpha })',
-  '    const pixels = new Uint8Array(width * height * 4)',
-  '    for (let index = 0; index < pixels.length; index += 4) pixels.set(color, index)',
-  '    for (let frame = 0; frame < count; frame += 1) frames.add(pixels)',
-  '    counts[name] = frames.end()',
-  '  }',
-  '  return counts',
+  WRITE_FRAMES,
+  `  return { reel: writeFrames("reel", ${JSON.stringify([...REEL_COLOR, 255])}, false), glow: writeFrames("glow", ${JSON.stringify(GLOW_COLOR)}, true) }`,
   '}',
 ].join('\n')
 
@@ -709,8 +685,8 @@ describe('apps invoke', () => {
     const run = await invoke(await chatRequest(), 'call_reel', { name: 'reel', is_intermediate: true })
     expect(run.result.status).toBe('finished')
     const [value, outputs] = run.result.text.split('\n\n')
-    expect(JSON.parse(value)).toStrictEqual({ reel: REEL.count, glow: REEL.count })
-    expect(outputs).toContain(`Dez keeps 2 files of the output folder: glow.frames/ (video clip: ${REEL.count} frames, PNG in MOV with alpha), reel.frames/ (video clip: ${REEL.count} frames, H.264 in MP4).`)
+    expect(JSON.parse(value)).toStrictEqual({ reel: FRAMES.count, glow: FRAMES.count })
+    expect(outputs).toContain(`Dez keeps 2 files of the output folder: glow.frames/ (video clip: ${FRAMES.count} frames, PNG in MOV with alpha), reel.frames/ (video clip: ${FRAMES.count} frames, H.264 in MP4).`)
     expect(run.result.text.endsWith('\nMade the video clip @a.\nMade the video clip @b.')).toBe(true)
     await sendChatReply(run.next.reply, CALLER.modelName)
 
@@ -733,8 +709,8 @@ describe('apps invoke', () => {
     expect(await shownPlayers(browser)).toStrictEqual([])
 
     // Each clip has each frame of its sequence once.
-    const size = `${REEL.width}x${REEL.height}`
-    const seconds = REEL.count / REEL.fps
+    const size = `${FRAMES.width}x${FRAMES.height}`
+    const seconds = FRAMES.count / FRAMES.fps
     expect(mediaFacts(setup.app, reelPath)).toStrictEqual({ streams: [`video h264 ${size}`], seconds })
     expect(mediaFacts(setup.app, glowPath)).toStrictEqual({ streams: [`video png ${size}`], seconds })
     // The PNG codec keeps each pixel as it is, with its alpha; H.264 keeps
