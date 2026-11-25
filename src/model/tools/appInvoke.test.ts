@@ -611,31 +611,33 @@ describe('appRunOutcome', () => {
 })
 
 describe('codeRunOutcome', () => {
-  it('gives the returned value as it is, and asks for a `return` only when the code wrote nothing', () => {
-    expect(codeRunOutcome(EXITED, { type: 'result', text: '42' }, false)).toStrictEqual({ isError: false, lead: null, given: { text: '42', name: 'returned value' }, advice: [] })
+  it('gives the returned value as it is, and asks for a `return` only when the result tells nothing else of the code', () => {
+    expect(codeRunOutcome(EXITED, { type: 'result', text: '42' }, false, false)).toStrictEqual({ isError: false, lead: null, given: { text: '42', name: 'returned value' }, advice: [] })
 
-    const silent = codeRunOutcome(EXITED, { type: 'result' }, false)
+    const silent = codeRunOutcome(EXITED, { type: 'result' }, false, false)
     expect([silent.isError, silent.given]).toStrictEqual([false, null])
     expect(silent.lead).toContain('`return`')
-    expect(codeRunOutcome(EXITED, { type: 'result' }, true).lead).not.toContain('`return`')
+    expect(codeRunOutcome(EXITED, { type: 'result' }, true, false).lead).toBe('The code returned no value.')
+    expect(codeRunOutcome(EXITED, { type: 'result' }, false, true).lead).toBe('The code returned no value.')
   })
 
   it('gives the error of the code, with the advice of code for an error that names a flag of Deno', () => {
-    const thrown = codeRunOutcome(EXITED, { type: 'error', text: 'RangeError: bad range' }, false)
+    const thrown = codeRunOutcome(EXITED, { type: 'error', text: 'RangeError: bad range' }, false, false)
     expect(thrown.isError).toBe(true)
     expect(thrown.given?.text).toBe('RangeError: bad range')
     expect(thrown.lead).toContain('Dez kept no file of the output folder.')
     expect(thrown.advice).toStrictEqual([])
 
     const refused = 'NotCapable: Requires net access to "example.com:443", run again with the --allow-net flag'
-    expect(codeRunOutcome(EXITED, { type: 'error', text: refused }, false).advice).toStrictEqual(errorAdvice(refused))
+    expect(codeRunOutcome(EXITED, { type: 'error', text: refused }, false, false).advice).toStrictEqual(errorAdvice(refused))
   })
 
   it('tells why a run with no line ended, and names the code', () => {
-    const exited = codeRunOutcome({ kind: 'exited', code: 1 }, null, false)
+    const exited = codeRunOutcome({ kind: 'exited', code: 1 }, null, false, false)
     expect([exited.isError, exited.given]).toStrictEqual([true, null])
     expect(exited.lead).toContain('The code ended before it returned a value (exit code 1).')
     expect(exited.lead).toContain('Dez kept no file of the output folder.')
+    expect(codeRunOutcome({ kind: 'exited', code: 1 }, null, false, true).lead).toContain('The code wrote nothing to the console.')
   })
 })
 

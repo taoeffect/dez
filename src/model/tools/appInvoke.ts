@@ -549,10 +549,13 @@ export function appRunOutcome(end: Exclude<ProgramEnd, { kind: 'timedOut' }>, li
  *  gave the protocol line `line`, as `appRunOutcome` for an app. The
  *  advice for an error is the one of code (`errorAdvice`, jsEval.ts): the
  *  run can load skia-canvas, so no error asks for the field of a
- *  manifest. */
-export function codeRunOutcome(end: Exclude<ProgramEnd, { kind: 'timedOut' }>, line: JsEvalEndLine | null, hasConsole: boolean): RunOutcome {
+ *  manifest. `namesWork` tells that the result names other work of the
+ *  code (a kept file of the output folder, an asset or an open job of its
+ *  tool calls): code that only writes a file or calls a tool needs no
+ *  value, so only a result that tells nothing else asks for `return`. */
+export function codeRunOutcome(end: Exclude<ProgramEnd, { kind: 'timedOut' }>, line: JsEvalEndLine | null, hasConsole: boolean, namesWork: boolean): RunOutcome {
   if (line?.type === 'result') {
-    const noValue = hasConsole ? 'The code returned no value.' : 'The code returned no value, and it wrote nothing to the console. Give the result with `return`.'
+    const noValue = hasConsole || namesWork ? 'The code returned no value.' : 'The code returned no value, and it wrote nothing to the console. Give the result with `return`.'
     return returnedOutcome(line.text, 'code', noValue)
   }
   if (line?.type === 'error') {

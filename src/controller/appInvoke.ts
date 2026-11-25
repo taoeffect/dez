@@ -432,8 +432,16 @@ export function runScriptJob(
 
     const { line, log } = endedRun(end, output)
     const hasConsole = log.trim() !== ''
-    const outcome = app === null ? codeRunOutcome(end, line, hasConsole) : appRunOutcome(end, line, hasConsole, app.call.nativeCanvas)
-    if (outcome.isError) return told(scriptRunResult(outcome, log, forModel, NO_APP_OUTPUTS, calls, run.kind), made)
+    // The lead of code that returned no value tells whether the result
+    // names other work of the code (`codeRunOutcome`). Dez knows the kept
+    // files of the output folder only after it kept them, and it keeps them
+    // only for a run that did not fail, so the outcome is made twice.
+    const calledWork = calls.made.length > 0 || calls.jobs.length > 0
+    const outcomeOf = (keptFiles: boolean) => (app === null
+      ? codeRunOutcome(end, line, hasConsole, keptFiles || calledWork)
+      : appRunOutcome(end, line, hasConsole, app.call.nativeCanvas))
+    const ended = outcomeOf(false)
+    if (ended.isError) return told(scriptRunResult(ended, log, forModel, NO_APP_OUTPUTS, calls, run.kind), made)
     let kept: { outputs: AppOutputs, assets: MadeAsset[] }
     try {
       kept = await keptOutputs(folder, ffmpegRun, run.kind, signal, report, keepAsset)
@@ -445,7 +453,7 @@ export function runScriptJob(
       console.error('Dez kept no output file of a js_eval run:', error)
       return told({ text: error.message, isError: true }, [])
     }
-    return told(scriptRunResult(outcome, log, forModel, kept.outputs, calls, run.kind), [...kept.assets, ...made])
+    return told(scriptRunResult(outcomeOf(kept.outputs.kept.length > 0), log, forModel, kept.outputs, calls, run.kind), [...kept.assets, ...made])
   })
 }
 
