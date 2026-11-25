@@ -106,6 +106,12 @@ async function timesResultText({ provider, model, request }: MediaInvocation, co
   return invocationTimesResult(text, clipId, times, { name })
 }
 
+// The price of a request with the price of its paid uploads: unknown when
+// either one is unknown.
+function withUploadCost(uploadCost: number | null, usd: number | null): number | null {
+  return uploadCost === null || usd === null ? null : uploadCost + usd
+}
+
 // The one media request of `invocation`, as the work of its job.
 // - An image is saved in the generated image folder, and a clip stays at
 //   the provider's URL or in a temp copy, as in a reply of a media model.
@@ -138,7 +144,7 @@ async function invokeMediaModel(invocation: MediaInvocation, conversationId: str
   let queued = false
   // The price of the paid uploads; null when the price of one is unknown.
   let uploadCost: number | null = 0
-  const reportWithUploads = (usd: number | null) => reportCost(uploadCost === null || usd === null ? null : uploadCost + usd)
+  const reportWithUploads = (usd: number | null) => reportCost(withUploadCost(uploadCost, usd))
   let result: ProviderGenerateMediaResult
   try {
     result = await sbp('dez.provider/generateMedia', {
@@ -159,7 +165,7 @@ async function invokeMediaModel(invocation: MediaInvocation, conversationId: str
       onProgress: (progress: MediaProgress) => {
         // A free upload is no paid request: it gives no report.
         if (progress.phase === 'uploaded' && progress.cost !== 0) {
-          uploadCost = uploadCost === null || progress.cost === undefined ? null : uploadCost + progress.cost
+          uploadCost = withUploadCost(uploadCost, progress.cost ?? null)
           reportCost(uploadCost)
         }
         if (progress.phase === 'sent') {
@@ -240,7 +246,7 @@ export function resumeModelInvocation(providerJob: StoredProviderJob, timeoutMs:
       throw new ToolError(`The provider of ${model.name} is gone (the user deleted it, or Dez does not have it any more), so Dez cannot ask it for the output of this job. `
         + `Its job id at the provider was ${providerJob.jobId}. Tell the user, or call another model.`)
     }
-    const reportWithUploads = (usd: number | null) => reportCost(uploadCost === null || usd === null ? null : uploadCost + usd)
+    const reportWithUploads = (usd: number | null) => reportCost(withUploadCost(uploadCost, usd))
     let result: ProviderGenerateMediaResult
     try {
       result = await sbp('dez.provider/generateMedia', {
