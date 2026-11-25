@@ -208,8 +208,7 @@ async function playCopy(entry: FailedLoad): Promise<void> {
   try {
     made = await copy
   } catch (error) {
-    if (wait.signal.aborted) return
-    console.error('[MediaPlayer] The play copy failed:', error)
+    if (!wait.signal.aborted) console.error('[MediaPlayer] The play copy failed:', error)
   }
   if (wait.signal.aborted) return
   // The clip got another source, or failed again, or the player went,
