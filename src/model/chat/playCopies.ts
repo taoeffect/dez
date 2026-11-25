@@ -57,8 +57,14 @@ export interface PlayCopyRun {
 
 // The picture of a copy: the alpha flattened over black, an even width and
 // height (yuv420p needs them), and the pixel format that every decoder of
-// the two codecs reads.
-const PICTURE_FILTERS = 'format=rgba,premultiply=inplace=1,scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p'
+// the two codecs reads. The colours are in the BT.709 matrix, and the
+// frames tell it (`setparams`, which the encoder writes into the stream).
+// With no matrix named, swscale converts RGB with BT.601 and the stream
+// tells no matrix; a player then guesses, and GStreamer guesses BT.709 for
+// a stream taller than 576 lines: a saturated colour of an HD copy shifts.
+const PICTURE_FILTERS = 'format=rgba,premultiply=inplace=1,'
+  + 'scale=trunc(iw/2)*2:trunc(ih/2)*2:out_color_matrix=bt709:out_range=tv,format=yuv420p,'
+  + 'setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv'
 
 // The encoders of each target. The baseline profile: openh264, the only
 // H.264 decoder of Fedora's GStreamer, decodes no other. `faststart` puts

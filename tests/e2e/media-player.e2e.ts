@@ -6,7 +6,7 @@ import { openAiChatBody } from './harness/chatBody'
 import { click, consoleErrors, elementCenter, isOnTop, movePointer, pointerClick, pointerClickAt, pointerDrag, promptMessage, resetConsoleErrors, screenshotOnFailure, typeKeys, waitForValue, type Point } from './harness/dom'
 import { linkedDropDir, nativeDrop } from './harness/drops'
 import { appFilePath, conversationFilePath, filesIn, mediaTempDir, newFileIn, readAppState, storedFileName, writeTestFile } from './harness/fixtures'
-import { NOT_A_CLIP, WAV_SAMPLE_RATE, WEBM_VIDEO, clipTag, magicYuvClip, monoWav, openPlayerTooltips, problemCards, shownPlayers, silentWav, startClipServer, waitForPlayerFullscreen, type ClipKind, type ClipServer, type ProblemCard, type ShownPlayer } from './harness/media'
+import { MAGIC_YUV_COLOR, NOT_A_CLIP, WAV_SAMPLE_RATE, WEBM_VIDEO, clipTag, magicYuvClip, monoWav, openPlayerTooltips, problemCards, shownPlayers, shownVideoColor, silentWav, startClipServer, waitForPlayerFullscreen, type ClipKind, type ClipServer, type ProblemCard, type ShownPlayer } from './harness/media'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { mockChatPath, mockModelKey, replyText, sendChatReply, type MockProvider } from './harness/mockServer'
 import { threadCount, webProcessPid } from './harness/processes'
@@ -682,15 +682,22 @@ describe('media player', () => {
     expect(await consoleErrors(browser)).toStrictEqual([expect.stringMatching(/^\[MediaPlayer\] The clip did not load; media error code: [34]$/)])
   })
 
-  it('plays a saved video that this computer cannot decode from a copy that the bundled ffmpeg makes, with a mark, and keeps the facts of its file', async () => {
+  it('plays a saved video that this computer cannot decode from a copy that the bundled ffmpeg makes, in its colours, with a mark, and keeps the facts of its file', async () => {
     const file = magicYuvClip(setup.app, path.join(savedDir('video'), 'magic-copy.mov'))
     await recordBlobUrls()
     await openReply('magic-copy', clipTag('video', { id: 'a', type: 'video/quicktime', src: file }))
 
     // The copy has the picture and the length of the clip.
     await waitForValue(browser, 'player of the copy', () => shownPlayers(browser), [
-      { kind: 'video', id: 'a', available: true, source: 'copy', seconds: 1, picture: { width: 320, height: 240 }, clock: null, save: 'saved' },
+      { kind: 'video', id: 'a', available: true, source: 'copy', seconds: 1, picture: { width: 1280, height: 720 }, clock: null, save: 'saved' },
     ])
+    // And its colour: the YUV of the copy is in the matrix that the player
+    // reads it with. The wrong matrix gives a green that is about 30 lower.
+    // A smaller error comes from the rounding of the encoder and the player.
+    await waitForValue(browser, 'frame of the copy', async () => (await shownVideoColor(browser)) !== null, true)
+    const color = await shownVideoColor(browser)
+    const error = Math.max(...MAGIC_YUV_COLOR.map((value, index) => Math.abs(value - (color?.[index] ?? -1))))
+    expect(error, `colour of the copy: ${JSON.stringify(color)}`).toBeLessThanOrEqual(12)
     expect(await problemCards(browser)).toStrictEqual([])
     // The player gave up the blob URL of the file, and plays the one of the
     // copy.

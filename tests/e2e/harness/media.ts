@@ -65,14 +65,23 @@ export const MP4_VIDEO = fs.readFileSync(new URL('../fixtures/video.mp4', import
  *  host. */
 export const NOT_A_CLIP = Buffer.from('This text is no clip.\n')
 
+/** The colour of each pixel of `magicYuvClip`, in RGB: a saturated green,
+ *  which the BT.601 and BT.709 matrices give far apart. */
+export const MAGIC_YUV_COLOR: readonly number[] = [0, 200, 0]
+
 /** Writes a 1 s MagicYUV video in a MOV file to `file`, with the ffmpeg of
  *  the build of `app`, and gives `file`. No WebKit of the tests (the
  *  GStreamer of this computer or of CI) decodes MagicYUV, and Dez's ffmpeg
  *  does: so the player of such a clip plays from a play copy on each host,
- *  as a PNG MOV with transparency does on macOS. */
+ *  as a PNG MOV with transparency does on macOS. Each pixel is
+ *  `MAGIC_YUV_COLOR`, stored as RGB (`gbrp`), so the file has no colour
+ *  matrix. The picture is 1280x720: a player takes BT.709 for a YUV stream
+ *  that is taller than 576 lines and tells no matrix, so a copy that is in
+ *  another matrix shows another colour. 4 frames keep the file small. */
 export function magicYuvClip (app: RunningApp, file: string): string {
   fs.mkdirSync(path.dirname(file), { recursive: true })
-  programRun(app, 'dez-ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=320x240:rate=24:duration=1', '-c:v', 'magicyuv', '-y', file])
+  const color = `0x${Buffer.from(MAGIC_YUV_COLOR).toString('hex')}`
+  programRun(app, 'dez-ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', `color=c=${color}:size=1280x720:rate=4:duration=1,format=gbrp`, '-c:v', 'magicyuv', '-y', file])
   return file
 }
 
@@ -217,6 +226,23 @@ export async function shownPlayers (browser: E2EBrowser): Promise<ShownPlayer[]>
       save: player.querySelector('.media-player__save')?.getAttribute('data-state') ?? null,
     }
   }))
+}
+
+/** The colour (RGB) of the middle pixel of the picture of the first player
+ *  of the active editor, as the page draws its video element; null until
+ *  the element has a frame. */
+export async function shownVideoColor (browser: E2EBrowser): Promise<number[] | null> {
+  return browser.execute(() => {
+    const video = document.querySelector('.cm-content .media-player')?.querySelector('video, audio')
+    if (!(video instanceof HTMLVideoElement) || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return null
+    const canvas = document.createElement('canvas')
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('shownVideoColor: no canvas context')
+    context.drawImage(video, 0, 0)
+    return Array.from(context.getImageData(canvas.width >> 1, canvas.height >> 1, 1, 1).data.subarray(0, 3))
+  })
 }
 
 /** The text of each player tooltip that is open, in doc order. */
