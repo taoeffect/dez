@@ -147,10 +147,13 @@ describe('model settings panel resize', () => {
     expect(await cursorAt(browser, handlePoint(start, 'top'))).toBe('ns-resize')
     expect(await cursorAt(browser, handlePoint(start, 'right'))).toBe('ew-resize')
     expect(await cursorAt(browser, handlePoint(start, 'corner'))).toBe('nesw-resize')
-    // The handles take nothing of the scroll body.
+    // The handles take nothing of the scroll body. The probe is the last
+    // whole pixel of the body: the panel is as wide as its longest label,
+    // so its edge can fall between two pixels, and WebKit gives a pixel
+    // that a handle covers in part to the handle.
     const bodySide = await browser.execute(() => {
       const rect = document.querySelector('.provider-settings-body')!.getBoundingClientRect()
-      return { x: rect.right - 1, y: rect.top + rect.height / 2 }
+      return { x: Math.floor(rect.right) - 1, y: rect.top + rect.height / 2 }
     })
     expect(await elementAtIs(browser, bodySide, '.provider-settings-body')).toBe(true)
     expect(await cursorAt(browser, bodySide)).not.toMatch(/resize/)

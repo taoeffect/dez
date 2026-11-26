@@ -231,8 +231,8 @@ function weightRow(name: string, label: string): ModelParameter {
 }
 
 // The Suno fields that only custom mode takes: inspiration mode ignores
-// the first four, and max mode and the length need custom mode.
-const SUNO_CUSTOM_FIELDS: ReadonlySet<string> = new Set(['title', 'negative_tags', 'auto_lyrics', 'persona_id', 'max_mode', 'duration'])
+// the first four, and max mode needs custom mode.
+const SUNO_CUSTOM_FIELDS: ReadonlySet<string> = new Set(['title', 'negative_tags', 'auto_lyrics', 'persona_id', 'max_mode'])
 // The fields that a request with a custom model id must not have.
 const SUNO_NOT_WITH_CUSTOM_MODEL: ReadonlySet<string> = new Set(['version', 'persona_id'])
 const SUNO_MAX_STYLE_LENGTH = 1000
@@ -246,9 +246,16 @@ const SUNO_MAX_TITLE_LENGTH = 80
 // the message is then the style of an instrumental: custom mode makes no
 // song with a voice from no lyrics (`auto_lyrics` only rewrites lyrics).
 // The fields that a mode does not take are left out, so that a value of
-// the panel never makes a request fail.
+// the panel never makes a request fail. The one exception is a length in
+// inspiration mode, which is refused: APIMart refuses it (HTTP 400,
+// "`duration` requires custom mode"), and a length that Dez left out gave
+// the user paid songs of a length that the user did not ask for (live,
+// 2026-11-25).
 function sunoBody({ prompt, lyrics, values }: ClipInput): Record<string, unknown> {
   const custom = lyrics !== undefined || values.custom === true
+  if (!custom && values.duration !== undefined) {
+    throw new ExplainedError('This model takes a length only in Custom mode. Write the style, then a line "Lyrics:", then the lyrics; or turn on Custom mode and Instrumental, or clear Target length, in the model parameters.')
+  }
   if (custom && lyrics === undefined && values.instrumental !== true) {
     throw new ExplainedError('In Custom mode, this model makes a song only from lyrics, or an instrumental. Write the style, then a line "Lyrics:", then the lyrics; or turn on Instrumental, or turn off Custom mode, in the model parameters.')
   }
@@ -268,12 +275,17 @@ function sunoBody({ prompt, lyrics, values }: ClipInput): Record<string, unknown
 }
 
 export const APIMART_MUSIC_MODELS: Readonly<Record<string, ApimartMusicModel>> = {
-  // A task makes more than one song (two in the docs' example). `version`
-  // has a default: a request needs a version or a custom model id. The
-  // style (at most 1,000 characters) and the description (at most 3,000)
-  // come from the message, as a text row holds one short line.
+  // A task makes more than one song (two in the docs' example). No field
+  // sets the count: a task with `n: 1` (not in the docs) still gave two
+  // songs (live, 2026-11-25). `version` has a default: a request needs a
+  // version or a custom model id. The style (at most 1,000 characters) and
+  // the description (at most 3,000) come from the message, as a text row
+  // holds one short line. Custom mode keeps the length as a target, with
+  // lyrics and for an instrumental: two tasks that asked for 30 seconds
+  // gave songs of 30 and 29.8, and of 32.76 and 29.8 seconds (live,
+  // 2026-11-25).
   // https://docs.apimart.ai/en/api-reference/audios/suno/generation
-  // (checked 2026-11-24)
+  // (checked 2026-11-25)
   suno: {
     parameters: [
       { name: 'version', label: 'Version', options: ['v6', 'v6-wild', 'v6-mini'], default: 'v6' },
@@ -283,7 +295,7 @@ export const APIMART_MUSIC_MODELS: Readonly<Record<string, ApimartMusicModel>> =
       textRow('negative_tags', 'Styles to avoid (Custom mode)'),
       { name: 'auto_lyrics', label: 'Rewrite the lyrics' },
       { name: 'vocal_gender', label: 'Voice', options: ['Male', 'Female'] },
-      { name: 'duration', label: 'Length (seconds, Custom mode)', min: 10, max: 360 },
+      { name: 'duration', label: 'Target length (seconds, Custom mode)', min: 10, max: 360 },
       textRow('persona_id', 'Persona id (Custom mode)'),
       textRow('custom_model_id', 'Custom model id'),
       { name: 'variety', label: 'Variety', options: ['off', 'normal', 'high', 'extra', 'max'] },
@@ -306,17 +318,18 @@ export const APIMART_MUSIC_MODELS: Readonly<Record<string, ApimartMusicModel>> =
   // One song for each task. `sound_prompt` and `lyrics` cannot both be
   // empty. `bpm` and `seed` are texts in the docs, so they go as texts.
   // The version `lyria-3.5` keeps the model `flowmusic`; with no version,
-  // the model is Flow Music's own. A live task with no version and a
-  // `length` of 10 gave a song of 105 seconds (2026-11-24): the model can
-  // take the length as a hint only.
+  // the model is Flow Music's own. Both take `length` only as a target,
+  // which a song can miss by far, most of all a short one. Live tasks with
+  // no version: 10 → 105 seconds (2026-11-24), 30 → 131.85, 200 → 175.89;
+  // with `lyria-3.5`: 30 → 57.48, 200 → 181.18 (2026-11-25).
   // https://docs.apimart.ai/en/api-reference/audios/flow-music/music
   // https://docs.apimart.ai/en/api-reference/audios/flow-music/music-lyria-3-5
-  // (checked 2026-11-24)
+  // (checked 2026-11-25)
   flowmusic: {
     parameters: [
       { name: 'version', label: 'Version', options: ['lyria-3.5'] },
       textRow('title', 'Title'),
-      { name: 'length', label: 'Length (seconds)', min: 1, max: 240 },
+      { name: 'length', label: 'Target length (seconds)', min: 1, max: 240 },
       textRow('bpm', 'Beats a minute'),
       textRow('seed', 'Seed'),
     ],

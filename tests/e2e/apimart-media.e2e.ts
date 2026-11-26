@@ -32,9 +32,11 @@ import { activeTabId, closeToasts, editorDoc, focusEditor, newTab, openSeededCon
 //   what the task tells (APIMart gives the money back);
 // - a music request is one POST to `/music/generations` with the fields of
 //   its model (Suno: inspiration mode for a message with no lyrics; Flow
-//   Music: the style and the lyrics of the message); the app asks
-//   `/music/tasks/<id>` for the state, and shows one player for each song
-//   of the task (a Suno task makes two), at the cost of the task;
+//   Music: the style and the lyrics of the message, and the length of its
+//   row); the app asks `/music/tasks/<id>` for the state, and shows one
+//   player for each song of the task (a Suno task makes two), at the cost
+//   of the task; a Suno length in inspiration mode, which APIMart refuses,
+//   gets an error toast that tells how to send it, and no request goes;
 // - a transcription sends the audio clip that the message names as the
 //   file of a form to `/audio/transcriptions`, and the reply's text is the
 //   transcript; its price is unknown, as the answer tells no cost;
@@ -287,7 +289,7 @@ describe('APIMart media models', () => {
         { name: 'negative_tags', label: 'Styles to avoid (Custom mode)', text: '' },
         { name: 'auto_lyrics', label: 'Rewrite the lyrics', on: false },
         { name: 'vocal_gender', label: 'Voice', options: ['Default', 'Male', 'Female'], picked: 'Default' },
-        { name: 'duration', label: 'Length (seconds, Custom mode)', number: '', min: '10', max: '360', step: '1' },
+        { name: 'duration', label: 'Target length (seconds, Custom mode)', number: '', min: '10', max: '360', step: '1' },
         { name: 'persona_id', label: 'Persona id (Custom mode)', text: '' },
         { name: 'custom_model_id', label: 'Custom model id', text: '' },
         { name: 'variety', label: 'Variety', options: ['Default', 'off', 'normal', 'high', 'extra', 'max'], picked: 'Default' },
@@ -325,15 +327,44 @@ describe('APIMart media models', () => {
     expect(await consoleErrors(browser)).toStrictEqual([])
   })
 
-  it('sends the style and the lyrics of a message to Flow Music', async () => {
+  it('refuses a Suno length in inspiration mode before any request, with a text that tells how to send it', async () => {
+    const prompt = 'make a short song about love.'
+    const lengthRow = async () => (await popupView(browser)).rows.find((row) => row.name === 'duration')
+    await pickModel(browser, MART.name, SUNO.name)
+    await openPopup(browser)
+    await changeParameterField(browser, 'duration', '30', 'number')
+    await waitForValue(browser, 'length row of the user', lengthRow, { name: 'duration', label: 'Target length (seconds, Custom mode)', number: '30', min: '10', max: '360', step: '1' })
+    await closePopup(browser)
+    await submit(browser, prompt)
+
+    await waitForValue(browser, 'error toast of the refusal', () => openToasts(browser, 'error'), [{
+      title: 'Request failed',
+      message: 'This model takes a length only in Custom mode. Write the style, then a line "Lyrics:", then the lyrics; or turn on Custom mode and Instrumental, or clear Target length, in the model parameters.',
+    }])
+    await waitForValue(browser, 'thread after the refusal', () => threadSections(browser), [{ role: 'user', text: prompt }])
+    expect(setup.mock.hasWaitingRequest()).toBe(false)
+    await closeToasts(browser)
+    await waitForValue(browser, 'error toast closed', () => openToasts(browser, 'error'), [])
+    // The stored length would refuse each later Suno request of the file.
+    await openPopup(browser)
+    await click(browser, '.provider-settings-reset')
+    await waitForValue(browser, 'length row after the reset', lengthRow, { name: 'duration', label: 'Target length (seconds, Custom mode)', number: '', min: '10', max: '360', step: '1' })
+    await closePopup(browser)
+  })
+
+  it('sends the style and the lyrics of a message, and the length of its row, to Flow Music', async () => {
     const message = 'Upbeat synth pop\nLyrics:\nLa la la, the city lights'
     await pickModel(browser, MART.name, FLOW_MUSIC.name)
+    await openPopup(browser)
+    await changeParameterField(browser, 'length', '30', 'number')
+    await waitForValue(browser, 'length row of the user', async () => (await popupView(browser)).rows.find((row) => row.name === 'length'), { name: 'length', label: 'Target length (seconds)', number: '30', min: '1', max: '240', step: '1' })
+    await closePopup(browser)
     await setCaret(browser, (await editorDoc(browser)).length)
     await pasteText(browser, message)
     await waitForValue(browser, 'message with the lyrics', () => threadSections(browser), [{ role: 'user', text: message }])
     await submit(browser, '')
 
-    const request = await takeRequest(setup, MUSIC_PATH, { sound_prompt: 'Upbeat synth pop', lyrics: 'La la la, the city lights', model: FLOW_MUSIC.id })
+    const request = await takeRequest(setup, MUSIC_PATH, { length: 30, sound_prompt: 'Upbeat synth pop', lyrics: 'La la la, the city lights', model: FLOW_MUSIC.id })
     answerHeld(request.reply, 'application/json', submitted('task-flow'))
     await waitForValue(browser, 'player of the song', () => shownPlayers(browser), [
       { kind: 'audio', id: 'a', available: true, source: 'blob', seconds: 2, picture: null, clock: 'Not saved', save: 'save' },

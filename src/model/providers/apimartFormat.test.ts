@@ -547,9 +547,9 @@ describe('apimart music models', () => {
 describe('apimart Suno requests', () => {
   const request = (input: { prompt: string, lyrics?: string, values?: ParameterValues }) =>
     clips.request('music', `${BASE_URL}/`, 'suno', { images: [], values: {}, ...input })
-  // A value for each field that only custom mode takes, and for each field
-  // that both modes take.
-  const CUSTOM_ONLY = { title: 'Morning', negative_tags: 'metal', auto_lyrics: true, persona_id: 'p-1', max_mode: true, duration: 120 }
+  // A value for each field that inspiration mode leaves out, and for each
+  // field that both modes take.
+  const CUSTOM_ONLY = { title: 'Morning', negative_tags: 'metal', auto_lyrics: true, persona_id: 'p-1', max_mode: true }
   const BOTH_MODES = { version: 'v6', instrumental: true, vocal_gender: 'Female', style_weight: 0.6, weirdness_constraint: 0.3, audio_weight: 0.5, variety: 'high', audio_format: 'm4a' }
 
   it('sends a message with no lyrics in inspiration mode, as the description, with only the fields that both modes take', () => {
@@ -575,6 +575,21 @@ describe('apimart Suno requests', () => {
       .toStrictEqual({ instrumental: true, title: 'Rain', custom: true, style: 'lo-fi piano, rain', model: 'suno' })
     expect(thrownError(() => request({ prompt: 'lo-fi piano, rain', values: { custom: true } }))).toStrictEqual(new ExplainedError(
       'In Custom mode, this model makes a song only from lyrics, or an instrumental. Write the style, then a line "Lyrics:", then the lyrics; or turn on Instrumental, or turn off Custom mode, in the model parameters.',
+    ))
+  })
+
+  // Live, 2026-11-25: Custom mode keeps the length, in both forms, and
+  // inspiration mode answers 400 "`duration` requires custom mode".
+  it('sends a length in Custom mode, with lyrics and for an instrumental, and refuses it in inspiration mode with a text that tells how to send it', () => {
+    expect([
+      request({ prompt: 'pop ballad', lyrics: 'La la', values: { duration: 30 } }).body,
+      request({ prompt: 'soft piano', values: { custom: true, instrumental: true, duration: 30 } }).body,
+    ]).toStrictEqual([
+      { duration: 30, custom: true, prompt: 'La la', style: 'pop ballad', model: 'suno' },
+      { instrumental: true, duration: 30, custom: true, style: 'soft piano', model: 'suno' },
+    ])
+    expect(thrownError(() => request({ prompt: 'make a short song about love.', values: { duration: 30, vocal_gender: 'Female', audio_format: 'mp3' } }))).toStrictEqual(new ExplainedError(
+      'This model takes a length only in Custom mode. Write the style, then a line "Lyrics:", then the lyrics; or turn on Custom mode and Instrumental, or clear Target length, in the model parameters.',
     ))
   })
 
