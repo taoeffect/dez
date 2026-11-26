@@ -896,9 +896,9 @@ export default sbp('sbp/selectors/register', {
       // that no wait comes between that check and the paid request. The
       // check before them keeps the images on this computer when the money
       // limit of the tab refuses a request with no known price. Their time
-      // counts in the time limit of `run`: `timeoutMs` is the time that the
-      // whole call runs (the `timeout_seconds` of `model_invoke`, whose job
-      // counts the uploads too), not only the time of the provider's job.
+      // counts in the time limit of `run`, which starts before them:
+      // `timeoutMs` (the `timeout_seconds` of `model_invoke`, whose job
+      // counts the uploads too) is not only the time of the provider's job.
       const upload = readImages.length > 0 ? provider.imageUpload(secret) : null
       let imageUrls: string[] | undefined
       if (upload) {
