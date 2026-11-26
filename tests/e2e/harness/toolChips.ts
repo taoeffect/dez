@@ -220,7 +220,7 @@ export async function panelFieldNames (browser: E2EBrowser, index: number): Prom
 export async function panelField (browser: E2EBrowser, index: number, name: string): Promise<PanelFieldView | null> {
   return browser.execute((chipIndex: number, fieldName: string) => {
     const root = document.querySelectorAll('.cm-content .dez-tool-call')[chipIndex]
-    const field = Array.from(root?.querySelectorAll<HTMLTextAreaElement>('.dez-tool-call__panel textarea') ?? []).find((candidate) => candidate.getAttribute('aria-label') === fieldName)
+    const field = root?.querySelector<HTMLTextAreaElement>(`.dez-tool-call__panel textarea[aria-label="${CSS.escape(fieldName)}"]`)
     if (!field) return null
     return { text: field.value, selected: field.value.slice(field.selectionStart, field.selectionEnd), focused: document.activeElement === field }
   }, index, name)
@@ -236,7 +236,7 @@ export async function panelFieldWordPoint (browser: E2EBrowser, index: number, n
   return browser.execute((chipIndex: number, fieldName: string, wanted: string) => new Promise<Point>((resolve, reject) => {
     requestAnimationFrame(() => requestAnimationFrame(() => {
       const root = document.querySelectorAll('.cm-content .dez-tool-call')[chipIndex]
-      const field = Array.from(root?.querySelectorAll<HTMLTextAreaElement>('.dez-tool-call__panel textarea') ?? []).find((candidate) => candidate.getAttribute('aria-label') === fieldName)
+      const field = root?.querySelector<HTMLTextAreaElement>(`.dez-tool-call__panel textarea[aria-label="${CSS.escape(fieldName)}"]`)
       const at = field?.value.indexOf(wanted) ?? -1
       if (!field || at < 0) {
         reject(new Error(`panelFieldWordPoint: no field "${fieldName}" with "${wanted}" in chip ${chipIndex}`))
@@ -274,7 +274,7 @@ export async function panelFieldWordPoint (browser: E2EBrowser, index: number, n
 export async function sendCopyToPanelField (browser: E2EBrowser, index: number, name: string): Promise<{ canceled: boolean, text: string }> {
   return browser.execute((chipIndex: number, fieldName: string) => {
     const root = document.querySelectorAll('.cm-content .dez-tool-call')[chipIndex]
-    const field = Array.from(root?.querySelectorAll<HTMLTextAreaElement>('.dez-tool-call__panel textarea') ?? []).find((candidate) => candidate.getAttribute('aria-label') === fieldName)
+    const field = root?.querySelector<HTMLTextAreaElement>(`.dez-tool-call__panel textarea[aria-label="${CSS.escape(fieldName)}"]`)
     if (!field) throw new Error(`sendCopyToPanelField: no field "${fieldName}" in chip ${chipIndex}`)
     const data = new DataTransfer()
     const event = new ClipboardEvent('copy', { clipboardData: data, bubbles: true, cancelable: true })
