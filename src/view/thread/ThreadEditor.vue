@@ -1218,8 +1218,6 @@ onBeforeUnmount(() => {
 watch(
   () => activeTabId.value,
   (_newId, oldId) => {
-    // A report that is still due would read the old doc for the new tab.
-    reportViewPlace.clear()
     if (oldId) {
       rememberViewPlace()
       saveViewTabNow()
