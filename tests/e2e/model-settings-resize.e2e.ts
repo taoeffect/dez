@@ -3,7 +3,7 @@ import { MODEL_SETTINGS_SIZE_DEFAULT } from '../../src/model/modelSettingsSize'
 import { PICKER_ROOM_MARGIN_PX } from '../../src/view/model-selector/pickerResize'
 import { APIMART_CONFIG, MART, MODELS_PATH, MODEL_LIST, SUNO } from './harness/apimartMock'
 import { boxRect, cursorAt, dragHandle, elementAtIs, handlePoint, viewport, type Box } from './harness/boxResize'
-import { consoleErrors, resetConsoleErrors, screenshotOnFailure, waitForValue, withSmallerWindow } from './harness/dom'
+import { consoleErrors, isOnTop, resetConsoleErrors, screenshotOnFailure, waitForValue, withSmallerWindow } from './harness/dom'
 import { readAppState, readModelCache } from './harness/fixtures'
 import { startMockProviderApp, type MockProviderApp } from './harness/mockProviderApp'
 import { closePopup, openPopup, popupOpen, popupView } from './harness/parameterPopup'
@@ -120,11 +120,7 @@ describe('model settings panel resize', () => {
       expect(box.top).toBeLessThan(PICKER_ROOM_MARGIN_PX + 1)
       expect(await bodyScrolls()).toBe(true)
 
-      const reset = await browser.execute(() => {
-        const rect = document.querySelector('.provider-settings-reset')!.getBoundingClientRect()
-        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
-      })
-      expect(await elementAtIs(browser, reset, '.provider-settings-reset')).toBe(true)
+      expect(await isOnTop(browser, '.provider-settings-reset')).toBe(true)
 
       const lastRow = await browser.execute(() => {
         const body = document.querySelector('.provider-settings-body')!
