@@ -140,9 +140,7 @@ function hasValueAtPath(model: Record<string, unknown>, path: string): boolean {
 function typeRequest(model: Record<string, unknown>, { request, requestBy }: ModelOutputsConfig['values'][string]): ModelRequest {
   const value = requestBy === undefined ? undefined : valueAtPath(model, requestBy.path)
   const name = typeof value === 'boolean' ? String(value) : value
-  // Object.hasOwn: as for the raw types below.
-  if (requestBy === undefined || typeof name !== 'string' || !Object.hasOwn(requestBy.values, name)) return request ?? 'none'
-  return requestBy.values[name]
+  return (requestBy && ownEntry(requestBy.values, name)) ?? request ?? 'none'
 }
 
 // What a `/models` entry's model makes and how Dez sends it a request, from
@@ -159,11 +157,8 @@ export function modelOutputsAndRequest(model: Record<string, unknown>, mapping: 
 
   const value = valueAtPath(model, mapping.path)
   const types = typeof value === 'string' ? [value] : Array.isArray(value) ? value : []
-  // Object.hasOwn: a raw type such as 'constructor' must not read an
-  // inherited member of the `values` object.
   const known = types
-    .filter((type): type is string => typeof type === 'string' && Object.hasOwn(mapping.values, type))
-    .map((type) => mapping.values[type])
+    .flatMap((type) => ownEntry(mapping.values, type) ?? [])
     .filter((entry) => entry.requiredPath === undefined || hasValueAtPath(model, entry.requiredPath))
   if (known.length === 0) return {}
 

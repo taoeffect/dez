@@ -20,7 +20,7 @@ import type { MultipartField } from './multipart'
 import { clipFormFile, isClipUrl, jobStateText, jsonBody, lengthSeconds, listedValues, lowestFirstParameter, optionsParameter, resolutionLines, sourceClip, switchParameter, transcriptText, transcriptTimes } from './mediaFormatParts'
 import { parameterTakes, type ModelParameter, type OptionValue, type ParameterValues, type RangeParameter } from './modelParameters'
 import { priceNumber, roundedPrice, unitPrice, usdText, type ModelPrice } from './modelPrices'
-import { isRecord, valueAtPath } from './modelParsing'
+import { isRecord, ownEntry, valueAtPath } from './modelParsing'
 import { CLIP_KINDS, type ChatImagePart, type ClipKind, type GeneratedMedia, type ImageKind, type MediaKind, type TextKind, type TranscriptTimes } from './types'
 import { VENICE_AUDIO_TYPES, VENICE_MAX_AUDIO_BYTES, VENICE_REFERENCE_FIELDS, VENICE_VIDEO_TYPES, veniceFamilyByIdPrefix, veniceReferenceBody, veniceReferenceClipRules, veniceReferenceFamily } from './veniceReferences'
 
@@ -1215,7 +1215,7 @@ const veniceFormat: MediaFormat = {
       }
       case 'voiceChange': {
         const formats = listedValues(valueAtPath(entry, 'model_spec.accepted_audio_formats'))
-        const types = formats.flatMap((format) => (typeof format === 'string' && Object.hasOwn(VENICE_VOICE_CHANGER_TYPES, format) ? VENICE_VOICE_CHANGER_TYPES[format] : []))
+        const types = formats.flatMap((format) => ownEntry(VENICE_VOICE_CHANGER_TYPES, format) ?? [])
         const maxSeconds = valueAtPath(entry, 'model_spec.max_source_audio_duration_seconds')
         return {
           audio: {
@@ -1640,7 +1640,7 @@ function skuVideoPrice(values: ParameterValues, mediaEntry: unknown, paths: Medi
   if (typeof seconds !== 'number') return seconds
   let usd = rate.usd * seconds
   if (rate.per === 'token') {
-    const pixels = resolution !== undefined && Object.hasOwn(OPENROUTER_TOKEN_FRAME_PIXELS, resolution) ? OPENROUTER_TOKEN_FRAME_PIXELS[resolution] : undefined
+    const pixels = ownEntry(OPENROUTER_TOKEN_FRAME_PIXELS, resolution)
     if (pixels === undefined) return videoPriceError(`the price is by video token, and Dez does not know the size in pixels of a video of ${resolution ?? 'no resolution'}`, where)
     usd *= pixels * OPENROUTER_TOKEN_FPS / OPENROUTER_PIXELS_PER_TOKEN
   }
