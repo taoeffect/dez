@@ -254,7 +254,7 @@ const SUNO_MAX_TITLE_LENGTH = 80
 function sunoBody({ prompt, lyrics, values }: ClipInput): Record<string, unknown> {
   const custom = lyrics !== undefined || values.custom === true
   if (!custom && values.duration !== undefined) {
-    throw new ExplainedError('This model takes a length only in Custom mode. Write the style, then a line "Lyrics:", then the lyrics; or turn on Custom mode and Instrumental, or clear Target length, in the model parameters.')
+    throw new ExplainedError('This model takes a length only in Custom mode. Write the style, then a line "Lyrics:", then the lyrics; or turn on Custom mode and Instrumental in the model parameters. Or the user clears Target length in the model parameters.')
   }
   if (custom && lyrics === undefined && values.instrumental !== true) {
     throw new ExplainedError('In Custom mode, this model makes a song only from lyrics, or an instrumental. Write the style, then a line "Lyrics:", then the lyrics; or turn on Instrumental, or turn off Custom mode, in the model parameters.')

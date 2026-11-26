@@ -589,7 +589,7 @@ describe('apimart Suno requests', () => {
       { instrumental: true, duration: 30, custom: true, style: 'soft piano', model: 'suno' },
     ])
     expect(thrownError(() => request({ prompt: 'make a short song about love.', values: { duration: 30, vocal_gender: 'Female', audio_format: 'mp3' } }))).toStrictEqual(new ExplainedError(
-      'This model takes a length only in Custom mode. Write the style, then a line "Lyrics:", then the lyrics; or turn on Custom mode and Instrumental, or clear Target length, in the model parameters.',
+      'This model takes a length only in Custom mode. Write the style, then a line "Lyrics:", then the lyrics; or turn on Custom mode and Instrumental in the model parameters. Or the user clears Target length in the model parameters.',
     ))
   })
 

@@ -339,7 +339,7 @@ describe('APIMart media models', () => {
 
     await waitForValue(browser, 'error toast of the refusal', () => openToasts(browser, 'error'), [{
       title: 'Request failed',
-      message: 'This model takes a length only in Custom mode. Write the style, then a line "Lyrics:", then the lyrics; or turn on Custom mode and Instrumental, or clear Target length, in the model parameters.',
+      message: 'This model takes a length only in Custom mode. Write the style, then a line "Lyrics:", then the lyrics; or turn on Custom mode and Instrumental in the model parameters. Or the user clears Target length in the model parameters.',
     }])
     await waitForValue(browser, 'thread after the refusal', () => threadSections(browser), [{ role: 'user', text: prompt }])
     expect(setup.mock.hasWaitingRequest()).toBe(false)
